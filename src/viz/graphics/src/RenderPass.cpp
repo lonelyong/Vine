@@ -13,6 +13,7 @@
 #include <vine/graphics/ShaderProgram.hpp>
 
 #include "FrameExpand.hpp"
+#include "PublicationStore.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -218,9 +219,9 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
     // THE VIEW, AS A VALUE (see CameraSnapshot). Taking it here is what lets the frame's expansion collect on
     // another thread, and what keeps this frame's culling and shading on one camera state.
     draw.camera       = CameraSnapshot::of(*desc_.camera);
-    // WHO ANSWERS THE VIEW. The pass names the content it renders; the collection happens in the frame's expansion
-    // step (see detail::expandPass), so describing a pass costs nothing per drawable.
-    draw.content      = scene;
+    // WHOSE PUBLICATION ANSWERS THE VIEW is bound at the frame boundary, not here: a description states the VIEW, and
+    // the engine points it at the scene's published snapshot (see detail::bindSceneDraws). A live scene never travels
+    // in a frame value - one edit on the content thread could otherwise reach a frame that is already being recorded.
     draw.layer_mask   = desc_.layer_mask;
     // The viewport this pass lands in, in DEVICE pixels. A sub-viewport wins; otherwise an explicit target's
     // size; otherwise the surface size the engine/chain stated for a window pass. Collection needs it for
@@ -252,9 +253,10 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
         light_values.push_back(light != nullptr ? light->value() : LightValue{});
     }
     draw.light_values = std::move(light_values);
-    // The command list is NOT collected here: `draw.commands` stays null and the frame's expansion asks
-    // `draw.content` for it (see FrameExpand). A program override is a PASS fact, not a per-command rewrite
-    // (see PassDraw::program_override): the backend resolves it per command exactly like the pass' state.
+    // The command list is NOT collected here: `draw.commands` stays null and the frame's expansion asks the source the
+    // draw was bound to (see FrameExpand and detail::bindSceneDraws). A program override is a PASS fact, not a
+    // per-command rewrite (see PassDraw::program_override): the backend resolves it per command exactly like the
+    // pass' state.
     out.draws.push_back(std::move(draw));
     return true;
 }
@@ -271,6 +273,14 @@ void RenderPass::execute(raw_ptr<Scene> scene, raw_ptr<RenderBackend> backend, r
     PassDraw description;
     if (!describe(scene, description)) {
         return;
+    }
+    // A PASS DRIVEN BY ITS OWNER DRAWS A PUBLICATION TOO (see Scene: a frame never reads the live tree). Publishing
+    // here is the same call a host makes before handing a snapshot to an engine, so a pass commanded mid-batch draws
+    // the picture the batch started from - exactly what a frame would.
+    detail::PublicationStore publications;
+    if (scene != nullptr) {
+        (void)publications.publish(*scene);
+        detail::bindSceneDraws(description, publications.sourceOf(*scene));
     }
     detail::expandPass(description);
     backend->executor().executeFrame(singlePassFrame(this, /*order*/ 0, /*inputs*/ {}, std::move(description)), present_to);

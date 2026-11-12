@@ -536,7 +536,7 @@
 | T31 | 批内 publish | `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch`（`Posted` → `Unchanged` → `InsideBatch` → `Posted`）+ `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` | 已实现（2026-11-12） |
 | T32 | 预热的答案 = 帧的构建 | `ContentHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds`（键集相等，设备无关）+ `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` 的键集断言（录制侧） | 已实现（2026-11-12） |
 | T33 | 预热后录制 `builds` 增量 0，且预热不提交 / 不呈现 | `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing`（`halves().builds` / `sets().builds` / `uploads().uploads` / `inputSetBuilds` / `pool.created` 全 0，`progress->submitted` 不动，像素仍画出）+ `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing`（引擎侧：同一个 value、不执行、不取帧号） | 已实现（2026-11-12） |
-| T34 | 快照源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`（600 帧，transform / opacity / material / placement 编辑，逐项 diff）+ `FrameExpanderTest.AFrameExpandsTheSamePictureTheSceneWould`（绑定后的帧级接缝） | 已实现（2026-11-12） |
+| T34 | 快照源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`（600 帧，transform / opacity / material / placement 编辑，逐项 diff）+ `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould`（绑定后的帧级接缝） | 已实现（2026-11-12） |
 
 ### 8.1 判死阈值（`K#`）
 
@@ -583,7 +583,7 @@
   Published 模式的每个 draw；`Scene::collectRenderCommands` 仍是 Direct 模式的直接路径；`K1`（203 µs）、
   `K2`（1.03×）、`K3` 已由 `SnapshotTest` 证明。
 - **5a / 5b-1 / 5b-2a / 5b-2b 已落地（2026-11-12）**：`SnapshotSource`（快照 → `DrawListSource`）、
-  `DrawListDiff`；`T34` 由 `SnapshotSourceTest` 的 600 帧与 `FrameExpanderTest` 的帧级比较钉住，`T17` 的
+  `DrawListDiff`；`T34` 由 `SnapshotSourceTest` 的 600 帧与 `FrameExpandTest` 的帧级比较钉住，`T17` 的
   snapshot 侧由同一套件的旧快照用例钉住；公开 `Scene::publish()`（`Posted`/`Unchanged`/`InsideBatch`）；
   `PublicationStore` 直接持有 `SnapshotSource`（W3 拆自 `FrameWorker`）。**5b-2b 删除了 `ContentMirror` / `DeltaChannel` / `RenderWorld` /
   `RenderWorldSource` / `PublishOutcome` 与 23 条 LEGACY 用例**；`test_graphics` 554 / `test_vsg` 542。
@@ -612,7 +612,7 @@
 | 步 | 内容 | 删掉什么 | 判据 / 回退条件 |
 |---|---|---|---|
 | 1 | 计划是值：`Plan` + 帧边界差分 + 校验 code · **已落地 2026-11-12** | 本步不删公开入口（`C11`）；`compileFrame` 的行从“`slots_` 的投影”变成“计划的投影” | `T7` / `T30` / `K4`；击穿则回退该步 |
-| 2 | `publish` 返回结果（四态）· **已落地 2026-11-12（内部半边）** | 内部 `bool` 发布（旧 `FrameWorker` / `ContentMirror`，前者已拆为 `PublicationStore` / `FrameExpander`）；**帧内隐式发布随 5b-2c 消失** | `T31` |
+| 2 | `publish` 返回结果（四态）· **已落地 2026-11-12（内部半边）** | 内部 `bool` 发布（旧 `FrameWorker` / `ContentMirror`，前者已拆为 `PublicationStore` + `FrameExpand`）；**帧内隐式发布随 5b-2c 消失** | `T31` |
 | 3a | `prepare()` 的**答案**：抽出 `drawNeeds`，`prepare` 与 `record` 共用它；断言答案 = 这一帧实际构建的键集 · **已落地 2026-11-12** | 录制里重复的键构造 | `T32`；击穿则回退该步 |
 | 3b | `prepare()` 的**预建**：按答案建半片 / 集合 / 上传 · **已落地 2026-11-12** | “录制时才发现要编译” | `T7` / `T10` / `T33`，预热后 `builds` 增量 0 |
 | 4 | 一 Session 多 Surface | 每窗口一个 Session 的驱动路径 | `T29` / `K10` |
@@ -628,6 +628,11 @@
 （计划是输入，`slots_` 是它的应用结果），这也正是 `T7` 能成立的最小充分条件。
 5a 是**等价性证明**，5b-1 是**切换真相**，5b-2a 是**公开入口 + 源归位**，5b-2b 是**删旧镜像**，
 5b-2c 只做**删 pass 声明旧形状**；各自一个可回退提交，理由见 `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`。
+
+**W9a（W6b）已落地 2026-11-13**：`Scene` 不再实现 `DrawListSource`，`RenderPass::describe` 不再把活 `Scene`
+写进帧值，绑定移到内容半段（`detail::bindSceneDraws`），`FrameExpander` 随之删除（它只有 bind 一个职责）。
+帧值跨线程时只装发布源；未发布的场景什么也不画（`FrameExpandTest.ADrawNoPublicationAnswersDrawsNothing`）。
+剩余：W9b（隐式发布）、W9c（活指针门）、W9d（`addPass` 家族）、W9e（W7 结果形状）。
 
 ## 10. 参考
 

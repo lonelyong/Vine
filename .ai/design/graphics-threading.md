@@ -4,13 +4,14 @@
 > 跨线程的载荷只剩「一次发布出的不可变快照」与「两个原子 revision」。历史（为什么曾经那样、哪条被否决）见
 > `../decisions/ADR-2026-11-12-adopt-graphics-next.md`、`../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`
 > 与 git 历史；`C1–C15` 与 `N1–N14` 里只服务于被删机制的条目已退役，编号不复用（见 §5.1、§5.3 的说明）。
-> **最后核对**：2026-11-12
+> **最后核对**：2026-11-13
 > **范围**：一帧的工作在两条线程上各归谁 —— 内容侧与引擎侧各拥有什么、跨侧只允许过什么值、表面与交换链归谁、
 > 并行放在哪、关闭怎么收。
 > **不含** appfw 的通用异步（`appfw-startup-phases.md`、`async-design.md`）与 Vulkan 同步细节（`vsg-backend.md`）。
 > **权威来源**：`src/viz/graphics/src/PublicationStore.{hpp,cpp}`（发布与绑定的内容侧表）、
-> `src/viz/graphics/src/FrameExpander.{hpp,cpp}`（引擎半段：bind + expand）、`src/viz/graphics/src/SnapshotSource.{hpp,cpp}`
-> （快照的 `DrawListSource` 面）、`src/viz/graphics/src/FrameRunner.{hpp,cpp}`（引擎线程）、
+> `src/viz/graphics/src/FrameExpand.{hpp,cpp}`（帧的绑定与展开：`bindSceneDraws` / `expandFrame`）、
+> `src/viz/graphics/src/SnapshotSource.{hpp,cpp}`（快照的 `DrawListSource` 面）、
+> `src/viz/graphics/src/FrameRunner.{hpp,cpp}`（引擎线程）、
 > `sdk/vine/graphics/Scene.hpp`（`publish`）与 `sdk/vine/graphics/RenderEngine.hpp`（`bindSnapshot` /
 > `setFrameThreading` / `waitForFrame` / `presentRecord` / `presentedCamera`）。
 > **待办**：`../backlog/graphics.md`
@@ -177,7 +178,7 @@
 | `WindowPresentTarget` + 交换链 | 引擎（设备造，`createSurfaceTarget`） | 引擎线程 | — |
 | `RenderDevice` / 会话 / 帧值 / 退休队列 | 引擎 | 引擎线程 | — |
 | 帧的**内容半段**：帧号、`compileFrame`、`before_draw` 钩子、发布（每帧每场景一次）、`describe` | 内容线程 | 内容线程 | 帧值交出去 |
-| 帧的**引擎半段**：表面事件、`FrameExpander::runPass`（bind + expand）、`executeFrame`、present | 引擎线程 | 引擎线程 | — |
+| 帧的**引擎半段**：表面事件、`expandFrame`（展开已绑定的视图）、`executeFrame`、present | 引擎线程 | 引擎线程 | — |
 
 - **一帧两个半段，每侧一帧在飞**（已落地）：内容线程构建帧 N+1 时，引擎线程正在跑帧 N，**所以画面比内容晚一帧**
   （N15）。这是唯一的语义代价，换来的是 UI 侧调用只花 O(passes)：不 expand（O(drawables)）、不 present
@@ -234,21 +235,26 @@
   `DrawDescription::lights`）**保留到 5b-2c**（`C11`：公开 API 只增不改）；记录侧与事实表只读值，活指针只做身份与寿命。
   程序/材质的值是通过 `detail::refreshValues` 在发布边界重取的（它们不经节点 mutator，epoch 看不见）。
 
-### 2.15 发布与展开是两个对象（`G2` / `G12`）
+### 2.15 发布与展开是两个半边，帧值只装发布（`G2` / `G12`）
 
-- **是什么**：`detail::PublicationStore` 持有"每个内容一份 `SnapshotSource`"的表与那把锁，动词是内容侧的
-  `publish` / `bindSnapshot` / `hasExplicitSnapshot`（外加表级 `beginFrame` 与展开时用的 `sourceOf` 查找）；
-  `detail::FrameExpander` 只读这张表，动词是引擎侧的 `runPass` / `run`（bind 每个 draw + expand），并记 `unbound()`。
-- **为什么**：内容半段（`buildFrameValue`）要发布，引擎半段要展开。两者放在一个 `FrameWorker` 上时，内容半段必须
-  先拿到引擎半段的对象才能发布——对象级依赖指向了错误的一侧（`G2`），类名说的又是引擎半段（`G12`）。拆开后依赖
-  只有一条边：expander → store，store 不认识 expander。
-- **边界**：拆的是对象，不是线程。`FrameRunner` 仍只把 `FrameExpander::run(...)` 递给引擎线程；`bindSnapshot` 仍
-  必须发生在帧与帧之间（`PublicationStore` 的类注释钉住这条不变量），所以"发布创建"进握手之前不允许帧重叠。
+- **是什么**：`detail::PublicationStore` 持有"每个内容一份 `SnapshotSource`"的表与那把锁，动词都是内容侧的
+  `publish` / `bindSnapshot` / `hasExplicitSnapshot` / `sourceOf`（外加表级 `beginFrame`，引擎半段唯一的一次调用）。
+  帧的绑定与展开在 `detail::FrameExpand` 里：`bindSceneDraws` 把每个 scene draw 指向它的发布源，`expandFrame`
+  只读值、按视图收集。
+- **为什么**：`FrameWorker` 的拆分走了两步。第一步（W3）把发布（内容侧）与 bind + expand（引擎侧）分成
+  `PublicationStore` / `FrameExpander`，去掉了"内容半段必须知道引擎半段对象"的回边。第二步（W9a）去掉了 bind
+  本身——它存在只因为 `RenderPass::describe` 把活 `Scene` 写进了帧值。现在 describe 只写 VIEW，
+  `buildFrameValue` 在 describe 之后绑定（`detail::bindSceneDraws`），于是：内容侧拥有发布**和**绑定，引擎侧只
+  展开值，帧值跨线程时不装任何活内容（`G2`）；`Scene` 也不再是 `DrawListSource`（`G12`：作者树不是帧的来源）。
+- **边界**：拆的是对象，不是线程。`FrameRunner` 仍只把引擎半段的展开递给引擎线程；`bindSnapshot` 仍必须发生在
+  帧与帧之间（`PublicationStore` 的类注释钉住这条不变量），所以"发布创建"进握手之前不允许帧重叠。
 - **发布粒度**：`buildFrameValue` 先跑完本帧所有 `before_draw`，再按"每帧每场景一次"发布，最后才 describe。同一
-  场景 N 个 pass 因此只发布一次（旧形状是 N 次，后 N-1 次 `Unchanged` 仍付一次锁 + 一次 epoch 比较）；而"先发布、
-  再跑后面的钩子"会把后面钩子写的内容漏出本帧，所以钩子必须全部先跑完（N16 的"所有 pass 看到同一份"由此成立）。
-- **验收**：`T34` / `T17` / `FrameRunnerTest.ManyFramesThroughTheEngineThreadStayEquivalent`；内容半段不再出现
-  旧 `FrameWorker` 这个词（该类已删除）。
+  场景 N 个 pass 因此只发布一次；而"先发布、再跑后面的钩子"会把后面钩子写的内容漏出本帧，所以钩子必须全部先跑完
+  （N16 的"所有 pass 看到同一份"由此成立）。
+- **没发布的场景**：帧不替它发布，也不读它的活内容——draw 拿不到源，展开时什么也不收集（后端记录空），
+  这是"你没有交出图"的诚实答案。
+- **验收**：`T34` / `T17` / `FrameRunnerTest.ManyFramesThroughTheEngineThreadStayEquivalent`；
+  `FrameExpandTest.ADrawNoPublicationAnswersDrawsNothing` 钉住"没发布就什么也不画"。
 
 ## 3. 功能点
 
@@ -277,7 +283,7 @@
 - **约束**（C18 / C19）：批内不发布；材质以**值**过帧。
 - **要求**（R9 / R13 / R17）：一次交换、在飞帧逐项不变、批 = 一次发布。
 - **验收**（T3 / T17 / T31 / T34）：`SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture`、
-  `FrameExpanderTest.AFrameExpandsTheSamePictureTheSceneWould`、
+  `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould`、
   `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch`、
   `SnapshotSourceTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith`、
   `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`。
@@ -286,7 +292,8 @@
 ### 3.1.2 F8 每帧
 
 - **行为**：内容半段（`RenderEngine::buildContentHalf`）按 run order 跑每个声明的 `before_draw`、发布该 pass 的内容、
-  把 pass 描述成 `FrameDescription`；引擎半段（`runEngineHalf`）为每个 pass 绑定快照、展开命令、交给 executor 执行并呈现。
+  把 pass 描述成 `FrameDescription` 并把每个 scene draw 绑定到它的发布；引擎半段（`runEngineHalf`）展开命令、交给
+  executor 执行并呈现。
 - **约束**（C16）：两个半段各归一条线程；一条引擎线程碰设备。
 - **要求**（R16）：`frame()` 在内容线程只花 O(passes) 加一次握手；等待必须显式。
 - **验收**（T12 / T16）：`FrameRunnerTest.ManyFramesThroughTheEngineThreadStayEquivalent`（64 帧逐项相同）、
@@ -349,7 +356,8 @@
 ### 4.3 不变的部分
 
 - 内容的编辑 API（`Scene` / `Node` / `Geometry` / `Material`）不变，全部在内容线程同步调用。
-- `DrawListSource`（"这个视图画什么"）不变：`Scene` 与 `SnapshotSource` 是它的两个实现。
+- `DrawListSource`（"这个视图画什么"）不变：`SnapshotSource` 是生产实现（帧只画发布），宿主也可以实现它；
+  `Scene` 不再是它的实现（W9a）——`Scene::collectRenderCommands` 是内容线程的查询，不是帧的来源。
 
 ## 5. 约束、要求与不变量
 
@@ -471,8 +479,8 @@
 | T16 | `frame()` 只花 O(passes) | `FrameRunnerTest` 的 inline / threaded 计数断言 | 已实现 |
 | T17 | 旧帧读旧 revision | `SnapshotSourceTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith` | 已实现 |
 | T31 | 批内 publish | 见 T3（同一组用例） | 已实现 |
-| T34 | 发布源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` + `FrameExpanderTest.AFrameExpandsTheSamePictureTheSceneWould` | 已实现 |
-| T35 | 绑定即渲染真值 | `FrameExpanderTest.ABoundPublicationIsThePictureTheFrameDraws` | 已实现（2026-11-12） |
+| T34 | 发布源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` + `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould` | 已实现 |
+| T35 | 绑定即渲染真值 | `FrameExpandTest.ABoundPublicationIsThePictureTheFrameDraws` | 已实现（2026-11-12） |
 | T13 | 无数据竞争 | `scripts/tsan_check.sh` | 收尾跑 |
 
 ## 9. 状态与演进
@@ -507,7 +515,7 @@
 - `src/viz/graphics/src/SceneRows.{hpp,cpp}`（`SceneBake` → 快照的唯一门）
 - `src/viz/graphics/src/SnapshotSource.{hpp,cpp}`（快照的 `DrawListSource` 面）
 - `src/viz/graphics/src/PublicationStore.{hpp,cpp}`（内容侧的发布/绑定与 `SnapshotSource` 表）
-- `src/viz/graphics/src/FrameExpander.{hpp,cpp}`（引擎半段：bind / expand）
+- `src/viz/graphics/src/FrameExpand.{hpp,cpp}`（`bindSceneDraws` / `expandPass` / `expandFrame`）
 - `src/viz/graphics/src/FrameRunner.{hpp,cpp}`（引擎线程）
 - `src/viz/graphics/src/EngineCompile.cpp`（内容半段：钩子 / 发布 / describe / 引擎半段入口）
 - `src/viz/graphics/sdk/vine/graphics/RenderEngine.hpp`（`bindSnapshot` / `setFrameThreading` / `waitForFrame` /
@@ -518,7 +526,7 @@
 ### 10.2 用例
 
 - `tests/test_graphics/PublicationStoreTest.cpp`（T3 / T31 的三态发布）
-- `tests/test_graphics/FrameExpanderTest.cpp`（T34 / T35：帧级接缝、绑定即真值）
+- `tests/test_graphics/FrameExpandTest.cpp`（T34 / T35：帧级接缝、绑定即真值、没发布就什么也不画）
 - `tests/test_graphics/FrameRunnerTest.cpp`（T10 / T12 / T16）
 - `tests/test_graphics/SnapshotShadowTest.cpp`（T3 / T17 / T34）
 - `tests/test_graphics/HeadlessBackendTest.cpp`（两半段与预热）

@@ -65,6 +65,7 @@
 #include <vector>
 
 #include "FrameExpand.hpp"
+#include "PublicationStore.hpp"
 #include "TestGeometryBuilders.hpp"
 
 using namespace vn::graphics;
@@ -5964,8 +5965,12 @@ TEST(PassDrawTest, WhatAScenePassDescribesIsWhatItAnnounces)
     // 值：同一件事描述成 PassDraw。
     vn::graphics::PassDraw described;
     ASSERT_TRUE(pass->describe(scene.get(), described));
-    // The pass STATES a view; the frame's expansion is the step that collects it (see FrameExpand), and this test
-    // compares the value with what the live pass announced - so it takes that step too.
+    // The pass STATES a view; the frame boundary binds it to the content's publication and the expansion collects
+    // it (see FrameExpand), and this test compares the value with what the live pass announced - so it takes both
+    // steps too.
+    vn::graphics::detail::PublicationStore publications;
+    (void)publications.publish(*scene);
+    vn::graphics::detail::bindSceneDraws(described, publications.sourceOf(*scene));
     vn::graphics::detail::expandPass(described);
 
     // —— pass 自己的四项事实 ——

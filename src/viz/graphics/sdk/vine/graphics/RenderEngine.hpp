@@ -44,7 +44,6 @@ namespace detail
 class FrameResources;
 class FrameScheduler;
 class PublicationStore;              // The content side of the publication channel (see src/PublicationStore.hpp).
-class FrameExpander;                 // The engine half of a frame: bind, expand (see src/FrameExpander.hpp).
 struct EngineFrame;                  // One frame as it travels between the two halves (see src/EngineFrame.hpp).
 class FrameRunner;                   // The thread a frame's engine half runs on (see src/FrameRunner.hpp).
 
@@ -1134,12 +1133,13 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void runEngineHalf(detail::EngineFrame& frame);
 
-    /** @brief Answers the frame's draws: one drain per pass, then one expansion per described draw.
+    /** @brief Answers the frame's draws: one expansion per described pass.
      *
      * @details
      * - The ENGINE HALF of a frame (design 2.12): every draw `buildFrameValue` described is asked of its source here,
      *   after every pass has been described - so one frame answers ONE publication (N16), and nothing in this
-     *   function reads content (`runPass` re-points a draw at its content's publication first, see FrameExpander).
+     *   function reads content: the content half already bound every scene draw to its publication (see
+     *   detail::bindSceneDraws), so this half reads values only.
      * - What it costs per pass lands in @p frame (its own `engine_micros`), never in the plan: the plan belongs to the
      *   content half, and the numbers are published into it by `publishEngineMicros`.
      *
@@ -1469,12 +1469,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /// lock is held for a copy in both directions and nothing else.
     mutable std::mutex            presented_camera_mutex_;
     std::optional<CameraSnapshot> presented_camera_;
-    // THE PUBLICATION CHANNEL AND THE ENGINE HALF THAT READS IT. Two objects, not one: publish/bind are the content
-    // side's verbs on its own table (see detail::PublicationStore), expansion is the engine side's (see
-    // detail::FrameExpander) - so the object-level edge points one way (G2), and the engine half is what a runner hands
-    // to another thread (see setFrameThreading), not a second way to answer a draw.
+    // THE PUBLICATION CHANNEL. Its verbs are the content side's (see detail::PublicationStore): publish, bind, and the
+    // lookup the frame's bind step does - so a frame value crosses with publications in it, never with live content
+    // (G2/G12), and the engine half's only call on it is `beginFrame` (the token the per-view memos share).
     std::unique_ptr<detail::PublicationStore> publications_;
-    std::unique_ptr<detail::FrameExpander>    expander_;
     /// This frame's problems and the previous frame's, swapped after each compile: the episode rule.
     std::vector<CompileProblem> plan_problems_;
     std::vector<CompileProblem> previous_problems_;

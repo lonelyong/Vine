@@ -20,7 +20,6 @@
 
 #include "EngineFrame.hpp"
 #include "FrameExpand.hpp"
-#include "FrameExpander.hpp"
 #include "FrameResources.hpp"
 #include "FrameScheduler.hpp"
 #include "PublicationStore.hpp"
@@ -346,6 +345,11 @@ void RenderEngine::buildFrameValue()
             entry.draw.reset();
         }
         else {
+            // THE BOUNDARY THAT SAYS WHOSE PUBLICATION ANSWERS THE VIEW: the pass stated a view, the content's write is
+            // already published (see the publication step above), and this is where the frame value stops naming the
+            // content and starts naming its rows (see detail::bindSceneDraws). A pass with no content binds nothing -
+            // its draws are already what it described.
+            detail::bindSceneDraws(*entry.draw, row.content != nullptr ? publications_->sourceOf(*row.content) : nullptr);
             // THE ANSWER IS NOT TAKEN HERE. The pass stated a view and whose content answers it (and the content's
             // write is already published); asking that source for the list is the ENGINE half's step, which runs
             // over the whole described frame (see expandFrameValue) - that is the seam a thread crosses, and it is
@@ -372,10 +376,11 @@ void RenderEngine::expandFrameValue(detail::EngineFrame& frame)
     // a frame answered late opens its OWN number, never the one the content has moved on to.
     publications_->beginFrame(frame.content_frame);
 
-    // THE ENGINE HALF'S EXPANSION: every draw of the described frame is answered here, one bind+expand per pass, in
+    // THE ENGINE HALF'S EXPANSION: every draw of the described frame is answered here, one expansion per pass, in
     // run order (see design 2.12 - the two halves are the seam a thread crosses, so they are two functions and not one
-    // loop). Nothing in this function reads content: `runPass` re-points each draw at its content's publication and
-    // `expandPass` asks that publication, which is exactly what makes it safe to run away from the content's thread.
+    // loop). Nothing in this function reads content: every scene draw was bound to its content's publication by the
+    // content half (see detail::bindSceneDraws) and `expandPass` asks that publication, which is exactly what makes it
+    // safe to run away from the content's thread.
     //
     // record_micros keeps meaning "describe + collect": the content half measured its part per pass, and the
     // expansion adds its own here - one clock read per pass, not per draw.
@@ -385,7 +390,7 @@ void RenderEngine::expandFrameValue(detail::EngineFrame& frame)
         FrameDescription::Pass& described = frame.description.passes[entry++];
         const auto              started   = std::chrono::steady_clock::now();
         if (described.draw.has_value()) {
-            expander_->runPass(*described.draw);
+            detail::expandPass(*described.draw);
         }
         frame.engine_micros.push_back(
             static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count()));

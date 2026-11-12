@@ -22,6 +22,21 @@ namespace detail
 [[nodiscard]] CollectView collectViewOf(const DrawDescription& draw) noexcept;
 
 /**
+ * @brief Points every unbound scene drawing call of @p pass at @p source.
+ *
+ * @details
+ * - THE ONE BIND STEP: a description states a VIEW (see RenderPass::describe) and the frame boundary says WHOSE
+ *   publication answers it. Binding it here, on the side that owns the content, is what keeps a live scene out of a
+ *   frame value.
+ * - A draw that already names a source, a screen draw, and a draw nothing published for all stay as they are: "a
+ *   list I already have" is not collected twice, and a draw nothing was published for draws nothing.
+ *
+ * @param pass   The pass whose scene draws are bound in place.
+ * @param source The publication's source to bind, or null when nothing was published for this pass' content.
+ */
+void bindSceneDraws(PassDraw& pass, const vn::graphics::DrawListSource* source);
+
+/**
  * @brief Turns the VIEWS of @p pass into command lists: the one O(drawables) step of a frame.
  *
  * @details

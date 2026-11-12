@@ -534,7 +534,7 @@
 
 - **对象级回边消除**（`G2` / `G12`）：`detail::PublicationStore`（`src/viz/graphics/src/PublicationStore.hpp`）
   住发布与绑定（`publish` / `bindSnapshot` / `hasExplicitSnapshot` / `beginFrame` / `sourceOf` + 表锁）；
-  `detail::FrameExpander`（`src/viz/graphics/src/FrameExpander.hpp`）只读它（`runPass` / `run` / `unbound`）。
+  `detail::FrameExpander`（`src/viz/graphics/src/FrameExpander.hpp`，W9a 已删）只读它（`runPass` / `run` / `unbound`）。<!-- drift-ok -->
   内容半段不再需要引擎半段的对象；旧 `FrameWorker` 两个文件删除，`SceneSnapshotRef` 的 friend 改为
   `detail::PublicationStore`。
 - **发布粒度**：`buildFrameValue` 先跑完本帧所有 `before_draw`（各自记钩子耗时），再按“每帧每场景一次”发布，
@@ -542,7 +542,7 @@
   钩子写的内容漏出本帧（`RenderEngineTest.AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote` 钉住这一点）。
 - **`record_micros`**：钩子阶段先记钩子耗时，describe 阶段把发布（首个命名该场景的 pass）+ resolve + describe
   累加进去，总口径仍是“describe + collect”。
-- **测试**：旧的 `FrameWorkerTest`（已删除）拆成 `PublicationStoreTest.cpp` 与 `FrameExpanderTest.cpp`；
+- **测试**：旧的 `FrameWorkerTest`（已删除）拆成 `PublicationStoreTest.cpp` 与 `FrameExpanderTest.cpp`（W9a 改名为 `FrameExpandTest.cpp`）；<!-- drift-ok -->
   `FrameRunnerTest` / `ValueChannelTest` 改成两个对象。`T3` / `T31` 由
   `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch` 钉住；`T34` 由
   `FrameExpanderTest.AFrameExpandsTheSamePictureTheSceneWould`、`T35` 由
@@ -585,3 +585,16 @@
 
 
 
+
+## 2026-11-13 —— W9a（W6b）：帧值只装发布，`Scene` 不再是 `DrawListSource`
+
+- `Scene` 去掉 `DrawListSource` 基类：`collectRenderCommands` 仍是内容线程自己的查询（不再 override），
+  `ScenePublisher` 也不再实现那个接口。帧的绑定与展开集中在 `detail::FrameExpand`：`bindSceneDraws` 把未绑定的
+  scene draw 指向发布源，`expandPass` / `expandFrame` 只读值。
+- `RenderPass::describe` 只写 VIEW（camera / lights 的值），不写内容；`buildFrameValue` 在 describe 之后绑定。
+  `FrameExpander`（bind + `unbound()`）整个删除——它只有 bind 一个职责；`PublicationStore::sourceOf` 改为按
+  `Scene` 查、只查不建（没发布 ⇒ null ⇒ 什么都不画，`FrameExpandTest.ADrawNoPublicationAnswersDrawsNothing`）。
+- `RenderPass::execute`（宿主自驱一遍）自己发布 + 绑定：`PublicationStore` 必须活到 `expandPass` 之后，写在
+  `if` 作用域里就是 use-after-free（本地已踩，`RenderPassTest.Execute*` 段错误）。
+- 测试：`FrameExpanderTest` → `FrameExpandTest`（6 例；文件与 suite 都改名），`FrameRunnerTest` / `ValueChannelTest`
+  改成传发布源，`PassDrawTest` 补走绑定。`test_graphics` 558 / `test_vsg` 546 全绿。

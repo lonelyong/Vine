@@ -20,13 +20,14 @@ namespace detail
  *
  * @details
  * - WHAT IT IS. The table a frame's draws are bound through: for every content that has ever been published or bound,
- *   the `SnapshotSource` that hands the frame's engine half the publication to draw. The table's verbs are the
- *   CONTENT side's - `publish` (the frame's implicit publication) and `bindSnapshot` (the host's explicit handoff) -
- *   because a publication is produced where the content is written.
- * - WHY IT IS NOT PART OF THE EXPANDER. The content half (see `RenderEngine::buildFrameValue`) has to publish, and
- *   the engine half (see `detail::FrameExpander`) has to bind a draw to the source. Keeping both halves on one object
- *   made the content half know the engine half's object just to publish (an object-level edge pointing the wrong way,
- *   `G2`); here the dependency is one-directional: the expander reads this table, this table knows nothing about it.
+ *   the `SnapshotSource` that hands the frame's engine half the publication to draw. Its verbs are the
+ *   CONTENT side's - `publish` (the frame's implicit publication), `bindSnapshot` (the host's explicit handoff) and
+ *   `sourceOf` (the lookup the frame's bind step does) - because a publication is produced where the content is
+ *   written.
+ * - WHY IT IS NOT PART OF THE EXPANSION. The content half (see `RenderEngine::buildFrameValue`) publishes AND binds,
+ *   and the engine half (see `detail::expandFrame`) only reads the values it is handed. Keeping the table on the
+ *   expansion side made the engine half look content up while a frame ran; here the dependency is one-directional:
+ *   the content half reads this table, the engine half's single call is `beginFrame` (the token the memos share).
  * - THE LOCK GUARDS THE LIST, NOT THE VALUES. `publish`/`bindSnapshot` run on the content thread and may create an
  *   entry; `sourceOf` runs on whichever thread answers a frame. The mutex is held for a lookup or an insert, never
  *   across a publish or an expansion.
@@ -105,16 +106,19 @@ class PublicationStore {
     void beginFrame(std::uint64_t frame);
 
     /**
-     * @brief Finds the source @p source names, whether it names the content or a source itself.
+     * @brief Finds the source @p scene's publications are drawn through.
      *
      * @details
-     * - The engine half's bind step reads this: a draw naming a CONTENT is re-pointed at that content's published
-     *   snapshot, and a draw that already names the source is left alone (a second run over one frame value).
+     * - THE FRAME'S BIND STEP READS THIS (see `detail::bindSceneDraws`): a scene drawing call is pointed at the source
+     *   its content was published or bound to, so the expansion asks a publication and never the live tree.
+     * - A LOOKUP, not an attach: a content this store never published has no picture to draw, and the answer is null.
+     *   Attaching an empty source here would make "nothing was ever published" indistinguishable from "an empty
+     *   picture was published".
      *
-     * @param source The draw's `content` (a content or one of this store's sources).
-     * @return The source to bind to, or null when this store never published that content.
+     * @param scene The content whose source is asked for.
+     * @return The source to bind to, or null when this store never published or bound that content.
      */
-    [[nodiscard]] SnapshotSource* sourceOf(const vn::graphics::DrawListSource& source) noexcept;
+    [[nodiscard]] SnapshotSource* sourceOf(const Scene& scene) noexcept;
 
   public:
     /** @brief Gets how many contents this store publishes. */
@@ -129,8 +133,8 @@ class PublicationStore {
   private:
     /// @brief One content's published-snapshot face, owned by the store.
     struct Publication {
-        const vn::graphics::DrawListSource* content{ nullptr };
-        std::unique_ptr<SnapshotSource>     source{};
+        const Scene*                    content{ nullptr };
+        std::unique_ptr<SnapshotSource> source{};
         /// A host handed this content's publication over itself (see bindSnapshot): the frame must not publish it.
         bool explicit_snapshot{ false };
     };
@@ -142,7 +146,7 @@ class PublicationStore {
     [[nodiscard]] SnapshotSource* sourceForLocked(Scene& scene);
 
     /// @brief The lookup itself, for callers that already hold `publications_mutex_`.
-    [[nodiscard]] SnapshotSource* sourceOfLocked(const vn::graphics::DrawListSource& source) noexcept;
+    [[nodiscard]] SnapshotSource* sourceOfLocked(const Scene& scene) noexcept;
 
     /// @brief The publication record of @p scene, or null when this store never saw it.
     [[nodiscard]] Publication* publicationOfLocked(const Scene& scene) noexcept;

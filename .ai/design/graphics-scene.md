@@ -61,8 +61,9 @@
 深度与发布值住在 `detail::ScenePublisher`（`src/viz/graphics/src/ScenePublisher.hpp`），`Scene` 的 `collectRenderCommands` /
 `publish` / `beginEdit` / `endEdit` / `setContentFrame` / `invalidateContent` 与三个计数全部委托。为什么：三者住在一个类里时，
 改缓存或改发布都要动作者的类（`G1` / `G5`），作者 API 也要背它们不拥有的寿命规则；拆开后依赖只有 Scene → publisher 一条
-（publisher 读作者的树，反向不成立）。边界：`Scene` 仍是唯一的公开 `DrawListSource` 实现（`W6b` 才删继承），公开 API 与
-测试语义不变；`detail::SceneRows::snapshot` 仍是模块唯一的一行门，背后转给 publisher。
+（publisher 读作者的树，反向不成立）。边界：`Scene` **不是**帧的来源（W9a 删掉了它的 `DrawListSource` 继承）——
+一帧画的是发布（`SnapshotSource`），`Scene::collectRenderCommands` 只是内容线程自己的查询；公开 API 与测试语义不变；
+`detail::SceneRows::snapshot` 仍是模块唯一的一行门，背后转给 publisher。
 
 ## 3. 功能点
 

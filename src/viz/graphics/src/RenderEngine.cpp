@@ -13,7 +13,7 @@
 #include <vine/graphics/ScreenPass.hpp>
 
 #include "EngineFrame.hpp"
-#include "FrameExpander.hpp"
+#include "FrameExpand.hpp"
 #include "FrameResources.hpp"
 #include "FrameRunner.hpp"
 #include "FrameScheduler.hpp"
@@ -39,7 +39,6 @@ RenderEngine::RenderEngine()
   , scheduler_(std::make_unique<detail::FrameScheduler>())
   , frame_slots_{ std::make_unique<detail::EngineFrame>(), std::make_unique<detail::EngineFrame>() }
   , publications_(std::make_unique<detail::PublicationStore>())
-  , expander_(std::make_unique<detail::FrameExpander>(*publications_))
   // THE PUBLICATION IS THE SOURCE (see the design's 2.11): every scene pass draws the content's PUBLISHED value, so a
   // frame's draws name nothing the content owns - which is what lets the engine half move to another thread. The
   // per-view memo it needs (one camera drawn by two passes collects once) is the shared DrawListMemo.

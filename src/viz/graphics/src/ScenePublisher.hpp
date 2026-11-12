@@ -51,7 +51,7 @@ class DrawListMemo;
  *   layout stays an implementation type the public SDK does not name, and the algorithm lives next to the rows it
  *   reads (`G1`).
  */
-class ScenePublisher final : public vn::graphics::DrawListSource
+class ScenePublisher final
 {
   public:
     /**
@@ -60,21 +60,25 @@ class ScenePublisher final : public vn::graphics::DrawListSource
      * @param scene The scene whose authored side this reads; it owns this object and outlives it.
      */
     explicit ScenePublisher(vn::graphics::Scene& scene) noexcept;
-    ~ScenePublisher() override;
+    ~ScenePublisher();
 
     ScenePublisher(const ScenePublisher&)            = delete;
     ScenePublisher& operator=(const ScenePublisher&) = delete;
 
   public:
     /**
-     * @brief Collects what @p view draws, restricted to @p layer_mask (see DrawListSource).
+     * @brief Collects what @p view draws, restricted to @p layer_mask (see Scene::collectRenderCommands).
+     *
+     * @details
+     * - NOT A FRAME SOURCE: a frame draws a publication (see SnapshotSource); this is the content thread's own query,
+     *   which `Scene::collectRenderCommands` forwards to.
      *
      * @param view       The view to collect for.
      * @param layer_mask Layers this picture draws.
      * @return The shared, immutable command list.
      */
     [[nodiscard]] std::shared_ptr<const std::vector<vn::graphics::RenderCommand>>
-    collectRenderCommands(const vn::graphics::CollectView& view, std::uint32_t layer_mask) const override;
+    collectRenderCommands(const vn::graphics::CollectView& view, std::uint32_t layer_mask) const;
 
     /**
      * @brief Publishes the scene's current rows as an immutable snapshot, or answers why it did not.

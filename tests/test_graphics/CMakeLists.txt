@@ -17,7 +17,7 @@ set(SRC_FILE_LIST
 	RenderWorldTest.cpp
 	SnapshotShadowTest.cpp
 	PublicationStoreTest.cpp
-	FrameExpanderTest.cpp
+	FrameExpandTest.cpp
 	FrameRunnerTest.cpp
         ValueChannelTest.cpp
 )

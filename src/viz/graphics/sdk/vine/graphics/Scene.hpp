@@ -12,9 +12,9 @@
 #include <vine/raw_ptr.hpp>
 
 #include "CollectView.hpp"
-#include "DrawListSource.hpp"
 #include "Light.hpp"
 #include "Node.hpp"
+#include "RenderCommand.hpp"
 #include "SceneSnapshotRef.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -96,11 +96,16 @@ struct VN_GRAPHICS_API ScenePublishResult {
  * - THE AUTHORED SIDE ONLY. What the scene DERIVES - the baked rows a collection reads, the per-view list
  *   memo, the content epoch and the publication - lives in one `detail::ScenePublisher` this class delegates to,
  *   so the editing API never carries the lifetime rules of caches and snapshots it does not own.
+ * - NOT A FRAME SOURCE. A frame draws a PUBLICATION (see publish() and RenderEngine::bindSnapshot), never the live
+ *   tree: `collectRenderCommands` below answers a caller that HOLDS the content (a query on the content thread), and
+ *   the frame machinery reaches the same rows through the publication instead (a `DrawListSource` that reads an
+ *   immutable snapshot). That is why this class implements no source interface - handing a frame a live scene is the
+ *   one way an edit could reach a frame that is already being recorded.
  * - The root is a ROOT: the tree a scene renders is entered at a parentless node. setRoot() detaches a node
  *   that is still attached elsewhere, and a root attached elsewhere afterwards takes the scene out of the
  *   picture (see setRoot).
  */
-class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public DrawListSource {
+class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     VN_OBJECT_META_DECL;
     VN_DISABLE_COPY_MOVE(Scene);
 
@@ -293,8 +298,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
      *
      * @details
      * - The same rules as the camera overload; the caller states projection / view / eye / up / viewport
-     *   directly. RenderPass builds this from its own camera and viewport, and a host that drives a pass itself
-     *   can do the same without owning a Camera.
+     *   directly. A host that drives a pass itself collects this way, without owning a Camera.
      * - The memo key is the view-projection, the eye and the viewport: two cameras (or two rectangles) that
      *   look differently get their own lists.
      *
@@ -302,7 +306,7 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
      * @param layer_mask Layers this picture draws (see Node::setLayers).
      * @return The shared list of collected render commands (empty when there is nothing to draw).
      */
-    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(const CollectView& view, std::uint32_t layer_mask = kAllLayers) const override;
+    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(const CollectView& view, std::uint32_t layer_mask = kAllLayers) const;
 
     /**
      * @brief Publishes the scene's current rows as an immutable snapshot, or answers why it did not.

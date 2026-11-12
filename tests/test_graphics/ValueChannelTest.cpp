@@ -36,7 +36,7 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
 
-#include "FrameExpander.hpp"
+#include "FrameExpand.hpp"
 #include "PublicationStore.hpp"
 
 using vn::Colorf;
@@ -58,7 +58,8 @@ using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::StateNode;
-using vn::graphics::detail::FrameExpander;
+using vn::graphics::detail::bindSceneDraws;
+using vn::graphics::detail::expandFrame;
 using vn::graphics::detail::PublicationStore;
 using vn::math::Vec3d;
 using vn::math::Vec3f;
@@ -67,10 +68,14 @@ namespace
 {
 
 /// @brief One frame whose single pass draws one view of @p scene, as `RenderPass::describe` produces it.
-FrameDescription describedFrame(RenderPass& pass, const intrusive_ptr<Scene>& scene)
+///
+/// The pass states the view and the store says whose publication answers it - exactly the two steps a frame's
+/// content half performs (see detail::bindSceneDraws).
+FrameDescription describedFrame(RenderPass& pass, const intrusive_ptr<Scene>& scene, PublicationStore& store)
 {
     PassDraw description;
     EXPECT_TRUE(pass.describe(scene.get(), description));
+    bindSceneDraws(description, store.sourceOf(*scene));
 
     FrameDescription frame;
     frame.passes.emplace_back();
@@ -135,9 +140,8 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
 
     // FRAME N: published and described on the content side, exactly as a frame's content half does it.
     PublicationStore store;
-    FrameExpander    expander{ store };
     ASSERT_EQ(store.publish(*scene).status, ScenePublishStatus::Posted);
-    FrameDescription frame = describedFrame(pass, scene);
+    FrameDescription frame = describedFrame(pass, scene, store);
 
     const std::uint64_t program_revision_v1  = program->revision();
     const std::uint64_t material_revision_v1 = material->revision();
@@ -155,7 +159,7 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
         ready.set_value();
         go.get_future().wait();
 
-        expander.run(frame); // bind the publication + expand on the engine thread (the real engine half's reads)
+        expandFrame(frame); // expand on the engine thread (the real engine half's reads)
 
         const std::vector<RenderCommand>& commands = commandsOf(frame);
         ASSERT_EQ(commands.size(), 1U);
@@ -196,8 +200,8 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
 
     // FRAME N+1: publish, describe, run - all after the edits.
     ASSERT_EQ(store.publish(*scene).status, ScenePublishStatus::Posted);
-    FrameDescription next = describedFrame(pass, scene);
-    expander.run(next);
+    FrameDescription next = describedFrame(pass, scene, store);
+    expandFrame(next);
 
     const std::vector<RenderCommand>& next_commands = commandsOf(next);
     ASSERT_EQ(next_commands.size(), 1U);

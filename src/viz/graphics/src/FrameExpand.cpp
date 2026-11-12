@@ -16,6 +16,18 @@ CollectView collectViewOf(const DrawDescription& draw) noexcept
     return view;
 }
 
+void bindSceneDraws(PassDraw& pass, const vn::graphics::DrawListSource* source)
+{
+    if (source == nullptr) {
+        return;
+    }
+    for (DrawDescription& draw : pass.draws) {
+        if (draw.kind == DrawDescription::Kind::Scene && draw.content == nullptr) {
+            draw.content = source;
+        }
+    }
+}
+
 void expandPass(PassDraw& pass)
 {
     for (DrawDescription& draw : pass.draws) {

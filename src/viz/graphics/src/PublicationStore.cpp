@@ -11,7 +11,7 @@ PublicationStore::~PublicationStore() = default;
 
 ScenePublishResult PublicationStore::publish(Scene& scene)
 {
-    // THE CONTENT'S SOURCE EXISTS BEFORE ANYTHING IS HANDED OVER: a draw's bind step looks it up, and a scene that
+    // THE CONTENT'S SOURCE EXISTS BEFORE ANYTHING IS HANDED OVER: the frame's bind step looks it up, and a scene that
     // answers InsideBatch still has to be findable - that frame draws the picture the batch started from.
     SnapshotSource* const source = sourceFor(scene);
 
@@ -122,23 +122,16 @@ PublicationStore::Publication* PublicationStore::publicationOfLocked(const Scene
     return nullptr;
 }
 
-SnapshotSource* PublicationStore::sourceOf(const vn::graphics::DrawListSource& source) noexcept
+SnapshotSource* PublicationStore::sourceOf(const Scene& scene) noexcept
 {
     const std::lock_guard<std::mutex> lock(publications_mutex_);
-    return sourceOfLocked(source);
+    return sourceOfLocked(scene);
 }
 
-SnapshotSource* PublicationStore::sourceOfLocked(const vn::graphics::DrawListSource& source) noexcept
+SnapshotSource* PublicationStore::sourceOfLocked(const Scene& scene) noexcept
 {
-    for (const Publication& publication : publications_) {
-        // Either spelling means "this content": the CONTENT itself (a frame described on the content's thread) or the
-        // snapshot source it was bound to. Matching both is what makes a second `run` on the same frame a no-op here
-        // instead of a false "unbound".
-        if (publication.content == &source || publication.source.get() == &source) {
-            return publication.source.get();
-        }
-    }
-    return nullptr;
+    const Publication* const publication = publicationOfLocked(scene);
+    return publication != nullptr ? publication->source.get() : nullptr;
 }
 
 } // namespace detail
