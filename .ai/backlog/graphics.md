@@ -29,7 +29,6 @@
 
 | # | 项 | 做什么 | 为什么 / 代价 | 判据 / 前置 |
 |---|---|---|---|---|
-| W4 | 计划与子类 pass | 文档写明“计划只表达 `PassKind` 能表达的形状”；`applyPlan` 拒绝“会被重建的子类名”并报一条稳定诊断 | `applyPlan` 对子类 pass 的 remove/re-add 会静默降级成基类；一条 `validate` 检查换“误用不可表达”。不建注册表（`G8`） | `PlanTest` 新用例；`T7` / `T30` 绿 |
 | W6a | `Scene` 外移第一步 | `detail::ScenePublisher` 承接 bake / memo / snapshot / 批深度；`Scene` 委托，公开 API 与测试语义不变 | `Scene` 同时是作者树、派生缓存与发布值；生产收集已走 `SnapshotSource`，`Scene` 的收集只剩测试与单 pass 直驱。这一步是 F11 的前置。代价：624 行拆分、108 处测试引用迁移 | `T34` 绿；`K2` 常驻不升 |
 | W2 | 公共 API 状态 | `applyPlan` / `plan` / `bindSnapshot` / `prepare` 标“迁移 API，尚未成为宿主契约”；决定 `FramePlan` 改名与 `SessionBusy` 去留 | 三条入口 0 生产消费者、`addPass` 家族 218 个调用点；不标状态，宿主会按“已支持”使用。5b-2c 前不再新增公共入口。代价 0 | 设计文档出现状态标记 |
 | W9 | 5b-2c 收口批 | 删 `addPass` 家族、隐式发布、活指针字段、`Scene` 的 `DrawListSource` 继承（W6b）；`FrameRecorder` 三阶段降为后端组件 | 让“计划是唯一形状”从承诺变事实的唯一一步；前置已由 W1 / W3 / W6a / W2 铺好。代价：25 src + 193 tests = 218 个调用点；`K4` 分母 1096、5% 线 55；`K5` 与 2519 同口径 | 触发条件见上方 5b-2c 段（5b-2b 稳定一轮 / 第二后端复用内容层 / host 需要计划之外的第二套 pass 形状）；`K4` / `K5` / `T7` / `T30` |

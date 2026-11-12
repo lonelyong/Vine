@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <span>
 #include <string>
+#include <typeinfo>
 #include <vector>
 
 #include <vine/graphics/Camera.hpp>
@@ -743,6 +744,10 @@ std::vector<PlanProblem> RenderEngine::applyPlan(const Plan& plan)
     // that reads a picture the host hands in.
     const std::vector<String> host_names = hostOutputNames();
     std::vector<PlanProblem>  problems   = validatePlan(plan, std::span<const String>(host_names.data(), host_names.size()));
+    if (problems.empty()) {
+        // What a pure plan check cannot see: the shape REGISTERED under each name (see collectRebuildProblems).
+        collectRebuildProblems(plan, problems);
+    }
     if (!problems.empty()) {
         // ALL OR NOTHING: a half-applied shape would be a shape nobody declared. The answer is the return value; the
         // diagnostic is for the log, one per problem per CALL (a host call, not a frame, so the call is the episode).
@@ -756,6 +761,37 @@ std::vector<PlanProblem> RenderEngine::applyPlan(const Plan& plan)
 
     applyPlanRows(plan);
     return problems;
+}
+
+void RenderEngine::collectRebuildProblems(const Plan& plan, std::vector<PlanProblem>& problems) const
+{
+    // THE PLAN EXPRESSES THE SHAPES PassKind NAMES, and nothing else. A pass registered as a SUBCLASS (the escape
+    // hatch over describe()) has no plan spelling: updating it in place is fine - the node, and its describe(),
+    // survive - but a name whose KIND changed is rebuilt through makePassNode(), which would silently replace the
+    // subclass with the built-in base. Refused with its own code instead, so the custom behaviour cannot disappear
+    // as a picture that merely starts looking different.
+    for (const PassDesc& desc : plan.passes) {
+        for (const Slot& slot : slots_) {
+            if (slot.pass == nullptr || slot.pass->name() != desc.name) {
+                continue;
+            }
+            if (slot.pass->declaration().kind != desc.kind) {
+                // The question is "is this node one of the two objects makePassNode builds", which is exactly a
+                // dynamic-type question: a registered subclass answers with its own type either way.
+                const RenderPass&     node = *slot.pass;
+                const std::type_info& type = typeid(node);
+                if (type != typeid(RenderPass) && type != typeid(ScreenPass)) {
+                    problems.push_back(PlanProblem{ PlanProblemCode::SubclassPassWouldBeRebuilt,
+                                                    desc.name,
+                                                    String(u8"pass '") + desc.name +
+                                                        String(u8"' is a custom pass class and this plan changes its kind; a rebuilt "
+                                                               u8"pass would be the built-in base class, so the plan is refused "
+                                                               u8"rather than silently dropping what makes the pass custom") });
+                }
+            }
+            break;
+        }
+    }
 }
 
 void RenderEngine::applyPlanRows(const Plan& plan)

@@ -565,6 +565,11 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - WHAT "IN PLACE" DOES NOT COVER: a pass whose KIND changed (Scene -> Screen) cannot become the other
      *   object, so that name is removed and re-added under the same owner and role. Every other field a
      *   PassDesc states is adopted as the pass' new declaration.
+     * - THE PLAN'S VOCABULARY IS `PassKind` (Scene / Screen). A pass registered as a SUBCLASS - the escape hatch
+     *   over describe() - is outside it: a same-kind restatement updates it in place (the node survives), but a
+     *   KIND change would rebuild the name as the built-in base, so that plan is REFUSED with
+     *   `SubclassPassWouldBeRebuilt` instead of silently dropping the subclass. There is no custom-kind registry
+     *   (`G8`): a host that needs another shape builds the pass itself.
      * - THE WHOLE PLAN IS CHECKED FIRST (see validatePlan) and a plan with ANY problem is applied ENTIRELY
      *   or not at all: a half-applied shape would be a shape nobody declared.
      * - A PASS THE PLAN DOES NOT NAME IS REMOVED - including one registered by addPass() whose name is
@@ -1174,6 +1179,17 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @param plan The shape to apply (its problems were answered by validatePlan already).
      */
     void applyPlanRows(const Plan& plan);
+
+    /** @brief Adds the problems a plan has that depend on the shape REGISTERED under its names.
+     *
+     * @details
+     * - A plan check alone cannot see this: `validatePlan` reads the plan, while whether a name may be REBUILT is a
+     *   fact of the pass already registered under it (see applyPlan's vocabulary rule).
+     *
+     * @param plan     The shape being applied.
+     * @param problems Appended to; empty in means "every problem found so far is none".
+     */
+    void collectRebuildProblems(const Plan& plan, std::vector<PlanProblem>& problems) const;
 
     /** @brief Answers the names the HOST publishes (see publish), which a plan's named input may resolve against.
      *

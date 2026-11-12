@@ -136,6 +136,7 @@ String planCodeText(PlanProblemCode code)
     case PlanProblemCode::DependencyCycle: return String(u8"dependency-cycle");
     case PlanProblemCode::TooManyPasses: return String(u8"too-many-passes");
     case PlanProblemCode::SessionBusy: return String(u8"session-busy");
+    case PlanProblemCode::SubclassPassWouldBeRebuilt: return String(u8"subclass-pass-would-be-rebuilt");
     }
     return String(u8"unknown");
 }

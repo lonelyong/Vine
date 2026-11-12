@@ -542,11 +542,22 @@
   钩子写的内容漏出本帧（`RenderEngineTest.AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote` 钉住这一点）。
 - **`record_micros`**：钩子阶段先记钩子耗时，describe 阶段把发布（首个命名该场景的 pass）+ resolve + describe
   累加进去，总口径仍是“describe + collect”。
-- **测试**：`FrameWorkerTest.cpp` 拆成 `PublicationStoreTest.cpp` 与 `FrameExpanderTest.cpp`；
+- **测试**：旧的 `FrameWorkerTest`（已删除）拆成 `PublicationStoreTest.cpp` 与 `FrameExpanderTest.cpp`；
   `FrameRunnerTest` / `ValueChannelTest` 改成两个对象。`T3` / `T31` 由
   `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch` 钉住；`T34` 由
   `FrameExpanderTest.AFrameExpandsTheSamePictureTheSceneWould`、`T35` 由
   `FrameExpanderTest.ABoundPublicationIsThePictureTheFrameDraws` 钉住。
 - **计数**：`test_graphics` 556 / `test_vsg` 542 / TSan 556 用例 0 warning。全量并行 ctest 在这台机上
   偶发 `test_vsg` 的 `backend->initialize()` false（4 例）与移动相机测量超预算；单套件重跑即绿，先重跑再怀疑回归。
+
+## 2026-11-13 —— 第三轮审计 W4：计划只表达 `PassKind` 的形状
+
+- **规则**：计划只能说 `Scene` / `Screen`；子类 pass 是 `describe()` 的逃生口，不在计划契约内。同名同 kind
+  的声明原地更新会保留它（节点与 `describe()` 都活着）；kind 变更会被重建为内置基类，所以 `applyPlan` 拒绝。
+- **新 code**：`PlanProblemCode::SubclassPassWouldBeRebuilt`（`subclass-pass-would-be-rebuilt`），由
+  `RenderEngine::collectRebuildProblems` 在 `validatePlan` 之后判定——纯计划检查看不见"这个名字下已注册的
+  是哪个对象"。判定用 C++ 动态类型（`typeid`），不是 metatype：没写 `VN_OBJECT_META_DECL` 的快速子类也要被拦住。
+- **测试**：`PlanTest.AKindChangeOnACustomPassIsRefusedWithItsCode`（原地更新保留节点 → kind 变更被拒 →
+  内置 pass 仍可换 kind）；`TheCodeSpellingsAreStable` 增加新 token。`test_graphics` 557。
+
 

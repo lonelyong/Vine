@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -93,6 +94,23 @@ PassDesc namedPass(const char8_t* name, intrusive_ptr<RenderTarget> target, int 
     desc.writes = std::move(target);
     return desc;
 }
+
+/**
+ * @brief A pass whose behaviour is its overridden describe(): the escape hatch a plan cannot spell (W4).
+ *
+ * It is deliberately not registered through VN_OBJECT_META_DECL: the refusal asks the C++ DYNAMIC type, because
+ * that is what "makePassNode would build a different object" means.
+ */
+class CustomPass : public RenderPass {
+  public:
+    int describes = 0;
+
+    bool describe(vn::raw_ptr<Scene> scene, PassDraw& out) override
+    {
+        ++describes;
+        return RenderPass::describe(scene, out);
+    }
+};
 
 /** @brief A fresh colour target of one attachment. */
 intrusive_ptr<RenderTarget> colourTarget()
@@ -258,6 +276,60 @@ TEST(PlanTest, AChangedTargetUpdatesTheSameNodeInPlace)
 }
 
 /*
+ * @brief W4: the plan expresses the shapes PassKind names - a custom pass under a CHANGED KIND is refused.
+ *
+ * A subclass is the escape hatch over describe() (ScreenPass is the one shipped example). A same-kind restatement
+ * updates it in place, so a plan works WITH it; a kind change cannot become the other object, so the name would be
+ * rebuilt through makePassNode() as the built-in base - the custom behaviour would silently disappear. Refused with
+ * its own stable code instead, and the shape is left exactly as it was.
+ */
+TEST(PlanTest, AKindChangeOnACustomPassIsRefusedWithItsCode)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = vn::make_intrusive<Camera>();
+    auto custom = vn::make_intrusive<CustomPass>();
+    custom->setName(u8"custom");
+    ASSERT_NE(engine->addPass(custom, 0), nullptr);
+
+    // Same kind, restated: the subclass is updated IN PLACE - the node survives, which is the plan keeping it alive.
+    Plan restated;
+    restated.passes.push_back(namedPass(u8"custom", colourTarget(), 0, camera));
+    EXPECT_TRUE(engine->applyPlan(restated).empty()) << "a same-kind restatement is expressible";
+    EXPECT_EQ(engine->passOrder(custom.get()), std::optional<int>(0)) << "the custom node is still the registered pass";
+
+    // A kind change would rebuild the name as the built-in base: refused, with the shape untouched.
+    Plan rebuilt;
+    PassDesc screen;
+    screen.name  = u8"custom";
+    screen.kind  = PassKind::Screen;
+    screen.stage = PassStage::Shading;
+    screen.order = 0;
+    rebuilt.passes.push_back(screen);
+    const std::vector<PlanProblem> problems = engine->applyPlan(rebuilt);
+    ASSERT_TRUE(carries(problems, PlanProblemCode::SubclassPassWouldBeRebuilt));
+    EXPECT_EQ(engine->passOrder(custom.get()), std::optional<int>(0)) << "a refused plan leaves the shape untouched";
+    EXPECT_EQ(engine->passCount(), 1u);
+
+    // A BUILT-IN pass may still change kind: both objects are what makePassNode builds, so nothing is lost.
+    Plan without_custom;
+    without_custom.passes.push_back(namedPass(u8"ordinary", colourTarget(), 0, camera));
+    ASSERT_TRUE(engine->applyPlan(without_custom).empty()) << "removing a subclass the plan does not name is allowed";
+
+    Plan to_screen;
+    PassDesc ordinary_screen;
+    ordinary_screen.name  = u8"ordinary";
+    ordinary_screen.kind  = PassKind::Screen;
+    ordinary_screen.stage = PassStage::Shading;
+    ordinary_screen.order = 0;
+    to_screen.passes.push_back(ordinary_screen);
+    EXPECT_TRUE(engine->applyPlan(to_screen).empty()) << "Scene -> Screen on a built-in pass is expressible";
+}
+
+/*
  * @brief T30 (1/4): a pass with no name cannot be diffed, so the plan is refused with its own code.
  */
 TEST(PlanTest, AnEmptyPassNameIsRefusedWithItsCode)
@@ -413,6 +485,7 @@ TEST(PlanTest, TheCodeSpellingsAreStable){
     EXPECT_EQ(planCodeText(PlanProblemCode::DependencyCycle), u8"dependency-cycle");
     EXPECT_EQ(planCodeText(PlanProblemCode::TooManyPasses), u8"too-many-passes");
     EXPECT_EQ(planCodeText(PlanProblemCode::SessionBusy), u8"session-busy");
+    EXPECT_EQ(planCodeText(PlanProblemCode::SubclassPassWouldBeRebuilt), u8"subclass-pass-would-be-rebuilt");
 }
 
 /*

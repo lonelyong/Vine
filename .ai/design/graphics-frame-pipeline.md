@@ -125,6 +125,9 @@
 - 为什么：宿主发布"我要的帧图"，Session 在帧边界按名字差分对齐 ⇒ 增删 pass 不需要任何 add/remove 调用，
   "帧在飞时改会话形状"**不可表达**（`R21`；`G12`）。
 - 边界：`PassId` 只在 Session 内部；差分按**名字**不按指针（`C7`）；临时目标的生命周期由计划声明。
+  计划只表达 `PassKind` 能表达的形状（`Scene` / `Screen`）：子类 pass 是 `describe()` 的逃生口，不在计划契约内
+  ——同名同 kind 的声明原地更新会保留它（节点与 `describe()` 都活着），kind 变更会被 `applyPlan` 以
+  `SubclassPassWouldBeRebuilt` 拒绝，而不是静默重建为基类。不建 `PassKind::Custom` 或工厂注册表（`G8`）。
 
 ### 2.9 派生是纯函数
 
@@ -205,7 +208,8 @@
   `applyPlan(plan)` 按名字差分：新名字新增、同名更新**原地**（节点与后端状态存活）、消失的名字移除；
   `plan()` 把当前形状读回成同一类型（`applyPlan(plan())` 是幂等的）。校验给出 `PlanProblemCode` 稳定 code
   （`EmptyPassName` / `DuplicatePassName` / `UnknownInput` / `DependencyCycle` / `TooManyPasses`），
-  并整份接受或整份拒绝。
+  并整份接受或整份拒绝；另有一条**形状相关**的拒绝（`validatePlan` 看不见）：kind 变更会重建子类 pass 时以
+  `SubclassPassWouldBeRebuilt` 拒绝。
 - **约束**（`C7` / `C11`）：按名字不按指针；迁移期公开 API 只增不改（`addPass` 家族不删）。
 - **要求**（`R21` / `R38`）：增删 pass 不调用任何 add/remove；每条校验一个 code；`SessionBusy` 回答
   “引擎里有帧在录”，不做事后补救。**名字说明**：SDK 里今天没有 `Session` 类型；这个 code 的拼写保留只因
@@ -213,8 +217,7 @@
 - **验收**（`T7` / `T30`）：`PlanTest.APassIsAddedWithoutAnyAddCall`、`PlanTest.AChangedTargetUpdatesTheSameNodeInPlace`（P7）、
   `PlanTest.*IsRefusedWithItsCode`（四类 code）、`PlanTest.TheCodeSpellingsAreStable`。
 - **注意**（`P7`）：差分必须对**同名不同内容**也成立（改一个 pass 的 target 不是“删一个加一个”）。
-  计划不命名的 pass 会被移除（包括 `addPass` 注册但没名字的 pass）——这是“计划即形状”的直接后果。
-
+  计划不命名的 pass 会被移除（包括 `addPass` 注册但没名字的 pass）——这是“计划即形状”的直接后果。  子类 pass 只能被计划**原地更新**；它的 kind 变更（会重建为基类）是拒绝而不是重写（`W4`）。
 ### 3.7 F7 预热入口
 
 - **行为**：`prepare()` 回答“这一帧需要哪些半片 / 描述符集 / 上传”，并**把它们全部建好**，不提交帧。
@@ -524,7 +527,7 @@
 | T27 | pose 拾取 | pose 后拾取子节点 | 未做 |
 | T28 | pose 剔除 | pose 子树部分出视 | 未做 |
 | T29 | 多表面 | 一个 Session 两个 Surface | 未做 |
-| T30 | 计划校验 | `PlanTest.*IsRefusedWithItsCode`（四类）+ `PlanTest.TheCodeSpellingsAreStable` | 已实现 |
+| T30 | 计划校验 | `PlanTest.*IsRefusedWithItsCode`（四类）+ `PlanTest.TheCodeSpellingsAreStable` + `PlanTest.AKindChangeOnACustomPassIsRefusedWithItsCode` | 已实现 |
 | T31 | 批内 publish | `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch`（`Posted` → `Unchanged` → `InsideBatch` → `Posted`）+ `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` | 已实现（2026-11-12） |
 | T32 | 预热的答案 = 帧的构建 | `ContentHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds`（键集相等，设备无关）+ `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` 的键集断言（录制侧） | 已实现（2026-11-12） |
 | T33 | 预热后录制 `builds` 增量 0，且预热不提交 / 不呈现 | `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing`（`halves().builds` / `sets().builds` / `uploads().uploads` / `inputSetBuilds` / `pool.created` 全 0，`progress->submitted` 不动，像素仍画出）+ `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing`（引擎侧：同一个 value、不执行、不取帧号） | 已实现（2026-11-12） |
