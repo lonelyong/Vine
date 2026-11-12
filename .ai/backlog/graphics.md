@@ -16,7 +16,7 @@
   `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §迁移，每步一个可回退的提交。
 - **graphics-next 的接管（已采纳：`../decisions/ADR-2026-11-12-adopt-graphics-next.md`）**：目标形状、
   `C1–C12` / `R1–R39` / `I1–I7` / `N1–N10` 与六步迁移表在 `../design/graphics-frame-pipeline.md`。
-  未做的是 §9.3 的步 3–6（`prepare` → 多表面 → 生产收集改走快照
+  未做的是 §9.3 的步 3a–6（`prepare` 的答案/预建 → 多表面 → 生产收集改走快照
   （删镜像/delta/memo/版本）→ 原型/实例），以及 F11/F12 的全序键与 `query`。每步一个可回退提交；
   某步击穿它自己的 `K#` ⇒ 回退该步并把结论写回 ADR，**不重开“是否采纳”**。
 

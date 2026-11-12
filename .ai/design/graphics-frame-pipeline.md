@@ -114,7 +114,7 @@
 | 引擎表只存**共享资源**，从不存每实例状态 | 表大小 = 原型数 × 版本数，不是实例数 | 每命令 touch 活体 |
 | 驻留 ⟺ 被 Session 已接受或在飞的 Snapshot 引用它的 `(id, revision)`；宿主自持快照不钉住 | 精确规则，不看时间窗（`I4` / `R22`） | `parking` / `kept` 兜底 |
 | 管线缓存键是**值**（program@rev, layout@rev, state, formats, samples） | 可复现、可共享、可单测 | 指针 + variant bits |
-| 预热是一等入口：`prepare(snapshot, plan)` 答"需要什么" | 编译卡顿可预算，加载期可全预编译（`R23`） | 录制时才发现要编译 |
+| 预热是一等入口：`prepare()` 答"需要什么" | 编译卡顿可预算，加载期可全预编译（`R23`） | 录制时才发现要编译 |
 | 每帧 arena，帧内 arena 外零分配 | 分配上限从"规则"变常数（`R24`） | per-frame `vector` / `shared_ptr` |
 
 ### 2.8 计划是声明
@@ -155,7 +155,7 @@
 | F4 | 引擎表按 `(id, revision)` 驻留 | 事实表按 ref 建行；旧帧读旧版 | 已落地 |
 | F5 | 行级 epoch 回收 | 行按"最后一次被计划命中的帧"回收；条目在"宿主不要了 ∧ 没有行"时离开 | 已落地 |
 | F6 | 计划是值 | 帧边界按名字差分 + 计划校验稳定 code | 部分：`Plan` + `validatePlan` + `applyPlan` + `plan()` 已落地；`Target` 仍是显式 `RenderTarget` 句柄，`addPass` 家族保留到第 5 步（`C11`） |
-| F7 | 预热入口 | `prepare(snapshot, plan)` 答需要什么；预热后录制 `builds` 增量 0 | 未做 |
+| F7 | 预热入口 | `prepare()` 答需要什么；预热后录制 `builds` 增量 0 | 未做（§9.3 拆成 3a / 3b） |
 | F8 | 一 Session 多 Surface | `Target` / 帧请求带 `SurfaceId`；一个引擎线程驱动多个窗口 | 未做 |
 | F9 | `publish` 返回结果 | 批内显式“未发布”，无 null | 部分：`PublishOutcome` 四态已落地（`Posted`/`Unchanged`/`InsideBatch`/`Refused`），公开 `Scene::publish()` 随第 5 步的快照出现 |
 | F10 | 原型与实例 | `Instance` 引用原型；折叠一次；无环与行预算 | 未做 |
@@ -215,11 +215,15 @@
 
 ### 3.7 F7 预热入口
 
-- **行为**：`prepare(snapshot, plan)` 回答"这一份快照 + 这一份计划需要哪些半片/描述符集/上传"，并可全部预先建好。
-- **约束**（`C3`）：预热在引擎线程；它不提交帧。
+- **行为**：`prepare()` 回答“这一帧需要哪些半片 / 描述符集 / 上传”，并可把它们全部建好，**不提交帧**。
+  公开入口是 `RenderEngine::prepare()`（引擎先编成 `FrameDescription`），后端拿到的是与 `executeFrame()`
+  **同一个值**——一条线、两个动词，不引入新名词。快照进这个输入是第 5 步的事。
+- **约束**（`C3`）：预热在引擎线程；它不提交帧，也不 acquire 交换链图像。
 - **要求**（`R23` / `R36`）：预热后录制的帧 `builds` 增量 0；缺可选能力要出现在报告里。
-- **验收**（`T7` / `T10`）：`builds` 增量断言；`SessionTest.AMissingRequiredCapabilityIsRefusedWithACode`。
-- **注意**（`P8`）：预热是**查询**不是"编译一切"——答的是这份快照要的，不是所有可能的变体。
+- **验收**（`T7` / `T10` / `T32`）：`builds` 增量断言；`prepare()` 报的键集 = 这一帧实际构建的键集。
+- **注意**（`P8` / `P11`）：预热是**查询**不是“编译一切”；也**不能**用“跑一帧不提交”实现（见 `P11`）。
+  **缝**：`drawNeeds(compiled pass, draw)` 是唯一的键构造者——`prepare` 用它建、`ContentPass::record` 用它取，
+  两边不可能漂移（`G1`）。
 
 ### 3.8 F8 一设备一 Session 多 Surface
 
@@ -286,7 +290,7 @@
 
 | 接口 | 契约 | 备注 |
 |---|---|---|
-| `Session::prepare(const Snapshot&, const Plan&)` | 只建不提交；答所需半片/集合/上传 | 目标 |
+| `RenderEngine::prepare()` → `PrepareReport` | 只建不提交；答所需半片/集合/上传 | 目标（后端拿到的是与 `executeFrame()` 同一个 `FrameDescription`；快照进这个输入是第 5 步） |
 | `Session::frame(FrameRequest) → FrameResult` | 提交一帧；`FrameRequest` 带 `View` 与 `SurfaceId` | 目标（今天 `executeFrame` + `presentWindow`） |
 | `FrameResult{ snapshot, view, poses, stats, diagnostics, present }` | 宿主读的值 | 目标（今天 `FrameStats` + `PresentOutcome`） |
 | `Plan` / `Pass` / `Target` / `SurfaceId` | 帧图声明 | 目标（今天 `addPass` / `PassDesc`） |
@@ -428,7 +432,7 @@
 
 - 会怎么错：加载期把全部变体都编一遍，冷启动炸掉。
 - 怎么判：预热后 `builds` 增量与预热耗时。
-- 怎么防：`prepare(snapshot, plan)` 只答这一份输入要的（`R23`）。
+- 怎么防：`prepare()` 只答这一份输入要的（`R23`）。
 
 ### 6.9 P9 批被当成事务
 
@@ -441,6 +445,15 @@
 - 会怎么错：相机在帧间移动，查询用新相机回答上一帧的画面。
 - 怎么判：`T20`。
 - 怎么防：查询吃 `FrameResult.query` 的 View 值（`I7`）。
+
+### 6.11 P11 用“跑一帧但不提交”实现预热
+
+- 会怎么错：窗口帧的 `Session::beginFrame()` 里 `viewer->advanceToNextFrame()` **acquire** 一张交换链图像；
+  不提交就再也不会有图像可 acquire（下一帧饿死），提交则已经不是预热。而画到窗口的 pass 只能画进那张图像，
+  所以“跑一遍录制再丢掉”连它都覆盖不到 —— 预热会在看起来通过的像素用例下留下一条 acquire 饥饿。
+- 怎么判：`builds` 增量断言不成立，或第二帧 `beginFrame()` 回空 token / 出现 acquire 超时的 VUID。
+- 怎么防：预热只做**值**这一侧（半片 / 集合 / 上传），键由 `drawNeeds` 算；窗口目标的格式由
+  `WindowTarget::facts()` 回答（const，不需要 acquire）。
 
 ## 7. 已否决选项
 
@@ -456,6 +469,7 @@
 | D8 | 保留 `addPass` 家族 + 运行时拒绝 | 计划是值之后误用不可表达；拒绝路径本身是复杂度 | 同上 |
 | D9 | 内容引用只带 id、不带 revision | 旧帧会解析到新值，破坏 `R9`/`I1` | 同上 |
 | D10 | 只做已落地的身份/寿命层，其余留作提案 | "发布 = 一次指针交换"不成立，镜像/delta/memo 继续在轨 | ADR-2026-11-12 §选项 D |
+| D11 | 用“跑一帧但不提交”实现预热 | 窗口帧的 `beginFrame` acquire 图像：不提交则饥饿，提交则不是预热；画到窗口的 pass 连覆盖都做不到（`P11`） | ADR-2026-11-12 |
 
 ## 8. 测试与验收
 
@@ -492,6 +506,7 @@
 | T29 | 多表面 | 一个 Session 两个 Surface | 未做 |
 | T30 | 计划校验 | `PlanTest.*IsRefusedWithItsCode`（四类）+ `PlanTest.TheCodeSpellingsAreStable` | 已实现 |
 | T31 | 批内 publish | `ContentMirrorTest.AnEditBatchIsOnePublicationAndTheMirrorKeepsTheOldPictureUntilItEnds`（`InsideBatch` → `Posted`） | 已实现 |
+| T32 | 预热的答案 = 帧的构建 | `PrepareTest.TheReportedNeedsAreWhatTheFrameBuilds`（键集相等） | 未做 |
 
 ### 8.1 判死阈值（`K#`）
 
@@ -546,7 +561,8 @@
 |---|---|---|---|
 | 1 | 计划是值：`Plan` + 帧边界差分 + 校验 code · **已落地 2026-11-12** | 本步不删公开入口（`C11`）；`compileFrame` 的行从“`slots_` 的投影”变成“计划的投影” | `T7` / `T30` / `K4`；击穿则回退该步 |
 | 2 | `publish` 返回结果（四态）· **已落地 2026-11-12（内部半边）** | 内部 `bool` 发布（`FrameWorker` / `ContentMirror`）；**帧内隐式发布随第 5 步消失** | `T31` |
-| 3 | `prepare()` 预热 | “录制时才发现要编译” | `T7` / `T10`，预热后 `builds` 增量 0 |
+| 3a | `prepare()` 的**答案**：抽出 `drawNeeds`，`prepare` 与 `record` 共用它；断言答案 = 这一帧实际构建的键集 | 录制里重复的键构造 | `T32`；击穿则回退该步 |
+| 3b | `prepare()` 的**预建**：按答案建半片 / 集合 / 上传 | “录制时才发现要编译” | `T7` / `T10`，预热后 `builds` 增量 0 |
 | 4 | 一 Session 多 Surface | 每窗口一个 Session 的驱动路径 | `T29` / `K10` |
 | 5 | **生产收集改走 Snapshot + `selectSnapshot`，删镜像/delta/memo/版本** | `ContentMirror`、`DeltaChannel`、`DrawListMemo`、`Version`、`refresh*`（约 2000 行）；**并在此收口删 `addPass` 家族与 `PassRegistry` 的运行时拒绝** | `K1` / `K2` / `K3` / `K5` / `K7` / `N5`；这是风险最高的一步 |
 | 6 | 原型与实例（单独实验，B 方案先测） | 无（新增能力） | `T23` / `K11`；数字不好就停在“原型 DAG 共享” |

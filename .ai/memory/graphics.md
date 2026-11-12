@@ -400,3 +400,20 @@
   版本号，还会和镜像的记账形成两个真相。它与“帧内隐式发布消失”一起属于第 5 步（§9.3 第 2 行已改写）。
 - **断言**：三处既有用例把 `EXPECT_FALSE/TRUE` 升级为状态断言（`Unchanged` / `InsideBatch` / `Refused` / `Posted`），
   没有新增重复用例。`test_graphics` 571。
+
+## 2026-11-12 —— graphics-next 第 3 步先定缝：预热不能是"跑一帧不提交"
+
+- **查代码否掉的那个显而易见的实现**：`VsgBackend::executeFrame` 的循环
+  （`openFrameBooks` → 每 pass → `closeFrameBooks` → 提交）看起来可以"跑完不提交"，但
+  `Session::beginFrame()` 里 `viewer->advanceToNextFrame()` **acquire** 一张交换链图像：
+  不提交 ⇒ 下一帧没图像可 acquire（饥饿）；提交 ⇒ 已经不是预热。而画到窗口的 pass 只能画进那张图像，
+  所以这个做法连它都覆盖不到。**已记入 §7 否决项 D11 / §6.11 P11。**
+- **选定的缝**：预热只做**值**这一侧 —— 半片 / 描述符集 / 上传。键由
+  `drawNeeds(compiled pass, draw)` 算，`prepare` 用它建、`ContentPass::record` 用它取（一个构造者两个消费者，
+  `G1`）。窗口目标的格式由 `WindowTarget::facts()` 回答（const，不 acquire）。
+- **入口**：`RenderEngine::prepare()` 先编成 `FrameDescription`，后端拿到的是与 `executeFrame()` **同一个值**
+  （一条线、两个动词，不引入新名词）；快照进这个输入是第 5 步。
+- **§9.3 第 3 步因此拆成 3a / 3b**：3a = 答案（`T32`：报告的键集 = 这一帧实际构建的键集），
+  3b = 预建（`T7`/`T10`：预热后 `builds` 增量 0）。每行一个可回退提交。
+- **下一步**：3a —— 在 `ContentPass::record` 里定位键构造点（约 1235 行附近，含 `PipelineKey::variant`
+  与 topology 的注释），抽成纯函数，再让 `prepare` 走同一函数。
