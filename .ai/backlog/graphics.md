@@ -29,7 +29,7 @@
 
 | # | 项 | 做什么 | 为什么 / 代价 | 判据 / 前置 |
 |---|---|---|---|---|
-| W9 | 5b-2c 收口批 | 删 `addPass` 家族、隐式发布、活指针字段、`Scene` 的 `DrawListSource` 继承（W6b）；`FrameRecorder` 三阶段降为后端组件 | 让“计划是唯一形状”从承诺变事实的唯一一步；前置已由 W1 / W3 / W6a / W2 铺好。代价：25 src + 193 tests = 218 个调用点；`K4` 分母 1096、5% 线 55；`K5` 与 2519 同口径 | 触发条件见上方 5b-2c 段（5b-2b 稳定一轮 / 第二后端复用内容层 / host 需要计划之外的第二套 pass 形状）；`K4` / `K5` / `T7` / `T30` |
+| W9 | 5b-2c 收口批 | 删 `addPass` 家族、隐式发布、活指针字段、`Scene` 的 `DrawListSource` 继承（W6b）；`FrameRecorder` 三阶段降为后端组件 | 让“计划是唯一形状”从承诺变事实的唯一一步。**W9a（W6b）/ W9b（隐式发布）/ W9c（灯的活指针通道）已落地 2026-11-13**；剩下 W9d（`addPass` 家族与 `PassRegistry` 拒绝，25 src + 193 tests）与 W9e（W7 结果形状 + `FramePlan`→`FrameTable`），两者必须同窗。W9d 待定：`PassChain` 的 owner/role 注册要改成“链构造 `Plan` + `applyPlan`”，一个引擎多链的选择要先说清 | W9d 开工前先定“一个引擎几条链 / 一个 Plan”的边界；`K4` 分母 1096、5% 线 55；`K5` 与 2519 同口径；`T7` / `T30` |
 | W7 | 结果形状收口 | `frame()` 只答 Ran / Submitted；`applyPlan` 三态 `{applied, problems, refused}`；`SessionBusy` 移出 `PlanProblemCode` | 7 个枚举、121/163 个 `bool`；3 组是同一件事的不同拼法。全是公开签名，必须与 W9 同窗，否则迁移期三套并存。代价：`TheCodeSpellingsAreStable` 等断言改 | `PlanTest` 断言 busy 不是 plan problem |
 | W6b | `Scene` 外移第二步 | 删 `Scene` 的 `DrawListSource` 继承；`RenderPass::describe` 不再把活 `Scene` 写进帧值 | 去掉“活 Scene 过界”的最后一条根；与 W9 同窗，避免两套收集形状并存 | `Scene.hpp` 不再 override `collectRenderCommands`；`T34` 绿 |
 
