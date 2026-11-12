@@ -285,6 +285,11 @@
 ## 4. 公开接口
 
 > 目标是目标签名；每一条以落地后的头文件为准。迁移期按 `C11` 只增不改。
+>
+> **迁移 API 状态（`W2`，2026-11-13）**：`applyPlan` / `plan` / `bindSnapshot` / `prepare` 在 `src/` 里没有宿主
+> 调用点（只有引擎内部的转发与自测），它们是**迁移入口，尚未成为宿主契约**；5b-2c 前不再新增公共入口。生产路径
+> 仍是 `addPass` 家族 + 帧首隐式发布。`FramePlan` 的改名（→ `FrameTable`）与 `SessionBusy` 的去留（随 `W7` 移出
+> `PlanProblemCode`）都在 5b-2c 窗口内一次改完（见 `graphics-architecture.md` §2.10）。
 
 ### 4.1 内容侧
 
@@ -311,10 +316,10 @@
 
 | 接口 | 契约 | 备注 |
 |---|---|---|
-| `RenderEngine::prepare()` → `PrepareReport` | 只建不提交；答所需半片/集合/上传 | 目标（后端拿到的是与 `executeFrame()` 同一个 `FrameDescription`；快照进这个输入是 5b-1，已落地） |
+| `RenderEngine::prepare()` → `PrepareReport` | 只建不提交；答所需半片/集合/上传（**迁移 API，尚未成为宿主契约**，`W2`） | 目标（后端拿到的是与 `executeFrame()` 同一个 `FrameDescription`；快照进这个输入是 5b-1，已落地） |
 | `Session::frame(FrameRequest) → FrameResult` | 提交一帧；`FrameRequest` 带 `View` 与 `SurfaceId` | 目标（今天 `executeFrame` + `presentWindow`） |
 | `FrameResult{ snapshot, view, poses, stats, diagnostics, present }` | 宿主读的值 | 目标（今天 `FrameStats` + `PresentOutcome`） |
-| `Plan` / `Pass` / `Target` / `SurfaceId` | 帧图声明 | 目标（今天 `addPass` / `PassDesc`） |
+| `Plan` / `Pass` / `Target` / `SurfaceId` | 帧图声明（**迁移 API，尚未成为宿主契约**，`W2`；`FramePlan` 将在 5b-2c 改名 `FrameTable`） | 目标（今天 `addPass` / `PassDesc`） |
 
 ## 5. 约束、要求与不变量
 

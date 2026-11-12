@@ -339,7 +339,7 @@
 
 | 接口 | 契约 | 备注 |
 |---|---|---|
-| `RenderEngine::bindSnapshot(scene, ref)` | 说"这个引擎从这一份开始画"；**接管**该场景的发布（不再隐式发布） | 新（2026-11-12） |
+| `RenderEngine::bindSnapshot(scene, ref)` | 说"这个引擎从这一份开始画"；**接管**该场景的发布（不再隐式发布） | 新（2026-11-12）；**迁移 API，尚未成为宿主契约**（`W2`） |
 | `RenderEngine::frame() → FrameOutcome` | 构建 + 交出（`Submitted`）或就地跑完（`Ran`） | 已存在 |
 | `RenderEngine::setFrameThreading(FrameThreading)` | `Inline`（默认）/ `EngineThread`；生命周期决定 | 已存在 |
 | `RenderEngine::waitForFrame(n, timeout)` | 唯一显式等待 | 已存在 |

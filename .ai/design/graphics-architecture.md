@@ -22,6 +22,8 @@
 
 - 不在本文件重复头文件里的完整签名；接口只给契约与指针。
 - 不在本文件保存已关闭的历史或逐轮审查记录。
+- 5b-2c 收口前**不再新增公共入口**：`applyPlan` / `plan` / `bindSnapshot` / `prepare` 是迁移 API，尚未成为宿主
+  契约（`W2`，`graphics-frame-pipeline.md` §4）；新能力先写设计，不先加签名。
 
 ### 1.4 一句话结论
 
@@ -58,6 +60,13 @@
     附带一条名词纪律：`PlanProblemCode::SessionBusy` 的字符串保留（测试钉住），但它的文档含义是“**引擎里有帧在录**”；
     SDK 里今天**没有** `Session` 类型，该类型随 F8（一 Session 多 Surface，`graphics-frame-pipeline.md` §3.8）落地——
     在那之前，文档与新接口都不再引用一个不存在的 `Session`。
+
+2.10 **迁移 API 与它的收口窗口**：`applyPlan` / `plan` / `bindSnapshot` / `prepare` 今天在 `src/` 里没有宿主调用点
+    （只有引擎内部的转发与自测），所以它们是**迁移 API，不是宿主契约**：宿主不应按“已稳定”使用它们，仓库也不在
+    5b-2c 前再加同类入口（`G8`）。收口时一次改完三件事：删 `addPass` 家族、把 `FramePlan` 改名为 `FrameTable`
+    （它读的是“编译后的帧表”，不是计划）、把 `SessionBusy` 移出 `PlanProblemCode`（它描述运行时前置条件，不是形状
+    缺陷；`W7`）。理由：三条入口 0 生产消费者而 `addPass` 家族 218 个调用点——不标状态，宿主会按“已支持”使用；
+    分两次改则迁移期三套形状并存。
 
 2.9 **`backend/` 是后端接缝，不是宿主 SDK**：`sdk/vine/graphics/backend/`（24 个头）只被 `gfx_backend_*` 与
     `libGraphics` 自己消费，宿主包含它是编译错误（`BackendHalfGuard.hpp`）。它的 **ABI 随后端变、不随宿主变**，

@@ -341,6 +341,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - The takeover is per engine and one-way for the scene's lifetime in this engine: publishing through the frame is
      *   the implicit path, and there is nothing to switch back to.
      *
+     * @note
+     * - MIGRATION ENTRY: this repository has no host consumer of it yet, so its shape is not a host contract until
+     *   the 5b-2c window closes (backlog W9 / W2).
+     *
      * @param scene    The scene whose publication is being handed over.
      * @param snapshot The publication to draw (see ScenePublishResult::snapshot), or an empty handle to draw nothing.
      */
@@ -372,6 +376,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   animates off its own wall clock (the intended shape) is unaffected.
      * - A prepared identity only helps while it stays the same one: an edit between the call and the frame is a new
      *   identity, and that frame compiles it (correct, and the price of the edit).
+     *
+     * @note
+     * - MIGRATION ENTRY: this repository has no host consumer of it yet, so its shape is not a host contract until
+     *   the 5b-2c window closes (backlog W9 / W2).
      *
      * @return What the request did, with what it built (see PrepareReport); `outcome` says NoDevice / NotInitialized
      *         when this engine cannot prepare anything at all.
@@ -580,6 +588,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - A SESSION'S SHAPE IS EDITED BETWEEN FRAMES: a call that lands while a frame is being recorded is
      *   REFUSED and answers `SessionBusy` (no partial change).
      *
+     * @note
+     * - MIGRATION ENTRY: this repository has no host consumer of it yet, so its shape is not a host contract until
+     *   the 5b-2c window closes (backlog W9 / W2).
+     *
      * @param plan The shape to apply (see Plan).
      * @return Every problem found, empty when the plan was applied.
      */
@@ -599,6 +611,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - What is NOT here: the measured facts (the last frame's record time) and the owner/role bookkeeping - those
      *   belong to the compile and to whoever registered the pass, not to the declared shape (see FramePlan, which is
      *   the COMPILED frame and a different value).
+     *
+     * @note
+     * - MIGRATION ENTRY: this repository has no host consumer of it yet, so its shape is not a host contract until
+     *   the 5b-2c window closes (backlog W9 / W2).
      *
      * @return The shape, in engine order; empty when nothing is registered.
      */

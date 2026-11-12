@@ -572,7 +572,16 @@
   `TheSharedCollectionIsOneListAndTheOwningSpellingCopiesIt` 的"空列表是同一个"断言）。
 - **新文件要 reconfigure**：库源码是 `file(GLOB_RECURSE)`（无 `CONFIGURE_DEPENDS`），加 .cpp 后必须
   `cmake -S . -B build`（`build-tsan` 同）再构建，否则链接期只看到未定义符号。
-- **测试**：`test_graphics` 557 / `test_vsg` 542 / TSan 557 用例 0 warning；公开 API 与测试语义未动。
+- **测试**：`test_graphics` 557 / `test_vsg`（gtest_list 546 例）全绿 / TSan 557 用例 0 warning；公开 API 与测试语义未动。
+
+## 2026-11-13 —— 第三轮审计 W2：迁移 API 的状态标记
+
+- 四个入口 `applyPlan` / `plan` / `bindSnapshot` / `prepare` 标为“迁移 API，尚未成为宿主契约”：设计文档
+  （`graphics-frame-pipeline.md` §4、`graphics-threading.md` §4.2、`graphics-architecture.md` §1.3 / §2.10）与
+  公开头文件的 `@note` 同时写明；5b-2c 前不再新增公共入口。
+- **决定**：`FramePlan` 在 5b-2c 改名 `FrameTable`（它读的是编译后的帧表，不是计划）；`SessionBusy` 随 `W7`
+  移出 `PlanProblemCode`（它描述运行时前置条件，不是形状缺陷）。两项都在 W9 窗口一次改完，之前不动公开签名（`C11`）。
+- 计数：0 代码改动；生产路径仍是 `addPass` 家族 + 帧首隐式发布。
 
 
 
