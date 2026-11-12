@@ -165,10 +165,11 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## research/ —— 调研与提案（8 文件 / 1 组提案）
+## research/ —— 调研与提案（9 文件 / 1 组提案）
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
 
+- `graphics-2026-11-12-audit-3.md` —— graphics 的**第三轮审计**（只读）：线程载荷与契约相反（R3-1）、三条新公共入口零生产消费者（R3-2）、`Scene` 三概念同居（R3-3）、`backend/` 公共安装与 Vulkan 拼写（R3-4）、内容半段调引擎半段（R3-5）、结果形状七套（R3-6）、扩展轴与计划互斥（R3-7）、`RenderEngine` 组合根（R3-8）；含修复任务表 W1–W9 与“现在不做”的触发条件。
 - `graphics-2026-11-12-instances.md` —— 原型与实例（A6）的 `T23` A/B 测量口径：5000 行原型 × 10 实例、E0–E3 四类编辑、`snapshot_rows` / `draw_rows` / 放置乘法 / publish / select / 常驻六项；B 的判定线（O(R+N)、常驻 ≤ 2× 1× 原型、`K11` 绿）与“数字不好就停在原型 DAG 共享”的回退。**未采纳**。
 - `graphics-2026-11-11-next.md` —— graphics 整体骨架的重设计：**总纲**（问题来源、骨架摘要、`I1–I7`、
   判死条件 `K1–K6`、验证计划、否决项、`G1–G13` 对照）。对应 backlog `T32`；采纳则改写 `design/`，否决则留 ADR。

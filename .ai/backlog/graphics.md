@@ -22,6 +22,26 @@
   5b-2c 的 pass 声明收口不在“现在可做”里：触发条件是 5b-2b 稳定一轮、第二后端要复用内容层，或 host
   需要计划之外的第二套 pass 形状；A6 的触发条件是出现“一处原型多处放置”的真实宿主。未命中就只写设计（`G8`）。
 
+### 1.1 第三轮审计修复（2026-11-12，W1–W9；W9 按 5b-2c 触发条件）
+
+证据、代码位置与完整论证见 `../research/graphics-2026-11-12-audit-3.md`（R3-1…R3-8）。
+**顺序即依赖**：先做零语义风险的，再修正确性，公共 API 的形状变化集中在 W9 一个窗口。
+
+| # | 项 | 做什么 | 为什么 / 代价 | 判据 / 前置 |
+|---|---|---|---|---|
+| W8 | 组合根声明 | `graphics-architecture.md` §2 写明 `RenderEngine` 是组合根；`SessionBusy` 文档改称“帧在录”（SDK 里没有 `Session` 类型） | 1462 行、56 个公共签名、8 类职责；不写下来，下一次加功能会继续往里塞。代价 0 | 文档出现该声明 |
+| W5 | `backend/` 安装拆分 | `install(DIRECTORY sdk/)` 拆 host / backend 两个 component；文档写“后端接缝，其 ABI 随后端变”；4 个 Vulkan 拼写（`Keys` / `ClearPlan` / `TargetPlan` / `FrameCompiler`）在第二个后端前写成不透明设备格式码 | 今天“装进 include 但禁止包含”自相矛盾；拆安装不改 API。晚做会把包装策略误当架构决策。代价：一个 CMake 组件 | 安装后 host include 不含 `backend/`；`check_include_hygiene.py` 绿 |
+| W1 | 跨层值通道 | 新增 `ShaderProgramDescription` + `LightValue`；`Row` / `RenderCommand` 带 `ContentRef`；`FrameRecorder` 只读值，不再解引用活对象 | **唯一一类真实 UB**：UI 改灯/材质/程序 vs 引擎线程读同一非原子字段；程序与灯今天没有值描述。先加法，删字段搭 W9。代价：两个值类型 + 发布侧按 revision 缓存一次拷贝；每行省 24 B + 3 次原子操作 | 新 `T35`：帧在飞时改程序/材质/灯，帧 N 不变、N+1 用新值，TSan 0；`T17` 绿 |
+| W3 | 拆 `FrameWorker` | `PublicationStore`（内容侧：`publish` / `bind` / `SnapshotSource` 表）+ `FrameExpander`（引擎侧：`runPass` / `run`）；发布提到“每帧每场景一次” | 内容半段调引擎半段对象，是对象级回边（`G2` / `G12`）；同一场景 N 个 pass 调 N 次发布。现在 182 行搬移，晚做会让 W9 同时改发布与 pass 声明 | `T34` / `T17` / `FrameRunnerTest` 绿；内容半段不再出现 `FrameWorker` |
+| W4 | 计划与子类 pass | 文档写明“计划只表达 `PassKind` 能表达的形状”；`applyPlan` 拒绝“会被重建的子类名”并报一条稳定诊断 | `applyPlan` 对子类 pass 的 remove/re-add 会静默降级成基类；一条 `validate` 检查换“误用不可表达”。不建注册表（`G8`） | `PlanTest` 新用例；`T7` / `T30` 绿 |
+| W6a | `Scene` 外移第一步 | `detail::ScenePublisher` 承接 bake / memo / snapshot / 批深度；`Scene` 委托，公开 API 与测试语义不变 | `Scene` 同时是作者树、派生缓存与发布值；生产收集已走 `SnapshotSource`，`Scene` 的收集只剩测试与单 pass 直驱。这一步是 F11 的前置。代价：624 行拆分、108 处测试引用迁移 | `T34` 绿；`K2` 常驻不升 |
+| W2 | 公共 API 状态 | `applyPlan` / `plan` / `bindSnapshot` / `prepare` 标“迁移 API，尚未成为宿主契约”；决定 `FramePlan` 改名与 `SessionBusy` 去留 | 三条入口 0 生产消费者、`addPass` 家族 218 个调用点；不标状态，宿主会按“已支持”使用。5b-2c 前不再新增公共入口。代价 0 | 设计文档出现状态标记 |
+| W9 | 5b-2c 收口批 | 删 `addPass` 家族、隐式发布、活指针字段、`Scene` 的 `DrawListSource` 继承（W6b）；`FrameRecorder` 三阶段降为后端组件 | 让“计划是唯一形状”从承诺变事实的唯一一步；前置已由 W1 / W3 / W6a / W2 铺好。代价：25 src + 193 tests = 218 个调用点；`K4` 分母 1096、5% 线 55；`K5` 与 2519 同口径 | 触发条件见上方 5b-2c 段（5b-2b 稳定一轮 / 第二后端复用内容层 / host 需要计划之外的第二套 pass 形状）；`K4` / `K5` / `T7` / `T30` |
+| W7 | 结果形状收口 | `frame()` 只答 Ran / Submitted；`applyPlan` 三态 `{applied, problems, refused}`；`SessionBusy` 移出 `PlanProblemCode` | 7 个枚举、121/163 个 `bool`；3 组是同一件事的不同拼法。全是公开签名，必须与 W9 同窗，否则迁移期三套并存。代价：`TheCodeSpellingsAreStable` 等断言改 | `PlanTest` 断言 busy 不是 plan problem |
+| W6b | `Scene` 外移第二步 | 删 `Scene` 的 `DrawListSource` 继承；`RenderPass::describe` 不再把活 `Scene` 写进帧值 | 去掉“活 Scene 过界”的最后一条根；与 W9 同窗，避免两套收集形状并存 | `Scene.hpp` 不再 override `collectRenderCommands`；`T34` 绿 |
+
+审计里“现在不做”的三项已对应本文件 T27（pin 显存）/ T24（F11 派生层并行）/ T22 与 T15（第二个后端），不重复列。
+
 
 ## 2. 触发条件型
 
