@@ -13,6 +13,7 @@
 #include "CameraSnapshot.hpp"
 #include "DepthRange.hpp"
 #include "ImageSource.hpp"
+#include "Light.hpp"
 #include "Node.hpp"
 #include "RenderCommand.hpp"
 #include "StateResolution.hpp"
@@ -136,12 +137,23 @@ struct VN_GRAPHICS_API DrawDescription {
     raw_ptr<RenderTarget> source = nullptr;
     /// Screen kind: the fragment program to draw the source through (required; null means no draw).
     intrusive_ptr<const ShaderProgram> program;
+    /// Screen kind: @ref program's text as a value, taken with the pointer (see ShaderProgramDescription).
+    ///
+    /// The recorder reads THIS, not the object: the same rule every other cross-thread value follows. A hand-built
+    /// description that names only the object falls back to its cached conversion (the content-side door).
+    ShaderProgramDescriptionPtr program_description;
     /// The lights this draw announces, or nullopt to announce NONE.
     ///
     /// Engaged-but-empty is a real state (a scene with no lights: the announcement happens and says so, which is
     /// what restores a backend's default light), which is why this is an optional and not a vector: "announce
     /// nothing" and "announce that there are none" are different statements.
     std::optional<std::vector<raw_ptr<const Light>>> lights;
+    /// The same lights as VALUES, taken when the pass described itself (see LightValue).
+    ///
+    /// THE CHANNEL THE RECORDER READS. `lights` above stays for the calls that still name objects (a host driving
+    /// content, the legacy record door); both spellings are filled together and say the same thing until the object
+    /// half retires (5b-2c). Engaged-but-empty means "none", exactly like @ref lights.
+    std::optional<std::vector<LightValue>> light_values;
 };
 
 /**
@@ -178,6 +190,11 @@ struct VN_GRAPHICS_API PassDraw {
     /// command-sized copy (allocation + memcpy + three refcounts per command) on every frame the override existed -
     /// the same trade the rasterisation override already made (see StateResolution.hpp's resolveRenderState).
     intrusive_ptr<const ShaderProgram> program_override;
+    /// @ref program_override's text as a value, taken with the pointer (see ShaderProgramDescription).
+    ///
+    /// The recorder applies THIS, not the object: an override edited while a frame is in flight keeps the text the
+    /// frame described itself with.
+    ShaderProgramDescriptionPtr program_override_description;
     /// The drawing calls, in the order they happen. Empty is a real answer: a pass that announces its target and
     /// state but has nothing to draw with (no camera, no program) issues no draw, and does NOT become a draw of
     /// something else.

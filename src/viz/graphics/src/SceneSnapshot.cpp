@@ -20,7 +20,7 @@ std::atomic<std::uint64_t> s_next_revision{ 1 };
 SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
                                    std::uint64_t           epoch,
                                    std::uint64_t           boxes,
-                                   std::uint64_t           materials,
+                                   std::uint64_t           values,
                                    const SceneSnapshotPtr& previous)
 {
     auto snapshot        = std::make_shared<SceneSnapshot>();
@@ -28,7 +28,7 @@ SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
     snapshot->revision   = s_next_revision.fetch_add(1, std::memory_order_relaxed);
     snapshot->epoch      = epoch;
     snapshot->boxes      = boxes;
-    snapshot->materials  = materials;
+    snapshot->values     = values;
     snapshot->identities.reserve(snapshot->row_count);
     snapshot->node_epochs.reserve(snapshot->row_count);
 
@@ -42,10 +42,10 @@ SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
         (snapshot->row_count + SceneSnapshot::kRowsPerChunk - 1U) / SceneSnapshot::kRowsPerChunk;
     snapshot->chunks.reserve(chunk_count);
 
-    // A box or material refresh edits rows in place without moving a node epoch, so those versions disable sharing
+    // A box or value refresh edits rows in place without moving a node epoch, so those versions disable sharing
     // entirely rather than serving a stale chunk.
     const bool may_share = previous != nullptr && have_epochs && previous->row_count == snapshot->row_count &&
-                           previous->boxes == boxes && previous->materials == materials &&
+                           previous->boxes == boxes && previous->values == values &&
                            previous->chunks.size() == chunk_count;
 
     for (std::size_t chunk = 0; chunk < chunk_count; ++chunk) {

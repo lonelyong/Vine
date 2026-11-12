@@ -43,12 +43,25 @@ VN_VSG_NS_BEGIN
 
 /** @brief Builds the program table entry for @p program.
  *
- * @param program SDK program to describe (borrowed; the entry copies its sources).
+ * @param program SDK program text to describe (borrowed; the entry copies its sources).
  * @param out     Receives the entry.
  * @return None when the entry was built; Unknown when the program has no stages; Malformed when it cannot be
  *         one content pipeline (not exactly one vertex and one fragment stage, an empty source, an entry
  *         point the two stages disagree about, or a text whose declared bindings cannot be read - see
  *         api/ProgramAbi).
+ */
+[[nodiscard]] FactMiss buildProgramFacts(const vn::graphics::ShaderProgramDescription& program, ProgramFacts& out);
+
+/**
+ * @brief The convenience spelling over a live @p program: converts with `ShaderProgram::description()` and delegates.
+ *
+ * @note For a hand-built caller or a test that still holds the object. The FRAME path never takes this door: the
+ *       store describes the value the frame carried (see ContentStore::ensureProgram), so recording never reads a
+ *       program's text on the thread that records it.
+ *
+ * @param program SDK program to describe (borrowed; the entry copies its sources).
+ * @param out     Receives the entry.
+ * @return None / Unknown / Malformed exactly as the value overload says.
  */
 [[nodiscard]] FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out);
 
@@ -62,11 +75,14 @@ VN_VSG_NS_BEGIN
  * effect, which is the failure a text with an `#error` in the wrong branch would otherwise report as a
  * compile error at draw time (or not at all).
  *
- * @param program  The program whose stages are described.
+ * @param program  The program text whose stages are described.
  * @param variant  The variant to describe it for.
  * @param out      Receives the entry (its `shaders.defines` are the variant's).
  * @return None when the entry was built; Unknown/Malformed exactly as the untagged overload says.
  */
+[[nodiscard]] FactMiss buildProgramFacts(const vn::graphics::ShaderProgramDescription& program, const ProgramVariant& variant, ProgramFacts& out);
+
+/** @brief The convenience spelling over a live @p program (see the untagged overload). */
 [[nodiscard]] FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const ProgramVariant& variant, ProgramFacts& out);
 
 /** @brief Builds the program table entry for a FULL-SCREEN program (see core::DrawKind::Screen).
@@ -90,6 +106,9 @@ VN_VSG_NS_BEGIN
  *         fragment entry point that is not the canonical vertex stage's (the pipeline carries one entry point
  *         for both stages), or a fragment text whose declared bindings cannot be read.
  */
+[[nodiscard]] FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgramDescription& program, ProgramFacts& out);
+
+/** @brief The convenience spelling over a live @p program (see the value overload). */
 [[nodiscard]] FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out);
 
 /** @brief Builds the material table entry for @p material from the VALUES @p values, or for the DEFAULT material.

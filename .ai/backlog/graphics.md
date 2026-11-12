@@ -29,9 +29,6 @@
 
 | # | 项 | 做什么 | 为什么 / 代价 | 判据 / 前置 |
 |---|---|---|---|---|
-| W8 | 组合根声明 | `graphics-architecture.md` §2 写明 `RenderEngine` 是组合根；`SessionBusy` 文档改称“帧在录”（SDK 里没有 `Session` 类型） | 1462 行、56 个公共签名、8 类职责；不写下来，下一次加功能会继续往里塞。代价 0 | 文档出现该声明 |
-| W5 | `backend/` 安装拆分 | `install(DIRECTORY sdk/)` 拆 host / backend 两个 component；文档写“后端接缝，其 ABI 随后端变”；4 个 Vulkan 拼写（`Keys` / `ClearPlan` / `TargetPlan` / `FrameCompiler`）在第二个后端前写成不透明设备格式码 | 今天“装进 include 但禁止包含”自相矛盾；拆安装不改 API。晚做会把包装策略误当架构决策。代价：一个 CMake 组件 | 安装后 host include 不含 `backend/`；`check_include_hygiene.py` 绿 |
-| W1 | 跨层值通道 | 新增 `ShaderProgramDescription` + `LightValue`；`Row` / `RenderCommand` 带 `ContentRef`；`FrameRecorder` 只读值，不再解引用活对象 | **唯一一类真实 UB**：UI 改灯/材质/程序 vs 引擎线程读同一非原子字段；程序与灯今天没有值描述。先加法，删字段搭 W9。代价：两个值类型 + 发布侧按 revision 缓存一次拷贝；每行省 24 B + 3 次原子操作 | 新 `T35`：帧在飞时改程序/材质/灯，帧 N 不变、N+1 用新值，TSan 0；`T17` 绿 |
 | W3 | 拆 `FrameWorker` | `PublicationStore`（内容侧：`publish` / `bind` / `SnapshotSource` 表）+ `FrameExpander`（引擎侧：`runPass` / `run`）；发布提到“每帧每场景一次” | 内容半段调引擎半段对象，是对象级回边（`G2` / `G12`）；同一场景 N 个 pass 调 N 次发布。现在 182 行搬移，晚做会让 W9 同时改发布与 pass 声明 | `T34` / `T17` / `FrameRunnerTest` 绿；内容半段不再出现 `FrameWorker` |
 | W4 | 计划与子类 pass | 文档写明“计划只表达 `PassKind` 能表达的形状”；`applyPlan` 拒绝“会被重建的子类名”并报一条稳定诊断 | `applyPlan` 对子类 pass 的 remove/re-add 会静默降级成基类；一条 `validate` 检查换“误用不可表达”。不建注册表（`G8`） | `PlanTest` 新用例；`T7` / `T30` 绿 |
 | W6a | `Scene` 外移第一步 | `detail::ScenePublisher` 承接 bake / memo / snapshot / 批深度；`Scene` 委托，公开 API 与测试语义不变 | `Scene` 同时是作者树、派生缓存与发布值；生产收集已走 `SnapshotSource`，`Scene` 的收集只剩测试与单 pass 直驱。这一步是 F11 的前置。代价：624 行拆分、108 处测试引用迁移 | `T34` 绿；`K2` 常驻不升 |
@@ -71,6 +68,7 @@
 | T27 | 驻留的显存交易复评 | pin 模型（ADR-2026-11-10）让驻留 = 活内容所需：离屏但宿主仍持有的内容不再自动让出显存。若某宿主的显存峰值不可接受，需要重新引入一条时间/容量规则（会与“零时间窗”的判据冲突，必须走新 ADR） | 出现“大场景 + 离线模型常驻”进入显存预算的真实宿主 | `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §代价 |
 | T29 | 驻留账的帧级增量 | `RetentionStats::residency`（ADR 第一步）答的是“现在多少”；T25 要的是“这一帧传了多少 / 释放了多少”，即两次报告之差 | 与 T25 同一触发 | `../design/graphics-content-lifecycle.md` §3.3 |
 | T30 | GPU 资源抽象（统一类型 / 多态总表） | 现在统一的是**规则与账**（`ResidencyLedger` + pin），不是类型。基类或多态总表只在第二个后端出现时才值得：届时形状是“SDK 资源描述 + 每后端实现”，不是包 vsg 的基类 | 第二个后端出现（与 T15 同一触发） | `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §选项表 |
+| T31 | 字节 revision 的跨线程轮询 | `StreamUploads::beginFrame` 在引擎线程比较活 `Buffer` 的 `revision()`，而那是普通计数器；流式写入与引擎帧并发时是未定义行为。修法不是改 atomic（只修一个字段），而是让写入方在发布边界声明一个值（`(buffer, revision)` 声明），驻留按声明判活。帧载荷的程序/材质/灯值已走值通道（W1） | T17 异步上传 / 编译落地，或流式写入真的与引擎线程并发 | `../design/graphics-threading.md` §2.4、R3-1 |
 
 ### 2.3 平台与验证
 | # | 项 | 内容 | 触发条件 |

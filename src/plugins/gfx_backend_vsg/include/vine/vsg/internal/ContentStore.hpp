@@ -111,6 +111,22 @@ class ContentStore {
     void track(const vn::intrusive_ptr<vn::graphics::ShaderProgram>& program);
 
     /**
+     * @brief Answers for @p description's TEXT from now on - the program's half of the material value overload.
+     *
+     * @details
+     * - THE VALUE, NOT THE OBJECT: a row is built from what the frame carried (`RenderCommand::program_description`,
+     *   `PassDraw::program_override_description`), so describing a program never reads the live program on the
+     *   thread that records the frame. A stage edit is a new value at the next publish (see
+     *   `detail::refreshValues`), which is what makes an edit while a frame is in flight keep that frame's text.
+     * - The rows the tables answer for the old revision stay answerable until no live plan has named them for a
+     *   window (see `LiveProgram::description` and the file note). A hand-built caller that never published a text
+     *   is answered from the object's own cache, the same door a material uses.
+     *
+     * @param description The program text; null is ignored.
+     */
+    void track(const vn::graphics::ShaderProgramDescriptionPtr& description);
+
+    /**
      * @brief Takes (a share of) ownership of @p material and answers for it from now on.
      *
      * @param material Material the host shades with; null is ignored (content without a material is answered

@@ -99,38 +99,18 @@ struct InputRef {
     vn::graphics::ImageSource source{}; // The resolved input (Produced* or ImportedTexture).
 };
 
-/** @brief One light as the frame remembers it: its numbers, never the borrowed pointer.
+/** @brief One light as the frame remembers it: the SDK's value type (see LightValue).
  *
  * @details
- * - A light is borrowed for the duration of the call that announces it (a drawing call's lights), and
- *   a plan that kept the pointer would read freed memory - the host is free to destroy the light, and
- *   the scene it belongs to, before the frame is recorded. The fields here are what the shading block
- *   is built from (see VsgLights).
+ * - ONE DEFINITION, TWO READERS (G1): a pass snapshots a scene's lights with `Light::value()` on the content side,
+ *   and this layer stores that value - the shading block and the shadow map's whose-is-it match read it. There is no
+ *   second light struct to keep in step, and recording never touches a `Light` object.
+ * - `identity` is the light's address, used only to match `RenderTarget::shadowOf` against the announced lights; it is
+ *   never dereferenced after the call that announced it.
+ * - The old pointer-shaped `setLights` overload stays for hand-built calls (C11: additive until 5b-2c); it converts
+ *   through `Light::value()` on the content side.
  */
-struct LightRef {
-    /// @brief The light this was copied from (its identity, not a number).
-    ///
-    /// A shadow map states WHOSE it is (RenderTarget::shadowOf), so the plan has to be able to match that
-    /// statement against the lights a drawing call announced - and numbers cannot do that (two lights of the same
-    /// colour are the same numbers). The pointer is an identity, never dereferenced after the call returns.
-    const void*             identity{ nullptr };
-    bool                    enabled{ false };                         // Disabled lights are not lit.
-    vn::graphics::LightType type{ vn::graphics::LightType::Ambient }; // Ambient / directional / reserved kinds.
-    vn::Colorf              color{};                                  // Linear colour.
-    float                   intensity{ 1.0F };                        // Intensity multiplier.
-    bool                    has_direction{ false };                   // Whether direction() means anything.
-    vn::math::Vec3d         direction{};                              // World-space direction (directional lights).
-    bool                    has_position{ false };                    // Whether position() / range() mean anything.
-    vn::math::Vec3d         position{};                               // World-space position (point / spot lights).
-    float                   range{ 0.0F };                            // Distance at which the contribution reaches zero
-                                                                      // (0 = no cutoff); see Light::setRange.
-    double inner_cone_degrees{ 0.0 };                                 // Spot cone's full-strength angle (degrees).
-    double outer_cone_degrees{ 0.0 };                                 // Spot cone's zero-strength angle (degrees).
-    bool   cast_shadow{ false };                                      // Light::isCastingShadow: the switch that makes it a
-                                                                      // caster.
-    float shadow_bias{ 0.0F };                                        // ShadowSettings::bias: the map comparison's
-                                                                      // depth bias.
-};
+using LightRef = vn::graphics::LightValue;
 
 /** @brief The camera value a frame carries (see `CameraSnapshot`): one definition, in the SDK root.
  *
@@ -357,7 +337,22 @@ class VN_GRAPHICS_API FrameRecorder {
      */
     bool setPassInputs(std::span<const vn::graphics::RenderTarget* const> inputs);
 
-    /** @brief Announces the lights for the NEXT drawing call of this scope.
+    /** @brief Announces the lights for the NEXT drawing call of this scope, as VALUES.
+     *
+     * @details
+     * - THE ENTRY THE FRAME PATH USES: a pass snapshots its scene's lights with `Light::value()` when it describes
+     *   itself, and this copies the values - so recording never reads a `Light` on the thread that records.
+     * - Engaged-but-empty is a real announcement ("there are none"), exactly like the pointer spelling.
+     *
+     * @param lights The light values, or empty for the backend default.
+     * @return true when it was recorded; false when it was dropped.
+     */
+    bool setLights(std::span<const vn::graphics::LightValue> lights);
+
+    /** @brief Announces the lights for the NEXT drawing call of this scope (the object spelling).
+     *
+     * @note The legacy door for a hand-built call (C11: additive until 5b-2c); it converts through
+     *       `Light::value()` and therefore reads the light on the caller's thread.
      *
      * @param lights Lights of the content scene, or empty for the backend default.
      * @return true when it was recorded; false when it was dropped.
@@ -380,6 +375,23 @@ class VN_GRAPHICS_API FrameRecorder {
     bool render(std::span<const vn::graphics::RenderCommand> commands,
                 const vn::graphics::CameraSnapshot&          camera,
                 const vn::graphics::ShaderProgram*           program_override = nullptr);
+
+    /** @brief The value spelling of the call above: @p program_override is the pass override's TEXT.
+     *
+     * @details
+     * - What the frame path calls: `PassDraw::program_override_description` was taken when the pass described
+     *   itself, so an override edited while the frame is in flight keeps the text the frame recorded.
+     * - The object spelling stays for hand-built calls (C11: additive until 5b-2c); a literal `nullptr` as the third
+     *   argument is ambiguous between the two, so callers state the parameter's type (or pass neither).
+     *
+     * @param commands         Commands to draw, copied into the arena before this call returns.
+     * @param camera           The view the call is projected with.
+     * @param program_override Program text every command is drawn with, or null for each command's own.
+     * @return true when the call was collected; false when it was refused (no scope, or a released target).
+     */
+    bool render(std::span<const vn::graphics::RenderCommand> commands,
+                const vn::graphics::CameraSnapshot&          camera,
+                const vn::graphics::ShaderProgramDescription* program_override);
 
     /** @brief The same, for a caller that still holds the authored camera (the content-side convenience).
      *
@@ -408,6 +420,15 @@ class VN_GRAPHICS_API FrameRecorder {
      */
     bool drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::CameraSnapshot& camera);
 
+    /** @brief The value spelling: @p program is the fragment program's TEXT (see DrawDescription::program_description).
+     *
+     * @param source  Target whose colour attachments are sampled.
+     * @param program Fragment program text to draw with.
+     * @param camera  The view the call is projected with (the frame's value).
+     * @return true when the call was collected; false when it was refused.
+     */
+    bool drawScreenProgram(const void* source, const vn::graphics::ShaderProgramDescription* program, const vn::graphics::CameraSnapshot& camera);
+
     /** @brief The same, for a caller that still holds the authored camera (the content-side convenience).
      *
      * @param source  Target whose colour attachments are sampled.
@@ -428,6 +449,13 @@ class VN_GRAPHICS_API FrameRecorder {
      * @return true always (the setting is a fact, not a request that can fail).
      */
     bool setDefaultContentProgram(const vn::graphics::ShaderProgram* program);
+
+    /** @brief The value spelling of the setting above: @p program is the default program's TEXT.
+     *
+     * @param program Program text to shade program-less content with, or null for "none".
+     * @return true always (the setting is a fact, not a request that can fail).
+     */
+    bool setDefaultContentProgram(const vn::graphics::ShaderProgramDescription* program);
 
     /** @brief Notes that a target is going away: the announcement of an open scope is dropped here.
      *
@@ -452,16 +480,19 @@ class VN_GRAPHICS_API FrameRecorder {
 
   private:
     /** @brief Copies @p lights into the arena and makes them the pending announcement. */
+    void snapshotLights(std::span<const vn::graphics::LightValue> lights);
+
+    /** @brief The object spelling: converts through `Light::value()` and delegates. */
     void snapshotLights(std::span<const vn::graphics::Light* const> lights);
 
     /** @brief Copies @p commands into the arena as collected commands, with the pass' program override applied.
      *
      * @param commands         Commands of one drawing call (borrowed).
-     * @param program_override Program every command is drawn with, or null for each command's own.
+     * @param program_override Program text every command is drawn with, or null for each command's own.
      * @return The recorded commands (arena storage, valid until the frame's arena is reset).
      */
     [[nodiscard]] std::span<const CollectedCommand> snapshotCommands(std::span<const vn::graphics::RenderCommand> commands,
-                                                                     const vn::graphics::ShaderProgram*           program_override);
+                                                                     const vn::graphics::ShaderProgramDescription* program_override);
 
 
   private:

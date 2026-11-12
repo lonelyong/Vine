@@ -8,6 +8,7 @@ VN_GRAPHICS_NS_BEGIN
 RenderCommand::RenderCommand(intrusive_ptr<Geometry> g, MaterialBasePtr m, const Mat4d& model, std::uint32_t primitive_index)
   : geometry(std::move(g))
   , description(geometry != nullptr ? geometry->description() : GeometryDescriptionPtr{})
+  , geometry_ref(geometry != nullptr ? contentRefOf(geometry->id(), description != nullptr ? description->revision() : 0U) : ContentRef{})
   , primitive_index(primitive_index)
   , material(std::move(m))
   , model_matrix(model)
@@ -38,6 +39,16 @@ GeometryDescriptionPtr RenderCommand::geometryDescription() const
     // A hand-built command (see the declaration): the geometry's own cache answers, once per revision, and the
     // object is the content's - which is why this is only for the thread that authored the command.
     return geometry != nullptr ? geometry->description() : GeometryDescriptionPtr{};
+}
+
+ShaderProgramDescriptionPtr RenderCommand::programDescription() const
+{
+    if (program_description != nullptr) {
+        return program_description;
+    }
+    // A hand-built command (see the declaration): the program's own cache answers, once per revision, and the object
+    // is the content's - which is why this is only for the thread that authored the command.
+    return program != nullptr ? program->description() : ShaderProgramDescriptionPtr{};
 }
 
 VN_GRAPHICS_NS_END

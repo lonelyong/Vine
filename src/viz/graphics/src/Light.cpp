@@ -189,4 +189,26 @@ void Light::setShadowBias(float bias)
     shadow_settings_.bias = bias;
 }
 
+LightValue Light::value() const noexcept
+{
+    // Every field is written, the conditional ones included: a value that left a member at its default because
+    // "this kind of light does not use it" would make a point light read as a directional one at the origin.
+    LightValue value;
+    value.identity           = this;
+    value.enabled            = enabled_;
+    value.type               = type_;
+    value.color              = color_;
+    value.intensity          = intensity_;
+    value.has_direction      = type_ == LightType::Directional || type_ == LightType::Spot;
+    value.has_position       = type_ == LightType::Point || type_ == LightType::Spot;
+    value.direction          = value.has_direction ? direction_ : vn::math::Vec3d{};
+    value.position           = value.has_position ? position_ : vn::math::Vec3d{};
+    value.range              = range_;
+    value.inner_cone_degrees = inner_cone_degrees_;
+    value.outer_cone_degrees = outer_cone_degrees_;
+    value.cast_shadow        = cast_shadow_;
+    value.shadow_bias        = shadow_settings_.bias;
+    return value;
+}
+
 VN_GRAPHICS_NS_END

@@ -44,7 +44,7 @@ struct SceneSnapshot {
     std::uint64_t                                        revision{ 0 };
     std::uint64_t                                        epoch{ 0 };
     std::uint64_t                                        boxes{ 0 };
-    std::uint64_t                                        materials{ 0 };
+    std::uint64_t                                        values{ 0 };
 
     /** @brief Returns the row at @p index; the index must be below row_count. */
     [[nodiscard]] const Row& row(std::size_t index) const
@@ -61,14 +61,14 @@ using SceneSnapshotPtr = std::shared_ptr<const SceneSnapshot>;
  * @param rows      The current rows (read only).
  * @param epoch     The scene's published content epoch.
  * @param boxes     The scene's box generation.
- * @param materials The scene's material generation.
+ * @param values    The scene's value generation (materials and program texts).
  * @param previous  The snapshot this one may share chunks with, or null for a full copy.
  * @return The new snapshot; never null.
  */
 [[nodiscard]] SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
                                                  std::uint64_t           epoch,
                                                  std::uint64_t           boxes,
-                                                 std::uint64_t           materials,
+                                                 std::uint64_t           values,
                                                  const SceneSnapshotPtr& previous);
 
 /**

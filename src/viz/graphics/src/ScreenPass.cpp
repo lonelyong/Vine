@@ -69,6 +69,9 @@ bool ScreenPass::describe(raw_ptr<Scene> scene, PassDraw& out)
     draw.camera  = CameraSnapshot::of(*camera());
     draw.source  = source_;
     draw.program = desc_.program;
+    // Its text as a value, taken with the pointer (see DrawDescription::program_description): the recorder reads the
+    // value, so a program edited while a frame is in flight keeps the text it was described with.
+    draw.program_description = desc_.program != nullptr ? desc_.program->description() : ShaderProgramDescriptionPtr{};
     // Forward the content scene's lights so the backend can push them to the
     // fullscreen fragment program (mirrors how scene passes feed their lights).
     // A pass with no scene announces NONE rather than an empty list: a screen pass is content-agnostic, and
@@ -80,6 +83,12 @@ bool ScreenPass::describe(raw_ptr<Scene> scene, PassDraw& out)
             light_ptrs.push_back(light.get());
         }
         draw.lights = std::move(light_ptrs);
+        std::vector<LightValue> light_values;
+        light_values.reserve(scene->lights().size());
+        for (const auto& light : scene->lights()) {
+            light_values.push_back(light != nullptr ? light->value() : LightValue{});
+        }
+        draw.light_values = std::move(light_values);
     }
     out.draws.push_back(std::move(draw));
     return true;

@@ -15,6 +15,44 @@ ShaderProgram::~ShaderProgram()
     ContentRegistry::instance().release(id_.handle());
 }
 
+ShaderProgramDescription::ShaderProgramDescription(ProgramId id, std::uint64_t revision, String name, std::vector<ShaderStage> stages)
+  : id_(id)
+  , revision_(revision)
+  , name_(std::move(name))
+  , stages_(std::move(stages))
+{}
+
+ProgramId ShaderProgramDescription::id() const noexcept
+{
+    return id_;
+}
+
+std::uint64_t ShaderProgramDescription::revision() const noexcept
+{
+    return revision_;
+}
+
+const String& ShaderProgramDescription::name() const noexcept
+{
+    return name_;
+}
+
+std::span<const ShaderStage> ShaderProgramDescription::stages() const noexcept
+{
+    return stages_;
+}
+
+ShaderProgramDescriptionPtr ShaderProgram::description() const
+{
+    // The cache key IS the revision (see Geometry::description): a stage edit is the only thing that moves it, and a
+    // frame in flight keeps the value it was published with.
+    if (description_ != nullptr && description_->revision() == revision_) {
+        return description_;
+    }
+    description_ = ShaderProgramDescriptionPtr(new ShaderProgramDescription(id_, revision_, name_, stages_));
+    return description_;
+}
+
 ProgramId ShaderProgram::id() const noexcept
 {
     return id_;

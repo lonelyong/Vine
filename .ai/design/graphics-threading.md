@@ -60,7 +60,7 @@
   `ContentHalves` / `ContentSets` / `MaterialImages`）、vsg 命令图、交换链，只被引擎线程写。
 - **为什么**：两个写者共享一个可变图，只能靠锁 —— 锁会进到每一次读路径，且与"稳态零分配"直接冲突（`G1` / `G10`）。
   各自一个写者 + 值通道，是唯一能让两边都保持零锁的形状。
-- **边界**：唯一的跨侧读取是"已发布不可变值"（§2.2）与两个原子 revision（§2.4）。引擎侧**不读**内容对象的任何字段。
+- **边界**：唯一的跨侧读取是“已发布不可变值”（§2.2）与随 pass 快照的值（§2.14）。引擎侧**不读**内容对象的任何可变字段。
 
 ### 2.2 跨线程的唯一载荷：一次发布的不可变快照
 
@@ -70,6 +70,9 @@
 - **为什么**：一份值取代五种"副本过期"的答案（`G1`）；发布是唯一一次可变 → 不可变的转换，所以"旧帧画旧值"
   不是约定，而是值语义；派生是纯函数，因此可并行、可 dump、可 replay（`G11`）。
 - **边界**：快照的内容、分块与选择器是**实现**（`detail::SceneSnapshot`）；公开面只有一个不透明句柄加 `revision()`。
+- **行里装的是什么值**：每条命令携带 `geometry_ref` / `material_ref`（身份 + 版本）与三份不可变描述
+  （`GeometryDescription` / `MaterialDescription` / `ShaderProgramDescription`）；pass 描述自己时另快照
+  `LightValue` 数组与程序 override 的文本。这就是 §2.14 的载荷，记录侧只读它。
 - **一次发布是谁的动词**：`publish()` 是内容侧的动词（内容线程，唯一写者）；`bindSnapshot()` 是引擎侧的动词（宿主在
   帧与帧之间调用，或引擎的隐式发布代劳 —— 见 §2.13）。两者合起来才是完整的交接。
 
@@ -85,15 +88,16 @@
   没有消费者的通道不做（`G8`）。
 - **边界**：publication 没有返回值，也不排队 —— 它是**一个指针交换**，没有"满了"这种状态。
 
-### 2.4 字节内容靠两个原子 revision
+### 2.4 字节内容：一个已知残余，不是第二条值通道
 
-- **是什么**：`Buffer::revision()` 与 `Geometry::revision()` 是 `std::atomic<std::uint64_t>`（relaxed 读），
-  其余一切不变。引擎侧的驻留条目问"我上传的 revision 还是不是现在这个"（`StreamUploads` 的 live 判据），
-  这条轮询继续用，只是那次读现在是原子的。
-- **为什么**：字节可以在任何线程写（加载 worker、流式写入），把每次 `Buffer::edit()` 变成一次发布会让
-  "编辑"与"帧"强耦合，且发布要承受每帧上千条；而轮询的代价已经是 O(#驻留条目)、与内容规模无关。
-- **边界**：这是**唯一**允许的跨侧读；只读这两个计数器，不读它们指向的任何东西。描述变化（通道集合、切片、
-  primitive）不进这条通道 —— 它进的是下一次发布的快照。
+- **是什么**：几何的**形状**（通道集合、切片、primitive）走发布的描述值；几何/纹理的**字节**不走 —— 字节在任何线程写
+  （加载 worker、流式写入），驻留条目问“我上传的 revision 还是不是它上传时那个”（`StreamUploads` 的 live 判据）。
+  这条轮询**今天读的是活对象的 `revision()`**，而那个计数器**不是** `std::atomic`（2026-11-12 核对：`Buffer` /
+  `Geometry` / `Texture` / `ShaderProgram` / `Material` 里都是普通 `std::uint64_t`）。
+- **为什么保留**：把每次 `Buffer::edit()` 变成一次发布会让“编辑”与“帧”强耦合，且发布要承受每帧上千条。
+- **边界**：这是**已知残余**（backlog T31）：当流式写入真的与引擎线程并发时，轮询本身是未定义行为。修法不在本轮
+  （它需要“写入声明一条值”而不是把计数器改 atomic —— 后者只修一个字段）：见 T31 的触发条件。
+  帧载荷的**内容**（形状、材质值、程序文本、灯）不靠这条通道，它们全部是 §2.14 的值。
 
 ### 2.5 发布是一次指针交换，不是一次事务
 
@@ -145,7 +149,9 @@
   并执行、呈现。两步之间只传值。
 - **为什么**：这条缝就是线程边界（`G3` / `G7`）：内容半段可以留在内容线程，引擎半段可以搬到引擎线程，而
   "一帧是什么"只有一个定义。
-- **边界**：`FrameDescription` 里的指针都是借用（camera、commands、lights、target、program），只在这个调用期间有效。
+- **边界**：`FrameDescription` 里的指针都是借用（camera、commands、target、program），只在这个调用期间有效；
+  记录侧读的却是它旁边那份**值**（`light_values`、`program_override_description`、命令里的三份 description），
+  所以借用指针失效也不改变“这一帧画的是什么”。
 
 ### 2.11 一帧的所有权：三样东西，各自一个所有者
 
@@ -210,6 +216,22 @@
   那一份"，而不是"跑的时候恰好是什么"（`G4`）。
 - **边界**：一个引擎对一份场景只保留一个绑定；绑定是**每个引擎**的，所以两个引擎可以各画各的一份（编辑器 + 离屏烘焙）。
 
+### 2.14 跨侧载荷是值：三份 description + `LightValue` + `ContentRef`
+
+- **是什么**：内容对象各有“值半边”，与身份一起过界：
+  - `GeometryDescription`（形状）、`MaterialDescription`（材质值）、`ShaderProgramDescription`（程序文本 + id + revision，
+    新增）；三者都是 **按 revision 缓存**的不可变值（`X::description()`）。
+  - `ContentRef`（`id + revision`）是事实表的键：`RenderCommand` 带 `geometry_ref` / `material_ref`，`program_description`
+    自带 id+revision。
+  - `LightValue`（新增）是灯的值半边；pass 描述自己时（`RenderPass::describe` / `ScreenPass::describe`）把场景的灯快照成
+    `DrawDescription::light_values`，程序 override 同时快照成 `PassDraw::program_override_description`。
+- **为什么**（`G1` / `G4` / `G10`）：**唯一一类真实 UB** 是 UI 改灯/材质/程序与引擎线程读同一非原子字段（R3-1）。
+  值通道让“帧 N 画它描述时的那份值”成为值语义，而不是约定；每条命令少 3 次 `intrusive_ptr` 原子增减。
+  “把 revision 改 atomic”只修一个字段、不修灯与程序文本，**已否决**（`D12`）。
+- **边界**：活指针字段（`RenderCommand::geometry/material/program`、`PassDraw::program_override`、
+  `DrawDescription::lights`）**保留到 5b-2c**（`C11`：公开 API 只增不改）；记录侧与事实表只读值，活指针只做身份与寿命。
+  程序/材质的值是通过 `detail::refreshValues` 在发布边界重取的（它们不经节点 mutator，epoch 看不见）。
+
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -220,9 +242,9 @@
 | F2 | 发布协议 | 一次发布 = 一次指针交换；三态答案 + 快照句柄 | 已落地（5b-2a） |
 | F3 | 场景图结构更新 | attach / detach / 重父化 / 换根**不需要任何通知**：下一次发布的内容就是新的结构 | 已落地 |
 | F4 | 节点状态更新 | placement / opacity / layers / drawOrder 折叠进下一次发布；隐藏 = 不产生行 | 已落地 |
-| F5 | 几何与材质值的更新 | 行携带 `(id, revision)` 与值；旧帧读旧值 | 已落地 |
+| F5 | 几何、材质与程序值的更新 | 行携带 `(id, revision)` 与值；旧帧读旧值 | 已落地 |
 | F6 | 相机更新 | 相机是内容、事件即刻生效；查询用被答完那一帧的快照（N17） | 已落地 |
-| F7 | 字节内容与流式 | `Buffer::edit()` 只推进原子 revision；引擎侧按驻留条目轮询 | 已落地 |
+| F7 | 字节内容与流式 | `Buffer::edit()` 只推进 revision；引擎侧按驻留条目轮询（已知残余，见 §2.4） | 已落地 |
 | F8 | 每帧 | 内容半段：钩子 → 发布 → describe；引擎半段：bind → expand → execute → present → 报告 | 已落地 |
 | F9 | 表面事件与交换链 | 尺寸是帧自己的值；设备动词是帧间操作；呈现结局是值 | 已落地 |
 | F10 | 关闭与拆解 | 停帧 → 引擎半段收尾 → 引擎线程释放 → join | 已落地 |
@@ -240,7 +262,7 @@
   `FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch`、
   `SnapshotSourceTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith`、
   `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`。
-- **注意**（§2.4）：原子 revision 只回答"字节换了"，不回答"在哪读"；形状变化走发布。
+- **注意**（§2.4）：字节 revision 只回答"字节换了"，不回答"在哪读"；形状与值的变化走发布（§2.14）。
 
 ### 3.1.2 F8 每帧
 

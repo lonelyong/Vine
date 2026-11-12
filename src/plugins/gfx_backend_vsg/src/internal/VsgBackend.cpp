@@ -452,7 +452,7 @@ struct VsgBackend::Data {
     std::size_t                             released_textures{ 0 };
     std::size_t                             released_streams{ 0 };
     std::vector<core::TargetFacts>          facts;         // This frame's target table (borrowed rows).
-    std::vector<const vn::graphics::Light*> light_scratch; // Reused by announceLights (no per-call allocation).
+    std::vector<vn::graphics::LightValue> light_scratch; // Reused by announceLights (no per-call allocation).
     std::vector<InputImages>                input_scratch; // Reused per content pass (see recordContent).
     /// One colour-view list per declared input, reused per pass: the InputImages spans point into these, so
     /// they must outlive the record call and must not be reallocated while it runs (see recordContent).
@@ -811,19 +811,20 @@ void VsgBackend::collectFrame(const vn::graphics::FrameDescription& frame)
                 announceDepthRange(*description.depth_range);
             }
             for (const vn::graphics::DrawDescription& draw : description.draws) {
-                if (draw.lights.has_value()) {
-                    announceLights(*draw.lights);
+                if (draw.light_values.has_value()) {
+                    announceLights(*draw.light_values);
                 }
                 if (!draw.camera.present) {
                     continue; // a drawing call with no view is no call at all (see DrawDescription)
                 }
                 if (draw.kind == vn::graphics::DrawDescription::Kind::Screen) {
-                    collectScreenDraw(draw.source, draw.program.get(), draw.camera);
+                    collectScreenDraw(draw.source, draw.program.get(), draw.program_description, draw.camera);
                 }
                 else if (draw.commands != nullptr) {
                     // The override is a PASS fact (see PassDraw::program_override), so every drawing call of the
-                    // pass is drawn with it; the command list itself is never rewritten.
-                    collectContentDraw(*draw.commands, draw.camera, description.program_override.get());
+                    // pass is drawn with it; the command list itself is never rewritten. Its TEXT travels with it
+                    // (PassDraw::program_override_description), which is what the recorder applies.
+                    collectContentDraw(*draw.commands, draw.camera, description.program_override_description);
                 }
             }
         }
@@ -1251,9 +1252,15 @@ void VsgBackend::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::
     d->default_program = std::move(program);
     // The plan needs it now - content without a program of its own is drawn with this one, and the
     // compiler resolves that before the plan exists - and the store must know it before any frame names
-    // it, because the tables are what the recording reads.
-    (void)d->recorder.setDefaultContentProgram(d->default_program.get());
+    // it, because the tables are what the recording reads. The TEXT is taken here, on the content side (this call is
+    // a host API), and both halves travel: the object for the store's ownership/abandon rule, the value for its rows.
+    const vn::graphics::ShaderProgramDescriptionPtr text =
+        d->default_program != nullptr ? d->default_program->description() : vn::graphics::ShaderProgramDescriptionPtr{};
+    (void)d->recorder.setDefaultContentProgram(text.get());
     trackProgram(d->store.get(), d->default_program);
+    if (d->store != nullptr) {
+        d->store->track(text);
+    }
 }
 
 vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
@@ -1469,16 +1476,15 @@ void VsgBackend::announceViewport(const vn::graphics::Viewport& viewport)
     }
 }
 
-void VsgBackend::announceLights(const std::vector<vn::raw_ptr<const vn::graphics::Light>>& lights)
+void VsgBackend::announceLights(std::span<const vn::graphics::LightValue> lights)
 {
     if (!d->recorder.inPass()) {
         return;
     }
-    // raw_ptr<T> IS T* (see vine/raw_ptr.hpp), so the draw's pointers are the plan's spelling as
-    // they are - only the container has to become a span, and the scratch vector keeps that from being an
-    // allocation per pass per frame.
+    // The values are already a copy taken on the content side (see Light::value): only the container has to become a
+    // span, and the scratch vector keeps that from being an allocation per pass per frame.
     d->light_scratch.assign(lights.begin(), lights.end());
-    (void)d->recorder.setLights(d->light_scratch);
+    (void)d->recorder.setLights(std::span<const vn::graphics::LightValue>(d->light_scratch));
 }
 
 void VsgBackend::announcePassInputs(const std::vector<vn::graphics::ImageSource>& inputs)
@@ -1547,7 +1553,7 @@ void VsgBackend::announceClear(const vn::graphics::ClearPolicy& policy)
 
 void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
                                     const vn::graphics::CameraSnapshot&             camera,
-                                    const vn::graphics::ShaderProgram*              program_override)
+                                    const vn::graphics::ShaderProgramDescriptionPtr& program_override)
 {
     if (!d->recorder.inFrame()) {
         return; // nothing is collected outside a frame
@@ -1573,34 +1579,45 @@ void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderComman
         // graphics-threading.md C18).
         d->store->track(command.material.get(), command.materialDescription());
         d->store->track(command.program);
+        // The program's TEXT travels the same way the material's values do: a command built from a row carries the
+        // text that row was published with, so the program table is described from a value and never from the live
+        // object - which is what lets the content side edit a program while another thread records.
+        d->store->track(command.programDescription());
     }
     // The picture's shape is the CAMERA's (see Camera), and the recorder reads it from the same camera when it
     // builds the view block - one number, read by culling and projection alike, so they cannot drift.
     if (program_override != nullptr) {
-        // The override's own texts are content like any other: the store must answer for them when the plan
-        // records, even though no command names it.
-        trackProgram(d->store.get(), vn::intrusive_ptr<const vn::graphics::ShaderProgram>(const_cast<vn::graphics::ShaderProgram*>(program_override)));
+        // The override's own text is content like any other: the store must answer for it when the plan records,
+        // even though no command names it.
+        d->store->track(program_override);
     }
     // The pass' override is resolved when the draw is recorded (see FrameRecorder::render): the command list stays the
     // shared one the engine collected, and nothing here rewrites it.
-    (void)d->recorder.render(commands, camera, program_override); // refusing (a released target) is the recorder's to report
+    (void)d->recorder.render(commands, camera, program_override.get()); // refusing (a released target) is the recorder's to report
 }
 
 void VsgBackend::collectScreenDraw(vn::graphics::RenderTarget*                    source,
                                    vn::raw_ptr<const vn::graphics::ShaderProgram> program,
+                                   const vn::graphics::ShaderProgramDescriptionPtr& program_description,
                                    const vn::graphics::CameraSnapshot&            camera)
 {
     if (!d->recorder.inFrame()) {
         return; // nothing is collected outside a frame
     }
+    // The VALUE the pass carried is what the tables and the recorder read; a hand-built description that named only
+    // the object is converted here, on the content side (the same door every hand-built command uses).
+    const vn::graphics::ShaderProgramDescriptionPtr text =
+        program_description != nullptr ? program_description
+                                       : (program != nullptr ? program->description() : vn::graphics::ShaderProgramDescriptionPtr{});
     if (d->store != nullptr) {
         // The fragment stage is content like any other: the tables must answer its two texts and their
         // declarations when the plan records (the store's own walk covers full-screen calls' programs).
         trackProgram(d->store.get(), vn::intrusive_ptr<const vn::graphics::ShaderProgram>(program));
+        d->store->track(text);
     }
     // The source is an IDENTITY here, exactly like a content draw's program: which images it offers was
     // announced with the pass' inputs (the value's resolved `inputs`), and the content layer resolves it among them.
-    (void)d->recorder.drawScreenProgram(source, program, camera);
+    (void)d->recorder.drawScreenProgram(source, text.get(), camera);
 }
 
 void VsgBackend::releasePass(vn::raw_ptr<const vn::graphics::RenderPass> pass)

@@ -3,6 +3,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
+#include <utility>
 #include <vector>
 
 #include <vine/Object.hpp>
@@ -37,6 +39,55 @@ struct VN_GRAPHICS_API ShaderStage {
     String          source;                         // GLSL source for the stage.
     String          entryPoint = u8"main";          // Entry function name.
 };
+
+/**
+ * @brief ONE program's text as an immutable VALUE: its identity, the revision it was read at, and its stages.
+ *
+ * @details
+ * - THE PROGRAM'S HALF OF THE FRAME'S VALUE CHANNEL, the same shape as `GeometryDescription` and
+ *   `MaterialDescription`: what crosses to a side that records the frame is this value, not the live program.
+ * - IT NAMES ITSELF. The id travels with the text because a frame in flight keys its compiled variants by
+ *   `(id, revision)` and cannot ask the object for either half on the thread that records (see ContentId.hpp).
+ * - ONE PER REVISION: `ShaderProgram::description()` returns the cached instance for the program's current revision,
+ *   so frames with no text edit share one object. A stage edit is a NEW value at the next publication boundary
+ *   (see `Scene::beginEdit` and `.ai/design/graphics-threading.md`).
+ * - `name` is diagnostics only (a program whose text is refused still has a name); it is taken with the text because
+ *   the recorder no longer reads the object. A rename does not move the revision, so a cached description keeps the
+ *   name it was built with - the same visibility the name had when the facts were described per revision.
+ * - NOT thread-safe to mutate, and it never is: every field is set by the constructor and read-only afterwards.
+ */
+class VN_GRAPHICS_API ShaderProgramDescription final : public RefCounted<ShaderProgramDescription> {
+  public:
+    /**
+     * @brief Constructs a description.
+     *
+     * @param id       The program identity the text belongs to.
+     * @param revision The program revision the text was read at.
+     * @param name     The program name at that revision (diagnostics only).
+     * @param stages   The stages, in addition order.
+     */
+    ShaderProgramDescription(ProgramId id, std::uint64_t revision, String name, std::vector<ShaderStage> stages);
+
+    /** @brief Gets the program identity. */
+    [[nodiscard]] ProgramId id() const noexcept;
+
+    /** @brief Gets the revision the text was read at. */
+    [[nodiscard]] std::uint64_t revision() const noexcept;
+
+    /** @brief Gets the program name at that revision (diagnostics only). */
+    [[nodiscard]] const String& name() const noexcept;
+
+    /** @brief Gets the stages, in addition order. */
+    [[nodiscard]] std::span<const ShaderStage> stages() const noexcept;
+
+  private:
+    ProgramId                id_;
+    std::uint64_t            revision_;
+    String                   name_;
+    std::vector<ShaderStage> stages_;
+};
+
+using ShaderProgramDescriptionPtr = intrusive_ptr<const ShaderProgramDescription>;
 
 /**
  * @brief Backend-agnostic, user-authored shader program (a set of stages).
@@ -147,11 +198,28 @@ class VN_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderPro
      */
     const std::vector<ShaderStage>& stages() const;
 
+    /**
+     * @brief Gets the program's text as an immutable value, building it when the revision moved.
+     *
+     * @details
+     * - THE CONVERSION, the same shape as `Geometry::description()` and `MaterialBase::description()`: call it where
+     *   the program may still be read (the publish that copies a scene's rows, a pass describing itself). It caches,
+     *   so the second call in a revision is an integer compare.
+     * - What the RECORDING side reads is the value handed to it (`RenderCommand::program_description`,
+     *   `PassDraw::program_override_description`), never this call: a program edit must reach a frame at a
+     *   publication boundary, not in the middle of one (design graphics-threading.md).
+     *
+     * @return The cached description for the current revision.
+     */
+    [[nodiscard]] ShaderProgramDescriptionPtr description() const;
+
   private:
     ProgramId                id_;
     String                   name_;
     std::vector<ShaderStage> stages_;
     std::uint64_t            revision_ = 0;
+    /// The text as a value, rebuilt only when revision_ moves (see description()).
+    mutable ShaderProgramDescriptionPtr description_;
 };
 
 using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;

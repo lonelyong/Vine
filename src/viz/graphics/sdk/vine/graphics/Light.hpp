@@ -46,6 +46,37 @@ struct VN_GRAPHICS_API ShadowSettings {
 };
 
 /**
+ * @brief ONE light as a frame REMEMBERS it: its numbers plus an identity, never the object.
+ *
+ * @details
+ * - THE LIGHT'S HALF OF THE FRAME'S VALUE CHANNEL, the same shape as `GeometryDescription` / `MaterialDescription`:
+ *   a pass taking this value when it describes itself is what lets a frame record without reading a `Light` on the
+ *   thread that records it (`Light::value()` is the one conversion, made where the light lives).
+ * - `identity` is the light's ADDRESS, used only to match a shadow map's statement of whose it is
+ *   (`RenderTarget::shadowOf`) against the lights a drawing call announced. It is never dereferenced after the call
+ *   returns - two lights with the same numbers would otherwise be indistinguishable to that match.
+ * - The fields are exactly what the shading block is built from (see the backend's `VineLightsBlock`); adding a
+ *   shading input means adding it here and in `Light::value()` together, so the value a frame carries and the value a
+ *   light states cannot drift.
+ */
+struct VN_GRAPHICS_API LightValue {
+    const void* identity{ nullptr };                         // The light's address (identity only, never read).
+    bool        enabled{ false };                            // Disabled lights are not lit.
+    LightType   type{ LightType::Ambient };                  // Ambient / directional / point / spot.
+    Colorf      color{};                                     // Linear colour.
+    float       intensity{ 1.0F };                           // Intensity multiplier.
+    bool        has_direction{ false };                      // Whether direction means anything.
+    vn::math::Vec3d direction{};                             // World-space direction (directional lights).
+    bool        has_position{ false };                       // Whether position / range mean anything.
+    vn::math::Vec3d position{};                              // World-space position (point / spot lights).
+    float       range{ 0.0F };                               // Distance at which the contribution reaches zero.
+    double      inner_cone_degrees{ 0.0 };                   // Spot cone's full-strength angle (degrees).
+    double      outer_cone_degrees{ 0.0 };                   // Spot cone's zero-strength angle (degrees).
+    bool        cast_shadow{ false };                        // Light::isCastingShadow: the switch that makes it a caster.
+    float       shadow_bias{ 0.0F };                         // ShadowSettings::bias: the map comparison's depth bias.
+};
+
+/**
  * @brief A light source attached to a Scene.
  *
  * @details
@@ -120,7 +151,6 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      * @return The light type (see LightType).
      */
     LightType type() const;
-
     /** @brief Returns whether the light contributes to shading.
      *
      * @return true when the light is enabled.
@@ -288,6 +318,19 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      *             shadowing).
      */
     void setShadowBias(float bias);
+
+    /**
+     * @brief Gets this light's numbers as one immutable value (see LightValue).
+     *
+     * @details
+     * - THE ONE CONVERSION, made on the side that owns the light (a pass describing itself, a publish copying a
+     *   scene's lights). After it, a frame records from the value and never reads the object again.
+     * - `identity` is written as this light's address, which is what a shadow map's `shadowOf` statement is matched
+     *   against - the value is not dereferenced by its readers.
+     *
+     * @return The light's fields as a value (a copy; no sharing, no lifetime).
+     */
+    [[nodiscard]] LightValue value() const noexcept;
 
 
   private:

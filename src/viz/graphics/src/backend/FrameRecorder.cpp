@@ -10,8 +10,8 @@ using vn::graphics::FrameCounters;
 namespace
 {
 
-/// @brief Pairs a borrowed program with the revision it is at: the SDK's own content reference.
-vn::graphics::ContentRef programRef(const vn::graphics::ShaderProgram* program) noexcept
+/// @brief Pairs a program's VALUE with the ref a plan keys by: the SDK's own content reference.
+vn::graphics::ContentRef programRef(const vn::graphics::ShaderProgramDescription* program) noexcept
 {
     if (program == nullptr) {
         return {};
@@ -238,6 +238,15 @@ bool FrameRecorder::setPassInputs(std::span<const vn::graphics::RenderTarget* co
     return true;
 }
 
+bool FrameRecorder::setLights(std::span<const vn::graphics::LightValue> lights)
+{
+    if (!pass_open_ || scope_target_released_) {
+        return false; // no scope to fill, or the scope's target is gone (see the file note)
+    }
+    snapshotLights(lights);
+    return true;
+}
+
 bool FrameRecorder::setLights(std::span<const vn::graphics::Light* const> lights)
 {
     if (!pass_open_ || scope_target_released_) {
@@ -250,6 +259,17 @@ bool FrameRecorder::setLights(std::span<const vn::graphics::Light* const> lights
 bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands,
                            const vn::graphics::CameraSnapshot&          camera,
                            const vn::graphics::ShaderProgram*           program_override)
+{
+    // THE LEGACY DOOR (C11: additive until 5b-2c): convert once, where the object may still be read, and take the
+    // value path below. A command a scene row produced never needs this - it carries its program text already.
+    const vn::graphics::ShaderProgramDescriptionPtr text =
+        program_override != nullptr ? program_override->description() : vn::graphics::ShaderProgramDescriptionPtr{};
+    return render(commands, camera, text.get());
+}
+
+bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands,
+                           const vn::graphics::CameraSnapshot&           camera,
+                           const vn::graphics::ShaderProgramDescription* program_override)
 {
     if (!pass_open_ || scope_target_released_) {
         return false; // no scope to draw in, or its target is gone: nothing is redirected
@@ -286,6 +306,14 @@ bool FrameRecorder::render(std::span<const vn::graphics::RenderCommand> commands
 
 bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::ShaderProgram* program, const vn::graphics::CameraSnapshot& camera)
 {
+    // THE LEGACY DOOR (C11: additive until 5b-2c): convert once and take the value path.
+    const vn::graphics::ShaderProgramDescriptionPtr text =
+        program != nullptr ? program->description() : vn::graphics::ShaderProgramDescriptionPtr{};
+    return drawScreenProgram(source, text.get(), camera);
+}
+
+bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::ShaderProgramDescription* program, const vn::graphics::CameraSnapshot& camera)
+{
     if (!pass_open_ || scope_target_released_) {
         return false; // no scope to draw in, or its target is gone: nothing is redirected
     }
@@ -309,6 +337,14 @@ bool FrameRecorder::drawScreenProgram(const void* source, const vn::graphics::Sh
 }
 
 bool FrameRecorder::setDefaultContentProgram(const vn::graphics::ShaderProgram* program)
+{
+    // THE LEGACY DOOR (C11: additive until 5b-2c): convert once and take the value path.
+    const vn::graphics::ShaderProgramDescriptionPtr text =
+        program != nullptr ? program->description() : vn::graphics::ShaderProgramDescriptionPtr{};
+    return setDefaultContentProgram(text.get());
+}
+
+bool FrameRecorder::setDefaultContentProgram(const vn::graphics::ShaderProgramDescription* program)
 {
     // Frame-level, and legal in every state (see the file note). The setting outlives the frame it was made
     // in, so it is kept next to the token.
@@ -345,39 +381,32 @@ bool FrameRecorder::inPass() const noexcept
     return pass_open_;
 }
 
-void FrameRecorder::snapshotLights(std::span<const vn::graphics::Light* const> lights)
+void FrameRecorder::snapshotLights(std::span<const vn::graphics::LightValue> lights)
 {
+    // A PURE COPY: the values were taken where the lights live (a pass describing itself), so recording reads nothing
+    // off a Light and an edit on the content thread cannot reach this frame (see LightValue).
     const std::span<LightRef> copy = arena_.makeArray<LightRef>(lights.size());
     for (std::size_t i = 0; i < lights.size(); ++i) {
-        const vn::graphics::Light* light = lights[i];
-        if (light == nullptr) {
-            continue; // a null entry stays the default "disabled" light: the array keeps its positions
-        }
-        LightRef& ref     = copy[i];
-        ref.identity      = light;
-        ref.enabled       = light->isEnabled();
-        ref.type          = light->type();
-        ref.color         = light->color();
-        ref.intensity     = light->intensity();
-        ref.has_direction = light->hasDirection();
-        ref.cast_shadow   = light->isCastingShadow();
-        ref.shadow_bias   = light->shadowSettings().bias;
-        if (ref.has_direction) {
-            ref.direction = light->direction();
-        }
-        ref.has_position       = light->hasPosition();
-        ref.range              = light->range();
-        ref.inner_cone_degrees = light->innerConeAngle();
-        ref.outer_cone_degrees = light->outerConeAngle();
-        if (ref.has_position) {
-            ref.position = light->position();
+        copy[i] = lights[i];
+    }
+    pending_lights_ = copy;
+}
+
+void FrameRecorder::snapshotLights(std::span<const vn::graphics::Light* const> lights)
+{
+    // THE LEGACY DOOR (C11: additive until 5b-2c): the conversion is `Light::value()`, one named call per light, made
+    // by the caller that may still read the object.
+    const std::span<LightRef> copy = arena_.makeArray<LightRef>(lights.size());
+    for (std::size_t i = 0; i < lights.size(); ++i) {
+        if (lights[i] != nullptr) {
+            copy[i] = lights[i]->value();
         }
     }
     pending_lights_ = copy;
 }
 
 std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<const vn::graphics::RenderCommand> commands,
-                                                                  const vn::graphics::ShaderProgram*           program_override)
+                                                                  const vn::graphics::ShaderProgramDescription* program_override)
 {
     const std::span<CollectedCommand> copy = arena_.makeArray<CollectedCommand>(commands.size());
     for (std::size_t i = 0; i < commands.size(); ++i) {
@@ -391,9 +420,15 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<cons
         // THE IDENTITY AND THE REVISION ARE ONE REF (see CollectedCommand::geometry): the revision is read from the
         // DESCRIPTION, so a frame in flight is served the shape it recorded even after the geometry moved on.
         const vn::graphics::GeometryDescriptionPtr description = source.geometryDescription();
-        const vn::graphics::NodeId                 identity =
-            !source.node.isNull() ? source.node : (source.geometry != nullptr ? source.geometry->id() : vn::graphics::NodeId{});
-        target.geometry  = vn::graphics::contentRefOf(identity, description != nullptr ? description->revision() : 0);
+        if (!source.geometry_ref.isNull()) {
+            // The ref the collector took (identity + the shape's revision): nothing left to derive.
+            target.geometry = source.geometry_ref;
+        }
+        else {
+            const vn::graphics::NodeId identity =
+                !source.node.isNull() ? source.node : (source.geometry != nullptr ? source.geometry->id() : vn::graphics::NodeId{});
+            target.geometry = vn::graphics::contentRefOf(identity, description != nullptr ? description->revision() : 0);
+        }
         target.primitive = source.primitive_index;
         // The primitive's topology travels with the command: it is the data's word (the pass may still override
         // it - see resolveRenderState), and it is read from the DESCRIPTION, so recording never asks the live
@@ -407,7 +442,10 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<cons
         }
         // The pass' override wins over the command's own program (see render()): the identity the plan keys its
         // pipeline variants by is therefore the EFFECTIVE one, and nothing downstream needs to know about overrides.
-        target.program        = programRef(program_override != nullptr ? program_override : source.program.get());
+        // Both halves are VALUES: the override's text came with the pass, the command's with the row it was collected
+        // from, and the fallback builds one only for a hand-built command (the named content-side door).
+        const vn::graphics::ShaderProgramDescriptionPtr own_text = source.programDescription();
+        target.program = programRef(program_override != nullptr ? program_override : own_text.get());
         // THE MATERIAL'S VALUES CROSS, NOT THE OBJECT (see RenderCommand::materialDescription): the identity is the
         // material's own id and the revision is the one the values are at, so a frame in flight is served the bytes it
         // started with rather than whatever the material says by the time the plan is recorded.
@@ -416,21 +454,23 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<cons
         // current values (see ContentStore::ensureMaterial) - so the ref names that revision, and the plan and the table
         // agree instead of missing each other forever.
         const vn::graphics::MaterialDescriptionPtr material_values = source.materialDescription();
-        std::uint64_t                              material_revision = material_values != nullptr ? material_values->revision() : 0;
-        if (material_values == nullptr && source.material != nullptr) {
-            material_revision = source.material->revision();
+        if (!source.material_ref.isNull()) {
+            // The pair the collector took (material identity + the values' revision).
+            target.material = source.material_ref;
         }
-        target.material = vn::graphics::ContentRef{ source.material != nullptr ? source.material->id().handle() : vn::graphics::Handle{},
-                                                    material_revision };
+        else if (material_values != nullptr) {
+            // The identity is the object's own (immutable after construction); the revision is the value's.
+            target.material = vn::graphics::ContentRef{ source.material != nullptr ? source.material->id().handle() : vn::graphics::Handle{},
+                                                       material_values->revision() };
+        }
         target.model   = source.model_matrix;
         target.opacity = source.opacity;
-        // The transparency decision is made ONCE, here, from the command's own rule (`isTransparent`: the
-        // material's resolved alpha mode and the drawable's opacity). The plan carries the answer because
-        // compilation has only the identity, and the blend enable has to agree with the order the collector
-        // sorted by - two spellings of "is this see-through" is exactly the drift that made a Blend material sort
-        // as transparent and draw unblended (graphics-material.md 2.7).
-        target.transparent    = source.isTransparent();
-        target.authored_state = source.authored_state;
+        // The transparency decision is made ONCE, here, from the values the frame crosses with - the blend enable has
+        // to agree with the order the collector sorted by (graphics-material.md 2.7). No material at all is the
+        // engine's default (opaque), so the opacity decides.
+        target.transparent = material_values != nullptr ? material_values->isTransparent(source.opacity)
+                                                        : vn::graphics::alphaModeSortsTransparent(vn::graphics::AlphaMode::Opaque, source.opacity);
+        target.authored_state  = source.authored_state;
         if (!source.instance_transforms.empty()) {
             // The record takes a SHARE of the stream rather than a pointer into the host's slice: everything
             // downstream keys the upload entries by that buffer's address (see CollectedCommand).

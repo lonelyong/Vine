@@ -21,6 +21,7 @@ struct Inherited {
     MaterialBasePtr  material{};
     MaterialDescriptionPtr material_description{};
     ShaderProgramPtr program{};
+    ShaderProgramDescriptionPtr program_description{};
     bool             view_dependent{ false };
 };
 
@@ -98,6 +99,7 @@ void foldDown(SceneBake& bake, std::uint32_t index, const Inherited& parent)
         }
         if (row.own_program != nullptr) {
             inherited.program = row.own_program;
+            inherited.program_description = row.own_program_description;
         }
     }
 
@@ -111,6 +113,7 @@ void foldDown(SceneBake& bake, std::uint32_t index, const Inherited& parent)
         row.material             = inherited.material;
         row.material_description = inherited.material_description;
         row.program  = inherited.program;
+        row.program_description = inherited.program_description;
     }
 
     for (std::uint32_t cursor = index + 1; cursor < row.end;) {
@@ -215,6 +218,7 @@ void fillOwnFacts(const Node& node, Row& row)
     row.own_material.reset();
     row.own_material_description.reset();
     row.own_program.reset();
+    row.own_program_description.reset();
     row.geometry.reset();
     row.description.reset();
     row.draws.clear();
@@ -233,6 +237,8 @@ void fillOwnFacts(const Node& node, Row& row)
         }
         if (raw_ptr<ShaderProgram> program = state_node->program()) {
             row.own_program = program;
+            // Its text travels with it, for the same reason the material's values do (see the fold's program copy).
+            row.own_program_description = program->description();
         }
     }
     if (const auto* geometry = obj_cast<Geometry>(&node)) {
@@ -257,6 +263,7 @@ void fillOwnFacts(const Node& node, Row& row)
             draw.program         = primitive->program != nullptr
                                        ? ShaderProgramPtr(primitive->program)
                                        : (geometry_program != nullptr ? ShaderProgramPtr(geometry_program) : ShaderProgramPtr());
+            draw.program_description = draw.program != nullptr ? draw.program->description() : ShaderProgramDescriptionPtr();
             draw.drawn = !(primitive->hasInstances() && primitive->visibleInstanceCount() == 0u);
             if (primitive->hasInstances()) {
                 draw.instance_transforms = primitive->instance_transforms;
@@ -331,6 +338,7 @@ RowRefresh refreshRowFacts(const Node& node, SceneBake& bake, std::uint32_t inde
         return lhs.primitive_index == rhs.primitive_index && lhs.material.get() == rhs.material.get() &&
                lhs.material_description.get() == rhs.material_description.get() &&
                lhs.program.get() == rhs.program.get() &&
+               lhs.program_description.get() == rhs.program_description.get() &&
                lhs.instance_transforms.values.get() == rhs.instance_transforms.values.get() &&
                lhs.instance_transforms.first == rhs.instance_transforms.first &&
                lhs.instance_transforms.count == rhs.instance_transforms.count &&
@@ -358,7 +366,9 @@ RowRefresh refreshRowFacts(const Node& node, SceneBake& bake, std::uint32_t inde
     const bool non_hot = before.owns_state != row.owns_state || !(before.own_state == row.own_state) ||
                          before.own_material.get() != row.own_material.get() ||
                          before.own_material_description.get() != row.own_material_description.get() ||
-                         before.own_program.get() != row.own_program.get() || before.geometry.get() != row.geometry.get() ||
+                         before.own_program.get() != row.own_program.get() ||
+                         before.own_program_description.get() != row.own_program_description.get() ||
+                         before.geometry.get() != row.geometry.get() ||
                          before.description.get() != row.description.get() || !same_draws(before.draws, row.draws) ||
                          !same_optional_box(before.world_box_answer, row.world_box_answer) ||
                          !(before.local_box == row.local_box) || before.unbounded != row.unbounded;
@@ -422,6 +432,7 @@ std::uint32_t resolveSubtree(SceneBake& bake, std::uint32_t index)
         parent.material  = above.material;
         parent.material_description = above.material_description;
         parent.program   = above.program;
+        parent.program_description = above.program_description;
         parent.view_dependent = above.view_dependent;
     }
     foldDown(bake, index, parent);
@@ -482,8 +493,12 @@ std::uint32_t refreshBoxes(SceneBake& bake)
     return refreshed;
 }
 
-std::uint32_t refreshMaterials(SceneBake& bake)
+std::uint32_t refreshValues(SceneBake& bake)
 {
+    // The value halves the fold copies are re-taken here: a material's values and a program's text are edited through
+    // live objects, so no node mutator announces them and the graph epoch cannot see the change - while the values a
+    // command carries do change. One function for both because they share the rule (no epoch, new value at the next
+    // publication) and the same version a publication compares.
     std::uint32_t moved = 0U;
     for (Row& row : bake.rows) {
         bool row_moved = false;
@@ -501,14 +516,34 @@ std::uint32_t refreshMaterials(SceneBake& bake)
                 row_moved                    = true;
             }
         }
-        for (DrawFacts& draw : row.draws) {
-            if (draw.material == nullptr) {
-                continue;
+        if (row.program != nullptr) {
+            const ShaderProgramDescriptionPtr text = row.program->description();
+            if (text != row.program_description) {
+                row.program_description = text;
+                row_moved               = true;
             }
-            const MaterialDescriptionPtr values = draw.material->description();
-            if (values != draw.material_description) {
-                draw.material_description = values;
-                row_moved                 = true;
+        }
+        if (row.own_program != nullptr) {
+            const ShaderProgramDescriptionPtr text = row.own_program->description();
+            if (text != row.own_program_description) {
+                row.own_program_description = text;
+                row_moved                   = true;
+            }
+        }
+        for (DrawFacts& draw : row.draws) {
+            if (draw.material != nullptr) {
+                const MaterialDescriptionPtr values = draw.material->description();
+                if (values != draw.material_description) {
+                    draw.material_description = values;
+                    row_moved                 = true;
+                }
+            }
+            if (draw.program != nullptr) {
+                const ShaderProgramDescriptionPtr text = draw.program->description();
+                if (text != draw.program_description) {
+                    draw.program_description = text;
+                    row_moved                = true;
+                }
             }
         }
         if (row_moved) {

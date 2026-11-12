@@ -107,6 +107,10 @@ struct ContentStore::Data {
 
     struct LiveProgram {
         vn::intrusive_ptr<vn::graphics::ShaderProgram> object{};
+        /// The TEXT the rows are built from: what the frame carried (see track(description)), or - for a hand-built
+        /// caller that never published one - the object's own cached value. Immutable, so a new revision is a NEW
+        /// value here (never an in-place edit).
+        vn::graphics::ShaderProgramDescriptionPtr description{};
         bool                                           described{ false };
         std::uint64_t                                  described_revision{ 0 };
         std::vector<std::uint32_t>                     variants;              // Variants built at that revision (their bits()).
@@ -116,7 +120,11 @@ struct ContentStore::Data {
         /** @brief Whether nobody outside the store holds this program any more (see releaseAbandoned). */
         [[nodiscard]] bool isAbandoned() const noexcept
         {
-            return object == nullptr || object->useCount() <= 1UL;
+            // WHAT "NOBODY ELSE HOLDS IT" MEANS: the object (when the identity named one) is the content's; a value
+            // with no object came from a value producer, whose owner is the one that keeps it alive (the same rule
+            // LiveGeometry::isAbandoned states for shapes).
+            const unsigned long held_outside = object != nullptr ? object->useCount() : (description != nullptr ? description->useCount() : 0UL);
+            return held_outside <= 1UL;
         }
     };
 
@@ -861,6 +869,20 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::ShaderProgram>& p
     }
 }
 
+void ContentStore::track(const vn::graphics::ShaderProgramDescriptionPtr& description)
+{
+    if (description == nullptr) {
+        return;
+    }
+    const auto [entry, inserted] = d->programs.try_emplace(description->id());
+    (void)inserted;
+    Data::LiveProgram& live = entry->second;
+    live.released           = false; // still in use: a release the host asked for is called off
+    // A NEW TEXT AT THE SAME IDENTITY: replacing it is enough (the rows built from the old revision age out by
+    // epoch), and ensureProgram notices the revision moved and rebuilds the variants.
+    live.description = description;
+}
+
 void ContentStore::track(const vn::intrusive_ptr<vn::graphics::MaterialBase>& material)
 {
     if (material == nullptr) {
@@ -1099,14 +1121,21 @@ void ContentStore::ensureProgram(vn::graphics::ProgramId program, const ProgramV
         return; // untracked (see ensureGeometry)
     }
 
-    Data::LiveProgram& live                     = entry->second;
-    live.released                               = false; // named by a frame: a release the host asked for is called off
-    // THE TRACKED OBJECT IS WHAT THE ROW IS DESCRIBED FROM: the plan names the identity, and the values are the
-    // object's current ones - a build never resurrects a revision (see the class note), so the plan's revision
-    // is deliberately not used here.
-    const vn::graphics::ShaderProgram& source   = *live.object;
-    const std::uint64_t                revision = source.revision();
-    const vn::graphics::ContentRef     ref{ program.handle(), revision };
+    Data::LiveProgram& live = entry->second;
+    live.released           = false; // named by a frame: a release the host asked for is called off
+    // THE VALUE THE FRAME CARRIED IS WHAT THE ROW IS DESCRIBED FROM: the plan names the identity, and the text is the
+    // one the collection handed over - a build never resurrects a revision (see the class note), so the plan's
+    // revision is deliberately not used here. A hand-built caller that never published a text is answered from the
+    // object's own cache (the content-side door, the same one materials use).
+    if (live.description == nullptr && live.object != nullptr) {
+        live.description = live.object->description();
+    }
+    const vn::graphics::ShaderProgramDescription* source = live.description.get();
+    if (source == nullptr) {
+        return; // nothing to describe: an identity with neither a value nor an object
+    }
+    const std::uint64_t            revision = source->revision();
+    const vn::graphics::ContentRef ref{ program.handle(), revision };
     if (!(live.described && live.described_revision == revision)) {
         // Another revision is another set of texts: none of the old answers is this one's (its rows age out by epoch).
         live.described          = true;
@@ -1115,7 +1144,7 @@ void ContentStore::ensureProgram(vn::graphics::ProgramId program, const ProgramV
         live.screen_built = false;
         // The NAME travels with the description, not with the row: a program whose text is refused still has a
         // name, and the sentence that says so has no row to read it from (see ProgramNameFacts).
-        d->recordProgramName(program, source.name());
+        d->recordProgramName(program, source->name());
     }
 
     const auto built = [&live, &variant, screen]() {
@@ -1138,7 +1167,7 @@ void ContentStore::ensureProgram(vn::graphics::ProgramId program, const ProgramV
     }
 
     ProgramFacts   fresh;
-    const FactMiss miss = screen ? buildScreenProgramFacts(source, fresh) : buildProgramFacts(source, variant, fresh);
+    const FactMiss miss = screen ? buildScreenProgramFacts(*source, fresh) : buildProgramFacts(*source, variant, fresh);
     if (miss != FactMiss::None) {
         return; // a program that is not one content pipeline: no entry, and the recorder says so
     }

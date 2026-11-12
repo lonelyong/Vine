@@ -57,6 +57,18 @@ struct VN_GRAPHICS_API RenderCommand {
      */
     GeometryDescriptionPtr description;
 
+    /**
+     * @brief The shape's identity AND revision as one ref (see ContentId.hpp).
+     *
+     * @details
+     * - THE PLAN'S KEY FOR THIS DRAW'S FACTS. A frame in flight must be answered with the row the content published for
+     *   it, so the revision travels with the identity; both come from @ref description (the shape this command was
+     *   built with), which is why the two cannot disagree.
+     * - A hand-built command gets it from the constructor's own conversion; a command a scene row produced carries
+     *   the row's identity (the node id), which is the identity such a command means.
+     */
+    ContentRef geometry_ref;
+
     /** Which of the geometry's primitives this command draws (its index, see Geometry::primitive). */
     std::uint32_t primitive_index{ 0 };
 
@@ -79,12 +91,37 @@ struct VN_GRAPHICS_API RenderCommand {
      */
     MaterialDescriptionPtr material_description;
 
+    /**
+     * @brief The material's identity AND revision as one ref (see ContentId.hpp).
+     *
+     * @details
+     * - THE VALUE DOES NOT NAME ITSELF (`MaterialDescription` carries the revision, not the id), so the pair travels
+     *   here: a recorder keys its material table by this ref without reading the live material, and a frame in flight
+     *   keeps the values it recorded even after the material moved on.
+     * - Empty when the command names no material (the backend's default entry answers) or when nobody took the
+     *   values (a hand-built command a caller is still free to enrich).
+     */
+    ContentRef material_ref;
+
     /** Effective shader program (leaf/StateNode resolution), null = default.
      *
      * @note A backend that supports user programs compiles/uses this instead of the built-in program; backends
      *       without user-program support ignore it.
      */
     ShaderProgramPtr program;
+
+    /**
+     * @brief The program's text as an immutable value (see ShaderProgramDescription), or null for "the frame's
+     *        default".
+     *
+     * @details
+     * - THE PROGRAM'S HALF OF @ref description: what a recorder hands the program table, so recording never reads the
+     *   live program's stages or revision. It also names the program (id + revision), which is the key a pipeline
+     *   variant is cached by.
+     * - A command a scene row produced carries the row's resolved program value; a hand-built command falls back to
+     *   the object's own cached conversion, the same door `geometryDescription()` opens for the content side.
+     */
+    ShaderProgramDescriptionPtr program_description;
 
     /** World-space model matrix. */
     Mat4d model_matrix;
@@ -107,16 +144,13 @@ struct VN_GRAPHICS_API RenderCommand {
      */
     [[nodiscard]] bool isTransparent() const noexcept
     {
-        if (material != nullptr) {
-            const AlphaMode mode = material->alphaMode();
-            if (mode == AlphaMode::Blend) {
-                return true;
-            }
-            if (mode == AlphaMode::Mask) {
-                return false;
-            }
+        // THE VALUE WINS when the frame crossed with one: a material edited while a frame is in flight must not move
+        // this frame's sort. A hand-built command with neither value nor object falls through to the opacity alone,
+        // which is the engine's default (opaque) material.
+        if (material_description != nullptr) {
+            return material_description->isTransparent(opacity);
         }
-        return opacity < 1.0f - 1e-6f;
+        return alphaModeSortsTransparent(material != nullptr ? material->alphaMode() : AlphaMode::Opaque, opacity);
     }
 
     /** Effective opacity in [0, 1]: scene x nodes x leaf geometry. */
@@ -221,6 +255,25 @@ struct VN_GRAPHICS_API RenderCommand {
      * @return The published values; null when none were ever published for this material.
      */
     [[nodiscard]] MaterialDescriptionPtr materialDescription() const;
+
+    /**
+     * @brief Gets the program's text as a value: the published one, or (for a hand-built command) the program's
+     *        cached one.
+     *
+     * @details
+     * - What a recorder hands the program table, so describing a program never reads the live object on the thread
+     *   that records the frame.
+     * - Same door as `geometryDescription()`: a command a scene row produced already carries @ref program_description,
+     *   so this costs a pointer check; a hand-built command states only @ref program and the conversion
+     *   (`ShaderProgram::description`) happens on the content side.
+     *
+     * @warning
+     * - A recording path on another thread must NOT rely on the fallback: what crosses a thread boundary is the value
+     *   the command already carries.
+     *
+     * @return The program text; null when the command names no program (the frame's default answers).
+     */
+    [[nodiscard]] ShaderProgramDescriptionPtr programDescription() const;
 };
 
 VN_GRAPHICS_NS_END

@@ -190,6 +190,10 @@ void RenderPass::fillPassFacts(PassDraw& out)
     out.depth_range      = desc_.depth_range;
     out.clear            = clearPolicy();
     out.program_override = desc_.program_override;
+    // Its text as a value, taken with the pointer: the recorder applies THIS, so an override edited while a frame is in
+    // flight keeps the text the frame described itself with (see PassDraw::program_override_description).
+    out.program_override_description =
+        desc_.program_override != nullptr ? desc_.program_override->description() : ShaderProgramDescriptionPtr{};
     // This pass' state for the content it draws - its depth policy and its rasterisation override, in one
     // announcement: what a backend needs to resolve each command's FINAL state
     // (StateResolution.hpp's resolveRenderState).
@@ -239,6 +243,15 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
         light_ptrs.push_back(light.get());
     }
     draw.lights = std::move(light_ptrs);
+    // THE SAME LIGHTS AS VALUES (see LightValue): what the recorder reads, so editing a light while this frame records
+    // cannot change what it lights. A null entry keeps its slot as the default disabled light, exactly like the
+    // pointer spelling does (see FrameRecorder::snapshotLights).
+    std::vector<LightValue> light_values;
+    light_values.reserve(scene->lights().size());
+    for (const auto& light : scene->lights()) {
+        light_values.push_back(light != nullptr ? light->value() : LightValue{});
+    }
+    draw.light_values = std::move(light_values);
     // The command list is NOT collected here: `draw.commands` stays null and the frame's expansion asks
     // `draw.content` for it (see FrameExpand). A program override is a PASS fact, not a per-command rewrite
     // (see PassDraw::program_override): the backend resolves it per command exactly like the pass' state.

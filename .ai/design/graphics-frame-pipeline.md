@@ -114,6 +114,7 @@
 | 引擎表只存**共享资源**，从不存每实例状态 | 表大小 = 原型数 × 版本数，不是实例数 | 每命令 touch 活体 |
 | 驻留 ⟺ 被 Session 已接受或在飞的 Snapshot 引用它的 `(id, revision)`；宿主自持快照不钉住 | 精确规则，不看时间窗（`I4` / `R22`） | `parking` / `kept` 兜底 |
 | 管线缓存键是**值**（program@rev, layout@rev, state, formats, samples） | 可复现、可共享、可单测 | 指针 + variant bits |
+| 行/命令的载荷是**值**：`GeometryDescription` / `MaterialDescription` / `ShaderProgramDescription` + `ContentRef`；灯是 `LightValue` | 记录侧不读活对象，帧 N 画它描述时的那份值（`G1` / `G10`）；每命令省 3 次 `intrusive_ptr` 原子增减 | 活对象读（程序文本 / 材质 α 模式 / `Light` 字段） |
 | 预热是一等入口：`prepare()` 答"需要什么" | 编译卡顿可预算，加载期可全预编译（`R23`） | 录制时才发现要编译 |
 | 每帧 arena，帧内 arena 外零分配 | 分配上限从"规则"变常数（`R24`） | per-frame `vector` / `shared_ptr` |
 
@@ -292,6 +293,9 @@
 | `Node::setVisible(bool)` | 隐藏由发布编译成"不产生行" | 已存在 |
 | `ContentRegistry::allocate<Tag>() / release(handle) / alive(handle)` | 唯一 id 来源；陈旧句柄答 gone | 已存在（`ContentId.hpp`） |
 | `ContentRef{Handle id, uint64 revision}` | 跨层键；`contentRefOf()` 是唯一构造 | 已存在 |
+| `Geometry::description()` / `MaterialBase::description()` | 按 revision 缓存的不可变值 | 已存在 |
+| `ShaderProgram::description() → ShaderProgramDescriptionPtr` | 程序文本 + id + revision；按 revision 缓存 | 已落地（W1） |
+| `Light::value() → LightValue` | 灯的值半边；pass 描述自己时快照成 `DrawDescription::light_values` | 已落地（W1） |
 
 ### 4.2 派生层
 

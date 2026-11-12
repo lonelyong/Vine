@@ -53,6 +53,9 @@ struct DrawFacts {
     /// command hands a backend, so recording never reads the live material.
     MaterialDescriptionPtr material_description{};
     ShaderProgramPtr   program{};                            ///< Resolved the same way.
+    /// The same program's text as a value (see ShaderProgramDescription), taken where the facts were built: what a
+    /// command hands a backend, so recording never reads the live program.
+    ShaderProgramDescriptionPtr program_description{};
     BufferSlice<float> instance_transforms{};                ///< Null for a non-instanced draw.
     std::uint32_t      first_instance{ 0 };
     std::uint32_t      instance_count{ 0 };                  ///< 0 for a plain draw (see RenderCommand).
@@ -97,6 +100,9 @@ struct Row {
     /// ask the material for its values on a thread that does not own it.
     MaterialDescriptionPtr       own_material_description{};
     ShaderProgramPtr             own_program{};
+    /// The own program's text, taken with it (content side): the fold copies value pointers, so nothing downstream
+    /// has to ask the program for its stages on a thread that does not own it.
+    ShaderProgramDescriptionPtr  own_program_description{};
     /// The leaf's own bound as the NODE states it, in WORLD space, for the leaves that cannot state one in their own
     /// frame (a Geometry subclass may place itself in ways only it knows - see Node::subtreeBounds).
     ///
@@ -131,6 +137,9 @@ struct Row {
     /// material EDIT is a new value at the next publish, never a live re-read in the middle of a frame.
     MaterialDescriptionPtr material_description{};
     ShaderProgramPtr program{};
+    /// The resolved program's text as a value (see `program`): from the row that owned the program, by pointer copy -
+    /// a program EDIT is a new value at the next publish, never a live re-read in the middle of a frame.
+    ShaderProgramDescriptionPtr program_description{};
     /// This subtree's box in this row's OWN frame (the frame `local` consumes): a leaf's own bounds, or the union of
     /// its children's boxes placed by their `local`. For a per-view row it does NOT cover the orientations the
     /// placement may choose - that bound is in the PARENT frame, see world_box.
@@ -333,24 +342,28 @@ void refoldChain(SceneBake& bake, std::uint32_t index);
 std::uint32_t refreshBoxes(SceneBake& bake);
 
 /**
- * @brief Re-takes every row's material values, and answers how many rows actually moved.
+ * @brief Re-takes every row's value halves (material values, program text), and answers how many rows actually moved.
  *
  * @details
- * - THE ONE CONTENT FACT THE GRAPH EPOCH CANNOT SEE. A geometry's shape, a node's placement and a program all change
- *   through a mutator that announces itself (`Node::announceContentChange`), which is what the epoch counts. A material
- *   is edited through a LIVE OBJECT (`Material::setXxx`, or nothing at all when a host writes its block) - no node is
- *   touched, so no epoch moves, and a list memoised on that epoch would keep drawing the old values forever.
- * - SO THIS IS THE PUBLISH BOUNDARY FOR MATERIALS, the material's half of `refreshBoxes`: the content side (the only
- *   thread that may read a material) walks its own rows, takes `MaterialBase::description()` - a pointer compare in a
- *   steady frame, one new value when a setter moved the revision - and reports what moved. The caller turns a non-zero
- *   answer into a version bump, and every consumer keyed on that version (the list memo, a mirror) then re-derives.
+ * - THE TWO CONTENT FACTS THE GRAPH EPOCH CANNOT SEE. A geometry's shape, a node's placement and WHICH program or
+ *   material a node names all change through a mutator that announces itself (`Node::announceContentChange`), which is
+ *   what the epoch counts. A material's values and a program's stages are edited through LIVE OBJECTS
+ *   (`Material::setXxx` / `ShaderProgram::replaceStages`) - no node is touched, so no epoch moves, and a list memoised
+ *   on that epoch would keep drawing the old values forever.
+ * - SO THIS IS THE PUBLISH BOUNDARY FOR VALUES, the value half of `refreshBoxes`: the content side (the only thread
+ *   that may read the objects) walks its own rows, takes `MaterialBase::description()` and
+ *   `ShaderProgram::description()` - a pointer compare in a steady frame, one new value when a revision moved - and
+ *   reports what moved. The caller turns a non-zero answer into a version bump, and every consumer keyed on that
+ *   version (the list memo, a mirror) then re-derives.
+ * - ONE FUNCTION FOR BOTH because they share the rule (no epoch, new value at the next publication) and the version a
+ *   publication compares; splitting them would be two spellings of one boundary (G1).
  * - A MIRROR has no live objects (see the class note), so it does not refresh: its rows carry the values they were
  *   published with, which is exactly the one-publication lag every content fact has.
  *
  * @param bake The table to refresh; its rows are edited in place.
  * @return How many rows' values changed (0 when nothing moved).
  */
-std::uint32_t refreshMaterials(SceneBake& bake);
+std::uint32_t refreshValues(SceneBake& bake);
 
 /** @brief What re-reading one row's own facts found. */
 enum class RowRefresh
@@ -454,14 +467,22 @@ void selectRows(std::uint32_t               row_count,
                 const MaterialDescriptionPtr material_description =
                     draw.material_description != nullptr ? draw.material_description : row.material_description;
                 const ShaderProgramPtr program = draw.program != nullptr ? draw.program : row.program;
+                const ShaderProgramDescriptionPtr program_description =
+                    draw.program_description != nullptr ? draw.program_description : row.program_description;
                 auto&                  cmd     = out.emplace_back(row.geometry, material, world, draw.primitive_index);
                 cmd.node                       = row.identity;
                 cmd.description                = row.description;
+                cmd.geometry_ref               = contentRefOf(row.identity, row.description != nullptr ? row.description->revision() : 0U);
                 cmd.material_description       = material_description;
+                cmd.material_ref               = material_description != nullptr
+                                                     ? ContentRef{ material != nullptr ? material->id().handle() : Handle{},
+                                                                   material_description->revision() }
+                                                     : ContentRef{};
                 cmd.opacity                    = effective;
                 cmd.draw_order                 = row.draw_order;
                 cmd.authored_state             = row.state;
                 cmd.program                    = program;
+                cmd.program_description        = program_description;
                 cmd.instance_transforms        = draw.instance_transforms;
                 cmd.first_instance             = draw.first_instance;
                 cmd.instance_count             = draw.instance_count;

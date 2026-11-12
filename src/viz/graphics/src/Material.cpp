@@ -20,6 +20,22 @@ const MaterialParameters& MaterialDescription::values() const noexcept
     return values_;
 }
 
+bool alphaModeSortsTransparent(AlphaMode mode, float opacity) noexcept
+{
+    if (mode == AlphaMode::Blend) {
+        return true; // the mode alone says so: a blended surface is see-through at any opacity
+    }
+    if (mode == AlphaMode::Mask) {
+        return false; // a cut-out occludes itself; fading it would let the background through the holes
+    }
+    return opacity < 1.0f - 1e-6f;
+}
+
+bool MaterialDescription::isTransparent(float opacity) const noexcept
+{
+    return alphaModeSortsTransparent(values_.alpha_mode, opacity);
+}
+
 MaterialDescriptionPtr MaterialBase::description() const
 {
     const std::uint64_t revision = this->revision();

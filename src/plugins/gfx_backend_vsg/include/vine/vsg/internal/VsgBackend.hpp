@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include <vine/graphics/RenderBackend.hpp>
@@ -456,8 +457,8 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
     /** @brief Announces the depth band the pass maps its draws into (see PassDraw::depth_range). */
     void announceDepthRange(const vn::graphics::DepthRange& range);
 
-    /** @brief Announces the lights of one drawing call (see DrawDescription::lights). */
-    void announceLights(const std::vector<vn::raw_ptr<const vn::graphics::Light>>& lights);
+    /** @brief Announces the lights of one drawing call, as VALUES (see DrawDescription::light_values). */
+    void announceLights(std::span<const vn::graphics::LightValue> lights);
 
     /** @brief Collects one content drawing call, and tracks the objects it names (see the file note).
      *
@@ -468,7 +469,7 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      */
     void collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
                             const vn::graphics::CameraSnapshot&             camera,
-                            const vn::graphics::ShaderProgram*              program_override);
+                            const vn::graphics::ShaderProgramDescriptionPtr& program_override);
 
     /** @brief Creates the slot of window @p index when it does not exist yet (indices are dense and never reused).
      *
@@ -496,8 +497,10 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
     [[nodiscard]] api::OffscreenSession* ensureOffscreenSession();
 
     /** @brief Collects one full-screen drawing call whose source is one of the pass' declared inputs. */
-    void
-    collectScreenDraw(vn::graphics::RenderTarget* source, vn::raw_ptr<const vn::graphics::ShaderProgram> program, const vn::graphics::CameraSnapshot& camera);
+    void collectScreenDraw(vn::graphics::RenderTarget*                    source,
+                           vn::raw_ptr<const vn::graphics::ShaderProgram> program,
+                           const vn::graphics::ShaderProgramDescriptionPtr& program_description,
+                           const vn::graphics::CameraSnapshot&            camera);
 
     /** @brief Holds the host's target and builds what its description can make (the half setRenderTarget shares).
      *

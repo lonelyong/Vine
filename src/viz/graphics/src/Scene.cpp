@@ -328,12 +328,12 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
     // for one frame only and a static scene paid a full walk per frame (measured: SceneTest.MeasureWhatOneCollectionCosts*).
     // The memo itself is SHARED WITH THE MIRROR (see DrawListMemo): "which list may this view reuse" is one rule, and
     // the two answers to a view must not implement it twice.
-    // THE MATERIAL VALUES, RE-TAKEN BEFORE THE MEMO IS ASKED: a material is edited through a live object, so no epoch
-    // moves when its values change (see detail::refreshMaterials) - and a memoises list built from the old values would
-    // otherwise be handed out for as long as the graph stays still. Outside a batch only: a batch publishes nothing, so
-    // the values it moves are taken by the collection that closes it (C18).
-    if (edit_depth_ == 0 && content_bake_ != nullptr && detail::refreshMaterials(*content_bake_) > 0U) {
-        ++material_generation_;
+    // THE VALUE HALVES, RE-TAKEN BEFORE THE MEMO IS ASKED: a material or a program is edited through a live object, so
+    // no epoch moves when its values change (see detail::refreshValues) - and a memoised list built from the old values
+    // would otherwise be handed out for as long as the graph stays still. Outside a batch only: a batch publishes
+    // nothing, so the values it moves are taken by the collection that closes it (C18).
+    if (edit_depth_ == 0 && content_bake_ != nullptr && detail::refreshValues(*content_bake_) > 0U) {
+        ++value_generation_;
         ++content_revision_; // the memo key moved: every view's list was built from the values that just changed
     }
     const std::uint64_t epoch = root_->contentEpoch();
@@ -544,17 +544,17 @@ const detail::SceneBake& Scene::ensureRows() const
     // the version a mirror compares, and it only advances OUTSIDE an edit batch (see beginEdit): a frame that lands in
     // the middle of one publishes nothing, so the mirror keeps drawing the state the batch started from, and the whole
     // batch becomes ONE publication in the frame after the outermost endEdit.
-    if (edit_depth_ == 0 && detail::refreshMaterials(*content_bake_) > 0U) {
-        // The values a row carries moved (see refreshMaterials): nothing on the graph announced it, so the version a
+    if (edit_depth_ == 0 && detail::refreshValues(*content_bake_) > 0U) {
+        // The values a row carries moved (see refreshValues): nothing on the graph announced it, so the version a
         // mirror compares and the memo key both have to move here, or the picture keeps the values the material had
         // before the edit.
-        ++material_generation_;
+        ++value_generation_;
         ++content_revision_;
     }
     if (edit_depth_ == 0) {
         published_epoch_     = bake_epoch_;
         published_boxes_     = box_generation_;
-        published_materials_ = material_generation_;
+        published_values_    = value_generation_;
     }
     return *content_bake_;
 }

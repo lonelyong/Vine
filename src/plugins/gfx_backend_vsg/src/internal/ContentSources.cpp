@@ -13,13 +13,24 @@ VN_VSG_NS_BEGIN
 
 FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out)
 {
+    // THE CONVENIENCE SPELLING (see the header): the object's own cached conversion, taken once, then the value path.
+    return buildProgramFacts(*program.description(), out);
+}
+
+FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const ProgramVariant& variant, ProgramFacts& out)
+{
+    return buildProgramFacts(*program.description(), variant, out);
+}
+
+FactMiss buildProgramFacts(const vn::graphics::ShaderProgramDescription& program, ProgramFacts& out)
+{
     // The empty variant: the text is described exactly as it stands, with none of its imported names
     // defined. A program that GATES a declaration on one of them is a different set of facts per
     // variant (see the tagged overload) - this one describes the variant whose pragma list is empty.
     return buildProgramFacts(program, ProgramVariant{}, out);
 }
 
-FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const ProgramVariant& variant, ProgramFacts& out)
+FactMiss buildProgramFacts(const vn::graphics::ShaderProgramDescription& program, const ProgramVariant& variant, ProgramFacts& out)
 {
     out         = ProgramFacts{};
     out.program = vn::graphics::contentRefOf(program.id(), program.revision());
@@ -85,6 +96,11 @@ FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const Pro
 }
 
 FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out)
+{
+    return buildScreenProgramFacts(*program.description(), out);
+}
+
+FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgramDescription& program, ProgramFacts& out)
 {
     out         = ProgramFacts{};
     out.program = vn::graphics::contentRefOf(program.id(), program.revision());

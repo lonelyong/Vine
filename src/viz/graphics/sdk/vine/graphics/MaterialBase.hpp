@@ -37,6 +37,22 @@ enum class AlphaMode
 };
 
 /**
+ * @brief Returns whether a draw with alpha @p mode and drawable @p opacity belongs in the transparent queue.
+ *
+ * @details
+ * - ONE DEFINITION OF A TWO-INPUT RULE (graphics-material.md §2.7): `Blend` is transparent whatever the opacity;
+ *   `Mask` is opaque to the sort even at opacity < 1 (its alpha cuts fragments out instead of fading the surface);
+ *   everything else is transparent exactly when the effective opacity is below 1.
+ * - Both readers call it: the command's own `isTransparent()` (its live fallback) and `MaterialDescription::isTransparent()`
+ *   (the value the frame crosses with), so the sort order and the recorded blend enable cannot disagree.
+ *
+ * @param mode    The material's resolved alpha mode.
+ * @param opacity The drawable's effective opacity, in [0, 1].
+ * @return true when the draw belongs in the transparent queue.
+ */
+[[nodiscard]] VN_GRAPHICS_API bool alphaModeSortsTransparent(AlphaMode mode, float opacity) noexcept;
+
+/**
  * @brief The five semantic texture slots a material carries.
  *
  * @details
@@ -130,6 +146,19 @@ class VN_GRAPHICS_API MaterialDescription final : public RefCounted<MaterialDesc
 
     /** @brief Gets the resolved values. */
     [[nodiscard]] const MaterialParameters& values() const noexcept;
+
+    /**
+     * @brief Returns whether these values belong in the transparent queue at @p opacity.
+     *
+     * @details
+     * - The value-side spelling of the sort rule (see `alphaModeSortsTransparent`): this is what a recorder asks
+     *   instead of reading the live material's alpha mode, so the blend enable and the sort order agree even when the
+     *   material is edited while a frame is in flight.
+     *
+     * @param opacity The drawable's effective opacity, in [0, 1].
+     * @return true when the draw belongs in the transparent queue.
+     */
+    [[nodiscard]] bool isTransparent(float opacity) const noexcept;
 
   private:
     std::uint64_t      revision_;
