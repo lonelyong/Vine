@@ -66,9 +66,11 @@ executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟�
 | `StreamUploads` + `Streams` | 流身份（切片 + revision）、别名登记（**不持有字节**）、帧命名寿命、容量边界 |
 | `BlockStorage` + `BlockDescriptors` | 每帧 ring（视图/draw）+ 材质 arena；descriptor 按 `ProgramAbi` 声明的 `(set, binding)` 建 |
 
-**半片与集合**：`ContentHalves` 编译"一个 pass 会问到的半片"（(program, revision, layout, variant)），
-`ContentPipeline` 负责编译与查找（`VariantPool` 是变体池），`ContentDraw` 把解析过的绘制录成命令图
-（"两个仅当"：管线只在变体变了时绑、动态状态只在值变了时发）。
+**半片与集合**：`DrawNeeds` 是**唯一的键构造者** —— `drawNeeds(pass, command, facts)`（内容绘制）与
+`drawNeeds(pass, draw, inputs)`（全屏调用）算出一次绘制需要的身份（程序@revision、布局、variant、topology、
+附件形状、采样计数），`DrawNeeds::keyFor(compatibility)` 把它变成 `PipelineKey`。`ContentHalves` 用它建半片、
+`ContentPass` 用它取键，两边不可能各说一套。`ContentPipeline` 负责编译与查找（`VariantPool` 是变体池），
+`ContentDraw` 把解析过的绘制录成命令图（“两个仅当”：管线只在变体变了时绑、动态状态只在值变了时发）。
 
 **程序侧**：`ProgramAbi` 把 program 的**文本**读成事实（set/binding、种类、阶段、std140 尺寸、push 范围），
 `ProgramVariant` 把"哪几个 define 生效"算成一个数（进管线键），`ContentPush` 按名字填 push 成员。

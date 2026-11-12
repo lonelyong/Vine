@@ -20,6 +20,7 @@
 #include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/ContentImages.hpp>
 #include <vine/vsg/internal/ContentPipeline.hpp>
+#include <vine/vsg/internal/DrawNeeds.hpp>
 #include <vine/vsg/internal/ProgramVariant.hpp>
 #include <vine/vsg/internal/StreamUploads.hpp>
 #include <vine/vsg/vsg_global.hpp>
@@ -45,6 +46,14 @@
  * they agree, the colour textures are bound in the layer's sampled-input set (set 1, one binding per texture in
  * declaration order) and the count travels in the pipeline's identity - so a pipeline is compiled against
  * exactly the sampled shape its pass binds, and a second draw of the same pass binds the set once.
+ *
+ * WHERE THE IDENTITY COMES FROM, AND WHY THAT IS NOT THIS FILE. What one drawing call needs - the vertex layout,
+ * the variant the drawable's material and geometry imply, the program row for that variant, and the counts the
+ * pipeline key carries - is answered by `drawNeeds` (api/DrawNeeds), and this layer READS that answer instead of
+ * deriving it. The warm-up path (api/ContentHalves, and the `prepare()` entry that drives it) reads the same
+ * answer, so "what the warm-up reports" and "what the frame builds" are one value rather than two spellings that
+ * happen to agree today (`G1`; the property `T32` pins). What stays here is what the answer cannot know: which
+ * compiled half serves it, and how the half's blocks, streams and pushes are filled.
  *
  * WHAT THE OUTER LAYER OWNS, and is therefore not here: turning an input identity into images. The targets
  * belong to the session (the same table the executor resolves its targets from), so the caller - the layer that
@@ -174,11 +183,11 @@ class VN_VSG_API ContentPass {
     struct Scope {
         /** @brief One compiled half: one program's stages against one vertex layout, for ONE variant. */
         struct Entry {
-            core::DrawKind          kind{ core::DrawKind::Content }; // Which drawing call this half serves.
-            vn::graphics::ContentRef program{};                     // The program identity AND revision the plan names.
-            core::VertexLayoutKey   layout{};                       // The vertex layout its pipeline declares (content).
-            ContentPipeline*      pipelines{ nullptr };            // The pipeline layer over that stage text.
-            ContentDraw*          draws{ nullptr };                // The recorder over those pipelines.
+            core::DrawKind           kind{ core::DrawKind::Content }; // Which drawing call this half serves.
+            vn::graphics::ContentRef program{};                       // The program identity AND revision the plan names.
+            core::VertexLayoutKey    layout{};                        // The vertex layout its pipeline declares (content).
+            ContentPipeline*         pipelines{ nullptr };            // The pipeline layer over that stage text.
+            ContentDraw*             draws{ nullptr };                // The recorder over those pipelines.
             /// The VARIANT this half was compiled for (see api/ProgramVariant). One program has several,
             /// and they share everything above - the same identity, revision and layout - so without this
             /// field a pass would hand every drawable of that program the FIRST half it finds and compile
@@ -300,9 +309,22 @@ class VN_VSG_API ContentPass {
                        std::uint64_t                                   lights_offset,
                        std::uint64_t                                   shadow_offset,
                        const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
-                       std::uint32_t                                   sampled_color_count,
-                       std::uint32_t                                   sampled_depth_count,
                        ::vsg::Group&                                   into);
+
+    /** @brief Gets the compiled half @p needs is drawn through, or null when none serves it (already reported).
+     *
+     * @details
+     * - A half carries its own program, revision, variant and TOPOLOGY (see the file note), so a command whose
+     *   program is not one this pass was built for - or one drawn at another revision, with another vertex
+     *   layout, with another class of primitives, or as another variant of the same text - is refused rather
+     *   than drawn: borrowing a half's stages would draw a picture nobody authored.
+     * - WHICH of those four did not match is said in its own words, because the fixes are different ones (compile
+     *   the program, the layout, the topology's class, or the missing variant).
+     *
+     * @param needs The answer the command's identity came from (see api/DrawNeeds).
+     * @return The half, or null when the pass holds none for that identity.
+     */
+    [[nodiscard]] const Scope::Entry* halfFor(const DrawNeeds& needs);
 
     /** @brief Reports the lights of @p announced that the block could not carry, once per episode. */
     void reportLightsDropped(std::size_t announced, std::size_t represented, bool has_camera);
@@ -382,6 +404,8 @@ class VN_VSG_API ContentPass {
      *                      does not know it).
      * @param inputs        The images the pass' inputs offer, one entry per `pass.inputs` entry and in the same
      *                      order (the same offer the content halves get).
+     * @param needs         What the call needs (see api/DrawNeeds): its source among the inputs, the counts its
+     *                      set and its pipeline carry, and the identity the key is spelled from.
      * @param into          The group the recorded commands are added to.
      * @return true when recorded; false when the half could not record it (already reported).
      */
@@ -390,6 +414,7 @@ class VN_VSG_API ContentPass {
                           const core::CompiledPass&            pass,
                           const core::RenderPassCompatibility& compatibility,
                           std::span<const InputImages>         inputs,
+                          const DrawNeeds&                     needs,
                           ::vsg::Group&                        into);
 
     /** @brief Reports one refused command, naming the identity and the reason the lookup gave. */

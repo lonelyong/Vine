@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -60,6 +61,7 @@
 #include <vine/vsg/internal/ContentSources.hpp>
 #include <vine/vsg/internal/ContentStore.hpp>
 #include <vine/vsg/internal/Device.hpp>
+#include <vine/vsg/internal/DrawNeeds.hpp>
 #include <vine/vsg/internal/GeometryFacts.hpp>
 #include <vine/vsg/internal/MaterialImages.hpp>
 #include <vine/vsg/internal/OffscreenTarget.hpp>
@@ -746,6 +748,34 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     ASSERT_TRUE(messages.empty()) << "every identity is in the tables: nothing may be refused";
 
     EXPECT_EQ(pool.created(), 2U) << "one program against two layouts is two identities, not one";
+    // T32, the frame's side: the identities the RECORDER compiled are exactly the ones the answer names. The answer
+    // is the value the warm-up path reads (api/DrawNeeds), so this is the property that keeps "what prepare
+    // reports" and "what the frame builds" from drifting apart - a drift is a key the pool holds that no answer
+    // names, or the other way round.
+    {
+        std::vector<vn::graphics::backend::PipelineKey> answered;
+        for (const vn::graphics::backend::CompiledDraw& draw : frame.passes[0].draws) {
+            for (const vn::graphics::backend::CompiledCommand& command : draw.commands) {
+                const vn::vsg::DrawNeeds needs = vn::vsg::drawNeeds(frame.passes[0], command, facts);
+                ASSERT_TRUE(needs.answerable());
+                const vn::graphics::backend::PipelineKey key = needs.keyFor(target->shape().compatibility());
+                if (std::find(answered.begin(), answered.end(), key) == answered.end()) {
+                    answered.push_back(key);
+                }
+            }
+        }
+        ASSERT_EQ(answered.size(), 2U) << "the pass asks for one identity per (program, layout) pair";
+        std::vector<vn::graphics::backend::PipelineKey> built;
+        for (std::uint64_t id = 1U; built.size() < pool.variants(); ++id) {
+            if (const vn::graphics::backend::PipelineKey* key = pool.keyOf(id)) {
+                built.push_back(*key);
+            }
+        }
+        ASSERT_EQ(built.size(), answered.size());
+        for (const vn::graphics::backend::PipelineKey& key : answered) {
+            EXPECT_NE(std::find(built.begin(), built.end(), key), built.end()) << "the frame built the identity the answer named";
+        }
+    }
     EXPECT_EQ(left_draws.draws(), 2U);
     EXPECT_EQ(right_draws.draws(), 1U);
     EXPECT_EQ(left_draws.pipeline_binds(), 2U) << "the third drawing call returns to the left half: the bind the right half replaced has to be re-issued";

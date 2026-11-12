@@ -417,3 +417,28 @@
   3b = 预建（`T7`/`T10`：预热后 `builds` 增量 0）。每行一个可回退提交。
 - **下一步**：3a —— 在 `ContentPass::record` 里定位键构造点（约 1235 行附近，含 `PipelineKey::variant`
   与 topology 的注释），抽成纯函数，再让 `prepare` 走同一函数。
+
+## 2026-11-12 —— graphics-next 第 3a 步落地：`drawNeeds` 是唯一的键构造者
+
+- **新文件**：`src/plugins/gfx_backend_vsg/include/vine/vsg/internal/DrawNeeds.hpp` + `src/internal/DrawNeeds.cpp`。
+  `DrawNeeds` 值 + `Miss{None,Geometry,Material,Program}` + `keyFor(compatibility)`；两个 `drawNeeds` 重载：
+  `(pass, CompiledCommand, facts)` = 内容绘制，`(pass, CompiledDraw, inputs)` = 全屏调用（**不需要 facts**：
+  它的身份全在计划 + 调用方 offer 里）。`sampledColorCount` / `sampledDepthCount` 从 `ContentPass.cpp` 的
+  匿名命名空间搬到头文件（`record` 的 set 构建与 `serveHalf` 也用同一拼写）。
+- **两组计数，一条规则**：`set_colors/set_depths` = 这一帧的输入集绑多少（pass 的事实）；`key_colors/key_depths`
+  = 管线键写多少（program 不在 set 1 采样 ⇒ 0，`programSamplesInputSet` 留在 .cpp 匿名命名空间）。两对名字
+  写在同一处，不会各算各的。
+- **删掉的重复**：`ContentHalves::halvesFor` 的 variant/layout/program/Key 构造；`recordCommand` 的
+  geometry/material/variant/findProgram/半片四路匹配（→ `halfFor(needs)`）；`recordScreenDraw` 的 source
+  搜索与六个月手填的 key 字段；`describeMissingContentHalf` 的第三次 lookup。`recordCommand` 少了两个参数
+  （`sampled_color_count/depth_count`），改读 `needs.set_*`。
+- **T32（设备无关）**：`ContentHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds` —— 身份由用例**手写**
+  （不用 `drawNeeds` 喂期望），再比 (a) 答案、(b) `halvesFor` 的半片、(c) 录制后 pool 的键集（`keyOf(1..N)`，
+  id 从 1 单调且不复用）。另在 `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` 加了同一个
+  键集断言（录制侧）。
+- **变异验证 3/3 红**：`keyFor` 丢 topology / 丢 variant、`recordCommand` 里把 `record.key.compatibility`
+  再覆盖掉。
+- **陷阱**：`ContentPassTest.cpp` / `ContentHalvesTest.cpp` 这类大文件**不要**整体 clang-format（会重排既有
+  `Scope::Entry{...}` 与 `using` 顺序）；只格式化新文件与 `ContentPass.*` / `ContentHalves.cpp`。
+- `test_vsg` = 541 cases / 78 suites 全绿。下一步 = 3b：`RenderEngine::prepare()` 入口 +
+  按答案预建（判据：预热后录制 `builds` 增量 0）。

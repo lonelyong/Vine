@@ -155,7 +155,7 @@
 | F4 | 引擎表按 `(id, revision)` 驻留 | 事实表按 ref 建行；旧帧读旧版 | 已落地 |
 | F5 | 行级 epoch 回收 | 行按"最后一次被计划命中的帧"回收；条目在"宿主不要了 ∧ 没有行"时离开 | 已落地 |
 | F6 | 计划是值 | 帧边界按名字差分 + 计划校验稳定 code | 部分：`Plan` + `validatePlan` + `applyPlan` + `plan()` 已落地；`Target` 仍是显式 `RenderTarget` 句柄，`addPass` 家族保留到第 5 步（`C11`） |
-| F7 | 预热入口 | `prepare()` 答需要什么；预热后录制 `builds` 增量 0 | 未做（§9.3 拆成 3a / 3b） |
+| F7 | 预热入口 | `prepare()` 答需要什么；预热后录制 `builds` 增量 0 | 部分：3a 已落地（`drawNeeds` 是唯一的键构造者，录制与预热共用）；`prepare()` 入口与预建是 3b |
 | F8 | 一 Session 多 Surface | `Target` / 帧请求带 `SurfaceId`；一个引擎线程驱动多个窗口 | 未做 |
 | F9 | `publish` 返回结果 | 批内显式“未发布”，无 null | 部分：`PublishOutcome` 四态已落地（`Posted`/`Unchanged`/`InsideBatch`/`Refused`），公开 `Scene::publish()` 随第 5 步的快照出现 |
 | F10 | 原型与实例 | `Instance` 引用原型；折叠一次；无环与行预算 | 未做 |
@@ -224,6 +224,9 @@
 - **注意**（`P8` / `P11`）：预热是**查询**不是“编译一切”；也**不能**用“跑一帧不提交”实现（见 `P11`）。
   **缝**：`drawNeeds(compiled pass, draw)` 是唯一的键构造者——`prepare` 用它建、`ContentPass::record` 用它取，
   两边不可能漂移（`G1`）。
+  **落地位置**（3a，2026-11-12）：`src/plugins/gfx_backend_vsg/{include/vine/vsg/internal,src/internal}/DrawNeeds.{hpp,cpp}`
+  （`drawNeeds` 两个重载 + `DrawNeeds::keyFor`）；`ContentHalves::halvesFor`、`ContentPass::recordCommand` /
+  `recordScreenDraw` 与 `describeMissingContentHalf` 都只读它，录制路径不再自己拼键。
 
 ### 3.8 F8 一设备一 Session 多 Surface
 
@@ -506,7 +509,7 @@
 | T29 | 多表面 | 一个 Session 两个 Surface | 未做 |
 | T30 | 计划校验 | `PlanTest.*IsRefusedWithItsCode`（四类）+ `PlanTest.TheCodeSpellingsAreStable` | 已实现 |
 | T31 | 批内 publish | `ContentMirrorTest.AnEditBatchIsOnePublicationAndTheMirrorKeepsTheOldPictureUntilItEnds`（`InsideBatch` → `Posted`） | 已实现 |
-| T32 | 预热的答案 = 帧的构建 | `PrepareTest.TheReportedNeedsAreWhatTheFrameBuilds`（键集相等） | 未做 |
+| T32 | 预热的答案 = 帧的构建 | `ContentHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds`（键集相等，设备无关）+ `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` 的键集断言（录制侧） | 已实现（2026-11-12） |
 
 ### 8.1 判死阈值（`K#`）
 
@@ -539,7 +542,8 @@
 - **原型已通过阈值、生产未接管**：F1（快照发布）、F2（纯派生）。`detail::SceneSnapshot` +
   `selectSnapshot` 只有测试消费者，生产收集仍走 `RenderWorld` + `drawListBake`；`K1`（203 µs）、
   `K2`（1.03×）、`K3` 已由 `SnapshotTest` 证明。
-- **未做**：F7、F8、F10、F11 与 F12 的 `query` 半边。F9 的内部半边（四态发布答案）已落地；它的公开
+- **未做**：F8、F10、F11 与 F12 的 `query` 半边。F7 的**答案**半边（3a）已落地：`drawNeeds` 是唯一的键构造者，
+  `ContentHalves` 与 `ContentPass` 都只读它（见 §3.7）；它的 `prepare()` 入口与预建是 3b。F9 的内部半边（四态发布答案）已落地；它的公开
   `Scene::publish()` 与“帧内隐式发布消失”是同一步（第 5 步），因为那一步才把快照变成公开值。
 - **迁移期的事实**：`graphics-threading.md` 的 `C1–C20` 与 `graphics-scene.md` 的镜像/delta/memo 描述
   仍是**现在**的形状；本文件是**目标**。两者冲突时以状态字段为准，接管顺序见 §9.3。
@@ -561,7 +565,7 @@
 |---|---|---|---|
 | 1 | 计划是值：`Plan` + 帧边界差分 + 校验 code · **已落地 2026-11-12** | 本步不删公开入口（`C11`）；`compileFrame` 的行从“`slots_` 的投影”变成“计划的投影” | `T7` / `T30` / `K4`；击穿则回退该步 |
 | 2 | `publish` 返回结果（四态）· **已落地 2026-11-12（内部半边）** | 内部 `bool` 发布（`FrameWorker` / `ContentMirror`）；**帧内隐式发布随第 5 步消失** | `T31` |
-| 3a | `prepare()` 的**答案**：抽出 `drawNeeds`，`prepare` 与 `record` 共用它；断言答案 = 这一帧实际构建的键集 | 录制里重复的键构造 | `T32`；击穿则回退该步 |
+| 3a | `prepare()` 的**答案**：抽出 `drawNeeds`，`prepare` 与 `record` 共用它；断言答案 = 这一帧实际构建的键集 · **已落地 2026-11-12** | 录制里重复的键构造 | `T32`；击穿则回退该步 |
 | 3b | `prepare()` 的**预建**：按答案建半片 / 集合 / 上传 | “录制时才发现要编译” | `T7` / `T10`，预热后 `builds` 增量 0 |
 | 4 | 一 Session 多 Surface | 每窗口一个 Session 的驱动路径 | `T29` / `K10` |
 | 5 | **生产收集改走 Snapshot + `selectSnapshot`，删镜像/delta/memo/版本** | `ContentMirror`、`DeltaChannel`、`DrawListMemo`、`Version`、`refresh*`（约 2000 行）；**并在此收口删 `addPass` 家族与 `PassRegistry` 的运行时拒绝** | `K1` / `K2` / `K3` / `K5` / `K7` / `N5`；这是风险最高的一步 |
@@ -584,6 +588,7 @@
 - `src/viz/graphics/src/SceneRows.cpp`（发布的缓存侧）
 - `src/viz/graphics/src/DrawListBake.cpp`（现役收集与排序）
 - `src/viz/graphics/sdk/vine/graphics/backend/ResourceTable.hpp`（按键驻留）
+- `src/plugins/gfx_backend_vsg/include/vine/vsg/internal/DrawNeeds.hpp` / `src/internal/DrawNeeds.cpp`（`drawNeeds`：预热与录制共用的唯一键构造者）
 - `src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp`（事实行与 epoch 回收）
 
 ### 10.2 文档与 ADR

@@ -4,6 +4,7 @@
 
 #include <vine/vsg/internal/ContentDraw.hpp>
 #include <vine/vsg/internal/ContentPipeline.hpp>
+#include <vine/vsg/internal/DrawNeeds.hpp>
 #include <vine/vsg/internal/ProgramVariant.hpp>
 
 VN_VSG_NS_BEGIN
@@ -11,12 +12,12 @@ VN_VSG_NS_BEGIN
 struct ContentHalves::Data {
     /** @brief What a compiled half is: everything the layer depends on (see the file note). */
     struct Key {
-        core::DrawKind          kind{ core::DrawKind::Content };
+        core::DrawKind           kind{ core::DrawKind::Content };
         vn::graphics::ContentRef program{}; // Identity AND revision: the text this half was compiled from.
-        core::VertexLayoutKey   layout{};
-        ProgramVariant          variant{};
-        std::uint32_t           color_attachments{ 1 };
-        vn::graphics::Topology  topology{ vn::graphics::Topology::Triangles };
+        core::VertexLayoutKey    layout{};
+        ProgramVariant           variant{};
+        std::uint32_t            color_attachments{ 1 };
+        vn::graphics::Topology   topology{ vn::graphics::Topology::Triangles };
     };
 
     /** @brief One compiled half: a layer and its recorder, and the key that says when they are this one. */
@@ -43,9 +44,8 @@ struct ContentHalves::Data {
     [[nodiscard]] Half* find(const Key& key) noexcept
     {
         for (const std::shared_ptr<Half>& half : halves) {
-            if (half->key.kind == key.kind && half->key.program == key.program && half->key.layout == key.layout &&
-                half->key.variant == key.variant && half->key.color_attachments == key.color_attachments &&
-                half->key.topology == key.topology)
+            if (half->key.kind == key.kind && half->key.program == key.program && half->key.layout == key.layout && half->key.variant == key.variant &&
+                half->key.color_attachments == key.color_attachments && half->key.topology == key.topology)
             {
                 return half.get();
             }
@@ -92,9 +92,20 @@ struct ContentHalves::Data {
         return false;
     }
 
-    /** @brief Ensures the half one key names, building it from @p program (and @p geometry, for content). */
-    void ensure(const Key& key, const ProgramFacts& program, const GeometryFacts* geometry)
+    /** @brief Ensures the half @p needs names, building it from @p program (and @p geometry, for content). */
+    void ensure(const DrawNeeds& needs, const ProgramFacts& program, const GeometryFacts* geometry)
     {
+        // The half's key comes from the SAME answer the recorder reads (see api/DrawNeeds), so the halves this
+        // producer builds are exactly the tuples a pass asks it for - and what a half is keyed by is spelled in
+        // one place rather than here and again in the recording path.
+        Key key;
+        key.kind              = needs.kind;
+        key.program           = needs.program;
+        key.layout            = needs.layout;
+        key.variant           = needs.variant;
+        key.color_attachments = needs.color_attachments;
+        key.topology          = needs.topology;
+
         if (Half* existing = find(key)) {
             if (existing->layer != nullptr) {
                 serve(*existing);
@@ -153,45 +164,21 @@ ContentHalves::halvesFor(const core::CompiledPass& pass, const ContentFacts& fac
             if (!program.found()) {
                 continue; // the recorder reports the miss; no half is invented for it
             }
-            Data::Key key;
-            key.kind              = core::DrawKind::Screen;
-            key.program           = draw.program;
-            key.color_attachments = pass.color_attachments;
-            // A full-screen call's state is the PASS' (its plan field): the topology it draws its generated
-            // triangle with travels with it, so a pass drawn as lines gets a line-class pipeline.
-            key.topology          = draw.dynamic.topology;
-            d->ensure(key, *program.entry, nullptr);
+            // An empty offer: a half's key states no sampled counts, and the counts a full-screen pipeline is
+            // compiled for are the CALLER's offer (see api/DrawNeeds) - which the producer, asking for shapes,
+            // does not have.
+            d->ensure(drawNeeds(pass, draw, {}), *program.entry, nullptr);
             continue;
         }
 
         for (const core::CompiledCommand& command : draw.commands) {
-            // The same lookups the recorder makes (see api/ContentPass::recordCommand), so the halves
-            // produced here are exactly the tuples it will ask for.
-            const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry);
-            if (!geometry.found()) {
-                continue;
+            // The same answer the recorder reads (see api/DrawNeeds), so the halves produced here are exactly
+            // the tuples it will ask for.
+            const DrawNeeds needs = drawNeeds(pass, command, facts);
+            if (!needs.answerable()) {
+                continue; // the recorder reports the miss; no half is invented for it
             }
-            const FactResult<MaterialFacts> material = findMaterial(facts, command.material);
-            if (!material.found()) {
-                continue;
-            }
-            ProgramVariant variant                 = variantOf(*material.entry, *geometry.entry);
-            variant.instanced                      = command.instance_buffer != nullptr;
-            const FactResult<ProgramFacts> program = findProgram(facts, command.program, variant, core::DrawKind::Content);
-            if (!program.found()) {
-                continue;
-            }
-
-            Data::Key key;
-            key.kind              = core::DrawKind::Content;
-            key.program           = command.program;
-            key.layout            = geometry.entry->layout;
-            key.variant           = variant;
-            key.color_attachments = pass.color_attachments;
-            // ... and the topology the command is assembled with: a half is compiled for ONE class, because
-            // the API will not accept a dynamic set that leaves it (see core::PipelineKey::topology).
-            key.topology          = command.dynamic.topology;
-            d->ensure(key, *program.entry, geometry.entry);
+            d->ensure(needs, *needs.program_entry, needs.geometry_entry);
         }
     }
 

@@ -52,52 +52,6 @@ std::span<const std::byte> bytesOf(const Block& block) noexcept
     return std::span<const std::byte>(reinterpret_cast<const std::byte*>(&block), sizeof(Block));
 }
 
-/// @brief How many colour textures the pass' inputs offer, as the plan states it (the key's count).
-std::uint32_t sampledColorCount(const core::CompiledPass& pass) noexcept
-{
-    std::uint32_t total = 0;
-    for (const core::CompiledInput& input : pass.inputs) {
-        total += input.color_attachments;
-    }
-    return total;
-}
-
-/**
- * @brief Whether a program reads any sampler from THIS layer's input set.
- *
- * WHY IT MATTERS, AND WHAT IT COST TO MISS IT: the pass' declared inputs are what this backend binds at set 1
- * (see ContentPipeline::kInputSet) FOR THE PROGRAMS THAT READ THEM THERE, while the engine's own programs
- * keep every map outside that set - the material block and the diffuse map at set 0, the per-drawable block
- * at set 1 - and are served by name instead (see api/ContentImages: a texture slot from the material,
- * `vn_shadow_map` from the pass' resolved images). Compiling such a program against an input set is a LAYOUT
- * question rather than a size one: its per-drawable block lives in set 1, and a sampled set in that slot is
- * exactly the mismatch ContentPipeline::acquire's guard refuses - measured: every command of the engine's
- * forward path was refused ("its pipeline identity has no compiled pipeline"), 42 lines per frame, with the
- * whole scene invisible while the passes, the plan and the pixels that were left all looked fine.
- *
- * @param abi The program's declarations.
- * @return true when the text declares at least one sampler in the input set.
- */
-bool programSamplesInputSet(const ProgramAbi& abi) noexcept
-{
-    for (const AbiBinding& binding : abi.bindings) {
-        if (binding.kind != AbiDescriptorKind::UniformBlock && binding.set == ContentPipeline::kInputSet) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/// @brief How many DEPTH textures the pass' inputs offer, as the plan states it (the key's count).
-std::uint32_t sampledDepthCount(const core::CompiledPass& pass) noexcept
-{
-    std::uint32_t total = 0;
-    for (const core::CompiledInput& input : pass.inputs) {
-        total += input.depth_sampleable ? 1U : 0U;
-    }
-    return total;
-}
-
 /**
  * @brief Says WHY a pass has content drawing calls but no compiled content half.
  *
@@ -105,7 +59,8 @@ std::uint32_t sampledDepthCount(const core::CompiledPass& pass) noexcept
  * sends the reader to the sampled inputs - while a half is missing for one of FOUR different reasons: the
  * geometry row, the material row, the program entry for the drawable's variant, or a half this backend REFUSED
  * while building it (its GLSL, or a vertex layout it cannot declare). Each has a different fix, so the pass says
- * which one it hit. It walks exactly the lookups the producer walked (see api/ContentHalves).
+ * which one it hit. It reads the SAME answer the recorder reads (see api/DrawNeeds), so this sentence cannot
+ * disagree with the refusal it explains.
  *
  * @param pass  The compiled pass whose content half is missing.
  * @param facts The tables the halves were produced from (the same ones the producer read).
@@ -120,26 +75,22 @@ std::string describeMissingContentHalf(const core::CompiledPass& pass, const Con
         if (draw.commands.empty()) {
             return "the pass records a content drawing call with no commands";
         }
-        const core::CompiledCommand&    command  = draw.commands.front();
-        const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry);
-        if (!geometry.found()) {
-            return std::string("the first command's geometry row misses: ") + missText(geometry.miss);
+        const core::CompiledCommand& command = draw.commands.front();
+        const DrawNeeds              needs   = drawNeeds(pass, command, facts);
+        if (needs.missed == DrawNeeds::Miss::Geometry) {
+            return std::string("the first command's geometry row misses: ") + missText(needs.miss);
         }
-        const FactResult<MaterialFacts> material = findMaterial(facts, command.material);
-        if (!material.found()) {
-            return std::string("the first command's material row misses: ") + missText(material.miss);
+        if (needs.missed == DrawNeeds::Miss::Material) {
+            return std::string("the first command's material row misses: ") + missText(needs.miss);
         }
-        ProgramVariant variant                 = variantOf(*material.entry, *geometry.entry);
-        variant.instanced                      = command.instance_buffer != nullptr;
-        const FactResult<ProgramFacts> program = findProgram(facts, command.program, variant, core::DrawKind::Content);
         // The NAME comes from the tables, not from the plan: a plan carries the handle only, and a program whose
         // text was refused has no `ProgramFacts` row to read a label from - which is why the store keeps a name
         // per identity (see ProgramNameFacts).
         const std::string_view named = programName(facts, command.program.as<vn::graphics::ProgramTag>());
-        if (!program.found()) {
-            std::string text = "the first command's program entry misses for variant " + variant.describe() + ": " + missText(program.miss);
-            text += " (program '" + (named.empty() ? std::string("<none>") : std::string(named)) + "', revision " +
-                    std::to_string(command.program.revision) + ")";
+        if (needs.missed == DrawNeeds::Miss::Program) {
+            std::string text = "the first command's program entry misses for variant " + needs.variant.describe() + ": " + missText(needs.miss);
+            text +=
+                " (program '" + (named.empty() ? std::string("<none>") : std::string(named)) + "', revision " + std::to_string(command.program.revision) + ")";
             return text;
         }
         // The identity IS answerable, so the half itself was refused while it was being built - the one reason
@@ -457,7 +408,11 @@ bool ContentPass::record(const core::CompiledPass&            pass,
             // The set this call binds is the PASS' (the source's attachments, the map, the call's block), so
             // it is built per call: a full-screen call has ONE block and it is the call's own (see
             // makeScreenSet). A pass whose call is refused says why - the rest of the pass still draws.
-            if (!recordScreenDraw(draw, *half, pass, compatibility, inputs, *group)) {
+            //
+            // What it NEEDS is answered before anything is built (see api/DrawNeeds): its source among the pass'
+            // inputs, the counts its set and its pipeline carry, and the identity its key is spelled from - the
+            // same answer the warm-up path reads, so the pipeline this call compiles is the one it promised.
+            if (!recordScreenDraw(draw, *half, pass, compatibility, inputs, drawNeeds(pass, draw, inputs), *group)) {
                 complete = false;
             }
             continue;
@@ -491,19 +446,7 @@ bool ContentPass::record(const core::CompiledPass&            pass,
         }
 
         for (const core::CompiledCommand& command : draw.commands) {
-            if (!recordCommand(command,
-                               draw,
-                               pass,
-                               facts,
-                               compatibility,
-                               view.offset,
-                               lights.offset,
-                               shadow.offset,
-                               input_set,
-                               sampled_color_count,
-                               sampled_depth_count,
-                               *group))
-            {
+            if (!recordCommand(command, draw, pass, facts, compatibility, view.offset, lights.offset, shadow.offset, input_set, *group)) {
                 complete = false;
             }
         }
@@ -629,6 +572,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
                                    const core::CompiledPass&            pass,
                                    const core::RenderPassCompatibility& compatibility,
                                    std::span<const InputImages>         inputs,
+                                   const DrawNeeds&                     needs,
                                    ::vsg::Group&                        into)
 {
     ContentPipeline* const layer = entry.pipelines;
@@ -637,19 +581,12 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
         return false;
     }
 
-    // WHICH OF THE PASS' INPUTS THIS CALL READS. The full-screen ABI reads ONE input - the call's source - plus
-    // the shadow map (by name, wherever the text declares it). The source is named by IDENTITY (the plan's
-    // `draw.source`), not by position: the pass' other inputs are its own business, and a call whose source is
-    // not among them has nothing to draw from.
-    std::size_t source_index = inputs.size();
-    for (std::size_t index = 0; index < inputs.size(); ++index) {
-        if (index < pass.inputs.size() && pass.inputs[index].target == draw.source) {
-            source_index = index;
-            break;
-        }
-    }
-    const bool         has_source = source_index < inputs.size();
-    const InputImages* source     = has_source ? &inputs[source_index] : nullptr;
+    // WHICH OF THE PASS' INPUTS THIS CALL READS came in with the answer (see api/DrawNeeds): the full-screen ABI
+    // reads ONE input - the call's source - plus the shadow map (by name, wherever the text declares it). The
+    // source is named by IDENTITY (the plan's `draw.source`), not by position: the pass' other inputs are its own
+    // business, and a call whose source is not among them has nothing to draw from.
+    const bool         has_source = needs.hasSource();
+    const InputImages* source     = has_source ? &inputs[needs.source_index] : nullptr;
 
     // The map: the input the plan RESOLVED (by the light its target states), never "the first one with a
     // depth" - a G-buffer has a depth too, and binding that one as the sun's map is the measured defect the
@@ -682,15 +619,17 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
     // are the same list.
     const std::span<const ::vsg::ref_ptr<::vsg::ImageView>> source_colors =
         source == nullptr ? std::span<const ::vsg::ref_ptr<::vsg::ImageView>>{} : (source->screen_colors.empty() ? source->colors : source->screen_colors);
-    const std::uint32_t colours = static_cast<std::uint32_t>(source_colors.size());
-    const std::uint32_t depths  = source != nullptr && source->depth != nullptr ? 1U : 0U;
+    // The counts are the ANSWER's (see api/DrawNeeds): they are what the pipeline is compiled for and what this
+    // set is laid out against, so the two cannot end up describing different counts.
+    const std::uint32_t colours = needs.set_colors;
+    const std::uint32_t depths  = needs.set_depths;
 
     // Imported textures are the inputs that are neither the call's source nor the shadow map. They are the
     // ONLY such inputs the full-screen ABI can bind: a produced image other than the source has no slot, and
     // an imported one needs a sampler binding the program actually declares (see below).
     std::vector<std::size_t> imported_indices;
     for (std::size_t index = 0; index < inputs.size(); ++index) {
-        if (index == source_index) {
+        if (index == needs.source_index) {
             continue;
         }
         if (index == map_index) {
@@ -960,26 +899,24 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
     }
 
     ContentDraw::ScreenDraw full_screen;
-    full_screen.key.kind                = core::DrawKind::Screen;
-    full_screen.key.program             = draw.program;
-    full_screen.key.compatibility       = compatibility;
-    // The identity says how many textures the set the draw binds carries: the source's colours and its own
-    // depth (the map and the block are the text's own declarations, so they cannot vary with the pass).
-    full_screen.key.sampled_color_count = colours;
-    full_screen.key.sampled_depth_count = depths;
-    full_screen.dynamic                 = draw.dynamic;
-    full_screen.samplers                = samples;
+    // THE IDENTITY, spelled ONCE (see api/DrawNeeds): the counts it carries are the source's colours and the
+    // source's own depth - the map and the block are the text's own declarations, so they cannot vary with the
+    // pass - and it states no `depth_sampleable`, because the full-screen ABI's depth question is answered by the
+    // counts (see DrawNeeds::keyFor).
+    full_screen.key               = needs.keyFor(compatibility);
+    full_screen.dynamic           = draw.dynamic;
+    full_screen.samplers          = samples;
     // No push: the SDK's full-screen programs read their lights from the light BLOCK (see LightBlock), and a
     // full-screen program of the host's that declares a push block is served by its own caller - the engine has
     // no bytes for it.
-    full_screen.push                    = {};
-    full_screen.viewport                = ViewportRect{ static_cast<float>(draw.viewport.x),
-                                                        static_cast<float>(draw.viewport.y),
-                                                        static_cast<float>(draw.viewport.width),
-                                                        static_cast<float>(draw.viewport.height) };
-    full_screen.depth_min               = pass.depth_range.min;
-    full_screen.depth_max               = pass.depth_range.max;
-    full_screen.color_attachments       = pass.color_attachments;
+    full_screen.push              = {};
+    full_screen.viewport          = ViewportRect{ static_cast<float>(draw.viewport.x),
+                                                  static_cast<float>(draw.viewport.y),
+                                                  static_cast<float>(draw.viewport.width),
+                                                  static_cast<float>(draw.viewport.height) };
+    full_screen.depth_min         = pass.depth_range.min;
+    full_screen.depth_max         = pass.depth_range.max;
+    full_screen.color_attachments = pass.color_attachments;
 
     const auto group = entry.draws->recordScreen(*scope_.registry, full_screen);
     if (group == nullptr) {
@@ -999,22 +936,22 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
                                 std::uint64_t                                   lights_offset,
                                 std::uint64_t                                   shadow_offset,
                                 const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
-                                std::uint32_t                                   sampled_color_count,
-                                std::uint32_t                                   sampled_depth_count,
                                 ::vsg::Group&                                   into)
 {
-    const FactResult<GeometryFacts> geometry = findGeometry(facts, command.geometry);
-    if (!geometry.found()) {
-        reportRefused("the command's geometry", geometry.miss);
+    // WHAT THIS DRAWABLE NEEDS (see api/DrawNeeds): the identity a pipeline is compiled for, answered by the one
+    // function the warm-up path answers it with as well. The recorder READS it here instead of deriving it a
+    // second time - which is what makes "the answer" and "what the frame builds" one value rather than two
+    // spellings that happen to agree today (the property T32 pins).
+    const DrawNeeds needs = drawNeeds(pass, command, facts);
+
+    // The refusals are said in the plan's order (geometry, then material, then program), because that is the
+    // order the answer is built in and each miss has a different fix.
+    if (needs.missed == DrawNeeds::Miss::Geometry) {
+        reportRefused("the command's geometry", needs.miss);
         return false;
     }
-
-    // The material answers before the program does, because it is one of the two inputs of the drawable's
-    // VARIANT (see below): a program's text is several programs, and which of them this drawable is drawn
-    // with is a fact of the drawable, not of the plan.
-    const FactResult<MaterialFacts> material = findMaterial(facts, command.material);
-    if (!material.found()) {
-        reportRefused("the command's material", material.miss);
+    if (needs.missed == DrawNeeds::Miss::Material) {
+        reportRefused("the command's material", needs.miss);
         return false;
     }
 
@@ -1022,12 +959,12 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     // map still draws - refusing a drawable over a colour space would be worse than a gamma-shifted picture -
     // but the host hears about it once per material edit. Said HERE, before any half is looked for, because it is
     // a fact about the material rather than about this pass' ability to draw the command.
-    reportMaterialSlots(*material.entry);
+    reportMaterialSlots(*needs.material_entry);
 
     // THE INSTANCE STREAM, BEFORE ANY PIPELINE IS ACQUIRED: a draw that names no stream cannot be instanced,
     // and a stream whose visible range does not fit the buffer would read another scope's matrices (or past
     // the buffer). Both are refused here, by name, rather than drawn as a guess.
-    const bool instanced = command.instance_buffer != nullptr;
+    const bool instanced = needs.instanced;
     if (!instanced && command.instance_count > 1U) {
         reportRefused("the command's instances", "an instance count without an instance stream");
         return false;
@@ -1047,74 +984,14 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
         }
     }
 
-    // THE VARIANT: which of the program's texts this drawable means, computed from the two facts that
-    // decide it (the engine's own rule - see api/ProgramVariant). It is part of the half's identity, so a
-    // pass that compiled one variant never draws another variant's drawable through it - and it is part of
-    // the PROGRAM ENTRY's key as well, so the `abi` this command is served (its push ranges) is the one its
-    // own text declares (see findProgram).
-    ProgramVariant variant = variantOf(*material.entry, *geometry.entry);
-    variant.instanced      = instanced;
-
-    const FactResult<ProgramFacts> program = findProgram(facts, command.program, variant, core::DrawKind::Content);
-    if (!program.found()) {
-        reportRefused("the command's program", program.miss);
+    // The program entry for the drawable's VARIANT (the engine's rule, computed by the answer), and the compiled
+    // half that entry's tuple names. Both are refusals with their own sentences; see `halfFor`.
+    if (needs.missed == DrawNeeds::Miss::Program) {
+        reportRefused("the command's program", needs.miss);
         return false;
     }
-
-    // The compiled half the tuple names: one program's stages against one vertex layout FOR ONE VARIANT
-    // (see the file note). A half carries its own program, revision, variant and TOPOLOGY, so a command that
-    // names another program - or the same one at a revision the half was not compiled from, or a drawable
-    // whose material and geometry ask for another variant, or one assembled with another class of primitives
-    // - is refused: borrowing a half's stages would draw a picture nobody authored, and the pool would file it
-    // under the key the plan named.
-    const Scope::Entry* entry          = nullptr;
-    bool                program_known  = false;
-    bool                layout_known   = false;
-    bool                topology_known = false;
-    for (const Scope::Entry& candidate : scope_.entries) {
-        if (candidate.program != command.program) {
-            continue;
-        }
-        program_known = true;
-        if (candidate.layout != geometry.entry->layout) {
-            continue;
-        }
-        layout_known = true;
-        // The half's pipeline BAKES this topology, and the API only accepts a dynamically set topology within
-        // the CLASS a pipeline was created with (see core::PipelineKey::topology): a half of another class
-        // cannot draw this command, whatever state is set for it.
-        if (candidate.topology != command.dynamic.topology) {
-            continue;
-        }
-        topology_known = true;
-        if (candidate.variant == variant) {
-            entry = &candidate;
-            break;
-        }
-    }
+    const Scope::Entry* entry = halfFor(needs);
     if (entry == nullptr) {
-        // Which of the four did not match matters: the fixes are different ones (compile the program, the
-        // layout, the topology's class, or the missing variant), and "not built for" alone would send the
-        // reader to the wrong half of the pipeline key.
-        if (!program_known) {
-            reportRefused("the command", "its program is not one this pass was built for (or not at that revision)");
-        }
-        else if (!layout_known) {
-            reportRefused("the command's geometry", "its vertex layout is not one this pass was built for");
-        }
-        else if (!topology_known) {
-            reportRefused("the command's topology",
-                          "the pass has no half that bakes it (points, lines and triangles are compiled for "
-                          "separately: a dynamic set may only move within the class its pipeline was built "
-                          "with)");
-        }
-        else {
-            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
-                                vn::graphics::DiagnosticCategory::ContentSkipped,
-                                vn::String::fromUtf8("the command is not drawn: the pass has no half for the variant this drawable is drawn "
-                                                     "with (" +
-                                                     variant.describe() + "): its own halves serve other variants of that program"));
-        }
         return false;
     }
 
@@ -1126,14 +1003,16 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     // VALUE-initialised on purpose: the source is empty when the material has no map, and a set key built from
     // a stale pointer would file this drawable under ANOTHER one's images (ImageSource has no default member
     // initialisers - see its own note - so the `{}` is the initialisation).
-    const BlockDescriptors::ImageSource demanded = imageSourceOf(*material.entry);
+    const BlockDescriptors::ImageSource demanded = imageSourceOf(*needs.material_entry);
 
     // THE HALF IS SERVED HERE, per command: a pass holds one half per (program, revision, layout, variant,
     // topology), and each half's block sets are ITS OWN - the textured variant's declared set carries the
     // map the untextured one has no binding for - so the sets a command binds must come from the half
     // that command is drawn through, not from whichever half the pass happened to see first. Serving
     // also refuses (once per half - see half_reported_) a half whose sets the caller built no match for.
-    if (!serveHalf(*entry, sampled_color_count + sampled_depth_count, &demanded)) {
+    // The count is the PASS' input set (the caller's sets are built for it), not the pipeline key's - a program
+    // that samples nothing there still has its other declared sets checked by this same call.
+    if (!serveHalf(*entry, needs.set_colors + needs.set_depths, &demanded)) {
         return false;
     }
 
@@ -1146,8 +1025,9 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     vn::graphics::VineDrawBlock draw_block;
     packDrawBlock(command, draw_block);
     const BlockStorage::Block         block          = scope_.storage->writeDraw(bytesOf(draw_block));
-    const BlockStorage::MaterialWrite material_write =
-        scope_.storage->writeMaterial(material.entry->material.as<vn::graphics::MaterialTag>(), material.entry->material.revision, material.entry->block);
+    const BlockStorage::MaterialWrite material_write = scope_.storage->writeMaterial(needs.material_entry->material.as<vn::graphics::MaterialTag>(),
+                                                                                     needs.material_entry->material.revision,
+                                                                                     needs.material_entry->block);
     if (!block.valid) {
         reportRefused("the command's draw block", "the frame's block budget is full");
         return false;
@@ -1162,7 +1042,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     // The streams: one bind per channel, in the entry's order (which is the binding order).
     std::array<::vsg::ref_ptr<::vsg::BindVertexBuffers>, kMaxChannels> binds;
     std::size_t                                                        bound = 0;
-    for (const ChannelFacts& channel : geometry.entry->channels) {
+    for (const ChannelFacts& channel : needs.geometry_entry->channels) {
         if (bound == binds.size()) {
             reportRefused("the command's geometry", "it feeds more channels than this layer binds");
             return false;
@@ -1207,11 +1087,11 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     // The DRAW's own row: a geometry is a set of channels plus N primitives, and the plan names one by its
     // index (CompiledCommand::primitive). Everything below reads THIS row - the index stream, its span and the
     // vertex count - because two primitives of one geometry may read different buffers, or none at all.
-    if (command.primitive >= geometry.entry->primitives.size()) {
+    if (command.primitive >= needs.geometry_entry->primitives.size()) {
         reportRefused("the command's geometry", "it names a primitive this geometry no longer has");
         return false;
     }
-    const PrimitiveFacts& primitive = geometry.entry->primitives[command.primitive];
+    const PrimitiveFacts& primitive = needs.geometry_entry->primitives[command.primitive];
 
     // The stream the draw is ASSEMBLED from, and the two modes are different commands: with an index stream
     // the span travels with the draw (the bind aliases the whole buffer, so an index arena is uploaded once),
@@ -1229,27 +1109,11 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     }
 
     ContentDraw::Draw record;
-    record.key.program                                       = program.entry->program;
-    record.key.vertex_layout                                 = entry->layout;
-    // The variant is identity like the layout is: two variants of one program share the key's other
-    // fields and must never share a pipeline or a state group (see core::PipelineKey::variant).
-    record.key.variant                                       = variant.bits();
-    // ... and so is the topology, because the half was compiled for this one class of primitives (see
-    // core::PipelineKey::topology): the key must name it or the pool would hand this draw the pipeline some
-    // other topology was baked into.
-    record.key.topology                                      = command.dynamic.topology;
-    record.key.compatibility                                 = compatibility;
-    record.key.depth_sampleable                              = pass.depth_sampleable;
-    // How many textures the PIPELINE's input set has: the pass' declared inputs for a program that reads
-    // them there, and NONE for one that does not (see programSamplesInputSet) - the count is part of the
-    // identity because the pipeline is compiled against the set layout it names.
-    const bool          reads_inputs                         = programSamplesInputSet(program.entry->abi);
-    const std::uint32_t pipeline_colors                      = reads_inputs ? sampled_color_count : 0U;
-    const std::uint32_t pipeline_depths                      = reads_inputs ? sampled_depth_count : 0U;
-    record.key.sampled_color_count                           = pipeline_colors;
-    // ... and how many DEPTH textures: the same table's other half (see core::CompiledInput), identity for the
-    // same reason - the pipeline's sampled set is compiled against how many of each the pass binds.
-    record.key.sampled_depth_count                           = pipeline_depths;
+    // THE IDENTITY, spelled ONCE (see api/DrawNeeds): the same value the warm-up path reads, so this draw cannot
+    // be compiled for an identity the answer does not name. The variant is identity like the layout is, and so
+    // is the topology the half's pipeline BAKES (the API accepts a dynamically set topology only within the
+    // class its pipeline was built with - see core::PipelineKey::topology).
+    record.key                                               = needs.keyFor(compatibility);
     record.dynamic                                           = command.dynamic;
     // The device's lineWidthRange is a LIMIT the API enforces by refusing the call, so the width is clamped here -
     // where the draw is prepared - rather than at the Vulkan boundary, which cannot report why it refused. 1.0 is
@@ -1259,7 +1123,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     // The blocks: one bind per set the PROGRAM declares (its own `layout(set = ..., binding = ...)` qualifiers,
     // see api/ProgramAbi). Which sets those are came from `serveHalf`, which also refused the half when the
     // caller built no set for one of them.
-    const ::vsg::ref_ptr<::vsg::PipelineLayout> block_layout = entry->pipelines->layoutFor(pipeline_colors, pipeline_depths);
+    const ::vsg::ref_ptr<::vsg::PipelineLayout> block_layout = entry->pipelines->layoutFor(needs.key_colors, needs.key_depths);
     const BlockDescriptors::Offsets             block_offsets{ view_offset, block.offset, material_write.offset, lights_offset, shadow_offset };
     std::array<::vsg::ref_ptr<::vsg::BindDescriptorSet>, kMaxBlockSets> block_binds;
     std::size_t                                                         bound_sets = 0U;
@@ -1278,7 +1142,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     // offset, size and stages are the declaration's, so the words and the pipeline layout cannot disagree.
     std::array<::vsg::ref_ptr<::vsg::PushConstants>, kMaxPushRanges> push_commands;
     std::size_t                                                      push_count = 0U;
-    for (const AbiPushRange& range : program.entry->abi.pushes) {
+    for (const AbiPushRange& range : needs.program_entry->abi.pushes) {
         if (push_count == push_commands.size()) {
             reportRefused("the command's push range", "its program declares more push ranges than this pass writes");
             return false;
@@ -1301,10 +1165,10 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
         ++push_count;
     }
     record.pushes         = std::span<const ::vsg::ref_ptr<::vsg::PushConstants>>(push_commands.data(), push_count);
-    // The pass' sampled images are bound only by a program that reads them (see programSamplesInputSet):
-    // binding a set the pipeline layout has no room for is an API violation, and the engine's own programs
-    // have their inputs served by name in their own sets.
-    record.inputs         = reads_inputs ? inputs : nullptr;
+    // The pass' sampled images are bound only by a program that reads them (see programSamplesInputSet in
+    // api/DrawNeeds): binding a set the pipeline layout has no room for is an API violation, and the engine's own
+    // programs have their inputs served by name in their own sets.
+    record.inputs         = needs.reads_inputs ? inputs : nullptr;
     record.vertex_binds   = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(binds.data(), bound);
     record.index          = index_bind;
     record.instances      = instanced ? command.instance_count : 1U;
@@ -1320,10 +1184,10 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     if (primitive.indices.has_value()) {
         record.index_count   = primitive.index_count;
         record.first_index   = primitive.first_index;
-        record.vertex_offset = geometry.entry->vertex_offset;
+        record.vertex_offset = needs.geometry_entry->vertex_offset;
     }
     else {
-        record.vertex_count = geometry.entry->vertex_count;
+        record.vertex_count = needs.geometry_entry->vertex_count;
     }
     record.color_attachments = pass.color_attachments;
 
@@ -1336,6 +1200,57 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     }
     into.addChild(node);
     return true;
+}
+
+const ContentPass::Scope::Entry* ContentPass::halfFor(const DrawNeeds& needs)
+{
+    bool program_known  = false;
+    bool layout_known   = false;
+    bool topology_known = false;
+    for (const Scope::Entry& candidate : scope_.entries) {
+        if (candidate.program != needs.program) {
+            continue;
+        }
+        program_known = true;
+        if (candidate.layout != needs.layout) {
+            continue;
+        }
+        layout_known = true;
+        // The half's pipeline BAKES this topology, and the API only accepts a dynamically set topology within
+        // the CLASS a pipeline was created with (see core::PipelineKey::topology): a half of another class
+        // cannot draw this command, whatever state is set for it.
+        if (candidate.topology != needs.topology) {
+            continue;
+        }
+        topology_known = true;
+        if (candidate.variant == needs.variant) {
+            return &candidate;
+        }
+    }
+
+    // Which of the four did not match matters: the fixes are different ones (compile the program, the layout, the
+    // topology's class, or the missing variant), and "not built for" alone would send the reader to the wrong
+    // half of the pipeline key.
+    if (!program_known) {
+        reportRefused("the command", "its program is not one this pass was built for (or not at that revision)");
+    }
+    else if (!layout_known) {
+        reportRefused("the command's geometry", "its vertex layout is not one this pass was built for");
+    }
+    else if (!topology_known) {
+        reportRefused("the command's topology",
+                      "the pass has no half that bakes it (points, lines and triangles are compiled for "
+                      "separately: a dynamic set may only move within the class its pipeline was built "
+                      "with)");
+    }
+    else {
+        diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                            vn::graphics::DiagnosticCategory::ContentSkipped,
+                            vn::String::fromUtf8("the command is not drawn: the pass has no half for the variant this drawable is drawn "
+                                                 "with (" +
+                                                 needs.variant.describe() + "): its own halves serve other variants of that program"));
+    }
+    return nullptr;
 }
 
 bool ContentPass::noteRefusal(const char* what, const char* why)

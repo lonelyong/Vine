@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -8,6 +9,7 @@
 #include <vine/graphics/Geometry.hpp>
 
 #include <vine/graphics/Material.hpp>
+#include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Texture.hpp>
 #include <vine/intrusive_ptr.hpp>
@@ -15,9 +17,12 @@
 #include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/vsg/internal/ContentDraw.hpp>
 #include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/ContentHalves.hpp>
 #include <vine/vsg/internal/ContentSources.hpp>
+#include <vine/vsg/internal/DrawNeeds.hpp>
 #include <vine/vsg/internal/FactResult.hpp>
 #include <vine/vsg/internal/GeometryFacts.hpp>
 #include <vine/vsg/internal/ProgramVariant.hpp>
@@ -38,16 +43,24 @@ using vn::graphics::backend::CompiledDraw;
 using vn::graphics::backend::CompiledPass;
 using vn::graphics::backend::DrawKind;
 using vn::graphics::backend::FrameTimeline;
+using vn::graphics::backend::PipelineKey;
+using vn::graphics::backend::RenderPassCompatibility;
 using vn::graphics::backend::RetirementQueue;
+using vn::graphics::backend::StateRegistry;
 using vn::graphics::backend::VariantPool;
+using vn::graphics::Topology;
 using vn::test::setPrimitiveIndices;
 using vn::vsg::buildGeometryFacts;
 using vn::vsg::buildMaterialFacts;
 using vn::test::buildMaterialFacts; // the object-pointer overload a case writes (see TestMaterialFacts.hpp)
 using vn::vsg::buildProgramFacts;
 using vn::vsg::ChannelFacts;
+using vn::vsg::ContentDraw;
 using vn::vsg::ContentFacts;
 using vn::vsg::ContentHalves;
+using vn::vsg::ContentPass;
+using vn::vsg::DrawNeeds;
+using vn::vsg::drawNeeds;
 using vn::vsg::FactMiss;
 using vn::vsg::GeometryFacts;
 using vn::vsg::MaterialFacts;
@@ -760,4 +773,137 @@ TEST(ContentHalvesTest, AnotherProgramIdentityIsAnotherHalf)
     ASSERT_EQ(first_again.size(), 1U);
     EXPECT_EQ(first_again[0].pipelines, first_layer) << "the first program's half is still the one it built";
     EXPECT_EQ(halves.builds(), 2U);
+}
+
+TEST(ContentHalvesTest, TheReportedNeedsAreWhatTheFrameBuilds)
+{
+    // T32: what the warm-up path REPORTS and what the frame BUILDS are one value. The case spells the identities
+    // BY HAND (no drawNeeds call feeds the expectation), then checks that the answer spells them and that the
+    // frame's compiled set - the pool, filled by recording each drawable through the half its answer names - is
+    // exactly that set. A backend that derived the tuple twice would pass a count comparison and fail this one.
+    const auto program  = contentProgram();
+    const auto geometry = quad(true);
+    const auto plain    = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    const auto texture  = vn::intrusive_ptr<Texture2D>(new Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+    const auto textured = ::material(vn::Colorf(1.0F, 1.0F, 1.0F, 1.0F), texture);
+
+    ProgramVariant textured_variant;
+    textured_variant.textured = true;
+    ProgramFacts textured_facts;
+    ProgramFacts plain_facts;
+    ASSERT_EQ(buildProgramFacts(*program, textured_variant, textured_facts), FactMiss::None);
+    ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, plain_facts), FactMiss::None);
+
+    Tables tables;
+    tables.programs.push_back(textured_facts);
+    tables.programs.push_back(plain_facts);
+    GeometryFacts geometry_facts;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()), FactMiss::None);
+    tables.geometries.push_back(geometry_facts);
+    MaterialFacts textured_material_facts;
+    MaterialFacts plain_material_facts;
+    ASSERT_EQ(buildMaterialFacts(textured.get(), textured->description(), 1U, textured_material_facts, tables.block_storage.emplace_back()), FactMiss::None);
+    tables.materials.push_back(textured_material_facts);
+    ASSERT_EQ(buildMaterialFacts(plain.get(), plain->description(), 1U, plain_material_facts, tables.block_storage.emplace_back()), FactMiss::None);
+    tables.materials.push_back(plain_material_facts);
+    tables.facts.programs   = tables.programs;
+    tables.facts.geometries = tables.geometries;
+    tables.facts.materials  = tables.materials;
+
+    // THREE drawables, THREE identities: two texts of one program, and the plain one drawn as LINES (the
+    // topology is baked into the half, so it is part of what the frame builds).
+    std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), textured.get()),
+                                           commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), plain.get()),
+                                           commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), plain.get()) };
+    commands[2].dynamic.topology = Topology::Lines;
+    const std::vector<CompiledDraw> draws{ CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands } };
+    const CompiledPass              pass = passWith(draws);
+
+    RenderPassCompatibility compatibility;
+    compatibility.color_formats.push_back(vn::graphics::RenderTarget::ColorFormat::RGBA8);
+    compatibility.device_color_formats.push_back(VK_FORMAT_R8G8B8A8_UNORM);
+    compatibility.samples = 1U;
+
+    // THE IDENTITY SPELLED BY HAND: this is the case's own answer, not the code's.
+    const auto identity = [&](std::uint32_t variant_bits, Topology topology) {
+        PipelineKey key;
+        key.kind                = DrawKind::Content;
+        key.program             = vn::test::programRef(*program);
+        key.vertex_layout       = geometry_facts.layout;
+        key.compatibility       = compatibility;
+        key.depth_sampleable    = false;
+        key.sampled_color_count = 0U;
+        key.sampled_depth_count = 0U;
+        key.variant             = variant_bits;
+        key.topology            = topology;
+        return key;
+    };
+    const std::vector<PipelineKey> expected{
+        identity(textured_variant.bits(), Topology::Triangles),
+        identity(ProgramVariant{}.bits(), Topology::Triangles),
+        identity(ProgramVariant{}.bits(), Topology::Lines),
+    };
+
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+
+    // 1. THE ANSWER. A query: it compiles nothing, and it spells exactly the identities above - including the
+    //    variant, which is a fact of the drawable rather than of the plan.
+    std::vector<PipelineKey> answered;
+    for (const CompiledCommand& command : commands) {
+        const DrawNeeds needs = drawNeeds(pass, command, tables.facts);
+        ASSERT_TRUE(needs.answerable());
+        answered.push_back(needs.keyFor(compatibility));
+    }
+    EXPECT_EQ(pool.created(), 0U) << "answering what a frame needs builds nothing";
+    ASSERT_EQ(answered.size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        EXPECT_TRUE(answered[index] == expected[index]) << "answer " << index << " is the identity the case spelled";
+    }
+
+    // 2. THE HALVES THE FRAME IS SERVED BY: one per answer, and one per answer only.
+    const auto entries = halves.halvesFor(pass, tables.facts, timeline, retirement);
+    EXPECT_EQ(halves.refused(), 0U) << "all three texts compile";
+    ASSERT_EQ(entries.size(), expected.size());
+    EXPECT_EQ(halves.halves(), expected.size());
+
+    // 3. THE FRAME'S BUILD: every drawable recorded through the half its own answer names, with the key the
+    //    answer spells. The pool is what the recorder asked the identity arithmetic for, so its contents ARE the
+    //    frame's compiled set.
+    StateRegistry registry(pool);
+    for (const CompiledCommand& command : commands) {
+        const DrawNeeds                  needs = drawNeeds(pass, command, tables.facts);
+        const ContentPass::Scope::Entry* half  = nullptr;
+        for (const ContentPass::Scope::Entry& candidate : entries) {
+            if (candidate.program == needs.program && candidate.layout == needs.layout && candidate.topology == needs.topology &&
+                candidate.variant == needs.variant)
+            {
+                half = &candidate;
+                break;
+            }
+        }
+        ASSERT_NE(half, nullptr) << "the halves cover exactly the answers";
+        ContentDraw::Draw draw;
+        draw.key               = needs.keyFor(compatibility);
+        draw.vertex_count      = geometry_facts.vertex_count;
+        draw.viewport          = vn::vsg::ViewportRect{ 0.0F, 0.0F, 64.0F, 64.0F };
+        draw.color_attachments = pass.color_attachments;
+        ASSERT_NE(half->draws->record(registry, draw), nullptr) << "the frame builds the identity the answer named";
+    }
+    EXPECT_EQ(pool.created(), static_cast<std::uint64_t>(expected.size())) << "one compiled identity per answer, and no other";
+
+    // ... and the set the pool holds IS the answered set, field for field: an identity the frame invented would be
+    // a key no answer names, and the created() count above would not show it.
+    std::vector<PipelineKey> built;
+    for (std::uint64_t id = 1U; built.size() < pool.variants(); ++id) {
+        if (const PipelineKey* key = pool.keyOf(id)) {
+            built.push_back(*key);
+        }
+    }
+    ASSERT_EQ(built.size(), expected.size()) << "ids are handed out from 1 and never reused (see VariantPool)";
+    for (const PipelineKey& key : expected) {
+        EXPECT_NE(std::find(built.begin(), built.end(), key), built.end());
+    }
 }
