@@ -30,7 +30,6 @@ using vn::graphics::RenderCommand;
 using vn::graphics::Scene;
 using vn::graphics::ScenePublishStatus;
 using vn::graphics::detail::expandFrame;
-using vn::graphics::detail::FrameMode;
 using vn::graphics::detail::FrameRunner;
 using vn::graphics::detail::RunnerMode;
 using vn::graphics::detail::FrameWorker;
@@ -132,14 +131,14 @@ TEST(FrameRunnerTest, BothModesExpandAFrameToTheSamePicture)
     ASSERT_NE(inline_worker.publish(scene).status, ScenePublishStatus::InsideBatch);
     FrameRunner     inline_runner{ RunnerMode::Inline };
     FrameDescription from_inline = onePassFrame(scene);
-    inline_runner.run([&] { inline_worker.run(from_inline, FrameMode::Published); });
+    inline_runner.run([&] { inline_worker.run(from_inline); });
     EXPECT_EQ(inline_runner.frames(), 1U) << "jobs are counted where they run: inline, that is the caller's thread";
 
     FrameWorker      threaded_worker;
     ASSERT_NE(threaded_worker.publish(scene).status, ScenePublishStatus::InsideBatch);
     FrameRunner     threaded_runner{ RunnerMode::Threaded };
     FrameDescription from_thread = onePassFrame(scene);
-    threaded_runner.run([&] { threaded_worker.run(from_thread, FrameMode::Published); });
+    threaded_runner.run([&] { threaded_worker.run(from_thread); });
     EXPECT_EQ(threaded_runner.frames(), 1U) << "the engine thread ran that frame";
 
     ASSERT_EQ(commandsOf(from_content).size(), 2U);
@@ -162,7 +161,7 @@ TEST(FrameRunnerTest, ManyFramesThroughTheEngineThreadStayEquivalent)
     constexpr int kFrames = 64;
     for (int frame_index = 0; frame_index < kFrames; ++frame_index) {
         FrameDescription frame = onePassFrame(scene);
-        runner.run([&] { worker.run(frame, FrameMode::Published); });
+        runner.run([&] { worker.run(frame); });
         ASSERT_EQ(commandsOf(frame).size(), 2U) << "frame " << frame_index;
         FrameDescription reference = onePassFrame(scene);
         expandFrame(reference);
@@ -188,13 +187,13 @@ TEST(FrameRunnerTest, StoppedRunnerRunsFramesOnTheCallerInsteadOfWaiting)
     EXPECT_EQ(runner.frames(), 0U);
 
     FrameDescription frame = onePassFrame(scene);
-    // Asked DIRECT: this test is about the thread, so it keeps the source question out of it - a stopped runner must
-    // run the job, not reinterpret how it should be answered.
-    runner.run([&] { worker.run(frame, FrameMode::Direct); });
+    // The job is the engine half as it always is: a stopped runner runs it on the caller instead of waiting for a
+    // thread that is gone - it does not reinterpret how the draw should be answered.
+    runner.run([&] { worker.run(frame); });
     EXPECT_EQ(commandsOf(frame).size(), 2U);
-    EXPECT_EQ(worker.unbound(), 0U) << "a stopped runner runs INLINE: the caller is the content's thread, so the draw "
-                                      "keeps its content instead of being re-pointed at a snapshot";
-    EXPECT_EQ(frame.passes.front().draw->draws.front().content, &scene);
+    EXPECT_EQ(worker.unbound(), 0U) << "the publication was there, so every draw found its source";
+    EXPECT_NE(frame.passes.front().draw->draws.front().content, &scene)
+        << "the draw names the content's publication, not the content - which is what makes the frame portable";
     EXPECT_EQ(runner.busy(), false) << "nothing is left in flight";
     EXPECT_EQ(runner.mode(), RunnerMode::Threaded) << "the mode is a lifetime decision, not a live state";
 }

@@ -289,16 +289,15 @@ void RenderEngine::buildFrameValue()
         if (index < slots_.size() && slots_[index].pass != nullptr && slots_[index].pass->declaration().before_draw) {
             slots_[index].pass->declaration().before_draw();
         }
-        // WHAT THIS PASS WROTE GOES TO THE MIRROR BEFORE THE FRAME IS ANSWERED. The hook WRITES content (an overlay
-        // that follows the camera, a gizmo), so that write has to be published - and it is published per pass, in run
-        // order, because that is the order the hooks ran in. The EXPANSION below is a separate step (see
-        // expandFrameValue) and runs after every pass has been described, which is what makes a frame answer ONE
-        // mirror state (design N16): a hook's write is visible to all of that frame's passes, which is the same rule
-        // the direct and the mirrored mode now state. With nothing changed, both calls answer immediately.
-        if (frame_mode_ == detail::FrameMode::Published) {
-            if (raw_ptr<Scene> scene = pass->content()) {
-                (void)worker_->publish(*scene);
-            }
+        // WHAT THIS PASS WROTE GOES TO THE PUBLICATION BEFORE THE FRAME IS ANSWERED. The hook WRITES content (an
+        // overlay that follows the camera, a gizmo), so that write has to be published - and it is published per pass,
+        // in run order, because that is the order the hooks ran in. This is the migration's IMPLICIT publication: it
+        // goes away in 5b-2c, when a host publishes through `Scene::publish()` and hands the value over with
+        // `RenderEngine::bindSnapshot`. The EXPANSION below is a separate step (see expandFrameValue) and runs after
+        // every pass has been described, which is what makes a frame answer ONE publication state (design N16): a
+        // hook's write is visible to all of that frame's passes. With nothing changed, the call answers immediately.
+        if (raw_ptr<Scene> scene = pass->content()) {
+            (void)worker_->publish(*scene);
         }
         // The declared inputs were resolved by the compile (see compileFrame's rows), and the pass is told them
         // here: they are what a ScreenPass' effect reads, and they are part of what the pass describes.
@@ -362,7 +361,7 @@ void RenderEngine::expandFrameValue(detail::EngineFrame& frame)
         FrameDescription::Pass& described = frame.description.passes[entry++];
         const auto              started   = std::chrono::steady_clock::now();
         if (described.draw.has_value()) {
-            worker_->runPass(*described.draw, frame_mode_);
+            worker_->runPass(*described.draw);
         }
         frame.engine_micros.push_back(
             static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count()));

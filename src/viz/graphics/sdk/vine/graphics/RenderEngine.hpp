@@ -34,6 +34,7 @@
 #include "RenderDiagnostic.hpp"
 #include "RenderSurface.hpp"
 #include "ReportOnce.hpp"
+#include "SceneSnapshotRef.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -45,7 +46,6 @@ class FrameScheduler;
 class FrameWorker;                   // The engine half of a frame: drain, bind, expand (see src/FrameWorker.hpp).
 struct EngineFrame;                  // One frame as it travels between the two halves (see src/EngineFrame.hpp).
 class FrameRunner;                   // The thread a frame's engine half runs on (see src/FrameRunner.hpp).
-enum class FrameMode : std::uint8_t; // What a frame's draws may ask: content (Direct) or its mirror (Mirrored).
 
 } // namespace detail
 
@@ -317,6 +317,33 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   "device lost, rebuild from the bottom" path.
      */
     void shutdown();
+
+    /**
+     * @brief States which publication of @p scene this engine draws from now on.
+     *
+     * @details
+     * - THE EXPLICIT HALF OF PUBLISHING. `Scene::publish()` produces the value; this says which value THIS engine's
+     *   frames draw. Together they are the whole handoff: a host publishes once, hands the answer over, and a frame
+     *   then draws exactly that picture - not whatever the content happened to say when the frame ran.
+     * - IT IS PER ENGINE AND PER SCENE. Two engines drawing one scene each hold their own publication, so an editor
+     *   view and an offscreen bake can be one publication apart without either telling the other what to draw.
+     * - An EMPTY handle clears the binding: every view then answers an empty list, which is the same answer as a
+     *   scene whose content draws nothing.
+     * - IT TAKES PUBLICATION OVER FOR THIS SCENE. A scene this engine was bound for is no longer published implicitly at
+     *   frame start - otherwise the picture the host named would be replaced by whatever the content said when the frame
+     *   ran, and the call would have no effect. A scene never bound keeps the migration's convenience (one implicit
+     *   publication per pass' `before_draw`, which 5b-2c deletes), so a host that does not care keeps working.
+     *
+     * @warning
+     * - Between frames: the engine half of a frame looks this content's source up while it expands, and the binding is
+     *   the answer it finds. Binding while a frame is being answered is a race the engine does not police.
+     * - The takeover is per engine and one-way for the scene's lifetime in this engine: publishing through the frame is
+     *   the implicit path, and there is nothing to switch back to.
+     *
+     * @param scene    The scene whose publication is being handed over.
+     * @param snapshot The publication to draw (see ScenePublishResult::snapshot), or an empty handle to draw nothing.
+     */
+    void bindSnapshot(Scene& scene, const SceneSnapshotRef& snapshot);
 
     /**
      * @brief Prepares the frame the next frame() would build, without running it: a warm-up a host can budget.
@@ -1401,10 +1428,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     mutable std::mutex            presented_camera_mutex_;
     std::optional<CameraSnapshot> presented_camera_;
     // THE ENGINE HALF OF A FRAME, in this engine (see detail::FrameWorker): the one place a pass' expansion is asked
-    // for, so the DEFAULT path and the mirrored one are the same code - and the mode below is what P3 flips when the
-    // frame moves to an engine thread.
+    // for, so there is ONE path for a frame - the engine half is what a runner hands to another thread (see
+    // setFrameThreading), not a second way to answer a draw.
     std::unique_ptr<detail::FrameWorker> worker_;
-    detail::FrameMode                    frame_mode_;
     /// This frame's problems and the previous frame's, swapped after each compile: the episode rule.
     std::vector<CompileProblem> plan_problems_;
     std::vector<CompileProblem> previous_problems_;

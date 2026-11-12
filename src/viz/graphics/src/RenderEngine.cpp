@@ -38,11 +38,9 @@ RenderEngine::RenderEngine()
   , scheduler_(std::make_unique<detail::FrameScheduler>())
   , frame_slots_{ std::make_unique<detail::EngineFrame>(), std::make_unique<detail::EngineFrame>() }
   , worker_(std::make_unique<detail::FrameWorker>())
-  // THE PUBLISHED SNAPSHOT IS THE SOURCE (5b-1; see the design's 2.11): every scene pass is published, then expanded
-  // from that content's snapshot source, so a frame's draws name nothing the content owns - which is what P3 will move
-  // to another thread. The per-view memo it needs (one camera drawn by two passes collects once) is the shared
-  // DrawListMemo.
-  , frame_mode_(detail::FrameMode::Published)
+  // THE PUBLICATION IS THE SOURCE (see the design's 2.11): every scene pass draws the content's PUBLISHED value, so a
+  // frame's draws name nothing the content owns - which is what lets the engine half move to another thread. The
+  // per-view memo it needs (one camera drawn by two passes collects once) is the shared DrawListMemo.
 {
     // The ONE default in the shading path, and it is a named program: content with no program of its
     // own is shaded with the engine's forward program until the host says otherwise. (Null would mean
@@ -255,6 +253,14 @@ raw_ptr<const RenderPass> RenderEngine::passNeedingAnUnsupportedTarget() const
         }
     }
     return nullptr;
+}
+
+void RenderEngine::bindSnapshot(Scene& scene, const SceneSnapshotRef& snapshot)
+{
+    // NO DEVICE AND NO FRAME IS CONSULTED: this states what this engine draws the scene with, and the next frame
+    // reads it. A scene the engine has not drawn before gets its source here, exactly as an implicit publication
+    // would have created one.
+    worker_->bindSnapshot(scene, snapshot);
 }
 
 PrepareReport RenderEngine::prepare()

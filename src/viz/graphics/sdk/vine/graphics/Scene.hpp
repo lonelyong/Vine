@@ -15,14 +15,15 @@
 #include "DrawListSource.hpp"
 #include "Light.hpp"
 #include "Node.hpp"
+#include "SceneSnapshotRef.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
 namespace detail
 {
 struct SceneBake;  // The baked graph half of a collection (see Scene.cpp): an implementation detail, not API.
-class SceneRows;   // The one door onto those rows, for the engine side's mirror (see src/SceneRows.hpp).
-class DrawListMemo; // The per-view collected lists, shared by a Scene and a mirror (see src/DrawListMemo.hpp).
+class SceneRows;   // The one door onto those rows, for the engine side's publication (see src/SceneRows.hpp).
+class DrawListMemo; // The per-view collected lists (see src/DrawListMemo.hpp).
 }
 
 using vn::geom::spatial::Aabbd;
@@ -39,7 +40,8 @@ struct RenderCommand;
  * - `Unchanged` means the current snapshot is still current (no new value was built).
  * - `InsideBatch` means an edit batch is open: the batch's edits are deliberately held back until its outermost
  *   endEdit(), and the previous snapshot stays the published answer (`Scene::beginEdit`).
- * - There is no `Refused`: 5b-2 removes the bounded delta channel that could refuse a publication.
+ * - There is no `Refused`: a publication has nowhere to be refused, because nothing queues behind a bounded channel
+ *   any more - the scene builds one immutable value and swaps it in.
  */
 enum class ScenePublishStatus : std::uint8_t
 {
@@ -49,15 +51,20 @@ enum class ScenePublishStatus : std::uint8_t
 };
 
 /**
- * @brief The result of one Scene::publish() call.
+ * @brief The result of one Scene::publish() call: what happened, and which publication is the answer.
  *
  * @details
- * - Read @ref status, or use the value as a bool meaning `posted()`.
- * - The snapshot itself is not part of the public result: a frame asks the scene for it through the engine's
- *   published-snapshot source, and a host that only needs "did the content move" reads the status.
+ * - TWO FACTS, ONE VALUE: the status says whether a new publication was posted, and @ref snapshot is the
+ *   publication that is the scene's answer AFTER the call - the new one when it was posted, the previous one when
+ *   nothing moved, and the one the batch started from while a batch is open.
+ * - A host that only needs "did the content move" reads the status; a host that drives its own frames takes
+ *   @ref snapshot and hands it to the engine it draws through (see RenderEngine::bindSnapshot). Reading it is
+ *   the only way to say WHICH publication a frame should draw, and that is what makes the handoff a value.
  */
 struct VN_GRAPHICS_API ScenePublishResult {
     ScenePublishStatus status{ ScenePublishStatus::Unchanged };
+    /// The publication that is the scene's answer after this call (empty before the first `Posted`).
+    SceneSnapshotRef snapshot{};
 
     /**
      * @brief Returns whether this call published a new snapshot.
@@ -70,9 +77,9 @@ struct VN_GRAPHICS_API ScenePublishResult {
     }
 
     /**
-     * @brief Returns whether this call published a new snapshot.
+     * @brief Returns the same answer as @ref posted, for a caller that tests the result directly.
      *
-     * @return true when @ref posted() is true.
+     * @return true when this call published a new snapshot.
      */
     explicit operator bool() const noexcept
     {
@@ -306,10 +313,11 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
      *   mid-batch draws the state the batch started from, and the whole batch lands with the publication after the
      *   outermost `endEdit()`.
      * - A second call with nothing changed answers `Unchanged`; no new snapshot is built and the previous one stays.
-     * - The immutable snapshot is not returned here: the engine's source asks for it internally, and the public
-     *   answer a host acts on is the status.
+     * - The answer CARRIES the publication (see @ref ScenePublishResult::snapshot): a host that drives its own frames
+     *   hands that value to the engine it draws through (`RenderEngine::bindSnapshot`), and a frame then draws exactly
+     *   the picture that was published - not whatever the content happened to say when the frame ran.
      *
-     * @return `Posted`, `Unchanged` or `InsideBatch` (see @ref ScenePublishResult).
+     * @return The status and the publication that is the scene's answer afterwards (see @ref ScenePublishResult).
      */
     ScenePublishResult publish();
 
@@ -494,10 +502,9 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
     mutable std::uint64_t                 published_epoch_     = 0;
     mutable std::uint64_t                 published_boxes_     = 0;
     mutable std::uint64_t                 published_materials_ = 0;
-    // The revision of the snapshot `publish()` last answered `Posted` with (0 = none): a stable publication id, so a
-    // later call can tell "the cached snapshot is still the answer" from "a new one was built" without naming the
-    // detail snapshot type in this public header.
-    std::uint64_t published_snapshot_revision_ = 0;
+    // The publication `publish()` last answered `Posted` with: the handle is also the answer `Unchanged` and
+    // `InsideBatch` hand back, so a host always receives the picture a frame would draw.
+    SceneSnapshotRef                      published_snapshot_;
 };
 
 using ScenePtr = intrusive_ptr<Scene>;

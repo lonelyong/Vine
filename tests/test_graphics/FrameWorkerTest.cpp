@@ -29,9 +29,10 @@ using vn::graphics::MatrixTransform;
 using vn::graphics::PassDraw;
 using vn::graphics::RenderCommand;
 using vn::graphics::Scene;
+using vn::graphics::ScenePublishResult;
 using vn::graphics::ScenePublishStatus;
+using vn::graphics::SceneSnapshotRef;
 using vn::graphics::detail::expandFrame;
-using vn::graphics::detail::FrameMode;
 using vn::graphics::detail::FrameWorker;
 using vn::intrusive_ptr;
 using vn::math::Vec3d;
@@ -115,7 +116,7 @@ TEST(FrameWorkerTest, AWorkerExpandsTheSameFrameTheSceneWould)
     FrameWorker worker;
     EXPECT_TRUE(worker.publish(scene)) << "the first publish is the handshake";
     FrameDescription from_snapshot = onePassFrame(scene);
-    worker.run(from_snapshot, FrameMode::Published);
+    worker.run(from_snapshot);
 
     const std::vector<RenderCommand>& expected = commandsOf(from_content);
     const std::vector<RenderCommand>& actual   = commandsOf(from_snapshot);
@@ -138,6 +139,8 @@ TEST(FrameWorkerTest, PublishAnswersPostedUnchangedAndInsideBatch)
 {
     // The public Scene::publish() states its three answers through the same path a frame uses: the first call posts a
     // snapshot, a second with nothing changed reuses it, and a batch holds the previous snapshot until it closes.
+    // THE ANSWER CARRIES THE PUBLICATION (see ScenePublishResult::snapshot), so each status also says WHICH picture is
+    // the scene's answer - which is what a host hands to the engine it draws through.
     auto root = intrusive_ptr<Group>(new Group());
     root->addChild(triangleAt(0.0));
 
@@ -145,14 +148,78 @@ TEST(FrameWorkerTest, PublishAnswersPostedUnchangedAndInsideBatch)
     scene.setRoot(root);
 
     FrameWorker worker;
-    EXPECT_EQ(worker.publish(scene).status, ScenePublishStatus::Posted);
-    EXPECT_EQ(worker.publish(scene).status, ScenePublishStatus::Unchanged);
+    const ScenePublishResult posted = worker.publish(scene);
+    EXPECT_EQ(posted.status, ScenePublishStatus::Posted);
+    ASSERT_TRUE(posted.snapshot.valid()) << "a posted answer names the publication it posted";
+
+    const ScenePublishResult unchanged = worker.publish(scene);
+    EXPECT_EQ(unchanged.status, ScenePublishStatus::Unchanged);
+    EXPECT_EQ(unchanged.snapshot.revision(), posted.snapshot.revision()) << "nothing moved, so the same picture is the answer";
 
     scene.beginEdit();
     root->children().front()->setOpacity(0.5F);
-    EXPECT_EQ(worker.publish(scene).status, ScenePublishStatus::InsideBatch);
+    const ScenePublishResult inside = worker.publish(scene);
+    EXPECT_EQ(inside.status, ScenePublishStatus::InsideBatch);
+    EXPECT_EQ(inside.snapshot.revision(), posted.snapshot.revision())
+        << "a batch holds the publication back: the answer is still the picture the batch started from";
     scene.endEdit();
-    EXPECT_EQ(worker.publish(scene).status, ScenePublishStatus::Posted);
+
+    // The batch lands as ONE publication, and the answer names it.
+    const ScenePublishResult closed = worker.publish(scene);
+    EXPECT_EQ(closed.status, ScenePublishStatus::Posted) << "the outermost endEdit releases the whole batch in one post";
+    EXPECT_GT(closed.snapshot.revision(), posted.snapshot.revision());
+}
+
+TEST(FrameWorkerTest, ABoundPublicationIsThePictureTheFrameDraws)
+{
+    // THE EXPLICIT HANDOFF (see RenderEngine::bindSnapshot): what the engine draws is the publication it was BOUND to,
+    // not whatever the content says when the frame runs. That is the whole point of publishing as a value - an editor
+    // can publish, hand over, and keep editing while the frame draws the picture it named.
+    auto root = intrusive_ptr<Group>(new Group());
+    root->addChild(triangleAt(0.0));
+
+    Scene scene;
+    scene.setRoot(root);
+
+    FrameWorker worker;
+    const ScenePublishResult first = scene.publish();
+    ASSERT_TRUE(first.posted());
+    worker.bindSnapshot(scene, first.snapshot);
+
+    FrameDescription frame = onePassFrame(scene);
+    worker.run(frame);
+    EXPECT_EQ(commandsOf(frame).size(), 1U) << "the bound publication holds one drawable";
+
+    // The content grows, and the frame is NOT told: a frame of the same declarations still draws the bound picture.
+    root->addChild(triangleAt(0.6));
+    FrameDescription stale = onePassFrame(scene);
+    worker.run(stale);
+    EXPECT_EQ(commandsOf(stale).size(), 1U) << "the content moved, but the engine was not handed a new publication";
+    EXPECT_EQ(worker.unbound(), 0U) << "the draws found the source they were bound to";
+
+    // THE FRAME'S OWN PUBLICATION DOES NOT OVERRIDE THE BINDING. A bound scene is the host's picture; the implicit
+    // publication that runs at frame start must leave it alone, or a host's bind would be undone silently every frame.
+    const ScenePublishResult implicit_answer = worker.publish(scene);
+    EXPECT_EQ(implicit_answer.status, ScenePublishStatus::Unchanged) << "a bound scene is not published by the frame";
+    EXPECT_EQ(implicit_answer.snapshot.revision(), first.snapshot.revision()) << "and the answer is still the bound picture";
+    FrameDescription unbound_by_frame = onePassFrame(scene);
+    worker.run(unbound_by_frame);
+    EXPECT_EQ(commandsOf(unbound_by_frame).size(), 1U) << "the frame did not take the scene's new state";
+
+    // Handing over the new publication is what changes the picture.
+    const ScenePublishResult second = scene.publish();
+    ASSERT_TRUE(second.posted());
+    ASSERT_NE(second.snapshot.revision(), first.snapshot.revision());
+    worker.bindSnapshot(scene, second.snapshot);
+    FrameDescription fresh = onePassFrame(scene);
+    worker.run(fresh);
+    EXPECT_EQ(commandsOf(fresh).size(), 2U) << "the frame draws the publication it was last bound to";
+
+    // An empty handle clears the binding: the same answer as a scene whose content draws nothing.
+    worker.bindSnapshot(scene, SceneSnapshotRef{});
+    FrameDescription cleared = onePassFrame(scene);
+    worker.run(cleared);
+    EXPECT_TRUE(commandsOf(cleared).empty()) << "an empty publication draws nothing, and says so by drawing nothing";
 }
 
 TEST(FrameWorkerTest, ARunOnTheSameFrameTwiceBindsOnceAndExpandsOnce)
@@ -168,13 +235,13 @@ TEST(FrameWorkerTest, ARunOnTheSameFrameTwiceBindsOnceAndExpandsOnce)
     FrameWorker worker;
     ASSERT_TRUE(worker.publish(scene));
     FrameDescription frame = onePassFrame(scene);
-    worker.run(frame, FrameMode::Published);
+    worker.run(frame);
     EXPECT_EQ(worker.unbound(), 0U);
 
     const std::vector<RenderCommand>* first = &commandsOf(frame);
     EXPECT_EQ(first->size(), 1U);
 
-    worker.run(frame, FrameMode::Published);
+    worker.run(frame);
     EXPECT_EQ(worker.unbound(), 0U) << "the snapshot source the frame now names is this worker's own";
     EXPECT_EQ(commandsOf(frame).size(), 1U);
 }
@@ -197,42 +264,22 @@ TEST(FrameWorkerTest, PerPassAndWholeFrameFormsGiveTheSamePicture)
     // first, from the same snapshot, without collecting anything again.
     FrameDescription piecewise = onePassFrame(scene);
     PassDraw&       pass       = *piecewise.passes.front().draw;
-    worker.runPass(pass, FrameMode::Published);
+    worker.runPass(pass);
     ASSERT_EQ(pass.draws.size(), 1U);
     const std::size_t first_pass_commands = commandsOf(piecewise).size();
     EXPECT_EQ(first_pass_commands, 1U);
     pass.draws.front().commands.reset(); // a second pass describes itself from scratch
     pass.draws.front().content = &scene;
-    worker.runPass(pass, FrameMode::Published);
+    worker.runPass(pass);
     EXPECT_EQ(commandsOf(piecewise).size(), first_pass_commands);
 
     // The whole-frame form, on a frame of its own.
     FrameDescription whole = onePassFrame(scene);
-    worker.run(whole, FrameMode::Published);
+    worker.run(whole);
     ASSERT_EQ(commandsOf(whole).size(), first_pass_commands);
     for (std::size_t index = 0; index < first_pass_commands; ++index) {
         EXPECT_EQ(commandsOf(whole)[index].geometry.get(), commandsOf(piecewise)[index].geometry.get());
     }
-}
-
-TEST(FrameWorkerTest, TheInlineModeBindsNothingBecauseItIsTheContentsOwnThread)
-{
-    // THE MODE IS ONE PREDICATE. In the inline mode the caller IS the content's thread, so the draw keeps the content it
-    // names: re-pointing it would spend a snapshot's copy to reproduce the answer the content gives for free. That also
-    // makes `unbound()` a meaningful number instead of "every draw of an inline frame".
-    auto root = intrusive_ptr<Group>(new Group());
-    root->addChild(triangleAt(0.0));
-
-    Scene scene;
-    scene.setRoot(root);
-
-    FrameWorker worker;
-    ASSERT_TRUE(worker.publish(scene)) << "the publication exists, even though the inline mode will not use it";
-    FrameDescription frame = onePassFrame(scene);
-    worker.run(frame, FrameMode::Direct);
-    EXPECT_EQ(worker.unbound(), 0U) << "an inline run binds nothing, so nothing is unbound";
-    EXPECT_EQ(frame.passes.front().draw->draws.front().content, &scene) << "the draw still names the content";
-    EXPECT_EQ(commandsOf(frame).size(), 1U) << "and it expanded all the same";
 }
 
 TEST(FrameWorkerTest, ADrawWhoseContentWasNeverPublishedIsCountedNotSilentlyPublished)
@@ -248,7 +295,7 @@ TEST(FrameWorkerTest, ADrawWhoseContentWasNeverPublishedIsCountedNotSilentlyPubl
 
     FrameWorker worker;
     FrameDescription frame = onePassFrame(scene);
-    worker.run(frame, FrameMode::Published);
+    worker.run(frame);
     EXPECT_EQ(worker.unbound(), 1U) << "the draw named a content this worker does not publish";
     EXPECT_EQ(commandsOf(frame).size(), 1U) << "it is still expanded, from the content itself";
     EXPECT_EQ(worker.publicationCount(), 0U);

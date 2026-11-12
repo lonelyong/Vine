@@ -17,24 +17,6 @@ namespace detail
 {
 
 /**
- * @brief WHAT a frame's engine half asks for a draw: the CONTENT it names, or that content's PUBLICATION.
- *
- * @details
- * - This is a statement about the SOURCE, not about the thread - and the two are independent: a published-backed frame
- *   may run on the content's own thread (an engine that publishes and then expands in place), and only the reverse is
- *   illegal - `Direct` reads content, so it may ONLY run where that content lives.
- * - `Published` is what makes a frame portable across threads at all: every draw is re-pointed at the immutable
- *   snapshot published for it, and after that the frame names nothing the content owns.
- * - Naming it after the SOURCE keeps the worker honest (it never inspects a thread) and the owner honest (the engine
- *   decides how its frames are answered; the runner decides where they run).
- */
-enum class FrameMode : std::uint8_t
-{
-    Direct,    ///< Ask the content a draw names. Legal only on the content's thread (the inline path, and the fallback).
-    Published, ///< Ask the content's published snapshot (5b-1). Legal anywhere it was published from.
-};
-
-/**
  * @brief THE ENGINE SIDE OF ONE FRAME: bind the frame to published snapshots, then expand it.
  *
  * @details
@@ -46,16 +28,16 @@ enum class FrameMode : std::uint8_t
  * - IT OWNS NO THREAD AND NO WAITING. `run` is a plain call: whoever owns it decides which thread it runs on, which is
  *   what lets the inline mode (the calling thread, no thread at all) and the threaded mode be the same object. Waiting,
  *   frame numbers and the start/stop handshake belong to the owner (see the design's 2.8 and the backlog's T31).
- * - IT READS NO CONTENT. The content arrives as an immutable snapshot (`publish`) and as a pointer to compare
- *   (`DrawDescription::content`); nothing here dereferences a node. A draw whose content has no publication is COUNTED
- *   (`unbound()`) instead of being quietly expanded from the content - which is correct on the calling thread and a
- *   cross-thread read anywhere else, so the count is how a host finds out it forgot to publish.
+ * - IT READS NO CONTENT. The content arrives as an immutable publication (`Scene::publish`) and as a pointer to
+ *   compare (`DrawDescription::content`); nothing here dereferences a node. A draw whose content has no publication is
+ *   COUNTED (`unbound()`) instead of being quietly expanded from the content - which is correct on the calling thread
+ *   and a cross-thread read anywhere else, so the count is how a host finds out it forgot to publish.
  *
- * @warning `publish` MUST NOT RUN WHILE A FRAME IS RUNNING. The snapshot handoff is safe from both sides, but the LIST
- * of publications is not: `publish` may create one while `run` walks it. Today that is guaranteed by construction - the
- * runner hands a frame over and waits for it, so the content's thread is inside `run` while the engine's works - and a
- * mode that overlaps frames has to move publication creation into the handshake BEFORE it may overlap them. Stating the
- * invariant rather than relying on it silently is the point.
+ * @warning `bindSnapshot` MUST NOT RUN WHILE A FRAME IS RUNNING. The snapshot handoff is safe from both sides, but the
+ * LIST of publications is not: a bind may create one while `run` walks it. Today that is guaranteed by construction -
+ * the runner hands a frame over and waits for it, so the content's thread is inside `run` while the engine's works -
+ * and a mode that overlaps frames has to move publication creation into the handshake BEFORE it may overlap them.
+ * Stating the invariant rather than relying on it silently is the point.
  */
 class FrameWorker {
   public:
@@ -71,14 +53,44 @@ class FrameWorker {
      *
      * @details
      * - Content thread, before the frame that draws @p scene is run. It calls `Scene::publish()` (the explicit
-     *   publication entry) and hands the resulting snapshot to this content's `SnapshotSource`.
+     *   publication entry) and hands the resulting publication to this content's `SnapshotSource`.
      * - It is a cheap no-op when the scene has not changed (`Unchanged`); inside an edit batch it keeps the previous
      *   snapshot, so a frame that lands mid-batch draws the state the batch started from.
+     * - A scene a host BOUND (`bindSnapshot`) is not published here: the call answers `Unchanged` with the publication
+     *   the source already holds, because the host owns that picture.
      *
      * @param scene The scene this frame draws.
-     * @return What the scene answered: posted / unchanged / inside an edit batch (see ScenePublishResult).
+     * @return What the scene answered, publication included (see ScenePublishResult).
      */
     ScenePublishResult publish(Scene& scene);
+
+    /**
+     * @brief Makes @p snapshot the picture this worker draws @p scene with (see RenderEngine::bindSnapshot).
+     *
+     * @details
+     * - The EXPLICIT half of `publish`: a host that called `Scene::publish()` itself hands the value over here, and
+     *   the frame draws exactly that publication. An empty handle clears it (every view then answers an empty list).
+     * - It attaches the content's source on first use, exactly as `publish` does, so binding before a frame is the
+     *   ordinary way to say "draw this picture".
+     *
+     * @param scene    The scene whose publication is being handed over.
+     * @param snapshot The publication to draw, or an empty handle to draw nothing.
+     */
+    void bindSnapshot(Scene& scene, const SceneSnapshotRef& snapshot);
+
+    /**
+     * @brief Gets whether @p scene's publication was taken over by a host (@ref bindSnapshot).
+     *
+     * @details
+     * - THE FRAME'S IMPLICIT PUBLICATION ASKS THIS FIRST: a host that bound a publication owns it, so the frame must
+     *   not overwrite it with whatever the content says at frame start - that would make `bindSnapshot` a call with no
+     *   effect. Unbound scenes keep the migration's convenience (one publication per pass' hook, see EngineCompile),
+     *   which 5b-2c deletes when every host publishes explicitly.
+     *
+     * @param scene The scene to ask about.
+     * @return true when a host bound this scene's snapshot (see @ref bindSnapshot).
+     */
+    [[nodiscard]] bool hasExplicitSnapshot(const Scene& scene);
 
     /**
      * @brief Opens @p frame on every publication: the token their memos are keyed by (the frame's FIRST step).
@@ -88,12 +100,11 @@ class FrameWorker {
     void beginFrame(std::uint64_t frame);
 
     /**
-     * @brief Binds (see @p mode) and expands the draws of ONE pass.
+     * @brief Binds and expands the draws of ONE pass.
      *
      * @param pass The pass' drawing calls, expanded in place.
-     * @param mode What a draw may ask (see FrameMode).
      */
-    void runPass(PassDraw& pass, FrameMode mode = FrameMode::Published);
+    void runPass(PassDraw& pass);
 
     /**
      * @brief Runs the engine half of @p frame: bind and expand every pass.
@@ -103,9 +114,8 @@ class FrameWorker {
      *   does all of it, in the order the frame requires.
      *
      * @param frame The frame value to expand in place.
-     * @param mode  What the run may assume about the content (see FrameMode).
      */
-    void run(FrameDescription& frame, FrameMode mode = FrameMode::Published);
+    void run(FrameDescription& frame);
 
   public:
     /** @brief Gets how many contents this worker publishes. */
@@ -125,13 +135,24 @@ class FrameWorker {
     struct Publication {
         const vn::graphics::DrawListSource* content{ nullptr };
         std::unique_ptr<SnapshotSource>     source{};
+        /// A host handed this content's publication over itself (see bindSnapshot): the frame must not publish it.
+        bool explicit_snapshot{ false };
     };
 
     /// @brief Finds the source a draw names, whether it names the content or the source itself.
     [[nodiscard]] SnapshotSource* sourceOf(const vn::graphics::DrawListSource& source) noexcept;
 
+    /// @brief Finds the source of the content @p scene, attaching one on first use.
+    [[nodiscard]] SnapshotSource* sourceFor(Scene& scene);
+
     /// @brief The lookup itself, for callers that already hold `publications_mutex_`.
     [[nodiscard]] SnapshotSource* sourceOfLocked(const vn::graphics::DrawListSource& source) noexcept;
+
+    /// @brief The attach-on-first-use half, for callers that already hold `publications_mutex_`.
+    [[nodiscard]] SnapshotSource* sourceForLocked(Scene& scene);
+
+    /// @brief The publication record of @p scene, or null when this worker never saw it.
+    [[nodiscard]] Publication* publicationOfLocked(const Scene& scene) noexcept;
 
   private:
     std::vector<Publication> publications_;
