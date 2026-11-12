@@ -360,7 +360,7 @@
 ### 6.2 P2 在帧中间改会话形状
 
 - 会怎么错：pass 表与后端保留态在录制中被换掉，命令引用已释放的对象。
-- 怎么判：`applyPlan` 答 `SessionBusy`（C20）。
+- 怎么判：`applyPlan` 答 `SessionBusy`（C20；名字指“引擎里有帧在录”，SDK 里没有 `Session` 类型）。
 - 怎么防：形状只在帧与帧之间改（`graphics-frame-pipeline.md` F6）。
 
 ### 6.3 P3 在帧中间做设备动词

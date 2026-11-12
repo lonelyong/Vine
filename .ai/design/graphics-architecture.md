@@ -47,6 +47,18 @@
 为什么：静默 no-op 让宿主把“没生效”当成“生效”；返回值是调用点唯一能判断的答案。边界：`removePass` 保持幂等、不返回——
 移除未注册的 pass 与移除已移除的 pass 是同一个结果。满足 `G4` / `G6`；代价是每个调用点多一个可忽略的返回值。
 
+2.8 **`RenderEngine` 是组合根，不是功能的家**：它拥有三样东西 —— 帧泵（`frame` / `waitForFrame` /
+    `setFrameThreading` / `frameNumber`）、会话形状（pass 声明、`plan` / `applyPlan` 与帧编译）、设备借用
+    （`initialize` / `shutdown` / `device` / `createSurface`）与报告（`frameReport` / `presentRecord` /
+    `presentedCamera`）。为什么：`RenderEngine.hpp` 1462 行、56 个公共签名，一个类里住着 8 类职责；线程策略的
+    **机制**只有 `detail::FrameRunner`（123 行）与 5 个调用点，但**语义契约**外溢到 9 个文件——不写下来，下一次
+    加功能会继续默认往里塞（`G5` / `G12`）。边界：新的**机制**属于 `detail::`，不属于 `RenderEngine`；它只组合
+    现有机制。5b-2c 删掉 `addPass` 家族后，`slots_` / `applyPlanRows` 自然沉到 `detail::SessionShape`——那次拆分
+    有真实消费者，不是今天预建的抽象（`G8`）。
+    附带一条名词纪律：`PlanProblemCode::SessionBusy` 的字符串保留（测试钉住），但它的文档含义是“**引擎里有帧在录**”；
+    SDK 里今天**没有** `Session` 类型，该类型随 F8（一 Session 多 Surface，`graphics-frame-pipeline.md` §3.8）落地——
+    在那之前，文档与新接口都不再引用一个不存在的 `Session`。
+
 ## 3. 功能点
 
 ### 3.1 设备、窗口、区、视图、引擎

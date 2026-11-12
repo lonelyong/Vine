@@ -207,7 +207,8 @@
   并整份接受或整份拒绝。
 - **约束**（`C7` / `C11`）：按名字不按指针；迁移期公开 API 只增不改（`addPass` 家族不删）。
 - **要求**（`R21` / `R38`）：增删 pass 不调用任何 add/remove；每条校验一个 code；`SessionBusy` 回答
-  “帧正在录制”，不做事后补救。
+  “引擎里有帧在录”，不做事后补救。**名字说明**：SDK 里今天没有 `Session` 类型；这个 code 的拼写保留只因
+  测试钉住字符串，含义是“引擎忙”，不是某个 `Session` 对象的状态（`graphics-architecture.md` §2.8）。
 - **验收**（`T7` / `T30`）：`PlanTest.APassIsAddedWithoutAnyAddCall`、`PlanTest.AChangedTargetUpdatesTheSameNodeInPlace`（P7）、
   `PlanTest.*IsRefusedWithItsCode`（四类 code）、`PlanTest.TheCodeSpellingsAreStable`。
 - **注意**（`P7`）：差分必须对**同名不同内容**也成立（改一个 pass 的 target 不是“删一个加一个”）。
