@@ -255,3 +255,19 @@
 - 下一步：计划行 `geometry` + `geometry_revision` 合并为 `ContentRef geometry`；然后 `markUsed`/parking 换
   `ResidencyTable` epoch 回收。`ProgramFacts::generation` 删除后，`ADR-2026-11-09` 的“持有即身份”只剩上传表
   （`Buffer`）一条。
+
+### 下一步的接缝（几何行合并为 `ContentRef`）
+
+- 计划行：`CollectedCommand` / `CompiledCommand` 的 `geometry`（`NodeId`）+ `geometry_revision` → 一个
+  `vn::graphics::ContentRef geometry`。产生点只有一个（`FrameRecorder::snapshotCommands`，revision 取
+  `description->revision()`），`FrameCompiler::resolveCommands` 只复制。
+- 事实与表：`GeometryFacts` 的 `geometry` + `revision` 合并；`GeometryKey` / `compareGeometry` /
+  `orderGeometryRows`、`findGeometry(facts, ContentRef)`；`ContentStore` 的 live 表、`eraseGeometryRows` 与
+  `TrackedGeometry` 从 `(NodeId, revision)` 改成一个 ref。`ensureGeometry` 仍从 `live.shape->revision()` 建行
+  （计划里的 revision 不参与建行，规则与程序/材质相同）。
+- **类型坑**：几何的身份就是 `Geometry` 继承自 `Node` 的 `NodeId`（`Geometry::id()` = `Node::id()`），
+  `ContentRef::revision` 才是几何 revision。**不要为此造 `GeometryId`**（`ContentId.hpp` 有这个 tag，但今天
+  没有分配者）；要 typed 视图用 `ref.as<vn::graphics::NodeTag>()`。
+- 消费点：`ContentHalves::halvesFor`、`ContentPass`（两处 `findGeometry`）、`ContentSets::ensure`。
+  `ContentHalves::Key` 与 `ContentSets::Key` 里没有几何身份（只有 layout / set / source），它们的键不用改。
+- 不要顺手改 `RenderWorld` / `SceneSnapshot` / `Scene` 的行身份：它们已经是 `NodeId` 键，这次只动“计划行”。
