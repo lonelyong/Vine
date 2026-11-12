@@ -80,8 +80,10 @@ VN_VSG_NS_BEGIN
  *   therefore keeps these indexes beside the rows (each table maintains its own as rows move) and publishes them
  *   here; asking is one hash lookup.
  * - TWO KINDS, ONE QUESTION. A geometry row declares the BUFFERS its streams read; a material row declares the
- *   TEXTURES its slots sample. Both are addresses, and both are asked the same way by the residency tables that
- *   key on them (api/StreamUploads, api/MaterialImages) - so one type answers both instead of two lookalikes.
+ *   TEXTURES its slots sample; a material row also declares its own IDENTITY (what the block arena holds a slot
+ *   under). The first two are addresses and the third is a handle, so they are two maps - but one type answers
+ *   all three instead of three lookalikes, and every residency table that keys on any of them (api/StreamUploads,
+ *   api/MaterialImages, the material arena) asks the same way.
  * - WHAT IT MEANS, AND WHAT IT DOES NOT. Membership says an address is still declared by some live row, at the
  *   moment that row was built. It says NOTHING about whether the bytes at that address are still the ones a
  *   residency entry was built from: `Buffer::edit()` / a texture refill move the object's revision without
@@ -96,13 +98,16 @@ class ContentDeclarations {
     /**
      * @brief Points at the store's declaration indexes.
      *
-     * @param buffers  Address -> how many live geometry rows still name it (borrowed, never owned).
-     * @param textures Address -> how many live material rows still sample it (borrowed, never owned).
+     * @param buffers   Address -> how many live geometry rows still name it (borrowed, never owned).
+     * @param textures  Address -> how many live material rows still sample it (borrowed, never owned).
+     * @param materials Handle bits -> how many live material rows still name that identity (borrowed, never owned).
      */
-    explicit ContentDeclarations(const std::unordered_map<const void*, std::uint32_t>* buffers  = nullptr,
-                                 const std::unordered_map<const void*, std::uint32_t>* textures = nullptr) noexcept
+    explicit ContentDeclarations(const std::unordered_map<const void*, std::uint32_t>*   buffers   = nullptr,
+                                 const std::unordered_map<const void*, std::uint32_t>*   textures  = nullptr,
+                                 const std::unordered_map<std::uint64_t, std::uint32_t>* materials = nullptr) noexcept
       : buffers_(buffers)
       , textures_(textures)
+      , materials_(materials)
     {}
 
     /**
@@ -127,9 +132,29 @@ class ContentDeclarations {
         return address != nullptr && textures_ != nullptr && textures_->find(address) != textures_->end();
     }
 
+    /**
+     * @brief Gets whether a live material row still names the identity @p material.
+     *
+     * @details
+     * - THE PIN OF A MATERIAL BLOCK. The arena keeps one slot per identity, so "is this block still wanted?" is
+     *   "does any row of that identity answer?" - and a superseded revision that a recorded plan may still name
+     *   keeps the slot exactly as long as it answers, because the block's bytes ARE that row's.
+     * - COUNTED BY THE TABLE ITSELF: the material table already keeps one row count per identity (it is what
+     *   decides when an entry may leave), so this borrows that count instead of copying it - one fact, one home.
+     *
+     * @param material Material identity (the key the arena holds a slot under). The null id asks about the default
+     *                 material, which is an entry like any other.
+     * @return true when some live material row still names that identity.
+     */
+    [[nodiscard]] bool declaresMaterial(vn::graphics::MaterialId material) const noexcept
+    {
+        return materials_ != nullptr && materials_->find(material.handle().bits()) != materials_->end();
+    }
+
   private:
-    const std::unordered_map<const void*, std::uint32_t>* buffers_{ nullptr };
-    const std::unordered_map<const void*, std::uint32_t>* textures_{ nullptr };
+    const std::unordered_map<const void*, std::uint32_t>*   buffers_{ nullptr };
+    const std::unordered_map<const void*, std::uint32_t>*   textures_{ nullptr };
+    const std::unordered_map<std::uint64_t, std::uint32_t>* materials_{ nullptr };
 };
 
 /** @brief One vertex channel of a geometry: what the stream is shared by, and where its bytes live.

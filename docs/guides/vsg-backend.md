@@ -66,7 +66,10 @@
 **驻留寿命由“谁声明这些字节”决定**，不由宿主持有量决定：几何行声明 stream 的 buffer，材质行的 slot 与各 pass 的
 导入输入声明贴图，另一半是对象自己的 `revision()`。所以裁剪 / 隐藏不丢上传（行还在，回来零重传），对象离树后行
 过一个 `slots + 1` 的窗口，声明消失，副本随之离场（`StreamUploads::retired()` / `MaterialImages::released()`
-是这条路的口径）。显式 `releaseContent`（对象，或一条流读的 `buffer`）立刻放，对象本身不受影响。
+是这条路的口径）。**材质块（arena 槽）也按同一条规则，只是 pin 是身份**：只要还有活材质行答得出这个身份，槽就留着；
+最后一行走后帧首立刻放槽（`MaterialArena::retireUnpinned`；口径是
+`ResidencyKind::MaterialBlocks` 那一行的 `retired`）——这里不放停车队列，arena 自己的副本轮转就是那个窗口。
+显式 `releaseContent`（对象，或一条流读的 `buffer`）立刻放，对象本身不受影响。
 
 ## 4. 更新策略
 

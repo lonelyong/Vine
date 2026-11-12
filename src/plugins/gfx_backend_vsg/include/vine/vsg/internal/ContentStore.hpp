@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <memory>
 #include <span>
-#include <vector>
 
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
@@ -183,16 +182,16 @@ class ContentStore {
      * @brief Drops the tracked objects nobody else holds any more.
      *
      * An object is abandoned when the store's share is the last one: nothing can draw with it again, so its
-     * entry has no future to describe. The entry is marked released here and DROPPED when its rows are gone -
-     * a plan already recorded may still name them (see the file note).
+     * entry has no future to describe. Marking and dropping are ONE pass (`retireOwner`): the entry is marked here
+     * and DROPPED when its rows are gone - a plan already recorded may still name them (see the file note).
      *
-     * @param released_materials Receives the identities of abandoned MATERIALS whose arena slots are free at
-     *                           the next sweep (cleared first): the block storage returns those slots. A raw
-     *                           pointer is only used as the arena's key, never dereferenced, so it may already
-     *                           name freed memory.
+     * A MATERIAL'S ARENA SLOT IS NOT DECIDED HERE. The slot follows the same rows one kind down: the block storage
+     * asks the published declaration index every frame and returns the slots no live row names any more (see
+     * `MaterialArena::retireUnpinned`), so this store never names a GPU object.
+     *
      * @return Number of abandoned objects released.
      */
-    std::size_t releaseAbandoned(std::vector<vn::graphics::MaterialId>& released_materials);
+    std::size_t releaseAbandoned();
 
     /**
      * @brief Tells the store the host is done with @p identity, and drops its entry once its rows are gone.
@@ -231,9 +230,9 @@ class ContentStore {
     /** @brief Tells the store the host is done with @p material, and drops its entry once its rows are gone.
      *
      * @details
-     * - Same released-flag rule as releaseGeometry(). The material's ARENA SLOT is not freed here: the row's block
-     *   may still be read by a recorded plan, so the slot leaves through @ref releaseAbandoned's output once the row
-     *   is gone (the sweep frees it then).
+     * - Same released-flag rule as releaseGeometry(). The material's ARENA SLOT follows its rows, not this call: a
+     *   recorded plan may still read the block, so the block storage returns the slot once the last row of that
+     *   identity has left (see `MaterialArena::retireUnpinned`).
      *
      * @param material Material to release; null is refused.
      * @return true when the material is not (or no longer) resident; false for a null material.
@@ -252,10 +251,11 @@ class ContentStore {
     /** @brief Gets how many material entries the tables carry (one per identity). */
     [[nodiscard]] std::size_t materialEntries() const noexcept;
 
-    /** @brief Gets how many material rows are LIVE (tracked objects, the default material excluded).
+    /** @brief Gets how many tracked materials the tables answer for, the default material excluded.
      *
-     * This is the number the block storage sizes its material arena against: every row is a material the host
-     * still holds, and the arena keeps a slot for each of them until the host releases it. O(1).
+     * This is the upper bound the block storage sizes its material arena against: every tracked material may hold a
+     * slot, and a slot returns only once no row of its identity answers (so the live count can be lower, never
+     * higher). O(1).
      */
     [[nodiscard]] std::size_t materialCount() const noexcept;
 

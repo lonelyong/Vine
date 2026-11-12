@@ -30,6 +30,10 @@
  *   queue uses to know which frames are done. A caller that writes to the copy the current frame
  *   reads is correct by construction; a caller that writes to the copy an IN-FLIGHT frame reads is
  *   the bug this layout exists to make impossible to express.
+ * - WHO DECIDES THAT A SLOT GOES. Not a time window and not a capacity: a slot is kept while some live content
+ *   row still names its material, and @ref retireUnpinned returns it the first frame nothing does. That is the
+ *   same pin rule the streams and the textures follow (ADR-2026-11-10), applied to the one residency whose
+ *   bytes the frame writes rather than uploads.
  * - WHAT THIS TYPE DOES NOT OWN. No GPU object and no buffer: it is the layout and the accounting
  *   (which slot, which copy, how many 64-byte writes happened), so its rules are testable without a
  *   device. The API layer allocates one buffer of @ref capacityBytes() and uses @ref offsetOf() for
@@ -114,6 +118,40 @@ class VN_GRAPHICS_API MaterialArena {
      */
     bool release(vn::graphics::MaterialId material) noexcept;
 
+    /** @brief Returns every slot no live content names any more, and says how many went.
+     *
+     * @details
+     * - THIS IS THE ARENA'S LIFETIME RULE, and the only one: a slot is kept while some live content row still
+     *   names its material, and returned the first frame nothing does. The question is asked once per resident
+     *   entry, so the cost is O(slots) and does not follow the size of the content - a culled drawable keeps
+     *   its row (and therefore its slot), a dropped one loses both (see the residency ADR, step 4).
+     * - AN IMMEDIATE RETURN IS SAFE, WHICH IS WHY THIS DOES NOT PARK: a slot is only rewritten in the CURRENT
+     *   frame's copy, so the copies an in-flight frame reads are the ones this call leaves alone (the same
+     *   rotation and the same argument as @ref release). What a slot holds is bytes no live row names.
+     * - A RETURNED SLOT IS NOT A REFUSAL: it makes room for the next material instead of growing the arena, and
+     *   the counter it moves is @ref retired.
+     *
+     * @tparam Live Callable `bool(MaterialId)` - true while some live content row still names that material.
+     * @param is_live The pin question, asked exactly once per resident slot.
+     * @return How many slots were returned.
+     */
+    template <class Live>
+    std::size_t retireUnpinned(Live&& is_live) noexcept
+    {
+        std::size_t retired = 0U;
+        for (auto it = entries_.begin(); it != entries_.end();) {
+            if (is_live(it->first)) {
+                ++it;
+                continue;
+            }
+            free_slots_.push_back(it->second.slot);
+            it = entries_.erase(it);
+            ++retired;
+        }
+        retired_ += retired;
+        return retired;
+    }
+
     /** @brief Gets the byte offset of one block, which is also the dynamic offset a descriptor binds with.
      *
      * @param slot Slot index (see the Write returned by @ref note).
@@ -153,6 +191,12 @@ class VN_GRAPHICS_API MaterialArena {
     /** @brief Gets the number of notes answered Refused because the arena was full. */
     [[nodiscard]] std::uint64_t refusals() const noexcept;
 
+    /** @brief Gets the number of slots returned because no live content named them any more (see retireUnpinned). */
+    [[nodiscard]] std::uint64_t retired() const noexcept
+    {
+        return retired_;
+    }
+
     /** @brief Gets the slot count a replacement arena needs to serve this frame's refused materials.
      *
      * The live materials plus the ones this frame could not fit. It is what the layer feeds into its growth
@@ -171,11 +215,11 @@ class VN_GRAPHICS_API MaterialArena {
 
   private:
     struct Entry {
-        vn::graphics::MaterialId material{};         // The identity this slot belongs to.
-        std::uint64_t            revision{ 0 };      // Revision whose bytes the slot holds.
-        std::uint32_t            slot{ 0 };          // Slot index.
+        vn::graphics::MaterialId material{};            // The identity this slot belongs to.
+        std::uint64_t            revision{ 0 };         // Revision whose bytes the slot holds.
+        std::uint32_t            slot{ 0 };             // Slot index.
         std::uint64_t            last_write_frame{ 0 }; // Frame of the last write (the per-frame dedupe).
-        std::uint32_t            last_copy{ 0 };     // Copy the last write went to.
+        std::uint32_t            last_copy{ 0 };        // Copy the last write went to.
     };
 
     /** @brief Gets the copy the current frame writes to. */
@@ -190,12 +234,13 @@ class VN_GRAPHICS_API MaterialArena {
 
     std::unordered_map<vn::graphics::MaterialId, Entry> entries_; // Material -> its slot (no order: nothing is evicted).
 
-    std::uint64_t                   writes_{ 0 };
-    std::uint64_t                   allocations_{ 0 };
-    std::uint64_t                   hits_{ 0 };
-    std::uint64_t                   refusals_{ 0 };
+    std::uint64_t                                writes_{ 0 };
+    std::uint64_t                                allocations_{ 0 };
+    std::uint64_t                                hits_{ 0 };
+    std::uint64_t                                refusals_{ 0 };
+    std::uint64_t                                retired_{ 0 };       // Slots returned by the pin sweep (see retireUnpinned).
     std::unordered_set<vn::graphics::MaterialId> refused_this_frame_; // Distinct materials refused this frame.
-    std::uint64_t                   bytes_written_{ 0 };
+    std::uint64_t                                bytes_written_{ 0 };
 };
 
 VN_GRAPHICSBACKEND_NS_END

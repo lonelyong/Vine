@@ -27,6 +27,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <vsg/app/Window.h>
@@ -35,6 +36,7 @@
 
 #include <vine/graphics/backend/SlotProbe.hpp>
 #include <vine/vsg/internal/BlockStorage.hpp>
+#include <vine/vsg/internal/ContentFacts.hpp>
 
 #include "SdkPixelFixture.hpp"
 
@@ -511,12 +513,66 @@ TEST(BlockStorageTest, AMaterialRefusalAsksForTheWholeFramesNeed)
     EXPECT_EQ(fixture.storage->liveMaterials(), 2U) << "the two live materials kept their slots";
     EXPECT_EQ(fixture.storage->growthNeeded().materials, 3U) << "live (2) + the one refused";
 
-    // The release path is what makes room - no capacity to run out of.
-    EXPECT_TRUE(fixture.storage->releaseMaterial(a));
+    // The pin sweep is what makes room - no capacity to run out of, and no eviction: `a` stops being named by
+    // live content, its slot comes back, and the refused material lands in it.
+    std::unordered_map<const void*, std::uint32_t>   buffers;
+    std::unordered_map<const void*, std::uint32_t>   textures;
+    std::unordered_map<std::uint64_t, std::uint32_t> materials;
+    materials.emplace(b.handle().bits(), 1U);
+    const vn::vsg::ContentDeclarations declarations{ &buffers, &textures, &materials };
+    EXPECT_EQ(fixture.storage->retireUnpinnedMaterials(declarations), 1U);
     const auto fitted = fixture.storage->writeMaterial(c, 1, blockOf(64, 0x30));
     EXPECT_TRUE(fitted.valid);
     EXPECT_EQ(fitted.kind, vn::graphics::backend::MaterialArena::WriteKind::Allocated);
-    EXPECT_EQ(fixture.storage->materialRefusals(), 1U) << "a release is not a refusal";
+    EXPECT_EQ(fixture.storage->materialRefusals(), 1U) << "a return is not a refusal";
+}
+
+TEST(BlockStorageTest, AMaterialSlotIsReturnedOnceNoLiveRowDeclaresIt)
+{
+    // THE PIN SWEEP, on a real storage. The arena holds one slot per material identity, and "does a live material
+    // row still name it?" is the declaration index the content tables publish - so this is the whole lifetime rule
+    // of a material block, asked once per resident slot. What comes back is the right to REUSE the slot: the bytes
+    // a draw already recorded may still bind live in an older copy, which the arena's rotation leaves untouched
+    // (see MaterialArena::retireUnpinned).
+    if (!Fixture::available()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+    Fixture              fixture;
+    BlockStorage::Layout layout;
+    layout.materials.capacity = 2U;
+    ASSERT_TRUE(fixture.build(layout));
+
+    const auto a = materialId(0), b = materialId(1), c = materialId(2);
+    fixture.storage->beginFrame();
+    const std::vector<std::byte> a_bytes = blockOf(64, 0xA1);
+    const auto                   kept    = fixture.storage->writeMaterial(a, 1, a_bytes);
+    ASSERT_TRUE(kept.valid);
+    ASSERT_TRUE(fixture.storage->writeMaterial(b, 1, blockOf(64, 0xB2)).valid);
+    ASSERT_EQ(fixture.storage->liveMaterials(), 2U);
+
+    // Only `a` is still named by live content: `b`'s slot comes back, and the ledger can say so.
+    std::unordered_map<const void*, std::uint32_t>   buffers;
+    std::unordered_map<const void*, std::uint32_t>   textures;
+    std::unordered_map<std::uint64_t, std::uint32_t> materials;
+    materials.emplace(a.handle().bits(), 1U);
+    const vn::vsg::ContentDeclarations declarations{ &buffers, &textures, &materials };
+    EXPECT_EQ(fixture.storage->retireUnpinnedMaterials(declarations), 1U);
+    EXPECT_EQ(fixture.storage->liveMaterials(), 1U);
+    const vn::graphics::ResidencyRow row = fixture.storage->materialResidency();
+    ASSERT_TRUE(row.retired.has_value()) << "a returned slot is counted";
+    EXPECT_EQ(*row.retired, 1U);
+
+    // The survivor is still a hit whose bytes nobody touched, and the room serves the third material instead of
+    // refusing it (or growing the arena for it).
+    const auto steady = fixture.storage->writeMaterial(a, 1, blockOf(64, 0x00));
+    EXPECT_EQ(steady.kind, vn::graphics::backend::MaterialArena::WriteKind::Unchanged);
+    EXPECT_EQ(steady.offset, kept.offset);
+    EXPECT_EQ(readBack(*fixture.storage, kept.offset, a_bytes.size()), a_bytes);
+    const auto fitted = fixture.storage->writeMaterial(c, 1, blockOf(64, 0xC3));
+    EXPECT_EQ(fitted.kind, vn::graphics::backend::MaterialArena::WriteKind::Allocated);
+    EXPECT_TRUE(fitted.valid) << "a returned slot makes room: nothing is refused, nothing has to grow";
+    EXPECT_EQ(fixture.storage->materialRefusals(), 0U);
+    EXPECT_EQ(fixture.storage->growthNeeded().materials, 0U);
 }
 
 TEST(BlockStorageTest, TheMaterialRegionGrowsWhileTheOthersStay)

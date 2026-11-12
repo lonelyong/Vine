@@ -3844,10 +3844,10 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
     // A3'S QUESTION, MADE A LEDGER. The host's only way to "release" content today is dropping its own
     // references (the SDK has no release entry - §6/A3), so this recipe runs exactly that over cycles:
     // every cycle creates a geometry, a material, a PROGRAM and a texture, draws the geometry once, then
-    // lets all four go. At each cycle's end the tables, the stream registry and the image cache must be
-    // back at their baseline - the sweep's counters (releasedContentObjects / releasedTextures /
-    // releasedStreams) are the proof the letting-go happened - and what the ledger always shows as the
-    // residue is the material arena's slot handling, which has no release path at all (eviction only).
+    // lets all four go. At each cycle's end the tables, the stream registry, the image cache AND the material
+    // arena's slot must be back at their baseline - the sweep's counters (releasedContentObjects /
+    // releasedTextures / releasedStreams) are the proof the letting-go happened, and the slot is the proof the
+    // block residency follows the same pin (see MaterialArena::retireUnpinned).
     if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
@@ -4021,15 +4021,15 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
     EXPECT_GE(backend->releasedStreams(), static_cast<std::size_t>(kCycles))
         << "the streams of the dropped geometries are let go once the naming window passes";
 
-    // THE ONE RESIDUE the ledger shows: material SLOTS have no release path (eviction only, see §11.16cx),
-    // and how many survive here is the allocator's business - a freed material's address may come back.
+    // THE MATERIAL SLOT IS BACK TOO: a dropped material's arena slot follows the same rows as its facts (the pin the
+    // block storage asks every frame), so the live set settles at the session's baseline - there is no "no release
+    // path, eviction only" residue left to report.
     const std::size_t slots = storage->liveMaterials();
-    EXPECT_LE(slots, 256U) << "the arena's bound still holds";
-    std::printf("[a3] residue: %zu/%zu material slots held, %zu above the session's baseline (no release "
-                "path - eviction only)\n",
+    EXPECT_LE(slots, base_slots) << "every dropped material's slot came back through the pin sweep";
+    std::printf("[a3] residue: %zu/%zu material slots held (the pin sweep returns them; baseline %zu)\n",
                 slots,
                 base_slots + static_cast<std::size_t>(kCycles),
-                slots - base_slots);
+                base_slots);
 
     backend->shutdown();
     EXPECT_TRUE(host.alive());

@@ -339,3 +339,27 @@
   `VsgBackendTest.AWorkingSetLargerThanTheOldTextureBoundStaysResident` 的前提正是旧的持有量规则，删除；
   “无容量上限”由 `MaterialImagesTest.EveryLiveTextureKeepsItsImages`（300 条、不跑帧）继续钉住。
 - 变异验证：把 `declared` 改成恒真 ⇒ 3 个新用例全红。`test_vsg` / 全 ctest 30/30，门禁 0。
+
+## 2026-11-12 —— ADR-2026-11-10 步骤 4：材质块迁入 pin 模型
+
+- **pin = 材质身份**（不是 `(身份, revision)`）：arena 一个身份一个槽，而“还活着”这一半就是材质表的
+  per-identity 行计数——所以 `ContentDeclarations` 直接借用 `Table::rows_of_`
+  （`declaresMaterial(id)` = `find(bits)`），**没有第二份记账**。行还答得出（包括被取代的 revision）就钉着槽。
+- **builder / destroyer**：写还是 `MaterialArena::note`（记录时照旧 memo：稳态 0 写、一次编辑一块、同帧第二次
+  `Unchanged`）；放槽变成 `MaterialArena::retireUnpinned(is_live)`，由 `BlockStorage::retireUnpinnedMaterials(
+  declarations)` 在 `ContentAssembly::beginFrame`（表出版之后）每帧问一次：O(槽数)，不随内容走。
+- **不 park，立即放**：arena 的副本轮转就是那个窗口——“放掉可以复用槽的权利”，不是在飞帧读的字节。
+  停靠反而有洞：窗口内内容回来重建了条目，停靠到期仍会把槽还掉，条目里的偏移随后会被别的材质写脏。
+- **`ContentStore` 三个释放循环 → 一个 `retireOwner`**：标记（`Live::isAbandoned()`：geometry 问 object 或
+  shape，program/material 问 object）与丢弃（`released && rowsOf == 0`）同一遍完成；`dropReleased()` 只是
+  `retire(false)`。`material_slots_pending`、`releaseAbandoned(released_materials)` 的出口、
+  `BlockStorage::releaseMaterial`（生产侧最后一个调用点）、`VsgBackend::abandoned_materials` 全部删除。
+- **头文件坑**：`BlockStorage.hpp` 不能 include `ContentFacts.hpp`——`ContentFacts.hpp` 又 include
+  `ContentPipeline.hpp`，后者要求 `BlockDescriptors` 先被包含，而 `BlockDescriptors.hpp` 正是 include
+  本文件 ⇒ 环。用前置声明 `class ContentDeclarations;`（只收引用），实现放 `.cpp`。
+- **计数器**：`ResidencyKind::MaterialBlocks` 的 `retired` 从“缺席”变成 arena 的 `retired()`（a3 以前那行
+  “no release path - eviction only” 的残余现在实测为 0）；`BlockStorage::materialResidency()` 一并填上。
+- 用例：`CoreMaterialArenaTest.ThePinSweepReturnsTheSlotsNoLiveContentNames`、
+  `BlockStorageTest.AMaterialSlotIsReturnedOnceNoLiveRowDeclaresIt`（真设备）、
+  `ContentStoreTest.AMaterialDeclaresItsIdentityForAsLongAsARowAnswersIt`；a3 的残差断言改成
+  `liveMaterials() <= base_slots`（实测每周期回 0）。`test_vsg` 全绿。

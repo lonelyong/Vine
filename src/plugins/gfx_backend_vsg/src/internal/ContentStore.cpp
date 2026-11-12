@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <vine/vsg/internal/ContentSources.hpp>
 #include <vine/vsg/internal/GeometryFacts.hpp>
@@ -31,6 +32,47 @@ namespace
     return row.material.id.bits();
 }
 
+/**
+ * @brief Retires one kind's entries: the host is done with them (@p abandoned) AND no row names them.
+ *
+ * WHY ONE FUNCTION FOR THREE MAPS. A geometry, a program and a material entry leave by the SAME rule - the host
+ * no longer holds the object (see ContentStore::releaseAbandoned) and no row of that identity can still be
+ * recorded - and the three loops that used to say so each could drift apart. Here the rule is written once: the
+ * marking half and the dropping half are the same pass, so an entry can no longer be marked in one place and
+ * forgotten in another (G1: one lifetime, one implementation).
+ *
+ * @tparam Key     The identity type the kind is keyed by.
+ * @tparam Live    The kind's entry type (it has the `released` flag this pass owns).
+ * @tparam Abandoned Callable `bool(const Key&, Live&)` - nobody outside the store holds that identity any more.
+ * @tparam RowsOf  Callable `std::size_t(const Key&)` - how many rows of that identity still answer.
+ * @tparam OnRetire Callable `void(const Key&)` - what the kind must do with the identity as it leaves.
+ *
+ * @param entries   The kind's live set.
+ * @param abandoned Whether an entry nobody has marked yet is now abandoned (not asked for a marked one).
+ * @param rows_of   The row count of one identity (the other half of the rule).
+ * @param on_retire Runs before the entry is erased.
+ * @return How many entries this pass marked as abandoned.
+ */
+template <class Key, class Live, class Abandoned, class RowsOf, class OnRetire>
+std::size_t retireOwner(std::unordered_map<Key, Live>& entries, Abandoned&& abandoned, RowsOf&& rows_of, OnRetire&& on_retire)
+{
+    std::size_t marked = 0U;
+    for (auto it = entries.begin(); it != entries.end();) {
+        Live& live = it->second;
+        if (!live.released && abandoned(it->first, live)) {
+            live.released = true; // the host's last share: nothing can draw with it again
+            ++marked;
+        }
+        if (live.released && rows_of(it->first) == 0U) {
+            on_retire(it->first);
+            it = entries.erase(it);
+            continue;
+        }
+        ++it;
+    }
+    return marked;
+}
+
 } // namespace
 
 struct ContentStore::Data {
@@ -50,6 +92,16 @@ struct ContentStore::Data {
         /// The host is done with this identity (@ref releaseGeometry). track() / ensureGeometry() clear it again, and
         /// the entry itself leaves once no row names it (see the file note).
         bool released{ false };
+
+        /** @brief Whether nobody outside the store holds this identity any more (see releaseAbandoned). */
+        [[nodiscard]] bool isAbandoned() const noexcept
+        {
+            // WHAT "NOBODY ELSE HOLDS IT" MEANS: the object (when the identity named one) is the content's; a shape with
+            // no object came from a value producer, whose owner is the one that keeps it alive. Either way, a share
+            // besides the store's own means the thing is still in use.
+            const unsigned long held_outside = object != nullptr ? object->useCount() : (shape != nullptr ? shape->useCount() : 0UL);
+            return held_outside <= 1UL;
+        }
     };
 
     struct LiveProgram {
@@ -59,6 +111,12 @@ struct ContentStore::Data {
         std::vector<std::uint32_t>                     variants;              // Variants built at that revision (their bits()).
         bool                                           screen_built{ false }; // The full-screen entry, at that revision.
         bool                                           released{ false };
+
+        /** @brief Whether nobody outside the store holds this program any more (see releaseAbandoned). */
+        [[nodiscard]] bool isAbandoned() const noexcept
+        {
+            return object == nullptr || object->useCount() <= 1UL;
+        }
     };
 
     struct LiveMaterial {
@@ -75,6 +133,12 @@ struct ContentStore::Data {
         bool          built{ false };
         std::uint64_t described_revision{ 0 }; // The `values` revision the row was built at.
         bool          released{ false };
+
+        /** @brief Whether nobody outside the store holds this material any more (see releaseAbandoned). */
+        [[nodiscard]] bool isAbandoned() const noexcept
+        {
+            return object == nullptr || object->useCount() <= 1UL;
+        }
     };
 
     struct GeometryStorage {
@@ -207,6 +271,17 @@ struct ContentStore::Data {
         {
             const auto found = rows_of_.find(key);
             return found != rows_of_.end() ? static_cast<std::size_t>(found->second) : 0U;
+        }
+
+        /** @brief Gets the row count per identity, as the declaration index the facts publish (see rowsOf).
+         *
+         * It is the SAME count the entry-drop condition reads: "a live row still names this identity" and "this
+         * identity still has rows" are one fact, and a residency table may borrow it instead of a copy
+         * (see ContentDeclarations::declaresMaterial).
+         */
+        [[nodiscard]] const std::unordered_map<std::uint64_t, std::uint32_t>& identities() const noexcept
+        {
+            return rows_of_;
         }
 
       private:
@@ -473,6 +548,13 @@ struct ContentStore::Data {
             return declared_.counts();
         }
 
+        /** @brief Gets the identity index the facts publish: which material identities still have a row (see
+         *         ContentDeclarations::declaresMaterial). */
+        [[nodiscard]] const std::unordered_map<std::uint64_t, std::uint32_t>& declaredMaterials() const noexcept
+        {
+            return table_.identities();
+        }
+
       private:
         /// @brief Adds (@p direction +1) or withdraws (-1) every texture one row's slots name.
         void declare(const MaterialFacts& row, int direction)
@@ -497,10 +579,6 @@ struct ContentStore::Data {
     std::unordered_map<vn::graphics::NodeId, LiveGeometry>     geometries;
     std::unordered_map<vn::graphics::ProgramId, LiveProgram>   programs;
     std::unordered_map<vn::graphics::MaterialId, LiveMaterial> materials;
-
-    /// Material identities whose entry is gone and whose arena slot is nobody's to keep any more (see dropReleased):
-    /// the sweep hands them to the block storage.
-    std::vector<vn::graphics::MaterialId> material_slots_pending;
 
     /// Program identity -> the name its description saw (see ProgramNameFacts): the tables answer it separately
     /// from `program` because a program whose text cannot be described still has a name, and that is exactly the
@@ -536,7 +614,7 @@ struct ContentStore::Data {
         tables.material_order = material.order();
         // The declaration indexes travel WITH the rows (see ContentDeclarations): a residency table asks them
         // instead of walking the rows, so its per-frame cost does not follow the size of the content.
-        tables.declarations   = ContentDeclarations{ &geometry.declaredBuffers(), &material.declaredTextures() };
+        tables.declarations   = ContentDeclarations{ &geometry.declaredBuffers(), &material.declaredTextures(), &material.declaredMaterials() };
         return tables;
     }
 
@@ -631,38 +709,49 @@ struct ContentStore::Data {
         entry->second.built     = false;
     }
 
+    /**
+     * @brief Retires every kind's entries by the one rule (see retireOwner): the host is done with them, and no row
+     *        names them.
+     *
+     * @param mark_abandoned false = only entries the host already let go of may leave (the frame boundary's half, and
+     *                       what an explicit releaseGeometry/Program/Material asks for); true = also ask which entries
+     *                       nobody outside the store holds any more (see releaseAbandoned).
+     * @return How many entries became abandoned in this call.
+     */
+    std::size_t retire(bool mark_abandoned)
+    {
+        // THE ONE RULE, ASKED OF EVERY KIND. A null identity is never abandoned: it is the default material, the
+        // engine's fill-in for content that names none, and not an object anyone holds (a geometry or a program entry
+        // never has one - track() refuses a null id).
+        const auto  abandoned = [mark_abandoned](const auto& key, const auto& live) { return mark_abandoned && !key.handle().isNull() && live.isAbandoned(); };
+        std::size_t marked    = 0U;
+        marked += retireOwner(
+            geometries,
+            abandoned,
+            [this](const vn::graphics::NodeId& key) { return geometry.rowsOf(key.handle().bits()); },
+            [](const vn::graphics::NodeId&) {});
+        marked += retireOwner(
+            programs,
+            abandoned,
+            [this](const vn::graphics::ProgramId& key) { return program.rowsOf(key.handle().bits()); },
+            [this](const vn::graphics::ProgramId& key) {
+                // The NAME travels with the description, not with a row (see ProgramNameFacts): it leaves with the entry.
+                std::erase_if(program_names, [&key](const ProgramNameFacts& name) { return name.program == key; });
+            });
+        // The material's ARENA SLOT is no longer this table's business: it follows the rows themselves, and the block
+        // storage asks the declaration index every frame (see MaterialArena::retireUnpinned). The entry just goes.
+        marked += retireOwner(
+            materials,
+            abandoned,
+            [this](const vn::graphics::MaterialId& key) { return material.rowsOf(key.handle().bits()); },
+            [](const vn::graphics::MaterialId&) {});
+        return marked;
+    }
+
     /** @brief Drops the entries the host is done with whose rows are all gone (the epoch rule's other half). */
     void dropReleased()
     {
-        for (auto it = geometries.begin(); it != geometries.end();) {
-            if (it->second.released && geometry.rowsOf(it->first.handle().bits()) == 0U) {
-                it = geometries.erase(it);
-            }
-            else {
-                ++it;
-            }
-        }
-        for (auto it = programs.begin(); it != programs.end();) {
-            if (it->second.released && program.rowsOf(it->first.handle().bits()) == 0U) {
-                const vn::graphics::ProgramId identity = it->first;
-                std::erase_if(program_names, [identity](const ProgramNameFacts& name) { return name.program == identity; });
-                it = programs.erase(it);
-            }
-            else {
-                ++it;
-            }
-        }
-        for (auto it = materials.begin(); it != materials.end();) {
-            if (it->second.released && material.rowsOf(it->first.handle().bits()) == 0U) {
-                // The ARENA SLOT follows the row: the block a recorded plan still reads is the row's, so the id leaves
-                // for the block storage only once that row is gone (see releaseMaterial).
-                material_slots_pending.push_back(it->first);
-                it = materials.erase(it);
-            }
-            else {
-                ++it;
-            }
-        }
+        (void)retire(/*mark_abandoned=*/false);
     }
 
     /** @brief Gets the row that answers for a TRACKED geometry right now (the one built at its live revision).
@@ -862,7 +951,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
     d->facts.program_order  = d->program.order();
     d->facts.geometry_order = d->geometry.order();
     d->facts.material_order = d->material.order();
-    d->facts.declarations   = ContentDeclarations{ &d->geometry.declaredBuffers(), &d->material.declaredTextures() };
+    d->facts.declarations   = ContentDeclarations{ &d->geometry.declaredBuffers(), &d->material.declaredTextures(), &d->material.declaredMaterials() };
     return d->facts;
 }
 
@@ -1036,56 +1125,15 @@ void ContentStore::ensureProgram(vn::graphics::ProgramId program, const ProgramV
     ++d->builds;
 }
 
-std::size_t ContentStore::releaseAbandoned(std::vector<vn::graphics::MaterialId>& released_materials)
+std::size_t ContentStore::releaseAbandoned()
 {
-    released_materials.clear();
-    std::size_t released = 0U;
-
-    // AN ABANDONED ENTRY IS ONLY MARKED HERE. Its rows may still answer for a recorded plan, and the entry is what
-    // keeps a material's maps (and a geometry's shape) alive for them - so the entry leaves in dropReleased() once its
-    // last row does, and its arena slot with it.
-    for (auto& [identity, live] : d->geometries) {
-        if (live.released) {
-            continue; // already the host's word
-        }
-        // WHAT "NOBODY ELSE HOLDS IT" MEANS: the object (when the identity named one) is the content's; a shape with no
-        // object came from a value producer, whose owner is the one that keeps it alive. Either way, a share besides
-        // the store's own means the thing is still in use.
-        const unsigned long held_outside = live.object != nullptr ? live.object->useCount() : (live.shape != nullptr ? live.shape->useCount() : 0UL);
-        if (held_outside > 1UL) {
-            continue;
-        }
-        live.released = true;
-        ++released;
-    }
-
-    for (auto& [identity, live] : d->programs) {
-        (void)identity;
-        if (live.released || (live.object != nullptr && live.object->useCount() > 1UL)) {
-            continue;
-        }
-        live.released = true;
-        ++released;
-    }
-
-    for (auto& [identity, live] : d->materials) {
-        if (identity.isNull() || live.released) {
-            continue; // the default material is not an object anyone can abandon
-        }
-        if (live.object != nullptr && live.object->useCount() > 1UL) {
-            continue;
-        }
-        live.released = true;
-        ++released;
-    }
-
-    d->dropReleased();
-
-    // THE ARENA SLOTS come out here: an id whose entry (and therefore every row) is gone is nobody's to keep. The
-    // identity is a KEY only (the object may already be destroyed - see the declaration).
-    released_materials.swap(d->material_slots_pending);
-    d->material_slots_pending.clear();
-    return released;
+    // ONE PASS, ONE RULE (see retireOwner): an entry is retired when the host's share was the last one AND no row
+    // names its identity. The marking and the dropping are the same pass, so an entry marked here cannot be
+    // forgotten by a second loop somewhere else - and its rows (which a recorded plan may still name) keep it
+    // alive exactly as long as they answer. The material's arena slot is not this call's business any more: it
+    // follows the same rows, and the block storage asks the declaration index every frame (see
+    // MaterialArena::retireUnpinned).
+    return d->retire(/*mark_abandoned=*/true);
 }
 
 bool ContentStore::releaseGeometry(vn::graphics::NodeId identity)
@@ -1141,7 +1189,6 @@ void ContentStore::clear()
     d->geometries.clear();
     d->programs.clear();
     d->materials.clear();
-    d->material_slots_pending.clear();
     d->program_names.clear();
     d->geometry.clear();
     d->program.clear();

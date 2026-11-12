@@ -1,7 +1,7 @@
 # graphics 内容生命周期：释放与缓存
 
 > **状态**：现行
-> **最后核对**：2026-11-10
+> **最后核对**：2026-11-12
 > **范围**：内容对象的宿主所有权、GPU 驻留释放与缓存策略，以及上传暂存的回收。
 > **权威来源**：`RenderDevice.hpp` / `RenderEngine.hpp` / `MaterialImages.hpp` /
 > `core/MaterialArena.hpp` / `core/Streams.hpp` / `core/BlockStorage.hpp`。
@@ -79,6 +79,10 @@
      自己持有 view / sampler），所以它在 `ContentAssembly::beginFrame` 里和流一起问。
    - 编译半片 / 描述符集是**会话级**的，不随 pass 走：它们只在“表不再回答这个 program（id + revision）”或
      “没有任何 geometry 还问这个 layout”时被停靠（`ContentHalves::answerable` / `ContentSets` 的 sweep）。
+   - 材质块（arena 槽）也走**同一条规则**：槽按**身份**保留，每帧问一次声明索引
+     （`ContentDeclarations::declaresMaterial`：材质表的 per-identity 行计数）“还有活行吗”；没有就
+     **当帧立即放槽**（`MaterialArena::retireUnpinned`）。不是 park——arena 的副本轮转就是那个窗口，
+     放掉的是“可以复用这个槽”的权利，不是在飞帧要读的字节。
    为什么这么分：把“对象没了”和“这一帧没画”合成一个开关，就必然要么为裁剪抖动付重建代价，要么把已离树的
    驻留永久留（`G1`：两个问题，两个答案）。流这一步已经从“时间窗猜第三个开关”改成“只问谁还声明”（见 ADR）。
 
@@ -87,7 +91,8 @@
     两个后果：
     - 被取代的 revision（条目已给出新行）与已释放条目（宿主说了 release，或没人再持有）的行，过了窗口就离开；
     - **被裁剪 / 隐藏的内容不会丢行**：它仍是条目的当前答案，所以也仍是上传声明的来源（F27 / F28）。
-    条目本身在“宿主不要了”与“没有行还答得出”同时成立时离开；材质 arena 槽跟最后一行走。
+    条目本身在“宿主不要了”与“没有行还答得出”同时成立时离开（`ContentStore` 的 `retireOwner`：标记与丢弃一遍完成）；
+    材质 arena 槽不看这个条目，只看**行**：帧首问声明索引，最后一行离开后就放槽。
     `markUsed` / 释放 token / park / `kept` 都不再存在（`ResidencyTable` 的规则落到行上，见 ADR-2026-11-11 第 3 段）。
 
 ## 3. 功能点
@@ -98,16 +103,16 @@
 |---|---|---|
 | F1 | `releaseContent(...)` | 释放 Geometry / Material（asset 或 `MaterialInstance`）/ ShaderProgram / Texture，以及单条流的 `Buffer<float>` / `Buffer<uint32_t>` 的 GPU 驻留（buffer 按地址命名，读它的 geometry 不动）。 |
 | F2 | 释放标记 | 释放只是标记；行按 epoch 回收（2.10）。下次使用（`track` / `ensure*`）清掉标记，所以不误删。 |
-| F3 | 纹理立即删 | 纹理 cache 立即删条目；行按 epoch 回收，arena 槽跟最后一行走。 |
+| F3 | 纹理立即删 | 纹理 cache 立即删条目；行按 epoch 回收，材质的 arena 槽按行（pin）回收。 |
 | F4 | 重建 | 下一次使用重建驻留；不是泄漏。 |
-| F5 | 弃用扫尾 | 宿主丢掉引用后由 `ContentStore::releaseAbandoned` 标记（帧内一次，录完内容、提交之前），行与条目按 epoch 回收；上传与纹理由帧自己的声明扫描离场。 |
+| F5 | 弃用扫尾 | 宿主丢掉引用后由 `ContentStore::releaseAbandoned` 标记（帧内一次，录完内容、提交之前），行与条目按 epoch 回收；上传、纹理与材质块由帧自己的声明扫描离场。 |
 
 ### 3.2 缓存
 
 | # | 功能 | 说明 |
 |---|---|---|
 | F6 | 纹理缓存 | `MaterialImages` 条目由**活内容**钉住：材质行的 slot 声明（`ContentDeclarations::declaresTexture`）+ 该帧各 pass 导入的贴图，另加条目自己的 `revision()`；无 LRU / 上限。 |
-| F7 | 材质 arena | 每槽 `copies` 份（对应在飞帧）；槽满 `Refused`，不淘汰活材质。 |
+| F7 | 材质 arena | 每槽 `copies` 份（对应在飞帧）；槽满 `Refused`，不淘汰活材质；槽的寿命是 pin（活材质行声明这个身份），帧首 `retireUnpinned` 放槽。 |
 | F8 | 按需扩容 | 记录前按 `ContentStore::materialCount()` 换更大 storage；无硬上限。 |
 | F9 | 流共享 | `StreamUploads` 按 `StreamKey` 共享；稳态帧 0 上传；条目由活几何行钉住（`ResourceTable`）。 |
 | F10 | 每帧块 | `BlockStorage` 每帧 ring，slab 数 = 在飞帧 + 1；稳态帧不写。 |
@@ -138,7 +143,7 @@
 
 | # | 情形 | 行（表） | 上传（stream） | 半片 / 描述符集 | 材质槽 | 触发处 |
 |---|---|---|---|---|---|---|
-| F23 | **材质离树** | 宿主丢引用后下个帧边界标记；行过了 epoch 窗口才走 | — | 无（set 键不含材质） | 行走了就 `BlockStorage::releaseMaterial` 放槽 | `ContentStore::releaseAbandoned` / `releaseContent` |
+| F23 | **材质离树** | 宿主丢引用后下个帧边界标记；行过了 epoch 窗口才走 | — | 无（set 键不含材质） | 行走后由帧首的 pin 扫描 `BlockStorage::retireUnpinnedMaterials` 放槽 | `ContentStore::releaseAbandoned` / `releaseContent` |
 | F24 | **program 离树** | 同上 | — | 半片在 `answerable` 不再成立时 park（它驱动的 vsg 管线随之走；池里的 variant 只按 FIFO 65 淘汰） | — | 同上 |
 | F25 | **pass 脱离** | 后端只有身份：`releasePass` 忘掉 id（永不重发） | — | **不释放**（会话级；随 program/layout 消失才走）；输入集一帧后退回 | — | `RenderEngine::removePass` → `device()->releasePass()` + 拥有目标 `releaseRenderTarget()` |
 | F26 | **geom 离树** | 宿主丢引用后扫尾标记；行过了 epoch 窗口 ⇒ pin 消失，上传按自己的窗口离场 | — | 见 F24（layout 不再被需要时） | `releaseAbandoned` |
@@ -166,7 +171,7 @@ revision，所以隐藏 / 裁剪的材质不丢贴图，材质行过了 epoch �
 |---|---|
 | `MaterialImages::acquire()` / `releaseTexture()` / `beginFrame()` / `released()` / `bytes()` | 纹理 cache（寿命读 `ContentDeclarations::declaresTexture` + 该帧导入的贴图 + 条目自己的 revision） |
 | `core::MaterialArena::write()` / `capacityNeed()` / `live()` | 材质块 |
-| `BlockStorage::beginFrame()` / `writeView()` / `writeDraw()` / `writeMaterial()` / `releaseMaterial()` | 每帧块 |
+| `BlockStorage::beginFrame()` / `writeView()` / `writeDraw()` / `writeMaterial()` / `retireUnpinnedMaterials()` | 每帧块 |
 | `BlockStorage::strides()` / `regions()` / `bytes()` | 布局与观测 |
 | `StreamUploads::acquireVertex()` / `acquireIndex()` / `beginFrame()` / `retired()` / `uploads()` | 流上传（条目由 `core::ResourceTable` 持有；寿命读 `ContentFacts::declarations` + 条目自己的 revision） |
 

@@ -1,6 +1,6 @@
 # ADR-2026-11-10：GPU 驻留按内容对象钉住（pin），按"谁活着"回收
 
-- 状态：已采纳（第一、二步落地，其余按 §迁移 推进）
+- 状态：已采纳（第一至四步落地，第五步按 §迁移 推进）
 - 日期：2026-11-10
 - 相关：`../design/graphics-content-lifecycle.md`、`../design/vsg-backend.md` §2.10、`../backlog/graphics.md`
   `src/viz/graphics/src/Scene.cpp`、`src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp`、
@@ -89,6 +89,10 @@
    验收：裁剪 100 帧零重传；离树后 `slots + 1` 帧内离场。
 3. **纹理**迁入：删 `MaterialImages::releaseAbandoned`，pin = texture@rev。
 4. **材质块**迁入：builder 写 arena、destroyer 放槽；删 `ContentStore` 三个释放循环 → 一个 `retireOwner`。
+   （实施：pin = 材质**身份**，另一半由材质表自己的 per-identity 行计数回答（`declaresMaterial`）——
+   arena 里那张“身份 → 槽”的表本来就是这张表，再叠一层 `ResourceTable` 会把 slot+revision 记两遍，
+   所以放槽写进 `MaterialArena::retireUnpinned`；且**不 park**：arena 的副本轮转就是窗口，写进停车队列反而
+   会在窗口内重建条目之后把槽还掉。）
 5. **半片 + 描述符集**迁入：删 `answerable` 与 `ContentSets::sweep`，pin = program@rev（+ 描述符集另加
    5 个贴图 pin）。删掉的是两份 O(n × m) 扫描。
 

@@ -211,7 +211,7 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 | F17 | 自定义属性 | location 3 起，转发 `vn_Attribute{location}`。 |
 | F18 | 块存储 | 一个 mapped buffer：view / draw / material 三区；每帧 ring；稳态零写。 |
 | F19 | 描述符 | 一个 set，3 个 dynamic uniform binding（0 view / 1 draw / 2 material）。 |
-| F20 | 材质 arena | 每槽 `copies` 份；槽满 `Refused`；扩容只换 material 区。 |
+| F20 | 材质 arena | 每槽 `copies` 份；槽满 `Refused`；扩容只换 material 区。槽的寿命是 pin：活材质行声明这个身份就留着，最后一行走后帧首 `retireUnpinned` 立刻放槽（`BlockStorage::retireUnpinnedMaterials`）——不 park，副本轮转就是窗口；`retired` 计数在 `ResidencyKind::MaterialBlocks` 那一行。 |
 
 ### 3.5 纹理、着色器、证据
 

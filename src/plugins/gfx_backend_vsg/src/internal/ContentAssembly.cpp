@@ -119,6 +119,13 @@ const ContentFacts& ContentAssembly::beginFrame(const core::CompiledFrame& frame
     }
     (void)d->images->beginFrame(d->facts->declarations, d->imported_textures);
 
+    // The MATERIAL BLOCKS follow the same pin, one kind down (see MaterialArena::retireUnpinned): an arena slot is
+    // kept while a live material row names its identity, and returned the frame nothing does. The release is
+    // immediate because the arena's own copy rotation is what protects an in-flight frame's bytes - so what comes
+    // back here is the right to reuse a slot, never bytes anybody may still read. The walk above published the
+    // index this asks, so the sweep costs one lookup per resident slot rather than a pass over the rows.
+    (void)d->storage->retireUnpinnedMaterials(d->facts->declarations);
+
     // The sampled-input sets the previous frame did not ask for are no longer this session's to keep: the
     // images they name were replaced (a resize builds new ones) or the pass that sampled them is gone. They
     // are PARKED rather than dropped, because a command buffer in flight may still name their VkDescriptorSet

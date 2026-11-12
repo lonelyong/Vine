@@ -217,6 +217,34 @@ TEST(CoreMaterialArenaTest, TheCapacityNeedCountsDistinctRefusedMaterialsPerFram
     EXPECT_EQ(arena.capacityNeed(), 2U) << "the need is the frame's own";
 }
 
+TEST(CoreMaterialArenaTest, ThePinSweepReturnsTheSlotsNoLiveContentNames)
+{
+    // THE SLOT'S LIFETIME IS A PIN, NOT A WINDOW (ADR-2026-11-10, step 4): the arena asks once per resident slot
+    // whether live content still names it, and a slot nobody names comes back the same call. A culled material keeps
+    // its row (and therefore its slot), so the answer is stable for as long as the content is.
+    MaterialArena arena({ 64U, 3U, 4U });
+    arena.beginFrame();
+    const auto pinned   = materialId(0);
+    const auto unpinned = materialId(1);
+    (void)arena.note(pinned, 1);
+    (void)arena.note(unpinned, 1);
+
+    std::size_t asked   = 0U;
+    const auto  is_live = [&asked, pinned](vn::graphics::MaterialId material) {
+        ++asked;
+        return material == pinned;
+    };
+    EXPECT_EQ(arena.retireUnpinned(is_live), 1U);
+    EXPECT_EQ(asked, 2U) << "one question per resident slot - never a walk over the content";
+    EXPECT_EQ(arena.live(), 1U);
+    EXPECT_EQ(arena.retired(), 1U);
+
+    // The un-named material is a NEW allocation when content names it again, and the pinned one is untouched.
+    EXPECT_EQ(arena.note(unpinned, 1).kind, MaterialArena::WriteKind::Allocated);
+    EXPECT_EQ(arena.note(pinned, 1).kind, MaterialArena::WriteKind::Unchanged) << "a pin sweep never rewrites a live slot";
+    EXPECT_EQ(arena.writes(), 3U) << "two allocations and the first material's allocation; no rewrite anywhere";
+}
+
 TEST(CoreMaterialArenaTest, AReleasedSlotIsReusedByTheNextMaterial)
 {
     MaterialArena arena({ 64U, 3U, 2U });

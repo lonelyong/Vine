@@ -428,11 +428,9 @@ struct VsgBackend::Data {
     vn::graphics::ReportOnce                                   occupied_report{};       // The "a window already served was asked again" episode.
     vn::graphics::ReportOnce                                   foreign_target_report{}; // The "a frame named someone else's target" episode.
     /// What the frame's steps have let go; zero while the host holds everything.
-    std::size_t released_objects{ 0 };
-    std::size_t released_textures{ 0 };
-    std::size_t released_streams{ 0 };
-    /// Reused by the sweep: the abandoned material identities whose arena slots the storage returns.
-    std::vector<vn::graphics::MaterialId>   abandoned_materials;
+    std::size_t                             released_objects{ 0 };
+    std::size_t                             released_textures{ 0 };
+    std::size_t                             released_streams{ 0 };
     std::vector<core::TargetFacts>          facts;         // This frame's target table (borrowed rows).
     std::vector<const vn::graphics::Light*> light_scratch; // Reused by announceLights (no per-call allocation).
     std::vector<InputImages>                input_scratch; // Reused per content pass (see recordContent).
@@ -1501,8 +1499,9 @@ bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)
         // over it are two concrete types under one shading model (see MaterialBase's note - `RenderCommand::
         // material` is a MaterialBasePtr, and nothing downstream branches on which kind it got). Casting to the
         // asset missed every instance, i.e. exactly the per-object materials a host is most likely to release.
-        // The ARENA SLOT is NOT freed here: a recorded plan may still read the row's block, so the slot leaves with
-        // the row - the next sweep returns the id once no row names it (see ContentStore::releaseMaterial).
+        // The ARENA SLOT is NOT freed here: a recorded plan may still read the row's block, so the slot follows the
+        // same rows as the facts and the block storage returns it once no row names the identity (see
+        // MaterialArena::retireUnpinned).
         return d->store->releaseMaterial(material);
     }
     if (const auto* texture = vn::obj_cast<const vn::graphics::Texture>(content)) {
@@ -1718,15 +1717,12 @@ void VsgBackend::sweepAbandonedContent()
     // (the declaration indexes the store publishes). The store's own entries are the opposite kind of step: they must
     // not be marked before the frame's content has been recorded, and they must not be dropped after the commit has
     // advanced the retirement queue - so they get one call between the two (see the frame drive).
-    d->released_objects += d->store->releaseAbandoned(d->abandoned_materials);
+    d->released_objects += d->store->releaseAbandoned();
 
-    // THE MATERIAL SLOT FOLLOWS THE ROW: a material nobody holds any more cannot be drawn again, so the arena's
-    // slot is nobody's to keep (releaseMaterial is a key lookup, never a dereference - the object may be gone).
-    if (d->storage != nullptr) {
-        for (const vn::graphics::MaterialId material : d->abandoned_materials) {
-            (void)d->storage->releaseMaterial(material);
-        }
-    }
+    // THE MATERIAL ARENA'S SLOTS ARE NOT THIS CALL'S BUSINESS ANY MORE: a slot follows the same rows one kind down,
+    // and the block storage returns it at the frame's opening from the published declaration index (see
+    // MaterialArena::retireUnpinned / ContentAssembly::beginFrame) - so the store never names a GPU object, and this
+    // sweep has no id list to hand on.
 
     // THE IMAGE CACHE HAS NO CAPACITY TO RUN OUT OF (see MaterialImages): an entry leaves when its texture is
     // released (the sweep above) or named explicitly, never to make room. So there is no "over the bound" sentence

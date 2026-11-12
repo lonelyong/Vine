@@ -755,17 +755,14 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveOnceNoPla
     ASSERT_EQ(store.geometryEntries(), 1U);
     ASSERT_EQ(store.programEntries(), 1U);
 
-    std::vector<vn::graphics::MaterialId> released_materials;
-
     // The host still holds both, so neither is abandoned.
-    EXPECT_EQ(store.releaseAbandoned(released_materials), 0U);
+    EXPECT_EQ(store.releaseAbandoned(), 0U);
     EXPECT_EQ(store.geometryEntries(), 1U);
-    EXPECT_TRUE(released_materials.empty());
 
     // The host lets the geometry go: the store's share is the last one. The ENTRY stays while its row may still be
     // named - the row is what a recorded plan reads, and the entry is what owns the shape it borrows from.
     geometry.reset();
-    EXPECT_EQ(store.releaseAbandoned(released_materials), 1U);
+    EXPECT_EQ(store.releaseAbandoned(), 1U);
     EXPECT_EQ(store.geometryEntries(), 1U) << "the entry stays while a recorded plan may still name its row";
 
     // Frames that draw nothing age the row, and the entry leaves once completion proves no plan can name it.
@@ -777,7 +774,7 @@ TEST(ContentStoreTest, AnObjectNobodyElseHoldsIsReleasedAndItsRowsLeaveOnceNoPla
     EXPECT_EQ(store.programEntries(), 1U) << "the program is still held by the host";
 }
 
-// 默认材质不是任何宿主句柄能放弃的对象：它没有 arena 槽，也不该出现在 released_materials 里。
+// 默认材质不是任何宿主句柄能放弃的对象：它不是任何人的，也不该被标成弃用。
 TEST(ContentStoreTest, TheDefaultMaterialIsNeverAbandoned)
 {
     ContentStore store;
@@ -795,9 +792,7 @@ TEST(ContentStoreTest, TheDefaultMaterialIsNeverAbandoned)
     geometry.reset();
     program.reset();
 
-    std::vector<vn::graphics::MaterialId> released_materials;
-    EXPECT_EQ(store.releaseAbandoned(released_materials), 2U) << "the geometry and the program, never the default material";
-    EXPECT_TRUE(released_materials.empty()) << "the default material has no arena slot to hand back";
+    EXPECT_EQ(store.releaseAbandoned(), 2U) << "the geometry and the program, never the default material";
     EXPECT_EQ(store.materialEntries(), 1U) << "the default entry stays: it is not an object anyone holds";
 }
 
@@ -821,12 +816,11 @@ TEST(ContentStoreTest, AnAbandonedEntryKeepsItsObjectUntilItsRowsLeave)
     (void)frames.record(store, plan->frame);
     ASSERT_EQ(store.programEntries(), 1U);
 
-    std::vector<vn::graphics::MaterialId> released_materials;
     program.reset();
     geometry.reset();
     shading.reset(); // the store's shares are the last ones (the plan copies identities, not handles)
 
-    EXPECT_EQ(store.releaseAbandoned(released_materials), 3U) << "the geometry, the program and the material";
+    EXPECT_EQ(store.releaseAbandoned(), 3U) << "the geometry, the program and the material";
     EXPECT_EQ(CountedProgram::destructions, 0) << "the entry still owns the object its rows answer from";
 
     // The rows age out with the frames that could still name them, and the object goes with the last entry.
@@ -1082,8 +1076,7 @@ TEST(ContentStoreTest, AStreamLeavesOnceItsGeometryIsDropped)
 
     // The host lets go of its last reference; the sweep marks the entry, and the row lives until no plan may name it.
     geometry.reset();
-    std::vector<vn::graphics::MaterialId> released_materials;
-    ASSERT_EQ(store.releaseAbandoned(released_materials), 1U);
+    ASSERT_EQ(store.releaseAbandoned(), 1U);
 
     // Still inside the window: the row (and therefore the PIN) is there.
     const ContentFacts& inside = frames.record(store, empty->frame);
@@ -1173,16 +1166,59 @@ TEST(ContentStoreTest, TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWi
 
     // One geometry goes: the OTHER row still declares the buffer, so the index keeps it (the refcount, not a bit).
     left.reset();
-    std::vector<vn::graphics::MaterialId> released_materials;
-    ASSERT_EQ(store.releaseAbandoned(released_materials), 1U);
+    ASSERT_EQ(store.releaseAbandoned(), 1U);
     EXPECT_TRUE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer))
         << "the dropped row is inside its window, and the other row names the buffer anyway";
     EXPECT_TRUE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer)) << "the row that is still the live answer keeps the bytes declared";
 
     // The last declarer goes too: the next frame boundary erases its row, and nothing declares the bytes.
     right.reset();
-    ASSERT_EQ(store.releaseAbandoned(released_materials), 1U);
+    ASSERT_EQ(store.releaseAbandoned(), 1U);
     EXPECT_FALSE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer)) << "with the last row erased, nothing declares the bytes any more";
+}
+
+TEST(ContentStoreTest, AMaterialDeclaresItsIdentityForAsLongAsARowAnswersIt)
+{
+    // THE BLOCK ARENA'S PIN. The arena holds one slot per material IDENTITY, and this index is the question its own
+    // sweep asks once per resident slot ("does any live row still name this?"). Both halves matter: an edit is not a
+    // new identity (the superseded row's bytes stay readable, so they stay resident), and a material the host let go
+    // of stops declaring only once its last row has gone.
+    ContentStore store;
+    const auto   geometry = quad();
+    const auto   program  = contentProgram();
+    const auto   shading  = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+    store.track(geometry);
+    store.track(program);
+    store.track(shading);
+
+    Frames     frames;
+    const auto plan  = contentPlan({ command(geometry.get(), geometry->revision(), program.get(), shading.get()) }, program.get());
+    const auto empty = contentPlan({});
+
+    const ContentFacts& named = frames.record(store, plan->frame);
+    EXPECT_TRUE(named.declarations.declaresMaterial(shading->id()));
+    EXPECT_FALSE(named.declarations.declaresMaterial(vn::graphics::MaterialId{})) << "this plan names a material, so nothing answers with the default";
+    EXPECT_FALSE(named.declarations.declaresMaterial(::material(vn::Colorf(0.0F, 1.0F, 0.0F, 1.0F))->id())) << "an untracked identity declares nothing";
+
+    // An EDITED material joins the table (the old row stays answerable for the plans that may replay it), and the
+    // identity stays declared: the pin is the identity, not one revision of it.
+    const std::uint64_t old_revision = shading->revision();
+    shading->setBaseColor(vn::Colorf(0.75F, 0.5F, 0.25F, 1.0F));
+    store.track(shading.get(), shading->description());
+    ASSERT_NE(shading->revision(), old_revision);
+    const ContentFacts& edited = frames.record(store, plan->frame);
+    ASSERT_EQ(store.materialEntries(), 2U);
+    EXPECT_TRUE(edited.declarations.declaresMaterial(shading->id())) << "both rows name one identity";
+
+    // The host lets the material go: the row a recorded plan may still replay keeps the identity declared inside the
+    // window, and the boundary that reclaims the last row takes the declaration with it.
+    ASSERT_TRUE(store.releaseMaterial(shading.get()));
+    EXPECT_TRUE(frames.record(store, empty->frame).declarations.declaresMaterial(shading->id())) << "the rows still answer inside their window";
+    for (int settle = 0; settle < 3; ++settle) {
+        (void)frames.record(store, empty->frame);
+    }
+    EXPECT_FALSE(frames.record(store, empty->frame).declarations.declaresMaterial(shading->id())) << "with the last row erased nothing names the identity";
+    EXPECT_EQ(store.materialEntries(), 0U);
 }
 
 TEST(ContentStoreTest, AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRevision)

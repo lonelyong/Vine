@@ -8,6 +8,8 @@
 #include <vsg/state/Buffer.h>
 #include <vsg/vk/DeviceMemory.h>
 
+#include <vine/vsg/internal/ContentFacts.hpp>
+
 VN_VSG_NS_BEGIN
 
 namespace
@@ -332,13 +334,13 @@ BlockStorage::Strides BlockStorage::strides() const noexcept
 vn::graphics::ResidencyRow BlockStorage::materialResidency() const noexcept
 {
     // The arena answers every number itself (see MaterialArena): slots holding a live material, the region's
-    // mapped size, the slots allocated so far, and the notes it had to turn away. `retired` stays absent - a
-    // returned slot is not counted today, and a zero would claim it was.
+    // mapped size, the slots allocated so far, the slots the pin sweep returned and the notes it had to turn away.
     vn::graphics::ResidencyRow row;
     row.kind    = vn::graphics::ResidencyKind::MaterialBlocks;
     row.live    = static_cast<std::uint32_t>(d->arena.live());
     row.bytes   = d->arena.capacityBytes();
     row.built   = d->arena.allocations();
+    row.retired = d->arena.retired();
     row.refused = d->arena.refusals();
     return row;
 }
@@ -460,9 +462,11 @@ std::uint64_t BlockStorage::materialRefusals() const noexcept
     return d->arena.refusals();
 }
 
-bool BlockStorage::releaseMaterial(vn::graphics::MaterialId material) noexcept
+std::size_t BlockStorage::retireUnpinnedMaterials(const ContentDeclarations& declarations) noexcept
 {
-    return d->arena.release(material);
+    // THE PIN QUESTION, ASKED ONCE PER RESIDENT SLOT (see MaterialArena::retireUnpinned): a live material row names
+    // the identity, so one lookup answers it and the cost does not follow the size of the content.
+    return d->arena.retireUnpinned([&declarations](vn::graphics::MaterialId material) { return declarations.declaresMaterial(material); });
 }
 
 VN_VSG_NS_END

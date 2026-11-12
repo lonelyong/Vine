@@ -47,6 +47,9 @@
  */
 VN_VSG_NS_BEGIN
 
+/// The declaration index the content facts publish (see ContentFacts.hpp); a reference is all the sweep needs.
+class ContentDeclarations;
+
 /** @brief The frame's mapped block storage (views, draws, lights, shadows, materials). */
 class BlockStorage {
   public:
@@ -191,15 +194,23 @@ class BlockStorage {
      */
     [[nodiscard]] MaterialWrite writeMaterial(vn::graphics::MaterialId material, std::uint64_t revision, std::span<const std::byte> block);
 
-    /** @brief Returns a material's slot to the arena (the application is done with it).
+    /** @brief Returns every material slot no live content declares any more, and says how many went.
      *
-     * Safe between frames: the slot's per-copy rotation keeps the bytes an in-flight frame reads untouched
-     * until that frame is done (the same rule the arena's writes follow).
+     * @details
+     * - THE FRAME'S RESIDENCY STEP FOR MATERIAL BLOCKS, and the one rule that decides a slot's lifetime: a slot is
+     *   kept while some live material row still names its identity and returned the first frame nothing does
+     *   (ADR-2026-11-10, step 4). The question is asked once per resident slot, so its cost does not follow the
+     *   size of the content - a culled material keeps its row (and its slot), a dropped one loses both.
+     * - THE ANSWER COMES FROM @p declarations, not from this class: "which identities are still named" is a fact
+     *   the content tables publish (see `ContentDeclarations::declaresMaterial`), and a storage that walked the
+     *   rows itself would put content knowledge into the buffer layer.
+     * - THE RETURN IS IMMEDIATE, not parked, and safe: the arena's per-copy rotation is what protects an in-flight
+     *   frame's bytes, so what comes back is the right to reuse a slot (see `MaterialArena::retireUnpinned`).
      *
-     * @param material Material identity; a material with no slot answers false.
-     * @return true when a slot was returned.
+     * @param declarations The indexes of what live content still names (borrowed for the call).
+     * @return How many slots were returned.
      */
-    bool releaseMaterial(vn::graphics::MaterialId material) noexcept;
+    std::size_t retireUnpinnedMaterials(const ContentDeclarations& declarations) noexcept;
 
   public:
     /** @brief Gets the regions the buffer is divided into. */
@@ -241,8 +252,8 @@ class BlockStorage {
      * - The material arena is the one region whose bytes are PERSISTENT (the view / draw / light / shadow
      *   regions are this frame's scratch and are not residency), so it is the region a host trims against.
      * - `live` is the materials holding a slot, `bytes` the region's mapped size, `built` the slots allocated so
-     *   far, `refused` the notes this arena had to turn away. A slot is returned by
-     *   @ref releaseMaterial, which is the only thing that lowers `live`.
+     *   far, `retired` the slots the pin sweep returned, `refused` the notes this arena had to turn away. A slot is
+     *   returned by @ref retireUnpinnedMaterials - the only thing that lowers `live`.
      *
      * @return The row for `ResidencyKind::MaterialBlocks`.
      */
