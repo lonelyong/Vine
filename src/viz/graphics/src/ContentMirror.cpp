@@ -24,6 +24,31 @@ vn::graphics::DrawListSource& ContentMirror::source() noexcept
     return source_;
 }
 
+RenderWorldSource& ContentMirror::legacySource() noexcept
+{
+    return source_;
+}
+
+SnapshotSource& ContentMirror::snapshotSource() noexcept
+{
+    return snapshot_source_;
+}
+
+const SnapshotSource& ContentMirror::snapshotSource() const noexcept
+{
+    return snapshot_source_;
+}
+
+void ContentMirror::setLegacyShadow(bool enabled) noexcept
+{
+    legacy_shadow_.store(enabled, std::memory_order_relaxed);
+}
+
+bool ContentMirror::legacyShadow() const noexcept
+{
+    return legacy_shadow_.load(std::memory_order_relaxed);
+}
+
 PublishOutcome ContentMirror::publish(const Scene& scene)
 {
     // A BATCH FREEZES THE VERSION ON PURPOSE, so the comparison below cannot tell "nothing moved" from "held back by
@@ -33,21 +58,34 @@ PublishOutcome ContentMirror::publish(const Scene& scene)
         return PublishOutcome{ PublishStatus::InsideBatch, published_ };
     }
 
+    const bool               legacy  = legacy_shadow_.load(std::memory_order_relaxed);
     const SceneRows::Version version = SceneRows::version(scene);
     if (published_.has_value() && *published_ == version) {
-        // The mirror already holds this answer: a steady frame publishes nothing.
+        // The snapshot already holds this answer: a steady frame publishes nothing. The one exception is the snapshot
+        // being switched on after the handshake: the rows are current, so it is taken here once.
+        if (snapshot_source_.snapshot() == nullptr) {
+            snapshot_source_.setSnapshot(SceneRows::snapshot(scene));
+        }
         return PublishOutcome{ PublishStatus::Unchanged, published_ };
     }
-    auto rows = std::make_shared<SceneBake>();
-    SceneRows::publish(scene, *rows);
 
-    Delta delta;
-    delta.kind = DeltaKind::RowsReplaced;
-    if (!channel_.post(delta, std::move(rows))) {
-        // Full: the version stays unpublished, so the next call retries (see the declaration). `held` still answers
-        // with the publication the engine side has - it did not change.
-        return PublishOutcome{ PublishStatus::Refused, published_ };
+    // THE SNAPSHOT IS THE PRODUCTION ANSWER (5b-1). It is taken from the live rows and shares unchanged chunks with
+    // the previous publication; it does not depend on the legacy row/delta path below.
+    const SceneSnapshotPtr snapshot = SceneRows::snapshot(scene);
+    if (legacy) {
+        auto rows = std::make_shared<SceneBake>();
+        SceneRows::publish(scene, *rows);
+
+        Delta delta;
+        delta.kind = DeltaKind::RowsReplaced;
+        if (!channel_.post(delta, std::move(rows))) {
+            // Full: the version stays unpublished, so the next call retries (see the declaration). `held` still answers
+            // with the publication the engine side has - it did not change. The snapshot is NOT advanced either, so the
+            // legacy shadow and the production answer stay on one version.
+            return PublishOutcome{ PublishStatus::Refused, published_ };
+        }
     }
+    snapshot_source_.setSnapshot(snapshot);
     published_ = version;
     ++publish_count_;
     return PublishOutcome{ PublishStatus::Posted, published_ };
@@ -102,6 +140,7 @@ bool ContentMirror::detach(const Node& subtree)
 void ContentMirror::beginFrame(std::uint64_t frame)
 {
     source_.beginFrame(frame);
+    snapshot_source_.beginFrame(frame);
 }
 
 std::size_t ContentMirror::drain()
@@ -148,12 +187,12 @@ const RenderWorld& ContentMirror::world() const noexcept
 
 std::uint64_t ContentMirror::memoHits() const noexcept
 {
-    return source_.memoHits();
+    return source_.memoHits() + snapshot_source_.memoHits();
 }
 
 std::uint64_t ContentMirror::memoStores() const noexcept
 {
-    return source_.memoStores();
+    return source_.memoStores() + snapshot_source_.memoStores();
 }
 
 std::uint64_t ContentMirror::publishCount() const noexcept

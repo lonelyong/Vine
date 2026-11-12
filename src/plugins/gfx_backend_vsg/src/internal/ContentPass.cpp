@@ -249,7 +249,28 @@ bool ContentPass::record(const core::CompiledPass&            pass,
                          std::span<const std::byte>           view_block,
                          ::vsg::ref_ptr<::vsg::Node>&         out)
 {
-    auto group = ::vsg::Group::create();
+    return walk(pass, facts, compatibility, inputs, view_block, out, Mode::Record);
+}
+
+bool ContentPass::prepare(const core::CompiledPass&            pass,
+                          const ContentFacts&                  facts,
+                          const core::RenderPassCompatibility& compatibility,
+                          std::span<const InputImages>         inputs)
+{
+    ::vsg::ref_ptr<::vsg::Node> discarded;
+    return walk(pass, facts, compatibility, inputs, {}, discarded, Mode::Prepare);
+}
+
+bool ContentPass::walk(const core::CompiledPass&            pass,
+                       const ContentFacts&                  facts,
+                       const core::RenderPassCompatibility& compatibility,
+                       std::span<const InputImages>         inputs,
+                       std::span<const std::byte>           view_block,
+                       ::vsg::ref_ptr<::vsg::Node>&         out,
+                       Mode                                 mode)
+{
+    const bool recording = mode == Mode::Record;
+    auto       group     = ::vsg::Group::create();
 
     // The refusal ledger belongs to THIS pass, and its summary has to be said however the pass ends - so it
     // is cleared here and emitted by a guard, not by a call before every `return`.
@@ -355,11 +376,17 @@ bool ContentPass::record(const core::CompiledPass&            pass,
 
     // One view block per pass: it describes the view, and the pass has one camera. A full-screen draw does not
     // read it (the full-screen ABI binds no blocks), so a pass with nothing but those still pays for one row.
-    const BlockStorage::Block view = scope_.storage->writeView(view_block);
-    if (!view.valid) {
-        reportRefused("the pass' view block", "the frame's block budget is full");
-        out = group;
-        return false;
+    // PREPARING WRITES NO BLOCK: a frame's bytes live in the per-frame ring, whose slab rotation belongs to the
+    // frame - consuming one here would make the next frame write the slab the oldest in-flight frame reads (see
+    // core::FrameRing), which is a torn picture rather than a slow one.
+    BlockStorage::Block view{};
+    if (recording) {
+        view = scope_.storage->writeView(view_block);
+        if (!view.valid) {
+            reportRefused("the pass' view block", "the frame's block budget is full");
+            out = group;
+            return false;
+        }
     }
 
     bool complete = true;
@@ -412,7 +439,17 @@ bool ContentPass::record(const core::CompiledPass&            pass,
             // What it NEEDS is answered before anything is built (see api/DrawNeeds): its source among the pass'
             // inputs, the counts its set and its pipeline carry, and the identity its key is spelled from - the
             // same answer the warm-up path reads, so the pipeline this call compiles is the one it promised.
-            if (!recordScreenDraw(draw, *half, pass, compatibility, inputs, drawNeeds(pass, draw, inputs), *group)) {
+            const DrawNeeds needs = drawNeeds(pass, draw, inputs);
+            if (!recording) {
+                // PREPARING: the identity is all a full-screen call offers to build ahead of time. Its set is the
+                // CALL's (its own light and shadow block offsets), so it is built when the call is recorded.
+                if (!half->draws->prepare(needs.keyFor(compatibility))) {
+                    reportRefused("a full-screen drawing call", "its pipeline for this target could not be built");
+                    complete = false;
+                }
+                continue;
+            }
+            if (!recordScreenDraw(draw, *half, pass, compatibility, inputs, needs, *group)) {
                 complete = false;
             }
             continue;
@@ -422,11 +459,14 @@ bool ContentPass::record(const core::CompiledPass&            pass,
         // ONE call (every command of the call shares them), so one block serves the whole call and the block
         // bytes are written before the first command is recorded - the same "one announcement, one call" rule
         // the viewport follows.
-        vn::vsg::VineLightsBlock  lights_block;
-        const std::size_t         represented = packLightBlock(draw.lights, draw.camera, lights_block);
-        const BlockStorage::Block lights      = scope_.storage->writeLights(bytesOf(lights_block));
+        vn::vsg::VineLightsBlock lights_block;
+        const std::size_t        represented = packLightBlock(draw.lights, draw.camera, lights_block);
+        BlockStorage::Block      lights{};
+        if (recording) {
+            lights = scope_.storage->writeLights(bytesOf(lights_block));
+        }
         reportLightsDropped(enabledLightCount(draw.lights), represented, draw.camera.present);
-        if (!lights.valid) {
+        if (recording && !lights.valid) {
             reportRefused("the drawing call's light block", "the frame's block budget is full");
             complete = false;
             continue;
@@ -437,16 +477,19 @@ bool ContentPass::record(const core::CompiledPass&            pass,
         // an unbound block a shader reads is undefined behaviour, not "no shadow".
         vn::graphics::VineShadowBlock shadow_block;
         const bool                    shadow_on = packShadowBlock(pass.shadow, draw, shadow_block);
-        const BlockStorage::Block     shadow    = scope_.storage->writeShadows(bytesOf(shadow_block));
+        BlockStorage::Block           shadow{};
+        if (recording) {
+            shadow = scope_.storage->writeShadows(bytesOf(shadow_block));
+        }
         (void)shadow_on;
-        if (!shadow.valid) {
+        if (recording && !shadow.valid) {
             reportRefused("the drawing call's shadow block", "the frame's block budget is full");
             complete = false;
             continue;
         }
 
         for (const core::CompiledCommand& command : draw.commands) {
-            if (!recordCommand(command, draw, pass, facts, compatibility, view.offset, lights.offset, shadow.offset, input_set, *group)) {
+            if (!recordCommand(command, draw, pass, facts, compatibility, view.offset, lights.offset, shadow.offset, input_set, *group, mode)) {
                 complete = false;
             }
         }
@@ -936,7 +979,8 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
                                 std::uint64_t                                   lights_offset,
                                 std::uint64_t                                   shadow_offset,
                                 const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
-                                ::vsg::Group&                                   into)
+                                ::vsg::Group&                                   into,
+                                Mode                                            mode)
 {
     // WHAT THIS DRAWABLE NEEDS (see api/DrawNeeds): the identity a pipeline is compiled for, answered by the one
     // function the warm-up path answers it with as well. The recorder READS it here instead of deriving it a
@@ -1021,22 +1065,28 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     // cannot tell from "the light does not cast" - so it is said once per half rather than left to the eye.
     reportShadowNotSampled(*entry, pass);
 
-    // The blocks: this draw's identity and data (the view's bytes came in with the pass).
+    // The blocks: this draw's identity and data (the view's bytes came in with the pass). PREPARING WRITES NONE:
+    // the per-frame ring's rotation belongs to the frame (see the note in `walk`), and these bytes are the frame's
+    // data rather than an identity to ensure.
     vn::graphics::VineDrawBlock draw_block;
-    packDrawBlock(command, draw_block);
-    const BlockStorage::Block         block          = scope_.storage->writeDraw(bytesOf(draw_block));
-    const BlockStorage::MaterialWrite material_write = scope_.storage->writeMaterial(needs.material_entry->material.as<vn::graphics::MaterialTag>(),
-                                                                                     needs.material_entry->material.revision,
-                                                                                     needs.material_entry->block);
-    if (!block.valid) {
-        reportRefused("the command's draw block", "the frame's block budget is full");
-        return false;
-    }
-    if (!material_write.valid) {
-        // The arena had no slot for this material. The storage grows before the next frame; this draw is
-        // skipped rather than bound to another material's bytes (see MaterialArena::note).
-        reportRefused("the command's material", "the material arena is full");
-        return false;
+    BlockStorage::Block         block{};
+    BlockStorage::MaterialWrite material_write{};
+    if (mode == Mode::Record) {
+        packDrawBlock(command, draw_block);
+        block          = scope_.storage->writeDraw(bytesOf(draw_block));
+        material_write = scope_.storage->writeMaterial(needs.material_entry->material.as<vn::graphics::MaterialTag>(),
+                                                       needs.material_entry->material.revision,
+                                                       needs.material_entry->block);
+        if (!block.valid) {
+            reportRefused("the command's draw block", "the frame's block budget is full");
+            return false;
+        }
+        if (!material_write.valid) {
+            // The arena had no slot for this material. The storage grows before the next frame; this draw is
+            // skipped rather than bound to another material's bytes (see MaterialArena::note).
+            reportRefused("the command's material", "the material arena is full");
+            return false;
+        }
     }
 
     // The streams: one bind per channel, in the entry's order (which is the binding order).
@@ -1113,7 +1163,19 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     // be compiled for an identity the answer does not name. The variant is identity like the layout is, and so
     // is the topology the half's pipeline BAKES (the API accepts a dynamically set topology only within the
     // class its pipeline was built with - see core::PipelineKey::topology).
-    record.key                                               = needs.keyFor(compatibility);
+    record.key = needs.keyFor(compatibility);
+
+    // THE WARM-UP STOPS HERE (see `prepare`): every identity this command needs is ensured - the half, the block
+    // sets it serves, every stream it reads and the pipeline identity `keyFor` spells - and everything below is the
+    // FRAME's: dynamic state, descriptor binds, pushes and the command itself. Which is why the frame that follows
+    // a prepare finds all of it and records without building anything (`T33`).
+    if (mode == Mode::Prepare) {
+        if (!entry->draws->prepare(record.key)) {
+            reportRefused("the command", "its pipeline identity has no compiled pipeline");
+            return false;
+        }
+        return true;
+    }
     record.dynamic                                           = command.dynamic;
     // The device's lineWidthRange is a LIMIT the API enforces by refusing the call, so the width is clamped here -
     // where the draw is prepared - rather than at the Vulkan boundary, which cannot report why it refused. 1.0 is

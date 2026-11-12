@@ -39,6 +39,9 @@ struct SceneSnapshot {
     std::vector<NodeId>                                  identities{};  ///< One per row, for the next share decision.
     std::vector<std::uint64_t>                           node_epochs{}; ///< One per row, for the next share decision.
     std::size_t                                          row_count{ 0 };
+    /// A publication id, unique for every newly built snapshot (see `makeSceneSnapshot`). It is the one state key a
+    /// collected-list memo needs: two snapshots are different even when their row counts happen to agree.
+    std::uint64_t                                        revision{ 0 };
     std::uint64_t                                        epoch{ 0 };
     std::uint64_t                                        boxes{ 0 };
     std::uint64_t                                        materials{ 0 };

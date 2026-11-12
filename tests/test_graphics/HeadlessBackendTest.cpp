@@ -70,6 +70,7 @@ class HeadlessBackend : public RenderBackend {
     {
         ++frames;
         present_targets.push_back(present_to);
+        executed_passes = static_cast<std::uint32_t>(frame.passes.size());
         for (const FrameDescription::Pass& entry : frame.passes) {
             if (!entry.draw.has_value()) {
                 continue; // a pass that ran and issued nothing
@@ -80,6 +81,19 @@ class HeadlessBackend : public RenderBackend {
         // The frame's tail, exactly as the contract states it (RenderFrameExecutor::executeFrame): the executor
         // presents through the target the frame named, and a frame that named none presents nowhere.
         return present_to != nullptr ? present_to->present() : PresentOutcome::Skipped;
+    }
+
+    /// The warm-up half of the frame contract (see RenderFrameExecutor::prepareFrame): it records the value it was
+    /// handed - which is what the case compares - and says nothing was executed.
+    [[nodiscard]] PrepareReport prepareFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
+    {
+        ++prepares;
+        prepared_passes = static_cast<std::uint32_t>(frame.passes.size());
+        prepared_present_targets.push_back(present_to);
+        PrepareReport report;
+        report.outcome = PrepareReport::Outcome::Prepared;
+        report.passes  = prepared_passes;
+        return report;
     }
 
     void setRenderTarget(RenderTarget*) override
@@ -110,10 +124,16 @@ class HeadlessBackend : public RenderBackend {
     int                                targets_asked = 0;
     std::vector<raw_ptr<RenderTarget>> targets;
     std::vector<PresentTarget*>        present_targets; // What each frame named (see executeFrame).
-    std::size_t                        draws = 0;
+    std::size_t                        draws    = 0;
+    /// How many warm-ups the engine asked for, and the frame each one handed over (see RenderEngine::prepare).
+    int                         prepares        = 0;
+    std::uint32_t               prepared_passes = 0;
+    std::vector<PresentTarget*> prepared_present_targets;
+    /// How many passes the last executed frame carried, so a case can say the warm-up saw the same value.
+    std::uint32_t executed_passes           = 0;
     /// What releaseContent() was asked to drop (see RenderDevice::releaseContent).
-    std::size_t               released       = 0;
-    raw_ptr<const vn::Object> last_released  = nullptr;
+    std::size_t               released      = 0;
+    raw_ptr<const vn::Object> last_released = nullptr;
 };
 
 /**
@@ -372,6 +392,62 @@ TEST(HeadlessBackendTest, AFrameIsCompleteWithoutATarget)
     EXPECT_EQ(backend->present_targets.front(), nullptr) << "the frame named no target: there was nothing to resolve, acquire or present";
     EXPECT_EQ(engine->diagnosticCount(), 0u) << "a windowless device is not a problem";
     EXPECT_FALSE(engine->capabilities().presentation) << "the DEVICE answers it: nothing to present through";
+}
+
+/**
+ * @brief `prepare()` hands the device the SAME frame the next frame() runs, and runs nothing itself.
+ *
+ * The warm-up is a query with a side effect (see RenderFrameExecutor::prepareFrame): it takes the value the engine
+ * compiles and hands it over, exactly as `frame()` does - one wire, two verbs. So the frame the backend sees must have
+ * the same shape as the one the next `frame()` produces (same entries, same pass), while nothing is executed,
+ * presented, or given a frame number: a warm-up that "ran a frame and threw it away" would starve a windowed session
+ * of its acquired image (P11), and a warm-up that took a frame number would answer a host's waitForFrame with a frame
+ * that never reached a surface.
+ */
+TEST(HeadlessBackendTest, PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing)
+{
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    auto area = engine->createSurface();
+    area->resize(320, 240);
+    ASSERT_TRUE(engine->initialize());
+
+    auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(320, 240);
+
+    auto scene  = intrusive_ptr<Scene>(new Scene());
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    camera->setAspect(320.0 / 240.0);
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setCamera(camera);
+    pass->setRenderTarget(target);
+    engine->addPass(pass, scene, 0);
+
+    // THE WARM-UP: the value the next frame would build, compiled and collected - and nothing else.
+    const PrepareReport warmed = engine->prepare();
+    EXPECT_EQ(warmed.outcome, PrepareReport::Outcome::Prepared);
+    EXPECT_EQ(warmed.passes, 1u) << "the one pass the next frame would run";
+    EXPECT_EQ(backend->prepares, 1);
+    EXPECT_EQ(backend->prepared_passes, 1u);
+    ASSERT_EQ(backend->prepared_present_targets.size(), 1u);
+    EXPECT_EQ(backend->prepared_present_targets.front(), nullptr) << "this device presents nothing: there is no target to name";
+    EXPECT_EQ(backend->frames, 0) << "nothing was executed";
+    EXPECT_EQ(backend->draws, 0u) << "and nothing was recorded";
+    EXPECT_TRUE(backend->present_targets.empty());
+    EXPECT_EQ(engine->frameNumber(), 0u) << "prepare takes no frame number: it is not a frame";
+    EXPECT_EQ(engine->presentRecord().frame, 0u) << "and it answers nothing about a picture";
+
+    // THE FRAME: the same shape the warm-up saw, this time executed.
+    EXPECT_EQ(engine->frame(), FrameOutcome::Ran);
+    EXPECT_EQ(backend->frames, 1);
+    EXPECT_EQ(backend->draws, 1u);
+    EXPECT_EQ(backend->prepared_passes, backend->executed_passes) << "the warm-up saw the frame the engine then ran";
+    ASSERT_EQ(backend->targets.size(), 1u);
+    EXPECT_EQ(backend->targets.front(), target.get()) << "the frame reached the target the pass names";
+    EXPECT_EQ(engine->frameNumber(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(), 0u);
 }
 
 /**

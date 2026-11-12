@@ -28,6 +28,7 @@ using vn::graphics::MatrixTransform;
 using vn::graphics::PassDraw;
 using vn::graphics::RenderCommand;
 using vn::graphics::Scene;
+using vn::graphics::ScenePublishStatus;
 using vn::graphics::detail::expandFrame;
 using vn::graphics::detail::FrameMode;
 using vn::graphics::detail::FrameRunner;
@@ -117,7 +118,7 @@ TEST(FrameRunnerTest, BothModesExpandAFrameToTheSamePicture)
 {
     // THE TWO MODES ARE ONE CODE PATH. The inline runner is the caller's thread and the threaded one hands the frame
     // value over, waits for that frame, and gives it back expanded: the answer a frame gets must not depend on which.
-    // The content's own answer is the third witness - it is what a frame named before any mirror existed.
+    // The content's own answer is the third witness - it is what a frame named before any snapshot existed.
     auto root = twoLeafAssembly();
     Scene scene;
     scene.setRoot(root);
@@ -126,23 +127,19 @@ TEST(FrameRunnerTest, BothModesExpandAFrameToTheSamePicture)
     expandFrame(from_content);
 
     // A JOB IS ONE FRAME'S ENGINE HALF (see RenderEngine::runEngineHalf): here it is the worker's own composition of
-    // drain + bind + expand, which is what a caller without a device has to hand over.
+    // bind + expand, which is what a caller without a device has to hand over.
     FrameWorker      inline_worker;
-    ASSERT_TRUE(inline_worker.publish(scene));
+    ASSERT_NE(inline_worker.publish(scene).status, ScenePublishStatus::InsideBatch);
     FrameRunner     inline_runner{ RunnerMode::Inline };
     FrameDescription from_inline = onePassFrame(scene);
-    std::size_t      applied_inline = 0;
-    inline_runner.run([&] { applied_inline = inline_worker.run(from_inline, FrameMode::Mirrored); });
-    EXPECT_EQ(applied_inline, 1U) << "the handshake's delta is applied by the drain";
+    inline_runner.run([&] { inline_worker.run(from_inline, FrameMode::Published); });
     EXPECT_EQ(inline_runner.frames(), 1U) << "jobs are counted where they run: inline, that is the caller's thread";
 
     FrameWorker      threaded_worker;
-    ASSERT_TRUE(threaded_worker.publish(scene));
+    ASSERT_NE(threaded_worker.publish(scene).status, ScenePublishStatus::InsideBatch);
     FrameRunner     threaded_runner{ RunnerMode::Threaded };
     FrameDescription from_thread = onePassFrame(scene);
-    std::size_t      applied_thread = 0;
-    threaded_runner.run([&] { applied_thread = threaded_worker.run(from_thread, FrameMode::Mirrored); });
-    EXPECT_EQ(applied_thread, 1U);
+    threaded_runner.run([&] { threaded_worker.run(from_thread, FrameMode::Published); });
     EXPECT_EQ(threaded_runner.frames(), 1U) << "the engine thread ran that frame";
 
     ASSERT_EQ(commandsOf(from_content).size(), 2U);
@@ -153,7 +150,7 @@ TEST(FrameRunnerTest, BothModesExpandAFrameToTheSamePicture)
 TEST(FrameRunnerTest, ManyFramesThroughTheEngineThreadStayEquivalent)
 {
     // A thread that survives frames is the point: the request/completion handshake has to work over and over, with
-    // nothing published in between (so every frame after the first drains nothing and expands from the same rows).
+    // nothing published in between (so every frame after the first expands from the same snapshot).
     auto root = twoLeafAssembly();
     Scene scene;
     scene.setRoot(root);
@@ -165,16 +162,14 @@ TEST(FrameRunnerTest, ManyFramesThroughTheEngineThreadStayEquivalent)
     constexpr int kFrames = 64;
     for (int frame_index = 0; frame_index < kFrames; ++frame_index) {
         FrameDescription frame = onePassFrame(scene);
-        std::size_t      applied = 0;
-        runner.run([&] { applied = worker.run(frame, FrameMode::Mirrored); });
-        EXPECT_EQ(applied, frame_index == 0 ? 1U : 0U) << "only the handshake had something to apply";
+        runner.run([&] { worker.run(frame, FrameMode::Published); });
         ASSERT_EQ(commandsOf(frame).size(), 2U) << "frame " << frame_index;
         FrameDescription reference = onePassFrame(scene);
         expandFrame(reference);
         expectSamePicture(commandsOf(frame), commandsOf(reference));
     }
     EXPECT_EQ(runner.frames(), static_cast<std::uint64_t>(kFrames));
-    EXPECT_EQ(worker.applied(), 1U) << "64 frames, one publish: the mirror applied exactly one delta";
+    EXPECT_EQ(worker.publicationCount(), 1U);
 }
 
 TEST(FrameRunnerTest, StoppedRunnerRunsFramesOnTheCallerInsteadOfWaiting)
@@ -195,12 +190,10 @@ TEST(FrameRunnerTest, StoppedRunnerRunsFramesOnTheCallerInsteadOfWaiting)
     FrameDescription frame = onePassFrame(scene);
     // Asked DIRECT: this test is about the thread, so it keeps the source question out of it - a stopped runner must
     // run the job, not reinterpret how it should be answered.
-    std::size_t applied = 0;
-    runner.run([&] { applied = worker.run(frame, FrameMode::Direct); });
-    EXPECT_EQ(applied, 1U) << "the frame still runs: on the calling thread";
+    runner.run([&] { worker.run(frame, FrameMode::Direct); });
     EXPECT_EQ(commandsOf(frame).size(), 2U);
     EXPECT_EQ(worker.unbound(), 0U) << "a stopped runner runs INLINE: the caller is the content's thread, so the draw "
-                                      "keeps its content instead of being re-pointed at a mirror";
+                                      "keeps its content instead of being re-pointed at a snapshot";
     EXPECT_EQ(frame.passes.front().draw->draws.front().content, &scene);
     EXPECT_EQ(runner.busy(), false) << "nothing is left in flight";
     EXPECT_EQ(runner.mode(), RunnerMode::Threaded) << "the mode is a lifetime decision, not a live state";

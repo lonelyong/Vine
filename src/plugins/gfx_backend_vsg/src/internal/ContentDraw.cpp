@@ -89,6 +89,21 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool, de
     return group;
 }
 
+bool ContentDraw::prepare(const core::PipelineKey& key)
+{
+    // ONE CALL, THE SAME ONE A RECORDED DRAW MAKES (see the header): the pool decides whether this is a compile or a
+    // reuse, and the layer keeps the object alive for the frame that will bind it. The registry is untouched, so the
+    // first real draw of that identity still issues its own pipeline bind.
+    const ContentPipeline::Result compiled = pipelines_->acquire(*pool_, key);
+    if (compiled.pipeline == nullptr) {
+        // Counted exactly as a recorded refusal is: the host reads one number for "this identity has no pipeline"
+        // however the identity was asked about.
+        ++refusals_;
+        return false;
+    }
+    return true;
+}
+
 ::vsg::ref_ptr<::vsg::StateGroup> ContentDraw::recordScreen(core::StateRegistry& registry, const ScreenDraw& draw)
 {
     // The same three "only when" answers a content draw gets, over the same identity arithmetic: a full-screen

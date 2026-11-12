@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -9,6 +10,7 @@
 #include "PublishOutcome.hpp"
 #include "RenderWorld.hpp"
 #include "SceneRows.hpp"
+#include "SnapshotSource.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -16,33 +18,33 @@ namespace detail
 {
 
 /**
- * @brief ONE content's MIRROR: the engine side's copy of its draw list, kept in step by values.
+ * @brief ONE content's publication: the production snapshot source plus the optional legacy row shadow (5b-1).
  *
  * @details
- * - WHAT IT IS. A `RenderWorld` (the rows) plus the face a frame asks for a view (`RenderWorldSource`), plus the
- *   channel the content's thread publishes through. It is the unit a worker owns per content, and it is the whole of
- *   "the render world" for one scene: no node, no graph, no camera object.
- * - THE TWO SIDES, ONE OBJECT. `publish`/`attach`/`detach` run on the CONTENT's thread (they read the graph - the
- *   scene's rows, a subtree's own facts - and post values), and `drain`/`source` run on the ENGINE's (they read no
- *   content at all). The two sides meet in the channel, never in a member: the content side owns the version it
- *   published and the channel, the engine side owns the world. Nothing is shared mutable between them.
- * - WHY THE PUBLISH IS COARSE IN P1. A node edit moves the scene's epoch and a byte edit moves a box (see
- *   `SceneRows::Version`), and both are answered by publishing the whole table. That is one O(rows) copy per change
- *   instead of per frame, and it is exactly the handshake the design calls for; the finer deltas (structure, state,
- *   description, box) replace it one kind at a time, each with its applier (`../backlog/graphics.md` T31).
+ * - WHAT IT IS. `snapshotSource()` is the production face a frame asks: an immutable `SceneSnapshot`, selected per
+ *   view. The old `RenderWorld` + `RenderWorldSource` + `DeltaChannel` remain only as the LEGACY shadow that 5b-1
+ *   compares against; `setLegacyShadow(true)` maintains it, and `legacySource()` exposes it. 5b-2 deletes that half.
+ * - THE TWO SIDES. `publish`/`attach`/`detach` run on the CONTENT's thread; `snapshotSource` / `legacySource` /
+ *   `drain` answer on the ENGINE's. The snapshot is immutable and handed over under the source's own lock; the legacy
+ *   half still uses the delta channel.
+ * - WHY THE LEGACY HALF IS STILL HERE. It is the proven old answer, kept one step longer so the production flip can
+ *   be compared frame for frame. It is not the truth: `FrameWorker` binds every draw to `snapshotSource()`.
  * - WHAT IT DOES NOT DO. It never expands, never binds a frame and never records: those belong to the frame that asks
- *   (see the design's `FrameWorker`), and a mirror that grew a frame would be the second engine.
+ *   (see the design's `FrameWorker`), and a publication that grew a frame would be the second engine.
  *
- * @warning Single-threaded per side: `publish` on the content's thread, `drain`/`source` on the engine's. A mirror is
- * not shared between two engines - a second engine publishes its own.
+ * @note The name is historical: it was the mirror. In 5b-1 it is the publication holder (snapshot + optional legacy
+ *       shadow); 5b-2 deletes the type when the legacy half goes.
+ *
+ * @warning Single-threaded per side: `publish` on the content's thread, `snapshotSource` / `legacySource` / `drain`
+ * on the engine's. A publication is not shared between two engines - a second engine publishes its own.
  */
 class ContentMirror {
   public:
     /**
-     * @brief Creates an empty mirror for @p content.
+     * @brief Creates the publication for @p content.
      *
-     * @param content The content this mirror answers for (its address is the identity a frame's binding maps).
-     * @param capacity How many deltas may wait between two drains (see DeltaChannel).
+     * @param content The content this publication answers for (its address is the identity a frame's binding maps).
+     * @param capacity How many LEGACY deltas may wait between two drains (see DeltaChannel).
      */
     explicit ContentMirror(const vn::graphics::DrawListSource& content, std::size_t capacity = DeltaChannel::kDefaultCapacity);
 
@@ -53,8 +55,39 @@ class ContentMirror {
     /** @brief Gets the content this mirror answers for. */
     [[nodiscard]] const vn::graphics::DrawListSource& content() const noexcept;
 
-    /** @brief Gets the face a frame names once it has been bound (see the design's bindContent). */
+    /** @brief Gets the LEGACY row face (migration 5b-1: the old mirror, kept as a shadow). */
     [[nodiscard]] vn::graphics::DrawListSource& source() noexcept;
+
+    /** @brief Gets the legacy row face, named for the 5b-1 shadow role. */
+    [[nodiscard]] RenderWorldSource& legacySource() noexcept;
+
+    /** @brief Gets the production face: the published snapshot (5b-1). */
+    [[nodiscard]] SnapshotSource& snapshotSource() noexcept;
+
+    /** @brief Gets the production face: the published snapshot (5b-1). */
+    [[nodiscard]] const SnapshotSource& snapshotSource() const noexcept;
+
+    /**
+     * @brief Enables or disables the LEGACY row path (migration 5b-1).
+     *
+     * @details
+     * - The snapshot is always published; it is the production source. This flag only decides whether the old rows /
+     *   delta path is still maintained as a comparison shadow.
+     * - The default is ON here so the existing mirror tests keep exercising the legacy path; `FrameWorker` sets it to
+     *   its own flag (default OFF) when it creates a publication, so production does not pay for the old path.
+     * - Enabling after the handshake is allowed: the next `publish` populates the snapshot even when the rows are
+     *   unchanged (see the implementation).
+     *
+     * @note The legacy shadow is taken by `publish` (the coarse rows path). A producer that only posts the fine deltas
+     *       (`setDescription` / `setState` / `attach` / `detach`) does not update it; today's engine path publishes, so
+     *       5b-1 is covered, and 5b-2 deletes this half.
+     *
+     * @param enabled Whether the legacy row path is maintained.
+     */
+    void setLegacyShadow(bool enabled) noexcept;
+
+    /** @brief Gets whether the legacy row path is maintained. */
+    [[nodiscard]] bool legacyShadow() const noexcept;
 
     /**
      * @brief Publishes @p scene's rows to this mirror, if they moved since the last publish.
@@ -161,10 +194,14 @@ class ContentMirror {
     const vn::graphics::DrawListSource* content_;
     RenderWorld                         world_;
     RenderWorldSource                   source_;
+    SnapshotSource                      snapshot_source_;
     DeltaChannel                        channel_;
     std::vector<OwnedDelta>             batch_;
     std::optional<SceneRows::Version>   published_;
     std::uint64_t                       publish_count_{ 0 };
+    /// Whether `publish` also maintains the LEGACY row/delta path. Atomic: the frame worker may toggle it while the
+    /// content thread publishes; the flag only picks a side effect, never a snapshot value.
+    std::atomic<bool> legacy_shadow_{ true };
 };
 
 } // namespace detail

@@ -201,6 +201,31 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      */
     virtual vn::graphics::PresentOutcome executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to = nullptr) override;
 
+    /** @brief Prepares a frame's CONTENT without running it: the same value executeFrame() walks, stopped earlier.
+     *
+     * @details
+     * - WHAT IT DOES. The value is collected and compiled exactly as executeFrame() does it - the plan, its target
+     *   facts and its pass scopes come out identical - and then the VALUE side of the frame is built and the recorded
+     *   node is DROPPED: the compiled halves (`api/ContentHalves`), the declared sets (`api/ContentSets`), the
+     *   sampled-input sets, the stream uploads (`api/StreamUploads`) and every pipeline identity the frame would
+     *   acquire (`ContentPipeline::acquire`, which is what moves the variant pool). A frame recorded afterwards finds
+     *   all of it and builds nothing (`R23`), which is the criterion `T33` pins.
+     * - WHAT IT NEVER DOES, and this is why the entry exists at all: no session frame is opened. A windowed session's
+     *   `beginFrame` ACQUIRES the next swapchain image, and an image acquired and never presented starves the next
+     *   frame (`P11`) - so the plan is compiled against the target facts the target itself answers (a const question),
+     *   and the block storage's own frame opens and closes around the recording without any of that. Nothing is
+     *   submitted, nothing is presented, and the frame-progress watermarks do not move.
+     * - WHAT IT LEAVES BEHIND is exactly what a recorded frame would have built, under the same keys: the recorded
+     *   NODE is thrown away (`d->packets` is cleared), because a command graph is the frame's, not a prepared value's.
+     *
+     * @param frame      The frame to prepare, in execution order (see vn::graphics::FrameDescription).
+     * @param present_to Target the frame's default framebuffer resolves to, or nullptr for the off-screen form. It is
+     *                   read, never acquired from.
+     * @return What the call built (see vn::graphics::PrepareReport); `Unsupported` is never answered by this backend.
+     */
+    [[nodiscard]] vn::graphics::PrepareReport prepareFrame(const vn::graphics::FrameDescription& frame,
+                                                           vn::graphics::PresentTarget*          present_to = nullptr) override;
+
     /** @brief Answers what this backend can do: off-screen targets, and presentation unless created to present nothing.
      *
      * @details
@@ -347,6 +372,29 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      * frame names none (see executeFrame).
      */
     void openFrameBooks();
+
+    /** @brief Walks @p frame into the collection stage: one pass scope per entry, in the order the value states.
+     *
+     * @details
+     * - THE TRANSLATION OF A FRAME VALUE INTO THIS LAYER'S OWN COLLECTION, and the only place it exists: the value's
+     *   passes become pass scopes, their targets / viewports / clears / states / inputs are announced under those
+     *   scopes, and their drawing calls are collected. `executeFrame` runs it and then records; `prepareFrame` runs
+     *   the SAME one and then builds only the value side - so a prepared frame and a recorded frame cannot disagree
+     *   about what the frame is (`G1`), which is what makes "prepared" carry over to the next frame.
+     * - It touches no session and no image: opening the frame's books is the caller's step (see openFrameBooks).
+     *
+     * @param frame The frame to collect, in execution order.
+     */
+    void collectFrame(const vn::graphics::FrameDescription& frame);
+
+    /** @brief Rebuilds the target-facts table the plan is compiled against (the window row plus every held target).
+     *
+     * @details
+     * - The rows are the same two sources `closeFrameBooks` has always used: the window the frame drives (answered by
+     *   the target itself, a const question) and every host target this backend holds, built or not. They are read
+     *   into `d->facts` by `closeFrameBooks` and by `prepareFrame`, which is why the assembly is one function.
+     */
+    void collectTargetFacts();
 
     /** @brief Closes the frame's books: the plan is closed and compiled against what the frame draws into.
      *

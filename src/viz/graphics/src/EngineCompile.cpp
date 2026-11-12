@@ -295,7 +295,7 @@ void RenderEngine::buildFrameValue()
         // expandFrameValue) and runs after every pass has been described, which is what makes a frame answer ONE
         // mirror state (design N16): a hook's write is visible to all of that frame's passes, which is the same rule
         // the direct and the mirrored mode now state. With nothing changed, both calls answer immediately.
-        if (frame_mode_ == detail::FrameMode::Mirrored) {
+        if (frame_mode_ == detail::FrameMode::Published) {
             if (raw_ptr<Scene> scene = pass->content()) {
                 (void)worker_->publish(*scene);
             }
@@ -349,8 +349,8 @@ void RenderEngine::expandFrameValue(detail::EngineFrame& frame)
     // a frame answered late opens its OWN number, never the one the content has moved on to.
     worker_->beginFrame(frame.content_frame);
 
-    // THE ENGINE HALF'S EXPANSION: every draw of the described frame is answered here, one drain per pass, in run
-    // order (see design 2.12 - the two halves are the seam a thread crosses, so they are two functions and not one
+    // THE ENGINE HALF'S EXPANSION: every draw of the described frame is answered here, one bind+expand per pass, in
+    // run order (see design 2.12 - the two halves are the seam a thread crosses, so they are two functions and not one
     // loop). Nothing in this function reads content: `runPass` re-points each draw at its content's mirror and
     // `expandPass` asks that mirror, which is exactly what makes it safe to run away from the content's thread.
     //
@@ -361,7 +361,6 @@ void RenderEngine::expandFrameValue(detail::EngineFrame& frame)
     for (const std::uint32_t index : frame.engine_order) {
         FrameDescription::Pass& described = frame.description.passes[entry++];
         const auto              started   = std::chrono::steady_clock::now();
-        (void)worker_->drain();
         if (described.draw.has_value()) {
             worker_->runPass(*described.draw, frame_mode_);
         }

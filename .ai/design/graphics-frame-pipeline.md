@@ -154,10 +154,10 @@
 | F3 | 内容身份与世代 | `Handle` + typed id + `ContentRef`，陈旧句柄答 gone | 已落地 |
 | F4 | 引擎表按 `(id, revision)` 驻留 | 事实表按 ref 建行；旧帧读旧版 | 已落地 |
 | F5 | 行级 epoch 回收 | 行按"最后一次被计划命中的帧"回收；条目在"宿主不要了 ∧ 没有行"时离开 | 已落地 |
-| F6 | 计划是值 | 帧边界按名字差分 + 计划校验稳定 code | 部分：`Plan` + `validatePlan` + `applyPlan` + `plan()` 已落地；`Target` 仍是显式 `RenderTarget` 句柄，`addPass` 家族保留到第 5 步（`C11`） |
-| F7 | 预热入口 | `prepare()` 答需要什么；预热后录制 `builds` 增量 0 | 部分：3a 已落地（`drawNeeds` 是唯一的键构造者，录制与预热共用）；`prepare()` 入口与预建是 3b |
+| F6 | 计划是值 | 帧边界按名字差分 + 计划校验稳定 code | 部分：`Plan` + `validatePlan` + `applyPlan` + `plan()` 已落地；`Target` 仍是显式 `RenderTarget` 句柄，`addPass` 家族保留到 5b-2b（`C11`） |
+| F7 | 预热入口 | `prepare()` 答需要什么；预热后录制 `builds` 增量 0 | 已落地：3a（`drawNeeds` 是唯一的键构造者）+ 3b（`RenderEngine::prepare()` → `prepareFrame(value)`，按同一份答案预建半片 / 集合 / 上传 / 管线身份） |
 | F8 | 一 Session 多 Surface | `Target` / 帧请求带 `SurfaceId`；一个引擎线程驱动多个窗口 | 未做 |
-| F9 | `publish` 返回结果 | 批内显式“未发布”，无 null | 部分：`PublishOutcome` 四态已落地（`Posted`/`Unchanged`/`InsideBatch`/`Refused`），公开 `Scene::publish()` 随第 5 步的快照出现 |
+| F9 | `publish` 返回结果 | 批内显式“未发布”，无 null | 已落地（5b-2a）：公开 `Scene::publish()` 三态（`Posted`/`Unchanged`/`InsideBatch`）；旧四态 `PublishOutcome` 只在 LEGACY，5b-2b 删 |
 | F10 | 原型与实例 | `Instance` 引用原型；折叠一次；无环与行预算 | 未做 |
 | F11 | 全序排序键 | 文档化的全序值（含 layer），透明两段 | 未做 |
 | F12 | 帧结果与查询 | `FrameResult` 带 snapshot / view / poses / 诊断 / present | 部分：`FrameStats` + `PresentOutcome` 已有，`query` 未做 |
@@ -215,18 +215,28 @@
 
 ### 3.7 F7 预热入口
 
-- **行为**：`prepare()` 回答“这一帧需要哪些半片 / 描述符集 / 上传”，并可把它们全部建好，**不提交帧**。
-  公开入口是 `RenderEngine::prepare()`（引擎先编成 `FrameDescription`），后端拿到的是与 `executeFrame()`
-  **同一个值**——一条线、两个动词，不引入新名词。快照进这个输入是第 5 步的事。
-- **约束**（`C3`）：预热在引擎线程；它不提交帧，也不 acquire 交换链图像。
+- **行为**：`prepare()` 回答“这一帧需要哪些半片 / 描述符集 / 上传”，并**把它们全部建好**，不提交帧。
+  公开入口是 `RenderEngine::prepare()`（引擎先编成 `FrameDescription`，与 `frame()` 同一份编译），后端入口是
+  `RenderFrameExecutor::prepareFrame(value, present_to)`——一条线、两个动词，不引入新名词；答案是一个值
+  （`PrepareReport`：outcome + 走了几 pass / 几个 draw + 这次调用建了几个半片 / 集合 / 上传 / 管线身份）。
+  快照进这个输入是 5b-1 的事（已落地）。
+- **约束**（`C3`）：预热在引擎线程；它不提交帧，也不 acquire 交换链图像（见 `P11`）。
 - **要求**（`R23` / `R36`）：预热后录制的帧 `builds` 增量 0；缺可选能力要出现在报告里。
-- **验收**（`T7` / `T10` / `T32`）：`builds` 增量断言；`prepare()` 报的键集 = 这一帧实际构建的键集。
+- **验收**（`T7` / `T10` / `T32` / `T33`）：`builds` 增量断言；`prepare()` 报的键集 = 这一帧实际构建的键集。
 - **注意**（`P8` / `P11`）：预热是**查询**不是“编译一切”；也**不能**用“跑一帧不提交”实现（见 `P11`）。
   **缝**：`drawNeeds(compiled pass, draw)` 是唯一的键构造者——`prepare` 用它建、`ContentPass::record` 用它取，
   两边不可能漂移（`G1`）。
   **落地位置**（3a，2026-11-12）：`src/plugins/gfx_backend_vsg/{include/vine/vsg/internal,src/internal}/DrawNeeds.{hpp,cpp}`
   （`drawNeeds` 两个重载 + `DrawNeeds::keyFor`）；`ContentHalves::halvesFor`、`ContentPass::recordCommand` /
   `recordScreenDraw` 与 `describeMissingContentHalf` 都只读它，录制路径不再自己拼键。
+  **落地位置**（3b，2026-11-12）：`sdk/vine/graphics/PrepareReport.hpp`、`RenderFrameExecutor::prepareFrame`、
+  `RenderEngine::prepare()`、`VsgBackend::prepareFrame`。后端复用帧自己的两半——`collectFrame`（值 → 采集）与
+  `recordContent(..., /*prepare_only*/)`（采集 → 半片 / 集合 / 采样输入集 / 上传）——两个动词在 `ContentPass` 里
+  只有一个分支点（`Mode::Prepare` 停在“身份已确保”处：不建命令图、不写块）。**预热不写块，也不开渲染环**：
+  `FrameRing` 的 slab 轮转是帧的，预热多吃一格会让下一帧写到最老在飞帧仍在读的 slab（`core::FrameRing` 的
+  多一格正是为此）——`T33` 用 `BlockStorage::writes()` / `frames()` 钉住这条。
+  它不调用 `Session::beginFrame()`（窗口会 acquire 图像），只从 `WindowTarget::facts()` 读形状；
+  `growBlockStorageIfNeeded` / `growMaterialArenaIfNeeded` 在预热里先跑，免得太帧第一次就换存储、把刚建好的集合全部重指。
 
 ### 3.8 F8 一设备一 Session 多 Surface
 
@@ -246,7 +256,7 @@
 - **验收**（`T3` / `T31`）：`ContentMirrorTest.AnEditBatchIsOnePublicationAndTheMirrorKeepsTheOldPictureUntilItEnds`、
   `...TheMirrorCollectsWhatItsSceneCollectsAndOnlyPublishesOnAChange`（`Unchanged`）、
   `ARefusedPublishIsRetriedInsteadOfBeingLost`（`Refused`）。
-- **注意**（`P9`）：批不是事务——它只界定“一帧能看见什么”。公开 `Scene::publish()` 随快照（第 5 步）出现：
+- **注意**（`P9`）：批不是事务——它只界定“一帧能看见什么”。公开 `Scene::publish()` 随快照（5b-2a，已落地）出现：
   在那之前，公开面没有一个能承载“上一份快照”的类型，先公开它只会多一个没人能用的版本号。
 
 ### 3.10 F10 原型与实例
@@ -257,6 +267,7 @@
   同一写者域、不允许悬垂 `NodeId` 进入发布。
 - **验收**（`T4` / `T21` / `T22` / `T23`）：折叠计数用例；共享原型发布；原型析构后仍有实例；实例化成本与 `K11`。
 - **注意**（`P3`）：v1 的放置成本是 N × 原型行数，不是 N——不要把它写成"实例化免费"。
+  A/B 的测量口径见 `../research/graphics-2026-11-12-instances.md`（`T23`）；B 只在数字满足判定线后成为默认。
 
 ### 3.11 F11 / F12 排序键与帧结果
 
@@ -293,7 +304,7 @@
 
 | 接口 | 契约 | 备注 |
 |---|---|---|
-| `RenderEngine::prepare()` → `PrepareReport` | 只建不提交；答所需半片/集合/上传 | 目标（后端拿到的是与 `executeFrame()` 同一个 `FrameDescription`；快照进这个输入是第 5 步） |
+| `RenderEngine::prepare()` → `PrepareReport` | 只建不提交；答所需半片/集合/上传 | 目标（后端拿到的是与 `executeFrame()` 同一个 `FrameDescription`；快照进这个输入是 5b-1，已落地） |
 | `Session::frame(FrameRequest) → FrameResult` | 提交一帧；`FrameRequest` 带 `View` 与 `SurfaceId` | 目标（今天 `executeFrame` + `presentWindow`） |
 | `FrameResult{ snapshot, view, poses, stats, diagnostics, present }` | 宿主读的值 | 目标（今天 `FrameStats` + `PresentOutcome`） |
 | `Plan` / `Pass` / `Target` / `SurfaceId` | 帧图声明 | 目标（今天 `addPass` / `PassDesc`） |
@@ -456,7 +467,9 @@
   所以“跑一遍录制再丢掉”连它都覆盖不到 —— 预热会在看起来通过的像素用例下留下一条 acquire 饥饿。
 - 怎么判：`builds` 增量断言不成立，或第二帧 `beginFrame()` 回空 token / 出现 acquire 超时的 VUID。
 - 怎么防：预热只做**值**这一侧（半片 / 集合 / 上传），键由 `drawNeeds` 算；窗口目标的格式由
-  `WindowTarget::facts()` 回答（const，不需要 acquire）。
+  `WindowTarget::facts()` 回答（const，不需要 acquire）。3b 的实现在 `VsgBackend::prepareFrame`：它走 `collectFrame`
+  + `recordContent`，**从不**调用 `Session::beginFrame()` / `PresentTarget::present()`，帧进度水位（`submitted` /
+  `presented`）因此不动——`T33` 断言的正是这两条。
 
 ## 7. 已否决选项
 
@@ -494,13 +507,13 @@
 | T14 | 既有行为不变 | `ctest`（30 套） | 30/30 |
 | T15 | 文档门禁 | 八个 `scripts/check_*.py` + `check_vsg_content_seam.cmake` | 全清 |
 | T16 | 量化"过/不过" | `../research/graphics-2026-11-11-next-benefits.md` 收益表 | 逐步记录 |
-| T17 | 旧帧读旧 revision | 两帧在飞时改材质/几何/程序，逐项 diff | 已实现 |
+| T17 | 旧帧读旧 revision | 两帧在飞时改材质/几何/程序，逐项 diff | 已实现（旧路径 + snapshot 侧 `SnapshotShadowTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith`，2026-11-12） |
 | T18 | 多实例拾取 | 同一原型两处实例 | 未做 |
 | T19 | pose 后拾取 | 父关节 pose 点其子 | 未做 |
 | T20 | 帧相机拾取 | 相机移动后按下 | 未做 |
 | T21 | 共享原型发布 | 两 Scene 共享原型 | 未做 |
 | T22 | 原型寿命 | 原型析构后仍有实例 | 未做 |
-| T23 | 实例化成本 | 5000 行 × 10 实例 | 未做 |
+| T23 | 实例化成本（A/B 对照） | 5000 行原型 × 10 实例；报 `snapshot_rows` / `draw_rows` / `placement_multiplications` / publish / select / 常驻；口径见 `../research/graphics-2026-11-12-instances.md` | 未做（research） |
 | T24 | 块级剔除正确 | 一块两段不同父变换 | 未做 |
 | T25 | 回收后旧快照 | Session 外持旧快照再提交 | 未做 |
 | T26 | pose 子树传播 | 父关节 pose | 未做 |
@@ -508,8 +521,10 @@
 | T28 | pose 剔除 | pose 子树部分出视 | 未做 |
 | T29 | 多表面 | 一个 Session 两个 Surface | 未做 |
 | T30 | 计划校验 | `PlanTest.*IsRefusedWithItsCode`（四类）+ `PlanTest.TheCodeSpellingsAreStable` | 已实现 |
-| T31 | 批内 publish | `ContentMirrorTest.AnEditBatchIsOnePublicationAndTheMirrorKeepsTheOldPictureUntilItEnds`（`InsideBatch` → `Posted`） | 已实现 |
+| T31 | 批内 publish | `FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch`（`Posted` → `Unchanged` → `InsideBatch` → `Posted`）+ `ContentMirrorTest.AnEditBatchIsOnePublicationAndTheMirrorKeepsTheOldPictureUntilItEnds`（LEGACY） | 已实现（2026-11-12） |
 | T32 | 预热的答案 = 帧的构建 | `ContentHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds`（键集相等，设备无关）+ `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` 的键集断言（录制侧） | 已实现（2026-11-12） |
+| T33 | 预热后录制 `builds` 增量 0，且预热不提交 / 不呈现 | `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing`（`halves().builds` / `sets().builds` / `uploads().uploads` / `inputSetBuilds` / `pool.created` 全 0，`progress->submitted` 不动，像素仍画出）+ `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing`（引擎侧：同一个 value、不执行、不取帧号） | 已实现（2026-11-12） |
+| T34 | 5a 影子路径与旧路径逐项相等 | `SnapshotShadowTest.TheSnapshotSourceMatchesTheMirrorAcrossSixHundredFrames`（600 帧，transform / opacity / material / placement 编辑，逐项 diff）+ `FrameWorkerTest.TheSnapshotShadowComparesEverySceneDrawAndFindsNoDifference`（绑定后的帧级接缝） | 已实现（2026-11-12） |
 
 ### 8.1 判死阈值（`K#`）
 
@@ -521,7 +536,7 @@
 | K1 | 2000 行场景改 1 行，`publish` > 500 µs（CoW 退化成整表） | `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` |
 | K2 | 快照常驻内存 > 3× 行表字节数 | `alloc_trace.c` / RSS |
 | K3 | 相机移动的 collect > 2160 µs 的 1.2 倍 | `SceneTest.MeasureWhatOneCollectionCosts*` |
-| K4 | 该步开始时的用例里，> 5% 的**语义断言**需要改才通过（纯改名不计） | 直接数（分母写“该步开始时”，不写死条数） |
+| K4 | 该子步开始时的用例里，> 5% 需要改**语义断言**才通过（纯改名/机械迁移不计；口径见下） | 直接数 |
 | K5 | 代码量不降反升（桥 + 寿命层 > 今天的 100%，与 2519 行同口径） | `wc -l` |
 | K6 | TSan 出现任何**新的**数据竞争报告 | `scripts/tsan_check.sh` |
 | K7 | 在飞帧的旧内容被新发布改变（材质/几何/程序任一） | `T17` 逐项 diff |
@@ -530,21 +545,43 @@
 | K10 | 多表面必须靠两个 Session / 两条引擎线程才能成立 | `T29` |
 | K11 | 5000 原型、1 次编辑的 publish 超过预算（元数据整体拷贝暴露） | `N19` ≤ 50 µs 或字节上限 |
 
+**`K4` 的计数口径**（5a / 5b-1 / 5b-2a / 5b-2b 各自适用）：
+
+- **分母**：该子步开始时 `test_graphics` + `test_vsg` 的 `--gtest_list_tests` 用例并集；`DISABLED_` 不计，
+  运行时 SKIP 计；不数源码里的 `TEST` 宏（今天 `test_vsg` 源码宏 544、可执行 542）。
+- **分子**：必须改期望值 / 可观察行为才通过的用例；改名、别名、签名/类型机械迁移、文件搬移不计。
+- 只钉被删机制、没有后继语义的用例随机制删除，但每条要写明由哪条新用例承接同一可观察行为；
+  写不出承接的，算 1 条。
+- **5a** 的既有语义断言改动必须为 **0**（影子路径；出现 1 条就回退 5a，不进 5b-1）；
+  **5b-1 / 5b-2a / 5b-2b** 的分母各自在开始时重取，不沿用上一步。
+- 今天（3b 收尾）实测 572 + 542 = **1114**，5% 线为 **55 条**（第 56 条越线）；这个数字只作初判，不写死。
+
 ## 9. 状态与演进
 
 ### 9.1 当前状态
 
-- **已落地**：F3（身份）、F4（引擎表按 ref）、F5（行级 epoch 回收）、F6（计划是值）。前三项在
-  `ContentId.hpp` / `ContentStore.cpp` / `ResourceTable.hpp` 里是现役代码，`test_graphics` 与 `test_vsg`
-  在钉它们；F6 在 `Plan.hpp` / `Plan.cpp` / `EngineCompile.cpp`（`applyPlan`）里，由 `PlanTest` 钉住。
-  F6 的**半边**仍属第 4 / 5 步：`Target` 还不是值（仍是显式 `RenderTarget` 句柄），`addPass` 家族按
-  `C11` 保留到第 5 步收口。
-- **原型已通过阈值、生产未接管**：F1（快照发布）、F2（纯派生）。`detail::SceneSnapshot` +
-  `selectSnapshot` 只有测试消费者，生产收集仍走 `RenderWorld` + `drawListBake`；`K1`（203 µs）、
-  `K2`（1.03×）、`K3` 已由 `SnapshotTest` 证明。
-- **未做**：F8、F10、F11 与 F12 的 `query` 半边。F7 的**答案**半边（3a）已落地：`drawNeeds` 是唯一的键构造者，
-  `ContentHalves` 与 `ContentPass` 都只读它（见 §3.7）；它的 `prepare()` 入口与预建是 3b。F9 的内部半边（四态发布答案）已落地；它的公开
-  `Scene::publish()` 与“帧内隐式发布消失”是同一步（第 5 步），因为那一步才把快照变成公开值。
+- **已落地**：F3（身份）、F4（引擎表按 ref）、F5（行级 epoch 回收）、F6（计划是值）、F7（预热入口，3a + 3b）。
+  前三项在 `ContentId.hpp` / `ContentStore.cpp` / `ResourceTable.hpp` 里是现役代码，`test_graphics` 与 `test_vsg`
+  在钉它们；F6 在 `Plan.hpp` / `Plan.cpp` / `EngineCompile.cpp`（`applyPlan`）里，由 `PlanTest` 钉住；F7 在
+  `DrawNeeds.*`（身份）与 `RenderEngine::prepare()` / `RenderFrameExecutor::prepareFrame` / `VsgBackend::prepareFrame`
+  （预建）里，由 `T32` / `T33` 钉住。
+  F6 的**半边**仍属第 4 步与 5b-2b：`Target` 还不是值（仍是显式 `RenderTarget` 句柄），`addPass` 家族按
+  `C11` 保留到 5b-2b 收口。
+- **快照已是生产收集（5b-1，2026-11-12）**：F1（快照发布）、F2（纯派生）现在由 `SnapshotSource` 回答 Published
+  模式的每个 draw；`ContentMirror` 只剩可选的 LEGACY 行/delta 影子（`setLegacyShadow` / `legacySource`），
+  默认关闭。`Scene::collectRenderCommands` 仍是 Direct 模式的直接路径；`K1`（203 µs）、`K2`（1.03×）、
+  `K3` 已由 `SnapshotTest` 证明。
+- **5a / 5b-1 已落地（2026-11-12）**：`SnapshotSource`（快照 → `DrawListSource`）、`DrawListDiff`、
+  `ContentMirror::snapshotSource()` / `legacySource()` / `FrameWorker::setLegacyShadow()`；`T34` 由
+  `SnapshotShadowTest` 的 600 帧与 `FrameWorkerTest` 的帧级比较钉住，`T17` 的 snapshot 侧由同一套件的旧快照用例
+  钉住。生产绑定 `snapshotSource()`，LEGACY 影子默认关闭；CI 由 `SnapshotShadowTest` 常开。
+- **5b-2a 已落地（2026-11-12）**：公开 `Scene::publish()`（`Posted`/`Unchanged`/`InsideBatch`）；`FrameWorker`
+  直接持有 `SnapshotSource`，不再经过 `ContentMirror`。LEGACY 文件仍在树内但已不在生产路径，5b-2b 删除。
+- **未做**：F8、F10、F11 与 F12 的 `query` 半边。F7 的两半都已落地：3a 的答案（`drawNeeds` 是唯一的键构造者）
+  与 3b 的预建（`RenderEngine::prepare()` → `prepareFrame(value)`；预热后录制的帧 `builds` 增量 0，见 `T33`）。
+  F9 的内部半边（四态发布答案）已落地；它的公开
+  `Scene::publish()` 已在 5b-2a 公开；“帧内隐式发布消失”留给 5b-2b（那时 `EngineCompile` 不再自动调用
+  `worker_->publish`）。
 - **迁移期的事实**：`graphics-threading.md` 的 `C1–C20` 与 `graphics-scene.md` 的镜像/delta/memo 描述
   仍是**现在**的形状；本文件是**目标**。两者冲突时以状态字段为准，接管顺序见 §9.3。
 
@@ -564,16 +601,21 @@
 | 步 | 内容 | 删掉什么 | 判据 / 回退条件 |
 |---|---|---|---|
 | 1 | 计划是值：`Plan` + 帧边界差分 + 校验 code · **已落地 2026-11-12** | 本步不删公开入口（`C11`）；`compileFrame` 的行从“`slots_` 的投影”变成“计划的投影” | `T7` / `T30` / `K4`；击穿则回退该步 |
-| 2 | `publish` 返回结果（四态）· **已落地 2026-11-12（内部半边）** | 内部 `bool` 发布（`FrameWorker` / `ContentMirror`）；**帧内隐式发布随第 5 步消失** | `T31` |
+| 2 | `publish` 返回结果（四态）· **已落地 2026-11-12（内部半边）** | 内部 `bool` 发布（`FrameWorker` / `ContentMirror`）；**帧内隐式发布随 5b-2b 消失** | `T31` |
 | 3a | `prepare()` 的**答案**：抽出 `drawNeeds`，`prepare` 与 `record` 共用它；断言答案 = 这一帧实际构建的键集 · **已落地 2026-11-12** | 录制里重复的键构造 | `T32`；击穿则回退该步 |
-| 3b | `prepare()` 的**预建**：按答案建半片 / 集合 / 上传 | “录制时才发现要编译” | `T7` / `T10`，预热后 `builds` 增量 0 |
+| 3b | `prepare()` 的**预建**：按答案建半片 / 集合 / 上传 · **已落地 2026-11-12** | “录制时才发现要编译” | `T7` / `T10` / `T33`，预热后 `builds` 增量 0 |
 | 4 | 一 Session 多 Surface | 每窗口一个 Session 的驱动路径 | `T29` / `K10` |
-| 5 | **生产收集改走 Snapshot + `selectSnapshot`，删镜像/delta/memo/版本** | `ContentMirror`、`DeltaChannel`、`DrawListMemo`、`Version`、`refresh*`（约 2000 行）；**并在此收口删 `addPass` 家族与 `PassRegistry` 的运行时拒绝** | `K1` / `K2` / `K3` / `K5` / `K7` / `N5`；这是风险最高的一步 |
+| 5a | **影子切换**：`selectSnapshot` 与旧 mirror 路径同帧同输入跑，逐项 diff；旧路径仍是渲染真相 · **影子接缝已落地 2026-11-12** | 本步不删生产形状；不公开 `Scene::publish()`；不删 `addPass` 家族（`C11`） | `T34` / `T17`（snapshot 侧）已由 `SnapshotShadowTest` 钉住，CI 常开；`K1` / `K2` / `K3` / `K7` 绿、既有语义断言改动为 0 才进 5b-1 |
+| 5b-1 | **切换真相**：Published 模式绑定 `SnapshotSource`；旧 mirror 降为可选 LEGACY 影子，默认关闭 · **已落地 2026-11-12** | 无（旧路径保留作影子，不删） | `T34` / `T17` / `K1` / `K2` / `K3` / `K7`；`test_graphics` 577 / `test_vsg` 542 / ctest 30/30 / TSan 0 |
+| 5b-2a | **公开入口 + 源归位**：公开 `Scene::publish()` 三态，`FrameWorker` 直接持有 `SnapshotSource` · **已落地 2026-11-12** | 无（LEGACY 文件仍在树内，但已不在生产路径） | `T31` / `test_graphics` 577 / `test_vsg` 542 / ctest 30/30 / TSan 0 |
+| 5b-2b | **删除旧路径**：删镜像/delta/版本与镜像的 refresh/delta 入口；收口删 `addPass` 家族与 `PassRegistry` 的运行时拒绝 | `ContentMirror`、`DeltaChannel`、`RenderWorld`、`RenderWorldSource`、`PublishOutcome`、`SceneRows::version/publish/editing`（约 2000 行，含 LEGACY 用例）；`DrawListMemo` **保留**为 `SnapshotSource` 的纯 per-view 缓存；`Scene::refreshBoxes/refreshMaterials` 保留（快照的输入） | `K4`（分母在 5b-2b 开始时重取）/ `K5` / `K7` / `N5`；只有 5b-2a 稳定后进 |
 | 6 | 原型与实例（单独实验，B 方案先测） | 无（新增能力） | `T23` / `K11`；数字不好就停在“原型 DAG 共享” |
 
-`C11`（迁移期公开 API 只增不改）适用于第 1–4 步：新入口先与旧入口并存，第 5 步收口时再删旧形状。
-所以“`addPass` 家族在第 1 步删”与 `C11` 自相矛盾，本表已改成“第 5 步删”：第 1 步只改变投影方向
+`C11`（迁移期公开 API 只增不改）适用于第 1–4 步、5a、5b-1 与 5b-2a：新入口先与旧入口并存，5b-2b 收口时再删旧形状。
+所以“`addPass` 家族在第 1 步删”与 `C11` 自相矛盾，本表已改成“5b-2b 删”：第 1 步只改变投影方向
 （计划是输入，`slots_` 是它的应用结果），这也正是 `T7` 能成立的最小充分条件。
+5a 是**等价性证明**，5b-1 是**切换真相**，5b-2a 是**公开入口 + 源归位**，5b-2b 只做**删除**；各自一个可回退提交，
+理由见 `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`。
 
 ## 10. 参考
 
@@ -581,10 +623,15 @@
 
 - `src/viz/graphics/sdk/vine/graphics/Plan.hpp` / `src/viz/graphics/src/Plan.cpp`（计划的契约、校验、`describe`）
 - `src/viz/graphics/src/EngineCompile.cpp`（`applyPlan` / `applyPlanRows` / `plan` / `makePassNode`）
+- `src/viz/graphics/sdk/vine/graphics/PrepareReport.hpp`（预热入口的答案）+
+  `src/viz/graphics/src/RenderEngine.cpp`（`RenderEngine::prepare()`：编译 + 展开，再交给 `prepareFrame`）
 - `src/viz/graphics/src/PublishOutcome.hpp` / `ContentMirror.cpp`（发布的四态答案）
 - `tests/test_graphics/PlanTest.cpp`（`T7` / `T30` 的全部用例）
+- `tests/test_graphics/SnapshotShadowTest.cpp`（`T34` 的 600 帧、批内旧图与空快照变异）
 - `src/viz/graphics/sdk/vine/graphics/ContentId.hpp`（身份、`ContentRef`、注册表）
 - `src/viz/graphics/src/SceneSnapshot.hpp` / `SceneSnapshot.cpp`（快照原型、`selectSnapshot`）
+- `src/viz/graphics/src/SnapshotSource.hpp` / `SnapshotSource.cpp`（快照的 `DrawListSource` 面：5b-1 生产源；5a 时是影子）
+- `src/viz/graphics/src/DrawListDiff.hpp` / `DrawListDiff.cpp`（5a 的字段级比较）
 - `src/viz/graphics/src/SceneRows.cpp`（发布的缓存侧）
 - `src/viz/graphics/src/DrawListBake.cpp`（现役收集与排序）
 - `src/viz/graphics/sdk/vine/graphics/backend/ResourceTable.hpp`（按键驻留）
@@ -594,9 +641,11 @@
 ### 10.2 文档与 ADR
 
 - `../decisions/ADR-2026-11-12-adopt-graphics-next.md`（采纳决定、被否决的选项）
+- `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`（5a 影子 / 5b-1 翻源 / 5b-2a 公开入口 / 5b-2b 删除的拆分与先后）
 - `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md`（`I4` 的来源）
 - `../decisions/ADR-2026-11-11-content-identity-is-a-handle.md`（`I2` / `R31` 的来源）
 - `../design/graphics-threading.md`（迁移期前的线程契约）、`../design/graphics-scene.md`（现役场景与收集）
+- `../research/graphics-2026-11-12-instances.md`（`T23` 的 A/B 测量口径；未采纳前只作研究）
 - `../research/graphics-2026-11-11-next*.md`（提案原文与 `-design` / `-api` / `-hot-paths` / `-requirements` / `-benefits`；
   按 §9.3 逐份吸收后删除。`-audit` 的两轮审计是 `R31–R39` 与 `K7–K11` 的出处，也被两份 ADR 引为证据，
   所以它留到那些引用被历史取代为止）

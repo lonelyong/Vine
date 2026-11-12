@@ -96,9 +96,23 @@ void ContentAssembly::repoint(BlockStorage& storage, core::FrameTimeline& timeli
 
 const ContentFacts& ContentAssembly::beginFrame(const core::CompiledFrame& frame, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
+    return openTables(frame, timeline, retirement, /*blocks*/ true);
+}
+
+const ContentFacts& ContentAssembly::prepare(const core::CompiledFrame& frame, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+{
+    // THE SAME OPENING, MINUS THE BLOCK STORAGE'S FRAME: see the header - the ring's rotation is the frame's, and a
+    // warm-up that consumed one would shift it under the oldest frame still in flight.
+    return openTables(frame, timeline, retirement, /*blocks*/ false);
+}
+
+const ContentFacts& ContentAssembly::openTables(const core::CompiledFrame& frame, core::FrameTimeline& timeline, core::RetirementQueue& retirement, bool blocks)
+{
     d->timeline   = &timeline;
     d->retirement = &retirement;
-    d->storage->beginFrame();
+    if (blocks) {
+        d->storage->beginFrame();
+    }
     d->facts = &d->store->tablesFor(frame, timeline);
     // The streams' frame opens ON THE FACTS THAT WALK JUST PUBLISHED (see api/StreamUploads): the published
     // declaration index says which buffers live content still names, and each entry answers the other half (its
@@ -162,14 +176,33 @@ bool ContentAssembly::record(const core::CompiledPass&            pass,
         return false;
     }
 
+    core::StateRegistry registry(*d->pool);
+    ContentPass         recorder(scopeFor(pass, inputs, registry), *d->diagnostics);
+    return recorder.record(pass, *d->facts, compatibility, inputs, view_block, out);
+}
+
+bool ContentAssembly::prepare(const core::CompiledPass& pass, const core::RenderPassCompatibility& compatibility, std::span<const InputImages> inputs)
+{
+    if (d->facts == nullptr) {
+        // The same caller bug `record` answers with an empty node: here there is no node to answer with, so the
+        // false IS the answer (nothing was ensured, and the next frame will record what this call could not).
+        return false;
+    }
+
+    core::StateRegistry registry(*d->pool);
+    ContentPass         recorder(scopeFor(pass, inputs, registry), *d->diagnostics);
+    return recorder.prepare(pass, *d->facts, compatibility, inputs);
+}
+
+ContentPass::Scope ContentAssembly::scopeFor(const core::CompiledPass& pass, std::span<const InputImages> inputs, core::StateRegistry& registry)
+{
     const std::span<const ContentPass::Scope::Entry> entries    = d->halves->halvesFor(pass, *d->facts, *d->timeline, *d->retirement);
     const std::span<BlockDescriptors* const>         candidates = d->sets->setsFor(pass, *d->facts, entries, inputs, *d->timeline, *d->retirement);
 
     // One registry PER PASS: the registry's contract is "this pass' state memory" (see its header), because
     // what a recording issues is the pass' - its view block's offsets among them - and a second pass must
     // not inherit it.
-    core::StateRegistry registry(*d->pool);
-    ContentPass::Scope  scope;
+    ContentPass::Scope scope;
     scope.entries                 = entries;
     scope.registry                = &registry;
     scope.storage                 = d->storage;
@@ -185,9 +218,7 @@ bool ContentAssembly::record(const core::CompiledPass&            pass,
     // The material-slot reports belong to the MATERIAL, so their episodes live in the store's per-material
     // entries (see ContentStore::claimSlotReport) - the pass itself is per frame.
     scope.store                   = d->store;
-
-    ContentPass recorder(scope, *d->diagnostics);
-    return recorder.record(pass, *d->facts, compatibility, inputs, view_block, out);
+    return scope;
 }
 
 const ContentFacts& ContentAssembly::facts() const noexcept

@@ -32,6 +32,55 @@ class LightRig;
 struct RenderCommand;
 
 /**
+ * @brief What one Scene::publish() call answered.
+ *
+ * @details
+ * - `Posted` means a new immutable snapshot became the scene's published answer.
+ * - `Unchanged` means the current snapshot is still current (no new value was built).
+ * - `InsideBatch` means an edit batch is open: the batch's edits are deliberately held back until its outermost
+ *   endEdit(), and the previous snapshot stays the published answer (`Scene::beginEdit`).
+ * - There is no `Refused`: 5b-2 removes the bounded delta channel that could refuse a publication.
+ */
+enum class ScenePublishStatus : std::uint8_t
+{
+    Posted,
+    Unchanged,
+    InsideBatch,
+};
+
+/**
+ * @brief The result of one Scene::publish() call.
+ *
+ * @details
+ * - Read @ref status, or use the value as a bool meaning `posted()`.
+ * - The snapshot itself is not part of the public result: a frame asks the scene for it through the engine's
+ *   published-snapshot source, and a host that only needs "did the content move" reads the status.
+ */
+struct VN_GRAPHICS_API ScenePublishResult {
+    ScenePublishStatus status{ ScenePublishStatus::Unchanged };
+
+    /**
+     * @brief Returns whether this call published a new snapshot.
+     *
+     * @return true when @ref status is `Posted`.
+     */
+    [[nodiscard]] bool posted() const noexcept
+    {
+        return status == ScenePublishStatus::Posted;
+    }
+
+    /**
+     * @brief Returns whether this call published a new snapshot.
+     *
+     * @return true when @ref posted() is true.
+     */
+    explicit operator bool() const noexcept
+    {
+        return posted();
+    }
+};
+
+/**
  * @brief Scene container owning one root subtree plus lights.
  *
  * @details
@@ -246,6 +295,24 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
      */
     std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(const CollectView& view, std::uint32_t layer_mask = kAllLayers) const override;
 
+    /**
+     * @brief Publishes the scene's current rows as an immutable snapshot, or answers why it did not.
+     *
+     * @details
+     * - The ONE explicit publication entry. It brings the rows up to date (boxes and material values included),
+     *   builds the chunked snapshot (sharing unchanged chunks with the previous one), and makes it the answer a
+     *   frame's published-snapshot source reads.
+     * - Inside an edit batch it answers `InsideBatch` and leaves the previous snapshot in place: a frame that lands
+     *   mid-batch draws the state the batch started from, and the whole batch lands with the publication after the
+     *   outermost `endEdit()`.
+     * - A second call with nothing changed answers `Unchanged`; no new snapshot is built and the previous one stays.
+     * - The immutable snapshot is not returned here: the engine's source asks for it internally, and the public
+     *   answer a host acts on is the status.
+     *
+     * @return `Posted`, `Unchanged` or `InsideBatch` (see @ref ScenePublishResult).
+     */
+    ScenePublishResult publish();
+
     /** @brief Opens the content frame the collected-command memo belongs to (and ages what nothing asked for).
      *
      * @details
@@ -427,6 +494,10 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
     mutable std::uint64_t                 published_epoch_     = 0;
     mutable std::uint64_t                 published_boxes_     = 0;
     mutable std::uint64_t                 published_materials_ = 0;
+    // The revision of the snapshot `publish()` last answered `Posted` with (0 = none): a stable publication id, so a
+    // later call can tell "the cached snapshot is still the answer" from "a new one was built" without naming the
+    // detail snapshot type in this public header.
+    std::uint64_t published_snapshot_revision_ = 0;
 };
 
 using ScenePtr = intrusive_ptr<Scene>;

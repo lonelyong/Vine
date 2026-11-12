@@ -3,6 +3,7 @@
 #include "DrawListBake.hpp"
 #include "DrawListMemo.hpp"
 #include "LayerEpoch.hpp"
+#include "SceneRows.hpp"
 
 #include <algorithm>
 #include <array>
@@ -383,6 +384,25 @@ std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(c
         }
     }
     return shared;
+}
+
+ScenePublishResult Scene::publish()
+{
+    // A BATCH HOLDS THE PUBLICATION BACK (see beginEdit): the previous snapshot stays the answer, so a frame that
+    // lands mid-batch draws the state the batch started from.
+    if (edit_depth_ > 0) {
+        return ScenePublishResult{ ScenePublishStatus::InsideBatch };
+    }
+
+    // `SceneRows::snapshot` is the one builder: it brings the rows up to date, shares unchanged chunks with the
+    // previous publication, and returns the cached value when nothing moved. Its revision is the publication id, so
+    // pointer identity is not needed to answer `Unchanged` and the public header names no detail type.
+    const detail::SceneSnapshotPtr snapshot = detail::SceneRows::snapshot(*this);
+    if (snapshot != nullptr && snapshot->revision == published_snapshot_revision_) {
+        return ScenePublishResult{ ScenePublishStatus::Unchanged };
+    }
+    published_snapshot_revision_ = snapshot != nullptr ? snapshot->revision : 0U;
+    return ScenePublishResult{ ScenePublishStatus::Posted };
 }
 
 const detail::SceneBake& Scene::ensureRows() const

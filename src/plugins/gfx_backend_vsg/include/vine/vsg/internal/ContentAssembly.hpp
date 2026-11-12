@@ -85,6 +85,25 @@ class ContentAssembly {
      */
     [[nodiscard]] const ContentFacts& beginFrame(const core::CompiledFrame& frame, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
+    /** @brief Opens @p frame for PREPARING: the same tables, and the block storage's frame NOT opened.
+     *
+     * @details
+     * - Everything `beginFrame` does to the CONTENT half - the tables for the plan's identities, the streams' and the
+     *   images' residency sweeps, the material arena's returned slots, the sampled-input sets' retirement - happens
+     *   here too, because a prepared frame is the same frame.
+     * - The one thing it does NOT do is `BlockStorage::beginFrame`, and that is a correctness rule rather than an
+     *   optimisation: the ring rotates per frame, and its extra slab is what keeps the frame being written off the
+     *   slab the OLDEST in-flight frame still reads (see core::FrameRing). A warm-up that consumed a rotation would
+     *   make the next real frame write that slab - a torn picture, silently. Which is also why a prepare walk writes
+     *   no block at all (see ContentPass::prepare).
+     *
+     * @param frame      The compiled plan whose identities the tables must answer.
+     * @param timeline   The frame clock the sweeps are dated against.
+     * @param retirement Where replaced sets and slots are parked.
+     * @return The tables (the same reference `facts()` answers with).
+     */
+    [[nodiscard]] const ContentFacts& prepare(const core::CompiledFrame& frame, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+
     /** @brief Points the assembly (and every set it has cached) at a replacement block storage.
      *
      * WHY A REPLACEMENT AND NOT A RESIZE: the block buffer is named by submitted command buffers, so a grown
@@ -115,6 +134,21 @@ class ContentAssembly {
                               std::span<const InputImages>         inputs,
                               std::span<const std::byte>           view_block,
                               ::vsg::ref_ptr<::vsg::Node>&         out);
+
+    /** @brief Ensures everything @p pass would need to be recorded, and records NOTHING.
+     *
+     * @details
+     * - The same halves and declared sets `record` produces, and the same sampled-input set and stream uploads its
+     *   walk ensures; the recorded node is what it does not build (see ContentPass::prepare).
+     * - Open the frame with `prepare(frame, ...)` first: this method refuses (answers false) before one, exactly as
+     *   `record` does.
+     *
+     * @param pass          The compiled pass to prepare.
+     * @param compatibility The target's shape (the pipeline key's half - the plan names the target).
+     * @param inputs        The images the pass' inputs offer, one entry per `pass.inputs` entry.
+     * @return true when every command's needs were ensured; false when one was refused (reported).
+     */
+    [[nodiscard]] bool prepare(const core::CompiledPass& pass, const core::RenderPassCompatibility& compatibility, std::span<const InputImages> inputs);
 
     /** @brief Gets the tables the last beginFrame() answered with (empty before one). */
     [[nodiscard]] const ContentFacts& facts() const noexcept;
@@ -149,6 +183,26 @@ class ContentAssembly {
     ContentAssembly& operator=(const ContentAssembly&) = delete;
 
   private:
+    /** @brief Opens @p frame's tables; @p blocks says whether the per-frame block storage is opened too.
+     *
+     * @param frame      The compiled plan whose identities the tables must answer.
+     * @param timeline   The frame clock the sweeps are dated against.
+     * @param retirement Where replaced sets and slots are parked.
+     * @param blocks     Whether this is a RECORDING frame (see beginFrame / prepare).
+     * @return The tables.
+     */
+    [[nodiscard]] const ContentFacts&
+    openTables(const core::CompiledFrame& frame, core::FrameTimeline& timeline, core::RetirementQueue& retirement, bool blocks);
+
+    /** @brief Builds the recorder scope over @p pass' halves, declared sets and the pieces the caller owns.
+     *
+     * @param pass     The compiled pass the scope is for.
+     * @param inputs   The images the pass' inputs offer (the declared sets are keyed by them).
+     * @param registry The pass' state memory (owned by the caller, which keeps it alive across the walk).
+     * @return The scope a ContentPass drives.
+     */
+    [[nodiscard]] ContentPass::Scope scopeFor(const core::CompiledPass& pass, std::span<const InputImages> inputs, core::StateRegistry& registry);
+
     struct Data;
     std::unique_ptr<Data> d;
 };

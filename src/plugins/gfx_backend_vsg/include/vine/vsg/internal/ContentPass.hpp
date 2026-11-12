@@ -294,10 +294,55 @@ class VN_VSG_API ContentPass {
                 std::span<const std::byte>           view_block,
                 ::vsg::ref_ptr<::vsg::Node>&         out);
 
+    /** @brief Ensures everything @p pass needs to be recorded, and records NOTHING.
+     *
+     * @details
+     * - THE WARM-UP VERB OF @ref record, over the SAME walk: the compiled half of every drawing call, the pass'
+     *   sampled-input set, the block sets a drawable's material picks, the stream uploads and the pipeline identity
+     *   `ContentPipeline::acquire` answers are all ensured here, so the frame that records the same declarations
+     *   finds them and builds nothing (`R23`; `T33` pins the deltas).
+     * - WHAT IT DELIBERATELY DOES NOT DO: it writes NO block and builds NO command. A frame's bytes live in the
+     *   per-frame ring, whose slab rotation is the frame's own - consuming a rotation here would make the next
+     *   frame write the slab the oldest in-flight frame reads (see core::FrameRing), and a command graph is the
+     *   frame's to build. So the difference between the two verbs is exactly where the walk stops.
+     * - The PASS' validation is the same one `record` makes (a caller whose images do not match the plan, a half
+     *   that cannot be served, a command the tables cannot answer), and it reports the same sentences - so a host
+     *   that prepares hears a broken frame before its first one runs.
+     *
+     * @param pass          The compiled pass to prepare.
+     * @param facts         The tables the identities are answered from.
+     * @param compatibility The target's shape (the pipeline key's half - the plan names the target).
+     * @param inputs        The images the pass' inputs offer, one entry per `pass.inputs` entry.
+     * @return true when every command's needs were ensured; false when at least one was refused (already reported).
+     */
+    bool
+    prepare(const core::CompiledPass& pass, const ContentFacts& facts, const core::RenderPassCompatibility& compatibility, std::span<const InputImages> inputs);
+
 
   private:
+    /** @brief What a walk does once a command's identities are ensured (see record() and prepare()).
+     *
+     * THE ONE BRANCH POINT BETWEEN THE TWO VERBS: everything up to and including the streams is shared, and from
+     * there `Record` writes the frame's bytes and command graph while `Prepare` stops. Naming it keeps the walk one
+     * function, so "what prepare ensures" and "what the frame builds" cannot drift apart.
+     */
+    enum class Mode : std::uint8_t
+    {
+        Record,  // Build the command graph this frame executes (and write its blocks).
+        Prepare, // Stop at the identity: the graph, and every block it would write, belong to the frame.
+    };
+
     /** @brief The most channels one geometry may feed through this layer (beyond it the command is refused). */
     static constexpr std::size_t kMaxChannels = 8;
+
+    /** @brief Walks @p pass in @p mode: see record() and prepare(). */
+    bool walk(const core::CompiledPass&            pass,
+              const ContentFacts&                  facts,
+              const core::RenderPassCompatibility& compatibility,
+              std::span<const InputImages>         inputs,
+              std::span<const std::byte>           view_block,
+              ::vsg::ref_ptr<::vsg::Node>&         out,
+              Mode                                 mode);
 
     /** @brief Records one command; false when it was refused (and reported). */
     bool recordCommand(const core::CompiledCommand&                    command,
@@ -309,7 +354,8 @@ class VN_VSG_API ContentPass {
                        std::uint64_t                                   lights_offset,
                        std::uint64_t                                   shadow_offset,
                        const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
-                       ::vsg::Group&                                   into);
+                       ::vsg::Group&                                   into,
+                       Mode                                            mode);
 
     /** @brief Gets the compiled half @p needs is drawn through, or null when none serves it (already reported).
      *

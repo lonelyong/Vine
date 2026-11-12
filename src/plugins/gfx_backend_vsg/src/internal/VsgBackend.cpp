@@ -151,6 +151,11 @@ bool isScreenSource(const core::CompiledPass& pass, const void* target) noexcept
 /// that names no target of its own has nowhere to draw - it produces no packet, and the plan has already left it
 /// out (it was compiled against facts with no default-framebuffer row). Passes that name their own targets are
 /// recorded exactly as they are on the windowed path.
+///
+/// PREPARE_ONLY is the WARM-UP half of the same walk (see RenderFrameExecutor::prepareFrame): the per-pass shape and
+/// image offers are resolved exactly as a frame resolves them - that is what makes a prepared identity the one the
+/// frame asks for - and then the pass is PREPARED instead of recorded, so no packet is produced and no block is
+/// written. The two verbs therefore cannot disagree about which passes exist or what they need.
 std::span<const PassContent> recordContent(ContentAssembly&                                            assembly,
                                            WindowTarget*                                               window,
                                            HostTargets&                                                targets,
@@ -164,10 +169,18 @@ std::span<const PassContent> recordContent(ContentAssembly&                     
                                            std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_views,
                                            std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_screen_views,
                                            std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>>&   input_color_samplers,
-                                           std::vector<PassContent>&                                   packets)
+                                           std::vector<PassContent>&                                   packets,
+                                           bool                                                        prepare_only)
 {
     packets.clear();
-    (void)assembly.beginFrame(frame, timeline, retirement);
+    // THE SAME OPENING FOR BOTH VERBS (see api/ContentAssembly): a recording frame opens the block storage's frame,
+    // a preparing one does not - the ring's rotation belongs to the frame (P11's "value side only").
+    if (prepare_only) {
+        (void)assembly.prepare(frame, timeline, retirement);
+    }
+    else {
+        (void)assembly.beginFrame(frame, timeline, retirement);
+    }
     for (const core::CompiledPass& pass : frame.passes) {
         if (pass.draws.empty()) {
             continue;
@@ -291,6 +304,13 @@ std::span<const PassContent> recordContent(ContentAssembly&                     
 
         // The view block is the PASS' (the content layer's contract), built from the first drawing call's
         // camera - the engine's passes draw through one camera per scope, so the first is the pass'.
+        if (prepare_only) {
+            // PREPARING: everything the pass needs and nothing the FRAME owns - no view block, no draw/lights/shadow
+            // block, no command graph (see api/ContentAssembly::prepare). A pass this backend could not serve was
+            // skipped above, exactly as the recorded frame skips it, so both verbs answer the same set of passes.
+            (void)assembly.prepare(pass, compatibility, input_scratch);
+            continue;
+        }
         const vn::graphics::VineViewBlock view_block = buildViewBlock(pass.draws[0].camera, frame_seconds, width, height);
         ::vsg::ref_ptr<::vsg::Node>       content;
         (void)assembly.record(pass, compatibility, input_scratch, std::as_bytes(std::span<const vn::graphics::VineViewBlock>(&view_block, 1U)), content);
@@ -764,11 +784,55 @@ void VsgBackend::openFrameBooks()
     (void)d->recorder.beginFrame(token); // it answers whether the frame's books could be opened (see its note)
 }
 
-void VsgBackend::closeFrameBooks()
+void VsgBackend::collectFrame(const vn::graphics::FrameDescription& frame)
 {
-    (void)d->recorder.endFrame();
-    (void)d->recorder.swapBuffers(); // closes the frame's books: endFrame() alone only leaves the pass scope
+    // THE VALUE, translated into this layer's own collection, in the order the value states. What the engine
+    // compiled arrives as data (see FrameDescription), so the frame's own shape is what drives this loop - and
+    // every call below is this backend's own piece of work, which is why the picture (and the plan) come out the
+    // same whether the frame came from the engine or from a host driving one pass (RenderPass::execute).
+    for (const vn::graphics::FrameDescription::Pass& entry : frame.passes) {
+        if (entry.pass == nullptr) {
+            continue; // a frame's entry always names a pass; a null one is nothing to run
+        }
+        openPassScope(entry.pass);
+        announcePassOrder(entry.order);
+        announcePassInputs(entry.inputs);
+        if (entry.draw.has_value()) {
+            const vn::graphics::PassDraw& description = *entry.draw;
+            announceTarget(description.target);
+            if (description.viewport.has_value()) {
+                announceViewport(*description.viewport);
+            }
+            if (description.clear.has_value()) {
+                announceClear(*description.clear);
+            }
+            announcePassState(description.state);
+            if (description.depth_range.has_value()) {
+                announceDepthRange(*description.depth_range);
+            }
+            for (const vn::graphics::DrawDescription& draw : description.draws) {
+                if (draw.lights.has_value()) {
+                    announceLights(*draw.lights);
+                }
+                if (!draw.camera.present) {
+                    continue; // a drawing call with no view is no call at all (see DrawDescription)
+                }
+                if (draw.kind == vn::graphics::DrawDescription::Kind::Screen) {
+                    collectScreenDraw(draw.source, draw.program.get(), draw.camera);
+                }
+                else if (draw.commands != nullptr) {
+                    // The override is a PASS fact (see PassDraw::program_override), so every drawing call of the
+                    // pass is drawn with it; the command list itself is never rewritten.
+                    collectContentDraw(*draw.commands, draw.camera, description.program_override.get());
+                }
+            }
+        }
+        closePassScope();
+    }
+}
 
+void VsgBackend::collectTargetFacts()
+{
     // The facts the plan is compiled against: the window as the default framebuffer, answered by the target
     // itself (see WindowTarget::facts), plus one row per host target this backend holds - built or not,
     // because the plan has to be able to say "this one has no objects yet", and because the compiler resolves
@@ -788,6 +852,13 @@ void VsgBackend::closeFrameBooks()
         d->targets.facts(*entry, row);
         d->facts.push_back(row);
     }
+}
+
+void VsgBackend::closeFrameBooks()
+{
+    (void)d->recorder.endFrame();
+    (void)d->recorder.swapBuffers(); // closes the frame's books: endFrame() alone only leaves the pass scope
+    collectTargetFacts();
     d->frame = &d->compiler.compile(d->recorder.description(), core::FrameFacts{ d->facts });
 }
 
@@ -856,50 +927,10 @@ vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameD
         d->executor.setWindow(detail::SessionContentAccess::windowTarget(session));
     }
 
-    // THE VALUE, run by the layer that owns the identities, in the order the value states. What the engine
-    // compiled arrives as data (see FrameDescription), so the frame's own shape is what drives this loop - and
-    // every call below is this backend's own piece of work, which is why the picture (and the plan) come out the
-    // same whether the frame came from the engine or from a host driving one pass (RenderPass::execute).
+    // THE VALUE, run by the layer that owns the identities, in the order the value states (see collectFrame - the
+    // same walk prepareFrame makes, so a prepared frame and this one cannot disagree about what the frame is).
     openFrameBooks();
-    for (const vn::graphics::FrameDescription::Pass& entry : frame.passes) {
-        if (entry.pass == nullptr) {
-            continue; // a frame's entry always names a pass; a null one is nothing to run
-        }
-        openPassScope(entry.pass);
-        announcePassOrder(entry.order);
-        announcePassInputs(entry.inputs);
-        if (entry.draw.has_value()) {
-            const vn::graphics::PassDraw& description = *entry.draw;
-            announceTarget(description.target);
-            if (description.viewport.has_value()) {
-                announceViewport(*description.viewport);
-            }
-            if (description.clear.has_value()) {
-                announceClear(*description.clear);
-            }
-            announcePassState(description.state);
-            if (description.depth_range.has_value()) {
-                announceDepthRange(*description.depth_range);
-            }
-            for (const vn::graphics::DrawDescription& draw : description.draws) {
-                if (draw.lights.has_value()) {
-                    announceLights(*draw.lights);
-                }
-                if (!draw.camera.present) {
-                    continue; // a drawing call with no view is no call at all (see DrawDescription)
-                }
-                if (draw.kind == vn::graphics::DrawDescription::Kind::Screen) {
-                    collectScreenDraw(draw.source, draw.program.get(), draw.camera);
-                }
-                else if (draw.commands != nullptr) {
-                    // The override is a PASS fact (see PassDraw::program_override), so every drawing call of the
-                    // pass is drawn with it; the command list itself is never rewritten.
-                    collectContentDraw(*draw.commands, draw.camera, description.program_override.get());
-                }
-            }
-        }
-        closePassScope();
-    }
+    collectFrame(frame);
     closeFrameBooks();
 
     // THE FRAME'S TAIL, and it is this call's last step whichever way the frame is presented. WITH a window, the
@@ -910,6 +941,119 @@ vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameD
         return commitFrameThrough(nullptr, offscreen);
     }
     return present_to != nullptr ? present_to->present() : vn::graphics::PresentOutcome::Skipped;
+}
+
+vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to)
+{
+    // NOTHING TO PREPARE WITHOUT THE CONTENT WORLD: it is what compiles a half, a set or a stream at all, and it
+    // exists only while a device does (see initialize). The answer says so rather than reporting a zero it did not
+    // earn.
+    if (d->assembly == nullptr || d->store == nullptr || d->images == nullptr) {
+        return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::NotInitialized };
+    }
+    // A FRAME IS OPEN ON THIS BACKEND (executeFrame between its books and its present): its plan and its recorded
+    // packets belong to it, and collecting a second frame over them would corrupt both. Refused, never queued.
+    if (d->frame != nullptr) {
+        return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::Refused };
+    }
+
+    // WHICH SURFACE THE FRAME NAMES: the same resolution executeFrame makes (a target this device handed out, or the
+    // off-screen form), minus everything that would touch it. Nothing is acquired, resized or presented - the shape
+    // is read from the target's own facts (a const answer), which is exactly what P11 asks for: an image acquired
+    // here and never presented would starve the next real frame.
+    std::size_t index = kNoWindow;
+    if (present_to != nullptr) {
+        for (std::size_t candidate = 0; candidate < d->windows.size(); ++candidate) {
+            if (d->windows[candidate]->target.get() == present_to) {
+                index = candidate;
+                break;
+            }
+        }
+        if (index >= d->windows.size()) {
+            // The same episode the frame path reports (one sentence, one fact): a surface this device did not hand
+            // out is wiring it could not have produced, whether it arrives to be prepared or to be run.
+            if (d->foreign_target_report.shouldReport()) {
+                reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                                 vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                 vn::String::fromUtf8("a frame named a surface target this device did not hand out: "
+                                                      "nothing was prepared (a device serves the windows it created, "
+                                                      "see createSurfaceTarget)"));
+            }
+            return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::Refused };
+        }
+        if (!sessionAt(index).initialized()) {
+            return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::Refused };
+        }
+    }
+    d->driving = index;
+
+    // THE PER-FRAME STORAGE IS BROUGHT UP TO WHAT THIS FRAME NEEDS, exactly as a frame's opening would - and this is
+    // the place for it, because prepare is defined to run between frames. A prepared frame whose first real frame
+    // would grow the storage would rebuild every declared set it just prepared (the sets bind that buffer), which is
+    // the one way a warm-up could make the frame it warmed cost more rather than less.
+    growBlockStorageIfNeeded();
+    growMaterialArenaIfNeeded();
+
+    // THE PLAN, COMPILED FROM THE SAME VALUE AND THE SAME FACTS a frame compiles it from - the collection (see
+    // collectFrame) and the target-fact table are the frame's own steps, so the identities prepared here are the
+    // ones the frame will ask for. The recorder needs a TOKEN and this is not a frame, so it gets the "not a frame"
+    // spelling (0): nothing downstream of prepare reads it - the content tables date their rows by the session's
+    // clock, not by the plan's number.
+    if (!d->recorder.beginFrame(core::FrameToken{})) {
+        d->driving = kNoWindow;
+        return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::Refused };
+    }
+    collectFrame(frame);
+    closeFrameBooks();
+    const core::CompiledFrame& plan = *d->frame;
+    d->frame                        = nullptr; // PREPARE LEAVES NO FRAME TO PRESENT: there is nothing recorded
+
+    // THE VALUE SIDE, AND ONLY IT. The same walk a frame takes (`recordContent`) resolves each pass' shape and image
+    // offers and then PREPARES it instead of recording it (see api/ContentPass::prepare): the compiled halves, the
+    // declared sets, the sampled-input sets, the stream uploads and the pipeline identities are what it builds, and
+    // what it produces is no command graph at all. Running the frame's own walk is what makes "what prepare built"
+    // and "what the frame builds" ONE implementation rather than two spellings that can drift (`G1`; `T32` pins the
+    // identity half, `T33` the whole). Nothing here acquires, submits, presents or rotates the block ring.
+    const std::uint64_t halves_before  = d->assembly->halves().builds();
+    const std::uint64_t sets_before    = d->assembly->sets().builds();
+    const std::uint64_t uploads_before = d->assembly->uploads().uploads();
+    const std::uint64_t pool_before    = d->pool.created();
+
+    WindowTarget* const window_target = index < d->windows.size() ? detail::SessionContentAccess::windowTarget(sessionAt(index)) : nullptr;
+    (void)recordContent(*d->assembly,
+                        window_target,
+                        d->targets,
+                        *d->images,
+                        d->diagnostics,
+                        d->clock.timeline(),
+                        d->retirement,
+                        // No frame clock is read: a preparing pass builds no view block (the frame's own clock,
+                        // sampled when it opens, is what its view block carries).
+                        0.0F,
+                        plan,
+                        d->input_scratch,
+                        d->input_views,
+                        d->input_screen_views,
+                        d->input_color_samplers,
+                        d->packets,
+                        /*prepare_only*/ true);
+
+    vn::graphics::PrepareReport report;
+    report.outcome = vn::graphics::PrepareReport::Outcome::Prepared;
+    for (const core::CompiledPass& pass : plan.passes) {
+        if (pass.draws.empty()) {
+            continue; // a pass with nothing to draw has nothing to prepare (its clear is the plan's own)
+        }
+        ++report.passes;
+        report.draws += static_cast<std::uint32_t>(pass.draws.size());
+    }
+    // WHAT THIS CALL BUILT, not what is resident: a second prepare of an unchanged frame answers zeros, which is the
+    // property the call exists for.
+    report.halves    = d->assembly->halves().builds() - halves_before;
+    report.sets      = d->assembly->sets().builds() - sets_before;
+    report.uploads   = d->assembly->uploads().uploads() - uploads_before;
+    report.pipelines = d->pool.created() - pool_before;
+    return report;
 }
 
 vn::graphics::PresentOutcome VsgBackend::presentWindow(std::size_t index)
@@ -1001,7 +1145,8 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window
                                 d->input_views,
                                 d->input_screen_views,
                                 d->input_color_samplers,
-                                d->packets);
+                                d->packets,
+                                /*prepare_only*/ false);
     }
     (void)d->executor.record(*d->frame, graph, packets);
     // WHAT THE HOST LET GO IS LET GO HERE: the frame's content has been recorded, and the commit below is

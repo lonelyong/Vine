@@ -15,6 +15,7 @@ set(SRC_FILE_LIST
 	ResidencyTest.cpp
 	ContentRegistryTest.cpp
 	RenderWorldTest.cpp
+	SnapshotShadowTest.cpp
 	DeltaChannelTest.cpp
 	FrameWorkerTest.cpp
 	FrameRunnerTest.cpp

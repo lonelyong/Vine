@@ -147,6 +147,21 @@ class ContentDraw {
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::StateGroup> recordScreen(core::StateRegistry& registry, const ScreenDraw& draw);
 
+    /** @brief Ensures @p key's identity has a compiled variant, WITHOUT recording a command.
+     *
+     * @details
+     * - THE WARM-UP HALF OF @ref record, and it is the same call: `ContentPipeline::acquire` is the ONE place a
+     *   variant is looked up or compiled, so an identity prepared ahead of time and one recorded later cannot
+     *   disagree - the recorded draw finds the variant the preparation compiled (`R23`; `T33` pins the delta).
+     * - Nothing is recorded, so no state is marked bound in any registry: the frame's first draw still issues its
+     *   own pipeline bind exactly as it would have without the call.
+     *
+     * @param key The pipeline identity (see DrawNeeds::keyFor).
+     * @return true when the identity has a pipeline (already there, or compiled by this call); false when the
+     *         layer refused it (counted there, exactly as a recorded refusal is).
+     */
+    [[nodiscard]] bool prepare(const core::PipelineKey& key);
+
   public:
     /** @brief Gets the number of draws recorded (content and full-screen). */
     [[nodiscard]] std::uint64_t draws() const noexcept;

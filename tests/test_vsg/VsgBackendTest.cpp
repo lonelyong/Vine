@@ -4688,6 +4688,166 @@ TEST(VsgBackendTest, ADeviceCreatedWithNoPresentationRunsWholeFramesWithoutAWind
     EXPECT_EQ(reported.size(), backend->diagnosticCount());
 }
 
+TEST(VsgBackendTest, PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing)
+{
+    if (!deviceCaseAvailable()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int                   screen_index = 0;
+    xcb_connection_t*     connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection); // closed at scope end (see TestXConnection)
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    constexpr int  kWidth  = 128;
+    constexpr int  kHeight = 96;
+    TestHostWindow host(connection, screen, kWidth, kHeight);
+
+    // A WINDOWED DEVICE, because that is the case P11 warns about: a windowed session's beginFrame() ACQUIRES the next
+    // swapchain image, so a "warm-up" that opened one would starve the next real frame - and what this case can see
+    // (the submitted watermark, the presented count) is exactly the evidence that it did not.
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> window_target = BackendContentAccess::surfaceTarget(*backend, 0);
+    ASSERT_NE(window_target, nullptr) << "the window this device serves";
+
+    // The content: the red triangle under a view-block program (the recipe the readback case proves), drawn into one
+    // of the host's own targets so the picture can be read back afterwards.
+    const TriangleFixture                         triangle = makeTriangle();
+    const vn::intrusive_ptr<vn::graphics::Camera> camera   = cameraLookingAt(0.5);
+
+    constexpr int                         kSide = 64;
+    const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    target->setSize(kSide, kSide);
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(RenderTarget::DepthFormat::D32F);
+    backend->setRenderTarget(target.get());
+
+    const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
+    const vn::graphics::ClearPolicy     clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
+    const auto                          frame = [&] {
+        return TestFrame()
+            .pass(pass.get())
+            .order(0)
+            .target(target.get())
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::TestAndWrite)
+            .content(triangle.commands, camera.get())
+            .value();
+    };
+
+    ContentAssembly* assembly = BackendContentAccess::assembly(*backend);
+    ASSERT_NE(assembly, nullptr) << "a live session owns the content world its frames assemble";
+    VariantPool&        pool    = BackendContentAccess::pool(*backend);
+    BlockStorage* const storage = BackendContentAccess::storage(*backend);
+    ASSERT_NE(storage, nullptr) << "a live session owns the frame's block storage";
+
+    // 1. Nothing is compiled yet: the first frame of this content would build all of it.
+    EXPECT_EQ(assembly->halves().builds(), 0U);
+    EXPECT_EQ(pool.created(), 0U);
+
+    const vn::graphics::FrameReport before = backend->frameReport();
+    ASSERT_TRUE(before.progress.has_value()) << "the device's frame clock answers";
+
+    // 2. THE WARM-UP. It builds the identities the frame needs, and does NOTHING ELSE: no frame is opened on the
+    //    session (P11: a windowed open would ACQUIRE an image this call would never present), nothing is submitted and
+    //    nothing is presented.
+    const vn::graphics::PrepareReport report = backend->prepareFrame(frame(), window_target);
+    EXPECT_EQ(report.outcome, vn::graphics::PrepareReport::Outcome::Prepared);
+    EXPECT_EQ(report.passes, 1U) << "one pass issues drawing calls";
+    EXPECT_EQ(report.draws, 1U) << "and one drawing call is what it needs";
+    EXPECT_GT(report.halves, 0U) << "a half is what the first frame would have compiled";
+    EXPECT_GT(report.sets, 0U) << "and the declared set the program's blocks live in";
+    EXPECT_GT(report.uploads, 0U) << "and the geometry's streams";
+    EXPECT_GT(report.pipelines, 0U) << "and the pipeline identity itself";
+
+    const vn::graphics::FrameReport after_prepare = backend->frameReport();
+    ASSERT_TRUE(after_prepare.progress.has_value());
+    EXPECT_EQ(after_prepare.progress->submitted, before.progress->submitted) << "prepare submits nothing";
+    EXPECT_EQ(backend->framesPresented(), 0U) << "and presents nothing";
+    EXPECT_EQ(backend->deviceWaits(), 0U) << "a warm-up never stops the device";
+
+    // 3. A SECOND warm-up of the same frame builds NOTHING: the report is what THIS call built, and every property is
+    //    keyed by an identity that is already there.
+    const vn::graphics::PrepareReport again = backend->prepareFrame(frame(), window_target);
+    EXPECT_EQ(again.outcome, vn::graphics::PrepareReport::Outcome::Prepared);
+    EXPECT_EQ(again.halves, 0U);
+    EXPECT_EQ(again.sets, 0U);
+    EXPECT_EQ(again.uploads, 0U);
+    EXPECT_EQ(again.pipelines, 0U);
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "nothing about the frame needed saying";
+
+    // 4. THE FRAME: the criterion `T33` pins. Every layer's build counter stays where the warm-up left it.
+    const std::uint64_t halves  = assembly->halves().builds();
+    const std::uint64_t sets    = assembly->sets().builds();
+    const std::uint64_t uploads = assembly->uploads().uploads();
+    const std::uint64_t inputs  = assembly->inputSetBuilds();
+    const std::uint64_t created = pool.created();
+
+    const vn::graphics::FrameReport warmed = backend->frameReport();
+    ASSERT_TRUE(warmed.counters.has_value());
+
+    backend->executeFrame(frame(), window_target);
+
+    EXPECT_EQ(assembly->halves().builds(), halves) << "the warm-up built every half the frame needed";
+    EXPECT_EQ(assembly->sets().builds(), sets) << "and every declared set";
+    EXPECT_EQ(assembly->uploads().uploads(), uploads) << "and every stream";
+    EXPECT_EQ(assembly->inputSetBuilds(), inputs) << "and the sampled-input set it reuses";
+    EXPECT_EQ(pool.created(), created) << "and every pipeline identity";
+
+    const vn::graphics::FrameReport ran = backend->frameReport();
+    ASSERT_TRUE(ran.counters.has_value());
+    EXPECT_EQ(ran.counters->passes, warmed.counters->passes + 1U) << "the frame recorded the one pass the value names";
+    EXPECT_EQ(ran.counters->draws, warmed.counters->draws + 1U) << "and the one drawing call it issues";
+    EXPECT_EQ(backend->framesPresented(), 1U) << "this one really was a frame";
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "the prepared frame recorded silently";
+
+    // ... and the frame still DRAWS what was prepared: a warm-up that left the picture undrawn would pass the
+    // counters above and be worthless. Read back before any device wait is asserted, because the read stops the
+    // device (a counted stop) by design. The probes are the readback case's: the camera looks half a unit to its
+    // right, so the triangle lands left of centre in the target's own RGBA order, and the right corner is the clear.
+    EXPECT_EQ(backend->deviceWaits(), 0U) << "recording the prepared frame did not stop the device either";
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels)) << "the target holds a picture";
+    ASSERT_EQ(pixels.size(), static_cast<std::size_t>(kSide) * static_cast<std::size_t>(kSide) * 4U);
+    const auto pixel = [&pixels](int x, int y) {
+        const std::size_t at = (static_cast<std::size_t>(y) * static_cast<std::size_t>(kSide) + static_cast<std::size_t>(x)) * 4U;
+        return std::array<std::uint8_t, 4>{ pixels[at], pixels[at + 1U], pixels[at + 2U], pixels[at + 3U] };
+    };
+    const auto drawn = pixel(kSide / 4, kSide * 5 / 8);
+    EXPECT_TRUE(isColourByte(drawn[0], 1.0) && isColourByte(drawn[1], 0.0) && isColourByte(drawn[2], 0.0))
+        << "the frame drew the content the warm-up prepared: got (" << static_cast<int>(drawn[0]) << ", " << static_cast<int>(drawn[1]) << ", "
+        << static_cast<int>(drawn[2]) << ")";
+    const auto outside = pixel(3 * kSide / 4, kSide / 8);
+    EXPECT_TRUE(isGreenClear({ outside[0], outside[1], outside[2] })) << "and the rest is the pass' clear";
+
+    // 5. THE RING BELONGS TO THE FRAME (P11's value-side rule, `T33`'s second half). The per-frame block storage owns
+    // ONE slab more than the frames that may be in flight, exactly so the frame being written leaves the slab the
+    // OLDEST in-flight frame still reads alone (see core::FrameRing). A warm-up that opened a block frame would
+    // consume that rotation and hand the next real frame the oldest slab - a torn picture rather than a slow one - so
+    // the two things a frame does to the ring are the two things prepare must not do.
+    const std::uint64_t               opened          = storage->frames();
+    const std::uint64_t               writes          = storage->writes();
+    const vn::graphics::PrepareReport after_the_frame = backend->prepareFrame(frame(), window_target);
+    EXPECT_EQ(after_the_frame.outcome, vn::graphics::PrepareReport::Outcome::Prepared);
+    // `frames()` counts OPENINGS AFTER THE FIRST (the ring's first beginFrame starts it), and one frame has opened
+    // above - so a warm-up that opened one of its own would read 1 here, and the frame below would read 2.
+    EXPECT_EQ(storage->frames(), opened) << "a warm-up opens no block frame";
+    EXPECT_EQ(storage->writes(), writes) << "and it writes no block";
+
+    backend->executeFrame(frame(), window_target);
+    EXPECT_EQ(storage->frames(), opened + 1U) << "a frame opens one";
+    EXPECT_GT(storage->writes(), writes) << "and writes its own blocks";
+
+    backend->shutdown();
+}
+
 TEST(VsgBackendTest, ADeviceCreatedOnAHandleWithoutOneIsRefusedWithItsReason)
 {
     // A HANDLE IS A CREATION INPUT (see DeviceDesc): a device asked for the host's window cannot invent one, so an

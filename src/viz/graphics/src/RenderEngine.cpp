@@ -38,10 +38,11 @@ RenderEngine::RenderEngine()
   , scheduler_(std::make_unique<detail::FrameScheduler>())
   , frame_slots_{ std::make_unique<detail::EngineFrame>(), std::make_unique<detail::EngineFrame>() }
   , worker_(std::make_unique<detail::FrameWorker>())
-  // THE MIRROR IS THE SOURCE (see the design's 2.11): every scene pass is published, then expanded from that content's
-  // mirror, so a frame's draws name nothing the content owns - which is what P3 will move to another thread. The
-  // per-view memo it needs (one camera drawn by two passes collects once) is the shared DrawListMemo.
-  , frame_mode_(detail::FrameMode::Mirrored)
+  // THE PUBLISHED SNAPSHOT IS THE SOURCE (5b-1; see the design's 2.11): every scene pass is published, then expanded
+  // from that content's snapshot source, so a frame's draws name nothing the content owns - which is what P3 will move
+  // to another thread. The per-view memo it needs (one camera drawn by two passes collects once) is the shared
+  // DrawListMemo.
+  , frame_mode_(detail::FrameMode::Published)
 {
     // The ONE default in the shading path, and it is a named program: content with no program of its
     // own is shaded with the engine's forward program until the host says otherwise. (Null would mean
@@ -254,6 +255,40 @@ raw_ptr<const RenderPass> RenderEngine::passNeedingAnUnsupportedTarget() const
         }
     }
     return nullptr;
+}
+
+PrepareReport RenderEngine::prepare()
+{
+    // The two reasons nothing can be prepared are the same two answers frame() gives, and they are values rather
+    // than silence: a host gating a load on this call has to be able to tell "no backend" from "not up yet".
+    if (device_ == nullptr) {
+        return PrepareReport{ PrepareReport::Outcome::NoDevice };
+    }
+    if (!initialized_) {
+        return PrepareReport{ PrepareReport::Outcome::NotInitialized };
+    }
+
+    // ONE FRAME IN FLIGHT: the engine half that owns the other slot is finished first, exactly as frame() does -
+    // the expansion below writes the per-view memos, and those are the half's state (design 2.12).
+    if (runner_ != nullptr) {
+        runner_->waitIdle();
+        if (detail::EngineFrame* const finished = pending_micros_.exchange(nullptr, std::memory_order_acquire)) {
+            publishEngineMicros(*finished);
+        }
+    }
+
+    // THE FRAME THE NEXT frame() WOULD BUILD, built and expanded the same way, and handed over as a QUERY. The slot
+    // is NOT advanced and no frame number is taken: nothing here is a frame, so the next frame() builds this same
+    // slot again from the declarations AS THEY STAND THEN - a camera that moved in between is in it, which is what
+    // keeps "prepared" a key rather than a frozen picture.
+    detail::EngineFrame& frame = *frame_slots_[frame_slot_];
+    buildContentHalf(frame);
+    // THE EXPANSION IS PART OF THE ANSWER. A compiled half is keyed per DRAWING CALL (its vertex layout, variant and
+    // counts are the command's), so a frame value whose draws carry no collected commands would describe nothing to
+    // build - the answer would be trivially zero and the first real frame would still compile. This is the same
+    // value step the engine half runs (see FrameExpand): no device call and no submission.
+    expandFrameValue(frame);
+    return device_->executor().prepareFrame(frame.description, frame.target);
 }
 
 FrameOutcome RenderEngine::frame()

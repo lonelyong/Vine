@@ -442,3 +442,41 @@
   `Scope::Entry{...}` 与 `using` 顺序）；只格式化新文件与 `ContentPass.*` / `ContentHalves.cpp`。
 - `test_vsg` = 541 cases / 78 suites 全绿。下一步 = 3b：`RenderEngine::prepare()` 入口 +
   按答案预建（判据：预热后录制 `builds` 增量 0）。
+
+## 2026-11-12 —— graphics-next 5a：影子快照接缝（`T34`）
+
+- **新文件**：`SnapshotSource`（`SceneSnapshot` → `DrawListSource`，按 `SceneSnapshot::revision` 记忆化）、
+  `DrawListDiff`（字段级比较）。
+- **开关**：`ContentMirror::setSnapshotShadow` / `FrameWorker::setSnapshotShadow`，默认关闭；影子只比较、不替换。
+  `publish` 在**成功 post 之后**用 `SceneRows::snapshot(scene)` 取影子；帧协议保证 content half 完成后 engine half
+  才开始，所以不会出现“行新影子旧”。
+- **坑**：不要从 `SceneRows::publish` 的拷贝建快照——它清掉 `nodes` / `node_epochs`，`makeSceneSnapshot` 会失去
+  chunk 共享；用 live `SceneBake` 的 `snapshot_cache`。
+- **比较口径**：`DrawListDiff` 比 row 身份 / geometry + description / material + program / world / opacity / order /
+  authored_state / instance slice；顺序即 `sortCollected` 的发出顺序（命令没有存 sort key）。
+- **测试**：`SnapshotShadowTest` 600 帧（transform / opacity / material / placement 编辑）+ 批内旧图 + 旧快照
+  材质/几何/程序 + 空快照变异；`FrameWorkerTest.TheSnapshotShadow...` 帧级接缝。`test_graphics` 577 / `test_vsg` 542 /
+  ctest 30/30 / TSan 0。
+
+## 2026-11-12 —— graphics-next 5b-1：Published 模式绑定快照
+
+- **翻源**：`FrameWorker::runPass(Published)` 现在把每个 draw 绑到 `ContentMirror::snapshotSource()`；旧
+  `RenderWorldSource` 只经 `legacySource()` 作为影子，`setLegacyShadow` 默认关闭。`FrameMode::Mirrored` 改名
+  `Published`。
+- **发布**：`ContentMirror::publish` 总是取 `SceneRows::snapshot`；只有 LEGACY 开启时才 `SceneRows::publish` + post。
+  snapshot 先建、legacy 后 post；legacy 被拒时两者都不前进（旧测试的 Refused 语义）。
+- **坑（test 抓到）**：`SnapshotSource::beginFrame` 必须像 `RenderWorldSource`/`Scene` 一样用**上一帧**的 token
+  调 `DrawListMemo::beginFrame`，否则每帧都把上一帧的 memo 全删；`PassesSharingSceneAndCameraCollectOnce...` 当场红。
+- **测试**：`test_graphics` 577 / `test_vsg` 542 / ctest 30/30 / TSan 0。
+
+## 2026-11-12 —— graphics-next 5b-2a：公开 `Scene::publish()`，`FrameWorker` 直接持有 `SnapshotSource`
+
+- **公开入口**：`ScenePublishStatus` / `ScenePublishResult`（`Posted` / `Unchanged` / `InsideBatch`，不再有
+  `Refused`）；`Scene::publish()` 用 `SceneRows::snapshot` + `published_snapshot_revision_` 判 `Unchanged`，批内
+  不前进。`ScenePublishResult` 有 `posted()` 与 explicit `operator bool`。
+- **源归位**：`FrameWorker` 不再经过 `ContentMirror`；每个内容一个 `{content, unique_ptr<SnapshotSource>}`，
+  `publish(Scene&)` 调 `scene.publish()` 后把快照交给源；`drain`/`applied`/LEGACY shadow 全部删除；`run` 改 void。
+- **坑**：第二个 `FrameWorker` 对同一 scene 调 `publish` 得到 `Unchanged`（不是 `Posted`），旧测试的
+  `ASSERT_TRUE(publish(...))` 要改成接受 `Posted|Unchanged`。
+- **测试**：`FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch`；`test_graphics` 577 / `test_vsg` 542 /
+  ctest 30/30 / TSan 0。5b-2b（删 legacy 文件/用例 + `addPass` 家族）未做。

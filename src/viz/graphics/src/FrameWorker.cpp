@@ -1,6 +1,7 @@
 #include "FrameWorker.hpp"
 
 #include "FrameExpand.hpp"
+#include "SceneRows.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -11,98 +12,84 @@ FrameWorker::FrameWorker() = default;
 
 FrameWorker::~FrameWorker() = default;
 
-PublishOutcome FrameWorker::publish(const Scene& scene)
+ScenePublishResult FrameWorker::publish(Scene& scene)
 {
-    ContentMirror* mirror = nullptr;
+    SnapshotSource* source = nullptr;
     {
         // The list is looked up and grown under its lock, and the lock is RELEASED before anything is published: what
-        // the two halves share is the list, not the mirror, and a content's publish is O(rows).
-        const std::lock_guard<std::mutex> lock(mirrors_mutex_);
-        mirror = mirrorOfLocked(scene);
-        if (mirror == nullptr) {
-            // The handshake: one mirror per content, created the first time the content is published. The vector is
+        // the two halves share is the list, not the source, and a content's publish is O(rows).
+        const std::lock_guard<std::mutex> lock(publications_mutex_);
+        source = sourceOfLocked(scene);
+        if (source == nullptr) {
+            // The handshake: one source per content, created the first time the content is published. The vector is
             // reserved for the small number of contents a frame draws (a main scene, a HUD, an overlay) so a steady
             // frame never reallocates it.
-            mirrors_.reserve(4U);
-            mirrors_.push_back(std::make_unique<ContentMirror>(scene));
-            mirror = mirrors_.back().get();
-            // A mirror born IN a frame joins that frame: the token was opened before it existed, so without this its
+            publications_.reserve(4U);
+            publications_.push_back(Publication{ &scene, std::make_unique<SnapshotSource>() });
+            source = publications_.back().source.get();
+            // A source born IN a frame joins that frame: the token was opened before it existed, so without this its
             // first frame would collect once per pass - the one frame where a new content costs the most. Opening the
             // token here is idempotent with the next beginFrame and never rewinds the memo (see
             // DrawListMemo::beginFrame).
-            mirror->beginFrame(frame_);
+            source->beginFrame(frame_);
         }
     }
-    return mirror->publish(scene);
+
+    // THE ONE PUBLICATION ENTRY IS THE SCENE'S. A batch answer leaves the source on the previous snapshot; Posted and
+    // Unchanged both hand over the current one (the same share when nothing moved).
+    const ScenePublishResult result = scene.publish();
+    if (result.status != ScenePublishStatus::InsideBatch) {
+        source->setSnapshot(SceneRows::snapshot(scene));
+    }
+    return result;
 }
 
 void FrameWorker::beginFrame(std::uint64_t frame)
 {
-    const std::lock_guard<std::mutex> lock(mirrors_mutex_);
+    const std::lock_guard<std::mutex> lock(publications_mutex_);
     frame_ = frame;
-    for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
-        mirror->beginFrame(frame);
+    for (const Publication& publication : publications_) {
+        publication.source->beginFrame(frame);
     }
-}
-
-std::size_t FrameWorker::drain()
-{
-    // Every mirror applies what its content published, in post order, before anything reads the rows. The lock covers
-    // the WALK: a content published for the first time while this frame is answered grows the list, and `drain` itself
-    // is the mirror's own business (its channel is the only thing the two halves share).
-    std::lock_guard<std::mutex> lock(mirrors_mutex_);
-    std::size_t                 drained = 0U;
-    for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
-        drained += mirror->drain();
-    }
-    applied_ += drained;
-    return drained;
 }
 
 void FrameWorker::runPass(PassDraw& pass, FrameMode mode)
 {
-    if (mode == FrameMode::Mirrored) {
-        // BIND: a draw that names a CONTENT is re-pointed at that content's mirror, so the expansion below stops
-        // asking the content - which is what makes the expand safe off the content's thread. A source this worker does
-        // not mirror is left alone and counted: correct on the calling thread, a cross-thread read anywhere else,
+    if (mode == FrameMode::Published) {
+        // BIND: a draw that names a CONTENT is re-pointed at that content's PUBLISHED SNAPSHOT, so the expansion below
+        // stops asking the content - which is what makes the expand safe off the content's thread. A source this worker
+        // does not publish is left alone and counted: correct on the calling thread, a cross-thread read anywhere else,
         // which is exactly what the count is for.
         for (DrawDescription& draw : pass.draws) {
             if (draw.content == nullptr) {
                 continue;
             }
-            ContentMirror* mirror = mirrorOf(*draw.content);
-            if (mirror == nullptr) {
+            SnapshotSource* source = sourceOf(*draw.content);
+            if (source == nullptr) {
                 ++unbound_;
                 continue;
             }
-            draw.content = &mirror->source();
+            draw.content = source;
         }
     }
     // The INLINE mode binds nothing: the caller IS the content's thread, so asking the content is exactly right, and
-    // re-pointing the draw would spend a mirror's copy to reproduce the answer the content gives for free.
+    // re-pointing the draw would spend a snapshot's copy to reproduce the answer the content gives for free.
     expandPass(pass);
 }
 
-std::size_t FrameWorker::run(FrameDescription& frame, FrameMode mode)
+void FrameWorker::run(FrameDescription& frame, FrameMode mode)
 {
-    const std::size_t drained = drain();
     for (FrameDescription::Pass& entry : frame.passes) {
         if (entry.draw.has_value()) {
             runPass(*entry.draw, mode);
         }
     }
-    return drained;
 }
 
-std::size_t FrameWorker::mirrorCount() const noexcept
+std::size_t FrameWorker::publicationCount() const noexcept
 {
-    const std::lock_guard<std::mutex> lock(mirrors_mutex_);
-    return mirrors_.size();
-}
-
-std::uint64_t FrameWorker::applied() const noexcept
-{
-    return applied_;
+    const std::lock_guard<std::mutex> lock(publications_mutex_);
+    return publications_.size();
 }
 
 std::uint64_t FrameWorker::unbound() const noexcept
@@ -112,38 +99,38 @@ std::uint64_t FrameWorker::unbound() const noexcept
 
 std::uint64_t FrameWorker::memoHits() const noexcept
 {
-    const std::lock_guard<std::mutex> lock(mirrors_mutex_);
+    const std::lock_guard<std::mutex> lock(publications_mutex_);
     std::uint64_t hits = 0U;
-    for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
-        hits += mirror->memoHits();
+    for (const Publication& publication : publications_) {
+        hits += publication.source->memoHits();
     }
     return hits;
 }
 
 std::uint64_t FrameWorker::memoStores() const noexcept
 {
-    const std::lock_guard<std::mutex> lock(mirrors_mutex_);
+    const std::lock_guard<std::mutex> lock(publications_mutex_);
     std::uint64_t stores = 0U;
-    for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
-        stores += mirror->memoStores();
+    for (const Publication& publication : publications_) {
+        stores += publication.source->memoStores();
     }
     return stores;
 }
 
-ContentMirror* FrameWorker::mirrorOf(const vn::graphics::DrawListSource& source) noexcept
+SnapshotSource* FrameWorker::sourceOf(const vn::graphics::DrawListSource& source) noexcept
 {
-    const std::lock_guard<std::mutex> lock(mirrors_mutex_);
-    return mirrorOfLocked(source);
+    const std::lock_guard<std::mutex> lock(publications_mutex_);
+    return sourceOfLocked(source);
 }
 
-ContentMirror* FrameWorker::mirrorOfLocked(const vn::graphics::DrawListSource& source) noexcept
+SnapshotSource* FrameWorker::sourceOfLocked(const vn::graphics::DrawListSource& source) noexcept
 {
-    for (const std::unique_ptr<ContentMirror>& mirror : mirrors_) {
+    for (const Publication& publication : publications_) {
         // Either spelling means "this content": the CONTENT itself (a frame described on the content's thread) or the
-        // mirror (a description that has already been bound once). Matching both is what makes a second `run` on the
-        // same frame a no-op here instead of a false "unbound".
-        if (&mirror->content() == &source || &mirror->source() == &source) {
-            return mirror.get();
+        // snapshot source it was bound to. Matching both is what makes a second `run` on the same frame a no-op here
+        // instead of a false "unbound".
+        if (publication.content == &source || publication.source.get() == &source) {
+            return publication.source.get();
         }
     }
     return nullptr;

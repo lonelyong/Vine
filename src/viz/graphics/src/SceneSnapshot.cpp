@@ -1,12 +1,21 @@
 #include "SceneSnapshot.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <utility>
 
 VN_GRAPHICS_NS_BEGIN
 
 namespace detail
 {
+namespace
+{
+
+/// The publication id every new snapshot takes (see SceneSnapshot::revision). A counter, not a hash: two snapshots
+/// must never share a memo key, however their row counts happen to line up.
+std::atomic<std::uint64_t> s_next_revision{ 1 };
+
+} // namespace
 
 SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
                                    std::uint64_t           epoch,
@@ -16,6 +25,7 @@ SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
 {
     auto snapshot        = std::make_shared<SceneSnapshot>();
     snapshot->row_count  = rows.rows.size();
+    snapshot->revision   = s_next_revision.fetch_add(1, std::memory_order_relaxed);
     snapshot->epoch      = epoch;
     snapshot->boxes      = boxes;
     snapshot->materials  = materials;

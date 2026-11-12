@@ -30,6 +30,7 @@
 #include "PassDesc.hpp"
 #include "PassRegistry.hpp"
 #include "Plan.hpp"
+#include "PrepareReport.hpp"
 #include "RenderDiagnostic.hpp"
 #include "RenderSurface.hpp"
 #include "ReportOnce.hpp"
@@ -316,6 +317,38 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   "device lost, rebuild from the bottom" path.
      */
     void shutdown();
+
+    /**
+     * @brief Prepares the frame the next frame() would build, without running it: a warm-up a host can budget.
+     *
+     * @details
+     * - WHAT IT IS. The frame is COMPILED exactly as frame() compiles it (the declarations are read as they stand,
+     *   the same pass value comes out) and its draws are collected the same way, and then the compiled value is
+     *   handed to the backend's `prepareFrame` - one wire, two verbs: what `prepare` builds is keyed by the same
+     *   identities the next frame uses, so that frame finds them and builds nothing (`R23`).
+     * - WHAT IT IS NOT. It is not a frame: nothing is acquired, recorded into a surface or presented, no counters of
+     *   handled frames move, and `presentRecord()` / `presentedCamera()` keep describing the last frame that really
+     *   ran. It is also not the "pre-frame warm-up" that used to live in initialize(): that one EXECUTED passes; this
+     *   one is a query that may build what a frame would need.
+     * - WHY A HOST CALLS IT. Compiling the first pipelines and uploading the first streams is where the first
+     *   frames' cost is; a host that has just loaded content can pay it here, once, and see from the report what it
+     *   cost. A caller that ignores it loses nothing: the next frame() does the same work inline, as before.
+     * - IT DOES NOT CHANGE WHAT THE NEXT FRAME DRAWS. The declarations are re-read when that frame runs, so content,
+     *   cameras and sizes that moved in between reach it as usual; what was prepared is a key, not a frozen picture.
+     *
+     * @warning
+     * - Never inside a `before_draw` hook or while a frame is being answered: like every entry of this class it
+     *   compiles the declarations, and it waits for a frame in flight on the engine thread first (between frames).
+     * - A pass' `before_draw` hook RUNS, because describing a pass is what a frame does and the hook is part of it:
+     *   a warm-up is therefore not free of side effects, and a hook that counts its calls sees one more. A hook that
+     *   animates off its own wall clock (the intended shape) is unaffected.
+     * - A prepared identity only helps while it stays the same one: an edit between the call and the frame is a new
+     *   identity, and that frame compiles it (correct, and the price of the edit).
+     *
+     * @return What the request did, with what it built (see PrepareReport); `outcome` says NoDevice / NotInitialized
+     *         when this engine cannot prepare anything at all.
+     */
+    PrepareReport prepare();
 
     /** @brief Renders one frame (compile, then announce the compiled value, end, swap).
      *
