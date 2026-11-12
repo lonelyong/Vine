@@ -154,7 +154,7 @@
 | F3 | 内容身份与世代 | `Handle` + typed id + `ContentRef`，陈旧句柄答 gone | 已落地 |
 | F4 | 引擎表按 `(id, revision)` 驻留 | 事实表按 ref 建行；旧帧读旧版 | 已落地 |
 | F5 | 行级 epoch 回收 | 行按"最后一次被计划命中的帧"回收；条目在"宿主不要了 ∧ 没有行"时离开 | 已落地 |
-| F6 | 计划是值 | 帧边界按名字差分 + 计划校验稳定 code | 未做 |
+| F6 | 计划是值 | 帧边界按名字差分 + 计划校验稳定 code | 部分：`Plan` + `validatePlan` + `applyPlan` + `plan()` 已落地；`Target` 仍是显式 `RenderTarget` 句柄，`addPass` 家族保留到第 5 步（`C11`） |
 | F7 | 预热入口 | `prepare(snapshot, plan)` 答需要什么；预热后录制 `builds` 增量 0 | 未做 |
 | F8 | 一 Session 多 Surface | `Target` / 帧请求带 `SurfaceId`；一个引擎线程驱动多个窗口 | 未做 |
 | F9 | `publish` 返回 `Result` | 批内显式"未发布"，无 null | 未做 |
@@ -200,11 +200,18 @@
 
 ### 3.6 F6 计划是值
 
-- **行为**：`Pass` / `Target` 是值；Session 在帧边界按名字差分；校验给出稳定 code（重名 / 环 / 未知输入 / 超 `kMaxPasses`）。
-- **约束**（`C7` / `C11`）：按名字不按指针；迁移期公开 API 只增不改。
-- **要求**（`R21` / `R38`）：增删 pass 不调用任何 add/remove；每条校验一个 code。
-- **验收**（`T7` / `T30`）：`PlanTest.APassIsAddedWithoutAnyAddCall`、计划校验用例。
-- **注意**（`P7`）：差分必须对**同名不同内容**也成立（改一个 pass 的 target 不是"删一个加一个"）。
+- **行为**：`Plan` 是一个值（有序的 `PassDesc` 列表，pass 的**名字**是它在计划里的身份）；
+  `applyPlan(plan)` 按名字差分：新名字新增、同名更新**原地**（节点与后端状态存活）、消失的名字移除；
+  `plan()` 把当前形状读回成同一类型（`applyPlan(plan())` 是幂等的）。校验给出 `PlanProblemCode` 稳定 code
+  （`EmptyPassName` / `DuplicatePassName` / `UnknownInput` / `DependencyCycle` / `TooManyPasses`），
+  并整份接受或整份拒绝。
+- **约束**（`C7` / `C11`）：按名字不按指针；迁移期公开 API 只增不改（`addPass` 家族不删）。
+- **要求**（`R21` / `R38`）：增删 pass 不调用任何 add/remove；每条校验一个 code；`SessionBusy` 回答
+  “帧正在录制”，不做事后补救。
+- **验收**（`T7` / `T30`）：`PlanTest.APassIsAddedWithoutAnyAddCall`、`PlanTest.AChangedTargetUpdatesTheSameNodeInPlace`（P7）、
+  `PlanTest.*IsRefusedWithItsCode`（四类 code）、`PlanTest.TheCodeSpellingsAreStable`。
+- **注意**（`P7`）：差分必须对**同名不同内容**也成立（改一个 pass 的 target 不是“删一个加一个”）。
+  计划不命名的 pass 会被移除（包括 `addPass` 注册但没名字的 pass）——这是“计划即形状”的直接后果。
 
 ### 3.7 F7 预热入口
 
@@ -455,7 +462,7 @@
 | T4 | 原型折叠一次、放置成本单计 | `SnapshotTest.APrototypeFoldsOnceAndIsPlacedNTimes` | 未做 |
 | T5 | 陈旧句柄答 gone | `ContentRegistryTest.AStaleHandleAnswersGone` | 已实现 |
 | T6 | 驻留 = 活快照引用 | `ResidencyTableTest.TheCollectableSetIsEnumerable` | 已实现 |
-| T7 | 计划差分 | `PlanTest.APassIsAddedWithoutAnyAddCall` | 未做 |
+| T7 | 计划差分 | `PlanTest.APassIsAddedWithoutAnyAddCall` | 已实现 |
 | T8 | 派生纯 | `SelectTest.SameInputSameList`（含并行） | 未做 |
 | T9 | 排序全序 | `SelectTest.TheSortKeyIsATotalOrder` | 未做 |
 | T10 | 能力协商 | `SessionTest.AMissingRequiredCapabilityIsRefusedWithACode` | 未做 |
@@ -478,20 +485,41 @@
 | T27 | pose 拾取 | pose 后拾取子节点 | 未做 |
 | T28 | pose 剔除 | pose 子树部分出视 | 未做 |
 | T29 | 多表面 | 一个 Session 两个 Surface | 未做 |
-| T30 | 计划校验 | 重名/环/未知输入/超上限 | 未做 |
+| T30 | 计划校验 | `PlanTest.*IsRefusedWithItsCode`（四类）+ `PlanTest.TheCodeSpellingsAreStable` | 已实现 |
 | T31 | 批内 publish | 批内调用 publish | 未做 |
+
+### 8.1 判死阈值（`K#`）
+
+每一步的**验收阈值与回退条件**（ADR-2026-11-12 决定 `K1–K11` 的身份从此是这一条，而不是"否决提案"）。
+某一步击穿它自己的 `K` ⇒ 回退该步并把结论写回 ADR，**不重开"是否采纳"**。
+
+| # | 阈值（击穿 = 回退该步） | 怎么测 |
+|---|---|---|
+| K1 | 2000 行场景改 1 行，`publish` > 500 µs（CoW 退化成整表） | `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` |
+| K2 | 快照常驻内存 > 3× 行表字节数 | `alloc_trace.c` / RSS |
+| K3 | 相机移动的 collect > 2160 µs 的 1.2 倍 | `SceneTest.MeasureWhatOneCollectionCosts*` |
+| K4 | 该步开始时的用例里，> 5% 的**语义断言**需要改才通过（纯改名不计） | 直接数（分母写“该步开始时”，不写死条数） |
+| K5 | 代码量不降反升（桥 + 寿命层 > 今天的 100%，与 2519 行同口径） | `wc -l` |
+| K6 | TSan 出现任何**新的**数据竞争报告 | `scripts/tsan_check.sh` |
+| K7 | 在飞帧的旧内容被新发布改变（材质/几何/程序任一） | `T17` 逐项 diff |
+| K8 | 两个 Scene 共享原型时数据竞争，或跨线程用例无法被拒绝 | `T21` + TSan |
+| K9 | pose 后的拾取/剔除与画面不一致 | `T19` / `T27` / `T28` |
+| K10 | 多表面必须靠两个 Session / 两条引擎线程才能成立 | `T29` |
+| K11 | 5000 原型、1 次编辑的 publish 超过预算（元数据整体拷贝暴露） | `N19` ≤ 50 µs 或字节上限 |
 
 ## 9. 状态与演进
 
 ### 9.1 当前状态
 
-- **已落地**：F3（身份）、F4（引擎表按 ref）、F5（行级 epoch 回收）。这三项在
+- **已落地**：F3（身份）、F4（引擎表按 ref）、F5（行级 epoch 回收）、F6（计划是值）。前三项在
   `ContentId.hpp` / `ContentStore.cpp` / `ResourceTable.hpp` 里是现役代码，`test_graphics` 与 `test_vsg`
-  在钉它们。
+  在钉它们；F6 在 `Plan.hpp` / `Plan.cpp` / `EngineCompile.cpp`（`applyPlan`）里，由 `PlanTest` 钉住。
+  F6 的**半边**仍属第 4 / 5 步：`Target` 还不是值（仍是显式 `RenderTarget` 句柄），`addPass` 家族按
+  `C11` 保留到第 5 步收口。
 - **原型已通过阈值、生产未接管**：F1（快照发布）、F2（纯派生）。`detail::SceneSnapshot` +
   `selectSnapshot` 只有测试消费者，生产收集仍走 `RenderWorld` + `drawListBake`；`K1`（203 µs）、
   `K2`（1.03×）、`K3` 已由 `SnapshotTest` 证明。
-- **未做**：F6–F11 与 F12 的 `query` 半边。
+- **未做**：F7–F11 与 F12 的 `query` 半边。
 - **迁移期的事实**：`graphics-threading.md` 的 `C1–C20` 与 `graphics-scene.md` 的镜像/delta/memo 描述
   仍是**现在**的形状；本文件是**目标**。两者冲突时以状态字段为准，接管顺序见 §9.3。
 
@@ -510,19 +538,24 @@
 
 | 步 | 内容 | 删掉什么 | 判据 / 回退条件 |
 |---|---|---|---|
-| 1 | 计划是值：`Pass`/`Target` + 帧边界差分 + 校验 code | `addPass` 家族（保留到迁移期结束）、`PassRegistry` 的运行时拒绝 | `T7` / `T30` / `K4`；击穿则回退该步 |
-| 2 | `publish` 返回 `Result`（批内显式未发布） | 返回 null 的旧形状 | `T31` |
-| 3 | `prepare()` 预热 | "录制时才发现要编译" | `T7` / `T10`，预热后 `builds` 增量 0 |
+| 1 | 计划是值：`Plan` + 帧边界差分 + 校验 code · **已落地 2026-11-12** | 本步不删公开入口（`C11`）；`compileFrame` 的行从“`slots_` 的投影”变成“计划的投影” | `T7` / `T30` / `K4`；击穿则回退该步 |
+| 2 | `publish` 返回 `Result`（批内显式未发布） | 内部 `bool` 发布（`FrameWorker` / `ContentMirror`），与帧内隐式发布 | `T31` |
+| 3 | `prepare()` 预热 | “录制时才发现要编译” | `T7` / `T10`，预热后 `builds` 增量 0 |
 | 4 | 一 Session 多 Surface | 每窗口一个 Session 的驱动路径 | `T29` / `K10` |
-| 5 | **生产收集改走 Snapshot + `selectSnapshot`，删镜像/delta/memo/版本** | `ContentMirror`、`DeltaChannel`、`DrawListMemo`、`Version`、`refresh*`（约 2000 行） | `K1` / `K2` / `K3` / `K5` / `K7` / `N5`；这是风险最高的一步 |
-| 6 | 原型与实例（单独实验，B 方案先测） | 无（新增能力） | `T23` / `K11`；数字不好就停在"原型 DAG 共享" |
+| 5 | **生产收集改走 Snapshot + `selectSnapshot`，删镜像/delta/memo/版本** | `ContentMirror`、`DeltaChannel`、`DrawListMemo`、`Version`、`refresh*`（约 2000 行）；**并在此收口删 `addPass` 家族与 `PassRegistry` 的运行时拒绝** | `K1` / `K2` / `K3` / `K5` / `K7` / `N5`；这是风险最高的一步 |
+| 6 | 原型与实例（单独实验，B 方案先测） | 无（新增能力） | `T23` / `K11`；数字不好就停在“原型 DAG 共享” |
 
 `C11`（迁移期公开 API 只增不改）适用于第 1–4 步：新入口先与旧入口并存，第 5 步收口时再删旧形状。
+所以“`addPass` 家族在第 1 步删”与 `C11` 自相矛盾，本表已改成“第 5 步删”：第 1 步只改变投影方向
+（计划是输入，`slots_` 是它的应用结果），这也正是 `T7` 能成立的最小充分条件。
 
 ## 10. 参考
 
 ### 10.1 代码
 
+- `src/viz/graphics/sdk/vine/graphics/Plan.hpp` / `src/viz/graphics/src/Plan.cpp`（计划的契约、校验、`describe`）
+- `src/viz/graphics/src/EngineCompile.cpp`（`applyPlan` / `applyPlanRows` / `plan` / `makePassNode`）
+- `tests/test_graphics/PlanTest.cpp`（`T7` / `T30` 的全部用例）
 - `src/viz/graphics/sdk/vine/graphics/ContentId.hpp`（身份、`ContentRef`、注册表）
 - `src/viz/graphics/src/SceneSnapshot.hpp` / `SceneSnapshot.cpp`（快照原型、`selectSnapshot`）
 - `src/viz/graphics/src/SceneRows.cpp`（发布的缓存侧）
@@ -536,7 +569,9 @@
 - `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md`（`I4` 的来源）
 - `../decisions/ADR-2026-11-11-content-identity-is-a-handle.md`（`I2` / `R31` 的来源）
 - `../design/graphics-threading.md`（迁移期前的线程契约）、`../design/graphics-scene.md`（现役场景与收集）
-- `../research/graphics-2026-11-11-next*.md`（提案与两轮审计原文；按 §9.3 吸收后逐份删除）
+- `../research/graphics-2026-11-11-next*.md`（提案原文与 `-design` / `-api` / `-hot-paths` / `-requirements` / `-benefits`；
+  按 §9.3 逐份吸收后删除。`-audit` 的两轮审计是 `R31–R39` 与 `K7–K11` 的出处，也被两份 ADR 引为证据，
+  所以它留到那些引用被历史取代为止）
 
 ### 10.3 外部资料
 

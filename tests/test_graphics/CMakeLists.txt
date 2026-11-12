@@ -4,6 +4,7 @@ set(SRC_FILE_LIST
 	FrameScheduleTest.cpp
 	GraphicsTest.cpp
 	HeadlessBackendTest.cpp
+	PlanTest.cpp
 	RenderSurfaceTest.cpp
 	ChannelSliceTest.cpp
 	EmbeddedShadersTest.cpp

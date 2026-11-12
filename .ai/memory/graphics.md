@@ -363,3 +363,26 @@
   `BlockStorageTest.AMaterialSlotIsReturnedOnceNoLiveRowDeclaresIt`（真设备）、
   `ContentStoreTest.AMaterialDeclaresItsIdentityForAsLongAsARowAnswersIt`；a3 的残差断言改成
   `liveMaterials() <= base_slots`（实测每周期回 0）。`test_vsg` 全绿。
+
+## 2026-11-12 —— graphics-next 第 1 步：计划是值（`Plan` + 按名字差分 + 稳定 code）
+
+- **新公开值**：`Plan`（有序 `PassDesc` 列表，pass 的**名字**是身份）、`PlanProblem { code, pass, detail }`、
+  `PlanProblemCode`（`EmptyPassName` / `DuplicatePassName` / `UnknownInput` / `DependencyCycle` /
+  `TooManyPasses` / `SessionBusy`）、`kMaxPlanPasses = 64`、纯函数 `validatePlan(plan, external_outputs)`、
+  `planCodeText(code)`。头文件 `Plan.hpp`，实现 `src/Plan.cpp`。
+- **引擎入口**：`RenderEngine::applyPlan(plan) -> vector<PlanProblem>`（空 = 已应用）与 `RenderEngine::plan()`。
+  差分按名字：新名字 `makePassNode` + `insertSlot`；同名同 kind ⇒ `setDesc` **原地**（节点与后端状态存活，
+  P7）；同名但 kind 变了 ⇒ 删后重建（保留 owner/role）；计划没命名的 pass ⇒ `removePass`。整份校验通过
+  才应用，**全有或全无**。
+- **`plan()` 会把有效 order 写进 `desc.order`**，所以 `applyPlan(engine.plan())` 是幂等的（只声明 stage
+  的 pass 不会因为读回而被重排）。
+- **命名**：`RenderEngine` 原来的私有 `PlanProblem`（句子身份）改名 `CompileProblem`——公开的 `PlanProblem`
+  是“形状缺陷 + 稳定 code”，两者不是一回事；`FramePlan` 仍是**编译后**的视图，`Plan` 是声明。
+- **坑**：`validatePlan` 必须用**两个** map——pass 名字（差分身份，要唯一）与 `output_name`（消费者解析的
+  生产者）。第一版混成一个 map，环与 feedback 两个用例当场红。
+- **测试**：`PlanTest`（12 个）——T7（无 add 调用即有 pass 并真的跑）、读回幂等、改名、原地更新、四类 code +
+  feedback 不是环、拒绝后形状不变、code 拼写、`describe`。`test_graphics` 571 / `test_vsg` 540（一个
+  既有窗口用例首跑红、单跑绿：宿主窗口报 `4294967295x4294967295` 的已知偶发）/ 全 ctest 30/30。
+- **文档**：`graphics-frame-pipeline.md` §3.1/§3.6/§8/§9.1/§9.3/§10 更新；`K1–K11` 落进 §8.1 作为仓库内
+  权威副本（`K4` 分母改成“该步开始时的用例数”）；§9.3 修正为“`addPass` 家族在第 5 步删”（原表与 `C11`
+  自相矛盾）。`-audit` **未删**：它是 `R31–R39` / `K7–K11` 的出处，且被两份 ADR 引为证据。

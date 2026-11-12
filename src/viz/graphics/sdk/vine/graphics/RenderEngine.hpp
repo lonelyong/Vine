@@ -29,6 +29,7 @@
 #include "OutputRegistry.hpp"
 #include "PassDesc.hpp"
 #include "PassRegistry.hpp"
+#include "Plan.hpp"
 #include "RenderDiagnostic.hpp"
 #include "RenderSurface.hpp"
 #include "ReportOnce.hpp"
@@ -40,9 +41,9 @@ namespace detail
 
 class FrameResources;
 class FrameScheduler;
-class FrameWorker;   // The engine half of a frame: drain, bind, expand (see src/FrameWorker.hpp).
-struct EngineFrame;  // One frame as it travels between the two halves (see src/EngineFrame.hpp).
-class FrameRunner;   // The thread a frame's engine half runs on (see src/FrameRunner.hpp).
+class FrameWorker;                   // The engine half of a frame: drain, bind, expand (see src/FrameWorker.hpp).
+struct EngineFrame;                  // One frame as it travels between the two halves (see src/EngineFrame.hpp).
+class FrameRunner;                   // The thread a frame's engine half runs on (see src/FrameRunner.hpp).
 enum class FrameMode : std::uint8_t; // What a frame's draws may ask: content (Direct) or its mirror (Mirrored).
 
 } // namespace detail
@@ -396,8 +397,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @return The last answered frame's id and picture outcome; frame 0 means no frame has been answered yet.
      */
     struct PresentRecord {
-        std::uint64_t frame{ 0 };                                  ///< The frame this answer belongs to (0: none yet).
-        PresentOutcome outcome{ PresentOutcome::Skipped };          ///< What became of its picture.
+        std::uint64_t  frame{ 0 };                         ///< The frame this answer belongs to (0: none yet).
+        PresentOutcome outcome{ PresentOutcome::Skipped }; ///< What became of its picture.
     };
 
     /** @brief Gets what became of the last answered frame's picture (see PresentRecord). */
@@ -491,6 +492,45 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @return The plan, in announcement order; empty when nothing is registered.
      */
     [[nodiscard]] FramePlan framePlan() const;
+
+    /** @brief Applies @p plan as this engine's session shape, diffing it by pass name.
+     *
+     * @details
+     * - WHAT CHANGES: a name the engine does not have is added, a name it has is updated IN PLACE (the pass
+     *   node survives, so the backend state keyed by it - pipeline variant, retained set, timing - does not
+     *   have to be rebuilt), and a name the plan no longer states is removed (its backend state and owned
+     *   target released, exactly as removePass() does). No addPass/removePass call is involved, which is the
+     *   point: the shape is one value, and applying it is one call.
+     * - WHAT "IN PLACE" DOES NOT COVER: a pass whose KIND changed (Scene -> Screen) cannot become the other
+     *   object, so that name is removed and re-added under the same owner and role. Every other field a
+     *   PassDesc states is adopted as the pass' new declaration.
+     * - THE WHOLE PLAN IS CHECKED FIRST (see validatePlan) and a plan with ANY problem is applied ENTIRELY
+     *   or not at all: a half-applied shape would be a shape nobody declared.
+     * - A PASS THE PLAN DOES NOT NAME IS REMOVED - including one registered by addPass() whose name is
+     *   empty, because a plan has no way to name it. Name every pass the plan should keep, or do not mix
+     *   the two entry points on one engine.
+     *
+     * @warning
+     * - A SESSION'S SHAPE IS EDITED BETWEEN FRAMES: a call that lands while a frame is being recorded is
+     *   REFUSED and answers `SessionBusy` (no partial change).
+     *
+     * @param plan The shape to apply (see Plan).
+     * @return Every problem found, empty when the plan was applied.
+     */
+    [[nodiscard]] std::vector<PlanProblem> applyPlan(const Plan& plan);
+
+    /** @brief Answers the session shape this engine runs, as a value (the inverse of applyPlan).
+     *
+     * @details
+     * - Built from the registered passes, each one stating its EFFECTIVE order, so `applyPlan(engine.plan())`
+     *   is a no-op: the shape read back is exactly the shape that reproduces it.
+     * - What is NOT here: the measured facts (the last frame's record time) and the owner/role bookkeeping -
+     *   those belong to the compile and to whoever registered the pass, not to the declared shape (see
+     *   FramePlan, which is the COMPILED frame and a different value).
+     *
+     * @return The shape, in engine order; empty when nothing is registered.
+     */
+    [[nodiscard]] Plan plan() const;
 
     /** @brief Gets the frame the last compile produced, as a value (see FrameDescription).
      *
@@ -900,8 +940,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   The cost is paid only by a frame that has a problem (a healthy frame builds none), and the message
      *   names its subject ("pass 'lighting' ..."), so two frames saying the same sentence really are the
      *   same problem.
+     * - It is NOT the public `PlanProblem`: that one is a shape's defect with a stable code, answered before
+     *   anything is applied; this one is a sentence about a compiled frame, compared by its wording.
      */
-    struct PlanProblem {
+    struct CompileProblem {
         String message; // the sentence a report would carry
     };
 
@@ -947,7 +989,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void scheduleRows();
 
-    /** @brief Collects the problems this frame's declarations carry (see PlanProblem).
+    /** @brief Collects the problems this frame's declarations carry (see CompileProblem).
      *
      * @details
      * - Every pass on its own is valid, so only the whole table can see a promise about a target never
@@ -1046,6 +1088,32 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     intrusive_ptr<RenderPass> insertSlot(Slot slot);
 
+    /** @brief Turns a declaration into its execution node, adjudicating the depth edge first.
+     *
+     * @details
+     * - THE ONE PLACE a PassDesc becomes a node, shared by addPass() and applyPlan() so a plan-applied pass
+     *   and a hand-added one cannot differ in kind mapping or depth-edge handling.
+     * - A layered depth view and a second, different depth view for one target are REFUSED here (once per
+     *   episode), because the SDK has one depth image per target and a declaration it cannot honour must not
+     *   look accepted on the node.
+     *
+     * @param desc Declaration to adopt (moved into the node).
+     * @return A new node of the declaration's kind (never null).
+     */
+    [[nodiscard]] intrusive_ptr<RenderPass> makePassNode(const PassDesc& desc);
+
+    /** @brief Applies a plan that has already been validated (see applyPlan): update, add, remove, re-order.
+     *
+     * @param plan The shape to apply (its problems were answered by validatePlan already).
+     */
+    void applyPlanRows(const Plan& plan);
+
+    /** @brief Answers the names the HOST publishes (see publish), which a plan's named input may resolve against.
+     *
+     * @return The standing host binding names, in name order.
+     */
+    [[nodiscard]] std::vector<String> hostOutputNames() const;
+
     // ---- Registration by owner (see PassChain): one slot table, an owner pointer per row ----
 
     friend class PassRegistry;
@@ -1091,9 +1159,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @param other Problem to compare with.
      * @return true when both describe the same problem of the same subject.
      */
-    [[nodiscard]] bool sameProblem(const PlanProblem& other) const noexcept;
+    [[nodiscard]] bool sameProblem(const CompileProblem& other) const noexcept;
 
-    /** @brief Records a problem the compile found, once per subject (see PlanProblem).
+    /** @brief Records a problem the compile found, once per subject (see CompileProblem).
      *
      * The one place a finding becomes data. Two checks can reach the same subject (a third pass claiming an
      * image two others already claim), and the frame should say it once: the episode rule then decides whether
@@ -1262,9 +1330,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /// half fills the other. Both live as long as the engine, because each keeps the storage of its pass entries.
     std::array<std::unique_ptr<detail::EngineFrame>, 2> frame_slots_;
     /// Which slot frame_ names while a frame is being built (alternates every frame).
-    std::size_t frame_slot_            = 0;
+    std::size_t frame_slot_     = 0;
     /// How many frames this engine has built (monotonic; 0 before the first one). What waitForFrame names.
-    std::uint64_t frame_number_        = 0;
+    std::uint64_t frame_number_ = 0;
     /// The id of the last frame whose engine half finished (0 before the first one). Read by waitForFrame.
     std::atomic<std::uint64_t> frame_completed_{ 0 };
     /// Where the engine half runs (see setFrameThreading); null means inline - the thread object exists only when a
@@ -1297,7 +1365,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /// The camera of the last answered frame (see presentedCamera), and the lock that makes it readable from the
     /// content's thread while the engine thread answers the next frame. A snapshot is a handful of matrices, so the
     /// lock is held for a copy in both directions and nothing else.
-    mutable std::mutex          presented_camera_mutex_;
+    mutable std::mutex            presented_camera_mutex_;
     std::optional<CameraSnapshot> presented_camera_;
     // THE ENGINE HALF OF A FRAME, in this engine (see detail::FrameWorker): the one place a pass' expansion is asked
     // for, so the DEFAULT path and the mirrored one are the same code - and the mode below is what P3 flips when the
@@ -1305,8 +1373,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     std::unique_ptr<detail::FrameWorker> worker_;
     detail::FrameMode                    frame_mode_;
     /// This frame's problems and the previous frame's, swapped after each compile: the episode rule.
-    std::vector<PlanProblem> plan_problems_;
-    std::vector<PlanProblem> previous_problems_;
+    std::vector<CompileProblem> plan_problems_;
+    std::vector<CompileProblem> previous_problems_;
     /// Whether a compile is running: while it is, the checks' reports are COLLECTED rather than emitted (see
     /// reportPlanProblems). One flag, because every check keeps calling reportEngineProblem() as it always did
     /// - the compile decides what becomes an episode, not each check.

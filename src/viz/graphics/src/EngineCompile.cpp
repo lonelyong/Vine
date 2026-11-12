@@ -4,11 +4,13 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <span>
 #include <string>
 #include <vector>
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/PassDesc.hpp>
+#include <vine/graphics/Plan.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
@@ -17,9 +19,9 @@
 
 #include "EngineFrame.hpp"
 #include "FrameExpand.hpp"
-#include "FrameWorker.hpp"
 #include "FrameResources.hpp"
 #include "FrameScheduler.hpp"
+#include "FrameWorker.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -256,7 +258,7 @@ void RenderEngine::buildFrameValue()
     //
     // The entries are REUSED rather than rebuilt (see below): a steady frame hands over the same pass list with the
     // same input lists, so it must not free and re-allocate them 60 times a second.
-    std::size_t used           = 0;
+    std::size_t used = 0;
     // Which entries the expansion has to answer, in run order (the passes whose description issued something). It
     // lives on the FRAME, so the two halves share no mutable state: this half fills it, the engine half walks it.
     frame_->engine_order.clear();
@@ -585,9 +587,9 @@ void RenderEngine::noteProblem(String message)
     // more than one direction (a second and a third claimant of one image), and one mistake should read as one
     // message. The episode rule decides whether it is said out loud at all (see reportPlanProblems).
     const auto known =
-        std::find_if(plan_problems_.begin(), plan_problems_.end(), [&message](const PlanProblem& problem) { return problem.message == message; });
+        std::find_if(plan_problems_.begin(), plan_problems_.end(), [&message](const CompileProblem& problem) { return problem.message == message; });
     if (known == plan_problems_.end()) {
-        plan_problems_.push_back(PlanProblem{ std::move(message) });
+        plan_problems_.push_back(CompileProblem{ std::move(message) });
     }
 }
 
@@ -604,8 +606,8 @@ bool RenderEngine::unusableInputReported(raw_ptr<const RenderPass> pass, const O
 
 void RenderEngine::reportPlanProblems()
 {
-    for (const PlanProblem& problem : plan_problems_) {
-        const auto previous = std::find_if(previous_problems_.begin(), previous_problems_.end(), [&problem](const PlanProblem& earlier) {
+    for (const CompileProblem& problem : plan_problems_) {
+        const auto previous = std::find_if(previous_problems_.begin(), previous_problems_.end(), [&problem](const CompileProblem& earlier) {
             return problem.message == earlier.message;
         });
         if (previous != previous_problems_.end()) {
@@ -644,7 +646,7 @@ intrusive_ptr<RenderPass> RenderEngine::addPass(const PassDesc& desc)
     return addPassOwnedBy(desc, nullptr, String());
 }
 
-intrusive_ptr<RenderPass> RenderEngine::addPassOwnedBy(const PassDesc& desc, raw_ptr<Object> owner, const String& role)
+intrusive_ptr<RenderPass> RenderEngine::makePassNode(const PassDesc& desc)
 {
     // The declaration is turned into the execution node of its kind ONCE, and the node then IS the declaration
     // (RenderPass::setDesc): a descriptor-declared pass and a hand-built one cannot drift apart, because by the time
@@ -693,13 +695,136 @@ intrusive_ptr<RenderPass> RenderEngine::addPassOwnedBy(const PassDesc& desc, raw
         }
     }
     node->setDesc(std::move(adopted));
+    return node;
+}
 
+intrusive_ptr<RenderPass> RenderEngine::addPassOwnedBy(const PassDesc& desc, raw_ptr<Object> owner, const String& role)
+{
     Slot slot;
-    slot.pass  = std::move(node);
+    slot.pass  = makePassNode(desc);
     slot.order = desc.order.value_or(passStageOrder(desc.stage));
     slot.owner = std::move(owner);
     slot.role  = role;
     return insertSlot(std::move(slot));
+}
+
+std::vector<PlanProblem> RenderEngine::applyPlan(const Plan& plan)
+{
+    // THE SHAPE IS A VALUE, so applying it is one call - but the table it replaces is what a frame may be walking,
+    // so the one rule every shape change obeys still holds here (see sessionChangeAllowed).
+    if (!sessionChangeAllowed("applyPlan")) {
+        return {
+            PlanProblem{ PlanProblemCode::SessionBusy, String(), String(u8"a frame is being recorded; a session's shape is applied between frames") }
+        };
+    }
+
+    // The host's own bindings serve names too (see publish), so validation must know them or it would refuse a plan
+    // that reads a picture the host hands in.
+    const std::vector<String> host_names = hostOutputNames();
+    std::vector<PlanProblem>  problems   = validatePlan(plan, std::span<const String>(host_names.data(), host_names.size()));
+    if (!problems.empty()) {
+        // ALL OR NOTHING: a half-applied shape would be a shape nobody declared. The answer is the return value; the
+        // diagnostic is for the log, one per problem per CALL (a host call, not a frame, so the call is the episode).
+        for (const PlanProblem& problem : problems) {
+            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::PassProtocolViolation,
+                                String(u8"plan refused [") + planCodeText(problem.code) + String(u8"]: ") + problem.detail);
+        }
+        return problems;
+    }
+
+    applyPlanRows(plan);
+    return problems;
+}
+
+void RenderEngine::applyPlanRows(const Plan& plan)
+{
+    // PHASE 1 - REMOVE what the plan no longer names. Collected first: removePass() mutates the table and releases
+    // backend state, so it must run once per pass and never while the table is being walked.
+    std::vector<raw_ptr<RenderPass>> doomed;
+    for (const Slot& slot : slots_) {
+        if (slot.pass == nullptr) {
+            continue;
+        }
+        const String name  = slot.pass->name();
+        const bool   named = std::any_of(plan.passes.begin(), plan.passes.end(), [&name](const PassDesc& desc) { return desc.name == name; });
+        if (!named) {
+            doomed.push_back(slot.pass.get());
+        }
+    }
+    for (raw_ptr<RenderPass> pass : doomed) {
+        removePass(pass);
+    }
+
+    // PHASE 2 - UPDATE the names both shapes state, ADD the ones only the plan states.
+    for (const PassDesc& desc : plan.passes) {
+        const int order = desc.order.value_or(passStageOrder(desc.stage));
+
+        Slot* existing = nullptr;
+        for (Slot& slot : slots_) {
+            if (slot.pass != nullptr && slot.pass->name() == desc.name) {
+                existing = &slot;
+                break;
+            }
+        }
+
+        if (existing != nullptr && existing->pass->declaration().kind == desc.kind) {
+            // IN PLACE: the node survives, so everything the backend keyed by it survives too - and a declaration
+            // that only changed its target is an update, not a remove plus an add (see P7).
+            existing->pass->setDesc(desc);
+            existing->order = order;
+            continue;
+        }
+
+        // A NAME THAT CHANGED KIND cannot become the other object: replace it, keeping who owned it.
+        raw_ptr<Object> owner = nullptr;
+        String          role;
+        if (existing != nullptr) {
+            owner = existing->owner;
+            role  = existing->role;
+            removePass(existing->pass.get());
+        }
+
+        Slot slot;
+        slot.pass  = makePassNode(desc);
+        slot.order = order;
+        slot.owner = owner;
+        slot.role  = std::move(role);
+        insertSlot(std::move(slot));
+    }
+
+    // PHASE 3 - the table is ordered by the orders the plan just stated (an update can move a pass in the frame).
+    std::stable_sort(slots_.begin(), slots_.end(), [](const Slot& left, const Slot& right) { return left.order < right.order; });
+}
+
+Plan RenderEngine::plan() const
+{
+    Plan shape;
+    shape.passes.reserve(slots_.size());
+    for (const Slot& slot : slots_) {
+        if (slot.pass == nullptr) {
+            continue;
+        }
+        PassDesc desc = slot.pass->declaration();
+        // The EFFECTIVE order, stated: the shape read back is the shape that reproduces it, even when the
+        // declaration only named a stage.
+        desc.order    = slot.order;
+        shape.passes.push_back(std::move(desc));
+    }
+    return shape;
+}
+
+std::vector<String> RenderEngine::hostOutputNames() const
+{
+    std::vector<String> names;
+    if (resources_ == nullptr) {
+        return names;
+    }
+    names.reserve(resources_->hostBindings().size());
+    for (const auto& binding : resources_->hostBindings()) {
+        names.push_back(binding.first);
+    }
+    return names;
 }
 
 void RenderEngine::removePassesOwnedBy(const Object* owner) noexcept
