@@ -55,6 +55,7 @@ using vn::vsg::buildMaterialFacts;
 using vn::test::buildMaterialFacts; // the object-pointer overload a case writes (see TestMaterialFacts.hpp)
 using vn::vsg::buildProgramFacts;
 using vn::vsg::ChannelFacts;
+using vn::vsg::ContentDeclarationIndexes;
 using vn::vsg::ContentDeclarations;
 using vn::vsg::ContentDraw;
 using vn::vsg::ContentFacts;
@@ -182,7 +183,7 @@ struct Tables {
         facts.programs     = programs;
         facts.geometries   = geometries;
         facts.materials    = materials;
-        facts.declarations = ContentDeclarations{ nullptr, nullptr, nullptr, &layouts };
+        facts.declarations = ContentDeclarations{ ContentDeclarationIndexes{ .layouts = &layouts } };
     }
 };
 
@@ -592,7 +593,7 @@ TEST(ContentHalvesTest, AHalfIsPinnedByTheLayoutDeclarationAndLeavesWithIt)
     program_only.programs      = tables.facts.programs;
     program_only.program_names = tables.facts.program_names;
     program_only.program_order = tables.facts.program_order;
-    program_only.declarations  = ContentDeclarations{ nullptr, nullptr, nullptr, &empty_layouts };
+    program_only.declarations  = ContentDeclarations{ ContentDeclarationIndexes{ .layouts = &empty_layouts } };
 
     EXPECT_TRUE(halves.halvesFor(pass, program_only, timeline, retirement).empty());
     halves.sweep(program_only, timeline, retirement);

@@ -375,10 +375,38 @@ TEST(PlanTest, ARefusedPlanLeavesTheShapeUntouched)
 }
 
 /*
+ * @brief A pass with NO NAME is not round-trippable, and the round trip says so instead of renaming or dropping it.
+ *
+ * A plan identifies a pass by its name, so `applyPlan(engine.plan())` is the identity only when every registered pass
+ * has one. A hand-built pass registered through the `addPass` family may not (that family takes an object, not a
+ * declaration), and the honest answer is the refusal code - the shape is untouched and the host is told which pass it
+ * has to name. Silently inventing a name would make two shapes that differ by a string compare equal.
+ */
+TEST(PlanTest, AnUnnamedPassIsNotRoundTrippable)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    const intrusive_ptr<RenderPass> unnamed(new RenderPass());
+    ASSERT_NE(engine->addPass(unnamed, 0), nullptr);
+    ASSERT_EQ(engine->passCount(), 1u);
+
+    const Plan read_back = engine->plan();
+    ASSERT_EQ(read_back.passes.size(), 1u);
+    EXPECT_TRUE(read_back.passes[0].name.empty()) << "the shape states what the pass IS: nothing to name it by";
+
+    const std::vector<PlanProblem> problems = engine->applyPlan(read_back);
+    ASSERT_FALSE(problems.empty()) << "a shape that cannot be diffed is refused, not guessed at";
+    EXPECT_EQ(problems.front().code, PlanProblemCode::EmptyPassName);
+    EXPECT_EQ(engine->passCount(), 1u) << "and the refusal changes nothing";
+}
+
+/*
  * @brief The code SPELLING is part of the contract a log and a test read.
  */
-TEST(PlanTest, TheCodeSpellingsAreStable)
-{
+TEST(PlanTest, TheCodeSpellingsAreStable){
     EXPECT_EQ(planCodeText(PlanProblemCode::EmptyPassName), u8"empty-pass-name");
     EXPECT_EQ(planCodeText(PlanProblemCode::DuplicatePassName), u8"duplicate-pass-name");
     EXPECT_EQ(planCodeText(PlanProblemCode::UnknownInput), u8"unknown-input");

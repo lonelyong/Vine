@@ -113,8 +113,10 @@ class VN_GRAPHICS_API RenderFrameExecutor {
      * - WHAT IT MAY BUILD. Anything the frame would need anyway, keyed exactly as the frame keys it, and nothing
      *   more: `prepare` answers the plan's own input, so it cannot become "compile every variant" (`P8`).
      * - A pass it cannot serve (its target has no objects yet, the tables cannot answer a program) is not an error:
-     *   it is left out of the counts and the rest of the frame is prepared. The next `executeFrame` compiles what is
-     *   still missing, which is the same frame it would have compiled without the call.
+     *   the rest of the frame is prepared, and the build counts say what it could not build. `passes` / `draws` keep
+     *   counting it, because they are the SHAPE OF THE FRAME that was asked for (see PrepareReport), not a claim about
+     *   what this backend managed to walk. The next `executeFrame` compiles what is still missing, which is the same
+     *   frame it would have compiled without the call.
      * - Borrowed, exactly as in `executeFrame`: every pointer inside @p frame is valid for the duration of the call
      *   and must be copied if kept.
      *

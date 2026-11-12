@@ -38,6 +38,7 @@ using vn::graphics::Texture;
 using vn::graphics::Texture2D;
 using vn::imaging::Image;
 using vn::imaging::PixelFormat;
+using vn::vsg::ContentDeclarationIndexes;
 using vn::vsg::ContentDeclarations;
 using vn::vsg::MaterialImages;
 using vn::vsg::SamplerImage;
@@ -286,7 +287,7 @@ TEST(MaterialImagesTest, AnEntryLivesWhileContentDeclaresItAndLeavesWhenItDoesNo
     std::unordered_map<const void*, std::uint32_t> textures{
         { texture.get(), 1U }
     };
-    const ContentDeclarations declared{ nullptr, &textures };
+    const ContentDeclarations declared{ ContentDeclarationIndexes{ .textures = &textures } };
     for (int frame = 0; frame < 100; ++frame) {
         EXPECT_EQ(cache->beginFrame(declared, {}), 0U) << "a declared texture keeps its upload";
     }
@@ -337,7 +338,7 @@ TEST(MaterialImagesTest, ARevisionThatMovedRetiresTheEntryContentStillDeclares)
     std::unordered_map<const void*, std::uint32_t> textures{
         { texture.get(), 1U }
     };
-    const ContentDeclarations declared{ nullptr, &textures };
+    const ContentDeclarations declared{ ContentDeclarationIndexes{ .textures = &textures } };
     ASSERT_EQ(cache->beginFrame(declared, {}), 0U);
 
     // The host refills the texture: its revision moves, the declaration does not.
@@ -496,7 +497,7 @@ TEST(MaterialImagesTest, DroppingTheDeclarationIsWhatRemovesItsImages)
     std::unordered_map<const void*, std::uint32_t> textures{
         { texture.get(), 1U }
     };
-    const ContentDeclarations declared{ nullptr, &textures };
+    const ContentDeclarations declared{ ContentDeclarationIndexes{ .textures = &textures } };
 
     // The content still names it, so the sweep has nothing to do and the residency does not move.
     EXPECT_EQ(cache->beginFrame(declared, {}), 0U);

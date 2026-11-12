@@ -1047,6 +1047,10 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
         ++report.passes;
         report.draws += static_cast<std::uint32_t>(pass.draws.size());
     }
+    // THE SHAPE THE FRAME ASKED FOR, not what this backend managed to walk (see PrepareReport): a pass the walk above
+    // skipped because its target has no objects yet is still counted here, and the build deltas below are what say
+    // how much of the request actually became objects. Two numbers, two questions - and neither pretends to be the
+    // other.
     // WHAT THIS CALL BUILT, not what is resident: a second prepare of an unchanged frame answers zeros, which is the
     // property the call exists for.
     report.halves    = d->assembly->halves().builds() - halves_before;

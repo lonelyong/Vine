@@ -584,9 +584,15 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @details
      * - Built from the registered passes, each one stating its EFFECTIVE order, so `applyPlan(engine.plan())`
      *   is a no-op: the shape read back is exactly the shape that reproduces it.
-     * - What is NOT here: the measured facts (the last frame's record time) and the owner/role bookkeeping -
-     *   those belong to the compile and to whoever registered the pass, not to the declared shape (see
-     *   FramePlan, which is the COMPILED frame and a different value).
+     * - THE ONE PRECONDITION IS A NAME. A plan identifies each pass by its name (`Plan`), and an empty name cannot be
+     *   expressed - `validatePlan` refuses it, because a shape that cannot be diffed would be applied as "remove
+     *   everything, add everything". A pass registered by `addPass` with no name (a hand-built one) therefore reads
+     *   back with an empty name and makes the round trip answer `EmptyPassName` instead of applying: name every pass
+     *   a host expects to survive a plan, or do not mix the two entry points. 5b-2c makes the name mandatory when the
+     *   `addPass` family goes away.
+     * - What is NOT here: the measured facts (the last frame's record time) and the owner/role bookkeeping - those
+     *   belong to the compile and to whoever registered the pass, not to the declared shape (see FramePlan, which is
+     *   the COMPILED frame and a different value).
      *
      * @return The shape, in engine order; empty when nothing is registered.
      */

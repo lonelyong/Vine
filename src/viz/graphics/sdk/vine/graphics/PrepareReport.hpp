@@ -11,15 +11,18 @@ VN_GRAPHICS_NS_BEGIN
  * @details
  * - WHY IT IS A VALUE AND NOT A BOOL. Preparing a frame is a QUERY with a side effect (the identities are built so
  *   the next frame does not have to), so "did it happen" answers one question and leaves three worth knowing
- *   unanswered: how much of the frame the backend could walk, what it actually had to build, and what it could not
+ *   unanswered: how much of the frame was asked for, what it actually had to build, and what it could not
  *   build at all (a pass whose target has no objects yet, a program the tables cannot answer). A bool would make the
  *   second prepare indistinguishable from "nothing was needed" and hide the first frame's compile cost entirely.
  * - THE COUNTS ARE DELTAS OF THE CALL, not running totals: a second `prepare()` of an unchanged frame answers zeros,
  *   which is exactly the property the call exists for - after it, a recorded frame builds nothing (`R23`). The
  *   backend's own reports (`FrameReport`) keep the totals; this value says what THIS call did.
- * - `passes` / `draws` are what the frame ASKED for; `halves` / `sets` / `uploads` / `pipelines` are what had to be
- *   built to serve it. A frame with fifty drawables under one identity builds one half and one pipeline, so the two
- *   halves of the value answer different questions and neither is derivable from the other.
+ * - TWO KINDS OF NUMBER, TWO QUESTIONS. `passes` / `draws` are the SHAPE OF THE FRAME that was asked for - the plan's
+ *   own passes that issue something, and their drawing calls - so they are comparable with what a recorded frame
+ *   reports and do not move because a backend could not serve one of them. `halves` / `sets` / `uploads` / `pipelines`
+ *   are what had to be BUILT to serve it, and are the evidence of what the backend actually did. A frame with fifty
+ *   drawables under one identity asks fifty draws and builds one pipeline, so neither number is derivable from the
+ *   other.
  * - NOTHING HERE IS DEVICE-BOUND: the counts describe compiled values (a pipeline layer, a descriptor set, a stream
  *   bind), which is what lets `prepare()` report them without the frame having been recorded or submitted.
  *
@@ -40,8 +43,8 @@ struct VN_GRAPHICS_API PrepareReport {
     };
 
     Outcome       outcome{ Outcome::NoDevice }; // What became of the request (see Outcome).
-    std::uint32_t passes{ 0 };                  // Pass entries whose content could be walked.
-    std::uint32_t draws{ 0 };                   // Drawing calls those entries issued.
+    std::uint32_t passes{ 0 };                  // Passes of the frame that issue drawing calls (see the class note).
+    std::uint32_t draws{ 0 };                   // Drawing calls those passes issue (what was asked, not what was built).
     std::uint64_t halves{ 0 };                  // Compiled halves THIS call built (0 = already there).
     std::uint64_t sets{ 0 };                    // Declared sets THIS call built.
     std::uint64_t uploads{ 0 };                 // Stream uploads THIS call built.

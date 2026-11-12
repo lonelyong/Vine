@@ -75,6 +75,9 @@ inline constexpr std::size_t kMaxPlanPasses = 64;
  * - A PASS' IDENTITY IS ITS NAME (`PassDesc::name`), which is why an empty name and a duplicate name are
  *   refused rather than guessed at: the diff has nothing else to compare, and a plan that cannot be diffed
  *   would be applied as "remove everything, add everything" - the churn this type exists to remove.
+ * - THE CONSEQUENCE FOR A MIXED ENGINE: a pass registered through `addPass()` without a name is not expressible
+ *   here, so `RenderEngine::plan()` reads it back with an empty name and `applyPlan` refuses that shape rather than
+ *   silently renaming or dropping the pass (see RenderEngine::plan).
  * - WHAT IT DOES NOT CARRY: measured facts (the record time of the last frame) and the engine's own
  *   bookkeeping (owner/role, the transient a compile resolved). Those belong to the compiled frame, which
  *   is a different value (`FramePlan`) - one describes what the frame SHOULD be, the other what the engine

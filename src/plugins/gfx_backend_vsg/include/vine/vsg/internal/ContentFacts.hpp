@@ -73,6 +73,26 @@ VN_VSG_NS_BEGIN
 using LayoutDeclarations = std::unordered_map<core::VertexLayoutKey, std::uint32_t, core::VertexLayoutKeyHash>;
 
 /**
+ * @brief The declaration indexes one table publishes (see @ref ContentDeclarations).
+ *
+ * @details
+ * - ONE NAMED FIELD PER KIND, and that is the whole reason this type exists: the buffer and texture indexes have
+ *   the same C++ type (`address -> row count`), so an argument list let a caller swap them and compile - a table
+ *   whose buffers were asked as textures answers "not declared" for every entry, which retires GPU copies that
+ *   content still names. A designated initializer names the half it fills, so the mistake is not spellable.
+ * - A NULL FIELD IS "THIS TABLE PUBLISHES NO SUCH INDEX", which is what a hand-built table (a test, an alternative
+ *   provider) has. Consumers state what that means for them (see @ref ContentDeclarations::hasLayoutIndex).
+ * - BORROWED, NEVER OWNED: every pointer names one of the publishing table's own maps and stays valid until that
+ *   table's rows move, the same lifetime the spans beside `ContentFacts` have.
+ */
+struct ContentDeclarationIndexes {
+    const std::unordered_map<const void*, std::uint32_t>*   buffers{ nullptr };   // Geometry rows: buffers their streams read.
+    const std::unordered_map<const void*, std::uint32_t>*   textures{ nullptr };  // Material rows: maps their slots sample.
+    const std::unordered_map<std::uint64_t, std::uint32_t>* materials{ nullptr }; // Material rows: the identities they answer for.
+    const LayoutDeclarations*                               layouts{ nullptr };   // Geometry rows: the vertex layouts they feed.
+};
+
+/**
  * @brief What the live content still DECLARES, as an index a residency table can ask in O(1).
  *
  * @details
@@ -99,21 +119,12 @@ using LayoutDeclarations = std::unordered_map<core::VertexLayoutKey, std::uint32
 class ContentDeclarations {
   public:
     /**
-     * @brief Points at the store's declaration indexes.
+     * @brief Points at the indexes @p indexes names.
      *
-     * @param buffers   Address -> how many live geometry rows still name it (borrowed, never owned).
-     * @param textures  Address -> how many live material rows still sample it (borrowed, never owned).
-     * @param materials Handle bits -> how many live material rows still name that identity (borrowed, never owned).
-     * @param layouts   Layout -> how many live geometry rows still feed it (borrowed, never owned).
+     * @param indexes The table's own indexes (borrowed, never owned); an omitted kind answers "not declared".
      */
-    explicit ContentDeclarations(const std::unordered_map<const void*, std::uint32_t>*   buffers   = nullptr,
-                                 const std::unordered_map<const void*, std::uint32_t>*   textures  = nullptr,
-                                 const std::unordered_map<std::uint64_t, std::uint32_t>* materials = nullptr,
-                                 const LayoutDeclarations*                              layouts   = nullptr) noexcept
-      : buffers_(buffers)
-      , textures_(textures)
-      , materials_(materials)
-      , layouts_(layouts)
+    explicit ContentDeclarations(ContentDeclarationIndexes indexes = {}) noexcept
+      : indexes_(indexes)
     {}
 
     /**
@@ -129,7 +140,7 @@ class ContentDeclarations {
      */
     [[nodiscard]] bool declaresLayout(const core::VertexLayoutKey& layout) const noexcept
     {
-        return layouts_ != nullptr && layouts_->find(layout) != layouts_->end();
+        return indexes_.layouts != nullptr && indexes_.layouts->find(layout) != indexes_.layouts->end();
     }
 
     /**
@@ -145,7 +156,7 @@ class ContentDeclarations {
      */
     [[nodiscard]] bool hasLayoutIndex() const noexcept
     {
-        return layouts_ != nullptr;
+        return indexes_.layouts != nullptr;
     }
 
     /**
@@ -156,7 +167,7 @@ class ContentDeclarations {
      */
     [[nodiscard]] bool declaresBuffer(const void* address) const noexcept
     {
-        return address != nullptr && buffers_ != nullptr && buffers_->find(address) != buffers_->end();
+        return address != nullptr && indexes_.buffers != nullptr && indexes_.buffers->find(address) != indexes_.buffers->end();
     }
 
     /**
@@ -167,7 +178,7 @@ class ContentDeclarations {
      */
     [[nodiscard]] bool declaresTexture(const void* address) const noexcept
     {
-        return address != nullptr && textures_ != nullptr && textures_->find(address) != textures_->end();
+        return address != nullptr && indexes_.textures != nullptr && indexes_.textures->find(address) != indexes_.textures->end();
     }
 
     /**
@@ -186,14 +197,11 @@ class ContentDeclarations {
      */
     [[nodiscard]] bool declaresMaterial(vn::graphics::MaterialId material) const noexcept
     {
-        return materials_ != nullptr && materials_->find(material.handle().bits()) != materials_->end();
+        return indexes_.materials != nullptr && indexes_.materials->find(material.handle().bits()) != indexes_.materials->end();
     }
 
   private:
-    const std::unordered_map<const void*, std::uint32_t>*   buffers_{ nullptr };
-    const std::unordered_map<const void*, std::uint32_t>*   textures_{ nullptr };
-    const std::unordered_map<std::uint64_t, std::uint32_t>* materials_{ nullptr };
-    const LayoutDeclarations*                               layouts_{ nullptr };
+    ContentDeclarationIndexes indexes_{}; // The publishing table's own indexes (see the type's note).
 };
 
 /** @brief One vertex channel of a geometry: what the stream is shared by, and where its bytes live.

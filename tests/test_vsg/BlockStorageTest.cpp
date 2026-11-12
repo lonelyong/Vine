@@ -519,7 +519,8 @@ TEST(BlockStorageTest, AMaterialRefusalAsksForTheWholeFramesNeed)
     std::unordered_map<const void*, std::uint32_t>   textures;
     std::unordered_map<std::uint64_t, std::uint32_t> materials;
     materials.emplace(b.handle().bits(), 1U);
-    const vn::vsg::ContentDeclarations declarations{ &buffers, &textures, &materials };
+    const vn::vsg::ContentDeclarations declarations{
+        vn::vsg::ContentDeclarationIndexes{ .buffers = &buffers, .textures = &textures, .materials = &materials } };
     EXPECT_EQ(fixture.storage->retireUnpinnedMaterials(declarations), 1U);
     const auto fitted = fixture.storage->writeMaterial(c, 1, blockOf(64, 0x30));
     EXPECT_TRUE(fitted.valid);
@@ -555,7 +556,8 @@ TEST(BlockStorageTest, AMaterialSlotIsReturnedOnceNoLiveRowDeclaresIt)
     std::unordered_map<const void*, std::uint32_t>   textures;
     std::unordered_map<std::uint64_t, std::uint32_t> materials;
     materials.emplace(a.handle().bits(), 1U);
-    const vn::vsg::ContentDeclarations declarations{ &buffers, &textures, &materials };
+    const vn::vsg::ContentDeclarations declarations{
+        vn::vsg::ContentDeclarationIndexes{ .buffers = &buffers, .textures = &textures, .materials = &materials } };
     EXPECT_EQ(fixture.storage->retireUnpinnedMaterials(declarations), 1U);
     EXPECT_EQ(fixture.storage->liveMaterials(), 1U);
     const vn::graphics::ResidencyRow row = fixture.storage->materialResidency();

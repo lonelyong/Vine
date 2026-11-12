@@ -39,6 +39,7 @@ using vn::graphics::backend::FrameTimeline;
 using vn::graphics::backend::RetirementQueue;
 using vn::graphics::backend::StreamKey;
 using vn::graphics::backend::StreamKind;
+using vn::vsg::ContentDeclarationIndexes;
 using vn::vsg::ContentDeclarations;
 using vn::vsg::ContentFacts;
 using vn::vsg::StreamUploads;
@@ -96,7 +97,7 @@ class Declarations {
     [[nodiscard]] ContentFacts facts() const
     {
         ContentFacts out;
-        out.declarations = ContentDeclarations{ &buffers_ };
+        out.declarations = ContentDeclarations{ ContentDeclarationIndexes{ .buffers = &buffers_ } };
         return out;
     }
 

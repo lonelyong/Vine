@@ -635,7 +635,10 @@ struct ContentStore::Data {
         // The declaration indexes travel WITH the rows (see ContentDeclarations): a residency table asks them
         // instead of walking the rows, so its per-frame cost does not follow the size of the content.
         tables.declarations   =
-            ContentDeclarations{ &geometry.declaredBuffers(), &material.declaredTextures(), &material.declaredMaterials(), &geometry.declaredLayouts() };
+            ContentDeclarations{ ContentDeclarationIndexes{ .buffers   = &geometry.declaredBuffers(),
+                                                            .textures  = &material.declaredTextures(),
+                                                            .materials = &material.declaredMaterials(),
+                                                            .layouts   = &geometry.declaredLayouts() } };
         return tables;
     }
 
@@ -973,7 +976,10 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
     d->facts.geometry_order = d->geometry.order();
     d->facts.material_order = d->material.order();
     d->facts.declarations   =
-        ContentDeclarations{ &d->geometry.declaredBuffers(), &d->material.declaredTextures(), &d->material.declaredMaterials(), &d->geometry.declaredLayouts() };
+        ContentDeclarations{ ContentDeclarationIndexes{ .buffers   = &d->geometry.declaredBuffers(),
+                                                                 .textures  = &d->material.declaredTextures(),
+                                                                 .materials = &d->material.declaredMaterials(),
+                                                                 .layouts   = &d->geometry.declaredLayouts() } };
     return d->facts;
 }
 
