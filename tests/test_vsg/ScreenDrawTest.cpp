@@ -60,6 +60,7 @@
 #include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include "TestMaterialFacts.hpp"
+#include "TestProgramFacts.hpp"
 #include "TestStreamUploads.hpp"
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
@@ -199,8 +200,7 @@ class Fixture {
         if (pipelines == nullptr) {
             return false;
         }
-        program_identity = facts.program;
-        program_revision = facts.revision;
+        program_ref      = facts.program;
 
         recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
@@ -253,8 +253,7 @@ class Fixture {
 
         ContentDraw::ScreenDraw full_screen;
         full_screen.key.kind                  = DrawKind::Screen;
-        full_screen.key.program               = program_identity;
-        full_screen.key.revision              = program_revision;
+        full_screen.key.program               = program_ref;
         full_screen.key.compatibility.samples = 1U;
         full_screen.key.sampled_color_count   = source->colorAttachmentCount();
         full_screen.dynamic.depth             = vn::graphics::DepthMode::Disabled; // a composite on top
@@ -292,8 +291,7 @@ class Fixture {
         }
 
         ContentDraw::Draw draw;
-        draw.key.program                                             = &content_program;
-        draw.key.revision                                            = 1U;
+        draw.key.program                                             = vn::test::programRef(1, 1U);
         draw.key.vertex_layout.canonical_mask                        = 0x1U;
         draw.key.compatibility.samples                               = 1U;
         const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
@@ -384,8 +382,7 @@ class Fixture {
     std::unique_ptr<OffscreenTarget>               source;
     std::unique_ptr<OffscreenTarget>               destination;
     vn::intrusive_ptr<vn::graphics::ShaderProgram> program;
-    const void*                                    program_identity{ nullptr };
-    std::uint64_t                                  program_revision{ 0 };
+    vn::graphics::ContentRef                       program_ref{};
     std::unique_ptr<ContentPipeline>               pipelines;
     VariantPool                                    pool;
     std::unique_ptr<ContentDraw>                   recorder;
@@ -401,11 +398,9 @@ class Fixture {
     std::unique_ptr<StateRegistry>    content_registry;
 
     static int material_identity;
-    static int content_program;
 };
 
 int Fixture::material_identity = 0;
-int Fixture::content_program   = 0;
 
 } // namespace
 

@@ -34,19 +34,6 @@ enum class KeyFields : std::uint8_t
     Kind,     // Identity, revision and kind (the program table's full key).
 };
 
-/// @brief Compares two identities: `std::less` is the only comparison the language gives a TOTAL order for.
-[[nodiscard]] std::strong_ordering compareIdentity(const void* left, const void* right) noexcept
-{
-    const std::less<const void*> before;
-    if (before(left, right)) {
-        return std::strong_ordering::less;
-    }
-    if (before(right, left)) {
-        return std::strong_ordering::greater;
-    }
-    return std::strong_ordering::equal;
-}
-
 /// @brief Compares two content handles by their bits: the same total order a pointer identity has, without an address.
 [[nodiscard]] std::strong_ordering compareIdentity(vn::graphics::NodeId left, vn::graphics::NodeId right) noexcept
 {
@@ -59,24 +46,23 @@ enum class KeyFields : std::uint8_t
     return left.handle().bits() <=> right.handle().bits();
 }
 
-/// @brief The key @ref findProgram searches by: the identity, the revision and the drawing CALL.
+/// @brief The key @ref findProgram searches by: the identity (with its revision) and the drawing CALL.
 struct ProgramKey {
-    const void*    identity{ nullptr };
-    std::uint64_t  revision{ 0 };
-    core::DrawKind kind{ core::DrawKind::Content };
+    vn::graphics::ContentRef program{};
+    core::DrawKind           kind{ core::DrawKind::Content };
 };
 
 /// @brief Orders one program row against one program key, over the first @p fields of the key.
 [[nodiscard]] std::strong_ordering compareProgram(const ProgramFacts& row, const ProgramKey& key, KeyFields fields) noexcept
 {
-    if (const std::strong_ordering identity = compareIdentity(row.program, key.identity); identity != std::strong_ordering::equal) {
+    if (const std::strong_ordering identity = row.program.id.bits() <=> key.program.id.bits(); identity != std::strong_ordering::equal) {
         return identity;
     }
     if (fields == KeyFields::Identity) {
         return std::strong_ordering::equal;
     }
-    if (row.revision != key.revision) {
-        return row.revision <=> key.revision;
+    if (row.program.revision != key.program.revision) {
+        return row.program.revision <=> key.program.revision;
     }
     if (fields == KeyFields::Revision) {
         return std::strong_ordering::equal;
@@ -179,7 +165,7 @@ void orderProgramRows(std::span<const ProgramFacts> rows, std::vector<std::uint3
     // with (see findProgram).
     std::stable_sort(order.begin(), order.end(), [rows](std::uint32_t left, std::uint32_t right) {
         const ProgramFacts& row = rows[right];
-        const ProgramKey    key{ row.program, row.revision, row.kind };
+        const ProgramKey    key{ row.program, row.kind };
         return compareProgram(rows[left], key, KeyFields::Kind) < 0;
     });
 }
@@ -242,9 +228,9 @@ bool blockFitsAbi(const MaterialFacts& facts) noexcept
     return facts.block.size() == sizeof(vn::graphics::VineMaterialBlock);
 }
 
-FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const core::ProgramRef& program, const ProgramVariant& variant, core::DrawKind kind) noexcept
+FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const vn::graphics::ContentRef& program, const ProgramVariant& variant, core::DrawKind kind) noexcept
 {
-    if (program.program == nullptr) {
+    if (program.isNull()) {
         // "No program of its own" is resolved to the frame's default by the compiler, so a null identity
         // reaching this lookup means the caller asked about a command that has no program AT ALL - which is
         // content the host did not shade, not content this table could answer for.
@@ -256,7 +242,7 @@ FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const core::Prog
     // entry, and the two PREFIXES of that key are the runs "this revision" and "this identity" - which is
     // exactly how the scan classifies what it did not find, so the two spellings cannot disagree.
     if (searchable(facts.programs.size(), facts.program_order)) {
-        const ProgramKey key{ program.program, program.revision, kind };
+        const ProgramKey key{ program, kind };
         const auto       searched = runOf(facts.programs, facts.program_order, key, KeyFields::Kind, compareProgram);
         for (std::size_t position = searched.first; position < searched.second; ++position) {
             const ProgramFacts& row = facts.programs[facts.program_order[position]];
@@ -278,11 +264,11 @@ FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const core::Prog
     bool identity_known = false;
     bool revision_known = false;
     for (const ProgramFacts& entry : facts.programs) {
-        if (entry.program != program.program) {
+        if (entry.program.id != program.id) {
             continue;
         }
         identity_known = true;
-        if (entry.revision != program.revision) {
+        if (entry.program.revision != program.revision) {
             continue;
         }
         revision_known = true;
@@ -298,6 +284,16 @@ FactResult<ProgramFacts> findProgram(const ContentFacts& facts, const core::Prog
         return { nullptr, FactMiss::Unknown };
     }
     return { nullptr, identity_known ? FactMiss::Revision : FactMiss::Unknown };
+}
+
+std::string_view programName(const ContentFacts& facts, vn::graphics::ProgramId program) noexcept
+{
+    for (const ProgramNameFacts& name : facts.program_names) {
+        if (name.program == program) {
+            return name.name;
+        }
+    }
+    return {};
 }
 
 FactResult<GeometryFacts> findGeometry(const ContentFacts& facts, vn::graphics::NodeId geometry, std::uint64_t revision) noexcept

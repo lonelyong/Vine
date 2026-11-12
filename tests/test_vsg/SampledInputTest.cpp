@@ -64,6 +64,7 @@
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
 #include "TestMaterialFacts.hpp"
+#include "TestProgramFacts.hpp"
 
 using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;
@@ -325,8 +326,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
         ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
-                                  program.get(),
-                                  program_facts.revision,
+                                  vn::test::programRef(*program),
                                   geometry_facts.layout,
                                   pipelines.get(),
                                   &draws }
@@ -530,7 +530,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     // full-screen ABI's (set 0) over the same images the content path would have bound at set 1.
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Screen, screen_program.get(), screen_facts.revision, {}, screen_pipelines.get(), &screen_draws }
+        ContentPass::Scope::Entry{ DrawKind::Screen, vn::test::programRef(*screen_program), {}, screen_pipelines.get(), &screen_draws }
     };
     ContentPass::Scope scope;
     scope.entries  = halves;
@@ -804,8 +804,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
 
     const ContentPass::Scope::Entry shadow_halves[]{
         ContentPass::Scope::Entry{ DrawKind::Content,
-                                  shadow_program.get(),
-                                  shadow_facts.revision,
+                                  vn::test::programRef(*shadow_program),
                                   shadow_geometry_facts.layout,
                                   shadow_pipelines.get(),
                                   &shadow_draws }
@@ -819,8 +818,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
 
     const ContentPass::Scope::Entry sampling_halves[]{
         ContentPass::Scope::Entry{ DrawKind::Content,
-                                  sampling_program.get(),
-                                  sampling_facts.revision,
+                                  vn::test::programRef(*sampling_program),
                                   sampling_geometry_facts.layout,
                                   sampling_pipelines.get(),
                                   &sampling_draws }

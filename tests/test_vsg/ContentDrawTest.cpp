@@ -50,6 +50,8 @@
 #include <vine/vsg/internal/StateCommands.hpp>
 #include <vine/vsg/support/VsgDynamicState.hpp>
 
+#include "TestProgramFacts.hpp"
+
 using vn::graphics::backend::DynamicState;
 using vn::graphics::backend::PipelineKey;
 using vn::graphics::backend::StateRegistry;
@@ -106,10 +108,8 @@ class Fixture {
     /** @brief A draw of one triangle, at a known identity and state. */
     ContentDraw::Draw draw(std::uint64_t revision = 1U) const
     {
-        static int        program = 0;
         ContentDraw::Draw result;
-        result.key.program                      = &program;
-        result.key.revision                     = revision;
+        result.key.program                      = vn::test::programRef(1, revision);
         result.key.vertex_layout.canonical_mask = 0x1U;
         result.key.compatibility.samples        = 1U;
         block_binds[0]                          = blocks();
@@ -441,10 +441,8 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     ASSERT_NE(set, nullptr);
 
     ContentDraw::ScreenDraw draw;
-    static int              program = 0;
     draw.key.kind                   = vn::graphics::backend::DrawKind::Screen;
-    draw.key.program                = &program;
-    draw.key.revision               = 1U;
+    draw.key.program                = vn::test::programRef(1, 1U);
     draw.key.compatibility.samples  = 1U;
     draw.key.sampled_color_count    = 2U;
     draw.samplers                   = ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines->layoutFor(2U, 0U), 0U, set);

@@ -45,6 +45,8 @@
 #include <vine/vsg/internal/ContentSources.hpp>
 #include <vine/vsg/internal/ProgramAbi.hpp>
 
+#include "TestProgramFacts.hpp"
+
 using vn::graphics::backend::DynamicState;
 using vn::graphics::backend::PipelineKey;
 using vn::graphics::backend::StateRegistry;
@@ -85,10 +87,8 @@ ContentPipeline::VertexAttribute positionAttribute()
 /// @brief An identity with all identity-layer inputs filled in.
 PipelineKey contentKey(std::uint64_t revision)
 {
-    static int  program = 0;
     PipelineKey key;
-    key.program                      = &program;
-    key.revision                     = revision;
+    key.program                      = vn::test::programRef(1, revision);
     key.vertex_layout.canonical_mask = 0x1U;
     key.compatibility.samples        = 1U;
     return key;
@@ -182,11 +182,9 @@ std::unique_ptr<ContentPipeline> screenLayer(const ContentPipeline::Shaders& sha
 /// @brief An identity of the full-screen kind (kind = Screen: the other descriptor ABI).
 PipelineKey screenKey(std::uint64_t revision, std::uint32_t sampled_colors = 1U)
 {
-    static int  program = 0;
     PipelineKey key;
     key.kind                  = vn::graphics::backend::DrawKind::Screen;
-    key.program               = &program;
-    key.revision              = revision;
+    key.program               = vn::test::programRef(1, revision);
     key.compatibility.samples = 1U;
     key.sampled_color_count   = sampled_colors;
     return key;

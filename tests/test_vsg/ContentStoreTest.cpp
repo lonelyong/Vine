@@ -22,6 +22,7 @@
 #include <vine/vsg/internal/StreamUploads.hpp>
 
 #include "TestGeometryBuilders.hpp"
+#include "TestProgramFacts.hpp"
 
 using vn::graphics::Geometry;
 using vn::graphics::Material;
@@ -35,7 +36,6 @@ using vn::graphics::backend::CompiledFrame;
 using vn::graphics::backend::CompiledPass;
 using vn::graphics::backend::DrawKind;
 using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::ProgramRef;
 using vn::graphics::backend::RetirementQueue;
 using vn::test::setPrimitiveIndices;
 using vn::vsg::ContentFacts;
@@ -46,6 +46,7 @@ using vn::vsg::findMaterial;
 using vn::vsg::findProgram;
 using vn::vsg::GeometryFacts;
 using vn::vsg::MaterialFacts;
+using vn::vsg::programName;
 using vn::vsg::ProgramVariant;
 using vn::vsg::StreamUploads;
 
@@ -189,18 +190,18 @@ struct Plan {
 };
 
 /// @brief A content command naming @p geometry (at @p geometry_revision), @p program and @p material.
-CompiledCommand command(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const void* program, vn::graphics::ContentRef material)
+CompiledCommand command(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const ShaderProgram* program, vn::graphics::ContentRef material)
 {
     CompiledCommand out;
     out.geometry          = geometry;
     out.geometry_revision = geometry_revision;
-    out.program           = ProgramRef{ program, 0U };
+    out.program           = program != nullptr ? vn::test::programRef(*program) : vn::graphics::ContentRef{};
     out.material          = material;
     return out;
 }
 
 /** @brief The same command naming a material by the OBJECT a case holds: the plan carries the id and the revision. */
-CompiledCommand command(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const void* program, const vn::graphics::MaterialBase* material)
+CompiledCommand command(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const ShaderProgram* program, const vn::graphics::MaterialBase* material)
 {
     const vn::graphics::ContentRef ref =
         material != nullptr ? vn::graphics::ContentRef{ material->id().handle(), material->revision() } : vn::graphics::ContentRef{};
@@ -208,7 +209,7 @@ CompiledCommand command(vn::graphics::NodeId geometry, std::uint64_t geometry_re
 }
 
 /** @brief The same command named by the OBJECT a case holds: a plan carries a handle, so the object converts to its id. */
-CompiledCommand command(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const void* program, const vn::graphics::MaterialBase* material)
+CompiledCommand command(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, const vn::graphics::MaterialBase* material)
 {
     return command(geometry != nullptr ? geometry->id() : vn::graphics::NodeId{}, geometry_revision, program, material);
 }
@@ -229,7 +230,7 @@ std::unique_ptr<Plan> contentPlan(std::vector<CompiledCommand> commands, const S
     plan->passes.push_back(pass);
     plan->frame.passes = plan->passes;
     if (program != nullptr) {
-        plan->frame.default_program = ProgramRef{ program, 0U };
+        plan->frame.default_program = vn::test::programRef(*program);
     }
     return plan;
 }
@@ -241,7 +242,7 @@ std::unique_ptr<Plan> screenPlan(const ShaderProgram* program)
 
     CompiledDraw draw;
     draw.kind    = DrawKind::Screen;
-    draw.program = ProgramRef{ program, 0U };
+    draw.program = vn::test::programRef(*program);
     plan->draws.push_back(draw);
 
     CompiledPass pass;
@@ -285,7 +286,7 @@ TEST(ContentStoreTest, ThePlanDecidesWhatIsBuilt)
     EXPECT_EQ(store.builds(), 3U);
 
     EXPECT_TRUE(findGeometry(facts, named->id(), named->revision()).found());
-    EXPECT_TRUE(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content).found());
+    EXPECT_TRUE(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Content).found());
     EXPECT_TRUE(findMaterial(facts, material.get()).found());
 
     // A second frame naming the other three builds the other three, and nothing else.
@@ -350,7 +351,7 @@ TEST(ContentStoreTest, ThePublishedTablesCarryTheirRowOrder)
     ASSERT_FALSE(facts.program_order.empty()) << "one program was described, so its table has a row";
 
     // And the order is the one the lookups search, so the recording's own three questions answer through it.
-    const auto found_program  = findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content);
+    const auto found_program  = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Content);
     const auto found_geometry = findGeometry(facts, geometry->id(), geometry->revision());
     const auto found_material = findMaterial(facts, material.get());
     EXPECT_TRUE(found_program.entry != nullptr);
@@ -626,8 +627,8 @@ TEST(ContentStoreTest, AProgramIsOneEntryPerVariant)
     textured_variant.textured = true;
     const ProgramVariant plain_variant;
 
-    const auto textured_entry = findProgram(facts, ProgramRef{ program.get(), program->revision() }, textured_variant, DrawKind::Content);
-    const auto plain_entry    = findProgram(facts, ProgramRef{ program.get(), program->revision() }, plain_variant, DrawKind::Content);
+    const auto textured_entry = findProgram(facts, vn::test::programRef(*program), textured_variant, DrawKind::Content);
+    const auto plain_entry    = findProgram(facts, vn::test::programRef(*program), plain_variant, DrawKind::Content);
     ASSERT_TRUE(textured_entry.found());
     ASSERT_TRUE(plain_entry.found());
     EXPECT_EQ(textured_entry.entry->abi.bindings.size(), plain_entry.entry->abi.bindings.size() + 1U) << "the sampler is what the material's texture adds";
@@ -653,13 +654,35 @@ TEST(ContentStoreTest, AScreenProgramGetsTheEnginesOwnVertexStage)
     ASSERT_EQ(store.programEntries(), 1U);
     // Asked for as the call it was described FOR: this program's entry answers the full-screen ABI (see
     // ProgramFacts::kind), and asking for the content one is a miss rather than the other build.
-    const auto entry = findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Screen);
+    const auto entry = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Screen);
     ASSERT_TRUE(entry.found());
     EXPECT_EQ(entry.entry->kind, DrawKind::Screen);
     EXPECT_NE(entry.entry->shaders.vertex.find("gl_VertexIndex"), std::string::npos)
         << "the full-screen ABI's vertex stage is the engine's triangle, not the host's";
-    EXPECT_FALSE(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content).found())
+    EXPECT_FALSE(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Content).found())
         << "a program only ever described as a screen call has no content entry";
+}
+
+TEST(ContentStoreTest, AProgramThatCannotBeDescribedStillHasItsName)
+{
+    ContentStore                     store;
+    vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    program->setName(u8"broken");
+    ShaderStage fragment;
+    fragment.type = ShaderStageType::Fragment; // empty source: not a program
+    program->addStage(fragment);
+    store.track(program);
+
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+
+    const auto          plan  = screenPlan(program.get());
+    const ContentFacts& facts = store.tablesFor(plan->frame, timeline, retirement);
+
+    // No row: a program that is not one content pipeline is refused, and the recorder reports the miss...
+    EXPECT_FALSE(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Screen).found());
+    // ... and the sentence can still say WHICH program, because the name is recorded when the identity is described.
+    EXPECT_EQ(programName(facts, program->id()), std::string_view("broken"));
 }
 
 TEST(ContentStoreTest, AnUntrackedObjectIsSimplyAbsent)
@@ -683,7 +706,7 @@ TEST(ContentStoreTest, AnUntrackedObjectIsSimplyAbsent)
     EXPECT_EQ(store.materialEntries(), 0U);
     EXPECT_EQ(store.builds(), 0U);
     EXPECT_EQ(findGeometry(facts, geometry->id(), geometry->revision()).miss, FactMiss::Unknown);
-    EXPECT_EQ(findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
+    EXPECT_EQ(findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
     EXPECT_EQ(findMaterial(facts, material.get()).miss, FactMiss::Unknown);
 }
 
@@ -973,8 +996,8 @@ TEST(ContentStoreTest, OneProgramDescribedAsBothKindsIsNeverServedForTheOther)
     const ContentFacts& facts       = store.tablesFor(screen_plan->frame, timeline, retirement);
 
     ASSERT_EQ(store.programEntries(), 2U) << "one text, two entries: the two calls are different ABIs";
-    const auto content = findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Content);
-    const auto screen  = findProgram(facts, ProgramRef{ program.get(), program->revision() }, ProgramVariant{}, DrawKind::Screen);
+    const auto content = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Content);
+    const auto screen  = findProgram(facts, vn::test::programRef(*program), ProgramVariant{}, DrawKind::Screen);
     ASSERT_TRUE(content.found());
     ASSERT_TRUE(screen.found());
     EXPECT_NE(content.entry, screen.entry) << "each call gets its own entry";

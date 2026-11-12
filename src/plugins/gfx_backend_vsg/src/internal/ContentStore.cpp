@@ -257,8 +257,13 @@ struct ContentStore::Data {
     // so the value a row was built from cannot die under the table, and the identity is the address the content side
     // names (a node's), so an edit re-uses the entry instead of creating a second one.
     std::unordered_map<vn::graphics::NodeId, LiveGeometry>              geometries;
-    std::unordered_map<const vn::graphics::ShaderProgram*, LiveProgram> programs;
+    std::unordered_map<vn::graphics::ProgramId, LiveProgram>            programs;
     std::unordered_map<vn::graphics::MaterialId, LiveMaterial>          materials;
+
+    /// Program identity -> the name its description saw (see ProgramNameFacts): the tables answer it separately
+    /// from `program` because a program whose text cannot be described still has a name, and that is exactly the
+    /// case whose sentence needs one. One entry per identity: a name does not move with the revision.
+    std::vector<ProgramNameFacts> program_names;
 
     /** @brief Cancels a pending release because the object is being used again.
      *
@@ -279,9 +284,6 @@ struct ContentStore::Data {
 
     ContentFacts  facts{};
     std::uint64_t builds{ 0 };
-    /// Raised for every program row appended: what tells two descriptions of one address apart (see
-    /// ProgramFacts::generation - the compiled halves key on it).
-    std::uint64_t descriptions{ 0 };
     std::size_t   retained{ 0 };
 
     /**
@@ -299,6 +301,7 @@ struct ContentStore::Data {
         tables.programs       = program.rows();
         tables.geometries     = geometry.rows();
         tables.materials      = material.rows();
+        tables.program_names  = program_names;
         tables.program_order  = program.order();
         tables.geometry_order = geometry.order();
         tables.material_order = material.order();
@@ -321,15 +324,32 @@ struct ContentStore::Data {
     }
 
     /** @brief Removes the program rows of one identity at one revision (a parked supersession). */
-    void eraseProgramRows(const void* identity, std::uint64_t revision) noexcept
+    void eraseProgramRows(vn::graphics::ProgramId identity, std::uint64_t revision) noexcept
     {
-        program.eraseIf([identity, revision](const ProgramFacts& row) { return row.program == identity && row.revision == revision; });
+        program.eraseIf([identity, revision](const ProgramFacts& row) {
+            return row.program.as<vn::graphics::ProgramTag>() == identity && row.program.revision == revision;
+        });
     }
 
-    /** @brief Removes every program row of one identity (an abandoned object's rows). */
-    void eraseProgramOf(const void* identity) noexcept
+    /** @brief Removes every program row of one identity (an abandoned object's rows, and its name). */
+    void eraseProgramOf(vn::graphics::ProgramId identity) noexcept
     {
-        program.eraseIf([identity](const ProgramFacts& row) { return row.program == identity; });
+        program.eraseIf(
+            [identity](const ProgramFacts& row) { return row.program.as<vn::graphics::ProgramTag>() == identity; });
+        std::erase_if(program_names,
+                      [identity](const ProgramNameFacts& name) { return name.program == identity; });
+    }
+
+    /** @brief Records the name a description saw (see ProgramNameFacts): one entry per identity, updated in place. */
+    void recordProgramName(vn::graphics::ProgramId identity, const vn::String& name)
+    {
+        for (ProgramNameFacts& entry : program_names) {
+            if (entry.program == identity) {
+                entry.name = name.as_std_str();
+                return;
+            }
+        }
+        program_names.push_back(ProgramNameFacts{ identity, name.as_std_str() });
     }
 
     /** @brief Removes the material rows of one identity at one revision (a superseded value). */
@@ -429,7 +449,7 @@ void ContentStore::track(const vn::intrusive_ptr<vn::graphics::ShaderProgram>& p
     if (program == nullptr) {
         return;
     }
-    const auto [entry, inserted] = d->programs.try_emplace(program.get());
+    const auto [entry, inserted] = d->programs.try_emplace(program->id());
     if (inserted) {
         entry->second.object = program;
     }
@@ -503,7 +523,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
             if (draw.kind == core::DrawKind::Screen) {
                 // The full-screen ABI is the engine's and carries no variant: a screen program is one text
                 // (see api/ContentSources).
-                ensureProgram(static_cast<const vn::graphics::ShaderProgram*>(draw.program.program), ProgramVariant{}, true, timeline, retirement);
+                ensureProgram(draw.program.as<vn::graphics::ProgramTag>(), ProgramVariant{}, true, timeline, retirement);
                 continue;
             }
 
@@ -514,8 +534,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
                 ensureGeometry(identity, timeline, retirement);
                 ensureMaterial(command.material, timeline, retirement);
 
-                const auto* program = static_cast<const vn::graphics::ShaderProgram*>(command.program.program);
-                if (program == nullptr) {
+                if (command.program.isNull()) {
                     continue;
                 }
 
@@ -529,7 +548,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
                 }
                 ProgramVariant variant = variantOf(*live_material, *live_geometry);
                 variant.instanced      = command.instance_buffer != nullptr;
-                ensureProgram(program, variant, false, timeline, retirement);
+                ensureProgram(command.program.as<vn::graphics::ProgramTag>(), variant, false, timeline, retirement);
             }
         }
     }
@@ -537,6 +556,7 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
     d->facts.programs   = d->program.rows();
     d->facts.geometries = d->geometry.rows();
     d->facts.materials  = d->material.rows();
+    d->facts.program_names = d->program_names;
 
     // The tables are published WITH THEIR ROW ORDER, which is what turns the recording's lookups into
     // bisections instead of whole-table scans (see api/ContentFacts). Nothing is built here: each table owns
@@ -661,13 +681,13 @@ void ContentStore::ensureMaterial(vn::graphics::ContentRef material, core::Frame
     ++d->builds;
 }
 
-void ContentStore::ensureProgram(const vn::graphics::ShaderProgram* program,
-                                 const ProgramVariant&              variant,
-                                 bool                               screen,
-                                 core::FrameTimeline&               timeline,
-                                 core::RetirementQueue&             retirement)
+void ContentStore::ensureProgram(vn::graphics::ProgramId program,
+                                 const ProgramVariant&  variant,
+                                 bool                   screen,
+                                 core::FrameTimeline&   timeline,
+                                 core::RetirementQueue& retirement)
 {
-    if (program == nullptr) {
+    if (program.isNull()) {
         return;
     }
     const auto entry = d->programs.find(program);
@@ -677,7 +697,11 @@ void ContentStore::ensureProgram(const vn::graphics::ShaderProgram* program,
 
     Data::LiveProgram& live = entry->second;
     Data::markUsed(live); // ensured by a frame: a pending release is cancelled
-    const std::uint64_t revision = program->revision();
+    // THE TRACKED OBJECT IS WHAT THE ROW IS DESCRIBED FROM: the plan names the identity, and the values are the
+    // object's current ones - a build never resurrects a revision (see the class note), so the plan's revision
+    // is deliberately not used here.
+    const vn::graphics::ShaderProgram& source   = *live.object;
+    const std::uint64_t                revision = source.revision();
     if (live.described && live.described_revision == revision) {
         const bool built = screen ? live.screen_built : std::find(live.variants.begin(), live.variants.end(), variant.bits()) != live.variants.end();
         if (built) {
@@ -686,10 +710,10 @@ void ContentStore::ensureProgram(const vn::graphics::ShaderProgram* program,
     }
     else {
         if (live.described) {
-            const void* const         identity = program;
-            const std::uint64_t       retired  = live.described_revision;
-            const std::weak_ptr<Data> weak     = d;
-            const bool                parked   = retirement.retire(timeline, [weak, identity, retired]() {
+            const vn::graphics::ProgramId identity = program;
+            const std::uint64_t           retired  = live.described_revision;
+            const std::weak_ptr<Data>     weak     = d;
+            const bool                    parked   = retirement.retire(timeline, [weak, identity, retired]() {
                 if (const std::shared_ptr<Data> data = weak.lock()) {
                     data->eraseProgramRows(identity, retired);
                 }
@@ -704,10 +728,13 @@ void ContentStore::ensureProgram(const vn::graphics::ShaderProgram* program,
         // the tables until their park comes due.)
         live.variants.clear();
         live.screen_built = false;
+        // The NAME travels with the description, not with the row: a program whose text is refused still has a
+        // name, and the sentence that says so has no row to read it from (see ProgramNameFacts).
+        d->recordProgramName(program, source.name());
     }
 
     ProgramFacts   fresh;
-    const FactMiss miss = screen ? buildScreenProgramFacts(*program, fresh) : buildProgramFacts(*program, variant, fresh);
+    const FactMiss miss = screen ? buildScreenProgramFacts(source, fresh) : buildProgramFacts(source, variant, fresh);
     if (miss != FactMiss::None) {
         return; // a program that is not one content pipeline: no entry, and the recorder says so
     }
@@ -718,7 +745,6 @@ void ContentStore::ensureProgram(const vn::graphics::ShaderProgram* program,
     else {
         live.variants.push_back(variant.bits());
     }
-    fresh.generation = ++d->descriptions; // a new description: a later program row at this address cannot be mistaken for it
     d->program.append(fresh, {});
     ++d->builds;
 }
@@ -729,15 +755,11 @@ std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::
     std::size_t               released = 0U;
     released_materials.clear();
 
-    // THE SHARE GOES WITH THE PARK, for all three tables. A row is keyed by the object's ADDRESS, so the address
-    // must stay reserved for exactly as long as the row can be read: releasing it here would let the allocator
-    // hand the same address to a later geometry / program / material, and the park that runs afterwards erases
-    // rows BY IDENTITY - including the rows the new object just had described. Measured as the failure this fixes:
-    // a shading switch builds a fresh program at a just-freed address, its rows are erased by the old object's
-    // park at the end of that same frame, `ensureProgram` still believes the program is described, and the pass
-    // then has no compiled content half at all - so the whole pass (clear included) stops being drawn, for good,
-    // until another program object happens to land elsewhere. The parked release owns the object and drops it
-    // with the rows; a park that cannot be taken KEEPS the entry, never frees the address early.
+    // THE ENTRY AND ITS ROWS LEAVE TOGETHER, THROUGH THE PARK, for all three tables. Everything here is keyed by
+    // content IDENTITY (a handle, see ContentId.hpp), so an erased entry can never be confused with a later
+    // object - what the park buys is the frame in flight: for one retirement window the rows still answer for the
+    // identity a recorded plan named. A park that cannot be taken KEEPS the entry (memory, never correctness) and
+    // is retried on a later frame.
     for (auto it = d->geometries.begin(); it != d->geometries.end();) {
         // WHAT "NOBODY ELSE HOLDS IT" MEANS: the object (when the identity named one) is the content's; a shape with no
         // object came from a value producer, whose owner is the one that keeps it alive. Either way, a share besides the
@@ -751,7 +773,7 @@ std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::
         const vn::graphics::GeometryDescriptionPtr       held        = it->second.shape;
         const vn::intrusive_ptr<vn::graphics::Geometry>  object_held = it->second.object;
         const bool                                       parked      = retirement.retire(timeline, [weak, identity, held, object_held]() {
-            (void)held;        // the address stays reserved until this runs, and dies with the rows it guards
+            (void)held;        // the shape's share lives until this runs, and dies with the rows it guards
             (void)object_held; // and so does the object that names it
             if (const std::shared_ptr<Data> data = weak.lock()) {
                 data->eraseGeometryOf(identity);
@@ -771,7 +793,7 @@ std::size_t ContentStore::releaseAbandoned(core::FrameTimeline& timeline, core::
             ++it;
             continue;
         }
-        const void* const                                    identity = it->first;
+        const vn::graphics::ProgramId                        identity = it->first;
         const vn::intrusive_ptr<vn::graphics::ShaderProgram> held     = it->second.object;
         const bool                                           parked   = retirement.retire(timeline, [weak, identity, held]() {
             (void)held;
@@ -878,7 +900,8 @@ bool ContentStore::releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram>
     if (program == nullptr) {
         return false;
     }
-    const auto entry = d->programs.find(program);
+    const vn::graphics::ProgramId identity = program->id();
+    const auto                    entry    = d->programs.find(identity);
     if (entry == d->programs.end()) {
         return true;
     }
@@ -890,20 +913,20 @@ bool ContentStore::releaseProgram(vn::raw_ptr<const vn::graphics::ShaderProgram>
     const std::uint64_t token                                   = ++live.release_token;
     live.release_requested                                      = true;
     const std::weak_ptr<Data> weak                              = d;
-    // The address must stay reserved until the rows keyed by it are erased (see releaseAbandoned).
+    // The entry must stay until the park runs (see releaseAbandoned).
     const vn::intrusive_ptr<vn::graphics::ShaderProgram> held   = live.object;
-    const bool                                           parked = retirement.retire(timeline, [weak, program, token, held]() {
+    const bool                                           parked = retirement.retire(timeline, [weak, identity, token, held]() {
         (void)held;
         const std::shared_ptr<Data> data = weak.lock();
         if (data == nullptr) {
             return;
         }
-        const auto found = data->programs.find(program);
+        const auto found = data->programs.find(identity);
         if (found == data->programs.end() || !found->second.release_requested || found->second.release_token != token) {
             return;
         }
         data->programs.erase(found);
-        data->eraseProgramOf(program);
+        data->eraseProgramOf(identity);
     });
     if (!parked) {
         live.release_requested = false;
@@ -959,6 +982,7 @@ void ContentStore::clear()
     d->geometries.clear();
     d->programs.clear();
     d->materials.clear();
+    d->program_names.clear();
     d->geometry.clear();
     d->program.clear();
     d->material.clear();

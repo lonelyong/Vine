@@ -28,6 +28,8 @@
 #include <vine/vsg/internal/ContentFacts.hpp>
 #include <vine/vsg/internal/ContentSources.hpp>
 
+#include "TestProgramFacts.hpp"
+
 using vn::graphics::AlphaMode;
 using vn::graphics::Material;
 using vn::graphics::ShaderProgram;
@@ -71,8 +73,8 @@ TEST(ContentSourcesTest, AProgramBecomesItsTwoStagesAndTheirEntryPoint)
     ProgramFacts facts;
     ASSERT_EQ(buildProgramFacts(program, facts), FactMiss::None);
 
-    EXPECT_EQ(facts.program, &program);
-    EXPECT_EQ(facts.revision, revision);
+    EXPECT_EQ(facts.program, vn::test::programRef(program));
+    EXPECT_EQ(facts.program.revision, revision);
     EXPECT_EQ(facts.shaders.vertex, kVertexSource);
     EXPECT_EQ(facts.shaders.fragment, kFragmentSource);
     EXPECT_EQ(facts.shaders.entry, "render");
@@ -131,8 +133,8 @@ TEST(ContentSourcesTest, AScreenProgramsVertexStageIsTheEnginesAndTheHostsIsIgno
 
     ProgramFacts facts;
     ASSERT_EQ(buildScreenProgramFacts(screen, facts), FactMiss::None);
-    EXPECT_EQ(facts.program, &screen) << "the identity is the host's program, as the plan names it";
-    EXPECT_EQ(facts.revision, revision);
+    EXPECT_EQ(facts.program, vn::test::programRef(screen)) << "the identity is the host's program, as the plan names it";
+    EXPECT_EQ(facts.program.revision, revision);
     EXPECT_EQ(facts.shaders.fragment, kFragmentSource);
     EXPECT_FALSE(facts.shaders.vertex.empty()) << "the entry carries the engine's full-screen vertex stage";
     EXPECT_NE(facts.shaders.vertex.find("gl_VertexIndex"), std::string::npos) << "the engine's vertex stage generates its vertices from gl_VertexIndex";

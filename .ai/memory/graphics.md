@@ -41,7 +41,7 @@
 - 通道 = `BufferSlice<float>` + components。`setPositions` / `setNormals` / `setTexcoords2` / `setTexcoords3` 共享 buffer；arena 用 slice。
 - 实例流：每实例 16 个 float（列主序 mat4）；`visible_instances` 是 draw 参数，不重传；`VN_INSTANCED` 决定 binding 4 与顶点布局。
 - revision：**形状归几何**（`Geometry::setRevision` / `bumpRevision`），**字节归 buffer**（`Buffer::setRevision`）。上传缓存只认 buffer revision；几何 revision 只驱动事实行重建。
-- 身份：`vn::graphics::Handle`（gen24/domain8/index32）+ `ContentRef{id, revision}`，公开头是 `sdk/vine/graphics/ContentId.hpp`。`Node::id()` / `MaterialBase::id()` 在构造时分配、析构时释放；`Row::identity`、`RenderWorld::RowId`、delta、`RenderCommand::node`、`CompiledCommand::geometry`、`GeometryFacts::geometry`、材质表都按它键。**表按 `(id, revision)` 建行**，旧 revision 的行在停靠窗口内继续作答。地址不再是身份（`ADR-2026-11-11-content-identity-is-a-handle`）；`Buffer`/流上传/编译半边仍是地址 + `ADR-2026-11-09` 的“持有即身份”。
+- 身份：`vn::graphics::Handle`（gen24/domain8/index32）+ `ContentRef{id, revision}`，公开头是 `sdk/vine/graphics/ContentId.hpp`。`Node::id()` / `MaterialBase::id()` 在构造时分配、析构时释放；`Row::identity`、`RenderWorld::RowId`、delta、`RenderCommand::node`、`CompiledCommand::geometry`、`GeometryFacts::geometry`、材质表都按它键。**表按 `(id, revision)` 建行**，旧 revision 的行在停靠窗口内继续作答。地址不再是身份（`ADR-2026-11-11-content-identity-is-a-handle`）；`Buffer`/流上传仍是地址 + `ADR-2026-11-09` 的“持有即身份”（内容对象、计划、编译半边都已改 `ContentRef`）。
 - 拾取树：`Geometry::prepareBvh(draw, builder)` 默认 `pickTreeBuilder()`（`kPickTreeLeafSize = 64`），建出的树**已封存**（`Bvh::seal()`）——一把自叶容量 4 的 14M 三角形树从 1.36 GB 降到 88 MB。封存树的查询回调第二参数是叶盒，拾取本来就不用它。
 - 收集：`Scene::collectRenderCommands` 对每个 primitive 发一条命令，快照 world / state / material / program / instance；按 `drawOrder` 后不透明前向、透明后向排序。
 - 包围盒：`Geometry::localBounds` 缓存键 = positions buffer + 其 revision + 段 + 几何 revision；`subtreeBounds` 在节点自身坐标系；`Scene::boundingBox` 只算可见且命中层掩码的内容。
@@ -238,3 +238,20 @@
   计划行 `geometry`+`geometry_revision` 合并为 `ContentRef geometry`；然后 epoch 回收。
 - 这一步只改了内部 `SceneBake` / `SceneSnapshot` / `Scene::ensureRows` / `DrawListBake`；公开 API 未变。
   `Scene` 的缓存/epochs 全放在内部 `SceneBake`，避免改公开类布局（曾因临时加字段导致 test_vsg ABI 崩溃，已改回）。
+
+### 步骤 5（程序身份；2026-11-12）
+
+- `ShaderProgram::id()`（ctor 分配 / dtor 释放）。`ProgramRef` 类型删除：计划/记录（`CollectedCommand`、
+  `CollectedDraw`、`CollectedFrame::default_program`、`CompiledCommand`、`CompiledDraw`、`CompiledFrame`）、
+  `PipelineKey::program`、`Scope::Entry::program`、`ContentHalves::Key::program`、`ContentSets::Key::program`
+  全部是 `ContentRef`。
+- `ProgramFacts::program` 是 `ContentRef`（独立的 `revision` 与 `generation` 两个字段删除）；程序表按
+  `(ProgramId, revision, variant, kind)` 建行。`ContentStore` 的 live 表按 `ProgramId` 键；`ensureProgram`
+  从被 track 的对象取 revision（计划里的 revision 不参与建行，规则仍是“建行描述对象现在是什么”）。
+- 诊断：`ContentFacts::program_names`（每 identity 一条 `ProgramNameFacts`）+ `programName()`。原因：计划只带
+  句柄，而“文本被拒绝”的程序没有 `ProgramFacts` 行，`describeMissingContentHalf` 仍要能说出是哪个程序。
+- 测试：`test_graphics` 559 / `test_vsg` 538 全绿；`ContentHalvesTest.AnotherProgramIdentityIsAnotherHalf`
+  钉住“同文本、同 revision 的两个程序对象不共半边”（原来靠 `generation`，现在靠句柄）。
+- 下一步：计划行 `geometry` + `geometry_revision` 合并为 `ContentRef geometry`；然后 `markUsed`/parking 换
+  `ResidencyTable` epoch 回收。`ProgramFacts::generation` 删除后，`ADR-2026-11-09` 的“持有即身份”只剩上传表
+  （`Buffer`）一条。

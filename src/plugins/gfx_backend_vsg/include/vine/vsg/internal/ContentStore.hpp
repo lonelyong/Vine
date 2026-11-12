@@ -47,13 +47,12 @@
  * identity alone (a plan cannot name a material revision - see findMaterial): the table has to answer "the
  * material now", so an edit REPLACES the entry in place and only the replaced value is parked.
  *
- * WHY AN ENTRY OWNS ITS SHAPE. The store is keyed by the IDENTITY a plan names and cannot observe the content's
- * destruction, so an entry that merely referenced the description it answers with could outlive it - and a later
- * geometry allocated at the recycled address would be served the dead one's facts (wrong picture, silently). The store
- * therefore holds an owning reference to the shape per tracked identity, exactly like api/MaterialImages does for its
- * textures, and @ref releaseAbandoned drops what nobody else holds. A geometry's own cache holds its current
- * description (see Geometry::description), so "nobody else holds it" means the geometry is gone or the revision moved
- * - the two cases whose rows are dead.
+ * WHY AN ENTRY OWNS ITS CONTENT. The tables are keyed by the identity a plan names (a handle, see ContentId.hpp),
+ * and a row is built from the OBJECT the host tracks - so the store holds an owning reference per tracked identity,
+ * exactly like api/MaterialImages does for its textures. What that buys is the row's own home: `ensureProgram` reads
+ * the object to describe its next revision, and @ref releaseAbandoned drops what nobody else holds, so "nobody else
+ * holds it" means the object is gone - the case whose rows are dead. A geometry's own cache holds its current
+ * description (see Geometry::description) for the same reason.
  *
  * WHAT IT REFUSES TO DO. It reports nothing: an object it cannot describe (a geometry without positions, a
  * program that is not one content pipeline) simply gets no entry, and the recorder - which owns the
@@ -292,12 +291,18 @@ class ContentStore {
     /** @brief Ensures the tables answer for one named material (see tablesFor). */
     void ensureMaterial(vn::graphics::ContentRef material, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
-    /** @brief Ensures the tables answer for one named program IN ONE GEOMETRY-FREE KIND (see tablesFor). */
-    void ensureProgram(const vn::graphics::ShaderProgram* program,
-                       const ProgramVariant&              variant,
-                       bool                               screen,
-                       core::FrameTimeline&               timeline,
-                       core::RetirementQueue&             retirement);
+    /** @brief Ensures the tables answer for one named program IN ONE GEOMETRY-FREE KIND (see tablesFor).
+     *
+     * The plan names the program by its identity (see `ShaderProgram::id()`); the revision is NOT taken from
+     * the plan but read from the tracked object, so a build always describes the object AS IT IS NOW and a plan
+     * that named a superseded revision looks up a row that is gone - which is the designed miss, not something
+     * the store may paper over (see the class note).
+     */
+    void ensureProgram(vn::graphics::ProgramId    program,
+                       const ProgramVariant&      variant,
+                       bool                       screen,
+                       core::FrameTimeline&       timeline,
+                       core::RetirementQueue&     retirement);
 
     struct Data;
     // A shared Data rather than a unique one: a parked removal holds a WEAK reference to it, so a store

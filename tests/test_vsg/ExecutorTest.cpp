@@ -56,6 +56,7 @@
 
 #include "DevicePhases.hpp"
 #include "TestMaterialFacts.hpp"
+#include "TestProgramFacts.hpp"
 #include "TestStreamUploads.hpp"
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
@@ -253,9 +254,7 @@ struct Fixture {
         }
 
         ContentDraw::Draw draw;
-        static int        program                                    = 0;
-        draw.key.program                                             = &program;
-        draw.key.revision                                            = 1U;
+        draw.key.program                                             = vn::test::programRef(1, 1U);
         draw.key.vertex_layout.canonical_mask                        = 0x1U;
         draw.key.compatibility                                       = first->shape().compatibility();
         draw.key.sampled_color_count                                 = 0U;

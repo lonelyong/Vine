@@ -25,6 +25,7 @@
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
 #include "TestMaterialFacts.hpp"
+#include "TestProgramFacts.hpp"
 
 using vn::graphics::Geometry;
 using vn::graphics::Material;
@@ -37,7 +38,6 @@ using vn::graphics::backend::CompiledDraw;
 using vn::graphics::backend::CompiledPass;
 using vn::graphics::backend::DrawKind;
 using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::ProgramRef;
 using vn::graphics::backend::RetirementQueue;
 using vn::graphics::backend::VariantPool;
 using vn::test::setPrimitiveIndices;
@@ -164,24 +164,24 @@ CompiledPass passWith(std::span<const CompiledDraw> draws, std::uint32_t color_a
 }
 
 /// @brief A content command over @p geometry, @p program and @p material.
-CompiledCommand commandOf(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const void* program, std::uint64_t program_revision, vn::graphics::ContentRef material)
+CompiledCommand commandOf(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const ShaderProgram* program, std::uint64_t program_revision, vn::graphics::ContentRef material)
 {
     CompiledCommand out;
     out.geometry          = geometry;
     out.geometry_revision = geometry_revision;
-    out.program           = ProgramRef{ program, program_revision };
+    out.program           = program != nullptr ? vn::graphics::contentRefOf(program->id(), program_revision) : vn::graphics::ContentRef{};
     out.material          = material;
     return out;
 }
 
 /** @brief The same command named by the OBJECT a test holds: a plan carries a handle, so the object converts to its id. */
-CompiledCommand commandOf(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const void* program, std::uint64_t program_revision, vn::graphics::ContentRef material)
+CompiledCommand commandOf(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, std::uint64_t program_revision, vn::graphics::ContentRef material)
 {
     return commandOf(geometry != nullptr ? geometry->id() : vn::graphics::NodeId{}, geometry_revision, program, program_revision, material);
 }
 
 /** @brief The same command naming a material by the OBJECT a test holds: the plan carries the id and the revision. */
-CompiledCommand commandOf(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const void* program, std::uint64_t program_revision, const vn::graphics::MaterialBase* material)
+CompiledCommand commandOf(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const ShaderProgram* program, std::uint64_t program_revision, const vn::graphics::MaterialBase* material)
 {
     const vn::graphics::ContentRef ref =
         material != nullptr ? vn::graphics::ContentRef{ material->id().handle(), material->revision() } : vn::graphics::ContentRef{};
@@ -189,7 +189,7 @@ CompiledCommand commandOf(vn::graphics::NodeId geometry, std::uint64_t geometry_
 }
 
 /** @brief Both identities named by the OBJECTS a case holds - the shape most cases write. */
-CompiledCommand commandOf(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const void* program, std::uint64_t program_revision, const vn::graphics::MaterialBase* material)
+CompiledCommand commandOf(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, std::uint64_t program_revision, const vn::graphics::MaterialBase* material)
 {
     return commandOf(geometry != nullptr ? geometry->id() : vn::graphics::NodeId{}, geometry_revision, program, program_revision, material);
 }
@@ -237,8 +237,7 @@ TEST(ContentHalvesTest, OneHalfPerTupleThePassNames)
     EXPECT_EQ(halves.refused(), 0U);
 
     EXPECT_EQ(entries[0].kind, DrawKind::Content);
-    EXPECT_EQ(entries[0].program, program.get());
-    EXPECT_EQ(entries[0].revision, program->revision());
+    EXPECT_EQ(entries[0].program, vn::test::programRef(*program));
     EXPECT_EQ(entries[0].layout, geometry_facts.layout);
     EXPECT_EQ(entries[0].variant, ProgramVariant{});
     EXPECT_NE(entries[0].pipelines, nullptr) << "the half carries the compiled layer";
@@ -524,7 +523,7 @@ TEST(ContentHalvesTest, AScreenDrawGetsAFullScreenHalf)
 
     CompiledDraw screen_draw;
     screen_draw.kind    = DrawKind::Screen;
-    screen_draw.program = ProgramRef{ program.get(), program->revision() };
+    screen_draw.program = vn::test::programRef(*program);
     const std::vector<CompiledDraw> draws{ screen_draw };
     const CompiledPass              pass = passWith(draws);
 
@@ -690,21 +689,23 @@ TEST(ContentHalvesTest, ARefusedLayerIsNotRetriedEveryFrame)
     EXPECT_EQ(halves.refused(), 1U);
 }
 
-// 数据表的身份是**地址**，而行比对象活得久；一次换档恰好造一个新程序、丢一个旧程序，新对象很容易落到刚释放的同一个
-// 地址上，而且内置预设每次创建的 revision 都一样。所以"哪一次描述"必须进半边的键（ProgramFacts::generation），
-// 否则新程序会被喂上上一档编译出来的流水线（画面停在上一档，没有任何拒绝）。
-TEST(ContentHalvesTest, AnotherDescriptionOfOneIdentityIsAnotherHalf)
+// 两个程序即使文本与 revision 完全相同，也必须是两个半边：身份是句柄（ShaderProgram::id()），不是地址，也不是
+// revision。旧键是“地址 + revision”，因此需要一个 ProgramFacts::generation 来区分“同一地址上的另一次描述”；
+// 句柄在释放时移动 generation，这个补丁因此消失。
+TEST(ContentHalvesTest, AnotherProgramIdentityIsAnotherHalf)
 {
-    const auto program  = contentProgram();
-    const auto geometry = quad();
-    const auto shaded   = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
-
-    ProgramFacts program_facts;
-    ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, program_facts), FactMiss::None);
-    program_facts.generation = 1U; // the description this frame's row is
+    const auto first_program  = contentProgram();
+    const auto second_program = contentProgram(); // same text, same revision, a DIFFERENT identity
+    const auto geometry       = quad();
+    const auto shaded         = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     Tables tables;
-    tables.programs.push_back(program_facts);
+    for (const auto& program : { first_program, second_program }) {
+        ProgramFacts program_facts;
+        ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, program_facts), FactMiss::None);
+        tables.programs.push_back(program_facts);
+    }
+
     GeometryFacts geometry_facts;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()), FactMiss::None);
     tables.geometries.push_back(geometry_facts);
@@ -720,33 +721,41 @@ TEST(ContentHalvesTest, AnotherDescriptionOfOneIdentityIsAnotherHalf)
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
-    const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
-    const std::vector<CompiledDraw>    draws{
-        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+    const std::vector<CompiledCommand> first_commands{
+        commandOf(geometry.get(), geometry->revision(), first_program.get(), first_program->revision(), shaded.get())
     };
-    const CompiledPass pass = passWith(draws);
-
-    const auto first = halves.halvesFor(pass, tables.facts, timeline, retirement);
+    const std::vector<CompiledDraw> first_draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, first_commands }
+    };
+    const auto first = halves.halvesFor(passWith(first_draws), tables.facts, timeline, retirement);
     ASSERT_EQ(first.size(), 1U);
     const void* const first_layer = first[0].pipelines;
     ASSERT_NE(first_layer, nullptr);
     ASSERT_EQ(halves.builds(), 1U);
 
-    // The SAME address, the SAME revision - but a different description (the object at that address was replaced
-    // and described again). Its text is not the half's text, so the half must not answer for it.
-    tables.programs[0].generation = 2U;
-    const auto second             = halves.halvesFor(pass, tables.facts, timeline, retirement);
+    // A DIFFERENT program, at the same revision, drawing the same geometry with the same material: its half is
+    // its own, because the identity is part of the key.
+    const std::vector<CompiledCommand> second_commands{
+        commandOf(geometry.get(), geometry->revision(), second_program.get(), second_program->revision(), shaded.get())
+    };
+    const std::vector<CompiledDraw> second_draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, second_commands }
+    };
+    const auto second = halves.halvesFor(passWith(second_draws), tables.facts, timeline, retirement);
     ASSERT_EQ(second.size(), 1U);
-    EXPECT_NE(second[0].pipelines, first_layer) << "another description is another half";
+    const void* const second_layer = second[0].pipelines;
+    EXPECT_NE(second_layer, first_layer) << "another program identity is another half";
     EXPECT_EQ(halves.builds(), 2U);
-    EXPECT_EQ(retirement.pending(), 1U) << "the stale half is parked, not reused";
+    EXPECT_EQ(retirement.pending(), 0U) << "both programs are still answerable: nothing was parked";
 
-    // Steady again: the new description's half is served, and nothing is rebuilt.
+    // Steady again: each identity keeps its own half, and nothing is rebuilt.
     for (int frame = 0; frame < 3; ++frame) {
-        const auto again = halves.halvesFor(pass, tables.facts, timeline, retirement);
+        const auto again = halves.halvesFor(passWith(second_draws), tables.facts, timeline, retirement);
         ASSERT_EQ(again.size(), 1U);
-        EXPECT_EQ(again[0].pipelines, second[0].pipelines);
+        EXPECT_EQ(again[0].pipelines, second_layer);
     }
+    const auto first_again = halves.halvesFor(passWith(first_draws), tables.facts, timeline, retirement);
+    ASSERT_EQ(first_again.size(), 1U);
+    EXPECT_EQ(first_again[0].pipelines, first_layer) << "the first program's half is still the one it built";
     EXPECT_EQ(halves.builds(), 2U);
-    EXPECT_EQ(retirement.pending(), 1U) << "the stale half was parked once, not once per frame";
 }

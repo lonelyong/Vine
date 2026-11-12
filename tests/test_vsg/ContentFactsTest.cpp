@@ -18,8 +18,9 @@
 
 #include <vine/vsg/internal/ContentFacts.hpp>
 
+#include "TestProgramFacts.hpp"
+
 using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::ProgramRef;
 using vn::graphics::backend::StreamKind;
 using vn::vsg::blockFitsAbi;
 using vn::vsg::ChannelFacts;
@@ -128,28 +129,24 @@ struct Tables {
 
 TEST(ContentFactsTest, AProgramIsFoundByItsIdentityAndRevisionAndNothingElse)
 {
-    static int first     = 0;
-    static int second    = 0;
-    int        unrelated = 0;
-
     Tables tables;
-    tables.programs.push_back(ProgramFacts{ &first, 7U, {} });
-    tables.programs.push_back(ProgramFacts{ &second, 1U, {} });
+    tables.programs.push_back(ProgramFacts{ vn::test::programRef(1, 7U), {} });
+    tables.programs.push_back(ProgramFacts{ vn::test::programRef(2, 1U), {} });
     const ContentFacts facts = tables.view();
 
-    const auto found = findProgram(facts, ProgramRef{ &first, 7U }, ProgramVariant{}, DrawKind::Content);
+    const auto found = findProgram(facts, vn::test::programRef(1, 7U), ProgramVariant{}, DrawKind::Content);
     ASSERT_TRUE(found.found());
-    EXPECT_EQ(found.entry->program, &first);
+    EXPECT_EQ(found.entry->program, vn::test::programRef(1, 7U));
     EXPECT_EQ(found.miss, FactMiss::None);
 
     // The same identity at a different revision is NOT the same content: the plan describes a program that has
     // moved on, and recording the newer one would draw a picture the frame never asked for.
-    EXPECT_EQ(findProgram(facts, ProgramRef{ &first, 6U }, ProgramVariant{}, DrawKind::Content).miss, FactMiss::Revision);
-    EXPECT_FALSE(findProgram(facts, ProgramRef{ &first, 6U }, ProgramVariant{}, DrawKind::Content).found());
-    EXPECT_EQ(findProgram(facts, ProgramRef{ &first, 8U }, ProgramVariant{}, DrawKind::Content).miss, FactMiss::Revision);
+    EXPECT_EQ(findProgram(facts, vn::test::programRef(1, 6U), ProgramVariant{}, DrawKind::Content).miss, FactMiss::Revision);
+    EXPECT_FALSE(findProgram(facts, vn::test::programRef(1, 6U), ProgramVariant{}, DrawKind::Content).found());
+    EXPECT_EQ(findProgram(facts, vn::test::programRef(1, 8U), ProgramVariant{}, DrawKind::Content).miss, FactMiss::Revision);
 
-    EXPECT_EQ(findProgram(facts, ProgramRef{ nullptr, 7U }, ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
-    EXPECT_EQ(findProgram(facts, ProgramRef{ &unrelated, 7U }, ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
+    EXPECT_EQ(findProgram(facts, vn::graphics::ContentRef{}, ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
+    EXPECT_EQ(findProgram(facts, vn::test::programRef(3, 7U), ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
 }
 
 TEST(ContentFactsTest, AGeometryIsFoundByItsIdentityAndRevision)
@@ -240,8 +237,7 @@ TEST(ContentFactsTest, AnEmptyTableAnswersUnknownRatherThanGuessing)
 {
     const ContentFacts empty{};
 
-    int identity = 0;
-    EXPECT_EQ(findProgram(empty, ProgramRef{ &identity, 0U }, ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
+    EXPECT_EQ(findProgram(empty, vn::test::programRef(1, 0U), ProgramVariant{}, DrawKind::Content).miss, FactMiss::Unknown);
     EXPECT_EQ(findGeometry(empty, nodeId(1U), 0U).miss, FactMiss::Unknown);
     EXPECT_EQ(findMaterial(empty, materialRef(1U, 0U)).miss, FactMiss::Unknown);
 }

@@ -96,8 +96,7 @@ bool declaresShadowSampler(const ContentPipeline& layer, std::uint32_t set) noex
 struct ContentSets::Data {
     /** @brief What one set answers for (see the file note). */
     struct Key {
-        const void*                   program{ nullptr };
-        std::uint64_t                 revision{ 0 };
+        vn::graphics::ContentRef      program{};
         ProgramVariant                variant{};
         std::uint32_t                 set{ 0 };
         BlockDescriptors::ImageSource source{};
@@ -310,8 +309,8 @@ std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass
                 // The same tuple the recorder matches entries by (see api/ContentPass::recordCommand), the
                 // topology included: a half is compiled for one class of primitives, and the sets are built
                 // against the half the draw will actually go through.
-                if (candidate.kind == core::DrawKind::Content && candidate.program == command.program.program &&
-                    candidate.revision == command.program.revision && candidate.layout == geometry.entry->layout && candidate.variant == variant &&
+                if (candidate.kind == core::DrawKind::Content && candidate.program == command.program &&
+                    candidate.layout == geometry.entry->layout && candidate.variant == variant &&
                     candidate.topology == command.dynamic.topology)
                 {
                     entry = &candidate;
@@ -331,8 +330,7 @@ std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass
 
             for (const std::uint32_t set : entry->pipelines->declaredSets()) {
                 Data::Key key;
-                key.program  = command.program.program;
-                key.revision = command.program.revision;
+                key.program  = command.program;
                 key.variant  = variant;
                 key.set      = set;
                 // A set whose samplers are all pass-level does not depend on the drawable's images: tagging
@@ -351,16 +349,16 @@ std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass
         }
     }
 
-    // The sweep, exactly as api/ContentHalves does it: a set whose (program, revision, variant) the tables no
-    // longer answer can never be asked for again - a pass builds its keys from those same tables - so it is
-    // parked through the same window every other replaced object gets.
+    // The sweep, exactly as api/ContentHalves does it: a set whose (program identity, revision, variant) the
+    // tables no longer answer can never be asked for again - a pass builds its keys from those same tables - so
+    // it is parked through the same window every other replaced object gets.
     for (auto it = d->sets.begin(); it != d->sets.end();) {
         const std::shared_ptr<Data::Set> set = *it;
         const bool                       answerable =
             // The set's source program is asked for AS CONTENT: every set here belongs to a content half (a
             // full-screen call's set is the pass' own and never reaches this table - see this function's own
             // guard above), so the entry that keeps it alive is the content one (see ProgramFacts::kind).
-            findProgram(facts, core::ProgramRef{ set->key.program, set->key.revision }, set->key.variant, core::DrawKind::Content).found();
+            findProgram(facts, set->key.program, set->key.variant, core::DrawKind::Content).found();
         if (answerable) {
             ++it;
             continue;

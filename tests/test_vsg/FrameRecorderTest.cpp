@@ -35,6 +35,8 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/backend/FrameRecorder.hpp>
 
+#include "TestProgramFacts.hpp"
+
 using vn::graphics::CullMode;
 using vn::graphics::DepthMode;
 using vn::graphics::DiagnosticCategory;
@@ -217,7 +219,7 @@ TEST(FrameRecorderTest, EveryFactOfACommandReachesTheRecord)
     EXPECT_EQ(recorded.geometry_revision, 7U) << "the revision the plan keys the facts row on";
     EXPECT_EQ(recorded.primitive, 0U);
     EXPECT_EQ(recorded.topology, Topology::TriangleStrip) << "the primitive's assembly travels with the command";
-    EXPECT_EQ(recorded.program.program, static_cast<const void*>(program.get()));
+    EXPECT_EQ(recorded.program, vn::test::programRef(*program));
     EXPECT_EQ(recorded.material.as<vn::graphics::MaterialTag>(), material->id()) << "the plan names the material's id";
     EXPECT_EQ(recorded.material.revision, material->revision()) << "and the revision of the values it was published with";
     EXPECT_TRUE(recorded.model.isEqual(model, 1e-12)) << "the world matrix";
@@ -255,7 +257,7 @@ TEST(FrameRecorderTest, ThePassProgramOverrideIsResolvedWhenTheDrawIsRecorded)
     ASSERT_EQ(description.passes.size(), 1u);
     ASSERT_EQ(description.passes[0].draws.size(), 1u);
     ASSERT_EQ(description.passes[0].draws[0].commands.size(), 1u);
-    EXPECT_EQ(description.passes[0].draws[0].commands[0].program.program, override_program.get()) << "the recorded identity is the EFFECTIVE program";
+    EXPECT_EQ(description.passes[0].draws[0].commands[0].program, vn::test::programRef(*override_program)) << "the recorded identity is the EFFECTIVE program";
     EXPECT_EQ(commands[0].program, list_before) << "the host's list is never rewritten";
 }
 
@@ -659,11 +661,11 @@ TEST(FrameRecorderTest, TheDefaultProgramIsAFrameLevelFactTheCompilerResolves)
     EXPECT_TRUE(r.recorder.endPass());
 
     const CollectedFrame& description = r.seal();
-    EXPECT_EQ(description.default_program.program, program.get());
+    EXPECT_EQ(description.default_program, vn::test::programRef(*program));
     ASSERT_EQ(description.passes.size(), 1u);
     ASSERT_EQ(description.passes[0].draws.size(), 1u);
     ASSERT_EQ(description.passes[0].draws[0].commands.size(), 1u);
-    EXPECT_EQ(description.passes[0].draws[0].commands[0].program.program, nullptr);
+    EXPECT_TRUE(description.passes[0].draws[0].commands[0].program.isNull());
 
     // The revision travels with the identity: a program edited after the call is not the one recorded.
     const std::uint64_t before = program->revision();

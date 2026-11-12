@@ -10,6 +10,8 @@
 #include <vine/String.hpp>
 #include <vine/intrusive_ptr.hpp>
 
+#include "ContentId.hpp"
+
 VN_GRAPHICS_NS_BEGIN
 
 /**
@@ -55,6 +57,19 @@ class VN_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderPro
     ~ShaderProgram();
 
   public:
+    /** @brief Gets this program's identity.
+     *
+     * @details
+     * - ALLOCATED AT CONSTRUCTION, released with the object, so a table that outlived the program reads "gone"
+     *   instead of resolving to whatever is built at the same address next (see ContentId.hpp).
+     * - THE NAME IS NOT THE IDENTITY (see name()): two programs may share a name, and a rename keeps the identity.
+     * - A program edit (addStage / clearStages / replaceStages / setStage) keeps the identity and moves
+     *   `revision()`, so a frame in flight names the same program at the revision it recorded.
+     *
+     * @return The program id; never null for a constructed program.
+     */
+    [[nodiscard]] ProgramId id() const noexcept;
+
     /** @brief Gets the program name.
      *
      * @return The name (empty when never set).
@@ -133,6 +148,7 @@ class VN_GRAPHICS_API ShaderProgram : public Object, public RefCounted<ShaderPro
     const std::vector<ShaderStage>& stages() const;
 
   private:
+    ProgramId                id_;
     String                   name_;
     std::vector<ShaderStage> stages_;
     std::uint64_t            revision_ = 0;

@@ -297,7 +297,7 @@ ShadowFacts FrameCompiler::resolveShadow(std::span<const CompiledInput> inputs) 
     return {};
 }
 
-std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass& pass, const vn::graphics::Viewport& whole, const ProgramRef& default_program)
+std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass& pass, const vn::graphics::Viewport& whole, const vn::graphics::ContentRef& default_program)
 {
     const std::span<CompiledDraw> draws = arena_.makeArray<CompiledDraw>(pass.draws.size());
     for (std::size_t index = 0; index < pass.draws.size(); ++index) {
@@ -326,7 +326,7 @@ std::span<const CompiledDraw> FrameCompiler::resolveDraws(const CollectedPass& p
 }
 
 std::span<const CompiledCommand>
-FrameCompiler::resolveCommands(const CollectedDraw& source, const ProgramRef& default_program, const vn::graphics::PassRenderState& pass_state)
+FrameCompiler::resolveCommands(const CollectedDraw& source, const vn::graphics::ContentRef& default_program, const vn::graphics::PassRenderState& pass_state)
 {
     const std::span<CompiledCommand> commands = arena_.makeArray<CompiledCommand>(source.commands.size());
     for (std::size_t index = 0; index < source.commands.size(); ++index) {
@@ -362,7 +362,7 @@ FrameCompiler::resolveCommands(const CollectedDraw& source, const ProgramRef& de
 
         // A command that names no program of its own is shaded by the frame's default - resolved here so the
         // executor never has to ask "and what if it is null?" (see the design's D2 table).
-        out.program = command.program.program != nullptr ? command.program : default_program;
+        out.program = !command.program.isNull() ? command.program : default_program;
     }
     return commands;
 }

@@ -24,7 +24,7 @@ bool LoadOpVariantKey::operator==(const LoadOpVariantKey& other) const noexcept
 
 bool PipelineKey::operator==(const PipelineKey& other) const noexcept
 {
-    return kind == other.kind && program == other.program && revision == other.revision && vertex_layout == other.vertex_layout &&
+    return kind == other.kind && program == other.program && vertex_layout == other.vertex_layout &&
            compatibility == other.compatibility && depth_sampleable == other.depth_sampleable && sampled_color_count == other.sampled_color_count &&
            sampled_depth_count == other.sampled_depth_count && variant == other.variant && topology == other.topology;
 }
@@ -55,8 +55,8 @@ std::size_t PipelineKeyHash::operator()(const PipelineKey& key) const noexcept
     // The same combine the stream registry uses, over exactly the fields PipelineKey::operator== reads.
     std::size_t hash = 0;
     const auto  mix  = [&hash](std::uint64_t value) noexcept { hash ^= static_cast<std::size_t>(value) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2); };
-    mix(reinterpret_cast<std::uintptr_t>(key.program));
-    mix(key.revision);
+    mix(key.program.id.bits());
+    mix(key.program.revision);
     mix(static_cast<std::uint64_t>(key.kind));
     mix(key.vertex_layout.canonical_mask);
     for (const std::uint32_t location : key.vertex_layout.custom_locations) {
@@ -94,7 +94,7 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
             "load/store ops + initial/final layouts - one entry for the colour set and one for the depth - NOT "
             "pipeline identity: compatibility excludes them" },
          { "PipelineKey",
-            "program + revision + draw kind (content or full-screen) + vertex layout + compatibility + depth "
+            "program IDENTITY + revision + draw kind (content or full-screen) + vertex layout + compatibility + depth "
             "sampleability + sampled colour attachment count + sampled DEPTH count + the program VARIANT (the "
             "defines that change what its text means - see api/ProgramVariant) + the topology CLASS (a static "
             "topology may only be changed dynamically within its own class, so it is compiled in)" },

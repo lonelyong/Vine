@@ -174,10 +174,9 @@ class VN_VSG_API ContentPass {
     struct Scope {
         /** @brief One compiled half: one program's stages against one vertex layout, for ONE variant. */
         struct Entry {
-            core::DrawKind        kind{ core::DrawKind::Content }; // Which drawing call this half serves.
-            const void*           program{ nullptr };              // The program identity the plan names.
-            std::uint64_t         revision{ 0 };                   // The revision the stages were taken at.
-            core::VertexLayoutKey layout{};                        // The vertex layout its pipeline declares (content).
+            core::DrawKind          kind{ core::DrawKind::Content }; // Which drawing call this half serves.
+            vn::graphics::ContentRef program{};                     // The program identity AND revision the plan names.
+            core::VertexLayoutKey   layout{};                       // The vertex layout its pipeline declares (content).
             ContentPipeline*      pipelines{ nullptr };            // The pipeline layer over that stage text.
             ContentDraw*          draws{ nullptr };                // The recorder over those pipelines.
             /// The VARIANT this half was compiled for (see api/ProgramVariant). One program has several,

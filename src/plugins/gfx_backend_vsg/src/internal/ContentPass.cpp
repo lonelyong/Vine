@@ -132,19 +132,21 @@ std::string describeMissingContentHalf(const core::CompiledPass& pass, const Con
         ProgramVariant variant                 = variantOf(*material.entry, *geometry.entry);
         variant.instanced                      = command.instance_buffer != nullptr;
         const FactResult<ProgramFacts> program = findProgram(facts, command.program, variant, core::DrawKind::Content);
+        // The NAME comes from the tables, not from the plan: a plan carries the handle only, and a program whose
+        // text was refused has no `ProgramFacts` row to read a label from - which is why the store keeps a name
+        // per identity (see ProgramNameFacts).
+        const std::string_view named = programName(facts, command.program.as<vn::graphics::ProgramTag>());
         if (!program.found()) {
             std::string text = "the first command's program entry misses for variant " + variant.describe() + ": " + missText(program.miss);
-            if (const auto* named = static_cast<const vn::graphics::ShaderProgram*>(command.program.program); named != nullptr) {
-                text += " (program '" + named->name().as_std_str() + "', revision " + std::to_string(command.program.revision) + ")";
-            }
+            text += " (program '" + (named.empty() ? std::string("<none>") : std::string(named)) + "', revision " +
+                    std::to_string(command.program.revision) + ")";
             return text;
         }
         // The identity IS answerable, so the half itself was refused while it was being built - the one reason
         // the tables cannot explain (see ContentHalves::refused).
-        const auto* named = static_cast<const vn::graphics::ShaderProgram*>(command.program.program);
         return "the half for the first command's identity was REFUSED while it was built (its GLSL did not compile, or its "
                "vertex layout is one this backend cannot declare): program '" +
-               (named != nullptr ? named->name().as_std_str() : std::string("<none>")) + "'";
+               (named.empty() ? std::string("<none>") : std::string(named)) + "'";
     }
     return "the pass has no content drawing call";
 }
@@ -435,11 +437,11 @@ bool ContentPass::record(const core::CompiledPass&            pass,
             const Scope::Entry* half         = nullptr;
             bool                same_program = false;
             for (const Scope::Entry& entry : scope_.entries) {
-                if (entry.kind != core::DrawKind::Screen || entry.program != draw.program.program) {
+                if (entry.kind != core::DrawKind::Screen || entry.program.id != draw.program.id) {
                     continue;
                 }
                 same_program = true;
-                if (entry.revision == draw.program.revision) {
+                if (entry.program == draw.program) {
                     half = &entry;
                     break;
                 }
@@ -959,8 +961,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
 
     ContentDraw::ScreenDraw full_screen;
     full_screen.key.kind                = core::DrawKind::Screen;
-    full_screen.key.program             = draw.program.program;
-    full_screen.key.revision            = draw.program.revision;
+    full_screen.key.program             = draw.program;
     full_screen.key.compatibility       = compatibility;
     // The identity says how many textures the set the draw binds carries: the source's colours and its own
     // depth (the map and the block are the text's own declarations, so they cannot vary with the pass).
@@ -1071,7 +1072,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     bool                layout_known   = false;
     bool                topology_known = false;
     for (const Scope::Entry& candidate : scope_.entries) {
-        if (candidate.program != command.program.program || candidate.revision != command.program.revision) {
+        if (candidate.program != command.program) {
             continue;
         }
         program_known = true;
@@ -1229,7 +1230,6 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
 
     ContentDraw::Draw record;
     record.key.program                                       = program.entry->program;
-    record.key.revision                                      = program.entry->revision;
     record.key.vertex_layout                                 = entry->layout;
     // The variant is identity like the layout is: two variants of one program share the key's other
     // fields and must never share a pipeline or a state group (see core::PipelineKey::variant).

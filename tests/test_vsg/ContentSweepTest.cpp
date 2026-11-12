@@ -38,6 +38,7 @@
 #include <vine/vsg/internal/ProgramVariant.hpp>
 
 #include "TestGeometryBuilders.hpp"
+#include "TestProgramFacts.hpp"
 
 using vn::graphics::Geometry;
 using vn::graphics::Material;
@@ -51,7 +52,6 @@ using vn::graphics::backend::CompiledFrame;
 using vn::graphics::backend::CompiledPass;
 using vn::graphics::backend::DrawKind;
 using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::ProgramRef;
 using vn::graphics::backend::RetirementQueue;
 using vn::imaging::Image;
 using vn::imaging::PixelFormat;
@@ -136,14 +136,17 @@ struct Plan {
 };
 
 /// @brief A plan with one pass and one content draw naming @p geometry, @p program and @p material.
-std::unique_ptr<Plan> contentPlan(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const void* program, vn::graphics::ContentRef material)
+std::unique_ptr<Plan> contentPlan(vn::graphics::NodeId geometry, std::uint64_t geometry_revision, const ShaderProgram* program, vn::graphics::ContentRef material)
 {
     auto plan = std::make_unique<Plan>();
+
+    const vn::graphics::ContentRef program_ref =
+        program != nullptr ? vn::test::programRef(*program) : vn::graphics::ContentRef{};
 
     CompiledCommand command;
     command.geometry          = geometry;
     command.geometry_revision = geometry_revision;
-    command.program           = ProgramRef{ program, 0U };
+    command.program           = program_ref;
     command.material          = material;
     plan->commands.push_back(command);
 
@@ -157,18 +160,18 @@ std::unique_ptr<Plan> contentPlan(vn::graphics::NodeId geometry, std::uint64_t g
     plan->passes.push_back(pass);
 
     plan->frame.passes          = plan->passes;
-    plan->frame.default_program = ProgramRef{ program, 0U };
+    plan->frame.default_program = program_ref;
     return plan;
 }
 
 /** @brief The same plan named by the OBJECT a test holds: a plan carries a handle, so the object converts to its id. */
-std::unique_ptr<Plan> contentPlan(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const void* program, vn::graphics::ContentRef material)
+std::unique_ptr<Plan> contentPlan(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, vn::graphics::ContentRef material)
 {
     return contentPlan(geometry != nullptr ? geometry->id() : vn::graphics::NodeId{}, geometry_revision, program, material);
 }
 
 /** @brief The same plan naming a material by the OBJECT a test holds: the plan carries the id and revision, not the object. */
-std::unique_ptr<Plan> contentPlan(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const void* program, const vn::graphics::MaterialBase* material)
+std::unique_ptr<Plan> contentPlan(const vn::graphics::Geometry* geometry, std::uint64_t geometry_revision, const ShaderProgram* program, const vn::graphics::MaterialBase* material)
 {
     const vn::graphics::ContentRef material_ref =
         material != nullptr ? vn::graphics::ContentRef{ material->id().handle(), material->revision() } : vn::graphics::ContentRef{};

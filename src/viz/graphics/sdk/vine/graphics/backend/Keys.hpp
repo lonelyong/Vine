@@ -6,6 +6,7 @@
 #include <span>
 #include <vector>
 
+#include <vine/graphics/ContentId.hpp>
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/StateResolution.hpp>
@@ -175,8 +176,9 @@ struct VN_GRAPHICS_API LoadOpVariantKey {
  */
 struct VN_GRAPHICS_API PipelineKey {
     DrawKind                kind{ DrawKind::Content }; // Which of the engine's two drawing calls this is.
-    const void*             program{ nullptr };        // Shader program (or the default content program).
-    std::uint64_t           revision{ 0 };             // Program revision.
+    /// The program AND the revision its text was at (see `ContentId.hpp`): the pair is the identity a
+    /// pipeline is compiled against, and the same pair the content tables answer programs by.
+    vn::graphics::ContentRef program{};
     VertexLayoutKey         vertex_layout;             // Vertex stream layout.
     RenderPassCompatibility compatibility;             // Target shape the pipeline was compiled against.
     bool                    depth_sampleable{ false }; // The pass samples the target's depth.

@@ -46,6 +46,7 @@
 #include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include "TestMaterialFacts.hpp"
+#include "TestProgramFacts.hpp"
 #include "TestStreamUploads.hpp"
 
 namespace
@@ -238,9 +239,7 @@ struct Fixture {
         }
 
         ContentDraw::Draw draw;
-        static int        program                                    = 0;
-        draw.key.program                                             = &program;
-        draw.key.revision                                            = 1U;
+        draw.key.program                                             = vn::test::programRef(1, 1U);
         draw.key.vertex_layout.canonical_mask                        = 0x1U;
         // The count is part of a pipeline's identity: the pipeline the API accepts for a multisampled pass has
         // to state the same count its attachments do, and the key is how a pass says which one it needs.

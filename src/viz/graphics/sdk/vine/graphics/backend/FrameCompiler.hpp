@@ -91,7 +91,7 @@ struct CompiledCommand {
     /// (geometry, primitive) is this command's data identity - the backend's facts answer index spans and
     /// uploads per primitive, and nothing downstream has to walk a primitive list to find it.
     std::uint32_t   primitive{ 0 };
-    ProgramRef      program{};           // The command's own program, or the frame's default (resolved).
+    vn::graphics::ContentRef program{};  // The command's own program, or the frame's default (resolved).
     vn::graphics::ContentRef material{}; // The material identity AND revision, or a null id for none.
     vn::math::Mat4d model{};             // World-space model matrix.
     float           opacity{ 1.0F };     // Effective opacity (the drawable's half of the alpha rule).
@@ -158,7 +158,7 @@ struct CompiledDraw {
     vn::graphics::Viewport           viewport{};                // Resolved: the announced rectangle, or the whole target.
     std::span<const LightRef>        lights{};                  // The consumed lights; empty = the backend default.
     const void*                      source{ nullptr };         // Screen draws: the target whose attachments are sampled.
-    ProgramRef                       program{};                 // Screen draws: the fragment program to draw with.
+    vn::graphics::ContentRef         program{};                 // Screen draws: the fragment program to draw with.
     DynamicState                     dynamic{};                 // Screen draws: the state the PASS gives them (see below).
     std::span<const CompiledCommand> commands{};                // Content draws: the instances to render.
 
@@ -256,7 +256,7 @@ struct CompiledTarget {
 /** @brief One frame, compiled: what the executor walks, in the order it walks it. */
 struct CompiledFrame {
     FrameToken                      token{};           // The frame this plan belongs to.
-    ProgramRef                      default_program{}; // What content without a program of its own draws with.
+    vn::graphics::ContentRef        default_program{}; // What content without a program of its own draws with.
     std::span<const CompiledPass>   passes{};          // In EXECUTION order, not call order.
     std::span<const CompiledTarget> targets{};         // Every target the frame draws into, in first-use order.
     std::uint32_t                   cycles{ 0 };       // Cyclic components skipped this frame (0 = a valid schedule).
@@ -298,11 +298,11 @@ class VN_GRAPHICS_API FrameCompiler {
     [[nodiscard]] static const TargetFacts* findTarget(const FrameFacts& facts, const void* target) noexcept;
 
     /** @brief Resolves one pass' drawing calls into the arena (viewports and programs made explicit). */
-    [[nodiscard]] std::span<const CompiledDraw> resolveDraws(const CollectedPass& pass, const vn::graphics::Viewport& whole, const ProgramRef& default_program);
+    [[nodiscard]] std::span<const CompiledDraw> resolveDraws(const CollectedPass& pass, const vn::graphics::Viewport& whole, const vn::graphics::ContentRef& default_program);
 
     /** @brief Resolves one drawing call's instances (program and dynamic state made explicit). */
     [[nodiscard]] std::span<const CompiledCommand>
-    resolveCommands(const CollectedDraw& draw, const ProgramRef& default_program, const vn::graphics::PassRenderState& pass_state);
+    resolveCommands(const CollectedDraw& draw, const vn::graphics::ContentRef& default_program, const vn::graphics::PassRenderState& pass_state);
 
     /** @brief Resolves one pass' declared inputs into the facts a binding layer needs.
      *

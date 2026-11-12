@@ -40,9 +40,10 @@
    公开的 `RenderCommand::row`（`const void*`）改为 `RenderCommand::node`（`NodeId`），
    `CollectedCommand`/`CompiledCommand`、`GeometryFacts`、`ContentStore` 的几何行表与 live 表随之按 `NodeId` 键。
    手写命令没有 node 时以 `geometry->id()` 命名 —— 一个**具名转换**，不是第二真相。
-2. **`ContentRef` 成为唯一键**（材质已完成，程序与几何合并未做）：`MaterialBase` 已持自己的 typed id，材质表已由
-   地址单键改为 `(MaterialId, revision)`（消掉 `A1` 残余）；`ShaderProgram::id()` 与 `ProgramRef`、几何行的
-   `geometry` + `geometry_revision` 合并仍在待办。
+2. **`ContentRef` 成为唯一键**（材质与程序已完成，几何合并未做）：`MaterialBase` 已持自己的 typed id，材质表已由
+   地址单键改为 `(MaterialId, revision)`（消掉 `A1` 残余）；`ShaderProgram` 也已持 `ProgramId`，计划与记录里的
+   `program` 是 `ContentRef`（`ProgramRef` 类型删除），程序表按 `(ProgramId, revision, variant, kind)` 建行、
+   `ProgramFacts::generation` 随之删除；几何行的 `geometry` + `geometry_revision` 合并仍在待办。
 3. **寿命交给 epoch**（未做）：`ContentStore` 的 `markUsed` / parking / `kept` 换成 `ResidencyTable`
    （`last_epoch < oldest_live` 即可回收，无时间窗、无 kept 回退）。
 
@@ -54,9 +55,10 @@
 
 - 好的：陈旧行/陈旧计划能答“gone”，地址复用那一类错画面无法再发生；重放与转储有了稳定键
   （`(id, revision)`）；`ProgramFacts::generation` 这类补丁的身份来源收敛到一个概念（`G1`/`G6`）。
-- 坏的 / 代价：公开类型变更（`RenderCommand::row` → `node`、`Row::identity`/`RowId` 变成 `NodeId`），
-  生产者与消费者一起改；`Node` 布局多了 8 字节，构造/析构各一次注册表加锁（每次内容对象一次，不进帧循环）；
-  改了 `Node`/`RenderCommand` 布局后必须清掉旧对象再编，否则会读到上个布局的对象（本次实测过 `malloc(): invalid size`）。
+- 坏的 / 代价：公开类型变更（`RenderCommand::row` → `node`、`Row::identity`/`RowId` 变成 `NodeId`、计划里的
+  `program` 从 `(地址, revision)` 变成 `ContentRef`），生产者与消费者一起改；`Node` 与 `ShaderProgram` 布局各多
+  8 字节，构造/析构各一次注册表加锁（每次内容对象一次，不进帧循环）；
+  改了 `Node`/`RenderCommand`/`ShaderProgram` 布局后必须清掉旧对象再编，否则会读到上个布局的对象（本次实测过 `malloc(): invalid size`）。
 - 代价（落地时发现）：`ContentRef::revision` 必须是 `std::uint64_t` —— 设计稿写的是 `std::uint32_t`，而 SDK 的每个
   `revision()` 都是 64 位，窄键会在四十亿次编辑后回绕；设计稿片段已同步。
 - 触发条件（什么时候重开）：若某张表**够不到** `Handle`（例如只有裸缓冲区、没有内容对象），那张表先按
@@ -66,9 +68,13 @@
 ## 证据
 
 - `nodeId::` 分配/释放语义：`test_graphics` 的 `ContentRegistryTest`（5 条）、`ResidencyTableTest`（1 条）。
-- 行身份迁移：`test_graphics` 559 条、`test_vsg` 537 条、`ctest` 30/30 全绿。
+- 行身份迁移：`test_graphics` 559 条、`test_vsg` 538 条、`ctest` 30/30 全绿。
 - 计划/记录携带 `NodeId`：`FrameRecorderTest.EveryFactOfACommandReachesTheRecord`、
-  `FrameCompilerTest` 的计划断言；手写命令回退到 `geometry->id()`：`GeometryFactsTest`。
+  程序身份：`ShaderProgram::id()`（ctor 分配 / dtor 释放）；`ShaderProgram::id()` 的同一文本、同一 revision 的两个
+  对象得到两条半边（`ContentHalvesTest.AnotherProgramIdentityIsAnotherHalf`）；程序表按 `(ProgramId, revision)` 建行
+  （`ContentStoreTest` 的 program 断言）；被拒绝的程序仍能报出名字（`ContentStoreTest.AProgramThatCannotBeDescribedStillHasItsName`）；
+  `ContentSourcesTest` 断言事实行带的是程序的 `ContentRef`。
+- `FrameCompilerTest` 的计划断言；手写命令回退到 `geometry->id()`：`GeometryFactsTest`。
 - 性能未退化：`SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` 在 RelWithDebInfo 下 175 µs publish /
   282 µs select（N2 ≤250 µs、K1 ≤500 µs 仍通过）。
 - 门禁：`check_ai_docs --strict`、`check_design_docs`、`check_doc_symbols`、`check_include_hygiene`、

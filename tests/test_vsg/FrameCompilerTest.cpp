@@ -35,6 +35,8 @@
 #include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/intrusive_ptr.hpp>
 
+#include "TestProgramFacts.hpp"
+
 using vn::graphics::BlendFactor;
 using vn::graphics::BlendState;
 using vn::graphics::DepthMode;
@@ -162,7 +164,7 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     const CompiledDraw& screen = consumer.draws[0];
     EXPECT_EQ(screen.kind, DrawKind::Screen);
     EXPECT_EQ(screen.source, static_cast<const void*>(source.get())) << "the call's source is carried";
-    EXPECT_EQ(screen.program.program, static_cast<const void*>(screen_program.get()));
+    EXPECT_EQ(screen.program, vn::test::programRef(*screen_program));
     EXPECT_TRUE(screen.commands.empty()) << "a full-screen call has no geometry to instance";
     EXPECT_EQ(screen.viewport.x, 4) << "the announced picture-in-picture rectangle is the draw's own";
     EXPECT_EQ(screen.viewport.y, 8);
@@ -316,7 +318,7 @@ TEST(FrameCompilerTest, EveryFactOfARecordedCommandReachesThePlan)
     EXPECT_EQ(planned.geometry, geometry->id());
     EXPECT_EQ(planned.geometry_revision, 7U) << "the revision the facts row and every stream key are built from";
     EXPECT_EQ(planned.primitive, 0U);
-    EXPECT_EQ(planned.program.program, static_cast<const void*>(program.get()));
+    EXPECT_EQ(planned.program, vn::test::programRef(*program));
     EXPECT_EQ(planned.material.as<vn::graphics::MaterialTag>(), material->id());
     EXPECT_EQ(planned.material.revision, material->revision());
     EXPECT_TRUE(planned.model.isEqual(model, 1e-12));
@@ -786,9 +788,9 @@ TEST(FrameCompilerTest, ACommandWithoutAProgramGetsTheFramesDefault)
     const CompiledFrame& frame = r.compile();
     ASSERT_EQ(frame.passes[0].draws.size(), 1u);
     ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 2u);
-    EXPECT_EQ(frame.passes[0].draws[0].commands[0].program.program, own.get());
-    EXPECT_EQ(frame.passes[0].draws[0].commands[1].program.program, fallback.get());
-    EXPECT_EQ(frame.default_program.program, fallback.get());
+    EXPECT_EQ(frame.passes[0].draws[0].commands[0].program, vn::test::programRef(*own));
+    EXPECT_EQ(frame.passes[0].draws[0].commands[1].program, vn::test::programRef(*fallback));
+    EXPECT_EQ(frame.default_program, vn::test::programRef(*fallback));
 }
 
 TEST(FrameCompilerTest, TheCompilerKeepsTheOrderTheEngineAnnounced)

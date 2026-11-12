@@ -30,6 +30,8 @@
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
 
+#include "TestProgramFacts.hpp"
+
 using vn::graphics::BlendState;
 using vn::graphics::CullMode;
 using vn::graphics::DepthMode;
@@ -44,16 +46,15 @@ using vn::graphics::backend::VariantPool;
 namespace
 {
 
-int program_a = 0;
-int program_b = 0;
-int program_c = 0;
+const vn::graphics::ProgramId program_a = vn::test::programId(1);
+const vn::graphics::ProgramId program_b = vn::test::programId(2);
+const vn::graphics::ProgramId program_c = vn::test::programId(3);
 
 /// @brief A content identity with all three layers' worth of inputs filled in.
-PipelineKey contentKey(const void* program, std::uint64_t revision)
+PipelineKey contentKey(const vn::graphics::ProgramId* program, std::uint64_t revision)
 {
     PipelineKey key;
-    key.program                        = program;
-    key.revision                       = revision;
+    key.program                        = vn::graphics::contentRefOf(*program, revision);
     key.vertex_layout.canonical_mask   = 0xFU;
     key.vertex_layout.custom_locations = { 3U };
     key.compatibility.color_formats    = { RenderTarget::ColorFormat::RGBA8 };
@@ -155,8 +156,8 @@ TEST(CoreVariantPoolTest, AnEntryKeepsItsKeyAfterTheCallersKeyIsGone)
 
     const PipelineKey* kept = pool.keyOf(id);
     ASSERT_NE(kept, nullptr);
-    EXPECT_EQ(kept->program, static_cast<const void*>(&program_a));
-    EXPECT_EQ(kept->revision, 9U);
+    EXPECT_EQ(kept->program, vn::graphics::contentRefOf(program_a, 9));
+    EXPECT_EQ(kept->program.revision, 9U);
     ASSERT_EQ(kept->vertex_layout.custom_locations.size(), 2U);
     EXPECT_EQ(kept->vertex_layout.custom_locations[1], 7U);
     EXPECT_EQ(kept->compatibility.depth_format, RenderTarget::DepthFormat::D24);

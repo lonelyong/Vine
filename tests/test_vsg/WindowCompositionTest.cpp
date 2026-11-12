@@ -91,6 +91,7 @@
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
 #include "TestMaterialFacts.hpp"
+#include "TestProgramFacts.hpp"
 
 using vn::graphics::Diagnostics;
 using vn::graphics::Geometry;
@@ -458,7 +459,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     const auto    window_view = view_block_for(3U, static_cast<std::uint32_t>(kWidth), static_cast<std::uint32_t>(kHeight));
 
     const ContentPass::Scope::Entry content_halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Content, program.get(), program_facts.revision, geometry_facts.layout, content_layer.get(), &content_draws }
+        ContentPass::Scope::Entry{ DrawKind::Content, vn::test::programRef(*program), geometry_facts.layout, content_layer.get(), &content_draws }
     };
 
     const auto* shared_pass = pass_of(2U);
@@ -487,7 +488,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
 
     StateRegistry                   screen_registry(screen_pool);
     const ContentPass::Scope::Entry screen_halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Screen, screen_program.get(), screen_facts.revision, {}, screen_layer.get(), &overlay_draws }
+        ContentPass::Scope::Entry{ DrawKind::Screen, screen_facts.program, {}, screen_layer.get(), &overlay_draws }
     };
     ContentPass::Scope screen_scope;
     screen_scope.entries  = screen_halves;

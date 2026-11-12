@@ -21,9 +21,8 @@ FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFa
 
 FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const ProgramVariant& variant, ProgramFacts& out)
 {
-    out          = ProgramFacts{};
-    out.program  = &program;
-    out.revision = program.revision();
+    out         = ProgramFacts{};
+    out.program = vn::graphics::contentRefOf(program.id(), program.revision());
 
     const vn::graphics::ShaderStage* vertex   = nullptr;
     const vn::graphics::ShaderStage* fragment = nullptr;
@@ -87,9 +86,8 @@ FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, const Pro
 
 FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out)
 {
-    out          = ProgramFacts{};
-    out.program  = &program;
-    out.revision = program.revision();
+    out         = ProgramFacts{};
+    out.program = vn::graphics::contentRefOf(program.id(), program.revision());
 
     const vn::graphics::ShaderStage* fragment = nullptr;
     std::size_t                      extra    = 0;

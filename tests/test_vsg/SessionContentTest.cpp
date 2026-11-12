@@ -73,6 +73,7 @@
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
 #include "TestMaterialFacts.hpp"
+#include "TestProgramFacts.hpp"
 #include "TestStreamUploads.hpp"
 
 /// @brief The scalars a vertex-stream array holds, as the upload layer takes them (a view, no copy).
@@ -293,8 +294,7 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     ASSERT_TRUE(block.valid);
 
     ContentDraw::Draw draw;
-    draw.key.program                                             = &program_identity;
-    draw.key.revision                                            = 1U;
+    draw.key.program                                             = vn::test::programRef(1, 1U);
     draw.key.vertex_layout.canonical_mask                        = 0x1U;
     draw.key.compatibility.samples                               = 1U;
     const ::vsg::ref_ptr<::vsg::BindDescriptorSet> block_binds[] = {
@@ -507,8 +507,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
         ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
-                                  program.get(),
-                                  program_facts.revision,
+                                  vn::test::programRef(*program),
                                   geometry_facts.layout,
                                   pipelines.get(),
                                   &draws }

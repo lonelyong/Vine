@@ -59,6 +59,7 @@
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
 #include "TestMaterialFacts.hpp"
+#include "TestProgramFacts.hpp"
 
 using vn::graphics::Camera;
 using vn::graphics::Diagnostics;
@@ -740,16 +741,14 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
 
     const ContentPass::Scope::Entry producer_halves[]{
         ContentPass::Scope::Entry{ DrawKind::Content,
-                                  producer_program.get(),
-                                  producer_facts.revision,
+                                  vn::test::programRef(*producer_program),
                                   quad_facts.layout,
                                   producer_pipelines.get(),
                                   &producer_draws }
     };
     const ContentPass::Scope::Entry consumer_halves[]{
         ContentPass::Scope::Entry{ DrawKind::Content,
-                                  consumer_program.get(),
-                                  consumer_facts.revision,
+                                  vn::test::programRef(*consumer_program),
                                   band_facts[0].layout,
                                   consumer_pipelines.get(),
                                   &consumer_draws }

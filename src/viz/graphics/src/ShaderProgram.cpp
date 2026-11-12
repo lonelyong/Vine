@@ -4,9 +4,21 @@ VN_GRAPHICS_NS_BEGIN
 
 VN_OBJECT_META_IMPL(ShaderProgram, vn::Object);
 
-ShaderProgram::ShaderProgram() = default;
+ShaderProgram::ShaderProgram()
+  : id_(ContentRegistry::instance().allocate<ProgramTag>())
+{}
 
-ShaderProgram::~ShaderProgram() = default;
+ShaderProgram::~ShaderProgram()
+{
+    // The id leaves with the object: a plan or a facts row that still names it afterwards reads "gone" instead of
+    // resolving to whatever the slot holds next (see ContentId.hpp).
+    ContentRegistry::instance().release(id_.handle());
+}
+
+ProgramId ShaderProgram::id() const noexcept
+{
+    return id_;
+}
 
 String ShaderProgram::name() const
 {

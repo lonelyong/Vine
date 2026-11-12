@@ -65,6 +65,7 @@
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
 #include "TestMaterialFacts.hpp"
+#include "TestProgramFacts.hpp"
 
 using vn::graphics::Camera;
 using vn::graphics::Diagnostics;
@@ -617,7 +618,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     StateRegistry registry(pool);
 
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Content, program.get(), program_facts.revision, geometry_facts[0].layout, pipelines.get(), &draws_recorder }
+        ContentPass::Scope::Entry{ DrawKind::Content, vn::test::programRef(*program), geometry_facts[0].layout, pipelines.get(), &draws_recorder }
     };
     ContentPass::Scope scope;
     scope.entries    = halves;
@@ -841,7 +842,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerFullScreenCall)
     StateRegistry registry(pool);
 
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ DrawKind::Screen, program_facts.program, program_facts.revision, {}, pipelines.get(), &draws }
+        ContentPass::Scope::Entry{ DrawKind::Screen, program_facts.program, {}, pipelines.get(), &draws }
     };
     ContentPass::Scope scope;
     scope.entries  = halves;

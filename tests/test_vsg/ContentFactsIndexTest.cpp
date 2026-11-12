@@ -28,8 +28,9 @@
 
 #include <vine/vsg/internal/ContentFacts.hpp>
 
+#include "TestProgramFacts.hpp"
+
 using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::ProgramRef;
 using vn::graphics::backend::StreamKind;
 using vn::vsg::ChannelFacts;
 using vn::vsg::ContentFacts;
@@ -56,7 +57,11 @@ struct Identities {
         vn::graphics::NodeId(vn::graphics::Handle::make(2U, 1U, 0U)),
         vn::graphics::NodeId(vn::graphics::Handle::make(3U, 1U, 0U))
     };
-    int programs[3]{};
+    vn::graphics::ProgramId programs[3]{
+        vn::graphics::ProgramId(vn::graphics::Handle::make(21U, 1U, 0U)),
+        vn::graphics::ProgramId(vn::graphics::Handle::make(22U, 1U, 0U)),
+        vn::graphics::ProgramId(vn::graphics::Handle::make(23U, 1U, 0U))
+    };
     vn::graphics::MaterialId materials[3]{
         vn::graphics::MaterialId(vn::graphics::Handle::make(11U, 1U, 0U)),
         vn::graphics::MaterialId(vn::graphics::Handle::make(12U, 1U, 0U)),
@@ -108,13 +113,12 @@ struct Rows {
     }
 
     /// @brief Adds one program row at @p revision, @p kind and @p variant.
-    void addProgram(const void* identity, std::uint64_t revision, DrawKind kind, const ProgramVariant& variant)
+    void addProgram(vn::graphics::ProgramId identity, std::uint64_t revision, DrawKind kind, const ProgramVariant& variant)
     {
         ProgramFacts row;
-        row.program  = identity;
-        row.revision = revision;
-        row.kind     = kind;
-        row.variant  = variant;
+        row.program = vn::graphics::contentRefOf(identity, revision);
+        row.kind    = kind;
+        row.variant = variant;
         programs.push_back(row);
     }
 
@@ -174,13 +178,13 @@ void buildRows(const Identities& ids, Rows& out)
     for (int index = 0; index < 3; ++index) {
         for (std::uint64_t revision = 1U; revision <= 2U; ++revision) {
             for (const DrawKind kind : { DrawKind::Content, DrawKind::Screen }) {
-                out.addProgram(&ids.programs[index], revision, kind, plain);
-                out.addProgram(&ids.programs[index], revision, kind, mapped);
-                out.addProgram(&ids.programs[index], revision, kind, coloured);
+                out.addProgram(ids.programs[index], revision, kind, plain);
+                out.addProgram(ids.programs[index], revision, kind, mapped);
+                out.addProgram(ids.programs[index], revision, kind, coloured);
             }
         }
     }
-    out.addProgram(&ids.programs[0], 3U, DrawKind::Content, plain);
+    out.addProgram(ids.programs[0], 3U, DrawKind::Content, plain);
 
     // MATERIALS: the default (null) entry, the three identities, a REPLACED pair for one identity (two rows,
     // one identity: the first is the answer - see findMaterial) and a malformed block for another.
@@ -230,8 +234,9 @@ TEST(ContentFactsIndexTest, AnIndexedTableAnswersExactlyWhatAScanWould)
 
             for (const DrawKind kind : kinds) {
                 for (const ProgramVariant& variant : variants) {
-                    const ProgramRef key{ &ids.programs[index], revision };
-                    const auto       scanned_program  = findProgram(scan, key, variant, kind);
+                    const vn::graphics::ContentRef key =
+                        vn::graphics::contentRefOf(ids.programs[index], revision);
+                    const auto scanned_program  = findProgram(scan, key, variant, kind);
                     const auto       searched_program = findProgram(indexed, key, variant, kind);
                     EXPECT_EQ(static_cast<int>(searched_program.miss), static_cast<int>(scanned_program.miss));
                     EXPECT_EQ(rowIndex(scan.programs, scanned_program.entry), rowIndex(indexed.programs, searched_program.entry))
@@ -254,9 +259,9 @@ TEST(ContentFactsIndexTest, AnIndexedTableAnswersExactlyWhatAScanWould)
     EXPECT_EQ(static_cast<int>(searched_default.miss), static_cast<int>(scanned_default.miss));
     EXPECT_EQ(rowIndex(scan.materials, scanned_default.entry), rowIndex(indexed.materials, searched_default.entry));
 
-    int        unknown          = 0;
-    const auto scanned_unknown  = findProgram(scan, ProgramRef{ &unknown, 1U }, ProgramVariant{}, DrawKind::Content);
-    const auto searched_unknown = findProgram(indexed, ProgramRef{ &unknown, 1U }, ProgramVariant{}, DrawKind::Content);
+    const auto unknown_ref      = vn::test::programRef(99, 1U);
+    const auto scanned_unknown  = findProgram(scan, unknown_ref, ProgramVariant{}, DrawKind::Content);
+    const auto searched_unknown = findProgram(indexed, unknown_ref, ProgramVariant{}, DrawKind::Content);
     EXPECT_EQ(static_cast<int>(searched_unknown.miss), static_cast<int>(scanned_unknown.miss));
     EXPECT_EQ(scanned_unknown.entry, nullptr);
 }
@@ -290,16 +295,12 @@ TEST(ContentFactsIndexTest, TheOrderIsAPermutationOfTheRowsAndItsRunsAreContiguo
     // binary search depends on, stated directly instead of inferred from a lookup that happens to hit. The
     // comparison is `std::less`, the only comparison the language gives a total order for and the one the
     // builders sort by.
-    const std::less<const void*> before;
-    const auto                   program_before = [&before](const ProgramFacts& left, const ProgramFacts& right) {
-        if (before(left.program, right.program)) {
-            return true;
+    const auto program_before = [](const ProgramFacts& left, const ProgramFacts& right) {
+        if (left.program.id.bits() != right.program.id.bits()) {
+            return left.program.id.bits() < right.program.id.bits();
         }
-        if (before(right.program, left.program)) {
-            return false;
-        }
-        if (left.revision != right.revision) {
-            return left.revision < right.revision;
+        if (left.program.revision != right.program.revision) {
+            return left.program.revision < right.program.revision;
         }
         return static_cast<int>(left.kind) < static_cast<int>(right.kind);
     };

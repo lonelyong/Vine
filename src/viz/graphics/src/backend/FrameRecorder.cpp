@@ -10,15 +10,13 @@ using vn::graphics::FrameCounters;
 namespace
 {
 
-/// @brief Pairs a borrowed program with the revision it is at.
-ProgramRef programRef(const vn::graphics::ShaderProgram* program) noexcept
+/// @brief Pairs a borrowed program with the revision it is at: the SDK's own content reference.
+vn::graphics::ContentRef programRef(const vn::graphics::ShaderProgram* program) noexcept
 {
-    ProgramRef ref;
-    if (program != nullptr) {
-        ref.program  = program;
-        ref.revision = program->revision();
+    if (program == nullptr) {
+        return {};
     }
-    return ref;
+    return vn::graphics::contentRefOf(program->id(), program->revision());
 }
 
 } // namespace

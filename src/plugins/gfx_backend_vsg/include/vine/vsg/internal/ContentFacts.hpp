@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -234,19 +236,20 @@ struct GeometryFacts {
  * answer together (see api/ContentPipeline). It is scanned for the variant the layer compiles with - today
  * the source as written, so the two can never disagree about which declarations are in effect. */
 struct ProgramFacts {
-    const void*    program{ nullptr }; // The identity the plan names.
-    std::uint64_t  revision{ 0 };      // The revision the plan names.
-    ProgramVariant variant{};          // The variant (which of the program's texts) this entry is.
-
-    /// @brief Which DESCRIPTION of this identity this row is (see ContentStore::ensureProgram).
+    /// The identity AND the revision the plan names (see `ContentId.hpp`).
     ///
-    /// THE IDENTITY IS AN ADDRESS, and an address is reused once its rows are gone: two different programs can be
-    /// described at one address at two different times, at the SAME revision (an engine preset is built from the
-    /// same stage count every time it is created). Address and revision therefore do not identify a program's TEXT,
-    /// and a compiled half keyed on them alone would be served for the other program - the previous mode's
-    /// pipeline, drawn for the mode just asked for. This number does identify the description: it is raised every
-    /// time a row is appended (ContentStore) and it is part of a half's key (ContentHalves).
-    std::uint64_t generation{ 0 };
+    /// THE REVISION IS PART OF THE KEY, the same rule the geometry and material tables follow: a frame in flight
+    /// that named revision 3 must be served revision 3's texts after the program moved to 4, so a table keyed by
+    /// the identity alone would answer the new text to the old frame.
+    ///
+    /// THE IDENTITY IS THE PROGRAM'S OWN HANDLE (`ShaderProgram::id()`), not an address. An address is reused:
+    /// two different programs can be described at one address at two different times, at the SAME revision (an
+    /// engine preset is built from the same stage count every time it is created), and a compiled half keyed on
+    /// an address and a revision would be served for the other program - the previous mode's pipeline, drawn for
+    /// the mode just asked for. A handle moves its generation on release, so that class of collision cannot
+    /// happen, and no per-description counter has to stand in for it.
+    vn::graphics::ContentRef program{};
+    ProgramVariant           variant{}; // The variant (which of the program's texts) this entry is.
 
     /// Which of the engine's two drawing CALLS this entry describes. It is part of the entry's key and not a
     /// decoration: ONE program object can be described twice at one revision - as content (both stages, the
@@ -260,6 +263,22 @@ struct ProgramFacts {
 
     ContentPipeline::Shaders shaders{}; // The GLSL those two stages consist of.
     ProgramAbi               abi{};     // The bindings and push ranges those two texts declare.
+};
+
+/** @brief One program identity's NAME: what a sentence about a miss can call it.
+ *
+ * @details
+ * - A NAME IS NOT IDENTITY (see `ShaderProgram::name()`): it never moves a revision, may be shared, and may be
+ *   empty. It is here because the one sentence a host gets when its program cannot be turned into a pipeline has
+ *   to say WHICH program - and a plan carries only the handle, while a program whose text cannot be described
+ *   has no `ProgramFacts` row to read a name from.
+ * - THE VALUE IS THE ONE THE DESCRIPTION SAW. A rename does not move the revision, so a table that was never
+ *   asked to describe the program again may still answer the previous name; that is a label, not a fact about
+ *   the picture, and it is bounded by the next description.
+ */
+struct ProgramNameFacts {
+    vn::graphics::ProgramId program{}; // The identity.
+    std::string             name{};    // `ShaderProgram::name()`; empty when the program was never named.
 };
 
 /** @brief One material texture slot as the CONTENT layer sees it: the map and how it is read. */
@@ -291,6 +310,13 @@ struct ContentFacts {
     std::span<const ProgramFacts>  programs{};   // Program identities → their GLSL.
     std::span<const GeometryFacts> geometries{}; // Geometry identities → their streams and layout.
     std::span<const MaterialFacts> materials{};  // Material identities → their block bytes.
+
+    /// Program identities → their names (see ProgramNameFacts): what a sentence about a missing program calls it.
+    ///
+    /// SEPARATE FROM `programs` ON PURPOSE. That table answers "what a pipeline is compiled from", so a program
+    /// whose text cannot be described has no row - and that is exactly the case whose sentence needs a name. One
+    /// entry per identity (a name does not move with the revision), found by a linear scan on a failure path.
+    std::span<const ProgramNameFacts> program_names{};
 
     /// WHAT THOSE ROWS DECLARE, as an O(1) index (see ContentDeclarations). A residency table asks this per
     /// entry instead of walking the rows - so a frame's residency bookkeeping costs O(entries), not O(content),
@@ -392,7 +418,21 @@ void orderMaterialRows(std::span<const MaterialFacts> rows, std::vector<std::uin
  * @return The entry, or the reason there is none.
  */
 [[nodiscard]] FactResult<ProgramFacts>
-findProgram(const ContentFacts& facts, const core::ProgramRef& program, const ProgramVariant& variant, core::DrawKind kind) noexcept;
+findProgram(const ContentFacts& facts, const vn::graphics::ContentRef& program, const ProgramVariant& variant, core::DrawKind kind) noexcept;
+
+/** @brief Gets the name a program identity was described with (see ProgramNameFacts).
+ *
+ * @details
+ * - Used by diagnostics only, and only where the tables cannot name the program otherwise: a program with no
+ *   `ProgramFacts` row (its text was refused) still has a name here, because the name is read when the store
+ *   starts describing the revision and not when the pipeline is built.
+ * - A linear scan: it runs on a reporting path, never per draw.
+ *
+ * @param facts   The tables.
+ * @param program Program identity.
+ * @return The name, or an empty view when the identity was never described.
+ */
+[[nodiscard]] VN_VSG_API std::string_view programName(const ContentFacts& facts, vn::graphics::ProgramId program) noexcept;
 
 /** @brief Finds the geometry a compiled command names.
  *

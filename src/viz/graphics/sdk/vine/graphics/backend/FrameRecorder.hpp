@@ -85,12 +85,6 @@ VN_GRAPHICSBACKEND_NS_BEGIN
 /** @brief Identity of a pass, assigned by the layer that owns the pass registry (the API layer). */
 using PassId = std::uint32_t;
 
-/** @brief A program and the revision its content is at: the pair that says whether it changed. */
-struct ProgramRef {
-    const void*   program{ nullptr }; // Program identity, or nullptr for "none".
-    std::uint64_t revision{ 0 };      // Upstream content revision (`ShaderProgram::revision()`).
-};
-
 /** @brief One pass input as the frame remembers it: the identity it reads, produced or imported.
  *
  * @details
@@ -159,7 +153,11 @@ struct CollectedCommand {
     /// class and the value every draw delivers, and it is data rather than state (see Primitive.hpp) - which
     /// is why it travels with the command instead of with `authored_state`.
     vn::graphics::Topology topology{ vn::graphics::Topology::Triangles };
-    ProgramRef             program{};           // The command's own program; null = the frame's default.
+    /// The command's own program identity AND revision, or a null id for "the frame's default" (see
+    /// `ContentId.hpp` and `ShaderProgram::id()`). The revision travels with the id because a frame in flight
+    /// must be answered with the text it recorded, not with whatever the program says by the time it is
+    /// recorded.
+    vn::graphics::ContentRef program{};
     vn::graphics::ContentRef material{};        // The material identity AND revision, or a null id for none.
     vn::math::Mat4d        model{};             // World-space model matrix.
     float                  opacity{ 1.0F };     // Effective opacity (the drawable's half of the alpha rule).
@@ -193,7 +191,7 @@ struct CollectedDraw {
     vn::graphics::Viewport            viewport{};                // The consumed viewport (meaningful when has_viewport).
     std::span<const LightRef>         lights{};                  // The consumed lights; empty = the backend default.
     const void*                       source{ nullptr };         // Screen draws: the target whose colour attachments are sampled.
-    ProgramRef                        program{};                 // Screen draws: the fragment program to draw with.
+    vn::graphics::ContentRef          program{};                 // Screen draws: the fragment program to draw with.
     std::span<const CollectedCommand> commands{};                // Content draws: the instances to render.
 };
 
@@ -227,7 +225,7 @@ struct CollectedPass {
 /** @brief One frame's worth of collected intent (see the file note for what is not resolved here). */
 struct CollectedFrame {
     FrameToken                     token{};           // The frame this description belongs to.
-    ProgramRef                     default_program{}; // What content without a program of its own is drawn with.
+    vn::graphics::ContentRef       default_program{}; // What content without a program of its own is drawn with.
     std::span<const CollectedPass> passes{};          // Pass scopes that arrived, in call order.
 };
 
@@ -470,8 +468,8 @@ class VN_GRAPHICS_API FrameRecorder {
     const void*  scope_target_{ nullptr };        // The target the open scope announced, or nullptr.
     bool         scope_target_released_{ false }; // That target was released while the scope was open.
 
-    FrameToken token_{};           // The open frame.
-    ProgramRef default_program_{}; // Frame-level default program (kept across frames).
+    FrameToken               token_{};           // The open frame.
+    vn::graphics::ContentRef default_program_{}; // Frame-level default program (kept across frames).
 
     PassId                        pass_id_{ 0 };            // Identity of the open scope's pass.
     int                           order_{ 0 };              // Order announced for the open scope.
