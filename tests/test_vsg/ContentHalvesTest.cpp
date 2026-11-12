@@ -55,6 +55,7 @@ using vn::vsg::buildMaterialFacts;
 using vn::test::buildMaterialFacts; // the object-pointer overload a case writes (see TestMaterialFacts.hpp)
 using vn::vsg::buildProgramFacts;
 using vn::vsg::ChannelFacts;
+using vn::vsg::ContentDeclarations;
 using vn::vsg::ContentDraw;
 using vn::vsg::ContentFacts;
 using vn::vsg::ContentHalves;
@@ -63,6 +64,7 @@ using vn::vsg::DrawNeeds;
 using vn::vsg::drawNeeds;
 using vn::vsg::FactMiss;
 using vn::vsg::GeometryFacts;
+using vn::vsg::LayoutDeclarations;
 using vn::vsg::MaterialFacts;
 using vn::vsg::ProgramFacts;
 using vn::vsg::ProgramVariant;
@@ -164,7 +166,24 @@ struct Tables {
     std::vector<std::vector<ChannelFacts>>            channel_storage;   // One per geometry entry.
     std::vector<std::vector<vn::vsg::PrimitiveFacts>> primitive_storage; // One per geometry entry: its draws.
     std::vector<std::vector<std::byte>>               block_storage;     // One per material entry.
+    LayoutDeclarations                                layouts;           // Layout -> live row count (see ContentDeclarations).
     ContentFacts                                      facts;
+
+    /// @brief Publishes the spans AND the declaration indexes, the way ContentStore::tablesFor does.
+    ///
+    /// The half pin asks `declaresLayout`, so a hand-built table that only filled the spans would model a store
+    /// that never published its index - every half would leave on the next sweep. This is the production shape.
+    void publish()
+    {
+        layouts.clear();
+        for (const GeometryFacts& geometry : geometries) {
+            ++layouts[geometry.layout];
+        }
+        facts.programs     = programs;
+        facts.geometries   = geometries;
+        facts.materials    = materials;
+        facts.declarations = ContentDeclarations{ nullptr, nullptr, nullptr, &layouts };
+    }
 };
 
 /// @brief A pass with the given draws (the spans are into the caller's vectors).
@@ -520,6 +539,109 @@ TEST(ContentHalvesTest, ALayoutIsPartOfTheHalf)
     EXPECT_EQ(entries[1].layout, plain_geometry_facts.layout);
 }
 
+TEST(ContentHalvesTest, AHalfIsPinnedByTheLayoutDeclarationAndLeavesWithIt)
+{
+    const auto program  = contentProgram();
+    const auto geometry = quad(true);
+    const auto shaded   = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+
+    ProgramFacts program_facts;
+    ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, program_facts), FactMiss::None);
+    Tables tables;
+    tables.programs.push_back(program_facts);
+    GeometryFacts geometry_facts;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()), FactMiss::None);
+    tables.geometries.push_back(geometry_facts);
+    MaterialFacts material_facts;
+    ASSERT_EQ(buildMaterialFacts(shaded.get(), shaded->description(), 1U, material_facts, tables.block_storage.emplace_back()), FactMiss::None);
+    tables.materials.push_back(material_facts);
+    tables.publish();
+
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+
+    const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
+    const std::vector<CompiledDraw>    draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+    };
+    const CompiledPass pass = passWith(draws);
+
+    ASSERT_EQ(halves.halvesFor(pass, tables.facts, timeline, retirement).size(), 1U);
+    ASSERT_EQ(halves.halves(), 1U);
+
+    // The program revision still answers, and the LAYOUT INDEX still says a live geometry feeds the half's layout:
+    // the half stays even though this facts value carries no geometry rows at all. That is the point of the index -
+    // the question is answered without walking the rows.
+    ContentFacts program_and_layout;
+    program_and_layout.programs      = tables.facts.programs;
+    program_and_layout.program_names = tables.facts.program_names;
+    program_and_layout.program_order = tables.facts.program_order;
+    program_and_layout.declarations  = tables.facts.declarations;
+
+    EXPECT_TRUE(halves.halvesFor(pass, program_and_layout, timeline, retirement).empty()) << "no geometry answers, so no draw is served";
+    halves.sweep(program_and_layout, timeline, retirement); // the FRAME's step; this case drives no frame of its own
+    EXPECT_EQ(halves.halves(), 1U) << "the layout declaration still pins the half";
+    EXPECT_EQ(retirement.pending(), 0U) << "nothing left the table";
+
+    // The last geometry of that layout is gone: the declaration index is empty, and the half leaves even though
+    // the program revision still answers.
+    LayoutDeclarations empty_layouts;
+    ContentFacts       program_only;
+    program_only.programs      = tables.facts.programs;
+    program_only.program_names = tables.facts.program_names;
+    program_only.program_order = tables.facts.program_order;
+    program_only.declarations  = ContentDeclarations{ nullptr, nullptr, nullptr, &empty_layouts };
+
+    EXPECT_TRUE(halves.halvesFor(pass, program_only, timeline, retirement).empty());
+    halves.sweep(program_only, timeline, retirement);
+    EXPECT_EQ(halves.halves(), 0U) << "the half is pinned by program revision AND a live layout";
+    EXPECT_EQ(retirement.pending(), 1U) << "the departed half is parked, not freed in place";
+}
+
+TEST(ContentHalvesTest, AFrameThatDrawsNothingStillRetiresWhatContentLeft)
+{
+    // RETIREMENT IS THE FRAME'S STEP, not a pass' (see ContentHalves::sweep): a frame whose passes issue nothing
+    // never calls halvesFor, and the halves whose content left must still depart - otherwise a scene that is emptied
+    // and then sits still would hold its pipelines until the session ends.
+    const auto program  = contentProgram();
+    const auto geometry = quad(true);
+    const auto shaded   = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
+
+    ProgramFacts program_facts;
+    ASSERT_EQ(buildProgramFacts(*program, ProgramVariant{}, program_facts), FactMiss::None);
+    Tables tables;
+    tables.programs.push_back(program_facts);
+    GeometryFacts geometry_facts;
+    ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, tables.channel_storage.emplace_back(), tables.primitive_storage.emplace_back()), FactMiss::None);
+    tables.geometries.push_back(geometry_facts);
+    MaterialFacts material_facts;
+    ASSERT_EQ(buildMaterialFacts(shaded.get(), shaded->description(), 1U, material_facts, tables.block_storage.emplace_back()), FactMiss::None);
+    tables.materials.push_back(material_facts);
+    tables.publish();
+
+    VariantPool     pool;
+    ContentHalves   halves(pool);
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+
+    const std::vector<CompiledCommand> commands{ commandOf(geometry.get(), geometry->revision(), program.get(), program->revision(), shaded.get()) };
+    const std::vector<CompiledDraw>    draws{
+        CompiledDraw{ DrawKind::Content, {}, {}, {}, {}, {}, {}, commands }
+    };
+    const CompiledPass pass = passWith(draws);
+
+    ASSERT_EQ(halves.halvesFor(pass, tables.facts, timeline, retirement).size(), 1U);
+    ASSERT_EQ(halves.halves(), 1U);
+
+    // The content is gone: no program row answers the revision, and no geometry row feeds the layout.
+    ContentFacts empty;
+    halves.sweep(empty, timeline, retirement); // no pass was walked at all - which is the point
+    EXPECT_EQ(halves.halves(), 0U) << "a frame with nothing to draw still retires what content left";
+    EXPECT_EQ(retirement.pending(), 1U) << "and it parks it, exactly as a drawing frame would";
+}
+
 TEST(ContentHalvesTest, AScreenDrawGetsAFullScreenHalf)
 {
     const auto program = screenProgram();
@@ -641,6 +763,7 @@ TEST(ContentHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
     const CompiledPass new_pass = passWith(new_draws);
 
     ASSERT_EQ(halves.halvesFor(new_pass, fresh.facts, timeline, retirement).size(), 1U);
+    halves.sweep(fresh.facts, timeline, retirement); // the FRAME's step (see ContentHalves::sweep)
     EXPECT_EQ(halves.halves(), 1U) << "the live list holds the revision the tables answer";
     EXPECT_EQ(retirement.pending(), 1U) << "the half whose key left the tables was PARKED, not dropped: a"
                                            " recorded frame may still name it";

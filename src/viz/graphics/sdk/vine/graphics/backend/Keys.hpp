@@ -77,6 +77,19 @@ struct VN_GRAPHICS_API VertexLayoutKey {
     [[nodiscard]] bool operator==(const VertexLayoutKey& other) const noexcept;
 };
 
+/** @brief Hashes a VertexLayoutKey over exactly the fields @ref VertexLayoutKey::operator== reads.
+ *
+ * @details
+ * - Used where a layout is a MAP KEY rather than a pipeline field: the content layer's declaration index
+ *   (`ContentDeclarations::declaresLayout`) asks "does a live geometry row still feed this layout?" in O(1), which
+ *   is what lets a compiled half be pinned without scanning the geometry rows.
+ * - A hash is not an identity: collisions are allowed, and equality still decides.
+ */
+struct VN_GRAPHICS_API VertexLayoutKeyHash {
+    /** @brief Hashes @p key. */
+    [[nodiscard]] std::size_t operator()(const VertexLayoutKey& key) const noexcept;
+};
+
 /**
  * @brief What one drawing call draws with: the engine has exactly two, and they compile against
  * different descriptor ABIs.

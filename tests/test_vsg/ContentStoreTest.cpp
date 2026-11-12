@@ -37,6 +37,7 @@ using vn::graphics::backend::CompiledPass;
 using vn::graphics::backend::DrawKind;
 using vn::graphics::backend::FrameTimeline;
 using vn::graphics::backend::RetirementQueue;
+using vn::graphics::backend::VertexLayoutKey;
 using vn::test::setPrimitiveIndices;
 using vn::vsg::ContentFacts;
 using vn::vsg::ContentStore;
@@ -1164,17 +1165,28 @@ TEST(ContentStoreTest, TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWi
     EXPECT_TRUE(both.declarations.declaresBuffer(buffer)) << "both rows declare the shared arena";
     EXPECT_FALSE(both.declarations.declaresBuffer(nullptr));
 
+    // The same rows declare their vertex LAYOUT: the half producer's pin asks this to retire a compiled half whose
+    // last geometry left, without walking the rows. Both rows feed one layout, so this is the refcount again.
+    const VertexLayoutKey layout = both.geometries.front().layout;
+    EXPECT_TRUE(both.declarations.declaresLayout(layout)) << "both rows feed the shared layout";
+    VertexLayoutKey other_layout;
+    other_layout.canonical_mask = layout.canonical_mask + 1U;
+    EXPECT_FALSE(both.declarations.declaresLayout(other_layout)) << "a layout no row feeds is not declared";
+
     // One geometry goes: the OTHER row still declares the buffer, so the index keeps it (the refcount, not a bit).
     left.reset();
     ASSERT_EQ(store.releaseAbandoned(), 1U);
     EXPECT_TRUE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer))
         << "the dropped row is inside its window, and the other row names the buffer anyway";
     EXPECT_TRUE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer)) << "the row that is still the live answer keeps the bytes declared";
+    EXPECT_TRUE(frames.record(store, empty->frame).declarations.declaresLayout(layout)) << "the other row still feeds the layout";
 
     // The last declarer goes too: the next frame boundary erases its row, and nothing declares the bytes.
     right.reset();
     ASSERT_EQ(store.releaseAbandoned(), 1U);
-    EXPECT_FALSE(frames.record(store, empty->frame).declarations.declaresBuffer(buffer)) << "with the last row erased, nothing declares the bytes any more";
+    const ContentFacts& gone = frames.record(store, empty->frame);
+    EXPECT_FALSE(gone.declarations.declaresBuffer(buffer)) << "with the last row erased, nothing declares the bytes any more";
+    EXPECT_FALSE(gone.declarations.declaresLayout(layout)) << "and nothing feeds the layout any more";
 }
 
 TEST(ContentStoreTest, AMaterialDeclaresItsIdentityForAsLongAsARowAnswersIt)

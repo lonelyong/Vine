@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <memory>
 #include <span>
-#include <vector>
 
 #include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
@@ -40,9 +39,13 @@
  * cannot answer one, no half is invented for it (the pass reports the miss; it is the same miss either way).
  *
  * WHAT IT DOES NOT DO, deliberately. It does not build the pass' DECLARED SETS: those carry the caller's
- * images and the frame's descriptor numbers, which is the scope's business (api/BlockDescriptors). It also
- * does not grow: a half whose key the tables STOP answering (its revision was retired) is parked, the same
- * retirement window every other replaced object gets - so what is compiled tracks what the tables answer.
+ * images and the frame's descriptor numbers, which is the scope's business (api/BlockDescriptors). Its lifetime
+ * is TWO PINS: the program revision it was compiled from (`findProgram`), and the LAYOUT declaration index
+ * (`ContentDeclarations::declaresLayout` - how many live geometry rows still feed that vertex layout). A layout
+ * whose last geometry left the tree therefore retires its halves. In production both questions are O(1); a
+ * hand-built table that published no layout index answers the second by scanning its rows (the optional-index
+ * rule `ContentFacts` states for the row orders too). The departure is parked through the same window every
+ * other replaced object gets.
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
@@ -69,17 +72,35 @@ class ContentHalves {
      * recorder refuses it on the geometry or the material first, and a half invented for one would be a half
      * nobody could find.
      *
-     * A half whose key the tables no longer answer (the tables retire a superseded revision) is parked
-     * through @p retirement, dated against @p timeline.
+     * WHAT IT DOES NOT DO. It does not decide what may go: retirement is the FRAME's step, once per frame, even
+     * for a frame that draws nothing (see @ref sweep). Asking each pass would make "when does a half die"
+     * depend on whether some pass happened to walk this producer.
      *
      * @param pass       The compiled pass the halves are for (its attachment count is part of their key).
      * @param facts      The tables the identities are answered from.
-     * @param timeline   The frame clock parks are dated against.
-     * @param retirement Where halves whose key left the tables are parked.
+     * @param timeline   The frame clock (unused here; kept for the caller's symmetry with the other producers).
+     * @param retirement Unused here (the parks happen in @ref sweep); kept for the same reason.
      * @return The entries, valid until the next call - they borrow this producer's own storage.
      */
     [[nodiscard]] std::span<const ContentPass::Scope::Entry>
     halvesFor(const core::CompiledPass& pass, const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+
+    /**
+     * @brief Parks every half the tables no longer answer, once per frame.
+     *
+     * @details
+     * - THE FRAME'S STEP, not a pass': a half is pinned by its program revision and its layout declaration (see the
+     *   file note), both facts of the tables rather than of any pass - so a frame that draws nothing still retires
+     *   the halves whose content left, exactly as it retires the streams and the arena slots.
+     * - Called from the content frame's opening (see ContentAssembly::beginFrame / prepare), before any pass asks
+     *   for its halves: a half this frame will need is still pinned, so the order costs nothing.
+     * - A refused build has no GPU object to park; its key is simply forgotten once the same pins are gone.
+     *
+     * @param facts      The tables the identities are answered from.
+     * @param timeline   The frame clock parks are dated against.
+     * @param retirement Where the departed halves are parked.
+     */
+    void sweep(const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief Gets how many compiled halves are alive (a steady pass raises this by nothing). */
     [[nodiscard]] std::size_t halves() const noexcept;

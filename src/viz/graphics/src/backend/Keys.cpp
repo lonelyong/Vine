@@ -9,6 +9,17 @@ bool VertexLayoutKey::operator==(const VertexLayoutKey& other) const noexcept
     return canonical_mask == other.canonical_mask && custom_locations == other.custom_locations;
 }
 
+std::size_t VertexLayoutKeyHash::operator()(const VertexLayoutKey& key) const noexcept
+{
+    std::size_t hash = 0;
+    const auto  mix  = [&hash](std::uint64_t value) noexcept { hash ^= static_cast<std::size_t>(value) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2); };
+    mix(key.canonical_mask);
+    for (const std::uint32_t location : key.custom_locations) {
+        mix(location);
+    }
+    return hash;
+}
+
 bool RenderPassCompatibility::operator==(const RenderPassCompatibility& other) const noexcept
 {
     return color_formats == other.color_formats && depth_format == other.depth_format && device_color_formats == other.device_color_formats &&

@@ -69,21 +69,24 @@ class Texture;
 
 VN_VSG_NS_BEGIN
 
+/** @brief Layout -> how many live geometry rows feed it (the map @ref ContentDeclarations borrows). */
+using LayoutDeclarations = std::unordered_map<core::VertexLayoutKey, std::uint32_t, core::VertexLayoutKeyHash>;
+
 /**
  * @brief What the live content still DECLARES, as an index a residency table can ask in O(1).
  *
  * @details
  * - WHY AN INDEX AND NOT A WALK. A residency table asks one question per entry - "does anything alive still
- *   name these bytes?" - and the answer is a property of the content rows. Answering it by walking the rows
- *   would make a frame's residency bookkeeping cost O(live content), which is the wrong side of the pin model:
- *   culled content KEEPS its rows, so the cost would be paid on frames that draw nothing. The content store
- *   therefore keeps these indexes beside the rows (each table maintains its own as rows move) and publishes them
- *   here; asking is one hash lookup.
- * - TWO KINDS, ONE QUESTION. A geometry row declares the BUFFERS its streams read; a material row declares the
- *   TEXTURES its slots sample; a material row also declares its own IDENTITY (what the block arena holds a slot
- *   under). The first two are addresses and the third is a handle, so they are two maps - but one type answers
- *   all three instead of three lookalikes, and every residency table that keys on any of them (api/StreamUploads,
- *   api/MaterialImages, the material arena) asks the same way.
+ *   name these bytes / this layout?" - and the answer is a property of the content rows. Answering it by walking
+ *   the rows would make a frame's residency bookkeeping cost O(live content), which is the wrong side of the pin
+ *   model: culled content KEEPS its rows, so the cost would be paid on frames that draw nothing. The content
+ *   store therefore keeps these indexes beside the rows (each table maintains its own as rows move) and publishes
+ *   them here; asking is one hash lookup.
+ * - FOUR KINDS, ONE QUESTION. A geometry row declares the BUFFERS its streams read and the vertex LAYOUT it feeds;
+ *   a material row declares the TEXTURES its slots sample and its own IDENTITY (what the block arena holds a slot
+ *   under). The first three are maps keyed by address or by the layout value, the last by a handle - but one type
+ *   answers all four instead of four lookalikes, and every residency table that keys on any of them
+ *   (api/StreamUploads, api/MaterialImages, the material arena, api/ContentHalves) asks the same way.
  * - WHAT IT MEANS, AND WHAT IT DOES NOT. Membership says an address is still declared by some live row, at the
  *   moment that row was built. It says NOTHING about whether the bytes at that address are still the ones a
  *   residency entry was built from: `Buffer::edit()` / a texture refill move the object's revision without
@@ -101,14 +104,49 @@ class ContentDeclarations {
      * @param buffers   Address -> how many live geometry rows still name it (borrowed, never owned).
      * @param textures  Address -> how many live material rows still sample it (borrowed, never owned).
      * @param materials Handle bits -> how many live material rows still name that identity (borrowed, never owned).
+     * @param layouts   Layout -> how many live geometry rows still feed it (borrowed, never owned).
      */
     explicit ContentDeclarations(const std::unordered_map<const void*, std::uint32_t>*   buffers   = nullptr,
                                  const std::unordered_map<const void*, std::uint32_t>*   textures  = nullptr,
-                                 const std::unordered_map<std::uint64_t, std::uint32_t>* materials = nullptr) noexcept
+                                 const std::unordered_map<std::uint64_t, std::uint32_t>* materials = nullptr,
+                                 const LayoutDeclarations*                              layouts   = nullptr) noexcept
       : buffers_(buffers)
       , textures_(textures)
       , materials_(materials)
+      , layouts_(layouts)
     {}
+
+    /**
+     * @brief Gets whether a live geometry row still feeds @p layout.
+     *
+     * @details
+     * - THE PIN OF A COMPILED HALF, together with `program@rev` (see api/ContentHalves): a half is kept while
+     *   the program revision answers AND some live geometry still feeds the layout it was compiled for - so a
+     *   layout whose last geometry left the tree retires its halves without any per-frame walk of the rows.
+     *
+     * @param layout The vertex layout (canonical mask + custom locations).
+     * @return true when some live geometry row still feeds it.
+     */
+    [[nodiscard]] bool declaresLayout(const core::VertexLayoutKey& layout) const noexcept
+    {
+        return layouts_ != nullptr && layouts_->find(layout) != layouts_->end();
+    }
+
+    /**
+     * @brief Gets whether a layout declaration index was published at all.
+     *
+     * @details
+     * - The index is OPTIONAL in the same sense the row orders are: a table built by hand (tests, an alternative
+     *   provider) may leave it empty, and a consumer that needs the question then answers it by scanning the
+     *   geometry rows - the same answer at a linear price. Production's `ContentStore` always publishes it, so
+     *   the frame path never takes that fallback.
+     *
+     * @return true when @ref declaresLayout can answer from an index.
+     */
+    [[nodiscard]] bool hasLayoutIndex() const noexcept
+    {
+        return layouts_ != nullptr;
+    }
 
     /**
      * @brief Gets whether a live geometry row still declares @p address.
@@ -155,6 +193,7 @@ class ContentDeclarations {
     const std::unordered_map<const void*, std::uint32_t>*   buffers_{ nullptr };
     const std::unordered_map<const void*, std::uint32_t>*   textures_{ nullptr };
     const std::unordered_map<std::uint64_t, std::uint32_t>* materials_{ nullptr };
+    const LayoutDeclarations*                               layouts_{ nullptr };
 };
 
 /** @brief One vertex channel of a geometry: what the stream is shared by, and where its bytes live.

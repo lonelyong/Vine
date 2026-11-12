@@ -161,9 +161,11 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 - 边界（性能往哪里长）：
   - **随资源数量**：每 command 的常数项（3 次 `track`、1 次 `updateMaterial`、3 次二分、每通道一次 `StreamKey`
     哈希、每贴图槽一次 `(Texture*, revision)` 哈希、一次 `VariantPool` 查询），全部 O(1)/O(log n)。
-  - **随资源种类数**：两处**线性扫描**是唯一会变重的簿记 —— half 清扫（`ContentHalves::answerable` 每 pass 对每个
-    half 扫一遍全部 geometry facts）与 `halves` / `sets` 的查找（`ContentHalves::find` / `ContentSets::find`）。
-    几十种组合可忽略，上百种要重新量。
+  - **随资源种类数**：半片与描述符集各自是一张 `ResourceTable` —— 查找是哈希、清扫是每个驻留条目一次 pin 询问
+    （`findProgram` 的二分 + `declaresLayout` / `declaresTexture` 的哈希），不再有“每 pass 对每个 half 扫一遍
+    geometry facts”的反事实扫描（2026-11-12，ADR-2026-11-10 第五步）。`ContentStore` 总是发布 layout 声明
+    索引；手建 facts 不发布时按可选索引规则退回扫描。几十种组合与上百种组合是同一个数量级；真正变重的仍是
+    下面两项。
   - **每 draw 的绝对大头不是簿记，而是 vsg 每帧新建的命令节点**：记录路径基线是 12 次分配/pass、约 33 次分配/
     一个被录制的三角，而计划半（`FrameRecorder` + `FrameCompiler`）是**零分配**并有门禁。
   - 真正能到数量级跳跃的只有两件事：**上传**（几何/贴图 revision 抖动，见 F16.2）与**编译**（程序 / 拓扑 / 布局变）。
@@ -310,7 +312,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | T2 | `scripts/vsg_rewrite_gate.sh`：0 VUID / 0 SYNC-HAZARD、相位行闭合、应用画面百分比。 |
 | T3 | `check_ai_docs.py --strict` / `check_doc_symbols.py` / `check_include_hygiene.py` / `check_export_annotations.py` / `check_diagnostic_formats.py` / `check_public_docs.py`。 |
 | T4 | 上传暂存不保留（F16.2）：`UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack` —— 帧不 idle；上传后 `uploadStagingBytes()` 归零，**没人调**；同一内容重画零上传；新流再上传、后续帧再归零。`OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands` —— 256 MB 上传后工作集至少 +128 MB，随后 4 KB 上传**逐字节**读回一致；同用例还钉住“vsg 自建的任务答不出（`nullopt`）→ 装过之后报 0 → 再上传后报 ≥ 4096 字节”。`OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting` —— 会话起来就装好可问的任务（`stagedBytes()` 有值且为 0），出帧不涨 `deviceWaits`，仍能提交。 |
-| T5 | 编辑成本与稳态（§2.10）：`VsgBackendTest.MeasureWhatEachKindOfEditCostsPerFrame` —— 打印 µs/帧与 `builds` / `uploads` / `created` 增量；断言稳态全 0、材质值 0 上传 0 编译、几何 revision ≥1 上传 0 编译、程序与拓扑变各 1 次编译。配套稳态钉：`ContentStoreTest.ASteadyFrameBuildsNothing`、`CoreMaterialArenaTest.ASteadyFrameWritesNothing`、`ContentHalves` / `ContentSets` 的 sweep 用例。分配上限：`CoreAllocationGateTest.TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPass`（12 次/pass、约 33 次/一个被录制的三角）。这几个配方需要真实窗口，headless 机器上 `GTEST_SKIP`。 |
+| T5 | 编辑成本与稳态（§2.10）：`VsgBackendTest.MeasureWhatEachKindOfEditCostsPerFrame` —— 打印 µs/帧与 `builds` / `uploads` / `created` 增量；断言稳态全 0、材质值 0 上传 0 编译、几何 revision ≥1 上传 0 编译、程序与拓扑变各 1 次编译。配套稳态钉：`ContentStoreTest.ASteadyFrameBuildsNothing`、`CoreMaterialArenaTest.ASteadyFrameWritesNothing`、`ContentHalves` / `ContentSets` 的 pin 用例。分配上限：`CoreAllocationGateTest.TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPass`（12 次/pass、约 33 次/一个被录制的三角）。这几个配方需要真实窗口，headless 机器上 `GTEST_SKIP`。 |
 
 ## 9. 状态与演进
 

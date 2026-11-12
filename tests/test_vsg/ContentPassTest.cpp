@@ -5997,6 +5997,18 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
     EXPECT_TRUE(near(right_half.r, 0.0) && near(right_half.g, 255.0) && near(right_half.b, 0.0))
         << "the RIGHT drawable samples ITS material's texel (green), got (" << static_cast<int>(right_half.r) << ", " << static_cast<int>(right_half.g) << ", "
         << static_cast<int>(right_half.b) << ") - one colour twice means one set served both drawables";
+
+    // The PIN: the program revision still answers, but no live material row declares either map. The program
+    // half of the pin holds; the texture half does not, so both sets leave through the table's ordinary parking
+    // window (see api/ContentSets). No material-row walk was needed to answer that.
+    ContentFacts program_only;
+    program_only.programs      = facts.programs;
+    program_only.program_names = facts.program_names;
+    program_only.program_order = facts.program_order;
+    EXPECT_TRUE(sets.setsFor(frame.passes[0], program_only, entries, {}, timeline, retirement).empty());
+    sets.sweep(program_only, timeline, retirement); // the FRAME's step (see ContentSets::sweep)
+    EXPECT_EQ(sets.sets(), 0U) << "a set whose maps no live row declares is not pinned by its program alone";
+    EXPECT_EQ(retirement.pending(), 2U) << "both sets were parked, not freed in place";
 }
 
 TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)

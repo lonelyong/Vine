@@ -140,6 +140,14 @@ const ContentFacts& ContentAssembly::openTables(const core::CompiledFrame& frame
     // index this asks, so the sweep costs one lookup per resident slot rather than a pass over the rows.
     (void)d->storage->retireUnpinnedMaterials(d->facts->declarations);
 
+    // THE SESSION-LEVEL PRODUCTS follow it, at the FRAME's pace and not a pass': a compiled half is pinned by
+    // (program@rev, layout declaration) and a declared set by (program@rev, the maps it sampled), both facts of
+    // the tables above - so a frame that draws NOTHING still retires what content left. Doing this inside
+    // api/ContentHalves::halvesFor / api/ContentSets::setsFor would make "when does it die" depend on whether some
+    // pass happened to walk the producer, and would scan the tables once per pass instead of once per frame.
+    d->halves->sweep(*d->facts, timeline, retirement);
+    d->sets->sweep(*d->facts, timeline, retirement);
+
     // The sampled-input sets the previous frame did not ask for are no longer this session's to keep: the
     // images they name were replaced (a resize builds new ones) or the pass that sampled them is gone. They
     // are PARKED rather than dropped, because a command buffer in flight may still name their VkDescriptorSet

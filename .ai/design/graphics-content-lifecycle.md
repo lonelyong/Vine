@@ -77,8 +77,11 @@
    - 纹理（`MaterialImages`）走**同一条规则**：声明是材质行的 slot（`declaresTexture`）或该帧某个 pass 的导入
      输入（`ImageInput`，没有事实行也照样算），另一半是条目自己的 `Texture::revision()`；离场不 park（描述符集
      自己持有 view / sampler），所以它在 `ContentAssembly::beginFrame` 里和流一起问。
-   - 编译半片 / 描述符集是**会话级**的，不随 pass 走：它们只在“表不再回答这个 program（id + revision）”或
-     “没有任何 geometry 还问这个 layout”时被停靠（`ContentHalves::answerable` / `ContentSets` 的 sweep）。
+   - 编译半片 / 描述符集是**会话级**的，不随 pass 走：半片的 pin 是 **program@rev ∧ `declaresLayout`**
+     （几何表维护的“layout → 活行计数”，O(1)），描述符集另加**它采样的贴图**（材质行的 `declaresTexture` +
+     键里自己的 texture revision）。两者都走 `ResourceTable::retireUnpinned`，不再有“还有没有 geometry 问这个
+     layout”的每帧扫描（手建 `ContentFacts` 未发布索引时按可选索引规则退回扫描，生产永远发布）；“最后一条
+     使用该 layout 的几何离树 ⇒ 半片 park”由声明索引直接回答。
    - 材质块（arena 槽）也走**同一条规则**：槽按**身份**保留，每帧问一次声明索引
      （`ContentDeclarations::declaresMaterial`：材质表的 per-identity 行计数）“还有活行吗”；没有就
      **当帧立即放槽**（`MaterialArena::retireUnpinned`）。不是 park——arena 的副本轮转就是那个窗口，
@@ -144,9 +147,9 @@
 | # | 情形 | 行（表） | 上传（stream） | 半片 / 描述符集 | 材质槽 | 触发处 |
 |---|---|---|---|---|---|---|
 | F23 | **材质离树** | 宿主丢引用后下个帧边界标记；行过了 epoch 窗口才走 | — | 无（set 键不含材质） | 行走后由帧首的 pin 扫描 `BlockStorage::retireUnpinnedMaterials` 放槽 | `ContentStore::releaseAbandoned` / `releaseContent` |
-| F24 | **program 离树** | 同上 | — | 半片在 `answerable` 不再成立时 park（它驱动的 vsg 管线随之走；池里的 variant 只按 FIFO 65 淘汰） | — | 同上 |
-| F25 | **pass 脱离** | 后端只有身份：`releasePass` 忘掉 id（永不重发） | — | **不释放**（会话级；随 program/layout 消失才走）；输入集一帧后退回 | — | `RenderEngine::removePass` → `device()->releasePass()` + 拥有目标 `releaseRenderTarget()` |
-| F26 | **geom 离树** | 宿主丢引用后扫尾标记；行过了 epoch 窗口 ⇒ pin 消失，上传按自己的窗口离场 | — | 见 F24（layout 不再被需要时） | `releaseAbandoned` |
+| F24 | **program 离树** | 同上 | — | 半片在 program@rev 不再被表回答时 park（它驱动的 vsg 管线随之走；池里的 variant 只按 FIFO 65 淘汰） | — | 同上 |
+| F25 | **pass 脱离** | 后端只有身份：`releasePass` 忘掉 id（永不重发） | — | **不释放**（会话级；随 program 或 layout 消失才走）；输入集一帧后退回 | — | `RenderEngine::removePass` → `device()->releasePass()` + 拥有目标 `releaseRenderTarget()` |
+| F26 | **geom 离树** | 宿主丢引用后扫尾标记；行过了 epoch 窗口 ⇒ pin 消失，上传按自己的窗口离场 | — | layout 的最后一条几何行离树 ⇒ `declaresLayout` 消失 ⇒ 半片 park（program 离树同样 park） | `releaseAbandoned` |
 | F27 | **geom 隐藏**（`setVisible(false)`） | **留着**（宿主仍持有） | **留着**：行还在 ⇒ pin 还在；恢复可见零重传 | 留着 | — | 只影响收集，不触发释放 |
 | F28 | **geom 被裁剪**（视锥外，逐视图） | 留着 | 同 F27——裁剪是逐视图的，但它不改变“谁声明了这些字节” | 留着 | — | 同上 |
 

@@ -1,6 +1,6 @@
 # ADR-2026-11-10：GPU 驻留按内容对象钉住（pin），按"谁活着"回收
 
-- 状态：已采纳（第一至四步落地，第五步按 §迁移 推进）
+- 状态：已采纳（第一至五步全部落地，第五步 2026-11-12）
 - 日期：2026-11-10
 - 相关：`../design/graphics-content-lifecycle.md`、`../design/vsg-backend.md` §2.10、`../backlog/graphics.md`
   `src/viz/graphics/src/Scene.cpp`、`src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp`、
@@ -75,7 +75,8 @@
   这是显式管理（`ADR-2026-10-22`）的必然结果，也是本 ADR 唯一的真实代价，必须写进
   `graphics-content-lifecycle.md` 的现役要点。
 - **半片累积**：pin 只看 program@rev 时，layout/变体更替会让半片累积（每个是几十 KB 的管线）。
-  这一条要按 `G10` 量一次再定（见开放项 1）。
+  这一条要按 `G10` 量一次再定（见开放项 1）。**第五步落地时已用 layout 声明索引消掉**（2026-11-12）：
+  `declaresLayout` 是 O(1) 的“还有活几何行喂这个 layout 吗”，所以不需要在累积与扫描之间选。
 
 ## 迁移
 
@@ -93,8 +94,12 @@
    arena 里那张“身份 → 槽”的表本来就是这张表，再叠一层 `ResourceTable` 会把 slot+revision 记两遍，
    所以放槽写进 `MaterialArena::retireUnpinned`；且**不 park**：arena 的副本轮转就是窗口，写进停车队列反而
    会在窗口内重建条目之后把槽还掉。）
-5. **半片 + 描述符集**迁入：删 `answerable` 与 `ContentSets::sweep`，pin = program@rev（+ 描述符集另加
-   5 个贴图 pin）。删掉的是两份 O(n × m) 扫描。
+5. **半片 + 描述符集**迁入（已落地 2026-11-12）：删 `answerable` 与 `ContentSets` 的 sweep，两张表都走
+   `ResourceTable::retireUnpinned`。半片的 pin = program@rev **+ `ContentDeclarations::declaresLayout`**（几何表
+   维护的“layout → 活行计数”，O(1)）；描述符集另加 5 个贴图 pin（`declaresTexture` + 键里自己的 revision）。
+   删掉的是两份 O(halves × geometries) / O(sets × geometries) 的反事实扫描（手建 `ContentFacts` 未发布索引时
+   按可选索引规则退回扫描；生产 `ContentStore` 永远发布）；被拒的构建不驻留（没有 GPU 对象），只记住键，
+   随 program revision 一起忘。半片不再按 layout 累积：最后一条使用该 layout 的几何行离树，声明消失，半片随之 park。
 
 ### 迁移 2 的设计：流 → pin（`backend/ResourceTable<K, V>`）
 
@@ -149,7 +154,7 @@ class ResourceTable {
 不再需要"同地址另一代"的保险）。
 
 步骤 2 里流的键已含 buffer revision，正常路径不会重建同键；这一条是给步骤 4（材质块按键身份、revision 另计）
-和步骤 5（半片按 program@rev）留的同一个抽屉（`G9`），今天由 `ResourceTableTest` 的计数型 `Value` 钉住。
+和步骤 5（半片按 program@rev + layout 声明）留的同一个抽屉（`G9`），今天由 `ResourceTableTest` 的计数型 `Value` 钉住。
 
 #### live-pin 的枚举点：内容层发布，条目自答
 
@@ -205,8 +210,9 @@ class ResourceTable {
 
 ## 开放项
 
-1. 半片的 pin 是否只看 program@rev（会累积）还是另加"layout 仍被活几何需要"（回到一份扫描）。**倾向后者只
-   在实测显示累积不可忽略时才加**。
+1. 半片的 pin 是否只看 program@rev（会累积）还是另加"layout 仍被活几何需要"（回到一份扫描）。**已关闭
+   （2026-11-12）**：第五步落地的 pin 是 `program@rev ∧ declaresLayout`，layout 那一半由几何表的
+   `layout → 活行计数` 索引回答，是 O(1)，既没有扫描也不累积。
 2. 是否给 `RefCounted` 加 weak 支持：**不做**。pin 集合由事实表枚举，不需要"对象已死"的通知。
 3. `Buffer` 仍然不在事实表里，但它不需要“成为身份”：流的 pin 从**几何行的 buffer 句柄**上读
    （地址 + 此刻的 `revision()`），所以几何声明字节、buffer 宣告换代，两件事各自生效；共享 buffer 的条目

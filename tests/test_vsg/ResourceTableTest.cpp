@@ -168,6 +168,29 @@ TEST(ResourceTableTest, AKeyBuiltAgainWhileItsOldValueIsParkedGetsANewGeneration
     EXPECT_EQ(table.live(), 1U) << "the current one is untouched";
 }
 
+TEST(ResourceTableTest, TheVisitSeesEveryResidentValueAndCanChangeItsBody)
+{
+    ResourceTable<int, Counted> table;
+    (void)table.acquire(1, []() -> std::optional<Counted> { return Counted{ 1 }; });
+    (void)table.acquire(2, []() -> std::optional<Counted> { return Counted{ 2 }; });
+
+    int seen = 0;
+    int sum  = 0;
+    table.forEach([&](const int& key, Counted& value) {
+        ++seen;
+        value.id += key; // changing the BODY is what a repoint does; the key is the table's
+        sum += value.id;
+    });
+
+    EXPECT_EQ(seen, 2) << "one visit per resident value";
+    EXPECT_EQ(sum, 2 + 4) << "the visitor saw the values the table held, and its change stuck";
+
+    const ResourceTable<int, Counted>& const_table = table;
+    int                               const_sum   = 0;
+    const_table.forEach([&](const int&, const Counted& value) { const_sum += value.id; });
+    EXPECT_EQ(const_sum, sum) << "the const door sees the same values";
+}
+
 TEST(ResourceTableTest, ClearDropsWithoutParkingBecauseNothingIsInFlight)
 {
     ResourceTable<int, Counted> table;

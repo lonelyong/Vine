@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <memory>
 #include <span>
-#include <vector>
 
 #include <vsg/core/ref_ptr.h>
 #include <vsg/vk/Device.h>
@@ -48,9 +47,12 @@
  * same shape; see BlockDescriptors::ImageSource). A set whose samplers are all pass-level is tagged with an
  * EMPTY source, so every drawable of that variant shares it.
  *
- * LIFETIME. A set whose key the tables no longer answer (their own retirement took the revision away) can
- * never be asked for again, so it is parked through the same window every other replaced object gets. A
- * REFUSED set is remembered: rebuilding it every frame would fail the same way and say the same thing.
+ * LIFETIME. A set is pinned by its program revision AND by the material maps its samplers read: it lives while
+ * the tables still answer `(program identity, revision, variant)` and every texture its source names is still
+ * declared by a live material row at the revision the set was built for. Both halves are O(1) questions (see
+ * `ContentDeclarations::declaresTexture` and the set's own source), not a walk of the content rows. A PARKED
+ * set goes through the same window every other replaced object gets; a REFUSED set is remembered without
+ * being a resident value: rebuilding it every frame would fail the same way and say the same thing.
  *
  * WHAT IT DOES NOT DO. It does not build the pass' INPUT set (api/ContentPass does, from the key's counts),
  * it does not report - it counts its fallbacks and refusals, and the caller owns the diagnostic stream - and
@@ -96,7 +98,8 @@ class ContentSets {
      * exists for exactly the (set index, image source) pairs a pass will ask for. A command the tables or
      * the halves cannot answer contributes nothing (the recorder refuses it first, and says why).
      *
-     * Sets whose key the tables no longer answer are parked through @p retirement, dated against @p timeline.
+     * WHAT IT DOES NOT DO. It does not decide what may go: retirement is the FRAME's step, once per frame, even
+     * for a frame that draws nothing (see @ref sweep).
      *
      * @param pass       The compiled pass whose draws the sets are for.
      * @param facts      The tables the identities are answered from.
@@ -104,8 +107,8 @@ class ContentSets {
      *                   declared shapes and the input/depth samplers).
      * @param inputs     The images the pass' inputs offer (see ContentPass::record - nothing when it has
      *                   none).
-     * @param timeline   The frame clock parks are dated against.
-     * @param retirement Where the sets whose key left the tables are parked.
+     * @param timeline   The frame clock (unused here; kept for the caller's symmetry with the other producers).
+     * @param retirement Unused here (the parks happen in @ref sweep); kept for the same reason.
      * @return The candidate sets for `Scope::block_sets`, valid until the next call.
      */
     [[nodiscard]] std::span<BlockDescriptors* const> setsFor(const core::CompiledPass&                  pass,
@@ -114,6 +117,23 @@ class ContentSets {
                                                              std::span<const InputImages>               inputs,
                                                              core::FrameTimeline&                       timeline,
                                                              core::RetirementQueue&                     retirement);
+
+    /**
+     * @brief Parks every set the tables no longer answer, once per frame.
+     *
+     * @details
+     * - THE FRAME'S STEP, not a pass': a set is pinned by its program revision AND by the maps its samplers read
+     *   (see the file note), both facts of the tables and the resident set's own source - so a frame that draws
+     *   nothing still retires the sets whose content left.
+     * - Called from the content frame's opening (see ContentAssembly::beginFrame / prepare), before any pass asks
+     *   for its sets: a set this frame will need is still pinned, so the order costs nothing.
+     * - A refused build has no descriptor set to park; its key is simply forgotten once the same pins are gone.
+     *
+     * @param facts      The tables the identities are answered from.
+     * @param timeline   The frame clock parks are dated against.
+     * @param retirement Where the departed sets are parked.
+     */
+    void sweep(const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
     /** @brief Rebuilds every cached set over a replacement storage (what a grown budget produces).
      *

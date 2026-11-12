@@ -1,6 +1,7 @@
 #include <vine/vsg/internal/ContentStore.hpp>
 
 #include <algorithm>
+#include <functional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -319,29 +320,28 @@ struct ContentStore::Data {
         std::unordered_map<std::uint64_t, std::uint32_t> rows_of_; // Rows per identity (see rowsOf).
     };
 
-    /// @brief Address -> how many live rows name it: the index ContentFacts publishes (see ContentDeclarations).
+    /// @brief Key -> how many live rows name it: the index ContentFacts publishes (see ContentDeclarations).
     ///
-    /// WHY ONE TYPE FOR BOTH KINDS. A geometry row names the buffers its streams read and a material row names the
-    /// textures its slots sample; both are an address, both are asked as membership, and both are refcounted (one
-    /// arena is named by several rows). Two lookalike maps is how the two would come to disagree about what "named"
-    /// means - so the rule (add one on append, remove one on erase, leave at zero) is written once.
+    /// WHY ONE TYPE FOR EVERY KIND. A geometry row names the buffers its streams read and the vertex layout it
+    /// feeds; a material row names the textures its slots sample and its own identity. All four are refcounted
+    /// (one arena is named by several rows, one layout by many geometries), so the rule - add one on append,
+    /// remove one on erase, leave at zero - is written once instead of four times (G1 / G6).
+    ///
+    /// @tparam Key  What is counted (an address, a layout, a material handle).
+    /// @tparam Hash The map's hasher; equality is the key's own `operator==`.
+    template <class Key, class Hash = std::hash<Key>>
     class Declarations {
       public:
-        /// @brief Adds one declaration of @p address (null is not a declaration).
-        void add(const void* address)
+        /// @brief Adds one declaration of @p key. Callers filter "no declaration" (a null address) themselves.
+        void add(const Key& key)
         {
-            if (address != nullptr) {
-                ++counts_[address];
-            }
+            ++counts_[key];
         }
 
-        /// @brief Withdraws one declaration of @p address; the address leaves when its count reaches zero.
-        void remove(const void* address) noexcept
+        /// @brief Withdraws one declaration of @p key; the key leaves when its count reaches zero.
+        void remove(const Key& key) noexcept
         {
-            if (address == nullptr) {
-                return;
-            }
-            const auto found = counts_.find(address);
+            const auto found = counts_.find(key);
             if (found == counts_.end()) {
                 return; // cannot happen for a row this index saw; never erase what is not there
             }
@@ -357,13 +357,13 @@ struct ContentStore::Data {
         }
 
         /// @brief Gets the index a `ContentDeclarations` borrows.
-        [[nodiscard]] const std::unordered_map<const void*, std::uint32_t>& counts() const noexcept
+        [[nodiscard]] const std::unordered_map<Key, std::uint32_t, Hash>& counts() const noexcept
         {
             return counts_;
         }
 
       private:
-        std::unordered_map<const void*, std::uint32_t> counts_;
+        std::unordered_map<Key, std::uint32_t, Hash> counts_;
     };
 
     /// @brief The geometry rows AND the buffers they declare: one object, so a row cannot move without the
@@ -416,6 +416,7 @@ struct ContentStore::Data {
         {
             table_.clear();
             declared_.clear();
+            declared_layouts_.clear();
         }
 
         /** @brief Gets the rows (contiguous: `ContentFacts` hands out spans of them). */
@@ -448,8 +449,14 @@ struct ContentStore::Data {
             return declared_.counts();
         }
 
+        /** @brief Gets the layout declaration index the facts publish (see ContentDeclarations::declaresLayout). */
+        [[nodiscard]] const LayoutDeclarations& declaredLayouts() const noexcept
+        {
+            return declared_layouts_.counts();
+        }
+
       private:
-        /// @brief Adds (@p direction +1) or withdraws (-1) every buffer one row names.
+        /// @brief Adds (@p direction +1) or withdraws (-1) every buffer and the layout one row names.
         void declare(const GeometryFacts& row, int direction)
         {
             for (const ChannelFacts& channel : row.channels) {
@@ -461,11 +468,20 @@ struct ContentStore::Data {
                 }
                 declareOne(primitive.instances.get(), direction);
             }
+            if (direction > 0) {
+                declared_layouts_.add(row.layout);
+            }
+            else {
+                declared_layouts_.remove(row.layout);
+            }
         }
 
-        /// @brief Adds or withdraws ONE declaration.
+        /// @brief Adds or withdraws ONE buffer declaration (a null handle is not a declaration).
         void declareOne(const void* buffer, int direction)
         {
+            if (buffer == nullptr) {
+                return;
+            }
             if (direction > 0) {
                 declared_.add(buffer);
             }
@@ -475,7 +491,8 @@ struct ContentStore::Data {
         }
 
         Table<GeometryFacts, GeometryStorage, &orderGeometryRows, &geometryRowKey> table_;
-        Declarations                                                               declared_;
+        Declarations<const void*>                                                  declared_;
+        Declarations<core::VertexLayoutKey, core::VertexLayoutKeyHash>            declared_layouts_;
     };
 
     /// @brief The material rows AND the textures they sample: GeometryTable's rule for the other kind.
@@ -560,6 +577,9 @@ struct ContentStore::Data {
         void declare(const MaterialFacts& row, int direction)
         {
             for (const MaterialSlotFacts& slot : row.slots) {
+                if (slot.texture == nullptr) {
+                    continue; // an absent slot is not a declaration
+                }
                 if (direction > 0) {
                     declared_.add(slot.texture);
                 }
@@ -570,7 +590,7 @@ struct ContentStore::Data {
         }
 
         Table<MaterialFacts, MaterialStorage, &orderMaterialRows, &materialRowKey> table_;
-        Declarations                                                               declared_;
+        Declarations<const void*>                                                  declared_;
     };
 
     // The live set: the identities the host tracked, each holding the SHAPE it answers with. The description is held
@@ -614,7 +634,8 @@ struct ContentStore::Data {
         tables.material_order = material.order();
         // The declaration indexes travel WITH the rows (see ContentDeclarations): a residency table asks them
         // instead of walking the rows, so its per-frame cost does not follow the size of the content.
-        tables.declarations   = ContentDeclarations{ &geometry.declaredBuffers(), &material.declaredTextures(), &material.declaredMaterials() };
+        tables.declarations   =
+            ContentDeclarations{ &geometry.declaredBuffers(), &material.declaredTextures(), &material.declaredMaterials(), &geometry.declaredLayouts() };
         return tables;
     }
 
@@ -951,7 +972,8 @@ const ContentFacts& ContentStore::tablesFor(const core::CompiledFrame& frame, co
     d->facts.program_order  = d->program.order();
     d->facts.geometry_order = d->geometry.order();
     d->facts.material_order = d->material.order();
-    d->facts.declarations   = ContentDeclarations{ &d->geometry.declaredBuffers(), &d->material.declaredTextures(), &d->material.declaredMaterials() };
+    d->facts.declarations   =
+        ContentDeclarations{ &d->geometry.declaredBuffers(), &d->material.declaredTextures(), &d->material.declaredMaterials(), &d->geometry.declaredLayouts() };
     return d->facts;
 }
 

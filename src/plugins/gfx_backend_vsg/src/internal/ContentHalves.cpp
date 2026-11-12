@@ -1,7 +1,10 @@
 #include <vine/vsg/internal/ContentHalves.hpp>
 
+#include <optional>
+#include <unordered_set>
 #include <utility>
 
+#include <vine/graphics/backend/ResourceTable.hpp>
 #include <vine/vsg/internal/ContentDraw.hpp>
 #include <vine/vsg/internal/ContentPipeline.hpp>
 #include <vine/vsg/internal/DrawNeeds.hpp>
@@ -18,40 +21,53 @@ struct ContentHalves::Data {
         ProgramVariant           variant{};
         std::uint32_t            color_attachments{ 1 };
         vn::graphics::Topology   topology{ vn::graphics::Topology::Triangles };
+
+        [[nodiscard]] friend bool operator==(const Key&, const Key&) noexcept = default;
+    };
+
+    /** @brief Hashes a half key over exactly the fields equality reads. */
+    struct KeyHash {
+        std::size_t operator()(const Key& key) const noexcept
+        {
+            std::size_t seed = 0;
+            const auto  mix  = [&seed](std::uint64_t value) noexcept {
+                seed ^= static_cast<std::size_t>(value) + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+            };
+            mix(key.program.id.bits());
+            mix(key.program.revision);
+            mix(static_cast<std::uint64_t>(key.kind));
+            mix(key.layout.canonical_mask);
+            for (const std::uint32_t location : key.layout.custom_locations) {
+                mix(location);
+            }
+            mix(key.variant.bits());
+            mix(key.color_attachments);
+            mix(static_cast<std::uint64_t>(key.topology));
+            return seed;
+        }
     };
 
     /** @brief One compiled half: a layer and its recorder, and the key that says when they are this one. */
     struct Half {
         Key                              key{};
-        std::unique_ptr<ContentPipeline> layer{}; // Null when the layer was REFUSED (never retried).
+        std::unique_ptr<ContentPipeline> layer{};
         std::unique_ptr<ContentDraw>     draws{};
         /// Episode state of the two per-half reports (see ContentPass::Scope::Entry): they live WITH the
         /// half, so a half that cannot be served says so once per session, not once per frame - and a
-        /// second pass drawing through the same half does not repeat it. A refused half is kept (it is not
-        /// retried), so its report survives the frames that keep asking for it.
+        /// second pass drawing through the same half does not repeat it.
         vn::graphics::ReportOnce reported{};
         vn::graphics::ReportOnce shadow_reported{};
     };
 
-    core::VariantPool*                     pool{ nullptr };
-    detail::DynamicStateEntryPoints        entry_points{};
-    std::vector<std::shared_ptr<Half>>     halves;
-    std::vector<ContentPass::Scope::Entry> entries;
-    std::uint64_t                          builds{ 0 };
-    std::size_t                            refused{ 0 };
-
-    /** @brief Gets the half one key already has (a refused one is a hit too: it must not be retried). */
-    [[nodiscard]] Half* find(const Key& key) noexcept
-    {
-        for (const std::shared_ptr<Half>& half : halves) {
-            if (half->key.kind == key.kind && half->key.program == key.program && half->key.layout == key.layout && half->key.variant == key.variant &&
-                half->key.color_attachments == key.color_attachments && half->key.topology == key.topology)
-            {
-                return half.get();
-            }
-        }
-        return nullptr;
-    }
+    core::VariantPool*                                      pool{ nullptr };
+    detail::DynamicStateEntryPoints                         entry_points{};
+    core::ResourceTable<Key, std::shared_ptr<Half>, KeyHash> halves;
+    std::vector<ContentPass::Scope::Entry>                  entries;
+    /// Keys whose build was REFUSED. They have no resident value (no GPU object exists), so they are not in the
+    /// table: the set is only the "do not retry" memory, and it leaves when its program revision does.
+    std::unordered_set<Key, KeyHash> refused_keys;
+    std::uint64_t                    builds{ 0 };
+    std::size_t                      refused{ 0 };
 
     /** @brief Adds @p half's entry to this call's list, once. */
     void serve(Half& half)
@@ -72,26 +88,6 @@ struct ContentHalves::Data {
                                                      &half.shadow_reported });
     }
 
-    /** @brief Whether the tables still answer the key of @p half (see the sweep in halvesFor). */
-    [[nodiscard]] bool answerable(const Half& half, const ContentFacts& facts) const noexcept
-    {
-        const FactResult<ProgramFacts> program = findProgram(facts, half.key.program, half.key.variant, half.key.kind);
-        if (!program.found()) {
-            // Gone at this revision (or its text was refused): this half's key is no longer answered by the
-            // tables, so it must not keep drawing.
-            return false;
-        }
-        if (half.key.kind == core::DrawKind::Screen) {
-            return true;
-        }
-        for (const GeometryFacts& geometry : facts.geometries) {
-            if (geometry.layout == half.key.layout) {
-                return true; // a geometry that would ask for this half's layout is still described
-            }
-        }
-        return false;
-    }
-
     /** @brief Ensures the half @p needs names, building it from @p program (and @p geometry, for content). */
     void ensure(const DrawNeeds& needs, const ProgramFacts& program, const GeometryFacts* geometry)
     {
@@ -106,39 +102,41 @@ struct ContentHalves::Data {
         key.color_attachments = needs.color_attachments;
         key.topology          = needs.topology;
 
-        if (Half* existing = find(key)) {
-            if (existing->layer != nullptr) {
-                serve(*existing);
+        if (refused_keys.find(key) != refused_keys.end()) {
+            return; // a refused key is remembered, not retried: a fix arrives with a new revision, another key
+        }
+
+        const auto acquired = halves.acquire(key, [&]() -> std::optional<std::shared_ptr<Half>> {
+            ContentPipeline::Settings settings;
+            settings.color_attachments             = key.color_attachments;
+            // The topology the layer BAKES is the key's: the API restricts a dynamic set to the class the
+            // pipeline was created with (see core::PipelineKey::topology), so a layer built for one topology can
+            // only ever serve the draws that state it.
+            settings.topology                      = key.topology;
+            std::unique_ptr<ContentPipeline> layer = key.kind == core::DrawKind::Screen
+                                                         ? ContentPipeline::createScreen(program.abi, program.shaders, settings)
+                                                         : ContentPipeline::create(program.abi, *geometry, program.shaders, settings);
+
+            ++builds;
+            if (layer == nullptr) {
+                // A program whose GLSL did not compile, or a layout this backend cannot declare: no half, and
+                // the key is REMEMBERED so nobody tries again every frame (a fix arrives with a new revision,
+                // which is another key).
+                return std::nullopt;
             }
-            return;
-        }
 
-        ContentPipeline::Settings settings;
-        settings.color_attachments             = key.color_attachments;
-        // The topology the layer BAKES is the key's: the API restricts a dynamic set to the class the
-        // pipeline was created with (see core::PipelineKey::topology), so a layer built for one topology can
-        // only ever serve the draws that state it.
-        settings.topology                      = key.topology;
-        std::unique_ptr<ContentPipeline> layer = key.kind == core::DrawKind::Screen
-                                                     ? ContentPipeline::createScreen(program.abi, program.shaders, settings)
-                                                     : ContentPipeline::create(program.abi, *geometry, program.shaders, settings);
-
-        ++builds;
-        std::shared_ptr<Half> half = std::make_shared<Half>();
-        half->key                  = key;
-        if (layer == nullptr) {
-            // A program whose GLSL did not compile, or a layout this backend cannot declare: no half, and
-            // the key is REMEMBERED so nobody tries again every frame (a fix arrives with a new revision,
-            // which is another key).
+            std::shared_ptr<Half> half = std::make_shared<Half>();
+            half->key                  = key;
+            half->layer                = std::move(layer);
+            half->draws                = std::make_unique<ContentDraw>(*half->layer, *pool, entry_points);
+            return half;
+        });
+        if (acquired.value == nullptr) {
             ++refused;
-            halves.push_back(std::move(half));
+            refused_keys.insert(key);
             return;
         }
-
-        half->layer = std::move(layer);
-        half->draws = std::make_unique<ContentDraw>(*half->layer, *pool, entry_points);
-        halves.push_back(half);
-        serve(*half);
+        serve(**acquired.value);
     }
 };
 
@@ -152,7 +150,7 @@ ContentHalves::ContentHalves(core::VariantPool& pool, detail::DynamicStateEntryP
 ContentHalves::~ContentHalves() = default;
 
 std::span<const ContentPass::Scope::Entry>
-ContentHalves::halvesFor(const core::CompiledPass& pass, const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+ContentHalves::halvesFor(const core::CompiledPass& pass, const ContentFacts& facts, core::FrameTimeline& /*timeline*/, core::RetirementQueue& /*retirement*/)
 {
     d->entries.clear();
 
@@ -182,40 +180,53 @@ ContentHalves::halvesFor(const core::CompiledPass& pass, const ContentFacts& fac
         }
     }
 
-    // The sweep: a half whose key the tables no longer answer (their own retirement took the revision away)
-    // can never be asked for again - a pass matches halves by the tuples those same tables produce - so it
-    // is parked through the same window every other replaced object gets. A half the tables CAN answer
-    // stays, even when this pass did not draw it: another pass of this frame may.
-    for (auto it = d->halves.begin(); it != d->halves.end();) {
-        const std::shared_ptr<Data::Half> half = *it;
-        if (d->answerable(*half, facts)) {
-            ++it;
-            continue;
+    return d->entries;
+}
+
+void ContentHalves::sweep(const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+{
+    // A half is PINNED BY ITS PROGRAM REVISION AND ITS LAYOUT. While the tables still answer the
+    // (identity, revision, variant, kind) it was compiled from AND some live geometry row still feeds its layout,
+    // the half stays. In production both halves are O(1) questions - the program table's index and the layout
+    // declaration index (see ContentDeclarations::declaresLayout). A hand-built table that published no layout
+    // index answers the layout question by scanning its rows (the same optional-index rule as the row order);
+    // the frame path always has the index, so it never pays the scan.
+    const auto layout_is_live = [&facts](const Data::Key& key) {
+        if (facts.declarations.hasLayoutIndex()) {
+            return facts.declarations.declaresLayout(key.layout);
         }
-        if (half->layer != nullptr) {
-            const bool parked = retirement.retire(timeline, [half]() { (void)half; });
-            if (!parked) {
-                // No window: the half is kept rather than freed while a recorded frame may still name it
-                // (memory, never correctness - the same answer api/ContentStore gives).
-                ++it;
-                continue;
+        for (const GeometryFacts& geometry : facts.geometries) {
+            if (geometry.layout == key.layout) {
+                return true;
             }
         }
-        it = d->halves.erase(it);
-    }
+        return false;
+    };
+    const auto pinned = [&facts, &layout_is_live](const Data::Key& key) {
+        if (!findProgram(facts, key.program, key.variant, key.kind).found()) {
+            return false;
+        }
+        // A full-screen half has no vertex layout: the program is its whole pin (see api/ContentSources).
+        return key.kind == core::DrawKind::Screen || layout_is_live(key);
+    };
+    (void)d->halves.retireUnpinned([&pinned](const Data::Key& key, const std::shared_ptr<Data::Half>&) { return pinned(key); }, timeline, retirement);
 
-    return d->entries;
+    // A refused build has no GPU object to park: its key is simply forgotten once its pins are gone (the same
+    // program revision and layout the resident halves are held by), which is the ONE rule above asked of the keys
+    // that never became a resident value.
+    for (auto it = d->refused_keys.begin(); it != d->refused_keys.end();) {
+        if (pinned(*it)) {
+            ++it;
+        }
+        else {
+            it = d->refused_keys.erase(it);
+        }
+    }
 }
 
 std::size_t ContentHalves::halves() const noexcept
 {
-    std::size_t alive = 0U;
-    for (const std::shared_ptr<Data::Half>& half : d->halves) {
-        if (half->layer != nullptr) {
-            ++alive;
-        }
-    }
-    return alive;
+    return d->halves.live();
 }
 
 std::uint64_t ContentHalves::builds() const noexcept
@@ -231,6 +242,7 @@ std::size_t ContentHalves::refused() const noexcept
 void ContentHalves::clear()
 {
     d->halves.clear();
+    d->refused_keys.clear();
     d->entries.clear();
     d->refused = 0U;
 }

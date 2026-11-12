@@ -494,3 +494,38 @@
 - **坑**：`RenderEngine` 的 contentCollectCount/ReuseCount 读 `FrameWorker::memoStores/Hits`；删掉 LEGACY 后
   只剩 `SnapshotSource` 的 memo，`PassesSharingSceneAndCameraCollectOnce...` 仍应绿（`beginFrame` 的上一帧
   grace 是前提）。
+
+## 2026-11-12 —— GPU 驻留 pin 迁移第 5 步：半片 / 描述符集
+
+- **同一张表**：`ContentHalves` 与 `ContentSets` 改走 `core::ResourceTable`；`answerable` 与 `ContentSets`
+  的 sweep 删除，换成一个 `retireUnpinned` 谓词。查找从线性扫描变哈希；清扫从 O(entries × geometries)
+  变 O(entries)。
+- **半片 pin**：`(program identity, revision, variant, kind)`。layout 不参与——问它要扫全部 geometry facts，
+  正是本步删掉的成本；代价是 layout / 变体更替会累积几十 KB 的管线，由 backlog `T28` 观察，未命中不加回。
+- **描述符集 pin**：program@rev + 键里每个非空 slot 的 `declaresTexture` + 自己的 `texture.revision()`
+  比较。空 source（全是 pass 级采样器）只由 program 钉住。
+- **被拒的构建**：没有 GPU 对象，不进表；单独 `unordered_set<Key>` 记“别重试”，随 program revision 遗忘。
+  所以 `halves()` / `sets()` 的计数与旧语义一致（被拒不算活）。
+- **`ResourceTable::forEach`**：`ContentSets::repoint` 需要遍历所有驻留值；visitor 不得 acquire/retire/clear
+  （会移动 `entries_`），但可以改 value 的 body。
+- **坑**：sets 的 texture pin 必须先 `declaresTexture` 再解引用——地址可能被回收，只有“还有活行声明”才
+  保证那个指针现在是 `Texture`；顺序反了就是 use-after-free。
+- **测试**：`ContentHalvesTest.AHalfStaysPinnedByItsProgramWhenNoGeometryFeedsItsLayout`、
+  `ContentPassTest.TheProducedSetsGiveEachTexturedDrawableItsOwnMap` 尾部的 pin 断言、
+  `ResourceTableTest.TheVisitSeesEveryResidentValueAndCanChangeItsBody`。`test_vsg` 544 / `test_graphics` 554。
+
+## 2026-11-12 —— 同日收口：半片 pin 加 layout 声明索引（取代上一条的 layout 部分）
+
+- **新增第 4 个声明索引**：`ContentDeclarations` 多了 `layouts_`（`declaresLayout` / `hasLayoutIndex`）；
+  `GeometryTable` 在 append / eraseIf / reclaimBefore / clear 的同一个方法里维护 `layout → 活行计数`
+  （`Declarations<Key, Hash>` 现在按 key 泛化，buffers / layouts / textures / materials 共用一条规则）。
+- **半片 pin**：`program@rev ∧ declaresLayout(layout)`；screen 半片只按 program。这样“最后一条使用该 layout
+  的几何行离树 ⇒ 半片 park”是 O(1)，不再有 layout 累积，也不再需要每帧扫 geometry facts。
+- **可选索引**：手建的 `ContentFacts` 没发布 layout 索引时，`ContentHalves` 退回扫描它的 `geometries`
+  （与 `program_order` 空则扫描的规则一致）；生产 `ContentStore` 永远发布，帧路径不走回退。
+- **公开头**：`VertexLayoutKeyHash`（`backend/Keys.hpp`，与 `operator==` 同字段）；`ContentDeclarations`
+  构造参数把 layouts 放最后，旧的 2/3 参数调用不变。
+- **测试**：`ContentStoreTest.TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWindow` 增加了 layout
+  的 refcount / 最后一行离树断言；`ContentHalvesTest.AHalfIsPinnedByTheLayoutDeclarationAndLeavesWithIt`
+  钉“索引说有就留、索引说没有就 park”。backlog `T28` 已删（收口项，不再是触发项）。
+- **计数**：`test_vsg` 544 / `test_graphics` 554 / ctest 30/30 / TSan 554 用例 0 warning。

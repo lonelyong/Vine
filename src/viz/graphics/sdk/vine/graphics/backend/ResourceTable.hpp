@@ -167,6 +167,44 @@ class ResourceTable {
         return entries_.size();
     }
 
+    /**
+     * @brief Visits every resident key and value, in an unspecified order.
+     *
+     * @details
+     * - THE READ DOOR, for a caller whose whole table needs work rather than one lookup: repointing every cached
+     *   value at a replacement parent (see `ContentSets::repoint`) or adding up a report. It is not a lookup and
+     *   does not touch generations.
+     * - The key is const: a value's identity is what the table was ordered by, and a visitor that changed it
+     *   would corrupt the map. The value is mutable here for the repoint case only.
+     *
+     * @warning
+     * - THE VISITOR MUST NOT ACQUIRE, RETIRE OR CLEAR on this table: each would move `entries_` while it is being
+     *   walked, invalidating the iterator. Changes to a value's own body are fine; changes to its identity are not.
+     *
+     * @tparam Visit Callable `void(const Key&, Value&)` (or `const Value&` for the const overload).
+     * @param visit What to do with each resident value.
+     */
+    template <class Visit>
+    void forEach(Visit&& visit)
+    {
+        for (auto& [key, entry] : entries_) {
+            visit(key, entry.value);
+        }
+    }
+
+    /** @brief Visits every resident key and value through a const table (see the mutable overload).
+     *
+     * @tparam Visit Callable `void(const Key&, const Value&)`.
+     * @param visit What to do with each resident value.
+     */
+    template <class Visit>
+    void forEach(Visit&& visit) const
+    {
+        for (const auto& [key, entry] : entries_) {
+            visit(key, entry.value);
+        }
+    }
+
     /** @brief Gets how many values were built in total: a hit raises nothing. */
     [[nodiscard]] std::uint64_t builds() const noexcept
     {
