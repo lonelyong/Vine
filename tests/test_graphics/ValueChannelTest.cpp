@@ -36,7 +36,8 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateNode.hpp>
 
-#include "FrameWorker.hpp"
+#include "FrameExpander.hpp"
+#include "PublicationStore.hpp"
 
 using vn::Colorf;
 using vn::intrusive_ptr;
@@ -57,7 +58,8 @@ using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::StateNode;
-using vn::graphics::detail::FrameWorker;
+using vn::graphics::detail::FrameExpander;
+using vn::graphics::detail::PublicationStore;
 using vn::math::Vec3d;
 using vn::math::Vec3f;
 
@@ -132,8 +134,9 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
     pass.setLayerMask(vn::graphics::kAllLayers);
 
     // FRAME N: published and described on the content side, exactly as a frame's content half does it.
-    FrameWorker worker;
-    ASSERT_EQ(worker.publish(*scene).status, ScenePublishStatus::Posted);
+    PublicationStore store;
+    FrameExpander    expander{ store };
+    ASSERT_EQ(store.publish(*scene).status, ScenePublishStatus::Posted);
     FrameDescription frame = describedFrame(pass, scene);
 
     const std::uint64_t program_revision_v1  = program->revision();
@@ -152,7 +155,7 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
         ready.set_value();
         go.get_future().wait();
 
-        worker.run(frame); // bind the publication + expand on the engine thread (the real engine half's reads)
+        expander.run(frame); // bind the publication + expand on the engine thread (the real engine half's reads)
 
         const std::vector<RenderCommand>& commands = commandsOf(frame);
         ASSERT_EQ(commands.size(), 1U);
@@ -192,9 +195,9 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
     EXPECT_NE(material->revision(), material_revision_v1);
 
     // FRAME N+1: publish, describe, run - all after the edits.
-    ASSERT_EQ(worker.publish(*scene).status, ScenePublishStatus::Posted);
+    ASSERT_EQ(store.publish(*scene).status, ScenePublishStatus::Posted);
     FrameDescription next = describedFrame(pass, scene);
-    worker.run(next);
+    expander.run(next);
 
     const std::vector<RenderCommand>& next_commands = commandsOf(next);
     ASSERT_EQ(next_commands.size(), 1U);

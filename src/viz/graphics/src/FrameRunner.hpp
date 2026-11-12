@@ -14,7 +14,7 @@ VN_GRAPHICS_NS_BEGIN
 namespace detail
 {
 
-/** @brief WHERE a frame's engine half runs (the source question is FrameMode's, see FrameWorker). */
+/** @brief WHERE a frame's engine half runs (the source question is the publication channel's, see PublicationStore). */
 enum class RunnerMode : std::uint8_t
 {
     Inline,   ///< On the calling thread: no thread, no waiting ("the engine thread" IS the caller).
@@ -25,14 +25,14 @@ enum class RunnerMode : std::uint8_t
  * @brief Runs ONE unit of engine-side work at a time, here or on a thread of its own.
  *
  * @details
- * - WHAT IT IS NOT: it is not the frame's work (that is the engine's two halves, see FrameWorker and the design's
+ * - WHAT IT IS NOT: it is not the frame's work (that is the engine's two halves, see FrameExpander and the design's
  *   2.12) and not the backend (that is the device). It owns exactly one thing the work must not: **the thread and the
  *   handshake around it**. Keeping the two apart is what lets the inline mode - the calling thread, no thread object
  *   at all - and the threaded mode be the same code path, which is the property the equivalence tests rest on.
  * - ONE JOB IN FLIGHT, STRICT ALTERNATION. `submit` waits for the previous job before handing the next one over, and
- *   `wait` says when the one in flight is done - so no two jobs are ever inside the mirrors or the device at once, and
- *   a caller cannot build up a queue of frames nobody asked for. It is deliberately NOT a pool: what a second frame
- *   in flight would mean for the RETURN contract (and for the swapchain) is a design decision (see
+ *   `wait` says when the one in flight is done - so no two jobs are ever inside the publications or the device at
+ *   once, and a caller cannot build up a queue of frames nobody asked for. It is deliberately NOT a pool: what a
+ *   second frame in flight would mean for the RETURN contract (and for the swapchain) is a design decision (see
  *   `.ai/design/graphics-threading.md` 2.12 and D12), not a runner detail.
  * - IDLE MEANS WAITING, NOT POLLING. The engine thread blocks on a condition variable when nothing was submitted
  *   (design 2.8): an application that draws nothing costs nothing.

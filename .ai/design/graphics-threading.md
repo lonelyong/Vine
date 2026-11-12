@@ -8,7 +8,8 @@
 > **范围**：一帧的工作在两条线程上各归谁 —— 内容侧与引擎侧各拥有什么、跨侧只允许过什么值、表面与交换链归谁、
 > 并行放在哪、关闭怎么收。
 > **不含** appfw 的通用异步（`appfw-startup-phases.md`、`async-design.md`）与 Vulkan 同步细节（`vsg-backend.md`）。
-> **权威来源**：`src/viz/graphics/src/FrameWorker.{hpp,cpp}`（引擎半段）、`src/viz/graphics/src/SnapshotSource.{hpp,cpp}`
+> **权威来源**：`src/viz/graphics/src/PublicationStore.{hpp,cpp}`（发布与绑定的内容侧表）、
+> `src/viz/graphics/src/FrameExpander.{hpp,cpp}`（引擎半段：bind + expand）、`src/viz/graphics/src/SnapshotSource.{hpp,cpp}`
 > （快照的 `DrawListSource` 面）、`src/viz/graphics/src/FrameRunner.{hpp,cpp}`（引擎线程）、
 > `sdk/vine/graphics/Scene.hpp`（`publish`）与 `sdk/vine/graphics/RenderEngine.hpp`（`bindSnapshot` /
 > `setFrameThreading` / `waitForFrame` / `presentRecord` / `presentedCamera`）。
@@ -73,8 +74,9 @@
 - **行里装的是什么值**：每条命令携带 `geometry_ref` / `material_ref`（身份 + 版本）与三份不可变描述
   （`GeometryDescription` / `MaterialDescription` / `ShaderProgramDescription`）；pass 描述自己时另快照
   `LightValue` 数组与程序 override 的文本。这就是 §2.14 的载荷，记录侧只读它。
-- **一次发布是谁的动词**：`publish()` 是内容侧的动词（内容线程，唯一写者）；`bindSnapshot()` 是引擎侧的动词（宿主在
-  帧与帧之间调用，或引擎的隐式发布代劳 —— 见 §2.13）。两者合起来才是完整的交接。
+- **一次发布是谁的动词**：`publish()` 是内容侧的动词（内容线程，唯一写者）；`bindSnapshot()` 说"这个引擎画
+  这一份"（宿主在帧与帧之间调用，或引擎的隐式发布代劳 —— 见 §2.13）。两个动词都落在 `detail::PublicationStore`
+  上，引擎半段只读这张表（见 §2.15）。两者合起来才是完整的交接。
 
 ### 2.3 两条通道：发布的快照 与 完成报告
 
@@ -174,8 +176,8 @@
 | `RenderSurface`（面积） | 引擎（`createSurface` 给的 share） | 引擎线程 | — |
 | `WindowPresentTarget` + 交换链 | 引擎（设备造，`createSurfaceTarget`） | 引擎线程 | — |
 | `RenderDevice` / 会话 / 帧值 / 退休队列 | 引擎 | 引擎线程 | — |
-| 帧的**内容半段**：帧号、`compileFrame`、`before_draw` 钩子、发布、`describe` | 内容线程 | 内容线程 | 帧值交出去 |
-| 帧的**引擎半段**：表面事件、bind、`runPass`（expand）、`executeFrame`、present | 引擎线程 | 引擎线程 | — |
+| 帧的**内容半段**：帧号、`compileFrame`、`before_draw` 钩子、发布（每帧每场景一次）、`describe` | 内容线程 | 内容线程 | 帧值交出去 |
+| 帧的**引擎半段**：表面事件、`FrameExpander::runPass`（bind + expand）、`executeFrame`、present | 引擎线程 | 引擎线程 | — |
 
 - **一帧两个半段，每侧一帧在飞**（已落地）：内容线程构建帧 N+1 时，引擎线程正在跑帧 N，**所以画面比内容晚一帧**
   （N15）。这是唯一的语义代价，换来的是 UI 侧调用只花 O(passes)：不 expand（O(drawables)）、不 present
@@ -232,6 +234,22 @@
   `DrawDescription::lights`）**保留到 5b-2c**（`C11`：公开 API 只增不改）；记录侧与事实表只读值，活指针只做身份与寿命。
   程序/材质的值是通过 `detail::refreshValues` 在发布边界重取的（它们不经节点 mutator，epoch 看不见）。
 
+### 2.15 发布与展开是两个对象（`G2` / `G12`）
+
+- **是什么**：`detail::PublicationStore` 持有"每个内容一份 `SnapshotSource`"的表与那把锁，动词是内容侧的
+  `publish` / `bindSnapshot` / `hasExplicitSnapshot`（外加表级 `beginFrame` 与展开时用的 `sourceOf` 查找）；
+  `detail::FrameExpander` 只读这张表，动词是引擎侧的 `runPass` / `run`（bind 每个 draw + expand），并记 `unbound()`。
+- **为什么**：内容半段（`buildFrameValue`）要发布，引擎半段要展开。两者放在一个 `FrameWorker` 上时，内容半段必须
+  先拿到引擎半段的对象才能发布——对象级依赖指向了错误的一侧（`G2`），类名说的又是引擎半段（`G12`）。拆开后依赖
+  只有一条边：expander → store，store 不认识 expander。
+- **边界**：拆的是对象，不是线程。`FrameRunner` 仍只把 `FrameExpander::run(...)` 递给引擎线程；`bindSnapshot` 仍
+  必须发生在帧与帧之间（`PublicationStore` 的类注释钉住这条不变量），所以"发布创建"进握手之前不允许帧重叠。
+- **发布粒度**：`buildFrameValue` 先跑完本帧所有 `before_draw`，再按"每帧每场景一次"发布，最后才 describe。同一
+  场景 N 个 pass 因此只发布一次（旧形状是 N 次，后 N-1 次 `Unchanged` 仍付一次锁 + 一次 epoch 比较）；而"先发布、
+  再跑后面的钩子"会把后面钩子写的内容漏出本帧，所以钩子必须全部先跑完（N16 的"所有 pass 看到同一份"由此成立）。
+- **验收**：`T34` / `T17` / `FrameRunnerTest.ManyFramesThroughTheEngineThreadStayEquivalent`；内容半段不再出现
+  旧 `FrameWorker` 这个词（该类已删除）。
+
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -259,7 +277,8 @@
 - **约束**（C18 / C19）：批内不发布；材质以**值**过帧。
 - **要求**（R9 / R13 / R17）：一次交换、在飞帧逐项不变、批 = 一次发布。
 - **验收**（T3 / T17 / T31 / T34）：`SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture`、
-  `FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch`、
+  `FrameExpanderTest.AFrameExpandsTheSamePictureTheSceneWould`、
+  `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch`、
   `SnapshotSourceTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith`、
   `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`。
 - **注意**（§2.4）：字节 revision 只回答"字节换了"，不回答"在哪读"；形状与值的变化走发布（§2.14）。
@@ -445,15 +464,15 @@
 
 | # | 判据 | 用例 / 命令 | 状态 |
 |---|---|---|---|
-| T3 | 批 = 一次发布 | `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` + `FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch` | 已实现 |
+| T3 | 批 = 一次发布 | `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` + `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch` | 已实现 |
 | T9 | 尺寸与呈现结局 | `RenderEngineTest.TheAreasSizeAnnouncedBeforeInitializeReachesTheBackend` / `TheFramesPictureOutcomeIsAFactOfTheFrame` | 已实现 |
 | T10 | 关闭相位 | `FrameRunnerTest` 的 stop / restart 用例 + ASan 运行 | 已实现 |
 | T12 | 两种运行位置同图 | `FrameRunnerTest.ManyFramesThroughTheEngineThreadStayEquivalent`（64 帧逐项相同） | 已实现 |
 | T16 | `frame()` 只花 O(passes) | `FrameRunnerTest` 的 inline / threaded 计数断言 | 已实现 |
 | T17 | 旧帧读旧 revision | `SnapshotSourceTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith` | 已实现 |
 | T31 | 批内 publish | 见 T3（同一组用例） | 已实现 |
-| T34 | 发布源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` + `FrameWorkerTest.AWorkerExpandsTheSameFrameTheSceneWould` | 已实现 |
-| T35 | 绑定即渲染真值 | `FrameWorkerTest.ABoundPublicationIsThePictureTheFrameDraws` | 已实现（2026-11-12） |
+| T34 | 发布源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` + `FrameExpanderTest.AFrameExpandsTheSamePictureTheSceneWould` | 已实现 |
+| T35 | 绑定即渲染真值 | `FrameExpanderTest.ABoundPublicationIsThePictureTheFrameDraws` | 已实现（2026-11-12） |
 | T13 | 无数据竞争 | `scripts/tsan_check.sh` | 收尾跑 |
 
 ## 9. 状态与演进
@@ -486,7 +505,8 @@
 - `src/viz/graphics/src/SceneSnapshot.{hpp,cpp}`（快照值、分块、`selectSnapshot`）
 - `src/viz/graphics/src/SceneRows.{hpp,cpp}`（`SceneBake` → 快照的唯一门）
 - `src/viz/graphics/src/SnapshotSource.{hpp,cpp}`（快照的 `DrawListSource` 面）
-- `src/viz/graphics/src/FrameWorker.{hpp,cpp}`（引擎半段：bind / expand / 发布与绑定）
+- `src/viz/graphics/src/PublicationStore.{hpp,cpp}`（内容侧的发布/绑定与 `SnapshotSource` 表）
+- `src/viz/graphics/src/FrameExpander.{hpp,cpp}`（引擎半段：bind / expand）
 - `src/viz/graphics/src/FrameRunner.{hpp,cpp}`（引擎线程）
 - `src/viz/graphics/src/EngineCompile.cpp`（内容半段：钩子 / 发布 / describe / 引擎半段入口）
 - `src/viz/graphics/sdk/vine/graphics/RenderEngine.hpp`（`bindSnapshot` / `setFrameThreading` / `waitForFrame` /
@@ -496,7 +516,8 @@
 
 ### 10.2 用例
 
-- `tests/test_graphics/FrameWorkerTest.cpp`（T3 / T31 / T34 的帧级接缝、T35 绑定）
+- `tests/test_graphics/PublicationStoreTest.cpp`（T3 / T31 的三态发布）
+- `tests/test_graphics/FrameExpanderTest.cpp`（T34 / T35：帧级接缝、绑定即真值）
 - `tests/test_graphics/FrameRunnerTest.cpp`（T10 / T12 / T16）
 - `tests/test_graphics/SnapshotShadowTest.cpp`（T3 / T17 / T34）
 - `tests/test_graphics/HeadlessBackendTest.cpp`（两半段与预热）

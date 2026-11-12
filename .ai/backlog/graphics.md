@@ -14,7 +14,7 @@
   `C1–C12` / `R1–R39` / `I1–I7` / `N1–N10` 与迁移表在 `../design/graphics-frame-pipeline.md`。
   未做的是 §9.3 的步 4、5b-2c、6（多表面 → pass 声明收口 → 原型/实例），以及 F11/F12 的全序键与 `query`。
   5a、5b-1、5b-2a 与 5b-2b 已落地 2026-11-12：Published 模式绑定 `SnapshotSource`，公开 `Scene::publish()` 三态，
-  `FrameWorker` 直接持有 `SnapshotSource`，旧 `ContentMirror` / `DeltaChannel` / `RenderWorld` / `PublishOutcome`
+  `PublicationStore` 直接持有 `SnapshotSource`（W3 拆自 `FrameWorker`），旧 `ContentMirror` / `DeltaChannel` / `RenderWorld` / `PublishOutcome`
   与 23 条 LEGACY 用例已删除。
   5a/5b-1/5b-2a/5b-2b/5b-2c 的拆分理由见 `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`；
   A6 的测量口径见 `../research/graphics-2026-11-12-instances.md`。每步一个可回退提交；
@@ -29,7 +29,6 @@
 
 | # | 项 | 做什么 | 为什么 / 代价 | 判据 / 前置 |
 |---|---|---|---|---|
-| W3 | 拆 `FrameWorker` | `PublicationStore`（内容侧：`publish` / `bind` / `SnapshotSource` 表）+ `FrameExpander`（引擎侧：`runPass` / `run`）；发布提到“每帧每场景一次” | 内容半段调引擎半段对象，是对象级回边（`G2` / `G12`）；同一场景 N 个 pass 调 N 次发布。现在 182 行搬移，晚做会让 W9 同时改发布与 pass 声明 | `T34` / `T17` / `FrameRunnerTest` 绿；内容半段不再出现 `FrameWorker` |
 | W4 | 计划与子类 pass | 文档写明“计划只表达 `PassKind` 能表达的形状”；`applyPlan` 拒绝“会被重建的子类名”并报一条稳定诊断 | `applyPlan` 对子类 pass 的 remove/re-add 会静默降级成基类；一条 `validate` 检查换“误用不可表达”。不建注册表（`G8`） | `PlanTest` 新用例；`T7` / `T30` 绿 |
 | W6a | `Scene` 外移第一步 | `detail::ScenePublisher` 承接 bake / memo / snapshot / 批深度；`Scene` 委托，公开 API 与测试语义不变 | `Scene` 同时是作者树、派生缓存与发布值；生产收集已走 `SnapshotSource`，`Scene` 的收集只剩测试与单 pass 直驱。这一步是 F11 的前置。代价：624 行拆分、108 处测试引用迁移 | `T34` 绿；`K2` 常驻不升 |
 | W2 | 公共 API 状态 | `applyPlan` / `plan` / `bindSnapshot` / `prepare` 标“迁移 API，尚未成为宿主契约”；决定 `FramePlan` 改名与 `SessionBusy` 去留 | 三条入口 0 生产消费者、`addPass` 家族 218 个调用点；不标状态，宿主会按“已支持”使用。5b-2c 前不再新增公共入口。代价 0 | 设计文档出现状态标记 |

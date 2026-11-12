@@ -13,10 +13,11 @@
 #include <vine/graphics/ScreenPass.hpp>
 
 #include "EngineFrame.hpp"
+#include "FrameExpander.hpp"
 #include "FrameResources.hpp"
 #include "FrameRunner.hpp"
 #include "FrameScheduler.hpp"
-#include "FrameWorker.hpp"
+#include "PublicationStore.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -37,7 +38,8 @@ RenderEngine::RenderEngine()
   : resources_(std::make_unique<detail::FrameResources>())
   , scheduler_(std::make_unique<detail::FrameScheduler>())
   , frame_slots_{ std::make_unique<detail::EngineFrame>(), std::make_unique<detail::EngineFrame>() }
-  , worker_(std::make_unique<detail::FrameWorker>())
+  , publications_(std::make_unique<detail::PublicationStore>())
+  , expander_(std::make_unique<detail::FrameExpander>(*publications_))
   // THE PUBLICATION IS THE SOURCE (see the design's 2.11): every scene pass draws the content's PUBLISHED value, so a
   // frame's draws name nothing the content owns - which is what lets the engine half move to another thread. The
   // per-view memo it needs (one camera drawn by two passes collects once) is the shared DrawListMemo.
@@ -260,7 +262,7 @@ void RenderEngine::bindSnapshot(Scene& scene, const SceneSnapshotRef& snapshot)
     // NO DEVICE AND NO FRAME IS CONSULTED: this states what this engine draws the scene with, and the next frame
     // reads it. A scene the engine has not drawn before gets its source here, exactly as an implicit publication
     // would have created one.
-    worker_->bindSnapshot(scene, snapshot);
+    publications_->bindSnapshot(scene, snapshot);
 }
 
 PrepareReport RenderEngine::prepare()
@@ -557,12 +559,12 @@ void RenderEngine::publishEngineMicros(const detail::EngineFrame& frame)
 
 std::uint64_t RenderEngine::contentCollectCount() const noexcept
 {
-    return worker_ != nullptr ? worker_->memoStores() : 0U;
+    return publications_->memoStores();
 }
 
 std::uint64_t RenderEngine::contentCollectReuseCount() const noexcept
 {
-    return worker_ != nullptr ? worker_->memoHits() : 0U;
+    return publications_->memoHits();
 }
 
 int RenderEngine::surfaceWidth() const noexcept

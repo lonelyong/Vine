@@ -9,8 +9,9 @@ the exact scope and the command it used.
 
 WHAT IT MEASURES
 
-  bridge        ContentMirror / DeltaChannel / DrawListMemo / FrameWorker / FrameRunner /
-                SceneRows / EngineFrame / DrawListBake: .hpp + .cpp, and cpp-only.
+  bridge        ContentMirror / DeltaChannel / DrawListMemo / PublicationStore /
+                FrameExpander / FrameRunner / SceneRows / EngineFrame / DrawListBake:
+                .hpp + .cpp, and cpp-only.
   contentstore  ContentStore.cpp lines and lifetime-token occurrences (six tokens, and
                 the same set plus `parked`).
   engine        RenderEngine.hpp lines, public-signature count and the number of files
@@ -39,7 +40,8 @@ BRIDGE = (
     "ContentMirror",
     "DeltaChannel",
     "DrawListMemo",
-    "FrameWorker",
+    "PublicationStore",
+    "FrameExpander",
     "FrameRunner",
     "SceneRows",
     "EngineFrame",

@@ -8,8 +8,8 @@ VN_GRAPHICS_NS_BEGIN
 
 namespace detail
 {
-struct SceneSnapshot; // The immutable value itself (src/SceneSnapshot.hpp): no caller names it.
-class FrameWorker;    // The engine half that hands a publication to its per-content source (src/FrameWorker.hpp).
+struct SceneSnapshot;    // The immutable value itself (src/SceneSnapshot.hpp): no caller names it.
+class PublicationStore;  // The content side of the publication channel: one source per content (src/PublicationStore.hpp).
 } // namespace detail
 
 /**
@@ -64,7 +64,7 @@ class VN_GRAPHICS_API SceneSnapshotRef {
   private:
     friend class Scene;
     friend class RenderEngine;
-    friend class detail::FrameWorker;
+    friend class detail::PublicationStore;
 
     /**
      * @brief Wraps the value a publication posted (owner side; see the class note).

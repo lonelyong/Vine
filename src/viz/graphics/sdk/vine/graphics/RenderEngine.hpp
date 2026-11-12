@@ -43,7 +43,8 @@ namespace detail
 
 class FrameResources;
 class FrameScheduler;
-class FrameWorker;                   // The engine half of a frame: drain, bind, expand (see src/FrameWorker.hpp).
+class PublicationStore;              // The content side of the publication channel (see src/PublicationStore.hpp).
+class FrameExpander;                 // The engine half of a frame: bind, expand (see src/FrameExpander.hpp).
 struct EngineFrame;                  // One frame as it travels between the two halves (see src/EngineFrame.hpp).
 class FrameRunner;                   // The thread a frame's engine half runs on (see src/FrameRunner.hpp).
 
@@ -332,7 +333,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - IT TAKES PUBLICATION OVER FOR THIS SCENE. A scene this engine was bound for is no longer published implicitly at
      *   frame start - otherwise the picture the host named would be replaced by whatever the content said when the frame
      *   ran, and the call would have no effect. A scene never bound keeps the migration's convenience (one implicit
-     *   publication per pass' `before_draw`, which 5b-2c deletes), so a host that does not care keeps working.
+     *   publication per frame, which 5b-2c deletes), so a host that does not care keeps working.
      *
      * @warning
      * - Between frames: the engine half of a frame looks this content's source up while it expands, and the binding is
@@ -1117,7 +1118,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @details
      * - The ENGINE HALF of a frame (design 2.12): every draw `buildFrameValue` described is asked of its source here,
      *   after every pass has been described - so one frame answers ONE publication (N16), and nothing in this
-     *   function reads content (`runPass` re-points a draw at its content's publication first, see FrameWorker).
+     *   function reads content (`runPass` re-points a draw at its content's publication first, see FrameExpander).
      * - What it costs per pass lands in @p frame (its own `engine_micros`), never in the plan: the plan belongs to the
      *   content half, and the numbers are published into it by `publishEngineMicros`.
      *
@@ -1384,6 +1385,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     std::vector<PlanRow> plan_rows_;
     /// The execution order of plan_rows_ (indices), decided by scheduleRows(); also what buildFrameValue walks.
     std::vector<std::uint32_t> frame_order_;
+    /// The scenes THIS frame has already published (see buildFrameValue): one publication per scene per frame, reused
+    /// so a steady frame allocates nothing here.
+    std::vector<raw_ptr<Scene>> published_scenes_;
     /// The announced sort key of each plan row, rebuilt by scheduleRows() (the scheduler reads a contiguous span).
     std::vector<int> frame_order_keys_;
     /// The scheduler's working memory (see FrameScheduler): one per engine, reused every frame.
@@ -1433,10 +1437,12 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /// lock is held for a copy in both directions and nothing else.
     mutable std::mutex            presented_camera_mutex_;
     std::optional<CameraSnapshot> presented_camera_;
-    // THE ENGINE HALF OF A FRAME, in this engine (see detail::FrameWorker): the one place a pass' expansion is asked
-    // for, so there is ONE path for a frame - the engine half is what a runner hands to another thread (see
-    // setFrameThreading), not a second way to answer a draw.
-    std::unique_ptr<detail::FrameWorker> worker_;
+    // THE PUBLICATION CHANNEL AND THE ENGINE HALF THAT READS IT. Two objects, not one: publish/bind are the content
+    // side's verbs on its own table (see detail::PublicationStore), expansion is the engine side's (see
+    // detail::FrameExpander) - so the object-level edge points one way (G2), and the engine half is what a runner hands
+    // to another thread (see setFrameThreading), not a second way to answer a draw.
+    std::unique_ptr<detail::PublicationStore> publications_;
+    std::unique_ptr<detail::FrameExpander>    expander_;
     /// This frame's problems and the previous frame's, swapped after each compile: the episode rule.
     std::vector<CompileProblem> plan_problems_;
     std::vector<CompileProblem> previous_problems_;

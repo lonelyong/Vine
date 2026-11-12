@@ -255,7 +255,7 @@
   外层 `endEdit` 之后的那一帧才发布整批，`publishCount` 只 +1。没有 `Refused`：发布无处可拒——它不排队。
 - **约束**（`C2`）：一个 Scene 同时只有一个写者。
 - **要求**（`R11` / `R39`）：`publishCount` 只 +1；没有 null，也没有一个 `bool` 同时表示"没变"和"批内"。
-- **验收**（`T3` / `T31`）：`FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch`（三态 + 句柄的
+- **验收**（`T3` / `T31`）：`PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch`（三态 + 句柄的
   revision 走向）、`SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture`。
 - **注意**（`P9`）：批不是事务——它只界定"一帧能看见什么"。公开 `Scene::publish()` 随快照（5b-2a，已落地）出现：
   在那之前，公开面没有一个能承载“上一份快照”的类型，先公开它只会多一个没人能用的版本号。
@@ -497,7 +497,7 @@
 |---|---|---|---|
 | T1 | 发布是 O(变更) | `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` | 已实现 |
 | T2 | 在飞帧不受内容改动影响 | `RenderEngineTest.AMaterialEditLandsOnTheNextFrame...` + 场景版 | 已实现 |
-| T3 | 批 = 一次发布 | `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` + `FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch` | 已实现（2026-11-12） |
+| T3 | 批 = 一次发布 | `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` + `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch` | 已实现（2026-11-12） |
 | T4 | 原型折叠一次、放置成本单计 | `SnapshotTest.APrototypeFoldsOnceAndIsPlacedNTimes` | 未做 |
 | T5 | 陈旧句柄答 gone | `ContentRegistryTest.AStaleHandleAnswersGone` | 已实现 |
 | T6 | 驻留 = 活快照引用 | `ResidencyTableTest.TheCollectableSetIsEnumerable` | 已实现 |
@@ -525,10 +525,10 @@
 | T28 | pose 剔除 | pose 子树部分出视 | 未做 |
 | T29 | 多表面 | 一个 Session 两个 Surface | 未做 |
 | T30 | 计划校验 | `PlanTest.*IsRefusedWithItsCode`（四类）+ `PlanTest.TheCodeSpellingsAreStable` | 已实现 |
-| T31 | 批内 publish | `FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch`（`Posted` → `Unchanged` → `InsideBatch` → `Posted`）+ `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` | 已实现（2026-11-12） |
+| T31 | 批内 publish | `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch`（`Posted` → `Unchanged` → `InsideBatch` → `Posted`）+ `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` | 已实现（2026-11-12） |
 | T32 | 预热的答案 = 帧的构建 | `ContentHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds`（键集相等，设备无关）+ `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` 的键集断言（录制侧） | 已实现（2026-11-12） |
 | T33 | 预热后录制 `builds` 增量 0，且预热不提交 / 不呈现 | `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing`（`halves().builds` / `sets().builds` / `uploads().uploads` / `inputSetBuilds` / `pool.created` 全 0，`progress->submitted` 不动，像素仍画出）+ `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing`（引擎侧：同一个 value、不执行、不取帧号） | 已实现（2026-11-12） |
-| T34 | 快照源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`（600 帧，transform / opacity / material / placement 编辑，逐项 diff）+ `FrameWorkerTest.AWorkerExpandsTheSameFrameTheSceneWould`（绑定后的帧级接缝） | 已实现（2026-11-12） |
+| T34 | 快照源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`（600 帧，transform / opacity / material / placement 编辑，逐项 diff）+ `FrameExpanderTest.AFrameExpandsTheSamePictureTheSceneWould`（绑定后的帧级接缝） | 已实现（2026-11-12） |
 
 ### 8.1 判死阈值（`K#`）
 
@@ -575,9 +575,9 @@
   Published 模式的每个 draw；`Scene::collectRenderCommands` 仍是 Direct 模式的直接路径；`K1`（203 µs）、
   `K2`（1.03×）、`K3` 已由 `SnapshotTest` 证明。
 - **5a / 5b-1 / 5b-2a / 5b-2b 已落地（2026-11-12）**：`SnapshotSource`（快照 → `DrawListSource`）、
-  `DrawListDiff`；`T34` 由 `SnapshotSourceTest` 的 600 帧与 `FrameWorkerTest` 的帧级比较钉住，`T17` 的
+  `DrawListDiff`；`T34` 由 `SnapshotSourceTest` 的 600 帧与 `FrameExpanderTest` 的帧级比较钉住，`T17` 的
   snapshot 侧由同一套件的旧快照用例钉住；公开 `Scene::publish()`（`Posted`/`Unchanged`/`InsideBatch`）；
-  `FrameWorker` 直接持有 `SnapshotSource`。**5b-2b 删除了 `ContentMirror` / `DeltaChannel` / `RenderWorld` /
+  `PublicationStore` 直接持有 `SnapshotSource`（W3 拆自 `FrameWorker`）。**5b-2b 删除了 `ContentMirror` / `DeltaChannel` / `RenderWorld` /
   `RenderWorldSource` / `PublishOutcome` 与 23 条 LEGACY 用例**；`test_graphics` 554 / `test_vsg` 542。
 - **未做**：F8、F10、F11 与 F12 的 `query` 半边。F7 的两半都已落地：3a 的答案（`drawNeeds` 是唯一的键构造者）
   与 3b 的预建（`RenderEngine::prepare()` → `prepareFrame(value)`；预热后录制的帧 `builds` 增量 0，见 `T33`）。
@@ -604,13 +604,13 @@
 | 步 | 内容 | 删掉什么 | 判据 / 回退条件 |
 |---|---|---|---|
 | 1 | 计划是值：`Plan` + 帧边界差分 + 校验 code · **已落地 2026-11-12** | 本步不删公开入口（`C11`）；`compileFrame` 的行从“`slots_` 的投影”变成“计划的投影” | `T7` / `T30` / `K4`；击穿则回退该步 |
-| 2 | `publish` 返回结果（四态）· **已落地 2026-11-12（内部半边）** | 内部 `bool` 发布（`FrameWorker` / `ContentMirror`）；**帧内隐式发布随 5b-2c 消失** | `T31` |
+| 2 | `publish` 返回结果（四态）· **已落地 2026-11-12（内部半边）** | 内部 `bool` 发布（旧 `FrameWorker` / `ContentMirror`，前者已拆为 `PublicationStore` / `FrameExpander`）；**帧内隐式发布随 5b-2c 消失** | `T31` |
 | 3a | `prepare()` 的**答案**：抽出 `drawNeeds`，`prepare` 与 `record` 共用它；断言答案 = 这一帧实际构建的键集 · **已落地 2026-11-12** | 录制里重复的键构造 | `T32`；击穿则回退该步 |
 | 3b | `prepare()` 的**预建**：按答案建半片 / 集合 / 上传 · **已落地 2026-11-12** | “录制时才发现要编译” | `T7` / `T10` / `T33`，预热后 `builds` 增量 0 |
 | 4 | 一 Session 多 Surface | 每窗口一个 Session 的驱动路径 | `T29` / `K10` |
 | 5a | **影子切换**：`selectSnapshot` 与旧 mirror 路径同帧同输入跑，逐项 diff；旧路径仍是渲染真相 · **影子接缝已落地 2026-11-12** | 本步不删生产形状；不公开 `Scene::publish()`；不删 `addPass` 家族（`C11`） | `T34` / `T17`（snapshot 侧）已由 `SnapshotSourceTest` 钉住，CI 常开；`K1` / `K2` / `K3` / `K7` 绿、既有语义断言改动为 0 才进 5b-1 |
 | 5b-1 | **切换真相**：Published 模式绑定 `SnapshotSource`；旧 mirror 降为可选 LEGACY 影子，默认关闭 · **已落地 2026-11-12** | 无（旧路径保留作影子，不删） | `T34` / `T17` / `K1` / `K2` / `K3` / `K7`；`test_graphics` 577 / `test_vsg` 542 / ctest 30/30 / TSan 0 |
-| 5b-2a | **公开入口 + 源归位**：公开 `Scene::publish()` 三态，`FrameWorker` 直接持有 `SnapshotSource` · **已落地 2026-11-12** | 无（LEGACY 文件仍在树内，但已不在生产路径） | `T31` / `test_graphics` 577 / `test_vsg` 542 / ctest 30/30 / TSan 0 |
+| 5b-2a | **公开入口 + 源归位**：公开 `Scene::publish()` 三态，`PublicationStore` 直接持有 `SnapshotSource`（W3 拆自 `FrameWorker`）· **已落地 2026-11-12** | 无（LEGACY 文件仍在树内，但已不在生产路径） | `T31` / `test_graphics` 577 / `test_vsg` 542 / ctest 30/30 / TSan 0 |
 | 5b-2b | **删除旧路径**：删镜像/delta/版本与镜像的 refresh/delta 入口 · **已落地 2026-11-12** | `ContentMirror`、`DeltaChannel`、`RenderWorld`、`RenderWorldSource`、`PublishOutcome`、`SceneRows::version/publish/editing`（约 2000 行，含 23 条 LEGACY 用例）；`DrawListMemo` **保留**为 `SnapshotSource` 的纯 per-view 缓存；`Scene::refreshBoxes/refreshMaterials` 保留（快照的输入） | `test_graphics` 554 / `test_vsg` 542 / ctest 30/30 / TSan 0 |
 | 5b-2c | **收口 pass 声明**：删 `addPass` 家族与 `PassRegistry` 的运行时拒绝，计划是唯一的形状 | 公开 `addPass` / `removePass` / `clearPasses` 与运行时拒绝路径（约 314 处调用点） | `K4`（分母在 5b-2c 开始时重取）/ `K5` / `T7` / `T30`；只有 5b-2b 稳定后进 |
 | 6 | 原型与实例（单独实验，B 方案先测） | 无（新增能力） | `T23` / `K11`；数字不好就停在“原型 DAG 共享” |

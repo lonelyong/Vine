@@ -16,8 +16,9 @@
 #include <vine/graphics/Scene.hpp>
 
 #include "FrameExpand.hpp"
+#include "FrameExpander.hpp"
 #include "FrameRunner.hpp"
-#include "FrameWorker.hpp"
+#include "PublicationStore.hpp"
 
 using vn::graphics::CameraSnapshot;
 using vn::graphics::DrawDescription;
@@ -30,9 +31,10 @@ using vn::graphics::RenderCommand;
 using vn::graphics::Scene;
 using vn::graphics::ScenePublishStatus;
 using vn::graphics::detail::expandFrame;
+using vn::graphics::detail::FrameExpander;
 using vn::graphics::detail::FrameRunner;
+using vn::graphics::detail::PublicationStore;
 using vn::graphics::detail::RunnerMode;
-using vn::graphics::detail::FrameWorker;
 using vn::intrusive_ptr;
 using vn::math::Vec3d;
 using vn::math::Vec3f;
@@ -125,20 +127,22 @@ TEST(FrameRunnerTest, BothModesExpandAFrameToTheSamePicture)
     FrameDescription from_content = onePassFrame(scene);
     expandFrame(from_content);
 
-    // A JOB IS ONE FRAME'S ENGINE HALF (see RenderEngine::runEngineHalf): here it is the worker's own composition of
-    // bind + expand, which is what a caller without a device has to hand over.
-    FrameWorker      inline_worker;
-    ASSERT_NE(inline_worker.publish(scene).status, ScenePublishStatus::InsideBatch);
+    // A JOB IS ONE FRAME'S ENGINE HALF (see RenderEngine::runEngineHalf): here it is the expander's own composition
+    // of bind + expand, which is what a caller without a device has to hand over.
+    PublicationStore inline_store;
+    FrameExpander    inline_expander{ inline_store };
+    ASSERT_NE(inline_store.publish(scene).status, ScenePublishStatus::InsideBatch);
     FrameRunner     inline_runner{ RunnerMode::Inline };
     FrameDescription from_inline = onePassFrame(scene);
-    inline_runner.run([&] { inline_worker.run(from_inline); });
+    inline_runner.run([&] { inline_expander.run(from_inline); });
     EXPECT_EQ(inline_runner.frames(), 1U) << "jobs are counted where they run: inline, that is the caller's thread";
 
-    FrameWorker      threaded_worker;
-    ASSERT_NE(threaded_worker.publish(scene).status, ScenePublishStatus::InsideBatch);
+    PublicationStore threaded_store;
+    FrameExpander    threaded_expander{ threaded_store };
+    ASSERT_NE(threaded_store.publish(scene).status, ScenePublishStatus::InsideBatch);
     FrameRunner     threaded_runner{ RunnerMode::Threaded };
     FrameDescription from_thread = onePassFrame(scene);
-    threaded_runner.run([&] { threaded_worker.run(from_thread); });
+    threaded_runner.run([&] { threaded_expander.run(from_thread); });
     EXPECT_EQ(threaded_runner.frames(), 1U) << "the engine thread ran that frame";
 
     ASSERT_EQ(commandsOf(from_content).size(), 2U);
@@ -154,21 +158,22 @@ TEST(FrameRunnerTest, ManyFramesThroughTheEngineThreadStayEquivalent)
     Scene scene;
     scene.setRoot(root);
 
-    FrameWorker worker;
-    ASSERT_TRUE(worker.publish(scene));
+    PublicationStore store;
+    FrameExpander    expander{ store };
+    ASSERT_TRUE(store.publish(scene));
     FrameRunner runner{ RunnerMode::Threaded };
 
     constexpr int kFrames = 64;
     for (int frame_index = 0; frame_index < kFrames; ++frame_index) {
         FrameDescription frame = onePassFrame(scene);
-        runner.run([&] { worker.run(frame); });
+        runner.run([&] { expander.run(frame); });
         ASSERT_EQ(commandsOf(frame).size(), 2U) << "frame " << frame_index;
         FrameDescription reference = onePassFrame(scene);
         expandFrame(reference);
         expectSamePicture(commandsOf(frame), commandsOf(reference));
     }
     EXPECT_EQ(runner.frames(), static_cast<std::uint64_t>(kFrames));
-    EXPECT_EQ(worker.publicationCount(), 1U);
+    EXPECT_EQ(store.publicationCount(), 1U);
 }
 
 TEST(FrameRunnerTest, StoppedRunnerRunsFramesOnTheCallerInsteadOfWaiting)
@@ -179,8 +184,9 @@ TEST(FrameRunnerTest, StoppedRunnerRunsFramesOnTheCallerInsteadOfWaiting)
     Scene scene;
     scene.setRoot(root);
 
-    FrameWorker worker;
-    ASSERT_TRUE(worker.publish(scene));
+    PublicationStore store;
+    FrameExpander    expander{ store };
+    ASSERT_TRUE(store.publish(scene));
     FrameRunner runner{ RunnerMode::Threaded };
     runner.stop();
     runner.stop(); // idempotent
@@ -189,9 +195,9 @@ TEST(FrameRunnerTest, StoppedRunnerRunsFramesOnTheCallerInsteadOfWaiting)
     FrameDescription frame = onePassFrame(scene);
     // The job is the engine half as it always is: a stopped runner runs it on the caller instead of waiting for a
     // thread that is gone - it does not reinterpret how the draw should be answered.
-    runner.run([&] { worker.run(frame); });
+    runner.run([&] { expander.run(frame); });
     EXPECT_EQ(commandsOf(frame).size(), 2U);
-    EXPECT_EQ(worker.unbound(), 0U) << "the publication was there, so every draw found its source";
+    EXPECT_EQ(expander.unbound(), 0U) << "the publication was there, so every draw found its source";
     EXPECT_NE(frame.passes.front().draw->draws.front().content, &scene)
         << "the draw names the content's publication, not the content - which is what makes the frame portable";
     EXPECT_EQ(runner.busy(), false) << "nothing is left in flight";

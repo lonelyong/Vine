@@ -19,9 +19,10 @@
 
 #include "EngineFrame.hpp"
 #include "FrameExpand.hpp"
+#include "FrameExpander.hpp"
 #include "FrameResources.hpp"
 #include "FrameScheduler.hpp"
-#include "FrameWorker.hpp"
+#include "PublicationStore.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -271,33 +272,55 @@ void RenderEngine::buildFrameValue()
     const int    device_height = static_cast<int>(std::lround(static_cast<double>(frame_->height) * pixel_ratio));
     // Rows and slots are one per index (see compileFrame): the row is the frame's answer about a pass, the slot
     // is the declaration itself - and the hook the declaration carries belongs to the DECLARATION.
+    //
+    // THE HOOKS RUN FIRST, ALL OF THEM (see the publication step below): a hook WRITES content, and this frame's one
+    // publication has to carry every hook's write - including a later pass' write, which a publication taken inside
+    // the pass loop would have skipped for every pass described before it. Their cost is the pass' share of the
+    // content half; the description below adds its own.
+    for (const std::uint32_t index : frame_order_) {
+        const PlanRow&    row  = plan_rows_[index];
+        RenderPass* const pass = row.pass;
+        if (pass == nullptr || !pass->isEnabled()) {
+            continue; // the scheduler never puts a pass that does not run into the order
+        }
+        const auto hook_started = std::chrono::steady_clock::now();
+        // Content that updates itself per frame (an FPS readout, a mirrored gizmo) does it through the hook its
+        // declaration carried, and it is what the pass is ABOUT TO describe: it writes content, so it happens
+        // here - before the passes are described - and in run order.
+        if (index < slots_.size() && slots_[index].pass != nullptr && slots_[index].pass->declaration().before_draw) {
+            slots_[index].pass->declaration().before_draw();
+        }
+        if (index < slots_.size()) {
+            slots_[index].record_micros =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - hook_started).count());
+        }
+    }
+
+    // THEN ONE PUBLICATION PER SCENE, taken in run order of the passes that name it, and only then the descriptions.
+    // Publishing between the two loops is what makes it ONE publication per frame and scene: a scene drawn by N
+    // passes used to be published N times (the later N-1 answered `Unchanged`, still a lock and an epoch comparison
+    // each), and a publication taken before every hook ran would leave a later hook's write out of the frame
+    // entirely. This is the migration's IMPLICIT publication; it goes away in 5b-2c, when a host publishes through
+    // `Scene::publish()` and hands the value over with `RenderEngine::bindSnapshot`. With nothing changed, the call
+    // answers immediately.
+    published_scenes_.clear();
     for (const std::uint32_t index : frame_order_) {
         PlanRow&          row  = plan_rows_[index];
         RenderPass* const pass = row.pass;
         if (pass == nullptr || !pass->isEnabled()) {
             continue; // the scheduler never puts a pass that does not run into the order
         }
-        // THIS IS WHAT A PASS COSTS THE FRAME. Under a value-driven frame the work is here: the hook runs, the
-        // inputs are told, the pass states its VIEW, and the frame's expansion collects it (see FrameExpand) - one
-        // measured interval, so the number keeps meaning what it always meant. The number is what the plan reports
-        // per pass (see FramePlan::PassPlan::record_micros), which is the host-visible half of a frame; the GPU half
-        // is the backend's (see RenderEngine::frameReport). One clock read per pass, not per draw.
+        // THIS IS WHAT A PASS COSTS THE FRAME. Under a value-driven frame the work is here: the publication (for the
+        // pass that names the scene first), the inputs told, the pass stating its VIEW, and the frame's expansion
+        // collecting it (see FrameExpand) - one measured interval, so the number keeps meaning what it always meant.
+        // The number is what the plan reports per pass (see FramePlan::PassPlan::record_micros), which is the
+        // host-visible half of a frame; the GPU half is the backend's (see RenderEngine::frameReport). One clock read
+        // per pass, not per draw.
         const auto pass_started = std::chrono::steady_clock::now();
-        // Content that updates itself per frame (an FPS readout, a mirrored gizmo) does it through the hook its
-        // declaration carried, and it is what the pass is ABOUT TO describe: it writes content, so it happens
-        // here - before the pass is described - and in run order.
-        if (index < slots_.size() && slots_[index].pass != nullptr && slots_[index].pass->declaration().before_draw) {
-            slots_[index].pass->declaration().before_draw();
-        }
-        // WHAT THIS PASS WROTE GOES TO THE PUBLICATION BEFORE THE FRAME IS ANSWERED. The hook WRITES content (an
-        // overlay that follows the camera, a gizmo), so that write has to be published - and it is published per pass,
-        // in run order, because that is the order the hooks ran in. This is the migration's IMPLICIT publication: it
-        // goes away in 5b-2c, when a host publishes through `Scene::publish()` and hands the value over with
-        // `RenderEngine::bindSnapshot`. The EXPANSION below is a separate step (see expandFrameValue) and runs after
-        // every pass has been described, which is what makes a frame answer ONE publication state (design N16): a
-        // hook's write is visible to all of that frame's passes. With nothing changed, the call answers immediately.
-        if (raw_ptr<Scene> scene = pass->content()) {
-            (void)worker_->publish(*scene);
+        if (raw_ptr<Scene> scene = pass->content();
+            scene != nullptr && std::find(published_scenes_.begin(), published_scenes_.end(), scene) == published_scenes_.end()) {
+            published_scenes_.push_back(scene);
+            (void)publications_->publish(*scene);
         }
         // The declared inputs were resolved by the compile (see compileFrame's rows), and the pass is told them
         // here: they are what a ScreenPass' effect reads, and they are part of what the pass describes.
@@ -329,7 +352,7 @@ void RenderEngine::buildFrameValue()
             frame_->engine_order.push_back(index);
         }
         if (index < slots_.size()) {
-            slots_[index].record_micros =
+            slots_[index].record_micros +=
                 static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - pass_started).count());
         }
     }
@@ -346,7 +369,7 @@ void RenderEngine::expandFrameValue(detail::EngineFrame& frame)
     // outside one - see DrawListMemo). Opened HERE and not where the frame was built, because it writes the publications'
     // memos - the very state this half reads - and because the token travels on the frame (see detail::EngineFrame):
     // a frame answered late opens its OWN number, never the one the content has moved on to.
-    worker_->beginFrame(frame.content_frame);
+    publications_->beginFrame(frame.content_frame);
 
     // THE ENGINE HALF'S EXPANSION: every draw of the described frame is answered here, one bind+expand per pass, in
     // run order (see design 2.12 - the two halves are the seam a thread crosses, so they are two functions and not one
@@ -361,7 +384,7 @@ void RenderEngine::expandFrameValue(detail::EngineFrame& frame)
         FrameDescription::Pass& described = frame.description.passes[entry++];
         const auto              started   = std::chrono::steady_clock::now();
         if (described.draw.has_value()) {
-            worker_->runPass(*described.draw);
+            expander_->runPass(*described.draw);
         }
         frame.engine_micros.push_back(
             static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count()));

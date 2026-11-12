@@ -529,3 +529,24 @@
   的 refcount / 最后一行离树断言；`ContentHalvesTest.AHalfIsPinnedByTheLayoutDeclarationAndLeavesWithIt`
   钉“索引说有就留、索引说没有就 park”。backlog `T28` 已删（收口项，不再是触发项）。
 - **计数**：`test_vsg` 544 / `test_graphics` 554 / ctest 30/30 / TSan 554 用例 0 warning。
+
+## 2026-11-13 —— 第三轮审计 W3：`FrameWorker` 拆成 `PublicationStore` + `FrameExpander`
+
+- **对象级回边消除**（`G2` / `G12`）：`detail::PublicationStore`（`src/viz/graphics/src/PublicationStore.hpp`）
+  住发布与绑定（`publish` / `bindSnapshot` / `hasExplicitSnapshot` / `beginFrame` / `sourceOf` + 表锁）；
+  `detail::FrameExpander`（`src/viz/graphics/src/FrameExpander.hpp`）只读它（`runPass` / `run` / `unbound`）。
+  内容半段不再需要引擎半段的对象；旧 `FrameWorker` 两个文件删除，`SceneSnapshotRef` 的 friend 改为
+  `detail::PublicationStore`。
+- **发布粒度**：`buildFrameValue` 先跑完本帧所有 `before_draw`（各自记钩子耗时），再按“每帧每场景一次”发布，
+  最后 describe。旧形状每 pass 发一次（后 N-1 次 `Unchanged` 仍付锁 + epoch 比较）；先发布再跑后面的钩子会把
+  钩子写的内容漏出本帧（`RenderEngineTest.AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote` 钉住这一点）。
+- **`record_micros`**：钩子阶段先记钩子耗时，describe 阶段把发布（首个命名该场景的 pass）+ resolve + describe
+  累加进去，总口径仍是“describe + collect”。
+- **测试**：`FrameWorkerTest.cpp` 拆成 `PublicationStoreTest.cpp` 与 `FrameExpanderTest.cpp`；
+  `FrameRunnerTest` / `ValueChannelTest` 改成两个对象。`T3` / `T31` 由
+  `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch` 钉住；`T34` 由
+  `FrameExpanderTest.AFrameExpandsTheSamePictureTheSceneWould`、`T35` 由
+  `FrameExpanderTest.ABoundPublicationIsThePictureTheFrameDraws` 钉住。
+- **计数**：`test_graphics` 556 / `test_vsg` 542 / TSan 556 用例 0 warning。全量并行 ctest 在这台机上
+  偶发 `test_vsg` 的 `backend->initialize()` false（4 例）与移动相机测量超预算；单套件重跑即绿，先重跑再怀疑回归。
+

@@ -161,7 +161,7 @@
 
 **证据**
 
-`EngineCompile.cpp:295-300` 的 `buildFrameValue`（内容半段）调 `worker_->publish(*scene)`；而 `FrameWorker.hpp` 的类注释是“THE ENGINE SIDE OF ONE FRAME”，`publish()` 按 `graphics-threading.md` §2.2 是**内容侧的动词**。`publications_mutex_` 横跨两半；同一场景 N 个 pass 会调 N 次 `publish()`（后 N-1 次 `Unchanged`，仍是一次锁 + 一次 epoch 比较）。
+`EngineCompile.cpp:295-300` 的 `buildFrameValue`（内容半段）调 `worker_->publish(*scene)`；而 `FrameWorker.hpp` 的类注释是“THE ENGINE SIDE OF ONE FRAME”，`publish()` 按 `graphics-threading.md` §2.2 是**内容侧的动词**。`publications_mutex_` 横跨两半；同一场景 N 个 pass 会调 N 次 `publish()`（后 N-1 次 `Unchanged`，仍是一次锁 + 一次 epoch 比较）。 <!-- drift-ok -->
 
 **判断**
 
@@ -284,7 +284,7 @@
 
 - `src/viz/graphics/src/DrawListBake.hpp`、`src/viz/graphics/sdk/vine/graphics/RenderCommand.hpp`（载荷）
 - `src/viz/graphics/src/RenderPass.cpp`、`src/viz/graphics/src/backend/FrameRecorder.cpp`（跨线程读）
-- `src/viz/graphics/src/EngineCompile.cpp`、`src/viz/graphics/src/FrameWorker.cpp`（发布与半段）
+- `src/viz/graphics/src/EngineCompile.cpp`、`src/viz/graphics/src/FrameWorker.cpp`（发布与半段） <!-- drift-ok -->
 - `src/viz/graphics/src/Scene.cpp`、`src/viz/graphics/src/SceneRows.hpp`、`src/viz/graphics/src/SnapshotSource.cpp`（场景与派生）
 - `src/viz/graphics/sdk/vine/graphics/backend/`（24 个头）
 - `src/viz/graphics/sdk/vine/graphics/Plan.hpp`、`PassDesc.hpp`、`FramePlan.hpp`、`FrameDescription.hpp`（计划词汇）

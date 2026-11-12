@@ -19,10 +19,9 @@ namespace detail
  *
  * @details
  * - A frame has TWO HALVES (see `.ai/design/graphics-threading.md` 2.12): the CONTENT half runs where the content is
- *   (hooks, publication to the mirrors, and the description of every pass) and the ENGINE half runs where the device
- *   is (the window half of the size, the expansion of every draw, the execute/present call). This struct is what
- *   crosses between them - one value, carried whole, so the second half reads nothing the first half might still be
- *   writing.
+ *   (hooks, publication, and the description of every pass) and the ENGINE half runs where the device is (the window
+ *   half of the size, the expansion of every draw, the execute/present call). This struct is what crosses between
+ *   them - one value, carried whole, so the second half reads nothing the first half might still be writing.
  * - EVERY FACT THE ENGINE HALF NEEDS IS HERE, and nowhere else: which passes issued what, the surface size the frame
  *   was LAID OUT on (not the size the surface happens to have now), the target the frame resolves to, and the frame
  *   token the mirrors' per-view memos are keyed by. That is what makes "the picture is one frame behind the content"

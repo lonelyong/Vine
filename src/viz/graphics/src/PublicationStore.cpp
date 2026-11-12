@@ -1,17 +1,15 @@
-#include "FrameWorker.hpp"
-
-#include "FrameExpand.hpp"
+#include "PublicationStore.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
 namespace detail
 {
 
-FrameWorker::FrameWorker() = default;
+PublicationStore::PublicationStore() = default;
 
-FrameWorker::~FrameWorker() = default;
+PublicationStore::~PublicationStore() = default;
 
-ScenePublishResult FrameWorker::publish(Scene& scene)
+ScenePublishResult PublicationStore::publish(Scene& scene)
 {
     // THE CONTENT'S SOURCE EXISTS BEFORE ANYTHING IS HANDED OVER: a draw's bind step looks it up, and a scene that
     // answers InsideBatch still has to be findable - that frame draws the picture the batch started from.
@@ -33,7 +31,7 @@ ScenePublishResult FrameWorker::publish(Scene& scene)
     return result;
 }
 
-void FrameWorker::bindSnapshot(Scene& scene, const SceneSnapshotRef& snapshot)
+void PublicationStore::bindSnapshot(Scene& scene, const SceneSnapshotRef& snapshot)
 {
     // The EXPLICIT handoff (see RenderEngine::bindSnapshot): the host published, the host says which picture to draw,
     // and from here on the frame does not publish this scene itself (see publish). An empty handle is a legitimate
@@ -48,14 +46,14 @@ void FrameWorker::bindSnapshot(Scene& scene, const SceneSnapshotRef& snapshot)
     publication->source->setSnapshot(snapshot.published());
 }
 
-bool FrameWorker::hasExplicitSnapshot(const Scene& scene)
+bool PublicationStore::hasExplicitSnapshot(const Scene& scene)
 {
     const std::lock_guard<std::mutex> lock(publications_mutex_);
     const Publication* const          publication = publicationOfLocked(scene);
     return publication != nullptr && publication->explicit_snapshot;
 }
 
-void FrameWorker::beginFrame(std::uint64_t frame)
+void PublicationStore::beginFrame(std::uint64_t frame)
 {
     const std::lock_guard<std::mutex> lock(publications_mutex_);
     frame_ = frame;
@@ -64,47 +62,13 @@ void FrameWorker::beginFrame(std::uint64_t frame)
     }
 }
 
-void FrameWorker::runPass(PassDraw& pass)
-{
-    // BIND: a draw that names a CONTENT is re-pointed at that content's PUBLISHED SNAPSHOT, so the expansion below
-    // stops asking the content - which is what makes the expand safe off the content's thread. A source this worker
-    // does not publish is left alone and counted: correct on the calling thread, a cross-thread read anywhere else,
-    // which is exactly what the count is for.
-    for (DrawDescription& draw : pass.draws) {
-        if (draw.content == nullptr) {
-            continue;
-        }
-        SnapshotSource* source = sourceOf(*draw.content);
-        if (source == nullptr) {
-            ++unbound_;
-            continue;
-        }
-        draw.content = source;
-    }
-    expandPass(pass);
-}
-
-void FrameWorker::run(FrameDescription& frame)
-{
-    for (FrameDescription::Pass& entry : frame.passes) {
-        if (entry.draw.has_value()) {
-            runPass(*entry.draw);
-        }
-    }
-}
-
-std::size_t FrameWorker::publicationCount() const noexcept
+std::size_t PublicationStore::publicationCount() const noexcept
 {
     const std::lock_guard<std::mutex> lock(publications_mutex_);
     return publications_.size();
 }
 
-std::uint64_t FrameWorker::unbound() const noexcept
-{
-    return unbound_;
-}
-
-std::uint64_t FrameWorker::memoHits() const noexcept
+std::uint64_t PublicationStore::memoHits() const noexcept
 {
     const std::lock_guard<std::mutex> lock(publications_mutex_);
     std::uint64_t hits = 0U;
@@ -114,7 +78,7 @@ std::uint64_t FrameWorker::memoHits() const noexcept
     return hits;
 }
 
-std::uint64_t FrameWorker::memoStores() const noexcept
+std::uint64_t PublicationStore::memoStores() const noexcept
 {
     const std::lock_guard<std::mutex> lock(publications_mutex_);
     std::uint64_t stores = 0U;
@@ -124,13 +88,13 @@ std::uint64_t FrameWorker::memoStores() const noexcept
     return stores;
 }
 
-SnapshotSource* FrameWorker::sourceFor(Scene& scene)
+SnapshotSource* PublicationStore::sourceFor(Scene& scene)
 {
     const std::lock_guard<std::mutex> lock(publications_mutex_);
     return sourceForLocked(scene);
 }
 
-SnapshotSource* FrameWorker::sourceForLocked(Scene& scene)
+SnapshotSource* PublicationStore::sourceForLocked(Scene& scene)
 {
     if (SnapshotSource* existing = sourceOfLocked(scene)) {
         return existing;
@@ -148,7 +112,7 @@ SnapshotSource* FrameWorker::sourceForLocked(Scene& scene)
     return source;
 }
 
-FrameWorker::Publication* FrameWorker::publicationOfLocked(const Scene& scene) noexcept
+PublicationStore::Publication* PublicationStore::publicationOfLocked(const Scene& scene) noexcept
 {
     for (Publication& publication : publications_) {
         if (publication.content == &scene) {
@@ -158,13 +122,13 @@ FrameWorker::Publication* FrameWorker::publicationOfLocked(const Scene& scene) n
     return nullptr;
 }
 
-SnapshotSource* FrameWorker::sourceOf(const vn::graphics::DrawListSource& source) noexcept
+SnapshotSource* PublicationStore::sourceOf(const vn::graphics::DrawListSource& source) noexcept
 {
     const std::lock_guard<std::mutex> lock(publications_mutex_);
     return sourceOfLocked(source);
 }
 
-SnapshotSource* FrameWorker::sourceOfLocked(const vn::graphics::DrawListSource& source) noexcept
+SnapshotSource* PublicationStore::sourceOfLocked(const vn::graphics::DrawListSource& source) noexcept
 {
     for (const Publication& publication : publications_) {
         // Either spelling means "this content": the CONTENT itself (a frame described on the content's thread) or the
