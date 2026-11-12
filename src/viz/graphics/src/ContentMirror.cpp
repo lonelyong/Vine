@@ -24,11 +24,19 @@ vn::graphics::DrawListSource& ContentMirror::source() noexcept
     return source_;
 }
 
-bool ContentMirror::publish(const Scene& scene)
+PublishOutcome ContentMirror::publish(const Scene& scene)
 {
+    // A BATCH FREEZES THE VERSION ON PURPOSE, so the comparison below cannot tell "nothing moved" from "held back by
+    // a batch" - and that difference is exactly what a caller acts on (T31). Asked FIRST: it is also what keeps a
+    // long batch from paying a row build per frame, because nothing would be posted anyway.
+    if (SceneRows::editing(scene)) {
+        return PublishOutcome{ PublishStatus::InsideBatch, published_ };
+    }
+
     const SceneRows::Version version = SceneRows::version(scene);
     if (published_.has_value() && *published_ == version) {
-        return false; // the mirror already holds this answer: a steady frame publishes nothing
+        // The mirror already holds this answer: a steady frame publishes nothing.
+        return PublishOutcome{ PublishStatus::Unchanged, published_ };
     }
     auto rows = std::make_shared<SceneBake>();
     SceneRows::publish(scene, *rows);
@@ -36,11 +44,13 @@ bool ContentMirror::publish(const Scene& scene)
     Delta delta;
     delta.kind = DeltaKind::RowsReplaced;
     if (!channel_.post(delta, std::move(rows))) {
-        return false; // full: the version stays unpublished, so the next call retries (see the declaration)
+        // Full: the version stays unpublished, so the next call retries (see the declaration). `held` still answers
+        // with the publication the engine side has - it did not change.
+        return PublishOutcome{ PublishStatus::Refused, published_ };
     }
     published_ = version;
     ++publish_count_;
-    return true;
+    return PublishOutcome{ PublishStatus::Posted, published_ };
 }
 
 bool ContentMirror::setDescription(const Node& node)

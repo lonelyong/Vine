@@ -386,3 +386,17 @@
 - **文档**：`graphics-frame-pipeline.md` §3.1/§3.6/§8/§9.1/§9.3/§10 更新；`K1–K11` 落进 §8.1 作为仓库内
   权威副本（`K4` 分母改成“该步开始时的用例数”）；§9.3 修正为“`addPass` 家族在第 5 步删”（原表与 `C11`
   自相矛盾）。`-audit` **未删**：它是 `R31–R39` / `K7–K11` 的出处，且被两份 ADR 引为证据。
+
+## 2026-11-12 —— graphics-next 第 2 步：`publish` 返回四态（内部半边）
+
+- **为什么**：`ContentMirror::publish` / `FrameWorker::publish` 返回 `bool`，而同一个 `false` 表示三件不同的事
+  ——“没变”“批内被冻住”“通道满、下次重试”。调用方无法据此决定重试还是报告，`T31` 的“批内显式未发布”也无处表达。
+- **新值**：`src/viz/graphics/src/PublishOutcome.hpp` —— `PublishStatus{Posted, Unchanged, InsideBatch, Refused}`
+  + `PublishOutcome{status, held}`（`held` = 调用之后镜像持有的那一版，首次发布前为空）+ `explicit operator bool`
+  （保留旧的“是否发布了”读法，所以既有 `EXPECT_TRUE(publish(...))` 一处未改）+ `posted()`。
+- **怎么分辨批内**：`SceneRows::editing(scene)`（friend，读 `edit_depth_ > 0`）。**先问它**再比版本：批内版本是被
+  故意冻住的，比较不出来；先问还让一个长批次不再每帧付一次行构建。
+- **没做的**：公开 `Scene::publish()`。今天没有公开的快照类型承载“上一份快照”，先公开只能答一个没人能用的
+  版本号，还会和镜像的记账形成两个真相。它与“帧内隐式发布消失”一起属于第 5 步（§9.3 第 2 行已改写）。
+- **断言**：三处既有用例把 `EXPECT_FALSE/TRUE` 升级为状态断言（`Unchanged` / `InsideBatch` / `Refused` / `Posted`），
+  没有新增重复用例。`test_graphics` 571。

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "DeltaChannel.hpp"
+#include "PublishOutcome.hpp"
 #include "RenderWorld.hpp"
 #include "SceneRows.hpp"
 
@@ -71,9 +72,10 @@ class ContentMirror {
      *   program swap), and the recovery after a refusal.
      *
      * @param scene The scene this mirror is the mirror of.
-     * @return true when a publish was posted (false when nothing moved or the channel was full).
+     * @return What the call answered: posted / unchanged / inside an edit batch / refused by a full channel (see
+     *         PublishOutcome). A caller that only needs "did it post" reads the value as a bool.
      */
-    bool publish(const Scene& scene);
+    PublishOutcome publish(const Scene& scene);
 
     /**
      * @brief Announces @p node's PAYLOAD: a re-read of its geometry description, draw facts and handles (content thread).

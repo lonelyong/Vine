@@ -78,9 +78,10 @@ class FrameWorker {
      *   changed (see ContentMirror::publish), so the caller can (and should) call it every frame.
      *
      * @param scene The scene this frame draws.
-     * @return true when a publish was posted (false when nothing moved, or the mirror's channel was full).
+     * @return What the call answered: posted / unchanged / inside an edit batch / refused by a full channel (see
+     *         ContentMirror::publish). A caller that only needs "did it post" reads the value as a bool.
      */
-    bool publish(const Scene& scene);
+    PublishOutcome publish(const Scene& scene);
 
     /**
      * @brief Opens @p frame on every mirror: the token their memos are keyed by (the frame's FIRST step).

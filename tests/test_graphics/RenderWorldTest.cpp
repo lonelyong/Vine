@@ -40,6 +40,8 @@ using vn::graphics::RenderCommand;
 using vn::graphics::Scene;
 using vn::graphics::detail::buildRows;
 using vn::graphics::detail::ContentMirror;
+using vn::graphics::detail::PublishOutcome;
+using vn::graphics::detail::PublishStatus;
 using vn::graphics::detail::refreshBoxes;
 using vn::graphics::detail::Row;
 using vn::graphics::Aabbd;
@@ -372,7 +374,8 @@ TEST(ContentMirrorTest, TheMirrorCollectsWhatItsSceneCollectsAndOnlyPublishesOnA
                        scene.collectRenderCommands(view, vn::graphics::kAllLayers));
 
     // Nothing moved: the mirror already holds this answer, so a frame asks it for nothing at all.
-    EXPECT_FALSE(mirror.publish(scene)) << "a steady frame publishes nothing";
+    const PublishOutcome unchanged = mirror.publish(scene);
+    EXPECT_EQ(unchanged.status, PublishStatus::Unchanged) << "a steady frame publishes nothing";
     EXPECT_EQ(mirror.drain(), 0U);
     EXPECT_EQ(mirror.publishCount(), 1U);
 
@@ -694,7 +697,8 @@ TEST(ContentMirrorTest, AnEditBatchIsOnePublicationAndTheMirrorKeepsTheOldPictur
 
     scene.beginEdit();
     arm->setMatrix(vn::math::translate(0.25, 0.0, 0.0)); // half of the configuration
-    EXPECT_FALSE(mirror.publish(scene)) << "mid-batch there is nothing to publish: the version is held";
+    const PublishOutcome inside = mirror.publish(scene);
+    EXPECT_EQ(inside.status, PublishStatus::InsideBatch) << "mid-batch there is nothing to publish: the version is held";
     const auto midway = mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers);
     ASSERT_NE(midway, nullptr);
     ASSERT_EQ(midway->size(), 1U);
@@ -705,7 +709,9 @@ TEST(ContentMirrorTest, AnEditBatchIsOnePublicationAndTheMirrorKeepsTheOldPictur
     EXPECT_FALSE(mirror.publish(scene));
 
     scene.endEdit();
-    ASSERT_TRUE(mirror.publish(scene)) << "the whole batch is one change";
+    const PublishOutcome after = mirror.publish(scene);
+    EXPECT_EQ(after.status, PublishStatus::Posted) << "the whole batch is one change";
+    EXPECT_TRUE(after.held.has_value()) << "and the answer names the publication the mirror now holds";
     EXPECT_EQ(mirror.publishCount(), publishes_before + 1U) << "one publication, not one per edit";
     EXPECT_EQ(mirror.drain(), 1U);
     const auto whole = mirror.source().collectRenderCommands(view, vn::graphics::kAllLayers);
@@ -804,7 +810,8 @@ TEST(ContentMirrorTest, ARefusedPublishIsRetriedInsteadOfBeingLost)
     assembly.arm->setMatrix(vn::math::translate(0.1, 0.0, 0.0));
     EXPECT_TRUE(mirror.publish(scene)); // fills the channel
     assembly.link->setMatrix(vn::math::translate(0.0, 0.3, 0.0));
-    EXPECT_FALSE(mirror.publish(scene)) << "the channel is full: refused, and the version is not recorded";
+    const PublishOutcome refused = mirror.publish(scene);
+    EXPECT_EQ(refused.status, PublishStatus::Refused) << "the channel is full: refused, and the version is not recorded";
     EXPECT_EQ(mirror.drain(), 1U);
 
     EXPECT_TRUE(mirror.publish(scene)) << "the retry carries the version the refusal left behind";

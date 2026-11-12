@@ -11,7 +11,7 @@ FrameWorker::FrameWorker() = default;
 
 FrameWorker::~FrameWorker() = default;
 
-bool FrameWorker::publish(const Scene& scene)
+PublishOutcome FrameWorker::publish(const Scene& scene)
 {
     ContentMirror* mirror = nullptr;
     {

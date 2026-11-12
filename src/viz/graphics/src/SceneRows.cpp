@@ -17,6 +17,11 @@ SceneRows::Version SceneRows::version(const Scene& scene)
     return Version{ scene.published_epoch_, scene.published_boxes_, scene.published_materials_ };
 }
 
+bool SceneRows::editing(const Scene& scene) noexcept
+{
+    return scene.edit_depth_ > 0;
+}
+
 SceneSnapshotPtr SceneRows::snapshot(const Scene& scene)
 {
     const Version version_now = version(scene); // this is the call that brings the rows up to date

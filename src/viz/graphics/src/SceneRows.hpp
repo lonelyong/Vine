@@ -52,6 +52,20 @@ class SceneRows {
     [[nodiscard]] static Version version(const Scene& scene);
 
     /**
+     * @brief Answers whether @p scene is inside an edit batch (see Scene::beginEdit).
+     *
+     * @details
+     * - The version above is FROZEN while a batch is open, which is indistinguishable from a version that simply
+     *   did not move; a mirror that only compared versions could not say which happened (`T31`). This is the one
+     *   bit that tells them apart - and it lets the frame path skip the row build a long batch would otherwise
+     *   pay on every frame of it.
+     *
+     * @param scene Scene to ask.
+     * @return true when at least one batch is open.
+     */
+    [[nodiscard]] static bool editing(const Scene& scene) noexcept;
+
+    /**
      * @brief Copies the scene's rows into @p out, as values, without the node record.
      *
      * @details

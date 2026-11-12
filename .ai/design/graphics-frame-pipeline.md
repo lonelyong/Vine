@@ -157,7 +157,7 @@
 | F6 | 计划是值 | 帧边界按名字差分 + 计划校验稳定 code | 部分：`Plan` + `validatePlan` + `applyPlan` + `plan()` 已落地；`Target` 仍是显式 `RenderTarget` 句柄，`addPass` 家族保留到第 5 步（`C11`） |
 | F7 | 预热入口 | `prepare(snapshot, plan)` 答需要什么；预热后录制 `builds` 增量 0 | 未做 |
 | F8 | 一 Session 多 Surface | `Target` / 帧请求带 `SurfaceId`；一个引擎线程驱动多个窗口 | 未做 |
-| F9 | `publish` 返回 `Result` | 批内显式"未发布"，无 null | 未做 |
+| F9 | `publish` 返回结果 | 批内显式“未发布”，无 null | 部分：`PublishOutcome` 四态已落地（`Posted`/`Unchanged`/`InsideBatch`/`Refused`），公开 `Scene::publish()` 随第 5 步的快照出现 |
 | F10 | 原型与实例 | `Instance` 引用原型；折叠一次；无环与行预算 | 未做 |
 | F11 | 全序排序键 | 文档化的全序值（含 layer），透明两段 | 未做 |
 | F12 | 帧结果与查询 | `FrameResult` 带 snapshot / view / poses / 诊断 / present | 部分：`FrameStats` + `PresentOutcome` 已有，`query` 未做 |
@@ -229,13 +229,18 @@
 - **验收**（`T29` / `K10`）：一个 Session 两个 Surface 都正确 present。
 - **注意**（`P4`）：表面事件只在帧首应用；交换链只在该表面自己的帧里重建。
 
-### 3.9 F9 `publish` 返回 `Result`
+### 3.9 F9 `publish` 返回结果
 
-- **行为**：批内调用 `publish` 返回显式的"未发布"状态与上一份快照；外层 `endEdit` 之后那一帧才发布整批。
+- **行为**：一次发布回答四种状态之一（`Posted` / `Unchanged` / `InsideBatch` / `Refused`）与“镜像现在持有的
+  那一版”；`InsideBatch` 是批内显式“未发布”，`Refused` 是“通道满、下次重试”。外层 `endEdit` 之后的那一帧
+  才发布整批，`publishCount` 只 +1。
 - **约束**（`C2`）：一个 Scene 同时只有一个写者。
-- **要求**（`R11` / `R39`）：`publishCount` 只 +1；不返回 null。
-- **验收**（`T3` / `T31`）：`ContentMirrorTest.AnEditBatchIsOnePublication`（迁移期）；批内 publish 用例。
-- **注意**（`P9`）：批不是事务——它只界定"一帧能看见什么"。
+- **要求**（`R11` / `R39`）：`publishCount` 只 +1；没有 null，也没有一个 `bool` 同时表示“没变”“批内”“通道满”。
+- **验收**（`T3` / `T31`）：`ContentMirrorTest.AnEditBatchIsOnePublicationAndTheMirrorKeepsTheOldPictureUntilItEnds`、
+  `...TheMirrorCollectsWhatItsSceneCollectsAndOnlyPublishesOnAChange`（`Unchanged`）、
+  `ARefusedPublishIsRetriedInsteadOfBeingLost`（`Refused`）。
+- **注意**（`P9`）：批不是事务——它只界定“一帧能看见什么”。公开 `Scene::publish()` 随快照（第 5 步）出现：
+  在那之前，公开面没有一个能承载“上一份快照”的类型，先公开它只会多一个没人能用的版本号。
 
 ### 3.10 F10 原型与实例
 
@@ -486,7 +491,7 @@
 | T28 | pose 剔除 | pose 子树部分出视 | 未做 |
 | T29 | 多表面 | 一个 Session 两个 Surface | 未做 |
 | T30 | 计划校验 | `PlanTest.*IsRefusedWithItsCode`（四类）+ `PlanTest.TheCodeSpellingsAreStable` | 已实现 |
-| T31 | 批内 publish | 批内调用 publish | 未做 |
+| T31 | 批内 publish | `ContentMirrorTest.AnEditBatchIsOnePublicationAndTheMirrorKeepsTheOldPictureUntilItEnds`（`InsideBatch` → `Posted`） | 已实现 |
 
 ### 8.1 判死阈值（`K#`）
 
@@ -519,7 +524,8 @@
 - **原型已通过阈值、生产未接管**：F1（快照发布）、F2（纯派生）。`detail::SceneSnapshot` +
   `selectSnapshot` 只有测试消费者，生产收集仍走 `RenderWorld` + `drawListBake`；`K1`（203 µs）、
   `K2`（1.03×）、`K3` 已由 `SnapshotTest` 证明。
-- **未做**：F7–F11 与 F12 的 `query` 半边。
+- **未做**：F7、F8、F10、F11 与 F12 的 `query` 半边。F9 的内部半边（四态发布答案）已落地；它的公开
+  `Scene::publish()` 与“帧内隐式发布消失”是同一步（第 5 步），因为那一步才把快照变成公开值。
 - **迁移期的事实**：`graphics-threading.md` 的 `C1–C20` 与 `graphics-scene.md` 的镜像/delta/memo 描述
   仍是**现在**的形状；本文件是**目标**。两者冲突时以状态字段为准，接管顺序见 §9.3。
 
@@ -539,7 +545,7 @@
 | 步 | 内容 | 删掉什么 | 判据 / 回退条件 |
 |---|---|---|---|
 | 1 | 计划是值：`Plan` + 帧边界差分 + 校验 code · **已落地 2026-11-12** | 本步不删公开入口（`C11`）；`compileFrame` 的行从“`slots_` 的投影”变成“计划的投影” | `T7` / `T30` / `K4`；击穿则回退该步 |
-| 2 | `publish` 返回 `Result`（批内显式未发布） | 内部 `bool` 发布（`FrameWorker` / `ContentMirror`），与帧内隐式发布 | `T31` |
+| 2 | `publish` 返回结果（四态）· **已落地 2026-11-12（内部半边）** | 内部 `bool` 发布（`FrameWorker` / `ContentMirror`）；**帧内隐式发布随第 5 步消失** | `T31` |
 | 3 | `prepare()` 预热 | “录制时才发现要编译” | `T7` / `T10`，预热后 `builds` 增量 0 |
 | 4 | 一 Session 多 Surface | 每窗口一个 Session 的驱动路径 | `T29` / `K10` |
 | 5 | **生产收集改走 Snapshot + `selectSnapshot`，删镜像/delta/memo/版本** | `ContentMirror`、`DeltaChannel`、`DrawListMemo`、`Version`、`refresh*`（约 2000 行）；**并在此收口删 `addPass` 家族与 `PassRegistry` 的运行时拒绝** | `K1` / `K2` / `K3` / `K5` / `K7` / `N5`；这是风险最高的一步 |
@@ -555,6 +561,7 @@
 
 - `src/viz/graphics/sdk/vine/graphics/Plan.hpp` / `src/viz/graphics/src/Plan.cpp`（计划的契约、校验、`describe`）
 - `src/viz/graphics/src/EngineCompile.cpp`（`applyPlan` / `applyPlanRows` / `plan` / `makePassNode`）
+- `src/viz/graphics/src/PublishOutcome.hpp` / `ContentMirror.cpp`（发布的四态答案）
 - `tests/test_graphics/PlanTest.cpp`（`T7` / `T30` 的全部用例）
 - `src/viz/graphics/sdk/vine/graphics/ContentId.hpp`（身份、`ContentRef`、注册表）
 - `src/viz/graphics/src/SceneSnapshot.hpp` / `SceneSnapshot.cpp`（快照原型、`selectSnapshot`）
