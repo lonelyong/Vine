@@ -1,7 +1,7 @@
 # graphics 架构：设备、引擎、链、一帧
 
 > **状态**：现行
-> **最后核对**：2026-11-02
+> **最后核对**：2026-11-12
 > **范围**：设备/窗口/区/视图/引擎的分层，一帧的编译与调度。
 > **权威来源**：`RenderEngine.hpp` / `PassChain.hpp` / `PassRegistry.hpp` / `OutputRegistry.hpp` /
 > `DiagnosticsRoute.hpp` / `SceneView.hpp` / `RenderSurface.hpp` / `RenderBackend.hpp`。
@@ -58,6 +58,13 @@
     附带一条名词纪律：`PlanProblemCode::SessionBusy` 的字符串保留（测试钉住），但它的文档含义是“**引擎里有帧在录**”；
     SDK 里今天**没有** `Session` 类型，该类型随 F8（一 Session 多 Surface，`graphics-frame-pipeline.md` §3.8）落地——
     在那之前，文档与新接口都不再引用一个不存在的 `Session`。
+
+2.9 **`backend/` 是后端接缝，不是宿主 SDK**：`sdk/vine/graphics/backend/`（24 个头）只被 `gfx_backend_*` 与
+    `libGraphics` 自己消费，宿主包含它是编译错误（`BackendHalfGuard.hpp`）。它的 **ABI 随后端变、不随宿主变**，
+    所以安装时单独成一个组件（`VineGraphicsBackendSdk`），不在默认 include 树里——“装进 include 但禁止包含”
+    是自相矛盾的（`G1` / `G6`）。边界：作为“驻留与帧纪律”，它把复杂性吸收在后端（`G7` 做对了）；`Keys` /
+    `ClearPlan` / `TargetPlan` / `FrameCompiler` 里仍是 Vulkan 拼写（`VkFormat` / `ImageLayout` / subpass）——
+    第二个后端落地前不再新增这类拼写，把它改成不透明设备格式码是那一轮的入口（`vsg-backend.md` C6）。
 
 ## 3. 功能点
 

@@ -1,4 +1,4 @@
-vn_add_library(GRAPHICS_TARGET_NAME Graphics)
+vn_add_library(GRAPHICS_TARGET_NAME Graphics BACKEND_SDK_SUBDIR vine/graphics/backend)
 
 # libGraphics compiles the backend half (sdk/vine/graphics/backend/), so it is a backend-half consumer:
 # those headers refuse to compile unless this is defined (see backend/BackendHalfGuard.hpp).

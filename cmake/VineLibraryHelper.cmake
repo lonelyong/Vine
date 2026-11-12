@@ -1,4 +1,8 @@
 function(vn_add_library target_name_var short_name)
+    # Optional keyword: BACKEND_SDK_SUBDIR <dir relative to sdk/> names the
+    # module's backend seam. That subtree is installed under its own component
+    # instead of the default include tree - see the install block at the end.
+    cmake_parse_arguments(VN_LIB "" "" "BACKEND_SDK_SUBDIR" ${ARGN})
     # CMAKE_SOURCE_DIR顶级当前CMakeLists.txt文件所在目录
     # CMAKE_CURRENT_SOURCE_DIR 当前CMakeLists.txt所在目录
     # file(RELATIVE_PATH src_rel_dir ${CMAKE_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
@@ -95,8 +99,34 @@ function(vn_add_library target_name_var short_name)
     # string(TOLOWER ${CMAKE_PROJECT_NAME} proj_name_lowercase)
 
     # 安装头文件（相对路径，尊重 CMAKE_INSTALL_PREFIX / --prefix）
-    # install(FILES ${sdk_file_list} DESTINATION ${CMAKE_INSTALL_PREFIX}/include/${src_rel_dir})
-    install(DIRECTORY ${sdk_dir}/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    #
+    # The SDK may carry two audiences (graphics-architecture.md 2.9): host
+    # headers, and a backend seam whose ABI follows the backend module rather
+    # than the host. A module names the seam via BACKEND_SDK_SUBDIR; the seam
+    # then leaves in its own component, never in the default include tree. The
+    # headers already refuse host inclusion, so shipping them to hosts only
+    # advertised a vocabulary hosts may not use.
+    if(VN_LIB_BACKEND_SDK_SUBDIR)
+        install(DIRECTORY ${sdk_dir}/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+            PATTERN "${VN_LIB_BACKEND_SDK_SUBDIR}" EXCLUDE)
+        # install(DIRECTORY ... COMPONENT ...) would also run in a default
+        # (all-components) install, which is the leak this split closes, so the
+        # seam installs only when its component is named explicitly:
+        #   cmake --install <build> --component ${CMAKE_PROJECT_NAME}${short_name}BackendSdk
+        if(IS_ABSOLUTE "${CMAKE_INSTALL_INCLUDEDIR}")
+            set(vn_backend_install_dest "${CMAKE_INSTALL_INCLUDEDIR}/${VN_LIB_BACKEND_SDK_SUBDIR}")
+        else()
+            set(vn_backend_install_dest "\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/${VN_LIB_BACKEND_SDK_SUBDIR}")
+        endif()
+        install(CODE "
+  if(CMAKE_INSTALL_COMPONENT STREQUAL \"${CMAKE_PROJECT_NAME}${short_name}BackendSdk\")
+    file(INSTALL DESTINATION \"${vn_backend_install_dest}\"
+         TYPE DIRECTORY FILES \"${sdk_dir}/${VN_LIB_BACKEND_SDK_SUBDIR}/\" USE_SOURCE_PERMISSIONS)
+  endif()"
+            COMPONENT ${CMAKE_PROJECT_NAME}${short_name}BackendSdk)
+    else()
+        install(DIRECTORY ${sdk_dir}/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    endif()
     # message(----------${sdk_dir})
     # message(----------${CMAKE_INSTALL_PREFIX}/include/${src_rel_dir})
     # foreach(sdk_file ${sdk_file_list})
