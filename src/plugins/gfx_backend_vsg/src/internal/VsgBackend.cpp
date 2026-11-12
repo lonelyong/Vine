@@ -1495,7 +1495,11 @@ bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)
     if (const auto* program = vn::obj_cast<const vn::graphics::ShaderProgram>(content)) {
         return d->store->releaseProgram(program);
     }
-    if (const auto* material = vn::obj_cast<const vn::graphics::Material>(content)) {
+    if (const auto* material = vn::obj_cast<const vn::graphics::MaterialBase>(content)) {
+        // A MATERIAL IS DISPATCHED AT ITS BASE, NOT AT `Material`: an asset and the instance a drawable overrides
+        // over it are two concrete types under one shading model (see MaterialBase's note - `RenderCommand::
+        // material` is a MaterialBasePtr, and nothing downstream branches on which kind it got). Casting to the
+        // asset missed every instance, i.e. exactly the per-object materials a host is most likely to release.
         // The ARENA SLOT is NOT freed here: a recorded plan may still read the row's block, so the slot leaves with
         // the row - the next sweep returns the id once no row names it (see ContentStore::releaseMaterial).
         return d->store->releaseMaterial(material);
@@ -1504,6 +1508,30 @@ bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)
         return d->images->releaseTexture(texture);
     }
     return false;
+}
+
+bool VsgBackend::releaseContent(const vn::Buffer<float>& buffer)
+{
+    // The element type is the caller's way of saying WHICH stream; the residency keys on the buffer's ADDRESS (see
+    // StreamUploads / StreamKey), so the two overloads share one body.
+    return releaseStreamBuffer(&buffer);
+}
+
+bool VsgBackend::releaseContent(const vn::Buffer<std::uint32_t>& buffer)
+{
+    return releaseStreamBuffer(&buffer);
+}
+
+bool VsgBackend::releaseStreamBuffer(const void* buffer)
+{
+    if (buffer == nullptr || !initialized() || d->assembly == nullptr) {
+        return false;
+    }
+    // THE DEVICE'S clock and queue, not a window's: a stream is read by every window's frames, so "may this bind be
+    // freed" is a question about the whole device (see core::DeviceClock). The release is PARKED, never destroyed -
+    // a submitted command buffer may still name the bind (see ResourceTable / StreamUploads).
+    (void)d->assembly->uploads().releaseBuffer(buffer, d->clock.timeline(), d->retirement);
+    return true;
 }
 
 bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target,

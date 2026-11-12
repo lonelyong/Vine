@@ -237,6 +237,28 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
     /** @brief Releases the GPU residency of one content object the host still owns. */
     bool releaseContent(vn::raw_ptr<const vn::Object> content) override;
 
+    /** @brief Releases the stream uploads read from one buffer; the geometry that reads it stays.
+     *
+     * @details
+     * - A stream's residency key IS its buffer (see api/StreamUploads), so this is the one entry that can name it:
+     *   the geometry's rows and tables are content and stay, and only the GPU copy goes - the next frame that draws
+     *   the geometry uploads again.
+     * - Parked through the device's retirement queue, never stopped synchronously; a session that has not learned
+     *   its in-flight count yet keeps the entries (counted as retained) rather than freeing bytes a frame may name.
+     *
+     * @param buffer Vertex or instance stream buffer.
+     * @return true when the release was accepted (scheduled, or nothing was resident); false when the session is
+     *         not up.
+     */
+    bool releaseContent(const vn::Buffer<float>& buffer) override;
+
+    /** @brief Releases the index upload read from one buffer (see the float overload).
+     *
+     * @param buffer Index buffer.
+     * @return true when the release was accepted (see the float overload).
+     */
+    bool releaseContent(const vn::Buffer<std::uint32_t>& buffer) override;
+
     /** @brief Reads a colour attachment back: the device is stopped (counted), the copy is fenced, bytes out. */
     bool readColorBuffer(const vn::graphics::RenderTarget* target,
                          int                               attachment,
@@ -505,6 +527,13 @@ class VN_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      * `shutdown()` and @ref initialize both need it, for the same reason and in the same order.
      */
     void releaseContentWorld() noexcept;
+
+    /** @brief The one body behind the two buffer overloads of releaseContent (the element type is not needed).
+     *
+     * @param buffer Address a `StreamKey` names; null is refused.
+     * @return true when the release was accepted (see the public overloads).
+     */
+    bool releaseStreamBuffer(const void* buffer);
 
   private:
     friend class detail::BackendContentAccess;

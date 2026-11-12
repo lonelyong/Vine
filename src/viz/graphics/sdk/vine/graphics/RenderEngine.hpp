@@ -12,6 +12,7 @@
 #include <set>
 #include <vector>
 
+#include <vine/Buffer.hpp>
 #include <vine/Lease.hpp>
 #include <vine/Object.hpp>
 #include <vine/RefCounted.hpp>
@@ -645,7 +646,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - The object remains valid and keeps its revision; the next frame that names it uploads, compiles or
      *   builds its tables again. This is the explicit release for a host under memory pressure that still
      *   wants to keep its logical content.
-     * - Recognized content: Geometry, Material, ShaderProgram and Texture. The release is scheduled through the
+     * - Recognized content: Geometry, Material (an asset or a MaterialInstance), ShaderProgram and Texture - and,
+     *   through the overloads below, the stream buffers a geometry reads. The release is scheduled through the
      *   backend's retirement queue (see RenderDevice::releaseContent), not done synchronously.
      * - Call between frames, on the frame thread.
      *
@@ -654,6 +656,24 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *         no device is bound, or the backend cannot park the release safely.
      */
     bool releaseContent(raw_ptr<const Object> content);
+
+    /** @brief Releases the GPU residency of the streams a geometry reads from @p buffer (see RenderDevice).
+     *
+     * @details
+     * - The geometry that reads the buffer is NOT touched: only the GPU copy goes, and the next frame that draws
+     *   it uploads the stream again. To drop every stream of a geometry, release the Geometry.
+     *
+     * @param buffer Vertex or instance stream buffer.
+     * @return true when the buffer was recognized and the release was accepted.
+     */
+    bool releaseContent(const vn::Buffer<float>& buffer);
+
+    /** @brief Releases the GPU residency of the index stream read from @p buffer (see RenderDevice).
+     *
+     * @param buffer Index buffer.
+     * @return true when the buffer was recognized and the release was accepted.
+     */
+    bool releaseContent(const vn::Buffer<std::uint32_t>& buffer);
 
     /** @brief Removes all registered passes (each one as removePass: resources released).
      *

@@ -229,6 +229,21 @@ std::uint64_t StreamUploads::beginFrame(const ContentFacts& facts, core::FrameTi
     return retired;
 }
 
+std::uint64_t StreamUploads::releaseBuffer(const void* buffer, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+{
+    if (buffer == nullptr) {
+        return 0U;
+    }
+    // The two tables are independent residences (a vertex channel and an index stream of one model are two entries),
+    // so one release asks both, each by the key's own spelling of the buffer address.
+    const auto from_buffer = [buffer](const core::StreamKey& key, const auto& entry) {
+        (void)entry;
+        return key.buffer == buffer;
+    };
+    return static_cast<std::uint64_t>(d->vertex.retireIf(from_buffer, timeline, retirement)) +
+           static_cast<std::uint64_t>(d->index.retireIf(from_buffer, timeline, retirement));
+}
+
 std::size_t StreamUploads::live() const noexcept
 {
     return d->vertex.live() + d->index.live();

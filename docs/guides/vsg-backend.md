@@ -21,7 +21,8 @@
 | 目标上的 `setWindowHandle`/`resize` | 采纳宿主表面 / 跟随表面（**停一次设备，计数**） | `deviceWaits()` |
 | `capabilities()` | 能力收成一个值：`render_targets = true`（离屏路径可用）；`presentation` 答成设备**创建时**说的意图（`DeviceDesc::None` ⇒ false，见 `RenderDevice.hpp` 的 `DeviceDesc`） | 引擎每帧读一次这张值（见 `RenderDevice::capabilities`） |
 | `releasePass/releaseRenderTarget` | 释放该 pass 的会话身份 / 目标对象（停靠后销毁） | 保留态不随帧数增长 |
-| `releaseContent(object)` | 放掉宿主仍持有的 `Geometry` / `Material` / `ShaderProgram` / `Texture` 的 GPU 驻留：纹理立即出图像缓存，行与编译产物走 in-flight park；对象仍有效，下次使用重建。返回 `false` 表示不是内容/会话未起/停车窗口不可用 | `deviceWaits()` 不增；`ContentStoreTest.*Release*` / `VsgBackendTest.ReleasingContent…` |
+| `releaseContent(object)` | 放掉宿主仍持有的 `Geometry` / `Material`（asset 或 `MaterialInstance`）/ `ShaderProgram` / `Texture` 的 GPU 驻留：纹理立即出图像缓存，行与编译产物走 in-flight park；对象仍有效，下次使用重建。返回 `false` 表示不是内容/会话未起/停车窗口不可用 | `deviceWaits()` 不增；`ContentStoreTest.*Release*` / `VsgBackendTest.ReleasingContent…` |
+| `releaseContent(buffer)` | 两个重载（`Buffer<float>` / `Buffer<uint32_t>`）：只放这一条流的 GPU 副本（驻留键就是 buffer 地址 + `revision()`），geometry 的行与表不动；`StreamUploads::releaseBuffer` 立即停靠，下一帧重传。返回 `false` 只表示会话未起 | `uploads().live()` 当场减 1、下一帧回涨；`VsgBackendTest.ReleasingAStreamBuffer…` |
 | `readColorBuffer/readDepthBuffer` | **分类先于任何工作**，再复制回读 | 分类表逐条说原因（见 §2） |
 | `shutdown()` | 破坏性路径：**一次计数过的 device idle** → 内容世界 → 会话 | 之后再 `initialize()` 是合法重来 |
 

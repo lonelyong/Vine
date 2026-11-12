@@ -35,6 +35,7 @@
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
+#include <vine/graphics/MaterialInstance.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Texture.hpp>
@@ -69,6 +70,7 @@ using vn::vsg::ContentAssembly;
 using vn::vsg::ContentStore;
 using vn::vsg::HostTargets;
 using vn::vsg::PassRegistry;
+using vn::vsg::StreamUploads;
 using vn::vsg::WindowTarget;
 using vn::vsg::detail::BackendContentAccess;
 
@@ -216,7 +218,10 @@ struct TriangleFixture {
     vn::intrusive_ptr<ShaderProgram> program;
     vn::intrusive_ptr<Geometry>      geometry;
     vn::intrusive_ptr<Material>      material;
-    std::vector<RenderCommand>       commands;
+    /// The two streams the geometry reads, kept because a stream's residency key IS its buffer.
+    vn::intrusive_ptr<vn::Buffer<float>>         positions;
+    vn::intrusive_ptr<vn::Buffer<std::uint32_t>> indices;
+    std::vector<RenderCommand>                   commands;
 };
 
 /// @brief Builds the triangle fixture: a view-block vertex stage and a constant red fragment stage.
@@ -249,7 +254,9 @@ TriangleFixture makeTriangle()
     geometry->setPositions(positions);
     setPrimitiveIndices(*geometry, 0U, indices);
     geometry->setRevision(1U);
-    fixture.geometry = geometry;
+    fixture.geometry  = geometry;
+    fixture.positions = positions;
+    fixture.indices   = indices;
 
     const vn::intrusive_ptr<Material> material(new Material());
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
@@ -1044,6 +1051,135 @@ TEST(VsgBackendTest, ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt)
     EXPECT_EQ(store->materialEntries(), 1U);
     EXPECT_EQ(store->programEntries(), 1U);
     EXPECT_GT(store->builds(), builds_before);
+
+    backend->shutdown();
+}
+
+/**
+ * @brief A drawable's instance is content like the asset under it: releasing one drops the instance's residency.
+ *
+ * WHY IT IS ITS OWN CASE. `RenderCommand::material` is a `MaterialBasePtr` - an asset, or an instance over one - so
+ * the entry point has to dispatch at the BASE. A cast to the concrete `Material` misses every instance: the call falls
+ * off the end of the dispatch and answers false, and the instance's row (and its arena slot) stays for the session's
+ * lifetime. No picture shows that, which is why the assertion is on the tables.
+ */
+TEST(VsgBackendTest, ReleasingAMaterialInstanceDropsItsResidency)
+{
+    if (!deviceCaseAvailable()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    vn::graphics::DeviceDesc desc;
+    desc.presentation = vn::graphics::DevicePresentation::None;
+    const vn::intrusive_ptr<VsgBackend> backend(new VsgBackend(desc));
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_TRUE(backend->capabilities().render_targets);
+
+    const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(32, 32);
+
+    const TriangleFixture triangle = makeTriangle();
+    // The per-object material a host would vary (see MaterialInstance): it is a MaterialBase, and NOT a Material.
+    const vn::intrusive_ptr<vn::graphics::MaterialInstance> instance(new vn::graphics::MaterialInstance(triangle.material));
+    instance->setBaseColor(vn::Colorf(0.8F, 0.2F, 0.1F, 1.0F));
+
+    // The frames name the INSTANCE: the asset it inherits from is named by no command, so it gets no row of its own.
+    std::vector<RenderCommand> commands = triangle.commands;
+    commands[0].material                = instance;
+
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
+
+    const auto drive_content = [&] {
+        backend->executeFrame(TestFrame().pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::TestAndWrite).content(commands, camera.get()).value());
+    };
+    const auto drive_empty = [&] {
+        backend->executeFrame(TestFrame().pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::TestAndWrite).value());
+    };
+
+    // Warm the session up so its in-flight count is learned (the release needs a parking window).
+    for (int frame = 0; frame < 8; ++frame) {
+        drive_content();
+    }
+    ASSERT_EQ(backend->diagnosticCount(), 0U);
+
+    ContentStore* store = BackendContentAccess::store(*backend);
+    ASSERT_NE(store, nullptr);
+    ASSERT_EQ(store->materialEntries(), 1U) << "the instance is the only material a frame named";
+
+    EXPECT_TRUE(backend->releaseContent(instance.get())) << "an instance is a MaterialBase, i.e. content";
+    for (int frame = 0; frame < 8; ++frame) {
+        drive_empty();
+    }
+    EXPECT_EQ(store->materialEntries(), 0U) << "a released instance leaves once its rows are past";
+
+    drive_content();
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+    EXPECT_EQ(store->materialEntries(), 1U) << "the host still holds it, so naming it again describes it again";
+
+    backend->shutdown();
+}
+
+/**
+ * @brief A stream's residency key is its BUFFER, so the release can name it - and only the GPU copy goes.
+ *
+ * WHY IT IS NOT A GEOMETRY RELEASE. Releasing the geometry drops its rows, which leaves the streams without a
+ * declaration and lets the sweep retire them a window later; a host that keeps drawing wants the upload gone NOW and
+ * the geometry untouched. That is the only thing a buffer-level release adds, and this case pins both halves: the
+ * entries leave at once, the geometry's rows stay, and the next frame uploads again.
+ */
+TEST(VsgBackendTest, ReleasingAStreamBufferDropsTheUploadButNotTheGeometry)
+{
+    if (!deviceCaseAvailable()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    vn::graphics::DeviceDesc desc;
+    desc.presentation = vn::graphics::DevicePresentation::None;
+    const vn::intrusive_ptr<VsgBackend> backend(new VsgBackend(desc));
+    ASSERT_TRUE(backend->initialize());
+    ASSERT_TRUE(backend->capabilities().render_targets);
+
+    const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(32, 32);
+
+    const TriangleFixture                         triangle = makeTriangle();
+    const vn::intrusive_ptr<vn::graphics::Camera> camera   = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.25F, 0.0F, 1.0F), true };
+
+    const auto drive = [&] {
+        backend->executeFrame(TestFrame().pass(pass.get()).target(target.get()).clear(clear).depth(vn::graphics::DepthMode::TestAndWrite).content(triangle.commands, camera.get()).value());
+    };
+
+    // Warm the session up so its in-flight count is learned and the release can be parked.
+    for (int frame = 0; frame < 8; ++frame) {
+        drive();
+    }
+    ASSERT_EQ(backend->diagnosticCount(), 0U);
+
+    ContentStore*    store    = BackendContentAccess::store(*backend);
+    ContentAssembly* assembly = BackendContentAccess::assembly(*backend);
+    ASSERT_NE(store, nullptr);
+    ASSERT_NE(assembly, nullptr);
+    StreamUploads&      uploads        = assembly->uploads();
+    const std::uint64_t uploads_before = uploads.uploads();
+    ASSERT_EQ(uploads.live(), 2U) << "the fixture's vertex channel and its index stream are the shared uploads";
+
+    EXPECT_TRUE(backend->releaseContent(*triangle.positions));
+    EXPECT_EQ(uploads.live(), 1U) << "only the buffer that was named went; the index stream is pinned by its own";
+    EXPECT_EQ(store->geometryEntries(), 1U) << "the geometry is content, and it stayed";
+
+    drive();
+    EXPECT_EQ(backend->diagnosticCount(), 0U);
+    EXPECT_EQ(uploads.live(), 2U) << "the next frame that draws uploads the released stream again";
+    EXPECT_GT(uploads.uploads(), uploads_before) << "which is what the release cost";
+
+    EXPECT_TRUE(backend->releaseContent(*triangle.indices)) << "the index stream has its own overload";
+    EXPECT_EQ(uploads.live(), 1U) << "the vertex stream came back with the frame; only the index went";
 
     backend->shutdown();
 }

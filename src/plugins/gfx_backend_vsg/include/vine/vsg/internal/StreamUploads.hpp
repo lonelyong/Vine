@@ -182,6 +182,27 @@ class StreamUploads {
      */
     std::uint64_t beginFrame(const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
 
+    /**
+     * @brief Parks every stream read from @p buffer: the host's EXPLICIT release, over an entry content still pins.
+     *
+     * @details
+     * - THE HOST'S WORD OUTRANKS CONTENT. A stream normally leaves when no live content row declares its buffer any
+     *   more (see @ref beginFrame); this makes the entries leave NOW, while the geometry that declares them stays.
+     *   Only the GPU copy goes: the host's buffer is untouched, and the next frame that draws the geometry uploads
+     *   again - that re-upload is what an explicit release costs (the same trade every other `releaseContent`
+     *   makes, see the ADR-2026-11-10 pin model).
+     * - DEPARTURES ARE PARKED, not destroyed, like every other departure here: a submitted frame may still bind
+     *   the binds. A queue with no window yet keeps the entries and counts them as retained - memory, never a
+     *   command buffer naming freed objects.
+     * - O(entries), not O(1): an explicit release is a host announcement between frames, never a per-frame cost.
+     *
+     * @param buffer     The buffer a stream was uploaded from (the address a `StreamKey` names). Null changes nothing.
+     * @param timeline   Frame clock the parks are dated against.
+     * @param retirement Where departed entries are parked.
+     * @return How many entries left the table (parked; a retained one is still resident and not counted).
+     */
+    std::uint64_t releaseBuffer(const void* buffer, core::FrameTimeline& timeline, core::RetirementQueue& retirement);
+
   public:
     /** @brief Gets the number of entries the store holds. */
     [[nodiscard]] std::size_t live() const noexcept;
@@ -195,7 +216,7 @@ class StreamUploads {
     /** @brief Gets the number of acquires refused because the stream may not be shared. */
     [[nodiscard]] std::uint64_t refusals() const noexcept;
 
-    /** @brief Gets the number of entries that left because no live content declared them any more. */
+    /** @brief Gets the number of entries that left, parked (the sweep's departures and explicit releases). */
     [[nodiscard]] std::uint64_t retired() const noexcept;
 
   private:

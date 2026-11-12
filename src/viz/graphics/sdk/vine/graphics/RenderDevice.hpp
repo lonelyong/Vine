@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <vector>
 
+#include <vine/Buffer.hpp>
 #include <vine/Object.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
@@ -285,8 +286,9 @@ class VN_GRAPHICS_API RenderDevice {
     /** @brief Releases the device's GPU residency of a content object the host still owns.
      *
      * @details
-     * - Recognized content: Geometry, Material, ShaderProgram and Texture. Any other Object is not content
-     *   and is refused, not silently ignored.
+     * - Recognized content: Geometry, Material (an asset, or the MaterialInstance a drawable overrides over one),
+     *   ShaderProgram and Texture - and, through the overloads below, the stream buffers a geometry reads.
+     *   Any other Object is not content and is refused, not silently ignored.
      * - The object stays valid and keeps its revision; the next frame that names it uploads, compiles or
      *   builds its tables again. This releases a COPY, not the host's object.
      * - The release is SCHEDULED, not synchronous: rows and compiled objects are parked through the session's
@@ -303,6 +305,43 @@ class VN_GRAPHICS_API RenderDevice {
     virtual bool releaseContent(raw_ptr<const Object> content)
     {
         (void)content;
+        return false;
+    }
+
+    /** @brief Releases the GPU residency of a vertex-or-instance stream read from @p buffer.
+     *
+     * @details
+     * - WHY A BUFFER IS ITS OWN ENTRY AND NOT AN `Object`: a `Buffer` is content DATA, not a scene object (see
+     *   graphics-content-lifecycle.md 2.6) - it has no identity a plan names, and the residency is keyed by its
+     *   ADDRESS plus its revision. An overload names exactly the thing that is released without pretending a buffer
+     *   is a node, and without widening the Object entry into an unchecked pointer.
+     * - WHY BY REFERENCE: a buffer that does not exist has no residency to release, so "absent" is not a case this
+     *   verb takes - which also keeps `releaseContent(nullptr)` meaning the Object entry (a literal null is never
+     *   ambiguous against a reference parameter).
+     * - The geometry that reads it is NOT affected: its rows and tables stay (it is still live content), and the next
+     *   frame that draws it uploads the stream again - which is what this release costs. To drop the residency of
+     *   every stream a geometry reads, release the Geometry.
+     * - A buffer no stream was uploaded from is already released (true).
+     * - Call between frames, on the frame thread, like the other resource announcements.
+     *
+     * @param buffer Stream buffer (a geometry's vertex channel or its instance transforms).
+     * @return true when the buffer was recognized and the release was accepted (scheduled, or nothing was
+     *         resident); false when the device is not up or the release cannot be parked safely.
+     */
+    virtual bool releaseContent(const vn::Buffer<float>& buffer)
+    {
+        (void)buffer;
+        return false;
+    }
+
+    /** @brief Releases the GPU residency of the index stream read from @p buffer (see the float overload above).
+     *
+     * @param buffer Index buffer (a geometry's primitive indices).
+     * @return true when the buffer was recognized and the release was accepted (see the float overload).
+     */
+    virtual bool releaseContent(const vn::Buffer<std::uint32_t>& buffer)
+    {
+        (void)buffer;
         return false;
     }
 

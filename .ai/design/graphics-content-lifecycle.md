@@ -46,6 +46,8 @@
     直接答 gone。**仍然按地址做键的只有上传表**（`StreamUploads` 的 `StreamKey` = `Buffer` 地址 + revision + 段，
     `Buffer` 不在内容对象体系里）：它的条目**持有它键名的那个 `Buffer`**，停靠排不上时**保留条目**、下一帧再试，
     绝不提前把地址还给分配器；计划读的实例流也由计划持有（见 ADR-2026-11-09-address-keys-hold-the-object）。
+    显式释放用同一个地址命名：`releaseContent(const Buffer<float>& / const Buffer<uint32_t>&)` 按地址把这条流的条目
+    停靠，不需要给 `Buffer` 造身份（G1：在这一层，地址就是它唯一的身份）。
 2.7 **三个词，三个意思**（读代码前先看这张表，否则“identity”会指三个东西）：
     - **name**：`Node::name()`，只用于查找与调试，**不**是身份。
     - **key（id + revision）**：缓存表的键。`id` 是内容对象的 `Handle`（见 `ContentId.hpp`），`revision` 说的是
@@ -61,7 +63,8 @@
 满足 `G1` / `G7` / `G10`：一条规则、零等待；同一件事也不再有第二个名字（`RenderDevice` 上不再有“清一次上传”的动词）。
 代价写在 D14：依赖 vsg 的 protected 块状态（派生任务读/清）。
 
-2.9 **“不再被画”的三个开关，后果也不同**：显式 `releaseContent()`（宿主说“我不要驻留了”）、
+2.9 **“不再被画”的三个开关，后果也不同**：显式 `releaseContent()`（宿主说“我不要驻留了”；对象，或一条流所读的
+    `Buffer`）、
    宿主丢掉最后一个引用（对象离树，行与驻留才会被扫尾）、以及**只是这一帧没被画**（隐藏、被视锥裁掉）。
    前两个由**持有量**决定；第三个不改变持有量，所以**什么都不释放**：
    - 表行（`ContentStore` 的 geometry / program / material）只看持有量：对象还在（场景图把着），行就留着，
@@ -90,7 +93,7 @@
 
 | # | 功能 | 说明 |
 |---|---|---|
-| F1 | `releaseContent(Object)` | 释放 Geometry / Material / ShaderProgram / Texture 的 GPU 驻留。 |
+| F1 | `releaseContent(...)` | 释放 Geometry / Material（asset 或 `MaterialInstance`）/ ShaderProgram / Texture，以及单条流的 `Buffer<float>` / `Buffer<uint32_t>` 的 GPU 驻留（buffer 按地址命名，读它的 geometry 不动）。 |
 | F2 | 释放标记 | 释放只是标记；行按 epoch 回收（2.10）。下次使用（`track` / `ensure*`）清掉标记，所以不误删。 |
 | F3 | 纹理立即删 | 纹理 cache 立即删条目；行按 epoch 回收，arena 槽跟最后一行走。 |
 | F4 | 重建 | 下一次使用重建驻留；不是泄漏。 |

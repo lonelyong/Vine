@@ -676,6 +676,18 @@ bool RenderEngine::releaseContent(raw_ptr<const Object> content)
     return target != nullptr && target->releaseContent(content);
 }
 
+bool RenderEngine::releaseContent(const vn::Buffer<float>& buffer)
+{
+    raw_ptr<RenderBackend> target = device();
+    return target != nullptr && target->releaseContent(buffer);
+}
+
+bool RenderEngine::releaseContent(const vn::Buffer<std::uint32_t>& buffer)
+{
+    raw_ptr<RenderBackend> target = device();
+    return target != nullptr && target->releaseContent(buffer);
+}
+
 void RenderEngine::clearPasses()
 {
     if (!sessionChangeAllowed("clearPasses")) {

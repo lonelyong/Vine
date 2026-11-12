@@ -299,3 +299,20 @@
   `AReleaseWithoutCompletionEvidenceKeepsTheRows` 与 `AnAbandonedEntryKeepsItsObjectUntilItsRowsLeave`。
 - 证据：`measure_graphics_claims.py` 的寿命 token 75 → **1**；`test_vsg` 537 / `test_graphics` 559 / ctest 30/30。
 - 陷阱：`tablesFor` 返回 store 的 `d->facts` 引用，多次 record 会改写它；断言要在每次 record 后立刻读。
+
+## 2026-11-12 —— `releaseContent` 入口补齐（MaterialBase + 一条流）
+
+- **`Material` → `MaterialBase`**：`RenderCommand::material` 是 `MaterialBasePtr`，`MaterialInstance : MaterialBase`
+  且**不是** `Material`，旧的具体类 `obj_cast` 让每个 instance 落到分派末尾、返回 false（行与 arena 槽永不释放）。
+  `VsgBackendTest.ReleasingAMaterialInstanceDropsItsResidency` 反向验证：改回 `Material` 即红。
+- **buffer 分派**：`Buffer<T>` 不是 `Object`（design 2.6 故意把它留在内容对象体系之外），所以
+  `releaseContent(raw_ptr<const Object>)` 根本收不到它——补的是**两个引用参数重载**
+  （`const vn::Buffer<float>&` / `const vn::Buffer<std::uint32_t>&`），`RenderDevice` → `RenderEngine` →
+  `VsgBackend` 各一层。用**引用**而不是指针：`releaseContent(nullptr)` 仍解析到 Object 那条（三个指针重载会让
+  `HeadlessBackendTest` 里那句 null 断言直接 ambiguous），而且“不存在的 buffer 没有驻留可放”本来就不是一种入参。
+- 实现：`backend/ResourceTable::retireIf(drop, timeline, retirement)`（`retireUnpinned` 现在只是它的取反）+
+  `StreamUploads::releaseBuffer(address, timeline, retirement)`（两张表各按 `key.buffer` 找，停靠不销毁；
+  停车窗口没学到就保留并计入 retained）。`VsgBackend::releaseStreamBuffer` 用**设备**的 clock/queue，不是某个窗口的。
+- 语义：只放这一条流的 GPU 副本，geometry 的行与表不动；下一帧画到它重传。想放一个 geometry 的全部流 → 放 geometry。
+- 证据：`VsgBackendTest.ReleasingAStreamBufferDropsTheUploadButNotTheGeometry`（`uploads().live()` 2 → 1 →
+  2、`geometryEntries()` 保持 1、`uploads()` 回涨）；`test_vsg` 539 全绿，`test_graphics` / 各项门禁 0。

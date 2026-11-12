@@ -98,30 +98,31 @@ class ResourceTable {
     }
 
     /**
-     * @brief Parks every value whose key @p is_live rejects, and forgets it.
+     * @brief Parks every value @p drop selects, and forgets it.
      *
      * @details
+     * - The general door @ref retireUnpinned is written in terms of: a caller that knows better than the pin model
+     *   which values must go (an explicit release - "the host says these bytes are not wanted") names them here, and
+     *   a caller that asks content supplies a predicate derived from the answer. Same rule, one loop.
      * - WHAT LEAVES IS PARKED, NOT DESTROYED: the value is moved into a release act the queue runs once the frames
      *   that could still bind it are past. A caller that needs the value's storage released immediately must call
      *   @ref clear instead - that is the session-teardown path, where nothing is in flight.
      * - NO WINDOW MEANS KEEP: when @p retirement cannot park yet (the session has not learned its in-flight slot
-     *   count), the entry is retained and counted in @ref retained, and the next call tries again.
-     * - The predicate is asked exactly once per resident entry, KEY AND VALUE together (see the file note), so a
-     *   caller may make it two O(1) lookups rather than a scan over anything.
+     *   count), the entry is retained and counted in @ref retained, and the next call tries again. A retained entry
+     *   is still resident, so it is NOT counted as departed.
      *
-     * @tparam Live Callable `bool(const Key&, const Value&)` - true when content still names that key, at the
-     *              state the resident value was built for.
-     * @param is_live    Whether a resident entry is still wanted.
+     * @tparam Drop Callable `bool(const Key&, const Value&)` - true when that value must leave now.
+     * @param drop       Which values leave (asked exactly once per resident entry).
      * @param timeline   Frame clock the parks are dated against.
      * @param retirement Where departed values are parked.
-     * @return How many values left the table (parked), i.e. how many keys became unpinned.
+     * @return How many values left the table (parked).
      */
-    template <class Live>
-    std::size_t retireUnpinned(Live&& is_live, FrameTimeline& timeline, RetirementQueue& retirement)
+    template <class Drop>
+    std::size_t retireIf(Drop&& drop, FrameTimeline& timeline, RetirementQueue& retirement)
     {
         std::size_t retired = 0U;
         for (auto it = entries_.begin(); it != entries_.end();) {
-            if (is_live(it->first, it->second.value)) {
+            if (!drop(it->first, it->second.value)) {
                 ++it;
                 continue;
             }
@@ -137,6 +138,27 @@ class ResourceTable {
         }
         retired_ += retired;
         return retired;
+    }
+
+    /**
+     * @brief Parks every value whose key @p is_live rejects, and forgets it.
+     *
+     * @details
+     * - The predicate is asked exactly once per resident entry, KEY AND VALUE together (see the file note), so a
+     *   caller may make it two O(1) lookups rather than a scan over anything.
+     * - Parking, retention and the return value are @ref retireIf's (this overload only negates the question).
+     *
+     * @tparam Live Callable `bool(const Key&, const Value&)` - true when content still names that key, at the
+     *              state the resident value was built for.
+     * @param is_live    Whether a resident entry is still wanted.
+     * @param timeline   Frame clock the parks are dated against.
+     * @param retirement Where departed values are parked.
+     * @return How many values left the table (parked), i.e. how many keys became unpinned.
+     */
+    template <class Live>
+    std::size_t retireUnpinned(Live&& is_live, FrameTimeline& timeline, RetirementQueue& retirement)
+    {
+        return retireIf([&is_live](const Key& key, const Value& value) { return !is_live(key, value); }, timeline, retirement);
     }
 
     /** @brief Gets how many values the table holds. */
