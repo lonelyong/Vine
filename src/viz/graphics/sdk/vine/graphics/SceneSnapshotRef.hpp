@@ -10,6 +10,7 @@ namespace detail
 {
 struct SceneSnapshot;    // The immutable value itself (src/SceneSnapshot.hpp): no caller names it.
 class PublicationStore;  // The content side of the publication channel: one source per content (src/PublicationStore.hpp).
+class ScenePublisher;    // The derived side of a scene: builds the publication a host hands over (src/ScenePublisher.hpp).
 } // namespace detail
 
 /**
@@ -65,6 +66,7 @@ class VN_GRAPHICS_API SceneSnapshotRef {
     friend class Scene;
     friend class RenderEngine;
     friend class detail::PublicationStore;
+    friend class detail::ScenePublisher;
 
     /**
      * @brief Wraps the value a publication posted (owner side; see the class note).

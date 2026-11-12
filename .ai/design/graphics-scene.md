@@ -5,7 +5,7 @@
 > **最后核对**：2026-11-12
 > **范围**：严格树、状态折叠、收集 memo、层与拾取。
 > **权威来源**：`Node.hpp` / `Group.hpp` / `StateNode.hpp` / `RenderState.hpp` / `StateResolution.hpp` /
-> `Scene.hpp` / `Camera.hpp` / `RayIntersection.hpp`。
+> `Scene.hpp` / `Camera.hpp` / `RayIntersection.hpp`；派生半段在 `src/viz/graphics/src/ScenePublisher.hpp`。
 > **待办**：`../backlog/graphics.md`
 
 ## 1. 概要设计
@@ -56,6 +56,13 @@
 20k 节点）；它也统一了项目已有的写法（`PassChain` / vsg 后端）。边界：这是**契约**——`T` 必须有正确的 `VN_OBJECT_META_DECL/IMPL`，
 且 meta 父链必须与 C++ 继承一致；错链会让 `static_cast` 静默落到错误地址。不是 `Object` 派生的类型（`CameraManipulator`、第三方 vsg 类型）
 继续用 `dynamic_cast`。满足 `G6` / `G10`，代价是元类型链必须维护正确。
+
+2.11 **派生状态单独一个对象**：`Scene` 只持有作者树、灯与查询；烘焙行（`SceneBake`）、per-view memo、内容 epoch、编辑批
+深度与发布值住在 `detail::ScenePublisher`（`src/viz/graphics/src/ScenePublisher.hpp`），`Scene` 的 `collectRenderCommands` /
+`publish` / `beginEdit` / `endEdit` / `setContentFrame` / `invalidateContent` 与三个计数全部委托。为什么：三者住在一个类里时，
+改缓存或改发布都要动作者的类（`G1` / `G5`），作者 API 也要背它们不拥有的寿命规则；拆开后依赖只有 Scene → publisher 一条
+（publisher 读作者的树，反向不成立）。边界：`Scene` 仍是唯一的公开 `DrawListSource` 实现（`W6b` 才删继承），公开 API 与
+测试语义不变；`detail::SceneRows::snapshot` 仍是模块唯一的一行门，背后转给 publisher。
 
 ## 3. 功能点
 

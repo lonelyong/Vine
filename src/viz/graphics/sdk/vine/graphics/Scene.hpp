@@ -21,9 +21,8 @@ VN_GRAPHICS_NS_BEGIN
 
 namespace detail
 {
-struct SceneBake;  // The baked graph half of a collection (see Scene.cpp): an implementation detail, not API.
-class SceneRows;   // The one door onto those rows, for the engine side's publication (see src/SceneRows.hpp).
-class DrawListMemo; // The per-view collected lists (see src/DrawListMemo.hpp).
+class ScenePublisher; // The derived side: baked rows, the per-view memo and the publication (src/ScenePublisher.hpp).
+class SceneRows;      // The one door onto those rows, for the engine side's publication (see src/SceneRows.hpp).
 }
 
 using vn::geom::spatial::Aabbd;
@@ -94,6 +93,9 @@ struct VN_GRAPHICS_API ScenePublishResult {
  * - Exactly one root node (an empty scene has no root and renders nothing), the scene's light sources, and
  *   the tree queries: bounding box, name-based search, render-command collection. Content is composed
  *   under the root through Group (typically a Group holding the world's top-level subtrees).
+ * - THE AUTHORED SIDE ONLY. What the scene DERIVES - the baked rows a collection reads, the per-view list
+ *   memo, the content epoch and the publication - lives in one `detail::ScenePublisher` this class delegates to,
+ *   so the editing API never carries the lifetime rules of caches and snapshots it does not own.
  * - The root is a ROOT: the tree a scene renders is entered at a parentless node. setRoot() detaches a node
  *   that is still attached elsewhere, and a root attached elsewhere afterwards takes the scene out of the
  *   picture (see setRoot).
@@ -440,20 +442,9 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
      */
     [[nodiscard]] bool hasRootedRoot() const;
 
-    /** @brief Builds (once per epoch) and box-refreshes the rows a collection reads, and returns them.
-     *
-     * @details
-     * - A named step because the rows have TWO readers now: a collection (which then runs the view half) and the
-     *   engine side's publication, built from them (see detail::SceneRows).
-     * - It is the one place of the collection that needs this thread: building reads the graph, and the box refresh
-     *   reads each leaf's own data box (a cache keyed by the buffers' revisions).
-     *
-     * @return The rows, valid until the graph changes.
-     */
-    [[nodiscard]] const detail::SceneBake& ensureRows() const;
-
   private:
-    friend class detail::SceneRows; // the engine side's publish: version + a copy of the rows (see SceneRows.hpp)
+    friend class detail::ScenePublisher; // the derived side reads the authored tree and owns the publication state
+    friend class detail::SceneRows;      // the engine side's publish: version + a copy of the rows (see SceneRows.hpp)
 
   private:
     String                name_;
@@ -462,49 +453,9 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene>, public Dr
     NodePtr               root_;
     std::vector<LightPtr> lights_;
 
-    /** @brief Collected-command memo, one list per view (see src/DrawListMemo.hpp). */
-
-    // Bumped by every scene-level content change, so a memo built before the
-    // change is not reused (see invalidateContent) - and by a material whose
-    // values moved (see detail::refreshValues, which runs during a
-    // collection because a material edit announces nothing on the graph).
-    mutable std::uint64_t content_revision_ = 1;
-    // Token of the content frame currently open, 0 = none (no memoising).
-    std::uint64_t content_frame_      = 0;
-    // THIS SCENE'S ROOT SUBTREE content epoch when the memo was last validated: a different value means something in
-    // this scene's graph changed since (Node::announceContentChange climbs to the root), so every collected list may
-    // be stale and the memo is dropped before it is looked up again. Another scene's edits leave it alone. Mutable:
-    // collecting is a const operation that maintains the memo (see content_collect_count_).
-    mutable std::uint64_t memo_epoch_ = 0;
-    // The collected lists of the views in use (one per camera), reused while the graph does not change and dropped
-    // when nothing asked for them in the previous frame - so the memo is bounded by the views drawn, not by frames.
-    mutable std::unique_ptr<detail::DrawListMemo> content_memo_;
-    // The GRAPH half of the same collection, keyed by the same epoch: placements, world boxes and folds, in walk
-    // order. A view reads it instead of recomputing it, which is why a moving camera costs the prune and the sort
-    // rather than a full walk (see detail::SceneBake in Scene.cpp).
-    mutable std::unique_ptr<detail::SceneBake> content_bake_;
-    mutable std::uint64_t                bake_epoch_         = 0;
-    mutable std::uint64_t                content_bake_count_ = 0;
-    mutable std::uint64_t                content_collect_count_ = 0;
-    mutable std::uint64_t                content_reuse_count_   = 0;
-    // How many times a re-read box actually moved (see ensureRows): a byte edit announces itself on a buffer, not on
-    // the graph, so it does not move `bake_epoch_` - and a reader that published these rows needs a version that does.
-    mutable std::uint64_t                box_generation_ = 0;
-    // HOW DEEP THE EDIT BATCH IS (see beginEdit), and the version a publication compares (`Scene::publish`). Inside a
-    // batch the published pair stays where it was, so a frame that lands mid-batch publishes nothing; the next
-    // collection after the outermost endEdit() catches it up in one step - which is also the only moment the whole
-    // batch is read.
-    // How many times a VALUE moved under the rows (see detail::refreshValues): a material's values and a program's text
-    // are edited through live objects, so no node mutator announces it and `bake_epoch_` cannot see it - while the
-    // values a command carries do change (RenderCommand::material_description / program_description).
-    mutable std::uint64_t                 value_generation_ = 0;
-    int                                   edit_depth_      = 0;
-    mutable std::uint64_t                 published_epoch_     = 0;
-    mutable std::uint64_t                 published_boxes_     = 0;
-    mutable std::uint64_t                 published_values_    = 0;
-    // The publication `publish()` last answered `Posted` with: the handle is also the answer `Unchanged` and
-    // `InsideBatch` hand back, so a host always receives the picture a frame would draw.
-    SceneSnapshotRef                      published_snapshot_;
+    /// The derived side (see detail::ScenePublisher): the baked rows, the per-view memo and the publication. Created
+    /// by the constructor, which is also why this class' constructor and destructor are out of line.
+    std::unique_ptr<detail::ScenePublisher> publisher_;
 };
 
 using ScenePtr = intrusive_ptr<Scene>;

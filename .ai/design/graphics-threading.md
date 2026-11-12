@@ -503,6 +503,7 @@
 - `src/viz/graphics/sdk/vine/graphics/Scene.hpp` / `src/viz/graphics/src/Scene.cpp`（`publish` / 批 / 发布值）
 - `src/viz/graphics/sdk/vine/graphics/SceneSnapshotRef.hpp` / `src/viz/graphics/src/SceneSnapshotRef.cpp`（快照句柄）
 - `src/viz/graphics/src/SceneSnapshot.{hpp,cpp}`（快照值、分块、`selectSnapshot`）
+- `src/viz/graphics/src/ScenePublisher.{hpp,cpp}`（场景的派生侧：烘焙行、per-view memo、发布值）
 - `src/viz/graphics/src/SceneRows.{hpp,cpp}`（`SceneBake` → 快照的唯一门）
 - `src/viz/graphics/src/SnapshotSource.{hpp,cpp}`（快照的 `DrawListSource` 面）
 - `src/viz/graphics/src/PublicationStore.{hpp,cpp}`（内容侧的发布/绑定与 `SnapshotSource` 表）

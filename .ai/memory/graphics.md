@@ -560,4 +560,19 @@
 - **测试**：`PlanTest.AKindChangeOnACustomPassIsRefusedWithItsCode`（原地更新保留节点 → kind 变更被拒 →
   内置 pass 仍可换 kind）；`TheCodeSpellingsAreStable` 增加新 token。`test_graphics` 557。
 
+## 2026-11-13 —— 第三轮审计 W6a：`Scene` 的派生侧搬进 `detail::ScenePublisher`
+
+- **搬走的东西**：`SceneBake`、per-view `DrawListMemo`、`content_revision_` / `memo_epoch_` / `content_frame_`、
+  编辑批 `edit_depth_`、发布版本对与 `published_snapshot_`、三个计数，全部落进 `src/ScenePublisher.{hpp,cpp}`。
+  `Scene` 只剩作者树（root / lights / visible / opacity）、查询（boundingBox / findNode）与委托
+  （collect / publish / beginEdit / endEdit / setContentFrame / invalidateContent / 计数）。依赖方向只有
+  Scene → publisher（publisher 以 `Scene&` 读作者的树；`Scene` 是它的 friend）。
+- **门没变**：`detail::SceneRows::snapshot(scene)` 仍是一行门，转给 `ScenePublisher::snapshot()`；`SnapshotShadowTest` /
+  `RenderWorldTest` 对它的引用不用改。空的共享命令表由一个 `detail::noCommands()` 统一（两个 TU 各存一份会破坏
+  `TheSharedCollectionIsOneListAndTheOwningSpellingCopiesIt` 的"空列表是同一个"断言）。
+- **新文件要 reconfigure**：库源码是 `file(GLOB_RECURSE)`（无 `CONFIGURE_DEPENDS`），加 .cpp 后必须
+  `cmake -S . -B build`（`build-tsan` 同）再构建，否则链接期只看到未定义符号。
+- **测试**：`test_graphics` 557 / `test_vsg` 542 / TSan 557 用例 0 warning；公开 API 与测试语义未动。
+
+
 
