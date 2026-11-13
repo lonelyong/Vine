@@ -35,14 +35,14 @@
 #include <vsg/vk/Device.h>
 
 #include <vine/graphics/backend/SlotProbe.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
 
 #include "SdkPixelFixture.hpp"
 
 using vn::graphics::backend::kAssumedInFlightSlots;
 using vn::graphics::backend::perFrameCopies;
-using vn::vsg::BlockStorage;
+using vn::backend_vsg::BlockStorage;
 
 namespace
 {
@@ -519,8 +519,8 @@ TEST(BlockStorageTest, AMaterialRefusalAsksForTheWholeFramesNeed)
     std::unordered_map<const void*, std::uint32_t>   textures;
     std::unordered_map<std::uint64_t, std::uint32_t> materials;
     materials.emplace(b.handle().bits(), 1U);
-    const vn::vsg::ContentDeclarations declarations{
-        vn::vsg::ContentDeclarationIndexes{ .buffers = &buffers, .textures = &textures, .materials = &materials } };
+    const vn::backend_vsg::ContentDeclarations declarations{
+        vn::backend_vsg::ContentDeclarationIndexes{ .buffers = &buffers, .textures = &textures, .materials = &materials } };
     EXPECT_EQ(fixture.storage->retireUnpinnedMaterials(declarations), 1U);
     const auto fitted = fixture.storage->writeMaterial(c, 1, blockOf(64, 0x30));
     EXPECT_TRUE(fitted.valid);
@@ -556,8 +556,8 @@ TEST(BlockStorageTest, AMaterialSlotIsReturnedOnceNoLiveRowDeclaresIt)
     std::unordered_map<const void*, std::uint32_t>   textures;
     std::unordered_map<std::uint64_t, std::uint32_t> materials;
     materials.emplace(a.handle().bits(), 1U);
-    const vn::vsg::ContentDeclarations declarations{
-        vn::vsg::ContentDeclarationIndexes{ .buffers = &buffers, .textures = &textures, .materials = &materials } };
+    const vn::backend_vsg::ContentDeclarations declarations{
+        vn::backend_vsg::ContentDeclarationIndexes{ .buffers = &buffers, .textures = &textures, .materials = &materials } };
     EXPECT_EQ(fixture.storage->retireUnpinnedMaterials(declarations), 1U);
     EXPECT_EQ(fixture.storage->liveMaterials(), 1U);
     const vn::graphics::ResidencyRow row = fixture.storage->materialResidency();

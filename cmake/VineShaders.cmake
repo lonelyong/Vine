@@ -13,7 +13,7 @@
 #
 # A backend has no shader directory of its own. It used to (src/plugins/gfx_backend_vsg/shaders/,
 # a full-screen triangle and a screen-copy fragment stage, generated into
-# vine/vsg/EmbeddedShaders.hpp): two stages behind engine-visible pictures — a ScreenPass with no
+# vine/backend_vsg/EmbeddedShaders.hpp): two stages behind engine-visible pictures — a ScreenPass with no
 # program drew the copy, and every full-screen program was written against that triangle — while
 # the text lived in one backend. Now both are SDK programs (BuiltinShaders::fullscreenVertexProgram
 # / screenCopyProgram) and a backend may only decide HOW to compile and bind them, or provide its

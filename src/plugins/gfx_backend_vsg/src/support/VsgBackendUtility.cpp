@@ -1,4 +1,4 @@
-#include <vine/vsg/support/VsgBackendUtility.hpp>
+#include <vine/backend_vsg/support/VsgBackendUtility.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -9,12 +9,12 @@
 #include <vsg/app/RenderGraph.h>
 #include <vsg/nodes/InstrumentationNode.h>
 
-#include <vine/vsg/support/VsgHostWindow.hpp>
+#include <vine/backend_vsg/support/VsgHostWindow.hpp>
 
 #include <vsg/vk/Instance.h>
 #include <vsg/vk/InstanceExtensions.h>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -244,4 +244,4 @@ vn::graphics::Viewport passDrawRect(const std::optional<vn::graphics::Viewport>&
 
 } // namespace detail
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

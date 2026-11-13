@@ -35,7 +35,7 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
-#include <vine/vsg/internal/ContentPass.hpp>
+#include <vine/backend_vsg/internal/ContentPass.hpp>
 
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/backend/AllocationGate.hpp>
@@ -492,15 +492,15 @@ TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPa
            "this build's cost for a one-element vector)";
 
     Diagnostics                              diagnostics;
-    vn::vsg::ContentPass::Scope              scope;
-    const vn::vsg::ContentPass::Scope::Entry halves[4]{};
+    vn::backend_vsg::ContentPass::Scope              scope;
+    const vn::backend_vsg::ContentPass::Scope::Entry halves[4]{};
     const auto                               record_once = [&scope, &halves, &diagnostics]() -> std::uint64_t {
-        const vn::vsg::ContentPass recorder(scope, diagnostics);
+        const vn::backend_vsg::ContentPass recorder(scope, diagnostics);
         return scope.entries.size();
     };
-    scope.entries                    = std::span<const vn::vsg::ContentPass::Scope::Entry>(halves, 1U);
+    scope.entries                    = std::span<const vn::backend_vsg::ContentPass::Scope::Entry>(halves, 1U);
     const std::uint64_t one_entry    = measure(kCalls, record_once);
-    scope.entries                    = std::span<const vn::vsg::ContentPass::Scope::Entry>(halves, 4U);
+    scope.entries                    = std::span<const vn::backend_vsg::ContentPass::Scope::Entry>(halves, 4U);
     const std::uint64_t four_entries = measure(kCalls, record_once);
     EXPECT_LE(four_entries, 8u * static_cast<std::uint64_t>(kCalls)) << "one recorder is a fixed handful of small vectors (measured: 7 counted allocations per "
                                                                         "construction in this build)";

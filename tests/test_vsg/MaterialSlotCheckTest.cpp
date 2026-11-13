@@ -7,16 +7,16 @@
 
 #include <gtest/gtest.h>
 
-#include <vine/vsg/internal/MaterialSlotCheck.hpp>
+#include <vine/backend_vsg/internal/MaterialSlotCheck.hpp>
 
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Texture.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 
-using vn::vsg::materialSlotName;
-using vn::vsg::materialSlotViolation;
-using vn::vsg::SlotViolation;
-using vn::vsg::slotViolationText;
+using vn::backend_vsg::materialSlotName;
+using vn::backend_vsg::materialSlotViolation;
+using vn::backend_vsg::SlotViolation;
+using vn::backend_vsg::slotViolationText;
 
 namespace
 {
@@ -45,7 +45,7 @@ TEST(MaterialSlotCheckTest, AnAbsentSlotIsNotAViolation)
 {
     // "The material does not have this map" is a legal material (graphics-material.md 2.5): the flags say so and
     // the slot reads as its constant. Only a map that does NOT fit its slot is the diagnostic's business.
-    const vn::vsg::MaterialFacts facts{};
+    const vn::backend_vsg::MaterialFacts facts{};
     for (std::uint32_t slot = 0; slot < vn::graphics::kTextureSlotCount; ++slot) {
         EXPECT_EQ(materialSlotViolation(facts, slot), SlotViolation::None);
     }
@@ -58,11 +58,11 @@ TEST(MaterialSlotCheckTest, OnlyTheBaseColourSlotTakesACubeMap)
     // is the violation a host is most likely to meet.
     const auto             cube_in_data = cubeMap(vn::imaging::PixelFormat::Rgba8Unorm);
     const auto             cube_in_base = cubeMap(vn::imaging::PixelFormat::Rgba8Srgb);
-    vn::vsg::MaterialFacts facts{};
+    vn::backend_vsg::MaterialFacts facts{};
     facts.slots[indexOf(vn::graphics::TextureSlot::Normal)].texture = cube_in_data.get();
     EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::Normal)), SlotViolation::CubeInDataSlot);
 
-    vn::vsg::MaterialFacts base{};
+    vn::backend_vsg::MaterialFacts base{};
     base.slots[indexOf(vn::graphics::TextureSlot::BaseColor)].texture = cube_in_base.get();
     EXPECT_EQ(materialSlotViolation(base, indexOf(vn::graphics::TextureSlot::BaseColor)), SlotViolation::None)
         << "the base colour slot is the one that may be a cube (a sky box is exactly that)";
@@ -74,7 +74,7 @@ TEST(MaterialSlotCheckTest, ColourSlotsWantColourFormats)
     // decode it, so every colour arrives brighter than the file said.
     const auto             linear_base     = map2d(vn::imaging::PixelFormat::Rgba8Unorm);
     const auto             linear_emissive = map2d(vn::imaging::PixelFormat::Bgra8Unorm);
-    vn::vsg::MaterialFacts facts{};
+    vn::backend_vsg::MaterialFacts facts{};
     facts.slots[indexOf(vn::graphics::TextureSlot::BaseColor)].texture = linear_base.get();
     facts.slots[indexOf(vn::graphics::TextureSlot::Emissive)].texture  = linear_emissive.get();
     EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::BaseColor)), SlotViolation::LinearFormatInColorSlot);
@@ -96,7 +96,7 @@ TEST(MaterialSlotCheckTest, DataSlotsWantLinearFormats)
     // decoded by the hardware, so an authored 0.5 arrives as 0.21.
     const auto             srgb_mr = map2d(vn::imaging::PixelFormat::Rgba8Srgb);
     const auto             srgb_ao = map2d(vn::imaging::PixelFormat::R8Srgb);
-    vn::vsg::MaterialFacts facts{};
+    vn::backend_vsg::MaterialFacts facts{};
     facts.slots[indexOf(vn::graphics::TextureSlot::MetallicRoughness)].texture = srgb_mr.get();
     facts.slots[indexOf(vn::graphics::TextureSlot::Occlusion)].texture         = srgb_ao.get();
     EXPECT_EQ(materialSlotViolation(facts, indexOf(vn::graphics::TextureSlot::MetallicRoughness)), SlotViolation::SrgbFormatInDataSlot);
@@ -114,7 +114,7 @@ TEST(MaterialSlotCheckTest, AnOutOfRangeSlotSaysNothing)
 {
     // A slot index that is not a slot is the caller's mistake, not a material's: the check answers "nothing" and
     // the name helper has no name, which is what a caller iterating a bigger range sees.
-    const vn::vsg::MaterialFacts facts{};
+    const vn::backend_vsg::MaterialFacts facts{};
     EXPECT_EQ(materialSlotViolation(facts, vn::graphics::kTextureSlotCount), SlotViolation::None);
     EXPECT_EQ(materialSlotName(vn::graphics::kTextureSlotCount), nullptr);
 }

@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/TransferStaging.hpp>
+#include <vine/backend_vsg/internal/TransferStaging.hpp>
 
 #include <mutex>
 
@@ -8,7 +8,7 @@
 #include <vsg/vk/Device.h>
 #include <vsg/vk/Fence.h>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -148,4 +148,4 @@ bool installStagingTask(::vsg::Viewer& viewer, ::vsg::Device& device, ::vsg::ref
 
 } // namespace detail
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

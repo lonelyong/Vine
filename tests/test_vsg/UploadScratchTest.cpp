@@ -32,7 +32,7 @@
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/vsg/internal/VsgBackend.hpp>
+#include <vine/backend_vsg/internal/VsgBackend.hpp>
 
 #include "TestFrame.hpp"
 #include "TestGeometryBuilders.hpp"
@@ -62,7 +62,7 @@ TEST(UploadScratchTest, TheUploadScratchIsNotRetainedAndTheFramesGiveItBack)
 {
     vn::graphics::DeviceDesc desc;
     desc.presentation = vn::graphics::DevicePresentation::None; // a device that presents nothing needs no display
-    const vn::intrusive_ptr<vn::vsg::VsgBackend> backend(new vn::vsg::VsgBackend(desc));
+    const vn::intrusive_ptr<vn::backend_vsg::VsgBackend> backend(new vn::backend_vsg::VsgBackend(desc));
     if (!backend->initialize() || !backend->capabilities().render_targets) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }

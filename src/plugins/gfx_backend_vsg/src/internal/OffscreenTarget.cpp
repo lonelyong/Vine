@@ -1,9 +1,9 @@
-#include <vine/vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
 
-#include <vine/vsg/internal/StateCommands.hpp>
+#include <vine/backend_vsg/internal/StateCommands.hpp>
 
 #include <vine/graphics/backend/TargetPlan.hpp>
-#include <vine/vsg/support/VsgBackendUtility.hpp>
+#include <vine/backend_vsg/support/VsgBackendUtility.hpp>
 
 #include <cstring>
 #include <memory>
@@ -25,7 +25,7 @@
 #include <vsg/vk/Framebuffer.h>
 #include <vsg/vk/RenderPass.h>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -1462,4 +1462,4 @@ OffscreenTarget::Rebuilt OffscreenTarget::rebuild(const TargetLayout& wanted, co
     return result;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

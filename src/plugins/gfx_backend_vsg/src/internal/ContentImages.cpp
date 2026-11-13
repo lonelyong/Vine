@@ -1,8 +1,8 @@
-#include <vine/vsg/internal/ContentImages.hpp>
+#include <vine/backend_vsg/internal/ContentImages.hpp>
 
 #include <string_view>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -101,4 +101,4 @@ bool shadowImageOf(const core::CompiledPass&             pass,
     return true;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

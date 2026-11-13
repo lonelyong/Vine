@@ -47,19 +47,19 @@
 #include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
-#include <vine/vsg/internal/BlockDescriptors.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/ContentPass.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/ContentSources.hpp>
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/GeometryFacts.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/vsg/internal/VsgExecutor.hpp>
-#include <vine/vsg/support/VsgDynamicState.hpp>
+#include <vine/backend_vsg/internal/BlockDescriptors.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentPass.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/internal/VsgExecutor.hpp>
+#include <vine/backend_vsg/support/VsgDynamicState.hpp>
 
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
@@ -89,26 +89,26 @@ using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::TargetShape;
 using vn::graphics::backend::VariantPool;
 using vn::test::setPrimitiveIndices;
-using vn::vsg::BlockDescriptors;
-using vn::vsg::BlockStorage;
-using vn::vsg::buildGeometryFacts;
-using vn::vsg::buildMaterialFacts;
+using vn::backend_vsg::BlockDescriptors;
+using vn::backend_vsg::BlockStorage;
+using vn::backend_vsg::buildGeometryFacts;
+using vn::backend_vsg::buildMaterialFacts;
 using vn::test::buildMaterialFacts; // the object-pointer overload a case writes (see TestMaterialFacts.hpp)
-using vn::vsg::buildProgramFacts;
-using vn::vsg::buildScreenProgramFacts;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentFacts;
-using vn::vsg::ContentPass;
-using vn::vsg::ContentPipeline;
-using vn::vsg::FactMiss;
-using vn::vsg::GeometryFacts;
-using vn::vsg::InputImages;
-using vn::vsg::MaterialFacts;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::PassContent;
-using vn::vsg::ProgramFacts;
-using vn::vsg::StreamUploads;
-using vn::vsg::VsgExecutor;
+using vn::backend_vsg::buildProgramFacts;
+using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::ContentDraw;
+using vn::backend_vsg::ContentFacts;
+using vn::backend_vsg::ContentPass;
+using vn::backend_vsg::ContentPipeline;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::GeometryFacts;
+using vn::backend_vsg::InputImages;
+using vn::backend_vsg::MaterialFacts;
+using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::PassContent;
+using vn::backend_vsg::ProgramFacts;
+using vn::backend_vsg::StreamUploads;
+using vn::backend_vsg::VsgExecutor;
 
 namespace
 {
@@ -166,7 +166,7 @@ constexpr vn::graphics::Viewport kPictureInPicture{ 8, 8, 16, 16 };
 TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
 {
     // 1. A device, the two targets, and the content stack the layer drives.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -214,7 +214,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    ContentDraw   draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw   draws(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
 
     // 2. The three tables, built from the SDK objects the host authored.
     Triangle                          triangle;
@@ -224,8 +224,8 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     geometry->setRevision(1U);
 
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -400,7 +400,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     // the draw is three generated vertices inside the announced picture-in-picture rectangle. The program is the
     // SDK'S screen copy, so a set bound at the wrong index, an input that never arrived or a rectangle that was
     // ignored each produce a different picture.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -447,7 +447,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads; // unused by the screen path, but the scope's shape is the pass'
-    ContentDraw   screen_draws(*screen_pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw   screen_draws(*screen_pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
 
     const ProgramFacts programs[] = { screen_facts };
     ContentFacts       facts;
@@ -588,7 +588,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     //     core::depthFinalLayout), so the sampling pass needs no barrier and no transition of its own;
     //   * the depth values are the producer's: inside its triangle the depth it wrote, everywhere else the
     //     cleared reverse-Z far plane (0.0) - which is what makes this a depth READ and not a texture bind.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -706,10 +706,10 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
 
     GeometryFacts                        shadow_geometry_facts;
     GeometryFacts                        sampling_geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   shadow_channels;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_shadow_channels;
-    std::vector<vn::vsg::ChannelFacts>   sampling_channels;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_sampling_channels;
+    std::vector<vn::backend_vsg::ChannelFacts>   shadow_channels;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_shadow_channels;
+    std::vector<vn::backend_vsg::ChannelFacts>   sampling_channels;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_sampling_channels;
     ASSERT_EQ(buildGeometryFacts(*shadow_geometry, shadow_geometry_facts, shadow_channels, primitives_shadow_channels), FactMiss::None);
     ASSERT_EQ(buildGeometryFacts(*sampling_geometry, sampling_geometry_facts, sampling_channels, primitives_sampling_channels), FactMiss::None);
 
@@ -729,7 +729,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
 
     VariantPool   pool;
     StreamUploads uploads;
-    const auto    entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto    entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw   shadow_draws(*shadow_pipelines, pool, entry_points);
     ContentDraw   sampling_draws(*sampling_pipelines, pool, entry_points);
 

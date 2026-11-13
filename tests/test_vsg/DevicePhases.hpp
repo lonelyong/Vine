@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include <vine/vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
 
 /**
  * @brief The device phases: the rewrite's real-device capabilities, expressed ONCE and run as evidence.
@@ -39,21 +39,21 @@ struct DevicePhaseCounters {
  * @param device  A device that satisfies the backend's floor.
  * @param counters Receives what the phase drove.
  */
-void runOffscreenReadbackPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+void runOffscreenReadbackPhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters);
 
 /** @brief The shared-depth phase: a borrower draws against the depth the lender wrote, and reads it back.
  *
  * @param device  A device that satisfies the backend's floor.
  * @param counters Receives what the phase drove.
  */
-void runSharedDepthPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+void runSharedDepthPhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters);
 
 /** @brief The target-resize phase: the plan replaces the extent, parks the old set, and the new one renders.
  *
  * @param device  A device that satisfies the backend's floor.
  * @param counters Receives what the phase drove.
  */
-void runTargetResizePhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+void runTargetResizePhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters);
 
 /** @brief The target-rebuild phase: the plan answers a shape change, the pass and the attachments are
  *         rebuilt, and the new shape (two colours and a depth) renders.
@@ -61,7 +61,7 @@ void runTargetResizePhase(const vn::vsg::DeviceResult& device, DevicePhaseCounte
  * @param device  A device that satisfies the backend's floor.
  * @param counters Receives what the phase drove.
  */
-void runTargetRebuildPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+void runTargetRebuildPhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters);
 
 /** @brief The plan-driven target phase: the executor applies the plan's answers (resize / rebuild) itself,
  *         and the frames it drives render through what the plan asked for.
@@ -69,7 +69,7 @@ void runTargetRebuildPhase(const vn::vsg::DeviceResult& device, DevicePhaseCount
  * @param device  A device that satisfies the backend's floor.
  * @param counters Receives what the phase drove.
  */
-void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+void runPlanDrivenTargetPhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters);
 
 /** @brief The leased-pair phase: the plan's answers are applied LENDER FIRST, so a leased pair that grows
  *         together really moves together - even though the plan names the borrower first.
@@ -84,11 +84,11 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
  * @param device  A device that satisfies the backend's floor.
  * @param counters Receives what the phase drove.
  */
-void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+void runLeasedTargetOrderPhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters);
 
 /** @brief The lost-submission phase: an invalidated target is re-bootstrapped once, then loads again.
  *
  * @param device  A device that satisfies the backend's floor.
  * @param counters Receives what the phase drove.
  */
-void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters);
+void runLostSubmissionPhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters);

@@ -5,8 +5,8 @@
 
 #include <vine/graphics/ContentId.hpp>
 #include <vine/graphics/MaterialBase.hpp>
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
 
 namespace vn::test
 {
@@ -57,15 +57,15 @@ inline vn::graphics::ContentRef materialRef(const vn::graphics::MaterialBase& ma
  * @param storage  Caller-owned storage the entry borrows.
  * @return None when the entry was built.
  */
-inline vn::vsg::FactMiss buildMaterialFacts(const vn::graphics::MaterialBase*           material,
+inline vn::backend_vsg::FactMiss buildMaterialFacts(const vn::graphics::MaterialBase*           material,
                                             const vn::graphics::MaterialDescriptionPtr& values,
                                             std::uint64_t                                revision,
-                                            vn::vsg::MaterialFacts&                      out,
+                                            vn::backend_vsg::MaterialFacts&                      out,
                                             std::vector<std::byte>&                      storage)
 {
     const vn::graphics::Handle    id           = material != nullptr ? material->id().handle() : vn::graphics::Handle{};
     const std::uint64_t           row_revision = values != nullptr ? values->revision() : revision;
-    return vn::vsg::buildMaterialFacts(vn::graphics::ContentRef{ id, row_revision }, values, out, storage);
+    return vn::backend_vsg::buildMaterialFacts(vn::graphics::ContentRef{ id, row_revision }, values, out, storage);
 }
 
 } // namespace vn::test

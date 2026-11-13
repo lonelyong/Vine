@@ -28,8 +28,8 @@
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Geometry.hpp>
 
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
 
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
@@ -37,11 +37,11 @@
 using vn::graphics::Geometry;
 using vn::graphics::backend::StreamKind;
 using vn::test::setPrimitiveIndices;
-using vn::vsg::buildGeometryFacts;
-using vn::vsg::ChannelFacts;
-using vn::vsg::channelsMatchLayout;
-using vn::vsg::FactMiss;
-using vn::vsg::GeometryFacts;
+using vn::backend_vsg::buildGeometryFacts;
+using vn::backend_vsg::ChannelFacts;
+using vn::backend_vsg::channelsMatchLayout;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::GeometryFacts;
 
 namespace
 {
@@ -69,8 +69,8 @@ TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
 
     GeometryFacts                        facts;
     std::vector<ChannelFacts>            storage;
-    std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
-    std::vector<vn::vsg::PrimitiveFacts> primitives;
+    std::vector<vn::backend_vsg::PrimitiveFacts> storage_primitives;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, primitives), FactMiss::None);
 
     // The ref is the geometry's own id at its revision: the raw builder stamps only the revision (a description
@@ -88,7 +88,7 @@ TEST(GeometryFactsTest, AGeometryBecomesItsLayoutItsChannelsAndItsIndexStream)
 
     // ONE ROW PER DRAW: the geometry has one primitive, and it is the row that says how it assembles.
     ASSERT_EQ(facts.primitives.size(), 1U);
-    const vn::vsg::PrimitiveFacts& draw = facts.primitives[0];
+    const vn::backend_vsg::PrimitiveFacts& draw = facts.primitives[0];
     EXPECT_EQ(draw.topology, vn::graphics::Topology::Triangles);
     EXPECT_EQ(draw.index_count, 3U);
     EXPECT_EQ(draw.first_index, 0U);
@@ -115,7 +115,7 @@ TEST(GeometryFactsTest, TheChannelOrderIsCanonicalFirstAndCustomsAscending)
 
     GeometryFacts                        facts;
     std::vector<ChannelFacts>            storage;
-    std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
+    std::vector<vn::backend_vsg::PrimitiveFacts> storage_primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, storage_primitives), FactMiss::None);
 
     ASSERT_EQ(facts.channels.size(), 3U);
@@ -137,7 +137,7 @@ TEST(GeometryFactsTest, AGeometryWithoutPositionsCannotBeDescribed)
 
     GeometryFacts                        facts;
     std::vector<ChannelFacts>            storage;
-    std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
+    std::vector<vn::backend_vsg::PrimitiveFacts> storage_primitives;
     EXPECT_EQ(buildGeometryFacts(without_positions, facts, storage, storage_primitives), FactMiss::Malformed);
 
     Geometry empty;
@@ -161,7 +161,7 @@ TEST(GeometryFactsTest, AGeometryWithoutIndicesIsDrawnFromItsVertexStreams)
 
     GeometryFacts                        facts;
     std::vector<ChannelFacts>            storage;
-    std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
+    std::vector<vn::backend_vsg::PrimitiveFacts> storage_primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, storage_primitives), FactMiss::None);
 
     ASSERT_EQ(facts.primitives.size(), 1U);
@@ -185,7 +185,7 @@ TEST(GeometryFactsTest, ANonIndexedSliceCountsItsOwnVertices)
 
     GeometryFacts                        facts;
     std::vector<ChannelFacts>            storage;
-    std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
+    std::vector<vn::backend_vsg::PrimitiveFacts> storage_primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, storage_primitives), FactMiss::None);
 
     ASSERT_EQ(facts.channels.size(), 1U);
@@ -207,7 +207,7 @@ TEST(GeometryFactsTest, ASlicedChannelUploadsItsOwnSegment)
 
     GeometryFacts                        facts;
     std::vector<ChannelFacts>            storage;
-    std::vector<vn::vsg::PrimitiveFacts> storage_primitives;
+    std::vector<vn::backend_vsg::PrimitiveFacts> storage_primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, storage, storage_primitives), FactMiss::None);
 
     ASSERT_EQ(facts.channels.size(), 1U);
@@ -240,9 +240,9 @@ TEST(GeometryFactsTest, TwoGeometriesOverOneIndexArenaShareOneStreamIdentity)
     GeometryFacts                        first_facts;
     GeometryFacts                        second_facts;
     std::vector<ChannelFacts>            storage_a;
-    std::vector<vn::vsg::PrimitiveFacts> storage_a_primitives;
+    std::vector<vn::backend_vsg::PrimitiveFacts> storage_a_primitives;
     std::vector<ChannelFacts>            storage_b;
-    std::vector<vn::vsg::PrimitiveFacts> storage_b_primitives;
+    std::vector<vn::backend_vsg::PrimitiveFacts> storage_b_primitives;
     ASSERT_EQ(buildGeometryFacts(first, first_facts, storage_a, storage_a_primitives), FactMiss::None);
     ASSERT_EQ(buildGeometryFacts(second, second_facts, storage_b, storage_b_primitives), FactMiss::None);
 
@@ -291,7 +291,7 @@ TEST(GeometryFactsTest, AMultiPrimitiveGeometryDescribesOneRowPerDraw)
 
     GeometryFacts                        facts;
     std::vector<ChannelFacts>            channels;
-    std::vector<vn::vsg::PrimitiveFacts> primitives;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives;
     ASSERT_EQ(buildGeometryFacts(geometry, facts, channels, primitives), FactMiss::None);
 
     ASSERT_EQ(facts.primitives.size(), 3U) << "one row per draw, in the geometry's order";

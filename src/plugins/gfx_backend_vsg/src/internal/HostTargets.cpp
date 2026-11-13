@@ -1,8 +1,8 @@
-#include <vine/vsg/internal/HostTargets.hpp>
+#include <vine/backend_vsg/internal/HostTargets.hpp>
 
 #include <optional>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 void HostTargets::describe(const vn::graphics::RenderTarget& target, Description& out)
 {
@@ -236,4 +236,4 @@ void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
     }
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

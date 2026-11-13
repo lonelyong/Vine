@@ -1,8 +1,8 @@
-#include <vine/vsg/internal/MaterialSlotCheck.hpp>
+#include <vine/backend_vsg/internal/MaterialSlotCheck.hpp>
 
 #include <vine/imaging/PixelFormat.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -100,4 +100,4 @@ const char* slotViolationText(SlotViolation violation) noexcept
     return "";
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

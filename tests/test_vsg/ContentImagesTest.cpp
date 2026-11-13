@@ -19,18 +19,18 @@
 #include <vsg/state/Sampler.h>
 
 #include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/vsg/internal/ContentImages.hpp>
-#include <vine/vsg/internal/ProgramAbi.hpp>
+#include <vine/backend_vsg/internal/ContentImages.hpp>
+#include <vine/backend_vsg/internal/ProgramAbi.hpp>
 
-using vn::vsg::AbiBinding;
-using vn::vsg::AbiDescriptorKind;
-using vn::vsg::ImageOrigin;
-using vn::vsg::imageOriginOf;
-using vn::vsg::InputImages;
-using vn::vsg::ProgramAbi;
-using vn::vsg::SamplerImage;
-using vn::vsg::samplesShadowMap;
-using vn::vsg::shadowImageOf;
+using vn::backend_vsg::AbiBinding;
+using vn::backend_vsg::AbiDescriptorKind;
+using vn::backend_vsg::ImageOrigin;
+using vn::backend_vsg::imageOriginOf;
+using vn::backend_vsg::InputImages;
+using vn::backend_vsg::ProgramAbi;
+using vn::backend_vsg::SamplerImage;
+using vn::backend_vsg::samplesShadowMap;
+using vn::backend_vsg::shadowImageOf;
 
 namespace
 {

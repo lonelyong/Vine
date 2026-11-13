@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/ContentSets.hpp>
+#include <vine/backend_vsg/internal/ContentSets.hpp>
 
 #include <optional>
 #include <unordered_set>
@@ -8,10 +8,10 @@
 
 #include <vine/graphics/Texture.hpp>
 #include <vine/graphics/backend/ResourceTable.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/ProgramVariant.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/ProgramVariant.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -354,8 +354,8 @@ std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass
                 // The map is the PASS' image, resolved the way ensure() will resolve it - so the key states
                 // what the set actually binds (see Key::shadow).
                 if (declaresShadowSampler(*entry->pipelines, set)) {
-                    vn::vsg::SamplerImage shadow_map;
-                    if (vn::vsg::shadowImageOf(pass, inputs, entry->pipelines->depthSampler(), shadow_map)) {
+                    vn::backend_vsg::SamplerImage shadow_map;
+                    if (vn::backend_vsg::shadowImageOf(pass, inputs, entry->pipelines->depthSampler(), shadow_map)) {
                         key.shadow = shadow_map.view.get();
                     }
                 }
@@ -434,4 +434,4 @@ void ContentSets::clear()
     d->refused   = 0U;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

@@ -70,23 +70,23 @@
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/Streams.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
-#include <vine/vsg/internal/BlockDescriptors.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/ContentPass.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/ContentSources.hpp>
-#include <vine/vsg/internal/DeviceProbe.hpp>
-#include <vine/vsg/internal/GeometryFacts.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/Session.hpp>
-#include <vine/vsg/internal/SessionContent.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/vsg/internal/ViewBlock.hpp>
-#include <vine/vsg/internal/VsgExecutor.hpp>
-#include <vine/vsg/internal/WindowTarget.hpp>
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/backend_vsg/internal/BlockDescriptors.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentPass.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/DeviceProbe.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/Session.hpp>
+#include <vine/backend_vsg/internal/SessionContent.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/internal/ViewBlock.hpp>
+#include <vine/backend_vsg/internal/VsgExecutor.hpp>
+#include <vine/backend_vsg/internal/WindowTarget.hpp>
+#include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
@@ -113,31 +113,31 @@ using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::TargetShape;
 using vn::graphics::backend::VariantPool;
 using vn::test::setPrimitiveIndices;
-using vn::vsg::BlockDescriptors;
-using vn::vsg::BlockStorage;
-using vn::vsg::buildGeometryFacts;
-using vn::vsg::buildMaterialFacts;
+using vn::backend_vsg::BlockDescriptors;
+using vn::backend_vsg::BlockStorage;
+using vn::backend_vsg::buildGeometryFacts;
+using vn::backend_vsg::buildMaterialFacts;
 using vn::test::buildMaterialFacts; // the object-pointer overload a case writes (see TestMaterialFacts.hpp)
-using vn::vsg::buildProgramFacts;
-using vn::vsg::buildScreenProgramFacts;
-using vn::vsg::buildViewBlock;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentFacts;
-using vn::vsg::ContentPass;
-using vn::vsg::ContentPipeline;
-using vn::vsg::FactMiss;
-using vn::vsg::GeometryFacts;
-using vn::vsg::InputImages;
-using vn::vsg::MaterialFacts;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::PassContent;
-using vn::vsg::ProgramFacts;
-using vn::vsg::StreamUploads;
-using vn::vsg::VsgExecutor;
-using vn::vsg::WindowTarget;
-using vn::vsg::api::probePhysicalDevices;
-using vn::vsg::api::Session;
-using vn::vsg::api::SessionOptions;
+using vn::backend_vsg::buildProgramFacts;
+using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::buildViewBlock;
+using vn::backend_vsg::ContentDraw;
+using vn::backend_vsg::ContentFacts;
+using vn::backend_vsg::ContentPass;
+using vn::backend_vsg::ContentPipeline;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::GeometryFacts;
+using vn::backend_vsg::InputImages;
+using vn::backend_vsg::MaterialFacts;
+using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::PassContent;
+using vn::backend_vsg::ProgramFacts;
+using vn::backend_vsg::StreamUploads;
+using vn::backend_vsg::VsgExecutor;
+using vn::backend_vsg::WindowTarget;
+using vn::backend_vsg::api::probePhysicalDevices;
+using vn::backend_vsg::api::Session;
+using vn::backend_vsg::api::SessionOptions;
 
 namespace
 {
@@ -211,9 +211,9 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     options.validation    = true;
     ASSERT_TRUE(session.initialize(options, diagnostics));
 
-    WindowTarget* window_target = vn::vsg::detail::SessionContentAccess::windowTarget(session);
+    WindowTarget* window_target = vn::backend_vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window_target, nullptr);
-    const auto device = vn::vsg::detail::SessionContentAccess::device(session);
+    const auto device = vn::backend_vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(device, nullptr);
 
     // The two off-screen targets: A is the picture the overlay samples (a plain clear), B is the target whose
@@ -300,7 +300,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     VariantPool   content_pool;
     VariantPool   screen_pool;
     StreamUploads uploads;
-    const auto    entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk());
+    const auto    entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk());
     ContentDraw   content_draws(*content_layer, content_pool, entry_points);
     ContentDraw   overlay_draws(*screen_layer, screen_pool, entry_points);
 
@@ -313,8 +313,8 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     geometry->setRevision(1U);
 
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -517,7 +517,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     executor.addTarget(picture_handle.get(), picture.get());
     executor.addTarget(shared_handle.get(), shared_target.get());
 
-    const auto command_graph = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    const auto command_graph = vn::backend_vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(command_graph, nullptr);
     const PassContent packets[] = {
         PassContent{ 1U, nullptr      },
@@ -531,7 +531,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     EXPECT_EQ(std::vector<vn::graphics::backend::PassId>(placed.begin(), placed.end()), std::vector<vn::graphics::backend::PassId>({ 1U, 2U, 3U, 4U }))
         << "the executor places the passes in the plan's order, not in the order they were announced";
 
-    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
+    ASSERT_TRUE(vn::backend_vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
     ASSERT_TRUE(session.commitFrame());
     EXPECT_EQ(session.framesPresented(), 1U);
 
@@ -544,7 +544,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // same destination buffer with no declared dependency; see OffscreenTarget's capture).
     for (int settle = 0; settle < 2; ++settle) {
         ASSERT_TRUE(session.beginFrame());
-        ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
+        ASSERT_TRUE(vn::backend_vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
         ASSERT_TRUE(session.commitFrame());
     }
 

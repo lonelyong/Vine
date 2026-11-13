@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/DeviceRequirements.hpp>
+#include <vine/backend_vsg/internal/DeviceRequirements.hpp>
 
 VN_GRAPHICSBACKEND_NS_BEGIN
 

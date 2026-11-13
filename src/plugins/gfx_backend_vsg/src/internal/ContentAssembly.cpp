@@ -1,10 +1,10 @@
-#include <vine/vsg/internal/ContentAssembly.hpp>
+#include <vine/backend_vsg/internal/ContentAssembly.hpp>
 
 #include <vsg/nodes/Group.h>
 
 #include <vine/graphics/backend/StateRegistry.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 struct ContentAssembly::Data {
     ContentStore*                 store{ nullptr };
@@ -260,4 +260,4 @@ std::uint64_t ContentAssembly::inputSetBuilds() const noexcept
     return d->input_sets.builds;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

@@ -13,9 +13,9 @@
 
 #include <cstddef>
 
-#include <vine/vsg/internal/PassRegistry.hpp>
+#include <vine/backend_vsg/internal/PassRegistry.hpp>
 
-using vn::vsg::PassRegistry;
+using vn::backend_vsg::PassRegistry;
 
 TEST(PassRegistryTest, AnAnnouncedPassKeepsItsNumberUntilItIsReleased)
 {

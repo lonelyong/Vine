@@ -41,9 +41,9 @@
 
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/ContentSources.hpp>
-#include <vine/vsg/internal/ProgramAbi.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/ProgramAbi.hpp>
 
 #include "TestProgramFacts.hpp"
 
@@ -51,10 +51,10 @@ using vn::graphics::backend::DynamicState;
 using vn::graphics::backend::PipelineKey;
 using vn::graphics::backend::StateRegistry;
 using vn::graphics::backend::VariantPool;
-using vn::vsg::buildScreenProgramFacts;
-using vn::vsg::ContentPipeline;
-using vn::vsg::FactMiss;
-using vn::vsg::ProgramFacts;
+using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::ContentPipeline;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::ProgramFacts;
 
 namespace
 {
@@ -95,10 +95,10 @@ PipelineKey contentKey(std::uint64_t revision)
 }
 
 /// @brief The bindings and push ranges @p shaders declare (the layer is built from these, not from a set).
-vn::vsg::ProgramAbi abiOf(const ContentPipeline::Shaders& shaders)
+vn::backend_vsg::ProgramAbi abiOf(const ContentPipeline::Shaders& shaders)
 {
-    vn::vsg::ProgramAbi abi;
-    EXPECT_EQ(vn::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vn::vsg::FactMiss::None);
+    vn::backend_vsg::ProgramAbi abi;
+    EXPECT_EQ(vn::backend_vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vn::backend_vsg::FactMiss::None);
     return abi;
 }
 
@@ -172,8 +172,8 @@ ContentPipeline::Shaders screenShaders()
 ///        the text says.
 std::unique_ptr<ContentPipeline> screenLayer(const ContentPipeline::Shaders& shaders)
 {
-    vn::vsg::ProgramAbi abi;
-    if (vn::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi) != FactMiss::None) {
+    vn::backend_vsg::ProgramAbi abi;
+    if (vn::backend_vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi) != FactMiss::None) {
         return nullptr;
     }
     return ContentPipeline::createScreen(abi, shaders);
@@ -313,14 +313,14 @@ TEST(ContentPipelineTest, AnInstanceVariantDeclaresThePerInstanceStreamTheShader
                                        "void main() { gl_Position = instance_model * vec4(position, 1.0); }\n";
     shaders.defines                  = { "VN_INSTANCED" };
 
-    vn::vsg::GeometryFacts geometry;
-    vn::vsg::ChannelFacts  position;
+    vn::backend_vsg::GeometryFacts geometry;
+    vn::backend_vsg::ChannelFacts  position;
     position.key.kind       = vn::graphics::backend::StreamKind::Vertex;
     position.key.location   = 0U;
     position.key.components = 3U;
     position.key.buffer     = reinterpret_cast<const void*>(0x1U);
     position.key.count      = 3U;
-    geometry.channels       = std::span<const vn::vsg::ChannelFacts>(&position, 1U);
+    geometry.channels       = std::span<const vn::backend_vsg::ChannelFacts>(&position, 1U);
 
     ContentPipeline::Settings settings;
     settings.color_attachments             = 1U;
@@ -357,14 +357,14 @@ TEST(ContentPipelineTest, AnInstanceVariantWithoutThePragmaIsRefused)
     ContentPipeline::Shaders shaders = contentShaders();
     shaders.defines                  = { "VN_INSTANCED" };
 
-    vn::vsg::GeometryFacts geometry;
-    vn::vsg::ChannelFacts  position;
+    vn::backend_vsg::GeometryFacts geometry;
+    vn::backend_vsg::ChannelFacts  position;
     position.key.kind       = vn::graphics::backend::StreamKind::Vertex;
     position.key.location   = 0U;
     position.key.components = 3U;
     position.key.buffer     = reinterpret_cast<const void*>(0x1U);
     position.key.count      = 3U;
-    geometry.channels       = std::span<const vn::vsg::ChannelFacts>(&position, 1U);
+    geometry.channels       = std::span<const vn::backend_vsg::ChannelFacts>(&position, 1U);
 
     ContentPipeline::Settings settings;
     settings.color_attachments = 1U;
@@ -378,14 +378,14 @@ TEST(ContentPipelineTest, AGeometryChannelCannotTakeAnInstanceSlot)
                                        "layout(location = 12) in vec4 custom;\n"
                                        "void main() { gl_Position = custom; }\n";
 
-    vn::vsg::GeometryFacts geometry;
-    vn::vsg::ChannelFacts  custom;
+    vn::backend_vsg::GeometryFacts geometry;
+    vn::backend_vsg::ChannelFacts  custom;
     custom.key.kind       = vn::graphics::backend::StreamKind::Vertex;
     custom.key.location   = 12U;
     custom.key.components = 4U;
     custom.key.buffer     = reinterpret_cast<const void*>(0x1U);
     custom.key.count      = 3U;
-    geometry.channels     = std::span<const vn::vsg::ChannelFacts>(&custom, 1U);
+    geometry.channels     = std::span<const vn::backend_vsg::ChannelFacts>(&custom, 1U);
 
     ContentPipeline::Settings settings;
     settings.color_attachments = 1U;
@@ -503,9 +503,9 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
     const auto shape = layer->blockShape(0U);
     ASSERT_EQ(shape.size(), 2U);
     EXPECT_EQ(shape[0].binding, 6U) << "the light block both paths carry";
-    EXPECT_EQ(shape[0].role, vn::vsg::AbiBlockRole::Lights);
+    EXPECT_EQ(shape[0].role, vn::backend_vsg::AbiBlockRole::Lights);
     EXPECT_EQ(shape[1].binding, 8U);
-    EXPECT_EQ(shape[1].role, vn::vsg::AbiBlockRole::ShadowBlock);
+    EXPECT_EQ(shape[1].role, vn::backend_vsg::AbiBlockRole::ShadowBlock);
 
     // The set a pass binds when its source offers FOUR colours and NO sampleable depth: 0..3 for the colours,
     // the lights at 5, the map at 6 and the block at 7 - binding 4 is NOT in it, which is exactly where an
@@ -560,8 +560,8 @@ TEST(ContentPipelineTest, TheEnginesShadowedLightingDeclaresItsOwnShadowSlots)
                            "layout(location = 0) in vec2 vn_uv;\n"
                            "layout(location = 0) out vec4 out_color;\n" +
                            declaration + "\nvoid main() { out_color = vec4(vn_uv, 0.0, 1.0); }\n";
-        vn::vsg::ProgramAbi abi;
-        if (vn::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi) != FactMiss::None) {
+        vn::backend_vsg::ProgramAbi abi;
+        if (vn::backend_vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi) != FactMiss::None) {
             return std::unique_ptr<ContentPipeline>{};
         }
         return ContentPipeline::createScreen(abi, shaders);
@@ -750,10 +750,10 @@ TEST(ContentPipelineTest, TheLayoutFollowsTheDeclarationsWhereverTheyPutTheBlock
     ASSERT_EQ(layer->declaredSets().size(), 2U) << "the sets a caller has to build block sets for";
     EXPECT_EQ(layer->declaredSets()[0], 0U);
     EXPECT_EQ(layer->declaredSets()[1], 1U);
-    const std::span<const vn::vsg::BlockDescriptors::Binding> shape = layer->blockShape(0U);
+    const std::span<const vn::backend_vsg::BlockDescriptors::Binding> shape = layer->blockShape(0U);
     ASSERT_EQ(shape.size(), 1U);
     EXPECT_EQ(shape[0].binding, 3U);
-    EXPECT_EQ(shape[0].role, vn::vsg::AbiBlockRole::Material);
+    EXPECT_EQ(shape[0].role, vn::backend_vsg::AbiBlockRole::Material);
     EXPECT_TRUE(layer->blockShape(2U).empty()) << "a set the text says nothing about declares nothing";
 
     // A block in set 2 ALONE: the sets before it are part of the layout all the same - the API wants a
@@ -828,9 +828,9 @@ TEST(ContentPipelineTest, ADeclarationThisBackendCannotFillIsRefused)
     // A block that reads a PREFIX of the L1 struct is fine: the range it is bound with covers what it reads.
     auto prefix = layerDeclaring("layout(set = 0, binding = 0, std140) uniform VineLightsBlock { vec4 light0; } lights;");
     ASSERT_NE(prefix, nullptr);
-    const std::span<const vn::vsg::BlockDescriptors::Binding> shape = prefix->blockShape(0U);
+    const std::span<const vn::backend_vsg::BlockDescriptors::Binding> shape = prefix->blockShape(0U);
     ASSERT_EQ(shape.size(), 1U);
-    EXPECT_EQ(shape[0].role, vn::vsg::AbiBlockRole::Lights);
+    EXPECT_EQ(shape[0].role, vn::backend_vsg::AbiBlockRole::Lights);
 
     // A declared input sampler is a fact of the program, but the KEY has to cover it: a pass that samples
     // nothing cannot bind an image at binding 0, so the pipeline is refused for that key and only that key.

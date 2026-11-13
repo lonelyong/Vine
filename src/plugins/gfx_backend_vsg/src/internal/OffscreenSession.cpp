@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/OffscreenSession.hpp>
+#include <vine/backend_vsg/internal/OffscreenSession.hpp>
 
 #include <chrono>
 #include <exception>
@@ -9,11 +9,11 @@
 #include <vsg/vk/Device.h>
 
 #include <vine/graphics/backend/SlotProbe.hpp>
-#include <vine/vsg/internal/SessionDrive.hpp>
-#include <vine/vsg/internal/SessionContent.hpp>
-#include <vine/vsg/internal/TransferStaging.hpp>
+#include <vine/backend_vsg/internal/SessionDrive.hpp>
+#include <vine/backend_vsg/internal/SessionContent.hpp>
+#include <vine/backend_vsg/internal/TransferStaging.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace api
 {
@@ -409,4 +409,4 @@ std::optional<::VkDeviceSize> OffscreenSession::stagedBytes() const noexcept
 
 } // namespace api
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

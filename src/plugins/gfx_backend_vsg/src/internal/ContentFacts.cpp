@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
 
 #include <algorithm>
 #include <compare>
@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <utility>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -374,4 +374,4 @@ FactResult<MaterialFacts> findMaterial(const ContentFacts& facts, vn::graphics::
     return { nullptr, FactMiss::Unknown };
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

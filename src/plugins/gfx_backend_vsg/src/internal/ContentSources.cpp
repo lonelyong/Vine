@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -7,9 +7,9 @@
 
 #include <vine/graphics/BuiltinShaders.hpp>
 
-#include <vine/vsg/internal/ProgramAbi.hpp>
+#include <vine/backend_vsg/internal/ProgramAbi.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 FactMiss buildProgramFacts(const vn::graphics::ShaderProgram& program, ProgramFacts& out)
 {
@@ -260,4 +260,4 @@ FactMiss buildMaterialFacts(vn::graphics::ContentRef                        mate
     return FactMiss::None;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

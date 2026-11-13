@@ -16,10 +16,10 @@
 #include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/ContentStore.hpp>
-#include <vine/vsg/internal/ProgramVariant.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentStore.hpp>
+#include <vine/backend_vsg/internal/ProgramVariant.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
 
 #include "TestGeometryBuilders.hpp"
 #include "TestProgramFacts.hpp"
@@ -39,17 +39,17 @@ using vn::graphics::backend::FrameTimeline;
 using vn::graphics::backend::RetirementQueue;
 using vn::graphics::backend::VertexLayoutKey;
 using vn::test::setPrimitiveIndices;
-using vn::vsg::ContentFacts;
-using vn::vsg::ContentStore;
-using vn::vsg::FactMiss;
-using vn::vsg::findGeometry;
-using vn::vsg::findMaterial;
-using vn::vsg::findProgram;
-using vn::vsg::GeometryFacts;
-using vn::vsg::MaterialFacts;
-using vn::vsg::programName;
-using vn::vsg::ProgramVariant;
-using vn::vsg::StreamUploads;
+using vn::backend_vsg::ContentFacts;
+using vn::backend_vsg::ContentStore;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::findGeometry;
+using vn::backend_vsg::findMaterial;
+using vn::backend_vsg::findProgram;
+using vn::backend_vsg::GeometryFacts;
+using vn::backend_vsg::MaterialFacts;
+using vn::backend_vsg::programName;
+using vn::backend_vsg::ProgramVariant;
+using vn::backend_vsg::StreamUploads;
 
 namespace
 {
@@ -59,12 +59,12 @@ namespace
 /// A NAMED CONVERSION, and the same one production makes: `FrameRecorder` builds the reference from the object's id and
 /// the revision of the values it published. Overloading the free function keeps the cases reading like the lookup they
 /// mean without giving the table a second identity.
-vn::vsg::FactResult<vn::vsg::MaterialFacts> findMaterial(const ContentFacts& facts, const vn::graphics::MaterialBase* material)
+vn::backend_vsg::FactResult<vn::backend_vsg::MaterialFacts> findMaterial(const ContentFacts& facts, const vn::graphics::MaterialBase* material)
 {
     if (material == nullptr) {
-        return vn::vsg::findMaterial(facts, vn::graphics::ContentRef{});
+        return vn::backend_vsg::findMaterial(facts, vn::graphics::ContentRef{});
     }
-    return vn::vsg::findMaterial(facts, vn::graphics::ContentRef{ material->id().handle(), material->revision() });
+    return vn::backend_vsg::findMaterial(facts, vn::graphics::ContentRef{ material->id().handle(), material->revision() });
 }
 
 /// @brief A stage of @p type, with the given source (the ASCII form the SDK stores as UTF-8).
@@ -1009,13 +1009,13 @@ namespace
 {
 
 /// @brief Binds every stream a facts row declares, the way the recorder does; answers how many were uploads.
-std::uint64_t bindStreams(StreamUploads& uploads, const vn::vsg::GeometryFacts& row)
+std::uint64_t bindStreams(StreamUploads& uploads, const vn::backend_vsg::GeometryFacts& row)
 {
     std::uint64_t built = 0U;
-    for (const vn::vsg::ChannelFacts& channel : row.channels) {
+    for (const vn::backend_vsg::ChannelFacts& channel : row.channels) {
         built += uploads.acquireVertex(channel.streamKey(), channel.scalars(), channel.values).action == StreamUploads::Action::Uploaded ? 1U : 0U;
     }
-    for (const vn::vsg::PrimitiveFacts& primitive : row.primitives) {
+    for (const vn::backend_vsg::PrimitiveFacts& primitive : row.primitives) {
         if (!primitive.indices.has_value()) {
             continue;
         }
@@ -1128,7 +1128,7 @@ TEST(ContentStoreTest, AStreamWhoseBufferMovedLeavesWithoutTheGeometryChanging)
     EXPECT_EQ(uploads.live(), 1U) << "the positions entry's key moved; the index entry is untouched";
     EXPECT_EQ(uploads.retired(), 1U) << "the previous revision's upload is not what these bytes are";
 
-    const vn::vsg::ChannelFacts& positions_channel = moved.geometries.front().channels.front();
+    const vn::backend_vsg::ChannelFacts& positions_channel = moved.geometries.front().channels.front();
     const auto                   again = uploads.acquireVertex(positions_channel.streamKey(), positions_channel.scalars(), positions_channel.values);
     EXPECT_EQ(again.action, StreamUploads::Action::Uploaded) << "the new bytes were never uploaded under this key";
     EXPECT_EQ(uploads.uploads(), 3U);
@@ -1247,7 +1247,7 @@ TEST(ContentStoreTest, AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRev
 
     const ContentFacts& facts = frames.record(store, plan->frame);
     ASSERT_EQ(facts.geometries.size(), 1U);
-    const vn::vsg::GeometryFacts& row = facts.geometries.front();
+    const vn::backend_vsg::GeometryFacts& row = facts.geometries.front();
     ASSERT_EQ(row.primitives.size(), 1U);
     EXPECT_EQ(row.primitives.front().instances.get(), instances.get()) << "the row carries the draw's instance stream";
     EXPECT_TRUE(facts.declarations.declaresBuffer(instances.get())) << "and the declaration is read from that handle";

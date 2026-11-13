@@ -48,27 +48,27 @@
 #include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
-#include <vine/vsg/internal/BlockDescriptors.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/ContentAssembly.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/ContentHalves.hpp>
-#include <vine/vsg/internal/ContentImages.hpp>
-#include <vine/vsg/internal/ContentPass.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/ContentSets.hpp>
-#include <vine/vsg/internal/ContentSources.hpp>
-#include <vine/vsg/internal/ContentStore.hpp>
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/DrawNeeds.hpp>
-#include <vine/vsg/internal/GeometryFacts.hpp>
-#include <vine/vsg/internal/MaterialImages.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/vsg/internal/VsgExecutor.hpp>
-#include <vine/vsg/internal/WhiteImage.hpp>
-#include <vine/vsg/support/VsgDynamicState.hpp>
+#include <vine/backend_vsg/internal/BlockDescriptors.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/ContentAssembly.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentHalves.hpp>
+#include <vine/backend_vsg/internal/ContentImages.hpp>
+#include <vine/backend_vsg/internal/ContentPass.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/ContentSets.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/ContentStore.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/DrawNeeds.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/MaterialImages.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/internal/VsgExecutor.hpp>
+#include <vine/backend_vsg/internal/WhiteImage.hpp>
+#include <vine/backend_vsg/support/VsgDynamicState.hpp>
 
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
@@ -99,29 +99,29 @@ using vn::graphics::backend::TargetShape;
 using vn::graphics::backend::VariantPool;
 using vn::graphics::backend::VertexLayoutKey;
 using vn::test::setPrimitiveIndices;
-using vn::vsg::BlockDescriptors;
-using vn::vsg::BlockStorage;
-using vn::vsg::buildGeometryFacts;
-using vn::vsg::buildMaterialFacts;
+using vn::backend_vsg::BlockDescriptors;
+using vn::backend_vsg::BlockStorage;
+using vn::backend_vsg::buildGeometryFacts;
+using vn::backend_vsg::buildMaterialFacts;
 using vn::test::buildMaterialFacts; // the object-pointer overload a case writes (see TestMaterialFacts.hpp)
-using vn::vsg::buildProgramFacts;
-using vn::vsg::ChannelFacts;
-using vn::vsg::ContentAssembly;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentFacts;
-using vn::vsg::ContentHalves;
-using vn::vsg::ContentPass;
-using vn::vsg::ContentPipeline;
-using vn::vsg::ContentSets;
-using vn::vsg::FactMiss;
-using vn::vsg::GeometryFacts;
-using vn::vsg::InputImages;
-using vn::vsg::MaterialFacts;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::PassContent;
-using vn::vsg::ProgramFacts;
-using vn::vsg::StreamUploads;
-using vn::vsg::VsgExecutor;
+using vn::backend_vsg::buildProgramFacts;
+using vn::backend_vsg::ChannelFacts;
+using vn::backend_vsg::ContentAssembly;
+using vn::backend_vsg::ContentDraw;
+using vn::backend_vsg::ContentFacts;
+using vn::backend_vsg::ContentHalves;
+using vn::backend_vsg::ContentPass;
+using vn::backend_vsg::ContentPipeline;
+using vn::backend_vsg::ContentSets;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::GeometryFacts;
+using vn::backend_vsg::InputImages;
+using vn::backend_vsg::MaterialFacts;
+using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::PassContent;
+using vn::backend_vsg::ProgramFacts;
+using vn::backend_vsg::StreamUploads;
+using vn::backend_vsg::VsgExecutor;
 
 namespace
 {
@@ -199,7 +199,7 @@ struct Mesh {
 /// @brief Builds the pipeline layer for one layout - the binding/format spelling lives in the api now
 /// (`ContentPipeline::create`'s geometry-entry overload), so a fixture and the production path cannot
 /// disagree about which binding a channel is fed at or what its format is.
-std::unique_ptr<ContentPipeline> pipelineFor(const GeometryFacts& facts, const ContentPipeline::Shaders& shaders, const vn::vsg::ProgramAbi& abi)
+std::unique_ptr<ContentPipeline> pipelineFor(const GeometryFacts& facts, const ContentPipeline::Shaders& shaders, const vn::backend_vsg::ProgramAbi& abi)
 {
     ContentPipeline::Settings settings;
     settings.color_attachments = 1U;
@@ -221,7 +221,7 @@ bool isBlue(const Rgba8& pixel)
 TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChange)
 {
     // 1. A device, a target, and the content stack the layer drives.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -260,7 +260,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    ContentDraw   draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw   draws(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
 
     // 2. The three tables, built from the SDK objects the host authored.
     Triangle                          triangle;
@@ -270,8 +270,8 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     geometry->setRevision(1U);
 
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -405,7 +405,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
 
 TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
 {
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -437,7 +437,7 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
         program->addStage(fragment);
     }
 
-    vn::vsg::ProgramVariant variant;
+    vn::backend_vsg::ProgramVariant variant;
     variant.instanced = true;
     ProgramFacts program_facts;
     ASSERT_EQ(buildProgramFacts(*program, variant, program_facts), FactMiss::None);
@@ -450,8 +450,8 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
     geometry->setRevision(1U);
 
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -476,7 +476,7 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    ContentDraw   draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw   draws(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
 
     // Two placements at x = -0.4 and +0.4: the shader applies the matrix itself, so the picture is two
     // triangles drawn by ONE command over ONE instance stream.
@@ -597,7 +597,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     //   * a command whose layout no half was built for is REFUSED, and the message names the layout - while a
     //     command whose program no half was built for is refused with a different message, because the fix is
     //     a different one (compile that program, not that layout).
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -641,11 +641,11 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     GeometryFacts                        right_facts;
     GeometryFacts                        unserved_facts;
     std::vector<ChannelFacts>            left_channels;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_left_channels;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_left_channels;
     std::vector<ChannelFacts>            right_channels;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_right_channels;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_right_channels;
     std::vector<ChannelFacts>            unserved_channels;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_unserved_channels;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_unserved_channels;
     ASSERT_EQ(buildGeometryFacts(*left.geometry, left_facts, left_channels, primitives_left_channels), FactMiss::None);
     ASSERT_EQ(buildGeometryFacts(*right.geometry, right_facts, right_channels, primitives_right_channels), FactMiss::None);
     ASSERT_EQ(buildGeometryFacts(*unserved.geometry, unserved_facts, unserved_channels, primitives_unserved_channels), FactMiss::None);
@@ -661,7 +661,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    const auto    entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto    entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw   left_draws(*left_pipeline, pool, entry_points);
     ContentDraw   right_draws(*right_pipeline, pool, entry_points);
 
@@ -757,7 +757,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
         std::vector<vn::graphics::backend::PipelineKey> answered;
         for (const vn::graphics::backend::CompiledDraw& draw : frame.passes[0].draws) {
             for (const vn::graphics::backend::CompiledCommand& command : draw.commands) {
-                const vn::vsg::DrawNeeds needs = vn::vsg::drawNeeds(frame.passes[0], command, facts);
+                const vn::backend_vsg::DrawNeeds needs = vn::backend_vsg::drawNeeds(frame.passes[0], command, facts);
                 ASSERT_TRUE(needs.answerable());
                 const vn::graphics::backend::PipelineKey key = needs.keyFor(target->shape().compatibility());
                 if (std::find(answered.begin(), answered.end(), key) == answered.end()) {
@@ -880,7 +880,7 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
     //     and an off-screen one, reached from the other side;
     //   * the loading pass really LOADs: the first pass' clear colour is still there afterwards, and the left
     //     mesh it drew is still on the screen under the second pass' work.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -912,9 +912,9 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
     GeometryFacts                        left_facts;
     GeometryFacts                        right_facts;
     std::vector<ChannelFacts>            left_channels;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_left_channels;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_left_channels;
     std::vector<ChannelFacts>            right_channels;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_right_channels;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_right_channels;
     ASSERT_EQ(buildGeometryFacts(*left.geometry, left_facts, left_channels, primitives_left_channels), FactMiss::None);
     ASSERT_EQ(buildGeometryFacts(*right.geometry, right_facts, right_channels, primitives_right_channels), FactMiss::None);
     ASSERT_TRUE(left_facts.layout == right_facts.layout) << "the two meshes must ask for the same layout";
@@ -924,7 +924,7 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
 
     VariantPool   pool;
     StreamUploads uploads;
-    const auto    entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto    entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw   draws(*pipelines, pool, entry_points);
 
     // One registry per PASS (what a pass has bound is not what another pass has bound), one pool between them.
@@ -1079,7 +1079,7 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
     //     guessed by POSITION would paint black;
     //   * the vertex stage places the triangle by the draw block in SET 1, so the geometry, the dynamic
     //     offsets and the two sets all have to be the ones the text declares.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -1122,9 +1122,9 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
     ASSERT_NE(material_set, nullptr);
     ASSERT_NE(draw_set, nullptr);
     ASSERT_EQ(material_set->shape().size(), 1U);
-    ASSERT_EQ(material_set->shape()[0].role, vn::vsg::AbiBlockRole::Material);
+    ASSERT_EQ(material_set->shape()[0].role, vn::backend_vsg::AbiBlockRole::Material);
     ASSERT_EQ(draw_set->shape().size(), 1U);
-    ASSERT_EQ(draw_set->shape()[0].role, vn::vsg::AbiBlockRole::Draw);
+    ASSERT_EQ(draw_set->shape()[0].role, vn::backend_vsg::AbiBlockRole::Draw);
     BlockDescriptors* block_sets[] = { material_set.get(), draw_set.get() };
 
     const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
@@ -1141,7 +1141,7 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    ContentDraw   draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw   draws(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
 
     Triangle                          triangle;
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
@@ -1149,8 +1149,8 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
     setPrimitiveIndices(*geometry, 0U, triangle.indices);
     geometry->setRevision(1U);
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     // A colour the CLEAR's channels do not match, so a role read from the wrong binding cannot pass: the clear
@@ -1268,7 +1268,7 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
     //     while the test's model matrix moved it to the right => the right pixel is clear;
     //   * the projection is written UNFOLDED (the SDK's clip convention, `.ai/design/vsg-backend.md`
     //     §11.16o) => the geometry is clipped away (device z outside [0, 1]) => no triangle.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -1314,7 +1314,7 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    ContentDraw   draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw   draws(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
 
     Triangle                          triangle;
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
@@ -1322,8 +1322,8 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
     setPrimitiveIndices(*geometry, 0U, triangle.indices);
     geometry->setRevision(1U);
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -1456,7 +1456,7 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
     // records - the caller binds its view and sampler where its text declares `vn_diffuseMap`, and this frame
     // draws a quad whose UVs run 0..1 over a 2x2 texture of four distinct colours: each quadrant of the
     // picture is one texel, so "the map reached the shader" is a picture rather than a claim.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -1490,11 +1490,11 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
         texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
     }
 
-    const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
+    const std::shared_ptr<vn::backend_vsg::MaterialImages> images = vn::backend_vsg::MaterialImages::create();
     ASSERT_NE(images, nullptr);
-    vn::vsg::detail::TextureReject reason = vn::vsg::detail::TextureReject::Ok;
-    const vn::vsg::SamplerImage    map    = images->acquire(texture.get(), reason);
-    ASSERT_EQ(reason, vn::vsg::detail::TextureReject::Ok) << "a complete 2x2 texture must be uploadable";
+    vn::backend_vsg::detail::TextureReject reason = vn::backend_vsg::detail::TextureReject::Ok;
+    const vn::backend_vsg::SamplerImage    map    = images->acquire(texture.get(), reason);
+    ASSERT_EQ(reason, vn::backend_vsg::detail::TextureReject::Ok) << "a complete 2x2 texture must be uploadable";
     ASSERT_NE(map.view, nullptr);
     ASSERT_NE(map.sampler, nullptr);
 
@@ -1529,7 +1529,7 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
     }
     // The entry is built for the variant the material asks for (it carries a texture): the tables key
     // their program entries by the variant, so an entry built for another text is not this entry.
-    vn::vsg::ProgramVariant sampled_variant;
+    vn::backend_vsg::ProgramVariant sampled_variant;
     sampled_variant.textured = true;
     ProgramFacts program_facts;
     ASSERT_EQ(buildProgramFacts(*program, sampled_variant, program_facts), FactMiss::None);
@@ -1547,16 +1547,16 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     std::unique_ptr<ContentPipeline> pipelines = pipelineFor(geometry_facts, program_facts.shaders, program_facts.abi);
     ASSERT_NE(pipelines, nullptr) << "the quad's two channels are what the program declares";
 
     // The declared set: the material's block from the arena, and the texture's images at binding 1.
-    const vn::vsg::BlockDescriptors::SampledBinding maps[] = {
-        vn::vsg::BlockDescriptors::SampledBinding{ 1U, map.view, map.sampler }
+    const vn::backend_vsg::BlockDescriptors::SampledBinding maps[] = {
+        vn::backend_vsg::BlockDescriptors::SampledBinding{ 1U, map.view, map.sampler }
     };
     std::unique_ptr<BlockDescriptors> declared = BlockDescriptors::forAbi(program_facts.abi, 0U, created.device, *storage, maps);
     ASSERT_NE(declared, nullptr);
@@ -1624,7 +1624,7 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    ContentDraw   draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw   draws(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
 
     storage->beginFrame();
     // The half declares the VARIANT it serves: this drawable's material carries a texture, so it is drawn
@@ -1702,7 +1702,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
     // picture's centre looks along +Z, its left/right edges along -X/+X and its top/bottom along +/-Y,
     // each far enough from the diagonal ties for the face choice to be unambiguous. Every face is 1x1 and
     // a different colour, so the five probes read five different faces.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -1740,11 +1740,11 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
         cube->setLayer(face, vn::intrusive_ptr<const vn::imaging::Image>(image));
     }
 
-    const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
+    const std::shared_ptr<vn::backend_vsg::MaterialImages> images = vn::backend_vsg::MaterialImages::create();
     ASSERT_NE(images, nullptr);
-    vn::vsg::detail::TextureReject reason = vn::vsg::detail::TextureReject::Ok;
-    const vn::vsg::SamplerImage    map    = images->acquire(cube.get(), reason);
-    ASSERT_EQ(reason, vn::vsg::detail::TextureReject::Ok) << "a complete cube must be uploadable";
+    vn::backend_vsg::detail::TextureReject reason = vn::backend_vsg::detail::TextureReject::Ok;
+    const vn::backend_vsg::SamplerImage    map    = images->acquire(cube.get(), reason);
+    ASSERT_EQ(reason, vn::backend_vsg::detail::TextureReject::Ok) << "a complete cube must be uploadable";
     ASSERT_EQ(map.view->viewType, VK_IMAGE_VIEW_TYPE_CUBE);
 
     const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
@@ -1779,7 +1779,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
     }
     // The entry is built for the variant the material asks for (it carries a texture): the tables key
     // their program entries by the variant, so an entry built for another text is not this entry.
-    vn::vsg::ProgramVariant textured_variant;
+    vn::backend_vsg::ProgramVariant textured_variant;
     textured_variant.textured = true;
     ProgramFacts program_facts;
     ASSERT_EQ(buildProgramFacts(*program, textured_variant, program_facts), FactMiss::None);
@@ -1797,15 +1797,15 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     std::unique_ptr<ContentPipeline> pipelines = pipelineFor(geometry_facts, program_facts.shaders, program_facts.abi);
     ASSERT_NE(pipelines, nullptr);
 
-    const vn::vsg::BlockDescriptors::SampledBinding maps[] = {
-        vn::vsg::BlockDescriptors::SampledBinding{ 1U, map.view, map.sampler }
+    const vn::backend_vsg::BlockDescriptors::SampledBinding maps[] = {
+        vn::backend_vsg::BlockDescriptors::SampledBinding{ 1U, map.view, map.sampler }
     };
     std::unique_ptr<BlockDescriptors> declared = BlockDescriptors::forAbi(program_facts.abi, 0U, created.device, *storage, maps);
     ASSERT_NE(declared, nullptr);
@@ -1872,7 +1872,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    ContentDraw   draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw   draws(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
 
     storage->beginFrame();
     // The half declares the VARIANT it serves: this drawable's material carries a texture, so it is drawn
@@ -1936,7 +1936,7 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     // same quad twice, with the texture re-filled between the two passes: the first picture is the old
     // texel and the second is the new one. A cache that ignored the revision would draw the old colour
     // twice, and a pipeline that reused the first pass' descriptor would do the same.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -1967,16 +1967,16 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     const vn::intrusive_ptr<vn::graphics::Texture2D> texture(new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
     fill(*texture, 255U, 0U, 0U);
 
-    const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
+    const std::shared_ptr<vn::backend_vsg::MaterialImages> images = vn::backend_vsg::MaterialImages::create();
     ASSERT_NE(images, nullptr);
     const auto acquire = [&](const char* step) {
-        vn::vsg::detail::TextureReject reason = vn::vsg::detail::TextureReject::Ok;
-        const vn::vsg::SamplerImage    result = images->acquire(texture.get(), reason);
-        EXPECT_EQ(reason, vn::vsg::detail::TextureReject::Ok) << step;
+        vn::backend_vsg::detail::TextureReject reason = vn::backend_vsg::detail::TextureReject::Ok;
+        const vn::backend_vsg::SamplerImage    result = images->acquire(texture.get(), reason);
+        EXPECT_EQ(reason, vn::backend_vsg::detail::TextureReject::Ok) << step;
         EXPECT_NE(result.view, nullptr) << step;
         return result;
     };
-    const vn::vsg::SamplerImage first_images = acquire("the first fill uploads");
+    const vn::backend_vsg::SamplerImage first_images = acquire("the first fill uploads");
 
     const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
@@ -2006,7 +2006,7 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     }
     // The entry is built for the variant the material asks for (it carries a texture): the tables key
     // their program entries by the variant, so an entry built for another text is not this entry.
-    vn::vsg::ProgramVariant textured_variant;
+    vn::backend_vsg::ProgramVariant textured_variant;
     textured_variant.textured = true;
     ProgramFacts program_facts;
     ASSERT_EQ(buildProgramFacts(*program, textured_variant, program_facts), FactMiss::None);
@@ -2024,16 +2024,16 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     std::unique_ptr<ContentPipeline> pipelines = pipelineFor(geometry_facts, program_facts.shaders, program_facts.abi);
     ASSERT_NE(pipelines, nullptr);
 
     // The declared set of the FIRST pass; the second pass gets its own, built from the re-acquired images.
-    const vn::vsg::BlockDescriptors::SampledBinding first_maps[] = {
-        vn::vsg::BlockDescriptors::SampledBinding{ 1U, first_images.view, first_images.sampler }
+    const vn::backend_vsg::BlockDescriptors::SampledBinding first_maps[] = {
+        vn::backend_vsg::BlockDescriptors::SampledBinding{ 1U, first_images.view, first_images.sampler }
     };
     std::unique_ptr<BlockDescriptors> first_declared = BlockDescriptors::forAbi(program_facts.abi, 0U, created.device, *storage, first_maps);
     ASSERT_NE(first_declared, nullptr);
@@ -2099,11 +2099,11 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     // Re-fill the texture: the same address, a new revision - the cache rebuilds and the new image is what
     // the second pass' descriptor is built from.
     fill(*texture, 0U, 255U, 0U);
-    const vn::vsg::SamplerImage second_images = acquire("the re-fill uploads");
+    const vn::backend_vsg::SamplerImage second_images = acquire("the re-fill uploads");
     EXPECT_NE(second_images.view.get(), first_images.view.get()) << "the revision decided the rebuild";
 
-    const vn::vsg::BlockDescriptors::SampledBinding second_maps[] = {
-        vn::vsg::BlockDescriptors::SampledBinding{ 1U, second_images.view, second_images.sampler }
+    const vn::backend_vsg::BlockDescriptors::SampledBinding second_maps[] = {
+        vn::backend_vsg::BlockDescriptors::SampledBinding{ 1U, second_images.view, second_images.sampler }
     };
     std::unique_ptr<BlockDescriptors> second_declared = BlockDescriptors::forAbi(program_facts.abi, 0U, created.device, *storage, second_maps);
     ASSERT_NE(second_declared, nullptr);
@@ -2122,8 +2122,8 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     StateRegistry                first_registry(pool);
     StateRegistry                second_registry(pool);
     StreamUploads                uploads;
-    ContentDraw                  first_draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
-    ContentDraw                  second_draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw                  first_draws(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw                  second_draws(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
 
     storage->beginFrame();
@@ -2223,7 +2223,7 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
     // The program is written the way the engine's own stages are (see builtin_forward.vert): the texcoord
     // input and the sampler sit behind `VN_DIFFUSE_MAP`, the slot's kind is `#error`-guarded, and the
     // fragment shades the material's own colour when the map is not defined.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -2249,11 +2249,11 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
         texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
     }
 
-    const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
+    const std::shared_ptr<vn::backend_vsg::MaterialImages> images = vn::backend_vsg::MaterialImages::create();
     ASSERT_NE(images, nullptr);
-    vn::vsg::detail::TextureReject map_reason = vn::vsg::detail::TextureReject::Ok;
-    const vn::vsg::SamplerImage    map        = images->acquire(texture.get(), map_reason);
-    ASSERT_EQ(map_reason, vn::vsg::detail::TextureReject::Ok);
+    vn::backend_vsg::detail::TextureReject map_reason = vn::backend_vsg::detail::TextureReject::Ok;
+    const vn::backend_vsg::SamplerImage    map        = images->acquire(texture.get(), map_reason);
+    ASSERT_EQ(map_reason, vn::backend_vsg::detail::TextureReject::Ok);
 
     const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
@@ -2307,9 +2307,9 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
 
     // The two variants' facts: ONE text, two ABIs - the textured one declares the sampler the plain one
     // does not, and each compile asks for its own define list.
-    vn::vsg::ProgramVariant textured_variant;
+    vn::backend_vsg::ProgramVariant textured_variant;
     textured_variant.textured = true;
-    const vn::vsg::ProgramVariant plain_variant;
+    const vn::backend_vsg::ProgramVariant plain_variant;
 
     ProgramFacts textured_facts;
     ProgramFacts plain_facts;
@@ -2330,8 +2330,8 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     std::unique_ptr<ContentPipeline> textured_layer = pipelineFor(geometry_facts, textured_facts.shaders, textured_facts.abi);
@@ -2340,8 +2340,8 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
     ASSERT_NE(plain_layer, nullptr);
 
     // Each variant's declared set: the material block, and - for the textured one - the map at (0,1).
-    const vn::vsg::BlockDescriptors::SampledBinding textured_maps[] = {
-        vn::vsg::BlockDescriptors::SampledBinding{ 1U, map.view, map.sampler }
+    const vn::backend_vsg::BlockDescriptors::SampledBinding textured_maps[] = {
+        vn::backend_vsg::BlockDescriptors::SampledBinding{ 1U, map.view, map.sampler }
     };
     std::unique_ptr<BlockDescriptors> textured_declared = BlockDescriptors::forAbi(textured_facts.abi, 0U, created.device, *storage, textured_maps);
     std::unique_ptr<BlockDescriptors> plain_declared    = BlockDescriptors::forAbi(plain_facts.abi, 0U, created.device, *storage);
@@ -2427,8 +2427,8 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    ContentDraw   textured_draws(*textured_layer, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
-    ContentDraw   plain_draws(*plain_layer, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw   textured_draws(*textured_layer, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw   plain_draws(*plain_layer, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
 
     // ONE scope holds BOTH halves - the same program, revision and layout, two variants. The textured half
     // is registered FIRST so that a pass which ignored the variant would use it for both draws.
@@ -2501,7 +2501,7 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     //     (0.5, 0.125, 0.5) - a colour neither of them has, so a map that was not bound (the shader would
     //     read whatever happened to be there) or a material that did not arrive cannot produce it;
     //   * the corners are the plan's clear, which is what says the set was bound for a pass that drew.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -2604,8 +2604,8 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
 
     // The set the program declares, built by the caller: the block half from the arena, the map half from
     // whatever image the caller has (here the source pass' colour attachment).
-    const vn::vsg::BlockDescriptors::SampledBinding maps[] = {
-        vn::vsg::BlockDescriptors::SampledBinding{ 1U, source->colorView(0), pipelines->inputSampler() }
+    const vn::backend_vsg::BlockDescriptors::SampledBinding maps[] = {
+        vn::backend_vsg::BlockDescriptors::SampledBinding{ 1U, source->colorView(0), pipelines->inputSampler() }
     };
     ASSERT_NE(maps[0].view, nullptr);
     std::unique_ptr<BlockDescriptors> declared = BlockDescriptors::forAbi(program_facts.abi, 0U, created.device, *storage, maps);
@@ -2616,7 +2616,7 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    ContentDraw   draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw   draws(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
 
     Triangle                          triangle;
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
@@ -2624,8 +2624,8 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     setPrimitiveIndices(*geometry, 0U, triangle.indices);
     geometry->setRevision(1U);
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -2752,7 +2752,7 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     // The negative is built in: a black fallback (or one that never got filled, which would leave the image
     // in the layout the descriptor does not declare) paints something else, and the material colour is a
     // value no other node in this frame writes.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -2766,7 +2766,7 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
 
-    const std::shared_ptr<vn::vsg::WhiteImage> white = vn::vsg::WhiteImage::create();
+    const std::shared_ptr<vn::backend_vsg::WhiteImage> white = vn::backend_vsg::WhiteImage::create();
     ASSERT_NE(white, nullptr);
 
     const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
@@ -2804,8 +2804,8 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     ASSERT_NE(pipelines, nullptr);
 
     // The declared set: the material's block from the arena, and the fallback at the binding the text names.
-    const vn::vsg::BlockDescriptors::SampledBinding maps[] = {
-        vn::vsg::BlockDescriptors::SampledBinding{ 1U, white->view(), white->sampler() }
+    const vn::backend_vsg::BlockDescriptors::SampledBinding maps[] = {
+        vn::backend_vsg::BlockDescriptors::SampledBinding{ 1U, white->view(), white->sampler() }
     };
     std::unique_ptr<BlockDescriptors> declared = BlockDescriptors::forAbi(program_facts.abi, 0U, created.device, *storage, maps);
     ASSERT_NE(declared, nullptr);
@@ -2814,7 +2814,7 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    ContentDraw   draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentDraw   draws(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
 
     Triangle                          triangle;
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
@@ -2822,8 +2822,8 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
     setPrimitiveIndices(*geometry, 0U, triangle.indices);
     geometry->setRevision(1U);
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -2954,7 +2954,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     // A program that declares the map NOWHERE, drawn by a pass that resolved one, takes the fourth: it
     // draws (the shadow is not a reason to lose the drawable) and the map it cannot read is REPORTED - a
     // picture the host cannot tell from "the light does not cast" is what that diagnostic exists for.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -3051,7 +3051,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
-    const std::shared_ptr<vn::vsg::WhiteImage> white = vn::vsg::WhiteImage::create();
+    const std::shared_ptr<vn::backend_vsg::WhiteImage> white = vn::backend_vsg::WhiteImage::create();
     ASSERT_NE(white, nullptr);
 
     const vn::intrusive_ptr<Geometry> geometry(new Geometry());
@@ -3062,8 +3062,8 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -3189,22 +3189,22 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     };
     const auto shadow_layer = pipelineFor(geometry_facts, shadow_facts.shaders, shadow_facts.abi);
     ASSERT_NE(shadow_layer, nullptr);
-    vn::vsg::SamplerImage shadow_image;
+    vn::backend_vsg::SamplerImage shadow_image;
     ASSERT_TRUE(shadowImageOf(frame.passes[2], std::span<const InputImages>(lit_inputs, 2U), shadow_layer->depthSampler(), shadow_image));
     EXPECT_EQ(shadow_image.view, map->depthView()) << "the map, not the other sampleable depth";
     EXPECT_EQ(shadow_image.sampler, shadow_layer->depthSampler());
 
     // The caller's sets, built per pass from what the policy picked: the map where the text names it, the
     // white stand-in where the pass resolved none, and the material's own fallback for `vn_diffuseMap`.
-    const vn::vsg::BlockDescriptors::SampledBinding with_map[] = {
+    const vn::backend_vsg::BlockDescriptors::SampledBinding with_map[] = {
         { 1U, white->view(),     white->sampler()     },
         { 3U, shadow_image.view, shadow_image.sampler }
     };
-    const vn::vsg::BlockDescriptors::SampledBinding with_stand_in[] = {
+    const vn::backend_vsg::BlockDescriptors::SampledBinding with_stand_in[] = {
         { 1U, white->view(), white->sampler() },
         { 3U, white->view(), white->sampler() }
     };
-    const vn::vsg::BlockDescriptors::SampledBinding map_only[] = {
+    const vn::backend_vsg::BlockDescriptors::SampledBinding map_only[] = {
         { 1U, white->view(), white->sampler() }
     };
     std::unique_ptr<BlockDescriptors> declares_map      = BlockDescriptors::forAbi(shadow_facts.abi, 0U, created.device, *storage, with_map);
@@ -3219,7 +3219,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
 
     VariantPool                      pool;
     StreamUploads                    uploads;
-    const auto                       entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto                       entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw                      shadow_draws(*shadow_layer, pool, entry_points);
     std::unique_ptr<ContentPipeline> unshadowed_layer = pipelineFor(geometry_facts, unshadowed_facts.shaders, unshadowed_facts.abi);
     ASSERT_NE(unshadowed_layer, nullptr);
@@ -3240,7 +3240,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
                                   geometry_facts.layout,
                                   unshadowed_layer.get(),
                                   &unshadowed_draws,
-                                  vn::vsg::ProgramVariant{},
+                                  vn::backend_vsg::ProgramVariant{},
                                   vn::graphics::Topology::Triangles,
                                   nullptr, &plain_shadow_episode }
     };
@@ -3387,7 +3387,7 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     // the shading decodes it into a direction it cannot use, and the sun disappears - which is what this
     // picture asserted before the delivery learned to write several attachments unblended (see
     // makeDynamicStateCommand's opaque rule).
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -3541,8 +3541,8 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -3669,7 +3669,7 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
 
     VariantPool                     pool;
     StreamUploads                   uploads;
-    const auto                      entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto                      entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw                     writer_draws(*writer_layer, pool, entry_points);
     ContentDraw                     shadowed_draws(*shadowed_layer, pool, entry_points);
     ContentDraw                     unshadowed_draws(*unshadowed_layer, pool, entry_points);
@@ -3825,7 +3825,7 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
     // camera-at-the-surface case, and no rasterised geometry reliably lands on it. Its outputs are the
     // engine's own four (albedo / normal with the shininess in alpha / specular / position), which is the
     // shape a real G-buffer has.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -3923,8 +3923,8 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     const vn::intrusive_ptr<Material> material(new Material());
@@ -4001,7 +4001,7 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
 
     VariantPool                     pool;
     StreamUploads                   uploads;
-    const auto                      entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto                      entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw                     writer_draws(*writer_layer, pool, entry_points);
     ContentDraw                     lighting_draws(*lighting_layer, pool, entry_points);
     const ContentPass::Scope::Entry writer_halves[]{
@@ -4107,7 +4107,7 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     // v.h = 1. The picture is therefore `sun_colour x base x 4/pi` = 0.5 x 0.25 x 1.2732 = 0.159. A path that
     // ignored the material's factors would draw the 0.8 grey default (0.51 - clamped to white), and one that
     // still carried the retired Blinn-Phong bridge would draw 0.125: neither is within reach of the tolerance.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -4187,8 +4187,8 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
 
     MaterialFacts          black_facts;
@@ -4212,8 +4212,8 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     // The canonical bindings are the BACKEND's rule (see StreamUploads::bindingOfCanonical) and the
     // locations are the vertex text's (position 0, normal 1 - see builtin_forward.vert).
     const ContentPipeline::VertexBinding bindings[]{
-        { vn::vsg::StreamUploads::bindingOfCanonical(0U), sizeof(float) * 3U, false },
-        { vn::vsg::StreamUploads::bindingOfCanonical(1U), sizeof(float) * 3U, false }
+        { vn::backend_vsg::StreamUploads::bindingOfCanonical(0U), sizeof(float) * 3U, false },
+        { vn::backend_vsg::StreamUploads::bindingOfCanonical(1U), sizeof(float) * 3U, false }
     };
     const ContentPipeline::VertexAttribute attributes[]{
         { 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U },
@@ -4300,7 +4300,7 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
 
     VariantPool                     pool;
     StreamUploads                   uploads;
-    const auto                      entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto                      entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw                     forward_draws(*forward_layer, pool, entry_points);
     ContentDraw                     gbuffer_draws(*gbuffer_layer, pool, entry_points);
     ContentDraw                     lighting_draws(*lighting_layer, pool, entry_points);
@@ -4330,12 +4330,12 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     // material and the lights in set 0 (with the `vn_shadow_map` slot its text declares, which this pass does
     // not resolve - the WHITE stand-in is what the engine's own path binds there, see api/WhiteImage) and
     // the DRAW block in its own set 1; the G-buffer writer carries the material alone.
-    const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
+    const std::shared_ptr<vn::backend_vsg::MaterialImages> images = vn::backend_vsg::MaterialImages::create();
     ASSERT_NE(images, nullptr);
-    const vn::vsg::SamplerImage white = images->white();
+    const vn::backend_vsg::SamplerImage white = images->white();
     ASSERT_NE(white.view, nullptr);
-    const vn::vsg::BlockDescriptors::SampledBinding forward_maps[] = {
-        vn::vsg::BlockDescriptors::SampledBinding{ 7U, white.view, white.sampler }
+    const vn::backend_vsg::BlockDescriptors::SampledBinding forward_maps[] = {
+        vn::backend_vsg::BlockDescriptors::SampledBinding{ 7U, white.view, white.sampler }
     };
     std::unique_ptr<BlockDescriptors> forward_set = BlockDescriptors::forAbi(forward_facts.abi, 0U, created.device, *storage, forward_maps);
     ASSERT_NE(forward_set, nullptr);
@@ -4439,7 +4439,7 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
     // reports the FIRST refusal of a reason in full (it names the command) and ONE line with the count when
     // the pass ends (see ContentPass::RefusalRow), so the number of messages follows the number of REASONS,
     // not the number of broken commands.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -4468,8 +4468,8 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
@@ -4555,7 +4555,7 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
                                                                                    std::span<const ContentPipeline::VertexAttribute>(&attribute, 1U),
                                                                                    present_facts.shaders);
     ASSERT_NE(present_layer, nullptr);
-    const auto                      entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto                      entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw                     present_draws(*present_layer, pool, entry_points);
     const ContentPass::Scope::Entry halves[]{
         ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
@@ -4593,7 +4593,7 @@ TEST(ContentPassTest, MeasureWhatAnEightBitAlbedoDoesToDarkShades)
     // while a half-float store's step at that magnitude is ~6e-6 (2^-17) - every pixel its own level. The
     // printed numbers are what the design log records; the assertion is the format fact alone (a step of
     // exactly one 8-bit unit), which is machine-independent.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -4642,8 +4642,8 @@ TEST(ContentPassTest, MeasureWhatAnEightBitAlbedoDoesToDarkShades)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
@@ -4692,7 +4692,7 @@ TEST(ContentPassTest, MeasureWhatAnEightBitAlbedoDoesToDarkShades)
 
     VariantPool                     pool;
     StreamUploads                   uploads;
-    const auto                      entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto                      entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw                     ramp_draws(*ramp_layer, pool, entry_points);
     const ContentPass::Scope::Entry halves[]{
         ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
@@ -4772,7 +4772,7 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
     //
     // Both are handed in by api/ContentAssembly, and both are pinned here the same way: one caller-owned
     // ReportOnce carried across two frames, then the re-arm that says a fixed-then-broken pass reports again.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -4799,8 +4799,8 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
@@ -4904,7 +4904,7 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
         return count;
     };
 
-    const auto                      entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto                      entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw                     draws(*layer, pool, entry_points);
     const ContentPass::Scope::Entry halves[]{
         ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content, program_facts.program, geometry_facts.layout, layer.get(), &draws }
@@ -4967,7 +4967,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     // MULTIPLIED by the light, so a dim light hides it (0.5 x 1/255) while a bright one amplifies it
     // (4 x 1/255, four output levels). The recipe prints the biggest deviation from the ideal ramp and the
     // number of distinct output levels; the assertions are the machine-independent halves of the recipe.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -5060,8 +5060,8 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
         geometry->setRevision(1U);
     }
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
     const vn::intrusive_ptr<Material> material(new Material());
     MaterialFacts                     material_facts;
@@ -5173,7 +5173,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
 
     VariantPool                     pool;
     StreamUploads                   uploads;
-    const auto                      entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto                      entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw                     writer_draws(*writer_layer, pool, entry_points);
     ContentDraw                     lighting_draws(*lighting_layer, pool, entry_points);
     const ContentPass::Scope::Entry writer_halves[]{
@@ -5322,7 +5322,7 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     //
     // Everything else is the shape the two-variant case uses: the camera's push lands the quad exactly
     // where the plain branch's fixed position does, so the two halves differ only in what they shade.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -5347,11 +5347,11 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
         texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
     }
 
-    const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
+    const std::shared_ptr<vn::backend_vsg::MaterialImages> images = vn::backend_vsg::MaterialImages::create();
     ASSERT_NE(images, nullptr);
-    vn::vsg::detail::TextureReject map_reason = vn::vsg::detail::TextureReject::Ok;
-    const vn::vsg::SamplerImage    map        = images->acquire(texture.get(), map_reason);
-    ASSERT_EQ(map_reason, vn::vsg::detail::TextureReject::Ok);
+    vn::backend_vsg::detail::TextureReject map_reason = vn::backend_vsg::detail::TextureReject::Ok;
+    const vn::backend_vsg::SamplerImage    map        = images->acquire(texture.get(), map_reason);
+    ASSERT_EQ(map_reason, vn::backend_vsg::detail::TextureReject::Ok);
 
     const vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
     {
@@ -5423,7 +5423,7 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     plain_material->setBaseColor(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     // The host hands the store its live content, and nothing else: everything below reads its tables.
-    vn::vsg::ContentStore store;
+    vn::backend_vsg::ContentStore store;
     store.track(geometry);
     store.track(program);
     store.track(textured_material);
@@ -5487,15 +5487,15 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     ASSERT_EQ(store.programEntries(), 2U) << "one program, two texts: the store built both variants";
     ASSERT_EQ(store.builds(), 5U) << "the geometry, the two materials and the two variants";
 
-    vn::vsg::ProgramVariant textured_variant;
+    vn::backend_vsg::ProgramVariant textured_variant;
     textured_variant.textured = true;
-    const vn::vsg::ProgramVariant plain_variant;
+    const vn::backend_vsg::ProgramVariant plain_variant;
     // THE HALVES ARE PRODUCED the way a host produces them: the pass' tuples come from the store's tables
     // and the layers are compiled from the entries they name (see api/ContentHalves) - no host loop, no
     // layer built by hand. The entries are in first-seen order, so the plain command (collected first) is
     // served first.
     VariantPool   pool;
-    ContentHalves halves(pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentHalves halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
     const auto    entries = halves.halvesFor(frame.passes[0], facts, timeline, retirement);
     ASSERT_EQ(entries.size(), 2U) << "one program, two texts: the pass is served two halves";
     ASSERT_EQ(halves.halves(), 2U);
@@ -5511,8 +5511,8 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
 
     // The pass' DECLARED SETS stay the caller's (they carry the frame's descriptor numbers and the map's
     // image), built from each half's OWN declarations: the layer's `abi` is the shape a set must have.
-    const vn::vsg::BlockDescriptors::SampledBinding textured_maps[] = {
-        vn::vsg::BlockDescriptors::SampledBinding{ 1U, map.view, map.sampler }
+    const vn::backend_vsg::BlockDescriptors::SampledBinding textured_maps[] = {
+        vn::backend_vsg::BlockDescriptors::SampledBinding{ 1U, map.view, map.sampler }
     };
     std::unique_ptr<BlockDescriptors> textured_declared = BlockDescriptors::forAbi(entries[1].pipelines->abi(), 0U, created.device, *storage, textured_maps);
     std::unique_ptr<BlockDescriptors> plain_declared    = BlockDescriptors::forAbi(entries[0].pipelines->abi(), 0U, created.device, *storage);
@@ -5569,7 +5569,7 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
     // see BlockDescriptors::ImageSource) have the SAME shape, so a pass that picked a set by shape alone
     // would hand one drawable the other's images. The picture says which happened: each half shows the
     // texel of ITS OWN material's texture, and one colour twice would mean one set served both.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -5598,14 +5598,14 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
     const auto left_texture  = make_texture(255U, 0U, 255U);
     const auto right_texture = make_texture(0U, 255U, 0U);
 
-    const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
+    const std::shared_ptr<vn::backend_vsg::MaterialImages> images = vn::backend_vsg::MaterialImages::create();
     ASSERT_NE(images, nullptr);
-    vn::vsg::detail::TextureReject left_reason  = vn::vsg::detail::TextureReject::Ok;
-    vn::vsg::detail::TextureReject right_reason = vn::vsg::detail::TextureReject::Ok;
-    const vn::vsg::SamplerImage    left_map     = images->acquire(left_texture.get(), left_reason);
-    const vn::vsg::SamplerImage    right_map    = images->acquire(right_texture.get(), right_reason);
-    ASSERT_EQ(left_reason, vn::vsg::detail::TextureReject::Ok);
-    ASSERT_EQ(right_reason, vn::vsg::detail::TextureReject::Ok);
+    vn::backend_vsg::detail::TextureReject left_reason  = vn::backend_vsg::detail::TextureReject::Ok;
+    vn::backend_vsg::detail::TextureReject right_reason = vn::backend_vsg::detail::TextureReject::Ok;
+    const vn::backend_vsg::SamplerImage    left_map     = images->acquire(left_texture.get(), left_reason);
+    const vn::backend_vsg::SamplerImage    right_map    = images->acquire(right_texture.get(), right_reason);
+    ASSERT_EQ(left_reason, vn::backend_vsg::detail::TextureReject::Ok);
+    ASSERT_EQ(right_reason, vn::backend_vsg::detail::TextureReject::Ok);
 
     // The program both drawables are drawn with: the texcoord slot and the sampler are what the TEXTURE
     // side of the picture needs; there is no define gating here, because both drawables take the same
@@ -5650,7 +5650,7 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
     const vn::intrusive_ptr<Material> right_material(new Material());
     right_material->setTexture(vn::graphics::TextureSlot::BaseColor, right_texture);
 
-    vn::vsg::ContentStore store;
+    vn::backend_vsg::ContentStore store;
     store.track(geometry);
     store.track(program);
     store.track(left_map_material);
@@ -5712,7 +5712,7 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
     const ContentFacts&                    facts = store.tablesFor(frame, timeline);
 
     VariantPool   pool;
-    ContentHalves halves(pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentHalves halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
     const auto    entries = halves.halvesFor(frame.passes[0], facts, timeline, retirement);
     ASSERT_EQ(entries.size(), 1U) << "both drawables are the same variant: ONE half serves both";
     ASSERT_EQ(store.programEntries(), 1U) << "one text, one entry";
@@ -5720,11 +5720,11 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
     // The caller's declared sets: ONE PER TEXTURE, each tagged with the texture revision its images came
     // from (the pair MaterialImages keys by). Same shape, same sampler binding - only the tag tells them
     // apart, which is exactly what the pass must use.
-    const vn::vsg::BlockDescriptors::SampledBinding left_maps[] = {
-        vn::vsg::BlockDescriptors::SampledBinding{ 1U, left_map.view, left_map.sampler }
+    const vn::backend_vsg::BlockDescriptors::SampledBinding left_maps[] = {
+        vn::backend_vsg::BlockDescriptors::SampledBinding{ 1U, left_map.view, left_map.sampler }
     };
-    const vn::vsg::BlockDescriptors::SampledBinding right_maps[] = {
-        vn::vsg::BlockDescriptors::SampledBinding{ 1U, right_map.view, right_map.sampler }
+    const vn::backend_vsg::BlockDescriptors::SampledBinding right_maps[] = {
+        vn::backend_vsg::BlockDescriptors::SampledBinding{ 1U, right_map.view, right_map.sampler }
     };
     std::unique_ptr<BlockDescriptors> left_declared =
         BlockDescriptors::forAbi(entries[0].pipelines->abi(),
@@ -5732,14 +5732,14 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
                                  created.device,
                                  *storage,
                                  left_maps,
-                                 vn::vsg::BlockDescriptors::ImageSource{ left_texture.get(), left_texture->revision() });
+                                 vn::backend_vsg::BlockDescriptors::ImageSource{ left_texture.get(), left_texture->revision() });
     std::unique_ptr<BlockDescriptors> right_declared =
         BlockDescriptors::forAbi(entries[0].pipelines->abi(),
                                  0U,
                                  created.device,
                                  *storage,
                                  right_maps,
-                                 vn::vsg::BlockDescriptors::ImageSource{ right_texture.get(), right_texture->revision() });
+                                 vn::backend_vsg::BlockDescriptors::ImageSource{ right_texture.get(), right_texture->revision() });
     ASSERT_NE(left_declared, nullptr);
     ASSERT_NE(right_declared, nullptr);
     ASSERT_EQ(left_declared->shape().size(), right_declared->shape().size());
@@ -5796,7 +5796,7 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
     // (see api/ContentSets) - the images come from the drawables' own materials through MaterialImages, each
     // set is tagged with the texture revision it was resolved from, and the pass picks each drawable's own.
     // ONE half, TWO textures, and the only two sets that exist are the ones a steady frame needs.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -5825,14 +5825,14 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
     const auto left_texture  = make_texture(255U, 0U, 255U);
     const auto right_texture = make_texture(0U, 255U, 0U);
 
-    const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
+    const std::shared_ptr<vn::backend_vsg::MaterialImages> images = vn::backend_vsg::MaterialImages::create();
     ASSERT_NE(images, nullptr);
-    vn::vsg::detail::TextureReject left_reason  = vn::vsg::detail::TextureReject::Ok;
-    vn::vsg::detail::TextureReject right_reason = vn::vsg::detail::TextureReject::Ok;
-    const vn::vsg::SamplerImage    left_map     = images->acquire(left_texture.get(), left_reason);
-    const vn::vsg::SamplerImage    right_map    = images->acquire(right_texture.get(), right_reason);
-    ASSERT_EQ(left_reason, vn::vsg::detail::TextureReject::Ok);
-    ASSERT_EQ(right_reason, vn::vsg::detail::TextureReject::Ok);
+    vn::backend_vsg::detail::TextureReject left_reason  = vn::backend_vsg::detail::TextureReject::Ok;
+    vn::backend_vsg::detail::TextureReject right_reason = vn::backend_vsg::detail::TextureReject::Ok;
+    const vn::backend_vsg::SamplerImage    left_map     = images->acquire(left_texture.get(), left_reason);
+    const vn::backend_vsg::SamplerImage    right_map    = images->acquire(right_texture.get(), right_reason);
+    ASSERT_EQ(left_reason, vn::backend_vsg::detail::TextureReject::Ok);
+    ASSERT_EQ(right_reason, vn::backend_vsg::detail::TextureReject::Ok);
 
     // The program both drawables are drawn with: the texcoord slot and the sampler are what the TEXTURE
     // side of the picture needs; there is no define gating here, because both drawables take the same
@@ -5877,7 +5877,7 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
     const vn::intrusive_ptr<Material> right_material(new Material());
     right_material->setTexture(vn::graphics::TextureSlot::BaseColor, right_texture);
 
-    vn::vsg::ContentStore store;
+    vn::backend_vsg::ContentStore store;
     store.track(geometry);
     store.track(program);
     store.track(left_produced_material);
@@ -5939,14 +5939,14 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
     const ContentFacts&                    facts = store.tablesFor(frame, timeline);
 
     VariantPool   pool;
-    ContentHalves halves(pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ContentHalves halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
     const auto    entries = halves.halvesFor(frame.passes[0], facts, timeline, retirement);
     ASSERT_EQ(entries.size(), 1U) << "both drawables are the same variant: ONE half serves both";
     ASSERT_EQ(store.programEntries(), 1U) << "one text, one entry";
 
     // The produced sets: one per texture (one per image source), each tagged with the revision its images
     // were acquired at. The FIRST call builds them; a steady second call must build nothing.
-    vn::vsg::ContentSets sets(created.device, *storage, *images);
+    vn::backend_vsg::ContentSets sets(created.device, *storage, *images);
     (void)sets.setsFor(frame.passes[0], facts, entries, {}, timeline, retirement);
     const auto candidates = sets.setsFor(frame.passes[0], facts, entries, {}, timeline, retirement);
     ASSERT_EQ(candidates.size(), 2U) << "one set per texture: the two drawables' images are different";
@@ -6019,7 +6019,7 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
     // hand-assembled cases draw (two textured drawables of one variant, each sampling its own map), and the
     // SECOND frame is the evidence that a steady frame builds nothing: every producer's counter stands
     // still.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -6048,14 +6048,14 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
     const auto left_texture  = make_texture(255U, 0U, 255U);
     const auto right_texture = make_texture(0U, 255U, 0U);
 
-    const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
+    const std::shared_ptr<vn::backend_vsg::MaterialImages> images = vn::backend_vsg::MaterialImages::create();
     ASSERT_NE(images, nullptr);
-    vn::vsg::detail::TextureReject left_reason  = vn::vsg::detail::TextureReject::Ok;
-    vn::vsg::detail::TextureReject right_reason = vn::vsg::detail::TextureReject::Ok;
-    const vn::vsg::SamplerImage    left_map     = images->acquire(left_texture.get(), left_reason);
-    const vn::vsg::SamplerImage    right_map    = images->acquire(right_texture.get(), right_reason);
-    ASSERT_EQ(left_reason, vn::vsg::detail::TextureReject::Ok);
-    ASSERT_EQ(right_reason, vn::vsg::detail::TextureReject::Ok);
+    vn::backend_vsg::detail::TextureReject left_reason  = vn::backend_vsg::detail::TextureReject::Ok;
+    vn::backend_vsg::detail::TextureReject right_reason = vn::backend_vsg::detail::TextureReject::Ok;
+    const vn::backend_vsg::SamplerImage    left_map     = images->acquire(left_texture.get(), left_reason);
+    const vn::backend_vsg::SamplerImage    right_map    = images->acquire(right_texture.get(), right_reason);
+    ASSERT_EQ(left_reason, vn::backend_vsg::detail::TextureReject::Ok);
+    ASSERT_EQ(right_reason, vn::backend_vsg::detail::TextureReject::Ok);
 
     // The program both drawables are drawn with: the texcoord slot and the sampler are what the TEXTURE
     // side of the picture needs; there is no define gating here, because both drawables take the same
@@ -6100,7 +6100,7 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
     const vn::intrusive_ptr<Material> right_material(new Material());
     right_material->setTexture(vn::graphics::TextureSlot::BaseColor, right_texture);
 
-    vn::vsg::ContentStore store;
+    vn::backend_vsg::ContentStore store;
     store.track(geometry);
     store.track(program);
     store.track(left_assembled_material);
@@ -6159,7 +6159,7 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
 
     // An assembly over the pieces that outlive the frame.
     VariantPool                            pool;
-    vn::vsg::ContentAssembly               assembly(store, created.device, pool, *storage, *images, diagnostics);
+    vn::backend_vsg::ContentAssembly               assembly(store, created.device, pool, *storage, *images, diagnostics);
     vn::graphics::backend::FrameTimeline   timeline;
     vn::graphics::backend::RetirementQueue retirement(3U);
 
@@ -6254,7 +6254,7 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     // kind (a 2D texture where the text declares `samplerCube`) is answered the same way instead of being
     // written into the slot as an invalid descriptor. Until `vn_skyMap` was read as the drawable's map the
     // whole program was refused where its layer would be built.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -6338,7 +6338,7 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     const vn::intrusive_ptr<Material> flat_material(new Material()); // a map of the other kind
     flat_material->setTexture(vn::graphics::TextureSlot::BaseColor, flat_texture);
 
-    vn::vsg::ContentStore store;
+    vn::backend_vsg::ContentStore store;
     store.track(to_posz);
     store.track(to_posx);
     store.track(sky_program);
@@ -6418,10 +6418,10 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     ASSERT_EQ(frame.passes.size(), 1U);
     ASSERT_EQ(frame.passes[0].draws.size(), 4U);
 
-    const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
+    const std::shared_ptr<vn::backend_vsg::MaterialImages> images = vn::backend_vsg::MaterialImages::create();
     ASSERT_NE(images, nullptr);
     VariantPool                            pool;
-    vn::vsg::ContentAssembly               assembly(store, created.device, pool, *storage, *images, diagnostics);
+    vn::backend_vsg::ContentAssembly               assembly(store, created.device, pool, *storage, *images, diagnostics);
     vn::graphics::backend::FrameTimeline   timeline;
     vn::graphics::backend::RetirementQueue retirement(3U);
 
@@ -6532,7 +6532,7 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     //
     // The pixel is the evidence neither counter can replace: an 8-texel point at the target's centre, drawn
     // through a POINT_LIST pipeline, has to come out as that point's colour.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -6571,7 +6571,7 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     const vn::intrusive_ptr<Material> material(new Material());
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
-    vn::vsg::ContentStore store;
+    vn::backend_vsg::ContentStore store;
     store.track(geometry);
     store.track(program);
     store.track(material);
@@ -6629,10 +6629,10 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 1U);
     EXPECT_EQ(frame.passes[0].draws[0].commands[0].dynamic.topology, vn::graphics::Topology::Points) << "the plan carries the topology the state asked for";
 
-    const std::shared_ptr<vn::vsg::MaterialImages> images = vn::vsg::MaterialImages::create();
+    const std::shared_ptr<vn::backend_vsg::MaterialImages> images = vn::backend_vsg::MaterialImages::create();
     ASSERT_NE(images, nullptr);
     VariantPool                            pool;
-    vn::vsg::ContentAssembly               assembly(store, created.device, pool, *storage, *images, diagnostics);
+    vn::backend_vsg::ContentAssembly               assembly(store, created.device, pool, *storage, *images, diagnostics);
     vn::graphics::backend::FrameTimeline   timeline;
     vn::graphics::backend::RetirementQueue retirement(3U);
 
@@ -6679,8 +6679,8 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     // or "build that program". Without this check the points draw would go through the triangle-baked
     // pipeline - exactly the shape the previous implementation shipped, where only the API's own
     // same-topology-class rule stood between the picture and undefined behaviour.
-    const vn::vsg::FactResult<GeometryFacts> live_geometry =
-        vn::vsg::findGeometry(assembly.facts(), vn::graphics::contentRefOf(geometry->id(), geometry->revision()));
+    const vn::backend_vsg::FactResult<GeometryFacts> live_geometry =
+        vn::backend_vsg::findGeometry(assembly.facts(), vn::graphics::contentRefOf(geometry->id(), geometry->revision()));
     ASSERT_TRUE(live_geometry.found());
     ASSERT_EQ(assembly.facts().programs.size(), 1U) << "one program was compiled for this frame";
     const ProgramFacts& live_program = assembly.facts().programs.front();

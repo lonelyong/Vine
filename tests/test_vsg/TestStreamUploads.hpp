@@ -8,7 +8,7 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/backend/Streams.hpp>
 #include <vine/intrusive_ptr.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
 
 /**
  * @brief Uploads the streams a test drawable reads, with the MODEL BUFFERS production always hands over.
@@ -29,8 +29,8 @@ namespace vn::test
 struct UploadedStreams {
     vn::intrusive_ptr<const vn::Buffer<float>>         positions;  // The position channel's bytes.
     vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> indices;    // The index stream's bytes.
-    vn::vsg::StreamUploads::VertexResult               vertex{};   // What the store answered for the channel.
-    vn::vsg::StreamUploads::IndexResult                index{};    // What it answered for the index stream.
+    vn::backend_vsg::StreamUploads::VertexResult               vertex{};   // What the store answered for the channel.
+    vn::backend_vsg::StreamUploads::IndexResult                index{};    // What it answered for the index stream.
 };
 
 /**
@@ -41,7 +41,7 @@ struct UploadedStreams {
  * @param indices The whole index list the draw reads.
  * @return The model buffers (held by the caller) and the store's answers.
  */
-inline UploadedStreams uploadTriangle(vn::vsg::StreamUploads& uploads, std::span<const float> scalars, std::span<const std::uint32_t> indices)
+inline UploadedStreams uploadTriangle(vn::backend_vsg::StreamUploads& uploads, std::span<const float> scalars, std::span<const std::uint32_t> indices)
 {
     UploadedStreams out;
     out.positions = vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(scalars.begin(), scalars.end())));

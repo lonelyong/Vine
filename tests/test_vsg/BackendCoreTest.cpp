@@ -35,7 +35,7 @@
 #include <vine/graphics/backend/Readback.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/graphics/backend/TargetPlan.hpp>
-#include <vine/vsg/internal/DeviceRequirements.hpp>
+#include <vine/backend_vsg/internal/DeviceRequirements.hpp>
 
 using vn::graphics::RenderTarget;
 using vn::graphics::backend::DeviceClock;

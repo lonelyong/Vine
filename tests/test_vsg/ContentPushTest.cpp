@@ -32,26 +32,26 @@
 #include <vine/math/Matrix4x4.hpp>
 
 #include <vine/graphics/backend/FrameRecorder.hpp>
-#include <vine/vsg/internal/ContentPush.hpp>
-#include <vine/vsg/internal/ContentSources.hpp>
-#include <vine/vsg/internal/ProgramAbi.hpp>
-#include <vine/vsg/internal/ViewBlock.hpp>
+#include <vine/backend_vsg/internal/ContentPush.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/ProgramAbi.hpp>
+#include <vine/backend_vsg/internal/ViewBlock.hpp>
 
 using vn::graphics::ShaderProgram;
 using vn::graphics::backend::CameraSnapshot;
 using vn::math::Mat4d;
-using vn::vsg::AbiPushMember;
-using vn::vsg::AbiPushRange;
-using vn::vsg::buildProgramFacts;
-using vn::vsg::canFillPushMember;
-using vn::vsg::ContentPushMember;
-using vn::vsg::contentPushMemberName;
-using vn::vsg::contentPushMemberOf;
-using vn::vsg::FactMiss;
-using vn::vsg::foldToDeviceClip;
-using vn::vsg::packContentPush;
-using vn::vsg::ProgramAbi;
-using vn::vsg::ProgramFacts;
+using vn::backend_vsg::AbiPushMember;
+using vn::backend_vsg::AbiPushRange;
+using vn::backend_vsg::buildProgramFacts;
+using vn::backend_vsg::canFillPushMember;
+using vn::backend_vsg::ContentPushMember;
+using vn::backend_vsg::contentPushMemberName;
+using vn::backend_vsg::contentPushMemberOf;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::foldToDeviceClip;
+using vn::backend_vsg::packContentPush;
+using vn::backend_vsg::ProgramAbi;
+using vn::backend_vsg::ProgramFacts;
 
 namespace
 {
@@ -144,7 +144,7 @@ AbiPushRange enginePush()
     ProgramFacts facts;
     EXPECT_EQ(buildProgramFacts(*vn::graphics::forwardProgram(), facts), FactMiss::None);
     ProgramAbi abi;
-    EXPECT_EQ(vn::vsg::scanProgramAbi(facts.shaders.vertex, facts.shaders.fragment, {}, abi), FactMiss::None);
+    EXPECT_EQ(vn::backend_vsg::scanProgramAbi(facts.shaders.vertex, facts.shaders.fragment, {}, abi), FactMiss::None);
     EXPECT_EQ(abi.pushes.size(), 1U);
     return abi.pushes.empty() ? AbiPushRange{} : abi.pushes.front();
 }
@@ -183,7 +183,7 @@ TEST(ContentPushTest, ThePushCarriesTheSameMatricesTheViewBlockDoes)
 
     // `pc.projection == VineViewBlock.proj`: the fold is the view block's, spelled once (api/ViewBlock), so a
     // program that reads the push and one that reads the block agree about the clip convention.
-    const vn::graphics::VineViewBlock block = vn::vsg::buildViewBlock(camera, 0.0F, 0U, 0U);
+    const vn::graphics::VineViewBlock block = vn::backend_vsg::buildViewBlock(camera, 0.0F, 0U, 0U);
     for (int column = 0; column < 4; ++column) {
         for (int row = 0; row < 4; ++row) {
             EXPECT_NEAR(elementOf(bytes, 0U, row, column), block.proj[static_cast<std::size_t>(column) * 4U + static_cast<std::size_t>(row)], 1e-6)

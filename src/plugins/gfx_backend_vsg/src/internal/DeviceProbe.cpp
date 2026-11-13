@@ -1,11 +1,11 @@
-#include <vine/vsg/internal/DeviceProbe.hpp>
+#include <vine/backend_vsg/internal/DeviceProbe.hpp>
 
 #include <utility>
 
 #include <vsg/vk/Instance.h>
 #include <vsg/vk/PhysicalDevice.h>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace api
 {
@@ -137,4 +137,4 @@ ProbeResult probePhysicalDevices()
 
 } // namespace api
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

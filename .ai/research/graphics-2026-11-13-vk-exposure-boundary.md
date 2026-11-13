@@ -29,8 +29,8 @@
 |---|---|---|---|
 | SDK 宿主面 `sdk/vine/graphics/*.hpp` | **3** | 全部是**注释里的文字**（`Sampler.hpp` 解释"Vulkan 把采样器放在 image 之外"、`RenderBackendRegistry.hpp` 的 `"vulkan \| opengl3"` 示例串） | **零 Vk 类型**，零 `<vulkan>` include |
 | SDK 后端面 `sdk/vine/graphics/backend/*.hpp` | **2** | 全部是 `Keys.hpp` 注释里的 `VkFormat` / `VkPipeline`（解释"设备格式码"与一次真实 VUID 事故） | **零 Vk 类型**，零 `<vulkan>` / `<vsg>` include |
-| 插件 `include/vine/vsg/internal/` + `support/` | 18 / 57 个头含 `Vk*` | 真实类型（`VkDevice`、`VkPipeline`、`VkCommandBuffer`…） | 允许，且是今天的主力 |
-| 插件 `include/vine/vsg/shell/` | **0** | `GfxBackendVsgPlugin.hpp` / `VsgRenderBackendFactory.hpp` | 干净 |
+| 插件 `include/vine/backend_vsg/internal/` + `support/` | 18 / 57 个头含 `Vk*` | 真实类型（`VkDevice`、`VkPipeline`、`VkCommandBuffer`…） | 允许，且是今天的主力 |
+| 插件 `include/vine/backend_vsg/shell/` | **0** | `GfxBackendVsgPlugin.hpp` / `VsgRenderBackendFactory.hpp` | 干净 |
 
 **读法**：本仓库的边界**不是"后端不许提 Vulkan"**，而是"**SDK 的两个面都不出现 Vk 类型，插件内部随便用**"。
 `backend/` 的规则是 C1 的另一种说法：它可以用 Vulkan 的**语义**（`device_color_formats` 装 `VkFormat` 值），
@@ -214,7 +214,7 @@ V2 / V4 今天已经是事实，可以直接写成脚本断言；V1 需要"只�
 
 上一轮我给 vk 立的 "D2：`Vk*` 只允许 `src/internal/`" 有两个问题：
 
-1. **与仓库分层不符**：vsg 的 `internal/` 头在 `include/vine/vsg/internal/`，不在 `src/`；照 D2 写会与周边不一致（`G6`）；
+1. **与仓库分层不符**：vsg 的 `internal/` 头在 `include/vine/backend_vsg/internal/`，不在 `src/`；照 D2 写会与周边不一致（`G6`）；
 2. **没有受害者**：插件头不安装、`shell/` 无人 include ⇒ 它是一道只增加维护成本的检查（`G8`）。
 
 所以本节把它换成 **V4（`shell/` 零 Vk）**——同一个意图，**只对今天真有意义的那一半**，并保留升级条件。

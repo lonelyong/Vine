@@ -24,12 +24,12 @@
 #include "TestHostWindow.hpp"
 
 #include <vine/graphics/Diagnostics.hpp>
-#include <vine/vsg/internal/DeviceProbe.hpp>
-#include <vine/vsg/internal/Session.hpp>
+#include <vine/backend_vsg/internal/DeviceProbe.hpp>
+#include <vine/backend_vsg/internal/Session.hpp>
 
-using vn::vsg::api::probePhysicalDevices;
-using vn::vsg::api::Session;
-using vn::vsg::api::SessionOptions;
+using vn::backend_vsg::api::probePhysicalDevices;
+using vn::backend_vsg::api::Session;
+using vn::backend_vsg::api::SessionOptions;
 
 #if !defined(_WIN32)
 

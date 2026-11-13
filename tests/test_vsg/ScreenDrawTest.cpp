@@ -49,15 +49,15 @@
 
 #include <vine/graphics/backend/PixelProbe.hpp>
 #include <vine/graphics/backend/Streams.hpp>
-#include <vine/vsg/internal/BlockDescriptors.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/ContentSources.hpp>
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/backend_vsg/internal/BlockDescriptors.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include "TestMaterialFacts.hpp"
 #include "TestProgramFacts.hpp"
@@ -90,16 +90,16 @@ using vn::graphics::backend::PixelProbe;
 using vn::graphics::backend::Rgba8;
 using vn::graphics::backend::StateRegistry;
 using vn::graphics::backend::VariantPool;
-using vn::vsg::BlockDescriptors;
-using vn::vsg::BlockStorage;
-using vn::vsg::buildScreenProgramFacts;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentPipeline;
-using vn::vsg::FactMiss;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::ProgramFacts;
-using vn::vsg::StreamUploads;
-using vn::vsg::ViewportRect;
+using vn::backend_vsg::BlockDescriptors;
+using vn::backend_vsg::BlockStorage;
+using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::ContentDraw;
+using vn::backend_vsg::ContentPipeline;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::ProgramFacts;
+using vn::backend_vsg::StreamUploads;
+using vn::backend_vsg::ViewportRect;
 
 namespace
 {
@@ -158,7 +158,7 @@ class Fixture {
     ///                            engine's full-screen ABI defines as the attachment index.
     bool build(std::uint32_t source_attachments, int sampled_attachment)
     {
-        created = vn::vsg::createDevice();
+        created = vn::backend_vsg::createDevice();
         if (!created.ok) {
             return false;
         }
@@ -202,7 +202,7 @@ class Fixture {
         }
         program_ref      = facts.program;
 
-        recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+        recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         viewer   = ::vsg::Viewer::create();
         if (viewer == nullptr) {
@@ -347,8 +347,8 @@ class Fixture {
             return false;
         }
         const ContentPipeline::Shaders shader_pair = mrtShaders();
-        vn::vsg::ProgramAbi            abi;
-        if (vn::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::vsg::FactMiss::None) {
+        vn::backend_vsg::ProgramAbi            abi;
+        if (vn::backend_vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::backend_vsg::FactMiss::None) {
             return false;
         }
         content_descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
@@ -372,13 +372,13 @@ class Fixture {
         uploads          = std::make_unique<StreamUploads>();
         content_recorder = std::make_unique<ContentDraw>(*content_pipelines,
                                                          content_pool,
-                                                         vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+                                                         vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         content_registry = std::make_unique<StateRegistry>(content_pool);
         return true;
     }
 
   public:
-    vn::vsg::DeviceResult                          created;
+    vn::backend_vsg::DeviceResult                          created;
     std::unique_ptr<OffscreenTarget>               source;
     std::unique_ptr<OffscreenTarget>               destination;
     vn::intrusive_ptr<vn::graphics::ShaderProgram> program;

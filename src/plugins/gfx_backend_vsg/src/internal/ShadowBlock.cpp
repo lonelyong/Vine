@@ -1,8 +1,8 @@
-#include <vine/vsg/internal/ShadowBlock.hpp>
+#include <vine/backend_vsg/internal/ShadowBlock.hpp>
 
-#include <vine/vsg/internal/LightBlock.hpp>
+#include <vine/backend_vsg/internal/LightBlock.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& draw, vn::graphics::VineShadowBlock& out) noexcept
 {
@@ -56,4 +56,4 @@ bool packShadowBlock(const core::ShadowFacts& shadow, const core::CompiledDraw& 
     return true;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

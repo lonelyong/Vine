@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/ProgramAbi.hpp>
+#include <vine/backend_vsg/internal/ProgramAbi.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -831,4 +831,4 @@ FactMiss scanProgramAbi(std::string_view vertex, std::string_view fragment, std:
     return FactMiss::None;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

@@ -18,8 +18,8 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/vsg/internal/DeviceProbe.hpp>
-#include <vine/vsg/internal/VsgBackend.hpp>
+#include <vine/backend_vsg/internal/DeviceProbe.hpp>
+#include <vine/backend_vsg/internal/VsgBackend.hpp>
 
 #include <vine/Buffer.hpp>
 
@@ -135,7 +135,7 @@ TEST_F(VsgBackendPluginTest, TheConstructorBuildsTheApplicationFromItsConfig)
 /// @brief Whether a device case can run at all (one usable physical device; the X11 host window is the xcb check below).
 bool deviceCaseAvailable()
 {
-    const auto probed = vn::vsg::api::probePhysicalDevices();
+    const auto probed = vn::backend_vsg::api::probePhysicalDevices();
     return probed.ok && probed.usableCount() != 0;
 }
 
@@ -187,7 +187,7 @@ TEST_F(VsgBackendPluginTest, CreateBackendByName)
     // case below drives the registered backend through the SDK instead.
     auto backend = registry.create(u8"vsg");
     ASSERT_NE(backend, nullptr);
-    auto* const facade = dynamic_cast<vn::vsg::VsgBackend*>(backend.get());
+    auto* const facade = dynamic_cast<vn::backend_vsg::VsgBackend*>(backend.get());
     ASSERT_NE(facade, nullptr) << "the registered 'vsg' backend is the rewrite's facade, not the implementation it replaces";
     EXPECT_TRUE(backend->capabilities().render_targets);
     EXPECT_TRUE(backend->capabilities().presentation) << "this device HAS a window half: the value says so";
@@ -227,7 +227,7 @@ TEST_F(VsgBackendPluginTest, TheRegisteredBackendComesUpOnTheHostsSurfaceAndDraw
     auto& registry = vn::graphics::RenderBackendRegistry::instance();
     auto  backend  = registry.create(u8"vsg");
     ASSERT_NE(backend, nullptr);
-    ASSERT_NE(dynamic_cast<vn::vsg::VsgBackend*>(backend.get()), nullptr);
+    ASSERT_NE(dynamic_cast<vn::backend_vsg::VsgBackend*>(backend.get()), nullptr);
 
     // The content: a red triangle under a view-block vertex stage (the pair the rewrite's own device cases
     // draw), so the window's pixels say whether the frame went through.

@@ -1,9 +1,9 @@
-#include <vine/vsg/internal/LightBlock.hpp>
+#include <vine/backend_vsg/internal/LightBlock.hpp>
 
 #include <cmath>
 #include <numbers>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -177,4 +177,4 @@ std::size_t packLightBlock(std::span<const core::LightRef> lights, const core::C
     return packed + (has_ambient ? 1U : 0U);
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

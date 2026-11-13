@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/WindowTarget.hpp>
+#include <vine/backend_vsg/internal/WindowTarget.hpp>
 
 #include <utility>
 #include <vector>
@@ -10,7 +10,7 @@
 #include <vsg/maths/vec3.h>
 #include <vsg/nodes/Group.h>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -265,4 +265,4 @@ std::uint32_t WindowTarget::height() const noexcept
     return d->window->extent2D().height;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

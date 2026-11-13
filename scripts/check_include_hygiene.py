@@ -26,7 +26,7 @@ not part of the group order — but the group ORDER is only checked in headers:
   * a header has one owner and one obvious order, so the rule applies verbatim;
   * a plugin's .cpp files open with the module's own headers (its own header plus
     the private ones it shares with sibling TUs, e.g. VsgRenderer.cpp's run of
-    vine/vsg/*.hpp) before the std / third-party groups.  Reordering those is a
+    vine/backend_vsg/*.hpp) before the std / third-party groups.  Reordering those is a
     separate decision about that house style, not a typo to gate on, and a gate
     that fires 123 times on it would be turned off instead of followed.
 
@@ -94,7 +94,7 @@ SKIP_PARTS = ("build/", "_deps/", "/vsg_selftest/")
 BACKEND_HALF_DIRS = ("/graphics/src/backend/", "/vine/graphics/backend/")
 # Allowed inside it: its own headers plus the project's global header (the namespace macros - the
 # coding guidelines make that one the first include of any file). Allowing only `vine/graphics/backend/`
-# is ALSO what forbids the reverse direction: a `vsg/...` or `vine/vsg/...` include here is a finding,
+# is ALSO what forbids the reverse direction: a `vsg/...` or `vine/backend_vsg/...` include here is a finding,
 # so the backend half can never grow back into one particular backend again.
 BACKEND_HALF_ALLOWED_PREFIXES = ("vine/graphics/backend/",)
 # Who may include the backend half: a backend plugin, the backend half itself, and the backend's own
@@ -122,7 +122,7 @@ def backend_half_findings(path, lines):
         header = match.group(2)
         if header.startswith("vsg/"):
             findings.append((number, f"the backend half includes the render API ({header}): {line.strip()}"))
-        elif header.startswith("vine/vsg/") and not header.startswith(BACKEND_HALF_ALLOWED_PREFIXES):
+        elif header.startswith("vine/backend_vsg/") and not header.startswith(BACKEND_HALF_ALLOWED_PREFIXES):
             findings.append((number, f"the backend half includes the layer above it ({header}): {line.strip()}"))
     return findings
 

@@ -1,12 +1,12 @@
-#include <vine/vsg/internal/ContentPush.hpp>
+#include <vine/backend_vsg/internal/ContentPush.hpp>
 
 #include <cstring>
 
 #include <vsg/vk/vulkan.h>
 
-#include <vine/vsg/internal/ViewBlock.hpp>
+#include <vine/backend_vsg/internal/ViewBlock.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -97,4 +97,4 @@ bool packContentPush(const AbiPushRange&         range,
     return true;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

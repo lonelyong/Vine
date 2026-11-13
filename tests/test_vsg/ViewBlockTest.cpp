@@ -34,13 +34,13 @@
 #include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector3.hpp>
-#include <vine/vsg/internal/ViewBlock.hpp>
+#include <vine/backend_vsg/internal/ViewBlock.hpp>
 
 using vn::graphics::VineViewBlock;
 using vn::graphics::backend::CameraSnapshot;
 using vn::math::Mat4d;
 using vn::math::Vec3d;
-using vn::vsg::buildViewBlock;
+using vn::backend_vsg::buildViewBlock;
 
 namespace
 {

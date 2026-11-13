@@ -19,10 +19,10 @@
 
 #include <cstdint>
 
-#include <vine/vsg/support/VsgBackendUtility.hpp>
+#include <vine/backend_vsg/support/VsgBackendUtility.hpp>
 
-using vn::vsg::detail::kRequiredVulkanVersion;
-using vn::vsg::detail::supportsRequiredVulkanVersion;
+using vn::backend_vsg::detail::kRequiredVulkanVersion;
+using vn::backend_vsg::detail::supportsRequiredVulkanVersion;
 
 TEST(DeviceRequirementsTest, TheFloorIsVulkan14)
 {

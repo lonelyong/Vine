@@ -26,24 +26,24 @@
 #include <span>
 #include <vector>
 
-#include <vine/vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
 
 #include "TestProgramFacts.hpp"
 
 using vn::graphics::backend::DrawKind;
 using vn::graphics::backend::StreamKind;
-using vn::vsg::ChannelFacts;
-using vn::vsg::ContentFacts;
-using vn::vsg::findGeometry;
-using vn::vsg::findMaterial;
-using vn::vsg::findProgram;
-using vn::vsg::GeometryFacts;
-using vn::vsg::MaterialFacts;
-using vn::vsg::orderGeometryRows;
-using vn::vsg::orderMaterialRows;
-using vn::vsg::orderProgramRows;
-using vn::vsg::ProgramFacts;
-using vn::vsg::ProgramVariant;
+using vn::backend_vsg::ChannelFacts;
+using vn::backend_vsg::ContentFacts;
+using vn::backend_vsg::findGeometry;
+using vn::backend_vsg::findMaterial;
+using vn::backend_vsg::findProgram;
+using vn::backend_vsg::GeometryFacts;
+using vn::backend_vsg::MaterialFacts;
+using vn::backend_vsg::orderGeometryRows;
+using vn::backend_vsg::orderMaterialRows;
+using vn::backend_vsg::orderProgramRows;
+using vn::backend_vsg::ProgramFacts;
+using vn::backend_vsg::ProgramVariant;
 
 namespace
 {
@@ -75,7 +75,7 @@ struct Rows {
     std::vector<GeometryFacts>                        geometries;
     std::vector<MaterialFacts>                        materials;
     std::vector<std::vector<ChannelFacts>>            channels;   // One per geometry row: what `GeometryFacts::channels` spans.
-    std::vector<std::vector<vn::vsg::PrimitiveFacts>> primitives; // One per geometry row: its draws.
+    std::vector<std::vector<vn::backend_vsg::PrimitiveFacts>> primitives; // One per geometry row: its draws.
     std::vector<std::vector<std::byte>>               blocks;     // One per material row: what `MaterialFacts::block` spans.
 
     /// @brief Adds one geometry row: @p channel_count streams of @p mask's shape (the malformed row is one
@@ -97,7 +97,7 @@ struct Rows {
         // ONE PRIMITIVE ROW PER GEOMETRY ROW (the plan names a draw by its primitive index): indexed ones
         // carry the stream and its span, non-indexed ones are assembled from the vertex count.
         primitives.emplace_back(1U); // one draw per geometry row
-        vn::vsg::PrimitiveFacts& draw = primitives.back().front();
+        vn::backend_vsg::PrimitiveFacts& draw = primitives.back().front();
         if (indexed) {
             draw.indices.emplace();
             draw.indices->key.kind     = StreamKind::Index;

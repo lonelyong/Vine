@@ -7,7 +7,7 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/backend/PixelProbe.hpp>
-#include <vine/vsg/internal/VsgBackend.hpp>
+#include <vine/backend_vsg/internal/VsgBackend.hpp>
 
 /**
  * @brief The SDK-level device fixture: the SDK's own engine on a real device, with a picture a probe can read.
@@ -69,7 +69,7 @@ class SdkPixelFixture {
     /// @return The picture, or an INVALID probe when the readback was refused (the reason is printed).
     vn::graphics::backend::PixelProbe read();
 
-    vn::intrusive_ptr<vn::vsg::VsgBackend>        backend;
+    vn::intrusive_ptr<vn::backend_vsg::VsgBackend>        backend;
     vn::intrusive_ptr<vn::graphics::RenderEngine> engine;
     vn::intrusive_ptr<vn::graphics::RenderTarget> target;
     vn::intrusive_ptr<vn::graphics::Scene>        scene;

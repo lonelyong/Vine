@@ -1,4 +1,4 @@
-#include <vine/vsg/support/VsgSceneRules.hpp>
+#include <vine/backend_vsg/support/VsgSceneRules.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -13,9 +13,9 @@
 #include <vsg/utils/ShaderSet.h>
 
 #include <vine/imaging/Image.hpp>
-#include <vine/vsg/support/VsgUtils.hpp>
+#include <vine/backend_vsg/support/VsgUtils.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 // The bridge's device-free rules: what a custom vertex channel may be, which colour attachments a
 // shader set declares, what an opaque multi-attachment pipeline writes, and the cache-key hashing.
@@ -493,4 +493,4 @@ void applyOpaqueBlendForAttachments(RenderStateObjects& states, int colour_count
 
 } // namespace detail
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

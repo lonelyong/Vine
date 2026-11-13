@@ -1,8 +1,8 @@
-#include <vine/vsg/internal/DeviceFeatures.hpp>
+#include <vine/backend_vsg/internal/DeviceFeatures.hpp>
 
-#include <vine/vsg/internal/DeviceRequirements.hpp>
+#include <vine/backend_vsg/internal/DeviceRequirements.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 void applyRequiredFeatures(const ::vsg::ref_ptr<::vsg::DeviceFeatures>& features)
 {
@@ -39,4 +39,4 @@ void applyRequiredFeatures(const ::vsg::ref_ptr<::vsg::DeviceFeatures>& features
     return ::vsg::Names{ VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME, VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME };
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

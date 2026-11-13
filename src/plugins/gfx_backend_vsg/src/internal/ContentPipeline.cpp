@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -18,14 +18,14 @@
 #include <vsg/utils/ShaderCompiler.h>
 
 #include <vine/graphics/ShaderAbi.hpp>
-#include <vine/vsg/internal/ContentImages.hpp>
-#include <vine/vsg/internal/ContentPush.hpp>
-#include <vine/vsg/internal/GeometryFacts.hpp>
-#include <vine/vsg/internal/LightBlock.hpp>
-#include <vine/vsg/internal/StateCommands.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/internal/ContentImages.hpp>
+#include <vine/backend_vsg/internal/ContentPush.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/LightBlock.hpp>
+#include <vine/backend_vsg/internal/StateCommands.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -638,7 +638,7 @@ const ::vsg::GraphicsPipelineStates& ContentPipeline::statesFor(std::uint32_t sa
         if (state.cast<::vsg::MultisampleState>() == nullptr) {
             continue;
         }
-        state = ::vsg::MultisampleState::create(vn::vsg::samplesToVk(count));
+        state = ::vsg::MultisampleState::create(vn::backend_vsg::samplesToVk(count));
     }
     return d->states_by_samples.emplace(count, std::move(states)).first->second;
 }
@@ -830,4 +830,4 @@ bool ContentPipeline::agreesWithPool(const core::VariantPool& pool) const noexce
     return true;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

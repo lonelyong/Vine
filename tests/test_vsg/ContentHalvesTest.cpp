@@ -18,14 +18,14 @@
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/ContentHalves.hpp>
-#include <vine/vsg/internal/ContentSources.hpp>
-#include <vine/vsg/internal/DrawNeeds.hpp>
-#include <vine/vsg/internal/FactResult.hpp>
-#include <vine/vsg/internal/GeometryFacts.hpp>
-#include <vine/vsg/internal/ProgramVariant.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentHalves.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/DrawNeeds.hpp>
+#include <vine/backend_vsg/internal/FactResult.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/ProgramVariant.hpp>
 
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
@@ -50,25 +50,25 @@ using vn::graphics::backend::StateRegistry;
 using vn::graphics::backend::VariantPool;
 using vn::graphics::Topology;
 using vn::test::setPrimitiveIndices;
-using vn::vsg::buildGeometryFacts;
-using vn::vsg::buildMaterialFacts;
+using vn::backend_vsg::buildGeometryFacts;
+using vn::backend_vsg::buildMaterialFacts;
 using vn::test::buildMaterialFacts; // the object-pointer overload a case writes (see TestMaterialFacts.hpp)
-using vn::vsg::buildProgramFacts;
-using vn::vsg::ChannelFacts;
-using vn::vsg::ContentDeclarationIndexes;
-using vn::vsg::ContentDeclarations;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentFacts;
-using vn::vsg::ContentHalves;
-using vn::vsg::ContentPass;
-using vn::vsg::DrawNeeds;
-using vn::vsg::drawNeeds;
-using vn::vsg::FactMiss;
-using vn::vsg::GeometryFacts;
-using vn::vsg::LayoutDeclarations;
-using vn::vsg::MaterialFacts;
-using vn::vsg::ProgramFacts;
-using vn::vsg::ProgramVariant;
+using vn::backend_vsg::buildProgramFacts;
+using vn::backend_vsg::ChannelFacts;
+using vn::backend_vsg::ContentDeclarationIndexes;
+using vn::backend_vsg::ContentDeclarations;
+using vn::backend_vsg::ContentDraw;
+using vn::backend_vsg::ContentFacts;
+using vn::backend_vsg::ContentHalves;
+using vn::backend_vsg::ContentPass;
+using vn::backend_vsg::DrawNeeds;
+using vn::backend_vsg::drawNeeds;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::GeometryFacts;
+using vn::backend_vsg::LayoutDeclarations;
+using vn::backend_vsg::MaterialFacts;
+using vn::backend_vsg::ProgramFacts;
+using vn::backend_vsg::ProgramVariant;
 
 namespace
 {
@@ -165,7 +165,7 @@ struct Tables {
     std::vector<GeometryFacts>                        geometries;
     std::vector<MaterialFacts>                        materials;
     std::vector<std::vector<ChannelFacts>>            channel_storage;   // One per geometry entry.
-    std::vector<std::vector<vn::vsg::PrimitiveFacts>> primitive_storage; // One per geometry entry: its draws.
+    std::vector<std::vector<vn::backend_vsg::PrimitiveFacts>> primitive_storage; // One per geometry entry: its draws.
     std::vector<std::vector<std::byte>>               block_storage;     // One per material entry.
     LayoutDeclarations                                layouts;           // Layout -> live row count (see ContentDeclarations).
     ContentFacts                                      facts;
@@ -648,7 +648,7 @@ TEST(ContentHalvesTest, AScreenDrawGetsAFullScreenHalf)
     const auto program = screenProgram();
 
     ProgramFacts screen_facts;
-    ASSERT_EQ(vn::vsg::buildScreenProgramFacts(*program, screen_facts), FactMiss::None);
+    ASSERT_EQ(vn::backend_vsg::buildScreenProgramFacts(*program, screen_facts), FactMiss::None);
 
     Tables tables;
     tables.programs.push_back(screen_facts);
@@ -1012,7 +1012,7 @@ TEST(ContentHalvesTest, TheReportedNeedsAreWhatTheFrameBuilds)
         ContentDraw::Draw draw;
         draw.key               = needs.keyFor(compatibility);
         draw.vertex_count      = geometry_facts.vertex_count;
-        draw.viewport          = vn::vsg::ViewportRect{ 0.0F, 0.0F, 64.0F, 64.0F };
+        draw.viewport          = vn::backend_vsg::ViewportRect{ 0.0F, 0.0F, 64.0F, 64.0F };
         draw.color_attachments = pass.color_attachments;
         ASSERT_NE(half->draws->record(registry, draw), nullptr) << "the frame builds the identity the answer named";
     }

@@ -33,21 +33,21 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-#include <vine/vsg/internal/ContentSources.hpp>
-#include <vine/vsg/internal/LightBlock.hpp>
-#include <vine/vsg/internal/ProgramAbi.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/LightBlock.hpp>
+#include <vine/backend_vsg/internal/ProgramAbi.hpp>
 
 using vn::graphics::ShaderProgram;
-using vn::vsg::AbiBinding;
-using vn::vsg::AbiBlockRole;
-using vn::vsg::AbiDescriptorKind;
-using vn::vsg::AbiStage;
-using vn::vsg::buildProgramFacts;
-using vn::vsg::buildScreenProgramFacts;
-using vn::vsg::FactMiss;
-using vn::vsg::ProgramAbi;
-using vn::vsg::ProgramFacts;
-using vn::vsg::scanProgramAbi;
+using vn::backend_vsg::AbiBinding;
+using vn::backend_vsg::AbiBlockRole;
+using vn::backend_vsg::AbiDescriptorKind;
+using vn::backend_vsg::AbiStage;
+using vn::backend_vsg::buildProgramFacts;
+using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::ProgramAbi;
+using vn::backend_vsg::ProgramFacts;
+using vn::backend_vsg::scanProgramAbi;
 
 namespace
 {
@@ -94,7 +94,7 @@ void expectBlock(const ProgramAbi& abi, std::uint32_t set, std::uint32_t binding
     EXPECT_EQ(entry->kind, AbiDescriptorKind::UniformBlock);
     EXPECT_EQ(entry->role, role);
     EXPECT_EQ(entry->stages, stages);
-    EXPECT_EQ(entry->layout, vn::vsg::AbiBlockLayout::Std140);
+    EXPECT_EQ(entry->layout, vn::backend_vsg::AbiBlockLayout::Std140);
     EXPECT_EQ(entry->block_size, size);
 }
 
@@ -117,7 +117,7 @@ TEST(ProgramAbiTest, TheForwardProgramDeclaresTheContentAbiTheExistingBackendSer
 
     ASSERT_EQ(abi.bindings.size(), 5U);
     expectBlock(abi, 0U, 0U, AbiBlockRole::Material, kFragment, sizeof(vn::graphics::VineMaterialBlock));
-    expectBlock(abi, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
+    expectBlock(abi, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::backend_vsg::VineLightsBlock));
     expectSampler(abi, 0U, 7U, AbiDescriptorKind::Sampler2D, kFragment, "vn_shadow_map");
     expectBlock(abi, 0U, 8U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::graphics::VineShadowBlock));
     // The draw block is declared by BOTH stages now: the fragment reads `params.x` (opacity), the vertex stage
@@ -239,7 +239,7 @@ void main() {}
     EXPECT_EQ(foreign->role, AbiBlockRole::Foreign);
     EXPECT_EQ(foreign->type_name, "SomeOtherBlock");
     EXPECT_EQ(foreign->block_size, 16U);
-    EXPECT_STREQ(vn::vsg::abiBlockRoleName(foreign->role), "foreign block");
+    EXPECT_STREQ(vn::backend_vsg::abiBlockRoleName(foreign->role), "foreign block");
 }
 
 TEST(ProgramAbiTest, TheDeferredLightingProgramsDeclareTheirSourcesTheLightsAndTheShadowedPair)
@@ -251,7 +251,7 @@ TEST(ProgramAbiTest, TheDeferredLightingProgramsDeclareTheirSourcesTheLightsAndT
     expectSampler(plain, 0U, 1U, AbiDescriptorKind::Sampler2D, kFragment, "vn_normal_tex");
     expectSampler(plain, 0U, 2U, AbiDescriptorKind::Sampler2D, kFragment, "vn_emissive_tex");
     expectSampler(plain, 0U, 3U, AbiDescriptorKind::Sampler2D, kFragment, "vn_pos_tex");
-    expectBlock(plain, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
+    expectBlock(plain, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::backend_vsg::VineLightsBlock));
     // The lights are a BLOCK, not a push: the full-screen program declares no push range at all (a host's own
     // screen program may declare one - see ContentPipeline::Settings).
     EXPECT_TRUE(plain.pushes.empty());
@@ -261,7 +261,7 @@ TEST(ProgramAbiTest, TheDeferredLightingProgramsDeclareTheirSourcesTheLightsAndT
     ASSERT_NE(shadowed_program, nullptr) << "the shadow markers must still be in the shipped source";
     const ProgramAbi shadowed = scanScreen(*shadowed_program);
     ASSERT_EQ(shadowed.bindings.size(), 7U);
-    expectBlock(shadowed, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
+    expectBlock(shadowed, 0U, 6U, AbiBlockRole::Lights, kFragment, sizeof(vn::backend_vsg::VineLightsBlock));
     expectSampler(shadowed, 0U, 7U, AbiDescriptorKind::Sampler2D, kFragment, "vn_shadow_map");
     expectBlock(shadowed, 0U, 8U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::graphics::VineShadowBlock));
 }
@@ -361,7 +361,7 @@ void main() {}
     expectBlock(abi, 0U, 0U, AbiBlockRole::View, kVertex | kFragment, sizeof(vn::graphics::VineViewBlock));
     expectBlock(abi, 0U, 1U, AbiBlockRole::Draw, kVertex, sizeof(vn::graphics::VineDrawBlock));
     expectBlock(abi, 0U, 2U, AbiBlockRole::Material, kFragment, sizeof(vn::graphics::VineMaterialBlock));
-    expectBlock(abi, 0U, 3U, AbiBlockRole::Lights, kFragment, sizeof(vn::vsg::VineLightsBlock));
+    expectBlock(abi, 0U, 3U, AbiBlockRole::Lights, kFragment, sizeof(vn::backend_vsg::VineLightsBlock));
     expectBlock(abi, 0U, 4U, AbiBlockRole::ShadowBlock, kFragment, sizeof(vn::graphics::VineShadowBlock));
     // An unnamed sampler is an input: the serving layer addresses those by binding number, which is how the
     // full-screen ABI names its attachments too.

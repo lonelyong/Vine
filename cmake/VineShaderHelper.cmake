@@ -16,7 +16,7 @@
 #                              INCLUDES src/viz/graphics/shaders/vine_params.glsl)
 #
 #   # In any directory, for every target that compiles a TU including the header:
-#   vn_use_embedded_shaders(<target> OUTPUT vine/vsg/EmbeddedShaders.hpp)
+#   vn_use_embedded_shaders(<target> OUTPUT vine/backend_vsg/EmbeddedShaders.hpp)
 #
 # The declaration must be at the top level: a custom command is only visible in
 # the directory that declares it and its subdirectories, so declaring it inside
@@ -35,7 +35,7 @@ set(VN_GENERATED_INCLUDE_DIR "${CMAKE_BINARY_DIR}/generated")
 # vn_declare_embedded_shaders — declares the generation rule for one header.
 #
 # @param OUTPUT    Header path below the generated include dir, used verbatim as
-#                  the include spelling (e.g. vine/vsg/EmbeddedShaders.hpp).
+#                  the include spelling (e.g. vine/backend_vsg/EmbeddedShaders.hpp).
 # @param NAMESPACE C++ namespace of the generated constants.
 # @param SOURCES   Shader sources; relative paths are resolved against the
 #                  calling directory.

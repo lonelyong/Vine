@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -9,7 +9,7 @@
 
 #include <vine/graphics/ShaderAbi.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -190,4 +190,4 @@ FactMiss buildGeometryFacts(const vn::graphics::GeometryDescription& description
     return FactMiss::None;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

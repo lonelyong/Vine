@@ -1,8 +1,8 @@
-﻿#include <vine/vsg/shell/VsgRenderBackendFactory.hpp>
+﻿#include <vine/backend_vsg/shell/VsgRenderBackendFactory.hpp>
 
-#include <vine/vsg/internal/VsgBackend.hpp>
+#include <vine/backend_vsg/internal/VsgBackend.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -50,4 +50,4 @@ vn::intrusive_ptr<vn::graphics::RenderBackend> VsgRenderBackendFactory::create(c
     return vn::intrusive_ptr<vn::graphics::RenderBackend>(new VsgBackend(desc));
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

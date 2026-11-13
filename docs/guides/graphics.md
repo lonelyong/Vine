@@ -1546,4 +1546,4 @@ deferred、离屏、深度共享、overlay —— 并打印 `[selftest]` 证据�
 | 设计文档（渲染管线 / 状态 / 阴影 / 延迟 / overlay） | `.ai/design/*.md` |
 | 简明模块笔记（坑清单、实测结论、变异证据） | `.ai/memory/graphics.md` |
 | 可执行的契约 | `tests/test_graphics/`、`tests/test_vsg/` |
-| 后端自己的设备无关规则 | `src/plugins/gfx_backend_vsg/include/vine/vsg/support/VsgSceneRules.hpp` |
+| 后端自己的设备无关规则 | `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/support/VsgSceneRules.hpp` |

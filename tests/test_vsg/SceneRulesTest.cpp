@@ -17,8 +17,8 @@
 #include <vine/graphics/StateNode.hpp>
 #include <vine/graphics/Texture.hpp>
 #include <vine/imaging/Image.hpp>
-#include <vine/vsg/support/RenderStateMapper.hpp>
-#include <vine/vsg/support/VsgSceneRules.hpp>
+#include <vine/backend_vsg/support/RenderStateMapper.hpp>
+#include <vine/backend_vsg/support/VsgSceneRules.hpp>
 
 using vn::graphics::AttributeChannel;
 using vn::graphics::BlendFactor;
@@ -28,32 +28,32 @@ using vn::graphics::CullMode;
 using vn::graphics::PolygonMode;
 using vn::graphics::ResolvedRenderState;
 using vn::graphics::Topology;
-using vn::vsg::makeRenderStateObjects;
-using vn::vsg::RenderStateObjects;
-using vn::vsg::detail::aliasArray;
-using vn::vsg::detail::aliasTypedVertexData;
-using vn::vsg::detail::applyOpaqueBlendForAttachments;
-using vn::vsg::detail::ChannelShape;
-using vn::vsg::detail::channelShape;
-using vn::vsg::detail::colourAttachmentCount;
-using vn::vsg::detail::customAttributeName;
-using vn::vsg::detail::faceNormal;
-using vn::vsg::detail::formatForComponents;
-using vn::vsg::detail::hashCombine;
-using vn::vsg::detail::hashStateVariant;
-using vn::vsg::detail::ignoredChannelMessage;
-using vn::vsg::detail::ignoredNormalChannelMessage;
-using vn::vsg::detail::kHashSeed;
-using vn::vsg::detail::kLayoutSeed;
-using vn::vsg::detail::makeIndexedNormals;
-using vn::vsg::detail::makeNormals;
-using vn::vsg::detail::makeWhiteColors;
-using vn::vsg::detail::normalIsUsable;
-using vn::vsg::detail::sampleVertexData;
-using vn::vsg::detail::stageFlag;
-using vn::vsg::detail::unpackXyz;
-using vn::vsg::detail::vertexLayoutHash;
-using vn::vsg::detail::XyzUnpack;
+using vn::backend_vsg::makeRenderStateObjects;
+using vn::backend_vsg::RenderStateObjects;
+using vn::backend_vsg::detail::aliasArray;
+using vn::backend_vsg::detail::aliasTypedVertexData;
+using vn::backend_vsg::detail::applyOpaqueBlendForAttachments;
+using vn::backend_vsg::detail::ChannelShape;
+using vn::backend_vsg::detail::channelShape;
+using vn::backend_vsg::detail::colourAttachmentCount;
+using vn::backend_vsg::detail::customAttributeName;
+using vn::backend_vsg::detail::faceNormal;
+using vn::backend_vsg::detail::formatForComponents;
+using vn::backend_vsg::detail::hashCombine;
+using vn::backend_vsg::detail::hashStateVariant;
+using vn::backend_vsg::detail::ignoredChannelMessage;
+using vn::backend_vsg::detail::ignoredNormalChannelMessage;
+using vn::backend_vsg::detail::kHashSeed;
+using vn::backend_vsg::detail::kLayoutSeed;
+using vn::backend_vsg::detail::makeIndexedNormals;
+using vn::backend_vsg::detail::makeNormals;
+using vn::backend_vsg::detail::makeWhiteColors;
+using vn::backend_vsg::detail::normalIsUsable;
+using vn::backend_vsg::detail::sampleVertexData;
+using vn::backend_vsg::detail::stageFlag;
+using vn::backend_vsg::detail::unpackXyz;
+using vn::backend_vsg::detail::vertexLayoutHash;
+using vn::backend_vsg::detail::XyzUnpack;
 
 namespace
 {
@@ -105,26 +105,26 @@ TEST(SceneRulesTest, TheTexcoordSlotCarriesOneOfTwoWidths)
     // falls back to the declared binding (a UV pair) only otherwise. A cube direction read as a pair draws —
     // with the wrong coordinates, and no error from any layer.
     const auto uv       = AttributeChannel::packed({ 0.0f, 0.0f, 1.0f, 1.0f, 0.5f, 0.5f }, 2u);
-    auto       uv_array = vn::vsg::detail::texCoordArray(uv, 3u);
+    auto       uv_array = vn::backend_vsg::detail::texCoordArray(uv, 3u);
     ASSERT_NE(uv_array, nullptr);
     EXPECT_EQ(uv_array->valueCount(), 3u);
     EXPECT_EQ(uv_array->properties.stride, 8u);
     EXPECT_EQ(uv_array->properties.format, VK_FORMAT_R32G32_SFLOAT);
-    EXPECT_FALSE(vn::vsg::detail::isThreeScalarTexcoord(*uv_array));
+    EXPECT_FALSE(vn::backend_vsg::detail::isThreeScalarTexcoord(*uv_array));
 
     const auto directions      = AttributeChannel::packed({ 1.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f }, 3u);
-    auto       direction_array = vn::vsg::detail::texCoordArray(directions, 3u);
+    auto       direction_array = vn::backend_vsg::detail::texCoordArray(directions, 3u);
     ASSERT_NE(direction_array, nullptr);
     EXPECT_EQ(direction_array->valueCount(), 3u);
     EXPECT_EQ(direction_array->properties.stride, 12u);
     EXPECT_EQ(direction_array->properties.format, VK_FORMAT_R32G32B32_SFLOAT);
-    EXPECT_TRUE(vn::vsg::detail::isThreeScalarTexcoord(*direction_array));
+    EXPECT_TRUE(vn::backend_vsg::detail::isThreeScalarTexcoord(*direction_array));
 
     // Neither shape, and a shape that does not cover the mesh's vertices, are refused: the caller reports
     // them and binds zero UVs, which is what keeps a bad optional channel from rejecting a drawable.
-    EXPECT_FALSE(vn::vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f, 4.0f }, 4u), 1u));
-    EXPECT_FALSE(vn::vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f }, 1u), 3u));
-    EXPECT_FALSE(vn::vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f }, 2u), 2u));
+    EXPECT_FALSE(vn::backend_vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f, 4.0f }, 4u), 1u));
+    EXPECT_FALSE(vn::backend_vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f }, 1u), 3u));
+    EXPECT_FALSE(vn::backend_vsg::detail::texCoordArray(AttributeChannel::packed({ 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f }, 2u), 2u));
 }
 
 TEST(SceneRulesTest, ChannelShapeAcceptsExactlyOneValuePerVertex)
@@ -740,7 +740,7 @@ TEST(SceneRulesTest, AliasArrayWrapsAnIndexBufferAsRealUnsignedIntArrays)
 TEST(VsgSceneRulesTest, MapsEveryPixelLayoutToItsVulkanFormat)
 {
     using vn::imaging::PixelFormat;
-    using vn::vsg::detail::vkFormatFor;
+    using vn::backend_vsg::detail::vkFormatFor;
 
     EXPECT_EQ(vkFormatFor(PixelFormat::R8Unorm), VK_FORMAT_R8_UNORM);
     EXPECT_EQ(vkFormatFor(PixelFormat::R8Srgb), VK_FORMAT_R8_SRGB);
@@ -763,7 +763,7 @@ TEST(VsgSceneRulesTest, MapsEveryPixelLayoutToItsVulkanFormat)
 TEST(VsgSceneRulesTest, AThreeChannelLayoutHasNoVulkanFormat)
 {
     using vn::imaging::PixelFormat;
-    using vn::vsg::detail::vkFormatFor;
+    using vn::backend_vsg::detail::vkFormatFor;
 
     // Vulkan has no 24-bit format at all. The rule reports "no such format" rather than quietly picking
     // a 4-channel one, because widening the pixels is the caller's decision, not the mapping's.
@@ -774,7 +774,7 @@ TEST(VsgSceneRulesTest, AThreeChannelLayoutHasNoVulkanFormat)
 TEST(VsgSceneRulesTest, AnUnknownPixelLayoutHasNoVulkanFormat)
 {
     using vn::imaging::PixelFormat;
-    using vn::vsg::detail::vkFormatFor;
+    using vn::backend_vsg::detail::vkFormatFor;
 
     EXPECT_EQ(vkFormatFor(PixelFormat::Unknown), VK_FORMAT_UNDEFINED);
     EXPECT_EQ(vkFormatFor(static_cast<PixelFormat>(200)), VK_FORMAT_UNDEFINED);
@@ -783,7 +783,7 @@ TEST(VsgSceneRulesTest, AnUnknownPixelLayoutHasNoVulkanFormat)
 TEST(VsgSceneRulesTest, EveryMappedLayoutGetsItsOwnVulkanFormat)
 {
     using vn::imaging::PixelFormat;
-    using vn::vsg::detail::vkFormatFor;
+    using vn::backend_vsg::detail::vkFormatFor;
 
     // A duplicated mapping is the copy-paste mistake this table is prone to, and it would sample a
     // texture as the wrong layout with no validation error at all.
@@ -823,8 +823,8 @@ vn::intrusive_ptr<vn::graphics::Texture> filledTexture(vn::graphics::Texture::Ki
 
 TEST(VsgSceneRulesTest, ClassifiesWhetherATextureCanBeUploaded)
 {
-    using vn::vsg::detail::classifyTexture;
-    using vn::vsg::detail::TextureReject;
+    using vn::backend_vsg::detail::classifyTexture;
+    using vn::backend_vsg::detail::TextureReject;
 
     EXPECT_EQ(classifyTexture(nullptr), TextureReject::Absent);
 
@@ -838,8 +838,8 @@ TEST(VsgSceneRulesTest, ClassifiesWhetherATextureCanBeUploaded)
 
 TEST(VsgSceneRulesTest, ACubeMapIsUploadedAsSixLayers)
 {
-    using vn::vsg::detail::classifyTexture;
-    using vn::vsg::detail::TextureReject;
+    using vn::backend_vsg::detail::classifyTexture;
+    using vn::backend_vsg::detail::TextureReject;
 
     // A cube is six 2D layers read through a cube view, so it goes down the same upload path as a 2D texture:
     // there is no shape left that this backend refuses.
@@ -854,9 +854,9 @@ TEST(VsgSceneRulesTest, ACubeMapIsUploadedAsSixLayers)
 
 TEST(VsgSceneRulesTest, TheExtentRuleAccountsForEveryLevelAndLayer)
 {
-    using vn::vsg::detail::classifyTexture;
-    using vn::vsg::detail::textureDataMatchesExtent;
-    using vn::vsg::detail::TextureReject;
+    using vn::backend_vsg::detail::classifyTexture;
+    using vn::backend_vsg::detail::textureDataMatchesExtent;
+    using vn::backend_vsg::detail::TextureReject;
 
     // A chain, not a single level: the rule sizes each level from ITS extent, so a texture whose image
     // carries three levels has to be measured level by level (level 1 is 4x4 of an 8x8 base, level 2 is 2x2).
@@ -878,9 +878,9 @@ TEST(VsgSceneRulesTest, TheExtentRuleAccountsForEveryLevelAndLayer)
 
 TEST(VsgSceneRulesTest, AnUnfilledLayerIsRefusedInsteadOfBeingDereferenced)
 {
-    using vn::vsg::detail::classifyTexture;
-    using vn::vsg::detail::textureDataMatchesExtent;
-    using vn::vsg::detail::TextureReject;
+    using vn::backend_vsg::detail::classifyTexture;
+    using vn::backend_vsg::detail::textureDataMatchesExtent;
+    using vn::backend_vsg::detail::TextureReject;
 
     // An empty face is the ordinary "still being filled" state, and the two rules have to agree about it:
     // classification says Incomplete (what the caller can act on), and the extent rule says "no" WITHOUT
@@ -901,7 +901,7 @@ TEST(VsgSceneRulesTest, AnUnfilledLayerIsRefusedInsteadOfBeingDereferenced)
 
 TEST(VsgSceneRulesTest, AnisotropyIsClampedToWhatTheDeviceOffers)
 {
-    using vn::vsg::detail::anisotropyFor;
+    using vn::backend_vsg::detail::anisotropyFor;
 
     // A request above the device's limit is a validation error, so the number a sampler is created with has
     // to be the smaller of the two. Vulkan's floor is 1.0, and 1 IS a legal request (it just filters
@@ -919,8 +919,8 @@ TEST(VsgSceneRulesTest, AnisotropyIsClampedToWhatTheDeviceOffers)
 
 TEST(VsgSceneRulesTest, AThreeChannelTextureIsRefusedForHavingNoVulkanFormat)
 {
-    using vn::vsg::detail::classifyTexture;
-    using vn::vsg::detail::TextureReject;
+    using vn::backend_vsg::detail::classifyTexture;
+    using vn::backend_vsg::detail::TextureReject;
 
     auto three_channel = filledTexture(vn::graphics::Texture::Kind::D2, vn::imaging::PixelFormat::Rgb8Unorm, 1);
     EXPECT_EQ(classifyTexture(three_channel.get()), TextureReject::UnsupportedFormat);
@@ -928,8 +928,8 @@ TEST(VsgSceneRulesTest, AThreeChannelTextureIsRefusedForHavingNoVulkanFormat)
 
 TEST(VsgSceneRulesTest, EachRefusalSaysWhichCaseFired)
 {
-    using vn::vsg::detail::TextureReject;
-    using vn::vsg::detail::textureRejectMessage;
+    using vn::backend_vsg::detail::TextureReject;
+    using vn::backend_vsg::detail::textureRejectMessage;
 
     auto unfilled      = filledTexture(vn::graphics::Texture::Kind::D2, vn::imaging::PixelFormat::Rgba8Unorm, 0);
     auto three_channel = filledTexture(vn::graphics::Texture::Kind::D2, vn::imaging::PixelFormat::Rgb8Unorm, 1);

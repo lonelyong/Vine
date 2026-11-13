@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/VsgBackend.hpp>
+#include <vine/backend_vsg/internal/VsgBackend.hpp>
 
 #include <algorithm>
 #include <array>
@@ -23,25 +23,25 @@
 #include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/graphics/backend/Observe.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
-#include <vine/vsg/internal/BackendContent.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/ContentAssembly.hpp>
-#include <vine/vsg/internal/ContentStore.hpp>
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/HostReadback.hpp>
-#include <vine/vsg/internal/HostTargets.hpp>
-#include <vine/vsg/internal/MaterialImages.hpp>
-#include <vine/vsg/internal/OffscreenSession.hpp>
-#include <vine/vsg/internal/PassRegistry.hpp>
-#include <vine/vsg/internal/Session.hpp>
-#include <vine/vsg/internal/SessionContent.hpp>
-#include <vine/vsg/internal/ViewBlock.hpp>
-#include <vine/vsg/internal/VsgExecutor.hpp>
-#include <vine/vsg/internal/WindowTarget.hpp>
-#include <vine/vsg/support/VsgSceneRules.hpp>
-#include <vine/vsg/support/VsgUtils.hpp>
+#include <vine/backend_vsg/internal/BackendContent.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/ContentAssembly.hpp>
+#include <vine/backend_vsg/internal/ContentStore.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/HostReadback.hpp>
+#include <vine/backend_vsg/internal/HostTargets.hpp>
+#include <vine/backend_vsg/internal/MaterialImages.hpp>
+#include <vine/backend_vsg/internal/OffscreenSession.hpp>
+#include <vine/backend_vsg/internal/PassRegistry.hpp>
+#include <vine/backend_vsg/internal/Session.hpp>
+#include <vine/backend_vsg/internal/SessionContent.hpp>
+#include <vine/backend_vsg/internal/ViewBlock.hpp>
+#include <vine/backend_vsg/internal/VsgExecutor.hpp>
+#include <vine/backend_vsg/internal/WindowTarget.hpp>
+#include <vine/backend_vsg/support/VsgSceneRules.hpp>
+#include <vine/backend_vsg/support/VsgUtils.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -229,18 +229,18 @@ std::span<const PassContent> recordContent(ContentAssembly&                     
                 if (texture == nullptr) {
                     continue; // an empty declaration produces nothing to bind
                 }
-                vn::vsg::detail::TextureReject reject = vn::vsg::detail::TextureReject::Ok;
+                vn::backend_vsg::detail::TextureReject reject = vn::backend_vsg::detail::TextureReject::Ok;
                 // The state belongs to the INPUT: the same texture declared with two states uploads once and
                 // yields two samplers (see MaterialImages). No state = the backend's input sampler, the
                 // behavior every imported input had before state existed.
                 const SamplerImage sampled =
                     pass.inputs[index].sampler.has_value() ? images.acquire(texture, *pass.inputs[index].sampler, reject) : images.acquire(texture, reject);
-                if (reject != vn::vsg::detail::TextureReject::Ok || sampled.view == nullptr) {
+                if (reject != vn::backend_vsg::detail::TextureReject::Ok || sampled.view == nullptr) {
                     diagnostics.report(vn::graphics::DiagnosticSeverity::Warning,
                                        vn::graphics::DiagnosticCategory::ContentSkipped,
                                        vn::String(u8"pass input texture could not be sampled; the input binds the white "
                                                   u8"stand-in: ") +
-                                           vn::vsg::detail::textureRejectMessage(reject, *texture));
+                                           vn::backend_vsg::detail::textureRejectMessage(reject, *texture));
                 }
                 if (sampled.view != nullptr) {
                     views.push_back(sampled.view);
@@ -1337,7 +1337,7 @@ vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
         const VkPhysicalDeviceProperties& properties = physical->getProperties();
         // The LIMITS travel beside the feature bits: "anisotropy exists" and "how much of it" are different
         // answers, and the number is clamped the one way the sampler path clamps it (anisotropyFor).
-        answer.max_anisotropy                        = vn::vsg::detail::anisotropyFor(properties.limits.maxSamplerAnisotropy);
+        answer.max_anisotropy                        = vn::backend_vsg::detail::anisotropyFor(properties.limits.maxSamplerAnisotropy);
         answer.max_color_attachments                 = properties.limits.maxColorAttachments;
         // ONE target has ONE sample count, and its colour and depth attachments must both support it, so the
         // limit reported is what BOTH can do (a device whose depth tops out lower is the binding side).
@@ -2174,4 +2174,4 @@ core::VariantPool& BackendContentAccess::pool(VsgBackend& backend) noexcept
 
 } // namespace detail
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

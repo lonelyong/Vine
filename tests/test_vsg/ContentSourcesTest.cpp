@@ -25,8 +25,8 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Texture.hpp>
 
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
 
 #include "TestProgramFacts.hpp"
 
@@ -35,14 +35,14 @@ using vn::graphics::Material;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
-using vn::vsg::buildMaterialFacts;
-using vn::vsg::buildProgramFacts;
-using vn::vsg::buildScreenProgramFacts;
-using vn::vsg::ContentFacts;
-using vn::vsg::FactMiss;
-using vn::vsg::findMaterial;
-using vn::vsg::MaterialFacts;
-using vn::vsg::ProgramFacts;
+using vn::backend_vsg::buildMaterialFacts;
+using vn::backend_vsg::buildProgramFacts;
+using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::ContentFacts;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::findMaterial;
+using vn::backend_vsg::MaterialFacts;
+using vn::backend_vsg::ProgramFacts;
 
 namespace
 {

@@ -4,7 +4,7 @@
 > **最后核对**：2026-11-02
 > **范围**：vsg 后端如何把编译好的帧值物化成 Vulkan 命令；平台事实与已踩过的坑。
 > **权威来源**：`RenderBackend.hpp` / `ShaderAbi.hpp` / `src/viz/graphics/sdk/vine/graphics/backend/**` /
-> `src/plugins/gfx_backend_vsg/include/vine/vsg/**`。
+> `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/**`。
 > **待办**：`../backlog/graphics.md`
 
 ## 1. 概要设计

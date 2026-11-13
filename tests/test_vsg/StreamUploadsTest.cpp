@@ -34,17 +34,17 @@
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/graphics/backend/Streams.hpp>
 #include <vine/intrusive_ptr.hpp>
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
 
 using vn::graphics::backend::FrameTimeline;
 using vn::graphics::backend::RetirementQueue;
 using vn::graphics::backend::StreamKey;
 using vn::graphics::backend::StreamKind;
-using vn::vsg::ContentDeclarationIndexes;
-using vn::vsg::ContentDeclarations;
-using vn::vsg::ContentFacts;
-using vn::vsg::StreamUploads;
+using vn::backend_vsg::ContentDeclarationIndexes;
+using vn::backend_vsg::ContentDeclarations;
+using vn::backend_vsg::ContentFacts;
+using vn::backend_vsg::StreamUploads;
 
 namespace
 {

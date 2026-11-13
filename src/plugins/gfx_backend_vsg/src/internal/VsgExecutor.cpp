@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/VsgExecutor.hpp>
+#include <vine/backend_vsg/internal/VsgExecutor.hpp>
 
 #include <cstddef>
 #include <exception>
@@ -6,9 +6,9 @@
 
 #include <vsg/core/Exception.h>
 
-#include <vine/vsg/internal/OffscreenSession.hpp>
+#include <vine/backend_vsg/internal/OffscreenSession.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {} // namespace
@@ -693,4 +693,4 @@ void VsgExecutor::reportWindowSkipped(const char* why)
                         vn::String::fromUtf8(std::string("a compiled pass is not recorded: ") + why + " (the pass targets the default framebuffer)"));
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

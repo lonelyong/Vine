@@ -1,12 +1,12 @@
-#include <vine/vsg/internal/StateCommands.hpp>
+#include <vine/backend_vsg/internal/StateCommands.hpp>
 
-#include <vine/vsg/support/RenderStateMapper.hpp>
+#include <vine/backend_vsg/support/RenderStateMapper.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -212,4 +212,4 @@ VkSampleCountFlagBits samplesToVk(std::uint32_t samples) noexcept
     return VK_SAMPLE_COUNT_1_BIT;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

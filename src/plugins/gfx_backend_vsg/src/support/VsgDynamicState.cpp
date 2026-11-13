@@ -1,4 +1,4 @@
-#include <vine/vsg/support/VsgDynamicState.hpp>
+#include <vine/backend_vsg/support/VsgDynamicState.hpp>
 
 #include <algorithm>
 #include <array>
@@ -6,7 +6,7 @@
 
 #include <vsg/vk/CommandBuffer.h>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -130,4 +130,4 @@ void SetDynamicState::record(::vsg::CommandBuffer& commandBuffer) const
 
 } // namespace detail
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

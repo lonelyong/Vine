@@ -16,11 +16,11 @@
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/vsg/internal/HostTargets.hpp>
+#include <vine/backend_vsg/internal/HostTargets.hpp>
 
 using vn::graphics::RenderTarget;
 using vn::graphics::backend::TargetFacts;
-using vn::vsg::HostTargets;
+using vn::backend_vsg::HostTargets;
 
 TEST(HostTargetsTest, TheDescriptionIsASnapshotAndTheFactsSayWhatIsBuilt)
 {

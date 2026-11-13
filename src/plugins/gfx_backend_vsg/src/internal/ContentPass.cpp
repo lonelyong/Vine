@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/ContentPass.hpp>
+#include <vine/backend_vsg/internal/ContentPass.hpp>
 
 #include <vine/graphics/Texture.hpp>
 
@@ -20,15 +20,15 @@
 
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/vsg/internal/ContentPush.hpp>
-#include <vine/vsg/internal/ContentSets.hpp>
-#include <vine/vsg/internal/ContentStore.hpp>
-#include <vine/vsg/internal/DrawBlock.hpp>
-#include <vine/vsg/internal/LightBlock.hpp>
-#include <vine/vsg/internal/MaterialSlotCheck.hpp>
-#include <vine/vsg/internal/ShadowBlock.hpp>
+#include <vine/backend_vsg/internal/ContentPush.hpp>
+#include <vine/backend_vsg/internal/ContentSets.hpp>
+#include <vine/backend_vsg/internal/ContentStore.hpp>
+#include <vine/backend_vsg/internal/DrawBlock.hpp>
+#include <vine/backend_vsg/internal/LightBlock.hpp>
+#include <vine/backend_vsg/internal/MaterialSlotCheck.hpp>
+#include <vine/backend_vsg/internal/ShadowBlock.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -459,7 +459,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
         // ONE call (every command of the call shares them), so one block serves the whole call and the block
         // bytes are written before the first command is recorded - the same "one announcement, one call" rule
         // the viewport follows.
-        vn::vsg::VineLightsBlock lights_block;
+        vn::backend_vsg::VineLightsBlock lights_block;
         const std::size_t        represented = packLightBlock(draw.lights, draw.camera, lights_block);
         BlockStorage::Block      lights{};
         if (recording) {
@@ -634,7 +634,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
     // The map: the input the plan RESOLVED (by the light its target states), never "the first one with a
     // depth" - a G-buffer has a depth too, and binding that one as the sun's map is the measured defect the
     // plan's own resolution exists to avoid (see api/ContentImages).
-    const std::size_t map_index = vn::vsg::shadowInputIndexOf(pass, inputs);
+    const std::size_t map_index = vn::backend_vsg::shadowInputIndexOf(pass, inputs);
 
     // A text that declares a sampler OTHER than the map's reads the SOURCE's attachments, so a call that names
     // no source among the pass' inputs has nothing to fill them from - and every input that is neither the
@@ -642,7 +642,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
     // with somebody else's picture (or left unread) is a picture nobody asked for.
     const bool declares_source_textures = [&] {
         for (const AbiBinding& binding : layer->abi().bindings) {
-            if (binding.kind != AbiDescriptorKind::UniformBlock && vn::vsg::imageOriginOf(binding.name) != ImageOrigin::Shadow) {
+            if (binding.kind != AbiDescriptorKind::UniformBlock && vn::backend_vsg::imageOriginOf(binding.name) != ImageOrigin::Shadow) {
                 return true;
             }
         }
@@ -699,9 +699,9 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
     // stand-in: the picture would be one nobody asked for, and the reason (the map's depth is not sampleable,
     // or its producer published no matrix) is exactly what the refusal has to say.
     std::uint32_t         map_binding  = 0U;
-    const bool            declares_map = vn::vsg::shadowBindingOf(layer->abi(), 0U, map_binding);
-    vn::vsg::SamplerImage map_image;
-    if (declares_map && !vn::vsg::shadowImageOf(pass, inputs, layer->depthSampler(), map_image)) {
+    const bool            declares_map = vn::backend_vsg::shadowBindingOf(layer->abi(), 0U, map_binding);
+    vn::backend_vsg::SamplerImage map_image;
+    if (declares_map && !vn::backend_vsg::shadowImageOf(pass, inputs, layer->depthSampler(), map_image)) {
         reportRefused("a full-screen drawing call",
                       "its program declares `vn_shadow_map` and this pass resolved no readable map (the depth is "
                       "not sampleable, or the producer published no matrix)");
@@ -771,7 +771,7 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
         return AbiBlockRole::NotABlock;
     };
 
-    vn::vsg::VineLightsBlock lights_block;
+    vn::backend_vsg::VineLightsBlock lights_block;
     std::uint64_t            lights_offset = 0U;
     if (hasRole(AbiBlockRole::Lights)) {
         const std::size_t         represented = packLightBlock(draw.lights, draw.camera, lights_block);
@@ -1446,4 +1446,4 @@ void ContentPass::reportLightsDropped(std::size_t announced, std::size_t represe
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ChannelIgnored, vn::String::fromUtf8(message));
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

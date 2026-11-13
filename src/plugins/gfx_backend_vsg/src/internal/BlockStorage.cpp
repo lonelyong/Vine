@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
 
 #include <algorithm>
 #include <cstring>
@@ -8,9 +8,9 @@
 #include <vsg/state/Buffer.h>
 #include <vsg/vk/DeviceMemory.h>
 
-#include <vine/vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -469,4 +469,4 @@ std::size_t BlockStorage::retireUnpinnedMaterials(const ContentDeclarations& dec
     return d->arena.retireUnpinned([&declarations](vn::graphics::MaterialId material) { return declarations.declaresMaterial(material); });
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

@@ -32,14 +32,14 @@
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/Streams.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
-#include <vine/vsg/internal/BlockDescriptors.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/backend_vsg/internal/BlockDescriptors.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include "TestMaterialFacts.hpp"
 #include "TestProgramFacts.hpp"
@@ -71,13 +71,13 @@ using vn::graphics::backend::PixelProbe;
 using vn::graphics::backend::Rgba8;
 using vn::graphics::backend::StateRegistry;
 using vn::graphics::backend::VariantPool;
-using vn::vsg::BlockDescriptors;
-using vn::vsg::BlockStorage;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentPipeline;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::StreamUploads;
-using vn::vsg::ViewportRect;
+using vn::backend_vsg::BlockDescriptors;
+using vn::backend_vsg::BlockStorage;
+using vn::backend_vsg::ContentDraw;
+using vn::backend_vsg::ContentPipeline;
+using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::StreamUploads;
+using vn::backend_vsg::ViewportRect;
 
 namespace
 {
@@ -156,7 +156,7 @@ ContentPipeline::Shaders mrtShaders()
 
 /// @brief What a case needs: an MRT target and the stack that can draw into it.
 struct Fixture {
-    vn::vsg::DeviceResult             created;
+    vn::backend_vsg::DeviceResult             created;
     std::unique_ptr<OffscreenTarget>  target;
     std::unique_ptr<BlockStorage>     storage;
     std::unique_ptr<BlockDescriptors> descriptors;
@@ -171,7 +171,7 @@ struct Fixture {
 
     bool build()
     {
-        created = vn::vsg::createDevice();
+        created = vn::backend_vsg::createDevice();
         if (!created.ok) {
             return false;
         }
@@ -184,8 +184,8 @@ struct Fixture {
             return false;
         }
         const ContentPipeline::Shaders shader_pair = mrtShaders();
-        vn::vsg::ProgramAbi            abi;
-        if (vn::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::vsg::FactMiss::None) {
+        vn::backend_vsg::ProgramAbi            abi;
+        if (vn::backend_vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::backend_vsg::FactMiss::None) {
             return false;
         }
         descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
@@ -207,7 +207,7 @@ struct Fixture {
         }
 
         uploads  = std::make_unique<StreamUploads>();
-        recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+        recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         viewer   = ::vsg::Viewer::create();
         return viewer != nullptr;

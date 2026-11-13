@@ -17,17 +17,17 @@
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/vsg/internal/BackendContent.hpp>
-#include <vine/vsg/internal/ContentAssembly.hpp>
-#include <vine/vsg/internal/ContentHalves.hpp>
-#include <vine/vsg/internal/ContentSets.hpp>
-#include <vine/vsg/internal/ContentStore.hpp>
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/DeviceProbe.hpp>
-#include <vine/vsg/internal/HostTargets.hpp>
-#include <vine/vsg/internal/MaterialImages.hpp>
-#include <vine/vsg/internal/VsgBackend.hpp>
-#include <vine/vsg/internal/WindowTarget.hpp>
+#include <vine/backend_vsg/internal/BackendContent.hpp>
+#include <vine/backend_vsg/internal/ContentAssembly.hpp>
+#include <vine/backend_vsg/internal/ContentHalves.hpp>
+#include <vine/backend_vsg/internal/ContentSets.hpp>
+#include <vine/backend_vsg/internal/ContentStore.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/DeviceProbe.hpp>
+#include <vine/backend_vsg/internal/HostTargets.hpp>
+#include <vine/backend_vsg/internal/MaterialImages.hpp>
+#include <vine/backend_vsg/internal/VsgBackend.hpp>
+#include <vine/backend_vsg/internal/WindowTarget.hpp>
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
@@ -65,14 +65,14 @@ using vn::graphics::backend::depthPlan;
 using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::VariantPool;
 using vn::test::setPrimitiveIndices;
-using vn::vsg::BlockStorage;
-using vn::vsg::ContentAssembly;
-using vn::vsg::ContentStore;
-using vn::vsg::HostTargets;
-using vn::vsg::PassRegistry;
-using vn::vsg::StreamUploads;
-using vn::vsg::WindowTarget;
-using vn::vsg::detail::BackendContentAccess;
+using vn::backend_vsg::BlockStorage;
+using vn::backend_vsg::ContentAssembly;
+using vn::backend_vsg::ContentStore;
+using vn::backend_vsg::HostTargets;
+using vn::backend_vsg::PassRegistry;
+using vn::backend_vsg::StreamUploads;
+using vn::backend_vsg::WindowTarget;
+using vn::backend_vsg::detail::BackendContentAccess;
 
 /**
  * @brief The device these cases drive directly, with the ONE window a case presents through held explicitly.
@@ -82,13 +82,13 @@ using vn::vsg::detail::BackendContentAccess;
  * this holds THAT window's target and names it in the frame, which is exactly what a host does; everything the cases
  * assert about the device (counters, clock, storage, targets) is inherited unchanged.
  */
-class DirectDriveBackend : public vn::vsg::VsgBackend {
+class DirectDriveBackend : public vn::backend_vsg::VsgBackend {
   public:
     /// @brief Creates the device @p desc asks for (see VsgBackend's constructor); this drive adds no opinion of its own.
     ///
     /// @param desc How the device reaches the display (a case about a display-less device states None).
     explicit DirectDriveBackend(const vn::graphics::DeviceDesc& desc = {})
-      : vn::vsg::VsgBackend(desc)
+      : vn::backend_vsg::VsgBackend(desc)
     {}
 
     /// The window's handle is the target's CREATION input; a second announcement MOVES the target that exists.
@@ -122,13 +122,13 @@ class DirectDriveBackend : public vn::vsg::VsgBackend {
     /// able to name it).
     void executeFrame(const vn::graphics::FrameDescription& frame)
     {
-        (void)vn::vsg::VsgBackend::executeFrame(frame, heldTarget());
+        (void)vn::backend_vsg::VsgBackend::executeFrame(frame, heldTarget());
     }
 
     /// The two-argument form, unchanged: a case that names a target explicitly (a foreign one, a bare presenter).
     vn::graphics::PresentOutcome executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to) override
     {
-        return vn::vsg::VsgBackend::executeFrame(frame, present_to);
+        return vn::backend_vsg::VsgBackend::executeFrame(frame, present_to);
     }
 
     [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget> target() const
@@ -424,7 +424,7 @@ TEST(VsgBackendTest, TheSdkFacingBackendComesUpPresentsEmptyFramesAndSaysWhatItC
     // have come from the device's own limit - which is what makes "the session hands it over" observable at
     // all (the entry point existed and nothing called it, and no test could tell). A device that reports no
     // anisotropy would read 1.0 here, which is why the assertion is "more than 1x" rather than a number.
-    const vn::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
+    const vn::backend_vsg::MaterialImages* images = BackendContentAccess::images(*backend);
     ASSERT_NE(images, nullptr);
     EXPECT_GT(images->maxAnisotropy(), 1.0F) << "the cache was never told the device's limit";
 
@@ -1294,7 +1294,7 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAContentProgram)
 
     // The texture is resident in the image cache; releasing it drops that entry, and the next frame uploads it
     // again because the host still owns the texture. The picture is the same magenta, not the white fallback.
-    vn::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
+    vn::backend_vsg::MaterialImages* images = BackendContentAccess::images(*backend);
     ASSERT_NE(images, nullptr);
     ASSERT_TRUE(images->has(texture.get()));
     EXPECT_TRUE(backend->releaseContent(texture.get()));
@@ -1799,7 +1799,7 @@ TEST(VsgBackendTest, ARefilledImportedTextureIsReuploadedForTheNextFrame)
         return std::array<std::uint8_t, 4>{ pixels[at], pixels[at + 1U], pixels[at + 2U], pixels[at + 3U] };
     };
 
-    vn::vsg::MaterialImages* const images = BackendContentAccess::images(*backend);
+    vn::backend_vsg::MaterialImages* const images = BackendContentAccess::images(*backend);
     ASSERT_NE(images, nullptr);
 
     drive();
@@ -1930,7 +1930,7 @@ TEST(VsgBackendTest, TwoInputStatesOverOneTextureSampleDifferently)
         << static_cast<int>(pixels[at + 1]) << ", " << static_cast<int>(pixels[at + 2]) << ")";
     EXPECT_EQ(pixels[at + 3], 255U);
 
-    vn::vsg::MaterialImages* const images = BackendContentAccess::images(*backend);
+    vn::backend_vsg::MaterialImages* const images = BackendContentAccess::images(*backend);
     ASSERT_NE(images, nullptr);
     EXPECT_EQ(images->count(), 1U) << "one texture, one upload";
     EXPECT_EQ(images->samplerCount(), 2U) << "two declared states, two samplers";
@@ -3738,7 +3738,7 @@ TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
     backend->setWindowHandle(host.handle());
     ASSERT_TRUE(backend->initialize());
 
-    vn::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
+    vn::backend_vsg::MaterialImages* images = BackendContentAccess::images(*backend);
     ASSERT_NE(images, nullptr);
     EXPECT_EQ(images->count(), 0U) << "a session that drew nothing caches no texture";
 
@@ -3753,9 +3753,9 @@ TEST(VsgBackendTest, EveryLiveTextureStaysResidentPastTheOldBound)
         return texture;
     };
     const auto acquire = [&](const vn::intrusive_ptr<vn::graphics::Texture2D>& texture) {
-        vn::vsg::detail::TextureReject reason   = vn::vsg::detail::TextureReject::Ok;
-        const vn::vsg::SamplerImage    acquired = images->acquire(texture.get(), reason);
-        EXPECT_EQ(reason, vn::vsg::detail::TextureReject::Ok) << "a complete 2D texture must upload";
+        vn::backend_vsg::detail::TextureReject reason   = vn::backend_vsg::detail::TextureReject::Ok;
+        const vn::backend_vsg::SamplerImage    acquired = images->acquire(texture.get(), reason);
+        EXPECT_EQ(reason, vn::backend_vsg::detail::TextureReject::Ok) << "a complete 2D texture must upload";
         EXPECT_NE(acquired.view, nullptr);
         EXPECT_NE(acquired.sampler, nullptr);
     };
@@ -3873,7 +3873,7 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
     ContentAssembly* assembly = BackendContentAccess::assembly(*backend);
     ASSERT_NE(store, nullptr);
     ASSERT_NE(assembly, nullptr);
-    vn::vsg::MaterialImages* images = BackendContentAccess::images(*backend);
+    vn::backend_vsg::MaterialImages* images = BackendContentAccess::images(*backend);
     ASSERT_NE(images, nullptr);
     BlockStorage* const storage = BackendContentAccess::storage(*backend);
     ASSERT_NE(storage, nullptr);
@@ -3949,9 +3949,9 @@ TEST(VsgBackendTest, MeasureWhatRepeatedCreateAndDropLeavesBehind)
                 }
                 texture->setImage(vn::intrusive_ptr<const vn::imaging::Image>(image));
             }
-            vn::vsg::detail::TextureReject reason = vn::vsg::detail::TextureReject::Ok;
+            vn::backend_vsg::detail::TextureReject reason = vn::backend_vsg::detail::TextureReject::Ok;
             (void)images->acquire(texture.get(), reason);
-            EXPECT_EQ(reason, vn::vsg::detail::TextureReject::Ok);
+            EXPECT_EQ(reason, vn::backend_vsg::detail::TextureReject::Ok);
             EXPECT_TRUE(images->has(texture.get())) << "the cache holds this cycle's texture, for now";
 
             drive(); // the one frame that names all of it
@@ -4586,7 +4586,7 @@ TEST(VsgBackendTest, ANullTargetRunsTheFrameWithoutAnyWindow)
     // `.ai/design/graphics-architecture.md` §6): it is the off-screen form. It acquires nothing, presents nothing,
     // brings no window into existence, and reports nothing - and the next frame through a window's target still
     // presents exactly once.
-    vn::intrusive_ptr<vn::vsg::VsgBackend>      backend(new vn::vsg::VsgBackend());
+    vn::intrusive_ptr<vn::backend_vsg::VsgBackend>      backend(new vn::backend_vsg::VsgBackend());
     std::vector<vn::graphics::RenderDiagnostic> reported;
     backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
 
@@ -4648,7 +4648,7 @@ TEST(VsgBackendTest, ADeviceCreatedWithNoPresentationRunsWholeFramesWithoutAWind
     desc.presentation = vn::graphics::DevicePresentation::None;
     // The plain device, not this file's drive: that one holds a window's target so a case can name it, and this device
     // has no window to hold (its one-argument executeFrame would ask for window 0's target and be answered NoPresentation).
-    vn::intrusive_ptr<vn::vsg::VsgBackend>      backend(new vn::vsg::VsgBackend(desc));
+    vn::intrusive_ptr<vn::backend_vsg::VsgBackend>      backend(new vn::backend_vsg::VsgBackend(desc));
     std::vector<vn::graphics::RenderDiagnostic> reported;
     backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
 
@@ -4944,14 +4944,14 @@ TEST(VsgBackendTest, ADeviceCapThatIsReachedIsAReasonAndNotAnException)
     ASSERT_GT(cap, 0U) << "a build that allows no device at all cannot run this suite";
 
     // 1. The window-less seam: fill this build's slots, then ask for one more.
-    std::vector<vn::vsg::DeviceResult> held;
+    std::vector<vn::backend_vsg::DeviceResult> held;
     held.reserve(cap);
     for (std::uint32_t index = 0; index < cap; ++index) {
-        held.push_back(vn::vsg::createDevice());
+        held.push_back(vn::backend_vsg::createDevice());
         ASSERT_TRUE(held.back().ok) << "slot " << index << ": " << as_bytes(held.back().error);
     }
 
-    const vn::vsg::DeviceResult refused = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult refused = vn::backend_vsg::createDevice();
     EXPECT_FALSE(refused.ok) << "the cap is reached: the seam answers, it does not throw";
     EXPECT_EQ(refused.device, nullptr) << "a refused creation hands out no device";
     const std::string seam_reason = as_bytes(refused.error);
@@ -4980,6 +4980,6 @@ TEST(VsgBackendTest, ADeviceCapThatIsReachedIsAReasonAndNotAnException)
     // 3. A slot comes back when a device goes: the refusal is about devices ALIVE, not about a counter that
     //    can only go up. (vsg reuses a released id, and the seam must not answer "cap reached" afterwards.)
     held.pop_back();
-    const vn::vsg::DeviceResult reused = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult reused = vn::backend_vsg::createDevice();
     EXPECT_TRUE(reused.ok) << as_bytes(reused.error);
 }

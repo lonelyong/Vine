@@ -43,23 +43,23 @@
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/Streams.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
-#include <vine/vsg/internal/BlockDescriptors.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/ContentPass.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/ContentSources.hpp>
-#include <vine/vsg/internal/DeviceProbe.hpp>
-#include <vine/vsg/internal/GeometryFacts.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/Session.hpp>
-#include <vine/vsg/internal/SessionContent.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/vsg/internal/ViewBlock.hpp>
-#include <vine/vsg/internal/VsgExecutor.hpp>
-#include <vine/vsg/internal/WindowTarget.hpp>
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/backend_vsg/internal/BlockDescriptors.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentPass.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/DeviceProbe.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/Session.hpp>
+#include <vine/backend_vsg/internal/SessionContent.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/internal/ViewBlock.hpp>
+#include <vine/backend_vsg/internal/VsgExecutor.hpp>
+#include <vine/backend_vsg/internal/WindowTarget.hpp>
+#include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/Camera.hpp>
@@ -111,29 +111,29 @@ using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::TargetShape;
 using vn::graphics::backend::VariantPool;
 using vn::test::setPrimitiveIndices;
-using vn::vsg::BlockDescriptors;
-using vn::vsg::BlockStorage;
-using vn::vsg::buildGeometryFacts;
-using vn::vsg::buildMaterialFacts;
-using vn::vsg::buildProgramFacts;
-using vn::vsg::buildViewBlock;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentFacts;
-using vn::vsg::ContentPass;
-using vn::vsg::ContentPipeline;
-using vn::vsg::FactMiss;
-using vn::vsg::GeometryFacts;
-using vn::vsg::MaterialFacts;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::PassContent;
-using vn::vsg::ProgramFacts;
-using vn::vsg::StreamUploads;
-using vn::vsg::ViewportRect;
-using vn::vsg::VsgExecutor;
-using vn::vsg::WindowTarget;
-using vn::vsg::api::probePhysicalDevices;
-using vn::vsg::api::Session;
-using vn::vsg::api::SessionOptions;
+using vn::backend_vsg::BlockDescriptors;
+using vn::backend_vsg::BlockStorage;
+using vn::backend_vsg::buildGeometryFacts;
+using vn::backend_vsg::buildMaterialFacts;
+using vn::backend_vsg::buildProgramFacts;
+using vn::backend_vsg::buildViewBlock;
+using vn::backend_vsg::ContentDraw;
+using vn::backend_vsg::ContentFacts;
+using vn::backend_vsg::ContentPass;
+using vn::backend_vsg::ContentPipeline;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::GeometryFacts;
+using vn::backend_vsg::MaterialFacts;
+using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::PassContent;
+using vn::backend_vsg::ProgramFacts;
+using vn::backend_vsg::StreamUploads;
+using vn::backend_vsg::ViewportRect;
+using vn::backend_vsg::VsgExecutor;
+using vn::backend_vsg::WindowTarget;
+using vn::backend_vsg::api::probePhysicalDevices;
+using vn::backend_vsg::api::Session;
+using vn::backend_vsg::api::SessionOptions;
 
 #if !defined(_WIN32)
 
@@ -240,8 +240,8 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     ASSERT_TRUE(session.initialize(options, diagnostics)) << "the session must adopt the host window";
 
     // The three facts a drawing layer needs from the session: its content root, its device, a recompile.
-    const auto root   = vn::vsg::detail::SessionContentAccess::root(session);
-    const auto device = vn::vsg::detail::SessionContentAccess::device(session);
+    const auto root   = vn::backend_vsg::detail::SessionContentAccess::root(session);
+    const auto device = vn::backend_vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(root, nullptr) << "the session must expose the node it renders";
     ASSERT_NE(device, nullptr);
 
@@ -249,8 +249,8 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     auto storage = BlockStorage::create(device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);
     const ContentPipeline::Shaders program_shaders = shaders();
-    vn::vsg::ProgramAbi            program_abi;
-    ASSERT_EQ(vn::vsg::scanProgramAbi(program_shaders.vertex, program_shaders.fragment, {}, program_abi), FactMiss::None);
+    vn::backend_vsg::ProgramAbi            program_abi;
+    ASSERT_EQ(vn::backend_vsg::scanProgramAbi(program_shaders.vertex, program_shaders.fragment, {}, program_abi), FactMiss::None);
     auto descriptors = BlockDescriptors::forAbi(program_abi, 0U, device, *storage);
     ASSERT_NE(descriptors, nullptr);
 
@@ -284,7 +284,7 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
 
     VariantPool   pool;
     StateRegistry registry(pool);
-    ContentDraw   recorder(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk()));
+    ContentDraw   recorder(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk()));
 
     storage->beginFrame();
     const auto view     = storage->writeView(std::vector<std::byte>(288U, std::byte{ 0 }));
@@ -310,7 +310,7 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     ASSERT_NE(content, nullptr) << "the draw must record";
 
     root->addChild(content);
-    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::recompile(session)) << "content attached after the session came up has to be compiled";
+    ASSERT_TRUE(vn::backend_vsg::detail::SessionContentAccess::recompile(session)) << "content attached after the session came up has to be compiled";
 
     for (int frame = 0; frame < 3; ++frame) {
         ASSERT_TRUE(session.beginFrame());
@@ -382,9 +382,9 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     options.validation    = true;
     ASSERT_TRUE(session.initialize(options, diagnostics));
 
-    WindowTarget* window_target = vn::vsg::detail::SessionContentAccess::windowTarget(session);
+    WindowTarget* window_target = vn::backend_vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window_target, nullptr) << "the session wraps its window as the frame's default framebuffer";
-    const auto device = vn::vsg::detail::SessionContentAccess::device(session);
+    const auto device = vn::backend_vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(device, nullptr);
 
     // The content stack, built on the SESSION's device.
@@ -439,8 +439,8 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
 
     GeometryFacts                        geometry_facts;
-    std::vector<vn::vsg::ChannelFacts>   channel_storage;
-    std::vector<vn::vsg::PrimitiveFacts> primitives_channel_storage;
+    std::vector<vn::backend_vsg::ChannelFacts>   channel_storage;
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitives_channel_storage;
     ASSERT_EQ(buildGeometryFacts(*geometry, geometry_facts, channel_storage, primitives_channel_storage), FactMiss::None);
     MaterialFacts          material_facts;
     std::vector<std::byte> material_storage;
@@ -457,7 +457,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     VariantPool   pool;
     StateRegistry registry(pool);
     StreamUploads uploads;
-    ContentDraw   draws(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk()));
+    ContentDraw   draws(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(device->vk(), device->getInstance()->vk()));
 
     // The camera: looking at (0.5, 0, 0) from (0.5, 0, 1.5), with an orthographic window of [-1, 1] squared.
     // The look-at puts the triangle 0.5 to the LEFT of the window's centre; the fragment stage reports the
@@ -533,7 +533,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // the graph the session hands out for this frame.
     VsgExecutor executor(diagnostics);
     executor.setWindow(window_target);
-    const auto command_graph = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    const auto command_graph = vn::backend_vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(command_graph, nullptr);
 
     const PassContent packet{ frame.passes[0].pass, content_node };
@@ -542,7 +542,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     ASSERT_EQ(executor.recorded().size(), 1U);
     EXPECT_EQ(executor.recorded()[0], 7U);
 
-    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
+    ASSERT_TRUE(vn::backend_vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
     ASSERT_TRUE(session.commitFrame());
 
     // The frame's books: ONE present for the frame, the timeline moved once, no device wait anywhere.
@@ -559,7 +559,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // keeps the picture: the assignment is consumed by the commit that follows it.
     for (int settle = 0; settle < 2; ++settle) {
         ASSERT_TRUE(session.beginFrame());
-        ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
+        ASSERT_TRUE(vn::backend_vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));
         ASSERT_TRUE(session.commitFrame());
     }
 

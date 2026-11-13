@@ -32,13 +32,13 @@
 #include <vsg/state/Sampler.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/vsg/internal/BlockDescriptors.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/BlockDescriptors.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
 
 #include "SdkPixelFixture.hpp"
 
-using vn::vsg::BlockDescriptors;
-using vn::vsg::BlockStorage;
+using vn::backend_vsg::BlockDescriptors;
+using vn::backend_vsg::BlockStorage;
 
 namespace
 {
@@ -212,8 +212,8 @@ TEST(BlockDescriptorsTest, TheDeclaredShapeDecidesTheBindingsAndTheOffsets)
     ASSERT_TRUE(fixture.build({}));
 
     const BlockDescriptors::Binding declared[]{
-        { 0U, vn::vsg::AbiBlockRole::View     },
-        { 3U, vn::vsg::AbiBlockRole::Material }
+        { 0U, vn::backend_vsg::AbiBlockRole::View     },
+        { 3U, vn::backend_vsg::AbiBlockRole::Material }
     };
     std::unique_ptr<BlockDescriptors> descriptors = BlockDescriptors::create(fixture.device, *fixture.storage, declared, 1U);
     ASSERT_NE(descriptors, nullptr);
@@ -259,7 +259,7 @@ TEST(BlockDescriptorsTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     ASSERT_NE(sampler, nullptr);
 
     const BlockDescriptors::Binding declared[]{
-        { 0U, vn::vsg::AbiBlockRole::Material }
+        { 0U, vn::backend_vsg::AbiBlockRole::Material }
     };
     const BlockDescriptors::SampledBinding maps[]{
         { 1U, view, sampler }

@@ -1,13 +1,13 @@
-#include <vine/vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
 
 #include <vsg/core/Exception.h>
 
 #include <vsg/vk/PhysicalDevice.h>
 
-#include <vine/vsg/internal/DeviceFeatures.hpp>
-#include <vine/vsg/internal/DeviceProbe.hpp>
+#include <vine/backend_vsg/internal/DeviceFeatures.hpp>
+#include <vine/backend_vsg/internal/DeviceProbe.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -150,4 +150,4 @@ DeviceResult createDevice(const DeviceOptions& options)
     return result;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

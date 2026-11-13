@@ -28,11 +28,11 @@
 #include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/graphics/backend/Observe.hpp>
 #include <vine/graphics/backend/SlotProbe.hpp>
-#include <vine/vsg/internal/DeviceProbe.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/Session.hpp>
-#include <vine/vsg/internal/SessionContent.hpp>
-#include <vine/vsg/internal/VsgExecutor.hpp>
+#include <vine/backend_vsg/internal/DeviceProbe.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/Session.hpp>
+#include <vine/backend_vsg/internal/SessionContent.hpp>
+#include <vine/backend_vsg/internal/VsgExecutor.hpp>
 
 #include "FailingStepNode.hpp"
 #include "SdkPixelFixture.hpp"
@@ -53,10 +53,10 @@ using vn::graphics::backend::Rgba8;
 using vn::graphics::backend::TargetAction;
 using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::TargetShape;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::VsgExecutor;
-using vn::vsg::api::Session;
-using vn::vsg::api::SessionOptions;
+using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::VsgExecutor;
+using vn::backend_vsg::api::Session;
+using vn::backend_vsg::api::SessionOptions;
 
 namespace
 {
@@ -117,7 +117,7 @@ TEST(SessionTest, ASecondSessionRendersOnTheDeviceTheFirstOneCreated)
 
     Session first;
     ASSERT_TRUE(first.initialize(SessionOptions{}, diagnostics));
-    const ::vsg::ref_ptr<::vsg::Device> device = vn::vsg::detail::SessionContentAccess::device(first);
+    const ::vsg::ref_ptr<::vsg::Device> device = vn::backend_vsg::detail::SessionContentAccess::device(first);
     ASSERT_NE(device, nullptr);
 
     // The second session ADOPTS the first one's device: its window brings nothing but a surface and a swapchain.
@@ -125,8 +125,8 @@ TEST(SessionTest, ASecondSessionRendersOnTheDeviceTheFirstOneCreated)
     shared_options.device = device.get();
     Session second;
     ASSERT_TRUE(second.initialize(shared_options, diagnostics));
-    EXPECT_TRUE(vn::vsg::detail::SessionContentAccess::device(second) == device) << "the second session renders on the device the first one created";
-    EXPECT_TRUE(vn::vsg::detail::SessionContentAccess::windowTarget(second) != vn::vsg::detail::SessionContentAccess::windowTarget(first))
+    EXPECT_TRUE(vn::backend_vsg::detail::SessionContentAccess::device(second) == device) << "the second session renders on the device the first one created";
+    EXPECT_TRUE(vn::backend_vsg::detail::SessionContentAccess::windowTarget(second) != vn::backend_vsg::detail::SessionContentAccess::windowTarget(first))
         << "and has a window (and a default-framebuffer target) of its own";
 
     // Two swapchains on one device: each session opens and commits its own frames.
@@ -229,7 +229,7 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
 
     // Two off-screen targets, one colour each - so WHICH graph the session submitted is readable: each frame
     // hands over its own graph (one per frame, see makeFrameGraph) and writes one of them with its own clear.
-    const ::vsg::ref_ptr<::vsg::Device> device = vn::vsg::detail::SessionContentAccess::device(session);
+    const ::vsg::ref_ptr<::vsg::Device> device = vn::backend_vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(device, nullptr);
     auto first_target  = OffscreenTarget::create(device,
                                                  OffscreenTarget::Layout{
@@ -246,7 +246,7 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
     ASSERT_NE(first_target, nullptr);
     ASSERT_NE(second_target, nullptr);
 
-    vn::vsg::WindowTarget* window = vn::vsg::detail::SessionContentAccess::windowTarget(session);
+    vn::backend_vsg::WindowTarget* window = vn::backend_vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window, nullptr);
     VsgExecutor executor(diagnostics);
     executor.setWindow(window);
@@ -302,11 +302,11 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
         }
         const CompiledFrame& compiled = compiler.compile(recorder.description(), FrameFacts{ table });
 
-        const ::vsg::ref_ptr<::vsg::CommandGraph> graph = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+        const ::vsg::ref_ptr<::vsg::CommandGraph> graph = vn::backend_vsg::detail::SessionContentAccess::makeFrameGraph(session);
         EXPECT_NE(graph, nullptr);
         EXPECT_TRUE(executor.record(compiled, graph));
         EXPECT_EQ(executor.skipped(), 0U);
-        EXPECT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
+        EXPECT_TRUE(vn::backend_vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
         return executor.commit(compiled, session);
     };
 
@@ -371,7 +371,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
 
         // The frame drive of the window path: one executor that holds the window and the off-screen target,
         // so every target the plan can resolve to is one it knows.
-        const ::vsg::ref_ptr<::vsg::Device> device = vn::vsg::detail::SessionContentAccess::device(session);
+        const ::vsg::ref_ptr<::vsg::Device> device = vn::backend_vsg::detail::SessionContentAccess::device(session);
         ASSERT_NE(device, nullptr);
         auto target = OffscreenTarget::create(device,
                                               OffscreenTarget::Layout{
@@ -380,7 +380,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
                                                 { 0.25F, 0.5F, 0.75F, 1.0F }
         });
         ASSERT_NE(target, nullptr);
-        vn::vsg::WindowTarget* window = vn::vsg::detail::SessionContentAccess::windowTarget(session);
+        vn::backend_vsg::WindowTarget* window = vn::backend_vsg::detail::SessionContentAccess::windowTarget(session);
         ASSERT_NE(window, nullptr);
 
         VsgExecutor executor(diagnostics);
@@ -420,11 +420,11 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
         ASSERT_TRUE(first_token);
         const CompiledFrame* first = record_frame(first_token);
         ASSERT_EQ(first->passes.size(), 2U);
-        const ::vsg::ref_ptr<::vsg::CommandGraph> graph = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+        const ::vsg::ref_ptr<::vsg::CommandGraph> graph = vn::backend_vsg::detail::SessionContentAccess::makeFrameGraph(session);
         ASSERT_NE(graph, nullptr);
         ASSERT_TRUE(executor.record(*first, graph));
         EXPECT_EQ(executor.skipped(), 0U);
-        ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
+        ASSERT_TRUE(vn::backend_vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
         EXPECT_TRUE(executor.commit(*first, session)) << "the drive submits and presents through the session";
         EXPECT_EQ(session.framesPresented(), 1U);
         EXPECT_EQ(session.deviceWaits(), 0U) << "a frame that goes through does not stop the device";
@@ -451,7 +451,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     // not one it keeps driving.
     Session session;
     ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
-    const ::vsg::ref_ptr<::vsg::Device> device = vn::vsg::detail::SessionContentAccess::device(session);
+    const ::vsg::ref_ptr<::vsg::Device> device = vn::backend_vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(device, nullptr);
     auto target = OffscreenTarget::create(device,
                                           OffscreenTarget::Layout{
@@ -460,7 +460,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
                                             { 0.25F, 0.5F, 0.75F, 1.0F }
     });
     ASSERT_NE(target, nullptr);
-    vn::vsg::WindowTarget* window = vn::vsg::detail::SessionContentAccess::windowTarget(session);
+    vn::backend_vsg::WindowTarget* window = vn::backend_vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window, nullptr);
 
     VsgExecutor executor(diagnostics);
@@ -501,12 +501,12 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     const FrameToken second_token = session.beginFrame();
     ASSERT_TRUE(second_token);
     const CompiledFrame* second        = record_frame(second_token);
-    const auto           failing_graph = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    const auto           failing_graph = vn::backend_vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(failing_graph, nullptr);
     ::vsg::ref_ptr<FailingStepNode> failing(new FailingStepNode());
     failing_graph->addChild(failing);
     ASSERT_TRUE(executor.record(*second, failing_graph));
-    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ failing_graph }));
+    ASSERT_TRUE(vn::backend_vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ failing_graph }));
     failing->armed = true;
 
     const std::uint64_t failures_before = diagnostics.count(vn::graphics::DiagnosticCategory::SubmissionFailed);
@@ -551,11 +551,11 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
         }
         const CompiledFrame& compiled = compiler.compile(recorder.description(), FrameFacts{ table });
 
-        const ::vsg::ref_ptr<::vsg::CommandGraph> graph = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+        const ::vsg::ref_ptr<::vsg::CommandGraph> graph = vn::backend_vsg::detail::SessionContentAccess::makeFrameGraph(session);
         EXPECT_NE(graph, nullptr);
         EXPECT_TRUE(executor.record(compiled, graph));
         EXPECT_EQ(executor.skipped(), 0U);
-        EXPECT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
+        EXPECT_TRUE(vn::backend_vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
         EXPECT_TRUE(executor.commit(compiled, session)) << "the next frame goes through on the same session";
         return &compiled;
     };
@@ -612,7 +612,7 @@ TEST(SessionTest, AWindowPlanThatGotTheFormatWrongIsNotRecorded)
     Session     session;
     ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
 
-    vn::vsg::WindowTarget* window = vn::vsg::detail::SessionContentAccess::windowTarget(session);
+    vn::backend_vsg::WindowTarget* window = vn::backend_vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window, nullptr);
 
     VsgExecutor executor(diagnostics);
@@ -655,7 +655,7 @@ TEST(SessionTest, AWindowPlanThatGotTheFormatWrongIsNotRecorded)
     ASSERT_EQ(wrong.passes.size(), 1U);
     EXPECT_EQ(wrong.passes[0].color_attachments, 1U) << "the count agrees: only the format drifted";
 
-    const ::vsg::ref_ptr<::vsg::CommandGraph> refused = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    const ::vsg::ref_ptr<::vsg::CommandGraph> refused = vn::backend_vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(refused, nullptr);
     EXPECT_FALSE(executor.record(wrong, refused)) << "the same count is not the same render pass";
     EXPECT_EQ(executor.skipped(), 1U);
@@ -667,14 +667,14 @@ TEST(SessionTest, AWindowPlanThatGotTheFormatWrongIsNotRecorded)
     const CompiledFrame& right = compiler.compile(recorder.description(), FrameFacts{ truthful });
     ASSERT_EQ(right.passes.size(), 1U);
 
-    const ::vsg::ref_ptr<::vsg::CommandGraph> served = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    const ::vsg::ref_ptr<::vsg::CommandGraph> served = vn::backend_vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(served, nullptr);
     EXPECT_TRUE(executor.record(right, served));
     EXPECT_EQ(executor.skipped(), 0U);
     ASSERT_EQ(executor.recorded().size(), 1U);
     EXPECT_EQ(executor.recorded()[0], 1U);
 
-    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ served }));
+    ASSERT_TRUE(vn::backend_vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ served }));
     EXPECT_TRUE(session.commitFrame());
     EXPECT_EQ(session.framesPresented(), 1U);
     EXPECT_EQ(session.deviceWaits(), 0U) << "none of this is a reason to stop the device";
@@ -692,9 +692,9 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
     Session     session;
     ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
 
-    vn::vsg::WindowTarget* window = vn::vsg::detail::SessionContentAccess::windowTarget(session);
+    vn::backend_vsg::WindowTarget* window = vn::backend_vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window, nullptr);
-    const auto device = vn::vsg::detail::SessionContentAccess::device(session);
+    const auto device = vn::backend_vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(device, nullptr);
 
     VsgExecutor executor(diagnostics);
@@ -750,7 +750,7 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
         EXPECT_EQ(applied.resized + applied.rebuilt + applied.refused + applied.failed, 0U) << "a steady window has no answer to apply";
     }
     {
-        const ::vsg::ref_ptr<::vsg::CommandGraph> graph = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+        const ::vsg::ref_ptr<::vsg::CommandGraph> graph = vn::backend_vsg::detail::SessionContentAccess::makeFrameGraph(session);
         ASSERT_NE(graph, nullptr);
         EXPECT_TRUE(executor.record(steady, graph));
         EXPECT_EQ(executor.skipped(), 0U);
@@ -778,7 +778,7 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
         << "the target still reports what the swapchain serves: the plan's claim was not adopted";
     EXPECT_FALSE(window->refresh());
     {
-        const ::vsg::ref_ptr<::vsg::CommandGraph> graph = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+        const ::vsg::ref_ptr<::vsg::CommandGraph> graph = vn::backend_vsg::detail::SessionContentAccess::makeFrameGraph(session);
         ASSERT_NE(graph, nullptr);
         EXPECT_FALSE(executor.record(rebuild, graph)) << "an unapplied rebuild is not recorded";
         EXPECT_EQ(executor.skipped(), 1U);
@@ -788,14 +788,14 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
     // (3) The window is still usable: told the truth, the same pass records - and the frame is presented.
     const CompiledFrame& again = compiler.compile(recorder.description(), FrameFacts{ truthful });
     ASSERT_EQ(again.passes.size(), 1U);
-    const ::vsg::ref_ptr<::vsg::CommandGraph> served = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    const ::vsg::ref_ptr<::vsg::CommandGraph> served = vn::backend_vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(served, nullptr);
     EXPECT_TRUE(executor.record(again, served));
     EXPECT_EQ(executor.skipped(), 0U);
     ASSERT_EQ(executor.recorded().size(), 1U);
     EXPECT_EQ(executor.recorded()[0], 1U);
 
-    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ served }));
+    ASSERT_TRUE(vn::backend_vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ served }));
     EXPECT_TRUE(session.commitFrame());
     EXPECT_EQ(session.framesPresented(), 1U);
     EXPECT_EQ(session.deviceWaits(), 0U) << "none of this is a reason to stop the device";
@@ -816,11 +816,11 @@ TEST(SessionTest, ACommitWhoseSubmissionFailsSaysSoAndTheFrameIsStillOver)
     // The session's own frame graph, with a node that fails the submission's record step on command: a
     // queue submit the driver refuses cannot be summoned on lavapipe, and vsg's own failure vocabulary for
     // "this step cannot be made" is an exception (see FailingStepNode).
-    ::vsg::ref_ptr<::vsg::CommandGraph> graph = vn::vsg::detail::SessionContentAccess::makeFrameGraph(session);
+    ::vsg::ref_ptr<::vsg::CommandGraph> graph = vn::backend_vsg::detail::SessionContentAccess::makeFrameGraph(session);
     ASSERT_NE(graph, nullptr);
     ::vsg::ref_ptr<FailingStepNode> failing(new FailingStepNode());
     graph->addChild(failing);
-    ASSERT_TRUE(vn::vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
+    ASSERT_TRUE(vn::backend_vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ graph }));
 
     ASSERT_TRUE(session.beginFrame());
     failing->armed = true;

@@ -3,7 +3,7 @@
 #include <vector>
 
 #include <vine/graphics/Geometry.hpp>
-#include <vine/vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
 
 /**
  * @brief Describes a LIVE geometry, the way a content-side caller does, for tests that never cross a thread.
@@ -19,14 +19,14 @@
  * @param out        Receives the entry (its spans point into @p channels / @p primitives).
  * @param channels   Caller-owned channel storage the entry borrows; cleared first, and must outlive the entry.
  * @param primitives Caller-owned primitive storage, same rule.
- * @return None when the entry was built; Unknown / Malformed as `vn::vsg::buildGeometryFacts` states.
+ * @return None when the entry was built; Unknown / Malformed as `vn::backend_vsg::buildGeometryFacts` states.
  */
-inline vn::vsg::FactMiss buildGeometryFacts(const vn::graphics::Geometry&        geometry,
-                                            vn::vsg::GeometryFacts&              out,
-                                            std::vector<vn::vsg::ChannelFacts>&   channels,
-                                            std::vector<vn::vsg::PrimitiveFacts>& primitives)
+inline vn::backend_vsg::FactMiss buildGeometryFacts(const vn::graphics::Geometry&        geometry,
+                                            vn::backend_vsg::GeometryFacts&              out,
+                                            std::vector<vn::backend_vsg::ChannelFacts>&   channels,
+                                            std::vector<vn::backend_vsg::PrimitiveFacts>& primitives)
 {
-    const vn::vsg::FactMiss miss = vn::vsg::buildGeometryFacts(*geometry.description(), out, channels, primitives);
+    const vn::backend_vsg::FactMiss miss = vn::backend_vsg::buildGeometryFacts(*geometry.description(), out, channels, primitives);
     // The ref these tests will name from their commands: the geometry's own id, which is what a hand-built
     // `RenderCommand` / `CompiledCommand` carries (a draw list's row identity is the same node id), and the revision
     // its shape is at. The backend's builder stamps no identity at all, because a description knows its revision,

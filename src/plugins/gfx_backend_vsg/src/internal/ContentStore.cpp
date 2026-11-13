@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/ContentStore.hpp>
+#include <vine/backend_vsg/internal/ContentStore.hpp>
 
 #include <algorithm>
 #include <functional>
@@ -6,11 +6,11 @@
 #include <utility>
 #include <vector>
 
-#include <vine/vsg/internal/ContentSources.hpp>
-#include <vine/vsg/internal/GeometryFacts.hpp>
-#include <vine/vsg/internal/ProgramVariant.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/ProgramVariant.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -1281,4 +1281,4 @@ std::uint64_t ContentStore::builds() const noexcept
     return d->builds;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

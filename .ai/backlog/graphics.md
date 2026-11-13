@@ -47,6 +47,7 @@
 | T14 | H2 可选目视 | “边缩放边点菜单”需真实交互桌面 | 可选 |
 | T33 | 设备创建偶发（疑 WSL） | `VsgBackendTest.ACubeMapInputReachesAContentProgramAsACubeSampler` 首跑 `initialize()` false（约 10.7 s，日志里窗口尺寸报 `4294967295x4294967295`），重跑绿；同一提交下其余用例全部正常。判断：更像是 WSLg 下窗口/设备创建的偶发，不是回归（当时 `git stash` 前后行为一致，且与本次改动无交集）。**下次在 Windows 桌面机器上复跑同一用例**：绿 → WSL 环境问题，删本条；红 → 按设备创建失败查（`VsgHostWindow` 句柄与 `DeviceProbe` 的选择） | 有 Windows 桌面机器时（与 T12 同一轮） |
 | T34 | `test_vsg` 的 TSan 构建 | `tests/test_vsg/AllocationCounter.cpp` 替换全局 `operator new/delete`，与 `libclang_rt.tsan_cxx` 的强定义冲突（链接报 multiple definition）；`scripts/tsan_check.sh` 因此只跑 `test_graphics`。T31 的证据是手动从链接命令里去掉 `AllocationCounter.cpp.o` 重链才拿到的。要正式覆盖：给该文件加 sanitizer 守卫（不 announce `countsAvailable`），把依赖计数的用例在 `!countsAvailable()` 时跳过，再让脚本能跑 `test_vsg` 的无设备子集（`StreamUploadsTest.AnEditFromTheHostThread...` 是新 gate 的第一个消费者） | 已命中（T31 修复落地，2026-11-13） | `scripts/tsan_check.sh`、`tests/test_vsg/AllocationCounter.cpp` |
+| T36 | `EachAttachmentClearsToItsOwnColour` 偶发 | 2026-11-13 一天内 2 次（全套 5 次运行中）：`VsgBackendTest.EachAttachmentClearsToItsOwnColour` 红，单独重跑与再跑全套均绿。**已带诊断**：失败那次日志里有 `[sdk-pixels] diagnostic: ... a window this device already serves was asked for again`，即 `SdkPixelFixture` 的窗口被同一设备二次索取——更像设备/窗口创建顺序在 WSLg 下的偶发，不是像素逻辑。**判据**：第三次出现时按这条诊断查 `SdkPixelFixture::up()` 与 `VsgBackendTest` 的 fixture 复用（是否同一进程内先建过别的窗口），并考虑把该用例改成“独占 fixture” | 第三次出现（前两次已有诊断） | `tests/test_vsg/VsgBackendTest.cpp`、`tests/test_vsg/SdkPixelFixture.cpp` |
 
 ### 2.4 对象模型遗留
 

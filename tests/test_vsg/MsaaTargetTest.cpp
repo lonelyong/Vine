@@ -35,15 +35,15 @@
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/Streams.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
-#include <vine/vsg/internal/BlockDescriptors.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/HostTargets.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/backend_vsg/internal/BlockDescriptors.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/HostTargets.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include "TestMaterialFacts.hpp"
 #include "TestProgramFacts.hpp"
@@ -59,13 +59,13 @@ using vn::graphics::backend::ReadbackKind;
 using vn::graphics::backend::Rgba8;
 using vn::graphics::backend::StateRegistry;
 using vn::graphics::backend::VariantPool;
-using vn::vsg::BlockDescriptors;
-using vn::vsg::BlockStorage;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentPipeline;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::StreamUploads;
-using vn::vsg::ViewportRect;
+using vn::backend_vsg::BlockDescriptors;
+using vn::backend_vsg::BlockStorage;
+using vn::backend_vsg::ContentDraw;
+using vn::backend_vsg::ContentPipeline;
+using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::StreamUploads;
+using vn::backend_vsg::ViewportRect;
 
 constexpr std::uint32_t kSize = 64U;
 
@@ -153,7 +153,7 @@ std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>&
 
 /// @brief What a case needs: a target of a given sample count and the stack that can draw into it.
 struct Fixture {
-    vn::vsg::DeviceResult             created;
+    vn::backend_vsg::DeviceResult             created;
     std::unique_ptr<OffscreenTarget>  target;
     std::unique_ptr<BlockStorage>     storage;
     std::unique_ptr<BlockDescriptors> descriptors;
@@ -169,7 +169,7 @@ struct Fixture {
 
     bool build(std::uint32_t sample_count)
     {
-        created = vn::vsg::createDevice();
+        created = vn::backend_vsg::createDevice();
         if (!created.ok) {
             return false;
         }
@@ -178,7 +178,7 @@ struct Fixture {
 
     /// @brief Builds this fixture on @p device: the DEVICE is a scarce resource in this suite (a build holds
     ///        a fixed number of them at once), so a case that needs two targets makes one device and shares it.
-    bool buildOn(const vn::vsg::DeviceResult& device, std::uint32_t sample_count)
+    bool buildOn(const vn::backend_vsg::DeviceResult& device, std::uint32_t sample_count)
     {
         samples = sample_count;
         created = device;
@@ -191,8 +191,8 @@ struct Fixture {
             return false;
         }
         const ContentPipeline::Shaders shader_pair = greenShaders();
-        vn::vsg::ProgramAbi            abi;
-        if (vn::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::vsg::FactMiss::None) {
+        vn::backend_vsg::ProgramAbi            abi;
+        if (vn::backend_vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::backend_vsg::FactMiss::None) {
             return false;
         }
         descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
@@ -214,7 +214,7 @@ struct Fixture {
         }
 
         uploads  = std::make_unique<StreamUploads>();
-        recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+        recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         viewer   = ::vsg::Viewer::create();
         return viewer != nullptr;
@@ -427,19 +427,19 @@ TEST(MsaaTargetTest, AFourSampleTargetsDepthIsTheResolvedPicture)
  */
 TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCannot)
 {
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    vn::vsg::HostTargets targets;
+    vn::backend_vsg::HostTargets targets;
     targets.setMaxSamples(4U);
 
     const vn::intrusive_ptr<RenderTarget> too_many(new RenderTarget());
     too_many->attachColor(RenderTarget::ColorFormat::RGBA8);
     too_many->setSize(16, 16);
     too_many->setSamples(8U);
-    EXPECT_EQ(targets.ensure(*too_many, created.device).state, vn::vsg::HostTargets::State::SamplesUnsupported)
+    EXPECT_EQ(targets.ensure(*too_many, created.device).state, vn::backend_vsg::HostTargets::State::SamplesUnsupported)
         << "eight samples is above this table's limit of four";
 
     const vn::intrusive_ptr<RenderTarget> lender(new RenderTarget());
@@ -447,14 +447,14 @@ TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCan
     lender->attachDepth(RenderTarget::DepthFormat::D32);
     lender->setDepthPromotion(false);
     lender->setSize(16, 16);
-    EXPECT_EQ(targets.ensure(*lender, created.device).state, vn::vsg::HostTargets::State::Ready);
+    EXPECT_EQ(targets.ensure(*lender, created.device).state, vn::backend_vsg::HostTargets::State::Ready);
 
     const vn::intrusive_ptr<RenderTarget> borrower(new RenderTarget());
     borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
     borrower->shareDepth(lender);
     borrower->setSize(16, 16);
     borrower->setSamples(4U);
-    EXPECT_EQ(targets.ensure(*borrower, created.device).state, vn::vsg::HostTargets::State::SamplesUnsupported)
+    EXPECT_EQ(targets.ensure(*borrower, created.device).state, vn::backend_vsg::HostTargets::State::SamplesUnsupported)
         << "one depth image cannot be a four-sample attachment for one pass and a single-sample one for "
            "another";
 
@@ -462,12 +462,12 @@ TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCan
     // single-sample, which is the shape the refusal above rules out when it is not.
     lender->setSamples(4U);
     (void)targets.observe(*lender);
-    EXPECT_EQ(targets.ensure(*lender, created.device).state, vn::vsg::HostTargets::State::Ready)
+    EXPECT_EQ(targets.ensure(*lender, created.device).state, vn::backend_vsg::HostTargets::State::Ready)
         << "a multisampled target lends its resolved depth picture like any other depth";
 
     borrower->setSamples(1U);
     (void)targets.observe(*borrower);
-    EXPECT_EQ(targets.ensure(*borrower, created.device).state, vn::vsg::HostTargets::State::Ready)
+    EXPECT_EQ(targets.ensure(*borrower, created.device).state, vn::backend_vsg::HostTargets::State::Ready)
         << "a single-sample pass borrowing that picture is the case the resolve made possible";
 
     // Promoting a multisampled target's OWN depth: legal, and it is the resolved image a shader samples.
@@ -477,7 +477,7 @@ TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCan
     promoted->setSize(16, 16);
     promoted->setSamples(4U);
     EXPECT_TRUE(promoted->isDepthPromoted()) << "the SDK default asks for a sampleable depth";
-    EXPECT_EQ(targets.ensure(*promoted, created.device).state, vn::vsg::HostTargets::State::Ready)
+    EXPECT_EQ(targets.ensure(*promoted, created.device).state, vn::backend_vsg::HostTargets::State::Ready)
         << "the multisampled image is a draw target only; the RESOLVED one is what promotion makes sampleable";
 }
 
@@ -491,7 +491,7 @@ TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCan
  */
 TEST(MsaaTargetTest, RebuildingAtANewCountReplacesTheImages)
 {
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }

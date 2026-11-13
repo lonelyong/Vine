@@ -66,7 +66,7 @@ backlog T16 的两个触发条件都已经出现：
 - 逐对象高亮的克隆点：`src/plugins/model_viewer/src/ModelRenderView.hpp` 的 `selectAt`。
 - 单贴图与 64 B 块：`src/viz/graphics/sdk/vine/graphics/Material.hpp`、`ShaderAbi.hpp` 的
   `VineMaterialBlock`、`shaders/vine_params.glsl`。
-- 变体机制与门禁：`src/plugins/gfx_backend_vsg/include/vine/vsg/internal/ProgramVariant.hpp`、
+- 变体机制与门禁：`src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ProgramVariant.hpp`、
   `scripts/vn_shader_check.sh`。
-- 采样器按值缓存已经存在：`src/plugins/gfx_backend_vsg/include/vine/vsg/internal/MaterialImages.hpp`
+- 采样器按值缓存已经存在：`src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/MaterialImages.hpp`
   （`acquire(texture, sampler, why)`）。

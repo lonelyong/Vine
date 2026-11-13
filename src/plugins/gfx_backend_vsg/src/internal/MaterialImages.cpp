@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/MaterialImages.hpp>
+#include <vine/backend_vsg/internal/MaterialImages.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -17,10 +17,10 @@
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/WhiteImage.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/WhiteImage.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -644,4 +644,4 @@ void MaterialImages::clear()
     d->white_cube = SamplerImage{};
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

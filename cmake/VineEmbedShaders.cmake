@@ -19,7 +19,7 @@
 #   OUT       Absolute path of the header to write.
 #   SOURCES   Shader files, ','-separated (a ',' is never valid in a path, and a
 #             ';'-separated list would be re-split by CMake's list expansion).
-#   NAMESPACE C++ namespace for the generated constants (e.g. vn::vsg::shaders).
+#   NAMESPACE C++ namespace for the generated constants (e.g. vn::backend_vsg::shaders).
 #
 # Mode used by the offline gate (scripts/vn_shader_check.sh), which must compile
 # and hash exactly the text the build embeds:

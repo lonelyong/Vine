@@ -15,7 +15,7 @@
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
-#include <vine/vsg/internal/VsgBackend.hpp>
+#include <vine/backend_vsg/internal/VsgBackend.hpp>
 
 #include "TestFrame.hpp"
 #include "TestTriangleContent.hpp"
@@ -29,7 +29,7 @@ namespace
 
 /** @brief The triangle drawn into a 32x32 off-screen target, one frame at a time (null content = a quiet frame). */
 struct UploadsFixture {
-    vn::intrusive_ptr<vn::vsg::VsgBackend>   backend;
+    vn::intrusive_ptr<vn::backend_vsg::VsgBackend>   backend;
     vn::intrusive_ptr<vn::graphics::RenderTarget> target;
     vn::intrusive_ptr<vn::graphics::RenderPass>   pass;
     vn::intrusive_ptr<vn::graphics::Camera>       camera;
@@ -44,7 +44,7 @@ TEST(FrameUploadsTest, TheReportAnswersWhatThisFrameUploadedAndReleased)
     desc.presentation = vn::graphics::DevicePresentation::None; // a device that presents nothing needs no display
 
     UploadsFixture fixture;
-    fixture.backend = vn::intrusive_ptr<vn::vsg::VsgBackend>(new vn::vsg::VsgBackend(desc));
+    fixture.backend = vn::intrusive_ptr<vn::backend_vsg::VsgBackend>(new vn::backend_vsg::VsgBackend(desc));
     if (!fixture.backend->initialize() || !fixture.backend->capabilities().render_targets) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }

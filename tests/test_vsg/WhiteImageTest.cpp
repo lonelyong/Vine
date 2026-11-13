@@ -18,9 +18,9 @@
 #include <vsg/state/Image.h>
 #include <vsg/state/Sampler.h>
 
-#include <vine/vsg/internal/WhiteImage.hpp>
+#include <vine/backend_vsg/internal/WhiteImage.hpp>
 
-using vn::vsg::WhiteImage;
+using vn::backend_vsg::WhiteImage;
 
 TEST(WhiteImageTest, TheFallbackCarriesItsWhiteTexelAsUploadableData)
 {

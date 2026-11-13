@@ -1,16 +1,16 @@
-#include <vine/vsg/internal/ContentHalves.hpp>
+#include <vine/backend_vsg/internal/ContentHalves.hpp>
 
 #include <optional>
 #include <unordered_set>
 #include <utility>
 
 #include <vine/graphics/backend/ResourceTable.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/DrawNeeds.hpp>
-#include <vine/vsg/internal/ProgramVariant.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/DrawNeeds.hpp>
+#include <vine/backend_vsg/internal/ProgramVariant.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 struct ContentHalves::Data {
     /** @brief What a compiled half is: everything the layer depends on (see the file note). */
@@ -239,4 +239,4 @@ void ContentHalves::clear()
     d->refused = 0U;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

@@ -39,15 +39,15 @@
 #include <vine/graphics/backend/Streams.hpp>
 #include <vine/graphics/backend/TargetPlan.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
-#include <vine/vsg/internal/BlockDescriptors.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/HostTargets.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/backend_vsg/internal/BlockDescriptors.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/HostTargets.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include "DevicePhases.hpp"
 #include "TestMaterialFacts.hpp"
@@ -77,14 +77,14 @@ using vn::graphics::backend::PixelProbe;
 using vn::graphics::backend::Rgba8;
 using vn::graphics::backend::StateRegistry;
 using vn::graphics::backend::VariantPool;
-using vn::vsg::BlockDescriptors;
-using vn::vsg::BlockStorage;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentPipeline;
-using vn::vsg::HostTargets;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::StreamUploads;
-using vn::vsg::ViewportRect;
+using vn::backend_vsg::BlockDescriptors;
+using vn::backend_vsg::BlockStorage;
+using vn::backend_vsg::ContentDraw;
+using vn::backend_vsg::ContentPipeline;
+using vn::backend_vsg::HostTargets;
+using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::StreamUploads;
+using vn::backend_vsg::ViewportRect;
 
 namespace
 {
@@ -174,7 +174,7 @@ ContentPipeline::Shaders depthShaders()
 
 /// @brief The device plus everything needed to record draws into it (shared by both targets).
 struct Stack {
-    vn::vsg::DeviceResult             created;
+    vn::backend_vsg::DeviceResult             created;
     std::unique_ptr<BlockStorage>     storage;
     std::unique_ptr<BlockDescriptors> descriptors;
     std::unique_ptr<ContentPipeline>  pipelines;
@@ -186,7 +186,7 @@ struct Stack {
 
     static int material_identity;
 
-    bool build(const vn::vsg::DeviceResult& device)
+    bool build(const vn::backend_vsg::DeviceResult& device)
     {
         created = device; // the shared depth is a layout question, so the caller brings the layers
         if (!created.validation) {
@@ -203,8 +203,8 @@ struct Stack {
             return false;
         }
         const ContentPipeline::Shaders shader_pair = depthShaders();
-        vn::vsg::ProgramAbi            abi;
-        if (vn::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::vsg::FactMiss::None) {
+        vn::backend_vsg::ProgramAbi            abi;
+        if (vn::backend_vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::backend_vsg::FactMiss::None) {
             return false;
         }
         descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
@@ -223,7 +223,7 @@ struct Stack {
         }
 
         uploads  = std::make_unique<StreamUploads>();
-        recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+        recorder = std::make_unique<ContentDraw>(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         viewer   = ::vsg::Viewer::create();
         return viewer != nullptr;
@@ -309,7 +309,7 @@ constexpr float kNearZ = 0.5F; // Depth 0.5: nearer, which is what reverse-Z's G
 
 } // namespace
 
-void runSharedDepthPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+void runSharedDepthPhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
     Stack stack;
     try {
@@ -446,7 +446,7 @@ void runSharedDepthPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounter
 
 TEST(SharedDepthTest, ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromotion)
 {
-    const auto created = vn::vsg::createDevice();
+    const auto created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
@@ -510,9 +510,9 @@ TEST(SharedDepthTest, TheBorrowerSeesTheDepthTheLenderWrote)
 {
     // The phase body is also what the phase table runs (see DevicePhases.hpp). The device is created here,
     // with the layers on: the shared depth is a layout question, and the phase is evidence about it.
-    vn::vsg::DeviceOptions options;
+    vn::backend_vsg::DeviceOptions options;
     options.validation = true;
-    const auto created = vn::vsg::createDevice(options);
+    const auto created = vn::backend_vsg::createDevice(options);
     if (!created.ok) {
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
@@ -524,7 +524,7 @@ TEST(SharedDepthTest, TheBorrowerSeesTheDepthTheLenderWrote)
 
 TEST(SharedDepthTest, TheHostTargetRowsSayWhoReadsTheDepthTheLenderWrites)
 {
-    const auto created = vn::vsg::createDevice();
+    const auto created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }

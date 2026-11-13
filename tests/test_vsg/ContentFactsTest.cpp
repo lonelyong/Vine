@@ -16,25 +16,25 @@
 #include <cstdint>
 #include <vector>
 
-#include <vine/vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
 
 #include "TestProgramFacts.hpp"
 
 using vn::graphics::backend::DrawKind;
 using vn::graphics::backend::StreamKind;
-using vn::vsg::blockFitsAbi;
-using vn::vsg::ChannelFacts;
-using vn::vsg::channelsMatchLayout;
-using vn::vsg::ContentFacts;
-using vn::vsg::FactMiss;
-using vn::vsg::findGeometry;
-using vn::vsg::findMaterial;
-using vn::vsg::findProgram;
-using vn::vsg::GeometryFacts;
-using vn::vsg::IndexFacts;
-using vn::vsg::MaterialFacts;
-using vn::vsg::ProgramFacts;
-using vn::vsg::ProgramVariant;
+using vn::backend_vsg::blockFitsAbi;
+using vn::backend_vsg::ChannelFacts;
+using vn::backend_vsg::channelsMatchLayout;
+using vn::backend_vsg::ContentFacts;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::findGeometry;
+using vn::backend_vsg::findMaterial;
+using vn::backend_vsg::findProgram;
+using vn::backend_vsg::GeometryFacts;
+using vn::backend_vsg::IndexFacts;
+using vn::backend_vsg::MaterialFacts;
+using vn::backend_vsg::ProgramFacts;
+using vn::backend_vsg::ProgramVariant;
 
 namespace
 {
@@ -82,7 +82,7 @@ IndexFacts indexStream()
 /// @brief Owns the storage a GeometryFacts points at: the tables BORROW, so a test must keep them alive.
 struct GeometryHolder {
     std::vector<ChannelFacts>            channels;
-    std::vector<vn::vsg::PrimitiveFacts> primitive_rows; // What `facts.primitives` points at.
+    std::vector<vn::backend_vsg::PrimitiveFacts> primitive_rows; // What `facts.primitives` points at.
     GeometryFacts                        facts;
 
     GeometryHolder(vn::graphics::NodeId identity, std::uint64_t revision, std::uint32_t canonical_mask, std::size_t channel_count, std::uint32_t custom_locations = 0U)
@@ -202,7 +202,7 @@ TEST(ContentFactsTest, AGeometryWhoseChannelsDoNotMatchItsLayoutCannotBeDrawn)
     unindexed.facts.primitives = {};
     EXPECT_FALSE(channelsMatchLayout(unindexed.facts)) << "no index stream and no vertex count: nothing to draw";
     // A geometry whose primitives are all non-indexed IS drawable from its vertices.
-    unindexed.primitive_rows.assign(1U, vn::vsg::PrimitiveFacts{});
+    unindexed.primitive_rows.assign(1U, vn::backend_vsg::PrimitiveFacts{});
     unindexed.facts.primitives   = unindexed.primitive_rows;
     unindexed.facts.vertex_count = 3U;
     EXPECT_TRUE(channelsMatchLayout(unindexed.facts));

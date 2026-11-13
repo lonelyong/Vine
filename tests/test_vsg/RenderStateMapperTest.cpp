@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
 
 #include <vine/graphics/StateNode.hpp>
-#include <vine/vsg/support/RenderStateMapper.hpp>
+#include <vine/backend_vsg/support/RenderStateMapper.hpp>
 
 using namespace vn::graphics;
-using vn::vsg::makeRenderStateObjects;
-using vn::vsg::RenderStateObjects;
+using vn::backend_vsg::makeRenderStateObjects;
+using vn::backend_vsg::RenderStateObjects;
 
 namespace
 {

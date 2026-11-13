@@ -19,24 +19,24 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/Texture.hpp>
 
-#include <vine/vsg/internal/ContentSources.hpp>
-#include <vine/vsg/internal/GeometryFacts.hpp>
-#include <vine/vsg/internal/ProgramVariant.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/ProgramVariant.hpp>
 
 using vn::graphics::attributeLocation;
 using vn::graphics::Texture2D;
 using vn::graphics::VertexAttribute;
 using vn::imaging::PixelFormat;
-using vn::vsg::AbiBinding;
-using vn::vsg::AbiDescriptorKind;
-using vn::vsg::buildProgramFacts;
-using vn::vsg::ChannelFacts;
-using vn::vsg::FactMiss;
-using vn::vsg::GeometryFacts;
-using vn::vsg::MaterialFacts;
-using vn::vsg::ProgramFacts;
-using vn::vsg::ProgramVariant;
-using vn::vsg::variantOf;
+using vn::backend_vsg::AbiBinding;
+using vn::backend_vsg::AbiDescriptorKind;
+using vn::backend_vsg::buildProgramFacts;
+using vn::backend_vsg::ChannelFacts;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::GeometryFacts;
+using vn::backend_vsg::MaterialFacts;
+using vn::backend_vsg::ProgramFacts;
+using vn::backend_vsg::ProgramVariant;
+using vn::backend_vsg::variantOf;
 
 namespace
 {

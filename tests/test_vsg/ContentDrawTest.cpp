@@ -45,10 +45,10 @@
 
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/StateCommands.hpp>
-#include <vine/vsg/support/VsgDynamicState.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/StateCommands.hpp>
+#include <vine/backend_vsg/support/VsgDynamicState.hpp>
 
 #include "TestProgramFacts.hpp"
 
@@ -56,9 +56,9 @@ using vn::graphics::backend::DynamicState;
 using vn::graphics::backend::PipelineKey;
 using vn::graphics::backend::StateRegistry;
 using vn::graphics::backend::VariantPool;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentPipeline;
-using vn::vsg::ViewportRect;
+using vn::backend_vsg::ContentDraw;
+using vn::backend_vsg::ContentPipeline;
+using vn::backend_vsg::ViewportRect;
 
 namespace
 {
@@ -81,8 +81,8 @@ class Fixture {
                            "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n";
         // The text declares no bindings, so the layer builds a layout with no sets - the recorder's own
         // command shapes are what these cases pin (nothing here is executed on a device).
-        vn::vsg::ProgramAbi abi;
-        EXPECT_EQ(vn::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vn::vsg::FactMiss::None);
+        vn::backend_vsg::ProgramAbi abi;
+        EXPECT_EQ(vn::backend_vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vn::backend_vsg::FactMiss::None);
         const ContentPipeline::VertexBinding   binding{ 0U, sizeof(float) * 3U, false };
         const ContentPipeline::VertexAttribute attribute{ 0U, 0U, VK_FORMAT_R32G32B32_SFLOAT, 0U };
         pipelines = ContentPipeline::create(abi,
@@ -145,9 +145,9 @@ TEST(ContentDrawTest, TheFirstDrawRecordsThePipelineTheStateAndTheGeometry)
     const auto* pipeline_bind = dynamic_cast<const ::vsg::BindGraphicsPipeline*>(group->stateCommands[0].get());
     ASSERT_NE(pipeline_bind, nullptr);
     EXPECT_NE(pipeline_bind->pipeline, nullptr);
-    const auto* dynamic = dynamic_cast<const vn::vsg::detail::SetDynamicState*>(group->stateCommands[1].get());
+    const auto* dynamic = dynamic_cast<const vn::backend_vsg::detail::SetDynamicState*>(group->stateCommands[1].get());
     ASSERT_NE(dynamic, nullptr);
-    EXPECT_EQ(dynamic->slot, vn::vsg::detail::kDynamicStateSlot) << "the dynamic command must not take the pipeline bind's slot";
+    EXPECT_EQ(dynamic->slot, vn::backend_vsg::detail::kDynamicStateSlot) << "the dynamic command must not take the pipeline bind's slot";
     EXPECT_EQ(group->stateCommands[2], draw.blocks[0]) << "the third command is this draw's block bind";
 
     ASSERT_EQ(group->children.size(), 1U);
@@ -279,7 +279,7 @@ TEST(ContentDrawTest, AStateChangeRecordsOnlyTheDynamicBlock)
     ASSERT_NE(group, nullptr);
     ASSERT_EQ(group->stateCommands.size(), 2U) << "the dynamic block and the blocks bind; no pipeline rebind";
 
-    const auto* dynamic = dynamic_cast<const vn::vsg::detail::SetDynamicState*>(group->stateCommands[0].get());
+    const auto* dynamic = dynamic_cast<const vn::backend_vsg::detail::SetDynamicState*>(group->stateCommands[0].get());
     ASSERT_NE(dynamic, nullptr);
     EXPECT_EQ(dynamic->cull_mode, VK_CULL_MODE_FRONT_BIT);
     EXPECT_EQ(dynamic->depth_test_enable, VK_TRUE);
@@ -306,17 +306,17 @@ TEST(ContentDrawTest, AnIdentityChangeRebindsThePipeline)
 
 TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
 {
-    const vn::vsg::detail::DynamicStateEntryPoints none;
+    const vn::backend_vsg::detail::DynamicStateEntryPoints none;
 
     DynamicState disabled;
     disabled.depth      = vn::graphics::DepthMode::Disabled;
-    const auto no_depth = vn::vsg::makeDynamicStateCommand(disabled, 1U, none);
+    const auto no_depth = vn::backend_vsg::makeDynamicStateCommand(disabled, 1U, none);
     EXPECT_EQ(no_depth->depth_test_enable, VK_FALSE);
     EXPECT_EQ(no_depth->depth_write_enable, VK_FALSE);
 
     DynamicState translucent;
     translucent.depth    = vn::graphics::DepthMode::TestOnly;
-    const auto test_only = vn::vsg::makeDynamicStateCommand(translucent, 1U, none);
+    const auto test_only = vn::backend_vsg::makeDynamicStateCommand(translucent, 1U, none);
     EXPECT_EQ(test_only->depth_test_enable, VK_TRUE);
     EXPECT_EQ(test_only->depth_write_enable, VK_FALSE);
 
@@ -328,17 +328,17 @@ TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
     // inversion happens at this boundary, so LessEqual (standard depth) becomes GREATER_OR_EQUAL.
     DynamicState farther_wins;
     farther_wins.compare = vn::graphics::CompareOp::LessEqual;
-    EXPECT_EQ(vn::vsg::makeDynamicStateCommand(farther_wins, 1U, none)->compare_op, VK_COMPARE_OP_GREATER_OR_EQUAL);
+    EXPECT_EQ(vn::backend_vsg::makeDynamicStateCommand(farther_wins, 1U, none)->compare_op, VK_COMPARE_OP_GREATER_OR_EQUAL);
 
     DynamicState nearer_loses;
     nearer_loses.compare = vn::graphics::CompareOp::Greater;
-    EXPECT_EQ(vn::vsg::makeDynamicStateCommand(nearer_loses, 1U, none)->compare_op, VK_COMPARE_OP_LESS);
+    EXPECT_EQ(vn::backend_vsg::makeDynamicStateCommand(nearer_loses, 1U, none)->compare_op, VK_COMPARE_OP_LESS);
 
     DynamicState churn;
     churn.cull_mode    = vn::graphics::CullMode::Back;
     churn.polygon_mode = vn::graphics::PolygonMode::Line;
     churn.topology     = vn::graphics::Topology::Points;
-    const auto mapped  = vn::vsg::makeDynamicStateCommand(churn, 1U, none);
+    const auto mapped  = vn::backend_vsg::makeDynamicStateCommand(churn, 1U, none);
     EXPECT_EQ(mapped->cull_mode, VK_CULL_MODE_BACK_BIT);
     EXPECT_EQ(mapped->polygon_mode, VK_POLYGON_MODE_LINE);
     EXPECT_EQ(mapped->topology, VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
@@ -357,7 +357,7 @@ TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
     // and what is delivered is the standard alpha pair.
     DynamicState translucent_blend;
     translucent_blend.blend.enabled = true;
-    const auto standard             = vn::vsg::makeDynamicStateCommand(translucent_blend, 1U, none);
+    const auto standard             = vn::backend_vsg::makeDynamicStateCommand(translucent_blend, 1U, none);
     EXPECT_EQ(standard->blend[0].blendEnable, VK_TRUE) << "one attachment: the engine's opacity path";
     EXPECT_EQ(standard->blend[0].srcColorBlendFactor, VK_BLEND_FACTOR_SRC_ALPHA) << "a state that opts in with the default pair gets the standard pair";
     EXPECT_EQ(standard->blend[0].dstColorBlendFactor, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
@@ -368,7 +368,7 @@ TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
     opted_in.blend.enabled = true;
     opted_in.blend.src     = vn::graphics::BlendFactor::One;
     opted_in.blend.dst     = vn::graphics::BlendFactor::Zero;
-    const auto factors     = vn::vsg::makeDynamicStateCommand(opted_in, 1U, none);
+    const auto factors     = vn::backend_vsg::makeDynamicStateCommand(opted_in, 1U, none);
     EXPECT_EQ(factors->blend[0].srcColorBlendFactor, VK_BLEND_FACTOR_ONE);
     EXPECT_EQ(factors->blend[0].dstColorBlendFactor, VK_BLEND_FACTOR_ZERO);
     EXPECT_EQ(factors->blend[0].srcAlphaBlendFactor, VK_BLEND_FACTOR_ONE) << "alpha follows the colour pair";
@@ -377,7 +377,7 @@ TEST(ContentDrawTest, TheDynamicMappingFollowsTheEngineConventions)
 
 TEST(ContentDrawTest, TheRectangleCommandsCarryTheRectAndClampWhatTheApiForbids)
 {
-    const auto viewport = vn::vsg::makeViewportCommand(ViewportRect{ 10.0F, 20.0F, 320.0F, 240.0F });
+    const auto viewport = vn::backend_vsg::makeViewportCommand(ViewportRect{ 10.0F, 20.0F, 320.0F, 240.0F });
     ASSERT_EQ(viewport->viewports.size(), 1U);
     EXPECT_FLOAT_EQ(viewport->viewports[0].x, 10.0F);
     EXPECT_FLOAT_EQ(viewport->viewports[0].y, 20.0F);
@@ -386,7 +386,7 @@ TEST(ContentDrawTest, TheRectangleCommandsCarryTheRectAndClampWhatTheApiForbids)
     EXPECT_FLOAT_EQ(viewport->viewports[0].minDepth, 0.0F) << "reverse-Z lives in the projection";
     EXPECT_FLOAT_EQ(viewport->viewports[0].maxDepth, 1.0F);
 
-    const auto scissor = vn::vsg::makeScissorCommand(ViewportRect{ -5.0F, -2.0F, 0.0F, 0.0F });
+    const auto scissor = vn::backend_vsg::makeScissorCommand(ViewportRect{ -5.0F, -2.0F, 0.0F, 0.0F });
     ASSERT_EQ(scissor->scissors.size(), 1U);
     EXPECT_EQ(scissor->scissors[0].offset.x, 0) << "a negative origin is a validation error, not a rectangle";
     EXPECT_EQ(scissor->scissors[0].offset.y, 0);
@@ -416,8 +416,8 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
                        "layout(binding = 0) uniform sampler2D picture;\n"
                        "void main() { out_color = texture(picture, vn_uv); }\n";
     // The layer's set is what the text declares: scan the pair (the engine's table entry does exactly that).
-    vn::vsg::ProgramAbi abi;
-    ASSERT_EQ(vn::vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vn::vsg::FactMiss::None);
+    vn::backend_vsg::ProgramAbi abi;
+    ASSERT_EQ(vn::backend_vsg::scanProgramAbi(shaders.vertex, shaders.fragment, {}, abi), vn::backend_vsg::FactMiss::None);
     auto pipelines = ContentPipeline::createScreen(abi, shaders);
     ASSERT_NE(pipelines, nullptr);
 
@@ -455,7 +455,7 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     ASSERT_NE(group, nullptr);
     ASSERT_EQ(group->stateCommands.size(), 3U) << "pipeline, dynamic block, the sampler set (no blocks bind)";
     EXPECT_NE(dynamic_cast<const ::vsg::BindGraphicsPipeline*>(group->stateCommands[0].get()), nullptr);
-    EXPECT_NE(dynamic_cast<const vn::vsg::detail::SetDynamicState*>(group->stateCommands[1].get()), nullptr);
+    EXPECT_NE(dynamic_cast<const vn::backend_vsg::detail::SetDynamicState*>(group->stateCommands[1].get()), nullptr);
     EXPECT_EQ(group->stateCommands[2], draw.samplers) << "the sampler set is the third command";
 
     ASSERT_EQ(group->children.size(), 1U);

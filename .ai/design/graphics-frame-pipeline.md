@@ -233,7 +233,7 @@
 - **注意**（`P8` / `P11`）：预热是**查询**不是“编译一切”；也**不能**用“跑一帧不提交”实现（见 `P11`）。
   **缝**：`drawNeeds(compiled pass, draw)` 是唯一的键构造者——`prepare` 用它建、`ContentPass::record` 用它取，
   两边不可能漂移（`G1`）。
-  **落地位置**（3a，2026-11-12）：`src/plugins/gfx_backend_vsg/{include/vine/vsg/internal,src/internal}/DrawNeeds.{hpp,cpp}`
+  **落地位置**（3a，2026-11-12）：`src/plugins/gfx_backend_vsg/{include/vine/backend_vsg/internal,src/internal}/DrawNeeds.{hpp,cpp}`
   （`drawNeeds` 两个重载 + `DrawNeeds::keyFor`）；`ContentHalves::halvesFor`、`ContentPass::recordCommand` /
   `recordScreenDraw` 与 `describeMissingContentHalf` 都只读它，录制路径不再自己拼键。
   **落地位置**（3b，2026-11-12）：`sdk/vine/graphics/PrepareReport.hpp`、`RenderFrameExecutor::prepareFrame`、
@@ -683,7 +683,7 @@
 - `src/viz/graphics/src/SceneRows.cpp`（发布的缓存侧）
 - `src/viz/graphics/src/DrawListBake.cpp`（现役收集与排序）
 - `src/viz/graphics/sdk/vine/graphics/backend/ResourceTable.hpp`（按键驻留）
-- `src/plugins/gfx_backend_vsg/include/vine/vsg/internal/DrawNeeds.hpp` / `src/internal/DrawNeeds.cpp`（`drawNeeds`：预热与录制共用的唯一键构造者）
+- `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/DrawNeeds.hpp` / `src/internal/DrawNeeds.cpp`（`drawNeeds`：预热与录制共用的唯一键构造者）
 - `src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp`（事实行与 epoch 回收）
 
 ### 10.2 文档与 ADR

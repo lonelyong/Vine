@@ -15,7 +15,7 @@ Only the two claims a script can decide EXACTLY are gated:
      cannot judge (a sentence may name a symbol that is deliberately absent, or a foreign type),
      so only UNIT files are checked — a renamed or deleted unit is exactly the drift that hurts a
      reader following the module map.
-  2. Every unit under ``src/`` and ``include/vine/vsg/`` must be named somewhere in the three
+  2. Every unit under ``src/`` and ``include/vine/backend_vsg/`` must be named somewhere in the three
      docs. The map is part of what those documents are for; a unit nobody documented is a hole.
 
 What is skipped, on purpose:
@@ -45,10 +45,10 @@ DOCS = [
     ROOT / "docs" / "guides" / "vsg-data-flow.md",
 ]
 # Directories whose units the docs are expected to map. RECURSIVE: the rewrite moved the backend into
-# `src/internal` + `src/core` (and `include/vine/vsg/internal` + `core`), and a walk that stopped at the top level
+# `src/internal` + `src/core` (and `include/vine/backend_vsg/internal` + `core`), and a walk that stopped at the top level
 # would enumerate the seven flat files that are left (19 units) while 143 exist - which is exactly how this
 # script silently stopped covering the new architecture (the finding that put the recursion here).
-MAPPED_DIRS = [PLUGIN / "src", PLUGIN / "include" / "vine" / "vsg"]
+MAPPED_DIRS = [PLUGIN / "src", PLUGIN / "include" / "vine" / "backend_vsg"]
 # Where a unit mention is looked for when deciding whether it names SOMETHING: every unit this repository
 # has, so a doc sentence may name the SDK's `RenderBackend.hpp` or a framework unit without being drift.
 # The prefix list this replaces only knew the old flat names (`Vsg*`, `SceneBridge*`, ...), so it neither

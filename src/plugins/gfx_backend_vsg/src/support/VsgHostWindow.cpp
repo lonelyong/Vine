@@ -1,4 +1,4 @@
-#include <vine/vsg/support/VsgHostWindow.hpp>
+#include <vine/backend_vsg/support/VsgHostWindow.hpp>
 
 #include <cstdlib>
 
@@ -7,7 +7,7 @@
 
 #include <vine/logging/Log.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -151,4 +151,4 @@ bool adoptDevice(::vsg::Window& window, ::vsg::ref_ptr<::vsg::Device> device)
 
 } // namespace detail
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

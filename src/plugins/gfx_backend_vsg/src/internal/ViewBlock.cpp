@@ -1,10 +1,10 @@
-#include <vine/vsg/internal/ViewBlock.hpp>
+#include <vine/backend_vsg/internal/ViewBlock.hpp>
 
 #include <cstddef>
 
 #include <vine/math/Matrix4x4.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -63,4 +63,4 @@ vn::graphics::VineViewBlock buildViewBlock(const core::CameraSnapshot& camera, f
     return block;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

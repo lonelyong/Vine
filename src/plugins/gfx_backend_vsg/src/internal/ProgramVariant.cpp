@@ -1,11 +1,11 @@
-#include <vine/vsg/internal/ProgramVariant.hpp>
+#include <vine/backend_vsg/internal/ProgramVariant.hpp>
 
 #include <vine/graphics/ShaderAbi.hpp>
 
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 std::uint32_t ProgramVariant::bits() const noexcept
 {
@@ -89,4 +89,4 @@ ProgramVariant variantOf(const MaterialFacts& material, const GeometryFacts& geo
     return variant;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

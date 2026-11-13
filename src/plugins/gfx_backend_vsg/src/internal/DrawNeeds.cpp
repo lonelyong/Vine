@@ -1,6 +1,6 @@
-#include <vine/vsg/internal/DrawNeeds.hpp>
+#include <vine/backend_vsg/internal/DrawNeeds.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -159,4 +159,4 @@ DrawNeeds drawNeeds(const core::CompiledPass& pass, const core::CompiledDraw& dr
     return out;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

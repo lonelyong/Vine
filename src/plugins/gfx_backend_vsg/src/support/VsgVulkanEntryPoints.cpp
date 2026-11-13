@@ -11,11 +11,11 @@
 // a vsg::Device (see the header).
 #include <volk.h>
 
-#include <vine/vsg/support/VsgVulkanEntryPoints.hpp>
+#include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>
 
 #include <mutex>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace detail
 {
@@ -76,4 +76,4 @@ DynamicStateEntryPoints fetchDynamicStateEntryPoints(VkDevice device, VkInstance
 
 } // namespace detail
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

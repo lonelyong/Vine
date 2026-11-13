@@ -44,15 +44,15 @@
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/Streams.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
-#include <vine/vsg/internal/BlockDescriptors.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/vsg/internal/VsgExecutor.hpp>
-#include <vine/vsg/support/VsgDynamicState.hpp>
+#include <vine/backend_vsg/internal/BlockDescriptors.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/internal/VsgExecutor.hpp>
+#include <vine/backend_vsg/support/VsgDynamicState.hpp>
 
 #include "DevicePhases.hpp"
 #include "TestMaterialFacts.hpp"
@@ -103,15 +103,15 @@ using vn::graphics::backend::TargetDesc;
 using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::TargetShape;
 using vn::graphics::backend::VariantPool;
-using vn::vsg::BlockDescriptors;
-using vn::vsg::BlockStorage;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentPipeline;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::PassContent;
-using vn::vsg::StreamUploads;
-using vn::vsg::ViewportRect;
-using vn::vsg::VsgExecutor;
+using vn::backend_vsg::BlockDescriptors;
+using vn::backend_vsg::BlockStorage;
+using vn::backend_vsg::ContentDraw;
+using vn::backend_vsg::ContentPipeline;
+using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::PassContent;
+using vn::backend_vsg::StreamUploads;
+using vn::backend_vsg::ViewportRect;
+using vn::backend_vsg::VsgExecutor;
 
 namespace
 {
@@ -154,7 +154,7 @@ struct Fixture {
     Observe                          observe;
     FrameRecorder                    recorder{ arena, diagnostics, observe };
     FrameCompiler                    compiler{ arena, diagnostics, observe };
-    vn::vsg::DeviceResult            created;
+    vn::backend_vsg::DeviceResult            created;
     std::unique_ptr<OffscreenTarget> first;
     std::unique_ptr<OffscreenTarget> second;
     std::vector<TargetFacts>         facts;
@@ -173,7 +173,7 @@ struct Fixture {
 
     bool build()
     {
-        created = vn::vsg::createDevice();
+        created = vn::backend_vsg::createDevice();
         if (!created.ok) {
             return false;
         }
@@ -198,8 +198,8 @@ struct Fixture {
             return false;
         }
         const ContentPipeline::Shaders shader_pair = triangleShaders();
-        vn::vsg::ProgramAbi            abi;
-        if (vn::vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::vsg::FactMiss::None) {
+        vn::backend_vsg::ProgramAbi            abi;
+        if (vn::backend_vsg::scanProgramAbi(shader_pair.vertex, shader_pair.fragment, {}, abi) != vn::backend_vsg::FactMiss::None) {
             return false;
         }
         descriptors = BlockDescriptors::forAbi(abi, 0U, created.device, *storage);
@@ -221,7 +221,7 @@ struct Fixture {
         }
 
         uploads  = std::make_unique<StreamUploads>();
-        draws    = std::make_unique<ContentDraw>(*pipelines, pool, vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+        draws    = std::make_unique<ContentDraw>(*pipelines, pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
         registry = std::make_unique<StateRegistry>(pool);
         return true;
     }
@@ -359,7 +359,7 @@ bool isGreen(const Rgba8& pixel)
 
 } // namespace
 
-void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+void runPlanDrivenTargetPhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
     const float kFirst[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
 
@@ -547,7 +547,7 @@ void runPlanDrivenTargetPhase(const vn::vsg::DeviceResult& device, DevicePhaseCo
     EXPECT_FALSE(bystander->written()) << "no pass of any driven frame named it";
 }
 
-void runLeasedTargetOrderPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+void runLeasedTargetOrderPhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
     // THE ORDER THE PLAN'S ANSWERS ARE APPLIED IN, as a device phase (the gap M10c/M10d/M10e registered:
     // `applyTargetPlans`' selection sort had only the object-level case and the demo's picture behind it).

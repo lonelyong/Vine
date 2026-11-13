@@ -1,10 +1,10 @@
-#include <vine/vsg/internal/DrawBlock.hpp>
+#include <vine/backend_vsg/internal/DrawBlock.hpp>
 
 #include <cstddef>
 
 #include <vine/math/Matrix4x4.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 void packDrawBlock(const core::CompiledCommand& command, vn::graphics::VineDrawBlock& out) noexcept
 {
@@ -27,4 +27,4 @@ void packDrawBlock(const core::CompiledCommand& command, vn::graphics::VineDrawB
     out.params[3] = 0.0F;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

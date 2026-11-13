@@ -180,7 +180,7 @@ done
 # The header list comes from the MANIFEST, not from a glob of the build tree: a generated header whose
 # declaring block was removed stays on disk (nothing regenerates or deletes it), and a glob would keep
 # checking an owner that no longer exists — measured: after the backend's shaders moved to the SDK, the
-# stale vine/vsg/EmbeddedShaders.hpp made this check fail on a file that is not in the tree any more.
+# stale vine/backend_vsg/EmbeddedShaders.hpp made this check fail on a file that is not in the tree any more.
 #
 # The hash and byte count are the expanded text's (see VineEmbedShaders.cmake): a fragment edit changes
 # them even though the shader file on disk is untouched, which is exactly the drift this step is for.

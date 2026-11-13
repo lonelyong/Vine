@@ -1,11 +1,11 @@
-﻿#include <vine/vsg/shell/GfxBackendVsgPlugin.hpp>
+﻿#include <vine/backend_vsg/shell/GfxBackendVsgPlugin.hpp>
 
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/plugin_export.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/vsg/shell/VsgRenderBackendFactory.hpp>
+#include <vine/backend_vsg/shell/VsgRenderBackendFactory.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 VN_OBJECT_META_IMPL(GfxBackendVsgPlugin, vn::appfw::Plugin)
 
@@ -29,9 +29,9 @@ void GfxBackendVsgPlugin::unload(vn::appfw::PluginLoadContext* context)
     // Registry keeps the factory alive for the process; nothing to tear down.
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END
 
-VN_DECLARE_PLUGIN(vn::vsg::GfxBackendVsgPlugin,
+VN_DECLARE_PLUGIN(vn::backend_vsg::GfxBackendVsgPlugin,
                   u8"51fd4cc0-07c2-484c-bd2b-c99a51a848e7",
                   u8"gfx_backend_vsg",
                   u8"VSG 渲染后端",

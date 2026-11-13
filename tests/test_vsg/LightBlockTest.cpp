@@ -48,19 +48,19 @@
 #include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
-#include <vine/vsg/internal/BlockDescriptors.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/ContentPass.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/ContentSources.hpp>
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/GeometryFacts.hpp>
-#include <vine/vsg/internal/LightBlock.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/vsg/internal/VsgExecutor.hpp>
+#include <vine/backend_vsg/internal/BlockDescriptors.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentPass.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/LightBlock.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/internal/VsgExecutor.hpp>
 
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
@@ -97,30 +97,30 @@ using vn::graphics::backend::StateRegistry;
 using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::VariantPool;
 using vn::test::setPrimitiveIndices;
-using vn::vsg::AbiBinding;
-using vn::vsg::AbiBlockRole;
-using vn::vsg::BlockDescriptors;
-using vn::vsg::BlockStorage;
-using vn::vsg::buildGeometryFacts;
-using vn::vsg::buildMaterialFacts;
-using vn::vsg::buildProgramFacts;
-using vn::vsg::buildScreenProgramFacts;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentFacts;
-using vn::vsg::ContentPass;
-using vn::vsg::ContentPipeline;
-using vn::vsg::FactMiss;
-using vn::vsg::GeometryFacts;
-using vn::vsg::kLightKindEmpty;
-using vn::vsg::MaterialFacts;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::packLightBlock;
-using vn::vsg::PassContent;
-using vn::vsg::ProgramAbi;
-using vn::vsg::ProgramFacts;
-using vn::vsg::StreamUploads;
-using vn::vsg::VineLightsBlock;
-using vn::vsg::VsgExecutor;
+using vn::backend_vsg::AbiBinding;
+using vn::backend_vsg::AbiBlockRole;
+using vn::backend_vsg::BlockDescriptors;
+using vn::backend_vsg::BlockStorage;
+using vn::backend_vsg::buildGeometryFacts;
+using vn::backend_vsg::buildMaterialFacts;
+using vn::backend_vsg::buildProgramFacts;
+using vn::backend_vsg::buildScreenProgramFacts;
+using vn::backend_vsg::ContentDraw;
+using vn::backend_vsg::ContentFacts;
+using vn::backend_vsg::ContentPass;
+using vn::backend_vsg::ContentPipeline;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::GeometryFacts;
+using vn::backend_vsg::kLightKindEmpty;
+using vn::backend_vsg::MaterialFacts;
+using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::packLightBlock;
+using vn::backend_vsg::PassContent;
+using vn::backend_vsg::ProgramAbi;
+using vn::backend_vsg::ProgramFacts;
+using vn::backend_vsg::StreamUploads;
+using vn::backend_vsg::VineLightsBlock;
+using vn::backend_vsg::VsgExecutor;
 
 namespace
 {
@@ -440,7 +440,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
 {
     // THE PICTURE. One pass, four drawing calls, four bands of 16 pixels; each band's light list is chosen so that
     // only a correct packing, bound PER CALL, can explain its colour (see the file note).
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -514,8 +514,8 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     ASSERT_EQ(vn::test::buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     GeometryFacts                        geometry_facts[4];
-    std::vector<vn::vsg::ChannelFacts>   geometry_channels[4];
-    std::vector<vn::vsg::PrimitiveFacts> geometry_primitives[4];
+    std::vector<vn::backend_vsg::ChannelFacts>   geometry_channels[4];
+    std::vector<vn::backend_vsg::PrimitiveFacts> geometry_primitives[4];
     for (std::size_t index = 0; index < 4U; ++index) {
         ASSERT_EQ(buildGeometryFacts(*bands[index], geometry_facts[index], geometry_channels[index], geometry_primitives[index]), FactMiss::None);
     }
@@ -614,7 +614,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
     storage->beginFrame();
     VariantPool   pool;
     StreamUploads uploads;
-    const auto    entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto    entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw   draws_recorder(*pipelines, pool, entry_points);
     StateRegistry registry(pool);
 
@@ -733,7 +733,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerFullScreenCall)
     // A block written once per PASS (all three calls sharing the first announcement), a zeroed block, or one bound
     // at the wrong binding moves at least one band, and the destination's clear (blue) is what a band that drew
     // nothing would show.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -838,7 +838,7 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerFullScreenCall)
     storage->beginFrame();
     VariantPool   pool;
     StreamUploads uploads;
-    const auto    entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto    entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw   draws(*pipelines, pool, entry_points);
     StateRegistry registry(pool);
 

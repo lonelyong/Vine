@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -6,9 +6,9 @@
 
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/backend/ResourceTable.hpp>
-#include <vine/vsg/support/VsgSceneRules.hpp>
+#include <vine/backend_vsg/support/VsgSceneRules.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -278,4 +278,4 @@ std::uint64_t StreamUploads::retired() const noexcept
     return d->vertex.retired() + d->index.retired();
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

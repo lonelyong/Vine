@@ -17,8 +17,8 @@
 #include <cstdio>
 #include <string>
 
-#include <vine/vsg/internal/DeviceProbe.hpp>
-#include <vine/vsg/internal/DeviceRequirements.hpp>
+#include <vine/backend_vsg/internal/DeviceProbe.hpp>
+#include <vine/backend_vsg/internal/DeviceRequirements.hpp>
 
 using vn::graphics::backend::kDeviceExtensionCount;
 using vn::graphics::backend::kDeviceFeatureCount;
@@ -26,7 +26,7 @@ using vn::graphics::backend::missingExtensionCount;
 using vn::graphics::backend::missingFeatureCount;
 using vn::graphics::backend::satisfiesRequirements;
 using vn::graphics::backend::supportsRequiredVersion;
-using vn::vsg::api::probePhysicalDevices;
+using vn::backend_vsg::api::probePhysicalDevices;
 
 namespace
 {

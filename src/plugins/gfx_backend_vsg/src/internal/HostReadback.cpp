@@ -1,13 +1,13 @@
-﻿#include <vine/vsg/internal/HostReadback.hpp>
+﻿#include <vine/backend_vsg/internal/HostReadback.hpp>
 
 #include <string>
 
-#include <vine/vsg/internal/OneShot.hpp>
+#include <vine/backend_vsg/internal/OneShot.hpp>
 
 #include <vsg/commands/Commands.h>
 #include <vsg/vk/Device.h>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -144,4 +144,4 @@ vn::String readbackRefusalMessage(HostReadbackRefusal refusal, const char* what)
     return vn::String();
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

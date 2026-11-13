@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/WhiteImage.hpp>
+#include <vine/backend_vsg/internal/WhiteImage.hpp>
 
 #include <cstdint>
 
@@ -7,7 +7,7 @@
 #include <vsg/core/MipmapLayout.h>
 #include <vsg/state/Image.h>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 struct WhiteImage::Data {
     ::vsg::ref_ptr<::vsg::Image>     image;
@@ -99,4 +99,4 @@ WhiteImage::~WhiteImage() = default;
     return d->sampler;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

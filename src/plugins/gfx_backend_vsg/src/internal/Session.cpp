@@ -1,14 +1,14 @@
-#include <vine/vsg/internal/Session.hpp>
+#include <vine/backend_vsg/internal/Session.hpp>
 
 #include <chrono>
 #include <cstdlib>
 
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/DeviceFeatures.hpp>
-#include <vine/vsg/internal/SessionContent.hpp>
-#include <vine/vsg/internal/SessionDrive.hpp>
-#include <vine/vsg/internal/TransferStaging.hpp>
-#include <vine/vsg/internal/WindowTarget.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/DeviceFeatures.hpp>
+#include <vine/backend_vsg/internal/SessionContent.hpp>
+#include <vine/backend_vsg/internal/SessionDrive.hpp>
+#include <vine/backend_vsg/internal/TransferStaging.hpp>
+#include <vine/backend_vsg/internal/WindowTarget.hpp>
 
 #include <string>
 
@@ -25,11 +25,11 @@
 
 #include <vine/graphics/backend/SessionMove.hpp>
 #include <vine/graphics/backend/SlotProbe.hpp>
-#include <vine/vsg/internal/DeviceRequirements.hpp>
-#include <vine/vsg/support/VsgBackendUtility.hpp>
-#include <vine/vsg/support/VsgHostWindow.hpp>
+#include <vine/backend_vsg/internal/DeviceRequirements.hpp>
+#include <vine/backend_vsg/support/VsgBackendUtility.hpp>
+#include <vine/backend_vsg/support/VsgHostWindow.hpp>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace api
 {
@@ -800,4 +800,4 @@ bool SessionContentAccess::recompile(api::Session& session)
 
 } // namespace detail
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

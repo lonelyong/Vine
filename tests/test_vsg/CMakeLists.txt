@@ -72,14 +72,14 @@ set(SRC_FILE_LIST
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 # The backend is an appfw plugin (MODULE DLL, cannot be linked). Its headers
-# (VsgHostWindow.hpp etc.) annotate the classes VN_VSG_API (dllexport/dllimport on
+# (VsgHostWindow.hpp etc.) annotate the classes VN_BACKEND_VSG_API (dllexport/dllimport on
 # Windows). Because VsgHostWindow.cpp + VsgBackendUtility.cpp are compiled INTO
 # this test executable (see target_sources below), the target must build them
-# as the exporting side (VN_VSG_LIB); otherwise MSVC treats the classes as
+# as the exporting side (VN_BACKEND_VSG_LIB); otherwise MSVC treats the classes as
 # dllimport, their header-only accessors and vtables are never emitted locally,
 # and the executable can neither import (no plugin .lib) nor resolve them ->
 # LNK2019 / C4273. Harmless (empty) on Linux.
-target_compile_definitions(${TEST_NAME} PRIVATE VN_VSG_LIB)
+target_compile_definitions(${TEST_NAME} PRIVATE VN_BACKEND_VSG_LIB)
 # This suite compiles the backend half directly (its headers, and the plugin's device sources added
 # below), so it is a backend-half consumer (see that half's BackendHalfGuard.hpp).
 target_compile_definitions(${TEST_NAME} PRIVATE VN_GRAPHICS_BACKEND_CONSUMER)

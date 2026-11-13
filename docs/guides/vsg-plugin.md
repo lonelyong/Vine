@@ -44,13 +44,13 @@
 
 ## 2. 文件地图（谁负责什么）
 
-**包含树** `include/vine/vsg/`：`vsg_global.hpp`（导出宏与命名空间宏，**唯一留在根的头**）＋ 三层，实现在 `src/` 下同名的三层目录里：
+**包含树** `include/vine/backend_vsg/`：`backend_vsg_global.hpp`（导出宏与命名空间宏，**唯一留在根的头**）＋ 三层，实现在 `src/` 下同名的三层目录里：
 
 **`shell/`**（入口与工厂）→ **`internal/`**（插件的机器）→ **`support/`**（被上面两层复用的支撑）。
 依赖只有一个方向：`shell` → `internal` → `support`；唯一一处反向边是工厂 include `internal/VsgBackend.hpp`（入口当然要知道它造什么）。
 2026-09-27 之前 `internal/` 叫 `api/`——名字误导（`sdk/**` 才是导出/安装的那个 API），而支撑头与外壳头混在根上，看不出层次。
 
-**`support/`**（`include/vine/vsg/support` + `src/support`，9 头 / 5 源）——被机器与外壳复用的支撑（设备无关或只依赖 vsg）：
+**`support/`**（`include/vine/backend_vsg/support` + `src/support`，9 头 / 5 源）——被机器与外壳复用的支撑（设备无关或只依赖 vsg）：
 `RenderStateMapper`、`VsgUtils`、`VsgBufferView`、`VsgFwd` 是 header-only/前向声明单一家。
 
 | 单元 | 职责 |
@@ -62,7 +62,7 @@
 | `VsgBackendUtility` | 图手术、设备同步、会话策略查询 |
 | `VsgUtils` / `VsgFwd` / `VsgBufferView` | `Mat4d`→`dmat4`；只在指针后出现的 vsg 类型；缓冲视图 |
 
-**`internal/`**（`include/vine/vsg/internal` + `src/internal`）——门面、会话、目标与内容世界：
+**`internal/`**（`include/vine/backend_vsg/internal` + `src/internal`）——门面、会话、目标与内容世界：
 
 | 组 | 单元 |
 | --- | --- |
@@ -87,11 +87,11 @@
 > 引擎持有唯一的诊断路线，本插件自己那条路线的 sink 转发进去 —— 宿主的 sink 与
 > `RenderEngine::diagnosticCount()` 因此能看到 session 自己的报告，而本层不重复上报。
 >
-> `DeviceRequirements` 相反：**从后端半移入本插件**（`include/vine/vsg/internal/` + `src/internal/`，2026-10-21）。
+> `DeviceRequirements` 相反：**从后端半移入本插件**（`include/vine/backend_vsg/internal/` + `src/internal/`，2026-10-21）。
 > 它命名的是 Vulkan 1.4 地板与 `VK_EXT_*` 要求，只有 Vulkan 后端能用；留在"随 SDK 安装"的那一半里
 > 会把"每个后端都能用"写成假话（见 `.ai/backlog/graphics.md` R1）。
 
-**`shell/`（插件外壳）**：`GfxBackendVsgPlugin`（`VN_DECLARE_PLUGIN`）与 `VsgRenderBackendFactory`（按名注册/创建），头在 `include/vine/vsg/shell/`、实现在 `src/shell/`。
+**`shell/`（插件外壳）**：`GfxBackendVsgPlugin`（`VN_DECLARE_PLUGIN`）与 `VsgRenderBackendFactory`（按名注册/创建），头在 `include/vine/backend_vsg/shell/`、实现在 `src/shell/`。
 
 **测试与工具**：`tests/test_vsg/`（本模块的集成测试；MODULE 库不能链，测试**直接编实现源文件**）、
 `scripts/vsg_rewrite_gate.sh`（门禁）、`scripts/xwin2ppm.py` / `ppmprobe.py` / `xwinresize.py`（读窗口与断言）。

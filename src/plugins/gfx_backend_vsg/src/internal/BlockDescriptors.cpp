@@ -1,4 +1,4 @@
-#include <vine/vsg/internal/BlockDescriptors.hpp>
+#include <vine/backend_vsg/internal/BlockDescriptors.hpp>
 
 #include <array>
 #include <cstdint>
@@ -11,7 +11,7 @@
 #include <vsg/state/DescriptorImage.h>
 #include <vsg/state/ImageInfo.h>
 
-VN_VSG_NS_BEGIN
+VN_BACKEND_VSG_NS_BEGIN
 
 namespace
 {
@@ -314,4 +314,4 @@ std::uint64_t BlockDescriptors::refusals() const noexcept
     return d->refusals;
 }
 
-VN_VSG_NS_END
+VN_BACKEND_VSG_NS_END

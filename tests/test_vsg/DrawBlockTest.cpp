@@ -26,7 +26,7 @@
 
 #include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameRecorder.hpp>
-#include <vine/vsg/internal/DrawBlock.hpp>
+#include <vine/backend_vsg/internal/DrawBlock.hpp>
 
 using vn::graphics::Diagnostics;
 using vn::graphics::RenderCommand;
@@ -41,7 +41,7 @@ using vn::graphics::backend::FrameToken;
 using vn::graphics::backend::Observe;
 using vn::graphics::backend::TargetFacts;
 using vn::math::Mat4d;
-using vn::vsg::packDrawBlock;
+using vn::backend_vsg::packDrawBlock;
 
 namespace
 {

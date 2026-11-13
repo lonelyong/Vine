@@ -16,7 +16,7 @@
 #include <vine/graphics/StateNode.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Point3.hpp>
-#include <vine/vsg/internal/DeviceProbe.hpp>
+#include <vine/backend_vsg/internal/DeviceProbe.hpp>
 
 #include "TestGeometryBuilders.hpp"
 #include "PlanTestSupport.hpp"
@@ -137,7 +137,7 @@ SdkPixelFixture::~SdkPixelFixture()
 
 bool SdkPixelFixture::up()
 {
-    backend = vn::intrusive_ptr<vn::vsg::VsgBackend>(new vn::vsg::VsgBackend());
+    backend = vn::intrusive_ptr<vn::backend_vsg::VsgBackend>(new vn::backend_vsg::VsgBackend());
     engine  = vn::intrusive_ptr<vn::graphics::RenderEngine>(new vn::graphics::RenderEngine());
     engine->setDevice(backend);
     engine->setDiagnosticSink([](const RenderDiagnostic& diagnostic) {

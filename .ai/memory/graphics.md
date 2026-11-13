@@ -424,7 +424,7 @@
 
 ## 2026-11-12 —— graphics-next 第 3a 步落地：`drawNeeds` 是唯一的键构造者
 
-- **新文件**：`src/plugins/gfx_backend_vsg/include/vine/vsg/internal/DrawNeeds.hpp` + `src/internal/DrawNeeds.cpp`。
+- **新文件**：`src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/DrawNeeds.hpp` + `src/internal/DrawNeeds.cpp`。
   `DrawNeeds` 值 + `Miss{None,Geometry,Material,Program}` + `keyFor(compatibility)`；两个 `drawNeeds` 重载：
   `(pass, CompiledCommand, facts)` = 内容绘制，`(pass, CompiledDraw, inputs)` = 全屏调用（**不需要 facts**：
   它的身份全在计划 + 调用方 offer 里）。`sampledColorCount` / `sampledDepthCount` 从 `ContentPass.cpp` 的
@@ -804,7 +804,7 @@
 - **可检查的**：V1 宿主面零 Vk 类型（今天靠人工/注释区分）、V2 后端面零 `<vulkan>`/`<vsg>` include（已 0）、
   V3 安装组件不含 Vulkan 头、V4 插件 `shell/` 零 Vk（已 0）。升级触发：插件头开始安装 / 第二个模块 include `shell/` /
   `support/` 被生产路径 include。
-- **降级**：上一轮的 “D2 只允许 `src/internal/`” 撤回（与 vsg 的 `include/vine/vsg/internal/` 分层不符，且无受害者），
+- **降级**：上一轮的 “D2 只允许 `src/internal/`” 撤回（与 vsg 的 `include/vine/backend_vsg/internal/` 分层不符，且无受害者），
   换成 V4 + 升级条件。
 - **文档**：`../research/graphics-2026-11-13-vk-exposure-boundary.md`（dated，非现行）。
 
@@ -826,6 +826,21 @@
   `volkLoadDeviceTable(&table, device)` 后用 `table.vkDestroyDevice(...)`。直接 include `<vulkan/vulkan.h>` + `<volk.h>`
   会让 `vkEnumeratePhysicalDevices` 在全局与 `volk::` 之间二义。
 - **验证**：`test_vk` 3 例全绿；本机 `validation=on`、`InitFailed` 诊断计数 0；`plugins/vine/gfx_backend_vkd.so` 构建并部署。
+
+## 2026-11-13 —— vsg 后端对齐命名：`vn::backend_vsg`
+
+- **范围**：`vine/vsg/` → `vine/backend_vsg/`、`vsg_global.hpp` → `backend_vsg_global.hpp`（旧名仅在此记录 `<!-- drift-ok -->`）、`vn::vsg::` → `vn::backend_vsg::`、
+  `VN_VSG_{LIB,API,NS_BEGIN,NS_END}` → `VN_BACKEND_VSG_*`。共 176 个文件（src/tests/cmake/scripts/docs/.ai）。
+- **不动的**：VulkanSceneGraph 自己的 `::vsg`（2134 处 `::vsg::` 与全局 `namespace vsg {` 前向声明）——模块内一律用带前导
+  `::` 的拼写，这也是这次能安全批量替换的原因。
+- **类名暂不改**：`VsgBackend` / `VsgExecutor` / `VsgHostWindow` … 在 `vn::backend_vsg` 下前缀冗余，但那是 ~1000 处引用且无
+  行为收益；留作独立一步（若做，参照 vk 模块的 `Device` / `BackendFactory` / `Plugin`）。
+- **一个真坑（门禁静默失效）**：`scripts/check_doc_symbols.py` 的 `MAPPED_DIRS` 写的是
+  `PLUGIN / "include" / "vine" / "vsg"`（分段字符串），文本替换匹配不到，于是它**照样报 OK**，但覆盖的 unit 从 104 掉到 47。
+  已修为 `"backend_vsg"`，恢复 104。教训：改名后要看门禁的**计数**，不只是退出码。
+- **其余**：`scripts/vn_shader_check.sh` 注释里的旧路径同步；`content_seam` ctest 绿。
+- **验证**：`test_vsg` 548 全绿（5 次运行中 1 次 `EachAttachmentClearsToItsOwnColour` 偶发红，已记 backlog T36 并带诊断），
+  `test_vk` 3/3，`gfx_backend_vsg` / `gfx_backend_vk` 均构建部署，四个文档/头文件门禁 + 符号门禁全清。
 
 ## 2026-11-13 —— 第二个后端定为手撸 Vulkan（`vk`，学习/研究）
 

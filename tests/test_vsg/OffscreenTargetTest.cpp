@@ -51,12 +51,12 @@
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/Observe.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/OffscreenSession.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/SessionContent.hpp>
-#include <vine/vsg/internal/SessionDrive.hpp>
-#include <vine/vsg/internal/TransferStaging.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/OffscreenSession.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/SessionContent.hpp>
+#include <vine/backend_vsg/internal/SessionDrive.hpp>
+#include <vine/backend_vsg/internal/TransferStaging.hpp>
 
 #include "DevicePhases.hpp"
 
@@ -79,10 +79,10 @@ using vn::graphics::backend::Rgba8;
 using vn::graphics::backend::TargetAction;
 using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::TargetInstance;
-using vn::vsg::createDevice;
-using vn::vsg::DeviceResult;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::api::OffscreenSessionOptions;
+using vn::backend_vsg::createDevice;
+using vn::backend_vsg::DeviceResult;
+using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::api::OffscreenSessionOptions;
 
 namespace
 {
@@ -183,7 +183,7 @@ vn::graphics::backend::ClearValues clearPolicy(const float (&color)[4], bool ask
 
 } // namespace
 
-void runOffscreenReadbackPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+void runOffscreenReadbackPhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
     auto target = OffscreenTarget::create(device.device,
                                           OffscreenTarget::Layout{
@@ -223,7 +223,7 @@ void runOffscreenReadbackPhase(const vn::vsg::DeviceResult& device, DevicePhaseC
     EXPECT_DOUBLE_EQ(probe.nonBlackFraction(), 1.0) << "a clear colour that is not black is still not 'empty'";
 }
 
-void runTargetResizePhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+void runTargetResizePhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
     auto target = OffscreenTarget::create(device.device,
                                           OffscreenTarget::Layout{
@@ -310,7 +310,7 @@ void runTargetResizePhase(const vn::vsg::DeviceResult& device, DevicePhaseCounte
     EXPECT_TRUE(target->probe().valid()) << "the release of the old set must not touch the live one";
 }
 
-void runTargetRebuildPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+void runTargetRebuildPhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
     const float kFirst[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
     const float kSecond[4]{ 0.1F, 0.2F, 0.3F, 1.0F };
@@ -451,7 +451,7 @@ void runTargetRebuildPhase(const vn::vsg::DeviceResult& device, DevicePhaseCount
     EXPECT_TRUE(target->probe().valid()) << "the release of the old set must not touch the live one";
 }
 
-void runLostSubmissionPhase(const vn::vsg::DeviceResult& device, DevicePhaseCounters& counters)
+void runLostSubmissionPhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
     const float kRed[4]{ 1.0F, 0.0F, 0.0F, 1.0F };
     const float kGreen[4]{ 0.0F, 1.0F, 0.0F, 1.0F };
@@ -1303,7 +1303,7 @@ TEST(OffscreenSessionTest, TheDestructiveWaitIsCountedOnce)
     }
 
     Diagnostics                    diagnostics;
-    vn::vsg::api::OffscreenSession session;
+    vn::backend_vsg::api::OffscreenSession session;
     OffscreenSessionOptions        options;
     options.device       = created.device;
     options.queue_family = created.queue_family;
@@ -1336,7 +1336,7 @@ TEST(OffscreenSessionTest, AReplacedTransferTaskLeavesTheSessionSubmitting)
     }
 
     Diagnostics                    diagnostics;
-    vn::vsg::api::OffscreenSession session;
+    vn::backend_vsg::api::OffscreenSession session;
     OffscreenSessionOptions        options;
     options.device       = created.device;
     options.queue_family = created.queue_family;
@@ -1439,7 +1439,7 @@ TEST(OffscreenSessionTest, TheUploadScratchIsGivenBackAndALaterUploadStillLands)
 
     // The viewer shape an off-screen session builds (see OffscreenSession::initialize): ONE windowless record task,
     // which is also the single transfer task this backend's uploads are queued into.
-    ::vsg::ref_ptr<::vsg::Viewer>       viewer(new vn::vsg::detail::EmbeddedViewer());
+    ::vsg::ref_ptr<::vsg::Viewer>       viewer(new vn::backend_vsg::detail::EmbeddedViewer());
     ::vsg::ref_ptr<::vsg::CommandGraph> graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
     viewer->assignRecordAndSubmitTaskAndPresentation(::vsg::CommandGraphs{ graph });
     ASSERT_EQ(viewer->recordAndSubmitTasks.size(), 1U) << "the replacement refuses any other shape";
@@ -1465,19 +1465,19 @@ TEST(OffscreenSessionTest, TheUploadScratchIsGivenBackAndALaterUploadStillLands)
     // AND WHAT THE TASK CAN SAY ABOUT ITSELF - the fact the release decides on instead of comparing upload counters (see
     // detail::StagingTask). This viewer was built by vsg, so its task keeps the block to itself: that unreachable answer
     // is exactly why this backend installs a type of its own, and the swap below is what hands one over.
-    EXPECT_FALSE(vn::vsg::detail::stagedBytesOf(task.get()).has_value())
+    EXPECT_FALSE(vn::backend_vsg::detail::stagedBytesOf(task.get()).has_value())
         << "a task vsg built cannot be asked what it holds";
 
     // The task is handed back rather than destroyed by the swap: the caller owns the moment the staged block dies. Here
     // the copy is already provably done (`deviceWaitIdle()` above), so it goes immediately.
     ::vsg::ref_ptr<::vsg::TransferTask> previous;
-    ASSERT_TRUE(vn::vsg::detail::installStagingTask(*viewer, *created.device, previous));
+    ASSERT_TRUE(vn::backend_vsg::detail::installStagingTask(*viewer, *created.device, previous));
     ASSERT_NE(previous, nullptr) << "the task that staged the upload is handed back, not dropped inside the swap";
     previous = nullptr;
     const std::size_t released = workingSetBytes();
     EXPECT_LE(released + (128U << 20), uploaded) << "replacing the task gives that buffer back (working set " << uploaded << " -> " << released << ")";
     EXPECT_EQ(created.device->transferTask.get(), task.get()) << "the device's observer follows the replacement";
-    EXPECT_EQ(vn::vsg::detail::stagedBytesOf(task.get()).value_or(1U), 0U) << "and the fresh task holds nothing until it uploads";
+    EXPECT_EQ(vn::backend_vsg::detail::stagedBytesOf(task.get()).value_or(1U), 0U) << "and the fresh task holds nothing until it uploads";
 
     // AND WHAT LANDS AFTER THE REPLACEMENT IS THE BYTES, not just a successful submit: the new task has no staging of
     // its own, so this upload allocates one and stages through it, and a host-visible destination can be read back -
@@ -1509,13 +1509,13 @@ TEST(OffscreenSessionTest, TheUploadScratchIsGivenBackAndALaterUploadStillLands)
 
     // THE INSTALLED TASK ANSWERS WITH REAL BYTES: the block the small upload sized is visible on it, which is what the
     // release asks before deciding to swap (`staged != 0` -> there is something to give back).
-    const std::optional<::VkDeviceSize> staged_after = vn::vsg::detail::stagedBytesOf(task.get());
+    const std::optional<::VkDeviceSize> staged_after = vn::backend_vsg::detail::stagedBytesOf(task.get());
     ASSERT_TRUE(staged_after.has_value()) << "the installed task can be asked";
     EXPECT_GE(*staged_after, ::VkDeviceSize{ 4096U }) << "and reports the block the upload sized (" << *staged_after << ")";
 
     // AND THAT BLOCK CAN BE GIVEN BACK WITHOUT STOPPING ANYTHING: the copy's own fence is the proof, so the free is a poll
     // and nothing else. (The backend runs this at every frame boundary; here it is called directly, which is the same path.)
-    EXPECT_GT(vn::vsg::detail::releaseStaging(*viewer), 0U) << "the staging is freed on the copy's evidence";
-    EXPECT_EQ(vn::vsg::detail::stagedBytesOf(task.get()).value_or(1U), 0U) << "and the task holds nothing afterwards";
+    EXPECT_GT(vn::backend_vsg::detail::releaseStaging(*viewer), 0U) << "the staging is freed on the copy's evidence";
+    EXPECT_EQ(vn::backend_vsg::detail::stagedBytesOf(task.get()).value_or(1U), 0U) << "and the task holds nothing afterwards";
 }
 #endif

@@ -22,9 +22,9 @@
 #include <vine/graphics/StateNode.hpp>
 #include <vine/graphics/Topology.hpp>
 #include <vine/math/Matrix4x4.hpp>
-#include <vine/vsg/internal/BackendContent.hpp>
-#include <vine/vsg/internal/ContentAssembly.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/internal/BackendContent.hpp>
+#include <vine/backend_vsg/internal/ContentAssembly.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
 
 using vn::graphics::DepthMode;
 using vn::graphics::Geometry;
@@ -281,7 +281,7 @@ TEST(PrimitiveDrawTest, OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUplo
     EXPECT_EQ(report.counters->draws, 1U) << "一个几何体一次绘制调用：图元是这次调用里的三条命令";
 
     // 后端的账：位置、法线、索引 arena 各上传一次，其余六次取流命中已建的绑定。
-    auto* const assembly = vn::vsg::detail::BackendContentAccess::assembly(*fixture.backend);
+    auto* const assembly = vn::backend_vsg::detail::BackendContentAccess::assembly(*fixture.backend);
     ASSERT_NE(assembly, nullptr) << "会话起来之后内容世界必须存在";
     const std::uint64_t uploads_after_first = assembly->uploads().uploads();
     const std::uint64_t aliases_after_first = assembly->uploads().aliases();

@@ -29,8 +29,8 @@
 #include <vine/imaging/Image.hpp>
 #include <vine/imaging/PixelFormat.hpp>
 
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/MaterialImages.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/MaterialImages.hpp>
 
 using vn::graphics::CubeMap;
 using vn::graphics::Sampler;
@@ -38,11 +38,11 @@ using vn::graphics::Texture;
 using vn::graphics::Texture2D;
 using vn::imaging::Image;
 using vn::imaging::PixelFormat;
-using vn::vsg::ContentDeclarationIndexes;
-using vn::vsg::ContentDeclarations;
-using vn::vsg::MaterialImages;
-using vn::vsg::SamplerImage;
-using vn::vsg::detail::TextureReject;
+using vn::backend_vsg::ContentDeclarationIndexes;
+using vn::backend_vsg::ContentDeclarations;
+using vn::backend_vsg::MaterialImages;
+using vn::backend_vsg::SamplerImage;
+using vn::backend_vsg::detail::TextureReject;
 
 namespace
 {

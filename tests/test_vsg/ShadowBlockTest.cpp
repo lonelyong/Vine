@@ -41,20 +41,20 @@
 #include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/graphics/backend/StateRegistry.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
-#include <vine/vsg/internal/BlockDescriptors.hpp>
-#include <vine/vsg/internal/BlockStorage.hpp>
-#include <vine/vsg/internal/ContentDraw.hpp>
-#include <vine/vsg/internal/ContentFacts.hpp>
-#include <vine/vsg/internal/ContentPass.hpp>
-#include <vine/vsg/internal/ContentPipeline.hpp>
-#include <vine/vsg/internal/ContentSources.hpp>
-#include <vine/vsg/internal/Device.hpp>
-#include <vine/vsg/internal/GeometryFacts.hpp>
-#include <vine/vsg/internal/LightBlock.hpp>
-#include <vine/vsg/internal/OffscreenTarget.hpp>
-#include <vine/vsg/internal/ShadowBlock.hpp>
-#include <vine/vsg/internal/StreamUploads.hpp>
-#include <vine/vsg/internal/VsgExecutor.hpp>
+#include <vine/backend_vsg/internal/BlockDescriptors.hpp>
+#include <vine/backend_vsg/internal/BlockStorage.hpp>
+#include <vine/backend_vsg/internal/ContentDraw.hpp>
+#include <vine/backend_vsg/internal/ContentFacts.hpp>
+#include <vine/backend_vsg/internal/ContentPass.hpp>
+#include <vine/backend_vsg/internal/ContentPipeline.hpp>
+#include <vine/backend_vsg/internal/ContentSources.hpp>
+#include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/GeometryFacts.hpp>
+#include <vine/backend_vsg/internal/LightBlock.hpp>
+#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/ShadowBlock.hpp>
+#include <vine/backend_vsg/internal/StreamUploads.hpp>
+#include <vine/backend_vsg/internal/VsgExecutor.hpp>
 
 #include "TestGeometryBuilders.hpp"
 #include "TestGeometryFacts.hpp"
@@ -93,29 +93,29 @@ using vn::graphics::backend::StateRegistry;
 using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::VariantPool;
 using vn::test::setPrimitiveIndices;
-using vn::vsg::BlockDescriptors;
-using vn::vsg::BlockStorage;
-using vn::vsg::buildGeometryFacts;
-using vn::vsg::buildMaterialFacts;
+using vn::backend_vsg::BlockDescriptors;
+using vn::backend_vsg::BlockStorage;
+using vn::backend_vsg::buildGeometryFacts;
+using vn::backend_vsg::buildMaterialFacts;
 using vn::test::buildMaterialFacts; // the object-pointer overload a case writes (see TestMaterialFacts.hpp)
-using vn::vsg::buildProgramFacts;
-using vn::vsg::ContentDraw;
-using vn::vsg::ContentFacts;
-using vn::vsg::ContentPass;
-using vn::vsg::ContentPipeline;
-using vn::vsg::FactMiss;
-using vn::vsg::GeometryFacts;
-using vn::vsg::InputImages;
-using vn::vsg::MaterialFacts;
-using vn::vsg::OffscreenTarget;
-using vn::vsg::packedSlotOf;
-using vn::vsg::packLightBlock;
-using vn::vsg::packShadowBlock;
-using vn::vsg::PassContent;
-using vn::vsg::ProgramFacts;
-using vn::vsg::StreamUploads;
-using vn::vsg::VineLightsBlock;
-using vn::vsg::VsgExecutor;
+using vn::backend_vsg::buildProgramFacts;
+using vn::backend_vsg::ContentDraw;
+using vn::backend_vsg::ContentFacts;
+using vn::backend_vsg::ContentPass;
+using vn::backend_vsg::ContentPipeline;
+using vn::backend_vsg::FactMiss;
+using vn::backend_vsg::GeometryFacts;
+using vn::backend_vsg::InputImages;
+using vn::backend_vsg::MaterialFacts;
+using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::packedSlotOf;
+using vn::backend_vsg::packLightBlock;
+using vn::backend_vsg::packShadowBlock;
+using vn::backend_vsg::PassContent;
+using vn::backend_vsg::ProgramFacts;
+using vn::backend_vsg::StreamUploads;
+using vn::backend_vsg::VineLightsBlock;
+using vn::backend_vsg::VsgExecutor;
 
 namespace
 {
@@ -476,7 +476,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     //
     // A packing that bound the map to the wrong slot, ignored the switch, or scaled every light would move at least
     // one of those four colours, and the receiver's clear colour (blue) is what a band that drew nothing looks like.
-    const vn::vsg::DeviceResult created = vn::vsg::createDevice();
+    const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
     if (!created.ok) {
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
@@ -581,12 +581,12 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     ASSERT_EQ(buildMaterialFacts(material.get(), material->description(), 1U, material_facts, material_storage), FactMiss::None);
 
     GeometryFacts                        quad_facts;
-    std::vector<vn::vsg::ChannelFacts>   quad_channels;
-    std::vector<vn::vsg::PrimitiveFacts> quad_primitives;
+    std::vector<vn::backend_vsg::ChannelFacts>   quad_channels;
+    std::vector<vn::backend_vsg::PrimitiveFacts> quad_primitives;
     ASSERT_EQ(buildGeometryFacts(*full_quad, quad_facts, quad_channels, quad_primitives), FactMiss::None);
     GeometryFacts                        band_facts[4];
-    std::vector<vn::vsg::ChannelFacts>   band_channels[4];
-    std::vector<vn::vsg::PrimitiveFacts> band_primitives[4];
+    std::vector<vn::backend_vsg::ChannelFacts>   band_channels[4];
+    std::vector<vn::backend_vsg::PrimitiveFacts> band_primitives[4];
     for (std::size_t index = 0; index < 4U; ++index) {
         ASSERT_EQ(buildGeometryFacts(*bands[index], band_facts[index], band_channels[index], band_primitives[index]), FactMiss::None);
     }
@@ -734,7 +734,7 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     storage->beginFrame();
     VariantPool   pool;
     StreamUploads uploads;
-    const auto    entry_points = vn::vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
+    const auto    entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw   producer_draws(*producer_pipelines, pool, entry_points);
     ContentDraw   consumer_draws(*consumer_pipelines, pool, entry_points);
     StateRegistry producer_registry(pool);
