@@ -726,3 +726,16 @@
 - **口径**：chunk 是共享单位，不是剔除单位；将来若做“块级早期剔除”，块盒必须取块内所有行的并（保守），
   不得用 `chain[0]`。
 - **文档**：`graphics-frame-pipeline.md` §3.3 F2 验收加 `T24`；§8 的 T24 判据改为“剔除按行、不按块”、已实现。
+
+## 2026-11-13 —— backlog T24：select 的 Release 配方与重测
+
+- **配方**：`SelectTest.MeasureWhatOneSelectCostsWithAMovingCamera` —— 2000 / 10000 drawables 的网格（全部在视内、
+  深度有层次），快照发布一次，10 个移过眼的 view（预建，计时不含相机构造）；打印纯 `detail::selectSnapshot` 与
+  生产 miss（`SnapshotSource::collectRenderCommands`，含 memo 查找与命令 vector 的 shared 分配），断答数与
+  “每个移动视图都是 miss”。
+- **数字（RelWithDebInfo，本机 ×3）**：2000 → select 337–340 µs / source 435–443 µs；10000 → select 2348–3067 µs /
+  source 3388–3626 µs。Debug 只作参考：1815 µs / 10675 µs。
+- **结论**：10k < 4 ms 门、2000 < 2 ms 线 ⇒ 不做优化，T24 保持触发条件型；但 10k 已越过 2 ms，生产路径比纯
+  select 多 ~0.9 ms（查找 + 分配），1 万 drawable 成为日常时先看这一半。
+- **文档**：backlog T24 换掉“先补配方”；`graphics-threading.md` §1.1 的 1597 µs/帧（旧直接路径）改成帧路径的
+  select / source 数字。

@@ -22,7 +22,7 @@
 
 内容（场景图、几何、材质、相机）由宿主在 UI 线程上同步编辑 —— 这是文档编辑器的核心手感，不能变成异步；
 而一帧的 GPU 面工作（编译、上传、记录、提交、呈现、驻留记账）必须能和交互并行，否则 UI 与渲染互斥。
-实测（Release）：2000 drawables 移动相机 1597 µs/帧，后端记录基线 33 次分配/一个被录制的三角。
+实测（Release）：2000 drawables 移动相机，帧的 select 337–340 µs、生产 miss（`SnapshotSource::collectRenderCommands`）435–443 µs，10000 drawables 为 2.3–3.1 ms / 3.4–3.6 ms（`tests/test_graphics/SelectTest.cpp` 的 `MeasureWhatOneSelectCostsWithAMovingCamera`，2026-11-13；旧的 1597 µs/帧计时的是已不在帧路径上的直接收集器），后端记录基线 33 次分配/一个被录制的三角。
 
 难的不是"开线程"，而是**内容归谁写**：后端的"事实行"从活内容上读（`Geometry::revision()`、primitive 的实例句柄），
 收集要走场景图。只要渲染在另一条线程，两侧就必须有一种关系：共享（锁）、拷贝（每帧快照）、或移交（一个写者）。

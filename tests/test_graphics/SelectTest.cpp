@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <random>
 #include <thread>
 #include <vector>
@@ -29,6 +31,7 @@
 #include "DrawListDiff.hpp"
 #include "SceneRows.hpp"
 #include "SceneSnapshot.hpp"
+#include "SnapshotSource.hpp"
 
 using vn::geom::spatial::Aabbd;
 using vn::graphics::CollectView;
@@ -44,6 +47,7 @@ using vn::graphics::detail::makeSortKey;
 using vn::graphics::detail::Row;
 using vn::graphics::detail::SceneRows;
 using vn::graphics::detail::selectSnapshot;
+using vn::graphics::detail::SnapshotSource;
 using vn::graphics::detail::SortKey;
 using vn::intrusive_ptr;
 using vn::math::Mat4d;
@@ -359,4 +363,91 @@ TEST(SelectTest, OneChunkCullsEachRowOnItsOwnBox)
     selectSnapshot(*snapshot, looking_at_outside, vn::graphics::kAllLayers, other, viewport_used);
     ASSERT_EQ(other.size(), 1U) << "the other camera answers the other segment - culling is still ON";
     EXPECT_EQ(other.front().node, outside_geometry->id());
+}
+
+/*
+ * @brief T24's remeasure (backlog graphics section 2.2): what one select costs when the camera moves.
+ *
+ * The old figure (1597 us @2000 drawables) timed the DIRECT collector, `Scene::collectRenderCommands`; since W9b a
+ * frame selects from a published snapshot instead, where the world boxes were folded at publish time and F11 gave the
+ * sort a documented key. This recipe measures that path alone at the two sizes the backlog's trigger names - 2000 for
+ * continuity with the old table, 10000 for the trigger - with a view that moves before every call, so no answer may
+ * come from a memo.
+ *
+ * It prints the pure select (`detail::selectSnapshot`, the miss path) and the production miss
+ * (`SnapshotSource::collectRenderCommands`: memo lookup + select + the shared list's allocation), because the trigger
+ * ("select > 4 ms at 10k", "> 2 ms in a 60 fps budget") is judged on the frame's path, not on the helper alone. It
+ * asserts the answers (every drawable selected, every moved view a miss); the times are the record, not a CI gate.
+ *
+ * Run it where the numbers matter:
+ *   ./build-rel/bin/test_graphics --gtest_filter='*MeasureWhatOneSelectCosts*'
+ */
+TEST(SelectTest, MeasureWhatOneSelectCostsWithAMovingCamera)
+{
+    std::printf("\n");
+    constexpr int kRepetitions = 10;
+    for (const std::size_t drawables : { std::size_t{ 2000 }, std::size_t{ 10000 } }) {
+        constexpr std::size_t kColumns = 100U;
+        const std::size_t     rows     = drawables / kColumns;
+
+        Scene scene;
+        auto  root = intrusive_ptr<vn::graphics::Group>(new vn::graphics::Group());
+        scene.setRoot(root);
+        // A grid that FILLS the view (a culled grid would time the prune), with per-node depth variation so the sort
+        // has real work. The geometry is one triangle per node, each under its own placement.
+        for (std::size_t index = 0; index < drawables; ++index) {
+            const double x = (static_cast<double>(index % kColumns) - 0.5 * static_cast<double>(kColumns)) * 0.05;
+            const double y = (static_cast<double>(index / kColumns) - 0.5 * static_cast<double>(rows)) * 0.05;
+            const double z = -4.0 - static_cast<double>((index / 7U) % 5U) * 0.25;
+            auto         node = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+            node->setMatrix(vn::math::translate(Vec3d(x, y, z)));
+            node->addChild(triangleGeometry());
+            root->addChild(node);
+        }
+
+        const vn::graphics::detail::SceneSnapshotPtr snapshot = SceneRows::snapshot(scene);
+        ASSERT_EQ(snapshot->row_count, 1U + 2U * drawables) << "the root row, then one placement and one leaf per drawable";
+
+        // Pre-built views: the recipe times SELECT, not camera construction. Each moves the eye a little, so no two
+        // share a view-projection and nothing may be answered from a memo.
+        std::vector<CollectView> views;
+        views.reserve(kRepetitions);
+        for (int step = 0; step < kRepetitions; ++step) {
+            views.push_back(viewFrom(Vec3d(0.001 * static_cast<double>(step), 0.0, 10.0), Vec3d(0.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 }));
+        }
+
+        bool                       viewport_used = false;
+        std::vector<RenderCommand> selected;
+        selectSnapshot(*snapshot, views.front(), vn::graphics::kAllLayers, selected, viewport_used); // warm
+        ASSERT_EQ(selected.size(), drawables) << "the fixture fills the view; a culled grid would time the prune";
+
+        const auto select_began = std::chrono::steady_clock::now();
+        for (const CollectView& view : views) {
+            selectSnapshot(*snapshot, view, vn::graphics::kAllLayers, selected, viewport_used);
+        }
+        const long long select_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - select_began).count() / kRepetitions;
+        EXPECT_EQ(selected.size(), drawables);
+
+        SnapshotSource source;
+        source.setSnapshot(snapshot);
+        const auto source_began = std::chrono::steady_clock::now();
+        for (int step = 0; step < kRepetitions; ++step) {
+            source.beginFrame(static_cast<std::uint64_t>(step) + 1U);
+            const auto list = source.collectRenderCommands(views[static_cast<std::size_t>(step)], vn::graphics::kAllLayers);
+            ASSERT_NE(list, nullptr);
+            ASSERT_EQ(list->size(), drawables);
+        }
+        const long long source_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - source_began).count() / kRepetitions;
+        EXPECT_EQ(source.memoHits(), 0U) << "a moved view cannot hit the per-view memo";
+        EXPECT_EQ(source.memoStores(), static_cast<std::uint64_t>(kRepetitions));
+
+        std::printf("[measure] select rows=%zu drawables=%zu moving=%lld us source_miss=%lld us\n",
+                    snapshot->row_count,
+                    drawables,
+                    select_us,
+                    source_us);
+        std::fflush(stdout);
+    }
 }
