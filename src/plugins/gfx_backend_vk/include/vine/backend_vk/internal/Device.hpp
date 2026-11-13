@@ -14,16 +14,22 @@ VN_BACKEND_VK_NS_BEGIN
  *   one content draw per `RenderCommand` - a GLSL program compiled through glslang into a pipeline, the geometry's
  *   channels uploaded as vertex/index streams, the `VineViewBlock`/`VineDrawBlock` pair bound as uniforms, and
  *   `vkCmdDrawIndexed`.
- * - WHAT IT DELIBERATELY DOES NOT DO YET. No self-owned window (`DevicePresentation::Probe`), no shadows and no
- *   built-in shader variant defines. M4 landed the engine's content ABI (material, texture slots, lights, the draw
- *   block and the 128-byte camera push) and the full-screen draw path; M5 serves a HOST window
- *   (`DevicePresentation::Handle`) through a per-window swapchain; M6 makes residency an answered question -
- *   `releaseContent` lets go of what a host names, `prepareFrame` builds a frame's content without running it, and
- *   `frameReport` says what the last frame did and what is resident. It answers `capabilities()` from what it can
- *   really serve - `render_targets == true`, and `presentation == true` once a window target can present.
- * - FRAME AND HOST VERBS. `executeFrame()` runs the off-screen passes of the frame value and records the draws of each
- *   `DrawDescription`; a pass drawing into the window, or a draw naming no program, is reported and left out. The
- *   readbacks answer the targets this device built.
+ * - WHAT IT DOES, MILESTONE BY MILESTONE. M4 landed the engine's content ABI (material, texture slots, lights, the
+ *   draw block and the 128-byte camera push) and the full-screen draw path; M5 serves a HOST window
+ *   (`DevicePresentation::Handle`) through a per-window swapchain, and brings up its OWN window for a `Probe` device;
+ *   M6 makes residency an answered question - `releaseContent` lets go of what a host names, `prepareFrame` builds a
+ *   frame's content without running it, and `frameReport` says what the last frame did and what is resident; M8
+ *   compiles the engine's own programs under the variant names their drawables ask for; M9 records a DEPTH-ONLY pass
+ *   (a target with a depth attachment and no colour attachment is the engine's shadow map) and binds that map plus the
+ *   `VineShadowBlock` a pass' declared inputs resolve to. It answers `capabilities()` from what it can really serve -
+ *   `render_targets == true`, and `presentation == true` once a window target can present.
+ * - WHAT IT STILL DOES NOT DO. Multi-sampled targets (`Capabilities::max_samples` is 1), the deferred G-buffer path,
+ *   and point-light (cube) shadows. A request for either of the first two is reported once and served without it,
+ *   rather than silently drawn differently.
+ * - FRAME AND HOST VERBS. `executeFrame()` runs the frame's passes in the order it carries and records the draws of each
+ *   `DrawDescription` - an off-screen pass into its target, and a pass naming no target into the acquired image of the
+ *   window the frame presents through. A draw naming no program is reported and left out. The readbacks answer the
+ *   targets this device built.
  * - VULKAN LIVENESS. Every handle lives in the implementation object; `shutdown()` returns the device to the state of
  *   a freshly constructed one (idempotent, safe before `initialize()`), which is what the SDK's contract requires of a
  *   backend whose surface can be recreated.
@@ -190,8 +196,15 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   image of `present_to` when that is a window this device handed out, and the frame's tail presents it (M5).
      *   A frame that names no presenter, or a pass that names a target this device cannot build, is reported once and
      *   left out.
+     * - WHAT A PASS SAMPLES. A pass that DECLARES an input which is a shadow map (a target stating whose shadow it is,
+     *   with a published view-projection) gets that map bound and its `VineShadowBlock` packed per drawing call: a map
+     *   whose light this call does not announce, or whose light stopped casting, leaves the switch off and shades
+     *   nothing. The map's depth image is moved to `SHADER_READ_ONLY_OPTIMAL` before the pass begins (a barrier inside
+     *   a render pass is not legal), and back before a later pass writes that depth.
      * - Each scene draw is projected with its own camera snapshot and shaded with the resolved program (the pass'
      *   override, else the command's own, else the default content program). One `RenderCommand` is one indexed draw.
+     *   A pass whose target has no colour attachment (a shadow map) draws with a depth-only pipeline and its fragment
+     *   outputs are discarded.
      * - The submission is synchronous by design: one command buffer, one fence, then the queue is idle, so a readback in
      *   the same breath sees exactly what this frame left - and a content release between frames needs no wait.
      *

@@ -6,6 +6,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -39,6 +40,7 @@ using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::DrawDescription;
 using vn::graphics::FrameDescription;
+using vn::graphics::ImageSource;
 using vn::graphics::PassDraw;
 using vn::graphics::PresentOutcome;
 using vn::graphics::PresentTarget;
@@ -240,6 +242,75 @@ struct Device::Impl {
         frame_uploads.texture_uploads = after.texture_builds - before.texture_builds;
         frame_uploads.texture_bytes   = after.texture_bytes - before.texture_bytes;
         books.uploads = frame_uploads;
+    }
+
+    /**
+     * @brief Resolves the SHADOW MAP a pass samples out of what it declared, and makes the map readable.
+     *
+     * @details
+     * - WHICH INPUT: the first one whose TARGET says it is a shadow map (`RenderTarget::shadowOf`), whose depth this
+     *   device actually built and whose host left promotable, and whose producer published how to read it
+     *   (`hasProducerViewProjection`) - the SDK's rule (see `ShadowFacts`), restated here because this backend consumes
+     *   the frame value directly rather than going through the shared compiler. A G-buffer's depth is not a shadow: a
+     *   target nobody stated a light for is skipped, which is the defect the rule exists to prevent.
+     * - WHAT IT DOES BESIDES ANSWER: moves the map's depth image to `SHADER_READ_ONLY_OPTIMAL` before the consuming
+     *   pass begins. A barrier is not legal inside a render pass instance, and the map was left in the attachment
+     *   layout by the pass that wrote it - so this is the one moment the transition can be recorded.
+     *
+     * @param commands The command buffer being recorded (OUTSIDE any render pass).
+     * @param inputs   The pass' resolved inputs, in declaration order.
+     * @param out      Receives the binding; empty (`view == VK_NULL_HANDLE`) when the pass samples no readable map.
+     * @return true when a map was resolved (and transitioned).
+     */
+    [[nodiscard]] bool resolveShadow(VkCommandBuffer commands, std::span<const ImageSource> inputs, ContentDraw::ShadowSource& out)
+    {
+        for (const ImageSource& input : inputs) {
+            if (input.target == nullptr || !input.isProduced()) {
+                continue;
+            }
+            const RenderTarget& map = *input.target;
+            const auto          images = targets.find(&map);
+            if (images == targets.end() || !images->second.built() || !images->second.hasDepth()) {
+                continue;
+            }
+            const vn::raw_ptr<const vn::graphics::Light> light = map.shadowOf();
+            if (light == nullptr || !map.hasProducerViewProjection()) {
+                continue; // not a map, or a map nobody said how to read (shading nothing is the honest answer)
+            }
+            if (!map.isDepthPromoted()) {
+                // The host said this target's depth is NOT to be read as a texture (RenderTarget::setDepthPromotion):
+                // binding it anyway would serve a picture the host declared it does not want, and the reference backend
+                // refuses the same map for the same reason (`DepthFacts` / `depthPlan().sampleable`).
+                continue;
+            }
+
+            // THE MAP IS ABOUT TO BE READ: one transition, from the attachment layout the producer left it in (or
+            // UNDEFINED when nobody wrote it yet) to the sampled one.
+            TargetImages& sampled = images->second;
+            if (!sampled.depth_sampled) {
+                const ImageState from = stateOf(sampled.fresh ? ImageLayout::Undefined : ImageLayout::DepthAttachment);
+                const VkImageMemoryBarrier barrier =
+                    barrierBetween(sampled.depth, from, stateOf(ImageLayout::ShaderReadOnly), depthAspectMask(sampled.depthFormat()));
+                device_table.vkCmdPipelineBarrier(commands,
+                                                  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                                                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                                  0U,
+                                                  0U,
+                                                  nullptr,
+                                                  0U,
+                                                  nullptr,
+                                                  1U,
+                                                  &barrier);
+                sampled.depth_sampled = true;
+            }
+
+            out.view                  = sampled.depth_view;
+            out.has_view_projection   = true;
+            out.view_projection       = map.producerViewProjection();
+            out.light                 = light;
+            return true;
+        }
+        return false;
     }
 
     /** @brief Notes this backend's three residency kinds into @p ledger (see frameReport). */
@@ -905,8 +976,9 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     }
 
     struct Runnable {
-        const PassDraw* draw{ nullptr };
-        bool            window{ false };
+        const FrameDescription::Pass* entry{ nullptr };
+        const PassDraw*               draw{ nullptr };
+        bool                          window{ false };
     };
 
     std::vector<Runnable> runnable_passes;
@@ -955,13 +1027,13 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                 }
                 window_acquired = true;
             }
-            runnable_passes.push_back(Runnable{ &draw, true });
+            runnable_passes.push_back(Runnable{ &entry, &draw, true });
             continue;
         }
         if (!ensureTarget(*draw.target)) {
             continue;
         }
-        runnable_passes.push_back(Runnable{ &draw, false });
+        runnable_passes.push_back(Runnable{ &entry, &draw, false });
     }
 
     if (runnable_passes.empty()) {
@@ -1040,6 +1112,11 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
             sampled.color_sampled = true;
         }
 
+        // THE SHADOW MAP THIS PASS SAMPLES, if it declared one: resolved from the target's own statement and moved to
+        // SHADER_READ_ONLY here, before the render pass begins (see resolveShadow).
+        ContentDraw::ShadowSource shadow{};
+        (void)impl->resolveShadow(commands, item.entry->inputs, shadow);
+
         TargetImages*                                  images        = nullptr;
         VkRenderPass                                   render_pass   = VK_NULL_HANDLE;
         VkFramebuffer                                  framebuffer   = VK_NULL_HANDLE;
@@ -1085,6 +1162,26 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                 images->color_sampled = false;
             }
 
+            // A TARGET A PASS SAMPLED AS A SHADOW MAP has its depth in SHADER_READ_ONLY: put it back before this pass
+            // writes the depth (the mirror of the colour rule above, on the depth attachment).
+            if (images->depth_sampled) {
+                const VkImageMemoryBarrier back = barrierBetween(images->depth,
+                                                                 stateOf(ImageLayout::ShaderReadOnly),
+                                                                 stateOf(ImageLayout::DepthAttachment),
+                                                                 depthAspectMask(images->depthFormat()));
+                impl->device_table.vkCmdPipelineBarrier(commands,
+                                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                                                        0U,
+                                                        0U,
+                                                        nullptr,
+                                                        0U,
+                                                        nullptr,
+                                                        1U,
+                                                        &back);
+                images->depth_sampled = false;
+            }
+
             // A FRESH attachment set is UNDEFINED: a pass that asked to preserve something gets the CLEAR variant for
             // its first frame (there is nothing to load yet). A pass that announces NO clear loads both attachments;
             // a fresh target falls back to CLEAR, the honest reading of "load an image nobody wrote".
@@ -1103,7 +1200,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         // from extra_colors (an absent entry is transparent black - see ClearPolicy), and the depth is the last slot.
         std::vector<VkClearValue> clear_values(color_count + (has_depth ? 1U : 0U));
         const Colorf              colour      = draw.clear.has_value() ? draw.clear->color : Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-        clear_values[0].color                 = { { colour.r, colour.g, colour.b, colour.a } };
+        if (color_count != 0U) {
+            // A DEPTH-ONLY PASS (a shadow map) has no colour slot to clear: its clear values start at the depth.
+            clear_values[0].color = { { colour.r, colour.g, colour.b, colour.a } };
+        }
         for (std::size_t index = 1; index < color_count; ++index) {
             const Colorf extra = images != nullptr && draw.clear.has_value() && index - 1U < draw.clear->extra_colors.size()
                                      ? draw.clear->extra_colors[index - 1U]
@@ -1163,6 +1263,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                                            description,
                                            draw,
                                            impl->default_program.get(),
+                                           shadow,
                                            &why,
                                            &category);
             }

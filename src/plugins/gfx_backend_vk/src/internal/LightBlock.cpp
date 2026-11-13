@@ -73,6 +73,28 @@ struct ViewAxes {
     return std::cos(degrees * std::numbers::pi / 180.0);
 }
 
+/**
+ * @brief Whether @p light is a light the block gives the numbered slot @p slot to.
+ *
+ * @details
+ * - THE ONE STATEMENT OF THE SLOT RULE: @ref packLightBlock walks it to fill the block, @ref packedSlotOf walks it
+ *   again to name a slot, and a map that named a slot by a second rule would scale a light it does not belong to.
+ * - The ambient light fills its own slot and never a numbered one; a disabled light takes nothing; a positional light
+ *   nobody placed takes nothing (it would light from the camera's eye); and a full block gives a later light none.
+ *
+ * @param light The announced light.
+ * @param slot  The numbered slot it would take next.
+ * @return true when it takes @p slot.
+ */
+[[nodiscard]] bool takesSlot(const vn::graphics::LightValue& light, std::size_t slot) noexcept
+{
+    if (!light.enabled || light.type == vn::graphics::LightType::Ambient || slot >= vn::graphics::kMaxLights) {
+        return false;
+    }
+    const bool positional = light.type == vn::graphics::LightType::Point || light.type == vn::graphics::LightType::Spot;
+    return !positional || light.has_position;
+}
+
 } // namespace
 
 std::size_t packLightBlock(std::span<const vn::graphics::LightValue> lights,
@@ -105,13 +127,9 @@ std::size_t packLightBlock(std::span<const vn::graphics::LightValue> lights,
             has_ambient = true;
             continue;
         }
-        if (packed == vn::graphics::kMaxLights) {
-            continue; // the block is full: a later light has no slot a shader could name it by
-        }
-
-        const bool positional = light.type == vn::graphics::LightType::Point || light.type == vn::graphics::LightType::Spot;
-        if (positional && !light.has_position) {
-            continue; // a positional light nobody placed would light from the camera's eye: not a light at all
+        // A FULL BLOCK AND AN UNUSABLE POSITIONAL LIGHT ARE THE SAME ANSWER HERE: no slot (see takesSlot).
+        if (!takesSlot(light, packed)) {
+            continue;
         }
 
         float* position_kind   = out.position_kind[packed].data();
@@ -119,6 +137,7 @@ std::size_t packLightBlock(std::span<const vn::graphics::LightValue> lights,
         float* color_intensity = out.color_intensity[packed].data();
         float* cone            = out.cone[packed].data();
 
+        const bool positional = light.type == vn::graphics::LightType::Point || light.type == vn::graphics::LightType::Spot;
         if (positional) {
             const std::array<double, 3> view_position = toViewPosition(camera, light.position);
             position_kind[0]                          = static_cast<float>(view_position[0]);
@@ -154,6 +173,25 @@ std::size_t packLightBlock(std::span<const vn::graphics::LightValue> lights,
         out.ambient = { 0.15F, 0.15F, 0.15F, 1.0F };
     }
     return packed + (has_ambient ? 1U : 0U);
+}
+
+std::size_t packedSlotOf(std::span<const vn::graphics::LightValue> lights, const void* identity) noexcept
+{
+    if (identity == nullptr) {
+        return vn::graphics::kMaxLights;
+    }
+    // THE SAME WALK AS packLightBlock, one step at a time: the slot a light is GIVEN is the number of lights that took
+    // one before it, and only a light takesSlot() accepts moves that number.
+    std::size_t packed = 0U;
+    for (const vn::graphics::LightValue& light : lights) {
+        if (takesSlot(light, packed)) {
+            if (light.identity == identity) {
+                return packed;
+            }
+            ++packed;
+        }
+    }
+    return vn::graphics::kMaxLights;
 }
 
 VN_BACKEND_VK_NS_END

@@ -534,6 +534,28 @@
   钉“索引说有就留、索引说没有就 park”。backlog `T28` 已删（收口项，不再是触发项）。
 - **计数**：`test_vsg` 544 / `test_graphics` 554 / ctest 30/30 / TSan 554 用例 0 warning。
 
+## 2026-11-13 —— `gfx_backend_vk` M9：阴影贴图
+
+- **形状**：`TargetImages` 接受**深度-only** 目标 —— `built()` 不再要求有颜色视图，`createRenderPass` 在 0 个颜色附件时
+  `colorAttachmentCount = 0` / `pColorAttachments = nullptr`，`buildPipeline` 同理（`blend.pAttachments`）；`Device`
+  的 per-attachment clear 从 `clear_values[0]` 起写，深度-only 时颜色槽不存在，必须跳过。
+- **哪张图是阴影**：只认**目标自己的声明**（`RenderTarget::shadowOf` + `producerViewProjection`），从 pass 的
+  `FrameDescription::Pass::inputs` 里取第一张（`Impl::resolveShadow`）。**不要**用“第一个带可采样深度的输入”——
+  G-buffer 也有深度（`graphics-rendering.md` 6.3 记着参考后端踩过的缺陷）。
+- **布局**：生产 pass 的 render pass 把深度留在 attachment 布局；消费 pass **之前**（render pass 外）转到
+  `SHADER_READ_ONLY`，`TargetImages::depth_sampled` 记账，下一次写该目标深度前再转回 —— 与 `color_sampled` 同一套规则。
+- **块**：`buildShadowBlock`（`ContentDraw.cpp`）四道开关：有图 / 发布了矩阵 / 灯在本 call 的 `light_values` 里且
+  `cast_shadow` 且是方向光或聚光 / 灯在 light block 里有槽。矩阵 = `producer VP * inverse(view)`，**不折**（SDK 裁剪约定，
+  转换在 shader 里）；`params = {1, 灯自己的 bias, 1, 槽}`。
+- **一个谓词两处用**：`LightBlock.cpp` 的 `takesSlot()` 同时驱动 `packLightBlock` 与 `packedSlotOf`；各自推导槽位会让
+  阴影去缩放**别的灯**。
+- **采样器**：`Nearest` + `ClampToEdge`（`kShadowSampler`），与参考端 `ContentPipeline::depthSampler()` 同值 —— 过滤会把
+  投射体深度与它身后的表面平均，剪影会动。
+- **坑（Windows 构建）**：`test_vk` / `test_vsg` 直接编译插件源码；目标上没有 `VN_BACKEND_VK_LIB` 时
+  `VN_BACKEND_VK_API` 展开成 `dllimport`，链接期 6 个未解析符号（Linux 上只是可见性属性，完全看不出来）。
+- **验证**：`test_vk` 51 例（新增 `VkShadowTest` 3 例）；`BackendParityTest` 第 10 例（Windows 上 `test_vsg` 因
+  `VsgBackendTest.cpp` 的 XCB 用例缺平台保护编译不过 —— 既有问题，Linux 是它的构建环境）。
+
 ## 2026-11-13 —— 第三轮审计 W3：`FrameWorker` 拆成 `PublicationStore` + `FrameExpander`
 
 - **对象级回边消除**（`G2` / `G12`）：`detail::PublicationStore`（`src/viz/graphics/src/PublicationStore.hpp`）

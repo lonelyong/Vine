@@ -27,6 +27,9 @@ VN_BACKEND_VK_NS_BEGIN
  *   (`TargetAction::ResizeInPlace`, see `planTarget`).
  * - MRT. Every colour attachment is built, cleared and read back on its own; the render pass' subpass references them
  *   in order, which is the order a fragment's output locations write.
+ * - DEPTH-ONLY IS A SHAPE. A target with a depth attachment and no colour attachment is the engine's SHADOW MAP and
+ *   builds like any other (the render pass simply references no colour attachment, and a fragment's outputs are
+ *   discarded); a target with neither attachment is not a target.
  * - MEMORY IS ONE ALLOCATION PER IMAGE. A suballocator is the right answer for a scene with hundreds of targets and the
  *   wrong one for the first clear; `vkAllocateMemory` per image keeps the failure modes visible (every call answers a
  *   result) and leaves the allocator as its own later step.
@@ -61,6 +64,10 @@ struct TargetImages {
     /// True after a screen draw sampled this target: its colour images are then in `SHADER_READ_ONLY_OPTIMAL`, and the
     /// device transitions them back before the next pass writes them (or before a readback reads them).
     bool color_sampled{ false };
+    /// True after a pass sampled this target as a SHADOW MAP: its depth image is then in `SHADER_READ_ONLY_OPTIMAL`,
+    /// and the device transitions it back before the next pass writes the depth (the same rule `color_sampled`
+    /// follows, on the other attachment).
+    bool depth_sampled{ false };
 
     /** @brief Gets the target width in pixels. */
     [[nodiscard]] int width() const noexcept
@@ -142,6 +149,21 @@ struct TargetImages {
  * @return The Vulkan format.
  */
 [[nodiscard]] VkFormat depthFormatOf(vn::graphics::RenderTarget::DepthFormat format) noexcept;
+
+/**
+ * @brief Gets the aspect mask a barrier on a depth image of @p format must name.
+ *
+ * @details
+ * - A COMBINED DEPTH+STENCIL FORMAT NEEDS BOTH ASPECTS in a barrier unless the device enables
+ *   `separateDepthStencilLayouts`, even though nothing here ever writes stencil (VUID-VkImageMemoryBarrier-image-03320;
+ *   the validation layer refuses a depth-only aspect on such an image). This backend's `D24` is Vulkan's
+ *   `D24_UNORM_S8_UINT`, so the shadow map is exactly that case.
+ * - A VIEW is not a barrier: it may name the depth aspect alone, which is what `createView` does.
+ *
+ * @param format The depth image's format.
+ * @return `DEPTH|STENCIL` for a combined format, `DEPTH` otherwise.
+ */
+[[nodiscard]] VkImageAspectFlags depthAspectMask(VkFormat format) noexcept;
 
 /**
  * @brief Creates everything `images.desc` describes: render passes, images, views and the framebuffer.

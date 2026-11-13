@@ -13,6 +13,7 @@
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/backend/Keys.hpp>
+#include <vine/math/Matrix4x4.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -38,6 +39,10 @@ class ContentImages;
  *   five texture slots at 1-5, the light block at 6 - and set 1 binding 0 is the draw block. The camera matrices are
  *   the 128-byte push range (`projection`, `modelView`), exactly the L2 realization `vine_params.glsl` describes.
  *   A full-screen draw uses the OTHER ABI: the source target's attachments at set 0 bindings 0..N-1.
+ * - THE SHADOW ABI IS PART OF THAT SET (M9): binding 7 is the map and binding 8 is `VineShadowBlock`, because the
+ *   engine's forward text declares both unconditionally. A pass that samples no map binds the 1x1 stand-in and zeroes
+ *   the block (`params.x = 0` is the switch the one text takes its unshadowed path with), so a shadow is an
+ *   ADDITIONAL fact about a pass rather than a second pipeline.
  * - MEMORY MODEL. Streams, the per-draw block and the texture staging copies live in host-visible coherent memory. A
  *   staging copy for geometry would add a synchronisation story this step does not teach; the residency step (M6) is
  *   what moves streams to device-local memory behind one copy.
@@ -68,6 +73,30 @@ class VN_BACKEND_VK_API ContentDraw final {
     struct ScreenSource {
         std::span<const VkImage>     images{}; // The source's colour images (for layout transitions; may be empty).
         std::span<const VkImageView> views{};  // The same attachments' views, bound at set 0 bindings 0..N-1.
+    };
+
+    /**
+     * @brief The SHADOW MAP a content pass samples: whose map it is and how a fragment maps into it.
+     *
+     * @details
+     * - THE MAP ARRIVES AS A PASS INPUT, and this is the device's reading of what the TARGET said about it
+     *   (`RenderTarget::shadowOf` + `producerViewProjection`): a target is a map because it states whose shadow it is,
+     *   never because it happens to have a sampleable depth (a G-buffer does too - see `ShadowFacts` in
+     *   `backend/FrameCompiler.hpp`).
+     * - THREE FACTS, each from its owner: the VIEW is the image the producing pass wrote (already in
+     *   `SHADER_READ_ONLY_OPTIMAL`, the device transitions it before the pass begins), the MATRIX is the producer's own
+     *   (light clip <- world, in the SDK's clip convention), and the LIGHT is the identity the map belongs to - what
+     *   the drawing call's announced lights are matched against, because the switch lives on the light.
+     * - AN EMPTY ONE MEANS "NO MAP": the content set binds the 1x1 white stand-in and the block's switch stays off, so
+     *   the engine's forward text takes its unshadowed path with the same pipeline.
+     *
+     * @see ShadowBlock: the packing rules, the clip conversion and the reverse-Z comparison.
+     */
+    struct ShadowSource {
+        VkImageView     view{ VK_NULL_HANDLE };         // The map's depth view, bound at set 0 binding 7.
+        bool            has_view_projection{ false };   // Whether the producer published how to read the map.
+        vn::math::Mat4d view_projection{};              // Light clip <- world, in the SDK's clip convention.
+        const void*     light{ nullptr };               // Whose map it is (a `Light`'s identity; nullptr = not a map).
     };
 
   public:
@@ -275,17 +304,22 @@ class VN_BACKEND_VK_API ContentDraw final {
      *   into the material block; each texture slot with a complete texture is uploaded and bound, and the other slots
      *   are bound to the 1x1 white fallback with their slot bits clear. The draw's announced lights are packed into
      *   the light block in view space (see LightBlock.hpp).
+     * - THE SHADOW MAP, when @p shadow names one: its depth view is bound at the content set's shadow binding and the
+     *   `VineShadowBlock` is packed per call from the map's own statement (see ShadowSource and `shadowBlockOf`) - the
+     *   block's switch is on only when the map's light is one this call announced AND still casts, so a map nobody can
+     *   name shades nothing rather than scaling a light it does not belong to.
      *
      * @param commands        The command buffer being recorded (inside a render pass).
      * @param render_pass     The render pass @p commands is in (used only when a pipeline must be CREATED; reuse is
      *                        keyed by @p compatibility).
      * @param compatibility   The target's pipeline compatibility (see TargetImages::compatibility).
-     * @param color_attachments How many colour attachments the target has.
+     * @param color_attachments How many colour attachments the target has (0 for a depth-only pass).
      * @param width           The target's width in pixels.
      * @param height          The target's height in pixels.
      * @param draw            The draw to record (borrowed for the call).
      * @param pass            The pass drawing it (its override, state and viewport are read; borrowed).
      * @param default_program The program content without one of its own is drawn with, or null.
+     * @param shadow          The shadow map this pass samples (see ShadowSource), or an empty one for none.
      * @param why             Receives the first reason a command was skipped (empty when every command was recorded).
      * @param category        Receives the category that reason belongs to (CompileFailed for a program or pipeline
      *                        that could not be built, ContentSkipped for anything else), or null to ignore.
@@ -300,6 +334,7 @@ class VN_BACKEND_VK_API ContentDraw final {
                          const vn::graphics::DrawDescription&       draw,
                          const vn::graphics::PassDraw&              pass,
                          const vn::graphics::ShaderProgramDescription* default_program,
+                         ShadowSource                               shadow,
                          vn::String*                                why,
                          vn::graphics::DiagnosticCategory*          category = nullptr);
 

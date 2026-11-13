@@ -49,6 +49,7 @@
 #include <vine/graphics/FrameStats.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/ImageSource.hpp>
+#include <vine/graphics/Light.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackend.hpp>
@@ -82,6 +83,8 @@ using vn::graphics::DrawDescription;
 using vn::graphics::FrameDescription;
 using vn::graphics::FrameReport;
 using vn::graphics::Geometry;
+using vn::graphics::Light;
+using vn::graphics::LightValue;
 using vn::graphics::Material;
 using vn::graphics::PassDraw;
 using vn::graphics::PassRenderState;
@@ -255,6 +258,33 @@ void main()
     return geometry;
 }
 
+/// @brief A screen-filling (or strip) QUAD at depth @p z, with the normals the engine's lit stages read.
+///
+/// The shadow case needs a surface to receive a shadow and a caster to cast it; both are stated in clip space, so the
+/// identity camera on both sides means every number is the value the hardware compares.
+[[nodiscard]] intrusive_ptr<Geometry> makeEngineQuad(float x0, float x1, float z)
+{
+    auto geometry = intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
+        x0, -1.0F, z,
+        x1, -1.0F, z,
+        x1,  1.0F, z,
+        x0, -1.0F, z,
+        x1,  1.0F, z,
+        x0,  1.0F, z,
+    })));
+    geometry->setNormals(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
+        0.0F, 0.0F, 1.0F,
+        0.0F, 0.0F, 1.0F,
+        0.0F, 0.0F, 1.0F,
+        0.0F, 0.0F, 1.0F,
+        0.0F, 0.0F, 1.0F,
+        0.0F, 0.0F, 1.0F,
+    })));
+    geometry->bumpRevision();
+    return geometry;
+}
+
 /// @brief A camera whose matrices are identities, so the triangle's clip-space positions ARE the picture.
 [[nodiscard]] CameraSnapshot identityCamera()
 {
@@ -284,13 +314,15 @@ void main()
     return std::make_shared<const std::vector<RenderCommand>>(std::move(commands));
 }
 
-/// @brief The drawing call that renders @p commands through the identity camera.
-[[nodiscard]] DrawDescription sceneDraw(std::shared_ptr<const std::vector<RenderCommand>> commands)
+/// @brief The drawing call that renders @p commands through the identity camera, announcing @p lights.
+[[nodiscard]] DrawDescription sceneDraw(std::shared_ptr<const std::vector<RenderCommand>> commands,
+                                        std::optional<std::vector<LightValue>>              lights = std::nullopt)
 {
     DrawDescription draw;
-    draw.kind     = DrawDescription::Kind::Scene;
-    draw.camera   = identityCamera();
-    draw.commands = std::move(commands);
+    draw.kind         = DrawDescription::Kind::Scene;
+    draw.camera       = identityCamera();
+    draw.commands     = std::move(commands);
+    draw.light_values = std::move(lights);
     return draw;
 }
 
@@ -477,6 +509,21 @@ class BackendParityTest : public ::testing::Test {
         made->attachColor(RenderTarget::ColorFormat::RGBA8);
         made->attachDepth(RenderTarget::DepthFormat::D24);
         made->setSize(kSide, kSide);
+        vsg->setRenderTarget(made.get());
+        vk->setRenderTarget(made.get());
+        targets.push_back(made);
+        return made.get();
+    }
+
+    /// @brief Creates a 64x64 DEPTH-ONLY target that states whose shadow map it is, and announces it to both devices.
+    RenderTarget* shadowMap(const intrusive_ptr<Light>& light)
+    {
+        auto made = intrusive_ptr<RenderTarget>(new RenderTarget());
+        made->setName(String(u8"parity_shadow_map"));
+        made->attachDepth(RenderTarget::DepthFormat::D24);
+        made->setSize(kSide, kSide);
+        made->setShadowOf(light);
+        made->setProducerViewProjection(vn::math::Mat4d{});
         vsg->setRenderTarget(made.get());
         vk->setRenderTarget(made.get());
         targets.push_back(made);
@@ -776,3 +823,76 @@ TEST_F(BackendParityTest, AnEntryThatNamesNoPassIsNothingToRunOnBothBackends)
     EXPECT_FALSE(reference.read) << "an entry that names no pass must not have drawn anything";
     EXPECT_EQ(candidate.read, reference.read) << "the same frame is refused the same way";
 }
+
+TEST_F(BackendParityTest, TheSameShadowMapIsTheSamePictureOnBothBackends)
+{
+    // THE WHOLE SHADOW PATH, as ONE frame value: a DEPTH-ONLY pass writes a map (no colour attachment at all), the
+    // shading pass declares that target as an input, and the engine's own forward program samples it with the
+    // `VineShadowBlock` each backend packs from the map's statement (whose it is, and how to read it).
+    //
+    // WHAT A DIFF HERE CAN SEE, and what the single-backend cases cannot: the block's matrix has to be
+    // `light clip <- world * world <- view` (a sign or a transpose error samples a mirrored texel), the map's depth has
+    // to be compared in the SAME reverse-Z direction on both sides, and the sampler has to pick the SAME texel (a
+    // filtered read moves every silhouette). Each of those is invisible in one backend's own picture.
+    RenderTarget* const picture = target();
+
+    auto light = Light::createDirectional(vn::math::Vec3d(0.0, 0.0, -1.0));
+    light->setColor(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    light->setIntensity(1.0F);
+    light->setCastShadow(true);
+
+    RenderTarget* const map = shadowMap(light);
+
+    const intrusive_ptr<ShaderProgram> program  = vn::graphics::forwardProgram();
+    const intrusive_ptr<Geometry>      ground   = makeEngineQuad(-1.0F, 1.0F, 0.5F);
+    const intrusive_ptr<Geometry>      occluder = makeEngineQuad(-1.0F, -0.25F, 0.0F);
+    const intrusive_ptr<Material>      material = makeMaterial(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+
+    // Two passes are two identities (a backend keys per-pass retained state by the object), so the frame owns them.
+    const intrusive_ptr<vn::graphics::RenderPass> shadow_identity(new vn::graphics::RenderPass());
+    const intrusive_ptr<vn::graphics::RenderPass> main_identity(new vn::graphics::RenderPass());
+
+    std::vector<LightValue> lights{ light->value() };
+
+    FrameDescription frame;
+
+    FrameDescription::Pass shadow_entry;
+    shadow_entry.pass  = shadow_identity.get();
+    shadow_entry.order = 0;
+    PassDraw shadow_pass;
+    shadow_pass.target      = map;
+    shadow_pass.clear       = ClearPolicy{};
+    shadow_pass.state.depth = DepthMode::TestAndWrite;
+    shadow_pass.draws.push_back(
+        sceneDraw(commandsOf({ commandOf(ground, program, material), commandOf(occluder, program, material) })));
+    shadow_entry.draw = std::move(shadow_pass);
+    frame.passes.push_back(std::move(shadow_entry));
+
+    FrameDescription::Pass main_entry;
+    main_entry.pass   = main_identity.get();
+    main_entry.order  = 1;
+    main_entry.inputs = { vn::graphics::ImageSource::producedTarget(map) };
+
+    std::optional<ClearPolicy> clear = ClearPolicy{};
+    clear->color                     = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    PassDraw main_pass;
+    main_pass.target      = picture;
+    main_pass.clear       = clear;
+    main_pass.state.depth = DepthMode::TestAndWrite;
+    main_pass.draws.push_back(sceneDraw(commandsOf({ commandOf(ground, program, material) }), std::move(lights)));
+    main_entry.draw = std::move(main_pass);
+    frame.passes.push_back(std::move(main_entry));
+
+    const Ran reference = run(*vsg, frame, picture);
+    const Ran candidate = run(*vk, frame, picture);
+
+    expectTheSameRecord(reference, candidate, 2, 2, "the same shadow frame");
+    expectTheSamePicture(reference, candidate, "the same shadow frame");
+
+    // AND THE SHADOW IS THERE: the strip behind the caster is darker than the strip beside it on BOTH sides, so the
+    // diff above compares two pictures that actually carry a shadow rather than two identical unshadowed ones.
+    const int shadowed = pixelAt(reference.pixels, kSide / 4, kSide / 2)[1];
+    const int lit      = pixelAt(reference.pixels, (3 * kSide) / 4, kSide / 2)[1];
+    EXPECT_LT(shadowed, lit) << "the reference backend's own picture has no shadow either";
+}
+

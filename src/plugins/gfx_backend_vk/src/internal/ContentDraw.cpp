@@ -46,6 +46,24 @@ constexpr std::uint32_t kTextureSlots = vn::graphics::kTextureSlotCount;
 constexpr std::uint32_t kShadowMapBinding   = 7U;
 constexpr std::uint32_t kShadowBlockBinding = 8U;
 
+/// @brief How a shadow map is read: nearest texels, clamped to the edge, no mip interpolation.
+///
+/// @details
+/// - THE ENGINE'S TERM COMPARES ONE TEXEL (see BuiltinShaders' shadow term): filtering would average a caster's depth
+///   with the surface behind it and move every silhouette, so the map is read exactly. The reference backend states the
+///   same three fields for the same reason (`ContentPipeline::depthSampler`), which is what makes the two backends
+///   sample the same value.
+/// - Clamp rather than repeat is the other half: map coordinates are clamped into the rectangle by the shader's own
+///   range test, and a wrapped read would sample the opposite edge if that test ever disagreed with the sampler.
+constexpr vn::graphics::Sampler kShadowSampler{
+    .min_filter   = vn::graphics::Sampler::Filter::Nearest,
+    .mag_filter   = vn::graphics::Sampler::Filter::Nearest,
+    .mipmap_mode  = vn::graphics::Sampler::MipmapMode::Nearest,
+    .address_u    = vn::graphics::Sampler::AddressMode::ClampToEdge,
+    .address_v    = vn::graphics::Sampler::AddressMode::ClampToEdge,
+    .address_w    = vn::graphics::Sampler::AddressMode::ClampToEdge,
+};
+
 /// @brief The shadow block's bytes, in the engine ABI's shape (`VineShadowBlock` in builtin_forward.frag).
 struct VineShadowBlock {
     std::array<float, 16> view_to_light{}; // View space -> light clip (the SDK's clip convention).
@@ -218,6 +236,61 @@ static_assert(sizeof(ContentPushConstants) == 128U, "the content push range is t
     vn::graphics::VineDrawBlock block{};
     copyMatrix(command.model_matrix, block.model);
     block.params = { command.opacity, point_size, 0.0F, 0.0F };
+    return block;
+}
+
+/**
+ * @brief Packs the shadow block one drawing call shades with (see ShaderAbi.hpp `VineShadowBlock`).
+ *
+ * @details
+ * - THE MAP'S IDENTITY IS SOMEBODY ELSE'S STATEMENT: the target says whose shadow it is (`RenderTarget::shadowOf`) and
+ *   the producer published how to read it (`setProducerViewProjection`). This function only checks whether that map can
+ *   shade THIS call - it never infers a map from an input's depth.
+ * - FOUR FACTS DECIDE THE SWITCH, and each of them can turn it off on its own: no map, no published matrix, no view to
+ *   map from, or a map whose light this call did not announce as an enabled caster of a kind that has a map
+ *   (directional or spot). The light must also have taken a slot in the light block, because `params.w` names the
+ *   light whose term the map scales - a slot the block cannot carry would scale somebody else's.
+ * - THE MATRIX IS `light clip <- world` TIMES `world <- this view`: a fragment's view position is what the shading
+ *   has, and the map's space is where it must be compared. It stays in the SDK's clip convention (y up, z in [-1, 1]):
+ *   the shader's own conversion to the map's texel space and reverse-Z depth is the ABI's statement, and a matrix
+ *   folded here would be a second one.
+ * - `params` is {enabled, the casting light's OWN bias, strength 1, its slot}: the bias comes from `ShadowSettings`
+ *   (a private default would be the second answer this ABI exists to prevent), and the SDK has no strength knob yet.
+ *
+ * @param shadow The map this pass samples (see ContentDraw::ShadowSource), or an empty one for none.
+ * @param draw   The drawing call: its camera (the view space to map from) and the lights it announced.
+ * @return The block; every field is written and the switch is off when the map cannot shade this call.
+ */
+[[nodiscard]] VineShadowBlock buildShadowBlock(const ContentDraw::ShadowSource& shadow, const vn::graphics::DrawDescription& draw) noexcept
+{
+    VineShadowBlock block{};
+    if (shadow.light == nullptr || !shadow.has_view_projection || shadow.view == VK_NULL_HANDLE || !draw.camera.present ||
+        !draw.light_values.has_value())
+    {
+        return block;
+    }
+
+    const vn::graphics::LightValue* caster = nullptr;
+    for (const vn::graphics::LightValue& light : *draw.light_values) {
+        if (light.identity == shadow.light) {
+            caster = &light;
+            break;
+        }
+    }
+    if (caster == nullptr || !caster->enabled || !caster->cast_shadow ||
+        (caster->type != vn::graphics::LightType::Directional && caster->type != vn::graphics::LightType::Spot))
+    {
+        return block;
+    }
+
+    const std::size_t slot = packedSlotOf(*draw.light_values, shadow.light);
+    if (slot >= vn::graphics::kMaxLights) {
+        return block;
+    }
+
+    const vn::math::Mat4d view_to_light = shadow.view_projection * draw.camera.view.inverted();
+    copyMatrix(view_to_light, block.view_to_light);
+    block.params = { 1.0F, caster->shadow_bias, 1.0F, static_cast<float>(slot) };
     return block;
 }
 
@@ -921,7 +994,9 @@ struct ContentDraw::Impl {
         VkPipelineColorBlendStateCreateInfo blend{};
         blend.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         blend.attachmentCount = static_cast<std::uint32_t>(blend_attachments.size());
-        blend.pAttachments    = blend_attachments.data();
+        // A DEPTH-ONLY PASS has no attachment to blend into; the array is no more valid than an empty one (the fragment's
+        // writes are discarded, which is what a shadow pass states by writing no colour).
+        blend.pAttachments    = blend_attachments.empty() ? nullptr : blend_attachments.data();
 
         const VkDynamicState dynamic_states[4]{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_LINE_WIDTH, VK_DYNAMIC_STATE_DEPTH_BIAS };
         VkPipelineDynamicStateCreateInfo dynamic{};
@@ -1347,7 +1422,10 @@ struct ContentDraw::Impl {
      * @param slots  One image info per texture slot, in `TextureSlot` order.
      * @return The set, or `VK_NULL_HANDLE`.
      */
-    [[nodiscard]] VkDescriptorSet makeContentSet(VkBuffer buffer, const std::array<VkDescriptorImageInfo, kTextureSlots>& slots) const
+    [[nodiscard]] VkDescriptorSet makeContentSet(VkBuffer buffer,
+                                                 const std::array<VkDescriptorImageInfo, kTextureSlots>& slots,
+                                                 VkImageView shadow_view,
+                                                 VkSampler   shadow_sampler) const
     {
         const VkDescriptorSet set = allocateSet(content_set_layout);
         if (set == VK_NULL_HANDLE) {
@@ -1365,10 +1443,11 @@ struct ContentDraw::Impl {
         lights_info.range  = sizeof(VineLightsBlock);
 
         // THE SHADOW ABI (see kShadowMapBinding): the engine's forward programs declare both, so every content set binds
-        // them - the map to the white stand-in and the block to the zeroed "no shadow" state (see createDrawUniforms).
+        // them - the map the pass samples, or the white stand-in when it samples none (see buildShadowBlock for what
+        // turns the map into a shadow).
         VkDescriptorImageInfo shadow_map{};
-        shadow_map.sampler     = images.fallbackSampler();
-        shadow_map.imageView   = images.fallbackView();
+        shadow_map.sampler     = shadow_sampler;
+        shadow_map.imageView   = shadow_view;
         shadow_map.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
         VkDescriptorBufferInfo shadow_info{};
@@ -1489,6 +1568,7 @@ struct ContentDraw::Impl {
     [[nodiscard]] bool createDrawUniforms(const vn::graphics::VineMaterialBlock& material,
                                           const VineLightsBlock&                 lights,
                                           const vn::graphics::VineDrawBlock&     draw,
+                                          const VineShadowBlock&                 shadow,
                                           VkBuffer&                              buffer,
                                           VkDeviceMemory&                        memory) const
     {
@@ -1505,9 +1585,8 @@ struct ContentDraw::Impl {
         std::memcpy(bytes, &material, sizeof(material));
         std::memcpy(bytes + lightsOffset(), &lights, sizeof(lights));
         std::memcpy(bytes + drawOffset(), &draw, sizeof(draw));
-        // THE SHADOW BLOCK IS ZEROED: `params.x = 0` is the engine's own "no shadow reached this pass" switch, which
-        // is the honest answer while this backend records no shadow pass (the map binds the white stand-in).
-        const VineShadowBlock shadow{};
+        // THE SHADOW BLOCK is the call's own statement (see buildShadowBlock); its `params.x = 0` is the engine's "no
+        // shadow reached this pass" switch, which is what a pass that samples no map states.
         std::memcpy(bytes + shadowOffset(), &shadow, sizeof(shadow));
         table->vkUnmapMemory(device, memory);
         return true;
@@ -2033,6 +2112,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
                                   const vn::graphics::DrawDescription&        draw,
                                   const vn::graphics::PassDraw&               pass,
                                   const vn::graphics::ShaderProgramDescription* default_program,
+                                  ShadowSource                                shadow,
                                   vn::String*                                 why,
                                   vn::graphics::DiagnosticCategory*           category)
 {
@@ -2157,11 +2237,16 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
             (void)packLightBlock({}, draw.camera, lights_block);
         }
 
+        // THE SHADOW: the map the pass samples becomes a block for THIS call (the caster's slot, its bias and the
+        // matrix that maps a fragment's view position into the producer's clip - see buildShadowBlock).
+        const VineShadowBlock shadow_block = buildShadowBlock(shadow, draw);
+
         VkBuffer       uniform_buffer = VK_NULL_HANDLE;
         VkDeviceMemory uniform_memory = VK_NULL_HANDLE;
         if (!impl->createDrawUniforms(buildMaterialBlock(material_values, texture_flags),
                                       lights_block,
                                       buildDrawBlock(command, resolved.state.pointSize),
+                                      shadow_block,
                                       uniform_buffer,
                                       uniform_memory)) {
             note(u8"vk: a draw's uniform buffer could not be created");
@@ -2169,7 +2254,10 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         }
         impl->frame_uniforms.emplace_back(uniform_buffer, uniform_memory);
 
-        const VkDescriptorSet content_set = impl->makeContentSet(uniform_buffer, slots);
+        const VkImageView shadow_view    = shadow.view != VK_NULL_HANDLE ? shadow.view : impl->images.fallbackView();
+        const VkSampler   shadow_sampler = impl->images.samplerFor(kShadowSampler);
+        const VkDescriptorSet content_set =
+            impl->makeContentSet(uniform_buffer, slots, shadow_view, shadow_sampler != VK_NULL_HANDLE ? shadow_sampler : impl->images.fallbackSampler());
         const VkDescriptorSet draw_set    = content_set != VK_NULL_HANDLE ? impl->makeDrawSet(uniform_buffer) : VK_NULL_HANDLE;
         if (content_set == VK_NULL_HANDLE || draw_set == VK_NULL_HANDLE) {
             note(u8"vk: the descriptor pool ran out of sets for this frame");
@@ -2323,7 +2411,7 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
 
     VkBuffer       uniform_buffer = VK_NULL_HANDLE;
     VkDeviceMemory uniform_memory = VK_NULL_HANDLE;
-    if (!impl->createDrawUniforms(vn::graphics::VineMaterialBlock{}, lights_block, vn::graphics::VineDrawBlock{}, uniform_buffer, uniform_memory)) {
+    if (!impl->createDrawUniforms(vn::graphics::VineMaterialBlock{}, lights_block, vn::graphics::VineDrawBlock{}, VineShadowBlock{}, uniform_buffer, uniform_memory)) {
         reason = vn::String(u8"vk: a screen draw's uniform buffer could not be created");
         return 0;
     }

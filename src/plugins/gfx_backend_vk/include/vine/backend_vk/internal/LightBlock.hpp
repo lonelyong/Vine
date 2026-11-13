@@ -74,4 +74,20 @@ std::size_t packLightBlock(std::span<const vn::graphics::LightValue> lights,
                            const vn::graphics::CameraSnapshot&      camera,
                            VineLightsBlock&                         out) noexcept;
 
+/**
+ * @brief Gets the block slot a light was packed into, or `kMaxLights` when it took none.
+ *
+ * @details
+ * - THE OTHER HALF OF @ref packLightBlock, by the same walk: what a shadow map needs is not the light's numbers but
+ *   the INDEX its term sits at (`VineShadowBlock::params.w` names it), and a second derivation of that rule is how
+ *   a map ends up scaling a different light's term.
+ * - A light takes a slot only when @ref packLightBlock would give it one: enabled, not ambient, the block not full
+ *   by then, and a positional light that was placed.
+ *
+ * @param lights   The lights the same drawing call announced.
+ * @param identity The light's identity (see LightValue::identity), as a map states whose shadow it is.
+ * @return The slot in [0, kMaxLights), or `kMaxLights` when that light took none of them.
+ */
+std::size_t packedSlotOf(std::span<const vn::graphics::LightValue> lights, const void* identity) noexcept;
+
 VN_BACKEND_VK_NS_END

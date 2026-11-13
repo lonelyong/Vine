@@ -12,6 +12,7 @@ add_executable(${TEST_NAME}
         OffscreenClearTest.cpp
         ProbeTest.cpp
         ResidencyTest.cpp
+        ShadowTest.cpp
         StateMappingTest.cpp
         VariantTest.cpp
         WindowPresentTest.cpp
@@ -35,6 +36,12 @@ target_include_directories(${TEST_NAME} PRIVATE
 # The device header derives from RenderBackend and lives under internal/, so the consumer opt-in is stated here too,
 # exactly as the plugin states it.
 target_compile_definitions(${TEST_NAME} PRIVATE VN_GRAPHICS_BACKEND_CONSUMER)
+
+# THE MODULE'S OWN EXPORT MACRO. This target compiles the plugin's sources instead of linking the MODULE, so it HAS to
+# define them the way the module does: `VN_BACKEND_VK_API` is dllexport under `VN_BACKEND_VK_LIB` and dllimport without
+# it, and a target that declares dllimport for symbols it compiles itself fails to link on Windows (on Linux the
+# attribute is visibility and the omission goes unnoticed). test_vsg states `VN_BACKEND_VSG_LIB` for the same reason.
+target_compile_definitions(${TEST_NAME} PRIVATE VN_BACKEND_VK_LIB)
 
 target_link_libraries(${TEST_NAME} PRIVATE vn::Appfw vn::Graphics tp::volk glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits)
 

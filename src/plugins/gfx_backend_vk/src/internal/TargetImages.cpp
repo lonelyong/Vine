@@ -106,7 +106,10 @@ namespace
 
 bool TargetImages::built() const noexcept
 {
-    return render_pass != VK_NULL_HANDLE && framebuffer != VK_NULL_HANDLE && !color_views.empty() && color_views.size() == colorCount();
+    // A DEPTH-ONLY TARGET (a shadow map) has every object too: its render pass and framebuffer exist, it simply owns
+    // no colour view. A target with NEITHER attachment is the one shape that is not built.
+    const bool attachments = color_views.size() == colorCount() && (!color_views.empty() || hasDepth());
+    return render_pass != VK_NULL_HANDLE && framebuffer != VK_NULL_HANDLE && attachments;
 }
 
 VkFormat colorFormatOf(const vn::graphics::RenderTarget::ColorFormat format) noexcept
@@ -130,6 +133,14 @@ VkFormat depthFormatOf(const vn::graphics::RenderTarget::DepthFormat format) noe
     case DepthFormat::D32F: return VK_FORMAT_D32_SFLOAT;
     }
     return VK_FORMAT_UNDEFINED;
+}
+
+VkImageAspectFlags depthAspectMask(const VkFormat format) noexcept
+{
+    if (format == VK_FORMAT_D24_UNORM_S8_UINT || format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
+        return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+    }
+    return VK_IMAGE_ASPECT_DEPTH_BIT;
 }
 
 namespace
@@ -251,7 +262,7 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount    = static_cast<std::uint32_t>(color_references.size());
-    subpass.pColorAttachments       = color_references.data();
+    subpass.pColorAttachments       = color_references.empty() ? nullptr : color_references.data();
     subpass.pDepthStencilAttachment = images.hasDepth() ? &depth_reference : nullptr;
 
     VkSubpassDependency dependency{};
@@ -303,7 +314,7 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
 {
     const auto width  = static_cast<std::uint32_t>(images.desc.width);
     const auto height = static_cast<std::uint32_t>(images.desc.height);
-    if (images.desc.width <= 0 || images.desc.height <= 0 || images.colorCount() == 0U) {
+    if (images.desc.width <= 0 || images.desc.height <= 0 || (images.colorCount() == 0U && !images.hasDepth())) {
         return false;
     }
 
@@ -372,7 +383,7 @@ bool buildTarget(const VolkDeviceTable&                  table,
                  const VkPhysicalDeviceMemoryProperties& memory,
                  TargetImages&                           images)
 {
-    if (images.desc.width <= 0 || images.desc.height <= 0 || images.colorCount() == 0U) {
+    if (images.desc.width <= 0 || images.desc.height <= 0 || (images.colorCount() == 0U && !images.hasDepth())) {
         return false;
     }
 
@@ -396,6 +407,7 @@ bool buildTarget(const VolkDeviceTable&                  table,
     }
     images.fresh         = true;
     images.color_sampled = false;
+    images.depth_sampled = false;
     return true;
 }
 
@@ -416,6 +428,7 @@ bool resizeTarget(const VolkDeviceTable&                  table,
     }
     images.fresh         = true;
     images.color_sampled = false;
+    images.depth_sampled = false;
     return true;
 }
 
@@ -439,6 +452,7 @@ void destroyTarget(const VolkDeviceTable& table, const VkDevice device, TargetIm
     images.framebuffer            = VK_NULL_HANDLE;
     images.fresh                  = true;
     images.color_sampled          = false;
+    images.depth_sampled          = false;
     images.desc                   = vn::graphics::backend::TargetDesc{};
 }
 
