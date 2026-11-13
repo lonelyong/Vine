@@ -14,7 +14,7 @@ VN_GRAPHICS_NS_BEGIN
  * - A stage names that place by intent — passStageOrder() turns it into the number the engine sorts by, and
  *   passes inside one stage run in the order they were planned (the engine resolves equal orders by registration
  *   order).
- * - The scale is documented rather than private so a host that registers its own pass (RenderEngine::addPass) can
+ * - The scale is documented rather than private so a host that registers its own pass (RenderEngine::applyPlan) can
  *   place it by intent too, instead of guessing where the gaps are.
  */
 enum class PassStage

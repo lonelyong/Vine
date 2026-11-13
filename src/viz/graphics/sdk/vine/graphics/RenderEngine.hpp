@@ -809,19 +809,19 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     bool releaseContent(const vn::Buffer<std::uint32_t>& buffer);
 
-    /** @brief Gets the number of registered scene passes.
+    /** @brief Gets the number of registered passes.
      *
-     * @return Number of passes added via addPass().
+     * @return Number of rows in the engine's pass table.
      */
     std::size_t passCount() const;
 
     /** @brief Rebinds which scene a registered pass renders.
      *
      * @details
-     * - The binding is written into the pass' declaration (`PassDesc::content`) - the same one storage addPass()
+     * - The binding is written into the pass' declaration (`PassDesc::content`) - the same one storage a plan
      *   writes and the compile reads.
      *
-     * @param pass    Pass registered via addPass() (by pointer).
+     * @param pass    Pass in the engine's table (by pointer).
      * @param content New content scene; null clears the binding (a base scene pass then draws nothing).
      * @return true when @p pass is registered and its declaration now states @p content; false when no such pass is
      *         registered, so nothing changed.
@@ -830,7 +830,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     /** @brief Gets the content scene a registered pass renders.
      *
-     * @param pass Pass registered via addPass() (by pointer).
+     * @param pass Pass in the engine's table (by pointer).
      * @return The bound content, or nullptr when the pass has none or is not registered.
      */
     raw_ptr<Scene> contentOf(raw_ptr<RenderPass> pass) const;
@@ -1178,8 +1178,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Turns a declaration into its execution node, adjudicating the depth edge first.
      *
      * @details
-     * - THE ONE PLACE a PassDesc becomes a node, shared by addPass() and applyPlan() so a plan-applied pass
-     *   and a hand-added one cannot differ in kind mapping or depth-edge handling.
+     * - THE ONE PLACE a PassDesc becomes a node: applyPlan updates an existing row through it and builds a new one
+     *   with it, so a re-stated pass and an added pass cannot differ in kind mapping or depth-edge handling.
      * - A layered depth view and a second, different depth view for one target are REFUSED here (once per
      *   episode), because the SDK has one depth image per target and a declaration it cannot honour must not
      *   look accepted on the node.
@@ -1209,32 +1209,11 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     friend class PassRegistry;
 
-    /** @brief Registers @p desc on behalf of @p owner under @p role (the PassChain::addPass implementation).
-     *
-     * @param desc  Declaration of the pass to register.
-     * @param owner Object that keeps the pass and takes it back when it dies (null = no owner).
-     * @param role  Name the owner gives this pass (empty = anonymous).
-     * @return The registered node, or null when it was already registered.
-     */
-
     /** @brief Removes every pass whose slot is owned by @p owner (each one as removePass).
      *
      * @param owner Owner whose passes are taken back (null is a no-op: unowned passes belong to whoever added them).
      */
     void removePassesOwnedBy(const void* owner) noexcept;
-
-    /** @brief Answers the passes owned by @p owner, in engine order.
-     *
-     * @param owner Owner whose passes are asked for (null answers nothing).
-     * @return The handles; empty when nothing is registered for that owner.
-     */
-
-    /** @brief Answers the pass @p owner registered as @p role, or null.
-     *
-     * @param owner Owner whose pass is asked for (null answers nothing).
-     * @param role  Role the pass was registered under.
-     * @return The pass, or null when that owner registered no pass with that role.
-     */
 
     /** @brief Makes sure the transient target a slot declares exists, at the shape it declares.
      *
@@ -1389,11 +1368,11 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // one-condition episode in this class.
     ReportOnce unsupported_target_reported_{};
 
-    /// "A pass names a layered depth view" is one condition, not a per-pass event (see addPass): layered targets
-    /// are not built yet, so the declaration is refused once rather than once per declaration.
+    /// "A pass names a layered depth view" is one condition, not a per-pass event (see PassDesc::depth_view): layered
+    /// targets are not built yet, so the declaration is refused once rather than once per declaration.
     ReportOnce layered_depth_reported_{};
     /// The depth-view conflicts already said, keyed by (target, the image it was refused): a repeated identical
-    /// declaration stays silent, while a different second image gets its own sentence (see addPass).
+    /// declaration stays silent, while a different second image gets its own sentence (see PassDesc::depth_view).
     std::set<std::pair<raw_ptr<RenderTarget>, raw_ptr<RenderTarget>>> depth_view_conflicts_{};
 
 

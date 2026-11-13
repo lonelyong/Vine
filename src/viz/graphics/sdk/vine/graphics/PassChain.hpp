@@ -32,7 +32,7 @@ class AxisGizmo;
 class Camera;
 class FpsOverlay;
 // Declared rather than included: a chain only ever passes a declaration straight on to the engine
-// (RenderEngine::addPassOwnedBy), so its own header does not need the one that defines it.
+// (PassRegistry::apply, scoped to the chain), so its own header does not need the one that defines it.
 struct PassDesc;
 class RenderEngine;
 class RenderPass;
@@ -231,7 +231,7 @@ struct VN_GRAPHICS_API ChainDesc {
  * @details
  * - Owns the passes it created AND their registration: it registers them on the engine as they are planned and
  *   unregisters them when it dies, so dropping the handle takes the passes out of the frame instead of leaving them
- *   to run with nobody holding them (RenderEngine::addPass keeps its own reference, so a reference alone would keep a
+ *   to run with nobody holding them (the engine's slot table keeps its own reference, so a reference alone would keep a
  *   dropped pipeline's passes alive and drawing).
  * - It also BORROWS the engine through two NARROW handles rather than owning it (see PassRegistry /
  *   DiagnosticsRoute): the passes live in the engine's table, so the chain must be able to reach it, but keeping the
@@ -637,7 +637,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     PassRegistry     registry_;
     DiagnosticsRoute diagnostics_;
     // Every pass this chain registered lives in the engine's own slot table with `owner = this` (see
-    // RenderEngine::addPassOwnedBy), so "a pass the chain registered is a pass the chain unregisters" needs no second
+    // RenderEngine::applyPlan(plan, owner)), so "a pass the chain registered is a pass the chain unregisters" needs no second
     // list here (see the destructor) and a named pass is found by its role instead of by a field per pass.
     intrusive_ptr<RenderPass>   window_pass_;
     intrusive_ptr<RenderTarget> offscreen_target_;

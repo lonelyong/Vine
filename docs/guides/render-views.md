@@ -120,7 +120,7 @@ classDiagram
     }
     class RenderEngine {
         +setDevice(device)
-        +addPass(pass, content, order)
+        +applyPlan(plan)
         +frame(dt)
     }
     class RenderSurface {

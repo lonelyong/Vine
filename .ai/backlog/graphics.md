@@ -10,7 +10,15 @@
 
 5b-2c 已于 2026-11-13 随 W9a–W9e 收口：`addPass` 家族、隐式发布、活指针通道与 `Scene` 的 `DrawListSource`
 继承已删，`Plan` 是唯一的 pass 形状，`FrameTable` 是编译后的帧表，`frame()` 两态、`applyPlan` 三态
-（见 `../design/graphics-frame-pipeline.md` §9.3）。当前没有无触发条件的开放项；剩下的都在 §2，按触发条件执行。
+（见 `../design/graphics-frame-pipeline.md` §9.3）。它剩下的开放项按“有没有真宿主”分两类：
+
+| # | 项 | 现状 | 前置 |
+|---|---|---|---|
+| N1 | 步 4：一 Session 多 Surface（`../design/graphics-frame-pipeline.md` F8 / §3.8） | 未做：`Target` 仍是显式 `RenderTarget` 句柄，帧请求不带 `SurfaceId`；一个引擎今天只能驱动一个区 | 公开形状变化；`T29` / `K10` 是判据 |
+| N2 | F11 全序排序键 + F12 的 `query` 半边（§3.11） | 未做：排序键不是文档化的全序值；`FrameResult` 这个宿主读的值还不存在（今天只有 `FrameReport` + `PresentOutcome` + `presentedCamera`） | `T9` / `T18`–`T20`；`query` 要先有 `FrameResult` |
+| N3 | 步 6：原型与实例（F10） | 未做，且**有触发条件**：出现“一处原型多处放置”的真实宿主 | `T23` 的 A/B 口径见 `../research/graphics-2026-11-12-instances.md`；`K11` |
+
+`N1` / `N2` 没有触发条件（设计已定、缺的是实现），但都改公开或可观察形状，按仓库节奏一次一步、一步一个可回退提交。
 
 
 ## 2. 触发条件型

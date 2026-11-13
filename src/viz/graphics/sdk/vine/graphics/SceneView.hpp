@@ -82,7 +82,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *
      * @details
      * - The reference shares ownership with the view, so it can be bound explicitly to engine passes
-     *   (addPass(pass, content, order)).
+     *   (a plan states it as `PassDesc::content`).
      *
      * @return The content scene (never null; an empty scene draws nothing).
      */

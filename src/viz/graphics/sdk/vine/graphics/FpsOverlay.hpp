@@ -73,7 +73,7 @@ class Scene;
  * hud.content = intrusive_ptr<Scene>(fps->content());
  * hud.viewport = fps->boxViewport(); hud.clear_enabled = false; hud.depth_mode = DepthMode::Disabled;
  * hud.before_draw = [fps] { fps->update(); };
- * engine->addPass(hud);
+ * engine->applyPlan(vn::graphics::Plan{ { hud } });
  * \endcode
  */
 class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay> {

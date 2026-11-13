@@ -33,7 +33,7 @@ class Scene;
 struct VN_GRAPHICS_API PassRow {
     /// The registered pass this describes (identity: two tables of the same pass compare equal here).
     raw_ptr<const RenderPass> pass = nullptr;
-    /// The order the engine runs it at (see RenderEngine::addPass): what decides where it sits in the frame.
+    /// The order the engine runs it at (see PassDesc::order / PassStage): what decides where it sits in the frame.
     int order                      = 0;
     /// The pass' name (empty when it has none - a name is what makes a row greppable, see RenderPass::setName).
     String name;

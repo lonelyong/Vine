@@ -84,7 +84,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * - The pass is NOT adopted: the pipeline that built it owns it (the engine holds it while registered), and
      *   this area keeps its own reference so what it reports cannot outlive what it describes.
      * - Refused and reported when it draws nothing here: it must be one of THIS engine's registered passes
-     *   (RenderEngine::addPass - a pipeline registers its own when built); a pass outside the frame is the same
+     *   (RenderEngine::applyPlan - a pipeline registers its own when built); a pass outside the frame is the same
      *   silence present(SceneView&) refuses.
      *
      * @param pass Pass that presents this surface; null is a no-op, and a pass that is not registered on this

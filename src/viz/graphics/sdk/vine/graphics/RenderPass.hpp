@@ -38,7 +38,7 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
  *
  * @details
  * - ONE FACT, ONE STORAGE. The pass IS its declaration: every accessor below reads or writes a field of declaration(), and a
- *   descriptor handed to `RenderEngine::addPass(const PassDesc&)` is adopted as-is (see setDesc). There is no second
+ *   descriptor stated through `RenderEngine::applyPlan` is adopted as-is (see setDesc). There is no second
  *   copy of the clear colour, the camera, the inputs or the layer mask to keep in step, so "the value form and the
  *   node form disagree" is not a defect this type can have.
  * - WHAT IS NOT HERE: the facts the FRAME produces - the transient target a compile resolved, the measured record
@@ -80,7 +80,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *
      * @details
      * - Everything the pass stated before is replaced - this is "I am this descriptor", not a merge - which is what
-     *   makes a descriptor-declared pass and a hand-built one the same object (see RenderEngine::addPass).
+     *   makes a descriptor-declared pass and a hand-built one the same object (see RenderEngine::applyPlan).
      * - A stated depth view is applied to the declared target again (see setDepthView), so a re-stated declaration
      *   keeps its depth edge.
      *

@@ -69,13 +69,11 @@ struct TransientShape {
  * @brief What a pass IS, as one value.
  *
  * @details
- * - What the engine does with it: `RenderEngine::addPass(const PassDesc&)` turns the descriptor into the
- *   execution node for its kind (Scene -> RenderPass, Screen -> ScreenPass) ONCE, and that node is the
- *   single storage of the declaration - a descriptor and a hand-built pass cannot drift apart, because a
- *   descriptor IS a hand-built pass by the time the engine sees it.
- * - `engine->applyPlan(Plan{ { desc } }, owner)` is the one way a declaration reaches the table (a pass that needs something
- *   the descriptor cannot state has no spelling: what is custom about a picture is data, not a subclass).
- *   the kinds cannot express.
+ * - What the engine does with it: `RenderEngine::applyPlan` turns the descriptor into the execution node for its
+ *   kind (Scene -> RenderPass, Screen -> ScreenPass) and keeps that node as the single storage of the declaration -
+ *   the node and the descriptor cannot drift apart, because the node IS a PassDesc (see RenderPass::setDesc).
+ * - `engine->applyPlan(Plan{ { desc } }, owner)` is the one way a declaration reaches the table (a pass that needs
+ *   something the descriptor cannot state has no spelling: what is custom about a picture is data, not a subclass).
  * - What is NOT here: a descriptor cannot invent an execution (that is PassKind), cannot be a subtree of
  *   content (Scene), and cannot decide how a backend draws (the program's own ABI). The state it states is
  *   the pass-scoped half of the ONE resolution table (see .ai/design/graphics-scene.md §4).

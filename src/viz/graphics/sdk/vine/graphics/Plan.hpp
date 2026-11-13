@@ -158,9 +158,9 @@ inline constexpr std::size_t kMaxPlanPasses = 64;
  * - A PASS' IDENTITY IS ITS NAME (`PassDesc::name`), which is why an empty name and a duplicate name are
  *   refused rather than guessed at: the diff has nothing else to compare, and a plan that cannot be diffed
  *   would be applied as "remove everything, add everything" - the churn this type exists to remove.
- * - THE CONSEQUENCE FOR A MIXED ENGINE: a pass registered through `addPass()` without a name is not expressible
- *   here, so `RenderEngine::plan()` reads it back with an empty name and `applyPlan` refuses that shape rather than
- *   silently renaming or dropping the pass (see RenderEngine::plan).
+ * - EVERY ROW OF THE TABLE CAME FROM A PLAN, so every row has a name. A name-less row cannot exist - an empty name
+ *   is refused at the door (`EmptyPassName`) rather than renamed or dropped - which is what keeps `plan()`'s
+ *   read-back exactly re-appliable (see RenderEngine::plan).
  * - WHAT IT CANNOT SAY: a custom pass CLASS. The plan states the shapes `PassKind` names (Scene / Screen), and the
  *   node the engine builds from a declaration is the built-in of its kind - so a subclass with an overridden
  *   `describe()` is not registrable at all (it was the escape hatch of the old `addPass` family). What is custom

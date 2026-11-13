@@ -157,7 +157,7 @@ struct VN_GRAPHICS_API DrawDescription {
  *
  * @details
  * - A DIFFERENT CONCEPT FROM PassDesc, and named so it cannot be confused with it: a PassDesc is the DECLARATION
- *   a pass IS (authored, persists across frames, what RenderEngine::addPass adopts), while a PassDraw is what that
+ *   a pass IS (authored, persists across frames, what RenderEngine::applyPlan adopts), while a PassDraw is what that
  *   pass ISSUES on one frame (filled by RenderPass::describe, valid until the compile reuses its storage).
  * - The pass' own half, as opposed to the facts the ENGINE owns about a pass (its identity, its order, its resolved
  *   inputs), which belong to the frame's row rather than to the pass. Splitting them that way is what lets a pass
