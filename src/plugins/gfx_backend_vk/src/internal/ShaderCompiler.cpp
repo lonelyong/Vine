@@ -1,6 +1,7 @@
 #include <vine/backend_vk/internal/ShaderCompiler.hpp>
 
 #include <mutex>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -48,7 +49,22 @@ std::once_flag s_glslangInit;
 
 } // namespace
 
-bool compileStage(const vn::graphics::ShaderStage& stage, SpirvModule& out, vn::String& why)
+namespace
+{
+
+/**
+ * @brief The stage's compilation, under @p defines (see the header's two entries).
+ *
+ * @param stage   The stage to compile.
+ * @param defines The names to define before the source, in order.
+ * @param out     Receives the SPIR-V words.
+ * @param why     Receives the failure's reason.
+ * @return true when the stage compiled and linked.
+ */
+[[nodiscard]] bool compileWithDefines(const vn::graphics::ShaderStage& stage,
+                                      const std::span<const std::string> defines,
+                                      SpirvModule&                       out,
+                                      vn::String&                        why)
 {
     why = vn::String();
     out.words.clear();
@@ -75,6 +91,19 @@ bool compileStage(const vn::graphics::ShaderStage& stage, SpirvModule& out, vn::
     const int         lengths[1]{ static_cast<int>(text.size()) };
     shader.setStringsWithLengths(strings, lengths, 1);
     shader.setEntryPoint(stage.entryPoint.empty() ? "main" : stage.entryPoint.as_std_str().c_str());
+
+    // THE VARIANT'S NAMES, as a preamble: glslang processes it before the source and without disturbing the
+    // `#version` line, which is exactly what a `#define` set has to be. No stage reads a value, so each name is
+    // defined as 1 (see the header).
+    std::string preamble;
+    if (!defines.empty()) {
+        for (const std::string& name : defines) {
+            preamble += "#define ";
+            preamble += name;
+            preamble += " 1\n";
+        }
+        shader.setPreamble(preamble.c_str());
+    }
 
     // THE VULKAN TARGET, exactly what `glslangValidator -V` states: SPIR-V 1.0 for Vulkan 1.0. A stage written for a
     // higher Vulkan version still parses (the text's own #version governs the language), and the device this backend
@@ -109,6 +138,18 @@ bool compileStage(const vn::graphics::ShaderStage& stage, SpirvModule& out, vn::
         return false;
     }
     return true;
+}
+
+} // namespace
+
+bool compileStage(const vn::graphics::ShaderStage& stage, SpirvModule& out, vn::String& why)
+{
+    return compileWithDefines(stage, {}, out, why);
+}
+
+bool compileStage(const vn::graphics::ShaderStage& stage, const std::span<const std::string> defines, SpirvModule& out, vn::String& why)
+{
+    return compileWithDefines(stage, defines, out, why);
 }
 
 VN_BACKEND_VK_NS_END

@@ -229,6 +229,32 @@ void main()
     return geometry;
 }
 
+/// @brief A triangle carrying the channels the ENGINE's vertex stages read (positions, normals and a UV pair).
+///
+/// The engine's forward vertex stage declares positions and normals unconditionally and its texcoord slot under
+/// `VN_TEXTURED`; a frame that runs the engine's own program must feed all three.
+[[nodiscard]] intrusive_ptr<Geometry> makeEngineTriangle()
+{
+    auto geometry = intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
+        -0.75F, -0.75F, 0.5F,
+        0.75F,  -0.75F, 0.5F,
+        0.0F,   0.75F,  0.5F,
+    })));
+    geometry->setNormals(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
+        0.0F, 0.0F, 1.0F,
+        0.0F, 0.0F, 1.0F,
+        0.0F, 0.0F, 1.0F,
+    })));
+    geometry->setTexcoords2(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
+        0.0F, 0.0F,
+        1.0F, 0.0F,
+        0.5F, 1.0F,
+    })));
+    geometry->bumpRevision();
+    return geometry;
+}
+
 /// @brief A camera whose matrices are identities, so the triangle's clip-space positions ARE the picture.
 [[nodiscard]] CameraSnapshot identityCamera()
 {
@@ -653,6 +679,49 @@ TEST_F(BackendParityTest, TheSameTextureIsSampledTheSame)
     expectTheSamePicture(reference, candidate, "sampled texture");
     EXPECT_EQ(pixelAt(reference.pixels, kSide / 2, kSide / 2), (std::array<int, 4>{ 0, 0, 255, 255 }))
         << "the reference backend did not sample the base-colour texture";
+}
+
+TEST_F(BackendParityTest, TheEngineUnlitProgramDrawsTheSamePictureOnBothBackends)
+{
+    // THE ENGINE'S OWN TEXT, through the seam: `unlitForwardProgram()` declares the material block, five texture
+    // slots, the lights, the draw block AND the shadow map + block (its forward source inserts that ABI
+    // unconditionally), and its texcoord slot only under `VN_TEXTURED`. "The engine's programs run on this backend"
+    // therefore means every binding, the variant's names and the vertex layout agree - and the picture is where all
+    // three meet. ONE frame, the same value, two backends.
+    RenderTarget* const shared = target();
+
+    const intrusive_ptr<ShaderProgram> program  = vn::graphics::unlitForwardProgram();
+    const intrusive_ptr<Geometry>      geometry = makeEngineTriangle();
+
+    // An sRGB map (a colour slot's own colour space) of pure green: both backends decode it in hardware, so the two
+    // pictures being byte-identical also says the format reached the image on both sides.
+    auto image = intrusive_ptr<vn::imaging::Image>(new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
+    const std::span<std::byte> texel = image->mipData(0);
+    texel[0]                         = std::byte{ 0U };
+    texel[1]                         = std::byte{ 255U };
+    texel[2]                         = std::byte{ 0U };
+    texel[3]                         = std::byte{ 255U };
+    auto texture = intrusive_ptr<vn::graphics::Texture2D>(new vn::graphics::Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Srgb));
+    texture->setImage(image);
+
+    const intrusive_ptr<Material> material = makeMaterial(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+    material->setTexture(vn::graphics::TextureSlot::BaseColor, texture);
+
+    std::optional<ClearPolicy> clear = ClearPolicy{};
+    clear->color                     = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    const FrameDescription frame     = onePass(shared,
+                                               clear,
+                                               DepthMode::TestAndWrite,
+                                               { sceneDraw(commandsOf({ commandOf(geometry, program, material) })) },
+                                               { vn::graphics::ImageSource::imported(texture.get()) });
+
+    const Ran reference = run(*vsg, frame, shared);
+    const Ran candidate = run(*vk, frame, shared);
+
+    expectTheSameRecord(reference, candidate, 1, 1, "engine unlit program, textured");
+    expectTheSamePicture(reference, candidate, "engine unlit program, textured");
+    EXPECT_EQ(pixelAt(reference.pixels, kSide / 2, kSide / 2), (std::array<int, 4>{ 0, 255, 0, 255 }))
+        << "the reference backend did not sample the engine's base-colour map";
 }
 
 TEST_F(BackendParityTest, APassWithNoEffectIsNotAScopeOnEitherBackend)

@@ -16,6 +16,8 @@
 #include <vine/backend_vk/internal/StateMapping.hpp>
 #include <vine/backend_vk/internal/ContentImages.hpp>
 #include <vine/backend_vk/internal/LightBlock.hpp>
+#include <vine/backend_vk/internal/ProgramVariant.hpp>
+#include <vine/Buffer.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/MaterialBase.hpp>
@@ -36,6 +38,20 @@ constexpr std::uint32_t kDescriptorsPerFrame = 256U;
 
 /// @brief The content ABI's texture-slot count (see `TextureSlot`), i.e. set 0 bindings 1..5.
 constexpr std::uint32_t kTextureSlots = vn::graphics::kTextureSlotCount;
+
+/// @brief The content set's SHADOW bindings: the engine's forward ABI puts the map at 7 and its block at 8.
+///
+/// The engine's `forwardFragmentSource()` declares both UNCONDITIONALLY (its `vn_shadow.params.x` is the runtime
+/// switch), so a backend that wants its own forward programs must offer the binding even while it casts no shadow.
+constexpr std::uint32_t kShadowMapBinding   = 7U;
+constexpr std::uint32_t kShadowBlockBinding = 8U;
+
+/// @brief The shadow block's bytes, in the engine ABI's shape (`VineShadowBlock` in builtin_forward.frag).
+struct VineShadowBlock {
+    std::array<float, 16> view_to_light{}; // View space -> light clip (the SDK's clip convention).
+    std::array<float, 4>  params{};        // x = enabled, y = depth bias, z = strength, w = the light it belongs to.
+};
+static_assert(sizeof(VineShadowBlock) == 80U, "the shadow block is a mat4 row plus one vec4 row");
 
 /// @brief The full-screen ABI's sampler bindings: bindings 0..4 (four colour attachments and depth).
 constexpr std::uint32_t kScreenSamplerBindings = 5U;
@@ -218,6 +234,37 @@ struct ContentDraw::Impl {
         bool                                      failed{ false };
     };
 
+    /// @brief The program cache's key: one TEXT (its identity and revision are the pointer) under one VARIANT.
+    struct ProgramKey {
+        const vn::graphics::ShaderProgramDescription* description{ nullptr };
+        std::uint32_t                                 variant{ 0 }; // see ProgramVariant::bits
+
+        /**
+         * @brief Compares two keys (everything the cache distinguishes).
+         *
+         * @param other Key to compare against.
+         * @return true when both name the same text under the same variant.
+         */
+        [[nodiscard]] bool operator==(const ProgramKey& other) const noexcept
+        {
+            return description == other.description && variant == other.variant;
+        }
+    };
+
+    /// @brief The hash a program cache needs (pointer and variant, mixed once).
+    struct ProgramKeyHash {
+        /**
+         * @brief Hashes @p key.
+         *
+         * @param key The key to hash.
+         * @return A stable hash of the pair.
+         */
+        [[nodiscard]] std::size_t operator()(const ProgramKey& key) const noexcept
+        {
+            return std::hash<const void*>{}(key.description) ^ (static_cast<std::size_t>(key.variant) << 4U);
+        }
+    };
+
     /// @brief One uploaded vertex channel.
     struct VertexStream {
         VkBuffer      buffer{ VK_NULL_HANDLE };
@@ -249,6 +296,17 @@ struct ContentDraw::Impl {
         bool                                 failed{ false };
     };
 
+    /// @brief One uploaded instance stream: the per-instance model matrices a command reads at locations 12-15.
+    ///
+    /// Keyed by the BUFFER's address (the identity the SDK releases by, see releaseContent(Buffer)), and re-uploaded
+    /// when the buffer's revision moves - the bytes are announced through it, not through a geometry revision.
+    struct InstanceStream {
+        VkBuffer       buffer{ VK_NULL_HANDLE };
+        VkDeviceMemory memory{ VK_NULL_HANDLE };
+        std::uint64_t  bytes{ 0 };    // Bytes copied in (the entry's residency weight).
+        std::uint64_t  revision{ 0 }; // The Buffer revision the bytes came from.
+    };
+
     /// @brief The pipeline-relevant half of a resolved state (dynamic state recompiles nothing, so it is not in here).
     struct PipelineState {
         VkPolygonMode   polygon_mode{ VK_POLYGON_MODE_FILL };
@@ -274,12 +332,15 @@ struct ContentDraw::Impl {
         }
     };
 
-    /// @brief What one pipeline is built for: program revision, target compatibility, state and the vertex layout.
+    /// @brief What one pipeline is built for: program revision, VARIANT, target compatibility, state and the vertex layout.
     struct PipelineKey {
         /// true for a FULL-SCREEN program: `program` is then the FRAGMENT stage's description, and the geometry's
         /// channels play no part (the vertex stage is the engine's full-screen triangle and reads no buffer).
         bool                                                   screen{ false };
         const vn::graphics::ShaderProgramDescription*          program{ nullptr };
+        /// The VARIANT's bits (see ProgramVariant): the same text compiled under different names is a different
+        /// program, so two pipelines that differ only there are two pipelines.
+        std::uint32_t                                          variant{ 0 };
         vn::graphics::backend::RenderPassCompatibility         compatibility{};
         VkPrimitiveTopology                                    topology{ VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
         PipelineState                                          state{};
@@ -302,6 +363,9 @@ struct ContentDraw::Impl {
             }
             if (program != other.program) {
                 return program < other.program;
+            }
+            if (variant != other.variant) {
+                return variant < other.variant;
             }
             if (compatibility.device_color_formats != other.compatibility.device_color_formats) {
                 return std::lexicographical_compare(compatibility.device_color_formats.begin(),
@@ -350,8 +414,10 @@ struct ContentDraw::Impl {
     /// The sampled images and samplers the material slots read.
     ContentImages images{};
 
-    std::unordered_map<const vn::graphics::ShaderProgramDescription*, ProgramEntry> programs;
+    std::unordered_map<ProgramKey, ProgramEntry, ProgramKeyHash>                     programs;
     std::unordered_map<const vn::graphics::GeometryDescription*, GeometryEntry>     geometries;
+    /// One entry per INSTANCE buffer a command read (keyed by the buffer's address, see InstanceStream).
+    std::unordered_map<const vn::Buffer<float>*, InstanceStream>                    instance_streams;
     std::map<PipelineKey, VkPipeline>                                               pipelines;
     std::vector<std::pair<VkBuffer, VkDeviceMemory>>                                frame_uniforms;
     /// How many pipelines were CREATED (a resize must leave this unmoved; see pipelinesCreated).
@@ -400,10 +466,16 @@ struct ContentDraw::Impl {
         return alignedUp(lightsOffset() + sizeof(VineLightsBlock), uniform_alignment);
     }
 
-    /** @brief Size of one draw's uniform buffer: material, lights and draw, each at its aligned offset. */
+    /** @brief Byte offset of the shadow block inside one draw's uniform buffer. */
+    [[nodiscard]] VkDeviceSize shadowOffset() const noexcept
+    {
+        return alignedUp(drawOffset() + sizeof(vn::graphics::VineDrawBlock), uniform_alignment);
+    }
+
+    /** @brief Size of one draw's uniform buffer: material, lights, draw and the (unused-for-now) shadow block. */
     [[nodiscard]] VkDeviceSize uniformSize() const noexcept
     {
-        return drawOffset() + sizeof(vn::graphics::VineDrawBlock);
+        return shadowOffset() + sizeof(VineShadowBlock);
     }
 
     /**
@@ -503,15 +575,61 @@ struct ContentDraw::Impl {
     }
 
     /**
-     * @brief Gets (or compiles) one program revision's shader modules.
+     * @brief Gets (or uploads) one instance stream: the per-instance model matrices a command reads.
+     *
+     * @details
+     * - KEYED BY THE BUFFER'S ADDRESS, the identity the SDK releases by (see RenderDevice::releaseContent(Buffer)),
+     *   and re-uploaded when the buffer's revision moves - a command's instance data is announced through the
+     *   buffer, not through a geometry revision.
+     * - The bytes are the WHOLE buffer: `first_instance` / `instance_count` are DRAW parameters, so one upload
+     *   serves every draw that reads the same buffer.
+     *
+     * @param buffer The instance buffer (its floats are the matrices, four vec4 columns per instance).
+     * @param why    Receives the reason when the bytes could not be uploaded.
+     * @return The stream, or null when it could not be uploaded.
+     */
+    [[nodiscard]] InstanceStream* ensureInstanceStream(const vn::Buffer<float>& buffer, vn::String& why)
+    {
+        InstanceStream&      entry    = instance_streams[&buffer];
+        const std::uint64_t revision = buffer.revision();
+        if (entry.buffer != VK_NULL_HANDLE && entry.revision == revision) {
+            return &entry;
+        }
+        destroyBuffer(entry.buffer, entry.memory); // a new revision replaces the bytes
+        const std::span<const float> floats = buffer.view();
+        if (floats.empty()) {
+            why = vn::String(u8"vk: an instance stream carries no transforms");
+            return nullptr;
+        }
+        const std::span<const std::byte> bytes(reinterpret_cast<const std::byte*>(floats.data()), floats.size() * sizeof(float));
+        if (!upload(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, entry.buffer, entry.memory)) {
+            why = vn::String(u8"vk: an instance stream could not be uploaded");
+            return nullptr;
+        }
+        entry.bytes    = bytes.size();
+        entry.revision = revision;
+        ++stream_builds_;
+        stream_bytes_ += entry.bytes;
+        return &entry;
+    }
+
+    /**
+     * @brief Gets (or compiles) one program text under one VARIANT.
+     *
+     * @details
+     * - THE TEXT IS ONE THING; WHAT IT MEANS IS THE VARIANT (see ProgramVariant). A cache that keyed only the text
+     *   would answer the textured variant with the untextured compile - the exact silence the engine's
+     *   `#pragma import_defines` line exists to prevent.
      *
      * @param description The program's text as a value (not null; the entry keeps it alive).
+     * @param variant     The defines the text is compiled under.
      * @param why         Receives the first failure's reason.
      * @return The entry, or null when the program could not be compiled.
      */
-    [[nodiscard]] ProgramEntry* ensureProgram(const vn::graphics::ShaderProgramDescription* description, vn::String& why)
+    [[nodiscard]] ProgramEntry* ensureProgram(const vn::graphics::ShaderProgramDescription* description, const ProgramVariant& variant, vn::String& why)
     {
-        const auto found = programs.find(description);
+        const ProgramKey key{ description, variant.bits() };
+        const auto       found = programs.find(key);
         if (found != programs.end()) {
             return found->second.failed ? nullptr : &found->second;
         }
@@ -519,12 +637,13 @@ struct ContentDraw::Impl {
         ProgramEntry entry;
         entry.description = vn::graphics::ShaderProgramDescriptionPtr(description);
 
+        const std::vector<std::string> defines = variant.defines();
         for (const vn::graphics::ShaderStage& stage : description->stages()) {
             if (stage.type == vn::graphics::ShaderStageType::Compute) {
                 continue; // M2 has no compute path
             }
             SpirvModule spirv;
-            if (!compileStage(stage, spirv, why)) {
+            if (!compileStage(stage, defines, spirv, why)) {
                 entry.failed = true;
                 break;
             }
@@ -556,7 +675,7 @@ struct ContentDraw::Impl {
             entry.fragment_entry = "main";
         }
 
-        const auto inserted = programs.emplace(description, std::move(entry));
+        const auto inserted = programs.emplace(key, std::move(entry));
         if (inserted.first->second.failed) {
             return nullptr;
         }
@@ -845,6 +964,8 @@ struct ContentDraw::Impl {
      *
      * @param program           The compiled program (both stages required).
      * @param geometry          The geometry whose channels state the vertex layout.
+     * @param variant           The variant the program was compiled under (see ProgramVariant).
+     * @param instanced         Whether the command reads an instance stream (one more binding at 12-15).
      * @param compatibility     The target's pipeline compatibility (the key's shape half).
      * @param render_pass       A render pass with that compatibility (used only when the pipeline is CREATED).
      * @param topology          The draw's effective topology.
@@ -855,6 +976,8 @@ struct ContentDraw::Impl {
      */
     [[nodiscard]] VkPipeline ensureContentPipeline(const ProgramEntry&                                   program,
                                                    const vn::graphics::GeometryDescription&              geometry,
+                                                   const ProgramVariant&                                 variant,
+                                                   bool                                                  instanced,
                                                    const vn::graphics::backend::RenderPassCompatibility& compatibility,
                                                    VkRenderPass                                          render_pass,
                                                    VkPrimitiveTopology                                   topology,
@@ -869,6 +992,7 @@ struct ContentDraw::Impl {
 
         PipelineKey key;
         key.program       = program.description.get();
+        key.variant       = variant.bits();
         key.compatibility = compatibility;
         key.topology      = topology;
         key.state         = state;
@@ -878,12 +1002,22 @@ struct ContentDraw::Impl {
             }
             key.channels.emplace_back(channel.location, channel.channel.components);
         }
+        const std::size_t geometry_channels = key.channels.size();
+        if (instanced) {
+            // THE INSTANCE MATRIX IS FOUR vec4 COLUMNS at locations 12-15 (see ShaderAbi's InstanceModel), supplied by
+            // ONE binding whose stride is the matrix - the same shape the engine's vertex stage declares under
+            // `VN_INSTANCED`. Putting the entries in the key's channel list is what makes two layouts different keys.
+            const std::uint32_t first = vn::graphics::attributeLocation(vn::graphics::VertexAttribute::InstanceModel);
+            for (std::uint32_t column = 0; column < vn::graphics::kInstanceMatrixColumns; ++column) {
+                key.channels.emplace_back(first + column, 4U);
+            }
+        }
 
         std::vector<VkVertexInputBindingDescription>   bindings;
         std::vector<VkVertexInputAttributeDescription> attributes;
-        bindings.reserve(key.channels.size());
+        bindings.reserve(geometry_channels + 1U);
         attributes.reserve(key.channels.size());
-        for (std::size_t index = 0; index < key.channels.size(); ++index) {
+        for (std::size_t index = 0; index < geometry_channels; ++index) {
             const std::uint32_t binding    = static_cast<std::uint32_t>(index);
             const std::uint32_t location   = key.channels[index].first;
             const std::uint32_t components = key.channels[index].second;
@@ -899,6 +1033,21 @@ struct ContentDraw::Impl {
             attribute.format   = vertexFormatOf(components);
             attribute.offset   = 0U;
             attributes.push_back(attribute);
+        }
+        if (instanced) {
+            VkVertexInputBindingDescription binding_description{};
+            binding_description.binding   = static_cast<std::uint32_t>(geometry_channels);
+            binding_description.stride    = vn::graphics::kInstanceMatrixColumns * 4U * static_cast<std::uint32_t>(sizeof(float));
+            binding_description.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+            bindings.push_back(binding_description);
+            for (std::uint32_t column = 0; column < vn::graphics::kInstanceMatrixColumns; ++column) {
+                VkVertexInputAttributeDescription attribute{};
+                attribute.location = key.channels[geometry_channels + column].first;
+                attribute.binding  = binding_description.binding;
+                attribute.format   = vertexFormatOf(4U);
+                attribute.offset   = column * 4U * static_cast<std::uint32_t>(sizeof(float));
+                attributes.push_back(attribute);
+            }
         }
 
         return buildPipeline(std::move(key),
@@ -977,10 +1126,13 @@ struct ContentDraw::Impl {
      *   answered here once, so a warm-up cannot build something the frame would not ask for (and vice versa).
      */
     struct CommandPlan {
-        ProgramEntry*                program{ nullptr };
-        GeometryEntry*               streams{ nullptr };
-        VkPipeline                   pipeline{ VK_NULL_HANDLE };
-        vn::graphics::ResolvedCommandState resolved{};
+        ProgramEntry*                        program{ nullptr };
+        GeometryEntry*                       streams{ nullptr };
+        vn::graphics::MaterialDescriptionPtr material{};     // the material it is shaded with, or null (defaults)
+        InstanceStream*                      instances{ nullptr }; // the instance stream it reads, or null
+        ProgramVariant                       variant{};      // what the program was compiled under
+        VkPipeline                           pipeline{ VK_NULL_HANDLE };
+        vn::graphics::ResolvedCommandState   resolved{};
     };
 
     /**
@@ -1015,13 +1167,6 @@ struct ContentDraw::Impl {
             category = vn::graphics::DiagnosticCategory::ContentSkipped;
             return false;
         }
-        vn::String          build_why;
-        ProgramEntry* const compiled = ensureProgram(program_description, build_why);
-        if (compiled == nullptr) {
-            why      = build_why.empty() ? vn::String(u8"vk: the content program could not be compiled") : std::move(build_why);
-            category = vn::graphics::DiagnosticCategory::CompileFailed;
-            return false;
-        }
 
         const vn::graphics::GeometryDescriptionPtr geometry = command.geometryDescription();
         if (geometry == nullptr) {
@@ -1035,11 +1180,38 @@ struct ContentDraw::Impl {
             category = vn::graphics::DiagnosticCategory::ContentSkipped;
             return false;
         }
+
+        // THE MATERIAL AND THE VARIANT, before anything is compiled: the texture slots select `VN_TEXTURED` and the
+        // geometry's channels select the colour and texcoord names (see ProgramVariant::variantOf). Resolved HERE so
+        // a warm-up and the frame that follows it cannot compile different programs for one drawable (G1).
+        vn::graphics::MaterialDescriptionPtr material = command.material_description;
+        if (material == nullptr && command.material != nullptr) {
+            material = command.material->description();
+        }
+        const bool           instanced = command.instance_transforms.values != nullptr && command.instance_count != 0U;
+        const ProgramVariant variant   = variantOf(*geometry, material.get(), instanced);
+
+        vn::String          build_why;
+        ProgramEntry* const compiled = ensureProgram(program_description, variant, build_why);
+        if (compiled == nullptr) {
+            why      = build_why.empty() ? vn::String(u8"vk: the content program could not be compiled") : std::move(build_why);
+            category = vn::graphics::DiagnosticCategory::CompileFailed;
+            return false;
+        }
         GeometryEntry* const streams = ensureGeometry(*geometry, build_why);
         if (streams == nullptr) {
             why      = build_why.empty() ? vn::String(u8"vk: the geometry's streams could not be uploaded") : std::move(build_why);
             category = vn::graphics::DiagnosticCategory::ContentSkipped;
             return false;
+        }
+        InstanceStream* instances = nullptr;
+        if (instanced) {
+            instances = ensureInstanceStream(*command.instance_transforms.values, build_why);
+            if (instances == nullptr) {
+                why      = build_why.empty() ? vn::String(u8"vk: the instance stream could not be uploaded") : std::move(build_why);
+                category = vn::graphics::DiagnosticCategory::ContentSkipped;
+                return false;
+            }
         }
 
         // THE STATE, RESOLVED ONCE PER COMMAND (pass override > content > defaults; see StateResolution.hpp). The
@@ -1050,6 +1222,8 @@ struct ContentDraw::Impl {
         vn::String pipeline_why;
         plan.pipeline = ensureContentPipeline(*compiled,
                                               *geometry,
+                                              variant,
+                                              instanced,
                                               compatibility,
                                               render_pass,
                                               StateMapping::topology(plan.resolved.state.topology),
@@ -1061,8 +1235,11 @@ struct ContentDraw::Impl {
             category = vn::graphics::DiagnosticCategory::CompileFailed;
             return false;
         }
-        plan.program = compiled;
-        plan.streams = streams;
+        plan.program   = compiled;
+        plan.streams   = streams;
+        plan.material  = std::move(material);
+        plan.instances = instances;
+        plan.variant   = variant;
         return true;
     }
 
@@ -1110,13 +1287,13 @@ struct ContentDraw::Impl {
         }
 
         vn::String                build_why;
-        ProgramEntry* const       fragment = ensureProgram(fragment_description.get(), build_why);
+        ProgramEntry* const       fragment = ensureProgram(fragment_description.get(), ProgramVariant{}, build_why);
         if (fragment == nullptr) {
             why      = build_why.empty() ? vn::String(u8"vk: the screen fragment program could not be compiled") : std::move(build_why);
             category = vn::graphics::DiagnosticCategory::CompileFailed;
             return false;
         }
-        ProgramEntry* const vertex = ensureProgram(screen_vertex.get(), build_why);
+        ProgramEntry* const vertex = ensureProgram(screen_vertex.get(), ProgramVariant{}, build_why);
         if (vertex == nullptr) {
             why      = build_why.empty() ? vn::String(u8"vk: the full-screen vertex program could not be compiled") : std::move(build_why);
             category = vn::graphics::DiagnosticCategory::CompileFailed;
@@ -1187,7 +1364,19 @@ struct ContentDraw::Impl {
         lights_info.offset = lightsOffset();
         lights_info.range  = sizeof(VineLightsBlock);
 
-        VkWriteDescriptorSet writes[3]{};
+        // THE SHADOW ABI (see kShadowMapBinding): the engine's forward programs declare both, so every content set binds
+        // them - the map to the white stand-in and the block to the zeroed "no shadow" state (see createDrawUniforms).
+        VkDescriptorImageInfo shadow_map{};
+        shadow_map.sampler     = images.fallbackSampler();
+        shadow_map.imageView   = images.fallbackView();
+        shadow_map.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkDescriptorBufferInfo shadow_info{};
+        shadow_info.buffer = buffer;
+        shadow_info.offset = shadowOffset();
+        shadow_info.range  = sizeof(VineShadowBlock);
+
+        VkWriteDescriptorSet writes[5]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = set;
         writes[0].dstBinding      = 0U;
@@ -1206,7 +1395,19 @@ struct ContentDraw::Impl {
         writes[2].descriptorCount = 1U;
         writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         writes[2].pBufferInfo     = &lights_info;
-        table->vkUpdateDescriptorSets(device, 3U, writes, 0U, nullptr);
+        writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet          = set;
+        writes[3].dstBinding      = kShadowMapBinding;
+        writes[3].descriptorCount = 1U;
+        writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[3].pImageInfo      = &shadow_map;
+        writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet          = set;
+        writes[4].dstBinding      = kShadowBlockBinding;
+        writes[4].descriptorCount = 1U;
+        writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[4].pBufferInfo     = &shadow_info;
+        table->vkUpdateDescriptorSets(device, 5U, writes, 0U, nullptr);
         return set;
     }
 
@@ -1304,6 +1505,10 @@ struct ContentDraw::Impl {
         std::memcpy(bytes, &material, sizeof(material));
         std::memcpy(bytes + lightsOffset(), &lights, sizeof(lights));
         std::memcpy(bytes + drawOffset(), &draw, sizeof(draw));
+        // THE SHADOW BLOCK IS ZEROED: `params.x = 0` is the engine's own "no shadow reached this pass" switch, which
+        // is the honest answer while this backend records no shadow pass (the map binds the white stand-in).
+        const VineShadowBlock shadow{};
+        std::memcpy(bytes + shadowOffset(), &shadow, sizeof(shadow));
         table->vkUnmapMemory(device, memory);
         return true;
     }
@@ -1331,6 +1536,16 @@ struct ContentDraw::Impl {
             destroyGeometryStreams(entry);
         }
         geometries.clear();
+    }
+
+    /** @brief Destroys every uploaded instance stream. */
+    void destroyInstanceStreams() noexcept
+    {
+        for (auto& [buffer, entry] : instance_streams) {
+            (void)buffer;
+            destroyBuffer(entry.buffer, entry.memory);
+        }
+        instance_streams.clear();
     }
 
     /** @brief Destroys every pipeline. */
@@ -1380,7 +1595,7 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
 
     // THE CONTENT SET (set 0): material at 0, the five slots at 1-5, lights at 6 - the engine's arrangement, which is
     // also the one vine_params.glsl declares.
-    VkDescriptorSetLayoutBinding content_bindings[7]{};
+    VkDescriptorSetLayoutBinding content_bindings[9]{};
     content_bindings[0].binding         = 0U;
     content_bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     content_bindings[0].descriptorCount = 1U;
@@ -1396,10 +1611,20 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
     content_bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     content_bindings[6].descriptorCount = 1U;
     content_bindings[6].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    // THE ENGINE'S SHADOW ABI (see kShadowMapBinding): a forward program declares both, so the layout offers both -
+    // fragment stages only, which is where the engine's shading reads them.
+    content_bindings[7].binding         = kShadowMapBinding;
+    content_bindings[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    content_bindings[7].descriptorCount = 1U;
+    content_bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    content_bindings[8].binding         = kShadowBlockBinding;
+    content_bindings[8].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    content_bindings[8].descriptorCount = 1U;
+    content_bindings[8].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo layout_info{};
     layout_info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_info.bindingCount = 7U;
+    layout_info.bindingCount = 9U;
     layout_info.pBindings    = content_bindings;
     if (impl->table->vkCreateDescriptorSetLayout(impl->device, &layout_info, nullptr, &impl->content_set_layout) != VK_SUCCESS) {
         destroy();
@@ -1470,9 +1695,11 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
     // 5 samplers).
     VkDescriptorPoolSize pool_sizes[2]{};
     pool_sizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    pool_sizes[0].descriptorCount = kDescriptorsPerFrame * 3U;
+    // material, lights and the shadow block per content set; the draw block per draw set.
+    pool_sizes[0].descriptorCount = kDescriptorsPerFrame * 4U;
     pool_sizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    pool_sizes[1].descriptorCount = kDescriptorsPerFrame * 2U * kTextureSlots;
+    // five material slots + the shadow map per content set; five sampled inputs per screen set.
+    pool_sizes[1].descriptorCount = kDescriptorsPerFrame * (2U * kTextureSlots + 1U);
 
     VkDescriptorPoolCreateInfo pool_info{};
     pool_info.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1506,6 +1733,7 @@ void ContentDraw::destroy() noexcept
         impl->destroyPipelines();
         impl->destroyPrograms();
         impl->destroyGeometries();
+        impl->destroyInstanceStreams();
         if (impl->descriptor_pool != VK_NULL_HANDLE) {
             impl->table->vkDestroyDescriptorPool(impl->device, impl->descriptor_pool, nullptr);
             impl->descriptor_pool = VK_NULL_HANDLE;
@@ -1583,6 +1811,15 @@ ContentDraw::Progress ContentDraw::progress() const noexcept
             }
         }
     }
+    // The instance streams are streams too: a command that read one paid for its bytes and fills a row of the same
+    // ledger (see ResidencyKind::Streams), so a host release that drops one is visible there like any other.
+    for (const auto& [buffer, entry] : impl->instance_streams) {
+        (void)buffer;
+        if (entry.buffer != VK_NULL_HANDLE) {
+            ++out.streams_live;
+            out.stream_bytes_live += entry.bytes;
+        }
+    }
     return out;
 }
 
@@ -1629,18 +1866,23 @@ std::size_t ContentDraw::releaseProgram(const vn::graphics::ShaderProgramDescrip
         ++dropped;
     }
 
-    const auto found = impl->programs.find(description);
-    if (found == impl->programs.end()) {
-        return dropped;
+    // ONE TEXT MAY BE SEVERAL VARIANTS (see ProgramVariant): every compile of this description goes, and the entry
+    // count says how many. The pipelines above were keyed by the same pointer, so none can survive this.
+    for (auto it = impl->programs.begin(); it != impl->programs.end();) {
+        if (it->first.description != description) {
+            ++it;
+            continue;
+        }
+        if (it->second.vertex != VK_NULL_HANDLE) {
+            impl->table->vkDestroyShaderModule(impl->device, it->second.vertex, nullptr);
+        }
+        if (it->second.fragment != VK_NULL_HANDLE) {
+            impl->table->vkDestroyShaderModule(impl->device, it->second.fragment, nullptr);
+        }
+        it = impl->programs.erase(it);
+        ++dropped;
     }
-    if (found->second.vertex != VK_NULL_HANDLE) {
-        impl->table->vkDestroyShaderModule(impl->device, found->second.vertex, nullptr);
-    }
-    if (found->second.fragment != VK_NULL_HANDLE) {
-        impl->table->vkDestroyShaderModule(impl->device, found->second.fragment, nullptr);
-    }
-    impl->programs.erase(found);
-    return dropped + 1U;
+    return dropped;
 }
 
 std::size_t ContentDraw::releaseStreams(const void* buffer)
@@ -1667,6 +1909,14 @@ std::size_t ContentDraw::releaseStreams(const void* buffer)
             ++impl->stream_releases_;
             ++dropped;
         }
+    }
+    // AN INSTANCE STREAM IS RELEASED BY THE SAME ANNOUNCEMENT (`releaseContent(Buffer)` names a vertex-or-instance
+    // stream, see RenderDevice): the next draw that reads this buffer uploads it again, exactly like a vertex one.
+    const auto instance = impl->instance_streams.find(static_cast<const vn::Buffer<float>*>(buffer));
+    if (instance != impl->instance_streams.end() && instance->second.buffer != VK_NULL_HANDLE) {
+        impl->destroyBuffer(instance->second.buffer, instance->second.memory);
+        ++impl->stream_releases_;
+        ++dropped;
     }
     return dropped;
 }
@@ -1863,13 +2113,9 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         }
         const vn::graphics::ResolvedCommandState& resolved = plan.resolved;
 
-        // THE MATERIAL: the value the frame carries, else the live material's description (the hand-built door).
-        vn::graphics::MaterialDescriptionPtr material_description = command.material_description;
-        if (material_description == nullptr && command.material != nullptr) {
-            material_description = command.material->description();
-        }
-        const vn::graphics::MaterialParameters* material_values =
-            material_description != nullptr ? &material_description->values() : nullptr;
+        // THE MATERIAL: resolved by the plan (the same answer the variant was derived from), so the slots bound and
+        // the program compiled cannot describe two different materials.
+        const vn::graphics::MaterialParameters* material_values = plan.material != nullptr ? &plan.material->values() : nullptr;
 
         // THE SLOTS: upload each COMPLETE texture, bind the rest to the fallback, and state the presence bits the
         // shading reads. A slot the cache cannot serve is reported and stays absent rather than reading stale bytes.
@@ -1951,27 +2197,36 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
 
         std::vector<VkBuffer>      vertex_buffers;
         std::vector<VkDeviceSize>  vertex_offsets;
-        vertex_buffers.reserve(plan.streams->streams.size());
-        vertex_offsets.reserve(plan.streams->streams.size());
+        const std::size_t          binding_count = plan.streams->streams.size() + (plan.instances != nullptr ? 1U : 0U);
+        vertex_buffers.reserve(binding_count);
+        vertex_offsets.reserve(binding_count);
         for (const Impl::VertexStream& stream : plan.streams->streams) {
             vertex_buffers.push_back(stream.buffer);
+            vertex_offsets.push_back(0U);
+        }
+        if (plan.instances != nullptr) {
+            // THE INSTANCE STREAM is the LAST binding, matching the layout `ensureContentPipeline` built for it
+            // (one binding, stride of a matrix, input rate INSTANCE).
+            vertex_buffers.push_back(plan.instances->buffer);
             vertex_offsets.push_back(0U);
         }
         if (!vertex_buffers.empty()) {
             impl->table->vkCmdBindVertexBuffers(commands, 0U, static_cast<std::uint32_t>(vertex_buffers.size()), vertex_buffers.data(), vertex_offsets.data());
         }
 
+        const std::uint32_t instance_count = plan.instances != nullptr ? command.instance_count : 1U;
+        const std::uint32_t first_instance = plan.instances != nullptr ? command.first_instance : 0U;
         const Impl::IndexStream* indices = nullptr;
         if (command.primitive_index < plan.streams->indices.size() && plan.streams->indices[command.primitive_index].buffer != VK_NULL_HANDLE) {
             indices = &plan.streams->indices[command.primitive_index];
         }
         if (indices != nullptr) {
             impl->table->vkCmdBindIndexBuffer(commands, indices->buffer, 0U, VK_INDEX_TYPE_UINT32);
-            impl->table->vkCmdDrawIndexed(commands, indices->count, 1U, 0U, 0, 0U);
+            impl->table->vkCmdDrawIndexed(commands, indices->count, instance_count, 0U, 0, first_instance);
             ++recorded;
         }
         else if (plan.streams->vertex_count > 0U) {
-            impl->table->vkCmdDraw(commands, plan.streams->vertex_count, 1U, 0U, 0U);
+            impl->table->vkCmdDraw(commands, plan.streams->vertex_count, instance_count, 0U, first_instance);
             ++recorded;
         }
         else {

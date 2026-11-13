@@ -3,6 +3,8 @@
 #include <vine/backend_vk/backend_vk_global.hpp>
 
 #include <cstdint>
+#include <span>
+#include <string>
 #include <vector>
 
 #include <vine/String.hpp>
@@ -43,8 +45,8 @@ struct SpirvModule {
  *   `.ai/research/graphics-2026-11-13-gpu-resource-abstraction.md` §8).
  * - WHAT THE TEXT MUST BE. GLSL for Vulkan: the stage is parsed with `EShMsgVulkanRules | EShMsgSpvRules` and the
  *   SPIR-V target `1.0`, which is what `glslangValidator -V` does. The engine's programs are written for exactly that
- *   ("GLSL, compiled at run time"), so no #define or dialect is added here (see the research note §9.4: source language
- *   is GLSL only for now, and the pipeline builder says so instead of guessing).
+ *   ("GLSL, compiled at run time"), and the stage's OWN text is compiled unchanged - the only addition is the
+ *   variant's define names (see the overload below).
  * - THE OPTIMIZER IS OFF, and not because of a preference: this tree may build glslang with `ENABLE_OPT=OFF` (the vsg
  *   plugin's FetchContent settings do), so asking SPIRV-Tools to optimize would fail to link. Unoptimized SPIR-V is
  *   valid input to every Vulkan driver.
@@ -57,5 +59,27 @@ struct SpirvModule {
  * @return true when the stage compiled and linked.
  */
 [[nodiscard]] VN_BACKEND_VK_API bool compileStage(const vn::graphics::ShaderStage& stage, SpirvModule& out, vn::String& why);
+
+/**
+ * @brief Compiles ONE GLSL stage under a set of DEFINE names (a program VARIANT, see ProgramVariant).
+ *
+ * @details
+ * - WHY THE NAMES ARE SEPARATE FROM THE TEXT. The engine's stages declare their switches in a
+ *   `#pragma import_defines (...)` line and branch on them with `#ifdef`: the same program text is several programs,
+ *   and which one it is IS the set of names handed in here. The names are delivered as a glslang PREAMBLE, which is
+ *   processed before the source without disturbing its `#version` line.
+ * - The names are stated as `#define <name> 1`: the engine's stages test presence (`#ifdef` / `#if defined`), and no
+ *   stage reads a value.
+ *
+ * @param stage   The stage to compile (its source and entry point; an empty source is refused).
+ * @param defines The names to define, in order (empty compiles the text as it stands).
+ * @param out     Receives the SPIR-V words on success, untouched on failure.
+ * @param why     Receives glslang's own log on failure, or an empty string on success.
+ * @return true when the stage compiled and linked.
+ */
+[[nodiscard]] VN_BACKEND_VK_API bool compileStage(const vn::graphics::ShaderStage& stage,
+                                                  std::span<const std::string>     defines,
+                                                  SpirvModule&                     out,
+                                                  vn::String&                      why);
 
 VN_BACKEND_VK_NS_END

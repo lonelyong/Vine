@@ -6,12 +6,14 @@ set(TEST_NAME test_vk)
 add_executable(${TEST_NAME}
         BackendTest.cpp
         BarrierPlanTest.cpp
+        BuiltinProgramTest.cpp
         ContentDrawTest.cpp
         ContentTargetTest.cpp
         OffscreenClearTest.cpp
         ProbeTest.cpp
         ResidencyTest.cpp
         StateMappingTest.cpp
+        VariantTest.cpp
         WindowPresentTest.cpp
 
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/BarrierPlan.cpp
@@ -20,6 +22,7 @@ add_executable(${TEST_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/Device.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/LightBlock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ProbeWindow.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ProgramVariant.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ShaderCompiler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/TargetImages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/WindowTarget.cpp
