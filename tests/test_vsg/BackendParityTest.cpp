@@ -44,6 +44,7 @@
 #include <vine/String.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
+#include <vine/graphics/ChainPresets.hpp>
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/FrameStats.hpp>
@@ -84,6 +85,7 @@ using vn::graphics::FrameDescription;
 using vn::graphics::FrameReport;
 using vn::graphics::Geometry;
 using vn::graphics::Light;
+using vn::graphics::LightType;
 using vn::graphics::LightValue;
 using vn::graphics::Material;
 using vn::graphics::PassDraw;
@@ -253,6 +255,28 @@ void main()
         0.0F, 0.0F,
         1.0F, 0.0F,
         0.5F, 1.0F,
+    })));
+    geometry->bumpRevision();
+    return geometry;
+}
+
+/// @brief A triangle carrying exactly the two channels the ENGINE's G-buffer stage reads: positions and normals.
+///
+/// The deferred G-buffer program writes the view normal and never consumes a texcoord or a vertex colour, so the
+/// geometry states only what that program declares. A channel the pipeline supplies and the shader ignores is legal,
+/// but it is the kind of noise validation reports, and noise hides the next real finding.
+[[nodiscard]] intrusive_ptr<Geometry> makeGbufferTriangle()
+{
+    auto geometry = intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
+        -0.75F, -0.75F, 0.5F,
+        0.75F,  -0.75F, 0.5F,
+        0.0F,   0.75F,  0.5F,
+    })));
+    geometry->setNormals(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>{
+        0.0F, 0.0F, 1.0F,
+        0.0F, 0.0F, 1.0F,
+        0.0F, 0.0F, 1.0F,
     })));
     geometry->bumpRevision();
     return geometry;
@@ -524,6 +548,28 @@ class BackendParityTest : public ::testing::Test {
         made->setSize(kSide, kSide);
         made->setShadowOf(light);
         made->setProducerViewProjection(vn::math::Mat4d{});
+        vsg->setRenderTarget(made.get());
+        vk->setRenderTarget(made.get());
+        targets.push_back(made);
+        return made.get();
+    }
+
+    /// @brief Creates the canonical 64x64 four-attachment G-buffer (RGBA16F x4 + D24) and announces it to BOTH devices.
+    ///
+    /// The shape is `defaultGbufferTarget`'s (the Deferred preset's own), but the target is built here rather than
+    /// taken from that preset: the parity suite owns the targets it announces, and a preset-owned one would be a
+    /// second announcement path in the same case. What the case needs from the shape is that the four rows are
+    /// DISTINCT attachments of one target, so a backend that binds them by index can be checked against one that
+    /// binds them another way.
+    RenderTarget* gbufferTarget()
+    {
+        auto made = intrusive_ptr<RenderTarget>(new RenderTarget());
+        made->setName(String(u8"parity_gbuffer"));
+        for (int attachment = 0; attachment < 4; ++attachment) {
+            made->attachColor(RenderTarget::ColorFormat::RGBA16F);
+        }
+        made->attachDepth(RenderTarget::DepthFormat::D24);
+        made->setSize(kSide, kSide);
         vsg->setRenderTarget(made.get());
         vk->setRenderTarget(made.get());
         targets.push_back(made);
@@ -894,5 +940,103 @@ TEST_F(BackendParityTest, TheSameShadowMapIsTheSamePictureOnBothBackends)
     const int shadowed = pixelAt(reference.pixels, kSide / 4, kSide / 2)[1];
     const int lit      = pixelAt(reference.pixels, (3 * kSide) / 4, kSide / 2)[1];
     EXPECT_LT(shadowed, lit) << "the reference backend's own picture has no shadow either";
+}
+
+TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
+{
+    // THE DEFERRED CHAIN AS ONE FRAME VALUE: a scene pass writes the four-attachment G-buffer through the SDK's
+    // G-buffer geometry program, then a SCREEN pass shades that G-buffer through the SDK's deferred lighting program.
+    //
+    // WHY THIS CASE IS WORTH A SECOND FRAME SHAPE. The single-backend cases prove the chain runs on each backend
+    // separately, and each of them agrees with whatever ITS OWN binding rule says. What only a two-backend diff can
+    // see: whether attachment N lands where the lighting program's sampler N reads it (a shifted row lights a
+    // surface with another surface's albedo), whether the pass' DECLARED input is what the screen call samples (a
+    // backend that samples the wrong target still draws a plausible picture), and whether the light block sits at
+    // the binding the program declares - an ambient of 0 and a picture of pure black are indistinguishable when the
+    // only instrument is one backend's own output.
+    RenderTarget* const gbuffer = gbufferTarget();
+    RenderTarget* const result  = target();
+
+    const intrusive_ptr<ShaderProgram> geometry_program = vn::graphics::defaultGbufferGeometryProgram();
+    const intrusive_ptr<ShaderProgram> light_program    = vn::graphics::defaultDeferredLightProgram();
+    ASSERT_NE(geometry_program, nullptr) << "the SDK ships the G-buffer geometry program";
+    ASSERT_NE(light_program, nullptr) << "the SDK ships the deferred lighting program";
+    ASSERT_EQ(gbuffer->colorCount(), 4) << "the G-buffer is four colour attachments (see defaultGbufferTarget)";
+
+    // The triangle states the two channels the G-buffer stage reads (position and view normal) and nothing else, so
+    // the frame's vertex layout and its program declare the same inputs.
+    const intrusive_ptr<Geometry> geometry = makeGbufferTriangle();
+    // The engine's default surface (metallic 0, roughness 0.5, occlusion 1 - the values the lighting pass reads back
+    // out of attachments 1 and 2), so the composite is the ambient term applied to a known albedo.
+    const intrusive_ptr<Material> material = makeMaterial(Colorf(0.8F, 0.8F, 0.8F, 1.0F));
+
+    // Two passes are two identities (a backend keys per-pass retained state by the object), so the frame owns them.
+    const intrusive_ptr<vn::graphics::RenderPass> gbuffer_identity(new vn::graphics::RenderPass());
+    const intrusive_ptr<vn::graphics::RenderPass> light_identity(new vn::graphics::RenderPass());
+
+    FrameDescription frame;
+
+    FrameDescription::Pass gbuffer_entry;
+    gbuffer_entry.pass  = gbuffer_identity.get();
+    gbuffer_entry.order = 0;
+    PassDraw gbuffer_pass;
+    gbuffer_pass.target = gbuffer;
+    // Attachment 0's clear is stated and the rest are LEFT EMPTY on purpose: an attachment nobody states a colour
+    // for is cleared to transparent black, which is the G-buffer's own "nothing was drawn here" - attachment 3's
+    // alpha is the lighting program's write mask, so that default is part of the frame's contract (see ClearPolicy).
+    gbuffer_pass.clear        = ClearPolicy{};
+    gbuffer_pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 0.0F);
+    gbuffer_pass.state.depth  = DepthMode::TestAndWrite;
+    gbuffer_pass.draws.push_back(sceneDraw(commandsOf({ commandOf(geometry, geometry_program, material) })));
+    gbuffer_entry.draw = std::move(gbuffer_pass);
+    frame.passes.push_back(std::move(gbuffer_entry));
+
+    FrameDescription::Pass light_entry;
+    light_entry.pass  = light_identity.get();
+    light_entry.order = 1;
+    // The DECLARATION is what a backend binds its samplers from: the whole produced target, so the full-screen ABI's
+    // "binding N = attachment N" finds all four G-buffer rows (see ImageSource::producedTarget).
+    light_entry.inputs.push_back(vn::graphics::ImageSource::producedTarget(gbuffer));
+
+    DrawDescription screen;
+    screen.kind                = DrawDescription::Kind::Screen;
+    screen.camera              = identityCamera();
+    screen.source              = gbuffer;
+    screen.program             = light_program;
+    screen.program_description = light_program->description();
+    // ONE ambient light, so the composite is the albedo the G-buffer stored rather than a black frame: the deferred
+    // program multiplies the albedo by the ambient term, which is the only thing that tells "the chain ran" apart
+    // from "two targets were cleared".
+    LightValue ambient;
+    ambient.enabled     = true;
+    ambient.type        = LightType::Ambient;
+    ambient.color       = Colorf(1.0F, 1.0F, 1.0F, 1.0F);
+    ambient.intensity   = 1.0F;
+    screen.light_values = std::vector<LightValue>{ ambient };
+
+    PassDraw light_pass;
+    light_pass.target       = result;
+    light_pass.clear        = ClearPolicy{};
+    light_pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    // The destination carries depth and a full-screen triangle sits at the far plane: the pass draws OVER what the
+    // target holds, which is the same policy the SDK's own lighting pass states by carrying no depth at all.
+    light_pass.state.depth = DepthMode::Disabled;
+    light_pass.draws.push_back(std::move(screen));
+    light_entry.draw = std::move(light_pass);
+    frame.passes.push_back(std::move(light_entry));
+
+    const Ran reference = run(*vsg, frame, result);
+    const Ran candidate = run(*vk, frame, result);
+
+    expectTheSameRecord(reference, candidate, 2, 2, "the same deferred frame");
+    expectTheSamePicture(reference, candidate, "the same deferred frame");
+
+    // TWO EMPTY PICTURES MUST NOT PASS: the reference composite's centre is the ambient-lit surface and it is opaque,
+    // so the byte-identical comparison above is comparing two shaded G-buffers rather than two clear colours.
+    const std::array<int, 4> centre = pixelAt(reference.pixels, kSide / 2, kSide / 2);
+    std::printf("[parity] deferred result centre r=%d g=%d b=%d a=%d\n", centre[0], centre[1], centre[2], centre[3]);
+    EXPECT_GT(centre[0] + centre[1] + centre[2], 0)
+        << "the reference composite is black: the deferred lighting pass did not shade the G-buffer";
+    EXPECT_EQ(centre[3], 255) << "the lighting pass writes an opaque composite";
 }
 

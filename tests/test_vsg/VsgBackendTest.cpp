@@ -4688,6 +4688,10 @@ TEST(VsgBackendTest, ADeviceCreatedWithNoPresentationRunsWholeFramesWithoutAWind
     EXPECT_EQ(reported.size(), backend->diagnosticCount());
 }
 
+// The warm-up case drives a HOST WINDOW, so it reaches for an XCB connection exactly like the cases above and needs
+// the same guard: on Windows there is no such window and no such connection (see the guard at the top of this file).
+#if !defined(_WIN32)
+
 TEST(VsgBackendTest, PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing)
 {
     if (!deviceCaseAvailable()) {
@@ -4851,6 +4855,8 @@ TEST(VsgBackendTest, PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing)
 
     backend->shutdown();
 }
+
+#endif // !defined(_WIN32)
 
 TEST(VsgBackendTest, ADeviceCreatedOnAHandleWithoutOneIsRefusedWithItsReason)
 {

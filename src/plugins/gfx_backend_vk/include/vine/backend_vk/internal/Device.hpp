@@ -21,11 +21,12 @@ VN_BACKEND_VK_NS_BEGIN
  *   frame's content without running it, and `frameReport` says what the last frame did and what is resident; M8
  *   compiles the engine's own programs under the variant names their drawables ask for; M9 records a DEPTH-ONLY pass
  *   (a target with a depth attachment and no colour attachment is the engine's shadow map) and binds that map plus the
- *   `VineShadowBlock` a pass' declared inputs resolve to. It answers `capabilities()` from what it can really serve -
- *   `render_targets == true`, and `presentation == true` once a window target can present.
- * - WHAT IT STILL DOES NOT DO. Multi-sampled targets (`Capabilities::max_samples` is 1), the deferred G-buffer path,
- *   and point-light (cube) shadows. A request for either of the first two is reported once and served without it,
- *   rather than silently drawn differently.
+ *   `VineShadowBlock` a pass' declared inputs resolve to; M10 runs the engine's DEFERRED chain - the four-attachment
+ *   RGBA16F G-buffer, then a full-screen lighting pass that samples it through the pass' declared inputs. It answers
+ *   `capabilities()` from what it can really serve - `render_targets == true`, and `presentation == true` once a window
+ *   target can present.
+ * - WHAT IT STILL DOES NOT DO. Multi-sampled targets (`Capabilities::max_samples` is 1) and point-light (cube) shadows.
+ *   A request for the first is reported once and served single-sampled rather than silently drawn differently.
  * - FRAME AND HOST VERBS. `executeFrame()` runs the frame's passes in the order it carries and records the draws of each
  *   `DrawDescription` - an off-screen pass into its target, and a pass naming no target into the acquired image of the
  *   window the frame presents through. A draw naming no program is reported and left out. The readbacks answer the

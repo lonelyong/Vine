@@ -556,6 +556,28 @@
 - **验证**：`test_vk` 51 例（新增 `VkShadowTest` 3 例）；`BackendParityTest` 第 10 例（Windows 上 `test_vsg` 因
   `VsgBackendTest.cpp` 的 XCB 用例缺平台保护编译不过 —— 既有问题，Linux 是它的构建环境）。
 
+## 2026-11-14 —— `gfx_backend_vk` M10：延迟路径
+
+- **形状**：引擎的延迟帧 = 一条 scene pass 写四附件 RGBA16F + D24 G-buffer（`defaultGbufferGeometryProgram()`），
+  随后一条 SCREEN pass（`defaultDeferredLightProgram()`）按 pass 声明的输入（`Pass::inputs` +
+  `DrawDescription::source`）采样四张附件、灯块在 set 0 binding 6。**后端没有改动**：M3 的 MRT / 每附件 clear
+  （`extra_colors` 缺省 = 透明黑）、RGBA16F 图像、M4 的多源 screen draw 与灯块已经够用。这是"接缝够不够用"的证据，
+  不是新能力。
+- **画面事实**（本机）：合成中心 204/204/204（0.8 线性 albedo × 环境项的 sRGB 编码）；四张附件拷到 RGBA8 后分别
+  读回 204/204/204、0/0/127（法线 (0,0,1) 的八面体编码 + roughness 0.5）、255（alpha = occlusion）、4/0/127。
+- **测试**：`VkDeferredTest` 2 例（合成中心是环境光下的 albedo；四张附件逐张拷贝读回、序号真的换了东西）；
+  `BackendParityTest` 第 11 例（同一个延迟帧 0/4096 差异、passes=2 draws=2）。`test_vk` 53 例（52 过 1 跳过）、
+  `test_vsg` 519 例（516 过 3 跳过）。
+- **坑**：给 vk 的 G-buffer pass 喂带 texcoord 的几何会触发 validation 警告
+  "Vertex attribute at location 8 not consumed by vertex shader" —— vk 按几何通道列表建 vertex input，
+  不按 shader 消费过滤。测试里让几何只声明程序读的两条通道（位置 + 法线）即可；管线本身合法。
+- **Windows**：`VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing` 用 XCB 窗口却没有
+  `#if !defined(_WIN32)` 保护（既有问题，Linux 看不出来）；已补上与文件顶部同样的守卫，否则 Windows 上 `test_vsg`
+  编不过。
+- **T26 的旧断言**：`OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands` 末尾仍按"全还"断言，
+  与 ADR-2026-11-13（保留 ≤ `minimumStagingBufferSize` 的块）矛盾；改成"4 KiB 上传的块被保留（release 返回 0）+
+  32 MiB 一次性块被还掉"。
+
 ## 2026-11-13 —— 第三轮审计 W3：`FrameWorker` 拆成 `PublicationStore` + `FrameExpander`
 
 - **对象级回边消除**（`G2` / `G12`）：`detail::PublicationStore`（`src/viz/graphics/src/PublicationStore.hpp`）
