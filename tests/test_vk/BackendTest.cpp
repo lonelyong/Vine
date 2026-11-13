@@ -89,10 +89,10 @@ TEST(VkBackendTest, TheDeviceComesUpAndGoesDownCleanly)
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
         << "the validation layer reported something while the instance and device were built";
 
-    // WHAT IT ADVERTISES IS WHAT IT SERVES. M0 builds no target and no window, so a host must not plan against them -
-    // the capability value, not the device's abilities, is the contract (see Capabilities).
+    // WHAT IT ADVERTISES IS WHAT IT SERVES. M1 builds off-screen colour targets and still presents nothing, so a host
+    // must not plan a window against it - the capability value, not the device's abilities, is the contract.
     const vn::graphics::Capabilities capabilities = backend->capabilities();
-    EXPECT_FALSE(capabilities.render_targets) << "M1 builds the off-screen half";
+    EXPECT_TRUE(capabilities.render_targets) << "M1 builds the off-screen half";
     EXPECT_FALSE(capabilities.presentation) << "M5 brings up the window half";
     EXPECT_EQ(capabilities.max_samples, 1U);
 

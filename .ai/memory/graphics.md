@@ -842,6 +842,21 @@
 - **验证**：`test_vsg` 548 全绿（5 次运行中 1 次 `EachAttachmentClearsToItsOwnColour` 偶发红，已记 backlog T36 并带诊断），
   `test_vk` 3/3，`gfx_backend_vsg` / `gfx_backend_vk` 均构建部署，四个文档/头文件门禁 + 符号门禁全清。
 
+## 2026-11-13 —— `gfx_backend_vk` M1：离屏清屏 + 读回
+
+- **`BarrierPlan`**（§9.3 的那张通用表）：`ImageLayout`（当作“用途”）+ `LoadOp`/`StoreOp` → `VkImageLayout`/stage/
+  access；另加 `transferReadState()`（读回不是 pass，所以这一端没有 SDK 拼写，留在插件内）+ `barrierBetween`。
+  5 例无设备表驱动测试：每个用途一个独立布局、自身不需 barrier、barrier 两侧字段、Undefined/Present 两端、载/存映射。
+- **`TargetImages`**：每 target 一套 VkImage/内存/视图/render pass/framebuffer；render pass 固定 `CLEAR`/`STORE`、
+  initialLayout `UNDEFINED`（M1 的契约：画进 target 的 pass 必须声明 clear，否则报一次并跳过）。resize 在 M1 是重建
+  （M3 才换成 `planTarget` 的 `ResizeInPlace`）。
+- **设备**：命令池 + fence（init 建、shutdown 销），`executeFrame` 一帧一命令缓冲、提交后等 fence；
+  `readColorBuffer` 走 staging buffer（HOST_VISIBLE|COHERENT），barrier → `vkCmdCopyImageToBuffer` → barrier 回
+  `COLOR_ATTACHMENT_OPTIMAL`，只支持 RGBA8（其它格式答 `Unsupported`）。
+- **capabilities**：`render_targets` 改 true；`presentation` 仍 false。M0 的用例断言跟着改。
+- **验证**：`test_vk` 10 例全绿（3 backend + 5 barrier + 2 offscreen），本机 `validation=on` 且新路径无一句报错；
+  `plugins/vine/gfx_backend_vkd.so` 构建部署。
+
 ## 2026-11-13 —— 第二个后端定为手撸 Vulkan（`vk`，学习/研究）
 
 - **触发修正**：它是**同 API 家族**的第二后端 ⇒ T15（设备无关性）与 T30（统一类型）都**不触发**，只收窄触发条件为

@@ -80,15 +80,42 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      */
     void setRenderTarget(vn::graphics::RenderTarget* target) override;
 
-    /** @brief Gets what this device can serve TODAY (see Capabilities): M0 serves no target and no window. */
+    /** @brief Gets what this device can serve TODAY (see Capabilities): M1 serves off-screen colour targets. */
     [[nodiscard]] vn::graphics::Capabilities capabilities() const noexcept override;
 
     /**
-     * @brief Runs nothing: M0 has no pass recording, so a frame is answered `Skipped` and reported once.
+     * @brief Reads back a colour attachment of an off-screen target this device drew into.
      *
-     * @param frame      The frame to execute (ignored).
-     * @param present_to Target the frame's default framebuffer resolves to (ignored).
-     * @return `PresentOutcome::Skipped` - this device presents nothing yet.
+     * @details
+     * - M1 answers the targets it built, as packed RGBA8 (the SDK's readback contract), and nothing else: another colour
+     *   format, an attachment index above 0, a target it never saw or a target whose attachments are not built answer
+     *   the matching `ReadbackResult` instead of a picture.
+     * - The copy is synchronous: one command buffer, one fence, the pixels the last frame left.
+     *
+     * @param target     Target to read (borrowed, may not be null).
+     * @param attachment Colour attachment index; M1 serves 0.
+     * @param outPixels  Receives `width * height * 4` bytes on success.
+     * @param why        Receives why the read did not happen (Ok when it did), or null to ignore.
+     * @return true when the pixels were read.
+     */
+    bool readColorBuffer(const vn::graphics::RenderTarget* target,
+                         int                               attachment,
+                         std::vector<std::uint8_t>&        outPixels,
+                         vn::graphics::ReadbackResult*     why = nullptr) override;
+
+    /**
+     * @brief Runs the frame's passes that draw into off-screen targets: each one clears its target and stores the result.
+     *
+     * @details
+     * - M1's whole frame path. A pass that names a target AND states a clear policy is recorded as one render pass
+     *   (`CLEAR`/`STORE`); anything else - a pass with no target (the window, which M5 brings up), a pass with no clear
+     *   (which would need a LOAD variant), a draw itself - is reported once and left out.
+     * - The submission is synchronous by design: one command buffer, one fence, then the queue is idle, so a readback in
+     *   the same breath sees exactly what this frame left.
+     *
+     * @param frame      The frame to execute.
+     * @param present_to Target the default framebuffer resolves to (ignored: M1 presents nothing).
+     * @return `PresentOutcome::Skipped` - this device still presents nothing.
      */
     [[nodiscard]] vn::graphics::PresentOutcome executeFrame(const vn::graphics::FrameDescription& frame,
                                                            vn::graphics::PresentTarget*          present_to) override;
@@ -132,6 +159,18 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
     void reportDriverMessage(int severity_flags, const char* text);
 
   private:
+    /**
+     * @brief Builds (or rebuilds) the Vulkan objects for @p target when they do not fit it.
+     *
+     * @details
+     * - M1 compares the description it built against the target's current one; M3 replaces the comparison with
+     *   `planTarget`'s `TargetDecision` (ResizeInPlace keeps the render pass, Rebuild replaces it).
+     *
+     * @param target The host's target (borrowed).
+     * @return true when the objects exist and fit the target.
+     */
+    [[nodiscard]] bool ensureTarget(const vn::graphics::RenderTarget& target);
+
     struct Impl;
 
     std::unique_ptr<Impl> impl;

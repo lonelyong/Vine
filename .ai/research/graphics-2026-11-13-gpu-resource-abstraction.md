@@ -182,7 +182,7 @@
 | # | 内容 | 验收 |
 |---|---|---|
 | M0 | 插件 + factory + `initialize/shutdown` + `capabilities`（无窗口） | registry 测试 + 设备门控的 init/shutdown，validation 0 error · **已落地 2026-11-13**：`test_vk` 3 例（`BackendTest.cpp`），本机 `validation=on` 且 `InitFailed` 诊断计数 0；`plugins/vine/gfx_backend_vkd.so` 可加载 |
-| M1 | 离屏 target（RGBA8/D24）+ 无 draw 的 pass + `ClearPolicy` + `readColorBuffer` | 像素 = pass 的 clear 色 |
+| M1 | 离屏 target（RGBA8/D24）+ 无 draw 的 pass + `ClearPolicy` + `readColorBuffer` | 像素 = pass 的 clear 色 · **已落地 2026-11-13**：`BarrierPlan`（`ImageLayout` + 载/存操作 → Vk 布局/阶段/access，5 例无设备表驱动测试）+ `TargetImages` + 同步提交 + `readColorBuffer`；`VkOffscreenTest` 2 例（64×64 RGBA8+D24 全像素等于 clear 色；未画的 target 答 `NotReady` 而非黑像素），validation 静默 |
 | M2 | 一个 content draw：内置程序 → pipeline；`GeometryDescription` 通道 → 上传；`VineViewBlock` / `VineDrawBlock`；`vkCmdDrawIndexed` | 三角形像素（`SdkPixelFixture` 式读回） |
 | M3 | `TargetDecision`（ResizeInPlace/Rebuild）、viewport/scissor、depth range、MRT、per-attachment clear、`PassDraw::state` | resize 不重编管线；MRT 各附件值正确 |
 | M4 | 材质块 + 纹理 + 灯块 + screen draw + 透明排序（引擎已排好） | 材质/采样/全屏拷贝像素 |

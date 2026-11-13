@@ -5,8 +5,12 @@ set(TEST_NAME test_vk)
 # Vulkan through volk (tp::volk carries the Vulkan headers).
 add_executable(${TEST_NAME}
         BackendTest.cpp
+        BarrierPlanTest.cpp
+        OffscreenClearTest.cpp
 
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/BarrierPlan.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/Device.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/TargetImages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/shell/BackendFactory.cpp)
 
 target_include_directories(${TEST_NAME} PRIVATE

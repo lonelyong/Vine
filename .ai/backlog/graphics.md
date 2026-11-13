@@ -10,7 +10,7 @@
 
 | # | 项 | 内容 | 出处 |
 |---|---|---|---|
-| T35 | 手撸 Vulkan 学习后端（`gfx_backend_vk`，注册名 `"vk"`） | 目标：学习/研究，**不是默认后端**（宿主仍按名字创建 "vsg"）。**M0 已落地（2026-11-13）**：插件 + factory + 设备生命周期 + 诚实的 `capabilities`，`test_vk` 3 例（本机 validation=on、`InitFailed` 诊断 0）、`gfx_backend_vkd.so` 可加载。**下一步 M1**：离屏 target + 无 draw 的 pass + `ClearPolicy` + `readColorBuffer`（含 §9.3 的 `BarrierPlan` 映射表 + 无设备表驱动测试）。形态、复用清单、里程碑 M0–M7 与成本见评估 §8；**通用化边界（J1–J3 判据 + 现在就通用的清单 + 只留概念项 + 明确不做项 + D1–D5 纪律门）见 §9；Vulkan 暴露到哪一层与可检查的 V1–V4 见 `../research/graphics-2026-11-13-vk-exposure-boundary.md`** | `../research/graphics-2026-11-13-gpu-resource-abstraction.md` §8、§9、`../research/graphics-2026-11-13-vk-exposure-boundary.md`、`../design/graphics-architecture.md` 2.9 |
+| T35 | 手撸 Vulkan 学习后端（`gfx_backend_vk`，注册名 `"vk"`） | 目标：学习/研究，**不是默认后端**（宿主仍按名字创建 "vsg"）。**M0 已落地（2026-11-13）**：插件 + factory + 设备生命周期 + 诚实的 `capabilities`，`test_vk` 3 例（本机 validation=on、`InitFailed` 诊断 0）、`gfx_backend_vkd.so` 可加载。**M1 已落地（2026-11-13）**：`BarrierPlan` 映射表（`ImageLayout` 当作“用途”，载/存操作一并映射）+ `TargetImages`（RGBA8/D24 图像、视图、render pass、framebuffer）+ 同步提交 + `readColorBuffer`；`test_vk` 10 例（含 `VkOffscreenTest` 的“全像素等于 clear 色”与“未画的 target 答 `NotReady`”），本机 validation 静默。**下一步 M2**：一个 content draw（glslang → pipeline、`GeometryDescription` 通道 → 上传、`VineViewBlock`/`VineDrawBlock`、`vkCmdDrawIndexed`）。形态、复用清单、里程碑 M0–M7 与成本见评估 §8；**通用化边界（J1–J3 判据 + 现在就通用的清单 + 只留概念项 + 明确不做项 + D1–D5 纪律门）见 §9；Vulkan 暴露到哪一层与可检查的 V1–V4 见 `../research/graphics-2026-11-13-vk-exposure-boundary.md`** | `../research/graphics-2026-11-13-gpu-resource-abstraction.md` §8、§9、`../research/graphics-2026-11-13-vk-exposure-boundary.md`、`../design/graphics-architecture.md` 2.9 |
 
 下一项都在 §2，等各自的触发条件。`T8`（派生纯的并发用例）已于 2026-11-13 落地（`SelectTest.SameInputSameList`）。
 

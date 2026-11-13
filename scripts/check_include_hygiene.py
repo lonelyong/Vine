@@ -100,7 +100,10 @@ BACKEND_HALF_ALLOWED_PREFIXES = ("vine/graphics/backend/",)
 # Who may include the backend half: a backend plugin, the backend half itself, and the backend's own
 # test suite. Everything else - the SDK's host half, appfw, app plugins, other test suites - may not:
 # the half is a backend's tooling, and a host renders through the host half only.
-BACKEND_HALF_AUDIENCE = ("/graphics/src/backend/", "/vine/graphics/backend/", "/gfx_backend_", "/test_vsg/")
+# A backend plugin, its implementation test and the backend half itself are the audience of `vine/graphics/backend/`
+# (a host never includes it). A new backend adds its `test_<backend>` tree here - `test_vk` compiles the plugin sources
+# directly, exactly like `test_vsg`.
+BACKEND_HALF_AUDIENCE = ("/graphics/src/backend/", "/vine/graphics/backend/", "/gfx_backend_", "/test_vsg/", "/test_vk/")
 
 
 def is_backend_half(path):

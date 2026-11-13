@@ -2,12 +2,16 @@
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <unordered_map>
 #include <vector>
 
 // volk is built with VOLK_NO_DEVICE_PROTOTYPES (see third_party/volk/CMakeLists.txt): device-level commands are not
 // declared as free functions, and `VolkDeviceTable` is the supported way to reach them - one table filled per device.
 #include <volk.h>
 
+#include <vine/backend_vk/internal/BarrierPlan.hpp>
+#include <vine/backend_vk/internal/TargetImages.hpp>
 #include <vine/graphics/Capabilities.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/PresentTarget.hpp>
@@ -20,9 +24,12 @@ using vn::graphics::DiagnosticCategory;
 using vn::graphics::DiagnosticSeverity;
 using vn::graphics::DeviceDesc;
 using vn::graphics::FrameDescription;
+using vn::graphics::PassDraw;
 using vn::graphics::PresentOutcome;
 using vn::graphics::PresentTarget;
+using vn::graphics::ReadbackResult;
 using vn::graphics::RenderTarget;
+using vn::graphics::backend::ImageLayout;
 
 namespace
 {
@@ -80,9 +87,20 @@ struct Device::Impl {
     bool validation{ false };
     /// The device-level entry points (volk declares no free functions for them, see the include note).
     VolkDeviceTable device_table{};
-    /// One report each for the two answers M0 cannot serve, so a host is told once rather than per frame.
+    VkPhysicalDeviceMemoryProperties memory{};
+
+    /// The command machinery every frame and every readback borrows: one pool, one fence, one buffer at a time.
+    VkCommandPool command_pool{ VK_NULL_HANDLE };
+    VkFence       completion{ VK_NULL_HANDLE };
+
+    /// One entry per off-screen target this device built, keyed by the host's object (the identity the frame names).
+    std::unordered_map<const RenderTarget*, TargetImages> targets{};
+
+    /// One report each for the answers M1 cannot serve, so a host is told once rather than per frame.
     bool reported_no_draw{ false };
     bool reported_no_targets{ false };
+    bool reported_no_clear{ false };
+    bool reported_window{ false };
 };
 
 Device::Device(const DeviceDesc& desc)
@@ -259,13 +277,34 @@ bool Device::initialize()
     volkLoadDeviceTable(&impl->device_table, impl->device);
     impl->device_table.vkGetDeviceQueue(impl->device, impl->queue_family, 0U, &impl->queue);
 
-    // CAPABILITIES ARE WHAT THIS BACKEND CAN SERVE, not what the device can do: M0 builds no target and no window, so
-    // both are false and a host plans nothing against abilities that are not implemented yet (M1 / M5).
+    // THE COMMAND MACHINERY: one pool (the backend records one frame at a time) and one fence it waits on.
+    VkCommandPoolCreateInfo pool_info{};
+    pool_info.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pool_info.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    pool_info.queueFamilyIndex = impl->queue_family;
+    if (impl->device_table.vkCreateCommandPool(impl->device, &pool_info, nullptr, &impl->command_pool) != VK_SUCCESS) {
+        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed, u8"vk: vkCreateCommandPool failed");
+        shutdown();
+        return false;
+    }
+
+    VkFenceCreateInfo fence_info{};
+    fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    if (impl->device_table.vkCreateFence(impl->device, &fence_info, nullptr, &impl->completion) != VK_SUCCESS) {
+        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed, u8"vk: vkCreateFence failed");
+        shutdown();
+        return false;
+    }
+
+    vkGetPhysicalDeviceMemoryProperties(impl->physical, &impl->memory);
+
+    // CAPABILITIES ARE WHAT THIS BACKEND CAN SERVE, not what the device can do: M1 builds off-screen colour targets and
+    // reads them back, and still presents nothing (M5).
     VkPhysicalDeviceProperties properties{};
     vkGetPhysicalDeviceProperties(impl->physical, &properties);
 
     impl->caps                         = Capabilities{};
-    impl->caps.render_targets          = false;
+    impl->caps.render_targets          = true;
     impl->caps.presentation            = false;
     impl->caps.features                = 0U;
     impl->caps.max_samples             = 1U;
@@ -281,10 +320,27 @@ void Device::shutdown()
     if (impl->device != VK_NULL_HANDLE) {
         // A counted stop: every queue is idle before the objects it recorded against go.
         (void)impl->device_table.vkDeviceWaitIdle(impl->device);
+
+        for (auto& [target, images] : impl->targets) {
+            (void)target;
+            destroyTarget(impl->device_table, impl->device, images);
+        }
+        impl->targets.clear();
+
+        if (impl->completion != VK_NULL_HANDLE) {
+            impl->device_table.vkDestroyFence(impl->device, impl->completion, nullptr);
+            impl->completion = VK_NULL_HANDLE;
+        }
+        if (impl->command_pool != VK_NULL_HANDLE) {
+            impl->device_table.vkDestroyCommandPool(impl->device, impl->command_pool, nullptr);
+            impl->command_pool = VK_NULL_HANDLE;
+        }
+
         impl->device_table.vkDestroyDevice(impl->device, nullptr);
         impl->device       = VK_NULL_HANDLE;
         impl->queue        = VK_NULL_HANDLE;
         impl->device_table = VolkDeviceTable{};
+        impl->memory       = VkPhysicalDeviceMemoryProperties{};
     }
     if (impl->messenger != VK_NULL_HANDLE) {
         vkDestroyDebugUtilsMessengerEXT(impl->instance, impl->messenger, nullptr);
@@ -300,6 +356,8 @@ void Device::shutdown()
     impl->caps                = Capabilities{};
     impl->reported_no_draw    = false;
     impl->reported_no_targets = false;
+    impl->reported_no_clear   = false;
+    impl->reported_window     = false;
 }
 
 bool Device::initialized() const noexcept
@@ -315,12 +373,36 @@ vn::graphics::RenderFrameExecutor& Device::executor()
 void Device::setRenderTarget(RenderTarget* target)
 {
     impl->target = target;
-    if (target != nullptr && !impl->reported_no_targets) {
-        impl->reported_no_targets = true;
-        reportDiagnostic(DiagnosticSeverity::Warning,
-                         DiagnosticCategory::UnsupportedRequest,
-                         u8"vk: render targets are not built yet (M1); this device draws nothing into the target named");
+}
+
+bool Device::ensureTarget(const RenderTarget& target)
+{
+    // WHAT THE HOST'S OBJECT ASKS FOR, as Vulkan spelling. The extent is the target's own (a target is a DESCRIPTION,
+    // and its attachments exist only after a backend builds them - see RenderTarget's note).
+    const int      width  = target.width();
+    const int      height = target.height();
+    const VkFormat color  = target.colorCount() > 0 ? colorFormatOf(target.colorFormat(0)) : VK_FORMAT_UNDEFINED;
+    const VkFormat depth  = depthFormatOf(target.depthFormat());
+
+    TargetImages& images = impl->targets[&target];
+    if (images.built() && images.matches(width, height, color, depth)) {
+        return true;
     }
+
+    // A RESIZE IS A REBUILD in M1: `planTarget`'s ResizeInPlace (M3) is the step that keeps the render pass and re-points
+    // the views; until then the honest answer is to build the objects that fit and drop the ones that do not.
+    destroyTarget(impl->device_table, impl->device, images);
+    images.width        = width;
+    images.height       = height;
+    images.color_format = color;
+    images.depth_format = depth;
+    if (!buildTarget(impl->device_table, impl->device, impl->memory, images)) {
+        reportDiagnostic(DiagnosticSeverity::Error,
+                         DiagnosticCategory::TargetBuildFailed,
+                         u8"vk: the off-screen target's attachments could not be built (see the loader's report)");
+        return false;
+    }
+    return true;
 }
 
 Capabilities Device::capabilities() const noexcept
@@ -330,15 +412,300 @@ Capabilities Device::capabilities() const noexcept
 
 PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget* present_to)
 {
-    (void)frame;
     (void)present_to;
-    if (!impl->reported_no_draw) {
-        impl->reported_no_draw = true;
-        reportDiagnostic(DiagnosticSeverity::Warning,
-                         DiagnosticCategory::UnsupportedRequest,
-                         u8"vk: pass recording is not implemented yet (M1/M2); the frame ran and drew nothing");
+    if (!initialized()) {
+        reportDiagnostic(DiagnosticSeverity::Error,
+                         DiagnosticCategory::SubmissionFailed,
+                         u8"vk: a frame was handed to a device that is not up");
+        return PresentOutcome::Skipped;
+    }
+
+    // WHICH PASSES THIS BACKEND CAN RUN TODAY: the ones that name an off-screen target and state a clear. Everything
+    // else is reported once (a window pass is M5, a LOAD pass needs the M3 variant) instead of being drawn wrong.
+    std::vector<const PassDraw*> clear_passes;
+    clear_passes.reserve(frame.passes.size());
+    for (const FrameDescription::Pass& entry : frame.passes) {
+        if (!entry.draw.has_value()) {
+            continue; // a pass that issued nothing: the scope opens and closes, nothing to record
+        }
+        const PassDraw& draw = *entry.draw;
+        if (draw.target == nullptr) {
+            if (!impl->reported_window) {
+                impl->reported_window = true;
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
+                                 u8"vk: a pass drawing into the window is not served yet (M5); it was left out");
+            }
+            continue;
+        }        if (!draw.clear.has_value()) {
+            if (!impl->reported_no_clear) {
+                impl->reported_no_clear = true;
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
+                                 u8"vk: a pass that loads its target instead of clearing it needs the LOAD variant (M3); "
+                                 u8"it was left out");
+            }
+            continue;
+        }
+        if (!ensureTarget(*draw.target)) {
+            continue;
+        }
+        clear_passes.push_back(&draw);
+    }
+
+    if (clear_passes.empty()) {
+        if (!impl->reported_no_targets) {
+            impl->reported_no_targets = true;
+            reportDiagnostic(DiagnosticSeverity::Info,
+                             DiagnosticCategory::UnsupportedRequest,
+                             u8"vk: the frame had no pass this backend can run yet (M1 serves off-screen targets with a "
+                             u8"clear policy); nothing was submitted");
+        }
+        return PresentOutcome::Skipped;
+    }
+
+    // ONE COMMAND BUFFER, ONE FENCE, ONE WAIT. M1 is a learning step: the frame is submitted and finished before the call
+    // returns, which is what makes "read the pixels right after" mean what it says.
+    VkCommandBufferAllocateInfo allocate{};
+    allocate.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocate.commandPool        = impl->command_pool;
+    allocate.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocate.commandBufferCount = 1U;
+
+    VkCommandBuffer commands{ VK_NULL_HANDLE };
+    if (impl->device_table.vkAllocateCommandBuffers(impl->device, &allocate, &commands) != VK_SUCCESS) {
+        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed, u8"vk: no command buffer");
+        return PresentOutcome::Skipped;
+    }
+
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (impl->device_table.vkBeginCommandBuffer(commands, &begin) != VK_SUCCESS) {
+        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed, u8"vk: vkBeginCommandBuffer failed");
+        impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
+        return PresentOutcome::Skipped;
+    }
+
+    for (const PassDraw* draw : clear_passes) {
+        const TargetImages& images = impl->targets.at(draw->target);
+
+        VkClearValue clear_values[2]{};
+        const Colorf& colour    = draw->clear->color;
+        clear_values[0].color   = { { colour.r, colour.g, colour.b, colour.a } };
+        // Reverse-Z: every backend clears depth to its own far plane, and this camera convention's far plane is 0
+        // (see ClearPolicy: the policy states WHETHER, never to what).
+        clear_values[1].depthStencil = { 0.0F, 0U };
+
+        VkRenderPassBeginInfo pass_begin{};
+        pass_begin.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        pass_begin.renderPass        = images.render_pass;
+        pass_begin.framebuffer       = images.framebuffer;
+        pass_begin.renderArea.offset = VkOffset2D{ 0, 0 };
+        pass_begin.renderArea.extent = VkExtent2D{ static_cast<std::uint32_t>(images.width), static_cast<std::uint32_t>(images.height) };
+        pass_begin.clearValueCount   = images.depth_format != VK_FORMAT_UNDEFINED ? 2U : 1U;
+        pass_begin.pClearValues      = clear_values;
+
+        impl->device_table.vkCmdBeginRenderPass(commands, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
+        // Nothing is drawn yet (M2): the render pass' CLEAR/STORE pair is the whole effect this step asks for.
+        impl->device_table.vkCmdEndRenderPass(commands);
+    }
+
+    if (impl->device_table.vkEndCommandBuffer(commands) != VK_SUCCESS) {
+        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed, u8"vk: vkEndCommandBuffer failed");
+        impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
+        return PresentOutcome::Skipped;
+    }
+
+    VkSubmitInfo submit{};
+    submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1U;
+    submit.pCommandBuffers    = &commands;
+
+    const bool submitted = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion) == VK_SUCCESS &&
+                           impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+    (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
+    impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
+
+    if (!submitted) {
+        reportDiagnostic(DiagnosticSeverity::Error,
+                         DiagnosticCategory::SubmissionFailed,
+                         u8"vk: the frame's command buffer did not run to completion");
     }
     return PresentOutcome::Skipped;
+}
+
+bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels, ReadbackResult* why)
+{
+    const auto fail = [why](const ReadbackResult reason) {
+        if (why != nullptr) {
+            *why = reason;
+        }
+        return false;
+    };
+
+    if (why != nullptr) {
+        *why = ReadbackResult::Ok;
+    }
+    if (!initialized()) {
+        return fail(ReadbackResult::Failed);
+    }
+    if (target == nullptr) {
+        return fail(ReadbackResult::Invalid);
+    }
+    if (attachment != 0) {
+        return fail(ReadbackResult::Invalid); // M1 builds one colour attachment (see Capabilities::max_color_attachments)
+    }
+
+    const auto found = impl->targets.find(target);
+    if (found == impl->targets.end() || !found->second.built()) {
+        return fail(ReadbackResult::NotReady);
+    }
+    const TargetImages& images = found->second;
+    if (images.color_format != VK_FORMAT_R8G8B8A8_UNORM) {
+        // The readback contract is packed RGBA8; another colour format would need a conversion this step does not write.
+        return fail(ReadbackResult::Unsupported);
+    }
+
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(images.width) * static_cast<VkDeviceSize>(images.height) * 4U;
+
+    VkBufferCreateInfo buffer_info{};
+    buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.size        = bytes;
+    buffer_info.usage       = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VkBuffer staging{ VK_NULL_HANDLE };
+    if (impl->device_table.vkCreateBuffer(impl->device, &buffer_info, nullptr, &staging) != VK_SUCCESS) {
+        return fail(ReadbackResult::Failed);
+    }
+
+    VkMemoryRequirements requirements{};
+    impl->device_table.vkGetBufferMemoryRequirements(impl->device, staging, &requirements);
+
+    std::uint32_t memory_type = std::numeric_limits<std::uint32_t>::max();
+    for (std::uint32_t index = 0; index < impl->memory.memoryTypeCount; ++index) {
+        const VkMemoryPropertyFlags flags = impl->memory.memoryTypes[index].propertyFlags;
+        const bool allowed                = (requirements.memoryTypeBits & (1U << index)) != 0U;
+        if (allowed && (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0U && (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0U) {
+            memory_type = index;
+            break;
+        }
+    }
+
+    VkDeviceMemory staging_memory{ VK_NULL_HANDLE };
+    if (memory_type == std::numeric_limits<std::uint32_t>::max()) {
+        impl->device_table.vkDestroyBuffer(impl->device, staging, nullptr);
+        return fail(ReadbackResult::Unsupported);
+    }
+
+    VkMemoryAllocateInfo allocate{};
+    allocate.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocate.allocationSize  = requirements.size;
+    allocate.memoryTypeIndex = memory_type;
+    if (impl->device_table.vkAllocateMemory(impl->device, &allocate, nullptr, &staging_memory) != VK_SUCCESS ||
+        impl->device_table.vkBindBufferMemory(impl->device, staging, staging_memory, 0U) != VK_SUCCESS) {
+        if (staging_memory != VK_NULL_HANDLE) {
+            impl->device_table.vkFreeMemory(impl->device, staging_memory, nullptr);
+        }
+        impl->device_table.vkDestroyBuffer(impl->device, staging, nullptr);
+        return fail(ReadbackResult::Failed);
+    }
+
+    // RECORD: colour attachment -> transfer source -> copy -> back, so the next frame's render pass finds the layout its
+    // render pass was built with (COLOR_ATTACHMENT_OPTIMAL).
+    VkCommandBufferAllocateInfo command_allocate{};
+    command_allocate.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    command_allocate.commandPool        = impl->command_pool;
+    command_allocate.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    command_allocate.commandBufferCount = 1U;
+
+    VkCommandBuffer commands{ VK_NULL_HANDLE };
+    const auto      release = [&] {
+        if (commands != VK_NULL_HANDLE) {
+            impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
+        }
+        impl->device_table.vkFreeMemory(impl->device, staging_memory, nullptr);
+        impl->device_table.vkDestroyBuffer(impl->device, staging, nullptr);
+    };
+
+    if (impl->device_table.vkAllocateCommandBuffers(impl->device, &command_allocate, &commands) != VK_SUCCESS) {
+        release();
+        return fail(ReadbackResult::Failed);
+    }
+
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (impl->device_table.vkBeginCommandBuffer(commands, &begin) != VK_SUCCESS) {
+        release();
+        return fail(ReadbackResult::Failed);
+    }
+
+    const VkImageMemoryBarrier to_transfer =
+        barrierBetween(images.colors[0], stateOf(ImageLayout::ColorAttachment), transferReadState(), VK_IMAGE_ASPECT_COLOR_BIT);
+    impl->device_table.vkCmdPipelineBarrier(commands,
+                                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                            VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                            0U,
+                                            0U,
+                                            nullptr,
+                                            0U,
+                                            nullptr,
+                                            1U,
+                                            &to_transfer);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1U;
+    region.imageExtent                 = VkExtent3D{ static_cast<std::uint32_t>(images.width),
+                                                      static_cast<std::uint32_t>(images.height), 1U };
+    impl->device_table.vkCmdCopyImageToBuffer(commands, images.colors[0], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging, 1U, &region);
+
+    const VkImageMemoryBarrier to_attachment =
+        barrierBetween(images.colors[0], transferReadState(), stateOf(ImageLayout::ColorAttachment), VK_IMAGE_ASPECT_COLOR_BIT);
+    impl->device_table.vkCmdPipelineBarrier(commands,
+                                            VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                            0U,
+                                            0U,
+                                            nullptr,
+                                            0U,
+                                            nullptr,
+                                            1U,
+                                            &to_attachment);
+
+    if (impl->device_table.vkEndCommandBuffer(commands) != VK_SUCCESS) {
+        release();
+        return fail(ReadbackResult::Failed);
+    }
+
+    VkSubmitInfo submit{};
+    submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1U;
+    submit.pCommandBuffers    = &commands;
+
+    const bool ran = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion) == VK_SUCCESS &&
+                     impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+    (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
+
+    if (!ran) {
+        release();
+        return fail(ReadbackResult::Failed);
+    }
+
+    void* mapped = nullptr;
+    if (impl->device_table.vkMapMemory(impl->device, staging_memory, 0U, bytes, 0U, &mapped) != VK_SUCCESS || mapped == nullptr) {
+        release();
+        return fail(ReadbackResult::Failed);
+    }
+
+    outPixels.resize(static_cast<std::size_t>(bytes));
+    std::memcpy(outPixels.data(), mapped, static_cast<std::size_t>(bytes));
+    impl->device_table.vkUnmapMemory(impl->device, staging_memory);
+
+    release();
+    return true;
 }
 
 Device::Handles Device::handles() const noexcept
