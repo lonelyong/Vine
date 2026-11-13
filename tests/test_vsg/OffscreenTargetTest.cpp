@@ -1367,6 +1367,12 @@ TEST(OffscreenSessionTest, AReplacedTransferTaskLeavesTheSessionSubmitting)
 namespace
 {
 
+/// @brief vsg's `TransferTask::minimumStagingBufferSize`: the reusable block a small upload is padded to (16 MiB).
+constexpr std::uint32_t kMinimumStagingBytes = 16U * 1024U * 1024U;
+
+/// @brief An upload ABOVE the reusable minimum, so its staging is one-off weight rather than the kept block (T26).
+constexpr std::uint32_t kOneOffBytes = 32U * 1024U * 1024U;
+
 /// @brief This process's working set, in bytes.
 ///
 /// The evidence for the staging question has to be host memory: vsg's staging buffer is HOST_VISIBLE, so it is charged
@@ -1515,7 +1521,31 @@ TEST(OffscreenSessionTest, TheUploadScratchIsGivenBackAndALaterUploadStillLands)
 
     // AND THAT BLOCK CAN BE GIVEN BACK WITHOUT STOPPING ANYTHING: the copy's own fence is the proof, so the free is a poll
     // and nothing else. (The backend runs this at every frame boundary; here it is called directly, which is the same path.)
-    EXPECT_GT(vn::backend_vsg::detail::releaseStaging(*viewer), 0U) << "the staging is freed on the copy's evidence";
-    EXPECT_EQ(vn::backend_vsg::detail::stagedBytesOf(task.get()).value_or(1U), 0U) << "and the task holds nothing afterwards";
+    //
+    // THE REUSABLE SIZE STAYS (T26, ADR-2026-11-13-staging-keeps-the-reusable-block.md): vsg sizes a block's staging to
+    // max(transfer, minimumStagingBufferSize), so a 4 KiB upload still holds 16 MiB - a block at or under that minimum is
+    // the buffer a per-frame uploader would otherwise rebuild every frame, and the sweep keeps it. Asking for a release
+    // here therefore frees nothing, which is the rule read from the outside rather than from its implementation.
+    EXPECT_GT(*staged_after, ::VkDeviceSize{ 0U });
+    EXPECT_EQ(vn::backend_vsg::detail::releaseStaging(*viewer), 0U) << "a block at the reusable minimum is not one-off weight";
+    EXPECT_EQ(vn::backend_vsg::detail::stagedBytesOf(task.get()).value_or(1U), *staged_after)
+        << "and the task still holds exactly what it held before the sweep";
+
+    // A ONE-OFF SIZE IS GIVEN BACK: an upload ABOVE `minimumStagingBufferSize` grows the block to its own size, and that
+    // block is dead weight once its copy's fence signals - the 1.2 GB model load this sweep exists for.
+    ::vsg::ref_ptr<::vsg::ubyteArray> one_off = ::vsg::ubyteArray::create(kOneOffBytes, std::uint8_t{ 0 });
+    ::vsg::ref_ptr<::vsg::Buffer>      one_off_landed;
+    ASSERT_EQ(uploadBytes(*created.device,
+                          *task,
+                          one_off,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                          one_off_landed),
+              VK_SUCCESS)
+        << "a one-off upload succeeds too";
+    viewer->deviceWaitIdle();
+    const ::VkDeviceSize freed = vn::backend_vsg::detail::releaseStaging(*viewer);
+    EXPECT_GE(freed, ::VkDeviceSize{ kOneOffBytes }) << "the block above the reusable minimum is given back (" << freed << " bytes)";
+    EXPECT_LE(vn::backend_vsg::detail::stagedBytesOf(task.get()).value_or(1U), ::VkDeviceSize{ kMinimumStagingBytes })
+        << "what stays is the reusable block and nothing more";
 }
 #endif
