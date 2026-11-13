@@ -687,3 +687,14 @@
 - **理由**（评估结论）：无真实消费者（`G8`）；`FrameResult` / `PresentRecord` 刚在 F12 落成单值，改 per-surface 是返工（`G10`）；
   appfw 所有权（窗口拥有引擎）要重写；估算 ~900–1400 行 / 14–20 文件。
 - **触发条件**：真实宿主需要"同一计划两窗不同视口"；或第二个后端使"设备 = Session"成为必要。
+
+## 2026-11-13 —— T8：`select` 是纯函数，并发同结果
+
+- **测试**：`SelectTest.SameInputSameList` —— 40 节点场景（drawOrder / 层 / 透明 / 深度都有）的快照：同视图重复、
+  换视图穿插、`scene.setRoot(nullptr)` 之后，全部与串行参考 `diffDrawLists` 逐项相同；8 线程 × 32 轮共用一个快照、
+  各自输出，逐项等于串行答案。断言只在主线程，worker 用 `std::atomic` 计数并记录首个出错线程。
+- **为什么并发合法（证据）**：`intrusive_ptr` 计数器是 atomic（`RefCounted`）；快照 chunk 只读；`AutoTransformPlacement`
+  只持数值；`selectRows`/`Frustum`/`SortKey` 无静态状态。所以红了就是真 bug。
+- **边界**：测试直接调 `detail::selectSnapshot`，**不**经 `SnapshotSource`（memo 是引擎线程独有的）；`R15`（折叠一次）
+  沿用 `GraphicsTest` 的 `contentCollect*` 用例，不新增计数器。
+- **结果**：`test_graphics` 567 全绿；`scripts/tsan_check.sh` 567 例 0 warning（并行用例 31 ms）。

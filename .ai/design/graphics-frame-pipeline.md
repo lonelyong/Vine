@@ -154,7 +154,7 @@
 | # | 功能 | 行为 | 状态 |
 |---|---|---|---|
 | F1 | 快照发布 | 分块写时复制的行表 + 素材值 + 空间索引 + 灯集，一次指针交换 | 部分：`detail::SceneSnapshot` 已发布并被 `SceneRows` 缓存，生产收集仍读 `SceneBake` |
-| F2 | 纯派生 `select` | `selectSnapshot(snapshot, view)` 逐项等于现役收集 | 部分：实现存在，只有测试消费者 |
+| F2 | 纯派生 `select` | `selectSnapshot(snapshot, view)` 逐项等于现役收集 | 部分：实现存在，只有测试消费者；`T8` 已证明纯（串行/并发/内容清空后同一结果） |
 | F3 | 内容身份与世代 | `Handle` + typed id + `ContentRef`，陈旧句柄答 gone | 已落地 |
 | F4 | 引擎表按 `(id, revision)` 驻留 | 事实表按 ref 建行；旧帧读旧版 | 已落地 |
 | F5 | 行级 epoch 回收 | 行按"最后一次被计划命中的帧"回收；条目在"宿主不要了 ∧ 没有行"时离开 | 已落地 |
@@ -180,7 +180,7 @@
 - **行为**：`select(snapshot, view) → DrawList`，视图无关的折叠一帧一次，逐视图只付裁剪与排序。
 - **约束**（`C8`）：跨层的值类型不带虚函数/继承。
 - **要求**（`R14` / `R15` / `R16`）：同输入逐项相同；折叠计数 = 1；视图相关行逐视图重算。
-- **验收**（`T8` / `T9`）：`SelectTest.SameInputSameList`（含并行）、`SelectTest.TheSortKeyIsATotalOrder`。
+- **验收**（`T8` / `T9`）：`SelectTest.SameInputSameList`（同快照重复、换视图穿插、场景清空后、8 线程并发逐项等于串行）、`SelectTest.TheSortKeyIsATotalOrder`。
 - **注意**（`P5`）：纯函数不等于免费——并行只在纯值上做（`I6`），设备侧仍是一条线程。
 
 ### 3.4 F3 内容身份
@@ -526,7 +526,7 @@
 | T5 | 陈旧句柄答 gone | `ContentRegistryTest.AStaleHandleAnswersGone` | 已实现 |
 | T6 | 驻留 = 活快照引用 | `ResidencyTableTest.TheCollectableSetIsEnumerable` | 已实现 |
 | T7 | 计划差分 | `PlanTest.APassIsAddedWithoutAnyAddCall` | 已实现 |
-| T8 | 派生纯 | `SelectTest.SameInputSameList`（含并行） | 未做 |
+| T8 | 派生纯 | `SelectTest.SameInputSameList`（同快照重复、换视图穿插、场景清空后、8 线程 × 32 轮并发逐项等于串行）；`R15` 的折叠计数由 `GraphicsTest` 的 `contentCollect*` 用例钉住 | 已实现（2026-11-13） |
 | T9 | 排序全序 | `SelectTest.TheSortKeyIsATotalOrder` + `SelectTest.TheKeyReadsDrawOrderThenLayerThenSegmentThenDepth` + `SelectTest.TheKeySortsByTheBoxCentreNotTheNodeOrigin` | 已实现（2026-11-13） |
 | T10 | 能力协商 | `SessionTest.AMissingRequiredCapabilityIsRefusedWithACode` | 未做 |
 | T11 | 关闭相位 | `SessionTest.ShutdownIsIdempotentInEveryPhase` | 未做 |

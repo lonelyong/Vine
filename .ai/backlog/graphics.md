@@ -8,17 +8,8 @@
 
 ## 1. 现在可做（无触发条件）
 
-5b-2c 已于 2026-11-13 随 W9a–W9e 收口：`addPass` 家族、隐式发布、活指针通道与 `Scene` 的 `DrawListSource`
-继承已删，`Plan` 是唯一的 pass 形状，`FrameTable` 是编译后的帧表，`frame()` 两态、`applyPlan` 三态
-（见 `../design/graphics-frame-pipeline.md` §9.3）。它剩下的开放项按“有没有真宿主”分两类：
-
-| # | 项 | 现状 | 前置 |
-|---|---|---|---|
-| N1 | 派生纯的并行用例 `T8`（`SelectTest.SameInputSameList`） | 能力已存在（`selectSnapshot` 是纯函数），缺的是"含并行的逐项相等"用例 | `T8`；`../design/graphics-frame-pipeline.md` §8 |
-| N2 | 步 6：原型与实例（F10） | 未做，且**有触发条件**：出现"一处原型多处放置"的真实宿主；F12 的 `poses` 等它 | `T23` 的 A/B 口径见 `../research/graphics-2026-11-12-instances.md`；`K11` |
-
-`N1` 没有触发条件（设计已定、缺的是用例），按仓库节奏一次一步、一步一个可回退提交。
-"一引擎多 Surface"（原 N1 / graphics-next F8）已否决，见 `../decisions/ADR-2026-11-13-one-engine-one-surface.md`。
+当前没有无触发条件的开放项。`T8`（派生纯的并发用例）已于 2026-11-13 落地（`SelectTest.SameInputSameList`）；
+下一项都在 §2，等各自的触发条件。
 
 
 ## 2. 触发条件型
