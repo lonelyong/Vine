@@ -82,11 +82,12 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（76）
+## decisions/ —— 决策记录（ADR）（77）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
+- `ADR-2026-11-13-one-engine-one-surface.md` —— **一个引擎驱动一个表面**：否决 graphics-next 的 F8（一引擎多 Surface / `Target{SurfaceId}`），多窗口 = 一个设备服务多个引擎（每窗一引擎 / 一区 / 一个 `Viewer`）；`FrameResult.present` / `PresentRecord` 保持单值；触发条件（真实-host 双视口 / 第二后端）写在 ADR 里。
 - `ADR-2026-11-12-adopt-graphics-next.md` —— **采纳 graphics-next 作为下一版帧管线设计**（四层单向：内容 → 快照 → 派生 → 执行）；目标形状的规范文档是 `design/graphics-frame-pipeline.md`（草案），`K1–K11` 从“否决提案”改成“每一步的验收阈值与回退条件”，backlog 的 `T32` 从触发条件型移出；否决保持现状、只留已落地的身份/寿命层、以及大爆炸重写。
 - `ADR-2026-11-12-snapshot-takes-over-collection.md` —— **快照接管生产收集拆成 5a 影子 / 5b-1 翻源 / 5b-2a 公开入口 / 5b-2b 删除 / 5b-2c pass 收口**：5a 只跑新旧两路并逐项 diff、旧路径仍是渲染真相；5b-1 把 Published 模式绑到 `SnapshotSource`；5b-2a 公开 `Scene::publish()` 三态并让 `FrameWorker` 直接持有 `SnapshotSource`；5b-2b 删 `ContentMirror` / `DeltaChannel` / `RenderWorld` / `PublishOutcome` 与 23 条 LEGACY 用例；5b-2c 才删 `addPass` 家族与运行时拒绝；否决一步完成、拆三步、保留 mirror 与 debug-only 双跑。
 - `ADR-2026-11-11-content-identity-is-a-handle.md` —— 内容身份是**句柄**（`Handle` gen24/domain8/index32 + `ContentRef{id,revision}`），不是地址：公开 `ContentId.hpp`、`Node::id()`、行身份/镜像键/`RenderCommand::node`/计划行/后端几何表全部改为 `NodeId`；分三段落地（公开身份 → `ContentRef` 唯一键 → epoch 回收）；部分取代 `ADR-2026-11-09-address-keys-hold-the-object`。

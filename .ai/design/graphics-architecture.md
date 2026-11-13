@@ -59,8 +59,8 @@
     现有机制。`addPass` 家族已删（W9d），`slots_` / `applyPlanRows` 若要继续下沉，目标仍是 `detail::SessionShape`——那次拆分
     有真实消费者，不是今天预建的抽象（`G8`）。
     附带一条名词纪律：`PlanRefusal::Busy` 的文档含义是“**引擎里有帧在录**”；SDK 里今天**没有** `Session` 类型，
-    该类型随 F8（一 Session 多 Surface，`graphics-frame-pipeline.md` §3.8）落地——在那之前，文档与新接口都不再
-    引用一个不存在的 `Session`。
+    也不需要：**一个引擎驱动一个表面**（[ADR-2026-11-13](ADR-2026-11-13-one-engine-one-surface.md)），`Session` 只作为设计
+    名词指一个引擎的执行侧。文档与新接口都不再引用一个不存在的类型。
 
 2.10 **迁移 API 已收口**：5b-2c（W9，2026-11-13）删除了 `addPass` 家族，`Plan` 是 pass 声明唯一的形状；
     `applyPlan` / `plan` / `bindSnapshot` / `prepare` 从迁移入口变成宿主契约。`FrameTable` 是编译后的帧表（不是
@@ -118,7 +118,7 @@
 | # | 功能 | 说明 |
 |---|---|---|
 | F18 | 声明式呈递 | `RenderSurface::present(view)` / `present(pass)`；谁画这块面由视图/表面回答一次。 |
-| F19 | 多窗口 | 一个引擎可服务多个窗口；每个窗口一个目标；窗口销毁不带走其他窗口。 |
+| F19 | 多窗口 | **一个设备可服务多个引擎**（每窗口一个引擎 / 一个区 / 一个 `Viewer`）；窗口销毁不带走其他窗口。一个引擎驱动多个窗口已否决（一帧一表面，见 §7 D2 与 ADR-2026-11-13）。 |
 | F20 | 尺寸 | 表面尺寸唯一 owner 是 `RenderSurface`；视图通过 `resize` / `addSurfaceLayout` 跟随。 |
 
 ## 4. 公开接口
@@ -223,7 +223,7 @@
 | # | 否决 | 理由 |
 |---|---|---|
 | D1 | 引擎内置多格分屏布局 | 组合归应用层；SDK 只保证矩形、输入、尺寸扇出三条机制。 |
-| D2 | 一帧跨多窗口 | 只有“一场画面铺满两块屏”才需要；当前一窗口一幅画。 |
+| D2 | 一帧跨多窗口 / 一个引擎驱动多个区 | 只有“一场画面铺满两块屏”才需要；当前一窗口一幅画。多窗口 = 一个设备服务多个引擎（见 [ADR-2026-11-13](ADR-2026-11-13-one-engine-one-surface.md)，它同时否决了 graphics-next 的 F8）。 |
 | D3 | `PassPipeline` / `ScenePicture` 命名 | 重开 K1 的 PSO 歧义 / 读成“场景图片”；现行名 `PassChain`。 |
 | D4 | 引擎同时做 pass 表、产出表、诊断与 UI 门面 | 一个类型多职；拆成三个窄门面。 |
 | D5 | 后端自己再排一次 pass | 两套排序、两套帧词汇；调度上移引擎。详见 [ADR](../decisions/ADR-2026-10-22-engine-schedules-passes.md)。 |

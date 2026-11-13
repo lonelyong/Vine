@@ -58,7 +58,7 @@
 | **Snapshot** | 场景的**这一次发布** | 发布层（值） | 被在飞帧与 Session 引用 |
 | **View** | 相机值 + 视口 + 层掩码（投影种类是取值） | 派生层（值） | 一次派生内 |
 | **DrawList** | `(Snapshot, View)` 的有序绘制项，一切已解析成值 | 派生层（值） | 一次帧内 |
-| **Session** | 设备 + 后端 + 句柄表 + 管线缓存 + arena + 唯一引擎线程 | 执行层 | 宿主持有 |
+| **Session** | 设备 + 后端 + 句柄表 + 管线缓存 + arena + 唯一引擎线程（SDK 里**没有**同名类型：指一个引擎的执行侧） | 执行层 | 宿主持有 |
 | **FrameResult** | present、耗时、诊断、呈现了哪个 Snapshot / View | 值 | 宿主读 |
 
 - 为什么：一个概念一个定义、一个归属（`G1`）。**统一的三件套**——句柄（身份）· revision（值变了）·
@@ -89,7 +89,7 @@
 | `NodeId` | **原型**的身份 | 构造时 | 内容域 |
 | `InstanceId` | 树里的**一个位置**（引用原型 + 本地放置/覆盖） | 插入时 | 内容域 |
 | `RowIndex` | 快照内的稠密序号（SoA 下标） | 发布时 | 一份 Snapshot |
-| `PassId` / `TargetId` / `SurfaceId` | 会话内部句柄 | 计划对齐时 | 一次 Session |
+| `PassId` / `TargetId` | 会话内部句柄 | 计划对齐时 | 一次引擎（一引擎一表面，见 `../decisions/ADR-2026-11-13-one-engine-one-surface.md`） |
 
 - 是什么：内容域一个 `ContentRegistry`（槽分配 + generation）；64 位 = `generation:24 | domain:8 | index:32`；
   释放即换 generation，回绕即退休该槽；**只有注册表能造 id**（`C4` / `C5`）。
@@ -120,8 +120,9 @@
 
 ### 2.8 计划是声明
 
-- 是什么：`Pass = (name, View, Target, 状态覆盖, order, inputs)`；`Target = Surface{SurfaceId} |
-  Transient{name, shape} | External{name}`；`inputs` 用稳定名字；一个设备 = 一个 Session = 多条 Surface。
+- 是什么：`Pass = (name, View, Target, 状态覆盖, order, inputs)`；`Target = Transient{name, shape} |
+  Explicit{RenderTarget} | Window`（不写 target = 画进这块区的默认 framebuffer）；`inputs` 用稳定名字。
+  一个引擎驱动一个表面（多窗口 = 多引擎共享设备，见 `../decisions/ADR-2026-11-13-one-engine-one-surface.md`）。
 - 为什么：宿主发布"我要的帧图"，Session 在帧边界按名字差分对齐 ⇒ 增删 pass 不需要任何 add/remove 调用，
   "帧在飞时改会话形状"**不可表达**（`R21`；`G12`）。
 - 边界：`PassId` 只在 Session 内部；差分按**名字**不按指针（`C7`）；临时目标的生命周期由计划声明。
@@ -159,7 +160,6 @@
 | F5 | 行级 epoch 回收 | 行按"最后一次被计划命中的帧"回收；条目在"宿主不要了 ∧ 没有行"时离开 | 已落地 |
 | F6 | 计划是值 | 帧边界按名字差分 + 计划校验稳定 code | 已落地（W9d + W9e，2026-11-13）：`Plan` + `validatePlan` + `applyPlan`（会话 / 作用域两种，`PlanResult` 三态）+ `plan()` / `planFor(owner)`；`Target` 仍是显式 `RenderTarget` 句柄 |
 | F7 | 预热入口 | `prepare()` 答需要什么；预热后录制 `builds` 增量 0 | 已落地：3a（`drawNeeds` 是唯一的键构造者）+ 3b（`RenderEngine::prepare()` → `prepareFrame(value)`，按同一份答案预建半片 / 集合 / 上传 / 管线身份） |
-| F8 | 一 Session 多 Surface | `Target` / 帧请求带 `SurfaceId`；一个引擎线程驱动多个窗口 | 未做 |
 | F9 | `publish` 返回结果 | 批内显式“未发布”，无 null | 已落地（5b-2a）：公开 `Scene::publish()` 三态（`Posted`/`Unchanged`/`InsideBatch`）；旧四态 `PublishOutcome` 已随 5b-2b 删除 |
 | F10 | 原型与实例 | `Instance` 引用原型；折叠一次；无环与行预算 | 未做 |
 | F11 | 全序排序键 | 文档化的全序值（含 layer），透明两段 | 已落地（2026-11-13）：`detail::SortKey`（drawOrder → 层 → 不透明段/透明段 → 量化相机深度 → 行/图元索引）；代表点是世界盒中心 |
@@ -245,13 +245,20 @@
   它不调用 `Session::beginFrame()`（窗口会 acquire 图像），只从 `WindowTarget::facts()` 读形状；
   `growBlockStorageIfNeeded` / `growMaterialArenaIfNeeded` 在预热里先跑，免得太帧第一次就换存储、把刚建好的集合全部重指。
 
-### 3.8 F8 一设备一 Session 多 Surface
+### 3.8 多窗口：一个引擎驱动一个表面
 
-- **行为**：`Target = Surface{SurfaceId}`；一个 Session 驱动多个窗口，一条引擎线程。
-- **约束**（`I6` / `R27`）：任何实现需要第二条引擎线程就违反本设计。
-- **要求**（`R21` / `R37`）：`Target` / 帧请求带 `SurfaceId`。
-- **验收**（`T29` / `K10`）：一个 Session 两个 Surface 都正确 present。
-- **注意**（`P4`）：表面事件只在帧首应用；交换链只在该表面自己的帧里重建。
+- **行为**：`RenderEngine::createSurface()` 造出它**唯一**的区；帧的默认 framebuffer 就是这个区的目标
+  （无区时是设备自建的目标，见 `initialize`）。多窗口 = **一个 `RenderDevice` 服务多个引擎**，每窗口一个引擎 /
+  一个区 / 一个 `Viewer`。
+- **约束**（`I6` / `R27`）：只有一条引擎线程碰设备，所以一个设备没有两条引擎线程——它服务的是多个**引擎**，
+  不是一个引擎的多个区。
+- **要求**（`R21` / `R27`）：增删 pass 不调用 add/remove；一帧一个表面，`FrameResult.present` /
+  `PresentRecord` 是单值。
+- **验收**：`RenderSurfaceTest.ASecondAreaIsAConstructionFailureNotASecondObject`（第二区被拒）、
+  `HeadlessBackendTest.OneDeviceServesSeveralAreasWithoutCrossingThem`（一个设备两个引擎）。
+- **注意**（`P4`）：表面事件只在帧首应用；交换链只在自己的引擎帧里重建。
+- **已否决**："一个引擎驱动多个 Surface"（graphics-next F8 / `R37` / `T29` / `K10`）——没有消费者、会把 `FrameResult`
+  再改一次、且需重写 appfw 所有权；见 §7 D12 与 `../decisions/ADR-2026-11-13-one-engine-one-surface.md`。
 
 ### 3.9 F9 `publish` 返回结果
 
@@ -326,9 +333,9 @@
 | `RenderEngine::applyPlan() → PlanResult` / `plan()` | 三态：`Applied` / `Invalid` + `problems` / `Refused` + `PlanRefusal` | 已落地（W9e） |
 | `RenderEngine::frame() → FrameOutcome` | `Ran` / `Submitted`；`NotReady` + `EngineNotReady` | 已落地（W9e） |
 | `RenderEngine::frameResult() → FrameResult` | 上一帧被回答时的全部事实：`query`（snapshot / view）+ passes / draws / diagnostics / present | 已落地（F12，2026-11-13；`poses` 待 F10） |
-| `Session::frame(FrameRequest) → FrameResult` | 提交一帧；`FrameRequest` 带 `View` 与 `SurfaceId` | 目标（今天 `executeFrame` + `presentWindow`） |
-| `FrameResult{ snapshot, view, poses, stats, diagnostics, present }` | 宿主读的值 | 目标（今天 `FrameStats` + `PresentOutcome`） |
-| `Plan` / `Pass` / `Target` / `SurfaceId` | 帧图声明（W9d 起是唯一的形状；`FrameTable` 是编译后的帧表） | 已落地 |
+| `Session::frame(FrameRequest) → FrameResult` | 提交一帧；`FrameRequest` 带 `View`（一帧一个表面） | 目标（今天 `executeFrame` + `presentWindow`） |
+| `FrameResult{ frame, present, query, passes, draws, diagnostics }` | 宿主读的值（`query` = snapshot + view） | 已落地（F12，`poses` 待 F10） |
+| `Plan` / `Pass` / `Target` | 帧图声明（W9d 起是唯一的形状；`FrameTable` 是编译后的帧表） | 已落地 |
 
 ## 5. 约束、要求与不变量
 
@@ -374,13 +381,13 @@
 | R18 | 查询吃 `FrameResult.query` | `T19` / `T20` |
 | R19 | 拾取返回位置身份，不含指针 | `T18` |
 | R20 | 后端并行 record 时合并结果确定 | 并行 = 串行逐项 |
-| R21 | 会话形状是声明，按名字差分；`Target` 带 `SurfaceId` | `T7` / `T29` |
+| R21 | 会话形状是声明，按名字差分；一引擎一表面（多窗口 = 多引擎共享设备） | `T7` |
 | R22 | 驻留 ⟺ 活快照引用；宿主自持快照不钉住 | `T25` |
 | R23 | 管线键是值；预热是一等入口 | 预热后 `builds` 增量 0 |
 | R24 | 帧内 arena 外零分配 | 分配计数 |
 | R25 | 能力分必选/可选，创建时协商并说明 | `T10` |
 | R26 | 关闭有显式相位，可重入 | `T11` |
-| R27 | 一个设备一个 Session，可驱动多表面 | `T29` / `K10` |
+| R27 | 只有一条引擎线程碰设备；一个设备服务多个引擎，一个引擎驱动一个表面 | 第二区被拒 + `OneDeviceServesSeveralAreasWithoutCrossingThem` |
 | R28 | 诊断带稳定 code 与结构化字段 | 按 code 断言 |
 | R29 | 单位与颜色空间是类型/值 | 传错编译失败 |
 | R30 | 帧值可 replay 出同一命令序列 | `T12` |
@@ -390,7 +397,6 @@
 | R34 | `Instance` 对原型有存活责任；不允许悬垂 `NodeId` | `T22` |
 | R35 | `PoseSet` = 实例 local 覆盖 + 子树传播 | `T26–T28` / `K9` |
 | R36 | 预热是会话一等入口；缺可选能力出现在报告里 | `T7` / `T10` |
-| R37 | 一个 Session 多 Surface；`Target`/帧请求带 `SurfaceId` | `T29` / `K10` |
 | R38 | 计划校验有稳定 code | `T30` |
 | R39 | `publish` 在批内不返回 null | `T31` |
 
@@ -507,6 +513,7 @@
 | D9 | 内容引用只带 id、不带 revision | 旧帧会解析到新值，破坏 `R9`/`I1` | 同上 |
 | D10 | 只做已落地的身份/寿命层，其余留作提案 | "发布 = 一次指针交换"不成立，镜像/delta/memo 继续在轨 | ADR-2026-11-12 §选项 D |
 | D11 | 用“跑一帧但不提交”实现预热 | 窗口帧的 `beginFrame` acquire 图像：不提交则饥饿，提交则不是预热；画到窗口的 pass 连覆盖都做不到（`P11`） | ADR-2026-11-12 |
+| D12 | 一个引擎驱动多个 Surface（graphics-next F8） | 无消费者（`G8`）；`FrameResult` / `PresentRecord` 刚落地又变 per-surface（`G10`）；appfw 所有权要重写；与架构 D2 一致 | [ADR-2026-11-13](ADR-2026-11-13-one-engine-one-surface.md) |
 
 ## 8. 测试与验收
 
@@ -540,7 +547,6 @@
 | T26 | pose 子树传播 | 父关节 pose | 未做 |
 | T27 | pose 拾取 | pose 后拾取子节点 | 未做 |
 | T28 | pose 剔除 | pose 子树部分出视 | 未做 |
-| T29 | 多表面 | 一个 Session 两个 Surface | 未做 |
 | T30 | 计划校验 | `PlanTest.*IsRefusedWithItsCode`（四类）+ `PlanTest.TheCodeSpellingsAreStable` + `PlanTest.AKindChangeOnACustomPassIsRefusedWithItsCode` | 已实现 |
 | T31 | 批内 publish | `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch`（`Posted` → `Unchanged` → `InsideBatch` → `Posted`）+ `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` | 已实现（2026-11-12） |
 | T32 | 预热的答案 = 帧的构建 | `ContentHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds`（键集相等，设备无关）+ `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` 的键集断言（录制侧） | 已实现（2026-11-12） |
@@ -564,7 +570,6 @@
 | K7 | 在飞帧的旧内容被新发布改变（材质/几何/程序任一） | `T17` 逐项 diff |
 | K8 | 两个 Scene 共享原型时数据竞争，或跨线程用例无法被拒绝 | `T21` + TSan |
 | K9 | pose 后的拾取/剔除与画面不一致 | `T19` / `T27` / `T28` |
-| K10 | 多表面必须靠两个 Session / 两条引擎线程才能成立 | `T29` |
 | K11 | 5000 原型、1 次编辑的 publish 超过预算（元数据整体拷贝暴露） | `N19` ≤ 50 µs 或字节上限 |
 
 **`K4` 的计数口径**（5a / 5b-1 / 5b-2a / 5b-2b / 5b-2c 各自适用）：
@@ -597,7 +602,7 @@
   snapshot 侧由同一套件的旧快照用例钉住；公开 `Scene::publish()`（`Posted`/`Unchanged`/`InsideBatch`）；
   `PublicationStore` 直接持有 `SnapshotSource`（W3 拆自 `FrameWorker`）。**5b-2b 删除了 `ContentMirror` / `DeltaChannel` / `RenderWorld` /
   `RenderWorldSource` / `PublishOutcome` 与 23 条 LEGACY 用例**；`test_graphics` 554 / `test_vsg` 542。
-- **未做**：F8、F10，以及 F12 的 `poses` 半边（它要等 F10 的原型/实例层；`FrameResult` / `query` 本身已于 2026-11-13 落地）。F7 的两半都已落地：3a 的答案（`drawNeeds` 是唯一的键构造者）
+- **未做**：F10，以及 F12 的 `poses` 半边（它要等 F10 的原型/实例层；`FrameResult` / `query` 本身已于 2026-11-13 落地）。F7 的两半都已落地：3a 的答案（`drawNeeds` 是唯一的键构造者）
   与 3b 的预建（`RenderEngine::prepare()` → `prepareFrame(value)`；预热后录制的帧 `builds` 增量 0，见 `T33`）。
   F9 的三态公开答案（`Posted` / `Unchanged` / `InsideBatch`）与它携带的快照句柄已落地（5b-2a + 2026-11-12 的
   `SceneSnapshotRef`）。**帧内隐式发布已删除（W9b，2026-11-13）**：发布是内容写者的动词，帧在 build 时取
@@ -625,7 +630,6 @@
 | 2 | `publish` 返回结果（四态）· **已落地 2026-11-12（内部半边）** | 内部 `bool` 发布（旧 `FrameWorker` / `ContentMirror`，前者已拆为 `PublicationStore` + `FrameExpand`）；**帧内隐式发布随 5b-2c 消失** | `T31` |
 | 3a | `prepare()` 的**答案**：抽出 `drawNeeds`，`prepare` 与 `record` 共用它；断言答案 = 这一帧实际构建的键集 · **已落地 2026-11-12** | 录制里重复的键构造 | `T32`；击穿则回退该步 |
 | 3b | `prepare()` 的**预建**：按答案建半片 / 集合 / 上传 · **已落地 2026-11-12** | “录制时才发现要编译” | `T7` / `T10` / `T33`，预热后 `builds` 增量 0 |
-| 4 | 一 Session 多 Surface | 每窗口一个 Session 的驱动路径 | `T29` / `K10` |
 | 5a | **影子切换**：`selectSnapshot` 与旧 mirror 路径同帧同输入跑，逐项 diff；旧路径仍是渲染真相 · **影子接缝已落地 2026-11-12** | 本步不删生产形状；不公开 `Scene::publish()`；不删 `addPass` 家族（`C11`） | `T34` / `T17`（snapshot 侧）已由 `SnapshotSourceTest` 钉住，CI 常开；`K1` / `K2` / `K3` / `K7` 绿、既有语义断言改动为 0 才进 5b-1 |
 | 5b-1 | **切换真相**：Published 模式绑定 `SnapshotSource`；旧 mirror 降为可选 LEGACY 影子，默认关闭 · **已落地 2026-11-12** | 无（旧路径保留作影子，不删） | `T34` / `T17` / `K1` / `K2` / `K3` / `K7`；`test_graphics` 577 / `test_vsg` 542 / ctest 30/30 / TSan 0 |
 | 5b-2a | **公开入口 + 源归位**：公开 `Scene::publish()` 三态，`PublicationStore` 直接持有 `SnapshotSource`（W3 拆自 `FrameWorker`）· **已落地 2026-11-12** | 无（LEGACY 文件仍在树内，但已不在生产路径） | `T31` / `test_graphics` 577 / `test_vsg` 542 / ctest 30/30 / TSan 0 |
@@ -634,7 +638,7 @@
 | 5b-2c 收口 | **结果形状与帧表**：`FramePlan` → `FrameTable`、`PassPlan` → `PassRow`、`frame()` 两态、`applyPlan` 三态 · **W9e 已落地 2026-11-13** | `FrameOutcome::NotInitialized` / `NoDevice` 变成一个 `NotReady` + `EngineNotReady`；`SessionBusy` 移出 `PlanProblemCode` | `K4` / `K5` / `T7` / `T30` |
 | 6 | 原型与实例（单独实验，B 方案先测） | 无（新增能力） | `T23` / `K11`；数字不好就停在“原型 DAG 共享” |
 
-`C11`（迁移期公开 API 只增不改）适用于第 1–4 步、5a、5b-1、5b-2a 与 5b-2b：新入口先与旧入口并存，5b-2c 收口时再删旧形状。
+`C11`（迁移期公开 API 只增不改）适用于第 1–3b 步、5a、5b-1、5b-2a 与 5b-2b：新入口先与旧入口并存，5b-2c 收口时再删旧形状。
 所以“`addPass` 家族在第 1 步删”与 `C11` 自相矛盾，本表已改成“5b-2c 删”：第 1 步只改变投影方向
 （计划是输入，`slots_` 是它的应用结果），这也正是 `T7` 能成立的最小充分条件。
 5a 是**等价性证明**，5b-1 是**切换真相**，5b-2a 是**公开入口 + 源归位**，5b-2b 是**删旧镜像**，

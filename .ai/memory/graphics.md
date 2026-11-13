@@ -676,3 +676,14 @@
   （buildContentHalf 取 `publicationFor(presenting->content())`，与相机同刻）与 `diagnostics_before`（`diagnosticCount()` 的初值）。
 - **测试**：`SelectTest`（4 例：全序置换、字段顺序、盒中心 vs 节点原点、无盒退回）；`RenderEngineTest.
   TheFrameResultIsThePictureThatWasAnswered`（空值 → 快照/相机/计数/诊断 → 帧间发布不改已答的帧）。`test_graphics` 566。
+
+## 2026-11-13 —— F8 否决：一个引擎驱动一个表面
+
+- **决定**：`ADR-2026-11-13-one-engine-one-surface.md` —— 保持一引擎一区；多窗口 = 一设备多引擎（每窗一引擎 / 一区 / 一个 `Viewer`）。
+- **删/改写**：graphics-next 的 F8、`R37`、`T29`、`K10`、§9.3 步 4 删除；`R21` / `R27` 改成一引擎一表面；`SurfaceId` 离开 id 表；
+  §3.8 改成"多窗口：一个引擎驱动一个表面"；§7 新增 `D12`。
+- **修掉的文档矛盾**：`graphics-architecture.md` F19 曾写"一个引擎可服务多个窗口"（与代码 `createSurface()` 拒绝第二区、以及
+  同文 §7 D2 都相反），已改；D2 补 ADR 链接；§2.8 里"`Session` 类型随 F8 落地"改成"没有也不需要"。
+- **理由**（评估结论）：无真实消费者（`G8`）；`FrameResult` / `PresentRecord` 刚在 F12 落成单值，改 per-surface 是返工（`G10`）；
+  appfw 所有权（窗口拥有引擎）要重写；估算 ~900–1400 行 / 14–20 文件。
+- **触发条件**：真实宿主需要"同一计划两窗不同视口"；或第二个后端使"设备 = Session"成为必要。
