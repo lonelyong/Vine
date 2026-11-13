@@ -23,6 +23,7 @@ set(SRC_FILE_LIST
 	SharedDepthTest.cpp
 	VariantCoreTest.cpp
 	StreamUploadsTest.cpp
+	FrameUploadsTest.cpp
 	BlockStorageTest.cpp
 	BlockDescriptorsTest.cpp
 	ContentPipelineTest.cpp

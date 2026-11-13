@@ -77,6 +77,30 @@ struct VN_GRAPHICS_API FrameProgress {
 };
 
 /**
+ * @brief What one frame ADDED to and DROPPED from GPU residency (a per-frame DELTA).
+ *
+ * @details
+ * - THE FRAME'S OWN NUMBERS, not running totals: "this frame uploaded 3 streams / 128 KiB and released one texture"
+ *   is the question a HUD, a gate or a profile asks. The layers keep cumulative counters (see StreamUploads /
+ *   MaterialImages), so the backend takes the difference across one frame and answers it here.
+ * - COUNTS AND BYTES ARE SEPARATE on purpose: one 64 MiB model is ONE stream upload whose byte count is the thing
+ *   that matters, while a thousand tiny edits are many uploads of little weight.
+ * - What counts as an upload: a stream bind built (each copies its bytes once) and a texture image built (a new
+ *   revision of one texture is a new upload). An ALIASED stream - one that shares another drawable's bind - copies
+ *   nothing and is not counted here; the layer's `aliases()` answers that separately.
+ * - A release is an entry the layer let go of because no live content declared it (never an explicit host release,
+ *   which is already an announcement).
+ */
+struct VN_GRAPHICS_API FrameUploads {
+    std::uint64_t stream_uploads{ 0 };   ///< Stream binds built this frame (each one copies its bytes once).
+    std::uint64_t stream_bytes{ 0 };     ///< Bytes those binds copied.
+    std::uint64_t stream_releases{ 0 };  ///< Stream entries that left the residency this frame.
+    std::uint64_t texture_uploads{ 0 };  ///< Texture images built this frame.
+    std::uint64_t texture_bytes{ 0 };    ///< Bytes those images copied.
+    std::uint64_t texture_releases{ 0 }; ///< Texture images released this frame.
+};
+
+/**
  * @brief What a backend can say about its frames, as ONE answer (see RenderFrameExecutor::frameReport).
  *
  * @details
@@ -96,6 +120,7 @@ struct VN_GRAPHICS_API FrameReport {
     std::optional<FrameCounters>  counters;  // The frame that just ended; disengaged when none are kept.
     std::optional<RetentionStats> retention; // Cumulative retention; disengaged when none are kept.
     std::optional<FrameProgress>  progress;  // Where the frame clock is; disengaged when none is kept.
+    std::optional<FrameUploads>   uploads;   // What the frame that just ended added and dropped; disengaged when none is kept.
 };
 
 VN_GRAPHICS_NS_END

@@ -1,6 +1,7 @@
 # ADR-2026-11-10：上传暂存不保留 —— 拷贝的 fence 一完成就还，由帧边界自己判定
 
-> **状态**：已采纳
+> **状态**：已取代（2026-11-13，见 [ADR-2026-11-13-staging-keeps-the-reusable-block.md](ADR-2026-11-13-staging-keeps-the-reusable-block.md)：
+> 完成就放的证据规则不变，但**可复用下限的块保留**，只还大于下限的一次性大块）
 > **日期**：2026-11-10
 > **取代**：[ADR-2026-11-10-upload-staging-release-is-explicit.md](ADR-2026-11-10-upload-staging-release-is-explicit.md)
 > **影响范围**：`src/viz/graphics/sdk/vine/graphics/RenderDevice.hpp`（删掉动词）、

@@ -463,6 +463,40 @@ struct VsgBackend::Data {
     std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>> input_color_samplers;
     std::vector<PassContent>                                 packets;          // Reused per frame (see recordContent).
     const core::CompiledFrame*                               frame{ nullptr }; // This frame's plan, between end and swap.
+
+    /// The layers' cumulative upload counters, as one block: the frame's own numbers are the difference of two of
+    /// these (see FrameReport::uploads).
+    struct UploadCounters {
+        std::uint64_t streams{ 0 };
+        std::uint64_t stream_bytes{ 0 };
+        std::uint64_t stream_releases{ 0 };
+        std::uint64_t textures{ 0 };
+        std::uint64_t texture_bytes{ 0 };
+        std::uint64_t texture_releases{ 0 };
+    };
+
+    [[nodiscard]] UploadCounters readUploadCounters() const noexcept
+    {
+        UploadCounters counters;
+        if (assembly != nullptr) {
+            const StreamUploads& uploads = assembly->uploads();
+            counters.streams           = uploads.uploads();
+            counters.stream_bytes      = uploads.uploadedBytes();
+            counters.stream_releases   = uploads.retired();
+        }
+        if (images != nullptr) {
+            counters.textures         = images->built();
+            counters.texture_bytes    = images->uploadedBytes();
+            counters.texture_releases = images->released();
+        }
+        return counters;
+    }
+
+    /// The frame that is being built took its baseline here (see executeFrame).
+    UploadCounters uploads_before{};
+    /// The last EXECUTED frame's own upload/release numbers; absent until a frame has run (an unmeasured frame must
+    /// not read like an empty one).
+    std::optional<vn::graphics::FrameUploads> last_uploads{};
 };
 
 VsgBackend::VsgBackend(const vn::graphics::DeviceDesc& desc)
@@ -928,6 +962,14 @@ vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameD
         d->executor.setWindow(detail::SessionContentAccess::windowTarget(session));
     }
 
+    // WHAT THIS FRAME MOVES: the layers' counters are cumulative, so the frame's own numbers are the difference taken
+    // across the whole frame. The baseline is read here - after the staging sweep, before the books open - and the delta
+    // is published at the tail, AFTER the recording (streams and images are built by recordContent, which the commit
+    // runs). A frame that fails before reaching the tail therefore reports ZERO: it uploaded nothing, and an old answer
+    // must not survive into it.
+    d->last_uploads   = vn::graphics::FrameUploads{};
+    d->uploads_before = d->readUploadCounters();
+
     // THE VALUE, run by the layer that owns the identities, in the order the value states (see collectFrame - the
     // same walk prepareFrame makes, so a prepared frame and this one cannot disagree about what the frame is).
     openFrameBooks();
@@ -938,10 +980,22 @@ vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameD
     // executor presents through the target the frame named - PresentTarget::present is the mechanism, the executor is
     // the one making the call - and in this backend that call is what commits the frame and shows it. WITHOUT a
     // window there is nothing to present, so the off-screen session commits it inline.
-    if (offscreen != nullptr) {
-        return commitFrameThrough(nullptr, offscreen);
-    }
-    return present_to != nullptr ? present_to->present() : vn::graphics::PresentOutcome::Skipped;
+    const vn::graphics::PresentOutcome outcome = offscreen != nullptr
+                                                     ? commitFrameThrough(nullptr, offscreen)
+                                                     : (present_to != nullptr ? present_to->present() : vn::graphics::PresentOutcome::Skipped);
+
+    // WHAT THE FRAME ACTUALLY BUILT, as one delta (see FrameReport::uploads): counts and bytes the recording above
+    // copied, and the entries the residency sweep let go of.
+    const Data::UploadCounters after = d->readUploadCounters();
+    vn::graphics::FrameUploads  moved;
+    moved.stream_uploads   = after.streams - d->uploads_before.streams;
+    moved.stream_bytes     = after.stream_bytes - d->uploads_before.stream_bytes;
+    moved.stream_releases  = after.stream_releases - d->uploads_before.stream_releases;
+    moved.texture_uploads  = after.textures - d->uploads_before.textures;
+    moved.texture_bytes    = after.texture_bytes - d->uploads_before.texture_bytes;
+    moved.texture_releases = after.texture_releases - d->uploads_before.texture_releases;
+    d->last_uploads        = moved;
+    return outcome;
 }
 
 vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to)
@@ -1329,6 +1383,7 @@ vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
     vn::graphics::FrameReport report;
     report.counters  = d->observe.counters();
     report.retention = d->observe.retention();
+    report.uploads   = d->last_uploads; // This frame's own delta (see FrameUploads); absent until one ran.
     report.progress =
         vn::graphics::FrameProgress{ .submitted = timeline.submittedFrame(), .completed = timeline.completedFrame(), .presented = d->presented_watermark };
 

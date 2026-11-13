@@ -8,8 +8,11 @@
 
 ## 1. 现在可做（无触发条件）
 
-当前没有无触发条件的开放项。`T8`（派生纯的并发用例）已于 2026-11-13 落地（`SelectTest.SameInputSameList`）；
-下一项都在 §2，等各自的触发条件。
+| # | 项 | 内容 | 出处 |
+|---|---|---|---|
+| T31 | 字节 revision 的跨线程轮询 —— **已知潜在竞态** | `StreamUploads::beginFrame` 在引擎线程执行 `key.revision == entry.owner->revision()`（`src/plugins/gfx_backend_vsg/src/internal/StreamUploads.cpp`），而 `Buffer::revision()` 读普通 `std::uint64_t`（`Buffer.hpp`）——宿主在内容线程 `Buffer::edit()` 与引擎帧并发就是数据竞争。今天没有宿主每帧改 buffer，所以未暴露。修法不是把字段改 atomic，而是让写入方在发布边界声明 `(buffer, revision)`。下一步：先写一个诊断用例（改 buffer + 跑帧，TSan 下跑） | `../design/graphics-threading.md` §2.4、R3-1 |
+
+下一项都在 §2，等各自的触发条件。`T8`（派生纯的并发用例）已于 2026-11-13 落地（`SelectTest.SameInputSameList`）。
 
 
 ## 2. 触发条件型
@@ -29,18 +32,12 @@
 
 | # | 项 | 内容 | 触发条件 | 出处 |
 |---|---|---|---|---|
-| T8 | `BlockStorageTest` 偶发 | `TheRegionsAreLaidOutOnceAndDoNotOverlap` 首跑红重跑绿 | 第三次出现 | 本行 |
-| T22 | 内容层提成共享库 | 事实表/半边/键这套记账已与 vsg 无关（`content_seam` 守卫），但仍在插件目录里；提成 SDK 库就能给第二个后端直接复用 | 第二个后端（D3D12/WebGPU/软件）落地，或出现第二个渲染路径 | `../design/vsg-backend.md` 2.8 |
-| T24 | 场景收集的失效粒度 | memo 的失效键是整个场景根的 `contentEpoch`，换了视图就要重走。**第一半已落地**（ADR-2026-11-09-scene-collection-two-halves）：图依赖的一半（世界矩阵 + opacity/layers/drawOrder 折叠）按 `contentEpoch` 烘焙，选取只做层并集剪枝 + 视锥 + 排序；世界盒仍每视图问（盒子的键是流的 revision，`Buffer::edit()` 不惊动图）。**Release 复测**：2000 drawables 移动相机 **1597 µs（0.94 µs/命令）**、200 个 141 µs、稳态帧 0 µs；归因：box 变换 + `BoundsCache` 哈希 = 317 µs（20%），每条命令的构造/解析 ~1.3 ms（71%），排序 7 µs。 | **触发条件未命中**（真实成本 1.6 ms/帧，不是 Debug 的 13.8 ms）：Release 下 1 万 drawables 移动相机 > 4 ms，或 60 fps 预算里收集 > 2 ms，才做\"烘焙世界盒 + 盒 stamp\"或命令构造瘦身（前置：buffer 编辑→场景的公告路径要说清） | `../design/graphics-scene.md`、`Scene.cpp` 的 `detail::SceneBake`、ADR 里的两张测量表、`../design/graphics-threading.md` §3.1.6（并行 select 的接缝与验收） |
-| T9 | V2 | `forget(view)` 依赖 vsg `protected` 池 | 升级 vsg 时与 V1 一起复核 | 本行 |
-| T10 | V3 | 拿不到 `VkPipelineCache`（第三实参写死 `VK_NULL_HANDLE`） | 推上游；影响冷启动 / 换会话 | 本行 |
-| T11 | V4 | dynamic rendering（`vkCmdBeginRendering`）vsg 记录路径不存在 | 上游支持后合并每 pass 的 begin | 本行 |
-| T25 | 每帧上传数当观测指标 | `FrameCounters` 只有 passes / draws / invalid_schedules；`StreamUploads::uploads()` 与 `MaterialImages::count()` 的每帧差值能回答“这一帧传了多少”，但今天没有消费者 | HUD / 门禁 / 性能面板要显示“这一帧上传了几个流 / 多少字节” | `../design/graphics-content-lifecycle.md` D10 |
-| T26 | 每帧上传的宿主的暂存重分配 | 现行规则是“fence 一完成就清”，所以每帧都上传的宿主会在每帧重新分配一块最小 16 MB 的暂存。仓库里目前没有这样的宿主（帧内上传都是 revision 变化才发生） | 出现每帧上传的宿主（动态几何 / 流式点云），且分配进入 profile：加回“只清大于 `minimumStagingBufferSize` 的块”这一条判断（一行） | `../design/graphics-content-lifecycle.md` D16、`../decisions/ADR-2026-11-10-upload-staging-is-not-retained.md` |
+| T8 | `BlockStorageTest` 偶发 | `TheRegionsAreLaidOutOnceAndDoNotOverlap` 首跑红重跑绿；**证据装置已就位**：用例打印设备的 `minUniformBufferOffsetAlignment` 与三段 region 布局，并用 `SCOPED_TRACE` 把它带进任何失败 | 第三次出现（前两次没有诊断） | `tests/test_vsg/BlockStorageTest.cpp` |
+| T24 | 场景收集的失效粒度 | memo 失效键是整根子树的 `contentEpoch`。**旧数字已过时**：Release 2000 drawables 1597 µs 测的是 `Scene::collectRenderCommands` 直接路径；W9b 之后帧画的是 `SnapshotSource::selectSnapshot`（世界盒已在发布时折好，F11 又换了排序键）。**先补一个 `selectSnapshot` 的 Release 配方并重测**，再谈优化（原候选：烘焙世界盒 + 盒 stamp、命令构造瘦身） | Release 下 1 万 drawables 移动相机 select > 4 ms，或 60 fps 预算里 select > 2 ms（**重测后**） | `../design/graphics-scene.md`、`../decisions/ADR-2026-11-09-scene-collection-two-halves.md`、`../design/graphics-threading.md` §3.1.6 |
+| T10 | V3 | 拿不到 `VkPipelineCache`（vsg 1.1.16 只有 Vulkan 类型声明，没有 cache 管理；本后端也不创建） | 推上游；影响冷启动 / 换会话 | `../design/vsg-backend.md` C6 |
+| T11 | V4 | dynamic rendering（`vkCmdBeginRendering`）vsg 记录路径不存在（1.1.16 全树无此调用） | 上游支持后合并每 pass 的 begin | 同上 |
 | T27 | 驻留的显存交易复评 | pin 模型（ADR-2026-11-10）让驻留 = 活内容所需：离屏但宿主仍持有的内容不再自动让出显存。若某宿主的显存峰值不可接受，需要重新引入一条时间/容量规则（会与“零时间窗”的判据冲突，必须走新 ADR） | 出现“大场景 + 离线模型常驻”进入显存预算的真实宿主 | `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §代价 |
-| T29 | 驻留账的帧级增量 | `RetentionStats::residency`（ADR 第一步）答的是“现在多少”；T25 要的是“这一帧传了多少 / 释放了多少”，即两次报告之差 | 与 T25 同一触发 | `../design/graphics-content-lifecycle.md` §3.3 |
 | T30 | GPU 资源抽象（统一类型 / 多态总表） | 现在统一的是**规则与账**（`ResidencyLedger` + pin），不是类型。基类或多态总表只在第二个后端出现时才值得：届时形状是“SDK 资源描述 + 每后端实现”，不是包 vsg 的基类 | 第二个后端出现（与 T15 同一触发） | `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §选项表 |
-| T31 | 字节 revision 的跨线程轮询 | `StreamUploads::beginFrame` 在引擎线程比较活 `Buffer` 的 `revision()`，而那是普通计数器；流式写入与引擎帧并发时是未定义行为。修法不是改 atomic（只修一个字段），而是让写入方在发布边界声明一个值（`(buffer, revision)` 声明），驻留按声明判活。帧载荷的程序/材质/灯值已走值通道（W1） | T17 异步上传 / 编译落地，或流式写入真的与引擎线程并发 | `../design/graphics-threading.md` §2.4、R3-1 |
 
 ### 2.3 平台与验证
 | # | 项 | 内容 | 触发条件 |
@@ -57,7 +54,7 @@
 | T17 | 异步上传 / 编译入口 | 无异步入口（契约是单线程串行） | 一次加载超过一帧预算 |
 | T18 | `OwnedFrame` 的消费者 | `OwnedFrame` 是零生产消费者的公开类型（仅自测） | 远程渲染 / 录制真正开工时再决定去留 |
 | T20 | 收集遍历的分派开销 | 已把 `Object` 派生类型的 `dynamic_cast` 换成 `obj_cast`（实测命中 21.7→8.2 ns、未命中 42.2→20.5 ns，Debug / MSVC）。仍可选的是 `contributeState` / `forEachChild` 虚钩子：`Group` / `StateNode` / `Geometry` 的新子类已被现有分派识别，不构成扩展性缺口；只有在替换后 profile 仍指向类型转换时才做。非 `Object` 类型（`CameraManipulator`、第三方 vsg 类型）保留 `dynamic_cast` | 大场景“每帧收集本身成为瓶颈”，且 profile 仍指向类型转换 |
-| T22 | `RenderBackend` 聚合拆分 | 拆成 device / executor 两个工厂出口（今天一个聚合同时是 `RenderDevice` 与 `RenderFrameExecutor`） | 第一个 device 需要驱动两个 executor，或第一个工厂只想返回 `RenderDevice` |
+| T32 | `RenderBackend` 聚合拆分 | 拆成 device / executor 两个工厂出口（今天一个聚合同时是 `RenderDevice` 与 `RenderFrameExecutor`，`RenderBackend.hpp` 仍多重继承） | 第一个 device 需要驱动两个 executor，或第一个工厂只想返回 `RenderDevice` |
 
 ### 2.5 着色参数
 

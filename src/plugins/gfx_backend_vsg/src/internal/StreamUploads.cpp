@@ -97,6 +97,8 @@ struct StreamUploads::Data {
 
     std::uint64_t refusals{ 0 };
     std::uint64_t aliases{ 0 };
+    /// Bytes the binds built so far have copied (see uploadedBytes): the array each bind reads, aliased or staged.
+    std::uint64_t uploaded_bytes{ 0 };
 };
 
 StreamUploads::StreamUploads()
@@ -163,6 +165,7 @@ StreamUploads::acquireVertex(const core::StreamKey& key, std::span<const float> 
 
         const auto binding = bindingOfCanonical(key.location);
         auto       bind    = ::vsg::BindVertexBuffers::create(binding, ::vsg::DataList{ array });
+        d->uploaded_bytes += static_cast<std::uint64_t>(array->dataSize());
         return Data::VertexEntry{ bind, std::move(owner) };
     });
     if (acquired.value == nullptr) {
@@ -202,6 +205,7 @@ StreamUploads::acquireIndex(const core::StreamKey& key, std::span<const std::uin
             array = snapshot;
         }
         auto bind = ::vsg::BindIndexBuffer::create(array);
+        d->uploaded_bytes += static_cast<std::uint64_t>(array->dataSize());
         return Data::IndexEntry{ bind, std::move(owner) };
     });
     if (acquired.value == nullptr) {
@@ -252,6 +256,11 @@ std::size_t StreamUploads::live() const noexcept
 std::uint64_t StreamUploads::uploads() const noexcept
 {
     return d->vertex.builds() + d->index.builds();
+}
+
+std::uint64_t StreamUploads::uploadedBytes() const noexcept
+{
+    return d->uploaded_bytes;
 }
 
 std::uint64_t StreamUploads::aliases() const noexcept

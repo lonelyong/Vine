@@ -698,3 +698,21 @@
 - **边界**：测试直接调 `detail::selectSnapshot`，**不**经 `SnapshotSource`（memo 是引擎线程独有的）；`R15`（折叠一次）
   沿用 `GraphicsTest` 的 `contentCollect*` 用例，不新增计数器。
 - **结果**：`test_graphics` 567 全绿；`scripts/tsan_check.sh` 567 例 0 warning（并行用例 31 ms）。
+
+## 2026-11-13 —— backlog §2.2 复核 + T25/T26/T29 落地
+
+- **复核结论（写回 backlog）**：T9（V2 `forget`）删除（`forget(` 在 src 与 vsg 1.1.16 都不存在）；T24 重写
+  （旧 1597 µs 测的是 `Scene::collectRenderCommands` 直接路径，帧已走 `SnapshotSource::selectSnapshot`，
+  先补 select 配方重测）；T31 升级为 §1 的**已知潜在竞态**（`StreamUploads.cpp` 引擎线程读 `Buffer::revision()`，
+  该字段非 atomic；今天没有宿主每帧改 buffer）；2.4 的重复 T22 → T32；T8 注明证据装置已就位；
+  “内容提库”条目删除（ADR-2026-11-13-content-seam-stays-in-the-plugin）。
+- **T25 + T29**：新 `FrameUploads`（SDK `FrameStats.hpp`）挂到 `FrameReport::uploads` —— 本帧 stream/texture
+  的上传数、字节与释放数。`StreamUploads` 加 `uploadedBytes()`，`MaterialImages` 加 `built()` / `uploadedBytes()`；
+  `VsgBackend` 在 `executeFrame` 开帧取基线、**录制完**取差值（上传发生在 `recordContent`，不在 `collectFrame`——
+  第一版把差值放在 collect 后，结果全 0），失败路径先置零。
+- **T26**：`StagingTask::releaseStaging()` 只还 `staging->size > minimumStagingBufferSize` 的块，等于下限的保留
+  （每帧上传宿主稳态零分配）；新 ADR 取代 ADR-2026-11-10 的“全部不保留”。
+- **测试**：新 `FrameUploadsTest`（增量、稳态 0、buffer revision 重传、换内容报释放）；`UploadScratchTest` 改成
+  “存活块都是下限的倍数 + 一次性大块被还掉”（`makeBigTriangle` 17 MiB）。`UploadScratchTest` 的 floor 不再固定为
+  16 MiB：每个用过的 frame slot 各留一块（至多 3 块）。
+- **共享夹具**：`tests/test_vsg/TestTriangleContent.hpp`（TriangleFixture / makeTriangle / makeBigTriangle / makeCamera）。

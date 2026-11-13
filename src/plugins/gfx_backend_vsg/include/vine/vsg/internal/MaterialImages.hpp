@@ -165,6 +165,12 @@ ck of its own.
 luded). */
     [[nodiscard]] std::size_t count() const noexcept;
 
+    /** @brief Gets how many images have been built so far (cumulative; a new revision of one texture is a new build). */
+    [[nodiscard]] std::uint64_t built() const noexcept;
+
+    /** @brief Gets the bytes those builds have copied so far (cumulative; a frame's own number is a delta). */
+    [[nodiscard]] std::uint64_t uploadedBytes() const noexcept;
+
     /**
      * @brief Gets the staged bytes the cached images carry (the mip chains, no allocator overhead).
      *

@@ -406,6 +406,10 @@ struct MaterialImages::Data {
     std::vector<SamplerEntry> samplers;
     /// The staged bytes of every live entry (what bytes() answers; kept in step with insertions and erasures).
     std::uint64_t bytes_total{ 0 };
+    /// Images built so far and the bytes they copied (see built() / uploadedBytes(); cumulative, a frame delta is taken
+    /// against them). A new revision of one texture is a new build.
+    std::uint64_t built{ 0 };
+    std::uint64_t uploaded_bytes{ 0 };
     /// Entries the frame sweep has let go so far (what released() answers; explicit releases are not counted here).
     std::size_t                 released{ 0 };
     std::shared_ptr<WhiteImage> white;
@@ -543,6 +547,8 @@ SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture
         }
         found = d->cache.insert_or_assign(texture, Data::Entry{ std::move(owner), view, default_sampler, revision, bytes }).first;
         d->bytes_total += bytes;
+        ++d->built;
+        d->uploaded_bytes += bytes;
     }
 
     SamplerImage images;
@@ -558,6 +564,16 @@ SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture
 std::size_t MaterialImages::count() const noexcept
 {
     return d->cache.size();
+}
+
+std::uint64_t MaterialImages::built() const noexcept
+{
+    return d->built;
+}
+
+std::uint64_t MaterialImages::uploadedBytes() const noexcept
+{
+    return d->uploaded_bytes;
 }
 
 std::uint64_t MaterialImages::bytes() const noexcept

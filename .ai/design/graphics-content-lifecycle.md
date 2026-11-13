@@ -58,7 +58,7 @@
 而一次上传用来中转的 host 暂存（vsg 是 `TransferTask` 的 `staging`：整次上传一个 `HOST_VISIBLE` 缓冲，只增不减）在拷贝落地后
 **没有第二个读者**——它既不是宿主对象的驻留，也不是可复用的缓存，只是没还给系统的临时内存。为什么：先把它归类，才谈得上谁决定“何时还”。它不能进 `releaseContent` 的口径（那会替宿主决定驻留），
 也不该变成容量上限/预算（`G8`：没有消费者）。
-边界：**这块暂存不保留**。它是**一个** `vkCmdCopyBuffer` 的源，没有第二个读者；拷贝的 fence 一完成它就是死重。
+边界：**这块暂存不再常驻，但可复用的下限大小保留**（2026-11-13，`../decisions/ADR-2026-11-13-staging-keeps-the-reusable-block.md`）。它是**一个** `vkCmdCopyBuffer` 的源，没有第二个读者；拷贝的 fence 一完成它就是死重。
 所以“何时还”不是一道需要谁决定的题：证据（那块的 fence）到了就还，触发点是**帧边界**，宿主不参与、也不需要知道（F16–F21）。
 满足 `G1` / `G7` / `G10`：一条规则、零等待；同一件事也不再有第二个名字（`RenderDevice` 上不再有“清一次上传”的动词）。
 代价写在 D14：依赖 vsg 的 protected 块状态（派生任务读/清）。
@@ -172,7 +172,8 @@ revision，所以隐藏 / 裁剪的材质不丢贴图，材质行过了 epoch �
 | `RenderDevice::releaseContent(raw_ptr<const Object>)` | 释放 GPU 驻留 |
 | `RenderEngine::releaseContent(...)` | 引擎转发 |
 
-上传暂存**没有入口**：它在帧边界自己释放（F16–F19）；后端侧的现面是 `VsgBackend::uploadStagingBytes()` 与
+上传暂存**没有入口**：它在帧边界自己回收（F16–F19）；后端侧的现面是 `VsgBackend::uploadStagingBytes()` 与
+每帧的观测值 `FrameReport::uploads`（`FrameUploads`，2026-11-13）。
 `api::OffscreenSession::stagedBytes()`（只读观测）。
 
 ### 4.2 缓存与存储
@@ -284,13 +285,13 @@ revision，所以隐藏 / 裁剪的材质不丢贴图，材质行过了 epoch �
 | D7 | 用时间线 park（或 `deviceWaitIdle`）当证据 | 证据是那块自己的 fence，比窗口强也比设备空闲便宜：零等待、零 idle。 |
 | D8 | 引擎每帧“好心”调一次回收 | 引擎不该有资源政策，而且它看不到“这次拷贝完了没有”。帧边界上由后端自己看 fence 才是同一件事的正确位置。 |
 | D9 | 环境变量当开关 | 它等价于“用完就放”，不是可选政策；开关只会多一条要解释的线。 |
-| D10 | 给 `FrameCounters` 加每帧上传数，让引擎据此触发 | 没人读的 SDK 字段（`G8`）；每帧上传数作为观测指标进 backlog（T25）。 |
+| D10 | 给 `FrameCounters` 加每帧上传数，让引擎据此触发 | 没人读的 SDK 字段（`G8`）。**观测面已于 2026-11-13 落地为 `FrameReport::uploads`**（`FrameUploads`：本帧 stream/texture 的上传、字节与释放）；引擎仍不据此触发。 |
 | D11 | 给引擎加一个转发入口 | 引擎已经有 `device()`；多一个只做一跳的入口等于同一件事两个名字（`G4`）。 |
 | D12 | 只登记一个“待清理”标记，真正清理留到下一帧 | 登记不等于还了；帧边界就是那个“下一帧”，不需要一个额外状态。 |
 | D13 | 清块之前先问一句“这个 DataToCopy 还有待拷数据吗” | 看起来便宜，实际上那种表可以长期非空而无任何待拷，于是 sweep 永久跳过（见 6.3 E）。 |
 | D14 | 用设备级上传计数（`uploads()` / `count()`）判断“手里有没有块” | 计数答的是设备，不是被问的会话（见 6.3 D）。改成问会话自己的任务（F22）。 |
 | D15 | 换掉整个 `TransferTask` 来释放 | 会把每块的 command pool / command buffer / fence 一起丢掉，还要把三处交接再正确一遍（`vsg-pitfalls.md` P42.1）；清 `staging` 只丢那块缓冲。 |
-| D16 | 只清比 `minimumStagingBufferSize` 大的块（留可复用的小块） | 能让“每帧都上传”的宿主少一次分配，但把“用完就放”变成“够大才放”；当前仓库里没这种宿主，触发条件在 backlog。 |
+| D16 | 只清比 `minimumStagingBufferSize` 大的块（留可复用的小块） | ~~否决~~ **已采纳（2026-11-13，T26）**：每帧上传的宿主稳态零分配，一次性大块仍还掉；见 `../decisions/ADR-2026-11-13-staging-keeps-the-reusable-block.md`。 |
 
 ## 8. 测试与验收
 
@@ -300,12 +301,13 @@ revision，所以隐藏 / 裁剪的材质不丢贴图，材质行过了 epoch �
 | T2 | `VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt`。 |
 | T3 | `HeadlessBackendTest.TheEngineForwardsAContentReleaseToItsDevice`。 |
 | T4 | `BlockStorageTest.*` / `MaterialArenaTest.*` / `StreamUploadsTest.*`。 |
-| T5 | `UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack`：上传后帧不涨 idle；上传的暂存**没人调**就被后续帧清掉（数归零，且只需几帧）；同一内容重画零上传；新流再上传、再由后续帧归零。 |
+| T5 | `UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack`：上传后帧不涨 idle；上传的暂存**没人调**就被后续帧收回（存活块都是可复用尺寸的倍数；大于下限的一次性大块被还掉）；同一内容重画零上传；新流再上传、再回落到下限。 |
 | T6 | `OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting`：会话起来就装好了可问的任务（`stagedBytes()` 有值且为 0），出帧不涨 idle，之后仍能提交。 |
 | T7 | `OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands`：机制层（256 MB 工作集回落 + 后续上传逐字节读回；vsg 自建的任务答不出 → 装过之后报 0 → 再上传后报 ≥ 4096 字节）。 |
 | T8 | `HeadlessBackendTest`：设备双不再有暂存入口（动词已从 SDK 删除，`RenderDevice` 少一个虚函数）。 |
 | T9 | 六种“不再被画”（§2.9 / F23–F28）：`ContentStoreTest.*Release*`（离树与显式释放）、`ContentStoreTest.ACulledGeometryKeepsItsUploadsForAHundredFrames`（裁剪 100 帧零重传）、`ContentStoreTest.AStreamLeavesWithinTheParkingWindowAfterItsGeometryIsDropped`（离树 `slots + 1` 帧内 `live()` 下降）、`StreamUploadsTest.TwoGeometriesOfOneBufferShareOneUploadUntilBothLeave`（共享 buffer 的 pin 合并）、`VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt`（释放后重建）、`VsgBackendTest` 的 pass 身份用例（`releasePass` 只忘 id）。隐藏 / 裁剪的“行不变、上传也留着”由 `StreamUploadsTest` 与 `ContentStoreTest` 各钉一半，不合并成一条——那是两件不同的事实。 |
 | T10 | 实例流也是**声明**（§2.5 / §6.5）：`ContentStoreTest.AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRevision` —— 行带着 primitive 的实例句柄并据此声明它；换了切片但**没**报新描述时只声明旧流；`bumpRevision()` 后活行声明新流、停车中的旧行仍声明旧流；旧行离场后只剩新流。 |
+| T11 | 每帧上传/释放在报告里是**增量**（T25/T29）：`FrameUploadsTest.TheReportAnswersWhatThisFrameUploadedAndReleased` —— 帧前无答案；首帧 `stream_uploads`/`stream_bytes` > 0；稳态全 0；`Buffer::bumpRevision()` 后重新上传一次；换内容时报 `stream_releases` > 0。 |
 
 ## 9. 状态与演进
 

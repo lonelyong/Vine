@@ -32,12 +32,16 @@ namespace detail
  *   therefore the only way to reach it without patching vsg, which is this adapter layer's job (it already hardcodes
  *   the task count `RecordAndSubmitTask` builds, hands the `transferQueue` over by hand and publishes the task on
  *   `device->transferTask`).
- * - WHAT IT DOES ABOUT IT. NOTHING IS KEPT. A block's staging buffer is the SOURCE of one `vkCmdCopyBuffer` and has no
- *   second reader, so once that copy's fence signals the buffer is dead weight - vsg simply never lets it go
- *   (measured: 1.2 GB resident after loading a model, and it grows to one such block per frame slot, because uploads
- *   rotate through them). `releaseStaging()` frees the buffer the moment the block's own fence proves the copy is done,
- *   which is the same state vsg's growth path already handles (`if (!staging || staging->size < totalSize) staging =
+ * - WHAT IT DOES ABOUT IT. A block's staging buffer is the SOURCE of one `vkCmdCopyBuffer` and has no second reader, so
+ *   once that copy's fence signals the bytes are dead weight - vsg simply never lets them go (measured: 1.2 GB resident
+ *   after loading a model, and it grows to one such block per frame slot, because uploads rotate through them).
+ *   `releaseStaging()` frees the buffer the moment the block's own fence proves the copy is done, which is the same
+ *   state vsg's growth path already handles (`if (!staging || staging->size < totalSize) staging =
  *   createBufferAndMemory(...)`): the next upload through that block sizes a fresh one.
+ * - WHAT IT KEEPS (T26): a block whose staging is AT OR UNDER `minimumStagingBufferSize` stays. That is the size vsg
+ *   allocates for a small transfer anyway, so a host that uploads every frame (dynamic geometry, a streaming point cloud)
+ *   would otherwise pay one allocation per frame forever; keeping the reusable block makes the steady state zero
+ *   allocations. Larger blocks are one-off weight and are still given back - the 1.2 GB case the sweep exists for.
  * - WHY THAT IS BETTER THAN REPLACING THE TASK. A new task would also throw away every block's command pool, command
  *   buffer and fence, and would have to inherit three handovers correctly or uploads stop landing silently (see
  *   `installStagingTask`); clearing the buffer keeps all of that and costs one allocation on the next upload.

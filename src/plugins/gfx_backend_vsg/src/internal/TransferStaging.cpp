@@ -52,6 +52,13 @@ namespace detail
             if (block->fence != nullptr && block->fence->status() != VK_SUCCESS) {
                 continue;
             }
+            // THE REUSABLE SIZE STAYS (T26). vsg sizes a block's staging to max(transfer, minimumStagingBufferSize), so a
+            // block at or under the minimum is the buffer a PER-FRAME uploader would otherwise rebuild every frame;
+            // keeping it turns that allocation into zero. A LARGER one is one-off weight (a model load) and is given
+            // back here - which is the case the original measurement was about.
+            if (block->staging->size <= minimumStagingBufferSize) {
+                continue;
+            }
             freed += block->staging->size;
             // EXACTLY THE STATE vsg's own growth path starts from (`!staging` -> create + map), so the next upload through
             // this block sizes a fresh buffer; `buffer_data` points into the memory being freed.

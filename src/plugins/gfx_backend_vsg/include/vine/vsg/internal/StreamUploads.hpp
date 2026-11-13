@@ -210,6 +210,16 @@ class StreamUploads {
     /** @brief Gets the number of binds built (one upload each). */
     [[nodiscard]] std::uint64_t uploads() const noexcept;
 
+    /** @brief Gets the bytes those binds have copied so far (cumulative; a frame's own number is a delta).
+     *
+     * @details
+     * - The size of the array a built bind reads: an aliased bind reads the model's own bytes and is counted at its
+     *   real size too - the device copy happens either way, it is only the host-side staging that is shared.
+     *
+     * @return Bytes uploaded since construction.
+     */
+    [[nodiscard]] std::uint64_t uploadedBytes() const noexcept;
+
     /** @brief Gets the number of acquires an existing bind answered. */
     [[nodiscard]] std::uint64_t aliases() const noexcept;
 
