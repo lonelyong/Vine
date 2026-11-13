@@ -46,6 +46,24 @@ inline vn::String nextTestPassName()
 } // namespace detail
 
 /**
+ * @brief The pass identity a hand-built FrameDescription names (see FrameDescription::Pass::pass).
+ *
+ * @details
+ * - AN ENTRY THAT NAMES NO PASS IS NOTHING TO RUN (see RenderFrameExecutor::executeFrame), so a test that builds a
+ *   frame value by hand has to name one - otherwise it is handing the backend a frame with no work in it.
+ * - ONE IDENTITY SERVES EVERY FRAME, because a backend keys per-pass retained state by it and these frames are
+ *   about the drawing path, not about per-pass retention: the object lives for the whole process, so a frame that
+ *   borrows it stays valid for the call that runs it.
+ *
+ * @return A pass that outlives every frame of the process.
+ */
+inline vn::raw_ptr<const vn::graphics::RenderPass> framePassForTest()
+{
+    static const vn::intrusive_ptr<vn::graphics::RenderPass> s_pass(new vn::graphics::RenderPass());
+    return s_pass.get();
+}
+
+/**
  * @brief States one declaration and answers the registered node.
  *
  * @details

@@ -34,6 +34,7 @@
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderState.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -45,6 +46,8 @@
 #include <vine/math/Vector3.hpp>
 
 #include <vine/backend_vk/internal/ShaderCompiler.hpp>
+
+#include "PlanTestSupport.hpp"
 
 using vn::Colorf;
 using vn::String;
@@ -259,7 +262,7 @@ void main()
     FrameDescription frame;
 
     FrameDescription::Pass entry;
-    entry.pass  = nullptr;
+    entry.pass  = vn::test::framePassForTest();
     entry.order = 0;
 
     PassDraw pass;
@@ -279,7 +282,7 @@ void main()
     FrameDescription frame;
 
     FrameDescription::Pass entry;
-    entry.pass  = nullptr;
+    entry.pass  = vn::test::framePassForTest();
     entry.order = 0;
 
     PassDraw pass;
@@ -615,6 +618,7 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
 
     FrameDescription frame;
     FrameDescription::Pass entry;
+    entry.pass = vn::test::framePassForTest();
     PassRenderState        state;
     state.depth = DepthMode::Disabled;
     PassDraw pass;

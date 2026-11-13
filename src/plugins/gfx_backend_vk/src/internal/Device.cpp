@@ -79,6 +79,30 @@ constexpr const char* kPlatformSurfaceExtensionName = "VK_KHR_xcb_surface";
 }
 
 /**
+ * @brief Whether @p description is a DRAWING CALL at all (see FrameCounters::draws).
+ *
+ * @details
+ * - A drawing call is one `DrawDescription` a backend can issue, NOT the GPU commands inside it: one drawable is one
+ *   call whatever its primitives (the reference recorder counts it the same way, which is what makes the two frame
+ *   reports comparable - see the parity suite).
+ * - The conditions are the SDK's own: a call with no view is no call at all, a screen call without a program draws
+ *   nothing, and a content call with an empty list has nothing to draw.
+ *
+ * @param description The drawing call as the frame describes it.
+ * @return true when it is a call the record counts.
+ */
+[[nodiscard]] bool isDrawingCall(const vn::graphics::DrawDescription& description) noexcept
+{
+    if (!description.camera.present) {
+        return false;
+    }
+    if (description.kind == vn::graphics::DrawDescription::Kind::Screen) {
+        return description.program != nullptr || description.program_description != nullptr;
+    }
+    return description.commands != nullptr && !description.commands->empty();
+}
+
+/**
  * @brief The debug-utils callback: forwards every layer message to the device that installed it.
  *
  * @param severity   The layer's severity flags.
@@ -827,10 +851,25 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     runnable_passes.reserve(frame.passes.size());
     bool window_acquired = false;
     for (const FrameDescription::Pass& entry : frame.passes) {
+        if (entry.pass == nullptr) {
+            continue; // the SDK's rule: an entry that names no pass is nothing to run (see RenderFrameExecutor)
+        }
         if (!entry.draw.has_value()) {
             continue; // a pass that issued nothing: the scope opens and closes, nothing to record
         }
         const PassDraw& draw = *entry.draw;
+
+        // WHAT THE FRAME'S SHAPE RECORDS (see FrameCounters): a scope enters the plan when it has an effect - it drew
+        // something, or it announced a clear (a clear is the pass' own load-op, so a clear-only pass is a real pass
+        // with no draws). The reference recorder states the same rule, which is what makes the two reports comparable.
+        std::uint64_t calls = 0U;
+        for (const DrawDescription& description : draw.draws) {
+            calls += isDrawingCall(description) ? 1U : 0U;
+        }
+        if (calls != 0U || draw.clear.has_value()) {
+            ++counters.passes;
+            counters.draws += calls;
+        }
         if (draw.target == nullptr) {
             if (window == nullptr || !window->ready()) {
                 if (!impl->reported_surface) {
@@ -900,9 +939,8 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     // ONE DESCRIPTOR POOL RESET PER FRAME: the pool's sets are the per-draw uniform bindings, and the previous frame
     // is complete by now (the device submits synchronously), so nothing still names them.
     impl->content.beginFrame();
-    // THE SHAPE OF THE FRAME THAT RAN, as the SDK counts it: the pass scopes recorded here and the drawing calls
-    // they issued (a pass whose draws were all skipped is still a pass that ran).
-    counters.passes = static_cast<std::uint64_t>(runnable_passes.size());
+    // The pass count was taken from the frame's shape above (a pass whose draws were all skipped is still a pass
+    // that ran); what the loop below adds is the drawing calls this backend actually recorded.
 
     bool first_window_pass = true;
     for (const Runnable& item : runnable_passes) {
@@ -1027,7 +1065,8 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
 
         impl->device_table.vkCmdBeginRenderPass(commands, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
         // WHAT THIS PASS DRAWS. Each draw description is borrowed for this call; every command inside it becomes one
-        // drawing call (M3: resolved state selects the pipeline, one `RenderCommand` = one indexed draw).
+        // GPU draw (M3: resolved state selects the pipeline, one `RenderCommand` = one indexed draw). The frame's
+        // DRAWING-CALL count was taken from the frame's shape above - a call is the description, not its commands.
         for (const DrawDescription& description : draw.draws) {
             vn::String                       why;
             vn::graphics::DiagnosticCategory category = DiagnosticCategory::ContentSkipped;
@@ -1040,30 +1079,30 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                     source.images = source_images->second.colors;
                     source.views  = source_images->second.color_views;
                 }
-                counters.draws += impl->content.recordScreen(commands,
-                                                             render_pass,
-                                                             compatibility,
-                                                             color_count,
-                                                             static_cast<int>(extent.width),
-                                                             static_cast<int>(extent.height),
-                                                             description,
-                                                             draw,
-                                                             source,
-                                                             &why,
-                                                             &category);
+                (void)impl->content.recordScreen(commands,
+                                                 render_pass,
+                                                 compatibility,
+                                                 color_count,
+                                                 static_cast<int>(extent.width),
+                                                 static_cast<int>(extent.height),
+                                                 description,
+                                                 draw,
+                                                 source,
+                                                 &why,
+                                                 &category);
             }
             else {
-                counters.draws += impl->content.record(commands,
-                                                       render_pass,
-                                                       compatibility,
-                                                       color_count,
-                                                       static_cast<int>(extent.width),
-                                                       static_cast<int>(extent.height),
-                                                       description,
-                                                       draw,
-                                                       impl->default_program.get(),
-                                                       &why,
-                                                       &category);
+                (void)impl->content.record(commands,
+                                           render_pass,
+                                           compatibility,
+                                           color_count,
+                                           static_cast<int>(extent.width),
+                                           static_cast<int>(extent.height),
+                                           description,
+                                           draw,
+                                           impl->default_program.get(),
+                                           &why,
+                                           &category);
             }
             if (!why.empty() && !impl->reported_content) {
                 impl->reported_content = true;
@@ -1245,6 +1284,9 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
     report.outcome = PrepareReport::Outcome::Prepared;
 
     for (const FrameDescription::Pass& entry : frame.passes) {
+        if (entry.pass == nullptr) {
+            continue; // the SDK's rule: an entry that names no pass is nothing to run (see executeFrame)
+        }
         if (!entry.draw.has_value()) {
             continue;
         }
@@ -1254,14 +1296,11 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
         }
         // THE SHAPE OF THE FRAME ASKED FOR (see PrepareReport): counted whether or not this device can build it.
         ++report.passes;
+        std::uint32_t calls = 0U;
         for (const DrawDescription& description : draw.draws) {
-            if (!description.camera.present) {
-                continue; // no view means no drawing call
-            }
-            report.draws += description.kind == DrawDescription::Kind::Screen
-                                ? 1U
-                                : (description.commands != nullptr ? static_cast<std::uint32_t>(description.commands->size()) : 0U);
+            calls += isDrawingCall(description) ? 1U : 0U;
         }
+        report.draws += calls;
 
         VkRenderPass                                  render_pass   = VK_NULL_HANDLE;
         std::uint32_t                                 color_count   = 0U;

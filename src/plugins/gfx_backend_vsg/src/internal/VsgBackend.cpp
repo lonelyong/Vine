@@ -1055,12 +1055,18 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
     // ones the frame will ask for. The recorder needs a TOKEN and this is not a frame, so it gets the "not a frame"
     // spelling (0): nothing downstream of prepare reads it - the content tables date their rows by the session's
     // clock, not by the plan's number.
+    //
+    // A PREPARE IS NOT A FRAME, so the counters it disturbs are put back: compiling the plan runs the recorder (that
+    // is what gives the plan its scopes), and an answer taken after a warm-up must still describe the last EXECUTED
+    // frame - see FrameCounters ("the frame that just ended").
+    const vn::graphics::FrameCounters counters_before = d->observe.counters();
     if (!d->recorder.beginFrame(core::FrameToken{})) {
         d->driving = kNoWindow;
         return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::Refused };
     }
     collectFrame(frame);
     closeFrameBooks();
+    d->observe.counters() = counters_before;
     const core::CompiledFrame& plan = *d->frame;
     d->frame                        = nullptr; // PREPARE LEAVES NO FRAME TO PRESENT: there is nothing recorded
 
@@ -1812,6 +1818,13 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target,
     for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
         detail::SessionContentAccess::waitDeviceIdle(*window->session);
     }
+    if (d->offscreen != nullptr) {
+        // AND THE OFF-SCREEN SESSION, which a device created to present nothing has instead of a window: its frames
+        // are submitted by its own viewer, so without this wait the copy below can be submitted while the frame
+        // that wrote the pixels is still in flight (measured: a windowless device read zeros where the windowed one
+        // read the picture - the parity suite is where that surfaced). One device idle, counted like the others.
+        d->offscreen->waitDeviceIdle();
+    }
 
     const HostReadbackRefusal refusal = readColorAttachment(*entry->target, static_cast<std::uint32_t>(attachment), device.get(), outPixels);
     if (refusal != HostReadbackRefusal::None) {
@@ -1867,6 +1880,9 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::
     // any of them (see readColorBuffer's note).
     for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
         detail::SessionContentAccess::waitDeviceIdle(*window->session);
+    }
+    if (d->offscreen != nullptr) {
+        d->offscreen->waitDeviceIdle(); // the windowless device's only submitter (see readColorBuffer's note)
     }
 
     const HostReadbackRefusal refusal = readDepthAttachment(*entry->target, device.get(), outDepths);

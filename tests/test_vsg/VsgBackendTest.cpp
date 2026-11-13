@@ -4792,6 +4792,10 @@ TEST(VsgBackendTest, PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing)
 
     const vn::graphics::FrameReport warmed = backend->frameReport();
     ASSERT_TRUE(warmed.counters.has_value());
+    // THE COUNTERS DESCRIBE THE FRAME THAT JUST ENDED (see FrameCounters), and no frame has run yet: the warm-up
+    // records nothing, so its answer is zero rather than what a later frame will say.
+    EXPECT_EQ(warmed.counters->passes, 0U);
+    EXPECT_EQ(warmed.counters->draws, 0U);
 
     backend->executeFrame(frame(), window_target);
 
@@ -4803,8 +4807,8 @@ TEST(VsgBackendTest, PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing)
 
     const vn::graphics::FrameReport ran = backend->frameReport();
     ASSERT_TRUE(ran.counters.has_value());
-    EXPECT_EQ(ran.counters->passes, warmed.counters->passes + 1U) << "the frame recorded the one pass the value names";
-    EXPECT_EQ(ran.counters->draws, warmed.counters->draws + 1U) << "and the one drawing call it issues";
+    EXPECT_EQ(ran.counters->passes, 1U) << "the frame recorded the one pass the value names";
+    EXPECT_EQ(ran.counters->draws, 1U) << "and the one drawing call it issues";
     EXPECT_EQ(backend->framesPresented(), 1U) << "this one really was a frame";
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "the prepared frame recorded silently";
 

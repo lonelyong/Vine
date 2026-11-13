@@ -68,6 +68,11 @@ set(SRC_FILE_LIST
 	PrimitiveDrawTest.cpp
 	# When the upload scratch is given back: the frame that uploaded pays for it (see vsg-backend.md F16.2).
 	UploadScratchTest.cpp
+	# M7 parity: ONE FrameDescription drawn by this backend AND by the vk backend, compared as a record and as
+	# pixels (see .ai/research/graphics-2026-11-13-gpu-resource-abstraction.md §8.3 M7). The vk sources are
+	# compiled into this binary below - the parity claim is about two backends answering ONE value in ONE
+	# process, not about two test executables agreeing on a file.
+	BackendParityTest.cpp
 )
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
@@ -102,6 +107,26 @@ find_package(vsg CONFIG QUIET)
 find_package(Qt6 CONFIG REQUIRED COMPONENTS Core)
 
 target_link_libraries(${TEST_NAME} vn::Appfw vn::Graphics vn::Logging Qt6::Core tp::volk)
+
+# THE PARITY SUITE'S SECOND BACKEND (see BackendParityTest.cpp): gfx_backend_vk is a MODULE as well, so its
+# device sources are compiled into this target the same way test_vk does it, and glslang is the compiler the
+# vk sources reach for (provisioned at the top level by cmake/VineGlslang.cmake). Compiling it HERE rather than
+# in a third executable is the build-cost decision: this binary already carries the reference backend, and the
+# parity cases only need the vk DEVICE half, not a second copy of the whole test suite.
+target_sources(${TEST_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/BarrierPlan.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ContentDraw.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ContentImages.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/Device.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/LightBlock.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ShaderCompiler.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/TargetImages.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/WindowTarget.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/XcbSurface.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/shell/BackendFactory.cpp)
+target_include_directories(${TEST_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/include)
+target_link_libraries(${TEST_NAME} glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits)
 
 # VsgHostWindow creates the host surface itself; vsg builds the same code but links xcb PRIVATE, so its
 # include directories do not reach this target.

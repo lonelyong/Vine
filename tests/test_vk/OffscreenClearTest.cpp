@@ -20,7 +20,10 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
+#include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+
+#include "PlanTestSupport.hpp"
 
 using vn::Colorf;
 using vn::graphics::ClearPolicy;
@@ -54,7 +57,7 @@ namespace
     FrameDescription frame;
 
     FrameDescription::Pass entry;
-    entry.pass = nullptr; // M1 keys nothing by the pass identity; M2 will.
+    entry.pass = vn::test::framePassForTest(); // an entry that names no pass is nothing to run (see RenderFrameExecutor)
     entry.order = 0;
 
     PassDraw draw;

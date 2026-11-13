@@ -188,7 +188,7 @@
 | M4 | 材质块 + 纹理 + 灯块 + screen draw + 透明排序（引擎已排好） | 材质/采样/全屏拷贝像素 · **已落地 2026-11-13**：内容 ABI 改为引擎 ABI（set 0 = material@0 / 五槽 1–5 / lights@6，set 1 = draw@0，相机 = 128B push）；`ContentImages`（纹理上传 + sampler 缓存 + 1x1 白色 stand-in，上传在 render pass 之前由 `preparePass` 记录）；`LightBlock`（view-space 打包，`kMaxLights = 8`）；`recordScreen`（引擎 fullscreen vertex + draw 自己的 fragment，source 颜色附件 = set 0 binding 0..N-1）；无 clear 的 pass 由 colour+depth LOAD 变体承载（fresh 时回退 CLEAR）；blend 走逐命令 `resolveRenderState`；target 颜色/深度图像新增 `SAMPLED` usage；`test_vk` 26 例（材质因子、纹理采样、ambient 灯、全屏拷贝像素、半透明叠加） |
 | M5 | `createSurfaceTarget` / `WindowPresentTarget` / acquire / present / resize | 窗口像素与 `PresentRecord` · **已落地 2026-11-13（Handle 模式）**：`WindowTarget`（XCB surface 由 `XcbSurface` 用 dlopen 的 `xcb_connect` 创建；swapchain + D24 + 两个 render pass（CLEAR/LOAD）+ 每 image framebuffer；acquire/present 信号量 + 提交后 `COLOR_ATTACHMENT → PRESENT_SRC` 转移；resize/out-of-date 重建）；`Device::createSurfaceTarget` 一窗口一 target（重复 = `WindowOccupied`）、`DevicePresentation::Handle` 是创建输入（pre-init 的 target 在 initialize 时 attach）；`executeFrame(frame, present_to)` 把 `target == nullptr` 的 pass 画进 acquired image 并在帧尾 present；`capabilities().presentation` 随会话如实回答；`test_vk` 28 例。**已知缺口**：`Probe`（设备自建窗口）未做（答 `UnsupportedSurface`）；WSLg 下 XGetImage 读不到窗口像素（连纯 XCB 填充都读回黑色），所以窗口像素断言在仪器不可读时跳过，由 `Presented` + validation 判定 |
 | M6 | `ResidencyLedger` 每类、`releaseContent`、`prepareFrame`、`FrameReport` | 稳态 0 上传/0 编译；驻留随内容离开而下降 · **已落地 2026-11-13**：`ContentDraw::Progress` / `ContentImages::Progress`（cumulative builds/bytes/releases + live 合计）；`releaseContent(Object)` 按 Geometry / ShaderProgram / Material / Texture 派发，`releaseContent(Buffer)` 按 buffer 身份只放它供出的 stream；`prepareFrame` 与 `executeFrame` 共用 `planCommand` / `planScreen`；`FrameReport` 的 residency 只记 Streams / Images / Halves（material block / set 逐帧存在）；`test_vk` 35 例 |
-| M7 | 与 vsg 对拍：`test_vsg` 的设备无关子集 + 像素子集 | 同一 `FrameDescription` 的记录/像素 diff |
+| M7 | 与 vsg 对拍：`test_vsg` 的设备无关子集 + 像素子集 | 同一 `FrameDescription` 的记录/像素 diff · **已落地 2026-11-13**：`BackendParityTest`（`test_vsg`，8 例）把同一个 frame 值交给两个后端（都是 `DevicePresentation::None`）：clear / 不透明绘制 / 深度序 / 半透明混合 / 全屏拷贝 / 纹理采样六类像素**逐字节相同**，`FrameReport::counters` 与 `PresentOutcome` 相同；无效果的 pass、不命名 pass 的 entry 两例各答 0/0 并同样拒绝回读。对拍修掉三处：vk 投影只折 Y 不折深度（深度保留更远片元）；vsg `FrameCounters` 从不复位（报告逐帧累加）；vsg 无窗口设备回读不等离屏会话（读到全 0）。`test_vk` 35 例 / `test_vsg` 556 例 |
 
 ### 8.4 成本与风险
 
@@ -294,7 +294,7 @@ vk 的 pipeline builder 因此只接受 GLSL，并在源码不是 GLSL 时报告
 | D1 | vk 不改 `backend/` 的公开面 | `git diff --stat src/viz/graphics/sdk/vine/graphics/backend/` 为空（新增中性**输入**需单独说明，见 9.7） |
 | D2 | `Vk*` 不出现在 vk 的**工厂/入口头**（`shell/`） | 只允许 `internal/` 与 `support/`（与 vsg 同形）；**不是门，是形状**——插件头未安装、`shell/` 无第二消费者（`G8`）。边界论证与升级条件见 `graphics-2026-11-13-vk-exposure-boundary.md` |
 | D3 | 驻留账完整 | `ResidencyLedger` 每类有行或显式 absent（`live` 必答） |
-| D4 | 同值同画 | 同一 `FrameDescription` 与 vsg 的记录/像素对拍（M7） |
+| D4 | 同值同画 | 同一 `FrameDescription` 与 vsg 的记录/像素对拍（M7 已落地 2026-11-13：`tests/test_vsg/BackendParityTest.cpp`，8 例逐字节相同） |
 | D5 | 不重编 | resize 不重编管线、host 状态变更不重编管线（`Keys.hpp` audit 表照搬） |
 
 ### 9.7 新加中性枚举时的判据

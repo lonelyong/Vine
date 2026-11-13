@@ -109,21 +109,31 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
 }
 
 /**
- * @brief Flips the projection's Y so an upright picture lands in Vulkan's top-left framebuffer space.
+ * @brief Folds the SDK's clip space into the device's: y down, and z into the [0, 1] reverse-Z range.
  *
  * @details
- * - The SDK's camera builds an OpenGL-style projection (y up in clip space) - it is backend-neutral - while Vulkan
- *   defines framebuffer coordinates with the origin at the TOP-left. Multiplying by diag(1, -1, 1, 1) is what makes
- *   both the picture and the front-face rule come out right (see StateMapping::kFrontFace).
+ * - The SDK's camera builds an OpenGL-style projection (y up, near at clip z = -1, far at +1) - it is
+ *   backend-neutral - while Vulkan defines framebuffer coordinates with the origin at the TOP-left and a depth
+ *   range of [0, 1] that this backend reads with the GREATER comparison (see StateMapping::compareOp): a nearer
+ *   fragment must own the LARGER stored value.
+ * - One matrix carries both parts, exactly as the reference backend's `foldToDeviceClip` does: y is negated
+ *   (diag(1, -1, 1, 1) keeps the picture and the front-face rule right, see StateMapping::kFrontFace) and z is
+ *   mapped to `0.5 - 0.5 z` (near -1 -> 1, far +1 -> 0, matching the depth the pass clears to).
+ * - FOLDING ONLY Y WAS A DEPTH BUG: the fragments' stored depths kept the OpenGL direction, so with GREATER the
+ *   FARTHER fragment won whenever two overlapped. This backend's own tests had stated their depths in the folded
+ *   direction, which is why they could not see it; the parity suite, which hands the SAME frame to both backends,
+ *   did (M7).
  *
  * @param projection The camera's clip-space projection.
- * @return The same projection with Y negated.
+ * @return The same projection in the device's clip convention.
  */
-[[nodiscard]] vn::math::Mat4d flipProjectionY(const vn::math::Mat4d& projection) noexcept
+[[nodiscard]] vn::math::Mat4d foldToDeviceClip(const vn::math::Mat4d& projection) noexcept
 {
-    vn::math::Mat4d flip{}; // identity
-    flip(1, 1) = -1.0;
-    return flip * projection;
+    vn::math::Mat4d fold{}; // identity: x and w are the same in both conventions
+    fold(1, 1) = -1.0;      // the device's NDC is y-down
+    fold(2, 2) = -0.5;      // reverse-Z: the SDK's near (-1) becomes 1, its far (+1) becomes 0
+    fold(2, 3) = 0.5;
+    return fold * projection;
 }
 
 /**
@@ -143,14 +153,14 @@ static_assert(sizeof(ContentPushConstants) == 128U, "the content push range is t
 /**
  * @brief Fills the push range from a pass' camera and one drawable's model matrix.
  *
- * @param camera The pass' camera snapshot (its projection is Y-flipped, see flipProjectionY).
+ * @param camera The pass' camera snapshot (its projection is folded, see foldToDeviceClip).
  * @param model  The drawable's world transform.
  * @return The range's bytes.
  */
 [[nodiscard]] ContentPushConstants pushConstantsOf(const vn::graphics::CameraSnapshot& camera, const vn::math::Mat4d& model) noexcept
 {
     ContentPushConstants push{};
-    copyMatrix(flipProjectionY(camera.projection), push.projection);
+    copyMatrix(foldToDeviceClip(camera.projection), push.projection);
     copyMatrix(camera.view * model, push.model_view);
     return push;
 }

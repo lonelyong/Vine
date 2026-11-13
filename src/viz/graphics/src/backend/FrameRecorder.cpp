@@ -42,6 +42,10 @@ bool FrameRecorder::beginFrame(FrameToken token)
 
     // The frame boundary is the ONE moment a span handed out earlier may die (see FrameArena).
     arena_.reset();
+    // AND THE FRAME'S COUNTERS START AGAIN HERE (see FrameCounters): an answer describes the frame that just ended,
+    // never a running total - `RetentionStats` is where the numbers that only grow live. Resetting in the recorder
+    // rather than in a reader keeps the rule where the increments are.
+    observe_.counters()    = vn::graphics::FrameCounters{};
     token_                 = token;
     pass_open_             = false;
     scope_target_          = nullptr;

@@ -633,7 +633,10 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
           return steady != nullptr && steady->passes.size() == 1U;
       },
       [&]() { return static_cast<std::uint64_t>(observe.counters().draws); },
-      [](std::uint64_t before, std::uint64_t after) { return after == before + 2U; },
+      // THE COUNTER ANSWERS THE FRAME, NOT A RUNNING TOTAL (see FrameCounters): the phase records one pass with
+      // two drawing calls, so the sample reads 2 whatever it read before it. (It used to be an increment, which
+      // is the shape of the defect the parity suite found: the counters never started the next frame from zero.)
+      [](std::uint64_t /*before*/, std::uint64_t after) { return after == 2U; },
     });
     table.add(Phase{
       "the handed-over order is kept",

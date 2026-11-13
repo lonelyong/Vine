@@ -31,9 +31,12 @@
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/math/Matrix4x4.hpp>
+
+#include "PlanTestSupport.hpp"
 
 #if defined(VN_TEST_HAVE_XCB)
 #    include <xcb/xcb.h>
@@ -238,6 +241,7 @@ void main()
 
     FrameDescription frame;
     FrameDescription::Pass entry;
+    entry.pass = vn::test::framePassForTest();
     PassDraw pass;
     pass.target       = nullptr; // the window
     pass.clear        = ClearPolicy{};

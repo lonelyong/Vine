@@ -8,8 +8,9 @@
  *   - RESIZE: an extent change replaces the images and the framebuffer but not the render passes, so the pipeline is
  *     REUSED (`Device::contentPipelines()` does not move); a SHAPE change does rebuild it. That is `planTarget`'s
  *     ResizeInPlace vs Rebuild, observed from outside;
- *   - DEPTH: the default pass policy tests and writes depth (reverse-Z: nearer = greater), so a farther fragment drawn
- *     later must be rejected; with `DepthMode::Disabled` the later fragment wins.
+ *   - DEPTH: the default pass policy tests and writes depth (the SDK projection puts the near plane at clip z = -1,
+ *     and the backend stores it as the larger device depth), so a farther fragment drawn later must be rejected;
+ *     with `DepthMode::Disabled` the later fragment wins.
  *
  * The device cases skip on a machine with no Vulkan device, like every device case in this repository.
  */
@@ -30,6 +31,7 @@
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateResolution.hpp>
@@ -37,6 +39,8 @@
 #include <vine/math/Vector3.hpp>
 
 #include <vine/backend_vk/internal/Device.hpp>
+
+#include "PlanTestSupport.hpp"
 
 using vn::Colorf;
 using vn::String;
@@ -119,7 +123,8 @@ void main()
     return program;
 }
 
-/// @brief Builds an indexed triangle in clip space at depth @p z (reverse-Z: larger is nearer).
+/// @brief Builds an indexed triangle in clip space at depth @p z (a SMALLER z is nearer: the SDK projection puts the
+///        near plane at clip z = -1, which the backend stores as the larger device depth).
 [[nodiscard]] intrusive_ptr<Geometry> makeTriangle(float z)
 {
     std::vector<float> positions{
@@ -186,6 +191,7 @@ void main()
 
     FrameDescription frame;
     FrameDescription::Pass entry;
+    entry.pass = vn::test::framePassForTest();
     PassDraw pass;
     pass.target = target;
     pass.clear  = clear;
@@ -330,8 +336,8 @@ TEST(VkContentTargetTest, ThePassDepthPolicyDecidesWhichFragmentSurvives)
 
     const intrusive_ptr<ShaderProgram> green_program = makeProgram(kGreenFragment);
     const intrusive_ptr<ShaderProgram> red_program   = makeProgram(kRedFragment);
-    const intrusive_ptr<Geometry>      near_geometry = makeTriangle(0.75F); // reverse-Z: larger depth = nearer
-    const intrusive_ptr<Geometry>      far_geometry  = makeTriangle(0.25F);
+    const intrusive_ptr<Geometry>      near_geometry = makeTriangle(0.25F); // near: SMALLER clip z
+    const intrusive_ptr<Geometry>      far_geometry  = makeTriangle(0.75F);
 
     // NEAR first, FAR second: the default policy tests and writes depth, so the far fragment is rejected.
     const std::vector<RenderCommand> ordered{ commandOf(near_geometry, green_program), commandOf(far_geometry, red_program) };
