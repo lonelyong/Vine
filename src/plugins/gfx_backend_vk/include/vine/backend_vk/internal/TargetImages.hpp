@@ -27,6 +27,14 @@ VN_BACKEND_VK_NS_BEGIN
  *   (`TargetAction::ResizeInPlace`, see `planTarget`).
  * - MRT. Every colour attachment is built, cleared and read back on its own; the render pass' subpass references them
  *   in order, which is the order a fragment's output locations write.
+ * - MULTISAMPLING IS A SHAPE FACT, AND IT ADDS A SECOND IMAGE PER ATTACHMENT. A target whose shape says `samples > 1`
+ *   is drawn into MULTISAMPLED colour images and the render pass RESOLVES them into single-sample ones at the end of
+ *   its subpass. `colors` / `color_views` are then the RESOLVE images - the picture this device hands out, which is
+ *   what a screen draw samples and what `readColorBuffer` copies - while `multisample_colors` /
+ *   `multisample_color_views` are the sample buffers, which nothing samples and nothing reads back. The DEPTH is
+ *   multisampled with the same count and NOT resolved: nothing on this path samples or reads it back (a target whose
+ *   depth is read is served single-sampled, see `Device::ensureTarget`), so a resolve there would be an image nobody
+ *   asked for.
  * - DEPTH-ONLY IS A SHAPE. A target with a depth attachment and no colour attachment is the engine's SHADOW MAP and
  *   builds like any other (the render pass simply references no colour attachment, and a fragment's outputs are
  *   discarded); a target with neither attachment is not a target.
@@ -40,10 +48,21 @@ struct TargetImages {
     /// The extent and the shape (engine formats + device formats) these objects were built for.
     vn::graphics::backend::TargetDesc desc{};
 
+    /// THE PICTURE, one per colour attachment: the single-sample image a later pass samples, a readback copies and a
+    /// single-sampled pass draws into - and, on a multisampled target, the RESOLVE image the render pass writes at the
+    /// end of its subpass. Nothing here is ever drawn into directly while `isMultisampled()` is true.
     std::vector<VkImage>        colors{};
     std::vector<VkDeviceMemory> color_memories{};
     std::vector<VkImageView>    color_views{};
 
+    /// THE SAMPLE BUFFERS, one per colour attachment, EMPTY on a single-sampled target: the images a multisampled
+    /// pass draws into, whose content the render pass resolves into `colors`. They carry no sampled or transfer usage
+    /// because nothing reads them; the resolve is the only way out of them.
+    std::vector<VkImage>        multisample_colors{};
+    std::vector<VkDeviceMemory> multisample_color_memories{};
+    std::vector<VkImageView>    multisample_color_views{};
+
+    /// The depth attachment, created with the target's sample count and NEVER resolved (see the class note).
     VkImage        depth{ VK_NULL_HANDLE };
     VkDeviceMemory depth_memory{ VK_NULL_HANDLE };
     VkImageView    depth_view{ VK_NULL_HANDLE };
@@ -56,13 +75,15 @@ struct TargetImages {
     /// The variant that LOADs every attachment, for a pass that announces no clear at all (a screen pass): colour and
     /// depth keep what earlier passes wrote. Only valid on a NON-fresh attachment set.
     VkRenderPass render_pass_load{ VK_NULL_HANDLE };
-    /// Binds every colour view and, when present, the depth view; compatible with BOTH render-pass variants.
+    /// Binds the attachments IN THE ORDER the render pass declares them: every sample buffer, then (on a multisampled
+    /// target) every resolve image, then the depth view when present. Compatible with ALL render-pass variants.
     VkFramebuffer framebuffer{ VK_NULL_HANDLE };
     /// True until a pass has drawn into this attachment set: fresh images are UNDEFINED, so a pass that asked to LOAD
     /// the depth is given the CLEAR variant instead (loading an image nobody wrote is meaningless and invalid).
     bool fresh{ true };
-    /// True after a screen draw sampled this target: its colour images are then in `SHADER_READ_ONLY_OPTIMAL`, and the
-    /// device transitions them back before the next pass writes them (or before a readback reads them).
+    /// True after a screen draw sampled this target: its colour images (the PICTURE - the resolve images on a
+    /// multisampled target) are then in `SHADER_READ_ONLY_OPTIMAL`, and the device transitions them back before the
+    /// next pass writes them (or before a readback reads them).
     bool color_sampled{ false };
     /// True after a pass sampled this target as a SHADOW MAP: its depth image is then in `SHADER_READ_ONLY_OPTIMAL`,
     /// and the device transitions it back before the next pass writes the depth (the same rule `color_sampled`
@@ -79,6 +100,18 @@ struct TargetImages {
     [[nodiscard]] int height() const noexcept
     {
         return desc.height;
+    }
+
+    /** @brief Gets how many samples each pixel of this target is drawn with (always at least 1). */
+    [[nodiscard]] std::uint32_t samples() const noexcept
+    {
+        return desc.shape.samples > 1U ? desc.shape.samples : 1U;
+    }
+
+    /** @brief Answers whether the attachments are multisampled, i.e. whether `colors` are RESOLVE images. */
+    [[nodiscard]] bool isMultisampled() const noexcept
+    {
+        return samples() > 1U;
     }
 
     /** @brief Gets how many colour attachments the target has. */
@@ -103,6 +136,23 @@ struct TargetImages {
     [[nodiscard]] VkFormat depthFormat() const noexcept
     {
         return static_cast<VkFormat>(desc.shape.device_depth_format);
+    }
+
+    /**
+     * @brief Gets the ATTACHMENT INDEX the depth occupies in the render pass and in the framebuffer.
+     *
+     * @details
+     * - The attachment array is [sample buffers..., resolve images..., depth], so the depth's index is the number of
+     *   COLOUR slots - and a clear-value array (indexed by attachment, see `VkRenderPassBeginInfo`) has to agree with
+     *   it, or a multisampled pass would clear the depth with the resolve's slot.
+     * - The colour slots' own count is this index: `colorCount()` on a single-sampled target, twice that when the
+     *   attachments are resolved.
+     *
+     * @return The depth attachment's index, or the colour slot count when the target has no depth.
+     */
+    [[nodiscard]] std::size_t depthAttachmentIndex() const noexcept
+    {
+        return colorCount() * (isMultisampled() ? 2U : 1U);
     }
 
     /** @brief Gets the render pass that serves a pass' load ops (see the three variants above). */
@@ -170,6 +220,8 @@ struct TargetImages {
  *
  * @details
  * - `desc.width` / `height` and the shape must be set first; they are the description the objects are built for.
+ * - A shape whose `samples` is above 1 builds the multisampled attachments AND their single-sample resolve images (see
+ *   the class note): the render pass resolves the colour into `colors`, and the framebuffer lists both sets.
  * - On failure the function destroys whatever it made and answers false, so the caller never holds a half-built target
  *   (the same rule the device's `initialize` follows).
  *

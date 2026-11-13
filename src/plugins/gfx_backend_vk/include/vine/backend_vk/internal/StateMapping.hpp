@@ -2,6 +2,7 @@
 
 #include <vine/backend_vk/backend_vk_global.hpp>
 
+#include <cstdint>
 #include <optional>
 #include <utility>
 
@@ -122,6 +123,34 @@ struct StateMapping {
         case PolygonMode::Point: return VK_POLYGON_MODE_POINT;
         }
         return VK_POLYGON_MODE_FILL;
+    }
+
+    /**
+     * @brief Gets the Vulkan sample count for a target's samples per pixel.
+     *
+     * @details
+     * - A TARGET'S SAMPLE COUNT IS A NUMBER, not a device flag: the SDK states samples per pixel (`TargetShape::samples`),
+     *   while Vulkan spells the same fact as a `VkSampleCountFlagBits` whose enumerator happens to be that number. The
+     *   mapping is stated once, here, because the render pass and the pipeline must read the same answer - two
+     *   spellings would be a render pass and a pipeline that disagree about how many samples they draw.
+     * - A count Vulkan has no flag for (0, or a number that is not one of its counts) answers 1: the request is clamped
+     *   to what the device offers before it reaches this table (see `Device::ensureTarget`), so an unknown value is a
+     *   bug upstream, and drawing single-sampled is the only safe reading of it.
+     *
+     * @param samples Samples per pixel, as the target's shape states them.
+     * @return The Vulkan sample count.
+     */
+    [[nodiscard]] static constexpr VkSampleCountFlagBits sampleCount(std::uint32_t samples) noexcept
+    {
+        switch (samples) {
+        case 2U: return VK_SAMPLE_COUNT_2_BIT;
+        case 4U: return VK_SAMPLE_COUNT_4_BIT;
+        case 8U: return VK_SAMPLE_COUNT_8_BIT;
+        case 16U: return VK_SAMPLE_COUNT_16_BIT;
+        case 32U: return VK_SAMPLE_COUNT_32_BIT;
+        case 64U: return VK_SAMPLE_COUNT_64_BIT;
+        default: return VK_SAMPLE_COUNT_1_BIT;
+        }
     }
 
     /**

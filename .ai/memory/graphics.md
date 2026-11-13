@@ -578,6 +578,23 @@
   与 ADR-2026-11-13（保留 ≤ `minimumStagingBufferSize` 的块）矛盾；改成"4 KiB 上传的块被保留（release 返回 0）+
   32 MiB 一次性块被还掉"。
 
+## 2026-11-14 —— `gfx_backend_vk` M11：多采样目标
+
+- **上限是计数**：`caps.max_samples = largestSampleCount(framebufferColorSampleCounts & framebufferDepthSampleCounts)`
+  （本机 8）。`ensureTarget` 用同一集合把请求夹到“≤ 请求的最大受支持计数”，超限报一次并用最接近的计数建；
+  不受支持的奇数（如 3）静默下调。**vsg 那条仍答位掩码 15**（backlog T37）。
+- **形状**：`TargetImages` 多采样时建**样本缓冲**（只有 `COLOR_ATTACHMENT` usage）+ **单采样 resolve 图像**；
+  render pass 附件顺序 = [样本缓冲…, resolve…, depth]，`pResolveAttachments` 指向 resolve，framebuffer 同序。
+  **`colors` / `color_views` 从此是画面（resolve 图像）**：screen draw 采样它、`readColorBuffer` 读它、
+  `color_sampled` 的转移也作用在它上面；样本缓冲只在 render pass 内有效。
+- **depth 不 resolve**：同计数创建，但 `target.isDepthPromoted()`（深度可能被采样）时强制单采样并报一次——
+  否则 shader / 回读拿到的是样本而不是画面。
+- **clear 值按附件下标**：多采样目标的 depth 槽 = `colorCount()*2`（`depthAttachmentIndex()`），不是 `colorCount()`。
+- **pipeline**：`rasterizationSamples = StateMapping::sampleCount(key.compatibility.samples)`；
+  `RenderPassCompatibility` 已把 samples 纳入键，单采样与多采样不会共享同一条管线。
+- **测试**：`VkMsaaTest` 3 例（limit=8；4 采样目标的全屏单色中心/角落 = 51/102/153，且与单采样中心相同；
+  超限请求被服务且只报一次）；`test_vk` 56 例（55 过 1 跳过）；`test_vsg` 的 parity / offscreen / sdk-pixel 20 例全过。
+
 ## 2026-11-13 —— 第三轮审计 W3：`FrameWorker` 拆成 `PublicationStore` + `FrameExpander`
 
 - **对象级回边消除**（`G2` / `G12`）：`detail::PublicationStore`（`src/viz/graphics/src/PublicationStore.hpp`）

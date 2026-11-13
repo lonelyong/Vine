@@ -4,6 +4,8 @@
 #include <cstring>
 #include <limits>
 
+#include <vine/backend_vk/internal/StateMapping.hpp>
+
 VN_BACKEND_VK_NS_BEGIN
 
 namespace
@@ -109,7 +111,10 @@ bool TargetImages::built() const noexcept
     // A DEPTH-ONLY TARGET (a shadow map) has every object too: its render pass and framebuffer exist, it simply owns
     // no colour view. A target with NEITHER attachment is the one shape that is not built.
     const bool attachments = color_views.size() == colorCount() && (!color_views.empty() || hasDepth());
-    return render_pass != VK_NULL_HANDLE && framebuffer != VK_NULL_HANDLE && attachments;
+    // A MULTISAMPLED target is not built without its sample buffers: the render pass draws into those and resolves
+    // them, so a target that lost them has nothing to draw into whatever its resolve images say.
+    const bool sample_buffers = !isMultisampled() || multisample_color_views.size() == colorCount();
+    return render_pass != VK_NULL_HANDLE && framebuffer != VK_NULL_HANDLE && attachments && sample_buffers;
 }
 
 VkFormat colorFormatOf(const vn::graphics::RenderTarget::ColorFormat format) noexcept
@@ -152,6 +157,8 @@ namespace
  * @details
  * - The extent-bound half of a target (see the header's shape-vs-extent split): a resize replaces exactly this and
  *   must not touch what pipelines were compiled against.
+ * - Both halves of a multisampled attachment go: the sample buffers are no more reusable than the resolve images they
+ *   were built with (they share one sample count, which is part of the shape).
  *
  * @param table  The device's entry points (volk table).
  * @param device The logical device.
@@ -178,6 +185,21 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
         table.vkFreeMemory(device, images.depth_memory, nullptr);
         images.depth_memory = VK_NULL_HANDLE;
     }
+    for (const VkImageView view : images.multisample_color_views) {
+        if (view != VK_NULL_HANDLE) {
+            table.vkDestroyImageView(device, view, nullptr);
+        }
+    }
+    for (const VkImage image : images.multisample_colors) {
+        if (image != VK_NULL_HANDLE) {
+            table.vkDestroyImage(device, image, nullptr);
+        }
+    }
+    for (const VkDeviceMemory memory : images.multisample_color_memories) {
+        if (memory != VK_NULL_HANDLE) {
+            table.vkFreeMemory(device, memory, nullptr);
+        }
+    }
     for (const VkImageView view : images.color_views) {
         if (view != VK_NULL_HANDLE) {
             table.vkDestroyImageView(device, view, nullptr);
@@ -193,6 +215,9 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
             table.vkFreeMemory(device, memory, nullptr);
         }
     }
+    images.multisample_colors.clear();
+    images.multisample_color_memories.clear();
+    images.multisample_color_views.clear();
     images.colors.clear();
     images.color_memories.clear();
     images.color_views.clear();
@@ -205,6 +230,11 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
  * - Colour attachments CLEAR and STORE; the depth attachment CLEARs or LOADs according to @p depth_load. A LOAD op is
  *   NOT part of render-pass compatibility, so the two variants share one framebuffer and one set of pipelines.
  * - Every colour attachment is referenced, in order: a fragment's output location i writes attachment i (MRT).
+ * - ON A MULTISAMPLED TARGET the attachment array is [sample buffers..., resolve images..., depth], the subpass'
+ *   colour references point at the sample buffers and `pResolveAttachments` at the resolve images. A resolve
+ *   attachment only ever STORES (it is written by the resolve, never loaded), which is why its description states
+ *   DONT_CARE/STORE in every variant - and why the three load-op variants stay compatible with one another.
+ * - The DEPTH attachment is multisampled with the same count and never resolved (see the header's class note).
  *
  * @param table      The device's entry points (volk table).
  * @param device     The logical device.
@@ -221,15 +251,21 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
                                     const VkAttachmentLoadOp depth_load,
                                     VkRenderPass&          out)
 {
+    const VkSampleCountFlagBits sample_count = StateMapping::sampleCount(images.samples());
+    const bool                  resolved     = images.isMultisampled();
+
     std::vector<VkAttachmentDescription> attachments;
     std::vector<VkAttachmentReference>   color_references;
-    attachments.reserve(images.colorCount() + (images.hasDepth() ? 1U : 0U));
+    std::vector<VkAttachmentReference>   resolve_references;
+    const std::size_t                    resolve_base = resolved ? images.colorCount() : 0U;
+    attachments.reserve(images.colorCount() * (resolved ? 2U : 1U) + (images.hasDepth() ? 1U : 0U));
     color_references.reserve(images.colorCount());
+    resolve_references.reserve(images.colorCount());
 
     for (std::size_t index = 0; index < images.colorCount(); ++index) {
         VkAttachmentDescription color{};
         color.format         = images.colorFormat(index);
-        color.samples        = VK_SAMPLE_COUNT_1_BIT;
+        color.samples        = sample_count;
         color.loadOp         = color_load;
         color.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
         color.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -242,11 +278,28 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
         color_references.push_back(VkAttachmentReference{ static_cast<std::uint32_t>(index), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
     }
 
+    // THE RESOLVE IMAGES: the picture, written once at the end of the subpass. Their load op is DONT_CARE because a
+    // resolve overwrites every pixel (and a load op on a resolve attachment has no meaning to give it).
+    for (std::size_t index = 0; index < resolve_base; ++index) {
+        VkAttachmentDescription resolve{};
+        resolve.format         = images.colorFormat(index);
+        resolve.samples        = VK_SAMPLE_COUNT_1_BIT;
+        resolve.loadOp         = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        resolve.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+        resolve.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        resolve.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        resolve.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+        resolve.finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        attachments.push_back(resolve);
+        resolve_references.push_back(VkAttachmentReference{ static_cast<std::uint32_t>(resolve_base + index), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
+    }
+
+    const std::size_t depth_index = images.depthAttachmentIndex();
     VkAttachmentReference depth_reference{};
     if (images.hasDepth()) {
         VkAttachmentDescription depth{};
         depth.format         = images.depthFormat();
-        depth.samples        = VK_SAMPLE_COUNT_1_BIT;
+        depth.samples        = sample_count;
         depth.loadOp         = depth_load;
         depth.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
         depth.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -256,13 +309,14 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
         depth.initialLayout  = depth_load == VK_ATTACHMENT_LOAD_OP_LOAD ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
         depth.finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         attachments.push_back(depth);
-        depth_reference = VkAttachmentReference{ static_cast<std::uint32_t>(images.colorCount()), VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+        depth_reference = VkAttachmentReference{ static_cast<std::uint32_t>(depth_index), VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
     }
 
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount    = static_cast<std::uint32_t>(color_references.size());
     subpass.pColorAttachments       = color_references.empty() ? nullptr : color_references.data();
+    subpass.pResolveAttachments     = resolve_references.empty() ? nullptr : resolve_references.data();
     subpass.pDepthStencilAttachment = images.hasDepth() ? &depth_reference : nullptr;
 
     VkSubpassDependency dependency{};
@@ -299,6 +353,11 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
  * @details
  * - The framebuffer is created against the CLEAR variant and is equally usable with the LOAD variant (same attachment
  *   formats), which is what keeps one framebuffer valid across both load-op choices.
+ * - A MULTISAMPLED shape creates the sample buffers FIRST and then their resolve images: the render pass draws into the
+ *   former and writes the latter, so both exist before the framebuffer names them (in that order - the order the
+ *   render pass declares its attachments).
+ * - The sample buffers ask for no SAMPLED or TRANSFER_SRC usage: nothing samples them and nothing copies them, and
+ *   asking for a capability nothing uses would only widen what the driver has to allocate.
  * - On failure the partial objects are destroyed before answering false.
  *
  * @param table  The device's entry points (volk table).
@@ -318,6 +377,9 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
         return false;
     }
 
+    const VkSampleCountFlagBits sample_count = StateMapping::sampleCount(images.samples());
+    const bool                  resolved     = images.isMultisampled();
+
     VkImageCreateInfo image_create{};
     image_create.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     image_create.imageType     = VK_IMAGE_TYPE_2D;
@@ -332,6 +394,31 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
     image_create.samples       = VK_SAMPLE_COUNT_1_BIT;
     image_create.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
 
+    // THE SAMPLE BUFFERS, when the shape asks for them: one per colour attachment, at the shape's sample count.
+    if (resolved) {
+        image_create.samples = sample_count;
+        image_create.usage   = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        images.multisample_colors.resize(images.colorCount());
+        images.multisample_color_memories.resize(images.colorCount());
+        images.multisample_color_views.resize(images.colorCount());
+        for (std::size_t index = 0; index < images.colorCount(); ++index) {
+            image_create.format = images.colorFormat(index);
+            if (!createImage(table,
+                             device,
+                             memory,
+                             image_create,
+                             images.multisample_colors[index],
+                             images.multisample_color_memories[index]) ||
+                !createView(table, device, images.multisample_colors[index], image_create.format, VK_IMAGE_ASPECT_COLOR_BIT, images.multisample_color_views[index])) {
+                destroyAttachments(table, device, images);
+                return false;
+            }
+        }
+        image_create.samples = VK_SAMPLE_COUNT_1_BIT;
+        image_create.usage   = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    }
+
+    // THE PICTURES: drawn into directly on a single-sampled target, RESOLVED into on a multisampled one.
     images.colors.resize(images.colorCount());
     images.color_memories.resize(images.colorCount());
     images.color_views.resize(images.colorCount());
@@ -345,8 +432,9 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
     }
 
     if (images.hasDepth()) {
-        image_create.format = images.depthFormat();
-        image_create.usage  = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        image_create.format  = images.depthFormat();
+        image_create.usage   = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        image_create.samples = sample_count; // NOT resolved: this backend never samples or reads a multisampled depth
         if (!createImage(table, device, memory, image_create, images.depth, images.depth_memory) ||
             !createView(table, device, images.depth, image_create.format, VK_IMAGE_ASPECT_DEPTH_BIT, images.depth_view)) {
             destroyAttachments(table, device, images);
@@ -354,7 +442,9 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
         }
     }
 
-    std::vector<VkImageView> views(images.color_views.begin(), images.color_views.end());
+    // THE FRAMEBUFFER, in the render pass' own order: sample buffers, resolve images, depth.
+    std::vector<VkImageView> views(images.multisample_color_views.begin(), images.multisample_color_views.end());
+    views.insert(views.end(), images.color_views.begin(), images.color_views.end());
     if (images.hasDepth()) {
         views.push_back(images.depth_view);
     }

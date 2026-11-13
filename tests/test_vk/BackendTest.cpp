@@ -94,7 +94,9 @@ TEST(VkBackendTest, TheDeviceComesUpAndGoesDownCleanly)
     const vn::graphics::Capabilities capabilities = backend->capabilities();
     EXPECT_TRUE(capabilities.render_targets) << "M1 builds the off-screen half";
     EXPECT_FALSE(capabilities.presentation) << "M5 brings up the window half";
-    EXPECT_EQ(capabilities.max_samples, 1U);
+    // THE SAMPLE LIMIT IS THE DEVICE'S ANSWER (see Capabilities::max_samples): M11 builds multisampled targets, so the
+    // number is what the colour and depth attachments both support, and a device that offers none answers 1.
+    EXPECT_GE(capabilities.max_samples, 1U);
 
     // IDEMPOTENT, and back to a fresh object: the SDK requires a device whose surface is recreated to take this path.
     backend->shutdown();

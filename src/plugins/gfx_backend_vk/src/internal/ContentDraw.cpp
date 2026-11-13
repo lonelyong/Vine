@@ -968,8 +968,12 @@ struct ContentDraw::Impl {
         raster.lineWidth               = 1.0F;
 
         VkPipelineMultisampleStateCreateInfo multisample{};
-        multisample.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-        multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        // THE SAMPLE COUNT COMES FROM THE TARGET'S SHAPE, not from this file: a pipeline's rasterisation sample count
+        // must equal the subpass' colour attachment count, and `compatibility` is the shape half of the key - so the
+        // same value the render pass was built with reaches the pipeline. The key compares it, which is why a
+        // single-sample and a multisampled target never share one compiled pipeline.
+        multisample.rasterizationSamples = StateMapping::sampleCount(key.compatibility.samples);
 
         VkPipelineDepthStencilStateCreateInfo depth{};
         depth.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;

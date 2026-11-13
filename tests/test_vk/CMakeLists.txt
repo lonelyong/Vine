@@ -10,6 +10,7 @@ add_executable(${TEST_NAME}
         ContentDrawTest.cpp
         ContentTargetTest.cpp
         DeferredTest.cpp
+        MsaaTest.cpp
         OffscreenClearTest.cpp
         ProbeTest.cpp
         ResidencyTest.cpp

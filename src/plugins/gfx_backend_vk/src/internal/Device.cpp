@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -18,6 +19,7 @@
 #include <vine/backend_vk/internal/ContentDraw.hpp>
 #include <vine/backend_vk/internal/ContentImages.hpp>
 #include <vine/backend_vk/internal/ProbeWindow.hpp>
+#include <vine/backend_vk/internal/StateMapping.hpp>
 #include <vine/backend_vk/internal/TargetImages.hpp>
 #include <vine/backend_vk/internal/WindowTarget.hpp>
 #include <vine/graphics/Capabilities.hpp>
@@ -85,6 +87,63 @@ constexpr const char* kPlatformSurfaceExtensionName = "VK_KHR_xcb_surface";
     return vn::String(reinterpret_cast<const char8_t*>(text != nullptr ? text : ""));
 }
 
+/// @brief The sample counts Vulkan offers, largest first: a target's request is clamped to one of them.
+constexpr std::uint32_t kSampleCounts[] = { 64U, 32U, 16U, 8U, 4U, 2U, 1U };
+
+/**
+ * @brief Gets the largest sample count at or below @p requested that @p supported flags offer.
+ *
+ * @details
+ * - A TARGET'S SAMPLE COUNT IS A NUMBER, a device's answer is a SET of them (`VK_SAMPLE_COUNT_*_BIT`), and an image
+ *   can only be created with a count the set contains - so the request has to be brought into the set before any
+ *   object is made. Both the clamp and the report of an over-large request read this one answer.
+ *
+ * @param requested Samples per pixel the host asked for (0 and 1 both mean single-sampled).
+ * @param supported The device's `framebufferColorSampleCounts & framebufferDepthSampleCounts` flags.
+ * @return The largest supported count at or below @p requested; 1 when the flags offer nothing usable.
+ */
+[[nodiscard]] std::uint32_t clampSampleCount(const std::uint32_t requested, const std::uint32_t supported) noexcept
+{
+    for (const std::uint32_t count : kSampleCounts) {
+        if (count <= requested && (supported & static_cast<std::uint32_t>(StateMapping::sampleCount(count))) != 0U) {
+            return count;
+        }
+    }
+    return 1U;
+}
+
+/**
+ * @brief Gets the largest sample count @p supported flags offer.
+ *
+ * @param supported The device's `framebufferColorSampleCounts & framebufferDepthSampleCounts` flags.
+ * @return The largest supported count; 1 when the flags offer nothing usable.
+ */
+[[nodiscard]] std::uint32_t largestSampleCount(const std::uint32_t supported) noexcept
+{
+    for (const std::uint32_t count : kSampleCounts) {
+        if ((supported & static_cast<std::uint32_t>(StateMapping::sampleCount(count))) != 0U) {
+            return count;
+        }
+    }
+    return 1U;
+}
+
+/**
+ * @brief Builds a message fragment from a count.
+ *
+ * @details
+ * - A diagnostic that names the numbers a host can act on ("asks for 8, this device offers 4") is worth more than one
+ *   that only says "too many", and `vn::String` holds UTF-8 while `std::to_string` answers UTF-8 bytes, so the
+ *   conversion is a copy.
+ *
+ * @param value The number to spell.
+ * @return The number as text.
+ */
+[[nodiscard]] vn::String numberText(const std::uint32_t value)
+{
+    return vn::String::fromUtf8(std::to_string(value));
+}
+
 /**
  * @brief Whether @p description is a DRAWING CALL at all (see FrameCounters::draws).
  *
@@ -150,6 +209,11 @@ struct Device::Impl {
     VolkDeviceTable device_table{};
     VkPhysicalDeviceMemoryProperties memory{};
 
+    /// The sample counts the device's COLOUR and DEPTH attachments both offer, as Vulkan spells them
+    /// (`VK_SAMPLE_COUNT_*_BIT`): one target has one sample count, so a count either attachment cannot do is a count
+    /// this device cannot build (see `ensureTarget`).
+    std::uint32_t supported_sample_counts{ VK_SAMPLE_COUNT_1_BIT };
+
     /// The command machinery every frame and every readback borrows: one pool, one fence, one buffer at a time.
     VkCommandPool command_pool{ VK_NULL_HANDLE };
     VkFence       completion{ VK_NULL_HANDLE };
@@ -178,6 +242,7 @@ struct Device::Impl {
     bool reported_content{ false };
     bool reported_size_unknown{ false };
     bool reported_samples{ false };
+    bool reported_samples_depth{ false };
     bool reported_prepare_target{ false };
 
     /**
@@ -662,7 +727,13 @@ bool Device::initialize()
     impl->caps.render_targets          = true;
     impl->caps.presentation            = impl->presentation_wanted;
     impl->caps.features                = 0U;
-    impl->caps.max_samples             = 1U;
+    // ONE target has ONE sample count, and its colour and depth attachments must both support it, so the set this
+    // device offers is the INTERSECTION of the two (a device whose depth tops out lower is the binding side). That
+    // intersection is a `VkSampleCountFlags` BIT SET, while `Capabilities::max_samples` states the largest COUNT a
+    // target may ask for - the number a host hands to `RenderTarget::setSamples` - so the limit is read OUT of the
+    // set rather than being the set. The same set is what `ensureTarget` clamps a request against.
+    impl->supported_sample_counts      = static_cast<std::uint32_t>(properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts);
+    impl->caps.max_samples             = largestSampleCount(impl->supported_sample_counts);
     impl->caps.max_anisotropy          = 1.0F;
     impl->caps.max_line_width          = properties.limits.lineWidthRange[1] > 0.0F ? properties.limits.lineWidthRange[1] : 1.0F;
     impl->caps.max_color_attachments   = std::min<std::uint32_t>(properties.limits.maxColorAttachments, 4U);
@@ -873,14 +944,38 @@ bool Device::ensureTarget(const RenderTarget& target)
         wanted.shape.depth_format        = target.depthFormat();
         wanted.shape.device_depth_format = static_cast<std::uint32_t>(depthFormatOf(target.depthFormat()));
     }
-    // M3 builds single-sampled targets; Capabilities::max_samples says so, and a larger request is reported once.
-    wanted.shape.samples = 1U;
-    wanted.shape.subpass = 0U;
-    if (target.samples() > 1U && !impl->reported_samples) {
+    // THE SAMPLE COUNT THIS DEVICE CAN BUILD (see TargetShape::samples): the shape carries a NUMBER, the device offers
+    // a SET of them, so the request is brought into the set once, here, and every later step - the images, the render
+    // pass, the pipeline - reads the clamped value back out of `wanted`.
+    // - ABOVE THE DEVICE'S LIMIT: reported once and served at the largest count the device offers. Refusing the target
+    //   outright would leave the host with nothing to draw into, and the picture it asked for is still the picture it
+    //   gets, only with fewer samples.
+    // - BELOW THE LIMIT BUT NOT A COUNT VULKAN OFFERS (three, say): clamped to the largest count at or below it and
+    //   not reported - "as close as the device can" is the honest reading of a number the SDK states.
+    const std::uint32_t requested_samples = target.samples();
+    const std::uint32_t largest_samples   = largestSampleCount(impl->supported_sample_counts);
+    wanted.shape.samples                  = clampSampleCount(requested_samples, impl->supported_sample_counts);
+    wanted.shape.subpass                  = 0U;
+    if (requested_samples > largest_samples && !impl->reported_samples) {
         impl->reported_samples = true;
         reportDiagnostic(DiagnosticSeverity::Warning,
                          DiagnosticCategory::UnsupportedRequest,
-                         u8"vk: multi-sampled targets are not built yet (Capabilities::max_samples is 1); the target was built single-sampled");
+                         vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
+                             u8" samples per pixel, above this device's limit of " + numberText(largest_samples) +
+                             u8"; it is drawn with the largest count the device offers (see Capabilities::max_samples)");
+    }
+    // A DEPTH THAT WILL BE READ STAYS SINGLE-SAMPLED: this backend never resolves a multisampled depth (see
+    // TargetImages' class note), so a multisampled one would answer the SAMPLES where a shader - or a readback -
+    // expects the picture. `isDepthPromoted` is the fact the shadow path gates on (`resolveShadow` refuses a map whose
+    // promotion the host revoked), and the SDK's own rule is that a depth a shader samples is single-sample.
+    if (target.hasDepth() && target.isDepthPromoted() && wanted.shape.samples > 1U) {
+        if (!impl->reported_samples_depth) {
+            impl->reported_samples_depth = true;
+            reportDiagnostic(DiagnosticSeverity::Warning,
+                             DiagnosticCategory::UnsupportedRequest,
+                             u8"vk: a target whose depth may be sampled is built single-sampled (a multisampled depth is never resolved on this path)");
+        }
+        wanted.shape.samples = 1U;
     }
 
     TargetImages& images = impl->targets[&target];
@@ -1196,9 +1291,13 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
             compatibility         = images->compatibility();
         }
 
-        // PER-ATTACHMENT CLEAR (a LOAD variant ignores these values): attachment 0 is the pass' colour, the rest come
-        // from extra_colors (an absent entry is transparent black - see ClearPolicy), and the depth is the last slot.
-        std::vector<VkClearValue> clear_values(color_count + (has_depth ? 1U : 0U));
+        // PER-ATTACHMENT CLEAR (a LOAD variant ignores these values): the clear values are indexed by ATTACHMENT, and
+        // attachment 0 is the pass' colour while the rest of the COLOUR slots come from extra_colors (an absent entry
+        // is transparent black - see ClearPolicy). A MULTISAMPLED target's array is [sample buffers, resolve images,
+        // depth], so its depth slot is not `color_count`; the resolve slots in between are DONT_CARE and their values
+        // are never read (see TargetImages' class note).
+        const std::size_t         depth_slot  = images != nullptr ? images->depthAttachmentIndex() : static_cast<std::size_t>(color_count);
+        std::vector<VkClearValue> clear_values(depth_slot + (has_depth ? 1U : 0U));
         const Colorf              colour      = draw.clear.has_value() ? draw.clear->color : Colorf(0.0F, 0.0F, 0.0F, 1.0F);
         if (color_count != 0U) {
             // A DEPTH-ONLY PASS (a shadow map) has no colour slot to clear: its clear values start at the depth.
@@ -1213,7 +1312,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         if (has_depth) {
             // Reverse-Z: every backend clears depth to its own far plane, and this camera convention's far plane is 0
             // (see ClearPolicy: the policy states WHETHER, never to what).
-            clear_values[color_count].depthStencil = { 0.0F, 0U };
+            clear_values[depth_slot].depthStencil = { 0.0F, 0U };
         }
 
         VkRenderPassBeginInfo pass_begin{};
