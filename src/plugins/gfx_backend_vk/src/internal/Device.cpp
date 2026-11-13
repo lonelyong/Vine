@@ -113,7 +113,6 @@ struct Device::Impl {
 
     /// One report each for the answers M1 cannot serve, so a host is told once rather than per frame.
     bool reported_no_targets{ false };
-    bool reported_no_clear{ false };
     bool reported_window{ false };
     bool reported_content{ false };
     bool reported_size_unknown{ false };
@@ -387,7 +386,6 @@ void Device::shutdown()
     impl->caps                = Capabilities{};
     impl->default_program     = nullptr;
     impl->reported_no_targets = false;
-    impl->reported_no_clear   = false;
     impl->reported_window     = false;
     impl->reported_content    = false;
     impl->reported_size_unknown = false;
@@ -505,10 +503,11 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         return PresentOutcome::Skipped;
     }
 
-    // WHICH PASSES THIS BACKEND CAN RUN TODAY: the ones that name an off-screen target and state a clear. Everything
-    // else is reported once (a window pass is M5, a LOAD pass needs the M3 variant) instead of being drawn wrong.
-    std::vector<const PassDraw*> clear_passes;
-    clear_passes.reserve(frame.passes.size());
+    // WHICH PASSES THIS BACKEND CAN RUN TODAY: the ones that name an off-screen target. Everything else is reported
+    // once (a window pass is M5) instead of being drawn wrong. A pass that announces NO clear is served by the
+    // both-attachments LOAD variant (a screen pass), or by the CLEAR variant when its target is fresh.
+    std::vector<const PassDraw*> runnable_passes;
+    runnable_passes.reserve(frame.passes.size());
     for (const FrameDescription::Pass& entry : frame.passes) {
         if (!entry.draw.has_value()) {
             continue; // a pass that issued nothing: the scope opens and closes, nothing to record
@@ -522,29 +521,20 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                                  u8"vk: a pass drawing into the window is not served yet (M5); it was left out");
             }
             continue;
-        }        if (!draw.clear.has_value()) {
-            if (!impl->reported_no_clear) {
-                impl->reported_no_clear = true;
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::UnsupportedRequest,
-                                 u8"vk: a pass that announces no clear needs the colour LOAD variant, which is not built; "
-                                 u8"it was left out");
-            }
-            continue;
         }
         if (!ensureTarget(*draw.target)) {
             continue;
         }
-        clear_passes.push_back(&draw);
+        runnable_passes.push_back(&draw);
     }
 
-    if (clear_passes.empty()) {
+    if (runnable_passes.empty()) {
         if (!impl->reported_no_targets) {
             impl->reported_no_targets = true;
             reportDiagnostic(DiagnosticSeverity::Info,
                              DiagnosticCategory::UnsupportedRequest,
-                             u8"vk: the frame had no pass this backend can run yet (M1 serves off-screen targets with a "
-                             u8"clear policy); nothing was submitted");
+                             u8"vk: the frame had no pass this backend can run yet (M4 serves off-screen targets and their "
+                             u8"content/screen draws); nothing was submitted");
         }
         return PresentOutcome::Skipped;
     }
@@ -576,20 +566,82 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     // is complete by now (the device submits synchronously), so nothing still names them.
     impl->content.beginFrame();
 
-    for (const PassDraw* draw : clear_passes) {
-        TargetImages&       images      = impl->targets.at(draw->target);
-        // A FRESH attachment set is UNDEFINED: a pass that asked to preserve the depth is given the CLEAR variant for
-        // its first frame (there is nothing to load yet), and the plan's Bootstrap repair says exactly that.
-        const bool          load_depth = !draw->clear->depth && !images.fresh;
-        const VkRenderPass  render_pass = images.renderPassFor(load_depth);
+    for (const PassDraw* draw : runnable_passes) {
+        // THE PASS' TEXTURES ARE PREPARED BEFORE ITS RENDER PASS BEGINS: an upload records image barriers and
+        // buffer-to-image copies, neither of which is legal inside a render pass instance.
+        impl->content.preparePass(commands, draw->draws);
+
+        // A SOURCE A SCREEN DRAW SAMPLES is about to be read: transition it to SHADER_READ_ONLY now, where an image
+        // barrier is unambiguously allowed (before any render pass instance begins).
+        for (const DrawDescription& description : draw->draws) {
+            if (description.kind != DrawDescription::Kind::Screen || description.source == nullptr) {
+                continue;
+            }
+            const auto source = impl->targets.find(description.source);
+            if (source == impl->targets.end() || !source->second.built() || source->second.color_sampled) {
+                continue;
+            }
+            TargetImages& sampled = source->second;
+            for (const VkImage image : sampled.colors) {
+                const ImageState from = sampled.fresh ? stateOf(ImageLayout::Undefined) : stateOf(ImageLayout::ColorAttachment);
+                const ImageState to   = stateOf(ImageLayout::ShaderReadOnly);
+                const VkImageMemoryBarrier barrier = barrierBetween(image, from, to, VK_IMAGE_ASPECT_COLOR_BIT);
+                impl->device_table.vkCmdPipelineBarrier(commands,
+                                                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                                        0U,
+                                                        0U,
+                                                        nullptr,
+                                                        0U,
+                                                        nullptr,
+                                                        1U,
+                                                        &barrier);
+            }
+            sampled.color_sampled = true;
+        }
+
+        TargetImages& images = impl->targets.at(draw->target);
+
+        // A TARGET A SCREEN DRAW SAMPLED is in SHADER_READ_ONLY: put its colour images back before this pass writes
+        // them (the LOAD variants name the attachment layout explicitly, so only the UNDEFINED variants would not care).
+        if (images.color_sampled) {
+            for (const VkImage image : images.colors) {
+                const VkImageMemoryBarrier back = barrierBetween(image,
+                                                                 stateOf(ImageLayout::ShaderReadOnly),
+                                                                 stateOf(ImageLayout::ColorAttachment),
+                                                                 VK_IMAGE_ASPECT_COLOR_BIT);
+                impl->device_table.vkCmdPipelineBarrier(commands,
+                                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                                        0U,
+                                                        0U,
+                                                        nullptr,
+                                                        0U,
+                                                        nullptr,
+                                                        1U,
+                                                        &back);
+            }
+            images.color_sampled = false;
+        }
+
+        // A FRESH attachment set is UNDEFINED: a pass that asked to preserve something is given the CLEAR variant for
+        // its first frame (there is nothing to load yet), and the plan's Bootstrap repair says exactly that. A pass
+        // that announces NO clear loads both attachments; a fresh target falls back to the CLEAR variant, which is the
+        // honest reading of "load an image nobody wrote".
+        const bool         has_clear  = draw->clear.has_value();
+        const bool         load_color = !has_clear && !images.fresh;
+        const bool         load_depth = has_clear ? (!draw->clear->depth && !images.fresh) : !images.fresh;
+        const VkRenderPass render_pass = images.renderPassFor(load_depth, load_color);
 
         // PER-ATTACHMENT CLEAR: attachment 0 is the pass' colour, the rest come from extra_colors (an absent entry is
-        // transparent black - see ClearPolicy), and the depth is the last slot when the target owns one.
+        // transparent black - see ClearPolicy), and the depth is the last slot when the target owns one. A pass that
+        // announces no clear contributes no colour; its fresh fallback discards the images anyway.
         std::vector<VkClearValue> clear_values(images.colorCount() + (images.hasDepth() ? 1U : 0U));
-        const Colorf&             colour      = draw->clear->color;
+        const Colorf              colour      = has_clear ? draw->clear->color : Colorf(0.0F, 0.0F, 0.0F, 0.0F);
         clear_values[0].color                 = { { colour.r, colour.g, colour.b, colour.a } };
         for (std::size_t index = 1; index < images.colorCount(); ++index) {
-            const Colorf extra = index - 1U < draw->clear->extra_colors.size() ? draw->clear->extra_colors[index - 1U] : Colorf(0.0F, 0.0F, 0.0F, 0.0F);
+            const Colorf extra = has_clear && index - 1U < draw->clear->extra_colors.size() ? draw->clear->extra_colors[index - 1U]
+                                                                                           : Colorf(0.0F, 0.0F, 0.0F, 0.0F);
             clear_values[index].color = { { extra.r, extra.g, extra.b, extra.a } };
         }
         if (images.hasDepth()) {
@@ -613,17 +665,40 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         for (const DrawDescription& description : draw->draws) {
             vn::String                       why;
             vn::graphics::DiagnosticCategory category = DiagnosticCategory::ContentSkipped;
-            (void)impl->content.record(commands,
-                                       render_pass,
-                                       images.compatibility(),
-                                       static_cast<std::uint32_t>(images.colorCount()),
-                                       images.width(),
-                                       images.height(),
-                                       description,
-                                       *draw,
-                                       impl->default_program.get(),
-                                       &why,
-                                       &category);
+            if (description.kind == DrawDescription::Kind::Screen) {
+                // THE FULL-SCREEN ABI: the source's colour attachments, bound in order. A source this device never
+                // built answers an empty span, which makes the recorder report (and skip) the draw.
+                ContentDraw::ScreenSource source{};
+                const auto                source_images = description.source != nullptr ? impl->targets.find(description.source) : impl->targets.end();
+                if (source_images != impl->targets.end() && source_images->second.built()) {
+                    source.images = source_images->second.colors;
+                    source.views  = source_images->second.color_views;
+                }
+                (void)impl->content.recordScreen(commands,
+                                                 render_pass,
+                                                 images.compatibility(),
+                                                 static_cast<std::uint32_t>(images.colorCount()),
+                                                 images.width(),
+                                                 images.height(),
+                                                 description,
+                                                 *draw,
+                                                 source,
+                                                 &why,
+                                                 &category);
+            }
+            else {
+                (void)impl->content.record(commands,
+                                           render_pass,
+                                           images.compatibility(),
+                                           static_cast<std::uint32_t>(images.colorCount()),
+                                           images.width(),
+                                           images.height(),
+                                           description,
+                                           *draw,
+                                           impl->default_program.get(),
+                                           &why,
+                                           &category);
+            }
             if (!why.empty() && !impl->reported_content) {
                 impl->reported_content = true;
                 reportDiagnostic(DiagnosticSeverity::Warning, category, why);
@@ -684,7 +759,7 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     if (found == impl->targets.end() || !found->second.built()) {
         return fail(ReadbackResult::NotReady);
     }
-    const TargetImages& images = found->second;
+    TargetImages& images = found->second;
     if (attachment < 0 || static_cast<std::size_t>(attachment) >= images.colorCount()) {
         return fail(ReadbackResult::Invalid);
     }
@@ -768,6 +843,26 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     if (impl->device_table.vkBeginCommandBuffer(commands, &begin) != VK_SUCCESS) {
         release();
         return fail(ReadbackResult::Failed);
+    }
+
+    // A target a SCREEN DRAW sampled is in SHADER_READ_ONLY: put every colour attachment back before this readback's
+    // own transition names COLOR_ATTACHMENT_OPTIMAL as the old layout.
+    if (images.color_sampled) {
+        for (const VkImage image : images.colors) {
+            const VkImageMemoryBarrier back =
+                barrierBetween(image, stateOf(ImageLayout::ShaderReadOnly), stateOf(ImageLayout::ColorAttachment), VK_IMAGE_ASPECT_COLOR_BIT);
+            impl->device_table.vkCmdPipelineBarrier(commands,
+                                                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                                    0U,
+                                                    0U,
+                                                    nullptr,
+                                                    0U,
+                                                    nullptr,
+                                                    1U,
+                                                    &back);
+        }
+        images.color_sampled = false;
     }
 
     const VkImageMemoryBarrier to_transfer =

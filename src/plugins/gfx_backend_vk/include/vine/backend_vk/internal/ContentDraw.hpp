@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 
 #include <volk.h>
 
@@ -16,13 +17,13 @@
 VN_BACKEND_VK_NS_BEGIN
 
 /**
- * @brief M2's content path: the draws of one pass become indexed Vulkan drawing calls.
+ * @brief M2-M4's content path: the draws of one pass become indexed Vulkan drawing calls.
  *
  * @details
  * - WHAT IT OWNS. Compiled shader modules per program REVISION (keyed by the immutable `ShaderProgramDescription`),
  *   uploaded vertex/index streams per geometry REVISION (keyed by `GeometryDescription`), the descriptor and pipeline
  *   layouts every pipeline shares, the pipelines themselves, and one small uniform buffer per recorded draw holding
- *   the `VineViewBlock` + `VineDrawBlock` pair (std140, see ShaderAbi.hpp).
+ *   the `VineMaterialBlock`, `VineLightsBlock` and `VineDrawBlock` (std140, see ShaderAbi.hpp).
  * - A PIPELINE IS KEYED BY COMPATIBILITY, NOT BY A RENDER-PASS HANDLE. `RenderPassCompatibility` names the attachment
  *   set (formats, depth, samples, subpass), which is what Vulkan compares a pipeline against; an EXTENT change creates
  *   new images and a new framebuffer but no new render pass, so every pipeline stays valid and is REUSED. That is the
@@ -30,18 +31,19 @@ VN_BACKEND_VK_NS_BEGIN
  * - WHAT IT DOES NOT OWN. Nothing of the frame: every pointer inside a `DrawDescription` is borrowed for the call, and
  *   a description it keeps as a cache key is retained by an intrusive pointer - so a later edit of the live object is
  *   a NEW description and a new key, never a silent reuse of old bytes.
- * - THE CONTENT ABI IT SERVES. This backend's own arrangement, not vsg's: set 0 binding 0 is `VineViewBlock` and set 0
- *   binding 1 is `VineDrawBlock`. A program written for this backend declares those two blocks and nothing else (M4
- *   adds the material, light and texture blocks together with the shading that reads them). The arrangement is stated
- *   here because a shader cannot read a binding nobody wrote.
- * - MEMORY MODEL. Streams and the per-draw block live in host-visible coherent memory. M2's own words are "channel ->
- *   buffer", and a staging copy would add a synchronisation story this step does not teach; the residency step (M6)
- *   is what moves both to device-local memory behind a copy.
- * - FRAME BOUNDARY. `beginFrame()` resets the descriptor pool and `endFrame()` releases the per-draw uniform buffers.
- *   The device calls both around ONE command buffer, after the queue is idle, which is what makes the reuse safe
- *   without a ring of frames.
+ * - THE CONTENT ABI IS THE ENGINE'S, NOT THIS BACKEND'S (M4): set 0 is the content set - material at binding 0, the
+ *   five texture slots at 1-5, the light block at 6 - and set 1 binding 0 is the draw block. The camera matrices are
+ *   the 128-byte push range (`projection`, `modelView`), exactly the L2 realization `vine_params.glsl` describes.
+ *   A full-screen draw uses the OTHER ABI: the source target's attachments at set 0 bindings 0..N-1.
+ * - MEMORY MODEL. Streams, the per-draw block and the texture staging copies live in host-visible coherent memory. A
+ *   staging copy for geometry would add a synchronisation story this step does not teach; the residency step (M6) is
+ *   what moves streams to device-local memory behind one copy.
+ * - FRAME BOUNDARY. `beginFrame()` resets the descriptor pool and `endFrame()` releases the per-draw uniform buffers,
+ *   the retired texture uploads and their staging buffers. The device calls both around ONE command buffer, after the
+ *   queue is idle, which is what makes the reuse safe without a ring of frames.
  * - WHAT IS REPORTED, NOT DRAWN. A draw with no camera issues nothing (see `DrawDescription::camera`), one with no
- *   program is skipped and reported, and a full-screen draw is M4's. Every skip leaves the rest of the pass drawn.
+ *   program is skipped and reported, and a screen draw with no source target is skipped and reported. Every skip leaves
+ *   the rest of the pass drawn.
  * - WHAT IS NOT RELEASED YET. The caches are keyed by an immutable description per revision and held until
  *   `destroy()`: a geometry edited many times keeps every revision it was drawn at. Releasing content is M6's
  *   residency step (`RenderDevice::releaseContent`), and until then the cost is bounded by the edits a session made.
@@ -52,6 +54,13 @@ VN_BACKEND_VK_NS_BEGIN
  * @warning Not thread-safe: one frame at a time, from the thread that records it (the SDK's contract).
  */
 class VN_BACKEND_VK_API ContentDraw final {
+  public:
+    /** @brief One screen drawing call's source: the target's colour images and the views a fragment stage samples. */
+    struct ScreenSource {
+        std::span<const VkImage>     images{}; // The source's colour images (for layout transitions; may be empty).
+        std::span<const VkImageView> views{};  // The same attachments' views, bound at set 0 bindings 0..N-1.
+    };
+
   public:
     /** @brief Builds an empty recorder; nothing exists until @ref create. */
     ContentDraw();
@@ -85,6 +94,21 @@ class VN_BACKEND_VK_API ContentDraw final {
     void destroy() noexcept;
 
     /**
+     * @brief Prepares the textures one pass' draws sample, BEFORE the pass' render pass begins.
+     *
+     * @details
+     * - A texture upload records image barriers and buffer-to-image copies, and Vulkan forbids both inside a render
+     *   pass instance (`vkCmdCopyBufferToImage` outright, a barrier without a self-dependency). The device therefore
+     *   calls this once per pass, before @ref record / @ref recordScreen: the copies land on the frame's command
+     *   buffer outside the pass, and the draws find the views cached.
+     * - It also creates the 1x1 white fallback every absent slot is bound to, on the first frame that needs it.
+     *
+     * @param commands The command buffer being recorded (outside any render pass).
+     * @param draws    The pass' drawing calls (borrowed for the call).
+     */
+    void preparePass(VkCommandBuffer commands, std::span<const vn::graphics::DrawDescription> draws);
+
+    /**
      * @brief Resets the per-frame descriptor pool.
      *
      * @details
@@ -94,7 +118,7 @@ class VN_BACKEND_VK_API ContentDraw final {
      */
     void beginFrame();
 
-    /** @brief Releases the per-draw uniform buffers recorded since @ref beginFrame (the queue is idle). */
+    /** @brief Releases the per-draw uniform buffers and the retired texture uploads recorded since @ref beginFrame. */
     void endFrame() noexcept;
 
     /**
@@ -109,7 +133,7 @@ class VN_BACKEND_VK_API ContentDraw final {
     [[nodiscard]] std::uint64_t pipelinesCreated() const noexcept;
 
     /**
-     * @brief Records one draw description's commands into @p commands.
+     * @brief Records one CONTENT draw description's commands into @p commands.
      *
      * @details
      * - Must run INSIDE the render pass that names the target, because it records drawing commands; every resource it
@@ -121,6 +145,10 @@ class VN_BACKEND_VK_API ContentDraw final {
      *   test/write/compare (reverse-Z), blend and polygon offset select or fill the pipeline, while line width, depth
      *   bias values and the viewport are dynamic; the point size travels in the draw block. A multi-attachment target
      *   never blends (its attachments hold data, not a surface - see BlendState).
+     * - Each command's material values (the value the frame carries, else the live material's description) are packed
+     *   into the material block; each texture slot with a complete texture is uploaded and bound, and the other slots
+     *   are bound to the 1x1 white fallback with their slot bits clear. The draw's announced lights are packed into
+     *   the light block in view space (see LightBlock.hpp).
      *
      * @param commands        The command buffer being recorded (inside a render pass).
      * @param render_pass     The render pass @p commands is in (used only when a pipeline must be CREATED; reuse is
@@ -148,6 +176,44 @@ class VN_BACKEND_VK_API ContentDraw final {
                          const vn::graphics::ShaderProgramDescription* default_program,
                          vn::String*                                why,
                          vn::graphics::DiagnosticCategory*          category = nullptr);
+
+    /**
+     * @brief Records one SCREEN draw description: a full-screen triangle sampling @p source.
+     *
+     * @details
+     * - The vertex stage is the engine's `BuiltinShaders::fullscreenVertexProgram()`; the fragment stage is the draw's
+     *   own program description, compiled against the full-screen ABI (`vn_uv` at location 0). The source's colour
+     *   attachments are bound at set 0 bindings 0..N-1 with the fallback sampler, and the draw's lights at binding 6
+     *   (the full-screen deferred program reads them there).
+     * - The pass' state selects the pipeline the same way a content draw's does (reverse-Z, culling, blend); a
+     *   full-screen draw writes its rectangle, and a multi-attachment target never blends (the content rule).
+     * - The source's images must already be in `SHADER_READ_ONLY_OPTIMAL`: the device records that transition before
+     *   the destination's render pass begins, where an image barrier is unambiguously allowed.
+     *
+     * @param commands          The command buffer being recorded (inside the destination's render pass).
+     * @param render_pass       The destination's render pass (used only when a pipeline must be CREATED).
+     * @param compatibility     The destination's pipeline compatibility.
+     * @param color_attachments How many colour attachments the destination has.
+     * @param width             The destination's width in pixels.
+     * @param height            The destination's height in pixels.
+     * @param draw              The screen draw (its fragment program and camera are read; borrowed).
+     * @param pass              The pass drawing it (state and viewport; borrowed).
+     * @param source            The source target's colour images/views (see ScreenSource).
+     * @param why               Receives the reason when the draw was skipped (empty when it was recorded).
+     * @param category          Receives the category of that reason, or null to ignore.
+     * @return 1 when the full-screen draw was recorded, 0 otherwise.
+     */
+    std::uint64_t recordScreen(VkCommandBuffer                            commands,
+                               VkRenderPass                               render_pass,
+                               const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                               std::uint32_t                              color_attachments,
+                               int                                        width,
+                               int                                        height,
+                               const vn::graphics::DrawDescription&       draw,
+                               const vn::graphics::PassDraw&              pass,
+                               ScreenSource                               source,
+                               vn::String*                                why,
+                               vn::graphics::DiagnosticCategory*          category = nullptr);
 
   private:
     struct Impl;

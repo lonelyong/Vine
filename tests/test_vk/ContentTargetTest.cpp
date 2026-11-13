@@ -64,30 +64,21 @@ using vn::intrusive_ptr;
 namespace
 {
 
-/// @brief The vertex stage the content ABI serves (set 0 binding 0 = view block, binding 1 = draw block).
+/// @brief The M4 content ABI: the camera pair is the 128-byte push (what the draw block used to carry is derived
+///        inside it).
 constexpr const char8_t* kVertexStage = u8R"(
 #version 450
 layout(location = 0) in vec3 in_position;
 
-layout(set = 0, binding = 0, std140) uniform VineViewBlock
+layout(push_constant) uniform PushConstants
 {
-    mat4 view;
-    mat4 inv_view;
-    mat4 proj;
-    mat4 view_proj;
-    vec4 cam_pos;
-    vec4 frame;
-} vn_view;
-
-layout(set = 0, binding = 1, std140) uniform VineDrawBlock
-{
-    mat4 model;
-    vec4 params;
-} vn_draw;
+    mat4 projection;
+    mat4 modelView;
+} vn_pc;
 
 void main()
 {
-    gl_Position = vn_view.view_proj * vn_draw.model * vec4(in_position, 1.0);
+    gl_Position = vn_pc.projection * vn_pc.modelView * vec4(in_position, 1.0);
 }
 )";
 

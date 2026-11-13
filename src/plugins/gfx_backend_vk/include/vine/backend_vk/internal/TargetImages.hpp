@@ -50,11 +50,17 @@ struct TargetImages {
     /// The variant whose depth attachment is LOADed (a pass that preserves the depth an earlier pass wrote); null for
     /// a colour-only target, where the two variants are the same thing.
     VkRenderPass render_pass_load_depth{ VK_NULL_HANDLE };
+    /// The variant that LOADs every attachment, for a pass that announces no clear at all (a screen pass): colour and
+    /// depth keep what earlier passes wrote. Only valid on a NON-fresh attachment set.
+    VkRenderPass render_pass_load{ VK_NULL_HANDLE };
     /// Binds every colour view and, when present, the depth view; compatible with BOTH render-pass variants.
     VkFramebuffer framebuffer{ VK_NULL_HANDLE };
     /// True until a pass has drawn into this attachment set: fresh images are UNDEFINED, so a pass that asked to LOAD
     /// the depth is given the CLEAR variant instead (loading an image nobody wrote is meaningless and invalid).
     bool fresh{ true };
+    /// True after a screen draw sampled this target: its colour images are then in `SHADER_READ_ONLY_OPTIMAL`, and the
+    /// device transitions them back before the next pass writes them (or before a readback reads them).
+    bool color_sampled{ false };
 
     /** @brief Gets the target width in pixels. */
     [[nodiscard]] int width() const noexcept
@@ -92,9 +98,12 @@ struct TargetImages {
         return static_cast<VkFormat>(desc.shape.device_depth_format);
     }
 
-    /** @brief Gets the render pass that serves a pass' depth load op. */
-    [[nodiscard]] VkRenderPass renderPassFor(bool load_depth) const noexcept
+    /** @brief Gets the render pass that serves a pass' load ops (see the three variants above). */
+    [[nodiscard]] VkRenderPass renderPassFor(bool load_depth, bool load_color) const noexcept
     {
+        if (load_color && render_pass_load != VK_NULL_HANDLE) {
+            return render_pass_load;
+        }
         return load_depth && render_pass_load_depth != VK_NULL_HANDLE ? render_pass_load_depth : render_pass;
     }
 

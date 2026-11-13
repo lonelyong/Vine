@@ -1,6 +1,7 @@
 #include <vine/backend_vk/internal/ContentDraw.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -13,7 +14,11 @@
 
 #include <vine/backend_vk/internal/ShaderCompiler.hpp>
 #include <vine/backend_vk/internal/StateMapping.hpp>
+#include <vine/backend_vk/internal/ContentImages.hpp>
+#include <vine/backend_vk/internal/LightBlock.hpp>
+#include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/Geometry.hpp>
+#include <vine/graphics/MaterialBase.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/StateResolution.hpp>
@@ -28,6 +33,12 @@ constexpr std::uint32_t kDefaultUniformAlignment = 256U;
 
 /// @brief Descriptor sets (and therefore draws) one frame may record before the pool is exhausted.
 constexpr std::uint32_t kDescriptorsPerFrame = 256U;
+
+/// @brief The content ABI's texture-slot count (see `TextureSlot`), i.e. set 0 bindings 1..5.
+constexpr std::uint32_t kTextureSlots = vn::graphics::kTextureSlotCount;
+
+/// @brief The full-screen ABI's sampler bindings: bindings 0..4 (four colour attachments and depth).
+constexpr std::uint32_t kScreenSamplerBindings = 5U;
 
 /**
  * @brief Finds a memory type that serves @p bits and has every property in @p wanted.
@@ -116,24 +127,56 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
 }
 
 /**
- * @brief Fills the per-view block a content program reads (see ShaderAbi.hpp).
+ * @brief The 128-byte push range the engine's content programs read (`vine_params.glsl`).
  *
- * @param camera Camera snapshot of the drawing call.
- * @param width  Target width in pixels.
- * @param height Target height in pixels.
+ * @details
+ * - `pc.projection == VineViewBlock.proj` (the pass' projection, folded into the device's clip convention) and
+ *   `pc.modelView == VineViewBlock.view * VineDrawBlock.model`: the same two values a block-reading program finds in
+ *   the view/draw pair, spelled for the range the built-in stages declare.
+ */
+struct ContentPushConstants {
+    std::array<float, 16> projection{}; // View -> clip, column-major, in the device's clip convention.
+    std::array<float, 16> model_view{}; // World -> view, column-major (the pass' view times the drawable's model).
+};
+static_assert(sizeof(ContentPushConstants) == 128U, "the content push range is two mat4");
+
+/**
+ * @brief Fills the push range from a pass' camera and one drawable's model matrix.
+ *
+ * @param camera The pass' camera snapshot (its projection is Y-flipped, see flipProjectionY).
+ * @param model  The drawable's world transform.
+ * @return The range's bytes.
+ */
+[[nodiscard]] ContentPushConstants pushConstantsOf(const vn::graphics::CameraSnapshot& camera, const vn::math::Mat4d& model) noexcept
+{
+    ContentPushConstants push{};
+    copyMatrix(flipProjectionY(camera.projection), push.projection);
+    copyMatrix(camera.view * model, push.model_view);
+    return push;
+}
+
+/**
+ * @brief Packs a material's values into the shading block (see ShaderAbi.hpp).
+ *
+ * @details
+ * - A command that names no material uses the block's DEFAULTS, which are the default material's values - content
+ *   without a material must look like content with a default one.
+ * - `texture_flags` states which slots the caller could actually bind (a complete texture was uploaded); those are the
+ *   bits the shading reads to decide whether a slot is sampled or falls back to its constant.
+ *
+ * @param values        The resolved values, or null for the default material.
+ * @param texture_flags Bit 0-4 = the slots that carry an uploaded map.
  * @return The block.
  */
-[[nodiscard]] vn::graphics::VineViewBlock buildViewBlock(const vn::graphics::CameraSnapshot& camera, int width, int height) noexcept
+[[nodiscard]] vn::graphics::VineMaterialBlock buildMaterialBlock(const vn::graphics::MaterialParameters* values, std::uint32_t texture_flags) noexcept
 {
-    const vn::math::Mat4d projection = flipProjectionY(camera.projection);
-
-    vn::graphics::VineViewBlock block{};
-    copyMatrix(camera.view, block.view);
-    copyMatrix(camera.view.inverted(), block.inv_view);
-    copyMatrix(projection, block.proj);
-    copyMatrix(projection * camera.view, block.view_proj);
-    block.cam_pos = { static_cast<float>(camera.eye.x), static_cast<float>(camera.eye.y), static_cast<float>(camera.eye.z), 0.0F };
-    block.frame   = { 0.0F, static_cast<float>(width), static_cast<float>(height), 0.0F };
+    vn::graphics::VineMaterialBlock block{}; // its member defaults are the default material
+    if (values != nullptr) {
+        block.base_color = { values->base_color.r, values->base_color.g, values->base_color.b, values->base_color.a };
+        block.emissive   = { values->emissive.r, values->emissive.g, values->emissive.b, values->emissive.a };
+        block.params     = { values->metallic, values->roughness, values->occlusion, values->alpha_cutoff };
+        block.flags[0]   = texture_flags | (static_cast<std::uint32_t>(values->alpha_mode) << vn::graphics::kMaterialAlphaModeShift);
+    }
     return block;
 }
 
@@ -216,6 +259,9 @@ struct ContentDraw::Impl {
 
     /// @brief What one pipeline is built for: program revision, target compatibility, state and the vertex layout.
     struct PipelineKey {
+        /// true for a FULL-SCREEN program: `program` is then the FRAGMENT stage's description, and the geometry's
+        /// channels play no part (the vertex stage is the engine's full-screen triangle and reads no buffer).
+        bool                                                   screen{ false };
         const vn::graphics::ShaderProgramDescription*          program{ nullptr };
         vn::graphics::backend::RenderPassCompatibility         compatibility{};
         VkPrimitiveTopology                                    topology{ VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
@@ -234,6 +280,9 @@ struct ContentDraw::Impl {
          */
         [[nodiscard]] bool operator<(const PipelineKey& other) const
         {
+            if (screen != other.screen) {
+                return screen < other.screen;
+            }
             if (program != other.program) {
                 return program < other.program;
             }
@@ -270,9 +319,19 @@ struct ContentDraw::Impl {
     VkPhysicalDeviceMemoryProperties memory_properties{};
     std::uint32_t                   uniform_alignment{ kDefaultUniformAlignment };
 
-    VkDescriptorSetLayout set_layout{ VK_NULL_HANDLE };
-    VkPipelineLayout      pipeline_layout{ VK_NULL_HANDLE };
+    /// The set layouts and pipeline layouts the two ABIs use: the content pair (set 0 material/slots/lights, set 1
+    /// draw) and the full-screen set (the source's attachments at 0..N-1, lights at 6).
+    VkDescriptorSetLayout content_set_layout{ VK_NULL_HANDLE };
+    VkDescriptorSetLayout draw_set_layout{ VK_NULL_HANDLE };
+    VkDescriptorSetLayout screen_set_layout{ VK_NULL_HANDLE };
+    VkPipelineLayout      content_pipeline_layout{ VK_NULL_HANDLE };
+    VkPipelineLayout      screen_pipeline_layout{ VK_NULL_HANDLE };
     VkDescriptorPool      descriptor_pool{ VK_NULL_HANDLE };
+
+    /// The engine's full-screen vertex stage (the fragment stage of a screen draw is the draw's own program).
+    vn::graphics::ShaderProgramDescriptionPtr screen_vertex{};
+    /// The sampled images and samplers the material slots read.
+    ContentImages images{};
 
     std::unordered_map<const vn::graphics::ShaderProgramDescription*, ProgramEntry> programs;
     std::unordered_map<const vn::graphics::GeometryDescription*, GeometryEntry>     geometries;
@@ -280,6 +339,24 @@ struct ContentDraw::Impl {
     std::vector<std::pair<VkBuffer, VkDeviceMemory>>                                frame_uniforms;
     /// How many pipelines were CREATED (a resize must leave this unmoved; see pipelinesCreated).
     std::uint64_t created_{ 0 };
+
+    /** @brief Byte offset of the light block inside one draw's uniform buffer (material starts at 0). */
+    [[nodiscard]] VkDeviceSize lightsOffset() const noexcept
+    {
+        return alignedUp(sizeof(vn::graphics::VineMaterialBlock), uniform_alignment);
+    }
+
+    /** @brief Byte offset of the draw block inside one draw's uniform buffer. */
+    [[nodiscard]] VkDeviceSize drawOffset() const noexcept
+    {
+        return alignedUp(lightsOffset() + sizeof(VineLightsBlock), uniform_alignment);
+    }
+
+    /** @brief Size of one draw's uniform buffer: material, lights and draw, each at its aligned offset. */
+    [[nodiscard]] VkDeviceSize uniformSize() const noexcept
+    {
+        return drawOffset() + sizeof(vn::graphics::VineDrawBlock);
+    }
 
     /**
      * @brief Creates a buffer and binds host-visible coherent memory to it.
@@ -424,10 +501,6 @@ struct ContentDraw::Impl {
             }
         }
 
-        if (!entry.failed && (entry.vertex == VK_NULL_HANDLE || entry.fragment == VK_NULL_HANDLE)) {
-            entry.failed = true;
-            why          = vn::String(u8"vk: a content program needs a vertex and a fragment stage (M2)");
-        }
         if (entry.vertex_entry.empty()) {
             entry.vertex_entry = "main";
         }
@@ -524,84 +597,63 @@ struct ContentDraw::Impl {
     }
 
     /**
-     * @brief Gets (or builds) the pipeline serving one program, target compatibility, state and vertex layout.
+     * @brief Gets (or builds) one graphics pipeline from a fully stated key and its shader/vertex-input data.
      *
-     * @param program           The compiled program.
-     * @param geometry          The geometry whose channels state the vertex layout.
-     * @param compatibility     The target's pipeline compatibility (the key's shape half).
-     * @param render_pass       A render pass with that compatibility (used only when the pipeline is CREATED).
-     * @param topology          The draw's effective topology.
+     * @param key               The cache key (program revision, compatibility, topology, state and vertex layout).
+     * @param vertex            The compiled vertex module.
+     * @param vertex_entry      The vertex stage's entry point.
+     * @param fragment          The compiled fragment module.
+     * @param fragment_entry    The fragment stage's entry point.
+     * @param bindings          The vertex input bindings (empty for the full-screen triangle).
+     * @param attributes        The vertex input attributes (empty for the full-screen triangle).
+     * @param layout            The pipeline layout the program's descriptor sets agree with.
+     * @param render_pass       A render pass with the key's compatibility (used only when the pipeline is CREATED).
+     * @param topology          The pipeline's primitive topology.
      * @param state             The resolved pipeline state (dynamic state is not part of it).
      * @param color_attachments How many colour attachments the pass writes.
      * @param why               Receives the reason when the pipeline could not be built.
      * @return The pipeline, or `VK_NULL_HANDLE`.
      */
-    [[nodiscard]] VkPipeline ensurePipeline(const ProgramEntry&                                   program,
-                                            const vn::graphics::GeometryDescription&              geometry,
-                                            const vn::graphics::backend::RenderPassCompatibility& compatibility,
-                                            VkRenderPass                                          render_pass,
-                                            VkPrimitiveTopology                                   topology,
-                                            const PipelineState&                                  state,
-                                            std::uint32_t                                         color_attachments,
-                                            vn::String&                                           why)
+    [[nodiscard]] VkPipeline buildPipeline(PipelineKey                                          key,
+                                           VkShaderModule                                       vertex,
+                                           const std::string&                                   vertex_entry,
+                                           VkShaderModule                                       fragment,
+                                           const std::string&                                   fragment_entry,
+                                           const std::vector<VkVertexInputBindingDescription>&  bindings,
+                                           const std::vector<VkVertexInputAttributeDescription>& attributes,
+                                           VkPipelineLayout                                     layout,
+                                           VkRenderPass                                         render_pass,
+                                           VkPrimitiveTopology                                  topology,
+                                           const PipelineState&                                 state,
+                                           std::uint32_t                                        color_attachments,
+                                           vn::String&                                          why)
     {
-        PipelineKey key;
-        key.program       = program.description.get();
-        key.compatibility = compatibility;
-        key.topology      = topology;
-        key.state         = state;
-        for (const vn::graphics::GeometryChannel& channel : geometry.channels()) {
-            if (channel.channel.empty()) {
-                continue;
-            }
-            key.channels.emplace_back(channel.location, channel.channel.components);
-        }
-
         const auto found = pipelines.find(key);
         if (found != pipelines.end()) {
             return found->second;
         }
 
-        std::vector<VkVertexInputBindingDescription>   bindings;
-        std::vector<VkVertexInputAttributeDescription> attributes;
-        bindings.reserve(key.channels.size());
-        attributes.reserve(key.channels.size());
-        for (std::size_t index = 0; index < key.channels.size(); ++index) {
-            const std::uint32_t binding    = static_cast<std::uint32_t>(index);
-            const std::uint32_t location   = key.channels[index].first;
-            const std::uint32_t components = key.channels[index].second;
-            VkVertexInputBindingDescription binding_description{};
-            binding_description.binding   = binding;
-            binding_description.stride    = components * static_cast<std::uint32_t>(sizeof(float));
-            binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-            bindings.push_back(binding_description);
-
-            VkVertexInputAttributeDescription attribute{};
-            attribute.location = location;
-            attribute.binding  = binding;
-            attribute.format   = vertexFormatOf(components);
-            attribute.offset   = 0U;
-            attributes.push_back(attribute);
-        }
+        std::vector<VkVertexInputBindingDescription>   input_bindings = bindings;
+        std::vector<VkVertexInputAttributeDescription> input_attributes = attributes;
 
         // WHAT THE PIPELINE STATES. The resolved state selects the pipeline variant; values that are DYNAMIC state
         // (viewport, scissor, line width, depth-bias values) are set per draw and never recompile anything.
         VkPipelineShaderStageCreateInfo stages[2]{};
         stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
-        stages[0].module = program.vertex;
-        stages[0].pName  = program.vertex_entry.c_str();
+        stages[0].module = vertex;
+        stages[0].pName  = vertex_entry.c_str();
         stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
-        stages[1].module = program.fragment;
-        stages[1].pName  = program.fragment_entry.c_str();
+        stages[1].module = fragment;
+        stages[1].pName  = fragment_entry.c_str();
 
         VkPipelineVertexInputStateCreateInfo vertex_input{};
         vertex_input.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertex_input.vertexBindingDescriptionCount   = static_cast<std::uint32_t>(bindings.size());
-        vertex_input.pVertexBindingDescriptions      = bindings.empty() ? nullptr : bindings.data();
-        vertex_input.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size());
-        vertex_input.pVertexAttributeDescriptions    = attributes.empty() ? nullptr : attributes.data();
+        vertex_input.vertexBindingDescriptionCount   = static_cast<std::uint32_t>(input_bindings.size());
+        vertex_input.pVertexBindingDescriptions      = input_bindings.empty() ? nullptr : input_bindings.data();
+        vertex_input.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(input_attributes.size());
+        vertex_input.pVertexAttributeDescriptions    = input_attributes.empty() ? nullptr : input_attributes.data();
 
         VkPipelineInputAssemblyStateCreateInfo assembly{};
         assembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -669,7 +721,7 @@ struct ContentDraw::Impl {
         info.pDepthStencilState  = &depth;
         info.pColorBlendState    = &blend;
         info.pDynamicState       = &dynamic;
-        info.layout              = pipeline_layout;
+        info.layout              = layout;
         info.renderPass          = render_pass;
         info.subpass             = 0U;
 
@@ -684,69 +736,287 @@ struct ContentDraw::Impl {
     }
 
     /**
-     * @brief Allocates the descriptor set of one draw and points its two bindings at @p buffer.
+     * @brief Gets (or builds) the pipeline of a CONTENT draw.
      *
-     * @param buffer      The draw's uniform buffer (view block at 0, draw block at @p draw_offset).
-     * @param draw_offset Byte offset of the draw block inside @p buffer.
-     * @return The set, or `VK_NULL_HANDLE`.
+     * @details
+     * - The vertex layout is the geometry's channel list: one binding per channel, at the channel's location and with
+     *   its component count - the same arrangement `ensureGeometry` uploaded.
+     *
+     * @param program           The compiled program (both stages required).
+     * @param geometry          The geometry whose channels state the vertex layout.
+     * @param compatibility     The target's pipeline compatibility (the key's shape half).
+     * @param render_pass       A render pass with that compatibility (used only when the pipeline is CREATED).
+     * @param topology          The draw's effective topology.
+     * @param state             The resolved pipeline state (dynamic state is not part of it).
+     * @param color_attachments How many colour attachments the pass writes.
+     * @param why               Receives the reason when the pipeline could not be built.
+     * @return The pipeline, or `VK_NULL_HANDLE`.
      */
-    [[nodiscard]] VkDescriptorSet makeSet(VkBuffer buffer, VkDeviceSize draw_offset) const
+    [[nodiscard]] VkPipeline ensureContentPipeline(const ProgramEntry&                                   program,
+                                                   const vn::graphics::GeometryDescription&              geometry,
+                                                   const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                                   VkRenderPass                                          render_pass,
+                                                   VkPrimitiveTopology                                   topology,
+                                                   const PipelineState&                                  state,
+                                                   std::uint32_t                                         color_attachments,
+                                                   vn::String&                                           why)
+    {
+        if (program.vertex == VK_NULL_HANDLE || program.fragment == VK_NULL_HANDLE) {
+            why = vn::String(u8"vk: a content program needs a vertex and a fragment stage");
+            return VK_NULL_HANDLE;
+        }
+
+        PipelineKey key;
+        key.program       = program.description.get();
+        key.compatibility = compatibility;
+        key.topology      = topology;
+        key.state         = state;
+        for (const vn::graphics::GeometryChannel& channel : geometry.channels()) {
+            if (channel.channel.empty()) {
+                continue;
+            }
+            key.channels.emplace_back(channel.location, channel.channel.components);
+        }
+
+        std::vector<VkVertexInputBindingDescription>   bindings;
+        std::vector<VkVertexInputAttributeDescription> attributes;
+        bindings.reserve(key.channels.size());
+        attributes.reserve(key.channels.size());
+        for (std::size_t index = 0; index < key.channels.size(); ++index) {
+            const std::uint32_t binding    = static_cast<std::uint32_t>(index);
+            const std::uint32_t location   = key.channels[index].first;
+            const std::uint32_t components = key.channels[index].second;
+            VkVertexInputBindingDescription binding_description{};
+            binding_description.binding   = binding;
+            binding_description.stride    = components * static_cast<std::uint32_t>(sizeof(float));
+            binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+            bindings.push_back(binding_description);
+
+            VkVertexInputAttributeDescription attribute{};
+            attribute.location = location;
+            attribute.binding  = binding;
+            attribute.format   = vertexFormatOf(components);
+            attribute.offset   = 0U;
+            attributes.push_back(attribute);
+        }
+
+        return buildPipeline(std::move(key),
+                             program.vertex,
+                             program.vertex_entry,
+                             program.fragment,
+                             program.fragment_entry,
+                             bindings,
+                             attributes,
+                             content_pipeline_layout,
+                             render_pass,
+                             topology,
+                             state,
+                             color_attachments,
+                             why);
+    }
+
+    /**
+     * @brief Gets (or builds) the pipeline of a SCREEN draw: the engine's full-screen vertex stage + the draw's
+     *        fragment stage, with no vertex input.
+     *
+     * @param fragment          The compiled FRAGMENT program (its description is the key's program half).
+     * @param vertex            The compiled full-screen vertex stage (see `screen_vertex`).
+     * @param compatibility     The destination's pipeline compatibility.
+     * @param render_pass       A render pass with that compatibility (used only when the pipeline is CREATED).
+     * @param state             The resolved pipeline state (dynamic state is not part of it).
+     * @param color_attachments How many colour attachments the destination writes.
+     * @param why               Receives the reason when the pipeline could not be built.
+     * @return The pipeline, or `VK_NULL_HANDLE`.
+     */
+    [[nodiscard]] VkPipeline ensureScreenPipeline(const ProgramEntry&                                   fragment,
+                                                  const ProgramEntry&                                   vertex,
+                                                  const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                                  VkRenderPass                                          render_pass,
+                                                  const PipelineState&                                  state,
+                                                  std::uint32_t                                         color_attachments,
+                                                  vn::String&                                           why)
+    {
+        if (vertex.vertex == VK_NULL_HANDLE) {
+            why = vn::String(u8"vk: the full-screen vertex stage could not be compiled");
+            return VK_NULL_HANDLE;
+        }
+        if (fragment.fragment == VK_NULL_HANDLE) {
+            why = vn::String(u8"vk: a screen program needs a fragment stage");
+            return VK_NULL_HANDLE;
+        }
+
+        PipelineKey key;
+        key.screen        = true;
+        key.program       = fragment.description.get();
+        key.compatibility = compatibility;
+        key.topology      = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        key.state         = state;
+
+        return buildPipeline(std::move(key),
+                             vertex.vertex,
+                             vertex.vertex_entry,
+                             fragment.fragment,
+                             fragment.fragment_entry,
+                             {},
+                             {},
+                             screen_pipeline_layout,
+                             render_pass,
+                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                             state,
+                             color_attachments,
+                             why);
+    }
+
+    /**
+     * @brief Allocates one descriptor set from @p layout.
+     *
+     * @param layout The set layout the set must agree with.
+     * @return The set, or `VK_NULL_HANDLE` when the pool is exhausted.
+     */
+    [[nodiscard]] VkDescriptorSet allocateSet(VkDescriptorSetLayout layout) const
     {
         VkDescriptorSetAllocateInfo allocate{};
         allocate.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         allocate.descriptorPool     = descriptor_pool;
         allocate.descriptorSetCount = 1U;
-        allocate.pSetLayouts        = &set_layout;
+        allocate.pSetLayouts        = &layout;
 
         VkDescriptorSet set = VK_NULL_HANDLE;
         if (table->vkAllocateDescriptorSets(device, &allocate, &set) != VK_SUCCESS) {
             return VK_NULL_HANDLE;
         }
+        return set;
+    }
 
-        VkDescriptorBufferInfo view_info{};
-        view_info.buffer = buffer;
-        view_info.offset = 0U;
-        view_info.range  = sizeof(vn::graphics::VineViewBlock);
+    /**
+     * @brief Writes a content draw's set 0: material at binding 0, the five slots at 1-5, lights at 6.
+     *
+     * @param buffer The draw's uniform buffer (material at 0, lights at @ref lightsOffset).
+     * @param slots  One image info per texture slot, in `TextureSlot` order.
+     * @return The set, or `VK_NULL_HANDLE`.
+     */
+    [[nodiscard]] VkDescriptorSet makeContentSet(VkBuffer buffer, const std::array<VkDescriptorImageInfo, kTextureSlots>& slots) const
+    {
+        const VkDescriptorSet set = allocateSet(content_set_layout);
+        if (set == VK_NULL_HANDLE) {
+            return set;
+        }
 
-        VkDescriptorBufferInfo draw_info{};
-        draw_info.buffer = buffer;
-        draw_info.offset = draw_offset;
-        draw_info.range  = sizeof(vn::graphics::VineDrawBlock);
+        VkDescriptorBufferInfo material_info{};
+        material_info.buffer = buffer;
+        material_info.offset = 0U;
+        material_info.range  = sizeof(vn::graphics::VineMaterialBlock);
 
-        VkWriteDescriptorSet writes[2]{};
+        VkDescriptorBufferInfo lights_info{};
+        lights_info.buffer = buffer;
+        lights_info.offset = lightsOffset();
+        lights_info.range  = sizeof(VineLightsBlock);
+
+        VkWriteDescriptorSet writes[3]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = set;
         writes[0].dstBinding      = 0U;
         writes[0].descriptorCount = 1U;
         writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[0].pBufferInfo     = &view_info;
+        writes[0].pBufferInfo     = &material_info;
         writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[1].dstSet          = set;
         writes[1].dstBinding      = 1U;
+        writes[1].descriptorCount = kTextureSlots;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].pImageInfo      = slots.data();
+        writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet          = set;
+        writes[2].dstBinding      = 6U;
+        writes[2].descriptorCount = 1U;
+        writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[2].pBufferInfo     = &lights_info;
+        table->vkUpdateDescriptorSets(device, 3U, writes, 0U, nullptr);
+        return set;
+    }
+
+    /**
+     * @brief Writes a content draw's set 1: the per-draw block at binding 0.
+     *
+     * @param buffer The draw's uniform buffer (draw at @ref drawOffset).
+     * @return The set, or `VK_NULL_HANDLE`.
+     */
+    [[nodiscard]] VkDescriptorSet makeDrawSet(VkBuffer buffer) const
+    {
+        const VkDescriptorSet set = allocateSet(draw_set_layout);
+        if (set == VK_NULL_HANDLE) {
+            return set;
+        }
+
+        VkDescriptorBufferInfo draw_info{};
+        draw_info.buffer = buffer;
+        draw_info.offset = drawOffset();
+        draw_info.range  = sizeof(vn::graphics::VineDrawBlock);
+
+        VkWriteDescriptorSet write{};
+        write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet          = set;
+        write.dstBinding      = 0U;
+        write.descriptorCount = 1U;
+        write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        write.pBufferInfo     = &draw_info;
+        table->vkUpdateDescriptorSets(device, 1U, &write, 0U, nullptr);
+        return set;
+    }
+
+    /**
+     * @brief Writes a screen draw's set 0: the source attachments at 0..4, the lights at 6.
+     *
+     * @param buffer The draw's uniform buffer (lights at @ref lightsOffset).
+     * @param slots  One image info per source/depth binding, in binding order; absent ones carry the fallback.
+     * @return The set, or `VK_NULL_HANDLE`.
+     */
+    [[nodiscard]] VkDescriptorSet makeScreenSet(VkBuffer buffer, const std::array<VkDescriptorImageInfo, kTextureSlots>& slots) const
+    {
+        const VkDescriptorSet set = allocateSet(screen_set_layout);
+        if (set == VK_NULL_HANDLE) {
+            return set;
+        }
+
+        VkDescriptorBufferInfo lights_info{};
+        lights_info.buffer = buffer;
+        lights_info.offset = lightsOffset();
+        lights_info.range  = sizeof(VineLightsBlock);
+
+        VkWriteDescriptorSet writes[2]{};
+        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet          = set;
+        writes[0].dstBinding      = 0U;
+        writes[0].descriptorCount = kTextureSlots;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo      = slots.data();
+        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet          = set;
+        writes[1].dstBinding      = 6U;
         writes[1].descriptorCount = 1U;
         writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[1].pBufferInfo     = &draw_info;
+        writes[1].pBufferInfo     = &lights_info;
         table->vkUpdateDescriptorSets(device, 2U, writes, 0U, nullptr);
         return set;
     }
 
     /**
-     * @brief Creates the per-draw uniform buffer and writes both blocks into it.
+     * @brief Creates the per-draw uniform buffer and writes the material, lights and draw blocks at their offsets.
      *
-     * @param view        The per-view block.
-     * @param draw        The per-draw block.
-     * @param draw_offset Byte offset the draw block starts at.
-     * @param buffer      Receives the buffer.
-     * @param memory      Receives the memory.
+     * @param material The material block (offset 0).
+     * @param lights   The light block (offset @ref lightsOffset).
+     * @param draw     The per-draw block (offset @ref drawOffset).
+     * @param buffer   Receives the buffer.
+     * @param memory   Receives the memory.
      * @return true when the bytes are in the buffer.
      */
-    [[nodiscard]] bool createUniforms(const vn::graphics::VineViewBlock& view,
-                                      const vn::graphics::VineDrawBlock& draw,
-                                      VkDeviceSize                       draw_offset,
-                                      VkBuffer&                          buffer,
-                                      VkDeviceMemory&                    memory) const
+    [[nodiscard]] bool createDrawUniforms(const vn::graphics::VineMaterialBlock& material,
+                                          const VineLightsBlock&                 lights,
+                                          const vn::graphics::VineDrawBlock&     draw,
+                                          VkBuffer&                              buffer,
+                                          VkDeviceMemory&                        memory) const
     {
-        const VkDeviceSize size = draw_offset + sizeof(vn::graphics::VineDrawBlock);
+        const VkDeviceSize size = uniformSize();
         if (!createHostBuffer(size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, buffer, memory)) {
             return false;
         }
@@ -755,8 +1025,10 @@ struct ContentDraw::Impl {
             destroyBuffer(buffer, memory);
             return false;
         }
-        std::memcpy(mapped, &view, sizeof(view));
-        std::memcpy(static_cast<std::byte*>(mapped) + draw_offset, &draw, sizeof(draw));
+        auto* bytes = static_cast<std::byte*>(mapped);
+        std::memcpy(bytes, &material, sizeof(material));
+        std::memcpy(bytes + lightsOffset(), &lights, sizeof(lights));
+        std::memcpy(bytes + drawOffset(), &draw, sizeof(draw));
         table->vkUnmapMemory(device, memory);
         return true;
     }
@@ -836,48 +1108,121 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
     impl->memory_properties = memory;
     impl->uniform_alignment = uniform_alignment != 0U ? uniform_alignment : kDefaultUniformAlignment;
 
-    VkDescriptorSetLayoutBinding bindings[2]{};
-    bindings[0].binding         = 0U;
-    bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    bindings[0].descriptorCount = 1U;
-    bindings[0].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    bindings[1].binding         = 1U;
-    bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    bindings[1].descriptorCount = 1U;
-    bindings[1].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    // THE CONTENT SET (set 0): material at 0, the five slots at 1-5, lights at 6 - the engine's arrangement, which is
+    // also the one vine_params.glsl declares.
+    VkDescriptorSetLayoutBinding content_bindings[7]{};
+    content_bindings[0].binding         = 0U;
+    content_bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    content_bindings[0].descriptorCount = 1U;
+    content_bindings[0].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    for (std::uint32_t slot = 0; slot < kTextureSlots; ++slot) {
+        VkDescriptorSetLayoutBinding& binding = content_bindings[1U + slot];
+        binding.binding                       = 1U + slot;
+        binding.descriptorType                = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        binding.descriptorCount               = 1U;
+        binding.stageFlags                    = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    content_bindings[6].binding         = 6U;
+    content_bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    content_bindings[6].descriptorCount = 1U;
+    content_bindings[6].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo layout_info{};
     layout_info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_info.bindingCount = 2U;
-    layout_info.pBindings    = bindings;
-    if (impl->table->vkCreateDescriptorSetLayout(impl->device, &layout_info, nullptr, &impl->set_layout) != VK_SUCCESS) {
+    layout_info.bindingCount = 7U;
+    layout_info.pBindings    = content_bindings;
+    if (impl->table->vkCreateDescriptorSetLayout(impl->device, &layout_info, nullptr, &impl->content_set_layout) != VK_SUCCESS) {
         destroy();
         return false;
     }
+
+    // THE DRAW SET (set 1): the per-draw block at binding 0.
+    VkDescriptorSetLayoutBinding draw_binding{};
+    draw_binding.binding         = 0U;
+    draw_binding.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    draw_binding.descriptorCount = 1U;
+    draw_binding.stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    layout_info.bindingCount = 1U;
+    layout_info.pBindings    = &draw_binding;
+    if (impl->table->vkCreateDescriptorSetLayout(impl->device, &layout_info, nullptr, &impl->draw_set_layout) != VK_SUCCESS) {
+        destroy();
+        return false;
+    }
+
+    // THE FULL-SCREEN SET (set 0 of a screen program): the source's colour attachments at 0..4 and the lights at 6.
+    VkDescriptorSetLayoutBinding screen_bindings[6]{};
+    for (std::uint32_t slot = 0; slot < kScreenSamplerBindings; ++slot) {
+        screen_bindings[slot].binding         = slot;
+        screen_bindings[slot].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        screen_bindings[slot].descriptorCount = 1U;
+        screen_bindings[slot].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    screen_bindings[5].binding         = 6U;
+    screen_bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    screen_bindings[5].descriptorCount = 1U;
+    screen_bindings[5].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    layout_info.bindingCount = 6U;
+    layout_info.pBindings    = screen_bindings;
+    if (impl->table->vkCreateDescriptorSetLayout(impl->device, &layout_info, nullptr, &impl->screen_set_layout) != VK_SUCCESS) {
+        destroy();
+        return false;
+    }
+
+    // THE CONTENT LAYOUT: set 0 + set 1, and the 128-byte camera push every built-in content stage reads.
+    const VkDescriptorSetLayout content_sets[2]{ impl->content_set_layout, impl->draw_set_layout };
+    VkPushConstantRange         push{};
+    push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    push.offset     = 0U;
+    push.size       = sizeof(ContentPushConstants);
 
     VkPipelineLayoutCreateInfo pipeline_info{};
-    pipeline_info.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipeline_info.setLayoutCount = 1U;
-    pipeline_info.pSetLayouts    = &impl->set_layout;
-    if (impl->table->vkCreatePipelineLayout(impl->device, &pipeline_info, nullptr, &impl->pipeline_layout) != VK_SUCCESS) {
+    pipeline_info.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeline_info.setLayoutCount         = 2U;
+    pipeline_info.pSetLayouts            = content_sets;
+    pipeline_info.pushConstantRangeCount = 1U;
+    pipeline_info.pPushConstantRanges    = &push;
+    if (impl->table->vkCreatePipelineLayout(impl->device, &pipeline_info, nullptr, &impl->content_pipeline_layout) != VK_SUCCESS) {
         destroy();
         return false;
     }
 
-    VkDescriptorPoolSize pool_size{};
-    pool_size.type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    pool_size.descriptorCount = kDescriptorsPerFrame * 2U;
+    // THE SCREEN LAYOUT: set 0 only (a full-screen program reads no camera push).
+    pipeline_info.setLayoutCount         = 1U;
+    pipeline_info.pSetLayouts            = &impl->screen_set_layout;
+    pipeline_info.pushConstantRangeCount = 0U;
+    pipeline_info.pPushConstantRanges    = nullptr;
+    if (impl->table->vkCreatePipelineLayout(impl->device, &pipeline_info, nullptr, &impl->screen_pipeline_layout) != VK_SUCCESS) {
+        destroy();
+        return false;
+    }
+
+    // ONE POOL FOR BOTH PATHS: a content draw allocates two sets (3 UBOs + 5 samplers), a screen draw one (1 UBO +
+    // 5 samplers).
+    VkDescriptorPoolSize pool_sizes[2]{};
+    pool_sizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    pool_sizes[0].descriptorCount = kDescriptorsPerFrame * 3U;
+    pool_sizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    pool_sizes[1].descriptorCount = kDescriptorsPerFrame * 2U * kTextureSlots;
 
     VkDescriptorPoolCreateInfo pool_info{};
     pool_info.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pool_info.maxSets       = kDescriptorsPerFrame;
-    pool_info.poolSizeCount = 1U;
-    pool_info.pPoolSizes    = &pool_size;
+    pool_info.maxSets       = kDescriptorsPerFrame * 2U;
+    pool_info.poolSizeCount = 2U;
+    pool_info.pPoolSizes    = pool_sizes;
     if (impl->table->vkCreateDescriptorPool(impl->device, &pool_info, nullptr, &impl->descriptor_pool) != VK_SUCCESS) {
         destroy();
         return false;
     }
-    return true;
+
+    if (!impl->images.create(table, device, memory)) {
+        destroy();
+        return false;
+    }
+
+    // The engine's full-screen vertex stage: the interface every screen fragment stage is written against.
+    const vn::intrusive_ptr<vn::graphics::ShaderProgram> fullscreen = vn::graphics::fullscreenVertexProgram();
+    impl->screen_vertex = fullscreen != nullptr ? fullscreen->description() : vn::graphics::ShaderProgramDescriptionPtr{};
+    return impl->screen_vertex != nullptr;
 }
 
 void ContentDraw::destroy() noexcept
@@ -886,6 +1231,7 @@ void ContentDraw::destroy() noexcept
         return;
     }
     if (impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
+        impl->images.destroy();
         impl->destroyFrameUniforms();
         impl->destroyPipelines();
         impl->destroyPrograms();
@@ -894,18 +1240,25 @@ void ContentDraw::destroy() noexcept
             impl->table->vkDestroyDescriptorPool(impl->device, impl->descriptor_pool, nullptr);
             impl->descriptor_pool = VK_NULL_HANDLE;
         }
-        if (impl->pipeline_layout != VK_NULL_HANDLE) {
-            impl->table->vkDestroyPipelineLayout(impl->device, impl->pipeline_layout, nullptr);
-            impl->pipeline_layout = VK_NULL_HANDLE;
+        if (impl->content_pipeline_layout != VK_NULL_HANDLE) {
+            impl->table->vkDestroyPipelineLayout(impl->device, impl->content_pipeline_layout, nullptr);
+            impl->content_pipeline_layout = VK_NULL_HANDLE;
         }
-        if (impl->set_layout != VK_NULL_HANDLE) {
-            impl->table->vkDestroyDescriptorSetLayout(impl->device, impl->set_layout, nullptr);
-            impl->set_layout = VK_NULL_HANDLE;
+        if (impl->screen_pipeline_layout != VK_NULL_HANDLE) {
+            impl->table->vkDestroyPipelineLayout(impl->device, impl->screen_pipeline_layout, nullptr);
+            impl->screen_pipeline_layout = VK_NULL_HANDLE;
+        }
+        for (VkDescriptorSetLayout* layout : { &impl->content_set_layout, &impl->draw_set_layout, &impl->screen_set_layout }) {
+            if (*layout != VK_NULL_HANDLE) {
+                impl->table->vkDestroyDescriptorSetLayout(impl->device, *layout, nullptr);
+                *layout = VK_NULL_HANDLE;
+            }
         }
     }
     impl->table  = nullptr;
     impl->device = VK_NULL_HANDLE;
     impl->memory_properties = VkPhysicalDeviceMemoryProperties{};
+    impl->screen_vertex = nullptr;
 }
 
 void ContentDraw::beginFrame()
@@ -919,12 +1272,43 @@ void ContentDraw::endFrame() noexcept
 {
     if (impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
         impl->destroyFrameUniforms();
+        impl->images.releaseFrame();
     }
 }
 
 std::uint64_t ContentDraw::pipelinesCreated() const noexcept
 {
     return impl->created_;
+}
+
+void ContentDraw::preparePass(const VkCommandBuffer commands, const std::span<const vn::graphics::DrawDescription> draws)
+{
+    if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || commands == VK_NULL_HANDLE) {
+        return;
+    }
+    vn::String why;
+    if (!impl->images.ensureFallback(commands, &why)) {
+        return; // reported when a draw finds no fallback view
+    }
+    for (const vn::graphics::DrawDescription& draw : draws) {
+        if (draw.kind != vn::graphics::DrawDescription::Kind::Scene || draw.commands == nullptr) {
+            continue;
+        }
+        for (const vn::graphics::RenderCommand& command : *draw.commands) {
+            vn::graphics::MaterialDescriptionPtr description = command.material_description;
+            if (description == nullptr && command.material != nullptr) {
+                description = command.material->description();
+            }
+            if (description == nullptr) {
+                continue;
+            }
+            for (const vn::graphics::TextureSlotBinding& slot : description->values().textures) {
+                if (slot.texture != nullptr && slot.texture->isComplete()) {
+                    (void)impl->images.viewFor(*slot.texture, commands, &why);
+                }
+            }
+        }
+    }
 }
 
 std::uint64_t ContentDraw::record(VkCommandBuffer                             commands,
@@ -954,12 +1338,15 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         return 0;
     }
     if (draw.kind != vn::graphics::DrawDescription::Kind::Scene) {
-        reason = vn::String(u8"vk: a full-screen draw is M4's; this one was skipped");
+        reason = vn::String(u8"vk: a screen draw reached the content path (it has its own recordScreen)");
         return 0;
     }
 
-    const vn::graphics::VineViewBlock view        = buildViewBlock(draw.camera, width, height);
-    const VkDeviceSize                draw_offset = alignedUp(sizeof(vn::graphics::VineViewBlock), impl->uniform_alignment);
+    // THE 1x1 WHITE STAND-IN: prepared outside the render pass by preparePass, so no descriptor a shader might read
+    // is left undefined.
+    if (!impl->images.ensureFallback(VK_NULL_HANDLE, &reason)) {
+        return 0;
+    }
 
     // The rectangle the pass states, or the whole target (a pass without a viewport draws all of it).
     VkViewport viewport{};
@@ -1051,30 +1438,83 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         pipeline_state.blend_src    = StateMapping::blendFactor(resolved.state.blend.src);
         pipeline_state.blend_dst    = StateMapping::blendFactor(resolved.state.blend.dst);
 
-        const VkPipeline stateful_pipeline = impl->ensurePipeline(*compiled,
-                                                                  *geometry,
-                                                                  compatibility,
-                                                                  render_pass,
-                                                                  StateMapping::topology(resolved.state.topology),
-                                                                  pipeline_state,
-                                                                  color_attachments,
-                                                                  failure);
+        const VkPipeline stateful_pipeline = impl->ensureContentPipeline(*compiled,
+                                                                        *geometry,
+                                                                        compatibility,
+                                                                        render_pass,
+                                                                        StateMapping::topology(resolved.state.topology),
+                                                                        pipeline_state,
+                                                                        color_attachments,
+                                                                        failure);
         if (stateful_pipeline == VK_NULL_HANDLE) {
             fail(failure.empty() ? vn::String(u8"vk: the content pipeline could not be built") : std::move(failure),
                  vn::graphics::DiagnosticCategory::CompileFailed);
             continue;
         }
 
+        // THE MATERIAL: the value the frame carries, else the live material's description (the hand-built door).
+        vn::graphics::MaterialDescriptionPtr material_description = command.material_description;
+        if (material_description == nullptr && command.material != nullptr) {
+            material_description = command.material->description();
+        }
+        const vn::graphics::MaterialParameters* material_values =
+            material_description != nullptr ? &material_description->values() : nullptr;
+
+        // THE SLOTS: upload each COMPLETE texture, bind the rest to the fallback, and state the presence bits the
+        // shading reads. A slot the cache cannot serve is reported and stays absent rather than reading stale bytes.
+        std::array<VkDescriptorImageInfo, kTextureSlots> slots{};
+        std::uint32_t                                    texture_flags = 0U;
+        for (std::uint32_t slot = 0; slot < kTextureSlots; ++slot) {
+            VkImageView image_view = impl->images.fallbackView();
+            VkSampler   sampler    = impl->images.fallbackSampler();
+            if (material_values != nullptr) {
+                const vn::graphics::TextureSlotBinding& binding = material_values->textures[slot];
+                if (binding.texture != nullptr && binding.texture->isComplete()) {
+                    vn::String        upload_why;
+                    const VkImageView uploaded = impl->images.viewFor(*binding.texture, VK_NULL_HANDLE, &upload_why);
+                    if (uploaded != VK_NULL_HANDLE) {
+                        image_view = uploaded;
+                        const VkSampler authored = impl->images.samplerFor(binding.sampler);
+                        if (authored != VK_NULL_HANDLE) {
+                            sampler = authored;
+                        }
+                        texture_flags |= 1U << slot;
+                    }
+                    else {
+                        note(upload_why.empty() ? u8"vk: a material texture could not be uploaded" : upload_why.c_str());
+                    }
+                }
+            }
+            slots[slot].sampler     = sampler;
+            slots[slot].imageView   = image_view;
+            slots[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        }
+
+        // THE LIGHTS: the draw's announcement, packed in view space (see LightBlock.hpp). No announcement and an
+        // empty one both mean the backend default, an ambient-lit scene.
+        VineLightsBlock lights_block{};
+        if (draw.light_values.has_value()) {
+            (void)packLightBlock(*draw.light_values, draw.camera, lights_block);
+        }
+        else {
+            (void)packLightBlock({}, draw.camera, lights_block);
+        }
+
         VkBuffer       uniform_buffer = VK_NULL_HANDLE;
         VkDeviceMemory uniform_memory = VK_NULL_HANDLE;
-        if (!impl->createUniforms(view, buildDrawBlock(command, resolved.state.pointSize), draw_offset, uniform_buffer, uniform_memory)) {
+        if (!impl->createDrawUniforms(buildMaterialBlock(material_values, texture_flags),
+                                      lights_block,
+                                      buildDrawBlock(command, resolved.state.pointSize),
+                                      uniform_buffer,
+                                      uniform_memory)) {
             note(u8"vk: a draw's uniform buffer could not be created");
             continue;
         }
         impl->frame_uniforms.emplace_back(uniform_buffer, uniform_memory);
 
-        const VkDescriptorSet set = impl->makeSet(uniform_buffer, draw_offset);
-        if (set == VK_NULL_HANDLE) {
+        const VkDescriptorSet content_set = impl->makeContentSet(uniform_buffer, slots);
+        const VkDescriptorSet draw_set    = content_set != VK_NULL_HANDLE ? impl->makeDrawSet(uniform_buffer) : VK_NULL_HANDLE;
+        if (content_set == VK_NULL_HANDLE || draw_set == VK_NULL_HANDLE) {
             note(u8"vk: the descriptor pool ran out of sets for this frame");
             continue;
         }
@@ -1087,7 +1527,16 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         impl->table->vkCmdSetScissor(commands, 0U, 1U, &scissor);
         impl->table->vkCmdSetLineWidth(commands, resolved.state.lineWidth);
         impl->table->vkCmdSetDepthBias(commands, resolved.state.polygonOffset.units, 0.0F, resolved.state.polygonOffset.factor);
-        impl->table->vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, impl->pipeline_layout, 0U, 1U, &set, 0U, nullptr);
+        const VkDescriptorSet sets[2]{ content_set, draw_set };
+        impl->table->vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, impl->content_pipeline_layout, 0U, 2U, sets, 0U, nullptr);
+
+        const ContentPushConstants push = pushConstantsOf(draw.camera, command.model_matrix);
+        impl->table->vkCmdPushConstants(commands,
+                                        impl->content_pipeline_layout,
+                                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                        0U,
+                                        sizeof(push),
+                                        &push);
 
         std::vector<VkBuffer>      vertex_buffers;
         std::vector<VkDeviceSize>  vertex_offsets;
@@ -1119,6 +1568,157 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         }
     }
     return recorded;
+}
+
+std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                             commands,
+                                        VkRenderPass                                render_pass,
+                                        const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                        std::uint32_t                               color_attachments,
+                                        int                                         width,
+                                        int                                         height,
+                                        const vn::graphics::DrawDescription&        draw,
+                                        const vn::graphics::PassDraw&               pass,
+                                        ScreenSource                                source,
+                                        vn::String*                                 why,
+                                        vn::graphics::DiagnosticCategory*           category)
+{
+    vn::String                       local;
+    vn::String&                      reason        = why != nullptr ? *why : local;
+    vn::graphics::DiagnosticCategory local_category = vn::graphics::DiagnosticCategory::ContentSkipped;
+    vn::graphics::DiagnosticCategory& category_ref  = category != nullptr ? *category : local_category;
+    reason                                          = vn::String();
+    category_ref                                    = vn::graphics::DiagnosticCategory::ContentSkipped;
+
+    if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || commands == VK_NULL_HANDLE) {
+        return 0;
+    }
+    // The same contract a content draw follows: no camera names no picture.
+    if (!draw.camera.present) {
+        return 0;
+    }
+    if (source.views.empty()) {
+        reason = vn::String(u8"vk: a screen draw named no source target, so there is nothing to sample");
+        return 0;
+    }
+    if (!impl->images.ensureFallback(VK_NULL_HANDLE, &reason)) {
+        return 0;
+    }
+
+    // THE PROGRAM'S TEXT: the value the frame carries, else the live program's cached description.
+    vn::graphics::ShaderProgramDescriptionPtr fragment_description = draw.program_description;
+    if (fragment_description == nullptr && draw.program != nullptr) {
+        fragment_description = draw.program->description();
+    }
+    if (fragment_description == nullptr) {
+        reason = vn::String(u8"vk: a screen draw named no fragment program");
+        return 0;
+    }
+
+    vn::String          failure;
+    Impl::ProgramEntry* fragment_entry = impl->ensureProgram(fragment_description.get(), failure);
+    if (fragment_entry == nullptr) {
+        reason       = failure.empty() ? vn::String(u8"vk: the screen fragment program could not be compiled") : std::move(failure);
+        category_ref = vn::graphics::DiagnosticCategory::CompileFailed;
+        return 0;
+    }
+    Impl::ProgramEntry* vertex_entry = impl->ensureProgram(impl->screen_vertex.get(), failure);
+    if (vertex_entry == nullptr) {
+        reason       = failure.empty() ? vn::String(u8"vk: the full-screen vertex program could not be compiled") : std::move(failure);
+        category_ref = vn::graphics::DiagnosticCategory::CompileFailed;
+        return 0;
+    }
+
+    // THE STATE, resolved from the pass (a full-screen call has no per-command state of its own).
+    const vn::graphics::ResolvedCommandState resolved =
+        vn::graphics::resolveRenderState(vn::graphics::RenderState{}, pass.state, vn::graphics::Topology::Triangles);
+    Impl::PipelineState pipeline_state;
+    pipeline_state.polygon_mode  = StateMapping::polygonMode(resolved.state.polygonMode);
+    pipeline_state.cull_mode     = StateMapping::cullMode(resolved.state.cullMode);
+    pipeline_state.depth_test    = resolved.state.depth.test ? VK_TRUE : VK_FALSE;
+    pipeline_state.depth_write   = resolved.state.depth.write ? VK_TRUE : VK_FALSE;
+    pipeline_state.depth_compare = StateMapping::compareOp(resolved.state.depth.compare);
+    const bool blend_enabled     = color_attachments == 1U && resolved.state.blend.enabled;
+    pipeline_state.blend_enable  = blend_enabled ? VK_TRUE : VK_FALSE;
+    pipeline_state.blend_src     = StateMapping::blendFactor(resolved.state.blend.src);
+    pipeline_state.blend_dst     = StateMapping::blendFactor(resolved.state.blend.dst);
+
+    const VkPipeline pipeline = impl->ensureScreenPipeline(*fragment_entry,
+                                                           *vertex_entry,
+                                                           compatibility,
+                                                           render_pass,
+                                                           pipeline_state,
+                                                           color_attachments,
+                                                           failure);
+    if (pipeline == VK_NULL_HANDLE) {
+        reason       = failure.empty() ? vn::String(u8"vk: the screen pipeline could not be built") : std::move(failure);
+        category_ref = vn::graphics::DiagnosticCategory::CompileFailed;
+        return 0;
+    }
+
+    // The rectangle the pass states, or the whole destination (a pass without a viewport draws all of it).
+    VkViewport viewport{};
+    VkRect2D   scissor{};
+    if (pass.viewport.has_value() && pass.viewport->isValid()) {
+        viewport.x      = static_cast<float>(pass.viewport->x);
+        viewport.y      = static_cast<float>(pass.viewport->y);
+        viewport.width  = static_cast<float>(pass.viewport->width);
+        viewport.height = static_cast<float>(pass.viewport->height);
+        scissor.offset  = VkOffset2D{ pass.viewport->x, pass.viewport->y };
+        scissor.extent  = VkExtent2D{ static_cast<std::uint32_t>(pass.viewport->width), static_cast<std::uint32_t>(pass.viewport->height) };
+    }
+    else {
+        viewport.x      = 0.0F;
+        viewport.y      = 0.0F;
+        viewport.width  = static_cast<float>(width);
+        viewport.height = static_cast<float>(height);
+        scissor.offset  = VkOffset2D{ 0, 0 };
+        scissor.extent  = VkExtent2D{ static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height) };
+    }
+    viewport.minDepth = 0.0F;
+    viewport.maxDepth = 1.0F;
+
+    // THE SLOTS: binding N is the source's attachment N; a binding past the source's count reads the fallback (a
+    // screen program only declares the bindings its own ABI states, so nothing reads them).
+    std::array<VkDescriptorImageInfo, kTextureSlots> slots{};
+    for (std::uint32_t slot = 0; slot < kTextureSlots; ++slot) {
+        slots[slot].sampler     = impl->images.fallbackSampler();
+        slots[slot].imageView   = slot < source.views.size() ? source.views[slot] : impl->images.fallbackView();
+        slots[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+
+    VineLightsBlock lights_block{};
+    if (draw.light_values.has_value()) {
+        (void)packLightBlock(*draw.light_values, draw.camera, lights_block);
+    }
+    else {
+        (void)packLightBlock({}, draw.camera, lights_block);
+    }
+
+    VkBuffer       uniform_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory uniform_memory = VK_NULL_HANDLE;
+    if (!impl->createDrawUniforms(vn::graphics::VineMaterialBlock{}, lights_block, vn::graphics::VineDrawBlock{}, uniform_buffer, uniform_memory)) {
+        reason = vn::String(u8"vk: a screen draw's uniform buffer could not be created");
+        return 0;
+    }
+    impl->frame_uniforms.emplace_back(uniform_buffer, uniform_memory);
+
+    const VkDescriptorSet set = impl->makeScreenSet(uniform_buffer, slots);
+    if (set == VK_NULL_HANDLE) {
+        reason = vn::String(u8"vk: the descriptor pool ran out of sets for this frame");
+        return 0;
+    }
+
+    impl->table->vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    impl->table->vkCmdSetViewport(commands, 0U, 1U, &viewport);
+    impl->table->vkCmdSetScissor(commands, 0U, 1U, &scissor);
+    impl->table->vkCmdSetLineWidth(commands, resolved.state.lineWidth);
+    // The pipeline states depth bias as DYNAMIC (the content path does the same), so a full-screen draw owes the
+    // command buffer the values too - zero is "no offset".
+    impl->table->vkCmdSetDepthBias(commands, 0.0F, 0.0F, 0.0F);
+    impl->table->vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, impl->screen_pipeline_layout, 0U, 1U, &set, 0U, nullptr);
+    // The full-screen triangle: three vertices generated from gl_VertexIndex, no buffer, no index stream.
+    impl->table->vkCmdDraw(commands, 3U, 1U, 0U, 0U);
+    return 1;
 }
 
 VN_BACKEND_VK_NS_END
