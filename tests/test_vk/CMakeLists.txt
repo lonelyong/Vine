@@ -7,7 +7,9 @@ add_executable(${TEST_NAME}
         BackendTest.cpp
         BarrierPlanTest.cpp
         ContentDrawTest.cpp
+        ContentTargetTest.cpp
         OffscreenClearTest.cpp
+        StateMappingTest.cpp
 
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/BarrierPlan.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ContentDraw.cpp

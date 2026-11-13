@@ -104,14 +104,9 @@ namespace
 
 } // namespace
 
-bool TargetImages::matches(const int w, const int h, const VkFormat color, const VkFormat depth_fmt) const noexcept
-{
-    return width == w && height == h && color_format == color && depth_format == depth_fmt;
-}
-
 bool TargetImages::built() const noexcept
 {
-    return render_pass != VK_NULL_HANDLE && framebuffer != VK_NULL_HANDLE && !color_views.empty();
+    return render_pass != VK_NULL_HANDLE && framebuffer != VK_NULL_HANDLE && !color_views.empty() && color_views.size() == colorCount();
 }
 
 VkFormat colorFormatOf(const vn::graphics::RenderTarget::ColorFormat format) noexcept
@@ -137,95 +132,123 @@ VkFormat depthFormatOf(const vn::graphics::RenderTarget::DepthFormat format) noe
     return VK_FORMAT_UNDEFINED;
 }
 
-bool buildTarget(const VolkDeviceTable&                  table,
-                 const VkDevice                          device,
-                 const VkPhysicalDeviceMemoryProperties& memory,
-                 TargetImages&                           images)
+namespace
 {
-    const auto width  = static_cast<std::uint32_t>(images.width);
-    const auto height = static_cast<std::uint32_t>(images.height);
-    if (images.width <= 0 || images.height <= 0 || images.color_format == VK_FORMAT_UNDEFINED) {
-        return false;
+
+/**
+ * @brief Destroys the images, views and framebuffer, KEEPING the render passes.
+ *
+ * @details
+ * - The extent-bound half of a target (see the header's shape-vs-extent split): a resize replaces exactly this and
+ *   must not touch what pipelines were compiled against.
+ *
+ * @param table  The device's entry points (volk table).
+ * @param device The logical device.
+ * @param images The record to strip.
+ */
+void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, TargetImages& images) noexcept
+{
+    if (device == VK_NULL_HANDLE) {
+        return;
     }
-
-    // ---- colour attachments
-    images.colors.resize(1U);
-    images.color_memories.resize(1U);
-    images.color_views.resize(1U);
-
-    VkImageCreateInfo image_create{};
-    image_create.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    image_create.imageType     = VK_IMAGE_TYPE_2D;
-    image_create.extent.width  = width;
-    image_create.extent.height = height;
-    image_create.extent.depth  = 1U;
-    image_create.mipLevels     = 1U;
-    image_create.arrayLayers   = 1U;
-    image_create.format        = images.color_format;
-    image_create.tiling        = VK_IMAGE_TILING_OPTIMAL;
-    image_create.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    image_create.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    image_create.samples       = VK_SAMPLE_COUNT_1_BIT;
-    image_create.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
-
-    if (!createImage(table, device, memory, image_create, images.colors[0], images.color_memories[0])) {
-        destroyTarget(table, device, images);
-        return false;
+    if (images.framebuffer != VK_NULL_HANDLE) {
+        table.vkDestroyFramebuffer(device, images.framebuffer, nullptr);
+        images.framebuffer = VK_NULL_HANDLE;
     }
-    if (!createView(table, device, images.colors[0], images.color_format, VK_IMAGE_ASPECT_COLOR_BIT, images.color_views[0])) {
-        destroyTarget(table, device, images);
-        return false;
+    if (images.depth_view != VK_NULL_HANDLE) {
+        table.vkDestroyImageView(device, images.depth_view, nullptr);
+        images.depth_view = VK_NULL_HANDLE;
     }
-
-    // ---- depth attachment (optional)
-    if (images.depth_format != VK_FORMAT_UNDEFINED) {
-        VkImageCreateInfo depth_create = image_create;
-        depth_create.format            = images.depth_format;
-        depth_create.usage             = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-        if (!createImage(table, device, memory, depth_create, images.depth, images.depth_memory)) {
-            destroyTarget(table, device, images);
-            return false;
-        }
-        if (!createView(table, device, images.depth, images.depth_format, VK_IMAGE_ASPECT_DEPTH_BIT, images.depth_view)) {
-            destroyTarget(table, device, images);
-            return false;
+    if (images.depth != VK_NULL_HANDLE) {
+        table.vkDestroyImage(device, images.depth, nullptr);
+        images.depth = VK_NULL_HANDLE;
+    }
+    if (images.depth_memory != VK_NULL_HANDLE) {
+        table.vkFreeMemory(device, images.depth_memory, nullptr);
+        images.depth_memory = VK_NULL_HANDLE;
+    }
+    for (const VkImageView view : images.color_views) {
+        if (view != VK_NULL_HANDLE) {
+            table.vkDestroyImageView(device, view, nullptr);
         }
     }
+    for (const VkImage image : images.colors) {
+        if (image != VK_NULL_HANDLE) {
+            table.vkDestroyImage(device, image, nullptr);
+        }
+    }
+    for (const VkDeviceMemory memory : images.color_memories) {
+        if (memory != VK_NULL_HANDLE) {
+            table.vkFreeMemory(device, memory, nullptr);
+        }
+    }
+    images.colors.clear();
+    images.color_memories.clear();
+    images.color_views.clear();
+}
 
-    // ---- render pass: one subpass, CLEAR/STORE, UNDEFINED in (M1 clears; see the header note).
+/**
+ * @brief Creates one render pass over the target's attachment set.
+ *
+ * @details
+ * - Colour attachments CLEAR and STORE; the depth attachment CLEARs or LOADs according to @p depth_load. A LOAD op is
+ *   NOT part of render-pass compatibility, so the two variants share one framebuffer and one set of pipelines.
+ * - Every colour attachment is referenced, in order: a fragment's output location i writes attachment i (MRT).
+ *
+ * @param table      The device's entry points (volk table).
+ * @param device     The logical device.
+ * @param images     The target whose shape states the attachment set.
+ * @param depth_load The depth attachment's load op.
+ * @param out        Receives the render pass.
+ * @return true when the render pass exists.
+ */
+[[nodiscard]] bool createRenderPass(const VolkDeviceTable& table,
+                                    const VkDevice         device,
+                                    const TargetImages&    images,
+                                    const VkAttachmentLoadOp depth_load,
+                                    VkRenderPass&          out)
+{
     std::vector<VkAttachmentDescription> attachments;
-    VkAttachmentReference               color_reference{ 0U, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
-    VkAttachmentReference               depth_reference{ 1U, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+    std::vector<VkAttachmentReference>   color_references;
+    attachments.reserve(images.colorCount() + (images.hasDepth() ? 1U : 0U));
+    color_references.reserve(images.colorCount());
 
-    VkAttachmentDescription color_attachment{};
-    color_attachment.format         = images.color_format;
-    color_attachment.samples        = VK_SAMPLE_COUNT_1_BIT;
-    color_attachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color_attachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
-    color_attachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    color_attachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
-    color_attachment.finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    attachments.push_back(color_attachment);
+    for (std::size_t index = 0; index < images.colorCount(); ++index) {
+        VkAttachmentDescription color{};
+        color.format         = images.colorFormat(index);
+        color.samples        = VK_SAMPLE_COUNT_1_BIT;
+        color.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+        color.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        color.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+        color.finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        attachments.push_back(color);
+        color_references.push_back(VkAttachmentReference{ static_cast<std::uint32_t>(index), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
+    }
 
-    if (images.depth_format != VK_FORMAT_UNDEFINED) {
-        VkAttachmentDescription depth_attachment{};
-        depth_attachment.format         = images.depth_format;
-        depth_attachment.samples        = VK_SAMPLE_COUNT_1_BIT;
-        depth_attachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth_attachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
-        depth_attachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depth_attachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
-        depth_attachment.finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        attachments.push_back(depth_attachment);
+    VkAttachmentReference depth_reference{};
+    if (images.hasDepth()) {
+        VkAttachmentDescription depth{};
+        depth.format         = images.depthFormat();
+        depth.samples        = VK_SAMPLE_COUNT_1_BIT;
+        depth.loadOp         = depth_load;
+        depth.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        // A LOAD op may not name an UNDEFINED image (VUID-VkAttachmentDescription-format-06699): the LOAD variant is
+        // only ever used after a CLEAR variant left the image in its attachment layout (see TargetImages::fresh).
+        depth.initialLayout  = depth_load == VK_ATTACHMENT_LOAD_OP_LOAD ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+        depth.finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        attachments.push_back(depth);
+        depth_reference = VkAttachmentReference{ static_cast<std::uint32_t>(images.colorCount()), VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
     }
 
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount    = 1U;
-    subpass.pColorAttachments       = &color_reference;
-    subpass.pDepthStencilAttachment = images.depth_format != VK_FORMAT_UNDEFINED ? &depth_reference : nullptr;
+    subpass.colorAttachmentCount    = static_cast<std::uint32_t>(color_references.size());
+    subpass.pColorAttachments       = color_references.data();
+    subpass.pDepthStencilAttachment = images.hasDepth() ? &depth_reference : nullptr;
 
     VkSubpassDependency dependency{};
     dependency.srcSubpass    = VK_SUBPASS_EXTERNAL;
@@ -234,6 +257,10 @@ bool buildTarget(const VolkDeviceTable&                  table,
     dependency.dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     dependency.srcAccessMask = 0U;
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    if (images.hasDepth()) {
+        dependency.dstStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        dependency.dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    }
 
     VkRenderPassCreateInfo pass_create{};
     pass_create.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -244,15 +271,76 @@ bool buildTarget(const VolkDeviceTable&                  table,
     pass_create.dependencyCount = 1U;
     pass_create.pDependencies   = &dependency;
 
-    if (table.vkCreateRenderPass(device, &pass_create, nullptr, &images.render_pass) != VK_SUCCESS) {
-        images.render_pass = VK_NULL_HANDLE;
-        destroyTarget(table, device, images);
+    if (table.vkCreateRenderPass(device, &pass_create, nullptr, &out) != VK_SUCCESS) {
+        out = VK_NULL_HANDLE;
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief Creates the images, their views and the framebuffer for `images.desc` (the render passes must exist).
+ *
+ * @details
+ * - The framebuffer is created against the CLEAR variant and is equally usable with the LOAD variant (same attachment
+ *   formats), which is what keeps one framebuffer valid across both load-op choices.
+ * - On failure the partial objects are destroyed before answering false.
+ *
+ * @param table  The device's entry points (volk table).
+ * @param device The logical device.
+ * @param memory The device's memory properties.
+ * @param images The record to fill.
+ * @return true when every attachment object exists.
+ */
+[[nodiscard]] bool createAttachments(const VolkDeviceTable&                  table,
+                                     const VkDevice                          device,
+                                     const VkPhysicalDeviceMemoryProperties& memory,
+                                     TargetImages&                           images)
+{
+    const auto width  = static_cast<std::uint32_t>(images.desc.width);
+    const auto height = static_cast<std::uint32_t>(images.desc.height);
+    if (images.desc.width <= 0 || images.desc.height <= 0 || images.colorCount() == 0U) {
         return false;
     }
 
-    // ---- framebuffer
-    std::vector<VkImageView> views{ images.color_views[0] };
-    if (images.depth_format != VK_FORMAT_UNDEFINED) {
+    VkImageCreateInfo image_create{};
+    image_create.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image_create.imageType     = VK_IMAGE_TYPE_2D;
+    image_create.extent.width  = width;
+    image_create.extent.height = height;
+    image_create.extent.depth  = 1U;
+    image_create.mipLevels     = 1U;
+    image_create.arrayLayers   = 1U;
+    image_create.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    image_create.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    image_create.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    image_create.samples       = VK_SAMPLE_COUNT_1_BIT;
+    image_create.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+
+    images.colors.resize(images.colorCount());
+    images.color_memories.resize(images.colorCount());
+    images.color_views.resize(images.colorCount());
+    for (std::size_t index = 0; index < images.colorCount(); ++index) {
+        image_create.format = images.colorFormat(index);
+        if (!createImage(table, device, memory, image_create, images.colors[index], images.color_memories[index]) ||
+            !createView(table, device, images.colors[index], image_create.format, VK_IMAGE_ASPECT_COLOR_BIT, images.color_views[index])) {
+            destroyAttachments(table, device, images);
+            return false;
+        }
+    }
+
+    if (images.hasDepth()) {
+        image_create.format = images.depthFormat();
+        image_create.usage  = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        if (!createImage(table, device, memory, image_create, images.depth, images.depth_memory) ||
+            !createView(table, device, images.depth, image_create.format, VK_IMAGE_ASPECT_DEPTH_BIT, images.depth_view)) {
+            destroyAttachments(table, device, images);
+            return false;
+        }
+    }
+
+    std::vector<VkImageView> views(images.color_views.begin(), images.color_views.end());
+    if (images.hasDepth()) {
         views.push_back(images.depth_view);
     }
 
@@ -267,59 +355,75 @@ bool buildTarget(const VolkDeviceTable&                  table,
 
     if (table.vkCreateFramebuffer(device, &framebuffer_create, nullptr, &images.framebuffer) != VK_SUCCESS) {
         images.framebuffer = VK_NULL_HANDLE;
-        destroyTarget(table, device, images);
+        destroyAttachments(table, device, images);
         return false;
     }
     return true;
 }
 
+} // namespace
+
+bool buildTarget(const VolkDeviceTable&                  table,
+                 const VkDevice                          device,
+                 const VkPhysicalDeviceMemoryProperties& memory,
+                 TargetImages&                           images)
+{
+    if (images.desc.width <= 0 || images.desc.height <= 0 || images.colorCount() == 0U) {
+        return false;
+    }
+
+    // RENDER PASSES FIRST: the framebuffer names one of them, and their formats come from the shape alone.
+    if (!createRenderPass(table, device, images, VK_ATTACHMENT_LOAD_OP_CLEAR, images.render_pass)) {
+        destroyTarget(table, device, images);
+        return false;
+    }
+    if (images.hasDepth() && !createRenderPass(table, device, images, VK_ATTACHMENT_LOAD_OP_LOAD, images.render_pass_load_depth)) {
+        destroyTarget(table, device, images);
+        return false;
+    }
+    if (!createAttachments(table, device, memory, images)) {
+        destroyTarget(table, device, images);
+        return false;
+    }
+    images.fresh = true;
+    return true;
+}
+
+bool resizeTarget(const VolkDeviceTable&                  table,
+                  const VkDevice                          device,
+                  const VkPhysicalDeviceMemoryProperties& memory,
+                  TargetImages&                           images)
+{
+    if (images.render_pass == VK_NULL_HANDLE) {
+        return false; // nothing to keep: a resize presupposes a built target
+    }
+    // The SHAPE is unchanged (the caller only takes this path when `planTarget` answered ResizeInPlace), so the
+    // render passes and every pipeline compiled against them stay; only the extent-bound objects are replaced.
+    destroyAttachments(table, device, images);
+    if (!createAttachments(table, device, memory, images)) {
+        destroyTarget(table, device, images);
+        return false;
+    }
+    images.fresh = true;
+    return true;
+}
+
 void destroyTarget(const VolkDeviceTable& table, const VkDevice device, TargetImages& images) noexcept
 {
+    destroyAttachments(table, device, images);
     if (device != VK_NULL_HANDLE) {
-        if (images.framebuffer != VK_NULL_HANDLE) {
-            table.vkDestroyFramebuffer(device, images.framebuffer, nullptr);
+        if (images.render_pass_load_depth != VK_NULL_HANDLE) {
+            table.vkDestroyRenderPass(device, images.render_pass_load_depth, nullptr);
         }
         if (images.render_pass != VK_NULL_HANDLE) {
             table.vkDestroyRenderPass(device, images.render_pass, nullptr);
         }
-        if (images.depth_view != VK_NULL_HANDLE) {
-            table.vkDestroyImageView(device, images.depth_view, nullptr);
-        }
-        if (images.depth != VK_NULL_HANDLE) {
-            table.vkDestroyImage(device, images.depth, nullptr);
-        }
-        if (images.depth_memory != VK_NULL_HANDLE) {
-            table.vkFreeMemory(device, images.depth_memory, nullptr);
-        }
-        for (const VkImageView view : images.color_views) {
-            if (view != VK_NULL_HANDLE) {
-                table.vkDestroyImageView(device, view, nullptr);
-            }
-        }
-        for (const VkImage image : images.colors) {
-            if (image != VK_NULL_HANDLE) {
-                table.vkDestroyImage(device, image, nullptr);
-            }
-        }
-        for (const VkDeviceMemory memory : images.color_memories) {
-            if (memory != VK_NULL_HANDLE) {
-                table.vkFreeMemory(device, memory, nullptr);
-            }
-        }
     }
-
-    images.colors.clear();
-    images.color_memories.clear();
-    images.color_views.clear();
-    images.depth        = VK_NULL_HANDLE;
-    images.depth_memory = VK_NULL_HANDLE;
-    images.depth_view   = VK_NULL_HANDLE;
-    images.render_pass  = VK_NULL_HANDLE;
-    images.framebuffer  = VK_NULL_HANDLE;
-    images.width        = 0;
-    images.height       = 0;
-    images.color_format = VK_FORMAT_UNDEFINED;
-    images.depth_format = VK_FORMAT_UNDEFINED;
+    images.render_pass            = VK_NULL_HANDLE;
+    images.render_pass_load_depth = VK_NULL_HANDLE;
+    images.framebuffer            = VK_NULL_HANDLE;
+    images.fresh                  = true;
+    images.desc                   = vn::graphics::backend::TargetDesc{};
 }
 
 VN_BACKEND_VK_NS_END

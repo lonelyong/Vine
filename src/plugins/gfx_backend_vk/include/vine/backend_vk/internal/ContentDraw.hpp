@@ -11,6 +11,7 @@
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/backend/Keys.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -22,6 +23,10 @@ VN_BACKEND_VK_NS_BEGIN
  *   uploaded vertex/index streams per geometry REVISION (keyed by `GeometryDescription`), the descriptor and pipeline
  *   layouts every pipeline shares, the pipelines themselves, and one small uniform buffer per recorded draw holding
  *   the `VineViewBlock` + `VineDrawBlock` pair (std140, see ShaderAbi.hpp).
+ * - A PIPELINE IS KEYED BY COMPATIBILITY, NOT BY A RENDER-PASS HANDLE. `RenderPassCompatibility` names the attachment
+ *   set (formats, depth, samples, subpass), which is what Vulkan compares a pipeline against; an EXTENT change creates
+ *   new images and a new framebuffer but no new render pass, so every pipeline stays valid and is REUSED. That is the
+ *   observable half of M3's "a resize must not recompile" rule, pinned by `pipelinesCreated()`.
  * - WHAT IT DOES NOT OWN. Nothing of the frame: every pointer inside a `DrawDescription` is borrowed for the call, and
  *   a description it keeps as a cache key is retained by an intrusive pointer - so a later edit of the live object is
  *   a NEW description and a new key, never a silent reuse of old bytes.
@@ -93,11 +98,15 @@ class VN_BACKEND_VK_API ContentDraw final {
     void endFrame() noexcept;
 
     /**
-     * @brief Drops every pipeline built against @p render_pass, before that render pass is destroyed.
+     * @brief Gets how many `VkPipeline` objects this recorder built over its lifetime.
      *
-     * @param render_pass Render pass the device is about to destroy (may be `VK_NULL_HANDLE`).
+     * @details
+     * - THE COUNTER THE RESIZE RULE IS OBSERVED WITH: a frame drawn again after an extent change must leave it where
+     *   it was (the pipeline is compatible with the new framebuffer), while a shape change or a new program moves it.
+     *
+     * @return Pipelines created since @ref create (0 after a failure that built none).
      */
-    void releaseRenderPass(VkRenderPass render_pass) noexcept;
+    [[nodiscard]] std::uint64_t pipelinesCreated() const noexcept;
 
     /**
      * @brief Records one draw description's commands into @p commands.
@@ -108,21 +117,30 @@ class VN_BACKEND_VK_API ContentDraw final {
      * - The program is resolved as `PassDraw::program_override_description`, else the command's own
      *   `programDescription()`, else @p default_program; a draw with none is skipped and reported through @p why.
      *   The viewport is the pass' rectangle, or the whole of the target when the pass states none.
+     * - The STATE is resolved per command (`resolveRenderState`): topology, cull/front face, polygon mode, depth
+     *   test/write/compare (reverse-Z), blend and polygon offset select or fill the pipeline, while line width, depth
+     *   bias values and the viewport are dynamic; the point size travels in the draw block. A multi-attachment target
+     *   never blends (its attachments hold data, not a surface - see BlendState).
      *
-     * @param commands       The command buffer being recorded (inside a render pass).
-     * @param render_pass    The render pass @p commands is in (a pipeline is compatible with exactly it).
-     * @param width          The target's width in pixels.
-     * @param height         The target's height in pixels.
-     * @param draw           The draw to record (borrowed for the call).
-     * @param pass           The pass drawing it (its override and viewport are read; borrowed).
+     * @param commands        The command buffer being recorded (inside a render pass).
+     * @param render_pass     The render pass @p commands is in (used only when a pipeline must be CREATED; reuse is
+     *                        keyed by @p compatibility).
+     * @param compatibility   The target's pipeline compatibility (see TargetImages::compatibility).
+     * @param color_attachments How many colour attachments the target has.
+     * @param width           The target's width in pixels.
+     * @param height          The target's height in pixels.
+     * @param draw            The draw to record (borrowed for the call).
+     * @param pass            The pass drawing it (its override, state and viewport are read; borrowed).
      * @param default_program The program content without one of its own is drawn with, or null.
-     * @param why            Receives the first reason a command was skipped (empty when every command was recorded).
-     * @param category       Receives the category that reason belongs to (CompileFailed for a program or pipeline
-     *                       that could not be built, ContentSkipped for anything else), or null to ignore.
+     * @param why             Receives the first reason a command was skipped (empty when every command was recorded).
+     * @param category        Receives the category that reason belongs to (CompileFailed for a program or pipeline
+     *                        that could not be built, ContentSkipped for anything else), or null to ignore.
      * @return How many drawing calls were recorded.
      */
     std::uint64_t record(VkCommandBuffer                            commands,
                          VkRenderPass                               render_pass,
+                         const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                         std::uint32_t                              color_attachments,
                          int                                        width,
                          int                                        height,
                          const vn::graphics::DrawDescription&       draw,

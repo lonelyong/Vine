@@ -15,8 +15,10 @@ VN_BACKEND_VK_NS_BEGIN
  *   channels uploaded as vertex/index streams, the `VineViewBlock`/`VineDrawBlock` pair bound as uniforms, and
  *   `vkCmdDrawIndexed`.
  * - WHAT IT DELIBERATELY DOES NOT DO YET. No window (M5), no material/light/texture blocks and no full-screen draws
- *   (M4), no depth state, MRT or per-attachment clear (M3), no residency accounting (M6). It answers `capabilities()`
- *   from what it can really serve - `render_targets == true`, `presentation == false`.
+ *   (M4), no residency accounting (M6). M3 landed the target plan (`planTarget`: a resize keeps the render passes and
+ *   every pipeline, a shape change rebuilds them), MRT with per-attachment clears, the depth band, the depth-LOAD
+ *   variant and the pass' resolved render state. It answers `capabilities()` from what it can really serve -
+ *   `render_targets == true`, `presentation == false`.
  * - FRAME AND HOST VERBS. `executeFrame()` runs the off-screen passes of the frame value and records the draws of each
  *   `DrawDescription`; a pass drawing into the window, or a draw naming no program, is reported and left out. The
  *   readbacks answer the targets this device built.
@@ -121,9 +123,10 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *        drawing calls of every `DrawDescription` it carries.
      *
      * @details
-     * - M2's whole frame path. A pass that names a target AND states a clear policy is recorded as one render pass
-     *   (`CLEAR`/`STORE`); a pass with no target (the window, which M5 brings up), a pass with no clear (which would
-     *   need a LOAD variant) and a full-screen draw (M4) are reported once and left out.
+ * - M3's whole frame path. A pass that names a target AND states a clear policy is recorded as one render pass
+ *   (colour attachments CLEAR, depth CLEAR or LOAD per `ClearPolicy::depth`); a pass with no target (the window, which
+ *   M5 brings up), a pass with no clear at all (which would need a colour LOAD variant) and a full-screen draw (M4)
+ *   are reported once and left out.
      * - Each scene draw is projected with its own camera snapshot and shaded with the resolved program (the pass'
      *   override, else the command's own, else the default content program). One `RenderCommand` is one indexed draw.
      * - The submission is synchronous by design: one command buffer, one fence, then the queue is idle, so a readback in
@@ -161,6 +164,18 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
 
     /** @brief Gets the handles (see Handles). */
     [[nodiscard]] Handles handles() const noexcept;
+
+    /**
+     * @brief Gets how many content pipelines this device built over its lifetime.
+     *
+     * @details
+     * - THE EVIDENCE FOR "A RESIZE MUST NOT RECOMPILE": a frame drawn again after an EXTENT change leaves this
+     *   unmoved (the pipeline is compatible with the new framebuffer), while a shape change or a new program moves it.
+     *   Like `handles()`, it is a learning-backend fact rather than a verb any other backend promises.
+     *
+     * @return Pipelines created since the device came up (0 when it built none).
+     */
+    [[nodiscard]] std::uint64_t contentPipelines() const noexcept;
 
     /**
      * @brief Forwards one message the Vulkan loader or a validation layer produced.

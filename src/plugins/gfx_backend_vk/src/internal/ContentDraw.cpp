@@ -6,14 +6,17 @@
 #include <map>
 #include <span>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include <vine/backend_vk/internal/ShaderCompiler.hpp>
+#include <vine/backend_vk/internal/StateMapping.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
+#include <vine/graphics/StateResolution.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -80,30 +83,10 @@ constexpr std::uint32_t kDescriptorsPerFrame = 256U;
 }
 
 /**
- * @brief Gets the Vulkan topology for an SDK topology.
- *
- * @param topology The SDK topology.
- * @return The Vulkan topology (triangles for a value this backend does not know).
- */
-[[nodiscard]] VkPrimitiveTopology topologyOf(vn::graphics::Topology topology) noexcept
-{
-    using vn::graphics::Topology;
-    switch (topology) {
-    case Topology::Triangles: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    case Topology::TriangleStrip: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-    case Topology::TriangleFan: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
-    case Topology::Points: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-    case Topology::Lines: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-    case Topology::LineStrip: return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
-    }
-    return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-}
-
-/**
  * @brief Copies a column-major double matrix into a column-major float array.
  *
- * @param source       The matrix (element (row, column) access).
- * @param destination  The sixteen floats, column-major.
+ * @param source      The matrix (element (row, column) access).
+ * @param destination The sixteen floats, column-major.
  */
 void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destination) noexcept
 {
@@ -112,6 +95,24 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
             destination[column * 4 + row] = static_cast<float>(source(row, column));
         }
     }
+}
+
+/**
+ * @brief Flips the projection's Y so an upright picture lands in Vulkan's top-left framebuffer space.
+ *
+ * @details
+ * - The SDK's camera builds an OpenGL-style projection (y up in clip space) - it is backend-neutral - while Vulkan
+ *   defines framebuffer coordinates with the origin at the TOP-left. Multiplying by diag(1, -1, 1, 1) is what makes
+ *   both the picture and the front-face rule come out right (see StateMapping::kFrontFace).
+ *
+ * @param projection The camera's clip-space projection.
+ * @return The same projection with Y negated.
+ */
+[[nodiscard]] vn::math::Mat4d flipProjectionY(const vn::math::Mat4d& projection) noexcept
+{
+    vn::math::Mat4d flip{}; // identity
+    flip(1, 1) = -1.0;
+    return flip * projection;
 }
 
 /**
@@ -124,11 +125,13 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
  */
 [[nodiscard]] vn::graphics::VineViewBlock buildViewBlock(const vn::graphics::CameraSnapshot& camera, int width, int height) noexcept
 {
+    const vn::math::Mat4d projection = flipProjectionY(camera.projection);
+
     vn::graphics::VineViewBlock block{};
     copyMatrix(camera.view, block.view);
     copyMatrix(camera.view.inverted(), block.inv_view);
-    copyMatrix(camera.projection, block.proj);
-    copyMatrix(camera.projection * camera.view, block.view_proj);
+    copyMatrix(projection, block.proj);
+    copyMatrix(projection * camera.view, block.view_proj);
     block.cam_pos = { static_cast<float>(camera.eye.x), static_cast<float>(camera.eye.y), static_cast<float>(camera.eye.z), 0.0F };
     block.frame   = { 0.0F, static_cast<float>(width), static_cast<float>(height), 0.0F };
     return block;
@@ -137,16 +140,15 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
 /**
  * @brief Fills the per-draw block a content program reads (see ShaderAbi.hpp).
  *
- * @param command The draw command.
- * @return The block: the model matrix and the effective opacity in `params.x`.
+ * @param command   The draw command.
+ * @param point_size The resolved point size (`params.y`; the content stages write it to `gl_PointSize`).
+ * @return The block: the model matrix, the effective opacity and the point size.
  */
-[[nodiscard]] vn::graphics::VineDrawBlock buildDrawBlock(const vn::graphics::RenderCommand& command) noexcept
+[[nodiscard]] vn::graphics::VineDrawBlock buildDrawBlock(const vn::graphics::RenderCommand& command, float point_size) noexcept
 {
     vn::graphics::VineDrawBlock block{};
     copyMatrix(command.model_matrix, block.model);
-    // params.y is the point size the resolved state asks for; M2 draws triangles only, so it stays at "nobody authored
-    // one" (1.0). z/w are the reserved user parameter slot (P10).
-    block.params = { command.opacity, 1.0F, 0.0F, 0.0F };
+    block.params = { command.opacity, point_size, 0.0F, 0.0F };
     return block;
 }
 
@@ -187,15 +189,45 @@ struct ContentDraw::Impl {
         bool                                 failed{ false };
     };
 
-    /// @brief What one pipeline is built for: program revision, render pass and the vertex layout.
-    struct PipelineKey {
-        const vn::graphics::ShaderProgramDescription*         program{ nullptr };
-        VkRenderPass                                          render_pass{ VK_NULL_HANDLE };
-        VkPrimitiveTopology                                   topology{ VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
-        std::vector<std::pair<std::uint32_t, std::uint32_t>> channels; // (location, components), in description order
+    /// @brief The pipeline-relevant half of a resolved state (dynamic state recompiles nothing, so it is not in here).
+    struct PipelineState {
+        VkPolygonMode   polygon_mode{ VK_POLYGON_MODE_FILL };
+        VkCullModeFlags cull_mode{ VK_CULL_MODE_NONE };
+        VkBool32        depth_test{ VK_FALSE };
+        VkBool32        depth_write{ VK_FALSE };
+        VkCompareOp     depth_compare{ VK_COMPARE_OP_ALWAYS };
+        VkBool32        blend_enable{ VK_FALSE };
+        VkBlendFactor   blend_src{ VK_BLEND_FACTOR_ONE };
+        VkBlendFactor   blend_dst{ VK_BLEND_FACTOR_ZERO };
 
         /**
-         * @brief Orders keys so the cache is a stable map (identity first, layout last).
+         * @brief Orders states so the pipeline cache is a stable map.
+         *
+         * @param other State to compare against.
+         * @return true when this state sorts before @p other.
+         */
+        [[nodiscard]] bool operator<(const PipelineState& other) const
+        {
+            return std::tie(polygon_mode, cull_mode, depth_test, depth_write, depth_compare, blend_enable, blend_src, blend_dst) <
+                   std::tie(other.polygon_mode, other.cull_mode, other.depth_test, other.depth_write, other.depth_compare, other.blend_enable,
+                            other.blend_src, other.blend_dst);
+        }
+    };
+
+    /// @brief What one pipeline is built for: program revision, target compatibility, state and the vertex layout.
+    struct PipelineKey {
+        const vn::graphics::ShaderProgramDescription*          program{ nullptr };
+        vn::graphics::backend::RenderPassCompatibility         compatibility{};
+        VkPrimitiveTopology                                    topology{ VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
+        PipelineState                                          state{};
+        std::vector<std::pair<std::uint32_t, std::uint32_t>>   channels; // (location, components), in description order
+
+        /**
+         * @brief Orders keys so the cache is a stable map.
+         *
+         * @details
+         * - The DEVICE spelling of the attachment set decides compatibility; the engine spelling is a projection of it,
+         *   so two render passes that Vulkan considers compatible share one pipeline.
          *
          * @param other Key to compare against.
          * @return true when this key sorts before @p other.
@@ -205,11 +237,29 @@ struct ContentDraw::Impl {
             if (program != other.program) {
                 return program < other.program;
             }
-            if (render_pass != other.render_pass) {
-                return render_pass < other.render_pass;
+            if (compatibility.device_color_formats != other.compatibility.device_color_formats) {
+                return std::lexicographical_compare(compatibility.device_color_formats.begin(),
+                                                    compatibility.device_color_formats.end(),
+                                                    other.compatibility.device_color_formats.begin(),
+                                                    other.compatibility.device_color_formats.end());
+            }
+            if (compatibility.device_depth_format != other.compatibility.device_depth_format) {
+                return compatibility.device_depth_format < other.compatibility.device_depth_format;
+            }
+            if (compatibility.samples != other.compatibility.samples) {
+                return compatibility.samples < other.compatibility.samples;
+            }
+            if (compatibility.subpass != other.compatibility.subpass) {
+                return compatibility.subpass < other.compatibility.subpass;
             }
             if (topology != other.topology) {
                 return topology < other.topology;
+            }
+            if (state < other.state) {
+                return true;
+            }
+            if (other.state < state) {
+                return false;
             }
             return std::lexicographical_compare(channels.begin(), channels.end(), other.channels.begin(), other.channels.end());
         }
@@ -228,6 +278,8 @@ struct ContentDraw::Impl {
     std::unordered_map<const vn::graphics::GeometryDescription*, GeometryEntry>     geometries;
     std::map<PipelineKey, VkPipeline>                                               pipelines;
     std::vector<std::pair<VkBuffer, VkDeviceMemory>>                                frame_uniforms;
+    /// How many pipelines were CREATED (a resize must leave this unmoved; see pipelinesCreated).
+    std::uint64_t created_{ 0 };
 
     /**
      * @brief Creates a buffer and binds host-visible coherent memory to it.
@@ -472,25 +524,32 @@ struct ContentDraw::Impl {
     }
 
     /**
-     * @brief Gets (or builds) the pipeline serving one program, render pass and vertex layout.
+     * @brief Gets (or builds) the pipeline serving one program, target compatibility, state and vertex layout.
      *
-     * @param program      The compiled program.
-     * @param geometry     The geometry whose channels state the vertex layout.
-     * @param topology     The draw's topology.
-     * @param render_pass  The render pass the pipeline must be compatible with.
-     * @param why          Receives the reason when the pipeline could not be built.
+     * @param program           The compiled program.
+     * @param geometry          The geometry whose channels state the vertex layout.
+     * @param compatibility     The target's pipeline compatibility (the key's shape half).
+     * @param render_pass       A render pass with that compatibility (used only when the pipeline is CREATED).
+     * @param topology          The draw's effective topology.
+     * @param state             The resolved pipeline state (dynamic state is not part of it).
+     * @param color_attachments How many colour attachments the pass writes.
+     * @param why               Receives the reason when the pipeline could not be built.
      * @return The pipeline, or `VK_NULL_HANDLE`.
      */
-    [[nodiscard]] VkPipeline ensurePipeline(const ProgramEntry&                  program,
-                                            const vn::graphics::GeometryDescription& geometry,
-                                            vn::graphics::Topology               topology,
-                                            VkRenderPass                         render_pass,
-                                            vn::String&                          why)
+    [[nodiscard]] VkPipeline ensurePipeline(const ProgramEntry&                                   program,
+                                            const vn::graphics::GeometryDescription&              geometry,
+                                            const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                            VkRenderPass                                          render_pass,
+                                            VkPrimitiveTopology                                   topology,
+                                            const PipelineState&                                  state,
+                                            std::uint32_t                                         color_attachments,
+                                            vn::String&                                           why)
     {
         PipelineKey key;
-        key.program     = program.description.get();
-        key.render_pass = render_pass;
-        key.topology    = topologyOf(topology);
+        key.program       = program.description.get();
+        key.compatibility = compatibility;
+        key.topology      = topology;
+        key.state         = state;
         for (const vn::graphics::GeometryChannel& channel : geometry.channels()) {
             if (channel.channel.empty()) {
                 continue;
@@ -508,8 +567,8 @@ struct ContentDraw::Impl {
         bindings.reserve(key.channels.size());
         attributes.reserve(key.channels.size());
         for (std::size_t index = 0; index < key.channels.size(); ++index) {
-            const std::uint32_t binding   = static_cast<std::uint32_t>(index);
-            const std::uint32_t location  = key.channels[index].first;
+            const std::uint32_t binding    = static_cast<std::uint32_t>(index);
+            const std::uint32_t location   = key.channels[index].first;
             const std::uint32_t components = key.channels[index].second;
             VkVertexInputBindingDescription binding_description{};
             binding_description.binding   = binding;
@@ -525,9 +584,8 @@ struct ContentDraw::Impl {
             attributes.push_back(attribute);
         }
 
-        // WHAT THE PIPELINE STATES. M2's content draw has no material, no depth test and no blend (M3/M4 bring state):
-        // a triangle is written as it is. Viewport and scissor are DYNAMIC so a pass' rectangle is one command, not a
-        // pipeline (`PassDraw::viewport`).
+        // WHAT THE PIPELINE STATES. The resolved state selects the pipeline variant; values that are DYNAMIC state
+        // (viewport, scissor, line width, depth-bias values) are set per draw and never recompile anything.
         VkPipelineShaderStageCreateInfo stages[2]{};
         stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
@@ -555,11 +613,14 @@ struct ContentDraw::Impl {
         viewport.scissorCount  = 1U;
 
         VkPipelineRasterizationStateCreateInfo raster{};
-        raster.sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-        raster.polygonMode = VK_POLYGON_MODE_FILL;
-        raster.cullMode    = VK_CULL_MODE_NONE; // M3 resolves the state; a picture nobody culled is still the picture
-        raster.frontFace   = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-        raster.lineWidth   = 1.0F;
+        raster.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        raster.polygonMode             = state.polygon_mode;
+        raster.cullMode                = state.cull_mode;
+        raster.frontFace               = StateMapping::kFrontFace;
+        raster.depthBiasEnable         = VK_TRUE; // the bias VALUES are dynamic (vkCmdSetDepthBias)
+        raster.depthBiasConstantFactor = 0.0F;
+        raster.depthBiasSlopeFactor    = 0.0F;
+        raster.lineWidth               = 1.0F;
 
         VkPipelineMultisampleStateCreateInfo multisample{};
         multisample.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -567,22 +628,33 @@ struct ContentDraw::Impl {
 
         VkPipelineDepthStencilStateCreateInfo depth{};
         depth.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-        depth.depthTestEnable  = VK_FALSE; // M3 wires the pass' depth state
-        depth.depthWriteEnable = VK_FALSE;
+        depth.depthTestEnable  = state.depth_test;
+        depth.depthWriteEnable = state.depth_write;
+        depth.depthCompareOp   = state.depth_compare;
 
-        VkPipelineColorBlendAttachmentState blend_attachment{};
-        blend_attachment.blendEnable    = VK_FALSE;
-        blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        // EVERY COLOUR ATTACHMENT GETS THE SAME BLEND: one object's fragment writes them all, and an MRT target states
+        // blendEnable FALSE (its attachments hold data, not a surface - see BlendState).
+        std::vector<VkPipelineColorBlendAttachmentState> blend_attachments(color_attachments);
+        for (VkPipelineColorBlendAttachmentState& attachment : blend_attachments) {
+            attachment.blendEnable         = state.blend_enable;
+            attachment.srcColorBlendFactor = state.blend_src;
+            attachment.dstColorBlendFactor = state.blend_dst;
+            attachment.colorBlendOp        = VK_BLEND_OP_ADD;
+            attachment.srcAlphaBlendFactor = state.blend_src;
+            attachment.dstAlphaBlendFactor = state.blend_dst;
+            attachment.alphaBlendOp        = VK_BLEND_OP_ADD;
+            attachment.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        }
 
         VkPipelineColorBlendStateCreateInfo blend{};
         blend.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        blend.attachmentCount = 1U;
-        blend.pAttachments    = &blend_attachment;
+        blend.attachmentCount = static_cast<std::uint32_t>(blend_attachments.size());
+        blend.pAttachments    = blend_attachments.data();
 
-        const VkDynamicState dynamic_states[2]{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+        const VkDynamicState dynamic_states[4]{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_LINE_WIDTH, VK_DYNAMIC_STATE_DEPTH_BIAS };
         VkPipelineDynamicStateCreateInfo dynamic{};
         dynamic.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-        dynamic.dynamicStateCount = 2U;
+        dynamic.dynamicStateCount = 4U;
         dynamic.pDynamicStates    = dynamic_states;
 
         VkGraphicsPipelineCreateInfo info{};
@@ -606,6 +678,7 @@ struct ContentDraw::Impl {
             why = vn::String(u8"vk: the content pipeline could not be built (see the loader's report)");
             return VK_NULL_HANDLE;
         }
+        ++created_;
         pipelines.emplace(std::move(key), pipeline);
         return pipeline;
     }
@@ -849,24 +922,15 @@ void ContentDraw::endFrame() noexcept
     }
 }
 
-void ContentDraw::releaseRenderPass(VkRenderPass render_pass) noexcept
+std::uint64_t ContentDraw::pipelinesCreated() const noexcept
 {
-    if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || render_pass == VK_NULL_HANDLE) {
-        return;
-    }
-    for (auto iterator = impl->pipelines.begin(); iterator != impl->pipelines.end();) {
-        if (iterator->first.render_pass == render_pass) {
-            impl->table->vkDestroyPipeline(impl->device, iterator->second, nullptr);
-            iterator = impl->pipelines.erase(iterator);
-        }
-        else {
-            ++iterator;
-        }
-    }
+    return impl->created_;
 }
 
 std::uint64_t ContentDraw::record(VkCommandBuffer                             commands,
                                   VkRenderPass                                render_pass,
+                                  const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                  std::uint32_t                               color_attachments,
                                   int                                         width,
                                   int                                         height,
                                   const vn::graphics::DrawDescription&        draw,
@@ -918,6 +982,13 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
     }
     viewport.minDepth = 0.0F;
     viewport.maxDepth = 1.0F;
+    if (pass.depth_range.has_value() && pass.depth_range->isValid()) {
+        // The pass' depth BAND: min is the far end, max the near end (see DepthRange), which is exactly Vulkan's
+        // minDepth/maxDepth pair under reverse-Z.
+        const std::pair<float, float> depth = StateMapping::viewportDepth(pass.depth_range);
+        viewport.minDepth                  = depth.first;
+        viewport.maxDepth                  = depth.second;
+    }
 
     std::uint64_t recorded       = 0;
     VkPipeline    bound_pipeline = VK_NULL_HANDLE;
@@ -963,8 +1034,32 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
             continue;
         }
 
-        const VkPipeline pipeline = impl->ensurePipeline(*compiled, *geometry, primitives[command.primitive_index].topology, render_pass, failure);
-        if (pipeline == VK_NULL_HANDLE) {
+        // THE STATE, RESOLVED ONCE PER COMMAND (pass override > content > defaults; see StateResolution.hpp). The
+        // pipeline-relevant half selects the variant; the dynamic half is set below and recompiles nothing.
+        const vn::graphics::ResolvedCommandState resolved =
+            vn::graphics::resolveRenderState(command.authored_state, pass.state, primitives[command.primitive_index].topology);
+
+        Impl::PipelineState pipeline_state;
+        pipeline_state.polygon_mode  = StateMapping::polygonMode(resolved.state.polygonMode);
+        pipeline_state.cull_mode     = StateMapping::cullMode(resolved.state.cullMode);
+        pipeline_state.depth_test    = resolved.state.depth.test ? VK_TRUE : VK_FALSE;
+        pipeline_state.depth_write   = resolved.state.depth.write ? VK_TRUE : VK_FALSE;
+        pipeline_state.depth_compare = StateMapping::compareOp(resolved.state.depth.compare);
+        // A multi-attachment target never blends: its attachments hold data, not a surface (see BlendState).
+        const bool blend_enabled    = color_attachments == 1U && resolved.state.blend.enabled;
+        pipeline_state.blend_enable = blend_enabled ? VK_TRUE : VK_FALSE;
+        pipeline_state.blend_src    = StateMapping::blendFactor(resolved.state.blend.src);
+        pipeline_state.blend_dst    = StateMapping::blendFactor(resolved.state.blend.dst);
+
+        const VkPipeline stateful_pipeline = impl->ensurePipeline(*compiled,
+                                                                  *geometry,
+                                                                  compatibility,
+                                                                  render_pass,
+                                                                  StateMapping::topology(resolved.state.topology),
+                                                                  pipeline_state,
+                                                                  color_attachments,
+                                                                  failure);
+        if (stateful_pipeline == VK_NULL_HANDLE) {
             fail(failure.empty() ? vn::String(u8"vk: the content pipeline could not be built") : std::move(failure),
                  vn::graphics::DiagnosticCategory::CompileFailed);
             continue;
@@ -972,7 +1067,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
 
         VkBuffer       uniform_buffer = VK_NULL_HANDLE;
         VkDeviceMemory uniform_memory = VK_NULL_HANDLE;
-        if (!impl->createUniforms(view, buildDrawBlock(command), draw_offset, uniform_buffer, uniform_memory)) {
+        if (!impl->createUniforms(view, buildDrawBlock(command, resolved.state.pointSize), draw_offset, uniform_buffer, uniform_memory)) {
             note(u8"vk: a draw's uniform buffer could not be created");
             continue;
         }
@@ -984,12 +1079,14 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
             continue;
         }
 
-        if (pipeline != bound_pipeline) {
-            impl->table->vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-            bound_pipeline = pipeline;
+        if (stateful_pipeline != bound_pipeline) {
+            impl->table->vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, stateful_pipeline);
+            bound_pipeline = stateful_pipeline;
         }
         impl->table->vkCmdSetViewport(commands, 0U, 1U, &viewport);
         impl->table->vkCmdSetScissor(commands, 0U, 1U, &scissor);
+        impl->table->vkCmdSetLineWidth(commands, resolved.state.lineWidth);
+        impl->table->vkCmdSetDepthBias(commands, resolved.state.polygonOffset.units, 0.0F, resolved.state.polygonOffset.factor);
         impl->table->vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, impl->pipeline_layout, 0U, 1U, &set, 0U, nullptr);
 
         std::vector<VkBuffer>      vertex_buffers;

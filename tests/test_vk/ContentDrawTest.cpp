@@ -111,12 +111,15 @@ void main()
 }
 
 /// @brief Builds a triangle in clip space, indexed, as the one command of its geometry.
+///
+/// The z values are 0.5, not 0: the backend renders reverse-Z (the far plane is 0, which is what a depth buffer is
+/// cleared to), and the default pass policy TESTS depth - a fragment at the far plane would fail every comparison.
 [[nodiscard]] intrusive_ptr<Geometry> makeTriangle()
 {
     std::vector<float> positions{
-        -0.75F, -0.75F, 0.0F, // bottom left
-        0.75F,  -0.75F, 0.0F, // bottom right
-        0.0F,   0.75F,  0.0F, // top
+        -0.75F, -0.75F, 0.5F, // bottom left
+        0.75F,  -0.75F, 0.5F, // bottom right
+        0.0F,   0.75F,  0.5F, // top
     };
     std::vector<std::uint32_t> indices{ 0U, 1U, 2U };
 

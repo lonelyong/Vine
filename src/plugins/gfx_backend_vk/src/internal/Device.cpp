@@ -1,5 +1,6 @@
 #include <vine/backend_vk/internal/Device.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -33,6 +34,12 @@ using vn::graphics::PresentTarget;
 using vn::graphics::ReadbackResult;
 using vn::graphics::RenderTarget;
 using vn::graphics::backend::ImageLayout;
+using vn::graphics::backend::planTarget;
+using vn::graphics::backend::RepairReason;
+using vn::graphics::backend::TargetAction;
+using vn::graphics::backend::TargetDecision;
+using vn::graphics::backend::TargetDesc;
+using vn::graphics::backend::TargetInstance;
 
 namespace
 {
@@ -109,6 +116,8 @@ struct Device::Impl {
     bool reported_no_clear{ false };
     bool reported_window{ false };
     bool reported_content{ false };
+    bool reported_size_unknown{ false };
+    bool reported_samples{ false };
 };
 
 Device::Device(const DeviceDesc& desc)
@@ -318,7 +327,7 @@ bool Device::initialize()
     impl->caps.max_samples             = 1U;
     impl->caps.max_anisotropy          = 1.0F;
     impl->caps.max_line_width          = properties.limits.lineWidthRange[1] > 0.0F ? properties.limits.lineWidthRange[1] : 1.0F;
-    impl->caps.max_color_attachments   = 1U;
+    impl->caps.max_color_attachments   = std::min<std::uint32_t>(properties.limits.maxColorAttachments, 4U);
 
     // M2'S CONTENT PATH: the layouts, the descriptor pool and the caches every draw uses. A device that cannot build
     // them is not a device that can draw, so it refuses to come up rather than answering frames with nothing.
@@ -339,7 +348,8 @@ void Device::shutdown()
         // A counted stop: every queue is idle before the objects it recorded against go.
         (void)impl->device_table.vkDeviceWaitIdle(impl->device);
 
-        // Pipelines are built against a target's render pass, so the content caches go BEFORE the targets do.
+        // Pipelines are keyed by render-pass COMPATIBILITY, so they hold no render-pass handle; destroying the content
+        // caches first is still the order that keeps teardown simple (the queue is idle, nothing names them).
         impl->content.destroy();
 
         for (auto& [target, images] : impl->targets) {
@@ -380,6 +390,8 @@ void Device::shutdown()
     impl->reported_no_clear   = false;
     impl->reported_window     = false;
     impl->reported_content    = false;
+    impl->reported_size_unknown = false;
+    impl->reported_samples    = false;
 }
 
 bool Device::initialized() const noexcept
@@ -405,34 +417,77 @@ void Device::setRenderTarget(RenderTarget* target)
 
 bool Device::ensureTarget(const RenderTarget& target)
 {
-    // WHAT THE HOST'S OBJECT ASKS FOR, as Vulkan spelling. The extent is the target's own (a target is a DESCRIPTION,
-    // and its attachments exist only after a backend builds them - see RenderTarget's note).
-    const int      width  = target.width();
-    const int      height = target.height();
-    const VkFormat color  = target.colorCount() > 0 ? colorFormatOf(target.colorFormat(0)) : VK_FORMAT_UNDEFINED;
-    const VkFormat depth  = depthFormatOf(target.depthFormat());
+    // WHAT THE HOST'S OBJECT ASKS FOR, in the value `planTarget` compares: an extent plus the shape - the engine's
+    // formats AND the device spelling only this backend can fill (see TargetShape).
+    TargetDesc wanted;
+    wanted.width  = target.width();
+    wanted.height = target.height();
+    for (int index = 0; index < target.colorCount(); ++index) {
+        wanted.shape.color_formats.push_back(target.colorFormat(index));
+        wanted.shape.device_color_formats.push_back(static_cast<std::uint32_t>(colorFormatOf(target.colorFormat(index))));
+    }
+    if (target.hasDepth()) {
+        wanted.shape.depth_format        = target.depthFormat();
+        wanted.shape.device_depth_format = static_cast<std::uint32_t>(depthFormatOf(target.depthFormat()));
+    }
+    // M3 builds single-sampled targets; Capabilities::max_samples says so, and a larger request is reported once.
+    wanted.shape.samples = 1U;
+    wanted.shape.subpass = 0U;
+    if (target.samples() > 1U && !impl->reported_samples) {
+        impl->reported_samples = true;
+        reportDiagnostic(DiagnosticSeverity::Warning,
+                         DiagnosticCategory::UnsupportedRequest,
+                         u8"vk: multi-sampled targets are not built yet (Capabilities::max_samples is 1); the target was built single-sampled");
+    }
 
     TargetImages& images = impl->targets[&target];
-    if (images.built() && images.matches(width, height, color, depth)) {
+    TargetInstance current;
+    current.desc                   = images.desc;
+    current.generation             = 0U;
+    current.built                  = images.built();
+    current.attachments_invalidated = false;
+
+    const TargetDecision decision = planTarget(current, wanted);
+    switch (decision.action) {
+    case TargetAction::None:
+        return true;
+    case TargetAction::Repair:
+        if (decision.reason == RepairReason::SizeUnknown) {
+            if (!impl->reported_size_unknown) {
+                impl->reported_size_unknown = true;
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::TargetBuildFailed,
+                                 u8"vk: a target with an unusable extent (0 in a dimension) was left unbuilt");
+            }
+            return false;
+        }
+        // Bootstrap: the attachments exist and have the right shape; the colour attachments always CLEAR, so the first
+        // pass in does not need a second variant.
+        return true;
+    case TargetAction::ResizeInPlace:
+        images.desc = wanted;
+        if (!resizeTarget(impl->device_table, impl->device, impl->memory, images)) {
+            reportDiagnostic(DiagnosticSeverity::Error,
+                             DiagnosticCategory::TargetBuildFailed,
+                             u8"vk: the target's attachments could not be rebuilt at the new extent (see the loader's report)");
+            return false;
+        }
+        return true;
+    case TargetAction::Rebuild:
+        // The shape changed: the render pass, the framebuffer and the attachments are rebuilt; pipelines are keyed by
+        // compatibility, so the ones built for the old shape are simply never asked for again (and a resize, which
+        // keeps the shape, reuses them - see ContentDraw).
+        destroyTarget(impl->device_table, impl->device, images);
+        images.desc = wanted;
+        if (!buildTarget(impl->device_table, impl->device, impl->memory, images)) {
+            reportDiagnostic(DiagnosticSeverity::Error,
+                             DiagnosticCategory::TargetBuildFailed,
+                             u8"vk: the off-screen target's attachments could not be built (see the loader's report)");
+            return false;
+        }
         return true;
     }
-
-    // A RESIZE IS A REBUILD in M1: `planTarget`'s ResizeInPlace (M3) is the step that keeps the render pass and re-points
-    // the views; until then the honest answer is to build the objects that fit and drop the ones that do not.
-    // Pipelines are built against THIS render pass, so they go with it.
-    impl->content.releaseRenderPass(images.render_pass);
-    destroyTarget(impl->device_table, impl->device, images);
-    images.width        = width;
-    images.height       = height;
-    images.color_format = color;
-    images.depth_format = depth;
-    if (!buildTarget(impl->device_table, impl->device, impl->memory, images)) {
-        reportDiagnostic(DiagnosticSeverity::Error,
-                         DiagnosticCategory::TargetBuildFailed,
-                         u8"vk: the off-screen target's attachments could not be built (see the loader's report)");
-        return false;
-    }
-    return true;
+    return false;
 }
 
 Capabilities Device::capabilities() const noexcept
@@ -472,7 +527,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                 impl->reported_no_clear = true;
                 reportDiagnostic(DiagnosticSeverity::Warning,
                                  DiagnosticCategory::UnsupportedRequest,
-                                 u8"vk: a pass that loads its target instead of clearing it needs the LOAD variant (M3); "
+                                 u8"vk: a pass that announces no clear needs the colour LOAD variant, which is not built; "
                                  u8"it was left out");
             }
             continue;
@@ -522,37 +577,60 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     impl->content.beginFrame();
 
     for (const PassDraw* draw : clear_passes) {
-        const TargetImages& images = impl->targets.at(draw->target);
+        TargetImages&       images      = impl->targets.at(draw->target);
+        // A FRESH attachment set is UNDEFINED: a pass that asked to preserve the depth is given the CLEAR variant for
+        // its first frame (there is nothing to load yet), and the plan's Bootstrap repair says exactly that.
+        const bool          load_depth = !draw->clear->depth && !images.fresh;
+        const VkRenderPass  render_pass = images.renderPassFor(load_depth);
 
-        VkClearValue clear_values[2]{};
-        const Colorf& colour    = draw->clear->color;
-        clear_values[0].color   = { { colour.r, colour.g, colour.b, colour.a } };
-        // Reverse-Z: every backend clears depth to its own far plane, and this camera convention's far plane is 0
-        // (see ClearPolicy: the policy states WHETHER, never to what).
-        clear_values[1].depthStencil = { 0.0F, 0U };
+        // PER-ATTACHMENT CLEAR: attachment 0 is the pass' colour, the rest come from extra_colors (an absent entry is
+        // transparent black - see ClearPolicy), and the depth is the last slot when the target owns one.
+        std::vector<VkClearValue> clear_values(images.colorCount() + (images.hasDepth() ? 1U : 0U));
+        const Colorf&             colour      = draw->clear->color;
+        clear_values[0].color                 = { { colour.r, colour.g, colour.b, colour.a } };
+        for (std::size_t index = 1; index < images.colorCount(); ++index) {
+            const Colorf extra = index - 1U < draw->clear->extra_colors.size() ? draw->clear->extra_colors[index - 1U] : Colorf(0.0F, 0.0F, 0.0F, 0.0F);
+            clear_values[index].color = { { extra.r, extra.g, extra.b, extra.a } };
+        }
+        if (images.hasDepth()) {
+            // Reverse-Z: every backend clears depth to its own far plane, and this camera convention's far plane is 0
+            // (see ClearPolicy: the policy states WHETHER, never to what).
+            clear_values[images.colorCount()].depthStencil = { 0.0F, 0U };
+        }
 
         VkRenderPassBeginInfo pass_begin{};
         pass_begin.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        pass_begin.renderPass        = images.render_pass;
+        pass_begin.renderPass        = render_pass;
         pass_begin.framebuffer       = images.framebuffer;
         pass_begin.renderArea.offset = VkOffset2D{ 0, 0 };
-        pass_begin.renderArea.extent = VkExtent2D{ static_cast<std::uint32_t>(images.width), static_cast<std::uint32_t>(images.height) };
-        pass_begin.clearValueCount   = images.depth_format != VK_FORMAT_UNDEFINED ? 2U : 1U;
-        pass_begin.pClearValues      = clear_values;
+        pass_begin.renderArea.extent = VkExtent2D{ static_cast<std::uint32_t>(images.width()), static_cast<std::uint32_t>(images.height()) };
+        pass_begin.clearValueCount   = static_cast<std::uint32_t>(clear_values.size());
+        pass_begin.pClearValues      = clear_values.data();
 
         impl->device_table.vkCmdBeginRenderPass(commands, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
         // WHAT THIS PASS DRAWS. Each draw description is borrowed for this call; every command inside it becomes one
-        // drawing call (M2: one `RenderCommand` = one pipeline bind + one indexed draw).
+        // drawing call (M3: resolved state selects the pipeline, one `RenderCommand` = one indexed draw).
         for (const DrawDescription& description : draw->draws) {
-            vn::String                      why;
+            vn::String                       why;
             vn::graphics::DiagnosticCategory category = DiagnosticCategory::ContentSkipped;
-            (void)impl->content.record(commands, images.render_pass, images.width, images.height, description, *draw, impl->default_program.get(), &why, &category);
+            (void)impl->content.record(commands,
+                                       render_pass,
+                                       images.compatibility(),
+                                       static_cast<std::uint32_t>(images.colorCount()),
+                                       images.width(),
+                                       images.height(),
+                                       description,
+                                       *draw,
+                                       impl->default_program.get(),
+                                       &why,
+                                       &category);
             if (!why.empty() && !impl->reported_content) {
                 impl->reported_content = true;
                 reportDiagnostic(DiagnosticSeverity::Warning, category, why);
             }
         }
         impl->device_table.vkCmdEndRenderPass(commands);
+        images.fresh = false;
     }
 
     if (impl->device_table.vkEndCommandBuffer(commands) != VK_SUCCESS) {
@@ -601,21 +679,23 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     if (target == nullptr) {
         return fail(ReadbackResult::Invalid);
     }
-    if (attachment != 0) {
-        return fail(ReadbackResult::Invalid); // M1 builds one colour attachment (see Capabilities::max_color_attachments)
-    }
 
     const auto found = impl->targets.find(target);
     if (found == impl->targets.end() || !found->second.built()) {
         return fail(ReadbackResult::NotReady);
     }
     const TargetImages& images = found->second;
-    if (images.color_format != VK_FORMAT_R8G8B8A8_UNORM) {
+    if (attachment < 0 || static_cast<std::size_t>(attachment) >= images.colorCount()) {
+        return fail(ReadbackResult::Invalid);
+    }
+    const std::size_t   attachment_index = static_cast<std::size_t>(attachment);
+    const VkImage       color_image      = images.colors[attachment_index];
+    if (images.colorFormat(attachment_index) != VK_FORMAT_R8G8B8A8_UNORM) {
         // The readback contract is packed RGBA8; another colour format would need a conversion this step does not write.
         return fail(ReadbackResult::Unsupported);
     }
 
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(images.width) * static_cast<VkDeviceSize>(images.height) * 4U;
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(images.width()) * static_cast<VkDeviceSize>(images.height()) * 4U;
 
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -691,7 +771,7 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     }
 
     const VkImageMemoryBarrier to_transfer =
-        barrierBetween(images.colors[0], stateOf(ImageLayout::ColorAttachment), transferReadState(), VK_IMAGE_ASPECT_COLOR_BIT);
+        barrierBetween(color_image, stateOf(ImageLayout::ColorAttachment), transferReadState(), VK_IMAGE_ASPECT_COLOR_BIT);
     impl->device_table.vkCmdPipelineBarrier(commands,
                                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                                             VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -706,12 +786,12 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     VkBufferImageCopy region{};
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1U;
-    region.imageExtent                 = VkExtent3D{ static_cast<std::uint32_t>(images.width),
-                                                      static_cast<std::uint32_t>(images.height), 1U };
-    impl->device_table.vkCmdCopyImageToBuffer(commands, images.colors[0], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging, 1U, &region);
+    region.imageExtent                 = VkExtent3D{ static_cast<std::uint32_t>(images.width()),
+                                                      static_cast<std::uint32_t>(images.height()), 1U };
+    impl->device_table.vkCmdCopyImageToBuffer(commands, color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging, 1U, &region);
 
     const VkImageMemoryBarrier to_attachment =
-        barrierBetween(images.colors[0], transferReadState(), stateOf(ImageLayout::ColorAttachment), VK_IMAGE_ASPECT_COLOR_BIT);
+        barrierBetween(color_image, transferReadState(), stateOf(ImageLayout::ColorAttachment), VK_IMAGE_ASPECT_COLOR_BIT);
     impl->device_table.vkCmdPipelineBarrier(commands,
                                             VK_PIPELINE_STAGE_TRANSFER_BIT,
                                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
@@ -766,6 +846,11 @@ Device::Handles Device::handles() const noexcept
     out.queue_family    = impl->queue_family;
     out.validation      = impl->validation;
     return out;
+}
+
+std::uint64_t Device::contentPipelines() const noexcept
+{
+    return impl->content.pipelinesCreated();
 }
 
 void Device::reportDriverMessage(int severity_flags, const char* text)
