@@ -16,6 +16,7 @@
 #include <vine/backend_vk/internal/BarrierPlan.hpp>
 #include <vine/backend_vk/internal/ContentDraw.hpp>
 #include <vine/backend_vk/internal/ContentImages.hpp>
+#include <vine/backend_vk/internal/ProbeWindow.hpp>
 #include <vine/backend_vk/internal/TargetImages.hpp>
 #include <vine/backend_vk/internal/WindowTarget.hpp>
 #include <vine/graphics/Capabilities.hpp>
@@ -57,6 +58,10 @@ namespace
 
 /// @brief The layer this backend asks for whenever the loader has it (see Device::initialize).
 constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
+
+/// @brief The size a Probe device's own window comes up at (the reference backend's own default: 640x360).
+constexpr int kProbeWindowWidth  = 640;
+constexpr int kProbeWindowHeight = 360;
 
 /// @brief The window-system surface extension this build can use (empty where no window is served).
 #if defined(_WIN32)
@@ -157,6 +162,11 @@ struct Device::Impl {
 
     /// The windows this device presents through (one per host handle; owned here, borrowed by the host).
     std::vector<std::unique_ptr<WindowTarget>> surfaces;
+    /// The window this device brought up FOR ITSELF (DevicePresentation::Probe), or null for every other desc.
+    ///
+    /// A platform object, older than the Vulkan session: the surface is created on it and the physical device is
+    /// judged against that surface, so it is torn down AFTER every surface that presented through it (see shutdown).
+    std::unique_ptr<ProbeWindow> probe_window;
     /// Whether this session was opened with a presentation intent (a window half exists).
     bool presentation_wanted{ false };
 
@@ -258,6 +268,10 @@ Device::Device(const DeviceDesc& desc)
   : impl(std::make_unique<Impl>())
 {
     impl->desc = desc;
+    // THE CREATION INTENT IS ANSWERED BEFORE ANY SESSION EXISTS: `capabilities().presentation` is "does this device
+    // present" (see RenderDevice), and a host reads it before it drives a frame. A session that turns out to serve
+    // nothing (no surface extension, a window that would not come up) says so when initialize() answers.
+    impl->caps.presentation = desc.presentation != DevicePresentation::None;
 }
 
 Device::~Device()
@@ -316,16 +330,23 @@ bool Device::initialize()
         }
     }
 
-    // THE WINDOW HALF'S CREATION INTENT. Handle names the host's window (a wiring error otherwise); Probe's self-owned
-    // window is not built yet, so a Probe session with no target created for it answers presentation=false instead of
-    // pretending. A missing surface extension is the same answer: this machine cannot present, and the off-screen path
-    // still runs whole frames.
+    // THE WINDOW HALF'S CREATION INTENT. Handle names the host's window (a wiring error otherwise); Probe's own
+    // window is brought up HERE, before the instance exists, because the surface is created on it and the physical
+    // device is judged against that surface (see DevicePresentation). A missing surface extension is the same answer:
+    // this machine cannot present, and the off-screen path still runs whole frames.
     impl->presentation_wanted = impl->desc.presentation != DevicePresentation::None;
     if (impl->presentation_wanted && impl->desc.presentation == DevicePresentation::Probe && impl->surfaces.empty()) {
-        reportDiagnostic(DiagnosticSeverity::Warning,
-                         DiagnosticCategory::UnsupportedRequest,
-                         u8"vk: a device-owned window (DevicePresentation::Probe) is not built; name a host window (Handle) or ask for None");
-        impl->presentation_wanted = false;
+        vn::String why;
+        if (!ensureProbeWindow(&why)) {
+            // A Probe device PROMISED a window (it is what the creation input says), so not having one is a failed
+            // session rather than a quiet degradation - a host that wants the off-screen form asks for None.
+            reportDiagnostic(DiagnosticSeverity::Error,
+                             DiagnosticCategory::InitFailed,
+                             why.empty() ? vn::String(u8"vk: the device-owned (Probe) window could not be brought up") : std::move(why));
+            shutdown();
+            return false;
+        }
+        impl->surfaces.push_back(std::make_unique<WindowTarget>(impl->probe_window->handle()));
     }
     if (impl->presentation_wanted && impl->desc.presentation == DevicePresentation::Handle && impl->desc.native_handle == nullptr &&
         impl->surfaces.empty()) {
@@ -635,6 +656,9 @@ void Device::shutdown()
     impl->queue_family        = 0U;
     impl->validation          = false;
     impl->caps                = Capabilities{};
+    // The creation intent survives the session (see the constructor): a shut-down Probe device still intends to
+    // present when it is brought up again.
+    impl->caps.presentation   = impl->desc.presentation != DevicePresentation::None;
     impl->default_program     = nullptr;
     impl->reported_no_targets = false;
     impl->reported_surface    = false;
@@ -642,8 +666,25 @@ void Device::shutdown()
     impl->reported_size_unknown = false;
     impl->reported_samples    = false;
     impl->reported_prepare_target = false;
+    // THE DEVICE'S OWN WINDOW GOES LAST, and whether or not a Vulkan session came up: it is a platform object older
+    // than the session (see ProbeWindow), and every surface created on it was destroyed above.
+    impl->surfaces.clear();
+    impl->probe_window.reset();
     // The frame's books go with the session: the next initialize() starts a device that measured nothing yet.
     impl->books = Impl::Books{};
+}
+
+bool Device::ensureProbeWindow(vn::String* why)
+{
+    if (impl->probe_window != nullptr) {
+        return true; // one window per device, whoever asked first
+    }
+    auto window = std::make_unique<ProbeWindow>();
+    if (!window->open(kProbeWindowWidth, kProbeWindowHeight, why)) {
+        return false;
+    }
+    impl->probe_window = std::move(window);
+    return true;
 }
 
 bool Device::initialized() const noexcept
@@ -680,24 +721,45 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
         answer(SurfaceTargetResult::NoPresentation);
         return nullptr;
     }
-    if (native_handle == nullptr) {
-        answer(SurfaceTargetResult::UnsupportedSurface);
-        if (!impl->reported_surface) {
-            impl->reported_surface = true;
-            reportDiagnostic(DiagnosticSeverity::Warning,
-                             DiagnosticCategory::UnsupportedRequest,
-                             u8"vk: a window target needs a host window handle (the self-owned Probe window is not built)");
+
+    // A NULL HANDLE IS THE DEVICE'S OWN WINDOW on a Probe device (see DevicePresentation): brought up here when the
+    // host asks before initialize() - the SDK's documented order - or when the device came up. A Handle device has
+    // no window of its own, so a null handle there is wiring this device cannot repair.
+    void* window_handle = native_handle;
+    if (window_handle == nullptr) {
+        if (impl->desc.presentation != DevicePresentation::Probe) {
+            answer(SurfaceTargetResult::UnsupportedSurface);
+            if (!impl->reported_surface) {
+                impl->reported_surface = true;
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
+                                 u8"vk: DevicePresentation::Handle needs a host window handle; this device brings up none");
+            }
+            return nullptr;
         }
-        return nullptr;
+        vn::String why;
+        if (!ensureProbeWindow(&why)) {
+            answer(SurfaceTargetResult::UnsupportedSurface);
+            if (!impl->reported_surface) {
+                impl->reported_surface = true;
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
+                                 why.empty() ? vn::String(u8"vk: the device-owned window could not be brought up") : std::move(why));
+            }
+            return nullptr;
+        }
+        window_handle = impl->probe_window->handle();
     }
     for (const auto& surface : impl->surfaces) {
-        if (surface->nativeHandle() == native_handle) {
+        if (surface->nativeHandle() == window_handle) {
+            // THE ASK IS REFUSED, and the host already holds the target the first ask answered (see RenderDevice):
+            // one window carries one live swapchain, so a second target would be a second owner of the same surface.
             answer(SurfaceTargetResult::WindowOccupied);
-            return surface.get();
+            return nullptr;
         }
     }
 
-    auto target = std::make_unique<WindowTarget>(native_handle);
+    auto target = std::make_unique<WindowTarget>(window_handle);
     if (initialized()) {
         const WindowDevice window_device{
             &impl->device_table, impl->instance, impl->physical, impl->device, impl->queue, impl->queue_family, impl->memory

@@ -104,13 +104,16 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @brief Creates (or answers) the target this device presents @p native_handle through.
      *
      * @details
-     * - ONE LIVE TARGET PER WINDOW: a second ask for the same handle answers `WindowOccupied`.
-     * - `DevicePresentation::None` answers `NoPresentation` silently; a device asked for a window without one (or
-     *   the not-built self-owned window of `Probe`) answers `UnsupportedSurface` and reports it once.
+     * - ONE LIVE TARGET PER WINDOW: a second ask for the same handle answers `WindowOccupied` and hands none out
+     *   (the host already holds the target the first ask answered).
+     * - A NULL HANDLE IS THE DEVICE'S OWN WINDOW on a `Probe` device: the window is brought up here (or when the
+     *   device came up, whichever is first) and the target presents through it. On a `Handle` device a null handle
+     *   is wiring it cannot repair, so it answers `UnsupportedSurface` and reports it once.
+     * - `DevicePresentation::None` answers `NoPresentation` silently.
      * - The target is BORROWED and the device owns it (it lives until `shutdown()`); a target created before
      *   `initialize()` is attached when the device comes up, which is the shape the SDK's contract describes.
      *
-     * @param native_handle Native window handle (`HWND` on Windows), or null when no host window is named.
+     * @param native_handle Native window handle (`HWND` on Windows), or null for the device's own window.
      * @param why           Receives why no target was created (Ok when one was), or null to ignore.
      * @return The target, or null (see @p why).
      */
@@ -302,6 +305,19 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @return true when the objects exist and fit the target.
      */
     [[nodiscard]] bool ensureTarget(const vn::graphics::RenderTarget& target);
+
+    /**
+     * @brief Brings up the window a `Probe` device presents through, once per session.
+     *
+     * @details
+     * - Called from `initialize()` (the device's own window must exist before the surface is created on it) and from
+     *   `createSurfaceTarget(nullptr)` when a host asks for the device's window first - the SDK's documented order.
+     * - A window already up is a no-op: one Probe window per device, whatever asks for it first.
+     *
+     * @param why Receives the reason when no window came up, or null.
+     * @return true when the device has a window (its handle is what a target is created from).
+     */
+    [[nodiscard]] bool ensureProbeWindow(vn::String* why);
 
     struct Impl;
 

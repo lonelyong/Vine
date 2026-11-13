@@ -19,9 +19,10 @@ VN_BACKEND_VK_NS_BEGIN
  *   `VkXcbSurfaceCreateInfoKHR` needs. XCB is a WINDOW-SYSTEM library, not something this backend links: the two
  *   symbols are resolved with `dlopen`, so a machine without libxcb reports "no window system" instead of failing to
  *   load the plugin (the same honesty `capabilities().presentation` is for).
- * - WHAT IT DOES NOT DO. It never creates a window: the SDK's contract is a HOST window handle
- *   (`WindowPresentTarget`), and `DevicePresentation::Probe` (a device that brings up its own window) is a known gap
- *   - the backend answers "this surface cannot be served" rather than pretending.
+ * - WHAT IT DOES NOT DO. It never creates a window: a window is a PLATFORM object with a lifetime of its own, and
+ *   the two kinds (`DevicePresentation::Handle`'s host window, `Probe`'s device-owned one) are owned where they are
+ *   made - by the host, or by `ProbeWindow` (see its own note). What this type answers is the CONNECTION a surface
+ *   is created on.
  * - PLATFORM. The connection path exists for X11 only; Win32 has no connection object (the HWND with the module
  *   instance is the whole input), and macOS is not served (no surface extension is enabled there).
  */
