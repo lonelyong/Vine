@@ -172,7 +172,7 @@
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
 
-- `graphics-2026-11-13-vk-exposure-boundary.md` —— **后端能不能暴露 Vulkan** 的边界论证：SDK 宿主面 / SDK 后端面今天**零 Vk 类型**（命中全是注释），插件 `internal`+`support` 18/57 个头含 `Vk*` 而 `shell` 为 0；对照 wgpu / Diligent / QRhi / Godot / bgfx / Filament / UE / Dawn，结论是“插件内部随便、SDK 与工厂入口不许”，学习后端需要的那扇门做成 `support/` 里的显式自由函数（`VkrawHandles`），并给出可检查的 V1–V4 与升级触发。
+- `graphics-2026-11-13-vk-exposure-boundary.md` —— **后端能不能暴露 Vulkan** 的边界论证：SDK 宿主面 / SDK 后端面今天**零 Vk 类型**（命中全是注释），插件 `internal`+`support` 18/57 个头含 `Vk*` 而 `shell` 为 0；对照 wgpu / Diligent / QRhi / Godot / bgfx / Filament / UE / Dawn，结论是“插件内部随便、SDK 与工厂入口不许”，学习后端需要的那扇门做成 `support/` 里的显式自由函数（`vn::vk::Handles`），并给出可检查的 V1–V4 与升级触发。
 - `graphics-2026-11-13-gpu-resource-abstraction.md` —— **T30（GPU 资源抽象）评估**：宿主面 18 个设备动词里 0 个创建 GPU 资源；规则层（pin / 退役 / 驻留账 / 帧值 / 能力 / 目标决策）完备，类型层无消费者；真触发时的形状是“不透明资源描述 + 每后端实现”，不建 `GpuResource` 基类；前置 T15 / T32，另记 S4 / S5 与验证层缺口。
 
 - `graphics-2026-11-12-audit-3.md` —— graphics 的**第三轮审计**（只读）：线程载荷与契约相反（R3-1）、三条新公共入口零生产消费者（R3-2）、`Scene` 三概念同居（R3-3）、`backend/` 公共安装与 Vulkan 拼写（R3-4）、内容半段调引擎半段（R3-5）、结果形状七套（R3-6）、扩展轴与计划互斥（R3-7）、`RenderEngine` 组合根（R3-8）；含修复任务表 W1–W9 与“现在不做”的触发条件。

@@ -1,15 +1,15 @@
 # 后端实现里能不能暴露 Vulkan？—— 边界设计论证
 
-> **状态**：设计论证（**非现行设计**；结论先在 vkraw 上执行，落地并入 `design/vsg-backend.md` / `design/graphics-architecture.md` 后再删本文）
+> **状态**：设计论证（**非现行设计**；结论先在 vk 上执行，落地并入 `design/vsg-backend.md` / `design/graphics-architecture.md` 后再删本文）
 > **日期**：2026-11-13
-> **问题**：写第二个后端（`vkraw`，手撸 Vulkan）时，**Vulkan 类型到底可以暴露到哪一层**？哪些暴露是自由的，哪些一旦发生就把 SDK 契约弄坏了？
+> **问题**：写第二个后端（`vk`，手撸 Vulkan）时，**Vulkan 类型到底可以暴露到哪一层**？哪些暴露是自由的，哪些一旦发生就把 SDK 契约弄坏了？
 > **结论（一句话）**：**插件内部随便暴露；SDK 与工厂入口不许暴露；需要给学习/工具用的那一扇门是一个显式、可选、后端特有的"逃生门"，不是 `RenderDevice` 动词表里的一个方法。**
 
 ## 1. 概要
 
 ### 1.1 为什么这问题现在才值得写
 
-`gfx_backend_vsg` 是唯一实现，没人问过这个问题：它内部大量使用 Vk 类型，而它没有第二个消费者。`vkraw` 是第一个
+`gfx_backend_vsg` 是唯一实现，没人问过这个问题：它内部大量使用 Vk 类型，而它没有第二个消费者。`vk` 是第一个
 "同 API 家族的第二个实现"，也是**学习用途**——这意味着它比 vsg 更需要 Vk 访问（抓帧、experiment、validation
 回调、拿 `VkDevice` 做实验）。所以"能不能暴露"从学术问题变成要拍板的事。
 
@@ -122,7 +122,7 @@
 
 ### 4.4 论点四（反方最强的一击）：学习后端**确实需要** Vk
 
-诚实面对：`vkraw` 的**目的就是学习 Vulkan**。想做的事包括
+诚实面对：`vk` 的**目的就是学习 Vulkan**。想做的事包括
 
 - 用 RenderDoc / Nsight 抓帧（通常不需要你的 `VkDevice`，但需要 `VK_LAYER` 可注入）；
 - 挂 `VkDebugUtilsMessengerEXT` 自己的回调、跑校验层实验；
@@ -138,21 +138,21 @@
 对照 §3.1 的规律 2，本仓库里最合适的位置是 **`support/`**（vsg 已经用 `support/` 放"测试与工具用、不安装"的头）：
 
 ```cpp
-// include/vine/vkraw/support/VkrawHandles.hpp   ← 含 Vk 类型；不安装；不进 shell；不进 SDK
-struct VkrawHandles {
+// include/vine/vk/support/vn::vk::Handles.hpp   ← 含 Vk 类型；不安装；不进 shell；不进 SDK
+struct vn::vk::Handles {
     VkInstance       instance{ VK_NULL_HANDLE };
     VkPhysicalDevice physical{ VK_NULL_HANDLE };
     VkDevice         device{ VK_NULL_HANDLE };
     VkQueue          graphics{ VK_NULL_HANDLE };
     std::uint32_t    graphics_family{ 0 };
 };
-[[nodiscard]] VkrawHandles vkrawHandles(const RenderDevice& device);  // 非 vkraw ⇒ 空结构
+[[nodiscard]] vn::vk::Handles vkHandles(const RenderDevice& device);  // 非 vk ⇒ 空结构
 ```
 
 三条性质让它不是"暴露契约"：
 
 1. **它不是 `RenderDevice` 的方法**——是自由函数，参数是 `const RenderDevice&`，所以 SDK 动词表不变（`G2`）；
-2. **它的返回值不假装通用**——没有 `native_handle()` 这种中性名，名字里就写着 `Vkraw`（`G4`：语义明确）；
+2. **它的返回值不假装通用**——没有 `native_handle()` 这种中性名，名字里就写着 `vk`（`G4`：语义明确）；
 3. **它在 `support/`**——测试与工具能 include，宿主与 SDK 不能（`BackendHalfGuard` 之外再加一条同形的守卫，
    或用 `check_include_hygiene.py` 约束）。
 
@@ -181,7 +181,7 @@ struct VkrawHandles {
 
 ### 5.2 逃生门的纪律
 
-- 生产路径**不许**走逃生门：`vkraw` 自己的帧路径只用插件的 `internal/`，不 include `support/VkrawHandles.hpp`；
+- 生产路径**不许**走逃生门：`vk` 自己的帧路径只用插件的 `internal/`，不 include `support/vn::vk::Handles.hpp`；
 - 使用方是**测试、工具、实验**，且一次使用要在注释里说明"为什么中性 API 不够"；
 - 逃生门**不进** SDK、**不进** `shell/`、**不安装**。
 
@@ -207,12 +207,12 @@ V2 / V4 今天已经是事实，可以直接写成脚本断言；V1 需要"只�
 `internal/` 与 `support/`：**不加门**。理由（`G8`）：
 
 - 没有受害者（§2.2）；
-- 加门会逼出影子类型（把 `VkImage` 包成 `VkrawImage`），那是**用重复换取"看起来干净"**；
+- 加门会逼出影子类型（把 `VkImage` 包成 `vk::Image`），那是**用重复换取"看起来干净"**；
 - 与 vsg 的现状不一致（vsg 的 `internal/` 就有 Vk），破坏 `G6`。
 
 ### 6.3 为什么把"D2"降级
 
-上一轮我给 vkraw 立的 "D2：`Vk*` 只允许 `src/internal/`" 有两个问题：
+上一轮我给 vk 立的 "D2：`Vk*` 只允许 `src/internal/`" 有两个问题：
 
 1. **与仓库分层不符**：vsg 的 `internal/` 头在 `include/vine/vsg/internal/`，不在 `src/`；照 D2 写会与周边不一致（`G6`）；
 2. **没有受害者**：插件头不安装、`shell/` 无人 include ⇒ 它是一道只增加维护成本的检查（`G8`）。
@@ -243,11 +243,11 @@ V2 / V4 今天已经是事实，可以直接写成脚本断言；V1 需要"只�
   （像 `ImageSource` 导入纹理那样，作为值/描述进 SDK），不是 `nativeDevice()`；
 - 第二个 API 家族落地且逃生门成为**唯一**可用的互操作方式（那就说明 `FrameDescription` 的值不够，问题在值层）。
 
-**vkraw 的落地判据**（与评估 §9.6 的 D1–D5 一致）：
+**vk 的落地判据**（与评估 §9.6 的 D1–D5 一致）：
 
 - `backend/` 公开面零 diff；
 - `shell/` 零 Vk（V4）；
-- `support/VkrawHandles.hpp` 存在且**不被** vkraw 自己的帧路径 include；
+- `support/vn::vk::Handles.hpp` 存在且**不被** vk 自己的帧路径 include；
 - 同一 `FrameDescription` 与 vsg 的对拍通过（M7）。
 
 ## 9. 参考
@@ -259,7 +259,7 @@ V2 / V4 今天已经是事实，可以直接写成脚本断言；V1 需要"只�
 - `../design/graphics-threading.md` §2（跨侧只传值，不传活对象）
 - `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md`（选项 D 否决资源基类；"其它库怎么做的"一节的写法是本文的体例来源）
 - `../decisions/ADR-2026-11-13-content-seam-stays-in-the-plugin.md`（内容缝留在插件内）
-- `graphics-2026-11-13-gpu-resource-abstraction.md` §8（vkraw 的形态与里程碑）、§9（通用化边界 J1–J3）
+- `graphics-2026-11-13-gpu-resource-abstraction.md` §8（vk 的形态与里程碑）、§9（通用化边界 J1–J3）
 - 代码：`src/viz/graphics/sdk/vine/graphics/backend/BackendHalfGuard.hpp`、`scripts/check_include_hygiene.py`、`cmake/VinePluginHelper.cmake`
 
 **外部**

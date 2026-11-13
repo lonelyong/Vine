@@ -10,7 +10,7 @@
 
 | # | 项 | 内容 | 出处 |
 |---|---|---|---|
-| T35 | 手撸 Vulkan 学习后端（`vkraw`） | 目标：学习/研究，**不是默认后端**（宿主仍按名字创建 "vsg"）。形态、复用清单、里程碑 M0–M7 与成本见评估 §8；**通用化边界（J1–J3 判据 + 现在就通用的清单 + 只留概念项 + 明确不做项 + D1–D5 纪律门）见 §9；Vulkan 暴露到哪一层（SDK 宿主面 / SDK 后端面 / 插件 shell / internal+support）与可检查的 V1–V4 见 `../research/graphics-2026-11-13-vk-exposure-boundary.md`**。M0 插件 + factory + `initialize/shutdown`；M1 离屏清屏 + `readColorBuffer`（含 §9.3 的 `BarrierPlan` 映射表 + 无设备表驱动测试）；M2 一个 content draw（glslang → pipeline、通道 → 上传、`VineViewBlock`/`VineDrawBlock`）。 | `../research/graphics-2026-11-13-gpu-resource-abstraction.md` §8、§9、`../research/graphics-2026-11-13-vk-exposure-boundary.md`、`../design/graphics-architecture.md` 2.9 |
+| T35 | 手撸 Vulkan 学习后端（`gfx_backend_vk`，注册名 `"vk"`） | 目标：学习/研究，**不是默认后端**（宿主仍按名字创建 "vsg"）。**M0 已落地（2026-11-13）**：插件 + factory + 设备生命周期 + 诚实的 `capabilities`，`test_vk` 3 例（本机 validation=on、`InitFailed` 诊断 0）、`gfx_backend_vkd.so` 可加载。**下一步 M1**：离屏 target + 无 draw 的 pass + `ClearPolicy` + `readColorBuffer`（含 §9.3 的 `BarrierPlan` 映射表 + 无设备表驱动测试）。形态、复用清单、里程碑 M0–M7 与成本见评估 §8；**通用化边界（J1–J3 判据 + 现在就通用的清单 + 只留概念项 + 明确不做项 + D1–D5 纪律门）见 §9；Vulkan 暴露到哪一层与可检查的 V1–V4 见 `../research/graphics-2026-11-13-vk-exposure-boundary.md`** | `../research/graphics-2026-11-13-gpu-resource-abstraction.md` §8、§9、`../research/graphics-2026-11-13-vk-exposure-boundary.md`、`../design/graphics-architecture.md` 2.9 |
 
 下一项都在 §2，等各自的触发条件。`T8`（派生纯的并发用例）已于 2026-11-13 落地（`SelectTest.SameInputSameList`）。
 
@@ -37,7 +37,7 @@
 | T10 | V3 | 拿不到 `VkPipelineCache`（vsg 1.1.16 只有 Vulkan 类型声明，没有 cache 管理；本后端也不创建） | 推上游；影响冷启动 / 换会话 | `../design/vsg-backend.md` C6 |
 | T11 | V4 | dynamic rendering（`vkCmdBeginRendering`）vsg 记录路径不存在（1.1.16 全树无此调用） | 上游支持后合并每 pass 的 begin | 同上 |
 | T27 | 驻留的显存交易复评 | pin 模型（ADR-2026-11-10）让驻留 = 活内容所需：离屏但宿主仍持有的内容不再自动让出显存。若某宿主的显存峰值不可接受，需要重新引入一条时间/容量规则（会与“零时间窗”的判据冲突，必须走新 ADR） | 出现“大场景 + 离线模型常驻”进入显存预算的真实宿主 | `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §代价 |
-| T30 | GPU 资源抽象（统一类型 / 多态总表） | 现在统一的是**规则与账**（`ResidencyLedger` + pin），不是类型。基类或多态总表只在第二个**API 家族**的后端出现时才值得：届时形状是“SDK 资源描述 + 每后端实现”，不是包 vsg 的基类。**评估已做（2026-11-13）**：规则层完备、类型层无跨 API 消费者；首个同族的第二后端（`vkraw`）消费的是接缝，不改变本条结论；前置是 T15（设备格式码）与 T32（聚合拆分），但两者都只属于跨 API 那一轮。见 `../research/graphics-2026-11-13-gpu-resource-abstraction.md` | 第二个 **API 家族**的后端（D3D12 / Metal / WebGPU）出现；手撸 Vulkan 同族，不算（评估 §8） | `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §选项表、`../research/graphics-2026-11-13-gpu-resource-abstraction.md` |
+| T30 | GPU 资源抽象（统一类型 / 多态总表） | 现在统一的是**规则与账**（`ResidencyLedger` + pin），不是类型。基类或多态总表只在第二个**API 家族**的后端出现时才值得：届时形状是“SDK 资源描述 + 每后端实现”，不是包 vsg 的基类。**评估已做（2026-11-13）**：规则层完备、类型层无跨 API 消费者；首个同族的第二后端（`vk`）消费的是接缝，不改变本条结论；前置是 T15（设备格式码）与 T32（聚合拆分），但两者都只属于跨 API 那一轮。见 `../research/graphics-2026-11-13-gpu-resource-abstraction.md` | 第二个 **API 家族**的后端（D3D12 / Metal / WebGPU）出现；手撸 Vulkan 同族，不算（评估 §8） | `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §选项表、`../research/graphics-2026-11-13-gpu-resource-abstraction.md` |
 
 ### 2.3 平台与验证
 | # | 项 | 内容 | 触发条件 |
@@ -56,7 +56,7 @@
 | T17 | 异步上传 / 编译入口 | 无异步入口（契约是单线程串行） | 一次加载超过一帧预算 |
 | T18 | `OwnedFrame` 的消费者 | `OwnedFrame` 是零生产消费者的公开类型（仅自测） | 远程渲染 / 录制真正开工时再决定去留 |
 | T20 | 收集遍历的分派开销 | 已把 `Object` 派生类型的 `dynamic_cast` 换成 `obj_cast`（实测命中 21.7→8.2 ns、未命中 42.2→20.5 ns，Debug / MSVC）。仍可选的是 `contributeState` / `forEachChild` 虚钩子：`Group` / `StateNode` / `Geometry` 的新子类已被现有分派识别，不构成扩展性缺口；只有在替换后 profile 仍指向类型转换时才做。非 `Object` 类型（`CameraManipulator`、第三方 vsg 类型）保留 `dynamic_cast` | 大场景“每帧收集本身成为瓶颈”，且 profile 仍指向类型转换 |
-| T32 | `RenderBackend` 聚合拆分 | 拆成 device / executor 两个工厂出口（今天一个聚合同时是 `RenderDevice` 与 `RenderFrameExecutor`，`RenderBackend.hpp` 仍多重继承） | 第一个 device 需要驱动两个 executor，或第一个工厂只想返回 `RenderDevice`；`vkraw` 直接实现聚合，不触发 |
+| T32 | `RenderBackend` 聚合拆分 | 拆成 device / executor 两个工厂出口（今天一个聚合同时是 `RenderDevice` 与 `RenderFrameExecutor`，`RenderBackend.hpp` 仍多重继承） | 第一个 device 需要驱动两个 executor，或第一个工厂只想返回 `RenderDevice`；`vk` 直接实现聚合，不触发 |
 
 ### 2.5 着色参数
 

@@ -162,14 +162,14 @@
 
 - `backend/` 的 Vulkan 策略（`device_color_formats` 的 `VkFormat` 语义、`subpass`、`ImageLayout`）对它是**可用**的，
   不需要先改成不透明格式码——那是跨 API 家族（D3D12 / Metal / WebGPU）的问题。**T15 不触发**。
-- T30 的"统一类型 / 多态总表"仍无跨 API 消费者；vkraw 直接实现 `RenderDevice`（18 动词）+ `RenderFrameExecutor`
+- T30 的"统一类型 / 多态总表"仍无跨 API 消费者；vk 直接实现 `RenderDevice`（18 动词）+ `RenderFrameExecutor`
   （2 动词）+ `WindowPresentTarget`，寿命规则复用 `backend/` 的四个机制头。**T30 的触发条件收窄为"第二个 API 家族的后端"**。
 - T32（`RenderBackend` 聚合拆分）**不阻塞**：直接实现聚合即可。
 
 ### 8.2 形态
 
-- 插件 `gfx_backend_vkraw`，在 `load()` 里注册工厂 `"vkraw"`（`RenderApi::Vulkan`）；**不是默认后端**，
-  vsg 仍是生产路径；测试独立（新建 `test_vkraw`，像 `tests/test_vsg` 一样直接编译插件源码）。
+- 插件 `gfx_backend_vk`，在 `load()` 里注册工厂 `"vk"`（`RenderApi::Vulkan`）；**不是默认后端**，
+  vsg 仍是生产路径；测试独立（新建 `test_vk`，像 `tests/test_vsg` 一样直接编译插件源码）。
 - **复用**（SDK `backend/`）：`ResourceTable`、`RetirementQueue`、`FrameTimeline`、`ResidencyLedger`、`FrameArena`、
   `MaterialArena`、`Keys` / `TargetPlan` / `Streams` / `ClearPlan` / `Readback` / `PixelProbe` / `Observe`；
   `ShaderAbi` 的四个块与 `vn_params.glsl` 是 L1 契约。
@@ -181,7 +181,7 @@
 
 | # | 内容 | 验收 |
 |---|---|---|
-| M0 | 插件 + factory + `initialize/shutdown` + `capabilities`（无窗口） | registry 测试 + 设备门控的 init/shutdown，validation 0 error |
+| M0 | 插件 + factory + `initialize/shutdown` + `capabilities`（无窗口） | registry 测试 + 设备门控的 init/shutdown，validation 0 error · **已落地 2026-11-13**：`test_vk` 3 例（`BackendTest.cpp`），本机 `validation=on` 且 `InitFailed` 诊断计数 0；`plugins/vine/gfx_backend_vkd.so` 可加载 |
 | M1 | 离屏 target（RGBA8/D24）+ 无 draw 的 pass + `ClearPolicy` + `readColorBuffer` | 像素 = pass 的 clear 色 |
 | M2 | 一个 content draw：内置程序 → pipeline；`GeometryDescription` 通道 → 上传；`VineViewBlock` / `VineDrawBlock`；`vkCmdDrawIndexed` | 三角形像素（`SdkPixelFixture` 式读回） |
 | M3 | `TargetDecision`（ResizeInPlace/Rebuild）、viewport/scissor、depth range、MRT、per-attachment clear、`PassDraw::state` | resize 不重编管线；MRT 各附件值正确 |
@@ -193,19 +193,19 @@
 ### 8.4 成本与风险
 
 - M0–M2 约 2–4k 行（含 CMake/测试），是学习核心，短周期能看到三角形。
-- M3–M6 到"能跑现有像素套件"约 10–20k 行；vsg 是 28,354 行，vkraw 可以按需裁剪（先不做阴影/实例）。
+- M3–M6 到"能跑现有像素套件"约 10–20k 行；vsg 是 28,354 行，vk 可以按需裁剪（先不做阴影/实例）。
 - 风险：validation layer 的设备门控（WSLg）、glslang 运行时编译、插件 MODULE 不可链接（测试直接编译源码）、
   `VN_GRAPHICS_BACKEND_CONSUMER` 定义。不引入新第三方：volk / glslang 已在树内。
 
 ### 8.5 与默认路径的纪律
 
-- vkraw **不进**默认后端选择（宿主按名字 `create("vsg")`）；`SdkPixelFixture` 与现有宿主仍用 vsg。
+- vk **不进**默认后端选择（宿主按名字 `create("vsg")`）；`SdkPixelFixture` 与现有宿主仍用 vsg。
 - 它的价值是**接缝的证据**：第二个实现能回答"`FrameDescription` 是不是够用、`backend/` 的规则是不是可复用"，
   这本身就是 T30 想要的东西——只是以"第二个实现"而不是"统一类型"的形式出现。
 
-## 9. 追加（2026-11-13）：vkraw 的通用化边界（设计论证）
+## 9. 追加（2026-11-13）：vk 的通用化边界（设计论证）
 
-**范围决定**：只做 Vulkan（`vkraw`），但**新写的东西、以及好改的东西先按通用形状落**；shader 不做实现层通用化，
+**范围决定**：只做 Vulkan（`vk`），但**新写的东西、以及好改的东西先按通用形状落**；shader 不做实现层通用化，
 只在概念上预留。本节是这条原则的论证与可执行清单，不是实现计划（里程碑见 §8.3）。
 
 ### 9.1 原则：通用化发生在「值 / 规则 / 映射表」，不发生在「API 对象」
@@ -222,18 +222,18 @@
 | # | 判据 | 结论 |
 |---|---|---|
 | J1 | 它是**输入**（被消费的值）还是**输出**（API 对象/调用）？ | 输入可以通用化；输出留在插件 |
-| J2 | 它**今天就有第二个消费者**吗（vsg 与 vkraw 都读）？ | 有 ⇒ 共享；没有 ⇒ 插件私有（`G8`） |
+| J2 | 它**今天就有第二个消费者**吗（vsg 与 vk 都读）？ | 有 ⇒ 共享；没有 ⇒ 插件私有（`G8`） |
 | J3 | 通用化它要不要动**公开面**（SDK 头/公开枚举）？ | 要 ⇒ 推迟到触发；不要 ⇒ 现在做 |
 
 ### 9.2 现在就通用化（写出即通用，成本≈0）
 
-这些不是"新抽象"，是**在 vkraw 里直接使用已有类型**——通用化的成本就是"别另写一份"。
+这些不是"新抽象"，是**在 vk 里直接使用已有类型**——通用化的成本就是"别另写一份"。
 
 | 项 | 消费的既有类型 | 为什么便宜 |
 |---|---|---|
 | 后端身份 | `RenderBackendInfo` + `RenderApi::Vulkan` | 已有 factory/registry，零改动 |
 | 能力 | `Capabilities`（features 位 + 极限值） | 已是值，`supports()` 已定义语义 |
-| 目标决策 | `planTarget(TargetInstance, TargetDesc)` | 已是纯函数、已测；vkraw 不自己判"尺寸变了" |
+| 目标决策 | `planTarget(TargetInstance, TargetDesc)` | 已是纯函数、已测；vk 不自己判"尺寸变了" |
 | 管线身份 | `PipelineKey` / `PipelineKeyHash` / `VariantPool` | `Keys.hpp` 的 audit 表（什么可以进键）自动适用于第二后端 |
 | 寿命 | `ResourceTable` / `RetirementQueue` / `FrameTimeline` | pin 规则与 API 无关 |
 | 驻留账 | `ResidencyLedger`（`bytes` 可 absent，`live` 必答） | absent ≠ 0 的规则已经定好 |
@@ -241,12 +241,12 @@
 | 诊断 | `DiagnosticsRoute` / `DiagnosticSink` | validation 消息走同一条路 |
 | 帧 | `FrameDescription` + `executeFrame` / `prepareFrame` | 一条线两个动词 |
 
-**纪律**：这些类型一个都不许在 vkraw 里出现"影子版本"（`VkrawPipelineKey`、`VkrawResidency`…）。影子版本是重复，
+**纪律**：这些类型一个都不许在 vk 里出现"影子版本"（`vn::vk::PipelineKey`、`vn::vk::Residency`…）。影子版本是重复，
 不是拓展性（`G1`）。
 
 ### 9.3 唯一值得新做的通用物：一张映射表
 
-`BarrierPlan`（新，落在 vkraw 插件的 `src/internal/`）：
+`BarrierPlan`（新，落在 vk 插件的 `src/internal/`）：
 
 - **输入**（全部中性、全部已存在）：`ImageLayout`（当作"这一 pass 要什么用途"，不是 Vulkan 布局）、
   `LoadOp` / `StoreOp`、以及一个极小的 `AccessKind{Sampled, ColorWrite, DepthWrite, TransferRead, Present}`；
@@ -274,7 +274,7 @@
 零成本推迟之所以成立：`ShaderProgramDescription` 是 SDK 的**值**，加一个字段便宜且不碰 GPU 布局；而工具链
 （DXC 出 DXIL、SPIRV-Cross 出 MSL）是**新第三方依赖**，本来就该走 ADR，不能顺手决定。
 
-vkraw 的 pipeline builder 因此只接受 GLSL，并在源码不是 GLSL 时报告一条明确诊断（而不是编译失败后报一串 SPIR-V 错误）。
+vk 的 pipeline builder 因此只接受 GLSL，并在源码不是 GLSL 时报告一条明确诊断（而不是编译失败后报一串 SPIR-V 错误）。
 
 ### 9.5 明确不做（附触发）
 
@@ -291,22 +291,22 @@ vkraw 的 pipeline builder 因此只接受 GLSL，并在源码不是 GLSL 时报
 
 | # | 门 | 判据 |
 |---|---|---|
-| D1 | vkraw 不改 `backend/` 的公开面 | `git diff --stat src/viz/graphics/sdk/vine/graphics/backend/` 为空（新增中性**输入**需单独说明，见 9.7） |
-| D2 | `Vk*` 不出现在 vkraw 的**工厂/入口头**（`shell/`） | 只允许 `internal/` 与 `support/`（与 vsg 同形）；**不是门，是形状**——插件头未安装、`shell/` 无第二消费者（`G8`）。边界论证与升级条件见 `graphics-2026-11-13-vk-exposure-boundary.md` |
+| D1 | vk 不改 `backend/` 的公开面 | `git diff --stat src/viz/graphics/sdk/vine/graphics/backend/` 为空（新增中性**输入**需单独说明，见 9.7） |
+| D2 | `Vk*` 不出现在 vk 的**工厂/入口头**（`shell/`） | 只允许 `internal/` 与 `support/`（与 vsg 同形）；**不是门，是形状**——插件头未安装、`shell/` 无第二消费者（`G8`）。边界论证与升级条件见 `graphics-2026-11-13-vk-exposure-boundary.md` |
 | D3 | 驻留账完整 | `ResidencyLedger` 每类有行或显式 absent（`live` 必答） |
 | D4 | 同值同画 | 同一 `FrameDescription` 与 vsg 的记录/像素对拍（M7） |
 | D5 | 不重编 | resize 不重编管线、host 状态变更不重编管线（`Keys.hpp` audit 表照搬） |
 
 ### 9.7 新加中性枚举时的判据
 
-若 vkraw 确实需要一个新的中性拼写（例如 9.3 的 `AccessKind`），先问：**它是输入还是输出？**
+若 vk 确实需要一个新的中性拼写（例如 9.3 的 `AccessKind`），先问：**它是输入还是输出？**
 
 - **输入**（被两个后端消费的值，如用途/访问类型）⇒ 可以进 `backend/`，但必须在同一提交里说明"第二个消费者是谁"，
-  否则先放在 vkraw 的 `internal/`（`G8`）；
+  否则先放在 vk 的 `internal/`（`G8`）；
 - **输出**（Vulkan 布局、stage 位、格式码）⇒ 永远留在插件（C6）。
 
 这条判据替代了"看到 Vulkan 拼写就去抽象"的反射：`backend/` 里已有的 Vulkan 策略（`device_color_formats`、
-`subpass`、`initial/final layout`）在 vkraw 上是**可用**的，不需要先改（§8.1）。
+`subpass`、`initial/final layout`）在 vk 上是**可用**的，不需要先改（§8.1）。
 
 ## 10. 参考
 

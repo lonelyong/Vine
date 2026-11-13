@@ -778,14 +778,14 @@
   成 device / executor 两个出口）；S4/S5 另算。
 - **文档**：`../research/graphics-2026-11-13-gpu-resource-abstraction.md`（dated，非现行），backlog T30 已链接。
 
-## 2026-11-13 —— vkraw 的通用化边界（设计论证）
+## 2026-11-13 —— vk 的通用化边界（设计论证）
 
 - **决定**：只做 Vulkan；新写的与好改的按通用形状落地；shader 不做实现层通用化、只留概念。
 - **原则**：通用化在「值 / 规则 / 映射表」，不在「API 对象」。判据 J1（输入 vs 输出）、J2（今天有第二个消费者吗）、
   J3（要不要动公开面）。
 - **现在就通用（成本≈0，靠“不另写一份”）**：`RenderBackendInfo`、`Capabilities`、`planTarget`、`PipelineKey`/
   `VariantPool`、`ResourceTable`/`RetirementQueue`/`FrameTimeline`、`ResidencyLedger`、`ReadbackResult`、
-  `DiagnosticsRoute`、`FrameDescription`。禁止影子类型（`VkrawPipelineKey` 之类）。
+  `DiagnosticsRoute`、`FrameDescription`。禁止影子类型（`vn::vk::PipelineKey` 之类）。
 - **唯一新做的通用物**：`BarrierPlan` 映射表（`ImageLayout` 当作用途 + `LoadOp/StoreOp` + `AccessKind` → Vk
   barrier），150–250 行 + 无设备表驱动测试；反例是“通用 barrier 类型”。
 - **shader 只留概念**：缺的是**源码语言**（不加字段，只写未来形状 `ShaderSourceLanguage` + 每后端编译入口），
@@ -799,7 +799,7 @@
 
 - **结论**：插件 `internal/` + `support/` **随便**暴露 Vk（今天 18/57 个头含 `Vk*`）；SDK 宿主面与 SDK 后端面**零 Vk 类型**
   （实测命中全是注释文字）；插件 `shell/` 为 0，但**只作形状不作门**（插件头未安装、无第二消费者，`G8`）。
-- **学习后端需要的 Vk 访问**：做成 `support/VkrawHandles.hpp` 的**自由函数**（不进 `RenderDevice` 动词表、名字带后端名、
+- **学习后端需要的 Vk 访问**：做成 `support/vn::vk::Handles.hpp` 的**自由函数**（不进 `RenderDevice` 动词表、名字带后端名、
   不安装、生产路径不 include）——与 Diligent `ITextureVk` / QRhi `nativeTexture()` / Godot `get_driver_resource()` 同形。
 - **可检查的**：V1 宿主面零 Vk 类型（今天靠人工/注释区分）、V2 后端面零 `<vulkan>`/`<vsg>` include（已 0）、
   V3 安装组件不含 Vulkan 头、V4 插件 `shell/` 零 Vk（已 0）。升级触发：插件头开始安装 / 第二个模块 include `shell/` /
@@ -808,14 +808,29 @@
   换成 V4 + 升级条件。
 - **文档**：`../research/graphics-2026-11-13-vk-exposure-boundary.md`（dated，非现行）。
 
-## 2026-11-13 —— 第二个后端定为手撸 Vulkan（`vkraw`，学习/研究）
+## 2026-11-13 —— `gfx_backend_vk` M0 落地（先叫 vkraw，同日改名 vk）
+
+- **命名**：插件 `gfx_backend_vk`、注册名 `"vk"`、命名空间 `vn::vk`、类 `vn::vk::{Device, BackendFactory, Plugin}`、
+  宏 `VN_VK_{LIB,API,NS_BEGIN,NS_END}`、测试 `tests/test_vk`（`VkBackendTest`）。`"vk"` 说的是**实现路径**（直连 Vulkan），
+  与 `"vsg"`（经 VulkanSceneGraph）对照——两者都是 `RenderApi::Vulkan`。
+- **硬约束**：`Vk*` 拼写在模块内属于 Vulkan 自己的类型（volk 带进 `vulkan.h`），所以自己的类**不能**叫 `VkDevice` /
+  `VkInstance` 这类名字；`vn::vk::Device` 才安全。
+- **M0 内容**：volk 建 instance（validation 层与 debug-utils 按可用性启用）/ 选带 graphics 队列的物理设备 / 建逻辑设备；
+  `capabilities()` 诚实地报 `render_targets=false`、`presentation=false`；`executeFrame` 与 `setRenderTarget` 各只报一次
+  “M1/M2 未实现”；`shutdown()` 幂等且可重入。
+- **一个坑**：`tp::volk` 用 `VOLK_NO_DEVICE_PROTOTYPES` 编译，设备级函数**没有**自由函数声明；正确用法是
+  `volkLoadDeviceTable(&table, device)` 后用 `table.vkDestroyDevice(...)`。直接 include `<vulkan/vulkan.h>` + `<volk.h>`
+  会让 `vkEnumeratePhysicalDevices` 在全局与 `volk::` 之间二义。
+- **验证**：`test_vk` 3 例全绿；本机 `validation=on`、`InitFailed` 诊断计数 0；`plugins/vine/gfx_backend_vkd.so` 构建并部署。
+
+## 2026-11-13 —— 第二个后端定为手撸 Vulkan（`vk`，学习/研究）
 
 - **触发修正**：它是**同 API 家族**的第二后端 ⇒ T15（设备无关性）与 T30（统一类型）都**不触发**，只收窄触发条件为
   “第二个 **API 家族** 的后端”；T32 不阻塞（直接实现聚合）。
 - **它消费的是接缝**：`RenderDevice`（18 动词）+ `RenderFrameExecutor`（2 动词）+ `WindowPresentTarget`；寿命规则复用
   `backend/` 的 `ResourceTable` / `RetirementQueue` / `FrameTimeline` / `ResidencyLedger`，L1 块沿用 `ShaderAbi`。
-- **形态**：插件 `gfx_backend_vkraw` 注册工厂 `"vkraw"`（`RenderApi::Vulkan`）；不是默认后端；测试独立
-  （新建 `test_vkraw`，像 `tests/test_vsg` 一样直接编译插件源码）。
+- **形态**：插件 `gfx_backend_vk` 注册工厂 `"vk"`（`RenderApi::Vulkan`）；不是默认后端；测试独立
+  （新建 `test_vk`，像 `tests/test_vsg` 一样直接编译插件源码）。
 - **里程碑**：M0 插件+设备；M1 离屏清屏+读回；M2 一个 content draw（glslang→pipeline、通道→上传、View/Draw 块）；
   M3 targets/state/MRT；M4 材质/纹理/灯/screen draw；M5 swapchain；M6 驻留/prepare；M7 与 vsg 对拍。
   M0–M2 约 2–4k 行，M3–M6 约 10–20k 行。详见评估 §8。
