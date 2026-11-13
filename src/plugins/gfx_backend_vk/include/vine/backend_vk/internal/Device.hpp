@@ -15,10 +15,12 @@ VN_BACKEND_VK_NS_BEGIN
  *   channels uploaded as vertex/index streams, the `VineViewBlock`/`VineDrawBlock` pair bound as uniforms, and
  *   `vkCmdDrawIndexed`.
  * - WHAT IT DELIBERATELY DOES NOT DO YET. No self-owned window (`DevicePresentation::Probe`), no shadows and no
- *   built-in shader variant defines, no residency accounting (M6). M4 landed the engine's content ABI (material,
- *   texture slots, lights, the draw block and the 128-byte camera push) and the full-screen draw path; M5 serves a
- *   HOST window (`DevicePresentation::Handle`) through a per-window swapchain. It answers `capabilities()` from what
- *   it can really serve - `render_targets == true`, and `presentation == true` once a window target can present.
+ *   built-in shader variant defines. M4 landed the engine's content ABI (material, texture slots, lights, the draw
+ *   block and the 128-byte camera push) and the full-screen draw path; M5 serves a HOST window
+ *   (`DevicePresentation::Handle`) through a per-window swapchain; M6 makes residency an answered question -
+ *   `releaseContent` lets go of what a host names, `prepareFrame` builds a frame's content without running it, and
+ *   `frameReport` says what the last frame did and what is resident. It answers `capabilities()` from what it can
+ *   really serve - `render_targets == true`, and `presentation == true` once a window target can present.
  * - FRAME AND HOST VERBS. `executeFrame()` runs the off-screen passes of the frame value and records the draws of each
  *   `DrawDescription`; a pass drawing into the window, or a draw naming no program, is reported and left out. The
  *   readbacks answer the targets this device built.
@@ -116,6 +118,46 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
                                                                                   vn::graphics::SurfaceTargetResult* why = nullptr) override;
 
     /**
+     * @brief Releases this device's GPU residency of a content object the host still owns.
+     *
+     * @details
+     * - WHAT IT DROPS. A `Geometry` loses its uploaded streams, a `ShaderProgram` loses its compiled modules AND the
+     *   pipelines built from them, a `Texture` loses its uploaded image; a `Material` (asset or instance) is
+     *   recognized and accepted although nothing is retained for it - this backend packs a material's values into
+     *   each draw's uniform buffer, so there is no per-material GPU state to let go.
+     * - WHAT IT KEEPS. Everything keyed by something else: a geometry release leaves the pipelines (they are keyed
+     *   by the program, the target shape and the vertex layout), and the next frame that draws the content uploads
+     *   or compiles it again - which is what the release costs. The object itself stays valid and keeps its
+     *   revision; a copy is released, never the host's object.
+     * - WHEN IT RUNS. Between frames, on the frame thread. This device records, submits and waits on one frame at a
+     *   time, so between frames nothing is in flight and what the host released is destroyed immediately (the
+     *   parked-release machinery exists for devices whose frames overlap; see RetirementQueue).
+     * - NOT the window half: a window target's swapchain belongs to the device's lifetime, and a pass or target
+     *   release is `releasePass` / `releaseRenderTarget` (this device keeps no per-pass objects).
+     *
+     * @param content Content object to evict; null is refused.
+     * @return true when @p content was recognized (a texture with no uploaded image is already released), false when
+     *         it is not content or the device is not up.
+     */
+    bool releaseContent(vn::raw_ptr<const vn::Object> content) override;
+
+    /**
+     * @brief Releases the streams uploaded from @p buffer (its identity, not its bytes).
+     *
+     * @details
+     * - PER STREAM: a geometry that reads three buffers keeps the two nobody released, and the next frame that
+     *   uploads the released one leaves the others alone. The geometry's entry - and every pipeline - stays.
+     * - A buffer no stream was uploaded from is already released (true).
+     *
+     * @param buffer Stream buffer (a geometry's vertex channel or its instance transforms).
+     * @return true when the buffer was recognized (or had nothing resident), false when the device is not up.
+     */
+    bool releaseContent(const vn::Buffer<float>& buffer) override;
+
+    /** @brief Releases the index streams uploaded from @p buffer (see the float overload). */
+    bool releaseContent(const vn::Buffer<std::uint32_t>& buffer) override;
+
+    /**
      * @brief Reads back a colour attachment of an off-screen target this device drew into.
      *
      * @details
@@ -136,25 +178,67 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
                          vn::graphics::ReadbackResult*     why = nullptr) override;
 
     /**
-     * @brief Runs the frame's passes that draw into off-screen targets: each one clears its target, then records the
-     *        drawing calls of every `DrawDescription` it carries.
+     * @brief Runs the frame's passes and presents the window's picture when a window is named: each pass clears or
+     *        loads its target, then records the drawing calls of every `DrawDescription` it carries.
      *
      * @details
- * - M3's whole frame path. A pass that names a target AND states a clear policy is recorded as one render pass
- *   (colour attachments CLEAR, depth CLEAR or LOAD per `ClearPolicy::depth`); a pass with no target (the window, which
- *   M5 brings up), a pass with no clear at all (which would need a colour LOAD variant) and a full-screen draw (M4)
- *   are reported once and left out.
+     * - WHICH PASSES RUN. One that names an off-screen target is recorded as one render pass (colour attachments
+     *   CLEAR or LOAD, depth CLEAR or LOAD, as `ClearPolicy` says); one that names no target draws into the acquired
+     *   image of `present_to` when that is a window this device handed out, and the frame's tail presents it (M5).
+     *   A frame that names no presenter, or a pass that names a target this device cannot build, is reported once and
+     *   left out.
      * - Each scene draw is projected with its own camera snapshot and shaded with the resolved program (the pass'
      *   override, else the command's own, else the default content program). One `RenderCommand` is one indexed draw.
      * - The submission is synchronous by design: one command buffer, one fence, then the queue is idle, so a readback in
-     *   the same breath sees exactly what this frame left.
+     *   the same breath sees exactly what this frame left - and a content release between frames needs no wait.
      *
-     * @param frame      The frame to execute.
-     * @param present_to Target the default framebuffer resolves to (ignored: M1 presents nothing).
-     * @return `PresentOutcome::Skipped` - this device still presents nothing.
+     * @param frame      The frame to execute (borrowed for the call).
+     * @param present_to Window the default framebuffer resolves to, or null for a frame that has no window.
+     * @return `Presented` when a window took the picture, `Skipped` for the off-screen form (a first-class state, not
+     *         a failure) and `Lost` when a window was named and the picture could not reach it.
      */
     [[nodiscard]] vn::graphics::PresentOutcome executeFrame(const vn::graphics::FrameDescription& frame,
                                                            vn::graphics::PresentTarget*          present_to) override;
+
+    /**
+     * @brief Builds a frame's CONTENT ahead of time - programs, streams, pipelines, target attachments - and submits
+     *        nothing.
+     *
+     * @details
+     * - THE SAME VALUE `executeFrame` takes, walked to the same identities: this device resolves each pass' target,
+     *   each command's program and geometry and the pipeline its state selects (see `ContentDraw::prepare`), so a
+     *   later frame of the same declarations builds nothing (its upload/compile deltas are zero).
+     * - WHAT IT DELIBERATELY DOES NOT DO. No swapchain image is acquired, no window is resized, no command buffer is
+     *   recorded, nothing is submitted or presented. The window passes are walked for their shapes but build no
+     *   pipeline of their own unless the swapchain already exists (`WindowTarget::ready`).
+     * - TEXTURES ARE THE EXCEPTION, and the honest one: a texture's first use copies bytes into a device-local
+     *   image on the frame's command buffer (see `ContentImages`), and this call opens no command buffer - so the
+     *   first frame that samples it still uploads it.
+     * - A pass this device cannot serve yet (its target has no objects) is not an error: it is counted in
+     *   `passes`/`draws` (the shape of the frame asked for) and the build counts say what became objects.
+     *
+     * @param frame      The frame to prepare (borrowed for the call).
+     * @param present_to The surface the frame's default framebuffer resolves to, or null for the off-screen form.
+     *                   Nothing is acquired from it.
+     * @return What this call built (see PrepareReport); `NotReady` before `initialize()`.
+     */
+    [[nodiscard]] vn::graphics::PrepareReport prepareFrame(const vn::graphics::FrameDescription& frame,
+                                                           vn::graphics::PresentTarget*          present_to = nullptr) override;
+
+    /**
+     * @brief Gets this device's own report about its frames (see FrameReport).
+     *
+     * @details
+     * - `counters` and `uploads` describe the frame that just ENDED; `retention` and `progress` are cumulative. The
+     *   residency ledger is composed HERE, where the stream table, the image cache and the pipeline map are all
+     *   reachable, and it reports the three kinds this backend retains (streams, images, compiled halves) with their
+     *   live counts and bytes - material blocks and descriptor sets are per-frame objects here, so no row claims
+     *   them.
+     * - `uploads` stays DISENGAGED until a frame has run: an unmeasured frame must not read like an empty one.
+     *
+     * @return The report, with the parts this device keeps engaged.
+     */
+    [[nodiscard]] vn::graphics::FrameReport frameReport() const noexcept override;
 
   public:
     /**

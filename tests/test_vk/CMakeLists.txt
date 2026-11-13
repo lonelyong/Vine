@@ -9,6 +9,7 @@ add_executable(${TEST_NAME}
         ContentDrawTest.cpp
         ContentTargetTest.cpp
         OffscreenClearTest.cpp
+        ResidencyTest.cpp
         StateMappingTest.cpp
         WindowPresentTest.cpp
 

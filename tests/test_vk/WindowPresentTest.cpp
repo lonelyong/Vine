@@ -49,6 +49,7 @@ using vn::graphics::DrawDescription;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::PassDraw;
+using vn::graphics::PrepareReport;
 using vn::graphics::PresentOutcome;
 using vn::graphics::Primitive;
 using vn::graphics::RenderBackendRegistry;
@@ -323,6 +324,14 @@ TEST(VkWindowPresentTest, AWindowFrameIsDrawnAndPresented)
         EXPECT_LT(centre[0], 40);
         EXPECT_GT(corner[0], 200) << "the window's corner is not the pass' clear (rgb = " << corner[0] << ", " << corner[1] << ", " << corner[2] << ")";
     }
+
+    // PREPARING A WINDOW FRAME touches neither the swapchain nor the queue: it is counted, it builds what the frame
+    // would need, and nothing is acquired or presented (see RenderFrameExecutor::prepareFrame, P11). The pass builds
+    // against the swapchain that already exists - preparing must not create one.
+    const PrepareReport prepared = backend->prepareFrame(windowFrame(), target);
+    EXPECT_TRUE(prepared.prepared()) << "outcome " << static_cast<int>(prepared.outcome);
+    EXPECT_EQ(prepared.passes, 1U);
+    EXPECT_EQ(prepared.draws, 1U);
 
     // A SECOND ASK for the same window is refused: one live swapchain per window.
     const vn::raw_ptr<vn::graphics::WindowPresentTarget> again = backend->createSurfaceTarget(window.handle(), &result);

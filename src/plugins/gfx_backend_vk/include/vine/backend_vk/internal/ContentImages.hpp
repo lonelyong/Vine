@@ -68,6 +68,42 @@ class VN_BACKEND_VK_API ContentImages final {
     void releaseFrame() noexcept;
 
     /**
+     * @brief What this cache has built, what it let go and what it holds now.
+     *
+     * @details
+     * - CUMULATIVE, EXCEPT THE TWO `live` FIELDS: the frame's own numbers are the difference of two cumulative ones
+     *   (see FrameUploads), while residency is a question about NOW (see ResidencyLedger).
+     * - A REVISION THE NEW ONE REPLACED IS A REBUILD, NOT A RELEASE: it leaves `live_bytes` and adds to `builds`,
+     *   because the entry never stopped being resident - it was replaced. `releases` counts entries a HOST release
+     *   let go, which is the same rule the stream table follows.
+     */
+    struct Progress {
+        std::uint64_t builds{ 0 };     ///< Texture images built over this cache's lifetime.
+        std::uint64_t bytes{ 0 };      ///< Bytes those images copied over its lifetime.
+        std::uint64_t releases{ 0 };   ///< Entries a host release let go (see the class note).
+        std::uint32_t live{ 0 };       ///< Texture images resident NOW.
+        std::uint64_t live_bytes{ 0 }; ///< GPU bytes those images occupy NOW (the bytes they were uploaded from).
+    };
+
+    /** @brief Gets the numbers (see Progress). */
+    [[nodiscard]] Progress progress() const noexcept;
+
+    /**
+     * @brief Drops @p texture's uploaded image, if there is one, so the next frame that samples it uploads it again.
+     *
+     * @details
+     * - DESTROYED, NOT PARKED: this device records and submits one frame synchronously and waits on its fence, so
+     *   between frames nothing is in flight and an image nothing names can go immediately. Call it between frames,
+     *   on the frame thread - the same contract the SDK's release verbs state.
+     * - The entry keeps nothing: a texture released here is resident again on the first frame that samples it, and
+     *   that re-upload is what the release costs.
+     *
+     * @param texture Texture whose image leaves the cache (borrowed; the host keeps the object).
+     * @return true when the cache answered - a texture with no entry is already released, which is the same true.
+     */
+    bool releaseTexture(const vn::graphics::Texture& texture);
+
+    /**
      * @brief Gets the view of @p texture, recording its upload into @p commands when it is new or changed.
      *
      * @details

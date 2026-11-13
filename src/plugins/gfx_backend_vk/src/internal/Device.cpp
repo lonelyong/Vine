@@ -5,6 +5,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -14,13 +15,19 @@
 
 #include <vine/backend_vk/internal/BarrierPlan.hpp>
 #include <vine/backend_vk/internal/ContentDraw.hpp>
+#include <vine/backend_vk/internal/ContentImages.hpp>
 #include <vine/backend_vk/internal/TargetImages.hpp>
 #include <vine/backend_vk/internal/WindowTarget.hpp>
 #include <vine/graphics/Capabilities.hpp>
 #include <vine/graphics/FrameDescription.hpp>
+#include <vine/graphics/FrameStats.hpp>
+#include <vine/graphics/Geometry.hpp>
+#include <vine/graphics/MaterialBase.hpp>
+#include <vine/graphics/PrepareReport.hpp>
 #include <vine/graphics/PresentTarget.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/Texture.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -135,6 +142,92 @@ struct Device::Impl {
     bool reported_content{ false };
     bool reported_size_unknown{ false };
     bool reported_samples{ false };
+    bool reported_prepare_target{ false };
+
+    /**
+     * @brief What the last frame did and what this device has done so far (see FrameReport).
+     *
+     * @details
+     * - `counters` / `uploads` describe the frame that just ended, `progress` / `released_nodes` are cumulative.
+     * - `uploads` stays disengaged until a frame has run: an unmeasured frame must not read like an empty one.
+     * - `device_waits` is 0 by construction: a release needs no idle here, because every frame ends having waited
+     *   on its own fence, so between frames nothing is in flight.
+     */
+    struct Books {
+        vn::graphics::FrameCounters               counters{};
+        vn::graphics::FrameProgress               progress{};
+        std::optional<vn::graphics::FrameUploads> uploads;
+        std::uint64_t                             released_nodes{ 0 };
+        std::uint64_t                             device_waits{ 0 };
+    };
+    Books books{};
+
+    /** @brief One snapshot of the content path's cumulative numbers (a frame's own delta is the difference of two). */
+    struct ContentNumbers {
+        std::uint64_t stream_builds{ 0 };
+        std::uint64_t stream_bytes{ 0 };
+        std::uint64_t program_builds{ 0 };
+        std::uint64_t pipeline_builds{ 0 };
+        std::uint64_t texture_builds{ 0 };
+        std::uint64_t texture_bytes{ 0 };
+    };
+
+    /** @brief Reads the content path's cumulative numbers (see ContentNumbers). */
+    [[nodiscard]] ContentNumbers contentNumbers() const noexcept
+    {
+        const ContentDraw::Progress   content_numbers = content.progress();
+        const ContentImages::Progress image_numbers   = content.images().progress();
+        ContentNumbers                numbers;
+        numbers.stream_builds    = content_numbers.stream_builds;
+        numbers.stream_bytes     = content_numbers.stream_bytes;
+        numbers.program_builds   = content_numbers.program_builds;
+        numbers.pipeline_builds  = content_numbers.pipeline_builds;
+        numbers.texture_builds   = image_numbers.builds;
+        numbers.texture_bytes    = image_numbers.bytes;
+        return numbers;
+    }
+
+    /**
+     * @brief Closes one frame's books: what the frame built is the difference from @p before.
+     *
+     * @param before   The numbers when the frame opened.
+     * @param counters The frame's own recording counters (passes, draws).
+     */
+    void closeFrameBooks(const ContentNumbers& before, const vn::graphics::FrameCounters& counters) noexcept
+    {
+        const ContentNumbers after = contentNumbers();
+        books.counters             = counters;
+        // `stream_releases` / `texture_releases` stay 0 for a frame: this device only lets go when a host says so,
+        // which happens BETWEEN frames - and an explicit release is an announcement, not a frame's own number (see
+        // FrameUploads). A texture a new revision replaced is a BUILD (it never stopped being resident).
+        vn::graphics::FrameUploads frame_uploads;
+        frame_uploads.stream_uploads  = after.stream_builds - before.stream_builds;
+        frame_uploads.stream_bytes    = after.stream_bytes - before.stream_bytes;
+        frame_uploads.texture_uploads = after.texture_builds - before.texture_builds;
+        frame_uploads.texture_bytes   = after.texture_bytes - before.texture_bytes;
+        books.uploads = frame_uploads;
+    }
+
+    /** @brief Notes this backend's three residency kinds into @p ledger (see frameReport). */
+    void noteResidency(vn::graphics::ResidencyLedger& ledger) const
+    {
+        const ContentDraw::Progress   content_numbers = content.progress();
+        const ContentImages::Progress image_numbers   = content.images().progress();
+        ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Streams,
+                                                .live    = content_numbers.streams_live,
+                                                .bytes   = content_numbers.stream_bytes_live,
+                                                .built   = content_numbers.stream_builds,
+                                                .retired = content_numbers.stream_releases });
+        ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Images,
+                                                .live    = image_numbers.live,
+                                                .bytes   = image_numbers.live_bytes,
+                                                .built   = image_numbers.builds,
+                                                .retired = image_numbers.releases });
+        ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Halves,
+                                                .live    = content_numbers.pipelines_live,
+                                                .built   = content_numbers.pipeline_builds,
+                                                .retired = content_numbers.pipeline_releases });
+    }
 };
 
 Device::Device(const DeviceDesc& desc)
@@ -524,6 +617,9 @@ void Device::shutdown()
     impl->reported_content    = false;
     impl->reported_size_unknown = false;
     impl->reported_samples    = false;
+    impl->reported_prepare_target = false;
+    // The frame's books go with the session: the next initialize() starts a device that measured nothing yet.
+    impl->books = Impl::Books{};
 }
 
 bool Device::initialized() const noexcept
@@ -694,6 +790,20 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         return PresentOutcome::Skipped;
     }
 
+    // THE FRAME'S BOOKS OPEN HERE AND CLOSE ON EVERY EXIT (see closeFrameBooks): the report always describes the
+    // frame that just ended - an empty one included - and the upload numbers are this frame's own delta.
+    const Impl::ContentNumbers    before = impl->contentNumbers();
+    vn::graphics::FrameCounters   counters{};
+    struct BooksCloser {
+        Impl*                        impl;
+        const Impl::ContentNumbers&  before;
+        vn::graphics::FrameCounters& counters;
+        ~BooksCloser()
+        {
+            impl->closeFrameBooks(before, counters);
+        }
+    } books_closer{ impl.get(), before, counters };
+
     // WHICH PASSES THIS BACKEND CAN RUN: off-screen passes, and WINDOW passes when the frame names one of this
     // device's own targets as its presenter. A frame that names no presenter presents nowhere (a first-class state:
     // an offline bake), and a pass that names no target while a presenter IS named draws into that window.
@@ -790,6 +900,9 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     // ONE DESCRIPTOR POOL RESET PER FRAME: the pool's sets are the per-draw uniform bindings, and the previous frame
     // is complete by now (the device submits synchronously), so nothing still names them.
     impl->content.beginFrame();
+    // THE SHAPE OF THE FRAME THAT RAN, as the SDK counts it: the pass scopes recorded here and the drawing calls
+    // they issued (a pass whose draws were all skipped is still a pass that ran).
+    counters.passes = static_cast<std::uint64_t>(runnable_passes.size());
 
     bool first_window_pass = true;
     for (const Runnable& item : runnable_passes) {
@@ -927,30 +1040,30 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                     source.images = source_images->second.colors;
                     source.views  = source_images->second.color_views;
                 }
-                (void)impl->content.recordScreen(commands,
-                                                 render_pass,
-                                                 compatibility,
-                                                 color_count,
-                                                 static_cast<int>(extent.width),
-                                                 static_cast<int>(extent.height),
-                                                 description,
-                                                 draw,
-                                                 source,
-                                                 &why,
-                                                 &category);
+                counters.draws += impl->content.recordScreen(commands,
+                                                             render_pass,
+                                                             compatibility,
+                                                             color_count,
+                                                             static_cast<int>(extent.width),
+                                                             static_cast<int>(extent.height),
+                                                             description,
+                                                             draw,
+                                                             source,
+                                                             &why,
+                                                             &category);
             }
             else {
-                (void)impl->content.record(commands,
-                                           render_pass,
-                                           compatibility,
-                                           color_count,
-                                           static_cast<int>(extent.width),
-                                           static_cast<int>(extent.height),
-                                           description,
-                                           draw,
-                                           impl->default_program.get(),
-                                           &why,
-                                           &category);
+                counters.draws += impl->content.record(commands,
+                                                       render_pass,
+                                                       compatibility,
+                                                       color_count,
+                                                       static_cast<int>(extent.width),
+                                                       static_cast<int>(extent.height),
+                                                       description,
+                                                       draw,
+                                                       impl->default_program.get(),
+                                                       &why,
+                                                       &category);
             }
             if (!why.empty() && !impl->reported_content) {
                 impl->reported_content = true;
@@ -995,15 +1108,22 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         submit.pSignalSemaphores    = &signal_semaphore;
     }
 
-    const bool submitted = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion) == VK_SUCCESS &&
+    const bool submitted = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion) == VK_SUCCESS;
+    if (submitted) {
+        ++impl->books.progress.submitted;
+    }
+    const bool completed = submitted &&
                            impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+    if (completed) {
+        ++impl->books.progress.completed;
+    }
     (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
     impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
     // The per-draw uniform buffers were named by the command buffer that just finished (or failed to): the queue is
     // idle either way, so the bytes can go.
     impl->content.endFrame();
 
-    if (!submitted) {
+    if (!completed) {
         reportDiagnostic(DiagnosticSeverity::Error,
                          DiagnosticCategory::SubmissionFailed,
                          u8"vk: the frame's command buffer did not run to completion");
@@ -1012,9 +1132,211 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     // THE FRAME'S TAIL: the executor is what presents the frame it ran (see RenderFrameExecutor::executeFrame).
     PresentOutcome outcome = PresentOutcome::Skipped;
     if (window_acquired) {
-        outcome = submitted ? window->present() : PresentOutcome::Lost;
+        outcome = completed ? window->present() : PresentOutcome::Lost;
+        if (outcome == PresentOutcome::Presented) {
+            ++impl->books.progress.presented;
+        }
     }
     return outcome;
+}
+
+bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
+{
+    if (content == nullptr || !initialized()) {
+        return false;
+    }
+
+    // ONE TYPE DISPATCH: the SDK names the entry with Object because the four content types have no common narrower
+    // base (see graphics-content-lifecycle.md). No two of them are related, and a Texture2D / CubeMap answers through
+    // Texture.
+    if (const auto* geometry = vn::obj_cast<const vn::graphics::Geometry>(content)) {
+        const vn::graphics::GeometryDescriptionPtr description = geometry->description();
+        const std::size_t dropped = description != nullptr ? impl->content.releaseGeometry(description.get()) : 0U;
+        if (dropped > 0U) {
+            ++impl->books.released_nodes;
+        }
+        return true;
+    }
+    if (const auto* program = vn::obj_cast<const vn::graphics::ShaderProgram>(content)) {
+        const vn::graphics::ShaderProgramDescriptionPtr description = program->description();
+        const std::size_t dropped = description != nullptr ? impl->content.releaseProgram(description.get()) : 0U;
+        if (dropped > 0U) {
+            ++impl->books.released_nodes;
+        }
+        return true;
+    }
+    if (const auto* material = vn::obj_cast<const vn::graphics::MaterialBase>(content)) {
+        // RECOGNIZED, AND NOTHING TO DROP: a material's values are packed into each draw's uniform buffer, and no
+        // per-material GPU state is kept. Answering false here would say the object is not content - it is.
+        (void)material;
+        return true;
+    }
+    if (const auto* texture = vn::obj_cast<const vn::graphics::Texture>(content)) {
+        const std::uint64_t before = impl->content.images().progress().releases;
+        const bool          answered = impl->content.images().releaseTexture(*texture);
+        if (answered && impl->content.images().progress().releases != before) {
+            ++impl->books.released_nodes;
+        }
+        return answered;
+    }
+    return false;
+}
+
+bool Device::releaseContent(const vn::Buffer<float>& buffer)
+{
+    if (!initialized()) {
+        return false;
+    }
+    // The element type is the caller's way of saying WHICH stream; the residency keys on the buffer's ADDRESS (see
+    // ContentDraw::releaseStreams), so the two overloads share one rule and one body would.
+    const std::size_t dropped = impl->content.releaseStreams(&buffer);
+    if (dropped > 0U) {
+        ++impl->books.released_nodes;
+    }
+    return true;
+}
+
+bool Device::releaseContent(const vn::Buffer<std::uint32_t>& buffer)
+{
+    if (!initialized()) {
+        return false;
+    }
+    const std::size_t dropped = impl->content.releaseStreams(&buffer);
+    if (dropped > 0U) {
+        ++impl->books.released_nodes;
+    }
+    return true;
+}
+
+vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, PresentTarget* present_to)
+{
+    using vn::graphics::EngineNotReady;
+    using vn::graphics::PrepareReport;
+
+    if (!initialized()) {
+        // "There is nothing to prebuild" and "the device is not up" are different answers (see PrepareReport).
+        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReady::NotInitialized };
+    }
+
+    // WHICH SURFACE THE FRAME NAMES - the same resolution executeFrame makes, minus everything that would touch it:
+    // nothing is acquired, resized or presented (see RenderFrameExecutor::prepareFrame, P11).
+    WindowTarget* window = nullptr;
+    if (present_to != nullptr) {
+        auto* candidate = dynamic_cast<WindowTarget*>(present_to);
+        for (const auto& surface : impl->surfaces) {
+            if (surface.get() == candidate) {
+                window = candidate;
+                break;
+            }
+        }
+        if (window == nullptr) {
+            if (!impl->reported_prepare_target) {
+                impl->reported_prepare_target = true;
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
+                                 u8"vk: a frame named a surface target this device did not hand out; nothing was prepared");
+            }
+            return PrepareReport{ PrepareReport::Outcome::Refused };
+        }
+    }
+
+    const Impl::ContentNumbers before = impl->contentNumbers();
+    PrepareReport             report;
+    report.outcome = PrepareReport::Outcome::Prepared;
+
+    for (const FrameDescription::Pass& entry : frame.passes) {
+        if (!entry.draw.has_value()) {
+            continue;
+        }
+        const PassDraw& draw = *entry.draw;
+        if (draw.draws.empty()) {
+            continue;
+        }
+        // THE SHAPE OF THE FRAME ASKED FOR (see PrepareReport): counted whether or not this device can build it.
+        ++report.passes;
+        for (const DrawDescription& description : draw.draws) {
+            if (!description.camera.present) {
+                continue; // no view means no drawing call
+            }
+            report.draws += description.kind == DrawDescription::Kind::Screen
+                                ? 1U
+                                : (description.commands != nullptr ? static_cast<std::uint32_t>(description.commands->size()) : 0U);
+        }
+
+        VkRenderPass                                  render_pass   = VK_NULL_HANDLE;
+        std::uint32_t                                 color_count   = 0U;
+        vn::graphics::backend::RenderPassCompatibility compatibility{};
+        if (draw.target == nullptr) {
+            // A WINDOW PASS: its shape is known only once a swapchain exists - and preparing must not create one.
+            if (window == nullptr || !window->ready()) {
+                continue;
+            }
+            render_pass   = window->renderPass(false, false);
+            color_count   = 1U;
+            compatibility = window->compatibility();
+        }
+        else {
+            // THE TARGET'S ATTACHMENTS ARE WHAT THE FRAME WOULD BUILD ANYWAY, so preparing them is the point.
+            if (!ensureTarget(*draw.target)) {
+                continue;
+            }
+            TargetImages& images = impl->targets.at(draw.target);
+            render_pass   = images.renderPassFor(false, false);
+            color_count   = static_cast<std::uint32_t>(images.colorCount());
+            compatibility = images.compatibility();
+        }
+
+        for (const DrawDescription& description : draw.draws) {
+            vn::String                       why;
+            vn::graphics::DiagnosticCategory category = DiagnosticCategory::ContentSkipped;
+            if (description.kind == DrawDescription::Kind::Screen) {
+                impl->content.prepareScreen(compatibility, render_pass, color_count, description, draw, &why, &category);
+            }
+            else {
+                impl->content.prepare(compatibility,
+                                      render_pass,
+                                      color_count,
+                                      description,
+                                      draw,
+                                      impl->default_program.get(),
+                                      &why,
+                                      &category);
+            }
+            if (!why.empty() && !impl->reported_content) {
+                impl->reported_content = true;
+                reportDiagnostic(DiagnosticSeverity::Warning, category, why);
+            }
+        }
+    }
+
+    // WHAT THIS CALL BUILT, not what is resident: a second prepare of an unchanged frame answers zeros (see
+    // PrepareReport). `sets` stays 0 because no descriptor set outlives a frame here.
+    const Impl::ContentNumbers after = impl->contentNumbers();
+    report.halves    = after.program_builds - before.program_builds;
+    report.pipelines = after.pipeline_builds - before.pipeline_builds;
+    report.uploads   = after.stream_builds - before.stream_builds;
+    return report;
+}
+
+vn::graphics::FrameReport Device::frameReport() const noexcept
+{
+    vn::graphics::FrameReport report;
+    report.counters = impl->books.counters;
+    report.progress = impl->books.progress;
+    report.uploads  = impl->books.uploads; // this frame's own delta; absent until a frame ran
+
+    vn::graphics::RetentionStats retention;
+    retention.released_nodes = impl->books.released_nodes;
+    retention.device_waits   = impl->books.device_waits;
+    if (initialized()) {
+        // WHAT IS RESIDENT, PER KIND: the three kinds this backend retains, composed here where all three tables are
+        // reachable. Material blocks and descriptor sets are per-frame objects, so no row claims them.
+        vn::graphics::ResidencyLedger ledger;
+        impl->noteResidency(ledger);
+        retention.residency = std::move(ledger);
+    }
+    report.retention = std::move(retention);
+    return report;
 }
 
 bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels, ReadbackResult* why)

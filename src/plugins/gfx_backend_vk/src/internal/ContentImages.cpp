@@ -138,6 +138,7 @@ struct ContentImages::Impl {
     struct Entry {
         vn::intrusive_ptr<const vn::graphics::Texture> texture; // Held so the key (its address) cannot be recycled.
         std::uint64_t                                 revision{ 0 };
+        std::uint64_t                                 bytes{ 0 }; // Bytes this image was uploaded from (its residency weight).
         VkImage                                       image{ VK_NULL_HANDLE };
         VkDeviceMemory                                memory{ VK_NULL_HANDLE };
         VkImageView                                   view{ VK_NULL_HANDLE };
@@ -160,6 +161,12 @@ struct ContentImages::Impl {
     VkImageView    fallback_view{ VK_NULL_HANDLE };
     VkSampler      fallback_sampler{ VK_NULL_HANDLE };
     std::vector<std::pair<VkBuffer, VkDeviceMemory>> fallback_staging;
+
+    /// The numbers a report reads (see Progress): cumulative builds/copies/releases, plus the live total.
+    std::uint64_t built{ 0 };
+    std::uint64_t uploaded_bytes{ 0 };
+    std::uint64_t released{ 0 };
+    std::uint64_t bytes_total{ 0 };
 
     /**
      * @brief Creates a buffer and binds host-visible coherent memory to it.
@@ -398,6 +405,8 @@ struct ContentImages::Impl {
             }
             std::memcpy(mapped, image->mipData(0).data(), bytes);
             table->vkUnmapMemory(device, staging_memory);
+            // RESIDENCY WEIGHT: the bytes copied in, which is what a release has to make go down.
+            entry.bytes += static_cast<std::uint64_t>(bytes);
 
             std::size_t offset = 0U;
             for (int mip = 0; mip < image->mipCount(); ++mip) {
@@ -495,6 +504,42 @@ void ContentImages::destroy() noexcept
     impl->table  = nullptr;
     impl->device = VK_NULL_HANDLE;
     impl->memory = VkPhysicalDeviceMemoryProperties{};
+    impl->built           = 0;
+    impl->uploaded_bytes  = 0;
+    impl->released        = 0;
+    impl->bytes_total     = 0;
+}
+
+ContentImages::Progress ContentImages::progress() const noexcept
+{
+    Progress out;
+    if (impl == nullptr) {
+        return out;
+    }
+    out.builds     = impl->built;
+    out.bytes      = impl->uploaded_bytes;
+    out.releases   = impl->released;
+    out.live       = static_cast<std::uint32_t>(impl->textures.size());
+    out.live_bytes = impl->bytes_total;
+    return out;
+}
+
+bool ContentImages::releaseTexture(const vn::graphics::Texture& texture)
+{
+    if (!impl || impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
+        return false;
+    }
+    const auto found = impl->textures.find(&texture);
+    if (found == impl->textures.end()) {
+        return true; // nothing was resident: already released
+    }
+    impl->bytes_total -= found->second.bytes;
+    // NOT INTO `retired`: that list exists for images a frame replaced, whose copies may still be in flight. This
+    // call runs between frames, where the device has waited on its fence, so nothing names the image any more.
+    impl->destroyEntry(found->second);
+    impl->textures.erase(found);
+    ++impl->released;
+    return true;
 }
 
 void ContentImages::releaseFrame() noexcept
@@ -565,7 +610,13 @@ VkImageView ContentImages::viewFor(const vn::graphics::Texture& texture, const V
                                       1U,
                                       &to_sampled);
 
+    // THE BOOKS: a REPLACED revision is a rebuild (its bytes leave the total, the entry never stopped being
+    // resident), a fresh upload is a build.
+    ++impl->built;
+    impl->uploaded_bytes += entry.bytes;
+    impl->bytes_total += entry.bytes;
     if (found != impl->textures.end()) {
+        impl->bytes_total -= found->second.bytes;
         impl->retired.push_back(std::move(found->second));
         found->second = std::move(entry);
     }

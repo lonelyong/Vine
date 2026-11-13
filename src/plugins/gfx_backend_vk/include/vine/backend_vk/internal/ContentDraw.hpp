@@ -16,8 +16,11 @@
 
 VN_BACKEND_VK_NS_BEGIN
 
+class ContentImages;
+
 /**
- * @brief M2-M4's content path: the draws of one pass become indexed Vulkan drawing calls.
+ * @brief The content path (M2-M6): the draws of one pass become indexed Vulkan drawing calls, and what they built is
+ *        accounted for, can be prepared ahead of time, and can be let go when the host says the content is done.
  *
  * @details
  * - WHAT IT OWNS. Compiled shader modules per program REVISION (keyed by the immutable `ShaderProgramDescription`),
@@ -44,9 +47,15 @@ VN_BACKEND_VK_NS_BEGIN
  * - WHAT IS REPORTED, NOT DRAWN. A draw with no camera issues nothing (see `DrawDescription::camera`), one with no
  *   program is skipped and reported, and a screen draw with no source target is skipped and reported. Every skip leaves
  *   the rest of the pass drawn.
- * - WHAT IS NOT RELEASED YET. The caches are keyed by an immutable description per revision and held until
- *   `destroy()`: a geometry edited many times keeps every revision it was drawn at. Releasing content is M6's
- *   residency step (`RenderDevice::releaseContent`), and until then the cost is bounded by the edits a session made.
+ * - WHAT IS RELEASED, AND BY WHOM. Nothing here decides that a cache entry is no longer wanted: the host says so
+ *   (`RenderDevice::releaseContent`), and this object drops exactly what the announcement names - a geometry's
+ *   streams, a program's modules and the pipelines compiled from them, the streams one `Buffer` was uploaded from,
+ *   or a texture's image (see `ContentImages`). The next frame that names the content builds it again, which is what
+ *   the release costs; `progress()` is where the numbers that must go down (residency) and the ones that only grow
+ *   (builds) are read.
+ * - PREPARE, NOT EXECUTE. `prepare()` / `prepareScreen()` run the SAME resolution a recorded draw runs - program
+ *   compiled, geometry uploaded, pipeline selected - and stop before any command is recorded, so a host pays the
+ *   first frame's cost at load time and a later frame of the same declarations builds nothing (`R23`).
  *
  * @note The name says what it records, and it is deliberately the CONTENT half: the clear-only pass M1 records stays in
  *       the device, because a pass' scope is the device's, not this object's.
@@ -131,6 +140,123 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @return Pipelines created since @ref create (0 after a failure that built none).
      */
     [[nodiscard]] std::uint64_t pipelinesCreated() const noexcept;
+
+    /**
+     * @brief What the content path has built, what it let go and what it holds now.
+     *
+     * @details
+     * - CUMULATIVE, EXCEPT THE THREE `live` FIELDS: a frame's own numbers are the difference of two cumulative ones
+     *   (see FrameUploads), while residency is a question about NOW (see ResidencyLedger).
+     * - `streams_live` / `stream_bytes_live` count the UPLOADED BUFFERS, not the geometries: one geometry may own a
+     *   vertex stream per channel plus one index stream per primitive, and a released `Buffer` takes only the
+     *   streams uploaded from it.
+     * - `pipelines_live` is what the residency ledger calls the compiled halves - the pipelines ARE that kind here.
+     */
+    struct Progress {
+        std::uint64_t stream_builds{ 0 };     ///< Uploaded vertex/index buffers, cumulative.
+        std::uint64_t stream_bytes{ 0 };      ///< Bytes those buffers copied, cumulative.
+        std::uint64_t stream_releases{ 0 };   ///< Stream buffers a release let go, cumulative.
+        std::uint64_t program_builds{ 0 };    ///< Program revisions compiled (both stages), cumulative.
+        std::uint64_t pipeline_builds{ 0 };   ///< Pipelines created, cumulative (= pipelinesCreated()).
+        std::uint64_t pipeline_releases{ 0 }; ///< Pipelines destroyed by a program's release, cumulative.
+        std::uint32_t streams_live{ 0 };      ///< Uploaded buffers resident NOW.
+        std::uint64_t stream_bytes_live{ 0 };
+        std::uint32_t pipelines_live{ 0 }; ///< Pipelines resident NOW.
+    };
+
+    /** @brief Gets the numbers (see Progress). */
+    [[nodiscard]] Progress progress() const noexcept;
+
+    /**
+     * @brief Gets the sampled-image cache this recorder prepares.
+     *
+     * @details
+     * - Exposed so one report can ask all three tables (streams, images, halves) in ONE place - the device composes
+     *   the residency ledger, and it is the only object that should learn the shape of more than one table.
+     *
+     * @return The image cache (outlives this recorder).
+     */
+    [[nodiscard]] ContentImages& images() noexcept;
+    /** @brief Gets the image cache for a reader that only reports on it (see the mutable overload). */
+    [[nodiscard]] const ContentImages& images() const noexcept;
+    /**
+     * @brief Drops the streams uploaded for @p description, so a later frame uploads them again.
+     *
+     * @details
+     * - The pipelines stay: they are keyed by the program, the target's compatibility and the vertex LAYOUT - never
+     *   by the geometry's identity - so a geometry coming back uploads its streams and reuses what it compiled.
+     *
+     * @param description The geometry's shape as the frame named it (the same value a released `Geometry` answers).
+     * @return Entries dropped: 1 when a cache entry left, 0 when nothing was resident (already released).
+     */
+    std::size_t releaseGeometry(const vn::graphics::GeometryDescription* description);
+
+    /**
+     * @brief Drops @p description's compiled modules and every pipeline built from them.
+     *
+     * @param description The program's text as the frame named it.
+     * @return Entries dropped: the program plus the pipelines keyed by it (0 when nothing was resident).
+     */
+    std::size_t releaseProgram(const vn::graphics::ShaderProgramDescription* description);
+
+    /**
+     * @brief Drops the vertex/index streams uploaded from @p buffer (its identity, not its bytes).
+     *
+     * @details
+     * - PER STREAM, NOT PER GEOMETRY: a geometry that reads three buffers keeps the two nobody released, and the
+     *   next frame re-uploads only the missing one. The geometry's entry stays (it is still live content).
+     *
+     * @param buffer The stream buffer's address, as `vn::Buffer` identity spells it.
+     * @return Stream buffers dropped (0 when no uploaded stream reads it - already released).
+     */
+    std::size_t releaseStreams(const void* buffer);
+
+    /**
+     * @brief Builds what a SCENE draw's commands need, without recording a single command.
+     *
+     * @details
+     * - THE WARM-UP HALF OF @ref record: the same program resolution, the same stream upload and the same pipeline
+     *   selection (one implementation, see `planCommand`), stopping before any drawing command. Nothing is
+     *   acquired, submitted or presented.
+     * - A command that cannot be built is reported through @p why with @p category, exactly as @ref record reports
+     *   it; the rest of the draw is still prepared.
+     *
+     * @param compatibility     The target's pipeline compatibility (as @ref record).
+     * @param render_pass       A render pass with that compatibility (used only when a pipeline must be CREATED).
+     * @param color_attachments How many colour attachments the target has.
+     * @param draw              The draw to prepare (borrowed).
+     * @param pass              The pass drawing it (its override and state are read; borrowed).
+     * @param default_program   The program content without one of its own is drawn with, or null.
+     * @param why               Receives the first reason a command could not be built (empty when all were).
+     * @param category          Receives the category of that reason, or null to ignore.
+     */
+    void prepare(const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                 VkRenderPass                               render_pass,
+                 std::uint32_t                              color_attachments,
+                 const vn::graphics::DrawDescription&       draw,
+                 const vn::graphics::PassDraw&              pass,
+                 const vn::graphics::ShaderProgramDescription* default_program,
+                 vn::String*                                why,
+                 vn::graphics::DiagnosticCategory*          category = nullptr);
+
+    /**
+     * @brief Builds what a SCREEN draw needs (its fragment stage and the composed pipeline), recording nothing.
+     *
+     * @param compatibility     The destination's pipeline compatibility.
+     * @param render_pass       A render pass with that compatibility (used only when a pipeline must be CREATED).
+     * @param color_attachments How many colour attachments the destination has.
+     * @param draw              The screen draw (its fragment program is read; borrowed).
+     * @param pass              The pass drawing it (state is read; borrowed).
+     * @param why               Receives the reason when the draw could not be prepared (empty when it was).
+     * @param category          Receives the category of that reason, or null to ignore.
+     */
+    void prepareScreen(const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                       VkRenderPass                               render_pass,
+                       std::uint32_t                              color_attachments,
+                       const vn::graphics::DrawDescription&       draw,
+                       const vn::graphics::PassDraw&              pass,
+                       vn::String*                                why,
+                       vn::graphics::DiagnosticCategory*          category = nullptr);
 
     /**
      * @brief Records one CONTENT draw description's commands into @p commands.

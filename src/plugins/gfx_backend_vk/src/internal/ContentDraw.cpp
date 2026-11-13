@@ -214,6 +214,8 @@ struct ContentDraw::Impl {
         VkDeviceMemory memory{ VK_NULL_HANDLE };
         std::uint32_t location{ 0 };
         std::uint32_t components{ 0 };
+        std::uint64_t bytes{ 0 };          // Bytes copied in (the entry's residency weight).
+        const void*   source{ nullptr };    // The `Buffer` this stream was uploaded from (RVALUE identity only).
     };
 
     /// @brief One uploaded index stream (per primitive).
@@ -221,9 +223,14 @@ struct ContentDraw::Impl {
         VkBuffer       buffer{ VK_NULL_HANDLE };
         VkDeviceMemory memory{ VK_NULL_HANDLE };
         std::uint32_t  count{ 0 };
+        std::uint64_t  bytes{ 0 };       // Bytes copied in (the entry's residency weight).
+        const void*    source{ nullptr }; // The `Buffer` this stream was uploaded from (identity only).
     };
 
     /// @brief One geometry revision's uploaded streams.
+    ///
+    /// A HOLE IS "NOT UPLOADED": a stream a host released keeps its slot with a null buffer, and the next
+    /// `ensureGeometry` uploads exactly the holes - which is what makes releasing one `Buffer` cost one upload.
     struct GeometryEntry {
         vn::graphics::GeometryDescriptionPtr description;
         std::vector<VertexStream>            streams;
@@ -339,6 +346,37 @@ struct ContentDraw::Impl {
     std::vector<std::pair<VkBuffer, VkDeviceMemory>>                                frame_uniforms;
     /// How many pipelines were CREATED (a resize must leave this unmoved; see pipelinesCreated).
     std::uint64_t created_{ 0 };
+
+    /// M6's books (see Progress): cumulative builds and releases; the live totals are counted from the tables, so a
+    /// hole a release left is never reported as resident.
+    std::uint64_t stream_builds_{ 0 };
+    std::uint64_t stream_bytes_{ 0 };
+    std::uint64_t stream_releases_{ 0 };
+    std::uint64_t program_builds_{ 0 };
+    std::uint64_t pipeline_releases_{ 0 };
+
+    /**
+     * @brief Resolves the pipeline-relevant state of one drawing call (the dynamic half recompiles nothing).
+     *
+     * @param resolved          The state `resolveRenderState` produced.
+     * @param color_attachments How many colour attachments the pass writes (a multi-attachment target never blends).
+     * @return The state a pipeline is keyed by.
+     */
+    [[nodiscard]] PipelineState pipelineStateOf(const vn::graphics::ResolvedCommandState& resolved,
+                                                std::uint32_t                             color_attachments) const noexcept
+    {
+        PipelineState state;
+        state.polygon_mode  = StateMapping::polygonMode(resolved.state.polygonMode);
+        state.cull_mode     = StateMapping::cullMode(resolved.state.cullMode);
+        state.depth_test    = resolved.state.depth.test ? VK_TRUE : VK_FALSE;
+        state.depth_write   = resolved.state.depth.write ? VK_TRUE : VK_FALSE;
+        state.depth_compare = StateMapping::compareOp(resolved.state.depth.compare);
+        // A multi-attachment target never blends: its attachments hold data, not a surface (see BlendState).
+        state.blend_enable  = color_attachments == 1U && resolved.state.blend.enabled;
+        state.blend_src     = StateMapping::blendFactor(resolved.state.blend.src);
+        state.blend_dst     = StateMapping::blendFactor(resolved.state.blend.dst);
+        return state;
+    }
 
     /** @brief Byte offset of the light block inside one draw's uniform buffer (material starts at 0). */
     [[nodiscard]] VkDeviceSize lightsOffset() const noexcept
@@ -509,11 +547,22 @@ struct ContentDraw::Impl {
         }
 
         const auto inserted = programs.emplace(description, std::move(entry));
-        return inserted.first->second.failed ? nullptr : &inserted.first->second;
+        if (inserted.first->second.failed) {
+            return nullptr;
+        }
+        ++program_builds_;
+        return &inserted.first->second;
     }
 
     /**
      * @brief Gets (or uploads) one geometry revision's streams.
+     *
+     * @details
+     * - A REPEAT CALL PAYS NOTHING when every stream is resident, and repairs the HOLES a host release left: a
+     *   release drops the buffer of the streams it named while the entry - and its other streams - stay, so the
+     *   next frame uploads exactly what left (`RenderDevice::releaseContent(Buffer)`).
+     * - A REFUSED BUILD IS REMEMBERED: an entry that could not be uploaded answers null from then on, so a broken
+     *   geometry is reported once instead of failing the same way every frame.
      *
      * @param description The geometry's shape as a value (the entry keeps it alive).
      * @param why         Receives the first failure's reason.
@@ -522,78 +571,120 @@ struct ContentDraw::Impl {
     [[nodiscard]] GeometryEntry* ensureGeometry(const vn::graphics::GeometryDescription& description, vn::String& why)
     {
         const auto found = geometries.find(&description);
-        if (found != geometries.end()) {
-            return found->second.failed ? nullptr : &found->second;
+        if (found != geometries.end() && found->second.failed) {
+            return nullptr;
         }
 
-        GeometryEntry entry;
-        entry.description = vn::graphics::GeometryDescriptionPtr(&description);
+        GeometryEntry* entry = nullptr;
+        if (found == geometries.end()) {
+            GeometryEntry fresh;
+            fresh.description = vn::graphics::GeometryDescriptionPtr(&description);
+            // One slot per NON-EMPTY channel, in channel order: that is the vertex-input binding order the pipeline
+            // states, so a hole and its binding stay aligned.
+            for (const vn::graphics::GeometryChannel& channel : description.channels()) {
+                if (!channel.channel.empty()) {
+                    fresh.streams.emplace_back();
+                }
+            }
+            fresh.indices.resize(description.primitives().size());
+            entry = &geometries.emplace(&description, std::move(fresh)).first->second;
+        }
+        else {
+            entry = &found->second;
+        }
 
+        std::size_t slot = 0;
         for (const vn::graphics::GeometryChannel& channel : description.channels()) {
             const std::span<const float> scalars = channel.channel.scalars();
             if (scalars.empty()) {
                 continue;
             }
-            const std::uint32_t components = channel.channel.components;
-            if (vertexFormatOf(components) == VK_FORMAT_UNDEFINED) {
-                entry.failed = true;
-                why          = vn::String(u8"vk: an attribute channel states a component count Vulkan has no format for");
-                break;
+            VertexStream& stream = entry->streams[slot];
+            if (stream.buffer == VK_NULL_HANDLE) {
+                const std::uint32_t components = channel.channel.components;
+                if (vertexFormatOf(components) == VK_FORMAT_UNDEFINED) {
+                    why = vn::String(u8"vk: an attribute channel states a component count Vulkan has no format for");
+                    return failGeometry(*entry, std::move(why));
+                }
+                stream.location   = channel.location;
+                stream.components = components;
+                stream.source     = channel.channel.values.get();
+                if (!upload(std::as_bytes(scalars), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, stream.buffer, stream.memory)) {
+                    why = vn::String(u8"vk: a vertex channel could not be uploaded");
+                    return failGeometry(*entry, std::move(why));
+                }
+                stream.bytes = static_cast<std::uint64_t>(scalars.size_bytes());
+                ++stream_builds_;
+                stream_bytes_ += stream.bytes;
             }
-            VertexStream stream;
-            stream.location   = channel.location;
-            stream.components = components;
-            if (!upload(std::as_bytes(scalars), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, stream.buffer, stream.memory)) {
-                entry.failed = true;
-                why          = vn::String(u8"vk: a vertex channel could not be uploaded");
-                break;
-            }
-            entry.streams.push_back(stream);
+            ++slot;
         }
 
-        if (!entry.failed) {
-            // The draw count follows the SMALLEST stream: a vertex index that is in range for one attribute and out of
-            // range for another is undefined behaviour, and the smallest stream is the only count all of them serve.
-            std::uint32_t smallest = std::numeric_limits<std::uint32_t>::max();
-            for (const vn::graphics::GeometryChannel& channel : description.channels()) {
-                if (channel.channel.empty()) {
-                    continue;
-                }
-                smallest = std::min(smallest, static_cast<std::uint32_t>(channel.channel.vertexCount()));
+        // The draw count follows the SMALLEST stream: a vertex index that is in range for one attribute and out of
+        // range for another is undefined behaviour, and the smallest stream is the only count all of them serve.
+        std::uint32_t smallest = std::numeric_limits<std::uint32_t>::max();
+        for (const vn::graphics::GeometryChannel& channel : description.channels()) {
+            if (channel.channel.empty()) {
+                continue;
             }
-            entry.vertex_count = smallest == std::numeric_limits<std::uint32_t>::max() ? 0U : smallest;
-
-            const std::span<const vn::graphics::Primitive> primitives = description.primitives();
-            entry.indices.resize(primitives.size());
-            for (std::size_t index = 0; index < primitives.size(); ++index) {
-                const std::span<const std::uint32_t> indices = primitives[index].indices.span();
-                if (indices.empty()) {
-                    continue;
-                }
-                IndexStream stream;
-                if (!upload(std::as_bytes(indices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, stream.buffer, stream.memory)) {
-                    entry.failed = true;
-                    why          = vn::String(u8"vk: an index stream could not be uploaded");
-                    break;
-                }
-                stream.count        = static_cast<std::uint32_t>(indices.size());
-                entry.indices[index] = stream;
-            }
+            smallest = std::min(smallest, static_cast<std::uint32_t>(channel.channel.vertexCount()));
         }
+        entry->vertex_count = smallest == std::numeric_limits<std::uint32_t>::max() ? 0U : smallest;
 
-        if (entry.failed) {
-            for (VertexStream& stream : entry.streams) {
-                destroyBuffer(stream.buffer, stream.memory);
+        const std::span<const vn::graphics::Primitive> primitives = description.primitives();
+        for (std::size_t index = 0; index < primitives.size(); ++index) {
+            const std::span<const std::uint32_t> indices = primitives[index].indices.span();
+            if (indices.empty()) {
+                continue;
             }
-            for (IndexStream& stream : entry.indices) {
-                destroyBuffer(stream.buffer, stream.memory);
+            IndexStream& stream = entry->indices[index];
+            if (stream.buffer != VK_NULL_HANDLE) {
+                continue;
             }
-            entry.streams.clear();
-            entry.indices.clear();
+            stream.source = primitives[index].indices.values.get();
+            if (!upload(std::as_bytes(indices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, stream.buffer, stream.memory)) {
+                why = vn::String(u8"vk: an index stream could not be uploaded");
+                return failGeometry(*entry, std::move(why));
+            }
+            stream.count = static_cast<std::uint32_t>(indices.size());
+            stream.bytes = static_cast<std::uint64_t>(indices.size_bytes());
+            ++stream_builds_;
+            stream_bytes_ += stream.bytes;
         }
+        return entry;
+    }
 
-        const auto inserted = geometries.emplace(&description, std::move(entry));
-        return inserted.first->second.failed ? nullptr : &inserted.first->second;
+    /**
+     * @brief Marks one geometry entry refused and destroys every stream it had.
+     *
+     * @param entry The entry that could not be completed.
+     * @param why   The reason, passed through to the caller.
+     * @return Always null, so a caller can write `return failGeometry(...)`.
+     */
+    GeometryEntry* failGeometry(GeometryEntry& entry, vn::String why)
+    {
+        entry.failed = true;
+        destroyGeometryStreams(entry);
+        return nullptr;
+    }
+
+    /** @brief Destroys every stream of @p entry and counts the releases (the entry itself stays). */
+    void destroyGeometryStreams(GeometryEntry& entry) noexcept
+    {
+        for (VertexStream& stream : entry.streams) {
+            if (stream.buffer == VK_NULL_HANDLE) {
+                continue;
+            }
+            destroyBuffer(stream.buffer, stream.memory);
+            ++stream_releases_;
+        }
+        for (IndexStream& stream : entry.indices) {
+            if (stream.buffer == VK_NULL_HANDLE) {
+                continue;
+            }
+            destroyBuffer(stream.buffer, stream.memory);
+            ++stream_releases_;
+        }
     }
 
     /**
@@ -868,6 +959,180 @@ struct ContentDraw::Impl {
     }
 
     /**
+     * @brief What one scene drawing call needs before any command can be recorded: its program, its streams and the
+     *        pipeline its state selects.
+     *
+     * @details
+     * - THE ONE RESOLUTION @ref record AND @ref ContentDraw::prepare SHARE: "what does this command draw with" is
+     *   answered here once, so a warm-up cannot build something the frame would not ask for (and vice versa).
+     */
+    struct CommandPlan {
+        ProgramEntry*                program{ nullptr };
+        GeometryEntry*               streams{ nullptr };
+        VkPipeline                   pipeline{ VK_NULL_HANDLE };
+        vn::graphics::ResolvedCommandState resolved{};
+    };
+
+    /**
+     * @brief Resolves one scene command's program, streams and pipeline (building each on a miss).
+     *
+     * @param command           The drawing call to resolve.
+     * @param pass              The pass drawing it (its program override and state are read).
+     * @param default_program   The program content without one of its own is drawn with, or null.
+     * @param compatibility     The target's pipeline compatibility.
+     * @param render_pass       A render pass with that compatibility (used only when a pipeline must be CREATED).
+     * @param color_attachments How many colour attachments the pass writes.
+     * @param plan              Receives what was resolved (untouched when this answers false).
+     * @param why               Receives the reason a command could not be resolved.
+     * @param category          Receives that reason's category (CompileFailed for a build, ContentSkipped otherwise).
+     * @return true when the command can be recorded.
+     */
+    [[nodiscard]] bool planCommand(const vn::graphics::RenderCommand&                     command,
+                                   const vn::graphics::PassDraw&                          pass,
+                                   const vn::graphics::ShaderProgramDescription*          default_program,
+                                   const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                                   VkRenderPass                                           render_pass,
+                                   std::uint32_t                                          color_attachments,
+                                   CommandPlan&                                           plan,
+                                   vn::String&                                            why,
+                                   vn::graphics::DiagnosticCategory&                       category)
+    {
+        const vn::graphics::ShaderProgramDescriptionPtr program =
+            pass.program_override_description != nullptr ? pass.program_override_description : command.programDescription();
+        const vn::graphics::ShaderProgramDescription* program_description = program != nullptr ? program.get() : default_program;
+        if (program_description == nullptr) {
+            why      = vn::String(u8"vk: a content draw named no program and the device has no default content program");
+            category = vn::graphics::DiagnosticCategory::ContentSkipped;
+            return false;
+        }
+        vn::String          build_why;
+        ProgramEntry* const compiled = ensureProgram(program_description, build_why);
+        if (compiled == nullptr) {
+            why      = build_why.empty() ? vn::String(u8"vk: the content program could not be compiled") : std::move(build_why);
+            category = vn::graphics::DiagnosticCategory::CompileFailed;
+            return false;
+        }
+
+        const vn::graphics::GeometryDescriptionPtr geometry = command.geometryDescription();
+        if (geometry == nullptr) {
+            why      = vn::String(u8"vk: a content draw carried no geometry description");
+            category = vn::graphics::DiagnosticCategory::ContentSkipped;
+            return false;
+        }
+        const std::span<const vn::graphics::Primitive> primitives = geometry->primitives();
+        if (command.primitive_index >= primitives.size()) {
+            why      = vn::String(u8"vk: a content draw named a primitive its geometry does not have");
+            category = vn::graphics::DiagnosticCategory::ContentSkipped;
+            return false;
+        }
+        GeometryEntry* const streams = ensureGeometry(*geometry, build_why);
+        if (streams == nullptr) {
+            why      = build_why.empty() ? vn::String(u8"vk: the geometry's streams could not be uploaded") : std::move(build_why);
+            category = vn::graphics::DiagnosticCategory::ContentSkipped;
+            return false;
+        }
+
+        // THE STATE, RESOLVED ONCE PER COMMAND (pass override > content > defaults; see StateResolution.hpp). The
+        // pipeline-relevant half selects the variant; the dynamic half is set when the draw is recorded.
+        plan.resolved = vn::graphics::resolveRenderState(command.authored_state,
+                                                         pass.state,
+                                                         primitives[command.primitive_index].topology);
+        vn::String pipeline_why;
+        plan.pipeline = ensureContentPipeline(*compiled,
+                                              *geometry,
+                                              compatibility,
+                                              render_pass,
+                                              StateMapping::topology(plan.resolved.state.topology),
+                                              pipelineStateOf(plan.resolved, color_attachments),
+                                              color_attachments,
+                                              pipeline_why);
+        if (plan.pipeline == VK_NULL_HANDLE) {
+            why      = pipeline_why.empty() ? vn::String(u8"vk: the content pipeline could not be built") : std::move(pipeline_why);
+            category = vn::graphics::DiagnosticCategory::CompileFailed;
+            return false;
+        }
+        plan.program = compiled;
+        plan.streams = streams;
+        return true;
+    }
+
+    /**
+     * @brief What one screen drawing call needs before it can be recorded: its fragment stage, the composed pipeline
+     *        and the state that selected it.
+     */
+    struct ScreenPlan {
+        ProgramEntry*                      fragment{ nullptr };
+        VkPipeline                         pipeline{ VK_NULL_HANDLE };
+        vn::graphics::ResolvedCommandState resolved{};
+    };
+
+    /**
+     * @brief Resolves one screen draw's fragment program and pipeline (see @ref planCommand for the shared idea).
+     *
+     * @param draw              The screen draw (its fragment program is read).
+     * @param pass              The pass drawing it (state is read).
+     * @param compatibility     The destination's pipeline compatibility.
+     * @param render_pass       A render pass with that compatibility (used only when a pipeline must be CREATED).
+     * @param color_attachments How many colour attachments the destination writes.
+     * @param plan              Receives what was resolved.
+     * @param why               Receives the reason the draw could not be resolved.
+     * @param category          Receives that reason's category.
+     * @return true when the draw can be recorded.
+     */
+    [[nodiscard]] bool planScreen(const vn::graphics::DrawDescription&                  draw,
+                                  const vn::graphics::PassDraw&                          pass,
+                                  const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                                  VkRenderPass                                           render_pass,
+                                  std::uint32_t                                          color_attachments,
+                                  ScreenPlan&                                            plan,
+                                  vn::String&                                            why,
+                                  vn::graphics::DiagnosticCategory&                       category)
+    {
+        // THE PROGRAM'S TEXT: the value the frame carries, else the live program's cached description.
+        vn::graphics::ShaderProgramDescriptionPtr fragment_description = draw.program_description;
+        if (fragment_description == nullptr && draw.program != nullptr) {
+            fragment_description = draw.program->description();
+        }
+        if (fragment_description == nullptr) {
+            why      = vn::String(u8"vk: a screen draw named no fragment program");
+            category = vn::graphics::DiagnosticCategory::ContentSkipped;
+            return false;
+        }
+
+        vn::String                build_why;
+        ProgramEntry* const       fragment = ensureProgram(fragment_description.get(), build_why);
+        if (fragment == nullptr) {
+            why      = build_why.empty() ? vn::String(u8"vk: the screen fragment program could not be compiled") : std::move(build_why);
+            category = vn::graphics::DiagnosticCategory::CompileFailed;
+            return false;
+        }
+        ProgramEntry* const vertex = ensureProgram(screen_vertex.get(), build_why);
+        if (vertex == nullptr) {
+            why      = build_why.empty() ? vn::String(u8"vk: the full-screen vertex program could not be compiled") : std::move(build_why);
+            category = vn::graphics::DiagnosticCategory::CompileFailed;
+            return false;
+        }
+
+        // THE STATE, resolved from the pass (a full-screen call has no per-command state of its own).
+        plan.resolved = vn::graphics::resolveRenderState(vn::graphics::RenderState{}, pass.state, vn::graphics::Topology::Triangles);
+        vn::String pipeline_why;
+        plan.pipeline = ensureScreenPipeline(*fragment,
+                                             *vertex,
+                                             compatibility,
+                                             render_pass,
+                                             pipelineStateOf(plan.resolved, color_attachments),
+                                             color_attachments,
+                                             pipeline_why);
+        if (plan.pipeline == VK_NULL_HANDLE) {
+            why      = pipeline_why.empty() ? vn::String(u8"vk: the screen pipeline could not be built") : std::move(pipeline_why);
+            category = vn::graphics::DiagnosticCategory::CompileFailed;
+            return false;
+        }
+        plan.fragment = fragment;
+        return true;
+    }
+
+    /**
      * @brief Allocates one descriptor set from @p layout.
      *
      * @param layout The set layout the set must agree with.
@@ -1053,12 +1318,7 @@ struct ContentDraw::Impl {
     {
         for (auto& [description, entry] : geometries) {
             (void)description;
-            for (VertexStream& stream : entry.streams) {
-                destroyBuffer(stream.buffer, stream.memory);
-            }
-            for (IndexStream& stream : entry.indices) {
-                destroyBuffer(stream.buffer, stream.memory);
-            }
+            destroyGeometryStreams(entry);
         }
         geometries.clear();
     }
@@ -1259,6 +1519,12 @@ void ContentDraw::destroy() noexcept
     impl->device = VK_NULL_HANDLE;
     impl->memory_properties = VkPhysicalDeviceMemoryProperties{};
     impl->screen_vertex = nullptr;
+    impl->stream_builds_      = 0;
+    impl->stream_bytes_       = 0;
+    impl->stream_releases_    = 0;
+    impl->program_builds_     = 0;
+    impl->pipeline_releases_  = 0;
+    impl->created_            = 0;
 }
 
 void ContentDraw::beginFrame()
@@ -1279,6 +1545,193 @@ void ContentDraw::endFrame() noexcept
 std::uint64_t ContentDraw::pipelinesCreated() const noexcept
 {
     return impl->created_;
+}
+
+ContentDraw::Progress ContentDraw::progress() const noexcept
+{
+    Progress out;
+    out.stream_builds   = impl->stream_builds_;
+    out.stream_bytes    = impl->stream_bytes_;
+    out.stream_releases = impl->stream_releases_;
+    out.program_builds  = impl->program_builds_;
+    out.pipeline_builds = impl->created_;
+    out.pipeline_releases = impl->pipeline_releases_;
+    out.pipelines_live    = static_cast<std::uint32_t>(impl->pipelines.size());
+    // LIVE, FROM THE TABLES: a hole a release left has a null buffer and is not resident.
+    for (const auto& [description, entry] : impl->geometries) {
+        (void)description;
+        for (const Impl::VertexStream& stream : entry.streams) {
+            if (stream.buffer != VK_NULL_HANDLE) {
+                ++out.streams_live;
+                out.stream_bytes_live += stream.bytes;
+            }
+        }
+        for (const Impl::IndexStream& stream : entry.indices) {
+            if (stream.buffer != VK_NULL_HANDLE) {
+                ++out.streams_live;
+                out.stream_bytes_live += stream.bytes;
+            }
+        }
+    }
+    return out;
+}
+
+ContentImages& ContentDraw::images() noexcept
+{
+    return impl->images;
+}
+
+const ContentImages& ContentDraw::images() const noexcept
+{
+    return impl->images;
+}
+
+std::size_t ContentDraw::releaseGeometry(const vn::graphics::GeometryDescription* description)
+{
+    if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || description == nullptr) {
+        return 0;
+    }
+    const auto found = impl->geometries.find(description);
+    if (found == impl->geometries.end()) {
+        return 0; // nothing was resident: already released
+    }
+    impl->destroyGeometryStreams(found->second);
+    impl->geometries.erase(found);
+    return 1;
+}
+
+std::size_t ContentDraw::releaseProgram(const vn::graphics::ShaderProgramDescription* description)
+{
+    if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || description == nullptr) {
+        return 0;
+    }
+    std::size_t dropped = 0;
+    // THE PIPELINES FIRST: they are keyed by the program's pointer, so once the entry is gone they could never be
+    // looked up again - keeping them alive would be a leak nothing can name.
+    for (auto it = impl->pipelines.begin(); it != impl->pipelines.end();) {
+        if (it->first.program != description) {
+            ++it;
+            continue;
+        }
+        impl->table->vkDestroyPipeline(impl->device, it->second, nullptr);
+        it = impl->pipelines.erase(it);
+        ++impl->pipeline_releases_;
+        ++dropped;
+    }
+
+    const auto found = impl->programs.find(description);
+    if (found == impl->programs.end()) {
+        return dropped;
+    }
+    if (found->second.vertex != VK_NULL_HANDLE) {
+        impl->table->vkDestroyShaderModule(impl->device, found->second.vertex, nullptr);
+    }
+    if (found->second.fragment != VK_NULL_HANDLE) {
+        impl->table->vkDestroyShaderModule(impl->device, found->second.fragment, nullptr);
+    }
+    impl->programs.erase(found);
+    return dropped + 1U;
+}
+
+std::size_t ContentDraw::releaseStreams(const void* buffer)
+{
+    if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || buffer == nullptr) {
+        return 0;
+    }
+    std::size_t dropped = 0;
+    for (auto& [description, entry] : impl->geometries) {
+        (void)description;
+        for (Impl::VertexStream& stream : entry.streams) {
+            if (stream.source != buffer || stream.buffer == VK_NULL_HANDLE) {
+                continue;
+            }
+            impl->destroyBuffer(stream.buffer, stream.memory);
+            ++impl->stream_releases_;
+            ++dropped;
+        }
+        for (Impl::IndexStream& stream : entry.indices) {
+            if (stream.source != buffer || stream.buffer == VK_NULL_HANDLE) {
+                continue;
+            }
+            impl->destroyBuffer(stream.buffer, stream.memory);
+            ++impl->stream_releases_;
+            ++dropped;
+        }
+    }
+    return dropped;
+}
+
+void ContentDraw::prepare(const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                          const VkRenderPass                             render_pass,
+                          const std::uint32_t                            color_attachments,
+                          const vn::graphics::DrawDescription&           draw,
+                          const vn::graphics::PassDraw&                  pass,
+                          const vn::graphics::ShaderProgramDescription* default_program,
+                          vn::String*                                    why,
+                          vn::graphics::DiagnosticCategory*              category)
+{
+    vn::String                       local;
+    vn::String&                      reason        = why != nullptr ? *why : local;
+    vn::graphics::DiagnosticCategory local_category = vn::graphics::DiagnosticCategory::ContentSkipped;
+    vn::graphics::DiagnosticCategory& category_ref  = category != nullptr ? *category : local_category;
+    reason                                          = vn::String();
+    category_ref                                    = vn::graphics::DiagnosticCategory::ContentSkipped;
+
+    if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || draw.commands == nullptr) {
+        return;
+    }
+    if (!draw.camera.present) {
+        return; // no view means no draw, and no draw means nothing to build
+    }
+    if (draw.kind != vn::graphics::DrawDescription::Kind::Scene) {
+        reason = vn::String(u8"vk: a screen draw reached the content path (it has its own recordScreen)");
+        return;
+    }
+
+    // NO FALLBACK IMAGE, NO DESCRIPTOR SET, NO COMMAND: a warm-up is programs, streams and pipelines only - the
+    // 1x1 stand-in and the texture copies need a command buffer, which prepare() does not open.
+    for (const vn::graphics::RenderCommand& command : *draw.commands) {
+        Impl::CommandPlan                plan;
+        vn::String                       failure;
+        vn::graphics::DiagnosticCategory failure_category = vn::graphics::DiagnosticCategory::ContentSkipped;
+        if (impl->planCommand(command, pass, default_program, compatibility, render_pass, color_attachments, plan, failure, failure_category)) {
+            continue;
+        }
+        if (reason.empty()) {
+            reason       = std::move(failure);
+            category_ref = failure_category;
+        }
+    }
+}
+
+void ContentDraw::prepareScreen(const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                const VkRenderPass                             render_pass,
+                                const std::uint32_t                            color_attachments,
+                                const vn::graphics::DrawDescription&           draw,
+                                const vn::graphics::PassDraw&                  pass,
+                                vn::String*                                    why,
+                                vn::graphics::DiagnosticCategory*              category)
+{
+    vn::String                       local;
+    vn::String&                      reason        = why != nullptr ? *why : local;
+    vn::graphics::DiagnosticCategory local_category = vn::graphics::DiagnosticCategory::ContentSkipped;
+    vn::graphics::DiagnosticCategory& category_ref  = category != nullptr ? *category : local_category;
+    reason                                          = vn::String();
+    category_ref                                    = vn::graphics::DiagnosticCategory::ContentSkipped;
+
+    if (impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
+        return;
+    }
+    if (!draw.camera.present) {
+        return;
+    }
+    Impl::ScreenPlan                 plan;
+    vn::String                       failure;
+    vn::graphics::DiagnosticCategory failure_category = vn::graphics::DiagnosticCategory::ContentSkipped;
+    if (!impl->planScreen(draw, pass, compatibility, render_pass, color_attachments, plan, failure, failure_category)) {
+        reason       = std::move(failure);
+        category_ref = failure_category;
+    }
 }
 
 void ContentDraw::preparePass(const VkCommandBuffer commands, const std::span<const vn::graphics::DrawDescription> draws)
@@ -1389,68 +1842,16 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
     const auto note = [&fail](const char8_t* text) { fail(vn::String(text), vn::graphics::DiagnosticCategory::ContentSkipped); };
 
     for (const vn::graphics::RenderCommand& command : *draw.commands) {
-        const vn::graphics::ShaderProgramDescriptionPtr program =
-            pass.program_override_description != nullptr ? pass.program_override_description : command.programDescription();
-        const vn::graphics::ShaderProgramDescription* program_description = program != nullptr ? program.get() : default_program;
-        if (program_description == nullptr) {
-            note(u8"vk: a content draw named no program and the device has no default content program");
+        // WHAT THIS COMMAND DRAWS WITH - the same resolution a warm-up runs (see planCommand): program compiled,
+        // streams uploaded, pipeline selected. Without it there is nothing to record.
+        Impl::CommandPlan                 plan;
+        vn::String                        failure;
+        vn::graphics::DiagnosticCategory  failure_category = vn::graphics::DiagnosticCategory::ContentSkipped;
+        if (!impl->planCommand(command, pass, default_program, compatibility, render_pass, color_attachments, plan, failure, failure_category)) {
+            fail(std::move(failure), failure_category);
             continue;
         }
-        vn::String          failure;
-        Impl::ProgramEntry* compiled = impl->ensureProgram(program_description, failure);
-        if (compiled == nullptr) {
-            fail(failure.empty() ? vn::String(u8"vk: the content program could not be compiled") : std::move(failure),
-                 vn::graphics::DiagnosticCategory::CompileFailed);
-            continue;
-        }
-
-        const vn::graphics::GeometryDescriptionPtr geometry = command.geometryDescription();
-        if (geometry == nullptr) {
-            note(u8"vk: a content draw carried no geometry description");
-            continue;
-        }
-        const std::span<const vn::graphics::Primitive> primitives = geometry->primitives();
-        if (command.primitive_index >= primitives.size()) {
-            note(u8"vk: a content draw named a primitive its geometry does not have");
-            continue;
-        }
-        Impl::GeometryEntry* streams = impl->ensureGeometry(*geometry, failure);
-        if (streams == nullptr) {
-            fail(failure.empty() ? vn::String(u8"vk: the geometry's streams could not be uploaded") : std::move(failure),
-                 vn::graphics::DiagnosticCategory::ContentSkipped);
-            continue;
-        }
-
-        // THE STATE, RESOLVED ONCE PER COMMAND (pass override > content > defaults; see StateResolution.hpp). The
-        // pipeline-relevant half selects the variant; the dynamic half is set below and recompiles nothing.
-        const vn::graphics::ResolvedCommandState resolved =
-            vn::graphics::resolveRenderState(command.authored_state, pass.state, primitives[command.primitive_index].topology);
-
-        Impl::PipelineState pipeline_state;
-        pipeline_state.polygon_mode  = StateMapping::polygonMode(resolved.state.polygonMode);
-        pipeline_state.cull_mode     = StateMapping::cullMode(resolved.state.cullMode);
-        pipeline_state.depth_test    = resolved.state.depth.test ? VK_TRUE : VK_FALSE;
-        pipeline_state.depth_write   = resolved.state.depth.write ? VK_TRUE : VK_FALSE;
-        pipeline_state.depth_compare = StateMapping::compareOp(resolved.state.depth.compare);
-        // A multi-attachment target never blends: its attachments hold data, not a surface (see BlendState).
-        const bool blend_enabled    = color_attachments == 1U && resolved.state.blend.enabled;
-        pipeline_state.blend_enable = blend_enabled ? VK_TRUE : VK_FALSE;
-        pipeline_state.blend_src    = StateMapping::blendFactor(resolved.state.blend.src);
-        pipeline_state.blend_dst    = StateMapping::blendFactor(resolved.state.blend.dst);
-
-        const VkPipeline stateful_pipeline = impl->ensureContentPipeline(*compiled,
-                                                                        *geometry,
-                                                                        compatibility,
-                                                                        render_pass,
-                                                                        StateMapping::topology(resolved.state.topology),
-                                                                        pipeline_state,
-                                                                        color_attachments,
-                                                                        failure);
-        if (stateful_pipeline == VK_NULL_HANDLE) {
-            fail(failure.empty() ? vn::String(u8"vk: the content pipeline could not be built") : std::move(failure),
-                 vn::graphics::DiagnosticCategory::CompileFailed);
-            continue;
-        }
+        const vn::graphics::ResolvedCommandState& resolved = plan.resolved;
 
         // THE MATERIAL: the value the frame carries, else the live material's description (the hand-built door).
         vn::graphics::MaterialDescriptionPtr material_description = command.material_description;
@@ -1519,9 +1920,9 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
             continue;
         }
 
-        if (stateful_pipeline != bound_pipeline) {
-            impl->table->vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, stateful_pipeline);
-            bound_pipeline = stateful_pipeline;
+        if (plan.pipeline != bound_pipeline) {
+            impl->table->vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, plan.pipeline);
+            bound_pipeline = plan.pipeline;
         }
         impl->table->vkCmdSetViewport(commands, 0U, 1U, &viewport);
         impl->table->vkCmdSetScissor(commands, 0U, 1U, &scissor);
@@ -1540,9 +1941,9 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
 
         std::vector<VkBuffer>      vertex_buffers;
         std::vector<VkDeviceSize>  vertex_offsets;
-        vertex_buffers.reserve(streams->streams.size());
-        vertex_offsets.reserve(streams->streams.size());
-        for (const Impl::VertexStream& stream : streams->streams) {
+        vertex_buffers.reserve(plan.streams->streams.size());
+        vertex_offsets.reserve(plan.streams->streams.size());
+        for (const Impl::VertexStream& stream : plan.streams->streams) {
             vertex_buffers.push_back(stream.buffer);
             vertex_offsets.push_back(0U);
         }
@@ -1551,16 +1952,16 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         }
 
         const Impl::IndexStream* indices = nullptr;
-        if (command.primitive_index < streams->indices.size() && streams->indices[command.primitive_index].buffer != VK_NULL_HANDLE) {
-            indices = &streams->indices[command.primitive_index];
+        if (command.primitive_index < plan.streams->indices.size() && plan.streams->indices[command.primitive_index].buffer != VK_NULL_HANDLE) {
+            indices = &plan.streams->indices[command.primitive_index];
         }
         if (indices != nullptr) {
             impl->table->vkCmdBindIndexBuffer(commands, indices->buffer, 0U, VK_INDEX_TYPE_UINT32);
             impl->table->vkCmdDrawIndexed(commands, indices->count, 1U, 0U, 0, 0U);
             ++recorded;
         }
-        else if (streams->vertex_count > 0U) {
-            impl->table->vkCmdDraw(commands, streams->vertex_count, 1U, 0U, 0U);
+        else if (plan.streams->vertex_count > 0U) {
+            impl->table->vkCmdDraw(commands, plan.streams->vertex_count, 1U, 0U, 0U);
             ++recorded;
         }
         else {
@@ -1604,56 +2005,17 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
         return 0;
     }
 
-    // THE PROGRAM'S TEXT: the value the frame carries, else the live program's cached description.
-    vn::graphics::ShaderProgramDescriptionPtr fragment_description = draw.program_description;
-    if (fragment_description == nullptr && draw.program != nullptr) {
-        fragment_description = draw.program->description();
-    }
-    if (fragment_description == nullptr) {
-        reason = vn::String(u8"vk: a screen draw named no fragment program");
+    // THE PROGRAM AND THE PIPELINE - the same resolution a warm-up runs (see planScreen).
+    Impl::ScreenPlan                 plan;
+    vn::String                       failure;
+    vn::graphics::DiagnosticCategory failure_category = vn::graphics::DiagnosticCategory::ContentSkipped;
+    if (!impl->planScreen(draw, pass, compatibility, render_pass, color_attachments, plan, failure, failure_category)) {
+        reason       = std::move(failure);
+        category_ref = failure_category;
         return 0;
     }
-
-    vn::String          failure;
-    Impl::ProgramEntry* fragment_entry = impl->ensureProgram(fragment_description.get(), failure);
-    if (fragment_entry == nullptr) {
-        reason       = failure.empty() ? vn::String(u8"vk: the screen fragment program could not be compiled") : std::move(failure);
-        category_ref = vn::graphics::DiagnosticCategory::CompileFailed;
-        return 0;
-    }
-    Impl::ProgramEntry* vertex_entry = impl->ensureProgram(impl->screen_vertex.get(), failure);
-    if (vertex_entry == nullptr) {
-        reason       = failure.empty() ? vn::String(u8"vk: the full-screen vertex program could not be compiled") : std::move(failure);
-        category_ref = vn::graphics::DiagnosticCategory::CompileFailed;
-        return 0;
-    }
-
-    // THE STATE, resolved from the pass (a full-screen call has no per-command state of its own).
-    const vn::graphics::ResolvedCommandState resolved =
-        vn::graphics::resolveRenderState(vn::graphics::RenderState{}, pass.state, vn::graphics::Topology::Triangles);
-    Impl::PipelineState pipeline_state;
-    pipeline_state.polygon_mode  = StateMapping::polygonMode(resolved.state.polygonMode);
-    pipeline_state.cull_mode     = StateMapping::cullMode(resolved.state.cullMode);
-    pipeline_state.depth_test    = resolved.state.depth.test ? VK_TRUE : VK_FALSE;
-    pipeline_state.depth_write   = resolved.state.depth.write ? VK_TRUE : VK_FALSE;
-    pipeline_state.depth_compare = StateMapping::compareOp(resolved.state.depth.compare);
-    const bool blend_enabled     = color_attachments == 1U && resolved.state.blend.enabled;
-    pipeline_state.blend_enable  = blend_enabled ? VK_TRUE : VK_FALSE;
-    pipeline_state.blend_src     = StateMapping::blendFactor(resolved.state.blend.src);
-    pipeline_state.blend_dst     = StateMapping::blendFactor(resolved.state.blend.dst);
-
-    const VkPipeline pipeline = impl->ensureScreenPipeline(*fragment_entry,
-                                                           *vertex_entry,
-                                                           compatibility,
-                                                           render_pass,
-                                                           pipeline_state,
-                                                           color_attachments,
-                                                           failure);
-    if (pipeline == VK_NULL_HANDLE) {
-        reason       = failure.empty() ? vn::String(u8"vk: the screen pipeline could not be built") : std::move(failure);
-        category_ref = vn::graphics::DiagnosticCategory::CompileFailed;
-        return 0;
-    }
+    const vn::graphics::ResolvedCommandState& resolved = plan.resolved;
+    const VkPipeline                          pipeline = plan.pipeline;
 
     // The rectangle the pass states, or the whole destination (a pass without a viewport draws all of it).
     VkViewport viewport{};
