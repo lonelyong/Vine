@@ -27,88 +27,16 @@ target_compile_definitions(${GFX_BACKEND_VSG_TARGET} PRIVATE VN_GRAPHICS_BACKEND
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Static third-party libs (glslang, vsg) are baked into the plugin DLL.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+# glslang is provisioned ONCE for every shader-compiling backend, at the TOP LEVEL before any plugin configures
+# (see cmake/VineGlslang.cmake). vsg discovers it afterwards through the same glslang_DIR that helper left behind;
+# calling the helper here again is a no-op and states the dependency.
+vn_provide_glslang()
+
 include(FetchContent)
 if(VN_USE_FETCHCONTENT)
-    # Static third-party libs (glslang, vsg) are baked into the plugin DLL.
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-
-    # Runtime GLSL -> SPIR-V compilation (vsg ShaderCompiler) requires glslang,
-    # which vsg discovers itself via find_package(glslang). Quiet find first so
-    # an already-installed glslang (system / vcpkg) is reused instead of being
-    # downloaded; when none is available, build glslang from source here.
-    if(glslang_DIR STREQUAL "${CMAKE_CURRENT_BINARY_DIR}/glslang-config")
-        unset(glslang_DIR CACHE)   # Drop the stale shim from a previous configure.
-    endif()
-    find_package(glslang CONFIG QUIET)
-    if(glslang_FOUND)
-        # An installed glslang (vcpkg x64-windows, or a hand-built install) exports only
-        # DEBUG and RELEASE configurations. A RelWithDebInfo / MinSizeRel build has no
-        # exact match, so CMake falls back to the first declared configuration - DEBUG -
-        # and the plugin then links /MDd glslang objects into an /MD DLL: LNK2038
-        # (_ITERATOR_DEBUG_LEVEL, RuntimeLibrary) and an unresolved __imp__CrtDbgReport.
-        # Both intermediate configurations use the release runtime, so map them onto
-        # RELEASE, which is the glslang build matching every Vine target there.
-        foreach(_vn_glslang_config RelWithDebInfo MinSizeRel)
-            string(TOUPPER "${_vn_glslang_config}" _vn_glslang_config_upper)
-            foreach(_vn_glslang_target
-                    glslang::glslang
-                    glslang::SPIRV
-                    glslang::glslang-default-resource-limits)
-                if(TARGET ${_vn_glslang_target})
-                    get_target_property(_vn_glslang_imported ${_vn_glslang_target} IMPORTED)
-                    if(_vn_glslang_imported)
-                        set_property(TARGET ${_vn_glslang_target}
-                                     PROPERTY MAP_IMPORTED_CONFIG_${_vn_glslang_config_upper} RELEASE)
-                    endif()
-                endif()
-            endforeach()
-        endforeach()
-    endif()
-    if(NOT glslang_FOUND)
-        FetchContent_Declare(glslang
-            GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
-            GIT_TAG        16.2.0
-        )
-        # Only the libraries vsg links against are needed; skip glslang's own
-        # tests, install rules, validator binary and SPIRV-Tools optimizer.
-        set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
-        set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
-        set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
-        set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
-        FetchContent_MakeAvailable(glslang)
-        vn_group_targets_folder(${glslang_SOURCE_DIR} third_party)
-        # glslang now lives in this build tree; its static targets must be
-        # folded into vsg's export set and its headers mirrored into the
-        # installed layout (see below) before vsg is built.
-        set(VN_VSG_GLSLANG_IN_TREE TRUE)
-
-        # An installed glslang ships its SPIRV headers as include/glslang/SPIRV,
-        # the layout vsg's ShaderCompiler.cpp expects. In-tree glslang keeps
-        # them at <src>/SPIRV instead, so mirror them into the build tree and
-        # expose the mirror on the SPIRV target below.
-        set(_glslang_include_mirror "${CMAKE_CURRENT_BINARY_DIR}/glslang-include")
-        file(MAKE_DIRECTORY "${_glslang_include_mirror}/glslang/SPIRV")
-        file(GLOB _glslang_spirv_headers
-            "${glslang_SOURCE_DIR}/SPIRV/*.h"
-            "${glslang_SOURCE_DIR}/SPIRV/spirv.hpp11")
-        file(COPY ${_glslang_spirv_headers}
-            DESTINATION "${_glslang_include_mirror}/glslang/SPIRV")
-
-        # glslang's glslang::* targets are project-visible once the subproject
-        # is added, but vsg re-runs find_package(glslang CONFIG QUIET) during
-        # its own configure. Generate a minimal config that confirms the
-        # in-tree glslang and point glslang_DIR at it, so vsg keeps its
-        # ShaderCompiler (VSG_SUPPORTS_ShaderCompiler) enabled.
-        set(_glslang_config_dir "${CMAKE_CURRENT_BINARY_DIR}/glslang-config")
-        file(MAKE_DIRECTORY "${_glslang_config_dir}")
-        file(WRITE "${_glslang_config_dir}/glslang-config.cmake"
-            "if(NOT TARGET glslang::glslang)\n"
-            "    message(FATAL_ERROR \"in-tree glslang is missing its glslang::glslang target\")\n"
-            "endif()\n"
-            "set(glslang_FOUND TRUE)\n")
-        set(glslang_DIR "${_glslang_config_dir}" CACHE PATH "" FORCE)
-    endif()
-
     # A prebuilt no-glslang VSG (e.g. the local /opt/opensrc/VSG install)
     # cannot provide runtime shader compilation, so VSG is always built from
     # source here; the glslang above (installed or fetched) enables its
@@ -137,7 +65,7 @@ if(VN_USE_FETCHCONTENT)
     FetchContent_MakeAvailable(vsg)
     vn_group_targets_folder(${vsg_SOURCE_DIR} third_party)
 
-    if(VN_VSG_GLSLANG_IN_TREE)
+    if(VN_GLSLANG_IN_TREE)
         # vsg registers install/export of its vsgTargets export set during its
         # own configure. As a static library, vsg re-exports the PRIVATE
         # glslang link dependencies through that set, and CMake requires each
@@ -151,9 +79,10 @@ if(VN_USE_FETCHCONTENT)
                 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
         # vsg's ShaderCompiler.cpp includes <glslang/SPIRV/GlslangToSpv.h>, so
         # expose the mirrored SPIRV headers through glslang::SPIRV's interface.
-        # SPIRV is folded into vsg's export set above, so the path must be
-        # wrapped in a BUILD_INTERFACE generator expression to stay relocatable.
-        target_include_directories(SPIRV PUBLIC "$<BUILD_INTERFACE:${_glslang_include_mirror}>")
+        # The mirror is what the shared helper created (see cmake/VineGlslang.cmake);
+        # SPIRV is folded into vsg's export set above, so the path must be wrapped
+        # in a BUILD_INTERFACE generator expression to stay relocatable.
+        target_include_directories(SPIRV PUBLIC "$<BUILD_INTERFACE:${VN_GLSLANG_INCLUDE_MIRROR}>")
     endif()
 else()
     # Consume vsg from vcpkg or a local install (e.g. /opt/opensrc/VSG).

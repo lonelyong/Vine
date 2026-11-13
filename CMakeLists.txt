@@ -87,6 +87,12 @@ include(VineShaders)
 # (see cmake/VineTranslate.cmake). Function definitions only, so the top level is the right place for it.
 include(VineTranslate)
 
+# vn_provide_glslang(): the ONE glslang provisioning decision, for every target that compiles GLSL at run time
+# (see cmake/VineGlslang.cmake). Called at the TOP LEVEL on purpose: an IMPORTED target is directory-scoped, so one
+# created inside third_party/ would be invisible to the plugins under src/.
+include(VineGlslang)
+vn_provide_glslang()
+
 add_subdirectory(third_party)
 add_subdirectory(src)
 add_subdirectory(tools/urdf2vine)

@@ -33,4 +33,10 @@ target_link_libraries(${VK_BACKEND_TARGET} PRIVATE
     # THE META-LOADER. vk reaches every Vulkan entry point through volk (the loader exports no symbol for the extension
     # commands), and volk's own target carries the Vulkan headers (`Vulkan::Headers`) so the plugin does not link
     # VulkanSceneGraph just to get them.
-    tp::volk)
+    tp::volk
+    # GLSL -> SPIR-V at run time, through glslang's own front end (M2). Provisioned ONCE for every shader-compiling
+    # backend by cmake/VineGlslang.cmake, so this plugin never depends on the vsg plugin being configured first.
+    glslang::glslang
+    glslang::SPIRV
+    # GetDefaultResources(): the resource limits every parse call takes (header-only declaration, library symbol).
+    glslang::glslang-default-resource-limits)

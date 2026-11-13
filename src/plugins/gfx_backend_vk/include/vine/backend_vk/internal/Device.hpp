@@ -10,16 +10,16 @@ VN_BACKEND_VK_NS_BEGIN
  *
  * @details
  * - WHAT IT IS. A `RenderBackend` implemented directly on Vulkan through volk: it owns one `VkInstance`, one
- *   `VkPhysicalDevice`, one `VkDevice` and one graphics queue, and NOTHING else yet. M0 exists so the seam is proved
- *   before anything is drawn: registry -> factory -> device -> `initialize()` / `shutdown()`, with the validation
- *   layer's messages arriving on the host's diagnostic route (see `.ai/research/graphics-2026-11-13-gpu-resource-
- *   abstraction.md` §8.3).
- * - WHAT IT DELIBERATELY DOES NOT DO YET. No render targets (M1), no content draws (M2), no window (M5). It answers
- *   `capabilities()` from what it can really serve - `render_targets == false`, `presentation == false` - instead of
- *   claiming the device's Vulkan abilities, because a host plans frames against that answer.
- * - FRAME AND HOST VERBS. `executeFrame()` runs nothing and says so once; `setRenderTarget()` refuses to promise
- *   anything; the readbacks keep the SDK's `Unsupported` answer. A host that drives this backend today gets a device
- *   that comes up, reports, and draws nothing - which is the honest M0 picture.
+ *   `VkPhysicalDevice`, one `VkDevice` and one graphics queue, off-screen targets with their render passes, and (M2)
+ *   one content draw per `RenderCommand` - a GLSL program compiled through glslang into a pipeline, the geometry's
+ *   channels uploaded as vertex/index streams, the `VineViewBlock`/`VineDrawBlock` pair bound as uniforms, and
+ *   `vkCmdDrawIndexed`.
+ * - WHAT IT DELIBERATELY DOES NOT DO YET. No window (M5), no material/light/texture blocks and no full-screen draws
+ *   (M4), no depth state, MRT or per-attachment clear (M3), no residency accounting (M6). It answers `capabilities()`
+ *   from what it can really serve - `render_targets == true`, `presentation == false`.
+ * - FRAME AND HOST VERBS. `executeFrame()` runs the off-screen passes of the frame value and records the draws of each
+ *   `DrawDescription`; a pass drawing into the window, or a draw naming no program, is reported and left out. The
+ *   readbacks answer the targets this device built.
  * - VULKAN LIVENESS. Every handle lives in the implementation object; `shutdown()` returns the device to the state of
  *   a freshly constructed one (idempotent, safe before `initialize()`), which is what the SDK's contract requires of a
  *   backend whose surface can be recreated.
@@ -74,6 +74,19 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
     [[nodiscard]] vn::graphics::RenderFrameExecutor& executor() override;
 
     /**
+     * @brief Selects the program content without one of its own is drawn with.
+     *
+     * @details
+     * - M2 does not compile the program by itself: the announcement takes the program's TEXT as a value (see
+     *   `ShaderProgram::description`), so a later edit of the object cannot change what a recorded frame draws.
+     * - A program the content path cannot compile (no vertex or fragment stage, GLSL glslang refuses) is reported on
+     *   this device's diagnostics channel and the content it would shade is skipped, not drawn with something else.
+     *
+     * @param program Program to shade program-less content with, or null for "none".
+     */
+    void setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program) override;
+
+    /**
      * @brief Remembers the target a host announced; M0 builds no attachments for it.
      *
      * @param target Target the host will draw into, or null for the default framebuffer.
@@ -104,12 +117,15 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
                          vn::graphics::ReadbackResult*     why = nullptr) override;
 
     /**
-     * @brief Runs the frame's passes that draw into off-screen targets: each one clears its target and stores the result.
+     * @brief Runs the frame's passes that draw into off-screen targets: each one clears its target, then records the
+     *        drawing calls of every `DrawDescription` it carries.
      *
      * @details
-     * - M1's whole frame path. A pass that names a target AND states a clear policy is recorded as one render pass
-     *   (`CLEAR`/`STORE`); anything else - a pass with no target (the window, which M5 brings up), a pass with no clear
-     *   (which would need a LOAD variant), a draw itself - is reported once and left out.
+     * - M2's whole frame path. A pass that names a target AND states a clear policy is recorded as one render pass
+     *   (`CLEAR`/`STORE`); a pass with no target (the window, which M5 brings up), a pass with no clear (which would
+     *   need a LOAD variant) and a full-screen draw (M4) are reported once and left out.
+     * - Each scene draw is projected with its own camera snapshot and shaded with the resolved program (the pass'
+     *   override, else the command's own, else the default content program). One `RenderCommand` is one indexed draw.
      * - The submission is synchronous by design: one command buffer, one fence, then the queue is idle, so a readback in
      *   the same breath sees exactly what this frame left.
      *

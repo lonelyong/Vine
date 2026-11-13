@@ -11,11 +11,13 @@
 #include <volk.h>
 
 #include <vine/backend_vk/internal/BarrierPlan.hpp>
+#include <vine/backend_vk/internal/ContentDraw.hpp>
 #include <vine/backend_vk/internal/TargetImages.hpp>
 #include <vine/graphics/Capabilities.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/PresentTarget.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/ShaderProgram.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -23,6 +25,7 @@ using vn::graphics::Capabilities;
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::DiagnosticSeverity;
 using vn::graphics::DeviceDesc;
+using vn::graphics::DrawDescription;
 using vn::graphics::FrameDescription;
 using vn::graphics::PassDraw;
 using vn::graphics::PresentOutcome;
@@ -96,11 +99,16 @@ struct Device::Impl {
     /// One entry per off-screen target this device built, keyed by the host's object (the identity the frame names).
     std::unordered_map<const RenderTarget*, TargetImages> targets{};
 
+    /// M2's content path: compiled programs, uploaded streams, pipelines and the per-frame uniform buffers.
+    ContentDraw content{};
+    /// The program content without one of its own is drawn with, taken as a VALUE when it was announced.
+    vn::graphics::ShaderProgramDescriptionPtr default_program{};
+
     /// One report each for the answers M1 cannot serve, so a host is told once rather than per frame.
-    bool reported_no_draw{ false };
     bool reported_no_targets{ false };
     bool reported_no_clear{ false };
     bool reported_window{ false };
+    bool reported_content{ false };
 };
 
 Device::Device(const DeviceDesc& desc)
@@ -312,6 +320,16 @@ bool Device::initialize()
     impl->caps.max_line_width          = properties.limits.lineWidthRange[1] > 0.0F ? properties.limits.lineWidthRange[1] : 1.0F;
     impl->caps.max_color_attachments   = 1U;
 
+    // M2'S CONTENT PATH: the layouts, the descriptor pool and the caches every draw uses. A device that cannot build
+    // them is not a device that can draw, so it refuses to come up rather than answering frames with nothing.
+    if (!impl->content.create(impl->device_table, impl->device, impl->memory, properties.limits.minUniformBufferOffsetAlignment)) {
+        reportDiagnostic(DiagnosticSeverity::Error,
+                         DiagnosticCategory::InitFailed,
+                         u8"vk: the content layout / descriptor pool could not be created");
+        shutdown();
+        return false;
+    }
+
     return true;
 }
 
@@ -320,6 +338,9 @@ void Device::shutdown()
     if (impl->device != VK_NULL_HANDLE) {
         // A counted stop: every queue is idle before the objects it recorded against go.
         (void)impl->device_table.vkDeviceWaitIdle(impl->device);
+
+        // Pipelines are built against a target's render pass, so the content caches go BEFORE the targets do.
+        impl->content.destroy();
 
         for (auto& [target, images] : impl->targets) {
             (void)target;
@@ -354,15 +375,22 @@ void Device::shutdown()
     impl->queue_family        = 0U;
     impl->validation          = false;
     impl->caps                = Capabilities{};
-    impl->reported_no_draw    = false;
+    impl->default_program     = nullptr;
     impl->reported_no_targets = false;
     impl->reported_no_clear   = false;
     impl->reported_window     = false;
+    impl->reported_content    = false;
 }
 
 bool Device::initialized() const noexcept
 {
     return impl->device != VK_NULL_HANDLE;
+}
+
+void Device::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
+{
+    // THE VALUE, NOT THE OBJECT: what a frame records is the text that was current when the host announced it.
+    impl->default_program = program != nullptr ? program->description() : nullptr;
 }
 
 vn::graphics::RenderFrameExecutor& Device::executor()
@@ -391,6 +419,8 @@ bool Device::ensureTarget(const RenderTarget& target)
 
     // A RESIZE IS A REBUILD in M1: `planTarget`'s ResizeInPlace (M3) is the step that keeps the render pass and re-points
     // the views; until then the honest answer is to build the objects that fit and drop the ones that do not.
+    // Pipelines are built against THIS render pass, so they go with it.
+    impl->content.releaseRenderPass(images.render_pass);
     destroyTarget(impl->device_table, impl->device, images);
     images.width        = width;
     images.height       = height;
@@ -487,6 +517,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         return PresentOutcome::Skipped;
     }
 
+    // ONE DESCRIPTOR POOL RESET PER FRAME: the pool's sets are the per-draw uniform bindings, and the previous frame
+    // is complete by now (the device submits synchronously), so nothing still names them.
+    impl->content.beginFrame();
+
     for (const PassDraw* draw : clear_passes) {
         const TargetImages& images = impl->targets.at(draw->target);
 
@@ -507,12 +541,23 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         pass_begin.pClearValues      = clear_values;
 
         impl->device_table.vkCmdBeginRenderPass(commands, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
-        // Nothing is drawn yet (M2): the render pass' CLEAR/STORE pair is the whole effect this step asks for.
+        // WHAT THIS PASS DRAWS. Each draw description is borrowed for this call; every command inside it becomes one
+        // drawing call (M2: one `RenderCommand` = one pipeline bind + one indexed draw).
+        for (const DrawDescription& description : draw->draws) {
+            vn::String                      why;
+            vn::graphics::DiagnosticCategory category = DiagnosticCategory::ContentSkipped;
+            (void)impl->content.record(commands, images.render_pass, images.width, images.height, description, *draw, impl->default_program.get(), &why, &category);
+            if (!why.empty() && !impl->reported_content) {
+                impl->reported_content = true;
+                reportDiagnostic(DiagnosticSeverity::Warning, category, why);
+            }
+        }
         impl->device_table.vkCmdEndRenderPass(commands);
     }
 
     if (impl->device_table.vkEndCommandBuffer(commands) != VK_SUCCESS) {
         reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed, u8"vk: vkEndCommandBuffer failed");
+        impl->content.endFrame();
         impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
         return PresentOutcome::Skipped;
     }
@@ -526,6 +571,9 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                            impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
     (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
     impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
+    // The per-draw uniform buffers were named by the command buffer that just finished (or failed to): the queue is
+    // idle either way, so the bytes can go.
+    impl->content.endFrame();
 
     if (!submitted) {
         reportDiagnostic(DiagnosticSeverity::Error,
