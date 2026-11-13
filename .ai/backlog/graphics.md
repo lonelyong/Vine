@@ -45,6 +45,7 @@
 | T12 | Windows 窗口读像素 | `TestHostWindow` 是 XCB 窗口；Windows 侧仍 SKIP | 有 Windows 机器时 |
 | T13 | Wayland 回退实测 | 只按 WSI 契约实现，未在真 Wayland 上跑过 | 手上有 Wayland 会话 |
 | T14 | H2 可选目视 | “边缩放边点菜单”需真实交互桌面 | 可选 |
+| T33 | 设备创建偶发（疑 WSL） | `VsgBackendTest.ACubeMapInputReachesAContentProgramAsACubeSampler` 首跑 `initialize()` false（约 10.7 s，日志里窗口尺寸报 `4294967295x4294967295`），重跑绿；同一提交下其余用例全部正常。判断：更像是 WSLg 下窗口/设备创建的偶发，不是回归（当时 `git stash` 前后行为一致，且与本次改动无交集）。**下次在 Windows 桌面机器上复跑同一用例**：绿 → WSL 环境问题，删本条；红 → 按设备创建失败查（`VsgHostWindow` 句柄与 `DeviceProbe` 的选择） | 有 Windows 桌面机器时（与 T12 同一轮） |
 
 ### 2.4 对象模型遗留
 
