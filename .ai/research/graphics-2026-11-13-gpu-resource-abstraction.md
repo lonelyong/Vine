@@ -6,6 +6,8 @@
 > **方法**：只读现行代码与设计（不新建抽象）；每条判断给出可核对的事实
 > **一句话结论**：今天统一的是**规则与账**（pin / 退役 / 驻留），这层已经完备；"统一类型 / 多态总表"
 > 在第二个后端出现前没有消费者，且真出现时正确的形状是**不透明资源描述 + 每后端实现**，不是基类。
+> **追加（2026-11-13）**：首个第二后端确定为**手撸 Vulkan**（学习/研究），与 vsg 同 API 家族——
+> 上面的结论不变（它消费的是接缝，不是资源类型），见 §8。
 
 ## 1. 问题
 
@@ -152,7 +154,56 @@
 - 第二个后端需要与 vsg **共享同一个 GPU 对象**（不同 API 下不成立，但若出现软件/硬件双后端共享内存，另当别论）；
 - 宿主需要**逐对象**读驻留（今天只有逐类）。那时扩的是 `ResidencyLedger` 的粒度，仍不是基类。
 
-## 8. 参考
+## 8. 追加（2026-11-13）：首个第二后端确定为手撸 Vulkan（学习/研究）
+
+结论先说：**同 API 家族**，所以上面"不做类型抽象"的结论不变；它消费的是**接缝**，不是资源类型。
+
+### 8.1 为什么它不触发 T15 / T30 的类型问题
+
+- `backend/` 的 Vulkan 策略（`device_color_formats` 的 `VkFormat` 语义、`subpass`、`ImageLayout`）对它是**可用**的，
+  不需要先改成不透明格式码——那是跨 API 家族（D3D12 / Metal / WebGPU）的问题。**T15 不触发**。
+- T30 的"统一类型 / 多态总表"仍无跨 API 消费者；vkraw 直接实现 `RenderDevice`（18 动词）+ `RenderFrameExecutor`
+  （2 动词）+ `WindowPresentTarget`，寿命规则复用 `backend/` 的四个机制头。**T30 的触发条件收窄为"第二个 API 家族的后端"**。
+- T32（`RenderBackend` 聚合拆分）**不阻塞**：直接实现聚合即可。
+
+### 8.2 形态
+
+- 插件 `gfx_backend_vkraw`，在 `load()` 里注册工厂 `"vkraw"`（`RenderApi::Vulkan`）；**不是默认后端**，
+  vsg 仍是生产路径；测试独立（新建 `test_vkraw`，像 `tests/test_vsg` 一样直接编译插件源码）。
+- **复用**（SDK `backend/`）：`ResourceTable`、`RetirementQueue`、`FrameTimeline`、`ResidencyLedger`、`FrameArena`、
+  `MaterialArena`、`Keys` / `TargetPlan` / `Streams` / `ClearPlan` / `Readback` / `PixelProbe` / `Observe`；
+  `ShaderAbi` 的四个块与 `vn_params.glsl` 是 L1 契约。
+- **自己写**（学习内容）：instance / physical device / device / queue（volk）、简单分配器、命令池/缓冲、
+  fence/semaphore、image/view/render pass/framebuffer、pipeline（`ShaderProgramDescription` → glslang → SPIR-V；
+  `VertexLayoutKey` → `VkVertexInput`；`RenderState` → 固定状态）、descriptor 布局/池/集、流上传、读回、swapchain。
+
+### 8.3 里程碑（每级都有可跑的验收）
+
+| # | 内容 | 验收 |
+|---|---|---|
+| M0 | 插件 + factory + `initialize/shutdown` + `capabilities`（无窗口） | registry 测试 + 设备门控的 init/shutdown，validation 0 error |
+| M1 | 离屏 target（RGBA8/D24）+ 无 draw 的 pass + `ClearPolicy` + `readColorBuffer` | 像素 = pass 的 clear 色 |
+| M2 | 一个 content draw：内置程序 → pipeline；`GeometryDescription` 通道 → 上传；`VineViewBlock` / `VineDrawBlock`；`vkCmdDrawIndexed` | 三角形像素（`SdkPixelFixture` 式读回） |
+| M3 | `TargetDecision`（ResizeInPlace/Rebuild）、viewport/scissor、depth range、MRT、per-attachment clear、`PassDraw::state` | resize 不重编管线；MRT 各附件值正确 |
+| M4 | 材质块 + 纹理 + 灯块 + screen draw + 透明排序（引擎已排好） | 材质/采样/全屏拷贝像素 |
+| M5 | `createSurfaceTarget` / `WindowPresentTarget` / acquire / present / resize | 窗口像素与 `PresentRecord` |
+| M6 | `ResidencyLedger` 每类、`releaseContent`、`prepareFrame`、`FrameReport` | 稳态 0 上传/0 编译；驻留随内容离开而下降 |
+| M7 | 与 vsg 对拍：`test_vsg` 的设备无关子集 + 像素子集 | 同一 `FrameDescription` 的记录/像素 diff |
+
+### 8.4 成本与风险
+
+- M0–M2 约 2–4k 行（含 CMake/测试），是学习核心，短周期能看到三角形。
+- M3–M6 到"能跑现有像素套件"约 10–20k 行；vsg 是 28,354 行，vkraw 可以按需裁剪（先不做阴影/实例）。
+- 风险：validation layer 的设备门控（WSLg）、glslang 运行时编译、插件 MODULE 不可链接（测试直接编译源码）、
+  `VN_GRAPHICS_BACKEND_CONSUMER` 定义。不引入新第三方：volk / glslang 已在树内。
+
+### 8.5 与默认路径的纪律
+
+- vkraw **不进**默认后端选择（宿主按名字 `create("vsg")`）；`SdkPixelFixture` 与现有宿主仍用 vsg。
+- 它的价值是**接缝的证据**：第二个实现能回答"`FrameDescription` 是不是够用、`backend/` 的规则是不是可复用"，
+  这本身就是 T30 想要的东西——只是以"第二个实现"而不是"统一类型"的形式出现。
+
+## 9. 参考
 
 - 设计：`../design/graphics-architecture.md` 2.1 / 2.2 / 2.4 / 2.9、`../design/graphics-threading.md` §2、
   `../design/vsg-backend.md` C1–C6、`../design/graphics-content-lifecycle.md`

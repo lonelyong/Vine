@@ -777,3 +777,16 @@
 - **前置**：T15（`device_color_formats` / `subpass` 等 Vulkan 策略 → 不透明设备格式码）与 T32（`RenderBackend` 聚合拆
   成 device / executor 两个出口）；S4/S5 另算。
 - **文档**：`../research/graphics-2026-11-13-gpu-resource-abstraction.md`（dated，非现行），backlog T30 已链接。
+
+## 2026-11-13 —— 第二个后端定为手撸 Vulkan（`vkraw`，学习/研究）
+
+- **触发修正**：它是**同 API 家族**的第二后端 ⇒ T15（设备无关性）与 T30（统一类型）都**不触发**，只收窄触发条件为
+  “第二个 **API 家族** 的后端”；T32 不阻塞（直接实现聚合）。
+- **它消费的是接缝**：`RenderDevice`（18 动词）+ `RenderFrameExecutor`（2 动词）+ `WindowPresentTarget`；寿命规则复用
+  `backend/` 的 `ResourceTable` / `RetirementQueue` / `FrameTimeline` / `ResidencyLedger`，L1 块沿用 `ShaderAbi`。
+- **形态**：插件 `gfx_backend_vkraw` 注册工厂 `"vkraw"`（`RenderApi::Vulkan`）；不是默认后端；测试独立
+  （新建 `test_vkraw`，像 `tests/test_vsg` 一样直接编译插件源码）。
+- **里程碑**：M0 插件+设备；M1 离屏清屏+读回；M2 一个 content draw（glslang→pipeline、通道→上传、View/Draw 块）；
+  M3 targets/state/MRT；M4 材质/纹理/灯/screen draw；M5 swapchain；M6 驻留/prepare；M7 与 vsg 对拍。
+  M0–M2 约 2–4k 行，M3–M6 约 10–20k 行。详见评估 §8。
+- **文档**：backlog §1 新 T35（唯一“现在可做”项）；评估 `graphics-2026-11-13-gpu-resource-abstraction.md` §8。
