@@ -100,7 +100,7 @@
 | # | 功能 | 说明 |
 |---|---|---|
 | F17 | 几何 revision | `setRevision()` / `bumpRevision()`；只表示形状变化。 |
-| F18 | buffer revision | `Buffer::edit()` 作用域结束即公告（唯一的写入口）；`setRevision()` 只给“对象之外的写”。上传缓存只认 revision。 |
+| F18 | buffer revision | `Buffer::edit()` 作用域结束即公告（唯一的写入口）；`setRevision()` 只给“对象之外的写”。上传缓存只认 revision；revision 是 `std::atomic`（写者 release、读者 acquire），所以跨线程轮询有定义顺序。 |
 | F19 | 事实行重建 | 几何 revision 变化 ⇒ 重建 layout / 通道集 / counts。 |
 | F20 | 局部盒缓存 | `localBounds()` + `localBoundsComputationCount()` 见证。 |
 | F21 | 世界盒 | 局部盒乘父链；`subtreeBounds` 在节点自身坐标系。 |

@@ -1,6 +1,7 @@
 #pragma once
 #include "core_global.hpp"
 
+#include <atomic>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -174,11 +175,19 @@ class Buffer : public RefCounted<Buffer<T>> {
      * contents it read first. (The counterpart of `Geometry::revision()`, `Texture::revision()` and
      * `ShaderProgram::revision()`.)
      *
+     * @details
+     * - The counter is ATOMIC and the read is an ACQUIRE: a consumer (the upload cache on the frame's thread, say)
+     *   that observes a new revision has the bytes written before the edit scope ended. The writer side is a
+     *   release (`bumpRevision` / `setRevision` / `Edit`'s destructor), so the pair is a publish, not a poll of
+     *   plain memory.
+     * - Reading the bytes BEFORE observing a new revision is not made safe by this: the revision is what says
+     *   "these are the new bytes".
+     *
      * @return Monotonic revision counter (starts at 0).
      */
     [[nodiscard]] std::uint64_t revision() const noexcept
     {
-        return revision_;
+        return revision_.load(std::memory_order_acquire);
     }
 
     /**
@@ -344,7 +353,7 @@ class Buffer : public RefCounted<Buffer<T>> {
      */
     void setRevision(std::uint64_t revision) noexcept
     {
-        revision_ = revision;
+        revision_.store(revision, std::memory_order_release);
     }
 
     /**
@@ -360,12 +369,14 @@ class Buffer : public RefCounted<Buffer<T>> {
      */
     void bumpRevision() noexcept
     {
-        ++revision_;
+        revision_.fetch_add(1U, std::memory_order_release);
     }
 
   private:
     std::vector<T> data_;
-    std::uint64_t  revision_ = 0;
+    /// Atomic: the frame's thread reads it while the host owns the bytes (see revision()). The writer side is
+    /// release, so a consumer that observes the new number has the bytes written before the announcement.
+    std::atomic<std::uint64_t> revision_{ 0 };
     /// Whether a writer scope is open (see Edit): one at a time, so the end of an edit is announced once.
     std::uint32_t editing_   = 0;
 };

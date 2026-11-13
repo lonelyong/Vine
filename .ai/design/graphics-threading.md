@@ -92,18 +92,19 @@
   没有消费者的通道不做（`G8`）。
 - **边界**：publication 没有返回值，也不排队 —— 它是**一个指针交换**，没有"满了"这种状态。
 
-### 2.4 字节内容：一个已知残余，不是第二条值通道
+### 2.4 字节内容：计数器是原子，字节仍不走值通道
 
-- **是什么**：几何的**形状**（通道集合、切片、primitive）走发布的描述值；几何/纹理的**字节**不走 —— 字节在任何线程写
-  （加载 worker、流式写入），驻留条目问“我上传的 revision 还是不是它上传时那个”（`StreamUploads` 的 live 判据）。
-  这条轮询**今天读的是活对象的 `revision()`**，而那个计数器**不是** `std::atomic`（2026-11-12 核对：`Buffer` /
-  `Geometry` / `Texture` / `ShaderProgram` / `Material` 里都是普通 `std::uint64_t`）。
-- **为什么保留**：把每次 `Buffer::edit()` 变成一次发布会让“编辑”与“帧”强耦合，且发布要承受每帧上千条。
-- **边界**：这是**已知残余**（backlog T31）：当流式写入真的与引擎线程并发时，轮询本身是未定义行为。修法不在本轮
-  （它需要“写入声明一条值”而不是把计数器改 atomic —— 后者只修一个字段）：见 T31 的触发条件。
-  **已复现（2026-11-13）**：`StreamUploadsTest.AnEditFromTheHostThreadRetiresTheSameUploadASerialOne` 在普通构建里
-  钉住“并发编辑与串行编辑同一答案”，TSan 下报 `bumpRevision()`（main）与 `revision()`（帧线程）这一对。
-  帧载荷的**内容**（形状、材质值、程序文本、灯）不靠这条通道，它们全部是 §2.14 的值。
+- **是什么**：几何的**形状**（通道集合、切片、primitive）走发布的描述值；几何/纹理的**字节**不走——字节在写者自己的
+  线程上写（加载 worker、流式写入），驻留条目问“我上传的 revision 还是不是它上传时那个”（`StreamUploads` 的 live 判据）。
+- **同步在哪里**：`Buffer::revision` 与 `Texture::revision` 是 `std::atomic<std::uint64_t>`——写者（`Edit` 作用域
+  结束 / `setRevision` / 一次填充）做 release，读者（`revision()`）做 acquire，所以“观察到新 revision”就“看得见
+  revision 之前写的字节”。`Geometry` / `ShaderProgram` / `Material` 的 revision 不必原子：帧那一侧读的是发布的
+  描述值（`GeometryDescription` / `ShaderProgramDescription` / `MaterialDescription`），不是活对象。
+- **为什么保留轮询**：把每次 `Buffer::edit()` 变成一次发布会让“编辑”与“帧”强耦合，且发布要承受每帧上千条。
+- **边界**：原子只覆盖“计数器 + 它之前的字节”；宿主在**公告之后**继续写同一段字节（不发新 revision）仍然是合同外——
+  帧读到的是它写进去的东西。帧载荷的**内容**（形状、材质值、程序文本、灯）不靠这条通道，它们全部是 §2.14 的值。
+  **回归用例（2026-11-13）**：`StreamUploadsTest.AnEditFromTheHostThreadRetiresTheSameUploadASerialOne`——普通构建与
+  TSan 下都必须绿（原子化之前 TSan 报过 `bumpRevision()` vs `revision()` 这一对）。
 
 ### 2.5 发布是一次指针交换，不是一次事务
 
@@ -281,7 +282,7 @@
 | F4 | 节点状态更新 | placement / opacity / layers / drawOrder 折叠进下一次发布；隐藏 = 不产生行 | 已落地 |
 | F5 | 几何、材质与程序值的更新 | 行携带 `(id, revision)` 与值；旧帧读旧值 | 已落地 |
 | F6 | 相机更新 | 相机是内容、事件即刻生效；查询用被答完那一帧的快照（N17） | 已落地 |
-| F7 | 字节内容与流式 | `Buffer::edit()` 只推进 revision；引擎侧按驻留条目轮询（已知残余，见 §2.4） | 已落地 |
+| F7 | 字节内容与流式 | `Buffer::edit()` 只推进 revision（revision 是 atomic，写者 release、读者 acquire）；引擎侧按驻留条目轮询（见 §2.4） | 已落地 |
 | F8 | 每帧 | 内容半段：钩子 → 发布 → describe；引擎半段：bind → expand → execute → present → 报告 | 已落地 |
 | F9 | 表面事件与交换链 | 尺寸是帧自己的值；设备动词是帧间操作；呈现结局是值 | 已落地 |
 | F10 | 关闭与拆解 | 停帧 → 引擎半段收尾 → 引擎线程释放 → join | 已落地 |

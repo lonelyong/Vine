@@ -754,3 +754,15 @@
 - **同类活读（修复要一起看）**：`ChannelFacts::streamKey()`（`ContentFacts.hpp:233`）、instance buffer
   （`ContentPass.cpp:1123`）、textures（`ContentSets.cpp:268`、`MaterialImages.cpp:516`）。
 - **文档**：`graphics-threading.md` §2.4 加用例指针；backlog T31 记录证据与修法范围。
+
+## 2026-11-13 —— T31 修复：revision 计数器原子化
+
+- **改动**：`Buffer<T>::revision_` 与 `Texture::revision_` 改成 `std::atomic<std::uint64_t>`；写者（`Edit` 作用域
+  结束 / `setRevision` / `setLayer`）用 release，`revision()` 用 acquire。`Geometry` / `ShaderProgram` / `Material`
+  不动——帧那侧读的是描述值，不是活对象。
+- **为什么够**：观察到新 revision ⇒ 之前写的字节可见；轮询因此有定义顺序。仍不走值通道：公告之后再写字节不发新
+  revision 仍是合同外。
+- **验证**：`StreamUploadsTest.AnEditFromTheHostThreadRetiresTheSameUploadASerialOne` 在普通构建绿；同一个 TSan
+  二进制（去掉 `AllocationCounter.cpp.o` 重链，见 backlog T34）从「1 warning」变成 0 warning。
+- **文档**：`graphics-threading.md` §2.4 / F7 与 `graphics-geometry.md` F18 改成「计数器原子、字节仍不走值通道」；
+  backlog §1 清空，T34 的触发条件记为已命中。

@@ -1,5 +1,6 @@
 #include <vine/graphics/Texture.hpp>
 
+#include <atomic>
 #include <stdexcept>
 
 VN_GRAPHICS_NS_BEGIN
@@ -100,7 +101,7 @@ void Texture::setLayer(int layer, intrusive_ptr<const imaging::Image> image)
     }
 
     sources_[static_cast<std::size_t>(layer)] = image;
-    ++revision_;
+    revision_.fetch_add(1U, std::memory_order_release);
 }
 
 raw_ptr<const imaging::Image> Texture::layer(int index) const noexcept
@@ -130,7 +131,7 @@ bool Texture::isComplete() const noexcept
 
 std::uint64_t Texture::revision() const noexcept
 {
-    return revision_;
+    return revision_.load(std::memory_order_acquire);
 }
 
 int Texture::layerCount() const noexcept

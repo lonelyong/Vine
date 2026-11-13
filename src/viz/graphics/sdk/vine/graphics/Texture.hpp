@@ -2,6 +2,7 @@
 
 #include "graphics_global.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -163,6 +164,11 @@ class VN_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
      * revision a re-filled texture would keep sampling the old upload — the same failure the shader
      * program's revision exists to prevent.
      *
+     * @details
+     * - ATOMIC with an ACQUIRE read: the backend reads this on the frame's thread while the host fills the
+     *   texture, and a reader that observes a new revision has the pixels written before that fill returned.
+     *   Every fill stores with release (see setLayer).
+     *
      * @return Monotonic revision counter (starts at 0).
      */
     [[nodiscard]] std::uint64_t revision() const noexcept;
@@ -198,7 +204,8 @@ class VN_GRAPHICS_API Texture : public Object, public RefCounted<Texture> {
     imaging::PixelFormat                             format_    = imaging::PixelFormat::Unknown;
     int                                              mip_count_ = 1;
     Kind                                             kind_      = Kind::D2;
-    std::uint64_t                                    revision_  = 0;
+    /// Atomic: the backend samples it from the frame's thread (see revision()). Fills are release.
+    std::atomic<std::uint64_t>                       revision_{ 0 };
 };
 
 /**

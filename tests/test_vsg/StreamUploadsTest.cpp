@@ -422,23 +422,20 @@ TEST(StreamUploadsTest, TheUploadedIndexArrayAliasesTheWholeModelBuffer)
 }
 
 /*
- * @brief T31: an edit on the HOST thread is swept like a serial one - and is a data race today (see the note).
+ * @brief T31: an edit on the HOST thread is swept like a serial one, and the counter pair is ordered.
  *
- * The sweep reads `entry.owner->revision()` (a plain `std::uint64_t`) on the frame's thread, while the host's
- * `Buffer::edit()` scope writes it on its own. The two accesses are unordered, and this case is the diagnostic
- * backlog T31 asks for: under ThreadSanitizer it reports exactly that pair. In an ordinary build it pins the
- * ANSWER the fix must preserve - the concurrent edit retires the old upload exactly like an edit made between
- * frames, and the next acquire uploads the new bytes.
+ * The sweep reads `entry.owner->revision()` on the frame's thread while the host's `Buffer::edit()` scope writes
+ * it on its own - the exact pair that used to be a data race and that `std::atomic` (release writer, acquire
+ * reader) now orders. In an ordinary build the case pins the ANSWER: the concurrent edit retires the old upload
+ * exactly like an edit made between frames, and the next acquire uploads the new bytes. Under ThreadSanitizer it
+ * must stay silent; before the counters became atomic it reported the pair.
  *
- * How to see the report (no device is created here, so it runs anywhere):
+ * How to run it under the sanitizer (no device is created here):
  *   cmake --build build-tsan --target test_vsg   # compiles; the LINK fails, see the note below
  *   ninja -C build-tsan -t commands test_vsg | tail -n 1 | sed 's#AllocationCounter.cpp.o##g' | bash
  *   TSAN_OPTIONS=halt_on_error=0 ./build-tsan/bin/test_vsg --gtest_filter='StreamUploadsTest.AnEditFromTheHostThread*'
  * The plain link fails today because `tests/test_vsg/AllocationCounter.cpp` replaces the global allocation
  * functions, which collide with libclang_rt.tsan_cxx's own definitions (backlog T34).
- * The unguarded case is deliberate: a sanitizer report here is the KNOWN residual documented in
- * `.ai/design/graphics-threading.md` 2.4, not a regression. Its fix is the declared `(buffer, revision)` value;
- * when that lands, this case must stay green under the sanitizer too.
  */
 TEST(StreamUploadsTest, AnEditFromTheHostThreadRetiresTheSameUploadASerialOne)
 {
