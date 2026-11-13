@@ -766,3 +766,14 @@
   二进制（去掉 `AllocationCounter.cpp.o` 重链，见 backlog T34）从「1 warning」变成 0 warning。
 - **文档**：`graphics-threading.md` §2.4 / F7 与 `graphics-geometry.md` F18 改成「计数器原子、字节仍不走值通道」；
   backlog §1 清空，T34 的触发条件记为已命中。
+
+## 2026-11-13 —— T30 评估：GPU 资源抽象
+
+- **结论**：维持触发条件型（第二个后端）；不建 `GpuResource` 基类。规则层（pin / 退役 / 驻留账 / 帧值 / 能力 /
+  目标决策）**完备**；类型层**不完备也不该现在补**（宿主没有创建 GPU 资源的动词，`RenderDevice` 18 个虚动词里 0 个）。
+- **事实**：`backend/` 24 头 3,897 行（`BackendHalfGuard` 编译期隔离）；vsg 后端 28,354 行 / 85 个 internal 文件——
+  第二后端的成本在物化层，不在“资源类型”。装载路径已有：`RenderBackendRegistry` / `RenderBackendFactory` /
+  `RenderApi` / `vn_add_plugin`。
+- **前置**：T15（`device_color_formats` / `subpass` 等 Vulkan 策略 → 不透明设备格式码）与 T32（`RenderBackend` 聚合拆
+  成 device / executor 两个出口）；S4/S5 另算。
+- **文档**：`../research/graphics-2026-11-13-gpu-resource-abstraction.md`（dated，非现行），backlog T30 已链接。

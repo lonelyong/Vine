@@ -36,7 +36,7 @@
 | T10 | V3 | 拿不到 `VkPipelineCache`（vsg 1.1.16 只有 Vulkan 类型声明，没有 cache 管理；本后端也不创建） | 推上游；影响冷启动 / 换会话 | `../design/vsg-backend.md` C6 |
 | T11 | V4 | dynamic rendering（`vkCmdBeginRendering`）vsg 记录路径不存在（1.1.16 全树无此调用） | 上游支持后合并每 pass 的 begin | 同上 |
 | T27 | 驻留的显存交易复评 | pin 模型（ADR-2026-11-10）让驻留 = 活内容所需：离屏但宿主仍持有的内容不再自动让出显存。若某宿主的显存峰值不可接受，需要重新引入一条时间/容量规则（会与“零时间窗”的判据冲突，必须走新 ADR） | 出现“大场景 + 离线模型常驻”进入显存预算的真实宿主 | `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §代价 |
-| T30 | GPU 资源抽象（统一类型 / 多态总表） | 现在统一的是**规则与账**（`ResidencyLedger` + pin），不是类型。基类或多态总表只在第二个后端出现时才值得：届时形状是“SDK 资源描述 + 每后端实现”，不是包 vsg 的基类 | 第二个后端出现（与 T15 同一触发） | `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §选项表 |
+| T30 | GPU 资源抽象（统一类型 / 多态总表） | 现在统一的是**规则与账**（`ResidencyLedger` + pin），不是类型。基类或多态总表只在第二个后端出现时才值得：届时形状是“SDK 资源描述 + 每后端实现”，不是包 vsg 的基类。**评估已做（2026-11-13）**：规则层完备、类型层无消费者；前置是 T15（设备格式码）与 T32（聚合拆分）。见 `../research/graphics-2026-11-13-gpu-resource-abstraction.md` | 第二个后端出现（与 T15 同一触发） | `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` §选项表、`../research/graphics-2026-11-13-gpu-resource-abstraction.md` |
 
 ### 2.3 平台与验证
 | # | 项 | 内容 | 触发条件 |
