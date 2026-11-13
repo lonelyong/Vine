@@ -14,11 +14,11 @@ VN_BACKEND_VK_NS_BEGIN
  *   one content draw per `RenderCommand` - a GLSL program compiled through glslang into a pipeline, the geometry's
  *   channels uploaded as vertex/index streams, the `VineViewBlock`/`VineDrawBlock` pair bound as uniforms, and
  *   `vkCmdDrawIndexed`.
- * - WHAT IT DELIBERATELY DOES NOT DO YET. No window (M5), no material/light/texture blocks and no full-screen draws
- *   (M4), no residency accounting (M6). M3 landed the target plan (`planTarget`: a resize keeps the render passes and
- *   every pipeline, a shape change rebuilds them), MRT with per-attachment clears, the depth band, the depth-LOAD
- *   variant and the pass' resolved render state. It answers `capabilities()` from what it can really serve -
- *   `render_targets == true`, `presentation == false`.
+ * - WHAT IT DELIBERATELY DOES NOT DO YET. No self-owned window (`DevicePresentation::Probe`), no shadows and no
+ *   built-in shader variant defines, no residency accounting (M6). M4 landed the engine's content ABI (material,
+ *   texture slots, lights, the draw block and the 128-byte camera push) and the full-screen draw path; M5 serves a
+ *   HOST window (`DevicePresentation::Handle`) through a per-window swapchain. It answers `capabilities()` from what
+ *   it can really serve - `render_targets == true`, and `presentation == true` once a window target can present.
  * - FRAME AND HOST VERBS. `executeFrame()` runs the off-screen passes of the frame value and records the draws of each
  *   `DrawDescription`; a pass drawing into the window, or a draw naming no program, is reported and left out. The
  *   readbacks answer the targets this device built.
@@ -95,8 +95,25 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      */
     void setRenderTarget(vn::graphics::RenderTarget* target) override;
 
-    /** @brief Gets what this device can serve TODAY (see Capabilities): M1 serves off-screen colour targets. */
+    /** @brief Gets what this device can serve TODAY (see Capabilities): off-screen targets and, when asked, a window. */
     [[nodiscard]] vn::graphics::Capabilities capabilities() const noexcept override;
+
+    /**
+     * @brief Creates (or answers) the target this device presents @p native_handle through.
+     *
+     * @details
+     * - ONE LIVE TARGET PER WINDOW: a second ask for the same handle answers `WindowOccupied`.
+     * - `DevicePresentation::None` answers `NoPresentation` silently; a device asked for a window without one (or
+     *   the not-built self-owned window of `Probe`) answers `UnsupportedSurface` and reports it once.
+     * - The target is BORROWED and the device owns it (it lives until `shutdown()`); a target created before
+     *   `initialize()` is attached when the device comes up, which is the shape the SDK's contract describes.
+     *
+     * @param native_handle Native window handle (`HWND` on Windows), or null when no host window is named.
+     * @param why           Receives why no target was created (Ok when one was), or null to ignore.
+     * @return The target, or null (see @p why).
+     */
+    [[nodiscard]] vn::raw_ptr<vn::graphics::WindowPresentTarget> createSurfaceTarget(void* native_handle,
+                                                                                  vn::graphics::SurfaceTargetResult* why = nullptr) override;
 
     /**
      * @brief Reads back a colour attachment of an off-screen target this device drew into.

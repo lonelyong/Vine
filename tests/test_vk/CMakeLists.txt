@@ -10,6 +10,7 @@ add_executable(${TEST_NAME}
         ContentTargetTest.cpp
         OffscreenClearTest.cpp
         StateMappingTest.cpp
+        WindowPresentTest.cpp
 
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/BarrierPlan.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ContentDraw.cpp
@@ -18,6 +19,8 @@ add_executable(${TEST_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/LightBlock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ShaderCompiler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/TargetImages.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/WindowTarget.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/XcbSurface.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/shell/BackendFactory.cpp)
 
 target_include_directories(${TEST_NAME} PRIVATE
@@ -28,5 +31,17 @@ target_include_directories(${TEST_NAME} PRIVATE
 target_compile_definitions(${TEST_NAME} PRIVATE VN_GRAPHICS_BACKEND_CONSUMER)
 
 target_link_libraries(${TEST_NAME} PRIVATE vn::Appfw vn::Graphics tp::volk glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits)
+
+# THE WINDOW TEST creates a real X11 window with xcb when the development package is present. The PLUGIN never links
+# xcb (it resolves xcb_connect/xcb_disconnect with dlopen); this is the TEST's own measuring instrument, and a machine
+# without xcb simply runs the other cases (the test is compiled out).
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(VK_TEST_XCB QUIET IMPORTED_TARGET xcb)
+endif()
+if(VK_TEST_XCB_FOUND)
+    target_link_libraries(${TEST_NAME} PRIVATE PkgConfig::VK_TEST_XCB)
+    target_compile_definitions(${TEST_NAME} PRIVATE VN_TEST_HAVE_XCB)
+endif()
 
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -14,6 +15,7 @@
 #include <vine/backend_vk/internal/BarrierPlan.hpp>
 #include <vine/backend_vk/internal/ContentDraw.hpp>
 #include <vine/backend_vk/internal/TargetImages.hpp>
+#include <vine/backend_vk/internal/WindowTarget.hpp>
 #include <vine/graphics/Capabilities.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/PresentTarget.hpp>
@@ -26,6 +28,7 @@ using vn::graphics::Capabilities;
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::DiagnosticSeverity;
 using vn::graphics::DeviceDesc;
+using vn::graphics::DevicePresentation;
 using vn::graphics::DrawDescription;
 using vn::graphics::FrameDescription;
 using vn::graphics::PassDraw;
@@ -33,6 +36,7 @@ using vn::graphics::PresentOutcome;
 using vn::graphics::PresentTarget;
 using vn::graphics::ReadbackResult;
 using vn::graphics::RenderTarget;
+using vn::graphics::SurfaceTargetResult;
 using vn::graphics::backend::ImageLayout;
 using vn::graphics::backend::planTarget;
 using vn::graphics::backend::RepairReason;
@@ -46,6 +50,15 @@ namespace
 
 /// @brief The layer this backend asks for whenever the loader has it (see Device::initialize).
 constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
+
+/// @brief The window-system surface extension this build can use (empty where no window is served).
+#if defined(_WIN32)
+constexpr const char* kPlatformSurfaceExtensionName = "VK_KHR_win32_surface";
+#elif defined(__APPLE__)
+constexpr const char* kPlatformSurfaceExtensionName = "";
+#else
+constexpr const char* kPlatformSurfaceExtensionName = "VK_KHR_xcb_surface";
+#endif
 
 /**
  * @brief Builds a diagnostic message from a driver string.
@@ -111,9 +124,14 @@ struct Device::Impl {
     /// The program content without one of its own is drawn with, taken as a VALUE when it was announced.
     vn::graphics::ShaderProgramDescriptionPtr default_program{};
 
+    /// The windows this device presents through (one per host handle; owned here, borrowed by the host).
+    std::vector<std::unique_ptr<WindowTarget>> surfaces;
+    /// Whether this session was opened with a presentation intent (a window half exists).
+    bool presentation_wanted{ false };
+
     /// One report each for the answers M1 cannot serve, so a host is told once rather than per frame.
     bool reported_no_targets{ false };
-    bool reported_window{ false };
+    bool reported_surface{ false };
     bool reported_content{ false };
     bool reported_size_unknown{ false };
     bool reported_samples{ false };
@@ -162,16 +180,53 @@ bool Device::initialize()
         }
     }
     std::uint32_t extension_count = 0;
+    bool          has_surface_extension  = false;
+    bool          has_platform_extension = false;
     if (vkEnumerateInstanceExtensionProperties(nullptr, &extension_count, nullptr) == VK_SUCCESS && extension_count > 0U) {
         std::vector<VkExtensionProperties> extensions(extension_count);
         if (vkEnumerateInstanceExtensionProperties(nullptr, &extension_count, extensions.data()) == VK_SUCCESS) {
             for (const VkExtensionProperties& extension : extensions) {
                 if (std::strcmp(extension.extensionName, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0) {
                     has_debug_utils = true;
-                    break;
+                }
+                if (std::strcmp(extension.extensionName, VK_KHR_SURFACE_EXTENSION_NAME) == 0) {
+                    has_surface_extension = true;
+                }
+                if (kPlatformSurfaceExtensionName[0] != '\0' && std::strcmp(extension.extensionName, kPlatformSurfaceExtensionName) == 0) {
+                    has_platform_extension = true;
                 }
             }
         }
+    }
+
+    // THE WINDOW HALF'S CREATION INTENT. Handle names the host's window (a wiring error otherwise); Probe's self-owned
+    // window is not built yet, so a Probe session with no target created for it answers presentation=false instead of
+    // pretending. A missing surface extension is the same answer: this machine cannot present, and the off-screen path
+    // still runs whole frames.
+    impl->presentation_wanted = impl->desc.presentation != DevicePresentation::None;
+    if (impl->presentation_wanted && impl->desc.presentation == DevicePresentation::Probe && impl->surfaces.empty()) {
+        reportDiagnostic(DiagnosticSeverity::Warning,
+                         DiagnosticCategory::UnsupportedRequest,
+                         u8"vk: a device-owned window (DevicePresentation::Probe) is not built; name a host window (Handle) or ask for None");
+        impl->presentation_wanted = false;
+    }
+    if (impl->presentation_wanted && impl->desc.presentation == DevicePresentation::Handle && impl->desc.native_handle == nullptr &&
+        impl->surfaces.empty()) {
+        reportDiagnostic(DiagnosticSeverity::Error,
+                         DiagnosticCategory::UnsupportedRequest,
+                         u8"vk: DevicePresentation::Handle needs a native window handle; this device presents nothing");
+        impl->presentation_wanted = false;
+    }
+    if (impl->presentation_wanted && (!has_surface_extension || !has_platform_extension)) {
+        reportDiagnostic(DiagnosticSeverity::Warning,
+                         DiagnosticCategory::UnsupportedRequest,
+                         u8"vk: the instance does not offer the surface extensions a window needs; this device presents nothing");
+        impl->presentation_wanted = false;
+    }
+    if (impl->presentation_wanted && impl->desc.presentation == DevicePresentation::Handle && impl->surfaces.empty()) {
+        // The SDK's Handle form names the window as a CREATION input; the target object exists before the instance so
+        // the surface can be created as soon as it does.
+        impl->surfaces.push_back(std::make_unique<WindowTarget>(impl->desc.native_handle));
     }
 
     const bool want_validation = has_validation;
@@ -187,13 +242,17 @@ bool Device::initialize()
 
     const char*   layer_names[1]{};
     std::uint32_t layer_name_count = 0;
-    const char*   extension_names[1]{};
+    const char*   extension_names[3]{};
     std::uint32_t extension_name_count = 0;
     if (want_validation) {
         layer_names[layer_name_count++] = kValidationLayerName;
     }
     if (want_debug) {
         extension_names[extension_name_count++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+    }
+    if (impl->presentation_wanted) {
+        extension_names[extension_name_count++] = VK_KHR_SURFACE_EXTENSION_NAME;
+        extension_names[extension_name_count++] = kPlatformSurfaceExtensionName;
     }
 
     VkInstanceCreateInfo instance_info{};
@@ -212,6 +271,21 @@ bool Device::initialize()
     // Instance-level commands exist only after this (volk resolves them per instance).
     volkLoadInstance(impl->instance);
     impl->validation = want_validation;
+
+    // THE SURFACES, while the instance is the newest object: a Vulkan surface is created on the instance and is what
+    // the physical device is judged against, which is why it exists before the device is picked.
+    if (impl->presentation_wanted) {
+        for (const auto& surface : impl->surfaces) {
+            vn::String why;
+            if (!surface->createSurface(impl->instance, &why)) {
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
+                                 why.empty() ? vn::String(u8"vk: the host window's surface could not be created") : std::move(why));
+                impl->presentation_wanted = false;
+                break;
+            }
+        }
+    }
 
     if (want_debug) {
         VkDebugUtilsMessengerCreateInfoEXT messenger_info{};
@@ -245,6 +319,9 @@ bool Device::initialize()
         return false;
     }
 
+    const VkSurfaceKHR presentation_surface =
+        impl->presentation_wanted && !impl->surfaces.empty() ? impl->surfaces.front()->surfaceHandle() : VK_NULL_HANDLE;
+
     for (const VkPhysicalDevice candidate : physical_devices) {
         std::uint32_t family_count = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(candidate, &family_count, nullptr);
@@ -254,11 +331,19 @@ bool Device::initialize()
         std::vector<VkQueueFamilyProperties> families(family_count);
         vkGetPhysicalDeviceQueueFamilyProperties(candidate, &family_count, families.data());
         for (std::uint32_t index = 0; index < family_count; ++index) {
-            if ((families[index].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0U) {
-                impl->physical     = candidate;
-                impl->queue_family = index;
-                break;
+            if ((families[index].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0U) {
+                continue;
             }
+            if (presentation_surface != VK_NULL_HANDLE) {
+                VkBool32 present_supported = VK_FALSE;
+                if (vkGetPhysicalDeviceSurfaceSupportKHR(candidate, index, presentation_surface, &present_supported) != VK_SUCCESS ||
+                    present_supported == VK_FALSE) {
+                    continue;
+                }
+            }
+            impl->physical     = candidate;
+            impl->queue_family = index;
+            break;
         }
         if (impl->physical != VK_NULL_HANDLE) {
             break;
@@ -283,6 +368,34 @@ bool Device::initialize()
     device_info.sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     device_info.queueCreateInfoCount = 1U;
     device_info.pQueueCreateInfos    = &queue_info;
+
+    // THE SWAPCHAIN EXTENSION: only when a window is to be served, and only if the device offers it.
+    const char* device_extension_names[1]{ "VK_KHR_swapchain" };
+    if (impl->presentation_wanted) {
+        std::uint32_t available = 0;
+        bool          found     = false;
+        if (vkEnumerateDeviceExtensionProperties(impl->physical, nullptr, &available, nullptr) == VK_SUCCESS && available > 0U) {
+            std::vector<VkExtensionProperties> extensions(available);
+            if (vkEnumerateDeviceExtensionProperties(impl->physical, nullptr, &available, extensions.data()) == VK_SUCCESS) {
+                for (const VkExtensionProperties& extension : extensions) {
+                    if (std::strcmp(extension.extensionName, "VK_KHR_swapchain") == 0) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!found) {
+            reportDiagnostic(DiagnosticSeverity::Warning,
+                             DiagnosticCategory::UnsupportedRequest,
+                             u8"vk: the device does not offer VK_KHR_swapchain; this device presents nothing");
+            impl->presentation_wanted = false;
+        }
+    }
+    if (impl->presentation_wanted) {
+        device_info.enabledExtensionCount   = 1U;
+        device_info.ppEnabledExtensionNames = device_extension_names;
+    }
 
     if (vkCreateDevice(impl->physical, &device_info, nullptr, &impl->device) != VK_SUCCESS) {
         reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed, u8"vk: vkCreateDevice failed");
@@ -314,6 +427,23 @@ bool Device::initialize()
 
     vkGetPhysicalDeviceMemoryProperties(impl->physical, &impl->memory);
 
+    // THE TIMESLICE WHERE THE SWAPCHAINS ARE MADE: the device (and therefore its tables) exist, so each window's
+    // surface can now be paired with a swapchain. A target that cannot be attached stays detached: the host still
+    // holds the object it was given, and every later call answers the truth instead of touching a dead surface.
+    if (impl->presentation_wanted) {
+        const WindowDevice window_device{ &impl->device_table, impl->instance, impl->physical, impl->device, impl->queue, impl->queue_family, impl->memory };
+        for (const auto& surface : impl->surfaces) {
+            vn::String why;
+            if (!surface->attach(window_device, &why)) {
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
+                                 why.empty() ? vn::String(u8"vk: the host window's swapchain could not be created") : std::move(why));
+                impl->presentation_wanted = false;
+                break;
+            }
+        }
+    }
+
     // CAPABILITIES ARE WHAT THIS BACKEND CAN SERVE, not what the device can do: M1 builds off-screen colour targets and
     // reads them back, and still presents nothing (M5).
     VkPhysicalDeviceProperties properties{};
@@ -321,7 +451,7 @@ bool Device::initialize()
 
     impl->caps                         = Capabilities{};
     impl->caps.render_targets          = true;
-    impl->caps.presentation            = false;
+    impl->caps.presentation            = impl->presentation_wanted;
     impl->caps.features                = 0U;
     impl->caps.max_samples             = 1U;
     impl->caps.max_anisotropy          = 1.0F;
@@ -357,6 +487,10 @@ void Device::shutdown()
         }
         impl->targets.clear();
 
+        // The window targets first: their destructors use the device table/instance this block is about to destroy.
+        impl->surfaces.clear();
+        impl->presentation_wanted = false;
+
         if (impl->completion != VK_NULL_HANDLE) {
             impl->device_table.vkDestroyFence(impl->device, impl->completion, nullptr);
             impl->completion = VK_NULL_HANDLE;
@@ -386,7 +520,7 @@ void Device::shutdown()
     impl->caps                = Capabilities{};
     impl->default_program     = nullptr;
     impl->reported_no_targets = false;
-    impl->reported_window     = false;
+    impl->reported_surface    = false;
     impl->reported_content    = false;
     impl->reported_size_unknown = false;
     impl->reported_samples    = false;
@@ -411,6 +545,64 @@ vn::graphics::RenderFrameExecutor& Device::executor()
 void Device::setRenderTarget(RenderTarget* target)
 {
     impl->target = target;
+}
+
+vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void* native_handle, SurfaceTargetResult* why)
+{
+    const auto answer = [why](const SurfaceTargetResult result) {
+        if (why != nullptr) {
+            *why = result;
+        }
+    };
+
+    // A DISPLAY-LESS DEVICE ANSWERS SILENTLY: that is a first-class state, not a failure (see SurfaceTargetResult).
+    if (impl->desc.presentation == DevicePresentation::None) {
+        answer(SurfaceTargetResult::NoPresentation);
+        return nullptr;
+    }
+    if (native_handle == nullptr) {
+        answer(SurfaceTargetResult::UnsupportedSurface);
+        if (!impl->reported_surface) {
+            impl->reported_surface = true;
+            reportDiagnostic(DiagnosticSeverity::Warning,
+                             DiagnosticCategory::UnsupportedRequest,
+                             u8"vk: a window target needs a host window handle (the self-owned Probe window is not built)");
+        }
+        return nullptr;
+    }
+    for (const auto& surface : impl->surfaces) {
+        if (surface->nativeHandle() == native_handle) {
+            answer(SurfaceTargetResult::WindowOccupied);
+            return surface.get();
+        }
+    }
+
+    auto target = std::make_unique<WindowTarget>(native_handle);
+    if (initialized()) {
+        const WindowDevice window_device{
+            &impl->device_table, impl->instance, impl->physical, impl->device, impl->queue, impl->queue_family, impl->memory
+        };
+        vn::String reason;
+        if (!target->attach(window_device, &reason)) {
+            answer(SurfaceTargetResult::UnsupportedSurface);
+            if (!impl->reported_surface) {
+                impl->reported_surface = true;
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
+                                 reason.empty() ? vn::String(u8"vk: the window target could not be created") : std::move(reason));
+            }
+            return nullptr;
+        }
+        // A target accepted after initialize() still means this session presents.
+        impl->presentation_wanted = true;
+        impl->caps.presentation    = true;
+    }
+    // Before initialize(): the target only remembers the handle; the surface and swapchain are created when the
+    // instance and the device exist (see initialize).
+    WindowTarget* raw = target.get();
+    impl->surfaces.push_back(std::move(target));
+    answer(SurfaceTargetResult::Ok);
+    return raw;
 }
 
 bool Device::ensureTarget(const RenderTarget& target)
@@ -495,7 +687,6 @@ Capabilities Device::capabilities() const noexcept
 
 PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget* present_to)
 {
-    (void)present_to;
     if (!initialized()) {
         reportDiagnostic(DiagnosticSeverity::Error,
                          DiagnosticCategory::SubmissionFailed,
@@ -503,29 +694,63 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         return PresentOutcome::Skipped;
     }
 
-    // WHICH PASSES THIS BACKEND CAN RUN TODAY: the ones that name an off-screen target. Everything else is reported
-    // once (a window pass is M5) instead of being drawn wrong. A pass that announces NO clear is served by the
-    // both-attachments LOAD variant (a screen pass), or by the CLEAR variant when its target is fresh.
-    std::vector<const PassDraw*> runnable_passes;
+    // WHICH PASSES THIS BACKEND CAN RUN: off-screen passes, and WINDOW passes when the frame names one of this
+    // device's own targets as its presenter. A frame that names no presenter presents nowhere (a first-class state:
+    // an offline bake), and a pass that names no target while a presenter IS named draws into that window.
+    WindowTarget* window = nullptr;
+    if (present_to != nullptr) {
+        auto* candidate = dynamic_cast<WindowTarget*>(present_to);
+        for (const auto& surface : impl->surfaces) {
+            if (surface.get() == candidate) {
+                window = candidate;
+                break;
+            }
+        }
+    }
+
+    struct Runnable {
+        const PassDraw* draw{ nullptr };
+        bool            window{ false };
+    };
+
+    std::vector<Runnable> runnable_passes;
     runnable_passes.reserve(frame.passes.size());
+    bool window_acquired = false;
     for (const FrameDescription::Pass& entry : frame.passes) {
         if (!entry.draw.has_value()) {
             continue; // a pass that issued nothing: the scope opens and closes, nothing to record
         }
         const PassDraw& draw = *entry.draw;
         if (draw.target == nullptr) {
-            if (!impl->reported_window) {
-                impl->reported_window = true;
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::UnsupportedRequest,
-                                 u8"vk: a pass drawing into the window is not served yet (M5); it was left out");
+            if (window == nullptr || !window->ready()) {
+                if (!impl->reported_surface) {
+                    impl->reported_surface = true;
+                    reportDiagnostic(DiagnosticSeverity::Warning,
+                                     DiagnosticCategory::UnsupportedRequest,
+                                     u8"vk: a window pass names no presenter this device handed out; it was left out");
+                }
+                continue;
             }
+            if (!window_acquired) {
+                vn::String why;
+                if (!window->acquire(&why)) {
+                    if (!impl->reported_surface) {
+                        impl->reported_surface = true;
+                        reportDiagnostic(DiagnosticSeverity::Warning,
+                                         DiagnosticCategory::UnsupportedRequest,
+                                         why.empty() ? vn::String(u8"vk: the window's next image could not be acquired") : std::move(why));
+                    }
+                    continue;
+                }
+                window_acquired = true;
+            }
+            runnable_passes.push_back(Runnable{ &draw, true });
             continue;
         }
         if (!ensureTarget(*draw.target)) {
             continue;
         }
-        runnable_passes.push_back(&draw);
+        runnable_passes.push_back(Runnable{ &draw, false });
     }
 
     if (runnable_passes.empty()) {
@@ -533,8 +758,8 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
             impl->reported_no_targets = true;
             reportDiagnostic(DiagnosticSeverity::Info,
                              DiagnosticCategory::UnsupportedRequest,
-                             u8"vk: the frame had no pass this backend can run yet (M4 serves off-screen targets and their "
-                             u8"content/screen draws); nothing was submitted");
+                             u8"vk: the frame had no pass this backend can run (off-screen targets and host windows are "
+                             u8"served); nothing was submitted");
         }
         return PresentOutcome::Skipped;
     }
@@ -566,14 +791,16 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     // is complete by now (the device submits synchronously), so nothing still names them.
     impl->content.beginFrame();
 
-    for (const PassDraw* draw : runnable_passes) {
+    bool first_window_pass = true;
+    for (const Runnable& item : runnable_passes) {
+        const PassDraw& draw = *item.draw;
         // THE PASS' TEXTURES ARE PREPARED BEFORE ITS RENDER PASS BEGINS: an upload records image barriers and
         // buffer-to-image copies, neither of which is legal inside a render pass instance.
-        impl->content.preparePass(commands, draw->draws);
+        impl->content.preparePass(commands, draw.draws);
 
         // A SOURCE A SCREEN DRAW SAMPLES is about to be read: transition it to SHADER_READ_ONLY now, where an image
         // barrier is unambiguously allowed (before any render pass instance begins).
-        for (const DrawDescription& description : draw->draws) {
+        for (const DrawDescription& description : draw.draws) {
             if (description.kind != DrawDescription::Kind::Screen || description.source == nullptr) {
                 continue;
             }
@@ -600,69 +827,95 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
             sampled.color_sampled = true;
         }
 
-        TargetImages& images = impl->targets.at(draw->target);
+        TargetImages*                                  images        = nullptr;
+        VkRenderPass                                   render_pass   = VK_NULL_HANDLE;
+        VkFramebuffer                                  framebuffer   = VK_NULL_HANDLE;
+        VkExtent2D                                     extent{};
+        std::uint32_t                                  color_count   = 0U;
+        bool                                           has_depth     = false;
+        vn::graphics::backend::RenderPassCompatibility compatibility{};
 
-        // A TARGET A SCREEN DRAW SAMPLED is in SHADER_READ_ONLY: put its colour images back before this pass writes
-        // them (the LOAD variants name the attachment layout explicitly, so only the UNDEFINED variants would not care).
-        if (images.color_sampled) {
-            for (const VkImage image : images.colors) {
-                const VkImageMemoryBarrier back = barrierBetween(image,
-                                                                 stateOf(ImageLayout::ShaderReadOnly),
-                                                                 stateOf(ImageLayout::ColorAttachment),
-                                                                 VK_IMAGE_ASPECT_COLOR_BIT);
-                impl->device_table.vkCmdPipelineBarrier(commands,
-                                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                                        0U,
-                                                        0U,
-                                                        nullptr,
-                                                        0U,
-                                                        nullptr,
-                                                        1U,
-                                                        &back);
+        if (item.window) {
+            // A WINDOW PASS: the swapchain's image, the window's render pass. The first pass into a frame's image
+            // clears both attachments; a later pass into the same image loads what the earlier one wrote.
+            const bool load = !first_window_pass;
+            render_pass     = window->renderPass(load, load);
+            framebuffer     = window->framebuffer();
+            extent          = VkExtent2D{ window->width(), window->height() };
+            color_count     = 1U;
+            has_depth       = true;
+            compatibility   = window->compatibility();
+            first_window_pass = false;
+        }
+        else {
+            images = &impl->targets.at(draw.target);
+
+            // A TARGET A SCREEN DRAW SAMPLED is in SHADER_READ_ONLY: put its colour images back before this pass
+            // writes them.
+            if (images->color_sampled) {
+                for (const VkImage image : images->colors) {
+                    const VkImageMemoryBarrier back = barrierBetween(image,
+                                                                     stateOf(ImageLayout::ShaderReadOnly),
+                                                                     stateOf(ImageLayout::ColorAttachment),
+                                                                     VK_IMAGE_ASPECT_COLOR_BIT);
+                    impl->device_table.vkCmdPipelineBarrier(commands,
+                                                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                                            0U,
+                                                            0U,
+                                                            nullptr,
+                                                            0U,
+                                                            nullptr,
+                                                            1U,
+                                                            &back);
+                }
+                images->color_sampled = false;
             }
-            images.color_sampled = false;
+
+            // A FRESH attachment set is UNDEFINED: a pass that asked to preserve something gets the CLEAR variant for
+            // its first frame (there is nothing to load yet). A pass that announces NO clear loads both attachments;
+            // a fresh target falls back to CLEAR, the honest reading of "load an image nobody wrote".
+            const bool has_clear  = draw.clear.has_value();
+            const bool load_color = !has_clear && !images->fresh;
+            const bool load_depth = has_clear ? (!draw.clear->depth && !images->fresh) : !images->fresh;
+            render_pass           = images->renderPassFor(load_depth, load_color);
+            framebuffer           = images->framebuffer;
+            extent                = VkExtent2D{ static_cast<std::uint32_t>(images->width()), static_cast<std::uint32_t>(images->height()) };
+            color_count           = static_cast<std::uint32_t>(images->colorCount());
+            has_depth             = images->hasDepth();
+            compatibility         = images->compatibility();
         }
 
-        // A FRESH attachment set is UNDEFINED: a pass that asked to preserve something is given the CLEAR variant for
-        // its first frame (there is nothing to load yet), and the plan's Bootstrap repair says exactly that. A pass
-        // that announces NO clear loads both attachments; a fresh target falls back to the CLEAR variant, which is the
-        // honest reading of "load an image nobody wrote".
-        const bool         has_clear  = draw->clear.has_value();
-        const bool         load_color = !has_clear && !images.fresh;
-        const bool         load_depth = has_clear ? (!draw->clear->depth && !images.fresh) : !images.fresh;
-        const VkRenderPass render_pass = images.renderPassFor(load_depth, load_color);
-
-        // PER-ATTACHMENT CLEAR: attachment 0 is the pass' colour, the rest come from extra_colors (an absent entry is
-        // transparent black - see ClearPolicy), and the depth is the last slot when the target owns one. A pass that
-        // announces no clear contributes no colour; its fresh fallback discards the images anyway.
-        std::vector<VkClearValue> clear_values(images.colorCount() + (images.hasDepth() ? 1U : 0U));
-        const Colorf              colour      = has_clear ? draw->clear->color : Colorf(0.0F, 0.0F, 0.0F, 0.0F);
+        // PER-ATTACHMENT CLEAR (a LOAD variant ignores these values): attachment 0 is the pass' colour, the rest come
+        // from extra_colors (an absent entry is transparent black - see ClearPolicy), and the depth is the last slot.
+        std::vector<VkClearValue> clear_values(color_count + (has_depth ? 1U : 0U));
+        const Colorf              colour      = draw.clear.has_value() ? draw.clear->color : Colorf(0.0F, 0.0F, 0.0F, 1.0F);
         clear_values[0].color                 = { { colour.r, colour.g, colour.b, colour.a } };
-        for (std::size_t index = 1; index < images.colorCount(); ++index) {
-            const Colorf extra = has_clear && index - 1U < draw->clear->extra_colors.size() ? draw->clear->extra_colors[index - 1U]
-                                                                                           : Colorf(0.0F, 0.0F, 0.0F, 0.0F);
+        for (std::size_t index = 1; index < color_count; ++index) {
+            const Colorf extra = images != nullptr && draw.clear.has_value() && index - 1U < draw.clear->extra_colors.size()
+                                     ? draw.clear->extra_colors[index - 1U]
+                                     : Colorf(0.0F, 0.0F, 0.0F, 0.0F);
             clear_values[index].color = { { extra.r, extra.g, extra.b, extra.a } };
         }
-        if (images.hasDepth()) {
+        if (has_depth) {
             // Reverse-Z: every backend clears depth to its own far plane, and this camera convention's far plane is 0
             // (see ClearPolicy: the policy states WHETHER, never to what).
-            clear_values[images.colorCount()].depthStencil = { 0.0F, 0U };
+            clear_values[color_count].depthStencil = { 0.0F, 0U };
         }
 
         VkRenderPassBeginInfo pass_begin{};
         pass_begin.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         pass_begin.renderPass        = render_pass;
-        pass_begin.framebuffer       = images.framebuffer;
+        pass_begin.framebuffer       = framebuffer;
         pass_begin.renderArea.offset = VkOffset2D{ 0, 0 };
-        pass_begin.renderArea.extent = VkExtent2D{ static_cast<std::uint32_t>(images.width()), static_cast<std::uint32_t>(images.height()) };
+        pass_begin.renderArea.extent = extent;
         pass_begin.clearValueCount   = static_cast<std::uint32_t>(clear_values.size());
         pass_begin.pClearValues      = clear_values.data();
 
         impl->device_table.vkCmdBeginRenderPass(commands, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
         // WHAT THIS PASS DRAWS. Each draw description is borrowed for this call; every command inside it becomes one
         // drawing call (M3: resolved state selects the pipeline, one `RenderCommand` = one indexed draw).
-        for (const DrawDescription& description : draw->draws) {
+        for (const DrawDescription& description : draw.draws) {
             vn::String                       why;
             vn::graphics::DiagnosticCategory category = DiagnosticCategory::ContentSkipped;
             if (description.kind == DrawDescription::Kind::Screen) {
@@ -676,12 +929,12 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                 }
                 (void)impl->content.recordScreen(commands,
                                                  render_pass,
-                                                 images.compatibility(),
-                                                 static_cast<std::uint32_t>(images.colorCount()),
-                                                 images.width(),
-                                                 images.height(),
+                                                 compatibility,
+                                                 color_count,
+                                                 static_cast<int>(extent.width),
+                                                 static_cast<int>(extent.height),
                                                  description,
-                                                 *draw,
+                                                 draw,
                                                  source,
                                                  &why,
                                                  &category);
@@ -689,12 +942,12 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
             else {
                 (void)impl->content.record(commands,
                                            render_pass,
-                                           images.compatibility(),
-                                           static_cast<std::uint32_t>(images.colorCount()),
-                                           images.width(),
-                                           images.height(),
+                                           compatibility,
+                                           color_count,
+                                           static_cast<int>(extent.width),
+                                           static_cast<int>(extent.height),
                                            description,
-                                           *draw,
+                                           draw,
                                            impl->default_program.get(),
                                            &why,
                                            &category);
@@ -705,7 +958,15 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
             }
         }
         impl->device_table.vkCmdEndRenderPass(commands);
-        images.fresh = false;
+        if (images != nullptr) {
+            images->fresh = false;
+        }
+    }
+
+    // THE PRESENT TRANSITION, after the window's last pass and before the command buffer ends: every window pass
+    // stores into COLOR_ATTACHMENT_OPTIMAL, and vkQueuePresentKHR reads PRESENT_SRC_KHR.
+    if (window_acquired) {
+        window->recordPresentTransition(commands);
     }
 
     if (impl->device_table.vkEndCommandBuffer(commands) != VK_SUCCESS) {
@@ -720,6 +981,20 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     submit.commandBufferCount = 1U;
     submit.pCommandBuffers    = &commands;
 
+    // THE WINDOW'S SEMAPHORES: the acquire signalled image_available, the submit waits on it and signals
+    // render_finished, and the present waits on that. One frame at a time (the device waits on its fence below), so
+    // one pair per window target is enough.
+    const VkSemaphore          wait_semaphore   = window_acquired ? window->imageAvailableSemaphore() : VK_NULL_HANDLE;
+    const VkSemaphore          signal_semaphore = window_acquired ? window->renderFinishedSemaphore() : VK_NULL_HANDLE;
+    const VkPipelineStageFlags wait_stage       = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    if (window_acquired) {
+        submit.waitSemaphoreCount   = 1U;
+        submit.pWaitSemaphores      = &wait_semaphore;
+        submit.pWaitDstStageMask    = &wait_stage;
+        submit.signalSemaphoreCount = 1U;
+        submit.pSignalSemaphores    = &signal_semaphore;
+    }
+
     const bool submitted = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion) == VK_SUCCESS &&
                            impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
     (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
@@ -733,7 +1008,13 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                          DiagnosticCategory::SubmissionFailed,
                          u8"vk: the frame's command buffer did not run to completion");
     }
-    return PresentOutcome::Skipped;
+
+    // THE FRAME'S TAIL: the executor is what presents the frame it ran (see RenderFrameExecutor::executeFrame).
+    PresentOutcome outcome = PresentOutcome::Skipped;
+    if (window_acquired) {
+        outcome = submitted ? window->present() : PresentOutcome::Lost;
+    }
+    return outcome;
 }
 
 bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels, ReadbackResult* why)
