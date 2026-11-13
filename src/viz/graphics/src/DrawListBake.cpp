@@ -1,6 +1,8 @@
 #include "DrawListBake.hpp"
 
 #include <algorithm>
+#include <bit>
+#include <cmath>
 #include <limits>
 
 VN_GRAPHICS_NS_BEGIN
@@ -558,7 +560,8 @@ void selectFromBake(const SceneBake&            bake,
                     const CollectView&          view,
                     std::uint32_t               layer_mask,
                     bool&                       viewport_used,
-                    std::vector<RenderCommand>& out)
+                    std::vector<RenderCommand>& out,
+                    std::vector<SortKey>*       keys)
 {
     selectRows(static_cast<std::uint32_t>(bake.rows.size()),
                [&bake](std::uint32_t index) -> const Row& { return bake.rows[index]; },
@@ -566,34 +569,49 @@ void selectFromBake(const SceneBake&            bake,
                view,
                layer_mask,
                viewport_used,
-               out);
+               out,
+               keys);
 }
 
-void sortCollected(std::vector<RenderCommand>& commands, const Vec3d& eye)
+SortKey makeSortKey(const RenderCommand& command, std::uint32_t layers, const Aabbd& box, const Mat4d& view, std::uint64_t tie)
 {
-    std::vector<std::pair<double, RenderCommand*>> keyed;
-    keyed.reserve(commands.size());
-    for (RenderCommand& cmd : commands) {
-        const auto origin = cmd.model_matrix * vn::math::Point3d(0.0, 0.0, 0.0);
-        keyed.emplace_back((origin.asVector() - eye).length2(), &cmd);
+    SortKey key;
+    key.draw_order  = command.draw_order;
+    key.transparent = command.isTransparent();
+    key.tie         = tie;
+    // The SMALLEST layer index the row belongs to; a row that states no layers belongs to the default one (bit 0).
+    key.layer = layers == 0U ? 0U : static_cast<std::uint32_t>(std::countr_zero(layers));
+
+    // THE POINT THE PICTURE IS SORTED BY: the center of the world box the row already carries (the fold computed it), and
+    // the node's own origin only when the row has NO box - see .ai/bugs/graphics-transparent-sort-uses-origin.md.
+    const vn::math::Point3d origin = command.model_matrix * vn::math::Point3d(0.0, 0.0, 0.0);
+    const vn::math::Point3d point  = box.isValid() ? box.center() : origin;
+    // CAMERA-SPACE depth, not a Euclidean distance: the order then agrees with the depth the rasterizer writes at the edge
+    // of the field of view. A camera looks down its own -z, so a smaller view-space z is FARTHER.
+    constexpr double kMaxSortDepth = 1.0e9; // far enough for any scene in world units; keeps the ticks inside int64
+    const double     depth         = -(view * point).z;
+    const double     clamped       = std::isfinite(depth) ? std::clamp(depth, -kMaxSortDepth, kMaxSortDepth) : 0.0;
+    key.depth                      = static_cast<std::int64_t>(std::llround(clamped * SortKey::kDepthStep));
+    return key;
+}
+
+void sortCollected(std::vector<RenderCommand>& commands, std::span<const SortKey> keys)
+{
+    if (keys.size() != commands.size()) {
+        return; // a list of keys that does not describe these commands cannot order them: answer what was handed in
     }
-    std::stable_sort(keyed.begin(), keyed.end(), [](const std::pair<double, RenderCommand*>& lhs, const std::pair<double, RenderCommand*>& rhs) {
-        // The draw order DECLARED on the content is the outer key (see Node::setDrawOrder): a higher order is drawn
-        // later, which is how content that must land on top of the rest is expressed without its own pass. Equal
-        // orders fall through to the ordering the collection has always produced.
-        if (lhs.second->draw_order != rhs.second->draw_order) {
-            return lhs.second->draw_order < rhs.second->draw_order;
-        }
-        if (lhs.second->isTransparent() != rhs.second->isTransparent()) {
-            return !lhs.second->isTransparent();
-        }
-        return lhs.second->isTransparent() ? lhs.first > rhs.first : lhs.first < rhs.first;
-    });
+    // NO EQUAL KEYS (the tie field is unique per command), so a plain sort is deterministic and no stability is needed - the
+    // order is a property of the commands, not of the walk that collected them (R17 / T9).
+    std::vector<std::uint32_t> order(commands.size());
+    for (std::uint32_t index = 0; index < order.size(); ++index) {
+        order[index] = index;
+    }
+    std::sort(order.begin(), order.end(), [&keys](std::uint32_t lhs, std::uint32_t rhs) { return keys[lhs] < keys[rhs]; });
+
     std::vector<RenderCommand> ordered;
-    ordered.reserve(keyed.size());
-    for (auto& [distance, cmd] : keyed) {
-        (void)distance;
-        ordered.push_back(std::move(*cmd));
+    ordered.reserve(commands.size());
+    for (const std::uint32_t index : order) {
+        ordered.push_back(std::move(commands[index]));
     }
     commands = std::move(ordered);
 }

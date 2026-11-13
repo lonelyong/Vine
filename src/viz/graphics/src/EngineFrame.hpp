@@ -6,6 +6,7 @@
 
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
+#include <vine/graphics/SceneSnapshotRef.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -61,6 +62,13 @@ struct EngineFrame {
     /// when nothing presents this engine's area. It is what a pointer query should aim with once the frame is answered
     /// (design N17): `RenderEngine::presentedCamera` hands it to the host.
     CameraSnapshot presented_camera{};
+    /// The publication THIS frame's picture is drawn from (the presenting pass' content, as the store resolved it when
+    /// the frame was built), or empty when that pass draws no content. It is the snapshot half of the value a query aims
+    /// with (see RenderEngine::frameResult).
+    SceneSnapshotRef presented_snapshot{};
+    /// What the engine's diagnostic counter read when this frame started: `FrameResult::diagnostics` is the delta at the
+    /// moment the frame is answered, so the number belongs to THIS frame instead of being a running total.
+    std::uint64_t diagnostics_before{ 0 };
     /// What became of this frame's PICTURE (see PresentOutcome): written by the engine half when the frame is answered,
     /// and what `RenderEngine::presentRecord` hands a host - #Lost is the one answer a host must act on (re-attach).
     PresentOutcome outcome = PresentOutcome::Skipped;

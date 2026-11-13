@@ -162,8 +162,8 @@
 | F8 | 一 Session 多 Surface | `Target` / 帧请求带 `SurfaceId`；一个引擎线程驱动多个窗口 | 未做 |
 | F9 | `publish` 返回结果 | 批内显式“未发布”，无 null | 已落地（5b-2a）：公开 `Scene::publish()` 三态（`Posted`/`Unchanged`/`InsideBatch`）；旧四态 `PublishOutcome` 已随 5b-2b 删除 |
 | F10 | 原型与实例 | `Instance` 引用原型；折叠一次；无环与行预算 | 未做 |
-| F11 | 全序排序键 | 文档化的全序值（含 layer），透明两段 | 未做 |
-| F12 | 帧结果与查询 | `FrameResult` 带 snapshot / view / poses / 诊断 / present | 部分：`FrameStats` + `PresentOutcome` 已有，`query` 未做 |
+| F11 | 全序排序键 | 文档化的全序值（含 layer），透明两段 | 已落地（2026-11-13）：`detail::SortKey`（drawOrder → 层 → 不透明段/透明段 → 量化相机深度 → 行/图元索引）；代表点是世界盒中心 |
+| F12 | 帧结果与查询 | `FrameResult` 带 snapshot / view / poses / 诊断 / present | 部分（2026-11-13）：`FrameResult` + `FrameQuery`（snapshot / view / passes / draws / diagnostics / present）已落地；`poses` 随 F10 未做 |
 
 ### 3.2 F1 快照发布
 
@@ -277,11 +277,15 @@
 
 ### 3.11 F11 / F12 排序键与帧结果
 
-- **行为**：排序键是**文档化的全序值**（`draw_order, layer, opaque/transparent, 量化深度`），不透明与透明两段；
-  `FrameResult` 带呈现了哪个 Snapshot / View、耗时、诊断、`query`（拾取 / 锚点 / fit 吃它）。
-- **约束**（`C8`）：键是值，可序列化、可比较。
-- **要求**（`R17` / `R18` / `R19` / `R30`）：跨机器顺序一致；查询吃 `FrameResult.query`；返回位置身份。
-- **验收**（`T9` / `T18` / `T19` / `T20`）：排序全序；多实例拾取；pose 后拾取；帧相机拾取。
+- **行为**：排序键是 `detail::SortKey`（`DrawListBake.hpp`）——一个文档化的全序值：`draw_order` → 层（最小层号）→
+  不透明/透明 → 量化相机空间深度 → 行/图元索引（`tie`）。不透明与透明两段；代表点是**世界盒中心**（无盒退回矩阵
+  原点），深度由 `view` 变换后的 -z 量化（1/4096 世界单位）。
+  `FrameResult`（`FrameResult.hpp`）带呈现了哪个 Snapshot / 相机值、pass / draw 计数、诊断增量与 present；
+  `RenderEngine::frameResult()` 在帧被回答时一次写入，`query` 是拾取 / 锚点 / fit 该瞄的那一份。
+- **约束**（`C8`）：键与结果都是值，可比较、可拷贝，不带活对象。
+- **要求**（`R17` / `R18` / `R19` / `R30`）：跨机器顺序一致（量化 + 全序 tie）；查询吃 `FrameResult.query`；返回位置身份。
+- **验收**（`T9` / `T36`）：`SelectTest.TheSortKeyIsATotalOrder`（任意置换同结果）与 `SelectTest.TheKey*`；
+  `RenderEngineTest.TheFrameResultIsThePictureThatWasAnswered`。`T18`–`T20`（多实例 / pose / 帧相机拾取）随 F10 未做。
 - **注意**（`P10`）：`query` 里的 View 是**当时那一帧**的值；拿活相机去查是"瞄错"，不是"更新一下"。
 
 ## 4. 公开接口
@@ -321,6 +325,7 @@
 | `RenderEngine::prepare()` → `PrepareReport` | 只建不提交；答所需半片/集合/上传（`NotReady` + `EngineNotReady`） | 已落地（后端拿到的是与 `executeFrame()` 同一个 `FrameDescription`；快照进这个输入是 5b-1） |
 | `RenderEngine::applyPlan() → PlanResult` / `plan()` | 三态：`Applied` / `Invalid` + `problems` / `Refused` + `PlanRefusal` | 已落地（W9e） |
 | `RenderEngine::frame() → FrameOutcome` | `Ran` / `Submitted`；`NotReady` + `EngineNotReady` | 已落地（W9e） |
+| `RenderEngine::frameResult() → FrameResult` | 上一帧被回答时的全部事实：`query`（snapshot / view）+ passes / draws / diagnostics / present | 已落地（F12，2026-11-13；`poses` 待 F10） |
 | `Session::frame(FrameRequest) → FrameResult` | 提交一帧；`FrameRequest` 带 `View` 与 `SurfaceId` | 目标（今天 `executeFrame` + `presentWindow`） |
 | `FrameResult{ snapshot, view, poses, stats, diagnostics, present }` | 宿主读的值 | 目标（今天 `FrameStats` + `PresentOutcome`） |
 | `Plan` / `Pass` / `Target` / `SurfaceId` | 帧图声明（W9d 起是唯一的形状；`FrameTable` 是编译后的帧表） | 已落地 |
@@ -515,7 +520,7 @@
 | T6 | 驻留 = 活快照引用 | `ResidencyTableTest.TheCollectableSetIsEnumerable` | 已实现 |
 | T7 | 计划差分 | `PlanTest.APassIsAddedWithoutAnyAddCall` | 已实现 |
 | T8 | 派生纯 | `SelectTest.SameInputSameList`（含并行） | 未做 |
-| T9 | 排序全序 | `SelectTest.TheSortKeyIsATotalOrder` | 未做 |
+| T9 | 排序全序 | `SelectTest.TheSortKeyIsATotalOrder` + `SelectTest.TheKeyReadsDrawOrderThenLayerThenSegmentThenDepth` + `SelectTest.TheKeySortsByTheBoxCentreNotTheNodeOrigin` | 已实现（2026-11-13） |
 | T10 | 能力协商 | `SessionTest.AMissingRequiredCapabilityIsRefusedWithACode` | 未做 |
 | T11 | 关闭相位 | `SessionTest.ShutdownIsIdempotentInEveryPhase` | 未做 |
 | T12 | replay | `ReplayTest.ARecordedFrameReplaysToTheSameCommands` | 未做 |
@@ -541,6 +546,7 @@
 | T32 | 预热的答案 = 帧的构建 | `ContentHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds`（键集相等，设备无关）+ `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` 的键集断言（录制侧） | 已实现（2026-11-12） |
 | T33 | 预热后录制 `builds` 增量 0，且预热不提交 / 不呈现 | `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing`（`halves().builds` / `sets().builds` / `uploads().uploads` / `inputSetBuilds` / `pool.created` 全 0，`progress->submitted` 不动，像素仍画出）+ `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing`（引擎侧：同一个 value、不执行、不取帧号） | 已实现（2026-11-12） |
 | T34 | 快照源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`（600 帧，transform / opacity / material / placement 编辑，逐项 diff）+ `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould`（绑定后的帧级接缝） | 已实现（2026-11-12） |
+| T36 | 帧结果是那一帧的值 | `RenderEngineTest.TheFrameResultIsThePictureThatWasAnswered`（快照 / 相机 / 计数 / 诊断 / present；发布落在帧间不改已答的帧） | 已实现（2026-11-13） |
 
 ### 8.1 判死阈值（`K#`）
 
@@ -591,7 +597,7 @@
   snapshot 侧由同一套件的旧快照用例钉住；公开 `Scene::publish()`（`Posted`/`Unchanged`/`InsideBatch`）；
   `PublicationStore` 直接持有 `SnapshotSource`（W3 拆自 `FrameWorker`）。**5b-2b 删除了 `ContentMirror` / `DeltaChannel` / `RenderWorld` /
   `RenderWorldSource` / `PublishOutcome` 与 23 条 LEGACY 用例**；`test_graphics` 554 / `test_vsg` 542。
-- **未做**：F8、F10、F11 与 F12 的 `query` 半边。F7 的两半都已落地：3a 的答案（`drawNeeds` 是唯一的键构造者）
+- **未做**：F8、F10，以及 F12 的 `poses` 半边（它要等 F10 的原型/实例层；`FrameResult` / `query` 本身已于 2026-11-13 落地）。F7 的两半都已落地：3a 的答案（`drawNeeds` 是唯一的键构造者）
   与 3b 的预建（`RenderEngine::prepare()` → `prepareFrame(value)`；预热后录制的帧 `builds` 增量 0，见 `T33`）。
   F9 的三态公开答案（`Posted` / `Unchanged` / `InsideBatch`）与它携带的快照句柄已落地（5b-2a + 2026-11-12 的
   `SceneSnapshotRef`）。**帧内隐式发布已删除（W9b，2026-11-13）**：发布是内容写者的动词，帧在 build 时取

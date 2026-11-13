@@ -9,6 +9,10 @@
 - SDK：`src/viz/graphics/sdk/vine/graphics`；vsg 后端：`src/plugins/gfx_backend_vsg`（`core/` 纯策略 + `api/` vsg 适配 + `support/`）。
 - `RenderEngine`：生命周期 / `frame()` / 设备借用 / 尺寸 / 能力与报告；三个门面是 `PassRegistry`、`OutputRegistry`、`DiagnosticsRoute`。
 - `frame()` 返回 `FrameOutcome`（`Ran` / `Submitted`；`NotReady` + `EngineNotReady`），`applyPlan` 返回 `PlanResult` 三态；pass 的内容住在 `PassDesc::content`，`bindPassContent` 返回是否命中。
+- **排序键是 `detail::SortKey`**（`DrawListBake.hpp`）：drawOrder → 层（最小层号）→ 不透明/透明 → 量化相机空间深度（1/4096 单位）→ 行/图元索引。代表点是**世界盒中心**（无盒退回矩阵原点），`sortCollected` 用 `std::sort`（`tie` 保证无相等键）。
+- **帧结果是值**：`RenderEngine::frameResult()` → `FrameResult{frame, present, query{snapshot, view}, passes, draws, diagnostics}`，在帧被回答时一次写入（`frame_result_mutex_`）；`presentedCamera()` 是 `query.view` 的简写。`poses` 半边等 F10。
+- **排序键是 `detail::SortKey`**（`DrawListBake.hpp`）：drawOrder → 层（最小层号）→ 不透明/透明 → 量化相机空间深度（1/4096 单位）→ 行/图元索引。代表点是**世界盒中心**（无盒退回矩阵原点），`sortCollected` 用 `std::sort`（`tie` 保证无相等键）。
+- **帧结果是值**：`RenderEngine::frameResult()` → `FrameResult{frame, present, query{snapshot, view}, passes, draws, diagnostics}`，在帧被回答时一次写入（`frame_result_mutex_`）；`presentedCamera()` 是 `query.view` 的简写。`pose` 半边等 F10。
 - 节点 / pass / 几何的 `Object` 派生类型判断用 `obj_cast<T>`（core 元类型链），不要用 `dynamic_cast`；`CameraManipulator` 与第三方 vsg 类型例外。
 - `PassChain`：一张画面的配方 + 注册归属。`PassChain::build(engine, ChainDesc)` 建链并注册 pass；析构把手里的 pass 交还引擎；`SceneView::setChain` 采纳它。
 - 一帧：`beginFrame` → 每个 pass（`beginPass` / `setPassOrder` / `setPassInputs` / `execute` / `endPass`）→ `endFrame` → present。
@@ -658,3 +662,17 @@
   setter，注册按 `PassDesc` + `applyPlan` 翻译）。
 - **测试**：`test_graphics` 561（新增 `PlanTest.ABusyEngineRefusesThePlanInsteadOfBlamingItsShape`；`SessionBusy` 的
   拼写断言删除；`frame()` 断言改谓词）/ `test_vsg` 546 全绿。
+
+## 2026-11-13 —— F11 + F12：全序排序键与 `FrameResult`
+
+- **F11**：`detail::SortKey`（`DrawListBake.hpp`）取代 `sortCollected(commands, eye)` 的 lambda —— drawOrder → 层
+  （`std::countr_zero(layers)`）→ 不透明/透明 → 量化相机空间深度（`view * center` 的 -z，1/4096 单位，±1e9 夹取）→
+  `(row_index << 32) | primitive_index`。代表点用行的 `world_box` 中心（view 解析过的行用 `local_box.transformed(world)`），
+  无盒退回矩阵原点。键由 `selectRows` 生成（行数据只在那一处），`sortCollected(commands, keys)` 用 `std::sort`
+  （tie 唯一 ⇒ 无相等键，不依赖稳定性）。两个生产者（`ScenePublisher` / `selectSnapshot`）都改传 keys。
+- **F12**：新 `sdk/vine/graphics/FrameResult.hpp` —— `FrameQuery{snapshot, view}` + `FrameResult{frame, present, query,
+  passes, draws, diagnostics}`；`RenderEngine::frameResult()` 在 `runEngineHalf` 一次写入（`frame_result_mutex_`），
+  `presentedCamera()` 读它的 `query.view`（删掉 `presented_camera_`）。`EngineFrame` 新增 `presented_snapshot`
+  （buildContentHalf 取 `publicationFor(presenting->content())`，与相机同刻）与 `diagnostics_before`（`diagnosticCount()` 的初值）。
+- **测试**：`SelectTest`（4 例：全序置换、字段顺序、盒中心 vs 节点原点、无盒退回）；`RenderEngineTest.
+  TheFrameResultIsThePictureThatWasAnswered`（空值 → 快照/相机/计数/诊断 → 帧间发布不改已答的帧）。`test_graphics` 566。

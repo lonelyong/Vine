@@ -14,11 +14,12 @@
 
 | # | 项 | 现状 | 前置 |
 |---|---|---|---|
-| N1 | 步 4：一 Session 多 Surface（`../design/graphics-frame-pipeline.md` F8 / §3.8） | 未做：`Target` 仍是显式 `RenderTarget` 句柄，帧请求不带 `SurfaceId`；一个引擎今天只能驱动一个区 | 公开形状变化；`T29` / `K10` 是判据 |
-| N2 | F11 全序排序键 + F12 的 `query` 半边（§3.11） | 未做：排序键不是文档化的全序值；`FrameResult` 这个宿主读的值还不存在（今天只有 `FrameReport` + `PresentOutcome` + `presentedCamera`） | `T9` / `T18`–`T20`；`query` 要先有 `FrameResult` |
-| N3 | 步 6：原型与实例（F10） | 未做，且**有触发条件**：出现“一处原型多处放置”的真实宿主 | `T23` 的 A/B 口径见 `../research/graphics-2026-11-12-instances.md`；`K11` |
+| N1 | 步 4：一 Session 多 Surface（`../design/graphics-frame-pipeline.md` F8 / §3.8） | 未做：`Target` 仍是显式 `RenderTarget` 句柄，帧请求不带 `SurfaceId`；一个引擎今天只能驱动一个区 | 公开形状变化；`T29` / `K10` 是判据；`FrameResult` 已落地（2026-11-13） |
+| N2 | 派生纯的并行用例 `T8`（`SelectTest.SameInputSameList`） | 能力已存在（`selectSnapshot` 是纯函数），缺的是"含并行的逐项相等"用例 | `T8`；`../design/graphics-frame-pipeline.md` §8 |
+| N3 | 步 6：原型与实例（F10） | 未做，且**有触发条件**：出现"一处原型多处放置"的真实宿主；F12 的 `poses` 等它 | `T23` 的 A/B 口径见 `../research/graphics-2026-11-12-instances.md`；`K11` |
 
-`N1` / `N2` 没有触发条件（设计已定、缺的是实现），但都改公开或可观察形状，按仓库节奏一次一步、一步一个可回退提交。
+`N1` / `N2` 没有触发条件（设计已定、缺的是实现/用例），但都改公开或可观察形状，按仓库节奏一次一步、一步一个可回退提交。
+F11（全序排序键）与 F12 的 `query`（`FrameResult`）已于 2026-11-13 落地。
 
 
 ## 2. 触发条件型

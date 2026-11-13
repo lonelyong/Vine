@@ -126,7 +126,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 - `RenderEngine` —— 帧泵 + 账本：`initialize()` / `shutdown()`、`setDevice()`、`applyPlan(plan)` / `plan()`、
   `frame()`（返回 `FrameOutcome`：`Ran` / `Submitted`；引擎没起来时 `NotReady` + `EngineNotReady`）、
   `createSurface()`（尺寸走 `RenderSurface::resize()`）、`publish/resolve`（命名输出）、
-  `frameTable()` / `frameDescription()` / `frameReport()` / `diagnostics()` / `releaseContent()`。
+  `frameTable()` / `frameDescription()` / `frameReport()` / `frameResult()` / `diagnostics()` / `releaseContent()`。
   - **发布与绑定**：`Scene::publish()` 回答 `Posted` / `Unchanged` / `InsideBatch`，并把**这一份**快照
     （`SceneSnapshotRef`，可用 `valid()` / `revision()` 查）交回来；`bindSnapshot(scene, ref)` 说“这个引擎画这一份”。
     帧只画**已发布**的内容：宿主每帧先 `publishContent()`（或自己调用 `Scene::publish()`），未发布的场景不画并报一次
@@ -137,8 +137,9 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   - **预热**：`prepare()` 不提交任何帧，只把下一帧要编译 / 上传的身份建好，返回 `PrepareReport`（这次调用建了什么）；
     预热过的帧再录制时 `builds` / `uploads` 增量为 0。
   - **线程与帧的回读**：`setFrameThreading(Inline | EngineThread)`（生命周期决定，不是每帧开关）、
-    `waitForFrame(n)`（唯一显式等待，“这一帧上屏了”）、`presentRecord()` / `presentedCamera()`
-    （上一帧的呈现结局与那一帧的相机快照 —— 拾取用它，不要用活相机）。
+    `waitForFrame(n)`（唯一显式等待，“这一帧上屏了”）、`frameResult()`（上一帧的完整值：`query.snapshot` /
+    `query.view` / passes / draws / 诊断 / present）、`presentRecord()` / `presentedCamera()`（前者的两个简写）。
+    拾取 / 锚点 / fit 一律用 `frameResult().query`，不要用活相机或活场景。
 - `RenderPass` —— 相机 + 渲染目标 + 渲染状态 + 清屏/深度策略。**没有 renderTarget 的 pass 画进窗口**，
   order 决定先后。
   - **扩展点只有一个：`describe(scene, out)`**（另加声明侧的 `before_draw` 钩子）。这一条 pass 要"发什么"

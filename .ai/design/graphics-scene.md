@@ -46,10 +46,11 @@
 **场景不设灯数上限**：`addLight` / `setLighting` 有多少收多少，因为容量是光照程序的属性而不是内容的语义 —— 同一个 Scene 今天被 forward 与 deferred 两条路径画，将来可能被容量不同的宿主程序画。上限在 `kMaxLights`（`ShaderAbi.hpp`），超出的灯在打包时不被表示，按 episode 报一次 `ChannelIgnored` 警告（见 `graphics-shader-params.md` §2.2）。要限制灯数的是选灯策略（backlog S7），不是 `Scene` 的一道上限。
 2.8 **根必须是根**：场景从一个无父节点进入。`setRoot` 先把已在别的 Group 下的节点摘下来（与 `Group::addChild` 自动脱离旧父同一条规则）；根在之后被别的树收养，就不再是这个场景的根——收集与包围盒一律为空，且检查在 memo 查询之前，所以不会返回移动前的列表。两个场景可以共用同一棵仍是根的子树（各自的场景级状态、memo 独立），接缝只在“它还是不是根”。
 
-2.9 **透明顺序是对象级近似**：同一 `drawOrder` 内不透明前→后、透明后→前，顺序键是**一个代表点**到眼睛的距离平方
-（今日取命令世界矩阵原点），不是几何范围，也不是逐片元顺序。它保证“看着分得开的两个物体”顺序正确，不保证自相交、
-非凸、同中心多层的顺序。需要更强顺序的内容走 `Node::setDrawOrder`（已支持）、拆分几何，或另开一个排序独立透明的 pass
-（触发条件见 backlog）。代表点的选取口径见 `../bugs/graphics-transparent-sort-uses-origin.md`。
+2.9 **透明顺序是对象级近似**：同一 `drawOrder` 内不透明前→后、透明后→前；顺序键是一个**文档化的全序值**
+（`detail::SortKey`：drawOrder → 层（最小层号）→ 不透明/透明 → 量化相机空间深度 → 行/图元索引），代表点是
+**世界盒中心**（无盒时退回命令自己的矩阵原点），深度是**相机空间深度**的量化值而不是欧氏距离。它保证“看着分得开的两
+个物体”顺序正确，不保证自相交、非凸、同中心多层的顺序。需要更强顺序的内容走 `Node::setDrawOrder`（已支持）、拆分几何，
+或另开一个排序独立透明的 pass（触发条件见 backlog）。口径与修复记录见 `../bugs/graphics-transparent-sort-uses-origin.md`。
 
 2.10 **节点类型分派走元类型**：场景走查对 `Node` 派生类型的判断用 `obj_cast<T>`（`vine/Object.hpp` 的元类型父链 + `static_cast`），
 不用 `dynamic_cast`。为什么：每节点有若干次判断，实测 `obj_cast` 在命中 / 未命中都约为 `dynamic_cast` 的 2–2.6 倍（Debug / MSVC，
@@ -97,7 +98,7 @@
 | F13 | 命令快照 | geometry、primitive、model matrix、opacity、draw_order、state、material、program、instance。 |
 | F14 | memo | 键 = view-projection + eye + layer_mask（必要时 + viewport）；根子树 epoch 失效。 |
 | F15 | 视锥剔除 | 子树盒 `subtreeBounds` 在节点自身坐标系持久缓存；移动相机不重算。 |
-| F16 | 排序 | drawOrder 外键；同 order 内不透明前向、透明后向。分类在收集时求值、顺序冻结在表里（见 §6.3）。 |
+| F16 | 排序 | `detail::SortKey` 全序：drawOrder → 层 → 不透明段/透明段 → 量化相机深度 → 行/图元索引；代表点是世界盒中心。分类在收集时求值、顺序冻结在表里（见 §6.3）。 |
 | F17 | 场景盒 | `Scene::boundingBox(mask)` 只算可见且命中层掩码的内容。 |
 
 ### 3.4 层与视图上下文
@@ -201,7 +202,7 @@
 | N7 | 拾取只打三角形图元；线/点不是表面。 |
 | N8 | `Camera` 自带 aspect；pass 矩形与相机形状不一致会在编译期报出来。 |
 | N9 | 根必须仍是根：`setRoot` 会摘下已在别的 Group 下的节点；根被 `Group::addChild` 收养后，该场景的收集与包围盒为空，且不复用收养前的 memo。 |
-| N10 | 透明顺序是对象级近似：顺序键取代表点距离，不处理逐片元 / 自相交 / 同中心多层；依赖它之前先确认内容不重叠，否则用 `drawOrder` 或拆分几何。 |
+| N10 | 透明顺序是对象级近似：顺序键取**世界盒中心**的量化相机空间深度（无盒退回矩阵原点），不处理逐片元 / 自相交 / 同中心多层；依赖它之前先确认内容不重叠，否则用 `drawOrder` 或拆分几何。 |
 | N11 | 层并集缓存用**进程级** epoch（`detail::g_layer_epoch`）：任一场景的层 / 结构编辑，会让所有场景下一次走查各自重算一次层并集。层编辑是作者期操作，重算只发生在下一次走查，陈旧缓存不会被用来误剪；若多文档同时编辑时走查耗时可见，改为每根子树 epoch（先记录测量再动，`G10`）。 |
 
 ## 6. 注意事项与陷阱

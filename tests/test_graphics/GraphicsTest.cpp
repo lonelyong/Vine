@@ -11390,6 +11390,60 @@ TEST(RenderEngineTest, TheAnsweredFramesCameraIsWhatAPointerQueryShouldAimWith)
     EXPECT_NEAR(moved->eye.x, 9.0, 1e-6);
 }
 
+TEST(RenderEngineTest, TheFrameResultIsThePictureThatWasAnswered)
+{
+    // ONE VALUE PER ANSWERED FRAME (design F12 / I7): which publication the picture came from, which camera took it,
+    // what the frame consisted of and what it reported. A query aims with it; a host gates on it; and before any frame
+    // is answered it says so instead of presenting zeros as facts.
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    EXPECT_FALSE(engine->frameResult().answered()) << "nothing has been answered yet";
+    EXPECT_FALSE(engine->frameResult().query.snapshot.valid());
+    EXPECT_FALSE(engine->frameResult().query.view.present);
+
+    auto       scene = intrusive_ptr<Scene>(new Scene());
+    const auto root  = setIdentityRoot(*scene);
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
+
+    auto surface = engine->createSurface();
+    auto view    = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    view->setScene(scene); // the view's picture is THIS scene: publishContent publishes what the chain draws
+    ASSERT_NE(buildFor(*view, engine.get()), nullptr);
+    ASSERT_TRUE(surface->present(*view));
+
+    // THE HOST VERB: a frame draws a PUBLICATION, so the content thread publishes before asking for the frame.
+    view->publishContent();
+    const SceneSnapshotRef drawn = scene->publishedSnapshot();
+    ASSERT_TRUE(drawn.valid());
+    const std::size_t diagnostics_before = engine->diagnosticCount();
+
+    ASSERT_TRUE(engine->frame().ran());
+    const FrameResult result = engine->frameResult();
+    EXPECT_TRUE(result.answered());
+    EXPECT_EQ(result.frame, engine->frameNumber());
+    EXPECT_EQ(result.present, engine->presentRecord().outcome) << "one answer, both spellings agree";
+    EXPECT_EQ(result.query.snapshot.revision(), drawn.revision()) << "the picture the frame actually drew";
+    ASSERT_TRUE(result.query.view.present);
+    EXPECT_NEAR(result.query.view.eye.z, view->camera()->eye().z, 1e-9) << "the camera that picture was taken with";
+    EXPECT_GE(result.passes, 1u) << "a frame with a presenting pass has at least one pass";
+    EXPECT_GE(result.draws, 1u) << "the triangle is drawn";
+    EXPECT_EQ(result.diagnostics, engine->diagnosticCount() - diagnostics_before) << "the frame's own share of the reports";
+
+    // A PUBLICATION THAT LANDS BETWEEN FRAMES IS THE NEXT ANSWER'S PICTURE: the value describes ONE answered frame.
+    root->addChild(makeTriangleNode(Vec3d(0.5, 0, -3), nullptr, u8"second"));
+    ASSERT_EQ(scene->publish().status, ScenePublishStatus::Posted);
+    EXPECT_EQ(engine->frameResult().query.snapshot.revision(), drawn.revision())
+        << "nothing has been answered since; the published picture is not retroactively this frame's";
+
+    ASSERT_TRUE(engine->frame().ran());
+    EXPECT_EQ(engine->frameResult().query.snapshot.revision(), scene->publishedSnapshot().revision());
+    EXPECT_NE(engine->frameResult().query.snapshot.revision(), drawn.revision());
+}
+
 TEST(CameraSnapshotTest, TheSnapshotsRayIsTheCamerasOwnRay)
 {
     // THE VALUE ANSWERS THE PICTURE'S OWN QUESTION (design N17): which world ray does this picture see through this

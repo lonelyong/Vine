@@ -394,8 +394,14 @@ bool RenderEngine::waitForFrame(std::chrono::milliseconds timeout)
 
 std::optional<CameraSnapshot> RenderEngine::presentedCamera() const
 {
-    const std::lock_guard<std::mutex> lock(presented_camera_mutex_);
-    return presented_camera_;
+    const std::lock_guard<std::mutex> lock(frame_result_mutex_);
+    return frame_result_.query.view.present ? std::optional<CameraSnapshot>(frame_result_.query.view) : std::nullopt;
+}
+
+FrameResult RenderEngine::frameResult() const
+{
+    const std::lock_guard<std::mutex> lock(frame_result_mutex_);
+    return frame_result_;
 }
 
 RenderEngine::PresentRecord RenderEngine::presentRecord() const noexcept
@@ -431,6 +437,21 @@ void RenderEngine::buildContentHalf(detail::EngineFrame& frame)
             frame.presented_camera = CameraSnapshot::of(*presenting->camera());
         }
     }
+    // THE PUBLICATION THE PICTURE IS DRAWN FROM, taken the same way and at the same moment as the camera: the presenting
+    // pass' content, as this frame resolves it (a bound publication wins over the scene's latest, see bindSnapshot), or
+    // empty when that pass draws no content at all.
+    frame.presented_snapshot = SceneSnapshotRef{};
+    if (area_ != nullptr) {
+        if (raw_ptr<RenderPass> presenting = area_->presentingPass()) {
+            if (raw_ptr<Scene> scene = presenting->content()) {
+                frame.presented_snapshot = publications_->publicationFor(*scene);
+            }
+        }
+    }
+    // The diagnostics THIS frame produces are the delta of the engine's one counter (see FrameResult): taken before the
+    // compile, because everything the frame reports - wiring problems here, the device's during the engine half - lands
+    // between these two reads.
+    frame.diagnostics_before = diagnosticCount();
 
     // Announce the content frame BEFORE the passes run: every scene this frame
     // renders may then memoise the command list it collects (see
@@ -534,12 +555,25 @@ void RenderEngine::runEngineHalf(detail::EngineFrame& frame)
     // The picture's fate and the frame's id travel as ONE word: a host reading presentRecord() while the next frame is
     // being answered must never see this frame's outcome beside that frame's id.
     present_record_.store((frame.number << 8U) | static_cast<std::uint64_t>(frame.outcome), std::memory_order_release);
-    // The picture's camera travels with the answer for the same reason its outcome does: a query must aim with the frame
-    // the user can see (design N17), and it is a value, so the copy under a lock is all the sharing there is.
+    // THE FRAME'S WHOLE ANSWER, in one value: which publication and camera the picture was taken from, what the frame
+    // consisted of, and what it reported. Written under the lock the two accessors read, so a host never sees half of
+    // this frame's answer beside half of the previous one.
     {
-        const std::lock_guard<std::mutex> lock(presented_camera_mutex_);
-        presented_camera_ = frame.presented_camera.present ? std::optional<CameraSnapshot>(frame.presented_camera)
-                                                           : std::nullopt;
+        FrameResult result;
+        result.frame          = frame.number;
+        result.present        = frame.outcome;
+        result.query.snapshot = frame.presented_snapshot;
+        result.query.view     = frame.presented_camera;
+        for (const FrameDescription::Pass& pass : frame.description.passes) {
+            ++result.passes;
+            if (pass.draw.has_value()) {
+                result.draws += static_cast<std::uint32_t>(pass.draw->draws.size());
+            }
+        }
+        const std::size_t reported = diagnosticCount();
+        result.diagnostics         = reported >= frame.diagnostics_before ? static_cast<std::uint64_t>(reported - frame.diagnostics_before) : 0U;
+        const std::lock_guard<std::mutex> lock(frame_result_mutex_);
+        frame_result_ = std::move(result);
     }
     frame_completed_.store(frame.number, std::memory_order_release);
 }

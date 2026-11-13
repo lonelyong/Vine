@@ -17,7 +17,8 @@ namespace detail
  * - The migration's shadow check (5a) compares the mirror's list with the snapshot source's list for the same view.
  *   The comparison is FIELD-EXACT: identity, payload, resolved material / program, world matrix, opacity, draw order,
  *   authored state and the instance slice. Anything a backend would record differently is a difference.
- * - Draw order is compared by position: both lists are sorted by `sortCollected`, so a changed order is a difference
+ * - Draw order is compared by position: both lists are sorted by the same total-order key (see `SortKey`), so a
+ *   changed order is a difference
  *   at the first index where it shows.
  * - `field` is a stable English spelling for the test's failure message, not a user-facing diagnostic.
  */

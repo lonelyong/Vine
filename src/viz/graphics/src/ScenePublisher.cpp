@@ -106,10 +106,12 @@ ScenePublisher::collectRenderCommands(const vn::graphics::CollectView& view, std
     std::vector<vn::graphics::RenderCommand> commands;
     const Frustum                            frustum       = Frustum::fromViewProjection(view_proj);
     bool                                     viewport_used = false;
-    selectFromBake(rows, frustum, view, layer_mask, viewport_used, commands);
+    std::vector<SortKey>                     keys;
+    keys.reserve(rows.rows.size());
+    selectFromBake(rows, frustum, view, layer_mask, viewport_used, commands, &keys);
     // The view's half ends in one order, and the order is the same rule for every producer of a draw list (the
-    // render world sorts its own collection with this very function - see DrawListBake.hpp).
-    sortCollected(commands, eye);
+    // snapshot path sorts with this very function - see DrawListBake.hpp / SortKey).
+    sortCollected(commands, keys);
     // Into the shared list by MOVE: the walk's result is the only copy that ever exists.
     auto shared = std::make_shared<const std::vector<vn::graphics::RenderCommand>>(std::move(commands));
     if (memoising) {

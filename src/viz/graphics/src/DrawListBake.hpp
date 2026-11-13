@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include <vine/SmallVector.hpp>
@@ -389,14 +390,100 @@ enum class RowRefresh
 RowRefresh refreshRowFacts(const Node& node, SceneBake& bake, std::uint32_t index);
 
 /**
+ * @brief ONE command's place in the order a frame draws it: THE total order `sortCollected` sorts by.
+ *
+ * @details
+ * - A VALUE, compared field by field, in the order the fields are declared - so "why is this drawn before that"
+ *   is answered by reading the struct (`G4` / `G11`):
+ *   1. @ref draw_order - the content's own declaration (`Node::setDrawOrder`); a higher value is drawn later.
+ *   2. @ref layer - the SMALLEST layer index the row belongs to (`Node::setLayers`): a pass that selects several
+ *      layers still has one deterministic order among them.
+ *   3. @ref transparent - the opaque segment first, the transparent segment after it.
+ *   4. @ref depth - CAMERA-SPACE depth of the representative point, quantized: front-to-back for the opaque segment,
+ *      back-to-front for the transparent one.
+ *   5. @ref tie - the row index in the publication and the primitive index inside it: the last key exists so the
+ *      order is TOTAL, not merely stable - any permutation of the same commands sorts to the same list (`R17`, `T9`).
+ * - THE REPRESENTATIVE POINT is the world box CENTER when the row has a box, and the node's origin only when it has
+ *   none: a mesh whose vertices sit far from its local origin (CAD parts, baked world coordinates) would otherwise
+ *   sort by a point that is not on it - the defect `.ai/bugs/graphics-transparent-sort-uses-origin.md` records.
+ * - DEPTH IS CAMERA-SPACE, not a Euclidean distance: the sort then agrees with the rasterized depth at the edge of
+ *   the field of view, where the two disagree about "which is in front". It is quantized (see @ref kDepthStep) so
+ *   that two runs on different machines break ties the same way.
+ * - This is still an OBJECT-LEVEL approximation: it does not order self-intersections, non-convex meshes or
+ *   concentric shells; content that needs more states it with `setDrawOrder` or splits its geometry
+ *   (see `graphics-scene.md` N10).
+ */
+struct SortKey {
+    std::int32_t  draw_order{ 0 };      ///< Declared draw order; a higher value is drawn later.
+    std::uint32_t layer{ 0 };           ///< Smallest layer index the row belongs to (0 when it states none).
+    bool          transparent{ false }; ///< Opaque segment first, transparent segment after it.
+    std::int64_t  depth{ 0 };           ///< Quantized camera-space depth (near = larger, see makeSortKey).
+    std::uint64_t tie{ 0 };             ///< (row index << 32) | primitive index: what makes the order total.
+
+    /// @brief Depth quantization: one step is 1/4096 of a world unit.
+    static constexpr double kDepthStep = 4096.0;
+
+    /** @brief Gets whether two keys name the same place in the order. */
+    friend bool operator==(const SortKey& lhs, const SortKey& rhs) noexcept = default;
+
+    /**
+     * @brief Orders two keys (see the struct's note for the field order and for what each field means).
+     *
+     * @param lhs First key.
+     * @param rhs Second key.
+     * @return true when @p lhs is drawn before @p rhs.
+     */
+    friend bool operator<(const SortKey& lhs, const SortKey& rhs) noexcept
+    {
+        if (lhs.draw_order != rhs.draw_order) {
+            return lhs.draw_order < rhs.draw_order;
+        }
+        if (lhs.layer != rhs.layer) {
+            return lhs.layer < rhs.layer;
+        }
+        if (lhs.transparent != rhs.transparent) {
+            return !lhs.transparent;
+        }
+        if (lhs.depth != rhs.depth) {
+            return lhs.transparent ? lhs.depth > rhs.depth : lhs.depth < rhs.depth;
+        }
+        return lhs.tie < rhs.tie;
+    }
+};
+
+/**
+ * @brief Builds the sort key of one command (see SortKey).
+ *
+ * @param command  The command the key describes (its draw order and transparency are read from it).
+ * @param layers   The layers of the ROW the command came from (its smallest bit is the key's layer).
+ * @param box      The row's world box this view resolved (or the folded one); an invalid box falls back to the
+ *                 command's own matrix origin.
+ * @param view     The world-to-view matrix of the view being drawn (camera-space depth is measured with it).
+ * @param tie      The row-and-primitive index that makes the order total.
+ * @return The key.
+ */
+SortKey makeSortKey(const RenderCommand& command, std::uint32_t layers, const Aabbd& box, const Mat4d& view, std::uint64_t tie);
+
+/**
  * @brief Collects one view's commands from a row range, through an accessor.
  *
  * @details
  * - The algorithm reads rows only; the accessor is what lets it run over a flat `SceneBake` and over the chunked
  *   `SceneSnapshot` without materialising either into the other's layout.
  * - `row_at(index)` must answer the row at @p index and must be stable for the duration of the call.
+ * - @p keys, when given, receives ONE key per command appended - the caller then reorders with `sortCollected`.
+ *   The keys are built here because a key needs facts only the row has (its layers and its world box).
  *
  * @tparam RowAt Callable `const Row&(std::uint32_t)`.
+ *
+ * @param row_count     Number of rows to walk.
+ * @param row_at        Accessor answering one row.
+ * @param frustum       The view's frustum.
+ * @param view          The view being drawn.
+ * @param layer_mask    Layers this picture draws.
+ * @param viewport_used Receives true when a per-view row needs the device-pixel viewport.
+ * @param out           Receives the commands, in walk order.
+ * @param keys          Receives the sort key of every appended command, or null when the caller sorts elsewhere.
  */
 template <class RowAt>
 void selectRows(std::uint32_t               row_count,
@@ -405,7 +492,8 @@ void selectRows(std::uint32_t               row_count,
                 const CollectView&          view,
                 std::uint32_t               layer_mask,
                 bool&                       viewport_used,
-                std::vector<RenderCommand>& out)
+                std::vector<RenderCommand>& out,
+                std::vector<SortKey>*       keys = nullptr)
 {
     // The rows are in walk order, so the rows currently being resolved form the ancestor chain, deepest last. A row
     // whose placement was resolved for THIS view hands its world down; every other row is already placed by the fold.
@@ -459,6 +547,9 @@ void selectRows(std::uint32_t               row_count,
         }
         if (!row.draws.empty()) {
             const float effective = std::clamp(row.opacity, 0.0f, 1.0f);
+            // The box the key's representative point is taken from: the one this view resolved for a per-view row,
+            // otherwise the box the fold published.
+            const Aabbd sort_box = resolved ? row.local_box.transformed(world) : row.world_box;
             for (const DrawFacts& draw : row.draws) {
                 if (!draw.drawn) {
                     continue;
@@ -486,6 +577,13 @@ void selectRows(std::uint32_t               row_count,
                 cmd.instance_transforms        = draw.instance_transforms;
                 cmd.first_instance             = draw.first_instance;
                 cmd.instance_count             = draw.instance_count;
+                if (keys != nullptr) {
+                    keys->push_back(makeSortKey(out.back(),
+                                                row.layers,
+                                                sort_box,
+                                                view.view,
+                                                (static_cast<std::uint64_t>(index) << 32U) | draw.primitive_index));
+                }
             }
         }
         ++index;
@@ -501,26 +599,30 @@ void selectRows(std::uint32_t               row_count,
  * @param layer_mask    Layers this picture draws.
  * @param viewport_used Receives true when a per-view row needs the device-pixel viewport.
  * @param out           Receives the commands, in walk order.
+ * @param keys          Receives the sort key of every appended command (see selectRows).
  */
 void selectFromBake(const SceneBake&            bake,
                     const Frustum&              frustum,
                     const CollectView&          view,
                     std::uint32_t               layer_mask,
                     bool&                       viewport_used,
-                    std::vector<RenderCommand>& out);
+                    std::vector<RenderCommand>& out,
+                    std::vector<SortKey>*       keys = nullptr);
 
 /**
- * @brief Reorders @p commands into the draw order a frame draws them in, in place.
+ * @brief Reorders @p commands into the order a frame draws them in, in place.
  *
  * @details
- * - The order is the CONTENT's declared draw order (see Node::setDrawOrder), then opaque before transparent, then
- *   front-to-back for opaque and back-to-front for transparent. Ties keep the collection order.
+ * - The order is the TOTAL order @ref SortKey states: declared draw order, then layer, then the opaque segment before
+ *   the transparent one, then quantized camera-space depth (front-to-back opaque, back-to-front transparent), and
+ *   finally the row/primitive index. Because the last field is unique, no two commands compare equal - so any
+ *   permutation of the same commands sorts to the same list and `std::sort` (not `stable_sort`) is correct.
  * - It exists as its own step because BOTH producers of a draw list need it and neither may own a copy.
  *
  * @param commands Commands to reorder (replaced by their sorted order).
- * @param eye      World-space eye point the distances are measured from.
+ * @param keys     The key of every command, in the commands' current order (see selectRows).
  */
-void sortCollected(std::vector<RenderCommand>& commands, const Vec3d& eye);
+void sortCollected(std::vector<RenderCommand>& commands, std::span<const SortKey> keys);
 
 } // namespace detail
 

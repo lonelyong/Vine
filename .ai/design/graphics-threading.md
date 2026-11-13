@@ -364,7 +364,8 @@
 | `RenderEngine::frame() → FrameOutcome` | 构建 + 交出（`Submitted`）或就地跑完（`Ran`）；`NotReady` + `EngineNotReady` 表示没驱动 | 已存在（W9e 收口） |
 | `RenderEngine::setFrameThreading(FrameThreading)` | `Inline`（默认）/ `EngineThread`；生命周期决定 | 已存在 |
 | `RenderEngine::waitForFrame(n, timeout)` | 唯一显式等待 | 已存在 |
-| `RenderEngine::presentRecord()` / `presentedCamera()` | 上一帧的呈现结局 / 那一帧的相机快照（N17） | 已存在 |
+| `RenderEngine::presentRecord()` / `presentedCamera()` | 上一帧的呈现结局 / 那一帧的相机快照（N17）；两者都是 `frameResult()` 的两个半边 | 已存在 |
+| `RenderEngine::frameResult() → FrameResult` | 上一帧的全部事实：`query`（snapshot / view）+ passes / draws / diagnostics / present | 新（F12，2026-11-13） |
 | `RenderEngine::prepare()` | 只建不提交的预热（见 `graphics-frame-pipeline.md` F7） | 已存在 |
 
 ### 4.3 不变的部分
@@ -410,7 +411,7 @@
 |---|---|---|
 | N15 | 线程化之后画面比内容晚一帧（引擎半段跑的是上一帧）；`waitForFrame` 是唯一"等到那一帧"的手段。 | 把"已提交"当"已上屏" |
 | N16 | 一帧之内只有一份发布：钩子写的内容对该帧所有 pass 可见。 | 帧内半新半旧 |
-| N17 | 相机在内容侧、事件即刻生效，画面是上一帧的相机快照。所以**把指针变成世界点的查询（拾取、锚点）用"用户看到的那一帧"的相机**：`RenderEngine::presentedCamera()` 发布它，经 `SceneView::setPresentedCamera` 到达 manipulator；没有发布值时退回当前相机。 | 低帧率下枢轴/选择偏一帧 |
+| N17 | 相机在内容侧、事件即刻生效，画面是上一帧的相机快照。所以**把指针变成世界点的查询（拾取、锚点）用“用户看到的那一帧”的相机**：`RenderEngine::frameResult().query`（`view` + 它画的那份 `snapshot`）发布它，`presentedCamera()` 是其中 `view` 的简写；经 `SceneView::setPresentedCamera` 到达 manipulator；没有发布值时退回当前相机。 | 低帧率下枢轴/选择偏一帧 |
 
 ## 6. 注意事项与陷阱
 

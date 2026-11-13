@@ -1,10 +1,9 @@
 # 透明排序用世界矩阵原点当代表点，大网格/偏移几何排错
 
-- **状态**：待修复（先改顺序键；“透明排序只到对象级”这一边界同时写进了 `graphics-scene.md` §2.9 / N10）。
+- **状态**：已修复（2026-11-13）。顺序键现在是 `detail::SortKey`（`DrawListBake.hpp`）：代表点 = 世界盒中心（无盒退回矩阵原点），深度 = 量化相机空间深度。
 - **发现日期**：2026-11-02
 - **模块**：`src/viz/graphics`
-- **涉及**：`Scene::collectRenderCommands` 的排序键（`src/viz/graphics/src/Scene.cpp:736-762`）、`RenderCommand::model_matrix`、
-  `Geometry::localBounds()` / `Node::subtreeBounds()`
+- **涉及**：`detail::sortCollected` / `detail::makeSortKey`（`src/viz/graphics/src/DrawListBake.{hpp,cpp}`）
 
 ## 现象与影响
 
@@ -42,3 +41,15 @@ early-Z 效率问题，不改变画面；透明批次是正确性问题。
 
 该问题涉及 **G4**（“顺序键是什么”没有在接口层说清，调用者无法预测）、**G11**（错误只体现在像素上，且难以定位到排序键）
 与 **G10**（用零成本的近似换掉了正确性，却没人写出这笔代价）。
+
+## 修复（2026-11-13，F11）
+
+- **代表点**：世界盒中心（行里已经有 `world_box`，fold 算过一次），只有无盒的行才退回命令自己的矩阵原点。
+- **深度**：相机空间深度（`view * point` 的 -z）而不是欧氏距离，并按 `SortKey::kDepthStep`（1/4096 世界单位）量化，
+  使排序与光栅化深度一致、且跨机器可复现。
+- **全序**：键依次是 drawOrder → 层（最小层号）→ 不透明/透明 → 量化深度 → 行/图元索引（`tie`）。`tie` 使任意置换
+  排序结果相同，`sortCollected` 因此用 `std::sort` 而不依赖稳定性（`R17` / `T9`）。
+- **测试**：`SelectTest.TheSortKeyIsATotalOrder`、`SelectTest.TheKeyReadsDrawOrderThenLayerThenSegmentThenDepth`、
+  `SelectTest.TheKeySortsByTheBoxCentreNotTheNodeOrigin`（节点原点被故意放在最远点）、
+  `SelectTest.ACommandWithNoBoxFallsBackToItsOrigin`。像素级回归由现有 `test_vsg` 通过。
+- **边界没变**：仍是对象级近似（见“设计约束”与 `graphics-scene.md` N10）。

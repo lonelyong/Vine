@@ -25,6 +25,7 @@
 #include "DiagnosticsRoute.hpp"
 #include "EngineNotReady.hpp"
 #include "FrameDescription.hpp"
+#include "FrameResult.hpp"
 #include "FrameStats.hpp"
 #include "FrameTable.hpp"
 #include "OutputRegistry.hpp"
@@ -509,6 +510,25 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Gets what became of the last answered frame's picture (see PresentRecord). */
     [[nodiscard]] PresentRecord presentRecord() const noexcept;
 
+    /** @brief Gets what the last ANSWERED frame was: its picture, the world it saw, and what it cost (see FrameResult).
+     *
+     * @details
+     * - ONE ANSWER FOR ONE FRAME. Every field describes the frame that produced it, and the whole value is written once,
+     *   when that frame is answered - so a host reading while the next frame is being recorded never sees this frame's
+     *   id beside the last frame's picture.
+     * - THE VALUE A QUERY AIMS WITH: `query.snapshot` is the publication the picture was drawn from and `query.view`
+     *   the camera it was taken with, both taken when the frame was built. A pick, an anchor or a fit that asks about
+     *   "what the user sees" reads them here instead of the live scene and camera (`I7`, design N17).
+     * - `frame` stays 0 until something is answered (`answered()`), and `present` is the same answer `presentRecord()`
+     *   carries - the one field a host must ACT on (`Lost` -> re-attach, between frames).
+     *
+     * @note
+     * - `presentedCamera()` is the `query.view` half of this value, kept as its own entry for callers that only aim.
+     *
+     * @return The last answered frame's result; an empty value (frame 0) before the first answer.
+     */
+    [[nodiscard]] FrameResult frameResult() const;
+
     /** @brief Gets the camera the last ANSWERED frame's picture was taken with, when something presents this area.
      *
      * @details
@@ -520,6 +540,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   and published when the frame is answered - beside presentRecord(), and read from any thread.
      * - Absent when nothing presents this engine's area (an offline bake, a device that presents nothing): a query then
      *   keeps using the live camera, which is the right answer when there is no picture to disagree with.
+     * - It is the `query.view` half of RenderEngine::frameResult, kept as its own entry for callers that only aim.
      *
      * @return The snapshot, or nullopt (see above).
      */
@@ -1429,11 +1450,11 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /// The last answered frame's id and picture outcome, packed into one word (`frame << 8 | outcome`) so a host can
     /// read both from any thread without a lock and without the two halves of the answer tearing apart.
     std::atomic<std::uint64_t> present_record_{ 0 };
-    /// The camera of the last answered frame (see presentedCamera), and the lock that makes it readable from the
-    /// content's thread while the engine thread answers the next frame. A snapshot is a handful of matrices, so the
-    /// lock is held for a copy in both directions and nothing else.
-    mutable std::mutex            presented_camera_mutex_;
-    std::optional<CameraSnapshot> presented_camera_;
+    /// The last ANSWERED frame's whole answer (see frameResult): its picture, the world it saw and what it cost, plus
+    /// the lock that makes it readable from the content's thread while the engine thread answers the next frame. A
+    /// snapshot handle and a camera value are all it shares, so the lock is held for a copy in both directions.
+    mutable std::mutex frame_result_mutex_;
+    FrameResult        frame_result_;
     // THE PUBLICATION CHANNEL. Its verbs are the content side's (see detail::PublicationStore): publish, bind, and the
     // lookup the frame's bind step does - so a frame value crosses with publications in it, never with live content
     // (G2/G12), and the engine half's only call on it is `beginFrame` (the token the per-view memos share).

@@ -84,14 +84,17 @@ void selectSnapshot(const SceneSnapshot&        snapshot,
         return;
     }
     const Frustum frustum = Frustum::fromViewProjection(view.viewProjection());
+    std::vector<SortKey> keys;
+    keys.reserve(snapshot.row_count);
     selectRows(static_cast<std::uint32_t>(snapshot.row_count),
                [&snapshot](std::uint32_t index) -> const Row& { return snapshot.row(index); },
                frustum,
                view,
                layer_mask,
                viewport_used,
-               out);
-    sortCollected(out, view.eye);
+               out,
+               &keys);
+    sortCollected(out, keys);
 }
 
 } // namespace detail
