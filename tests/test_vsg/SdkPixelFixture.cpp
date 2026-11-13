@@ -19,6 +19,7 @@
 #include <vine/vsg/internal/DeviceProbe.hpp>
 
 #include "TestGeometryBuilders.hpp"
+#include "PlanTestSupport.hpp"
 
 using vn::graphics::Camera;
 using vn::graphics::Geometry;
@@ -113,7 +114,7 @@ bool SdkPixelFixture::available()
         pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
         pass->setShouldClearDepth(true);
         pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-        probe.engine->addPass(pass, probe.scene, 0);
+        vn::test::registerPassForTest(*probe.engine, pass, probe.scene, 0);
         return probe.read().valid();
     }();
     return usable;

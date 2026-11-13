@@ -386,7 +386,7 @@
 | C17 | 表面事件只在帧首应用一次；交换链只在引擎线程重建；UI 侧不写任何引擎侧状态。 |
 | C18 | 批内版本不推进：`beginEdit()` 之后、最外层 `endEdit()` 之前，发布停在原处 —— 落在批中间的帧**不发布任何东西**，画批次开始时的状态；整批在 `endEdit()` 之后那一帧作为**一次**发布落地。 |
 | C19 | 材质以**值**过帧：命令携带 `MaterialDescriptionPtr`（`revision` + 解析后的参数），引擎侧只读值，不读 `Material::resolved()`。值的取点在内容侧，批内不取。 |
-| C20 | 会话形状（pass 集合、资源表、后端保留态）**只在帧与帧之间**改：帧在飞时 `applyPlan` / `addPass` / `removePass` 一律拒绝（`sessionChangeAllowed`），并按 episode 报**一条** `PassProtocolViolation`。 |
+| C20 | 会话形状（pass 集合、资源表、后端保留态）**只在帧与帧之间**改：帧在飞时 `applyPlan`（任何一种形态）一律拒绝（`sessionChangeAllowed`），并按 episode 报**一条** `PassProtocolViolation`。 |
 
 ### 5.2 要求（R#）
 

@@ -11,30 +11,32 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "Plan.hpp"
+
 VN_GRAPHICS_NS_BEGIN
 
 class RenderEngine;
 class RenderPass;
 class Scene;
 struct PassDesc;
+struct Plan;
+struct PlanProblem;
 
 /**
  * @brief The engine's pass registry - the ONE table a frame runs from - as a narrow handle.
  *
  * @details
- * - ONE STORAGE, ONE CONTRACT: the engine owns the ordered slot table (order, owner, role, transient, timing),
- *   and this handle is a view of it. Content is not in that table: it is a field of the pass' own declaration
+ * - ONE STORAGE, ONE CONTRACT: the engine owns the ordered slot table (order, owner, transient, timing), and this
+ *   handle is a view of it. Content is not in that table: it is a field of the pass' own declaration
  *   (`PassDesc::content`), which is what `bindContent()` writes. There is no second list here - `count()` and
- *   `orderOf()` walk the engine's table, and `add()` files a pass into it.
- * - WHO DEPENDS ON IT: a `PassChain` registers its passes through this handle and takes them back through it, so a
- *   recipe depends on the registry instead of the whole engine. Hosts that spell it out use `engine.passes()`.
+ *   `orderOf()` walk the engine's table.
+ * - THE SHAPE IS A PLAN, HERE TOO: a pass is registered by applying a `Plan` scoped to its owner (`apply`), so the one
+ *   way a table row appears is the same value-shaped diff a host uses (see RenderEngine::applyPlan). A `PassChain`
+ *   builds its plan and hands it over through this handle, which is what lets a recipe depend on the registry instead
+ *   of the whole engine.
  * - THE ENGINE MAY OUTLIVE OR PRECEDE THE HANDLE, and the handle knows it (a `Lease`): once the engine is destroyed
- *   `isValid()` answers false and every call is a no-op (an add answers null) instead of reaching into freed
+ *   `isValid()` answers false and every call is a no-op (a lookup answers null) instead of reaching into freed
  *   memory. That is what lets a chain outlive its engine safely.
- *
- * @note
- * - The engine's flat methods (`addPass`, `removePass`, `passCount`, ...) are shorthands for this handle; they exist
- *   because most callers live next to the engine, not because there is a second registry.
  */
 class VN_GRAPHICS_API PassRegistry {
   public:
@@ -48,39 +50,31 @@ class VN_GRAPHICS_API PassRegistry {
      */
     [[nodiscard]] bool isValid() const noexcept;
 
-    /** @brief Registers a declared pass (see PassDesc), with no owner and no role.
+    /**
+     * @brief Applies @p plan as @p owner's rows (see RenderEngine::applyPlan(plan, owner)).
      *
-     * @param desc Declaration of the pass to register.
-     * @return The execution node the declaration became, or null when the engine is gone or that pass was already
-     *         registered.
+     * @param plan  The rows this contributor states.
+     * @param owner The contributor the rows belong to.
+     * @return Every problem found, empty when the plan was applied.
      */
-    intrusive_ptr<RenderPass> add(const PassDesc& desc);
+    [[nodiscard]] std::vector<PlanProblem> apply(const Plan& plan, const void* owner);
 
-    /** @brief Registers a hand-built pass at an explicit order.
+    /**
+     * @brief Finds the registered pass whose name is @p name.
      *
-     * @param pass  Pass to add (the engine keeps a reference).
-     * @param order Execution order (ascending; equal orders keep insertion order).
-     * @return The pass the engine registered, or null when the engine is gone or it was already registered.
+     * @param name Pass name (a plan's identity).
+     * @return The registered node, or null when no row carries that name.
      */
-    intrusive_ptr<RenderPass> add(intrusive_ptr<RenderPass> pass, int order);
+    [[nodiscard]] raw_ptr<RenderPass> find(const String& name) const;
 
-    /** @brief Registers a hand-built pass bound to explicit content.
+    /**
+     * @brief Finds the pass @p owner stated under @p name (see RenderEngine::passFor).
      *
-     * @param pass    Pass to add (the engine keeps a reference).
-     * @param content Scene the pass renders (a reference is kept).
-     * @param order   Execution order (ascending).
-     * @return The pass the engine registered, or null when the engine is gone or it was already registered.
+     * @param name  Pass name.
+     * @param owner The scope that stated it.
+     * @return The node, or null.
      */
-    intrusive_ptr<RenderPass> add(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order);
-
-    /** @brief Removes a registered pass and releases the backend state it retained.
-     *
-     * @param pass Pass to remove (by pointer; null or an unregistered pass is ignored).
-     */
-    void remove(raw_ptr<RenderPass> pass);
-
-    /** @brief Removes every registered pass (each one as remove). */
-    void clear();
+    [[nodiscard]] raw_ptr<RenderPass> findFor(const String& name, const void* owner) const;
 
     /** @brief Gets how many passes are registered.
      *
@@ -124,23 +118,19 @@ class VN_GRAPHICS_API PassRegistry {
      */
     explicit PassRegistry(Lease<RenderEngine> engine) noexcept;
 
-    /** @brief Registers a declaration on behalf of @p owner under @p role (the chain's registration).
+  public:
+    /**
+     * @brief Removes every pass filed under @p owner (the scope's teardown; null is a no-op).
      *
-     * @param desc  Declaration of the pass to register.
-     * @param owner Object that owns the pass (the chain).
-     * @param role  Name the owner gives this pass (empty = anonymous).
-     * @return The registered node, or null when the engine is gone or it was already registered.
+     * @details
+     * - A contributor's rows leave with the contributor (see RenderEngine::applyPlan(plan, owner)): a view drops its
+     *   chain, a chain that owns its own scope drops itself.
+     *
+     * @param owner The scope whose rows are removed (an identity).
      */
-    intrusive_ptr<RenderPass> addOwnedBy(const PassDesc& desc, raw_ptr<Object> owner, const String& role);
+    void clearOwnedBy(const void* owner) noexcept;
 
-    /** @brief Removes every pass @p owner registered (null is a no-op). */
-    void removeOwnedBy(const Object* owner) noexcept;
-
-    /** @brief Answers the passes @p owner registered, in engine order. */
-    [[nodiscard]] std::vector<intrusive_ptr<RenderPass>> passesOwnedBy(const Object* owner) const;
-
-    /** @brief Answers the pass @p owner registered as @p role, or null. */
-    [[nodiscard]] raw_ptr<RenderPass> passOwnedBy(const Object* owner, const String& role) const;
+  private:
 
   private:
     Lease<RenderEngine> engine_;

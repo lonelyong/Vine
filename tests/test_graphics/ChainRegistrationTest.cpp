@@ -14,6 +14,8 @@
 
 #include <gtest/gtest.h>
 
+#include "PlanTestSupport.hpp"
+
 using namespace vn::graphics;
 using vn::intrusive_ptr;
 using vn::raw_ptr;
@@ -64,7 +66,7 @@ TEST(ChainRegistrationTest, AChainTakesBackExactlyThePassesItRegistered)
     EXPECT_EQ(chain->overlayPass(String(u8"nothing")), nullptr);
 
     // A pass the host registered itself is not the chain's business, and both live in the one table.
-    EXPECT_NE(engine->addPass(overlayDeclaration(u8"outside")), nullptr);
+    EXPECT_NE(vn::test::applyPassForTest(*engine, overlayDeclaration(u8"outside")), nullptr);
     EXPECT_EQ(engine->passCount(), 3u);
 
     chain = nullptr;
@@ -216,7 +218,8 @@ TEST(ChainRegistrationTest, TheHandlesOutliveTheirEngineAndThenAnswerNothing)
         EXPECT_TRUE(registry.isValid());
         EXPECT_TRUE(outputs.isValid());
         EXPECT_TRUE(diagnostics.isValid());
-        EXPECT_NE(registry.add(overlayDeclaration(u8"outside")), nullptr) << "the same table the engine's own methods read";
+        const Plan plan{ { overlayDeclaration(u8"outside") } };
+        EXPECT_TRUE(registry.apply(plan, nullptr).empty()) << "the same table the engine's own methods read";
         EXPECT_EQ(registry.count(), engine->passCount());
     }
 
@@ -224,7 +227,8 @@ TEST(ChainRegistrationTest, TheHandlesOutliveTheirEngineAndThenAnswerNothing)
     EXPECT_FALSE(outputs.isValid());
     EXPECT_FALSE(diagnostics.isValid());
     EXPECT_EQ(registry.count(), 0u);
-    EXPECT_EQ(registry.add(overlayDeclaration(u8"late")), nullptr) << "there is nobody left to register it on";
+    EXPECT_FALSE(registry.apply(Plan{ { overlayDeclaration(u8"late") } }, nullptr).empty())
+        << "there is nobody left to register it on: the apply answers a problem instead of reaching into freed memory";
     EXPECT_EQ(outputs.resolve(String(u8"nothing")), nullptr);
     EXPECT_EQ(outputs.transientTarget(String(u8"nothing")), nullptr);
     EXPECT_EQ(outputs.transientCount(), 0u);

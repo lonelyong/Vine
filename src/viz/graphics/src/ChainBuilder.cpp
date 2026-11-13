@@ -20,8 +20,9 @@ VN_GRAPHICS_NS_BEGIN
 namespace detail
 {
 
-ChainBuilder::ChainBuilder(raw_ptr<RenderEngine> engine)
+ChainBuilder::ChainBuilder(raw_ptr<RenderEngine> engine, const void* owner)
   : engine_(engine)
+  , owner_(owner)
 {}
 
 intrusive_ptr<PassChain> ChainBuilder::build(const ChainDesc& options)
@@ -40,6 +41,10 @@ intrusive_ptr<PassChain> ChainBuilder::build(const ChainDesc& options)
     // that drops the handle) takes its passes back out of the frame. The handles are leases; the engine may die
     // first and the chain then answers "gone" instead of reaching into freed memory.
     auto pipeline          = make_intrusive<PassChain>(engine_->passes(), engine_->diagnostics());
+    // THE SCOPE EXISTS BEFORE ANY APPLY: an overlay added during the build commits a plan of its own, so the chain must
+    // know whose rows they are from its first statement (see PassChain::build(engine, desc, owner)).
+    pipeline->scope_       = owner_ != nullptr ? owner_ : pipeline.get();
+    pipeline->scope_owned_ = owner_ == nullptr;
     // The chain the REQUEST assembles is not always the chain it names: a mode that needs the geometry pass
     // decides it (see effectivePath). The chain records what it was built as, because "can this chain
     // express that mode" is what a later setShadingMode() is answered from.
@@ -53,9 +58,8 @@ intrusive_ptr<PassChain> ChainBuilder::build(const ChainDesc& options)
     if (!applyOverlays(*pipeline, options)) {
         return nullptr;
     }
-    // The build's mode lands as the same override a live switch applies (one place knows what a mode means),
-    // and it always succeeds here: the chain was chosen to be able to express it.
-    (void)pipeline->setShadingMode(options.mode);
+    // The build's mode is applied AFTER the commit (see PassChain::build): a mode is an override ON the picture pass,
+    // so it needs the node, not the declaration.
     return pipeline;
 }
 
@@ -299,7 +303,7 @@ bool ChainBuilder::buildForwardPath(PassChain& pipeline)
     if (shadow_map != nullptr) {
         main_desc.input_targets = { shadow_map };
     }
-    const intrusive_ptr<RenderPass> pass = pipeline.addPass(main_desc);
+    pipeline.addPass(main_desc);
     // Optional transparent content: a depth-on pass stacked right after the
     // main content in the SAME window render pass, so it occludes against the
     // opaque depth the main pass just wrote (see setTransparentContent).
@@ -321,7 +325,7 @@ bool ChainBuilder::buildForwardPath(PassChain& pipeline)
         // the host's to publish, and this one has no other owner.
         pipeline.setTransparentContent(transparent_);
     }
-    pipeline.setWindowPass(pass);
+    pipeline.setWindowPass(main_desc.name);
     return true;
 }
 
@@ -429,10 +433,10 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
             light_desc.input_targets.push_back(shadow_map);
         }
         light_desc.program                    = std::move(light_program);
-        const intrusive_ptr<RenderPass> light = pipeline.addPass(light_desc);
+        pipeline.addPass(light_desc);
 
         pipeline.setOffscreenTarget(std::move(gbuffer));
-        pipeline.setWindowPass(light);
+        pipeline.setWindowPass(light_desc.name);
         return true;
     }
 
@@ -512,11 +516,11 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     present_desc.program                    = screenCopyProgram();
     present_desc.input_names                = { u8"Composite" };
     present_desc.input_targets              = { composite }; // it presents the whole baked target
-    const intrusive_ptr<RenderPass> present = pipeline.addPass(present_desc);
+    pipeline.addPass(present_desc);
 
     pipeline.setOffscreenTarget(std::move(gbuffer));
     pipeline.setCompositeTarget(std::move(composite));
-    pipeline.setWindowPass(present);
+    pipeline.setWindowPass(present_desc.name);
     return true;
 }
 
@@ -536,7 +540,25 @@ ShadingPath PassChain::effectivePath(const ChainDesc& options) noexcept
 
 intrusive_ptr<PassChain> PassChain::build(raw_ptr<RenderEngine> engine, const ChainDesc& desc)
 {
-    return detail::ChainBuilder(engine).build(desc);
+    return build(engine, desc, nullptr);
+}
+
+intrusive_ptr<PassChain> PassChain::build(raw_ptr<RenderEngine> engine, const ChainDesc& desc, const void* owner)
+{
+    // THE RECIPE STATES, THE COMMIT APPLIES: the builder assembles declarations, one apply states them as the SCOPE's
+    // rows (a whole plan, so a pass reading a name another pass of the chain publishes validates), and the plan's
+    // refusals are the build's answer (reported once, see PassChain::apply).
+    intrusive_ptr<PassChain> chain = detail::ChainBuilder(engine, owner).build(desc);
+    if (chain == nullptr) {
+        return nullptr;
+    }
+    if (!chain->apply()) {
+        return nullptr;
+    }
+    // The build's mode lands as the same override a live switch applies (one place knows what a mode means), and it
+    // always succeeds here: the chain was chosen to be able to express it.
+    (void)chain->setShadingMode(desc.mode);
+    return chain;
 }
 
 VN_GRAPHICS_NS_END

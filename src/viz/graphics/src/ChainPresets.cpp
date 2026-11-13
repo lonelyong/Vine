@@ -12,6 +12,7 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/Plan.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -151,10 +152,10 @@ raw_ptr<ScreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
     target->attachColor(color_format);
     target->attachDepth(depth_format);
 
-    // Registered on the engine, NOT through a chain: the engine keeps this pass alive and no chain owns it, so it is
-    // only addressable through clearPasses() (see the declaration).
+    // Registered as the ENGINE'S OWN row, NOT through a chain: the preset is not a recipe, and a plan's identity is
+    // the NAME - so the source and the PiP get names of their own (the published slot name stays the output's).
     PassDesc preview_desc;
-    preview_desc.name          = output_slot;
+    preview_desc.name          = String(output_slot) + String(u8"_source");
     preview_desc.tag           = u8"Preview";
     preview_desc.stage         = PassStage::Geometry;
     preview_desc.camera        = intrusive_ptr<Camera>(camera);
@@ -162,12 +163,11 @@ raw_ptr<ScreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
     preview_desc.writes        = target;
     preview_desc.output_name   = output_slot;
     preview_desc.output_target = target; // its only writer: it owns the hand-off
-    engine->addPass(preview_desc);
 
     // The order > 0 ScreenPass sampling the slot into the PiP sub-viewport. Its picture is the SDK's copy program,
     // and it carries the view camera because a fullscreen program is drawn through the pass' view.
     PassDesc pip_desc;
-    pip_desc.name                          = output_slot;
+    pip_desc.name                          = String(output_slot) + String(u8"_pip");
     pip_desc.tag                           = u8"Preview";
     pip_desc.stage                         = PassStage::Preview;
     pip_desc.kind                          = PassKind::Screen;
@@ -178,10 +178,14 @@ raw_ptr<ScreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
     pip_desc.input_names                   = { output_slot };
     pip_desc.input_targets                 = { target }; // samples the whole published target
     pip_desc.viewport                      = pip;
+    // ONE PLAN, BOTH ROWS: the PiP reads the slot the source publishes, and a plan is checked as a whole (an input no
+    // row of this plan states would be refused).
+    Plan preset;
+    preset.passes.push_back(preview_desc);
+    preset.passes.push_back(pip_desc);
+    (void)engine->applyPlan(preset, engine);
     // The node is the handle this function hands back, and a Screen declaration is a ScreenPass by construction.
-    const intrusive_ptr<RenderPass> screen = engine->addPass(pip_desc);
-
-    return static_cast<ScreenPass*>(screen.get());
+    return static_cast<ScreenPass*>(engine->passFor(pip_desc.name, engine));
 }
 
 VN_GRAPHICS_NS_END

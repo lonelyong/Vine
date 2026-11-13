@@ -625,3 +625,19 @@
   `test_graphics` 561 / `test_vsg` 546 全绿。
 - `RenderCommand::geometry/material/program` 保留：只做身份与寿命（流绑定、驻留、`releaseContent` 的“还有谁持有”），
   记录侧不再从它们读 revision / 透明 / 灯值；删它们需要内容注册通道（T30/T22 触发）。
+
+## 2026-11-13 —— W9d：`addPass` 家族删除，计划是唯一的形状
+
+- **删掉的**：`RenderEngine::addPass` ×3 / `removePass` / `clearPasses`（`removePass` 转私有，供计划自己的差分与
+  scope teardown）；`PassRegistry::add` ×3 / `remove` / `clear` / `addOwnedBy`；`PassProblemCode::SubclassPassWouldBeRebuilt`
+  （计划只表达 `PassKind`，子类 pass 不存在了）。
+- **新增**：`applyPlan(plan, const void* owner)`（作用域形态：**只 upsert，不删除**，身份是 `(owner, name)`）、
+  `planFor(owner)`、`pass(name)` / `passFor(name, owner)`；`PassRegistry::apply` / `find` / `findFor` / `clearOwnedBy`。
+- **链**：`PassChain` 只收集声明（`addPass` 不再碰引擎），`apply()` 一次提交整计划（所以"一条 pass 读另一条产的
+  名字"能整体校验）；`PassChain::build(engine, desc, owner)` 让宿主点名 scope，**重建是同一 scope 重述**（节点原地
+  更新，后端状态不清）；`SceneView` 是其链的 scope 并在析构时 `clearOwnedBy(this)`；`Viewer` / `buildFor` 传 view。
+- **其它贡献者**：`DemoScene` 用自己的 `RenderControl` 作 scope；`addOffscreenToScreen` 预设用引擎作 scope、两条声明
+  一个计划；测试用 `tests/PlanTestSupport.hpp`（`applyPassForTest` / `registerPassForTest`，scope = 引擎）。
+- **坑**：`apply()` 的"从节点刷新声明"只能对**已提交过**的行做（`applied_`），否则重建的新声明会被旧节点覆盖。
+- **测试**：`test_graphics` 560 / `test_vsg` 546 全绿（删 1 个只测子类 kind 变更的用例；`AddSamePassTwice...` 改为
+  "同名两次 = 一行，最后一次声明生效"）。

@@ -153,7 +153,7 @@ bool RenderSurface::present(raw_ptr<RenderPass> pass)
             engine->reportEngineProblem(DiagnosticSeverity::Warning,
                                         DiagnosticCategory::PassProtocolViolation,
                                         u8"RenderSurface::present: this pass is not registered on the engine of this surface, so it draws "
-                                        u8"nothing here; register it first (RenderEngine::addPass - a pipeline registers its own when it is "
+                                        u8"nothing here; state it first (RenderEngine::applyPlan - a chain states its own when it is "
                                         u8"built) and declare it again");
         }
         return false;

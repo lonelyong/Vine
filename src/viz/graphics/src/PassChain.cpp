@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <vine/graphics/AxisGizmo.hpp>
+#include <vine/graphics/Plan.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/RenderPass.hpp>
@@ -21,11 +22,13 @@ PassChain::PassChain(PassRegistry registry, DiagnosticsRoute diagnostics)
 
 PassChain::~PassChain()
 {
-    // The chain IS its registration scope: every pass it added is filed in the engine's slot table with this chain as
-    // its owner (see PassRegistry::addOwnedBy), so ONE call hands them all back - no second list to keep in step and
-    // no move-only token to get wrong. A chain that outlived its engine has no table left to hand anything back to:
-    // the handle answers "gone" and the passes died with the engine that owned them.
-    registry_.removeOwnedBy(this);
+    // The chain IS its registration scope: every pass it applied is filed in the engine's slot table with this chain
+    // as its owner (see RenderEngine::applyPlan(plan, owner)), so ONE call hands them all back - no second list to
+    // keep in step and no move-only token to get wrong. A chain that outlived its engine has no table left to hand
+    // anything back to: the handle answers "gone" and the passes died with the engine that owned them.
+    if (scope_owned_) {
+        registry_.clearOwnedBy(scope_);
+    }
 }
 
 bool PassChain::isValid() const noexcept
@@ -40,8 +43,10 @@ bool PassChain::draws(raw_ptr<const Scene> scene) const noexcept
     }
     // Every pass of the chain, not just the presenting one: on a deferred chain the scene is drawn into the G-buffer
     // and the window pass presents a target (see the declaration).
-    const std::vector<intrusive_ptr<RenderPass>> passes = registry_.passesOwnedBy(this);
-    return std::any_of(passes.begin(), passes.end(), [scene](const intrusive_ptr<RenderPass>& pass) { return pass != nullptr && pass->content() == scene; });
+    return std::any_of(entries_.begin(), entries_.end(), [this, scene](const Entry& entry) {
+        const raw_ptr<RenderPass> pass = registry_.findFor(entry.name, scope_);
+        return pass != nullptr && pass->content() == scene;
+    });
 }
 
 raw_ptr<RenderPass> PassChain::presentingPass() const
@@ -166,17 +171,18 @@ raw_ptr<RenderPass> PassChain::addOverlay(const String& role, raw_ptr<Object> co
 {
     // The registration and the value are one step: a pass registered under a role nobody recorded, or a value pointing
     // at a pass nothing draws, are both states this method makes unreachable.
-    intrusive_ptr<RenderPass> pass = addPass(desc, role);
-    if (pass == nullptr) {
-        return nullptr; // the engine is gone, or that pass was already registered
-    }
+    (void)addPass(desc, role);
     overlays_.push_back(Overlay{ role, content, std::move(layout) });
-    return pass.get();
+    if (!apply()) {
+        return nullptr; // the engine is gone, or the plan was refused (reported once)
+    }
+    return overlayPass(role);
 }
 
 raw_ptr<RenderPass> PassChain::overlayPass(const String& role) const noexcept
 {
-    return registry_.passOwnedBy(this, role);
+    const auto found = std::find_if(entries_.begin(), entries_.end(), [&role](const Entry& entry) { return entry.role == role; });
+    return found != entries_.end() ? registry_.findFor(found->name, scope_) : nullptr;
 }
 
 raw_ptr<Object> PassChain::overlayContent(const String& role) const noexcept
@@ -247,9 +253,48 @@ void PassChain::resize(int width, int height, double pixel_ratio)
 
 intrusive_ptr<RenderPass> PassChain::addPass(const PassDesc& desc, const String& role)
 {
-    // The engine's row carries this chain as the pass' owner (see the destructor): registering and taking back are
-    // the same relation, and the role is what a reader asks for by name instead of a field per pass (see gizmoPass).
-    return registry_.addOwnedBy(desc, this, role);
+    // THE SHAPE IS A PLAN, HERE TOO (see RenderEngine::applyPlan(plan, owner)): a recipe only STATES its passes, and
+    // `apply()` hands the whole plan over once - a pass that reads a name another pass of the same chain publishes
+    // cannot be validated one row at a time. The node comes back after apply(), by name, which is the identity a plan
+    // uses; the role is this chain's own bookkeeping (what overlayPass asks for).
+    pending_.passes.push_back(desc);
+    entries_.push_back(Entry{ role, desc.name });
+    return nullptr;
+}
+
+bool PassChain::apply()
+{
+    if (scope_ == nullptr) {
+        scope_ = this; // a chain built through the bare constructor owns its own scope
+    }
+    if (!registry_.isValid()) {
+        return false;
+    }
+    // THE NODES ARE THE CURRENT SHAPE: resize / visibility / shading mode are declaration setters on the node, so a
+    // re-apply takes each row's declaration as it stands (and restates the order this chain asked for).
+    Plan plan = pending_;
+    for (std::size_t index = 0; index < plan.passes.size() && index < applied_; ++index) {
+        const raw_ptr<RenderPass> node = registry_.findFor(plan.passes[index].name, scope_);
+        if (node == nullptr) {
+            continue;
+        }
+        PassDesc refreshed = node->declaration();
+        refreshed.order    = pending_.passes[index].order;
+        plan.passes[index] = std::move(refreshed);
+    }
+    const std::vector<PlanProblem> problems = registry_.apply(plan, scope_);
+    if (!problems.empty()) {
+        for (const PlanProblem& problem : problems) {
+            diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
+                                vn::graphics::DiagnosticCategory::PassProtocolViolation,
+                                String(u8"chain pass refused [") + planCodeText(problem.code) + String(u8"]: ") + problem.detail);
+        }
+        return false;
+    }
+    pending_     = std::move(plan);
+    applied_     = pending_.passes.size();
+    window_pass_ = registry_.findFor(window_name_, scope_);
+    return true;
 }
 
 void PassChain::setTransparentContent(intrusive_ptr<Scene> scene)
@@ -267,9 +312,11 @@ void PassChain::publishContent()
     }
 }
 
-void PassChain::setWindowPass(intrusive_ptr<RenderPass> pass)
+void PassChain::setWindowPass(const String& name)
 {
-    window_pass_ = std::move(pass);
+    window_name_ = name;
+    // Before apply() there is no node yet; after it (and after every re-apply) the name resolves.
+    window_pass_ = registry_.findFor(window_name_, scope_);
 }
 
 void PassChain::setOffscreenTarget(intrusive_ptr<RenderTarget> target)

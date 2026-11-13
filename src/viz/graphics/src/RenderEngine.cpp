@@ -646,36 +646,6 @@ bool RenderEngine::sessionChangeAllowed(const char* verb)
     return false;
 }
 
-intrusive_ptr<RenderPass> RenderEngine::addPass(intrusive_ptr<RenderPass> pass, int order)
-{
-    return addPass(std::move(pass), nullptr, order);
-}
-
-intrusive_ptr<RenderPass> RenderEngine::addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order)
-{
-    if (!sessionChangeAllowed("addPass")) {
-        return nullptr;
-    }
-    Slot slot;
-    slot.pass  = std::move(pass);
-    slot.order = order;
-    // THE ADD HAPPENS FIRST, THE CONTENT SECOND. Content is a field of the pass' declaration (PassDesc::content),
-    // so writing it before insertSlot() would edit a pass that this call then refuses to register - a duplicate
-    // add would rebind the content of a pass it did not add. Registering first makes "ignored" mean ignored.
-    intrusive_ptr<RenderPass> registered = insertSlot(std::move(slot));
-    if (registered == nullptr) {
-        return nullptr;
-    }
-    // Passing none leaves what the pass already states alone - a pass built with its own scene (an overlay) keeps
-    // it on registration. Clearing is bindPassContent(pass, nullptr).
-    if (content != nullptr) {
-        registered->setContent(std::move(content));
-    }
-    // What comes back is the node the engine registered - the same instance, or null when it was already there
-    // (see addPass(PassDesc), which explains why a caller wants a handle at all).
-    return registered;
-}
-
 void RenderEngine::removePass(raw_ptr<RenderPass> pass)
 {
     if (!sessionChangeAllowed("removePass")) {
@@ -728,36 +698,6 @@ bool RenderEngine::releaseContent(const vn::Buffer<std::uint32_t>& buffer)
 {
     raw_ptr<RenderBackend> target = device();
     return target != nullptr && target->releaseContent(buffer);
-}
-
-void RenderEngine::clearPasses()
-{
-    if (!sessionChangeAllowed("clearPasses")) {
-        return;
-    }
-    // Keep the passes alive while their retained backend state is released: a pass may be owned only by its
-    // slot, so dropping the slots first and then dereferencing a raw pointer would be a use-after-free.
-    std::vector<intrusive_ptr<RenderPass>> removed;
-    removed.reserve(slots_.size());
-    for (const auto& slot : slots_) {
-        if (slot.pass != nullptr) {
-            removed.push_back(slot.pass);
-        }
-    }
-    slots_.clear();
-
-    if (device_ != nullptr) {
-        for (const intrusive_ptr<RenderPass>& pass : removed) {
-            device_->releasePass(pass.get());
-            raw_ptr<RenderTarget> target = pass->renderTarget();
-            // A transient is the resources table's, not the pass': releaseAll() below lets it go once, after
-            // every pass has stopped naming it.
-            if (target != nullptr && !resources_->owns(target)) {
-                device_->releaseRenderTarget(target);
-            }
-        }
-    }
-    resources_->releaseAll(device_.get());
 }
 
 std::size_t RenderEngine::passCount() const

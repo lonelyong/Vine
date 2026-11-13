@@ -43,7 +43,7 @@ class Scene;
  * hud.clear_enabled   = false;
  * hud.depth_mode      = DepthMode::Disabled;
  * hud.before_draw     = [gizmo] { gizmo->update(); };
- * engine->addPass(hud);
+ * engine->applyPlan(vn::graphics::Plan{ { hud } });
  * \endcode
  */
 class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo> {

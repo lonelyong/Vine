@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include "PlanTestSupport.hpp"
+
 using namespace vn::graphics;
 using vn::Color;
 using vn::intrusive_ptr;
@@ -32,7 +34,7 @@ intrusive_ptr<PassChain> buildFor(const intrusive_ptr<SceneView>& view, RenderEn
     ChainDesc request                 = options;
     request.camera                    = view->camera();
     request.content                   = view->scene();
-    intrusive_ptr<PassChain> pipeline = PassChain::build(engine, request);
+    intrusive_ptr<PassChain> pipeline = PassChain::build(engine, request, view.get());
     if (pipeline != nullptr) {
         view->setChain(pipeline);
     }
@@ -106,7 +108,7 @@ TEST(RenderSurfaceTest, APassRegisteredOnTheEngineIsNotAPresentation)
     auto surface = engine->createSurface();
     auto hud     = intrusive_ptr<RenderPass>(new RenderPass());
     hud->setName(vn::String(u8"fps_overlay"));
-    engine->addPass(hud, 30);
+    vn::test::registerPassForTest(*engine, hud, 30);
 
     EXPECT_EQ(engine->passCount(), 1u);
     EXPECT_FALSE(surface->hasPresentation()) << "a pass is not a presentation by existing";
@@ -121,7 +123,7 @@ TEST(RenderSurfaceTest, AHostDeclaredPassIsTheSurfacesPresentation)
     auto surface = engine->createSurface();
     auto main    = intrusive_ptr<RenderPass>(new RenderPass());
     main->setName(vn::String(u8"deferred_lighting"));
-    engine->addPass(main, 0);
+    vn::test::registerPassForTest(*engine, main, 0);
 
     EXPECT_TRUE(surface->present(main.get()));
     EXPECT_TRUE(surface->hasPresentation());
@@ -148,8 +150,12 @@ TEST(RenderSurfaceTest, ThePassFollowsARebuiltPipeline)
     with_gizmo.gizmo.source_camera = view->camera();
     ASSERT_NE(buildFor(view, engine.get(), with_gizmo), nullptr);
     ASSERT_NE(view->chain(), nullptr);
-    EXPECT_NE(surface->presentingPass(), first);
+    // A REBUILD IS THE SAME SCOPE RESTATED (see PassChain::build(engine, desc, owner)): the same name is the same node,
+    // updated in place - everything the backend keyed by it survives, which is the point. What the area must follow is
+    // the CHAIN, and that is what it reads back; the new recipe's overlay is what proves the new shape applied.
+    EXPECT_EQ(surface->presentingPass(), first) << "same name, same scope: an update, not a new node";
     EXPECT_EQ(surface->presentingPass(), view->chain()->presentingPass());
+    EXPECT_NE(view->chain()->gizmoPass(), nullptr) << "the new recipe's overlay is in the frame";
     EXPECT_EQ(surface->presentedView(), view.get());
 }
 
@@ -244,7 +250,7 @@ TEST(RenderSurfaceTest, APassThatIsNotInTheFrameCannotPresentTheArea)
     EXPECT_FALSE(surface->present(pass.get())) << "and trying again is not a second report";
     EXPECT_EQ(engine->diagnosticCount(), 1u);
 
-    engine->addPass(pass, 0);
+    vn::test::registerPassForTest(*engine, pass, 0);
     EXPECT_TRUE(surface->present(pass.get())) << "registered first, declared second - the host order";
     EXPECT_TRUE(surface->hasPresentation());
     EXPECT_EQ(surface->presentingPass(), pass.get());
@@ -258,11 +264,11 @@ TEST(RenderSurfaceTest, APresentationWhosePassLeavesTheFrameStopsPresenting)
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto surface = engine->createSurface();
     auto pass    = intrusive_ptr<RenderPass>(new RenderPass());
-    engine->addPass(pass, 0);
+    vn::test::registerPassForTest(*engine, pass, 0);
     ASSERT_TRUE(surface->present(pass.get()));
     EXPECT_TRUE(surface->hasPresentation());
 
-    engine->removePass(pass.get());
+    vn::test::removePassForTest(*engine, pass.get());
     EXPECT_FALSE(surface->hasPresentation()) << "a pass that is not in the frame presents nothing";
     EXPECT_EQ(surface->presentingPass(), nullptr);
     EXPECT_TRUE(surface->dismiss(pass.get())) << "and the declaration can still be taken back";
@@ -283,7 +289,7 @@ TEST(RenderSurfaceTest, OneAreaDrawsOnePicture)
     EXPECT_EQ(surface->presentingPass(), first->chain()->presentingPass());
 
     auto host_pass = intrusive_ptr<RenderPass>(new RenderPass());
-    engine->addPass(host_pass, 40);
+    vn::test::registerPassForTest(*engine, host_pass, 40);
     EXPECT_FALSE(surface->present(host_pass.get()));
     EXPECT_EQ(surface->presentedView(), first.get());
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u) << "one condition, one report - not one per attempt";
@@ -345,9 +351,10 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
     ChainDesc with_gizmo;
     with_gizmo.gizmo.source_camera = view->camera();
     ASSERT_NE(buildFor(view, engine.get(), with_gizmo), nullptr);
-    EXPECT_NE(surface->presentingPass(), window);
+    EXPECT_EQ(surface->presentingPass(), window) << "same name, same scope: the node survives the rebuild";
     EXPECT_TRUE(surface->presentingPass()->isClearEnabled())
-        << "a rebuilt chain's window pass is a new pass with its own (default) ask - the area invents nothing";
+        << "the rebuilt chain states its own (default) ask, and the statement is what the node now is - the area "
+           "invents nothing either way";
 
     // Deferred: the picture is a fullscreen pass over the whole area, whose program is a ScreenPass and therefore asks
     // for no clear at all - being the area's picture does not make it want one.

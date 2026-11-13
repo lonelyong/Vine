@@ -41,10 +41,10 @@
 2.6 **内容属于 pass 的声明**：`PassDesc::content` 是唯一存储；引擎的 slot 只存 order / owner / role / transient / 计时。
 为什么：一个 pass 就是一条声明（`RenderPass.hpp` 的 “ONE FACT, ONE STORAGE”），内容由声明者写、编译者读；引擎另存一份
 会立刻变成两份可写的值。边界：同一个 pass 实例被两个引擎注册时共享内容——这是“一条声明”的直接后果，要两幅画就用两个 pass。
-`addPass(pass, content, order)` 只是写声明；null 不动已声明的内容，清空用 `bindPassContent(pass, nullptr)`。
+`applyPlan(plan, owner)` 只是写声明；清空用 `bindPassContent(pass, nullptr)`（或计划里不再命名那一行）。
 满足 `G1` / `G4`；为 `G1` 放弃“同实例多内容”。
 
-2.7 **可失败的变更从返回值看得出**：`addPass` 返回注册的 pass 或 null，`bindPassContent` / `PassRegistry::bindContent`
+2.7 **可失败的变更从返回值看得出**：`applyPlan` 返回问题表（空即应用），`bindPassContent` / `PassRegistry::bindContent`
 返回是否命中已注册的 pass，`frame()` 返回 `FrameOutcome`（Ran / NotInitialized / NoDevice）。
 为什么：静默 no-op 让宿主把“没生效”当成“生效”；返回值是调用点唯一能判断的答案。边界：`removePass` 保持幂等、不返回——
 移除未注册的 pass 与移除已移除的 pass 是同一个结果。满足 `G4` / `G6`；代价是每个调用点多一个可忽略的返回值。
@@ -55,7 +55,7 @@
     `presentedCamera`）。为什么：`RenderEngine.hpp` 1462 行、56 个公共签名，一个类里住着 8 类职责；线程策略的
     **机制**只有 `detail::FrameRunner`（123 行）与 5 个调用点，但**语义契约**外溢到 9 个文件——不写下来，下一次
     加功能会继续默认往里塞（`G5` / `G12`）。边界：新的**机制**属于 `detail::`，不属于 `RenderEngine`；它只组合
-    现有机制。5b-2c 删掉 `addPass` 家族后，`slots_` / `applyPlanRows` 自然沉到 `detail::SessionShape`——那次拆分
+    现有机制。`addPass` 家族已删（W9d），`slots_` / `applyPlanRows` 若要继续下沉，目标仍是 `detail::SessionShape`——那次拆分
     有真实消费者，不是今天预建的抽象（`G8`）。
     附带一条名词纪律：`PlanProblemCode::SessionBusy` 的字符串保留（测试钉住），但它的文档含义是“**引擎里有帧在录**”；
     SDK 里今天**没有** `Session` 类型，该类型随 F8（一 Session 多 Surface，`graphics-frame-pipeline.md` §3.8）落地——
@@ -133,7 +133,7 @@
 | `passes()` / `outputs()` / `diagnostics()` | 三个门面 |
 | `device()` / `setDevice()` | 借用/安装设备 |
 | `createSurface()` | 创建唯一的区 |
-| `addPass()` / `removePass()` / `clearPasses()` | 直接登记（宿主自建 pass） |
+| `applyPlan()` / `applyPlan(plan, owner)` / `plan()` / `planFor(owner)` | 宿主与贡献者的形状（W9d：`addPass` 家族已删） |
 | `publish()` / `resolve()` / `unpublish()` | 命名产出（等价于 `outputs()`） |
 | `transientTarget()` | transient 目标 |
 | `releaseContent()` | 释放内容的 GPU 驻留 |

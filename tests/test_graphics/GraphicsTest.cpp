@@ -67,6 +67,7 @@
 #include "FrameExpand.hpp"
 #include "PublicationStore.hpp"
 #include "TestGeometryBuilders.hpp"
+#include "PlanTestSupport.hpp"
 
 using namespace vn::graphics;
 using vn::Color;
@@ -3889,9 +3890,9 @@ TEST(RenderEngineTest, EveryExecutedPassReachesTheBackendOnceAndADisabledOneDoes
     hidden->setCamera(camera);
     hidden->setEnabled(false);
 
-    engine->addPass(pass_a, scene, 0);
-    engine->addPass(pass_b, scene, 1);
-    engine->addPass(hidden, scene, 2);
+    vn::test::registerPassForTest(*engine, pass_a, scene, 0);
+    vn::test::registerPassForTest(*engine, pass_b, scene, 1);
+    vn::test::registerPassForTest(*engine, hidden, scene, 2);
 
     engine->frame();
 
@@ -3921,8 +3922,8 @@ TEST(RenderEngineTest, RemovePassReleasesBackendPerPassState)
     engine->setDevice(backend);
 
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
-    engine->addPass(pass, 0);
-    engine->removePass(pass.get());
+    vn::test::registerPassForTest(*engine, pass, 0);
+    vn::test::removePassForTest(*engine, pass.get());
 
     EXPECT_EQ(backend->pass_releases, 1);
     EXPECT_EQ(backend->last_released_pass, pass.get());
@@ -3939,9 +3940,9 @@ TEST(RenderEngineTest, RemovePassReleasesBackendRenderTarget)
     auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
     auto pass   = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setRenderTarget(target);
-    engine->addPass(pass, 1);
+    vn::test::registerPassForTest(*engine, pass, 1);
 
-    engine->removePass(pass.get());
+    vn::test::removePassForTest(*engine, pass.get());
     EXPECT_EQ(backend->target_releases, 1);
     EXPECT_EQ(backend->last_released_target, target.get());
 }
@@ -3960,9 +3961,9 @@ TEST(RenderEngineTest, RemovePassReleasesBackendStateAndTarget)
     auto pass   = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setCamera(camera);
     pass->setRenderTarget(target);
-    engine->addPass(pass, 1);
+    vn::test::registerPassForTest(*engine, pass, 1);
 
-    engine->removePass(pass.get());
+    vn::test::removePassForTest(*engine, pass.get());
     EXPECT_EQ(backend->target_releases, 1);
     EXPECT_EQ(backend->last_released_target, target.get());
     EXPECT_EQ(backend->pass_releases, 1);
@@ -3981,17 +3982,17 @@ TEST(RenderEngineTest, ClearPassesReleasesEveryRegisteredPass)
     auto cam_a  = intrusive_ptr<Camera>(new Camera());
     auto pass_a = intrusive_ptr<RenderPass>(new RenderPass());
     pass_a->setCamera(cam_a);
-    engine->addPass(pass_a, 0);
+    vn::test::registerPassForTest(*engine, pass_a, 0);
 
     auto cam_b  = intrusive_ptr<Camera>(new Camera());
     auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
     auto pass_b = intrusive_ptr<RenderPass>(new RenderPass());
     pass_b->setCamera(cam_b);
     pass_b->setRenderTarget(target);
-    engine->addPass(pass_b, 5);
+    vn::test::registerPassForTest(*engine, pass_b, 5);
 
     EXPECT_EQ(engine->passCount(), 2u);
-    engine->clearPasses();
+    vn::test::clearPassesForTest(*engine);
     EXPECT_EQ(engine->passCount(), 0u);
     EXPECT_EQ(backend->target_releases, 1);
     EXPECT_EQ(backend->last_released_target, target.get());
@@ -4025,14 +4026,20 @@ TEST(RenderEngineTest, FramePlanDescribesThePassesInTheOrderTheyWillRun)
     present->setCamera(camera);
     present->setClearColor(Color(128, 128, 128, 255).toLinear());
     present->setShouldClearDepth(false);
+    // The producer of the name @c gbuffer reads. A plan is checked for unknown inputs before it is applied (a name
+    // nobody in the plan and no host binding publishes), so the wire has to be complete - what the COMPILE then says
+    // about the ORDER (an input produced after its reader) is a different report, and the one this case reads.
+    present->setOutputName(u8"SceneColor");
 
     auto hud = intrusive_ptr<RenderPass>(new RenderPass());
     hud->setName(u8"hud");
     hud->setEnabled(false);
 
-    engine->addPass(offscreen, content, -40);
-    engine->addPass(present, content, 0);
-    engine->addPass(hud, 60);
+    // The producer first: a plan is checked for unknown inputs when it is applied, so the row that publishes
+    // @c SceneColor has to exist when the row that reads it is stated (the ORDER they run at is a separate question).
+    vn::test::registerPassForTest(*engine, present, content, 0);
+    vn::test::registerPassForTest(*engine, offscreen, content, -40);
+    vn::test::registerPassForTest(*engine, hud, 60);
 
     const FramePlan plan = engine->framePlan();
     ASSERT_EQ(plan.passes.size(), 3u);
@@ -4101,8 +4108,8 @@ TEST(RenderEngineTest, APassMapsItsDrawsIntoItsOwnDepthBand)
     overlay->setCamera(camera);
     overlay->setDepthRange(DepthRange{ 0.6F, 1.0F }); // the near half: in front of the geometry
 
-    engine->addPass(plain, content, -10);
-    engine->addPass(overlay, content, 10);
+    vn::test::registerPassForTest(*engine, plain, content, -10);
+    vn::test::registerPassForTest(*engine, overlay, content, 10);
 
     const FramePlan plan = engine->framePlan();
     ASSERT_EQ(plan.passes.size(), 2u);
@@ -4144,10 +4151,10 @@ TEST(RenderEngineTest, TheFramePlanIsWhatTheFrameActuallyRan)
     auto late = intrusive_ptr<RenderPass>(new RenderPass());
     late->setName(u8"hud");
 
-    engine->addPass(late, 60);
-    engine->addPass(hidden, 40);
-    engine->addPass(main, scene, 0);
-    engine->addPass(early, scene, -40);
+    vn::test::registerPassForTest(*engine, late, 60);
+    vn::test::registerPassForTest(*engine, hidden, 40);
+    vn::test::registerPassForTest(*engine, main, scene, 0);
+    vn::test::registerPassForTest(*engine, early, scene, -40);
 
     engine->frame();
 
@@ -4172,25 +4179,21 @@ TEST(RenderEngineTest, TheFramePlanCarriesWhatEachPassLastCost)
     // WHERE THAT WORK IS: the frame runs from the value the compile built (see RenderEngine::buildFrameValue), so
     // what a pass costs the frame is the hook + the inputs + the pass describing itself - collecting and culling
     // its content - and NOT the wire announcements that follow (those are the backend's cost). A pass is slow by
-    // being slow to DESCRIBE itself, which is what this pins: the number still names the same thing it always did
-    // (this pass' share of the frame's record), it just measures it where the record now happens.
-    class SlowPass : public RenderPass {
-      public:
-        bool describe(vn::raw_ptr<Scene> scene, PassDraw& out) override
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            return RenderPass::describe(scene, out);
-        }
-    };
+    // doing slow work in its HOOK, which is the per-frame work its shape can state (a custom describe() is not a
+    // shape the plan expresses - see PassDesc), and that is what this pins: the number still names the same thing it
+    // always did (this pass' share of the frame's record), it just measures it where the record now happens.
 
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
-    auto slow = intrusive_ptr<SlowPass>(new SlowPass());
-    slow->setName(u8"slow");
-    auto skipped = intrusive_ptr<RenderPass>(new RenderPass());
+    // The per-frame work a pass can state is its HOOK (PassDesc::before_draw): a pass whose shape says "do this before
+    // I describe myself" is slow because of what it stated, which is the shape the plan can express.
+    PassDesc slow_desc;
+    slow_desc.name        = u8"slow";
+    slow_desc.before_draw = [] { std::this_thread::sleep_for(std::chrono::milliseconds(2)); };
+    auto skipped          = intrusive_ptr<RenderPass>(new RenderPass());
     skipped->setName(u8"skipped");
     skipped->setEnabled(false);
     // A scene, so the pass really has something to describe (a pass with nothing to describe costs nothing even
@@ -4199,10 +4202,11 @@ TEST(RenderEngineTest, TheFramePlanCarriesWhatEachPassLastCost)
     setIdentityRoot(*scene)->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
     auto camera = intrusive_ptr<Camera>(new Camera());
     setupLookAtCamera(*camera);
-    slow->setCamera(camera);
+    slow_desc.camera  = camera;
+    slow_desc.content = scene;
 
-    engine->addPass(slow, scene, 0);
-    engine->addPass(skipped, 10);
+    vn::test::registerPassForTest(*engine, slow_desc);
+    vn::test::registerPassForTest(*engine, skipped, 10);
 
     const FramePlan before = engine->framePlan();
     ASSERT_EQ(before.passes.size(), 2u);
@@ -4229,7 +4233,7 @@ TEST(RenderEngineTest, PassOrderAnswersWhereARegisteredPassRuns)
     EXPECT_FALSE(engine->passOrder(pass.get()).has_value());
     EXPECT_FALSE(engine->passOrder(nullptr).has_value());
 
-    engine->addPass(pass, 7);
+    vn::test::registerPassForTest(*engine, pass, 7);
     ASSERT_TRUE(engine->passOrder(pass.get()).has_value());
     EXPECT_EQ(*engine->passOrder(pass.get()), 7);
 
@@ -4237,25 +4241,30 @@ TEST(RenderEngineTest, PassOrderAnswersWhereARegisteredPassRuns)
     pass->setEnabled(false);
     EXPECT_EQ(*engine->passOrder(pass.get()), 7);
 
-    engine->removePass(pass.get());
+    vn::test::removePassForTest(*engine, pass.get());
     EXPECT_FALSE(engine->passOrder(pass.get()).has_value());
 }
 
-TEST(RenderEngineTest, AddSamePassTwiceKeepsSingleSlot)
+TEST(RenderEngineTest, StatingTheSameNameTwiceIsOneRowAndTheLastDeclarationWins)
 {
-    // Registering the same extra pass twice must not run it twice per frame - and must not edit the pass it did
-    // not register: content lives in the pass' declaration, so an ignored add that bound content would be a
-    // mutation the caller holds no handle for.
+    // A PLAN'S IDENTITY IS THE NAME: stating it twice is one row whose declaration the second statement replaces (the
+    // node survives, which is what keeps everything the backend keyed by it). The duplicate-instance rule of the old
+    // addPass family has nothing left to refuse - there is no "same object twice", only "same name twice".
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto pass   = intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setName(u8"restated");
     auto first  = intrusive_ptr<Scene>(new Scene());
     auto second = intrusive_ptr<Scene>(new Scene());
 
-    EXPECT_NE(engine->addPass(pass, first, 1), nullptr);
-    EXPECT_EQ(engine->addPass(pass, second, 2), nullptr); // duplicate add is a no-op
+    const intrusive_ptr<RenderPass> registered = vn::test::applyPassForTest(*engine, pass, first, 1);
+    ASSERT_NE(registered, nullptr);
     EXPECT_EQ(engine->passCount(), 1u);
-    EXPECT_EQ(engine->passOrder(pass.get()), 1);
-    EXPECT_EQ(engine->contentOf(pass.get()), first.get()) << "the ignored add must not rebind the declaration";
+
+    const intrusive_ptr<RenderPass> restated = vn::test::applyPassForTest(*engine, pass, second, 2);
+    ASSERT_EQ(restated.get(), registered.get()) << "the node survives the restatement";
+    EXPECT_EQ(engine->passCount(), 1u) << "one name, one row";
+    EXPECT_EQ(engine->passOrder(registered.get()), 2) << "the last declaration states the order";
+    EXPECT_EQ(engine->contentOf(registered.get()), second.get()) << "and the content";
 }
 
 TEST(RenderEngineTest, InitializeAttachesToTheDeviceItsCreatorBroughtUp)
@@ -4322,7 +4331,7 @@ TEST(RenderEngineTest, FrameRunsPipeline)
     auto cam     = intrusive_ptr<Camera>(new Camera());
     auto pass    = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setCamera(cam);
-    engine->addPass(pass, content, 0);
+    vn::test::registerPassForTest(*engine, pass, content, 0);
 
     engine->frame();
 
@@ -4347,7 +4356,7 @@ TEST(RenderEngineTest, APassAnnouncesItsClearPolicyToTheBackend)
     clearing->setCamera(cam);
     clearing->setClearColor(Color(10, 20, 30, 255).toLinear());
     clearing->setShouldClearDepth(false);
-    engine->addPass(clearing, content, 0);
+    vn::test::registerPassForTest(*engine, clearing, content, 0);
 
     // ...and a pass that does not clear announces NOTHING, even though it carries a colour of its
     // own: a backend must be able to tell the two apart, so this pass must not overwrite what the
@@ -4356,7 +4365,7 @@ TEST(RenderEngineTest, APassAnnouncesItsClearPolicyToTheBackend)
     loading->setCamera(cam);
     loading->setClearEnabled(false);
     loading->setClearColor(Color(200, 200, 200, 255).toLinear());
-    engine->addPass(loading, content, 1);
+    vn::test::registerPassForTest(*engine, loading, content, 1);
 
     engine->frame();
 
@@ -4382,7 +4391,7 @@ TEST(RenderEngineTest, ABackendThatCannotDrawTargetsIsToldOncePerEpisode)
     auto pass      = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setName(u8"GBuffer");
     pass->setRenderTarget(offscreen);
-    engine->addPass(pass, 0);
+    vn::test::registerPassForTest(*engine, pass, 0);
 
     // This backend honours targets, so the pipeline means what it says and nothing is reported about it.
     engine->frame();
@@ -4726,7 +4735,7 @@ TEST(SceneViewTest, AChainBuiltForOtherContentIsReportedOnceAndIsANewEpisodeOnce
     ChainDesc desc;
     desc.camera   = view->camera();
     desc.content  = other;
-    auto pipeline = PassChain::build(engine.get(), desc);
+    auto pipeline = PassChain::build(engine.get(), desc, view.get());
     ASSERT_NE(pipeline, nullptr);
     EXPECT_EQ(engine->diagnosticCount(), 0u) << "building a chain is not a mistake";
 
@@ -4740,7 +4749,7 @@ TEST(SceneViewTest, AChainBuiltForOtherContentIsReportedOnceAndIsANewEpisodeOnce
     ChainDesc second_desc;
     second_desc.camera  = view->camera();
     second_desc.content = third;
-    view->setChain(PassChain::build(engine.get(), second_desc));
+    view->setChain(PassChain::build(engine.get(), second_desc, view.get()));
     EXPECT_EQ(engine->diagnosticCount(), 1u) << "one episode, one message";
 
     // The view's content catches up with the chain it adopted (setScene rebinds the window pass): the wire is right,
@@ -4752,7 +4761,7 @@ TEST(SceneViewTest, AChainBuiltForOtherContentIsReportedOnceAndIsANewEpisodeOnce
     ChainDesc third_desc;
     third_desc.camera  = view->camera();
     third_desc.content = fourth;
-    view->setChain(PassChain::build(engine.get(), third_desc));
+    view->setChain(PassChain::build(engine.get(), third_desc, view.get()));
     EXPECT_EQ(engine->diagnosticCount(), 2u) << "a break after a good frame is a new problem";
 }
 
@@ -4767,7 +4776,7 @@ TEST(SceneViewTest, AdoptingAPipelineDoesNotStandDownForSomebodyElsesPass)
 
     auto main = intrusive_ptr<RenderPass>(new RenderPass());
     main->setCamera(intrusive_ptr<Camera>(view->camera()));
-    engine->addPass(main, 0);
+    vn::test::registerPassForTest(*engine, main, 0);
 
     auto pipeline = buildFor(*view, engine.get());
     ASSERT_NE(pipeline, nullptr);
@@ -5176,7 +5185,7 @@ TEST(RenderEngineTest, APassAnnouncesItsOwnStateForTheContentItDraws)
     pass->setCamera(intrusive_ptr<Camera>(new Camera()));
     pass->setDepthMode(DepthMode::TestOnly);
     pass->setPolygonModeOverride(PolygonMode::Line);
-    engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*engine, pass, scene, 0);
 
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     engine->setDevice(backend);
@@ -5511,7 +5520,7 @@ TEST(SceneViewViewportTest, AnApplicationWindowPassLeavesTheViewWithNothingToDec
     // The application presents this surface itself (its own deferred main pass) and DECLARES it.
     auto main = intrusive_ptr<RenderPass>(new RenderPass());
     main->setCamera(intrusive_ptr<Camera>(view->camera()));
-    engine->addPass(main, 0);
+    vn::test::registerPassForTest(*engine, main, 0);
     ASSERT_TRUE(surface->present(main.get()));
     ASSERT_TRUE(surface->hasPresentation());
 
@@ -5674,9 +5683,9 @@ TEST(RenderEngineTest, RegisteredPassesRunInAscendingOrder)
     auto post = intrusive_ptr<RenderPass>(new RenderPass());
     post->setCamera(post_cam);
 
-    engine->addPass(main, content, 0); // window-present pass.
-    engine->addPass(pre, content, -5); // shadow-map style pass before the window pass.
-    engine->addPass(post, content, 5); // post-processing pass after the window pass.
+    vn::test::registerPassForTest(*engine, main, content, 0); // window-present pass.
+    vn::test::registerPassForTest(*engine, pre, content, -5); // shadow-map style pass before the window pass.
+    vn::test::registerPassForTest(*engine, post, content, 5); // post-processing pass after the window pass.
     EXPECT_EQ(engine->passCount(), 3u);
 
     // THE HOST PUBLISHES (see Scene::publish): a frame draws the publication that stood when it was built.
@@ -5690,14 +5699,14 @@ TEST(RenderEngineTest, RegisteredPassesRunInAscendingOrder)
     EXPECT_TRUE(backend->last_camera.present);
     EXPECT_TRUE(backend->last_camera.view.isEqual(post->camera()->viewMatrix(), 1e-12)) << "the postfx pass' own camera";
 
-    engine->removePass(post.get());
+    vn::test::removePassForTest(*engine, post.get());
     EXPECT_EQ(engine->passCount(), 2u);
     const int before2 = backend->render_calls;
     engine->frame();
     // Only pre + main now.
     EXPECT_EQ(backend->render_calls - before2, 2);
 
-    engine->clearPasses();
+    vn::test::clearPassesForTest(*engine);
     EXPECT_EQ(engine->passCount(), 0u);
 }
 
@@ -5718,10 +5727,10 @@ TEST(RenderEngineTest, PassContentLivesInThePassDeclaration)
     // Explicit content: pass A draws sceneA; pass B has no content.
     auto passA = intrusive_ptr<RenderPass>(new RenderPass());
     passA->setCamera(cam);
-    engine->addPass(passA, sceneA, 5);
+    vn::test::registerPassForTest(*engine, passA, sceneA, 5);
     auto passB = intrusive_ptr<RenderPass>(new RenderPass());
     passB->setCamera(cam);
-    engine->addPass(passB, -5);
+    vn::test::registerPassForTest(*engine, passB, -5);
 
     EXPECT_EQ(engine->passCount(), 2u);
     EXPECT_EQ(engine->contentOf(passA.get()), sceneA.get());
@@ -5818,7 +5827,7 @@ TEST(RenderEngineTest, ResizeDoesNotManagePassLayout)
     pass->setCamera(cam);
     pass->setRenderTarget(target);
     pass->setViewport(10, 20, 100, 50);
-    engine->addPass(pass, 5);
+    vn::test::registerPassForTest(*engine, pass, 5);
 
     // The size the passes lay themselves out on is the AREA's announcement (see RenderSurface).
     auto area = engine->createSurface();
@@ -5880,7 +5889,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     off->setCamera(cam);
     off->setRenderTarget(rt);
     off->setOutputName(u8"SceneColor");
-    engine->addPass(off, -2);
+    vn::test::registerPassForTest(*engine, off, -2);
 
     // Consumer: a ScreenPass declaring it wants the published "SceneColor", and NAMING the program it
     // draws it with — a screen pass has no implicit shading (see ScreenPass).
@@ -5891,7 +5900,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     screen->addInputName(u8"SceneColor");
     // A screen pass composites over existing content, so it never clears.
     EXPECT_FALSE(screen->isClearEnabled());
-    engine->addPass(screen, 100);
+    vn::test::registerPassForTest(*engine, screen, 100);
 
     const int before = backend->program_draws;
     engine->frame();
@@ -5905,16 +5914,23 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     // The registry holds the off-screen target after the producer ran.
     EXPECT_EQ(engine->resolve(u8"SceneColor"), rt.get());
 
-    // Without a producer nothing resolves, so the ScreenPass draws nothing.
+    // A PRODUCER THAT DID NOT RUN THIS FRAME leaves nothing to resolve, so the ScreenPass draws nothing. (A producer
+    // the plan does not state at all is a different answer: the plan refuses an input no one publishes - see
+    // PlanTest::AnUnknownInputIsRefusedWithItsCodeUnlessTheHostServesIt.)
     auto engine2  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto backend2 = intrusive_ptr<MockBackend>(new MockBackend());
     engine2->setDevice(backend2);
     engine2->initialize();
+    auto idle_producer = intrusive_ptr<RenderPass>(new RenderPass());
+    idle_producer->setName(u8"idle_producer");
+    idle_producer->setOutputName(u8"SceneColor");
+    idle_producer->setEnabled(false);
+    vn::test::registerPassForTest(*engine2, idle_producer, -2);
     auto orphan = intrusive_ptr<ScreenPass>(new ScreenPass());
     orphan->setCamera(cam);
     orphan->setProgram(vn::graphics::screenCopyProgram());
     orphan->addInputName(u8"SceneColor");
-    engine2->addPass(orphan, 100);
+    vn::test::registerPassForTest(*engine2, orphan, 100);
     engine2->frame();
     EXPECT_EQ(backend2->program_draws, 0);
     EXPECT_EQ(orphan->sourceTarget(), nullptr);
@@ -5929,7 +5945,7 @@ TEST(RenderEngineTest, OffscreenPassPublishesThenScreenPassSamples)
     program_less->setCamera(cam);
     program_less->addInputName(u8"SceneColor");
     engine3->publish(u8"SceneColor", rt);
-    engine3->addPass(program_less, 100);
+    vn::test::registerPassForTest(*engine3, program_less, 100);
     EXPECT_EQ(engine3->diagnosticCount(), 0u);
     engine3->frame();
     EXPECT_EQ(backend3->program_draws, 0);
@@ -6169,7 +6185,7 @@ TEST(RenderEngineTest, ScreenPassProgramCarriesTheAttachmentItReads)
     producer->setCamera(cam);
     producer->setRenderTarget(rt);
     producer->setOutputName(u8"GBuffer");
-    engine->addPass(producer, -2);
+    vn::test::registerPassForTest(*engine, producer, -2);
 
     // Two consumers reading different colour attachments of the same target: the ATTACHMENT is the
     // program's sampler binding (the fullscreen program ABI — binding i reads attachment i), so the two
@@ -6182,13 +6198,13 @@ TEST(RenderEngineTest, ScreenPassProgramCarriesTheAttachmentItReads)
     albedo->setCamera(cam);
     albedo->setProgram(albedo_program);
     albedo->addInputName(u8"GBuffer");
-    engine->addPass(albedo, 100);
+    vn::test::registerPassForTest(*engine, albedo, 100);
 
     auto normal = intrusive_ptr<ScreenPass>(new ScreenPass());
     normal->setCamera(cam);
     normal->setProgram(normal_program);
     normal->addInputName(u8"GBuffer");
-    engine->addPass(normal, 101);
+    vn::test::registerPassForTest(*engine, normal, 101);
 
     const int before = backend->program_draws;
     engine->frame();
@@ -6222,7 +6238,7 @@ TEST(RenderEngineTest, ScreenPassProgramSamplesMrtForDeferredLighting)
     producer->setCamera(cam);
     producer->setRenderTarget(rt);
     producer->setOutputName(u8"GBuffer");
-    engine->addPass(producer, -3);
+    vn::test::registerPassForTest(*engine, producer, -3);
 
     // Lighting consumer: a ScreenPass carrying a fragment program samples the
     // whole MRT source (all attachments) through the backend.
@@ -6240,7 +6256,7 @@ TEST(RenderEngineTest, ScreenPassProgramSamplesMrtForDeferredLighting)
     light->setCamera(cam);
     light->setProgram(program);
     EXPECT_EQ(light->program(), program.get());
-    engine->addPass(light, 100);
+    vn::test::registerPassForTest(*engine, light, 100);
 
     const int before = backend->program_draws;
     engine->frame();
@@ -6451,7 +6467,7 @@ TEST(RenderEngineTest, ShadowPassIsJustARegisteredScenePass)
     auto cam  = intrusive_ptr<Camera>(new Camera());
     auto main = intrusive_ptr<RenderPass>(new RenderPass());
     main->setCamera(cam);
-    engine->addPass(main, content, 0); // window pass (null target).
+    vn::test::registerPassForTest(*engine, main, content, 0); // window pass (null target).
 
     // Explicit depth-only shadow pass: a light-view camera + depth-only
     // target, running before the window pass (order < 0). No engine magic.
@@ -6466,7 +6482,7 @@ TEST(RenderEngineTest, ShadowPassIsJustARegisteredScenePass)
     shadow->setCamera(light_cam);
     shadow->setRenderTarget(depth);
     shadow->setShouldClearDepth(true);
-    engine->addPass(shadow, content, -5);
+    vn::test::registerPassForTest(*engine, shadow, content, -5);
 
     EXPECT_EQ(engine->passCount(), 2u);
 
@@ -7149,11 +7165,19 @@ TEST(PassChainTest, DeclaredPassInputsReachTheBackend)
     produced->setSize(64, 64);
     engine->publish(u8"Produced", produced);
 
+    // A producer that does not RUN this frame: the name is stated (a plan naming an input nobody publishes is refused,
+    // see PlanTest), and the compile is what reports that nothing produced it this frame.
+    auto idle = intrusive_ptr<RenderPass>(new RenderPass());
+    idle->setName(u8"idle");
+    idle->setOutputName(u8"NothingPublishesThis");
+    idle->setEnabled(false);
+    vn::test::registerPassForTest(*engine, idle, -1);
+
     auto consumer = intrusive_ptr<RenderPass>(new RenderPass());
     consumer->setCamera(cam);
     consumer->addInputName(u8"Produced");
     consumer->addInputName(u8"NothingPublishesThis");
-    engine->addPass(consumer, 1);
+    vn::test::registerPassForTest(*engine, consumer, 1);
 
     engine->frame();
 
@@ -7193,7 +7217,7 @@ TEST(PassChainTest, AnImportedTextureIsAnInputInDeclarationOrder)
     producer.camera  = camera;
     producer.content = intrusive_ptr<Scene>(new Scene());
     producer.writes  = source;
-    engine->addPass(producer);
+    vn::test::registerPassForTest(*engine, producer);
 
     // The state belongs to the INPUT: a content pass may read this texture with point/clamp while another
     // declaration (or another pass) reads it with the backend default.
@@ -7210,7 +7234,7 @@ TEST(PassChainTest, AnImportedTextureIsAnInputInDeclarationOrder)
     compose.camera        = camera;
     compose.inputs        = { ImageInput(texture, point_clamp) };
     compose.input_targets = { source };
-    engine->addPass(compose);
+    vn::test::registerPassForTest(*engine, compose);
 
     engine->frame();
 
@@ -7246,7 +7270,7 @@ TEST(PassChainTest, AScreenPassKeepsImportedTextureInputsForItsProgram)
     producer.kind   = PassKind::Scene;
     producer.camera = camera;
     producer.writes = source;
-    engine->addPass(producer);
+    vn::test::registerPassForTest(*engine, producer);
 
     const intrusive_ptr<Texture2D> texture(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
     PassDesc                       screen;
@@ -7256,7 +7280,7 @@ TEST(PassChainTest, AScreenPassKeepsImportedTextureInputsForItsProgram)
     screen.program       = screenCopyProgram(1); // binding 1 is the imported texture's slot
     screen.inputs        = { ImageInput(texture) };
     screen.input_targets = { source };
-    engine->addPass(screen);
+    vn::test::registerPassForTest(*engine, screen);
 
     const std::size_t before = engine->diagnosticCount(DiagnosticCategory::ContentSkipped);
     engine->frame();
@@ -7354,7 +7378,7 @@ TEST(DepthViewTest, APassStatesTheDepthEdgeAndItsTargetGetsTheMechanism)
     desc.kind       = PassKind::Scene;
     desc.writes     = drawn_into;
     desc.depth_view = depthViewOf(lender);
-    const auto pass = engine->addPass(desc);
+    const auto pass = vn::test::applyPassForTest(*engine, desc);
     ASSERT_NE(pass, nullptr);
     EXPECT_TRUE(pass->depthView().isValid());
     EXPECT_EQ(pass->depthView().target(), lender.get());
@@ -7401,14 +7425,14 @@ TEST(DepthViewTest, ALayeredDepthViewIsRefusedRatherThanPointingAtTheWholeImage)
     desc.writes     = target;
     desc.depth_view = depthViewOf(lender, 2);
 
-    const auto pass = engine->addPass(desc);
+    const auto pass = vn::test::applyPassForTest(*engine, desc);
     ASSERT_NE(pass, nullptr);
     EXPECT_FALSE(pass->depthView().isValid()) << "the declaration is refused, not stored";
     EXPECT_FALSE(target->sharedDepth().isValid()) << "and nothing was applied to the target";
     EXPECT_EQ(engine->diagnosticCount(), 1U) << "the refusal is said once";
 
     // The same condition, a second pass: no second sentence.
-    engine->addPass(desc);
+    vn::test::registerPassForTest(*engine, desc);
     EXPECT_EQ(engine->diagnosticCount(), 1U);
 }
 
@@ -7440,7 +7464,7 @@ TEST(DepthViewTest, TwoDifferentDepthViewsForOneTargetAreRefusedOnce)
     agrees.kind         = PassKind::Scene;
     agrees.writes       = drawn_into;
     agrees.depth_view   = depthViewOf(first);
-    const auto accepted = engine->addPass(agrees);
+    const auto accepted = vn::test::applyPassForTest(*engine, agrees);
     ASSERT_NE(accepted, nullptr);
     EXPECT_TRUE(accepted->depthView().isValid());
     EXPECT_EQ(drawn_into->depthSource(), first.get());
@@ -7448,18 +7472,18 @@ TEST(DepthViewTest, TwoDifferentDepthViewsForOneTargetAreRefusedOnce)
 
     PassDesc disagrees   = agrees;
     disagrees.depth_view = depthViewOf(second);
-    const auto refused   = engine->addPass(disagrees);
+    const auto refused   = vn::test::applyPassForTest(*engine, disagrees);
     ASSERT_NE(refused, nullptr);
     EXPECT_FALSE(refused->depthView().isValid()) << "the conflicting declaration is refused";
     EXPECT_EQ(drawn_into->depthSource(), first.get()) << "the first one stands";
     EXPECT_EQ(engine->diagnosticCount(), 1U) << "the conflict is said once";
 
     // The same conflict again: the same sentence is not repeated.
-    engine->addPass(disagrees);
+    vn::test::registerPassForTest(*engine, disagrees);
     EXPECT_EQ(engine->diagnosticCount(), 1U);
 
     // A pass that agrees with what the target already has is accepted silently.
-    const auto agreeing = engine->addPass(agrees);
+    const auto agreeing = vn::test::applyPassForTest(*engine, agrees);
     ASSERT_NE(agreeing, nullptr);
     EXPECT_TRUE(agreeing->depthView().isValid());
     EXPECT_EQ(engine->diagnosticCount(), 1U);
@@ -7570,7 +7594,7 @@ TEST(RenderPassTest, EachAttachmentClearColourTravelsWithThePassPolicy)
     desc.clear_color = vn::Color(255, 0, 0, 255).toLinear();
     desc.clear_extra_colors.push_back(vn::Color(0, 255, 0, 255).toLinear());
 
-    const auto pass = engine->addPass(desc);
+    const auto pass = vn::test::applyPassForTest(*engine, desc);
     ASSERT_NE(pass, nullptr);
     EXPECT_EQ(pass->clearColor(0), vn::Color(255, 0, 0, 255).toLinear()) << "the single colour is attachment 0";
     EXPECT_EQ(pass->clearColor(1), vn::Color(0, 255, 0, 255).toLinear()) << "the stated extra reaches its attachment";
@@ -7927,7 +7951,7 @@ TEST(HudPassTest, EngineDrawsPassesInOrderAndSkipsDisabled)
     auto master_cam  = intrusive_ptr<Camera>(new Camera());
     auto window      = intrusive_ptr<RenderPass>(new RenderPass());
     window->setCamera(master_cam);
-    engine->addPass(window, win_content, 0);
+    vn::test::registerPassForTest(*engine, window, win_content, 0);
 
     auto cam = intrusive_ptr<Camera>(new Camera());
     cam->lookAt(Vec3d(0, 0, 5), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
@@ -7938,18 +7962,18 @@ TEST(HudPassTest, EngineDrawsPassesInOrderAndSkipsDisabled)
     auto low = intrusive_ptr<RenderPass>(new RenderPass());
     low->setCamera(cam);
     low->setClearEnabled(false);
-    engine->addPass(low, scene, 5);
+    vn::test::registerPassForTest(*engine, low, scene, 5);
 
     auto high = intrusive_ptr<RenderPass>(new RenderPass());
     high->setCamera(cam);
     high->setClearEnabled(false);
-    engine->addPass(high, scene, 10);
+    vn::test::registerPassForTest(*engine, high, scene, 10);
 
     auto hidden = intrusive_ptr<RenderPass>(new RenderPass());
     hidden->setCamera(cam);
     hidden->setClearEnabled(false);
     hidden->setEnabled(false);
-    engine->addPass(hidden, scene, 7);
+    vn::test::registerPassForTest(*engine, hidden, scene, 7);
 
     const int before = backend->render_calls;
     (void)win_content->publish(); // both scenes this frame draws are published by their owner (see Scene::publish)
@@ -7971,7 +7995,7 @@ TEST(HudPassTest, SubViewportAndClearPolicy)
     auto master_cam  = intrusive_ptr<Camera>(new Camera());
     auto window      = intrusive_ptr<RenderPass>(new RenderPass());
     window->setCamera(master_cam);
-    engine->addPass(window, win_content, 0);
+    vn::test::registerPassForTest(*engine, window, win_content, 0);
 
     auto cam = intrusive_ptr<Camera>(new Camera());
     cam->lookAt(Vec3d(0, 0, 5), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
@@ -7983,7 +8007,7 @@ TEST(HudPassTest, SubViewportAndClearPolicy)
     hud->setClearEnabled(false);
     EXPECT_FALSE(hud->isClearEnabled());
     hud->setViewport(4, 5, 96, 96);
-    engine->addPass(hud, scene, 10);
+    vn::test::registerPassForTest(*engine, hud, scene, 10);
 
     const int before = backend->clear_calls;
     engine->frame();
@@ -10902,7 +10926,7 @@ TEST(ContentLayersTest, TheDeclarationCarriesTheMaskOntoThePassAndIntoThePlan)
     PassDesc desc;
     desc.name       = u8"declared";
     desc.layer_mask = 0x9u;
-    engine->addPass(desc);
+    vn::test::registerPassForTest(*engine, desc);
 
     const FramePlan plan = engine->framePlan();
     ASSERT_EQ(plan.passes.size(), 1u);
@@ -10912,8 +10936,8 @@ TEST(ContentLayersTest, TheDeclarationCarriesTheMaskOntoThePassAndIntoThePlan)
     // The dump carries it for a pass that says something other than the default, and stays quiet for the rest.
     const std::string one_pass = plan.describe().as_std_str();
     EXPECT_NE(one_pass.find("layers=0x9"), std::string::npos) << one_pass;
-    engine->clearPasses();
-    engine->addPass(RenderPassPtr(new RenderPass()), 0);
+    vn::test::clearPassesForTest(*engine);
+    vn::test::registerPassForTest(*engine, RenderPassPtr(new RenderPass()), 0);
     EXPECT_EQ(engine->framePlan().describe().as_std_str().find("layers="), std::string::npos) << "a pass drawing every layer says nothing about them";
 }
 
@@ -10981,7 +11005,7 @@ TEST(ContentLayersTest, APassThatSelectsNoLayerDrawsNothingAndSaysSoOnce)
     pass->setName(u8"blind");
     pass->setCamera(camera);
     pass->setLayerMask(0u);
-    engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*engine, pass, scene, 0);
 
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 0u) << "nothing ran yet";
 
@@ -11221,9 +11245,9 @@ TEST(RenderEngineTest, PassesSharingSceneAndCameraCollectOncePerCameraPerFrame)
     pass_b->setCamera(cam_a);
     auto pass_c = intrusive_ptr<RenderPass>(new RenderPass());
     pass_c->setCamera(cam_b);
-    engine->addPass(pass_a, scene, 0);
-    engine->addPass(pass_b, scene, 1);
-    engine->addPass(pass_c, scene, 2);
+    vn::test::registerPassForTest(*engine, pass_a, scene, 0);
+    vn::test::registerPassForTest(*engine, pass_b, scene, 1);
+    vn::test::registerPassForTest(*engine, pass_c, scene, 2);
     (void)scene->publish(); // the host's verb (see Scene::publish)
 
     // Deltas: the pre-frame warm-up also executes passes and collects.
@@ -11273,7 +11297,7 @@ TEST(RenderEngineTest, AFrameLandedInsideAnEditBatchDrawsTheStateTheBatchStarted
     setupLookAtCamera(*camera);
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setCamera(camera);
-    engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*engine, pass, scene, 0);
 
     const auto joint_x = [&engine]() {
         // Held BY NAME: `*collect(...)` inside a range-for would be a reference into a list whose shared_ptr is already
@@ -11491,7 +11515,7 @@ TEST(RenderEngineTest, TheFramesPictureOutcomeIsAFactOfTheFrame)
     setupLookAtCamera(*camera);
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setCamera(camera);
-    engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*engine, pass, scene, 0);
 
     EXPECT_EQ(engine->presentRecord().frame, 0U) << "no frame has been answered yet";
     ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
@@ -11514,7 +11538,7 @@ TEST(RenderEngineTest, TheFramesPictureOutcomeIsAFactOfTheFrame)
     ASSERT_TRUE(offline_engine->initialize());
     auto offline_pass = intrusive_ptr<RenderPass>(new RenderPass());
     offline_pass->setCamera(camera);
-    offline_engine->addPass(offline_pass, scene, 0);
+    vn::test::registerPassForTest(*offline_engine, offline_pass, scene, 0);
     ASSERT_EQ(offline_engine->frame(), FrameOutcome::Ran);
     EXPECT_EQ(offline_engine->presentRecord().outcome, PresentOutcome::Skipped)
         << "a device that presents nothing is a first-class state, not a lost frame";
@@ -11537,7 +11561,7 @@ TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLan
     setupLookAtCamera(*camera);
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setCamera(camera);
-    engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*engine, pass, scene, 0);
     (void)scene->publish(); // the host's verb (see Scene::publish)
 
     // The reference: the inline path, which is what every other case in this file measures.
@@ -11669,7 +11693,7 @@ TEST(RenderEngineTest, ASessionsShapeIsEditedBetweenFramesNotDuringOne)
     setupLookAtCamera(*camera);
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setCamera(camera);
-    ASSERT_NE(engine->addPass(pass, scene, 0), nullptr);
+    ASSERT_NE(vn::test::applyPassForTest(*engine, pass, scene, 0), nullptr);
     const std::size_t passes_before = engine->passCount();
 
     engine->setFrameThreading(FrameThreading::EngineThread);
@@ -11680,23 +11704,23 @@ TEST(RenderEngineTest, ASessionsShapeIsEditedBetweenFramesNotDuringOne)
     const std::size_t diagnostics_before = engine->diagnosticCount();
     auto              extra              = intrusive_ptr<RenderPass>(new RenderPass());
     extra->setCamera(camera);
-    EXPECT_EQ(engine->addPass(extra, 1), nullptr) << "refused while a frame is being recorded";
-    engine->clearPasses();
+    EXPECT_EQ(vn::test::applyPassForTest(*engine, extra, 1), nullptr) << "refused while a frame is being recorded";
+    vn::test::clearPassesForTest(*engine);
     EXPECT_EQ(engine->passCount(), passes_before) << "and the session keeps the shape the frame is drawing";
     EXPECT_EQ(engine->diagnosticCount(), diagnostics_before + 1U)
         << "one report for the episode, not one per call: the host hears it once";
 
-    EXPECT_EQ(engine->addPass(extra, 1), nullptr) << "still refused";
+    EXPECT_EQ(vn::test::applyPassForTest(*engine, extra, 1), nullptr) << "still refused";
     EXPECT_EQ(engine->diagnosticCount(), diagnostics_before + 1U) << "and still one report";
 
     backend->release();
     EXPECT_TRUE(engine->waitForFrame());
-    ASSERT_NE(engine->addPass(extra, 1), nullptr) << "between frames the same call is nothing special";
+    ASSERT_NE(vn::test::applyPassForTest(*engine, extra, 1), nullptr) << "between frames the same call is nothing special";
     EXPECT_EQ(engine->passCount(), passes_before + 1U);
     EXPECT_EQ(engine->diagnosticCount(), diagnostics_before + 1U) << "an accepted change says nothing at all";
 
     engine->setFrameThreading(FrameThreading::Inline);
-    engine->removePass(extra.get());
+    vn::test::removePassForTest(*engine, extra.get());
     engine->shutdown();
 }
 
@@ -11722,7 +11746,7 @@ TEST(RenderEngineTest, AMaterialEditLandsOnTheNextFrameEvenWhileTheEngineThreadR
     setupLookAtCamera(*camera);
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setCamera(camera);
-    ASSERT_NE(engine->addPass(pass, scene, 0), nullptr);
+    ASSERT_NE(vn::test::applyPassForTest(*engine, pass, scene, 0), nullptr);
     (void)scene->publish(); // the host's verb (see Scene::publish)
 
     // The values the last answered frame drew, read through the command (which is what a backend reads).
@@ -11783,8 +11807,8 @@ TEST(RenderEngineTest, OneCameraCullsWithItsOwnShapeInEveryRectangle)
     auto square = intrusive_ptr<RenderPass>(new RenderPass());
     square->setCamera(camera);
     square->setViewport(0, 0, 600, 600); // shape 1.0
-    engine->addPass(wide, scene, 0);
-    engine->addPass(square, scene, 1);
+    vn::test::registerPassForTest(*engine, wide, scene, 0);
+    vn::test::registerPassForTest(*engine, square, scene, 1);
     (void)scene->publish(); // the host's verb (see Scene::publish)
 
     const auto        walks_before  = engine->contentCollectCount();
@@ -11860,7 +11884,7 @@ TEST(RenderEngineTest, AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote)
     first.name    = u8"first";
     first.camera  = camera_a;
     first.content = scene;
-    ASSERT_NE(engine->addPass(first), nullptr);
+    ASSERT_NE(vn::test::applyPassForTest(*engine, first), nullptr);
 
     bool moved = false;
     PassDesc second;
@@ -11877,7 +11901,7 @@ TEST(RenderEngineTest, AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote)
             (void)scene->publish();
         }
     };
-    ASSERT_NE(engine->addPass(second), nullptr);
+    ASSERT_NE(vn::test::applyPassForTest(*engine, second), nullptr);
 
     engine->frame();
 
@@ -11928,7 +11952,7 @@ TEST(RenderEngineTest, TheFramesValueIsBuiltAfterThePerFrameHooks)
             (void)scene->publish();
         }
     };
-    ASSERT_NE(engine->addPass(desc), nullptr);
+    ASSERT_NE(vn::test::applyPassForTest(*engine, desc), nullptr);
 
     engine->frame();
     EXPECT_EQ(hook_runs, 1) << "the hook runs once per frame, exactly where the frame used to run it";
@@ -11998,11 +12022,11 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
     fifth->setCamera(camera);
     fifth->setEnabled(false);
 
-    engine->addPass(first, scene, 0);
-    engine->addPass(second, scene, 1);
-    engine->addPass(third, scene, 2);
-    engine->addPass(fourth, nullptr, 3);
-    engine->addPass(fifth, scene, 4);
+    vn::test::registerPassForTest(*engine, first, scene, 0);
+    vn::test::registerPassForTest(*engine, second, scene, 1);
+    vn::test::registerPassForTest(*engine, third, scene, 2);
+    vn::test::registerPassForTest(*engine, fourth, nullptr, 3);
+    vn::test::registerPassForTest(*engine, fifth, scene, 4);
     (void)scene->publish(); // the host's verb (see Scene::publish)
     engine->frame();
 
@@ -12076,17 +12100,10 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
  */
 TEST(RenderEngineTest, TheEngineRunsTheFrameValueAndDescribesEachPassOnce)
 {
-    class CountingPass : public RenderPass {
-      public:
-        int describes = 0;
-
-        bool describe(vn::raw_ptr<Scene> scene, PassDraw& out) override
-        {
-            ++describes;
-            return RenderPass::describe(scene, out);
-        }
-    };
-
+    // A FRAME IS ONE VALUE: the compile describes every pass ONCE into the frame it then hands over, and the backend
+    // walks that value - so "described once, run once" is visible as one entry per pass per frame, not as a call
+    // counter on the node (a plan identifies a pass by name and the engine builds the node; a custom describe() is not
+    // a shape the plan expresses - see PassDesc).
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
@@ -12096,18 +12113,17 @@ TEST(RenderEngineTest, TheEngineRunsTheFrameValueAndDescribesEachPassOnce)
     setIdentityRoot(*scene)->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
     auto camera = intrusive_ptr<Camera>(new Camera());
     setupLookAtCamera(*camera);
-    auto pass = intrusive_ptr<CountingPass>(new CountingPass());
+    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setName(u8"counted");
     pass->setCamera(camera);
-    engine->addPass(pass, scene, 0);
-
-    const int describes_before = pass->describes;
+    vn::test::registerPassForTest(*engine, pass, scene, 0);
 
     (void)scene->publish(); // the host's verb (see Scene::publish)
     engine->frame();
+    ASSERT_EQ(engine->frameDescription().passes.size(), 1u) << "one entry for the one pass";
     engine->frame();
+    ASSERT_EQ(engine->frameDescription().passes.size(), 1u) << "and one again: the value is rebuilt, not appended to";
 
-    EXPECT_EQ(pass->describes - describes_before, 2) << "once per frame, by the compile";
     EXPECT_EQ(backend->frames_executed, 2) << "one frame per call: the engine announces the value, and no pass is executed a second time";
     // And the pass really did reach the backend - from the value, with its camera and its content.
     ASSERT_EQ(backend->pass_entries.size(), 2u) << "one entry per frame";
@@ -12142,7 +12158,7 @@ TEST(RenderEngineTest, ACameraWhoseShapeIsNotThePassRectangleIsReportedOnce)
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setName(u8"window");
     pass->setCamera(camera);
-    engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*engine, pass, scene, 0);
     auto area = engine->createSurface();
     area->resize(800, 600); // the window pass' rectangle: shape 4:3
 
@@ -12173,10 +12189,10 @@ TEST(RenderEngineTest, ACameraWhoseShapeIsNotThePassRectangleIsReportedOnce)
 
     // The pass is taken out of the frame, and comes back with the same mistake: a new episode, since the report is
     // about a pass IN a frame (there was no picture being stretched while it was gone).
-    engine->removePass(pass.get());
+    vn::test::removePassForTest(*engine, pass.get());
     engine->frame();
     EXPECT_EQ(received.size(), 2u) << "a pass that is not in the frame draws no picture to stretch";
-    engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*engine, pass, scene, 0);
     engine->frame();
     EXPECT_EQ(received.size(), 3u) << "and the same pass back in the frame is a new episode";
 }
@@ -12209,7 +12225,7 @@ TEST(RenderEngineTest, TheRectangleIsThePassViewportAndAScreenPassIsNotMeasured)
     preview->setName(u8"preview");
     preview->setCamera(camera);
     preview->setViewport(600, 0, 400, 400); // shape 1.0, the camera's own
-    engine->addPass(preview, scene, 0);
+    vn::test::registerPassForTest(*engine, preview, scene, 0);
     auto area = engine->createSurface();
     area->resize(800, 600); // the SURFACE is 4:3, the pass draws into a square
 
@@ -12221,7 +12237,7 @@ TEST(RenderEngineTest, TheRectangleIsThePassViewportAndAScreenPassIsNotMeasured)
     auto full = intrusive_ptr<RenderPass>(new RenderPass());
     full->setName(u8"full");
     full->setCamera(camera);
-    engine->addPass(full, scene, 1);
+    vn::test::registerPassForTest(*engine, full, scene, 1);
     engine->frame();
     ASSERT_EQ(received.size(), 1u);
     EXPECT_NE(received[0].message.find(u8"full"), vn::String::npos);
@@ -12237,14 +12253,14 @@ TEST(RenderEngineTest, TheRectangleIsThePassViewportAndAScreenPassIsNotMeasured)
     producer->setCamera(camera);
     producer->setRenderTarget(source);
     producer->setOutputName(u8"GBuffer");
-    engine->addPass(producer, scene, 2);
+    vn::test::registerPassForTest(*engine, producer, scene, 2);
 
     auto screen = intrusive_ptr<ScreenPass>(new ScreenPass());
     screen->setName(u8"copy");
     screen->setCamera(camera);
     screen->setProgram(vn::graphics::screenCopyProgram());
     screen->addInputName(u8"GBuffer");
-    engine->addPass(screen, scene, 3);
+    vn::test::registerPassForTest(*engine, screen, scene, 3);
 
     engine->frame();
     ASSERT_EQ(backend->program_draws, 1) << "the screen pass drew (its input resolved)";
@@ -12273,7 +12289,8 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     auto camera = intrusive_ptr<Camera>(new Camera());
     setupLookAtCamera(*camera);
 
-    // A consumer with no producer for "GBuffer".
+    // A consumer of "GBuffer", and a producer of that name that does not RUN this frame. The plan is valid (the name
+    // is stated by a row); what the compile reports is that nothing produced it THIS frame.
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"light");
     consumer->setCamera(camera);
@@ -12281,7 +12298,14 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     // pass has to be valid apart from the one thing under test.
     consumer->setProgram(vn::graphics::screenCopyProgram());
     consumer->addInputName(u8"GBuffer");
-    engine->addPass(consumer, 0);
+    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
+    producer->setName(u8"gbuffer");
+    producer->setCamera(camera);
+    producer->setRenderTarget(RenderTargetPtr(new RenderTarget()));
+    producer->setOutputName(u8"GBuffer");
+    producer->setEnabled(false);
+    vn::test::registerPassForTest(*engine, producer, -1);
+    vn::test::registerPassForTest(*engine, consumer, 0);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
@@ -12296,18 +12320,13 @@ TEST(RenderEngineTest, UnresolvedDeclaredInputIsReportedOnceAndRearmed)
     EXPECT_EQ(engine->diagnosticCount(), 1u);
     EXPECT_EQ(received.size(), 1u);
 
-    // A producer publishing that name resolves the input: nothing more to say.
-    auto producer = intrusive_ptr<RenderPass>(new RenderPass());
-    producer->setName(u8"gbuffer");
-    producer->setCamera(camera);
-    producer->setRenderTarget(RenderTargetPtr(new RenderTarget()));
-    producer->setOutputName(u8"GBuffer");
-    engine->addPass(producer, -1);
+    // The producer runs: the input resolves, nothing more to say.
+    producer->setEnabled(true);
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
 
-    // The producer leaves again: the same problem, so it is reported again.
-    engine->removePass(producer.get());
+    // The producer stops again: the same problem, so it is reported again.
+    producer->setEnabled(false);
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
@@ -12343,8 +12362,8 @@ TEST(RenderEngineTest, TwoProducersUnderOneOutputNameAreReportedOnce)
     };
     auto first  = make_producer(u8"first", RenderTargetPtr(new RenderTarget()));
     auto second = make_producer(u8"second", RenderTargetPtr(new RenderTarget()));
-    engine->addPass(first, -2);
-    engine->addPass(second, -1);
+    vn::test::registerPassForTest(*engine, first, -2);
+    vn::test::registerPassForTest(*engine, second, -1);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
@@ -12357,12 +12376,12 @@ TEST(RenderEngineTest, TwoProducersUnderOneOutputNameAreReportedOnce)
     EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // One producer leaves: the name is wired again, so the report re-arms...
-    engine->removePass(second.get());
+    vn::test::removePassForTest(*engine, second.get());
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // ...and the collision coming back is reported again.
-    engine->addPass(second, -1);
+    vn::test::registerPassForTest(*engine, second, -1);
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
@@ -12393,7 +12412,7 @@ TEST(RenderEngineTest, PublishingANameWithoutARenderTargetIsReported)
     presenter->setName(u8"presenter");
     presenter->setCamera(camera);
     presenter->setOutputName(u8"SceneColor"); // renders into the window: nothing to publish
-    engine->addPass(presenter, 0);
+    vn::test::registerPassForTest(*engine, presenter, 0);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
@@ -12440,7 +12459,7 @@ TEST(RenderEngineTest, ADeclarationChangeLandsInTheFrameThatFollowsIt)
 
     auto main_pass = intrusive_ptr<RenderPass>(new RenderPass());
     main_pass->setCamera(camera);
-    engine->addPass(main_pass, 0);
+    vn::test::registerPassForTest(*engine, main_pass, 0);
 
     // A steady frame stream says nothing, and stays that way when a declaration moves LEGALLY: the frame
     // simply uses the new declaration.
@@ -12514,7 +12533,7 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     desc.output_name   = u8"SceneColor";
     desc.clear_enabled = true;
     desc.before_draw   = [&enabled_calls] { ++enabled_calls; };
-    engine->addPass(desc);
+    vn::test::registerPassForTest(*engine, desc);
 
     engine->frame();
     EXPECT_EQ(enabled_calls, 1) << "the hook the declaration carried runs before the pass does";
@@ -12536,7 +12555,7 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     disabled.content     = scene;
     disabled.enabled     = false;
     disabled.before_draw = [&disabled_calls] { ++disabled_calls; };
-    engine->addPass(disabled);
+    vn::test::registerPassForTest(*engine, disabled);
     engine->frame();
     EXPECT_EQ(disabled_calls, 0) << "a pass that does not run does not update its content either";
     EXPECT_EQ(enabled_calls, 2) << "while the one that runs keeps updating its own";
@@ -12573,7 +12592,7 @@ TEST(RenderEngineTest, AScreenPassCanBeDeclaredAsAValueToo)
     producer.content     = scene;
     producer.writes      = source;
     producer.output_name = u8"SceneColor";
-    engine->addPass(producer);
+    vn::test::registerPassForTest(*engine, producer);
 
     // The consumer: a screen pass that samples the published name through a program.
     PassDesc compose;
@@ -12584,7 +12603,7 @@ TEST(RenderEngineTest, AScreenPassCanBeDeclaredAsAValueToo)
     compose.camera      = camera;
     compose.program     = screenCopyProgram();
     compose.input_names = { vn::String(u8"SceneColor") };
-    engine->addPass(compose);
+    vn::test::registerPassForTest(*engine, compose);
 
     engine->frame();
     EXPECT_EQ(backend->program_draws, 1u) << "the declared screen pass drew through its program";
@@ -12617,7 +12636,7 @@ TEST(RenderEngineTest, ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise)
     copy.kind            = PassKind::Screen;
     copy.camera          = camera;
     copy.program         = screenCopyProgram();
-    const auto copy_node = engine->addPass(copy);
+    const auto copy_node = vn::test::applyPassForTest(*engine, copy);
     ASSERT_NE(copy_node, nullptr);
     EXPECT_FALSE(copy_node->isClearEnabled()) << "a silent declaration must not turn a screen pass' clear on";
     EXPECT_FALSE(copy_node->shouldClearDepth());
@@ -12626,7 +12645,7 @@ TEST(RenderEngineTest, ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise)
     PassDesc opaque;
     opaque.name            = u8"opaque";
     opaque.camera          = camera;
-    const auto opaque_node = engine->addPass(opaque);
+    const auto opaque_node = vn::test::applyPassForTest(*engine, opaque);
     ASSERT_NE(opaque_node, nullptr);
     EXPECT_TRUE(opaque_node->isClearEnabled());
     EXPECT_EQ(opaque_node->clearColor(), Color(51, 51, 51, 255).toLinear())
@@ -12639,7 +12658,7 @@ TEST(RenderEngineTest, ADeclaredPassClearsTheWayItsKindDoesUntilItSaysOtherwise)
     tinted.clear_enabled   = true;
     tinted.clear_color     = Color(10, 20, 30, 255).toLinear();
     tinted.clear_depth     = false;
-    const auto tinted_node = engine->addPass(tinted);
+    const auto tinted_node = vn::test::applyPassForTest(*engine, tinted);
     ASSERT_NE(tinted_node, nullptr);
     EXPECT_TRUE(tinted_node->isClearEnabled());
     EXPECT_EQ(tinted_node->clearColor(), Color(10, 20, 30, 255).toLinear());
@@ -12679,7 +12698,7 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
         desc.writes_shape.height = height;
         desc.writes_shape.colors = { RenderTarget::ColorFormat::RGBA8 };
         desc.writes_shape.depth  = depth ? std::optional<RenderTarget::DepthFormat>(RenderTarget::DepthFormat::D24) : std::nullopt;
-        engine->addPass(desc);
+        vn::test::registerPassForTest(*engine, desc);
     };
 
     // Declared with no explicit extent: the shape follows the surface the frame is presenting.
@@ -12708,12 +12727,12 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
     EXPECT_EQ(engine->transientTargetCount(), 1u);
     ASSERT_EQ(engine->framePlan().passes.size(), 2u);
     EXPECT_EQ(engine->framePlan().passes[1].target, first) << "the same declaration is the same target";
-    engine->removePass(const_cast<RenderPass*>(engine->framePlan().passes[1].pass));
+    vn::test::removePassForTest(*engine, const_cast<RenderPass*>(engine->framePlan().passes[1].pass));
     engine->frame();
     EXPECT_EQ(engine->transientTargetCount(), 1u) << "the first declaration still needs it";
 
     // A DIFFERENT shape is a different target: the attachments of a built one cannot change.
-    engine->clearPasses();
+    vn::test::clearPassesForTest(*engine);
     engine->frame();
     EXPECT_EQ(engine->transientTargetCount(), 0u) << "nothing declares it any more, so the compile let it go";
     EXPECT_EQ(engine->transientTarget(u8"gbuffer"), nullptr) << "and the query answers with what is live now";
@@ -12810,14 +12829,14 @@ TEST(RenderEngineTest, OneWireIsReportedByOneCheckWhetherDeclaredByNameOrObject)
     shared_target->attachColor(RenderTarget::ColorFormat::RGBA8);
     auto first  = make_pass(u8"first", shared_target, shared_target);
     auto second = make_pass(u8"second", shared_target, shared_target);
-    engine->addPass(first, -2);
-    engine->addPass(second, -1);
+    vn::test::registerPassForTest(*engine, first, -2);
+    vn::test::registerPassForTest(*engine, second, -1);
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
     EXPECT_NE(received[0].message.find(u8"claim"), vn::String::npos);
-    engine->removePass(first.get());
-    engine->removePass(second.get());
+    vn::test::removePassForTest(*engine, first.get());
+    vn::test::removePassForTest(*engine, second.get());
 
     // Two producers writing DIFFERENT targets under one name: the name map reports it — once — and
     // the claims are legal wiring (one pass each).
@@ -12828,8 +12847,8 @@ TEST(RenderEngineTest, OneWireIsReportedByOneCheckWhetherDeclaredByNameOrObject)
     fourth_target->attachColor(RenderTarget::ColorFormat::RGBA8);
     auto third  = make_pass(u8"third", third_target, nullptr);
     auto fourth = make_pass(u8"fourth", fourth_target, nullptr);
-    engine->addPass(third, -2);
-    engine->addPass(fourth, -1);
+    vn::test::registerPassForTest(*engine, third, -2);
+    vn::test::registerPassForTest(*engine, fourth, -1);
     engine->frame();
     ASSERT_EQ(received.size(), 1u);
     EXPECT_NE(received[0].message.find(u8"shared"), vn::String::npos);
@@ -12964,8 +12983,8 @@ TEST(RenderEngineTest, ImageDeclaredAsOutputByTwoPassesIsReportedOnce)
     };
     auto first  = make_producer(u8"first", RenderTargetPtr(new RenderTarget()));
     auto second = make_producer(u8"second", RenderTargetPtr(new RenderTarget()));
-    engine->addPass(first, -2);
-    engine->addPass(second, -1);
+    vn::test::registerPassForTest(*engine, first, -2);
+    vn::test::registerPassForTest(*engine, second, -1);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
@@ -12984,7 +13003,7 @@ TEST(RenderEngineTest, ImageDeclaredAsOutputByTwoPassesIsReportedOnce)
     // as "already accounted for" in the frame that reported the COLLISION, so the declaration stayed silent
     // afterwards even though nothing had ever been said about it. In the compile, an episode is what was
     // actually reported, so a problem that was never spoken about is not treated as one that was.)
-    engine->removePass(second.get());
+    vn::test::removePassForTest(*engine, second.get());
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 2u);
     ASSERT_EQ(received.size(), 2u);
@@ -12993,7 +13012,7 @@ TEST(RenderEngineTest, ImageDeclaredAsOutputByTwoPassesIsReportedOnce)
 
     // The collision coming back is reported again (the episode re-arms), and it takes the place of the
     // unbound-promise message: one image, one message, whichever of the two rules speaks for it.
-    engine->addPass(second, -1);
+    vn::test::registerPassForTest(*engine, second, -1);
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 3u);
     EXPECT_EQ(received.size(), 3u);
@@ -13001,7 +13020,7 @@ TEST(RenderEngineTest, ImageDeclaredAsOutputByTwoPassesIsReportedOnce)
 
     // Two passes declaring the SAME object are one role, not a collision: only a second, DIFFERENT
     // pass on the image is. The same pass cannot collide with itself.
-    engine->removePass(first.get());
+    vn::test::removePassForTest(*engine, first.get());
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 4u) << "the remaining promise is about an unbound image, and says so";
     ASSERT_EQ(received.size(), 4u);
@@ -13048,8 +13067,8 @@ TEST(RenderEngineTest, TwoImageRefsOfOneAttachmentAreReportedOnce)
     };
     auto first  = make_producer(u8"first", declared_by_first);
     auto second = make_producer(u8"second", declared_by_second);
-    engine->addPass(first, -2);
-    engine->addPass(second, -1);
+    vn::test::registerPassForTest(*engine, first, -2);
+    vn::test::registerPassForTest(*engine, second, -1);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
@@ -13065,12 +13084,12 @@ TEST(RenderEngineTest, TwoImageRefsOfOneAttachmentAreReportedOnce)
     EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // One producer leaves: the image has a single writer again, so the episode re-arms...
-    engine->removePass(second.get());
+    vn::test::removePassForTest(*engine, second.get());
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // ...and the collision coming back is reported again.
-    engine->addPass(second, -1);
+    vn::test::registerPassForTest(*engine, second, -1);
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
@@ -13112,8 +13131,8 @@ TEST(RenderEngineTest, TwoImagesOfOneTargetWithDifferentAttachmentsAreNotACollis
         pass->setOutput(std::move(image));
         return pass;
     };
-    engine->addPass(make_pass(u8"gbuffer", albedo), -2);
-    engine->addPass(make_pass(u8"light", normal), -1);
+    vn::test::registerPassForTest(*engine, make_pass(u8"gbuffer", albedo), -2);
+    vn::test::registerPassForTest(*engine, make_pass(u8"light", normal), -1);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 0u);
@@ -13151,8 +13170,8 @@ TEST(RenderEngineTest, TwoDistinctUnboundImagesAreNotACollision)
         pass->setOutput(std::move(image));
         return pass;
     };
-    engine->addPass(make_pass(u8"first", intrusive_ptr<ImageRef>(new ImageRef(u8"not_bound_yet"))), -2);
-    engine->addPass(make_pass(u8"second", intrusive_ptr<ImageRef>(new ImageRef(u8"also_not_bound"))), -1);
+    vn::test::registerPassForTest(*engine, make_pass(u8"first", intrusive_ptr<ImageRef>(new ImageRef(u8"not_bound_yet"))), -2);
+    vn::test::registerPassForTest(*engine, make_pass(u8"second", intrusive_ptr<ImageRef>(new ImageRef(u8"also_not_bound"))), -1);
 
     engine->frame();
 
@@ -13200,7 +13219,7 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
     // pass has to be valid apart from the one thing under test.
     consumer->setProgram(vn::graphics::screenCopyProgram());
     consumer->addInput(image);
-    engine->addPass(consumer, 0);
+    vn::test::registerPassForTest(*engine, consumer, 0);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
@@ -13220,12 +13239,12 @@ TEST(RenderEngineTest, DeclaredInputImageWithoutProducerIsReportedOnce)
     producer->setCamera(camera);
     producer->setRenderTarget(source);
     producer->setOutput(image);
-    engine->addPass(producer, -1);
+    vn::test::registerPassForTest(*engine, producer, -1);
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // The producer leaves again: the same problem, so it is reported again.
-    engine->removePass(producer.get());
+    vn::test::removePassForTest(*engine, producer.get());
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 2u);
     EXPECT_EQ(received.size(), 2u);
@@ -13263,7 +13282,7 @@ TEST(RenderEngineTest, AProducerRegisteredLaterIsScheduledFirstAndAWholeMissingP
     // pass has to be valid apart from the one thing under test.
     consumer->setProgram(vn::graphics::screenCopyProgram());
     consumer->addInput(image);
-    engine->addPass(consumer, 0);
+    vn::test::registerPassForTest(*engine, consumer, 0);
 
     // Registered AFTER the consumer (higher order), drawing into the target it promises.
     auto producer = intrusive_ptr<RenderPass>(new RenderPass());
@@ -13271,14 +13290,14 @@ TEST(RenderEngineTest, AProducerRegisteredLaterIsScheduledFirstAndAWholeMissingP
     producer->setCamera(camera);
     producer->setRenderTarget(source);
     producer->setOutput(image);
-    engine->addPass(producer, 5);
+    vn::test::registerPassForTest(*engine, producer, 5);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 0u) << "registration order is not execution order: the scheduler runs the producer first";
     EXPECT_TRUE(received.empty());
 
     // Removing the producer leaves the image with NO writer at all: that is a wiring problem, said once.
-    engine->removePass(producer.get());
+    vn::test::removePassForTest(*engine, producer.get());
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
     ASSERT_EQ(received.size(), 1u);
@@ -13324,7 +13343,7 @@ TEST(RenderEngineTest, PassReadingTheTargetItDrawsIntoIsLeftToTheBackend)
     pass->setRenderTarget(target); // it draws into the very target it reads
     pass->setOutput(image);
     pass->addInput(image);
-    engine->addPass(pass, 0);
+    vn::test::registerPassForTest(*engine, pass, 0);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 0u);
@@ -13433,7 +13452,7 @@ TEST(RenderEngineTest, WholeTargetPromiseSatisfiesAFineImageRead)
     producer->setCamera(camera);
     producer->setRenderTarget(gbuffer);
     producer->setOutputTarget(gbuffer);
-    engine->addPass(producer, -3);
+    vn::test::registerPassForTest(*engine, producer, -3);
 
     // Consumer: the one image it samples (attachment 2), declared at its own grain.
     auto sampled = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.position"));
@@ -13445,7 +13464,7 @@ TEST(RenderEngineTest, WholeTargetPromiseSatisfiesAFineImageRead)
     // pass has to be valid apart from the one thing under test.
     consumer->setProgram(vn::graphics::screenCopyProgram());
     consumer->addInput(sampled);
-    engine->addPass(consumer, 10);
+    vn::test::registerPassForTest(*engine, consumer, 10);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 0u);
@@ -13481,7 +13500,7 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
     // pass has to be valid apart from the one thing under test.
     light->setProgram(vn::graphics::screenCopyProgram());
     light->addInputTarget(orphan);
-    engine->addPass(light, 0);
+    vn::test::registerPassForTest(*engine, light, 0);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
@@ -13498,12 +13517,12 @@ TEST(RenderEngineTest, WholeTargetReadWithoutAnyWriterIsReported)
     producer->setName(u8"fill");
     producer->setCamera(camera);
     producer->setRenderTarget(orphan);
-    engine->addPass(producer, -1);
+    vn::test::registerPassForTest(*engine, producer, -1);
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
 
     // The writer leaves: reported again.
-    engine->removePass(producer.get());
+    vn::test::removePassForTest(*engine, producer.get());
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 2u);
 }
@@ -13535,7 +13554,7 @@ TEST(RenderEngineTest, DepthReadIsReportedWhenTheTargetHasNoDepth)
     producer->setName(u8"light");
     producer->setCamera(camera);
     producer->setRenderTarget(color_only); // fills the target, but it has no depth
-    engine->addPass(producer, -1);
+    vn::test::registerPassForTest(*engine, producer, -1);
 
     auto depth_image = intrusive_ptr<ImageRef>(new ImageRef(u8"Composite.depth", ImageRef::Kind::Depth));
     depth_image->bind(color_only, 0);
@@ -13546,7 +13565,7 @@ TEST(RenderEngineTest, DepthReadIsReportedWhenTheTargetHasNoDepth)
     // pass has to be valid apart from the one thing under test.
     consumer->setProgram(vn::graphics::screenCopyProgram());
     consumer->addInput(depth_image);
-    engine->addPass(consumer, 1);
+    vn::test::registerPassForTest(*engine, consumer, 1);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
@@ -13588,14 +13607,14 @@ TEST(RenderEngineTest, AnUnboundDeclaredImageIsReportedAtWiringTime)
     producer->setCamera(camera);
     producer->setRenderTarget(target);
     producer->setOutput(unbound); // declared, but never bound to that target
-    engine->addPass(producer, -1);
+    vn::test::registerPassForTest(*engine, producer, -1);
 
     auto consumer = intrusive_ptr<ScreenPass>(new ScreenPass());
     consumer->setName(u8"present");
     consumer->setCamera(camera);
     consumer->setProgram(vn::graphics::screenCopyProgram());
     consumer->addInput(unbound);
-    engine->addPass(consumer, 1);
+    vn::test::registerPassForTest(*engine, consumer, 1);
 
     const int draws_before = backend->program_draws;
     engine->frame();
@@ -13653,7 +13672,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAProgramIsReportedAndDrawsNothing)
     producer->setName(u8"light");
     producer->setCamera(camera);
     producer->setRenderTarget(target);
-    engine->addPass(producer, -1);
+    vn::test::registerPassForTest(*engine, producer, -1);
 
     auto depth_image = intrusive_ptr<ImageRef>(new ImageRef(u8"Composite.depth", ImageRef::Kind::Depth));
     depth_image->bind(target, 0);
@@ -13661,7 +13680,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAProgramIsReportedAndDrawsNothing)
     consumer->setName(u8"reconstruct");
     consumer->setCamera(camera);
     consumer->addInput(depth_image);
-    engine->addPass(consumer, 1);
+    vn::test::registerPassForTest(*engine, consumer, 1);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
@@ -13728,8 +13747,8 @@ TEST(RenderEngineTest, DepthAndColorAttachmentZeroAreDistinctImages)
     colors->setCamera(camera);
     colors->setRenderTarget(target); // a promise has to be about what the pass writes
     colors->setOutput(color_image);
-    engine->addPass(depths, 0);
-    engine->addPass(colors, 1);
+    vn::test::registerPassForTest(*engine, depths, 0);
+    vn::test::registerPassForTest(*engine, colors, 1);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 0u);
@@ -13772,8 +13791,8 @@ TEST(RenderEngineTest, WholeTargetPromiseCollidingWithAFineOneIsReported)
     whole->setCamera(camera);
     whole->setRenderTarget(shared);
     whole->setOutputTarget(shared);
-    engine->addPass(fine, 0);
-    engine->addPass(whole, 1);
+    vn::test::registerPassForTest(*engine, fine, 0);
+    vn::test::registerPassForTest(*engine, whole, 1);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
@@ -13816,7 +13835,7 @@ TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
     producer->setCamera(camera);
     producer->setRenderTarget(source);
     producer->setOutputTarget(source);
-    engine->addPass(producer, -3);
+    vn::test::registerPassForTest(*engine, producer, -3);
 
     // Declares the third image and NOTHING else: no input name, no pass-side index. The DECLARATION
     // carries which target (and which image of it the host means); the PROGRAM carries which attachment
@@ -13828,7 +13847,7 @@ TEST(RenderEngineTest, DeclaredImageDecidesWhichAttachmentIsSampled)
     preview->setCamera(camera);
     preview->setProgram(vn::graphics::screenCopyProgram(2));
     preview->addInput(sampled);
-    engine->addPass(preview, 10);
+    vn::test::registerPassForTest(*engine, preview, 10);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 0u);
@@ -13864,14 +13883,14 @@ TEST(RenderEngineTest, CoarseDeclarationAndTheProgramsBindingPickTheAttachment)
     producer->setName(u8"bake");
     producer->setCamera(camera);
     producer->setRenderTarget(baked);
-    engine->addPass(producer, -1);
+    vn::test::registerPassForTest(*engine, producer, -1);
 
     auto pip = intrusive_ptr<ScreenPass>(new ScreenPass());
     pip->setName(u8"pip");
     pip->setCamera(camera);
     pip->setProgram(vn::graphics::screenCopyProgram(1));
     pip->addInputTarget(baked);
-    engine->addPass(pip, 100);
+    vn::test::registerPassForTest(*engine, pip, 100);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 0u);
@@ -13906,7 +13925,7 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
     producer->setCamera(camera);
     producer->setRenderTarget(source);
     producer->setOutputTarget(source);
-    engine->addPass(producer, -3);
+    vn::test::registerPassForTest(*engine, producer, -3);
 
     auto sampled = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.albedo"));
     sampled->bind(source, 0);
@@ -13915,7 +13934,7 @@ TEST(RenderEngineTest, DeclaredInputNotProducedThisFrameIsReportedOnce)
     preview->setCamera(camera);
     preview->setProgram(vn::graphics::screenCopyProgram());
     preview->addInput(sampled);
-    engine->addPass(preview, 10);
+    vn::test::registerPassForTest(*engine, preview, 10);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 0u); // wired and produced: silent
@@ -13973,7 +13992,7 @@ TEST(RenderEngineTest, NameAndObjectDeclarationResolveTheWireOnce)
     producer->setRenderTarget(source);
     producer->setOutputName(u8"GBuffer");
     producer->setOutputTarget(source);
-    engine->addPass(producer, -3);
+    vn::test::registerPassForTest(*engine, producer, -3);
 
     auto sampled = intrusive_ptr<ImageRef>(new ImageRef(u8"GBuffer.albedo"));
     sampled->bind(source, 0);
@@ -13983,7 +14002,7 @@ TEST(RenderEngineTest, NameAndObjectDeclarationResolveTheWireOnce)
     preview->setProgram(vn::graphics::screenCopyProgram());
     preview->addInputName(u8"GBuffer");
     preview->addInput(sampled);
-    engine->addPass(preview, 10);
+    vn::test::registerPassForTest(*engine, preview, 10);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 0u);
@@ -14036,8 +14055,8 @@ TEST(RenderEngineTest, PromiseAboutATargetThePassDoesNotWriteIsReported)
     fine->setCamera(camera);
     fine->setRenderTarget(drawn_into);
     fine->setOutput(fine_image);
-    engine->addPass(coarse, 0);
-    engine->addPass(fine, 1);
+    vn::test::registerPassForTest(*engine, coarse, 0);
+    vn::test::registerPassForTest(*engine, fine, 1);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 2u); // one per declaration form
@@ -14099,7 +14118,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     // pass has to be valid apart from the one thing under test.
     by_name->setProgram(vn::graphics::screenCopyProgram());
     by_name->addInputName(u8"External");
-    engine->addPass(by_name, 0);
+    vn::test::registerPassForTest(*engine, by_name, 0);
 
     // A consumer that declares the image it samples (the object path checks "was it produced this
     // frame", and a host binding is available every frame).
@@ -14110,7 +14129,7 @@ TEST(RenderEngineTest, HostPublishedTargetSurvivesTheFrame)
     by_object->setCamera(camera);
     by_object->setProgram(vn::graphics::screenCopyProgram());
     by_object->addInput(declared);
-    engine->addPass(by_object, 1);
+    vn::test::registerPassForTest(*engine, by_object, 1);
 
     for (int frame_index = 0; frame_index < 3; ++frame_index) {
         engine->frame();
@@ -14160,7 +14179,7 @@ TEST(RenderEngineTest, ScreenPassWithAProgramAndNoCameraIsReported)
     producer->setCamera(camera);
     producer->setRenderTarget(RenderTargetPtr(new RenderTarget()));
     producer->setOutputName(u8"SceneColor");
-    engine->addPass(producer, -1);
+    vn::test::registerPassForTest(*engine, producer, -1);
 
     auto        program = intrusive_ptr<ShaderProgram>(new ShaderProgram());
     ShaderStage stage;
@@ -14173,7 +14192,7 @@ TEST(RenderEngineTest, ScreenPassWithAProgramAndNoCameraIsReported)
     light->addInputName(u8"SceneColor");
     light->setProgram(program);
     // NO setCamera: the program path has no view to build.
-    engine->addPass(light, 1);
+    vn::test::registerPassForTest(*engine, light, 1);
 
     const int draws_before = backend->program_draws;
     engine->frame();
@@ -14214,7 +14233,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAnyInputIsReportedOnce)
     // A drawable ScreenPass names its program (see ScreenPass): this test is about the wiring, so the
     // pass has to be valid apart from the one thing under test.
     consumer->setProgram(vn::graphics::screenCopyProgram());
-    engine->addPass(consumer, 0);
+    vn::test::registerPassForTest(*engine, consumer, 0);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
@@ -14238,7 +14257,7 @@ TEST(RenderEngineTest, ScreenPassWithoutAnyInputIsReportedOnce)
     producer->setCamera(camera);
     producer->setRenderTarget(source);
     producer->setOutput(image);
-    engine->addPass(producer, -1);
+    vn::test::registerPassForTest(*engine, producer, -1);
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 1u);
 
@@ -14270,7 +14289,7 @@ TEST(RenderEngineTest, ScenePassWithoutInputIsNotReported)
     pass->setName(u8"scene");
     pass->setCamera(camera);
     pass->setRenderTarget(RenderTargetPtr(new RenderTarget()));
-    engine->addPass(pass, 0);
+    vn::test::registerPassForTest(*engine, pass, 0);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 0u);
@@ -14300,8 +14319,8 @@ TEST(RenderEngineTest, PublishingOneTargetUnderOneNameTwiceIsNotACollision)
     };
     auto first  = make_producer(u8"first", -2);
     auto second = make_producer(u8"second", -1);
-    engine->addPass(first.first, first.second);
-    engine->addPass(second.first, second.second);
+    vn::test::registerPassForTest(*engine, first.first, first.second);
+    vn::test::registerPassForTest(*engine, second.first, second.second);
 
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 0u);

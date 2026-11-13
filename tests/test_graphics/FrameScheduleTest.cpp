@@ -18,6 +18,8 @@
 #include <cstddef>
 #include <vector>
 
+#include "PlanTestSupport.hpp"
+
 using namespace vn::graphics;
 using vn::intrusive_ptr;
 using vn::raw_ptr;
@@ -117,8 +119,8 @@ TEST(FrameScheduleTest, PassesWithoutDependenciesKeepTheAnnouncedOrder)
 
     auto camera = vn::make_intrusive<Camera>();
 
-    engine->addPass(writingPass(u8"late", colourTarget(), 10, camera));
-    engine->addPass(writingPass(u8"early", colourTarget(), -5, camera));
+    vn::test::registerPassForTest(*engine, writingPass(u8"late", colourTarget(), 10, camera));
+    vn::test::registerPassForTest(*engine, writingPass(u8"early", colourTarget(), -5, camera));
     engine->frame();
 
     const FrameDescription& frame = engine->frameDescription();
@@ -145,8 +147,8 @@ TEST(FrameScheduleTest, AProducerRunsBeforeAConsumerAnnouncedEarlier)
 
     PassDesc consumer      = writingPass(u8"consumer", colourTarget(), -100, camera);
     consumer.input_targets = { source };
-    engine->addPass(consumer); // announced first, stacked first
-    engine->addPass(writingPass(u8"producer", source, 100, camera));
+    vn::test::registerPassForTest(*engine, consumer); // announced first, stacked first
+    vn::test::registerPassForTest(*engine, writingPass(u8"producer", source, 100, camera));
 
     engine->frame();
 
@@ -177,9 +179,9 @@ TEST(FrameScheduleTest, ACycleIsSkippedAndTheRestOfTheFrameStillRuns)
     PassDesc alone  = writingPass(u8"alone", colourTarget(), 20, camera);
     a.input_targets = { second };
     b.input_targets = { first };
-    engine->addPass(a);
-    engine->addPass(b);
-    engine->addPass(alone);
+    vn::test::registerPassForTest(*engine, a);
+    vn::test::registerPassForTest(*engine, b);
+    vn::test::registerPassForTest(*engine, alone);
 
     engine->frame();
 
@@ -211,8 +213,8 @@ TEST(FrameScheduleTest, ThePlanKeepsTheDeclarationOrderAndTheFrameTheExecutionOr
     // first, and only the edge can move the writer ahead of it.
     PassDesc consumer      = writingPass(u8"consumer", colourTarget(), -10, camera);
     consumer.input_targets = { source };
-    engine->addPass(consumer);
-    engine->addPass(writingPass(u8"producer", source, 50, camera));
+    vn::test::registerPassForTest(*engine, consumer);
+    vn::test::registerPassForTest(*engine, writingPass(u8"producer", source, 50, camera));
     engine->frame();
 
     const FramePlan plan = engine->framePlan();
@@ -254,7 +256,7 @@ TEST(FrameScheduleTest, ATargetsSampleCountTravelsWithItAndDefaultsToOne)
 
     target->setSamples(4);
     auto camera = vn::make_intrusive<Camera>();
-    engine->addPass(writingPass(u8"msaa", target, 0, camera));
+    vn::test::registerPassForTest(*engine, writingPass(u8"msaa", target, 0, camera));
     engine->frame();
 
     // The count stays the TARGET's through a frame: nothing in the schedule copies it into a pass or a

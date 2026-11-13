@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <span>
 #include <string>
 #include <typeinfo>
@@ -663,16 +662,11 @@ intrusive_ptr<RenderPass> RenderEngine::insertSlot(Slot slot)
         }
     }
     // Keep the slots ascending by order; equal orders preserve insertion order (stable), so ties are resolved
-    // by the addPass() call sequence.
+    // by the order a plan states.
     const int  order      = slot.order;
     const auto it         = std::find_if(slots_.begin(), slots_.end(), [order](const Slot& existing) { return existing.order > order; });
     const auto registered = slots_.insert(it, std::move(slot));
     return registered->pass;
-}
-
-intrusive_ptr<RenderPass> RenderEngine::addPass(const PassDesc& desc)
-{
-    return addPassOwnedBy(desc, nullptr, String());
 }
 
 intrusive_ptr<RenderPass> RenderEngine::makePassNode(const PassDesc& desc)
@@ -727,17 +721,12 @@ intrusive_ptr<RenderPass> RenderEngine::makePassNode(const PassDesc& desc)
     return node;
 }
 
-intrusive_ptr<RenderPass> RenderEngine::addPassOwnedBy(const PassDesc& desc, raw_ptr<Object> owner, const String& role)
+std::vector<PlanProblem> RenderEngine::applyPlan(const Plan& plan)
 {
-    Slot slot;
-    slot.pass  = makePassNode(desc);
-    slot.order = desc.order.value_or(passStageOrder(desc.stage));
-    slot.owner = std::move(owner);
-    slot.role  = role;
-    return insertSlot(std::move(slot));
+    return applyPlan(plan, nullptr);
 }
 
-std::vector<PlanProblem> RenderEngine::applyPlan(const Plan& plan)
+std::vector<PlanProblem> RenderEngine::applyPlan(const Plan& plan, const void* owner)
 {
     // THE SHAPE IS A VALUE, so applying it is one call - but the table it replaces is what a frame may be walking,
     // so the one rule every shape change obeys still holds here (see sessionChangeAllowed).
@@ -748,13 +737,23 @@ std::vector<PlanProblem> RenderEngine::applyPlan(const Plan& plan)
     }
 
     // The host's own bindings serve names too (see publish), so validation must know them or it would refuse a plan
-    // that reads a picture the host hands in.
-    const std::vector<String> host_names = hostOutputNames();
-    std::vector<PlanProblem>  problems   = validatePlan(plan, std::span<const String>(host_names.data(), host_names.size()));
-    if (problems.empty()) {
-        // What a pure plan check cannot see: the shape REGISTERED under each name (see collectRebuildProblems).
-        collectRebuildProblems(plan, problems);
+    // that reads a picture the host hands in. A SCOPED plan also reads names its siblings publish: those rows are not
+    // in this plan, so they are external inputs exactly like a host binding.
+    std::vector<String> external = hostOutputNames();
+    if (owner != nullptr) {
+        for (const Slot& slot : slots_) {
+            if (slot.pass == nullptr || slot.owner == owner) {
+                continue;
+            }
+            // A sibling's PASS name is a valid input name, and so is the OUTPUT name it publishes: a scoped plan may
+            // read either without owning the row.
+            external.push_back(slot.pass->name());
+            if (!slot.pass->outputName().empty()) {
+                external.push_back(slot.pass->outputName());
+            }
+        }
     }
+    std::vector<PlanProblem> problems = validatePlan(plan, std::span<const String>(external.data(), external.size()));
     if (!problems.empty()) {
         // ALL OR NOTHING: a half-applied shape would be a shape nobody declared. The answer is the return value; the
         // diagnostic is for the log, one per problem per CALL (a host call, not a frame, so the call is the episode).
@@ -766,49 +765,21 @@ std::vector<PlanProblem> RenderEngine::applyPlan(const Plan& plan)
         return problems;
     }
 
-    applyPlanRows(plan);
+    applyPlanRows(plan, owner);
     return problems;
 }
 
-void RenderEngine::collectRebuildProblems(const Plan& plan, std::vector<PlanProblem>& problems) const
-{
-    // THE PLAN EXPRESSES THE SHAPES PassKind NAMES, and nothing else. A pass registered as a SUBCLASS (the escape
-    // hatch over describe()) has no plan spelling: updating it in place is fine - the node, and its describe(),
-    // survive - but a name whose KIND changed is rebuilt through makePassNode(), which would silently replace the
-    // subclass with the built-in base. Refused with its own code instead, so the custom behaviour cannot disappear
-    // as a picture that merely starts looking different.
-    for (const PassDesc& desc : plan.passes) {
-        for (const Slot& slot : slots_) {
-            if (slot.pass == nullptr || slot.pass->name() != desc.name) {
-                continue;
-            }
-            if (slot.pass->declaration().kind != desc.kind) {
-                // The question is "is this node one of the two objects makePassNode builds", which is exactly a
-                // dynamic-type question: a registered subclass answers with its own type either way.
-                const RenderPass&     node = *slot.pass;
-                const std::type_info& type = typeid(node);
-                if (type != typeid(RenderPass) && type != typeid(ScreenPass)) {
-                    problems.push_back(PlanProblem{ PlanProblemCode::SubclassPassWouldBeRebuilt,
-                                                    desc.name,
-                                                    String(u8"pass '") + desc.name +
-                                                        String(u8"' is a custom pass class and this plan changes its kind; a rebuilt "
-                                                               u8"pass would be the built-in base class, so the plan is refused "
-                                                               u8"rather than silently dropping what makes the pass custom") });
-                }
-            }
-            break;
-        }
-    }
-}
-
-void RenderEngine::applyPlanRows(const Plan& plan)
+void RenderEngine::applyPlanRows(const Plan& plan, const void* owner)
 {
     // PHASE 1 - REMOVE what the plan no longer names. Collected first: removePass() mutates the table and releases
     // backend state, so it must run once per pass and never while the table is being walked.
+    //
+    // ONLY THE WHOLE-SESSION FORM REMOVES: a scoped plan states one contributor's rows and never speaks for the
+    // session, so "not in my plan" there means "not mine", not "gone" (see applyPlan's note).
     std::vector<raw_ptr<RenderPass>> doomed;
     for (const Slot& slot : slots_) {
-        if (slot.pass == nullptr) {
-            continue;
+        if (slot.pass == nullptr || owner != nullptr) {
+            continue; // a scoped plan states rows; it never speaks for the session (see applyPlan's note)
         }
         const String name  = slot.pass->name();
         const bool   named = std::any_of(plan.passes.begin(), plan.passes.end(), [&name](const PassDesc& desc) { return desc.name == name; });
@@ -824,9 +795,14 @@ void RenderEngine::applyPlanRows(const Plan& plan)
     for (const PassDesc& desc : plan.passes) {
         const int order = desc.order.value_or(passStageOrder(desc.stage));
 
+        // A scoped plan speaks only for its own rows: its identity is (owner, name), so two contributors may each
+        // state a pass of the same name (two views of one engine, each with its own "main").
         Slot* existing = nullptr;
         for (Slot& slot : slots_) {
-            if (slot.pass != nullptr && slot.pass->name() == desc.name) {
+            if (slot.pass == nullptr || (owner != nullptr && slot.owner != owner)) {
+                continue;
+            }
+            if (slot.pass->name() == desc.name) {
                 existing = &slot;
                 break;
             }
@@ -841,24 +817,61 @@ void RenderEngine::applyPlanRows(const Plan& plan)
         }
 
         // A NAME THAT CHANGED KIND cannot become the other object: replace it, keeping who owned it.
-        raw_ptr<Object> owner = nullptr;
-        String          role;
+        const void* existing_owner = nullptr;
         if (existing != nullptr) {
-            owner = existing->owner;
-            role  = existing->role;
+            existing_owner = existing->owner;
             removePass(existing->pass.get());
         }
 
         Slot slot;
         slot.pass  = makePassNode(desc);
         slot.order = order;
-        slot.owner = owner;
-        slot.role  = std::move(role);
+        slot.owner = owner != nullptr ? owner : existing_owner;
         insertSlot(std::move(slot));
     }
 
     // PHASE 3 - the table is ordered by the orders the plan just stated (an update can move a pass in the frame).
     std::stable_sort(slots_.begin(), slots_.end(), [](const Slot& left, const Slot& right) { return left.order < right.order; });
+}
+
+raw_ptr<RenderPass> RenderEngine::passFor(const String& name, const void* owner) const
+{
+    if (owner == nullptr) {
+        return pass(name);
+    }
+    for (const Slot& slot : slots_) {
+        if (slot.pass != nullptr && slot.owner == owner && slot.pass->name() == name) {
+            return slot.pass.get();
+        }
+    }
+    return nullptr;
+}
+
+raw_ptr<RenderPass> RenderEngine::pass(const String& name) const
+{
+    for (const Slot& slot : slots_) {
+        if (slot.pass != nullptr && slot.pass->name() == name) {
+            return slot.pass.get();
+        }
+    }
+    return nullptr;
+}
+
+Plan RenderEngine::planFor(const void* owner) const
+{
+    if (owner == nullptr) {
+        return plan();
+    }
+    Plan shape;
+    for (const Slot& slot : slots_) {
+        if (slot.pass == nullptr || slot.owner != owner) {
+            continue;
+        }
+        PassDesc desc = slot.pass->declaration();
+        desc.order    = slot.order;
+        shape.passes.push_back(std::move(desc));
+    }
+    return shape;
 }
 
 Plan RenderEngine::plan() const
@@ -891,7 +904,7 @@ std::vector<String> RenderEngine::hostOutputNames() const
     return names;
 }
 
-void RenderEngine::removePassesOwnedBy(const Object* owner) noexcept
+void RenderEngine::removePassesOwnedBy(const void* owner) noexcept
 {
     if (owner == nullptr) {
         return; // unowned passes belong to whoever added them; no chain can take them back
@@ -907,33 +920,6 @@ void RenderEngine::removePassesOwnedBy(const Object* owner) noexcept
     for (raw_ptr<RenderPass> pass : doomed) {
         removePass(pass);
     }
-}
-
-std::vector<intrusive_ptr<RenderPass>> RenderEngine::passesOwnedBy(const Object* owner) const
-{
-    std::vector<intrusive_ptr<RenderPass>> passes;
-    if (owner == nullptr) {
-        return passes;
-    }
-    for (const Slot& slot : slots_) {
-        if (slot.owner == owner && slot.pass != nullptr) {
-            passes.push_back(slot.pass);
-        }
-    }
-    return passes;
-}
-
-raw_ptr<RenderPass> RenderEngine::passOwnedBy(const Object* owner, const String& role) const
-{
-    if (owner == nullptr) {
-        return nullptr;
-    }
-    for (const Slot& slot : slots_) {
-        if (slot.owner == owner && slot.pass != nullptr && slot.role == role) {
-            return slot.pass.get();
-        }
-    }
-    return nullptr;
 }
 
 VN_GRAPHICS_NS_END

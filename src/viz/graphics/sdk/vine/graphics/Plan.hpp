@@ -19,10 +19,8 @@ VN_GRAPHICS_NS_BEGIN
  * - A CODE, not a sentence: the answer a host acts on is "which of these codes is wrong", and a
  *   sentence is what changes the day someone rewords it. The sentence accompanies the code (see
  *   PlanProblem::detail), the code is what a test and a host switch on.
- * - `SessionBusy` and `SubclassPassWouldBeRebuilt` are the codes not about the plan's own content: the first says
- *   the SHAPE cannot be changed right now (a frame is being recorded against the table it would replace), the
- *   second reads the shape REGISTERED under a name and refuses a change that would silently rebuild a custom pass
- *   class as the built-in base (see RenderEngine::applyPlan).
+ * - `SessionBusy` is the code not about the plan's own content: it says the SHAPE cannot be changed right now (a
+ *   frame is being recorded against the table it would replace).
  *
  * @note
  * - The set is closed on purpose (`G8`): a new failure of a plan is a new code added here, next to its
@@ -36,7 +34,6 @@ enum class PlanProblemCode : std::uint8_t
     DependencyCycle,   // The named inputs form a cycle: no execution order satisfies it.
     TooManyPasses,     // More passes than kMaxPlanPasses (the plan is refused, not truncated).
     SessionBusy,       // A frame is being recorded; apply the plan between frames.
-    SubclassPassWouldBeRebuilt, // A kind change would rebuild a custom pass class as the built-in base.
 };
 
 /**
@@ -81,10 +78,10 @@ inline constexpr std::size_t kMaxPlanPasses = 64;
  * - THE CONSEQUENCE FOR A MIXED ENGINE: a pass registered through `addPass()` without a name is not expressible
  *   here, so `RenderEngine::plan()` reads it back with an empty name and `applyPlan` refuses that shape rather than
  *   silently renaming or dropping the pass (see RenderEngine::plan).
- * - WHAT IT CANNOT SAY: a custom pass CLASS. The plan states the shapes `PassKind` names (Scene / Screen); a
- *   subclass exists for its overridden `describe()`, which is not a field. A same-kind restatement keeps the
- *   subclass alive (the node survives the update, see RenderEngine::applyPlan), but a kind change under that name
- *   would rebuild it as the built-in base and is refused rather than performed (`SubclassPassWouldBeRebuilt`).
+ * - WHAT IT CANNOT SAY: a custom pass CLASS. The plan states the shapes `PassKind` names (Scene / Screen), and the
+ *   node the engine builds from a declaration is the built-in of its kind - so a subclass with an overridden
+ *   `describe()` is not registrable at all (it was the escape hatch of the old `addPass` family). What is custom
+ *   about a picture is stated as data: a program override, a viewport, a depth band, a hook (see PassDesc).
  * - WHAT IT DOES NOT CARRY: measured facts (the record time of the last frame) and the engine's own
  *   bookkeeping (owner/role, the transient a compile resolved). Those belong to the compiled frame, which
  *   is a different value (`FramePlan`) - one describes what the frame SHOULD be, the other what the engine

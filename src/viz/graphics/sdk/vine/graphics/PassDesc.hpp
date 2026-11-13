@@ -73,7 +73,8 @@ struct TransientShape {
  *   execution node for its kind (Scene -> RenderPass, Screen -> ScreenPass) ONCE, and that node is the
  *   single storage of the declaration - a descriptor and a hand-built pass cannot drift apart, because a
  *   descriptor IS a hand-built pass by the time the engine sees it.
- * - `engine->addPass(RenderPass, content, order)` stays the escape hatch for a pass that needs something
+ * - `engine->applyPlan(Plan{ { desc } }, owner)` is the one way a declaration reaches the table (a pass that needs something
+ *   the descriptor cannot state has no spelling: what is custom about a picture is data, not a subclass).
  *   the kinds cannot express.
  * - What is NOT here: a descriptor cannot invent an execution (that is PassKind), cannot be a subtree of
  *   content (Scene), and cannot decide how a backend draws (the program's own ABI). The state it states is

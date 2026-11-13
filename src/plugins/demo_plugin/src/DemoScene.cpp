@@ -898,6 +898,37 @@ void addBlendedPair(vn::graphics::Group* root, const BlendedPlacement& at)
     }
 }
 
+
+/**
+ * @brief States one of the demo's own passes: a contributor beside the view's chain.
+ *
+ * @details
+ * - THE DEMO OWNS THESE ROWS, the viewer owns the chain: applying them as a SCOPED plan
+ *   (`RenderEngine::applyPlan(plan, owner)`) upserts exactly the named pass and leaves everything the chain registered
+ *   alone, which is what lets one engine carry both.
+ * - The node the demo configured becomes the plan's declaration; the engine's node is the one that runs (a plan
+ *   identifies a pass by NAME), so the demo keeps no handle it would then mutate.
+ *
+ * @param engine  Engine to state the pass on.
+ * @param owner   The demo's identity in that engine (its render control: rows belong to it, not to the chain).
+ * @param pass    Configured pass whose declaration is stated.
+ * @param content Scene the pass draws (null for a content-agnostic pass).
+ * @param order   Execution order.
+ */
+void addDemoPass(vn::graphics::RenderEngine& engine,
+                 vn::raw_ptr<vn::Object>     owner,
+                 const vn::intrusive_ptr<vn::graphics::RenderPass>& pass,
+                 vn::intrusive_ptr<vn::graphics::Scene>            content,
+                 int                                               order)
+{
+    vn::graphics::PassDesc desc = pass->declaration();
+    desc.content                = std::move(content);
+    desc.order                  = order;
+    // Problems are reported by the engine's one route (the plan's refusals included); nothing here substitutes a
+    // different pass for a refused one.
+    (void)engine.applyPlan(vn::graphics::Plan{ { desc } }, owner);
+}
+
 } // namespace
 
 /**
@@ -1147,7 +1178,7 @@ void addSlotOverlayDemo(vn::appfw::gui::RenderControl* render_control)
         pass->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
         pass->setClearEnabled(false); // overlay: no clear + no depth -> on-top
         pass->setDepthMode(vn::graphics::DepthMode::Disabled);
-        engine->addPass(pass, overlay, 20); // its own (master camera, order 20) slot
+        addDemoPass(*engine, render_control, pass, overlay, 20); // its own (master camera, order 20) slot
     });
 }
 
@@ -1192,7 +1223,7 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     pass_main->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
     pass_main->setRenderTarget(target);
     pass_main->setOutputName(u8"MultiColor");
-    engine->addPass(pass_main, render_control->view()->scene(), -2); // content = view scene
+    addDemoPass(*engine, render_control, pass_main, render_control->view()->scene(), -2); // content = view scene
 
     // Slot 1: an extra scene drawn on top (no clear -> on-top, depth-off).
     auto overlay      = vn::make_intrusive<vn::graphics::Scene>();
@@ -1213,7 +1244,7 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     pass_top->setOutputName(u8"MultiColor"); // publishes the same baked target
     pass_top->setClearEnabled(false);        // no clear + no depth -> on-top slot
     pass_top->setDepthMode(vn::graphics::DepthMode::Disabled);
-    engine->addPass(pass_top, overlay, -1); // slot = (master, -1)
+    addDemoPass(*engine, render_control, pass_top, overlay, -1); // slot = (master, -1)
 
     // PiP screen pass sampling the baked texture into the window.
     const double dpr   = render_control->devicePixelRatio();
@@ -1244,7 +1275,7 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     // target, and the engine answers it from "a pass draws into it", not from a promise.
     screen->addInputTarget(target);
     screen->setViewport(sx, sy, pip_w, pip_h);
-    engine->addPass(screen, 100);
+    addDemoPass(*engine, render_control, screen, nullptr, 100);
 }
 
 // The deferred / G-buffer previews reuse the PassChain Deferred
@@ -1285,7 +1316,7 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
     gbuf->setProgramOverride(vn::graphics::defaultGbufferGeometryProgram());
     gbuf->setOutputName(u8"GBuffer");
     gbuf->setOutputTarget(target); // the G-buffer's only writer owns the hand-off (design §14)
-    engine->addPass(gbuf, render_control->view()->scene(), -3);
+    addDemoPass(*engine, render_control, gbuf, render_control->view()->scene(), -3);
 
     // Preview each colour attachment of the same published target: each preview declares the SAME wire
     // at the grain it really is — one image, not "a name plus an attachment index". The identity is
@@ -1314,7 +1345,7 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
         screen->addInput(image);
         const int x = 8 + attachment * (pip_w + 8);
         screen->setViewport(x, 8, pip_w, pip_h);
-        engine->addPass(screen, 120 + attachment);
+        addDemoPass(*engine, render_control, screen, nullptr, 120 + attachment);
     }
 }
 
@@ -1351,7 +1382,7 @@ void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
     gbuf->setProgramOverride(vn::graphics::defaultGbufferGeometryProgram());
     gbuf->setOutputName(u8"GBuffer");
     gbuf->setOutputTarget(target); // the G-buffer's only writer owns the hand-off (design §14)
-    engine->addPass(gbuf, render_control->view()->scene(), -3);
+    addDemoPass(*engine, render_control, gbuf, render_control->view()->scene(), -3);
 
     // Deferred-lighting preview: a fullscreen program sampling the G-buffer.
     const double dpr   = render_control->devicePixelRatio();
@@ -1367,7 +1398,7 @@ void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
     // The content scene must be bound to THIS pass too: ScreenPass forwards a scene's lights to the
     // fullscreen program, and a program pass with no scene is handed the backend's default ambient
     // only (no directional term) - a flat image contradicting this function's own documentation.
-    engine->addPass(light, render_control->view()->scene(), 130);
+    addDemoPass(*engine, render_control, light, render_control->view()->scene(), 130);
 }
 
 /**
@@ -1546,7 +1577,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
             const int x = 8 + attachment * (pip_w + 8);
             preview->setViewport(x, 8, pip_w, pip_h); // the layout step re-fits it to the source's aspect
             previews.push_back(preview);
-            engine->addPass(preview, 120 + attachment);
+            addDemoPass(*engine, render_control, preview, nullptr, 120 + attachment);
         }
     }
 

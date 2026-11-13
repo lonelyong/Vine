@@ -36,10 +36,13 @@ SceneView::~SceneView()
     if (surface_ != nullptr) {
         surface_->dismiss(this);
     }
-    // Drop the pipeline this view adopted. Dropping the handle is all it takes: the pipeline unregisters every
-    // pass it registered, and it holds the engine strongly, so the engine is still there to be unregistered from
-    // even if the host released it first (see Pipeline).
+    // Drop the pipeline this view adopted, then the rows a chain stated IN THIS VIEW'S SCOPE (see
+    // PassChain::build(engine, desc, owner)): a rebuilt chain leaves its rows to the scope, so the view is what takes
+    // them back. The lease answers "gone" when the engine went first, so this never reaches into freed memory.
     setChain(nullptr);
+    if (raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
+        engine->passes().clearOwnedBy(this);
+    }
 }
 
 void SceneView::setSurface(raw_ptr<RenderSurface> surface) noexcept

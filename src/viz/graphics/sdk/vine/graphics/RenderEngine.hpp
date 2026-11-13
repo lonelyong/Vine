@@ -101,11 +101,11 @@ enum class FrameThreading : std::uint8_t
  * @brief High-level render engine managing the frame loop and render state.
  *
  * @details
- * - It imposes NO fixed pipeline: nothing renders unless the caller registers passes (addPass). Each
+ * - It imposes NO fixed pipeline: nothing renders unless the caller states passes (applyPlan, or a chain). Each
  *   frame() runs the registered passes in ascending order, then ends and swaps; a top / HUD pass is just a
  *   pass registered with a higher order - there is no separate overlay concept.
  * - A pure scheduler: it carries no content scene, no camera and no input forwarding. Every pass draws the
- *   content its own declaration states (addPass(pass, content, order)) or nothing; the primary interactive view
+ *   content its own declaration states (PassDesc::content) or nothing; the primary interactive view
  *   lives in a SceneView that borrows this engine. Which pass draws into which SURFACE is the surface's own
  *   declaration (see RenderSurface), never something the engine infers.
  * - THE ENGINE KNOWS NO WINDOW: the window belongs to the AREA - the area holds the TARGET its device made
@@ -122,7 +122,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
   public:
     /** @brief Constructs an empty engine (no device, no passes).
      *
-     * Configure the chain explicitly (addPass) or through PassChain::build, then setDevice()
+     * Configure the chain explicitly (applyPlan) or through PassChain::build, then setDevice()
      * before initialize().
      */
     RenderEngine();
@@ -151,7 +151,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @details
      * - The narrow contract a recipe (PassChain) depends on: registration, order, content access, and the owner
      *   relation that makes "the chain takes back what it registered" one call. The flat methods below
-     *   (`addPass`, `removePass`, `passCount`, ...) are shorthands for this handle.
+     *   (`passCount`, `passOrder`, ...) are shorthands for this handle.
      * - The handle carries a lease, so it may outlive the engine: `isValid()` then answers false and every call is
      *   a no-op.
      *
@@ -526,7 +526,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Gets the order a registered pass runs at in this engine's frame.
      *
      * @details
-     * - The order lives in the ENGINE (addPass places the pass), not on the pass, so this is the one way to
+     * - The order lives in the ENGINE (a plan states it), not on the pass, so this is the one way to
      *   ask where it sits - and an answer doubles as the liveness query: a removed pass answers nothing, so
      *   an answer IS the pass being in the frame.
      * - The caller this exists for is a HOST (and tests): the area a pass presents is a declaration
@@ -562,21 +562,19 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - WHAT CHANGES: a name the engine does not have is added, a name it has is updated IN PLACE (the pass
      *   node survives, so the backend state keyed by it - pipeline variant, retained set, timing - does not
      *   have to be rebuilt), and a name the plan no longer states is removed (its backend state and owned
-     *   target released, exactly as removePass() does). No addPass/removePass call is involved, which is the
+     *   target released). No separate add/remove call is involved, which is the
      *   point: the shape is one value, and applying it is one call.
      * - WHAT "IN PLACE" DOES NOT COVER: a pass whose KIND changed (Scene -> Screen) cannot become the other
      *   object, so that name is removed and re-added under the same owner and role. Every other field a
      *   PassDesc states is adopted as the pass' new declaration.
-     * - THE PLAN'S VOCABULARY IS `PassKind` (Scene / Screen). A pass registered as a SUBCLASS - the escape hatch
-     *   over describe() - is outside it: a same-kind restatement updates it in place (the node survives), but a
-     *   KIND change would rebuild the name as the built-in base, so that plan is REFUSED with
-     *   `SubclassPassWouldBeRebuilt` instead of silently dropping the subclass. There is no custom-kind registry
-     *   (`G8`): a host that needs another shape builds the pass itself.
+     * - THE PLAN'S VOCABULARY IS `PassKind` (Scene / Screen), and the node built from a declaration is the built-in
+     *   of its kind: a custom pass CLASS (a subclass overriding `describe()`) is not registrable - what is custom
+     *   about a picture is stated as data (a program override, a viewport, a depth band, a hook). There is no
+     *   custom-kind registry (`G8`).
      * - THE WHOLE PLAN IS CHECKED FIRST (see validatePlan) and a plan with ANY problem is applied ENTIRELY
      *   or not at all: a half-applied shape would be a shape nobody declared.
-     * - A PASS THE PLAN DOES NOT NAME IS REMOVED - including one registered by addPass() whose name is
-     *   empty, because a plan has no way to name it. Name every pass the plan should keep, or do not mix
-     *   the two entry points on one engine.
+     * - A PASS THE PLAN DOES NOT NAME IS REMOVED (the whole-session form; a scoped plan removes nothing). A pass
+     *   whose name is empty cannot be stated at all, which is why every plan row must be named.
      *
      * @warning
      * - A SESSION'S SHAPE IS EDITED BETWEEN FRAMES: a call that lands while a frame is being recorded is
@@ -591,6 +589,54 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     [[nodiscard]] std::vector<PlanProblem> applyPlan(const Plan& plan);
 
+    /**
+     * @brief Applies @p plan as @p owner's rows: an upsert that leaves every other contributor's rows alone.
+     *
+     * @details
+     * - WHAT A SCOPED PLAN IS FOR. One engine is drawn by several contributors (a view's chain, a demo's own passes,
+     *   a host's overlay), and each states its own rows. A scoped apply resolves the plan against the rows @p owner
+     *   already has: a name it already owns is updated IN PLACE (the node, and every backend state keyed by it,
+     *   survives), a name it does not own is ADDED, and every row owned by someone else is left exactly as it is.
+     * - IT DOES NOT REMOVE: a scoped plan states what this contributor draws, not what the session is. Removal is
+     *   either the whole-session form above or the owner going away (see RenderEngine::removePassesOwnedBy).
+     * - A NAME ANOTHER OWNER HAS IS REFUSED (`DuplicatePassName`): one table, one row per name, so a scoped plan
+     *   cannot take a pass somebody else draws.
+     *
+     * @warning
+     * - A plan is still a shape change: refused with `SessionBusy` while a frame is being recorded.
+     *
+     * @param plan  The rows this contributor states (name = identity, as in the whole-session form).
+     * @param owner The contributor the rows belong to (an identity; null means the whole session, see above).
+     * @return Every problem found, empty when the plan was applied.
+     */
+    [[nodiscard]] std::vector<PlanProblem> applyPlan(const Plan& plan, const void* owner);
+
+    /**
+     * @brief Finds the registered pass whose name is @p name.
+     *
+     * @details
+     * - THE LOOKUP A PLAN IS APPLIED WITH: a plan identifies a pass by its name, so this is how a host finds the node
+     *   it stated (the handle the old addPass family used to return).
+     *
+     * @param name Pass name (a plan's identity).
+     * @return The registered node, or null when no row carries that name.
+     */
+    [[nodiscard]] raw_ptr<RenderPass> pass(const String& name) const;
+
+    /**
+     * @brief Finds the pass @p owner stated under @p name.
+     *
+     * @details
+     * - THE UNAMBIGUOUS LOOKUP. `pass(name)` answers the first row with that name; a plan's identity is
+     *   `(owner, name)` on the scoped form (see applyPlan), so a contributor that reads its own rows back has to say
+     *   whose they are - two views of one engine may each have a "main".
+     *
+     * @param name  Pass name.
+     * @param owner The scope that stated it (null: any row, as pass(name)).
+     * @return The node, or null.
+     */
+    [[nodiscard]] raw_ptr<RenderPass> passFor(const String& name, const void* owner) const;
+
     /** @brief Answers the session shape this engine runs, as a value (the inverse of applyPlan).
      *
      * @details
@@ -598,10 +644,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   is a no-op: the shape read back is exactly the shape that reproduces it.
      * - THE ONE PRECONDITION IS A NAME. A plan identifies each pass by its name (`Plan`), and an empty name cannot be
      *   expressed - `validatePlan` refuses it, because a shape that cannot be diffed would be applied as "remove
-     *   everything, add everything". A pass registered by `addPass` with no name (a hand-built one) therefore reads
-     *   back with an empty name and makes the round trip answer `EmptyPassName` instead of applying: name every pass
-     *   a host expects to survive a plan, or do not mix the two entry points. 5b-2c makes the name mandatory when the
-     *   `addPass` family goes away.
+     *   everything, add everything". A pass with no name cannot be expressed at all: name every pass.
      * - What is NOT here: the measured facts (the last frame's record time) and the owner/role bookkeeping - those
      *   belong to the compile and to whoever registered the pass, not to the declared shape (see FramePlan, which is
      *   the COMPILED frame and a different value).
@@ -613,6 +656,18 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @return The shape, in engine order; empty when nothing is registered.
      */
     [[nodiscard]] Plan plan() const;
+
+    /**
+     * @brief Answers the rows one contributor stated, as a value (the scoped inverse of applyPlan(plan, owner)).
+     *
+     * @details
+     * - A scoped plan speaks only for its own rows, so reading them back is `planFor(owner)` - `plan()` is the
+     *   session's whole shape and cannot say which row belongs to whom.
+     *
+     * @param owner The scope whose rows are answered (null: same as plan(), the whole session).
+     * @return The rows that scope stated, in engine order.
+     */
+    [[nodiscard]] Plan planFor(const void* owner) const;
 
     /** @brief Gets the frame the last compile produced, as a value (see FrameDescription).
      *
@@ -685,83 +740,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     intrusive_ptr<const ShaderProgram> defaultContentProgram() const;
 
-    /** @brief Registers a scene render pass without touching the content its declaration states.
-     *
-     * @details
-     * - Passes run in ascending @p order (equal orders keep insertion order): negative orders first (a
-     *   shadow-map or depth pre-pass); the pass presenting the primary view to the window conventionally at
-     *   0; positive orders after it (post / compositing); top / HUD passes at the highest orders.
-     * - This overload binds NO content: the pass draws whatever its declaration already states - nothing for a
-     *   fresh pass, while content-agnostic passes (a ScreenPass compositing inputs, an AxisGizmo) still execute.
-     *   State a scene with the addPass(pass, content, order) overload, or bind one with bindPassContent().
-     *   Nothing is auto-registered; registering the same pass instance twice is a no-op.
-     * - Two DIFFERENT passes may share a camera and an order: the backend keys retained state by the pass,
-     *   so they stay separate content (the order only decides their stacking). Give distinct orders (and a
-     *   sub-viewport / clear policy) when they must layer.
-     *
-     * @warning
-     * - A SESSION'S SHAPE IS EDITED BETWEEN FRAMES: a call that lands while a frame is being recorded is REFUSED (null,
-     *   plus one `PassProtocolViolation` diagnostic per episode) - see `waitForFrame`.
-     *
-     * @param pass  Pass to add (the engine keeps a reference).
-     * @param order Execution order (ascending; any integer allowed).
-     * @return The pass the engine registered, or null when it was already registered OR the call was refused.
-     */
-    intrusive_ptr<RenderPass> addPass(intrusive_ptr<RenderPass> pass, int order);
-
-    /** @brief Registers a scene render pass, stating the content its declaration draws.
-     *
-     * @details
-     * - THE CONTENT IS PART OF THE PASS' DECLARATION (`PassDesc::content`), not a fact the engine keeps beside it:
-     *   this overload writes @p content into that one declaration, which is what the compile reads. A pass is
-     *   therefore one declaration - two engines registering the same instance share its content.
-     * - A null @p content leaves what the pass already declares alone (an overlay keeps the scene it was built
-     *   with). Use bindPassContent(pass, nullptr) to clear a binding.
-     * - Registering the same instance twice is a no-op: the call returns null and changes NEITHER the order NOR the
-     *   content (use bindPassContent() to rebind a registered pass).
-     *
-     * @param pass    Pass to add (the engine keeps a reference).
-     * @param content Scene the pass' declaration draws (null leaves the declared content unchanged).
-     * @param order   Execution order (ascending; any integer allowed).
-     * @return The pass the engine registered, or null when it was already registered (or null).
-     */
-    intrusive_ptr<RenderPass> addPass(intrusive_ptr<RenderPass> pass, intrusive_ptr<Scene> content, int order);
-
-    /** @brief Registers a pass declared as a VALUE (see PassDesc).
-     *
-     * @details
-     * - The declaration is turned into the execution node of its kind ONCE (`PassKind::Scene` -> RenderPass,
-     *   `PassKind::Screen` -> ScreenPass) and registered like any other pass: nothing downstream knows which
-     *   way a pass arrived, and no second mechanism has to be kept in step.
-     * - What the descriptor adds over the setters: the STAGE it belongs to (its order follows from intent,
-     *   see passStageOrder), a TAG for the plan, the TRANSIENT it needs (no host owns the target - see
-     *   PassDesc::writes_image), and the per-frame hook its content updates itself through.
-     * - What the return is for: a declaration says what a pass IS; the node it became is how a host CHANGES
-     *   what it does without re-declaring - a program override, a viewport that follows the surface, a
-     *   restated clear policy. That is the one handle a caller needs (a PassChain keeps the node for exactly
-     *   this).
-     *
-     * @param desc The declaration (see PassDesc; a null camera draws nothing, as any pass does).
-     * @return The execution node the declaration became, or null when that pass was already registered.
-     */
-    intrusive_ptr<RenderPass> addPass(const PassDesc& desc);
-
-    /** @brief Removes a previously added pass.
-     *
-     * @details
-     * - The pass is dropped from the ordered list and its backend resources are released: the retained
-     *   per-pass GPU state (RenderDevice::releasePass, keyed by the pass itself) and any off-screen render
-     *   target the pass owns (RenderDevice::releaseRenderTarget).
-     *
-     * @warning
-     * - A SESSION'S SHAPE IS EDITED BETWEEN FRAMES: a call that lands while a frame is being recorded is REFUSED (one
-     *   `PassProtocolViolation` diagnostic per episode) - the slot list is what the engine thread walks (see
-     *   `waitForFrame`).
-     *
-     * @param pass Pass to remove (by pointer).
-     */
-    void removePass(raw_ptr<RenderPass> pass);
-
     /** @brief Releases the device's GPU residency of a content object the host still owns.
      *
      * @details
@@ -796,14 +774,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @return true when the buffer was recognized and the release was accepted.
      */
     bool releaseContent(const vn::Buffer<std::uint32_t>& buffer);
-
-    /** @brief Removes all registered passes (each one as removePass: resources released).
-     *
-     * @warning
-     * - A SESSION'S SHAPE IS EDITED BETWEEN FRAMES: refused, with the same once-per-episode diagnostic as removePass,
-     *   while a frame is being recorded.
-     */
-    void clearPasses();
 
     /** @brief Gets the number of registered scene passes.
      *
@@ -914,7 +884,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         int                       order = 0;
         /// The object that registered this pass and takes it back when it dies (null = registered without an owner,
         /// e.g. straight on the engine). Opaque on purpose: the engine never calls into it, only compares it.
-        raw_ptr<Object> owner{ nullptr };
+        const void* owner{ nullptr };
         /// The role that owner gave this pass (empty = anonymous).
         String role;
         /// How long the last frame's record of this pass took, in microseconds (0: it did not run then).
@@ -1187,20 +1157,13 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     /** @brief Applies a plan that has already been validated (see applyPlan): update, add, remove, re-order.
      *
-     * @param plan The shape to apply (its problems were answered by validatePlan already).
+     * @param plan  The shape to apply (its problems were answered by validatePlan already).
+     * @param owner The contributor whose rows the plan states (null: the whole session, which may remove).
      */
-    void applyPlanRows(const Plan& plan);
+    void applyPlanRows(const Plan& plan, const void* owner);
 
-    /** @brief Adds the problems a plan has that depend on the shape REGISTERED under its names.
-     *
-     * @details
-     * - A plan check alone cannot see this: `validatePlan` reads the plan, while whether a name may be REBUILT is a
-     *   fact of the pass already registered under it (see applyPlan's vocabulary rule).
-     *
-     * @param plan     The shape being applied.
-     * @param problems Appended to; empty in means "every problem found so far is none".
-     */
-    void collectRebuildProblems(const Plan& plan, std::vector<PlanProblem>& problems) const;
+    /** @brief Drops one registered pass and releases what the backend retained for it (the plan's own step). */
+    void removePass(raw_ptr<RenderPass> pass);
 
     /** @brief Answers the names the HOST publishes (see publish), which a plan's named input may resolve against.
      *
@@ -1219,20 +1182,18 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @param role  Name the owner gives this pass (empty = anonymous).
      * @return The registered node, or null when it was already registered.
      */
-    intrusive_ptr<RenderPass> addPassOwnedBy(const PassDesc& desc, raw_ptr<Object> owner, const String& role);
 
     /** @brief Removes every pass whose slot is owned by @p owner (each one as removePass).
      *
      * @param owner Owner whose passes are taken back (null is a no-op: unowned passes belong to whoever added them).
      */
-    void removePassesOwnedBy(const Object* owner) noexcept;
+    void removePassesOwnedBy(const void* owner) noexcept;
 
     /** @brief Answers the passes owned by @p owner, in engine order.
      *
      * @param owner Owner whose passes are asked for (null answers nothing).
      * @return The handles; empty when nothing is registered for that owner.
      */
-    [[nodiscard]] std::vector<intrusive_ptr<RenderPass>> passesOwnedBy(const Object* owner) const;
 
     /** @brief Answers the pass @p owner registered as @p role, or null.
      *
@@ -1240,7 +1201,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @param role  Role the pass was registered under.
      * @return The pass, or null when that owner registered no pass with that role.
      */
-    [[nodiscard]] raw_ptr<RenderPass> passOwnedBy(const Object* owner, const String& role) const;
 
     /** @brief Makes sure the transient target a slot declares exists, at the shape it declares.
      *

@@ -22,6 +22,8 @@
 #include <string>
 #include <vector>
 
+#include "PlanTestSupport.hpp"
+
 using namespace vn::graphics;
 using vn::intrusive_ptr;
 using vn::raw_ptr;
@@ -276,60 +278,6 @@ TEST(PlanTest, AChangedTargetUpdatesTheSameNodeInPlace)
 }
 
 /*
- * @brief W4: the plan expresses the shapes PassKind names - a custom pass under a CHANGED KIND is refused.
- *
- * A subclass is the escape hatch over describe() (ScreenPass is the one shipped example). A same-kind restatement
- * updates it in place, so a plan works WITH it; a kind change cannot become the other object, so the name would be
- * rebuilt through makePassNode() as the built-in base - the custom behaviour would silently disappear. Refused with
- * its own stable code instead, and the shape is left exactly as it was.
- */
-TEST(PlanTest, AKindChangeOnACustomPassIsRefusedWithItsCode)
-{
-    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
-    engine->setDevice(backend);
-    ASSERT_TRUE(engine->initialize());
-
-    auto camera = vn::make_intrusive<Camera>();
-    auto custom = vn::make_intrusive<CustomPass>();
-    custom->setName(u8"custom");
-    ASSERT_NE(engine->addPass(custom, 0), nullptr);
-
-    // Same kind, restated: the subclass is updated IN PLACE - the node survives, which is the plan keeping it alive.
-    Plan restated;
-    restated.passes.push_back(namedPass(u8"custom", colourTarget(), 0, camera));
-    EXPECT_TRUE(engine->applyPlan(restated).empty()) << "a same-kind restatement is expressible";
-    EXPECT_EQ(engine->passOrder(custom.get()), std::optional<int>(0)) << "the custom node is still the registered pass";
-
-    // A kind change would rebuild the name as the built-in base: refused, with the shape untouched.
-    Plan rebuilt;
-    PassDesc screen;
-    screen.name  = u8"custom";
-    screen.kind  = PassKind::Screen;
-    screen.stage = PassStage::Shading;
-    screen.order = 0;
-    rebuilt.passes.push_back(screen);
-    const std::vector<PlanProblem> problems = engine->applyPlan(rebuilt);
-    ASSERT_TRUE(carries(problems, PlanProblemCode::SubclassPassWouldBeRebuilt));
-    EXPECT_EQ(engine->passOrder(custom.get()), std::optional<int>(0)) << "a refused plan leaves the shape untouched";
-    EXPECT_EQ(engine->passCount(), 1u);
-
-    // A BUILT-IN pass may still change kind: both objects are what makePassNode builds, so nothing is lost.
-    Plan without_custom;
-    without_custom.passes.push_back(namedPass(u8"ordinary", colourTarget(), 0, camera));
-    ASSERT_TRUE(engine->applyPlan(without_custom).empty()) << "removing a subclass the plan does not name is allowed";
-
-    Plan to_screen;
-    PassDesc ordinary_screen;
-    ordinary_screen.name  = u8"ordinary";
-    ordinary_screen.kind  = PassKind::Screen;
-    ordinary_screen.stage = PassStage::Shading;
-    ordinary_screen.order = 0;
-    to_screen.passes.push_back(ordinary_screen);
-    EXPECT_TRUE(engine->applyPlan(to_screen).empty()) << "Scene -> Screen on a built-in pass is expressible";
-}
-
-/*
  * @brief T30 (1/4): a pass with no name cannot be diffed, so the plan is refused with its own code.
  */
 TEST(PlanTest, AnEmptyPassNameIsRefusedWithItsCode)
@@ -447,12 +395,10 @@ TEST(PlanTest, ARefusedPlanLeavesTheShapeUntouched)
 }
 
 /*
- * @brief A pass with NO NAME is not round-trippable, and the round trip says so instead of renaming or dropping it.
+ * @brief An unnamed pass has no plan spelling: the shape is refused, not guessed at.
  *
- * A plan identifies a pass by its name, so `applyPlan(engine.plan())` is the identity only when every registered pass
- * has one. A hand-built pass registered through the `addPass` family may not (that family takes an object, not a
- * declaration), and the honest answer is the refusal code - the shape is untouched and the host is told which pass it
- * has to name. Silently inventing a name would make two shapes that differ by a string compare equal.
+ * The plan identifies each pass by its NAME (that is what a diff compares), so an empty name is a shape that cannot
+ * be expressed - `EmptyPassName`, with the table untouched. Naming it is the one thing a declaration must state.
  */
 TEST(PlanTest, AnUnnamedPassIsNotRoundTrippable)
 {
@@ -461,18 +407,19 @@ TEST(PlanTest, AnUnnamedPassIsNotRoundTrippable)
     engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
-    const intrusive_ptr<RenderPass> unnamed(new RenderPass());
-    ASSERT_NE(engine->addPass(unnamed, 0), nullptr);
-    ASSERT_EQ(engine->passCount(), 1u);
-
-    const Plan read_back = engine->plan();
-    ASSERT_EQ(read_back.passes.size(), 1u);
-    EXPECT_TRUE(read_back.passes[0].name.empty()) << "the shape states what the pass IS: nothing to name it by";
-
-    const std::vector<PlanProblem> problems = engine->applyPlan(read_back);
+    PassDesc unnamed;
+    unnamed.camera                         = vn::make_intrusive<Camera>();
+    const std::vector<PlanProblem> problems = engine->applyPlan(Plan{ { unnamed } });
     ASSERT_FALSE(problems.empty()) << "a shape that cannot be diffed is refused, not guessed at";
     EXPECT_EQ(problems.front().code, PlanProblemCode::EmptyPassName);
-    EXPECT_EQ(engine->passCount(), 1u) << "and the refusal changes nothing";
+    EXPECT_EQ(engine->passCount(), 0u) << "and the refusal changes nothing";
+
+    // A named restatement of the same declaration is the expressible shape.
+    unnamed.name = u8"named";
+    EXPECT_TRUE(engine->applyPlan(Plan{ { unnamed } }).empty());
+    EXPECT_EQ(engine->passCount(), 1u);
+    ASSERT_EQ(engine->plan().passes.size(), 1u);
+    EXPECT_EQ(engine->plan().passes.front().name, u8"named");
 }
 
 /*
@@ -485,7 +432,6 @@ TEST(PlanTest, TheCodeSpellingsAreStable){
     EXPECT_EQ(planCodeText(PlanProblemCode::DependencyCycle), u8"dependency-cycle");
     EXPECT_EQ(planCodeText(PlanProblemCode::TooManyPasses), u8"too-many-passes");
     EXPECT_EQ(planCodeText(PlanProblemCode::SessionBusy), u8"session-busy");
-    EXPECT_EQ(planCodeText(PlanProblemCode::SubclassPassWouldBeRebuilt), u8"subclass-pass-would-be-rebuilt");
 }
 
 /*

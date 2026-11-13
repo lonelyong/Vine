@@ -19,6 +19,8 @@
 #include <memory>
 #include <vector>
 
+#include "PlanTestSupport.hpp"
+
 using namespace vn::graphics;
 using vn::intrusive_ptr;
 using vn::raw_ptr;
@@ -380,7 +382,7 @@ TEST(HeadlessBackendTest, AFrameIsCompleteWithoutATarget)
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setCamera(camera);
     pass->setRenderTarget(target);
-    engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*engine, pass, scene, 0);
 
     (void)scene->publish(); // the host's verb (see Scene::publish)
     engine->frame();
@@ -424,7 +426,7 @@ TEST(HeadlessBackendTest, PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNot
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setCamera(camera);
     pass->setRenderTarget(target);
-    engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*engine, pass, scene, 0);
     (void)scene->publish(); // the host's verb (see Scene::publish): a warm-up compiles what a frame would draw
 
     // THE WARM-UP: the value the next frame would build, compiled and collected - and nothing else.
@@ -674,7 +676,7 @@ TEST(HeadlessBackendTest, AReAnnouncedWindowMovesTheTargetAndTheDeviceStays)
     area->resize(320, 240);
 
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
-    engine->addPass(pass, 42);
+    vn::test::registerPassForTest(*engine, pass, 42);
 
     int first  = 0;
     int second = 0;

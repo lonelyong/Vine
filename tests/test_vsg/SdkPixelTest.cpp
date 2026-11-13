@@ -27,6 +27,7 @@
 #include <vine/graphics/StateNode.hpp>
 
 #include "TestGeometryBuilders.hpp"
+#include "PlanTestSupport.hpp"
 
 using vn::graphics::ChainDesc;
 using vn::graphics::PassChain;
@@ -270,7 +271,7 @@ TEST(SdkPixelTest, TheFixtureAlsoDrawsContentWithNoViewAtAll)
     pass->setShouldClearDepth(true);
     // 无光照档的程序：没有光的环境里跑默认的前向程序，得到的是"被算黑了的画面"，而这一条要判的是覆盖，不是光照。
     pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-    fixture.engine->addPass(pass, fixture.scene, 0);
+    vn::test::registerPassForTest(*fixture.engine, pass, fixture.scene, 0);
 
     const PixelProbe picture = fixture.read();
     ASSERT_TRUE(picture.valid());
@@ -327,7 +328,8 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
     constexpr int kSlotSide = 12;
     for (int attachment = 0; attachment < 4; ++attachment) {
         vn::intrusive_ptr<ScreenPass> preview(new ScreenPass());
-        preview->setName(vn::String(u8"gbuffer_preview"));
+        // One row per preview (a plan's identity is the name): the four differ by attachment, and the helper names each
+        // one uniquely - a shared name would leave ONE pass reading attachment 3.
         preview->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(fixture.camera));
         preview->setProgram(
             vn::graphics::screenCopyProgram(attachment, attachment == 2 ? vn::graphics::ScreenCopyChannels::Alpha : vn::graphics::ScreenCopyChannels::All));
@@ -339,7 +341,7 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
         preview->setClearEnabled(false);
         preview->setShouldClearDepth(false);
         preview->setViewport(kSlot + attachment * kSlotStep, kSlot, kSlotSide, kSlotSide);
-        fixture.engine->addPass(preview, 120 + attachment);
+        vn::test::registerPassForTest(*fixture.engine, preview, 120 + attachment);
     }
 
     const PixelProbe read_back = fixture.read();
@@ -448,7 +450,7 @@ TEST(SdkPixelTest, ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop)
     pass->setDepthMode(vn::graphics::DepthMode::Disabled);
     // 无光照档：没有灯的环境里跑默认前向程序会得到"被算黑"的画面，而这条判的是覆盖顺序，不是光照。
     pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-    fixture.engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*fixture.engine, pass, scene, 0);
 
     (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe first = fixture.read();
@@ -493,7 +495,7 @@ TEST(SdkPixelTest, TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends)
     pass->setShouldClearDepth(true);
     // 无光照档：这条量的是"模式"，不是光照算术。
     pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-    fixture.engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*fixture.engine, pass, scene, 0);
 
     (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const auto centre = [&]() {

@@ -287,6 +287,23 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      */
     [[nodiscard]] static intrusive_ptr<PassChain> build(raw_ptr<RenderEngine> engine, const ChainDesc& desc);
 
+    /**
+     * @brief Builds the chain @p desc describes into @p owner's scope (see RenderEngine::applyPlan(plan, owner)).
+     *
+     * @details
+     * - A REBUILD IS THE SAME SCOPE RESTATED: a host that replaces a view's chain passes the VIEW as @p owner, so the
+     *   replacement updates the rows in place (the node, and everything the backend keyed by it, survives) instead of
+     *   colliding with the rows the outgoing chain still owns. Without an owner the chain is its own scope - right for
+     *   a one-off chain, wrong for a rebuild.
+     * - The scope's rows leave with the owner (see SceneView), not with the chain that stated them.
+     *
+     * @param engine Engine the passes are registered on.
+     * @param desc   What to build (see ChainDesc).
+     * @param owner  The scope the rows belong to (null: this chain, see above).
+     * @return The built chain, or null when the request cannot be assembled on @p engine.
+     */
+    [[nodiscard]] static intrusive_ptr<PassChain> build(raw_ptr<RenderEngine> engine, const ChainDesc& desc, const void* owner);
+
     /** @brief The chain a build with @p desc assembles, given what the requested mode needs.
      *
      * @details
@@ -572,8 +589,23 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     intrusive_ptr<RenderPass> addPass(const PassDesc& desc, const String& role = String());
 
 
-    /** @brief Sets the window-presenting pass. */
-    void setWindowPass(intrusive_ptr<RenderPass> pass);
+    /** @brief States which pass presents the picture, by NAME (applied with the chain's plan). */
+    void setWindowPass(const String& name);
+
+    /**
+     * @brief States every pass this chain has added, as one plan scoped to this chain (see RenderEngine::applyPlan).
+     *
+     * @details
+     * - THE CHAIN'S COMMIT VERB: `addPass` only collects declarations (a recipe names its passes and their boards, and
+     *   some of those boards read names another pass of the same chain publishes - so the plan is validated as a
+     *   whole). This applies it once, refreshing every row from the node it became (resize / visibility / shading mode
+     *   are declaration setters, and a re-apply must not undo them).
+     * - Idempotent: applying twice is the same shape.
+     *
+     * @return true when the plan was applied; false when the engine is gone or the plan was refused (the reason is
+     *         reported through this chain's diagnostic route).
+     */
+    bool apply();
 
     /** @brief Sets the off-screen G-buffer (Deferred path). */
     void setOffscreenTarget(intrusive_ptr<RenderTarget> target);
@@ -612,9 +644,29 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     intrusive_ptr<RenderTarget> composite_target_;
     /// The extra scene this chain draws (see ChainDesc::transparent), or null: owned here so it is published here.
     intrusive_ptr<Scene> transparent_content_;
-    // The overlays, as VALUES (see addOverlay): a role (which is also the name the pass is registered under), the
-    // content object and its layout. No field per overlay and no pass handle here - the pass lives in the group and is
-    // found by role, and the content stays alive with whoever registered it.
+    // Every pass this chain applied, in registration order: the role a reader asks for (an overlay's, or empty) and
+    // the plan name it is registered under. The node itself is the engine's (a plan identifies a pass by name), so
+    // this list is the chain's own bookkeeping, not a second registry.
+    struct Entry {
+        String role;
+        String name;
+    };
+    std::vector<Entry>  entries_;
+    /// The scope the rows belong to (see build(engine, desc, owner)): `this` unless the host named one.
+    const void*         scope_{ nullptr };
+    /// Whether this chain owns its scope (the default): only then does its destructor take the rows back.
+    bool                scope_owned_{ true };
+    /// The declarations this chain states (one per entry, same order): what `apply()` hands over.
+    Plan                pending_;
+    /// How many of them this chain has already committed: those are refreshed from their nodes on a re-apply (a
+    /// resize / visibility / shading-mode edit), while a first-time declaration IS the new shape.
+    std::size_t         applied_{ 0 };
+    /// The pass that presents the picture, by name (resolved by apply(): a plan identifies a pass by name).
+    String              window_name_;
+
+    // The overlays, as VALUES (see addOverlay): a role, the content object and its layout. No field per overlay and
+    // no pass handle here - the pass is found by role through entries_, and the content stays alive with whoever
+    // registered it.
     std::vector<Overlay> overlays_;
     // The chain this pipeline was built as (the EFFECTIVE one) and the mode its picture means: what
     // setShadingMode decides "can this be expressed" on, and what a rebuild would start from. Set by the

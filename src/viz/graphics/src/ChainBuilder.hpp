@@ -31,7 +31,7 @@ namespace detail
 class ChainBuilder {
   public:
     /** @brief Constructs a builder targeting @p engine (borrowed; may be null, then nothing builds). */
-    explicit ChainBuilder(raw_ptr<RenderEngine> engine);
+    explicit ChainBuilder(raw_ptr<RenderEngine> engine, const void* owner = nullptr);
 
     /** @brief Assembles @p desc into a registered chain (see PassChain::build). */
     intrusive_ptr<PassChain> build(const ChainDesc& desc);
@@ -62,6 +62,8 @@ class ChainBuilder {
 
   private:
     raw_ptr<RenderEngine> engine_;
+    /// The scope the chain's rows belong to (see PassChain::build); null means "the chain is its own scope".
+    const void* owner_{ nullptr };
     /// This build's request, copied once at the start of build() (the public request is the ChainDesc value).
     raw_ptr<Camera>      camera_;
     intrusive_ptr<Scene> content_;

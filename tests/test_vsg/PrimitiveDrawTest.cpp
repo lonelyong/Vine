@@ -1,4 +1,5 @@
 #include "SdkPixelFixture.hpp"
+#include "PlanTestSupport.hpp"
 
 #include <gtest/gtest.h>
 
@@ -254,7 +255,7 @@ TEST(PrimitiveDrawTest, OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUplo
     pass->setDepthMode(DepthMode::Disabled);
     // 无光照档：没有灯的环境里跑默认前向程序会得到一张被算黑的画面，而这一条判的是"哪一段画的"。
     pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-    fixture.engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*fixture.engine, pass, scene, 0);
 
     (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe picture = fixture.read();
@@ -351,7 +352,7 @@ TEST(PrimitiveDrawTest, APointSizeTheContentAuthoredIsWhatTheRasteriserCovers)
     pass->setShouldClearDepth(true);
     pass->setDepthMode(DepthMode::Disabled);
     pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-    fixture.engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*fixture.engine, pass, scene, 0);
 
     (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe one = fixture.read();
@@ -418,12 +419,12 @@ TEST(PrimitiveDrawTest, AStripAndAFanCoverTheSameQuadAListDoes)
         pass->setShouldClearDepth(true);
         pass->setDepthMode(DepthMode::Disabled);
         pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-        fixture.engine->addPass(pass, scene, 0);
+        vn::test::registerPassForTest(*fixture.engine, pass, scene, 0);
         (void)scene->publish(); // the scene this pass draws, published by its owner (see Scene::publish)
 
     (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
         const PixelProbe picture = fixture.read();
-        fixture.engine->removePass(pass.get());
+        vn::test::removePassForTest(*fixture.engine, pass.get());
         EXPECT_TRUE(picture.valid()) << "画出来的这一帧必须读得回来";
         return countParts(picture).red;
     };
@@ -474,7 +475,7 @@ TEST(PrimitiveDrawTest, ALineWidthTheContentAuthoredIsWhatTheRasteriserCovers)
     pass->setShouldClearDepth(true);
     pass->setDepthMode(DepthMode::Disabled);
     pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-    fixture.engine->addPass(pass, scene, 0);
+    vn::test::registerPassForTest(*fixture.engine, pass, scene, 0);
 
     (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe thin = fixture.read();
