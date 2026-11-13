@@ -21,17 +21,17 @@ class RenderTarget;
 class Scene;
 
 /**
- * @brief One pass of a frame plan: which pass runs, and the facts the engine knows about it.
+ * @brief One row of a frame table: which pass runs, and the facts the engine knows about it.
  *
  * @details
  * - A DESCRIPTION, not a handle: everything is a copy of a value the pass or the engine's slot already holds,
- *   so a plan can be handed to a log line, a test or a HUD without keeping anything alive (the two pointers
+ *   so a table can be handed to a log line, a test or a HUD without keeping anything alive (the two pointers
  *   are borrowed).
  * - What it deliberately does NOT carry: whether this pass presents a SURFACE - that is the surface's table
  *   (RenderSurface); the engine draws whatever is registered, and "who this is for" is not its to know.
  */
-struct VN_GRAPHICS_API PassPlan {
-    /// The registered pass this describes (identity: two plans of the same pass compare equal here).
+struct VN_GRAPHICS_API PassRow {
+    /// The registered pass this describes (identity: two tables of the same pass compare equal here).
     raw_ptr<const RenderPass> pass = nullptr;
     /// The order the engine runs it at (see RenderEngine::addPass): what decides where it sits in the frame.
     int order                      = 0;
@@ -40,7 +40,7 @@ struct VN_GRAPHICS_API PassPlan {
     /// The label its DECLARATION gave it, or empty (see PassDesc::tag).
     ///
     /// Where a name says which pass this is, a tag says what it is FOR ("GBuffer", "Lighting", "Hud") - the
-    /// answer a host reading a plan usually wants, and the one a viewer's own naming cannot be trusted to give
+    /// answer a host reading a frame table usually wants, and the one a viewer's own naming cannot be trusted to give
     /// (a viewer names passes after its slots, not after what they mean).
     String tag;
     /// The content it draws, or null (a content-agnostic pass: a screen pass, a HUD).
@@ -67,7 +67,7 @@ struct VN_GRAPHICS_API PassPlan {
     /// The depth band its draws are mapped into, or nullopt for the whole depth buffer (see DepthRange).
     ///
     /// A row with a band is a LAYER: its content sits at a chosen depth rather than at its real distance, so the
-    /// target's depth is no longer a distance field. That is the fact a host reading a plan needs in order to
+    /// target's depth is no longer a distance field. That is the fact a host reading the table needs in order to
     /// know why one pass draws over another.
     std::optional<DepthRange> depth_range;
     /// The input names it declared (see RenderPass::addInputName), in declaration order.
@@ -76,7 +76,7 @@ struct VN_GRAPHICS_API PassPlan {
     String output;
     /// How long LAST frame's record of this pass took, in microseconds.
     ///
-    /// The one number here that describes the past rather than the future: a plan cannot know what a pass will
+    /// The one number here that describes the past rather than the future: a table cannot know what a pass will
     /// cost, and the useful answer to "which pass should I look at" is what the pass cost the last time it ran.
     /// Zero before this pass has ever run, and for a pass that did not run last frame (a disabled one).
     /// WHAT THAT COST IS: the frame is compiled before it runs (see RenderEngine::buildFrameValue), so a pass'
@@ -87,7 +87,7 @@ struct VN_GRAPHICS_API PassPlan {
 };
 
 /**
- * @brief A frame's plan as the ENGINE compiled it: the passes it will announce, in announcement order.
+ * @brief A frame's table as the ENGINE compiled it: the passes it will announce, in announcement order.
  *
  * @details
  * - The answer to "what does a frame of this pipeline consist of", which used to have to be assembled from
@@ -101,21 +101,21 @@ struct VN_GRAPHICS_API PassPlan {
  *   (see RenderEngine::frameDescription), so this is a view of the engine's own scheduling input, not a
  *   second schedule.
  *
- * @see RenderEngine::framePlan
+ * @see RenderEngine::frameTable
  */
-struct VN_GRAPHICS_API FramePlan {
+struct VN_GRAPHICS_API FrameTable {
     /// The passes, in the order the engine announces them (two passes at one order keep registration order).
-    std::vector<PassPlan> passes;
+    std::vector<PassRow> passes;
 
-    /** @brief Renders the plan as the table a human reads.
+    /** @brief Renders the table as the text a human reads.
      *
      * One line per pass, key=value pairs, so the result is greppable as well as readable: this is what a dev
-     * switch prints and what a bug report carries. An empty plan says so in one line.
+     * switch prints and what a bug report carries. An empty table says so in one line.
      *
      * @note
      * - The TEXT is for humans and is not a parsing contract; the fields above are. That is also why the colour it
      *   prints is spelled in the space it holds (`clear=linear(...)`): the sentence has to be unambiguous to a reader,
-     *   a machine reads @ref PassPlan::clear_color instead.
+     *   a machine reads @ref PassRow::clear_color instead.
      *
      * @return The table, UTF-8, lines separated by '\n' (no trailing newline).
      */

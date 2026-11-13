@@ -1,4 +1,4 @@
-#include <vine/graphics/FramePlan.hpp>
+#include <vine/graphics/FrameTable.hpp>
 
 #include <cstdint>
 #include <cstdio>
@@ -9,7 +9,7 @@ VN_GRAPHICS_NS_BEGIN
 namespace
 {
 
-/** @brief A pointer as the plan prints it: identity, in the shape the log's own lines already use ("0x8f0ab2"). */
+/** @brief A pointer as the table prints it: identity, in the shape the log's own lines already use ("0x8f0ab2"). */
 std::string pointerText(const void* pointer)
 {
     if (pointer == nullptr) {
@@ -21,7 +21,7 @@ std::string pointerText(const void* pointer)
 }
 
 /** @brief A pass' clear as the colour it clears to, or a dash when it does not clear at all. */
-std::string clearText(const PassPlan& pass)
+std::string clearText(const PassRow& pass)
 {
     if (!pass.clears) {
         return "-";
@@ -56,7 +56,7 @@ std::string listText(const std::vector<String>& names)
     return text;
 }
 
-/** @brief A layer mask as the plan prints it ("0x3"). */
+/** @brief A layer mask as the table prints it ("0x3"). */
 std::string layerMaskText(std::uint32_t mask)
 {
     char buffer[2 + sizeof(std::uint32_t) * 2 + 1]{};
@@ -65,7 +65,7 @@ std::string layerMaskText(std::uint32_t mask)
 }
 
 /** @brief A pass' viewport rectangle, or `full` when it draws the whole target. */
-std::string viewportText(const PassPlan& pass)
+std::string viewportText(const PassRow& pass)
 {
     if (!pass.viewport.has_value()) {
         return "full";
@@ -76,10 +76,10 @@ std::string viewportText(const PassPlan& pass)
 
 } // namespace
 
-String FramePlan::describe() const
+String FrameTable::describe() const
 {
     std::size_t disabled = 0;
-    for (const PassPlan& pass : passes) {
+    for (const PassRow& pass : passes) {
         if (!pass.enabled) {
             ++disabled;
         }
@@ -87,13 +87,13 @@ String FramePlan::describe() const
 
     // The header states the count and, when it matters, how many of them will not run: "5 passes" of which four are
     // disabled is not the same frame as five running ones.
-    std::string text = "frame plan: " + std::to_string(passes.size()) + " pass(es)";
+    std::string text = "frame table: " + std::to_string(passes.size()) + " pass(es)";
     if (disabled != 0) {
         text += " (" + std::to_string(disabled) + " disabled)";
     }
 
     for (std::size_t index = 0; index < passes.size(); ++index) {
-        const PassPlan& pass = passes[index];
+        const PassRow& pass = passes[index];
         text += "\n  [" + std::to_string(index) + "] order=" + std::to_string(pass.order);
         text += " name='" + (pass.name.empty() ? std::string("(unnamed)") : pass.name.as_std_str()) + "'";
         text += pass.enabled ? "" : " DISABLED";

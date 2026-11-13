@@ -444,7 +444,7 @@ TEST(HeadlessBackendTest, PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNot
     EXPECT_EQ(engine->presentRecord().frame, 0u) << "and it answers nothing about a picture";
 
     // THE FRAME: the same shape the warm-up saw, this time executed.
-    EXPECT_EQ(engine->frame(), FrameOutcome::Ran);
+    EXPECT_TRUE(engine->frame().ran());
     EXPECT_EQ(backend->frames, 1);
     EXPECT_EQ(backend->draws, 1u);
     EXPECT_EQ(backend->prepared_passes, backend->executed_passes) << "the warm-up saw the frame the engine then ran";

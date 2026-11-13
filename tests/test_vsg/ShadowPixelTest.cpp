@@ -20,7 +20,7 @@
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/ChainPresets.hpp>
-#include <vine/graphics/FramePlan.hpp>
+#include <vine/graphics/FrameTable.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Light.hpp>
@@ -169,9 +169,9 @@ TEST(ShadowPixelTest, ACastingSunDarkensTheGroundWhereItsShadowFalls)
     picture->setShouldClearDepth(true);
 
     // 计划里必须真的有一条 shadow pass：没有它，"地面很亮"和"地面亮且被影子切过"是同一张图。
-    const vn::graphics::FramePlan plan            = fixture.engine->framePlan();
+    const vn::graphics::FrameTable plan            = fixture.engine->frameTable();
     bool                          has_shadow_pass = false;
-    for (const vn::graphics::PassPlan& row : plan.passes) {
+    for (const vn::graphics::PassRow& row : plan.passes) {
         has_shadow_pass = has_shadow_pass || (row.name == vn::String(u8"shadow"));
     }
     ASSERT_TRUE(has_shadow_pass) << "一盏 setCastShadow(true) 的方向灯必须让 Deferred 预设建出 shadow pass";

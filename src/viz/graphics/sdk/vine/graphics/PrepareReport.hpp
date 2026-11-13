@@ -3,6 +3,8 @@
 
 #include <cstdint>
 
+#include "EngineNotReady.hpp"
+
 VN_GRAPHICS_NS_BEGIN
 
 /**
@@ -35,14 +37,14 @@ struct VN_GRAPHICS_API PrepareReport {
     /** @brief What became of one prepare request. */
     enum class Outcome : std::uint8_t
     {
-        Prepared,       // A backend walked the frame and built what it needed, without submitting it.
-        NoDevice,       // The engine has no backend.
-        NotInitialized, // The engine is not attached to a device that is up.
-        Refused,        // The backend would not prepare it (a frame is open, or its target is not one it serves).
-        Unsupported,    // The backend keeps nothing compiled, so there is nothing to prepare.
+        Prepared,    // A backend walked the frame and built what it needed, without submitting it.
+        NotReady,    // Nothing was prepared: the engine cannot drive a frame (see reason).
+        Refused,     // The backend would not prepare it (a frame is open, or its target is not one it serves).
+        Unsupported, // The backend keeps nothing compiled, so there is nothing to prepare.
     };
 
-    Outcome       outcome{ Outcome::NoDevice }; // What became of the request (see Outcome).
+    Outcome       outcome{ Outcome::NotReady }; // What became of the request (see Outcome).
+    EngineNotReady reason{ EngineNotReady::NoDevice }; // Why, when @ref outcome is #Outcome::NotReady.
     std::uint32_t passes{ 0 };                  // Passes of the frame that issue drawing calls (see the class note).
     std::uint32_t draws{ 0 };                   // Drawing calls those passes issue (what was asked, not what was built).
     std::uint64_t halves{ 0 };                  // Compiled halves THIS call built (0 = already there).

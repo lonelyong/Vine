@@ -950,7 +950,8 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
     // exists only while a device does (see initialize). The answer says so rather than reporting a zero it did not
     // earn.
     if (d->assembly == nullptr || d->store == nullptr || d->images == nullptr) {
-        return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::NotInitialized };
+        return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::NotReady,
+                                            vn::graphics::EngineNotReady::NotInitialized };
     }
     // A FRAME IS OPEN ON THIS BACKEND (executeFrame between its books and its present): its plan and its recorded
     // packets belong to it, and collecting a second frame over them would corrupt both. Refused, never queued.

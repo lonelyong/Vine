@@ -123,16 +123,17 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 
 ### 2.4 渲染对象
 
-- `RenderEngine` —— 帧泵 + 账本：`initialize()` / `shutdown()`、`setDevice()`、`addPass(pass, content, order)` / `removePass()`、
-  `frame()`（返回 `FrameOutcome`：Ran / NotInitialized / NoDevice）、`createSurface()`（尺寸走 `RenderSurface::resize()`）、
-  `publish/resolve`（命名输出）、`framePlan()` / `frameDescription()` / `frameReport()` / `diagnostics()` / `releaseContent()`。
+- `RenderEngine` —— 帧泵 + 账本：`initialize()` / `shutdown()`、`setDevice()`、`applyPlan(plan)` / `plan()`、
+  `frame()`（返回 `FrameOutcome`：`Ran` / `Submitted`；引擎没起来时 `NotReady` + `EngineNotReady`）、
+  `createSurface()`（尺寸走 `RenderSurface::resize()`）、`publish/resolve`（命名输出）、
+  `frameTable()` / `frameDescription()` / `frameReport()` / `diagnostics()` / `releaseContent()`。
   - **发布与绑定**：`Scene::publish()` 回答 `Posted` / `Unchanged` / `InsideBatch`，并把**这一份**快照
     （`SceneSnapshotRef`，可用 `valid()` / `revision()` 查）交回来；`bindSnapshot(scene, ref)` 说“这个引擎画这一份”。
-    绑定之后引擎**不再**为该场景隐式发布，所以画面就是你指定的那一份。不调用两者也照样有画面 —— 帧首会替
-    未绑定的场景发布，这是迁移期的便利。
-  - **会话形状是值**：`applyPlan(plan)` 按名字差分（新增 / 同名原地更新 / 消失的删除，一次调用完成，整份接受或整份拒绝），
-    `plan()` 把它读回成同一个类型，`Plan::describe()` 打出人能读的表。`addPass` / `removePass` 仍可用（迁移期），
-    但不要和计划混用在同一个引擎上：计划没命名的 pass 会被移除。
+    帧只画**已发布**的内容：宿主每帧先 `publishContent()`（或自己调用 `Scene::publish()`），未发布的场景不画并报一次
+    `ContentSkipped`；`bindSnapshot` 是覆盖，不是必须步骤。
+  - **会话形状是值**：`applyPlan(plan)` 按名字差分（新增 / 同名原地更新 / 消失的删除，一次调用完成），返回
+    `PlanResult` 三态（`Applied` / `Invalid` + 问题表 / `Refused` + `PlanRefusal`）；`plan()` 把它读回成同一个类型，
+    `Plan::describe()` 打出人能读的表。`addPass` / `removePass` 已删，计划是唯一的形状。
   - **预热**：`prepare()` 不提交任何帧，只把下一帧要编译 / 上传的身份建好，返回 `PrepareReport`（这次调用建了什么）；
     预热过的帧再录制时 `builds` / `uploads` 增量为 0。
   - **线程与帧的回读**：`setFrameThreading(Inline | EngineThread)`（生命周期决定，不是每帧开关）、
@@ -345,6 +346,10 @@ geometry->setRevision(geometry->revision() + 1);        // 公告：重建数据
 
 ### 3.3 例：纯手动 2 pass —— 离屏渲染 + 全屏合成到窗口
 
+> **注册拼写（W9d，2026-11-13）**：本节的 `RenderPass` 结点配置展示的是“一条 pass 有哪些事实”；注册它
+> **不再**用 `addPass`。把同样的字段填进 `PassDesc`，然后一次 `engine->applyPlan(vn::graphics::Plan{ { desc } })`
+> 即可（`PassDesc` 的字段与下面的 setter 一一对应，见 §3.13）。
+
 不写任何 shader：`ScreenPass` 配 `BuiltinShaders::screenCopyProgram()` 就是"把一张彩色图拷到目标
 子视口"——**要显式命名**它（没有隐式拷贝），并且这条 pass 需要有相机。
 
@@ -540,7 +545,7 @@ engine.addPass(hud);
 | G-buffer 布局与 program | 自己 `attachColor` × 4 + 写 MRT program | `defaultGbufferTarget()` / `defaultGbufferGeometryProgram()` |
 | 离屏 + PiP | §3.3 + `setViewport()` | `addOffscreenToScreen(...)` |
 | 尺寸跟随窗口 | 逐个 `setSize()` | `PassChain::resize(w, h)` |
-| 任意自定义 pass | `engine.addPass(pass, order)` | `builder.addPass(pass, order)` |
+| 任意自定义 pass | `engine->applyPlan(Plan{ { desc } })`（`PassDesc` 数据，§3.13） | `builder.addPass(desc, role)` |
 
 ### 3.6 例：HUD 叠加与"叠加场景"
 
@@ -921,23 +926,23 @@ surface->dismiss(surface->presentedView());
 - **被拒的声明**（记一条 `PassProtocolViolation`，不静默）：视图挂在**别的引擎**上（它的 pass 注册在另一帧上，
   永远画不到这块区）；区上**已经有**别的呈现（一块区只画一幅画）；视图已经服务着**另一块**区。
 
-### 3.12 看一眼这一帧：`RenderEngine::framePlan()`
+### 3.12 看一眼这一帧：`RenderEngine::frameTable()`
 
 "这个管线到底画了什么、按什么序、清在哪"以前只能靠数 `passCount()` 或者翻日志猜。现在引擎能把它交出来：
 
 ```cpp
-// 结构：按执行序的一组 PassPlan（order / name / content / camera / target / enabled / clear /
+// 结构：按宣布序的一组 PassRow（order / name / content / camera / target / enabled / clear /
 // viewport / inputs / output / record_micros）
-for (const vn::graphics::PassPlan& pass : engine->framePlan().passes) { ... }
+for (const vn::graphics::PassRow& pass : engine->frameTable().passes) { ... }
 
 // 文本：一行一 pass 的表，直接丢进日志
-VN_LOGI("{}", engine->framePlan().describe().as_std_str());
+VN_LOGI("{}", engine->frameTable().describe().as_std_str());
 ```
 
 ```
-frame plan: 11 pass(es)
-  [0] order=-100 name='shadow' target=0x2815952fe20 camera=0x281550ad220 content=0x281550b0270 clear=rgba(51,51,51,255,depth) viewport=full inputs=- output='-' last=436us
-  [1] order=-40  name='gbuffer' target=0x2815952ff60 camera=0x281550ada60 content=0x281550b0270 clear=rgba(51,51,51,255,depth) viewport=full inputs=- output='GBuffer' last=376us
+frame table: 11 pass(es)
+  [0] order=-100 name='shadow' target=0x2815952fe20 camera=0x281550ad220 content=0x281550b0270 clear=linear(0.200,0.200,0.200,1.000,depth) viewport=full inputs=- output='-' last=436us
+  [1] order=-40  name='gbuffer' target=0x2815952ff60 camera=0x281550ada60 content=0x281550b0270 clear=linear(0.200,0.200,0.200,1.000,depth) viewport=full inputs=- output='GBuffer' last=376us
   ...
   [4] order=40   name='present' target=window     camera=0x281550ada60 content=-               clear=- viewport=full inputs=Composite output='-' last=7us
 ```
@@ -965,7 +970,7 @@ desc.program       = vn::graphics::screenCopyProgram();
 desc.input_names   = { vn::String(u8"Composite") };   // 声明的输入（名字／ImageRef／target 三种写法与 RenderPass 相同）
 desc.output_name   = u8"Presented";
 desc.before_draw   = [&hud] { hud.update(); };  // 每帧跑一次的内容更新钩子（不需要钩子就留空）
-engine->addPass(desc);
+engine->applyPlan(vn::graphics::Plan{ { desc } });   // 注册 = 把声明交给计划（W9d 起唯一的路）
 ```
 
 - **位置**由 `stage` 决定；要精确插到某个数就用 `desc.order`（逃生口，见 `PassStage` 的刻度）。
@@ -991,11 +996,11 @@ desc.writes_shape.depth  = RenderTarget::DepthFormat::D24;
 - **MRT 每个附件自己的清屏色**：`clear_color` 只管 attachment 0；其余附件用 `clear_extra_colors`（按附件 1..N-1 的顺序），
   pass 侧对应 `setClearColor(attachment, colour)`。没写的附件仍清成**透明黑**（那是“没画”的值），所以 G-buffer 想让
   法线附件清成 `(0,0,1,0)` 就只写那一格，不必把所有附件涂成同一种颜色。
-- **返回的是结点**：`addPass` 的三个重载都交回**已注册的那个执行结点**（重复注册则返回 null），于是"我声明了什么"与
-  "我接下来要调什么"是同一个对象：present 那一类配方把它记下来交给 `PassChain::setWindowPass` 就行。builder 内部正是这样写的 ——
+- **返回的是结点**：`applyPlan` 是唯一的注册入口；要拿已注册的执行结点按名字回读（`engine->pass(desc.name)`），
+  于是"我声明了什么"与"我接下来要调什么"是同一个对象。builder 内部正是这样写的 ——
   它的普通 pass（shadow / gbuffer / lighting / transparent / present / preview）全是描述符，order 一律由 `stage` 决定。
-- 逃生口不变：`engine->addPass(pass, content, order)` 仍然收一个手搭的 pass（需要结点本身时用它），描述符只是把"声明"
-  变成数据。
+- 计划只表达 `PassKind`（`Scene` / `Screen`）：手搭的**子类** pass 不再是可注册的形状，自定义写成 `PassDesc` 的**数据**
+  （program / viewport / depth band / hook）。
 
 
 ### 3.14 分层：让一条 pass 只画它要的内容
@@ -1031,7 +1036,7 @@ options.layer_mask = 1u << 1;                       // appfw 里就是 ViewerOpt
   `removeChild` 会失效，`setVisible` / opacity / 变换 / 内容编辑不会。
 - **同一个选择还给拾取和包围盒用**：`RayIntersection::intersectScene` / `intersectSceneAll` 与 `Scene::boundingBox`
   都收 `layer_mask`（默认 `kAllLayers` = 逐位老行为）——“这条 pass 画什么”“拾取拾什么”“包围盒量什么”共用同一份声明与同一条判定。
-- 看一眼结果：`engine->framePlan()` 里 `PassPlan::layer_mask` 是这条 pass 的选择，`describe()` 只在非默认时打 `layers=0x..`。
+- 看一眼结果：`engine->frameTable()` 里 `PassRow::layer_mask` 是这条 pass 的选择，`describe()` 只在非默认时打 `layers=0x..`。
 
 
 ### 3.15 同一 pass 内的画序：`Node::setDrawOrder`（描边 / 贴花 / 高亮）
@@ -1110,10 +1115,9 @@ if (converted.root != nullptr) {
 
 ### 3.18 注册归链自己
 
-`RenderEngine::addPass(...)` 是**唯一的注册表**（顺序、owner 与资源都在它那儿；内容属于 pass 的声明 `PassDesc::content`），
-而"这些 pass 是我的、我走的时候要撤掉"不需要第二份列表：**链自己就是注册范围** ——
-引擎的槽位表把链记为它注册的 pass 的 owner（`RenderEngine::addPassOwnedBy`），
-链的析构调用 `removePassesOwnedBy(this)`，一次交还它注册过的全部 pass。
+`applyPlan` 是**唯一的注册入口**（顺序、owner 与资源都在引擎的槽位表里；内容属于 pass 的声明 `PassDesc::content`），
+而"这些 pass 是我的、我走的时候要撤掉"不需要第二份列表：**作用域就是注册范围** ——
+`applyPlan(plan, owner)` 把 owner 记在它声明的每一行上，`PassRegistry::clearOwnedBy(owner)` 一次交还它声明过的全部 pass。
 
 ```cpp
 {
@@ -1262,7 +1266,7 @@ root->addChild(mesh);                              // 一个对象、一次挂�
   `buffer + revision + 切片`）。索引按 buffer 共享：一个 arena 一次上传，改任一段整段重传；想让选中点集改一次
   只传它自己，就给它单独的索引 buffer。
 
-想确认"真的画了三条"，`RenderEngine::framePlan()` 的 pass 行会给出 draw 数；测试里读 `StreamUploads` 的
+想确认"真的画了三条"，`RenderEngine::frameTable()` 的 pass 行会给出 draw 数；测试里读 `StreamUploads` 的
 uploads/aliases 计数可以钉住"顶点只传一次"。
 
 ### 3.22 逐帧驱动变换：`PositionAttitudeTransform`（位置 / 姿态 / 缩放）

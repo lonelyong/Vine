@@ -84,11 +84,11 @@ struct TransientShape {
  * - Why a value and not a class: a pass used to be a configured `RenderPass` subclass, so adding a kind
  *   meant deriving a class and nothing could read the whole declaration at once (each setter had to
  *   announce it moved). A descriptor is the declaration read AS DATA - the engine can look at every pass
- *   of a frame together (which is what makes a COMPILED frame possible - RenderEngine::framePlan) and a
+ *   of a frame together (which is what makes a COMPILED frame possible - RenderEngine::frameTable) and a
  *   caller writes a pass without adding a type.
  */
 struct VN_GRAPHICS_API PassDesc {
-    /// Diagnostics and the frame-plan dump (see RenderEngine::framePlan).
+    /// Diagnostics and the frame-table dump (see RenderEngine::frameTable).
     String name;
     /// A label for the plan and for a human reading it ("GBuffer", "Lighting", "Hud"). No behaviour.
     String tag;

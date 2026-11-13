@@ -125,9 +125,8 @@
 - 为什么：宿主发布"我要的帧图"，Session 在帧边界按名字差分对齐 ⇒ 增删 pass 不需要任何 add/remove 调用，
   "帧在飞时改会话形状"**不可表达**（`R21`；`G12`）。
 - 边界：`PassId` 只在 Session 内部；差分按**名字**不按指针（`C7`）；临时目标的生命周期由计划声明。
-  计划只表达 `PassKind` 能表达的形状（`Scene` / `Screen`）：子类 pass 是 `describe()` 的逃生口，不在计划契约内
-  ——同名同 kind 的声明原地更新会保留它（节点与 `describe()` 都活着），kind 变更会被 `applyPlan` 以
-  `SubclassPassWouldBeRebuilt` 拒绝，而不是静默重建为基类。不建 `PassKind::Custom` 或工厂注册表（`G8`）。
+  计划只表达 `PassKind` 能表达的形状（`Scene` / `Screen`）：子类 pass 不再是可注册的形状，自定义在**数据**里
+  （程序覆盖、视口、深度带、钩子）；kind 变更按内置节点重建。不建 `PassKind::Custom` 或工厂注册表（`G8`）。
 
 ### 2.9 派生是纯函数
 
@@ -158,7 +157,7 @@
 | F3 | 内容身份与世代 | `Handle` + typed id + `ContentRef`，陈旧句柄答 gone | 已落地 |
 | F4 | 引擎表按 `(id, revision)` 驻留 | 事实表按 ref 建行；旧帧读旧版 | 已落地 |
 | F5 | 行级 epoch 回收 | 行按"最后一次被计划命中的帧"回收；条目在"宿主不要了 ∧ 没有行"时离开 | 已落地 |
-| F6 | 计划是值 | 帧边界按名字差分 + 计划校验稳定 code | 已落地（W9d，2026-11-13）：`Plan` + `validatePlan` + `applyPlan`（会话 / 作用域两种）+ `plan()` / `planFor(owner)`；`Target` 仍是显式 `RenderTarget` 句柄 |
+| F6 | 计划是值 | 帧边界按名字差分 + 计划校验稳定 code | 已落地（W9d + W9e，2026-11-13）：`Plan` + `validatePlan` + `applyPlan`（会话 / 作用域两种，`PlanResult` 三态）+ `plan()` / `planFor(owner)`；`Target` 仍是显式 `RenderTarget` 句柄 |
 | F7 | 预热入口 | `prepare()` 答需要什么；预热后录制 `builds` 增量 0 | 已落地：3a（`drawNeeds` 是唯一的键构造者）+ 3b（`RenderEngine::prepare()` → `prepareFrame(value)`，按同一份答案预建半片 / 集合 / 上传 / 管线身份） |
 | F8 | 一 Session 多 Surface | `Target` / 帧请求带 `SurfaceId`；一个引擎线程驱动多个窗口 | 未做 |
 | F9 | `publish` 返回结果 | 批内显式“未发布”，无 null | 已落地（5b-2a）：公开 `Scene::publish()` 三态（`Posted`/`Unchanged`/`InsideBatch`）；旧四态 `PublishOutcome` 已随 5b-2b 删除 |
@@ -208,14 +207,16 @@
   `applyPlan(plan)` 按名字差分：新名字新增、同名更新**原地**（节点与后端状态存活）、消失的名字移除；
   `plan()` 把当前形状读回成同一类型（`applyPlan(plan())` 是幂等的）。校验给出 `PlanProblemCode` 稳定 code
   （`EmptyPassName` / `DuplicatePassName` / `UnknownInput` / `DependencyCycle` / `TooManyPasses`），
-  并整份接受或整份拒绝；另有一条**形状相关**的拒绝（`validatePlan` 看不见）：kind 变更会重建子类 pass 时以
-  `SubclassPassWouldBeRebuilt` 拒绝。
+  并整份接受或整份拒绝。返回值是 `PlanResult` 三态：`Applied` / `Invalid` + 问题表 / `Refused` + `PlanRefusal`
+  （`Busy` = 引擎里有帧在录，`EngineGone` = `PassRegistry` 的引擎已亡）。kind 变更按内置节点重建；计划只表达
+  `PassKind`，子类 pass 不再是可表达的形状（W9d）。
 - **约束**（`C7`）：按名字不按指针（作用域形态下是 `(owner, name)`）。
-- **要求**（`R21` / `R38`）：增删 pass 不调用任何 add/remove；每条校验一个 code；`SessionBusy` 回答
-  “引擎里有帧在录”，不做事后补救。**名字说明**：SDK 里今天没有 `Session` 类型；这个 code 的拼写保留只因
-  测试钉住字符串，含义是“引擎忙”，不是某个 `Session` 对象的状态（`graphics-architecture.md` §2.8）。
+- **要求**（`R21` / `R38`）：增删 pass 不调用任何 add/remove；每条校验一个 code；帧在录时在**校验之前**答
+  `Refused{Busy}`（不读形状相关状态），不做事后补救。`SessionBusy` 不再是 plan problem code——它是运行时前置
+  条件，不是形状缺陷。
 - **验收**（`T7` / `T30`）：`PlanTest.APassIsAddedWithoutAnyAddCall`、`PlanTest.AChangedTargetUpdatesTheSameNodeInPlace`（P7）、
-  `PlanTest.*IsRefusedWithItsCode`（四类 code）、`PlanTest.TheCodeSpellingsAreStable`。
+  `PlanTest.*IsRefusedWithItsCode`（四类 code）、`PlanTest.TheCodeSpellingsAreStable`、
+  `PlanTest.ABusyEngineRefusesThePlanInsteadOfBlamingItsShape`。
 - **注意**（`P7`）：差分必须对**同名不同内容**也成立（改一个 pass 的 target 不是“删一个加一个”）。
   计划不命名的 pass 会被移除（整会话形态；作用域形态只做 upsert）——这是“计划即形状”的直接后果。
   子类 pass 不再是可表达的形状：自定义在**数据**里（程序覆盖、视口、深度带、钩子），没有 custom-kind 注册表。
@@ -285,14 +286,12 @@
 
 ## 4. 公开接口
 
-> 目标是目标签名；每一条以落地后的头文件为准。迁移期按 `C11` 只增不改。
+> 目标是目标签名；每一条以落地后的头文件为准。
 >
-> **迁移 API 状态（`W2`，2026-11-13；W9b 后更新）**：`applyPlan` / `plan` / `prepare` 在 `src/` 里没有宿主
-> 调用点（只有引擎内部的转发与自测），它们是**迁移入口，尚未成为宿主契约**；5b-2c 前不再新增公共入口。
-> `bindSnapshot` 自 W9b 起只是**覆盖**（帧默认取 `Scene::publishedSnapshot()`），生产路径是
-> `SceneView::publishContent` + `applyPlan`。`FramePlan` 的改名（→ `FrameTable`）与
-> `SessionBusy` 的去留（随 `W7` 移出 `PlanProblemCode`）都在 5b-2c 窗口内一次改完
-> （见 `graphics-architecture.md` §2.10）。
+> **迁移 API 已收口（W9e，2026-11-13）**：`applyPlan` / `plan` / `bindSnapshot` / `prepare` 是宿主契约；
+> `Plan` 是唯一的 pass 形状，`FrameTable` 是编译后的帧表，`frame()` 只答 Ran / Submitted，`applyPlan` 三态。
+> `bindSnapshot` 仍是**覆盖**（帧默认取 `Scene::publishedSnapshot()`），生产路径是
+> `SceneView::publishContent` + `applyPlan`。
 
 ### 4.1 内容侧
 
@@ -319,10 +318,12 @@
 
 | 接口 | 契约 | 备注 |
 |---|---|---|
-| `RenderEngine::prepare()` → `PrepareReport` | 只建不提交；答所需半片/集合/上传（**迁移 API，尚未成为宿主契约**，`W2`） | 目标（后端拿到的是与 `executeFrame()` 同一个 `FrameDescription`；快照进这个输入是 5b-1，已落地） |
+| `RenderEngine::prepare()` → `PrepareReport` | 只建不提交；答所需半片/集合/上传（`NotReady` + `EngineNotReady`） | 已落地（后端拿到的是与 `executeFrame()` 同一个 `FrameDescription`；快照进这个输入是 5b-1） |
+| `RenderEngine::applyPlan() → PlanResult` / `plan()` | 三态：`Applied` / `Invalid` + `problems` / `Refused` + `PlanRefusal` | 已落地（W9e） |
+| `RenderEngine::frame() → FrameOutcome` | `Ran` / `Submitted`；`NotReady` + `EngineNotReady` | 已落地（W9e） |
 | `Session::frame(FrameRequest) → FrameResult` | 提交一帧；`FrameRequest` 带 `View` 与 `SurfaceId` | 目标（今天 `executeFrame` + `presentWindow`） |
 | `FrameResult{ snapshot, view, poses, stats, diagnostics, present }` | 宿主读的值 | 目标（今天 `FrameStats` + `PresentOutcome`） |
-| `Plan` / `Pass` / `Target` / `SurfaceId` | 帧图声明（W9d 起是唯一的形状；`FramePlan` 将在 W9e 改名 `FrameTable`） | 目标 |
+| `Plan` / `Pass` / `Target` / `SurfaceId` | 帧图声明（W9d 起是唯一的形状；`FrameTable` 是编译后的帧表） | 已落地 |
 
 ## 5. 约束、要求与不变量
 
@@ -580,7 +581,8 @@
   在钉它们；F6 在 `Plan.hpp` / `Plan.cpp` / `EngineCompile.cpp`（`applyPlan`）里，由 `PlanTest` 钉住；F7 在
   `DrawNeeds.*`（身份）与 `RenderEngine::prepare()` / `RenderFrameExecutor::prepareFrame` / `VsgBackend::prepareFrame`
   （预建）里，由 `T32` / `T33` 钉住。
-  F6 的**半边**：`Target` 还不是值（仍是显式 `RenderTarget` 句柄）；`addPass` 家族已删（W9d）。
+  F6 的**半边**：`Target` 还不是值（仍是显式 `RenderTarget` 句柄）；`addPass` 家族已删（W9d）；`FrameTable` 是
+  编译后的帧表，`PlanResult` 三态与 `frame()` 两态已收口（W9e）。
 - **快照已是生产收集（5b-1 / 5b-2a，2026-11-12）**：F1（快照发布）、F2（纯派生）由 `SnapshotSource` 回答
   Published 模式的每个 draw；`Scene::collectRenderCommands` 仍是 Direct 模式的直接路径；`K1`（203 µs）、
   `K2`（1.03×）、`K3` 已由 `SnapshotTest` 证明。
@@ -623,6 +625,7 @@
 | 5b-2a | **公开入口 + 源归位**：公开 `Scene::publish()` 三态，`PublicationStore` 直接持有 `SnapshotSource`（W3 拆自 `FrameWorker`）· **已落地 2026-11-12** | 无（LEGACY 文件仍在树内，但已不在生产路径） | `T31` / `test_graphics` 577 / `test_vsg` 542 / ctest 30/30 / TSan 0 |
 | 5b-2b | **删除旧路径**：删镜像/delta/版本与镜像的 refresh/delta 入口 · **已落地 2026-11-12** | `ContentMirror`、`DeltaChannel`、`RenderWorld`、`RenderWorldSource`、`PublishOutcome`、`SceneRows::version/publish/editing`（约 2000 行，含 23 条 LEGACY 用例）；`DrawListMemo` **保留**为 `SnapshotSource` 的纯 per-view 缓存；`Scene::refreshBoxes/refreshMaterials` 保留（快照的输入） | `test_graphics` 554 / `test_vsg` 542 / ctest 30/30 / TSan 0 |
 | 5b-2c | **收口 pass 声明**：删 `addPass` 家族与 `PassRegistry` 的运行时拒绝，计划是唯一的形状 · **W9d 已落地 2026-11-13** | `addPass` / `removePass` / `clearPasses` 删除；`PassChain` / `DemoScene` / 链预设 / 测试改走 `applyPlan`；作用域形态让一个引擎可以有多个贡献者 | `K4` / `K5` / `T7` / `T30` |
+| 5b-2c 收口 | **结果形状与帧表**：`FramePlan` → `FrameTable`、`PassPlan` → `PassRow`、`frame()` 两态、`applyPlan` 三态 · **W9e 已落地 2026-11-13** | `FrameOutcome::NotInitialized` / `NoDevice` 变成一个 `NotReady` + `EngineNotReady`；`SessionBusy` 移出 `PlanProblemCode` | `K4` / `K5` / `T7` / `T30` |
 | 6 | 原型与实例（单独实验，B 方案先测） | 无（新增能力） | `T23` / `K11`；数字不好就停在“原型 DAG 共享” |
 
 `C11`（迁移期公开 API 只增不改）适用于第 1–4 步、5a、5b-1、5b-2a 与 5b-2b：新入口先与旧入口并存，5b-2c 收口时再删旧形状。
@@ -648,7 +651,10 @@
 一次 `apply()` 提交（整计划校验），宿主可以点名作用域（`PassChain::build(engine, desc, owner)`）以便**重建原地更新**；
 `DemoScene` / 链预设 / 测试走 `applyPlan`；`RenderEngine::pass(name)` / `passFor(name, owner)` 补上节点回读。
 `PassProblemCode::SubclassPassWouldBeRebuilt` 随子类 pass 一起退役（计划只表达 `PassKind`）。
-剩余：W9e（W7 结果形状 + `FramePlan`→`FrameTable`）。
+**W9e（结果形状 + 帧表）已落地 2026-11-13**：`FramePlan` → `FrameTable`、`PassPlan` → `PassRow`、
+`RenderEngine::framePlan()` → `frameTable()`；`FrameOutcome` 只答 `Ran` / `Submitted`，`NotReady` 带
+`EngineNotReady` 并由 `prepare()` 复用；`applyPlan` 返回 `PlanResult` 三态（`Applied` / `Invalid` + 问题表 /
+`Refused` + `PlanRefusal::{Busy, EngineGone}`），`SessionBusy` 从 `PlanProblemCode` 删除。
 
 ## 10. 参考
 

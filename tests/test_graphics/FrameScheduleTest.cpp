@@ -217,7 +217,7 @@ TEST(FrameScheduleTest, ThePlanKeepsTheDeclarationOrderAndTheFrameTheExecutionOr
     vn::test::registerPassForTest(*engine, writingPass(u8"producer", source, 50, camera));
     engine->frame();
 
-    const FramePlan plan = engine->framePlan();
+    const FrameTable plan = engine->frameTable();
     ASSERT_EQ(plan.passes.size(), 2u);
     EXPECT_EQ(plan.passes[0].name, u8"consumer") << "the plan answers 'what did the host declare', in order";
     EXPECT_EQ(plan.passes[0].order, -10);

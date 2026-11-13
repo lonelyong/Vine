@@ -1752,14 +1752,14 @@ void DemoScene::install()
     }
 }
 
-void DemoScene::logFramePlan() const
+void DemoScene::logFrameTable() const
 {
     if (std::getenv("VN_FRAME_PLAN") == nullptr || control_ == nullptr || control_->engine() == nullptr) {
         return;
     }
     // The table goes out as one log record (timestamp, thread, log file) - a dev switch that says nothing is
     // worse than no dev switch, so the switch's whole job is this line.
-    VN_LOGI("[demo] {}", control_->engine()->framePlan().describe().as_std_str());
+    VN_LOGI("[demo] {}", control_->engine()->frameTable().describe().as_std_str());
 }
 
 void DemoScene::installContent(const DemoCubeImages& images)

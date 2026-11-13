@@ -135,7 +135,6 @@ String planCodeText(PlanProblemCode code)
     case PlanProblemCode::UnknownInput: return String(u8"unknown-input");
     case PlanProblemCode::DependencyCycle: return String(u8"dependency-cycle");
     case PlanProblemCode::TooManyPasses: return String(u8"too-many-passes");
-    case PlanProblemCode::SessionBusy: return String(u8"session-busy");
     }
     return String(u8"unknown");
 }

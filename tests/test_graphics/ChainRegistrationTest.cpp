@@ -219,7 +219,7 @@ TEST(ChainRegistrationTest, TheHandlesOutliveTheirEngineAndThenAnswerNothing)
         EXPECT_TRUE(outputs.isValid());
         EXPECT_TRUE(diagnostics.isValid());
         const Plan plan{ { overlayDeclaration(u8"outside") } };
-        EXPECT_TRUE(registry.apply(plan, nullptr).empty()) << "the same table the engine's own methods read";
+        EXPECT_TRUE(registry.apply(plan, nullptr).applied()) << "the same table the engine's own methods read";
         EXPECT_EQ(registry.count(), engine->passCount());
     }
 
@@ -227,8 +227,10 @@ TEST(ChainRegistrationTest, TheHandlesOutliveTheirEngineAndThenAnswerNothing)
     EXPECT_FALSE(outputs.isValid());
     EXPECT_FALSE(diagnostics.isValid());
     EXPECT_EQ(registry.count(), 0u);
-    EXPECT_FALSE(registry.apply(Plan{ { overlayDeclaration(u8"late") } }, nullptr).empty())
-        << "there is nobody left to register it on: the apply answers a problem instead of reaching into freed memory";
+    const PlanResult late = registry.apply(Plan{ { overlayDeclaration(u8"late") } }, nullptr);
+    EXPECT_TRUE(late.refused()) << "there is nobody left to register it on: the apply answers a refusal instead of reaching into freed memory";
+    EXPECT_EQ(late.refusal, PlanRefusal::EngineGone);
+    EXPECT_TRUE(late.problems.empty()) << "the shape is fine; the engine is gone";
     EXPECT_EQ(outputs.resolve(String(u8"nothing")), nullptr);
     EXPECT_EQ(outputs.transientTarget(String(u8"nothing")), nullptr);
     EXPECT_EQ(outputs.transientCount(), 0u);

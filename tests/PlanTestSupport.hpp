@@ -72,7 +72,7 @@ inline vn::intrusive_ptr<vn::graphics::RenderPass> applyPassForTest(vn::graphics
                                      [&name](const vn::graphics::PassDesc& existing) { return existing.name == name; }),
                       plan.passes.end());
     plan.passes.push_back(std::move(desc));
-    if (!engine.applyPlan(plan, &engine).empty()) {
+    if (!engine.applyPlan(plan, &engine).applied()) {
         return nullptr;
     }
     return vn::intrusive_ptr<vn::graphics::RenderPass>(engine.passFor(name, &engine));

@@ -8,7 +8,7 @@
 
 - SDK：`src/viz/graphics/sdk/vine/graphics`；vsg 后端：`src/plugins/gfx_backend_vsg`（`core/` 纯策略 + `api/` vsg 适配 + `support/`）。
 - `RenderEngine`：生命周期 / `frame()` / 设备借用 / 尺寸 / 能力与报告；三个门面是 `PassRegistry`、`OutputRegistry`、`DiagnosticsRoute`。
-- `frame()` 返回 `FrameOutcome`（Ran / NotInitialized / NoDevice）；pass 的内容住在 `PassDesc::content`，`bindPassContent` 返回是否命中。
+- `frame()` 返回 `FrameOutcome`（`Ran` / `Submitted`；`NotReady` + `EngineNotReady`），`applyPlan` 返回 `PlanResult` 三态；pass 的内容住在 `PassDesc::content`，`bindPassContent` 返回是否命中。
 - 节点 / pass / 几何的 `Object` 派生类型判断用 `obj_cast<T>`（core 元类型链），不要用 `dynamic_cast`；`CameraManipulator` 与第三方 vsg 类型例外。
 - `PassChain`：一张画面的配方 + 注册归属。`PassChain::build(engine, ChainDesc)` 建链并注册 pass；析构把手里的 pass 交还引擎；`SceneView::setChain` 采纳它。
 - 一帧：`beginFrame` → 每个 pass（`beginPass` / `setPassOrder` / `setPassInputs` / `execute` / `endPass`）→ `endFrame` → present。
@@ -641,3 +641,20 @@
 - **坑**：`apply()` 的"从节点刷新声明"只能对**已提交过**的行做（`applied_`），否则重建的新声明会被旧节点覆盖。
 - **测试**：`test_graphics` 560 / `test_vsg` 546 全绿（删 1 个只测子类 kind 变更的用例；`AddSamePassTwice...` 改为
   "同名两次 = 一行，最后一次声明生效"）。
+
+## 2026-11-13 —— W9e：结果形状收口，`FramePlan` 改名 `FrameTable`
+
+- **`FramePlan` → `FrameTable`**（文件 / 类型 / 访问器）：`RenderEngine::framePlan()` → `frameTable()`，行类型
+  `PassPlan` → `PassRow`，dump 头改成 `frame table:`；demo 的 `logFramePlan` 同步为 `logFrameTable`。理由：它读的是
+  编译后的帧表，不是计划（`Plan` 才是声明）。
+- **`frame()` 两态**：`FrameOutcome` 从 enum 变成 struct —— `Status::{Ran, Submitted, NotReady}` + `reason`
+  (`EngineNotReady::{NoDevice, NotInitialized}`)，谓词 `ran()` / `submitted()` / `driven()`。`NotReady` 是前置条件，
+  不是帧结局；`prepare()` 复用同一个 `EngineNotReady`（`Outcome::NotReady` + `reason`）。
+- **`applyPlan()` 三态**：返回 `PlanResult` —— `Applied` / `Invalid` + `problems` / `Refused` + `PlanRefusal`
+  (`Busy` / `EngineGone`)；`PassRegistry::apply` 同型。`SessionBusy` 从 `PlanProblemCode` 删除（`planCodeText` 少一项），
+  忙 -> `Refused{Busy}`（校验之前答，诊断仍由 `sessionChangeAllowed` 每次 episode 一条）。
+- **迁移窗口关闭**：`applyPlan` / `plan` / `bindSnapshot` / `prepare` 的 “MIGRATION ENTRY” 注记删除，设计文档与
+  `docs/guides/graphics.md` 同步；guide 的旧 `addPass` 示例加了 W9d 的注册拼写说明（示例字段仍是 `RenderPass`
+  setter，注册按 `PassDesc` + `applyPlan` 翻译）。
+- **测试**：`test_graphics` 561（新增 `PlanTest.ABusyEngineRefusesThePlanInsteadOfBlamingItsShape`；`SessionBusy` 的
+  拼写断言删除；`frame()` 断言改谓词）/ `test_vsg` 546 全绿。

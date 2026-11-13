@@ -3,7 +3,6 @@
 
 #include <cstddef>
 #include <optional>
-#include <vector>
 
 #include <vine/Lease.hpp>
 #include <vine/Object.hpp>
@@ -20,7 +19,6 @@ class RenderPass;
 class Scene;
 struct PassDesc;
 struct Plan;
-struct PlanProblem;
 
 /**
  * @brief The engine's pass registry - the ONE table a frame runs from - as a narrow handle.
@@ -55,9 +53,10 @@ class VN_GRAPHICS_API PassRegistry {
      *
      * @param plan  The rows this contributor states.
      * @param owner The contributor the rows belong to.
-     * @return Every problem found, empty when the plan was applied.
+     * @return What the call did (see PlanResult); a handle whose engine is gone answers
+     *         `Refused` with `PlanRefusal::EngineGone`.
      */
-    [[nodiscard]] std::vector<PlanProblem> apply(const Plan& plan, const void* owner);
+    [[nodiscard]] PlanResult apply(const Plan& plan, const void* owner);
 
     /**
      * @brief Finds the registered pass whose name is @p name.

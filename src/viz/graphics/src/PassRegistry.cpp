@@ -16,12 +16,15 @@ bool PassRegistry::isValid() const noexcept
     return engine_.get() != nullptr;
 }
 
-std::vector<PlanProblem> PassRegistry::apply(const Plan& plan, const void* owner)
+PlanResult PassRegistry::apply(const Plan& plan, const void* owner)
 {
     if (raw_ptr<RenderEngine> engine = engine_.get()) {
         return engine->applyPlan(plan, owner);
     }
-    return { PlanProblem{ PlanProblemCode::SessionBusy, String(), String(u8"this handle's engine is gone") } };
+    PlanResult refused;
+    refused.outcome = PlanResult::Outcome::Refused;
+    refused.refusal = PlanRefusal::EngineGone;
+    return refused;
 }
 
 raw_ptr<RenderPass> PassRegistry::find(const String& name) const

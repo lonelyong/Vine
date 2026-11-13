@@ -282,9 +282,9 @@ bool PassChain::apply()
         refreshed.order    = pending_.passes[index].order;
         plan.passes[index] = std::move(refreshed);
     }
-    const std::vector<PlanProblem> problems = registry_.apply(plan, scope_);
-    if (!problems.empty()) {
-        for (const PlanProblem& problem : problems) {
+    const PlanResult result = registry_.apply(plan, scope_);
+    if (!result.applied()) {
+        for (const PlanProblem& problem : result.problems) {
             diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                                 vn::graphics::DiagnosticCategory::PassProtocolViolation,
                                 String(u8"chain pass refused [") + planCodeText(problem.code) + String(u8"]: ") + problem.detail);

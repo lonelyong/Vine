@@ -361,7 +361,7 @@
 | `Scene::publishedSnapshot()` | 场景最近一次发布的句柄：帧 build 时默认取它 | 新（W9b，2026-11-13） |
 | `RenderEngine::bindSnapshot(scene, ref)` | **覆盖**：这个引擎改画 `ref` 这一份（直到下一次绑定） | 新（2026-11-12）；W9b 起只是覆盖，不是必须步骤 |
 | `SceneView::publishContent()` / `PassChain::publishContent()` | 宿主每帧一次的发布（视图 + 链拥有的场景） | 新（W9b） |
-| `RenderEngine::frame() → FrameOutcome` | 构建 + 交出（`Submitted`）或就地跑完（`Ran`） | 已存在 |
+| `RenderEngine::frame() → FrameOutcome` | 构建 + 交出（`Submitted`）或就地跑完（`Ran`）；`NotReady` + `EngineNotReady` 表示没驱动 | 已存在（W9e 收口） |
 | `RenderEngine::setFrameThreading(FrameThreading)` | `Inline`（默认）/ `EngineThread`；生命周期决定 | 已存在 |
 | `RenderEngine::waitForFrame(n, timeout)` | 唯一显式等待 | 已存在 |
 | `RenderEngine::presentRecord()` / `presentedCamera()` | 上一帧的呈现结局 / 那一帧的相机快照（N17） | 已存在 |
@@ -386,7 +386,7 @@
 | C17 | 表面事件只在帧首应用一次；交换链只在引擎线程重建；UI 侧不写任何引擎侧状态。 |
 | C18 | 批内版本不推进：`beginEdit()` 之后、最外层 `endEdit()` 之前，发布停在原处 —— 落在批中间的帧**不发布任何东西**，画批次开始时的状态；整批在 `endEdit()` 之后那一帧作为**一次**发布落地。 |
 | C19 | 材质以**值**过帧：命令携带 `MaterialDescriptionPtr`（`revision` + 解析后的参数），引擎侧只读值，不读 `Material::resolved()`。值的取点在内容侧，批内不取。 |
-| C20 | 会话形状（pass 集合、资源表、后端保留态）**只在帧与帧之间**改：帧在飞时 `applyPlan`（任何一种形态）一律拒绝（`sessionChangeAllowed`），并按 episode 报**一条** `PassProtocolViolation`。 |
+| C20 | 会话形状（pass 集合、资源表、后端保留态）**只在帧与帧之间**改：帧在飞时 `applyPlan`（任何一种形态）一律答 `PlanResult::Refused` + `PlanRefusal::Busy`（`sessionChangeAllowed`），并按 episode 报**一条** `PassProtocolViolation`。 |
 
 ### 5.2 要求（R#）
 
@@ -423,7 +423,7 @@
 ### 6.2 P2 在帧中间改会话形状
 
 - 会怎么错：pass 表与后端保留态在录制中被换掉，命令引用已释放的对象。
-- 怎么判：`applyPlan` 答 `SessionBusy`（C20；名字指“引擎里有帧在录”，SDK 里没有 `Session` 类型）。
+- 怎么判：`applyPlan` 答 `PlanResult::refused()` + `PlanRefusal::Busy`（C20；含义是“引擎里有帧在录”，SDK 里没有 `Session` 类型）。
 - 怎么防：形状只在帧与帧之间改（`graphics-frame-pipeline.md` F6）。
 
 ### 6.3 P3 在帧中间做设备动词

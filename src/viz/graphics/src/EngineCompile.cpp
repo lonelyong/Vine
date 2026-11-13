@@ -308,7 +308,7 @@ void RenderEngine::buildFrameValue()
         // THIS IS WHAT A PASS COSTS THE FRAME. Under a value-driven frame the work is here: the publication (for the
         // pass that names the scene first), the inputs told, the pass stating its VIEW, and the frame's expansion
         // collecting it (see FrameExpand) - one measured interval, so the number keeps meaning what it always meant.
-        // The number is what the plan reports per pass (see FramePlan::PassPlan::record_micros), which is the
+        // The number is what the table reports per pass (see PassRow::record_micros), which is the
         // host-visible half of a frame; the GPU half is the backend's (see RenderEngine::frameReport). One clock read
         // per pass, not per draw.
         const auto pass_started = std::chrono::steady_clock::now();
@@ -721,19 +721,21 @@ intrusive_ptr<RenderPass> RenderEngine::makePassNode(const PassDesc& desc)
     return node;
 }
 
-std::vector<PlanProblem> RenderEngine::applyPlan(const Plan& plan)
+PlanResult RenderEngine::applyPlan(const Plan& plan)
 {
     return applyPlan(plan, nullptr);
 }
 
-std::vector<PlanProblem> RenderEngine::applyPlan(const Plan& plan, const void* owner)
+PlanResult RenderEngine::applyPlan(const Plan& plan, const void* owner)
 {
     // THE SHAPE IS A VALUE, so applying it is one call - but the table it replaces is what a frame may be walking,
-    // so the one rule every shape change obeys still holds here (see sessionChangeAllowed).
+    // so the one rule every shape change obeys still holds here (see sessionChangeAllowed). A busy engine is a
+    // REFUSAL, not a problem with the shape: the plan was not even examined, and the same call works between frames.
     if (!sessionChangeAllowed("applyPlan")) {
-        return {
-            PlanProblem{ PlanProblemCode::SessionBusy, String(), String(u8"a frame is being recorded; a session's shape is applied between frames") }
-        };
+        PlanResult refused;
+        refused.outcome = PlanResult::Outcome::Refused;
+        refused.refusal = PlanRefusal::Busy;
+        return refused;
     }
 
     // The host's own bindings serve names too (see publish), so validation must know them or it would refuse a plan
@@ -753,20 +755,23 @@ std::vector<PlanProblem> RenderEngine::applyPlan(const Plan& plan, const void* o
             }
         }
     }
-    std::vector<PlanProblem> problems = validatePlan(plan, std::span<const String>(external.data(), external.size()));
-    if (!problems.empty()) {
+
+    PlanResult result;
+    result.problems = validatePlan(plan, std::span<const String>(external.data(), external.size()));
+    if (!result.problems.empty()) {
         // ALL OR NOTHING: a half-applied shape would be a shape nobody declared. The answer is the return value; the
         // diagnostic is for the log, one per problem per CALL (a host call, not a frame, so the call is the episode).
-        for (const PlanProblem& problem : problems) {
+        for (const PlanProblem& problem : result.problems) {
             reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
                                 vn::graphics::DiagnosticCategory::PassProtocolViolation,
                                 String(u8"plan refused [") + planCodeText(problem.code) + String(u8"]: ") + problem.detail);
         }
-        return problems;
+        result.outcome = PlanResult::Outcome::Invalid;
+        return result;
     }
 
     applyPlanRows(plan, owner);
-    return problems;
+    return result;
 }
 
 void RenderEngine::applyPlanRows(const Plan& plan, const void* owner)

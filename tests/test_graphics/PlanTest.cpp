@@ -17,6 +17,8 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <condition_variable>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -82,6 +84,58 @@ class HeadlessBackend : public RenderBackend {
     bool                            up     = true;
     int                             frames = 0;
     raw_ptr<const FrameDescription> last   = nullptr;
+};
+
+/**
+ * @brief A headless device whose frame can be held INSIDE the engine half (the busy window).
+ *
+ * A shape change is refused while a frame is being recorded, and that refusal is a precondition rather than a defect
+ * of the plan. The gate makes the window deterministic: `waitEntered()` returns once the engine thread is inside the
+ * device call, and `release()` lets the frame finish.
+ */
+class GatedBackend : public HeadlessBackend {
+  public:
+    void arm()
+    {
+        const std::lock_guard<std::mutex> lock(gate_);
+        armed_    = true;
+        released_ = false;
+        entered_  = false;
+    }
+
+    PresentOutcome executeFrame(const FrameDescription& frame, PresentTarget* present_to = nullptr) override
+    {
+        {
+            std::unique_lock<std::mutex> lock(gate_);
+            if (!armed_) {
+                return HeadlessBackend::executeFrame(frame, present_to);
+            }
+            entered_ = true;
+            changed_.notify_all();
+            changed_.wait(lock, [this] { return released_; });
+        }
+        return HeadlessBackend::executeFrame(frame, present_to);
+    }
+
+    void waitEntered()
+    {
+        std::unique_lock<std::mutex> lock(gate_);
+        changed_.wait(lock, [this] { return entered_; });
+    }
+
+    void release()
+    {
+        const std::lock_guard<std::mutex> lock(gate_);
+        released_ = true;
+        changed_.notify_all();
+    }
+
+  private:
+    std::mutex              gate_;
+    std::condition_variable changed_;
+    bool                    armed_{ false };
+    bool                    entered_{ false };
+    bool                    released_{ false };
 };
 
 /** @brief A scene declaration with a name, a target and an order (the fields a plan diffs on). */
@@ -169,7 +223,7 @@ TEST(PlanTest, APassIsAddedWithoutAnyAddCall)
     shape.passes.push_back(namedPass(u8"main", colourTarget(), 0, camera));
     shape.passes.push_back(namedPass(u8"hud", colourTarget(), 60, camera));
 
-    EXPECT_TRUE(engine->applyPlan(shape).empty()) << "a valid shape is applied and answers no problem";
+    EXPECT_TRUE(engine->applyPlan(shape).applied()) << "a valid shape is applied and answers no problem";
     EXPECT_EQ(engine->passCount(), 2u);
 
     engine->frame();
@@ -203,14 +257,14 @@ TEST(PlanTest, TheShapeReadBackIsTheShapeThatReproducesIt)
     by_stage.order.reset();
     by_stage.stage = PassStage::Depth;
     shape.passes.push_back(by_stage);
-    ASSERT_TRUE(engine->applyPlan(shape).empty());
+    ASSERT_TRUE(engine->applyPlan(shape).applied());
 
     const Plan read_back = engine->plan();
     ASSERT_EQ(read_back.passes.size(), 2u);
     EXPECT_EQ(read_back.passes[0].name, u8"early") << "the table is ordered, not declaration-ordered";
     EXPECT_EQ(read_back.passes[0].order.value_or(0), passStageOrder(PassStage::Depth));
 
-    EXPECT_TRUE(engine->applyPlan(read_back).empty());
+    EXPECT_TRUE(engine->applyPlan(read_back).applied());
     EXPECT_EQ(engine->passCount(), 2u);
     EXPECT_EQ(namesOf(engine->plan())[0], u8"early");
 }
@@ -230,12 +284,12 @@ TEST(PlanTest, ARenamedPassLeavesExactlyTheDeclaredNames)
     Plan first;
     first.passes.push_back(namedPass(u8"a", colourTarget(), 0, camera));
     first.passes.push_back(namedPass(u8"b", colourTarget(), 10, camera));
-    ASSERT_TRUE(engine->applyPlan(first).empty());
+    ASSERT_TRUE(engine->applyPlan(first).applied());
 
     Plan second;
     second.passes.push_back(namedPass(u8"b", colourTarget(), 10, camera));
     second.passes.push_back(namedPass(u8"c", colourTarget(), 20, camera));
-    EXPECT_TRUE(engine->applyPlan(second).empty());
+    EXPECT_TRUE(engine->applyPlan(second).applied());
 
     const std::vector<String> names = namesOf(engine->plan());
     ASSERT_EQ(names.size(), 2u);
@@ -262,16 +316,16 @@ TEST(PlanTest, AChangedTargetUpdatesTheSameNodeInPlace)
 
     Plan initial;
     initial.passes.push_back(namedPass(u8"main", first, 0, camera));
-    ASSERT_TRUE(engine->applyPlan(initial).empty());
+    ASSERT_TRUE(engine->applyPlan(initial).applied());
 
-    const raw_ptr<const RenderPass> before = engine->framePlan().passes.at(0).pass;
+    const raw_ptr<const RenderPass> before = engine->frameTable().passes.at(0).pass;
     ASSERT_NE(before, nullptr);
 
     Plan restated;
     restated.passes.push_back(namedPass(u8"main", second, 0, camera));
-    EXPECT_TRUE(engine->applyPlan(restated).empty());
+    EXPECT_TRUE(engine->applyPlan(restated).applied());
 
-    const FramePlan after = engine->framePlan();
+    const FrameTable after = engine->frameTable();
     ASSERT_EQ(after.passes.size(), 1u);
     EXPECT_EQ(after.passes[0].pass, before) << "the node survives a re-stated declaration";
     EXPECT_EQ(after.passes[0].target, second.get()) << "and it draws into the target the new shape states";
@@ -381,12 +435,12 @@ TEST(PlanTest, ARefusedPlanLeavesTheShapeUntouched)
 
     Plan good;
     good.passes.push_back(namedPass(u8"main", colourTarget(), 0, camera));
-    ASSERT_TRUE(engine->applyPlan(good).empty());
+    ASSERT_TRUE(engine->applyPlan(good).applied());
 
     Plan bad;
     bad.passes.push_back(namedPass(u8"hud", colourTarget(), 60, camera));
     bad.passes.push_back(namedPass(u8"hud", colourTarget(), 70, camera));
-    EXPECT_FALSE(engine->applyPlan(bad).empty());
+    EXPECT_TRUE(engine->applyPlan(bad).invalid()) << "two rows with one name is a shape defect";
 
     const std::vector<String> names = namesOf(engine->plan());
     ASSERT_EQ(names.size(), 1u) << "the half-applied shape would be a shape nobody declared";
@@ -408,15 +462,16 @@ TEST(PlanTest, AnUnnamedPassIsNotRoundTrippable)
     ASSERT_TRUE(engine->initialize());
 
     PassDesc unnamed;
-    unnamed.camera                         = vn::make_intrusive<Camera>();
-    const std::vector<PlanProblem> problems = engine->applyPlan(Plan{ { unnamed } });
-    ASSERT_FALSE(problems.empty()) << "a shape that cannot be diffed is refused, not guessed at";
-    EXPECT_EQ(problems.front().code, PlanProblemCode::EmptyPassName);
+    unnamed.camera                          = vn::make_intrusive<Camera>();
+    const PlanResult result                 = engine->applyPlan(Plan{ { unnamed } });
+    ASSERT_TRUE(result.invalid()) << "a shape that cannot be diffed is refused, not guessed at";
+    ASSERT_FALSE(result.problems.empty());
+    EXPECT_EQ(result.problems.front().code, PlanProblemCode::EmptyPassName);
     EXPECT_EQ(engine->passCount(), 0u) << "and the refusal changes nothing";
 
     // A named restatement of the same declaration is the expressible shape.
     unnamed.name = u8"named";
-    EXPECT_TRUE(engine->applyPlan(Plan{ { unnamed } }).empty());
+    EXPECT_TRUE(engine->applyPlan(Plan{ { unnamed } }).applied());
     EXPECT_EQ(engine->passCount(), 1u);
     ASSERT_EQ(engine->plan().passes.size(), 1u);
     EXPECT_EQ(engine->plan().passes.front().name, u8"named");
@@ -431,7 +486,48 @@ TEST(PlanTest, TheCodeSpellingsAreStable){
     EXPECT_EQ(planCodeText(PlanProblemCode::UnknownInput), u8"unknown-input");
     EXPECT_EQ(planCodeText(PlanProblemCode::DependencyCycle), u8"dependency-cycle");
     EXPECT_EQ(planCodeText(PlanProblemCode::TooManyPasses), u8"too-many-passes");
-    EXPECT_EQ(planCodeText(PlanProblemCode::SessionBusy), u8"session-busy");
+}
+
+/*
+ * @brief A frame in flight is a REFUSAL, not a problem with the plan: the shape is not even examined.
+ *
+ * `SessionBusy` used to live in PlanProblemCode, which made "my plan is malformed" and "try again between frames" one
+ * vocabulary. The refused answer carries the reason and an empty problem list, so a host knows to retry the SAME plan.
+ */
+TEST(PlanTest, ABusyEngineRefusesThePlanInsteadOfBlamingItsShape)
+{
+    auto backend = intrusive_ptr<GatedBackend>(new GatedBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto camera = vn::make_intrusive<Camera>();
+
+    Plan initial;
+    initial.passes.push_back(namedPass(u8"main", colourTarget(), 0, camera));
+    ASSERT_TRUE(engine->applyPlan(initial).applied());
+
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    backend->arm();
+    ASSERT_TRUE(engine->frame().submitted());
+    backend->waitEntered();
+
+    Plan next;
+    next.passes.push_back(namedPass(u8"hud", colourTarget(), 60, camera));
+    const PlanResult refused = engine->applyPlan(next);
+    EXPECT_TRUE(refused.refused());
+    EXPECT_EQ(refused.refusal, PlanRefusal::Busy);
+    EXPECT_TRUE(refused.problems.empty()) << "busy is not a shape defect";
+    EXPECT_EQ(engine->passCount(), 1u) << "the session keeps the shape the frame is drawing";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u) << "one report for the episode";
+
+    backend->release();
+    ASSERT_TRUE(engine->waitForFrame());
+    EXPECT_TRUE(engine->applyPlan(next).applied()) << "the same plan is applicable between frames";
+    EXPECT_EQ(engine->passCount(), 1u) << "the whole-session form replaced main with hud";
+    EXPECT_NE(engine->pass(String(u8"hud")), nullptr);
+
+    engine->setFrameThreading(FrameThreading::Inline);
 }
 
 /*

@@ -287,7 +287,7 @@
 - `src/viz/graphics/src/EngineCompile.cpp`、`src/viz/graphics/src/FrameWorker.cpp`（发布与半段） <!-- drift-ok -->
 - `src/viz/graphics/src/Scene.cpp`、`src/viz/graphics/src/SceneRows.hpp`、`src/viz/graphics/src/SnapshotSource.cpp`（场景与派生）
 - `src/viz/graphics/sdk/vine/graphics/backend/`（24 个头）
-- `src/viz/graphics/sdk/vine/graphics/Plan.hpp`、`PassDesc.hpp`、`FramePlan.hpp`、`FrameDescription.hpp`（计划词汇）
+- `src/viz/graphics/sdk/vine/graphics/Plan.hpp`、`PassDesc.hpp`、`FramePlan.hpp`、`FrameDescription.hpp`（计划词汇）<!-- drift-ok -->
 - `src/viz/graphics/sdk/vine/graphics/PrepareReport.hpp`、`PresentTarget.hpp`、`Scene.hpp`、`RenderEngine.hpp`（结果 / 入口）
 - `scripts/measure_graphics_claims.py`、`scripts/check_include_hygiene.py`、`cmake/VineLibraryHelper.cmake`
 

@@ -98,7 +98,7 @@ inline void DemoView::activate()
                 self->content_started_ = true;
                 // Dev switch: the first frame is rendered (by the attach), so the plan's per-pass record costs are
                 // real - this is the moment "what does this pipeline draw" can be answered with numbers.
-                self->scene_->logFramePlan();
+                self->scene_->logFrameTable();
                 assembleDemoContentLater(self->scene_);
             }
         }(this);

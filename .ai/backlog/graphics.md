@@ -8,32 +8,9 @@
 
 ## 1. 现在可做（无触发条件）
 
-材质 PBR 的四步（模型 / 纹理集 / 两条路径的 BRDF / 实例与 alpha 模式）与 F11 的逐材质诊断已全部落地。
-
-- **graphics-next 的接管（已采纳：`../decisions/ADR-2026-11-12-adopt-graphics-next.md`）**：目标形状、
-  `C1–C12` / `R1–R39` / `I1–I7` / `N1–N10` 与迁移表在 `../design/graphics-frame-pipeline.md`。
-  未做的是 §9.3 的步 4、5b-2c、6（多表面 → pass 声明收口 → 原型/实例），以及 F11/F12 的全序键与 `query`。
-  5a、5b-1、5b-2a 与 5b-2b 已落地 2026-11-12：Published 模式绑定 `SnapshotSource`，公开 `Scene::publish()` 三态，
-  `PublicationStore` 直接持有 `SnapshotSource`（W3 拆自 `FrameWorker`），旧 `ContentMirror` / `DeltaChannel` / `RenderWorld` / `PublishOutcome`
-  与 23 条 LEGACY 用例已删除。
-  5a/5b-1/5b-2a/5b-2b/5b-2c 的拆分理由见 `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`；
-  A6 的测量口径见 `../research/graphics-2026-11-12-instances.md`。每步一个可回退提交；
-  某步击穿它自己的 `K#` ⇒ 回退该步并把结论写回 ADR，**不重开“是否采纳”**。
-  5b-2c 的 pass 声明收口不在“现在可做”里：触发条件是 5b-2b 稳定一轮、第二后端要复用内容层，或 host
-  需要计划之外的第二套 pass 形状；A6 的触发条件是出现“一处原型多处放置”的真实宿主。未命中就只写设计（`G8`）。
-
-### 1.1 第三轮审计修复（2026-11-12，W1–W9；W9 按 5b-2c 触发条件）
-
-证据、代码位置与完整论证见 `../research/graphics-2026-11-12-audit-3.md`（R3-1…R3-8）。
-**顺序即依赖**：先做零语义风险的，再修正确性，公共 API 的形状变化集中在 W9 一个窗口。
-
-| # | 项 | 做什么 | 为什么 / 代价 | 判据 / 前置 |
-|---|---|---|---|---|
-| W9 | 5b-2c 收口批 | 删 `addPass` 家族、隐式发布、活指针字段、`Scene` 的 `DrawListSource` 继承（W6b）；`FrameRecorder` 三阶段降为后端组件 | 让“计划是唯一形状”从承诺变事实的唯一一步。**W9a / W9b / W9c / W9d 已落地 2026-11-13**；剩下 W9e（W7 结果形状 + `FramePlan`→`FrameTable`，与 `frame()`/`applyPlan` 的返回形状同窗）。W9d 的边界答案：计划是唯一的形状，**作用域形态**（`applyPlan(plan, owner)`，身份 `(owner, name)`）让一个引擎可以有多个贡献者而不互删 | W9e 开工前先定 `frame()` 的花钱/不花钱两态与 `applyPlan` 的三态答案；`K4` 分母 1096、5% 线 55；`K5` 与 2519 同口径；`T7` / `T30` |
-| W7 | 结果形状收口 | `frame()` 只答 Ran / Submitted；`applyPlan` 三态 `{applied, problems, refused}`；`SessionBusy` 移出 `PlanProblemCode` | 7 个枚举、121/163 个 `bool`；3 组是同一件事的不同拼法。全是公开签名，必须与 W9 同窗，否则迁移期三套并存。代价：`TheCodeSpellingsAreStable` 等断言改 | `PlanTest` 断言 busy 不是 plan problem |
-| W6b | `Scene` 外移第二步 | 删 `Scene` 的 `DrawListSource` 继承；`RenderPass::describe` 不再把活 `Scene` 写进帧值 | 去掉“活 Scene 过界”的最后一条根；与 W9 同窗，避免两套收集形状并存 | `Scene.hpp` 不再 override `collectRenderCommands`；`T34` 绿 |
-
-审计里“现在不做”的三项已对应本文件 T27（pin 显存）/ T24（F11 派生层并行）/ T22 与 T15（第二个后端），不重复列。
+5b-2c 已于 2026-11-13 随 W9a–W9e 收口：`addPass` 家族、隐式发布、活指针通道与 `Scene` 的 `DrawListSource`
+继承已删，`Plan` 是唯一的 pass 形状，`FrameTable` 是编译后的帧表，`frame()` 两态、`applyPlan` 三态
+（见 `../design/graphics-frame-pipeline.md` §9.3）。当前没有无触发条件的开放项；剩下的都在 §2，按触发条件执行。
 
 
 ## 2. 触发条件型

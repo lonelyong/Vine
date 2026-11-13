@@ -269,10 +269,10 @@ PrepareReport RenderEngine::prepare()
     // The two reasons nothing can be prepared are the same two answers frame() gives, and they are values rather
     // than silence: a host gating a load on this call has to be able to tell "no backend" from "not up yet".
     if (device_ == nullptr) {
-        return PrepareReport{ PrepareReport::Outcome::NoDevice };
+        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReady::NoDevice };
     }
     if (!initialized_) {
-        return PrepareReport{ PrepareReport::Outcome::NotInitialized };
+        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReady::NotInitialized };
     }
 
     // ONE FRAME IN FLIGHT: the engine half that owns the other slot is finished first, exactly as frame() does -
@@ -308,10 +308,10 @@ FrameOutcome RenderEngine::frame()
     // and drew nothing: no device to hand anything to, or a device the engine is not attached to. The caller gets
     // the reason as a value (see FrameOutcome); "ran but issued no draw" stays a FrameReport fact.
     if (device_ == nullptr) {
-        return FrameOutcome::NoDevice;
+        return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReady::NoDevice };
     }
     if (!initialized_) {
-        return FrameOutcome::NotInitialized;
+        return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReady::NotInitialized };
     }
 
     // ONE FRAME IN FLIGHT: with a frame thread, the previous frame's engine half is finished before this frame touches
@@ -334,11 +334,11 @@ FrameOutcome RenderEngine::frame()
 
     if (runner_ == nullptr) {
         runEngineHalf(next);
-        return FrameOutcome::Ran;
+        return FrameOutcome{ FrameOutcome::Status::Ran };
     }
     detail::EngineFrame* const submitted = &next;
     runner_->submit([this, submitted]() { runEngineHalf(*submitted); });
-    return FrameOutcome::Submitted;
+    return FrameOutcome{ FrameOutcome::Status::Submitted };
 }
 
 void RenderEngine::setFrameThreading(FrameThreading mode)
@@ -586,38 +586,38 @@ std::optional<int> RenderEngine::passOrder(raw_ptr<RenderPass> pass) const
     return std::nullopt;
 }
 
-FramePlan RenderEngine::framePlan() const
+FrameTable RenderEngine::frameTable() const
 {
-    FramePlan plan;
-    plan.passes.reserve(slots_.size());
+    FrameTable table;
+    table.passes.reserve(slots_.size());
     for (const Slot& slot : slots_) {
         const RenderPass* const pass = slot.pass.get();
         if (pass == nullptr) {
             continue;
         }
-        PassPlan entry;
-        entry.pass          = pass;
-        entry.order         = slot.order;
-        entry.name          = pass->name();
-        entry.tag           = pass->declaration().tag;
-        entry.content       = pass->content();
-        entry.camera        = pass->camera();
-        entry.layer_mask    = pass->layerMask();
-        entry.target        = pass->renderTarget();
-        entry.enabled       = pass->isEnabled();
-        entry.clears        = pass->isClearEnabled();
-        entry.clear_color   = pass->clearColor();
-        entry.clears_depth  = pass->shouldClearDepth();
-        entry.inputs        = pass->inputNames();
-        entry.output        = pass->outputName();
-        entry.record_micros = slot.record_micros;
+        PassRow row;
+        row.pass          = pass;
+        row.order         = slot.order;
+        row.name          = pass->name();
+        row.tag           = pass->declaration().tag;
+        row.content       = pass->content();
+        row.camera        = pass->camera();
+        row.layer_mask    = pass->layerMask();
+        row.target        = pass->renderTarget();
+        row.enabled       = pass->isEnabled();
+        row.clears        = pass->isClearEnabled();
+        row.clear_color   = pass->clearColor();
+        row.clears_depth  = pass->shouldClearDepth();
+        row.inputs        = pass->inputNames();
+        row.output        = pass->outputName();
+        row.record_micros = slot.record_micros;
         if (pass->hasViewport()) {
-            entry.viewport = pass->viewport();
+            row.viewport = pass->viewport();
         }
-        entry.depth_range = pass->depthRange();
-        plan.passes.push_back(std::move(entry));
+        row.depth_range = pass->depthRange();
+        table.passes.push_back(std::move(row));
     }
-    return plan;
+    return table;
 }
 
 const FrameDescription& RenderEngine::frameDescription() const noexcept

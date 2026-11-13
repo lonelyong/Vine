@@ -23,9 +23,10 @@
 #include "Capabilities.hpp"
 #include "Diagnostics.hpp"
 #include "DiagnosticsRoute.hpp"
+#include "EngineNotReady.hpp"
 #include "FrameDescription.hpp"
-#include "FramePlan.hpp"
 #include "FrameStats.hpp"
+#include "FrameTable.hpp"
 #include "OutputRegistry.hpp"
 #include "PassDesc.hpp"
 #include "PassRegistry.hpp"
@@ -61,24 +62,69 @@ class PresentTarget;
  * @brief What one RenderEngine::frame() call did.
  *
  * @details
- * - Ran: the frame was compiled AND answered (executed, presented) before the call returned, because this engine has no
- *   frame thread (see setFrameThreading - the default).
- * - Submitted: the frame was compiled and handed to the engine thread; waitForFrame says when it was answered. The
- *   picture is then one frame behind the content, which is the price of the caller not waiting for the device (design
- *   2.12, N15).
- * - NotInitialized: initialize() has not succeeded - never called, refused, or shutdown() ran since.
- * - NoDevice: setDevice() was never called, so there is nothing to hand a frame to.
+ * - TWO OUTCOMES, one per price the call paid (`G4`): #Status::Ran means this call compiled AND answered the frame
+ *   before returning (there is no frame thread), #Status::Submitted means it compiled and handed it over, so the
+ *   picture follows one frame later (see waitForFrame). Nothing else is a frame outcome.
+ * - #Status::NotReady is not a third frame outcome: it says the call drove NOTHING, and @ref reason says which
+ *   precondition failed. It shares #EngineNotReady with `prepare()` so a host answers "is this engine ready" once.
+ * - What it deliberately does not answer: whether anything was drawn (RenderEngine::frameReport) or where the picture
+ *   went (RenderEngine::presentRecord / #PresentOutcome). Both describe the frame, not the call's readiness.
  *
  * @note
- * - This answers "what happened to the frame", not "did it draw anything": a frame that ran and issued no draw is a
- *   different fact, and RenderEngine::frameReport() is where its counters are.
+ * - The value describes the CALL; it is not the per-frame result the frame pipeline design calls `FrameResult`
+ *   (`graphics-frame-pipeline.md` F12), which carries the snapshot, view, poses and diagnostics a host queries with.
  */
-enum class FrameOutcome : std::uint8_t
-{
-    Ran,            // Compiled and answered before the call returned (no frame thread).
-    Submitted,      // Compiled and handed to the frame thread; see waitForFrame.
-    NotInitialized, // The engine is not attached to a device it can drive.
-    NoDevice,       // No backend is set.
+struct VN_GRAPHICS_API FrameOutcome {
+    /// What became of the call (see the struct's own note).
+    enum class Status : std::uint8_t
+    {
+        Ran,       // Compiled and answered before the call returned (no frame thread).
+        Submitted, // Compiled and handed to the frame thread; see waitForFrame.
+        NotReady,  // Nothing was driven: see reason.
+    };
+
+    Status         status{ Status::NotReady };            ///< Which answer this is.
+    EngineNotReady reason{ EngineNotReady::NoDevice };     ///< Why, when @ref status is #Status::NotReady.
+
+    /**
+     * @brief Gets whether the frame was answered before this call returned.
+     *
+     * @return true when @ref status is #Status::Ran.
+     */
+    [[nodiscard]] bool ran() const noexcept
+    {
+        return status == Status::Ran;
+    }
+
+    /**
+     * @brief Gets whether the frame was handed to the engine thread (see waitForFrame).
+     *
+     * @return true when @ref status is #Status::Submitted.
+     */
+    [[nodiscard]] bool submitted() const noexcept
+    {
+        return status == Status::Submitted;
+    }
+
+    /**
+     * @brief Gets whether this call drove a frame at all.
+     *
+     * @return true when the frame ran here or was submitted; false when the engine was not ready.
+     */
+    [[nodiscard]] bool driven() const noexcept
+    {
+        return status != Status::NotReady;
+    }
+
+    /**
+     * @brief Gets the same answer as @ref driven, for a caller that tests the outcome directly.
+     *
+     * @return true when the frame ran here or was submitted.
+     */
+    explicit operator bool() const noexcept
+    {
+        return driven();
+    }
 };
 
 /**
@@ -371,12 +417,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - A prepared identity only helps while it stays the same one: an edit between the call and the frame is a new
      *   identity, and that frame compiles it (correct, and the price of the edit).
      *
-     * @note
-     * - MIGRATION ENTRY: this repository has no host consumer of it yet, so its shape is not a host contract until
-     *   the 5b-2c window closes (backlog W9 / W2).
-     *
-     * @return What the request did, with what it built (see PrepareReport); `outcome` says NoDevice / NotInitialized
-     *         when this engine cannot prepare anything at all.
+     * @return What the request did, with what it built (see PrepareReport); `outcome` is `NotReady` with `reason`
+     *         (`NoDevice` / `NotInitialized`) when this engine cannot prepare anything at all.
      */
     PrepareReport prepare();
 
@@ -394,9 +436,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   animates measures its own time (a pass' `before_draw` hook, an overlay's own wall clock), which is what the
      *   one `dt` a host had to hand over used to be - a number nothing in the frame read.
      *
-     * @return Whether the frame ran (see FrameOutcome): `Ran` when this engine has no frame thread and the frame was
-     *         answered before returning, `Submitted` when it was handed to one, NotInitialized / NoDevice when nothing
-     *         was compiled or handed over.
+     * @return What the call did (see FrameOutcome): `status.ran()` when this engine has no frame thread and the frame
+     *         was answered before returning, `status.submitted()` when it was handed to one; `NotReady` with
+     *         `reason` (`NoDevice` / `NotInitialized`) when nothing was compiled or handed over.
      */
     FrameOutcome frame();
 
@@ -541,20 +583,20 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     /** @brief Gets what a frame of this engine consists of: the passes it runs, in order.
      *
      * @details
-     * - The plan is COMPILED from the registered passes (see compileFrame); every frame compiles its own,
-     *   so the answer is the last frame's plan - the table the ENGINE announced for it - or, before any
-     *   frame, the plan the current declarations would compile to. Both are the same compile, so a report
+     * - The table is COMPILED from the registered passes (see compileFrame); every frame compiles its own,
+     *   so the answer is the last frame's table - what the ENGINE announced for it - or, before any
+     *   frame, the table the current declarations would compile to. Both are the same compile, so a report
      *   cannot disagree with what the engine hands over.
      * - The order here is the DECLARATION order (order, then registration); the engine's scheduler turns it
      *   into execution order for the frame it hands a backend (see frameDescription), so the two differ
      *   exactly where a dependency overrides the announced priority. A report that claims "what actually
-     *   ran" reads the executor's own plan.
+     *   ran" reads the executor's own table.
      * - What it is for: a test asserting the SHAPE of a frame instead of counting passes or comparing
      *   pointers, a dev switch printing one table, and a host checking what a pipeline actually registered.
      *
-     * @return The plan, in announcement order; empty when nothing is registered.
+     * @return The table, in announcement order; empty when nothing is registered.
      */
-    [[nodiscard]] FramePlan framePlan() const;
+    [[nodiscard]] FrameTable frameTable() const;
 
     /** @brief Applies @p plan as this engine's session shape, diffing it by pass name.
      *
@@ -578,16 +620,12 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @warning
      * - A SESSION'S SHAPE IS EDITED BETWEEN FRAMES: a call that lands while a frame is being recorded is
-     *   REFUSED and answers `SessionBusy` (no partial change).
-     *
-     * @note
-     * - MIGRATION ENTRY: this repository has no host consumer of it yet, so its shape is not a host contract until
-     *   the 5b-2c window closes (backlog W9 / W2).
+     *   REFUSED with `PlanResult::refusal == PlanRefusal::Busy` (no partial change).
      *
      * @param plan The shape to apply (see Plan).
-     * @return Every problem found, empty when the plan was applied.
+     * @return What the call did (see PlanResult): applied, invalid (with every problem), or refused with a reason.
      */
-    [[nodiscard]] std::vector<PlanProblem> applyPlan(const Plan& plan);
+    [[nodiscard]] PlanResult applyPlan(const Plan& plan);
 
     /**
      * @brief Applies @p plan as @p owner's rows: an upsert that leaves every other contributor's rows alone.
@@ -603,13 +641,13 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   cannot take a pass somebody else draws.
      *
      * @warning
-     * - A plan is still a shape change: refused with `SessionBusy` while a frame is being recorded.
+     * - A plan is still a shape change: refused with `PlanRefusal::Busy` while a frame is being recorded.
      *
      * @param plan  The rows this contributor states (name = identity, as in the whole-session form).
      * @param owner The contributor the rows belong to (an identity; null means the whole session, see above).
-     * @return Every problem found, empty when the plan was applied.
+     * @return What the call did (see PlanResult): applied, invalid (with every problem), or refused with a reason.
      */
-    [[nodiscard]] std::vector<PlanProblem> applyPlan(const Plan& plan, const void* owner);
+    [[nodiscard]] PlanResult applyPlan(const Plan& plan, const void* owner);
 
     /**
      * @brief Finds the registered pass whose name is @p name.
@@ -646,12 +684,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   expressed - `validatePlan` refuses it, because a shape that cannot be diffed would be applied as "remove
      *   everything, add everything". A pass with no name cannot be expressed at all: name every pass.
      * - What is NOT here: the measured facts (the last frame's record time) and the owner/role bookkeeping - those
-     *   belong to the compile and to whoever registered the pass, not to the declared shape (see FramePlan, which is
+     *   belong to the compile and to whoever registered the pass, not to the declared shape (see FrameTable, which is
      *   the COMPILED frame and a different value).
-     *
-     * @note
-     * - MIGRATION ENTRY: this repository has no host consumer of it yet, so its shape is not a host contract until
-     *   the 5b-2c window closes (backlog W9 / W2).
      *
      * @return The shape, in engine order; empty when nothing is registered.
      */
@@ -889,7 +923,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         String role;
         /// How long the last frame's record of this pass took, in microseconds (0: it did not run then).
         /// Measured by the compile, where that record happens (see buildFrameValue); reported through the frame
-        /// plan (see FramePlan::PassPlan::record_micros).
+        /// plan (see PassRow::record_micros).
         std::uint64_t record_micros = 0;
         /// The transient the compile allocated for this pass (null when it declares none).
         intrusive_ptr<RenderTarget> transient;
@@ -1021,7 +1055,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         bool                      as_output{ false }; // Declared as an output (else as an input).
     };
 
-    /** @brief Compiles this frame's declarations into the table the frame runs from (see FramePlan).
+    /** @brief Compiles this frame's declarations into the table the frame runs from (see FrameTable).
      *
      * @details
      * - THE ONE PLACE A FRAME IS DECIDED. Compiled every frame - no declaration tells the engine it moved,

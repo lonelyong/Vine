@@ -19,12 +19,12 @@ VN_GRAPHICS_NS_BEGIN
  * - A CODE, not a sentence: the answer a host acts on is "which of these codes is wrong", and a
  *   sentence is what changes the day someone rewords it. The sentence accompanies the code (see
  *   PlanProblem::detail), the code is what a test and a host switch on.
- * - `SessionBusy` is the code not about the plan's own content: it says the SHAPE cannot be changed right now (a
- *   frame is being recorded against the table it would replace).
  *
  * @note
  * - The set is closed on purpose (`G8`): a new failure of a plan is a new code added here, next to its
  *   check in validatePlan(), not a new string somewhere in a report.
+ * - A PRECONDITION IS NOT A CODE (`G4`): "a frame is being recorded, try later" does not describe the shape, so it is
+ *   a PlanRefusal and travels in PlanResult::refusal rather than here.
  */
 enum class PlanProblemCode : std::uint8_t
 {
@@ -33,7 +33,6 @@ enum class PlanProblemCode : std::uint8_t
     UnknownInput,      // A named input no pass of the plan (and no host binding) publishes.
     DependencyCycle,   // The named inputs form a cycle: no execution order satisfies it.
     TooManyPasses,     // More passes than kMaxPlanPasses (the plan is refused, not truncated).
-    SessionBusy,       // A frame is being recorded; apply the plan between frames.
 };
 
 /**
@@ -51,6 +50,90 @@ struct VN_GRAPHICS_API PlanProblem {
     String pass;
     /// The sentence a report carries (human text, not a contract).
     String detail;
+};
+
+/**
+ * @brief Why a VALID plan was not applied: a precondition of the engine, not a defect of the shape.
+ *
+ * @details
+ * - These are the answers a caller retries, not the ones it edits the plan for: #Busy means a frame is being recorded
+ *   against the table the plan would replace (apply the shape between frames), #EngineGone means the registry handle's
+ *   engine has already been destroyed (there is nothing left to apply the plan to).
+ * - The set is separate from PlanProblemCode on purpose (`G4`): a runtime precondition is not a malformed plan, and
+ *   folding it into the shape vocabulary made "is my plan wrong" and "can I call this now" one question.
+ */
+enum class PlanRefusal : std::uint8_t
+{
+    Busy,       // A frame is being recorded; a session's shape is applied between frames.
+    EngineGone, // The registry handle's engine no longer exists (PassRegistry::apply only).
+};
+
+/**
+ * @brief What one applyPlan() call answered: the shape is applied, the shape is invalid, or it was refused.
+ *
+ * @details
+ * - THREE MUTUALLY EXCLUSIVE ANSWERS (`G4`), not a bool plus an empty vector:
+ *   - #Outcome::Applied: the plan was valid and is now the engine's shape. Both payloads are empty/default.
+ *   - #Outcome::Invalid: the plan itself has problems; `problems` carries every one of them and NOTHING changed.
+ *   - #Outcome::Refused: the plan was not examined because the engine cannot take a shape change now; `refusal` says
+ *     which precondition failed. Applying the same plan later is the move.
+ * - The distinction is what a host acts on: an invalid plan has to be edited, a refused one only retried (between
+ *   frames, or against an engine that still exists).
+ * - A refused call still reports ONE PassProtocolViolation diagnostic per episode (see RenderEngine::applyPlan); the
+ *   return value is the programmatic half of the same fact.
+ */
+struct VN_GRAPHICS_API PlanResult {
+    /// The answer (see the struct's own note for what each one means).
+    enum class Outcome : std::uint8_t
+    {
+        Applied, // The plan was valid and is now the engine's shape.
+        Invalid, // The plan has problems; nothing changed (see problems).
+        Refused, // A precondition failed; the plan was not applied (see refusal).
+    };
+
+    Outcome                  outcome{ Outcome::Applied }; ///< Which of the three answers this is.
+    std::vector<PlanProblem> problems;                     ///< Every problem found when #outcome is Invalid.
+    PlanRefusal              refusal{ PlanRefusal::Busy }; ///< The failed precondition when #outcome is Refused.
+
+    /**
+     * @brief Gets whether the plan became the engine's shape.
+     *
+     * @return true when @ref outcome is #Outcome::Applied.
+     */
+    [[nodiscard]] bool applied() const noexcept
+    {
+        return outcome == Outcome::Applied;
+    }
+
+    /**
+     * @brief Gets whether the plan itself has problems (see @ref problems).
+     *
+     * @return true when @ref outcome is #Outcome::Invalid.
+     */
+    [[nodiscard]] bool invalid() const noexcept
+    {
+        return outcome == Outcome::Invalid;
+    }
+
+    /**
+     * @brief Gets whether a precondition refused the plan (see @ref refusal).
+     *
+     * @return true when @ref outcome is #Outcome::Refused.
+     */
+    [[nodiscard]] bool refused() const noexcept
+    {
+        return outcome == Outcome::Refused;
+    }
+
+    /**
+     * @brief Gets the same answer as @ref applied, for a caller that tests the result directly.
+     *
+     * @return true when the plan became the engine's shape.
+     */
+    explicit operator bool() const noexcept
+    {
+        return applied();
+    }
 };
 
 /**
@@ -84,7 +167,7 @@ inline constexpr std::size_t kMaxPlanPasses = 64;
  *   about a picture is stated as data: a program override, a viewport, a depth band, a hook (see PassDesc).
  * - WHAT IT DOES NOT CARRY: measured facts (the record time of the last frame) and the engine's own
  *   bookkeeping (owner/role, the transient a compile resolved). Those belong to the compiled frame, which
- *   is a different value (`FramePlan`) - one describes what the frame SHOULD be, the other what the engine
+ *   is a different value (`FrameTable`) - one describes what the frame SHOULD be, the other what the engine
  *   compiled, and neither can be mistaken for the other.
  * - It holds references (a camera, a scene, a target), so copying a plan copies handles, not pictures:
  *   cheap, and not a snapshot of the content behind them.
@@ -124,7 +207,7 @@ struct VN_GRAPHICS_API Plan {
  *   everything that has to change.
  * - Inputs are matched BY NAME (`PassDesc::input_names` against `PassDesc::output_name`); the object-typed
  *   inputs are identities, not names, so they are checked by the compile that resolves them (see
- *   RenderEngine::framePlan). A pass that names its own output is feedback, not a cycle, and is allowed -
+ *   RenderEngine::frameTable). A pass that names its own output is feedback, not a cycle, and is allowed -
  *   the same rule the compile applies.
  *
  * @param plan              The shape to check.

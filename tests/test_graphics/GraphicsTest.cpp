@@ -14,7 +14,7 @@
 #include <vine/graphics/CameraMirror.hpp>
 #include <vine/graphics/ChainPresets.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
-#include <vine/graphics/FramePlan.hpp>
+#include <vine/graphics/FrameTable.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/ImageRef.hpp>
 #include <vine/graphics/InputRouter.hpp>
@@ -4005,7 +4005,7 @@ TEST(RenderEngineTest, ClearPassesReleasesEveryRegisteredPass)
  * The plan is the answer to a question tests used to assemble by hand out of `passCount()` and pointer
  * comparisons - and, more importantly, the thing a human (or a bug report) reads to see a frame's shape.
  */
-TEST(RenderEngineTest, FramePlanDescribesThePassesInTheOrderTheyWillRun)
+TEST(RenderEngineTest, FrameTableDescribesThePassesInTheOrderTheyWillRun)
 {
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto content = intrusive_ptr<Scene>(new Scene());
@@ -4041,7 +4041,7 @@ TEST(RenderEngineTest, FramePlanDescribesThePassesInTheOrderTheyWillRun)
     vn::test::registerPassForTest(*engine, offscreen, content, -40);
     vn::test::registerPassForTest(*engine, hud, 60);
 
-    const FramePlan plan = engine->framePlan();
+    const FrameTable plan = engine->frameTable();
     ASSERT_EQ(plan.passes.size(), 3u);
 
     // Every fact the pass holds about itself, in the shape a reader wants it: what it draws into, through what,
@@ -4075,7 +4075,7 @@ TEST(RenderEngineTest, FramePlanDescribesThePassesInTheOrderTheyWillRun)
 
     // ... and the table a human reads says the same things, one line per pass.
     const std::string text = plan.describe().as_std_str();
-    EXPECT_NE(text.find("frame plan: 3 pass(es) (1 disabled)"), std::string::npos);
+    EXPECT_NE(text.find("frame table: 3 pass(es) (1 disabled)"), std::string::npos);
     EXPECT_NE(text.find("name='gbuffer'"), std::string::npos);
     EXPECT_NE(text.find("DISABLED"), std::string::npos);
     EXPECT_NE(text.find("clear=linear(0.216,0.216,0.216,1.000)"), std::string::npos)
@@ -4111,7 +4111,7 @@ TEST(RenderEngineTest, APassMapsItsDrawsIntoItsOwnDepthBand)
     vn::test::registerPassForTest(*engine, plain, content, -10);
     vn::test::registerPassForTest(*engine, overlay, content, 10);
 
-    const FramePlan plan = engine->framePlan();
+    const FrameTable plan = engine->frameTable();
     ASSERT_EQ(plan.passes.size(), 2u);
     EXPECT_FALSE(plan.passes[0].depth_range.has_value()) << "nobody stated one: the whole buffer, unchanged";
     ASSERT_TRUE(plan.passes[1].depth_range.has_value());
@@ -4128,10 +4128,10 @@ TEST(RenderEngineTest, APassMapsItsDrawsIntoItsOwnDepthBand)
 
     // Clearing it puts the pass back on the whole buffer.
     overlay->clearDepthRange();
-    EXPECT_FALSE(engine->framePlan().passes[1].depth_range.has_value());
+    EXPECT_FALSE(engine->frameTable().passes[1].depth_range.has_value());
 }
 
-TEST(RenderEngineTest, TheFramePlanIsWhatTheFrameActuallyRan)
+TEST(RenderEngineTest, TheFrameTableIsWhatTheFrameActuallyRan)
 {
     // The plan is not a second opinion about the frame: the passes it lists as running, in the order it lists
     // them, are exactly the passes the backend was opened scopes for. Without this the dump would be a plausible
@@ -4159,7 +4159,7 @@ TEST(RenderEngineTest, TheFramePlanIsWhatTheFrameActuallyRan)
     engine->frame();
 
     std::vector<const RenderPass*> planned;
-    for (const PassPlan& pass : engine->framePlan().passes) {
+    for (const PassRow& pass : engine->frameTable().passes) {
         if (pass.enabled) {
             planned.push_back(pass.pass);
         }
@@ -4171,7 +4171,7 @@ TEST(RenderEngineTest, TheFramePlanIsWhatTheFrameActuallyRan)
     EXPECT_EQ(backend->pass_entries[2], late.get());
 }
 
-TEST(RenderEngineTest, TheFramePlanCarriesWhatEachPassLastCost)
+TEST(RenderEngineTest, TheFrameTableCarriesWhatEachPassLastCost)
 {
     // A plan cannot know the future, so the one number that is about the past says so: how long the LAST frame's
     // work on that pass took. A pass that did not run last frame reports none.
@@ -4208,13 +4208,13 @@ TEST(RenderEngineTest, TheFramePlanCarriesWhatEachPassLastCost)
     vn::test::registerPassForTest(*engine, slow_desc);
     vn::test::registerPassForTest(*engine, skipped, 10);
 
-    const FramePlan before = engine->framePlan();
+    const FrameTable before = engine->frameTable();
     ASSERT_EQ(before.passes.size(), 2u);
     EXPECT_EQ(before.passes[0].record_micros, 0u);
 
     engine->frame();
 
-    const FramePlan after = engine->framePlan();
+    const FrameTable after = engine->frameTable();
     ASSERT_EQ(after.passes.size(), 2u);
     EXPECT_GE(after.passes[0].record_micros, 1000u) << "the slow pass really did take about 2 ms";
     EXPECT_EQ(after.passes[1].record_micros, 0u) << "a pass that did not run has no cost this frame";
@@ -4292,7 +4292,9 @@ TEST(RenderEngineTest, AnAttachToADeviceThatIsNotUpIsRefusedOnce)
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 1u);
     EXPECT_FALSE(engine->initialize()) << "the same condition is one report, not one per call";
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 1u);
-    EXPECT_EQ(engine->frame(), FrameOutcome::NotInitialized);
+    const FrameOutcome outcome = engine->frame();
+    EXPECT_EQ(outcome.status, FrameOutcome::Status::NotReady);
+    EXPECT_EQ(outcome.reason, EngineNotReady::NotInitialized);
     EXPECT_EQ(backend->frames_executed, 0) << "and nothing runs until the creator brings the device up";
 }
 
@@ -4301,19 +4303,25 @@ TEST(RenderEngineTest, FrameSaysWhetherItRan)
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
 
     // No device: nothing to hand a frame to, and that is a different answer from "ran and drew nothing".
-    EXPECT_EQ(engine->frame(), FrameOutcome::NoDevice);
+    const FrameOutcome no_device = engine->frame();
+    EXPECT_EQ(no_device.status, FrameOutcome::Status::NotReady);
+    EXPECT_EQ(no_device.reason, EngineNotReady::NoDevice);
 
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     engine->setDevice(backend);
-    EXPECT_EQ(engine->frame(), FrameOutcome::NotInitialized) << "a frame through an engine that never attached is a frame nobody drove";
+    const FrameOutcome not_attached = engine->frame();
+    EXPECT_EQ(not_attached.status, FrameOutcome::Status::NotReady) << "a frame through an engine that never attached is a frame nobody drove";
+    EXPECT_EQ(not_attached.reason, EngineNotReady::NotInitialized);
     EXPECT_EQ(backend->frames_executed, 0);
 
     ASSERT_TRUE(engine->initialize());
-    EXPECT_EQ(engine->frame(), FrameOutcome::Ran) << "no registered pass still means the frame ran";
+    EXPECT_TRUE(engine->frame().ran()) << "no registered pass still means the frame ran";
     EXPECT_EQ(backend->frames_executed, 1);
 
     engine->shutdown();
-    EXPECT_EQ(engine->frame(), FrameOutcome::NotInitialized);
+    const FrameOutcome detached = engine->frame();
+    EXPECT_EQ(detached.status, FrameOutcome::Status::NotReady);
+    EXPECT_EQ(detached.reason, EngineNotReady::NotInitialized);
     EXPECT_EQ(backend->frames_executed, 1) << "a detached engine drives nothing";
 }
 
@@ -4895,7 +4903,7 @@ TEST(SceneViewViewportTest, TheBuildOptionsDecideWhichOverlayPassesExist)
     // The frame's SHAPE, not a count of it: which passes exist is the question, and the plan answers it by name.
     const auto pass_names = [&engine] {
         std::vector<String> names;
-        for (const PassPlan& pass : engine->framePlan().passes) {
+        for (const PassRow& pass : engine->frameTable().passes) {
             names.push_back(pass.name);
         }
         return names;
@@ -6557,7 +6565,7 @@ TEST(PassChainTest, ForwardPathBuildsWindowPass)
     // One pass, and the plan says what it is: the window pass drawing the bound content through the chain's
     // camera to the backbuffer, clearing the window grey - the frame's shape in one line instead of three
     // assertions about a handle.
-    const FramePlan plan = engine->framePlan();
+    const FrameTable plan = engine->frameTable();
     ASSERT_EQ(plan.passes.size(), 1u);
     EXPECT_EQ(plan.passes[0].pass, pipeline->presentingPass());
     EXPECT_EQ(plan.passes[0].name, u8"main");
@@ -7028,7 +7036,7 @@ TEST(PassChainTest, DeferredPresetBuildsGbufferAndLightingPasses)
     // own program (or the engine's forward one) which writes ONE colour output: the geometry lands in albedo
     // and the normal / specular / position attachments keep their transparent-black clear, which is exactly
     // what made the demo's three G-buffer previews black (see SdkPixelTest's deferred case for the pixels).
-    const FramePlan plan = engine->framePlan();
+    const FrameTable plan = engine->frameTable();
     ASSERT_EQ(plan.passes.size(), 2U);
     const RenderPass* const geometry_pass = plan.passes.front().pass;
     ASSERT_NE(geometry_pass, nullptr);
@@ -7683,7 +7691,7 @@ TEST(PassChainTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
     auto pipeline = PassChain::build(engine.get(), opts);
     ASSERT_NE(pipeline, nullptr);
 
-    const FramePlan plan = engine->framePlan();
+    const FrameTable plan = engine->frameTable();
     ASSERT_EQ(plan.passes.size(), 4u);
     EXPECT_EQ(plan.passes[0].tag, vn::String(u8"GBuffer"));
     EXPECT_EQ(plan.passes[1].tag, vn::String(u8"Lighting"));
@@ -7696,7 +7704,7 @@ TEST(PassChainTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
     EXPECT_EQ(plan.passes[3].order, passStageOrder(PassStage::Present));
     // Every row is still a pass with a name, a camera and a place to draw: a declaration did not cost the plan
     // anything (see the deferred preset test above for what the passes themselves are).
-    for (const PassPlan& row : plan.passes) {
+    for (const PassRow& row : plan.passes) {
         EXPECT_FALSE(row.name.empty());
         EXPECT_EQ(row.camera, cam.get());
     }
@@ -7741,10 +7749,10 @@ TEST(PassChainTest, TheHudOverlaysAreDeclarationsToo)
     ASSERT_NE(gizmo_pass, nullptr);
     ASSERT_NE(readout_pass, nullptr);
 
-    const FramePlan plan        = engine->framePlan();
-    const PassPlan* gizmo_row   = nullptr;
-    const PassPlan* readout_row = nullptr;
-    for (const PassPlan& row : plan.passes) {
+    const FrameTable plan        = engine->frameTable();
+    const PassRow* gizmo_row   = nullptr;
+    const PassRow* readout_row = nullptr;
+    for (const PassRow& row : plan.passes) {
         if (row.name == vn::String(u8"axis_gizmo")) {
             gizmo_row = &row;
         }
@@ -10928,7 +10936,7 @@ TEST(ContentLayersTest, TheDeclarationCarriesTheMaskOntoThePassAndIntoThePlan)
     desc.layer_mask = 0x9u;
     vn::test::registerPassForTest(*engine, desc);
 
-    const FramePlan plan = engine->framePlan();
+    const FrameTable plan = engine->frameTable();
     ASSERT_EQ(plan.passes.size(), 1u);
     EXPECT_EQ(plan.passes[0].pass->layerMask(), 0x9u) << "the descriptor's mask is the pass' mask";
     EXPECT_EQ(plan.passes[0].layer_mask, 0x9u) << "and the frame's row states it";
@@ -10938,7 +10946,7 @@ TEST(ContentLayersTest, TheDeclarationCarriesTheMaskOntoThePassAndIntoThePlan)
     EXPECT_NE(one_pass.find("layers=0x9"), std::string::npos) << one_pass;
     vn::test::clearPassesForTest(*engine);
     vn::test::registerPassForTest(*engine, RenderPassPtr(new RenderPass()), 0);
-    EXPECT_EQ(engine->framePlan().describe().as_std_str().find("layers="), std::string::npos) << "a pass drawing every layer says nothing about them";
+    EXPECT_EQ(engine->frameTable().describe().as_std_str().find("layers="), std::string::npos) << "a pass drawing every layer says nothing about them";
 }
 
 /**
@@ -10967,7 +10975,7 @@ TEST(ContentLayersTest, ARecipeStampsItsMaskOnEveryContentPassButNotOnTheOverlay
 
     std::size_t content_passes = 0;
     std::size_t overlay_passes = 0;
-    for (const PassPlan& pass : engine->framePlan().passes) {
+    for (const PassRow& pass : engine->frameTable().passes) {
         if (pass.pass == pipeline->gizmoPass()) {
             EXPECT_EQ(pass.layer_mask, kAllLayers) << "an overlay is UI: the content selection must not hide it";
             ++overlay_passes;
@@ -11019,8 +11027,8 @@ TEST(ContentLayersTest, APassThatSelectsNoLayerDrawsNothingAndSaysSoOnce)
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 1u) << "one condition, one report";
 
-    ASSERT_EQ(engine->framePlan().passes.size(), 1u);
-    EXPECT_EQ(engine->framePlan().passes[0].layer_mask, 0u) << "the plan still states the declaration";
+    ASSERT_EQ(engine->frameTable().passes.size(), 1u);
+    EXPECT_EQ(engine->frameTable().passes[0].layer_mask, 0u) << "the plan still states the declaration";
 }
 
 // ============ Draw order (where a subtree's draws sit inside one pass) ============
@@ -11313,29 +11321,29 @@ TEST(RenderEngineTest, AFrameLandedInsideAnEditBatchDrawsTheStateTheBatchStarted
     // THE HOST PUBLISHES BEFORE EACH FRAME (see Scene::publish), exactly as SceneView::publishContent does; inside the
     // batch the answer is `InsideBatch` and the picture the batch started from stays the one a frame takes.
     ASSERT_EQ(scene->publish().status, ScenePublishStatus::Posted);
-    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    ASSERT_TRUE(engine->frame().ran());
     EXPECT_NEAR(joint_x(), 0.0, 1e-9);
 
     scene->beginEdit();
     joint->setMatrix(vn::math::translate(0.4, 0.0, -3.0)); // half a configuration
     EXPECT_EQ(scene->publish().status, ScenePublishStatus::InsideBatch);
-    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    ASSERT_TRUE(engine->frame().ran());
     EXPECT_NEAR(joint_x(), 0.0, 1e-9) << "a frame inside the batch draws the state the batch started from";
 
     joint->setMatrix(vn::math::translate(0.8, 0.0, -3.0)); // the other half
     EXPECT_EQ(scene->publish().status, ScenePublishStatus::InsideBatch);
-    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    ASSERT_TRUE(engine->frame().ran());
     EXPECT_NEAR(joint_x(), 0.0, 1e-9) << "still: nothing of the batch has been published";
 
     scene->endEdit();
     ASSERT_EQ(scene->publish().status, ScenePublishStatus::Posted);
-    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    ASSERT_TRUE(engine->frame().ran());
     EXPECT_NEAR(joint_x(), 0.8, 1e-9) << "the whole batch lands in ONE frame";
 
     // AND EVERYTHING IS ORDINARY AGAIN: one edit, one publish, one frame, visible at once.
     joint->setMatrix(vn::math::translate(0.2, 0.0, -3.0));
     (void)scene->publish();
-    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    ASSERT_TRUE(engine->frame().ran());
     EXPECT_NEAR(joint_x(), 0.2, 1e-9);
 }
 
@@ -11361,7 +11369,7 @@ TEST(RenderEngineTest, TheAnsweredFramesCameraIsWhatAPointerQueryShouldAimWith)
     const Camera& picture_camera = *view->camera();
 
     EXPECT_FALSE(engine->presentedCamera().has_value()) << "no frame has been answered yet";
-    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    ASSERT_TRUE(engine->frame().ran());
     const auto answered = engine->presentedCamera();
     ASSERT_TRUE(answered.has_value()) << "something presents this area, so the frame has a picture";
     EXPECT_NEAR(answered->eye.x, picture_camera.eye().x, 1e-9);
@@ -11376,7 +11384,7 @@ TEST(RenderEngineTest, TheAnsweredFramesCameraIsWhatAPointerQueryShouldAimWith)
 
     // A camera that moved between frames is the NEXT frame's picture, not this one's: the value follows the answer.
     view->camera()->lookAt(Vec3d(9, 9, 9), Vec3d(0, 0, 0), Vec3d(0, 1, 0));
-    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    ASSERT_TRUE(engine->frame().ran());
     const auto moved = engine->presentedCamera();
     ASSERT_TRUE(moved.has_value());
     EXPECT_NEAR(moved->eye.x, 9.0, 1e-6);
@@ -11518,14 +11526,14 @@ TEST(RenderEngineTest, TheFramesPictureOutcomeIsAFactOfTheFrame)
     vn::test::registerPassForTest(*engine, pass, scene, 0);
 
     EXPECT_EQ(engine->presentRecord().frame, 0U) << "no frame has been answered yet";
-    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    ASSERT_TRUE(engine->frame().ran());
     EXPECT_EQ(engine->presentRecord().frame, engine->frameNumber()) << "the answer belongs to the frame that produced it";
     EXPECT_EQ(engine->presentRecord().outcome, PresentOutcome::Presented);
 
     // The surface could not take the next frame (the window went away under it): the frame is over and the picture is
     // lost - which is the one outcome a host has to act on.
     backend->surface_half.present_outcome = PresentOutcome::Lost;
-    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    ASSERT_TRUE(engine->frame().ran());
     EXPECT_EQ(engine->presentRecord().outcome, PresentOutcome::Lost);
     EXPECT_EQ(engine->presentRecord().frame, engine->frameNumber());
 
@@ -11539,7 +11547,7 @@ TEST(RenderEngineTest, TheFramesPictureOutcomeIsAFactOfTheFrame)
     auto offline_pass = intrusive_ptr<RenderPass>(new RenderPass());
     offline_pass->setCamera(camera);
     vn::test::registerPassForTest(*offline_engine, offline_pass, scene, 0);
-    ASSERT_EQ(offline_engine->frame(), FrameOutcome::Ran);
+    ASSERT_TRUE(offline_engine->frame().ran());
     EXPECT_EQ(offline_engine->presentRecord().outcome, PresentOutcome::Skipped)
         << "a device that presents nothing is a first-class state, not a lost frame";
 }
@@ -11565,7 +11573,7 @@ TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLan
     (void)scene->publish(); // the host's verb (see Scene::publish)
 
     // The reference: the inline path, which is what every other case in this file measures.
-    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    ASSERT_TRUE(engine->frame().ran());
     const std::uint64_t inline_frame = engine->frameNumber();
     ASSERT_EQ(inline_frame, 1U) << "a frame's id is its place in this engine's sequence";
     EXPECT_TRUE(engine->waitForFrame(inline_frame)) << "inline, every built frame is already answered";
@@ -11576,7 +11584,7 @@ TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLan
     // Now the same frame with a thread behind it.
     engine->setFrameThreading(FrameThreading::EngineThread);
     EXPECT_EQ(engine->frameThreading(), FrameThreading::EngineThread);
-    EXPECT_EQ(engine->frame(), FrameOutcome::Submitted) << "the caller does not wait for the device";
+    EXPECT_TRUE(engine->frame().submitted()) << "the caller does not wait for the device";
     const std::uint64_t threaded_frame = engine->frameNumber();
     ASSERT_EQ(threaded_frame, 2U);
     EXPECT_TRUE(engine->waitForFrame(threaded_frame)) << "waitForFrame is how a host asks for it";
@@ -11607,7 +11615,7 @@ TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLan
         root->addChild(makeTriangleNode(Vec3d(0.5, 0.0, -3.0 - 0.1 * step), nullptr, u8"step"));
         ++added;
         (void)scene->publish(); // the content half publishes while the engine half answers the previous frame
-        EXPECT_EQ(engine->frame(), FrameOutcome::Submitted);
+        EXPECT_TRUE(engine->frame().submitted());
         EXPECT_TRUE(engine->waitForFrame()) << "frame " << engine->frameNumber();
         const auto& commands = engine->frameDescription().passes.at(0).draw->draws.at(0).commands;
         ASSERT_NE(commands, nullptr);
@@ -11616,7 +11624,7 @@ TEST(RenderEngineTest, AFrameThreadedEngineAnswersTheSamePictureAndSaysWhenItLan
 
     // Back to inline: the next frame is answered before frame() returns, and the thread is joined.
     engine->setFrameThreading(FrameThreading::Inline);
-    EXPECT_EQ(engine->frame(), FrameOutcome::Ran);
+    EXPECT_TRUE(engine->frame().ran());
     EXPECT_TRUE(engine->waitForFrame());
     EXPECT_EQ(backend->frames_executed, 11) << "every frame reached the device exactly once, whichever thread drove it";
 }
@@ -11698,7 +11706,7 @@ TEST(RenderEngineTest, ASessionsShapeIsEditedBetweenFramesNotDuringOne)
 
     engine->setFrameThreading(FrameThreading::EngineThread);
     backend->arm();
-    ASSERT_EQ(engine->frame(), FrameOutcome::Submitted);
+    ASSERT_TRUE(engine->frame().submitted());
     backend->waitEntered(); // the engine thread is now INSIDE the frame
 
     const std::size_t diagnostics_before = engine->diagnosticCount();
@@ -11759,13 +11767,13 @@ TEST(RenderEngineTest, AMaterialEditLandsOnTheNextFrameEvenWhileTheEngineThreadR
         return values != nullptr ? values->values().base_color.r : -1.0F;
     };
 
-    ASSERT_EQ(engine->frame(), FrameOutcome::Ran);
+    ASSERT_TRUE(engine->frame().ran());
     ASSERT_TRUE(engine->waitForFrame());
     ASSERT_FLOAT_EQ(red_of(), 1.0F) << "the frame draws the values the material holds";
 
     engine->setFrameThreading(FrameThreading::EngineThread);
     backend->arm();
-    ASSERT_EQ(engine->frame(), FrameOutcome::Submitted);
+    ASSERT_TRUE(engine->frame().submitted());
     backend->waitEntered(); // the engine thread is now recording a frame
 
     material->setBaseColor(Colorf(0.0F, 1.0F, 0.0F, 1.0F)); // edited on the content thread, mid-frame
@@ -11776,7 +11784,7 @@ TEST(RenderEngineTest, AMaterialEditLandsOnTheNextFrameEvenWhileTheEngineThreadR
     ASSERT_TRUE(engine->waitForFrame());
     EXPECT_FLOAT_EQ(red_of(), 1.0F) << "the frame that was in flight keeps the values it was published with";
 
-    ASSERT_EQ(engine->frame(), FrameOutcome::Submitted);
+    ASSERT_TRUE(engine->frame().submitted());
     ASSERT_TRUE(engine->waitForFrame());
     EXPECT_FLOAT_EQ(red_of(), 0.0F) << "and the next frame draws the edit: nothing is lost across the thread";
 
@@ -12538,7 +12546,7 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     engine->frame();
     EXPECT_EQ(enabled_calls, 1) << "the hook the declaration carried runs before the pass does";
 
-    const FramePlan plan = engine->framePlan();
+    const FrameTable plan = engine->frameTable();
     ASSERT_EQ(plan.passes.size(), 1u);
     EXPECT_EQ(plan.passes[0].name, vn::String(u8"declared_pass"));
     EXPECT_EQ(plan.passes[0].tag, vn::String(u8"Lighting")) << "the tag is what the plan carries for a human";
@@ -12559,7 +12567,7 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     engine->frame();
     EXPECT_EQ(disabled_calls, 0) << "a pass that does not run does not update its content either";
     EXPECT_EQ(enabled_calls, 2) << "while the one that runs keeps updating its own";
-    const FramePlan with_disabled = engine->framePlan();
+    const FrameTable with_disabled = engine->frameTable();
     ASSERT_EQ(with_disabled.passes.size(), 2u);
     EXPECT_FALSE(with_disabled.passes[1].enabled);
 }
@@ -12610,7 +12618,7 @@ TEST(RenderEngineTest, AScreenPassCanBeDeclaredAsAValueToo)
     EXPECT_EQ(backend->last_program_source, source.get()) << "with the target the compile resolved for it";
     EXPECT_TRUE(backend->last_program_camera.view.isEqual(camera->viewMatrix(), 1e-12));
 
-    const FramePlan plan = engine->framePlan();
+    const FrameTable plan = engine->frameTable();
     ASSERT_EQ(plan.passes.size(), 2u);
     EXPECT_EQ(plan.passes[1].name, vn::String(u8"compose"));
     EXPECT_EQ(plan.passes[1].inputs.size(), 1u);
@@ -12707,7 +12715,7 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
         << "before the first compiled frame there is no transient: it is the compile's product, not the build's";
     engine->frame();
     ASSERT_EQ(engine->transientTargetCount(), 1u) << "one declaration, one target";
-    const RenderTarget* const first = engine->framePlan().passes[0].target;
+    const RenderTarget* const first = engine->frameTable().passes[0].target;
     ASSERT_NE(first, nullptr) << "the declare-then-draw hand-off gives the pass the target it asked for";
     EXPECT_EQ(engine->transientTarget(u8"gbuffer"), first) << "the owner reaches the instance through the identity it declared";
     EXPECT_EQ(engine->transientTarget(u8"nothing_declares_this"), nullptr) << "an identity nobody declared is not a target, it is nothing";
@@ -12718,16 +12726,16 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
     for (int frame = 0; frame < 4; ++frame) {
         engine->frame();
         ASSERT_EQ(engine->transientTargetCount(), 1u);
-        EXPECT_EQ(engine->framePlan().passes[0].target, first) << "a steady frame stream reallocates nothing";
+        EXPECT_EQ(engine->frameTable().passes[0].target, first) << "a steady frame stream reallocates nothing";
     }
 
     // A second pass declaring the SAME image and shape shares the target: one image, one attachment.
     declare(u8"gbuffer_second", 0, 0, true);
     engine->frame();
     EXPECT_EQ(engine->transientTargetCount(), 1u);
-    ASSERT_EQ(engine->framePlan().passes.size(), 2u);
-    EXPECT_EQ(engine->framePlan().passes[1].target, first) << "the same declaration is the same target";
-    vn::test::removePassForTest(*engine, const_cast<RenderPass*>(engine->framePlan().passes[1].pass));
+    ASSERT_EQ(engine->frameTable().passes.size(), 2u);
+    EXPECT_EQ(engine->frameTable().passes[1].target, first) << "the same declaration is the same target";
+    vn::test::removePassForTest(*engine, const_cast<RenderPass*>(engine->frameTable().passes[1].pass));
     engine->frame();
     EXPECT_EQ(engine->transientTargetCount(), 1u) << "the first declaration still needs it";
 
@@ -12740,7 +12748,7 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
     declare(u8"gbuffer_pass", 640, 360, false);
     engine->frame();
     ASSERT_EQ(engine->transientTargetCount(), 1u);
-    const RenderTarget* const second = engine->framePlan().passes[0].target;
+    const RenderTarget* const second = engine->frameTable().passes[0].target;
     EXPECT_NE(second, nullptr);
     EXPECT_EQ(second->width(), 640) << "the declared extent is the built extent";
     EXPECT_EQ(second->height(), 360);
