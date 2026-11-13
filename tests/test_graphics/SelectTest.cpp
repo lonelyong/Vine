@@ -39,7 +39,9 @@ using vn::graphics::RenderCommand;
 using vn::graphics::Scene;
 using vn::graphics::Viewport;
 using vn::graphics::detail::diffDrawLists;
+using vn::graphics::detail::Frustum;
 using vn::graphics::detail::makeSortKey;
+using vn::graphics::detail::Row;
 using vn::graphics::detail::SceneRows;
 using vn::graphics::detail::selectSnapshot;
 using vn::graphics::detail::SortKey;
@@ -286,4 +288,75 @@ TEST(SelectTest, SameInputSameList)
     }
     EXPECT_EQ(mismatches.load(), 0) << "thread " << first_bad_thread.load()
                                     << " answered a different list than the serial select";
+}
+
+/*
+ * @brief T24: culling is decided PER ROW, never per block - one chunk may hold segments under different parents.
+ *
+ * `SceneSnapshot` shares its rows in fixed-size chunks (`kRowsPerChunk`), and a chunk is a SHARING unit, not a culling
+ * unit: two rows that happen to sit in one have nothing in common but their position in the walk. The fixture puts
+ * the OUT-OF-VIEW segment FIRST in walk order on purpose - a block-level skip whose bound came from the block's first
+ * row (the `chain[0]` shortcut the hot-path research rejected) would answer an empty list here while the camera looks
+ * straight at the second segment. The last half turns the camera around and expects the other segment, so "culling
+ * switched off" does not pass either.
+ */
+TEST(SelectTest, OneChunkCullsEachRowOnItsOwnBox)
+{
+    Scene scene;
+    auto  root = intrusive_ptr<vn::graphics::Group>(new vn::graphics::Group());
+    scene.setRoot(root);
+
+    const GeometryPtr outside_geometry = triangleGeometry();
+    auto              outside_parent   = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    outside_parent->setMatrix(vn::math::translate(Vec3d(1000.0, 0.0, -3.0)));
+    outside_parent->addChild(outside_geometry);
+    root->addChild(outside_parent); // first in walk order: the block's first segment is the one OUT of view
+
+    const GeometryPtr inside_geometry = triangleGeometry();
+    auto              inside_parent   = intrusive_ptr<MatrixTransform>(new MatrixTransform());
+    inside_parent->setMatrix(vn::math::translate(Vec3d(0.0, 0.0, -3.0)));
+    inside_parent->addChild(inside_geometry);
+    root->addChild(inside_parent);
+
+    const vn::graphics::detail::SceneSnapshotPtr snapshot = SceneRows::snapshot(scene);
+    ASSERT_LT(snapshot->row_count, vn::graphics::detail::SceneSnapshot::kRowsPerChunk) << "the fixture is ONE block";
+
+    std::size_t outside_index = snapshot->row_count;
+    std::size_t inside_index  = snapshot->row_count;
+    for (std::size_t index = 0; index < snapshot->row_count; ++index) {
+        const Row& row = snapshot->row(index);
+        if (row.identity == outside_geometry->id()) {
+            outside_index = index;
+        }
+        else if (row.identity == inside_geometry->id()) {
+            inside_index = index;
+        }
+    }
+    ASSERT_LT(outside_index, snapshot->row_count) << "the out-of-view segment is a row";
+    ASSERT_LT(inside_index, snapshot->row_count) << "the in-view segment is a row";
+    EXPECT_EQ(outside_index / vn::graphics::detail::SceneSnapshot::kRowsPerChunk,
+              inside_index / vn::graphics::detail::SceneSnapshot::kRowsPerChunk)
+        << "one chunk, two segments - the two rows this test is about share their block";
+
+    const Row& outside_row = snapshot->row(outside_index);
+    const Row& inside_row  = snapshot->row(inside_index);
+    EXPECT_NE(outside_row.parent_world.element(0, 3), inside_row.parent_world.element(0, 3))
+        << "the segments sit under different parent transforms (x = 1000 vs x = 0)";
+
+    const CollectView looking_at_inside = viewFrom(Vec3d(0.0, 0.0, 10.0), Vec3d(0.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 });
+    const Frustum     frustum           = Frustum::fromViewProjection(looking_at_inside.viewProjection());
+    EXPECT_TRUE(frustum.isOutside(outside_row.world_box)) << "the block's FIRST row is the one out of view";
+    EXPECT_FALSE(frustum.isOutside(inside_row.world_box)) << "the second row is in view - it must not be culled";
+
+    bool                       viewport_used = false;
+    std::vector<RenderCommand> visible;
+    selectSnapshot(*snapshot, looking_at_inside, vn::graphics::kAllLayers, visible, viewport_used);
+    ASSERT_EQ(visible.size(), 1U) << "one segment per parent and one of them in view: a whole-block skip answers none";
+    EXPECT_EQ(visible.front().node, inside_geometry->id());
+
+    const CollectView          looking_at_outside = viewFrom(Vec3d(1000.0, 0.0, 10.0), Vec3d(1000.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 });
+    std::vector<RenderCommand> other;
+    selectSnapshot(*snapshot, looking_at_outside, vn::graphics::kAllLayers, other, viewport_used);
+    ASSERT_EQ(other.size(), 1U) << "the other camera answers the other segment - culling is still ON";
+    EXPECT_EQ(other.front().node, outside_geometry->id());
 }

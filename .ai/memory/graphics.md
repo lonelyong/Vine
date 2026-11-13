@@ -716,3 +716,13 @@
   “存活块都是下限的倍数 + 一次性大块被还掉”（`makeBigTriangle` 17 MiB）。`UploadScratchTest` 的 floor 不再固定为
   16 MiB：每个用过的 frame slot 各留一块（至多 3 块）。
 - **共享夹具**：`tests/test_vsg/TestTriangleContent.hpp`（TriangleFixture / makeTriangle / makeBigTriangle / makeCamera）。
+
+## 2026-11-13 —— T24：剔除按行，不按块
+
+- **测试**：`SelectTest.OneChunkCullsEachRowOnItsOwnBox` —— 一个快照块（`row_count < kRowsPerChunk`）里两个
+  兄弟段各带自己的父变换（x = 1000 / x = 0），walk 顺序把**视外**的放前面；相机看向第二段时 select 恰答它
+  （按首行盒做块级跳过会答空），换相机后恰答另一段（剔除没有被关掉）。断言：`row.identity` 找人、
+  `parent_world.element(0,3)` 证明父变换不同、`Frustum::isOutside(row.world_box)` 证明两盒一内一外。
+- **口径**：chunk 是共享单位，不是剔除单位；将来若做“块级早期剔除”，块盒必须取块内所有行的并（保守），
+  不得用 `chain[0]`。
+- **文档**：`graphics-frame-pipeline.md` §3.3 F2 验收加 `T24`；§8 的 T24 判据改为“剔除按行、不按块”、已实现。

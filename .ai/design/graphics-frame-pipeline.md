@@ -180,7 +180,7 @@
 - **行为**：`select(snapshot, view) → DrawList`，视图无关的折叠一帧一次，逐视图只付裁剪与排序。
 - **约束**（`C8`）：跨层的值类型不带虚函数/继承。
 - **要求**（`R14` / `R15` / `R16`）：同输入逐项相同；折叠计数 = 1；视图相关行逐视图重算。
-- **验收**（`T8` / `T9`）：`SelectTest.SameInputSameList`（同快照重复、换视图穿插、场景清空后、8 线程并发逐项等于串行）、`SelectTest.TheSortKeyIsATotalOrder`。
+- **验收**（`T8` / `T9` / `T24`）：`SelectTest.SameInputSameList`（同快照重复、换视图穿插、场景清空后、8 线程并发逐项等于串行）、`SelectTest.TheSortKeyIsATotalOrder`、`SelectTest.OneChunkCullsEachRowOnItsOwnBox`（块是共享单位，不是剔除单位）。
 - **注意**（`P5`）：纯函数不等于免费——并行只在纯值上做（`I6`），设备侧仍是一条线程。
 
 ### 3.4 F3 内容身份
@@ -542,7 +542,7 @@
 | T21 | 共享原型发布 | 两 Scene 共享原型 | 未做 |
 | T22 | 原型寿命 | 原型析构后仍有实例 | 未做 |
 | T23 | 实例化成本（A/B 对照） | 5000 行原型 × 10 实例；报 `snapshot_rows` / `draw_rows` / `placement_multiplications` / publish / select / 常驻；口径见 `../research/graphics-2026-11-12-instances.md` | 未做（research） |
-| T24 | 块级剔除正确 | 一块两段不同父变换 | 未做 |
+| T24 | 剔除按行、不按块 | 一块（同 chunk）两段不同父变换、首段视外：`SelectTest.OneChunkCullsEachRowOnItsOwnBox`（两盒一内一外；相机换边后互换，剔除仍开） | 已实现（2026-11-13） |
 | T25 | 回收后旧快照 | Session 外持旧快照再提交 | 未做 |
 | T26 | pose 子树传播 | 父关节 pose | 未做 |
 | T27 | pose 拾取 | pose 后拾取子节点 | 未做 |
