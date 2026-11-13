@@ -203,7 +203,112 @@
 - 它的价值是**接缝的证据**：第二个实现能回答"`FrameDescription` 是不是够用、`backend/` 的规则是不是可复用"，
   这本身就是 T30 想要的东西——只是以"第二个实现"而不是"统一类型"的形式出现。
 
-## 9. 参考
+## 9. 追加（2026-11-13）：vkraw 的通用化边界（设计论证）
+
+**范围决定**：只做 Vulkan（`vkraw`），但**新写的东西、以及好改的东西先按通用形状落**；shader 不做实现层通用化，
+只在概念上预留。本节是这条原则的论证与可执行清单，不是实现计划（里程碑见 §8.3）。
+
+### 9.1 原则：通用化发生在「值 / 规则 / 映射表」，不发生在「API 对象」
+
+上面三层契约的结论是：**值与规则已经通用，API 调用各写各的**。所以"考虑拓展性"在这里不是"多加一层抽象"
+（`G7`），而是三件更便宜的事：
+
+1. **只消费既有中性输入**，不另造同义类型（`G1` / `G6`）；
+2. **把"中性输入 → API 输出"的翻译收敛到一张表**，让第二个 API 家族只换表、不换输入（`G5`）；
+3. **明确写下不通用化的东西**，让下一个人知道那里是选择而不是遗漏（`G12`）。
+
+判据（用来回答"这个新东西要不要现在通用化"，三条按顺序问）：
+
+| # | 判据 | 结论 |
+|---|---|---|
+| J1 | 它是**输入**（被消费的值）还是**输出**（API 对象/调用）？ | 输入可以通用化；输出留在插件 |
+| J2 | 它**今天就有第二个消费者**吗（vsg 与 vkraw 都读）？ | 有 ⇒ 共享；没有 ⇒ 插件私有（`G8`） |
+| J3 | 通用化它要不要动**公开面**（SDK 头/公开枚举）？ | 要 ⇒ 推迟到触发；不要 ⇒ 现在做 |
+
+### 9.2 现在就通用化（写出即通用，成本≈0）
+
+这些不是"新抽象"，是**在 vkraw 里直接使用已有类型**——通用化的成本就是"别另写一份"。
+
+| 项 | 消费的既有类型 | 为什么便宜 |
+|---|---|---|
+| 后端身份 | `RenderBackendInfo` + `RenderApi::Vulkan` | 已有 factory/registry，零改动 |
+| 能力 | `Capabilities`（features 位 + 极限值） | 已是值，`supports()` 已定义语义 |
+| 目标决策 | `planTarget(TargetInstance, TargetDesc)` | 已是纯函数、已测；vkraw 不自己判"尺寸变了" |
+| 管线身份 | `PipelineKey` / `PipelineKeyHash` / `VariantPool` | `Keys.hpp` 的 audit 表（什么可以进键）自动适用于第二后端 |
+| 寿命 | `ResourceTable` / `RetirementQueue` / `FrameTimeline` | pin 规则与 API 无关 |
+| 驻留账 | `ResidencyLedger`（`bytes` 可 absent，`live` 必答） | absent ≠ 0 的规则已经定好 |
+| 读回 | `ReadbackResult`（机器可读原因） | 不要发明 bool + printf |
+| 诊断 | `DiagnosticsRoute` / `DiagnosticSink` | validation 消息走同一条路 |
+| 帧 | `FrameDescription` + `executeFrame` / `prepareFrame` | 一条线两个动词 |
+
+**纪律**：这些类型一个都不许在 vkraw 里出现"影子版本"（`VkrawPipelineKey`、`VkrawResidency`…）。影子版本是重复，
+不是拓展性（`G1`）。
+
+### 9.3 唯一值得新做的通用物：一张映射表
+
+`BarrierPlan`（新，落在 vkraw 插件的 `src/internal/`）：
+
+- **输入**（全部中性、全部已存在）：`ImageLayout`（当作"这一 pass 要什么用途"，不是 Vulkan 布局）、
+  `LoadOp` / `StoreOp`、以及一个极小的 `AccessKind{Sampled, ColorWrite, DepthWrite, TransferRead, Present}`；
+- **输出**：`VkImageLayout` + src/dst stage/access（synch2 或 legacy 由实现选）+ `VkImageMemoryBarrier` 参数；
+- **为什么它是通用点**：这是全后端唯一"中性输入 → API 输出"的**收敛处**。DX12 写
+  `D3D12_RESOURCE_STATES` + enhanced barriers，Metal 写 stage/access 与 barrier scope——**输入不变，只换这张表**。
+- **成本**：150–250 行 + 一张无设备的表驱动测试（每个 `(ImageLayout, prev, next)` 组合断言输出），
+  不需要 GPU。
+- **反例（不要做）**：一个"通用 barrier 类型"。它会把 Vulkan 的 stage/access 三元组变成 SDK 词汇，
+  而 DX12/Metal 的表达不是一个三元组（`G8` / `G10`）。
+
+### 9.4 只留概念、不写代码：shader
+
+按决定，shader **不做实现层通用化**。概念预留的边界只有两件事，别多：
+
+1. **源码语言**：`ShaderProgramDescription` 今天只装文本，没有"这是什么语言"的字段。未来形状是
+   `ShaderSourceLanguage{Glsl, Hlsl, Msl}` + 每后端一个编译入口；**现在不加字段**——一个只有 `Glsl` 一个值的枚举是
+   纯投机（`G8`）。
+2. **绑定解码**：`ShaderAbi` 已经是 `(set, binding)` 的规范形，Vulkan 直接映射、DX12 映射到 root signature、
+   Metal 映射到 argument buffer。**这部分已经通用**，不需要预留。
+
+一个容易走偏的判断：**块布局不是缺口**。`ShaderAbi.hpp:107` 已写明"每个成员是 mat4/vec4、16 字节对齐，
+所以 std140、D3D cbuffer packing 和 root constants 都成立"。真正缺的是**源码语言**，不是内存布局。
+
+零成本推迟之所以成立：`ShaderProgramDescription` 是 SDK 的**值**，加一个字段便宜且不碰 GPU 布局；而工具链
+（DXC 出 DXIL、SPIRV-Cross 出 MSL）是**新第三方依赖**，本来就该走 ADR，不能顺手决定。
+
+vkraw 的 pipeline builder 因此只接受 GLSL，并在源码不是 GLSL 时报告一条明确诊断（而不是编译失败后报一串 SPIR-V 错误）。
+
+### 9.5 明确不做（附触发）
+
+| 不做 | 理由 | 触发 |
+|---|---|---|
+| 内存/分配器抽象（VMA 式接口） | DX12 heap、Metal MTLHeap、Vulkan memory type 的差别大于共性；接口会变成并集（`G7`） | 第二个 API 家族的分配器真的出现，且两份实现有相同的分配策略 |
+| 命令记录抽象（第二套 recorder） | `FrameDescription` / `FrameRecorder` / `FrameCompiler` 已经是**值级**接缝；再抽象一层是二层抽象（`G7`） | 不预期 |
+| descriptor 模型抽象 | root signature / descriptor set / argument buffer 三者形状不同 | T15 触发 |
+| 资源类型基类 / 多态总表 | T30 §3 的结论不变 | T30 触发 |
+| 交换链抽象 | `WindowPresentTarget` 已是中性契约 | 不需要 |
+| 通用 barrier 类型 | 见 9.3 反例 | 不需要 |
+
+### 9.6 怎么知道没跑偏（可执行的纪律）
+
+| # | 门 | 判据 |
+|---|---|---|
+| D1 | vkraw 不改 `backend/` 的公开面 | `git diff --stat src/viz/graphics/sdk/vine/graphics/backend/` 为空（新增中性**输入**需单独说明，见 9.7） |
+| D2 | `Vk*` 不出现在 vkraw 的**公开**头 | 只允许 `src/internal/`；`include/vine/vkraw/` 里出现即错 |
+| D3 | 驻留账完整 | `ResidencyLedger` 每类有行或显式 absent（`live` 必答） |
+| D4 | 同值同画 | 同一 `FrameDescription` 与 vsg 的记录/像素对拍（M7） |
+| D5 | 不重编 | resize 不重编管线、host 状态变更不重编管线（`Keys.hpp` audit 表照搬） |
+
+### 9.7 新加中性枚举时的判据
+
+若 vkraw 确实需要一个新的中性拼写（例如 9.3 的 `AccessKind`），先问：**它是输入还是输出？**
+
+- **输入**（被两个后端消费的值，如用途/访问类型）⇒ 可以进 `backend/`，但必须在同一提交里说明"第二个消费者是谁"，
+  否则先放在 vkraw 的 `internal/`（`G8`）；
+- **输出**（Vulkan 布局、stage 位、格式码）⇒ 永远留在插件（C6）。
+
+这条判据替代了"看到 Vulkan 拼写就去抽象"的反射：`backend/` 里已有的 Vulkan 策略（`device_color_formats`、
+`subpass`、`initial/final layout`）在 vkraw 上是**可用**的，不需要先改（§8.1）。
+
+## 10. 参考
 
 - 设计：`../design/graphics-architecture.md` 2.1 / 2.2 / 2.4 / 2.9、`../design/graphics-threading.md` §2、
   `../design/vsg-backend.md` C1–C6、`../design/graphics-content-lifecycle.md`

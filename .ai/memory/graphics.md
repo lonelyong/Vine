@@ -778,6 +778,23 @@
   成 device / executor 两个出口）；S4/S5 另算。
 - **文档**：`../research/graphics-2026-11-13-gpu-resource-abstraction.md`（dated，非现行），backlog T30 已链接。
 
+## 2026-11-13 —— vkraw 的通用化边界（设计论证）
+
+- **决定**：只做 Vulkan；新写的与好改的按通用形状落地；shader 不做实现层通用化、只留概念。
+- **原则**：通用化在「值 / 规则 / 映射表」，不在「API 对象」。判据 J1（输入 vs 输出）、J2（今天有第二个消费者吗）、
+  J3（要不要动公开面）。
+- **现在就通用（成本≈0，靠“不另写一份”）**：`RenderBackendInfo`、`Capabilities`、`planTarget`、`PipelineKey`/
+  `VariantPool`、`ResourceTable`/`RetirementQueue`/`FrameTimeline`、`ResidencyLedger`、`ReadbackResult`、
+  `DiagnosticsRoute`、`FrameDescription`。禁止影子类型（`VkrawPipelineKey` 之类）。
+- **唯一新做的通用物**：`BarrierPlan` 映射表（`ImageLayout` 当作用途 + `LoadOp/StoreOp` + `AccessKind` → Vk
+  barrier），150–250 行 + 无设备表驱动测试；反例是“通用 barrier 类型”。
+- **shader 只留概念**：缺的是**源码语言**（不加字段，只写未来形状 `ShaderSourceLanguage` + 每后端编译入口），
+  不是块布局（`ShaderAbi.hpp:107` 已说明 std140 / cbuffer packing 都成立）；工具链（DXC / SPIRV-Cross）走 ADR。
+- **明确不做**：分配器抽象、第二套 recorder、descriptor 模型抽象、资源基类、swapchain 抽象、通用 barrier 类型。
+- **纪律门**：D1 `backend/` 公开面零 diff；D2 `Vk*` 只在 `src/internal/`；D3 驻留账完整；D4 同值同画；
+  D5 resize / 状态变更不重编管线。
+- **文档**：评估 §9（J1–J3、清单、D1–D5），backlog T35 已链接并把 `BarrierPlan` 排进 M1。
+
 ## 2026-11-13 —— 第二个后端定为手撸 Vulkan（`vkraw`，学习/研究）
 
 - **触发修正**：它是**同 API 家族**的第二后端 ⇒ T15（设备无关性）与 T30（统一类型）都**不触发**，只收窄触发条件为

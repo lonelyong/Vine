@@ -10,7 +10,7 @@
 
 | # | 项 | 内容 | 出处 |
 |---|---|---|---|
-| T35 | 手撸 Vulkan 学习后端（`vkraw`） | 目标：学习/研究，**不是默认后端**（宿主仍按名字创建 "vsg"）。形态、复用清单、里程碑 M0–M7 与成本见评估 §8：M0 插件 + factory + `initialize/shutdown`；M1 离屏清屏 + `readColorBuffer`；M2 一个 content draw（glslang → pipeline、通道 → 上传、`VineViewBlock`/`VineDrawBlock`）。 | `../research/graphics-2026-11-13-gpu-resource-abstraction.md` §8、`../design/graphics-architecture.md` 2.9 |
+| T35 | 手撸 Vulkan 学习后端（`vkraw`） | 目标：学习/研究，**不是默认后端**（宿主仍按名字创建 "vsg"）。形态、复用清单、里程碑 M0–M7 与成本见评估 §8；**通用化边界（J1–J3 判据 + 现在就通用的清单 + 只留概念项 + 明确不做项 + D1–D5 纪律门）见 §9**。M0 插件 + factory + `initialize/shutdown`；M1 离屏清屏 + `readColorBuffer`（含 §9.3 的 `BarrierPlan` 映射表 + 无设备表驱动测试）；M2 一个 content draw（glslang → pipeline、通道 → 上传、`VineViewBlock`/`VineDrawBlock`）。 | `../research/graphics-2026-11-13-gpu-resource-abstraction.md` §8、§9、`../design/graphics-architecture.md` 2.9 |
 
 下一项都在 §2，等各自的触发条件。`T8`（派生纯的并发用例）已于 2026-11-13 落地（`SelectTest.SameInputSameList`）。
 
