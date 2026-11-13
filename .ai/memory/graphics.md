@@ -739,3 +739,18 @@
   select 多 ~0.9 ms（查找 + 分配），1 万 drawable 成为日常时先看这一半。
 - **文档**：backlog T24 换掉“先补配方”；`graphics-threading.md` §1.1 的 1597 µs/帧（旧直接路径）改成帧路径的
   select / source 数字。
+
+## 2026-11-13 —— backlog T31：竞态复现 + TSan 证据
+
+- **用例**：`StreamUploadsTest.AnEditFromTheHostThreadRetiresTheSameUploadASerialOne` —— 一个线程循环跑
+  `StreamUploads::beginFrame`，主线程在 `Buffer::edit()` 作用域里改字节；普通构建断言“并发编辑与串行编辑同一答案”
+  （旧上传退役、下一次 acquire 重传）。
+- **TSan（clang-23，手工重链的 `test_vsg`）**：1 条 report —— write `Buffer<float>::bumpRevision()`
+  （`Buffer.hpp:363`，来自 `Edit::~Edit`，main）vs read `Buffer<float>::revision()`（`Buffer.hpp:181`，来自
+  `StreamUploads::beginFrame` 的 lambda，`StreamUploads.cpp:228`，T1）。
+- **链接坑**：`test_vsg` 不能直接 `-fsanitize=thread` 链接 —— `tests/test_vsg/AllocationCounter.cpp` 替换全局
+  new/delete，与 `libclang_rt.tsan_cxx` 的强定义冲突（multiple definition）。证据跑法：`ninja -t commands test_vsg`
+  取链接命令、去掉 `AllocationCounter.cpp.o` 后重链。正式覆盖记为 backlog T34。
+- **同类活读（修复要一起看）**：`ChannelFacts::streamKey()`（`ContentFacts.hpp:233`）、instance buffer
+  （`ContentPass.cpp:1123`）、textures（`ContentSets.cpp:268`、`MaterialImages.cpp:516`）。
+- **文档**：`graphics-threading.md` §2.4 加用例指针；backlog T31 记录证据与修法范围。

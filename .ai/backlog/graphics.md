@@ -10,7 +10,7 @@
 
 | # | 项 | 内容 | 出处 |
 |---|---|---|---|
-| T31 | 字节 revision 的跨线程轮询 —— **已知潜在竞态** | `StreamUploads::beginFrame` 在引擎线程执行 `key.revision == entry.owner->revision()`（`src/plugins/gfx_backend_vsg/src/internal/StreamUploads.cpp`），而 `Buffer::revision()` 读普通 `std::uint64_t`（`Buffer.hpp`）——宿主在内容线程 `Buffer::edit()` 与引擎帧并发就是数据竞争。今天没有宿主每帧改 buffer，所以未暴露。修法不是把字段改 atomic，而是让写入方在发布边界声明 `(buffer, revision)`。下一步：先写一个诊断用例（改 buffer + 跑帧，TSan 下跑） | `../design/graphics-threading.md` §2.4、R3-1 |
+| T31 | 字节 revision 的跨线程轮询 —— **已知竞态（已复现）** | 引擎线程在 `StreamUploads::beginFrame` 读 `entry.owner->revision()`（`StreamUploads.cpp:228`），内容线程 `Buffer::edit()` 的作用域结束写同一个 `std::uint64_t`（`Buffer.hpp:181` / `:363`）——两者无序，是数据竞争。**诊断用例（2026-11-13）**：`StreamUploadsTest.AnEditFromTheHostThreadRetiresTheSameUploadASerialOne`——普通构建绿（并钉住“并发编辑与串行编辑同一答案”），TSan 报一对读写：write `Buffer<float>::bumpRevision()` ← `Edit::~Edit`（main）vs read `Buffer<float>::revision()` ← `beginFrame` 的 lambda（T1），SUMMARY 在 `Buffer.hpp:363`。同类活读修复时要一起看：`ChannelFacts::streamKey()`（`ContentFacts.hpp:233`）、instance buffer（`ContentPass.cpp:1123`）、textures（`ContentSets.cpp:268`、`MaterialImages.cpp:516`）。修法是写入方在发布边界声明 `(buffer, revision)`，不是把字段改 atomic。**证据跑法**：`test_vsg` 不能直接 TSan 链接（见 T34），证据是去掉 `AllocationCounter.cpp.o` 重链的二进制跑出来的。今天没有宿主每帧改 buffer，所以未暴露 | `../design/graphics-threading.md` §2.4、R3-1 |
 
 下一项都在 §2，等各自的触发条件。`T8`（派生纯的并发用例）已于 2026-11-13 落地（`SelectTest.SameInputSameList`）。
 
@@ -46,6 +46,7 @@
 | T13 | Wayland 回退实测 | 只按 WSI 契约实现，未在真 Wayland 上跑过 | 手上有 Wayland 会话 |
 | T14 | H2 可选目视 | “边缩放边点菜单”需真实交互桌面 | 可选 |
 | T33 | 设备创建偶发（疑 WSL） | `VsgBackendTest.ACubeMapInputReachesAContentProgramAsACubeSampler` 首跑 `initialize()` false（约 10.7 s，日志里窗口尺寸报 `4294967295x4294967295`），重跑绿；同一提交下其余用例全部正常。判断：更像是 WSLg 下窗口/设备创建的偶发，不是回归（当时 `git stash` 前后行为一致，且与本次改动无交集）。**下次在 Windows 桌面机器上复跑同一用例**：绿 → WSL 环境问题，删本条；红 → 按设备创建失败查（`VsgHostWindow` 句柄与 `DeviceProbe` 的选择） | 有 Windows 桌面机器时（与 T12 同一轮） |
+| T34 | `test_vsg` 的 TSan 构建 | `tests/test_vsg/AllocationCounter.cpp` 替换全局 `operator new/delete`，与 `libclang_rt.tsan_cxx` 的强定义冲突（链接报 multiple definition）；`scripts/tsan_check.sh` 因此只跑 `test_graphics`。查 T31 时是手动从链接命令里去掉 `AllocationCounter.cpp.o` 重链才拿到报告的。要正式覆盖：给该文件加 sanitizer 守卫（不 announce `countsAvailable`），把依赖计数的用例在 `!countsAvailable()` 时跳过，再让脚本能跑 `test_vsg` 的无设备子集 | 下一次需要 sanitizer 覆盖 vsg 插件（T31 的修复落地时就是） | `scripts/tsan_check.sh`、`tests/test_vsg/AllocationCounter.cpp` |
 
 ### 2.4 对象模型遗留
 

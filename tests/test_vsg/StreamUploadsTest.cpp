@@ -16,7 +16,9 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdint>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -417,4 +419,63 @@ TEST(StreamUploadsTest, TheUploadedIndexArrayAliasesTheWholeModelBuffer)
     EXPECT_EQ(array->dataPointer(), static_cast<const void*>(arena->data()))
         << "the bind covers the whole buffer and the DRAW states the span, so the array starts where the buffer does";
     EXPECT_EQ(array->valueCount(), 48U) << "a span inside the arena may not shrink what the bind aliases";
+}
+
+/*
+ * @brief T31: an edit on the HOST thread is swept like a serial one - and is a data race today (see the note).
+ *
+ * The sweep reads `entry.owner->revision()` (a plain `std::uint64_t`) on the frame's thread, while the host's
+ * `Buffer::edit()` scope writes it on its own. The two accesses are unordered, and this case is the diagnostic
+ * backlog T31 asks for: under ThreadSanitizer it reports exactly that pair. In an ordinary build it pins the
+ * ANSWER the fix must preserve - the concurrent edit retires the old upload exactly like an edit made between
+ * frames, and the next acquire uploads the new bytes.
+ *
+ * How to see the report (no device is created here, so it runs anywhere):
+ *   cmake --build build-tsan --target test_vsg   # compiles; the LINK fails, see the note below
+ *   ninja -C build-tsan -t commands test_vsg | tail -n 1 | sed 's#AllocationCounter.cpp.o##g' | bash
+ *   TSAN_OPTIONS=halt_on_error=0 ./build-tsan/bin/test_vsg --gtest_filter='StreamUploadsTest.AnEditFromTheHostThread*'
+ * The plain link fails today because `tests/test_vsg/AllocationCounter.cpp` replaces the global allocation
+ * functions, which collide with libclang_rt.tsan_cxx's own definitions (backlog T34).
+ * The unguarded case is deliberate: a sanitizer report here is the KNOWN residual documented in
+ * `.ai/design/graphics-threading.md` 2.4, not a regression. Its fix is the declared `(buffer, revision)` value;
+ * when that lands, this case must stay green under the sanitizer too.
+ */
+TEST(StreamUploadsTest, AnEditFromTheHostThreadRetiresTheSameUploadASerialOne)
+{
+    StreamUploads store;
+    auto          arena = vn::intrusive_ptr<vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(36U, 0.0F)));
+    const StreamKey key  = vertexKey(arena.get(), arena->revision(), 0, 36);
+    (void)store.acquireVertex(key, arena->view(), arena);
+
+    Declarations declared;
+    declared.add(arena.get());
+
+    // The sweep owns the store (one thread, as on the engine side); the host owns the buffer. Nothing between the
+    // two is synchronized - which is the point.
+    std::atomic<bool> sweeping{ true };
+    std::thread       sweep([&] {
+        FrameTimeline   timeline;
+        RetirementQueue retirement(1U);
+        while (sweeping.load(std::memory_order_relaxed)) {
+            (void)store.beginFrame(declared.facts(), timeline, retirement);
+        }
+    });
+
+    {
+        auto scope = arena->edit();
+        scope[0]   = 1.0F;
+    }
+    sweeping.store(false, std::memory_order_relaxed);
+    sweep.join();
+
+    // The same answer a serialized edit gives (see ABufferRevisionThatMovedRetiresTheEntryTheContentStillDeclares):
+    // the old upload is not what these bytes are, and the next acquire builds the new one.
+    FrameTimeline   timeline;
+    RetirementQueue retirement(1U);
+    (void)store.beginFrame(declared.facts(), timeline, retirement);
+    EXPECT_EQ(store.live(), 0U) << "the edited bytes are not what the old upload holds";
+    EXPECT_EQ(store.retired(), 1U);
+
+    const auto again = store.acquireVertex(vertexKey(arena.get(), arena->revision(), 0, 36), arena->view(), arena);
+    EXPECT_EQ(again.action, StreamUploads::Action::Uploaded) << "the new bytes were never uploaded under this key";
 }
