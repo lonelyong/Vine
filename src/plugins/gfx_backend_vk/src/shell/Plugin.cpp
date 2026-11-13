@@ -1,13 +1,13 @@
-#include <vine/vk/shell/Plugin.hpp>
+#include <vine/backend_vk/shell/Plugin.hpp>
 
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/plugin_export.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/vk/shell/BackendFactory.hpp>
+#include <vine/backend_vk/shell/BackendFactory.hpp>
 
-VN_VK_NS_BEGIN
+VN_BACKEND_VK_NS_BEGIN
 
-VN_OBJECT_META_IMPL(vn::vk::Plugin, vn::appfw::Plugin)
+VN_OBJECT_META_IMPL(vn::backend_vk::Plugin, vn::appfw::Plugin)
 
 Plugin::Plugin()  = default;
 Plugin::~Plugin() = default;
@@ -26,9 +26,9 @@ void Plugin::unload(vn::appfw::PluginLoadContext* context)
     // The registry keeps the factory for the process and the module stays mapped: nothing to tear down.
 }
 
-VN_VK_NS_END
+VN_BACKEND_VK_NS_END
 
-VN_DECLARE_PLUGIN(vn::vk::Plugin,
+VN_DECLARE_PLUGIN(vn::backend_vk::Plugin,
                   u8"7f2b6c1e-3a4d-4c9b-9f60-2d8e5a1b7c34",
                   u8"gfx_backend_vk",
                   u8"vk (直连 Vulkan 学习后端)",

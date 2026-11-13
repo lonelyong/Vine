@@ -1,13 +1,13 @@
 #pragma once
 
 #include <vine/appfw/Plugin.hpp>
-#include <vine/vk/vk_global.hpp>
+#include <vine/backend_vk/backend_vk_global.hpp>
 
 VN_APPFW_NS_BEGIN
 class PluginLoadContext;
 VN_APPFW_NS_END
 
-VN_VK_NS_BEGIN
+VN_BACKEND_VK_NS_BEGIN
 
 /**
  * @brief appfw plugin exposing the direct-Vulkan backend ("vk").
@@ -19,7 +19,7 @@ VN_VK_NS_BEGIN
  * - `unload()` tears nothing down: the registry does not own the factory and the module stays mapped for the process
  *   lifetime, which is the contract the "vsg" plugin states the same way.
  */
-class VN_VK_API Plugin final : public vn::appfw::Plugin {
+class VN_BACKEND_VK_API Plugin final : public vn::appfw::Plugin {
     VN_OBJECT_META_DECL;
 
   public:
@@ -43,4 +43,4 @@ class VN_VK_API Plugin final : public vn::appfw::Plugin {
     void unload(vn::appfw::PluginLoadContext* context) override;
 };
 
-VN_VK_NS_END
+VN_BACKEND_VK_NS_END

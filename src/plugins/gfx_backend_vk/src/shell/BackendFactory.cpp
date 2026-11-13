@@ -1,8 +1,8 @@
-#include <vine/vk/shell/BackendFactory.hpp>
+#include <vine/backend_vk/shell/BackendFactory.hpp>
 
-#include <vine/vk/internal/Device.hpp>
+#include <vine/backend_vk/internal/Device.hpp>
 
-VN_VK_NS_BEGIN
+VN_BACKEND_VK_NS_BEGIN
 
 namespace
 {
@@ -37,4 +37,4 @@ vn::intrusive_ptr<vn::graphics::RenderBackend> BackendFactory::create(const vn::
     return vn::intrusive_ptr<vn::graphics::RenderBackend>(new Device(desc));
 }
 
-VN_VK_NS_END
+VN_BACKEND_VK_NS_END

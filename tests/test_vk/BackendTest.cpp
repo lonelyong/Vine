@@ -15,13 +15,13 @@
 #include <vector>
 
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/vk/internal/Device.hpp>
-#include <vine/vk/shell/BackendFactory.hpp>
+#include <vine/backend_vk/internal/Device.hpp>
+#include <vine/backend_vk/shell/BackendFactory.hpp>
 
 using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::RenderBackendRegistry;
-using vn::vk::Device;
+using vn::backend_vk::Device;
 
 TEST(VkBackendTest, TheFactoryRegistersItselfByName)
 {

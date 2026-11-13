@@ -1,9 +1,9 @@
 #pragma once
 
 #include <vine/graphics/RenderBackendRegistry.hpp>
-#include <vine/vk/vk_global.hpp>
+#include <vine/backend_vk/backend_vk_global.hpp>
 
-VN_VK_NS_BEGIN
+VN_BACKEND_VK_NS_BEGIN
 
 /**
  * @brief The factory that names this backend to the registry as "vk".
@@ -15,7 +15,7 @@ VN_VK_NS_BEGIN
  *   not the default either way: `"vsg"` remains the production backend (see
  *   `.ai/research/graphics-2026-11-13-gpu-resource-abstraction.md` §8.5), and nothing selects "vk" implicitly.
  */
-class VN_VK_API BackendFactory final : public vn::graphics::RenderBackendFactory {
+class VN_BACKEND_VK_API BackendFactory final : public vn::graphics::RenderBackendFactory {
   public:
     BackendFactory();
     ~BackendFactory() override;
@@ -33,4 +33,4 @@ class VN_VK_API BackendFactory final : public vn::graphics::RenderBackendFactory
     vn::intrusive_ptr<vn::graphics::RenderBackend> create(const vn::graphics::DeviceDesc& desc) override;
 };
 
-VN_VK_NS_END
+VN_BACKEND_VK_NS_END

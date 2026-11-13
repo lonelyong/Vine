@@ -10,7 +10,7 @@
 # factory and the plugin entry only name RenderBackend); everything Vulkan-shaped lives under src/internal.
 #
 # NAMING. Vulkan's own spellings (`VkDevice`, `VkInstance`, ...) belong to the driver layer; this module's classes are
-# `vn::vk::Device` / `BackendFactory` / `Plugin` (see vk_global.hpp).
+# `vn::backend_vk::Device` / `BackendFactory` / `Plugin` (see backend_vk_global.hpp).
 #
 # Tests cannot link a MODULE library; tests/test_vk compiles the implementation sources directly, exactly as
 # tests/test_vsg does.
@@ -18,8 +18,8 @@
 vn_add_plugin(VK_BACKEND_TARGET gfx_backend_vk)
 
 # vn_add_plugin derives the export macro from the short name (gfx_backend_vk -> VN_GFX_BACKEND_VK_LIB), but
-# vk_global.hpp checks VN_VK_LIB. Define it explicitly so VN_VK_API expands to dllexport when building.
-target_compile_definitions(${VK_BACKEND_TARGET} PRIVATE VN_VK_LIB)
+# backend_vk_global.hpp checks VN_BACKEND_VK_LIB. Define it explicitly so VN_BACKEND_VK_API expands to dllexport when building.
+target_compile_definitions(${VK_BACKEND_TARGET} PRIVATE VN_BACKEND_VK_LIB)
 
 # This plugin consumes the backend half of graphics (`vine/graphics/backend/`), so it opts in
 # (see that half's BackendHalfGuard.hpp).

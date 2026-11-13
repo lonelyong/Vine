@@ -138,15 +138,15 @@
 对照 §3.1 的规律 2，本仓库里最合适的位置是 **`support/`**（vsg 已经用 `support/` 放"测试与工具用、不安装"的头）：
 
 ```cpp
-// include/vine/vk/support/vn::vk::Handles.hpp   ← 含 Vk 类型；不安装；不进 shell；不进 SDK
-struct vn::vk::Handles {
+// include/vine/backend_vk/support/Handles.hpp   ← 含 Vk 类型；不安装；不进 shell；不进 SDK
+struct vn::backend_vk::Handles {
     VkInstance       instance{ VK_NULL_HANDLE };
     VkPhysicalDevice physical{ VK_NULL_HANDLE };
     VkDevice         device{ VK_NULL_HANDLE };
     VkQueue          graphics{ VK_NULL_HANDLE };
     std::uint32_t    graphics_family{ 0 };
 };
-[[nodiscard]] vn::vk::Handles vkHandles(const RenderDevice& device);  // 非 vk ⇒ 空结构
+[[nodiscard]] vn::backend_vk::Handles vkHandles(const RenderDevice& device);  // 非 vk ⇒ 空结构
 ```
 
 三条性质让它不是"暴露契约"：
@@ -181,7 +181,7 @@ struct vn::vk::Handles {
 
 ### 5.2 逃生门的纪律
 
-- 生产路径**不许**走逃生门：`vk` 自己的帧路径只用插件的 `internal/`，不 include `support/vn::vk::Handles.hpp`；
+- 生产路径**不许**走逃生门：`vk` 自己的帧路径只用插件的 `internal/`，不 include `support/Handles.hpp`；
 - 使用方是**测试、工具、实验**，且一次使用要在注释里说明"为什么中性 API 不够"；
 - 逃生门**不进** SDK、**不进** `shell/`、**不安装**。
 
@@ -247,7 +247,7 @@ V2 / V4 今天已经是事实，可以直接写成脚本断言；V1 需要"只�
 
 - `backend/` 公开面零 diff；
 - `shell/` 零 Vk（V4）；
-- `support/vn::vk::Handles.hpp` 存在且**不被** vk 自己的帧路径 include；
+- `support/Handles.hpp` 存在且**不被** vk 自己的帧路径 include；
 - 同一 `FrameDescription` 与 vsg 的对拍通过（M7）。
 
 ## 9. 参考

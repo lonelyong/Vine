@@ -1,9 +1,9 @@
 #pragma once
 
 #include <vine/graphics/RenderBackend.hpp>
-#include <vine/vk/vk_global.hpp>
+#include <vine/backend_vk/backend_vk_global.hpp>
 
-VN_VK_NS_BEGIN
+VN_BACKEND_VK_NS_BEGIN
 
 /**
  * @brief The direct-Vulkan backend's device (milestone M0: lifecycle and honest capabilities).
@@ -25,11 +25,11 @@ VN_VK_NS_BEGIN
  *   backend whose surface can be recreated.
  *
  * @note The class is `Device` and not `VkDevice`: the latter is Vulkan's own type, and this header's implementation
- *       includes volk (see `vk_global.hpp`).
+ *       includes volk (see `backend_vk_global.hpp`).
  *
  * @warning Not thread-safe: the SDK drives one frame at a time from one thread, and this device keeps no locks.
  */
-class VN_VK_API Device final : public vn::graphics::RenderBackend {
+class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
   public:
     /**
      * @brief Builds a device for @p desc, without creating anything yet.
@@ -103,7 +103,7 @@ class VN_VK_API Device final : public vn::graphics::RenderBackend {
      *   `RenderDevice`. It exists because this backend is a LEARNING one - a validation experiment or a RenderDoc
      *   session needs the real handles - and it is not a promise any other backend makes.
      * - It lives in `internal/` for M0. When a tool needs it from outside the plugin, it moves to
-     *   `include/vine/vk/support/` with the same shape (the boundary document says why).
+     *   `include/vine/backend_vk/support/` with the same shape (the boundary document says why).
      *
      * @return The handles, all zero before `initialize()`.
      */
@@ -137,4 +137,4 @@ class VN_VK_API Device final : public vn::graphics::RenderBackend {
     std::unique_ptr<Impl> impl;
 };
 
-VN_VK_NS_END
+VN_BACKEND_VK_NS_END

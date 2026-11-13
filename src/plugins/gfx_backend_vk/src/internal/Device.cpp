@@ -1,4 +1,4 @@
-#include <vine/vk/internal/Device.hpp>
+#include <vine/backend_vk/internal/Device.hpp>
 
 #include <cstdint>
 #include <cstring>
@@ -13,7 +13,7 @@
 #include <vine/graphics/PresentTarget.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
-VN_VK_NS_BEGIN
+VN_BACKEND_VK_NS_BEGIN
 
 using vn::graphics::Capabilities;
 using vn::graphics::DiagnosticCategory;
@@ -367,4 +367,4 @@ void Device::reportDriverMessage(int severity_flags, const char* text)
     reportDiagnostic(severity, DiagnosticCategory::InitFailed, messageOf(text));
 }
 
-VN_VK_NS_END
+VN_BACKEND_VK_NS_END

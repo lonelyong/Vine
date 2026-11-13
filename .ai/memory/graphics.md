@@ -785,7 +785,7 @@
   J3（要不要动公开面）。
 - **现在就通用（成本≈0，靠“不另写一份”）**：`RenderBackendInfo`、`Capabilities`、`planTarget`、`PipelineKey`/
   `VariantPool`、`ResourceTable`/`RetirementQueue`/`FrameTimeline`、`ResidencyLedger`、`ReadbackResult`、
-  `DiagnosticsRoute`、`FrameDescription`。禁止影子类型（`vn::vk::PipelineKey` 之类）。
+  `DiagnosticsRoute`、`FrameDescription`。禁止影子类型（`vn::backend_vk::PipelineKey` 之类）。
 - **唯一新做的通用物**：`BarrierPlan` 映射表（`ImageLayout` 当作用途 + `LoadOp/StoreOp` + `AccessKind` → Vk
   barrier），150–250 行 + 无设备表驱动测试；反例是“通用 barrier 类型”。
 - **shader 只留概念**：缺的是**源码语言**（不加字段，只写未来形状 `ShaderSourceLanguage` + 每后端编译入口），
@@ -799,7 +799,7 @@
 
 - **结论**：插件 `internal/` + `support/` **随便**暴露 Vk（今天 18/57 个头含 `Vk*`）；SDK 宿主面与 SDK 后端面**零 Vk 类型**
   （实测命中全是注释文字）；插件 `shell/` 为 0，但**只作形状不作门**（插件头未安装、无第二消费者，`G8`）。
-- **学习后端需要的 Vk 访问**：做成 `support/vn::vk::Handles.hpp` 的**自由函数**（不进 `RenderDevice` 动词表、名字带后端名、
+- **学习后端需要的 Vk 访问**：做成 `support/Handles.hpp` 的**自由函数**（不进 `RenderDevice` 动词表、名字带后端名、
   不安装、生产路径不 include）——与 Diligent `ITextureVk` / QRhi `nativeTexture()` / Godot `get_driver_resource()` 同形。
 - **可检查的**：V1 宿主面零 Vk 类型（今天靠人工/注释区分）、V2 后端面零 `<vulkan>`/`<vsg>` include（已 0）、
   V3 安装组件不含 Vulkan 头、V4 插件 `shell/` 零 Vk（已 0）。升级触发：插件头开始安装 / 第二个模块 include `shell/` /
@@ -808,13 +808,17 @@
   换成 V4 + 升级条件。
 - **文档**：`../research/graphics-2026-11-13-vk-exposure-boundary.md`（dated，非现行）。
 
-## 2026-11-13 —— `gfx_backend_vk` M0 落地（先叫 vkraw，同日改名 vk）
+## 2026-11-13 —— `gfx_backend_vk` M0 落地（命名两轮：`vkraw` → `vk` → `vn::backend_vk`）
 
-- **命名**：插件 `gfx_backend_vk`、注册名 `"vk"`、命名空间 `vn::vk`、类 `vn::vk::{Device, BackendFactory, Plugin}`、
-  宏 `VN_VK_{LIB,API,NS_BEGIN,NS_END}`、测试 `tests/test_vk`（`VkBackendTest`）。`"vk"` 说的是**实现路径**（直连 Vulkan），
-  与 `"vsg"`（经 VulkanSceneGraph）对照——两者都是 `RenderApi::Vulkan`。
+- **命名**：插件 `gfx_backend_vk`、注册名 `"vk"`、命名空间 `vn::backend_vk`、include 路径 `vine/backend_vk/`、
+  类 `vn::backend_vk::{Device, BackendFactory, Plugin}`、宏 `VN_BACKEND_VK_{LIB,API,NS_BEGIN,NS_END}`、
+  测试 `tests/test_vk`（`VkBackendTest`）。**命名空间两段各说一件事**：`backend` = 这是渲染接缝的**实现**
+  （`vine/graphics/backend/` 才是接缝本身），`vk` = 走**直连 Vulkan** 的实现路径（`vsg` 是经 VulkanSceneGraph）。
+  前一版是 `vn::vk`，被否的理由有两条：读起来像"Vine 对 Vulkan 的封装库"，且 `vn::vsg` 与 VulkanSceneGraph 自己的
+  `::vsg` 命名空间同名。`"vk"` 作为**注册名**不变（宿主按名字创建）；`"vsg"` 与它同为 `RenderApi::Vulkan`，区别是
+  实现路径而不是 API 家族。
 - **硬约束**：`Vk*` 拼写在模块内属于 Vulkan 自己的类型（volk 带进 `vulkan.h`），所以自己的类**不能**叫 `VkDevice` /
-  `VkInstance` 这类名字；`vn::vk::Device` 才安全。
+  `VkInstance` 这类名字；`vn::backend_vk::Device` 才安全。
 - **M0 内容**：volk 建 instance（validation 层与 debug-utils 按可用性启用）/ 选带 graphics 队列的物理设备 / 建逻辑设备；
   `capabilities()` 诚实地报 `render_targets=false`、`presentation=false`；`executeFrame` 与 `setRenderTarget` 各只报一次
   “M1/M2 未实现”；`shutdown()` 幂等且可重入。

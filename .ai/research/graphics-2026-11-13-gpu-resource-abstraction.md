@@ -241,7 +241,7 @@
 | 诊断 | `DiagnosticsRoute` / `DiagnosticSink` | validation 消息走同一条路 |
 | 帧 | `FrameDescription` + `executeFrame` / `prepareFrame` | 一条线两个动词 |
 
-**纪律**：这些类型一个都不许在 vk 里出现"影子版本"（`vn::vk::PipelineKey`、`vn::vk::Residency`…）。影子版本是重复，
+**纪律**：这些类型一个都不许在 vk 里出现"影子版本"（`vn::backend_vk::PipelineKey`、`vn::backend_vk::Residency`…）。影子版本是重复，
 不是拓展性（`G1`）。
 
 ### 9.3 唯一值得新做的通用物：一张映射表
