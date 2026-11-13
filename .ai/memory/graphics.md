@@ -795,6 +795,19 @@
   D5 resize / 状态变更不重编管线。
 - **文档**：评估 §9（J1–J3、清单、D1–D5），backlog T35 已链接并把 `BarrierPlan` 排进 M1。
 
+## 2026-11-13 —— Vulkan 暴露边界（设计论证）
+
+- **结论**：插件 `internal/` + `support/` **随便**暴露 Vk（今天 18/57 个头含 `Vk*`）；SDK 宿主面与 SDK 后端面**零 Vk 类型**
+  （实测命中全是注释文字）；插件 `shell/` 为 0，但**只作形状不作门**（插件头未安装、无第二消费者，`G8`）。
+- **学习后端需要的 Vk 访问**：做成 `support/VkrawHandles.hpp` 的**自由函数**（不进 `RenderDevice` 动词表、名字带后端名、
+  不安装、生产路径不 include）——与 Diligent `ITextureVk` / QRhi `nativeTexture()` / Godot `get_driver_resource()` 同形。
+- **可检查的**：V1 宿主面零 Vk 类型（今天靠人工/注释区分）、V2 后端面零 `<vulkan>`/`<vsg>` include（已 0）、
+  V3 安装组件不含 Vulkan 头、V4 插件 `shell/` 零 Vk（已 0）。升级触发：插件头开始安装 / 第二个模块 include `shell/` /
+  `support/` 被生产路径 include。
+- **降级**：上一轮的 “D2 只允许 `src/internal/`” 撤回（与 vsg 的 `include/vine/vsg/internal/` 分层不符，且无受害者），
+  换成 V4 + 升级条件。
+- **文档**：`../research/graphics-2026-11-13-vk-exposure-boundary.md`（dated，非现行）。
+
 ## 2026-11-13 —— 第二个后端定为手撸 Vulkan（`vkraw`，学习/研究）
 
 - **触发修正**：它是**同 API 家族**的第二后端 ⇒ T15（设备无关性）与 T30（统一类型）都**不触发**，只收窄触发条件为

@@ -292,7 +292,7 @@ vkraw 的 pipeline builder 因此只接受 GLSL，并在源码不是 GLSL 时报
 | # | 门 | 判据 |
 |---|---|---|
 | D1 | vkraw 不改 `backend/` 的公开面 | `git diff --stat src/viz/graphics/sdk/vine/graphics/backend/` 为空（新增中性**输入**需单独说明，见 9.7） |
-| D2 | `Vk*` 不出现在 vkraw 的**公开**头 | 只允许 `src/internal/`；`include/vine/vkraw/` 里出现即错 |
+| D2 | `Vk*` 不出现在 vkraw 的**工厂/入口头**（`shell/`） | 只允许 `internal/` 与 `support/`（与 vsg 同形）；**不是门，是形状**——插件头未安装、`shell/` 无第二消费者（`G8`）。边界论证与升级条件见 `graphics-2026-11-13-vk-exposure-boundary.md` |
 | D3 | 驻留账完整 | `ResidencyLedger` 每类有行或显式 absent（`live` 必答） |
 | D4 | 同值同画 | 同一 `FrameDescription` 与 vsg 的记录/像素对拍（M7） |
 | D5 | 不重编 | resize 不重编管线、host 状态变更不重编管线（`Keys.hpp` audit 表照搬） |
