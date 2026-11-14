@@ -31,6 +31,7 @@
 #include <vine/graphics/PrepareReport.hpp>
 #include <vine/graphics/PresentTarget.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/ReportOnce.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Texture.hpp>
 #include <vine/graphics/backend/Readback.hpp>
@@ -234,20 +235,76 @@ struct Device::Impl {
     /// Whether this session was opened with a presentation intent (a window half exists).
     bool presentation_wanted{ false };
 
-    /// One report each for the answers M1 cannot serve, so a host is told once rather than per frame.
-    bool reported_no_targets{ false };
-    bool reported_surface{ false };
-    bool reported_content{ false };
-    bool reported_size_unknown{ false };
-    bool reported_samples{ false };
-    bool reported_samples_depth{ false };
-    bool reported_prepare_target{ false };
+    /**
+     * @brief The answers this backend cannot serve, ONE EPISODE EACH (see ReportOnce).
+     *
+     * @details
+     * - A HOST IS TOLD ONCE PER EPISODE, and told again when the condition comes back after a clean run; the type owns
+     *   both halves of that rule (`shouldReport` / `rearm`), so the episode's boundary is a line a reader can point at
+     *   rather than a bare bool reset somewhere else.
+     * - ONE EPISODE PER CONDITION: two refusals sharing a flag means the first one silences the second for the rest of
+     *   the session - the host fixes that wiring and hears nothing about what is actually wrong.
+     */
+    vn::graphics::ReportOnce no_targets_report{};
+    vn::graphics::ReportOnce content_report{};
+    vn::graphics::ReportOnce size_unknown_report{};
+    vn::graphics::ReportOnce samples_report{};
+    vn::graphics::ReportOnce samples_depth_report{};
+    vn::graphics::ReportOnce prepare_target_report{};
+
+    /**
+     * @brief The window half's refusals, one episode each (see ReportOnce).
+     *
+     * @details
+     * - SIX CONDITIONS, NOT ONE FLAG: "this device has no window of its own", "this window's surface could not be
+     *   created" and "the frame's image could not be acquired" are different facts with different repairs.
+     * - THE EPISODE ENDS WHEN THE HALF WORKS: `rearmCreation` once a window target is handed out, `rearmFrames` once a
+     *   window pass has acquired its image.
+     */
+    struct WindowReports {
+        /// A Handle device was asked for a target and has no native window handle.
+        vn::graphics::ReportOnce handle_missing;
+        /// A Probe device's own window could not be brought up.
+        vn::graphics::ReportOnce own_window;
+        /// No display connection, so no window surface can exist.
+        vn::graphics::ReportOnce window_system;
+        /// The window's surface / swapchain could not be created.
+        vn::graphics::ReportOnce attach;
+        /// A window pass named no presenter this device handed out.
+        vn::graphics::ReportOnce presenter;
+        /// The window's next image could not be acquired.
+        vn::graphics::ReportOnce acquire;
+
+        /** @brief Ends the four creation episodes: a window target is being handed out (see createSurfaceTarget). */
+        void rearmCreation() noexcept
+        {
+            handle_missing.rearm();
+            own_window.rearm();
+            window_system.rearm();
+            attach.rearm();
+        }
+
+        /**
+         * @brief Ends every window episode: the next session starts with nothing reported (see shutdown).
+         *
+         * @note
+         * - The two FRAME episodes are re-armed at their own sites (a pass that found a presenter, an image that
+         *   arrived), not here: those are the moments each condition is observed to have ended.
+         */
+        void rearmAll() noexcept
+        {
+            rearmCreation();
+            presenter.rearm();
+            acquire.rearm();
+        }
+    };
+    WindowReports window_reports{};
 
     /// True once a queue/acquire/present call answered `VK_ERROR_DEVICE_LOST`: the session is over (see
     /// Device::noteDeviceLost), so `initialized()` stops answering true and the host rebuilds it.
     bool device_lost{ false };
-    /// One report for the loss itself, whatever number of calls saw it afterwards.
-    bool reported_device_lost{ false };
+    /// One report for the loss itself, whatever number of calls saw it afterwards (the session is the episode).
+    vn::graphics::ReportOnce device_lost_report{};
 
     /**
      * @brief What the last frame did and what this device has done so far (see FrameReport).
@@ -833,16 +890,19 @@ void Device::shutdown()
     // The creation intent survives the session (see the constructor): a shut-down Probe device still intends to
     // present when it is brought up again.
     impl->caps.presentation   = impl->desc.presentation != DevicePresentation::None;
-    impl->default_program     = nullptr;
-    impl->reported_no_targets = false;
-    impl->reported_surface    = false;
-    impl->reported_content    = false;
-    impl->reported_size_unknown = false;
-    impl->reported_samples    = false;
-    impl->reported_prepare_target = false;
+    impl->default_program        = nullptr;
+    // THE NEXT SESSION STARTS WITH NOTHING REPORTED: these episodes are about one session's wiring and one session's
+    // answers, so the rebuild a lost device needs must be able to tell its own story (see ReportOnce).
+    impl->no_targets_report.rearm();
+    impl->content_report.rearm();
+    impl->size_unknown_report.rearm();
+    impl->samples_report.rearm();
+    impl->samples_depth_report.rearm();
+    impl->prepare_target_report.rearm();
+    impl->window_reports.rearmAll();
     impl->depth_resolve_supported = false;
-    impl->device_lost         = false;
-    impl->reported_device_lost = false;
+    impl->device_lost             = false;
+    impl->device_lost_report.rearm();
     // THE WINDOW SYSTEM GOES LAST, and whether or not a Vulkan session came up: its connection is older than the
     // session and every surface created through it was destroyed above (see WindowSystem's lifetime warning).
     impl->surfaces.clear();
@@ -881,8 +941,7 @@ bool Device::noteDeviceLost(const VkResult result, const char* what)
         return false;
     }
     impl->device_lost = true;
-    if (!impl->reported_device_lost) {
-        impl->reported_device_lost = true;
+    if (impl->device_lost_report.shouldReport()) {
         // THE SENTENCE SAYS WHAT TO DO, not only what happened: this is the one failure a retry cannot fix.
         const std::string sentence = std::string("vk: ") + (what != nullptr ? what : "a device call") +
                                      " answered VK_ERROR_DEVICE_LOST; this session cannot continue - rebuild it with "
@@ -947,19 +1006,28 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
     if (window_handle == nullptr) {
         if (impl->desc.presentation != DevicePresentation::Probe) {
             answer(SurfaceTargetResult::UnsupportedSurface);
-            if (!impl->reported_surface) {
-                impl->reported_surface = true;
+            if (impl->window_reports.handle_missing.shouldReport()) {
                 reportDiagnostic(DiagnosticSeverity::Warning,
                                  DiagnosticCategory::UnsupportedRequest,
                                  u8"vk: DevicePresentation::Handle needs a host window handle; this device brings up none");
             }
             return nullptr;
         }
+        // THE CONNECTION AND THE WINDOW ARE TWO FACTS: a display that cannot be reached and a window that would not
+        // come up have different repairs, so each is its own episode (see WindowReports).
         vn::String why;
-        if (!ensureWindowSystem(&why) || !impl->window_system->openOwnWindow(kProbeWindowWidth, kProbeWindowHeight, &why)) {
+        if (!ensureWindowSystem(&why)) {
             answer(SurfaceTargetResult::UnsupportedSurface);
-            if (!impl->reported_surface) {
-                impl->reported_surface = true;
+            if (impl->window_reports.window_system.shouldReport()) {
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
+                                 why.empty() ? vn::String(u8"vk: no window system is available, so no window surface can be created") : std::move(why));
+            }
+            return nullptr;
+        }
+        if (!impl->window_system->openOwnWindow(kProbeWindowWidth, kProbeWindowHeight, &why)) {
+            answer(SurfaceTargetResult::UnsupportedSurface);
+            if (impl->window_reports.own_window.shouldReport()) {
                 reportDiagnostic(DiagnosticSeverity::Warning,
                                  DiagnosticCategory::UnsupportedRequest,
                                  why.empty() ? vn::String(u8"vk: the device-owned window could not be brought up") : std::move(why));
@@ -974,8 +1042,7 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
         vn::String why;
         if (!ensureWindowSystem(&why)) {
             answer(SurfaceTargetResult::UnsupportedSurface);
-            if (!impl->reported_surface) {
-                impl->reported_surface = true;
+            if (impl->window_reports.window_system.shouldReport()) {
                 reportDiagnostic(DiagnosticSeverity::Warning,
                                  DiagnosticCategory::UnsupportedRequest,
                                  why.empty() ? vn::String(u8"vk: no window system is available, so no window surface can be created") : std::move(why));
@@ -1000,14 +1067,14 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
         vn::String reason;
         if (!target->attach(window_device, &reason)) {
             answer(SurfaceTargetResult::UnsupportedSurface);
-            if (!impl->reported_surface) {
-                impl->reported_surface = true;
+            if (impl->window_reports.attach.shouldReport()) {
                 reportDiagnostic(DiagnosticSeverity::Warning,
                                  DiagnosticCategory::UnsupportedRequest,
                                  reason.empty() ? vn::String(u8"vk: the window target could not be created") : std::move(reason));
             }
             return nullptr;
         }
+        impl->window_reports.attach.rearm(); // the surface and swapchain exist: this episode is over
         // A target accepted after initialize() still means this session presents.
         impl->presentation_wanted = true;
         impl->caps.presentation    = true;
@@ -1016,6 +1083,9 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
     // instance and the device exist (see initialize).
     WindowTarget* raw = target.get();
     impl->surfaces.push_back(std::move(target));
+    // A TARGET IS BEING HANDED OUT: every creation episode is over, so the next refusal is a new one (see
+    // WindowReports).
+    impl->window_reports.rearmCreation();
     answer(SurfaceTargetResult::Ok);
     return raw;
 }
@@ -1035,6 +1105,11 @@ bool Device::ensureTarget(const RenderTarget& target)
         wanted.shape.depth_format        = target.depthFormat();
         wanted.shape.device_depth_format = static_cast<std::uint32_t>(depthFormatOf(target.depthFormat()));
     }
+    if (wanted.width > 0 && wanted.height > 0) {
+        // A USABLE EXTENT EXISTS: the "unusable extent" episode is over (see ReportOnce). It is a different fact from
+        // the sample-count refusals below, so it has an episode of its own.
+        impl->size_unknown_report.rearm();
+    }
     // A COUNT IS A COUNT (see ADR-2026-11-14-sample-count-refused-not-lowered): the target states the number of
     // samples it is drawn with, and `wanted.shape.samples` is that number - never another one. A count this device
     // cannot build (above its limit, or not a power of two) REFUSES the target: one warning naming the request and
@@ -1044,8 +1119,7 @@ bool Device::ensureTarget(const RenderTarget& target)
     const std::uint32_t requested_samples = target.samples() == 0U ? 1U : target.samples();
     const std::uint32_t largest_samples   = largestSampleCount(impl->supported_sample_counts);
     if (!ensureBuildableSamples(requested_samples, impl->supported_sample_counts)) {
-        if (!impl->reported_samples) {
-            impl->reported_samples = true;
+        if (impl->samples_report.shouldReport()) {
             // The two reasons a count is unbuildable are said as the difference they are: a request past the limit,
             // and a number that is not a sample count at all. Both name the limit the host should read.
             const vn::String request = vn::String(u8"vk: a target asks for ") + numberText(requested_samples) + u8" samples per pixel";
@@ -1058,6 +1132,7 @@ bool Device::ensureTarget(const RenderTarget& target)
         }
         return false;
     }
+    impl->samples_report.rearm(); // a target with a count this device builds: the episode is over
     wanted.shape.samples = requested_samples;
     wanted.shape.subpass = 0U;
     // A MULTISAMPLED DEPTH IS RESOLVED, and a device that cannot do that refuses the combination (ADR-2026-11-14).
@@ -1067,8 +1142,7 @@ bool Device::ensureTarget(const RenderTarget& target)
     // below that genuinely cannot serve this shape: nothing is created, nothing is drawn, and `readColorBuffer`
     // answers NotReady.
     if (requested_samples > 1U && target.hasDepth() && !impl->depth_resolve_supported) {
-        if (!impl->reported_samples_depth) {
-            impl->reported_samples_depth = true;
+        if (impl->samples_depth_report.shouldReport()) {
             reportDiagnostic(DiagnosticSeverity::Warning,
                              DiagnosticCategory::UnsupportedRequest,
                              vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
@@ -1077,6 +1151,7 @@ bool Device::ensureTarget(const RenderTarget& target)
         }
         return false;
     }
+    impl->samples_depth_report.rearm(); // a depth-attached target this device can resolve: the episode is over
 
     TargetImages& images = impl->targets[&target];
     TargetInstance current;
@@ -1091,8 +1166,7 @@ bool Device::ensureTarget(const RenderTarget& target)
         return true;
     case TargetAction::Repair:
         if (decision.reason == RepairReason::SizeUnknown) {
-            if (!impl->reported_size_unknown) {
-                impl->reported_size_unknown = true;
+            if (impl->size_unknown_report.shouldReport()) {
                 reportDiagnostic(DiagnosticSeverity::Warning,
                                  DiagnosticCategory::TargetBuildFailed,
                                  u8"vk: a target with an unusable extent (0 in a dimension) was left unbuilt");
@@ -1216,8 +1290,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         };
         if (draw.target == nullptr) {
             if (window == nullptr || !window->ready()) {
-                if (!impl->reported_surface) {
-                    impl->reported_surface = true;
+                if (impl->window_reports.presenter.shouldReport()) {
                     reportDiagnostic(DiagnosticSeverity::Warning,
                                      DiagnosticCategory::UnsupportedRequest,
                                      u8"vk: a window pass names no presenter this device handed out; it was left out");
@@ -1225,6 +1298,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                 refused_pass = true;
                 continue;
             }
+            impl->window_reports.presenter.rearm(); // the pass named a presenter this device handed out
             if (!window_acquired) {
                 vn::String why;
                 if (!window->acquire(&why)) {
@@ -1235,8 +1309,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                         (void)noteDeviceLost(VK_ERROR_DEVICE_LOST, "vkAcquireNextImageKHR");
                         return PresentOutcome::Lost;
                     }
-                    if (!impl->reported_surface) {
-                        impl->reported_surface = true;
+                    if (impl->window_reports.acquire.shouldReport()) {
                         reportDiagnostic(DiagnosticSeverity::Warning,
                                          DiagnosticCategory::UnsupportedRequest,
                                          why.empty() ? vn::String(u8"vk: the window's next image could not be acquired") : std::move(why));
@@ -1244,6 +1317,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                     refused_pass = true;
                     continue;
                 }
+                impl->window_reports.acquire.rearm(); // the image arrived: this episode is over
                 window_acquired = true;
             }
             count_pass();
@@ -1259,8 +1333,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     }
 
     if (runnable_passes.empty()) {
-        if (!refused_pass && !impl->reported_no_targets) {
-            impl->reported_no_targets = true;
+        if (!refused_pass && impl->no_targets_report.shouldReport()) {
             reportDiagnostic(DiagnosticSeverity::Info,
                              DiagnosticCategory::UnsupportedRequest,
                              u8"vk: the frame had no pass this backend can run (off-screen targets and host windows are "
@@ -1268,6 +1341,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         }
         return PresentOutcome::Skipped;
     }
+    impl->no_targets_report.rearm(); // a pass ran: the "nothing I can run" episode is over
 
     // ONE COMMAND BUFFER, ONE FENCE, ONE WAIT. The frame is submitted and finished before the call returns, which is
     // what makes "read the pixels right after" mean what it says.
@@ -1299,6 +1373,9 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     // that ran); what the loop below adds is the drawing calls this backend actually recorded.
 
     bool first_window_pass = true;
+    // Whether a draw this frame named could not be recorded. The refused-content episode ends when a frame records
+    // everything it was handed - a frame that still names one bad draw keeps the episode open (see ReportOnce).
+    bool content_refused = false;
     for (const Runnable& item : runnable_passes) {
         const PassDraw& draw = *item.draw;
         // THE PASS' TEXTURES ARE PREPARED BEFORE ITS RENDER PASS BEGINS: an upload records image barriers and
@@ -1493,15 +1570,20 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                                            &why,
                                            &category);
             }
-            if (!why.empty() && !impl->reported_content) {
-                impl->reported_content = true;
-                reportDiagnostic(DiagnosticSeverity::Warning, category, why);
+            if (!why.empty()) {
+                content_refused = true;
+                if (impl->content_report.shouldReport()) {
+                    reportDiagnostic(DiagnosticSeverity::Warning, category, why);
+                }
             }
         }
         impl->device_table.vkCmdEndRenderPass(commands);
         if (images != nullptr) {
             images->fresh = false;
         }
+    }
+    if (!content_refused) {
+        impl->content_report.rearm(); // every draw the frame named was recorded: the episode is over
     }
 
     // THE PRESENT TRANSITION, after the window's last pass and before the command buffer ends: every window pass
@@ -1670,14 +1752,14 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
             }
         }
         if (window == nullptr) {
-            if (!impl->reported_prepare_target) {
-                impl->reported_prepare_target = true;
+            if (impl->prepare_target_report.shouldReport()) {
                 reportDiagnostic(DiagnosticSeverity::Warning,
                                  DiagnosticCategory::UnsupportedRequest,
                                  u8"vk: a frame named a surface target this device did not hand out; nothing was prepared");
             }
             return PrepareReport{ PrepareReport::Outcome::Refused };
         }
+        impl->prepare_target_report.rearm(); // the frame named a target this device handed out
     }
 
     const Impl::ContentNumbers before = impl->contentNumbers();
@@ -1692,6 +1774,9 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
     // frame whose passes it cannot serve records nothing and therefore allocates nothing.
     VkCommandBuffer batch{ VK_NULL_HANDLE };
     bool            batch_attempted{ false };
+    // Whether a draw this call could not prepare. The refused-content episode ends when a call prepares everything it
+    // was handed, exactly as the frame path ends it (see ReportOnce).
+    bool content_refused{ false };
 
     for (const FrameDescription::Pass& entry : frame.passes) {
         if (entry.pass == nullptr) {
@@ -1781,9 +1866,11 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
                                       &why,
                                       &category);
             }
-            if (!why.empty() && !impl->reported_content) {
-                impl->reported_content = true;
-                reportDiagnostic(DiagnosticSeverity::Warning, category, why);
+            if (!why.empty()) {
+                content_refused = true;
+                if (impl->content_report.shouldReport()) {
+                    reportDiagnostic(DiagnosticSeverity::Warning, category, why);
+                }
             }
         }
 
@@ -1844,6 +1931,9 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
     // WHAT THIS CALL BUILT, not what is resident: a second prepare of an unchanged frame answers zeros (see
     // PrepareReport). `uploads` counts BOTH kinds FrameUploads reports - the streams this call uploaded and the
     // textures it made resident (see ADR-2026-11-14). `sets` stays 0 because no descriptor set outlives a frame here.
+    if (!content_refused) {
+        impl->content_report.rearm(); // every draw the call named was prepared: the episode is over
+    }
     const Impl::ContentNumbers after = impl->contentNumbers();
     report.halves    = after.program_builds - before.program_builds;
     report.pipelines = after.pipeline_builds - before.pipeline_builds;
