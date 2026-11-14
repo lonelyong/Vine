@@ -101,6 +101,24 @@ struct VN_GRAPHICS_API FrameUploads {
 };
 
 /**
+ * @brief What a frame cost on the DEVICE, as the backend measured it.
+ *
+ * @details
+ * - A DIFFERENT CLOCK FROM `PassRow::record_micros` AND FROM A HOST'S WALL CLOCK: those say what the CPU spent
+ *   building and recording a frame; this says how long the GPU took to run it. A HUD, a profile and a gate that
+ *   judges "did this change make the frame cheaper" need both, and reading one as the other is how a CPU-side
+ *   saving gets reported as a GPU-side one.
+ * - WHAT IT MEASURES: the device's own timestamp pair around the frame's work (the backend's own definition of the
+ *   span, which is why it is a value and not a promise of a particular pair of stages). It is the frame that just
+ *   ENDED, like FrameCounters - never a running average.
+ * - ABSENT IS NOT ZERO: a backend that keeps no device clock leaves `FrameReport::timing` disengaged rather than
+ *   answering 0, which would read as a frame that took no time at all (the rule FrameReport states for every part).
+ */
+struct VN_GRAPHICS_API FrameTiming {
+    std::uint64_t gpu_micros{ 0 }; // Device time of the frame that just ended, in microseconds.
+};
+
+/**
  * @brief What a backend can say about its frames, as ONE answer (see RenderFrameExecutor::frameReport).
  *
  * @details
@@ -121,6 +139,7 @@ struct VN_GRAPHICS_API FrameReport {
     std::optional<RetentionStats> retention; // Cumulative retention; disengaged when none are kept.
     std::optional<FrameProgress>  progress;  // Where the frame clock is; disengaged when none is kept.
     std::optional<FrameUploads>   uploads;   // What the frame that just ended added and dropped; disengaged when none is kept.
+    std::optional<FrameTiming>    timing;    // What that frame cost ON THE DEVICE; disengaged when the clock is not kept.
 };
 
 VN_GRAPHICS_NS_END

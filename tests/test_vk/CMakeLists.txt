@@ -16,6 +16,7 @@ add_executable(${TEST_NAME}
         PrepareUploadTest.cpp
         ProbeTest.cpp
         ResidencyTest.cpp
+        RingTest.cpp
         ShadowTest.cpp
         StateMappingTest.cpp
         VariantTest.cpp

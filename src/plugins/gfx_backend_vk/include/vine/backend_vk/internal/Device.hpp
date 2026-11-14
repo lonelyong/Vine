@@ -350,6 +350,26 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      */
     [[nodiscard]] std::uint64_t contentPipelines() const noexcept;
 
+    /** @brief The recorder's cache witnesses (see ContentDraw::Progress): what the cost model actually did. */
+    struct ContentCacheCounters {
+        std::uint64_t ring_builds{ 0 }; ///< Uniform rings created, cumulative (one in a steady session).
+        std::uint64_t set_builds{ 0 };  ///< Descriptor sets BUILT, cumulative - a cache miss, not a draw.
+        std::uint64_t sets_live{ 0 };   ///< Descriptor sets cached NOW.
+    };
+
+    /**
+     * @brief Gets the recorder's cache witnesses (see ContentCacheCounters).
+     *
+     * @details
+     * - THE EVIDENCE FOR THE COST MODEL: a draw's constants go into one ring (bound through dynamic offsets) and a
+     *   descriptor set is cached by the resources it binds, so a steady frame creates no ring and builds no set. A
+     *   test asks these three numbers instead of counting driver calls from outside - the same arrangement
+     *   `contentPipelines()` uses for "a resize must not recompile".
+     *
+     * @return The witnesses (zeros when no recorder is up).
+     */
+    [[nodiscard]] ContentCacheCounters contentCacheCounters() const noexcept;
+
     /**
      * @brief Forwards one message the Vulkan loader or a validation layer produced.
      *

@@ -190,6 +190,9 @@ class VN_BACKEND_VK_API ContentDraw final {
         std::uint64_t program_builds{ 0 };    ///< Program revisions compiled (both stages), cumulative.
         std::uint64_t pipeline_builds{ 0 };   ///< Pipelines created, cumulative (= pipelinesCreated()).
         std::uint64_t pipeline_releases{ 0 }; ///< Pipelines destroyed by a program's release, cumulative.
+        std::uint64_t ring_builds{ 0 };       ///< Uniform rings created, cumulative (one in a steady session).
+        std::uint64_t set_builds{ 0 };        ///< Descriptor sets BUILT, cumulative - a cache miss, not a draw.
+        std::uint64_t sets_live{ 0 };         ///< Descriptor sets cached NOW.
         std::uint32_t streams_live{ 0 };      ///< Uploaded buffers resident NOW.
         std::uint64_t stream_bytes_live{ 0 };
         std::uint32_t pipelines_live{ 0 }; ///< Pipelines resident NOW.

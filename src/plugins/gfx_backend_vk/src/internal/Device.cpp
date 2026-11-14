@@ -68,6 +68,19 @@ namespace
 /// @brief The layer this backend asks for whenever the loader has it (see Device::initialize).
 constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 
+/**
+ * @brief How often the device clock is sampled: every Nth frame, starting with the first (see Impl::timestamps).
+ *
+ * @details
+ * - MEASURED, NOT GUESSED: writing the timestamp pair and reading it back costs ~0.8 ms per frame on this machine's
+ *   software rasteriser (median 8.30 ms with the clock off, 9.01-9.20 ms with it on, three runs each). A production
+ *   backend samples the clock for exactly that reason - a HUD needs a value per second, not per frame.
+ * - THE COST IS THE SAMPLED FRAMES' ALONE: with 30, a steady frame pays the clock once in thirty, and the frames in
+ *   between answer `FrameReport::timing` DISENGAGED rather than repeating the last value (a report describes the
+ *   frame that just ended - see FrameTiming).
+ */
+constexpr std::uint64_t kTimestampSampleFrames = 30U;
+
 /// @brief The size a Probe device's own window comes up at (the reference backend's own default: 640x360).
 constexpr int kProbeWindowWidth  = 640;
 constexpr int kProbeWindowHeight = 360;
@@ -240,6 +253,20 @@ struct Device::Impl {
     /// serves every other shape - only "multisampled AND depth-attached" is refused (see `ensureTarget`).
     bool depth_resolve_supported{ false };
 
+    /**
+     * @brief The device clock: one query pair written around each frame's command buffer (see FrameTiming).
+     *
+     * @details
+     * - WHY ONE PAIR IS ENOUGH: this device submits and waits inside executeFrame, so the pair of the frame that just
+     *   ran is readable as soon as its fence signals - no ring of queries, no waiting for a frame in flight.
+     * - A DEVICE THAT DOES NOT REPORT `timestampComputeAndGraphics` keeps no clock at all, and the report answers
+     *   disengaged rather than a fabricated zero (see FrameTiming).
+     */
+    VkQueryPool timestamp_pool{ VK_NULL_HANDLE };
+    float       timestamp_period{ 0.0F }; // nanoseconds per tick, from the device's limits
+    bool        timestamps{ false };
+    std::uint64_t clock_frames{ 0 }; // frames executeFrame has begun (the sampling counter)
+
     /// The command machinery every frame and every readback borrows: one pool, one fence, one buffer at a time.
     VkCommandPool command_pool{ VK_NULL_HANDLE };
     VkFence       completion{ VK_NULL_HANDLE };
@@ -351,7 +378,9 @@ struct Device::Impl {
         vn::graphics::FrameCounters               counters{};
         vn::graphics::FrameProgress               progress{};
         std::optional<vn::graphics::FrameUploads> uploads;
-        std::uint64_t                             released_nodes{ 0 };
+        /// What the last frame cost on the device (see FrameTiming); disengaged when the device keeps no clock.
+        std::optional<vn::graphics::FrameTiming> timing;
+        std::uint64_t                            released_nodes{ 0 };
         std::uint64_t                             device_waits{ 0 };
     };
     Books books{};
@@ -885,6 +914,21 @@ bool Device::initialize()
     // `VkSubpassDescriptionDepthStencilResolve`, and both are Vulkan 1.2.
     impl->depth_resolve_supported = properties.apiVersion >= VK_API_VERSION_1_2;
 
+    // THE DEVICE CLOCK (see FrameTiming): two queries per frame, written around the frame's own command buffer.
+    impl->timestamp_period = properties.limits.timestampPeriod;
+    if (properties.limits.timestampComputeAndGraphics != VK_FALSE && impl->timestamp_period > 0.0F) {
+        VkQueryPoolCreateInfo query_info{};
+        query_info.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        query_info.queryType  = VK_QUERY_TYPE_TIMESTAMP;
+        query_info.queryCount = 2U;
+        if (impl->device_table.vkCreateQueryPool(impl->device, &query_info, nullptr, &impl->timestamp_pool) == VK_SUCCESS) {
+            impl->timestamps = true;
+        }
+        else {
+            impl->timestamp_pool = VK_NULL_HANDLE;
+        }
+    }
+
     impl->caps                         = Capabilities{};
     impl->caps.render_targets          = true;
     impl->caps.presentation            = impl->presentation_wanted;
@@ -966,6 +1010,12 @@ void Device::shutdown()
             impl->device_table.vkDestroyCommandPool(impl->device, impl->command_pool, nullptr);
             impl->command_pool = VK_NULL_HANDLE;
         }
+        if (impl->timestamp_pool != VK_NULL_HANDLE) {
+            impl->device_table.vkDestroyQueryPool(impl->device, impl->timestamp_pool, nullptr);
+            impl->timestamp_pool = VK_NULL_HANDLE;
+        }
+        impl->timestamps = false;
+        impl->books.timing.reset();
 
         impl->device_table.vkDestroyDevice(impl->device, nullptr);
         impl->device       = VK_NULL_HANDLE;
@@ -1545,6 +1595,15 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         return PresentOutcome::Skipped;
     }
 
+    // THE DEVICE CLOCK OPENS HERE (see FrameTiming): the reset is legal outside a render pass, which is where this is,
+    // and the pair is closed before the buffer ends below. SAMPLED, not every frame (see kTimestampSampleFrames).
+    ++impl->clock_frames;
+    const bool sample_clock = impl->timestamps && (impl->clock_frames % kTimestampSampleFrames) == 1U;
+    if (sample_clock) {
+        impl->device_table.vkCmdResetQueryPool(commands, impl->timestamp_pool, 0U, 2U);
+        impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, impl->timestamp_pool, 0U);
+    }
+
     // ONE DESCRIPTOR POOL RESET PER FRAME: the pool's sets are the per-draw uniform bindings, and the previous frame
     // is complete by now (the device submits synchronously), so nothing still names them.
     impl->content.beginFrame();
@@ -1772,6 +1831,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         window->recordPresentTransition(commands);
     }
 
+    if (sample_clock) {
+        impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, impl->timestamp_pool, 1U);
+    }
+
     if (impl->device_table.vkEndCommandBuffer(commands) != VK_SUCCESS) {
         reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed, u8"vk: vkEndCommandBuffer failed");
         impl->content.endFrame();
@@ -1808,6 +1871,30 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     const bool     completed    = fence_result == VK_SUCCESS;
     if (completed) {
         ++impl->books.progress.completed;
+        // THE PAIR IS READABLE NOW (the fence says the frame ran): one read, one value, and the report carries it as
+        // the frame's device time (see FrameTiming). A frame the clock did not sample answers DISENGAGED - never the
+        // previous frame's value.
+        if (sample_clock) {
+            std::uint64_t stamps[2]{ 0U, 0U };
+            if (impl->device_table.vkGetQueryPoolResults(impl->device,
+                                                         impl->timestamp_pool,
+                                                         0U,
+                                                         2U,
+                                                         sizeof(stamps),
+                                                         stamps,
+                                                         sizeof(std::uint64_t),
+                                                         VK_QUERY_RESULT_64_BIT) == VK_SUCCESS &&
+                stamps[1] > stamps[0]) {
+                const double micros = static_cast<double>(stamps[1] - stamps[0]) * static_cast<double>(impl->timestamp_period) / 1000.0;
+                impl->books.timing  = vn::graphics::FrameTiming{ static_cast<std::uint64_t>(micros) };
+            }
+            else {
+                impl->books.timing.reset();
+            }
+        }
+        else {
+            impl->books.timing.reset();
+        }
     }
     (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
     impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
@@ -2127,6 +2214,7 @@ vn::graphics::FrameReport Device::frameReport() const noexcept
     report.counters = impl->books.counters;
     report.progress = impl->books.progress;
     report.uploads  = impl->books.uploads; // this frame's own delta; absent until a frame ran
+    report.timing   = impl->books.timing;  // the device's own clock; absent when the device keeps none (see FrameTiming)
 
     vn::graphics::RetentionStats retention;
     retention.released_nodes = impl->books.released_nodes;
@@ -2411,6 +2499,12 @@ Handles Device::handles() const noexcept
 std::uint64_t Device::contentPipelines() const noexcept
 {
     return impl->content.pipelinesCreated();
+}
+
+Device::ContentCacheCounters Device::contentCacheCounters() const noexcept
+{
+    const ContentDraw::Progress numbers = impl->content.progress();
+    return ContentCacheCounters{ numbers.ring_builds, numbers.set_builds, numbers.sets_live };
 }
 
 void Device::reportDriverMessage(int severity_flags, const char* text)

@@ -563,6 +563,25 @@
 - **边界**：lavapipe 是软件光栅器，绝对值只用于**同机对拍**与回归，不是 GPU 结论；Win32 与真 GPU 未测。
   60 帧窗口里混有演示的 PiP/覆盖层定时器与一次资产上传帧。
 
+## 2026-11-14 —— vk 的每帧成本模型落地（T43+T42 同源；ring + 动态偏移 + 声明集缓存）
+
+- **形状**：`ContentDraw::Impl::UniformRing` 一个持久映射缓冲，`sliceSize()` 对齐切片；四个块写进切片，三个 set 布局
+  全部 `UNIFORM_BUFFER_DYNAMIC`，绑定时给 4 个动态偏移（content set 的 0/6/8 + draw set 的 0；screen set 是 6/8）。
+  帧满**不在帧内扩容**（会销毁命令缓冲已点名的 buffer）：`reserveSlice` 记 demand、跳过该 draw，`beginFrame` 按
+  demand 扩容（与 vsg 的 BlockStorage 同规则）。
+- **set 的键是“它绑定的资源”**（5 个纹理视图 + shadow 视图；screen 同形）：池带 `FREE_DESCRIPTOR_SET`、按条目释放，
+  **不再每帧 reset**；draw set 整个 ring generation 只有一个句柄。淘汰：`last_frame + 600 < frame_index`，每 120 帧扫一次。
+- **见证**：`Device::contentCacheCounters()`（`ring_builds` / `set_builds` / `sets_live`）+ `VkUniformRingTest` 两例；
+  变异（缓存恒 miss）⇒ 两例同红。`test_vk` **74** 例。
+- **实测（Release + lavapipe，同一 11-pass 场景，各 3 次）**：稳态 median **9.03–9.23 → 8.16–8.30 ms（−10%）**；
+  vk 与 vsg 仍**逐字节相同**；预热不变（预热不画）。
+- **管线缓存**：会话内 `VkPipelineCache` 已加（两处 `vkCreateGraphicsPipelines` 都传）；跨会话落盘仍 T44。
+- **GPU 计时（T46 收口）**：SDK 新增 `FrameTiming{gpu_micros}` + `FrameReport::timing`（可选，缺席≠0）；vk 用一对
+  `VK_QUERY_TYPE_TIMESTAMP`（写 TOP/BOTTOM，栅栏后 `vkGetQueryPoolResults`，`timestampComputeAndGraphics` 为假则缺席）。
+  **必须抽样**：实测 lavapipe 上每帧写读时间戳要 **~0.8 ms**（关：median 8.30；开：9.01–9.20，各 3 次）⇒ 每 30 帧采一次
+  （`kTimestampSampleFrames`），未采样的帧答**缺席**（不是上一帧的值）。demo 的 `bench last frame` 在有样本时印 gpu 毫秒
+  （lavapipe 实测 **gpu 7.15–7.74 ms**，CPU median 8.2–9.0）。
+
 ## 2026-11-14 —— `gfx_backend_vk` 工业标准审查（结论 + 两处小修）
 
 - **结论**：规范符合性/可诊断性**工业级**（validation 0 VUID、跨后端逐字节对拍、设备丢失分类、barrier 表、

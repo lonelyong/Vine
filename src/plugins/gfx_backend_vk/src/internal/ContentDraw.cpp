@@ -35,8 +35,20 @@ namespace
 /// @brief The alignment used when the device reports none (Vulkan's minimum for uniform-buffer offsets).
 constexpr std::uint32_t kDefaultUniformAlignment = 256U;
 
-/// @brief Descriptor sets (and therefore draws) one frame may record before the pool is exhausted.
-constexpr std::uint32_t kDescriptorsPerFrame = 256U;
+/// @brief How many descriptor sets the cache may hold before the pool is exhausted (see Impl::sets).
+///
+/// A set is a BINDING OF RESOURCES now, not a draw: the per-draw variation is a dynamic offset, so the cache holds
+/// one set per (texture set, shadow map) and a scene with hundreds of materials still fits comfortably.
+constexpr std::uint32_t kMaxCachedSets = 1024U;
+
+/// @brief The ring's first capacity: 256 KiB of constants is ~650 draws of one slice each (see Impl::UniformRing).
+constexpr VkDeviceSize kInitialRingBytes = 256U * 1024U;
+
+/// @brief Frames a cached set survives unused before it is freed (the same spirit as the reference backend's window).
+constexpr std::uint64_t kSetRetentionFrames = 600U;
+
+/// @brief How often unused sets are swept (a frame count; sweeping every frame would be pointless work).
+constexpr std::uint64_t kSetSweepIntervalFrames = 120U;
 
 /// @brief The content ABI's texture-slot count (see `TextureSlot`), i.e. set 0 bindings 1..5.
 constexpr std::uint32_t kTextureSlots = vn::graphics::kTextureSlotCount;
@@ -440,6 +452,16 @@ struct ContentDraw::Impl {
     VkPipelineLayout      content_pipeline_layout{ VK_NULL_HANDLE };
     VkPipelineLayout      screen_pipeline_layout{ VK_NULL_HANDLE };
     VkDescriptorPool      descriptor_pool{ VK_NULL_HANDLE };
+    /**
+     * @brief The session's pipeline cache (see create).
+     *
+     * @details
+     * - WHY IT EXISTS AT ALL: the recorder already keeps the pipelines it built, so this buys little WITHIN one session -
+     *   what it buys is the driver's own deduplication and the place a serialised blob would go. The industry rule is
+     *   "always create one"; persisting it to disk (keyed by driver and device) is the half that pays on cold start
+     *   and is registered as backlog T44.
+     */
+    VkPipelineCache pipeline_cache{ VK_NULL_HANDLE };
 
     /// The engine's full-screen vertex stage (the fragment stage of a screen draw is the draw's own program).
     vn::graphics::ShaderProgramDescriptionPtr screen_vertex{};
@@ -451,7 +473,66 @@ struct ContentDraw::Impl {
     /// One entry per INSTANCE buffer a command read (keyed by the buffer's address, see InstanceStream).
     std::unordered_map<const vn::Buffer<float>*, InstanceStream>                    instance_streams;
     std::map<PipelineKey, VkPipeline>                                               pipelines;
-    std::vector<std::pair<VkBuffer, VkDeviceMemory>>                                frame_uniforms;
+    /**
+     * @brief The frame's uniform constants: ONE host-visible buffer, slices handed out by byte offset.
+     *
+     * @details
+     * - THE COST MODEL OF THIS PATH: a draw's constants are WRITTEN into a slice and bound with a DYNAMIC offset, so
+     *   a steady frame creates no buffer and no memory. It used to create and destroy one of each per draw (28 of
+     *   each in the demo's frame - see .ai/research/graphics-2026-11-14-vk-industry-review.md F1).
+     * - THE RING IS REWRITTEN EVERY FRAME: the device submits and waits inside executeFrame, so when beginFrame runs
+     *   nothing the previous frame recorded is still reading it.
+     * - A FRAME THAT DOES NOT FIT IS SKIPPED, NOT GROWN IN PLACE: growing would destroy a buffer the command buffer
+     *   being recorded already names. `demand` remembers what the frame asked for and beginFrame grows to it before
+     *   anything is recorded - the same "grow between frames" rule the reference backend's block storage states.
+     * - REPLACING IT DROPS THE SET CACHE: every cached set names the old buffer (see ensureRing).
+     */
+    struct UniformRing {
+        VkBuffer       buffer{ VK_NULL_HANDLE };
+        VkDeviceMemory memory{ VK_NULL_HANDLE };
+        std::byte*     mapped{ nullptr };
+        VkDeviceSize   capacity{ 0 };
+        VkDeviceSize   cursor{ 0 };
+        VkDeviceSize   demand{ 0 };
+    };
+    UniformRing ring;
+
+    /**
+     * @brief A cached descriptor set: what it BINDS, and when it was last used.
+     *
+     * @details
+     * - A SET IS A BINDING OF RESOURCES, NOT OF A DRAW: with the constants bound through dynamic offsets, a content
+     *   set depends only on the five texture views and the shadow map it names; a screen set on the source's views
+     *   and the shadow map. Both are stable across draws AND frames, which is what makes them cacheable at all
+     *   (F2 of the review: they used to be allocated per draw, per frame).
+     * - `screen` is part of the key because the two layouts are different objects even when they name the same views.
+     */
+    struct SetKey {
+        bool                                   screen{ false };
+        std::array<VkImageView, kTextureSlots> views{};
+        VkImageView                            shadow{ VK_NULL_HANDLE };
+
+        [[nodiscard]] bool operator<(const SetKey& other) const
+        {
+            if (screen != other.screen) {
+                return screen < other.screen;
+            }
+            if (views != other.views) {
+                return views < other.views;
+            }
+            return shadow < other.shadow;
+        }
+    };
+    struct SetEntry {
+        VkDescriptorSet set{ VK_NULL_HANDLE };
+        std::uint64_t   last_frame{ 0 };
+    };
+    std::map<SetKey, SetEntry> sets;
+    /// The per-draw set: its only binding is the ring's draw block, so ONE handle serves every draw of a generation.
+    VkDescriptorSet draw_set{ VK_NULL_HANDLE };
+    /// Frames this recorder has begun - the stamp a cached set is evicted by.
+    std::uint64_t frame_index{ 0 };
+
     /// How many pipelines were CREATED (a resize must leave this unmoved; see pipelinesCreated).
     std::uint64_t created_{ 0 };
 
@@ -462,6 +543,8 @@ struct ContentDraw::Impl {
     std::uint64_t stream_releases_{ 0 };
     std::uint64_t program_builds_{ 0 };
     std::uint64_t pipeline_releases_{ 0 };
+    std::uint64_t ring_builds_{ 0 };
+    std::uint64_t set_builds_{ 0 };
 
     /**
      * @brief Resolves the pipeline-relevant state of one drawing call (the dynamic half recompiles nothing).
@@ -984,7 +1067,7 @@ struct ContentDraw::Impl {
         info.subpass             = 0U;
 
         VkPipeline pipeline = VK_NULL_HANDLE;
-        if (table->vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1U, &info, nullptr, &pipeline) != VK_SUCCESS) {
+        if (table->vkCreateGraphicsPipelines(device, pipeline_cache, 1U, &info, nullptr, &pipeline) != VK_SUCCESS) {
             why = vn::String(u8"vk: the content pipeline could not be built (see the loader's report)");
             return VK_NULL_HANDLE;
         }
@@ -1412,22 +1495,28 @@ struct ContentDraw::Impl {
         writes[1].dstSet          = set;
         writes[1].dstBinding      = kShadowBlockBinding;
         writes[1].descriptorCount = 1U;
-        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         writes[1].pBufferInfo     = &block;
         table->vkUpdateDescriptorSets(device, 2U, writes, 0U, nullptr);
     }
 
     /**
-     * @brief Writes a content draw's set 0: material at binding 0, the five slots at 1-5, lights at 6.
+     * @brief Builds a content set: material at 0, the five slots at 1-5, lights at 6, the shadow pair at 7/8.
      *
-     * @param buffer The draw's uniform buffer (material at 0, lights at @ref lightsOffset).
-     * @param slots  One image info per texture slot, in `TextureSlot` order.
+     * @details
+     * - EVERY UNIFORM BINDING IS `..._DYNAMIC` AND NAMES THE RING AT OFFSET 0: the draw's slice arrives as a dynamic
+     *   offset at bind time (see record), which is what lets ONE set serve every draw that names the same resources.
+     * - THE SHADOW ABI (see kShadowMapBinding): the engine's forward programs declare both, so every content set binds
+     *   them - the map the pass samples, or the white stand-in when it samples none (see buildShadowBlock).
+     *
+     * @param slots          One image info per texture slot, in `TextureSlot` order.
+     * @param shadow_view    The map this pass resolved, or the white stand-in.
+     * @param shadow_sampler The map's sampler (the shadow pair's, not the material slots').
      * @return The set, or `VK_NULL_HANDLE`.
      */
-    [[nodiscard]] VkDescriptorSet makeContentSet(VkBuffer buffer,
-                                                 const std::array<VkDescriptorImageInfo, kTextureSlots>& slots,
-                                                 VkImageView shadow_view,
-                                                 VkSampler   shadow_sampler) const
+    [[nodiscard]] VkDescriptorSet buildContentSet(const std::array<VkDescriptorImageInfo, kTextureSlots>& slots,
+                                                  const VkImageView                                        shadow_view,
+                                                  const VkSampler                                          shadow_sampler) const
     {
         const VkDescriptorSet set = allocateSet(content_set_layout);
         if (set == VK_NULL_HANDLE) {
@@ -1435,26 +1524,23 @@ struct ContentDraw::Impl {
         }
 
         VkDescriptorBufferInfo material_info{};
-        material_info.buffer = buffer;
+        material_info.buffer = ring.buffer;
         material_info.offset = 0U;
         material_info.range  = sizeof(vn::graphics::VineMaterialBlock);
 
         VkDescriptorBufferInfo lights_info{};
-        lights_info.buffer = buffer;
-        lights_info.offset = lightsOffset();
+        lights_info.buffer = ring.buffer;
+        lights_info.offset = 0U;
         lights_info.range  = sizeof(vn::graphics::VineLightsBlock);
 
-        // THE SHADOW ABI (see kShadowMapBinding): the engine's forward programs declare both, so every content set binds
-        // them - the map the pass samples, or the white stand-in when it samples none (see buildShadowBlock for what
-        // turns the map into a shadow).
         VkDescriptorImageInfo shadow_map{};
         shadow_map.sampler     = shadow_sampler;
         shadow_map.imageView   = shadow_view;
         shadow_map.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
         VkDescriptorBufferInfo shadow_info{};
-        shadow_info.buffer = buffer;
-        shadow_info.offset = shadowOffset();
+        shadow_info.buffer = ring.buffer;
+        shadow_info.offset = 0U;
         shadow_info.range  = sizeof(vn::graphics::VineShadowBlock);
 
         VkWriteDescriptorSet writes[3]{};
@@ -1462,7 +1548,7 @@ struct ContentDraw::Impl {
         writes[0].dstSet          = set;
         writes[0].dstBinding      = 0U;
         writes[0].descriptorCount = 1U;
-        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         writes[0].pBufferInfo     = &material_info;
         writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[1].dstSet          = set;
@@ -1474,7 +1560,7 @@ struct ContentDraw::Impl {
         writes[2].dstSet          = set;
         writes[2].dstBinding      = 6U;
         writes[2].descriptorCount = 1U;
-        writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         writes[2].pBufferInfo     = &lights_info;
         table->vkUpdateDescriptorSets(device, 3U, writes, 0U, nullptr);
         writeShadowPair(set, shadow_map, shadow_info);
@@ -1482,12 +1568,11 @@ struct ContentDraw::Impl {
     }
 
     /**
-     * @brief Writes a content draw's set 1: the per-draw block at binding 0.
+     * @brief Builds the per-draw set: the ring's draw block at binding 0, as a DYNAMIC uniform.
      *
-     * @param buffer The draw's uniform buffer (draw at @ref drawOffset).
      * @return The set, or `VK_NULL_HANDLE`.
      */
-    [[nodiscard]] VkDescriptorSet makeDrawSet(VkBuffer buffer) const
+    [[nodiscard]] VkDescriptorSet buildDrawSet() const
     {
         const VkDescriptorSet set = allocateSet(draw_set_layout);
         if (set == VK_NULL_HANDLE) {
@@ -1495,8 +1580,8 @@ struct ContentDraw::Impl {
         }
 
         VkDescriptorBufferInfo draw_info{};
-        draw_info.buffer = buffer;
-        draw_info.offset = drawOffset();
+        draw_info.buffer = ring.buffer;
+        draw_info.offset = 0U;
         draw_info.range  = sizeof(vn::graphics::VineDrawBlock);
 
         VkWriteDescriptorSet write{};
@@ -1504,23 +1589,28 @@ struct ContentDraw::Impl {
         write.dstSet          = set;
         write.dstBinding      = 0U;
         write.descriptorCount = 1U;
-        write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         write.pBufferInfo     = &draw_info;
         table->vkUpdateDescriptorSets(device, 1U, &write, 0U, nullptr);
         return set;
     }
 
     /**
-     * @brief Writes a screen draw's set 0: the source attachments at 0..4, the lights at 6.
+     * @brief Builds a full-screen set: the source's attachments at 0..4, the lights at 6, the shadow pair at 7/8.
      *
-     * @param buffer The draw's uniform buffer (lights at @ref lightsOffset).
-     * @param slots  One image info per source/depth binding, in binding order; absent ones carry the fallback.
+     * @details
+     * - Same two rules as the content set: every uniform binding is DYNAMIC and names the ring at offset 0, and the
+     *   set is cached by the IMAGES it names - so a pass that samples the same source and map reuses one set across
+     *   draws and frames.
+     *
+     * @param slots          One image info per source binding (absent ones carry the fallback), in binding order.
+     * @param shadow_view    The map this pass resolved, or the white stand-in.
+     * @param shadow_sampler The map's sampler.
      * @return The set, or `VK_NULL_HANDLE`.
      */
-    [[nodiscard]] VkDescriptorSet makeScreenSet(VkBuffer                                                 buffer,
-                                                const std::array<VkDescriptorImageInfo, kTextureSlots>& slots,
-                                                const VkImageView                                        shadow_view,
-                                                const VkSampler                                          shadow_sampler) const
+    [[nodiscard]] VkDescriptorSet buildScreenSet(const std::array<VkDescriptorImageInfo, kTextureSlots>& slots,
+                                                 const VkImageView                                        shadow_view,
+                                                 const VkSampler                                          shadow_sampler) const
     {
         const VkDescriptorSet set = allocateSet(screen_set_layout);
         if (set == VK_NULL_HANDLE) {
@@ -1528,23 +1618,18 @@ struct ContentDraw::Impl {
         }
 
         VkDescriptorBufferInfo lights_info{};
-        lights_info.buffer = buffer;
-        lights_info.offset = lightsOffset();
+        lights_info.buffer = ring.buffer;
+        lights_info.offset = 0U;
         lights_info.range  = sizeof(vn::graphics::VineLightsBlock);
 
-        // THE ENGINE'S SHADOW ABI, the same two bindings a content set writes (see kShadowMapBinding): a full-screen
-        // pass whose fragment IS the engine's forward shading declares both unconditionally. The MAP is the one the
-        // pass resolved (see recordScreen / ShadowSource) - a shading screen pass is exactly where the sun's shadow
-        // arrives - and the block is packed for this call below; with no map the caller passes the white stand-in and
-        // the zeroed block, which is the engine's own "no shadow reaches this pass".
         VkDescriptorImageInfo shadow_map{};
         shadow_map.sampler     = shadow_sampler;
         shadow_map.imageView   = shadow_view;
         shadow_map.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
         VkDescriptorBufferInfo shadow_info{};
-        shadow_info.buffer = buffer;
-        shadow_info.offset = shadowOffset();
+        shadow_info.buffer = ring.buffer;
+        shadow_info.offset = 0U;
         shadow_info.range  = sizeof(vn::graphics::VineShadowBlock);
 
         VkWriteDescriptorSet writes[2]{};
@@ -1558,48 +1643,208 @@ struct ContentDraw::Impl {
         writes[1].dstSet          = set;
         writes[1].dstBinding      = 6U;
         writes[1].descriptorCount = 1U;
-        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         writes[1].pBufferInfo     = &lights_info;
         table->vkUpdateDescriptorSets(device, 2U, writes, 0U, nullptr);
         writeShadowPair(set, shadow_map, shadow_info);
         return set;
     }
 
-    /**
-     * @brief Creates the per-draw uniform buffer and writes the material, lights and draw blocks at their offsets.
-     *
-     * @param material The material block (offset 0).
-     * @param lights   The light block (offset @ref lightsOffset).
-     * @param draw     The per-draw block (offset @ref drawOffset).
-     * @param buffer   Receives the buffer.
-     * @param memory   Receives the memory.
-     * @return true when the bytes are in the buffer.
-     */
-    [[nodiscard]] bool createDrawUniforms(const vn::graphics::VineMaterialBlock& material,
-                                          const vn::graphics::VineLightsBlock&   lights,
-                                          const vn::graphics::VineDrawBlock&     draw,
-                                          const vn::graphics::VineShadowBlock&   shadow,
-                                          VkBuffer&                              buffer,
-                                          VkDeviceMemory&                        memory) const
+    /** @brief Bytes one draw's slice occupies: the four blocks, padded so the next slice stays aligned. */
+    [[nodiscard]] VkDeviceSize sliceSize() const noexcept
     {
-        const VkDeviceSize size = uniformSize();
-        if (!createHostBuffer(size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, buffer, memory)) {
+        return alignedUp(uniformSize(), uniform_alignment);
+    }
+
+    /**
+     * @brief Makes the ring hold @p needed bytes, REPLACING it when it cannot - between frames only.
+     *
+     * @details
+     * - REPLACING DESTROYS A BUFFER, so it may not happen while a command buffer that names it is being recorded: the
+     *   two callers are create() (before any frame) and beginFrame() (after the previous frame was answered and
+     *   before this one is recorded).
+     * - EVERY CACHED SET NAMES THE OLD BUFFER, so the cache is dropped first, and the generation moves so a set that
+     *   somehow survived cannot be mistaken for one that binds the new buffer.
+     *
+     * @param needed Bytes the ring must hold.
+     * @return true when the ring can serve @p needed.
+     */
+    [[nodiscard]] bool ensureRing(const VkDeviceSize needed)
+    {
+        if (ring.buffer != VK_NULL_HANDLE && needed <= ring.capacity) {
+            return true;
+        }
+        if (table == nullptr) {
+            return false;
+        }
+        // GROW BY DOUBLING: a scene whose constants creep up then grows once per doubling, not once per frame.
+        const VkDeviceSize capacity = alignedUp(std::max({ needed, kInitialRingBytes, ring.capacity * 2U }), uniform_alignment);
+        VkBuffer           buffer   = VK_NULL_HANDLE;
+        VkDeviceMemory     memory   = VK_NULL_HANDLE;
+        if (!createHostBuffer(capacity, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, buffer, memory)) {
             return false;
         }
         void* mapped = nullptr;
-        if (table->vkMapMemory(device, memory, 0U, size, 0U, &mapped) != VK_SUCCESS || mapped == nullptr) {
+        if (table->vkMapMemory(device, memory, 0U, capacity, 0U, &mapped) != VK_SUCCESS || mapped == nullptr) {
             destroyBuffer(buffer, memory);
             return false;
         }
-        auto* bytes = static_cast<std::byte*>(mapped);
+        clearSets();
+        destroyRing();
+        ring = UniformRing{ buffer, memory, static_cast<std::byte*>(mapped), capacity, 0U, 0U };
+        ++ring_builds_;
+        return true;
+    }
+
+    /**
+     * @brief Hands out the next slice of the frame's ring.
+     *
+     * @details
+     * - A FULL RING DOES NOT GROW IN PLACE (see ensureRing): the demand is remembered and this call answers false, so
+     *   the caller skips that draw. beginFrame grows to the demand before the next frame records anything - the same
+     *   "grow between frames" rule the reference backend's block storage states.
+     *
+     * @param slice Receives the slice's byte offset.
+     * @return true when the slice was handed out.
+     */
+    [[nodiscard]] bool reserveSlice(VkDeviceSize& slice) noexcept
+    {
+        const VkDeviceSize size = sliceSize();
+        if (ring.buffer == VK_NULL_HANDLE || ring.cursor + size > ring.capacity) {
+            ring.demand = std::max(ring.demand, ring.cursor + size);
+            return false;
+        }
+        slice = ring.cursor;
+        ring.cursor += size;
+        return true;
+    }
+
+    /**
+     * @brief Writes one call's four blocks into @p slice, at the offsets the descriptors name.
+     *
+     * @param slice    The slice's byte offset (see reserveSlice).
+     * @param material The material block (offset 0).
+     * @param lights   The light block (offset @ref lightsOffset).
+     * @param draw     The per-draw block (offset @ref drawOffset).
+     * @param shadow   The shadow block (offset @ref shadowOffset).
+     */
+    void writeSlice(const VkDeviceSize                    slice,
+                    const vn::graphics::VineMaterialBlock& material,
+                    const vn::graphics::VineLightsBlock&   lights,
+                    const vn::graphics::VineDrawBlock&     draw,
+                    const vn::graphics::VineShadowBlock&   shadow) const noexcept
+    {
+        std::byte* const bytes = ring.mapped + slice;
         std::memcpy(bytes, &material, sizeof(material));
         std::memcpy(bytes + lightsOffset(), &lights, sizeof(lights));
         std::memcpy(bytes + drawOffset(), &draw, sizeof(draw));
         // THE SHADOW BLOCK is the call's own statement (see buildShadowBlock); its `params.x = 0` is the engine's "no
         // shadow reached this pass" switch, which is what a pass that samples no map states.
         std::memcpy(bytes + shadowOffset(), &shadow, sizeof(shadow));
-        table->vkUnmapMemory(device, memory);
-        return true;
+    }
+
+    /** @brief Frees every cached set (the ring they name is going away, or the pool is being rebuilt). */
+    void clearSets() noexcept
+    {
+        for (auto& [key, entry] : sets) {
+            (void)key;
+            freeSet(entry.set);
+        }
+        sets.clear();
+        freeSet(draw_set);
+    }
+
+    /** @brief Frees sets nobody has used for kSetRetentionFrames (see beginFrame). */
+    void sweepSets() noexcept
+    {
+        for (auto entry = sets.begin(); entry != sets.end();) {
+            if (entry->second.last_frame + kSetRetentionFrames < frame_index) {
+                freeSet(entry->second.set);
+                entry = sets.erase(entry);
+            }
+            else {
+                ++entry;
+            }
+        }
+    }
+
+    /** @brief Frees one set if it exists (a no-op before a pool does). */
+    void freeSet(VkDescriptorSet& set) noexcept
+    {
+        if (set != VK_NULL_HANDLE && descriptor_pool != VK_NULL_HANDLE && table != nullptr) {
+            (void)table->vkFreeDescriptorSets(device, descriptor_pool, 1U, &set);
+        }
+        set = VK_NULL_HANDLE;
+    }
+
+    /** @brief Destroys the ring's buffer and memory (idempotent). */
+    void destroyRing() noexcept
+    {
+        if (table != nullptr && ring.mapped != nullptr && ring.memory != VK_NULL_HANDLE) {
+            table->vkUnmapMemory(device, ring.memory);
+        }
+        destroyBuffer(ring.buffer, ring.memory);
+        ring = UniformRing{};
+    }
+
+    /** @brief The key a set is cached under (see SetKey). */
+    [[nodiscard]] static SetKey keyOf(const bool                                               screen,
+                                      const std::array<VkDescriptorImageInfo, kTextureSlots>& slots,
+                                      const VkImageView                                        shadow) noexcept
+    {
+        SetKey key;
+        key.screen = screen;
+        for (std::size_t slot = 0; slot < kTextureSlots; ++slot) {
+            key.views[slot] = slots[slot].imageView;
+        }
+        key.shadow = shadow;
+        return key;
+    }
+
+    /** @brief Answers the set cached under @p key, building it once (see SetKey). */
+    template <typename Build>
+    [[nodiscard]] VkDescriptorSet cachedSet(const SetKey& key, Build&& build)
+    {
+        const auto found = sets.find(key);
+        if (found != sets.end()) {
+            found->second.last_frame = frame_index;
+            return found->second.set;
+        }
+        const VkDescriptorSet set = build();
+        if (set == VK_NULL_HANDLE) {
+            return set;
+        }
+        sets.emplace(key, SetEntry{ set, frame_index });
+        ++set_builds_;
+        return set;
+    }
+
+    /** @brief The content set for one drawable's resources (see buildContentSet). */
+    [[nodiscard]] VkDescriptorSet contentSetFor(const std::array<VkDescriptorImageInfo, kTextureSlots>& slots,
+                                                const VkImageView                                        shadow_view,
+                                                const VkSampler                                          shadow_sampler)
+    {
+        return cachedSet(keyOf(false, slots, shadow_view), [&] { return buildContentSet(slots, shadow_view, shadow_sampler); });
+    }
+
+    /** @brief The full-screen set for one call's source and map (see buildScreenSet). */
+    [[nodiscard]] VkDescriptorSet screenSetFor(const std::array<VkDescriptorImageInfo, kTextureSlots>& slots,
+                                               const VkImageView                                        shadow_view,
+                                               const VkSampler                                          shadow_sampler)
+    {
+        return cachedSet(keyOf(true, slots, shadow_view), [&] { return buildScreenSet(slots, shadow_view, shadow_sampler); });
+    }
+
+    /** @brief The per-draw set: one handle per ring generation (its only binding is the ring's draw block). */
+    [[nodiscard]] VkDescriptorSet drawSetFor()
+    {
+        if (draw_set == VK_NULL_HANDLE) {
+            draw_set = buildDrawSet();
+            if (draw_set != VK_NULL_HANDLE) {
+                ++set_builds_;
+            }
+        }
+        return draw_set;
     }
 
     /** @brief Destroys every compiled program (and its modules). */
@@ -1647,14 +1892,6 @@ struct ContentDraw::Impl {
         pipelines.clear();
     }
 
-    /** @brief Destroys the per-frame uniform buffers. */
-    void destroyFrameUniforms() noexcept
-    {
-        for (auto& [buffer, memory] : frame_uniforms) {
-            destroyBuffer(buffer, memory);
-        }
-        frame_uniforms.clear();
-    }
 };
 
 ContentDraw::ContentDraw()
@@ -1686,7 +1923,7 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
     // also the one vine_params.glsl declares.
     VkDescriptorSetLayoutBinding content_bindings[9]{};
     content_bindings[0].binding         = 0U;
-    content_bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    content_bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     content_bindings[0].descriptorCount = 1U;
     content_bindings[0].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     for (std::uint32_t slot = 0; slot < kTextureSlots; ++slot) {
@@ -1697,7 +1934,7 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
         binding.stageFlags                    = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     }
     content_bindings[6].binding         = 6U;
-    content_bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    content_bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     content_bindings[6].descriptorCount = 1U;
     content_bindings[6].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     // THE ENGINE'S SHADOW ABI (see kShadowMapBinding): a forward program declares both, so the layout offers both -
@@ -1707,7 +1944,7 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
     content_bindings[7].descriptorCount = 1U;
     content_bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
     content_bindings[8].binding         = kShadowBlockBinding;
-    content_bindings[8].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    content_bindings[8].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     content_bindings[8].descriptorCount = 1U;
     content_bindings[8].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
@@ -1723,7 +1960,7 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
     // THE DRAW SET (set 1): the per-draw block at binding 0.
     VkDescriptorSetLayoutBinding draw_binding{};
     draw_binding.binding         = 0U;
-    draw_binding.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    draw_binding.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     draw_binding.descriptorCount = 1U;
     draw_binding.stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     layout_info.bindingCount = 1U;
@@ -1735,7 +1972,7 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
 
     // THE FULL-SCREEN SET (set 0 of a screen program): the source's colour attachments at 0..4, the lights at 6, and
     // the SAME shadow pair the content set declares at 7/8 - a full-screen pass whose fragment is the engine's forward
-    // shading states both, so the layout has to offer them (see makeScreenSet for what is bound there).
+    // shading states both, so the layout has to offer them (see buildScreenSet for what is bound there).
     VkDescriptorSetLayoutBinding screen_bindings[8]{};
     for (std::uint32_t slot = 0; slot < kScreenSamplerBindings; ++slot) {
         screen_bindings[slot].binding         = slot;
@@ -1744,7 +1981,7 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
         screen_bindings[slot].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     }
     screen_bindings[5].binding         = 6U;
-    screen_bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    screen_bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     screen_bindings[5].descriptorCount = 1U;
     screen_bindings[5].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     screen_bindings[6].binding         = kShadowMapBinding;
@@ -1752,7 +1989,7 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
     screen_bindings[6].descriptorCount = 1U;
     screen_bindings[6].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
     screen_bindings[7].binding         = kShadowBlockBinding;
-    screen_bindings[7].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    screen_bindings[7].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     screen_bindings[7].descriptorCount = 1U;
     screen_bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
     layout_info.bindingCount = 8U;
@@ -1790,24 +2027,40 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
         return false;
     }
 
-    // ONE POOL FOR BOTH PATHS: a content draw allocates two sets (3 UBOs + 6 samplers), a screen draw one (2 UBOs +
-    // 6 samplers) - both now carry the engine's shadow pair (see kShadowMapBinding).
+    // ONE POOL FOR THE SET CACHE (see Impl::sets): a set is a BINDING OF RESOURCES, so the pool holds one per
+    // (texture set, shadow map) instead of one per draw - and it is freed PER ENTRY (FREE_DESCRIPTOR_SET) rather than
+    // reset every frame, because a cached set has to outlive the frame that built it.
     VkDescriptorPoolSize pool_sizes[2]{};
-    pool_sizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     // material, lights and the shadow block per content set; the draw block per draw set; lights and the shadow block
-    // per screen set.
-    pool_sizes[0].descriptorCount = kDescriptorsPerFrame * 6U;
+    // per screen set - four is the worst case per cached set.
+    pool_sizes[0].descriptorCount = kMaxCachedSets * 4U;
     pool_sizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     // five material slots + the shadow map per content set; five sampled inputs + the shadow map per screen set.
-    pool_sizes[1].descriptorCount = kDescriptorsPerFrame * (2U * (kTextureSlots + 1U));
+    pool_sizes[1].descriptorCount = kMaxCachedSets * 2U * (kTextureSlots + 1U);
+
+    VkPipelineCacheCreateInfo cache_info{};
+    cache_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    if (impl->table->vkCreatePipelineCache(impl->device, &cache_info, nullptr, &impl->pipeline_cache) != VK_SUCCESS) {
+        // Not fatal: a device that refuses a cache still builds pipelines - it just cannot reuse them.
+        impl->pipeline_cache = VK_NULL_HANDLE;
+    }
 
     VkDescriptorPoolCreateInfo pool_info{};
     pool_info.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pool_info.maxSets       = kDescriptorsPerFrame * 2U;
+    pool_info.flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets       = kMaxCachedSets;
     pool_info.poolSizeCount = 2U;
     pool_info.pPoolSizes    = pool_sizes;
     if (impl->table->vkCreateDescriptorPool(impl->device, &pool_info, nullptr, &impl->descriptor_pool) != VK_SUCCESS) {
         destroy();
+        return false;
+    }
+
+    // THE UNIFORM RING IS PART OF COMING UP: every draw writes its constants into it, so a session that cannot hold
+    // 256 KiB of constants cannot draw anything (see UniformRing).
+    if (!impl->ensureRing(kInitialRingBytes)) {
+        destroy(); // the device reports why a recorder that cannot hold its constants did not come up
         return false;
     }
 
@@ -1829,11 +2082,16 @@ void ContentDraw::destroy() noexcept
     }
     if (impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
         impl->images.destroy();
-        impl->destroyFrameUniforms();
+        impl->clearSets();
+        impl->destroyRing();
         impl->destroyPipelines();
         impl->destroyPrograms();
         impl->destroyGeometries();
         impl->destroyInstanceStreams();
+        if (impl->pipeline_cache != VK_NULL_HANDLE) {
+            impl->table->vkDestroyPipelineCache(impl->device, impl->pipeline_cache, nullptr);
+            impl->pipeline_cache = VK_NULL_HANDLE;
+        }
         if (impl->descriptor_pool != VK_NULL_HANDLE) {
             impl->table->vkDestroyDescriptorPool(impl->device, impl->descriptor_pool, nullptr);
             impl->descriptor_pool = VK_NULL_HANDLE;
@@ -1863,19 +2121,38 @@ void ContentDraw::destroy() noexcept
     impl->program_builds_     = 0;
     impl->pipeline_releases_  = 0;
     impl->created_            = 0;
+    impl->ring_builds_        = 0;
+    impl->set_builds_         = 0;
+    impl->frame_index         = 0;
 }
 
 void ContentDraw::beginFrame()
 {
-    if (impl->device != VK_NULL_HANDLE && impl->descriptor_pool != VK_NULL_HANDLE) {
-        (void)impl->table->vkResetDescriptorPool(impl->device, impl->descriptor_pool, 0U);
+    if (impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
+        return;
+    }
+    ++impl->frame_index;
+    // A NEW FRAME'S SLICES START AT THE BEGINNING: the device submits and waits inside executeFrame, so the previous
+    // frame's reads are done (see UniformRing).
+    impl->ring.cursor = 0;
+    // THE FRAME THAT DID NOT FIT IS PAID FOR HERE, between frames: growing inside a frame would destroy a buffer the
+    // command buffer being recorded already names (see ensureRing). A growth that fails leaves the demand standing, so
+    // the next frame tries again and the draws that do not fit keep saying so.
+    if (impl->ring.demand > impl->ring.capacity) {
+        if (impl->ensureRing(impl->ring.demand)) {
+            impl->ring.demand = 0;
+        }
+        // A GROWTH THAT FAILED KEEPS THE DEMAND: the next frame tries again, and the draws that do not fit keep
+        // reporting through their own note (see reserveSlice).
+    }
+    if (impl->frame_index % kSetSweepIntervalFrames == 0U) {
+        impl->sweepSets();
     }
 }
 
 void ContentDraw::endFrame() noexcept
 {
     if (impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
-        impl->destroyFrameUniforms();
         impl->images.releaseFrame();
     }
 }
@@ -1895,6 +2172,9 @@ ContentDraw::Progress ContentDraw::progress() const noexcept
     out.pipeline_builds = impl->created_;
     out.pipeline_releases = impl->pipeline_releases_;
     out.pipelines_live    = static_cast<std::uint32_t>(impl->pipelines.size());
+    out.ring_builds       = impl->ring_builds_;
+    out.set_builds        = impl->set_builds_;
+    out.sets_live         = static_cast<std::uint64_t>(impl->sets.size()) + (impl->draw_set != VK_NULL_HANDLE ? 1U : 0U);
     // LIVE, FROM THE TABLES: a hole a release left has a null buffer and is not resident.
     for (const auto& [description, entry] : impl->geometries) {
         (void)description;
@@ -2270,8 +2550,13 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         // matrix that maps a fragment's view position into the producer's clip - see buildShadowBlock).
         const vn::graphics::VineShadowBlock shadow_block = buildShadowBlock(shadow, draw);
 
-        VkBuffer       uniform_buffer = VK_NULL_HANDLE;
-        VkDeviceMemory uniform_memory = VK_NULL_HANDLE;
+        // ONE SLICE OF THE FRAME'S RING, WRITTEN BY OFFSET (see UniformRing): no buffer is created for this draw, and
+        // a frame that does not fit skips the draw and grows the ring before the next one.
+        VkDeviceSize slice = 0;
+        if (!impl->reserveSlice(slice)) {
+            note(u8"vk: the frame's uniform ring is full; this draw was skipped and the ring grows before the next frame");
+            continue;
+        }
         // The material block's DEFAULTS are the default material's values, so a call with no material packs nothing
         // (see packMaterialBlock).
         vn::graphics::VineMaterialBlock material_block{};
@@ -2280,24 +2565,15 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         }
         vn::graphics::VineDrawBlock draw_block{};
         vn::graphics::packDrawBlock(command.model_matrix, command.opacity, resolved.state.pointSize, draw_block);
-        if (!impl->createDrawUniforms(material_block,
-                                      lights_block,
-                                      draw_block,
-                                      shadow_block,
-                                      uniform_buffer,
-                                      uniform_memory)) {
-            note(u8"vk: a draw's uniform buffer could not be created");
-            continue;
-        }
-        impl->frame_uniforms.emplace_back(uniform_buffer, uniform_memory);
+        impl->writeSlice(slice, material_block, lights_block, draw_block, shadow_block);
 
         const VkImageView shadow_view    = shadow.view != VK_NULL_HANDLE ? shadow.view : impl->images.fallbackView();
         const VkSampler   shadow_sampler = impl->images.samplerFor(kShadowSampler);
         const VkDescriptorSet content_set =
-            impl->makeContentSet(uniform_buffer, slots, shadow_view, shadow_sampler != VK_NULL_HANDLE ? shadow_sampler : impl->images.fallbackSampler());
-        const VkDescriptorSet draw_set    = content_set != VK_NULL_HANDLE ? impl->makeDrawSet(uniform_buffer) : VK_NULL_HANDLE;
+            impl->contentSetFor(slots, shadow_view, shadow_sampler != VK_NULL_HANDLE ? shadow_sampler : impl->images.fallbackSampler());
+        const VkDescriptorSet draw_set    = content_set != VK_NULL_HANDLE ? impl->drawSetFor() : VK_NULL_HANDLE;
         if (content_set == VK_NULL_HANDLE || draw_set == VK_NULL_HANDLE) {
-            note(u8"vk: the descriptor pool ran out of sets for this frame");
+            note(u8"vk: the descriptor cache could not hand out a set");
             continue;
         }
 
@@ -2312,7 +2588,20 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         impl->table->vkCmdSetLineWidth(commands, std::clamp(resolved.state.lineWidth, 1.0F, impl->max_line_width));
         impl->table->vkCmdSetDepthBias(commands, resolved.state.polygonOffset.units, 0.0F, resolved.state.polygonOffset.factor);
         const VkDescriptorSet sets[2]{ content_set, draw_set };
-        impl->table->vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, impl->content_pipeline_layout, 0U, 2U, sets, 0U, nullptr);
+        // THE SLICE REACHES THE SHADERS AS A DYNAMIC OFFSET, in binding order across both sets: material (0), lights
+        // (6) and the shadow block (8) of set 0, then the draw block (0) of set 1.
+        const std::uint32_t offsets[4]{ static_cast<std::uint32_t>(slice),
+                                        static_cast<std::uint32_t>(slice + impl->lightsOffset()),
+                                        static_cast<std::uint32_t>(slice + impl->shadowOffset()),
+                                        static_cast<std::uint32_t>(slice + impl->drawOffset()) };
+        impl->table->vkCmdBindDescriptorSets(commands,
+                                             VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                             impl->content_pipeline_layout,
+                                             0U,
+                                             2U,
+                                             sets,
+                                             4U,
+                                             offsets);
 
         const ContentPushConstants push = pushConstantsOf(draw.camera, command.model_matrix);
         impl->table->vkCmdPushConstants(commands,
@@ -2454,22 +2743,23 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
     // this pass" block (`params.x = 0`) and the set binds the white stand-in - which is what a full-screen pass that
     // declares the shadow ABI but resolved no map states.
     const vn::graphics::VineShadowBlock shadow_block = buildShadowBlock(shadow, draw);
-    VkBuffer                            uniform_buffer = VK_NULL_HANDLE;
-    VkDeviceMemory                      uniform_memory = VK_NULL_HANDLE;
-    if (!impl->createDrawUniforms(vn::graphics::VineMaterialBlock{}, lights_block, vn::graphics::VineDrawBlock{}, shadow_block, uniform_buffer, uniform_memory)) {
-        reason = vn::String(u8"vk: a screen draw's uniform buffer could not be created");
+    // THE SAME RING AND THE SAME RULE as the content path: the constants are written into a slice and bound as dynamic
+    // offsets; the set itself depends only on the images it names.
+    VkDeviceSize slice = 0;
+    if (!impl->reserveSlice(slice)) {
+        reason = vn::String(u8"vk: the frame's uniform ring is full; this draw was skipped and the ring grows before the "
+                                  u8"next frame");
         return 0;
     }
-    impl->frame_uniforms.emplace_back(uniform_buffer, uniform_memory);
+    impl->writeSlice(slice, vn::graphics::VineMaterialBlock{}, lights_block, vn::graphics::VineDrawBlock{}, shadow_block);
 
     const VkImageView shadow_view    = shadow.view != VK_NULL_HANDLE ? shadow.view : impl->images.fallbackView();
     const VkSampler   shadow_sampler = impl->images.samplerFor(kShadowSampler);
-    const VkDescriptorSet set        = impl->makeScreenSet(uniform_buffer,
-                                                           slots,
-                                                           shadow_view,
-                                                           shadow_sampler != VK_NULL_HANDLE ? shadow_sampler : impl->images.fallbackSampler());
+    const VkDescriptorSet set        = impl->screenSetFor(slots,
+                                                          shadow_view,
+                                                          shadow_sampler != VK_NULL_HANDLE ? shadow_sampler : impl->images.fallbackSampler());
     if (set == VK_NULL_HANDLE) {
-        reason = vn::String(u8"vk: the descriptor pool ran out of sets for this frame");
+        reason = vn::String(u8"vk: the descriptor cache could not hand out a set");
         return 0;
     }
 
@@ -2480,7 +2770,17 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
     // The pipeline states depth bias as DYNAMIC (the content path does the same), so a full-screen draw owes the
     // command buffer the values too - zero is "no offset".
     impl->table->vkCmdSetDepthBias(commands, 0.0F, 0.0F, 0.0F);
-    impl->table->vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, impl->screen_pipeline_layout, 0U, 1U, &set, 0U, nullptr);
+    // The screen set's dynamic bindings are the lights (6) and the shadow block (8), in binding order.
+    const std::uint32_t offsets[2]{ static_cast<std::uint32_t>(slice + impl->lightsOffset()),
+                                     static_cast<std::uint32_t>(slice + impl->shadowOffset()) };
+    impl->table->vkCmdBindDescriptorSets(commands,
+                                         VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                         impl->screen_pipeline_layout,
+                                         0U,
+                                         1U,
+                                         &set,
+                                         2U,
+                                         offsets);
     // The full-screen triangle: three vertices generated from gl_VertexIndex, no buffer, no index stream.
     impl->table->vkCmdDraw(commands, 3U, 1U, 0U, 0U);
     return 1;

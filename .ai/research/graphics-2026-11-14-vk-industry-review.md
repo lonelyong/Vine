@@ -45,7 +45,7 @@
 
 ## 4. 与行业标准的差距（按严重度）
 
-### F1（高）每 draw 每帧创建/销毁 uniform buffer
+### F1（高，**已落地 2026-11-14**）每 draw 每帧创建/销毁 uniform buffer
 
 - **现状**：`ContentDraw::createHostBuffer`（`ContentDraw.cpp:522`）对**每条 draw** 做
   `vkCreateBuffer` + `vkGetBufferMemoryRequirements` + `vkAllocateMemory` + `vkBindBufferMemory` + `vkMapMemory`
@@ -59,16 +59,24 @@
 - **判词**：这是与工业实现差得最远的一处，也是“同一框架两条实现”里 vsg 已经做到、vk 没做到的一条。
 - **代价**：驱动侧锁与堆操作在每帧关键路径上；在真 GPU 上会把 CPU 帧预算吃掉可观一块（lavapipe 上已占稳态
   7 ms 的一部分）。
-- **建议**：backlog **T43**（触发：切默认前 / 真 GPU 帧预算评审）。
+- **已落地（2026-11-14）**：`ContentDraw::Impl::UniformRing`——一个持久映射缓冲，按 `minUniformBufferOffsetAlignment`
+  切片；四个块（material/lights/draw/shadow）写成 `UNIFORM_BUFFER_DYNAMIC`，绑定时给 4 个动态偏移；帧满则**跳过该帧
+  的 draw 并在下一帧前扩容**（扩容会销毁命令缓冲已点名的 buffer，所以只在帧间做）。见证：`Device::contentCacheCounters()`
+  的 `ring_builds` 稳态恒 1；用例 `VkUniformRingTest.*`。
+- **实测（Release + lavapipe，同一 11-pass 场景，各 3 次）**：稳态 median **9.03–9.23 → 8.16–8.30 ms（−10%）**；
+  预热不变（预热不画）。
 
-### F2（高）描述符集每 draw 每帧分配
+### F2（高，**已落地 2026-11-14**）描述符集每 draw 每帧分配
 
 - **现状**：`makeContentSet` / `makeDrawSet` / `makeScreenSet` 每条 draw 现分配（池每帧 `vkResetDescriptorPool`，
   `ContentDraw.cpp:1871`）；预热报告的 `sets` 恒 0（T42 已登记）。
 - **行业做法**：按（program 布局, 资源集合）**缓存声明集**，只在资源变化时重建；或 push descriptor（1.4 可选）。
   vsg 的 `ContentSets` 就是前者（按 program revision + 纹理 revision 键）。
 - **判词**：与 F1 同源（“每 draw 一套对象”），两者一起改才划算（一次 bind 两个 set + offsets）。
-- **建议**：并入 T42，与 F1 同批做。
+- **已落地（2026-11-14）**：set 的键改成**它绑定的资源**（5 个纹理视图 + shadow 视图；screen set 同形），
+  三个 set 布局全部 `..._DYNAMIC`，池带 `FREE_DESCRIPTOR_SET` 并**按条目释放**（不再每帧 reset）；每 draw 的
+  差异只剩动态偏移，所以 draw set 整个 generation 只有一个句柄。见证：`set_builds` 稳态不涨、`sets_live` 不随
+  帧增长；变异（缓存恒 miss）⇒ 两个用例同时红。
 
 ### F3（中）命令缓冲每帧分配/释放
 
@@ -76,14 +84,15 @@
 - **行业做法**：每个帧槽一个持久命令缓冲（`vkResetCommandBuffer` 复用），或每帧从池里 reset。
 - **判词**：单帧在飞时收益有限（每帧 2 次驱动调用），但和 F1/F2 一样属于“每帧建对象”的模式。
 
-### F4（中）没有 `VkPipelineCache`，着色器运行时编译
+### F4（中，**会话内已落地 2026-11-14**）没有 `VkPipelineCache`，着色器运行时编译
 
 - **现状**：`vkCreatePipelineCache` 全仓 0 处；GLSL 在运行时经 glslang 编译（`ShaderCompiler.cpp`）。
 - **行业做法**：至少建一个内存内 `VkPipelineCache` 传给 `vkCreateGraphicsPipelines`；发布版把它**序列化到磁盘**
   （按驱动/设备版本命名），冷启动从“编译几分钟”降到“读一个 blob”。
 - **判词**：本后端已有 program/pipeline 的内存缓存（同一会话不重编），所以**会话内**收益接近 0；
   真正缺的是**跨会话**。对“每次启动都重新编译”的开发者体验是明显差距。
-- **建议**：backlog **T44**（触发：启动时间进入预算 / 有发布形态）。
+- **已落地（会话内）**：`ContentDraw` 建一个 `VkPipelineCache` 并传给两处 `vkCreateGraphicsPipelines`，
+  `destroy()` 销毁它。**仍缺**跨会话：`vkGetPipelineCacheData` 落盘 + `pInitialData` 装回（backlog **T44**）。
 
 ### F5（中）单帧在飞：每帧 `submit` + `fence wait`
 
@@ -138,13 +147,18 @@
 - **行业做法**：优先 graphics+compute+transfer 三合一的族，其次分开；大上传用专用 transfer 队列 + 队列族所有权转移。
 - **判词**：同步提交模型下收益很小；**明确不做**（G8），除非上传成为瓶颈。
 
-### F12（低）没有 GPU 侧计时
+### F12（低，**已落地 2026-11-14**）没有 GPU 侧计时
 
 - **现状**：`vkCmdWriteTimestamp` / query pool 全仓 0 处；HUD 的帧时间来自 CPU 墙钟（`FpsOverlay`）。
 - **行业做法**：每帧两个时间戳（帧首/帧尾）+ 环形 query pool，读回得到 GPU 时间；与 CPU 时间分开显示。
 - **判词**：性能证据目前只能回答“宿主调用花了多久”，不能回答“GPU 花了多久”。做 F1/F2 的收益评估时
   会**需要**它——建议先于 F1 落地，否则改动只能靠 lavapipe 的墙钟判优劣。
-- **建议**：backlog **T46**（触发：F1/F2 的性能验收）。
+- **已落地**：SDK 的 `FrameTiming`（`FrameStats.hpp`，`FrameReport::timing` 可选，缺席 ≠ 0）+ vk 的
+  `VK_QUERY_TYPE_TIMESTAMP` 一对查询（`executeFrame` 里写、栅栏之后读，`timestampComputeAndGraphics` 为假时整个
+  部件缺席）；demo 的 `bench last frame` 在有样本时印 **gpu 毫秒**。用例
+  `VkDeviceClockTest.AFrameReportsItsDeviceTime`（首帧有值、未采样帧缺席、第 31 帧再有值、关机后缺席）。
+- **量出来的代价**：lavapipe 上每帧写读时间戳 **~0.8 ms**（关 median 8.30 / 开 9.01–9.20，各 3 次）⇒ 后端**每 30 帧
+  采一次**，未采样的帧答缺席。gpu 值本身：**7.15–7.74 ms**（CPU median 8.2–9.0，同一场景）。
 
 ### F13（信息）运行时 glslang
 

@@ -1931,8 +1931,16 @@ void DemoScene::reportFrameBenchmark(const std::vector<double>& millis) const
             millis.size(), engine->frameNumber(), millis.front(), steady_mean,
             steady.empty() ? 0.0 : percentile(0.5), steady.empty() ? 0.0 : percentile(0.95),
             steady.empty() ? 0.0 : steady.back());
-    VN_LOGI("[demo] bench last frame: passes {}, draws {}, stream uploads {}, texture uploads {}", passes, draws, streams,
-            textures);
+    // THE DEVICE'S OWN CLOCK, when the backend keeps one (see FrameTiming): the CPU figures above say what the host
+    // paid, this says what the GPU took - reading one as the other is how a CPU saving gets reported as a GPU one.
+    if (report.timing.has_value()) {
+        VN_LOGI("[demo] bench last frame: passes {}, draws {}, stream uploads {}, texture uploads {}, gpu {:.2f} ms", passes,
+                draws, streams, textures, static_cast<double>(report.timing->gpu_micros) / 1000.0);
+    }
+    else {
+        VN_LOGI("[demo] bench last frame: passes {}, draws {}, stream uploads {}, texture uploads {}, gpu not measured", passes,
+                draws, streams, textures);
+    }
 }
 
 void DemoScene::installContent(const DemoCubeImages& images)
