@@ -15,6 +15,14 @@
 #include <vine/backend_vsg/support/VsgSceneRules.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
+namespace vsg
+{
+
+class Device;
+class TransferTask;
+
+} // namespace vsg
+
 namespace vn::graphics
 {
 
@@ -180,10 +188,58 @@ luded). */
      *   nothing in this cache evicts, warns or grows on it.
      * - WHAT IT DOES NOT INCLUDE. The two white fallbacks, driver alignment and the sampler objects. A host that
      *   wants to decide what to release reads this beside count() and its own texture sizes.
+     * - THE BYTES OUTLIVE THEIR HOST COPY: once a copy has landed (@ref releaseUploadedStaging) the entry still
+     *   answers the image's bytes - they are resident on the device - while the host-side staging they were
+     *   copied from is gone (see @ref staged).
      *
      * @return The staged bytes of every cached texture, or 0 for an empty cache.
      */
     [[nodiscard]] std::uint64_t bytes() const noexcept;
+
+    /**
+     * @brief Hands every image that still carries staged bytes to @p task, so a warm-up can copy them.
+     *
+     * @details
+     * - WHAT IT IS FOR. The frame's transfer step is what copies a texture's staged bytes into its image, and a
+     *   warm-up (see `VsgBackend::prepareFrame`) never reaches that step. This call lets a prepare run the SAME
+     *   copies the frame would have run in its transfer task - not a second copy path - so the bytes really land
+     *   during the warm-up (ADR-2026-11-14).
+     * - THE IMAGE IS CREATED HERE when the device has no VkImage for it yet: a copy needs an image to write into,
+     *   and a warm-up never runs a compile traversal. The memory comes from a device memory pool this cache holds
+     *   (vsg keeps only an observer on the device, so a pool nobody holds dies with the compile pass that made it);
+     *   the next frame's compile pass finds and reuses that pool, so the frame allocates nothing the warm-up did not.
+     * - THE TASK DECIDES WHAT TO COPY: vsg skips an image whose modified count it has already synced, so handing
+     *   an image over twice copies it once. The cache itself never records "this one is resident"; the image's
+     *   staged bytes are that record (see @ref releaseUploadedStaging).
+     * - A texture whose image cannot be created or bound is SKIPPED, silently: the next frame's compile pass
+     *   builds it as it always has, and its bytes are uploaded there.
+     *
+     * @param device The device the images belong to (its pools allocate them).
+     * @param task   The transfer task the copies are queued into (see flushUploads in TransferStaging.hpp).
+     * @return How many images were handed over (0 = nothing was waiting).
+     */
+    std::size_t queueUploads(::vsg::Device& device, ::vsg::TransferTask& task);
+
+    /**
+     * @brief Drops the host-side staging bytes of every cached image whose copy has landed.
+     *
+     * @details
+     * - WHY IT IS NEEDED. An `vsg::ImageInfo` decides whether to copy by comparing the data's modified count with
+     *   its OWN copied count, so a descriptor set built later (a new material revision, a second pass) starts at
+     *   "not copied yet" and would copy again. Dropping the bytes after the copies ran is what makes "the warm-up
+     *   uploaded it" a property of the IMAGE rather than of every descriptor that names it.
+     * - WHEN IT IS SAFE. Only once the batch that queued those copies has completed (see `flushUploads`): the
+     *   command buffer reads the staged bytes while it records, and the copy reads them on the device - the
+     *   flush's wait is the proof that neither can still need them.
+     * - A RE-FILLED TEXTURE IS A NEW IMAGE. The entry is keyed by revision, so a refill builds a fresh image with
+     *   fresh bytes; dropping this one never loses the pixels the host meant to upload.
+     *
+     * @return How many images gave their staging bytes back.
+     */
+    std::size_t releaseUploadedStaging() noexcept;
+
+    /** @brief Gets how many cached images still carry host-side staging bytes (see queueUploads / releaseUploadedStaging). */
+    [[nodiscard]] std::size_t staged() const noexcept;
 
     /** @brief States whether @p texture has cached images (by address). */
     [[nodiscard]] bool has(vn::raw_ptr<const vn::graphics::Texture> texture) const noexcept;

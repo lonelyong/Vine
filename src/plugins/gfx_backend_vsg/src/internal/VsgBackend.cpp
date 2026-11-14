@@ -35,6 +35,7 @@
 #include <vine/backend_vsg/internal/PassRegistry.hpp>
 #include <vine/backend_vsg/internal/Session.hpp>
 #include <vine/backend_vsg/internal/SessionContent.hpp>
+#include <vine/backend_vsg/internal/TransferStaging.hpp>
 #include <vine/backend_vsg/internal/ViewBlock.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>
 #include <vine/backend_vsg/internal/WindowTarget.hpp>
@@ -1046,6 +1047,12 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
     }
     d->driving = index;
 
+    // THE SESSION THE FRAME WILL RUN IN, resolved exactly as executeFrame resolves it: a frame that names no surface
+    // runs in the device's OFF-SCREEN session. Bringing that session up here is not opening a frame - it creates the
+    // viewer and its transfer task, acquires nothing and presents nothing - and the warm-up needs it, because that
+    // session's transfer task is where a prepared texture's copies go (see the flush below).
+    api::OffscreenSession* const offscreen = index < d->windows.size() ? nullptr : ensureOffscreenSession();
+
     // THE PER-FRAME STORAGE IS BROUGHT UP TO WHAT THIS FRAME NEEDS, exactly as a frame's opening would - and this is
     // the place for it, because prepare is defined to run between frames. A prepared frame whose first real frame
     // would grow the storage would rebuild every declared set it just prepared (the sets bind that buffer), which is
@@ -1079,10 +1086,11 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
     // what it produces is no command graph at all. Running the frame's own walk is what makes "what prepare built"
     // and "what the frame builds" ONE implementation rather than two spellings that can drift (`G1`; `T32` pins the
     // identity half, `T33` the whole). Nothing here acquires, submits, presents or rotates the block ring.
-    const std::uint64_t halves_before  = d->assembly->halves().builds();
-    const std::uint64_t sets_before    = d->assembly->sets().builds();
-    const std::uint64_t uploads_before = d->assembly->uploads().uploads();
-    const std::uint64_t pool_before    = d->pool.created();
+    const std::uint64_t halves_before   = d->assembly->halves().builds();
+    const std::uint64_t sets_before     = d->assembly->sets().builds();
+    const std::uint64_t uploads_before  = d->assembly->uploads().uploads();
+    const std::uint64_t textures_before = d->images->built();
+    const std::uint64_t pool_before     = d->pool.created();
 
     WindowTarget* const window_target = index < d->windows.size() ? detail::SessionContentAccess::windowTarget(sessionAt(index)) : nullptr;
     (void)recordContent(*d->assembly,
@@ -1103,6 +1111,24 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
                         d->packets,
                         /*prepare_only*/ true);
 
+    // THE TEXTURES THIS CALL STAGED ARE COPIED NOW, through the frame's own transfer step - not a second copy path
+    // (ADR-2026-11-14; backlog T39). `MaterialImages::acquire` only stages bytes into the image; the viewer's transfer
+    // task is what copies them, and a warm-up never reaches a frame that would run it. Handing the images to that task
+    // and waiting for its batch is what makes "prepared" mean the same thing for textures as for streams. The bytes go
+    // as soon as the copies have run, so a descriptor set compiled later cannot copy them a second time.
+    ::vsg::ref_ptr<::vsg::TransferTask> transfer_task;
+    if (index < d->windows.size()) {
+        transfer_task = detail::SessionContentAccess::transferTask(sessionAt(index));
+    }
+    else if (offscreen != nullptr) {
+        transfer_task = offscreen->transferTask();
+    }
+    if (transfer_task != nullptr && transfer_task->device != nullptr && d->images->queueUploads(*transfer_task->device, *transfer_task) > 0U) {
+        if (detail::flushUploads(*transfer_task)) {
+            (void)d->images->releaseUploadedStaging();
+        }
+    }
+
     vn::graphics::PrepareReport report;
     report.outcome = vn::graphics::PrepareReport::Outcome::Prepared;
     for (const core::CompiledPass& pass : plan.passes) {
@@ -1120,7 +1146,10 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
     // property the call exists for.
     report.halves    = d->assembly->halves().builds() - halves_before;
     report.sets      = d->assembly->sets().builds() - sets_before;
-    report.uploads   = d->assembly->uploads().uploads() - uploads_before;
+    // BOTH KINDS OF UPLOAD (see PrepareReport): the streams whose binds were built, and the texture images this call
+    // staged (and, above, copied) - the same two kinds FrameUploads reports, so a host comparing the two is comparing
+    // one vocabulary.
+    report.uploads   = (d->assembly->uploads().uploads() - uploads_before) + (d->images->built() - textures_before);
     report.pipelines = d->pool.created() - pool_before;
     return report;
 }

@@ -798,6 +798,14 @@ bool SessionContentAccess::recompile(api::Session& session)
     return true;
 }
 
+::vsg::ref_ptr<::vsg::TransferTask> SessionContentAccess::transferTask(const api::Session& session) noexcept
+{
+    if (session.impl == nullptr || session.impl->viewer == nullptr) {
+        return {};
+    }
+    return detail::transferTaskOf(*session.impl->viewer);
+}
+
 } // namespace detail
 
 VN_BACKEND_VSG_NS_END

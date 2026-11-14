@@ -51,6 +51,8 @@ set(SRC_FILE_LIST
 	SessionTest.cpp
 	SessionMoveTest.cpp
 	VsgBackendTest.cpp
+	# ADR-2026-11-14 / backlog T39: a warm-up copies the textures it staged.
+	PrepareUploadTest.cpp
 	HostWindowReadTest.cpp
 	PassRegistryTest.cpp
 	HostTargetsTest.cpp

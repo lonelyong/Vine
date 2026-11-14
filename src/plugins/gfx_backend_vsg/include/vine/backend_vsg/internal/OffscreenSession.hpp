@@ -7,12 +7,18 @@
 
 #include <vsg/app/CommandGraph.h>
 #include <vsg/core/ref_ptr.h>
-
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/backend/DeviceClock.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
+
+namespace vsg
+{
+
+class TransferTask;
+
+} // namespace vsg
 
 /**
  * @brief A render session with NO WINDOW: one device, one command graph, one submission per frame.
@@ -205,6 +211,16 @@ class OffscreenSession {
      * @return Staged bytes; `std::nullopt` when the session is not up or its task was not installed by this backend.
      */
     [[nodiscard]] std::optional<::VkDeviceSize> stagedBytes() const noexcept;
+
+    /** @brief Gets the transfer task this session's uploads are queued into (the windowed twin is
+     *         `detail::SessionContentAccess::transferTask`).
+     *
+     * The device layer needs it for the one thing that is not a frame: a warm-up hands the textures it staged to this
+     * task and flushes it (see `MaterialImages::queueUploads` / `detail::flushUploads`, ADR-2026-11-14).
+     *
+     * @return The task, or null when the session is not up.
+     */
+    [[nodiscard]] ::vsg::ref_ptr<::vsg::TransferTask> transferTask() const noexcept;
 
   private:
     /** @brief Folds one frame's slot observation in, and sets the park window up once the count is known. */

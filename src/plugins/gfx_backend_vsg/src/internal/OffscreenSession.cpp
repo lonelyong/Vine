@@ -407,6 +407,14 @@ std::optional<::VkDeviceSize> OffscreenSession::stagedBytes() const noexcept
     return detail::stagedBytesOf(task.get());
 }
 
+::vsg::ref_ptr<::vsg::TransferTask> OffscreenSession::transferTask() const noexcept
+{
+    if (!impl || !impl->ready || impl->viewer == nullptr) {
+        return {};
+    }
+    return detail::transferTaskOf(*impl->viewer);
+}
+
 } // namespace api
 
 VN_BACKEND_VSG_NS_END

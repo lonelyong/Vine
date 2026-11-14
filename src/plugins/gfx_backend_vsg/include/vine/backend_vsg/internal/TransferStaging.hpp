@@ -104,6 +104,28 @@ class StagingTask : public ::vsg::Inherit<::vsg::TransferTask, StagingTask> {
 [[nodiscard]] ::vsg::ref_ptr<::vsg::TransferTask> transferTaskOf(const ::vsg::Viewer& viewer) noexcept;
 
 /**
+ * @brief Submits the copies @p task is holding and waits for them, so a warm-up can make its bytes land.
+ *
+ * @details
+ * - WHY IT EXISTS. A frame runs the transfer step itself (`RecordAndSubmitTask::submit` calls `transferData` before
+ *   the record traversal), and a warm-up never reaches a frame - so without this the bytes a prepare staged wait
+ *   for the first frame that samples them (ADR-2026-11-14; backlog T39 closed by `VsgBackend::prepareFrame`).
+ * - IT IS THE SAME COPY THE FRAME WOULD RUN: `TransferTask::transferData` records and submits the copies the frame's
+ *   own compile/record would have queued - not a second copy path. What is different is only the WAIT: the call
+ *   answers when the copies have completed, where a frame would let the queue run on.
+ * - THE SEMAPHORE IS CONSUMED HERE. `transferData` signals a completion semaphore for the frame's submission to
+ *   wait on; with no frame there is nobody to wait, and a binary semaphore signalled twice is an invalid one. The
+ *   wait-only submission below takes the wait, and its fence is what proves the copies finished.
+ * - NOTHING TO COPY, NOTHING SUBMITTED: an unchanged task returns with no semaphore and no queue operation.
+ *
+ * @param task      The task whose queued copies to run (see MaterialImages::queueUploads for how they get there).
+ * @param timeout_ns How long to wait for the copies before giving up.
+ * @return true when every queued copy completed (or nothing was queued); false when the submission failed or the
+ *         wait timed out (the bytes then stay staged and the next frame uploads them).
+ */
+[[nodiscard]] bool flushUploads(::vsg::TransferTask& task, std::uint64_t timeout_ns = 100'000'000'000ull);
+
+/**
  * @brief Installs the upload task whose staging blocks this backend can free, replacing the one vsg built.
  *
  * @details

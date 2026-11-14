@@ -12,6 +12,7 @@ namespace vsg
 {
 
 class Group;
+class TransferTask;
 
 } // namespace vsg
 
@@ -129,6 +130,16 @@ class SessionContentAccess {
      * @return true when the compile pass ran; false when the session is not up.
      */
     static bool recompile(api::Session& session);
+
+    /** @brief Gets the transfer task this session's uploads are queued into.
+     *
+     * The device layer needs it for the one thing that is not a frame: a warm-up hands the textures it staged to
+     * this task and flushes it (see MaterialImages::queueUploads / detail::flushUploads, and ADR-2026-11-14).
+     *
+     * @param session Session to ask.
+     * @return The task, or null when the session is not up.
+     */
+    [[nodiscard]] static ::vsg::ref_ptr<::vsg::TransferTask> transferTask(const api::Session& session) noexcept;
 };
 
 } // namespace detail

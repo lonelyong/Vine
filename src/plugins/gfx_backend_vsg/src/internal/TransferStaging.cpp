@@ -7,6 +7,8 @@
 #include <vsg/state/Buffer.h>
 #include <vsg/vk/Device.h>
 #include <vsg/vk/Fence.h>
+#include <vsg/vk/Queue.h>
+#include <vsg/vk/Semaphore.h>
 
 VN_BACKEND_VSG_NS_BEGIN
 
@@ -88,6 +90,42 @@ std::optional<::VkDeviceSize> stagedBytesOf(const ::vsg::TransferTask* task) noe
         return {};
     }
     return tasks.front()->transferTask;
+}
+
+bool flushUploads(::vsg::TransferTask& task, std::uint64_t timeout_ns)
+{
+    if (task.transferQueue == nullptr || task.device == nullptr) {
+        return false; // nowhere to submit: the bytes stay staged for the frame's own transfer step
+    }
+
+    // THE FRAME'S OWN COPY PATH, run now (see the header): whatever a warm-up handed over is recorded into the task's
+    // own transfer command buffer. A task with nothing pending returns with no semaphore and has nothing to wait on.
+    const ::vsg::TransferTask::TransferResult transfer = task.transferData(::vsg::TransferTask::TRANSFER_ALL);
+    if (transfer.result != VK_SUCCESS) {
+        return false;
+    }
+    if (transfer.dataTransferredSemaphore == nullptr) {
+        return true; // zero work, zero submit
+    }
+
+    // THE WAIT THAT CONSUMES THE SIGNAL: a submission with no command buffers of its own that waits the transfer's
+    // completion semaphore, fenced so this call can answer only once the copies have run. Without the wait the
+    // semaphore would stay signalled and the next transfer would signal it a second time - an invalid one.
+    ::vsg::ref_ptr<::vsg::Fence> fence = ::vsg::Fence::create(task.device.get());
+    if (fence == nullptr) {
+        return false;
+    }
+    VkSemaphore          semaphore = transfer.dataTransferredSemaphore->vk();
+    VkPipelineStageFlags stage     = transfer.dataTransferredSemaphore->pipelineStageFlags();
+    VkSubmitInfo         wait{};
+    wait.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    wait.waitSemaphoreCount   = 1U;
+    wait.pWaitSemaphores      = &semaphore;
+    wait.pWaitDstStageMask    = &stage;
+    if (task.transferQueue->submit(wait, fence.get()) != VK_SUCCESS) {
+        return false;
+    }
+    return fence->wait(timeout_ns) == VK_SUCCESS;
 }
 
 bool installStagingTask(::vsg::Viewer& viewer, ::vsg::Device& device, ::vsg::ref_ptr<::vsg::TransferTask>& previous)

@@ -6,12 +6,17 @@
 #include <utility>
 #include <vector>
 
+#include <vsg/app/TransferTask.h>
 #include <vsg/core/Array2D.h>
 #include <vsg/core/Array3D.h>
+#include <vsg/core/Exception.h>
 #include <vsg/core/MipmapLayout.h>
 #include <vsg/state/Image.h>
+#include <vsg/state/ImageInfo.h>
 #include <vsg/state/ImageView.h>
 #include <vsg/state/Sampler.h>
+#include <vsg/vk/Device.h>
+#include <vsg/vk/MemoryBufferPools.h>
 
 #include <vine/graphics/Texture.hpp>
 #include <vine/imaging/Image.hpp>
@@ -373,8 +378,12 @@ struct MaterialImages::Data {
         ::vsg::ref_ptr<::vsg::ImageView>               view;            // The view every state samples.
         ::vsg::ref_ptr<::vsg::Sampler>                 default_sampler; // The no-state sampler (see
                                                                         // makeDefaultSampler).
-        std::uint64_t                                  revision{ 0 };
-        std::uint64_t                                  bytes{ 0 }; // Staged bytes (every layer of every level).
+        /// The view AS A TRANSFER SEES IT (see queueUploads): the descriptor sets build their own ImageInfos
+        /// (one per state, because the sampler is part of one), and this one exists so a warm-up can hand the
+        /// image to the transfer task without a compile traversal.
+        ::vsg::ref_ptr<::vsg::ImageInfo> info;
+        std::uint64_t                    revision{ 0 };
+        std::uint64_t                    bytes{ 0 }; // Staged bytes (every layer of every level).
     };
 
     /** @brief One explicitly declared state and the sampler built from it. */
@@ -414,6 +423,10 @@ struct MaterialImages::Data {
     std::size_t                 released{ 0 };
     std::shared_ptr<WhiteImage> white;
     SamplerImage                white_cube;
+    /// The device memory pool this cache allocates a warmed-up image from (see queueUploads). Held here rather than on
+    /// the device because vsg keeps only an OBSERVER there: without a holder the pool would die and the next image
+    /// would need a new one while the frame's compile pass would not find one to reuse either.
+    ::vsg::ref_ptr<::vsg::MemoryBufferPools> device_pools;
     // What the device offers (see setMaxAnisotropy); 1 is the safe answer for a cache that was never told.
     float max_anisotropy = 1.0F;
 };
@@ -536,7 +549,11 @@ SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture
         // The VIEW is shared by every sampler state the texture is read with; only the sampler changes.
         ::vsg::ref_ptr<::vsg::ImageView> view            = ::vsg::ImageView::create(image);
         ::vsg::ref_ptr<::vsg::Sampler>   default_sampler = makeDefaultSampler(static_cast<std::uint32_t>(texture->mipCount()), d->max_anisotropy);
-        if (view == nullptr || default_sampler == nullptr) {
+        // The transfer's own spelling of the same view (see Entry::info). It names the layout a landed copy leaves the
+        // image in - the one every declaration below binds it with.
+        ::vsg::ref_ptr<::vsg::ImageInfo> info =
+            ::vsg::ImageInfo::create(default_sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        if (view == nullptr || default_sampler == nullptr || info == nullptr) {
             reason = TextureReject::Inconsistent; // creation refused: the caller reports it, nothing is cached
             return fallback(false);
         }
@@ -545,7 +562,7 @@ SamplerImage MaterialImages::acquireImpl(vn::raw_ptr<const vn::graphics::Texture
         if (found != d->cache.end()) {
             d->bytes_total -= found->second.bytes;
         }
-        found = d->cache.insert_or_assign(texture, Data::Entry{ std::move(owner), view, default_sampler, revision, bytes }).first;
+        found = d->cache.insert_or_assign(texture, Data::Entry{ std::move(owner), view, default_sampler, info, revision, bytes }).first;
         d->bytes_total += bytes;
         ++d->built;
         d->uploaded_bytes += bytes;
@@ -579,6 +596,76 @@ std::uint64_t MaterialImages::uploadedBytes() const noexcept
 std::uint64_t MaterialImages::bytes() const noexcept
 {
     return d->bytes_total;
+}
+
+std::size_t MaterialImages::queueUploads(::vsg::Device& device, ::vsg::TransferTask& task)
+{
+    ::vsg::ImageInfoList waiting;
+    for (auto& cached : d->cache) {
+        Data::Entry& entry = cached.second;
+        if (entry.view == nullptr || entry.view->image == nullptr || entry.info == nullptr) {
+            continue;
+        }
+        // STAGED BYTES ARE THE RECORD (see releaseUploadedStaging): no data means the copy already landed, and
+        // handing the image over again would only be skipped by the task on the same ground.
+        ::vsg::ref_ptr<::vsg::Image>& image = entry.view->image;
+        if (image->data == nullptr) {
+            continue;
+        }
+        if (image->vk(device.deviceID) == VK_NULL_HANDLE) {
+            // A COPY NEEDS AN IMAGE TO WRITE INTO, and a warm-up never runs a compile traversal. The device's own
+            // pools allocate it, which is exactly what the frame's compile pass would have used (vsg's Context keeps
+            // the pool on the device as an OBSERVER, so it is only alive while somebody holds it - this cache does,
+            // which also makes the next frame's compile pass reuse it).
+            if (d->device_pools == nullptr) {
+                d->device_pools = ::vsg::MemoryBufferPools::create(
+                    "vn_warm_up_Device_MemoryBufferPool", ::vsg::ref_ptr<::vsg::Device>(&device), ::vsg::ResourceRequirements{});
+                if (d->device_pools == nullptr) {
+                    continue;
+                }
+                device.deviceMemoryBufferPools = d->device_pools;
+            }
+            try {
+                if (image->compile(*d->device_pools) != VK_SUCCESS) {
+                    continue;
+                }
+            }
+            catch (const ::vsg::Exception&) {
+                continue; // creation refused: the frame's compile pass reports it the way it always has
+            }
+        }
+        waiting.push_back(entry.info);
+    }
+
+    if (!waiting.empty()) {
+        task.assign(waiting);
+    }
+    return waiting.size();
+}
+
+std::size_t MaterialImages::releaseUploadedStaging() noexcept
+{
+    std::size_t dropped = 0;
+    for (auto& cached : d->cache) {
+        Data::Entry& entry = cached.second;
+        if (entry.view == nullptr || entry.view->image == nullptr || entry.view->image->data == nullptr) {
+            continue;
+        }
+        entry.view->image->data = nullptr;
+        ++dropped;
+    }
+    return dropped;
+}
+
+std::size_t MaterialImages::staged() const noexcept
+{
+    std::size_t count = 0;
+    for (const auto& entry : d->cache) {
+        if (entry.second.view != nullptr && entry.second.view->image != nullptr && entry.second.view->image->data != nullptr) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 bool MaterialImages::has(vn::raw_ptr<const vn::graphics::Texture> texture) const noexcept
