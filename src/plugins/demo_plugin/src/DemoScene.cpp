@@ -916,8 +916,10 @@ void addBlendedPair(vn::graphics::Group* root, const BlendedPlacement& at)
  * @param pass    Configured pass whose declaration is stated.
  * @param content Scene the pass draws (null for a content-agnostic pass).
  * @param order   Execution order.
+ * @return true when the engine adopted the row; false when it refused the plan (a frame being recorded, or a
+ *         problem the engine reported) - the caller that re-states a row to change it (a layout step) has to know.
  */
-void addDemoPass(vn::graphics::RenderEngine& engine,
+bool addDemoPass(vn::graphics::RenderEngine& engine,
                  vn::raw_ptr<vn::Object>     owner,
                  const vn::intrusive_ptr<vn::graphics::RenderPass>& pass,
                  vn::intrusive_ptr<vn::graphics::Scene>            content,
@@ -928,7 +930,7 @@ void addDemoPass(vn::graphics::RenderEngine& engine,
     desc.order                  = order;
     // Problems are reported by the engine's one route (the plan's refusals included); nothing here substitutes a
     // different pass for a refused one.
-    (void)engine.applyPlan(vn::graphics::Plan{ { desc } }, owner);
+    return engine.applyPlan(vn::graphics::Plan{ { desc } }, owner).applied();
 }
 
 /**
@@ -1624,17 +1626,33 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     // RE-STATING THE PASS IS PART OF SETTING ITS VIEWPORT: the engine's node is built from the declaration a plan
     // carries, so mutating this object alone would leave the frame's row with the old rectangle (a plan for an
     // existing (owner, name) updates it in place - see RenderEngine::applyPlanRows).
+    //
+    // A PLAN IS REFUSED WHILE A FRAME IS BEING RECORDED (see RenderEngine::applyPlan): the rows are therefore stated
+    // again after the in-flight frame has been waited for, which is the remedy that rule names ("a resize settled"
+    // is what this lambda is). Without it a strip resized during a recording keeps the rectangle of the last
+    // accepted plan until some later layout event.
     view->addSurfaceLayout([engine, render_control, previews = std::move(previews), preview_source, pip_w, pip_h](int, int) {
         if (preview_source == nullptr || previews.empty()) {
             return;
         }
         const int source_width  = preview_source->width();
         const int source_height = preview_source->height();
-        for (std::size_t index = 0; index < previews.size(); ++index) {
-            const int                    slot_x = 8 + static_cast<int>(index) * (pip_w + 8);
-            const vn::graphics::Viewport rect   = fitPreviewRect(source_width, source_height, slot_x, 8, pip_w, pip_h);
-            previews[index]->setViewport(rect.x, rect.y, rect.width, rect.height);
-            addDemoPass(*engine, render_control, previews[index], nullptr, 120 + static_cast<int>(index));
+        const auto restate      = [&]() {
+            bool applied = true;
+            for (std::size_t index = 0; index < previews.size(); ++index) {
+                const int                    slot_x = 8 + static_cast<int>(index) * (pip_w + 8);
+                const vn::graphics::Viewport rect   = fitPreviewRect(source_width, source_height, slot_x, 8, pip_w, pip_h);
+                previews[index]->setViewport(rect.x, rect.y, rect.width, rect.height);
+                applied = addDemoPass(*engine, render_control, previews[index], nullptr, 120 + static_cast<int>(index)) && applied;
+            }
+            return applied;
+        };
+        if (!restate()) {
+            // A BOUNDED WAIT, not the default: this runs in a layout step on the application thread, so a frame that
+            // never answers must not freeze the UI for the default five seconds - one frame's recording is what the
+            // retry is waiting for.
+            (void)engine->waitForFrame(std::chrono::milliseconds(250));
+            (void)restate();
         }
     });
 }
@@ -1889,6 +1907,11 @@ void DemoScene::reportFrameBenchmark(const std::vector<double>& millis) const
         steady_sum += value;
     }
     const double steady_mean = steady.empty() ? 0.0 : steady_sum / static_cast<double>(steady.size());
+
+    // THE REPORT DESCRIBES THE FRAME THE BACKEND FINISHED WRITING, so the last driven frame has to be answered before
+    // it is read: with a frame thread the numbers would otherwise be read while the engine half writes them (the
+    // report is not published as thread-safe, unlike PresentRecord). waitForFrame names exactly this caller.
+    (void)engine->waitForFrame();
 
     const auto report   = engine->frameReport();
     const auto passes   = report.counters ? report.counters->passes : 0;

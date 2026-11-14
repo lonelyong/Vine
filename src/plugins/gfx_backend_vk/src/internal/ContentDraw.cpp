@@ -1386,6 +1386,38 @@ struct ContentDraw::Impl {
     }
 
     /**
+     * @brief Writes the engine's shadow pair into @p set: the map at binding 7 and its block at binding 8.
+     *
+     * @details
+     * - ONE SPELLING FOR BOTH SETS: a content set and a full-screen set state the same two bindings (the engine's
+     *   programs declare them unconditionally), and spelling the pair twice is how the full-screen half once kept a
+     *   white stand-in while the content half had the map (see .ai/bugs/vk-screen-pass-shaded-without-the-map.md).
+     * - The CALLER decides which map: the pass' resolved one, or the white stand-in for "no shadow reaches this
+     *   pass" (see buildShadowBlock).
+     *
+     * @param set   The set to write into (allocated from a layout that declares both bindings).
+     * @param map   The map's image info: its sampler, view and the SHADER_READ_ONLY layout.
+     * @param block The `VineShadowBlock`'s buffer range.
+     */
+    void writeShadowPair(VkDescriptorSet set, const VkDescriptorImageInfo& map, const VkDescriptorBufferInfo& block) const
+    {
+        VkWriteDescriptorSet writes[2]{};
+        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet          = set;
+        writes[0].dstBinding      = kShadowMapBinding;
+        writes[0].descriptorCount = 1U;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo      = &map;
+        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet          = set;
+        writes[1].dstBinding      = kShadowBlockBinding;
+        writes[1].descriptorCount = 1U;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[1].pBufferInfo     = &block;
+        table->vkUpdateDescriptorSets(device, 2U, writes, 0U, nullptr);
+    }
+
+    /**
      * @brief Writes a content draw's set 0: material at binding 0, the five slots at 1-5, lights at 6.
      *
      * @param buffer The draw's uniform buffer (material at 0, lights at @ref lightsOffset).
@@ -1425,7 +1457,7 @@ struct ContentDraw::Impl {
         shadow_info.offset = shadowOffset();
         shadow_info.range  = sizeof(vn::graphics::VineShadowBlock);
 
-        VkWriteDescriptorSet writes[5]{};
+        VkWriteDescriptorSet writes[3]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = set;
         writes[0].dstBinding      = 0U;
@@ -1444,19 +1476,8 @@ struct ContentDraw::Impl {
         writes[2].descriptorCount = 1U;
         writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         writes[2].pBufferInfo     = &lights_info;
-        writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[3].dstSet          = set;
-        writes[3].dstBinding      = kShadowMapBinding;
-        writes[3].descriptorCount = 1U;
-        writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[3].pImageInfo      = &shadow_map;
-        writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[4].dstSet          = set;
-        writes[4].dstBinding      = kShadowBlockBinding;
-        writes[4].descriptorCount = 1U;
-        writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[4].pBufferInfo     = &shadow_info;
-        table->vkUpdateDescriptorSets(device, 5U, writes, 0U, nullptr);
+        table->vkUpdateDescriptorSets(device, 3U, writes, 0U, nullptr);
+        writeShadowPair(set, shadow_map, shadow_info);
         return set;
     }
 
@@ -1526,7 +1547,7 @@ struct ContentDraw::Impl {
         shadow_info.offset = shadowOffset();
         shadow_info.range  = sizeof(vn::graphics::VineShadowBlock);
 
-        VkWriteDescriptorSet writes[4]{};
+        VkWriteDescriptorSet writes[2]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = set;
         writes[0].dstBinding      = 0U;
@@ -1539,19 +1560,8 @@ struct ContentDraw::Impl {
         writes[1].descriptorCount = 1U;
         writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         writes[1].pBufferInfo     = &lights_info;
-        writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[2].dstSet          = set;
-        writes[2].dstBinding      = kShadowMapBinding;
-        writes[2].descriptorCount = 1U;
-        writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[2].pImageInfo      = &shadow_map;
-        writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[3].dstSet          = set;
-        writes[3].dstBinding      = kShadowBlockBinding;
-        writes[3].descriptorCount = 1U;
-        writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[3].pBufferInfo     = &shadow_info;
-        table->vkUpdateDescriptorSets(device, 4U, writes, 0U, nullptr);
+        table->vkUpdateDescriptorSets(device, 2U, writes, 0U, nullptr);
+        writeShadowPair(set, shadow_map, shadow_info);
         return set;
     }
 

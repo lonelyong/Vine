@@ -587,6 +587,17 @@
 - **诊断配方（可复用）**：①记录层探针（每 pass 的 commands/recorded/why）分清“没进命令”与“进了没画”；
   ②把待观察的 16F 目标**临时**改成 RGBA8（`ChainPresets.cpp`）即可用 `RenderEngine::device()->readColorBuffer`
   读回中心像素；③把 GBuffer 直接拷到可读的 RGBA8 composite 再读，能分开“源空”与“拷贝坏”。探针用完即撤。
+- **两条静态审查发现（2026-11-14 修）**：①`RenderEngine::frameReport()` **不是**跨线程安全的（只有
+  `PresentRecord` 明写“任何线程可读”）⇒ 基准/HUD 读它之前要 `waitForFrame()`（文档把 "a benchmark" 列为
+  waitForFrame 的调用者）；②从**布局步**重新声明 pass（改 viewport）会被 `applyPlan` 以 `Busy` 拒绝
+  （帧在录）⇒ 必须看 `PlanResult::applied()`，`waitForFrame(250ms)` 后重述一次，否则矩形停在旧值且只有一条
+  一次性警告。
+- **clang-tidy 基线（`clang-tidy-22 -p build`，`bugprone-*` + `clang-analyzer-*`，2026-11-14）**：
+  `ContentDraw.cpp` 4 条 = 2 条 Vulkan 结构体零初始化（`stages[2]{}` / `multisample{}` 的 enum 字段随后被写，
+  惯例，不是缺陷）+ 1 条 `build_why` 的 use-after-move **误报**（`ensure*` 全收 `vn::String&`，该路径上没移动）
+  + `std::hash` 特化（`ContentId.hpp`，有意的）；`Device.cpp` 1 条 “Called C++ object pointer is null”
+  （`window` 经 `Runnable.window` 关联，收集处已保证非空——分析器丢了这层关联，误报）；`DemoScene.cpp` 1 条
+  `atoi`（dev 开关，与仓库其它 `VN_*` 开关一致）。⇒ 这三份 TU 的静态分析**干净**，新出现的条目应当先排除这几类。
 
 ## 2026-11-13 —— `gfx_backend_vk` M9：阴影贴图
 

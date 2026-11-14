@@ -463,8 +463,12 @@ void main()
     shadow_entry.draw = std::move(shadow_pass);
     frame.passes.push_back(std::move(shadow_entry));
 
+    // A pass identity of its own: two entries naming ONE pass would describe a frame the engine never
+    // produces (it announces one entry per registered pass), and a case should not rely on the backend
+    // tolerating a shape the frame value's contract does not allow.
+    const intrusive_ptr<vn::graphics::RenderPass> source_pass_identity(new vn::graphics::RenderPass());
     FrameDescription::Pass source_entry;
-    source_entry.pass  = scene.main_pass.get();
+    source_entry.pass  = source_pass_identity.get();
     source_entry.order = 1;
     PassDraw source_pass;
     source_pass.target      = source.get();
@@ -480,8 +484,9 @@ void main()
     screen_draw.program             = read_program;
     screen_draw.program_description = read_program->description();
 
+    const intrusive_ptr<vn::graphics::RenderPass> screen_pass_identity(new vn::graphics::RenderPass());
     FrameDescription::Pass screen_entry;
-    screen_entry.pass = scene.main_pass.get();
+    screen_entry.pass = screen_pass_identity.get();
     screen_entry.order = 2;
     screen_entry.inputs.push_back(ImageSource::producedTarget(scene.map.get()));
     PassDraw screen_pass;
