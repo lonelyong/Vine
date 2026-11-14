@@ -117,7 +117,11 @@ bool TargetImages::built() const noexcept
     // ... and a multisampled DEPTH is not built without its resolve picture either: the pass resolves into that one,
     // and it is the image a shader samples (see depthPicture).
     const bool depth_picture = !resolvesDepth() || hasDepthResolve();
-    return render_pass != VK_NULL_HANDLE && framebuffer != VK_NULL_HANDLE && attachments && sample_buffers && depth_picture;
+    // A BORROWED depth has no images of its own to check: what it needs is the lender's view, which the device
+    // resolved when it built this record (see Device::ensureTarget).
+    const bool depth_attachment = !depth_borrowed || borrowed_depth_view != VK_NULL_HANDLE;
+    return render_pass != VK_NULL_HANDLE && framebuffer != VK_NULL_HANDLE && attachments && sample_buffers && depth_picture &&
+           depth_attachment;
 }
 
 VkFormat colorFormatOf(const vn::graphics::RenderTarget::ColorFormat format) noexcept
@@ -371,6 +375,13 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
     if (images.hasDepth()) {
         dependency.dstStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
         dependency.dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        if (depth_load == VK_ATTACHMENT_LOAD_OP_LOAD) {
+            // A LOAD over a depth an EARLIER pass wrote is a READ OF A WRITE - the borrower's case (its depth is the
+            // lender's image, left in this layout by the lender's pass) and the LOAD variants' - so the source scope
+            // has to cover the fragment-test write as well as a sampled read. Without it the two passes could overlap.
+            dependency.srcStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            dependency.srcAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        }
     }
 
     if (images.resolvesDepth()) {
@@ -555,7 +566,10 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
         }
     }
 
-    if (images.hasDepth()) {
+    // A BORROWED DEPTH IS NEVER CLEARED: the image already holds what the LENDER's pass wrote, and that picture is the
+    // whole reason this target borrows. So every variant LOADs it, which also means the CLEAR-depth variant is not a
+    // different pass here - the caller leaves it null and `renderPassFor` falls through to the one pass built.
+    if (!images.depth_borrowed && images.hasDepth()) {
         image_create.format  = images.depthFormat();
         // A MULTISAMPLED depth is a DRAW target only (the API forbids sampling or copying it); the single-sample one
         // IS the picture, and it carries the same pair the colour pictures carry: SAMPLED (the shadow path reads it -
@@ -588,7 +602,9 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
     std::vector<VkImageView> views(images.multisample_color_views.begin(), images.multisample_color_views.end());
     views.insert(views.end(), images.color_views.begin(), images.color_views.end());
     if (images.hasDepth()) {
-        views.push_back(images.depth_view);
+        // THE LENDER'S VIEW when this target borrows (see depthAttachmentView): the framebuffer binds another
+        // target's depth image, which is what makes the sharing a fact about the objects rather than about the API.
+        views.push_back(images.depthAttachmentView());
     }
     if (images.hasDepthResolve()) {
         views.push_back(images.depth_resolve_view);
@@ -623,11 +639,15 @@ bool buildTarget(const VolkDeviceTable&                  table,
     }
 
     // RENDER PASSES FIRST: the framebuffer names one of them, and their formats come from the shape alone.
-    if (!createRenderPass(table, device, images, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_CLEAR, images.render_pass)) {
+    // A BORROWING TARGET HAS ONE DEPTH LOAD OP, NOT TWO: its depth is the lender's image and must be LOADed by every
+    // variant (see the class note), so `render_pass` already IS the depth-LOAD variant and the second handle stays
+    // null - `renderPassFor` answers the same pass for both load-op questions.
+    const VkAttachmentLoadOp depth_clear = images.depth_borrowed ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+    if (!createRenderPass(table, device, images, VK_ATTACHMENT_LOAD_OP_CLEAR, depth_clear, images.render_pass)) {
         destroyTarget(table, device, images);
         return false;
     }
-    if (images.hasDepth() &&
+    if (!images.depth_borrowed && images.hasDepth() &&
         !createRenderPass(table, device, images, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_LOAD_OP_LOAD, images.render_pass_load_depth)) {
         destroyTarget(table, device, images);
         return false;
@@ -685,6 +705,8 @@ void destroyTarget(const VolkDeviceTable& table, const VkDevice device, TargetIm
     images.render_pass_load_depth = VK_NULL_HANDLE;
     images.render_pass_load       = VK_NULL_HANDLE;
     images.framebuffer            = VK_NULL_HANDLE;
+    images.depth_borrowed         = false;
+    images.borrowed_depth_view    = VK_NULL_HANDLE;
     images.fresh                  = true;
     images.color_sampled          = false;
     images.depth_sampled          = false;

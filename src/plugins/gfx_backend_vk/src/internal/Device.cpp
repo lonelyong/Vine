@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // volk is built with VOLK_NO_DEVICE_PROTOTYPES (see third_party/volk/CMakeLists.txt): device-level commands are not
@@ -251,6 +252,13 @@ struct Device::Impl {
     vn::graphics::ReportOnce samples_report{};
     vn::graphics::ReportOnce samples_depth_report{};
     vn::graphics::ReportOnce prepare_target_report{};
+    /// A multisampled target asked to borrow its depth (one image cannot be a multi-sample attachment and a
+    /// single-sample picture at once).
+    vn::graphics::ReportOnce borrow_samples_report{};
+    /// A target borrows a depth from one this device has not built (or one that has none).
+    vn::graphics::ReportOnce borrow_source_report{};
+    /// A target and the target it borrows its depth from are not equally sized.
+    vn::graphics::ReportOnce borrow_extent_report{};
 
     /**
      * @brief The window half's refusals, one episode each (see ReportOnce).
@@ -385,10 +393,15 @@ struct Device::Impl {
      *
      * @param commands The command buffer being recorded (OUTSIDE any render pass).
      * @param inputs   The pass' resolved inputs, in declaration order.
+     * @param lent     The depths THIS FRAME lends to another target (see RenderTarget::shareDepth); such an image
+     *                 cannot be a sampled picture and a pass' depth attachment at once, so it is skipped.
      * @param out      Receives the binding; empty (`view == VK_NULL_HANDLE`) when the pass samples no readable map.
      * @return true when a map was resolved (and transitioned).
      */
-    [[nodiscard]] bool resolveShadow(VkCommandBuffer commands, std::span<const ImageSource> inputs, ContentDraw::ShadowSource& out)
+    [[nodiscard]] bool resolveShadow(VkCommandBuffer                            commands,
+                                     std::span<const ImageSource>                inputs,
+                                     const std::unordered_set<const RenderTarget*>& lent,
+                                     ContentDraw::ShadowSource&                  out)
     {
         for (const ImageSource& input : inputs) {
             if (input.target == nullptr || !input.isProduced()) {
@@ -407,6 +420,13 @@ struct Device::Impl {
                 // The host said this target's depth is NOT to be read as a texture (RenderTarget::setDepthPromotion):
                 // binding it anyway would serve a picture the host declared it does not want, and the reference backend
                 // refuses the same map for the same reason (`DepthFacts` / `depthPlan().sampleable`).
+                continue;
+            }
+            if (lent.count(&map) != 0) {
+                // LENDING REVOKES SAMPLING: another target in this frame draws against this map's depth, so the image
+                // has to stay a depth attachment - a shader cannot sample it and a pass cannot attach it in the same
+                // frame (see RenderTarget::shareDepth). Skipped rather than transitioned, because the transition the
+                // borrower's pass depends on is the one already in effect.
                 continue;
             }
 
@@ -899,6 +919,9 @@ void Device::shutdown()
     impl->samples_report.rearm();
     impl->samples_depth_report.rearm();
     impl->prepare_target_report.rearm();
+    impl->borrow_samples_report.rearm();
+    impl->borrow_source_report.rearm();
+    impl->borrow_extent_report.rearm();
     impl->window_reports.rearmAll();
     impl->depth_resolve_supported = false;
     impl->device_lost             = false;
@@ -1153,6 +1176,60 @@ bool Device::ensureTarget(const RenderTarget& target)
     }
     impl->samples_depth_report.rearm(); // a depth-attached target this device can resolve: the episode is over
 
+    // A BORROWED DEPTH (RenderTarget::shareDepth): this target draws against ANOTHER target's depth image instead of
+    // owning one, which is what makes "the composite tests against the G-buffer's depth" a composition rather than
+    // two copies of one picture. Three facts are the host's to satisfy, and each refusal is its own episode because
+    // each has a different repair:
+    //  - a MULTISAMPLED target cannot borrow: one image cannot be a multi-sample attachment for one pass and a
+    //    single-sample picture for another (the SDK says every backend refuses that combination);
+    //  - the LENDER is a target THIS device has built and that has a depth - the SDK's ordering rule (the lender
+    //    renders earlier in the frame) is what makes that true, and a frame that breaks it is wiring, not a capability;
+    //  - both targets are EQUALLY SIZED: the lender's picture is bound into a framebuffer of the borrower's extent.
+    const vn::graphics::RenderTarget* lender      = target.depthSource();
+    VkImageView                       lender_view = VK_NULL_HANDLE;
+    if (lender != nullptr) {
+        if (requested_samples > 1U) {
+            if (impl->borrow_samples_report.shouldReport()) {
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
+                                 vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
+                                     u8" samples per pixel and borrows its depth (RenderTarget::shareDepth); one depth image "
+                                     u8"cannot be a multi-sample attachment for one pass and a single-sample picture for another");
+            }
+            return false;
+        }
+        impl->borrow_samples_report.rearm(); // a single-sample borrower: the episode is over
+        const auto source = impl->targets.find(lender);
+        if (source == impl->targets.end() || !source->second.built() || !source->second.hasDepth()) {
+            if (impl->borrow_source_report.shouldReport()) {
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
+                                 u8"vk: a target borrows its depth from a target this device has not built (or one with no "
+                                 u8"depth attachment); the lender must render earlier in the same frame (see RenderTarget::shareDepth)");
+            }
+            return false;
+        }
+        impl->borrow_source_report.rearm(); // the lender is built here: the episode is over
+        if (lender->width() != target.width() || lender->height() != target.height()) {
+            if (impl->borrow_extent_report.shouldReport()) {
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
+                                 vn::String(u8"vk: a target borrows the depth of a differently sized target (") + numberText(static_cast<std::uint32_t>(lender->width())) +
+                                     u8"x" + numberText(static_cast<std::uint32_t>(lender->height())) + u8" against " +
+                                     numberText(static_cast<std::uint32_t>(target.width())) + u8"x" +
+                                     numberText(static_cast<std::uint32_t>(target.height())) + u8"); a shared depth has one extent");
+            }
+            return false;
+        }
+        impl->borrow_extent_report.rearm(); // equally sized: the episode is over
+        lender_view = source->second.depthPictureView();
+        // THE LENDER'S DEPTH FORMAT IS WHAT THIS TARGET'S PASS IS BUILT WITH: the borrower's own declaration is not a
+        // picture anyone has, and the shape states what the attachment IS - so a lender rebuilt at another format
+        // rebuilds the borrower through `planTarget`'s own comparison.
+        wanted.shape.depth_format        = source->second.desc.shape.depth_format;
+        wanted.shape.device_depth_format = source->second.desc.shape.device_depth_format;
+    }
+
     TargetImages& images = impl->targets[&target];
     TargetInstance current;
     current.desc                   = images.desc;
@@ -1160,7 +1237,17 @@ bool Device::ensureTarget(const RenderTarget& target)
     current.built                  = images.built();
     current.attachments_invalidated = false;
 
-    const TargetDecision decision = planTarget(current, wanted);
+    TargetDecision decision = planTarget(current, wanted);
+    // THE BORROW EDGE IS PART OF WHAT WAS BUILT even though `planTarget` does not compare it: it is not a property of
+    // the shape but a relationship to another record, so a target that started or stopped borrowing - or that borrows
+    // a lender whose depth picture was rebuilt - has a different framebuffer to bind. A target with no usable extent
+    // still decides first, as always.
+    const bool borrow_moved = images.built() && (images.borrowsDepth() != (lender != nullptr) ||
+                                                 (lender != nullptr && images.borrowed_depth_view != lender_view));
+    if (borrow_moved && !(decision.action == TargetAction::Repair && decision.reason == RepairReason::SizeUnknown)) {
+        decision.action = TargetAction::Rebuild;
+        decision.reason = RepairReason::None;
+    }
     switch (decision.action) {
     case TargetAction::None:
         return true;
@@ -1190,7 +1277,9 @@ bool Device::ensureTarget(const RenderTarget& target)
         // compatibility, so the ones built for the old shape are simply never asked for again (and a resize, which
         // keeps the shape, reuses them - see ContentDraw).
         destroyTarget(impl->device_table, impl->device, images);
-        images.desc = wanted;
+        images.desc                = wanted;
+        images.depth_borrowed      = lender != nullptr;
+        images.borrowed_depth_view = lender_view;
         if (!buildTarget(impl->device_table, impl->device, impl->memory, images)) {
             reportDiagnostic(DiagnosticSeverity::Error,
                              DiagnosticCategory::TargetBuildFailed,
@@ -1343,6 +1432,18 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     }
     impl->no_targets_report.rearm(); // a pass ran: the "nothing I can run" episode is over
 
+    // THE DEPTHS THIS FRAME LENDS: every target another pass' target borrows its depth from (RenderTarget::shareDepth
+    // resolves to one pointer per borrower, and the borrower was built above). `resolveShadow` skips them - an image
+    // cannot be a shader's picture and a pass' depth attachment in the same frame.
+    std::unordered_set<const RenderTarget*> lent_depths;
+    for (const Runnable& item : runnable_passes) {
+        if (item.draw->target != nullptr) {
+            if (const vn::raw_ptr<RenderTarget> lender = item.draw->target->depthSource(); lender != nullptr) {
+                lent_depths.insert(lender);
+            }
+        }
+    }
+
     // ONE COMMAND BUFFER, ONE FENCE, ONE WAIT. The frame is submitted and finished before the call returns, which is
     // what makes "read the pixels right after" mean what it says.
     VkCommandBufferAllocateInfo allocate{};
@@ -1414,7 +1515,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         // THE SHADOW MAP THIS PASS SAMPLES, if it declared one: resolved from the target's own statement and moved to
         // SHADER_READ_ONLY here, before the render pass begins (see resolveShadow).
         ContentDraw::ShadowSource shadow{};
-        (void)impl->resolveShadow(commands, item.entry->inputs, shadow);
+        (void)impl->resolveShadow(commands, item.entry->inputs, lent_depths, shadow);
 
         TargetImages*                                  images        = nullptr;
         VkRenderPass                                   render_pass   = VK_NULL_HANDLE;

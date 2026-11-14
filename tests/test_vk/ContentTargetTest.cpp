@@ -202,6 +202,32 @@ void main()
     return geometry;
 }
 
+/// @brief Builds an indexed quad in clip space at depth @p z, covering x in [@p x0, @p x1] and y in [@p y0, @p y1].
+///
+/// The general form of makeCornerQuad: a case that needs "this pass covered THIS region and no other" states the
+/// region rather than reusing a quarter and hunting for pixels near its edge.
+[[nodiscard]] intrusive_ptr<Geometry> makeRectQuad(float x0, float y0, float x1, float y1, float z)
+{
+    std::vector<float> positions{
+        x0, y0, z,
+        x1, y0, z,
+        x1, y1, z,
+        x0, y1, z,
+    };
+    std::vector<std::uint32_t> indices{ 0U, 1U, 2U, 0U, 2U, 3U };
+
+    auto geometry = intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::move(positions))));
+
+    Primitive primitive;
+    primitive.topology = Topology::Triangles;
+    primitive.indices  = Primitive::IndexSpan::whole(intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::move(indices))));
+    geometry->clearPrimitives();
+    geometry->addPrimitive(primitive);
+    geometry->bumpRevision();
+    return geometry;
+}
+
 /// @brief A camera with identity matrices, so the triangle's clip-space positions ARE the picture.
 [[nodiscard]] CameraSnapshot identityCamera()
 {
@@ -566,8 +592,9 @@ TEST(VkContentTargetTest, DepthReadbackRefusalsKeepTheirReasonsAndTouchNothing)
 
     // A BORROWED depth is the lender's to read (the SDK's rule): the borrower says Unsupported, and the LENDER answers
     // its own depths. The borrower is drawn into first so it is BUILT - the refusal is then the borrow itself, not a
-    // missing attachment set. (This device attaches its own depth to a borrower today; what is pinned here is the
-    // READBACK rule, which is the SDK's and the same for every backend.)
+    // missing attachment set. (What a borrower ATTACHES is the lender's picture - see
+    // ABorrowedDepthRejectsTheFragmentTheLenderAlreadyCovered; what is pinned here is the READBACK rule, which is the
+    // SDK's and the same for every backend.)
     const intrusive_ptr<RenderTarget> lender = makeDepthTarget(16, 16, RenderTarget::DepthFormat::D32F);
     EXPECT_EQ(backend->executeFrame(drawingFrame(lender.get(), clear, PassRenderState{}, {})), vn::graphics::PresentOutcome::Skipped);
     const intrusive_ptr<RenderTarget> borrower = makeTarget(1, 16, 16);
@@ -592,5 +619,111 @@ TEST(VkContentTargetTest, DepthReadbackRefusalsKeepTheirReasonsAndTouchNothing)
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     EXPECT_EQ(waits, 0U);
+    backend->shutdown();
+}
+
+/**
+ * @brief A borrowed depth is the LENDER's image: the fragment the lender already covered is rejected.
+ *
+ * @details
+ * - THE PIXELS ARE THE ONLY PROOF. "This target draws against that target's depth" is a claim about objects, and only
+ *   a fragment whose fate depends on it can settle the claim. The lender covers the LEFT half at clip z = 0 (device
+ *   depth 0.5 under the SDK's reverse-Z fold) and writes its depth; the borrower covers the WHOLE target at clip
+ *   z = 0.25 (device depth 0.375, i.e. farther) against the borrowed image. With the GREATER comparison the borrower's
+ *   fragments are rejected where the lender wrote and accepted where it did not - so a borrower that had built its own
+ *   CLEARED depth would paint both halves, and one that drew nothing at all would leave the right half at its clear.
+ * - THE LENDER'S DEPTH, READ BACK AFTERWARDS, tells the two halves apart by VALUE: 0.5 where the lender drew, 0.375
+ *   where the borrower's fragment won. A borrower with a private depth image would leave the lender's right half at
+ *   the clear value (0.0), so this is the same fact seen from the other side.
+ */
+TEST(VkContentTargetTest, ABorrowedDepthRejectsTheFragmentTheLenderAlreadyCovered)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget> lender = makeDepthTarget(32, 32, RenderTarget::DepthFormat::D32F);
+
+    // THE BORROWER OWNS NO DEPTH: one colour attachment and an edge to the lender's image (RenderTarget::shareDepth).
+    const intrusive_ptr<RenderTarget> borrower(new RenderTarget());
+    borrower->setName(String(u8"vk_shared_depth_borrower"));
+    borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
+    borrower->setSize(32, 32);
+    borrower->shareDepth(vn::graphics::depthViewOf(lender));
+
+    const intrusive_ptr<ShaderProgram> red         = makeProgram(kRedFragment);
+    const intrusive_ptr<ShaderProgram> green       = makeProgram(kGreenFragment);
+    const intrusive_ptr<Geometry>      left_half   = makeRectQuad(-1.0F, -1.0F, 0.0F, 1.0F, 0.0F);
+    const intrusive_ptr<Geometry>      everywhere  = makeRectQuad(-1.0F, -1.0F, 1.0F, 1.0F, 0.25F);
+
+    ClearPolicy lender_clear;
+    lender_clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    lender_clear.depth = true;
+    ClearPolicy borrower_clear;
+    borrower_clear.color = Colorf(0.0F, 0.0F, 1.0F, 1.0F); // BLUE: what a REJECTED fragment leaves behind
+    borrower_clear.depth = false;                          // it never clears the depth it borrows
+
+    const auto passOf = [](RenderTarget* target,
+                           const ClearPolicy& clear,
+                           const intrusive_ptr<Geometry>& geometry,
+                           const intrusive_ptr<ShaderProgram>& program) {
+        auto list = std::make_shared<std::vector<RenderCommand>>();
+        list->push_back(commandOf(geometry, program));
+
+        DrawDescription draw;
+        draw.kind     = DrawDescription::Kind::Scene;
+        draw.camera   = identityCamera();
+        draw.commands = list;
+
+        PassDraw pass;
+        pass.target = target;
+        pass.clear  = clear;
+        pass.draws.push_back(std::move(draw));
+
+        FrameDescription::Pass entry;
+        entry.pass = vn::test::framePassForTest();
+        entry.draw = std::move(pass);
+        return entry;
+    };
+
+    // ONE FRAME, LENDER FIRST: the SDK's shareDepth rule is that the source renders earlier in the same frame.
+    FrameDescription frame;
+    frame.passes.push_back(passOf(lender.get(), lender_clear, left_half, red));
+    frame.passes.push_back(passOf(borrower.get(), borrower_clear, everywhere, green));
+    ASSERT_EQ(backend->executeFrame(frame, nullptr), vn::graphics::PresentOutcome::Skipped);
+
+    ReadbackResult            why = ReadbackResult::Ok;
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(borrower.get(), 0, pixels, &why)) << "borrower readback refused: " << static_cast<int>(why);
+    ASSERT_EQ(pixels.size(), std::size_t{ 32U * 32U } * 4U);
+    // (8, 16) is inside the lender's half and (24, 16) is not; both are well away from every edge.
+    EXPECT_EQ(pixelAt(pixels, 32, 8, 16), (std::array<int, 4>{ 0, 0, 255, 255 }))
+        << "the lender's depth rejected the borrower's farther fragment - a borrower with its OWN cleared depth would paint here";
+    EXPECT_EQ(pixelAt(pixels, 32, 24, 16), (std::array<int, 4>{ 0, 255, 0, 255 }))
+        << "nothing covered the right half, so the borrower's fragment reached its colour attachment";
+
+    // THE LENDER'S OWN COLOUR: the half it drew is red, the other half keeps its clear colour - a borrower writes its
+    // own attachments, never the lender's colour.
+    std::vector<std::uint8_t> lender_pixels;
+    ASSERT_TRUE(backend->readColorBuffer(lender.get(), 0, lender_pixels, &why)) << "lender readback refused: " << static_cast<int>(why);
+    EXPECT_EQ(pixelAt(lender_pixels, 32, 8, 16), (std::array<int, 4>{ 255, 0, 0, 255 }));
+    EXPECT_EQ(pixelAt(lender_pixels, 32, 24, 16), (std::array<int, 4>{ 0, 0, 0, 255 }));
+
+    // THE SAME IMAGE, SEEN AS DEPTH: 0.5 where the lender drew, 0.375 where the borrower's fragment won.
+    std::vector<float> depths;
+    ASSERT_TRUE(backend->readDepthBuffer(lender.get(), depths, &why)) << "lender depth readback refused: " << static_cast<int>(why);
+    ASSERT_EQ(depths.size(), std::size_t{ 32U * 32U });
+    const auto depthAt = [&depths](int x, int y) { return depths[static_cast<std::size_t>(y) * 32U + static_cast<std::size_t>(x)]; };
+    EXPECT_NEAR(depthAt(8, 16), 0.5F, 0.002F) << "the lender's own depth, written by its own pass";
+    EXPECT_NEAR(depthAt(24, 16), 0.375F, 0.002F) << "the borrower wrote its depth INTO the lender's image";
+
+    // The borrow's own refusal, unchanged: a borrowed depth is read through the lender (see RenderBackend).
+    std::vector<float> borrowed_depths;
+    EXPECT_FALSE(backend->readDepthBuffer(borrower.get(), borrowed_depths, &why));
+    EXPECT_EQ(why, ReadbackResult::Unsupported);
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
     backend->shutdown();
 }

@@ -75,6 +75,16 @@ struct TargetImages {
     VkDeviceMemory depth_resolve_memory{ VK_NULL_HANDLE };
     VkImageView    depth_resolve_view{ VK_NULL_HANDLE };
 
+    /// True when the depth attachment is ANOTHER target's image (see RenderTarget::shareDepth): `depth`,
+    /// `depth_memory` and `depth_view` stay null and the framebuffer binds @ref borrowed_depth_view instead. The
+    /// shape still states a depth format - the LENDER's, which is what the render pass is built with - and every
+    /// variant LOADs that depth, because a pass may not clear an image an earlier pass wrote.
+    bool depth_borrowed{ false };
+    /// The view a borrowing target's framebuffer attaches: the lender's `depthPictureView()` as it was when this one
+    /// was built. NOT owned here - the lender's record owns the image, and this target is rebuilt whenever that
+    /// picture moves (see Device::ensureTarget), so the value can never outlive what it names.
+    VkImageView borrowed_depth_view{ VK_NULL_HANDLE };
+
     /// The render pass whose depth attachment is CLEARed (the first pass into a fresh target).
     VkRenderPass render_pass{ VK_NULL_HANDLE };
     /// The variant whose depth attachment is LOADed (a pass that preserves the depth an earlier pass wrote); null for
@@ -158,16 +168,34 @@ struct TargetImages {
         return depth_resolve_view != VK_NULL_HANDLE;
     }
 
-    /** @brief Gets the depth image a READER sees: the resolve image on a multisampled target, the attachment else. */
-    [[nodiscard]] VkImage depthPicture() const noexcept
+    /** @brief Answers whether this target's depth attachment is ANOTHER target's image (see RenderTarget::shareDepth). */
+    [[nodiscard]] bool borrowsDepth() const noexcept
     {
-        return hasDepthResolve() ? depth_resolve : depth;
+        return depth_borrowed;
     }
 
-    /** @brief Gets the view of @ref depthPicture (what a shader samples and a borrower attaches). */
+    /** @brief Gets the DEPTH VIEW a framebuffer attaches: the owned one, or the lender's when this target borrows. */
+    [[nodiscard]] VkImageView depthAttachmentView() const noexcept
+    {
+        return depth_borrowed ? borrowed_depth_view : depth_view;
+    }
+
+    /**
+     * @brief Gets the depth image a READER sees: the resolve image on a multisampled target, the attachment else.
+     *
+     * @note
+     * - A BORROWING TARGET OWNS NO PICTURE and answers `VK_NULL_HANDLE`: the image belongs to the lender, which is
+     *   also the target a readback reads (see RenderBackend::readDepthBuffer) and the one a shader samples.
+     */
+    [[nodiscard]] VkImage depthPicture() const noexcept
+    {
+        return depth_borrowed ? VK_NULL_HANDLE : (hasDepthResolve() ? depth_resolve : depth);
+    }
+
+    /** @brief Gets the view of @ref depthPicture (what a shader samples and what a LENDER hands to a borrower). */
     [[nodiscard]] VkImageView depthPictureView() const noexcept
     {
-        return hasDepthResolve() ? depth_resolve_view : depth_view;
+        return depth_borrowed ? VK_NULL_HANDLE : (hasDepthResolve() ? depth_resolve_view : depth_view);
     }
 
     /**
