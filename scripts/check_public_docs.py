@@ -66,7 +66,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = Path(__file__).resolve().parent / "public_docs_baseline.txt"
 
-SPEC = r"(?:virtual\s+|static\s+|inline\s+|constexpr\s+|explicit\s+|friend\s+|template\s*<[^>]*>\s*)*"
+# An export macro is a SPECIFIER, not part of the return type: `VN_GRAPHICS_API void f()` returns void, and a gate
+# that read the macro as the return type demanded an `@return` it never wanted (four exported void functions carried
+# that false obligation in the baseline until 2026-11-14, when the first new one made the miss visible).
+SPEC = r"(?:virtual\s+|static\s+|inline\s+|constexpr\s+|explicit\s+|friend\s+|template\s*<[^>]*>\s+|VN_[A-Z0-9_]+_API\s+)*"
 HEAD_RE = re.compile(SPEC + r"(?P<ret>[A-Za-z_][\w:<>,\s\*&]*?)\s+(?P<name>[A-Za-z_]\w*)\s*$")
 CTOR_RE = re.compile(SPEC + r"(?P<name>[A-Za-z_]\w*)\s*$")
 CLASS_OPEN_RE = re.compile(r"^(class|struct|union)\b")

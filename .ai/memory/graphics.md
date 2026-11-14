@@ -1034,3 +1034,23 @@
 - **新坑**：`LightValue::identity` 默认空指针——单测里拿栈上 `LightValue` 的**地址**当 identity 会永远答
   `kMaxLights`；要点名的灯必须显式 `identity = &stable_id`。
 - **验证**：`test_graphics` / `test_vk` / `test_vsg` 全绿；门禁见同批提交。
+
+## 2026-11-14 —— 材质 / draw 块打包上移 SDK：一个块一处打包（C8）
+
+- **动机**：灯块那条尺的继续——材质与 draw 的字段映射在两个后端各写一份（vsg `blockOfMaterial` /
+  `packDrawBlock`，vk `buildMaterialBlock` / `buildDrawBlock`）。加一个因子要改两处，漏一处只在一个后端
+  “旧”，日志里什么都看不到。
+- **落点**：`MaterialAbi.hpp` 的 `packMaterialBlock(values, present_slots, out)`、`DrawAbi.hpp` 的
+  `packDrawBlock(model, opacity, point_size, out)`，实现各一个 `.cpp`；`ShaderAbi.hpp` 仍是零依赖叶子。
+  这条“形状 vs 填充面”的分层与“一块一处打包”已写进 `graphics-shader-params.md` §5.1 的 C7 / C8。
+- **细节**：材质块的槽位掩码是**调用方**的声明（vsg = 声明了贴图的槽；vk = 真的上传成功的槽，失败留 0 让
+  shader 走常量回退）；默认材质不调用打包（`VineMaterialBlock{}` 的成员默认就是默认材质的值）。draw 块的
+  保留字 `params.z/w` 恒写 0，不只是靠 `{}`。
+- **删掉的 vsg 单元**：`DrawBlock.hpp` / `DrawBlock.cpp`（公开名字随之消失，`packDrawBlock` 现在是 <!-- drift-ok -->
+  `vn::graphics::`）；`ContentPass` / `ContentSources` 改调 SDK；vk 的 `buildMaterialBlock` /
+  `buildDrawBlock` 删除，调用点自己把值交给 SDK。
+- **测试**：算术用例搬到 `tests/test_graphics/DrawBlockTest.cpp`（3 例），新增 `MaterialBlockTest.cpp`
+  （4 例：字段行 / 原样不钳制 / 默认材质 == ABI 默认 / 掩码直通）；vsg 的 `DrawBlockTest` 只留“值路径”
+  一例（recorder → compiler → 字节）。
+- **阴影块的例外**（写进 §3.3）：输入 `ShadowFacts` 在后端半（`backend/FrameCompiler.hpp`，D1 不开放），
+  两个后端各自打包；但槽位推导必须调用 `packedSlotOf`。

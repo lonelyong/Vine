@@ -18,13 +18,13 @@
 #include <vsg/state/PushConstants.h>
 #include <vsg/state/Sampler.h>
 
+#include <vine/graphics/DrawAbi.hpp>
 #include <vine/graphics/LightAbi.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/backend_vsg/internal/ContentPush.hpp>
 #include <vine/backend_vsg/internal/ContentSets.hpp>
 #include <vine/backend_vsg/internal/ContentStore.hpp>
-#include <vine/backend_vsg/internal/DrawBlock.hpp>
 #include <vine/backend_vsg/internal/MaterialSlotCheck.hpp>
 #include <vine/backend_vsg/internal/ShadowBlock.hpp>
 
@@ -1072,7 +1072,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     BlockStorage::Block         block{};
     BlockStorage::MaterialWrite material_write{};
     if (mode == Mode::Record) {
-        packDrawBlock(command, draw_block);
+        vn::graphics::packDrawBlock(command.model, command.opacity, command.point_size, draw_block);
         block          = scope_.storage->writeDraw(bytesOf(draw_block));
         material_write = scope_.storage->writeMaterial(needs.material_entry->material.as<vn::graphics::MaterialTag>(),
                                                        needs.material_entry->material.revision,

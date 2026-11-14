@@ -11,6 +11,8 @@ set(SRC_FILE_LIST
 	MaterialInstanceTest.cpp
 	ShaderAbiTest.cpp
 	LightBlockTest.cpp
+	DrawBlockTest.cpp
+	MaterialBlockTest.cpp
 	ModelSceneTest.cpp
 	MeshShapeTest.cpp
 	ResidencyTest.cpp

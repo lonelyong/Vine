@@ -1,17 +1,11 @@
 /**
- * @brief Packing the per-draw ABI block from a compiled command (see `.ai/design/vsg-backend.md`
- * §11.17 and ShaderAbi.hpp).
+ * @brief The per-draw block's VALUE PATH: the numbers a host authored reach the bytes a shader reads.
  *
- * Device-free by construction: packing is arithmetic over the plan's values.
- *
- * The first case packs a NON-SYMMETRIC matrix on purpose. A transposed packing is invisible with an identity,
- * a scale or any other symmetric matrix - which is most test content - and shows up later as "the model
- * rotates the wrong way / the object is somewhere else", which reads as a modelling bug. The values here are
- * chosen so every element is distinct and its position in the flat array says which convention was used.
- *
- * The second case drives the whole path the value travels (recorder → compiler → packer) and reads the
- * TRANSLATION out of the flat array: it is the one assertion that says the number on screen came from the
- * host's model matrix and not from a default left behind somewhere in the middle.
+ * The block's packing rule is the SDK's (`DrawAbi.hpp`'s `packDrawBlock`) and its arithmetic cases live with it in
+ * `tests/test_graphics/DrawBlockTest.cpp`. What needs the plan is this case: a translation the host authored travels
+ * through the recorder's snapshot, the compiler's plan and the packer, and it is read back out of the FLAT array
+ * (indices 12..14 = the fourth column) - the one assertion that says the number on screen came from the host's model
+ * matrix and not from a default left behind somewhere in the middle.
  */
 
 #include <gtest/gtest.h>
@@ -20,13 +14,13 @@
 #include <cstdint>
 #include <vector>
 
+#include <vine/graphics/DrawAbi.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
 #include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameRecorder.hpp>
-#include <vine/backend_vsg/internal/DrawBlock.hpp>
 
 using vn::graphics::Diagnostics;
 using vn::graphics::RenderCommand;
@@ -41,62 +35,6 @@ using vn::graphics::backend::FrameToken;
 using vn::graphics::backend::Observe;
 using vn::graphics::backend::TargetFacts;
 using vn::math::Mat4d;
-using vn::backend_vsg::packDrawBlock;
-
-namespace
-{
-
-/// @brief A matrix whose element (row, column) is `row * 10 + column`: every element distinct, not symmetric.
-Mat4d nonSymmetric()
-{
-    Mat4d matrix;
-    for (int row = 0; row < 4; ++row) {
-        for (int column = 0; column < 4; ++column) {
-            matrix(row, column) = static_cast<double>(row * 10 + column);
-        }
-    }
-    return matrix;
-}
-
-} // namespace
-
-TEST(DrawBlockTest, TheModelMatrixLandsColumnMajorAndTheOpacityInTheParameterSlot)
-{
-    CompiledCommand command;
-    command.model   = nonSymmetric();
-    command.opacity = 0.375F;
-
-    vn::graphics::VineDrawBlock block;
-    packDrawBlock(command, block);
-
-    // (row, column) at `column * 4 + row`: a row-major packing would put 1 where 10 belongs (and vice versa).
-    for (int row = 0; row < 4; ++row) {
-        for (int column = 0; column < 4; ++column) {
-            const std::size_t index = static_cast<std::size_t>(column) * 4U + static_cast<std::size_t>(row);
-            EXPECT_FLOAT_EQ(block.model[index], static_cast<float>(row * 10 + column)) << "row " << row << ", column " << column;
-        }
-    }
-
-    // Translation lives in the fourth column, i.e. at the end of the flat array - the same fact seen from the
-    // bytes rather than from the math.
-    EXPECT_FLOAT_EQ(block.model[12], 3.0F) << "x translation";
-    EXPECT_FLOAT_EQ(block.model[13], 13.0F) << "y translation";
-    EXPECT_FLOAT_EQ(block.model[14], 23.0F) << "z translation";
-    EXPECT_FLOAT_EQ(block.model[15], 33.0F);
-
-    EXPECT_FLOAT_EQ(block.params[0], 0.375F);
-    EXPECT_FLOAT_EQ(block.params[1], 1.0F); // the point size's default: one pixel, not zero
-    EXPECT_FLOAT_EQ(block.params[2], 0.0F); // the reserved user slot packs as zero, not as a leftover
-    EXPECT_FLOAT_EQ(block.params[3], 0.0F);
-
-    // A resolved point size travels beside the opacity, in the same block: it is data (the vertex stage writes
-    // it to gl_PointSize), so it never becomes a pipeline's business.
-    command.point_size = 4.5F;
-    vn::graphics::VineDrawBlock sized;
-    packDrawBlock(command, sized);
-    EXPECT_FLOAT_EQ(sized.params[1], 4.5F);
-    EXPECT_FLOAT_EQ(sized.params[0], 0.375F) << "the opacity is untouched";
-}
 
 TEST(DrawBlockTest, TheValuesThePlanCarriesAreTheOnesThatReachTheBytes)
 {
@@ -140,7 +78,8 @@ TEST(DrawBlockTest, TheValuesThePlanCarriesAreTheOnesThatReachTheBytes)
     ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 1U);
 
     vn::graphics::VineDrawBlock block;
-    packDrawBlock(frame.passes[0].draws[0].commands[0], block);
+    const vn::graphics::backend::CompiledCommand& compiled = frame.passes[0].draws[0].commands[0];
+    vn::graphics::packDrawBlock(compiled.model, compiled.opacity, compiled.point_size, block);
 
     // The translation the host authored - through the recorder's snapshot, the compiler's plan and the packer.
     EXPECT_FLOAT_EQ(block.model[12], 5.0F);

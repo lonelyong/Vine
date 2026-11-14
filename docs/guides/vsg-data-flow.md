@@ -61,7 +61,7 @@ executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟�
 | --- | --- |
 | `ContentStore` + `ContentFacts` | 三张表（几何按 identity+revision、程序按 identity+revision+variant+kind、材质按 identity）；行序（`rows`/`order`）让查找走二分 |
 | `GeometryFacts` | 通道顺序 = 绑定顺序、索引键归一化为整 buffer、起点一致、Malformed 规则 |
-| `DrawBlock` / `ShadowBlock` / `ViewBlock` | 三个 ABI 块的字节打包（列主序、平移在 12..14、opacity 在 `params.x`；影子块带"谁的 map + 生产者矩阵"）；**灯块不在这里**：`VineLightsBlock` 与 `packLightBlock` 是 SDK 的（`LightAbi.hpp`），两个后端填同一份 |
+| `ShadowBlock` / `ViewBlock` | 两个仍由本后端打包的 ABI 块（影子块带"谁的 map + 生产者矩阵"；视图块的 proj / view_proj 先折到设备 clip）；**draw / 材质 / 灯块的字节打包都不在这里**：`packDrawBlock` / `packMaterialBlock` / `packLightBlock` 是 SDK 的（`DrawAbi.hpp` / `MaterialAbi.hpp` / `LightAbi.hpp`），两个后端填同一份 |
 | `MaterialImages` | 材质贴图的 GPU 侧：缓存、上传、立方体逐面、`WhiteImage` 走同一条上传路（fallback 是值不是错误） |
 | `StreamUploads` + `Streams` | 流身份（切片 + revision）、别名登记（**不持有字节**）、帧命名寿命、容量边界 |
 | `BlockStorage` + `BlockDescriptors` | 每帧 ring（视图/draw）+ 材质 arena；descriptor 按 `ProgramAbi` 声明的 `(set, binding)` 建 |

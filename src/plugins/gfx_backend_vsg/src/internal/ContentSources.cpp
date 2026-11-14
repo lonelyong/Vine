@@ -6,6 +6,7 @@
 #include <string>
 
 #include <vine/graphics/BuiltinShaders.hpp>
+#include <vine/graphics/MaterialAbi.hpp>
 
 #include <vine/backend_vsg/internal/ProgramAbi.hpp>
 
@@ -166,20 +167,6 @@ FactMiss buildScreenProgramFacts(const vn::graphics::ShaderProgramDescription& p
 namespace
 {
 
-/// @brief The alpha mode's bits in the material block's flag row (see kMaterialAlphaModeShift).
-///
-/// A switch rather than a cast: the numbering is the ABI's (0/1/2), so a new enumerator has to be given a
-/// number here instead of silently inheriting one the shader reads as something else.
-[[nodiscard]] constexpr std::uint32_t alphaModeBits(vn::graphics::AlphaMode mode) noexcept
-{
-    switch (mode) {
-    case vn::graphics::AlphaMode::Opaque: return 0u;
-    case vn::graphics::AlphaMode::Mask: return 1u;
-    case vn::graphics::AlphaMode::Blend: return 2u;
-    }
-    return 0u;
-}
-
 /// @brief The flag-row bits of the slots the material HAS (see kMaterialFlag*).
 ///
 /// Presence is the one thing the bits say: a slot's map and sampler travel through MaterialFacts, because a
@@ -205,24 +192,6 @@ namespace
     return bits;
 }
 
-/// @brief Packs a material's RESOLVED values into the ABI's block, field for field.
-///
-/// The ONE spelling of the mapping: buildMaterialFacts writes it, and nothing else re-derives it. It reads the
-/// resolved parameters rather than a Material, so an asset and an instance over one pack through the same code
-/// (graphics-material.md 2.2/C3).
-/// The values are packed VERBATIM - no clamping and no sanitising: a material is data the host authored, and
-/// the shader clamps what it draws (graphics-material.md N2).
-[[nodiscard]] vn::graphics::VineMaterialBlock blockOfMaterial(const vn::graphics::MaterialParameters& values) noexcept
-{
-    vn::graphics::VineMaterialBlock block{}; // its member defaults are the default material
-    block.base_color = { values.base_color.r, values.base_color.g, values.base_color.b, values.base_color.a };
-    block.emissive   = { values.emissive.r, values.emissive.g, values.emissive.b, values.emissive.a };
-    block.params     = { values.metallic, values.roughness, values.occlusion, values.alpha_cutoff };
-    // The flag row: the present texture slots (bits 0-4) and the alpha mode (bits 8-9).
-    block.flags[0]   = textureSlotBits(values) | (alphaModeBits(values.alpha_mode) << vn::graphics::kMaterialAlphaModeShift);
-    return block;
-}
-
 } // namespace
 
 FactMiss buildMaterialFacts(vn::graphics::ContentRef                        material,
@@ -236,9 +205,13 @@ FactMiss buildMaterialFacts(vn::graphics::ContentRef                        mate
     // alone. What decides whether a material changed is the number it reports (MaterialBase::revision), never a
     // byte comparison of these bytes (which would report "changed" for a material that did not).
     // The VALUES are the caller's argument (see ContentStore::ensureMaterial): a description built from the value a
-    // frame published, never a read of the live material on the thread that records the frame.
-    const vn::graphics::VineMaterialBlock block =
-        values != nullptr ? blockOfMaterial(values->values()) : vn::graphics::VineMaterialBlock{};
+    // frame published, never a read of the live material on the thread that records the frame. The default
+    // material's block is the declared default-constructed one - content without a material must look like content
+    // with the default one (see ShaderAbi.hpp) - so only a named material is packed.
+    vn::graphics::VineMaterialBlock block{};
+    if (values != nullptr) {
+        vn::graphics::packMaterialBlock(values->values(), textureSlotBits(values->values()), block);
+    }
 
     storage.assign(sizeof(block), std::byte{ 0 });
     std::memcpy(storage.data(), &block, sizeof(block));

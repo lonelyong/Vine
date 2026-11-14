@@ -18,8 +18,10 @@
 #include <vine/backend_vk/internal/ProgramVariant.hpp>
 #include <vine/Buffer.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
+#include <vine/graphics/DrawAbi.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/LightAbi.hpp>
+#include <vine/graphics/MaterialAbi.hpp>
 #include <vine/graphics/MaterialBase.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
@@ -190,46 +192,6 @@ static_assert(sizeof(ContentPushConstants) == 128U, "the content push range is t
     copyMatrix(foldToDeviceClip(camera.projection), push.projection);
     copyMatrix(camera.view * model, push.model_view);
     return push;
-}
-
-/**
- * @brief Packs a material's values into the shading block (see ShaderAbi.hpp).
- *
- * @details
- * - A command that names no material uses the block's DEFAULTS, which are the default material's values - content
- *   without a material must look like content with a default one.
- * - `texture_flags` states which slots the caller could actually bind (a complete texture was uploaded); those are the
- *   bits the shading reads to decide whether a slot is sampled or falls back to its constant.
- *
- * @param values        The resolved values, or null for the default material.
- * @param texture_flags Bit 0-4 = the slots that carry an uploaded map.
- * @return The block.
- */
-[[nodiscard]] vn::graphics::VineMaterialBlock buildMaterialBlock(const vn::graphics::MaterialParameters* values, std::uint32_t texture_flags) noexcept
-{
-    vn::graphics::VineMaterialBlock block{}; // its member defaults are the default material
-    if (values != nullptr) {
-        block.base_color = { values->base_color.r, values->base_color.g, values->base_color.b, values->base_color.a };
-        block.emissive   = { values->emissive.r, values->emissive.g, values->emissive.b, values->emissive.a };
-        block.params     = { values->metallic, values->roughness, values->occlusion, values->alpha_cutoff };
-        block.flags[0]   = texture_flags | (static_cast<std::uint32_t>(values->alpha_mode) << vn::graphics::kMaterialAlphaModeShift);
-    }
-    return block;
-}
-
-/**
- * @brief Fills the per-draw block a content program reads (see ShaderAbi.hpp).
- *
- * @param command   The draw command.
- * @param point_size The resolved point size (`params.y`; the content stages write it to `gl_PointSize`).
- * @return The block: the model matrix, the effective opacity and the point size.
- */
-[[nodiscard]] vn::graphics::VineDrawBlock buildDrawBlock(const vn::graphics::RenderCommand& command, float point_size) noexcept
-{
-    vn::graphics::VineDrawBlock block{};
-    copyMatrix(command.model_matrix, block.model);
-    block.params = { command.opacity, point_size, 0.0F, 0.0F };
-    return block;
 }
 
 /**
@@ -2240,9 +2202,17 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
 
         VkBuffer       uniform_buffer = VK_NULL_HANDLE;
         VkDeviceMemory uniform_memory = VK_NULL_HANDLE;
-        if (!impl->createDrawUniforms(buildMaterialBlock(material_values, texture_flags),
+        // The material block's DEFAULTS are the default material's values, so a call with no material packs nothing
+        // (see packMaterialBlock).
+        vn::graphics::VineMaterialBlock material_block{};
+        if (material_values != nullptr) {
+            vn::graphics::packMaterialBlock(*material_values, texture_flags, material_block);
+        }
+        vn::graphics::VineDrawBlock draw_block{};
+        vn::graphics::packDrawBlock(command.model_matrix, command.opacity, resolved.state.pointSize, draw_block);
+        if (!impl->createDrawUniforms(material_block,
                                       lights_block,
-                                      buildDrawBlock(command, resolved.state.pointSize),
+                                      draw_block,
                                       shadow_block,
                                       uniform_buffer,
                                       uniform_memory)) {

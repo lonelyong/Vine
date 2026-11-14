@@ -252,7 +252,6 @@ src/base/core/sdk/vine/String.hpp	return|cstrlen
 src/base/core/sdk/vine/intrusive_ptr.hpp	param|intrusive_ptr::intrusive_ptr/1
 src/base/core/sdk/vine/intrusive_ptr.hpp	param|intrusive_ptr::swap/1
 src/base/core/sdk/vine/intrusive_ptr.hpp	return|intrusive_ptr::bool
-src/base/crash/sdk/vine/crash/CrashHandler.hpp	return|uninstall
 src/base/geom/sdk/vine/geom/spatial/detail/BvhBuilders.hpp	brief|Builder::build
 src/base/geom/sdk/vine/geom/spatial/detail/BvhBuilders.hpp	param|Builder::build/3
 src/base/geom/sdk/vine/geom/spatial/detail/BvhBuilders.hpp	return|Builder::build
@@ -262,7 +261,6 @@ src/base/iobase/sdk/vine/io/Adapters.hpp	param|IstreamSource::IstreamSource/1
 src/base/iobase/sdk/vine/io/Adapters.hpp	param|OstreamSink::OstreamSink/1
 src/base/iobase/sdk/vine/io/ZipArchive.hpp	brief|ArchiveHandle::ArchiveHandle
 src/base/iobase/sdk/vine/io/ZipArchive.hpp	brief|ZipArchive::ZipArchive
-src/base/logging/sdk/vine/logging/Log.hpp	return|flushDefault
 src/base/logging/sdk/vine/logging/Logger.hpp	brief|Logger::critical
 src/base/logging/sdk/vine/logging/Logger.hpp	brief|Logger::debug
 src/base/logging/sdk/vine/logging/Logger.hpp	brief|Logger::error
@@ -285,7 +283,6 @@ src/base/logging/sdk/vine/logging/Logger.hpp	param|Logger::warn/2
 src/base/logging/sdk/vine/logging/Logger.hpp	param|Logger::warn/3
 src/base/logging/sdk/vine/logging/Logger.hpp	return|Logger::level
 src/base/logging/sdk/vine/logging/Logger.hpp	return|Logger::name
-src/base/logging/sdk/vine/logging/Logger.hpp	return|reportLoggingFailure
 src/base/math/sdk/vine/math/Isometry2.hpp	return|Isometry2::postRotate
 src/base/math/sdk/vine/math/Isometry2.hpp	return|Isometry2::postTranslate
 src/base/math/sdk/vine/math/Isometry2.hpp	return|Isometry2::preRotate
@@ -935,7 +932,6 @@ src/viz/graphics/sdk/vine/graphics/Camera.hpp	return|Camera::viewMatrix
 src/viz/graphics/sdk/vine/graphics/CameraManipulator.hpp	param|CameraManipulator::setMode/1
 src/viz/graphics/sdk/vine/graphics/CameraManipulator.hpp	return|CameraManipulator::camera
 src/viz/graphics/sdk/vine/graphics/CameraManipulator.hpp	return|CameraManipulator::mode
-src/viz/graphics/sdk/vine/graphics/CameraMirror.hpp	return|applyCameraMirror
 src/viz/graphics/sdk/vine/graphics/FpsOverlay.hpp	param|Sampler::addFrame/1
 src/viz/graphics/sdk/vine/graphics/FpsOverlay.hpp	return|FpsOverlay::camera
 src/viz/graphics/sdk/vine/graphics/FpsOverlay.hpp	return|FpsOverlay::content

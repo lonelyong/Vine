@@ -53,8 +53,10 @@
 - **GLSL**：五个块的声明在 `shaders/vine_params.glsl`；shader 用 `#define VN_PARAM_<块>` 声明自己要哪些，
   再 `#include "vine_params.glsl"`，构建期把片段 inline 进嵌入字符串。影子块是唯一例外：它的 set/binding
   属于声明它的 program，唯一声明在 `BuiltinShaders::shadowBindings()`。
-- **C++**：四个零依赖块在 `ShaderAbi.hpp` 一处；灯块的容量、标签、形状与打包（`packLightBlock` /
-  `packedSlotOf`）同在 `LightAbi.hpp`（它依赖 `Light.hpp` / `CameraSnapshot.hpp`，`ShaderAbi.hpp` 不反向依赖它）。
+- **C++**：四个零依赖块的**形状**在 `ShaderAbi.hpp` 一处；需要模型/数学值才填得出字节的面各自成头：
+  `LightAbi.hpp`（`kMaxLights` + `kLightKindEmpty` + `VineLightsBlock` + `packLightBlock` / `packedSlotOf`）、
+  `MaterialAbi.hpp`（`packMaterialBlock`）、`DrawAbi.hpp`（`packDrawBlock`）。依赖方向只有一个：
+  `ShaderAbi.hpp` <- 三个填充面 <- 后端（见 §5.1 C7 / C8）。
 - **名字表**（P1）：手写在结构体旁边，条目用 `offsetof` 而不是手填数字，编译器保证与 C++ 一致。
 
 去重不是纪律问题：重复的声明不在维护者眼前，改一处忘一处是**结构**造成的，只能用结构的办法解决。
@@ -106,7 +108,7 @@ include 解析，也不需要编译器扩展；用户 shader 想用同一套块�
 | # | 功能 | 行为 | 状态 |
 |---|---|---|---|
 | F1 | 共享 GLSL 片段 | 五个块声明一处；shader 用守卫 + `#include` 选块 | 已实现 |
-| F2 | C++ 定义收敛 | 五个 L1 块都在 SDK：四个零依赖块在 `ShaderAbi.hpp`，灯块（容量 + 形状 + 打包）在 `LightAbi.hpp` | 已实现 |
+| F2 | C++ 定义收敛 | 五个 L1 块与它们的打包都在 SDK：形状在 `ShaderAbi.hpp`；灯 / 材质 / draw 的填充面在 `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp`；后端只决定字节放哪 | 已实现 |
 | F3 | 构建期 inline | 片段并入嵌入字符串，运行时不落盘 | 已实现 |
 | F4 | 名字解析（P1） | 手写表 + `offsetof`；一次解析、缓存 | 未做 |
 | F5 | 后端契约 | `ParameterSink` 的写与刷 | 未做 |
@@ -137,10 +139,13 @@ range（见 `ContentPush.hpp`），想要这个块的 program 按自己的布局
 
 ### 3.3 F2–F3 C++ 收敛与构建期 inline
 
-C++ 侧保持手写与 `static_assert`：四个零依赖块在 `ShaderAbi.hpp` 一处；灯块的容量（`kMaxLights`）、
-未用槽标签（`kLightKindEmpty`）、形状（`VineLightsBlock`）与打包（`packLightBlock` / `packedSlotOf`）同在
-`LightAbi.hpp`——打包要吃 `LightValue` / `CameraSnapshot`，所以这一面住在模型之上、ABI 叶子之下，两个后端
-include 同一个头（依赖方向 `ShaderAbi.hpp` <- `LightAbi.hpp` <- 后端，没有回边）。
+C++ 侧保持手写与 `static_assert`。**形状**（`ShaderAbi.hpp`）与**填字节的面**分两层：四个零依赖块在
+`ShaderAbi.hpp`；灯（容量 `kMaxLights`、标签 `kLightKindEmpty`、形状 `VineLightsBlock`、`packLightBlock` /
+`packedSlotOf`）、材质（`packMaterialBlock`）、draw（`packDrawBlock`）各自成头。理由：填充要吃模型/数学值，
+把它们拉进形状头就是一条回边（G2），而且每个只读形状的消费者都会付那部分 include 扇出（G10）；依赖方向固定为
+`ShaderAbi.hpp` <- `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp` <- 后端。场影块是例外：它的输入
+`ShadowFacts` 在后端半（`backend/FrameCompiler.hpp`，D1 不开放），两个后端各自打包，但槽位推导必须调用
+`packedSlotOf`。
 片段与结构体仍是两份手写，靠相邻 review 与 `ProgramAbiTest` 的绑定数/块大小断言守住。
 
 嵌入前由 `cmake/VineEmbedShaders.cmake` 把片段展开进每个 shader 的字符串：运行时不解析 include、不落盘，
@@ -206,6 +211,8 @@ C++ 结构体之外**唯一**的 shader 侧声明；任何 shader 再抄一份�
 | `ParameterSink::write / flush` | 后端实现；框架不解释值 |
 | `packLightBlock(lights, camera, out)` | 把一次绘制调用声明的灯按唯一规则填进 `VineLightsBlock`（视图空间）；返回块代表的灯数（不含环境光兜底） |
 | `packedSlotOf(lights, identity)` | 同一规则下某盏灯占的槽位；阴影块的 `params.w` 用它命名，避免第二份槽位推导 |
+| `packMaterialBlock(values, present_slots, out)` | 把解析后的材质值按字段填进 `VineMaterialBlock`；不钳制不改写，槽位掩码由调用方给（否则上传失败的槽位会让 shader 采样到占位图） |
+| `packDrawBlock(model, opacity, point_size, out)` | 把模型矩阵（列主序）、有效不透明度与点大小填进 `VineDrawBlock`；保留字 `params.z/w` 恒写 0 |
 
 ### 4.4 用户 shader 怎么用
 
@@ -224,6 +231,8 @@ C++ 结构体之外**唯一**的 shader 侧声明；任何 shader 再抄一份�
 | C4 | 框架占用一段 set/binding；用户块必须在保留段之外。 |
 | C5 | 逐顶点 / 逐实例数据走 attribute，不进参数块。 |
 | C6 | 片段只能用行首独占一行的 `#include` 引入，由构建期展开；嵌入字符串里不出现 include。 |
+| C7 | SDK 的 ABI 头分两层：**形状**（零依赖，`ShaderAbi.hpp`，只含 std）与**填字节的面**（`LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp`，可以依赖模型与数学）。依赖方向只能是 形状 ← 填充面 ← 后端；形状头不得 include 模型/数学头（回边），新增块的形状进 `ShaderAbi.hpp`、需要值的填充面单独成头。 |
+| C8 | 每个 L1 块只有一个打包函数，住在 SDK 的填充面；后端只决定字节放哪（buffer / offset / descriptor），不得重写字段映射或重推槽位。例外必须有理由且写在 §3.3：目前只有场影块（输入 `ShadowFacts` 在后端半），它的槽位推导也必须调用 `packedSlotOf`。 |
 
 ### 5.2 要求（R#）
 
@@ -280,8 +289,9 @@ C++ 结构体之外**唯一**的 shader 侧声明；任何 shader 再抄一份�
 
 ### 9.1 当前状态
 
-P0 已实现：参数块只有一处 GLSL 声明（`shaders/vine_params.glsl`，构建期展开），四个零依赖块的 C++ 定义在
-`ShaderAbi.hpp`，灯块（容量、形状与打包）在 `LightAbi.hpp`，两个后端用的是同一份。字节与既有测试未变。
+P0 已实现：参数块只有一处 GLSL 声明（`shaders/vine_params.glsl`，构建期展开），四个零依赖块的 C++ 形状在
+`ShaderAbi.hpp`，灯 / 材质 / draw 的打包面在 `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp`，两个后端用的
+是同一份。字节与既有测试未变。
 
 灯块自 2026-10-24 起是「带类型的灯数组」（位置 / 方向 / 范围 / 锥角，两条路径共用 UBO），
 见 [ADR](../decisions/ADR-2026-10-24-light-block-typed-lights.md)。
@@ -299,9 +309,10 @@ P0 不改任何字节与接口，可独立合入；P1 只加接口，既有字�
 
 - `shaders/vine_params.glsl` —— 参数块的唯一 GLSL 声明（material / draw / lights，按守卫选块）。
 - `cmake/VineEmbedShaders.cmake` —— 构建期展开与嵌入；`cmake/VineShaders.cmake` 的 `INCLUDES` 声明依赖。
-- `ShaderAbi.hpp` —— 四个零依赖 L1 块的 C++ 布局与 `static_assert`。
-- `LightAbi.hpp` —— 灯块的容量、形状与唯一打包规则（`packLightBlock` / `packedSlotOf`），以及它们为什么
-  不放在 `ShaderAbi.hpp`（那里保持零模型依赖）。
-- `DrawBlock.hpp` —— 打包规则与三条静默失败事实。
+- `ShaderAbi.hpp` —— 四个零依赖 L1 块的 C++ 布局与 `static_assert`（叶子：只依赖 std）。
+- `LightAbi.hpp` —— 灯块的容量、形状与唯一打包规则（`packLightBlock` / `packedSlotOf`）。
+- `MaterialAbi.hpp` —— `packMaterialBlock`：材质值 → `VineMaterialBlock`（槽位掩码是调用方的声明）。
+- `DrawAbi.hpp` —— `packDrawBlock`：模型矩阵 / 不透明度 / 点大小 → `VineDrawBlock`（列主序、保留槽恒 0）。
+- 三个填充面为什么不放在 `ShaderAbi.hpp`：见 §3.3 与 §5.1 C7。
 - `../decisions/ADR-2026-10-24-shader-parameter-abi.md` —— 为什么手写、为什么不反射、为什么暂不生成。
 - glslang `-V` 的 `non-opaque uniforms outside a block` 实测（P1）。
