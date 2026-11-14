@@ -1,0 +1,23 @@
+# tsan.supp — ThreadSanitizer suppressions for the graphics gate.
+#
+# WHY THIS FILE EXISTS: a TSan report says "thread A wrote X while thread B read Y", and for that verdict to be about
+# THIS repository both accesses have to come from code this repository owns. The Vulkan ICD (libvulkan_lvp.so,
+# lavapipe) and the Khronos validation layer (libVkLayer_khronos_validation.so) are prebuilt binaries compiled without
+# instrumentation: their own worker threads, their internal rwlocks and their allocator traffic are still seen, because
+# the pthread_* / operator new interceptors live in the runtime — but nothing on either side of the race is our code.
+#
+# MEASURED 2026-11-14, `VN_TSAN_TARGET=test_vk scripts/tsan_check.sh`, 66 cases: 7 warnings, every racing access
+# inside one of these two libraries (mutex_destroy / cond_destroy / operator delete in the ICD's own worker threads;
+# operator delete vs rwlock_rdlock in the validation layer's global object map), and ZERO accesses in a
+# vn::backend_vk or vn::graphics frame. The backend starts no thread of its own: one frame at a time, on the caller's
+# thread.
+#
+# THE RULE THIS KEEPS: a race whose stack mentions our code still fails the run — these entries name third-party
+# libraries, never a file of ours. An entry is added with its measured counts next to it, not to make a red run green.
+
+# lavapipe: the software ICD's own worker threads and their locks.
+race:libvulkan_lvp.so
+# The Khronos validation layer: its global object map and the allocator traffic around it.
+race:libVkLayer_khronos_validation.so
+# The loader, for the same reason (instance/device dispatch tables it owns).
+race:libvulkan.so

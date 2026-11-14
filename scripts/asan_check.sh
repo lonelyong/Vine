@@ -44,6 +44,15 @@
 #        TestXConnection in tests/test_vsg/TestHostWindow.hpp - and SKIP without
 #        DISPLAY. CoreAllocationGateTest's mallinfo2-teeth case skips under ASan:
 #        ASan's allocator is invisible to mallinfo2.)
+#   VN_ASAN_TARGET=test_vk VN_ASAN_FILTER='*' VN_ASAN_LEAKS=1 \
+#       VN_ASAN_LEAK_SCOPE='vn::backend_vk' scripts/asan_check.sh
+#       (the Vulkan backend's own evidence, measured 2026-11-14: 66 cases, zero
+#        LeakSanitizer report - every session a case builds is released by the
+#        destructors it should be. The scope is not a hiding place: the run
+#        prints what it found outside it, and any leakage with a vk frame fails.
+#        test_vk links the backend sources directly, so no plugin target is
+#        needed here. Its concurrent claim is judged by scripts/tsan_check.sh
+#        instead - see scripts/tsan.supp for the third-party rule.)
 #   vsg_backend_selftest no longer exists: it drove the retired renderer and went
 #   with it (see src/plugins/gfx_backend_vsg/CMakeLists.txt). The app gate in
 #   scripts/vsg_rewrite_gate.sh is the end-to-end evidence now.

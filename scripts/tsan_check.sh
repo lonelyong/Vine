@@ -22,6 +22,7 @@
 #   scripts/tsan_check.sh                 # configure (once), build, run
 #   VN_TSAN_FILTER='RenderEngineTest.*' scripts/tsan_check.sh
 #   VN_TSAN_REBUILD=1 scripts/tsan_check.sh   # reconfigure an existing tree
+#   VN_TSAN_TARGET=test_vk scripts/tsan_check.sh   # the vk backend's own suites
 #
 # The tree is <root>/build-tsan. It is NOT the developer's build: a sanitizer
 # run is a separate artifact, and mixing the two would put instrumented and
@@ -31,6 +32,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="${1:-$ROOT/build-tsan}"
 FILTER="${VN_TSAN_FILTER:-*}"
+# The suite is the caller's: the engine's two worlds live in test_graphics, while
+# the vk backend's one-frame-at-a-time contract is exercised by test_vk.
+TARGET="${VN_TSAN_TARGET:-test_graphics}"
 
 if [[ ! -f "$BUILD/CMakeCache.txt" || "${VN_TSAN_REBUILD:-0}" == "1" ]]; then
     echo "--- configuring $BUILD (thread sanitizer)"
@@ -43,19 +47,31 @@ if [[ ! -f "$BUILD/CMakeCache.txt" || "${VN_TSAN_REBUILD:-0}" == "1" ]]; then
           -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread" >/dev/null
 fi
 
-echo "--- building test_graphics (thread sanitizer)"
-cmake --build "$BUILD" --target test_graphics
+echo "--- building $TARGET (thread sanitizer)"
+cmake --build "$BUILD" --target "$TARGET"
 
 LOG="$(mktemp)"
-echo "--- running test_graphics (filter: $FILTER)"
+echo "--- running $TARGET (filter: $FILTER)"
+# THE SUPPRESSIONS ARE THE THIRD-PARTY RULE (see tsan.supp): the Vulkan ICD and the validation layer are uninstrumented
+# binaries whose own threads and locks the runtime's interceptors still see. A race that mentions our code still fails.
+SUPP="$ROOT/scripts/tsan.supp"
+TSAN_OPTS="halt_on_error=0 second_deadlock_stack=1 print_suppressions=1"
+if [[ -f "$SUPP" ]]; then
+    TSAN_OPTS="suppressions=$SUPP:$TSAN_OPTS"
+fi
 set +e
-TSAN_OPTIONS="halt_on_error=0 second_deadlock_stack=1" \
-    "$BUILD/bin/test_graphics" --gtest_filter="$FILTER" 2>&1 | tee "$LOG"
+TSAN_OPTIONS="$TSAN_OPTS" \
+    "$BUILD/bin/$TARGET" --gtest_filter="$FILTER" 2>&1 | tee "$LOG"
 STATUS=${PIPESTATUS[0]}
 set -e
 
 WARNINGS=$(grep -c "WARNING: ThreadSanitizer" "$LOG" || true)
 echo "--- $WARNINGS ThreadSanitizer warning(s)"
+# What the suppressions absorbed is PRINTED, never hidden: a run that silently excused everything would be the same
+# green as a clean one (the same rule the ASan gate follows for its leak table).
+if grep -q "Suppressions used" "$LOG"; then
+    sed -n '/Suppressions used/,/^$/p' "$LOG" | sed 's/^/    /'
+fi
 
 # A warning is a verdict of its own: the suite can pass while a race is real.
 if [[ "$STATUS" -ne 0 || "$WARNINGS" -ne 0 ]]; then
