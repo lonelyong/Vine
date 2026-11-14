@@ -534,6 +534,34 @@
   钉“索引说有就留、索引说没有就 park”。backlog `T28` 已删（收口项，不再是触发项）。
 - **计数**：`test_vsg` 544 / `test_graphics` 554 / ctest 30/30 / TSan 554 用例 0 warning。
 
+## 2026-11-14 —— `gfx_backend_vk` 设备内存池（F7/T45 落地）：两条容易写错的规则 + 变异结果
+
+- **概念**：`MemoryAllocator`（`internal/MemoryAllocator.hpp`）= 会话级**设备内存池**：按 memory type 建
+  `VkDeviceMemory` 块，资源只持 `MemorySlice{memory, offset, size, block}` 并**按 offset 绑定**。
+  `MemoryUsage`（`DeviceLocal` / `HostVisible`，后者强制 `HOST_COHERENT`）由池翻成 memory type；`MemoryKind`
+  （`Linear` / `Optimal`）只为一件事存在：`bufferImageGranularity` 禁止 buffer 与 optimal 图共享一个
+  granularity 页——**只对异类邻居生效**，同类相邻不 padding。块内区间**排序且 live/free 交替** ⇒ 释放只与两个
+  邻居合并，分配 = 带 alignment/granularity 的 first fit。整块变空且同类型还有别的块 ⇒ 销毁（一次大读回不会把
+  显存钉到会话结束）；同类型的最后一块留热。`Device::memoryStats()` 是外部可读的证人。
+- **坑 1（实测，值得记住）：能否 `map` 是 MEMORY TYPE 的属性，不是“这个块最初为何创建”**。我先给 `Block`
+  记了 `usage` 并在 `map()` 里比对 ⇒ lavapipe（device-local 与 host-visible 是**同一个** type）上 ring 合法地
+  落进深度图的块，`map()` 却拒绝 ⇒ `ensureRing` 失败 ⇒ 整个设备起不来（窗口用例只报“no Vulkan device”）。
+  正解：`map()` 查 `memoryTypes[type].propertyFlags & HOST_VISIBLE`。
+- **坑 2：建立顺序**。池必须在**第一个消费内存的东西之前** open：窗口 swapchain 的深度图在 `attach` 时就建，
+  早于 `content.create`。`initialize()` 里现在紧跟 `vkGetPhysicalDeviceMemoryProperties/Properties` 之后 open；
+  关机时在最后一个资源释放之后、`vkDestroyDevice` 之前 close。
+- **变异（4/4 承重）**：关合并 → 只有 `FreeNeighboursMergeSoThePoolIsReused` 红；关 granularity → 只有
+  `LinearAndOptimalDoNotShareAGranularityPage` 红；关子分配（每片一个块）→ 只有
+  `ManyTargetsShareThePoolBlocks` 红；把释放改成保留 live → 只有 `AReadbackGivesItsStagingBytesBack` 红。
+- **`test_vsg` Release 在本机的偶发不稳是既有的，不是这次改动**：全套偶发
+  `malloc(): unaligned tcache chunk detected` / SIGSEGV（落点漂移：`FrameUploadsTest`、`PrepareUploadTest`），
+  也出现过 `WindowCompositionTest` 的 X11 像素读失败。**A/B 方法**：新旧两版 `build-release/bin/test_vsg` 各自
+  `cp` 到 `/tmp`、设 `LD_LIBRARY_PATH=<build>/lib`，交替各跑 5 次 —— **旧版同样 segv/abort**。两个读日志的坑：
+  ①复制到 `/tmp` 后 `$ORIGIN/../plugins` 失效，`VsgBackendPluginTest.*` 会因此**假红**；②stdout 重定向到文件时
+  gtest 是**全缓冲**的，“最后一行 `[ RUN ]`”不等于崩溃点（用 `stdbuf -oL`）。`test_vk` Release 连跑 5 次
+  80/80 稳定；Debug 全量 ctest 32/32 稳定。
+- **计数**：`test_vk` 80（新增 `VkMemoryPoolTest` 3 + `VkMemoryAllocatorTest` 2）。
+
 ## 2026-11-14 —— `gfx_backend_vk` 性能基线（真实宿主 `Vine --open demo`，lavapipe）
 
 - **量法（新 dev switch，demo 插件）**：`VN_BENCH_FRAMES=N` 在资产装好后用零间隔 `QTimer` 连打 N 次

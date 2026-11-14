@@ -243,6 +243,18 @@ struct Device::Impl {
     VolkDeviceTable device_table{};
     VkPhysicalDeviceMemoryProperties memory{};
 
+    /**
+     * @brief The session's device memory: EVERY resource's slices come from here (see MemoryAllocator).
+     *
+     * @details
+     * - ONE POOL PER SESSION, not per subsystem: the attachments, textures, streams, the ring, staging and readbacks
+     *   would otherwise each search the memory types themselves and each create a `VkDeviceMemory` per resource - the
+     *   count `maxMemoryAllocationCount` limits.
+     * - OPENED RIGHT BEFORE THE CONTENT PATH and closed right after the last resource was released: it borrows the
+     *   device and the entry points, so it must not outlive `vkDestroyDevice`.
+     */
+    MemoryAllocator allocator{};
+
     /// The sample counts the device's COLOUR and DEPTH attachments both offer, as Vulkan spells them
     /// (`VK_SAMPLE_COUNT_*_BIT`): one target has one sample count, so a count either attachment cannot do is a count
     /// this device cannot build (see `ensureTarget`).
@@ -886,12 +898,26 @@ bool Device::initialize()
     }
 
     vkGetPhysicalDeviceMemoryProperties(impl->physical, &impl->memory);
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(impl->physical, &properties);
+
+    // THE MEMORY POOL COMES FIRST OF EVERYTHING THAT OWNS MEMORY: every resource below - the window's depth image, the
+    // attachments, the textures, the streams and the ring - asks it for a slice, and it is the one place that answers
+    // which memory type serves a purpose (see MemoryAllocator). `bufferImageGranularity` is the device's rule about
+    // which slices may share a page, so it is a device fact, read here and nowhere else.
+    if (!impl->allocator.open(impl->device_table, impl->device, impl->memory, properties.limits.bufferImageGranularity)) {
+        reportDiagnostic(DiagnosticSeverity::Error,
+                         DiagnosticCategory::InitFailed,
+                         u8"vk: the device's memory pool could not be opened");
+        shutdown();
+        return false;
+    }
 
     // THE TIMESLICE WHERE THE SWAPCHAINS ARE MADE: the device (and therefore its tables) exist, so each window's
     // surface can now be paired with a swapchain. A target that cannot be attached stays detached: the host still
     // holds the object it was given, and every later call answers the truth instead of touching a dead surface.
     if (impl->presentation_wanted) {
-        const WindowDevice window_device{ &impl->device_table, impl->instance, impl->physical, impl->device, impl->queue, impl->queue_family, impl->memory };
+        const WindowDevice window_device{ &impl->device_table, impl->instance, impl->physical, impl->device, impl->queue, impl->queue_family, &impl->allocator };
         for (const auto& surface : impl->surfaces) {
             vn::String why;
             if (!surface->attach(window_device, &why)) {
@@ -906,8 +932,6 @@ bool Device::initialize()
 
     // CAPABILITIES ARE WHAT THIS BACKEND CAN SERVE, not what the device can do: M1 builds off-screen colour targets and
     // reads them back, and still presents nothing (M5).
-    VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(impl->physical, &properties);
 
     // DEPTH RESOLVE IS THE DEVICE'S API VERSION (see Impl::depth_resolve_supported): the render pass that carries a
     // `pDepthStencilResolveAttachment` is created with `vkCreateRenderPass2` under a
@@ -965,7 +989,7 @@ bool Device::initialize()
 
     // M2'S CONTENT PATH: the layouts, the descriptor pool and the caches every draw uses. A device that cannot build
     // them is not a device that can draw, so it refuses to come up rather than answering frames with nothing.
-    if (!impl->content.create(impl->device_table, impl->device, impl->memory, properties.limits.minUniformBufferOffsetAlignment)) {
+    if (!impl->content.create(impl->device_table, impl->device, impl->allocator, properties.limits.minUniformBufferOffsetAlignment)) {
         reportDiagnostic(DiagnosticSeverity::Error,
                          DiagnosticCategory::InitFailed,
                          u8"vk: the content layout / descriptor pool could not be created");
@@ -994,7 +1018,7 @@ void Device::shutdown()
 
         for (auto& [target, images] : impl->targets) {
             (void)target;
-            destroyTarget(impl->device_table, impl->device, images);
+            destroyTarget(impl->device_table, impl->device, impl->allocator, images);
         }
         impl->targets.clear();
 
@@ -1016,6 +1040,10 @@ void Device::shutdown()
         }
         impl->timestamps = false;
         impl->books.timing.reset();
+
+        // THE POOL GOES AFTER THE RESOURCES IT SERVED, BEFORE THE DEVICE IT BORROWED: every slice above has been
+        // released by now, so this unmaps and frees the blocks while the entry points still exist.
+        impl->allocator.close();
 
         impl->device_table.vkDestroyDevice(impl->device, nullptr);
         impl->device       = VK_NULL_HANDLE;
@@ -1131,7 +1159,7 @@ void Device::releaseRenderTarget(RenderTarget* target)
     if (impl->device != VK_NULL_HANDLE) {
         // Between frames by contract (see the header): this device waits on its own fence before it answers, so
         // nothing in flight names these image/view/memory handles and the destroy needs no idle.
-        destroyTarget(impl->device_table, impl->device, found->second);
+        destroyTarget(impl->device_table, impl->device, impl->allocator, found->second);
     }
     impl->targets.erase(found);
 }
@@ -1213,7 +1241,7 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
     auto target = std::make_unique<WindowTarget>(*impl->window_system, window_handle);
     if (initialized()) {
         const WindowDevice window_device{
-            &impl->device_table, impl->instance, impl->physical, impl->device, impl->queue, impl->queue_family, impl->memory
+            &impl->device_table, impl->instance, impl->physical, impl->device, impl->queue, impl->queue_family, &impl->allocator
         };
         vn::String reason;
         if (!target->attach(window_device, &reason)) {
@@ -1393,7 +1421,7 @@ bool Device::ensureTarget(const RenderTarget& target)
         return true;
     case TargetAction::ResizeInPlace:
         images.desc = wanted;
-        if (!resizeTarget(impl->device_table, impl->device, impl->memory, images)) {
+        if (!resizeTarget(impl->device_table, impl->device, impl->allocator, images)) {
             reportDiagnostic(DiagnosticSeverity::Error,
                              DiagnosticCategory::TargetBuildFailed,
                              u8"vk: the target's attachments could not be rebuilt at the new extent (see the loader's report)");
@@ -1404,11 +1432,11 @@ bool Device::ensureTarget(const RenderTarget& target)
         // The shape changed: the render pass, the framebuffer and the attachments are rebuilt; pipelines are keyed by
         // compatibility, so the ones built for the old shape are simply never asked for again (and a resize, which
         // keeps the shape, reuses them - see ContentDraw).
-        destroyTarget(impl->device_table, impl->device, images);
+        destroyTarget(impl->device_table, impl->device, impl->allocator, images);
         images.desc                = wanted;
         images.depth_borrowed      = lender != nullptr;
         images.borrowed_depth_view = lender_view;
-        if (!buildTarget(impl->device_table, impl->device, impl->memory, images)) {
+        if (!buildTarget(impl->device_table, impl->device, impl->allocator, images)) {
             reportDiagnostic(DiagnosticSeverity::Error,
                              DiagnosticCategory::TargetBuildFailed,
                              u8"vk: the off-screen target's attachments could not be built (see the loader's report)");
@@ -2270,7 +2298,7 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(images.width()) * static_cast<VkDeviceSize>(images.height()) * 4U;
 
     ReadbackStaging staging;
-    const StagingRefusal opened = staging.open(impl->device_table, impl->device, impl->memory, impl->command_pool, bytes);
+    const StagingRefusal opened = staging.open(impl->device_table, impl->device, impl->allocator, impl->command_pool, bytes);
     if (opened == StagingRefusal::Unsupported) {
         return fail(ReadbackResult::Unsupported); // no host-visible coherent memory: this device cannot copy to the host
     }
@@ -2399,7 +2427,7 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
                                static_cast<VkDeviceSize>(packed.bytes_per_texel);
 
     ReadbackStaging staging;
-    const StagingRefusal opened = staging.open(impl->device_table, impl->device, impl->memory, impl->command_pool, bytes);
+    const StagingRefusal opened = staging.open(impl->device_table, impl->device, impl->allocator, impl->command_pool, bytes);
     if (opened == StagingRefusal::Unsupported) {
         return fail(ReadbackResult::Unsupported); // no host-visible coherent memory: this device cannot copy to the host
     }
@@ -2505,6 +2533,11 @@ Device::ContentCacheCounters Device::contentCacheCounters() const noexcept
 {
     const ContentDraw::Progress numbers = impl->content.progress();
     return ContentCacheCounters{ numbers.ring_builds, numbers.set_builds, numbers.sets_live };
+}
+
+MemoryStats Device::memoryStats() const noexcept
+{
+    return impl->allocator.stats();
 }
 
 void Device::reportDriverMessage(int severity_flags, const char* text)

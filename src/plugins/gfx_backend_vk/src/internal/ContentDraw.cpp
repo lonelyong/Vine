@@ -82,29 +82,6 @@ constexpr vn::graphics::Sampler kShadowSampler{
 constexpr std::uint32_t kScreenSamplerBindings = 5U;
 
 /**
- * @brief Finds a memory type that serves @p bits and has every property in @p wanted.
- *
- * @param memory The device's memory properties.
- * @param bits   The type bits the allocation requires.
- * @param wanted The property flags the memory must have.
- * @param out    Receives the type index.
- * @return true when a matching type exists.
- */
-[[nodiscard]] bool findMemoryType(const VkPhysicalDeviceMemoryProperties& memory,
-                                  std::uint32_t                          bits,
-                                  VkMemoryPropertyFlags                  wanted,
-                                  std::uint32_t&                         out) noexcept
-{
-    for (std::uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-        if ((bits & (1U << index)) != 0U && (memory.memoryTypes[index].propertyFlags & wanted) == wanted) {
-            out = index;
-            return true;
-        }
-    }
-    return false;
-}
-
-/**
  * @brief Rounds @p value up to the next multiple of @p alignment.
  *
  * @param value     Value to round.
@@ -308,7 +285,7 @@ struct ContentDraw::Impl {
     /// @brief One uploaded vertex channel.
     struct VertexStream {
         VkBuffer      buffer{ VK_NULL_HANDLE };
-        VkDeviceMemory memory{ VK_NULL_HANDLE };
+        MemorySlice   memory{};
         std::uint32_t location{ 0 };
         std::uint32_t components{ 0 };
         std::uint64_t bytes{ 0 };          // Bytes copied in (the entry's residency weight).
@@ -318,7 +295,7 @@ struct ContentDraw::Impl {
     /// @brief One uploaded index stream (per primitive).
     struct IndexStream {
         VkBuffer       buffer{ VK_NULL_HANDLE };
-        VkDeviceMemory memory{ VK_NULL_HANDLE };
+        MemorySlice    memory{};
         std::uint32_t  count{ 0 };
         std::uint64_t  bytes{ 0 };       // Bytes copied in (the entry's residency weight).
         const void*    source{ nullptr }; // The `Buffer` this stream was uploaded from (identity only).
@@ -342,7 +319,7 @@ struct ContentDraw::Impl {
     /// when the buffer's revision moves - the bytes are announced through it, not through a geometry revision.
     struct InstanceStream {
         VkBuffer       buffer{ VK_NULL_HANDLE };
-        VkDeviceMemory memory{ VK_NULL_HANDLE };
+        MemorySlice    memory{};
         std::uint64_t  bytes{ 0 };    // Bytes copied in (the entry's residency weight).
         std::uint64_t  revision{ 0 }; // The Buffer revision the bytes came from.
     };
@@ -441,7 +418,8 @@ struct ContentDraw::Impl {
     /// The widest line the device accepts, in pixels (see setLineWidthLimit): the number every `vkCmdSetLineWidth` in
     /// this recorder is clamped to, and the same one the capabilities report as `max_line_width`.
     float max_line_width{ 1.0F };
-    VkPhysicalDeviceMemoryProperties memory_properties{};
+    /// The device's memory pool (borrowed: the device owns it and outlives this recorder).
+    MemoryAllocator*                allocator{ nullptr };
     std::uint32_t                   uniform_alignment{ kDefaultUniformAlignment };
 
     /// The set layouts and pipeline layouts the two ABIs use: the content pair (set 0 material/slots/lights, set 1
@@ -488,12 +466,12 @@ struct ContentDraw::Impl {
      * - REPLACING IT DROPS THE SET CACHE: every cached set names the old buffer (see ensureRing).
      */
     struct UniformRing {
-        VkBuffer       buffer{ VK_NULL_HANDLE };
-        VkDeviceMemory memory{ VK_NULL_HANDLE };
-        std::byte*     mapped{ nullptr };
-        VkDeviceSize   capacity{ 0 };
-        VkDeviceSize   cursor{ 0 };
-        VkDeviceSize   demand{ 0 };
+        VkBuffer      buffer{ VK_NULL_HANDLE };
+        MemorySlice   memory{};
+        std::byte*    mapped{ nullptr };
+        VkDeviceSize  capacity{ 0 };
+        VkDeviceSize  cursor{ 0 };
+        VkDeviceSize  demand{ 0 };
     };
     UniformRing ring;
 
@@ -594,15 +572,18 @@ struct ContentDraw::Impl {
     }
 
     /**
-     * @brief Creates a buffer and binds host-visible coherent memory to it.
+     * @brief Creates a buffer and binds a host-visible coherent slice of the pool to it.
      *
      * @param size   Bytes to allocate (must be > 0).
      * @param usage  Buffer usage flags.
      * @param buffer Receives the buffer.
-     * @param memory Receives the bound memory.
+     * @param memory Receives the pool range the buffer is bound into.
      * @return true when both exist.
      */
-    [[nodiscard]] bool createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VkDeviceMemory& memory) const
+    [[nodiscard]] bool createHostBuffer(const VkDeviceSize size,
+                                        const VkBufferUsageFlags usage,
+                                        VkBuffer&                buffer,
+                                        MemorySlice&             memory) const
     {
         VkBufferCreateInfo info{};
         info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -617,26 +598,14 @@ struct ContentDraw::Impl {
         VkMemoryRequirements requirements{};
         table->vkGetBufferMemoryRequirements(device, buffer, &requirements);
 
-        std::uint32_t memory_type = 0;
-        if (!findMemoryType(memory_properties, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory_type)) {
+        memory = allocator->allocate(requirements, MemoryUsage::HostVisible, MemoryKind::Linear);
+        if (!memory.valid()) {
             table->vkDestroyBuffer(device, buffer, nullptr);
             buffer = VK_NULL_HANDLE;
             return false;
         }
-
-        VkMemoryAllocateInfo allocate{};
-        allocate.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocate.allocationSize  = requirements.size;
-        allocate.memoryTypeIndex = memory_type;
-        if (table->vkAllocateMemory(device, &allocate, nullptr, &memory) != VK_SUCCESS) {
-            memory = VK_NULL_HANDLE;
-            table->vkDestroyBuffer(device, buffer, nullptr);
-            buffer = VK_NULL_HANDLE;
-            return false;
-        }
-        if (table->vkBindBufferMemory(device, buffer, memory, 0U) != VK_SUCCESS) {
-            table->vkFreeMemory(device, memory, nullptr);
-            memory = VK_NULL_HANDLE;
+        if (table->vkBindBufferMemory(device, buffer, memory.memory, memory.offset) != VK_SUCCESS) {
+            allocator->release(memory);
             table->vkDestroyBuffer(device, buffer, nullptr);
             buffer = VK_NULL_HANDLE;
             return false;
@@ -645,20 +614,19 @@ struct ContentDraw::Impl {
     }
 
     /**
-     * @brief Destroys a buffer and its memory (idempotent).
+     * @brief Destroys a buffer and gives its slice back to the pool (idempotent).
      *
      * @param buffer Buffer to destroy.
-     * @param memory Memory to free.
+     * @param memory The slice to release.
      */
-    void destroyBuffer(VkBuffer& buffer, VkDeviceMemory& memory) const noexcept
+    void destroyBuffer(VkBuffer& buffer, MemorySlice& memory) const noexcept
     {
         if (buffer != VK_NULL_HANDLE) {
             table->vkDestroyBuffer(device, buffer, nullptr);
             buffer = VK_NULL_HANDLE;
         }
-        if (memory != VK_NULL_HANDLE) {
-            table->vkFreeMemory(device, memory, nullptr);
-            memory = VK_NULL_HANDLE;
+        if (allocator != nullptr) {
+            allocator->release(memory);
         }
     }
 
@@ -668,10 +636,10 @@ struct ContentDraw::Impl {
      * @param bytes  Bytes to upload (must be non-empty).
      * @param usage  Buffer usage flags.
      * @param buffer Receives the buffer.
-     * @param memory Receives the bound memory.
+     * @param memory Receives the pool range the buffer is bound into.
      * @return true when the bytes are in the buffer.
      */
-    [[nodiscard]] bool upload(std::span<const std::byte> bytes, VkBufferUsageFlags usage, VkBuffer& buffer, VkDeviceMemory& memory) const
+    [[nodiscard]] bool upload(std::span<const std::byte> bytes, VkBufferUsageFlags usage, VkBuffer& buffer, MemorySlice& memory) const
     {
         if (bytes.empty()) {
             return false;
@@ -679,13 +647,14 @@ struct ContentDraw::Impl {
         if (!createHostBuffer(static_cast<VkDeviceSize>(bytes.size()), usage, buffer, memory)) {
             return false;
         }
-        void* mapped = nullptr;
-        if (table->vkMapMemory(device, memory, 0U, static_cast<VkDeviceSize>(bytes.size()), 0U, &mapped) != VK_SUCCESS || mapped == nullptr) {
+        // THE POOL'S MAPPING IS PERSISTENT (see MemoryAllocator::map): coherent memory needs no flush, so the bytes are
+        // written and forgotten instead of mapped and unmapped around one memcpy.
+        void* const mapped = allocator->map(memory);
+        if (mapped == nullptr) {
             destroyBuffer(buffer, memory);
             return false;
         }
         std::memcpy(mapped, bytes.data(), bytes.size());
-        table->vkUnmapMemory(device, memory);
         return true;
     }
 
@@ -1675,17 +1644,19 @@ struct ContentDraw::Impl {
             return true;
         }
         if (table == nullptr) {
-            return false;
+                return false;
         }
         // GROW BY DOUBLING: a scene whose constants creep up then grows once per doubling, not once per frame.
         const VkDeviceSize capacity = alignedUp(std::max({ needed, kInitialRingBytes, ring.capacity * 2U }), uniform_alignment);
         VkBuffer           buffer   = VK_NULL_HANDLE;
-        VkDeviceMemory     memory   = VK_NULL_HANDLE;
+        MemorySlice        memory{};
         if (!createHostBuffer(capacity, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, buffer, memory)) {
             return false;
         }
-        void* mapped = nullptr;
-        if (table->vkMapMemory(device, memory, 0U, capacity, 0U, &mapped) != VK_SUCCESS || mapped == nullptr) {
+        // THE POOL OWNS THE MAPPING (see MemoryAllocator::map): coherent memory needs no flush, so the ring writes
+        // straight into the block and keeps the address.
+        void* const mapped = allocator->map(memory);
+        if (mapped == nullptr) {
             destroyBuffer(buffer, memory);
             return false;
         }
@@ -1777,12 +1748,10 @@ struct ContentDraw::Impl {
         set = VK_NULL_HANDLE;
     }
 
-    /** @brief Destroys the ring's buffer and memory (idempotent). */
+    /** @brief Destroys the ring's buffer and gives its slice back to the pool (idempotent). */
     void destroyRing() noexcept
     {
-        if (table != nullptr && ring.mapped != nullptr && ring.memory != VK_NULL_HANDLE) {
-            table->vkUnmapMemory(device, ring.memory);
-        }
+        // The mapping belongs to the pool's block (see MemoryAllocator::map): it is not unmapped here.
         destroyBuffer(ring.buffer, ring.memory);
         ring = UniformRing{};
     }
@@ -1904,10 +1873,10 @@ ContentDraw::~ContentDraw()
     destroy();
 }
 
-bool ContentDraw::create(const VolkDeviceTable&                  table,
-                         VkDevice                                device,
-                         const VkPhysicalDeviceMemoryProperties& memory,
-                         std::uint32_t                           uniform_alignment)
+bool ContentDraw::create(const VolkDeviceTable& table,
+                         const VkDevice         device,
+                         MemoryAllocator&       allocator,
+                         const std::uint32_t    uniform_alignment)
 {
     destroy();
     if (device == VK_NULL_HANDLE) {
@@ -1916,7 +1885,7 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
 
     impl->table             = &table;
     impl->device            = device;
-    impl->memory_properties = memory;
+    impl->allocator         = &allocator;
     impl->uniform_alignment = uniform_alignment != 0U ? uniform_alignment : kDefaultUniformAlignment;
 
     // THE CONTENT SET (set 0): material at 0, the five slots at 1-5, lights at 6 - the engine's arrangement, which is
@@ -2064,7 +2033,7 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
         return false;
     }
 
-    if (!impl->images.create(table, device, memory)) {
+    if (!impl->images.create(table, device, allocator)) {
         destroy();
         return false;
     }
@@ -2111,10 +2080,10 @@ void ContentDraw::destroy() noexcept
             }
         }
     }
-    impl->table  = nullptr;
-    impl->device = VK_NULL_HANDLE;
-    impl->memory_properties = VkPhysicalDeviceMemoryProperties{};
-    impl->screen_vertex = nullptr;
+    impl->table             = nullptr;
+    impl->device            = VK_NULL_HANDLE;
+    impl->allocator         = nullptr;
+    impl->screen_vertex     = nullptr;
     impl->stream_builds_      = 0;
     impl->stream_bytes_       = 0;
     impl->stream_releases_    = 0;

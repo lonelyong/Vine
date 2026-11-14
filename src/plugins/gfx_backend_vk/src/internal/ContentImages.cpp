@@ -21,29 +21,6 @@ namespace
 {
 
 /**
- * @brief Finds a memory type that serves @p bits and has every property in @p wanted.
- *
- * @param memory The device's memory properties.
- * @param bits   The type bits the allocation requires.
- * @param wanted The property flags the memory must have.
- * @param out    Receives the type index.
- * @return true when a matching type exists.
- */
-[[nodiscard]] bool findMemoryType(const VkPhysicalDeviceMemoryProperties& memory,
-                                  std::uint32_t                          bits,
-                                  VkMemoryPropertyFlags                  wanted,
-                                  std::uint32_t&                         out) noexcept
-{
-    for (std::uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-        if ((bits & (1U << index)) != 0U && (memory.memoryTypes[index].propertyFlags & wanted) == wanted) {
-            out = index;
-            return true;
-        }
-    }
-    return false;
-}
-
-/**
  * @brief Gets the Vulkan format a texture's pixel layout uploads as.
  *
  * @details
@@ -139,13 +116,14 @@ struct ContentImages::Impl {
         std::uint64_t                                 revision{ 0 };
         std::uint64_t                                 bytes{ 0 }; // Bytes this image was uploaded from (its residency weight).
         VkImage                                       image{ VK_NULL_HANDLE };
-        VkDeviceMemory                                memory{ VK_NULL_HANDLE };
+        MemorySlice                                   memory{}; // The pool range the image is bound into.
         VkImageView                                   view{ VK_NULL_HANDLE };
     };
 
-    const VolkDeviceTable*          table{ nullptr };
-    VkDevice                        device{ VK_NULL_HANDLE };
-    VkPhysicalDeviceMemoryProperties memory{};
+    const VolkDeviceTable* table{ nullptr };
+    VkDevice               device{ VK_NULL_HANDLE };
+    /// The device's memory pool (borrowed: the device owns it and outlives this cache).
+    MemoryAllocator* allocator{ nullptr };
 
     /// The largest anisotropy factor the device honours (see setMaxAnisotropy): a sampler built above it would be an
     /// invalid create, so the request is clamped here - the same number the capabilities report.
@@ -155,15 +133,15 @@ struct ContentImages::Impl {
     /// Entries a revision replaced (destroyed once the frame that may still name them has finished).
     std::vector<Entry> retired;
     /// Staging buffers an upload recorded (alive until that command buffer has finished).
-    std::vector<std::pair<VkBuffer, VkDeviceMemory>> staging;
+    std::vector<std::pair<VkBuffer, MemorySlice>> staging;
 
     std::vector<std::pair<vn::graphics::Sampler, VkSampler>> samplers;
 
-    VkImage        fallback_image{ VK_NULL_HANDLE };
-    VkDeviceMemory fallback_memory{ VK_NULL_HANDLE };
-    VkImageView    fallback_view{ VK_NULL_HANDLE };
-    VkSampler      fallback_sampler{ VK_NULL_HANDLE };
-    std::vector<std::pair<VkBuffer, VkDeviceMemory>> fallback_staging;
+    VkImage       fallback_image{ VK_NULL_HANDLE };
+    MemorySlice   fallback_memory{};
+    VkImageView   fallback_view{ VK_NULL_HANDLE };
+    VkSampler     fallback_sampler{ VK_NULL_HANDLE };
+    std::vector<std::pair<VkBuffer, MemorySlice>> fallback_staging;
 
     /// The numbers a report reads (see Progress): cumulative builds/copies/releases, plus the live total.
     std::uint64_t built{ 0 };
@@ -172,15 +150,18 @@ struct ContentImages::Impl {
     std::uint64_t bytes_total{ 0 };
 
     /**
-     * @brief Creates a buffer and binds host-visible coherent memory to it.
+     * @brief Creates a buffer and binds a host-visible coherent slice of the pool to it.
      *
      * @param size   Bytes to allocate (must be > 0).
      * @param usage  Buffer usage flags.
      * @param buffer Receives the buffer.
-     * @param memory Receives the bound memory.
+     * @param memory Receives the pool range the buffer is bound into.
      * @return true when both exist.
      */
-    [[nodiscard]] bool createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VkDeviceMemory& memory_handle) const
+    [[nodiscard]] bool createHostBuffer(const VkDeviceSize size,
+                                        const VkBufferUsageFlags usage,
+                                        VkBuffer&                buffer,
+                                        MemorySlice&             memory) const
     {
         VkBufferCreateInfo info{};
         info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -195,26 +176,14 @@ struct ContentImages::Impl {
         VkMemoryRequirements requirements{};
         table->vkGetBufferMemoryRequirements(device, buffer, &requirements);
 
-        std::uint32_t memory_type = 0;
-        if (!findMemoryType(memory, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, memory_type)) {
+        memory = allocator->allocate(requirements, MemoryUsage::HostVisible, MemoryKind::Linear);
+        if (!memory.valid()) {
             table->vkDestroyBuffer(device, buffer, nullptr);
             buffer = VK_NULL_HANDLE;
             return false;
         }
-
-        VkMemoryAllocateInfo allocate{};
-        allocate.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocate.allocationSize  = requirements.size;
-        allocate.memoryTypeIndex = memory_type;
-        if (table->vkAllocateMemory(device, &allocate, nullptr, &memory_handle) != VK_SUCCESS) {
-            memory_handle = VK_NULL_HANDLE;
-            table->vkDestroyBuffer(device, buffer, nullptr);
-            buffer = VK_NULL_HANDLE;
-            return false;
-        }
-        if (table->vkBindBufferMemory(device, buffer, memory_handle, 0U) != VK_SUCCESS) {
-            table->vkFreeMemory(device, memory_handle, nullptr);
-            memory_handle = VK_NULL_HANDLE;
+        if (table->vkBindBufferMemory(device, buffer, memory.memory, memory.offset) != VK_SUCCESS) {
+            allocator->release(memory);
             table->vkDestroyBuffer(device, buffer, nullptr);
             buffer = VK_NULL_HANDLE;
             return false;
@@ -222,16 +191,15 @@ struct ContentImages::Impl {
         return true;
     }
 
-    /** @brief Destroys a buffer and its memory (idempotent). */
-    void destroyBuffer(VkBuffer& buffer, VkDeviceMemory& memory_handle) const noexcept
+    /** @brief Destroys a buffer and gives its slice back to the pool (idempotent). */
+    void destroyBuffer(VkBuffer& buffer, MemorySlice& memory) const noexcept
     {
         if (buffer != VK_NULL_HANDLE) {
             table->vkDestroyBuffer(device, buffer, nullptr);
             buffer = VK_NULL_HANDLE;
         }
-        if (memory_handle != VK_NULL_HANDLE) {
-            table->vkFreeMemory(device, memory_handle, nullptr);
-            memory_handle = VK_NULL_HANDLE;
+        if (allocator != nullptr) {
+            allocator->release(memory);
         }
     }
 
@@ -246,9 +214,8 @@ struct ContentImages::Impl {
             table->vkDestroyImage(device, entry.image, nullptr);
             entry.image = VK_NULL_HANDLE;
         }
-        if (entry.memory != VK_NULL_HANDLE) {
-            table->vkFreeMemory(device, entry.memory, nullptr);
-            entry.memory = VK_NULL_HANDLE;
+        if (allocator != nullptr) {
+            allocator->release(entry.memory);
         }
     }
 
@@ -302,28 +269,15 @@ struct ContentImages::Impl {
         VkMemoryRequirements requirements{};
         table->vkGetImageMemoryRequirements(device, entry.image, &requirements);
 
-        std::uint32_t memory_type = 0;
-        if (!findMemoryType(memory, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, memory_type)) {
+        entry.memory = allocator->allocate(requirements, MemoryUsage::DeviceLocal, MemoryKind::Optimal);
+        if (!entry.memory.valid()) {
             destroyEntry(entry);
             if (why != nullptr) {
-                *why = vn::String(u8"vk: no device-local memory type serves a material texture");
+                *why = vn::String(u8"vk: the pool could not serve a material texture");
             }
             return false;
         }
-
-        VkMemoryAllocateInfo allocate{};
-        allocate.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocate.allocationSize  = requirements.size;
-        allocate.memoryTypeIndex = memory_type;
-        if (table->vkAllocateMemory(device, &allocate, nullptr, &entry.memory) != VK_SUCCESS) {
-            entry.memory = VK_NULL_HANDLE;
-            destroyEntry(entry);
-            if (why != nullptr) {
-                *why = vn::String(u8"vk: a material texture's memory could not be allocated");
-            }
-            return false;
-        }
-        if (table->vkBindImageMemory(device, entry.image, entry.memory, 0U) != VK_SUCCESS) {
+        if (table->vkBindImageMemory(device, entry.image, entry.memory.memory, entry.memory.offset) != VK_SUCCESS) {
             destroyEntry(entry);
             if (why != nullptr) {
                 *why = vn::String(u8"vk: a material texture's memory could not be bound");
@@ -398,8 +352,8 @@ struct ContentImages::Impl {
                 return false;
             }
 
-            VkBuffer       staging_buffer{ VK_NULL_HANDLE };
-            VkDeviceMemory staging_memory{ VK_NULL_HANDLE };
+            VkBuffer     staging_buffer{ VK_NULL_HANDLE };
+            MemorySlice  staging_memory{};
             const std::size_t bytes = image->totalByteSize();
             if (bytes == 0U || !createHostBuffer(static_cast<VkDeviceSize>(bytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, staging_buffer, staging_memory)) {
                 if (why != nullptr) {
@@ -408,8 +362,10 @@ struct ContentImages::Impl {
                 return false;
             }
 
-            void* mapped = nullptr;
-            if (table->vkMapMemory(device, staging_memory, 0U, static_cast<VkDeviceSize>(bytes), 0U, &mapped) != VK_SUCCESS || mapped == nullptr) {
+            // THE POOL'S MAPPING IS PERSISTENT (see MemoryAllocator::map): a coherent block needs no flush, so a
+            // staging buffer is written and forgotten rather than mapped and unmapped around one memcpy.
+            void* const mapped = allocator->map(staging_memory);
+            if (mapped == nullptr) {
                 destroyBuffer(staging_buffer, staging_memory);
                 if (why != nullptr) {
                     *why = vn::String(u8"vk: a material texture's staging buffer could not be mapped");
@@ -417,7 +373,6 @@ struct ContentImages::Impl {
                 return false;
             }
             std::memcpy(mapped, image->mipData(0).data(), bytes);
-            table->vkUnmapMemory(device, staging_memory);
             // RESIDENCY WEIGHT: the bytes copied in, which is what a release has to make go down.
             entry.bytes += static_cast<std::uint64_t>(bytes);
 
@@ -453,15 +408,15 @@ ContentImages::~ContentImages()
     destroy();
 }
 
-bool ContentImages::create(const VolkDeviceTable& table, const VkDevice device, const VkPhysicalDeviceMemoryProperties& memory)
+bool ContentImages::create(const VolkDeviceTable& table, const VkDevice device, MemoryAllocator& allocator)
 {
     destroy();
     if (device == VK_NULL_HANDLE) {
         return false;
     }
-    impl->table  = &table;
-    impl->device = device;
-    impl->memory = memory;
+    impl->table     = &table;
+    impl->device    = device;
+    impl->allocator = &allocator;
     // The fallback sampler reads the 1x1 white stand-in; it is also what an absent slot is sampled with.
     impl->fallback_sampler = samplerFor(vn::graphics::Sampler{});
     return impl->fallback_sampler != VK_NULL_HANDLE;
@@ -515,18 +470,17 @@ void ContentImages::destroy() noexcept
             impl->table->vkDestroyImage(impl->device, impl->fallback_image, nullptr);
             impl->fallback_image = VK_NULL_HANDLE;
         }
-        if (impl->fallback_memory != VK_NULL_HANDLE) {
-            impl->table->vkFreeMemory(impl->device, impl->fallback_memory, nullptr);
-            impl->fallback_memory = VK_NULL_HANDLE;
+        if (impl->allocator != nullptr) {
+            impl->allocator->release(impl->fallback_memory);
         }
         if (impl->fallback_sampler != VK_NULL_HANDLE) {
             // The fallback sampler is one of `samplers` (created through samplerFor), so it was destroyed with them.
             impl->fallback_sampler = VK_NULL_HANDLE;
         }
     }
-    impl->table  = nullptr;
-    impl->device = VK_NULL_HANDLE;
-    impl->memory = VkPhysicalDeviceMemoryProperties{};
+    impl->table     = nullptr;
+    impl->device    = VK_NULL_HANDLE;
+    impl->allocator = nullptr;
     impl->built           = 0;
     impl->uploaded_bytes  = 0;
     impl->released        = 0;
@@ -760,38 +714,35 @@ bool ContentImages::ensureFallback(const VkCommandBuffer commands, vn::String* w
 
     VkMemoryRequirements requirements{};
     impl->table->vkGetImageMemoryRequirements(impl->device, impl->fallback_image, &requirements);
-    std::uint32_t memory_type = 0;
-    if (!findMemoryType(impl->memory, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, memory_type)) {
+    impl->fallback_memory = impl->allocator->allocate(requirements, MemoryUsage::DeviceLocal, MemoryKind::Optimal);
+    if (!impl->fallback_memory.valid()) {
         impl->table->vkDestroyImage(impl->device, impl->fallback_image, nullptr);
         impl->fallback_image = VK_NULL_HANDLE;
         if (why != nullptr) {
-            *why = vn::String(u8"vk: no device-local memory type serves the 1x1 fallback image");
+            *why = vn::String(u8"vk: the pool could not serve the 1x1 fallback image");
         }
         return false;
     }
-
-    VkMemoryAllocateInfo allocate{};
-    allocate.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocate.allocationSize  = requirements.size;
-    allocate.memoryTypeIndex = memory_type;
-    if (impl->table->vkAllocateMemory(impl->device, &allocate, nullptr, &impl->fallback_memory) != VK_SUCCESS ||
-        impl->table->vkBindImageMemory(impl->device, impl->fallback_image, impl->fallback_memory, 0U) != VK_SUCCESS) {
+    if (impl->table->vkBindImageMemory(impl->device, impl->fallback_image, impl->fallback_memory.memory, impl->fallback_memory.offset) != VK_SUCCESS) {
+        impl->allocator->release(impl->fallback_memory);
+        impl->table->vkDestroyImage(impl->device, impl->fallback_image, nullptr);
+        impl->fallback_image = VK_NULL_HANDLE;
         if (why != nullptr) {
-            *why = vn::String(u8"vk: the 1x1 fallback image's memory could not be prepared");
+            *why = vn::String(u8"vk: the 1x1 fallback image's memory could not be bound");
         }
         return false;
     }
 
-    VkBuffer       staging_buffer{ VK_NULL_HANDLE };
-    VkDeviceMemory staging_memory{ VK_NULL_HANDLE };
+    VkBuffer    staging_buffer{ VK_NULL_HANDLE };
+    MemorySlice staging_memory{};
     if (!impl->createHostBuffer(4U, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, staging_buffer, staging_memory)) {
         if (why != nullptr) {
             *why = vn::String(u8"vk: the 1x1 fallback's staging buffer could not be created");
         }
         return false;
     }
-    void* mapped = nullptr;
-    if (impl->table->vkMapMemory(impl->device, staging_memory, 0U, 4U, 0U, &mapped) != VK_SUCCESS || mapped == nullptr) {
+    void* const mapped = impl->allocator->map(staging_memory);
+    if (mapped == nullptr) {
         impl->destroyBuffer(staging_buffer, staging_memory);
         if (why != nullptr) {
             *why = vn::String(u8"vk: the 1x1 fallback's staging buffer could not be mapped");
@@ -800,7 +751,6 @@ bool ContentImages::ensureFallback(const VkCommandBuffer commands, vn::String* w
     }
     const std::uint8_t white[4]{ 255U, 255U, 255U, 255U };
     std::memcpy(mapped, white, sizeof(white));
-    impl->table->vkUnmapMemory(impl->device, staging_memory);
 
     const ImageState transfer = transferWriteState();
     const VkImageMemoryBarrier to_transfer =

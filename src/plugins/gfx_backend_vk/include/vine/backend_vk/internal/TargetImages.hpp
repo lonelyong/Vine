@@ -7,6 +7,7 @@
 
 #include <volk.h>
 
+#include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/backend/TargetPlan.hpp>
 
@@ -39,9 +40,11 @@ VN_BACKEND_VK_NS_BEGIN
  * - DEPTH-ONLY IS A SHAPE. A target with a depth attachment and no colour attachment is the engine's SHADOW MAP and
  *   builds like any other (the render pass simply references no colour attachment, and a fragment's outputs are
  *   discarded); a target with neither attachment is not a target.
- * - MEMORY IS ONE ALLOCATION PER IMAGE. A suballocator is the right answer for a scene with hundreds of targets and the
- *   wrong one for the first clear; `vkAllocateMemory` per image keeps the failure modes visible (every call answers a
- *   result) and leaves the allocator as its own later step.
+ * - MEMORY IS A SLICE OF THE DEVICE'S POOL. Each image asks the device's MemoryAllocator for a range (see MemorySlice)
+ *   and binds it at that offset, so a scene with hundreds of targets reaches the driver a handful of times instead of
+ *   once per image: `maxMemoryAllocationCount` is a per-device limit (the spec's floor is 4096) and the failure it
+ *   produces reads like "out of memory" while the device may be nearly empty. This record owns the SLICES, not the
+ *   memory - `destroyTarget` gives them back to the pool.
  * - IT IS A VALUE-LIKE RECORD with explicit build/destroy calls, because Vulkan has no destructors: `destroyTarget()`
  *   is idempotent so an error path may call it unconditionally.
  */
@@ -53,26 +56,26 @@ struct TargetImages {
     /// single-sampled pass draws into - and, on a multisampled target, the RESOLVE image the render pass writes at the
     /// end of its subpass. Nothing here is ever drawn into directly while `isMultisampled()` is true.
     std::vector<VkImage>        colors{};
-    std::vector<VkDeviceMemory> color_memories{};
+    std::vector<MemorySlice>    color_memory{};
     std::vector<VkImageView>    color_views{};
 
     /// THE SAMPLE BUFFERS, one per colour attachment, EMPTY on a single-sampled target: the images a multisampled
     /// pass draws into, whose content the render pass resolves into `colors`. They carry no sampled or transfer usage
     /// because nothing reads them; the resolve is the only way out of them.
     std::vector<VkImage>        multisample_colors{};
-    std::vector<VkDeviceMemory> multisample_color_memories{};
+    std::vector<MemorySlice>    multisample_color_memory{};
     std::vector<VkImageView>    multisample_color_views{};
 
     /// The depth attachment, created with the target's sample count and NEVER resolved (see the class note).
     VkImage        depth{ VK_NULL_HANDLE };
-    VkDeviceMemory depth_memory{ VK_NULL_HANDLE };
+    MemorySlice    depth_memory{};
     VkImageView    depth_view{ VK_NULL_HANDLE };
 
     /// The single-sample depth PICTURE of a multisampled target (see the class note): the render pass resolves the
-    /// depth into it, a shader samples it and a borrower attaches it. Null on a single-sampled target, where
+    /// depth into it, a shader samples it and a borrower attaches it. Empty on a single-sampled target, where
     /// `depth` already is the picture.
     VkImage        depth_resolve{ VK_NULL_HANDLE };
-    VkDeviceMemory depth_resolve_memory{ VK_NULL_HANDLE };
+    MemorySlice    depth_resolve_memory{};
     VkImageView    depth_resolve_view{ VK_NULL_HANDLE };
 
     /// True when the depth attachment is ANOTHER target's image (see RenderTarget::shareDepth): `depth`,
@@ -287,16 +290,13 @@ struct TargetImages {
  * - On failure the function destroys whatever it made and answers false, so the caller never holds a half-built target
  *   (the same rule the device's `initialize` follows).
  *
- * @param table  The device's entry points (volk table).
- * @param device The logical device.
- * @param memory The device's memory properties (for the memory type search).
- * @param images The record to fill.
+ * @param table     The device's entry points (volk table).
+ * @param device    The logical device.
+ * @param allocator The device's memory pool (every attachment asks it for a slice).
+ * @param images    The record to fill.
  * @return true when every object exists.
  */
-[[nodiscard]] bool buildTarget(const VolkDeviceTable&                  table,
-                               VkDevice                                device,
-                               const VkPhysicalDeviceMemoryProperties& memory,
-                               TargetImages&                           images);
+[[nodiscard]] bool buildTarget(const VolkDeviceTable& table, VkDevice device, MemoryAllocator& allocator, TargetImages& images);
 
 /**
  * @brief Rebuilds the images, views and framebuffer for a new EXTENT, keeping the render passes.
@@ -306,24 +306,22 @@ struct TargetImages {
  *   compiled against them) stay; only what the extent decides is replaced.
  * - On failure the target is left with no attachments (and no stale objects), so the caller reports and retries later.
  *
- * @param table  The device's entry points (volk table).
- * @param device The logical device.
- * @param memory The device's memory properties.
- * @param images The record whose `desc` already states the new extent and the unchanged shape.
+ * @param table     The device's entry points (volk table).
+ * @param device    The logical device.
+ * @param allocator The device's memory pool.
+ * @param images    The record whose `desc` already states the new extent and the unchanged shape.
  * @return true when the new attachments exist.
  */
-[[nodiscard]] bool resizeTarget(const VolkDeviceTable&                  table,
-                                VkDevice                                device,
-                                const VkPhysicalDeviceMemoryProperties& memory,
-                                TargetImages&                           images);
+[[nodiscard]] bool resizeTarget(const VolkDeviceTable& table, VkDevice device, MemoryAllocator& allocator, TargetImages& images);
 
 /**
  * @brief Destroys every object `images` holds (idempotent), including the render passes and the description.
  *
- * @param table  The device's entry points (volk table).
- * @param device The logical device.
- * @param images The record to clear.
+ * @param table     The device's entry points (volk table).
+ * @param device    The logical device.
+ * @param allocator The device's memory pool (the slices are given back to it).
+ * @param images    The record to clear.
  */
-void destroyTarget(const VolkDeviceTable& table, VkDevice device, TargetImages& images) noexcept;
+void destroyTarget(const VolkDeviceTable& table, VkDevice device, MemoryAllocator& allocator, TargetImages& images) noexcept;
 
 VN_BACKEND_VK_NS_END

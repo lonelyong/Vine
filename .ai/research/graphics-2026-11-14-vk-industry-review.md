@@ -113,15 +113,26 @@
 - **仍缺**：**选中的设备没有一行证据**（名称/类型/API 版本）。行业实现都会打印。它属于宿主/日志层
   （本插件目前不 include logging），建议随 `docs/guides/` 的 vk 页一起定“设备行”的归属。
 
-### F7（中）无子分配（每个 image/buffer 一次 `vkAllocateMemory`）
+### F7（中，**已落地 2026-11-14**）无子分配（每个 image/buffer 一次 `vkAllocateMemory`）
 
-- **现状**：`TargetImages.cpp:48`（图像）、`ContentImages.cpp`（纹理与暂存）、`ReadbackStaging.cpp`（读回）
-  各自 `vkAllocateMemory`。
+- **现状（修前）**：`TargetImages.cpp:48`（图像）、`ContentImages.cpp`（纹理与暂存）、`ReadbackStaging.cpp`
+  （读回）各自 `vkAllocateMemory`。
 - **行业做法**：VMA 或自建 allocator（按 memory type 分块、子分配、对齐、释放表）。
 - **判词**：`maxMemoryAllocationCount` 的规范下限是 **4096**（本机 lavapipe 更大）；目标数 × 附件数 + 纹理数
   在“大场景 + 多目标”下会逼近这个上限，而失败形态是 `vkAllocateMemory` 返回 `VK_ERROR_OUT_OF_DEVICE_MEMORY`
   ——**看起来像显存不足，其实是分配次数用尽**。
-- **建议**：backlog **T45**（触发：目标/纹理数量到千级，或第一次出现“显存够却分配失败”）。
+- **已落地（backlog T45 关闭）**：`MemoryAllocator`（`include/vine/backend_vk/internal/MemoryAllocator.hpp`）——
+  按 memory type 分块的池；资源只持有一个 `MemorySlice{memory, offset, size, block}` 并按 offset 绑定。
+  `MemoryUsage`（device-local / host-visible）由池翻成 Vulkan memory type，`MemoryKind`（linear / optimal）
+  承载 `bufferImageGranularity` 规则（只对“异类邻居”生效），空闲区间相邻即合并，整块空闲且同类还有别的块时销毁；
+  host-visible 块**整块映射一次**，`map(slice)` 直接给该片的地址——能否映射由 **memory type 的属性**决定，
+  不是“这个块最初为什么创建”（同一类型可同时是 device-local 与 host-visible：lavapipe、ReBAR）。
+  六个消费方全部改走池：`TargetImages`、`ContentImages`、`ContentDraw`（ring 与顶点/索引/实例流）、
+  `ReadbackStaging`、`WindowTarget` 的深度图；`Device::memoryStats()` 给出
+  blocks / blocks_live / reserved / used / peak / allocations / releases。
+- **验证**：`VkMemoryPoolTest.*`（六个目标 = 12 片、≤ 2 块；稳态帧零分配；读回归还暂存；关机后 used/blocks 归零）
+  与 `VkMemoryAllocatorTest.*`（相邻释放合并、linear/optimal 不共 granularity 页）。四条变异（关合并、关
+  granularity、关子分配、关释放）**各自只让对应用例红**。
 
 ### F8（低–中，已修）`vkAcquireNextImageKHR` 的无限超时
 

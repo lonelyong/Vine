@@ -9,6 +9,7 @@
 #include <volk.h>
 
 #include <vine/String.hpp>
+#include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -115,19 +116,19 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @brief Creates the layouts, the descriptor pool and the caches over @p device.
      *
      * @details
-     * - Called by the device once its logical device and memory properties exist; on failure nothing is left behind,
-     *   so the caller may simply refuse to come up.
+     * - Called by the device once its logical device and memory pool exist; on failure nothing is left behind, so the
+     *   caller may simply refuse to come up.
      *
-     * @param table                 The device's entry points (volk table).
-     * @param device                The logical device.
-     * @param memory                The device's memory properties (for the host-visible memory type search).
-     * @param uniform_alignment     `minUniformBufferOffsetAlignment` of the device (0 selects 256, the Vulkan minimum).
+     * @param table             The device's entry points (volk table).
+     * @param device            The logical device.
+     * @param allocator         The device's memory pool (the ring and every stream are slices of it).
+     * @param uniform_alignment `minUniformBufferOffsetAlignment` of the device (0 selects 256, the Vulkan minimum).
      * @return true when every layout and the pool exist.
      */
-    [[nodiscard]] bool create(const VolkDeviceTable&                    table,
-                              VkDevice                                  device,
-                              const VkPhysicalDeviceMemoryProperties&   memory,
-                              std::uint32_t                             uniform_alignment);
+    [[nodiscard]] bool create(const VolkDeviceTable& table,
+                              VkDevice               device,
+                              MemoryAllocator&       allocator,
+                              std::uint32_t          uniform_alignment);
 
     /** @brief Destroys every object this recorder owns (idempotent; safe before @ref create). */
     void destroy() noexcept;

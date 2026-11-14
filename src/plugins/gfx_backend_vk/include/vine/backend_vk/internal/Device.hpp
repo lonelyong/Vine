@@ -3,6 +3,7 @@
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/backend_vk/backend_vk_global.hpp>
 #include <vine/backend_vk/internal/Handles.hpp>
+#include <vine/backend_vk/internal/MemoryAllocator.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -369,6 +370,22 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @return The witnesses (zeros when no recorder is up).
      */
     [[nodiscard]] ContentCacheCounters contentCacheCounters() const noexcept;
+
+    /**
+     * @brief Gets the device memory pool's numbers (see MemoryStats).
+     *
+     * @details
+     * - THE EVIDENCE FOR SUBALLOCATION: this backend's resources - attachments, textures, vertex and index streams,
+     *   the uniform ring, staging and readback buffers - all take SLICES of one pool (see MemoryAllocator), so the
+     *   number of `VkDeviceMemory` objects a session creates is `blocks`, not `allocations`. `maxMemoryAllocationCount`
+     *   is a per-device limit whose failure reads like "out of memory", and a test can ask these numbers instead of
+     *   counting driver calls from outside.
+     * - THE NUMBERS ARE THE SESSION'S: `blocks` and `allocations` are cumulative, while `blocks_live`, `reserved_bytes`
+     *   and `used_bytes` describe NOW (zeros after `shutdown()`).
+     *
+     * @return The pool's numbers (zeros when no session is up).
+     */
+    [[nodiscard]] MemoryStats memoryStats() const noexcept;
 
     /**
      * @brief Forwards one message the Vulkan loader or a validation layer produced.

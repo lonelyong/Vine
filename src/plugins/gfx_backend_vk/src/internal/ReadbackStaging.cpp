@@ -9,17 +9,18 @@ ReadbackStaging::~ReadbackStaging()
     release();
 }
 
-StagingRefusal ReadbackStaging::open(const VolkDeviceTable&                  table,
-                                     const VkDevice                          device,
-                                     const VkPhysicalDeviceMemoryProperties& memory,
-                                     const VkCommandPool                     pool,
-                                     const VkDeviceSize                      bytes)
+StagingRefusal ReadbackStaging::open(const VolkDeviceTable& table,
+                                     const VkDevice         device,
+                                     MemoryAllocator&       allocator,
+                                     const VkCommandPool    pool,
+                                     const VkDeviceSize     bytes)
 {
     // THE BORROWED FACTS FIRST, so every failure path below can release through them.
-    table_  = &table;
-    device_ = device;
-    pool_   = pool;
-    bytes_  = bytes;
+    table_     = &table;
+    device_    = device;
+    allocator_ = &allocator;
+    pool_      = pool;
+    bytes_     = bytes;
 
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -34,28 +35,15 @@ StagingRefusal ReadbackStaging::open(const VolkDeviceTable&                  tab
     VkMemoryRequirements requirements{};
     table.vkGetBufferMemoryRequirements(device, buffer_, &requirements);
 
-    std::uint32_t memory_type = std::numeric_limits<std::uint32_t>::max();
-    for (std::uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-        const VkMemoryPropertyFlags flags   = memory.memoryTypes[index].propertyFlags;
-        const bool                  allowed = (requirements.memoryTypeBits & (1U << index)) != 0U;
-        if (allowed && (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0U && (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0U) {
-            memory_type = index;
-            break;
-        }
-    }
-    if (memory_type == std::numeric_limits<std::uint32_t>::max()) {
-        // No host-visible coherent memory: this device cannot copy to the host at all, which is what the caller turns
-        // into `Unsupported` rather than `Failed` - the difference a host acts on.
+    // NO HOST-VISIBLE COHERENT TYPE IS `Unsupported`, NOT `Failed`: the device cannot copy to the host at all, and a
+    // caller acts on that difference (see StagingRefusal).
+    MemoryRefusal refusal = MemoryRefusal::Ok;
+    memory_               = allocator.allocate(requirements, MemoryUsage::HostVisible, MemoryKind::Linear, &refusal);
+    if (!memory_.valid()) {
         release();
-        return StagingRefusal::Unsupported;
+        return refusal == MemoryRefusal::NoType ? StagingRefusal::Unsupported : StagingRefusal::Failed;
     }
-
-    VkMemoryAllocateInfo allocate{};
-    allocate.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocate.allocationSize  = requirements.size;
-    allocate.memoryTypeIndex = memory_type;
-    if (table.vkAllocateMemory(device, &allocate, nullptr, &memory_) != VK_SUCCESS ||
-        table.vkBindBufferMemory(device, buffer_, memory_, 0U) != VK_SUCCESS) {
+    if (table.vkBindBufferMemory(device, buffer_, memory_.memory, memory_.offset) != VK_SUCCESS) {
         release();
         return StagingRefusal::Failed;
     }
@@ -120,12 +108,9 @@ StagingRun ReadbackStaging::run(const VkQueue queue, const VkFence fence) noexce
     (void)table_->vkResetFences(device_, 1U, &fence);
 
     if (answered.wait == VK_SUCCESS) {
-        void* mapped = nullptr;
         // A failed mapping is not a failed copy: bytes() answers empty and the caller's "is this a whole picture"
         // check refuses the read (the mapping is a second fact, not a third way to lose the copy).
-        if (table_->vkMapMemory(device_, memory_, 0U, bytes_, 0U, &mapped) == VK_SUCCESS) {
-            mapped_ = mapped;
-        }
+        mapped_ = allocator_->map(memory_);
     }
     return answered;
 }
@@ -143,17 +128,13 @@ void ReadbackStaging::release() noexcept
     if (table_ == nullptr) {
         return;
     }
-    if (mapped_ != nullptr) {
-        table_->vkUnmapMemory(device_, memory_);
-        mapped_ = nullptr;
-    }
+    mapped_ = nullptr;
     if (commands_ != VK_NULL_HANDLE) {
         table_->vkFreeCommandBuffers(device_, pool_, 1U, &commands_);
         commands_ = VK_NULL_HANDLE;
     }
-    if (memory_ != VK_NULL_HANDLE) {
-        table_->vkFreeMemory(device_, memory_, nullptr);
-        memory_ = VK_NULL_HANDLE;
+    if (allocator_ != nullptr) {
+        allocator_->release(memory_);
     }
     if (buffer_ != VK_NULL_HANDLE) {
         table_->vkDestroyBuffer(device_, buffer_, nullptr);

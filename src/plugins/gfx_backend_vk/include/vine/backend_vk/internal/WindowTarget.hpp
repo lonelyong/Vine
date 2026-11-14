@@ -8,6 +8,7 @@
 #include <volk.h>
 
 #include <vine/String.hpp>
+#include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/WindowPresentTarget.hpp>
 #include <vine/graphics/backend/TargetPlan.hpp>
@@ -18,13 +19,13 @@ class WindowSystem;
 
 /** @brief The device state one window target needs: the Vulkan objects the DEVICE owns (borrowed, never destroyed). */
 struct WindowDevice {
-    const VolkDeviceTable*           table{ nullptr };           // The device's entry points (volk table).
-    VkInstance                       instance{ VK_NULL_HANDLE };  // Instance the surface is created on.
-    VkPhysicalDevice                 physical{ VK_NULL_HANDLE };  // For the surface's capabilities/formats.
-    VkDevice                         device{ VK_NULL_HANDLE };    // Logical device the swapchain belongs to.
-    VkQueue                          queue{ VK_NULL_HANDLE };     // The queue that presents (graphics + present).
-    std::uint32_t                    queue_family{ 0U };          // The family the queue belongs to.
-    VkPhysicalDeviceMemoryProperties memory{};                    // For the depth image's memory.
+    const VolkDeviceTable* table{ nullptr };           // The device's entry points (volk table).
+    VkInstance             instance{ VK_NULL_HANDLE }; // Instance the surface is created on.
+    VkPhysicalDevice       physical{ VK_NULL_HANDLE }; // For the surface's capabilities/formats.
+    VkDevice               device{ VK_NULL_HANDLE };   // Logical device the swapchain belongs to.
+    VkQueue                queue{ VK_NULL_HANDLE };    // The queue that presents (graphics + present).
+    std::uint32_t          queue_family{ 0U };         // The family the queue belongs to.
+    MemoryAllocator*       allocator{ nullptr };       // The device's memory pool (the depth image's slice).
 };
 
 /**

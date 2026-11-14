@@ -23,29 +23,6 @@ constexpr VkFormat kDepthFormat = VK_FORMAT_D24_UNORM_S8_UINT;
 constexpr std::uint64_t kAcquireTimeoutNanoseconds = 1'000'000'000ULL;
 
 /**
- * @brief Finds a memory type that serves @p bits and has every property in @p wanted.
- *
- * @param memory The device's memory properties.
- * @param bits   The type bits the allocation requires.
- * @param wanted The property flags the memory must have.
- * @param out    Receives the type index.
- * @return true when a matching type exists.
- */
-[[nodiscard]] bool findMemoryType(const VkPhysicalDeviceMemoryProperties& memory,
-                                  std::uint32_t                          bits,
-                                  VkMemoryPropertyFlags                  wanted,
-                                  std::uint32_t&                         out) noexcept
-{
-    for (std::uint32_t index = 0; index < memory.memoryTypeCount; ++index) {
-        if ((bits & (1U << index)) != 0U && (memory.memoryTypes[index].propertyFlags & wanted) == wanted) {
-            out = index;
-            return true;
-        }
-    }
-    return false;
-}
-
-/**
  * @brief Chooses the swapchain format: an 8-bit sRGB format when the surface offers one.
  *
  * @details
@@ -178,9 +155,9 @@ struct WindowTarget::Impl {
     std::vector<VkImageView>   views;
     std::vector<VkFramebuffer> framebuffers;
 
-    VkImage        depth{ VK_NULL_HANDLE };
-    VkDeviceMemory depth_memory{ VK_NULL_HANDLE };
-    VkImageView    depth_view{ VK_NULL_HANDLE };
+    VkImage       depth{ VK_NULL_HANDLE };
+    MemorySlice   depth_memory{};
+    VkImageView   depth_view{ VK_NULL_HANDLE };
 
     VkRenderPass pass_clear{ VK_NULL_HANDLE };
     VkRenderPass pass_load{ VK_NULL_HANDLE };
@@ -263,21 +240,17 @@ struct WindowTarget::Impl {
 
         VkMemoryRequirements requirements{};
         device.table->vkGetImageMemoryRequirements(device.device, depth, &requirements);
-        std::uint32_t memory_type = 0;
-        if (!findMemoryType(device.memory, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, memory_type)) {
+        depth_memory = device.allocator->allocate(requirements, MemoryUsage::DeviceLocal, MemoryKind::Optimal);
+        if (!depth_memory.valid()) {
             if (why != nullptr) {
-                *why = vn::String(u8"vk: no device-local memory type serves the window's depth image");
+                *why = vn::String(u8"vk: the pool could not serve the window's depth image");
             }
             return false;
         }
-        VkMemoryAllocateInfo allocate{};
-        allocate.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocate.allocationSize  = requirements.size;
-        allocate.memoryTypeIndex = memory_type;
-        if (device.table->vkAllocateMemory(device.device, &allocate, nullptr, &depth_memory) != VK_SUCCESS ||
-            device.table->vkBindImageMemory(device.device, depth, depth_memory, 0U) != VK_SUCCESS) {
+        if (device.table->vkBindImageMemory(device.device, depth, depth_memory.memory, depth_memory.offset) != VK_SUCCESS) {
+            device.allocator->release(depth_memory);
             if (why != nullptr) {
-                *why = vn::String(u8"vk: the window's depth image memory could not be prepared");
+                *why = vn::String(u8"vk: the window's depth image memory could not be bound");
             }
             return false;
         }
@@ -354,9 +327,8 @@ struct WindowTarget::Impl {
                 device.table->vkDestroyImage(device.device, depth, nullptr);
                 depth = VK_NULL_HANDLE;
             }
-            if (depth_memory != VK_NULL_HANDLE) {
-                device.table->vkFreeMemory(device.device, depth_memory, nullptr);
-                depth_memory = VK_NULL_HANDLE;
+            if (device.allocator != nullptr) {
+                device.allocator->release(depth_memory);
             }
             for (const VkImageView view : views) {
                 if (view != VK_NULL_HANDLE) {

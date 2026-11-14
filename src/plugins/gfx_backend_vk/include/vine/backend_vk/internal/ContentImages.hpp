@@ -8,6 +8,7 @@
 #include <volk.h>
 
 #include <vine/String.hpp>
+#include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/graphics/Sampler.hpp>
 #include <vine/graphics/Texture.hpp>
 
@@ -18,9 +19,10 @@ VN_BACKEND_VK_NS_BEGIN
  *        them.
  *
  * @details
- * - WHAT IT OWNS. A `VkImage` + `VkDeviceMemory` + `VkImageView` per texture REVISION (keyed by the texture's address,
- *   with a strong reference held so that address cannot be recycled by a later object), a `VkSampler` per distinct
- *   `Sampler` value, and the 1x1 white image every absent material slot is bound to.
+ * - WHAT IT OWNS. A `VkImage`, the `MemorySlice` it is bound into and a `VkImageView` per texture REVISION (keyed by the
+ *   texture's address, with a strong reference held so that address cannot be recycled by a later object), a
+ *   `VkSampler` per distinct `Sampler` value, and the 1x1 white image every absent material slot is bound to. The
+ *   memory itself is the device pool's (see MemoryAllocator), not this cache's.
  * - THE UPLOAD IS RECORDED, NOT SUBMITTED BY THIS CACHE. A texture is copied on a command buffer the CALLER records
  *   the first time a draw samples it (or when its revision moved), because this backend records and submits one frame
  *   synchronously - there is no upload queue to hand it to. Two callers exist, and they are the same copies: the
@@ -52,12 +54,12 @@ class VN_BACKEND_VK_API ContentImages final {
     /**
      * @brief Creates the sampler cache and the fallback sampler.
      *
-     * @param table  The device's entry points (volk table).
-     * @param device The logical device.
-     * @param memory The device's memory properties (for the device-local image search).
+     * @param table     The device's entry points (volk table).
+     * @param device    The logical device.
+     * @param allocator The device's memory pool (every image and staging buffer asks it for a slice).
      * @return true when the fallback sampler exists.
      */
-    [[nodiscard]] bool create(const VolkDeviceTable& table, VkDevice device, const VkPhysicalDeviceMemoryProperties& memory);
+    [[nodiscard]] bool create(const VolkDeviceTable& table, VkDevice device, MemoryAllocator& allocator);
 
     /** @brief Destroys every image, view, sampler and staging buffer this cache owns (idempotent). */
     void destroy() noexcept;

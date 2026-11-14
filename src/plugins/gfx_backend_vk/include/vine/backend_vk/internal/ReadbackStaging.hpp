@@ -8,6 +8,8 @@
 
 #include <volk.h>
 
+#include <vine/backend_vk/internal/MemoryAllocator.hpp>
+
 VN_BACKEND_VK_NS_BEGIN
 
 /**
@@ -56,8 +58,9 @@ struct StagingRun {
  *   objects in the only order that is valid.
  * - IT DECIDES NOTHING: no diagnostic and no `ReadbackResult`; the device maps `StagingRefusal` / `StagingRun` onto
  *   its own answer (and reports a lost device once, see `Device::noteDeviceLost`).
- * - MEMORY: one allocation per copy, like the rest of this backend (see `TargetImages`) - the allocator is its own
- *   later step.
+ * - MEMORY: the buffer is a SLICE of the device pool (see MemoryAllocator), bound at that offset and reached through
+ *   the pool's persistent mapping - the same arrangement every other buffer here uses, so a copy does not allocate a
+ *   whole `VkDeviceMemory` of its own.
  *
  * @warning Not thread-safe and not reentrant: one copy at a time, which is this device's contract for its ONE frame
  *          fence.
@@ -79,19 +82,19 @@ class VN_BACKEND_VK_API ReadbackStaging final
     /**
      * @brief Creates the staging buffer, allocates its memory and begins the one-time command buffer.
      *
-     * @param table  The device's entry points (borrowed; must outlive this copy).
-     * @param device The logical device.
-     * @param memory The device's memory properties (the host-visible coherent type search).
-     * @param pool   The command pool the copy's command buffer is allocated from.
-     * @param bytes  How many bytes the copy will write (width * height * texel size).
+     * @param table     The device's entry points (borrowed; must outlive this copy).
+     * @param device    The logical device.
+     * @param allocator The device's memory pool (the buffer's slice comes from it, borrowed).
+     * @param pool      The command pool the copy's command buffer is allocated from.
+     * @param bytes     How many bytes the copy will write (width * height * texel size).
      * @return Ok when @ref commands may be recorded; Unsupported when no host-visible coherent memory type exists;
      *         Failed when a Vulkan object could not be created.
      */
-    [[nodiscard]] StagingRefusal open(const VolkDeviceTable&                  table,
-                                      VkDevice                                device,
-                                      const VkPhysicalDeviceMemoryProperties& memory,
-                                      VkCommandPool                           pool,
-                                      VkDeviceSize                            bytes);
+    [[nodiscard]] StagingRefusal open(const VolkDeviceTable& table,
+                                      VkDevice               device,
+                                      MemoryAllocator&       allocator,
+                                      VkCommandPool          pool,
+                                      VkDeviceSize           bytes);
 
     /** @brief Gets the command buffer to record the transitions and the copy into (allocated and begun by @ref open). */
     [[nodiscard]] VkCommandBuffer commands() const noexcept;
@@ -128,16 +131,18 @@ class VN_BACKEND_VK_API ReadbackStaging final
     [[nodiscard]] std::span<const std::byte> bytes() const noexcept;
 
   private:
-    /// Unmaps, then frees the command buffer, the memory and the buffer (each step null-checked; idempotent).
+    /// Releases the command buffer and gives the buffer's slice back to the pool (each step null-checked; idempotent).
     void release() noexcept;
 
     const VolkDeviceTable* table_{ nullptr };
+    /// The pool the buffer's slice belongs to (borrowed; outlives this copy).
+    MemoryAllocator*       allocator_{ nullptr };
     VkDevice               device_{ VK_NULL_HANDLE };
     VkCommandPool          pool_{ VK_NULL_HANDLE };
     VkBuffer               buffer_{ VK_NULL_HANDLE };
-    VkDeviceMemory         memory_{ VK_NULL_HANDLE };
+    MemorySlice            memory_{};
     VkCommandBuffer        commands_{ VK_NULL_HANDLE };
-    void*                  mapped_{ nullptr };
+    const void*            mapped_{ nullptr };
     VkDeviceSize           bytes_{ 0 };
 };
 
