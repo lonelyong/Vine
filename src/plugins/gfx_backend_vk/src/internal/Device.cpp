@@ -1835,14 +1835,14 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     return true;
 }
 
-Device::Handles Device::handles() const noexcept
+Handles Device::handles() const noexcept
 {
     Handles out;
-    out.instance        = reinterpret_cast<std::uint64_t>(impl->instance);
-    out.physical_device = reinterpret_cast<std::uint64_t>(impl->physical);
-    out.device          = reinterpret_cast<std::uint64_t>(impl->device);
-    out.queue           = reinterpret_cast<std::uint64_t>(impl->queue);
-    out.queue_family    = impl->queue_family;
+    out.instance        = impl->instance;
+    out.physical        = impl->physical;
+    out.device          = impl->device;
+    out.graphics        = impl->queue;
+    out.graphics_family = impl->queue_family;
     out.validation      = impl->validation;
     return out;
 }

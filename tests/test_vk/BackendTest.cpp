@@ -22,6 +22,7 @@ using vn::graphics::DeviceDesc;
 using vn::graphics::DevicePresentation;
 using vn::graphics::RenderBackendRegistry;
 using vn::backend_vk::Device;
+using vn::backend_vk::Handles;
 
 TEST(VkBackendTest, TheFactoryRegistersItselfByName)
 {
@@ -52,11 +53,12 @@ TEST(VkBackendTest, TheEscapeDoorIsClosedBeforeInitialize)
     auto* device = dynamic_cast<Device*>(backend.get());
     ASSERT_NE(device, nullptr);
 
-    const Device::Handles handles = device->handles();
-    EXPECT_EQ(handles.instance, 0U);
-    EXPECT_EQ(handles.physical_device, 0U);
-    EXPECT_EQ(handles.device, 0U);
-    EXPECT_EQ(handles.queue, 0U);
+    const Handles handles = device->handles();
+    EXPECT_EQ(handles.instance, VK_NULL_HANDLE);
+    EXPECT_EQ(handles.physical, VK_NULL_HANDLE);
+    EXPECT_EQ(handles.device, VK_NULL_HANDLE);
+    EXPECT_EQ(handles.graphics, VK_NULL_HANDLE);
+    EXPECT_EQ(handles.graphics_family, 0U);
     EXPECT_FALSE(handles.validation);
     EXPECT_FALSE(backend->initialized());
 }
@@ -73,13 +75,14 @@ TEST(VkBackendTest, TheDeviceComesUpAndGoesDownCleanly)
 
     auto* device = dynamic_cast<Device*>(backend.get());
     ASSERT_NE(device, nullptr);
-    const Device::Handles handles = device->handles();
-    EXPECT_NE(handles.instance, 0U);
-    EXPECT_NE(handles.physical_device, 0U);
-    EXPECT_NE(handles.device, 0U);
-    EXPECT_NE(handles.queue, 0U);
-    std::printf("[vk] device=%llu validation=%s\n",
-                static_cast<unsigned long long>(handles.device),
+    const Handles handles = device->handles();
+    EXPECT_NE(handles.instance, VK_NULL_HANDLE);
+    EXPECT_NE(handles.physical, VK_NULL_HANDLE);
+    EXPECT_NE(handles.device, VK_NULL_HANDLE);
+    EXPECT_NE(handles.graphics, VK_NULL_HANDLE);
+    std::printf("[vk] device=%p queue_family=%u validation=%s\n",
+                static_cast<const void*>(handles.device),
+                handles.graphics_family,
                 handles.validation ? "on" : "off (layer not installed)");
     std::fflush(stdout);
 
@@ -103,7 +106,7 @@ TEST(VkBackendTest, TheDeviceComesUpAndGoesDownCleanly)
     EXPECT_FALSE(backend->initialized());
     backend->shutdown();
     EXPECT_FALSE(backend->initialized());
-    EXPECT_EQ(device->handles().device, 0U) << "shutdown releases the handles, not only the flag";
+    EXPECT_EQ(device->handles().device, VK_NULL_HANDLE) << "shutdown releases the handles, not only the flag";
 
     EXPECT_TRUE(backend->initialize()) << "a shut-down device must be initializable again";
     EXPECT_TRUE(backend->initialized());

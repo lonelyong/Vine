@@ -578,6 +578,23 @@
   与 ADR-2026-11-13（保留 ≤ `minimumStagingBufferSize` 的块）矛盾；改成"4 KiB 上传的块被保留（release 返回 0）+
   32 MiB 一次性块被还掉"。
 
+## 2026-11-14 —— `gfx_backend_vk` M12：暴露边界的逃生门与门禁
+
+- **形状**（`../research/graphics-2026-11-13-vk-exposure-boundary.md` §4.5）：`support/Handles.hpp` 只声明
+  `Handles vkHandles(const RenderDevice& noexcept)`；值 `Handles` 在 `internal/Handles.hpp`。**依赖方向只能
+  support → internal**：`internal/Device.hpp` 绝不 include `support/`（否则门就变成插件自己的依赖，E1 也就成了
+  空检查）。
+- **`Handles`**：instance / physical / device / graphics / graphics_family + `validation`（M0 的证据行靠它）。
+  未 `initialize()`、`shutdown()` 之后全空；非 vk 设备 `dynamic_cast` 失败答 `{}`。`Device::handles()` 是内部
+  访问器，`src/support/Handles.cpp` 才做那一次 `dynamic_cast`。
+- **门禁**：`scripts/check_vk_exposure.py`（CTest `vk_exposure`）—— V2 SDK 后端面不 include vulkan/volk/vsg；
+  V4 插件 `shell/` 零 `Vk*`（注释也算）；E1 两个 internal 半边都不 include `support/Handles.hpp`。
+  `internal/` 与 `support/` 故意不设门（§6.2：设门只会逼出影子类型）。
+- **测试**：`VkHandlesTest` 1 例（未起 → 运行 → 关机后的生命周期）；`test_vk` 57 例（56 过 1 跳过）。
+- **本机新发现**：`test_graphics` 在 Windows 链接不过（W3 的 `detail::expandFrame` / `FrameRunner` 没有
+  `VN_GRAPHICS_API`），已记为 backlog **T38**；所以“整树 ALL_BUILD”在这台机上不是有效判据，验证据
+  `test_vk` / `test_vsg` / 插件目标 + 门禁。
+
 ## 2026-11-14 —— `gfx_backend_vk` M11：多采样目标
 
 - **上限是计数**：`caps.max_samples = largestSampleCount(framebufferColorSampleCounts & framebufferDepthSampleCounts)`

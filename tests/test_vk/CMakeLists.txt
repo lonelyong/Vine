@@ -10,6 +10,7 @@ add_executable(${TEST_NAME}
         ContentDrawTest.cpp
         ContentTargetTest.cpp
         DeferredTest.cpp
+        HandlesTest.cpp
         MsaaTest.cpp
         OffscreenClearTest.cpp
         ProbeTest.cpp
@@ -30,6 +31,7 @@ add_executable(${TEST_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/TargetImages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/WindowTarget.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/XcbSurface.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/support/Handles.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/shell/BackendFactory.cpp)
 
 target_include_directories(${TEST_NAME} PRIVATE
@@ -60,3 +62,13 @@ if(VK_TEST_XCB_FOUND)
 endif()
 
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+
+# 暴露边界：SDK 的两个面不许提 Vulkan，插件 shell 只露 RenderBackend，vk 自己的帧路径不许走逃生门
+# （见 .ai/research/graphics-2026-11-13-vk-exposure-boundary.md 5.1 / 6.1 的 V2、V4 与 5.2 的纪律）。
+# 跟着 ctest 跑，所以"下一次有人把 vulkan 头写进 backend/"会在测试里红，而不是在下一次移植时才发现。
+# 脚本用仓库相对路径、工作目录设在仓库根：find_package(Python3) 在这台机器上找到的是 Cygwin 的 python，
+# 它把 "I:/..." 当作相对路径打不开（同一个原因让 check_translations 在这里也是红的）；--root 仍给绝对路径，
+# 由脚本自己翻译成它能用的形式。
+add_test(NAME vk_exposure
+	COMMAND ${Python3_EXECUTABLE} scripts/check_vk_exposure.py --root ${CMAKE_SOURCE_DIR})
+set_tests_properties(vk_exposure PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

@@ -2,6 +2,7 @@
 
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/backend_vk/backend_vk_global.hpp>
+#include <vine/backend_vk/internal/Handles.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -264,25 +265,17 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @brief Gets the Vulkan handles this device created, for tools and experiments.
      *
      * @details
-     * - THE ESCAPE DOOR, and the only place Vulkan may leave this plugin (see
-     *   `.ai/research/graphics-2026-11-13-vk-exposure-boundary.md`): a value whose name says what it is, never a verb on
-     *   `RenderDevice`. It exists because this backend is a LEARNING one - a validation experiment or a RenderDoc
-     *   session needs the real handles - and it is not a promise any other backend makes.
-     * - It lives in `internal/` for M0. When a tool needs it from outside the plugin, it moves to
-     *   `include/vine/backend_vk/support/` with the same shape (the boundary document says why).
+     * - THE INTERNAL HALF OF THE ESCAPE DOOR. The value is `support/Handles.hpp`'s `Handles`, which is what
+     *   `vkHandles()` hands a test or a tool; this accessor is how the plugin reaches the same facts without a
+     *   `dynamic_cast`, and it is the only reason this header names that type (see
+     *   `.ai/research/graphics-2026-11-13-vk-exposure-boundary.md` §4.5, §5.2).
+     * - It is a value whose name says what it is, never a verb on `RenderDevice`, and it is not a promise any other
+     *   backend makes.
+     * - THE FRAME PATH DOES NOT USE IT: no source under `src/internal/` includes `support/Handles.hpp`, so the plugin
+     *   itself never depends on the door it offers.
      *
-     * @return The handles, all zero before `initialize()`.
+     * @return The handles, all `VK_NULL_HANDLE` (family 0) before `initialize()` and after `shutdown()`.
      */
-    struct Handles {
-        std::uint64_t instance{ 0 };        // The `VkInstance`, as its own numeric value.
-        std::uint64_t physical_device{ 0 }; // The `VkPhysicalDevice`.
-        std::uint64_t device{ 0 };          // The `VkDevice`.
-        std::uint64_t queue{ 0 };           // The graphics `VkQueue`.
-        std::uint32_t queue_family{ 0 };    // Index of that queue's family.
-        bool          validation{ false };  // Whether the validation layer is enabled.
-    };
-
-    /** @brief Gets the handles (see Handles). */
     [[nodiscard]] Handles handles() const noexcept;
 
     /**
