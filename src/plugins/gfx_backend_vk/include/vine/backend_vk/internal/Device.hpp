@@ -205,7 +205,8 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * - M1 answers the targets it built, as packed RGBA8 (the SDK's readback contract), and nothing else: another colour
      *   format, an attachment index above 0, a target it never saw or a target whose attachments are not built answer
      *   the matching `ReadbackResult` instead of a picture.
-     * - The copy is synchronous: one command buffer, one fence, the pixels the last frame left.
+     * - The copy is synchronous: one command buffer, one fence, the pixels the last frame left (the staging mechanism
+     *   itself is `ReadbackStaging` - this verb says WHAT to copy).
      *
      * @param target     Target to read (borrowed, may not be null).
      * @param attachment Colour attachment index; M1 serves 0.
@@ -223,7 +224,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *
      * @details
      * - The copy is synchronous, like readColorBuffer: one command buffer, one fence, the depths the last frame left,
-     *   as `width * height` floats in [0, 1], row-major.
+     *   as `width * height` floats in [0, 1], row-major (the staging mechanism is `ReadbackStaging`).
      * - IT READS THE DEPTH PICTURE: a multisampled target's resolved single-sample image (see
      *   `TargetImages::depthPicture`), never the sample buffer - multisampling cannot change the depths a reader sees.
      * - WHICH FORMATS, from the SDK's own table (`core::depthReadbackOf`, the table `decodeDepth` reads): D16, D32 and

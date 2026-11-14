@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -19,6 +18,7 @@
 #include <vine/backend_vk/internal/BarrierPlan.hpp>
 #include <vine/backend_vk/internal/ContentDraw.hpp>
 #include <vine/backend_vk/internal/ContentImages.hpp>
+#include <vine/backend_vk/internal/ReadbackStaging.hpp>
 #include <vine/backend_vk/internal/WindowSystem.hpp>
 #include <vine/backend_vk/internal/StateMapping.hpp>
 #include <vine/backend_vk/internal/TargetImages.hpp>
@@ -1906,80 +1906,22 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
         return fail(ReadbackResult::Unsupported);
     }
 
+    // THE COPY MECHANISM IS ReadbackStaging's (buffer, memory, command buffer, submit, wait, mapping); this function
+    // says WHAT to copy and what the bytes mean. The target's own layout state (color_sampled) is still this backend's
+    // knowledge, recorded below through the staging command buffer.
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(images.width()) * static_cast<VkDeviceSize>(images.height()) * 4U;
 
-    VkBufferCreateInfo buffer_info{};
-    buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buffer_info.size        = bytes;
-    buffer_info.usage       = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    VkBuffer staging{ VK_NULL_HANDLE };
-    if (impl->device_table.vkCreateBuffer(impl->device, &buffer_info, nullptr, &staging) != VK_SUCCESS) {
-        return fail(ReadbackResult::Failed);
+    ReadbackStaging staging;
+    const StagingRefusal opened = staging.open(impl->device_table, impl->device, impl->memory, impl->command_pool, bytes);
+    if (opened == StagingRefusal::Unsupported) {
+        return fail(ReadbackResult::Unsupported); // no host-visible coherent memory: this device cannot copy to the host
     }
-
-    VkMemoryRequirements requirements{};
-    impl->device_table.vkGetBufferMemoryRequirements(impl->device, staging, &requirements);
-
-    std::uint32_t memory_type = std::numeric_limits<std::uint32_t>::max();
-    for (std::uint32_t index = 0; index < impl->memory.memoryTypeCount; ++index) {
-        const VkMemoryPropertyFlags flags = impl->memory.memoryTypes[index].propertyFlags;
-        const bool allowed                = (requirements.memoryTypeBits & (1U << index)) != 0U;
-        if (allowed && (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0U && (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0U) {
-            memory_type = index;
-            break;
-        }
-    }
-
-    VkDeviceMemory staging_memory{ VK_NULL_HANDLE };
-    if (memory_type == std::numeric_limits<std::uint32_t>::max()) {
-        impl->device_table.vkDestroyBuffer(impl->device, staging, nullptr);
-        return fail(ReadbackResult::Unsupported);
-    }
-
-    VkMemoryAllocateInfo allocate{};
-    allocate.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocate.allocationSize  = requirements.size;
-    allocate.memoryTypeIndex = memory_type;
-    if (impl->device_table.vkAllocateMemory(impl->device, &allocate, nullptr, &staging_memory) != VK_SUCCESS ||
-        impl->device_table.vkBindBufferMemory(impl->device, staging, staging_memory, 0U) != VK_SUCCESS) {
-        if (staging_memory != VK_NULL_HANDLE) {
-            impl->device_table.vkFreeMemory(impl->device, staging_memory, nullptr);
-        }
-        impl->device_table.vkDestroyBuffer(impl->device, staging, nullptr);
+    if (opened != StagingRefusal::Ok) {
         return fail(ReadbackResult::Failed);
     }
 
     // RECORD: colour attachment -> transfer source -> copy -> back, so the next frame's render pass finds the layout its
     // render pass was built with (COLOR_ATTACHMENT_OPTIMAL).
-    VkCommandBufferAllocateInfo command_allocate{};
-    command_allocate.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    command_allocate.commandPool        = impl->command_pool;
-    command_allocate.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    command_allocate.commandBufferCount = 1U;
-
-    VkCommandBuffer commands{ VK_NULL_HANDLE };
-    const auto      release = [&] {
-        if (commands != VK_NULL_HANDLE) {
-            impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
-        }
-        impl->device_table.vkFreeMemory(impl->device, staging_memory, nullptr);
-        impl->device_table.vkDestroyBuffer(impl->device, staging, nullptr);
-    };
-
-    if (impl->device_table.vkAllocateCommandBuffers(impl->device, &command_allocate, &commands) != VK_SUCCESS) {
-        release();
-        return fail(ReadbackResult::Failed);
-    }
-
-    VkCommandBufferBeginInfo begin{};
-    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    if (impl->device_table.vkBeginCommandBuffer(commands, &begin) != VK_SUCCESS) {
-        release();
-        return fail(ReadbackResult::Failed);
-    }
 
     // A target a SCREEN DRAW sampled is in SHADER_READ_ONLY: put every colour attachment back before this readback's
     // own transition names COLOR_ATTACHMENT_OPTIMAL as the old layout.
@@ -1987,7 +1929,7 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
         for (const VkImage image : images.colors) {
             const VkImageMemoryBarrier back =
                 barrierBetween(image, stateOf(ImageLayout::ShaderReadOnly), stateOf(ImageLayout::ColorAttachment), VK_IMAGE_ASPECT_COLOR_BIT);
-            impl->device_table.vkCmdPipelineBarrier(commands,
+            impl->device_table.vkCmdPipelineBarrier(staging.commands(),
                                                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                                                     0U,
@@ -2003,7 +1945,7 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
 
     const VkImageMemoryBarrier to_transfer =
         barrierBetween(color_image, stateOf(ImageLayout::ColorAttachment), transferReadState(), VK_IMAGE_ASPECT_COLOR_BIT);
-    impl->device_table.vkCmdPipelineBarrier(commands,
+    impl->device_table.vkCmdPipelineBarrier(staging.commands(),
                                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                                             VK_PIPELINE_STAGE_TRANSFER_BIT,
                                             0U,
@@ -2014,16 +1956,13 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
                                             1U,
                                             &to_transfer);
 
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1U;
-    region.imageExtent                 = VkExtent3D{ static_cast<std::uint32_t>(images.width()),
-                                                      static_cast<std::uint32_t>(images.height()), 1U };
-    impl->device_table.vkCmdCopyImageToBuffer(commands, color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging, 1U, &region);
+    staging.recordCopy(color_image,
+                       VK_IMAGE_ASPECT_COLOR_BIT,
+                       VkExtent3D{ static_cast<std::uint32_t>(images.width()), static_cast<std::uint32_t>(images.height()), 1U });
 
     const VkImageMemoryBarrier to_attachment =
         barrierBetween(color_image, transferReadState(), stateOf(ImageLayout::ColorAttachment), VK_IMAGE_ASPECT_COLOR_BIT);
-    impl->device_table.vkCmdPipelineBarrier(commands,
+    impl->device_table.vkCmdPipelineBarrier(staging.commands(),
                                             VK_PIPELINE_STAGE_TRANSFER_BIT,
                                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                                             0U,
@@ -2034,43 +1973,23 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
                                             1U,
                                             &to_attachment);
 
-    if (impl->device_table.vkEndCommandBuffer(commands) != VK_SUCCESS) {
-        release();
+    const StagingRun run = staging.run(impl->queue, impl->completion);
+    if (!run.ran()) {
+        // The mechanism hands back the VkResults so the session-level fact is classified where every other queue call
+        // is (see noteDeviceLost); the read itself answers Failed like any other failed transfer.
+        (void)noteDeviceLost(run.submit, "vkQueueSubmit");
+        (void)noteDeviceLost(run.wait, "vkWaitForFences");
         return fail(ReadbackResult::Failed);
     }
-
-    VkSubmitInfo submit{};
-    submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1U;
-    submit.pCommandBuffers    = &commands;
-
-    const VkResult submit_result = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion);
-    const VkResult fence_result  = submit_result == VK_SUCCESS
-                                       ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX)
-                                       : submit_result;
-    const bool     ran           = fence_result == VK_SUCCESS;
-    (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
-
-    if (!ran) {
-        // A copy that found the device gone answers Failed like any other failed transfer; the session-level fact is
-        // reported once by the classifier (see noteDeviceLost).
-        (void)noteDeviceLost(submit_result, "vkQueueSubmit");
-        (void)noteDeviceLost(fence_result, "vkWaitForFences");
-        release();
-        return fail(ReadbackResult::Failed);
+    const std::span<const std::byte> copied = staging.bytes();
+    if (copied.size() != static_cast<std::size_t>(bytes)) {
+        return fail(ReadbackResult::Failed); // a copy that is not a whole picture is not a picture of anything
     }
 
-    void* mapped = nullptr;
-    if (impl->device_table.vkMapMemory(impl->device, staging_memory, 0U, bytes, 0U, &mapped) != VK_SUCCESS || mapped == nullptr) {
-        release();
-        return fail(ReadbackResult::Failed);
-    }
-
+    // THE HOST'S VECTOR IS ONLY WRITTEN ONCE THERE IS A WHOLE PICTURE, which is what keeps a refused read from handing
+    // out stale pixel counts (the SDK's rule, see RenderBackend::readColorBuffer).
     outPixels.resize(static_cast<std::size_t>(bytes));
-    std::memcpy(outPixels.data(), mapped, static_cast<std::size_t>(bytes));
-    impl->device_table.vkUnmapMemory(impl->device, staging_memory);
-
-    release();
+    std::memcpy(outPixels.data(), copied.data(), static_cast<std::size_t>(bytes));
     return true;
 }
 
@@ -2121,78 +2040,17 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * static_cast<VkDeviceSize>(extent.height) *
                                static_cast<VkDeviceSize>(packed.bytes_per_texel);
 
-    VkBufferCreateInfo buffer_info{};
-    buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buffer_info.size        = bytes;
-    buffer_info.usage       = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    VkBuffer staging{ VK_NULL_HANDLE };
-    if (impl->device_table.vkCreateBuffer(impl->device, &buffer_info, nullptr, &staging) != VK_SUCCESS) {
-        return fail(ReadbackResult::Failed);
+    ReadbackStaging staging;
+    const StagingRefusal opened = staging.open(impl->device_table, impl->device, impl->memory, impl->command_pool, bytes);
+    if (opened == StagingRefusal::Unsupported) {
+        return fail(ReadbackResult::Unsupported); // no host-visible coherent memory: this device cannot copy to the host
     }
-
-    VkMemoryRequirements requirements{};
-    impl->device_table.vkGetBufferMemoryRequirements(impl->device, staging, &requirements);
-
-    std::uint32_t memory_type = std::numeric_limits<std::uint32_t>::max();
-    for (std::uint32_t index = 0; index < impl->memory.memoryTypeCount; ++index) {
-        const VkMemoryPropertyFlags flags = impl->memory.memoryTypes[index].propertyFlags;
-        const bool allowed                = (requirements.memoryTypeBits & (1U << index)) != 0U;
-        if (allowed && (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0U && (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0U) {
-            memory_type = index;
-            break;
-        }
-    }
-
-    VkDeviceMemory staging_memory{ VK_NULL_HANDLE };
-    if (memory_type == std::numeric_limits<std::uint32_t>::max()) {
-        impl->device_table.vkDestroyBuffer(impl->device, staging, nullptr);
-        return fail(ReadbackResult::Unsupported);
-    }
-
-    VkMemoryAllocateInfo allocate{};
-    allocate.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocate.allocationSize  = requirements.size;
-    allocate.memoryTypeIndex = memory_type;
-    if (impl->device_table.vkAllocateMemory(impl->device, &allocate, nullptr, &staging_memory) != VK_SUCCESS ||
-        impl->device_table.vkBindBufferMemory(impl->device, staging, staging_memory, 0U) != VK_SUCCESS) {
-        if (staging_memory != VK_NULL_HANDLE) {
-            impl->device_table.vkFreeMemory(impl->device, staging_memory, nullptr);
-        }
-        impl->device_table.vkDestroyBuffer(impl->device, staging, nullptr);
+    if (opened != StagingRefusal::Ok) {
         return fail(ReadbackResult::Failed);
     }
 
     // RECORD: depth picture -> transfer source -> copy -> back to the one layout a render pass expects, so a later
     // pass into this target finds its depth where its render pass was built to write it (DEPTH_ATTACHMENT).
-    VkCommandBufferAllocateInfo command_allocate{};
-    command_allocate.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    command_allocate.commandPool        = impl->command_pool;
-    command_allocate.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    command_allocate.commandBufferCount = 1U;
-
-    VkCommandBuffer commands{ VK_NULL_HANDLE };
-    const auto      release = [&] {
-        if (commands != VK_NULL_HANDLE) {
-            impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
-        }
-        impl->device_table.vkFreeMemory(impl->device, staging_memory, nullptr);
-        impl->device_table.vkDestroyBuffer(impl->device, staging, nullptr);
-    };
-
-    if (impl->device_table.vkAllocateCommandBuffers(impl->device, &command_allocate, &commands) != VK_SUCCESS) {
-        release();
-        return fail(ReadbackResult::Failed);
-    }
-
-    VkCommandBufferBeginInfo begin{};
-    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    if (impl->device_table.vkBeginCommandBuffer(commands, &begin) != VK_SUCCESS) {
-        release();
-        return fail(ReadbackResult::Failed);
-    }
 
     // A PASS THAT SAMPLED THIS DEPTH AS A SHADOW MAP left the picture in SHADER_READ_ONLY: put it back before this
     // readback's own transition names DEPTH_ATTACHMENT as the old layout (the mirror of readColorBuffer's
@@ -2202,7 +2060,7 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
                                                          stateOf(ImageLayout::ShaderReadOnly),
                                                          stateOf(ImageLayout::DepthAttachment),
                                                          depthAspectMask(images.depthFormat()));
-        impl->device_table.vkCmdPipelineBarrier(commands,
+        impl->device_table.vkCmdPipelineBarrier(staging.commands(),
                                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                                                 0U,
@@ -2221,7 +2079,7 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
     // table can decode, and that table has no combined entry).
     const VkImageMemoryBarrier to_transfer =
         barrierBetween(depth_image, stateOf(ImageLayout::DepthAttachment), transferReadState(), depthAspectMask(images.depthFormat()));
-    impl->device_table.vkCmdPipelineBarrier(commands,
+    impl->device_table.vkCmdPipelineBarrier(staging.commands(),
                                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                                             VK_PIPELINE_STAGE_TRANSFER_BIT,
                                             0U,
@@ -2232,15 +2090,11 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
                                             1U,
                                             &to_transfer);
 
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    region.imageSubresource.layerCount = 1U;
-    region.imageExtent                 = extent;
-    impl->device_table.vkCmdCopyImageToBuffer(commands, depth_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging, 1U, &region);
+    staging.recordCopy(depth_image, VK_IMAGE_ASPECT_DEPTH_BIT, extent);
 
     const VkImageMemoryBarrier to_attachment =
         barrierBetween(depth_image, transferReadState(), stateOf(ImageLayout::DepthAttachment), depthAspectMask(images.depthFormat()));
-    impl->device_table.vkCmdPipelineBarrier(commands,
+    impl->device_table.vkCmdPipelineBarrier(staging.commands(),
                                             VK_PIPELINE_STAGE_TRANSFER_BIT,
                                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                                             0U,
@@ -2251,35 +2105,12 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
                                             1U,
                                             &to_attachment);
 
-    if (impl->device_table.vkEndCommandBuffer(commands) != VK_SUCCESS) {
-        release();
-        return fail(ReadbackResult::Failed);
-    }
-
-    VkSubmitInfo submit{};
-    submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1U;
-    submit.pCommandBuffers    = &commands;
-
-    const VkResult submit_result = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion);
-    const VkResult fence_result  = submit_result == VK_SUCCESS
-                                       ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX)
-                                       : submit_result;
-    const bool     ran           = fence_result == VK_SUCCESS;
-    (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
-
-    if (!ran) {
-        // A copy that found the device gone answers Failed like any other failed transfer; the session-level fact is
-        // reported once by the classifier (see noteDeviceLost).
-        (void)noteDeviceLost(submit_result, "vkQueueSubmit");
-        (void)noteDeviceLost(fence_result, "vkWaitForFences");
-        release();
-        return fail(ReadbackResult::Failed);
-    }
-
-    void* mapped = nullptr;
-    if (impl->device_table.vkMapMemory(impl->device, staging_memory, 0U, bytes, 0U, &mapped) != VK_SUCCESS || mapped == nullptr) {
-        release();
+    const StagingRun run = staging.run(impl->queue, impl->completion);
+    if (!run.ran()) {
+        // The mechanism hands back the VkResults so the session-level fact is classified where every other queue call
+        // is (see noteDeviceLost); the read itself answers Failed like any other failed transfer.
+        (void)noteDeviceLost(run.submit, "vkQueueSubmit");
+        (void)noteDeviceLost(run.wait, "vkWaitForFences");
         return fail(ReadbackResult::Failed);
     }
 
@@ -2287,11 +2118,7 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
     // normalised values a probe answers with (D32/D32F arrive as their float, D16 divided by its full scale). A copy
     // that is not a whole image is not a picture of anything, so a short decode is a failure - and the HOST's vector
     // is only written once there IS a picture, which is what keeps a refused read from handing out stale values.
-    std::vector<float> values = decodeDepth(target->depthFormat(),
-                                            std::span<const std::byte>(static_cast<const std::byte*>(mapped), static_cast<std::size_t>(bytes)));
-    impl->device_table.vkUnmapMemory(impl->device, staging_memory);
-
-    release();
+    std::vector<float> values = decodeDepth(target->depthFormat(), staging.bytes());
     if (values.size() != static_cast<std::size_t>(extent.width) * static_cast<std::size_t>(extent.height)) {
         return fail(ReadbackResult::Failed);
     }
