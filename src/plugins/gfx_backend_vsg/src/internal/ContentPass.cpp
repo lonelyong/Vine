@@ -18,13 +18,13 @@
 #include <vsg/state/PushConstants.h>
 #include <vsg/state/Sampler.h>
 
+#include <vine/graphics/LightAbi.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/backend_vsg/internal/ContentPush.hpp>
 #include <vine/backend_vsg/internal/ContentSets.hpp>
 #include <vine/backend_vsg/internal/ContentStore.hpp>
 #include <vine/backend_vsg/internal/DrawBlock.hpp>
-#include <vine/backend_vsg/internal/LightBlock.hpp>
 #include <vine/backend_vsg/internal/MaterialSlotCheck.hpp>
 #include <vine/backend_vsg/internal/ShadowBlock.hpp>
 
@@ -459,9 +459,9 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
         // ONE call (every command of the call shares them), so one block serves the whole call and the block
         // bytes are written before the first command is recorded - the same "one announcement, one call" rule
         // the viewport follows.
-        vn::backend_vsg::VineLightsBlock lights_block;
-        const std::size_t        represented = packLightBlock(draw.lights, draw.camera, lights_block);
-        BlockStorage::Block      lights{};
+        vn::graphics::VineLightsBlock lights_block;
+        const std::size_t            represented = vn::graphics::packLightBlock(draw.lights, draw.camera, lights_block);
+        BlockStorage::Block          lights{};
         if (recording) {
             lights = scope_.storage->writeLights(bytesOf(lights_block));
         }
@@ -771,10 +771,10 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
         return AbiBlockRole::NotABlock;
     };
 
-    vn::backend_vsg::VineLightsBlock lights_block;
-    std::uint64_t            lights_offset = 0U;
+    vn::graphics::VineLightsBlock lights_block;
+    std::uint64_t                 lights_offset = 0U;
     if (hasRole(AbiBlockRole::Lights)) {
-        const std::size_t         represented = packLightBlock(draw.lights, draw.camera, lights_block);
+        const std::size_t         represented = vn::graphics::packLightBlock(draw.lights, draw.camera, lights_block);
         const BlockStorage::Block written     = scope_.storage->writeLights(bytesOf(lights_block));
         reportLightsDropped(enabledLightCount(draw.lights), represented, draw.camera.present);
         if (!written.valid) {

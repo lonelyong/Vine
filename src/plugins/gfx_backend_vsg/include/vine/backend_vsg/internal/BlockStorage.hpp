@@ -172,7 +172,7 @@ class BlockStorage {
 
     /** @brief Writes one light block into this frame's slab.
      *
-     * @param block Block bytes (a `VineLightsBlock`: one ambient plus up to three directional lights).
+     * @param block Block bytes (a `VineLightsBlock`: one ambient plus `kMaxLights` typed lights, see LightAbi.hpp).
      * @return Where it went, or `valid == false` when the block is oversized or the frame's budget ran out.
      */
     [[nodiscard]] Block writeLights(std::span<const std::byte> block) noexcept;

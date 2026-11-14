@@ -17,7 +17,7 @@
 - `PassChain`：一张画面的配方 + 注册归属。`PassChain::build(engine, ChainDesc)` 建链并注册 pass；析构把手里的 pass 交还引擎；`SceneView::setChain` 采纳它。
 - 一帧：`beginFrame` → 每个 pass（`beginPass` / `setPassOrder` / `setPassInputs` / `execute` / `endPass`）→ `endFrame` → present。
 - 调度只在引擎（`detail::FrameScheduler`：迭代 Tarjan + 堆就绪队列，稳态零分配）；后端按交来的 `FrameDescription.passes` 物化，不再重排、不报环。
-- 后端契约：`RenderBackend.hpp` + `ShaderAbi.hpp`；`backend/` 半的类型在 `core/`、`api/`。
+- 后端契约：`RenderBackend.hpp` + `ShaderAbi.hpp`（四个零依赖 L1 块）+ `LightAbi.hpp`（灯块与打包）；`backend/` 半的类型在 `core/`、`api/`。
 - **一帧两个半段**：内容半段（钩子 / publish / describe）在调用线程，引擎半段（drain / bind / expand / execute /
   present）在引擎线程；两块帧值轮换、帧号随帧走（`detail::EngineFrame`）。**宿主默认线程化**
   （`SurfaceWindow` 开局就 `setFrameThreading(EngineThread)`），`RenderControl::setFrameThreading(Inline)` 是回退口。
@@ -547,7 +547,7 @@
 - **块**：`buildShadowBlock`（`ContentDraw.cpp`）四道开关：有图 / 发布了矩阵 / 灯在本 call 的 `light_values` 里且
   `cast_shadow` 且是方向光或聚光 / 灯在 light block 里有槽。矩阵 = `producer VP * inverse(view)`，**不折**（SDK 裁剪约定，
   转换在 shader 里）；`params = {1, 灯自己的 bias, 1, 槽}`。
-- **一个谓词两处用**：`LightBlock.cpp` 的 `takesSlot()` 同时驱动 `packLightBlock` 与 `packedSlotOf`；各自推导槽位会让
+- **一个谓词两处用**：`LightBlock.cpp` 的 `takesSlot()` 同时驱动 `packLightBlock` 与 `packedSlotOf`；各自推导槽位会让 <!-- drift-ok -->
   阴影去缩放**别的灯**。
 - **采样器**：`Nearest` + `ClampToEdge`（`kShadowSampler`），与参考端 `ContentPipeline::depthSampler()` 同值 —— 过滤会把
   投射体深度与它身后的表面平均，剪影会动。
@@ -1014,3 +1014,23 @@
   M3 targets/state/MRT；M4 材质/纹理/灯/screen draw；M5 swapchain；M6 驻留/prepare；M7 与 vsg 对拍。
   M0–M2 约 2–4k 行，M3–M6 约 10–20k 行。详见评估 §8。
 - **文档**：backlog §1 新 T35（唯一“现在可做”项）；评估 `graphics-2026-11-13-gpu-resource-abstraction.md` §8。
+
+## 2026-11-14 —— 灯块上移 SDK（`LightAbi.hpp`）：一个形状一个家
+
+- **动机**：`vk` 落地时把 `VineLightsBlock` 与 `packLightBlock` 从 vsg 复制了一份（M4/M9 的注记就是证据）——
+  同一 ABI 规则两份手写；对拍又证明这种副本会漂移（M7 的深度折法就是一例）。触发条件“第二个后端需要
+  同一份灯布局”已经命中，backlog `S5` 因此关闭。
+- **落点不是 `ShaderAbi.hpp`**：灯块的容量 `kMaxLights`、未用槽标签 `kLightKindEmpty`、形状 `VineLightsBlock`
+  与打包 `packLightBlock` / `packedSlotOf` 同在 `sdk/vine/graphics/LightAbi.hpp`（实现
+  `src/viz/graphics/src/LightAbi.cpp`）。理由：打包要吃 `LightValue` / `CameraSnapshot`，把它们拉进
+  `ShaderAbi.hpp` 会让 ABI 叶子依赖场景模型（回边 + 重编译扇出）；依赖方向固定为
+  `ShaderAbi.hpp` <- `LightAbi.hpp` <- 后端。
+- **删掉的副本**：两个后端各自的 `LightBlock.hpp` + `LightBlock.cpp`（`ContentPass` / <!-- drift-ok -->
+  `ShadowBlock` / `ContentPipeline` / `ContentDraw` 改 include `LightAbi.hpp`）；`vk` 的 `ContentDraw.cpp`
+  里私有 `struct VineShadowBlock`（80B，与 SDK 同形）也一并删除，改用 `vn::graphics::VineShadowBlock`。
+- **测试搬家**：纯打包用例从 `tests/test_vsg/LightBlockTest.cpp` 移到 `tests/test_graphics/LightBlockTest.cpp`
+  （10 例：形状/视图空间/旋转/禁用与不可用灯/空公告/点光/聚光/8 槽/无相机/槽位规则）；`test_vsg` 只留三个
+  设备画面用例（content 四带、两条路径同 binding、full-screen 三带）。
+- **新坑**：`LightValue::identity` 默认空指针——单测里拿栈上 `LightValue` 的**地址**当 identity 会永远答
+  `kMaxLights`；要点名的灯必须显式 `identity = &stable_id`。
+- **验证**：`test_graphics` / `test_vk` / `test_vsg` 全绿；门禁见同批提交。

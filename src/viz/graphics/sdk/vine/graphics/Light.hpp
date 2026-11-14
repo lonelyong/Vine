@@ -55,7 +55,7 @@ struct VN_GRAPHICS_API ShadowSettings {
  * - `identity` is the light's ADDRESS, used only to match a shadow map's statement of whose it is
  *   (`RenderTarget::shadowOf`) against the lights a drawing call announced. It is never dereferenced after the call
  *   returns - two lights with the same numbers would otherwise be indistinguishable to that match.
- * - The fields are exactly what the shading block is built from (see the backend's `VineLightsBlock`); adding a
+ * - The fields are exactly what the shading block is built from (see LightAbi.hpp's `VineLightsBlock`); adding a
  *   shading input means adding it here and in `Light::value()` together, so the value a frame carries and the value a
  *   light states cannot drift.
  */

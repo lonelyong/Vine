@@ -24,6 +24,7 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/ChainPresets.hpp>
 #include <vine/graphics/EmbeddedShaders.hpp>
+#include <vine/graphics/LightAbi.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
@@ -276,7 +277,7 @@ TEST(EmbeddedShadersTest, TheAbiLocationsMatchTheShaderText)
 
 TEST(EmbeddedShadersTest, TheLightBlockDeclaresOneSlotPerLightTheCapacityAllows)
 {
-    // kMaxLights is the ONE statement of how many lights a drawing call can have lit (ShaderAbi.hpp); the light
+    // kMaxLights is the ONE statement of how many lights a drawing call can have lit (LightAbi.hpp); the light
     // block's GLSL arrays are its other end. The block struct's sizeof static_assert pins the C++ side, and this
     // pins the GLSL side, so raising the capacity in one place only is a failing test rather than a block whose
     // arrays the shader reads past.

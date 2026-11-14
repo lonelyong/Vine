@@ -54,8 +54,8 @@
 
 - `Light.hpp`：`LightType{Ambient, Directional, Point(reserved), Spot(reserved)}`，`Light` 只有 `direction_`；
 - `FrameRecorder.hpp` 的 `LightRef` 只有 `has_direction` / `direction`；
-- `LightBlock.cpp` 的 `packLightBlock` 对 `Point`/`Spot` 走 `default: break`；
+- `LightBlock.cpp` 的 `packLightBlock` 对 `Point`/`Spot` 走 `default: break`； <!-- drift-ok -->
   `LightBlockTest.DisabledAndUnusableLightsAreNotPacked` 钉住「a kind the block has no slot for」；
 - `ContentPass.cpp` 全屏路径的注释明说掉落「deliberately NOT reported」；
-- `LightBlock.hpp`：`projparms` 是 RESERVED 且恒 0，没有 shipped program 读它；
+- `LightBlock.hpp`：`projparms` 是 RESERVED 且恒 0，没有 shipped program 读它； <!-- drift-ok -->
 - `ProgramAbi.cpp` 的 `memberTypeLayout` 对 struct 成员返回 false（因此块形状避开 struct 数组）。

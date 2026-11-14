@@ -10,6 +10,7 @@ set(SRC_FILE_LIST
 	EmbeddedShadersTest.cpp
 	MaterialInstanceTest.cpp
 	ShaderAbiTest.cpp
+	LightBlockTest.cpp
 	ModelSceneTest.cpp
 	MeshShapeTest.cpp
 	ResidencyTest.cpp

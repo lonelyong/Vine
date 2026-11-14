@@ -54,4 +54,4 @@
   allowed when using GLSL for Vulkan`；同一声明放进 `std140` 块内即通过。
 - `build/_deps/vsg-src` 中不存在 `Uniform` 类，`state/` 目录只有描述符与 push constant。
 - 现状：`VineMaterialBlock` 在 `builtin_forward.frag` 与 `builtin_gbuffer.frag` 各声明一次；
-  `VineLightsBlock` 定义在 `LightBlock.hpp`，不在 SDK 的 `ShaderAbi.hpp`。
+  `VineLightsBlock` 定义在 `LightBlock.hpp`，不在 SDK 的 `ShaderAbi.hpp`。 <!-- drift-ok -->

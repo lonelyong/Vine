@@ -31,6 +31,7 @@
 #include <vine/graphics/Geometry.hpp>
 
 #include <vine/graphics/Light.hpp>
+#include <vine/graphics/LightAbi.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
@@ -50,7 +51,6 @@
 #include <vine/backend_vsg/internal/ContentSources.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
 #include <vine/backend_vsg/internal/GeometryFacts.hpp>
-#include <vine/backend_vsg/internal/LightBlock.hpp>
 #include <vine/backend_vsg/internal/OffscreenTarget.hpp>
 #include <vine/backend_vsg/internal/ShadowBlock.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
@@ -74,6 +74,7 @@ using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
+using vn::graphics::VineLightsBlock;
 using vn::graphics::backend::CameraSnapshot;
 using vn::graphics::backend::ClearValues;
 using vn::graphics::backend::CompiledDraw;
@@ -108,13 +109,12 @@ using vn::backend_vsg::GeometryFacts;
 using vn::backend_vsg::InputImages;
 using vn::backend_vsg::MaterialFacts;
 using vn::backend_vsg::OffscreenTarget;
-using vn::backend_vsg::packedSlotOf;
-using vn::backend_vsg::packLightBlock;
+using vn::graphics::packedSlotOf;
+using vn::graphics::packLightBlock;
 using vn::backend_vsg::packShadowBlock;
 using vn::backend_vsg::PassContent;
 using vn::backend_vsg::ProgramFacts;
 using vn::backend_vsg::StreamUploads;
-using vn::backend_vsg::VineLightsBlock;
 using vn::backend_vsg::VsgExecutor;
 
 namespace

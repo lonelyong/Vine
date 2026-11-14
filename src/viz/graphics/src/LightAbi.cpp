@@ -1,9 +1,11 @@
-#include <vine/backend_vk/internal/LightBlock.hpp>
+#include <vine/graphics/LightAbi.hpp>
 
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <numbers>
 
-VN_BACKEND_VK_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 namespace
 {
@@ -20,14 +22,12 @@ struct ViewAxes {
  *
  * @details
  * - The view matrix IS the rotation the shading needs (plus the eye translation, which a direction does not see), so
- *   it is read from the one place the camera states it: the first three columns of its first three rows. A camera
- *   whose view matrix is all zeros yields zero axes, and a zero direction packs as zero - a light nobody can place
- *   does not light anything.
+ *   it is read from the one place the camera states it: the first three columns of its first three rows.
  *
  * @param camera The announced camera (its `view` is the world -> view matrix).
  * @return The three axes, in world coordinates.
  */
-[[nodiscard]] ViewAxes viewAxesOf(const vn::graphics::CameraSnapshot& camera) noexcept
+[[nodiscard]] ViewAxes viewAxesOf(const CameraSnapshot& camera) noexcept
 {
     ViewAxes axes;
     for (std::size_t column = 0; column < 3U; ++column) {
@@ -38,15 +38,30 @@ struct ViewAxes {
     return axes;
 }
 
-/** @brief Transforms a world-space POSITION into view space (rotation and translation; see viewAxesOf). */
-[[nodiscard]] std::array<double, 3> toViewPosition(const vn::graphics::CameraSnapshot& camera, const vn::math::Vec3d& position) noexcept
+/**
+ * @brief Transforms a world-space POSITION into view space (rotation and translation).
+ *
+ * @param camera The announced camera.
+ * @param position The world-space position.
+ * @return The view-space position.
+ */
+[[nodiscard]] std::array<double, 3> toViewPosition(const CameraSnapshot& camera, const vn::math::Vec3d& position) noexcept
 {
     return { camera.view(0, 0) * position.x + camera.view(0, 1) * position.y + camera.view(0, 2) * position.z + camera.view(0, 3),
              camera.view(1, 0) * position.x + camera.view(1, 1) * position.y + camera.view(1, 2) * position.z + camera.view(1, 3),
              camera.view(2, 0) * position.x + camera.view(2, 1) * position.y + camera.view(2, 2) * position.z + camera.view(2, 3) };
 }
 
-/** @brief Transforms a world-space DIRECTION into view space (rotation only, then normalised). */
+/**
+ * @brief Transforms a world-space DIRECTION into view space (rotation only, then normalised).
+ *
+ * @details
+ * - A direction nobody set (length zero) stays zero: the shading reads that as "no direction", not as +x.
+ *
+ * @param axes The camera's view-space axes.
+ * @param direction The world-space direction.
+ * @return The unit view-space direction (zero when @p direction has no length).
+ */
 [[nodiscard]] std::array<double, 3> toViewDirection(const ViewAxes& axes, const vn::math::Vec3d& direction) noexcept
 {
     double       vx     = axes.right[0] * direction.x + axes.right[1] * direction.y + axes.right[2] * direction.z;
@@ -59,7 +74,6 @@ struct ViewAxes {
         vz /= length;
     }
     else {
-        // A direction nobody set stays zero: the shading reads that as "no direction", not as +x.
         vx = 0.0;
         vy = 0.0;
         vz = 0.0;
@@ -67,7 +81,12 @@ struct ViewAxes {
     return { vx, vy, vz };
 }
 
-/** @brief The cosine of an angle stated in degrees (the block stores cosines, so the shading needs no trig). */
+/**
+ * @brief The cosine of an angle stated in degrees (the block stores cosines, so the shading needs no trig).
+ *
+ * @param degrees Angle in degrees.
+ * @return Its cosine.
+ */
 [[nodiscard]] double cosineOfDegrees(double degrees) noexcept
 {
     return std::cos(degrees * std::numbers::pi / 180.0);
@@ -77,36 +96,32 @@ struct ViewAxes {
  * @brief Whether @p light is a light the block gives the numbered slot @p slot to.
  *
  * @details
- * - THE ONE STATEMENT OF THE SLOT RULE: @ref packLightBlock walks it to fill the block, @ref packedSlotOf walks it
- *   again to name a slot, and a map that named a slot by a second rule would scale a light it does not belong to.
- * - The ambient light fills its own slot and never a numbered one; a disabled light takes nothing; a positional light
- *   nobody placed takes nothing (it would light from the camera's eye); and a full block gives a later light none.
+ * - THE ONE STATEMENT OF THE SLOT RULE: packLightBlock walks it to fill the block, packedSlotOf walks it again to
+ *   name a slot, and a map that named a slot by a second rule would scale a light it does not belong to.
  *
  * @param light The announced light.
  * @param slot  The numbered slot it would take next.
  * @return true when it takes @p slot.
  */
-[[nodiscard]] bool takesSlot(const vn::graphics::LightValue& light, std::size_t slot) noexcept
+[[nodiscard]] bool takesSlot(const LightValue& light, std::size_t slot) noexcept
 {
-    if (!light.enabled || light.type == vn::graphics::LightType::Ambient || slot >= vn::graphics::kMaxLights) {
+    if (!light.enabled || light.type == LightType::Ambient || slot >= kMaxLights) {
         return false;
     }
-    const bool positional = light.type == vn::graphics::LightType::Point || light.type == vn::graphics::LightType::Spot;
+    const bool positional = light.type == LightType::Point || light.type == LightType::Spot;
     return !positional || light.has_position;
 }
 
 } // namespace
 
-std::size_t packLightBlock(std::span<const vn::graphics::LightValue> lights,
-                           const vn::graphics::CameraSnapshot&      camera,
-                           VineLightsBlock&                         out) noexcept
+std::size_t packLightBlock(std::span<const LightValue> lights, const CameraSnapshot& camera, VineLightsBlock& out) noexcept
 {
     // Every field is written, including the ones nothing is packed into: a block that left its tail as whatever the
     // previous owner of these bytes wrote is a shader reading another frame's lights.
     out = VineLightsBlock{};
     // An empty slot says so. A zeroed kind would read as `Ambient` (0), which is a kind the ARRAY does not carry - a
     // shader that trusted it would evaluate a light that is not there.
-    for (std::size_t slot = 0U; slot < vn::graphics::kMaxLights; ++slot) {
+    for (std::size_t slot = 0U; slot < kMaxLights; ++slot) {
         out.position_kind[slot][3] = kLightKindEmpty;
     }
     if (!camera.present) {
@@ -116,11 +131,11 @@ std::size_t packLightBlock(std::span<const vn::graphics::LightValue> lights,
     const ViewAxes axes        = viewAxesOf(camera);
     std::size_t    packed      = 0U; // slots used
     bool           has_ambient = false;
-    for (const vn::graphics::LightValue& light : lights) {
+    for (const LightValue& light : lights) {
         if (!light.enabled) {
             continue;
         }
-        if (light.type == vn::graphics::LightType::Ambient) {
+        if (light.type == LightType::Ambient) {
             // The ambient slot is one light: a second ambient light replaces the first rather than adding to it (the
             // block has no room for a sum, and "the last announcement wins" is the reference rule).
             out.ambient = { light.color.r, light.color.g, light.color.b, light.intensity };
@@ -137,7 +152,7 @@ std::size_t packLightBlock(std::span<const vn::graphics::LightValue> lights,
         float* color_intensity = out.color_intensity[packed].data();
         float* cone            = out.cone[packed].data();
 
-        const bool positional = light.type == vn::graphics::LightType::Point || light.type == vn::graphics::LightType::Spot;
+        const bool positional = light.type == LightType::Point || light.type == LightType::Spot;
         if (positional) {
             const std::array<double, 3> view_position = toViewPosition(camera, light.position);
             position_kind[0]                          = static_cast<float>(view_position[0]);
@@ -160,7 +175,7 @@ std::size_t packLightBlock(std::span<const vn::graphics::LightValue> lights,
         color_intensity[2] = light.color.b;
         color_intensity[3] = light.intensity;
 
-        if (light.type == vn::graphics::LightType::Spot) {
+        if (light.type == LightType::Spot) {
             cone[0] = static_cast<float>(cosineOfDegrees(light.inner_cone_degrees));
             cone[1] = static_cast<float>(cosineOfDegrees(light.outer_cone_degrees));
         }
@@ -169,21 +184,21 @@ std::size_t packLightBlock(std::span<const vn::graphics::LightValue> lights,
 
     if (!has_ambient) {
         // Keep an unlit pass visible: without any ambient the shading multiplies the albedo by zero. The fill is NOT
-        // counted below - it is not a light the host announced (see the file note).
+        // counted below - it is not a light the host announced (see the declaration).
         out.ambient = { 0.15F, 0.15F, 0.15F, 1.0F };
     }
     return packed + (has_ambient ? 1U : 0U);
 }
 
-std::size_t packedSlotOf(std::span<const vn::graphics::LightValue> lights, const void* identity) noexcept
+std::size_t packedSlotOf(std::span<const LightValue> lights, const void* identity) noexcept
 {
     if (identity == nullptr) {
-        return vn::graphics::kMaxLights;
+        return kMaxLights;
     }
     // THE SAME WALK AS packLightBlock, one step at a time: the slot a light is GIVEN is the number of lights that took
     // one before it, and only a light takesSlot() accepts moves that number.
     std::size_t packed = 0U;
-    for (const vn::graphics::LightValue& light : lights) {
+    for (const LightValue& light : lights) {
         if (takesSlot(light, packed)) {
             if (light.identity == identity) {
                 return packed;
@@ -191,7 +206,7 @@ std::size_t packedSlotOf(std::span<const vn::graphics::LightValue> lights, const
             ++packed;
         }
     }
-    return vn::graphics::kMaxLights;
+    return kMaxLights;
 }
 
-VN_BACKEND_VK_NS_END
+VN_GRAPHICS_NS_END

@@ -40,7 +40,8 @@ VN_GRAPHICS_NS_BEGIN
  *
  * @details
  * - Reads the engine's ABI: positions/normals (+ optional colour and texture), the material block (base colour,
- *   metallic, roughness), the per-view lights and the per-drawable block (see ShaderAbi.hpp).
+ *   metallic, roughness), the per-view lights and the per-drawable block (see ShaderAbi.hpp; the light block is in
+ *   LightAbi.hpp).
  * - The G-buffer and this program read the SAME factors and derive the same diffuse/reflectance split, so the two
  *   paths agree on what a material is at every step of the material work (graphics-material.md §9.2).
  *

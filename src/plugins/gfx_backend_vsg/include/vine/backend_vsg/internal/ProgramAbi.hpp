@@ -74,7 +74,7 @@ enum class AbiBlockRole : std::uint8_t
     View,        // `VineViewBlock` (the per-pass view block).
     Draw,        // `VineDrawBlock` (the per-draw model matrix and opacity).
     Material,    // `VineMaterialBlock` (the shading material).
-    Lights,      // `VineLightsBlock` (one ambient plus up to three directional lights, in view space).
+    Lights,      // `VineLightsBlock` (one ambient plus `kMaxLights` typed lights, in view space; see LightAbi.hpp).
     ShadowBlock, // `VineShadowBlock` (the map's placement and comparison scalars).
     Foreign,     // A uniform block whose type name is none of the L1 names: the backend cannot fill it.
 };

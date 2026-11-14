@@ -459,7 +459,8 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     ASSERT_EQ(layout_one->setLayouts.size(), 1U) << "the samplers are the only set - no block set, no set 1";
     EXPECT_EQ(layout_one->setLayouts[0], samplers);
 
-    // No push: the SDK's own screen programs read the light BLOCK (see LightBlock), so a screen pipeline
+    // No push: the SDK's own screen programs read the light BLOCK (see ShaderAbi.hpp's VineLightsBlock), so a screen
+    // pipeline
     // declares a push range only when its caller asks for one (a host program's own block).
     EXPECT_TRUE(layout_one->pushConstantRanges.empty()) << "nothing is pushed by default";
 

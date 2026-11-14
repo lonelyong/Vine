@@ -17,11 +17,11 @@
 #include <vsg/state/ViewportState.h>
 #include <vsg/utils/ShaderCompiler.h>
 
+#include <vine/graphics/LightAbi.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/backend_vsg/internal/ContentImages.hpp>
 #include <vine/backend_vsg/internal/ContentPush.hpp>
 #include <vine/backend_vsg/internal/GeometryFacts.hpp>
-#include <vine/backend_vsg/internal/LightBlock.hpp>
 #include <vine/backend_vsg/internal/StateCommands.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 
@@ -79,7 +79,7 @@ std::uint32_t abiSizeOfRole(AbiBlockRole role) noexcept
     case AbiBlockRole::View: return static_cast<std::uint32_t>(sizeof(vn::graphics::VineViewBlock));
     case AbiBlockRole::Draw: return static_cast<std::uint32_t>(sizeof(vn::graphics::VineDrawBlock));
     case AbiBlockRole::Material: return static_cast<std::uint32_t>(sizeof(vn::graphics::VineMaterialBlock));
-    case AbiBlockRole::Lights: return static_cast<std::uint32_t>(sizeof(VineLightsBlock));
+    case AbiBlockRole::Lights: return static_cast<std::uint32_t>(sizeof(vn::graphics::VineLightsBlock));
     case AbiBlockRole::ShadowBlock: return static_cast<std::uint32_t>(sizeof(vn::graphics::VineShadowBlock));
     case AbiBlockRole::NotABlock:
     case AbiBlockRole::Foreign: return 0U;

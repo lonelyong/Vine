@@ -27,7 +27,8 @@ class ContentImages;
  * - WHAT IT OWNS. Compiled shader modules per program REVISION (keyed by the immutable `ShaderProgramDescription`),
  *   uploaded vertex/index streams per geometry REVISION (keyed by `GeometryDescription`), the descriptor and pipeline
  *   layouts every pipeline shares, the pipelines themselves, and one small uniform buffer per recorded draw holding
- *   the `VineMaterialBlock`, `VineLightsBlock` and `VineDrawBlock` (std140, see ShaderAbi.hpp).
+ *   the `VineMaterialBlock`, `VineLightsBlock` and `VineDrawBlock` (std140; the first and the third in ShaderAbi.hpp,
+ *   the light block in LightAbi.hpp).
  * - A PIPELINE IS KEYED BY COMPATIBILITY, NOT BY A RENDER-PASS HANDLE. `RenderPassCompatibility` names the attachment
  *   set (formats, depth, samples, subpass), which is what Vulkan compares a pipeline against; an EXTENT change creates
  *   new images and a new framebuffer but no new render pass, so every pipeline stays valid and is REUSED. That is the

@@ -246,6 +246,7 @@
 | 读回 | `ReadbackResult`（机器可读原因） | 不要发明 bool + printf |
 | 诊断 | `DiagnosticsRoute` / `DiagnosticSink` | validation 消息走同一条路 |
 | 帧 | `FrameDescription` + `executeFrame` / `prepareFrame` | 一条线两个动词 |
+| 灯块 | `LightValue` / `CameraSnapshot` → `VineLightsBlock`（`LightAbi.hpp` 的 `packLightBlock` / `packedSlotOf`） | 打包规则是引擎的、与 API 无关；两个后端今天都读它，复制一份就是第二份规则（S5 落地，2026-11-14） |
 
 **纪律**：这些类型一个都不许在 vk 里出现"影子版本"（`vn::backend_vk::PipelineKey`、`vn::backend_vk::Residency`…）。影子版本是重复，
 不是拓展性（`G1`）。
