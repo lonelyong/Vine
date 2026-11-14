@@ -211,6 +211,16 @@ class VN_BACKEND_VK_API ContentDraw final {
     /** @brief Gets the image cache for a reader that only reports on it (see the mutable overload). */
     [[nodiscard]] const ContentImages& images() const noexcept;
     /**
+     * @brief Sets how wide a rasterised line may be (the device's `lineWidthRange[1]`).
+     *
+     * @details
+     * - A pass' line-width override is a viewing switch (see PassRenderState::lineWidth) and the host may ask for
+     *   more than the device allows; this is the number the recorder clamps every `vkCmdSetLineWidth` to, so the
+     *   answer is the device's best instead of an invalid command. It is the SAME number the capabilities report.
+     *
+     * @param max_line_width The widest line the device accepts, in pixels (1 when it accepts only 1).
+     */
+    void setLineWidthLimit(float max_line_width) noexcept;    /**
      * @brief Drops the streams uploaded for @p description, so a later frame uploads them again.
      *
      * @details

@@ -1,6 +1,5 @@
 #include <vine/backend_vk/internal/Device.hpp>
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -742,10 +741,25 @@ bool Device::initialize()
     queue_info.queueCount       = 1U;
     queue_info.pQueuePriorities = &kQueuePriority;
 
+    // THE FEATURES THIS BACKEND ASKS FOR ARE THE ONES THE SDK CAN EXPRESS (see RenderState and PassRenderState): a
+    // WIREFRAME view (`fillModeNonSolid`), a POINT SIZE (`largePoints`), a THICK LINE (`wideLines`), ANISOTROPIC
+    // filtering (`samplerAnisotropy`) and MRT with per-attachment blends (`independentBlend`). Every one of those is a
+    // switch a host may throw, and a switch that fails at pipeline creation is a feature this backend does not have -
+    // so what the device offers is asked for, and what was asked for is what the capabilities below report.
+    VkPhysicalDeviceFeatures available_features{};
+    vkGetPhysicalDeviceFeatures(impl->physical, &available_features);
+    VkPhysicalDeviceFeatures wanted_features{};
+    wanted_features.fillModeNonSolid  = available_features.fillModeNonSolid;
+    wanted_features.largePoints       = available_features.largePoints;
+    wanted_features.wideLines         = available_features.wideLines;
+    wanted_features.samplerAnisotropy = available_features.samplerAnisotropy;
+    wanted_features.independentBlend  = available_features.independentBlend;
+
     VkDeviceCreateInfo device_info{};
     device_info.sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     device_info.queueCreateInfoCount = 1U;
     device_info.pQueueCreateInfos    = &queue_info;
+    device_info.pEnabledFeatures     = &wanted_features;
 
     // THE SWAPCHAIN EXTENSION: only when a window is to be served, and only if the device offers it.
     const char* device_extension_names[1]{ "VK_KHR_swapchain" };
@@ -836,6 +850,21 @@ bool Device::initialize()
     impl->caps.render_targets          = true;
     impl->caps.presentation            = impl->presentation_wanted;
     impl->caps.features                = 0U;
+    // THE FEATURE BITS ARE WHAT WAS ENABLED, not what the device might do: each one is set from the SAME value
+    // `pEnabledFeatures` carried, so a switch a host sees advertised is a switch the driver will accept.
+    // Anisotropy additionally requires a limit above 1: a bit saying "anisotropy is available" beside a factor of 1
+    // would advertise a quality setting that cannot do anything.
+    if (wanted_features.fillModeNonSolid == VK_TRUE) {
+        impl->caps.features |= Capabilities::bit(Capabilities::Feature::Wireframe);
+    }
+    if (wanted_features.samplerAnisotropy == VK_TRUE && properties.limits.maxSamplerAnisotropy > 1.0F) {
+        impl->caps.features |= Capabilities::bit(Capabilities::Feature::AnisotropicFiltering);
+    }
+    // GPU TIMINGS IS A DEVICE FACT, not a promise this backend measures anything yet (see Feature::GpuTimings): the
+    // device can write timestamps for graphics and compute work.
+    if (properties.limits.timestampComputeAndGraphics != VK_FALSE) {
+        impl->caps.features |= Capabilities::bit(Capabilities::Feature::GpuTimings);
+    }
     // ONE target has ONE sample count, and its colour and depth attachments must both support it, so the set this
     // device offers is the INTERSECTION of the two (a device whose depth tops out lower is the binding side). That
     // intersection is a `VkSampleCountFlags` BIT SET, while `Capabilities::max_samples` states the largest COUNT a
@@ -843,9 +872,13 @@ bool Device::initialize()
     // set rather than being the set. The same set is what `ensureTarget` clamps a request against.
     impl->supported_sample_counts      = static_cast<std::uint32_t>(properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts);
     impl->caps.max_samples             = largestSampleCount(impl->supported_sample_counts);
-    impl->caps.max_anisotropy          = 1.0F;
+    // THE LIMITS TRAVEL BESIDE THE BITS, and each is the device's own answer: "anisotropy exists" and "how much of
+    // it" are different facts, and so are "wide lines are allowed" and "how wide".
+    impl->caps.max_anisotropy          = impl->caps.supports(Capabilities::Feature::AnisotropicFiltering) ? properties.limits.maxSamplerAnisotropy : 1.0F;
     impl->caps.max_line_width          = properties.limits.lineWidthRange[1] > 0.0F ? properties.limits.lineWidthRange[1] : 1.0F;
-    impl->caps.max_color_attachments   = std::min<std::uint32_t>(properties.limits.maxColorAttachments, 4U);
+    // THE DEVICE'S OWN COUNT: an off-screen pass here can reference as many colour attachments as the render pass
+    // takes, and capping that below what the device offers would be an amputation nothing in this backend needs.
+    impl->caps.max_color_attachments   = properties.limits.maxColorAttachments;
 
     // M2'S CONTENT PATH: the layouts, the descriptor pool and the caches every draw uses. A device that cannot build
     // them is not a device that can draw, so it refuses to come up rather than answering frames with nothing.
@@ -856,6 +889,12 @@ bool Device::initialize()
         shutdown();
         return false;
     }
+    // THE TWO RASTERISATION LIMITS THE RECORDERS HAVE TO KNOW: a line wider than the device's range is an invalid
+    // command, and an anisotropy factor past the device's maximum is an invalid sampler - both are clamped to the
+    // numbers the capabilities just reported, so a host asking for more gets the device's best answer instead of a
+    // validation error.
+    impl->content.setLineWidthLimit(impl->caps.max_line_width);
+    impl->content.images().setMaxAnisotropy(impl->caps.max_anisotropy);
 
     return true;
 }

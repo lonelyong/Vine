@@ -101,6 +101,15 @@ TEST(VkBackendTest, TheDeviceComesUpAndGoesDownCleanly)
     // number is what the colour and depth attachments both support, and a device that offers none answers 1.
     EXPECT_GE(capabilities.max_samples, 1U);
 
+    // THE FEATURE BITS ARE ANSWERS ABOUT THIS SESSION, and each is checked against the limit that has to travel beside
+    // it: "anisotropy is available" next to a factor of 1 would advertise a quality setting that cannot do anything,
+    // and a line-width range below 1 would be no range at all.
+    EXPECT_EQ(capabilities.supports(vn::graphics::Capabilities::Feature::AnisotropicFiltering), capabilities.max_anisotropy > 1.0F);
+    EXPECT_GE(capabilities.max_anisotropy, 1.0F);
+    EXPECT_GE(capabilities.max_line_width, 1.0F);
+    // THE DEVICE'S OWN COLOUR SLOT COUNT: Vulkan guarantees at least 4, and an MRT pass may use every one.
+    EXPECT_GE(capabilities.max_color_attachments, 4U);
+
     // IDEMPOTENT, and back to a fresh object: the SDK requires a device whose surface is recreated to take this path.
     backend->shutdown();
     EXPECT_FALSE(backend->initialized());

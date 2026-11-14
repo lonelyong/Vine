@@ -425,6 +425,10 @@ struct ContentDraw::Impl {
 
     const VolkDeviceTable*          table{ nullptr };
     VkDevice                        device{ VK_NULL_HANDLE };
+
+    /// The widest line the device accepts, in pixels (see setLineWidthLimit): the number every `vkCmdSetLineWidth` in
+    /// this recorder is clamped to, and the same one the capabilities report as `max_line_width`.
+    float max_line_width{ 1.0F };
     VkPhysicalDeviceMemoryProperties memory_properties{};
     std::uint32_t                   uniform_alignment{ kDefaultUniformAlignment };
 
@@ -1866,6 +1870,14 @@ ContentImages& ContentDraw::images() noexcept
     return impl->images;
 }
 
+void ContentDraw::setLineWidthLimit(const float max_line_width) noexcept
+{
+    if (!impl) {
+        return;
+    }
+    impl->max_line_width = max_line_width >= 1.0F ? max_line_width : 1.0F;
+}
+
 const ContentImages& ContentDraw::images() const noexcept
 {
     return impl->images;
@@ -2237,7 +2249,9 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         }
         impl->table->vkCmdSetViewport(commands, 0U, 1U, &viewport);
         impl->table->vkCmdSetScissor(commands, 0U, 1U, &scissor);
-        impl->table->vkCmdSetLineWidth(commands, resolved.state.lineWidth);
+        // A PASS' LINE-WIDTH SWITCH IS A REQUEST (see PassRenderState::lineWidth): the device's range is the answer,
+        // and above it the command itself would be invalid.
+        impl->table->vkCmdSetLineWidth(commands, std::clamp(resolved.state.lineWidth, 1.0F, impl->max_line_width));
         impl->table->vkCmdSetDepthBias(commands, resolved.state.polygonOffset.units, 0.0F, resolved.state.polygonOffset.factor);
         const VkDescriptorSet sets[2]{ content_set, draw_set };
         impl->table->vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, impl->content_pipeline_layout, 0U, 2U, sets, 0U, nullptr);
@@ -2393,7 +2407,7 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
     impl->table->vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     impl->table->vkCmdSetViewport(commands, 0U, 1U, &viewport);
     impl->table->vkCmdSetScissor(commands, 0U, 1U, &scissor);
-    impl->table->vkCmdSetLineWidth(commands, resolved.state.lineWidth);
+    impl->table->vkCmdSetLineWidth(commands, std::clamp(resolved.state.lineWidth, 1.0F, impl->max_line_width));
     // The pipeline states depth bias as DYNAMIC (the content path does the same), so a full-screen draw owes the
     // command buffer the values too - zero is "no offset".
     impl->table->vkCmdSetDepthBias(commands, 0.0F, 0.0F, 0.0F);

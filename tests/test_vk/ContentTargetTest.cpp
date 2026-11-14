@@ -115,11 +115,41 @@ void main()
 )";
 
 /// @brief Builds a two-stage program (fresh object per call, like every SDK factory).
+/// @brief A vertex stage that ALSO states a point size: a POINT_LIST pipeline is invalid without one
+///        (VUID-VkGraphicsPipelineCreateInfo-topology-00737), which is the layer's way of saying the size is
+///        authored by the shader and not by the pipeline.
+constexpr const char8_t* kPointVertexStage = u8R"(
+#version 450
+layout(location = 0) in vec3 in_position;
+
+layout(push_constant) uniform PushConstants
+{
+    mat4 projection;
+    mat4 modelView;
+} vn_pc;
+
+void main()
+{
+    gl_Position  = vn_pc.projection * vn_pc.modelView * vec4(in_position, 1.0);
+    gl_PointSize = 6.0;
+}
+)";
+
 [[nodiscard]] intrusive_ptr<ShaderProgram> makeProgram(const char8_t* fragment_source)
 {
     auto program = intrusive_ptr<ShaderProgram>(new ShaderProgram());
     program->setName(u8"vk_m3_program");
     program->addStage(ShaderStage{ ShaderStageType::Vertex, String(kVertexStage), String(u8"main") });
+    program->addStage(ShaderStage{ ShaderStageType::Fragment, String(fragment_source), String(u8"main") });
+    return program;
+}
+
+/// @brief Builds a two-stage program with an explicit vertex stage (see kPointVertexStage).
+[[nodiscard]] intrusive_ptr<ShaderProgram> makeProgramWithVertex(const char8_t* vertex_source, const char8_t* fragment_source)
+{
+    auto program = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    program->setName(u8"vk_m3_program_with_vertex");
+    program->addStage(ShaderStage{ ShaderStageType::Vertex, String(vertex_source), String(u8"main") });
     program->addStage(ShaderStage{ ShaderStageType::Fragment, String(fragment_source), String(u8"main") });
     return program;
 }
@@ -725,5 +755,78 @@ TEST(VkContentTargetTest, ABorrowedDepthRejectsTheFragmentTheLenderAlreadyCovere
     EXPECT_EQ(why, ReadbackResult::Unsupported);
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    backend->shutdown();
+}
+
+/**
+ * @brief A view switch the app offers is SERVED, not refused: wireframe, a thick line and a point view.
+ *
+ * @details
+ * - These are the SDK's viewing switches (PassRenderState's polygonMode / lineWidth / topology / pointSize), and the
+ *   app's Wireframe shading mode sets the first one. Each needs a DEVICE feature (`fillModeNonSolid`, `wideLines`,
+ *   `largePoints`): with the feature off the pipeline is invalid, so the draw is refused with a ContentSkipped
+ *   diagnostic and the model simply disappears - the amputated capability this case exists to catch.
+ * - WHAT IS PINNED: the frame records the draw (it reached the queue), no ContentSkipped diagnostic appears, and the
+ *   picture is not the clear colour - a wireframe paints its edges.
+ */
+TEST(VkContentTargetTest, TheViewSwitchesAreServedInsteadOfRefused)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget(1);
+    const intrusive_ptr<ShaderProgram> program  = makeProgram(kRedFragment);
+    const intrusive_ptr<Geometry>      geometry = makeCornerQuad(0.0F);
+
+    ClearPolicy clear;
+    clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    clear.depth = true;
+
+    const auto paintedPixels = [&backend, &target]() {
+        std::vector<std::uint8_t> pixels;
+        ReadbackResult            why = ReadbackResult::Ok;
+        EXPECT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "readback refused: " << static_cast<int>(why);
+        std::size_t painted = 0U;
+        for (std::size_t index = 0; index + 3U < pixels.size(); index += 4U) {
+            painted += pixels[index] != 0U ? 1U : 0U;
+        }
+        return painted;
+    };
+
+    const std::size_t skipped_before = backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped);
+
+    // 1. WIREFRAME at a width the device's range covers (`fillModeNonSolid` builds the pipeline, `wideLines` makes the
+    //    width legal). Without them the pipeline is invalid, the draw is skipped and the model vanishes.
+    PassRenderState wireframe;
+    wireframe.polygonMode = vn::graphics::PolygonMode::Line;
+    wireframe.lineWidth   = 4.0F;
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), clear, wireframe, { commandOf(geometry, program) })),
+              vn::graphics::PresentOutcome::Skipped);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), skipped_before)
+        << "a wireframe pass must be recorded, not refused (see Capabilities::Feature::Wireframe)";
+    const auto wireframe_report = backend->frameReport();
+    ASSERT_TRUE(wireframe_report.counters.has_value());
+    EXPECT_EQ(wireframe_report.counters->draws, 1U) << "the draw reached the queue";
+    EXPECT_GT(paintedPixels(), std::size_t{ 0 }) << "a wireframe paints its edges";
+
+    // 2. A POINT VIEW of the same geometry: the topology override is the switch, the point size is what `largePoints`
+    //    lets the vertex stage honour.
+    const intrusive_ptr<ShaderProgram> point_program = makeProgramWithVertex(kPointVertexStage, kRedFragment);
+    PassRenderState                    points;
+    points.topology  = vn::graphics::Topology::Points;
+    points.pointSize = 6.0F;
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), clear, points, { commandOf(geometry, point_program) })),
+              vn::graphics::PresentOutcome::Skipped);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), skipped_before)
+        << "a point view must be recorded, not refused";
+    const auto points_report = backend->frameReport();
+    ASSERT_TRUE(points_report.counters.has_value());
+    EXPECT_EQ(points_report.counters->draws, 1U);
+    EXPECT_GT(paintedPixels(), std::size_t{ 4 }) << "the vertices are drawn as points, and `largePoints` lets the size through";
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U) << "and the session stayed clean";
     backend->shutdown();
 }

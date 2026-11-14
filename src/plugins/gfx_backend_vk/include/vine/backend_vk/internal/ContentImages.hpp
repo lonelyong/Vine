@@ -63,6 +63,18 @@ class VN_BACKEND_VK_API ContentImages final {
     void destroy() noexcept;
 
     /**
+     * @brief Sets the largest anisotropy factor the device honours (1 = filtering is unavailable).
+     *
+     * @details
+     * - `Sampler::anisotropy` is a request and this is the limit it is clamped to, which is also what the
+     *   capabilities report as `max_anisotropy`: a sampler built above it is an invalid create, and answering a
+     *   quality setting with silence is worse than answering it with the device's best.
+     *
+     * @param max_anisotropy The device's `maxSamplerAnisotropy`, or 1 when the feature is not enabled.
+     */
+    void setMaxAnisotropy(float max_anisotropy) noexcept;
+
+    /**
      * @brief Destroys what the PREVIOUS frame left behind: staging buffers and images a revision replaced.
      *
      * @details

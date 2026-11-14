@@ -1,9 +1,8 @@
 #include <vine/backend_vk/internal/ContentImages.hpp>
 
-#include <array>
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
-#include <limits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -147,6 +146,10 @@ struct ContentImages::Impl {
     const VolkDeviceTable*          table{ nullptr };
     VkDevice                        device{ VK_NULL_HANDLE };
     VkPhysicalDeviceMemoryProperties memory{};
+
+    /// The largest anisotropy factor the device honours (see setMaxAnisotropy): a sampler built above it would be an
+    /// invalid create, so the request is clamped here - the same number the capabilities report.
+    float max_anisotropy{ 1.0F };
 
     std::unordered_map<const vn::graphics::Texture*, Entry> textures;
     /// Entries a revision replaced (destroyed once the frame that may still name them has finished).
@@ -454,6 +457,16 @@ bool ContentImages::create(const VolkDeviceTable& table, const VkDevice device, 
     return impl->fallback_sampler != VK_NULL_HANDLE;
 }
 
+void ContentImages::setMaxAnisotropy(const float max_anisotropy) noexcept
+{
+    if (!impl) {
+        return;
+    }
+    // BELOW 2 THERE IS NOTHING TO FILTER ANISOTROPICALLY: the value is clamped up to 1 so a caller cannot build a
+    // sampler with a meaningless factor.
+    impl->max_anisotropy = max_anisotropy >= 1.0F ? max_anisotropy : 1.0F;
+}
+
 void ContentImages::destroy() noexcept
 {
     if (!impl) {
@@ -669,8 +682,12 @@ VkSampler ContentImages::samplerFor(const vn::graphics::Sampler& sampler)
     info.addressModeV            = addressModeOf(sampler.address_v);
     info.addressModeW            = addressModeOf(sampler.address_w);
     info.borderColor             = borderColorOf(sampler.border_color);
-    info.anisotropyEnable        = VK_FALSE; // M4 requires no device feature; the request is clamped away.
-    info.maxAnisotropy           = 1.0F;
+    // THE REQUEST IS CLAMPED, NEVER SILENTLY IGNORED: a factor above the device's maximum is an invalid sampler, so
+    // the answer is the device's best - and 1 (feature off) keeps `anisotropyEnable` false, which is what the spec
+    // requires beside a maximum of 1.
+    const float anisotropy       = std::clamp(sampler.anisotropy, 1.0F, impl->max_anisotropy);
+    info.anisotropyEnable        = anisotropy > 1.0F ? VK_TRUE : VK_FALSE;
+    info.maxAnisotropy           = anisotropy;
     info.compareEnable           = VK_FALSE;
     info.compareOp               = VK_COMPARE_OP_NEVER;
     info.minLod                  = sampler.min_lod;
