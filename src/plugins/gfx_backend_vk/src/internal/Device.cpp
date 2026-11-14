@@ -871,6 +871,24 @@ void Device::setRenderTarget(RenderTarget* target)
     impl->target = target;
 }
 
+void Device::releaseRenderTarget(RenderTarget* target)
+{
+    if (target == nullptr) {
+        return;
+    }
+    const auto found = impl->targets.find(target);
+    if (found == impl->targets.end()) {
+        // Never built, or already released: the host's statement is already true.
+        return;
+    }
+    if (impl->device != VK_NULL_HANDLE) {
+        // Between frames by contract (see the header): this device waits on its own fence before it answers, so
+        // nothing in flight names these image/view/memory handles and the destroy needs no idle.
+        destroyTarget(impl->device_table, impl->device, found->second);
+    }
+    impl->targets.erase(found);
+}
+
 vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void* native_handle, SurfaceTargetResult* why)
 {
     const auto answer = [why](const SurfaceTargetResult result) {

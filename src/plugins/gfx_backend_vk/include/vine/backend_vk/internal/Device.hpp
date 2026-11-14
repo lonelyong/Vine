@@ -112,6 +112,28 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      */
     void setRenderTarget(vn::graphics::RenderTarget* target) override;
 
+    /**
+     * @brief Frees the attachments this device built for @p target.
+     *
+     * @details
+     * - WHAT IT FREES. Every attachment built for the target - the colour images (one per MRT slot), the depth image
+     *   and a multisampled target's resolve images, their views, the framebuffer(s), the render pass and the device
+     *   memory behind them - and forgets the entry, so the target is "not built" afterwards.
+     * - WHAT IT KEEPS. The host's `RenderTarget` object: it is a description, and a later frame that names it builds
+     *   the attachments again through the same `planTarget` path (so the shape is re-checked, never assumed).
+     *   Release is a residency choice, not a lifetime change.
+     * - WHEN IT RUNS. Between frames, on the frame thread. This device submits and waits on one frame at a time, so
+     *   between frames nothing in flight names these images and the destroy is immediate (see RetirementQueue for
+     *   the machinery devices with overlapping frames need).
+     * - NOT THE WINDOW HALF. A window target's swapchain belongs to the device's lifetime (`createSurfaceTarget`);
+     *   this verb is for the off-screen targets the host announced, which is what `RenderDevice` states.
+     * - A target this device never built, or one already released, answers immediately: there is nothing to free and
+     *   nothing to report.
+     *
+     * @param target Target whose attachments to free; null is ignored.
+     */
+    void releaseRenderTarget(vn::graphics::RenderTarget* target) override;
+
     /** @brief Gets what this device can serve TODAY (see Capabilities): off-screen targets and, when asked, a window. */
     [[nodiscard]] vn::graphics::Capabilities capabilities() const noexcept override;
 
@@ -150,8 +172,9 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * - WHEN IT RUNS. Between frames, on the frame thread. This device records, submits and waits on one frame at a
      *   time, so between frames nothing is in flight and what the host released is destroyed immediately (the
      *   parked-release machinery exists for devices whose frames overlap; see RetirementQueue).
-     * - NOT the window half: a window target's swapchain belongs to the device's lifetime, and a pass or target
-     *   release is `releasePass` / `releaseRenderTarget` (this device keeps no per-pass objects).
+     * - NOT the window half or a target: a window target's swapchain belongs to the device's lifetime, `releasePass`
+     *   is a no-op (this device keeps no per-pass objects), and `releaseRenderTarget` frees a target's attachments
+     *   (see its own note).
      *
      * @param content Content object to evict; null is refused.
      * @return true when @p content was recognized (a texture with no uploaded image is already released), false when

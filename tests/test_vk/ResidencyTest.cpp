@@ -534,6 +534,50 @@ TEST(VkResidencyTest, ReleasingATextureLowersTheImageResidency)
     backend->shutdown();
 }
 
+TEST(VkResidencyTest, ReleasingATargetFreesItsAttachmentsAndTheNextFrameBuildsThemAgain)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    const Content                       content  = makeContent();
+    const intrusive_ptr<vn::graphics::Material> material = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+    const intrusive_ptr<RenderTarget>   target   = makeTarget();
+
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
+    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
+
+    // THE RELEASE IS THE HOST'S STATEMENT, and the answer is that this device holds no attachments for the target:
+    // a readback has nothing to read rather than stale pixels (the SDK's ReadbackResult states the difference).
+    device->releaseRenderTarget(target.get());
+    std::vector<std::uint8_t> after_release;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Ok;
+    EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, after_release, &why));
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::NotReady);
+    EXPECT_TRUE(after_release.empty()) << "a refused read must not hand out the previous pixels";
+
+    // THE OBJECT STAYS A DESCRIPTION: the next frame that names it builds the attachments again, and the picture is
+    // the one the content draws - a release changes what is resident, never what the target means.
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
+    std::vector<std::uint8_t> rebuilt;
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, rebuilt));
+    EXPECT_EQ(pixelAt(rebuilt, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
+
+    // AND RELEASING WHAT WAS NEVER BUILT (OR NOTHING) IS NOT AN ERROR: the statement is already true.
+    const intrusive_ptr<RenderTarget> never_drawn = makeTarget();
+    device->releaseRenderTarget(never_drawn.get());
+    device->releaseRenderTarget(nullptr);
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    backend->shutdown();
+}
+
 TEST(VkResidencyTest, ReleasingOneBufferLowersOnlyTheStreamsThatReadIt)
 {
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
