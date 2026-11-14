@@ -99,17 +99,27 @@ class VN_GRAPHICS_API RenderFrameExecutor {
      * - ONE WIRE, TWO VERBS. `prepare` takes the SAME value `executeFrame` takes - the engine compiles the frame once
      *   and hands that shape over - so there is no second description of a frame and no second grammar of what it
      *   contains. What differs is only how far the backend walks it: `prepare` stops where the CONTENT is complete
-     *   (the compiled halves, the declared and sampled-input sets, the stream uploads, the pipeline identities),
-     *   `executeFrame` continues into recording and submission.
-     * - WHY IT EXISTS. Compiling a pipeline and uploading a stream are what make a frame's first seconds janky, and a
-     *   host that knows what it is about to draw can pay that cost at load time instead. The criterion is measurable:
-     *   after `prepare`, a frame of the same declarations reports `ContentHalves::builds` and the variant pool's
-     *   `created` DELTA of zero (`R23`).
+     *   (the compiled halves, the declared and sampled-input sets, the stream and texture uploads, the pipeline
+     *   identities), `executeFrame` continues into recording and submission.
+     * - WHY IT EXISTS. Compiling a pipeline and uploading a stream or a texture are what make a frame's first seconds
+     *   janky, and a host that knows what it is about to draw can pay that cost at load time instead. The criterion
+     *   is measurable: after `prepare`, a frame of the same declarations reports `ContentHalves::builds`, the variant
+     *   pool's `created` and its own `FrameUploads` DELTAs of zero (`R23`).
      * - WHAT IT MUST NOT DO, and this is the whole risk of the entry. It must not open a frame on the surface (a
      *   windowed frame's `beginFrame` ACQUIRES the next swapchain image; an image acquired and never presented
-     *   starves the next frame, and presenting it would not be a preparation any more - `P11`). It must not submit,
-     *   present, or resize the swapchain. Everything it touches is the VALUE side: the target's shape is read from
-     *   the facts the target itself answers (a const question), never from an acquired image.
+     *   starves the next frame, and presenting it would not be a preparation any more - `P11`). It must not present
+     *   or resize the swapchain, and it must not move the frame water level: `FrameProgress::submitted` and
+     *   `presented` count FRAMES. Everything it touches is the VALUE side: the target's shape is read from the facts
+     *   the target itself answers (a const question), never from an acquired image.
+     * - THE ONE THING IT MAY SUBMIT IS A TRANSFER BATCH OF ITS OWN. Some builds cannot be recorded without a command
+     *   buffer - a texture copy out of a staging buffer, the 1x1 stand-in - so an executor MAY record ONE command
+     *   buffer holding nothing but transfers (copies and the layout transitions they need) and submit it on its own
+     *   fence, waiting for it before returning, so that what the report counts is resident when the call answers.
+     *   That batch is NOT a frame: no swapchain image, no render pass instance, no draw, no present, and the frame
+     *   water level does not move. It is also not a second path - it is exactly the copies the frame would have
+     *   recorded before its first render pass, made once, here, so that the frame then finds them resident and records
+     *   nothing (see ADR-2026-11-14, `R23`). No work means no submit: a second prepare of an unchanged frame submits
+     *   nothing.
      * - WHAT IT MAY BUILD. Anything the frame would need anyway, keyed exactly as the frame keys it, and nothing
      *   more: `prepare` answers the plan's own input, so it cannot become "compile every variant" (`P8`).
      * - A pass it cannot serve (its target has no objects yet, the tables cannot answer a program) is not an error:

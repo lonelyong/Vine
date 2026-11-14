@@ -137,9 +137,10 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @details
      * - A texture upload records image barriers and buffer-to-image copies, and Vulkan forbids both inside a render
      *   pass instance (`vkCmdCopyBufferToImage` outright, a barrier without a self-dependency). The device therefore
-     *   calls this once per pass, before @ref record / @ref recordScreen: the copies land on the frame's command
-     *   buffer outside the pass, and the draws find the views cached.
-     * - It also creates the 1x1 white fallback every absent slot is bound to, on the first frame that needs it.
+     *   calls this once per pass, before @ref record / @ref recordScreen: the copies land on the command buffer it
+     *   passes in - the frame's own, outside the pass, or the ONE transfer-only buffer a warm-up submits of its own
+     *   (see RenderFrameExecutor::prepareFrame) - and the draws find the views cached.
+     * - It also creates the 1x1 white fallback every absent slot is bound to, on the first recording that needs it.
      *
      * @param commands The command buffer being recorded (outside any render pass).
      * @param draws    The pass' drawing calls (borrowed for the call).

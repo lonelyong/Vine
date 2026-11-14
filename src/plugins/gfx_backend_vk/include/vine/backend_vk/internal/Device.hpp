@@ -221,19 +221,22 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
                                                            vn::graphics::PresentTarget*          present_to) override;
 
     /**
-     * @brief Builds a frame's CONTENT ahead of time - programs, streams, pipelines, target attachments - and submits
-     *        nothing.
+     * @brief Builds a frame's CONTENT ahead of time - programs, streams, pipelines, target attachments, textures - and
+     *        submits no frame.
      *
      * @details
      * - THE SAME VALUE `executeFrame` takes, walked to the same identities: this device resolves each pass' target,
-     *   each command's program and geometry and the pipeline its state selects (see `ContentDraw::prepare`), so a
-     *   later frame of the same declarations builds nothing (its upload/compile deltas are zero).
-     * - WHAT IT DELIBERATELY DOES NOT DO. No swapchain image is acquired, no window is resized, no command buffer is
-     *   recorded, nothing is submitted or presented. The window passes are walked for their shapes but build no
-     *   pipeline of their own unless the swapchain already exists (`WindowTarget::ready`).
-     * - TEXTURES ARE THE EXCEPTION, and the honest one: a texture's first use copies bytes into a device-local
-     *   image on the frame's command buffer (see `ContentImages`), and this call opens no command buffer - so the
-     *   first frame that samples it still uploads it.
+     *   each command's program and geometry and the pipeline its state selects (see `ContentDraw::prepare`), and it
+     *   records the pass' texture uploads and the 1x1 stand-in (see `ContentDraw::preparePass`), so a later frame of
+     *   the same declarations builds nothing (its upload/compile deltas are zero).
+     * - WHAT IT DELIBERATELY DOES NOT DO. No swapchain image is acquired, no window is resized, no render pass is
+     *   opened, nothing is drawn or presented, and `FrameProgress`'s `submitted` / `presented` do not move: those
+     *   count FRAMES. The window passes are walked for their shapes but build no pipeline of their own unless the
+     *   swapchain already exists (`WindowTarget::ready`).
+     * - THE ONE THING IT MAY SUBMIT is a command buffer holding nothing but transfers (the 1x1 stand-in and the
+     *   material textures), submitted on the device's own fence and waited for before the call answers, so what the
+     *   report counts is resident when it does. No work means no submit: a second prepare of an unchanged frame
+     *   submits nothing (see ADR-2026-11-14).
      * - A pass this device cannot serve yet (its target has no objects) is not an error: it is counted in
      *   `passes`/`draws` (the shape of the frame asked for) and the build counts say what became objects.
      *

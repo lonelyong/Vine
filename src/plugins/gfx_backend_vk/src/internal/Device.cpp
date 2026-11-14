@@ -1520,7 +1520,8 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
     }
 
     // WHICH SURFACE THE FRAME NAMES - the same resolution executeFrame makes, minus everything that would touch it:
-    // nothing is acquired, resized or presented (see RenderFrameExecutor::prepareFrame, P11).
+    // nothing is acquired, resized or presented, and the frame water level does not move (see
+    // RenderFrameExecutor::prepareFrame, P11). The ONE command buffer this call records holds transfers only.
     WindowTarget* window = nullptr;
     if (present_to != nullptr) {
         auto* candidate = dynamic_cast<WindowTarget*>(present_to);
@@ -1544,6 +1545,15 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
     const Impl::ContentNumbers before = impl->contentNumbers();
     PrepareReport             report;
     report.outcome = PrepareReport::Outcome::Prepared;
+
+    // THE ONE THING THIS CALL MAY SUBMIT IS A TRANSFER BATCH OF ITS OWN (see RenderFrameExecutor::prepareFrame and
+    // ADR-2026-11-14): the builds that need a command buffer - the 1x1 stand-in and every material texture of a pass -
+    // are recorded on one command buffer here, submitted on the device's own fence and waited for before this call
+    // answers. It is NOT a frame: no swapchain image is acquired, no render pass opens, nothing is drawn or presented,
+    // and `books.progress` does not move. The buffer is allocated LAZILY, on the first pass this device can serve: a
+    // frame whose passes it cannot serve records nothing and therefore allocates nothing.
+    VkCommandBuffer batch{ VK_NULL_HANDLE };
+    bool            batch_attempted{ false };
 
     for (const FrameDescription::Pass& entry : frame.passes) {
         if (entry.pass == nullptr) {
@@ -1587,6 +1597,36 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
             compatibility = images.compatibility();
         }
 
+        // THE BATCH IS OPENED ON THE FIRST PASS THIS DEVICE CAN SERVE - the same condition the branch above just
+        // answered, so a frame nothing can be built for never allocates a command buffer.
+        if (!batch_attempted) {
+            batch_attempted = true;
+            VkCommandBufferAllocateInfo allocate{};
+            allocate.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            allocate.commandPool        = impl->command_pool;
+            allocate.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocate.commandBufferCount = 1U;
+            batch                       = VK_NULL_HANDLE;
+            VkCommandBufferBeginInfo begin{};
+            begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            if (impl->device_table.vkAllocateCommandBuffers(impl->device, &allocate, &batch) != VK_SUCCESS) {
+                batch = VK_NULL_HANDLE;
+                reportDiagnostic(DiagnosticSeverity::Error,
+                                 DiagnosticCategory::SubmissionFailed,
+                                 u8"vk: the preparation's transfer batch could not be recorded; the next frame uploads the "
+                                 u8"content again");
+            }
+            else if (impl->device_table.vkBeginCommandBuffer(batch, &begin) != VK_SUCCESS) {
+                impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &batch);
+                batch = VK_NULL_HANDLE;
+                reportDiagnostic(DiagnosticSeverity::Error,
+                                 DiagnosticCategory::SubmissionFailed,
+                                 u8"vk: the preparation's transfer batch could not be recorded; the next frame uploads the "
+                                 u8"content again");
+            }
+        }
+
         for (const DrawDescription& description : draw.draws) {
             vn::String                       why;
             vn::graphics::DiagnosticCategory category = DiagnosticCategory::ContentSkipped;
@@ -1608,14 +1648,66 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
                 reportDiagnostic(DiagnosticSeverity::Warning, category, why);
             }
         }
+
+        // THE PASS' OWN UPLOADS, recorded into the batch: exactly the copies the frame would record before this pass'
+        // render pass begins (see ContentDraw::preparePass), so the frame then finds them resident and records
+        // nothing. A pass whose batch could not be opened is still prepared; the next frame uploads it.
+        if (batch != VK_NULL_HANDLE) {
+            impl->content.preparePass(batch, draw.draws);
+        }
+    }
+
+    // THE BATCH RUNS BEFORE THIS CALL ANSWERS: one submit on the device's frame fence, no semaphore (nothing was
+    // acquired, so the queue has nothing to wait for), one wait, and the staging buffers go as soon as the copies
+    // have run - the release the frame path reaches through ContentDraw::endFrame -> ContentImages::releaseFrame.
+    if (batch != VK_NULL_HANDLE) {
+        if (impl->device_table.vkEndCommandBuffer(batch) != VK_SUCCESS) {
+            // THE BUFFER NEVER CLOSED, so whatever it recorded never ran - and it cannot be recorded again: the copies
+            // were already recorded against entries this call made resident. Said plainly, because "the next frame
+            // uploads it again" would be a promise the revision check does not keep.
+            reportDiagnostic(DiagnosticSeverity::Error,
+                             DiagnosticCategory::SubmissionFailed,
+                             u8"vk: the preparation's transfer batch could not be closed; the copies it recorded never ran");
+            impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &batch);
+        }
+        else if (!impl->content.images().hasPendingUploads()) {
+            // ZERO WORK, ZERO SUBMIT: an unchanged frame records no copy, so there is nothing to run and nothing is
+            // submitted - the property a second prepare of the same frame is observed by (see ADR-2026-11-14).
+            impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &batch);
+        }
+        else {
+            VkSubmitInfo submit{};
+            submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit.commandBufferCount = 1U;
+            submit.pCommandBuffers    = &batch;
+            const bool submitted = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion) == VK_SUCCESS;
+            const bool completed = submitted &&
+                                   impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+            (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
+            impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &batch);
+            if (completed) {
+                impl->content.images().releaseUploadStaging();
+            }
+            else {
+                // The staging buffers stay: the next frame's releaseFrame lets go of them once its own queue is idle.
+                // They cannot buy a re-upload, though - the entries were already made resident with what the copies were
+                // going to write - so this says what actually happened rather than promising a retry: a queue that
+                // refuses a submit is a device-level failure (out of memory or lost device), not a content problem.
+                reportDiagnostic(DiagnosticSeverity::Error,
+                                 DiagnosticCategory::SubmissionFailed,
+                                 u8"vk: the preparation's transfer batch did not run (the queue refused it); the images it "
+                                 u8"was going to fill were never written");
+            }
+        }
     }
 
     // WHAT THIS CALL BUILT, not what is resident: a second prepare of an unchanged frame answers zeros (see
-    // PrepareReport). `sets` stays 0 because no descriptor set outlives a frame here.
+    // PrepareReport). `uploads` counts BOTH kinds FrameUploads reports - the streams this call uploaded and the
+    // textures it made resident (see ADR-2026-11-14). `sets` stays 0 because no descriptor set outlives a frame here.
     const Impl::ContentNumbers after = impl->contentNumbers();
     report.halves    = after.program_builds - before.program_builds;
     report.pipelines = after.pipeline_builds - before.pipeline_builds;
-    report.uploads   = after.stream_builds - before.stream_builds;
+    report.uploads   = (after.stream_builds - before.stream_builds) + (after.texture_builds - before.texture_builds);
     return report;
 }
 

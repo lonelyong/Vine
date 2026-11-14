@@ -551,10 +551,33 @@ void ContentImages::releaseFrame() noexcept
         impl->destroyEntry(entry);
     }
     impl->retired.clear();
+    // The frame's command buffer has completed (the device waited on its fence), so the copies it recorded are done
+    // and the buffers they read may go - the same release the prepare path performs right after ITS fence wait.
+    releaseUploadStaging();
+}
+
+void ContentImages::releaseUploadStaging() noexcept
+{
+    if (!impl || impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
+        return;
+    }
     for (auto& [buffer, memory] : impl->staging) {
         impl->destroyBuffer(buffer, memory);
     }
     impl->staging.clear();
+    for (auto& [buffer, memory] : impl->fallback_staging) {
+        impl->destroyBuffer(buffer, memory);
+    }
+    impl->fallback_staging.clear();
+}
+
+bool ContentImages::hasPendingUploads() const noexcept
+{
+    if (!impl) {
+        return false;
+    }
+    // THE STAGING BUFFERS ARE THE LEDGER: they exist from "a copy was recorded" until "that copy completed".
+    return !impl->staging.empty() || !impl->fallback_staging.empty();
 }
 
 VkImageView ContentImages::viewFor(const vn::graphics::Texture& texture, const VkCommandBuffer commands, vn::String* why)

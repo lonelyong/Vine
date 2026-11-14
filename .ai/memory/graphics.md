@@ -578,6 +578,29 @@
   与 ADR-2026-11-13（保留 ≤ `minimumStagingBufferSize` 的块）矛盾；改成"4 KiB 上传的块被保留（release 返回 0）+
   32 MiB 一次性块被还掉"。
 
+## 2026-11-14 —— `gfx_backend_vk` M13：预热自己提交“只含传输”的一批（框架优先）
+
+- **决策先写**：`../decisions/ADR-2026-11-14-prepare-may-submit-transfers.md`。`prepareFrame` 仍然**不提交帧**
+  （不 acquire、不 present、不动 `FrameProgress::submitted` / `presented`），但可以提交**一个只含传输**的命令缓冲：
+  拷贝 + 布局转换，没有 render pass、没有 draw。
+- **改了契约文字（不是只改后端）**：`RenderFrameExecutor::prepareFrame` 的 “must not submit” 拆成
+  “不提交帧 / 可以提交一个只含传输的批”；`PrepareReport::Outcome::Prepared` 与 `uploads` 的注释跟着改
+  （`uploads` 现在数**流 + 纹理**两类，与 `FrameUploads` 同义）；设计文档 §3.7 / §6.11 `P11` / §7 `D13` / §8 `T35`；
+  `.ai/README.md` 索引 +1。
+- **vk 实现**（`Device::prepareFrame`）：懒分配一个命令缓冲（第一个可服务的 pass 才分配），每个 pass 在
+  `content.prepare(...)` 之后调 `ContentDraw::preparePass(batch, draw.draws)`（1×1 stand-in + 材质纹理），
+  循环结束后 `hasPendingUploads()` 为真才 `vkQueueSubmit` + `vkWaitForFences`（复用 `impl->completion`），
+  成功即 `ContentImages::releaseUploadStaging()`。**零工作零提交**：第二次预热同一帧不提交任何东西。
+- **`ContentImages` 的两个小口**：`releaseUploadStaging()`（只放 staging，`releaseFrame()` 现在复用它）与
+  `hasPendingUploads()`（staging 非空 == 有一批拷贝已记录但没等过——这就是“要不要提交”的答案）。
+- **失败路径老实说**：submit / fence 失败是设备级失败（OOM / lost），条目已经驻留而图像没写过，所以只报
+  `SubmissionFailed`，**不**承诺“下一帧重传”（revision 没动就不会重传）。
+- **测试**：`VkPrepareUploadTest` 2 例（预热报 3 次上传 = 2 流 + 1 纹理，随后帧的 `stream_uploads` /
+  `texture_uploads` 全 0 且像素是纹理色；第二次预热的 `uploads` / `halves` / `pipelines` 全 0 且帧水位不动）；
+  `VkResidencyTest.PrepareBuildsWhatTheFrameNeedsAndSubmitsNothing` 原样通过（它现在同时钉住“传输批不算帧”）；
+  `test_vk` 59 例（58 过 1 跳过，validation 静默）、`test_vsg` 519 例（516 过 3 跳过）。
+- **`vsg` 仍把上传留给首帧**（它的拷贝在帧的传输任务里，不在帧的命令缓冲里）⇒ backlog **T39**。
+
 ## 2026-11-14 —— `gfx_backend_vk` M12：暴露边界的逃生门与门禁
 
 - **形状**（`../research/graphics-2026-11-13-vk-exposure-boundary.md` §4.5）：`support/Handles.hpp` 只声明

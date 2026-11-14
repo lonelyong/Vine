@@ -21,10 +21,14 @@ VN_BACKEND_VK_NS_BEGIN
  * - WHAT IT OWNS. A `VkImage` + `VkDeviceMemory` + `VkImageView` per texture REVISION (keyed by the texture's address,
  *   with a strong reference held so that address cannot be recycled by a later object), a `VkSampler` per distinct
  *   `Sampler` value, and the 1x1 white image every absent material slot is bound to.
- * - THE UPLOAD IS RECORDED, NOT SUBMITTED. A texture is copied on the frame's own command buffer the first time a
- *   draw samples it (or when its revision moved), because this backend records and submits one frame synchronously -
- *   there is no upload queue to hand it to. Staging buffers therefore stay alive until @ref releaseFrame, which the
- *   device calls after the queue is idle; the same call destroys the images a revision replaced.
+ * - THE UPLOAD IS RECORDED, NOT SUBMITTED BY THIS CACHE. A texture is copied on a command buffer the CALLER records
+ *   the first time a draw samples it (or when its revision moved), because this backend records and submits one frame
+ *   synchronously - there is no upload queue to hand it to. Two callers exist, and they are the same copies: the
+ *   frame's own command buffer (recorded outside each render pass, see `ContentDraw::preparePass`), and the ONE
+ *   transfer-only command buffer a warm-up submits of its own (see `RenderFrameExecutor::prepareFrame`). Staging
+ *   buffers therefore stay alive until the command buffer that recorded them has completed: the frame path lets go
+ *   through @ref releaseFrame after the queue is idle, the prepare path through @ref releaseUploadStaging right after
+ *   its own fence wait. @ref releaseFrame also destroys the images a revision replaced.
  * - WHAT "ABSENT" MEANS. A slot whose texture is null, empty or incomplete is not uploaded; the caller binds
  *   @ref fallbackView with @ref fallbackSampler and clears the material's slot bit, so the shader never reads a
  *   binding nobody wrote (the slot bits are the shading's own switch - see ShaderAbi.hpp).
@@ -66,6 +70,35 @@ class VN_BACKEND_VK_API ContentImages final {
      *   texture has finished" true. Until then the objects stay alive even though nothing caches them any more.
      */
     void releaseFrame() noexcept;
+
+    /**
+     * @brief Destroys the staging buffers of every upload recorded SO FAR, leaving the images they fed resident.
+     *
+     * @details
+     * - WHAT IT RELEASES: `staging` (the material textures) and `fallback_staging` (the 1x1 stand-in), and nothing
+     *   else - the images stay, because they are what the copies were for.
+     * - WHY THE SPLIT FROM @ref releaseFrame: the frame path and the prepare path record the same copies on different
+     *   command buffers, so each has to let go at the moment ITS buffer completed. A warm-up calls this right after
+     *   its own fence wait; a frame reaches it through @ref releaseFrame, after the queue is idle.
+     *
+     * @warning
+     * - Precondition: the command buffer that recorded those copies has completed. Destroying a staging buffer a
+     *   pending copy still reads is a use-after-free the driver cannot catch.
+     */
+    void releaseUploadStaging() noexcept;
+
+    /**
+     * @brief Gets whether a copy has been recorded into a command buffer that has not been waited for yet.
+     *
+     * @details
+     * - THE MECHANISM IS THE STAGING BUFFERS' OWN LIFETIME: they are created when a copy is recorded and destroyed
+     *   when that copy completed, so "one is alive" and "an upload is in flight" are the same fact. This is what
+     *   lets a caller answer "is there anything to submit?" without opening a command buffer first (see
+     *   `RenderFrameExecutor::prepareFrame`: no work means no submit).
+     *
+     * @return true when a recorded upload has not been released yet.
+     */
+    [[nodiscard]] bool hasPendingUploads() const noexcept;
 
     /**
      * @brief What this cache has built, what it let go and what it holds now.

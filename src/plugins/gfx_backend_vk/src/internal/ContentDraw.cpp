@@ -2031,8 +2031,8 @@ void ContentDraw::prepare(const vn::graphics::backend::RenderPassCompatibility& 
         return;
     }
 
-    // NO FALLBACK IMAGE, NO DESCRIPTOR SET, NO COMMAND: a warm-up is programs, streams and pipelines only - the
-    // 1x1 stand-in and the texture copies need a command buffer, which prepare() does not open.
+    // NO FALLBACK IMAGE, NO DESCRIPTOR SET: a warm-up builds programs, streams and pipelines, and the 1x1 stand-in
+    // and the texture copies are recorded afterwards by preparePass, on the transfer batch prepare() opens for them.
     for (const vn::graphics::RenderCommand& command : *draw.commands) {
         Impl::CommandPlan                plan;
         vn::String                       failure;

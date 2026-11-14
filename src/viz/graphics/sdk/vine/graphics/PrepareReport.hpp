@@ -25,8 +25,10 @@ VN_GRAPHICS_NS_BEGIN
  *   are what had to be BUILT to serve it, and are the evidence of what the backend actually did. A frame with fifty
  *   drawables under one identity asks fifty draws and builds one pipeline, so neither number is derivable from the
  *   other.
- * - NOTHING HERE IS DEVICE-BOUND: the counts describe compiled values (a pipeline layer, a descriptor set, a stream
- *   bind), which is what lets `prepare()` report them without the frame having been recorded or submitted.
+ * - THE COUNTS DESCRIBE WHAT WAS BUILT, not what a frame did: a pipeline layer, a descriptor set, a stream bind, a
+ *   texture image. That is what lets `prepare()` report them without the frame having been recorded or submitted;
+ *   a texture image is the one kind whose bytes only land once a transfer batch has run, and it is counted here
+ *   because it was THIS call that made it resident (see ADR-2026-11-14).
  *
  * @note
  * - A backend that keeps nothing compiled (an offline renderer, a test double) answers #Outcome::Unsupported rather
@@ -37,7 +39,8 @@ struct VN_GRAPHICS_API PrepareReport {
     /** @brief What became of one prepare request. */
     enum class Outcome : std::uint8_t
     {
-        Prepared,    // A backend walked the frame and built what it needed, without submitting it.
+        Prepared,    // A backend walked the frame and built what it needed, without submitting the FRAME (its own
+                     // transfer batch is not a frame; see RenderFrameExecutor::prepareFrame).
         NotReady,    // Nothing was prepared: the engine cannot drive a frame (see reason).
         Refused,     // The backend would not prepare it (a frame is open, or its target is not one it serves).
         Unsupported, // The backend keeps nothing compiled, so there is nothing to prepare.
@@ -49,7 +52,7 @@ struct VN_GRAPHICS_API PrepareReport {
     std::uint32_t draws{ 0 };                   // Drawing calls those passes issue (what was asked, not what was built).
     std::uint64_t halves{ 0 };                  // Compiled halves THIS call built (0 = already there).
     std::uint64_t sets{ 0 };                    // Declared sets THIS call built.
-    std::uint64_t uploads{ 0 };                 // Stream uploads THIS call built.
+    std::uint64_t uploads{ 0 };                 // Uploads THIS call built - streams and textures (the kinds FrameUploads reports).
     std::uint64_t pipelines{ 0 };               // Pipeline identities THIS call compiled.
 
     /** @brief Gets whether a backend prepared the frame.

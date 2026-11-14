@@ -1,7 +1,7 @@
 # graphics 帧管线（下一版）
 
 > **状态**：草案 —— `graphics-next` 已采纳（ADR-2026-11-12），按 §9.3 分步替换现役形状；每步的状态见 §3.1。
-> **最后核对**：2026-11-12
+> **最后核对**：2026-11-14
 > **范围**：内容 → 快照 → 派生 → 执行 这四层的形状、身份、寿命与计划语义。不含几何/拾取算法、材质模型、
 > 后端实现细节（`vsg-backend.md`）、线程契约的迁移期现状（`graphics-threading.md`）。
 > **权威来源**：`src/viz/graphics/sdk/vine/graphics/ContentId.hpp`、`sdk/vine/graphics/backend/ResourceTable.hpp`、
@@ -115,7 +115,7 @@
 | 驻留 ⟺ 被 Session 已接受或在飞的 Snapshot 引用它的 `(id, revision)`；宿主自持快照不钉住 | 精确规则，不看时间窗（`I4` / `R22`） | `parking` / `kept` 兜底 |
 | 管线缓存键是**值**（program@rev, layout@rev, state, formats, samples） | 可复现、可共享、可单测 | 指针 + variant bits |
 | 行/命令的载荷是**值**：`GeometryDescription` / `MaterialDescription` / `ShaderProgramDescription` + `ContentRef`；灯是 `LightValue` | 记录侧不读活对象，帧 N 画它描述时的那份值（`G1` / `G10`）；每命令省 3 次 `intrusive_ptr` 原子增减 | 活对象读（程序文本 / 材质 α 模式 / `Light` 字段） |
-| 预热是一等入口：`prepare()` 答"需要什么" | 编译卡顿可预算，加载期可全预编译（`R23`） | 录制时才发现要编译 |
+| 预热是一等入口：`prepare()` 答"需要什么" | 编译卡顿可预算，加载期可全预编译（`R23`）；它自己那批只含传输的工作也在这里落地（ADR-2026-11-14） | 录制时才发现要编译、才发现要上传 |
 | 每帧 arena，帧内 arena 外零分配 | 分配上限从"规则"变常数（`R24`） | per-frame `vector` / `shared_ptr` |
 
 ### 2.8 计划是声明
@@ -227,10 +227,16 @@
   `RenderFrameExecutor::prepareFrame(value, present_to)`——一条线、两个动词，不引入新名词；答案是一个值
   （`PrepareReport`：outcome + 走了几 pass / 几个 draw + 这次调用建了几个半片 / 集合 / 上传 / 管线身份）。
   快照进这个输入是 5b-1 的事（已落地）。
-- **约束**（`C3`）：预热在引擎线程；它不提交帧，也不 acquire 交换链图像（见 `P11`）。
-- **要求**（`R23` / `R36`）：预热后录制的帧 `builds` 增量 0；缺可选能力要出现在报告里。
-- **验收**（`T7` / `T10` / `T32` / `T33`）：`builds` 增量断言；`prepare()` 报的键集 = 这一帧实际构建的键集。
+- **约束**（`C3`）：预热在引擎线程；它不提交**帧**，也不 acquire 交换链图像（见 `P11`）。
+  它可以为自己那批**只含传输**的工作（纹理拷贝、1×1 stand-in）记录并提交**一个**命令缓冲，在返回前等它完成——
+  这一批没有帧、没有 render pass、没有 draw、没有 present，`FrameProgress` 的 `submitted` / `presented` 不动
+  （`D13` / `../decisions/ADR-2026-11-14-prepare-may-submit-transfers.md`）。
+- **要求**（`R23` / `R36`）：预热后录制的帧 `builds` 增量 0（含 `FrameUploads` 的流与纹理两类）；缺可选能力要出现在报告里。
+- **验收**（`T7` / `T10` / `T32` / `T33` / `T35`）：`builds` 增量断言；`prepare()` 报的键集 = 这一帧实际构建的键集；
+  报的 `uploads` 覆盖流与纹理两类。
 - **注意**（`P8` / `P11`）：预热是**查询**不是“编译一切”；也**不能**用“跑一帧不提交”实现（见 `P11`）。
+  传输批不是那个被否决形状的变体：它必须是“帧本来会在第一个 render pass 之前记录的那些拷贝”，
+  没有拷贝就没有提交（第二次预热同一帧产生零次提交）。
   **缝**：`drawNeeds(compiled pass, draw)` 是唯一的键构造者——`prepare` 用它建、`ContentPass::record` 用它取，
   两边不可能漂移（`G1`）。
   **落地位置**（3a，2026-11-12）：`src/plugins/gfx_backend_vsg/{include/vine/backend_vsg/internal,src/internal}/DrawNeeds.{hpp,cpp}`
@@ -497,6 +503,9 @@
   `WindowTarget::facts()` 回答（const，不需要 acquire）。3b 的实现在 `VsgBackend::prepareFrame`：它走 `collectFrame`
   + `recordContent`，**从不**调用 `Session::beginFrame()` / `PresentTarget::present()`，帧进度水位（`submitted` /
   `presented`）因此不动——`T33` 断言的正是这两条。
+- **边界**（ADR-2026-11-14）：`P11` 说的是**帧**——`beginFrame` 的 acquire、提交、画进交换链图像、present。
+  预热自己的**只含传输**的一批不走这条规则：它没有帧、没有交换链图像、没有 present，帧进度不动；
+  它与“跑一帧但不提交”的区别是可观测的（`T35` 的 `submitted` / `presented` 断言）。
 
 ## 7. 已否决选项
 
@@ -514,6 +523,7 @@
 | D10 | 只做已落地的身份/寿命层，其余留作提案 | "发布 = 一次指针交换"不成立，镜像/delta/memo 继续在轨 | ADR-2026-11-12 §选项 D |
 | D11 | 用“跑一帧但不提交”实现预热 | 窗口帧的 `beginFrame` acquire 图像：不提交则饥饿，提交则不是预热；画到窗口的 pass 连覆盖都做不到（`P11`） | ADR-2026-11-12 |
 | D12 | 一个引擎驱动多个 Surface（graphics-next F8） | 无消费者（`G8`）；`FrameResult` / `PresentRecord` 刚落地又变 per-surface（`G10`）；appfw 所有权要重写；与架构 D2 一致 | [ADR-2026-11-13](ADR-2026-11-13-one-engine-one-surface.md) |
+| D13 | 给预热加第二个入口（`flushUploads()` / `uploadNow()`） | 两个入口回答同一个问题（“把这一帧要的东西建好”），调用方还得自己知道何时调：复杂度转移到调用方（`G1` / `G7`），今天没有消费者要求把建与传分开（`G8`） | [ADR-2026-11-14](ADR-2026-11-14-prepare-may-submit-transfers.md) |
 
 ## 8. 测试与验收
 
@@ -553,6 +563,7 @@
 | T33 | 预热后录制 `builds` 增量 0，且预热不提交 / 不呈现 | `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing`（`halves().builds` / `sets().builds` / `uploads().uploads` / `inputSetBuilds` / `pool.created` 全 0，`progress->submitted` 不动，像素仍画出）+ `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing`（引擎侧：同一个 value、不执行、不取帧号） | 已实现（2026-11-12） |
 | T34 | 快照源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`（600 帧，transform / opacity / material / placement 编辑，逐项 diff）+ `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould`（绑定后的帧级接缝） | 已实现（2026-11-12） |
 | T36 | 帧结果是那一帧的值 | `RenderEngineTest.TheFrameResultIsThePictureThatWasAnswered`（快照 / 相机 / 计数 / 诊断 / present；发布落在帧间不改已答的帧） | 已实现（2026-11-13） |
+| T35 | 预热的上传批是真上传，而且不是帧 | `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns`（预热报流 2 + 纹理 1；随后 `executeFrame` 的 `stream_uploads` / `texture_uploads` 均 0，像素为纹理色）+ `VkPrepareUploadTest.ASecondPrepareSubmitsNothing`（`uploads == 0`，`progress->submitted` / `presented` 不动） | 已实现（2026-11-14，`vk`；`vsg` 见 backlog `T39`） |
 
 ### 8.1 判死阈值（`K#`）
 

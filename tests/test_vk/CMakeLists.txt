@@ -13,6 +13,7 @@ add_executable(${TEST_NAME}
         HandlesTest.cpp
         MsaaTest.cpp
         OffscreenClearTest.cpp
+        PrepareUploadTest.cpp
         ProbeTest.cpp
         ResidencyTest.cpp
         ShadowTest.cpp

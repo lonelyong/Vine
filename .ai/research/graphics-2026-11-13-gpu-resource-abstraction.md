@@ -194,6 +194,7 @@
 | M10 | 延迟路径：四附件 G-buffer + 全屏 lighting pass | G-buffer 四张附件都被写；lighting 画面照亮；同一帧两后端逐字节相同 · **已落地 2026-11-14**：四附件 RGBA16F + D24 G-buffer 由 `defaultGbufferGeometryProgram()` 写满，SCREEN pass 用 `defaultDeferredLightProgram()` 按 `Pass::inputs` / `DrawDescription::source` 采样四张附件（灯块 set 0 binding 6）；**后端零改动**（M3 的 MRT / 每附件 clear、RGBA16F、M4 的多源 screen draw 已覆盖）；`VkDeferredTest` 2 例、`BackendParityTest` 第 11 例 |
 | M11 | 多采样目标（`RenderTarget::samples`） | 4 采样的画面与单采样同色；`max_samples` 是计数 · **已落地 2026-11-14**：`max_samples` = 受支持计数的最大值（本机 8），请求夹到最近的受支持计数、超限报一次；`TargetImages` 建样本缓冲 + 单采样 resolve 图像，`colors` 从此是画面；depth 同计数但不 resolve（被采样的深度仍单采样）；管线 `rasterizationSamples` 来自形状；`VkMsaaTest` 3 例 |
 | M12 | 暴露边界的逃生门 + 可检查的门禁 | `support/Handles.hpp` 存在且不被 frame path include；`shell/` 零 Vk；`backend/` 零 Vulkan include · **已落地 2026-11-14**：`vkHandles(const RenderDevice&)`（值在 `internal/Handles.hpp`，方向 support → internal）；`scripts/check_vk_exposure.py` + CTest `vk_exposure` 守 V2 / V4 / E1；`VkHandlesTest` 钉生命周期 |
+| M13 | 预热自己提交“只含传输”的一批（框架优先：先改契约再改后端） | 预热之后首帧的 `FrameUploads` 流与纹理都为 0，且预热不是帧（`FrameProgress` 不动）· **已落地 2026-11-14**：ADR-2026-11-14 把 `prepareFrame` 的“不提交”拆成“不提交帧 / 可以提交一个只含传输的批”；`Device::prepareFrame` 懒分配一个命令缓冲、`ContentDraw::preparePass` 记录 1×1 stand-in 与材质纹理、自己的 fence 等待后 `releaseUploadStaging()`；`PrepareReport::uploads` 覆盖两类；`VkPrepareUploadTest` 2 例。`vsg` 的同一缺口留 backlog `T39` |
 
 ### 8.4 成本与风险
 
