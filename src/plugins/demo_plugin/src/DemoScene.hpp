@@ -2,6 +2,7 @@
 
 #include <array>
 #include <memory>
+#include <vector>
 
 #include <vine/async/Task.hpp>
 #include <vine/graphics/Group.hpp>
@@ -168,6 +169,34 @@ class DemoScene {
      * @return The overlay scene the pipeline draws after the path's own result (never null).
      */
     vn::intrusive_ptr<vn::graphics::Scene> buildScene(bool deferred);
+
+    /**
+     * @brief Dev switch (`VN_BENCH_FRAMES`): drives that many frames and logs what they cost.
+     *
+     * @details
+     * - The frames are the HOST's own (`RenderControl::renderFrame`), back to back on a zero-interval timer, so
+     *   the number is a real host's frame cost - engine half, backend recording and present included - rather
+     *   than a backend-only stopwatch.
+     * - `VN_BENCH_WARMUP=1` runs `RenderEngine::prepare()` twice first and logs what it built: the first call is
+     *   the load-time batch a host gates a load on, the second is the property that call exists for (an unchanged
+     *   frame builds nothing).
+     * - Called once the assets are installed, so the first measured frame is the one that uploads them and the
+     *   rest are steady.
+     *
+     * @note
+     * - A dev switch living beside the demo's other `VN_*` switches, not a product mode: it draws nothing of its
+     *   own and reports one line per fact (the evidence a performance baseline is taken from).
+     *
+     * @return true when the switch drove the frames; false when it is off and the caller still owes its own frame.
+     */
+    bool runFrameBenchmark();
+
+    /**
+     * @brief Logs the result of runFrameBenchmark(): first frame, steady frames, and the last frame's counters.
+     *
+     * @param millis Wall time of each driven frame, in order (milliseconds).
+     */
+    void reportFrameBenchmark(const std::vector<double>& millis) const;
 
     /// Render control the demo builds into (owned by the shell's dock layout).
     vn::appfw::gui::RenderControl* control_;

@@ -534,6 +534,35 @@
   钉“索引说有就留、索引说没有就 park”。backlog `T28` 已删（收口项，不再是触发项）。
 - **计数**：`test_vsg` 544 / `test_graphics` 554 / ctest 30/30 / TSan 554 用例 0 warning。
 
+## 2026-11-14 —— `gfx_backend_vk` 性能基线（真实宿主 `Vine --open demo`，lavapipe）
+
+- **量法（新 dev switch，demo 插件）**：`VN_BENCH_FRAMES=N` 在资产装好后用零间隔 `QTimer` 连打 N 次
+  `RenderControl::renderFrame()`（宿主自己的调用：publish + 引擎半段 + 后端记录/提交/呈现），逐次记墙钟；
+  `VN_BENCH_WARMUP=1` 先 `SceneView::publishContent()` 再 `RenderEngine::prepare()` 两次。日志三行
+  （`bench warm-up` / `bench first frames` / `bench`）+ 最后一帧计数的 `bench last frame`。
+  **量法要点**：帧是**异步移交**的（`frame()` 等的是上一帧的引擎半段）⇒ 第 1 个读数 ≈ 0，首帧成本落在
+  `first frames` 的第 2 个数；steady 用中位/p95（均值被上传帧拉偏）。对照 = 把 `gfx_backend_vk.so` 移出
+  `plugins/vine` 再跑同一命令（**记得移回**；本工具的 `trap EXIT` 不生效，要手工 `mv` 回来）。
+- **Release ×3（本机 WSL2 + lavapipe，`VK_ICD_FILENAMES=lvp_icd.json`，Qt xcb，60 帧）**：
+
+  | 项 | vk | vsg |
+  |---|---|---|
+  | 会话起来 / 首幅画面 | 40 / 219 ms | 42 / 229 ms |
+  | 启动期应用线程最长占用（`VN_BOOT_TIMING`） | 316 ms | 336 ms |
+  | 预热批（ms / passes / draws / halves / sets / uploads / pipelines） | **16.1–22.3** / 8 / 6 / 2 / 0 / 5 / 2 | **9.7–11.3** / 6 / 6 / 2 / 4 / 5 / 2 |
+  | 稳态帧 median（三次） / p95 | **7.06, 7.44, 6.93** / 7.95, 8.90, 7.94 ms | **5.63, 5.60, 5.63** / 6.52, 6.64, 6.26 ms |
+
+  ⇒ vk 稳态 ≈ **+25–32%**，预热批 ≈ 1.8×，启动两段几乎相同（vk 略快）。
+- **预热批买到了什么（vk，有/无预热交替 ×3，40 帧）**：首帧 12.2–17.3 ms vs **30.2–35.8 ms**（那 5 个上传：
+  2 流 + 3 纹理）⇒ 首帧约 −18 ms；代价是加载期 16–23 ms；稳态中位数在噪声内不可分（两种都落在 7.2–9.4）。
+  第二次预热 0.08–0.41 ms 且全零 = “预热后帧不再建东西”的契约。
+- **两条实测发现（已登记 backlog）**：①`PrepareReport.passes` 同一帧 vk 8 / vsg 6 / 录制计数 7 —— 三套口径，
+  vk 数 `FrameDescription` 里所有带 draws 的条目（含录制器会丢的），vsg 数编译计划（T41）；
+  ②vk **每 draw 每帧**分配 content/draw/screen 描述符集（无 vsg 的跨帧声明集缓存）⇒ 预热 `sets` 恒 0、
+  首帧仍建集，可能是稳态 +25% 的一部分（未归因，T42）。
+- **边界**：lavapipe 是软件光栅器，绝对值只用于**同机对拍**与回归，不是 GPU 结论；Win32 与真 GPU 未测。
+  60 帧窗口里混有演示的 PiP/覆盖层定时器与一次资产上传帧。
+
 ## 2026-11-13 —— `gfx_backend_vk` M9：阴影贴图
 
 - **形状**：`TargetImages` 接受**深度-only** 目标 —— `built()` 不再要求有颜色视图，`createRenderPass` 在 0 个颜色附件时

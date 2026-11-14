@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -16,6 +17,7 @@
 #include <vector>
 
 #include <QTimer>
+#include <QWidget>
 
 #include <vine/async/DetachedTask.hpp>
 #include <vine/async/Sleep.hpp>
@@ -929,6 +931,23 @@ void addDemoPass(vn::graphics::RenderEngine& engine,
     (void)engine.applyPlan(vn::graphics::Plan{ { desc } }, owner);
 }
 
+/**
+ * @brief Spells one warm-up outcome for the benchmark line (see DemoScene::runFrameBenchmark).
+ *
+ * @param outcome The outcome a `prepare()` answered.
+ * @return A stable lower-case name; "unknown" is unreachable today and says so rather than lying.
+ */
+const char* prepareOutcomeName(vn::graphics::PrepareReport::Outcome outcome)
+{
+    switch (outcome) {
+        case vn::graphics::PrepareReport::Outcome::Prepared: return "prepared";
+        case vn::graphics::PrepareReport::Outcome::NotReady: return "not ready";
+        case vn::graphics::PrepareReport::Outcome::Refused: return "refused";
+        case vn::graphics::PrepareReport::Outcome::Unsupported: return "unsupported";
+    }
+    return "unknown";
+}
+
 } // namespace
 
 /**
@@ -1762,6 +1781,120 @@ void DemoScene::logFrameTable() const
     VN_LOGI("[demo] {}", control_->engine()->frameTable().describe().as_std_str());
 }
 
+bool DemoScene::runFrameBenchmark()
+{
+    const char* const frames_text = std::getenv("VN_BENCH_FRAMES");
+    if (frames_text == nullptr || control_ == nullptr || control_->engine() == nullptr) {
+        return false;
+    }
+    const int frames = std::atoi(frames_text);
+    if (frames <= 0) {
+        return false;
+    }
+
+    auto* const engine = control_->engine();
+
+    // THE WARM-UP IS A QUERY WITH A SIDE EFFECT (see PrepareReport): a production host is expected to gate a load
+    // on it, so the load-time budget includes that batch. Called TWICE on purpose - the second answer is the
+    // contract's own property (an unchanged frame builds nothing).
+    if (std::getenv("VN_BENCH_WARMUP") != nullptr) {
+        // A FRAME DRAWS A PUBLICATION, and the host's publish step normally rides on RenderControl::renderFrame
+        // once per frame. A load path that warms up BEFORE its first frame has to publish first, or the warm-up
+        // warms the picture that was already on screen (measured 2026-11-14: every build count read zero).
+        if (auto* const view = control_->view(); view != nullptr) {
+            view->publishContent();
+        }
+        const auto timed_prepare = [engine] {
+            const auto began  = std::chrono::steady_clock::now();
+            const auto report = engine->prepare();
+            const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began).count();
+            return std::pair{ report, micros };
+        };
+        const auto [first, first_us] = timed_prepare();
+        const auto [again, again_us] = timed_prepare();
+        VN_LOGI("[demo] bench warm-up: {} in {:.2f} ms - {} pass(es), {} draw(s), built halves {}, sets {}, uploads {}, "
+                "pipelines {}",
+                prepareOutcomeName(first.outcome), static_cast<double>(first_us) / 1000.0, first.passes, first.draws,
+                first.halves, first.sets, first.uploads, first.pipelines);
+        VN_LOGI("[demo] bench warm-up again: {} in {:.2f} ms - built halves {}, sets {}, uploads {}, pipelines {}",
+                prepareOutcomeName(again.outcome), static_cast<double>(again_us) / 1000.0, again.halves, again.sets,
+                again.uploads, again.pipelines);
+    }
+
+    // ONE TICK IS ONE HOST FRAME. The zero-interval timer keeps the event loop turning between frames - a plain
+    // loop would starve Qt, and with frame threading on the engine half a frame waits for would never finish.
+    struct Bench final : std::enable_shared_from_this<Bench>
+    {
+        DemoScene*          self   = nullptr;
+        int                 frames = 0;
+        std::vector<double> millis;
+
+        void tick()
+        {
+            const auto began = std::chrono::steady_clock::now();
+            self->control_->renderFrame();
+            millis.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - began).count());
+            if (static_cast<int>(millis.size()) >= frames) {
+                self->reportFrameBenchmark(millis);
+                return;
+            }
+            const auto keep = shared_from_this();
+            QTimer::singleShot(0, self->control_->impl<QWidget>(), [keep] { keep->tick(); });
+        }
+    };
+
+    auto bench    = std::make_shared<Bench>();
+    bench->self   = this;
+    bench->frames = frames;
+    bench->millis.reserve(static_cast<std::size_t>(frames));
+    VN_LOGI("[demo] bench: driving {} frame(s) from engine frame {}", frames, engine->frameNumber());
+    bench->tick();
+    return true;
+}
+
+void DemoScene::reportFrameBenchmark(const std::vector<double>& millis) const
+{
+    auto* const engine = control_ != nullptr ? control_->engine() : nullptr;
+    if (engine == nullptr || millis.empty()) {
+        return;
+    }
+
+    // STEADY IS EVERYTHING AFTER THE FIRST FRAME: the first one is the load's own frame - it (or, with a warm-up,
+    // the warm-up in front of it) is where the assets just installed get uploaded - so it belongs to the load-time
+    // budget, not to the frame-rate one.
+    std::vector<double> steady(millis.begin() + 1, millis.end());
+    std::sort(steady.begin(), steady.end());
+    const auto percentile = [&steady](double fraction) {
+        return steady[static_cast<std::size_t>(fraction * static_cast<double>(steady.size() - 1))];
+    };
+    double steady_sum = 0.0;
+    for (const double value : steady) {
+        steady_sum += value;
+    }
+    const double steady_mean = steady.empty() ? 0.0 : steady_sum / static_cast<double>(steady.size());
+
+    const auto report   = engine->frameReport();
+    const auto passes   = report.counters ? report.counters->passes : 0;
+    const auto draws    = report.counters ? report.counters->draws : 0;
+    const auto streams  = report.uploads ? report.uploads->stream_uploads : 0;
+    const auto textures = report.uploads ? report.uploads->texture_uploads : 0;
+
+    // THE FIRST FRAMES SAY WHAT THE LOAD LEFT FOR THEM: with frame threading on, call i waits for frame i-1's engine
+    // half, so the frame that pays a load's uploads is the one READ at index 1 (index 0 is the hand-off itself).
+    const auto frame_time = [&millis](std::size_t index) {
+        return index < millis.size() ? millis[index] : 0.0;
+    };
+    VN_LOGI("[demo] bench first frames: {:.2f}, {:.2f}, {:.2f} ms", frame_time(0), frame_time(1), frame_time(2));
+
+    VN_LOGI("[demo] bench: {} frame(s), engine now {} - first {:.2f} ms; steady mean {:.2f}, median {:.2f}, p95 {:.2f}, "
+            "max {:.2f} ms",
+            millis.size(), engine->frameNumber(), millis.front(), steady_mean,
+            steady.empty() ? 0.0 : percentile(0.5), steady.empty() ? 0.0 : percentile(0.95),
+            steady.empty() ? 0.0 : steady.back());
+    VN_LOGI("[demo] bench last frame: passes {}, draws {}, stream uploads {}, texture uploads {}", passes, draws, streams,
+            textures);
+}
+
 void DemoScene::installContent(const DemoCubeImages& images)
 {
     using vn::math::Vec3d;
@@ -1794,7 +1927,13 @@ void DemoScene::installContent(const DemoCubeImages& images)
     // moving the mouse, a resize). That is exactly what a LATE install hits: these maps arrive ~1 s after the
     // document is on screen, long after the layout/show frame that drew the skeleton (2026-09-28: reported as "the
     // box shows, the sky does not"). Same thread as the install, so nothing else has to be arranged.
-    control_->renderFrame();
+    //
+    // Dev switch: VN_BENCH_FRAMES drives the frames a performance baseline is taken from (see runFrameBenchmark).
+    // It runs BEFORE the frame below so its warm-up sees the maps these assets just installed (a frame already drawn
+    // would have uploaded them); with the switch off, that one frame is this call's job.
+    if (!runFrameBenchmark()) {
+        control_->renderFrame();
+    }
 }
 
 } // namespace vn::demo
