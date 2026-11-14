@@ -358,6 +358,11 @@ class VN_BACKEND_VK_API ContentDraw final {
      *   own program description, compiled against the full-screen ABI (`vn_uv` at location 0). The source's colour
      *   attachments are bound at set 0 bindings 0..N-1 with the fallback sampler, and the draw's lights at binding 6
      *   (the full-screen deferred program reads them there).
+     * - SET 0 ALSO OFFERS THE ENGINE'S SHADOW PAIR (binding 7 the map, 8 `VineShadowBlock`), because the engine's
+     *   shadowed deferred-lighting program declares both unconditionally. When the pass resolved a readable map (see
+     *   ShadowSource) the REAL map and a block packed for this call are bound - a screen pass that shades is exactly
+     *   where the sun's shadow has to arrive; with no map the white stand-in and the zeroed block are bound, which is
+     *   the engine's own "no shadow reaches this pass".
      * - The pass' state selects the pipeline the same way a content draw's does (reverse-Z, culling, blend); a
      *   full-screen draw writes its rectangle, and a multi-attachment target never blends (the content rule).
      * - The source's images must already be in `SHADER_READ_ONLY_OPTIMAL`: the device records that transition before
@@ -372,6 +377,7 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param draw              The screen draw (its fragment program and camera are read; borrowed).
      * @param pass              The pass drawing it (state and viewport; borrowed).
      * @param source            The source target's colour images/views (see ScreenSource).
+     * @param shadow            The map this pass resolved (see ShadowSource), or an empty one for none.
      * @param why               Receives the reason when the draw was skipped (empty when it was recorded).
      * @param category          Receives the category of that reason, or null to ignore.
      * @return 1 when the full-screen draw was recorded, 0 otherwise.
@@ -385,6 +391,7 @@ class VN_BACKEND_VK_API ContentDraw final {
                                const vn::graphics::DrawDescription&       draw,
                                const vn::graphics::PassDraw&              pass,
                                ScreenSource                               source,
+                               ShadowSource                               shadow,
                                vn::String*                                why,
                                vn::graphics::DiagnosticCategory*          category = nullptr);
 

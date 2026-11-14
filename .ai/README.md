@@ -231,7 +231,7 @@
 - `robotics-kinematics.md` —— Robotics kinematics 要点。
 - `robotics-proximity.md` —— Robotics proximity 要点。
 
-## bugs/ —— Bug 记录（32）
+## bugs/ —— Bug 记录（33）
 
 现象 / 根因 / 状态 / 涉及文件 / 验证，一 bug 一文件；已修复记录保留历史标记，未修复项标明状态。
 
@@ -269,5 +269,7 @@
   缺失）、链的尺寸只能由 demo 自己补 resize；修复后视图一处维护。
 - `vk-screen-draw-inherits-pass-depth.md` —— vk 的全屏 draw 继承 pass 的 `TestAndWrite` 深度策略，对带深度/借用
   深度的目标整块被丢弃（窗口与 deferred composite 全黑、零 VUID）；全屏调用恒 `Disabled` 并补了回归用例。
+- `vk-screen-pass-shaded-without-the-map.md` —— vk 的全屏 set 恒绑阴影的白 stand-in/零块：延迟光照程序拿不到
+  真实 shadow map（前向有阴影、延迟没有、零诊断）；screen 路径改用 pass 解析的 `ShadowSource` 并补了回归用例。
 
 约定：`memory/` 保持简短要点式；详细设计放 `design/`；bug 一条一文件。

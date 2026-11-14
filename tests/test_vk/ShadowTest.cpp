@@ -72,6 +72,8 @@ using vn::graphics::RenderBackendRegistry;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
+using vn::graphics::ShaderStage;
+using vn::graphics::ShaderStageType;
 using vn::intrusive_ptr;
 
 namespace
@@ -390,6 +392,119 @@ TEST(VkShadowTest, ADeclaredMapThatWasNeverDrawnShadesNothingInsteadOfReadingGar
     const std::vector<std::uint8_t> none = runAndRead(*backend, shadowFrame(control, /*declare*/ false, /*casting*/ true), control.target.get());
 
     EXPECT_EQ(unbuilt, none) << "a declared map with no producer changed the picture: shading read an image nobody wrote";
+
+    backend->shutdown();
+}
+
+TEST(VkShadowTest, AScreenPassShadesWithTheMapItResolved)
+{
+    // THE FULL-SCREEN HALF OF THE SAME ABI (2026-11-14): the engine's shadowed deferred-lighting program is a SCREEN
+    // pass, and a screen pass is where the sun's shadow has to arrive. The set's binding 7 must therefore carry the
+    // map the pass RESOLVED - not the white stand-in the full-screen set offers when there is none. The app found
+    // this the hard way: the deferred demo had no shadow on vk while the content path's shadow worked.
+    //
+    // The program below samples the map directly and writes its depth, so "which image arrived at binding 7" is a
+    // number: the ground's depth over the centre, the caster's over the strip it covers, and 1.0 (the stand-in's
+    // white) if the real map never got bound.
+    constexpr const char8_t* kScreenVertex = u8R"(
+#version 450
+void main()
+{
+    gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+}
+)";
+    constexpr const char8_t* kMapReadFragment = u8R"(
+#version 450
+layout(location = 0) in vec2 vn_uv;
+layout(binding = 7) uniform sampler2D vn_shadow_map;
+layout(location = 0) out vec4 out_color;
+void main()
+{
+    out_color = vec4(vec3(texture(vn_shadow_map, vn_uv).r), 1.0);
+}
+)";
+
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    Scene scene = makeScene();
+    ASSERT_NE(scene.program, nullptr);
+
+    auto read_program = intrusive_ptr<ShaderProgram>(new ShaderProgram());
+    read_program->setName(u8"vk_shadow_read");
+    read_program->addStage(vn::graphics::ShaderStage{ vn::graphics::ShaderStageType::Vertex, String(kScreenVertex), String(u8"main") });
+    read_program->addStage(vn::graphics::ShaderStage{ vn::graphics::ShaderStageType::Fragment, String(kMapReadFragment), String(u8"main") });
+
+    // The picture: casters into the map (the same first pass every case here builds), then a source target that only
+    // has to EXIST (the full-screen ABI needs a source; this program does not sample it), then the screen pass itself.
+    const intrusive_ptr<RenderTarget> destination = makeColorTarget();
+    const intrusive_ptr<RenderTarget> source      = makeColorTarget();
+
+    // The map's content is stated directly, so the sampled numbers are unambiguous: a strip at z = 0.5 covers the
+    // LEFT half and the clear leaves the right half at 0. Reverse-Z's GREATER keeps the strip's larger depth.
+    const intrusive_ptr<Geometry> strip = makeQuad(-1.0F, 0.0F, 0.5F);
+    std::vector<RenderCommand>    casters;
+    casters.push_back(commandOf(strip, scene.program, scene.material));
+    const auto caster_list = std::make_shared<const std::vector<RenderCommand>>(std::move(casters));
+
+    FrameDescription frame;
+
+    FrameDescription::Pass shadow_entry;
+    shadow_entry.pass = scene.shadow_pass.get();
+    shadow_entry.order = 0;
+    PassDraw shadow_pass;
+    shadow_pass.target      = scene.map.get();
+    shadow_pass.clear       = ClearPolicy{};
+    shadow_pass.state.depth = DepthMode::TestAndWrite;
+    shadow_pass.draws.push_back(sceneDraw(caster_list));
+    shadow_entry.draw = std::move(shadow_pass);
+    frame.passes.push_back(std::move(shadow_entry));
+
+    FrameDescription::Pass source_entry;
+    source_entry.pass  = scene.main_pass.get();
+    source_entry.order = 1;
+    PassDraw source_pass;
+    source_pass.target      = source.get();
+    source_pass.clear       = ClearPolicy{};
+    source_pass.state.depth = DepthMode::Disabled;
+    source_entry.draw       = std::move(source_pass);
+    frame.passes.push_back(std::move(source_entry));
+
+    DrawDescription screen_draw;
+    screen_draw.kind                = DrawDescription::Kind::Screen;
+    screen_draw.camera              = identityCamera();
+    screen_draw.source              = source.get();
+    screen_draw.program             = read_program;
+    screen_draw.program_description = read_program->description();
+
+    FrameDescription::Pass screen_entry;
+    screen_entry.pass = scene.main_pass.get();
+    screen_entry.order = 2;
+    screen_entry.inputs.push_back(ImageSource::producedTarget(scene.map.get()));
+    PassDraw screen_pass;
+    screen_pass.target = destination.get();
+    screen_pass.draws.push_back(std::move(screen_draw));
+    screen_entry.draw = std::move(screen_pass);
+    frame.passes.push_back(std::move(screen_entry));
+
+    const std::vector<std::uint8_t> pixels = runAndRead(*backend, frame, destination.get());
+
+    // The strip's own depth over the left half, the clear's (0) over the right. The number is the DEVICE depth the
+    // content stage wrote: the stated clip z = 0.5 goes through the backend's reverse-Z camera fold (0.5 - 0.5 * z),
+    // so the map holds 0.25 - and 0.25 * 255 = 64. A white stand-in would read 255 in both halves, and a map that
+    // never reached binding 7 could not produce two different values.
+    EXPECT_NEAR(lumAt(pixels, 8, kTargetSize / 2), 64, 2)
+        << "the screen pass did not sample the resolved map's strip depth";
+    EXPECT_LE(lumAt(pixels, 48, kTargetSize / 2), 4)
+        << "the screen pass did not sample the map's cleared half";
+
+    ASSERT_TRUE(backend->frameReport().counters.has_value());
+    EXPECT_EQ(backend->frameReport().counters->draws, 2U) << "the map's pass and the screen pass both drew";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U)
+        << "the screen pass was refused instead of shaded";
 
     backend->shutdown();
 }

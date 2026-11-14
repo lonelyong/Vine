@@ -1496,7 +1496,10 @@ struct ContentDraw::Impl {
      * @param slots  One image info per source/depth binding, in binding order; absent ones carry the fallback.
      * @return The set, or `VK_NULL_HANDLE`.
      */
-    [[nodiscard]] VkDescriptorSet makeScreenSet(VkBuffer buffer, const std::array<VkDescriptorImageInfo, kTextureSlots>& slots) const
+    [[nodiscard]] VkDescriptorSet makeScreenSet(VkBuffer                                                 buffer,
+                                                const std::array<VkDescriptorImageInfo, kTextureSlots>& slots,
+                                                const VkImageView                                        shadow_view,
+                                                const VkSampler                                          shadow_sampler) const
     {
         const VkDescriptorSet set = allocateSet(screen_set_layout);
         if (set == VK_NULL_HANDLE) {
@@ -1509,11 +1512,13 @@ struct ContentDraw::Impl {
         lights_info.range  = sizeof(vn::graphics::VineLightsBlock);
 
         // THE ENGINE'S SHADOW ABI, the same two bindings a content set writes (see kShadowMapBinding): a full-screen
-        // pass whose fragment IS the engine's forward shading declares both unconditionally, so the set offers them
-        // too - the white stand-in and the zeroed block, which is the engine's own "no shadow reaches this pass".
+        // pass whose fragment IS the engine's forward shading declares both unconditionally. The MAP is the one the
+        // pass resolved (see recordScreen / ShadowSource) - a shading screen pass is exactly where the sun's shadow
+        // arrives - and the block is packed for this call below; with no map the caller passes the white stand-in and
+        // the zeroed block, which is the engine's own "no shadow reaches this pass".
         VkDescriptorImageInfo shadow_map{};
-        shadow_map.sampler     = images.fallbackSampler();
-        shadow_map.imageView   = images.fallbackView();
+        shadow_map.sampler     = shadow_sampler;
+        shadow_map.imageView   = shadow_view;
         shadow_map.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
         VkDescriptorBufferInfo shadow_info{};
@@ -2357,6 +2362,7 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
                                         const vn::graphics::DrawDescription&        draw,
                                         const vn::graphics::PassDraw&               pass,
                                         ScreenSource                                source,
+                                        ShadowSource                                shadow,
                                         vn::String*                                 why,
                                         vn::graphics::DiagnosticCategory*           category)
 {
@@ -2433,15 +2439,25 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
         (void)vn::graphics::packLightBlock({}, draw.camera, lights_block);
     }
 
-    VkBuffer       uniform_buffer = VK_NULL_HANDLE;
-    VkDeviceMemory uniform_memory = VK_NULL_HANDLE;
-    if (!impl->createDrawUniforms(vn::graphics::VineMaterialBlock{}, lights_block, vn::graphics::VineDrawBlock{}, vn::graphics::VineShadowBlock{}, uniform_buffer, uniform_memory)) {
+    // THE SHADOW THIS CALL SHADES WITH: the map the pass resolved (the same resolution a content draw uses - see
+    // Device::resolveShadow), packed into this call's block. An empty source packs the engine's "no shadow reaches
+    // this pass" block (`params.x = 0`) and the set binds the white stand-in - which is what a full-screen pass that
+    // declares the shadow ABI but resolved no map states.
+    const vn::graphics::VineShadowBlock shadow_block = buildShadowBlock(shadow, draw);
+    VkBuffer                            uniform_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory                      uniform_memory = VK_NULL_HANDLE;
+    if (!impl->createDrawUniforms(vn::graphics::VineMaterialBlock{}, lights_block, vn::graphics::VineDrawBlock{}, shadow_block, uniform_buffer, uniform_memory)) {
         reason = vn::String(u8"vk: a screen draw's uniform buffer could not be created");
         return 0;
     }
     impl->frame_uniforms.emplace_back(uniform_buffer, uniform_memory);
 
-    const VkDescriptorSet set = impl->makeScreenSet(uniform_buffer, slots);
+    const VkImageView shadow_view    = shadow.view != VK_NULL_HANDLE ? shadow.view : impl->images.fallbackView();
+    const VkSampler   shadow_sampler = impl->images.samplerFor(kShadowSampler);
+    const VkDescriptorSet set        = impl->makeScreenSet(uniform_buffer,
+                                                           slots,
+                                                           shadow_view,
+                                                           shadow_sampler != VK_NULL_HANDLE ? shadow_sampler : impl->images.fallbackSampler());
     if (set == VK_NULL_HANDLE) {
         reason = vn::String(u8"vk: the descriptor pool ran out of sets for this frame");
         return 0;

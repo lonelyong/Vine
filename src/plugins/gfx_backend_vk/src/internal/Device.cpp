@@ -1693,6 +1693,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                                                  description,
                                                  draw,
                                                  source,
+                                                 shadow,
                                                  &why,
                                                  &category);
             }
