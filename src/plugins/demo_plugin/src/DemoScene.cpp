@@ -1586,9 +1586,18 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
         // wire the builder's producer promised as a whole target.
         auto* gbuffer    = pipeline->offscreenTarget();
         preview_source   = vn::intrusive_ptr<vn::graphics::RenderTarget>(gbuffer);
+        // A PASS IS KEYED BY (owner, name): four previews that share one name are ONE row, and the last
+        // declaration stated wins - which is how only the last attachment ever reached the frame. One name per
+        // channel (what the tile shows, see previewChannelsOf) also makes the rows readable in a frame table.
+        constexpr const char8_t* kPreviewNames[4] = {
+            u8"gbuffer_preview_albedo",
+            u8"gbuffer_preview_normal",
+            u8"gbuffer_preview_emissive",
+            u8"gbuffer_preview_view_position",
+        };
         for (int attachment = 0; attachment < 4; ++attachment) {
             auto preview = vn::make_intrusive<vn::graphics::ScreenPass>();
-            preview->setName(u8"gbuffer_preview");
+            preview->setName(kPreviewNames[attachment]);
             preview->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
             // One copy program per attachment: the sampler binding IS the attachment (see
             // BuiltinShaders::screenCopyProgram), which is what the declared image below is that of, and the
@@ -1611,7 +1620,11 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     // copies the WHOLE attachment, so its rectangle takes the source's aspect (see fitPreviewRect). The chain's own
     // targets and HUD boxes are sized by the view's step, which runs before the layout steps and resizes the adopted
     // chain (see SceneView::applySurfaceGeometry) - so the source size read here is already the surface's.
-    view->addSurfaceLayout([previews = std::move(previews), preview_source, pip_w, pip_h](int, int) {
+    //
+    // RE-STATING THE PASS IS PART OF SETTING ITS VIEWPORT: the engine's node is built from the declaration a plan
+    // carries, so mutating this object alone would leave the frame's row with the old rectangle (a plan for an
+    // existing (owner, name) updates it in place - see RenderEngine::applyPlanRows).
+    view->addSurfaceLayout([engine, render_control, previews = std::move(previews), preview_source, pip_w, pip_h](int, int) {
         if (preview_source == nullptr || previews.empty()) {
             return;
         }
@@ -1621,6 +1634,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
             const int                    slot_x = 8 + static_cast<int>(index) * (pip_w + 8);
             const vn::graphics::Viewport rect   = fitPreviewRect(source_width, source_height, slot_x, 8, pip_w, pip_h);
             previews[index]->setViewport(rect.x, rect.y, rect.width, rect.height);
+            addDemoPass(*engine, render_control, previews[index], nullptr, 120 + static_cast<int>(index));
         }
     });
 }

@@ -563,7 +563,7 @@
 - **边界**：lavapipe 是软件光栅器，绝对值只用于**同机对拍**与回归，不是 GPU 结论；Win32 与真 GPU 未测。
   60 帧窗口里混有演示的 PiP/覆盖层定时器与一次资产上传帧。
 
-## 2026-11-14 —— 三处“录了、没画/没效果”的根因（demo 链未采纳 / vk 全屏继承深度 / vk 全屏只绑阴影 stand-in）
+## 2026-11-14 —— 四处“录了、没画/没效果”的根因（demo 链未采纳 / vk 全屏继承深度 / vk 全屏只绑阴影 stand-in / demo 预览同名）
 
 - **宿主**：`PassChain::build()` **不自我采纳**，必须 `view->setChain(chain)`（`Viewer` 是范本）。不采纳 ⇒
   `SceneView::publishContent` 不发布链拥有的透明场景（一条 `never published`，该 pass 画 nothing）、
@@ -579,6 +579,11 @@
   的 `VineShadowBlock`，无图才是白 stand-in + `params.x = 0`。症状 = “前向有阴影、延迟没有、零诊断”；用例
   `VkShadowTest.AScreenPassShadesWithTheMapItResolved`（采样 binding 7 写深度，白 stand-in 会读 255）。
   见 `.ai/bugs/vk-screen-pass-shaded-without-the-map.md`。
+- **计划按 `(owner, name)` 认行，名字不是标签**：demo 的四个 G-buffer 预览都叫 `gbuffer_preview` ⇒ 四次声明
+  落在同一行、只剩最后一个（“只有第 4 块显示”）。另一个半边：布局步只改 demo 自己的 `ScreenPass`
+  （`setViewport`），而帧里的节点是**从声明建的** ⇒ 重排从未生效；改完对象必须**重新声明**（`addDemoPass`
+  再应用一次，同 owner 同名原地更新）。帧表可直视：`VN_FRAME_PLAN=1` 应看到 4 条 `gbuffer_preview_*`。
+  见 `.ai/bugs/demo-preview-passes-shared-one-name.md`。
 - **诊断配方（可复用）**：①记录层探针（每 pass 的 commands/recorded/why）分清“没进命令”与“进了没画”；
   ②把待观察的 16F 目标**临时**改成 RGBA8（`ChainPresets.cpp`）即可用 `RenderEngine::device()->readColorBuffer`
   读回中心像素；③把 GBuffer 直接拷到可读的 RGBA8 composite 再读，能分开“源空”与“拷贝坏”。探针用完即撤。
