@@ -25,6 +25,7 @@
 
 #include <vine/Buffer.hpp>
 #include <vine/String.hpp>
+#include <vine/backend_vk/internal/WindowTarget.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/Geometry.hpp>
@@ -297,6 +298,14 @@ TEST(VkWindowPresentTest, AWindowFrameIsDrawnAndPresented)
 
     // FRAME 1: one window pass, presented.
     EXPECT_EQ(backend->executeFrame(windowFrame(), target), PresentOutcome::Presented);
+
+    // A HEALTHY PRESENT IS NOT A LOSS: the classification only fires on `VK_ERROR_DEVICE_LOST` (see
+    // WindowTarget::deviceLost and Device::noteDeviceLost), so a presented frame leaves the flag clear - which is what
+    // keeps `initialized()` true for the next frame.
+    auto* window_target = dynamic_cast<vn::backend_vk::WindowTarget*>(target);
+    ASSERT_NE(window_target, nullptr);
+    EXPECT_FALSE(window_target->deviceLost());
+    EXPECT_TRUE(backend->initialized()) << "a frame that presented must leave the session up";
 
     // THE WINDOW'S PIXELS, read by the TEST: the triangle covers the centre and the corner keeps the clear. A window
     // system that cannot hand back its own painted pixels (the instrument check above) makes this half UNMEASURED,

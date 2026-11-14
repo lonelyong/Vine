@@ -89,6 +89,18 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
     /** @brief Answers whether a swapchain and its render passes currently exist. */
     [[nodiscard]] bool ready() const noexcept;
 
+    /**
+     * @brief Answers whether the device was lost through this window (an acquire or present answered so).
+     *
+     * @details
+     * - A LOST DEVICE IS NOT A WINDOW PROBLEM: the swapchain cannot be recreated to fix it, so nothing here asks for
+     *   a recreate once this is true. The device reads this after a failed acquire or a `Lost` present to classify
+     *   the outcome once (see `Device::noteDeviceLost`) instead of leaving a host to guess from a missing picture.
+     *
+     * @return true when a queue call made on this window's behalf reported the device gone.
+     */
+    [[nodiscard]] bool deviceLost() const noexcept;
+
     /** @brief Gets the surface the target presents through (`VK_NULL_HANDLE` when it has none). */
     [[nodiscard]] VkSurfaceKHR surfaceHandle() const noexcept;
 

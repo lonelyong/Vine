@@ -264,6 +264,9 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   outputs are discarded.
      * - The submission is synchronous by design: one command buffer, one fence, then the queue is idle, so a readback in
      *   the same breath sees exactly what this frame left - and a content release between frames needs no wait.
+     * - A LOST DEVICE ENDS THE SESSION (see `noteDeviceLost`): a later frame is skipped without touching the device
+     *   (the one sentence was reported where the loss was seen) and answers `Lost` when it expected a window - the
+     *   outcome a host acts on, with `shutdown()` + `initialize()` as the rebuild path.
      *
      * @param frame      The frame to execute (borrowed for the call).
      * @param present_to Window the default framebuffer resolves to, or null for a frame that has no window.
@@ -384,6 +387,24 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @return true when surfaces can be created through it.
      */
     [[nodiscard]] bool ensureWindowSystem(vn::String* why);
+
+    /**
+     * @brief Classifies a queue/acquire/present result: `VK_ERROR_DEVICE_LOST` ends the session and is reported once.
+     *
+     * @details
+     * - A LOST DEVICE IS NOT A FAILED OPERATION. Every other failed result leaves this session usable (a refused
+     *   submit is reported and the next frame tries again), while a lost device cannot answer another frame at all -
+     *   so the answer a host needs is a different one: `initialized()` stops answering true, frames are skipped
+     *   without touching the device, and the rebuild path is `shutdown()` + `initialize()` (`initialize()` also
+     *   performs it on its own when it finds a lost session).
+     * - Report ONCE per session: the sentence names the call that saw it, and a host polling frames after the loss
+     *   must not be flooded with the same fact.
+     *
+     * @param result The `VkResult` of the call (any value; only `VK_ERROR_DEVICE_LOST` is classified as a loss).
+     * @param what   The call's name, used in the sentence ("vkQueueSubmit", "vkQueuePresentKHR").
+     * @return true when @p result was `VK_ERROR_DEVICE_LOST` (the session is now marked over).
+     */
+    bool noteDeviceLost(VkResult result, const char* what);
 
     struct Impl;
 

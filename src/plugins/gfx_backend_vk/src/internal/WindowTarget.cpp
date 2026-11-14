@@ -167,6 +167,9 @@ struct WindowTarget::Impl {
     int            requested_width{ 0 };
     int            requested_height{ 0 };
     bool           needs_recreate{ false };
+    /// True once an acquire or present answered `VK_ERROR_DEVICE_LOST`: the session is over, and no swapchain can
+    /// fix it (see WindowTarget::deviceLost).
+    bool           device_lost{ false };
 
     std::vector<VkImage>       images;
     std::vector<VkImageView>   views;
@@ -510,8 +513,9 @@ bool WindowTarget::createSurface(const VkInstance instance, vn::String* why)
 
 bool WindowTarget::attach(const WindowDevice& device, vn::String* why)
 {
-    impl->device   = device;
-    impl->attached = true;
+    impl->device      = device;
+    impl->attached    = true;
+    impl->device_lost = false; // a fresh device: the previous session's loss says nothing about this one
     if (!createSurface(device.instance, why)) {
         impl->attached = false;
         return false;
@@ -543,6 +547,11 @@ bool WindowTarget::ready() const noexcept
     return impl != nullptr && impl->attached && !impl->detached && impl->swapchain != VK_NULL_HANDLE && impl->pass_clear != VK_NULL_HANDLE;
 }
 
+bool WindowTarget::deviceLost() const noexcept
+{
+    return impl != nullptr && impl->device_lost;
+}
+
 VkSurfaceKHR WindowTarget::surfaceHandle() const noexcept
 {
     return impl != nullptr ? impl->surface : VK_NULL_HANDLE;
@@ -550,6 +559,12 @@ VkSurfaceKHR WindowTarget::surfaceHandle() const noexcept
 
 bool WindowTarget::acquire(vn::String* why)
 {
+    if (impl->device_lost) {
+        if (why != nullptr) {
+            *why = vn::String(u8"vk: the device was lost; the window's next image cannot be acquired");
+        }
+        return false;
+    }
     if (!ready()) {
         if (why != nullptr) {
             *why = vn::String(u8"vk: the window target has no live swapchain (a detached or failed window)");
@@ -574,6 +589,16 @@ bool WindowTarget::acquire(vn::String* why)
             impl->image_index    = index;
             impl->image_acquired = true;
             return true;
+        }
+        if (result == VK_ERROR_DEVICE_LOST) {
+            // NOT out of date: recreating the swapchain cannot fix a lost device (see deviceLost()). The device makes
+            // the session-level report - this target only remembers the fact.
+            impl->device_lost    = true;
+            impl->image_acquired = false;
+            if (why != nullptr) {
+                *why = vn::String(u8"vk: vkAcquireNextImageKHR answered VK_ERROR_DEVICE_LOST");
+            }
+            return false;
         }
         if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
             impl->needs_recreate = true;
@@ -690,6 +715,12 @@ vn::graphics::PresentOutcome WindowTarget::present()
 
     if (result == VK_SUCCESS) {
         return vn::graphics::PresentOutcome::Presented;
+    }
+    if (result == VK_ERROR_DEVICE_LOST) {
+        // NOT a window problem: a recreate cannot fix a lost device, so needs_recreate stays where it is and the
+        // device ends the session once (see deviceLost(), and Device::noteDeviceLost for the report).
+        impl->device_lost = true;
+        return vn::graphics::PresentOutcome::Lost;
     }
     if (result == VK_SUBOPTIMAL_KHR) {
         impl->needs_recreate = true;

@@ -243,6 +243,12 @@ struct Device::Impl {
     bool reported_samples_depth{ false };
     bool reported_prepare_target{ false };
 
+    /// True once a queue/acquire/present call answered `VK_ERROR_DEVICE_LOST`: the session is over (see
+    /// Device::noteDeviceLost), so `initialized()` stops answering true and the host rebuilds it.
+    bool device_lost{ false };
+    /// One report for the loss itself, whatever number of calls saw it afterwards.
+    bool reported_device_lost{ false };
+
     /**
      * @brief What the last frame did and what this device has done so far (see FrameReport).
      *
@@ -416,6 +422,12 @@ Device::~Device()
 
 bool Device::initialize()
 {
+    if (impl->device_lost) {
+        // A LOST SESSION CANNOT BE REUSED: the rebuild a host is asking for starts by letting the dead one go.
+        // Vulkan allows a lost device's objects to be destroyed, which is what shutdown() does (and why the process
+        // does not have to leak them to recover).
+        shutdown();
+    }
     if (impl->device != VK_NULL_HANDLE) {
         // A session that is already up is the "re-announced, unchanged" case: nothing is torn down, nothing rebuilt.
         return true;
@@ -829,6 +841,8 @@ void Device::shutdown()
     impl->reported_samples    = false;
     impl->reported_prepare_target = false;
     impl->depth_resolve_supported = false;
+    impl->device_lost         = false;
+    impl->reported_device_lost = false;
     // THE WINDOW SYSTEM GOES LAST, and whether or not a Vulkan session came up: its connection is older than the
     // session and every surface created through it was destroyed above (see WindowSystem's lifetime warning).
     impl->surfaces.clear();
@@ -856,7 +870,26 @@ bool Device::ensureWindowSystem(vn::String* why)
 
 bool Device::initialized() const noexcept
 {
-    return impl->device != VK_NULL_HANDLE;
+    // A LOST DEVICE IS NOT UP, even though its handle is still there: that is the answer a host rebuilds on (see
+    // noteDeviceLost). The handle survives until shutdown()/initialize() so the objects can be destroyed in order.
+    return impl->device != VK_NULL_HANDLE && !impl->device_lost;
+}
+
+bool Device::noteDeviceLost(const VkResult result, const char* what)
+{
+    if (result != VK_ERROR_DEVICE_LOST) {
+        return false;
+    }
+    impl->device_lost = true;
+    if (!impl->reported_device_lost) {
+        impl->reported_device_lost = true;
+        // THE SENTENCE SAYS WHAT TO DO, not only what happened: this is the one failure a retry cannot fix.
+        const std::string sentence = std::string("vk: ") + (what != nullptr ? what : "a device call") +
+                                     " answered VK_ERROR_DEVICE_LOST; this session cannot continue - rebuild it with "
+                                     "shutdown() and initialize()";
+        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed, vn::String::fromUtf8(sentence));
+    }
+    return true;
 }
 
 void Device::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
@@ -1103,6 +1136,12 @@ Capabilities Device::capabilities() const noexcept
 PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget* present_to)
 {
     if (!initialized()) {
+        if (impl->device_lost) {
+            // The one loss report already said why and what to do (see noteDeviceLost): a frame asked after it is
+            // skipped without touching the device, not re-explained per frame. A frame that expected a window still
+            // says its picture did not arrive - Lost is the outcome a host acts on.
+            return present_to != nullptr ? PresentOutcome::Lost : PresentOutcome::Skipped;
+        }
         reportDiagnostic(DiagnosticSeverity::Error,
                          DiagnosticCategory::SubmissionFailed,
                          u8"vk: a frame was handed to a device that is not up");
@@ -1189,6 +1228,13 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
             if (!window_acquired) {
                 vn::String why;
                 if (!window->acquire(&why)) {
+                    if (window->deviceLost()) {
+                        // The frame is over: nothing can run on a lost device, so the walk stops here instead of
+                        // letting every later pass build against it. The sentence is reported once (see
+                        // noteDeviceLost), and Lost is the outcome the host acts on.
+                        (void)noteDeviceLost(VK_ERROR_DEVICE_LOST, "vkAcquireNextImageKHR");
+                        return PresentOutcome::Lost;
+                    }
                     if (!impl->reported_surface) {
                         impl->reported_surface = true;
                         reportDiagnostic(DiagnosticSeverity::Warning,
@@ -1490,12 +1536,14 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         submit.pSignalSemaphores    = &signal_semaphore;
     }
 
-    const bool submitted = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion) == VK_SUCCESS;
+    const VkResult submit_result = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion);
+    const bool     submitted     = submit_result == VK_SUCCESS;
     if (submitted) {
         ++impl->books.progress.submitted;
     }
-    const bool completed = submitted &&
-                           impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+    const VkResult fence_result = submitted ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX)
+                                            : submit_result;
+    const bool     completed    = fence_result == VK_SUCCESS;
     if (completed) {
         ++impl->books.progress.completed;
     }
@@ -1506,15 +1554,24 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     impl->content.endFrame();
 
     if (!completed) {
-        reportDiagnostic(DiagnosticSeverity::Error,
-                         DiagnosticCategory::SubmissionFailed,
-                         u8"vk: the frame's command buffer did not run to completion");
+        // A LOST DEVICE GETS ITS OWN SENTENCE, ONCE (see noteDeviceLost); the generic one is for the failures a retry
+        // can still fix, which is the difference that matters to a host.
+        if (!noteDeviceLost(submit_result, "vkQueueSubmit") && !noteDeviceLost(fence_result, "vkWaitForFences")) {
+            reportDiagnostic(DiagnosticSeverity::Error,
+                             DiagnosticCategory::SubmissionFailed,
+                             u8"vk: the frame's command buffer did not run to completion");
+        }
     }
 
     // THE FRAME'S TAIL: the executor is what presents the frame it ran (see RenderFrameExecutor::executeFrame).
     PresentOutcome outcome = PresentOutcome::Skipped;
     if (window_acquired) {
         outcome = completed ? window->present() : PresentOutcome::Lost;
+        if (window->deviceLost()) {
+            // A present that found the device gone is the same session-level fact as a lost submit: one report, and
+            // the frame's Lost outcome is what the host acts on (see PresentOutcome::Lost).
+            (void)noteDeviceLost(VK_ERROR_DEVICE_LOST, "vkQueuePresentKHR");
+        }
         if (outcome == PresentOutcome::Presented) {
             ++impl->books.progress.presented;
         }
@@ -1761,15 +1818,17 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
             submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
             submit.commandBufferCount = 1U;
             submit.pCommandBuffers    = &batch;
-            const bool submitted = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion) == VK_SUCCESS;
-            const bool completed = submitted &&
-                                   impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+            const VkResult submit_result = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion);
+            const VkResult fence_result  = submit_result == VK_SUCCESS
+                                               ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX)
+                                               : submit_result;
+            const bool     completed     = fence_result == VK_SUCCESS;
             (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
             impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &batch);
             if (completed) {
                 impl->content.images().releaseUploadStaging();
             }
-            else {
+            else if (!noteDeviceLost(submit_result, "vkQueueSubmit") && !noteDeviceLost(fence_result, "vkWaitForFences")) {
                 // The staging buffers stay: the next frame's releaseFrame lets go of them once its own queue is idle.
                 // They cannot buy a re-upload, though - the entries were already made resident with what the copies were
                 // going to write - so this says what actually happened rather than promising a retry: a queue that
@@ -1985,11 +2044,18 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     submit.commandBufferCount = 1U;
     submit.pCommandBuffers    = &commands;
 
-    const bool ran = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion) == VK_SUCCESS &&
-                     impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+    const VkResult submit_result = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion);
+    const VkResult fence_result  = submit_result == VK_SUCCESS
+                                       ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX)
+                                       : submit_result;
+    const bool     ran           = fence_result == VK_SUCCESS;
     (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
 
     if (!ran) {
+        // A copy that found the device gone answers Failed like any other failed transfer; the session-level fact is
+        // reported once by the classifier (see noteDeviceLost).
+        (void)noteDeviceLost(submit_result, "vkQueueSubmit");
+        (void)noteDeviceLost(fence_result, "vkWaitForFences");
         release();
         return fail(ReadbackResult::Failed);
     }
@@ -2195,11 +2261,18 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
     submit.commandBufferCount = 1U;
     submit.pCommandBuffers    = &commands;
 
-    const bool ran = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion) == VK_SUCCESS &&
-                     impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+    const VkResult submit_result = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion);
+    const VkResult fence_result  = submit_result == VK_SUCCESS
+                                       ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX)
+                                       : submit_result;
+    const bool     ran           = fence_result == VK_SUCCESS;
     (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
 
     if (!ran) {
+        // A copy that found the device gone answers Failed like any other failed transfer; the session-level fact is
+        // reported once by the classifier (see noteDeviceLost).
+        (void)noteDeviceLost(submit_result, "vkQueueSubmit");
+        (void)noteDeviceLost(fence_result, "vkWaitForFences");
         release();
         return fail(ReadbackResult::Failed);
     }
