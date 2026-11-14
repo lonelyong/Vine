@@ -1548,6 +1548,13 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
         return;
     }
 
+    // ADOPTING THE CHAIN IS WHAT MAKES THE VIEW DRAW THROUGH IT (see SceneView::setChain): the view then publishes what
+    // the chain owns (its transparent scene - without adoption a frame reports "draws a scene that was never
+    // published" and draws nothing for that pass), applies the surface size to its targets and HUD boxes, and the
+    // area resolves the view's pass from the chain. A chain that is only built and left in the engine's rows is
+    // nobody's: the demo used to resize it from its own layout step because of exactly that gap.
+    view->setChain(pipeline);
+
     // This pipeline presents the surface. Saying so is what keeps the control from building its own default window
     // pass beside it (see RenderSurface): the main pass of this pipeline draws to the backbuffer, so two such
     // passes would draw over each other. Declared here rather than in the control because the demo - not the
@@ -1600,15 +1607,11 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
         }
     }
 
-    // One creator-managed layout step keeps the (deferred) G-buffer and the
-    // gizmo overlay in step with the window; it owns the pipeline handle. The
-    // step receives the LOGICAL surface size (what Qt reports), and the pipeline
-    // turns it into the two spaces its consumers need: DEVICE pixels for the
-    // off-screen targets (so the light pass samples them 1:1 with the swapchain,
-    // instead of the 2x-upscaled soft image logical sizing produced) and the
-    // logical size for the HUD overlays (which apply the ratio themselves).
-    view->addSurfaceLayout([pipeline, render_control, previews = std::move(previews), preview_source, pip_w, pip_h](int width, int height) {
-        pipeline->resize(width, height, render_control->devicePixelRatio());
+    // One creator-managed layout step keeps the (deferred) G-buffer previews in step with the window: a preview
+    // copies the WHOLE attachment, so its rectangle takes the source's aspect (see fitPreviewRect). The chain's own
+    // targets and HUD boxes are sized by the view's step, which runs before the layout steps and resizes the adopted
+    // chain (see SceneView::applySurfaceGeometry) - so the source size read here is already the surface's.
+    view->addSurfaceLayout([previews = std::move(previews), preview_source, pip_w, pip_h](int, int) {
         if (preview_source == nullptr || previews.empty()) {
             return;
         }
