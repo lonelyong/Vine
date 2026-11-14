@@ -43,10 +43,16 @@ HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device
     }
 
     // The sample count is a property of the TARGET and this backend builds one image set per count, so a
-    // description that asks for more than the device supports is refused HERE rather than at image creation:
+    // description that asks for a count the device cannot BUILD is refused HERE rather than at image creation:
     // the numbers came from the host, and "the device cannot do that" is a different answer from "the objects
     // failed to build".
-    if (description.samples > max_samples) {
+    // - ABOVE THE LIMIT: the device offers a largest count, and a request past it is not a count anything here
+    //   can be built with.
+    // - NOT A POWER OF TWO: the legal counts are 1/2/4/8/..., so a number between two of them (three, say) is a
+    //   count the device does not offer at all - rounding it would leave `shape().samples` and the images at two
+    //   different numbers, which is exactly what `RenderTarget::samples()` must never be able to say.
+    // Both are refused, never lowered or rounded (see ADR-2026-11-14-sample-count-refused-not-lowered).
+    if (description.samples > max_samples || (description.samples & (description.samples - 1U)) != 0U) {
         return State::SamplesUnsupported;
     }
     // What multisampling still refuses, and no longer refuses: a multisampled target can PROMOTE and LEND its

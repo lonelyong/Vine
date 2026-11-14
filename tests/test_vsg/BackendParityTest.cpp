@@ -44,6 +44,7 @@
 #include <vine/String.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
+#include <vine/graphics/Capabilities.hpp>
 #include <vine/graphics/ChainPresets.hpp>
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/FrameDescription.hpp>
@@ -1038,5 +1039,27 @@ TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
     EXPECT_GT(centre[0] + centre[1] + centre[2], 0)
         << "the reference composite is black: the deferred lighting pass did not shade the G-buffer";
     EXPECT_EQ(centre[3], 255) << "the lighting pass writes an opaque composite";
+}
+
+/*
+ * @brief The sample limit is ONE NUMBER on both backends, and it is a COUNT.
+ *
+ * One machine, one GPU: two backends that describe it must agree about how many samples a target may ask for, or a
+ * host has to know which backend it is talking to before it can read one limit. A bit set cannot answer this
+ * question - the same device used to say "15" - which is what ADR-2026-11-14-sample-count-refused-not-lowered
+ * settles. The counting rule lives in each backend's own mapping (they share no library, by design), so the only
+ * way it stays one answer is a case that compares the two.
+ */
+TEST_F(BackendParityTest, TheSampleLimitsAgreeBetweenTheBackends)
+{
+    const vn::graphics::Capabilities reference = vsg->capabilities();
+    const vn::graphics::Capabilities candidate = vk->capabilities();
+    std::printf("[parity] max_samples: vsg=%u vk=%u\n", reference.max_samples, candidate.max_samples);
+
+    ASSERT_GT(reference.max_samples, 0U) << "a device always offers one sample";
+    EXPECT_EQ(reference.max_samples & (reference.max_samples - 1U), 0U)
+        << "Capabilities::max_samples is a sample COUNT, and " << reference.max_samples << " is not a power of two";
+    EXPECT_EQ(candidate.max_samples, reference.max_samples)
+        << "the two backends describe one GPU with two different sample limits";
 }
 

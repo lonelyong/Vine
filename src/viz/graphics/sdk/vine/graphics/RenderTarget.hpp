@@ -167,17 +167,20 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
      *   - Off-screen targets are drawn multi-sampled and RESOLVED when the pass ends, so the colour a later
      *     pass samples, and the pixels a readback answers, are the resolved picture - one colour per pixel,
      *     with geometry edges averaged instead of stepped.
-     *   - A DEPTH a shader samples (see setDepthPromoted / shareDepth) has to be single-sample: the depth
-     *     attachment of a multi-sampled target is not resolved in this SDK, so the two cannot be asked for
-     *     together (the backend refuses that target with a diagnostic naming it).
+     *   - A DEPTH a shader samples (see setDepthPromoted / shareDepth) has to be a single-sample picture: a
+     *     multi-sampled target RESOLVES its depth into one where the backend can resolve depth, and a backend
+     *     that cannot refuses that target with a diagnostic naming it (it never draws at another count).
+     *     A MULTI-SAMPLED TARGET THAT BORROWS a depth is refused by every backend: one depth image cannot be a
+     *     multi-sample attachment for one pass and a single-sample one for another.
      *   - The DEFAULT FRAMEBUFFER is the window's image set and its sample count belongs to the window: a
      *     target that draws into it is single-sample whatever this says. Antialiasing a window is the
      *     off-screen + present shape the chain presets already use: draw into a multi-sampled off-screen
      *     target, then present it with the full-screen pass.
      *
      * @note
-     * - Read the device's limit before choosing a count: Capabilities::max_samples is what the backend can
-     *   build, and a larger request is refused (reported once) rather than silently lowered.
+     * - Read the device's limit before choosing a count: `Capabilities::max_samples` is the largest count the
+     *   backend can build, and the counts are powers of two. A count the device cannot build is refused (reported
+     *   once) rather than silently lowered, so `samples()` is always the count the target was drawn with.
      * - 0 is not "automatic": a sample count below 1 means 1.
      *
      * @param samples Samples per pixel (1 = none).

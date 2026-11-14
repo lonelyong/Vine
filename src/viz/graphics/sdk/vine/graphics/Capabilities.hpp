@@ -72,8 +72,10 @@ struct VN_GRAPHICS_API Capabilities {
     /// The largest sample count a render target may ask for (1 = multisampling is not available).
     ///
     /// A LIMIT, not a feature: `RenderTarget::setSamples` states what a target is drawn with, and a request
-    /// above this is refused by the backend that would have to build the images (reported once, never
-    /// silently lowered). The count reported is the one BOTH the colour and the depth attachment support,
+    /// the device cannot build is REFUSED by the backend that would have to build the images (reported once,
+    /// never silently lowered) - so `RenderTarget::samples()` is always the count the target was drawn with.
+    /// The legal counts are POWERS OF TWO (1, 2, 4, 8, ...), so this number and that rule together name every
+    /// count the device offers. The count reported is the one BOTH the colour and the depth attachment support,
     /// because one target has one sample count.
     std::uint32_t max_samples{ 1 };
 

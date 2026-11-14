@@ -442,6 +442,14 @@ TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCan
     EXPECT_EQ(targets.ensure(*too_many, created.device).state, vn::backend_vsg::HostTargets::State::SamplesUnsupported)
         << "eight samples is above this table's limit of four";
 
+    const vn::intrusive_ptr<RenderTarget> not_a_count(new RenderTarget());
+    not_a_count->attachColor(RenderTarget::ColorFormat::RGBA8);
+    not_a_count->setSize(16, 16);
+    not_a_count->setSamples(3U);
+    EXPECT_EQ(targets.ensure(*not_a_count, created.device).state, vn::backend_vsg::HostTargets::State::SamplesUnsupported)
+        << "the counts are powers of two (see Capabilities::max_samples), so three is not one of them - and it is "
+           "refused rather than rounded, or shape().samples and the images would answer two different numbers";
+
     const vn::intrusive_ptr<RenderTarget> lender(new RenderTarget());
     lender->attachColor(RenderTarget::ColorFormat::RGBA8);
     lender->attachDepth(RenderTarget::DepthFormat::D32);

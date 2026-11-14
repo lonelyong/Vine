@@ -66,9 +66,9 @@
 |---|---|---|
 | F6 | 采样数 | `RenderTarget::setSamples(n)`；0 视作 1。 |
 | F7 | 颜色解析 | MS 图只作 attachment；resolve 图单采样、可采样、可拷贝。 |
-| F8 | 深度解析 | MS 图只作 depth attachment；resolve 图单采样，`sample0` 不平均。 |
+| F8 | 深度解析 | MS 图只作 depth attachment；resolve 图单采样，`sample0` 不平均；不能 resolve 深度的后端拒绝“多采样 + 可被采样深度”，**借来的深度 + 多采样**任何后端都拒绝。 |
 | F9 | 画面定义 | `picture()` / `depthPicture()`：读回、采样、借出、提升都走它。 |
-| F10 | 上限 | `Capabilities::max_samples`；超限报 `SamplesUnsupported`。 |
+| F10 | 上限 | `Capabilities::max_samples` 是**计数**（合法计数是 2 的幂）；设备建不了的计数被**拒绝**（`SamplesUnsupported`，报一次），永不降级。 |
 
 ### 3.3 图源
 

@@ -11,6 +11,9 @@ VN_BACKEND_VSG_NS_BEGIN
 namespace
 {
 
+/// @brief The sample counts the API offers, largest first (see largestSampleCount).
+constexpr std::uint32_t kSampleCounts[] = { 64U, 32U, 16U, 8U, 4U, 2U, 1U };
+
 /** @brief Maps a depth policy onto the API's test/write enables. */
 void mapDepth(vn::graphics::DepthMode mode, VkBool32& test, VkBool32& write) noexcept
 {
@@ -210,6 +213,18 @@ VkSampleCountFlagBits samplesToVk(std::uint32_t samples) noexcept
         return VK_SAMPLE_COUNT_2_BIT;
     }
     return VK_SAMPLE_COUNT_1_BIT;
+}
+
+std::uint32_t largestSampleCount(std::uint32_t flags) noexcept
+{
+    // Large to small: the first flag the set contains IS the largest count it offers, and a set with nothing usable
+    // answers 1 (a target can always be built single-sampled).
+    for (const std::uint32_t count : kSampleCounts) {
+        if ((flags & static_cast<std::uint32_t>(samplesToVk(count))) != 0U) {
+            return count;
+        }
+    }
+    return 1U;
 }
 
 VN_BACKEND_VSG_NS_END

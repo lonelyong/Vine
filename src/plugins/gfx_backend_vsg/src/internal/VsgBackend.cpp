@@ -603,10 +603,13 @@ bool VsgBackend::initialize()
 
     // The sample-count limit is the DEVICE's, read once here rather than at every target build: a target's
     // description is refused against it (see HostTargets::State::SamplesUnsupported), and the same number is
-    // what capabilities() reports - one fact, one source.
+    // what capabilities() reports - one fact, one source. The device answers with a BIT SET, while the limit is a
+    // COUNT, so the intersection is collapsed to the largest count it offers (a host that read the bits would be
+    // told "15" by a device that offers 1/2/4/8 - see ADR-2026-11-14-sample-count-refused-not-lowered).
     if (const ::vsg::PhysicalDevice* physical = d->device->getPhysicalDevice(); physical != nullptr) {
         const VkPhysicalDeviceLimits& limits = physical->getProperties().limits;
-        d->targets.setMaxSamples(std::min(limits.framebufferColorSampleCounts, limits.framebufferDepthSampleCounts));
+        d->targets.setMaxSamples(vn::backend_vsg::largestSampleCount(
+            std::min(limits.framebufferColorSampleCounts, limits.framebufferDepthSampleCounts)));
     }
 
     // THE CONTENT WORLD BELONGS TO THE DEVICE, and is built ONCE: a window that came up, was re-attached or joined
@@ -1346,8 +1349,11 @@ vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
         answer.max_anisotropy                        = vn::backend_vsg::detail::anisotropyFor(properties.limits.maxSamplerAnisotropy);
         answer.max_color_attachments                 = properties.limits.maxColorAttachments;
         // ONE target has ONE sample count, and its colour and depth attachments must both support it, so the
-        // limit reported is what BOTH can do (a device whose depth tops out lower is the binding side).
-        answer.max_samples                           = std::min(properties.limits.framebufferColorSampleCounts, properties.limits.framebufferDepthSampleCounts);
+        // limit reported is what BOTH can do (a device whose depth tops out lower is the binding side). The device
+        // states a BIT SET and the contract states a COUNT, so the set is collapsed to its largest count here - the
+        // very number setMaxSamples received, which is what makes "the limit" one fact rather than two.
+        answer.max_samples                           = vn::backend_vsg::largestSampleCount(
+            std::min(properties.limits.framebufferColorSampleCounts, properties.limits.framebufferDepthSampleCounts));
         // How WIDE a rasterised LINE may be is the device's answer, not the feature bit's: `wideLines` says
         // "widths above 1.0 are allowed", and this is how far the implementation goes (some stop at 1.0 even
         // with the feature on). The recorder clamps to it (see ContentPass::Scope::max_line_width).
@@ -1480,17 +1486,28 @@ void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget>
     // on, and the pipeline builder names everything it creates.
     std::string message;
     if (reason == UnbuildableReason::SamplesUnsupported) {
-        // The two reasons a sample count is refused, said as the difference they are: a count the device does
-        // not have, and a multisampled target asking for what a multisampled depth cannot do (be shared with
-        // another pass, or be sampled by a shader). Both are the DESCRIPTION's, so the host can fix it.
-        const std::uint32_t samples  = target->samples();
-        const bool          too_many = samples > max_samples;
-        message                      = nameOf(target) + " asks for " + std::to_string(samples) + " samples per pixel, ";
-        message += too_many ? "above the device's limit of " + std::to_string(max_samples) +
-                                  ": the passes that draw into it are skipped (see Capabilities::max_samples)"
-                            : "and borrows its depth from another target: a borrowed depth is that target's resolved "
-                              "single-sample picture, and a framebuffer's attachments share one sample count - announce the "
-                              "borrower at one sample, or let it own its depth";
+        // The reasons a sample count is refused, said as the difference they are: a count above what the device
+        // offers, a number that is not a sample count at all, and a multisampled target asking for what a
+        // multisampled depth cannot do (be shared with another pass). The first two are the DESCRIPTION's, so the
+        // host can fix it - and both name the limit it should read, because `Capabilities::max_samples` plus "the
+        // counts are powers of two" is the whole set the device offers.
+        const std::uint32_t samples       = target->samples() == 0U ? 1U : target->samples();
+        const bool          too_many      = samples > max_samples;
+        const bool          above_a_count = (samples & (samples - 1U)) != 0U;
+        message                           = nameOf(target) + " asks for " + std::to_string(samples) + " samples per pixel, ";
+        if (too_many) {
+            message += "above what this device offers (up to " + std::to_string(max_samples) +
+                       "): the passes that draw into it are skipped (see Capabilities::max_samples)";
+        }
+        else if (above_a_count) {
+            message += "that is not a sample count the device offers (the counts are powers of two, up to " +
+                       std::to_string(max_samples) + "): the passes that draw into it are skipped (see Capabilities::max_samples)";
+        }
+        else {
+            message += "and borrows its depth from another target: a borrowed depth is that target's resolved "
+                       "single-sample picture, and a framebuffer's attachments share one sample count - announce the "
+                       "borrower at one sample, or let it own its depth";
+        }
     }
     else if (reason == UnbuildableReason::DepthSourceMissing) {
         // The lender is read from the target itself (shareDepth keeps it alive), so this works whether or

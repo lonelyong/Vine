@@ -578,6 +578,29 @@
   与 ADR-2026-11-13（保留 ≤ `minimumStagingBufferSize` 的块）矛盾；改成"4 KiB 上传的块被保留（release 返回 0）+
   32 MiB 一次性块被还掉"。
 
+## 2026-11-14 —— 采样数契约收口：`max_samples` 是计数，建不了就拒绝（框架优先）
+
+- **决策**：`../decisions/ADR-2026-11-14-sample-count-refused-not-lowered.md`。`Capabilities::max_samples`
+  是一个**计数**、合法计数是 2 的幂；设备建不了的请求（超上限或不是 2 的幂）**拒绝一次**、不降级 —— 这样
+  `RenderTarget::samples()` 永远是画出来的那个数。
+- **改前是三种答案**：文档说“拒绝、从不悄悄降低”；`vsg` 行为对但 `max_samples` / `setMaxSamples` 传的是
+  **位掩码**（本机答 15，宿主 `setSamples(15)` 一路走到 `samplesToVk` 取整 2 而 `shape().samples` 仍是 15），
+  且不检查“不是计数”的请求；“`vk`”（M11）把超限请求**降级**，又把“多采样 + 可被采样深度”降成单采样。
+- **`vsg`**：新增 `largestSampleCount(flags)`（`StateCommands`，与 `samplesToVk` 同处）；`capabilities()` 与
+  `setMaxSamples` 都传计数（本机 8）；`HostTargets::build` 额外拒绝非 2 的幂；`reportUnbuildableTarget` 把
+  “超过上限 / 不是计数 / 借来的深度”三句分开。
+- **`vk`**：`ensureTarget` 用 `ensureBuildableSamples(...)`（2 的幂 ∧ 在受支持集合里）判定，不成立就报一次并
+  `return false`（目标不建、pass 跳过、`readColorBuffer` 答 `NotReady`）；“多采样 + `isDepthPromoted`”
+  同样拒绝（backlog **T40**）；`clampSampleCount` 删除。
+- **帧计数顺带修正**：`executeFrame` 的 `FrameCounters` 只数**真正记录**的 pass / draw（这是 `FrameCounters`
+  文档的语义，也与 vsg 的 packets 一致），被拒的目标不再计一次 draw；被拒时也不再补一句 `Info`
+  “no pass this backend can run”（拒绝已经说过原因）。
+- **测试**：`VkMsaaTest` 5 例 —— 计数上限；4 采样画面（**现在真的多采样**：那张 target 原来默认 promote 深度，
+  被静默降成单采样，等于没测 resolve）；超限拒绝 + 报一次；3 被拒；多采样 + 可采样深度被拒。
+  `MsaaTargetTest` 增一个 3 的断言；新增 `BackendParityTest.TheSampleLimitsAgreeBetweenTheBackends`
+  （同一台机器两后端同一个数：本机 vsg=8 / vk=8）。
+- **验证**：`test_vk` 61 例（60 过 1 跳过，validation 静默）、`test_vsg` 520 例（517 过 3 跳过）、八个门禁全清。
+
 ## 2026-11-14 —— `gfx_backend_vk` M13：预热自己提交“只含传输”的一批（框架优先）
 
 - **决策先写**：`../decisions/ADR-2026-11-14-prepare-may-submit-transfers.md`。`prepareFrame` 仍然**不提交帧**

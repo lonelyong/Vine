@@ -70,11 +70,28 @@ struct ViewportRect {
  * pipeline (rasterisation samples) take the value from here - a pass whose attachments are multisampled and a
  * pipeline compiled for one sample are an incompatibility the API refuses at draw time.
  *
- * @param samples Samples per pixel; a value between two API counts rounds DOWN, and 0 and 1 both mean one
- *                sample.
+ * @param samples Samples per pixel; 0 and 1 both mean one sample. A value between two API counts rounds DOWN,
+ *                which is the LAST-RESORT projection for a number nobody should hand over: a target's count is
+ *                refused before it reaches this call when the device does not offer it (see HostTargets and
+ *                ADR-2026-11-14-sample-count-refused-not-lowered).
  * @return The API's count (never 0 for an input of at least 1).
  */
 [[nodiscard]] VkSampleCountFlagBits samplesToVk(std::uint32_t samples) noexcept;
+
+/** @brief Gets the largest sample COUNT a device's `VkSampleCountFlags` bit set contains.
+ *
+ * @details
+ * - WHY THIS EXISTS: the device answers with a SET of bits (`framebufferColorSampleCounts` intersected with
+ *   `framebufferDepthSampleCounts`, because one target has one sample count), while every contract in the SDK -
+ *   `Capabilities::max_samples`, `RenderTarget::setSamples`, the host's target description - states a COUNT. Passing
+ *   the bit set straight through said "15" for a device that offers 1/2/4/8, which is not a count anything can be
+ *   built with (see ADR-2026-11-14-sample-count-refused-not-lowered).
+ * - The counts are read largest first, so the first flag the set contains is the largest one it offers.
+ *
+ * @param flags A `VkSampleCountFlags` bit set.
+ * @return The largest count in @p flags; 1 when the set contains nothing usable.
+ */
+[[nodiscard]] std::uint32_t largestSampleCount(std::uint32_t flags) noexcept;
 
 /** @brief Maps the engine's dynamic state onto the set command that delivers it.
  *

@@ -87,29 +87,29 @@ constexpr const char* kPlatformSurfaceExtensionName = "VK_KHR_xcb_surface";
     return vn::String(reinterpret_cast<const char8_t*>(text != nullptr ? text : ""));
 }
 
-/// @brief The sample counts Vulkan offers, largest first: a target's request is clamped to one of them.
+/// @brief The sample counts Vulkan offers, largest first (see largestSampleCount / ensureBuildableSamples).
 constexpr std::uint32_t kSampleCounts[] = { 64U, 32U, 16U, 8U, 4U, 2U, 1U };
 
 /**
- * @brief Gets the largest sample count at or below @p requested that @p supported flags offer.
+ * @brief Whether @p samples is a count this device can build a target with.
  *
  * @details
- * - A TARGET'S SAMPLE COUNT IS A NUMBER, a device's answer is a SET of them (`VK_SAMPLE_COUNT_*_BIT`), and an image
- *   can only be created with a count the set contains - so the request has to be brought into the set before any
- *   object is made. Both the clamp and the report of an over-large request read this one answer.
+ * - A COUNT IS A COUNT (see ADR-2026-11-14-sample-count-refused-not-lowered): the legal counts are the powers of two,
+ *   so a number between two of them (three, say) is a count the device does not offer at all - mapping it through
+ *   `StateMapping::sampleCount` would silently answer one sample, which is the same lie as lowering an over-large
+ *   request. `Capabilities::max_samples` plus "the counts are powers of two" names the whole set, and this is where
+ *   that set is checked, once, before any object is made.
  *
- * @param requested Samples per pixel the host asked for (0 and 1 both mean single-sampled).
+ * @param samples Samples per pixel a target asks for (already normalised: 0 is not a count).
  * @param supported The device's `framebufferColorSampleCounts & framebufferDepthSampleCounts` flags.
- * @return The largest supported count at or below @p requested; 1 when the flags offer nothing usable.
+ * @return true when @p samples is a power of two the @p supported flags contain.
  */
-[[nodiscard]] std::uint32_t clampSampleCount(const std::uint32_t requested, const std::uint32_t supported) noexcept
+[[nodiscard]] bool ensureBuildableSamples(const std::uint32_t samples, const std::uint32_t supported) noexcept
 {
-    for (const std::uint32_t count : kSampleCounts) {
-        if (count <= requested && (supported & static_cast<std::uint32_t>(StateMapping::sampleCount(count))) != 0U) {
-            return count;
-        }
+    if (samples == 0U || (samples & (samples - 1U)) != 0U) {
+        return false;
     }
-    return 1U;
+    return (supported & static_cast<std::uint32_t>(StateMapping::sampleCount(samples))) != 0U;
 }
 
 /**
@@ -944,38 +944,47 @@ bool Device::ensureTarget(const RenderTarget& target)
         wanted.shape.depth_format        = target.depthFormat();
         wanted.shape.device_depth_format = static_cast<std::uint32_t>(depthFormatOf(target.depthFormat()));
     }
-    // THE SAMPLE COUNT THIS DEVICE CAN BUILD (see TargetShape::samples): the shape carries a NUMBER, the device offers
-    // a SET of them, so the request is brought into the set once, here, and every later step - the images, the render
-    // pass, the pipeline - reads the clamped value back out of `wanted`.
-    // - ABOVE THE DEVICE'S LIMIT: reported once and served at the largest count the device offers. Refusing the target
-    //   outright would leave the host with nothing to draw into, and the picture it asked for is still the picture it
-    //   gets, only with fewer samples.
-    // - BELOW THE LIMIT BUT NOT A COUNT VULKAN OFFERS (three, say): clamped to the largest count at or below it and
-    //   not reported - "as close as the device can" is the honest reading of a number the SDK states.
-    const std::uint32_t requested_samples = target.samples();
+    // A COUNT IS A COUNT (see ADR-2026-11-14-sample-count-refused-not-lowered): the target states the number of
+    // samples it is drawn with, and `wanted.shape.samples` is that number - never another one. A count this device
+    // cannot build (above its limit, or not a power of two) REFUSES the target: one warning naming the request and
+    // the limit, nothing created, nothing drawn into it, and `readColorBuffer` answering NotReady. Lowering it would
+    // leave `RenderTarget::samples()` saying a number the images are not drawn with, which no value in this shape can
+    // express.
+    const std::uint32_t requested_samples = target.samples() == 0U ? 1U : target.samples();
     const std::uint32_t largest_samples   = largestSampleCount(impl->supported_sample_counts);
-    wanted.shape.samples                  = clampSampleCount(requested_samples, impl->supported_sample_counts);
-    wanted.shape.subpass                  = 0U;
-    if (requested_samples > largest_samples && !impl->reported_samples) {
-        impl->reported_samples = true;
-        reportDiagnostic(DiagnosticSeverity::Warning,
-                         DiagnosticCategory::UnsupportedRequest,
-                         vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
-                             u8" samples per pixel, above this device's limit of " + numberText(largest_samples) +
-                             u8"; it is drawn with the largest count the device offers (see Capabilities::max_samples)");
+    if (!ensureBuildableSamples(requested_samples, impl->supported_sample_counts)) {
+        if (!impl->reported_samples) {
+            impl->reported_samples = true;
+            // The two reasons a count is unbuildable are said as the difference they are: a request past the limit,
+            // and a number that is not a sample count at all. Both name the limit the host should read.
+            const vn::String request = vn::String(u8"vk: a target asks for ") + numberText(requested_samples) + u8" samples per pixel";
+            const vn::String why     = requested_samples > largest_samples
+                                           ? request + u8", above what this device offers (up to " + numberText(largest_samples) +
+                                                 u8"; see Capabilities::max_samples)"
+                                           : request + u8", which is not a sample count this device offers (the counts are powers of two, up to " +
+                                                 numberText(largest_samples) + u8"; see Capabilities::max_samples)";
+            reportDiagnostic(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest, why);
+        }
+        return false;
     }
-    // A DEPTH THAT WILL BE READ STAYS SINGLE-SAMPLED: this backend never resolves a multisampled depth (see
+    wanted.shape.samples = requested_samples;
+    wanted.shape.subpass = 0U;
+    // A DEPTH A SHADER SAMPLES CANNOT BE MULTISAMPLED HERE: this backend never resolves a multisampled depth (see
     // TargetImages' class note), so a multisampled one would answer the SAMPLES where a shader - or a readback -
     // expects the picture. `isDepthPromoted` is the fact the shadow path gates on (`resolveShadow` refuses a map whose
-    // promotion the host revoked), and the SDK's own rule is that a depth a shader samples is single-sample.
-    if (target.hasDepth() && target.isDepthPromoted() && wanted.shape.samples > 1U) {
+    // promotion the host revoked), and the SDK's own rule is that a depth a shader samples is single-sample. The
+    // target is REFUSED rather than silently drawn single-sampled (ADR-2026-11-14-sample-count-refused-not-lowered);
+    // depth resolve is backlog T40, and this branch goes away with it.
+    if (requested_samples > 1U && target.hasDepth() && target.isDepthPromoted()) {
         if (!impl->reported_samples_depth) {
             impl->reported_samples_depth = true;
             reportDiagnostic(DiagnosticSeverity::Warning,
                              DiagnosticCategory::UnsupportedRequest,
-                             u8"vk: a target whose depth may be sampled is built single-sampled (a multisampled depth is never resolved on this path)");
+                             vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
+                                 u8" samples per pixel and a depth a shader samples; this backend never resolves a multisampled "
+                                 u8"depth, so the target is refused (see RenderTarget::setDepthPromotion and Capabilities::max_samples)");
         }
-        wanted.shape.samples = 1U;
+        return false;
     }
 
     TargetImages& images = impl->targets[&target];
@@ -1079,6 +1088,9 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     std::vector<Runnable> runnable_passes;
     runnable_passes.reserve(frame.passes.size());
     bool window_acquired = false;
+    // Whether a pass was dropped because a description this device cannot build was named (a sample count, say). The
+    // refusal has already said WHY, so the generic "nothing I can run" sentence below would be the same fact twice.
+    bool refused_pass = false;
     for (const FrameDescription::Pass& entry : frame.passes) {
         if (entry.pass == nullptr) {
             continue; // the SDK's rule: an entry that names no pass is nothing to run (see RenderFrameExecutor)
@@ -1095,10 +1107,16 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         for (const DrawDescription& description : draw.draws) {
             calls += isDrawingCall(description) ? 1U : 0U;
         }
-        if (calls != 0U || draw.clear.has_value()) {
-            ++counters.passes;
-            counters.draws += calls;
-        }
+        // COUNTED ONLY FOR A PASS THIS DEVICE CAN RUN: a drawing call is recorded, and a pass whose target could not
+        // be built recorded nothing (see the sample-count refusals in ensureTarget) - reporting its calls would say a
+        // frame drew when nothing reached the queue.
+        const bool has_effect = calls != 0U || draw.clear.has_value();
+        const auto count_pass = [&counters, calls, has_effect]() {
+            if (has_effect) {
+                ++counters.passes;
+                counters.draws += calls;
+            }
+        };
         if (draw.target == nullptr) {
             if (window == nullptr || !window->ready()) {
                 if (!impl->reported_surface) {
@@ -1107,6 +1125,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                                      DiagnosticCategory::UnsupportedRequest,
                                      u8"vk: a window pass names no presenter this device handed out; it was left out");
                 }
+                refused_pass = true;
                 continue;
             }
             if (!window_acquired) {
@@ -1118,21 +1137,25 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                                          DiagnosticCategory::UnsupportedRequest,
                                          why.empty() ? vn::String(u8"vk: the window's next image could not be acquired") : std::move(why));
                     }
+                    refused_pass = true;
                     continue;
                 }
                 window_acquired = true;
             }
+            count_pass();
             runnable_passes.push_back(Runnable{ &entry, &draw, true });
             continue;
         }
         if (!ensureTarget(*draw.target)) {
+            refused_pass = true;
             continue;
         }
+        count_pass();
         runnable_passes.push_back(Runnable{ &entry, &draw, false });
     }
 
     if (runnable_passes.empty()) {
-        if (!impl->reported_no_targets) {
+        if (!refused_pass && !impl->reported_no_targets) {
             impl->reported_no_targets = true;
             reportDiagnostic(DiagnosticSeverity::Info,
                              DiagnosticCategory::UnsupportedRequest,
