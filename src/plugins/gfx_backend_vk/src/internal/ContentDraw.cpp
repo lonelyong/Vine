@@ -1338,8 +1338,15 @@ struct ContentDraw::Impl {
             return false;
         }
 
-        // THE STATE, resolved from the pass (a full-screen call has no per-command state of its own).
-        plan.resolved = vn::graphics::resolveRenderState(vn::graphics::RenderState{}, pass.state, vn::graphics::Topology::Triangles);
+        // THE STATE, resolved from the pass (a full-screen call has no per-command state of its own) - WITH THE DEPTH
+        // POLICY FORCED OFF. A full-screen call is the canonical triangle at z = 0.0, which under this engine's
+        // reverse-Z convention is the FAR plane: any depth test against what the destination carries discards every
+        // fragment. The destinations that expose this are exactly the ones the reference backend's M4b rule names: a
+        // window pass' render pass clears D24 to 0 (far), and the deferred chain's composite BORROWS the G-buffer's
+        // depth. The pass' depth policy is about the CONTENT it draws into that target, not about this call.
+        vn::graphics::PassRenderState screen_state = pass.state;
+        screen_state.depth                         = vn::graphics::DepthMode::Disabled;
+        plan.resolved = vn::graphics::resolveRenderState(vn::graphics::RenderState{}, screen_state, vn::graphics::Topology::Triangles);
         vn::String pipeline_why;
         plan.pipeline = ensureScreenPipeline(*fragment,
                                              *vertex,

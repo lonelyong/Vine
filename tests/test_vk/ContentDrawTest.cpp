@@ -573,6 +573,77 @@ TEST(VkContentDrawTest, AScreenCopySamplesTheSourceTarget)
     backend->shutdown();
 }
 
+TEST(VkContentDrawTest, AScreenCopyIsDrawnWhateverThePassDepthPolicySays)
+{
+    // THE PASS' DEPTH POLICY IS ABOUT ITS CONTENT, NOT ABOUT THE FULL-SCREEN CALL. A full-screen draw is the
+    // canonical triangle at z = 0.0, which under this engine's reverse-Z convention is the FAR plane; a screen call
+    // that inherited the pass' TestAndWrite policy against a destination that carries depth would be discarded at
+    // every pixel. The app found this the hard way (2026-11-14): a window pass' render pass clears D24 to 0 and the
+    // deferred chain's composite BORROWS the G-buffer's depth, so present and the G-buffer previews "recorded and
+    // drew nothing" while the HUD content (DepthMode::Disabled) stayed visible.
+    //
+    // DEFAULT PASS STATE ON PURPOSE (see screenFrame, which states Disabled explicitly): the shape under test is the
+    // one the engine's own chain passes hand over.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget>                source   = makeTarget();
+    const intrusive_ptr<ShaderProgram>               scene    = makeProgram();
+    const intrusive_ptr<Geometry>                    geometry = makeTriangle();
+    const intrusive_ptr<Material>                    red      = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+    const intrusive_ptr<vn::graphics::ShaderProgram> copy     = vn::graphics::screenCopyProgram(0);
+
+    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    command.program              = scene;
+    command.program_description  = scene->description();
+    command.material             = red;
+    command.material_description = red->description();
+
+    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    commands->push_back(std::move(command));
+
+    DrawDescription scene_draw;
+    scene_draw.kind     = DrawDescription::Kind::Scene;
+    scene_draw.camera   = identityCamera();
+    scene_draw.commands = commands;
+    backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
+
+    // The destination carries depth (makeTarget attaches D24) and is never drawn into before: its depth is the
+    // render pass' clear (far, 0.0), which is exactly what a TestAndWrite full-screen call fails against.
+    const intrusive_ptr<RenderTarget> destination = makeTarget();
+
+    DrawDescription screen_draw;
+    screen_draw.kind                = DrawDescription::Kind::Screen;
+    screen_draw.camera              = identityCamera();
+    screen_draw.source              = source.get();
+    screen_draw.program             = copy;
+    screen_draw.program_description = copy->description();
+
+    FrameDescription frame;
+    FrameDescription::Pass entry;
+    entry.pass = vn::test::framePassForTest();
+    PassDraw pass;
+    pass.target = destination.get();
+    pass.draws.push_back(std::move(screen_draw));
+    entry.draw = std::move(pass);
+    frame.passes.push_back(std::move(entry));
+    EXPECT_EQ(backend->executeFrame(frame), PresentOutcome::Skipped);
+
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels));
+    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }))
+        << "the full-screen call was discarded by a depth test it does not have";
+    EXPECT_EQ(pixelAt(pixels, 2, 2), (std::array<int, 4>{ 0, 0, 0, 255 }))
+        << "the screen copy did not sample the source's cleared corner";
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+    backend->shutdown();
+}
+
 TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
 {
     // TRANSPARENCY: the engine decides the order, the backend draws it in that order with the resolved blend. The

@@ -563,6 +563,21 @@
 - **边界**：lavapipe 是软件光栅器，绝对值只用于**同机对拍**与回归，不是 GPU 结论；Win32 与真 GPU 未测。
   60 帧窗口里混有演示的 PiP/覆盖层定时器与一次资产上传帧。
 
+## 2026-11-14 —— 两处“录了、没画”的根因（demo 链未采纳 / vk 全屏继承深度）
+
+- **宿主**：`PassChain::build()` **不自我采纳**，必须 `view->setChain(chain)`（`Viewer` 是范本）。不采纳 ⇒
+  `SceneView::publishContent` 不发布链拥有的透明场景（一条 `never published`，该 pass 画 nothing）、
+  `applySurfaceGeometry` 也不 resize 链（demo 曾在自己布局步里补 resize，两份尺寸来源）。demo 已修，见
+  `.ai/bugs/demo-chain-never-adopted.md`。
+- **vk**：全屏调用必须**恒** `DepthMode::Disabled`（`ContentDraw::planScreen` 强制，参考后端 M4b 的规则）。
+  全屏三角形在 z = 0.0 = reverse-Z 远平面；窗口 pass 的 D24 清 0、deferred 的 composite **借用** G-buffer
+  深度 ⇒ 继承 `TestAndWrite` 会整块被深度测试丢弃，而**零 VUID、记录层每条 `recorded=1`**。用例
+  `AScreenCopyIsDrawnWhateverThePassDepthPolicySays`；旧 screen fixture 显式设了 `Disabled`，这正是它没抓到的
+  原因。见 `.ai/bugs/vk-screen-draw-inherits-pass-depth.md`。
+- **诊断配方（可复用）**：①记录层探针（每 pass 的 commands/recorded/why）分清“没进命令”与“进了没画”；
+  ②把待观察的 16F 目标**临时**改成 RGBA8（`ChainPresets.cpp`）即可用 `RenderEngine::device()->readColorBuffer`
+  读回中心像素；③把 GBuffer 直接拷到可读的 RGBA8 composite 再读，能分开“源空”与“拷贝坏”。探针用完即撤。
+
 ## 2026-11-13 —— `gfx_backend_vk` M9：阴影贴图
 
 - **形状**：`TargetImages` 接受**深度-only** 目标 —— `built()` 不再要求有颜色视图，`createRenderPass` 在 0 个颜色附件时
