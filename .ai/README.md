@@ -171,9 +171,14 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## research/ —— 调研与提案（11 文件 / 1 组提案）
+## research/ —— 调研与提案（12 文件 / 1 组提案）
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
+
+- `graphics-2026-11-14-vk-industry-review.md` —— **`gfx_backend_vk` 的工业标准审查**（只读 + 两处小修）：
+  规范符合性/可诊断性是工业级（validation 0 VUID、跨后端逐字节对拍、设备丢失分类、barrier 表、pipeline key），
+  资源与性能架构是原型级 —— 每 draw 每帧建/毁 UBO（实测每帧 28 次分配）、每 draw 每帧分配描述符集、每帧分配命令
+  缓冲、无 `VkPipelineCache`、无子分配、无 GPU 计时；单帧在飞是 SDK 契约的代价而非疏忽；含 F1–F13 与 T43–T46。
 
 - `graphics-2026-11-13-vk-exposure-boundary.md` —— **后端能不能暴露 Vulkan** 的边界论证：SDK 宿主面 / SDK 后端面今天**零 Vk 类型**（命中全是注释），插件 `internal`+`support` 18/57 个头含 `Vk*` 而 `shell` 为 0；对照 wgpu / Diligent / QRhi / Godot / bgfx / Filament / UE / Dawn，结论是“插件内部随便、SDK 与工厂入口不许”，学习后端需要的那扇门做成 `support/` 里的显式自由函数（`vn::backend_vk::Handles`），并给出可检查的 V1–V4 与升级触发。
 - `graphics-2026-11-13-gpu-resource-abstraction.md` —— **T30（GPU 资源抽象）评估**：宿主面 18 个设备动词里 0 个创建 GPU 资源；规则层（pin / 退役 / 驻留账 / 帧值 / 能力 / 目标决策）完备，类型层无消费者；真触发时的形状是“不透明资源描述 + 每后端实现”，不建 `GpuResource` 基类；前置 T15 / T32，另记 S4 / S5 与验证层缺口。

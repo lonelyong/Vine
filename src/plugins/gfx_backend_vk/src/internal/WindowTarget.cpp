@@ -19,6 +19,9 @@ namespace
 /// @brief The depth format every window target uses (the same D24 the off-screen targets use).
 constexpr VkFormat kDepthFormat = VK_FORMAT_D24_UNORM_S8_UINT;
 
+/// @brief How long an acquire waits for the presentation engine before the frame is skipped (see WindowTarget::acquire).
+constexpr std::uint64_t kAcquireTimeoutNanoseconds = 1'000'000'000ULL;
+
 /**
  * @brief Finds a memory type that serves @p bits and has every property in @p wanted.
  *
@@ -610,9 +613,13 @@ bool WindowTarget::acquire(vn::String* why)
 
     for (int attempt = 0; attempt < 2; ++attempt) {
         std::uint32_t index  = 0U;
+        // A FINITE TIMEOUT. `UINT64_MAX` turns a surface the presentation engine never hands an image for (a stuck
+        // window, a broken driver) into a hang with no diagnostic; a second is far longer than any healthy frame, so
+        // a working surface never sees it, and the timeout is answered like any other failed acquire: the frame is
+        // skipped and the episode is reported once (see the caller).
         const VkResult result = impl->device.table->vkAcquireNextImageKHR(impl->device.device,
                                                                           impl->swapchain,
-                                                                          UINT64_MAX,
+                                                                          kAcquireTimeoutNanoseconds,
                                                                           impl->image_available,
                                                                           VK_NULL_HANDLE,
                                                                           &index);

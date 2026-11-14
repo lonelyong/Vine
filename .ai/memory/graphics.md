@@ -563,6 +563,19 @@
 - **边界**：lavapipe 是软件光栅器，绝对值只用于**同机对拍**与回归，不是 GPU 结论；Win32 与真 GPU 未测。
   60 帧窗口里混有演示的 PiP/覆盖层定时器与一次资产上传帧。
 
+## 2026-11-14 —— `gfx_backend_vk` 工业标准审查（结论 + 两处小修）
+
+- **结论**：规范符合性/可诊断性**工业级**（validation 0 VUID、跨后端逐字节对拍、设备丢失分类、barrier 表、
+  pipeline key 完整）；资源与性能架构**原型级**（每 draw 每帧建/毁 UBO、每 draw 每帧分配描述符集、每帧分配命令缓冲、
+  无 `VkPipelineCache`、无子分配、无 GPU 计时）。单帧在飞是 **SDK 契约**（“画完就能读”）的代价，不是缺陷。
+  全文与 F1–F13 见 `../research/graphics-2026-11-14-vk-industry-review.md`；待办 T43–T46。
+- **已修两处**：①物理设备按 `VkPhysicalDeviceType` 排序（discrete > integrated > virtual > cpu > other，
+  同分保留先出现者）——原来取第一个可服务设备，笔记本上会默默用 iGPU；②`vkAcquireNextImageKHR` 的超时从
+  `UINT64_MAX` 改为 **1 s**（卡住的表面从“永久挂起”变成“跳过该帧 + 按情节报一次”）。
+- **量出来的数（别忘）**：演示帧 22 条内容 draw + 6 条全屏 draw ⇒ **28 次 buffer+memory 分配 / 帧**
+  （60 fps ≈ 1700 次/秒），全部 UBO 是 `UNIFORM_BUFFER`（无 dynamic offset）；`vkCreatePipelineCache`、
+  `vkCmdWriteTimestamp` 全仓 0 处。
+
 ## 2026-11-14 —— 四处“录了、没画/没效果”的根因（demo 链未采纳 / vk 全屏继承深度 / vk 全屏只绑阴影 stand-in / demo 预览同名）
 
 - **宿主**：`PassChain::build()` **不自我采纳**，必须 `view->setChain(chain)`（`Viewer` 是范本）。不采纳 ⇒

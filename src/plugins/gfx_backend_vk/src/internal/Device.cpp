@@ -73,6 +73,31 @@ constexpr int kProbeWindowWidth  = 640;
 constexpr int kProbeWindowHeight = 360;
 
 /**
+ * @brief How strongly a physical device is preferred, higher being better (see the device choice in initialize).
+ *
+ * @details
+ * - THE FIRST DEVICE THAT CAN SERVE IS NOT THE BEST ONE: a machine lists its integrated GPU before the discrete
+ *   one often enough that "take the first" quietly renders on the slower device, and nothing in a picture or a log
+ *   says so.
+ * - A virtual GPU outranks a CPU device (a virtualised desktop still has a GPU behind it); anything the loader
+ *   reports as OTHER ranks last, and ties keep the earlier device, so the choice is deterministic.
+ *
+ * @param type The physical device's reported type.
+ * @return The preference rank.
+ */
+[[nodiscard]] int deviceTypeRank(const VkPhysicalDeviceType type) noexcept
+{
+    switch (type) {
+        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 4;
+        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return 3;
+        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: return 2;
+        case VK_PHYSICAL_DEVICE_TYPE_CPU: return 1;
+        default: break; // OTHER, and the MAX_ENUM the loader never reports
+    }
+    return 0;
+}
+
+/**
  * @brief Builds a diagnostic message from a driver string.
  *
  * @param text The driver's `const char*`, or null.
@@ -680,7 +705,9 @@ bool Device::initialize()
         }
     }
 
-    // THE DEVICE: the first one with a graphics queue. M0 creates no surface, so no present support is asked for.
+    // THE DEVICE: the BEST one that can serve this session (a graphics queue, plus present support when a surface is
+    // named) - see deviceTypeRank for why "first" is not the answer. M0 creates no surface, so no present support is
+    // asked for there.
     std::uint32_t physical_count = 0;
     if (vkEnumeratePhysicalDevices(impl->instance, &physical_count, nullptr) != VK_SUCCESS || physical_count == 0U) {
         reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed, u8"vk: no Vulkan physical device");
@@ -699,6 +726,7 @@ bool Device::initialize()
     const VkSurfaceKHR presentation_surface =
         impl->presentation_wanted && !impl->surfaces.empty() ? impl->surfaces.front()->surfaceHandle() : VK_NULL_HANDLE;
 
+    int best_rank = -1; // no candidate yet: every rank (>= 0) is better than "none"
     for (const VkPhysicalDevice candidate : physical_devices) {
         std::uint32_t family_count = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(candidate, &family_count, nullptr);
@@ -707,6 +735,7 @@ bool Device::initialize()
         }
         std::vector<VkQueueFamilyProperties> families(family_count);
         vkGetPhysicalDeviceQueueFamilyProperties(candidate, &family_count, families.data());
+        std::uint32_t serving_family = std::numeric_limits<std::uint32_t>::max();
         for (std::uint32_t index = 0; index < family_count; ++index) {
             if ((families[index].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0U) {
                 continue;
@@ -718,12 +747,22 @@ bool Device::initialize()
                     continue;
                 }
             }
-            impl->physical     = candidate;
-            impl->queue_family = index;
+            serving_family = index;
             break;
         }
-        if (impl->physical != VK_NULL_HANDLE) {
-            break;
+        if (serving_family == std::numeric_limits<std::uint32_t>::max()) {
+            continue;
+        }
+
+        // THE BEST CANDIDATE SO FAR, not the first one (see deviceTypeRank): a machine that lists its integrated GPU
+        // first must not be the reason the slower device draws every frame.
+        VkPhysicalDeviceProperties candidate_properties{};
+        vkGetPhysicalDeviceProperties(candidate, &candidate_properties);
+        const int rank = deviceTypeRank(candidate_properties.deviceType);
+        if (rank > best_rank) {
+            best_rank          = rank;
+            impl->physical     = candidate;
+            impl->queue_family = serving_family;
         }
     }
     if (impl->physical == VK_NULL_HANDLE) {
