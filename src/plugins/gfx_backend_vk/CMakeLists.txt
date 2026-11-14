@@ -1,9 +1,13 @@
 # gfx_backend_vk: the DIRECT Vulkan backend, delivered as an appfw plugin.
 #
-# WHAT IT IS FOR. Learning and research (see .ai/research/graphics-2026-11-13-gpu-resource-abstraction.md §8): it
-# creates its own VkInstance / VkDevice / pipelines instead of driving VulkanSceneGraph, so the SDK's backend seam gets
-# a second implementation to be judged against. The name says that path: "vsg" goes through VulkanSceneGraph, "vk"
-# calls Vulkan itself. It is NOT the production backend - nothing selects it implicitly.
+# WHAT IT IS FOR. The backend that REPLACES VulkanSceneGraph: it creates its own VkInstance / VkDevice / pipelines
+# instead of driving VulkanSceneGraph, so the SDK's backend seam gets a second implementation to be judged against.
+# The name says that path: "vsg" goes through VulkanSceneGraph, "vk" calls Vulkan itself. It is NOT the default yet -
+# the switch is gated (see ADR-2026-11-14-vk-becomes-the-default-target): releaseRenderTarget, readDepthBuffer or a
+# stated difference, device-loss reporting, and platform evidence come first.
+#
+# PLATFORMS. Linux/X11 is the first supported target; Win32 is next and joins through WindowSystem (one
+# implementation file, no change to Device). A platform this build does not serve answers UnsupportedSurface.
 #
 # WHAT IT CONSUMES. The SDK's backend half (vine/graphics/backend/), which is why it defines
 # VN_GRAPHICS_BACKEND_CONSUMER: the same opt-in the vsg plugin states. Its shell headers expose no Vulkan type (the

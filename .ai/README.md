@@ -89,6 +89,7 @@
 
 - `ADR-2026-11-14-sample-count-refused-not-lowered.md` —— **采样数是计数，设备建不了的请求只拒绝一次、不降级**：`Capabilities::max_samples` 是 2 的幂的计数（`vsg` 原来答位掩码 15）；超上限或不是 2 的幂都拒绝（`SamplesUnsupported` / `UnsupportedRequest`，报一次），所以 `RenderTarget::samples()` 永远是画出来的那个数；否决降级、向上取整、给 `Capabilities` 加位集。
 - `ADR-2026-11-14-prepare-may-submit-transfers.md` —— **预热可以提交一批“只有传输”的工作**：`prepareFrame` 仍然不提交帧（不 acquire / 不 present / 不动 `FrameProgress`），但可以记录并提交**一个**只含拷贝与布局转换的命令缓冲，用自己的 fence 等它完成——纹理上传因此在加载期落地，`R23` 不再“除了纹理”；否决第二个入口、后台线程、填充即上传。
+- `ADR-2026-11-14-vk-becomes-the-default-target.md` —— **`gfx_backend_vk` 转为生产后端、最终替代 `vsg`**：平台先 Linux/X11、Win32 后续（每设备一个 `WindowSystem` 的接缝，加平台是加法）；未实现能力诚实答 `Unsupported` + 一次诊断，不静默降级；切换默认前必须过的门（`releaseRenderTarget`、`readDepthBuffer` 或差异表、device-lost 诊断、ASan/TSan/validation、平台与性能证据、用户文档）写在 ADR 里；否决立刻切默认与双后端长期并存。
 - `ADR-2026-11-13-content-seam-stays-in-the-plugin.md` —— 内容记账半边（事实表/半边/键，被 `check_vsg_content_seam.cmake` 守卫）**继续留在后端插件里**，不提成 SDK 库（`G8`：没有第二个后端，打包不该先于消费者）；第二个后端出现时按 seam 移动/复制。
 - `ADR-2026-11-13-staging-keeps-the-reusable-block.md` —— 上传暂存**保留可复用下限块**（`staging->size <= minimumStagingBufferSize`），只还大于下限的一次性大块：每帧上传的宿主稳态零分配，模型载入的 1.2 GB 常驻仍不回来；取代 ADR-2026-11-10 的“全部不保留”。
 - `ADR-2026-11-13-one-engine-one-surface.md` —— **一个引擎驱动一个表面**：否决 graphics-next 的 F8（一引擎多 Surface / `Target{SurfaceId}`），多窗口 = 一个设备服务多个引擎（每窗一引擎 / 一区 / 一个 `Viewer`）；`FrameResult.present` / `PresentRecord` 保持单值；触发条件（真实-host 双视口 / 第二后端）写在 ADR 里。

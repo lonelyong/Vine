@@ -18,7 +18,7 @@
 #include <vine/backend_vk/internal/BarrierPlan.hpp>
 #include <vine/backend_vk/internal/ContentDraw.hpp>
 #include <vine/backend_vk/internal/ContentImages.hpp>
-#include <vine/backend_vk/internal/ProbeWindow.hpp>
+#include <vine/backend_vk/internal/WindowSystem.hpp>
 #include <vine/backend_vk/internal/StateMapping.hpp>
 #include <vine/backend_vk/internal/TargetImages.hpp>
 #include <vine/backend_vk/internal/WindowTarget.hpp>
@@ -66,15 +66,6 @@ constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 /// @brief The size a Probe device's own window comes up at (the reference backend's own default: 640x360).
 constexpr int kProbeWindowWidth  = 640;
 constexpr int kProbeWindowHeight = 360;
-
-/// @brief The window-system surface extension this build can use (empty where no window is served).
-#if defined(_WIN32)
-constexpr const char* kPlatformSurfaceExtensionName = "VK_KHR_win32_surface";
-#elif defined(__APPLE__)
-constexpr const char* kPlatformSurfaceExtensionName = "";
-#else
-constexpr const char* kPlatformSurfaceExtensionName = "VK_KHR_xcb_surface";
-#endif
 
 /**
  * @brief Builds a diagnostic message from a driver string.
@@ -233,11 +224,9 @@ struct Device::Impl {
 
     /// The windows this device presents through (one per host handle; owned here, borrowed by the host).
     std::vector<std::unique_ptr<WindowTarget>> surfaces;
-    /// The window this device brought up FOR ITSELF (DevicePresentation::Probe), or null for every other desc.
-    ///
-    /// A platform object, older than the Vulkan session: the surface is created on it and the physical device is
-    /// judged against that surface, so it is torn down AFTER every surface that presented through it (see shutdown).
-    std::unique_ptr<ProbeWindow> probe_window;
+    /// The window system this device's surfaces are created through (one per session, owned here; the connection
+    /// outlives every window target made through it).
+    std::unique_ptr<WindowSystem> window_system;
     /// Whether this session was opened with a presentation intent (a window half exists).
     bool presentation_wanted{ false };
 
@@ -437,7 +426,7 @@ bool Device::initialize()
 
     // WHAT THE MACHINE HAS. Layers and instance extensions are asked BEFORE the instance exists, and the answers
     // decide what is asked for - the validation layer is a preference, not a requirement, so a machine without it
-    // still comes up (this backend is a learner: running it unvalidated beats not running it).
+    // still comes up (running unvalidated beats not running: a missing layer is a warning, not a failure).
     bool          has_validation  = false;
     bool          has_debug_utils = false;
     std::uint32_t layer_count     = 0;
@@ -455,6 +444,7 @@ bool Device::initialize()
     std::uint32_t extension_count = 0;
     bool          has_surface_extension  = false;
     bool          has_platform_extension = false;
+    const char*   platform_extension     = WindowSystem::instanceExtension();
     if (vkEnumerateInstanceExtensionProperties(nullptr, &extension_count, nullptr) == VK_SUCCESS && extension_count > 0U) {
         std::vector<VkExtensionProperties> extensions(extension_count);
         if (vkEnumerateInstanceExtensionProperties(nullptr, &extension_count, extensions.data()) == VK_SUCCESS) {
@@ -465,7 +455,7 @@ bool Device::initialize()
                 if (std::strcmp(extension.extensionName, VK_KHR_SURFACE_EXTENSION_NAME) == 0) {
                     has_surface_extension = true;
                 }
-                if (kPlatformSurfaceExtensionName[0] != '\0' && std::strcmp(extension.extensionName, kPlatformSurfaceExtensionName) == 0) {
+                if (platform_extension[0] != '\0' && std::strcmp(extension.extensionName, platform_extension) == 0) {
                     has_platform_extension = true;
                 }
             }
@@ -477,18 +467,33 @@ bool Device::initialize()
     // device is judged against that surface (see DevicePresentation). A missing surface extension is the same answer:
     // this machine cannot present, and the off-screen path still runs whole frames.
     impl->presentation_wanted = impl->desc.presentation != DevicePresentation::None;
+    if (impl->presentation_wanted) {
+        vn::String why;
+        if (!ensureWindowSystem(&why)) {
+            // A Probe device PROMISED a window (it is what the creation input says), so not having one is a failed
+            // session rather than a quiet degradation - a host that wants the off-screen form asks for None. A
+            // Handle device keeps its session: the off-screen path still runs whole frames.
+            const bool probe = impl->desc.presentation == DevicePresentation::Probe;
+            reportDiagnostic(probe ? DiagnosticSeverity::Error : DiagnosticSeverity::Warning,
+                             probe ? DiagnosticCategory::InitFailed : DiagnosticCategory::UnsupportedRequest,
+                             why.empty() ? vn::String(u8"vk: no window system is available, so this device presents nothing") : std::move(why));
+            if (probe) {
+                shutdown();
+                return false;
+            }
+            impl->presentation_wanted = false;
+        }
+    }
     if (impl->presentation_wanted && impl->desc.presentation == DevicePresentation::Probe && impl->surfaces.empty()) {
         vn::String why;
-        if (!ensureProbeWindow(&why)) {
-            // A Probe device PROMISED a window (it is what the creation input says), so not having one is a failed
-            // session rather than a quiet degradation - a host that wants the off-screen form asks for None.
+        if (!impl->window_system->openOwnWindow(kProbeWindowWidth, kProbeWindowHeight, &why)) {
             reportDiagnostic(DiagnosticSeverity::Error,
                              DiagnosticCategory::InitFailed,
                              why.empty() ? vn::String(u8"vk: the device-owned (Probe) window could not be brought up") : std::move(why));
             shutdown();
             return false;
         }
-        impl->surfaces.push_back(std::make_unique<WindowTarget>(impl->probe_window->handle()));
+        impl->surfaces.push_back(std::make_unique<WindowTarget>(*impl->window_system, impl->window_system->ownWindow()));
     }
     if (impl->presentation_wanted && impl->desc.presentation == DevicePresentation::Handle && impl->desc.native_handle == nullptr &&
         impl->surfaces.empty()) {
@@ -506,7 +511,7 @@ bool Device::initialize()
     if (impl->presentation_wanted && impl->desc.presentation == DevicePresentation::Handle && impl->surfaces.empty()) {
         // The SDK's Handle form names the window as a CREATION input; the target object exists before the instance so
         // the surface can be created as soon as it does.
-        impl->surfaces.push_back(std::make_unique<WindowTarget>(impl->desc.native_handle));
+        impl->surfaces.push_back(std::make_unique<WindowTarget>(*impl->window_system, impl->desc.native_handle));
     }
 
     const bool want_validation = has_validation;
@@ -532,7 +537,7 @@ bool Device::initialize()
     }
     if (impl->presentation_wanted) {
         extension_names[extension_name_count++] = VK_KHR_SURFACE_EXTENSION_NAME;
-        extension_names[extension_name_count++] = kPlatformSurfaceExtensionName;
+        extension_names[extension_name_count++] = platform_extension;
     }
 
     VkInstanceCreateInfo instance_info{};
@@ -820,24 +825,28 @@ void Device::shutdown()
     impl->reported_samples    = false;
     impl->reported_prepare_target = false;
     impl->depth_resolve_supported = false;
-    // THE DEVICE'S OWN WINDOW GOES LAST, and whether or not a Vulkan session came up: it is a platform object older
-    // than the session (see ProbeWindow), and every surface created on it was destroyed above.
+    // THE WINDOW SYSTEM GOES LAST, and whether or not a Vulkan session came up: its connection is older than the
+    // session and every surface created through it was destroyed above (see WindowSystem's lifetime warning).
     impl->surfaces.clear();
-    impl->probe_window.reset();
+    if (impl->window_system != nullptr) {
+        impl->window_system->closeOwnWindow();
+        impl->window_system->close();
+        impl->window_system.reset();
+    }
     // The frame's books go with the session: the next initialize() starts a device that measured nothing yet.
     impl->books = Impl::Books{};
 }
 
-bool Device::ensureProbeWindow(vn::String* why)
+bool Device::ensureWindowSystem(vn::String* why)
 {
-    if (impl->probe_window != nullptr) {
-        return true; // one window per device, whoever asked first
+    if (impl->window_system != nullptr) {
+        return impl->window_system->open(why); // idempotent: the connection is opened once
     }
-    auto window = std::make_unique<ProbeWindow>();
-    if (!window->open(kProbeWindowWidth, kProbeWindowHeight, why)) {
+    auto window_system = std::make_unique<WindowSystem>();
+    if (!window_system->open(why)) {
         return false;
     }
-    impl->probe_window = std::move(window);
+    impl->window_system = std::move(window_system);
     return true;
 }
 
@@ -892,7 +901,7 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
             return nullptr;
         }
         vn::String why;
-        if (!ensureProbeWindow(&why)) {
+        if (!ensureWindowSystem(&why) || !impl->window_system->openOwnWindow(kProbeWindowWidth, kProbeWindowHeight, &why)) {
             answer(SurfaceTargetResult::UnsupportedSurface);
             if (!impl->reported_surface) {
                 impl->reported_surface = true;
@@ -902,7 +911,22 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
             }
             return nullptr;
         }
-        window_handle = impl->probe_window->handle();
+        window_handle = impl->window_system->ownWindow();
+    }
+    // A HOST WINDOW NEEDS THE CONNECTION TOO, and this is the call that opens it: a target asked for before
+    // initialize() still creates its surface later, through the same object.
+    {
+        vn::String why;
+        if (!ensureWindowSystem(&why)) {
+            answer(SurfaceTargetResult::UnsupportedSurface);
+            if (!impl->reported_surface) {
+                impl->reported_surface = true;
+                reportDiagnostic(DiagnosticSeverity::Warning,
+                                 DiagnosticCategory::UnsupportedRequest,
+                                 why.empty() ? vn::String(u8"vk: no window system is available, so no window surface can be created") : std::move(why));
+            }
+            return nullptr;
+        }
     }
     for (const auto& surface : impl->surfaces) {
         if (surface->nativeHandle() == window_handle) {
@@ -913,7 +937,7 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
         }
     }
 
-    auto target = std::make_unique<WindowTarget>(window_handle);
+    auto target = std::make_unique<WindowTarget>(*impl->window_system, window_handle);
     if (initialized()) {
         const WindowDevice window_device{
             &impl->device_table, impl->instance, impl->physical, impl->device, impl->queue, impl->queue_family, impl->memory
@@ -1177,8 +1201,8 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         return PresentOutcome::Skipped;
     }
 
-    // ONE COMMAND BUFFER, ONE FENCE, ONE WAIT. M1 is a learning step: the frame is submitted and finished before the call
-    // returns, which is what makes "read the pixels right after" mean what it says.
+    // ONE COMMAND BUFFER, ONE FENCE, ONE WAIT. The frame is submitted and finished before the call returns, which is
+    // what makes "read the pixels right after" mean what it says.
     VkCommandBufferAllocateInfo allocate{};
     allocate.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocate.commandPool        = impl->command_pool;

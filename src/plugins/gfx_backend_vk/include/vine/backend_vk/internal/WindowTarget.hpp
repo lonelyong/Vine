@@ -14,6 +14,8 @@
 
 VN_BACKEND_VK_NS_BEGIN
 
+class WindowSystem;
+
 /** @brief The device state one window target needs: the Vulkan objects the DEVICE owns (borrowed, never destroyed). */
 struct WindowDevice {
     const VolkDeviceTable*           table{ nullptr };           // The device's entry points (volk table).
@@ -32,11 +34,13 @@ struct WindowDevice {
  * @details
  * - ONE LIVE TARGET PER WINDOW, which is the platform constraint `WindowPresentTarget` states: the device hands one
  *   out (see `Device::createSurfaceTarget`) and refuses a second for the same handle.
- * - WHAT IT OWNS. The `VkSurfaceKHR` (created on the XCB connection of this target; Win32 uses the host module), the
+ * - WHAT IT OWNS. The `VkSurfaceKHR` (created through the device's window system; Win32 uses the host module), the
  *   swapchain and its images/views, one D24 depth image, TWO render passes (colour CLEAR / colour LOAD - a load op is
  *   not part of compatibility) and one framebuffer per swapchain image.
- * - WHAT IT DOES NOT OWN. The `VkInstance`, `VkDevice` and queue: the device owns them and hands the target a
- *   borrowed `WindowDevice` (see @ref attach), so the target never destroys what it did not make.
+ * - WHAT IT BORROWS. The `VkInstance`, `VkDevice` and queue: the device owns them and hands the target a
+ *   borrowed `WindowDevice` (see @ref attach), so the target never destroys what it did not make. The CONNECTION a
+ *   surface is created on is borrowed the same way, from the device's `WindowSystem` - one per session, outliving
+ *   every target made through it.
  * - LIFECYCLE. @ref attach is called once the logical device exists; the first @ref acquire builds the swapchain, and
  *   a resize or an out-of-date answer rebuilds it (`vkDeviceWaitIdle` first, then the old swapchain is replaced).
  *   A window the platform destroyed under the target leaves it DETACHED: every later call answers the truth instead
@@ -49,10 +53,15 @@ struct WindowDevice {
  */
 class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentTarget {
   public:
-    /** @brief Creates a target for @p native_handle, without a surface yet (see @ref attach). */
-    explicit WindowTarget(void* native_handle);
+    /**
+     * @brief Creates a target for @p native_handle, without a surface yet (see @ref attach).
+     *
+     * @param window_system The device's window-system services (borrowed; outlives this target).
+     * @param native_handle The host window, or the device-owned window's handle for a `Probe` device.
+     */
+    WindowTarget(WindowSystem& window_system, void* native_handle);
 
-    /** @brief Destroys the swapchain, the surface and the connection this target owns. */
+    /** @brief Destroys the swapchain and the surface (the borrowed connection is the device's). */
     ~WindowTarget() override;
 
     WindowTarget(const WindowTarget&)            = delete;

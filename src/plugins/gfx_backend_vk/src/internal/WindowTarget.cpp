@@ -8,7 +8,7 @@
 
 #include <volk.h>
 
-#include <vine/backend_vk/internal/XcbSurface.hpp>
+#include <vine/backend_vk/internal/WindowSystem.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
@@ -155,9 +155,10 @@ struct WindowTarget::Impl {
     bool         detached{ false };
     void*        handle{ nullptr };
 
-    XcbSurface   xcb{};
-    VkInstance   instance{ VK_NULL_HANDLE };
-    VkSurfaceKHR surface{ VK_NULL_HANDLE };
+    /// The device's window-system services: the connection a surface is created on (borrowed, never closed here).
+    WindowSystem* window_system{ nullptr };
+    VkInstance    instance{ VK_NULL_HANDLE };
+    VkSurfaceKHR  surface{ VK_NULL_HANDLE };
 
     VkSwapchainKHR swapchain{ VK_NULL_HANDLE };
     VkFormat       format{ VK_FORMAT_UNDEFINED };
@@ -454,10 +455,11 @@ struct WindowTarget::Impl {
     }
 };
 
-WindowTarget::WindowTarget(void* native_handle)
+WindowTarget::WindowTarget(WindowSystem& window_system, void* native_handle)
   : impl(std::make_unique<Impl>())
 {
-    impl->handle = native_handle;
+    impl->window_system = &window_system;
+    impl->handle        = native_handle;
 }
 
 WindowTarget::~WindowTarget()
@@ -480,7 +482,6 @@ WindowTarget::~WindowTarget()
         vkDestroySurfaceKHR(impl->instance, impl->surface, nullptr);
         impl->surface = VK_NULL_HANDLE;
     }
-    impl->xcb.close();
 }
 
 bool WindowTarget::createSurface(const VkInstance instance, vn::String* why)
@@ -495,11 +496,13 @@ bool WindowTarget::createSurface(const VkInstance instance, vn::String* why)
         return false;
     }
     impl->instance = instance;
-    if (!impl->xcb.open(why)) {
+    if (impl->window_system == nullptr) {
+        if (why != nullptr) {
+            *why = vn::String(u8"vk: the window target has no window system to create its surface on");
+        }
         return false;
     }
-    if (!impl->xcb.createSurface(instance, impl->handle, impl->surface, why)) {
-        impl->xcb.close();
+    if (!impl->window_system->createSurface(instance, impl->handle, impl->surface, why)) {
         return false;
     }
     return true;
@@ -718,7 +721,8 @@ void WindowTarget::setWindowHandle(void* native_handle)
         vkDestroySurfaceKHR(impl->instance, impl->surface, nullptr);
         impl->surface = VK_NULL_HANDLE;
     }
-    impl->xcb.close();
+    // The CONNECTION is the device's (one per session), so a moved handle re-creates its surface on it: closing it
+    // here would take every other window target's surface with it.
     impl->handle   = native_handle;
     impl->detached = native_handle == nullptr;
     if (impl->detached || !impl->attached) {

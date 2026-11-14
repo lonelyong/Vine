@@ -292,7 +292,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @details
      * - THE EVIDENCE FOR "A RESIZE MUST NOT RECOMPILE": a frame drawn again after an EXTENT change leaves this
      *   unmoved (the pipeline is compatible with the new framebuffer), while a shape change or a new program moves it.
-     *   Like `handles()`, it is a learning-backend fact rather than a verb any other backend promises.
+     *   Like `handles()`, it is a diagnostic fact this backend offers the host, not a verb the SDK promises.
      *
      * @return Pipelines created since the device came up (0 when it built none).
      */
@@ -324,17 +324,18 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
     [[nodiscard]] bool ensureTarget(const vn::graphics::RenderTarget& target);
 
     /**
-     * @brief Brings up the window a `Probe` device presents through, once per session.
+     * @brief Brings up the session's window system, opening its connection once.
      *
      * @details
-     * - Called from `initialize()` (the device's own window must exist before the surface is created on it) and from
-     *   `createSurfaceTarget(nullptr)` when a host asks for the device's window first - the SDK's documented order.
-     * - A window already up is a no-op: one Probe window per device, whatever asks for it first.
+     * - Called from `initialize()` (a Probe device's window must exist before the surface is created on it, and a
+     *   Handle device's surface needs the connection) and from `createSurfaceTarget()` when a host asks for a target
+     *   first - the SDK's documented order for the Handle form.
+     * - Idempotent: one window system per session, and a second call only re-opens a connection that was closed.
      *
-     * @param why Receives the reason when no window came up, or null.
-     * @return true when the device has a window (its handle is what a target is created from).
+     * @param why Receives the reason when no window system came up, or null.
+     * @return true when surfaces can be created through it.
      */
-    [[nodiscard]] bool ensureProbeWindow(vn::String* why);
+    [[nodiscard]] bool ensureWindowSystem(vn::String* why);
 
     struct Impl;
 
