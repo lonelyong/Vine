@@ -24,6 +24,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -35,6 +36,7 @@
 #include <vine/String.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
+#include <vine/graphics/Capabilities.hpp>
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/FrameStats.hpp>
@@ -388,6 +390,57 @@ TEST(VkShadowTest, ADeclaredMapThatWasNeverDrawnShadesNothingInsteadOfReadingGar
     const std::vector<std::uint8_t> none = runAndRead(*backend, shadowFrame(control, /*declare*/ false, /*casting*/ true), control.target.get());
 
     EXPECT_EQ(unbuilt, none) << "a declared map with no producer changed the picture: shading read an image nobody wrote";
+
+    backend->shutdown();
+}
+
+TEST(VkShadowTest, AMultisampledMapCastsTheSameShadow)
+{
+    // BACKLOG T40: a multisampled map RESOLVES its depth, and the shading pass samples that resolved picture. The claim
+    // is byte-equality with the same scene's single-sampled map: the mode is `sample0`, so the picture a later pass
+    // reads is the depth a single-sample draw would have written - and a resolve that never ran, or a sampling pass
+    // that still bound the multisampled attachment, would shade a different (or garbage) picture.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    const vn::graphics::Capabilities capabilities = backend->capabilities();
+    if (capabilities.max_samples <= 1U) {
+        GTEST_SKIP() << "this device genuinely reports no multisampling (Capabilities::max_samples is 1)";
+    }
+
+    std::vector<vn::graphics::RenderDiagnostic> driver_messages;
+    backend->setDiagnosticSink([&driver_messages](const vn::graphics::RenderDiagnostic& diagnostic) { driver_messages.push_back(diagnostic); });
+    const std::size_t reported_before = backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest);
+
+    Scene sharp = makeScene();
+    ASSERT_NE(sharp.program, nullptr);
+    const std::vector<std::uint8_t> single_sampled_map = runAndRead(*backend, shadowFrame(sharp, /*declare*/ true, /*casting*/ true), sharp.target.get());
+
+    Scene smooth = makeScene();
+    ASSERT_NE(smooth.program, nullptr);
+    // The SDK default already lets a shader sample the map's depth; the sample count is the one thing that changes.
+    ASSERT_TRUE(smooth.map->isDepthPromoted());
+    smooth.map->setSamples(std::min<std::uint32_t>(4U, capabilities.max_samples));
+    const std::vector<std::uint8_t> multisampled_map = runAndRead(*backend, shadowFrame(smooth, /*declare*/ true, /*casting*/ true), smooth.target.get());
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), reported_before)
+        << "a multisampled map is served now (see TargetImages::resolvesDepth)";
+    ASSERT_EQ(multisampled_map.size(), single_sampled_map.size());
+    EXPECT_EQ(multisampled_map, single_sampled_map)
+        << "the multisampled map shaded a different picture: the depth resolve or the sampling of its picture is wrong";
+    // The picture must still BE the shadowed one - equal-but-wrong would pass the comparison above if neither frame
+    // shaded at all.
+    EXPECT_LT(lumAt(multisampled_map, 16, kTargetSize / 2), lumAt(multisampled_map, 48, kTargetSize / 2))
+        << "the multisampled map's frame lost its shadow";
+    ASSERT_TRUE(backend->frameReport().counters.has_value());
+    EXPECT_EQ(backend->frameReport().counters->draws, 2U) << "the map's pass and the shading pass both ran";
+    for (const vn::graphics::RenderDiagnostic& message : driver_messages) {
+        EXPECT_NE(message.severity, vn::graphics::DiagnosticSeverity::Error)
+            << "the driver rejected an object of the multisampled map's frame: "
+            << std::string(reinterpret_cast<const char*>(message.message.data()), message.message.size());
+    }
 
     backend->shutdown();
 }

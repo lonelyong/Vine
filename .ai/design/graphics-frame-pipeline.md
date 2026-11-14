@@ -563,7 +563,7 @@
 | T33 | 预热后录制 `builds` 增量 0，且预热不提交 / 不呈现 | `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing`（`halves().builds` / `sets().builds` / `uploads().uploads` / `inputSetBuilds` / `pool.created` 全 0，`progress->submitted` 不动，像素仍画出）+ `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing`（引擎侧：同一个 value、不执行、不取帧号） | 已实现（2026-11-12） |
 | T34 | 快照源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`（600 帧，transform / opacity / material / placement 编辑，逐项 diff）+ `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould`（绑定后的帧级接缝） | 已实现（2026-11-12） |
 | T36 | 帧结果是那一帧的值 | `RenderEngineTest.TheFrameResultIsThePictureThatWasAnswered`（快照 / 相机 / 计数 / 诊断 / present；发布落在帧间不改已答的帧） | 已实现（2026-11-13） |
-| T35 | 预热的上传批是真上传，而且不是帧 | `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns`（预热报流 2 + 纹理 1；随后 `executeFrame` 的 `stream_uploads` / `texture_uploads` 均 0，像素为纹理色）+ `VkPrepareUploadTest.ASecondPrepareSubmitsNothing`（`uploads == 0`，`progress->submitted` / `presented` 不动） | 已实现（2026-11-14，`vk`；`vsg` 见 backlog `T39`） |
+| T35 | 预热的上传批是真上传，而且不是帧 | `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns`（预热报流 2 + 纹理 1；随后 `executeFrame` 的 `stream_uploads` / `texture_uploads` 均 0，像素为纹理色）+ `VkPrepareUploadTest.ASecondPrepareSubmitsNothing`（`uploads == 0`，`progress->submitted` / `presented` 不动）+ `PrepareUploadTest.APreparedTexturedFrameCopiesItsTextureAndUploadsNothingWhenItRuns` / `ASecondPrepareCopiesNothing`（`vsg`：同一口径，`MaterialImages::staged() == 0` 证明 host 字节已随拷贝放掉） | 已实现（2026-11-14，`vk` 与 `vsg`） |
 
 ### 8.1 判死阈值（`K#`）
 

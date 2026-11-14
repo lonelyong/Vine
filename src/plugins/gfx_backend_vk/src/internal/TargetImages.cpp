@@ -114,7 +114,10 @@ bool TargetImages::built() const noexcept
     // A MULTISAMPLED target is not built without its sample buffers: the render pass draws into those and resolves
     // them, so a target that lost them has nothing to draw into whatever its resolve images say.
     const bool sample_buffers = !isMultisampled() || multisample_color_views.size() == colorCount();
-    return render_pass != VK_NULL_HANDLE && framebuffer != VK_NULL_HANDLE && attachments && sample_buffers;
+    // ... and a multisampled DEPTH is not built without its resolve picture either: the pass resolves into that one,
+    // and it is the image a shader samples (see depthPicture).
+    const bool depth_picture = !resolvesDepth() || hasDepthResolve();
+    return render_pass != VK_NULL_HANDLE && framebuffer != VK_NULL_HANDLE && attachments && sample_buffers && depth_picture;
 }
 
 VkFormat colorFormatOf(const vn::graphics::RenderTarget::ColorFormat format) noexcept
@@ -173,6 +176,18 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
         table.vkDestroyFramebuffer(device, images.framebuffer, nullptr);
         images.framebuffer = VK_NULL_HANDLE;
     }
+    if (images.depth_resolve_view != VK_NULL_HANDLE) {
+        table.vkDestroyImageView(device, images.depth_resolve_view, nullptr);
+        images.depth_resolve_view = VK_NULL_HANDLE;
+    }
+    if (images.depth_resolve != VK_NULL_HANDLE) {
+        table.vkDestroyImage(device, images.depth_resolve, nullptr);
+        images.depth_resolve = VK_NULL_HANDLE;
+    }
+    if (images.depth_resolve_memory != VK_NULL_HANDLE) {
+        table.vkFreeMemory(device, images.depth_resolve_memory, nullptr);
+        images.depth_resolve_memory = VK_NULL_HANDLE;
+    }
     if (images.depth_view != VK_NULL_HANDLE) {
         table.vkDestroyImageView(device, images.depth_view, nullptr);
         images.depth_view = VK_NULL_HANDLE;
@@ -230,11 +245,15 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
  * - Colour attachments CLEAR and STORE; the depth attachment CLEARs or LOADs according to @p depth_load. A LOAD op is
  *   NOT part of render-pass compatibility, so the two variants share one framebuffer and one set of pipelines.
  * - Every colour attachment is referenced, in order: a fragment's output location i writes attachment i (MRT).
- * - ON A MULTISAMPLED TARGET the attachment array is [sample buffers..., resolve images..., depth], the subpass'
- *   colour references point at the sample buffers and `pResolveAttachments` at the resolve images. A resolve
- *   attachment only ever STORES (it is written by the resolve, never loaded), which is why its description states
- *   DONT_CARE/STORE in every variant - and why the three load-op variants stay compatible with one another.
- * - The DEPTH attachment is multisampled with the same count and never resolved (see the header's class note).
+ * - ON A MULTISAMPLED TARGET the attachment array is [sample buffers..., resolve images..., depth, depth resolve],
+ *   the subpass' colour references point at the sample buffers and `pResolveAttachments` at the resolve images. A
+ *   resolve attachment only ever STORES (it is written by the resolve, never loaded), which is why its description
+ *   states DONT_CARE/STORE in every variant - and why the three load-op variants stay compatible with one another.
+ * - THE DEPTH IS RESOLVED TOO (see the header's class note): `pDepthStencilResolveAttachment` names the single-sample
+ *   picture and the mode is `sample0`, so the picture is what a single-sample draw of the same scene would have
+ *   written. That reference only exists in `VkSubpassDescription2`, so a target that resolves depth is created with
+ *   `vkCreateRenderPass2` (Vulkan 1.2); every other target keeps the 1.0 call, which is the entry point every device
+ *   has.
  *
  * @param table      The device's entry points (volk table).
  * @param device     The logical device.
@@ -312,6 +331,26 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
         depth_reference = VkAttachmentReference{ static_cast<std::uint32_t>(depth_index), VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
     }
 
+    // THE DEPTH PICTURE: the single-sample image the subpass resolves the depth into (see depthPicture). It is the
+    // DEPTH RESOLVE ATTACHMENT, which only exists on Vulkan 1.2's VkSubpassDescription2 - so a target that resolves
+    // depth is created below with vkCreateRenderPass2. Its load op is DONT_CARE because the resolve overwrites every
+    // pixel, and both halves are STOREd (the depth/stencil format may carry a stencil component the resolve writes).
+    VkAttachmentReference depth_resolve_reference{};
+    if (images.resolvesDepth()) {
+        VkAttachmentDescription resolve{};
+        resolve.format         = images.depthFormat();
+        resolve.samples        = VK_SAMPLE_COUNT_1_BIT;
+        resolve.loadOp         = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        resolve.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+        resolve.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        resolve.stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
+        resolve.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+        resolve.finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        attachments.push_back(resolve);
+        depth_resolve_reference = VkAttachmentReference{ static_cast<std::uint32_t>(depth_index + 1U),
+                                                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+    }
+
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount    = static_cast<std::uint32_t>(color_references.size());
@@ -322,13 +361,98 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
     VkSubpassDependency dependency{};
     dependency.srcSubpass    = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass    = 0U;
-    dependency.srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     dependency.dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.srcAccessMask = 0U;
+    // The SOURCE scope covers what an earlier submission may have done with these attachments: written them, or
+    // SAMPLED them (a screen draw sampling the colour picture, a shader sampling the depth picture - see
+    // Device::resolveShadow). The second half is what orders this pass' first write after those reads.
+    dependency.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     if (images.hasDepth()) {
         dependency.dstStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
         dependency.dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    }
+
+    if (images.resolvesDepth()) {
+        // THE ONE SHAPE THAT NEEDS THE 1.2 ENTRY POINT: the depth resolve reference lives in
+        // VkSubpassDescriptionDepthStencilResolve, which only VkSubpassDescription2 carries. `sample0` is required to
+        // be supported wherever the feature exists, and it is the only mode that cannot change the picture.
+        // StencilResolveMode must not be NONE when the format has a stencil component (D24 here does).
+        VkSubpassDescriptionDepthStencilResolve depth_resolve{};
+        depth_resolve.sType                          = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE;
+        depth_resolve.depthResolveMode               = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+        depth_resolve.stencilResolveMode             = depthAspectMask(images.depthFormat()) == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
+                                                           ? VK_RESOLVE_MODE_SAMPLE_ZERO_BIT
+                                                           : VK_RESOLVE_MODE_NONE;
+
+        // THE 2-SPELLINGS ARE BUILT FROM THE 1.0 ONES, field by field: the structs only APPEND sType/pNext/viewMask,
+        // so casting the 1.0 arrays would still be wrong - the appended fields would be read out of unrelated memory.
+        std::vector<VkAttachmentDescription2> attachments2(attachments.size());
+        for (std::size_t index = 0; index < attachments.size(); ++index) {
+            attachments2[index].sType          = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
+            attachments2[index].flags          = attachments[index].flags;
+            attachments2[index].format         = attachments[index].format;
+            attachments2[index].samples        = attachments[index].samples;
+            attachments2[index].loadOp         = attachments[index].loadOp;
+            attachments2[index].storeOp        = attachments[index].storeOp;
+            attachments2[index].stencilLoadOp  = attachments[index].stencilLoadOp;
+            attachments2[index].stencilStoreOp = attachments[index].stencilStoreOp;
+            attachments2[index].initialLayout  = attachments[index].initialLayout;
+            attachments2[index].finalLayout    = attachments[index].finalLayout;
+        }
+        const auto references2 = [](const std::vector<VkAttachmentReference>& from) {
+            std::vector<VkAttachmentReference2> to(from.size());
+            for (std::size_t index = 0; index < from.size(); ++index) {
+                to[index].sType      = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
+                to[index].attachment = from[index].attachment;
+                to[index].layout     = from[index].layout;
+            }
+            return to;
+        };
+        const std::vector<VkAttachmentReference2> color_references2   = references2(color_references);
+        const std::vector<VkAttachmentReference2> resolve_references2 = references2(resolve_references);
+        VkAttachmentReference2                    depth_reference2{};
+        depth_reference2.sType      = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
+        depth_reference2.attachment = depth_reference.attachment;
+        depth_reference2.layout     = depth_reference.layout;
+        VkAttachmentReference2 depth_resolve_reference2{};
+        depth_resolve_reference2.sType      = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
+        depth_resolve_reference2.attachment = depth_resolve_reference.attachment;
+        depth_resolve_reference2.layout     = depth_resolve_reference.layout;
+        depth_resolve.pDepthStencilResolveAttachment = &depth_resolve_reference2;
+
+        VkSubpassDescription2 subpass2{};
+        subpass2.sType                   = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2;
+        subpass2.pNext                   = &depth_resolve;
+        subpass2.pipelineBindPoint       = subpass.pipelineBindPoint;
+        subpass2.colorAttachmentCount    = static_cast<std::uint32_t>(color_references2.size());
+        subpass2.pColorAttachments       = color_references2.empty() ? nullptr : color_references2.data();
+        subpass2.pResolveAttachments     = resolve_references2.empty() ? nullptr : resolve_references2.data();
+        subpass2.pDepthStencilAttachment = images.hasDepth() ? &depth_reference2 : nullptr;
+
+        VkSubpassDependency2 dependency2{};
+        dependency2.sType           = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2;
+        dependency2.srcSubpass      = dependency.srcSubpass;
+        dependency2.dstSubpass      = dependency.dstSubpass;
+        dependency2.srcStageMask    = dependency.srcStageMask;
+        dependency2.dstStageMask    = dependency.dstStageMask;
+        dependency2.srcAccessMask   = dependency.srcAccessMask;
+        dependency2.dstAccessMask   = dependency.dstAccessMask;
+        dependency2.dependencyFlags = dependency.dependencyFlags;
+
+        VkRenderPassCreateInfo2 pass_create2{};
+        pass_create2.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2;
+        pass_create2.attachmentCount = static_cast<std::uint32_t>(attachments2.size());
+        pass_create2.pAttachments    = attachments2.data();
+        pass_create2.subpassCount    = 1U;
+        pass_create2.pSubpasses      = &subpass2;
+        pass_create2.dependencyCount = 1U;
+        pass_create2.pDependencies   = &dependency2;
+        if (table.vkCreateRenderPass2(device, &pass_create2, nullptr, &out) != VK_SUCCESS) {
+            out = VK_NULL_HANDLE;
+            return false;
+        }
+        return true;
     }
 
     VkRenderPassCreateInfo pass_create{};
@@ -433,20 +557,38 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
 
     if (images.hasDepth()) {
         image_create.format  = images.depthFormat();
-        image_create.usage   = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        image_create.samples = sample_count; // NOT resolved: this backend never samples or reads a multisampled depth
+        // A MULTISAMPLED depth is a DRAW target only (the API forbids sampling or copying it); the single-sample one
+        // IS the picture and carries the sampled usage itself (the shadow path reads it - see Device::resolveShadow).
+        image_create.usage   = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | (resolved ? 0U : VK_IMAGE_USAGE_SAMPLED_BIT);
+        image_create.samples = sample_count;
         if (!createImage(table, device, memory, image_create, images.depth, images.depth_memory) ||
             !createView(table, device, images.depth, image_create.format, VK_IMAGE_ASPECT_DEPTH_BIT, images.depth_view)) {
             destroyAttachments(table, device, images);
             return false;
         }
+
+        // THE DEPTH PICTURE of a multisampled target: the resolve attachment (see TargetImages::depthPicture). It keeps
+        // every capability a single-sample depth attachment used to have - DEPTH_STENCIL_ATTACHMENT (the pass resolves
+        // into it, a borrower attaches it) and SAMPLED (a shader samples it) - at one sample per texel.
+        if (resolved) {
+            image_create.samples = VK_SAMPLE_COUNT_1_BIT;
+            image_create.usage   = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            if (!createImage(table, device, memory, image_create, images.depth_resolve, images.depth_resolve_memory) ||
+                !createView(table, device, images.depth_resolve, image_create.format, VK_IMAGE_ASPECT_DEPTH_BIT, images.depth_resolve_view)) {
+                destroyAttachments(table, device, images);
+                return false;
+            }
+        }
     }
 
-    // THE FRAMEBUFFER, in the render pass' own order: sample buffers, resolve images, depth.
+    // THE FRAMEBUFFER, in the render pass' own order: sample buffers, resolve images, depth, depth resolve.
     std::vector<VkImageView> views(images.multisample_color_views.begin(), images.multisample_color_views.end());
     views.insert(views.end(), images.color_views.begin(), images.color_views.end());
     if (images.hasDepth()) {
         views.push_back(images.depth_view);
+    }
+    if (images.hasDepthResolve()) {
+        views.push_back(images.depth_resolve_view);
     }
 
     VkFramebufferCreateInfo framebuffer_create{};

@@ -14,8 +14,9 @@
  *     or for a number that is not one of the counts (three), builds nothing, reports it ONCE (`UnsupportedRequest`),
  *     answers `NotReady` from `readColorBuffer` and records no drawing call - running the same frame again must not
  *     report it a second time.
- *   - A DEPTH A SHADER SAMPLES PLUS MULTISAMPLING IS REFUSED ON THIS BACKEND (backlog T40: it does not resolve a
- *     multisampled depth yet, the reference backend does): refused once, with nothing drawn.
+ *   - A DEPTH A SHADER SAMPLES RESOLVES WITH THE COLOUR (backlog T40): a multisampled target whose depth may be sampled
+ *     builds, draws and reads back; the DEPTH side of that promise is pinned where a shader can actually read it - see
+ *     `VkShadowTest.AMultisampledMapCastsTheSameShadow`.
  *
  * THE SCENE IS STATED IN CLIP SPACE on purpose (identity camera, identity model): every number below is then the
  * value the hardware sees, with no camera derivation in the way. The triangle sits at clip z = 0.5 because the pass
@@ -273,10 +274,6 @@ TEST(VkMsaaTest, AMultisampledTargetResolvesTheSamePicture)
     backend->setDiagnosticSink([&driver_messages](const RenderDiagnostic& diagnostic) { driver_messages.push_back(diagnostic); });
 
     const intrusive_ptr<RenderTarget>  multisampled = makeTarget(samples);
-    // THE DEPTH HAS TO BE ONE NOBODY SAMPLES: this backend refuses a multisampled target whose depth a shader samples
-    // (it does not resolve a multisampled depth yet - backlog T40), and the SDK default asks for exactly that. Without
-    // this line the target would be refused and the case would never reach the resolve it exists to prove.
-    multisampled->setDepthPromotion(false);
     const intrusive_ptr<RenderTarget>  single       = makeTarget(1U);
     const intrusive_ptr<ShaderProgram> program      = makeProgram();
     const intrusive_ptr<Geometry>      geometry     = makeFullScreenTriangle();
@@ -435,7 +432,7 @@ TEST(VkMsaaTest, ACountTheDeviceDoesNotOfferIsRefusedToo)
     backend->shutdown();
 }
 
-TEST(VkMsaaTest, ASampleableDepthAndMultisamplingAreRefusedForNow)
+TEST(VkMsaaTest, ASampleableDepthResolvesWithTheColour)
 {
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
     ASSERT_NE(backend, nullptr);
@@ -449,9 +446,9 @@ TEST(VkMsaaTest, ASampleableDepthAndMultisamplingAreRefusedForNow)
         GTEST_SKIP() << "this device genuinely reports no multisampling (Capabilities::max_samples is 1)";
     }
 
-    // A DEPTH A SHADER SAMPLES PLUS MULTISAMPLING: the reference backend resolves the depth and draws it; this one does
-    // not resolve a multisampled depth yet (backlog T40), so it REFUSES the combination instead of silently drawing it
-    // single-sampled - the same "a count is a count" rule, one step further.
+    // A DEPTH A SHADER SAMPLES PLUS MULTISAMPLING (backlog T40): the target BUILDS, the pass runs and the colour is
+    // the fragment stage's - the depth half of the same shape is proved by `VkShadowTest.AMultisampledMapCastsThe-
+    // SameShadow`, which samples the resolved picture and compares it against a single-sampled map's.
     std::printf("[vk-msaa] asking for %u samples with a sampleable depth (limit %u)\n", samples, capabilities.max_samples);
     std::vector<RenderDiagnostic> driver_messages;
     backend->setDiagnosticSink([&driver_messages](const RenderDiagnostic& diagnostic) { driver_messages.push_back(diagnostic); });
@@ -464,16 +461,25 @@ TEST(VkMsaaTest, ASampleableDepthAndMultisamplingAreRefusedForNow)
 
     (void)backend->executeFrame(drawingFrame(target.get(), constantDraw(program, geometry)), nullptr);
 
-    EXPECT_EQ(backend->diagnosticCount(DiagnosticCategory::UnsupportedRequest), reported_before + 1U);
+    EXPECT_EQ(backend->diagnosticCount(DiagnosticCategory::UnsupportedRequest), reported_before)
+        << "a multisampled target with a depth attachment is served now (see TargetImages::depthPicture)";
     const FrameReport report = backend->frameReport();
     ASSERT_TRUE(report.counters.has_value());
-    EXPECT_EQ(report.counters->draws, 0U) << "the combination was drawn although it was reported as refused";
+    EXPECT_EQ(report.counters->draws, 1U) << "the pass into the multisampled depth-attached target was skipped";
 
-    const bool named = std::any_of(driver_messages.begin(), driver_messages.end(), [](const RenderDiagnostic& message) {
-        const std::string text(reinterpret_cast<const char*>(message.message.data()), message.message.size());
-        return text.find("depth") != std::string::npos;
-    });
-    EXPECT_TRUE(named) << "the diagnostic did not name the depth as the reason";
+    std::vector<std::uint8_t> pixels;
+    ReadbackResult            why = ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why))
+        << "the resolved colour readback was refused: " << static_cast<int>(why);
+    ASSERT_EQ(pixels.size(), static_cast<std::size_t>(kTargetSize * kTargetSize) * 4U);
+    expectFragmentColor(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), "the multisampled centre");
+
+    EXPECT_EQ(backend->diagnosticCount(DiagnosticCategory::CompileFailed), 0U);
+    for (const RenderDiagnostic& message : driver_messages) {
+        EXPECT_NE(message.severity, DiagnosticSeverity::Error)
+            << "the driver rejected an object of the multisampled frame: "
+            << std::string(reinterpret_cast<const char*>(message.message.data()), message.message.size());
+    }
 
     backend->shutdown();
 }

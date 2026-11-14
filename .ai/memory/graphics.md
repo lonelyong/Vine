@@ -578,6 +578,27 @@
   与 ADR-2026-11-13（保留 ≤ `minimumStagingBufferSize` 的块）矛盾；改成"4 KiB 上传的块被保留（release 返回 0）+
   32 MiB 一次性块被还掉"。
 
+## 2026-11-14 —— T39（`vsg` 预热真提交纹理）+ T40（`vk` 深度 resolve）
+
+- **T39 `vsg`**：`MaterialImages::queueUploads(Device&, TransferTask&)` 把仍带 staging 字节的图像交给该会话的传输任务
+  （需要时用 device 池自己 `compile` 出 VkImage——预热不跑 compile traversal）；`detail::flushUploads(task)` 用
+  `TransferTask::transferData(TRANSFER_ALL)`（帧自己那条拷贝路径）提交，再补一次“只等待”的 queue 提交消费完成信号量
+  并等 fence；成功后 `MaterialImages::releaseUploadedStaging()` 丢掉 host 字节（否则后编译的 descriptor 的
+  ImageInfo 会以“还没拷过”为由再拷一次）。`PrepareReport::uploads` 现在数**流 + 纹理**；`VsgBackend::prepareFrame`
+  对无窗口帧先 `ensureOffscreenSession()`（建 viewer/传输任务，不取图、不提交帧）。测试 `PrepareUploadTest` 2 例。
+- **T40 `vk`**：`TargetImages` 对“多采样 + 有深度”建 `depth_resolve` 图像/视图（`DEPTH_STENCIL_ATTACHMENT |
+  SAMPLED`），render pass 带 `VkSubpassDescriptionDepthStencilResolve`（`sample0`；D24 有 stencil，stencil 也
+  `sample0`）——它只能挂在 `VkSubpassDescription2` 上，所以这类 target 用 `vkCreateRenderPass2`（Vulkan 1.2），
+  其它 target 仍走 1.0 的 `vkCreateRenderPass`。附件顺序 = [样本缓冲…, colour resolve…, depth, depth resolve]；
+  `depthPicture()` / `depthPictureView()` 是读侧的唯一下标（`resolveShadow` 采样它、`depth_sampled` 的转移也作用在
+  它上面）；`ensureTarget` 的拒绝从“多采样 + 可采样深度”改成“设备低于 1.2”才拒。
+- **测试**：`VkMsaaTest.ASampleableDepthResolvesWithTheColour`；`VkShadowTest.AMultisampledMapCastsTheSameShadow`
+  （多采样 shadow map 与单采样逐字节相同 = resolve 真的跑了、采样的是画面）；`test_vk` 62 例、`test_vsg` 562 例、
+  `ctest` 32/32。
+- **坑**：`vsg::Device::deviceMemoryBufferPools` 是 observer —— compile pass 结束后池就没了，预热必须自己持有一个
+  `MemoryBufferPools`，否则拿出来永远是 null。`VkAttachmentReference` **不能** `reinterpret_cast` 成
+  `VkAttachmentReference2`（后者追加了 sType/pNext/viewMask），要逐字段建。
+
 ## 2026-11-14 —— 采样数契约收口：`max_samples` 是计数，建不了就拒绝（框架优先）
 
 - **决策**：`../decisions/ADR-2026-11-14-sample-count-refused-not-lowered.md`。`Capabilities::max_samples`

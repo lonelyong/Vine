@@ -214,6 +214,11 @@ struct Device::Impl {
     /// this device cannot build (see `ensureTarget`).
     std::uint32_t supported_sample_counts{ VK_SAMPLE_COUNT_1_BIT };
 
+    /// Whether this device can resolve a multisampled DEPTH (`VkSubpassDescriptionDepthStencilResolve`, and with it
+    /// `vkCreateRenderPass2`): true from Vulkan 1.2, which is the version that made both core. A device below it still
+    /// serves every other shape - only "multisampled AND depth-attached" is refused (see `ensureTarget`).
+    bool depth_resolve_supported{ false };
+
     /// The command machinery every frame and every readback borrows: one pool, one fence, one buffer at a time.
     VkCommandPool command_pool{ VK_NULL_HANDLE };
     VkFence       completion{ VK_NULL_HANDLE };
@@ -350,12 +355,13 @@ struct Device::Impl {
             }
 
             // THE MAP IS ABOUT TO BE READ: one transition, from the attachment layout the producer left it in (or
-            // UNDEFINED when nobody wrote it yet) to the sampled one.
+            // UNDEFINED when nobody wrote it yet) to the sampled one. IT IS THE PICTURE that moves - on a
+            // multisampled map that is the resolved depth image, which is also the only one a shader may sample.
             TargetImages& sampled = images->second;
             if (!sampled.depth_sampled) {
                 const ImageState from = stateOf(sampled.fresh ? ImageLayout::Undefined : ImageLayout::DepthAttachment);
                 const VkImageMemoryBarrier barrier =
-                    barrierBetween(sampled.depth, from, stateOf(ImageLayout::ShaderReadOnly), depthAspectMask(sampled.depthFormat()));
+                    barrierBetween(sampled.depthPicture(), from, stateOf(ImageLayout::ShaderReadOnly), depthAspectMask(sampled.depthFormat()));
                 device_table.vkCmdPipelineBarrier(commands,
                                                   VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                                                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
@@ -369,7 +375,7 @@ struct Device::Impl {
                 sampled.depth_sampled = true;
             }
 
-            out.view                  = sampled.depth_view;
+            out.view                  = sampled.depthPictureView();
             out.has_view_projection   = true;
             out.view_projection       = map.producerViewProjection();
             out.light                 = light;
@@ -723,6 +729,11 @@ bool Device::initialize()
     VkPhysicalDeviceProperties properties{};
     vkGetPhysicalDeviceProperties(impl->physical, &properties);
 
+    // DEPTH RESOLVE IS THE DEVICE'S API VERSION (see Impl::depth_resolve_supported): the render pass that carries a
+    // `pDepthStencilResolveAttachment` is created with `vkCreateRenderPass2` under a
+    // `VkSubpassDescriptionDepthStencilResolve`, and both are Vulkan 1.2.
+    impl->depth_resolve_supported = properties.apiVersion >= VK_API_VERSION_1_2;
+
     impl->caps                         = Capabilities{};
     impl->caps.render_targets          = true;
     impl->caps.presentation            = impl->presentation_wanted;
@@ -808,6 +819,7 @@ void Device::shutdown()
     impl->reported_size_unknown = false;
     impl->reported_samples    = false;
     impl->reported_prepare_target = false;
+    impl->depth_resolve_supported = false;
     // THE DEVICE'S OWN WINDOW GOES LAST, and whether or not a Vulkan session came up: it is a platform object older
     // than the session (see ProbeWindow), and every surface created on it was destroyed above.
     impl->surfaces.clear();
@@ -969,20 +981,20 @@ bool Device::ensureTarget(const RenderTarget& target)
     }
     wanted.shape.samples = requested_samples;
     wanted.shape.subpass = 0U;
-    // A DEPTH A SHADER SAMPLES CANNOT BE MULTISAMPLED HERE: this backend never resolves a multisampled depth (see
-    // TargetImages' class note), so a multisampled one would answer the SAMPLES where a shader - or a readback -
-    // expects the picture. `isDepthPromoted` is the fact the shadow path gates on (`resolveShadow` refuses a map whose
-    // promotion the host revoked), and the SDK's own rule is that a depth a shader samples is single-sample. The
-    // target is REFUSED rather than silently drawn single-sampled (ADR-2026-11-14-sample-count-refused-not-lowered);
-    // depth resolve is backlog T40, and this branch goes away with it.
-    if (requested_samples > 1U && target.hasDepth() && target.isDepthPromoted()) {
+    // A MULTISAMPLED DEPTH IS RESOLVED, and a device that cannot do that refuses the combination (ADR-2026-11-14).
+    // `TargetImages` builds the single-sample picture the render pass resolves into and every reader uses
+    // (`depthPicture`: the shadow path samples it), with `sample0` as the mode - so multisampling cannot change the
+    // depth a later pass tests against. The resolve is Vulkan 1.2 (see Impl::depth_resolve_supported), and a device
+    // below that genuinely cannot serve this shape: nothing is created, nothing is drawn, and `readColorBuffer`
+    // answers NotReady.
+    if (requested_samples > 1U && target.hasDepth() && !impl->depth_resolve_supported) {
         if (!impl->reported_samples_depth) {
             impl->reported_samples_depth = true;
             reportDiagnostic(DiagnosticSeverity::Warning,
                              DiagnosticCategory::UnsupportedRequest,
                              vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
-                                 u8" samples per pixel and a depth a shader samples; this backend never resolves a multisampled "
-                                 u8"depth, so the target is refused (see RenderTarget::setDepthPromotion and Capabilities::max_samples)");
+                                 u8" samples per pixel and a depth attachment; this device cannot resolve a multisampled depth "
+                                 u8"(it needs Vulkan 1.2's depth/stencil resolve), so the target is refused (see Capabilities::max_samples)");
         }
         return false;
     }
@@ -1280,10 +1292,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                 images->color_sampled = false;
             }
 
-            // A TARGET A PASS SAMPLED AS A SHADOW MAP has its depth in SHADER_READ_ONLY: put it back before this pass
-            // writes the depth (the mirror of the colour rule above, on the depth attachment).
+            // A TARGET A PASS SAMPLED AS A SHADOW MAP has its depth PICTURE in SHADER_READ_ONLY: put it back before
+            // this pass writes the depth (the mirror of the colour rule above, on the depth attachment).
             if (images->depth_sampled) {
-                const VkImageMemoryBarrier back = barrierBetween(images->depth,
+                const VkImageMemoryBarrier back = barrierBetween(images->depthPicture(),
                                                                  stateOf(ImageLayout::ShaderReadOnly),
                                                                  stateOf(ImageLayout::DepthAttachment),
                                                                  depthAspectMask(images->depthFormat()));

@@ -32,9 +32,10 @@ VN_BACKEND_VK_NS_BEGIN
  *   its subpass. `colors` / `color_views` are then the RESOLVE images - the picture this device hands out, which is
  *   what a screen draw samples and what `readColorBuffer` copies - while `multisample_colors` /
  *   `multisample_color_views` are the sample buffers, which nothing samples and nothing reads back. The DEPTH is
- *   multisampled with the same count and NOT resolved: nothing on this path samples or reads it back (a target whose
- *   depth is read is served single-sampled, see `Device::ensureTarget`), so a resolve there would be an image nobody
- *   asked for.
+ *   resolved the same way into `depth_resolve` / `depth_resolve_view` (`sample0`, so multisampling cannot change the
+ *   depth a later pass tests against): `depthPicture()` / `depthPictureView()` name whichever depth image is the
+ *   PICTURE - the resolve one on a multisampled target, the attachment itself otherwise - and that is what a shader
+ *   samples and what a borrower attaches.
  * - DEPTH-ONLY IS A SHAPE. A target with a depth attachment and no colour attachment is the engine's SHADOW MAP and
  *   builds like any other (the render pass simply references no colour attachment, and a fragment's outputs are
  *   discarded); a target with neither attachment is not a target.
@@ -67,6 +68,13 @@ struct TargetImages {
     VkDeviceMemory depth_memory{ VK_NULL_HANDLE };
     VkImageView    depth_view{ VK_NULL_HANDLE };
 
+    /// The single-sample depth PICTURE of a multisampled target (see the class note): the render pass resolves the
+    /// depth into it, a shader samples it and a borrower attaches it. Null on a single-sampled target, where
+    /// `depth` already is the picture.
+    VkImage        depth_resolve{ VK_NULL_HANDLE };
+    VkDeviceMemory depth_resolve_memory{ VK_NULL_HANDLE };
+    VkImageView    depth_resolve_view{ VK_NULL_HANDLE };
+
     /// The render pass whose depth attachment is CLEARed (the first pass into a fresh target).
     VkRenderPass render_pass{ VK_NULL_HANDLE };
     /// The variant whose depth attachment is LOADed (a pass that preserves the depth an earlier pass wrote); null for
@@ -85,9 +93,9 @@ struct TargetImages {
     /// multisampled target) are then in `SHADER_READ_ONLY_OPTIMAL`, and the device transitions them back before the
     /// next pass writes them (or before a readback reads them).
     bool color_sampled{ false };
-    /// True after a pass sampled this target as a SHADOW MAP: its depth image is then in `SHADER_READ_ONLY_OPTIMAL`,
-    /// and the device transitions it back before the next pass writes the depth (the same rule `color_sampled`
-    /// follows, on the other attachment).
+    /// True after a pass sampled this target as a SHADOW MAP: its depth PICTURE (see `depthPicture`) is then in
+    /// `SHADER_READ_ONLY_OPTIMAL`, and the device transitions it back before the next pass writes the depth (the
+    /// same rule `color_sampled` follows, on the other attachment).
     bool depth_sampled{ false };
 
     /** @brief Gets the target width in pixels. */
@@ -138,13 +146,39 @@ struct TargetImages {
         return static_cast<VkFormat>(desc.shape.device_depth_format);
     }
 
+    /** @brief Answers whether this target's SHAPE resolves its depth (multisampled AND depth-attached). */
+    [[nodiscard]] bool resolvesDepth() const noexcept
+    {
+        return isMultisampled() && hasDepth();
+    }
+
+    /** @brief Answers whether this target owns a resolved (single-sample) copy of its multisampled depth. */
+    [[nodiscard]] bool hasDepthResolve() const noexcept
+    {
+        return depth_resolve_view != VK_NULL_HANDLE;
+    }
+
+    /** @brief Gets the depth image a READER sees: the resolve image on a multisampled target, the attachment else. */
+    [[nodiscard]] VkImage depthPicture() const noexcept
+    {
+        return hasDepthResolve() ? depth_resolve : depth;
+    }
+
+    /** @brief Gets the view of @ref depthPicture (what a shader samples and a borrower attaches). */
+    [[nodiscard]] VkImageView depthPictureView() const noexcept
+    {
+        return hasDepthResolve() ? depth_resolve_view : depth_view;
+    }
+
     /**
      * @brief Gets the ATTACHMENT INDEX the depth occupies in the render pass and in the framebuffer.
      *
      * @details
-     * - The attachment array is [sample buffers..., resolve images..., depth], so the depth's index is the number of
-     *   COLOUR slots - and a clear-value array (indexed by attachment, see `VkRenderPassBeginInfo`) has to agree with
-     *   it, or a multisampled pass would clear the depth with the resolve's slot.
+     * - The attachment array is [sample buffers..., colour resolve images..., depth, depth resolve], so the depth's
+     *   index is the number of COLOUR slots - and a clear-value array (indexed by attachment, see
+     *   `VkRenderPassBeginInfo`) has to agree with it, or a multisampled pass would clear the depth with the resolve's
+     *   slot. The depth RESOLVE image (when there is one) is the slot right after the depth, which is why a clear-value
+     *   array sized to this index still names the highest LOAD_OP_CLEAR attachment.
      * - The colour slots' own count is this index: `colorCount()` on a single-sampled target, twice that when the
      *   attachments are resolved.
      *
