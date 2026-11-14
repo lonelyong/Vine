@@ -1501,7 +1501,20 @@ struct ContentDraw::Impl {
         lights_info.offset = lightsOffset();
         lights_info.range  = sizeof(vn::graphics::VineLightsBlock);
 
-        VkWriteDescriptorSet writes[2]{};
+        // THE ENGINE'S SHADOW ABI, the same two bindings a content set writes (see kShadowMapBinding): a full-screen
+        // pass whose fragment IS the engine's forward shading declares both unconditionally, so the set offers them
+        // too - the white stand-in and the zeroed block, which is the engine's own "no shadow reaches this pass".
+        VkDescriptorImageInfo shadow_map{};
+        shadow_map.sampler     = images.fallbackSampler();
+        shadow_map.imageView   = images.fallbackView();
+        shadow_map.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkDescriptorBufferInfo shadow_info{};
+        shadow_info.buffer = buffer;
+        shadow_info.offset = shadowOffset();
+        shadow_info.range  = sizeof(vn::graphics::VineShadowBlock);
+
+        VkWriteDescriptorSet writes[4]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = set;
         writes[0].dstBinding      = 0U;
@@ -1514,7 +1527,19 @@ struct ContentDraw::Impl {
         writes[1].descriptorCount = 1U;
         writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         writes[1].pBufferInfo     = &lights_info;
-        table->vkUpdateDescriptorSets(device, 2U, writes, 0U, nullptr);
+        writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet          = set;
+        writes[2].dstBinding      = kShadowMapBinding;
+        writes[2].descriptorCount = 1U;
+        writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[2].pImageInfo      = &shadow_map;
+        writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet          = set;
+        writes[3].dstBinding      = kShadowBlockBinding;
+        writes[3].descriptorCount = 1U;
+        writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[3].pBufferInfo     = &shadow_info;
+        table->vkUpdateDescriptorSets(device, 4U, writes, 0U, nullptr);
         return set;
     }
 
@@ -1686,8 +1711,10 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
         return false;
     }
 
-    // THE FULL-SCREEN SET (set 0 of a screen program): the source's colour attachments at 0..4 and the lights at 6.
-    VkDescriptorSetLayoutBinding screen_bindings[6]{};
+    // THE FULL-SCREEN SET (set 0 of a screen program): the source's colour attachments at 0..4, the lights at 6, and
+    // the SAME shadow pair the content set declares at 7/8 - a full-screen pass whose fragment is the engine's forward
+    // shading states both, so the layout has to offer them (see makeScreenSet for what is bound there).
+    VkDescriptorSetLayoutBinding screen_bindings[8]{};
     for (std::uint32_t slot = 0; slot < kScreenSamplerBindings; ++slot) {
         screen_bindings[slot].binding         = slot;
         screen_bindings[slot].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1698,7 +1725,15 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
     screen_bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     screen_bindings[5].descriptorCount = 1U;
     screen_bindings[5].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    layout_info.bindingCount = 6U;
+    screen_bindings[6].binding         = kShadowMapBinding;
+    screen_bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    screen_bindings[6].descriptorCount = 1U;
+    screen_bindings[6].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    screen_bindings[7].binding         = kShadowBlockBinding;
+    screen_bindings[7].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    screen_bindings[7].descriptorCount = 1U;
+    screen_bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    layout_info.bindingCount = 8U;
     layout_info.pBindings    = screen_bindings;
     if (impl->table->vkCreateDescriptorSetLayout(impl->device, &layout_info, nullptr, &impl->screen_set_layout) != VK_SUCCESS) {
         destroy();
@@ -1733,15 +1768,16 @@ bool ContentDraw::create(const VolkDeviceTable&                  table,
         return false;
     }
 
-    // ONE POOL FOR BOTH PATHS: a content draw allocates two sets (3 UBOs + 5 samplers), a screen draw one (1 UBO +
-    // 5 samplers).
+    // ONE POOL FOR BOTH PATHS: a content draw allocates two sets (3 UBOs + 6 samplers), a screen draw one (2 UBOs +
+    // 6 samplers) - both now carry the engine's shadow pair (see kShadowMapBinding).
     VkDescriptorPoolSize pool_sizes[2]{};
     pool_sizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    // material, lights and the shadow block per content set; the draw block per draw set.
-    pool_sizes[0].descriptorCount = kDescriptorsPerFrame * 4U;
+    // material, lights and the shadow block per content set; the draw block per draw set; lights and the shadow block
+    // per screen set.
+    pool_sizes[0].descriptorCount = kDescriptorsPerFrame * 6U;
     pool_sizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    // five material slots + the shadow map per content set; five sampled inputs per screen set.
-    pool_sizes[1].descriptorCount = kDescriptorsPerFrame * (2U * kTextureSlots + 1U);
+    // five material slots + the shadow map per content set; five sampled inputs + the shadow map per screen set.
+    pool_sizes[1].descriptorCount = kDescriptorsPerFrame * (2U * (kTextureSlots + 1U));
 
     VkDescriptorPoolCreateInfo pool_info{};
     pool_info.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;

@@ -57,6 +57,18 @@ VkImageMemoryBarrier barrierBetween(const VkImage            image,
                                     const ImageState&        to,
                                     const VkImageAspectFlags aspect) noexcept
 {
+    VkImageSubresourceRange range{};
+    range.aspectMask     = aspect;
+    range.levelCount     = 1U;
+    range.layerCount     = 1U;
+    return barrierBetween(image, from, to, range);
+}
+
+VkImageMemoryBarrier barrierBetween(const VkImage               image,
+                                    const ImageState&            from,
+                                    const ImageState&            to,
+                                    const VkImageSubresourceRange& range) noexcept
+{
     VkImageMemoryBarrier barrier{};
     barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.srcAccessMask       = from.access;
@@ -66,11 +78,7 @@ VkImageMemoryBarrier barrierBetween(const VkImage            image,
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image               = image;
-    barrier.subresourceRange.aspectMask     = aspect;
-    barrier.subresourceRange.baseMipLevel   = 0U;
-    barrier.subresourceRange.levelCount     = 1U;
-    barrier.subresourceRange.baseArrayLayer = 0U;
-    barrier.subresourceRange.layerCount     = 1U;
+    barrier.subresourceRange    = range;
     return barrier;
 }
 

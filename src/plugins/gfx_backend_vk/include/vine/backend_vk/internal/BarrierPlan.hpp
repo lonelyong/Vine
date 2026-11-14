@@ -107,6 +107,26 @@ struct ImageState {
                                                   VkImageAspectFlags aspect) noexcept;
 
 /**
+ * @brief Builds the barrier that moves a RANGE of @p image's subresources from one usage to another.
+ *
+ * @details
+ * - A texture image is not one subresource: a mip chain and an array/cube face set are several, and a barrier that
+ *   names only layer 0 leaves the rest in the layout they had - the copies that follow then write UNDEFINED
+ *   subresources (measured in the app: a cube map's faces 1..5 at submit time). The aspect-only overload above is the
+ *   single-subresource case, which is what every attachment barrier wants.
+ *
+ * @param image  Image to transition (may be `VK_NULL_HANDLE`: the value is still well formed).
+ * @param from   Usage the image is in now.
+ * @param to     Usage the image is about to be in.
+ * @param range  The subresources the transition covers.
+ * @return The barrier, ready to be recorded.
+ */
+[[nodiscard]] VkImageMemoryBarrier barrierBetween(VkImage                        image,
+                                                  const ImageState&              from,
+                                                  const ImageState&              to,
+                                                  const VkImageSubresourceRange& range) noexcept;
+
+/**
  * @brief Gets the attachment load operation for @p op.
  *
  * @param op The pass' neutral load operation (see ClearPlan).

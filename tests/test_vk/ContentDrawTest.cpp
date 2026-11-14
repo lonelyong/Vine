@@ -644,3 +644,140 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
     backend->shutdown();
 }
+
+/// @brief A fragment sampling the base-colour slot as a CUBE along +X: which face answers is the pixel's colour.
+constexpr const char8_t* kCubePosXFragment = u8R"(
+#version 450
+layout(location = 0) out vec4 out_color;
+layout(set = 0, binding = 1) uniform samplerCube vn_baseColorMap;
+void main() { out_color = texture(vn_baseColorMap, vec3(1.0, 0.0, 0.0)); }
+)";
+
+/// @brief The same along -X (see kCubePosXFragment).
+constexpr const char8_t* kCubeNegXFragment = u8R"(
+#version 450
+layout(location = 0) out vec4 out_color;
+layout(set = 0, binding = 1) uniform samplerCube vn_baseColorMap;
+void main() { out_color = texture(vn_baseColorMap, vec3(-1.0, 0.0, 0.0)); }
+)";
+
+TEST(VkContentDrawTest, ACubeMapIsUploadedWithEveryFaceAndSampled)
+{
+    // SIX LAYERS, ONE IMAGE: a cube map is the one texture whose upload crosses array layers, and a barrier that names
+    // only layer 0 leaves the rest UNDEFINED - the validation layer reports the copies at submit time and the shader
+    // then reads faces that are still TRANSFER_DST (both measured in the app, on the demo's sky cube). Each face is a
+    // distinct colour, so the sampled pixel says WHICH face the direction picked: the layout AND the face order in one
+    // assertion.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget> target   = makeTarget();
+    const intrusive_ptr<Geometry>     geometry = makeTriangle();
+
+    constexpr int                             kFaceSize = 4;
+    const intrusive_ptr<vn::graphics::CubeMap> cube(new vn::graphics::CubeMap(kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
+    const std::uint8_t                        face_colors[6][4]{
+        { 255U, 0U, 0U, 255U },   // PosX: red
+        { 0U, 255U, 0U, 255U },   // NegX: green
+        { 0U, 0U, 255U, 255U },   // PosY: blue
+        { 255U, 255U, 0U, 255U }, // NegY: yellow
+        { 255U, 0U, 255U, 255U }, // PosZ: magenta
+        { 0U, 255U, 255U, 255U }, // NegZ: cyan
+    };
+    for (int face = 0; face < cube->layerCount(); ++face) {
+        auto                       image  = intrusive_ptr<vn::imaging::Image>(new vn::imaging::Image(kFaceSize, kFaceSize, vn::imaging::PixelFormat::Rgba8Unorm));
+        const std::span<std::byte> pixels = image->mipData(0);
+        for (std::size_t texel = 0; texel < pixels.size(); ++texel) {
+            pixels[texel] = static_cast<std::byte>(face_colors[face][texel % 4U]);
+        }
+        cube->setLayer(face, intrusive_ptr<const vn::imaging::Image>(image));
+    }
+
+    const auto sampledCentre = [&](const char8_t* fragment) {
+        const intrusive_ptr<Material> material = makeMaterial(Colorf(1.0F, 1.0F, 1.0F, 1.0F));
+        material->setTexture(TextureSlot::BaseColor, cube);
+
+        const intrusive_ptr<ShaderProgram> program = makeProgramWith(fragment);
+        RenderCommand                      command(geometry, nullptr, vn::math::Mat4d{});
+        command.program              = program;
+        command.program_description  = program->description();
+        command.material             = material;
+        command.material_description = material->description();
+
+        auto commands = std::make_shared<std::vector<RenderCommand>>();
+        commands->push_back(std::move(command));
+
+        DrawDescription draw;
+        draw.kind     = DrawDescription::Kind::Scene;
+        draw.camera   = identityCamera();
+        draw.commands = commands;
+        backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
+
+        std::vector<std::uint8_t> pixels;
+        EXPECT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
+        return pixelAt(pixels, kTargetSize / 2, kTargetSize / 2);
+    };
+
+    EXPECT_EQ(sampledCentre(kCubePosXFragment), (std::array<int, 4>{ 255, 0, 0, 255 })) << "+X must sample the PosX face";
+    EXPECT_EQ(sampledCentre(kCubeNegXFragment), (std::array<int, 4>{ 0, 255, 0, 255 })) << "-X must sample the NegX face";
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
+        << "every face must be in SHADER_READ_ONLY, not only layer 0 (see ContentImages::recordUpload)";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+    backend->shutdown();
+}
+
+TEST(VkContentDrawTest, AShadowedFullScreenPassGetsTheEngineShadowBindings)
+{
+    // THE ENGINE'S SHADOW ABI IN A FULL-SCREEN SET: the deferred lighting program's shadowed variant declares set 0
+    // binding 7 (the map) and 8 (VineShadowBlock) - the app draws exactly this program as a full-screen pass. A screen
+    // set that does not offer the pair fails pipeline creation (VUID-VkGraphicsPipelineCreateInfo-layout-07988) and
+    // then every draw of it, which is what the app measured.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    // The G-buffer stand-in: one colour attachment and one drawn frame - a screen draw samples a target the device
+    // has BUILT, and the bindings past its single attachment read the white fallback.
+    const intrusive_ptr<RenderTarget>  source      = makeTarget();
+    const intrusive_ptr<RenderTarget>  destination = makeTarget();
+    const intrusive_ptr<ShaderProgram> scene       = makeProgram();
+    const intrusive_ptr<Geometry>      geometry    = makeTriangle();
+    {
+        RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+        command.program             = scene;
+        command.program_description = scene->description();
+        auto commands               = std::make_shared<std::vector<RenderCommand>>();
+        commands->push_back(std::move(command));
+
+        DrawDescription scene_draw;
+        scene_draw.kind     = DrawDescription::Kind::Scene;
+        scene_draw.camera   = identityCamera();
+        scene_draw.commands = commands;
+        backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
+    }
+
+    const intrusive_ptr<ShaderProgram> lit = vn::graphics::shadowedDeferredLightProgram();
+    ASSERT_NE(lit, nullptr);
+
+    DrawDescription screen_draw;
+    screen_draw.kind                = DrawDescription::Kind::Screen;
+    screen_draw.camera              = identityCamera();
+    screen_draw.source              = source.get();
+    screen_draw.program             = lit;
+    screen_draw.program_description = lit->description();
+    EXPECT_EQ(backend->executeFrame(screenFrame(destination.get(), std::move(screen_draw))), PresentOutcome::Skipped);
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
+        << "the screen set must offer the engine's shadow pair (see ContentDraw::makeScreenSet)";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+    const auto report = backend->frameReport();
+    ASSERT_TRUE(report.counters.has_value());
+    EXPECT_EQ(report.counters->draws, 1U) << "the full-screen pass reached the queue";
+    backend->shutdown();
+}

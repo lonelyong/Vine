@@ -183,10 +183,24 @@ struct WindowTarget::Impl {
     VkRenderPass pass_load{ VK_NULL_HANDLE };
 
     VkSemaphore image_available{ VK_NULL_HANDLE };
-    VkSemaphore render_finished{ VK_NULL_HANDLE };
+    /// ONE PRESENT-WAIT SEMAPHORE PER SWAPCHAIN IMAGE, indexed by the acquired image (see renderFinishedOfAcquiredImage).
+    ///
+    /// @note
+    /// - WHY NOT ONE: `vkQueuePresentKHR` keeps the semaphore until the presentation engine is done with the image, and
+    ///   an image may be presented and NOT re-acquired for several frames. Signalling one semaphore again before that
+    ///   is a reuse the spec forbids (VUID-vkQueueSubmit-pSignalSemaphores-00067), which the validation layer reports
+    ///   as "may still be in use by VkSwapchainKHR" - measured in the app. One per image makes each signal happen only
+    ///   after that image's previous present has been consumed by the next acquire.
+    std::vector<VkSemaphore> render_finished;
 
     std::uint32_t image_index{ 0U };
     bool          image_acquired{ false };
+
+    /** @brief Gets the present-wait semaphore of the image acquired NOW (`VK_NULL_HANDLE` when none is). */
+    [[nodiscard]] VkSemaphore renderFinishedOfAcquiredImage() const noexcept
+    {
+        return image_acquired && image_index < render_finished.size() ? render_finished[image_index] : VK_NULL_HANDLE;
+    }
 
     /** @brief Creates the swapchain's views, depth image, render passes and framebuffers for the current images. */
     [[nodiscard]] bool createSwapchainObjects(vn::String* why)
@@ -209,9 +223,23 @@ struct WindowTarget::Impl {
             }
         }
 
+        // ONE PRESENT-WAIT SEMAPHORE PER IMAGE (see render_finished): created with the images they belong to, so a
+        // rebuilt swapchain (a resize) gets a fresh set and nothing names a semaphore the presentation engine holds.
+        VkSemaphoreCreateInfo semaphore_info{};
+        semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        render_finished.assign(images.size(), VK_NULL_HANDLE);
+        for (std::size_t index = 0; index < images.size(); ++index) {
+            if (device.table->vkCreateSemaphore(device.device, &semaphore_info, nullptr, &render_finished[index]) != VK_SUCCESS) {
+                render_finished[index] = VK_NULL_HANDLE;
+                if (why != nullptr) {
+                    *why = vn::String(u8"vk: the window's present semaphores could not be created");
+                }
+                return false;
+            }
+        }
+
         // THE DEPTH IMAGE: one image shared by every swapchain image (the render pass clears it per frame).
-        VkImageCreateInfo depth_info{};
-        depth_info.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        VkImageCreateInfo depth_info{};        depth_info.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         depth_info.imageType     = VK_IMAGE_TYPE_2D;
         depth_info.extent        = VkExtent3D{ extent.width, extent.height, 1U };
         depth_info.mipLevels     = 1U;
@@ -333,6 +361,12 @@ struct WindowTarget::Impl {
                 }
             }
             views.clear();
+            for (const VkSemaphore semaphore : render_finished) {
+                if (semaphore != VK_NULL_HANDLE) {
+                    device.table->vkDestroySemaphore(device.device, semaphore, nullptr);
+                }
+            }
+            render_finished.clear();
             if (swapchain != VK_NULL_HANDLE) {
                 device.table->vkDestroySwapchainKHR(device.device, swapchain, nullptr);
                 swapchain = VK_NULL_HANDLE;
@@ -476,10 +510,6 @@ WindowTarget::~WindowTarget()
             impl->device.table->vkDestroySemaphore(impl->device.device, impl->image_available, nullptr);
             impl->image_available = VK_NULL_HANDLE;
         }
-        if (impl->render_finished != VK_NULL_HANDLE) {
-            impl->device.table->vkDestroySemaphore(impl->device.device, impl->render_finished, nullptr);
-            impl->render_finished = VK_NULL_HANDLE;
-        }
     }
     if (impl->surface != VK_NULL_HANDLE && impl->instance != VK_NULL_HANDLE) {
         vkDestroySurfaceKHR(impl->instance, impl->surface, nullptr);
@@ -521,14 +551,15 @@ bool WindowTarget::attach(const WindowDevice& device, vn::String* why)
         return false;
     }
 
-    // The acquire and present semaphores live as long as the target (the swapchain can be rebuilt under them).
+    // THE ACQUIRE SEMAPHORE lives as long as the target (the swapchain can be rebuilt under it): the submit waits on
+    // it and the fence wait below that makes it free again, so one is enough. The present-wait pair is per IMAGE and
+    // is created with the swapchain's objects (see render_finished).
     if (impl->image_available == VK_NULL_HANDLE) {
         VkSemaphoreCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        if (device.table->vkCreateSemaphore(device.device, &info, nullptr, &impl->image_available) != VK_SUCCESS ||
-            device.table->vkCreateSemaphore(device.device, &info, nullptr, &impl->render_finished) != VK_SUCCESS) {
+        if (device.table->vkCreateSemaphore(device.device, &info, nullptr, &impl->image_available) != VK_SUCCESS) {
             if (why != nullptr) {
-                *why = vn::String(u8"vk: the window's acquire/present semaphores could not be created");
+                *why = vn::String(u8"vk: the window's acquire semaphore could not be created");
             }
             impl->attached = false;
             return false;
@@ -663,7 +694,7 @@ VkSemaphore WindowTarget::imageAvailableSemaphore() const noexcept
 
 VkSemaphore WindowTarget::renderFinishedSemaphore() const noexcept
 {
-    return impl->render_finished;
+    return impl->renderFinishedOfAcquiredImage();
 }
 
 void WindowTarget::recordPresentTransition(const VkCommandBuffer commands) const
@@ -699,14 +730,15 @@ void WindowTarget::recordPresentTransition(const VkCommandBuffer commands) const
 
 vn::graphics::PresentOutcome WindowTarget::present()
 {
-    if (impl == nullptr || !impl->image_acquired || impl->swapchain == VK_NULL_HANDLE) {
+    if (impl == nullptr || !impl->image_acquired || impl->swapchain == VK_NULL_HANDLE ||
+        impl->image_index >= impl->render_finished.size()) {
         return vn::graphics::PresentOutcome::Skipped;
     }
 
     VkPresentInfoKHR info{};
     info.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     info.waitSemaphoreCount = 1U;
-    info.pWaitSemaphores    = &impl->render_finished;
+    info.pWaitSemaphores    = &impl->render_finished[impl->image_index];
     info.swapchainCount     = 1U;
     info.pSwapchains        = &impl->swapchain;
     info.pImageIndices      = &impl->image_index;

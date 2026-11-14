@@ -367,7 +367,17 @@ struct ContentImages::Impl {
         const ImageState from   = stateOf(vn::graphics::backend::ImageLayout::Undefined);
         const ImageState to     = transferWriteState();
 
-        const VkImageMemoryBarrier to_transfer = barrierBetween(entry.image, from, to, aspect);
+        // THE WHOLE IMAGE, NOT ITS LAYER 0: the loop below copies every layer and mip, and a barrier that names one
+        // subresource leaves the rest UNDEFINED - which is what the validation layer reports at submit time for a
+        // cube map's faces 1..5 (and what leaves them in TRANSFER_DST for the shader that samples them).
+        VkImageSubresourceRange whole{};
+        whole.aspectMask     = aspect;
+        whole.baseMipLevel   = 0U;
+        whole.levelCount     = static_cast<std::uint32_t>(texture.mipCount());
+        whole.baseArrayLayer = 0U;
+        whole.layerCount     = static_cast<std::uint32_t>(texture.layerCount());
+
+        const VkImageMemoryBarrier to_transfer = barrierBetween(entry.image, from, to, whole);
         table->vkCmdPipelineBarrier(commands,
                                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                     VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -634,7 +644,15 @@ VkImageView ContentImages::viewFor(const vn::graphics::Texture& texture, const V
 
     const ImageState transfer = transferWriteState();
     const ImageState sampled  = stateOf(vn::graphics::backend::ImageLayout::ShaderReadOnly);
-    const VkImageMemoryBarrier to_sampled = barrierBetween(entry.image, transfer, sampled, VK_IMAGE_ASPECT_COLOR_BIT);
+    // THE SAME RANGE THE UPLOAD WRITES (every layer and mip): a single-subresource transition here would leave the
+    // faces the descriptor samples in TRANSFER_DST, which is the layout error the app measured.
+    VkImageSubresourceRange whole{};
+    whole.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    whole.baseMipLevel   = 0U;
+    whole.levelCount     = static_cast<std::uint32_t>(texture.mipCount());
+    whole.baseArrayLayer = 0U;
+    whole.layerCount     = static_cast<std::uint32_t>(texture.layerCount());
+    const VkImageMemoryBarrier to_sampled = barrierBetween(entry.image, transfer, sampled, whole);
     impl->table->vkCmdPipelineBarrier(commands,
                                       VK_PIPELINE_STAGE_TRANSFER_BIT,
                                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
