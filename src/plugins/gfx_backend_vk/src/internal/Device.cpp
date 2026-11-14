@@ -1,6 +1,7 @@
 #include <vine/backend_vk/internal/Device.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -32,6 +33,7 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Texture.hpp>
+#include <vine/graphics/backend/Readback.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -49,6 +51,8 @@ using vn::graphics::PresentTarget;
 using vn::graphics::ReadbackResult;
 using vn::graphics::RenderTarget;
 using vn::graphics::SurfaceTargetResult;
+using vn::graphics::backend::decodeDepth;
+using vn::graphics::backend::depthReadbackOf;
 using vn::graphics::backend::ImageLayout;
 using vn::graphics::backend::planTarget;
 using vn::graphics::backend::RepairReason;
@@ -2001,6 +2005,224 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     impl->device_table.vkUnmapMemory(impl->device, staging_memory);
 
     release();
+    return true;
+}
+
+bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& outDepths, ReadbackResult* why)
+{
+    const auto fail = [why](const ReadbackResult reason) {
+        if (why != nullptr) {
+            *why = reason;
+        }
+        return false;
+    };
+
+    if (why != nullptr) {
+        *why = ReadbackResult::Ok;
+    }
+    if (!initialized()) {
+        return fail(ReadbackResult::Failed);
+    }
+    if (target == nullptr) {
+        return fail(ReadbackResult::Invalid);
+    }
+
+    const auto found = impl->targets.find(target);
+    if (found == impl->targets.end() || !found->second.built()) {
+        return fail(ReadbackResult::NotReady);
+    }
+    // A BORROWED DEPTH IS READ THROUGH THE SOURCE (the SDK's rule, see RenderBackend::readDepthBuffer): the image
+    // belongs to the lender, and this target never promised it - so the refusal comes before any format question.
+    if (target->depthSource() != nullptr) {
+        return fail(ReadbackResult::Unsupported);
+    }
+    TargetImages& images = found->second;
+    if (!images.hasDepth()) {
+        return fail(ReadbackResult::Invalid); // no depth attachment at all: the request names nothing
+    }
+
+    // ONE TABLE SAYS WHAT A DEPTH READBACK IS - the SDK's, the same one `decodeDepth` reads. D24 is Vulkan's COMBINED
+    // depth/stencil format with no plain depth copy, so it is refused here rather than decoded into numbers that
+    // look like depths and are not (the reference backend answers the same way, and the rule is why `depthReadbackOf`
+    // exists at all). The per-texel size below is the table's too, so the copy and the decoder cannot disagree.
+    const vn::graphics::backend::ReadbackFormat packed = depthReadbackOf(target->depthFormat());
+    if (!packed.readable) {
+        return fail(ReadbackResult::Unsupported);
+    }
+
+    const VkImage    depth_image = images.depthPicture();
+    const VkExtent3D extent{ static_cast<std::uint32_t>(images.width()), static_cast<std::uint32_t>(images.height()), 1U };
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * static_cast<VkDeviceSize>(extent.height) *
+                               static_cast<VkDeviceSize>(packed.bytes_per_texel);
+
+    VkBufferCreateInfo buffer_info{};
+    buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.size        = bytes;
+    buffer_info.usage       = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VkBuffer staging{ VK_NULL_HANDLE };
+    if (impl->device_table.vkCreateBuffer(impl->device, &buffer_info, nullptr, &staging) != VK_SUCCESS) {
+        return fail(ReadbackResult::Failed);
+    }
+
+    VkMemoryRequirements requirements{};
+    impl->device_table.vkGetBufferMemoryRequirements(impl->device, staging, &requirements);
+
+    std::uint32_t memory_type = std::numeric_limits<std::uint32_t>::max();
+    for (std::uint32_t index = 0; index < impl->memory.memoryTypeCount; ++index) {
+        const VkMemoryPropertyFlags flags = impl->memory.memoryTypes[index].propertyFlags;
+        const bool allowed                = (requirements.memoryTypeBits & (1U << index)) != 0U;
+        if (allowed && (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0U && (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0U) {
+            memory_type = index;
+            break;
+        }
+    }
+
+    VkDeviceMemory staging_memory{ VK_NULL_HANDLE };
+    if (memory_type == std::numeric_limits<std::uint32_t>::max()) {
+        impl->device_table.vkDestroyBuffer(impl->device, staging, nullptr);
+        return fail(ReadbackResult::Unsupported);
+    }
+
+    VkMemoryAllocateInfo allocate{};
+    allocate.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocate.allocationSize  = requirements.size;
+    allocate.memoryTypeIndex = memory_type;
+    if (impl->device_table.vkAllocateMemory(impl->device, &allocate, nullptr, &staging_memory) != VK_SUCCESS ||
+        impl->device_table.vkBindBufferMemory(impl->device, staging, staging_memory, 0U) != VK_SUCCESS) {
+        if (staging_memory != VK_NULL_HANDLE) {
+            impl->device_table.vkFreeMemory(impl->device, staging_memory, nullptr);
+        }
+        impl->device_table.vkDestroyBuffer(impl->device, staging, nullptr);
+        return fail(ReadbackResult::Failed);
+    }
+
+    // RECORD: depth picture -> transfer source -> copy -> back to the one layout a render pass expects, so a later
+    // pass into this target finds its depth where its render pass was built to write it (DEPTH_ATTACHMENT).
+    VkCommandBufferAllocateInfo command_allocate{};
+    command_allocate.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    command_allocate.commandPool        = impl->command_pool;
+    command_allocate.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    command_allocate.commandBufferCount = 1U;
+
+    VkCommandBuffer commands{ VK_NULL_HANDLE };
+    const auto      release = [&] {
+        if (commands != VK_NULL_HANDLE) {
+            impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
+        }
+        impl->device_table.vkFreeMemory(impl->device, staging_memory, nullptr);
+        impl->device_table.vkDestroyBuffer(impl->device, staging, nullptr);
+    };
+
+    if (impl->device_table.vkAllocateCommandBuffers(impl->device, &command_allocate, &commands) != VK_SUCCESS) {
+        release();
+        return fail(ReadbackResult::Failed);
+    }
+
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (impl->device_table.vkBeginCommandBuffer(commands, &begin) != VK_SUCCESS) {
+        release();
+        return fail(ReadbackResult::Failed);
+    }
+
+    // A PASS THAT SAMPLED THIS DEPTH AS A SHADOW MAP left the picture in SHADER_READ_ONLY: put it back before this
+    // readback's own transition names DEPTH_ATTACHMENT as the old layout (the mirror of readColorBuffer's
+    // colour_sampled note, and the same stage masks executeFrame's restore records).
+    if (images.depth_sampled) {
+        const VkImageMemoryBarrier back = barrierBetween(depth_image,
+                                                         stateOf(ImageLayout::ShaderReadOnly),
+                                                         stateOf(ImageLayout::DepthAttachment),
+                                                         depthAspectMask(images.depthFormat()));
+        impl->device_table.vkCmdPipelineBarrier(commands,
+                                                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                                                0U,
+                                                0U,
+                                                nullptr,
+                                                0U,
+                                                nullptr,
+                                                1U,
+                                                &back);
+        images.depth_sampled = false;
+    }
+
+    // A BARRIER NAMES BOTH HALVES of a combined depth/stencil image (see depthAspectMask); the COPY names only the
+    // aspect it reads, because a depth readback is the depth half - the stencil half is not a depth and nothing here
+    // decodes it (which is also why a combined format is refused above: this backend serves the formats the SDK's
+    // table can decode, and that table has no combined entry).
+    const VkImageMemoryBarrier to_transfer =
+        barrierBetween(depth_image, stateOf(ImageLayout::DepthAttachment), transferReadState(), depthAspectMask(images.depthFormat()));
+    impl->device_table.vkCmdPipelineBarrier(commands,
+                                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                                            VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                            0U,
+                                            0U,
+                                            nullptr,
+                                            0U,
+                                            nullptr,
+                                            1U,
+                                            &to_transfer);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    region.imageSubresource.layerCount = 1U;
+    region.imageExtent                 = extent;
+    impl->device_table.vkCmdCopyImageToBuffer(commands, depth_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging, 1U, &region);
+
+    const VkImageMemoryBarrier to_attachment =
+        barrierBetween(depth_image, transferReadState(), stateOf(ImageLayout::DepthAttachment), depthAspectMask(images.depthFormat()));
+    impl->device_table.vkCmdPipelineBarrier(commands,
+                                            VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                                            0U,
+                                            0U,
+                                            nullptr,
+                                            0U,
+                                            nullptr,
+                                            1U,
+                                            &to_attachment);
+
+    if (impl->device_table.vkEndCommandBuffer(commands) != VK_SUCCESS) {
+        release();
+        return fail(ReadbackResult::Failed);
+    }
+
+    VkSubmitInfo submit{};
+    submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1U;
+    submit.pCommandBuffers    = &commands;
+
+    const bool ran = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion) == VK_SUCCESS &&
+                     impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+    (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
+
+    if (!ran) {
+        release();
+        return fail(ReadbackResult::Failed);
+    }
+
+    void* mapped = nullptr;
+    if (impl->device_table.vkMapMemory(impl->device, staging_memory, 0U, bytes, 0U, &mapped) != VK_SUCCESS || mapped == nullptr) {
+        release();
+        return fail(ReadbackResult::Failed);
+    }
+
+    // THE DECODER IS THE SDK'S TOO: one table says how many bytes a texel is, one function turns them into the
+    // normalised values a probe answers with (D32/D32F arrive as their float, D16 divided by its full scale). A copy
+    // that is not a whole image is not a picture of anything, so a short decode is a failure - and the HOST's vector
+    // is only written once there IS a picture, which is what keeps a refused read from handing out stale values.
+    std::vector<float> values = decodeDepth(target->depthFormat(),
+                                            std::span<const std::byte>(static_cast<const std::byte*>(mapped), static_cast<std::size_t>(bytes)));
+    impl->device_table.vkUnmapMemory(impl->device, staging_memory);
+
+    release();
+    if (values.size() != static_cast<std::size_t>(extent.width) * static_cast<std::size_t>(extent.height)) {
+        return fail(ReadbackResult::Failed);
+    }
+    outDepths = std::move(values);
     return true;
 }
 

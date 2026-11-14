@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -157,6 +158,48 @@ void main()
     target->attachDepth(RenderTarget::DepthFormat::D24);
     target->setSize(width, height);
     return target;
+}
+
+/// @brief Builds a 64x64-style target with one RGBA8 attachment and a depth attachment of @p format.
+///
+/// D32F is the format a depth READBACK can decode: D24 is Vulkan's COMBINED depth/stencil image, which has no plain
+/// depth copy (see the refusal case at the end of this file, and the SDK's own `core::depthReadbackOf`).
+[[nodiscard]] intrusive_ptr<RenderTarget> makeDepthTarget(int width, int height, RenderTarget::DepthFormat format, std::uint32_t samples = 1U)
+{
+    auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
+    target->setName(String(u8"vk_m3_depth_target"));
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->attachDepth(format);
+    target->setSize(width, height);
+    target->setSamples(samples);
+    return target;
+}
+
+/// @brief Builds an indexed quad in clip space at depth @p z, covering x in [-1, 0] and y in [0, 1].
+///
+/// The SDK's clip space is y-UP and the backend folds y down, so this quad is the image's TOP-LEFT quarter. One
+/// readback can then pin two facts about the packed copy at once: row-major (the depth sits in the first half of the
+/// rows) and row length (the first half of the columns, not wrapped).
+[[nodiscard]] intrusive_ptr<Geometry> makeCornerQuad(float z)
+{
+    std::vector<float> positions{
+        -1.0F, 0.0F, z,
+        0.0F,  0.0F, z,
+        0.0F,  1.0F, z,
+        -1.0F, 1.0F, z,
+    };
+    std::vector<std::uint32_t> indices{ 0U, 1U, 2U, 0U, 2U, 3U };
+
+    auto geometry = intrusive_ptr<Geometry>(new Geometry());
+    geometry->setPositions(intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::move(positions))));
+
+    Primitive primitive;
+    primitive.topology = Topology::Triangles;
+    primitive.indices  = Primitive::IndexSpan::whole(intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::move(indices))));
+    geometry->clearPrimitives();
+    geometry->addPrimitive(primitive);
+    geometry->bumpRevision();
+    return geometry;
 }
 
 /// @brief A camera with identity matrices, so the triangle's clip-space positions ARE the picture.
@@ -368,5 +411,186 @@ TEST(VkContentTargetTest, ThePassDepthPolicyDecidesWhichFragmentSurvives)
     }
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    backend->shutdown();
+}
+
+/**
+ * @brief The depth attachment reads back as normalised, row-major values - one per texel, the picture the frame left.
+ *
+ * WHY A CORNER QUAD. The geometry covers the image's top-left quarter only, so one readback says both things a packed
+ * copy can get wrong: the ROW ORDER (a flipped read would report the depth at the bottom) and the ROW LENGTH (a short
+ * stride would wrap the columns). The depth value is exact: clip z = 0.5 folds to `0.5 - 0.5 z` = 0.25, and D32F
+ * stores the float the fragment wrote.
+ */
+TEST(VkContentTargetTest, TheDepthAttachmentReadsBackAsNormalisedRowMajorValues)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget>  target   = makeDepthTarget(64, 64, RenderTarget::DepthFormat::D32F);
+    const intrusive_ptr<ShaderProgram> program  = makeProgram(kGreenFragment);
+    const intrusive_ptr<Geometry>      geometry = makeCornerQuad(0.5F);
+
+    ClearPolicy clear;
+    clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    clear.depth = true;
+
+    EXPECT_EQ(backend->executeFrame(drawingFrame(target.get(), clear, PassRenderState{}, { commandOf(geometry, program) })),
+              vn::graphics::PresentOutcome::Skipped);
+
+    std::vector<float> depths;
+    ReadbackResult     why = ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readDepthBuffer(target.get(), depths, &why)) << "the depth readback was refused: " << static_cast<int>(why);
+    EXPECT_EQ(why, ReadbackResult::Ok);
+    ASSERT_EQ(depths.size(), std::size_t{ 64U * 64U }) << "one value per texel";
+
+    const auto depthAt = [&depths](int x, int y) { return depths[static_cast<std::size_t>(y) * 64U + static_cast<std::size_t>(x)]; };
+    EXPECT_NEAR(depthAt(16, 16), 0.25F, 0.002F) << "the covered quarter carries the fragment's depth (clip z = 0.5 folds to 0.25)";
+    EXPECT_FLOAT_EQ(depthAt(48, 16), 0.0F) << "outside the quad is the depth the pass cleared: the reverse-Z far plane";
+    EXPECT_FLOAT_EQ(depthAt(16, 48), 0.0F) << "a vertically flipped read would see the quad's depth here";
+    EXPECT_FLOAT_EQ(depthAt(48, 48), 0.0F);
+    for (const float value : depths) {
+        EXPECT_GE(value, 0.0F) << "a depth is a normalised value";
+        EXPECT_LE(value, 1.0F);
+    }
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::TargetBuildFailed), 0U)
+        << "a D32F depth attachment is a shape this device builds";
+    backend->shutdown();
+}
+
+/**
+ * @brief A multisampled target's depth reads back as its RESOLVED picture, not the sample buffer.
+ *
+ * The render pass resolves the depth into a single-sample image (`TargetImages::depthPicture`, `sample0`, backlog
+ * T40), and that image is what a reader sees - so the depths are the single-sampled ones, one per pixel. Reading the
+ * sample buffer instead would be a multi-texels-per-pixel copy, which the packed size below (width * height) rules out.
+ */
+TEST(VkContentTargetTest, AMultisampledTargetsDepthReadsItsResolvePicture)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const std::uint32_t samples = std::min<std::uint32_t>(4U, backend->capabilities().max_samples);
+    if (samples <= 1U) {
+        GTEST_SKIP() << "this device offers no multisampling (Capabilities::max_samples is 1)";
+    }
+
+    const intrusive_ptr<RenderTarget>  target   = makeDepthTarget(64, 64, RenderTarget::DepthFormat::D32F, samples);
+    const intrusive_ptr<ShaderProgram> program  = makeProgram(kGreenFragment);
+    const intrusive_ptr<Geometry>      geometry = makeCornerQuad(0.5F);
+
+    ClearPolicy clear;
+    clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    clear.depth = true;
+
+    EXPECT_EQ(backend->executeFrame(drawingFrame(target.get(), clear, PassRenderState{}, { commandOf(geometry, program) })),
+              vn::graphics::PresentOutcome::Skipped);
+
+    std::vector<float> depths;
+    ReadbackResult     why = ReadbackResult::Failed;
+    ASSERT_TRUE(backend->readDepthBuffer(target.get(), depths, &why))
+        << "a multisampled target's resolved depth is served now (see TargetImages::depthPicture), refused: " << static_cast<int>(why);
+    EXPECT_EQ(why, ReadbackResult::Ok);
+    ASSERT_EQ(depths.size(), std::size_t{ 64U * 64U }) << "one value per PIXEL, not per sample";
+
+    const auto depthAt = [&depths](int x, int y) { return depths[static_cast<std::size_t>(y) * 64U + static_cast<std::size_t>(x)]; };
+    // sample0 is the resolve mode, and the quad's depth is the same in every sample, so the resolved picture IS the
+    // single-sampled one - at the covered quarter and at the clear alike.
+    EXPECT_NEAR(depthAt(16, 16), 0.25F, 0.002F) << "the resolved picture carries the fragment's depth";
+    EXPECT_FLOAT_EQ(depthAt(48, 16), 0.0F) << "and the clear outside the quad";
+    EXPECT_FLOAT_EQ(depthAt(48, 48), 0.0F);
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    backend->shutdown();
+}
+
+/**
+ * @brief Every depth-readback refusal is classified, costs no submission, and leaves the host's vector alone.
+ *
+ * The reasons are the SDK's, not this backend's: a target it never built is NotReady (a later frame can make it
+ * readable), a request with no target is Invalid, a COMBINED depth/stencil format and a BORROWED depth are
+ * Unsupported (the SDK's readback table has no plain copy for the first, and the second belongs to the lender) - and
+ * a destination that already held values still holds them after a refusal.
+ */
+TEST(VkContentTargetTest, DepthReadbackRefusalsKeepTheirReasonsAndTouchNothing)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    ClearPolicy clear;
+    clear.color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    clear.depth = true;
+
+    // A BUILT D24 target: the SDK's table says a combined depth/stencil image has no plain depth copy, so this
+    // backend refuses the read instead of decoding bytes that look like depths and are not.
+    const intrusive_ptr<RenderTarget> combined = makeDepthTarget(32, 32, RenderTarget::DepthFormat::D24);
+    EXPECT_EQ(backend->executeFrame(drawingFrame(combined.get(), clear, PassRenderState{}, {})), vn::graphics::PresentOutcome::Skipped);
+
+    const std::vector<float> seeded{ 0.5F };
+    std::vector<float>       depths = seeded;
+    ReadbackResult           why    = ReadbackResult::Ok;
+    const std::size_t        waits  = 0U;
+    EXPECT_FALSE(backend->readDepthBuffer(combined.get(), depths, &why));
+    EXPECT_EQ(why, ReadbackResult::Unsupported) << "D24 is combined depth/stencil: no plain depth copy exists";
+    EXPECT_EQ(depths, seeded) << "a refused read leaves the destination untouched";
+
+    // A BUILT target WITHOUT a depth attachment: the request names nothing (Invalid, not Unsupported - no format could
+    // ever make it servable). Built by hand: `makeTarget` always attaches a depth.
+    const intrusive_ptr<RenderTarget> colour_only(new RenderTarget());
+    colour_only->attachColor(RenderTarget::ColorFormat::RGBA8);
+    colour_only->setSize(32, 32);
+    EXPECT_EQ(backend->executeFrame(drawingFrame(colour_only.get(), clear, PassRenderState{}, {})), vn::graphics::PresentOutcome::Skipped);
+    EXPECT_FALSE(backend->readDepthBuffer(colour_only.get(), depths, &why));
+    EXPECT_EQ(why, ReadbackResult::Invalid);
+    EXPECT_EQ(depths, seeded);
+
+    // A target this device never built: nothing to read YET.
+    const intrusive_ptr<RenderTarget> unknown = makeDepthTarget(8, 8, RenderTarget::DepthFormat::D32F);
+    EXPECT_FALSE(backend->readDepthBuffer(unknown.get(), depths, &why));
+    EXPECT_EQ(why, ReadbackResult::NotReady);
+
+    // No target at all: the request itself is wrong.
+    EXPECT_FALSE(backend->readDepthBuffer(nullptr, depths, &why));
+    EXPECT_EQ(why, ReadbackResult::Invalid);
+
+    // A BORROWED depth is the lender's to read (the SDK's rule): the borrower says Unsupported, and the LENDER answers
+    // its own depths. The borrower is drawn into first so it is BUILT - the refusal is then the borrow itself, not a
+    // missing attachment set. (This device attaches its own depth to a borrower today; what is pinned here is the
+    // READBACK rule, which is the SDK's and the same for every backend.)
+    const intrusive_ptr<RenderTarget> lender = makeDepthTarget(16, 16, RenderTarget::DepthFormat::D32F);
+    EXPECT_EQ(backend->executeFrame(drawingFrame(lender.get(), clear, PassRenderState{}, {})), vn::graphics::PresentOutcome::Skipped);
+    const intrusive_ptr<RenderTarget> borrower = makeTarget(1, 16, 16);
+    borrower->shareDepth(depthViewOf(lender));
+    EXPECT_EQ(backend->executeFrame(drawingFrame(borrower.get(), clear, PassRenderState{}, {})), vn::graphics::PresentOutcome::Skipped);
+    EXPECT_FALSE(backend->readDepthBuffer(borrower.get(), depths, &why));
+    EXPECT_EQ(why, ReadbackResult::Unsupported) << "read it through the source target";
+    EXPECT_EQ(depths, seeded);
+    std::vector<float> lender_depths;
+    ASSERT_TRUE(backend->readDepthBuffer(lender.get(), lender_depths, &why)) << "the lender's own depth is served, refused: " << static_cast<int>(why);
+    ASSERT_EQ(lender_depths.size(), std::size_t{ 16U * 16U });
+    for (const float value : lender_depths) {
+        EXPECT_FLOAT_EQ(value, 0.0F) << "the lender's pass cleared its depth and drew nothing";
+    }
+
+    // A RELEASED target is NotReady again (a later frame announcing it can make it readable - this is residency, not
+    // a capability).
+    backend->releaseRenderTarget(combined.get());
+    EXPECT_FALSE(backend->readDepthBuffer(combined.get(), depths, &why));
+    EXPECT_EQ(why, ReadbackResult::NotReady);
+    EXPECT_EQ(depths, seeded);
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U);
+    EXPECT_EQ(waits, 0U);
     backend->shutdown();
 }

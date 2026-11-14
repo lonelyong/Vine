@@ -558,8 +558,10 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
     if (images.hasDepth()) {
         image_create.format  = images.depthFormat();
         // A MULTISAMPLED depth is a DRAW target only (the API forbids sampling or copying it); the single-sample one
-        // IS the picture and carries the sampled usage itself (the shadow path reads it - see Device::resolveShadow).
-        image_create.usage   = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | (resolved ? 0U : VK_IMAGE_USAGE_SAMPLED_BIT);
+        // IS the picture, and it carries the same pair the colour pictures carry: SAMPLED (the shadow path reads it -
+        // see Device::resolveShadow) and TRANSFER_SRC (a readDepthBuffer copy reads it).
+        image_create.usage   = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                             (resolved ? 0U : (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT));
         image_create.samples = sample_count;
         if (!createImage(table, device, memory, image_create, images.depth, images.depth_memory) ||
             !createView(table, device, images.depth, image_create.format, VK_IMAGE_ASPECT_DEPTH_BIT, images.depth_view)) {
@@ -569,10 +571,11 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Tar
 
         // THE DEPTH PICTURE of a multisampled target: the resolve attachment (see TargetImages::depthPicture). It keeps
         // every capability a single-sample depth attachment used to have - DEPTH_STENCIL_ATTACHMENT (the pass resolves
-        // into it, a borrower attaches it) and SAMPLED (a shader samples it) - at one sample per texel.
+        // into it, a borrower attaches it), SAMPLED (a shader samples it) and TRANSFER_SRC (a readback copies it) - at
+        // one sample per texel.
         if (resolved) {
             image_create.samples = VK_SAMPLE_COUNT_1_BIT;
-            image_create.usage   = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            image_create.usage   = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
             if (!createImage(table, device, memory, image_create, images.depth_resolve, images.depth_resolve_memory) ||
                 !createView(table, device, images.depth_resolve, image_create.format, VK_IMAGE_ASPECT_DEPTH_BIT, images.depth_resolve_view)) {
                 destroyAttachments(table, device, images);

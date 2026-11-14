@@ -219,6 +219,31 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
                          vn::graphics::ReadbackResult*     why = nullptr) override;
 
     /**
+     * @brief Reads back the depth attachment of an off-screen target this device drew into.
+     *
+     * @details
+     * - The copy is synchronous, like readColorBuffer: one command buffer, one fence, the depths the last frame left,
+     *   as `width * height` floats in [0, 1], row-major.
+     * - IT READS THE DEPTH PICTURE: a multisampled target's resolved single-sample image (see
+     *   `TargetImages::depthPicture`), never the sample buffer - multisampling cannot change the depths a reader sees.
+     * - WHICH FORMATS, from the SDK's own table (`core::depthReadbackOf`, the table `decodeDepth` reads): D16, D32 and
+     *   D32F have a plain depth copy; D24 is Vulkan's COMBINED depth/stencil format with no plain depth copy, so it
+     *   answers Unsupported instead of decoding bytes that are not depths - the reference backend answers the same way.
+     * - A BORROWED depth (`RenderTarget::shareDepth`) answers Unsupported: the image belongs to the lender, and the
+     *   SDK's rule is that it is read through the SOURCE target.
+     * - Only a successful read changes @p outDepths; every refusal (Invalid / NotReady / Unsupported / Failed) leaves
+     *   it untouched and costs no submission.
+     *
+     * @param target    Target to read (borrowed; null is refused as Invalid).
+     * @param outDepths Receives `width * height` depths on success.
+     * @param why       Receives why the read did not happen (Ok when it did), or null to ignore.
+     * @return true when the depths were read.
+     */
+    bool readDepthBuffer(const vn::graphics::RenderTarget* target,
+                         std::vector<float>&               outDepths,
+                         vn::graphics::ReadbackResult*     why = nullptr) override;
+
+    /**
      * @brief Runs the frame's passes and presents the window's picture when a window is named: each pass clears or
      *        loads its target, then records the drawing calls of every `DrawDescription` it carries.
      *
