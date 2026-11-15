@@ -73,7 +73,18 @@
     是自相矛盾的（`G1` / `G6`）。边界：作为“驻留与帧纪律”，它把复杂性吸收在后端（`G7` 做对了）；`Keys` /
     `ClearPlan` / `TargetPlan` / `FrameCompiler` 里仍是 Vulkan 拼写（`VkFormat` / `ImageLayout` / subpass）——
     第二个后端落地前不再新增这类拼写，把它改成不透明设备格式码是那一轮的入口（`vsg-backend.md` C6）。
+2.11 **扩展点的成本是表，不是形容词**（审计 `A12`）：说"易于扩展"而不说"加一个要动哪几处"是无法证伪的。
+    所以每个扩展点在这里有一行，列的是**今天的实际文件**——加东西之前先读这张表，改完回来更新它。
+    判据：一个扩展点如果开始需要改**核心模型**（`FrameDescription` 的形状、引擎的编译、调度），那它就不是扩展
+    而是重构，那一步要走 ADR（`G9` 的反面正是"每加一样东西都动核心"）。
 
+| 扩展点 | 今天要动的地方（实际文件） | 处数 |
+|---|---|---|
+| 一个 **pass 种类**（如 compute） | `PassDesc.hpp` 的 `PassKind`；`Plan.cpp` 的校验；`RenderPass.cpp` 的 kind → 节点映射；一个新节点类（照 `ScreenPass.cpp`）；`EngineCompile.cpp` 的 describe；每个后端按 `DrawDescription::Kind` 录制 | 6–8 |
+| 一个 **像素格式** | `RenderTarget.hpp` 的 `ColorFormat` / `DepthFormat`；vk `TargetImages.cpp` 的 `colorFormatOf` / `depthFormatOf`；vk `ContentImages.cpp` 的 `toVkFormat`；vsg `VsgSceneRules.cpp` 的格式映射 | 4 |
+| 一个 **pass 声明字段** | `PassDesc.hpp`；`Plan.cpp`（差分与校验）；`FrameDescription.hpp` 的 `PassDraw`；每个后端的录制器 | 4+ |
+| 一个 **内容通道**（顶点属性） | `Geometry.hpp` 的 `GeometryDescription` 通道表；`ShaderAbi.hpp` 的块布局；vk `ContentDraw.cpp` 的通道 → location 映射与顶点格式；vsg 的绑定 | 4 |
+| 一个 **后端** | 新插件（`Plugin.cpp` + `BackendFactory.cpp`）、`RenderBackend` 两半、自己的 `test_*`、`check_*_exposure` 门禁、`RenderBackendRegistry` 自注册 | 约 6 类文件 |
 ## 3. 功能点
 
 ### 3.1 设备、窗口、区、视图、引擎
