@@ -427,6 +427,22 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      */
     void reportDriverMessage(int severity_flags, const char* text);
 
+    /**
+     * @brief Installs the seam that creates device memory, so a test can reach the failure classes (see
+     *        MemoryBlockCreator).
+     *
+     * @details
+     * - WHY A DEVICE-LEVEL DOOR EXISTS. The classification this backend owes a host - a lost device ends the session,
+     *   an exhausted heap is a fact the host can act on, a refused driver call is neither - is UNREACHABLE on a
+     *   healthy machine, so the tests that pin it need a way to make `vkAllocateMemory` fail. The door is here, not
+     *   on the allocator alone, because the classification lives on this device (see `noteMemoryRefusal`).
+     * - Empty is the production path. Blocks are created lazily, so this may be installed after `initialize()` and
+     *   before the first target or texture.
+     *
+     * @param creator The block creator, or empty for `vkAllocateMemory` through the device table.
+     */
+    void setMemoryBlockCreator(MemoryBlockCreator creator);
+
   private:
     /**
      * @brief Builds (or rebuilds) the Vulkan objects for @p target when they do not fit it.
@@ -471,6 +487,26 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @return true when @p result was `VK_ERROR_DEVICE_LOST` (the session is now marked over).
      */
     bool noteDeviceLost(VkResult result, const char* what);
+
+    /**
+     * @brief Turns one allocation's outcome into this backend's ONE answer for it (see MemoryRefusalReport).
+     *
+     * @details
+     * - THE ONE CLASSIFICATION POINT FOR MEMORY, the same way `noteDeviceLost` is the one for queue work. The pool
+     *   reports every allocation here (see `MemoryAllocator::setFailureSink`), which is what makes it impossible for an
+     *   allocation site to drop the reason: `allocate` has six callers and they only need "did it work".
+     * - WHAT EACH CLASS BECOMES: `DeviceLost` takes `noteDeviceLost` (so the session ends once, however many
+     *   allocations see it); `OutOfMemory` is a warning a host can act on by releasing content; `DriverRefused` is an
+     *   error naming the driver's own result; `NoType` says this device cannot host the resource; the two wiring
+     *   defects are reported as such rather than as memory pressure.
+     * - `Ok` RE-ARMS THE EPISODES: an allocation that worked says the pool can allocate again, which is where the
+     *   condition ends (the repository's `ReportOnce` rule).
+     * - The sentence carries the numbers a host can act on: what was asked, which memory type served it, and the
+     *   pool's reserved / used bytes at that moment.
+     *
+     * @param report The pool's account of one allocation (see MemoryRefusalReport).
+     */
+    void noteMemoryRefusal(const MemoryRefusalReport& report);
 
     struct Impl;
 

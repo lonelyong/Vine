@@ -19,6 +19,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include <vine/Buffer.hpp>
@@ -173,6 +174,22 @@ void main()
     program->addStage(vn::graphics::ShaderStage{ vn::graphics::ShaderStageType::Vertex, String(kVertexStage), String(u8"main") });
     program->addStage(vn::graphics::ShaderStage{ vn::graphics::ShaderStageType::Fragment, String(kFragmentStage), String(u8"main") });
     return program;
+}
+
+/// @brief A target too large for the blocks the pool already has open: serving it needs a NEW block.
+///
+/// WHY THE SIZE MATTERS. `vkAllocateMemory` runs when the pool creates a BLOCK, not when it carves a slice - so a
+/// failure case has to ask for something the open blocks cannot hold. 4096x4096 RGBA8 is 64 MiB, which is the pool's
+/// largest first-fill block, and the frame's uniform ring has already taken part of it: the request cannot fit, so the
+/// next allocation is a block creation, which is the only moment the injected failure can be produced. (On an
+/// integrated device both usages resolve to ONE memory type, so size is the only lever there is.)
+[[nodiscard]] intrusive_ptr<RenderTarget> makeTargetNeedingANewBlock(const char8_t* name)
+{
+    auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
+    target->setName(String(name));
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(4096, 4096);
+    return target;
 }
 
 } // namespace
@@ -422,4 +439,179 @@ TEST(VkMemoryAllocatorTest, LinearAndOptimalDoNotShareAGranularityPage)
     fixture.allocator.release(optimal);
     fixture.allocator.release(buffer);
     EXPECT_EQ(fixture.allocator.stats().used_bytes, 0U);
+}
+
+TEST(VkMemoryAllocatorTest, ARefusedBlockSaysWhichKindOfFailureItIs)
+{
+    // THE DEFECT THIS PINS (audit A1): `vkAllocateMemory`'s answer used to be collapsed into one "allocation failed", so
+    // a LOST DEVICE was reported as an exhausted heap and the session kept running on a dead device. The four classes
+    // below are four different repairs - rebuild the session, release content, escalate, fix the wiring - so they are
+    // four answers, and the driver's own result travels with the report instead of being discarded.
+    AllocationDevice fixture;
+    if (!fixture.ready) {
+        GTEST_SKIP() << "this machine has no Vulkan device the allocator can be opened on";
+    }
+
+    std::vector<vn::backend_vk::MemoryRefusalReport> reports;
+    fixture.allocator.setFailureSink([&reports](const vn::backend_vk::MemoryRefusalReport& report) { reports.push_back(report); });
+
+    const auto refuse_with = [&fixture](const VkResult result) {
+        fixture.allocator.setBlockCreator([result](VkDevice, const VkMemoryAllocateInfo&, VkDeviceMemory*) { return result; });
+    };
+    const auto ask = [&fixture](vn::backend_vk::MemoryRefusal& refusal) {
+        return fixture.allocator.allocate(AllocationDevice::requirement(4096U, 256U),
+                                          vn::backend_vk::MemoryUsage::DeviceLocal,
+                                          vn::backend_vk::MemoryKind::Linear,
+                                          &refusal);
+    };
+
+    vn::backend_vk::MemoryRefusal refusal = vn::backend_vk::MemoryRefusal::Ok;
+
+    refuse_with(VK_ERROR_DEVICE_LOST);
+    EXPECT_FALSE(ask(refusal).valid());
+    EXPECT_EQ(refusal, vn::backend_vk::MemoryRefusal::DeviceLost) << "a lost device is not an exhausted heap";
+    ASSERT_FALSE(reports.empty());
+    EXPECT_EQ(reports.back().driver_result, VK_ERROR_DEVICE_LOST) << "the driver's own answer was not carried";
+    EXPECT_EQ(reports.back().requested_bytes, 4096U) << "the report did not say what was asked for";
+
+    refuse_with(VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    EXPECT_FALSE(ask(refusal).valid());
+    EXPECT_EQ(refusal, vn::backend_vk::MemoryRefusal::OutOfMemory);
+    EXPECT_EQ(reports.back().driver_result, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+
+    refuse_with(VK_ERROR_TOO_MANY_OBJECTS);
+    EXPECT_FALSE(ask(refusal).valid());
+    EXPECT_EQ(refusal, vn::backend_vk::MemoryRefusal::DriverRefused)
+        << "a device limit is not memory pressure: nothing a host releases would help";
+
+    // A WORKING CREATOR IS REPORTED TOO, AND THAT IS THE POINT: the `Ok` report is how the reporting layer learns that
+    // the condition ended, so its episodes re-arm (the repository's ReportOnce rule).
+    fixture.allocator.setBlockCreator({});
+    vn::backend_vk::MemorySlice slice = ask(refusal);
+    ASSERT_TRUE(slice.valid()) << "the pool did not recover after the injection was cleared";
+    EXPECT_EQ(refusal, vn::backend_vk::MemoryRefusal::Ok);
+    EXPECT_EQ(reports.back().refusal, vn::backend_vk::MemoryRefusal::Ok) << "a success was not reported to the sink";
+    fixture.allocator.release(slice);
+}
+
+TEST(VkMemoryAllocatorTest, AllocationBeforeOpenIsAWiringDefectNotOutOfMemory)
+{
+    // A CLOSED POOL IS A BUG IN THIS BACKEND, NOT A FULL DEVICE. Saying "out of memory" here sends a host looking for
+    // content to release when what it has is a session that was never opened - which is why the refusal is its own
+    // class and needs no Vulkan device to be checked.
+    vn::backend_vk::MemoryAllocator allocator;
+
+    VkMemoryRequirements requirements{};
+    requirements.size           = 4096U;
+    requirements.alignment      = 256U;
+    requirements.memoryTypeBits = ~0U;
+
+    vn::backend_vk::MemoryRefusal refusal = vn::backend_vk::MemoryRefusal::Ok;
+    const vn::backend_vk::MemorySlice slice = allocator.allocate(requirements,
+                                                                 vn::backend_vk::MemoryUsage::DeviceLocal,
+                                                                 vn::backend_vk::MemoryKind::Linear,
+                                                                 &refusal);
+    EXPECT_FALSE(slice.valid());
+    EXPECT_EQ(refusal, vn::backend_vk::MemoryRefusal::NotOpen);
+}
+
+TEST(VkMemoryFailureTest, AnExhaustedHeapIsOneReportWithItsNumbersAndTheSessionSurvives)
+{
+    // THE HALF OF A1 A HOST ACTS ON: an exhausted heap must NOT look like a lost device (the session survives), and the
+    // sentence must carry what a host needs to decide - what was asked, which memory type, the driver's own result, and
+    // what the pool holds. "Device memory could not be allocated" is the report this case exists to make impossible.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    int refusals = 0;
+    device->setMemoryBlockCreator([&refusals](VkDevice, const VkMemoryAllocateInfo&, VkDeviceMemory*) {
+        ++refusals;
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    });
+
+    const intrusive_ptr<RenderTarget> target = makeTargetNeedingANewBlock(u8"vk_memory_exhausted");
+    const vn::backend_vk::MemoryStats before = device->memoryStats();
+    (void)backend->executeFrame(clearingFrame(target.get()), nullptr);
+
+    EXPECT_GT(refusals, 0) << "the injection was never reached: the case proved nothing";
+    EXPECT_TRUE(backend->initialized()) << "an exhausted heap is not a lost device: the session must survive";
+    EXPECT_EQ(device->memoryStats().blocks_live, before.blocks_live) << "a refused block was counted as a live one";
+    EXPECT_EQ(device->memoryStats().blocks, before.blocks) << "the refused block was counted at all";
+
+    bool saw_reason = false;
+    for (const vn::graphics::RenderDiagnostic& diagnostic : reported) {
+        if (diagnostic.category != vn::graphics::DiagnosticCategory::ResourcePressure) {
+            continue;
+        }
+        saw_reason = true;
+        const std::u8string_view text = diagnostic.message.std_u8str_view();
+        EXPECT_NE(text.find(u8" MiB"), std::u8string_view::npos) << "the sentence did not name the request";
+        EXPECT_NE(text.find(u8"VK_ERROR_OUT_OF_DEVICE_MEMORY"), std::u8string_view::npos)
+            << "the sentence did not name the driver's own answer";
+        EXPECT_NE(text.find(u8"reserved"), std::u8string_view::npos) << "the sentence did not say what the pool holds";
+    }
+    EXPECT_TRUE(saw_reason) << "the allocation failure was not reported as memory pressure";
+
+    // AND THE POOL RECOVERS: with the injection gone the next frame builds the target, which is the difference between
+    // "this frame lost a resource" and "the session is over".
+    device->setMemoryBlockCreator({});
+    (void)backend->executeFrame(clearingFrame(target.get()), nullptr);
+    EXPECT_GT(device->memoryStats().blocks, before.blocks) << "the pool did not recover after the injection was cleared";
+
+    // A SECOND EPISODE SPEAKS AGAIN: the successful allocation re-armed the episode, so the same failure later is a new
+    // fact rather than a silent one (the ReportOnce rule - an episode ends where its condition ends).
+    reported.clear();
+    device->setMemoryBlockCreator([](VkDevice, const VkMemoryAllocateInfo&, VkDeviceMemory*) {
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    });
+    const intrusive_ptr<RenderTarget> second = makeTargetNeedingANewBlock(u8"vk_memory_exhausted_again");
+    (void)backend->executeFrame(clearingFrame(second.get()), nullptr);
+    bool saw_second = false;
+    for (const vn::graphics::RenderDiagnostic& diagnostic : reported) {
+        saw_second = saw_second || diagnostic.category == vn::graphics::DiagnosticCategory::ResourcePressure;
+    }
+    EXPECT_TRUE(saw_second) << "the episode was not re-armed by the successful allocation";
+
+    backend->shutdown();
+}
+
+TEST(VkMemoryFailureTest, ALostDeviceDuringAnAllocationEndsTheSession)
+{
+    // THE OTHER HALF OF A1: the same call answering VK_ERROR_DEVICE_LOST is the session's end, and it must take the
+    // SAME path a lost submit does - `initialized()` stops answering true, later frames are skipped without touching
+    // the device, and the loss is said ONCE (the session is the episode, not each allocation that sees it).
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    int refusals = 0;
+    device->setMemoryBlockCreator([&refusals](VkDevice, const VkMemoryAllocateInfo&, VkDeviceMemory*) {
+        ++refusals;
+        return VK_ERROR_DEVICE_LOST;
+    });
+
+    const intrusive_ptr<RenderTarget> target = makeTargetNeedingANewBlock(u8"vk_memory_lost");
+    (void)backend->executeFrame(clearingFrame(target.get()), nullptr);
+
+    EXPECT_GT(refusals, 0) << "the injection was never reached: the case proved nothing";
+    EXPECT_FALSE(backend->initialized()) << "a lost device must end the session wherever it is seen";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::SubmissionFailed), 1U)
+        << "the loss was reported once per allocation instead of once per session";
+
+    // THE SESSION IS OVER, SO A LATER FRAME MUST NOT TOUCH THE DEVICE - and shutdown still returns it to a fresh state.
+    (void)backend->executeFrame(clearingFrame(target.get()), nullptr);
+    backend->shutdown();
+    EXPECT_EQ(device->memoryStats().blocks_live, 0U) << "shutdown after a loss left blocks behind";
 }

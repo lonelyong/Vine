@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 #include <vine/backend_vk/backend_vk_global.hpp>
@@ -48,10 +49,18 @@ enum class MemoryKind : std::uint8_t
 /** @brief Why an allocation was refused (see MemoryAllocator::allocate). */
 enum class MemoryRefusal : std::uint8_t
 {
-    Ok,               ///< The slice exists.
-    NoType,           ///< No memory type the resource allows serves the requested usage - this device cannot host it.
-    AllocationFailed, ///< A block could not be created (`VK_ERROR_OUT_OF_DEVICE_MEMORY`, a lost device, a bad handle).
+    Ok,             ///< The slice exists.
+    NoType,         ///< No memory type the resource allows serves the requested usage - this device cannot host it.
+    DeviceLost,     ///< `VK_ERROR_DEVICE_LOST`: the session is over (the device's ONE classification point handles it).
+    OutOfMemory,    ///< `VK_ERROR_OUT_OF_DEVICE_MEMORY` / `VK_ERROR_OUT_OF_HOST_MEMORY`: releasing content may help.
+    DriverRefused,  ///< Any other `VkResult` from `vkAllocateMemory`: a device limit, a bad handle, a driver bug.
+    InvalidRequest, ///< The request itself is unusable (a zero-byte resource): a defect in the caller.
+    NotOpen,        ///< `allocate` ran before `open`: a wiring defect, not a device fact.
+    Internal,       ///< The pool contradicted its own invariant (a placement failed in a block it had just made).
 };
+
+/** @brief The memory type a request resolved to when it resolved to none (see MemoryRefusalReport). */
+inline constexpr std::uint32_t kNoMemoryType = ~0U;
 
 /**
  * @brief A resource's own piece of device memory: an OFFSET into a block the allocator owns.
@@ -105,6 +114,47 @@ struct MemoryStats
     std::uint64_t allocations{ 0 };     ///< Slices handed out over this allocator's lifetime.
     std::uint64_t releases{ 0 };        ///< Slices released over this allocator's lifetime.
 };
+
+/**
+ * @brief What one allocation asks the REPORTING layer to say, in numbers (see MemoryAllocator::setFailureSink).
+ *
+ * @details
+ * - WHY THIS IS NOT THE RETURN VALUE. The returned slice answers "may I use this range" - control flow. This value
+ *   answers "why not, and with which numbers" - reporting. They have different consumers, and the defect this split
+ *   removes is real: five allocation sites used to be handed a reason and threw it away, so a **lost device read as
+ *   out of memory** all the way to the host. A report that travels to a sink cannot be forgotten by a call site,
+ *   because no call site sees it.
+ * - `Ok` IS REPORTED TOO: it is how the sink learns that the condition ended and re-arms its episodes, which is the
+ *   repository's rule for `ReportOnce` (re-arm where the condition ends, not at shutdown).
+ * - IT IS A STACK VALUE, built per allocation and only read when a sink is installed: no allocation, no virtual call
+ *   on the success path beyond the sink itself (see the class note's cost model).
+ */
+struct MemoryRefusalReport
+{
+    MemoryRefusal refusal{ MemoryRefusal::Ok };      ///< What kind of answer this is.
+    VkResult      driver_result{ VK_SUCCESS };       ///< `vkAllocateMemory`'s own answer when a block was attempted.
+    MemoryUsage   usage{ MemoryUsage::DeviceLocal }; ///< The purpose the caller stated.
+    MemoryKind    kind{ MemoryKind::Optimal };       ///< The kind the caller stated.
+    VkDeviceSize  requested_bytes{ 0 };              ///< The resource's `VkMemoryRequirements::size`.
+    std::uint32_t type_index{ kNoMemoryType };       ///< The memory type it resolved to, or `kNoMemoryType`.
+    MemoryStats   stats{};                           ///< The pool's numbers AT this refusal (see MemoryStats).
+};
+
+/** @brief Receives every allocation's outcome: the ONE place a refusal becomes a sentence (see MemoryAllocator). */
+using MemoryFailureSink = std::function<void(const MemoryRefusalReport&)>;
+
+/**
+ * @brief Creates one block's `VkDeviceMemory`: the ONE device call this unit makes, as an injectable seam.
+ *
+ * @details
+ * - WHY IT EXISTS. Every failure class of this unit - a lost device, an exhausted heap, a driver that refuses for its
+ *   own reason - is UNREACHABLE on a healthy machine, so the tests that prove the classification cannot exist without
+ *   a way to make the call fail. An empty creator is the production path (`vkAllocateMemory` through the device
+ *   table); a test installs one that answers the result it wants to see classified.
+ * - IT IS THE SAME SHAPE AS THE `VkDevice` HANDLE THIS UNIT ALREADY HOLDS: a borrowed capability, not an owned
+ *   dependency. It costs one indirect call per BLOCK (not per resource), which is a handful per session.
+ */
+using MemoryBlockCreator = std::function<VkResult(VkDevice, const VkMemoryAllocateInfo&, VkDeviceMemory*)>;
 
 /**
  * @brief The starting size of a block, per usage.
@@ -216,15 +266,17 @@ class VN_BACKEND_VK_API MemoryAllocator final
      * @param requirements What Vulkan said the resource needs (size, alignment, allowed type bits).
      * @param usage        What the memory is for (decides the memory type).
      * @param kind         Whether the resource is linear or optimally tiled (decides the granularity rule).
-     * @param refusal      Receives why the answer is empty, or null when the caller does not classify the failure.
-     * @param why          Receives a sentence when the answer is empty, or null.
-     * @return The slice, or an invalid one (`valid()` is false, `refusal` says why).
+     * @param refusal      Receives why the answer is empty, or null when the caller does not branch on the reason.
+     * @return The slice, or an invalid one (`valid()` is false).
+     *
+     * @note
+     * - THE REASON IS ALSO SENT TO THE FAILURE SINK (see setFailureSink), which is where it becomes a diagnostic. A
+     *   caller that passes @p refusal branches on it; a caller that does not still cannot lose it.
      */
     [[nodiscard]] MemorySlice allocate(const VkMemoryRequirements& requirements,
                                        MemoryUsage                 usage,
                                        MemoryKind                  kind,
-                                       MemoryRefusal*              refusal = nullptr,
-                                       vn::String*                 why = nullptr);
+                                       MemoryRefusal*              refusal = nullptr);
 
     /**
      * @brief Returns @p slice to its block, merging it with free neighbours; clears the slice (idempotent).
@@ -256,6 +308,37 @@ class VN_BACKEND_VK_API MemoryAllocator final
 
     /** @brief Gets the pool's numbers (see MemoryStats); zeros once closed. */
     [[nodiscard]] MemoryStats stats() const noexcept;
+
+    /**
+     * @brief Installs the one consumer of every allocation's outcome: the reporting layer (see MemoryRefusalReport).
+     *
+     * @details
+     * - WHY THE POOL REPORTS INSTEAD OF RETURNING A REASON TO EACH CALLER. `allocate` has six call sites and five of
+     *   them only need "did it work"; handing the reason back made "why" something each site had to remember to use,
+     *   and they did not - a device lost during an allocation was reported as an out-of-memory, or not at all. With a
+     *   sink the reason has exactly one consumer, the device, which is the only party that knows what a lost device
+     *   means (see `Device::noteDeviceLost`).
+     * - IT IS CALLED FOR EVERY ALLOCATION, `Ok` included: that is how the consumer re-arms an episode when the
+     *   condition ends. The cost is one indirect call per allocation, and allocations are a miss-path event (a steady
+     *   frame allocates nothing - see `R24`).
+     * - The sink is borrowed and must outlive this allocator's allocations; an empty sink keeps the classification in
+     *   the return value only.
+     *
+     * @param sink Consumer of every report, or empty to clear.
+     */
+    void setFailureSink(MemoryFailureSink sink);
+
+    /**
+     * @brief Installs the seam that creates a block's memory (see MemoryBlockCreator).
+     *
+     * @details
+     * - Empty is the production path. A test installs one to reach the failure classes this unit classifies - a lost
+     *   device, an exhausted heap, a refused driver call - which a healthy machine never produces.
+     * - It is read when a BLOCK is created, so it may be installed after @ref open and before the first resource.
+     *
+     * @param creator The block creator, or empty for `vkAllocateMemory`.
+     */
+    void setBlockCreator(MemoryBlockCreator creator);
 
   private:
     struct Impl;

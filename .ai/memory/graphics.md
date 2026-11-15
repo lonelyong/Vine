@@ -134,6 +134,18 @@
   另：`RenderCommand::materialDescription()` 对手搓命令退回 `material->description()`（与
   `geometryDescription()` 同一形态），所以手搓命令仍"下一帧生效"，但那条路是宿主的（别在录制中改它）。
 
+- **分配失败的分类只在 `Device` 一处（2026-11-15，审计 A1/A8）**：`MemoryAllocator` 只报事实
+  （`MemoryRefusal` + 驱动原始 `VkResult` + 请求字节/类型/池数字，装进 `MemoryRefusalReport`），**每次分配
+  含成功**都交给 `Device` 在 `initialize()` 装的 sink；`Device::noteMemoryRefusal` 是唯一分类点（`DeviceLost`
+  → `noteDeviceLost`，会话结束）。别再让调用点自己归因：六个分配点里五个只看"成不成"，把理由交给它们等于
+  让它被丢掉——**设备丢失曾被一路读成"显存不足"**。失败路径靠 `Device::setMemoryBlockCreator` 注入
+  （`vkAllocateMemory` 是唯一的块创建点，健康机器上不会失败）；三条变异各自被
+  `VkMemoryAllocatorTest.ARefusedBlockSaysWhichKindOfFailureItIs` /
+  `VkMemoryFailureTest.ALostDeviceDuringAnAllocationEndsTheSession` /
+  `VkMemoryFailureTest.AnExhaustedHeapIsOneReportWithItsNumbersAndTheSessionSurvives` 杀掉。
+  写这类用例要先问"请求会不会真的建一个新块"：集成设备上 device-local 与 host-visible 可能是**同一个**
+  memory type，小目标会切进已有的块，注入点根本不会触发（用例里用 4096×4096 RGBA8 = 64 MiB 才越过它）。
+
 ## 6. 证据与门禁
 
 - `test_graphics`（模型无关）、`test_vsg`（后端，含真实设备用例）、`test_gui`、`test_core`。

@@ -375,6 +375,8 @@
 - **C10 低层单元不依赖接缝**：`MemoryAllocator`、`PipelineCacheFile`、`WindowSystem`、`ReadbackStaging`、
   `Handles` 不得 `#include <vine/graphics/...>`；由 `check_vk_exposure.py` 的 E2 检查（新增单元要显式加入清单，
   这正是“决定它属于哪一半”的那一步）。
+- **C11 分配失败的分类单一**：`MemoryAllocator` 只报事实（`MemoryRefusal` + `VkResult` + 数字），
+  `Device::noteMemoryRefusal` 是唯一分类点；任何调用点都不得自行把失败归成“显存不足”（§2.12）。
 
 ### 5.2 要求（R#）
 
@@ -393,7 +395,7 @@
 - **N3** 一帧的命令缓冲在 `fence` 信号之后才被重置/释放；没有对象在仍被引用时销毁。
 - **N4** 池切片：同块内区间有序且 live/free 交替；释放只与两个邻居合并。
 - **N5** 缓存文件要么被完整读回（magic/版本/键/长度都对），要么被拒；没有“半解析”。
-- **N6** 设备丢失后 `initialized()` 为 false、帧被跳过、只报一次。
+- **N6** 设备丢失后 `initialized()` 为 false、帧被跳过、只报一次——**分配路径上的 `VK_ERROR_DEVICE_LOST` 与提交路径走同一条路**（`noteDeviceLost`，§2.12）。
 - **N7** 一帧的 `FrameReport.timing` 要么属于这一帧，要么缺席；不复用上一帧的值。
 
 ## 6. 注意事项与陷阱
@@ -501,6 +503,16 @@
 - **怎么判**：validation 的 00904（renderPass 与 framebuffer 不兼容）；肉眼是“多 pass 同目标”的帧。
 - **怎么防**：三个变体**用同一份依赖**，需要加宽就一律加宽（CLEAR 变体覆盖同样的源作用域不花钱）；用例
   `BackendParityTest.APrepareReportsTheShapeBothBackendsThenRecord` 在跑帧期间断言 vk 后端零 warning/error。
+
+### 6.16 P16 分配失败被跨类
+
+- **会怎么错**：把 `vkAllocateMemory` 的任何失败都当成“显存不足”——设备丢失的会话继续跑，宿主拿到的是“目标建不起来”，
+  而它会去释放内容（没用），并在死设备上重试到进程结束。
+- **怎么判**：`test_vk` 的 `VkMemoryFailureTest.ALostDeviceDuringAnAllocationEndsTheSession`（注入
+  `VK_ERROR_DEVICE_LOST`：`initialized()` 必须转 false）与 `VkMemoryAllocatorTest.ARefusedBlockSaysWhichKindOfFailureItIs`
+  （四类各自成值，驱动原始结果随报告走）。
+- **怎么防**：分类只在一处（§2.12），池只报事实；`MemoryBlockCreator` 是失败路径的注入点——健康机器上
+  `vkAllocateMemory` 不会失败，没有它这几条用例写不出来。
 
 ## 7. 已否决选项
 

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include <vine/String.hpp>
@@ -78,6 +79,32 @@ constexpr VkDeviceSize kBlockAlignment = 64U * 1024U;
     return heap < memory.memoryHeapCount ? memory.memoryHeaps[heap].size : 0U;
 }
 
+/**
+ * @brief Classifies `vkAllocateMemory`'s answer into the classes a caller ACTS ON (see MemoryRefusal).
+ *
+ * @details
+ * - THE POINT OF THE SPLIT IS THE FIRST TWO CASES: a lost device ends the session (and is the device's one
+ *   classification point to handle), while an exhausted heap is a fact a host can act on by releasing content. They
+ *   used to be one value, so a lost device was reported as "out of memory" and the session kept running on a dead
+ *   device.
+ * - Everything else is `DriverRefused` WITH THE RAW RESULT KEPT (see MemoryRefusalReport::driver_result): the sentence
+ *   can then name `VK_ERROR_TOO_MANY_OBJECTS` instead of guessing, which is the difference between a report a host can
+ *   act on and one it cannot.
+ *
+ * @param result `vkAllocateMemory`'s answer.
+ * @return The class that answer belongs to.
+ */
+[[nodiscard]] MemoryRefusal refusalOf(const VkResult result) noexcept
+{
+    switch (result) {
+    case VK_SUCCESS: return MemoryRefusal::Ok;
+    case VK_ERROR_DEVICE_LOST: return MemoryRefusal::DeviceLost;
+    case VK_ERROR_OUT_OF_DEVICE_MEMORY:
+    case VK_ERROR_OUT_OF_HOST_MEMORY: return MemoryRefusal::OutOfMemory;
+    default: return MemoryRefusal::DriverRefused;
+    }
+}
+
 } // namespace
 
 struct MemoryAllocator::Impl {
@@ -123,6 +150,11 @@ struct MemoryAllocator::Impl {
 
     /// The numbers stats() answers, kept live rather than recomputed (release is the hot path, not this).
     MemoryStats numbers{};
+
+    /// Where every allocation's outcome goes (see setFailureSink); empty keeps the classification in the return value.
+    MemoryFailureSink sink{};
+    /// How a block's memory is created (see setBlockCreator); empty is `vkAllocateMemory`.
+    MemoryBlockCreator creator{};
 
     /** @brief Finds a block by the id a slice carries (null when this allocator does not own it). */
     [[nodiscard]] Block* blockOf(const std::uint32_t id) noexcept
@@ -214,10 +246,15 @@ struct MemoryAllocator::Impl {
      * @param type     The memory type index.
      * @param usage    What the block is for.
      * @param size     The smallest useful block (a request larger than the base policy).
-     * @param refusal  Receives the answer when no block could be created.
+     * @param refusal  Receives the class of answer when no block could be created.
+     * @param driver_result Receives `vkAllocateMemory`'s own answer (or the creator's).
      * @return The new block, or null.
      */
-    [[nodiscard]] Block* createBlock(const std::uint32_t type, const MemoryUsage usage, const VkDeviceSize size, MemoryRefusal& refusal)
+    [[nodiscard]] Block* createBlock(const std::uint32_t type,
+                                     const MemoryUsage   usage,
+                                     const VkDeviceSize  size,
+                                     MemoryRefusal&      refusal,
+                                     VkResult&           driver_result)
     {
         const VkDeviceSize base = usage == MemoryUsage::HostVisible ? block_sizes.host_visible : block_sizes.device_local;
         const VkDeviceSize heap = heapBytesOf(memory, type);
@@ -237,12 +274,17 @@ struct MemoryAllocator::Impl {
         block->size       = wanted;
         block->ranges.push_back(Range{ 0U, wanted, MemoryKind::Optimal, false });
 
-        if (table->vkAllocateMemory(device, &allocate, nullptr, &block->memory) != VK_SUCCESS) {
+        // THE ONE DEVICE CALL THIS UNIT MAKES, AND THE ONLY PLACE IT CAN FAIL: through the injectable creator when a test
+        // installed one (see MemoryBlockCreator), through the device table otherwise. Its answer is CLASSIFIED, not
+        // collapsed: a lost device and an exhausted heap need different repairs, and the raw result is carried so the
+        // sentence can name it (see refusalOf).
+        driver_result = creator ? creator(device, allocate, &block->memory)
+                                : table->vkAllocateMemory(device, &allocate, nullptr, &block->memory);
+        if (driver_result != VK_SUCCESS) {
             block->memory = VK_NULL_HANDLE;
-            refusal       = MemoryRefusal::AllocationFailed;
+            refusal       = refusalOf(driver_result);
             return nullptr;
-        }
-        blocks.push_back(std::move(block));
+        }        blocks.push_back(std::move(block));
         ++numbers.blocks;
         numbers.reserved_bytes += wanted;
         numbers.blocks_live = static_cast<std::uint32_t>(blocks.size());
@@ -309,41 +351,62 @@ bool MemoryAllocator::opened() const noexcept
     return impl->table != nullptr && impl->device != VK_NULL_HANDLE;
 }
 
+void MemoryAllocator::setFailureSink(MemoryFailureSink sink)
+{
+    impl->sink = std::move(sink);
+}
+
+void MemoryAllocator::setBlockCreator(MemoryBlockCreator creator)
+{
+    impl->creator = std::move(creator);
+}
+
 MemorySlice MemoryAllocator::allocate(const VkMemoryRequirements& requirements,
                                       const MemoryUsage           usage,
                                       const MemoryKind            kind,
-                                      MemoryRefusal*              refusal_out,
-                                      vn::String*                 why)
+                                      MemoryRefusal*              refusal_out)
 {
-    const auto refuse = [refusal_out](const MemoryRefusal refusal) -> MemorySlice {
+    // ONE REPORT PER ALLOCATION, BUILT HERE SO BOTH ANSWERS CARRY THE SAME FACTS (see MemoryRefusalReport): what was
+    // asked, which memory type served it, and the pool's numbers at this moment. It is a stack value - nothing is
+    // allocated to report - and nothing is reported unless a sink is installed.
+    MemoryRefusalReport report;
+    report.usage           = usage;
+    report.kind            = kind;
+    report.requested_bytes = requirements.size;
+
+    const auto report_and = [this, &report, refusal_out](const MemoryRefusal refusal, const VkResult driver_result) {
+        report.refusal       = refusal;
+        report.driver_result = driver_result;
+        report.stats         = impl->numbers;
         if (refusal_out != nullptr) {
             *refusal_out = refusal;
         }
+        if (impl->sink) {
+            impl->sink(report);
+        }
+    };
+    const auto refuse = [&report_and](const MemoryRefusal refusal, const VkResult driver_result) -> MemorySlice {
+        report_and(refusal, driver_result);
         return MemorySlice{};
+    };
+    const auto succeed = [&report_and](const MemorySlice& slice) -> MemorySlice {
+        report_and(MemoryRefusal::Ok, VK_SUCCESS);
+        return slice;
     };
 
     if (!opened()) {
-        if (why != nullptr) {
-            *why = vn::String(u8"vk: device memory was asked for before the allocator was opened");
-        }
-        return refuse(MemoryRefusal::AllocationFailed);
+        // A WIRING DEFECT, NOT A DEVICE FACT: saying "out of memory" here would send a host looking for memory to free.
+        return refuse(MemoryRefusal::NotOpen, VK_SUCCESS);
     }
     if (requirements.size == 0U) {
-        if (why != nullptr) {
-            *why = vn::String(u8"vk: a resource reported a zero-byte memory requirement");
-        }
-        return refuse(MemoryRefusal::AllocationFailed);
+        return refuse(MemoryRefusal::InvalidRequest, VK_SUCCESS);
     }
 
     const std::optional<std::uint32_t> type = findMemoryType(impl->memory, requirements.memoryTypeBits, usage);
     if (!type.has_value()) {
-        if (why != nullptr) {
-            *why = usage == MemoryUsage::DeviceLocal
-                       ? vn::String(u8"vk: no device-local memory type serves this resource")
-                       : vn::String(u8"vk: this device has no host-visible coherent memory type");
-        }
-        return refuse(MemoryRefusal::NoType);
+        return refuse(MemoryRefusal::NoType, VK_SUCCESS);
     }
+    report.type_index = *type;
 
     // A BLOCK THAT FITS IS ALWAYS PREFERRED: reaching into one is a few comparisons; creating one is a device call.
     for (const auto& candidate : impl->blocks) {
@@ -362,33 +425,28 @@ MemorySlice MemoryAllocator::allocate(const VkMemoryRequirements& requirements,
             ++impl->numbers.allocations;
             impl->numbers.used_bytes += requirements.size;
             impl->numbers.peak_used_bytes = std::max(impl->numbers.peak_used_bytes, impl->numbers.used_bytes);
-            return MemorySlice{ candidate->memory, *offset, requirements.size, candidate->id };
+            return succeed(MemorySlice{ candidate->memory, *offset, requirements.size, candidate->id });
         }
     }
 
-    MemoryRefusal refusal = MemoryRefusal::AllocationFailed;
-    Impl::Block*  block   = impl->createBlock(*type, usage, requirements.size, refusal);
+    MemoryRefusal refusal       = MemoryRefusal::Ok;
+    VkResult      driver_result = VK_SUCCESS;
+    Impl::Block*  block         = impl->createBlock(*type, usage, requirements.size, refusal, driver_result);
     if (block == nullptr) {
-        if (why != nullptr) {
-            *why = vn::String(u8"vk: device memory could not be allocated for this resource");
-        }
-        return refuse(refusal);
+        return refuse(refusal, driver_result);
     }
 
     // A FRESH BLOCK HOLDS EXACTLY ONE FREE RANGE, so the search has to succeed unless the allocator contradicts itself:
     // a placement at offset 0 satisfies every alignment, and there is no neighbour to share a page with.
     const std::optional<VkDeviceSize> offset = impl->placeAt(*block, 0U, requirements.size, requirements.alignment, kind);
     if (!offset.has_value()) {
-        if (why != nullptr) {
-            *why = vn::String(u8"vk: the memory allocator could not place a resource in a block it had just made");
-        }
-        return refuse(MemoryRefusal::AllocationFailed);
+        return refuse(MemoryRefusal::Internal, VK_SUCCESS);
     }
     Impl::takeAt(*block, 0U, *offset, requirements.size, kind);
     ++impl->numbers.allocations;
     impl->numbers.used_bytes += requirements.size;
     impl->numbers.peak_used_bytes = std::max(impl->numbers.peak_used_bytes, impl->numbers.used_bytes);
-    return MemorySlice{ block->memory, *offset, requirements.size, block->id };
+    return succeed(MemorySlice{ block->memory, *offset, requirements.size, block->id });
 }
 
 void MemoryAllocator::release(MemorySlice& slice) noexcept

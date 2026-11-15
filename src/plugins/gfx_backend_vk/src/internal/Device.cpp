@@ -181,6 +181,97 @@ constexpr std::uint32_t kSampleCounts[] = { 64U, 32U, 16U, 8U, 4U, 2U, 1U };
 }
 
 /**
+ * @brief Spells a byte count the way a host reads it: "3.2 MiB", "512 KiB", "900 B".
+ *
+ * @details
+ * - ONE DECIMAL FOR MiB is enough to tell 3.2 from 3.9, and the arithmetic is integer-only (`tenths`), so the sentence
+ *   is exact and does not depend on a formatting library's rounding.
+ *
+ * @param bytes The count to spell.
+ * @return The count as text.
+ */
+[[nodiscard]] vn::String bytesText(const VkDeviceSize bytes)
+{
+    constexpr VkDeviceSize kKiB = 1024U;
+    constexpr VkDeviceSize kMiB = 1024U * 1024U;
+    if (bytes >= kMiB) {
+        const std::uint64_t tenths = (static_cast<std::uint64_t>(bytes) * 10U + kMiB / 2U) / kMiB;
+        return numberText(static_cast<std::uint32_t>(tenths / 10U)) + vn::String(u8".") +
+               numberText(static_cast<std::uint32_t>(tenths % 10U)) + vn::String(u8" MiB");
+    }
+    if (bytes >= kKiB) {
+        return numberText(static_cast<std::uint32_t>((bytes + kKiB / 2U) / kKiB)) + vn::String(u8" KiB");
+    }
+    return numberText(static_cast<std::uint32_t>(bytes)) + vn::String(u8" B");
+}
+
+/**
+ * @brief Spells a `VkResult` so a sentence can name the driver's own answer instead of guessing.
+ *
+ * @details
+ * - A HOST ACTS ON THE DIFFERENCE between `VK_ERROR_OUT_OF_DEVICE_MEMORY` (release content) and
+ *   `VK_ERROR_TOO_MANY_OBJECTS` (a device limit, nothing to release) - so the number the driver returned is part of
+ *   the report, not a detail for a debugger. The list covers what this backend can meet; anything else is said as
+ *   unlisted rather than silently numbered.
+ *
+ * @param result The result to spell.
+ * @return The result's Vulkan spelling, or a statement that it is not in this list.
+ */
+[[nodiscard]] const char8_t* resultText(const VkResult result) noexcept
+{
+    switch (result) {
+    case VK_SUCCESS: return u8"VK_SUCCESS";
+    case VK_ERROR_DEVICE_LOST: return u8"VK_ERROR_DEVICE_LOST";
+    case VK_ERROR_OUT_OF_DEVICE_MEMORY: return u8"VK_ERROR_OUT_OF_DEVICE_MEMORY";
+    case VK_ERROR_OUT_OF_HOST_MEMORY: return u8"VK_ERROR_OUT_OF_HOST_MEMORY";
+    case VK_ERROR_TOO_MANY_OBJECTS: return u8"VK_ERROR_TOO_MANY_OBJECTS";
+    case VK_ERROR_FRAGMENTED_POOL: return u8"VK_ERROR_FRAGMENTED_POOL";
+    case VK_ERROR_INITIALIZATION_FAILED: return u8"VK_ERROR_INITIALIZATION_FAILED";
+    case VK_ERROR_MEMORY_MAP_FAILED: return u8"VK_ERROR_MEMORY_MAP_FAILED";
+    case VK_ERROR_UNKNOWN: return u8"VK_ERROR_UNKNOWN";
+    default: return u8"a VkResult this backend does not name";
+    }
+}
+
+/**
+ * @brief Builds the sentence one memory refusal becomes (see Device::noteMemoryRefusal).
+ *
+ * @details
+ * - THE NUMBERS A HOST CAN ACT ON: what was asked, which memory type served it, the driver's own result, and what the
+ *   pool holds right now. "Device memory could not be allocated" sends a host looking for a debugger; "3.2 MiB of
+ *   device-local memory (type 2) could not be allocated: VK_ERROR_OUT_OF_DEVICE_MEMORY; the pool holds 64.0 MiB
+ *   reserved, 61.2 MiB in use" sends it looking for content to release.
+ *
+ * @param what   What the pool was doing, as a phrase ("the device is out of memory").
+ * @param report The pool's account of the refusal.
+ * @return The sentence.
+ */
+[[nodiscard]] vn::String memoryRefusalSentence(const char8_t* what, const MemoryRefusalReport& report)
+{
+    vn::String sentence = vn::String(u8"vk: ") + vn::String(what);
+    if (report.requested_bytes > 0U) {
+        sentence += vn::String(u8": ") + bytesText(report.requested_bytes) +
+                    (report.usage == MemoryUsage::DeviceLocal ? u8" of device-local memory"
+                                                              : u8" of host-visible memory");
+        if (report.type_index != kNoMemoryType) {
+            sentence += vn::String(u8" (type ") + numberText(report.type_index) + u8")";
+        }
+        if (report.driver_result != VK_SUCCESS) {
+            sentence += vn::String(u8" was refused by ");
+            sentence += resultText(report.driver_result);
+        } else {
+            sentence += u8" could not be allocated";
+        }
+    } else if (report.driver_result != VK_SUCCESS) {
+        sentence += vn::String(u8": ");
+        sentence += resultText(report.driver_result);
+    }
+    sentence += vn::String(u8"; the pool holds ") + bytesText(report.stats.reserved_bytes) + u8" reserved, " +
+                bytesText(report.stats.used_bytes) + u8" in use";
+    return sentence;
+}
+
+/**
  * @brief The debug-utils callback: forwards every layer message to the device that installed it.
  *
  * @param severity   The layer's severity flags.
@@ -378,6 +469,43 @@ struct Device::Impl {
         }
     };
     WindowReports window_reports{};
+
+    /**
+     * @brief The memory pool's refusals, one episode per class (see Device::noteMemoryRefusal).
+     *
+     * @details
+     * - ONE EPISODE PER CLASS, not one for "memory failed": an exhausted heap and a driver that refused for its own
+     *   reason are different facts with different repairs, and an episode that covered both would swallow the second.
+     *   `DeviceLost` is not here - it goes through `device_lost_report`, the session's own episode.
+     * - THEY END WHEN AN ALLOCATION SUCCEEDS (`Ok` reports re-arm them), which is where the condition ends rather than
+     *   at shutdown.
+     */
+    struct MemoryReports {
+        /// The device heap is exhausted: releasing content may help (a warning a host can act on).
+        vn::graphics::ReportOnce out_of_memory;
+        /// `vkAllocateMemory` refused for a reason that is neither a lost device nor an exhausted heap.
+        vn::graphics::ReportOnce driver_refused;
+        /// This device has no memory type that serves the resource's usage.
+        vn::graphics::ReportOnce no_type;
+        /// A resource asked for zero bytes: a content defect.
+        vn::graphics::ReportOnce invalid_request;
+        /// `allocate` before `open`: a wiring defect.
+        vn::graphics::ReportOnce not_open;
+        /// The pool contradicted its own invariant: a defect in the allocator.
+        vn::graphics::ReportOnce internal;
+
+        /** @brief Ends every memory episode: an allocation worked, so the pool can allocate again. */
+        void rearmAll() noexcept
+        {
+            out_of_memory.rearm();
+            driver_refused.rearm();
+            no_type.rearm();
+            invalid_request.rearm();
+            not_open.rearm();
+            internal.rearm();
+        }
+    };
+    MemoryReports memory_reports{};
 
     /// True once a queue/acquire/present call answered `VK_ERROR_DEVICE_LOST`: the session is over (see
     /// Device::noteDeviceLost), so `initialized()` stops answering true and the host rebuilds it.
@@ -949,6 +1077,11 @@ bool Device::initialize()
         return false;
     }
 
+    // THE ONE PLACE AN ALLOCATION'S OUTCOME BECOMES AN ANSWER (see noteMemoryRefusal): the pool reports every
+    // allocation here, so no allocation site can drop the reason. That is the defect this wiring removes - five of the
+    // six sites used to throw the reason away, so a lost device read as "out of memory" all the way to the host.
+    impl->allocator.setFailureSink([this](const MemoryRefusalReport& report) { noteMemoryRefusal(report); });
+
     // THE TIMESLICE WHERE THE SWAPCHAINS ARE MADE: the device (and therefore its tables) exist, so each window's
     // surface can now be paired with a swapchain. A target that cannot be attached stays detached: the host still
     // holds the object it was given, and every later call answers the truth instead of touching a dead surface.
@@ -1200,6 +1333,80 @@ bool Device::noteDeviceLost(const VkResult result, const char* what)
         reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed, vn::String::fromUtf8(sentence));
     }
     return true;
+}
+
+void Device::noteMemoryRefusal(const MemoryRefusalReport& report)
+{
+    if (report.refusal == MemoryRefusal::Ok) {
+        // THE EPISODES END WHERE THE CONDITION ENDS: an allocation that worked says the pool can allocate again, which
+        // is the moment each of these conditions is observed to be over (the repository's ReportOnce rule).
+        impl->memory_reports.rearmAll();
+        return;
+    }
+
+    // ONE CASE PER CLASS, because each has a different repair - and because an episode that covered two classes would
+    // swallow the second. The CATEGORY is the closest of the twelve the SDK has (a stable code is audit A3/A10's job):
+    // what matters here is that a lost device, an exhausted heap and a refused driver call are never the same answer.
+    switch (report.refusal) {
+    case MemoryRefusal::Ok:
+        return; // handled above; kept so the switch stays exhaustive without a default
+    case MemoryRefusal::DeviceLost:
+        // THE SAME FACT AS A LOST SUBMIT, so it takes the same path: initialized() stops answering true, later frames
+        // are skipped without touching the device, and the session's ONE sentence names the call that saw it.
+        (void)noteDeviceLost(report.driver_result, "vkAllocateMemory");
+        return;
+    case MemoryRefusal::OutOfMemory:
+        if (impl->memory_reports.out_of_memory.shouldReport()) {
+            reportDiagnostic(DiagnosticSeverity::Warning,
+                             DiagnosticCategory::ResourcePressure,
+                             memoryRefusalSentence(u8"the device is out of memory", report));
+        }
+        return;
+    case MemoryRefusal::DriverRefused:
+        if (impl->memory_reports.driver_refused.shouldReport()) {
+            // AN ERROR, NOT A PRESSURE: nothing a host releases changes a device limit or a driver bug, so this is a
+            // fact to escalate rather than a capacity to relieve.
+            reportDiagnostic(DiagnosticSeverity::Error,
+                             DiagnosticCategory::ResourcePressure,
+                             memoryRefusalSentence(u8"the driver refused an allocation", report));
+        }
+        return;
+    case MemoryRefusal::NoType:
+        if (impl->memory_reports.no_type.shouldReport()) {
+            reportDiagnostic(DiagnosticSeverity::Warning,
+                             DiagnosticCategory::UnsupportedRequest,
+                             memoryRefusalSentence(u8"this device has no memory type that serves the request", report));
+        }
+        return;
+    case MemoryRefusal::InvalidRequest:
+        if (impl->memory_reports.invalid_request.shouldReport()) {
+            reportDiagnostic(DiagnosticSeverity::Error,
+                             DiagnosticCategory::ContentSkipped,
+                             memoryRefusalSentence(u8"a resource asked for zero bytes of memory", report));
+        }
+        return;
+    case MemoryRefusal::NotOpen:
+        if (impl->memory_reports.not_open.shouldReport()) {
+            reportDiagnostic(DiagnosticSeverity::Error,
+                             DiagnosticCategory::InitFailed,
+                             memoryRefusalSentence(u8"device memory was asked for before the pool was opened", report));
+        }
+        return;
+    case MemoryRefusal::Internal:
+        if (impl->memory_reports.internal.shouldReport()) {
+            reportDiagnostic(DiagnosticSeverity::Error,
+                             DiagnosticCategory::InitFailed,
+                             memoryRefusalSentence(u8"the pool could not place a resource in a block it had just made", report));
+        }
+        return;
+    }
+}
+
+void Device::setMemoryBlockCreator(MemoryBlockCreator creator)
+{
+    // A TEST SEAM, NOT A POLICY (see the header): blocks are created lazily, so this is read by the first target or
+    // texture that needs one, and empty means the device table's own `vkAllocateMemory`.
+    impl->allocator.setBlockCreator(std::move(creator));
 }
 
 void Device::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
