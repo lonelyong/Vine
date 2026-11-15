@@ -294,6 +294,7 @@ vk 的 pipeline builder 因此只接受 GLSL，并在源码不是 GLSL 时报告
 | 命令记录抽象（第二套 recorder） | `FrameDescription` / `FrameRecorder` / `FrameCompiler` 已经是**值级**接缝；再抽象一层是二层抽象（`G7`） | 不预期 |
 | descriptor 模型抽象 | root signature / descriptor set / argument buffer 三者形状不同 | T15 触发 |
 | 资源类型基类 / 多态总表 | T30 §3 的结论不变 | T30 触发 |
+| 自建 vsg 式中间层（接缝 → 自研引擎 → Vulkan / D3D12） | 收益只在**第二个 API 家族**立项时才兑现；在那之前它是二层抽象（`G7`）。更关键：两个后端共用一层，就不再是**独立实现**——parity 测试只能证明“两边一致”，无法再证明“接缝没被双方一起误读”（`G11`）。vk 的 12.6k 行里约 10k 是机制（设备/命令/内存/描述符/管线/交换链），可搬走的策略已经在 `backend/` 的 26 个机制头里 | 第二个 API 家族真的立项，或出现第三方后端作者；届时按“资源与帧策略核 + 每 API 适配器”切，**不造场景图** |
 | 交换链抽象 | `WindowPresentTarget` 已是中性契约 | 不需要 |
 | 通用 barrier 类型 | 见 9.3 反例 | 不需要 |
 
