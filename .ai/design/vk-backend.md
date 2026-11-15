@@ -154,8 +154,14 @@
   答的就是它自己。
 - **2026-11-15（T48 S2a）后的形状**：帧机器已经不在 `Device::Impl` 里了，而在 `Device::Session`
   （命令池 / 栅欄 / 时间戳池 / 帧账 / `FrameGate` / clock window），设备拥有它并在 `shutdown()` 里销毁它的对象；
-  `ContentDraw` 里的常量环与描述符池仍在（S3 拆）。`RenderDevice::executor()` 现在答的是它带的那个驱动者：
-  帧体（`executeFrame` / `prepareFrame` / `frameReport`）也已经搬进 `Session`，`Device` 只剩三个一行转发。
+  `RenderDevice::executor()` 现在答的是它带的那个驱动者：帧体（`executeFrame` / `prepareFrame` / `frameReport`）
+  也已经搬进 `Session`，`Device` 只剩三个一行转发。
+- **2026-11-15（T48 S3）后的形状**：`ContentDraw` 不再是一个“什么都有”的对象，而是三件：
+  `ContentCaches`（**设备**：programs / geometries / instance streams / pipelines / 布局 / 图像 / 管线缓存）、
+  `FrameScratch`（**驱动者**：常量环 + 描述符池 + set 表 + `frame_index`）、以及 `ContentDraw` 本身
+  （**记录器**：借用前两者，只有 `prepare` / `prepareScreen` / `record` / `recordScreen`）。`Device::Session` 拥有自己的
+  `scratch` 与 `recorder`；`Device::Impl` 只留 `caches`；`createScratch()` 在布局建好之后由 `initialize()` 调，拆除时
+  scratch 先于 caches（set 的 layout 是借的）。
 - **为什么今天是这个形状**：一帧在飞（§2.3）让"帧之间"成为一个**时刻**，于是释放、读回、缓存填充都能共用一份机器；
   `ContentDraw` 的 `beginFrame` / `endFrame` 重置的是设备级状态，正是这条的直接后果。在那个前提下把它拆成两个对象
   只会多一层转发（`G8`）。
@@ -213,7 +219,7 @@
   才第一次能说"这条 draw 没有程序"，而不是"有条 draw 被跳过了"（`R28` 的落点）。
 - **边界**：`refuse()` 是唯一的写入者，且**先到者胜**——第二个原因（"没有几何，所以也没有管线"）不会覆盖第一个，
   这条规则原来在调用点用 `if (why.empty())` 重复了三遍。空句子 + 有 code 仍是拒绝：句子的有无从来不是判据。
-  `ContentRefusal` 是**内部头**（`internal/ContentDraw.hpp`），不进 SDK。
+  `ContentRefusal` 是**内部头**（`internal/ContentRefusal.hpp`），不进 SDK。
 - **门禁的两半**：报告调用若**构造**诊断（≥3 个实参）就必须写 code；若**转发**一个 `RenderDiagnostic`
   （`reportDiagnostic(diagnostic)`）则不算——值里带着 code，sink 丢不掉它。`check_diagnostic_formats.py`
   同时双向检查登记表：用到的必须登记，登记的必须被某个 builder 或报告用到。
@@ -235,6 +241,25 @@
   立即销毁，因为它发生在记录本帧时、提交之前；多会话之后它们必须一同 park（见设计文档 S6）。
 - **观察点**：`Device::retirementNumbers()`（`pending` / `released` / `device_waits`）。`device_waits` 应恒为 0：非零意味着某次释放
   无法 park、宁可空转也不猜窗口。
+
+### 2.16 设备是池、驱动者是帧：缓存与帧暂存分家（`G1` / `G4` / `G10`）
+
+- **是什么**：内容路径拆成 `ContentCaches`（设备）与 `FrameScratch`（驱动者），`ContentDraw` 退化为两者之上的记录器。
+  `ContentCaches` 持 programs / geometries / instance streams / pipelines / 三个 set layout 与两个 pipeline layout /
+  管线缓存 / `ContentImages`，以及释放（`release*`）+ 驻留账（`Progress`）；`FrameScratch` 持常量环（一个 host-visible
+  buffer + 切片游标）、描述符池、set 缓存、`draw_set`、`frame_index`、`ring_builds` / `set_builds`。
+- **为什么**：缓存按**宿主身份**（程序 revision / 几何 revision / buffer 地址）键控且重建很贵——第二个驱动者要的是
+  **找到**它们，而不是复制一份；而环与 set 缓存按**帧**写入（`beginFrame` 从零发切片、帧内会增长），两个帧交错写同一
+  个环就等于互相覆盖对方已提交帧还在读的常量。把“贵的、按身份共享的”与“每帧被写坏的”按这个界线切开，S6 的
+  `createSession()` 才是“多发一个驱动者”，而不是“多一个能毁掉第一个的东西”（`G5`）。
+- **边界**：布局归 caches（管线状态要它们），池与环归 scratch（分配发生在帧内）；scratch **借用**布局与设备入口，所以
+  拆除顺序是 scratch → caches → allocator → device（`P8` 的同一族规则）。set 缓存的淘汰用 `frame_index` 而不是锁：
+  它只属于自己的驱动者。
+- **代价（如实）**：`ContentDraw` 的 `record` 每帧多一次指针间接（两个借用引用），换来的是“谁拥有帧内状态”可以一行
+  指向一个对象。**锁计数（T3）没在这一步做**：单会话没有第二个读者，现在加锁只会是死机制（`G8`）；它在 S4 的
+  `ResidenceTable` 引入 owner / competitor 时落地，那里“稳态帧 0 次获取”才有意义。
+- **观察点**：`Device::contentCacheCounters()` 现在由两半拼成——ring / set 数字来自设备**自己那个驱动者**的
+  `FrameScratch`，其余来自 `caches.progress()`。单会话语义与拆分前逐值相同（`test_vk` 103/103）。
 
 ## 3. 功能点
 
@@ -626,7 +651,9 @@
 ### 9.1 当前状态
 
 - M0–M13 全部落地；审查项 F1/F2/F4/F7/F8/F12 已落地，审查 F5/F9/F10/F11/F13 按 §1.3 保留。
-- `test_vk` **89 例 / 23 套**（Debug 与 Release 各一次全绿；Release 连跑 5 次无波动）；Debug 全量 ctest **32/32**；
+- **T48 进度**：S1（释放走队列）、S2a/S2b（帧机器与帧体进 `Device::Session`）、S3（`ContentCaches` + `FrameScratch`
+  分家，§2.16）已落地；S4–S9 见 `.ai/design/graphics-sessions.md` §9.3。
+- `test_vk` **103 例 / 28 套**（Debug 与 ASan 各一次全绿）；Debug 全量 ctest **32/32**；
   `BackendParityTest` **12/12**。
 - 实测（lavapipe，真实宿主）：11 pass / 10 draw，稳态中位 **8.24 ms**，GPU **7.15–7.74 ms**；ring + set 缓存改动
   −10%（9.03–9.23 → 8.16–8.30 ms）。

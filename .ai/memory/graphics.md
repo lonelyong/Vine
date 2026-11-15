@@ -159,6 +159,15 @@
   `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
   ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
   别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
+- **S3 已落地（2026-11-15，T48 第三步）**：内容路径拆成三件——`ContentCaches`（**设备**：programs /
+  geometries / instance streams / pipelines / 布局 / `ContentImages` / 管线缓存 / `Progress` / `release*`）、
+  `FrameScratch`（**驱动者**：常量环 + 描述符池 + set 表 + `frame_index` + `ring_builds` / `set_builds`）、
+  `ContentDraw`（**记录器**：持两者的借用引用，只剩 `prepare` / `prepareScreen` / `record` / `recordScreen`）。
+  `Session` 拥有 `scratch` + `recorder`，`Impl` 只留 `caches`；`createScratch()` 在布局建好之后调，拆除时
+  **scratch 先于 caches**（set 的 layout 是借的）。判据：`test_vk` 103/103（Debug + ASan），强制重编 0 warning；
+  变异（`FrameScratch::create` 不建环）⇒ `ATriangleIsDrawnIntoTheTargetAndProbed` 红，恢复后绿。
+  **坑**：`Session` 里 `owner` 是**设备**——`owner.scratch` / `owner.recorder` 是错的，环/记录器是 `Session` 自己的成员；
+  只有 `owner.caches` 跨越这条线。**T3 的锁计数**没做：单会话无第二读者，加锁是死机制（`G8`），随 S4 的 owner/competitor 落地。
 - **S2b 已落地（2026-11-15）**：`executor()` 答 `Device::Session`，帧体也在它里，`Device` 只剩三个转发。
   帧体不直接调 `Device` 的成员：报告（protected，内嵌类沿不到）/ 建目标 / 认定丢失走 `Impl` 上的
   `report` / `ensure_target` / `note_device_lost` 三个面（设备析构时装配）。帧体里的 `initialized()` 换成
@@ -174,7 +183,7 @@
   （`pending` / `released` / `device_waits`，后者必须恒 0）。`shutdown()` 先 idle 再把接缝置空并 `releaseAll()`
   （SDK 新增的拆除动词）——漏了它 park 的对象就跟着会话泄漏（变异已验）。
   **仍未做**：替换路径（重传时的旧 buffer、ring 重建）还是立即销毁，S6 必须一起 park。
-- **T48 的实施设计在 `.ai/design/graphics-sessions.md`（状态：草案，2026-11-15）**：会话 = **帧驱动者**（不是窗口）；帧首快照让记录路径零锁；驻留三态「发布或撤回」；
+- **T48 的实施设计在 `.ai/design/graphics-sessions.md`（状态：实施中，S1–S3 已落地，2026-11-15）**：会话 = **帧驱动者**（不是窗口）；帧首快照让记录路径零锁；驻留三态「发布或撤回」；
   目标 claim 冲突只跳那个 pass；退休**复用** `DeviceClock` + `RetirementQueue`（vsg 已在用）。
   一处更正：vsg 的 `api::Session` 是**窗口会话**，收集/编译暂存（`recorder` / `compiler` / `arena` /
   `facts` / `packets` / `frame` / `driving`）仍是 `VsgBackend::Data` 里的**设备级单例** —— ADR 「vsg 更接近」只对了一半。
@@ -719,6 +728,8 @@
 ## 2026-11-14 —— vk 的每帧成本模型落地（T43+T42 同源；ring + 动态偏移 + 声明集缓存）
 
 - **形状**：`ContentDraw::Impl::UniformRing` 一个持久映射缓冲，`sliceSize()` 对齐切片；四个块写进切片，三个 set 布局
+  （**2026-11-15 S3 后**：环与 set 表在 `FrameScratch::Impl`，布局与 `buildPipeline` 在 `ContentCaches::Impl`；
+  下面的 `ContentDraw::*` 拼写指同一个机制）
   全部 `UNIFORM_BUFFER_DYNAMIC`，绑定时给 4 个动态偏移（content set 的 0/6/8 + draw set 的 0；screen set 是 6/8）。
   帧满**不在帧内扩容**（会销毁命令缓冲已点名的 buffer）：`reserveSlice` 记 demand、跳过该 draw，`beginFrame` 按
   demand 扩容（与 vsg 的 BlockStorage 同规则）。

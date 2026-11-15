@@ -1,6 +1,6 @@
 # 设备是池、会话拥有帧：类型、所有权、并发规则与迁移
 
-> **状态**：草案（`T47` 已落地；`T48` 未做，本文是它的实施设计）
+> **状态**：草案（`T47` 已落地；`T48` 进行中——S1 / S2a / S2b / S3 已落地，S4–S9 未做）
 > **最后核对**：2026-11-15
 > **范围**：一个 `RenderDevice` 被多个引擎借用时，"共享什么、谁拥有帧、怎么并发、怎么退休、怎么迁移"
 > 的**实施形状**；契约的**为什么**在 ADR，线程模型的**现在**在 `graphics-threading.md`。
@@ -188,7 +188,7 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 | | vk（`gfx_backend_vk`） | vsg（`gfx_backend_vsg`） |
 |---|---|---|
 | 帧机器今天在哪 | 全在 `Device::Impl`：`command_pool` / `completion` / 时间戳池 / `Books`（`Device.cpp:445`–`655`） | 命令图/提交**已经在每个窗口**（`api::Session` 持 `vsg::Viewer`）；**收集暂存**在设备（`recorder` / `compiler` / `arena` / `facts` / `packets` / `frame` / `driving`） |
-| 帧暂存在哪 | `ContentDraw::Impl` 同时装缓存与帧状态（`descriptor_pool` / `ring` / `sets` / `draw_set` / `frame_index`） | `BlockStorage`（每帧 slab 轮转）+ `ContentAssembly` 的 `beginFrame` 清扫 |
+| 帧暂存在哪 | **已分家**（S3）：`ContentCaches`（设备）持 programs / geometries / pipelines / 布局 / 图像；`FrameScratch`（会话）持环 / 描述符池 / set 表 / `frame_index`；`ContentDraw` 只剩“把一条 draw 变成命令”的记录器 | `BlockStorage`（每帧 slab 轮转）+ `ContentAssembly` 的 `beginFrame` 清扫 |
 | 要搬什么 | 拆 `ContentDraw` 为 `ContentCaches`（设备）+ `FrameScratch`（会话） | 把收集暂存搬进会话；缓存加锁/快照 |
 | 完成证据 | **没有**——需要采用 `DeviceClock` + `RetirementQueue` | **已有**（`d->clock` / `d->retirement`，由会话借用） |
 | 量级 | 大（约 900–1400 行） | 小（约 300–500 行） |
@@ -204,7 +204,7 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 |---|---|---|---|
 | F1 | 会话类型与创建 | 设备拥有会话；`createSession()` 借出，默认答 `&executor()` | 未做 |
 | F2 | 每会话帧机器 | 命令池 / 栅栏 / 时间戳池 / 帧账 / 帧闸按会话各一份 | 未做 |
-| F3 | 设备缓存 + 帧首快照 | 缓存只在帧首读一次，记录路径零锁 | 未做 |
+| F3 | 设备缓存 + 帧首快照 | 缓存只在帧首读一次，记录路径零锁 | **部分（S3）**：缓存与帧暂存已分家（`ContentCaches` / `FrameScratch`）；帧首快照与锁计数随 S4 的第一个第二读者 |
 | F4 | 驻留三态 | `Absent → Uploading → Resident`，发布或撤回，竞争即复制 | 未做 |
 | F5 | 目标 claim | 一帧一 claim，冲突只跳过那个 pass | 未做 |
 | F6 | 跨会话退休 | vk 采用 `DeviceClock` + `RetirementQueue`；释放可在别人 frame 时调用 | **部分（S1 已落地）**：时钟 / park 队列 / 水位 / 清结已在树上，仍只有一个会话 |
@@ -481,6 +481,11 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 - **已落地**：`T48` 的 **S2a + S2b**——帧机器与帧体都在 `Device::Session`；`executor()` 返回它，
   `Device::executeFrame` / `prepareFrame` / `frameReport` 是三个一行转发。帧体不再向设备提问：报告 / 建目标 / 认定丢失
   走 `Impl` 上装配好的三个面（见 `P9`）。
+- **已落地**：`T48` 的 **S3**——`ContentDraw` 拆成三件：`ContentCaches`（设备：programs / geometries / pipelines /
+  布局 / 图像 / 管线缓存）、`FrameScratch`（驱动者：常量环 + 描述符池 + set 表 + `frame_index`）、`ContentDraw`
+  （记录器：持两者的借用引用，`prepare` / `record` 两个动词）。`Device::Session` 拥有自己的 `scratch` 与 `recorder`，
+  `Device::Impl` 只留 `caches`；`createScratch()` 在布局建好之后由 `initialize()` 调，拆除时 scratch 先于 caches。
+  行为零变化（`test_vk` 103/103，ASan 103/103，变异 1/1 红）。
 - **未做**：`T48` 的 S3–S9（缓存拆分、驻留三态、目标 claim、公开 `createSession()`、读回独立、vsg、收口）。
 - **一处更正**：ADR 说"vsg 更接近"，准确说法是"vsg 的**窗口**会话已就位，**帧驱动者**仍是设备级单例"
   （§2.1）。这不改变结论，只改变迁移表的分工。
@@ -488,6 +493,7 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 ### 9.2 已知缺口 / 待办
 
 - `DeviceClock::WindowId` 的命名（`D7`）；`SessionId` 先做别名。
+- **T3 的锁计数**：S3 只做了结构性拆分；计数与帧首快照要等 S4 的第一个第二读者（否则是死机制，`G8`）。
 ### 9.3 兼容性 / 迁移
 
 **原则：每一步都让树保持绿，每一步都能单独回滚。** 顺序按"先造机制、后公开形状"排。
@@ -498,6 +504,10 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 | S2a | 帧机器搬进 `Device::Session`（命令池 / 栅欄 / 时间戳池 / 帧账 / 帧闸 / clock window） | **已落地 2026-11-15** | 低 |
 | S2b | 帧体（`executeFrame` / `prepareFrame` / `frameReport`）搬进 `Session`，`executor()` 返回它，`Device` 只剩三个转发 | **已落地 2026-11-15**：`test_vk` 103 全绿（含 ASan） | 中 |
 | S3 | 拆 `ContentDraw` → `ContentCaches` + `FrameScratch`；记录一次"锁计数" | T3（单会话版） | 中（500–700 行搬家） |
+| S3 | **已落地 2026-11-15**：`ContentCaches` / `FrameScratch` / `ContentDraw`（记录器）三件；`Session` 持 scratch +
+  recorder，`Device::Impl` 只留 caches；`test_vk` 103/103（Debug + ASan），变异（去掉 scratch 的环）⇒ 画图用例红。
+  **锁计数随 S4**：单会话没有第二个读者，现在加锁是死机制（`G8`）；S4 的 `ResidenceTable` 引入 owner/competitor 时
+  才有“稳态帧 0 次获取”可测 | T3 推迟到 S4 | 中 |
 | S4 | `ResidenceTable` 三态 + 发布/撤回；用**两个内部会话**做单元用例 | T4 | 中（状态机） |
 | S5 | `TargetClaims`；仍用两个内部会话验证 | T5 | 低 |
 | S6 | `createSession()` / `releaseSession()` 公开；引擎持有会话；**帧闸变成每会话** | T8、T10 | 中（公开形状） |

@@ -17,8 +17,10 @@
 #include <volk.h>
 
 #include <vine/backend_vk/internal/BarrierPlan.hpp>
+#include <vine/backend_vk/internal/ContentCaches.hpp>
 #include <vine/backend_vk/internal/ContentDraw.hpp>
 #include <vine/backend_vk/internal/ContentImages.hpp>
+#include <vine/backend_vk/internal/FrameScratch.hpp>
 #include <vine/backend_vk/internal/PipelineCacheFile.hpp>
 #include <vine/backend_vk/internal/ReadbackStaging.hpp>
 #include <vine/backend_vk/internal/WindowSystem.hpp>
@@ -445,6 +447,11 @@ struct ContentTotals {
  */
 class Device::Session final : public vn::graphics::RenderFrameExecutor
 {
+  private:
+    /// The device whose services this driver borrows (it owns this object, so it outlives it). Declared FIRST so the
+    /// `recorder` member can borrow the device's caches while this object is being constructed.
+    Impl& owner;
+
   public:
     /// @brief What `create()` refused, so the device can report which object never came up.
     enum class CreateRefusal : std::uint8_t
@@ -468,6 +475,18 @@ class Device::Session final : public vn::graphics::RenderFrameExecutor
 
     /** @brief Creates the objects a frame needs (idempotent; safe again after `destroy()`). */
     [[nodiscard]] CreateRefusal create() noexcept;
+
+    /**
+     * @brief Creates this driver's frame scratch over the device's layouts (after the caches exist).
+     *
+     * @details
+     * - A SEPARATE STEP, because the scratch borrows the three descriptor-set layouts and those belong to
+     *   `Device::initialize`'s content step: `create()` runs first (command pool, fence, clock window), the caches are
+     *   built next, and this is called immediately after them.
+     *
+     * @return true when the descriptor pool and the uniform ring exist.
+     */
+    [[nodiscard]] bool createScratch() noexcept;
 
     /** @brief Destroys them (idempotent): the device is idle and nothing can still name them. */
     void destroy() noexcept;
@@ -512,9 +531,20 @@ class Device::Session final : public vn::graphics::RenderFrameExecutor
     vn::graphics::backend::DeviceClock::WindowId clock_window{ 0 };
     bool                                         clock_window_live{ false };
 
-  private:
-    /// The device whose services this driver borrows (it owns this object, so it outlives it).
-    Impl& owner;
+  public:
+    /**
+     * @brief THIS DRIVER'S frame scratch: the uniform ring its draws write constants into, and the descriptor pool
+     *        (with the set cache) they bind.
+     *
+     * @details
+     * - IT IS THE DRIVER'S, NOT THE DEVICE'S (`G1`, and `.ai/design/graphics-sessions.md` §3.1.3): two frames' slices
+     *   must not interleave, while the CACHES (compiled programs, uploaded streams, pipelines) are exactly what a
+     *   second driver wants to share. `createScratch()` builds it once the device's layouts exist.
+     */
+    FrameScratch scratch{};
+    /// THIS DRIVER'S recorder: turns one draw description into commands, over the device's caches and `scratch`.
+    /// It owns neither, and it is constructed after both are in place (see the constructor).
+    ContentDraw recorder;
 };
 
 struct Device::Impl {
@@ -610,8 +640,9 @@ struct Device::Impl {
     /// One entry per off-screen target this device built, keyed by the host's object (the identity the frame names).
     std::unordered_map<const RenderTarget*, TargetImages> targets{};
 
-    /// M2's content path: compiled programs, uploaded streams, pipelines and the per-frame uniform buffers.
-    ContentDraw content{};
+    /// M2's content path, DEVICE HALF: compiled programs, uploaded streams, pipelines, the shared layouts and the
+    /// image cache. The frame's own half (the uniform ring and the descriptor pool) is each driver's `FrameScratch`.
+    ContentCaches caches{};
     /// The program content without one of its own is drawn with, taken as a VALUE when it was announced.
     vn::graphics::ShaderProgramDescriptionPtr default_program{};
 
@@ -791,8 +822,8 @@ struct Device::Impl {
     /** @brief Reads the content path's cumulative numbers (see ContentTotals). */
     [[nodiscard]] ContentTotals contentNumbers() const noexcept
     {
-        const ContentDraw::Progress   content_numbers = content.progress();
-        const ContentImages::Progress image_numbers   = content.images().progress();
+        const ContentCaches::Progress content_numbers = caches.progress();
+        const ContentImages::Progress image_numbers   = caches.images().progress();
         ContentTotals                 numbers;
         numbers.stream_builds    = content_numbers.stream_builds;
         numbers.stream_bytes     = content_numbers.stream_bytes;
@@ -888,8 +919,8 @@ struct Device::Impl {
     /** @brief Notes this backend's three residency kinds into @p ledger (see frameReport). */
     void noteResidency(vn::graphics::ResidencyLedger& ledger) const
     {
-        const ContentDraw::Progress   content_numbers = content.progress();
-        const ContentImages::Progress image_numbers   = content.images().progress();
+        const ContentCaches::Progress content_numbers = caches.progress();
+        const ContentImages::Progress image_numbers   = caches.images().progress();
         ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Streams,
                                                 .live    = content_numbers.streams_live,
                                                 .bytes   = content_numbers.stream_bytes_live,
@@ -909,6 +940,7 @@ struct Device::Impl {
 
 Device::Session::Session(Impl& owner_device) noexcept
   : owner(owner_device)
+  , recorder(owner_device.caches, scratch)
 {
 }
 
@@ -947,8 +979,23 @@ Device::Session::CreateRefusal Device::Session::create() noexcept
     return CreateRefusal::Ok;
 }
 
+bool Device::Session::createScratch() noexcept
+{
+    return scratch.create(owner.device_table,
+                          owner.device,
+                          owner.allocator,
+                          owner.caches.uniformAlignment(),
+                          owner.caches.contentSetLayout(),
+                          owner.caches.drawSetLayout(),
+                          owner.caches.screenSetLayout());
+}
+
 void Device::Session::destroy() noexcept
 {
+    // THE SCRATCH GOES FIRST of this driver's objects: its descriptor pool holds the cached sets, and the device's
+    // layouts (which the sets were allocated against) outlive it - `Device::shutdown` destroys the scratch before the
+    // caches, and this call is idempotent for the paths that reach a destroy without a shutdown.
+    scratch.destroy();
     // THE WINDOW LEAVES FIRST: a device clock that still lists this driver keeps the device watermark where it is, and
     // a queue that waits for evidence from a driver that no longer exists would never release anything.
     if (clock_window_live) {
@@ -1233,7 +1280,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
 
     // ONE DESCRIPTOR POOL RESET PER FRAME: the pool's sets are the per-draw uniform bindings, and the previous frame
     // is complete by now (the device submits synchronously), so nothing still names them.
-    owner.content.beginFrame();
+    scratch.beginFrame();
     // The pass count was taken from the frame's shape above (a pass whose draws were all skipped is still a pass
     // that ran); what the loop below adds is the drawing calls this backend actually recorded.
 
@@ -1252,7 +1299,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
         const PassDraw& draw = *item.draw;
         // THE PASS' TEXTURES ARE PREPARED BEFORE ITS RENDER PASS BEGINS: an upload records image barriers and
         // buffer-to-image copies, neither of which is legal inside a render pass instance.
-        owner.content.preparePass(commands, draw.draws);
+        owner.caches.preparePass(commands, draw.draws);
 
         // A SOURCE A SCREEN DRAW SAMPLES is about to be read: transition it to SHADER_READ_ONLY now, where an image
         // barrier is unambiguously allowed (before any render pass instance begins).
@@ -1415,7 +1462,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
                     source.images = source_images->second.colors;
                     source.views  = source_images->second.color_views;
                 }
-                (void)owner.content.recordScreen(commands,
+                (void)recorder.recordScreen(commands,
                                                  render_pass,
                                                  compatibility,
                                                  color_count,
@@ -1428,7 +1475,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
                                                  &refusal);
             }
             else {
-                (void)owner.content.record(commands,
+                (void)recorder.record(commands,
                                            render_pass,
                                            compatibility,
                                            color_count,
@@ -1478,7 +1525,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
                                           DiagnosticCategory::SubmissionFailed,
                                           u8"vk.frame.end_failed",
                                           u8"vk: vkEndCommandBuffer failed"));
-        owner.content.endFrame();
+        owner.caches.endFrame();
         owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &commands);
         return PresentOutcome::Skipped;
     }
@@ -1560,7 +1607,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
     owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &commands);
     // The per-draw uniform buffers were named by the command buffer that just finished (or failed to): the queue is
     // idle either way, so the bytes can go.
-    owner.content.endFrame();
+    owner.caches.endFrame();
 
     if (!completed) {
         // A LOST DEVICE GETS ITS OWN SENTENCE, ONCE (see noteDeviceLost); the generic one is for the failures a retry
@@ -1736,10 +1783,10 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
         for (const DrawDescription& description : draw.draws) {
             ContentRefusal refusal;
             if (description.kind == DrawDescription::Kind::Screen) {
-                owner.content.prepareScreen(compatibility, render_pass, color_count, description, draw, &refusal);
+                recorder.prepareScreen(compatibility, render_pass, color_count, description, draw, &refusal);
             }
             else {
-                owner.content.prepare(compatibility,
+                recorder.prepare(compatibility,
                                       render_pass,
                                       color_count,
                                       description,
@@ -1762,7 +1809,7 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
         // render pass begins (see ContentDraw::preparePass), so the frame then finds them resident and records
         // nothing. A pass whose batch could not be opened is still prepared; the next frame uploads it.
         if (batch != VK_NULL_HANDLE) {
-            owner.content.preparePass(batch, draw.draws);
+            owner.caches.preparePass(batch, draw.draws);
         }
     }
 
@@ -1780,7 +1827,7 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
                                               u8"vk: the preparation's transfer batch could not be closed; the copies it recorded never ran"));
             owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &batch);
         }
-        else if (!owner.content.images().hasPendingUploads()) {
+        else if (!owner.caches.images().hasPendingUploads()) {
             // ZERO WORK, ZERO SUBMIT: an unchanged frame records no copy, so there is nothing to run and nothing is
             // submitted - the property a second prepare of the same frame is observed by (see ADR-2026-11-14).
             owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &batch);
@@ -1802,7 +1849,7 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
             (void)owner.device_table.vkResetFences(owner.device, 1U, &completion);
             owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &batch);
             if (completed) {
-                owner.content.images().releaseUploadStaging();
+                owner.caches.images().releaseUploadStaging();
             }
             else if (!owner.note_device_lost(submit_result, "vkQueueSubmit") && !owner.note_device_lost(fence_result, "vkWaitForFences")) {
                 // The staging buffers stay: the next frame's releaseFrame lets go of them once its own queue is idle.
@@ -2368,7 +2415,7 @@ bool Device::initialize()
 
     // M2'S CONTENT PATH: the layouts, the descriptor pool and the caches every draw uses. A device that cannot build
     // them is not a device that can draw, so it refuses to come up rather than answering frames with nothing.
-    if (!impl->content.create(impl->device_table,
+    if (!impl->caches.create(impl->device_table,
                               impl->device,
                               impl->allocator,
                               properties.limits.minUniformBufferOffsetAlignment,
@@ -2384,23 +2431,36 @@ bool Device::initialize()
     // command, and an anisotropy factor past the device's maximum is an invalid sampler - both are clamped to the
     // numbers the capabilities just reported, so a host asking for more gets the device's best answer instead of a
     // validation error.
-    impl->content.setLineWidthLimit(impl->caps.max_line_width);
-    impl->content.images().setMaxAnisotropy(impl->caps.max_anisotropy);
-    impl->content.setCreationFeedback(impl->creation_feedback);
+    impl->caches.setLineWidthLimit(impl->caps.max_line_width);
+    impl->caches.images().setMaxAnisotropy(impl->caps.max_anisotropy);
+    impl->caches.setCreationFeedback(impl->creation_feedback);
+
+    // THIS DRIVER'S FRAME SCRATCH, over the layouts the caches just created: the ring and the descriptor pool are the
+    // frame's, so this is the step that makes the device a POOL (it owns what is shared) and the driver a FRAME (it
+    // owns what a frame writes into). A driver that cannot hold its constants is not a driver that can draw, so the
+    // session refuses to come up rather than answer frames with nothing.
+    if (!impl->session->createScratch()) {
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.content_pool_failed",
+                                          u8"vk: the frame's uniform ring / descriptor pool could not be created"));
+        shutdown();
+        return false;
+    }
 
     // THE PARK QUEUE'S WINDOW, from the first frame on: the driver registered its clock window in create(), so the
     // queue knows how many frames may be in flight and every released object waits for that watermark (see
     // Impl::releaseLater).
     impl->retirement.setSlots(impl->clock.widestSlots());
     impl->clock_registered   = true;
-    impl->content.setRetirement(&impl->retirement, &impl->clock.timeline());
-    impl->content.images().setRetirement(&impl->retirement, &impl->clock.timeline());
+    impl->caches.setRetirement(&impl->retirement, &impl->clock.timeline());
+    impl->caches.images().setRetirement(&impl->retirement, &impl->clock.timeline());
 
     // WHAT THE RECORDER DID WITH THE FILE, recorded where it will outlive the session (see pipelineCacheReport): the
     // hand-over and any refusal happen ONCE, at creation, and `content.destroy()` is what would erase them.
     impl->cache_books.hits_measured   = impl->creation_feedback;
-    impl->cache_books.preload_handed  = impl->content.pipelineCachePreloadHanded();
-    impl->cache_books.preload_refused = impl->content.pipelineCachePreloadRefused();
+    impl->cache_books.preload_handed  = impl->caches.pipelineCachePreloadHanded();
+    impl->cache_books.preload_refused = impl->caches.pipelineCachePreloadRefused();
 
     return true;
 }
@@ -2414,24 +2474,28 @@ void Device::shutdown()
         // WHAT THE RELEASES PARKED NOW GOES: the idle above IS the evidence every parked release was waiting for, so
         // the queue runs out of turn and the objects die while their device is still alive. A device that skipped this
         // would leak every object a release had parked - and the pool below would keep the blocks alive.
-        impl->content.setRetirement(nullptr, nullptr);
-        impl->content.images().setRetirement(nullptr, nullptr);
+        impl->caches.setRetirement(nullptr, nullptr);
+        impl->caches.images().setRetirement(nullptr, nullptr);
         impl->retirement.releaseAll();
 
         // THE SESSION'S PIPELINE CACHE GOES TO THE HOST'S DIRECTORY FIRST: `vkGetPipelineCacheData` needs the cache
         // object, which `content.destroy()` below is about to destroy. A write that fails is a cold start next time,
         // never a failed shutdown (the file is an optimisation).
-        impl->cache_books.cache_hits = impl->content.pipelineCacheHits();
+        impl->cache_books.cache_hits = impl->caches.pipelineCacheHits();
         if (!impl->cache_directory.empty()) {
-            const std::vector<std::byte> pipeline_cache = impl->content.pipelineCacheBytes();
+            const std::vector<std::byte> pipeline_cache = impl->caches.pipelineCacheBytes();
             if (PipelineCacheFile::write(impl->cache_directory, impl->cache_key, pipeline_cache)) {
                 impl->cache_books.saved_bytes = pipeline_cache.size();
             }
         }
 
+        // THE FRAME SCRATCH GOES BEFORE THE CACHES: its pool holds the cached sets and its ring is a slice of the
+        // allocator, while the layouts it allocated against belong to the caches - so the borrowed half goes first.
+        impl->session->scratch.destroy();
+
         // Pipelines are keyed by render-pass COMPATIBILITY, so they hold no render-pass handle; destroying the content
         // caches first is still the order that keeps teardown simple (the queue is idle, nothing names them).
-        impl->content.destroy();
+        impl->caches.destroy();
 
         for (auto& [target, images] : impl->targets) {
             (void)target;
@@ -2998,7 +3062,7 @@ bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
     // Texture.
     if (const auto* geometry = vn::obj_cast<const vn::graphics::Geometry>(content)) {
         const vn::graphics::GeometryDescriptionPtr description = geometry->description();
-        const std::size_t dropped = description != nullptr ? impl->content.releaseGeometry(description.get()) : 0U;
+        const std::size_t dropped = description != nullptr ? impl->caches.releaseGeometry(description.get()) : 0U;
         if (dropped > 0U) {
             ++impl->released_nodes;
         }
@@ -3006,7 +3070,7 @@ bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
     }
     if (const auto* program = vn::obj_cast<const vn::graphics::ShaderProgram>(content)) {
         const vn::graphics::ShaderProgramDescriptionPtr description = program->description();
-        const std::size_t dropped = description != nullptr ? impl->content.releaseProgram(description.get()) : 0U;
+        const std::size_t dropped = description != nullptr ? impl->caches.releaseProgram(description.get()) : 0U;
         if (dropped > 0U) {
             ++impl->released_nodes;
         }
@@ -3019,9 +3083,9 @@ bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
         return true;
     }
     if (const auto* texture = vn::obj_cast<const vn::graphics::Texture>(content)) {
-        const std::uint64_t before = impl->content.images().progress().releases;
-        const bool          answered = impl->content.images().releaseTexture(*texture);
-        if (answered && impl->content.images().progress().releases != before) {
+        const std::uint64_t before = impl->caches.images().progress().releases;
+        const bool          answered = impl->caches.images().releaseTexture(*texture);
+        if (answered && impl->caches.images().progress().releases != before) {
             ++impl->released_nodes;
         }
         return answered;
@@ -3036,7 +3100,7 @@ bool Device::releaseContent(const vn::Buffer<float>& buffer)
     }
     // The element type is the caller's way of saying WHICH stream; the residency keys on the buffer's ADDRESS (see
     // ContentDraw::releaseStreams), so the two overloads share one rule and one body would.
-    const std::size_t dropped = impl->content.releaseStreams(&buffer);
+    const std::size_t dropped = impl->caches.releaseStreams(&buffer);
     if (dropped > 0U) {
         ++impl->released_nodes;
     }
@@ -3048,7 +3112,7 @@ bool Device::releaseContent(const vn::Buffer<std::uint32_t>& buffer)
     if (!initialized()) {
         return false;
     }
-    const std::size_t dropped = impl->content.releaseStreams(&buffer);
+    const std::size_t dropped = impl->caches.releaseStreams(&buffer);
     if (dropped > 0U) {
         ++impl->released_nodes;
     }
@@ -3335,13 +3399,17 @@ Handles Device::handles() const noexcept
 
 std::uint64_t Device::contentPipelines() const noexcept
 {
-    return impl->content.pipelinesCreated();
+    return impl->caches.pipelinesCreated();
 }
 
 Device::ContentCacheCounters Device::contentCacheCounters() const noexcept
 {
-    const ContentDraw::Progress numbers = impl->content.progress();
-    return ContentCacheCounters{ numbers.ring_builds, numbers.set_builds, numbers.sets_live };
+    // TWO OWNERS, ONE ANSWER: the ring and the descriptor sets belong to the device's own driver (a second driver would
+    // have its own), while the caches answer the rest. `Device` reports its own session's frame scratch, which is the
+    // same answer a single-session tree has always given.
+    return ContentCacheCounters{ impl->session->scratch.ringBuilds(),
+                                 impl->session->scratch.setBuilds(),
+                                 impl->session->scratch.setsLive() };
 }
 
 MemoryStats Device::memoryStats() const noexcept
@@ -3373,7 +3441,7 @@ Device::PipelineCacheReport Device::pipelineCacheReport() const noexcept
     // A HIT MOVES WHILE THE SESSION RUNS, so it is read from the recorder while there is one (the rest of the report is
     // fixed when it happens and kept in the books, which is what makes it readable after shutdown).
     if (impl->device != VK_NULL_HANDLE) {
-        report.cache_hits = impl->content.pipelineCacheHits();
+        report.cache_hits = impl->caches.pipelineCacheHits();
     }
     return report;
 }

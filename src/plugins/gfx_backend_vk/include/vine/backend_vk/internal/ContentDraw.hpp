@@ -2,131 +2,61 @@
 
 #include <vine/backend_vk/backend_vk_global.hpp>
 
-#include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <span>
-#include <vector>
 
 #include <volk.h>
 
-#include <vine/String.hpp>
-#include <vine/backend_vk/internal/MemoryAllocator.hpp>
+#include <vine/backend_vk/internal/ContentAbi.hpp>
+#include <vine/backend_vk/internal/ContentRefusal.hpp>
+#include <vine/graphics/DrawAbi.hpp>
 #include <vine/graphics/FrameDescription.hpp>
+#include <vine/graphics/LightAbi.hpp>
+#include <vine/graphics/MaterialAbi.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
+#include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/backend/Keys.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
-class ContentImages;
+class ContentCaches;
+class FrameScratch;
 
 /**
- * @brief Why a recording path drew nothing: the cause's STABLE CODE, the category it belongs to and the sentence.
+ * @brief The content path's RECORDER: the drawing calls of one pass become indexed Vulkan draws, using what the
+ *        device's caches built and the driver's own frame scratch.
  *
  * @details
- * - THE CAUSE IS NAMED WHERE IT IS KNOWN. A recorder sees which stage refused (the program, the streams, the pipeline,
- *   the ring) and the callers above it do not, so the code is decided here and travels with the sentence. The device's
- *   report then forwards all three - which is what keeps `RenderDiagnostic::code` matchable instead of prose.
- * - ONE VALUE, NOT TWO OUT-PARAMETERS. The message and its category used to be separate `why` / `category` arguments,
- *   so a new refusal could fill one and forget the other; this type has no way to hold a message without a code
- *   (`refuse` is the only writer, and it is the only place the "first reason wins" rule lives).
- * - THE FIRST REASON WINS: a second `refuse` on the same value does nothing, because the first one is what explains
- *   the draw - the same rule the recorder had when it tested `why.empty()` by hand.
- *
- * @note The codes are the `vk.content.*` family in `scripts/diagnostic_codes.txt`; a value that is not refused carries
- *       no code at all (`code()` answers null), so a caller must ask `isRefused()` first.
- */
-class VN_BACKEND_VK_API ContentRefusal final
-{
-  public:
-    /** @brief Builds "nothing was refused": no category, no code, no sentence. */
-    ContentRefusal();
-
-    /**
-     * @brief Records @p text as the reason, unless a reason is already recorded.
-     *
-     * @details
-     * - The message is taken even when empty: a caller that has nothing to add still states the code, and the report
-     *   then carries the code with no sentence rather than the wrong cause.
-     *
-     * @param category The coarse class the cause belongs to.
-     * @param code     The stable identifier (`vk.content.*`), never null.
-     * @param text     The sentence for a human (may be empty).
-     */
-    void refuse(vn::graphics::DiagnosticCategory category, const char8_t* code, vn::String text);
-
-    /** @brief Forgets any reason, so the value can be handed to another call (what `record` does on entry). */
-    void clear() noexcept;
-
-    /** @brief Answers whether a reason was recorded. */
-    [[nodiscard]] bool isRefused() const noexcept;
-
-    /** @brief Gets the category of the recorded reason (ContentSkipped when nothing was refused). */
-    [[nodiscard]] vn::graphics::DiagnosticCategory category() const noexcept;
-
-    /** @brief Gets the recorded reason's stable code, or null when nothing was refused. */
-    [[nodiscard]] const char8_t* code() const noexcept;
-
-    /** @brief Gets the recorded sentence (empty when nothing was refused, or when the refusal stated only a code). */
-    [[nodiscard]] const vn::String& message() const noexcept;
-
-  private:
-    vn::graphics::DiagnosticCategory category_{ vn::graphics::DiagnosticCategory::ContentSkipped };
-    const char8_t*                   code_{ nullptr };
-    vn::String                       message_{};
-};
-
-/**
- * @brief The content path (M2-M6): the draws of one pass become indexed Vulkan drawing calls, and what they built is
- *        accounted for, can be prepared ahead of time, and can be let go when the host says the content is done.
- *
- * @details
- * - WHAT IT OWNS. Compiled shader modules per program REVISION (keyed by the immutable `ShaderProgramDescription`),
- *   uploaded vertex/index streams per geometry REVISION (keyed by `GeometryDescription`), the descriptor and pipeline
- *   layouts every pipeline shares, the pipelines themselves, and one small uniform buffer per recorded draw holding
- *   the `VineMaterialBlock`, `VineLightsBlock` and `VineDrawBlock` (std140; the first and the third in ShaderAbi.hpp,
- *   the light block in LightAbi.hpp).
- * - A PIPELINE IS KEYED BY COMPATIBILITY, NOT BY A RENDER-PASS HANDLE. `RenderPassCompatibility` names the attachment
- *   set (formats, depth, samples, subpass), which is what Vulkan compares a pipeline against; an EXTENT change creates
- *   new images and a new framebuffer but no new render pass, so every pipeline stays valid and is REUSED. That is the
- *   observable half of M3's "a resize must not recompile" rule, pinned by `pipelinesCreated()`.
- * - WHAT IT DOES NOT OWN. Nothing of the frame: every pointer inside a `DrawDescription` is borrowed for the call, and
- *   a description it keeps as a cache key is retained by an intrusive pointer - so a later edit of the live object is
- *   a NEW description and a new key, never a silent reuse of old bytes.
+ * - TWO OWNERS, ONE JOB EACH (see `.ai/design/graphics-sessions.md` §3.1.3): `ContentCaches` (the device's) answers
+ *   WHAT a command draws with - compiled programs, uploaded streams, pipelines - and `FrameScratch` (the driver's)
+ *   answers WHERE this frame's constants and descriptor sets live. This type owns neither; it is the value that turns
+ *   one `DrawDescription` into commands, which is why a second driver needs a second scratch and NOT a second cache.
+ * - IT HOLDS BORROWED REFERENCES. The cache belongs to the device, the scratch to the frame driver that constructed
+ *   this recorder; both outlive it by construction, and this type never destroys either.
+ * - WHAT IT DOES NOT DO. It does not compile, upload or build pipelines eagerly per frame: `planCommand` /
+ *   `planScreen` (the caches) answer a plan on a miss, and the warm-up (`prepare`) runs exactly the same resolution,
+ *   so a frame cannot ask for something the preparation would not have built (`R23`).
  * - THE CONTENT ABI IS THE ENGINE'S, NOT THIS BACKEND'S (M4): set 0 is the content set - material at binding 0, the
- *   five texture slots at 1-5, the light block at 6 - and set 1 binding 0 is the draw block. The camera matrices are
- *   the 128-byte push range (`projection`, `modelView`), exactly the L2 realization `vine_params.glsl` describes.
- *   A full-screen draw uses the OTHER ABI: the source target's attachments at set 0 bindings 0..N-1.
+ *   five texture slots at 1-5, the light block at 6, the shadow pair at 7/8 - and set 1 binding 0 is the draw block.
+ *   The camera matrices are the 128-byte push range (`projection`, `modelView`), exactly the L2 realization
+ *   `vine_params.glsl` describes. A full-screen draw uses the OTHER ABI: the source target's attachments at set 0
+ *   bindings 0..N-1.
  * - THE SHADOW ABI IS PART OF THAT SET (M9): binding 7 is the map and binding 8 is `VineShadowBlock`, because the
  *   engine's forward text declares both unconditionally. A pass that samples no map binds the 1x1 stand-in and zeroes
  *   the block (`params.x = 0` is the switch the one text takes its unshadowed path with), so a shadow is an
  *   ADDITIONAL fact about a pass rather than a second pipeline.
- * - MEMORY MODEL. Streams, the per-draw block and the texture staging copies live in host-visible coherent memory. A
- *   staging copy for geometry would add a synchronisation story this step does not teach; the residency step (M6) is
- *   what moves streams to device-local memory behind one copy.
- * - FRAME BOUNDARY. `beginFrame()` resets the descriptor pool and `endFrame()` releases the per-draw uniform buffers,
- *   the retired texture uploads and their staging buffers. The device calls both around ONE command buffer, after the
- *   queue is idle, which is what makes the reuse safe without a ring of frames.
  * - WHAT IS REPORTED, NOT DRAWN. A draw with no camera issues nothing (see `DrawDescription::camera`), one with no
- *   program is skipped and reported, and a screen draw with no source target is skipped and reported. Every skip leaves
- *   the rest of the pass drawn.
- * - WHAT IS RELEASED, AND BY WHOM. Nothing here decides that a cache entry is no longer wanted: the host says so
- *   (`RenderDevice::releaseContent`), and this object drops exactly what the announcement names - a geometry's
- *   streams, a program's modules and the pipelines compiled from them, the streams one `Buffer` was uploaded from,
- *   or a texture's image (see `ContentImages`). The next frame that names the content builds it again, which is what
- *   the release costs; `progress()` is where the numbers that must go down (residency) and the ones that only grow
- *   (builds) are read.
- * - PREPARE, NOT EXECUTE. `prepare()` / `prepareScreen()` run the SAME resolution a recorded draw runs - program
- *   compiled, geometry uploaded, pipeline selected - and stop before any command is recorded, so a host pays the
- *   first frame's cost at load time and a later frame of the same declarations builds nothing (`R23`).
+ *   program is skipped and reported, and a screen draw with no source target is skipped and reported. Every skip
+ *   leaves the rest of the pass drawn, and the FIRST reason travels in a `ContentRefusal` so the device's report
+ *   carries the code of the cause rather than a sentence about a symptom.
  *
  * @note The name says what it records, and it is deliberately the CONTENT half: the clear-only pass M1 records stays in
  *       the device, because a pass' scope is the device's, not this object's.
  *
- * @warning Not thread-safe: one frame at a time, from the thread that records it (the SDK's contract).
+ * @warning Not thread-safe: one frame at a time, from the thread that drives its scratch (the SDK's per-driver
+ *          contract). Two drivers are concurrent because each owns its own recorder and scratch.
  */
 class VN_BACKEND_VK_API ContentDraw final {
   public:
@@ -154,251 +84,32 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @see ShadowBlock: the packing rules, the clip conversion and the reverse-Z comparison.
      */
     struct ShadowSource {
-        VkImageView     view{ VK_NULL_HANDLE };         // The map's depth view, bound at set 0 binding 7.
-        bool            has_view_projection{ false };   // Whether the producer published how to read the map.
-        vn::math::Mat4d view_projection{};              // Light clip <- world, in the SDK's clip convention.
-        const void*     light{ nullptr };               // Whose map it is (a `Light`'s identity; nullptr = not a map).
+        VkImageView     view{ VK_NULL_HANDLE };       // The map's depth view, bound at set 0 binding 7.
+        bool            has_view_projection{ false }; // Whether the producer published how to read the map.
+        vn::math::Mat4d view_projection{};            // Light clip <- world, in the SDK's clip convention.
+        const void*     light{ nullptr };             // Whose map it is (a `Light`'s identity; nullptr = not a map).
     };
 
   public:
-    /** @brief Builds an empty recorder; nothing exists until @ref create. */
-    ContentDraw();
-
-    /** @brief Releases every Vulkan object this recorder owns (see @ref destroy). */
-    ~ContentDraw();
+    /**
+     * @brief Builds a recorder over the device's caches and one frame driver's scratch.
+     *
+     * @param caches  The device's cache half (borrowed; outlives this recorder).
+     * @param scratch The driver's frame scratch (borrowed; outlives this recorder).
+     */
+    ContentDraw(ContentCaches& caches, FrameScratch& scratch) noexcept;
 
     ContentDraw(const ContentDraw&)            = delete;
     ContentDraw& operator=(const ContentDraw&) = delete;
 
   public:
     /**
-     * @brief Creates the layouts, the descriptor pool and the caches over @p device.
-     *
-     * @details
-     * - Called by the device once its logical device and memory pool exist; on failure nothing is left behind, so the
-     *   caller may simply refuse to come up.
-     *
-     * @param table               The device's entry points (volk table).
-     * @param device              The logical device.
-     * @param allocator           The device's memory pool (the ring and every stream are slices of it).
-     * @param uniform_alignment   `minUniformBufferOffsetAlignment` of the device (0 selects 256, the Vulkan minimum).
-     * @param pipeline_cache_data A cache a previous session got out of @ref pipelineCacheBytes (empty starts cold).
-     * @return true when every layout and the pool exist.
-     */
-    [[nodiscard]] bool create(const VolkDeviceTable&     table,
-                              VkDevice                   device,
-                              MemoryAllocator&           allocator,
-                              std::uint32_t              uniform_alignment,
-                              std::span<const std::byte> pipeline_cache_data = {});
-
-    /**
-     * @brief Gets the pipeline cache's bytes as the device's driver would reload them (empty when there is no cache).
-     *
-     * @details
-     * - THE OTHER HALF OF `create`'s `pipeline_cache_data`: what this session accumulated is read out HERE and handed
-     *   to whoever persists it (the device's PipelineCacheFile). Asking a driver for its cache is not free, so this is
-     *   called once, when a session ends - not per frame.
-     *
-     * @return The blob (`vkGetPipelineCacheData`'s bytes), or empty when the cache could not be created or is empty.
-     */
-    [[nodiscard]] std::vector<std::byte> pipelineCacheBytes() const;
-
-    /**
-     * @brief States whether this device answers `VK_EXT_pipeline_creation_feedback` (core in Vulkan 1.3).
-     *
-     * @details
-     * - THE ONE OBSERVABLE THAT SAYS A CACHE HELPED: with it enabled, every `vkCreateGraphicsPipelines` call reports
-     *   whether the driver served the pipeline from the cache; without it, "the cache is not helping" and "the cache is
-     *   not wired" are indistinguishable from outside. It is a SETTING because the extension is the device's to offer.
-     *
-     * @param on Whether creation feedback is enabled for this device.
-     */
-    void setCreationFeedback(bool on) noexcept;
-
-    /**
-     * @brief Hands this recorder the device's park queue and completion clock, so a release can be deferred.
-     *
-     * @details
-     * - THE DEVICE DECIDES WHEN A RELEASED OBJECT MAY GO; this recorder only says what it is. A released entry leaves
-     *   the cache immediately, while the Vulkan objects behind it live until the device's watermark has passed the
-     *   frame that could still name them - which is what makes `releaseContent` legal while another session frames.
-     * - Pass nulls during teardown: a device that is going away has idled its queue and must destroy, not park.
-     *
-     * @param retirement The device's park queue (borrowed; null destroys immediately).
-     * @param timeline   The clock the park is dated against (borrowed; null destroys immediately).
-     */
-    void setRetirement(vn::graphics::backend::RetirementQueue* retirement,
-                       const vn::graphics::backend::FrameTimeline* timeline) noexcept;
-
-    /**
-     * @brief Gets how many pipelines the driver reported as served from the cache (see @ref setCreationFeedback).
-     *
-     * @note
-     * - ZERO IS TWO FACTS: "no pipeline came from the cache" and "this device does not report" - the caller reads
-     *   `setCreationFeedback`'s answer to tell them apart (see Device::PipelineCacheReport::hits_measured).
-     *
-     * @return Pipelines created out of the cache this session.
-     */
-    [[nodiscard]] std::uint64_t pipelineCacheHits() const noexcept;
-
-    /**
-     * @brief Answers whether the driver REFUSED the cache a previous session left (see @ref create's initial data).
-     *
-     * @details
-     * - A WELL-KEYED CACHE CAN STILL BE THE DRIVER'S TO REFUSE: our key says "same device", but the blob's own header is
-     *   the driver's, and a corrupt or stale one makes `vkCreatePipelineCache` answer an error. The retry without it is
-     *   what keeps that a slow start instead of a lost session - and THIS FLAG is what tells a report which of the two
-     *   happened. It is also the one device-side fact that proves the preload reached the driver at all.
-     *
-     * @return true when a preloaded cache was refused and the session continued without it.
-     */
-    [[nodiscard]] bool pipelineCachePreloadRefused() const noexcept;
-
-    /**
-     * @brief Answers whether a previous session's cache was HANDED to the driver (`pInitialData` was set).
-     *
-     * @details
-     * - THE FACT THIS BACKEND OWNS. Whether the driver then used it is the driver's to say (`pipelineCacheHits`), and a
-     *   software rasteriser may say nothing; that the bytes reached `vkCreatePipelineCache` is ours to prove, and it is
-     *   what a wiring mistake (a cache read but never passed on) would break.
-     *
-     * @return true when `create` was given a cache and passed it to the driver.
-     */
-    [[nodiscard]] bool pipelineCachePreloadHanded() const noexcept;
-
-    /** @brief Destroys every object this recorder owns (idempotent; safe before @ref create). */
-    void destroy() noexcept;
-
-    /**
-     * @brief Prepares the textures one pass' draws sample, BEFORE the pass' render pass begins.
-     *
-     * @details
-     * - A texture upload records image barriers and buffer-to-image copies, and Vulkan forbids both inside a render
-     *   pass instance (`vkCmdCopyBufferToImage` outright, a barrier without a self-dependency). The device therefore
-     *   calls this once per pass, before @ref record / @ref recordScreen: the copies land on the command buffer it
-     *   passes in - the frame's own, outside the pass, or the ONE transfer-only buffer a warm-up submits of its own
-     *   (see RenderFrameExecutor::prepareFrame) - and the draws find the views cached.
-     * - It also creates the 1x1 white fallback every absent slot is bound to, on the first recording that needs it.
-     *
-     * @param commands The command buffer being recorded (outside any render pass).
-     * @param draws    The pass' drawing calls (borrowed for the call).
-     */
-    void preparePass(VkCommandBuffer commands, std::span<const vn::graphics::DrawDescription> draws);
-
-    /**
-     * @brief Resets the per-frame descriptor pool.
-     *
-     * @details
-     * - Called once per frame, before any draw is recorded: a descriptor set is allocated per draw and the pool is
-     *   what makes that cheap. The previous frame must be complete (the device submits synchronously), or the reset
-     *   would free a set a pending command buffer still names.
-     */
-    void beginFrame();
-
-    /** @brief Releases the per-draw uniform buffers and the retired texture uploads recorded since @ref beginFrame. */
-    void endFrame() noexcept;
-
-    /**
-     * @brief Gets how many `VkPipeline` objects this recorder built over its lifetime.
-     *
-     * @details
-     * - THE COUNTER THE RESIZE RULE IS OBSERVED WITH: a frame drawn again after an extent change must leave it where
-     *   it was (the pipeline is compatible with the new framebuffer), while a shape change or a new program moves it.
-     *
-     * @return Pipelines created since @ref create (0 after a failure that built none).
-     */
-    [[nodiscard]] std::uint64_t pipelinesCreated() const noexcept;
-
-    /**
-     * @brief What the content path has built, what it let go and what it holds now.
-     *
-     * @details
-     * - CUMULATIVE, EXCEPT THE THREE `live` FIELDS: a frame's own numbers are the difference of two cumulative ones
-     *   (see FrameUploads), while residency is a question about NOW (see ResidencyLedger).
-     * - `streams_live` / `stream_bytes_live` count the UPLOADED BUFFERS, not the geometries: one geometry may own a
-     *   vertex stream per channel plus one index stream per primitive, and a released `Buffer` takes only the
-     *   streams uploaded from it.
-     * - `pipelines_live` is what the residency ledger calls the compiled halves - the pipelines ARE that kind here.
-     */
-    struct Progress {
-        std::uint64_t stream_builds{ 0 };     ///< Uploaded vertex/index buffers, cumulative.
-        std::uint64_t stream_bytes{ 0 };      ///< Bytes those buffers copied, cumulative.
-        std::uint64_t stream_releases{ 0 };   ///< Stream buffers a release let go, cumulative.
-        std::uint64_t program_builds{ 0 };    ///< Program revisions compiled (both stages), cumulative.
-        std::uint64_t pipeline_builds{ 0 };   ///< Pipelines created, cumulative (= pipelinesCreated()).
-        std::uint64_t pipeline_releases{ 0 }; ///< Pipelines destroyed by a program's release, cumulative.
-        std::uint64_t ring_builds{ 0 };       ///< Uniform rings created, cumulative (one in a steady session).
-        std::uint64_t set_builds{ 0 };        ///< Descriptor sets BUILT, cumulative - a cache miss, not a draw.
-        std::uint64_t sets_live{ 0 };         ///< Descriptor sets cached NOW.
-        std::uint32_t streams_live{ 0 };      ///< Uploaded buffers resident NOW.
-        std::uint64_t stream_bytes_live{ 0 };
-        std::uint32_t pipelines_live{ 0 }; ///< Pipelines resident NOW.
-    };
-
-    /** @brief Gets the numbers (see Progress). */
-    [[nodiscard]] Progress progress() const noexcept;
-
-    /**
-     * @brief Gets the sampled-image cache this recorder prepares.
-     *
-     * @details
-     * - Exposed so one report can ask all three tables (streams, images, halves) in ONE place - the device composes
-     *   the residency ledger, and it is the only object that should learn the shape of more than one table.
-     *
-     * @return The image cache (outlives this recorder).
-     */
-    [[nodiscard]] ContentImages& images() noexcept;
-    /** @brief Gets the image cache for a reader that only reports on it (see the mutable overload). */
-    [[nodiscard]] const ContentImages& images() const noexcept;
-    /**
-     * @brief Sets how wide a rasterised line may be (the device's `lineWidthRange[1]`).
-     *
-     * @details
-     * - A pass' line-width override is a viewing switch (see PassRenderState::lineWidth) and the host may ask for
-     *   more than the device allows; this is the number the recorder clamps every `vkCmdSetLineWidth` to, so the
-     *   answer is the device's best instead of an invalid command. It is the SAME number the capabilities report.
-     *
-     * @param max_line_width The widest line the device accepts, in pixels (1 when it accepts only 1).
-     */
-    void setLineWidthLimit(float max_line_width) noexcept;    /**
-     * @brief Drops the streams uploaded for @p description, so a later frame uploads them again.
-     *
-     * @details
-     * - The pipelines stay: they are keyed by the program, the target's compatibility and the vertex LAYOUT - never
-     *   by the geometry's identity - so a geometry coming back uploads its streams and reuses what it compiled.
-     *
-     * @param description The geometry's shape as the frame named it (the same value a released `Geometry` answers).
-     * @return Entries dropped: 1 when a cache entry left, 0 when nothing was resident (already released).
-     */
-    std::size_t releaseGeometry(const vn::graphics::GeometryDescription* description);
-
-    /**
-     * @brief Drops @p description's compiled modules and every pipeline built from them.
-     *
-     * @param description The program's text as the frame named it.
-     * @return Entries dropped: the program plus the pipelines keyed by it (0 when nothing was resident).
-     */
-    std::size_t releaseProgram(const vn::graphics::ShaderProgramDescription* description);
-
-    /**
-     * @brief Drops the vertex/index streams uploaded from @p buffer (its identity, not its bytes).
-     *
-     * @details
-     * - PER STREAM, NOT PER GEOMETRY: a geometry that reads three buffers keeps the two nobody released, and the
-     *   next frame re-uploads only the missing one. The geometry's entry stays (it is still live content).
-     *
-     * @param buffer The stream buffer's address, as `vn::Buffer` identity spells it.
-     * @return Stream buffers dropped (0 when no uploaded stream reads it - already released).
-     */
-    std::size_t releaseStreams(const void* buffer);
-
-    /**
      * @brief Builds what a SCENE draw's commands need, without recording a single command.
      *
      * @details
      * - THE WARM-UP HALF OF @ref record: the same program resolution, the same stream upload and the same pipeline
-     *   selection (one implementation, see `planCommand`), stopping before any drawing command. Nothing is
-     *   acquired, submitted or presented.
+     *   selection (one implementation, in `ContentCaches::planCommand`), stopping before any drawing command. Nothing
+     *   is acquired, submitted or presented.
      * - A command that cannot be built is reported through @p refusal with its code and category, exactly as
      *   @ref record reports it; the rest of the draw is still prepared.
      *
@@ -440,9 +151,10 @@ class VN_BACKEND_VK_API ContentDraw final {
      *
      * @details
      * - Must run INSIDE the render pass that names the target, because it records drawing commands; every resource it
-     *   needs is created on demand (shader modules, stream buffers, the pipeline) before the first draw of that shape.
+     *   needs was created on demand by the plan (shader modules, stream buffers, the pipeline) before the first draw
+     *   of that shape.
      * - The program is resolved as `PassDraw::program_override_description`, else the command's own
-     *   `programDescription()`, else @p default_program; a draw with none is skipped and reported through @p why.
+     *   `programDescription()`, else @p default_program; a draw with none is skipped and reported through @p refusal.
      *   The viewport is the pass' rectangle, or the whole of the target when the pass states none.
      * - The STATE is resolved per command (`resolveRenderState`): topology, cull/front face, polygon mode, depth
      *   test/write/compare (reverse-Z), blend and polygon offset select or fill the pipeline, while line width, depth
@@ -453,9 +165,11 @@ class VN_BACKEND_VK_API ContentDraw final {
      *   are bound to the 1x1 white fallback with their slot bits clear. The draw's announced lights are packed into
      *   the light block in view space (see LightBlock.hpp).
      * - THE SHADOW MAP, when @p shadow names one: its depth view is bound at the content set's shadow binding and the
-     *   `VineShadowBlock` is packed per call from the map's own statement (see ShadowSource and `shadowBlockOf`) - the
-     *   block's switch is on only when the map's light is one this call announced AND still casts, so a map nobody can
-     *   name shades nothing rather than scaling a light it does not belong to.
+     *   `VineShadowBlock` is packed per call from the map's own statement (see ShadowSource) - the block's switch is
+     *   on only when the map's light is one this call announced AND still casts, so a map nobody can name shades
+     *   nothing rather than scaling a light it does not belong to.
+     * - THE CONSTANTS GO INTO THE DRIVER'S RING (see FrameScratch): one slice per call, bound as dynamic offsets, and
+     *   a full ring skips the draw and grows before the next frame rather than growing in place.
      *
      * @param commands        The command buffer being recorded (inside a render pass).
      * @param render_pass     The render pass @p commands is in (used only when a pipeline must be CREATED; reuse is
@@ -528,9 +242,24 @@ class VN_BACKEND_VK_API ContentDraw final {
                                ContentRefusal*                            refusal = nullptr);
 
   private:
-    struct Impl;
+    /**
+     * @brief Writes one call's four blocks into @p slice at the offsets the scratch states.
+     *
+     * @param slice    The slice's byte offset (see FrameScratch::reserveSlice).
+     * @param material The material block (offset 0).
+     * @param lights   The light block (offset `lightsOffset`).
+     * @param draw     The per-draw block (offset `drawOffset`).
+     * @param shadow   The shadow block (offset `shadowOffset`).
+     */
+    void writeSlice(VkDeviceSize                          slice,
+                    const vn::graphics::VineMaterialBlock& material,
+                    const vn::graphics::VineLightsBlock&   lights,
+                    const vn::graphics::VineDrawBlock&     draw,
+                    const vn::graphics::VineShadowBlock&   shadow) const noexcept;
 
-    std::unique_ptr<Impl> impl;
+  private:
+    ContentCaches& caches;
+    FrameScratch&  scratch;
 };
 
 VN_BACKEND_VK_NS_END
