@@ -261,6 +261,25 @@
 - **观察点**：`Device::contentCacheCounters()` 现在由两半拼成——ring / set 数字来自设备**自己那个驱动者**的
   `FrameScratch`，其余来自 `caches.progress()`。单会话语义与拆分前逐值相同（`test_vk` 103/103）。
 
+### 2.17 驻留三态：一个键只有一个发布者（`G1` / `G4` / `G10`）
+
+- **是什么**：`internal/ResidenceTable.hpp` 是一条键一条条目的状态机：`Absent → Uploading(owner, token)` →
+  `Resident`。`admit(key, session)` 答三件事之一——`Use`（已经发布，直接用）、`Build`（我赢了 compare-and-set，
+  拿到 move-only 的 `Claim`）、`Copy(owner)`（别人正在填，自己建一份**不发布的临时副本**）。`Resident` 只能由
+  持有 token 的 owner 通过 `Claim::publish()` 声明（“填充已完成、证据在我手里”）；未决议的 `Claim` 析构时把键退回
+  `Absent`。
+- **为什么不是“等”**：等待是唯一能把两个驱动者互相锁死的形状（设计 §2.4 `P2` / `D3`），而复制有界——每个键每个
+  竞争者在“两个引擎第一次同时画它”的那一帧至多一份。`Uploading` 的条目对别人等于 `Absent`，所以一条半成品
+  永远不会被当成 `Resident` 用。
+- **为什么是 token 而不是“谁建的谁发布”**：token 单调且不复用，所以三种真实时序都能诚实回答：`forget`
+  （`releaseContent`）发生在填充中途、claim 已撤回、键被释放后又被新 claim 拿走——老 token 的 `publish` 一律失败
+  并计入 `Numbers::stale`（“调用方以为自己拥有它”）。
+- **边界**：表**不销毁任何东西**，也**不排退休**：`forget` 只忘键，Vulkan 对象仍交给 `RetirementQueue`（§2.15）。
+  它也不是 SDK 的 `ResourceTable`——那张表回答“这份驻留值现在能不能放”（单线程、按 pin 退休），这张回答“谁可以
+  建这个键”（两驱动者、只到发布为止）。
+- **今天的位置**：S4 只交付状态机与它的 8 条单元用例（两个 session id 模拟两会话，含 8 线程抢一键恰一个
+  `Build`）；`ContentCaches::ensureGeometry` 仍走原路径，S6 传入会话 id 时才接上（`D8`：半接比没接更糟）。
+
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -652,8 +671,8 @@
 
 - M0–M13 全部落地；审查项 F1/F2/F4/F7/F8/F12 已落地，审查 F5/F9/F10/F11/F13 按 §1.3 保留。
 - **T48 进度**：S1（释放走队列）、S2a/S2b（帧机器与帧体进 `Device::Session`）、S3（`ContentCaches` + `FrameScratch`
-  分家，§2.16）已落地；S4–S9 见 `.ai/design/graphics-sessions.md` §9.3。
-- `test_vk` **103 例 / 28 套**（Debug 与 ASan 各一次全绿）；Debug 全量 ctest **32/32**；
+  分家，§2.16）、S4（`ResidenceTable` 三态状态机，§2.17）已落地；S5–S9 见 `.ai/design/graphics-sessions.md` §9.3。
+- `test_vk` **111 例 / 29 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；Debug 全量 ctest **32/32**；
   `BackendParityTest` **12/12**。
 - 实测（lavapipe，真实宿主）：11 pass / 10 draw，稳态中位 **8.24 ms**，GPU **7.15–7.74 ms**；ring + set 缓存改动
   −10%（9.03–9.23 → 8.16–8.30 ms）。

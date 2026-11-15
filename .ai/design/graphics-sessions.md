@@ -205,7 +205,7 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 | F1 | 会话类型与创建 | 设备拥有会话；`createSession()` 借出，默认答 `&executor()` | 未做 |
 | F2 | 每会话帧机器 | 命令池 / 栅栏 / 时间戳池 / 帧账 / 帧闸按会话各一份 | 未做 |
 | F3 | 设备缓存 + 帧首快照 | 缓存只在帧首读一次，记录路径零锁 | **部分（S3）**：缓存与帧暂存已分家（`ContentCaches` / `FrameScratch`）；帧首快照与锁计数随 S4 的第一个第二读者 |
-| F4 | 驻留三态 | `Absent → Uploading → Resident`，发布或撤回，竞争即复制 | 未做 |
+| F4 | 驻留三态 | `Absent → Uploading → Resident`，发布或撤回，竞争即复制 | **部分（S4）**：状态机 + 8 条单元用例已落地（两个 session id 模拟两会话）；设备接线（`ensureGeometry` 走 `admit`）随 S6 |
 | F5 | 目标 claim | 一帧一 claim，冲突只跳过那个 pass | 未做 |
 | F6 | 跨会话退休 | vk 采用 `DeviceClock` + `RetirementQueue`；释放可在别人 frame 时调用 | **部分（S1 已落地）**：时钟 / park 队列 / 水位 / 清结已在树上，仍只有一个会话 |
 | F7 | 设备级读回 | 自己的池与栅栏，拷贝前等设备水位，计入 `deviceWaits()` | 未做（today 借帧栅栏） |
@@ -249,6 +249,13 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 - **要求**（R4）：条目不可变（键含 revision）；任何 `Uploading` 不得长期存在。
 - **验收**（T4）：两会话同时首画同一几何 ⇒ 不崩、两张图都对、上传次数 ≤ 2；变异（去掉撤回）⇒ 用例红。
 - **注意**（P1）：卡在 `Uploading` 是**全设备**的疤，不是一条 draw 的失败。
+
+**S4 落地（2026-11-15）**：状态机是 `internal/ResidenceTable.hpp`（无 Vulkan 类型），一条键一条条目：
+`admit(key, session)` 答 `Use` / `Build`（带 move-only 的 `Claim`）/ `Copy(owner)`；`Claim::publish()` 是 owner
+“填充已完成”的声明，`Claim` 析构时未决议的条目退回 `Absent`（规则 3 由类型强制，不靠调用点记得）；
+token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的老 claim 不可能把条目复活。
+**未接线**：`ContentCaches::ensureGeometry` 仍走原来的路径，S6 引入会话 id 后才把 `admit` 接进去——
+半接的状态机比没接更糟（`D8`），而状态机自身的验收（T4 的机器半）不依赖设备。
 
 ### 3.1.5 F5 目标 claim
 
@@ -486,6 +493,11 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
   （记录器：持两者的借用引用，`prepare` / `record` 两个动词）。`Device::Session` 拥有自己的 `scratch` 与 `recorder`，
   `Device::Impl` 只留 `caches`；`createScratch()` 在布局建好之后由 `initialize()` 调，拆除时 scratch 先于 caches。
   行为零变化（`test_vk` 103/103，ASan 103/103，变异 1/1 红）。
+- **已落地**：`T48` 的 **S4**——`internal/ResidenceTable.hpp`：一条键一条条目，`admit` 答 `Use` / `Build`
+  （move-only `Claim`）/ `Copy(owner)`；`Claim::publish()` 是 owner 的"填充已完成"声明，析构时未决议的条目退回
+  `Absent`；token 单调不复用，`forget` 之后的老 claim 无法复活。`ResidenceTableTest` **8 例**（含 8 线程抢一键
+  恰一个 `Build`），变异 2/2 红（去掉析构撤回 / 去掉 token 比较）。`test_vk` 111/111。**设备接线随 S6**：现在没有
+  会话 id 可传，半接的状态机比没接更糟（`D8`）。
 - **未做**：`T48` 的 S3–S9（缓存拆分、驻留三态、目标 claim、公开 `createSession()`、读回独立、vsg、收口）。
 - **一处更正**：ADR 说"vsg 更接近"，准确说法是"vsg 的**窗口**会话已就位，**帧驱动者**仍是设备级单例"
   （§2.1）。这不改变结论，只改变迁移表的分工。
@@ -509,6 +521,11 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
   **锁计数随 S4**：单会话没有第二个读者，现在加锁是死机制（`G8`）；S4 的 `ResidenceTable` 引入 owner/competitor 时
   才有“稳态帧 0 次获取”可测 | T3 推迟到 S4 | 中 |
 | S4 | `ResidenceTable` 三态 + 发布/撤回；用**两个内部会话**做单元用例 | T4 | 中（状态机） |
+| S4 | **已落地 2026-11-15**：`internal/ResidenceTable.hpp/.cpp`——`admit` 答 `Use`/`Build`/`Copy`，move-only
+  `Claim` 发布或撤回，token 单调且不复用（`forget` 后的老 claim 不能复活）；`Numbers` 见证 `claims` /
+  `published` / `withdrawn` / `copies` / `stale` / `uploading`。`ResidenceTableTest` **8 例**（含 8 线程抢一键：
+  恰一个 `Build`）；变异 2/2 红（去掉析构撤回 / 去掉 token 比较）。**未接线**：`ContentCaches::ensureGeometry`
+  仍走原路径，S6 接入会话 id 时切换 | T4（机器半） | 低 |
 | S5 | `TargetClaims`；仍用两个内部会话验证 | T5 | 低 |
 | S6 | `createSession()` / `releaseSession()` 公开；引擎持有会话；**帧闸变成每会话** | T8、T10 | 中（公开形状） |
 | S7 | F7 读回独立化 | T7 | 低 |

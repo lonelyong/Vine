@@ -159,6 +159,13 @@
   `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
   ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
   别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
+- **S4 已落地（2026-11-15，T48 第四步）**：`internal/ResidenceTable.hpp` 是“谁可以建这个键”的状态机（无 Vulkan 类型）：
+  `admit(key, session)` → `Use` / `Build`（move-only `Claim`）/ `Copy(owner)`；`Claim::publish()` 是 owner 的完成声明，
+  析构未决议 ⇒ 条目退回 `Absent`（规则 3 由类型强制）；token 单调不复用，`forget` 之后老 claim 的 `publish` 必败并计入
+  `Numbers::stale`。观察点：`numbers()` 的 `claims` / `published` / `withdrawn` / `copies` / `stale` / `uploading`
+  （后者必须恒 0）。判据：`ResidenceTableTest` **8 例**（含 8 线程抢一键恰一个 `Build`），变异 **2/2 红**（去掉析构撤回 /
+  去掉 token 比较），`test_vk` 111/111。**未接线**：`ensureGeometry` 仍走原路径，S6 传入会话 id 时才接（半接比没接更糟）。
+  它**不是** SDK 的 `ResourceTable`：那张按 pin 回答“这个驻留值能不能放”，这张回答“谁可以建”。
 - **S3 已落地（2026-11-15，T48 第三步）**：内容路径拆成三件——`ContentCaches`（**设备**：programs /
   geometries / instance streams / pipelines / 布局 / `ContentImages` / 管线缓存 / `Progress` / `release*`）、
   `FrameScratch`（**驱动者**：常量环 + 描述符池 + set 表 + `frame_index` + `ring_builds` / `set_builds`）、
