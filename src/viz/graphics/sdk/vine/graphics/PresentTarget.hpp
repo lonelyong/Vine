@@ -25,6 +25,8 @@ enum class PresentOutcome : std::uint8_t
     Presented, // The platform accepted the frame's picture.
     Skipped,   // There was nothing to present into (no target, or a device that presents nothing).
     Lost,      // There was a surface and the picture did not reach it (refused, gone, or out of date).
+    Refused,   // The device did not RECORD the frame at all: the calling thread already drives one (see
+               // `backend/FrameGate.hpp`), so nothing was drawn and nothing was presented.
 };
 
 /**

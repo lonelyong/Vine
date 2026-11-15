@@ -151,10 +151,14 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   several engines: two engines driving one device would otherwise tear each other's session down, and the second
  *   engine's initialize() would destroy the first one's - both silently. A borrowed device is up by definition, so
  *   an engine whose device is not up reports it instead of driving frames into nothing.
- * - THREADING. The engine drives one frame at a time from one thread, so calls into a device are serialised, never
- *   concurrent and never reentrant. A device may therefore keep its state unsynchronised, but must not assume it
- *   stays on the same thread across an initialize()/shutdown() pair. The diagnostic sink is invoked synchronously
- *   from inside a device call, so a sink must record and return, never call back into the device.
+ * - THREADING. ONE FRAME AT A TIME, CHECKED. A device's frame machinery is device-wide today, so an executor call
+ *   from a second thread WAITS for the frame in flight and a re-entrant call is REFUSED - `backend/FrameGate.hpp` is
+ *   the shared implementation, and the two backends answer the same way. Host verbs (`setRenderTarget`,
+ *   `releaseContent`, ...) stay BETWEEN-FRAME calls: the gate does not make them thread-safe, and a host that calls
+ *   one while another thread frames is breaking a contract the device cannot see. A device may keep its state
+ *   unsynchronised, but must not assume it stays on the same thread across an initialize()/shutdown() pair. The
+ *   diagnostic sink is invoked synchronously from inside a device call, so a sink must record and return, never call
+ *   back into the device (a re-entrant frame is refused, not queued).
  * - FAILURE. A device reports what it could not do instead of degrading silently (see setDiagnosticSink) and never
  *   throws across this interface: initialize() returns false, the readback methods return false,
  *   createSurfaceTarget() answers nullptr with a reason, and a request that cannot be served leaves the previous

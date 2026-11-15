@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vine/graphics/RenderBackend.hpp>
+#include <vine/graphics/backend/FrameGate.hpp>
 #include <vine/backend_vk/backend_vk_global.hpp>
 #include <vine/backend_vk/internal/Handles.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
@@ -47,7 +48,9 @@ VN_BACKEND_VK_NS_BEGIN
  * @note The class is `Device` and not `VkDevice`: the latter is Vulkan's own type, and this header's implementation
  *       includes volk (see `backend_vk_global.hpp`).
  *
- * @warning Not thread-safe: the SDK drives one frame at a time from one thread, and this device keeps no locks.
+ * @warning One frame at a time, CHECKED: `executeFrame` and `prepareFrame` go through the device's `FrameGate`, so a
+ *          second thread waits and a re-entrant call is refused (`PresentOutcome::Refused`). Everything else - the
+ *          host verbs - is a between-frame call and stays the host's contract; this device keeps no other locks.
  */
 class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
   public:

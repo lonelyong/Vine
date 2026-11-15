@@ -9,7 +9,9 @@ add_executable(${TEST_NAME}
         BuiltinProgramTest.cpp
         ContentDrawTest.cpp
         ContentTargetTest.cpp
+        ConcurrentFrameTest.cpp
         DeferredTest.cpp
+        FrameGateTest.cpp
         HandlesTest.cpp
         MemoryTest.cpp
         MsaaTest.cpp

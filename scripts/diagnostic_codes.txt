@@ -18,8 +18,12 @@ vk.memory.invalid_request     — a resource asked for zero bytes: a content def
 vk.memory.not_open            — device memory was asked for before the pool was opened: a wiring defect
 vk.memory.internal            — the pool contradicted its own invariant: a defect in the allocator
 
+# --- vsg backend: the session ---
+vsg.session.frame_reentry     — a frame or warm-up was started from the thread already driving one: refused (FrameGate)
+
 # --- vk backend: the session ---
 vk.session.device_lost        — a device call answered VK_ERROR_DEVICE_LOST: the session is over, rebuild it
+vk.session.frame_reentry      — a frame or warm-up was started from the thread already driving one: refused (FrameGate)
 
 # --- vk backend: targets (see vk-backend.md 2.6 / 2.11) ---
 vk.target.samples_above_limit             — the requested sample count is past what the device offers (limit pair)

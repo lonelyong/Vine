@@ -29,9 +29,16 @@
 - **指针查询按"用户看到的那一帧"算**（N17）：`RenderEngine::presentedCamera()` 发布被答完那一帧的相机快照，
   `SceneView::setPresentedCamera` 交给 manipulator，`OrbitCameraManipulator::makeScreenRay` 优先用它；没有发布值就退回
   当前相机（静止画面 / inline）。一个像素 → 世界射线是 `CameraSnapshot::screenRay`（两端反投影，透视正交同一套）。
-- 呈现结局是值：`PresentOutcome{Presented, Skipped, Lost}` + `RenderEngine::presentRecord()`（帧号+结局，一个原子字）。
+- 呈现结局是值：`PresentOutcome{Presented, Skipped, Lost, Refused}` + `RenderEngine::presentRecord()`（帧号+结局，一个原子字）。
+  `Refused` 是“设备根本没录这一帧”：调用线程已经在一个帧里（见下一条）；它不是 `Skipped`（没东西可呈现）也不是 `Lost`（有表面但画面没到）。
   `Lost` 由**引擎**修（忘掉已告知的尺寸 → 下一帧重报 → 后端重建交换链），宿主只记一条日志、不拆会话、不藏区域
   （藏区域会停掉修复帧）。设备动词（`createSurfaceTarget` / `setWindowHandle` / `initialize`）是**帧间**操作。
+- **一帧一次是“检查过的事实”，不是注释（2026-11-15，T47）**：`backend/FrameGate.hpp` —— `executeFrame` /
+  `prepareFrame` 进去取一个 **lease**：另一条线程**等待**，同一线程重入**拒绝**（`PresentOutcome::Refused` /
+  `PrepareReport::Outcome::Refused`，一条 `*.session.frame_reentry` 诊断）。两个后端共用同一实现，所以宿主的同一个
+  错误在两边得到同一个答案。lease 而不是 `enter/leave` 的原因：帧有多个提前返回，忘记 `leave` 会把下一帧卡死，
+  而 lease 让“忘记”无法表达。它只护**帧机器**（命令池 / 栅栏 / 环 / 描述符池）；宿主词（`setRenderTarget` /
+  `releaseContent`）仍是帧间调用。
 - 采集备忘录：`detail::DrawListMemo` 被 `Scene` 与 `RenderWorldSource` 共用（键 = 视图投影/眼点/视口/层掩码，状态 =
   表 revision，令牌 = 帧号，一帧宽限；令牌 0 = 不记）。见证在引擎侧：`RenderEngine::contentCollectCount/ReuseCount`。
 - 竞争/寿命门禁：`scripts/tsan_check.sh`（`build-tsan`，`-fsanitize=thread`，**0 条警告**才算过）。它顺手抓到过

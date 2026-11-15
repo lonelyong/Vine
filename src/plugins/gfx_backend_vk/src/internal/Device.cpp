@@ -307,11 +307,11 @@ constexpr std::uint32_t kSampleCounts[] = { 64U, 32U, 16U, 8U, 4U, 2U, 1U };
 }
 
 /**
- * @brief Builds a diagnostic about the MEMORY POOL: severity, category, stable code and the sentence with the numbers.
+ * @brief Builds a diagnostic about the DEVICE itself: severity, category, stable code and the sentence.
  *
  * @details
- * - NO SUBJECT AND NO LIMIT: the pool is device-wide, and its numbers (requested bytes, type, reserved, used) are in
- *   the sentence because they are four, not the requested/supported pair `DiagnosticLimit` means.
+ * - NO SUBJECT AND NO LIMIT: these reports are about the session or the pool, not about one object, and their numbers
+ *   are in the sentence when there are any.
  * - The shape is the same as `targetDiagnostic` on purpose: a coded report is built by a helper and handed to
  *   `reportDiagnostic`, so the code is visible in the report call - which is what the gate scans for.
  *
@@ -321,7 +321,7 @@ constexpr std::uint32_t kSampleCounts[] = { 64U, 32U, 16U, 8U, 4U, 2U, 1U };
  * @param message  The human sentence (with the numbers in it).
  * @return The diagnostic, ready to hand to reportDiagnostic.
  */
-[[nodiscard]] vn::graphics::RenderDiagnostic memoryDiagnostic(const DiagnosticSeverity severity,
+[[nodiscard]] vn::graphics::RenderDiagnostic deviceDiagnostic(const DiagnosticSeverity severity,
                                                              const DiagnosticCategory category,
                                                              const char8_t*           code,
                                                              vn::String               message)
@@ -569,6 +569,20 @@ struct Device::Impl {
         }
     };
     MemoryReports memory_reports{};
+
+    /**
+     * @brief The device's ONE-FRAME-AT-A-TIME gate (see FrameGate): today's contract, checked instead of assumed.
+     *
+     * @details
+     * - A second THREAD waits here; the thread that already drives a frame is refused, because waiting would be it
+     *   waiting for itself. Both verbs that touch the frame machinery go through it (`executeFrame` and
+     *   `prepareFrame`, which submits a transfer batch of its own).
+     * - Step 2 of `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` replaces it with per-session state; until
+     *   then it is what makes "a device drives one frame at a time" true rather than documented.
+     */
+    vn::graphics::backend::FrameGate frames{};
+    /// The episode of "a frame was started from the thread that already drives one" (see executeFrame).
+    vn::graphics::ReportOnce frame_reentry_report{};
 
     /// True once a queue/acquire/present call answered `VK_ERROR_DEVICE_LOST`: the session is over (see
     /// Device::noteDeviceLost), so `initialized()` stops answering true and the host rebuilds it.
@@ -1425,7 +1439,7 @@ void Device::noteMemoryRefusal(const MemoryRefusalReport& report)
         return;
     case MemoryRefusal::OutOfMemory:
         if (impl->memory_reports.out_of_memory.shouldReport()) {
-            reportDiagnostic(memoryDiagnostic(DiagnosticSeverity::Warning,
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
                                               DiagnosticCategory::ResourcePressure,
                                               u8"vk.memory.out_of_memory",
                                               memoryRefusalSentence(u8"the device is out of memory", report)));
@@ -1435,7 +1449,7 @@ void Device::noteMemoryRefusal(const MemoryRefusalReport& report)
         if (impl->memory_reports.driver_refused.shouldReport()) {
             // AN ERROR, NOT A PRESSURE: nothing a host releases changes a device limit or a driver bug, so this is a
             // fact to escalate rather than a capacity to relieve.
-            reportDiagnostic(memoryDiagnostic(DiagnosticSeverity::Error,
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                               DiagnosticCategory::ResourcePressure,
                                               u8"vk.memory.driver_refused",
                                               memoryRefusalSentence(u8"the driver refused an allocation", report)));
@@ -1443,7 +1457,7 @@ void Device::noteMemoryRefusal(const MemoryRefusalReport& report)
         return;
     case MemoryRefusal::NoType:
         if (impl->memory_reports.no_type.shouldReport()) {
-            reportDiagnostic(memoryDiagnostic(DiagnosticSeverity::Warning,
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
                                               DiagnosticCategory::UnsupportedRequest,
                                               u8"vk.memory.no_type",
                                               memoryRefusalSentence(u8"this device has no memory type that serves the request", report)));
@@ -1451,7 +1465,7 @@ void Device::noteMemoryRefusal(const MemoryRefusalReport& report)
         return;
     case MemoryRefusal::InvalidRequest:
         if (impl->memory_reports.invalid_request.shouldReport()) {
-            reportDiagnostic(memoryDiagnostic(DiagnosticSeverity::Error,
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                               DiagnosticCategory::ContentSkipped,
                                               u8"vk.memory.invalid_request",
                                               memoryRefusalSentence(u8"a resource asked for zero bytes of memory", report)));
@@ -1459,7 +1473,7 @@ void Device::noteMemoryRefusal(const MemoryRefusalReport& report)
         return;
     case MemoryRefusal::NotOpen:
         if (impl->memory_reports.not_open.shouldReport()) {
-            reportDiagnostic(memoryDiagnostic(DiagnosticSeverity::Error,
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                               DiagnosticCategory::InitFailed,
                                               u8"vk.memory.not_open",
                                               memoryRefusalSentence(u8"device memory was asked for before the pool was opened", report)));
@@ -1467,7 +1481,7 @@ void Device::noteMemoryRefusal(const MemoryRefusalReport& report)
         return;
     case MemoryRefusal::Internal:
         if (impl->memory_reports.internal.shouldReport()) {
-            reportDiagnostic(memoryDiagnostic(DiagnosticSeverity::Error,
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                               DiagnosticCategory::InitFailed,
                                               u8"vk.memory.internal",
                                               memoryRefusalSentence(u8"the pool could not place a resource in a block it had just made", report)));
@@ -1830,6 +1844,24 @@ Capabilities Device::capabilities() const noexcept
 
 PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget* present_to)
 {
+    // ONE FRAME AT A TIME, AS A CHECKED FACT (see FrameGate): another thread waits here, and a frame started from the
+    // thread that is ALREADY driving one is refused - the shared machinery (command pool, fence, ring, descriptor
+    // pool) is device-wide, so a re-entrant frame would corrupt it silently. The lease releases the gate on EVERY
+    // return below, which is why it is a lease and not a pair of calls.
+    const vn::graphics::backend::FrameGate::Lease frame_lease = impl->frames.enter();
+    if (!frame_lease) {
+        if (impl->frame_reentry_report.shouldReport()) {
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::PassProtocolViolation,
+                                              u8"vk.session.frame_reentry",
+                                              u8"vk: a frame was started from the thread that is already driving one (a hook "
+                                              u8"or a sink drove another engine); this frame was refused - a device drives "
+                                              u8"one frame at a time, so drive the second engine from another thread or after "
+                                              u8"waitForFrame"));
+        }
+        return PresentOutcome::Refused;
+    }
+
     if (!initialized()) {
         if (impl->device_lost) {
             // The one loss report already said why and what to do (see noteDeviceLost): a frame asked after it is
@@ -2404,6 +2436,22 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
 {
     using vn::graphics::EngineNotReady;
     using vn::graphics::PrepareReport;
+
+    // THE SAME GATE AS executeFrame, because a warm-up records and may submit a transfer batch of its own (see
+    // ADR-2026-11-14): a prepare racing a frame would share the command pool. `Refused` carries no reason - the
+    // report says which refusal it was (see executeFrame).
+    const vn::graphics::backend::FrameGate::Lease frame_lease = impl->frames.enter();
+    if (!frame_lease) {
+        if (impl->frame_reentry_report.shouldReport()) {
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::PassProtocolViolation,
+                                              u8"vk.session.frame_reentry",
+                                              u8"vk: a warm-up was started from the thread that is already driving a frame "
+                                              u8"(a hook or a sink drove another engine); it was refused - a device drives one "
+                                              u8"frame at a time"));
+        }
+        return PrepareReport{ PrepareReport::Outcome::Refused };
+    }
 
     if (!initialized()) {
         // "There is nothing to prebuild" and "the device is not up" are different answers (see PrepareReport).

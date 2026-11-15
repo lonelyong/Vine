@@ -50,9 +50,11 @@ VN_GRAPHICS_NS_BEGIN
  *   released by the matching release* call (see RenderDevice), and must not grow with the frame count: a long-running
  *   session has to reach a steady state. An executor must never require the host to call a release* method for
  *   correctness - the host calls them because a pass or target is gone.
- * - THREADING. The engine drives one frame at a time from one thread, so calls into an executor are serialised, never
- *   concurrent and never reentrant. An executor may therefore keep its state unsynchronised, but must not assume it
- *   stays on the same thread across an initialize()/shutdown() pair (see RenderDevice).
+ * - THREADING. A device drives ONE frame at a time, and that is CHECKED (see `backend/FrameGate.hpp`): a call from a
+ *   second thread WAITS for the frame in flight, and a call made from the thread that is already driving one is
+ *   REFUSED (`PresentOutcome::Refused`, `PrepareReport::Outcome::Refused`) with one diagnostic - waiting there would
+ *   be the caller waiting for itself. An executor may therefore keep its per-frame state unsynchronised, but must not
+ *   assume it stays on the same thread across an initialize()/shutdown() pair (see RenderDevice).
  */
 class VN_GRAPHICS_API RenderFrameExecutor {
   public:

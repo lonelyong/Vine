@@ -20,6 +20,7 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/backend/AllocationGate.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/graphics/backend/FrameGate.hpp>
 #include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/graphics/backend/Observe.hpp>
 #include <vine/graphics/backend/VariantPool.hpp>
@@ -320,6 +321,32 @@ std::span<const PassContent> recordContent(ContentAssembly&                     
     return packets;
 }
 
+/**
+ * @brief Builds a diagnostic about the BACKEND itself: severity, category, stable code and the sentence.
+ *
+ * @details
+ * - The code is stated INSIDE the report call that consumes this value, which is the shape
+ *   `check_diagnostic_formats.py` scans for: a report a host matches on says which cause it is, at the call.
+ *
+ * @param severity How bad it is.
+ * @param category The coarse class.
+ * @param code     The stable identifier of the cause (see scripts/diagnostic_codes.txt).
+ * @param message  The human sentence (with the numbers in it).
+ * @return The diagnostic, ready to hand to reportDiagnostic.
+ */
+[[nodiscard]] vn::graphics::RenderDiagnostic backendDiagnostic(const vn::graphics::DiagnosticSeverity severity,
+                                                              const vn::graphics::DiagnosticCategory category,
+                                                              const char8_t*                         code,
+                                                              vn::String                             message)
+{
+    vn::graphics::RenderDiagnostic diagnostic;
+    diagnostic.severity = severity;
+    diagnostic.category = category;
+    diagnostic.code     = vn::String(code);
+    diagnostic.message  = std::move(message);
+    return diagnostic;
+}
+
 } // namespace
 
 namespace detail
@@ -448,6 +475,12 @@ struct VsgBackend::Data {
     std::array<vn::graphics::ReportOnce, kReadbackReportCount> readback_reports{};      // The unresolved-target episodes.
     vn::graphics::ReportOnce                                   occupied_report{};       // The "a window already served was asked again" episode.
     vn::graphics::ReportOnce                                   foreign_target_report{}; // The "a frame named someone else's target" episode.
+
+    /// The device's ONE-FRAME-AT-A-TIME gate (see FrameGate): the same rule the vk backend states, so a host that
+    /// breaks it hears the same answer from both backends.
+    vn::graphics::backend::FrameGate frames{};
+    /// The episode of "a frame was started from the thread that already drives one" (see executeFrame).
+    vn::graphics::ReportOnce frame_reentry_report{};
     /// What the frame's steps have let go; zero while the host holds everything.
     std::size_t                             released_objects{ 0 };
     std::size_t                             released_textures{ 0 };
@@ -509,7 +542,11 @@ VsgBackend::VsgBackend(const vn::graphics::DeviceDesc& desc)
     // That is what puts those sentences in the host's sink and in the engine's single count, without this
     // layer re-reporting anything.
     d->diagnostics.setSink(
-        [this](const vn::graphics::RenderDiagnostic& diagnostic) { reportDiagnostic(diagnostic.severity, diagnostic.category, diagnostic.message); });
+        [this](const vn::graphics::RenderDiagnostic& diagnostic) {
+            // THE WHOLE VALUE: a code, a subject and a limit are what a host matches on, and rebuilding the diagnostic
+            // from three of its fields would drop exactly those (the SDK's report is one value, see RenderDiagnostic).
+            reportDiagnostic(diagnostic);
+        });
 }
 
 VsgBackend::~VsgBackend()
@@ -919,6 +956,22 @@ void VsgBackend::closeFrameBooks()
 
 vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to)
 {
+    // ONE FRAME AT A TIME, AS A CHECKED FACT (see FrameGate): another thread waits here, and a frame started from the
+    // thread that already drives one is refused. This is the same rule the vk backend states - the frame machinery is
+    // device-wide in both - so a host that drives two engines from one thread hears the same answer from either.
+    const vn::graphics::backend::FrameGate::Lease frame_lease = d->frames.enter();
+    if (!frame_lease) {
+        if (d->frame_reentry_report.shouldReport()) {
+            reportDiagnostic(backendDiagnostic(vn::graphics::DiagnosticSeverity::Error,
+                                               vn::graphics::DiagnosticCategory::PassProtocolViolation,
+                                               u8"vsg.session.frame_reentry",
+                                               u8"vsg: a frame was started from the thread that is already driving one (a "
+                                               u8"hook or a sink drove another engine); this frame was refused - a device "
+                                               u8"drives one frame at a time"));
+        }
+        return vn::graphics::PresentOutcome::Refused;
+    }
+
     // WHAT THE LAST FRAME'S UPLOADS NO LONGER NEED, BEFORE THIS ONE RECORDS. A staging buffer is the source of one
     // vkCmdCopyBuffer; the moment that copy's fence signals, the bytes are dead weight - and vsg keeps them for the life
     // of the session (measured: 1.2 GB after a 704 MB model, one block per frame slot because uploads rotate through
@@ -1020,6 +1073,20 @@ vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameD
 
 vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to)
 {
+    // THE SAME GATE AS executeFrame: a warm-up walks the content path and may record a transfer batch, so it shares the
+    // machinery a frame drives. `Refused` carries no reason - the report says which refusal it was.
+    const vn::graphics::backend::FrameGate::Lease frame_lease = d->frames.enter();
+    if (!frame_lease) {
+        if (d->frame_reentry_report.shouldReport()) {
+            reportDiagnostic(backendDiagnostic(vn::graphics::DiagnosticSeverity::Error,
+                                               vn::graphics::DiagnosticCategory::PassProtocolViolation,
+                                               u8"vsg.session.frame_reentry",
+                                               u8"vsg: a warm-up was started from the thread that is already driving a "
+                                               u8"frame; it was refused - a device drives one frame at a time"));
+        }
+        return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::Refused };
+    }
+
     // NOTHING TO PREPARE WITHOUT THE CONTENT WORLD: it is what compiles a half, a set or a stream at all, and it
     // exists only while a device does (see initialize). The answer says so rather than reporting a zero it did not
     // earn.

@@ -154,9 +154,9 @@
 - **为什么今天是这个形状**：一帧在飞（§2.3）让"帧之间"成为一个**时刻**，于是释放、读回、缓存填充都能共用一份机器；
   `ContentDraw` 的 `beginFrame` / `endFrame` 重置的是设备级状态，正是这条的直接后果。在那个前提下把它拆成两个对象
   只会多一层转发（`G8`）。
-- **边界**：**两个引擎同时 frame 不成立**——同一设备上两条线程进 `executeFrame` 是数据竞争（`ContentDraw` 与
-  `Device` 的 `@warning` 都写着"一次一帧、一条线程"）。这不是本插件的缺陷，是接缝今天的契约
-  （`graphics-threading.md` 的 `C21`）。形状与落地在
+- **边界**：**两个引擎同时 frame 今天被串行化，不是并行**——`executeFrame` / `prepareFrame` 走设备的
+  `FrameGate`：另一条线程**等待**，同一线程重入**拒绝**（`vk.session.frame_reentry`，`PresentOutcome::Refused`）。
+  并行是 ADR 第二步的事。形状与落地在
   `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，两步分别记在 backlog `T47` / `T48`。
 - **拆分时哪些东西会动**（清单是起点，不是拆分本身）：`ContentDraw` 的 `Impl` 一半是**缓存**（模块 / 流 / 管线 /
   布局，归设备）、一半是**帧状态**（常量环 / 描述符池 / 逐 draw UBO，归会话）；`command_pool` 与 `completion` 归会话；

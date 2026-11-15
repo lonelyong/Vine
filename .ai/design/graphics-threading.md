@@ -411,7 +411,7 @@
 | C18 | 批内版本不推进：`beginEdit()` 之后、最外层 `endEdit()` 之前，发布停在原处 —— 落在批中间的帧**不发布任何东西**，画批次开始时的状态；整批在 `endEdit()` 之后那一帧作为**一次**发布落地。 |
 | C19 | 材质以**值**过帧：命令携带 `MaterialDescriptionPtr`（`revision` + 解析后的参数），引擎侧只读值，不读 `Material::resolved()`。值的取点在内容侧，批内不取。 |
 | C20 | 会话形状（pass 集合、资源表、后端保留态）**只在帧与帧之间**改：帧在飞时 `applyPlan`（任何一种形态）一律答 `PlanResult::Refused` + `PlanRefusal::Busy`（`sessionChangeAllowed`），并按 episode 报**一条** `PassProtocolViolation`。 |
-| C21 | **一个设备可被多个引擎借用，但帧不并发**：内容驻留按身份共享（一次上传、一次编译）；一个窗口只有一个目标；一帧的机器（命令池 / 栅栏 / 常量环 / 描述符池）是**设备级**的，所以同一设备上两条线程同时 `executeFrame` 是契约违反。今天没有守卫，第一步补设备级帧闸（`T47`）；并发形状见 `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`。 |
+| C21 | **一个设备可被多个引擎借用，但帧不并发**：内容驻留按身份共享（一次上传、一次编译）；一个窗口只有一个目标；一帧的机器（命令池 / 栅栏 / 常量环 / 描述符池）是**设备级**的，所以同一设备上两条线程同时 `executeFrame` 是契约违反。**守卫已落地（2026-11-15）**：`backend/FrameGate.hpp` —— 另一条线程**等待**，同一线程重入**拒绝**并报一条（`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`），两个后端走同一个实现；真正的并行是 `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` 的第二步。 |
 
 ### 5.2 要求（R#）
 
