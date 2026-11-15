@@ -3,6 +3,7 @@
 #include <vine/backend_vk/backend_vk_global.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 #include <volk.h>
@@ -11,7 +12,6 @@
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/graphics/Sampler.hpp>
 #include <vine/graphics/Texture.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -27,11 +27,12 @@ VN_BACKEND_VK_NS_BEGIN
  * - THE UPLOAD IS RECORDED, NOT SUBMITTED BY THIS CACHE. A texture is copied on a command buffer the CALLER records
  *   the first time a draw samples it (or when its revision moved), because this backend records and submits one frame
  *   synchronously - there is no upload queue to hand it to. Two callers exist, and they are the same copies: the
- *   frame's own command buffer (recorded outside each render pass, see `ContentDraw::preparePass`), and the ONE
- *   transfer-only command buffer a warm-up submits of its own (see `RenderFrameExecutor::prepareFrame`). Staging
- *   buffers therefore stay alive until the command buffer that recorded them has completed: the frame path lets go
- *   through @ref releaseFrame after the queue is idle, the prepare path through @ref releaseUploadStaging right after
- *   its own fence wait. @ref releaseFrame also destroys the images a revision replaced.
+ *   frame's own command buffer (recorded outside each render pass, at the frame head), and the ONE transfer-only
+ *   command buffer a warm-up submits of its own (see `RenderFrameExecutor::prepareFrame`). Staging buffers therefore
+ *   stay alive until the command buffer that recorded them has completed - and each driver's are grouped in its own
+ *   batch (@ref BatchId), so the frame that ends first never frees the staging of the frame that is still recording.
+ *   @ref releaseFrame also lets go of the images that driver's revisions replaced, PARKED against the device watermark
+ *   because another driver's frame may still be sampling them.
  * - WHAT "ABSENT" MEANS. A slot whose texture is null, empty or incomplete is not uploaded; the caller binds
  *   @ref fallbackView with @ref fallbackSampler and clears the material's slot bit, so the shader never reads a
  *   binding nobody wrote (the slot bits are the shading's own switch - see ShaderAbi.hpp).
@@ -41,6 +42,28 @@ VN_BACKEND_VK_NS_BEGIN
  * @note Not thread-safe: one frame at a time, on the thread that records it (the backend's contract).
  */
 class VN_BACKEND_VK_API ContentImages final {
+  public:
+    /**
+     * @brief What the device does with an object that a frame may still name: park it, or destroy it now.
+     *
+     * @details
+     * - THE DEVICE DECIDES, THIS CACHE REPORTS (`G4`): whether an image may be destroyed is a question about the
+     *   device's completion watermark, and the answer needs the clock and the park queue - both of which belong to the
+     *   device, not to a cache. The seam is a function so this header keeps naming neither.
+     */
+    using ParkFn = std::function<void(std::function<void()>)>;
+
+    /**
+     * @brief One driver's upload bookkeeping: the staging buffers it recorded and the images its revisions replaced.
+     *
+     * @details
+     * - A BATCH IS A FRAME DRIVER (`C2`): the staging buffer of one driver's uploads may be destroyed the moment THAT
+     *   driver's command buffer completed, and no sooner - releasing it with another driver's frame end is the
+     *   use-after-free two concurrent frames would otherwise hand the driver.
+     * - Batch 0 is the warm-up's (its transfer batch has its own fence); a frame driver passes its own id.
+     */
+    using BatchId = std::uint64_t;
+
   public:
     /** @brief Builds an empty cache; nothing exists until @ref create. */
     ContentImages();
@@ -81,24 +104,25 @@ class VN_BACKEND_VK_API ContentImages final {
      * @brief Hands this cache the device's park queue and completion clock, so a released image can be deferred.
      *
      * @details
-     * - THE SAME SEAM `ContentDraw::setRetirement` STATES, for the images that cache owns: a released texture leaves the
+     * - THE SAME SEAM `ContentCaches::setRetirement` STATES, for the images that cache owns: a released texture leaves the
      *   table at once (the next frame uploads it again), and the `VkImage` behind it is destroyed once the device's
      *   watermark has passed every frame that could still sample it.
      *
-     * @param retirement The device's park queue (borrowed; null destroys immediately).
-     * @param timeline   The clock the park is dated against (borrowed; null destroys immediately).
+     * @param park What to do with an object that a frame may still name (empty destroys immediately).
      */
-    void setRetirement(vn::graphics::backend::RetirementQueue* retirement,
-                       const vn::graphics::backend::FrameTimeline* timeline) noexcept;
+    void setRetirement(ParkFn park);
 
     /**
-     * @brief Destroys what the PREVIOUS frame left behind: staging buffers and images a revision replaced.
+     * @brief Destroys what ONE driver's previous frame left behind: its staging buffers and the images it replaced.
      *
      * @details
-     * - Called by the device after the queue has gone idle, which is what makes "the command buffer that copied this
-     *   texture has finished" true. Until then the objects stay alive even though nothing caches them any more.
+     * - Called by the driver after ITS OWN queue submission has been waited for, which is what makes "the command
+     *   buffer that copied this texture has finished" true for the objects of `batch`. Another driver's batch is
+     *   untouched: its command buffer may still be recording.
+     *
+     * @param batch The driver whose uploads completed (see @ref BatchId).
      */
-    void releaseFrame() noexcept;
+    void releaseFrame(BatchId batch) noexcept;
 
     /**
      * @brief Destroys the staging buffers of every upload recorded SO FAR, leaving the images they fed resident.
@@ -113,8 +137,10 @@ class VN_BACKEND_VK_API ContentImages final {
      * @warning
      * - Precondition: the command buffer that recorded those copies has completed. Destroying a staging buffer a
      *   pending copy still reads is a use-after-free the driver cannot catch.
+     *
+     * @param batch The driver whose uploads completed (see @ref BatchId).
      */
-    void releaseUploadStaging() noexcept;
+    void releaseUploadStaging(BatchId batch) noexcept;
 
     /**
      * @brief Gets whether a copy has been recorded into a command buffer that has not been waited for yet.
@@ -126,8 +152,10 @@ class VN_BACKEND_VK_API ContentImages final {
      *   `RenderFrameExecutor::prepareFrame`: no work means no submit).
      *
      * @return true when a recorded upload has not been released yet.
+     *
+     * @param batch The driver to ask about (see @ref BatchId).
      */
-    [[nodiscard]] bool hasPendingUploads() const noexcept;
+    [[nodiscard]] bool hasPendingUploads(BatchId batch) const noexcept;
 
     /**
      * @brief What this cache has built, what it let go and what it holds now.
@@ -176,10 +204,14 @@ class VN_BACKEND_VK_API ContentImages final {
      *
      * @param texture  The texture to sample.
      * @param commands The command buffer the current frame is being recorded into.
+     * @param batch    The driver recording the copy (see @ref BatchId).
      * @param why      Receives the reason when no view can be served, or null to ignore.
      * @return The view, or `VK_NULL_HANDLE`.
      */
-    [[nodiscard]] VkImageView viewFor(const vn::graphics::Texture& texture, VkCommandBuffer commands, vn::String* why);
+    [[nodiscard]] VkImageView viewFor(const vn::graphics::Texture& texture,
+                                      VkCommandBuffer             commands,
+                                      BatchId                     batch,
+                                      vn::String*                 why);
 
     /**
      * @brief Gets (or creates) the sampler for @p sampler.
@@ -193,10 +225,11 @@ class VN_BACKEND_VK_API ContentImages final {
      * @brief Creates and uploads the 1x1 white fallback image on first use.
      *
      * @param commands The command buffer the current frame is being recorded into.
+     * @param batch    The driver recording the copy (see @ref BatchId).
      * @param why      Receives the reason when the fallback cannot be built, or null to ignore.
      * @return true when @ref fallbackView serves a view.
      */
-    [[nodiscard]] bool ensureFallback(VkCommandBuffer commands, vn::String* why);
+    [[nodiscard]] bool ensureFallback(VkCommandBuffer commands, BatchId batch, vn::String* why);
 
     /** @brief Gets the 1x1 white view every absent slot is bound to (null until @ref ensureFallback succeeded). */
     [[nodiscard]] VkImageView fallbackView() const noexcept;

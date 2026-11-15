@@ -292,21 +292,20 @@ class VN_BACKEND_VK_API ContentCaches final {
     [[nodiscard]] const VolkDeviceTable& table() const noexcept;
 
     /**
-     * @brief Hands these caches the device's park queue and completion clock, so a release can be deferred.
+     * @brief Hands these caches the device's park seam, so a release can be deferred.
      *
      * @details
      * - THE DEVICE DECIDES WHEN A RELEASED OBJECT MAY GO; the caches only say what it is. A released entry leaves
      *   the table immediately, while the Vulkan objects behind it live until the device's watermark has passed the
      *   frame that could still name them - which is what makes `releaseContent` legal while another session frames.
-     * - Pass nulls during teardown: a device that is going away has idled its queue and must destroy, not park.
-     * - IT ALSO HANDS THE SAME PAIR TO THE IMAGE CACHE, so a released texture and a released stream are dated against the
-     *   same evidence rather than two clocks that could disagree.
+     * - Pass an empty function during teardown: a device that is going away has idled its queue and must destroy, not
+     *   park.
+     * - IT ALSO HANDS THE SAME SEAM TO THE IMAGE CACHE, so a released texture and a released stream are dated against
+     *   the same evidence rather than two clocks that could disagree.
      *
-     * @param retirement The device's park queue (borrowed; null destroys immediately).
-     * @param timeline   The clock the park is dated against (borrowed; null destroys immediately).
+     * @param park What to do with an object a frame may still name (empty destroys immediately).
      */
-    void setRetirement(vn::graphics::backend::RetirementQueue* retirement,
-                       const vn::graphics::backend::FrameTimeline* timeline) noexcept;
+    void setRetirement(ContentImages::ParkFn park);
 
     /**
      * @brief States whether this device answers `VK_EXT_pipeline_creation_feedback` (core in Vulkan 1.3).
@@ -479,12 +478,14 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param out      Receives the bindings (cleared on entry).
      * @param refusal  Receives the first reason a texture could not be served (kept when already refused).
      * @param held     The cache lock (see @ref Lock).
+     * @param batch    The driver recording the uploads (see @ref ContentImages::BatchId).
      */
     void resolveTextures(const vn::graphics::MaterialDescription* material,
                          VkCommandBuffer                         commands,
                          ResolvedTextures&                       out,
                          ContentRefusal&                         refusal,
-                         const Lock&                                   held);
+                         const Lock&                             held,
+                         ContentImages::BatchId                  batch);
 
     /**
      * @brief Creates (or answers) the 1x1 white image every absent texture slot binds.
@@ -492,15 +493,16 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param commands The command buffer that records its copy (null answers whether one already exists).
      * @param held     The cache lock (see @ref Lock).
      * @param why      Receives the reason when the stand-in cannot be built, or null to ignore.
+     * @param batch    The driver recording the copy (see @ref ContentImages::BatchId).
      * @return true when a fallback view is available.
      */
-    [[nodiscard]] bool ensureFallback(VkCommandBuffer commands, const Lock& held, vn::String* why);
+    [[nodiscard]] bool ensureFallback(VkCommandBuffer commands, const Lock& held, vn::String* why, ContentImages::BatchId batch);
 
-    /** @brief Gets whether a texture copy was recorded into a command buffer that has not been waited for yet. */
-    [[nodiscard]] bool hasPendingUploads() const;
+    /** @brief Gets whether @p batch recorded a texture copy into a command buffer that has not been waited for yet. */
+    [[nodiscard]] bool hasPendingUploads(ContentImages::BatchId batch) const;
 
-    /** @brief Destroys the staging buffers of every upload recorded SO FAR, leaving the images they fed resident. */
-    void releaseUploadStaging() noexcept;
+    /** @brief Destroys the staging buffers @p batch recorded so far, leaving the images they fed resident. */
+    void releaseUploadStaging(ContentImages::BatchId batch) noexcept;
 
     /**
      * @brief Drops @p texture's uploaded image (see ContentImages::releaseTexture).
@@ -510,8 +512,8 @@ class VN_BACKEND_VK_API ContentCaches final {
      */
     [[nodiscard]] bool releaseTexture(const vn::graphics::Texture& texture);
 
-    /** @brief Releases the retired texture uploads recorded since the frame opened. */
-    void endFrame() noexcept;
+    /** @brief Releases the retired texture uploads recorded by @p batch (see @ref ContentImages::releaseFrame). */
+    void endFrame(const ContentImages::BatchId batch) noexcept;
 
     /**
      * @brief Resolves one scene command's program, streams and pipeline (building each on a miss).

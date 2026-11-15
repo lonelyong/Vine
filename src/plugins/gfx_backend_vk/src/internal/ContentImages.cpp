@@ -126,19 +126,29 @@ struct ContentImages::Impl {
     /// The device's memory pool (borrowed: the device owns it and outlives this cache).
     MemoryAllocator* allocator{ nullptr };
 
-    /// The device's park queue and clock (borrowed; see setRetirement). Null destroys immediately.
-    vn::graphics::backend::RetirementQueue*     retirement{ nullptr };
-    const vn::graphics::backend::FrameTimeline* timeline{ nullptr };
+    /// The device's park seam (see ParkFn). Empty destroys immediately (before initialize, during teardown).
+    ParkFn park{};
 
     /// The largest anisotropy factor the device honours (see setMaxAnisotropy): a sampler built above it would be an
     /// invalid create, so the request is clamped here - the same number the capabilities report.
     float max_anisotropy{ 1.0F };
 
     std::unordered_map<const vn::graphics::Texture*, Entry> textures;
-    /// Entries a revision replaced (destroyed once the frame that may still name them has finished).
-    std::vector<Entry> retired;
-    /// Staging buffers an upload recorded (alive until that command buffer has finished).
-    std::vector<std::pair<VkBuffer, MemorySlice>> staging;
+
+    /**
+     * @brief One driver's upload bookkeeping (see BatchId): the images its revisions replaced and the staging buffers
+     *        it recorded.
+     *
+     * @details
+     * - BATCHED BY DRIVER, because "the command buffer that recorded this copy has completed" is a fact about ONE
+     *   driver's submission. With two frames in flight, the frame that ends first must not free the staging of the
+     *   frame that is still recording.
+     */
+    struct Batch {
+        std::vector<Entry>                            retired;
+        std::vector<std::pair<VkBuffer, MemorySlice>> staging;
+    };
+    std::unordered_map<std::uint64_t, Batch> batches;
 
     std::vector<std::pair<vn::graphics::Sampler, VkSampler>> samplers;
 
@@ -146,7 +156,6 @@ struct ContentImages::Impl {
     MemorySlice   fallback_memory{};
     VkImageView   fallback_view{ VK_NULL_HANDLE };
     VkSampler     fallback_sampler{ VK_NULL_HANDLE };
-    std::vector<std::pair<VkBuffer, MemorySlice>> fallback_staging;
 
     /// The numbers a report reads (see Progress): cumulative builds/copies/releases, plus the live total.
     std::uint64_t built{ 0 };
@@ -220,7 +229,8 @@ struct ContentImages::Impl {
      */
     void releaseLater(std::function<void()> destroy)
     {
-        if (retirement != nullptr && timeline != nullptr && retirement->retire(*timeline, std::move(destroy))) {
+        if (park) {
+            park(std::move(destroy));
             return;
         }
         destroy();
@@ -338,7 +348,7 @@ struct ContentImages::Impl {
      * @param why      Receives the reason on failure.
      * @return true when every layer was copied.
      */
-    [[nodiscard]] bool recordUpload(const vn::graphics::Texture& texture, Entry& entry, VkCommandBuffer commands, vn::String* why)
+    [[nodiscard]] bool recordUpload(const vn::graphics::Texture& texture, Entry& entry, VkCommandBuffer commands, std::uint64_t batch, vn::String* why)
     {
         const auto aspect       = static_cast<VkImageAspectFlags>(VK_IMAGE_ASPECT_COLOR_BIT);
         const ImageState from   = stateOf(vn::graphics::backend::ImageLayout::Undefined);
@@ -415,7 +425,7 @@ struct ContentImages::Impl {
                 table->vkCmdCopyBufferToImage(commands, staging_buffer, entry.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1U, &region);
                 offset += image->mipByteSize(mip);
             }
-            staging.emplace_back(staging_buffer, staging_memory);
+            batches[batch].staging.emplace_back(staging_buffer, staging_memory);
         }
         return true;
     }
@@ -455,14 +465,12 @@ void ContentImages::setMaxAnisotropy(const float max_anisotropy) noexcept
     impl->max_anisotropy = max_anisotropy >= 1.0F ? max_anisotropy : 1.0F;
 }
 
-void ContentImages::setRetirement(vn::graphics::backend::RetirementQueue* const retirement,
-                                  const vn::graphics::backend::FrameTimeline* const timeline) noexcept
+void ContentImages::setRetirement(ParkFn park)
 {
     if (!impl) {
         return;
     }
-    impl->retirement = retirement;
-    impl->timeline   = timeline;
+    impl->park = std::move(park);
 }
 
 void ContentImages::destroy() noexcept
@@ -472,26 +480,23 @@ void ContentImages::destroy() noexcept
     }
     // A TEARDOWN DESTROYS, IT DOES NOT PARK (see releaseLater): the device has idled its queue before calling this,
     // and a park recorded here would outlive the queue that would have run it.
-    impl->retirement = nullptr;
-    impl->timeline   = nullptr;
+    impl->park = {};
     if (impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
         for (auto& [texture, entry] : impl->textures) {
             (void)texture;
             impl->destroyEntry(entry);
         }
         impl->textures.clear();
-        for (Impl::Entry& entry : impl->retired) {
-            impl->destroyEntry(entry);
+        for (auto& [batch, entry] : impl->batches) {
+            (void)batch;
+            for (Impl::Entry& retired : entry.retired) {
+                impl->destroyEntry(retired);
+            }
+            for (auto& [buffer, memory] : entry.staging) {
+                impl->destroyBuffer(buffer, memory);
+            }
         }
-        impl->retired.clear();
-        for (auto& [buffer, memory] : impl->staging) {
-            impl->destroyBuffer(buffer, memory);
-        }
-        impl->staging.clear();
-        for (auto& [buffer, memory] : impl->fallback_staging) {
-            impl->destroyBuffer(buffer, memory);
-        }
-        impl->fallback_staging.clear();
+        impl->batches.clear();
         for (auto& [sampler, handle] : impl->samplers) {
             (void)sampler;
             if (handle != VK_NULL_HANDLE) {
@@ -561,45 +566,59 @@ bool ContentImages::releaseTexture(const vn::graphics::Texture& texture)
     return true;
 }
 
-void ContentImages::releaseFrame() noexcept
+void ContentImages::releaseFrame(const BatchId batch) noexcept
 {
     if (!impl || impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
         return;
     }
-    for (Impl::Entry& entry : impl->retired) {
-        impl->destroyEntry(entry);
+    const auto found = impl->batches.find(batch);
+    if (found == impl->batches.end()) {
+        return;
     }
-    impl->retired.clear();
-    // The frame's command buffer has completed (the device waited on its fence), so the copies it recorded are done
-    // and the buffers they read may go - the same release the prepare path performs right after ITS fence wait.
-    releaseUploadStaging();
+    // THE STAGING BUFFERS MAY GO NOW: only THIS driver's command buffer named them, and its fence has been waited.
+    for (auto& [buffer, memory] : found->second.staging) {
+        impl->destroyBuffer(buffer, memory);
+    }
+    // THE REPLACED IMAGES ARE PARKED, NOT DESTROYED (see releaseLater): another driver's frame may have resolved the
+    // view this driver replaced and still be recording, so only the device's watermark proves nobody can sample them.
+    for (Impl::Entry& entry : found->second.retired) {
+        Impl::Entry doomed = std::move(entry);
+        impl->releaseLater([target = impl.get(), entry = std::move(doomed)]() mutable {
+            target->destroyEntry(entry);
+        });
+    }
+    impl->batches.erase(found);
 }
 
-void ContentImages::releaseUploadStaging() noexcept
+void ContentImages::releaseUploadStaging(const BatchId batch) noexcept
 {
     if (!impl || impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
         return;
     }
-    for (auto& [buffer, memory] : impl->staging) {
+    const auto found = impl->batches.find(batch);
+    if (found == impl->batches.end()) {
+        return;
+    }
+    for (auto& [buffer, memory] : found->second.staging) {
         impl->destroyBuffer(buffer, memory);
     }
-    impl->staging.clear();
-    for (auto& [buffer, memory] : impl->fallback_staging) {
-        impl->destroyBuffer(buffer, memory);
-    }
-    impl->fallback_staging.clear();
+    found->second.staging.clear();
 }
 
-bool ContentImages::hasPendingUploads() const noexcept
+bool ContentImages::hasPendingUploads(const BatchId batch) const noexcept
 {
     if (!impl) {
         return false;
     }
     // THE STAGING BUFFERS ARE THE LEDGER: they exist from "a copy was recorded" until "that copy completed".
-    return !impl->staging.empty() || !impl->fallback_staging.empty();
+    const auto found = impl->batches.find(batch);
+    return found != impl->batches.end() && !found->second.staging.empty();
 }
 
-VkImageView ContentImages::viewFor(const vn::graphics::Texture& texture, const VkCommandBuffer commands, vn::String* why)
+VkImageView ContentImages::viewFor(const vn::graphics::Texture& texture,
+                                   const VkCommandBuffer         commands,
+                                   const BatchId                 batch,
+                                   vn::String*                   why)
 {
     if (!impl || impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
         return VK_NULL_HANDLE;
@@ -633,7 +652,7 @@ VkImageView ContentImages::viewFor(const vn::graphics::Texture& texture, const V
 
     // The image starts UNDEFINED; a fresh entry is uploaded whole, while a REVISION replacement is a new image (the
     // old one is retired below), so both take the same path.
-    if (!impl->recordUpload(texture, entry, commands, why)) {
+    if (!impl->recordUpload(texture, entry, commands, batch, why)) {
         impl->destroyEntry(entry);
         return VK_NULL_HANDLE;
     }
@@ -667,7 +686,7 @@ VkImageView ContentImages::viewFor(const vn::graphics::Texture& texture, const V
     impl->bytes_total += entry.bytes;
     if (found != impl->textures.end()) {
         impl->bytes_total -= found->second.bytes;
-        impl->retired.push_back(std::move(found->second));
+        impl->batches[batch].retired.push_back(std::move(found->second));
         found->second = std::move(entry);
     }
     else {
@@ -717,7 +736,7 @@ VkSampler ContentImages::samplerFor(const vn::graphics::Sampler& sampler)
     return handle;
 }
 
-bool ContentImages::ensureFallback(const VkCommandBuffer commands, vn::String* why)
+bool ContentImages::ensureFallback(const VkCommandBuffer commands, const BatchId batch, vn::String* why)
 {
     if (!impl || impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
         return false;
@@ -831,7 +850,7 @@ bool ContentImages::ensureFallback(const VkCommandBuffer commands, vn::String* w
                                       nullptr,
                                       1U,
                                       &to_sampled);
-    impl->fallback_staging.emplace_back(staging_buffer, staging_memory);
+            impl->batches[batch].staging.emplace_back(staging_buffer, staging_memory);
 
     VkImageViewCreateInfo view{};
     view.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;

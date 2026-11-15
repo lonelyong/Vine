@@ -93,6 +93,8 @@ miss"两处协调。
   `resolveTextures` 把结果**按值**交给会话（`CommandPlan` / `ResolvedTextures`），纹理上传也在帧首录进帧命令缓冲；
   `record` / `recordScreen` 只读这些值。一整帧的获取数固定为 **4**（帧首 1 + 帧首/帧尾数簿各 1 + `endFrame` 1），
   **不随 draw 数增长**（`VkFrameHeadTest`：1 条 vs 6 条命令同数；变异成逐 draw 取锁后 6 → 10，红）。
+- **记录也按驱动者归属（S6c-2a）**：纹理上传的 staging 与被替换的图像按 `ContentImages::BatchId`（= `clock_window + 1`）
+  分组，帧尾只释放**自己**那一批；被替换的图像本身 park 到水位——另一个驱动者的在飞帧可能还拿着旧 view。
 - **管线是例外，但它本来就在 miss 上**：管线键含状态（拓扑 / 混合 / 深度），状态是每命令解析的，
   帧首算不出来——但管线表只在**创建**时写，创建本身就是 ms 级 miss，取一次独占锁不影响结论。
 
@@ -148,8 +150,11 @@ Resident ──releaseContent──▶ Retiring(epoch) ──设备水位 ≥ ep
   `308` 的契约文本**已经写好了**（"a device that retires asynchronously parks the free until every session
   is past it"）——本文只是把 vk 变成那个设备。
 - **线程**：`DeviceClock` 与 `RetirementQueue` 今天都写着"NOT thread-safe：设备由一条线程驱动"。两个会话
-  之后它们会被两条线程碰，所以它们各自要**一把小锁**（只在帧首/帧尾各取一次，`P4`）。
-
+  之后它们会被两条线程碰，所以它们各自要**一把小锁**（只在帧首/帧尾各取一次，`P4`）。- **已落地（S6c-2a）的取舍**：小锁放在**设备**（`Impl::clock_mutex`），不放进两个 SDK 值类型：参考后端（vsg）是单线程，
+  给它加锁是没有消费者的机制（`G8`）；两个类型的契约改成“调用方负责串行，多线程设备自己提供锁”。所有拿
+  `clock.timeline()` 引用的地方都在锁内，引用不离开临界区。
+- **多开帧（S6c-2a）**：`FrameTimeline` 从“一个开着的帧槽”改成“每个驱动者一个”：`begin()` 每次铸造新号，
+  `submitted`/`abandoned` 按 token 关闭。否则第二个驱动者会拿到第一个的 token，两帧在水位比较里塌成一帧。
 ### 2.7 读回是设备的动词，不是会话的（`G4` / `G6`）
 
 - **问题**：今天读回借的是帧的 `command_pool` + `completion` 栅栏（ADR "挡路的事实"第 2 条）。会话化之后
@@ -488,8 +493,8 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 | T7 | 交替画不同目标 + 穿插读回：各读各的最新完成帧 | `test_vk` 新用例 |
 | T8 | 两会话不同默认程序：各画各的 | `test_vk` 新用例 + 变异（共用单槽 ⇒ 红） |
 | T9 | 两会话下 `BackendParityTest` 逐字节对拍不变 | `test_vsg` |
-| T10 | 两会话各一条线程各 N 帧：两张图各自正确，重入被拒绝 | `test_vk` 的 `ConcurrentFrameTest`
-  （今天的两线程一设备）演化成两线程两会话；T47 的"同线程重入被拒"断言保留 |
+| T10 | 两会话各一条线程各 N 帧：两张图各自正确，重入被拒绝；**帧体时间上真的重叠**（一帧被 sink 停住时另一帧整帧完成） | `VkMultiSessionTest.TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`（各持一张自己的贴图）、
+  `VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`（变异回独占闸 ⇒ 红）；T47 的“同线程重入被拒”断言保留 |
 | T11 | 数据竞争有工具证据 | `scripts/tsan_check.sh`（需要 `build-tsan`，见 §9.2） |
 | T12 | 文档与代码一致 | `python3 scripts/check_ai_docs.py --strict`、`python3 scripts/check_design_docs.py` |
 
@@ -536,8 +541,15 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   预热走与帧首相同的 `ContentCaches::planCommand`）。**记录路径不取锁、不碰缓存条目**；instance stream 换代与失败的
   geometry 子树改 **park** 到水位，所以帧首解析的值整帧有效。观察点：`contentCacheCounters().cache_lock_acquisitions`
   （整帧固定 4，不随 draw 数增长）。`test_vk` **128/128**（ASan 门禁 PASS），变异（记录路径改回逐 draw 取锁）⇒ 6 → 10 红。
-- **未做**：`T48` 的 **S6c-2**（真并行：去帧体锁 / 条目活到水位 / R6 非阻塞释放 / 目标 map 与图像 staging 按帧归属 /
-  `ResidenceTable` 接 `ensureGeometry` / T6·T8 并行证据）与 S7–S9（读回独立、vsg 的 F9、F10 收口 + TSan）。
+- **已落地**：`T48` 的 **S6c-2a（帧体真并行）**——体闸改成 `std::shared_mutex`：帧体取 SHARED（两驱动者同时记录/提交），
+  出窗口的帧与所有宿主动词取 EXCLUSIVE（可能等帧，但不再竞争）。为此：`FrameTimeline` 支持多开帧（开帧时铸造号，
+  `submitted`/`abandoned` 按 token 关闭；两驱动者不再拿到同一个号）；`DeviceClock`/`RetirementQueue` 仍标“非线程安全”，
+  由设备的 `clock_mutex` 串行（P4，参考后端单线程不需要它）；`MemoryAllocator`、目标 map、报告 sink、每会话默认程序、
+  表面列表各一把小锁；采样目标（screen 源与 pass 输入）也取目标 lease；纹理上传/替换图像按驱动者 batch 归属（替换图像
+  park 到水位）。确定性别据：`VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame` 用诊断 sink 停住一帧，
+  另一驱动者的帧必须整帧完成；变异回独占闸 ⇒ 红。`test_vk` **129/129**（ASan PASS）、`test_vsg` 557、`test_graphics` 587。
+- **未做**：`T48` 的 **S6c-2b**（R6：释放不等帧——`releaseContent`/`releaseRenderTarget` 脱离体闸，目标图像 `shared_ptr` +
+  水位 park，离屏 staging 及时回收，T6 证据）与 S7–S9。
 - **一处更正**：ADR 说"vsg 更接近"，准确说法是"vsg 的**窗口**会话已就位，**帧驱动者**仍是设备级单例"
   （§2.1）。这不改变结论，只改变迁移表的分工。
 
@@ -587,9 +599,16 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 | S6c-1 | **已落地 2026-11-15**：记录路径零锁（`record`/`recordScreen` 不调 `planCommand`，不碰 `images()`）；`ContentDraw`
   只剩记录职责，计划由帧首/预热统一解析；`test_vk` **128/128**（含 ASan），变异（记录路径变回逐 draw 取锁）⇒ 整帧获取数
   6 → 10，`VkFrameHeadTest` 红 | T3 | 大 |
-| S6c-2 | **真并行**：去掉帧体锁；驻留条目活到水位（`shared_ptr`/引用计数或开放帧持有水位）；`releaseContent` 记下每个会话的
-  submitted（R6：可在别人 frame 时调用且不阻塞到它结束）；`ResidenceTable` 接进 `ensureGeometry`；目标 map 快照与图像
-  staging 按帧归属；T6/T8 的并行证据 | T6/T8/T10 | 大 |
+| S6c-2a | **真并行（帧体）**：`shared_mutex` 体闸（帧 SHARED、宿主动词 EXCLUSIVE）、窗口帧独占、多开帧 token、
+  clock/queue/allocator/target map/sink 各自的小锁、每驱动者纹理 batch、替换图像 park、采样目标也 claim | T10 的并行证据 | 大 |
+| S6c-2a | **已落地 2026-11-16**：两帧体**时间上重叠**（`VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`
+  用诊断 sink 把一个帧体停住，另一驱动者的帧必须整帧跑完；变异回独占闸 ⇒ 5 s 超时后红）。`FrameTimeline` 支持多开帧
+  （开帧时铸造号，两驱动者不再共用 token）；`DeviceClock`/`RetirementQueue` 由设备的 `clock_mutex` 串行（P4）；
+  分配器、目标 map、报告 sink 各一把小锁；每驱动者一个纹理 batch；被替换的纹理图像 park。`test_vk` **129/129**
+  （ASan 门禁 PASS）、`test_vsg` **557**、`test_graphics` **587** | T10 | 大 |
+| S6c-2b | **释放不再等帧（R6）**：`releaseContent` / `releaseRenderTarget` 不再取体闸；目标图像改 `shared_ptr` + 水位 park；
+  离屏帧的 staging 及时回收；T6 证据 | T6 | 中 |
+| S6c-2b | 未做。今天的约定是诚实的“释放可以等帧”：它取体闸 EXCLUSIVE，因此在飞帧全部结束后才返回 | T6 | 中 |
 | S7 | F7 读回独立化 | T7 | 低 |
 | S8 | vsg 的 F9（搬收集暂存 + 缓存加锁/快照） | T9 | 中 |
 | S9 | F10 收口 + TSan + 文档 | T11、T12 | 低 |
@@ -597,9 +616,10 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 **S6 是唯一改变并发语义的一步**：在它之前，两个会话只存在于单元用例里；S6a/S6b 之后，两个引擎各有自己的驱动者、
 可以同时**调用**，但设备把**帧体**串行化（缓存/分配/队列的锁与帧首快照是 S6c）。所以 S1–S5 的验收标准都是"单会话行为不变"；
 S6b 由 T8/T10 承担"两个驱动者各自正确"的证据，S6c 才承担"时间上重叠"的证据。
-**S6c 又分两半（D8）**：S6c-1（已落地）交付帧首快照与锁——记录路径不再碰缓存，替换对象一律 park，所以“帧首解析的值
-在整帧内有效”成为机制而不是假设；它仍**不**声称时间重叠。S6c-2 才是把帧体锁拿掉、把条目寿命与释放接到水位上、
-把目标 map 与图像 staging 按帧归属——那些每一条都是“两个帧体同时在飞”的直接前提，没做到就不该先删锁。
+**S6c 又分三步（D8）**：S6c-1（已落地）交付帧首快照与锁——记录路径不再碰缓存，替换对象一律 park；S6c-2a（已落地）
+把体闸改成 `shared_mutex`（帧 SHARED、宿主动词 EXCLUSIVE）并补齐两帧同时跑所需的每一把小锁与每个驱动者的纹
+理 batch，于是“时间上重叠”有了确定性证据；S6c-2b 才把 `releaseContent` / `releaseRenderTarget` 从体闸上拿下来
+（R6：可在别人 frame 时调用且不阻塞到它结束）——今天它们**会等**在飞帧，这是写进契约的限制，不是隐含行为。
 **S1 已落地（与历史估计的一处差异）**：释放是**两件事**，而不是一件。缓存表**立刻**忘掉条目（所以`ResidencyLedger`、`progress().streams_live` 的数字照旧立即下降，下一帧重传），而 GPU 对象在
 集合队列里等水位——一个 slot 时是 `submitted + 2`，即**最多两帧后**才销毁。新的观察点是
 `Device::retirementNumbers()`（`pending` / `released` / `device_waits`），而不是驻留账。两帧不是 bug：它是

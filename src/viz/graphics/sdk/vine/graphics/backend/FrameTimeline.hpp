@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
@@ -22,9 +23,13 @@
  *   RecordAndSubmitTask::start()`), so "the slot that could still name this object has been reused" IS the completion
  *   evidence. The executor reports that by calling completeUpTo(); an executor that stops waiting on slot fences
  *   loses the evidence and must fall back to a counted device wait instead of assuming.
- * - The slot count is a property of the viewer (`numBuffers`, 3 in this vsg) and is not part of the public API, so it
+ * - THE SLOT COUNT IS A PROPERTY OF THE VIEWER (`numBuffers`, 3 in this vsg) and is not part of the public API, so it
  *   is probed once at session start and passed in here - `retirePoint()` is why the number is needed: a parked object
  *   must outlive the slot that recorded it, hence slots + 1.
+ * - SEVERAL FRAMES MAY BE OPEN AT ONCE (one per driver). A device that hands out more than one frame driver opens one
+ *   frame per driver, and the numbers are MINTED AT OPENING (not derived from the submission count) so two open frames
+ *   never share a number. `submitted` / `abandoned` close the token they name; the submission watermark is the highest
+ *   number actually handed to a queue, which is what a park is dated against.
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
@@ -44,24 +49,28 @@ struct FrameToken {
  */
 class VN_GRAPHICS_API FrameTimeline {
   public:
-    /** @brief Opens a frame and mints its token.
+    /**
+     * @brief Opens a frame and mints its token.
      *
      * @details
-     * - Called from executeFrame(). Opening a frame while one is already open is a caller bug rather than a condition
-     *   to absorb, so the open frame is kept and its token returned again - the caller gets a usable token either
-     *   way.
+     * - EVERY CALL MINTS A NEW NUMBER, so two drivers that open a frame at the same time get two tokens rather than
+     *   one. Numbers are strictly increasing, never reused, and independent of how many frames were submitted.
+     * - A caller that opens a frame and never submits or abandons it keeps it OPEN, which is exactly what holds the
+     *   completion watermark back (see DeviceClock): a frame that is still being built may still name parked objects.
      *
-     * @return The token of the frame now open.
+     * @return The token of the frame now open. It stays open until `submitted` or `abandoned` closes it.
      */
     [[nodiscard]] FrameToken begin() noexcept;
 
-    /** @brief Marks the open frame as submitted.
+    /**
+     * @brief Marks the frame @p token names as submitted: the highest such number becomes the submitted watermark.
      *
      * @details
-     * - Called from present() after the queue submission returned. A token that does not name the open frame is
-     *   ignored: the timeline never moves backwards on behalf of a stale caller.
+     * - ONE TOKEN PER OPEN FRAME (see `begin`): committing one driver's frame leaves another driver's open frame open,
+     *   and only a token this timeline opened is accepted - a stale or foreign one is ignored, so the timeline never
+     *   moves backwards on behalf of a stale caller.
      *
-     * @param token Token returned by begin().
+     * @param token Token returned by begin() (a stale one is ignored).
      */
     void submitted(FrameToken token) noexcept;
 
@@ -88,7 +97,7 @@ class VN_GRAPHICS_API FrameTimeline {
      */
     void completeUpTo(std::uint64_t frame) noexcept;
 
-    /** @brief Gets the token of the open frame, or an empty token when no frame is open. */
+    /** @brief Gets the most recently opened frame that is still open, or an empty token when none is. */
     [[nodiscard]] FrameToken current() const noexcept;
 
     /** @brief Gets how many frames have been submitted. */
@@ -97,10 +106,10 @@ class VN_GRAPHICS_API FrameTimeline {
     /** @brief Gets how many frames are provably complete. */
     [[nodiscard]] std::uint64_t completedFrame() const noexcept;
 
-    /** @brief Gets whether a frame is open (between executeFrame() and present()). */
+    /** @brief Gets whether at least one frame is open (between begin() and submitted()/abandoned()). */
     [[nodiscard]] bool hasOpenFrame() const noexcept;
 
-    /** @brief Gets whether a token names the open frame. */
+    /** @brief Gets whether @p token names a frame that is still open. */
     [[nodiscard]] bool isOpenFrame(FrameToken token) const noexcept;
 
     /** @brief Computes the frame at which an object parked now may be released.
@@ -116,9 +125,10 @@ class VN_GRAPHICS_API FrameTimeline {
 
 
   private:
-    std::uint64_t submitted_{ 0 }; // Frames submitted.
-    std::uint64_t completed_{ 0 }; // Frames provably complete (monotonic).
-    FrameToken    open_{};         // The frame between begin() and submitted().
+    std::uint64_t              submitted_{ 0 }; // Frames submitted (the highest frame number handed to a queue).
+    std::uint64_t              completed_{ 0 }; // Frames provably complete (monotonic).
+    std::uint64_t              minted_{ 0 };    // The highest number begin() ever handed out.
+    std::vector<std::uint64_t> open_{};         // The numbers opened and not yet submitted/abandoned.
 };
 
 VN_GRAPHICSBACKEND_NS_END

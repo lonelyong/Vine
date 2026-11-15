@@ -1,6 +1,7 @@
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
 
 #include <algorithm>
+#include <mutex>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -108,6 +109,11 @@ constexpr VkDeviceSize kBlockAlignment = 64U * 1024U;
 } // namespace
 
 struct MemoryAllocator::Impl {
+    ///\n    /// THE POOL'S LOCK. Every session draws its resources from this one pool, and two frame drivers grow their
+    /// rings and build their targets on two threads (S6c-2): a block list mutated by one while the other walks it is
+    /// the coarsest possible race. It is never held across a frame, only across one allocation or release.
+    mutable std::mutex lock{};
+
     /**
      * @brief One contiguous stretch of a block: either handed to a resource (live) or available.
      *
@@ -149,6 +155,30 @@ struct MemoryAllocator::Impl {
     std::uint32_t                     next_block_id{ 1 };
 
     /// The numbers stats() answers, kept live rather than recomputed (release is the hot path, not this).
+    /// @brief Gets the pool's numbers WITH the lock held (the caller owns it; see @c lock).
+    [[nodiscard]] MemoryStats statsLocked() const noexcept
+    {
+        // THE ROOM NUMBERS ARE WALKED, NOT MAINTAINED: `stats` is asked by a report or a test, never per allocation, and
+        // keeping a running "largest free run" correct across every split and merge would put bookkeeping on the hot
+        // path for a number nobody reads there.
+        MemoryStats out = numbers;
+        for (const auto& block : blocks) {
+            for (const Range& range : block->ranges) {
+                if (range.live) {
+                    continue;
+                }
+                out.free_bytes += range.size;
+                out.largest_free_run = std::max(out.largest_free_run, range.size);
+            }
+        }
+        return out;
+    }
+
+    /// @brief Answers whether the pool can allocate WITH the lock held (the caller owns it).
+    [[nodiscard]] bool openedLocked() const noexcept
+    {
+        return table != nullptr && device != VK_NULL_HANDLE;
+    }
     MemoryStats numbers{};
 
     /// Where every allocation's outcome goes (see setFailureSink); empty keeps the classification in the return value.
@@ -308,6 +338,7 @@ bool MemoryAllocator::open(const VolkDeviceTable&                  table,
                            const VkDeviceSize                      granularity,
                            const MemoryBlockSizes                  block_sizes)
 {
+    const std::lock_guard<std::mutex> held(impl->lock);
     if (impl->table != nullptr) {
         return false; // a second open would orphan the first session's blocks
     }
@@ -325,6 +356,7 @@ bool MemoryAllocator::open(const VolkDeviceTable&                  table,
 
 void MemoryAllocator::close() noexcept
 {
+    const std::lock_guard<std::mutex> held(impl->lock);
     if (impl->table != nullptr) {
         for (const auto& block : impl->blocks) {
             if (block->mapped != nullptr) {
@@ -348,16 +380,19 @@ void MemoryAllocator::close() noexcept
 
 bool MemoryAllocator::opened() const noexcept
 {
-    return impl->table != nullptr && impl->device != VK_NULL_HANDLE;
+    const std::lock_guard<std::mutex> held(impl->lock);
+    return impl->openedLocked();
 }
 
 void MemoryAllocator::setFailureSink(MemoryFailureSink sink)
 {
+    const std::lock_guard<std::mutex> held(impl->lock);
     impl->sink = std::move(sink);
 }
 
 void MemoryAllocator::setBlockCreator(MemoryBlockCreator creator)
 {
+    const std::lock_guard<std::mutex> held(impl->lock);
     impl->creator = std::move(creator);
 }
 
@@ -366,6 +401,7 @@ MemorySlice MemoryAllocator::allocate(const VkMemoryRequirements& requirements,
                                       const MemoryKind            kind,
                                       MemoryRefusal*              refusal_out)
 {
+    const std::lock_guard<std::mutex> held(impl->lock);
     // ONE REPORT PER ALLOCATION, BUILT HERE SO BOTH ANSWERS CARRY THE SAME FACTS (see MemoryRefusalReport): what was
     // asked, which memory type served it, and the pool's numbers at this moment. It is a stack value - nothing is
     // allocated to report - and nothing is reported unless a sink is installed.
@@ -380,7 +416,7 @@ MemorySlice MemoryAllocator::allocate(const VkMemoryRequirements& requirements,
         // THE ROOM NUMBERS ARE WALKED, so they are filled only when something was REFUSED: a success path pays the
         // running counters it already has, and the refusal - the one case a host reads - gets the free/largest-run
         // pair that makes "out of memory" actionable (see MemoryStats).
-        report.stats         = refusal == MemoryRefusal::Ok ? impl->numbers : stats();
+        report.stats         = refusal == MemoryRefusal::Ok ? impl->numbers : impl->statsLocked();
         if (refusal_out != nullptr) {
             *refusal_out = refusal;
         }
@@ -397,7 +433,7 @@ MemorySlice MemoryAllocator::allocate(const VkMemoryRequirements& requirements,
         return slice;
     };
 
-    if (!opened()) {
+    if (!impl->openedLocked()) {
         // A WIRING DEFECT, NOT A DEVICE FACT: saying "out of memory" here would send a host looking for memory to free.
         return refuse(MemoryRefusal::NotOpen, VK_SUCCESS);
     }
@@ -454,6 +490,7 @@ MemorySlice MemoryAllocator::allocate(const VkMemoryRequirements& requirements,
 
 void MemoryAllocator::release(MemorySlice& slice) noexcept
 {
+    const std::lock_guard<std::mutex> held(impl->lock);
     if (!slice.valid() || impl->table == nullptr) {
         slice = MemorySlice{};
         return;
@@ -521,6 +558,7 @@ void MemoryAllocator::release(MemorySlice& slice) noexcept
 
 void* MemoryAllocator::map(const MemorySlice& slice) noexcept
 {
+    const std::lock_guard<std::mutex> held(impl->lock);
     if (!slice.valid() || impl->table == nullptr) {
         return nullptr;
     }
@@ -548,20 +586,8 @@ void* MemoryAllocator::map(const MemorySlice& slice) noexcept
 
 MemoryStats MemoryAllocator::stats() const noexcept
 {
-    // THE ROOM NUMBERS ARE WALKED, NOT MAINTAINED: `stats` is asked by a report or a test, never per allocation, and
-    // keeping a running "largest free run" correct across every split and merge would put bookkeeping on the hot path
-    // for a number nobody reads there.
-    MemoryStats numbers = impl->numbers;
-    for (const auto& block : impl->blocks) {
-        for (const Impl::Range& range : block->ranges) {
-            if (range.live) {
-                continue;
-            }
-            numbers.free_bytes += range.size;
-            numbers.largest_free_run = std::max(numbers.largest_free_run, range.size);
-        }
-    }
-    return numbers;
+    const std::lock_guard<std::mutex> held(impl->lock);
+    return impl->statsLocked();
 }
 
 VN_BACKEND_VK_NS_END

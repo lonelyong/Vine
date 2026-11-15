@@ -13,6 +13,8 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <thread>
@@ -24,6 +26,7 @@
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/Geometry.hpp>
+#include <vine/graphics/Material.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
@@ -31,6 +34,9 @@
 #include <vine/graphics/RenderState.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
+#include <vine/graphics/Texture.hpp>
+#include <vine/imaging/Image.hpp>
+#include <vine/imaging/PixelFormat.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
 #include <vine/backend_vk/internal/Device.hpp>
@@ -50,6 +56,7 @@ using vn::graphics::DevicePresentation;
 using vn::graphics::DrawDescription;
 using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
+using vn::graphics::Material;
 using vn::graphics::PassDraw;
 using vn::graphics::Primitive;
 using vn::graphics::RenderBackendRegistry;
@@ -59,6 +66,8 @@ using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
+using vn::graphics::Texture2D;
+using vn::graphics::TextureSlot;
 using vn::graphics::Topology;
 
 constexpr int kTargetSize = 32;
@@ -163,6 +172,41 @@ void main()
     return draw;
 }
 
+/// @brief One scene draw whose command names @p material (and no program: the driver's default shades it).
+[[nodiscard]] DrawDescription materialDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<Material>& material)
+{
+    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    command.material             = material;
+    command.material_description = material->description();
+    commands->push_back(std::move(command));
+
+    DrawDescription draw;
+    draw.kind     = DrawDescription::Kind::Scene;
+    draw.camera   = identityCamera();
+    draw.commands = commands;
+    return draw;
+}
+
+/// @brief A material with a complete 1x1 base-colour texture: its first frame records an upload, which is the point.
+[[nodiscard]] intrusive_ptr<Material> texturedMaterial(const char8_t* name)
+{
+    auto material = intrusive_ptr<Material>(new Material());
+    material->setName(String(name));
+
+    auto image = intrusive_ptr<vn::imaging::Image>(new vn::imaging::Image(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+    const std::span<std::byte> texel = image->mipData(0);
+    texel[0] = std::byte{ 255U };
+    texel[1] = std::byte{ 0U };
+    texel[2] = std::byte{ 0U };
+    texel[3] = std::byte{ 255U };
+
+    auto texture = intrusive_ptr<Texture2D>(new Texture2D(1, 1, vn::imaging::PixelFormat::Rgba8Unorm));
+    texture->setImage(image);
+    material->setTexture(TextureSlot::BaseColor, texture);
+    return material;
+}
+
 /// @brief A frame with ONE pass that clears @p target and issues @p draw.
 [[nodiscard]] FrameDescription drawingFrame(RenderTarget* target, DrawDescription draw)
 {
@@ -260,15 +304,20 @@ TEST(VkMultiSessionTest, TwoDriversOnTwoThreadsEachKeepTheirOwnPicture)
     const intrusive_ptr<RenderTarget> red_target   = makeTarget(u8"thread_red");
     const intrusive_ptr<RenderTarget> green_target = makeTarget(u8"thread_green");
 
+    // EACH DRIVER'S OWN TEXTURE: its first frame records a copy and its staging belongs to that driver's batch
+    // (ContentImages::BatchId), so the frame that finishes first must not free the other's staging (S6c-2).
+    const intrusive_ptr<Material> red_material   = texturedMaterial(u8"thread_red_texture");
+    const intrusive_ptr<Material> green_material = texturedMaterial(u8"thread_green_texture");
+
     constexpr int kFrames = 6;
-    std::thread   red_driver([&backend, &geometry, &red_target]() {
+    std::thread   red_driver([&backend, &geometry, &red_target, &red_material]() {
         for (int frame = 0; frame < kFrames; ++frame) {
-            (void)backend->executeFrame(drawingFrame(red_target.get(), programlessDraw(geometry)), nullptr);
+            (void)backend->executeFrame(drawingFrame(red_target.get(), materialDraw(geometry, red_material)), nullptr);
         }
     });
-    std::thread green_driver([second, &geometry, &green_target]() {
+    std::thread green_driver([second, &geometry, &green_target, &green_material]() {
         for (int frame = 0; frame < kFrames; ++frame) {
-            (void)second->executeFrame(drawingFrame(green_target.get(), programlessDraw(geometry)), nullptr);
+            (void)second->executeFrame(drawingFrame(green_target.get(), materialDraw(geometry, green_material)), nullptr);
         }
     });
     red_driver.join();
@@ -442,6 +491,94 @@ TEST(VkMultiSessionTest, TheDefaultProgramMayChangeWhileAnotherDriverFrames)
     ASSERT_TRUE(backend->readColorBuffer(own_target.get(), 0, pixels));
     EXPECT_GE(centreOf(pixels)[1], 254) << "the live program switch was lost while the other driver framed";
 
+    device->releaseSession(*second);
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, AFrameBodyDoesNotWaitForAnotherDriversFrame)
+{
+    // THE OBSERVABLE FACT S6c-2 CHANGES: two frame bodies overlap. The proof here is a frame that BLOCKS while another
+    // driver's frame runs to completion - the diagnostic sink is the one place a test can hold a frame still without
+    // holding any device lock. If the device still ran one body at a time, the second frame could not return until
+    // the first was released; the bounded wait below turns that into a failure instead of a hang.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    RenderFrameExecutor* const second = device->createSession();
+    ASSERT_NE(second, nullptr);
+
+    // The SECOND driver shades program-less content; the device's own driver has NO default program, so its
+    // program-less draw is a refusal - and a refusal is what reaches the sink.
+    second->setDefaultContentProgram(greenProgram());
+
+    const intrusive_ptr<Geometry>     geometry      = makeTriangle();
+    const intrusive_ptr<RenderTarget> warm_target   = makeTarget(u8"overlap_warm");
+    const intrusive_ptr<RenderTarget> blocked_target = makeTarget(u8"overlap_blocked");
+
+    // Warm the second driver: its frame then finds its target, its streams and its pipeline, so it allocates nothing
+    // and takes no lock the blocked frame holds.
+    (void)second->executeFrame(drawingFrame(warm_target.get(), programlessDraw(geometry)), nullptr);
+
+    std::atomic<bool> sink_entered{ false };
+    std::atomic<bool> second_finished{ false };
+    std::atomic<bool> second_finished_inside{ false };
+
+    backend->setDiagnosticSink([&](const vn::graphics::RenderDiagnostic& diagnostic) {
+        if (diagnostic.category != vn::graphics::DiagnosticCategory::ContentSkipped) {
+            return;
+        }
+        if (sink_entered.exchange(true)) {
+            return; // only the first refusal blocks
+        }
+        // WAIT, BOUNDED, FOR THE OTHER DRIVER'S FRAME. Five seconds is orders of magnitude more than a frame takes; a
+        // serialised device would spend all of it here and fail the assertion below. THE WITNESS IS SET HERE, while
+        // this frame is still inside its body: "the other frame finished DURING this one", not "at some point".
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (second_finished.load(std::memory_order_acquire)) {
+                second_finished_inside.store(true, std::memory_order_relaxed);
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    RenderFrameExecutor* const first = &device->executor();
+    std::thread blocker([&]() { (void)first->executeFrame(drawingFrame(blocked_target.get(), programlessDraw(geometry)), nullptr); });
+
+    // Wait until the blocking frame is INSIDE its report (bounded, so a device that never reports fails rather than
+    // hangs).
+    const auto enter_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!sink_entered.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < enter_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(sink_entered.load()) << "the blocking frame never reached its report";
+
+    std::thread other([&]() {
+        (void)second->executeFrame(drawingFrame(warm_target.get(), programlessDraw(geometry)), nullptr);
+        // RELEASE THE BLOCKER: the sink records whether this return happened while that frame was still inside.
+        second_finished.store(true, std::memory_order_release);
+    });
+
+    other.join();
+    blocker.join();
+
+    EXPECT_TRUE(second_finished_inside.load()) << "the second driver's frame could only run after the first one ended";
+
+    // AND THE SECOND DRIVER'S PICTURE IS STILL ITS OWN after that overlap.
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(warm_target.get(), 0, pixels));
+    const std::array<int, 4> centre = centreOf(pixels);
+    EXPECT_GE(centre[1], 254) << "the overlapped frame did not draw its program's green";
+    EXPECT_LE(centre[0], 1);
+    EXPECT_LE(centre[2], 1);
+
+    backend->setDiagnosticSink({});
     device->releaseSession(*second);
     backend->shutdown();
 }

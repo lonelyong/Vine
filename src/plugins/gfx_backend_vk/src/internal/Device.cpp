@@ -18,6 +18,7 @@
 // volk is built with VOLK_NO_DEVICE_PROTOTYPES (see third_party/volk/CMakeLists.txt): device-level commands are not
 // declared as free functions, and `VolkDeviceTable` is the supported way to reach them - one table filled per device.
 #include <volk.h>
+#include <shared_mutex>
 
 #include <vine/backend_vk/internal/BarrierPlan.hpp>
 #include <vine/backend_vk/internal/ContentCaches.hpp>
@@ -84,15 +85,19 @@ using vn::graphics::backend::TargetInstance;
  *   this guard only spends the frame.
  * - THE LAST STEP IS THE QUEUE'S: `advance()` runs after the token is closed, so a frame that just proved completion
  *   releases what that proof allows. Running it in the destructor is what puts it on every path.
+ * - ONE HOLD OF THE DEVICE'S CLOCK LOCK (see Impl::clock_mutex): the clock and the queue are single-threaded value
+ *   types, and two drivers end their frames on two threads (S6c-2).
  */
 struct FrameTokenCloser {
     vn::graphics::backend::DeviceClock&     clock;
     vn::graphics::backend::RetirementQueue& retirement;
+    std::mutex&                             clock_mutex;
     vn::graphics::backend::FrameToken       token;
     bool                                    submitted{ false };
 
     ~FrameTokenCloser()
     {
+        const std::lock_guard<std::mutex> held(clock_mutex);
         if (submitted) {
             clock.submitted(token);
         }
@@ -522,6 +527,20 @@ class Device::Session final : public vn::graphics::RenderFrameExecutor
     void destroy() noexcept;
 
     /**
+     * @brief Gets this driver's texture-upload batch: the id the image cache releases when THIS driver's fence passed.
+     *
+     * @details
+     * - ONE BATCH PER DRIVER (`C2`): batch 0 is the warm-up's transfer buffer. A frame must never release another
+     *   driver's staging - its command buffer may still be recording (see ContentImages::BatchId).
+     *
+     * @return `clock_window + 1`, so the first driver's batch is 1 and 0 stays the warm-up's.
+     */
+    [[nodiscard]] ContentImages::BatchId uploadBatch() const noexcept
+    {
+        return static_cast<ContentImages::BatchId>(clock_window) + 1U;
+    }
+
+    /**
      * @brief Makes the clock's query pool hold at least @p needed queries, recreating it when it does not.
      *
      * @details
@@ -555,6 +574,15 @@ class Device::Session final : public vn::graphics::RenderFrameExecutor
     FrameBooks    books{};
     /// The program content without one of its own is drawn with, taken as a VALUE when it was announced.
     vn::graphics::ShaderProgramDescriptionPtr default_program{};
+    /// Guards `default_program`: a host may announce a program while this driver's frame reads it (S6c-2).
+    mutable std::mutex program_mutex{};
+    ///
+    /// THIS DRIVER'S CONTENT EPISODES (see ReportOnce): a frame it ran that could not record or prepare something says
+    /// so once per episode. They are per DRIVER because two drivers' frames may both be in flight - one shared flag
+    /// would let one engine's refusal silence the other's, and would be a data race besides.
+    vn::graphics::ReportOnce content_report{};
+    /// This driver ran a frame with no pass it could serve.
+    vn::graphics::ReportOnce no_targets_report{};
     /// The ONE-FRAME-AT-A-TIME gate: one per driver, which is what will make two of them concurrent (see FrameGate).
     vn::graphics::backend::FrameGate frames{};
     /// The episode of "a frame was started from the thread that already drives one".
@@ -600,10 +628,22 @@ struct Device::Impl {
     /// Every OTHER driver a host borrowed (see Device::createSession); the device owns them too.
     std::vector<std::unique_ptr<Session>> extra_sessions{};
     ///
-    /// ONE FRAME BODY AT A TIME ON THIS DEVICE. Sessions own their machinery, but the caches, the allocator and
-    /// the queue are the device's and are not yet safe to observe from two running frames - so the drivers are
-    /// serialised HERE, at the body, after each driver's own gate has answered re-entry (see the class note).
-    mutable std::mutex frame_mutex{};
+    /// THE DEVICE'S TWO LOCKS, ONE FOR EACH QUESTION.
+    /// - `body_gate` answers "may any frame body run while this verb runs?". FRAME BODIES TAKE IT SHARED, so two
+    ///   drivers record and submit at the same time (S6c-2); the host verbs that cannot overlap a frame - a readback,
+    ///   a target release, a teardown, the diagnostic readers - take it EXCLUSIVE and wait for the frames in flight.
+    ///   `releaseContent` deliberately does not take it: its objects are parked against the watermark (R6).
+    /// - `clock_mutex` serialises the device's completion clock and park queue (P4). Both are single-threaded value
+    ///   types (see DeviceClock / RetirementQueue); a device with two drivers is their lock, and every use of
+    ///   `clock.timeline()` happens inside it - the reference never escapes.
+    mutable std::shared_mutex body_gate{};
+    mutable std::mutex        clock_mutex{};
+    /// One report at a time at the host's sink: frames on two threads both report, and the sink is the host's.
+    mutable std::mutex        report_mutex{};
+    /// One map operation at a time on the built targets: two frame heads may build/snapshot different targets.
+    mutable std::mutex        targets_mutex{};
+    /// One operation at a time on the surface list: a frame resolves its presenter while a host may add one.
+    mutable std::mutex        surfaces_mutex{};
     DeviceDesc      desc{};
     Capabilities    caps{};
     RenderTarget*   target{ nullptr };
@@ -709,8 +749,6 @@ struct Device::Impl {
      * - ONE EPISODE PER CONDITION: two refusals sharing a flag means the first one silences the second for the rest of
      *   the session - the host fixes that wiring and hears nothing about what is actually wrong.
      */
-    vn::graphics::ReportOnce no_targets_report{};
-    vn::graphics::ReportOnce content_report{};
     vn::graphics::ReportOnce size_unknown_report{};
     vn::graphics::ReportOnce samples_report{};
     vn::graphics::ReportOnce samples_depth_report{};
@@ -829,7 +867,6 @@ struct Device::Impl {
     /// frame (or the warm-up) that took it ends. Device-level because a target outlives every session and is
     /// exactly what two of them can contend for.
     TargetClaims target_claims{};
-    bool                                         clock_registered{ false };
     /// Frames in flight on this device today: one, because `executeFrame` submits and waits inside the call.
     static constexpr std::uint32_t               kFramesInFlight = 1U;
 
@@ -848,15 +885,23 @@ struct Device::Impl {
      */
     void releaseLater(std::function<void()> destroy)
     {
-        if (clock_registered && retirement.retire(clock.timeline(), std::move(destroy))) {
-            return;
+        {
+            const std::lock_guard<std::mutex> held(clock_mutex);
+            // A LIVE WINDOW IS THE EVIDENCE'S PREMISE: a queue whose timeline nobody reports cannot date a park. It
+            // is asked HERE rather than kept in a flag, because any number of drivers may come and go (S6c-2).
+            if (clock.windows() != 0 && retirement.retire(clock.timeline(), destroy)) {
+                return;
+            }
         }
         // NO EVIDENCE, SO NO PARKING: the honest answer to "we cannot prove it" is to stop the device (and count it),
         // never to guess a window that would destroy an object a submitted command buffer still names.
         if (device != VK_NULL_HANDLE) {
             (void)device_table.vkDeviceWaitIdle(device);
         }
-        retirement.noteDeviceWait();
+        {
+            const std::lock_guard<std::mutex> held(clock_mutex);
+            retirement.noteDeviceWait();
+        }
         destroy();
     }
 
@@ -866,6 +911,9 @@ struct Device::Impl {
     std::atomic<bool> device_lost{ false };
     /// One report for the loss itself, whatever number of calls saw it afterwards (the session is the episode).
     vn::graphics::ReportOnce device_lost_report{};
+    /// Guards the loss episode: two frames may both see the loss on two threads (S6c-2); the atomic bool says WHETHER,
+    /// this says WHO reports it.
+    mutable std::mutex loss_mutex{};
 
     /// How many nodes a release announcement let go, cumulative (a frame's own number is 0 - see FrameUploads).
     std::uint64_t released_nodes{ 0 };
@@ -914,8 +962,15 @@ struct Device::Impl {
                 continue;
             }
             const RenderTarget& map = *input.target;
-            const auto          images = targets.find(&map);
-            if (images == targets.end() || !images->second.built() || !images->second.hasDepth()) {
+            TargetImages*       map_images = nullptr;
+            {
+                const std::lock_guard<std::mutex> targets_held(targets_mutex);
+                const auto images = targets.find(&map);
+                if (images != targets.end() && images->second.built() && images->second.hasDepth()) {
+                    map_images = &images->second;
+                }
+            }
+            if (map_images == nullptr) {
                 continue;
             }
             const vn::raw_ptr<const vn::graphics::Light> light = map.shadowOf();
@@ -939,7 +994,7 @@ struct Device::Impl {
             // THE MAP IS ABOUT TO BE READ: one transition, from the attachment layout the producer left it in (or
             // UNDEFINED when nobody wrote it yet) to the sampled one. IT IS THE PICTURE that moves - on a
             // multisampled map that is the resolved depth image, which is also the only one a shader may sample.
-            TargetImages& sampled = images->second;
+            TargetImages& sampled = *map_images;
             if (!sampled.depth_sampled) {
                 const ImageState from = stateOf(sampled.fresh ? ImageLayout::Undefined : ImageLayout::DepthAttachment);
                 const VkImageMemoryBarrier barrier =
@@ -999,6 +1054,7 @@ void Device::Session::setDefaultContentProgram(vn::intrusive_ptr<const vn::graph
 {
     // THE VALUE, NOT THE OBJECT: what a frame records is the text that was current when the host announced it, so a
     // later edit of the program cannot change a frame that is already described.
+    const std::lock_guard<std::mutex> program_held(program_mutex);
     default_program = program != nullptr ? program->description() : vn::graphics::ShaderProgramDescriptionPtr{};
 }
 
@@ -1030,6 +1086,7 @@ Device::Session::CreateRefusal Device::Session::create() noexcept
     // release against the watermark it feeds. The clock starts a joining window AT the current watermark, which is
     // right for a driver created with the device: it proves nothing about frames it never drove.
     if (!clock_window_live) {
+        const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
         clock_window      = owner.clock.addWindow();
         owner.clock.setWindowSlots(clock_window, Impl::kFramesInFlight);
         clock_window_live = true;
@@ -1057,9 +1114,9 @@ void Device::Session::destroy() noexcept
     // THE WINDOW LEAVES FIRST: a device clock that still lists this driver keeps the device watermark where it is, and
     // a queue that waits for evidence from a driver that no longer exists would never release anything.
     if (clock_window_live) {
+        const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
         owner.clock.removeWindow(clock_window);
-        clock_window_live      = false;
-        owner.clock_registered = false;
+        clock_window_live = false;
     }
     if (owner.device != VK_NULL_HANDLE) {
         if (completion != VK_NULL_HANDLE) {
@@ -1141,9 +1198,19 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
         return PresentOutcome::Refused;
     }
 
-    // THE DEVICE RUNS ONE FRAME BODY AT A TIME (see Impl::frame_mutex): the caches, the allocator and the queue
-    // are shared, so a second driver waits HERE - after its own gate has already answered re-entry.
-    const std::lock_guard<std::mutex> device_body(owner.frame_mutex);
+    // FRAME BODIES OVERLAP (see Impl::body_gate): a frame takes the gate SHARED, so another driver's frame may record
+    // and submit at the same time - everything a frame touches is either its own (scratch, command pool, fence) or
+    // under its own lock (the caches, the allocator, the target map). A frame that PRESENTS is the exception: the
+    // swapchain, its semaphores and the window's report episodes are one device resource, so a window frame takes the
+    // gate EXCLUSIVELY and is serialised with every other frame.
+    std::shared_lock<std::shared_mutex> shared_body(owner.body_gate, std::defer_lock);
+    std::unique_lock<std::shared_mutex> window_body(owner.body_gate, std::defer_lock);
+    if (present_to != nullptr) {
+        window_body.lock();
+    }
+    else {
+        shared_body.lock();
+    }
 
     if (!(owner.device != VK_NULL_HANDLE && !owner.device_lost)) {
         if (owner.device_lost) {
@@ -1161,8 +1228,12 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
 
     // THE FRAME'S BOOKS OPEN HERE AND CLOSE ON EVERY EXIT (see closeFrameBooks): the report always describes the
     // frame that just ended - an empty one included - and the upload numbers are this frame's own delta.
-    const vn::graphics::backend::FrameToken frame_token = owner.clock.begin();
-    FrameTokenCloser                        frame_close{ owner.clock, owner.retirement, frame_token };
+    vn::graphics::backend::FrameToken frame_token{};
+    {
+        const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
+        frame_token = owner.clock.begin();
+    }
+    FrameTokenCloser                        frame_close{ owner.clock, owner.retirement, owner.clock_mutex, frame_token };
     const ContentTotals    before = owner.contentNumbers();
     vn::graphics::FrameCounters   counters{};
     struct BooksCloser {
@@ -1181,6 +1252,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
     WindowTarget* window = nullptr;
     if (present_to != nullptr) {
         auto* candidate = dynamic_cast<WindowTarget*>(present_to);
+        const std::lock_guard<std::mutex> surfaces_held(owner.surfaces_mutex);
         for (const auto& surface : owner.surfaces) {
             if (surface.get() == candidate) {
                 window = candidate;
@@ -1213,6 +1285,40 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
     // Whether a pass was dropped because a description this device cannot build was named (a sample count, say). The
     // refusal has already said WHY, so the generic "nothing I can run" sentence below would be the same fact twice.
     bool refused_pass = false;
+    // A PASS THAT SAMPLES A TARGET READS ITS IMAGES, and a target's "sampled vs attachment" layout is per-frame state:
+    // the sampler takes the same lease the drawer does (R5's other half). A conflict skips THIS pass and says so once
+    // per (target, episode), exactly like a drawing conflict.
+    const auto claim_sampled = [&](const RenderTarget* sampled) -> bool {
+        if (sampled == nullptr || target_lease.claim(sampled)) {
+            return true;
+        }
+        if (claim_conflicts.insert(sampled).second) {
+            owner.report(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                          DiagnosticCategory::UnsupportedRequest,
+                                          u8"vk.target.claim_conflict",
+                                          u8"vk: a pass samples a target another frame driver is drawing into right now; "
+                                          u8"the pass was skipped for this frame - drive the other engine on another "
+                                          u8"target, or wait for its frame to finish"));
+        }
+        claim_refused = true;
+        refused_pass  = true;
+        return false;
+    };
+    const auto claim_pass_samples = [&](const PassDraw& draw, const FrameDescription::Pass& entry) -> bool {
+        bool every = true;
+        for (const DrawDescription& description : draw.draws) {
+            if (description.kind == DrawDescription::Kind::Screen && !claim_sampled(description.source)) {
+                every = false;
+            }
+        }
+        for (const ImageSource& input : entry.inputs) {
+            if (!claim_sampled(input.target)) {
+                every = false;
+            }
+        }
+        return every;
+    };
+
     for (const FrameDescription::Pass& entry : frame.passes) {
         if (entry.pass == nullptr) {
             continue; // the SDK's rule: an entry that names no pass is nothing to run (see RenderFrameExecutor)
@@ -1273,6 +1379,9 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
                 owner.window_reports.acquire.rearm(); // the image arrived: this episode is over
                 window_acquired = true;
             }
+            if (!claim_pass_samples(draw, entry)) {
+                continue;
+            }
             count_pass();
             runnable_passes.push_back(Runnable{ &entry, &draw, true, nullptr, window->renderPass(false, false), 1U, window->compatibility() });
             continue;
@@ -1293,12 +1402,18 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
             refused_pass  = true; // the "nothing I can run" sentence would be the same fact twice
             continue;
         }
+        if (!claim_pass_samples(draw, entry)) {
+            continue;
+        }
         if (!owner.ensure_target(*draw.target)) {
             refused_pass = true;
             continue;
         }
         count_pass();
-        TargetImages& claimed_images = owner.targets.at(draw.target);
+        TargetImages& claimed_images = [&]() -> TargetImages& {
+            const std::lock_guard<std::mutex> targets_held(owner.targets_mutex);
+            return owner.targets.at(draw.target);
+        }();
         runnable_passes.push_back(Runnable{ &entry,
                                             &draw,
                                             false,
@@ -1309,7 +1424,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
     }
 
     if (runnable_passes.empty()) {
-        if (!refused_pass && owner.no_targets_report.shouldReport()) {
+        if (!refused_pass && no_targets_report.shouldReport()) {
             owner.report(deviceDiagnostic(DiagnosticSeverity::Info,
                                               DiagnosticCategory::UnsupportedRequest,
                                               u8"vk.content.no_runnable_pass",
@@ -1318,7 +1433,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
         }
         return PresentOutcome::Skipped;
     }
-    owner.no_targets_report.rearm(); // a pass ran: the "nothing I can run" episode is over
+    no_targets_report.rearm(); // a pass ran: the "nothing I can run" episode is over
     if (!claim_refused) {
         claim_conflicts.clear(); // no pass lost its target this frame: the conflict episode is over
     }
@@ -1392,6 +1507,13 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
     // path takes no lock at all (S6c; T3).
     {
         const ContentCaches::Lock cache_lock = owner.caches.lock();
+        // THE DEFAULT PROGRAM IS A VALUE FOR THIS FRAME (see program_mutex): a host may announce another one while
+        // this frame records, and a head that read the field twice could compile two variants of one answer.
+        vn::graphics::ShaderProgramDescriptionPtr head_program;
+        {
+            const std::lock_guard<std::mutex> program_held(program_mutex);
+            head_program = default_program;
+        }
         frame_content.resize(runnable_passes.size());
         for (std::size_t pass_position = 0; pass_position < runnable_passes.size(); ++pass_position) {
             const Runnable& item        = runnable_passes[pass_position];
@@ -1415,7 +1537,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
                                                   cache_lock);
                     // The destination's stand-in and shadow sampler: a screen draw samples the target it names, so its
                     // slots are the source's views (assembled where the source is, below), not a material's.
-                    owner.caches.resolveTextures(nullptr, commands, draw_content.screen_textures, draw_content.refusal, cache_lock);
+                    owner.caches.resolveTextures(nullptr, commands, draw_content.screen_textures, draw_content.refusal, cache_lock, uploadBatch());
                     continue;
                 }
                 if (description.commands == nullptr) {
@@ -1427,7 +1549,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
                     ContentCaches::CommandPlan& plan = draw_content.plans[command_index];
                     if (!owner.caches.planCommand((*description.commands)[command_index],
                                                   pass_draw,
-                                                  default_program.get(),
+                                                  head_program.get(),
                                                   item.compatibility,
                                                   item.pipeline_pass,
                                                   item.color_count,
@@ -1440,7 +1562,8 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
                                                  commands,
                                                  draw_content.textures[command_index],
                                                  draw_content.refusal,
-                                                 cache_lock);
+                                                 cache_lock,
+                                                 uploadBatch());
                 }
             }
         }
@@ -1472,11 +1595,18 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
             if (description.kind != DrawDescription::Kind::Screen || description.source == nullptr) {
                 continue;
             }
-            const auto source = owner.targets.find(description.source);
-            if (source == owner.targets.end() || !source->second.built() || source->second.color_sampled) {
+            TargetImages* sampled_images = nullptr;
+            {
+                const std::lock_guard<std::mutex> targets_held(owner.targets_mutex);
+                const auto source = owner.targets.find(description.source);
+                if (source != owner.targets.end() && source->second.built() && !source->second.color_sampled) {
+                    sampled_images = &source->second;
+                }
+            }
+            if (sampled_images == nullptr) {
                 continue;
             }
-            TargetImages& sampled = source->second;
+            TargetImages& sampled = *sampled_images;
             for (const VkImage image : sampled.colors) {
                 const ImageState from = sampled.fresh ? stateOf(ImageLayout::Undefined) : stateOf(ImageLayout::ColorAttachment);
                 const ImageState to   = stateOf(ImageLayout::ShaderReadOnly);
@@ -1625,7 +1755,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
             // instead of being guessed at the sink, and a call whose later commands DID resolve still records them.
             if (draw_content.refusal.isRefused()) {
                 content_refused = true;
-                if (owner.content_report.shouldReport()) {
+                if (content_report.shouldReport()) {
                     owner.report(deviceDiagnostic(DiagnosticSeverity::Warning,
                                                   draw_content.refusal.category(),
                                                   draw_content.refusal.code(),
@@ -1637,10 +1767,13 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
                 // THE FULL-SCREEN ABI: the source's colour attachments, bound in order. A source this device never
                 // built answers an empty span, which makes the recorder report (and skip) the draw.
                 ContentDraw::ScreenSource source{};
-                const auto                source_images = description.source != nullptr ? owner.targets.find(description.source) : owner.targets.end();
-                if (source_images != owner.targets.end() && source_images->second.built()) {
-                    source.images = source_images->second.colors;
-                    source.views  = source_images->second.color_views;
+                {
+                    const std::lock_guard<std::mutex> targets_held(owner.targets_mutex);
+                    const auto source_images = description.source != nullptr ? owner.targets.find(description.source) : owner.targets.end();
+                    if (source_images != owner.targets.end() && source_images->second.built()) {
+                        source.images = source_images->second.colors;
+                        source.views  = source_images->second.color_views;
+                    }
                 }
                 (void)recorder.recordScreen(commands,
                                                  static_cast<int>(extent.width),
@@ -1666,7 +1799,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
             }
             if (refusal.isRefused()) {
                 content_refused = true;
-                if (owner.content_report.shouldReport()) {
+                if (content_report.shouldReport()) {
                     // THE CAUSE WAS NAMED WHERE IT WAS KNOWN (see ContentRefusal), so this report FORWARDS the value the
                     // recorder built - the code travels with the sentence instead of being guessed at the sink.
                     const vn::graphics::RenderDiagnostic diagnostic =
@@ -1681,7 +1814,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
         }
     }
     if (!content_refused) {
-        owner.content_report.rearm(); // every draw the frame named was recorded: the episode is over
+        content_report.rearm(); // every draw the frame named was recorded: the episode is over
     }
 
     // THE PRESENT TRANSITION, after the window's last pass and before the command buffer ends: every window pass
@@ -1702,7 +1835,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
                                           DiagnosticCategory::SubmissionFailed,
                                           u8"vk.frame.end_failed",
                                           u8"vk: vkEndCommandBuffer failed"));
-        owner.caches.endFrame();
+        owner.caches.endFrame(uploadBatch());
         owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &commands);
         return PresentOutcome::Skipped;
     }
@@ -1739,7 +1872,10 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
         ++books.progress.completed;
         // THE COMPLETION EVIDENCE THE PARK QUEUE WAITS FOR (see Impl::releaseLater): the frame's GPU work is provably
         // done, so every object a release handed over while this frame was in flight may now go.
-        owner.clock.windowCompleted(clock_window, frame_token.frame);
+        {
+            const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
+            owner.clock.windowCompleted(clock_window, frame_token.frame);
+        }
         // THE PAIR IS READABLE NOW (the fence says the frame ran): one read, one value, and the report carries it as
         // the frame's device time (see FrameTiming). A frame the clock did not sample answers DISENGAGED - never the
         // previous frame's value.
@@ -1783,8 +1919,9 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
     (void)owner.device_table.vkResetFences(owner.device, 1U, &completion);
     owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &commands);
     // The per-draw uniform buffers were named by the command buffer that just finished (or failed to): the queue is
-    // idle either way, so the bytes can go.
-    owner.caches.endFrame();
+    // idle either way, so the bytes can go - and only THIS driver's texture staging, never a frame that is still
+    // recording (see ContentImages::BatchId).
+    owner.caches.endFrame(uploadBatch());
 
     if (!completed) {
         // A LOST DEVICE GETS ITS OWN SENTENCE, ONCE (see noteDeviceLost); the generic one is for the failures a retry
@@ -1834,8 +1971,9 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
         return PrepareReport{ PrepareReport::Outcome::Refused };
     }
 
-    // THE SAME DEVICE BODY LOCK executeFrame takes: a warm-up touches the same caches and may submit.
-    const std::lock_guard<std::mutex> device_body(owner.frame_mutex);
+    // THE SAME GATE AS executeFrame, in its SHARED form: a warm-up records transfers only, so it may overlap another
+    // driver's frame - but never its own (the FrameGate above already answered that).
+    const std::shared_lock<std::shared_mutex> device_body(owner.body_gate);
 
     if (!(owner.device != VK_NULL_HANDLE && !owner.device_lost)) {
         // "There is nothing to prebuild" and "the device is not up" are different answers (see PrepareReport).
@@ -1869,8 +2007,12 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
     // THE WARM-UP IS A SUBMISSION TOO (see ADR-2026-11-14): it opens a frame on the clock, so the transfer batch it may
     // submit carries a frame number the park queue can date a release against - and a warm-up that records nothing
     // spends the token without moving the submitted watermark.
-    const vn::graphics::backend::FrameToken warmup_token = owner.clock.begin();
-    FrameTokenCloser                        warmup_close{ owner.clock, owner.retirement, warmup_token };
+    vn::graphics::backend::FrameToken warmup_token{};
+    {
+        const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
+        warmup_token = owner.clock.begin();
+    }
+    FrameTokenCloser                        warmup_close{ owner.clock, owner.retirement, owner.clock_mutex, warmup_token };
     const ContentTotals before = owner.contentNumbers();
     PrepareReport             report;
     report.outcome = PrepareReport::Outcome::Prepared;
@@ -1903,6 +2045,11 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
     // and the staging release below take their own (see the wrappers).
     {
         const ContentCaches::Lock cache_lock = owner.caches.lock();
+        vn::graphics::ShaderProgramDescriptionPtr head_program;
+        {
+            const std::lock_guard<std::mutex> program_held(program_mutex);
+            head_program = default_program;
+        }
 
         for (const FrameDescription::Pass& entry : frame.passes) {
             if (entry.pass == nullptr) {
@@ -1996,12 +2143,12 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
                     // warm-up may not build something the frame would not ask for, and vice versa.
                     for (const vn::graphics::RenderCommand& command : *description.commands) {
                         ContentCaches::CommandPlan plan;
-                        (void)owner.caches.planCommand(command, draw, default_program.get(), compatibility, render_pass, color_count, plan, refusal, cache_lock);
+                        (void)owner.caches.planCommand(command, draw, head_program.get(), compatibility, render_pass, color_count, plan, refusal, cache_lock);
                     }
                 }
                 if (refusal.isRefused()) {
                     content_refused = true;
-                    if (owner.content_report.shouldReport()) {
+                    if (content_report.shouldReport()) {
                         // The same forwarding the frame path does (see above).
                         const vn::graphics::RenderDiagnostic diagnostic =
                             deviceDiagnostic(DiagnosticSeverity::Warning, refusal.category(), refusal.code(), refusal.message());
@@ -2033,7 +2180,7 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
                                               u8"vk: the preparation's transfer batch could not be closed; the copies it recorded never ran"));
             owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &batch);
         }
-        else if (!owner.caches.hasPendingUploads()) {
+        else if (!owner.caches.hasPendingUploads(0)) {
             // ZERO WORK, ZERO SUBMIT: an unchanged frame records no copy, so there is nothing to run and nothing is
             // submitted - the property a second prepare of the same frame is observed by (see ADR-2026-11-14).
             owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &batch);
@@ -2050,12 +2197,13 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
             const bool     completed     = fence_result == VK_SUCCESS;
             warmup_close.submitted       = submit_result == VK_SUCCESS;
             if (completed) {
+                const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
                 owner.clock.windowCompleted(clock_window, warmup_token.frame);
             }
             (void)owner.device_table.vkResetFences(owner.device, 1U, &completion);
             owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &batch);
             if (completed) {
-                owner.caches.releaseUploadStaging();
+                owner.caches.releaseUploadStaging(0);
             }
             else if (!owner.note_device_lost(submit_result, "vkQueueSubmit") && !owner.note_device_lost(fence_result, "vkWaitForFences")) {
                 // The staging buffers stay: the next frame's releaseFrame lets go of them once its own queue is idle.
@@ -2075,7 +2223,7 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
     // PrepareReport). `uploads` counts BOTH kinds FrameUploads reports - the streams this call uploaded and the
     // textures it made resident (see ADR-2026-11-14). `sets` stays 0 because no descriptor set outlives a frame here.
     if (!content_refused) {
-        owner.content_report.rearm(); // every draw the call named was prepared: the episode is over
+        content_report.rearm(); // every draw the call named was prepared: the episode is over
     }
     if (!claim_refused) {
         claim_conflicts.clear(); // no pass lost its target this preparation: the conflict episode is over
@@ -2118,7 +2266,12 @@ Device::Device(const DeviceDesc& desc)
     // before `initialize()` and after `shutdown()`, and `create()` is what gives it objects.
     impl->session = std::make_unique<Session>(*impl);
     impl->desc    = desc;
-    impl->report           = [this](const vn::graphics::RenderDiagnostic& diagnostic) { reportDiagnostic(diagnostic); };
+    // ONE REPORT AT A TIME AT THE HOST'S SINK: two drivers' frames report on two threads (S6c-2), and the sink is the
+    // host's - it is not asked to be thread-safe. A diagnostic is never on a frame's path (it is a refusal or a loss).
+    impl->report           = [this](const vn::graphics::RenderDiagnostic& diagnostic) {
+        const std::lock_guard<std::mutex> report_held(impl->report_mutex);
+        reportDiagnostic(diagnostic);
+    };
     impl->ensure_target    = [this](const RenderTarget& target) { return ensureTarget(target); };
     impl->note_device_lost = [this](const VkResult result, const char* what) { return noteDeviceLost(result, what); };
     // THE HOST'S DIRECTORY, converted ONCE: vn::String carries UTF-8 bytes, and std::filesystem::path is what the file
@@ -2680,8 +2833,9 @@ bool Device::initialize()
     // queue knows how many frames may be in flight and every released object waits for that watermark (see
     // Impl::releaseLater).
     impl->retirement.setSlots(impl->clock.widestSlots());
-    impl->clock_registered   = true;
-    impl->caches.setRetirement(&impl->retirement, &impl->clock.timeline());
+    // THE PARK SEAM, not the queue itself: the caches ask the DEVICE "when may this go?", and the device answers with
+    // its clock and its queue (see Impl::releaseLater). That is what lets two drivers share one clock safely.
+    impl->caches.setRetirement([impl = impl.get()](std::function<void()> destroy) { impl->releaseLater(std::move(destroy)); });
 
     // WHAT THE RECORDER DID WITH THE FILE, recorded where it will outlive the session (see pipelineCacheReport): the
     // hand-over and any refusal happen ONCE, at creation, and `content.destroy()` is what would erase them.
@@ -2694,6 +2848,9 @@ bool Device::initialize()
 
 void Device::shutdown()
 {
+    // SHUTDOWN IS THE ONE HOST VERB THAT OWNS THE WHOLE DEVICE: every frame in flight must be over before anything is
+    // destroyed, so it takes the gate exclusively (see Impl::body_gate).
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     if (impl->device != VK_NULL_HANDLE) {
         // A counted stop: every queue is idle before the objects it recorded against go.
         (void)impl->device_table.vkDeviceWaitIdle(impl->device);
@@ -2701,8 +2858,11 @@ void Device::shutdown()
         // WHAT THE RELEASES PARKED NOW GOES: the idle above IS the evidence every parked release was waiting for, so
         // the queue runs out of turn and the objects die while their device is still alive. A device that skipped this
         // would leak every object a release had parked - and the pool below would keep the blocks alive.
-        impl->caches.setRetirement(nullptr, nullptr);
-        impl->retirement.releaseAll();
+        impl->caches.setRetirement({});
+        {
+            const std::lock_guard<std::mutex> clock_held(impl->clock_mutex);
+            impl->retirement.releaseAll();
+        }
 
         // THE SESSION'S PIPELINE CACHE GOES TO THE HOST'S DIRECTORY FIRST: `vkGetPipelineCacheData` needs the cache
         // object, which `content.destroy()` below is about to destroy. A write that fails is a cold start next time,
@@ -2773,8 +2933,6 @@ void Device::shutdown()
     impl->caps.presentation   = impl->desc.presentation != DevicePresentation::None;
     // THE NEXT SESSION STARTS WITH NOTHING REPORTED: these episodes are about one session's wiring and one session's
     // answers, so the rebuild a lost device needs must be able to tell its own story (see ReportOnce).
-    impl->no_targets_report.rearm();
-    impl->content_report.rearm();
     impl->size_unknown_report.rearm();
     impl->samples_report.rearm();
     impl->samples_depth_report.rearm();
@@ -2824,7 +2982,12 @@ bool Device::noteDeviceLost(const VkResult result, const char* what)
         return false;
     }
     impl->device_lost = true;
-    if (impl->device_lost_report.shouldReport()) {
+    bool first = false;
+    {
+        const std::lock_guard<std::mutex> held(impl->loss_mutex);
+        first = impl->device_lost_report.shouldReport();
+    }
+    if (first) {
         // THE SENTENCE SAYS WHAT TO DO, not only what happened: this is the one failure a retry cannot fix.
         const std::string sentence = std::string("vk: ") + (what != nullptr ? what : "a device call") +
                                      " answered VK_ERROR_DEVICE_LOST; this session cannot continue - rebuild it with "
@@ -2912,10 +3075,11 @@ void Device::noteMemoryRefusal(const MemoryRefusalReport& report)
 
 void Device::setMemoryBlockCreator(MemoryBlockCreator creator)
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     // A TEST SEAM, NOT A POLICY (see the header): blocks are created lazily, so this is read by the first target or
     // texture that needs one, and empty means the device table's own `vkAllocateMemory`.
     impl->allocator.setBlockCreator(std::move(creator));
@@ -2923,10 +3087,11 @@ void Device::setMemoryBlockCreator(MemoryBlockCreator creator)
 
 void Device::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     // THE DRIVER'S SETTING (see RenderFrameExecutor::setDefaultContentProgram): this device runs its own frames through
     // its own session, so a caller that drives the device directly keeps the shape it had - and a real second driver
     // would be told its own program, not this one's.
@@ -2940,7 +3105,7 @@ vn::graphics::RenderFrameExecutor* Device::createSession()
     }
     // A DRIVER BORROWED BEFORE initialize() IS BUILT BY IT (R1: an engine attaches first); one borrowed from a device
     // that is ALREADY up must come up here, or it would answer frames with no command pool.
-    const std::lock_guard<std::mutex> guard(impl->frame_mutex);
+    const std::unique_lock<std::shared_mutex> guard(impl->body_gate);
     std::unique_ptr<Session>          session = std::make_unique<Session>(*impl);
     if (impl->device != VK_NULL_HANDLE) {
         if (session->create() != Session::CreateRefusal::Ok) {
@@ -2969,7 +3134,7 @@ void Device::releaseSession(vn::graphics::RenderFrameExecutor& session)
     if (&session == impl->session.get()) {
         return; // the device's own driver is not a host's to return (see the header)
     }
-    const std::lock_guard<std::mutex> guard(impl->frame_mutex);
+    const std::unique_lock<std::shared_mutex> guard(impl->body_gate);
     const auto found = std::find_if(impl->extra_sessions.begin(), impl->extra_sessions.end(), [&session](const std::unique_ptr<Session>& candidate) {
         return candidate.get() == &session;
     });
@@ -2993,19 +3158,21 @@ vn::graphics::RenderFrameExecutor& Device::executor()
 
 void Device::setRenderTarget(RenderTarget* target)
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     impl->target = target;
 }
 
 void Device::releaseRenderTarget(RenderTarget* target)
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     if (target == nullptr) {
         return;
     }
@@ -3031,10 +3198,11 @@ void Device::releaseRenderTarget(RenderTarget* target)
 
 vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void* native_handle, SurfaceTargetResult* why)
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     const auto answer = [why](const SurfaceTargetResult result) {
         if (why != nullptr) {
             *why = result;
@@ -3145,6 +3313,9 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
 
 bool Device::ensureTarget(const RenderTarget& target)
 {
+    // ONE TARGET MAP OPERATION AT A TIME: two frame heads may build (or find) different targets on two threads, and a
+    // host verb may be releasing one under the exclusive gate (S6c-2).
+    const std::lock_guard<std::mutex> targets_held(impl->targets_mutex);
     // WHAT THE HOST'S OBJECT ASKS FOR, in the value `planTarget` compares: an extent plus the shape - the engine's
     // formats AND the device spelling only this backend can fill (see TargetShape).
     TargetDesc wanted;
@@ -3358,10 +3529,11 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
 
 bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     if (content == nullptr || !initialized()) {
         return false;
     }
@@ -3404,10 +3576,11 @@ bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
 
 bool Device::releaseContent(const vn::Buffer<float>& buffer)
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     if (!initialized()) {
         return false;
     }
@@ -3422,10 +3595,11 @@ bool Device::releaseContent(const vn::Buffer<float>& buffer)
 
 bool Device::releaseContent(const vn::Buffer<std::uint32_t>& buffer)
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     if (!initialized()) {
         return false;
     }
@@ -3450,10 +3624,11 @@ vn::graphics::FrameReport Device::frameReport() const noexcept
 
 bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels, ReadbackResult* why)
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     const auto fail = [why](const ReadbackResult reason) {
         if (why != nullptr) {
             *why = reason;
@@ -3575,10 +3750,11 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
 
 bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& outDepths, ReadbackResult* why)
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     const auto fail = [why](const ReadbackResult reason) {
         if (why != nullptr) {
             *why = reason;
@@ -3724,19 +3900,21 @@ Handles Device::handles() const noexcept
 
 std::uint64_t Device::contentPipelines() const noexcept
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     return impl->caches.pipelinesCreated();
 }
 
 Device::ContentCacheCounters Device::contentCacheCounters() const noexcept
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     // TWO OWNERS, ONE ANSWER: the ring and the descriptor sets belong to the device's own driver (a second driver would
     // have its own), while the caches answer the rest. `Device` reports its own session's frame scratch, which is the
     // same answer a single-session tree has always given.
@@ -3748,10 +3926,11 @@ Device::ContentCacheCounters Device::contentCacheCounters() const noexcept
 
 MemoryStats Device::memoryStats() const noexcept
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     return impl->allocator.stats();
 }
 
@@ -3767,10 +3946,11 @@ const TargetClaims& Device::targetClaims() const noexcept
 
 Device::RetirementNumbers Device::retirementNumbers() const noexcept
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     RetirementNumbers numbers;
     numbers.pending      = impl->retirement.pending();
     numbers.released     = impl->retirement.released();
@@ -3780,10 +3960,11 @@ Device::RetirementNumbers Device::retirementNumbers() const noexcept
 
 Device::PipelineCacheReport Device::pipelineCacheReport() const noexcept
 {
-    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
-    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
-    // name on the host's behalf, so the device names it for them.
-    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
+    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
+    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
+    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
+    // shared/exclusive gate and not one plain lock.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     PipelineCacheReport report{
         .persisted       = impl->cache_books.persisted,
         .discarded       = impl->cache_books.discarded,
@@ -3813,6 +3994,7 @@ void Device::reportDriverMessage(int severity_flags, const char* text)
     }
     // M0 has no frame, so every driver message it can produce is about coming up - which is also why InitFailed is
     // the right category rather than a per-draw one (see the header).
+    const std::lock_guard<std::mutex> report_held(impl->report_mutex);
     reportDiagnostic(deviceDiagnostic(severity, DiagnosticCategory::InitFailed, u8"vk.driver.message", messageOf(text)));
 }
 

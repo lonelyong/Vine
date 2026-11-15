@@ -159,6 +159,14 @@
 - **2026-11-15（T48 S6a）后的形状**：SDK 的会话接缝已在树上（`createSession()` / `releaseSession()` 默认答
   `&executor()` / no-op；默认内容程序归 `RenderFrameExecutor`，本设备的每个 `Session` 各持一份，`Device` 覆写转发给
   自带的驱动者）。
+- **2026-11-16（T48 S6c-2a）后的形状**：**帧体真并行**。设备的大锁换成 `std::shared_mutex body_gate`：帧体（非窗口）
+  取 SHARED，两个驱动者在两条线程上同时记录/提交；出窗口的帧与所有宿主动词（读回 / 释放 / 默认程序 / 释放目标 /
+  建窗口 / 诊断读取）取 EXCLUSIVE（可等帧，不竞争）；`shutdown` 也取 EXCLUSIVE。支撑它的是一组小锁：`clock_mutex`
+  （`DeviceClock` + `RetirementQueue`，两个 SDK 值类型仍标非线程安全，多线程设备自己提供锁，`P4`）、分配器一把、
+  目标 map 一把、报告 sink 一把、每会话默认程序一把、表面列表一把。`FrameTimeline` 支持多开帧（开帧时铸造号）。
+  纹理 staging 与被替换图像按 `ContentImages::BatchId` 归驱动者，替换图像 park 到水位。采样目标（screen 源 / pass
+  输入）也取目标 lease。**证据**：`VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`（一个帧体被诊断 sink
+  停住时，另一驱动者的帧必须整帧完成；变异回独占闸 ⇒ 红）。
 - **2026-11-15（T48 S6b）后的形状**：`createSession()` 真的造一个 `Session`（可早于 `initialize()`，由它统一拉起；已起的
   设备上当场建），`releaseSession()` 销毁并遗忘（设备自己的驱动者不可归还）。**设备持一把 `frame_mutex` 串行化帧体**：
   每个驱动者有自己的命令池 / 栅栏 / 时间戳池 / 帧闸 / scratch / 默认程序，但缓存、分配器与队列尚未在两条运行中的帧之间
@@ -174,10 +182,10 @@
 - **为什么今天是这个形状**：一帧在飞（§2.3）让"帧之间"成为一个**时刻**，于是释放、读回、缓存填充都能共用一份机器；
   `ContentDraw` 的 `beginFrame` / `endFrame` 重置的是设备级状态，正是这条的直接后果。在那个前提下把它拆成两个对象
   只会多一层转发（`G8`）。
-- **边界**：**两个引擎同时 frame 今天被串行化，不是并行**——`executeFrame` / `prepareFrame` 走设备的
-  `FrameGate`：另一条线程**等待**，同一线程重入**拒绝**（`vk.session.frame_reentry`，`PresentOutcome::Refused`）。
-  并行是 ADR 第二步的事。形状与落地在
-  `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，两步分别记在 backlog `T47` / `T48`。
+- **边界**：**两个驱动者的帧体可以同时跑**（S6c-2a）；同一个驱动者的两帧仍由它的 `FrameGate` 串行（另一条线程**等待**，
+  同一线程重入**拒绝**，`vk.session.frame_reentry` / `PresentOutcome::Refused`）。窗口帧独占体闸（交换链是一份设备资源）。
+  `releaseContent` / `releaseRenderTarget` / 读回仍取体闸 EXCLUSIVE，因此**会等**在飞帧——R6（释放不等帧）是 S6c-2b。
+  形状与落地在 `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，步骤记在 backlog `T47` / `T48`。
 - **拆分时哪些东西会动**（清单是起点，不是拆分本身）：`ContentDraw` 的 `Impl` 一半是**缓存**（模块 / 流 / 管线 /
   布局，归设备）、一半是**帧状态**（常量环 / 描述符池 / 逐 draw UBO，归会话）；`command_pool` 与 `completion` 归会话；
   `allocator`、`targets`、`surfaces`、管线缓存、`default_program` 归设备。
@@ -707,10 +715,9 @@
 - **T48 进度**：S1（释放走队列）、S2a/S2b（帧机器与帧体进 `Device::Session`）、S3（`ContentCaches` + `FrameScratch`
   分家，§2.16）、S4（`ResidenceTable` 三态状态机，§2.17）、S5（`TargetClaims` 租约 + 帧/预热接线，§2.18）、
   S6a（SDK 会话接缝 + 引擎持有驱动者 + 默认程序归会话）、S6b（多驱动者 + 设备串行帧体）、
-  S6c-1（帧首快照：记录路径零锁、计划按值、条目 park 到水位）已落地；
-  S6c-2（真并行：去掉帧体锁 / 帧首快照的其余半边 / R6 非阻塞释放的接线测试）与 S7–S9 见
-  `.ai/design/graphics-sessions.md` §9.3。
-- `test_vk` **128 例 / 34 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **556**、`test_graphics` **587**；
+  S6c-1（帧首快照：记录路径零锁、计划按值、条目 park 到水位）、S6c-2a（帧体真并行：体闸 shared/exclusive + 多开帧 +
+  各小锁 + 每驱动者批量）已落地；S6c-2b（R6：释放不等帧）与 S7–S9 见 `.ai/design/graphics-sessions.md` §9.3。
+- `test_vk` **129 例 / 34 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **557**、`test_graphics` **587**；
   Debug 全量 ctest **32/32**；`BackendParityTest` **12/12**。
 - **一条构建教训**：SDK 的虚表改动后，**动态插件必须一起重建**（旧 `.so` 让 `VsgBackendPluginTest` 段错误）。
 - 实测（lavapipe，真实宿主）：11 pass / 10 draw，稳态中位 **8.24 ms**，GPU **7.15–7.74 ms**；ring + set 缓存改动

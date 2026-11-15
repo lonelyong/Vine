@@ -244,25 +244,61 @@ TEST(CoreTimelineTest, AnAbandonedFrameIsOverWithoutBecomingASubmission)
     EXPECT_FALSE(timeline.hasOpenFrame());
     EXPECT_EQ(timeline.submittedFrame(), 0u);
 
-    // The frame NUMBERS are that same clock (begin() hands out submitted + 1), so a frame that never
-    // reached the queue is not a frame for the timeline: the next one takes its number. That is also why
-    // a token is not a receipt - it names the frame that was open, and an abandoned one re-issues its
-    // number, so nothing may hold a token across a commit and expect it to stay stale.
+    // NUMBERS ARE MINTED AT OPENING AND NEVER REUSED (the same rule the residency table's claim tokens
+    // follow): a frame that never reached the queue still spent its number. That is what lets two drivers
+    // hold open frames at the same time without either one's token naming the other's frame - and it is
+    // why a token is not a receipt either way: an abandoned token is stale for submission, and the number
+    // it carried never comes back.
     const auto next = timeline.begin();
-    EXPECT_EQ(next.frame, token.frame);
+    EXPECT_NE(next.frame, token.frame);
+    EXPECT_GT(next.frame, token.frame);
     timeline.abandoned(next);
     EXPECT_EQ(timeline.submittedFrame(), 0u);
 
-    // A real submission moves it, and the next frame is the one after it.
+    // A real submission moves it TO THE NUMBER THAT WAS SUBMITTED (numbers are minted, so the abandoned
+    // frames spent 1 and 2 and this one is 3).
     const auto real = timeline.begin();
     timeline.submitted(real);
-    EXPECT_EQ(timeline.submittedFrame(), 1u);
+    EXPECT_EQ(timeline.submittedFrame(), real.frame);
+    EXPECT_NE(real.frame, token.frame);
 
     // The dating a park during an abandoned frame gets: the last frame that really was submitted - which
     // is what makes the object releasable at all (nothing in flight names the abandoned frame's objects).
     timeline.abandoned(timeline.begin());
-    EXPECT_EQ(timeline.submittedFrame(), 1u);
-    EXPECT_EQ(FrameTimeline::retirePoint(timeline.submittedFrame(), 3), 5u);
+    EXPECT_EQ(timeline.submittedFrame(), real.frame);
+    EXPECT_EQ(FrameTimeline::retirePoint(timeline.submittedFrame(), 3), real.frame + 4U);
+}
+
+TEST(CoreTimelineTest, TwoDriversMayHoldAFrameOpenAtTheSameTime)
+{
+    // THE DEVICE TIMELINE WITH TWO FRAME DRIVERS (S6c-2): each driver opens its own frame, and the two are
+    // two frames - not one shared token. The old single-slot form handed the second caller the first's
+    // token, which made two drivers collapse into one frame number in every watermark comparison.
+    FrameTimeline timeline;
+    const auto    first  = timeline.begin();
+    const auto    second = timeline.begin();
+
+    EXPECT_NE(first.frame, second.frame);
+    EXPECT_TRUE(timeline.hasOpenFrame());
+    EXPECT_TRUE(timeline.isOpenFrame(first));
+    EXPECT_TRUE(timeline.isOpenFrame(second));
+    EXPECT_EQ(timeline.current().frame, second.frame); // the most recently opened one
+
+    // Committing one leaves the other open: the submission watermark is the highest frame handed to a
+    // queue, and a stale token for the *other* open frame is not stale - it is still open.
+    timeline.submitted(second);
+    EXPECT_TRUE(timeline.isOpenFrame(first));
+    EXPECT_FALSE(timeline.isOpenFrame(second));
+    EXPECT_EQ(timeline.submittedFrame(), second.frame);
+
+    timeline.abandoned(first);
+    EXPECT_FALSE(timeline.hasOpenFrame());
+    EXPECT_EQ(timeline.submittedFrame(), second.frame);
+
+    // A later frame is minted after both, even though the second was the only submission.
+    const auto third = timeline.begin();
+    EXPECT_GT(third.frame, second.frame);
+    timeline.abandoned(third);
 }
 
 TEST(CoreTimelineTest, TheRetirePointIsOneMoreThanTheSlotCount)

@@ -159,6 +159,19 @@
   `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
   ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
   别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
+- **S6c-2a 已落地（2026-11-16，帧体真并行）**：设备的大锁变成 `std::shared_mutex body_gate`——**帧体 SHARED**（两驱动者
+  同时记录/提交）、**出窗口的帧与宿主动词 EXCLUSIVE**（可等帧、不竞争），`shutdown` 也 EXCLUSIVE。为此补齐：`FrameTimeline`
+  **多开帧**（`begin()` 每次铸造新号，`submitted`/`abandoned` 按 token 关闭——旧的单槽让第二个驱动者拿到第一个的 token，
+  两帧在水位比较里塌成一帧）；`DeviceClock`/`RetirementQueue` 由设备的 `clock_mutex` 串行（**锁放设备、不放 SDK 值类型**：
+  vsg 单线程没有消费者，`G8`；但两者仍必须注明“调用方负责串行”）；分配器 / 目标 map / 报告 sink / 每会话默认程序 /
+  表面列表各一把小锁；采样目标（screen 源、pass 输入）也取 lease；纹理 staging 与被替换图像按 `ContentImages::BatchId`
+  归驱动者，**替换图像 park 到水位**（另一个驱动者的在飞帧可能还拿着旧 view）。确定性证据：
+  `VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`——用诊断 sink 把一个帧体停住，另一驱动者的帧必须整帧
+  完成；变异回独占闸 ⇒ 5 s 后红。三条教训：①**加锁后自查自调用**：`MemoryAllocator::allocate` 里调 `opened()`/`stats()`
+  （都取同一把非递归锁）当场自锁，修法是“锁内实现 + 公开动词只包锁”；②**别用“曾经进过”当重叠证据**：第一版 witness 在
+  第二帧返回后读 `sink_entered`，而被序列化的设备 5 s 后也会让它为真——判据必须由**停住的那一帧在临界区里**设置
+  （“另一帧在我还没出来时完成了”）；③**多开帧先改时间线**：只改体闸不改 token，两个驱动者共用帧号，水位与 park 全部
+  失去意义。
 - **S6c-1 已落地（2026-11-15，T48 第六步 c 的上半，帧首快照）**：设备缓存有了**唯一一把锁**（`ContentCaches::Lock`，
   不可重入；`Lock&` 参数把"我持锁"变成编译期证据），帧只在**帧首**取一次：`planCommand`/`planScreen`/`resolveTextures`
   把 pipeline、顶点/索引/实例 buffer 句柄、材质、纹理 view/sampler **按值**写进 `CommandPlan`/`ResolvedTextures`，

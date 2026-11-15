@@ -185,14 +185,13 @@ struct ContentCaches::Impl {
     std::uint32_t                   uniform_alignment{ kDefaultUniformAlignment };
 
     /**
-     * @brief The device's park queue and its completion clock (borrowed; see releaseLater).
+     * @brief What the device does with an object a frame may still name (see ContentImages::ParkFn).
      *
      * @details
-     * - NULL UNTIL THE DEVICE HANDS THEM OVER, and null again once it starts tearing itself down: a teardown destroys,
-     *   it does not park. That is why every use goes through releaseLater rather than touching the queue directly.
+     * - EMPTY DESTROYS AT ONCE, which is correct at both ends of a session: before `initialize` nothing has been
+     *   submitted, and during `shutdown` the device has already idled its queue and flushed it.
      */
-    vn::graphics::backend::RetirementQueue*       retirement{ nullptr };
-    const vn::graphics::backend::FrameTimeline*   timeline{ nullptr };
+    ContentImages::ParkFn park{};
 
     /// The set layouts and pipeline layouts the two ABIs use: the content pair (set 0 material/slots/lights, set 1
     /// draw) and the full-screen set (the source's attachments at 0..N-1, lights at 6).
@@ -295,7 +294,8 @@ struct ContentCaches::Impl {
      */
     void releaseLater(std::function<void()> destroy)
     {
-        if (retirement != nullptr && timeline != nullptr && retirement->retire(*timeline, std::move(destroy))) {
+        if (park) {
+            park(std::move(destroy));
             return;
         }
         destroy();
@@ -1252,9 +1252,8 @@ struct ContentCaches::Impl {
     {
         // A TEARDOWN DESTROYS, IT DOES NOT PARK: the device has idled its queue before calling this, so nothing can
         // still name what is about to go - and a park here would outlive the queue that would have run it.
-        retirement = nullptr;
-        timeline   = nullptr;
-        images.setRetirement(nullptr, nullptr);
+        park = {};
+        images.setRetirement({});
         if (device != VK_NULL_HANDLE && table != nullptr) {
             images.destroy();
             destroyPipelines();
@@ -1571,15 +1570,13 @@ void ContentCaches::setCreationFeedback(const bool on) noexcept
     impl->creation_feedback = on;
 }
 
-void ContentCaches::setRetirement(vn::graphics::backend::RetirementQueue* const retirement,
-                                const vn::graphics::backend::FrameTimeline* const timeline) noexcept
+void ContentCaches::setRetirement(ContentImages::ParkFn park)
 {
     const Lock held = lock();
-    impl->retirement = retirement;
-    impl->timeline   = timeline;
+    impl->park = park;
     // THE IMAGES FOLLOW THE SAME EVIDENCE: a released texture is dated against the same watermark a released stream is
     // (see ContentImages::setRetirement), which is what keeps one clock for "may this object go".
-    impl->images.setRetirement(retirement, timeline);
+    impl->images.setRetirement(std::move(park));
 }
 
 std::uint64_t ContentCaches::pipelineCacheHits() const noexcept
@@ -1650,16 +1647,16 @@ void ContentCaches::setMaxAnisotropy(const float max_anisotropy) noexcept
     impl->images.setMaxAnisotropy(max_anisotropy);
 }
 
-bool ContentCaches::hasPendingUploads() const
+bool ContentCaches::hasPendingUploads(const ContentImages::BatchId batch) const
 {
     const Lock held = lock();
-    return impl->images.hasPendingUploads();
+    return impl->images.hasPendingUploads(batch);
 }
 
-void ContentCaches::releaseUploadStaging() noexcept
+void ContentCaches::releaseUploadStaging(const ContentImages::BatchId batch) noexcept
 {
     const Lock held = lock();
-    impl->images.releaseUploadStaging();
+    impl->images.releaseUploadStaging(batch);
 }
 
 bool ContentCaches::releaseTexture(const vn::graphics::Texture& texture)
@@ -1819,7 +1816,7 @@ void ContentCaches::preparePass(const VkCommandBuffer commands, const std::span<
         return;
     }
     vn::String why;
-    if (!impl->images.ensureFallback(commands, &why)) {
+    if (!impl->images.ensureFallback(commands, 0, &why)) {
         return; // reported when a draw finds no fallback view
     }
     for (const vn::graphics::DrawDescription& draw : draws) {
@@ -1836,24 +1833,25 @@ void ContentCaches::preparePass(const VkCommandBuffer commands, const std::span<
             }
             for (const vn::graphics::TextureSlotBinding& slot : description->values().textures) {
                 if (slot.texture != nullptr && slot.texture->isComplete()) {
-                    (void)impl->images.viewFor(*slot.texture, commands, &why);
+                    (void)impl->images.viewFor(*slot.texture, commands, 0, &why);
                 }
             }
         }
     }
 }
 
-bool ContentCaches::ensureFallback(const VkCommandBuffer commands, const Lock& held, vn::String* const why)
+bool ContentCaches::ensureFallback(const VkCommandBuffer commands, const Lock& held, vn::String* const why, const ContentImages::BatchId batch)
 {
     (void)held;
-    return impl->images.ensureFallback(commands, why);
+    return impl->images.ensureFallback(commands, batch, why);
 }
 
 void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* const material,
                                     const VkCommandBuffer                          commands,
                                     ResolvedTextures&                              out,
                                     ContentRefusal&                                refusal,
-                                    const Lock&                                    held)
+                                    const Lock&                                    held,
+                                    const ContentImages::BatchId                   batch)
 {
     (void)held;
     out = ResolvedTextures{};
@@ -1861,7 +1859,7 @@ void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* con
     // begins - which is where this runs (the frame head, or a warm-up's transfer batch for preparePass).
     vn::String why;
     if (commands != VK_NULL_HANDLE) {
-        (void)impl->images.ensureFallback(commands, &why);
+        (void)impl->images.ensureFallback(commands, batch, &why);
     }
     out.fallback_view    = impl->images.fallbackView();
     out.fallback_sampler = impl->images.fallbackSampler();
@@ -1883,7 +1881,7 @@ void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* con
             continue;
         }
         vn::String        upload_why;
-        const VkImageView view = impl->images.viewFor(*named.texture, commands, &upload_why);
+        const VkImageView view = impl->images.viewFor(*named.texture, commands, batch, &upload_why);
         if (view == VK_NULL_HANDLE) {
             refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                            u8"vk.content.material_texture_skipped",
@@ -1899,11 +1897,11 @@ void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* con
     }
 }
 
-void ContentCaches::endFrame() noexcept
+void ContentCaches::endFrame(const ContentImages::BatchId batch) noexcept
 {
     const Lock held = lock();
     if (impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
-        impl->images.releaseFrame();
+        impl->images.releaseFrame(batch);
     }
 }
 

@@ -155,13 +155,14 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   an engine whose device is not up reports it instead of driving frames into nothing.
  * - THREADING. ONE FRAME AT A TIME PER EXECUTOR, CHECKED. An executor call from a second thread WAITS for that
  *   executor's frame in flight and a re-entrant call is REFUSED - `backend/FrameGate.hpp` is the shared
- *   implementation, and the two backends answer the same way. Today `createSession()`'s default hands every caller
- *   the device's OWN executor, so there is still one driver per device; a backend that hands out several documents
- *   which of them may run concurrently (see `.ai/design/graphics-sessions.md`). HOST VERBS (`setRenderTarget`,
- *   `releaseContent`, ...) ARE THE DEVICE'S PROMISE, not an impossible host duty: a device may serialise them against
- *   the frame in flight (vk takes one device lock and documents that a host verb may WAIT), or it may state that they
- *   are between-frame calls - what it may not do is leave the host guessing which. A device must not assume its state
- *   stays on the same thread across an initialize()/shutdown() pair. The
+ *   implementation, and the two backends answer the same way. SEVERAL EXECUTORS MAY RUN AT THE SAME TIME: a backend
+ *   that hands out drivers through `createSession()` may run their frame bodies concurrently (vk does), which is what
+ *   makes two engines cost two frames' worth of host time rather than two assets' worth. What a backend must state is
+ *   which of its verbs may overlap: vk's frame bodies overlap each other, a frame that presents is serialised with
+ *   every other frame, and the HOST VERBS (`setRenderTarget`, `releaseContent`, the readbacks, ...) wait for the frames
+ *   in flight - they are the DEVICE'S promise, not an impossible host duty. A device that runs frames concurrently
+ *   must still keep the host's sink safe: it calls the sink from one thread at a time. A device must not assume its
+ *   state stays on the same thread across an initialize()/shutdown() pair. The
  *   diagnostic sink is invoked synchronously from inside a device call, so a sink must record and return, never call
  *   back into the device (a re-entrant frame is refused, not queued).
  * - FAILURE. A device reports what it could not do instead of degrading silently (see setDiagnosticSink) and never

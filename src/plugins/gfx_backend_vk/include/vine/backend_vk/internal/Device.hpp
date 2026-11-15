@@ -49,19 +49,22 @@ VN_BACKEND_VK_NS_BEGIN
  * @note The class is `Device` and not `VkDevice`: the latter is Vulkan's own type, and this header's implementation
  *       includes volk (see `backend_vk_global.hpp`).
  *
- * @warning ONE DEVICE BODY AT A TIME, CHECKED AND SERIALISED. `executeFrame` and `prepareFrame` go through their
- *          driver's `FrameGate` first (a second thread waits, a re-entrant call is refused), and then through the
- *          DEVICE's body lock: the caches, the allocator and the queue are shared, so two drivers may be driven from
- *          two threads but their bodies do not overlap (S6b; the frame-start snapshot that would let them overlap is
- *          S6c). Every host verb that touches that shared state (`readColorBuffer`, `releaseContent`,
+ * @warning FRAME BODIES OVERLAP; HOST VERBS DO NOT. `executeFrame` and `prepareFrame` go through their driver's
+ *          `FrameGate` first (a second call from the same thread is refused; another thread waits for that DRIVER), and
+ *          then take the device's body gate SHARED: two drivers' frames record and submit at the same time (S6c-2).
+ *          What a frame touches is its own (scratch, command pool, fence, upload batch) or under its own lock (the
+ *          caches at the frame head, the allocator, the target map, the device clock). A frame that PRESENTS is the
+ *          exception - the swapchain and its semaphores are one device resource - so a window frame takes the gate
+ *          EXCLUSIVELY. Every host verb that touches shared state (`readColorBuffer`, `releaseContent`,
  *          `setDefaultContentProgram`, `releaseRenderTarget`, `createSurfaceTarget`, the diagnostic readers) takes the
- *          same lock: it may WAIT for the body in flight, and it does not race it. `initialize()`/`shutdown()` stay the
- *          creator's calls, made with no frame in flight.
+ *          gate EXCLUSIVELY too: it may WAIT for the frames in flight, and it does not race them. `initialize()` and
+ *          `shutdown()` are the creator's calls, made with no frame in flight (`shutdown` waits for them itself).
  *
  * @note A FRAME CONSULTS THE CACHES ONCE (S6c-1). The frame head resolves every program, stream, pipeline and texture
  *       upload under one cache hold and keeps the answers as values (`ContentCaches::CommandPlan`); the recording path
- *       then takes no cache lock and names no cache entry. That is why a texture copy is recorded at the head rather
- *       than per pass, and why a release announced by another thread can only change what the NEXT frame resolves.
+ *       then takes no cache lock and names no cache entry. Texture uploads and the images a revision replaced belong to
+ *       the DRIVER's batch (`ContentImages::BatchId`), and a replaced image is parked against the watermark, so the
+ *       frame that ends first cannot free an object the frame still recording names.
  */
 class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
   public:
@@ -114,11 +117,10 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * - THE OBJECT IS THE DEVICE'S FROM THIS CALL ON, and it is created INERT: `initialize()` is what gives it
      *   a command pool, a fence and a frame scratch (R1 - an engine attaches to a device its creator has not
      *   brought up yet). Releasing it before then simply drops the object.
-     * - WHAT THE DEVICE PROMISES TODAY: every driver owns its frame machinery and its scratch, and the
-     *   DEVICE runs one frame body at a time - the caches, the allocator and the queue are shared and are not
-     *   yet observable from two running frames (see `.ai/design/graphics-sessions.md`, S6b). A host may
-     *   therefore drive two drivers from two threads and get two correct pictures; it may not expect them to
-     *   overlap in time.
+     * - WHAT THE DEVICE PROMISES TODAY: every driver owns its frame machinery and its scratch, and TWO DRIVERS'
+     *   FRAMES MAY RUN AT THE SAME TIME (S6c-2): the caches are consulted once per frame head under one lock, the
+     *   allocator, the target map and the device clock each have their own, and a window frame is serialised with
+     *   every other frame because the swapchain is one device resource (see `.ai/design/graphics-sessions.md`).
      *
      * @return The new driver, or null when the device is lost.
      */
