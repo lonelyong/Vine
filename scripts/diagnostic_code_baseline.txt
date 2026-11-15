@@ -9,7 +9,7 @@
 # session and target reports are already converted; the rest is the migration.
 
 src/fw/appfw/src/gui/Viewer.cpp                                     1
-src/plugins/gfx_backend_vk/src/internal/Device.cpp                  39
+src/plugins/gfx_backend_vk/src/internal/Device.cpp                  32
 src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp             10
 src/viz/graphics/sdk/vine/graphics/RenderDevice.hpp                  2
 src/viz/graphics/sdk/vine/graphics/RenderEngine.hpp                  2

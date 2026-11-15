@@ -1589,9 +1589,10 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
         if (impl->desc.presentation != DevicePresentation::Probe) {
             answer(SurfaceTargetResult::UnsupportedSurface);
             if (impl->window_reports.handle_missing.shouldReport()) {
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::UnsupportedRequest,
-                                 u8"vk: DevicePresentation::Handle needs a host window handle; this device brings up none");
+                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.window.handle_missing",
+                                                  u8"vk: DevicePresentation::Handle needs a host window handle; this device brings up none"));
             }
             return nullptr;
         }
@@ -1601,18 +1602,20 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
         if (!ensureWindowSystem(&why)) {
             answer(SurfaceTargetResult::UnsupportedSurface);
             if (impl->window_reports.window_system.shouldReport()) {
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::UnsupportedRequest,
-                                 why.empty() ? vn::String(u8"vk: no window system is available, so no window surface can be created") : std::move(why));
+                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.window.system_missing",
+                                                  why.empty() ? vn::String(u8"vk: no window system is available, so no window surface can be created") : std::move(why)));
             }
             return nullptr;
         }
         if (!impl->window_system->openOwnWindow(kProbeWindowWidth, kProbeWindowHeight, &why)) {
             answer(SurfaceTargetResult::UnsupportedSurface);
             if (impl->window_reports.own_window.shouldReport()) {
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::UnsupportedRequest,
-                                 why.empty() ? vn::String(u8"vk: the device-owned window could not be brought up") : std::move(why));
+                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.window.own_window_failed",
+                                                  why.empty() ? vn::String(u8"vk: the device-owned window could not be brought up") : std::move(why)));
             }
             return nullptr;
         }
@@ -1625,9 +1628,10 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
         if (!ensureWindowSystem(&why)) {
             answer(SurfaceTargetResult::UnsupportedSurface);
             if (impl->window_reports.window_system.shouldReport()) {
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::UnsupportedRequest,
-                                 why.empty() ? vn::String(u8"vk: no window system is available, so no window surface can be created") : std::move(why));
+                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.window.system_missing",
+                                                  why.empty() ? vn::String(u8"vk: no window system is available, so no window surface can be created") : std::move(why)));
             }
             return nullptr;
         }
@@ -1650,9 +1654,10 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
         if (!target->attach(window_device, &reason)) {
             answer(SurfaceTargetResult::UnsupportedSurface);
             if (impl->window_reports.attach.shouldReport()) {
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::UnsupportedRequest,
-                                 reason.empty() ? vn::String(u8"vk: the window target could not be created") : std::move(reason));
+                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.window.attach_failed",
+                                                  reason.empty() ? vn::String(u8"vk: the window target could not be created") : std::move(reason)));
             }
             return nullptr;
         }
@@ -1980,9 +1985,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         if (draw.target == nullptr) {
             if (window == nullptr || !window->ready()) {
                 if (impl->window_reports.presenter.shouldReport()) {
-                    reportDiagnostic(DiagnosticSeverity::Warning,
-                                     DiagnosticCategory::UnsupportedRequest,
-                                     u8"vk: a window pass names no presenter this device handed out; it was left out");
+                    reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                      DiagnosticCategory::UnsupportedRequest,
+                                                      u8"vk.window.presenter_missing",
+                                                      u8"vk: a window pass names no presenter this device handed out; it was left out"));
                 }
                 refused_pass = true;
                 continue;
@@ -1999,9 +2005,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                         return PresentOutcome::Lost;
                     }
                     if (impl->window_reports.acquire.shouldReport()) {
-                        reportDiagnostic(DiagnosticSeverity::Warning,
-                                         DiagnosticCategory::UnsupportedRequest,
-                                         why.empty() ? vn::String(u8"vk: the window's next image could not be acquired") : std::move(why));
+                        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                          DiagnosticCategory::UnsupportedRequest,
+                                                          u8"vk.window.acquire_failed",
+                                                          why.empty() ? vn::String(u8"vk: the window's next image could not be acquired") : std::move(why)));
                     }
                     refused_pass = true;
                     continue;

@@ -25,6 +25,14 @@ vsg.session.frame_reentry     — a frame or warm-up was started from the thread
 vk.session.device_lost        — a device call answered VK_ERROR_DEVICE_LOST: the session is over, rebuild it
 vk.session.frame_reentry      — a frame or warm-up was started from the thread already driving one: refused (FrameGate)
 
+# --- vk backend: the window half (see vk-backend.md F3) ---
+vk.window.handle_missing     — a Handle device was asked for a target and has no native window handle
+vk.window.system_missing     — no window system is available, so no window surface can exist
+vk.window.own_window_failed  — a Probe device's own window could not be brought up
+vk.window.attach_failed      — the window's surface or swapchain could not be created (the repair is re-attaching)
+vk.window.presenter_missing  — a window pass named no presenter this device handed out
+vk.window.acquire_failed     — the swapchain's next image could not be acquired
+
 # --- vk backend: targets (see vk-backend.md 2.6 / 2.11) ---
 vk.target.samples_above_limit             — the requested sample count is past what the device offers (limit pair)
 vk.target.samples_not_a_count             — the requested sample count is not one the device offers (limit pair)
