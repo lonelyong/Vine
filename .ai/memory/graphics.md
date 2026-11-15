@@ -534,6 +534,18 @@
   钉“索引说有就留、索引说没有就 park”。backlog `T28` 已删（收口项，不再是触发项）。
 - **计数**：`test_vsg` 544 / `test_graphics` 554 / ctest 30/30 / TSan 554 用例 0 warning。
 
+## 2026-11-15 —— F5 裁决：一帧在飞（并更正“CPU 是瓶颈”的误读）
+
+- **关键教训（会重复犯）**：**“一帧的墙钟” ≠ “宿主的活”**。`executeFrame` 内部就 `vkWaitForFences`，所以基准里的
+  墙钟（中位 8.63–8.94 ms）**包含设备执行**；宿主侧工作量 = 墙钟 − `FrameReport::timing`（7.95 ms）≈ **0.9 ms**。
+  早先把 8.2–9.0 当成 CPU 时间 ⇒ 得出“CPU 是瓶颈”的相反结论，已更正 `design/vk-backend.md` §2.3 与审查 F5。
+  **规则**：凡引用“CPU/GPU 时间”的数字，先说清它是墙钟、宿主工作量还是设备时间戳。
+- **裁决**：保持一帧在飞（`../decisions/ADR-2026-11-15-vk-keeps-one-frame-in-flight.md`）。多帧在飞的收益上限
+  `max(宿主, 设备) ≈ 7.95 ms`（约 10%），代价是改“画完即读”的契约；触发条件 = 设备时间 < 墙钟一半（宿主成为瓶颈）、
+  需要与 GPU 重叠的产物形态、或第二个后端要同一语义。
+- **量法**（可复用）：`VN_BENCH_WARMUP=1 VN_BENCH_FRAMES=N` 跑 demo；设备时间只在**采样帧**（每 30 帧一次）出现，
+  所以挑 N 让最后一帧落在采样上（本机 **N=29** 命中，N=28/30/58 都答 `gpu not measured`）。
+
 ## 2026-11-15 —— `test_vsg` Release 堆破坏定位（vsg 后端资源寿命）+ 内存检查器配方
 
 - **症状**：Release 全套 `test_vsg` 约 50% 崩（`malloc(): unaligned tcache chunk` / SIGSEGV，落点漂移：
@@ -671,7 +683,8 @@
   `VK_QUERY_TYPE_TIMESTAMP`（写 TOP/BOTTOM，栅栏后 `vkGetQueryPoolResults`，`timestampComputeAndGraphics` 为假则缺席）。
   **必须抽样**：实测 lavapipe 上每帧写读时间戳要 **~0.8 ms**（关：median 8.30；开：9.01–9.20，各 3 次）⇒ 每 30 帧采一次
   （`kTimestampSampleFrames`），未采样的帧答**缺席**（不是上一帧的值）。demo 的 `bench last frame` 在有样本时印 gpu 毫秒
-  （lavapipe 实测 **gpu 7.15–7.74 ms**，CPU median 8.2–9.0）。
+  （lavapipe 实测 **gpu 7.15–7.74 ms**，同一帧的**墙钟** median 8.2–9.0 —— 注意那是含栅栏等待的墙钟，
+  宿主侧只有 ~0.9 ms，见 2026-11-15 的 F5 裁决）。
 
 ## 2026-11-14 —— `gfx_backend_vk` 工业标准审查（结论 + 两处小修）
 

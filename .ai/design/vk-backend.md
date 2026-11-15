@@ -80,8 +80,12 @@
 
 - **是什么**：`executeFrame` 录一份命令缓冲 → 提交 → 等自己的栅栏 → 读回/释放可以在同一次调用后立即发生；
   `prepareFrame` 例外地允许**一批只含传输**的提交（ADR-2026-11-14-prepare-may-submit-transfers）。
-- **为什么**：G3（流程一趟读完）+ G11（“画完即读”让测试与宿主都不需要猜时序）。代价写在这里：**CPU 与 GPU
-  不重叠**，实测 CPU 中位 8.2–9.0 ms / GPU 7.15–7.74 ms，即 CPU 是瓶颈；多帧在飞是审查 F5 的议题（记录在 backlog，动它要 ADR）。
+- **为什么**：G3（流程一趟读完）+ G11（“画完即读”让测试与宿主都不需要猜时序）。代价写在这里：**宿主与设备串行**。
+  实测（lavapipe，60 帧基准）：一次 `renderFrame()` 的墙钟中位 **8.63–8.94 ms**，同一帧的设备时间 **7.95 ms**，
+  差额 **≈0.7–0.9 ms 是宿主侧的活** ⇒ **设备是瓶颈（约 90%）**，不是宿主。所以多帧在飞的收益上限是
+  `max(宿主, 设备) ≈ 7.95 ms`（约 10%），而代价是改掉“画完即读”的契约——决定与算式见
+  `../decisions/ADR-2026-11-15-vk-keeps-one-frame-in-flight.md`。**更正**：本页早先写“CPU 中位 8.2–9.0 / GPU
+  7.15–7.77，即 CPU 是瓶颈”，那是把**包含栅栏等待的墙钟**当成了宿主工作量，已按上表更正。
 - **边界**：这条契约决定了所有“释放前无需 idle”的说明（租赁、纹理换代、ring 增长）都成立；破坏它要同时改
   释放策略与读回语义，因此需要 ADR，而不是一处 `waitForFence` 的删除。
 
@@ -491,7 +495,7 @@
 | D3 | 用 vsg 的 `ShaderCompiler` 编 SPIR-V | G2：那是把依赖指向另一个后端插件；glslang 由上层的 `cmake/VineGlslang.cmake` 统一供给 | — |
 | D4 | 现在就上 synchronization2 / dynamic rendering | G8：当前目标是 API 1.2；现有屏障表是单一定义且被验证覆盖，升级到 1.3 时整层替换（审查 F9/F10） | — |
 | D5 | 把“缓存文件格式”放进 SDK | G1：SDK 不知道 Vulkan；正确的接缝是“宿主给位置、后端给格式”（§2.9） | — |
-| D6 | 多帧在飞直接实现 | G4：动“画完即读”的契约必须先有决策文档与迁移计划 | 待写（审查 F5） |
+| D6 | 多帧在飞直接实现 | G4：动“画完即读”的契约必须先有决策文档；实测收益上限约 10%（设备占 90%） | `../decisions/ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` |
 
 ## 8. 测试与验收
 
@@ -521,7 +525,8 @@
 
 ### 9.2 已知缺口 / 待办
 
-- **审查 F5（多帧在飞）**：需要 ADR（会改“画完即读”）。
+- **审查 F5（多帧在飞）**：**已裁决保持一帧在飞**（`../decisions/ADR-2026-11-15-vk-keeps-one-frame-in-flight.md`），
+  触发条件写在 ADR 里（设备时间 < 墙钟一半、或需要与 GPU 重叠的产物形态、或第二个后端要同一语义）。
 - **审查 F9 / F10**：`vkCmdPipelineBarrier2` 与 dynamic rendering，等 API 1.3 目标。
 - **backlog `T35`（成为默认后端）**的门禁（`../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`）：
   `releaseRenderTarget` 已真正释放附件、`readDepthBuffer` 与设备丢失报告已落地；**仍缺** Win32 实机证据（未过之前
