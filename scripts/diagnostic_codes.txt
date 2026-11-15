@@ -29,6 +29,12 @@ engine.compile.layered_depth_refused    — a layered depth view is not built ye
 engine.compile.depth_view_conflict      — two passes name different depth views for one target
 engine.compile.plan_refused             — the plan statement was refused (see PlanResult)
 
+# --- engine: a pass declaration the engine could not honour ---
+engine.pass.layer_mask_empty          — a content pass' layer mask selects nothing, so it draws an empty picture
+engine.pass.output_target_mismatch    — a pass promises a whole target it does not render into
+engine.pass.output_image_mismatch     — a pass promises one image of a target it does not render into
+engine.pass.output_collision          — two passes claim one image as their output
+
 # --- vsg backend: the session ---
 vsg.session.frame_reentry     — a frame or warm-up was started from the thread already driving one: refused (FrameGate)
 

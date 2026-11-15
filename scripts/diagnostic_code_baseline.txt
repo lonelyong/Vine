@@ -15,6 +15,6 @@ src/viz/graphics/src/ChainBuilder.cpp                                1
 src/viz/graphics/src/DiagnosticsRoute.cpp                            1
 src/viz/graphics/src/EngineCompile.cpp                               1
 src/viz/graphics/src/RenderDevice.cpp                                1
-src/viz/graphics/src/RenderEngine.cpp                               19
+src/viz/graphics/src/RenderEngine.cpp                               15
 src/viz/graphics/src/RenderSurface.cpp                               5
 src/viz/graphics/src/SceneView.cpp                                   1

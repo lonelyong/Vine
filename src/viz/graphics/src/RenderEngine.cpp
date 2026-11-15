@@ -22,7 +22,37 @@
 VN_GRAPHICS_NS_BEGIN
 
 namespace
-{} // namespace
+{
+
+/**
+ * @brief Builds one WIRING problem: a stable code, its class, the sentence and the pass it is about.
+ *
+ * @details
+ * - A wiring problem is a WARNING about a declaration the engine could not honour; the code is what a host
+ *   matches on (`engine.pass.*`, see scripts/diagnostic_codes.txt) and the subject is the pass, which is what lets a
+ *   host badge the pass rather than a log line.
+ *
+ * @param code     Stable identifier of the cause.
+ * @param category What it is about.
+ * @param message  The sentence (it names its subject too).
+ * @param subject  The pass it is about, or empty when the problem spans several.
+ * @return The diagnostic a report would carry.
+ */
+[[nodiscard]] vn::graphics::RenderDiagnostic wiringProblem(const char8_t*                        code,
+                                                          const vn::graphics::DiagnosticCategory category,
+                                                          vn::String                             message,
+                                                          vn::String                             subject)
+{
+    vn::graphics::RenderDiagnostic diagnostic;
+    diagnostic.severity = vn::graphics::DiagnosticSeverity::Warning;
+    diagnostic.category = category;
+    diagnostic.code     = vn::String(code);
+    diagnostic.message  = std::move(message);
+    diagnostic.subject  = std::move(subject);
+    return diagnostic;
+}
+
+} // namespace
 
 String RenderEngine::reportedPassName(raw_ptr<const RenderPass> pass)
 {
@@ -994,11 +1024,12 @@ void RenderEngine::collectPlanProblems()
         // reason attached. The sentence states the declaration, not an outcome: what a pass does with a
         // content scene is the pass' own business (a screen pass uses one for its lights, not for a walk).
         if (pass->layerMask() == 0 && pass->content() != nullptr) {
-            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                vn::graphics::DiagnosticCategory::ContentSkipped,
-                                String(u8"pass '") + reportedPassName(pass) +
-                                    String(u8"' has a layer mask of 0, so no layer of its content is selected —"
-                                           u8" state the layers it draws (RenderPass::setLayerMask / Node::setLayers)"));
+            reportEngineProblem(wiringProblem(u8"engine.pass.layer_mask_empty",
+                                              vn::graphics::DiagnosticCategory::ContentSkipped,
+                                              String(u8"pass '") + reportedPassName(pass) +
+                                                  String(u8"' has a layer mask of 0, so no layer of its content is selected —"
+                                                         u8" state the layers it draws (RenderPass::setLayerMask / Node::setLayers)"),
+                                              reportedPassName(pass)));
         }
 
         if (!pass->isEnabled()) {
@@ -1016,11 +1047,12 @@ void RenderEngine::collectPlanProblems()
             if (pass->renderTarget() != promised) {
                 const OutputIdentity identity = OutputIdentity::targetOf(*promised);
                 {
-                    reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                        vn::graphics::DiagnosticCategory::ContentSkipped,
-                                        String(u8"pass '") + reportedPassName(pass) + String(u8"' promises target '") + target_name(promised) +
-                                            String(u8"' as its output but renders into '") + drawn_into_name(pass) +
-                                            String(u8"', so the promise is about content this pass never writes"));
+                    reportEngineProblem(wiringProblem(u8"engine.pass.output_target_mismatch",
+                                                      vn::graphics::DiagnosticCategory::ContentSkipped,
+                                                      String(u8"pass '") + reportedPassName(pass) + String(u8"' promises target '") + target_name(promised) +
+                                                          String(u8"' as its output but renders into '") + drawn_into_name(pass) +
+                                                          String(u8"', so the promise is about content this pass never writes"),
+                                                      reportedPassName(pass)));
                 }
             }
 
@@ -1047,12 +1079,13 @@ void RenderEngine::collectPlanProblems()
                 }
                 noteColliding(identity);
                 {
-                    reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                        vn::graphics::DiagnosticCategory::ContentSkipped,
-                                        String(u8"two passes ('") + reportedPassName(entry->pass) + String(u8"' and '") + reportedPassName(pass) +
-                                            String(u8"') claim ") + identity_name(identity) +
-                                            String(u8" as their output, so a consumer of it gets whichever pass"
-                                                   u8" runs last"));
+                    reportEngineProblem(wiringProblem(u8"engine.pass.output_collision",
+                                                      vn::graphics::DiagnosticCategory::ContentSkipped,
+                                                      String(u8"two passes ('") + reportedPassName(entry->pass) + String(u8"' and '") + reportedPassName(pass) +
+                                                          String(u8"') claim ") + identity_name(identity) +
+                                                          String(u8" as their output, so a consumer of it gets whichever pass"
+                                                                 u8" runs last"),
+                                                      String{}));
                 }
             }
         }
@@ -1077,11 +1110,12 @@ void RenderEngine::collectPlanProblems()
             if (promised_target != nullptr && pass->renderTarget() != promised_target) {
                 const OutputIdentity identity = OutputIdentity::of(*output);
                 {
-                    reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                        vn::graphics::DiagnosticCategory::ContentSkipped,
-                                        String(u8"pass '") + reportedPassName(pass) + String(u8"' promises the image '") + output->label() +
-                                            String(u8"' of target '") + target_name(promised_target) + String(u8"' as its output but renders into '") +
-                                            drawn_into_name(pass) + String(u8"', so the promise is about content this pass never writes"));
+                    reportEngineProblem(wiringProblem(u8"engine.pass.output_image_mismatch",
+                                                      vn::graphics::DiagnosticCategory::ContentSkipped,
+                                                      String(u8"pass '") + reportedPassName(pass) + String(u8"' promises the image '") + output->label() +
+                                                          String(u8"' of target '") + target_name(promised_target) + String(u8"' as its output but renders into '") +
+                                                          drawn_into_name(pass) + String(u8"', so the promise is about content this pass never writes"),
+                                                      reportedPassName(pass)));
                 }
             }
             const OutputIdentity identity = OutputIdentity::of(*output);
