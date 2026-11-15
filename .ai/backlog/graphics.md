@@ -4,7 +4,8 @@
 > 需要历史时看 git。每条只写“是什么 / 触发条件 / 出处”。
 >
 > 设计来源：`../design/graphics-architecture.md` · `../design/graphics-scene.md` · `../design/graphics-geometry.md` ·
-> `../design/graphics-rendering.md` · `../design/graphics-content-lifecycle.md` · `../design/vsg-backend.md`。
+> `../design/graphics-rendering.md` · `../design/graphics-content-lifecycle.md` · `../design/vsg-backend.md` ·
+> `../design/vk-backend.md`。
 
 ## 1. 现在可做（无触发条件）
 
