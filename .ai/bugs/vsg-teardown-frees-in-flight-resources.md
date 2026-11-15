@@ -2,8 +2,8 @@
 
 > **判据**：`test_vsg`（Release）全套运行约 50% 概率 `malloc(): unaligned tcache chunk detected` 或 SIGSEGV，落点漂移
 > （`FrameUploadsTest`、`PrepareUploadTest` 各一次）；Debug 全套很少触发；旧提交同样触发。
-> **结论**：vsg 后端的**资源寿命与其提交不同步**——两处释放发生在 GPU/驱动线程仍在读之后。已修两处；
-> 仍有一处窄路径（prepare-only 拆机）在内存检查器下可见，见 §4。
+> **结论**：vsg 后端的**资源寿命与其提交不同步**——三处释放发生在 GPU/驱动线程仍在读之后，全部已修（见 §4）；
+> 内存检查器在修复后对同一批套件报告 0 处 `Invalid read`。
 > **权威来源**：`src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp`（拆机顺序）、`OffscreenSession.cpp` 与
 > `Session.cpp`（帧图换代）、`include/vine/backend_vsg/internal/GraphLifetime.hpp`（keep-alive）；内存检查器的原始栈在
 > 本文 §2。
@@ -50,12 +50,15 @@ device memory / buffer / image 销毁时仍在使用）。后端自身在 `VsgBa
 
 **量出来的效果**：Release 全套连跑 **4/4 全绿**（修前约 50% 崩）。
 
-**仍剩（已定位、未修）**：`PrepareUploadTest` 的 **prepare-only** 路径——它 `prepareFrame()` 之后直接
-`shutdown()`，很可能**一帧都没提交**（`submittedFrame() == 0`，因此 `waitDeviceIdle()` 提前返回），而 VSG 的
-**viewer 线程/传输任务**可能仍在跑，于是 `MaterialImages` 的图像被销毁时仍有工作线程在读。修法方向（按 VSG 自己的
-API）：拆机时先 `Viewer::stopThreading()`（并等传输任务完成）再 `deviceWaitIdle()`；`waitDeviceIdle()` 的
-`submittedFrame() == 0` 早退也要按“有没有编译/传输工作在跑”重新判断。触发条件：下一次在内存检查器下复现，或
-`test_vsg` 再次出现堆破坏。
+**第三处（已修，2026-11-15 后半）**：`PrepareUploadTest` 的 **prepare-only** 路径——它 `prepareFrame()` 之后直接
+`shutdown()`，而 `OffscreenSession::waitDeviceIdle()` 用 `timeline().submittedFrame() == 0` **提前返回**，
+于是“一帧都没提交”被当成“什么都没在跑”。真相是 prepare 会创建管线、并提交它的上传批（ADR 允许），驱动的编译/
+执行工作可以活过这次调用。修法：**把早退的判据换成“这个会话有没有创建过工作”**——`beginFrame()` 置位，
+`prepareFrame` 经该会话准备时由后端调 `notePreparedWork()` 置位；`waitDeviceIdle()` 只在这个事实为真时才等
+（等待计入 `deviceWaits()`）。这样既修了 prepare-only 的拆机，也保住了“从没创建过工作的会话不假装等过”的诚实
+计数（`OffscreenSessionTest.TheDestructiveWaitIsCountedOnce` 钉的就是这条）。验证：`valgrind` 对
+`PrepareUploadTest.*` 从 4 处 `Invalid read` 变成 **0**；
+`*FrameUploads*:*PrepareUploadTest*:*BlockStorageTest*:*ContentPassTest*` 共 44 例在 valgrind 下 0 处错误。
 
 ## 5. 为什么验证层看不见
 
@@ -69,5 +72,8 @@ validation 只检查 **Vulkan 对象之间的引用**；这里是**宿主内存*
   slot 回收（`FrameTimeline::completedFrame()`），新的资源类别必须接同一套，而不是各写各的。
 - **关闭路径要和稳态路径用同一份证据**：`shutdown()` 之前先 idle 是廉价的；稳态靠 keep-alive、拆机靠 idle，
   两者都不需要 sacrifice 流水线。
+- **“计数器为 0”不是“什么都没在跑”**：`submittedFrame() == 0` 被当成空闲的证据，而 prepare 会提交传输、会建管线。
+  一个早退省下的等待，换来的是一个只在 prepare-only 路径上出现的堆破坏——**等待的条件要写“有没有对象可能仍被读”，
+  不是“我记不记得发生过帧”**。
 - **内存检查器要跑“会崩的那棵树”**：ASan（Debug）连跑三次全绿，valgrind 跑 Release 一次就抓到 5 处 —— 这类
   时序相关缺陷先用 ASan 排除越界，再用 valgrind 跑真正会崩的构建。

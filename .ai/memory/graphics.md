@@ -547,8 +547,13 @@
 - **修法**：①拆机在任何销毁前让**每个会话** `waitDeviceIdle()`（计入 `RetirementQueue::noteDeviceWait()`）；
   ②新增 `detail::GraphLifetime`（`GraphLifetime.hpp`）：被替换的帧图进 keep-alive 列表，按
   **`FrameTimeline::completedFrame()`**（slot 回收给的完成证据，和内容退休同一套）逐帧丢弃——稳态不牺牲流水线。
-- **量**：Release 全套 **4/4 全绿**（修前约每 2 次崩 1 次）。仍剩 prepare-only 拆机的窄路径
-  （`waitDeviceIdle()` 因 `submittedFrame()==0` 早退，而 VSG viewer/传输线程还可能跑），记 backlog T46。
+- **第三处（同日修完）**：`OffscreenSession::waitDeviceIdle()` 用 **`timeline().submittedFrame() == 0` 早退**，
+  把“没记到帧”当成“没在跑”——而 prepare 会建管线、会提交上传批。判据换成**“该会话创建过工作”**
+  （`beginFrame` 置位 + 后端在 prepare 时调 `notePreparedWork()`），既修 prepare-only 拆机、又保住
+  “没创建过工作的会话不假装等过”的诚实计数（`OffscreenSessionTest.TheDestructiveWaitIsCountedOnce`）。结果：
+  `PrepareUploadTest.*` 的 valgrind 从 **4 处 `Invalid read` → 0**；
+  `*FrameUploads*:*PrepareUploadTest*:*BlockStorageTest*:*ContentPassTest*` 44 例 0 错误。
+- **量**：Release 全套 **4/4 全绿**（修前约每 2 次崩 1 次）。
 - **配方**：内存/生命周期缺陷先在 ASan 树跑 3 次（排除越界），再用 valgrind 跑 Release 二进制（`--gtest_filter`
   可收窄），`--num-callers=16` 才看得到「Block was free'd at」的释放栈。
 

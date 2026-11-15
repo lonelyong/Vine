@@ -32,6 +32,8 @@ struct OffscreenSession::Impl {
     /// The graphs this session stopped recording but a pipelined submission may still read (see detail::GraphLifetime).
     detail::GraphLifetime retired_graphs;
     core::FrameTimeline   timeline;        // One clock for the session, when the device's is not borrowed.
+    /// Whether anything was ever created through this session (see notePreparedWork and waitDeviceIdle).
+    bool work_created{ false };
     core::RetirementQueue retirement{ 0 }; // Constructed for real once the slots are learned.
     /// The DEVICE's clock and park queue, when this session is one of several frame sources on one device (see
     /// core::DeviceClock): the borrowed pair then REPLACES the two above, which stay unused.
@@ -153,6 +155,7 @@ void OffscreenSession::shutdown() noexcept
     // session is being torn down, so nothing it submitted can still be read (VsgBackend::shutdown idles the device
     // before any of it, see there).
     impl->retired_graphs.clear();
+    impl->work_created  = false;
     impl->ready         = false;
     impl->lost_frames   = 0;
     impl->slots         = 0;
@@ -184,6 +187,7 @@ core::FrameToken OffscreenSession::beginFrame()
     if (!impl || !impl->ready) {
         return {};
     }
+    impl->work_created = true; // a frame is about to be recorded and submitted: the device will name what it built
 
     // The frame's time stamp is sampled HERE and does not move while the frame is open, exactly as the windowed
     // session samples it: every pass of this frame binds the same "now".
@@ -324,11 +328,24 @@ std::size_t OffscreenSession::deviceWaits() const noexcept
     return impl->shared_retirement != nullptr ? impl->shared_retirement->deviceWaits() : impl->retirement.deviceWaits();
 }
 
+void OffscreenSession::notePreparedWork() noexcept
+{
+    if (impl) {
+        impl->work_created = true;
+    }
+}
+
 void OffscreenSession::waitDeviceIdle() noexcept
 {
-    if (!impl || !impl->viewer || timeline().submittedFrame() == 0) {
-        return; // nothing was ever submitted: there is nothing to wait for
+    if (!impl || !impl->viewer || !impl->work_created) {
+        // NOTHING WAS EVER CREATED THROUGH THIS SESSION: there is nothing the device could still be reading, and a wait
+        // that never had to happen does not count itself (the counter is evidence, not a habit).
+        return;
     }
+    // THE FRAME COUNTER IS NOT THE EVIDENCE. `prepareFrame` creates pipelines and submits its upload batch without
+    // opening a frame (the ADR allows it), so "no frame was submitted" once short-circuited this wait and a
+    // prepare-only session tore its material images down under a live driver thread (see
+    // .ai/bugs/vsg-teardown-frees-in-flight-resources.md). `work_created` is the fact the wait needs.
     impl->viewer->deviceWaitIdle();
     retirement().noteDeviceWait(); // the same counter deviceWaits() answers with
 }

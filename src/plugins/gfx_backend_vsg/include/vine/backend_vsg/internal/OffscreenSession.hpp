@@ -104,6 +104,19 @@ class OffscreenSession {
      */
     void waitDeviceIdle() noexcept;
 
+    /**
+     * @brief States that work was CREATED through this session without a frame being submitted (a prepare).
+     *
+     * @details
+     * - WHY THE SESSION HAS TO BE TOLD. `waitDeviceIdle()` waits when this session ever created something the device
+     *   may still read; a frame says so by itself (`beginFrame`), but a PREPARE does not go through the session's
+     *   frame path - it compiles pipelines and flushes its upload batch directly - so without this call a
+     *   prepare-only session would look untouched and its teardown would not wait (which a memory checker caught:
+     *   see .ai/bugs/vsg-teardown-frees-in-flight-resources.md).
+     * - It is not a counter: the fact is "anything was ever created", which is what the wait needs.
+     */
+    void notePreparedWork() noexcept;
+
     /** @brief Gets whether the session is up. */
     [[nodiscard]] bool initialized() const noexcept;
 

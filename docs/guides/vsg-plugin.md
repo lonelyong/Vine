@@ -66,7 +66,7 @@
 
 | 组 | 单元 |
 | --- | --- |
-| 门面与会话 | `VsgBackend` `Session` `OffscreenSession` `SessionDrive` `SessionContent` `SessionMove` `TransferStaging` `WindowTarget` `Device` `DeviceFeatures` `DeviceRequirements` `DeviceProbe` `VsgExecutor` |
+| 门面与会话 | `VsgBackend` `Session` `OffscreenSession` `GraphLifetime` `SessionDrive` `SessionContent` `SessionMove` `TransferStaging` `WindowTarget` `Device` `DeviceFeatures` `DeviceRequirements` `DeviceProbe` `VsgExecutor` |
 | 内容层 | `ContentAssembly` `ContentPass` `ContentHalves` `ContentDraw` `ContentFacts` `ContentSources` `ContentStore` `ContentImages` `ContentPush` `ContentSets` `ContentPipeline` `DrawNeeds` |
 | 数据与表 | `GeometryFacts` `ShadowBlock` `ViewBlock` `ProgramAbi` `ProgramVariant` `MaterialImages` `MaterialSlotCheck` `StreamUploads` `BlockStorage` `BlockDescriptors` `VariantPool` `PassRegistry` `StateCommands` |
 | 目标与读回 | `OffscreenTarget` `HostTargets` `HostReadback` `WhiteImage` |

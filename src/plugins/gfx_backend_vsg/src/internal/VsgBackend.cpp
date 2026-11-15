@@ -1069,6 +1069,13 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
     // session's transfer task is where a prepared texture's copies go (see the flush below).
     api::OffscreenSession* const offscreen = index < d->windows.size() ? nullptr : ensureOffscreenSession();
 
+    // THE SESSION IS TOLD A PREPARE WENT THROUGH IT (see OffscreenSession::notePreparedWork): a prepare creates
+    // pipelines and flushes uploads without opening a frame, and the teardown's device idle follows that fact rather
+    // than a frame counter.
+    if (offscreen != nullptr) {
+        offscreen->notePreparedWork();
+    }
+
     // THE PER-FRAME STORAGE IS BROUGHT UP TO WHAT THIS FRAME NEEDS, exactly as a frame's opening would - and this is
     // the place for it, because prepare is defined to run between frames. A prepared frame whose first real frame
     // would grow the storage would rebuild every declared set it just prepared (the sets bind that buffer), which is
