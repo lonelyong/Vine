@@ -15,6 +15,7 @@ add_executable(${TEST_NAME}
         HandlesTest.cpp
         MemoryTest.cpp
         MsaaTest.cpp
+        MultiSessionTest.cpp
         OffscreenClearTest.cpp
         PassTimingTest.cpp
         PipelineCacheTest.cpp

@@ -98,6 +98,34 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
     [[nodiscard]] vn::graphics::RenderFrameExecutor& executor() override;
 
     /**
+     * @brief Borrows a NEW frame driver (see RenderDevice::createSession).
+     *
+     * @details
+     * - THE OBJECT IS THE DEVICE'S FROM THIS CALL ON, and it is created INERT: `initialize()` is what gives it
+     *   a command pool, a fence and a frame scratch (R1 - an engine attaches to a device its creator has not
+     *   brought up yet). Releasing it before then simply drops the object.
+     * - WHAT THE DEVICE PROMISES TODAY: every driver owns its frame machinery and its scratch, and the
+     *   DEVICE runs one frame body at a time - the caches, the allocator and the queue are shared and are not
+     *   yet observable from two running frames (see `.ai/design/graphics-sessions.md`, S6b). A host may
+     *   therefore drive two drivers from two threads and get two correct pictures; it may not expect them to
+     *   overlap in time.
+     *
+     * @return The new driver, or null when the device is lost.
+     */
+    [[nodiscard]] vn::graphics::RenderFrameExecutor* createSession() override;
+
+    /**
+     * @brief Returns a driver borrowed through @ref createSession (see RenderDevice::releaseSession).
+     *
+     * @details
+     * - Releasing the device's OWN driver is a no-op (the device keeps it for its lifetime).
+     * - The caller guarantees nothing is driving it; the device may destroy its objects at once.
+     *
+     * @param session The driver to return (ignored when this device never handed it out).
+     */
+    void releaseSession(vn::graphics::RenderFrameExecutor& session) override;
+
+    /**
      * @brief Selects the program content without one of its own is drawn with.
      *
      * @details

@@ -159,6 +159,13 @@
   `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
   ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
   别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
+- **S6b 已落地（2026-11-15，T48 第六步 b，串行版）**：vk 真的多发驱动者——`Device::createSession()` 造 `Session`
+  （早于 `initialize()` 的由它统一拉起；已起的设备上当场建并建好 scratch）；`releaseSession()` 销毁并遗忘，设备自己的
+  驱动者不可归还。设备持一把 `frame_mutex`：会话各有命令池/栅栏/时间戳池/帧闸/scratch/默认程序，但缓存/分配器/队列还没在
+  两条运行帧之间成立 ⇒ **帧体串行**（C10：先写串行）。`VkMultiSessionTest` 4 例（T8 两驱动者不同默认程序各画各的、
+  T10 两线程各 6 帧两图各自正确、R1 早借晚用、释放与再借），变异 2/2 红；`test_vk` 125/125、ASan 门禁 PASS。
+  **坑**：`createSession()` 在设备已 initialize 后调用必须**当场建好**机器（否则 `vkAllocateCommandBuffers` 用空池段错误，
+  第一版就是这样炸的）。**仍未做（S6c）**：帧首快照、驻留条目活到水位、R6 非阻塞释放、`ensureGeometry` 接 `ResidenceTable`。
 - **S6a 已落地（2026-11-15，T48 第六步 a）**：SDK 的会话接缝——`RenderDevice::createSession()` 默认 `&executor()`、
   `releaseSession()` 默认 no-op；`setDefaultContentProgram` 从 `RenderDevice` **移到** `RenderFrameExecutor`（默认 no-op；
   `RenderBackend` 不再二义）。`RenderEngine` 持 `session_`：`setDevice` 借、换设备/析构还，帧与默认程序都走它。vk 的默认

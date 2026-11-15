@@ -205,14 +205,14 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 
 | # | 功能 | 行为 | 状态 |
 |---|---|---|---|
-| F1 | 会话类型与创建 | 设备拥有会话；`createSession()` 借出，默认答 `&executor()` | **部分（S6a）**：SDK 接缝与引擎持有一已落地；vk 仍答默认（单驱动者），第二个真实驱动者随 S6b |
+| F1 | 会话类型与创建 | 设备拥有会话；`createSession()` 借出，默认答 `&executor()` | **已落地（S6a+S6b）**：SDK 默认接缝 + 引擎持有；vk 真的多发驱动者（各自命令池/栅栏/暂存/默认程序）。设备今天**串行化帧体**，时间重叠见 S6c |
 | F2 | 每会话帧机器 | 命令池 / 栅栏 / 时间戳池 / 帧账 / 帧闸按会话各一份 | 未做 |
 | F3 | 设备缓存 + 帧首快照 | 缓存只在帧首读一次，记录路径零锁 | **部分（S3）**：缓存与帧暂存已分家（`ContentCaches` / `FrameScratch`）；帧首快照与锁计数随 S4 的第一个第二读者 |
 | F4 | 驻留三态 | `Absent → Uploading → Resident`，发布或撤回，竞争即复制 | **部分（S4）**：状态机 + 8 条单元用例已落地（两个 session id 模拟两会话）；设备接线（`ensureGeometry` 走 `admit`）随 S6 |
 | F5 | 目标 claim | 一帧一 claim，冲突只跳过那个 pass | **部分（S5）**：`TargetClaims` 租约 + 帧/预热的接线已落地；两会话冲突的报告实践由单元 + 设备用例验证，公开 `createSession()` 随 S6 |
 | F6 | 跨会话退休 | vk 采用 `DeviceClock` + `RetirementQueue`；释放可在别人 frame 时调用 | **部分（S1 已落地）**：时钟 / park 队列 / 水位 / 清结已在树上，仍只有一个会话 |
 | F7 | 设备级读回 | 自己的池与栅栏，拷贝前等设备水位，计入 `deviceWaits()` | 未做（today 借帧栅栏） |
-| F8 | 默认内容程序归会话 | 会话上可设；设备级只服务直接调用方；单会话后端行为不变 | **部分（S6a）**：声明已从 `RenderDevice` 移到 `RenderFrameExecutor`（默认 no-op）；vk 的每个 `Session` 各持一份，`Device` 覆写转发给自带的驱动者 |
+| F8 | 默认内容程序归会话 | 会话上可设；设备级只服务直接调用方；单会话后端行为不变 | **已落地（S6a+S6b）**：声明在 `RenderFrameExecutor`；vk 的每个 `Session` 各持一份，两驱动者各画各的（T8 用例） |
 | F9 | vsg 的对应落地 | 收集暂存搬进会话；缓存加锁/快照；完成证据已有 | 部分（窗口会话已有） |
 | F10 | 契约与文档收口 | `C21` / `N18` 改写、三处头文件文本、ADR 状态、审计行 | 部分（T47 改了三处文本） |
 
@@ -513,6 +513,11 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   发帧作用域 `Lease`，`claim` 冲突答 false、析构释放（`P3`）；`executeFrame` / `prepareFrame` 在 `ensure_target`
   之前 claim，冲突只跳该 pass 并报 `vk.target.claim_conflict`（每（目标, 情节）一条）。`TargetClaimsTest` 7 例 +
   `TargetClaimFrameTest` 2 例，变异 2/2 红；`test_vk` 120/120（Debug + ASan 门禁）。
+- **已落地**：`T48` 的 **S6b（串行版）**——vk 真的多发驱动者：`createSession()` 造 `Session`（早于 `initialize()` 的由
+  initialize 统一拉起；已起的设备上当场建），`releaseSession` 销毁并遗忘，设备自己的驱动者不可归还。设备持一把
+  `frame_mutex` 串行化帧体（缓存/分配/队列尚未在两条运行帧之间成立，`C10`：先写串行）。`VkMultiSessionTest` 4 例
+  （T8 两驱动者不同默认程序各画各的、T10 两线程各 6 帧两图各自正确、R1 早借晚用、释放与再借），变异 2/2 红；
+  `test_vk` **125/125**、`test_graphics` 587、`test_vsg` 556，ASan 门禁 PASS。
 - **已落地**：`T48` 的 **S6a**——`RenderDevice::createSession()` / `releaseSession()` 接缝（默认 `&executor()` /
   no-op）；`setDefaultContentProgram` 移到 `RenderFrameExecutor`；`RenderEngine` 持 `session_`（借/还，帧与默认程序
   走它）；vk 的默认程序归 `Session`。三套 **556 / 121 / 587** 全绿，变异 1/1 红。**S6b** 才是第二个真实驱动者：
@@ -556,14 +561,19 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   二义）；`RenderEngine` 在 `setDevice` 借、换设备/析构还，帧与默认程序走自己的 `session_`；vk 的默认程序从 `Impl`
   移到 `Session`（`Device` 覆写转发）。`test_graphics` 587（+1 借/还用例）、`test_vk` 121（+1 默认形状）、
   `test_vsg` 556；变异 1/1 红（析构不还）。**坑**：改了 SDK 的虚表后**动态插件必须重建**（旧 .so 让插件用例段错误）。
-| S6b | vk 真的多发驱动者：缓存/分配/提交三把锁（或帧首快照）、`ensureGeometry` 接 `ResidenceTable`、替换路径改 park、
-  T8 两引擎并发 | T3/T8 | 中 |
+| S6b | **已落地 2026-11-15（串行版）**：`Device::createSession()` 真的造一个 `Session`（可早于 `initialize()`，由它统一拉起；
+  已起的设备上则当场建）；`releaseSession` 销毁并遗忘（设备自己的驱动者不可归还）。**设备持一把 `frame_mutex`**：会话各持机器，
+  但缓存/分配器/队列还没在两条运行中的帧之间成立，所以帧体串行——这正是 `C10` 要求的"做不到就先写串行"。T8（两驱动者不同默认程序、
+  各画各的）与 T10（两线程各 N 帧、两图各自正确）已绿；变异 2/2 红。`test_vk` **125/125**（ASan 门禁 PASS）。
+| S6c | **真并行**：帧首快照（记录路径零锁）、驻留条目活到水位（释放不搬走条目）、`releaseContent` 记下每个会话的 submitted
+  （R6：可在别人 frame 时调用且不阻塞到它结束）、`ResidenceTable` 接进 `ensureGeometry`、替换路径改 park、T3/T8 的并行证据 | T3/T6/T8 | 大 |
 | S7 | F7 读回独立化 | T7 | 低 |
 | S8 | vsg 的 F9（搬收集暂存 + 缓存加锁/快照） | T9 | 中 |
 | S9 | F10 收口 + TSan + 文档 | T11、T12 | 低 |
 
-**S6 是唯一改变并发语义的一步**：在它之前，两个会话只存在于单元用例里；在它之后，两个引擎真的能同时 frame。
-所以 S1–S5 的验收标准都是"单会话行为不变"，S6 才引入新语义，由 T8/T10 承担证据。
+**S6 是唯一改变并发语义的一步**：在它之前，两个会话只存在于单元用例里；S6a/S6b 之后，两个引擎各有自己的驱动者、
+可以同时**调用**，但设备把**帧体**串行化（缓存/分配/队列的锁与帧首快照是 S6c）。所以 S1–S5 的验收标准都是"单会话行为不变"；
+S6b 由 T8/T10 承担"两个驱动者各自正确"的证据，S6c 才承担"时间上重叠"的证据。
 **S1 已落地（与历史估计的一处差异）**：释放是**两件事**，而不是一件。缓存表**立刻**忘掉条目（所以`ResidencyLedger`、`progress().streams_live` 的数字照旧立即下降，下一帧重传），而 GPU 对象在
 集合队列里等水位——一个 slot 时是 `submitted + 2`，即**最多两帧后**才销毁。新的观察点是
 `Device::retirementNumbers()`（`pending` / `released` / `device_waits`），而不是驻留账。两帧不是 bug：它是

@@ -4,7 +4,9 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <algorithm>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -565,8 +567,15 @@ struct Device::Impl {
     std::function<bool(const RenderTarget&)>   ensure_target{};
     std::function<bool(VkResult, const char*)> note_device_lost{};
 
-    /// THE FRAME DRIVER this device hands out: it owns the command machinery, the frame books and the gate.
+    /// THE DEVICE'S OWN FRAME DRIVER: it owns the command machinery, the frame books and the gate.
     std::unique_ptr<Session> session{};
+    /// Every OTHER driver a host borrowed (see Device::createSession); the device owns them too.
+    std::vector<std::unique_ptr<Session>> extra_sessions{};
+    ///
+    /// ONE FRAME BODY AT A TIME ON THIS DEVICE. Sessions own their machinery, but the caches, the allocator and
+    /// the queue are the device's and are not yet safe to observe from two running frames - so the drivers are
+    /// serialised HERE, at the body, after each driver's own gate has answered re-entry (see the class note).
+    std::mutex frame_mutex{};
     DeviceDesc      desc{};
     Capabilities    caps{};
     RenderTarget*   target{ nullptr };
@@ -1102,6 +1111,10 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
         }
         return PresentOutcome::Refused;
     }
+
+    // THE DEVICE RUNS ONE FRAME BODY AT A TIME (see Impl::frame_mutex): the caches, the allocator and the queue
+    // are shared, so a second driver waits HERE - after its own gate has already answered re-entry.
+    const std::lock_guard<std::mutex> device_body(owner.frame_mutex);
 
     if (!(owner.device != VK_NULL_HANDLE && !owner.device_lost)) {
         if (owner.device_lost) {
@@ -1701,6 +1714,9 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
         }
         return PrepareReport{ PrepareReport::Outcome::Refused };
     }
+
+    // THE SAME DEVICE BODY LOCK executeFrame takes: a warm-up touches the same caches and may submit.
+    const std::lock_guard<std::mutex> device_body(owner.frame_mutex);
 
     if (!(owner.device != VK_NULL_HANDLE && !owner.device_lost)) {
         // "There is nothing to prebuild" and "the device is not up" are different answers (see PrepareReport).
@@ -2502,17 +2518,36 @@ bool Device::initialize()
     impl->caches.images().setMaxAnisotropy(impl->caps.max_anisotropy);
     impl->caches.setCreationFeedback(impl->creation_feedback);
 
-    // THIS DRIVER'S FRAME SCRATCH, over the layouts the caches just created: the ring and the descriptor pool are the
-    // frame's, so this is the step that makes the device a POOL (it owns what is shared) and the driver a FRAME (it
-    // owns what a frame writes into). A driver that cannot hold its constants is not a driver that can draw, so the
-    // session refuses to come up rather than answer frames with nothing.
-    if (!impl->session->createScratch()) {
-        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                          DiagnosticCategory::InitFailed,
-                                          u8"vk.init.content_pool_failed",
-                                          u8"vk: the frame's uniform ring / descriptor pool could not be created"));
+    // EVERY DRIVER COMES UP WITH THE DEVICE, not only the device's own: a session borrowed before initialize()
+    // (R1 - an engine attaches first) gets its command machinery and its frame scratch HERE, where the layouts
+    // exist. A driver that cannot hold its constants is not a driver that can draw, so the device refuses to
+    // come up rather than answer frames with nothing.
+    const auto bring_up = [this](Session& driver) -> bool {
+        if (driver.create() != Session::CreateRefusal::Ok) {
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::InitFailed,
+                                              u8"vk.init.command_machinery_failed",
+                                              u8"vk: a frame driver's command pool / fence could not be created"));
+            return false;
+        }
+        if (!driver.createScratch()) {
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::InitFailed,
+                                              u8"vk.init.content_pool_failed",
+                                              u8"vk: a frame driver's uniform ring / descriptor pool could not be created"));
+            return false;
+        }
+        return true;
+    };
+    if (!bring_up(*impl->session)) {
         shutdown();
         return false;
+    }
+    for (std::unique_ptr<Session>& extra : impl->extra_sessions) {
+        if (!bring_up(*extra)) {
+            shutdown();
+            return false;
+        }
     }
 
     // THE PARK QUEUE'S WINDOW, from the first frame on: the driver registered its clock window in create(), so the
@@ -2555,6 +2590,13 @@ void Device::shutdown()
                 impl->cache_books.saved_bytes = pipeline_cache.size();
             }
         }
+
+        // EVERY OTHER DRIVER GOES FIRST for the same reason the device's own scratch does: its pool holds cached
+        // sets and its ring is a slice, while the layouts belong to the caches below.
+        for (std::unique_ptr<Session>& extra : impl->extra_sessions) {
+            extra->destroy();
+        }
+        impl->extra_sessions.clear();
 
         // THE FRAME SCRATCH GOES BEFORE THE CACHES: its pool holds the cached sets and its ring is a slice of the
         // allocator, while the layouts it allocated against belong to the caches - so the borrowed half goes first.
@@ -2757,6 +2799,57 @@ void Device::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::Shad
     // its own session, so a caller that drives the device directly keeps the shape it had - and a real second driver
     // would be told its own program, not this one's.
     impl->session->setDefaultContentProgram(std::move(program));
+}
+
+vn::graphics::RenderFrameExecutor* Device::createSession()
+{
+    if (impl->device_lost) {
+        return nullptr;
+    }
+    // A DRIVER BORROWED BEFORE initialize() IS BUILT BY IT (R1: an engine attaches first); one borrowed from a device
+    // that is ALREADY up must come up here, or it would answer frames with no command pool.
+    const std::lock_guard<std::mutex> guard(impl->frame_mutex);
+    std::unique_ptr<Session>          session = std::make_unique<Session>(*impl);
+    if (impl->device != VK_NULL_HANDLE) {
+        if (session->create() != Session::CreateRefusal::Ok) {
+            session->destroy();
+            impl->report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.command_machinery_failed",
+                                          u8"vk: a borrowed frame driver could not create its command pool / fence"));
+            return nullptr;
+        }
+        if (!session->createScratch()) {
+            session->destroy();
+            impl->report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.content_pool_failed",
+                                          u8"vk: a borrowed frame driver's uniform ring / descriptor pool could not be created"));
+            return nullptr;
+        }
+    }
+    impl->extra_sessions.push_back(std::move(session));
+    return impl->extra_sessions.back().get();
+}
+
+void Device::releaseSession(vn::graphics::RenderFrameExecutor& session)
+{
+    if (&session == impl->session.get()) {
+        return; // the device's own driver is not a host's to return (see the header)
+    }
+    const std::lock_guard<std::mutex> guard(impl->frame_mutex);
+    const auto found = std::find_if(impl->extra_sessions.begin(), impl->extra_sessions.end(), [&session](const std::unique_ptr<Session>& candidate) {
+        return candidate.get() == &session;
+    });
+    if (found == impl->extra_sessions.end()) {
+        return; // not one this device handed out
+    }
+    // THE CALLER GUARANTEES NOTHING IS DRIVING IT (see the header): the body lock above is what makes that
+    // guarantee cheap to honour - no frame body can be in flight while these objects go.
+    if (impl->device != VK_NULL_HANDLE) {
+        (*found)->destroy();
+    }
+    impl->extra_sessions.erase(found);
 }
 
 vn::graphics::RenderFrameExecutor& Device::executor()

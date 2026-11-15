@@ -24,25 +24,28 @@ using vn::graphics::RenderFrameExecutor;
 
 } // namespace
 
-TEST(VkSessionShapeTest, TheDeviceHandsOutItsOwnDriverAndTakingItBackIsHarmless)
+TEST(VkSessionShapeTest, TheDeviceHandsOutANewDriverAndKeepsItsOwn)
 {
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
     ASSERT_NE(backend, nullptr);
     if (!backend->initialize()) {
         GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
     }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
 
-    // THE DEFAULT IS "ONE DEVICE, ONE DRIVER" (see RenderDevice::createSession): until the cache and queue locks land
-    // (S6b), a second driver would let two engines race over state that is not guarded yet.
+    // S6b: `createSession()` hands out a REAL second driver - its own command machinery, its own frame scratch - so it
+    // is a different object from the device's own executor. A device borrowed before initialize() answers an inert
+    // one that comes up with the device (see VkMultiSessionTest).
     RenderFrameExecutor* const session = backend->createSession();
     ASSERT_NE(session, nullptr);
-    EXPECT_EQ(session, &backend->executor()) << "the vk device invented a second driver before its caches are guarded";
+    EXPECT_NE(session, &backend->executor()) << "the second driver IS the device's own session";
 
-    // Releasing what the device owns is a no-op - and must not leave the driver unusable.
-    backend->releaseSession(*session);
+    // Releasing what the device owns is a no-op; releasing a borrowed driver drops it.
+    backend->releaseSession(backend->executor());
+    EXPECT_EQ(&backend->executor(), &device->executor()) << "releasing the device's own driver replaced it";
     backend->releaseSession(*session);
     EXPECT_TRUE(backend->initialized());
-    EXPECT_EQ(&backend->executor(), session) << "a released own driver was replaced or destroyed";
 
     backend->shutdown();
 }
