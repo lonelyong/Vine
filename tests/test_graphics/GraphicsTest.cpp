@@ -3558,6 +3558,10 @@ class MockBackend : public RenderBackend {
     std::optional<vn::graphics::LightValue> last_light;
     int                                default_content_program_sets = 0;
     intrusive_ptr<const ShaderProgram> last_default_content_program;
+    /// How many frame drivers the engine borrowed and returned (see RenderDevice::createSession). This double IS
+    /// its own executor, which is the default shape: one driver per device.
+    int sessions_created  = 0;
+    int sessions_released = 0;
 
     bool initialize() override
     {
@@ -3577,6 +3581,18 @@ class MockBackend : public RenderBackend {
     {
         last_default_content_program = std::move(program);
         ++default_content_program_sets;
+    }
+
+    [[nodiscard]] RenderFrameExecutor* createSession() override
+    {
+        ++sessions_created;
+        return this;
+    }
+
+    void releaseSession(RenderFrameExecutor& session) override
+    {
+        (void)session;
+        ++sessions_released;
     }
 
     void shutdown() override
@@ -3755,6 +3771,33 @@ class MockBackend : public RenderBackend {
         last_released_target = target;
     }
 };
+
+TEST(RenderEngineTest, AnEngineBorrowsADriverAndReturnsItWhenTheDeviceChangesOrItDies)
+{
+    // OWNERSHIP OF THE FRAME DRIVER (see RenderDevice::createSession): the device owns it, the engine borrows it for
+    // as long as it drives that device - and re-announcing the same device must not borrow a second one.
+    {
+        const vn::intrusive_ptr<MockBackend> backend(new MockBackend());
+        RenderEngine                         engine;
+        engine.setDevice(backend);
+        EXPECT_EQ(backend->sessions_created, 1) << "attaching a device did not borrow its frame driver";
+        EXPECT_EQ(backend->sessions_released, 0);
+
+        engine.setDevice(backend); // idempotent: same device, same driver
+        EXPECT_EQ(backend->sessions_created, 1) << "re-announcing the same device borrowed another driver";
+
+        engine.setDevice(nullptr);
+        EXPECT_EQ(backend->sessions_released, 1) << "replacing the device did not return its driver";
+    }
+
+    const vn::intrusive_ptr<MockBackend> backend(new MockBackend());
+    {
+        RenderEngine engine;
+        engine.setDevice(backend);
+        EXPECT_EQ(backend->sessions_created, 1);
+    }
+    EXPECT_EQ(backend->sessions_released, 1) << "a dying engine kept the driver it borrowed";
+}
 
 TEST(RenderEngineTest, TheFrameReportCrossesTheEngineWholeAndAbsentPartsStayAbsent)
 {

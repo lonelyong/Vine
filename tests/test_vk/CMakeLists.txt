@@ -23,6 +23,7 @@ add_executable(${TEST_NAME}
         ResidencyTest.cpp
         ResidenceTableTest.cpp
         RingTest.cpp
+        SessionShapeTest.cpp
         ShadowTest.cpp
         StateMappingTest.cpp
         TargetClaimFrameTest.cpp

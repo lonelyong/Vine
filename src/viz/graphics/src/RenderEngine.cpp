@@ -105,6 +105,12 @@ RenderEngine::~RenderEngine()
     if (lease_cell_ != nullptr) {
         lease_cell_->target = nullptr;
     }
+    // THE FRAME DRIVER GOES BACK FIRST: the device owns it (RenderDevice::createSession) and may destroy its
+    // machinery at once, so the borrowed reference must not outlive this engine.
+    if (device_ != nullptr && session_ != nullptr) {
+        device_->releaseSession(*session_);
+        session_ = nullptr;
+    }
     // The route this engine installed on the device goes with it: the device BORROWS it (see
     // RenderDevice::setDiagnosticsRoute), so a route that outlived its engine would be a dangling pointer the next
     // report walks into.
@@ -126,6 +132,11 @@ void RenderEngine::setDevice(intrusive_ptr<RenderBackend> device)
     }
     // The route this engine installed on the OLD device goes with the old device: it was borrowed there (see
     // RenderDevice::setDiagnosticsRoute) and is about to stop being valid for it.
+    // THE OLD DRIVER GOES BACK TO THE OLD DEVICE, before that reference is replaced.
+    if (device_ != nullptr && session_ != nullptr) {
+        device_->releaseSession(*session_);
+    }
+    session_ = nullptr;
     if (device_ != nullptr) {
         device_->removeDiagnosticsRoute(diagnostics_);
     }
@@ -137,10 +148,16 @@ void RenderEngine::setDevice(intrusive_ptr<RenderBackend> device)
     // the sink was installed needs nothing else done to it - the sink lives in the route, not in a copy.
     if (device_ != nullptr) {
         device_->setDiagnosticsRoute(diagnostics_);
-        // The default content program travels with the device, not with the attach: the device is brought up by
-        // its CREATOR (see RenderDevice::initialize), so the program has to be known before that - the engine is
-        // the only party that has it, and this is the moment the two are introduced.
-        device_->setDefaultContentProgram(default_content_program_);
+        // A DRIVER OF THIS ENGINE'S OWN (RenderDevice::createSession): one device may serve several engines, and this
+        // is the object that drives THIS one. A device that cannot hand one out leaves the engine without a driver,
+        // and its frames answer NotInitialized rather than guess one.
+        session_ = device_->createSession();
+        // The default content program travels with the DRIVER, not with the attach: the program shades frames, and
+        // the frame driver is what resolves it. A device that runs its own frames hands the same object back, so a
+        // direct driver keeps the shape it had.
+        if (session_ != nullptr) {
+            session_->setDefaultContentProgram(default_content_program_);
+        }
     }
 }
 
@@ -203,7 +220,7 @@ FrameReport RenderEngine::frameReport() const noexcept
 {
     // No device, nothing is measured: every part stays disengaged rather than reading as zeros (see
     // FrameReport - absent is not zero). The frame half of the device is what has the numbers.
-    return device_ != nullptr ? device_->executor().frameReport() : FrameReport{};
+    return session_ != nullptr ? session_->frameReport() : FrameReport{};
 }
 
 bool RenderEngine::initialize()
@@ -314,6 +331,11 @@ PrepareReport RenderEngine::prepare()
     if (!initialized_) {
         return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReady::NotInitialized };
     }
+    if (session_ == nullptr) {
+        // A device that hands out no driver cannot be prepared through: the same answer as "not attached", because
+        // there is nothing this call could build.
+        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReady::NotInitialized };
+    }
 
     // ONE FRAME IN FLIGHT: the engine half that owns the other slot is finished first, exactly as frame() does -
     // the expansion below writes the per-view memos, and those are the half's state (design 2.12).
@@ -335,7 +357,7 @@ PrepareReport RenderEngine::prepare()
     // build - the answer would be trivially zero and the first real frame would still compile. This is the same
     // value step the engine half runs (see FrameExpand): no device call and no submission.
     expandFrameValue(frame);
-    return device_->executor().prepareFrame(frame.description, frame.target);
+    return session_->prepareFrame(frame.description, frame.target);
 }
 
 FrameOutcome RenderEngine::frame()
@@ -351,6 +373,10 @@ FrameOutcome RenderEngine::frame()
         return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReady::NoDevice };
     }
     if (!initialized_) {
+        return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReady::NotInitialized };
+    }
+    if (session_ == nullptr) {
+        // A device that handed out no driver has nothing to run this frame on (see setDevice).
         return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReady::NotInitialized };
     }
 
@@ -567,7 +593,7 @@ void RenderEngine::runEngineHalf(detail::EngineFrame& frame)
     // The WHOLE FRAME happens inside this ONE call (see RenderFrameExecutor::executeFrame): the device acquires the
     // presentable image, the record submits, and the frame's tail presents it through the target it names. The engine
     // does not present afterwards - presenting twice would be presenting somebody else's frame (or nothing at all).
-    frame.outcome = device_->executor().executeFrame(frame.description, frame.target);
+    frame.outcome = session_->executeFrame(frame.description, frame.target);
 
     // A LOST PICTURE IS THE SURFACE ASKING TO BE REBUILT, and the size is how that request is made: a swapchain is
     // rebuilt by re-announcing the extent it hangs off (PresentTarget::resize -> the session follows the surface and
@@ -1342,11 +1368,11 @@ void RenderEngine::unpublish(const String& name)
 void RenderEngine::setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program)
 {
     default_content_program_ = std::move(program);
-    if (device_ != nullptr) {
-        // Forwarded straight away: the backend treats a call before initialize() as the session
+    if (session_ != nullptr) {
+        // Forwarded straight away: the driver treats a call before initialize() as the session
         // decision and one after it as a live switch (rebuild the window sets, drop the slots), so
         // the engine's accessor and the picture cannot disagree.
-        device_->setDefaultContentProgram(default_content_program_);
+        session_->setDefaultContentProgram(default_content_program_);
     }
 }
 

@@ -5,6 +5,7 @@
 #include "FrameStats.hpp"
 #include "PrepareReport.hpp"
 #include "PresentTarget.hpp"
+#include "ShaderProgram.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -170,6 +171,26 @@ class VN_GRAPHICS_API RenderFrameExecutor {
     [[nodiscard]] virtual FrameReport frameReport() const noexcept
     {
         return {};
+    }
+
+    /**
+     * @brief Selects the DEFAULT program for content this executor draws: what a drawable naming none of its own gets.
+     *
+     * @details
+     * - A SESSION SETTING, not a device one: the program is resolved while the frame is recorded (see
+     *   DrawDescription / PassDraw), so it belongs to the object that records the frame - and two executors handed out
+     *   by one device may be told different programs (`C8`).
+     * - The default implementation keeps nothing, which is the honest answer for an executor whose device has no
+     *   content path of its own.
+     * - A device that runs its own frames forwards the call to its own executor (see `RenderDevice::executor`), so a
+     *   host that drives a device directly keeps the shape it had before this seam existed.
+     *
+     * @param program Program to shade program-less content with, or null for "none" (such content is then reported
+     *                and skipped).
+     */
+    virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program)
+    {
+        (void)program;
     }
 };
 

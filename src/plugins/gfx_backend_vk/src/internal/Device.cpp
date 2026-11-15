@@ -473,6 +473,9 @@ class Device::Session final : public vn::graphics::RenderFrameExecutor
     PresentOutcome              executeFrame(const FrameDescription& frame, PresentTarget* present_to) override;
     vn::graphics::PrepareReport prepareFrame(const FrameDescription& frame, PresentTarget* present_to) override;
     vn::graphics::FrameReport   frameReport() const noexcept override;
+    /// The default content program is a FRAME setting (see RenderFrameExecutor): this driver keeps its own, so two
+    /// drivers handed out by one device may shade program-less content differently (`C8`).
+    void setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program) override;
 
     /** @brief Creates the objects a frame needs (idempotent; safe again after `destroy()`). */
     [[nodiscard]] CreateRefusal create() noexcept;
@@ -524,6 +527,8 @@ class Device::Session final : public vn::graphics::RenderFrameExecutor
     std::uint64_t clock_frames{ 0 }; ///< Frames this driver has begun (the sampling counter).
     std::uint32_t timestamp_queries{ 0 };
     FrameBooks    books{};
+    /// The program content without one of its own is drawn with, taken as a VALUE when it was announced.
+    vn::graphics::ShaderProgramDescriptionPtr default_program{};
     /// The ONE-FRAME-AT-A-TIME gate: one per driver, which is what will make two of them concurrent (see FrameGate).
     vn::graphics::backend::FrameGate frames{};
     /// The episode of "a frame was started from the thread that already drives one".
@@ -648,8 +653,6 @@ struct Device::Impl {
     /// M2's content path, DEVICE HALF: compiled programs, uploaded streams, pipelines, the shared layouts and the
     /// image cache. The frame's own half (the uniform ring and the descriptor pool) is each driver's `FrameScratch`.
     ContentCaches caches{};
-    /// The program content without one of its own is drawn with, taken as a VALUE when it was announced.
-    vn::graphics::ShaderProgramDescriptionPtr default_program{};
 
     /// The windows this device presents through (one per host handle; owned here, borrowed by the host).
     std::vector<std::unique_ptr<WindowTarget>> surfaces;
@@ -954,6 +957,13 @@ Device::Session::Session(Impl& owner_device) noexcept
 {
 }
 
+void Device::Session::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
+{
+    // THE VALUE, NOT THE OBJECT: what a frame records is the text that was current when the host announced it, so a
+    // later edit of the program cannot change a frame that is already described.
+    default_program = program != nullptr ? program->description() : vn::graphics::ShaderProgramDescriptionPtr{};
+}
+
 Device::Session::CreateRefusal Device::Session::create() noexcept
 {
     if (owner.device == VK_NULL_HANDLE) {
@@ -1031,6 +1041,7 @@ void Device::Session::destroy() noexcept
     timestamp_queries = 0U;
     clock_frames      = 0U;
     books             = FrameBooks{};
+    default_program   = nullptr;
 }
 
 bool Device::Session::ensureTimestampQueries(const std::uint32_t needed) noexcept
@@ -1517,7 +1528,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
                                            static_cast<int>(extent.height),
                                            description,
                                            draw,
-                                           owner.default_program.get(),
+                                           default_program.get(),
                                            shadow,
                                            &refusal);
             }
@@ -1844,7 +1855,7 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
                                       color_count,
                                       description,
                                       draw,
-                                      owner.default_program.get(),
+                                      default_program.get(),
                                       &refusal);
             }
             if (refusal.isRefused()) {
@@ -2594,7 +2605,6 @@ void Device::shutdown()
     // The creation intent survives the session (see the constructor): a shut-down Probe device still intends to
     // present when it is brought up again.
     impl->caps.presentation   = impl->desc.presentation != DevicePresentation::None;
-    impl->default_program        = nullptr;
     // THE NEXT SESSION STARTS WITH NOTHING REPORTED: these episodes are about one session's wiring and one session's
     // answers, so the rebuild a lost device needs must be able to tell its own story (see ReportOnce).
     impl->no_targets_report.rearm();
@@ -2743,8 +2753,10 @@ void Device::setMemoryBlockCreator(MemoryBlockCreator creator)
 
 void Device::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
 {
-    // THE VALUE, NOT THE OBJECT: what a frame records is the text that was current when the host announced it.
-    impl->default_program = program != nullptr ? program->description() : nullptr;
+    // THE DRIVER'S SETTING (see RenderFrameExecutor::setDefaultContentProgram): this device runs its own frames through
+    // its own session, so a caller that drives the device directly keeps the shape it had - and a real second driver
+    // would be told its own program, not this one's.
+    impl->session->setDefaultContentProgram(std::move(program));
 }
 
 vn::graphics::RenderFrameExecutor& Device::executor()

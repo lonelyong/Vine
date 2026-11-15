@@ -159,6 +159,14 @@
   `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
   ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
   别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
+- **S6a 已落地（2026-11-15，T48 第六步 a）**：SDK 的会话接缝——`RenderDevice::createSession()` 默认 `&executor()`、
+  `releaseSession()` 默认 no-op；`setDefaultContentProgram` 从 `RenderDevice` **移到** `RenderFrameExecutor`（默认 no-op；
+  `RenderBackend` 不再二义）。`RenderEngine` 持 `session_`：`setDevice` 借、换设备/析构还，帧与默认程序都走它。vk 的默认
+  程序从 `Impl` 移到 `Session`（每个驱动者各一份，`Device` 覆写转发给自带的那个）。判据：`test_graphics` 587（+1 借/还）、
+  `test_vk` 121（+1 默认形状）、`test_vsg` 556，变异 1/1 红（析构不还）。**坑（必记）**：改了 SDK 的**虚表**之后，
+  **动态插件必须重建**——旧 `gfx_backend_vsgd.so` 对 `VsgBackendPluginTest` 会段错误（vtable 布局不匹配），
+  `ninja -C build gfx_backend_vsg gfx_backend_vk` 后全绿。**仍未做（S6b）**：vk 仍答默认单驱动者；第二驱动者要等
+  缓存/分配/提交的锁（或帧首快照）、`ensureGeometry` 接 `ResidenceTable`、替换路径改 park。
 - **S5 已落地（2026-11-15，T48 第五步）**：`internal/TargetClaims.hpp`——设备持 `RenderTarget* → SessionId`；
   `begin(session)` 发帧作用域 `Lease`（析构是唯一释放点，`P3`），`executeFrame` / `prepareFrame` 在 **`ensure_target`
   之前** claim（重建只归持有者，`R5`），冲突只跳那个 pass 并报 `vk.target.claim_conflict`（每（目标, 情节）一条：

@@ -156,6 +156,10 @@
   （命令池 / 栅欄 / 时间戳池 / 帧账 / `FrameGate` / clock window），设备拥有它并在 `shutdown()` 里销毁它的对象；
   `RenderDevice::executor()` 现在答的是它带的那个驱动者：帧体（`executeFrame` / `prepareFrame` / `frameReport`）
   也已经搬进 `Session`，`Device` 只剩三个一行转发。
+- **2026-11-15（T48 S6a）后的形状**：SDK 的会话接缝已在树上（`createSession()` / `releaseSession()` 默认答
+  `&executor()` / no-op；默认内容程序归 `RenderFrameExecutor`，本设备的每个 `Session` 各持一份，`Device` 覆写转发给
+  自带的驱动者）。但 `createSession()` **仍答默认**：缓存 / 分配 / 提交的锁（S6b）到位之前，第二个驱动者会让两个
+  引擎竞争未保护的状态——接缝先行，并发后行。
 - **2026-11-15（T48 S3）后的形状**：`ContentDraw` 不再是一个“什么都有”的对象，而是三件：
   `ContentCaches`（**设备**：programs / geometries / instance streams / pipelines / 布局 / 图像 / 管线缓存）、
   `FrameScratch`（**驱动者**：常量环 + 描述符池 + set 表 + `frame_index`）、以及 `ContentDraw` 本身
@@ -687,10 +691,11 @@
 
 - M0–M13 全部落地；审查项 F1/F2/F4/F7/F8/F12 已落地，审查 F5/F9/F10/F11/F13 按 §1.3 保留。
 - **T48 进度**：S1（释放走队列）、S2a/S2b（帧机器与帧体进 `Device::Session`）、S3（`ContentCaches` + `FrameScratch`
-  分家，§2.16）、S4（`ResidenceTable` 三态状态机，§2.17）、S5（`TargetClaims` 租约 + 帧/预热接线，§2.18）已落地；
-  S6–S9 见 `.ai/design/graphics-sessions.md` §9.3。
-- `test_vk` **120 例 / 31 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；Debug 全量 ctest **32/32**；
-  `BackendParityTest` **12/12**。
+  分家，§2.16）、S4（`ResidenceTable` 三态状态机，§2.17）、S5（`TargetClaims` 租约 + 帧/预热接线，§2.18）、
+  S6a（SDK 会话接缝 + 引擎持有驱动者 + 默认程序归会话）已落地；S6b–S9 见 `.ai/design/graphics-sessions.md` §9.3。
+- `test_vk` **121 例 / 32 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **556**、`test_graphics` **587**；
+  Debug 全量 ctest **32/32**；`BackendParityTest` **12/12**。
+- **一条构建教训**：SDK 的虚表改动后，**动态插件必须一起重建**（旧 `.so` 让 `VsgBackendPluginTest` 段错误）。
 - 实测（lavapipe，真实宿主）：11 pass / 10 draw，稳态中位 **8.24 ms**，GPU **7.15–7.74 ms**；ring + set 缓存改动
   −10%（9.03–9.23 → 8.16–8.30 ms）。
 - 已知仓库级现象：`test_vsg` 在 Release 偶发堆破坏/段错误（`FrameUploadsTest` / `PrepareUploadTest` 附近），

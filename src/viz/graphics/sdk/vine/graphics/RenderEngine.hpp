@@ -57,6 +57,7 @@ class RenderPass;
 class ImageRef;
 class RenderTarget;
 class RenderBackend;
+class RenderFrameExecutor;
 class PresentTarget;
 
 /**
@@ -1350,6 +1351,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
 
     // ---- Fields ----
     intrusive_ptr<RenderBackend> device_;
+    // THIS ENGINE'S FRAME DRIVER: borrowed from the device (RenderDevice::createSession) and returned to it
+    // (RenderDevice::releaseSession) when the device is replaced or this engine dies. The device owns it, so a NULL
+    // SESSION means the device could not hand one out - frames then answer NotInitialized rather than guess a driver.
+    RenderFrameExecutor* session_{ nullptr };
     // The validity bit behind every Lease this engine handed out (see lease): set to this in the constructor and
     // cleared in the destructor, so a holder of a lease (a PassChain, say) answers "the engine is gone" instead
     // of calling into freed memory - and never has to keep the engine alive to be safe.

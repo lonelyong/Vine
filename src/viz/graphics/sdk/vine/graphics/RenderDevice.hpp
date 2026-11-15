@@ -134,7 +134,9 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   - setRenderTarget(target): a target the host will draw into or read back, so the device can hold it and build its
  *     attachments before any frame names it (null selects the default framebuffer, which needs none);
  *   - releasePass / releaseRenderTarget: the pass / target is going away - free what it owns (see each entry);
- *   - setDefaultContentProgram: the program content with no program of its own is drawn with;
+ *   - setDefaultContentProgram: the program content with no program of its own is drawn with - a property of the
+ *     FRAME half, so it is announced to the executor or session that draws (RenderFrameExecutor::setDefaultContentProgram),
+ *     and a device that runs its own frames forwards it there;
  *   - setDiagnosticsRoute / setDiagnosticSink: where this device's reports go.
  * - WHAT A DEVICE IS ASKED, and what each answer is:
  *   - capabilities(): what it can do, as ONE value (Capabilities) - asked before a frame is driven, because a
@@ -151,9 +153,11 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   several engines: two engines driving one device would otherwise tear each other's session down, and the second
  *   engine's initialize() would destroy the first one's - both silently. A borrowed device is up by definition, so
  *   an engine whose device is not up reports it instead of driving frames into nothing.
- * - THREADING. ONE FRAME AT A TIME, CHECKED. A device's frame machinery is device-wide today, so an executor call
- *   from a second thread WAITS for the frame in flight and a re-entrant call is REFUSED - `backend/FrameGate.hpp` is
- *   the shared implementation, and the two backends answer the same way. Host verbs (`setRenderTarget`,
+ * - THREADING. ONE FRAME AT A TIME PER EXECUTOR, CHECKED. An executor call from a second thread WAITS for that
+ *   executor's frame in flight and a re-entrant call is REFUSED - `backend/FrameGate.hpp` is the shared
+ *   implementation, and the two backends answer the same way. Today `createSession()`'s default hands every caller
+ *   the device's OWN executor, so there is still one driver per device; a backend that hands out several documents
+ *   which of them may run concurrently (see `.ai/design/graphics-sessions.md`). Host verbs (`setRenderTarget`,
  *   `releaseContent`, ...) stay BETWEEN-FRAME calls: the gate does not make them thread-safe, and a host that calls
  *   one while another thread frames is breaking a contract the device cannot see. A device may keep its state
  *   unsynchronised, but must not assume it stays on the same thread across an initialize()/shutdown() pair. The
@@ -179,8 +183,8 @@ class VN_GRAPHICS_API RenderDevice {
      *   that knows when it is no longer needed, and an engine that drove this would take a shared device down under
      *   whoever else is still drawing through it.
      * - Called after the host asked for what it wants presented (createSurfaceTarget - the window is a CREATION
-     *   input on Vulkan, see the axis' Q1) and announced the default content program
-     *   (setDefaultContentProgram).
+     *   input on Vulkan, see the axis' Q1) and announced the frame-side settings a session bakes as it starts
+     *   (RenderFrameExecutor::setDefaultContentProgram).
      * - Called again on a live device, it FOLLOWS WHAT WAS ANNOUNCED: a re-announced window is moved onto, a device
      *   whose session is unchanged keeps it (nothing is torn down, nothing is recompiled).
      *
@@ -222,6 +226,43 @@ class VN_GRAPHICS_API RenderDevice {
      * @return The frame executor of this device.
      */
     [[nodiscard]] virtual RenderFrameExecutor& executor() = 0;
+
+    /**
+     * @brief Borrows a frame executor from this device: the object a host drives frames through.
+     *
+     * @details
+     * - ONE DEVICE, ONE OR MORE DRIVERS. The default answers executor() - the device's own driver - so every backend
+     *   that has not split its frame machinery keeps the exact shape it had, and a host that drives one engine sees no
+     *   difference. A backend that hands out more than one (see `.ai/design/graphics-sessions.md`) answers a NEW
+     *   executor per call; each is a frame driver with its own waiting and its own per-frame state, and which of them
+     *   may run concurrently is that backend's documented contract.
+     * - OWNERSHIP: THE DEVICE OWNS WHAT IT HANDS OUT. The reference is valid until releaseSession() or the device's
+     *   shutdown(); the caller never destroys it.
+     * - A backend that needs its device up to build a driver documents that and answers null until it is.
+     *
+     * @return The borrowed executor, or null when the device cannot hand one out (not initialized, or exhausted).
+     */
+    [[nodiscard]] virtual RenderFrameExecutor* createSession()
+    {
+        return &executor();
+    }
+
+    /**
+     * @brief Returns an executor a host borrowed through @ref createSession.
+     *
+     * @details
+     * - The default does nothing: a device whose createSession() answers its own executor has nothing to reclaim.
+     * - Releasing the device's OWN executor is a no-op, so a host that releases what it borrowed can do so
+     *   unconditionally.
+     * - Call it only when nothing is driving that executor any more; the device may destroy the driver's objects at
+     *   once.
+     *
+     * @param session The executor to return (ignored when it is not one this device handed out).
+     */
+    virtual void releaseSession(RenderFrameExecutor& session)
+    {
+        (void)session;
+    }
 
     /** @brief Creates a target this device presents a window through (see WindowPresentTarget).
      *
@@ -451,28 +492,6 @@ class VN_GRAPHICS_API RenderDevice {
     [[nodiscard]] virtual Capabilities capabilities() const noexcept
     {
         return {};
-    }
-
-    /** @brief Selects the DEFAULT program for content: what a drawable naming none of its own gets.
-     *
-     * @details
-     * - A default, not an override: a drawable's own program still wins, and so does a pass' program for the passes
-     *   that take one.
-     * - There is no shading-model enum and no fallback: the host names a program (the engine starts with
-     *   forwardProgram(), see RenderEngine), or content without its own program is NOT drawn and the reason is
-     *   reported.
-     * - May be called before initialize(), where it is a session decision baked as the session starts, or on a
-     *   RUNNING session, where the device re-bakes the shading side so the next frame draws with @p program.
-     * - A live switch rebuilds content shading only: the targets keep their attachments, their pass graphs and their
-     *   depth history, so a host that offers a shading toggle gets a differently shaded picture rather than a
-     *   restarted session.
-     *
-     * @param program Program to shade program-less content with, or null for "none" (such content is then reported
-     *                and skipped).
-     */
-    virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program)
-    {
-        (void)program;
     }
 
     /** @brief Installs a route every diagnostic this device reports goes through.

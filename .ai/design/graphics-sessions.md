@@ -182,6 +182,9 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
   `RenderEngine` 在 `setDevice` 里对**自己的会话**宣布。
 - **窗口**：`createSurfaceTarget` 留在设备上（一个平台表面不是会话的财产）；**第一个** claim 它的会话成为
   它的主人，第二个会话拿到现有的"foreign target"拒绝。不需要新参数。
+- **S6a 已落地（2026-11-15）**：上面三个声明都已进树。"暂时仍是一个驱动者"是**有意的**：vk 的 `createSession()`
+  在接缝落地时仍答 `&executor()`，因为缓存/分配/提交的锁（S6b）到位之前，第二个驱动者会让两个引擎竞争未保护的状态。
+  接缝先行的价值是：引擎的所有权、声明的位置、以及"谁来释放"的形状都已在树上被用例钉住，S6b 只换引擎内部的实现。
 
 ### 2.9 两个后端的落地差异（`G5` / `G10`）
 
@@ -202,14 +205,14 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 
 | # | 功能 | 行为 | 状态 |
 |---|---|---|---|
-| F1 | 会话类型与创建 | 设备拥有会话；`createSession()` 借出，默认答 `&executor()` | 未做 |
+| F1 | 会话类型与创建 | 设备拥有会话；`createSession()` 借出，默认答 `&executor()` | **部分（S6a）**：SDK 接缝与引擎持有一已落地；vk 仍答默认（单驱动者），第二个真实驱动者随 S6b |
 | F2 | 每会话帧机器 | 命令池 / 栅栏 / 时间戳池 / 帧账 / 帧闸按会话各一份 | 未做 |
 | F3 | 设备缓存 + 帧首快照 | 缓存只在帧首读一次，记录路径零锁 | **部分（S3）**：缓存与帧暂存已分家（`ContentCaches` / `FrameScratch`）；帧首快照与锁计数随 S4 的第一个第二读者 |
 | F4 | 驻留三态 | `Absent → Uploading → Resident`，发布或撤回，竞争即复制 | **部分（S4）**：状态机 + 8 条单元用例已落地（两个 session id 模拟两会话）；设备接线（`ensureGeometry` 走 `admit`）随 S6 |
 | F5 | 目标 claim | 一帧一 claim，冲突只跳过那个 pass | **部分（S5）**：`TargetClaims` 租约 + 帧/预热的接线已落地；两会话冲突的报告实践由单元 + 设备用例验证，公开 `createSession()` 随 S6 |
 | F6 | 跨会话退休 | vk 采用 `DeviceClock` + `RetirementQueue`；释放可在别人 frame 时调用 | **部分（S1 已落地）**：时钟 / park 队列 / 水位 / 清结已在树上，仍只有一个会话 |
 | F7 | 设备级读回 | 自己的池与栅栏，拷贝前等设备水位，计入 `deviceWaits()` | 未做（today 借帧栅栏） |
-| F8 | 默认内容程序归会话 | 会话上可设；设备级只服务直接调用方；单会话后端行为不变 | 未做 |
+| F8 | 默认内容程序归会话 | 会话上可设；设备级只服务直接调用方；单会话后端行为不变 | **部分（S6a）**：声明已从 `RenderDevice` 移到 `RenderFrameExecutor`（默认 no-op）；vk 的每个 `Session` 各持一份，`Device` 覆写转发给自带的驱动者 |
 | F9 | vsg 的对应落地 | 收集暂存搬进会话；缓存加锁/快照；完成证据已有 | 部分（窗口会话已有） |
 | F10 | 契约与文档收口 | `C21` / `N18` 改写、三处头文件文本、ADR 状态、审计行 | 部分（T47 改了三处文本） |
 
@@ -510,6 +513,10 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   发帧作用域 `Lease`，`claim` 冲突答 false、析构释放（`P3`）；`executeFrame` / `prepareFrame` 在 `ensure_target`
   之前 claim，冲突只跳该 pass 并报 `vk.target.claim_conflict`（每（目标, 情节）一条）。`TargetClaimsTest` 7 例 +
   `TargetClaimFrameTest` 2 例，变异 2/2 红；`test_vk` 120/120（Debug + ASan 门禁）。
+- **已落地**：`T48` 的 **S6a**——`RenderDevice::createSession()` / `releaseSession()` 接缝（默认 `&executor()` /
+  no-op）；`setDefaultContentProgram` 移到 `RenderFrameExecutor`；`RenderEngine` 持 `session_`（借/还，帧与默认程序
+  走它）；vk 的默认程序归 `Session`。三套 **556 / 121 / 587** 全绿，变异 1/1 红。**S6b** 才是第二个真实驱动者：
+  缓存/分配/提交三把锁（或帧首快照）、`ensureGeometry` 接 `ResidenceTable`、替换路径改 park、T8 并发证据。
 - **未做**：`T48` 的 S3–S9（缓存拆分、驻留三态、目标 claim、公开 `createSession()`、读回独立、vsg、收口）。
 - **一处更正**：ADR 说"vsg 更接近"，准确说法是"vsg 的**窗口**会话已就位，**帧驱动者**仍是设备级单例"
   （§2.1）。这不改变结论，只改变迁移表的分工。
@@ -544,6 +551,13 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   `vk.target.claim_conflict`（每（目标, 情节）一条）；`Device::targetClaims()` 是内部可观察量。`test_vk` **120/120**
   （Debug + ASan 门禁），变异 2/2 红 | T5（单会话 + 冒充租约） | 低 |
 | S6 | `createSession()` / `releaseSession()` 公开；引擎持有会话；**帧闸变成每会话** | T8、T10 | 中（公开形状） |
+| S6a | **已落地 2026-11-15**：`RenderDevice::createSession()` / `releaseSession()` 默认接缝（默认答 `&executor()` /
+  no-op）；`setDefaultContentProgram` 从 `RenderDevice` 移到 `RenderFrameExecutor`（默认 no-op，`RenderBackend` 不再
+  二义）；`RenderEngine` 在 `setDevice` 借、换设备/析构还，帧与默认程序走自己的 `session_`；vk 的默认程序从 `Impl`
+  移到 `Session`（`Device` 覆写转发）。`test_graphics` 587（+1 借/还用例）、`test_vk` 121（+1 默认形状）、
+  `test_vsg` 556；变异 1/1 红（析构不还）。**坑**：改了 SDK 的虚表后**动态插件必须重建**（旧 .so 让插件用例段错误）。
+| S6b | vk 真的多发驱动者：缓存/分配/提交三把锁（或帧首快照）、`ensureGeometry` 接 `ResidenceTable`、替换路径改 park、
+  T8 两引擎并发 | T3/T8 | 中 |
 | S7 | F7 读回独立化 | T7 | 低 |
 | S8 | vsg 的 F9（搬收集暂存 + 缓存加锁/快照） | T9 | 中 |
 | S9 | F10 收口 + TSan + 文档 | T11、T12 | 低 |
