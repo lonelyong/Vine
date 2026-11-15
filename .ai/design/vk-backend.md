@@ -280,6 +280,22 @@
 - **今天的位置**：S4 只交付状态机与它的 8 条单元用例（两个 session id 模拟两会话，含 8 线程抢一键恰一个
   `Build`）；`ContentCaches::ensureGeometry` 仍走原路径，S6 传入会话 id 时才接上（`D8`：半接比没接更糟）。
 
+### 2.18 目标 claim：一帧一个持有者，冲突只跳那个 pass（`G6` / `G7`）
+
+- **是什么**：设备持一张 `TargetClaims`（`RenderTarget* → SessionId`）。`begin(session)` 发一个帧作用域的
+  `Lease`；`executeFrame` 与 `prepareFrame` 在每个 pass 的 **`ensure_target` 之前** `claim` 它的目标。冲突时那个
+  pass **被跳过**（帧里其它 pass 照跑），并报 `vk.target.claim_conflict`——**每个（目标, 情节）一条**，情节在无冲突
+  的一帧/一次预热后结束。
+- **为什么是每 pass 而不是整帧**：一次局部冲突不该放大成“整帧失败”；冲突走的是已有“这个设备建不起这个目标”
+  同一条报告路径（`G6`），只是多了一个 code。
+- **为什么 claim 在 `ensure_target` 之前**：建/重建附件是**持有者的动词**（`R5`），所以“谁可以重建”与“谁可以画”
+  是同一个答案；claim 晚一步，两个会话就可能在同一个目标上交错重建。
+- **边界**：租约不是锁（`C5`）——等待会让两个引擎的帧率互相绑死；冲突不销毁任何东西，目标下一帧再试。
+  `Lease` 的析构是**唯一释放点**（`P3`），所以帧的任何一个提前返回都不会把目标钉住。窗口目标不需要 claim：
+  `createSurfaceTarget` 已经保证一个窗口只属于一个会话（`WindowOccupied`）。
+- **今天的位置**：两个动词都已接线；单会话不会冲突（零行为变化），测试用一条冒充“另一个驱动者”的租约把冲突
+  路径跑实。真正的两个会话随 S6 的 `createSession()` 到来。
+
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -671,8 +687,9 @@
 
 - M0–M13 全部落地；审查项 F1/F2/F4/F7/F8/F12 已落地，审查 F5/F9/F10/F11/F13 按 §1.3 保留。
 - **T48 进度**：S1（释放走队列）、S2a/S2b（帧机器与帧体进 `Device::Session`）、S3（`ContentCaches` + `FrameScratch`
-  分家，§2.16）、S4（`ResidenceTable` 三态状态机，§2.17）已落地；S5–S9 见 `.ai/design/graphics-sessions.md` §9.3。
-- `test_vk` **111 例 / 29 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；Debug 全量 ctest **32/32**；
+  分家，§2.16）、S4（`ResidenceTable` 三态状态机，§2.17）、S5（`TargetClaims` 租约 + 帧/预热接线，§2.18）已落地；
+  S6–S9 见 `.ai/design/graphics-sessions.md` §9.3。
+- `test_vk` **120 例 / 31 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；Debug 全量 ctest **32/32**；
   `BackendParityTest` **12/12**。
 - 实测（lavapipe，真实宿主）：11 pass / 10 draw，稳态中位 **8.24 ms**，GPU **7.15–7.74 ms**；ring + set 缓存改动
   −10%（9.03–9.23 → 8.16–8.30 ms）。

@@ -131,3 +131,4 @@ vk.target.borrow_extent_mismatch          — a borrowed depth must have the sam
 vk.target.size_unknown                    — the target has no usable extent (0 in a dimension)
 vk.target.resize_failed                   — the attachments could not be rebuilt at the new extent (see the memory report)
 vk.target.build_failed                    — the attachments could not be built (see the memory report)
+vk.target.claim_conflict                  — another frame driver holds this target for the frame in progress

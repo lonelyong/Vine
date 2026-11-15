@@ -206,7 +206,7 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 | F2 | 每会话帧机器 | 命令池 / 栅栏 / 时间戳池 / 帧账 / 帧闸按会话各一份 | 未做 |
 | F3 | 设备缓存 + 帧首快照 | 缓存只在帧首读一次，记录路径零锁 | **部分（S3）**：缓存与帧暂存已分家（`ContentCaches` / `FrameScratch`）；帧首快照与锁计数随 S4 的第一个第二读者 |
 | F4 | 驻留三态 | `Absent → Uploading → Resident`，发布或撤回，竞争即复制 | **部分（S4）**：状态机 + 8 条单元用例已落地（两个 session id 模拟两会话）；设备接线（`ensureGeometry` 走 `admit`）随 S6 |
-| F5 | 目标 claim | 一帧一 claim，冲突只跳过那个 pass | 未做 |
+| F5 | 目标 claim | 一帧一 claim，冲突只跳过那个 pass | **部分（S5）**：`TargetClaims` 租约 + 帧/预热的接线已落地；两会话冲突的报告实践由单元 + 设备用例验证，公开 `createSession()` 随 S6 |
 | F6 | 跨会话退休 | vk 采用 `DeviceClock` + `RetirementQueue`；释放可在别人 frame 时调用 | **部分（S1 已落地）**：时钟 / park 队列 / 水位 / 清结已在树上，仍只有一个会话 |
 | F7 | 设备级读回 | 自己的池与栅栏，拷贝前等设备水位，计入 `deviceWaits()` | 未做（today 借帧栅栏） |
 | F8 | 默认内容程序归会话 | 会话上可设；设备级只服务直接调用方；单会话后端行为不变 | 未做 |
@@ -264,6 +264,14 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 - **要求**（R5）：一个目标的重建只由 claim 持有者做。
 - **验收**（T5）：两会话画同一目标 ⇒ 一个会话那个 pass 被跳过并报一条（且只一条）。
 - **注意**（P3）：任何提前返回都要经过同一个释放点（作用域守卫）。
+
+**S5 落地（2026-11-15）**：`internal/TargetClaims.hpp`——设备持一张 `RenderTarget* → SessionId` 表；
+`begin(session)` 发一个帧作用域的 `Lease`，`Lease::claim(target)` 冲突时答 false，析构把本帧所有 claim 还回去
+（`P3` 由类型强制）。`Session::executeFrame` 与 `prepareFrame` 都在 **`ensure_target` 之前** claim（重建是持有者的
+动词，`R5`）；冲突只跳过那个 pass，报 `vk.target.claim_conflict` **每个（目标, 情节）一条**：情节在本帧/本次预热
+无冲突地跑完时结束。窗口目标不 claim（`createSurfaceTarget` 已经保证一窗一会话）。
+**验证**：`TargetClaimsTest` 7 例 + `TargetClaimFrameTest` 2 例（设备级：用一条冒充“另一个驱动者”的租约让 pass 被
+跳过、两次只报一条、干净帧后新冲突再报）；变异 2/2 红（租约不释放 / 情节不结束）。
 
 ### 3.1.6 F6 跨会话退休
 
@@ -498,6 +506,10 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   `Absent`；token 单调不复用，`forget` 之后的老 claim 无法复活。`ResidenceTableTest` **8 例**（含 8 线程抢一键
   恰一个 `Build`），变异 2/2 红（去掉析构撤回 / 去掉 token 比较）。`test_vk` 111/111。**设备接线随 S6**：现在没有
   会话 id 可传，半接的状态机比没接更糟（`D8`）。
+- **已落地**：`T48` 的 **S5**——`internal/TargetClaims.hpp`：设备持 `RenderTarget* → SessionId`；`begin(session)`
+  发帧作用域 `Lease`，`claim` 冲突答 false、析构释放（`P3`）；`executeFrame` / `prepareFrame` 在 `ensure_target`
+  之前 claim，冲突只跳该 pass 并报 `vk.target.claim_conflict`（每（目标, 情节）一条）。`TargetClaimsTest` 7 例 +
+  `TargetClaimFrameTest` 2 例，变异 2/2 红；`test_vk` 120/120（Debug + ASan 门禁）。
 - **未做**：`T48` 的 S3–S9（缓存拆分、驻留三态、目标 claim、公开 `createSession()`、读回独立、vsg、收口）。
 - **一处更正**：ADR 说"vsg 更接近"，准确说法是"vsg 的**窗口**会话已就位，**帧驱动者**仍是设备级单例"
   （§2.1）。这不改变结论，只改变迁移表的分工。
@@ -527,6 +539,10 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   恰一个 `Build`）；变异 2/2 红（去掉析构撤回 / 去掉 token 比较）。**未接线**：`ContentCaches::ensureGeometry`
   仍走原路径，S6 接入会话 id 时切换 | T4（机器半） | 低 |
 | S5 | `TargetClaims`；仍用两个内部会话验证 | T5 | 低 |
+| S5 | **已落地 2026-11-15**：`internal/TargetClaims.hpp/.cpp`（`begin` → 帧作用域 `Lease`，冲突 false，析构释放）；
+  `Session::executeFrame` / `prepareFrame` 在 `ensure_target` 之前 claim，冲突只跳该 pass 并报
+  `vk.target.claim_conflict`（每（目标, 情节）一条）；`Device::targetClaims()` 是内部可观察量。`test_vk` **120/120**
+  （Debug + ASan 门禁），变异 2/2 红 | T5（单会话 + 冒充租约） | 低 |
 | S6 | `createSession()` / `releaseSession()` 公开；引擎持有会话；**帧闸变成每会话** | T8、T10 | 中（公开形状） |
 | S7 | F7 读回独立化 | T7 | 低 |
 | S8 | vsg 的 F9（搬收集暂存 + 缓存加锁/快照） | T9 | 中 |

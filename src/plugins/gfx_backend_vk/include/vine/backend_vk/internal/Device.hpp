@@ -5,6 +5,7 @@
 #include <vine/backend_vk/backend_vk_global.hpp>
 #include <vine/backend_vk/internal/Handles.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
+#include <vine/backend_vk/internal/TargetClaims.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -410,6 +411,20 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @return The queue's numbers (zeros when no session is up).
      */
     [[nodiscard]] RetirementNumbers retirementNumbers() const noexcept;
+
+    /**
+     * @brief Gets the device's TARGET CLAIMS: the per-frame leases two drivers contend for (see TargetClaims).
+     *
+     * @details
+     * - EXPOSED FOR THE SAME REASON `retirementNumbers()` IS: a claim is a fact about the DEVICE, not about one
+     *   frame, and a test that plays "the other driver" must be able to take a target for a while. It is not a
+     *   verb `RenderDevice` promises.
+     *
+     * @return The claims (no target is held between frames).
+     */
+    [[nodiscard]] TargetClaims& targetClaims() noexcept;
+    /** @brief Gets the target claims for a reader that only reports on them (see the mutable overload). */
+    [[nodiscard]] const TargetClaims& targetClaims() const noexcept;
 
     /**
      * @brief What the persisted pipeline cache did for this session (see PipelineCacheFile).

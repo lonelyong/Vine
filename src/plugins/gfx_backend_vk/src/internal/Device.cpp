@@ -23,6 +23,7 @@
 #include <vine/backend_vk/internal/FrameScratch.hpp>
 #include <vine/backend_vk/internal/PipelineCacheFile.hpp>
 #include <vine/backend_vk/internal/ReadbackStaging.hpp>
+#include <vine/backend_vk/internal/TargetClaims.hpp>
 #include <vine/backend_vk/internal/WindowSystem.hpp>
 #include <vine/backend_vk/internal/StateMapping.hpp>
 #include <vine/backend_vk/internal/TargetImages.hpp>
@@ -527,6 +528,10 @@ class Device::Session final : public vn::graphics::RenderFrameExecutor
     vn::graphics::backend::FrameGate frames{};
     /// The episode of "a frame was started from the thread that already drives one".
     vn::graphics::ReportOnce frame_reentry_report{};
+    ///
+    /// The targets whose claim conflict was already reported in this episode (see TargetClaims): a pass that
+    /// lost its target says so ONCE, and a frame/prepare that completes without a conflict ends the episode.
+    std::unordered_set<const RenderTarget*> claim_conflicts{};
     /// This driver's clock window: the id its completion evidence is reported under (see DeviceClock).
     vn::graphics::backend::DeviceClock::WindowId clock_window{ 0 };
     bool                                         clock_window_live{ false };
@@ -779,6 +784,11 @@ struct Device::Impl {
      */
     vn::graphics::backend::DeviceClock       clock{};
     vn::graphics::backend::RetirementQueue   retirement{ 0 };
+    ///
+    /// THE TARGETS' PER-FRAME LEASES (see TargetClaims): one claim per target a pass names, released when the
+    /// frame (or the warm-up) that took it ends. Device-level because a target outlives every session and is
+    /// exactly what two of them can contend for.
+    TargetClaims target_claims{};
     bool                                         clock_registered{ false };
     /// Frames in flight on this device today: one, because `executeFrame` submits and waits inside the call.
     static constexpr std::uint32_t               kFramesInFlight = 1U;
@@ -1132,6 +1142,11 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
         bool                          window{ false };
     };
 
+    // THIS FRAME'S TARGET CLAIMS: one lease, and its destructor is the ONE release point every early return
+    // below passes through (`P3`).
+    TargetClaims::Lease target_lease = owner.target_claims.begin(clock_window);
+    bool                claim_refused = false;
+
     std::vector<Runnable> runnable_passes;
     runnable_passes.reserve(frame.passes.size());
     bool window_acquired = false;
@@ -1202,6 +1217,22 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
             runnable_passes.push_back(Runnable{ &entry, &draw, true });
             continue;
         }
+        // ONE DRIVER AT A TIME, ONE FRAME AT A TIME (see TargetClaims): the claim is taken BEFORE the
+        // attachments are built, because rebuilding a target is the claim holder's verb (`R5`). A lost claim
+        // skips THIS pass - the rest of the frame still runs (`G7`) - and says so once per (target, episode).
+        if (!target_lease.claim(draw.target)) {
+            if (claim_conflicts.insert(draw.target).second) {
+                owner.report(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                              DiagnosticCategory::UnsupportedRequest,
+                                              u8"vk.target.claim_conflict",
+                                              u8"vk: a pass named a target another frame driver is drawing into right "
+                                              u8"now; the pass was skipped for this frame - drive the other engine on "
+                                              u8"another target, or wait for its frame to finish"));
+            }
+            claim_refused = true;
+            refused_pass  = true; // the "nothing I can run" sentence would be the same fact twice
+            continue;
+        }
         if (!owner.ensure_target(*draw.target)) {
             refused_pass = true;
             continue;
@@ -1221,6 +1252,9 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
         return PresentOutcome::Skipped;
     }
     owner.no_targets_report.rearm(); // a pass ran: the "nothing I can run" episode is over
+    if (!claim_refused) {
+        claim_conflicts.clear(); // no pass lost its target this frame: the conflict episode is over
+    }
 
     // THE DEPTHS THIS FRAME LENDS: every target another pass' target borrows its depth from (RenderTarget::shareDepth
     // resolves to one pointer per borrower, and the borrower was built above). `resolveShadow` skips them - an image
@@ -1713,6 +1747,11 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
     report.passes = shape.passes;
     report.draws  = shape.draws;
 
+    // A WARM-UP WRITES TARGETS TOO (an attachment build, a texture copy into one), so it takes the same
+    // claims a frame does - and gives them back on every path out of here (`P3`).
+    TargetClaims::Lease target_lease = owner.target_claims.begin(clock_window);
+    bool                claim_refused = false;
+
     for (const FrameDescription::Pass& entry : frame.passes) {
         if (entry.pass == nullptr) {
             continue; // the SDK's rule: an entry that names no pass is nothing to run (see executeFrame)
@@ -1738,6 +1777,20 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
             compatibility = window->compatibility();
         }
         else {
+            // THE TARGET IS CLAIMED BEFORE ITS ATTACHMENTS ARE BUILT (see executeFrame): the warm-up may be
+            // running while another driver frames, and a half-rebuilt target is the one thing both forbid.
+            if (!target_lease.claim(draw.target)) {
+                if (claim_conflicts.insert(draw.target).second) {
+                    owner.report(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.target.claim_conflict",
+                                                  u8"vk: a pass named a target another frame driver is drawing into right "
+                                                  u8"now; the pass was skipped for this preparation - drive the other "
+                                                  u8"engine on another target, or wait for its frame to finish"));
+                }
+                claim_refused = true;
+                continue;
+            }
             // THE TARGET'S ATTACHMENTS ARE WHAT THE FRAME WOULD BUILD ANYWAY, so preparing them is the point.
             if (!owner.ensure_target(*draw.target)) {
                 continue;
@@ -1870,6 +1923,9 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
     // textures it made resident (see ADR-2026-11-14). `sets` stays 0 because no descriptor set outlives a frame here.
     if (!content_refused) {
         owner.content_report.rearm(); // every draw the call named was prepared: the episode is over
+    }
+    if (!claim_refused) {
+        claim_conflicts.clear(); // no pass lost its target this preparation: the conflict episode is over
     }
     const ContentTotals after = owner.contentNumbers();
     report.halves    = after.program_builds - before.program_builds;
@@ -3415,6 +3471,16 @@ Device::ContentCacheCounters Device::contentCacheCounters() const noexcept
 MemoryStats Device::memoryStats() const noexcept
 {
     return impl->allocator.stats();
+}
+
+TargetClaims& Device::targetClaims() noexcept
+{
+    return impl->target_claims;
+}
+
+const TargetClaims& Device::targetClaims() const noexcept
+{
+    return impl->target_claims;
 }
 
 Device::RetirementNumbers Device::retirementNumbers() const noexcept

@@ -159,6 +159,13 @@
   `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
   ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
   别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
+- **S5 已落地（2026-11-15，T48 第五步）**：`internal/TargetClaims.hpp`——设备持 `RenderTarget* → SessionId`；
+  `begin(session)` 发帧作用域 `Lease`（析构是唯一释放点，`P3`），`executeFrame` / `prepareFrame` 在 **`ensure_target`
+  之前** claim（重建只归持有者，`R5`），冲突只跳那个 pass 并报 `vk.target.claim_conflict`（每（目标, 情节）一条：
+  情节在无冲突的一帧/一次预热后结束）。设备级观察点 `Device::targetClaims()`。判据：`TargetClaimsTest` 7 例 +
+  `TargetClaimFrameTest` 2 例（冒充“另一个驱动者”的租约让 pass 被跳过、两次只报一条、干净帧后新冲突再报），变异
+  **2/2 红**（租约不释放 / 情节不结束），`test_vk` 120/120。**坑**：`Session` 里 claim 必须早于 `ensure_target`；
+  晚一步两个会话就能交错重建同一目标的附件。
 - **S4 已落地（2026-11-15，T48 第四步）**：`internal/ResidenceTable.hpp` 是“谁可以建这个键”的状态机（无 Vulkan 类型）：
   `admit(key, session)` → `Use` / `Build`（move-only `Claim`）/ `Copy(owner)`；`Claim::publish()` 是 owner 的完成声明，
   析构未决议 ⇒ 条目退回 `Absent`（规则 3 由类型强制）；token 单调不复用，`forget` 之后老 claim 的 `publish` 必败并计入
