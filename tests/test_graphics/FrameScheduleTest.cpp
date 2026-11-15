@@ -188,7 +188,8 @@ TEST(FrameScheduleTest, ACycleIsSkippedAndTheRestOfTheFrameStillRuns)
     const FrameDescription& frame = engine->frameDescription();
     ASSERT_EQ(frame.passes.size(), 1u) << "only the pass outside the cycle runs";
     EXPECT_EQ(frame.passes[0].pass->name(), u8"alone");
-    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 1u) << "the skipped component is reported once per episode";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u)
+        << "the skipped component is reported once per episode, as a PROTOCOL problem (a cycle is not missing content)";
 }
 
 /*

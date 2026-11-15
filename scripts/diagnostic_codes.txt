@@ -18,6 +18,17 @@ vk.memory.invalid_request     — a resource asked for zero bytes: a content def
 vk.memory.not_open            — device memory was asked for before the pool was opened: a wiring defect
 vk.memory.internal            — the pool contradicted its own invariant: a defect in the allocator
 
+# --- engine: what a frame's compile found (see graphics-frame-pipeline.md) ---
+engine.compile.cycle                    — passes depend on each other in a cycle; those passes are skipped
+engine.compile.unpublished_scene        — a pass draws a scene that was never published
+engine.compile.picture_shape_mismatch   — the rectangle a pass draws into and its camera's shape disagree
+engine.compile.input_not_produced       — a declared input nothing published this frame
+engine.compile.output_to_window         — a pass publishes an output name but renders into the window
+engine.compile.duplicate_output         — two passes publish one output name this frame
+engine.compile.layered_depth_refused    — a layered depth view is not built yet, so the declaration is refused
+engine.compile.depth_view_conflict      — two passes name different depth views for one target
+engine.compile.plan_refused             — the plan statement was refused (see PlanResult)
+
 # --- vsg backend: the session ---
 vsg.session.frame_reentry     — a frame or warm-up was started from the thread already driving one: refused (FrameGate)
 

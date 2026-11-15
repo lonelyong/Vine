@@ -70,6 +70,35 @@ std::string shapeText(double shape)
     return std::string(buffer);
 }
 
+/**
+ * @brief Builds one compile problem: a stable code, its class, the sentence and (when there is one) the pass.
+ *
+ * @details
+ * - A COMPILE PROBLEM IS ALWAYS A WARNING with a code: the frame still runs (the pass is skipped), and the code is
+ *   what a host matches on (`engine.compile.*`, see scripts/diagnostic_codes.txt).
+ * - The SUBJECT is the pass the problem is about, when there is exactly one: that is what lets a host badge the pass
+ *   rather than a log line.
+ *
+ * @param code     Stable identifier of the cause.
+ * @param category What it is about.
+ * @param message  The sentence (it names its subject too, because that is the problem's identity to the episode rule).
+ * @param subject  The pass it is about, or empty when the problem spans several.
+ * @return The diagnostic a report would carry.
+ */
+[[nodiscard]] vn::graphics::RenderDiagnostic compileProblem(const char8_t*                        code,
+                                                           const vn::graphics::DiagnosticCategory category,
+                                                           vn::String                             message,
+                                                           vn::String                             subject = {})
+{
+    vn::graphics::RenderDiagnostic diagnostic;
+    diagnostic.severity = vn::graphics::DiagnosticSeverity::Warning;
+    diagnostic.category = category;
+    diagnostic.code     = vn::String(code);
+    diagnostic.message  = std::move(message);
+    diagnostic.subject  = std::move(subject);
+    return diagnostic;
+}
+
 } // namespace
 
 void RenderEngine::compileFrame()
@@ -239,9 +268,11 @@ void RenderEngine::scheduleRows()
             }
             members += reportedPassName(plan_rows_[member].pass);
         }
-        noteProblem(String(u8"passes ") + members +
-                    String(u8" declare a dependency cycle (each reads what another writes), which no execution order "
-                           u8"can satisfy: those passes are skipped this frame, and the rest of the frame still runs"));
+        noteProblem(compileProblem(u8"engine.compile.cycle",
+                                   vn::graphics::DiagnosticCategory::PassProtocolViolation,
+                                   String(u8"passes ") + members +
+                                       String(u8" declare a dependency cycle (each reads what another writes), which no execution order "
+                                              u8"can satisfy: those passes are skipped this frame, and the rest of the frame still runs")));
     }
 
     // A row that does not run this frame (disabled or cyclic) has no timing to report.
@@ -346,9 +377,12 @@ void RenderEngine::buildFrameValue()
                 if (source == nullptr) {
                     // "You drew a scene that never published": reported once per episode, and the pass draws nothing -
                     // the honest answer, instead of quietly reading the live tree.
-                    noteProblem(String(u8"pass '") + reportedPassName(pass)
-                                + String(u8"' draws a scene that was never published: publish it (Scene::publish), or bind a"
-                                         u8" publication before the frame (RenderEngine::bindSnapshot)"));
+                    noteProblem(compileProblem(u8"engine.compile.unpublished_scene",
+                                               vn::graphics::DiagnosticCategory::ContentSkipped,
+                                               String(u8"pass '") + reportedPassName(pass)
+                                                   + String(u8"' draws a scene that was never published: publish it (Scene::publish), or bind a"
+                                                            u8" publication before the frame (RenderEngine::bindSnapshot)"),
+                                               reportedPassName(pass)));
                 }
             }
             // THE ANSWER IS NOT TAKEN HERE. The pass stated a view and whose content answers it (and the content's
@@ -465,13 +499,16 @@ void RenderEngine::collectPictureShapeMismatches()
             // The numbers go in as ASCII digits, like every other message in the SDK (see
             // the chain build).
             const std::string size_text = std::to_string(width) + "x" + std::to_string(height);
-            noteProblem(String(u8"pass '") + reportedPassName(pass) + String(u8"' draws into a ") + String(toU8(size_text)) +
-                        String(u8" rectangle, but its camera is projected for a picture "
-                               u8"of ") +
-                        String(toU8(shapeText(picture))) +
-                        String(u8" - the picture is stretched (the content was culled for one shape and lands in "
-                               u8"another). Give the camera the shape of the rectangle it draws into "
-                               u8"(Camera::setAspect), or draw it into the rectangle the camera is shaped for"));
+            noteProblem(compileProblem(u8"engine.compile.picture_shape_mismatch",
+                                       vn::graphics::DiagnosticCategory::PassProtocolViolation,
+                                       String(u8"pass '") + reportedPassName(pass) + String(u8"' draws into a ") + String(toU8(size_text)) +
+                                           String(u8" rectangle, but its camera is projected for a picture "
+                                                  u8"of ") +
+                                           String(toU8(shapeText(picture))) +
+                                           String(u8" - the picture is stretched (the content was culled for one shape and lands in "
+                                                  u8"another). Give the camera the shape of the rectangle it draws into "
+                                                  u8"(Camera::setAspect), or draw it into the rectangle the camera is shaped for"),
+                                       reportedPassName(pass)));
         }
         shape_mismatches_this_frame_.push_back(std::move(episode));
     }
@@ -560,11 +597,12 @@ void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageS
     if (any_resolved) {
         return;
     }
-    reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                        vn::graphics::DiagnosticCategory::ContentSkipped,
-                        String(u8"pass '") + reportedPassName(pass) + String(u8"' declared input '") + names.front() +
-                            String(u8"' but no pass published it this frame; the pass draws nothing"
-                                   u8" (check the producer's order, its enabled state and its output name)"));
+    reportEngineProblem(compileProblem(u8"engine.compile.input_not_produced",
+                                       vn::graphics::DiagnosticCategory::ContentSkipped,
+                                       String(u8"pass '") + reportedPassName(pass) + String(u8"' declared input '") + names.front() +
+                                           String(u8"' but no pass published it this frame; the pass draws nothing"
+                                                  u8" (check the producer's order, its enabled state and its output name)"),
+                                       reportedPassName(pass)));
 }
 
 void RenderEngine::publishRowOutput(raw_ptr<RenderPass> pass)
@@ -581,14 +619,15 @@ void RenderEngine::publishRowOutput(raw_ptr<RenderPass> pass)
         // The registry hands out a SAMPLEABLE target, and a pass rendering into the window has none. Reported
         // instead of dropping the declaration: a consumer of that name would otherwise be told "nothing
         // produced it this frame", pointing at the consumer for the producer's mistake.
-        reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                            vn::graphics::DiagnosticCategory::ContentSkipped,
-                            String(u8"pass '") + reportedPassName(pass) + String(u8"' publishes the output name '") + name +
-                                String(u8"' but renders into the window (no render target), so nothing is"
-                                       u8" published and a consumer of '") +
-                                name +
-                                String(u8"' finds nothing — give the pass a render target, or drop the"
-                                       u8" output name"));
+        reportEngineProblem(compileProblem(u8"engine.compile.output_to_window",
+                                           vn::graphics::DiagnosticCategory::ContentSkipped,
+                                           String(u8"pass '") + reportedPassName(pass) + String(u8"' publishes the output name '") + name +
+                                               String(u8"' but renders into the window (no render target), so nothing is"
+                                                      u8" published and a consumer of '") +
+                                               name +
+                                               String(u8"' finds nothing — give the pass a render target, or drop the"
+                                                      u8" output name"),
+                                           reportedPassName(pass)));
         return;
     }
     if (detail::FramePublication* published = resources_->findPublication(name); published != nullptr) {
@@ -598,10 +637,10 @@ void RenderEngine::publishRowOutput(raw_ptr<RenderPass> pass)
             // individually valid).
             const String first  = published->target->name().empty() ? String(u8"(unnamed)") : published->target->name();
             const String second = target->name().empty() ? String(u8"(unnamed)") : target->name();
-            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                vn::graphics::DiagnosticCategory::ContentSkipped,
-                                String(u8"pass output '") + name + String(u8"' is published by two passes this frame (targets '") + first +
-                                    String(u8"' and '") + second + String(u8"'); every consumer of '") + name + String(u8"' samples whichever pass ran last"));
+            reportEngineProblem(compileProblem(u8"engine.compile.duplicate_output",
+                                               vn::graphics::DiagnosticCategory::ContentSkipped,
+                                               String(u8"pass output '") + name + String(u8"' is published by two passes this frame (targets '") + first +
+                                                   String(u8"' and '") + second + String(u8"'); every consumer of '") + name + String(u8"' samples whichever pass ran last")));
         }
         published->target = target; // the latest publication serves the name for the rest of the frame
         return;
@@ -609,15 +648,16 @@ void RenderEngine::publishRowOutput(raw_ptr<RenderPass> pass)
     resources_->recordPublication(pass, target);
 }
 
-void RenderEngine::noteProblem(String message)
+void RenderEngine::noteProblem(const vn::graphics::RenderDiagnostic& diagnostic)
 {
     // One problem per sentence per frame: the checks visit a subject once, but a subject can be reached from
     // more than one direction (a second and a third claimant of one image), and one mistake should read as one
     // message. The episode rule decides whether it is said out loud at all (see reportPlanProblems).
-    const auto known =
-        std::find_if(plan_problems_.begin(), plan_problems_.end(), [&message](const CompileProblem& problem) { return problem.message == message; });
+    const auto known = std::find_if(plan_problems_.begin(), plan_problems_.end(), [&diagnostic](const CompileProblem& problem) {
+        return problem.diagnostic.message == diagnostic.message;
+    });
     if (known == plan_problems_.end()) {
-        plan_problems_.push_back(CompileProblem{ std::move(message) });
+        plan_problems_.push_back(CompileProblem{ diagnostic });
     }
 }
 
@@ -636,12 +676,14 @@ void RenderEngine::reportPlanProblems()
 {
     for (const CompileProblem& problem : plan_problems_) {
         const auto previous = std::find_if(previous_problems_.begin(), previous_problems_.end(), [&problem](const CompileProblem& earlier) {
-            return problem.message == earlier.message;
+            return problem.diagnostic.message == earlier.diagnostic.message;
         });
         if (previous != previous_problems_.end()) {
             continue; // the same problem, in the same words: this episode has already been said
         }
-        reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped, problem.message);
+        // THE WHOLE DIAGNOSTIC IS RE-EMITTED: the code, the category and the subject the check stated survive the
+        // episode rule - flattening them here is what used to turn every compiled problem into "content skipped".
+        reportEngineProblem(problem.diagnostic);
     }
     // What this compile found becomes what the next compile compares against: a problem that is gone drops out,
     // so the same breakage later is a new episode.
@@ -697,10 +739,10 @@ intrusive_ptr<RenderPass> RenderEngine::makePassNode(const PassDesc& desc)
         const DepthView declared = *adopted.depth_view;
         if (declared.isValid() && declared.layer() != 0) {
             if (layered_depth_reported_.shouldReport()) {
-                reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                    vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                                    u8"a pass names a layered depth view; layered targets are not built yet, so "
-                                    u8"the declaration is refused");
+                reportEngineProblem(compileProblem(u8"engine.compile.layered_depth_refused",
+                                                   vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                                   u8"a pass names a layered depth view; layered targets are not built yet, so "
+                                                   u8"the declaration is refused"));
             }
             adopted.depth_view.reset();
         }
@@ -708,10 +750,10 @@ intrusive_ptr<RenderPass> RenderEngine::makePassNode(const PassDesc& desc)
             const DepthView current = adopted.writes->sharedDepth();
             if (current.isValid() && current.target() != declared.target()) {
                 if (depth_view_conflicts_.insert(std::make_pair(adopted.writes.get(), declared.target())).second) {
-                    reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                        vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                                        u8"two passes name different depth views for one target; the first "
-                                        u8"declaration stands and this one is refused");
+                    reportEngineProblem(compileProblem(u8"engine.compile.depth_view_conflict",
+                                                       vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                                       u8"two passes name different depth views for one target; the first "
+                                                       u8"declaration stands and this one is refused"));
                 }
                 adopted.depth_view.reset();
             }
@@ -762,9 +804,9 @@ PlanResult RenderEngine::applyPlan(const Plan& plan, const void* owner)
         // ALL OR NOTHING: a half-applied shape would be a shape nobody declared. The answer is the return value; the
         // diagnostic is for the log, one per problem per CALL (a host call, not a frame, so the call is the episode).
         for (const PlanProblem& problem : result.problems) {
-            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                vn::graphics::DiagnosticCategory::PassProtocolViolation,
-                                String(u8"plan refused [") + planCodeText(problem.code) + String(u8"]: ") + problem.detail);
+            reportEngineProblem(compileProblem(u8"engine.compile.plan_refused",
+                                               vn::graphics::DiagnosticCategory::PassProtocolViolation,
+                                               String(u8"plan refused [") + planCodeText(problem.code) + String(u8"]: ") + problem.detail));
         }
         result.outcome = PlanResult::Outcome::Invalid;
         return result;

@@ -336,6 +336,19 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void reportEngineProblem(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const String& message);
 
+    /** @brief Reports one problem as a whole diagnostic (see RenderDiagnostic).
+     *
+     * @details
+     * - THE FORM THAT CARRIES A CODE: a compile problem names its cause (`engine.compile.*`), its subject (the pass)
+     *   and its own severity, so a host can act on it and a test can assert on it rather than on the sentence.
+     * - DURING A COMPILE the value is COLLECTED, not emitted: the episode rule decides what is said out loud, and it
+     *   now keeps the whole diagnostic - so a problem the compile found is no longer flattened to one category on the
+     *   way out.
+     *
+     * @param diagnostic What to report.
+     */
+    void reportEngineProblem(const vn::graphics::RenderDiagnostic& diagnostic);
+
 
     /** @brief Attaches this engine to the device it borrows: ready to drive frames.
      *
@@ -1039,19 +1052,20 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
         std::vector<ImageSource> inputs;
     };
 
-    /** @brief One problem a compile found, as the sentence a report would carry.
+    /** @brief One problem a compile found, as the diagnostic a report would carry.
      *
      * @details
-     * - The problem carries its own sentence because that IS its identity to a host: the episode rule
-     *   compares sentences (see reportPlanProblems), so nothing has to be kept in step with the wording.
-     *   The cost is paid only by a frame that has a problem (a healthy frame builds none), and the message
-     *   names its subject ("pass 'lighting' ..."), so two frames saying the same sentence really are the
-     *   same problem.
+     * - THE DIAGNOSTIC IS THE WHOLE PROBLEM: its `message` is its IDENTITY to a host (the episode rule compares
+     *   sentences, see reportPlanProblems), and its `code`, `category`, `severity` and `subject` are what the report
+     *   says when the episode speaks - so a problem the compile found is no longer flattened to one category on the
+     *   way out.
+     * - The cost is paid only by a frame that has a problem (a healthy frame builds none), and the message names its
+     *   subject ("pass 'lighting' ..."), so two frames saying the same sentence really are the same problem.
      * - It is NOT the public `PlanProblem`: that one is a shape's defect with a stable code, answered before
-     *   anything is applied; this one is a sentence about a compiled frame, compared by its wording.
+     *   anything is applied; this one is about a compiled frame.
      */
     struct CompileProblem {
-        String message; // the sentence a report would carry
+        vn::graphics::RenderDiagnostic diagnostic; // the report a host would read; its message is the identity
     };
 
     /** @brief What one pass declared about one image or target, as the wiring checks compare it.
@@ -1249,15 +1263,16 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     [[nodiscard]] bool sameProblem(const CompileProblem& other) const noexcept;
 
+
     /** @brief Records a problem the compile found, once per subject (see CompileProblem).
      *
      * The one place a finding becomes data. Two checks can reach the same subject (a third pass claiming an
      * image two others already claim), and the frame should say it once: the episode rule then decides whether
      * it is said OUT LOUD at all (see reportPlanProblems).
      *
-     * @param message The sentence a report would carry (it names its subject).
+     * @param diagnostic The report a host would read (its message is the identity).
      */
-    void noteProblem(String message);
+    void noteProblem(const vn::graphics::RenderDiagnostic& diagnostic);
 
     /** @brief Returns whether the structural check already spoke about this declared input.
      *

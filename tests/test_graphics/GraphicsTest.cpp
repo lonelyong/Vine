@@ -12227,7 +12227,10 @@ TEST(RenderEngineTest, ACameraWhoseShapeIsNotThePassRectangleIsReportedOnce)
     (void)scene->publish(); // the host's verb (see Scene::publish)
     engine->frame();
     ASSERT_EQ(received.size(), 1u);
-    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::PassProtocolViolation);
+    EXPECT_TRUE(received[0].code.std_u8str_view() == u8"engine.compile.picture_shape_mismatch")
+        << "the report names its cause by code, so a host can act on it without parsing the sentence";
+    EXPECT_TRUE(received[0].subject.std_u8str_view() == u8"window") << "and it names the pass it is about";
     EXPECT_NE(received[0].message.find(u8"window"), vn::String::npos) << "the pass is named";
     EXPECT_NE(received[0].message.find(u8"800x600"), vn::String::npos) << "the rectangle is stated";
     EXPECT_NE(received[0].message.find(u8"1:1"), vn::String::npos) << "and the picture the camera projects for";

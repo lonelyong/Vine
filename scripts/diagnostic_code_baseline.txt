@@ -11,12 +11,10 @@
 src/fw/appfw/src/gui/Viewer.cpp                                     1
 src/plugins/gfx_backend_vk/src/internal/Device.cpp                  32
 src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp             10
-src/viz/graphics/sdk/vine/graphics/RenderDevice.hpp                  2
-src/viz/graphics/sdk/vine/graphics/RenderEngine.hpp                  2
 src/viz/graphics/src/ChainBuilder.cpp                                1
 src/viz/graphics/src/DiagnosticsRoute.cpp                            1
-src/viz/graphics/src/EngineCompile.cpp                               7
-src/viz/graphics/src/RenderDevice.cpp                                3
-src/viz/graphics/src/RenderEngine.cpp                               18
+src/viz/graphics/src/EngineCompile.cpp                               1
+src/viz/graphics/src/RenderDevice.cpp                                1
+src/viz/graphics/src/RenderEngine.cpp                               19
 src/viz/graphics/src/RenderSurface.cpp                               5
 src/viz/graphics/src/SceneView.cpp                                   1

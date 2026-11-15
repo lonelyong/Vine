@@ -33,7 +33,7 @@ MACROS = ("VN_LOGI", "VN_LOGW", "VN_LOGE", "VN_LOGD")
 # call that states NO code may not grow past the ceiling `diagnostic_code_baseline.txt` records for its file.
 CODE_RE = re.compile(r'u8"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+){2,})"')
 ASSIGNED_CODE_RE = re.compile(r'\.code\s*=\s*(?:vn::String\()?u8"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+){2,})"')
-REPORT_NAMES = ("reportDiagnostic", "reportEngineProblem")
+REPORT_NAMES = ("reportDiagnostic", "reportEngineProblem", "noteProblem")
 CODES_FILE = "scripts/diagnostic_codes.txt"
 BASELINE_FILE = "scripts/diagnostic_code_baseline.txt"
 DEFAULT_GLOBS = (
@@ -185,7 +185,13 @@ def check_codes(root):
         relative = path.relative_to(root).as_posix()
         missing = 0
         for name in REPORT_NAMES:
-            for line, body in split_calls(text, name):
+            # A DEFINITION IS NOT A CALL: `RenderDevice::reportDiagnostic(...)` is where the report is made, and it
+            # names no cause because it IS the cause's consumer. The positions come from the same expression
+            # `split_calls` walks, so the two iterators pair up in order.
+            positions = [match.start() for match in re.finditer(r"\b" + re.escape(name) + r"\(", text)]
+            for (line, body), start in zip(split_calls(text, name), positions):
+                if start >= 2 and text[start - 2:start] == "::":
+                    continue
                 codes = CODE_RE.findall(body)
                 for code in codes:
                     used.setdefault(code, []).append(f"{relative}:{line}")
@@ -194,9 +200,10 @@ def check_codes(root):
         # A report built field by field states its code as an assignment instead of an argument.
         for match in ASSIGNED_CODE_RE.finditer(text):
             used.setdefault(match.group(1), []).append(f"{relative}:{text[:match.start()].count(chr(10)) + 1}")
-        if missing:
+        if missing and path.suffix == ".cpp":
+            # THE RATCHET IS ABOUT REPORTS, and a header DECLARES them: `virtual void reportRenderTarget(...)` names no
+            # cause because it is not where any report is made.
             uncoded[relative] = missing
-
     for code, places in sorted(used.items()):
         if code not in known:
             findings += 1

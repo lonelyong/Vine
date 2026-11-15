@@ -136,14 +136,24 @@ bool RenderEngine::diagnosticsClean() const noexcept
 
 void RenderEngine::reportEngineProblem(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const String& message)
 {
+    // THE MIGRATION FORM (see the header): the caller named no finer cause than the category.
+    vn::graphics::RenderDiagnostic diagnostic;
+    diagnostic.severity = severity;
+    diagnostic.category = category;
+    diagnostic.message  = message;
+    reportEngineProblem(diagnostic);
+}
+
+void RenderEngine::reportEngineProblem(const vn::graphics::RenderDiagnostic& diagnostic)
+{
     if (collecting_problems_) {
-        // A compile is running: what the checks FOUND is collected, and reportPlanProblems() decides what is
-        // said out loud - once per episode, by comparing this list with the previous compile's (see it). The
-        // checks therefore keep reporting the way they always did, and the episode rule lives in one place.
-        noteProblem(message);
+        // A compile is running: what the checks FOUND is collected, and reportPlanProblems() decides what is said
+        // out loud - once per episode, by comparing this list with the previous compile's (see it). The checks
+        // therefore keep reporting the way they always did, and the episode rule lives in one place.
+        noteProblem(diagnostic);
         return;
     }
-    diagnostics_.report(severity, category, message);
+    diagnostics_.report(diagnostic);
 }
 
 Capabilities RenderEngine::capabilities() const noexcept
