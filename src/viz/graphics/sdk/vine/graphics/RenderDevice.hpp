@@ -157,10 +157,11 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   executor's frame in flight and a re-entrant call is REFUSED - `backend/FrameGate.hpp` is the shared
  *   implementation, and the two backends answer the same way. Today `createSession()`'s default hands every caller
  *   the device's OWN executor, so there is still one driver per device; a backend that hands out several documents
- *   which of them may run concurrently (see `.ai/design/graphics-sessions.md`). Host verbs (`setRenderTarget`,
- *   `releaseContent`, ...) stay BETWEEN-FRAME calls: the gate does not make them thread-safe, and a host that calls
- *   one while another thread frames is breaking a contract the device cannot see. A device may keep its state
- *   unsynchronised, but must not assume it stays on the same thread across an initialize()/shutdown() pair. The
+ *   which of them may run concurrently (see `.ai/design/graphics-sessions.md`). HOST VERBS (`setRenderTarget`,
+ *   `releaseContent`, ...) ARE THE DEVICE'S PROMISE, not an impossible host duty: a device may serialise them against
+ *   the frame in flight (vk takes one device lock and documents that a host verb may WAIT), or it may state that they
+ *   are between-frame calls - what it may not do is leave the host guessing which. A device must not assume its state
+ *   stays on the same thread across an initialize()/shutdown() pair. The
  *   diagnostic sink is invoked synchronously from inside a device call, so a sink must record and return, never call
  *   back into the device (a re-entrant frame is refused, not queued).
  * - FAILURE. A device reports what it could not do instead of degrading silently (see setDiagnosticSink) and never

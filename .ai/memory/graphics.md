@@ -159,6 +159,14 @@
   `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
   ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
   别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
+- **S6b 补齐（2026-11-15）：宿主动词也上同一把设备锁**。多驱动者之后"帧之间"不再是宿主能命名的时刻，所以
+  `readColorBuffer` / `readDepthBuffer` / `releaseContent` ×3 / `releaseRenderTarget` / `setDefaultContentProgram` /
+  `setRenderTarget` / `createSurfaceTarget` / `setMemoryBlockCreator` / 诊断读取全部取 `Impl::frame_mutex`：可能等待
+  在飞的帧体，但不与它竞争。`device_lost` 改为 `std::atomic<bool>`（一条线程写、另一条读）。契约文本同步：vk 头写"一个
+  设备体一次、宿主动词串行"，SDK 写"宿主动词是设备的承诺（可等待或明确写 between-frame），不是宿主猜的义务"。
+  判据：`VkMultiSessionTest` 6 例（新增：另一驱动者连跑 30 帧时主线程做 10 次读回 + 5 次释放不失败、画面仍对；
+  另一驱动者跑帧时切换本驱动者默认程序，下一帧生效），`test_vk` 127/127、ASan 门禁 PASS。**诚实说明**：锁的正确性靠
+  结构与 ASan，变异会因时序不确定（不是确定性红），这类守卫属于"纵深"，在报告里说明而不是假装有红变异。
 - **S6b 已落地（2026-11-15，T48 第六步 b，串行版）**：vk 真的多发驱动者——`Device::createSession()` 造 `Session`
   （早于 `initialize()` 的由它统一拉起；已起的设备上当场建并建好 scratch）；`releaseSession()` 销毁并遗忘，设备自己的
   驱动者不可归还。设备持一把 `frame_mutex`：会话各有命令池/栅栏/时间戳池/帧闸/scratch/默认程序，但缓存/分配器/队列还没在

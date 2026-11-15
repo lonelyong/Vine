@@ -49,9 +49,14 @@ VN_BACKEND_VK_NS_BEGIN
  * @note The class is `Device` and not `VkDevice`: the latter is Vulkan's own type, and this header's implementation
  *       includes volk (see `backend_vk_global.hpp`).
  *
- * @warning One frame at a time, CHECKED: `executeFrame` and `prepareFrame` go through the device's `FrameGate`, so a
- *          second thread waits and a re-entrant call is refused (`PresentOutcome::Refused`). Everything else - the
- *          host verbs - is a between-frame call and stays the host's contract; this device keeps no other locks.
+ * @warning ONE DEVICE BODY AT A TIME, CHECKED AND SERIALISED. `executeFrame` and `prepareFrame` go through their
+ *          driver's `FrameGate` first (a second thread waits, a re-entrant call is refused), and then through the
+ *          DEVICE's body lock: the caches, the allocator and the queue are shared, so two drivers may be driven from
+ *          two threads but their bodies do not overlap (S6b; the frame-start snapshot that would let them overlap is
+ *          S6c). Every host verb that touches that shared state (`readColorBuffer`, `releaseContent`,
+ *          `setDefaultContentProgram`, `releaseRenderTarget`, `createSurfaceTarget`, the diagnostic readers) takes the
+ *          same lock: it may WAIT for the body in flight, and it does not race it. `initialize()`/`shutdown()` stay the
+ *          creator's calls, made with no frame in flight.
  */
 class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
   public:

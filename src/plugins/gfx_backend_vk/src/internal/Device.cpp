@@ -5,6 +5,7 @@
 #include <cstring>
 #include <filesystem>
 #include <algorithm>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -575,7 +576,7 @@ struct Device::Impl {
     /// ONE FRAME BODY AT A TIME ON THIS DEVICE. Sessions own their machinery, but the caches, the allocator and
     /// the queue are the device's and are not yet safe to observe from two running frames - so the drivers are
     /// serialised HERE, at the body, after each driver's own gate has answered re-entry (see the class note).
-    std::mutex frame_mutex{};
+    mutable std::mutex frame_mutex{};
     DeviceDesc      desc{};
     Capabilities    caps{};
     RenderTarget*   target{ nullptr };
@@ -833,8 +834,9 @@ struct Device::Impl {
     }
 
     /// True once a queue/acquire/present call answered `VK_ERROR_DEVICE_LOST`: the session is over (see
-    /// Device::noteDeviceLost), so `initialized()` stops answering true and the host rebuilds it.
-    bool device_lost{ false };
+    /// Device::noteDeviceLost), so `initialized()` stops answering true and the host rebuilds it. ATOMIC because a
+    /// host reads it while another session's frame is the thread that writes it.
+    std::atomic<bool> device_lost{ false };
     /// One report for the loss itself, whatever number of calls saw it afterwards (the session is the episode).
     vn::graphics::ReportOnce device_lost_report{};
 
@@ -2788,6 +2790,10 @@ void Device::noteMemoryRefusal(const MemoryRefusalReport& report)
 
 void Device::setMemoryBlockCreator(MemoryBlockCreator creator)
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     // A TEST SEAM, NOT A POLICY (see the header): blocks are created lazily, so this is read by the first target or
     // texture that needs one, and empty means the device table's own `vkAllocateMemory`.
     impl->allocator.setBlockCreator(std::move(creator));
@@ -2795,6 +2801,10 @@ void Device::setMemoryBlockCreator(MemoryBlockCreator creator)
 
 void Device::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     // THE DRIVER'S SETTING (see RenderFrameExecutor::setDefaultContentProgram): this device runs its own frames through
     // its own session, so a caller that drives the device directly keeps the shape it had - and a real second driver
     // would be told its own program, not this one's.
@@ -2861,11 +2871,19 @@ vn::graphics::RenderFrameExecutor& Device::executor()
 
 void Device::setRenderTarget(RenderTarget* target)
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     impl->target = target;
 }
 
 void Device::releaseRenderTarget(RenderTarget* target)
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     if (target == nullptr) {
         return;
     }
@@ -2891,6 +2909,10 @@ void Device::releaseRenderTarget(RenderTarget* target)
 
 vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void* native_handle, SurfaceTargetResult* why)
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     const auto answer = [why](const SurfaceTargetResult result) {
         if (why != nullptr) {
             *why = result;
@@ -3214,6 +3236,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
 
 bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     if (content == nullptr || !initialized()) {
         return false;
     }
@@ -3256,6 +3282,10 @@ bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
 
 bool Device::releaseContent(const vn::Buffer<float>& buffer)
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     if (!initialized()) {
         return false;
     }
@@ -3270,6 +3300,10 @@ bool Device::releaseContent(const vn::Buffer<float>& buffer)
 
 bool Device::releaseContent(const vn::Buffer<std::uint32_t>& buffer)
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     if (!initialized()) {
         return false;
     }
@@ -3294,6 +3328,10 @@ vn::graphics::FrameReport Device::frameReport() const noexcept
 
 bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels, ReadbackResult* why)
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     const auto fail = [why](const ReadbackResult reason) {
         if (why != nullptr) {
             *why = reason;
@@ -3415,6 +3453,10 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
 
 bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& outDepths, ReadbackResult* why)
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     const auto fail = [why](const ReadbackResult reason) {
         if (why != nullptr) {
             *why = reason;
@@ -3560,11 +3602,19 @@ Handles Device::handles() const noexcept
 
 std::uint64_t Device::contentPipelines() const noexcept
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     return impl->caches.pipelinesCreated();
 }
 
 Device::ContentCacheCounters Device::contentCacheCounters() const noexcept
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     // TWO OWNERS, ONE ANSWER: the ring and the descriptor sets belong to the device's own driver (a second driver would
     // have its own), while the caches answer the rest. `Device` reports its own session's frame scratch, which is the
     // same answer a single-session tree has always given.
@@ -3575,6 +3625,10 @@ Device::ContentCacheCounters Device::contentCacheCounters() const noexcept
 
 MemoryStats Device::memoryStats() const noexcept
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     return impl->allocator.stats();
 }
 
@@ -3590,6 +3644,10 @@ const TargetClaims& Device::targetClaims() const noexcept
 
 Device::RetirementNumbers Device::retirementNumbers() const noexcept
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     RetirementNumbers numbers;
     numbers.pending      = impl->retirement.pending();
     numbers.released     = impl->retirement.released();
@@ -3599,6 +3657,10 @@ Device::RetirementNumbers Device::retirementNumbers() const noexcept
 
 Device::PipelineCacheReport Device::pipelineCacheReport() const noexcept
 {
+    // A HOST VERB TOUCHES STATE A FRAME BODY ALSO TOUCHES (see Impl::frame_mutex): it waits for the body in
+    // flight instead of racing it. With several drivers, "between frames" is no longer a moment anyone can
+    // name on the host's behalf, so the device names it for them.
+    const std::lock_guard<std::mutex> device_lock(impl->frame_mutex);
     PipelineCacheReport report{
         .persisted       = impl->cache_books.persisted,
         .discarded       = impl->cache_books.discarded,

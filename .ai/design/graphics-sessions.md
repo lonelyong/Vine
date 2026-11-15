@@ -515,7 +515,9 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   `TargetClaimFrameTest` 2 例，变异 2/2 红；`test_vk` 120/120（Debug + ASan 门禁）。
 - **已落地**：`T48` 的 **S6b（串行版）**——vk 真的多发驱动者：`createSession()` 造 `Session`（早于 `initialize()` 的由
   initialize 统一拉起；已起的设备上当场建），`releaseSession` 销毁并遗忘，设备自己的驱动者不可归还。设备持一把
-  `frame_mutex` 串行化帧体（缓存/分配/队列尚未在两条运行帧之间成立，`C10`：先写串行）。`VkMultiSessionTest` 4 例
+  `frame_mutex` 串行化帧体（缓存/分配/队列尚未在两条运行帧之间成立，`C10`：先写串行）。**每一个碰共享状态的宿主动词
+  （读回 / 释放 / 默认程序 / 释放目标 / 建设备窗口 / 诊断读取）也取同一把锁**：它们可能**等待**在飞的帧体，但不再与它竞争——
+  多驱动者之后"帧之间"已不是宿主能自己命名的一个时刻，设备替它命名（`C10` 的第二半）。`VkMultiSessionTest` 6 例
   （T8 两驱动者不同默认程序各画各的、T10 两线程各 6 帧两图各自正确、R1 早借晚用、释放与再借），变异 2/2 红；
   `test_vk` **125/125**、`test_graphics` 587、`test_vsg` 556，ASan 门禁 PASS。
 - **已落地**：`T48` 的 **S6a**——`RenderDevice::createSession()` / `releaseSession()` 接缝（默认 `&executor()` /

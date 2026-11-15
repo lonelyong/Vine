@@ -349,3 +349,99 @@ TEST(VkMultiSessionTest, ReleasingTheDevicesOwnDriverIsANoOpAndAnotherDriverCanB
 
     backend->shutdown();
 }
+
+TEST(VkMultiSessionTest, AHostVerbWaitsForTheOtherDriversFrameInsteadOfRacingIt)
+{
+    // WITH SEVERAL DRIVERS, "between frames" IS NOT A MOMENT THE HOST CAN NAME. The device therefore serialises every
+    // verb that touches state a frame body touches (readback, release, the default program) on the same device lock
+    // the body takes - so a host call from one thread WAITS instead of racing a frame running on another.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    RenderFrameExecutor* const second = device->createSession();
+    ASSERT_NE(second, nullptr);
+    device->setDefaultContentProgram(redProgram());
+    second->setDefaultContentProgram(greenProgram());
+
+    const intrusive_ptr<Geometry>     geometry = makeTriangle();
+    const intrusive_ptr<RenderTarget> own_target  = makeTarget(u8"verbs_own");
+    const intrusive_ptr<RenderTarget> busy_target = makeTarget(u8"verbs_busy");
+
+    // The own driver builds its target once (the readback below needs something to read).
+    (void)backend->executeFrame(drawingFrame(own_target.get(), programlessDraw(geometry)), nullptr);
+
+    constexpr int kFrames = 30;
+    std::thread   driver([second, &geometry, &busy_target]() {
+        for (int frame = 0; frame < kFrames; ++frame) {
+            (void)second->executeFrame(drawingFrame(busy_target.get(), programlessDraw(geometry)), nullptr);
+            std::this_thread::yield();
+        }
+    });
+
+    // THE HOST VERBS, from this thread, while that frame body runs: none may fail or crash.
+    int releases = 0;
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        std::vector<std::uint8_t> pixels;
+        EXPECT_TRUE(backend->readColorBuffer(own_target.get(), 0, pixels))
+            << "a readback raced the frame in flight (it should have waited)";
+        EXPECT_EQ(pixels.size(), static_cast<std::size_t>(kTargetSize) * kTargetSize * 4U);
+        releases += device->releaseContent(geometry.get()) ? 1 : 0;
+        std::this_thread::yield();
+    }
+    driver.join();
+    EXPECT_GT(releases, 0) << "no release was ever accepted while another driver framed";
+
+    // The busy driver still draws after the releases (its next frame re-uploads what was let go).
+    (void)second->executeFrame(drawingFrame(busy_target.get(), programlessDraw(geometry)), nullptr);
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(busy_target.get(), 0, pixels));
+    EXPECT_GE(centreOf(pixels)[1], 254) << "a release during the other driver's frame broke its next picture";
+
+    device->releaseSession(*second);
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, TheDefaultProgramMayChangeWhileAnotherDriverFrames)
+{
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    RenderFrameExecutor* const second = device->createSession();
+    ASSERT_NE(second, nullptr);
+    device->setDefaultContentProgram(redProgram());
+    second->setDefaultContentProgram(greenProgram());
+
+    const intrusive_ptr<Geometry>     geometry = makeTriangle();
+    const intrusive_ptr<RenderTarget> own_target  = makeTarget(u8"switch_own");
+    const intrusive_ptr<RenderTarget> busy_target = makeTarget(u8"switch_busy");
+
+    constexpr int kFrames = 20;
+    std::thread   driver([second, &geometry, &busy_target]() {
+        for (int frame = 0; frame < kFrames; ++frame) {
+            (void)second->executeFrame(drawingFrame(busy_target.get(), programlessDraw(geometry)), nullptr);
+        }
+    });
+
+    // The device's own driver is NOT the one framing, so its setting may change while the other runs; the write waits
+    // for the body in flight (see Impl::frame_mutex) and the next frame uses the new program.
+    device->setDefaultContentProgram(greenProgram());
+    driver.join();
+
+    (void)backend->executeFrame(drawingFrame(own_target.get(), programlessDraw(geometry)), nullptr);
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(own_target.get(), 0, pixels));
+    EXPECT_GE(centreOf(pixels)[1], 254) << "the live program switch was lost while the other driver framed";
+
+    device->releaseSession(*second);
+    backend->shutdown();
+}
