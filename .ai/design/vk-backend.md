@@ -322,10 +322,13 @@
 ### 3.1.13 F13 设备时钟
 
 - **行为**：一对 `VK_QUERY_TYPE_TIMESTAMP` 包住一帧的命令缓冲，栅栏之后读回，写进 `FrameReport::timing`
-  （`FrameTiming::gpu_micros`）；每 30 帧采样一次（实测这对时间戳在 lavapipe 上值 ~0.8 ms/帧），未采样帧**缺席**
-  而不是重复上一次的值。
-- **约束**：`C7`。
-- **验收**：`VkDeviceClockTest.AFrameReportsItsDeviceTime`。
+  （`FrameTiming::gpu_micros`）；**每个 pass 另有一对边界**（写在它的上传之前，所以它要求的转换与拷贝算在它头上），
+  读回后写进 `FrameTiming::passes`（执行序，名字取自 `RenderPass::name`，所以宿主可以拿它对自己读到的计划）；
+  每 30 帧采样一次（实测这对时间戳在 lavapipe 上值 ~0.8 ms/帧），未采样帧**缺席**而不是重复上一次的值。
+- **约束**：`C7`、`C13`。
+- **验收**：`VkDeviceClockTest.AFrameReportsItsDeviceTime`、
+  `VkPassTimingTest.TheReportAttributesTheFrameToThePassesThatSpentIt`（两个 pass、两个条目、名字对得上、
+  各段之和不超过整帧）。
 - **注意**：`P12`。
 
 ### 3.1.14 F14 报告与诊断
@@ -409,6 +412,8 @@
   `Device::noteMemoryRefusal` 是唯一分类点；任何调用点都不得自行把失败归成“显存不足”（§2.12）。
 - **C12 每条报告带稳定 code**：新写的 `reportDiagnostic` 必须带 `code`（`check_diagnostic_formats.py` 用
   baseline 设上限，超了即红）；`code` 一旦发布不改写、不复用（`scripts/diagnostic_codes.txt`）。
+- **C13 归因是分段，不是整帧重复**：每个 pass 的时间是它与下一个边界之间的那一段（含它要求的上传与转换），
+  所以各段之和 ≤ 整帧；把整帧记到每个 pass 上是错的（`VkPassTimingTest` 钉住）。
 
 ### 5.2 要求（R#）
 

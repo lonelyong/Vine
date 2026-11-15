@@ -440,6 +440,44 @@ struct Device::Impl {
     float       timestamp_period{ 0.0F }; // nanoseconds per tick, from the device's limits
     bool        timestamps{ false };
     std::uint64_t clock_frames{ 0 }; // frames executeFrame has begun (the sampling counter)
+    /// How many queries `timestamp_pool` holds: the frame's pair plus one boundary per pass (see ensureTimestampQueries).
+    std::uint32_t timestamp_queries{ 0 };
+
+    /**
+     * @brief Makes the clock's query pool hold at least @p needed queries, recreating it when it does not.
+     *
+     * @details
+     * - GROWING IS A BETWEEN-FRAMES ACT: this device submits and waits inside `executeFrame`, so when this runs no
+     *   command buffer names the old pool (the same rule the ring follows, see P6). The pool is therefore sized by the
+     *   LARGEST frame seen so far, not by a guessed maximum - a frame with more passes pays one recreate, once.
+     * - A device that cannot create the pool keeps `timestamps == false` and answers timing DISENGAGED rather than a
+     *   fabricated zero (see FrameTiming).
+     *
+     * @param needed Queries the next frame needs (2 + passes + 1).
+     * @return true when the pool holds at least @p needed queries.
+     */
+    [[nodiscard]] bool ensureTimestampQueries(const std::uint32_t needed)
+    {
+        if (timestamp_pool != VK_NULL_HANDLE && timestamp_queries >= needed) {
+            return true;
+        }
+        if (timestamp_pool != VK_NULL_HANDLE) {
+            device_table.vkDestroyQueryPool(device, timestamp_pool, nullptr);
+            timestamp_pool    = VK_NULL_HANDLE;
+            timestamp_queries = 0U;
+        }
+        VkQueryPoolCreateInfo info{};
+        info.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        info.queryType  = VK_QUERY_TYPE_TIMESTAMP;
+        info.queryCount = needed;
+        if (device_table.vkCreateQueryPool(device, &info, nullptr, &timestamp_pool) != VK_SUCCESS) {
+            timestamp_pool    = VK_NULL_HANDLE;
+            timestamp_queries = 0U;
+            return false;
+        }
+        timestamp_queries = needed;
+        return true;
+    }
 
     /// The command machinery every frame and every readback borrows: one pool, one fence, one buffer at a time.
     VkCommandPool command_pool{ VK_NULL_HANDLE };
@@ -1184,19 +1222,11 @@ bool Device::initialize()
     // `VkSubpassDescriptionDepthStencilResolve`, and both are Vulkan 1.2.
     impl->depth_resolve_supported = properties.apiVersion >= VK_API_VERSION_1_2;
 
-    // THE DEVICE CLOCK (see FrameTiming): two queries per frame, written around the frame's own command buffer.
+    // THE DEVICE CLOCK (see FrameTiming): the frame's own pair to start; the per-pass boundaries are added by the first
+    // frame that needs them, between frames (see ensureTimestampQueries).
     impl->timestamp_period = properties.limits.timestampPeriod;
     if (properties.limits.timestampComputeAndGraphics != VK_FALSE && impl->timestamp_period > 0.0F) {
-        VkQueryPoolCreateInfo query_info{};
-        query_info.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-        query_info.queryType  = VK_QUERY_TYPE_TIMESTAMP;
-        query_info.queryCount = 2U;
-        if (impl->device_table.vkCreateQueryPool(impl->device, &query_info, nullptr, &impl->timestamp_pool) == VK_SUCCESS) {
-            impl->timestamps = true;
-        }
-        else {
-            impl->timestamp_pool = VK_NULL_HANDLE;
-        }
+        impl->timestamps = impl->ensureTimestampQueries(2U);
     }
 
     impl->caps                         = Capabilities{};
@@ -2035,8 +2065,14 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     // and the pair is closed before the buffer ends below. SAMPLED, not every frame (see kTimestampSampleFrames).
     ++impl->clock_frames;
     const bool sample_clock = impl->timestamps && (impl->clock_frames % kTimestampSampleFrames) == 1U;
-    if (sample_clock) {
-        impl->device_table.vkCmdResetQueryPool(commands, impl->timestamp_pool, 0U, 2U);
+    // THE PER-PASS BOUNDARIES NEED ONE QUERY PER PASS PLUS THE TAIL, beside the frame's own pair (see PassTiming). A
+    // frame that needs more than the pool holds recreates it here, which is legal because no command buffer is in
+    // flight; a device that cannot grow it keeps the frame's own clock and answers no attribution.
+    const std::uint32_t pass_count     = static_cast<std::uint32_t>(runnable_passes.size());
+    const std::uint32_t query_count    = 2U + pass_count + 1U;
+    const bool          per_pass_clock = sample_clock && impl->ensureTimestampQueries(query_count);
+    if (per_pass_clock) {
+        impl->device_table.vkCmdResetQueryPool(commands, impl->timestamp_pool, 0U, query_count);
         impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, impl->timestamp_pool, 0U);
     }
 
@@ -2050,7 +2086,14 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     // Whether a draw this frame named could not be recorded. The refused-content episode ends when a frame records
     // everything it was handed - a frame that still names one bad draw keeps the episode open (see ReportOnce).
     bool content_refused = false;
+    std::uint32_t pass_index = 0;
     for (const Runnable& item : runnable_passes) {
+        // THE PASS' OWN BOUNDARY, written BEFORE its uploads: the transitions and copies a pass asks for exist because
+        // it asked, so they are billed to it rather than to the frame (see PassTiming).
+        if (per_pass_clock) {
+            impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, impl->timestamp_pool, 2U + pass_index);
+        }
+        ++pass_index;
         const PassDraw& draw = *item.draw;
         // THE PASS' TEXTURES ARE PREPARED BEFORE ITS RENDER PASS BEGINS: an upload records image barriers and
         // buffer-to-image copies, neither of which is legal inside a render pass instance.
@@ -2267,7 +2310,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         window->recordPresentTransition(commands);
     }
 
-    if (sample_clock) {
+    if (per_pass_clock) {
+        // THE TAIL BOUNDARY: the last pass' span ends here, so what follows (the present transition, the frame's own
+        // tail) belongs to no pass - the honest split, because no pass asked for it.
+        impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, impl->timestamp_pool, 2U + pass_count);
         impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, impl->timestamp_pool, 1U);
     }
 
@@ -2310,19 +2356,34 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         // THE PAIR IS READABLE NOW (the fence says the frame ran): one read, one value, and the report carries it as
         // the frame's device time (see FrameTiming). A frame the clock did not sample answers DISENGAGED - never the
         // previous frame's value.
-        if (sample_clock) {
-            std::uint64_t stamps[2]{ 0U, 0U };
+        if (per_pass_clock) {
+            std::vector<std::uint64_t> stamps(query_count, 0U);
             if (impl->device_table.vkGetQueryPoolResults(impl->device,
                                                          impl->timestamp_pool,
                                                          0U,
-                                                         2U,
-                                                         sizeof(stamps),
-                                                         stamps,
+                                                         query_count,
+                                                         stamps.size() * sizeof(std::uint64_t),
+                                                         stamps.data(),
                                                          sizeof(std::uint64_t),
                                                          VK_QUERY_RESULT_64_BIT) == VK_SUCCESS &&
                 stamps[1] > stamps[0]) {
-                const double micros = static_cast<double>(stamps[1] - stamps[0]) * static_cast<double>(impl->timestamp_period) / 1000.0;
-                impl->books.timing  = vn::graphics::FrameTiming{ static_cast<std::uint64_t>(micros) };
+                const double             to_micros = static_cast<double>(impl->timestamp_period) / 1000.0;
+                vn::graphics::FrameTiming timing;
+                timing.gpu_micros = static_cast<std::uint64_t>(static_cast<double>(stamps[1] - stamps[0]) * to_micros);
+                // PER-PASS ATTRIBUTION, in EXECUTION order: pass i spans boundary 2+i to 2+i+1, and the name is the
+                // frame's own - a report a host can match against the plan it read (see PassTiming).
+                timing.passes.reserve(pass_count);
+                for (std::uint32_t index = 0; index < pass_count; ++index) {
+                    const std::uint64_t from = stamps[2U + index];
+                    const std::uint64_t to   = stamps[2U + index + 1U];
+                    vn::graphics::PassTiming entry;
+                    if (runnable_passes[index].entry != nullptr && runnable_passes[index].entry->pass != nullptr) {
+                        entry.pass = runnable_passes[index].entry->pass->name();
+                    }
+                    entry.gpu_micros = to > from ? static_cast<std::uint64_t>(static_cast<double>(to - from) * to_micros) : 0U;
+                    timing.passes.push_back(std::move(entry));
+                }
+                impl->books.timing = std::move(timing);
             }
             else {
                 impl->books.timing.reset();

@@ -2,6 +2,9 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
+
+#include <vine/String.hpp>
 
 #include "Residency.hpp"
 #include "graphics_global.hpp"
@@ -114,8 +117,29 @@ struct VN_GRAPHICS_API FrameUploads {
  * - ABSENT IS NOT ZERO: a backend that keeps no device clock leaves `FrameReport::timing` disengaged rather than
  *   answering 0, which would read as a frame that took no time at all (the rule FrameReport states for every part).
  */
+/**
+ * @brief What ONE pass cost on the device (see FrameTiming::passes).
+ *
+ * @details
+ * - THE ATTRIBUTION A HOST ACTUALLY ASKS FOR: "the frame took 8 ms" does not say whether the shadow pass or the
+ *   lighting pass is the one to fix. `pass` is the pass' own name (`RenderPass::name`), so it matches the plan a host
+ *   reads and the table a gate asserts - not a pointer, which no report can be compared against.
+ * - A PASS IS TIMED FROM ITS OWN BOUNDARY TO THE NEXT ONE, and that span INCLUDES the uploads and transitions recorded
+ *   between them: that work exists because the pass asked for it, so billing it to the preceding pass is the honest
+ *   split. The span before the first pass (the frame's own setup) belongs to no pass and is not reported here.
+ */
+struct VN_GRAPHICS_API PassTiming {
+    String        pass;            // The pass' name (the identity the frame carried).
+    std::uint64_t gpu_micros{ 0 }; // Device time between this pass' boundary and the next.
+};
+
 struct VN_GRAPHICS_API FrameTiming {
     std::uint64_t gpu_micros{ 0 }; // Device time of the frame that just ended, in microseconds.
+
+    /// Per-pass attribution, in execution order; EMPTY when the backend times only the frame (see PassTiming).
+    /// An empty vector is the honest answer for a backend that keeps one clock: it makes "this backend does not
+    /// attribute" distinguishable from "the passes cost nothing".
+    std::vector<PassTiming> passes;
 };
 
 /**
