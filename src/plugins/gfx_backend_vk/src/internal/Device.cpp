@@ -34,6 +34,8 @@
 #include <vine/graphics/PresentTarget.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ReportOnce.hpp>
+#include <vine/graphics/backend/DeviceClock.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Texture.hpp>
 #include <vine/graphics/backend/Readback.hpp>
@@ -63,6 +65,37 @@ using vn::graphics::backend::TargetAction;
 using vn::graphics::backend::TargetDecision;
 using vn::graphics::backend::TargetDesc;
 using vn::graphics::backend::TargetInstance;
+
+/**
+ * @brief Closes this frame's clock token on EVERY exit, then lets the park queue run.
+ *
+ * @details
+ * - A FRAME HAS MANY EARLY RETURNS AND EXACTLY ONE SUCCESS, so "which one happened" is a bool the success path sets and
+ *   the destructor acts on. A frame that bailed out before the submit must still close its token: the timeline answers
+ *   the SAME open token to the next `begin()` (see FrameTimeline::begin), so leaving one open would run two frames as
+ *   one - and the parked releases would never see a watermark.
+ * - SUBMITTING IS NOT COMPLETING. The success path reports completion separately, after the fence (see the callers);
+ *   this guard only spends the frame.
+ * - THE LAST STEP IS THE QUEUE'S: `advance()` runs after the token is closed, so a frame that just proved completion
+ *   releases what that proof allows. Running it in the destructor is what puts it on every path.
+ */
+struct FrameTokenCloser {
+    vn::graphics::backend::DeviceClock&     clock;
+    vn::graphics::backend::RetirementQueue& retirement;
+    vn::graphics::backend::FrameToken       token;
+    bool                                    submitted{ false };
+
+    ~FrameTokenCloser()
+    {
+        if (submitted) {
+            clock.submitted(token);
+        }
+        else {
+            clock.abandoned(token);
+        }
+        retirement.advance(clock.timeline());
+    }
+};
 
 namespace
 {
@@ -628,6 +661,55 @@ struct Device::Impl {
     /// The episode of "a frame was started from the thread that already drives one" (see executeFrame).
     vn::graphics::ReportOnce frame_reentry_report{};
 
+    /**
+     * @brief The device's completion clock and its park queue: WHEN an object a host released may really be destroyed.
+     *
+     * @details
+     * - ONE CLOCK, ONE PARK QUEUE, like the reference backend: whether a buffer or an image may be destroyed is a
+     *   question about the WHOLE device, because every frame reads the same objects - so the answer cannot live in a
+     *   session.
+     * - THIS DEVICE REGISTERS ONE CLOCK WINDOW, because a frame here is submitted and waited for inside the call
+     *   (`slots` = 1). Step 2 of `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` registers one window per
+     *   session; the queue and the arithmetic do not change - only the number of witnesses whose minimum is the
+     *   watermark.
+     * - `releaseAll()` at shutdown is what makes the parked releases run at all: parking exists to wait for evidence,
+     *   and a device being torn down has produced it by idling.
+     */
+    vn::graphics::backend::DeviceClock       clock{};
+    vn::graphics::backend::RetirementQueue   retirement{ 0 };
+    /// The clock window this device's frames report through (valid once `initialize` registered it).
+    vn::graphics::backend::DeviceClock::WindowId clock_window{ 0 };
+    bool                                         clock_registered{ false };
+    /// Frames in flight on this device today: one, because `executeFrame` submits and waits inside the call.
+    static constexpr std::uint32_t               kFramesInFlight = 1U;
+
+    /**
+     * @brief Runs @p destroy now, or parks it until the device's watermark has passed every frame that could name it.
+     *
+     * @details
+     * - THE ONE PLACE THE DECISION IS MADE. Every released object - a geometry's streams, a program's modules and
+     *   pipelines, a texture's image, a target's attachments - comes through here, so "when may this be destroyed"
+     *   has one answer instead of one per cache.
+     * - WITHOUT EVIDENCE IT IDLES: a release with no armed queue (a device that never came up, or one being torn
+     *   down) has no parking window it could trust, so the device is idled and the object destroyed - and the idle is
+     *   COUNTED (see RetirementQueue::deviceWaits). A queue that is armed never takes this path.
+     *
+     * @param destroy What to run when the object may go (capture handles and slices by value).
+     */
+    void releaseLater(std::function<void()> destroy)
+    {
+        if (clock_registered && retirement.retire(clock.timeline(), std::move(destroy))) {
+            return;
+        }
+        // NO EVIDENCE, SO NO PARKING: the honest answer to "we cannot prove it" is to stop the device (and count it),
+        // never to guess a window that would destroy an object a submitted command buffer still names.
+        if (device != VK_NULL_HANDLE) {
+            (void)device_table.vkDeviceWaitIdle(device);
+        }
+        retirement.noteDeviceWait();
+        destroy();
+    }
+
     /// True once a queue/acquire/present call answered `VK_ERROR_DEVICE_LOST`: the session is over (see
     /// Device::noteDeviceLost), so `initialized()` stops answering true and the host rebuilds it.
     bool device_lost{ false };
@@ -640,8 +722,8 @@ struct Device::Impl {
      * @details
      * - `counters` / `uploads` describe the frame that just ended, `progress` / `released_nodes` are cumulative.
      * - `uploads` stays disengaged until a frame has run: an unmeasured frame must not read like an empty one.
-     * - `device_waits` is 0 by construction: a release needs no idle here, because every frame ends having waited
-     *   on its own fence, so between frames nothing is in flight.
+     * - The count of DESTRUCTIVE IDLES is not here: the park queue owns it (`retirement.deviceWaits()`, reported
+     *   through `retirementNumbers()`), because it is the queue that decides between parking and idling.
      */
     struct Books {
         vn::graphics::FrameCounters               counters{};
@@ -650,7 +732,6 @@ struct Device::Impl {
         /// What the last frame cost on the device (see FrameTiming); disengaged when the device keeps no clock.
         std::optional<vn::graphics::FrameTiming> timing;
         std::uint64_t                            released_nodes{ 0 };
-        std::uint64_t                             device_waits{ 0 };
     };
     Books books{};
 
@@ -1331,6 +1412,17 @@ bool Device::initialize()
     impl->content.images().setMaxAnisotropy(impl->caps.max_anisotropy);
     impl->content.setCreationFeedback(impl->creation_feedback);
 
+    // THE CLOCK AND THE PARK QUEUE, from the first frame on: a frame reports its completion through this window, and
+    // every released object waits for that watermark (see Impl::releaseLater). Registered AFTER the content objects
+    // exist, because they are what borrows the seam.
+    impl->clock              = vn::graphics::backend::DeviceClock{};
+    impl->clock_window       = impl->clock.addWindow();
+    impl->clock.setWindowSlots(impl->clock_window, Impl::kFramesInFlight);
+    impl->retirement.setSlots(impl->clock.widestSlots());
+    impl->clock_registered   = true;
+    impl->content.setRetirement(&impl->retirement, &impl->clock.timeline());
+    impl->content.images().setRetirement(&impl->retirement, &impl->clock.timeline());
+
     // WHAT THE RECORDER DID WITH THE FILE, recorded where it will outlive the session (see pipelineCacheReport): the
     // hand-over and any refusal happen ONCE, at creation, and `content.destroy()` is what would erase them.
     impl->cache_books.hits_measured   = impl->creation_feedback;
@@ -1345,6 +1437,13 @@ void Device::shutdown()
     if (impl->device != VK_NULL_HANDLE) {
         // A counted stop: every queue is idle before the objects it recorded against go.
         (void)impl->device_table.vkDeviceWaitIdle(impl->device);
+
+        // WHAT THE RELEASES PARKED NOW GOES: the idle above IS the evidence every parked release was waiting for, so
+        // the queue runs out of turn and the objects die while their device is still alive. A device that skipped this
+        // would leak every object a release had parked - and the pool below would keep the blocks alive.
+        impl->content.setRetirement(nullptr, nullptr);
+        impl->content.images().setRetirement(nullptr, nullptr);
+        impl->retirement.releaseAll();
 
         // THE SESSION'S PIPELINE CACHE GOES TO THE HOST'S DIRECTORY FIRST: `vkGetPipelineCacheData` needs the cache
         // object, which `content.destroy()` below is about to destroy. A write that fails is a cold start next time,
@@ -1585,9 +1684,16 @@ void Device::releaseRenderTarget(RenderTarget* target)
         return;
     }
     if (impl->device != VK_NULL_HANDLE) {
-        // Between frames by contract (see the header): this device waits on its own fence before it answers, so
-        // nothing in flight names these image/view/memory handles and the destroy needs no idle.
-        destroyTarget(impl->device_table, impl->device, impl->allocator, found->second);
+        // THE ATTACHMENTS LEAVE THE TABLE NOW AND THE OBJECTS FOLLOW (see Impl::releaseLater): the target is no longer
+        // built (so a later frame rebuilds it), and the images die once the device's watermark has passed every frame
+        // that could still be drawing into them - which is what makes this call legal while another session frames.
+        TargetImages doomed = std::move(found->second);
+        impl->releaseLater([table = impl->device_table,
+                            device = impl->device,
+                            allocator = &impl->allocator,
+                            doomed = std::move(doomed)]() mutable {
+            destroyTarget(table, device, *allocator, doomed);
+        });
     }
     impl->targets.erase(found);
 }
@@ -1944,6 +2050,8 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
 
     // THE FRAME'S BOOKS OPEN HERE AND CLOSE ON EVERY EXIT (see closeFrameBooks): the report always describes the
     // frame that just ended - an empty one included - and the upload numbers are this frame's own delta.
+    const vn::graphics::backend::FrameToken frame_token = impl->clock.begin();
+    FrameTokenCloser                        frame_close{ impl->clock, impl->retirement, frame_token };
     const Impl::ContentNumbers    before = impl->contentNumbers();
     vn::graphics::FrameCounters   counters{};
     struct BooksCloser {
@@ -2397,12 +2505,16 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     const bool     submitted     = submit_result == VK_SUCCESS;
     if (submitted) {
         ++impl->books.progress.submitted;
+        frame_close.submitted = true;
     }
     const VkResult fence_result = submitted ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX)
                                             : submit_result;
     const bool     completed    = fence_result == VK_SUCCESS;
     if (completed) {
         ++impl->books.progress.completed;
+        // THE COMPLETION EVIDENCE THE PARK QUEUE WAITS FOR (see Impl::releaseLater): the frame's GPU work is provably
+        // done, so every object a release handed over while this frame was in flight may now go.
+        impl->clock.windowCompleted(impl->clock_window, frame_token.frame);
         // THE PAIR IS READABLE NOW (the fence says the frame ran): one read, one value, and the report carries it as
         // the frame's device time (see FrameTiming). A frame the clock did not sample answers DISENGAGED - never the
         // previous frame's value.
@@ -2594,10 +2706,14 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
         impl->prepare_target_report.rearm(); // the frame named a target this device handed out
     }
 
+    // THE WARM-UP IS A SUBMISSION TOO (see ADR-2026-11-14): it opens a frame on the clock, so the transfer batch it may
+    // submit carries a frame number the park queue can date a release against - and a warm-up that records nothing
+    // spends the token without moving the submitted watermark.
+    const vn::graphics::backend::FrameToken warmup_token = impl->clock.begin();
+    FrameTokenCloser                        warmup_close{ impl->clock, impl->retirement, warmup_token };
     const Impl::ContentNumbers before = impl->contentNumbers();
     PrepareReport             report;
     report.outcome = PrepareReport::Outcome::Prepared;
-
     // THE ONE THING THIS CALL MAY SUBMIT IS A TRANSFER BATCH OF ITS OWN (see RenderFrameExecutor::prepareFrame and
     // ADR-2026-11-14): the builds that need a command buffer - the 1x1 stand-in and every material texture of a pass -
     // are recorded on one command buffer here, submitted on the device's own fence and waited for before this call
@@ -2746,6 +2862,10 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
                                                ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX)
                                                : submit_result;
             const bool     completed     = fence_result == VK_SUCCESS;
+            warmup_close.submitted       = submit_result == VK_SUCCESS;
+            if (completed) {
+                impl->clock.windowCompleted(impl->clock_window, warmup_token.frame);
+            }
             (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
             impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &batch);
             if (completed) {
@@ -2788,7 +2908,9 @@ vn::graphics::FrameReport Device::frameReport() const noexcept
 
     vn::graphics::RetentionStats retention;
     retention.released_nodes = impl->books.released_nodes;
-    retention.device_waits   = impl->books.device_waits;
+    // THE QUEUE IS THE ONE COUNTING (see Impl::releaseLater): a release it could not park idles the device instead, and
+    // a report that kept its own number would disagree with `retirementNumbers()` about the same fact.
+    retention.device_waits   = impl->retirement.deviceWaits();
     if (initialized()) {
         // WHAT IS RESIDENT, PER KIND: the three kinds this backend retains, composed here where all three tables are
         // reachable. Material blocks and descriptor sets are per-frame objects, so no row claims them.
@@ -3080,6 +3202,15 @@ Device::ContentCacheCounters Device::contentCacheCounters() const noexcept
 MemoryStats Device::memoryStats() const noexcept
 {
     return impl->allocator.stats();
+}
+
+Device::RetirementNumbers Device::retirementNumbers() const noexcept
+{
+    RetirementNumbers numbers;
+    numbers.pending      = impl->retirement.pending();
+    numbers.released     = impl->retirement.released();
+    numbers.device_waits = impl->retirement.deviceWaits();
+    return numbers;
 }
 
 Device::PipelineCacheReport Device::pipelineCacheReport() const noexcept

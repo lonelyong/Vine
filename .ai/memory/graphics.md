@@ -159,6 +159,12 @@
   `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
   ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
   别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
+- **S1 已落地（2026-11-15，T48 第一步）**：vk 采用 `backend/DeviceClock.hpp` + `RetirementQueue`（会话 = clock window，
+  `slots = 1`）。`releaseContent` / `releaseRenderTarget` 是**两件事**：缓存条目**当场忘掉**（驻留数立刻降、下帧重传），
+  Vulkan 对象**交给队列**等水位（一个 slot ⇒ `submitted + 2`，最多两帧后才销毁）。观察点 `Device::retirementNumbers()`
+  （`pending` / `released` / `device_waits`，后者必须恒 0）。`shutdown()` 先 idle 再把接缝置空并 `releaseAll()`
+  （SDK 新增的拆除动词）——漏了它 park 的对象就跟着会话泄漏（变异已验）。
+  **仍未做**：替换路径（重传时的旧 buffer、ring 重建）还是立即销毁，S6 必须一起 park。
 - **T48 的实施设计在 `.ai/design/graphics-sessions.md`（状态：草案，2026-11-15）**：会话 = **帧驱动者**（不是窗口）；帧首快照让记录路径零锁；驻留三态「发布或撤回」；
   目标 claim 冲突只跳那个 pass；退休**复用** `DeviceClock` + `RetirementQueue`（vsg 已在用）。
   一处更正：vsg 的 `api::Session` 是**窗口会话**，收集/编译暂存（`recorder` / `compiler` / `arena` /

@@ -361,6 +361,13 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
         std::uint64_t sets_live{ 0 };   ///< Descriptor sets cached NOW.
     };
 
+    /** @brief What the park queue holds: the releases waiting for the frame that could still name them. */
+    struct RetirementNumbers {
+        std::uint64_t pending{ 0 };      ///< Releases waiting for their frame to be proven complete.
+        std::uint64_t released{ 0 };     ///< Releases the queue has run, cumulative.
+        std::uint64_t device_waits{ 0 }; ///< Destructive idles taken because parking was unavailable.
+    };
+
     /**
      * @brief Gets the recorder's cache witnesses (see ContentCacheCounters).
      *
@@ -389,6 +396,20 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @return The pool's numbers (zeros when no session is up).
      */
     [[nodiscard]] MemoryStats memoryStats() const noexcept;
+
+    /** @brief What the park queue holds: the releases waiting for the frame that could still name them.
+     *
+     * @details
+     * - A RELEASE IS TWO FACTS, and residency answers only the first: the cache forgets an entry at once (so the
+     *   residency numbers drop and the next frame uploads it again), while the Vulkan objects behind it live until the
+     *   completion watermark has passed every frame that could still read them. Without this pair a test cannot tell
+     *   "destroyed" from "handed over to the queue".
+     * - `device_waits` must stay 0 on a session whose queue is armed: a non-zero number means a release could not be
+     *   parked and the device was idled instead (see RetirementQueue::parkingAvailable).
+     *
+     * @return The queue's numbers (zeros when no session is up).
+     */
+    [[nodiscard]] RetirementNumbers retirementNumbers() const noexcept;
 
     /**
      * @brief What the persisted pipeline cache did for this session (see PipelineCacheFile).

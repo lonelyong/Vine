@@ -11,6 +11,7 @@
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/graphics/Sampler.hpp>
 #include <vine/graphics/Texture.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -75,6 +76,20 @@ class VN_BACKEND_VK_API ContentImages final {
      * @param max_anisotropy The device's `maxSamplerAnisotropy`, or 1 when the feature is not enabled.
      */
     void setMaxAnisotropy(float max_anisotropy) noexcept;
+
+    /**
+     * @brief Hands this cache the device's park queue and completion clock, so a released image can be deferred.
+     *
+     * @details
+     * - THE SAME SEAM `ContentDraw::setRetirement` STATES, for the images that cache owns: a released texture leaves the
+     *   table at once (the next frame uploads it again), and the `VkImage` behind it is destroyed once the device's
+     *   watermark has passed every frame that could still sample it.
+     *
+     * @param retirement The device's park queue (borrowed; null destroys immediately).
+     * @param timeline   The clock the park is dated against (borrowed; null destroys immediately).
+     */
+    void setRetirement(vn::graphics::backend::RetirementQueue* retirement,
+                       const vn::graphics::backend::FrameTimeline* timeline) noexcept;
 
     /**
      * @brief Destroys what the PREVIOUS frame left behind: staging buffers and images a revision replaced.

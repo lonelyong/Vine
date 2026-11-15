@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <map>
 #include <span>
@@ -16,6 +17,7 @@
 #include <vine/backend_vk/internal/StateMapping.hpp>
 #include <vine/backend_vk/internal/ContentImages.hpp>
 #include <vine/backend_vk/internal/ProgramVariant.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/Buffer.hpp>
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/DrawAbi.hpp>
@@ -466,6 +468,16 @@ struct ContentDraw::Impl {
     MemoryAllocator*                allocator{ nullptr };
     std::uint32_t                   uniform_alignment{ kDefaultUniformAlignment };
 
+    /**
+     * @brief The device's park queue and its completion clock (borrowed; see releaseLater).
+     *
+     * @details
+     * - NULL UNTIL THE DEVICE HANDS THEM OVER, and null again once it starts tearing itself down: a teardown destroys,
+     *   it does not park. That is why every use goes through releaseLater rather than touching the queue directly.
+     */
+    vn::graphics::backend::RetirementQueue*       retirement{ nullptr };
+    const vn::graphics::backend::FrameTimeline*   timeline{ nullptr };
+
     /// The set layouts and pipeline layouts the two ABIs use: the content pair (set 0 material/slots/lights, set 1
     /// draw) and the full-screen set (the source's attachments at 0..N-1, lights at 6).
     VkDescriptorSetLayout content_set_layout{ VK_NULL_HANDLE };
@@ -668,6 +680,12 @@ struct ContentDraw::Impl {
     /**
      * @brief Destroys a buffer and gives its slice back to the pool (idempotent).
      *
+     * @note IMMEDIATE, ON PURPOSE: this is the TEARDOWN and REPLACEMENT path, both of which run while nothing that
+     *       could name the buffer is in flight (a teardown follows the device's own idle; a replacement happens while
+     *       the current frame is still being recorded, before it is submitted). A *released* entry goes through
+     *       releaseLater instead - and when frames overlap across sessions, a replacement must go the same way (see
+     *       `.ai/design/graphics-sessions.md`, S6).
+     *
      * @param buffer Buffer to destroy.
      * @param memory The slice to release.
      */
@@ -680,6 +698,42 @@ struct ContentDraw::Impl {
         if (allocator != nullptr) {
             allocator->release(memory);
         }
+    }
+
+    /**
+     * @brief Runs @p destroy now, or parks it with the device until no submitted frame can still name the object.
+     *
+     * @details
+     * - THE DEVICE DECIDES *WHEN*; THIS RECORDER ONLY SAYS *WHAT*. A released entry leaves the table immediately, so
+     *   the residency numbers keep answering the question they are asked ("is this content resident?"), while the
+     *   Vulkan objects behind it live until the device's completion watermark has passed the frame that could still
+     *   read them.
+     * - WITHOUT A QUEUE IT RUNS AT ONCE, which is correct at both ends of a session: before `initialize` nothing has
+     *   been submitted, and during `shutdown` the device has already idled its queue and flushed it (see
+     *   Device::shutdown).
+     *
+     * @param destroy What to run when the object may go. Capture handles and slices BY VALUE - the closure outlives
+     *                this call, and the table entry it came from is already gone.
+     */
+    void releaseLater(std::function<void()> destroy)
+    {
+        if (retirement != nullptr && timeline != nullptr && retirement->retire(*timeline, std::move(destroy))) {
+            return;
+        }
+        destroy();
+    }
+
+    /** @brief Gets how many of @p entry's stream buffers are live (the count `progress()` reports as released). */
+    [[nodiscard]] static std::uint32_t liveStreams(const GeometryEntry& entry) noexcept
+    {
+        std::uint32_t live = 0;
+        for (const VertexStream& stream : entry.streams) {
+            live += stream.buffer != VK_NULL_HANDLE ? 1U : 0U;
+        }
+        for (const IndexStream& stream : entry.indices) {
+            live += stream.buffer != VK_NULL_HANDLE ? 1U : 0U;
+        }
+        return live;
     }
 
     /**
@@ -929,27 +983,37 @@ struct ContentDraw::Impl {
     GeometryEntry* failGeometry(GeometryEntry& entry, vn::String why)
     {
         entry.failed = true;
-        destroyGeometryStreams(entry);
+        stream_releases_ += destroyGeometryStreams(entry);
         return nullptr;
     }
 
-    /** @brief Destroys every stream of @p entry and counts the releases (the entry itself stays). */
-    void destroyGeometryStreams(GeometryEntry& entry) noexcept
+    /**
+     * @brief Destroys every stream of @p entry (the entry itself stays) and answers how many buffers it let go.
+     *
+     * @note THE CALLER COUNTS: a teardown is not a release, so only the paths that *are* announcements add the number
+     *       to `stream_releases_` (see releaseGeometry / failGeometry).
+     *
+     * @param entry The entry whose buffers go.
+     * @return Stream buffers destroyed.
+     */
+    [[nodiscard]] std::uint32_t destroyGeometryStreams(GeometryEntry& entry) noexcept
     {
+        std::uint32_t destroyed = 0;
         for (VertexStream& stream : entry.streams) {
             if (stream.buffer == VK_NULL_HANDLE) {
                 continue;
             }
             destroyBuffer(stream.buffer, stream.memory);
-            ++stream_releases_;
+            ++destroyed;
         }
         for (IndexStream& stream : entry.indices) {
             if (stream.buffer == VK_NULL_HANDLE) {
                 continue;
             }
             destroyBuffer(stream.buffer, stream.memory);
-            ++stream_releases_;
+            ++destroyed;
         }
+        return destroyed;
     }
 
     /**
@@ -1910,7 +1974,7 @@ struct ContentDraw::Impl {
     {
         for (auto& [description, entry] : geometries) {
             (void)description;
-            destroyGeometryStreams(entry);
+            (void)destroyGeometryStreams(entry); // a teardown is not a release: it moves no counter
         }
         geometries.clear();
     }
@@ -2138,6 +2202,10 @@ void ContentDraw::destroy() noexcept
     if (!impl) {
         return;
     }
+    // A TEARDOWN DESTROYS, IT DOES NOT PARK: the device has idled its queue before calling this, so nothing can still
+    // name what is about to go - and a park here would outlive the queue that would have run it.
+    impl->retirement = nullptr;
+    impl->timeline   = nullptr;
     if (impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
         impl->images.destroy();
         impl->clearSets();
@@ -2226,6 +2294,13 @@ std::uint64_t ContentDraw::pipelinesCreated() const noexcept
 void ContentDraw::setCreationFeedback(const bool on) noexcept
 {
     impl->creation_feedback = on;
+}
+
+void ContentDraw::setRetirement(vn::graphics::backend::RetirementQueue* const retirement,
+                                const vn::graphics::backend::FrameTimeline* const timeline) noexcept
+{
+    impl->retirement = retirement;
+    impl->timeline   = timeline;
 }
 
 std::uint64_t ContentDraw::pipelineCacheHits() const noexcept
@@ -2333,8 +2408,15 @@ std::size_t ContentDraw::releaseGeometry(const vn::graphics::GeometryDescription
     if (found == impl->geometries.end()) {
         return 0; // nothing was resident: already released
     }
-    impl->destroyGeometryStreams(found->second);
+    // THE ENTRY LEAVES THE CACHE NOW; ITS BUFFERS FOLLOW WHEN THE DEVICE SAYS THEY MAY (see releaseLater). The two
+    // questions are different: "is this content resident" is about the table, "may this object be destroyed" is about
+    // the queue - and answering both in one place is what used to force release to be a between-frames call.
+    Impl::GeometryEntry doomed = std::move(found->second);
     impl->geometries.erase(found);
+    impl->stream_releases_ += Impl::liveStreams(doomed);
+    impl->releaseLater([target = impl.get(), entry = std::move(doomed)]() mutable {
+        (void)target->destroyGeometryStreams(entry);
+    });
     return 1;
 }
 
@@ -2346,12 +2428,14 @@ std::size_t ContentDraw::releaseProgram(const vn::graphics::ShaderProgramDescrip
     std::size_t dropped = 0;
     // THE PIPELINES FIRST: they are keyed by the program's pointer, so once the entry is gone they could never be
     // looked up again - keeping them alive would be a leak nothing can name.
+    std::vector<VkPipeline>     pipelines;
+    std::vector<VkShaderModule> modules;
     for (auto it = impl->pipelines.begin(); it != impl->pipelines.end();) {
         if (it->first.program != description) {
             ++it;
             continue;
         }
-        impl->table->vkDestroyPipeline(impl->device, it->second, nullptr);
+        pipelines.push_back(it->second);
         it = impl->pipelines.erase(it);
         ++impl->pipeline_releases_;
         ++dropped;
@@ -2365,13 +2449,28 @@ std::size_t ContentDraw::releaseProgram(const vn::graphics::ShaderProgramDescrip
             continue;
         }
         if (it->second.vertex != VK_NULL_HANDLE) {
-            impl->table->vkDestroyShaderModule(impl->device, it->second.vertex, nullptr);
+            modules.push_back(it->second.vertex);
         }
         if (it->second.fragment != VK_NULL_HANDLE) {
-            impl->table->vkDestroyShaderModule(impl->device, it->second.fragment, nullptr);
+            modules.push_back(it->second.fragment);
         }
         it = impl->programs.erase(it);
         ++dropped;
+    }
+    // THE OBJECTS LEAVE WHEN THE DEVICE SAYS THEY MAY (see releaseLater): a submitted frame may still be drawing with
+    // the pipelines this announcement forgot, so destroying them here would be a race with the GPU.
+    if (!pipelines.empty() || !modules.empty()) {
+        impl->releaseLater([table = impl->table,
+                            device = impl->device,
+                            pipelines = std::move(pipelines),
+                            modules   = std::move(modules)]() {
+            for (const VkPipeline pipeline : pipelines) {
+                table->vkDestroyPipeline(device, pipeline, nullptr);
+            }
+            for (const VkShaderModule module : modules) {
+                table->vkDestroyShaderModule(device, module, nullptr);
+            }
+        });
     }
     return dropped;
 }
@@ -2381,6 +2480,22 @@ std::size_t ContentDraw::releaseStreams(const void* buffer)
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || buffer == nullptr) {
         return 0;
     }
+    // THE STREAMS LEAVE THE CACHE NOW AND THE BUFFERS FOLLOW (see releaseLater): the handles are taken out of the
+    // entries so a later frame uploads them again, and the destruction itself waits for the device's watermark.
+    struct DoomedBuffer {
+        VkBuffer    buffer{ VK_NULL_HANDLE };
+        MemorySlice memory{};
+    };
+    std::vector<DoomedBuffer> doomed;
+    const auto                take = [&doomed](VkBuffer& stream_buffer, MemorySlice& stream_memory) {
+        if (stream_buffer == VK_NULL_HANDLE) {
+            return;
+        }
+        doomed.push_back(DoomedBuffer{ stream_buffer, stream_memory });
+        stream_buffer   = VK_NULL_HANDLE;
+        stream_memory   = MemorySlice{};
+    };
+
     std::size_t dropped = 0;
     for (auto& [description, entry] : impl->geometries) {
         (void)description;
@@ -2388,7 +2503,7 @@ std::size_t ContentDraw::releaseStreams(const void* buffer)
             if (stream.source != buffer || stream.buffer == VK_NULL_HANDLE) {
                 continue;
             }
-            impl->destroyBuffer(stream.buffer, stream.memory);
+            take(stream.buffer, stream.memory);
             ++impl->stream_releases_;
             ++dropped;
         }
@@ -2396,7 +2511,7 @@ std::size_t ContentDraw::releaseStreams(const void* buffer)
             if (stream.source != buffer || stream.buffer == VK_NULL_HANDLE) {
                 continue;
             }
-            impl->destroyBuffer(stream.buffer, stream.memory);
+            take(stream.buffer, stream.memory);
             ++impl->stream_releases_;
             ++dropped;
         }
@@ -2405,9 +2520,16 @@ std::size_t ContentDraw::releaseStreams(const void* buffer)
     // stream, see RenderDevice): the next draw that reads this buffer uploads it again, exactly like a vertex one.
     const auto instance = impl->instance_streams.find(static_cast<const vn::Buffer<float>*>(buffer));
     if (instance != impl->instance_streams.end() && instance->second.buffer != VK_NULL_HANDLE) {
-        impl->destroyBuffer(instance->second.buffer, instance->second.memory);
+        take(instance->second.buffer, instance->second.memory);
         ++impl->stream_releases_;
         ++dropped;
+    }
+    if (!doomed.empty()) {
+        impl->releaseLater([target = impl.get(), buffers = std::move(doomed)]() mutable {
+            for (DoomedBuffer& one : buffers) {
+                target->destroyBuffer(one.buffer, one.memory);
+            }
+        });
     }
     return dropped;
 }

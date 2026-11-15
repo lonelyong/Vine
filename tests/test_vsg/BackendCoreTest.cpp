@@ -323,6 +323,33 @@ TEST(CoreRetirementQueueTest, AReleaseCallbackMayParkSomethingNew)
     EXPECT_EQ(queue.deviceWaits(), 0u);
 }
 
+TEST(CoreRetirementQueueTest, ATeardownRunsEverythingParkedInOrder)
+{
+    // THE TEARDOWN VERB (see RetirementQueue::releaseAll): parking exists to wait for the evidence that no submitted
+    // frame can still name the object, and a device being torn down has produced that evidence by idling its queue.
+    // Without this call every parked object would leak with the session - so the case pins both halves: everything
+    // runs, and it runs in the order it was parked (a release may name an object another one is nested inside).
+    FrameTimeline   timeline;
+    RetirementQueue queue(1);
+    std::vector<int> order;
+
+    const auto token = timeline.begin();
+    timeline.submitted(token); // frame 1; nothing is completed, so advance() would release nothing
+
+    ASSERT_TRUE(queue.retire(timeline, [&order] { order.push_back(1); }));
+    ASSERT_TRUE(queue.retire(timeline, [&order] { order.push_back(2); }));
+    EXPECT_EQ(queue.pending(), 2u);
+
+    queue.advance(timeline);
+    EXPECT_TRUE(order.empty()) << "advance() released something the timeline has not proven yet";
+
+    queue.releaseAll();
+    EXPECT_EQ(order, (std::vector<int>{ 1, 2 })) << "the teardown did not run every release in park order";
+    EXPECT_EQ(queue.pending(), 0u);
+    EXPECT_EQ(queue.released(), 2u) << "the teardown's releases were not counted";
+    EXPECT_EQ(queue.deviceWaits(), 0u) << "flushing the queue is not a device idle";
+}
+
 TEST(CoreArenaTest, GrowthPreservesWhatWasAlreadyHandedOut)
 {
     FrameArena             arena(64);       // deliberately tiny, so the copy below must grow it

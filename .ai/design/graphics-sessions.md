@@ -207,7 +207,7 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 | F3 | 设备缓存 + 帧首快照 | 缓存只在帧首读一次，记录路径零锁 | 未做 |
 | F4 | 驻留三态 | `Absent → Uploading → Resident`，发布或撤回，竞争即复制 | 未做 |
 | F5 | 目标 claim | 一帧一 claim，冲突只跳过那个 pass | 未做 |
-| F6 | 跨会话退休 | vk 采用 `DeviceClock` + `RetirementQueue`；释放可在别人 frame 时调用 | 未做 |
+| F6 | 跨会话退休 | vk 采用 `DeviceClock` + `RetirementQueue`；释放可在别人 frame 时调用 | **部分（S1 已落地）**：时钟 / park 队列 / 水位 / 清结已在树上，仍只有一个会话 |
 | F7 | 设备级读回 | 自己的池与栅栏，拷贝前等设备水位，计入 `deviceWaits()` | 未做（today 借帧栅栏） |
 | F8 | 默认内容程序归会话 | 会话上可设；设备级只服务直接调用方；单会话后端行为不变 | 未做 |
 | F9 | vsg 的对应落地 | 收集暂存搬进会话；缓存加锁/快照；完成证据已有 | 部分（窗口会话已有） |
@@ -466,6 +466,8 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 
 - **已落地**：`T47`——设备级帧闸（`backend/FrameGate.hpp`）、两个后端同一实现、三处契约文本、并发用例；
   vk 的 `vk.*` 诊断 code 全族；`graphics-threading.md` 的 `C21` / `R18` / `N18` / `D13`。
+- **已落地**：`T48` 的 **S1**——vk 采用 `backend/DeviceClock.hpp` + `RetirementQueue`（会话 = clock window），
+  `releaseContent` / `releaseRenderTarget` 把对象**交给队列**，`shutdown()` 在 idle 之后 `releaseAll()`（SDK 新增的拆除动词）。
 - **未做**：`T48` 的全部（F1–F9），以及 F10 的收口。
 - **一处更正**：ADR 说"vsg 更接近"，准确说法是"vsg 的**窗口**会话已就位，**帧驱动者**仍是设备级单例"
   （§2.1）。这不改变结论，只改变迁移表的分工。
@@ -483,7 +485,7 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 
 | 步 | 做什么 | 结束时可验收 | 风险 |
 |---|---|---|---|
-| S1 | vk 采用 `DeviceClock` + `RetirementQueue`（单会话）；`releaseContent` 变成 park | T6（单会话版）、`test_vk` 全绿 | 低（契约文本已允许） |
+| S1 | vk 采用 `DeviceClock` + `RetirementQueue`（单会话）；`releaseContent` 变成 park | **已落地 2026-11-15**：T6 单会话版 + `test_vk` 103 全绿，3 个变异各自被杀 | 低（契约文本已允许） |
 | S2 | 把 `Device::Impl` 的帧机器搬进 `Session`（仍只有一个）；`Device::executor()` 返回它 | T2 | 低（纯搬家） |
 | S3 | 拆 `ContentDraw` → `ContentCaches` + `FrameScratch`；记录一次"锁计数" | T3（单会话版） | 中（500–700 行搬家） |
 | S4 | `ResidenceTable` 三态 + 发布/撤回；用**两个内部会话**做单元用例 | T4 | 中（状态机） |
@@ -495,9 +497,10 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 
 **S6 是唯一改变并发语义的一步**：在它之前，两个会话只存在于单元用例里；在它之后，两个引擎真的能同时 frame。
 所以 S1–S5 的验收标准都是"单会话行为不变"，S6 才引入新语义，由 T8/T10 承担证据。
-**一处必须说清的可见变化在 S1**：`releaseContent` 从"立即销毁"变成"park 到下一次水位"，于是驻留账
-（`ResidencyLedger`）可能比今天晚一帧归零。这是**语义上正确的变化**（契约早已允许异步退休），但它会
-让任何按"release 之后立刻读驻留数"写的用例变红——那一帧的账要在 S1 的验收里写清楚，而不是偷偷放宽。
+**S1 已落地（与历史估计的一处差异）**：释放是**两件事**，而不是一件。缓存表**立刻**忘掉条目（所以`ResidencyLedger`、`progress().streams_live` 的数字照旧立即下降，下一帧重传），而 GPU 对象在
+集合队列里等水位——一个 slot 时是 `submitted + 2`，即**最多两帧后**才销毁。新的观察点是
+`Device::retirementNumbers()`（`pending` / `released` / `device_waits`），而不是驻留账。两帧不是 bug：它是
+"slot 已经被回收"这个证据的代价，且它是 S6 多会话下不可少的保守性。
 
 ## 10. 参考
 

@@ -16,6 +16,7 @@
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/backend/Keys.hpp>
+#include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
@@ -213,6 +214,21 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param on Whether creation feedback is enabled for this device.
      */
     void setCreationFeedback(bool on) noexcept;
+
+    /**
+     * @brief Hands this recorder the device's park queue and completion clock, so a release can be deferred.
+     *
+     * @details
+     * - THE DEVICE DECIDES WHEN A RELEASED OBJECT MAY GO; this recorder only says what it is. A released entry leaves
+     *   the cache immediately, while the Vulkan objects behind it live until the device's watermark has passed the
+     *   frame that could still name them - which is what makes `releaseContent` legal while another session frames.
+     * - Pass nulls during teardown: a device that is going away has idled its queue and must destroy, not park.
+     *
+     * @param retirement The device's park queue (borrowed; null destroys immediately).
+     * @param timeline   The clock the park is dated against (borrowed; null destroys immediately).
+     */
+    void setRetirement(vn::graphics::backend::RetirementQueue* retirement,
+                       const vn::graphics::backend::FrameTimeline* timeline) noexcept;
 
     /**
      * @brief Gets how many pipelines the driver reported as served from the cache (see @ref setCreationFeedback).

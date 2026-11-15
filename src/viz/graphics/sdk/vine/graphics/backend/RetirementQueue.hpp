@@ -92,6 +92,19 @@ class VN_GRAPHICS_API RetirementQueue {
      */
     void advance(const FrameTimeline& timeline);
 
+    /** @brief Runs every parked release NOW, whatever its turn was.
+     *
+     * @details
+     * - IT IS THE TEARDOWN VERB. Parking exists to wait for the evidence that no submitted frame can still name the
+     *   object; a device being torn down has idled its queue, which is that evidence for every object at once, and
+     *   nothing will be submitted again. A device that skipped this would leak every object a release had parked.
+     * - It counts like advance() does, so `released()` stays "how many objects this queue let go".
+     *
+     * @warning Not a frame verb. Calling it while a frame is in flight destroys objects a submitted command buffer
+     *          still names - the one direction this queue exists to make impossible.
+     */
+    void releaseAll();
+
     /** @brief Gets the number of command-buffer slots the parking window is derived from. */
     [[nodiscard]] std::uint32_t slots() const noexcept;
 

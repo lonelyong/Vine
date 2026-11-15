@@ -434,6 +434,58 @@ TEST(VkResidencyTest, ReleasingAGeometryLowersResidencyAndTheNextFrameUploadsItA
     backend->shutdown();
 }
 
+TEST(VkResidencyTest, AReleaseIsHandedOverParkedAndDestroyedAfterTheFramesThatCouldNameIt)
+{
+    // A RELEASE IS TWO FACTS (see Device::retirementNumbers): the cache forgets the entry AT ONCE - residency drops and
+    // the next frame uploads it again - while the Vulkan objects behind it live until the device's completion
+    // watermark has passed every frame that could still read them. Without the second half the call would be a
+    // between-frames rule the host has to keep; with it, a host may release content while another session frames
+    // (ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md, step 2).
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    const Content                       content  = makeContent();
+    const intrusive_ptr<vn::graphics::Material> material = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+    const intrusive_ptr<RenderTarget>   target   = makeTarget();
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
+
+    const vn::backend_vk::Device::RetirementNumbers before = device->retirementNumbers();
+    ASSERT_EQ(before.pending, 0U) << "nothing was released yet, so nothing is parked";
+
+    ASSERT_TRUE(backend->releaseContent(content.geometry.get()));
+
+    // THE CACHE FORGOT IT, AND THE OBJECTS ARE PARKED RATHER THAN DESTROYED.
+    const std::optional<ResidencyRow> after = rowOf(backend->frameReport(), ResidencyKind::Streams);
+    ASSERT_TRUE(after.has_value());
+    EXPECT_EQ(after->live, 0U) << "a released geometry holds no streams";
+    const vn::backend_vk::Device::RetirementNumbers parked = device->retirementNumbers();
+    EXPECT_EQ(parked.pending, before.pending + 1U) << "the release was destroyed instead of handed to the queue";
+    EXPECT_EQ(parked.released, before.released) << "it was released before its frame was proven complete";
+    EXPECT_EQ(parked.device_waits, 0U) << "parking a release must not idle the device";
+
+    // TWO FRAMES LATER the watermark has passed the frame that could still name the buffers (slots + 1), so the queue
+    // lets go - and it does so on the frame's own last step, not on a device idle.
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), sceneDraw(content, material))), PresentOutcome::Skipped);
+    const vn::backend_vk::Device::RetirementNumbers drained = device->retirementNumbers();
+    EXPECT_EQ(drained.pending, 0U) << "the parked release never became due";
+    EXPECT_EQ(drained.released, before.released + 1U) << "the parked release never ran";
+    EXPECT_EQ(drained.device_waits, 0U) << "the drain idled the device";
+
+    // AND A TEARDOWN FLUSHES WHAT IS STILL PARKED: a release followed by shutdown must leave nothing behind, or every
+    // parked object would leak with the session that outlived the queue's turn.
+    ASSERT_TRUE(backend->releaseContent(content.geometry.get()));
+    EXPECT_EQ(device->retirementNumbers().pending, 1U);
+    backend->shutdown();
+    EXPECT_EQ(device->retirementNumbers().pending, 0U) << "shutdown left releases parked (a leak)";
+    EXPECT_EQ(device->memoryStats().blocks_live, 0U) << "shutdown left blocks allocated";
+}
+
 TEST(VkResidencyTest, ReleasingAProgramLowersTheCompiledHalvesAndKeepsTheStreams)
 {
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });

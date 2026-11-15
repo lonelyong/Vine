@@ -59,6 +59,19 @@ std::uint32_t RetirementQueue::slots() const noexcept{
     return slots_;
 }
 
+void RetirementQueue::releaseAll()
+{
+    // TAKEN OUT FIRST, LIKE advance() TAKES ITS DUE SET: a release callback may park something new, and running the
+    // callbacks while iterating the vector they push into would invalidate the walk.
+    std::vector<Entry> due = std::move(parked_);
+    parked_.clear();
+
+    released_ += due.size();
+    for (auto& entry : due) {
+        entry.release();
+    }
+}
+
 std::uint64_t RetirementQueue::retirePoint(const FrameTimeline& timeline) const noexcept
 {
     return FrameTimeline::retirePoint(timeline.submittedFrame(), slots_);

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <functional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -125,6 +126,10 @@ struct ContentImages::Impl {
     /// The device's memory pool (borrowed: the device owns it and outlives this cache).
     MemoryAllocator* allocator{ nullptr };
 
+    /// The device's park queue and clock (borrowed; see setRetirement). Null destroys immediately.
+    vn::graphics::backend::RetirementQueue*     retirement{ nullptr };
+    const vn::graphics::backend::FrameTimeline* timeline{ nullptr };
+
     /// The largest anisotropy factor the device honours (see setMaxAnisotropy): a sampler built above it would be an
     /// invalid create, so the request is clamped here - the same number the capabilities report.
     float max_anisotropy{ 1.0F };
@@ -201,6 +206,24 @@ struct ContentImages::Impl {
         if (allocator != nullptr) {
             allocator->release(memory);
         }
+    }
+
+    /**
+     * @brief Runs @p destroy now, or parks it with the device until no submitted frame can still sample the image.
+     *
+     * @details
+     * - The same rule the content recorder states (see ContentDraw::setRetirement): the cache answers "is this image
+     *   resident", the queue answers "may this object be destroyed", and without a queue - before initialize, or during
+     *   a teardown that already idled the device - the destruction runs at once.
+     *
+     * @param destroy What to run when the image may go (capture handles and slices by value).
+     */
+    void releaseLater(std::function<void()> destroy)
+    {
+        if (retirement != nullptr && timeline != nullptr && retirement->retire(*timeline, std::move(destroy))) {
+            return;
+        }
+        destroy();
     }
 
     /** @brief Destroys one uploaded image entry (idempotent). */
@@ -432,11 +455,25 @@ void ContentImages::setMaxAnisotropy(const float max_anisotropy) noexcept
     impl->max_anisotropy = max_anisotropy >= 1.0F ? max_anisotropy : 1.0F;
 }
 
+void ContentImages::setRetirement(vn::graphics::backend::RetirementQueue* const retirement,
+                                  const vn::graphics::backend::FrameTimeline* const timeline) noexcept
+{
+    if (!impl) {
+        return;
+    }
+    impl->retirement = retirement;
+    impl->timeline   = timeline;
+}
+
 void ContentImages::destroy() noexcept
 {
     if (!impl) {
         return;
     }
+    // A TEARDOWN DESTROYS, IT DOES NOT PARK (see releaseLater): the device has idled its queue before calling this,
+    // and a park recorded here would outlive the queue that would have run it.
+    impl->retirement = nullptr;
+    impl->timeline   = nullptr;
     if (impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
         for (auto& [texture, entry] : impl->textures) {
             (void)texture;
@@ -511,11 +548,16 @@ bool ContentImages::releaseTexture(const vn::graphics::Texture& texture)
         return true; // nothing was resident: already released
     }
     impl->bytes_total -= found->second.bytes;
-    // NOT INTO `retired`: that list exists for images a frame replaced, whose copies may still be in flight. This
-    // call runs between frames, where the device has waited on its fence, so nothing names the image any more.
-    impl->destroyEntry(found->second);
+    // THE IMAGE LEAVES THE TABLE NOW AND THE OBJECTS FOLLOW LATER (see releaseLater): the next frame uploads the
+    // texture again, which is what the release costs, and the Vulkan image dies once the device's watermark has passed
+    // the frame that could still sample it. `retired` is a different list: it holds images a *frame* replaced, whose
+    // copies the frame itself still owns.
+    Impl::Entry doomed = std::move(found->second);
     impl->textures.erase(found);
     ++impl->released;
+    impl->releaseLater([target = impl.get(), entry = std::move(doomed)]() mutable {
+        target->destroyEntry(entry);
+    });
     return true;
 }
 
