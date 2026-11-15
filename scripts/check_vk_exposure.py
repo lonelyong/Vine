@@ -20,6 +20,12 @@ This gate is that split made executable:
      opt-in way out (a free function returning a `Handles` value, §4.5). Production code that included it
      would make the door load-bearing, and the design's own landing criterion (§8) is that the vk frame
      path does not include it. The plugin offers the door; it must not walk through it.
+  4. E2 - the LOW-LEVEL units stay free of the render seam. `MemoryAllocator`, `PipelineCacheFile`,
+     `ReadbackStaging`, `WindowSystem` and `Handles` include nothing from `vine/graphics`, which is what
+     makes them "a tool could use these beside the plugin" rather than a claim
+     (`.ai/design/vk-backend.md` C10). They are not extracted into a library today because no consumer
+     outside the plugin exists (G8) - and that option stays a move instead of an archaeology project only
+     as long as one convenience include cannot quietly re-tie them to the seam.
 
 What this gate deliberately does NOT check (§6.2): `internal/` and `support/` may name Vulkan freely, and no
 rule here constrains them. There is no consumer to protect - those headers are included only by the plugin
@@ -52,6 +58,22 @@ VK_INTERNALS = (
     "src/plugins/gfx_backend_vk/include/vine/backend_vk/internal",
 )
 
+# E2: the vk units that depend on NOTHING in the render seam (no `vine/graphics` include at all). Today they are the
+# low-level half a tool could use beside the plugin, and that property only survives if it is gated: one convenience
+# include of `RenderTarget` or `String`-shaped engine type would silently tie them to the seam again. Their being
+# graphics-free is what makes "extract a small library later" a move instead of an archaeology project.
+VK_GRAPHICS_FREE_UNITS = (
+    "src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/MemoryAllocator.hpp",
+    "src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/PipelineCacheFile.hpp",
+    "src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/ReadbackStaging.hpp",
+    "src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/WindowSystem.hpp",
+    "src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/Handles.hpp",
+    "src/plugins/gfx_backend_vk/src/internal/MemoryAllocator.cpp",
+    "src/plugins/gfx_backend_vk/src/internal/PipelineCacheFile.cpp",
+    "src/plugins/gfx_backend_vk/src/internal/ReadbackStaging.cpp",
+    "src/plugins/gfx_backend_vk/src/internal/WindowSystem.cpp",
+)
+
 # V2: the three headers a backend face may not include. `<vulkan` also covers `<vulkan.hpp>`; `<volk` and
 # `<vsg` are the other two ways the same dependency arrives, and the design names all three.
 VULKAN_INCLUDE_RE = re.compile(r"#\s*include\s*<(?:vulkan|volk|vsg)")
@@ -59,6 +81,8 @@ VULKAN_INCLUDE_RE = re.compile(r"#\s*include\s*<(?:vulkan|volk|vsg)")
 VK_TYPE_RE = re.compile(r"\bVk[A-Z]")
 # E1: the escape door, whether it is included with angle brackets or quotes.
 ESCAPE_DOOR_RE = re.compile(r'#\s*include\s*[<"][^>"]*support/Handles\.hpp')
+# E2: any include that reaches the render seam, whichever spelling (`vine/graphics/...` today).
+SEAM_INCLUDE_RE = re.compile(r'#\s*include\s*[<"]vine/graphics/')
 
 
 def resolve_root(raw: str) -> Path:
@@ -112,7 +136,8 @@ def display(root: Path, path: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Checks the Vulkan exposure boundary of "
-        ".ai/research/graphics-2026-11-13-vk-exposure-boundary.md (V2, V4, E1)."
+        ".ai/research/graphics-2026-11-13-vk-exposure-boundary.md (V2, V4, E1) and the graphics-free "
+        "unit boundary of .ai/design/vk-backend.md (E2)."
     )
     parser.add_argument(
         "--root",
@@ -142,23 +167,35 @@ def main() -> int:
             ESCAPE_DOOR_RE,
             "the vk frame path must not use the escape door it offers; support/Handles.hpp is for tests and tools",
         ),
+        (
+            "E2 vk-graphics-free",
+            VK_GRAPHICS_FREE_UNITS,
+            SEAM_INCLUDE_RE,
+            "this unit is graphics-free by contract (see .ai/design/vk-backend.md C10): a low-level piece a tool can "
+            "use beside the plugin, which one render-seam include would end",
+        ),
     )
 
     total = 0
     counts: list[str] = []
     for label, relative_glob, pattern, reason in checks:
         patterns = relative_glob if isinstance(relative_glob, tuple) else (relative_glob,)
-        targets = sorted(path for one in patterns for path in root.glob(one) if path.is_dir())
-        if not targets:
-            print(f"{display(root, root / relative_glob)}: {reason} - the directory is gone")
+        matched = sorted(path for one in patterns for path in root.glob(one))
+        # A check names DIRECTORIES (scanned recursively) or FILES (scanned as they are): E2 is the second kind,
+        # because "these units are graphics-free" is a statement about named files, not about a directory.
+        files: list[Path] = []
+        for target in matched:
+            if target.is_dir():
+                files.extend(files_under(target))
+            elif target.is_file():
+                files.append(target)
+        if not files:
+            first = patterns[0]
+            print(f"{display(root, root / first)}: {reason} - nothing to scan (renamed or deleted)")
             print("  update this check with it: a rename must not silence the gate")
             total += 1
             counts.append(f"{label}=0")
             continue
-
-        files: list[Path] = []
-        for target in targets:
-            files.extend(files_under(target))
         findings = scan(files, pattern)
         for path, number, line in findings:
             print(f"{display(root, path)}:{number}: {line}")

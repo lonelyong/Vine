@@ -68,8 +68,10 @@ endif()
 
 add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 
-# 暴露边界：SDK 的两个面不许提 Vulkan，插件 shell 只露 RenderBackend，vk 自己的帧路径不许走逃生门
-# （见 .ai/research/graphics-2026-11-13-vk-exposure-boundary.md 5.1 / 6.1 的 V2、V4 与 5.2 的纪律）。
+# 暴露边界：SDK 的两个面不许提 Vulkan，插件 shell 只露 RenderBackend，vk 自己的帧路径不许走逃生门，
+# 低层单元（池/缓存文件/窗口/读回/Handles）不许 include vine/graphics
+# （见 .ai/research/graphics-2026-11-13-vk-exposure-boundary.md 5.1 / 6.1 的 V2、V4 与 5.2 的纪律；
+#   E2 见 .ai/design/vk-backend.md C10）。
 # 跟着 ctest 跑，所以"下一次有人把 vulkan 头写进 backend/"会在测试里红，而不是在下一次移植时才发现。
 # 脚本用仓库相对路径、工作目录设在仓库根：find_package(Python3) 在这台机器上找到的是 Cygwin 的 python，
 # 它把 "I:/..." 当作相对路径打不开（同一个原因让 check_translations 在这里也是红的）；--root 仍给绝对路径，

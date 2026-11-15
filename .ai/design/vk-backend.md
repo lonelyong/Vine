@@ -60,7 +60,13 @@
   才是 Vulkan；`support/Handles.hpp` 是唯一把 `Vk*` 交给外部（测试 / 工具）的门。
 - **为什么**：G1（概念各有其位）+ G2（依赖单向：`internal` → SDK → `base`，`shell` 不反向依赖 Vulkan 类型）。
   这也让“把 vk 换成别的实现”是一次插件替换，而不是 SDK 变更。
-- **边界**：`scripts/check_vk_exposure.py` 是门禁（V2 SDK backend 面、V4 插件 shell、E1 帧路径），跟着 ctest 跑。
+- **边界**：`scripts/check_vk_exposure.py` 是门禁（V2 SDK backend 面、V4 插件 shell、E1 帧路径、E2 低层单元的
+  免接缝），跟着 ctest 跑。
+- **低层那一半**：`MemoryAllocator`、`PipelineCacheFile`、`WindowSystem`、`ReadbackStaging`、`Handles` **完全不
+  include `vine/graphics`**（约 2.0k 行）——它们是“工具可以不经接缝直接用”的候选，E2 就是钉这条性质的。今天没有被
+  **外部**消费者使用（`G8`），所以**不抽出独立库**：抽库只是搬家，边界已经在这儿；等真有一个不经过 `graphics` 的
+  消费者，切出去是一次移动而不是考古。`BarrierPlan` / `ShaderCompiler` 各有一个接缝 include（`ImageLayout` /
+  `ShaderStage`），因此不在这一组里。
 
 ### 2.2 设备是会话语义，丢失是第一种失败
 
@@ -346,6 +352,9 @@
 - **C7 能力=实际**：`capabilities()` 的每一位来自实际启用的 feature/limit，不来自“设备也许支持”。
 - **C8 两棵树**：Debug 与 Release 都要构建、都要跑 `test_vk`；Release 的设备用例与 Debug 是同一批。
 - **C9 缓存只信任同设备**：缓存文件的键必须与当前设备一致；不一致即拒绝，不“尽量用”。
+- **C10 低层单元不依赖接缝**：`MemoryAllocator`、`PipelineCacheFile`、`WindowSystem`、`ReadbackStaging`、
+  `Handles` 不得 `#include <vine/graphics/...>`；由 `check_vk_exposure.py` 的 E2 检查（新增单元要显式加入清单，
+  这正是“决定它属于哪一半”的那一步）。
 
 ### 5.2 要求（R#）
 
@@ -480,7 +489,7 @@
 |---|---|---|
 | T1 | 全套行为 | `build/bin/test_vk`（89 例 / 23 套）；`ctest -R test_vk` |
 | T2 | 与 vsg 逐字节一致 | `test_vsg` 的 `BackendParityTest`（12 例） |
-| T3 | 暴露边界 | `ctest -R vk_exposure`（`scripts/check_vk_exposure.py`） |
+| T3 | 暴露边界与低层免接缝 | `ctest -R vk_exposure`（V2 / V4 / E1 / E2，`scripts/check_vk_exposure.py`） |
 | T4 | 成本模型不回归 | `VkUniformRingTest.*`、`VkMemoryPoolTest.ASteadyFrameAllocatesNothing`（关缓存的变异必须红） |
 | T5 | validation 静默 | 上述运行中 `diagnosticCount(InitFailed)` 与 layer 计数为 0 |
 | T6 | 真实宿主 | `VN_BENCH_WARMUP=1 VN_BENCH_FRAMES=48 ./Vine --open demo`：median ≈ 8.2 ms、11 pass / 10 draw、无 `vk:` 诊断 |
