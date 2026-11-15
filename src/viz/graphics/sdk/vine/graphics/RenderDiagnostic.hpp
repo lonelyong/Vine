@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 
 #include <vine/String.hpp>
 
@@ -66,13 +67,45 @@ enum class DiagnosticCategory : std::uint8_t
 };
 
 /**
- * @brief One backend diagnostic: how bad, about what, and why.
+ * @brief The two numbers a report about a LIMIT carries (see RenderDiagnostic::limit).
+ *
+ * @details
+ * - A HOST ACTS ON THE PAIR, not on the sentence: "asks for 8 samples, this device offers 4" tells it to ask for 4,
+ *   while the same fact in prose tells it nothing it can use programmatically.
+ * - `supported == 0` means "this device offers none of it", which is a different answer from "the limit is 0".
+ */
+struct VN_GRAPHICS_API DiagnosticLimit
+{
+    std::uint64_t requested{ 0 }; ///< What was asked for (samples, bytes, a count).
+    std::uint64_t supported{ 0 }; ///< What the device offers.
+};
+
+/**
+ * @brief One backend diagnostic: how bad, about what, why - and, when it applies, the object and the limit.
+ *
+ * @details
+ * - FIVE FIELDS A HOST MATCHES ON, one it shows, one it acts on:
+ *   - @ref category is the COARSE class (the twelve consequences the SDK defines);
+ *   - @ref code is the STABLE identifier of the cause inside that class (`u8"vk.memory.out_of_memory"`): never
+ *     reworded, never localised, so a host or a test matches on it instead of parsing @ref message (`R28`);
+ *   - @ref subject names WHAT the report is about (a pass, a content object, a target), so a host can badge that
+ *     object rather than a log line;
+ *   - @ref limit carries the two numbers when the report is about a device limit;
+ *   - @ref message is the human sentence, and it is the only field whose wording may change.
+ * - THE CODE IS A STRING, NOT AN ENUM, because the vocabulary belongs to the MODULE that reports (this SDK knows no
+ *   `Vk*` and no `vsg::` - see `C3` in the graphics design docs): each backend and the engine name their own codes
+ *   under their own prefix, and `scripts/diagnostic_codes.txt` is the registry that keeps them from drifting
+ *   (`check_diagnostic_formats.py` checks both directions).
+ * - AN EMPTY CODE IS NOT A CODE. A report that names no finer cause than its category leaves @ref code empty; that is
+ *   the shape the migration is ratcheting away from, and the gate refuses NEW reports of that shape.
  */
 struct VN_GRAPHICS_API RenderDiagnostic {
     DiagnosticSeverity severity = DiagnosticSeverity::Error;            // How bad it is.
     DiagnosticCategory category = DiagnosticCategory::GeometryRejected; // What it is about.
-    String             message;                                         // Human-readable detail, with the numbers
-                                                                        // involved.
+    String             code;     // Stable identifier of the cause; empty means "the category is all there is".
+    String             message;  // Human-readable detail, with the numbers involved.
+    String             subject;  // What it is about (pass / content / target name); empty when nothing.
+    std::optional<DiagnosticLimit> limit; // The numbers, when the report is about a device limit.
 };
 
 /**

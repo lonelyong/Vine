@@ -1,0 +1,22 @@
+# Ceilings for report calls that state NO code yet (see RenderDiagnostic::code, scripts/diagnostic_codes.txt).
+#
+# A ratchet, not an excuse:
+#   * a file may not exceed the number below;
+#   * a file not listed may not have any uncoded report at all, so new code names its cause;
+#   * when a file drops below its ceiling, lower the number (and delete the line at 0) - the gate prints a hint.
+#
+# The numbers are what the tree had on 2026-11-15, when the code field landed (audit A3). The vk backend's memory,
+# session and target reports are already converted; the rest is the migration.
+
+src/fw/appfw/src/gui/Viewer.cpp                                     1
+src/plugins/gfx_backend_vk/src/internal/Device.cpp                  39
+src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp             10
+src/viz/graphics/sdk/vine/graphics/RenderDevice.hpp                  2
+src/viz/graphics/sdk/vine/graphics/RenderEngine.hpp                  2
+src/viz/graphics/src/ChainBuilder.cpp                                1
+src/viz/graphics/src/DiagnosticsRoute.cpp                            1
+src/viz/graphics/src/EngineCompile.cpp                               7
+src/viz/graphics/src/RenderDevice.cpp                                3
+src/viz/graphics/src/RenderEngine.cpp                               18
+src/viz/graphics/src/RenderSurface.cpp                               5
+src/viz/graphics/src/SceneView.cpp                                   1

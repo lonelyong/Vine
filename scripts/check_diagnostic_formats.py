@@ -24,6 +24,18 @@ import sys
 SPEC = re.compile(r"%[-+ #0]*(?:\d+|\*)?(?:\.(?:\d+|\*))?(?:hh|h|ll|l|z|j|t|L)?[diuoxXfFeEgGaAcspn]")
 PLACEHOLDER = re.compile(r"\{[^}]*\}")
 MACROS = ("VN_LOGI", "VN_LOGW", "VN_LOGE", "VN_LOGD")
+
+# --- diagnostic CODES: a stable id per cause, a registry, and a ratchet (audit A3) ---
+#
+# A diagnostic a host cannot match on without parsing prose is a log line. The SDK therefore carries a stable `code`
+# (see RenderDiagnostic), each module names its own (`vk.<class>.<cause>`), and this file keeps the two halves in
+# step: every code a source file states is registered with a meaning, every registered code is used, and a report
+# call that states NO code may not grow past the ceiling `diagnostic_code_baseline.txt` records for its file.
+CODE_RE = re.compile(r'u8"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+){2,})"')
+ASSIGNED_CODE_RE = re.compile(r'\.code\s*=\s*(?:vn::String\()?u8"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+){2,})"')
+REPORT_NAMES = ("reportDiagnostic", "reportEngineProblem")
+CODES_FILE = "scripts/diagnostic_codes.txt"
+BASELINE_FILE = "scripts/diagnostic_code_baseline.txt"
 DEFAULT_GLOBS = (
     # `**` because the plugin's sources live in layers (`src/{shell,internal,support}`): the flat
     # `src/*.cpp` this used to be went from 7 files to 0 the moment they moved, and the script still
@@ -128,6 +140,82 @@ def check(path):
     return found
 
 
+def registry(root):
+    """The codes the registry names, as {code: line number}."""
+    codes = {}
+    path = root / CODES_FILE
+    if not path.exists():
+        return codes
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        codes[line.split()[0]] = number
+    return codes
+
+
+def ceilings(root):
+    """The per-file ceiling of uncoded report calls, as {relative path: count}."""
+    limits = {}
+    path = root / BASELINE_FILE
+    if not path.exists():
+        return limits
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        limits[parts[0]] = int(parts[1])
+    return limits
+
+
+def check_codes(root):
+    """Codes used vs codes registered, and the ratchet on reports that state no code."""
+    findings = 0
+    known = registry(root)
+    limits = ceilings(root)
+    used = {}
+    uncoded = {}
+    sources = sorted(root.glob("src/**/*.cpp")) + sorted(root.glob("src/**/*.hpp"))
+    if not sources:
+        print("src/**/*.{cpp,hpp} matches no file - the code check would silently cover nothing")
+        return 1
+    for path in sources:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        relative = path.relative_to(root).as_posix()
+        missing = 0
+        for name in REPORT_NAMES:
+            for line, body in split_calls(text, name):
+                codes = CODE_RE.findall(body)
+                for code in codes:
+                    used.setdefault(code, []).append(f"{relative}:{line}")
+                if not codes:
+                    missing += 1
+        # A report built field by field states its code as an assignment instead of an argument.
+        for match in ASSIGNED_CODE_RE.finditer(text):
+            used.setdefault(match.group(1), []).append(f"{relative}:{text[:match.start()].count(chr(10)) + 1}")
+        if missing:
+            uncoded[relative] = missing
+
+    for code, places in sorted(used.items()):
+        if code not in known:
+            findings += 1
+            print(f"{places[0]}: code '{code}' is not registered in {CODES_FILE}")
+    for code, number in sorted(known.items()):
+        if code not in used:
+            findings += 1
+            print(f"{CODES_FILE}:{number}: code '{code}' is registered but no source states it")
+    for relative, count in sorted(uncoded.items()):
+        ceiling = limits.get(relative, 0)
+        if count > ceiling:
+            findings += 1
+            print(f"{relative}: {count} report call(s) without a code (ceiling {ceiling}) - a new report names its cause")
+    for relative, ceiling in sorted(limits.items()):
+        if uncoded.get(relative, 0) < ceiling:
+            print(f"hint: {relative} now has {uncoded.get(relative, 0)} uncoded report(s) - lower its ceiling in {BASELINE_FILE}")
+    print(f"--- {len(used)} code(s) in use, {len(known)} registered, {sum(uncoded.values())} uncoded report call(s) ratcheted")
+    return findings
+
 def main(argv):
     root = pathlib.Path(__file__).resolve().parent.parent
     findings = []
@@ -144,7 +232,8 @@ def main(argv):
     suspicious = sum(check(path) for path in paths)
     for finding in findings:
         print(finding)
-    total = suspicious + len(findings)
+    codes = 0 if argv else check_codes(root)
+    total = suspicious + len(findings) + codes
     extra = f", {len(findings)} discovery finding(s)" if findings else ""
     print(f"--- {suspicious} suspicious call(s) in {len(paths)} file(s){extra}")
     return 1 if total else 0

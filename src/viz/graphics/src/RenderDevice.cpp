@@ -49,15 +49,25 @@ std::size_t RenderDevice::diagnosticCount(DiagnosticCategory category) const
     return static_cast<std::size_t>(route_->count(category));
 }
 
-void RenderDevice::reportDiagnostic(DiagnosticSeverity severity, DiagnosticCategory category, const String& message)
+void RenderDevice::reportDiagnostic(const RenderDiagnostic& diagnostic)
 {
     // Counting and forwarding are the route's business (see Diagnostics.hpp): the count is what a phase
     // gates on, and a host that never installed a sink must still be able to see that something
     // happened. Every borrowed route gets the same report, so each engine's count is complete.
-    route_->report(severity, category, message);
+    route_->report(diagnostic);
     for (Diagnostics* borrowed : borrowed_routes_) {
-        borrowed->report(severity, category, message);
+        borrowed->report(diagnostic);
     }
+}
+
+void RenderDevice::reportDiagnostic(DiagnosticSeverity severity, DiagnosticCategory category, const String& message)
+{
+    // THE MIGRATION FORM (see the header): the caller named no finer cause than the category.
+    RenderDiagnostic diagnostic;
+    diagnostic.severity = severity;
+    diagnostic.category = category;
+    diagnostic.message  = message;
+    reportDiagnostic(diagnostic);
 }
 
 VN_GRAPHICS_NS_END

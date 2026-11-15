@@ -1,0 +1,33 @@
+# Diagnostic codes: the stable identifier of a cause (see RenderDiagnostic::code).
+#
+# One line per code: `<code> — <what it means, and what a host does about it>`.
+# The rule works BOTH ways (`scripts/check_diagnostic_formats.py`): a code a source file states must be here, and a
+# code here must be stated by a source. A code is never reworded and never reused for another cause; when its last
+# use goes, its line goes with it.
+#
+# The prefix names the module, because the vocabulary belongs to the module that reports (the SDK knows no `Vk*`):
+#   vk.*      the direct-Vulkan backend (`src/plugins/gfx_backend_vk`)
+#   vsg.*     the vsg backend (`src/plugins/gfx_backend_vsg`)
+#   engine.*  the render engine itself (`src/viz/graphics`)
+
+# --- vk backend: the memory pool (see vk-backend.md 2.12) ---
+vk.memory.out_of_memory       — the device heap is exhausted; releasing content may help
+vk.memory.driver_refused      — vkAllocateMemory refused for a reason that is neither a lost device nor an exhausted heap
+vk.memory.no_type             — no memory type this resource allows serves the usage: this device cannot host it
+vk.memory.invalid_request     — a resource asked for zero bytes: a content defect
+vk.memory.not_open            — device memory was asked for before the pool was opened: a wiring defect
+vk.memory.internal            — the pool contradicted its own invariant: a defect in the allocator
+
+# --- vk backend: the session ---
+vk.session.device_lost        — a device call answered VK_ERROR_DEVICE_LOST: the session is over, rebuild it
+
+# --- vk backend: targets (see vk-backend.md 2.6 / 2.11) ---
+vk.target.samples_above_limit             — the requested sample count is past what the device offers (limit pair)
+vk.target.samples_not_a_count             — the requested sample count is not one the device offers (limit pair)
+vk.target.multisampled_depth_unsupported  — a multisampled target with depth needs Vulkan 1.2's depth resolve
+vk.target.borrow_multisampled             — a multisampled target cannot borrow its depth
+vk.target.borrow_source_missing           — the depth lender was not built (or has no depth); it must render first
+vk.target.borrow_extent_mismatch          — a borrowed depth must have the same extent as its borrower
+vk.target.size_unknown                    — the target has no usable extent (0 in a dimension)
+vk.target.resize_failed                   — the attachments could not be rebuilt at the new extent (see the memory report)
+vk.target.build_failed                    — the attachments could not be built (see the memory report)

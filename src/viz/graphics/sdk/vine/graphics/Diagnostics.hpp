@@ -51,6 +51,29 @@ class VN_GRAPHICS_API Diagnostics {
 
     /** @brief Reports one diagnostic: it is counted and forwarded to the sink when one is installed.
      *
+     * @details
+     * - THE PRIMARY FORM: the value carries the severity, the category, the stable @ref RenderDiagnostic::code, the
+     *   subject and (when it applies) the limit, so a host can act on it without parsing the sentence.
+     *
+     * @param diagnostic What to report (see RenderDiagnostic).
+     */
+    void report(const vn::graphics::RenderDiagnostic& diagnostic);
+
+    /** @brief Reports @p diagnostic for @p episode, unless that episode was already reported.
+     *
+     * @param episode    Episode state this condition is reported through.
+     * @param diagnostic What to report.
+     * @return true when this call was the one that reported it.
+     */
+    bool reportOnce(ReportOnce& episode, const vn::graphics::RenderDiagnostic& diagnostic);
+
+    /** @brief Reports a diagnostic whose cause is fully described by its category (no finer code).
+     *
+     * @details
+     * - THE MIGRATION FORM, and the gate knows it: `check_diagnostic_formats.py` refuses NEW call sites of this shape
+     *   (a report with a code is what a host can match on), while the ones already written are ratcheted by a
+     *   baseline. A site that CAN name its cause should use @ref report(const RenderDiagnostic&) instead.
+     *
      * @param severity How bad it is (Info / Warning / Error).
      * @param category Machine-matchable category the host can switch on.
      * @param message Human-readable sentence; the category carries the meaning.

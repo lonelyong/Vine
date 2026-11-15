@@ -162,6 +162,36 @@
   布局，归设备）、一半是**帧状态**（常量环 / 描述符池 / 逐 draw UBO，归会话）；`command_pool` 与 `completion` 归会话；
   `allocator`、`targets`、`surfaces`、管线缓存、`default_program` 归设备。
 
+### 2.12 分配失败的分类只在设备一处（`G1` / `G4`）
+
+- **是什么**：`MemoryAllocator` 只回答**事实**——`MemoryRefusal`（`NoType` / `DeviceLost` / `OutOfMemory` /
+  `DriverRefused` / `InvalidRequest` / `NotOpen` / `Internal`）+ 驱动的原始 `VkResult` + 请求字节 / 类型 / 池的
+  当下数字，装在一个 `MemoryRefusalReport` 里，**每一次分配（含成功）**交给一个 sink。sink 由 `Device` 在
+  `initialize()` 里安装，是唯一的消费者；`Device::noteMemoryRefusal` 是唯一的分类点：`DeviceLost` 走
+  `noteDeviceLost`（会话结束，一次一条），`OutOfMemory` 是宿主可释放内容的警告，`DriverRefused` 是要上报的错误，
+  两个接线缺陷各自一条。
+- **为什么**：`allocate` 有六个调用点，其中五个只需要"成不成"——把理由交回给它们，等于要求每个调用点记得用它，
+  而它们不会。这正是修掉的缺陷：`vkAllocateMemory` 的 `VkResult` 被丢弃，**设备丢失一路被读成"显存不足"**，
+  宿主在死设备上继续重试（审计 `A1`）。
+- **边界**：池不 include 接缝（`C10`），所以它不知道 `DiagnosticCategory`，也不该知道；句子（含数字）由设备写。
+  成功也上报，是因为 `ReportOnce` 的情节要在**条件结束处** re-arm。
+- **成本**：每次分配一次 `std::function` 调用与一个栈上报告值；分配是 miss 路径事件（`R24`：稳态帧零分配），
+  所以热路径不受影响。
+
+### 2.13 诊断带 code、subject 与 limit：句子是给人的，值才是给宿主的（`G4` / `G11`）
+
+- **是什么**：每条报告带一个**稳定 code**（`vk.<class>.<cause>`，登记在 `scripts/diagnostic_codes.txt`）、一个
+  **subject**（这个报告说的是哪个目标）和一个可选的 **limit**（`requested` / `supported` 两个数）。`message`
+  仍带全部数字，但**它可以改措辞**，code 不可以。
+- **为什么**：宿主与用例要能"不解析句子就行动"（`R28`：按 code 断言）。同一个 category 下的两种原因（"超过上限"
+  与"不是 2 的幂"）在值上是两个 code，在句子上只是两句话——只有句子时，用例只能 `find(u8" MiB")`。
+- **边界**：code 的词汇表属于**报告它的模块**（SDK 不认识 `Vk*`，`C3` / `C10`），所以它是字符串而不是中央枚举；
+  `check_diagnostic_formats.py` 双向检查（用到的必须登记、登记的必须被用到），并用
+  `scripts/diagnostic_code_baseline.txt` 给尚未转换的调用点设**上限**——新报告必须带 code。
+- **已转换**：本后端的**内存、会话、目标**三类（16 个 code）；其余（窗口、缓存、内容）在 baseline 里，逐批转换。
+- **成本**：报告路径上一个 `String` 字段（情节已去重，所以不在热路径）；`limit` 是 `std::optional`，不报 limit
+  时零成本。
+
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -377,6 +407,8 @@
   这正是“决定它属于哪一半”的那一步）。
 - **C11 分配失败的分类单一**：`MemoryAllocator` 只报事实（`MemoryRefusal` + `VkResult` + 数字），
   `Device::noteMemoryRefusal` 是唯一分类点；任何调用点都不得自行把失败归成“显存不足”（§2.12）。
+- **C12 每条报告带稳定 code**：新写的 `reportDiagnostic` 必须带 `code`（`check_diagnostic_formats.py` 用
+  baseline 设上限，超了即红）；`code` 一旦发布不改写、不复用（`scripts/diagnostic_codes.txt`）。
 
 ### 5.2 要求（R#）
 

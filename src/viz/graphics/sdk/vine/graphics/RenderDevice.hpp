@@ -552,11 +552,24 @@ class VN_GRAPHICS_API RenderDevice {
     }
 
     /**
-     * @brief Reports one diagnostic to the installed sink and counts it.
+     * @brief Reports one diagnostic to every installed route and counts it (see RenderDiagnostic).
      *
      * @details
+     * - THE FORM THAT CARRIES A CODE: severity, category, the stable `code`, the `subject` and (when it applies) the
+     *   `limit`, so a host can act on the report without parsing the sentence.
      * - Devices call this instead of failing silently. The device keeps its own out-of-band tracing (e.g. stderr) in
      *   addition to the sink, so an unmodified host sees today's behaviour plus a programmatic channel.
+     *
+     * @param diagnostic What to report.
+     */
+    void reportDiagnostic(const RenderDiagnostic& diagnostic);
+
+    /**
+     * @brief Reports a diagnostic whose cause is fully described by its category (no finer code).
+     *
+     * @details
+     * - THE MIGRATION FORM: `check_diagnostic_formats.py` refuses new call sites of this shape, and the ones already
+     *   written are ratcheted by a baseline. A site that can name its cause uses the coded overload above.
      *
      * @param severity How bad the situation is.
      * @param category What it is about.

@@ -553,6 +553,8 @@ TEST(VkMemoryFailureTest, AnExhaustedHeapIsOneReportWithItsNumbersAndTheSessionS
         }
         saw_reason = true;
         const std::u8string_view text = diagnostic.message.std_u8str_view();
+        EXPECT_TRUE(diagnostic.code.std_u8str_view() == u8"vk.memory.out_of_memory")
+            << "the report did not name its cause by code (a host matches on this, not on the sentence)";
         EXPECT_NE(text.find(u8" MiB"), std::u8string_view::npos) << "the sentence did not name the request";
         EXPECT_NE(text.find(u8"VK_ERROR_OUT_OF_DEVICE_MEMORY"), std::u8string_view::npos)
             << "the sentence did not name the driver's own answer";
@@ -579,6 +581,45 @@ TEST(VkMemoryFailureTest, AnExhaustedHeapIsOneReportWithItsNumbersAndTheSessionS
         saw_second = saw_second || diagnostic.category == vn::graphics::DiagnosticCategory::ResourcePressure;
     }
     EXPECT_TRUE(saw_second) << "the episode was not re-armed by the successful allocation";
+
+    backend->shutdown();
+}
+
+TEST(VkMemoryFailureTest, ATargetRefusalCarriesItsCodeItsSubjectAndTheLimit)
+{
+    // A HOST ACTS ON THE VALUE, NOT ON THE SENTENCE (audit A3): the CODE says which refusal it is, the SUBJECT says
+    // which target, and the LIMIT says what to ask for instead. A target asking for a sample count that is not one the
+    // device offers is the deterministic case - every device refuses 3, whatever its limit is.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    const intrusive_ptr<RenderTarget> target = makeTarget(u8"vk_coded_target");
+    target->setSamples(3U);
+    (void)backend->executeFrame(clearingFrame(target.get()), nullptr);
+
+    bool saw_refusal = false;
+    for (const vn::graphics::RenderDiagnostic& diagnostic : reported) {
+        if (diagnostic.code.std_u8str_view() != u8"vk.target.samples_not_a_count") {
+            continue;
+        }
+        saw_refusal = true;
+        EXPECT_TRUE(diagnostic.subject.std_u8str_view() == u8"vk_coded_target")
+            << "the report did not name the target it is about";
+        ASSERT_TRUE(diagnostic.limit.has_value()) << "a limit refusal without the pair a host acts on";
+        EXPECT_EQ(diagnostic.limit->requested, 3U);
+        // `supported` is the LARGEST count the device offers (the counts are powers of two), which is what the
+        // sentence says - so the pair reads "you asked for 3; this device offers powers of two up to 8".
+        EXPECT_GE(diagnostic.limit->supported, 1U) << "the pair must name what the device does offer";
+        EXPECT_EQ(diagnostic.limit->supported & (diagnostic.limit->supported - 1U), 0U)
+            << "the offered count is a power of two";
+    }
+    EXPECT_TRUE(saw_refusal) << "the sample-count refusal did not arrive with its stable code";
 
     backend->shutdown();
 }

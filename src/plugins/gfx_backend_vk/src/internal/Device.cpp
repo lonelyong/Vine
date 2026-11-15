@@ -272,6 +272,69 @@ constexpr std::uint32_t kSampleCounts[] = { 64U, 32U, 16U, 8U, 4U, 2U, 1U };
 }
 
 /**
+ * @brief Builds a diagnostic about ONE target: severity, category, stable code, the target's name and (when it
+ *        applies) the limit it exceeded.
+ *
+ * @details
+ * - WHY A HELPER: a target refusal is the same five facts at eight sites, and the `subject` (the target's name) is
+ *   what a host badges on - it must not be forgotten at one of them (see `RenderDiagnostic`).
+ * - THE CODE IS THE STABLE HALF: `message` may be reworded, `code` may not (`scripts/diagnostic_codes.txt` is the
+ *   registry both directions are checked against).
+ *
+ * @param target   The target the report is about (its name becomes the subject).
+ * @param severity How bad it is.
+ * @param category The coarse class.
+ * @param code     The stable identifier of the cause.
+ * @param message  The human sentence (with the numbers in it).
+ * @param limit    The requested/supported pair, when the report is about a device limit.
+ * @return The diagnostic, ready to hand to reportDiagnostic.
+ */
+[[nodiscard]] vn::graphics::RenderDiagnostic targetDiagnostic(const RenderTarget&                          target,
+                                                             const DiagnosticSeverity                     severity,
+                                                             const DiagnosticCategory                     category,
+                                                             const char8_t*                               code,
+                                                             vn::String                                   message,
+                                                             std::optional<vn::graphics::DiagnosticLimit> limit = std::nullopt)
+{
+    vn::graphics::RenderDiagnostic diagnostic;
+    diagnostic.severity = severity;
+    diagnostic.category = category;
+    diagnostic.code     = vn::String(code);
+    diagnostic.message  = std::move(message);
+    diagnostic.subject  = target.name();
+    diagnostic.limit    = limit;
+    return diagnostic;
+}
+
+/**
+ * @brief Builds a diagnostic about the MEMORY POOL: severity, category, stable code and the sentence with the numbers.
+ *
+ * @details
+ * - NO SUBJECT AND NO LIMIT: the pool is device-wide, and its numbers (requested bytes, type, reserved, used) are in
+ *   the sentence because they are four, not the requested/supported pair `DiagnosticLimit` means.
+ * - The shape is the same as `targetDiagnostic` on purpose: a coded report is built by a helper and handed to
+ *   `reportDiagnostic`, so the code is visible in the report call - which is what the gate scans for.
+ *
+ * @param severity How bad it is.
+ * @param category The coarse class.
+ * @param code     The stable identifier of the cause.
+ * @param message  The human sentence (with the numbers in it).
+ * @return The diagnostic, ready to hand to reportDiagnostic.
+ */
+[[nodiscard]] vn::graphics::RenderDiagnostic memoryDiagnostic(const DiagnosticSeverity severity,
+                                                             const DiagnosticCategory category,
+                                                             const char8_t*           code,
+                                                             vn::String               message)
+{
+    vn::graphics::RenderDiagnostic diagnostic;
+    diagnostic.severity = severity;
+    diagnostic.category = category;
+    diagnostic.code     = vn::String(code);
+    diagnostic.message  = std::move(message);
+    return diagnostic;
+}
+
+/**
  * @brief The debug-utils callback: forwards every layer message to the device that installed it.
  *
  * @param severity   The layer's severity flags.
@@ -1330,7 +1393,12 @@ bool Device::noteDeviceLost(const VkResult result, const char* what)
         const std::string sentence = std::string("vk: ") + (what != nullptr ? what : "a device call") +
                                      " answered VK_ERROR_DEVICE_LOST; this session cannot continue - rebuild it with "
                                      "shutdown() and initialize()";
-        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed, vn::String::fromUtf8(sentence));
+        vn::graphics::RenderDiagnostic diagnostic;
+        diagnostic.severity = DiagnosticSeverity::Error;
+        diagnostic.category = DiagnosticCategory::SubmissionFailed;
+        diagnostic.code     = vn::String(u8"vk.session.device_lost");
+        diagnostic.message  = vn::String::fromUtf8(sentence);
+        reportDiagnostic(diagnostic);
     }
     return true;
 }
@@ -1345,8 +1413,8 @@ void Device::noteMemoryRefusal(const MemoryRefusalReport& report)
     }
 
     // ONE CASE PER CLASS, because each has a different repair - and because an episode that covered two classes would
-    // swallow the second. The CATEGORY is the closest of the twelve the SDK has (a stable code is audit A3/A10's job):
-    // what matters here is that a lost device, an exhausted heap and a refused driver call are never the same answer.
+    // swallow the second. Each carries its own STABLE CODE (`vk.memory.*`), which is what a host or a test matches on;
+    // the category is the coarse class beside it.
     switch (report.refusal) {
     case MemoryRefusal::Ok:
         return; // handled above; kept so the switch stays exhaustive without a default
@@ -1357,46 +1425,52 @@ void Device::noteMemoryRefusal(const MemoryRefusalReport& report)
         return;
     case MemoryRefusal::OutOfMemory:
         if (impl->memory_reports.out_of_memory.shouldReport()) {
-            reportDiagnostic(DiagnosticSeverity::Warning,
-                             DiagnosticCategory::ResourcePressure,
-                             memoryRefusalSentence(u8"the device is out of memory", report));
+            reportDiagnostic(memoryDiagnostic(DiagnosticSeverity::Warning,
+                                              DiagnosticCategory::ResourcePressure,
+                                              u8"vk.memory.out_of_memory",
+                                              memoryRefusalSentence(u8"the device is out of memory", report)));
         }
         return;
     case MemoryRefusal::DriverRefused:
         if (impl->memory_reports.driver_refused.shouldReport()) {
             // AN ERROR, NOT A PRESSURE: nothing a host releases changes a device limit or a driver bug, so this is a
             // fact to escalate rather than a capacity to relieve.
-            reportDiagnostic(DiagnosticSeverity::Error,
-                             DiagnosticCategory::ResourcePressure,
-                             memoryRefusalSentence(u8"the driver refused an allocation", report));
+            reportDiagnostic(memoryDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::ResourcePressure,
+                                              u8"vk.memory.driver_refused",
+                                              memoryRefusalSentence(u8"the driver refused an allocation", report)));
         }
         return;
     case MemoryRefusal::NoType:
         if (impl->memory_reports.no_type.shouldReport()) {
-            reportDiagnostic(DiagnosticSeverity::Warning,
-                             DiagnosticCategory::UnsupportedRequest,
-                             memoryRefusalSentence(u8"this device has no memory type that serves the request", report));
+            reportDiagnostic(memoryDiagnostic(DiagnosticSeverity::Warning,
+                                              DiagnosticCategory::UnsupportedRequest,
+                                              u8"vk.memory.no_type",
+                                              memoryRefusalSentence(u8"this device has no memory type that serves the request", report)));
         }
         return;
     case MemoryRefusal::InvalidRequest:
         if (impl->memory_reports.invalid_request.shouldReport()) {
-            reportDiagnostic(DiagnosticSeverity::Error,
-                             DiagnosticCategory::ContentSkipped,
-                             memoryRefusalSentence(u8"a resource asked for zero bytes of memory", report));
+            reportDiagnostic(memoryDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::ContentSkipped,
+                                              u8"vk.memory.invalid_request",
+                                              memoryRefusalSentence(u8"a resource asked for zero bytes of memory", report)));
         }
         return;
     case MemoryRefusal::NotOpen:
         if (impl->memory_reports.not_open.shouldReport()) {
-            reportDiagnostic(DiagnosticSeverity::Error,
-                             DiagnosticCategory::InitFailed,
-                             memoryRefusalSentence(u8"device memory was asked for before the pool was opened", report));
+            reportDiagnostic(memoryDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::InitFailed,
+                                              u8"vk.memory.not_open",
+                                              memoryRefusalSentence(u8"device memory was asked for before the pool was opened", report)));
         }
         return;
     case MemoryRefusal::Internal:
         if (impl->memory_reports.internal.shouldReport()) {
-            reportDiagnostic(DiagnosticSeverity::Error,
-                             DiagnosticCategory::InitFailed,
-                             memoryRefusalSentence(u8"the pool could not place a resource in a block it had just made", report));
+            reportDiagnostic(memoryDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::InitFailed,
+                                              u8"vk.memory.internal",
+                                              memoryRefusalSentence(u8"the pool could not place a resource in a block it had just made", report)));
         }
         return;
     }
@@ -1579,14 +1653,21 @@ bool Device::ensureTarget(const RenderTarget& target)
     if (!ensureBuildableSamples(requested_samples, impl->supported_sample_counts)) {
         if (impl->samples_report.shouldReport()) {
             // The two reasons a count is unbuildable are said as the difference they are: a request past the limit,
-            // and a number that is not a sample count at all. Both name the limit the host should read.
+            // and a number that is not a sample count at all. Both carry the pair a host acts on (requested vs
+            // offered) and their own code, so the two are distinguishable without reading the sentence.
             const vn::String request = vn::String(u8"vk: a target asks for ") + numberText(requested_samples) + u8" samples per pixel";
-            const vn::String why     = requested_samples > largest_samples
+            const bool       above   = requested_samples > largest_samples;
+            const vn::String why     = above
                                            ? request + u8", above what this device offers (up to " + numberText(largest_samples) +
                                                  u8"; see Capabilities::max_samples)"
                                            : request + u8", which is not a sample count this device offers (the counts are powers of two, up to " +
                                                  numberText(largest_samples) + u8"; see Capabilities::max_samples)";
-            reportDiagnostic(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest, why);
+            reportDiagnostic(targetDiagnostic(target,
+                                              DiagnosticSeverity::Warning,
+                                              DiagnosticCategory::UnsupportedRequest,
+                                              above ? u8"vk.target.samples_above_limit" : u8"vk.target.samples_not_a_count",
+                                              why,
+                                              vn::graphics::DiagnosticLimit{ requested_samples, largest_samples }));
         }
         return false;
     }
@@ -1601,11 +1682,14 @@ bool Device::ensureTarget(const RenderTarget& target)
     // answers NotReady.
     if (requested_samples > 1U && target.hasDepth() && !impl->depth_resolve_supported) {
         if (impl->samples_depth_report.shouldReport()) {
-            reportDiagnostic(DiagnosticSeverity::Warning,
-                             DiagnosticCategory::UnsupportedRequest,
-                             vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
-                                 u8" samples per pixel and a depth attachment; this device cannot resolve a multisampled depth "
-                                 u8"(it needs Vulkan 1.2's depth/stencil resolve), so the target is refused (see Capabilities::max_samples)");
+            reportDiagnostic(targetDiagnostic(target,
+                                              DiagnosticSeverity::Warning,
+                                              DiagnosticCategory::UnsupportedRequest,
+                                              u8"vk.target.multisampled_depth_unsupported",
+                                              vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
+                                                  u8" samples per pixel and a depth attachment; this device cannot resolve a multisampled depth "
+                                                  u8"(it needs Vulkan 1.2's depth/stencil resolve), so the target is refused (see Capabilities::max_samples)",
+                                              vn::graphics::DiagnosticLimit{ requested_samples, 1U }));
         }
         return false;
     }
@@ -1625,11 +1709,14 @@ bool Device::ensureTarget(const RenderTarget& target)
     if (lender != nullptr) {
         if (requested_samples > 1U) {
             if (impl->borrow_samples_report.shouldReport()) {
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::UnsupportedRequest,
-                                 vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
-                                     u8" samples per pixel and borrows its depth (RenderTarget::shareDepth); one depth image "
-                                     u8"cannot be a multi-sample attachment for one pass and a single-sample picture for another");
+                reportDiagnostic(targetDiagnostic(target,
+                                                  DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.target.borrow_multisampled",
+                                                  vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
+                                                      u8" samples per pixel and borrows its depth (RenderTarget::shareDepth); one depth image "
+                                                      u8"cannot be a multi-sample attachment for one pass and a single-sample picture for another",
+                                                  vn::graphics::DiagnosticLimit{ requested_samples, 1U }));
             }
             return false;
         }
@@ -1637,22 +1724,26 @@ bool Device::ensureTarget(const RenderTarget& target)
         const auto source = impl->targets.find(lender);
         if (source == impl->targets.end() || !source->second.built() || !source->second.hasDepth()) {
             if (impl->borrow_source_report.shouldReport()) {
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::UnsupportedRequest,
-                                 u8"vk: a target borrows its depth from a target this device has not built (or one with no "
-                                 u8"depth attachment); the lender must render earlier in the same frame (see RenderTarget::shareDepth)");
+                reportDiagnostic(targetDiagnostic(target,
+                                                  DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.target.borrow_source_missing",
+                                                  u8"vk: a target borrows its depth from a target this device has not built (or one with no "
+                                                  u8"depth attachment); the lender must render earlier in the same frame (see RenderTarget::shareDepth)"));
             }
             return false;
         }
         impl->borrow_source_report.rearm(); // the lender is built here: the episode is over
         if (lender->width() != target.width() || lender->height() != target.height()) {
             if (impl->borrow_extent_report.shouldReport()) {
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::UnsupportedRequest,
-                                 vn::String(u8"vk: a target borrows the depth of a differently sized target (") + numberText(static_cast<std::uint32_t>(lender->width())) +
-                                     u8"x" + numberText(static_cast<std::uint32_t>(lender->height())) + u8" against " +
-                                     numberText(static_cast<std::uint32_t>(target.width())) + u8"x" +
-                                     numberText(static_cast<std::uint32_t>(target.height())) + u8"); a shared depth has one extent");
+                reportDiagnostic(targetDiagnostic(target,
+                                                  DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.target.borrow_extent_mismatch",
+                                                  vn::String(u8"vk: a target borrows the depth of a differently sized target (") + numberText(static_cast<std::uint32_t>(lender->width())) +
+                                                      u8"x" + numberText(static_cast<std::uint32_t>(lender->height())) + u8" against " +
+                                                      numberText(static_cast<std::uint32_t>(target.width())) + u8"x" +
+                                                      numberText(static_cast<std::uint32_t>(target.height())) + u8"); a shared depth has one extent"));
             }
             return false;
         }
@@ -1689,9 +1780,11 @@ bool Device::ensureTarget(const RenderTarget& target)
     case TargetAction::Repair:
         if (decision.reason == RepairReason::SizeUnknown) {
             if (impl->size_unknown_report.shouldReport()) {
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::TargetBuildFailed,
-                                 u8"vk: a target with an unusable extent (0 in a dimension) was left unbuilt");
+                reportDiagnostic(targetDiagnostic(target,
+                                                  DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::TargetBuildFailed,
+                                                  u8"vk.target.size_unknown",
+                                                  u8"vk: a target with an unusable extent (0 in a dimension) was left unbuilt"));
             }
             return false;
         }
@@ -1701,9 +1794,11 @@ bool Device::ensureTarget(const RenderTarget& target)
     case TargetAction::ResizeInPlace:
         images.desc = wanted;
         if (!resizeTarget(impl->device_table, impl->device, impl->allocator, images)) {
-            reportDiagnostic(DiagnosticSeverity::Error,
-                             DiagnosticCategory::TargetBuildFailed,
-                             u8"vk: the target's attachments could not be rebuilt at the new extent (see the loader's report)");
+            reportDiagnostic(targetDiagnostic(target,
+                                              DiagnosticSeverity::Error,
+                                              DiagnosticCategory::TargetBuildFailed,
+                                              u8"vk.target.resize_failed",
+                                              u8"vk: the target's attachments could not be rebuilt at the new extent (see the memory report)"));
             return false;
         }
         return true;
@@ -1716,9 +1811,11 @@ bool Device::ensureTarget(const RenderTarget& target)
         images.depth_borrowed      = lender != nullptr;
         images.borrowed_depth_view = lender_view;
         if (!buildTarget(impl->device_table, impl->device, impl->allocator, images)) {
-            reportDiagnostic(DiagnosticSeverity::Error,
-                             DiagnosticCategory::TargetBuildFailed,
-                             u8"vk: the off-screen target's attachments could not be built (see the loader's report)");
+            reportDiagnostic(targetDiagnostic(target,
+                                              DiagnosticSeverity::Error,
+                                              DiagnosticCategory::TargetBuildFailed,
+                                              u8"vk.target.build_failed",
+                                              u8"vk: the off-screen target's attachments could not be built (see the memory report)"));
             return false;
         }
         return true;
