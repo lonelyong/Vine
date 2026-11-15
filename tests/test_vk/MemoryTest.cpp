@@ -494,6 +494,62 @@ TEST(VkMemoryAllocatorTest, ARefusedBlockSaysWhichKindOfFailureItIs)
     fixture.allocator.release(slice);
 }
 
+TEST(VkMemoryAllocatorTest, ARefusalSaysHowMuchRoomThePoolStillHas)
+{
+    // THE ANSWER AN "OUT OF MEMORY" REPORT NEEDS (audit A2): a heap that refuses a NEW block while the pool holds free
+    // bytes has room too SHREDDED to use, and "256 KiB free, largest run 128 KiB" tells a host that releasing one big
+    // resource helps while releasing small ones may not. Without those numbers the report says only "out of memory",
+    // which is the answer a host cannot act on.
+    AllocationDevice fixture;
+    if (!fixture.ready) {
+        GTEST_SKIP() << "this machine has no Vulkan device the allocator can be opened on";
+    }
+
+    std::vector<vn::backend_vk::MemoryRefusalReport> reports;
+    fixture.allocator.setFailureSink([&reports](const vn::backend_vk::MemoryRefusalReport& report) { reports.push_back(report); });
+
+    // FRAGMENT THE FIRST BLOCK: eight slices fill it exactly, and the two given back have LIVE neighbours - so the two
+    // free runs cannot merge, and there is no tail for a request to fall into (which would make this case prove
+    // nothing).
+    constexpr VkDeviceSize kSlice = 128U * 1024U;
+    std::array<vn::backend_vk::MemorySlice, 8> slices{};
+    for (vn::backend_vk::MemorySlice& slice : slices) {
+        slice = fixture.allocator.allocate(AllocationDevice::requirement(kSlice, 256U),
+                                           vn::backend_vk::MemoryUsage::DeviceLocal,
+                                           vn::backend_vk::MemoryKind::Linear);
+        ASSERT_TRUE(slice.valid()) << "the fixture's block did not hold eight slices";
+    }
+    fixture.allocator.release(slices[1]);
+    fixture.allocator.release(slices[3]);
+
+    const vn::backend_vk::MemoryStats fragmented = fixture.allocator.stats();
+    EXPECT_GE(fragmented.free_bytes, 2U * kSlice) << "two slices were given back and the pool does not count them";
+    EXPECT_LT(fragmented.largest_free_run, 2U * kSlice) << "the free runs merged: the case did not fragment anything";
+
+    // A BLOCK THAT CANNOT BE CREATED, for a request no single free run holds: the refusal must carry the room.
+    fixture.allocator.setBlockCreator([](VkDevice, const VkMemoryAllocateInfo&, VkDeviceMemory*) {
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    });
+    vn::backend_vk::MemoryRefusal refusal = vn::backend_vk::MemoryRefusal::Ok;
+    const vn::backend_vk::MemorySlice refused =
+        fixture.allocator.allocate(AllocationDevice::requirement(200U * 1024U, 256U),
+                                   vn::backend_vk::MemoryUsage::DeviceLocal,
+                                   vn::backend_vk::MemoryKind::Linear,
+                                   &refusal);
+    EXPECT_FALSE(refused.valid());
+    EXPECT_EQ(refusal, vn::backend_vk::MemoryRefusal::OutOfMemory);
+    ASSERT_FALSE(reports.empty());
+    EXPECT_GE(reports.back().stats.free_bytes, 2U * kSlice) << "the refusal did not say how much room the pool has";
+    EXPECT_LT(reports.back().stats.largest_free_run, 200U * 1024U)
+        << "the refusal did not say that no single run holds the request";
+
+    fixture.allocator.setBlockCreator({});
+    for (const std::size_t index : { 0U, 2U, 4U, 5U, 6U, 7U }) {
+        fixture.allocator.release(slices[index]);
+    }
+    EXPECT_EQ(fixture.allocator.stats().used_bytes, 0U);
+}
+
 TEST(VkMemoryAllocatorTest, AllocationBeforeOpenIsAWiringDefectNotOutOfMemory)
 {
     // A CLOSED POOL IS A BUG IN THIS BACKEND, NOT A FULL DEVICE. Saying "out of memory" here sends a host looking for

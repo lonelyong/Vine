@@ -268,6 +268,12 @@ constexpr std::uint32_t kSampleCounts[] = { 64U, 32U, 16U, 8U, 4U, 2U, 1U };
     }
     sentence += vn::String(u8"; the pool holds ") + bytesText(report.stats.reserved_bytes) + u8" reserved, " +
                 bytesText(report.stats.used_bytes) + u8" in use";
+    if (report.stats.free_bytes > 0U) {
+        // THE ROOM THAT COULD NOT BE USED (see MemoryStats): a refusal while the pool holds free bytes means the room
+        // is too shredded, which is a different repair from "the heap really is full".
+        sentence += vn::String(u8" and ") + bytesText(report.stats.free_bytes) + u8" free (largest run " +
+                    bytesText(report.stats.largest_free_run) + u8")";
+    }
     return sentence;
 }
 

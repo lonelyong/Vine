@@ -104,7 +104,7 @@
   `refusal_out`，并把"请求字节 / type / 已用 / 保留"写进句子。
 - **代价**：约 120 行 + 一条注入式用例（A8）。**触发：无**（正确性）。
 
-### A2（高，C16 / C17）没有内存压力策略
+### A2（高，C16 / C17）没有内存压力策略（**已落地 2026-11-15，以“可行动的拒绝”形式**）
 
 - **证据**：`createBlock` 是"first-fit + 新建块"；`MemoryStats` 有 used / reserved / peak，但**没有
   free / 最大连续 run**；`MemoryRefusal` 没有"碎片"与"预算"两态；没有 eviction、没有 compaction、
@@ -281,7 +281,7 @@ RenderDevice（接缝：身份 / 能力 / 生命周期 / 工厂）
 | 批次 | 内容 | 量级 | 触发 |
 |---|---|---|---|
 | 1 | A1 + A8：分配失败分类 + 故障注入 + 两条用例 | ~250 行 | **已落地 2026-11-15**（`MemoryRefusalReport` + sink + `MemoryBlockCreator`，5 条新用例，3 个变异各自被对应用例杀掉） |
-| 2 | A3 + A10：诊断 code + 统一失败词汇 + 门禁 | ~350 行 | **A3 部分落地 2026-11-15**：`RenderDiagnostic` 加 `code` / `subject` / `limit`，vk 的内存/会话/目标三类共 16 个 code 已转换并登记，门禁双向检查 + baseline 棘轮；剩余 90 个调用点在 `scripts/diagnostic_code_baseline.txt` 里逐批转。**A10 暂缓**：五个枚举回答的是不同问题，统一它们会丢精度（无消费者，`G8`） |
+| 2 | A3 + A10：诊断 code + 统一失败词汇 + 门禁 | ~350 行 | **A3 部分落地 2026-11-15**：`RenderDiagnostic` 加 `code` / `subject` / `limit`，vk 的内存/会话/目标三类共 16 个 code 已转换并登记，门禁双向检查 + baseline 棘轮；剩余 90 个调用点在 `scripts/diagnostic_code_baseline.txt` 里逐批转。**A10 暂缓**：五个枚举回答的是不同问题，统一它们会丢精度（无消费者，`G8`）。**A2 已落地**（同一提交系列）：`free_bytes` / `largest_free_run` 只在拒绝时算并写进句子；池内无阶梯可加（见 `vk-backend.md` §2.12） |
 | 3 | A4 + A14：契约句修正 | 文档 | **已落地 2026-11-15**（逐字段的拥有/借用规则；`releaseRenderTarget` 的前置条件） |
 | 4 | A5：per-pass GPU 时间 | ~150 行 | **已落地 2026-11-15**（`FrameTiming::passes` + 每 pass 一条边界 + 可增长的 query 池；两个变异各自被杀） |
 | 5 | A6 + A7 + A11：设备四单元 + 接缝四面 + 退休点上移 | ~1400 行 | ADR 第二步 / 第二个 API 家族 |

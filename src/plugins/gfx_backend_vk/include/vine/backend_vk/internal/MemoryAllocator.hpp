@@ -113,6 +113,14 @@ struct MemoryStats
     std::uint64_t peak_used_bytes{ 0 }; ///< The high-water mark of `used_bytes`.
     std::uint64_t allocations{ 0 };     ///< Slices handed out over this allocator's lifetime.
     std::uint64_t releases{ 0 };        ///< Slices released over this allocator's lifetime.
+
+    ///
+    /// ROOM THE POOL STILL HAS, and the answer an "out of memory" report needs to be actionable: `free_bytes` is
+    /// every free range summed, `largest_free_run` the biggest single one. When the heap refuses a NEW block while
+    /// these are non-zero, the pool has room that is too SHREDDED to use - a host reading that knows releasing a big
+    /// resource helps and releasing small ones may not.
+    std::uint64_t free_bytes{ 0 };
+    std::uint64_t largest_free_run{ 0 };
 };
 
 /**

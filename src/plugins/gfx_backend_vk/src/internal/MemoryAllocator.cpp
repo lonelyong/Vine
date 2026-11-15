@@ -377,7 +377,10 @@ MemorySlice MemoryAllocator::allocate(const VkMemoryRequirements& requirements,
     const auto report_and = [this, &report, refusal_out](const MemoryRefusal refusal, const VkResult driver_result) {
         report.refusal       = refusal;
         report.driver_result = driver_result;
-        report.stats         = impl->numbers;
+        // THE ROOM NUMBERS ARE WALKED, so they are filled only when something was REFUSED: a success path pays the
+        // running counters it already has, and the refusal - the one case a host reads - gets the free/largest-run
+        // pair that makes "out of memory" actionable (see MemoryStats).
+        report.stats         = refusal == MemoryRefusal::Ok ? impl->numbers : stats();
         if (refusal_out != nullptr) {
             *refusal_out = refusal;
         }
@@ -545,7 +548,20 @@ void* MemoryAllocator::map(const MemorySlice& slice) noexcept
 
 MemoryStats MemoryAllocator::stats() const noexcept
 {
-    return impl->numbers;
+    // THE ROOM NUMBERS ARE WALKED, NOT MAINTAINED: `stats` is asked by a report or a test, never per allocation, and
+    // keeping a running "largest free run" correct across every split and merge would put bookkeeping on the hot path
+    // for a number nobody reads there.
+    MemoryStats numbers = impl->numbers;
+    for (const auto& block : impl->blocks) {
+        for (const Impl::Range& range : block->ranges) {
+            if (range.live) {
+                continue;
+            }
+            numbers.free_bytes += range.size;
+            numbers.largest_free_run = std::max(numbers.largest_free_run, range.size);
+        }
+    }
+    return numbers;
 }
 
 VN_BACKEND_VK_NS_END
