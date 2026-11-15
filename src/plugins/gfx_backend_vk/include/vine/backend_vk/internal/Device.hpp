@@ -388,6 +388,34 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
     [[nodiscard]] MemoryStats memoryStats() const noexcept;
 
     /**
+     * @brief What the persisted pipeline cache did for this session (see PipelineCacheFile).
+     *
+     * @details
+     * - THE EVIDENCE FOR A WARM START: `loaded_bytes` is a cache this session REUSED, `saved_bytes` one it produced for
+     *   the next, and `discarded` says a file was there and refused - another device or driver, a corrupt file, an
+     *   empty one. Without these numbers "the cache is not helping" and "the cache is not wired" look the same.
+     * - IT SURVIVES `shutdown()`: the save happens while the session ends, so the numbers stay readable until the next
+     *   `initialize()` starts a fresh report (the same rule `FrameReport::timing` follows per frame).
+     */
+    struct PipelineCacheReport {
+        bool          persisted{ false };    ///< A cache directory was stated at creation (nothing is written without one).
+        bool          discarded{ false };    ///< A file was there and refused (see PipelineCacheRefusal).
+        std::uint64_t loaded_bytes{ 0 };     ///< Bytes accepted from the file and handed to `vkCreatePipelineCache`.
+        std::uint64_t saved_bytes{ 0 };      ///< Bytes written when the session ended (0 when there was nothing to save).
+        bool          hits_measured{ false }; ///< This device answers pipeline creation feedback, so `cache_hits` means something.
+        std::uint64_t cache_hits{ 0 };        ///< Pipelines the driver served FROM the cache (see hits_measured).
+        bool          preload_handed{ false };  ///< A previous session's blob was handed to `vkCreatePipelineCache`.
+        bool          preload_refused{ false }; ///< The driver refused it (a corrupt cache; drivers differ in checking).
+    };
+
+    /**
+     * @brief Gets what the persisted pipeline cache did (see PipelineCacheReport).
+     *
+     * @return The report (all zeros before `initialize()`).
+     */
+    [[nodiscard]] PipelineCacheReport pipelineCacheReport() const noexcept;
+
+    /**
      * @brief Forwards one message the Vulkan loader or a validation layer produced.
      *
      * @details

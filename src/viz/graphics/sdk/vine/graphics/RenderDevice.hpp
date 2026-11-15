@@ -7,6 +7,7 @@
 
 #include <vine/Buffer.hpp>
 #include <vine/Object.hpp>
+#include <vine/String.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
@@ -96,6 +97,23 @@ struct VN_GRAPHICS_API DeviceDesc {
     /// The host's window handle (HWND / xcb_window_t carried as `void*`) when @ref presentation is Handle; ignored
     /// otherwise. A Handle without a handle is a wiring error, and the device reports it when it is brought up.
     void* native_handle{ nullptr };
+
+    /**
+     * @brief Where this device may keep state that OUTLIVES the session (a pipeline cache, a shader cache), or empty.
+     *
+     * @details
+     * - THE LOCATION IS THE HOST'S DECISION. What is worth persisting is the backend's business; WHERE a user's files
+     *   go is not - an application has an organization, an application name and a data directory, and a render backend
+     *   has none of those. So a host that wants warm starts states a directory and a host that states none gets a
+     *   device that keeps nothing.
+     * - EMPTY MEANS "ASK THE BACKEND'S OWN DEFAULT": a backend loaded by an application as a plugin uses its plugin
+     *   data directory (`appfw::PluginLoadContext::ensureDataDirectory`), and a backend with no application behind it
+     *   (a tool, a test, a bake) keeps nothing. A stated directory always wins over that default.
+     * - WHAT MAY APPEAR HERE IS THE BACKEND'S: one file per cache, keyed by the device and driver that produced it, so a
+     *   directory shared between machines or driver versions is safe to state (a foreign cache is refused, not
+     *   trusted). Nothing here is required for correctness - a missing or unreadable directory costs a cold start.
+     */
+    vn::String cache_directory{};
 };
 
 /**

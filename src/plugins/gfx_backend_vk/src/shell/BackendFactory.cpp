@@ -34,7 +34,22 @@ vn::graphics::RenderBackendInfo BackendFactory::info() const
 
 vn::intrusive_ptr<vn::graphics::RenderBackend> BackendFactory::create(const vn::graphics::DeviceDesc& desc)
 {
-    return vn::intrusive_ptr<vn::graphics::RenderBackend>(new Device(desc));
+    // THE DEFAULT IS APPLIED HERE, ONCE (see the header): the device below never has to ask who created it.
+    vn::graphics::DeviceDesc effective = desc;
+    if (effective.cache_directory.empty()) {
+        effective.cache_directory = default_cache_directory_;
+    }
+    return vn::intrusive_ptr<vn::graphics::RenderBackend>(new Device(effective));
+}
+
+void BackendFactory::setDefaultCacheDirectory(vn::String directory)
+{
+    default_cache_directory_ = std::move(directory);
+}
+
+const vn::String& BackendFactory::defaultCacheDirectory() const noexcept
+{
+    return default_cache_directory_;
 }
 
 VN_BACKEND_VK_NS_END

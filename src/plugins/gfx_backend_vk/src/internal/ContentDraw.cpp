@@ -523,6 +523,14 @@ struct ContentDraw::Impl {
     std::uint64_t pipeline_releases_{ 0 };
     std::uint64_t ring_builds_{ 0 };
     std::uint64_t set_builds_{ 0 };
+    /// Pipelines the driver reported as served from the cache (see setCreationFeedback): the persisted cache's witness.
+    std::uint64_t cache_hits_{ 0 };
+    /// Whether this device answers pipeline creation feedback (see setCreationFeedback).
+    bool          creation_feedback{ false };
+    /// Whether the driver refused the cache handed to it (see pipelineCachePreloadRefused).
+    bool          preload_refused_{ false };
+    /// Whether a cache was handed to the driver at all (see pipelineCachePreloadHanded).
+    bool          preload_handed_{ false };
 
     /**
      * @brief Resolves the pipeline-relevant state of one drawing call (the dynamic half recompiles nothing).
@@ -1035,12 +1043,27 @@ struct ContentDraw::Impl {
         info.renderPass          = render_pass;
         info.subpass             = 0U;
 
+        // THE CACHE'S ONLY WITNESS (see setCreationFeedback): with feedback enabled the driver answers, per creation,
+        // whether it served this pipeline out of the cache. The structure is chained when the device offers it; a
+        // device without it builds exactly the same pipelines and reports no hit at all.
+        VkPipelineCreationFeedback         overall_feedback{};
+        VkPipelineCreationFeedbackCreateInfo feedback_info{};
+        if (creation_feedback) {
+            feedback_info.sType                            = VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO;
+            feedback_info.pPipelineCreationFeedback        = &overall_feedback;
+            feedback_info.pipelineStageCreationFeedbackCount = 0U;
+            info.pNext                                     = &feedback_info;
+        }
+
         VkPipeline pipeline = VK_NULL_HANDLE;
         if (table->vkCreateGraphicsPipelines(device, pipeline_cache, 1U, &info, nullptr, &pipeline) != VK_SUCCESS) {
             why = vn::String(u8"vk: the content pipeline could not be built (see the loader's report)");
             return VK_NULL_HANDLE;
         }
         ++created_;
+        if ((overall_feedback.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) != 0U) {
+            ++cache_hits_;
+        }
         pipelines.emplace(std::move(key), pipeline);
         return pipeline;
     }
@@ -1873,10 +1896,11 @@ ContentDraw::~ContentDraw()
     destroy();
 }
 
-bool ContentDraw::create(const VolkDeviceTable& table,
-                         const VkDevice         device,
-                         MemoryAllocator&       allocator,
-                         const std::uint32_t    uniform_alignment)
+bool ContentDraw::create(const VolkDeviceTable&     table,
+                         const VkDevice             device,
+                         MemoryAllocator&           allocator,
+                         const std::uint32_t        uniform_alignment,
+                         const std::span<const std::byte> pipeline_cache_data)
 {
     destroy();
     if (device == VK_NULL_HANDLE) {
@@ -2010,9 +2034,23 @@ bool ContentDraw::create(const VolkDeviceTable& table,
 
     VkPipelineCacheCreateInfo cache_info{};
     cache_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    // A PREVIOUS SESSION'S CACHE (see PipelineCacheFile): the driver validates it against its own identity, and the
+    // caller only ever hands over a blob this device's key accepted.
+    cache_info.initialDataSize = pipeline_cache_data.size();
+    cache_info.pInitialData    = pipeline_cache_data.empty() ? nullptr : pipeline_cache_data.data();
+    impl->preload_handed_      = cache_info.pInitialData != nullptr;
     if (impl->table->vkCreatePipelineCache(impl->device, &cache_info, nullptr, &impl->pipeline_cache) != VK_SUCCESS) {
-        // Not fatal: a device that refuses a cache still builds pipelines - it just cannot reuse them.
+        // Not fatal: a device that refuses a cache still builds pipelines - it just cannot reuse them. A REFUSED
+        // PRELOAD gets ONE retry without it: a stale file is a slower start, never a lost session.
         impl->pipeline_cache = VK_NULL_HANDLE;
+        if (cache_info.pInitialData != nullptr) {
+            impl->preload_refused_ = true;
+            VkPipelineCacheCreateInfo cold{};
+            cold.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+            if (impl->table->vkCreatePipelineCache(impl->device, &cold, nullptr, &impl->pipeline_cache) != VK_SUCCESS) {
+                impl->pipeline_cache = VK_NULL_HANDLE;
+            }
+        }
     }
 
     VkDescriptorPoolCreateInfo pool_info{};
@@ -2092,6 +2130,9 @@ void ContentDraw::destroy() noexcept
     impl->created_            = 0;
     impl->ring_builds_        = 0;
     impl->set_builds_         = 0;
+    impl->cache_hits_         = 0;
+    impl->preload_refused_    = false;
+    impl->preload_handed_     = false;
     impl->frame_index         = 0;
 }
 
@@ -2129,6 +2170,48 @@ void ContentDraw::endFrame() noexcept
 std::uint64_t ContentDraw::pipelinesCreated() const noexcept
 {
     return impl->created_;
+}
+
+void ContentDraw::setCreationFeedback(const bool on) noexcept
+{
+    impl->creation_feedback = on;
+}
+
+std::uint64_t ContentDraw::pipelineCacheHits() const noexcept
+{
+    return impl->cache_hits_;
+}
+
+bool ContentDraw::pipelineCachePreloadRefused() const noexcept
+{
+    return impl->preload_refused_;
+}
+
+bool ContentDraw::pipelineCachePreloadHanded() const noexcept
+{
+    return impl->preload_handed_;
+}
+
+std::vector<std::byte> ContentDraw::pipelineCacheBytes() const
+{
+    std::vector<std::byte> bytes;
+    if (impl->pipeline_cache == VK_NULL_HANDLE || impl->table == nullptr || impl->device == VK_NULL_HANDLE) {
+        return bytes;
+    }
+
+    // TWO CALLS, the standard Vulkan shape: the first answers the size, the second the bytes. A cache that reports no
+    // size has nothing to persist, which is not a failure (a session that built no pipeline).
+    std::size_t size = 0U;
+    if (impl->table->vkGetPipelineCacheData(impl->device, impl->pipeline_cache, &size, nullptr) != VK_SUCCESS || size == 0U) {
+        return bytes;
+    }
+    bytes.resize(size);
+    if (impl->table->vkGetPipelineCacheData(impl->device, impl->pipeline_cache, &size, bytes.data()) != VK_SUCCESS) {
+        bytes.clear();
+        return bytes;
+    }
+    bytes.resize(size); // the driver may answer fewer bytes than the first call promised
+    return bytes;
 }
 
 ContentDraw::Progress ContentDraw::progress() const noexcept

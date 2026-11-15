@@ -1,5 +1,8 @@
 #include <vine/backend_vk/shell/Plugin.hpp>
 
+#include <filesystem>
+#include <string_view>
+
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/plugin_export.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
@@ -14,8 +17,20 @@ Plugin::~Plugin() = default;
 
 vn::async::Task<void> Plugin::load(vn::appfw::PluginLoadContext* context)
 {
-    (void)context;
     static BackendFactory s_factory;
+
+    // THE PIPELINE CACHE IS A PLUGIN-OWNED FILE, and the framework already answers where those live (see
+    // PluginLoadContext::ensureDataDirectory): the factory hands that directory to every device that does not state one
+    // of its own, which is what turns a cold start into a warm one without a host knowing this backend's name.
+    if (context != nullptr) {
+        const std::filesystem::path directory = context->ensureDataDirectory();
+        if (!directory.empty()) {
+            const std::u8string text = directory.u8string();
+            s_factory.setDefaultCacheDirectory(
+                vn::String::fromUtf8(std::string_view(reinterpret_cast<const char*>(text.data()), text.size())));
+        }
+    }
+
     vn::graphics::RenderBackendRegistry::instance().registerFactory(&s_factory);
     co_return;
 }

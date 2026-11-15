@@ -534,6 +534,29 @@
   钉“索引说有就留、索引说没有就 park”。backlog `T28` 已删（收口项，不再是触发项）。
 - **计数**：`test_vsg` 544 / `test_graphics` 554 / ctest 30/30 / TSan 554 用例 0 warning。
 
+## 2026-11-15 —— `gfx_backend_vk` 跨会话管线缓存（F4/T44 落地）：位置归宿主、键归设备、证人要诚实
+
+- **概念**：`DeviceDesc::cache_directory`（SDK，创建输入）= **宿主说“文件可以放哪”**，后端说“存什么”。宿主不写时
+  插件在 `Plugin::load` 里用 `PluginLoadContext::ensureDataDirectory()` 当默认值（框架自己的规则：插件文件住插件
+  数据目录），两者都没有 = 不持久化。`PipelineCacheFile` 只负责文件格式：`[magic][format][key][size][blob]`，
+  key = vendor/device/driver/api/`pipelineCacheUUID`；读侧严格（长度、magic、版本、键、**尾字节必须正好用尽**），
+  写侧临时文件 + rename。
+- **坑 1：`pipelineCacheReport` 曾经在关机后变回 0**。`Device::initialize` 里算好的 `preload_handed/refused`
+  存在 `ContentDraw` 的字段里，而 `shutdown()` 先 `content.destroy()` 再读 ⇒ 全被重置。正解：在 `create()` 之后
+  立刻**快照进 `Impl::CacheBooks`**（与 saved_bytes 同一个家）；只有 `cache_hits` 因为是累计量才在会话还活着时
+  读实时值。这是同一个坑的第三次（“报告字段活在会被销毁的对象里”）。
+- **坑 2：lavapipe 既**广播**creation feedback 扩展，又**从不**报 hit、且**不校验** `pInitialData`**（把 blob 的
+  vendor 改掉照收）。所以“缓存命中了”在软件光栅器上**不可观测**，用例不能强求；后端能诚实声明的是
+  **hand-over**（blob 真的交给了 `vkCreatePipelineCache`，`preload_handed`），命中数只上报
+  （`hits_measured` + `cache_hits`）。规则：**证人要属于自己能证明的那一半**，别把驱动的沉默当失败。
+- **一个恰好有用的边角**：`vkCreatePipelineCache` 拒收 preload 时**重试一次不带数据**（会话照常起来），并把
+  `preload_refused` 记下来——真实驱动上这就是“缓存过时”的可见答案。
+- **变异（4/4 承重）**：去掉键比较 → `AnotherDevicesFileIsRefused` 红；去掉长度/尾字节严格 → `ATruncated…` 红；
+  去掉版本检查 → `AnotherFormatVersion…` 红；把 `pInitialData` 抹掉 → `ASessionWritesWhatTheNextOneLoads` 红
+  （靠 `preload_handed`，不是靠命中数）。
+- **计数**：`test_vk` 89（新增 `VkPipelineCacheFileTest` 5 + `VkPipelineCacheSessionTest` 4）；全量 Debug ctest 32/32；
+  Release `test_vk` 89/89。
+
 ## 2026-11-14 —— `gfx_backend_vk` 设备内存池（F7/T45 落地）：两条容易写错的规则 + 变异结果
 
 - **概念**：`MemoryAllocator`（`internal/MemoryAllocator.hpp`）= 会话级**设备内存池**：按 memory type 建

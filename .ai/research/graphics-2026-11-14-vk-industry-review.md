@@ -92,7 +92,17 @@
 - **判词**：本后端已有 program/pipeline 的内存缓存（同一会话不重编），所以**会话内**收益接近 0；
   真正缺的是**跨会话**。对“每次启动都重新编译”的开发者体验是明显差距。
 - **已落地（会话内）**：`ContentDraw` 建一个 `VkPipelineCache` 并传给两处 `vkCreateGraphicsPipelines`，
-  `destroy()` 销毁它。**仍缺**跨会话：`vkGetPipelineCacheData` 落盘 + `pInitialData` 装回（backlog **T44**）。
+  `destroy()` 销毁它。
+- **已落地（跨会话 2026-11-15，backlog T44 关闭）**：`PipelineCacheFile`（`internal/PipelineCacheFile.hpp`）把
+  `vkGetPipelineCacheData` 的 blob 写成 **设备键控**的文件（magic + 格式版本 + `PipelineCacheKey`（vendor / device /
+  driver / api / `pipelineCacheUUID`）+ 长度 + blob），读侧**严格**校验（长度、magic、版本、键、尾字节），写入用
+  临时文件 + rename 原子替换。**位置是宿主的**：`DeviceDesc::cache_directory`；宿主不写时，插件在 `Plugin::load`
+  里用自己的 application data 目录（`PluginLoadContext::ensureDataDirectory`）当默认值；两者都没有则“不持久化”。
+  `Device::pipelineCacheReport()` 回答 persisted / loaded_bytes / saved_bytes / discarded / preload_handed /
+  preload_refused / cache_hits（后者靠 `VK_EXT_pipeline_creation_feedback`，Vulkan 1.3 核心）。
+- **量出来的事实（lavapipe）**：它**广播** creation feedback 扩展，但**从不**报 hit；并且**不校验**
+  `pInitialData`（连 vendor 改掉也照收）⇒ 在软件光栅器上“缓存真的命中了”不可观测。后端能诚实声明的是
+  **hand-over**（blob 交给了 `vkCreatePipelineCache`），用例钉的也是它；命中数上报告而不强求（真驱动上会回答）。
 
 ### F5（中）单帧在飞：每帧 `submit` + `fence wait`
 

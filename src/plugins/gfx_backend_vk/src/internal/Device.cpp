@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <span>
@@ -18,6 +19,7 @@
 #include <vine/backend_vk/internal/BarrierPlan.hpp>
 #include <vine/backend_vk/internal/ContentDraw.hpp>
 #include <vine/backend_vk/internal/ContentImages.hpp>
+#include <vine/backend_vk/internal/PipelineCacheFile.hpp>
 #include <vine/backend_vk/internal/ReadbackStaging.hpp>
 #include <vine/backend_vk/internal/WindowSystem.hpp>
 #include <vine/backend_vk/internal/StateMapping.hpp>
@@ -255,6 +257,32 @@ struct Device::Impl {
      */
     MemoryAllocator allocator{};
 
+    /**
+     * @brief The persisted pipeline cache (see PipelineCacheFile): where the HOST said files may live, and what the
+     *        session's file did.
+     *
+     * @details
+     * - THE DIRECTORY COMES FROM `DeviceDesc::cache_directory` and is empty unless a host stated one (or the plugin's
+     *   application data directory was defaulted by its factory). An empty directory is "keep nothing", not a fault.
+     * - THE KEY IS READ FROM THE DEVICE, ONCE, at initialize(): vendor / device / driver / API / `pipelineCacheUUID`,
+     *   which is the identity a pipeline cache is only valid for.
+     * - `cache_books` is the session's answer (see Device::PipelineCacheReport); it is reset when a session starts and
+     *   KEPT when it ends, because the save is part of the ending.
+     */
+    std::filesystem::path cache_directory{};
+    PipelineCacheKey      cache_key{};
+    struct CacheBooks {
+        bool          persisted{ false };
+        bool          discarded{ false };
+        std::uint64_t loaded_bytes{ 0 };
+        std::uint64_t saved_bytes{ 0 };
+        bool          hits_measured{ false };
+        std::uint64_t cache_hits{ 0 };
+        bool          preload_handed{ false };
+        bool          preload_refused{ false };
+    };
+    CacheBooks cache_books{};
+
     /// The sample counts the device's COLOUR and DEPTH attachments both offer, as Vulkan spells them
     /// (`VK_SAMPLE_COUNT_*_BIT`): one target has one sample count, so a count either attachment cannot do is a count
     /// this device cannot build (see `ensureTarget`).
@@ -264,6 +292,10 @@ struct Device::Impl {
     /// `vkCreateRenderPass2`): true from Vulkan 1.2, which is the version that made both core. A device below it still
     /// serves every other shape - only "multisampled AND depth-attached" is refused (see `ensureTarget`).
     bool depth_resolve_supported{ false };
+
+    /// Whether this device answers PIPELINE CREATION FEEDBACK (Vulkan 1.3 or `VK_EXT_pipeline_creation_feedback`): the
+    /// one observable that says a pipeline came out of the persisted cache rather than being compiled again.
+    bool creation_feedback{ false };
 
     /**
      * @brief The device clock: one query pair written around each frame's command buffer (see FrameTiming).
@@ -551,6 +583,12 @@ Device::Device(const DeviceDesc& desc)
   : impl(std::make_unique<Impl>())
 {
     impl->desc = desc;
+    // THE HOST'S DIRECTORY, converted ONCE: vn::String carries UTF-8 bytes, and std::filesystem::path is what the file
+    // work speaks, so the two meet here instead of at every use.
+    if (!desc.cache_directory.empty()) {
+        const std::u8string text = std::u8string(desc.cache_directory.c_str());
+        impl->cache_directory    = std::filesystem::path(text);
+    }
     // THE CREATION INTENT IS ANSWERED BEFORE ANY SESSION EXISTS: `capabilities().presentation` is "does this device
     // present" (see RenderDevice), and a host reads it before it drives a frame. A session that turns out to serve
     // nothing (no surface extension, a window that would not come up) says so when initialize() answers.
@@ -814,6 +852,11 @@ bool Device::initialize()
         return false;
     }
 
+    // THE CHOSEN DEVICE'S PROPERTIES, ONCE: the extension choice below, the pipeline cache's key and the capabilities
+    // all describe the SAME device, so they read one value (see PipelineCacheKey).
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(impl->physical, &properties);
+
     constexpr float         kQueuePriority = 1.0F;
     VkDeviceQueueCreateInfo queue_info{};
     queue_info.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -841,32 +884,51 @@ bool Device::initialize()
     device_info.pQueueCreateInfos    = &queue_info;
     device_info.pEnabledFeatures     = &wanted_features;
 
-    // THE SWAPCHAIN EXTENSION: only when a window is to be served, and only if the device offers it.
-    const char* device_extension_names[1]{ "VK_KHR_swapchain" };
-    if (impl->presentation_wanted) {
-        std::uint32_t available = 0;
-        bool          found     = false;
+    // THE DEVICE EXTENSIONS THIS BACKEND USES, EACH ASKED FOR ONLY IF THE DEVICE OFFERS IT:
+    //  - VK_KHR_swapchain, only when a window is to be served. Without it this device presents nothing: a warning, and
+    //    a device that still runs off-screen frames.
+    //  - VK_EXT_pipeline_creation_feedback, which is WHAT MAKES "the persisted cache helped" ANSWERABLE: the driver says
+    //    per creation whether it was served from the cache (see ContentDraw's hit counter). Vulkan 1.3 made it core,
+    //    so a 1.3 device needs no extension for it. A device with neither reports NO answer, never a zero.
+    bool has_swapchain = false;
+    bool has_creation_feedback = properties.apiVersion >= VK_API_VERSION_1_3;
+    {
+        std::uint32_t                      available = 0;
+        std::vector<VkExtensionProperties> extensions;
         if (vkEnumerateDeviceExtensionProperties(impl->physical, nullptr, &available, nullptr) == VK_SUCCESS && available > 0U) {
-            std::vector<VkExtensionProperties> extensions(available);
-            if (vkEnumerateDeviceExtensionProperties(impl->physical, nullptr, &available, extensions.data()) == VK_SUCCESS) {
-                for (const VkExtensionProperties& extension : extensions) {
-                    if (std::strcmp(extension.extensionName, "VK_KHR_swapchain") == 0) {
-                        found = true;
-                        break;
-                    }
-                }
+            extensions.resize(available);
+            if (vkEnumerateDeviceExtensionProperties(impl->physical, nullptr, &available, extensions.data()) != VK_SUCCESS) {
+                extensions.clear();
             }
         }
-        if (!found) {
+        for (const VkExtensionProperties& extension : extensions) {
+            if (std::strcmp(extension.extensionName, "VK_KHR_swapchain") == 0) {
+                has_swapchain = true;
+            }
+            if (std::strcmp(extension.extensionName, "VK_EXT_pipeline_creation_feedback") == 0) {
+                has_creation_feedback = true;
+            }
+        }
+    }
+    std::vector<const char*> device_extension_names;
+    if (impl->presentation_wanted) {
+        if (has_swapchain) {
+            device_extension_names.push_back("VK_KHR_swapchain");
+        }
+        else {
             reportDiagnostic(DiagnosticSeverity::Warning,
                              DiagnosticCategory::UnsupportedRequest,
                              u8"vk: the device does not offer VK_KHR_swapchain; this device presents nothing");
             impl->presentation_wanted = false;
         }
     }
-    if (impl->presentation_wanted) {
-        device_info.enabledExtensionCount   = 1U;
-        device_info.ppEnabledExtensionNames = device_extension_names;
+    if (has_creation_feedback && properties.apiVersion < VK_API_VERSION_1_3) {
+        device_extension_names.push_back("VK_EXT_pipeline_creation_feedback");
+    }
+    impl->creation_feedback = has_creation_feedback;
+    if (!device_extension_names.empty()) {
+        device_info.enabledExtensionCount   = static_cast<std::uint32_t>(device_extension_names.size());
+        device_info.ppEnabledExtensionNames = device_extension_names.data();
     }
 
     if (vkCreateDevice(impl->physical, &device_info, nullptr, &impl->device) != VK_SUCCESS) {
@@ -898,8 +960,6 @@ bool Device::initialize()
     }
 
     vkGetPhysicalDeviceMemoryProperties(impl->physical, &impl->memory);
-    VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(impl->physical, &properties);
 
     // THE MEMORY POOL COMES FIRST OF EVERYTHING THAT OWNS MEMORY: every resource below - the window's depth image, the
     // attachments, the textures, the streams and the ring - asks it for a slice, and it is the one place that answers
@@ -987,9 +1047,27 @@ bool Device::initialize()
     // takes, and capping that below what the device offers would be an amputation nothing in this backend needs.
     impl->caps.max_color_attachments   = properties.limits.maxColorAttachments;
 
+    // THE PIPELINE CACHE FILE (see PipelineCacheFile): a cache is valid for ONE device and driver identity, so the key
+    // is read here and the file is refused unless it states the same one. A refused file is a slower start, never a
+    // failed session - the next shutdown overwrites it with this session's.
+    impl->cache_books            = Impl::CacheBooks{};
+    impl->cache_key              = PipelineCacheKey::of(properties);
+    std::vector<std::byte>       initial_pipeline_cache;
+    if (!impl->cache_directory.empty()) {
+        PipelineCacheRefusal refusal = PipelineCacheRefusal::Missing;
+        initial_pipeline_cache       = PipelineCacheFile::read(impl->cache_directory, impl->cache_key, refusal);
+        impl->cache_books.persisted    = true;
+        impl->cache_books.loaded_bytes = initial_pipeline_cache.size();
+        impl->cache_books.discarded    = refusal != PipelineCacheRefusal::Ok && refusal != PipelineCacheRefusal::Missing;
+    }
+
     // M2'S CONTENT PATH: the layouts, the descriptor pool and the caches every draw uses. A device that cannot build
     // them is not a device that can draw, so it refuses to come up rather than answering frames with nothing.
-    if (!impl->content.create(impl->device_table, impl->device, impl->allocator, properties.limits.minUniformBufferOffsetAlignment)) {
+    if (!impl->content.create(impl->device_table,
+                              impl->device,
+                              impl->allocator,
+                              properties.limits.minUniformBufferOffsetAlignment,
+                              initial_pipeline_cache)) {
         reportDiagnostic(DiagnosticSeverity::Error,
                          DiagnosticCategory::InitFailed,
                          u8"vk: the content layout / descriptor pool could not be created");
@@ -1002,6 +1080,13 @@ bool Device::initialize()
     // validation error.
     impl->content.setLineWidthLimit(impl->caps.max_line_width);
     impl->content.images().setMaxAnisotropy(impl->caps.max_anisotropy);
+    impl->content.setCreationFeedback(impl->creation_feedback);
+
+    // WHAT THE RECORDER DID WITH THE FILE, recorded where it will outlive the session (see pipelineCacheReport): the
+    // hand-over and any refusal happen ONCE, at creation, and `content.destroy()` is what would erase them.
+    impl->cache_books.hits_measured   = impl->creation_feedback;
+    impl->cache_books.preload_handed  = impl->content.pipelineCachePreloadHanded();
+    impl->cache_books.preload_refused = impl->content.pipelineCachePreloadRefused();
 
     return true;
 }
@@ -1011,6 +1096,17 @@ void Device::shutdown()
     if (impl->device != VK_NULL_HANDLE) {
         // A counted stop: every queue is idle before the objects it recorded against go.
         (void)impl->device_table.vkDeviceWaitIdle(impl->device);
+
+        // THE SESSION'S PIPELINE CACHE GOES TO THE HOST'S DIRECTORY FIRST: `vkGetPipelineCacheData` needs the cache
+        // object, which `content.destroy()` below is about to destroy. A write that fails is a cold start next time,
+        // never a failed shutdown (the file is an optimisation).
+        impl->cache_books.cache_hits = impl->content.pipelineCacheHits();
+        if (!impl->cache_directory.empty()) {
+            const std::vector<std::byte> pipeline_cache = impl->content.pipelineCacheBytes();
+            if (PipelineCacheFile::write(impl->cache_directory, impl->cache_key, pipeline_cache)) {
+                impl->cache_books.saved_bytes = pipeline_cache.size();
+            }
+        }
 
         // Pipelines are keyed by render-pass COMPATIBILITY, so they hold no render-pass handle; destroying the content
         // caches first is still the order that keeps teardown simple (the queue is idle, nothing names them).
@@ -2538,6 +2634,26 @@ Device::ContentCacheCounters Device::contentCacheCounters() const noexcept
 MemoryStats Device::memoryStats() const noexcept
 {
     return impl->allocator.stats();
+}
+
+Device::PipelineCacheReport Device::pipelineCacheReport() const noexcept
+{
+    PipelineCacheReport report{
+        .persisted       = impl->cache_books.persisted,
+        .discarded       = impl->cache_books.discarded,
+        .loaded_bytes    = impl->cache_books.loaded_bytes,
+        .saved_bytes     = impl->cache_books.saved_bytes,
+        .hits_measured   = impl->cache_books.hits_measured,
+        .cache_hits      = impl->cache_books.cache_hits,
+        .preload_handed  = impl->cache_books.preload_handed,
+        .preload_refused = impl->cache_books.preload_refused,
+    };
+    // A HIT MOVES WHILE THE SESSION RUNS, so it is read from the recorder while there is one (the rest of the report is
+    // fixed when it happens and kept in the books, which is what makes it readable after shutdown).
+    if (impl->device != VK_NULL_HANDLE) {
+        report.cache_hits = impl->content.pipelineCacheHits();
+    }
+    return report;
 }
 
 void Device::reportDriverMessage(int severity_flags, const char* text)

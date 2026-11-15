@@ -2,9 +2,11 @@
 
 #include <vine/backend_vk/backend_vk_global.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <vector>
 
 #include <volk.h>
 
@@ -119,16 +121,78 @@ class VN_BACKEND_VK_API ContentDraw final {
      * - Called by the device once its logical device and memory pool exist; on failure nothing is left behind, so the
      *   caller may simply refuse to come up.
      *
-     * @param table             The device's entry points (volk table).
-     * @param device            The logical device.
-     * @param allocator         The device's memory pool (the ring and every stream are slices of it).
-     * @param uniform_alignment `minUniformBufferOffsetAlignment` of the device (0 selects 256, the Vulkan minimum).
+     * @param table               The device's entry points (volk table).
+     * @param device              The logical device.
+     * @param allocator           The device's memory pool (the ring and every stream are slices of it).
+     * @param uniform_alignment   `minUniformBufferOffsetAlignment` of the device (0 selects 256, the Vulkan minimum).
+     * @param pipeline_cache_data A cache a previous session got out of @ref pipelineCacheBytes (empty starts cold).
      * @return true when every layout and the pool exist.
      */
-    [[nodiscard]] bool create(const VolkDeviceTable& table,
-                              VkDevice               device,
-                              MemoryAllocator&       allocator,
-                              std::uint32_t          uniform_alignment);
+    [[nodiscard]] bool create(const VolkDeviceTable&     table,
+                              VkDevice                   device,
+                              MemoryAllocator&           allocator,
+                              std::uint32_t              uniform_alignment,
+                              std::span<const std::byte> pipeline_cache_data = {});
+
+    /**
+     * @brief Gets the pipeline cache's bytes as the device's driver would reload them (empty when there is no cache).
+     *
+     * @details
+     * - THE OTHER HALF OF `create`'s `pipeline_cache_data`: what this session accumulated is read out HERE and handed
+     *   to whoever persists it (the device's PipelineCacheFile). Asking a driver for its cache is not free, so this is
+     *   called once, when a session ends - not per frame.
+     *
+     * @return The blob (`vkGetPipelineCacheData`'s bytes), or empty when the cache could not be created or is empty.
+     */
+    [[nodiscard]] std::vector<std::byte> pipelineCacheBytes() const;
+
+    /**
+     * @brief States whether this device answers `VK_EXT_pipeline_creation_feedback` (core in Vulkan 1.3).
+     *
+     * @details
+     * - THE ONE OBSERVABLE THAT SAYS A CACHE HELPED: with it enabled, every `vkCreateGraphicsPipelines` call reports
+     *   whether the driver served the pipeline from the cache; without it, "the cache is not helping" and "the cache is
+     *   not wired" are indistinguishable from outside. It is a SETTING because the extension is the device's to offer.
+     *
+     * @param on Whether creation feedback is enabled for this device.
+     */
+    void setCreationFeedback(bool on) noexcept;
+
+    /**
+     * @brief Gets how many pipelines the driver reported as served from the cache (see @ref setCreationFeedback).
+     *
+     * @note
+     * - ZERO IS TWO FACTS: "no pipeline came from the cache" and "this device does not report" - the caller reads
+     *   `setCreationFeedback`'s answer to tell them apart (see Device::PipelineCacheReport::hits_measured).
+     *
+     * @return Pipelines created out of the cache this session.
+     */
+    [[nodiscard]] std::uint64_t pipelineCacheHits() const noexcept;
+
+    /**
+     * @brief Answers whether the driver REFUSED the cache a previous session left (see @ref create's initial data).
+     *
+     * @details
+     * - A WELL-KEYED CACHE CAN STILL BE THE DRIVER'S TO REFUSE: our key says "same device", but the blob's own header is
+     *   the driver's, and a corrupt or stale one makes `vkCreatePipelineCache` answer an error. The retry without it is
+     *   what keeps that a slow start instead of a lost session - and THIS FLAG is what tells a report which of the two
+     *   happened. It is also the one device-side fact that proves the preload reached the driver at all.
+     *
+     * @return true when a preloaded cache was refused and the session continued without it.
+     */
+    [[nodiscard]] bool pipelineCachePreloadRefused() const noexcept;
+
+    /**
+     * @brief Answers whether a previous session's cache was HANDED to the driver (`pInitialData` was set).
+     *
+     * @details
+     * - THE FACT THIS BACKEND OWNS. Whether the driver then used it is the driver's to say (`pipelineCacheHits`), and a
+     *   software rasteriser may say nothing; that the bytes reached `vkCreatePipelineCache` is ours to prove, and it is
+     *   what a wiring mistake (a cache read but never passed on) would break.
+     *
+     * @return true when `create` was given a cache and passed it to the driver.
+     */
+    [[nodiscard]] bool pipelineCachePreloadHanded() const noexcept;
 
     /** @brief Destroys every object this recorder owns (idempotent; safe before @ref create). */
     void destroy() noexcept;
