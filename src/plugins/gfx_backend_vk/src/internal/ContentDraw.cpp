@@ -21,7 +21,6 @@ VN_BACKEND_VK_NS_BEGIN
 namespace
 {
 
-using detail::kShadowSampler;
 using detail::kTextureSlots;
 
 /**
@@ -163,72 +162,15 @@ void ContentDraw::writeSlice(const VkDeviceSize                    slice,
     std::memcpy(bytes + scratch.shadowOffset(), &shadow, sizeof(shadow));
 }
 
-void ContentDraw::prepare(const vn::graphics::backend::RenderPassCompatibility& compatibility,
-                          const VkRenderPass                             render_pass,
-                          const std::uint32_t                            color_attachments,
-                          const vn::graphics::DrawDescription&           draw,
-                          const vn::graphics::PassDraw&                  pass,
-                          const vn::graphics::ShaderProgramDescription* default_program,
-                          ContentRefusal* const                          refusal)
-{
-    ContentRefusal  local;
-    ContentRefusal& out = refusal != nullptr ? *refusal : local;
-    out.clear();
-
-    if (!caches.ready() || !scratch.ready() || draw.commands == nullptr) {
-        return;
-    }
-    if (!draw.camera.present) {
-        return; // no view means no draw, and no draw means nothing to build
-    }
-    if (draw.kind != vn::graphics::DrawDescription::Kind::Scene) {
-        out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                   u8"vk.content.wrong_path",
-                   vn::String(u8"vk: a screen draw reached the content path (it has its own recordScreen)"));
-        return;
-    }
-
-    // NO FALLBACK IMAGE, NO DESCRIPTOR SET: a warm-up builds programs, streams and pipelines, and the 1x1 stand-in
-    // and the texture copies are recorded afterwards by preparePass, on the transfer batch prepare() opens for them.
-    for (const vn::graphics::RenderCommand& command : *draw.commands) {
-        ContentCaches::CommandPlan plan;
-        // THE FIRST COMMAND THAT CANNOT BE BUILT IS THE REASON: `refuse` keeps it, so a later one cannot replace it.
-        (void)caches.planCommand(command, pass, default_program, compatibility, render_pass, color_attachments, plan, out);
-    }
-}
-
-void ContentDraw::prepareScreen(const vn::graphics::backend::RenderPassCompatibility& compatibility,
-                                const VkRenderPass                             render_pass,
-                                const std::uint32_t                            color_attachments,
-                                const vn::graphics::DrawDescription&           draw,
-                                const vn::graphics::PassDraw&                  pass,
-                                ContentRefusal* const                          refusal)
-{
-    ContentRefusal  local;
-    ContentRefusal& out = refusal != nullptr ? *refusal : local;
-    out.clear();
-
-    if (!caches.ready() || !scratch.ready()) {
-        return;
-    }
-    if (!draw.camera.present) {
-        return;
-    }
-    ContentCaches::ScreenPlan plan;
-    (void)caches.planScreen(draw, pass, compatibility, render_pass, color_attachments, plan, out);
-}
-
-std::uint64_t ContentDraw::record(VkCommandBuffer                             commands,
-                                  VkRenderPass                                render_pass,
-                                  const vn::graphics::backend::RenderPassCompatibility& compatibility,
-                                  std::uint32_t                               color_attachments,
-                                  int                                         width,
-                                  int                                         height,
-                                  const vn::graphics::DrawDescription&        draw,
-                                  const vn::graphics::PassDraw&               pass,
-                                  const vn::graphics::ShaderProgramDescription* default_program,
-                                  ShadowSource                                shadow,
-                                  ContentRefusal* const                       refusal)
+std::uint64_t ContentDraw::record(VkCommandBuffer                                        commands,
+                                  int                                                    width,
+                                  int                                                    height,
+                                  const vn::graphics::DrawDescription&                   draw,
+                                  const vn::graphics::PassDraw&                          pass,
+                                  const std::span<const ContentCaches::CommandPlan>      plans,
+                                  const std::span<const ContentCaches::ResolvedTextures> textures,
+                                  ShadowSource                                           shadow,
+                                  ContentRefusal* const                                  refusal)
 {
     ContentRefusal  local;
     ContentRefusal& out = refusal != nullptr ? *refusal : local;
@@ -247,15 +189,23 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
                    vn::String(u8"vk: a screen draw reached the content path (it has its own recordScreen)"));
         return 0;
     }
-
-    // THE 1x1 WHITE STAND-IN: prepared outside the render pass by preparePass, so no descriptor a shader might read
-    // is left undefined.
-    vn::String stand_in_why;
-    if (!caches.images().ensureFallback(VK_NULL_HANDLE, &stand_in_why)) {
+    // ONE PLAN PER COMMAND IS THE FRAME HEAD'S CONTRACT (see ContentCaches::CommandPlan): a caller that resolved only
+    // some of them would record a draw nobody resolved, so this call refuses rather than guessing.
+    if (plans.size() < draw.commands->size() || textures.size() < draw.commands->size()) {
+        out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                   u8"vk.content.plan_missing",
+                   vn::String(u8"vk: the frame head did not resolve every command of this drawing call"));
+        return 0;
+    }
+    // THE 1x1 WHITE STAND-IN was made at the frame head (see ContentCaches::resolveTextures), outside the render
+    // pass - the only place its copy is legal. A frame without one binds nothing, so it records nothing.
+    if (draw.commands->empty()) {
+        return 0; // nothing named, nothing drawn (not a refusal: the call is simply empty)
+    }
+    if (textures.front().fallback_view == VK_NULL_HANDLE) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    u8"vk.content.stand_in_missing",
-                   stand_in_why.empty() ? vn::String(u8"vk: the 1x1 stand-in every absent texture slot binds could not be made")
-                                        : std::move(stand_in_why));
+                   vn::String(u8"vk: the 1x1 stand-in every absent texture slot binds could not be made"));
         return 0;
     }
 
@@ -295,12 +245,14 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         out.refuse(kind, code, std::move(text));
     };
 
-    for (const vn::graphics::RenderCommand& command : *draw.commands) {
-        // WHAT THIS COMMAND DRAWS WITH - the same resolution a warm-up runs (see planCommand): program compiled,
-        // streams uploaded, pipeline selected. Without it there is nothing to record.
-        ContentCaches::CommandPlan plan;
-        if (!caches.planCommand(command, pass, default_program, compatibility, render_pass, color_attachments, plan, out)) {
-            continue; // the refusal already names the stage that refused, and the first one is kept
+    for (std::size_t command_index = 0; command_index < draw.commands->size(); ++command_index) {
+        const vn::graphics::RenderCommand&     command  = (*draw.commands)[command_index];
+        const ContentCaches::CommandPlan&      plan     = plans[command_index];
+        const ContentCaches::ResolvedTextures& resolved_textures = textures[command_index];
+        // A COMMAND THE HEAD COULD NOT RESOLVE IS SKIPPED, AND THE HEAD ALREADY SAID WHY (see planCommand): the
+        // drawing call's refusal carries that reason, and a later command still records.
+        if (plan.pipeline == VK_NULL_HANDLE) {
+            continue;
         }
         const vn::graphics::ResolvedCommandState& resolved = plan.resolved;
 
@@ -308,36 +260,18 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         // the program compiled cannot describe two different materials.
         const vn::graphics::MaterialParameters* material_values = plan.material != nullptr ? &plan.material->values() : nullptr;
 
-        // THE SLOTS: upload each COMPLETE texture, bind the rest to the fallback, and state the presence bits the
-        // shading reads. A slot the cache cannot serve is reported and stays absent rather than reading stale bytes.
+        // THE SLOTS: the frame head resolved each one (uploaded view or the stand-in), and the presence bits are the
+        // shading's own switch - a slot the cache could not serve stays absent rather than reading stale bytes.
         std::array<VkDescriptorImageInfo, kTextureSlots> slots{};
         std::uint32_t                                    texture_flags = 0U;
-        for (std::uint32_t slot = 0; slot < kTextureSlots; ++slot) {
-            VkImageView image_view = caches.images().fallbackView();
-            VkSampler   sampler    = caches.images().fallbackSampler();
-            if (material_values != nullptr) {
-                const vn::graphics::TextureSlotBinding& binding = material_values->textures[slot];
-                if (binding.texture != nullptr && binding.texture->isComplete()) {
-                    vn::String        upload_why;
-                    const VkImageView uploaded = caches.images().viewFor(*binding.texture, VK_NULL_HANDLE, &upload_why);
-                    if (uploaded != VK_NULL_HANDLE) {
-                        image_view = uploaded;
-                        const VkSampler authored = caches.images().samplerFor(binding.sampler);
-                        if (authored != VK_NULL_HANDLE) {
-                            sampler = authored;
-                        }
-                        texture_flags |= 1U << slot;
-                    }
-                    else {
-                        refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                               u8"vk.content.material_texture_skipped",
-                               upload_why.empty() ? vn::String(u8"vk: a material texture could not be uploaded") : std::move(upload_why));
-                    }
-                }
+        for (std::uint32_t slot_index = 0; slot_index < kTextureSlots; ++slot_index) {
+            const ContentCaches::SlotBinding& binding = resolved_textures.slots[slot_index];
+            slots[slot_index].sampler     = binding.sampler;
+            slots[slot_index].imageView   = binding.view;
+            slots[slot_index].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            if (binding.present) {
+                texture_flags |= 1U << slot_index;
             }
-            slots[slot].sampler     = sampler;
-            slots[slot].imageView   = image_view;
-            slots[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         }
 
         // THE LIGHTS: the draw's announcement, packed in view space (see LightAbi.hpp's packLightBlock). No
@@ -370,13 +304,14 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
             vn::graphics::packMaterialBlock(*material_values, texture_flags, material_block);
         }
         vn::graphics::VineDrawBlock draw_block{};
-        vn::graphics::packDrawBlock(command.model_matrix, command.opacity, resolved.state.pointSize, draw_block);
+        (void)vn::graphics::packDrawBlock(command.model_matrix, command.opacity, resolved.state.pointSize, draw_block);
         writeSlice(slice, material_block, lights_block, draw_block, shadow_block);
 
-        const VkImageView shadow_view    = shadow.view != VK_NULL_HANDLE ? shadow.view : caches.images().fallbackView();
-        const VkSampler   shadow_sampler = caches.images().samplerFor(kShadowSampler);
-        const VkDescriptorSet content_set =
-            scratch.contentSetFor(slots, shadow_view, shadow_sampler != VK_NULL_HANDLE ? shadow_sampler : caches.images().fallbackSampler());
+        const VkImageView shadow_view    = shadow.view != VK_NULL_HANDLE ? shadow.view : resolved_textures.fallback_view;
+        const VkSampler   shadow_sampler = resolved_textures.shadow_sampler != VK_NULL_HANDLE
+                                               ? resolved_textures.shadow_sampler
+                                               : resolved_textures.fallback_sampler;
+        const VkDescriptorSet content_set = scratch.contentSetFor(slots, shadow_view, shadow_sampler);
         const VkDescriptorSet draw_set    = content_set != VK_NULL_HANDLE ? scratch.drawSetFor() : VK_NULL_HANDLE;
         if (content_set == VK_NULL_HANDLE || draw_set == VK_NULL_HANDLE) {
             refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
@@ -419,38 +354,33 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
                                         sizeof(push),
                                         &push);
 
-        std::vector<VkBuffer>      vertex_buffers;
-        std::vector<VkDeviceSize>  vertex_offsets;
-        const std::size_t          binding_count = plan.streams->streams.size() + (plan.instances != nullptr ? 1U : 0U);
-        vertex_buffers.reserve(binding_count);
-        vertex_offsets.reserve(binding_count);
-        for (const ContentCaches::VertexStream& stream : plan.streams->streams) {
-            vertex_buffers.push_back(stream.buffer);
+        std::vector<VkBuffer>     vertex_buffers;
+        std::vector<VkDeviceSize> vertex_offsets;
+        vertex_buffers.reserve(plan.vertex_streams.size() + (plan.instance_buffer != VK_NULL_HANDLE ? 1U : 0U));
+        vertex_offsets.reserve(vertex_buffers.capacity());
+        for (const VkBuffer stream : plan.vertex_streams) {
+            vertex_buffers.push_back(stream);
             vertex_offsets.push_back(0U);
         }
-        if (plan.instances != nullptr) {
+        if (plan.instance_buffer != VK_NULL_HANDLE) {
             // THE INSTANCE STREAM is the LAST binding, matching the layout `ensureContentPipeline` built for it
             // (one binding, stride of a matrix, input rate INSTANCE).
-            vertex_buffers.push_back(plan.instances->buffer);
+            vertex_buffers.push_back(plan.instance_buffer);
             vertex_offsets.push_back(0U);
         }
         if (!vertex_buffers.empty()) {
             caches.table().vkCmdBindVertexBuffers(commands, 0U, static_cast<std::uint32_t>(vertex_buffers.size()), vertex_buffers.data(), vertex_offsets.data());
         }
 
-        const std::uint32_t instance_count = plan.instances != nullptr ? command.instance_count : 1U;
-        const std::uint32_t first_instance = plan.instances != nullptr ? command.first_instance : 0U;
-        const ContentCaches::IndexStream* indices = nullptr;
-        if (command.primitive_index < plan.streams->indices.size() && plan.streams->indices[command.primitive_index].buffer != VK_NULL_HANDLE) {
-            indices = &plan.streams->indices[command.primitive_index];
-        }
-        if (indices != nullptr) {
-            caches.table().vkCmdBindIndexBuffer(commands, indices->buffer, 0U, VK_INDEX_TYPE_UINT32);
-            caches.table().vkCmdDrawIndexed(commands, indices->count, instance_count, 0U, 0, first_instance);
+        const std::uint32_t instance_count = plan.instance_buffer != VK_NULL_HANDLE ? command.instance_count : 1U;
+        const std::uint32_t first_instance = plan.instance_buffer != VK_NULL_HANDLE ? command.first_instance : 0U;
+        if (plan.index_buffer != VK_NULL_HANDLE) {
+            caches.table().vkCmdBindIndexBuffer(commands, plan.index_buffer, 0U, VK_INDEX_TYPE_UINT32);
+            caches.table().vkCmdDrawIndexed(commands, plan.index_count, instance_count, 0U, 0, first_instance);
             ++recorded;
         }
-        else if (plan.streams->vertex_count > 0U) {
-            caches.table().vkCmdDraw(commands, plan.streams->vertex_count, instance_count, 0U, first_instance);
+        else if (plan.vertex_count > 0U) {
+            caches.table().vkCmdDraw(commands, plan.vertex_count, instance_count, 0U, first_instance);
             ++recorded;
         }
         else {
@@ -462,17 +392,16 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
     return recorded;
 }
 
-std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                             commands,
-                                        VkRenderPass                                render_pass,
-                                        const vn::graphics::backend::RenderPassCompatibility& compatibility,
-                                        std::uint32_t                               color_attachments,
-                                        int                                         width,
-                                        int                                         height,
-                                        const vn::graphics::DrawDescription&        draw,
-                                        const vn::graphics::PassDraw&               pass,
-                                        ScreenSource                                source,
-                                        ShadowSource                                shadow,
-                                        ContentRefusal* const                       refusal)
+std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                            commands,
+                                        int                                        width,
+                                        int                                        height,
+                                        const vn::graphics::DrawDescription&       draw,
+                                        const vn::graphics::PassDraw&              pass,
+                                        const ContentCaches::ScreenPlan&           plan,
+                                        const ContentCaches::ResolvedTextures&     textures,
+                                        ScreenSource                               source,
+                                        ShadowSource                               shadow,
+                                        ContentRefusal* const                      refusal)
 {
     ContentRefusal  local;
     ContentRefusal& out = refusal != nullptr ? *refusal : local;
@@ -491,18 +420,14 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
                    vn::String(u8"vk: a screen draw named no source target, so there is nothing to sample"));
         return 0;
     }
-    vn::String stand_in_why;
-    if (!caches.images().ensureFallback(VK_NULL_HANDLE, &stand_in_why)) {
+    if (textures.fallback_view == VK_NULL_HANDLE) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    u8"vk.content.stand_in_missing",
-                   stand_in_why.empty() ? vn::String(u8"vk: the 1x1 stand-in every absent texture slot binds could not be made")
-                                        : std::move(stand_in_why));
+                   vn::String(u8"vk: the 1x1 stand-in every absent texture slot binds could not be made"));
         return 0;
     }
-
-    // THE PROGRAM AND THE PIPELINE - the same resolution a warm-up runs (see planScreen).
-    ContentCaches::ScreenPlan plan;
-    if (!caches.planScreen(draw, pass, compatibility, render_pass, color_attachments, plan, out)) {
+    // THE HEAD'S REFUSAL IS THE DRAW'S REFUSAL: a plan without a pipeline was already reported by the frame loop.
+    if (plan.pipeline == VK_NULL_HANDLE) {
         return 0;
     }
     const vn::graphics::ResolvedCommandState& resolved = plan.resolved;
@@ -533,10 +458,10 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
     // THE SLOTS: binding N is the source's attachment N; a binding past the source's count reads the fallback (a
     // screen program only declares the bindings its own ABI states, so nothing reads them).
     std::array<VkDescriptorImageInfo, kTextureSlots> slots{};
-    for (std::uint32_t slot = 0; slot < kTextureSlots; ++slot) {
-        slots[slot].sampler     = caches.images().fallbackSampler();
-        slots[slot].imageView   = slot < source.views.size() ? source.views[slot] : caches.images().fallbackView();
-        slots[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    for (std::uint32_t slot_index = 0; slot_index < kTextureSlots; ++slot_index) {
+        slots[slot_index].sampler     = textures.fallback_sampler;
+        slots[slot_index].imageView   = slot_index < source.views.size() ? source.views[slot_index] : textures.fallback_view;
+        slots[slot_index].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
     vn::graphics::VineLightsBlock lights_block{};
@@ -564,11 +489,9 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
     }
     writeSlice(slice, vn::graphics::VineMaterialBlock{}, lights_block, vn::graphics::VineDrawBlock{}, shadow_block);
 
-    const VkImageView shadow_view    = shadow.view != VK_NULL_HANDLE ? shadow.view : caches.images().fallbackView();
-    const VkSampler   shadow_sampler = caches.images().samplerFor(kShadowSampler);
-    const VkDescriptorSet set        = scratch.screenSetFor(slots,
-                                                          shadow_view,
-                                                          shadow_sampler != VK_NULL_HANDLE ? shadow_sampler : caches.images().fallbackSampler());
+    const VkImageView shadow_view    = shadow.view != VK_NULL_HANDLE ? shadow.view : textures.fallback_view;
+    const VkSampler   shadow_sampler = textures.shadow_sampler != VK_NULL_HANDLE ? textures.shadow_sampler : textures.fallback_sampler;
+    const VkDescriptorSet set        = scratch.screenSetFor(slots, shadow_view, shadow_sampler);
     if (set == VK_NULL_HANDLE) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    u8"vk.content.descriptor_set_missing",

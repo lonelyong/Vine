@@ -265,10 +265,19 @@
   拆除顺序是 scratch → caches → allocator → device（`P8` 的同一族规则）。set 缓存的淘汰用 `frame_index` 而不是锁：
   它只属于自己的驱动者。
 - **代价（如实）**：`ContentDraw` 的 `record` 每帧多一次指针间接（两个借用引用），换来的是“谁拥有帧内状态”可以一行
-  指向一个对象。**锁计数（T3）没在这一步做**：单会话没有第二个读者，现在加锁只会是死机制（`G8`）；它在 S4 的
-  `ResidenceTable` 引入 owner / competitor 时落地，那里“稳态帧 0 次获取”才有意义。
-- **观察点**：`Device::contentCacheCounters()` 现在由两半拼成——ring / set 数字来自设备**自己那个驱动者**的
-  `FrameScratch`，其余来自 `caches.progress()`。单会话语义与拆分前逐值相同（`test_vk` 103/103）。
+  指向一个对象。
+- **锁与帧首快照（S6c-1，已落地）**：`ContentCaches` 有一把**自己的锁**（`ContentCaches::Lock`，不可重入），帧只在**帧首**取它
+  一次：`planCommand` / `planScreen` / `resolveTextures` 把每一调用要画的东西（pipeline、顶点/索引/实例 buffer 句柄、
+  材质、纹理 view/sampler、阴影 sampler）**按值**写进 `CommandPlan` / `ResolvedTextures`，纹理上传也在帧首录进帧自己的
+  命令缓冲（render pass 之外，唯一合法的地方）。**记录路径此后不取锁、不碰缓存条目**；条目被替换/释放时旧对象**park 到
+  水位**，所以“帧首解析过的值”在整帧内有效（`G10`）。`Lock&` 参数把“我持锁”变成编译期证据（`G4`）。
+- **观察点（T3 的准确形式）**：`Device::contentCacheCounters().cache_lock_acquisitions` 是累计获取次数。一整帧固定 **4 次**
+  （帧首 1 + 帧首/帧尾两次内容数簿各 1（`ContentCaches::numbers()` 一次读两半）+ `endFrame` 1），**不随 draw 数增长**；
+  设计里“稳态帧 0 次”指的是**记录路径**，帧首的 1 次是 §2.3 自己写的机制（见 `graphics-sessions.md` §8 T3 的订正）。
+  `VkFrameHeadTest.AFramesCacheWorkDoesNotGrowWithItsDrawingCalls` 用 1 条 vs 6 条命令比较同一个数；把记录路径改回
+  逐 draw 取锁会让它变红（实测 6 → 10）。
+- **观察点（另一半）**：`Device::contentCacheCounters()` 由两半拼成——ring / set 数字来自设备**自己那个驱动者**的
+  `FrameScratch`，其余来自 `caches.numbers()`。单会话语义与拆分前逐值相同（`test_vk` 全绿，`BackendParityTest` 12/12）。
 
 ### 2.17 驻留三态：一个键只有一个发布者（`G1` / `G4` / `G10`）
 
@@ -697,9 +706,11 @@
 - M0–M13 全部落地；审查项 F1/F2/F4/F7/F8/F12 已落地，审查 F5/F9/F10/F11/F13 按 §1.3 保留。
 - **T48 进度**：S1（释放走队列）、S2a/S2b（帧机器与帧体进 `Device::Session`）、S3（`ContentCaches` + `FrameScratch`
   分家，§2.16）、S4（`ResidenceTable` 三态状态机，§2.17）、S5（`TargetClaims` 租约 + 帧/预热接线，§2.18）、
-  S6a（SDK 会话接缝 + 引擎持有驱动者 + 默认程序归会话）、S6b（多驱动者 + 设备串行帧体）已落地；
-  S6c（真并行：帧首快照 / 条目活到水位 / R6 非阻塞释放）与 S7–S9 见 `.ai/design/graphics-sessions.md` §9.3。
-- `test_vk` **127 例 / 33 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **556**、`test_graphics` **587**；
+  S6a（SDK 会话接缝 + 引擎持有驱动者 + 默认程序归会话）、S6b（多驱动者 + 设备串行帧体）、
+  S6c-1（帧首快照：记录路径零锁、计划按值、条目 park 到水位）已落地；
+  S6c-2（真并行：去掉帧体锁 / 帧首快照的其余半边 / R6 非阻塞释放的接线测试）与 S7–S9 见
+  `.ai/design/graphics-sessions.md` §9.3。
+- `test_vk` **128 例 / 34 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **556**、`test_graphics` **587**；
   Debug 全量 ctest **32/32**；`BackendParityTest` **12/12**。
 - **一条构建教训**：SDK 的虚表改动后，**动态插件必须一起重建**（旧 `.so` 让 `VsgBackendPluginTest` 段错误）。
 - 实测（lavapipe，真实宿主）：11 pass / 10 draw，稳态中位 **8.24 ms**，GPU **7.15–7.74 ms**；ring + set 缓存改动

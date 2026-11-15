@@ -2,9 +2,11 @@
 
 #include <vine/backend_vk/backend_vk_global.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -16,6 +18,7 @@
 #include <vine/Buffer.hpp>
 #include <vine/String.hpp>
 #include <vine/backend_vk/internal/ContentAbi.hpp>
+#include <vine/backend_vk/internal/ContentImages.hpp>
 #include <vine/backend_vk/internal/ContentRefusal.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/backend_vk/internal/ProgramVariant.hpp>
@@ -27,8 +30,6 @@
 #include <vine/graphics/backend/RetirementQueue.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
-
-class ContentImages;
 
 /**
  * @brief What the device builds for content and keeps between frames: compiled programs, uploaded streams, pipelines,
@@ -44,8 +45,13 @@ class ContentImages;
  *   `FrameScratch`'s, one per driver, because mixing two frames' slices is a correctness problem while sharing a
  *   compiled pipeline is the point (see `.ai/design/graphics-sessions.md` §3.1.3).
  * - THE PLANNER IS HERE, NOT IN THE RECORDER. `planCommand` / `planScreen` answer what a drawing call builds with
- *   (program, streams, pipeline, resolved state) and nothing else: the warm-up (`prepare`) and the recording
- *   (`record`) run the SAME resolution, so a frame cannot ask for something the warm-up would not have built.
+ *   (program, streams, pipeline, resolved state) and nothing else: the warm-up and the frame head run the SAME
+ *   resolution, so a frame cannot ask for something the warm-up would not have built - and the answers CROSS the seam
+ *   as values (`CommandPlan`), which is what lets the recording path take no lock.
+ * - ONE LOCK, ONE OWNER OF THE HOT PATH (`G10`). The tables are edited only at a frame head or by a host verb; a frame
+ *   holds `Lock` while it resolves everything it will draw, and `record` / `recordScreen` then work from the values in
+ *   the plan. The lock's acquisitions are counted (`lockAcquisitions`), which is how a test states "a frame's cache
+ *   cost does not grow with its drawing calls".
  * - RELEASE IS A TWO-PART ANSWER. An announced release forgets the entry NOW (so residency numbers answer the
  *   question they are asked and the next frame uploads again) while the Vulkan objects park on the device's
  *   completion watermark (`setRetirement`) until no submitted frame can still name them. Without a queue they are
@@ -53,10 +59,11 @@ class ContentImages;
  * - MEMORY MODEL. Streams and staging copies live in host-visible coherent memory; the residency step (M6) is what
  *   moves streams to device-local memory behind one copy.
  *
- * @warning Before step S6 (public `createSession()`) this type is driven by ONE session at a time: there is no lock
- *          yet, because there is no second reader yet. `Progress` is a snapshot, not a synchronisation point.
+ * @warning The lock is NOT recursive: a verb that takes `Lock&` must be called with the frame's hold, and a verb that
+ *          takes its own lock (a release, `endFrame`, the progress readers) must not be called while a hold is alive.
+ *          The rule is enforced by the signatures, not by a runtime check.
  *
- * @see `ContentDraw` (the recorder that consumes the answers), `FrameScratch` (the frame's own half).
+ * @see `ContentDraw` (the recorder that consumes the plans), `FrameScratch` (the frame's own half).
  */
 class VN_BACKEND_VK_API ContentCaches final {
   public:
@@ -112,26 +119,105 @@ class VN_BACKEND_VK_API ContentCaches final {
         std::uint64_t revision{ 0 }; // The Buffer revision the bytes came from.
     };
 
-    /// @brief What one scene drawing call needs before any command can be recorded.
-    ///
-    /// @details
-    /// - THE ONE RESOLUTION the recorder and the warm-up share: "what does this command draw with" is answered by
-    ///   `planCommand` once, so a warm-up cannot build something the frame would not ask for (and vice versa).
+    /**
+     * @brief What one scene command draws with, COPIED as values when the frame head resolves it.
+     *
+     * @details
+     * - A PLAN IS A VALUE, NOT A VIEW INTO THE CACHE (`G4`). Everything here was true when the caches were asked (the
+     *   buffers, the pipeline, the state); a release or a replacement that lands while the frame records cannot change
+     *   what this frame already resolved, and the objects the values name are parked until the device's watermark (see
+     *   `releaseLater`), so they stay valid for the frame that copied them.
+     * - `pipeline == VK_NULL_HANDLE` means "this command cannot be recorded": the head already stated why in the
+     *   drawing call's `ContentRefusal`, and the recorder skips exactly this command.
+     * - THE ONE RESOLUTION the recorder and the warm-up share: "what does this command draw with" is answered by
+     *   `planCommand` once, so a warm-up cannot build something the frame would not ask for (and vice versa).
+     */
     struct CommandPlan {
-        ProgramEntry*                        program{ nullptr };
-        GeometryEntry*                       streams{ nullptr };
-        vn::graphics::MaterialDescriptionPtr material{};        // the material it is shaded with, or null (defaults)
-        InstanceStream*                      instances{ nullptr }; // the instance stream it reads, or null
-        ProgramVariant                       variant{};          // what the program was compiled under
         VkPipeline                           pipeline{ VK_NULL_HANDLE };
+        vn::graphics::MaterialDescriptionPtr material{};       // the material it is shaded with, or null (defaults)
+        ProgramVariant                       variant{};        // what the program was compiled under
         vn::graphics::ResolvedCommandState   resolved{};
+        std::vector<VkBuffer>                vertex_streams{}; // the geometry's non-empty channels, in binding order
+        std::uint32_t                        vertex_count{ 0 };
+        VkBuffer                             instance_buffer{ VK_NULL_HANDLE }; // the LAST binding, or null
+        VkBuffer                             index_buffer{ VK_NULL_HANDLE };    // this command's primitive, or null
+        std::uint32_t                        index_count{ 0 };
     };
 
-    /// @brief What one screen drawing call needs before it can be recorded.
+    /// @brief What one screen drawing call draws with (see @ref CommandPlan for why it is a value).
     struct ScreenPlan {
-        ProgramEntry*                    fragment{ nullptr };
-        VkPipeline                       pipeline{ VK_NULL_HANDLE };
+        VkPipeline                         pipeline{ VK_NULL_HANDLE };
         vn::graphics::ResolvedCommandState resolved{};
+    };
+
+    /// @brief One texture slot as the frame head resolved it: the view and the sampler it is read with.
+    struct SlotBinding {
+        VkImageView view{ VK_NULL_HANDLE };    ///< The uploaded image's view, or the 1x1 stand-in.
+        VkSampler   sampler{ VK_NULL_HANDLE };
+        bool        present{ false };          ///< Whether the material really names this slot (the shading's bit).
+    };
+
+    /**
+     * @brief The texture side of one drawing call, resolved at the frame head.
+     *
+     * @details
+     * - RESOLVED BEFORE THE RENDER PASS BEGINS, because a texture upload records a buffer-to-image copy and an image
+     *   barrier, neither of which is legal inside a render pass instance (the same rule @ref preparePass states for the
+     *   warm-up path). The copies land on the frame's own command buffer, ahead of every pass.
+     * - `fallback_*` and `shadow_sampler` are frame-wide values the recorder would otherwise ask the image cache for
+     *   once per draw; resolving them once is what lets the recording path touch no cache at all.
+     */
+    struct ResolvedTextures {
+        std::array<SlotBinding, detail::kTextureSlots> slots{};
+        VkImageView                            fallback_view{ VK_NULL_HANDLE };
+        VkSampler                              fallback_sampler{ VK_NULL_HANDLE };
+        VkSampler                              shadow_sampler{ VK_NULL_HANDLE };
+    };
+
+    /**
+     * @brief THE CACHE'S ONE LOCK, held while a frame head resolves its content or a host verb edits the caches.
+     *
+     * @details
+     * - WHY A PROOF TYPE AND NOT A PLAIN `std::unique_lock`: every verb that reads or writes the tables takes a
+     *   `Lock&`, so "I am holding the cache lock" is enforced by the compiler at the call site instead of by a
+     *   comment (`G4`). The lock is acquired through @ref lock, which counts the acquisition - the witness a test uses
+     *   to show that a frame's cost does not grow with its drawing calls.
+     * - A FRAME HOLDS IT ONCE, at its head: `planCommand` / `planScreen` / `resolveTextures` run there, and everything
+     *   the recording path needs afterwards is a value (see @ref CommandPlan).
+     * - HOST VERBS (release, progress, `endFrame`) take it internally: they are announcements, not frame work.
+     *
+     * @warning Not recursive. Holding one and calling a verb that takes its own lock (for example @ref releaseGeometry)
+     *          is a deadlock, so a verb that needs the caches takes `Lock&` and a verb that owns one does not.
+     */
+    class Lock final {
+      public:
+        /** @brief Takes over @p other's hold. */
+        Lock(Lock&& other) noexcept = default;
+
+        /** @brief Releases any hold this object had, then takes over @p other's. */
+        Lock& operator=(Lock&& other) noexcept = default;
+
+        Lock(const Lock&)            = delete;
+        Lock& operator=(const Lock&) = delete;
+
+        /** @brief Answers whether this object is holding the cache. */
+        [[nodiscard]] explicit operator bool() const noexcept
+        {
+            return held_.owns_lock();
+        }
+
+      private:
+        friend class ContentCaches;
+
+        /** @brief Builds an unheld lock: only the cache itself may hand one out (see @ref lock). */
+        Lock() noexcept = default;
+
+        explicit Lock(std::unique_lock<std::mutex> held) noexcept
+          : held_(std::move(held))
+        {
+        }
+
+        std::unique_lock<std::mutex> held_{};
     };
 
     /**
@@ -213,6 +299,8 @@ class VN_BACKEND_VK_API ContentCaches final {
      *   the table immediately, while the Vulkan objects behind it live until the device's watermark has passed the
      *   frame that could still name them - which is what makes `releaseContent` legal while another session frames.
      * - Pass nulls during teardown: a device that is going away has idled its queue and must destroy, not park.
+     * - IT ALSO HANDS THE SAME PAIR TO THE IMAGE CACHE, so a released texture and a released stream are dated against the
+     *   same evidence rather than two clocks that could disagree.
      *
      * @param retirement The device's park queue (borrowed; null destroys immediately).
      * @param timeline   The clock the park is dated against (borrowed; null destroys immediately).
@@ -293,12 +381,40 @@ class VN_BACKEND_VK_API ContentCaches final {
     [[nodiscard]] std::vector<std::byte> pipelineCacheBytes() const;
 
     /** @brief Gets the numbers (see Progress). */
-    [[nodiscard]] Progress progress() const noexcept;
+    [[nodiscard]] Progress progress() const;
 
-    /** @brief Gets the sampled-image cache these caches prepare. */
-    [[nodiscard]] ContentImages& images() noexcept;
-    /** @brief Gets the image cache for a reader that only reports on it (see the mutable overload). */
-    [[nodiscard]] const ContentImages& images() const noexcept;
+    /** @brief Gets the sampled-image cache's numbers (see ContentImages::Progress). */
+    [[nodiscard]] ContentImages::Progress imageProgress() const;
+
+    /// @brief Both halves of the content numbers, read under ONE hold (what a frame's books ask for).
+    struct Numbers {
+        Progress                content{}; ///< Streams, programs and pipelines (see @ref Progress).
+        ContentImages::Progress images{};  ///< Sampled images (see ContentImages::Progress).
+    };
+
+    /**
+     * @brief Gets both halves under one acquisition (see @ref Numbers).
+     *
+     * @return The numbers; `content` and `images` describe the same instant.
+     */
+    [[nodiscard]] Numbers numbers() const;
+
+    /**
+     * @brief Sets the largest anisotropy factor the device honours (see ContentImages::setMaxAnisotropy).
+     *
+     * @param max_anisotropy The device's `maxSamplerAnisotropy`, or 1 when the feature is not enabled.
+     */
+    void setMaxAnisotropy(float max_anisotropy) noexcept;
+
+    /** @brief Gets how many times the cache lock was acquired over this device's lifetime (see @ref Lock). */
+    [[nodiscard]] std::uint64_t lockAcquisitions() const noexcept;
+
+    /**
+     * @brief Takes the cache's one lock (see @ref Lock): the frame head holds it while it resolves its content.
+     *
+     * @return The hold; it releases the cache when it goes out of scope.
+     */
+    [[nodiscard]] Lock lock() const;
 
     /**
      * @brief Drops the streams uploaded for @p description, so a later frame uploads them again.
@@ -337,15 +453,62 @@ class VN_BACKEND_VK_API ContentCaches final {
      *
      * @details
      * - A texture upload records image barriers and buffer-to-image copies, and Vulkan forbids both inside a render
-     *   pass instance (`vkCmdCopyBufferToImage` outright, a barrier without a self-dependency). The driver therefore
-     *   calls this once per pass, before `record` / `recordScreen`: the copies land on the command buffer it passes
-     *   in - the frame's own, outside the pass, or the ONE transfer-only buffer a warm-up submits of its own.
-     * - It also creates the 1x1 white fallback every absent slot is bound to, on the first recording that needs it.
+     *   pass instance (`vkCmdCopyBufferToImage` outright, a barrier without a self-dependency). The WARM-UP calls this
+     *   once per pass on its transfer-only batch; the frame path does the same work at its head, through
+     *   @ref resolveTextures, on the frame's own command buffer.
+     * - It also creates the 1x1 white fallback every absent slot is bound to, on the first preparation that needs it.
      *
      * @param commands The command buffer being recorded (outside any render pass).
      * @param draws    The pass' drawing calls (borrowed for the call).
+     * @param held     The cache lock (see @ref Lock).
      */
-    void preparePass(VkCommandBuffer commands, std::span<const vn::graphics::DrawDescription> draws);
+    void preparePass(VkCommandBuffer commands, std::span<const vn::graphics::DrawDescription> draws, const Lock& held);
+
+    /**
+     * @brief Resolves one drawing call's texture bindings, recording every upload that is missing on @p commands.
+     *
+     * @details
+     * - THE FRAME HEAD'S TEXTURE HALF: a slot the material names is uploaded here (the copy is legal only outside a
+     *   render pass, which is where the head runs), and a slot it does not name answers the 1x1 stand-in with
+     *   `present == false`. A texture the cache cannot serve is reported through @p refusal and stays absent.
+     * - The fallback view/sampler and the shadow sampler are filled every time, so the recorder never has to ask the
+     *   image cache for them.
+     *
+     * @param material The material to resolve (its slots are read; null means "no material", everything absent).
+     * @param commands The frame's command buffer (uploads are recorded before any render pass begins).
+     * @param out      Receives the bindings (cleared on entry).
+     * @param refusal  Receives the first reason a texture could not be served (kept when already refused).
+     * @param held     The cache lock (see @ref Lock).
+     */
+    void resolveTextures(const vn::graphics::MaterialDescription* material,
+                         VkCommandBuffer                         commands,
+                         ResolvedTextures&                       out,
+                         ContentRefusal&                         refusal,
+                         const Lock&                                   held);
+
+    /**
+     * @brief Creates (or answers) the 1x1 white image every absent texture slot binds.
+     *
+     * @param commands The command buffer that records its copy (null answers whether one already exists).
+     * @param held     The cache lock (see @ref Lock).
+     * @param why      Receives the reason when the stand-in cannot be built, or null to ignore.
+     * @return true when a fallback view is available.
+     */
+    [[nodiscard]] bool ensureFallback(VkCommandBuffer commands, const Lock& held, vn::String* why);
+
+    /** @brief Gets whether a texture copy was recorded into a command buffer that has not been waited for yet. */
+    [[nodiscard]] bool hasPendingUploads() const;
+
+    /** @brief Destroys the staging buffers of every upload recorded SO FAR, leaving the images they fed resident. */
+    void releaseUploadStaging() noexcept;
+
+    /**
+     * @brief Drops @p texture's uploaded image (see ContentImages::releaseTexture).
+     *
+     * @param texture Texture whose image leaves the cache (borrowed; the host keeps the object).
+     * @return true when the cache answered.
+     */
+    [[nodiscard]] bool releaseTexture(const vn::graphics::Texture& texture);
 
     /** @brief Releases the retired texture uploads recorded since the frame opened. */
     void endFrame() noexcept;
@@ -361,6 +524,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param color_attachments How many colour attachments the pass writes.
      * @param plan              Receives what was resolved (untouched when this answers false).
      * @param refusal           Receives the reason a command could not be resolved, with its code and category.
+     * @param held              The cache lock (see @ref Lock).
      * @return true when the command can be recorded.
      */
     [[nodiscard]] bool planCommand(const vn::graphics::RenderCommand&                     command,
@@ -370,7 +534,8 @@ class VN_BACKEND_VK_API ContentCaches final {
                                    VkRenderPass                                           render_pass,
                                    std::uint32_t                                          color_attachments,
                                    CommandPlan&                                           plan,
-                                   ContentRefusal&                                        refusal);
+                                   ContentRefusal&                                        refusal,
+                                   const Lock&                                            held);
 
     /**
      * @brief Resolves one screen draw's fragment program and pipeline (see @ref planCommand for the shared idea).
@@ -382,6 +547,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param color_attachments How many colour attachments the destination writes.
      * @param plan              Receives what was resolved.
      * @param refusal           Receives the reason the draw could not be resolved, with its code and category.
+     * @param held              The cache lock (see @ref Lock).
      * @return true when the draw can be recorded.
      */
     [[nodiscard]] bool planScreen(const vn::graphics::DrawDescription&                  draw,
@@ -390,7 +556,8 @@ class VN_BACKEND_VK_API ContentCaches final {
                                   VkRenderPass                                           render_pass,
                                   std::uint32_t                                          color_attachments,
                                   ScreenPlan&                                            plan,
-                                  ContentRefusal&                                        refusal);
+                                  ContentRefusal&                                        refusal,
+                                  const Lock&                                            held);
 
   private:
     struct Impl;

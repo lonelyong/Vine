@@ -87,7 +87,12 @@ miss"两处协调。
   占帧预算的十万分之一；这个数字比"读锁状态机"宾服得多。
 - **边界：miss 仍要锁。** 快照里状态为 `Absent` 的条目要在帧内建：建**必须在独占锁下**把条目以
   `Uploading(owner, token)` 发布出去（§2.4），并把句柄记回会话本地的表。所以"零锁"的准确说法是：
-  **稳态（无 miss）帧零锁；miss 帧只在 miss 上付费**。
+  **记录路径零锁；帧首一次**。后者是本节开头写的那一次，前者是它的结果——两个数字要分开说，别把它们並成
+  “稳态帧 0 次”（那是记录路径的说法，不是整帧的说法）。
+- **已落地（S6c-1）的实测形状**：`ContentCaches` 的一把锁在**帧首**取一次，`planCommand` / `planScreen` /
+  `resolveTextures` 把结果**按值**交给会话（`CommandPlan` / `ResolvedTextures`），纹理上传也在帧首录进帧命令缓冲；
+  `record` / `recordScreen` 只读这些值。一整帧的获取数固定为 **4**（帧首 1 + 帧首/帧尾数簿各 1 + `endFrame` 1），
+  **不随 draw 数增长**（`VkFrameHeadTest`：1 条 vs 6 条命令同数；变异成逐 draw 取锁后 6 → 10，红）。
 - **管线是例外，但它本来就在 miss 上**：管线键含状态（拓扑 / 混合 / 深度），状态是每命令解析的，
   帧首算不出来——但管线表只在**创建**时写，创建本身就是 ms 级 miss，取一次独占锁不影响结论。
 
@@ -372,7 +377,7 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 |---|---|
 | R1 | `createSession()` 可在 `initialize()` 之前调用。 |
 | R2 | `executor()` 保留，含义是"设备自己的会话"。 |
-| R3 | 稳态帧的设备锁获取次数为 0（有计数器与用例）。 |
+| R3 | 稳态帧的**记录路径**设备缓存锁获取次数为 0（帧首那次除外；整帧次数不随 draw 数增长，有计数器与用例） |
 | R4 | 驻留条目不可变；`Uploading` 不得长期存在（发布或撤回）。 |
 | R5 | 目标重建只由 claim 持有者做。 |
 | R6 | 释放可在别的会话 frame 时调用，且不阻塞到那一帧结束。 |
@@ -388,7 +393,7 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 | N1 | 一个身份只有一个发布者；发布用 compare-and-set。 |
 | N2 | 每个 `Uploading` 条目在帧尾要么 `Resident`，要么回到 `Absent`。 |
 | N3 | 一个目标同一时刻只有一个 claim 持有者。 |
-| N4 | 记录路径上没有设备级锁（`N1`–`N3` 因此不必在热路径上检查）。 |
+| N4 | 记录路径上没有设备级锁（`N1`–`N3` 因此不必在热路径上检查）；帧首那一次是快照的机制，不是热路径 |
 | N5 | 设备丢失对**所有**会话同时成立（共用 `VkDevice`，不是失败分类能分开的）。 |
 | N6 | 能力（`capabilities()`）是设备级只读事实，任意会话任意时刻可问。 |
 
@@ -476,7 +481,7 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 |---|---|---|
 | T1 | 单会话后端行为零变化 | `build/bin/test_graphics`、`test_vsg`（默认 `createSession`） |
 | T2 | `test_vk` 在"只有一个会话"的树上全绿 | `build/bin/test_vk` |
-| T3 | 稳态帧设备锁计数为 0；miss 帧 ≤ miss 数 + 1 | `test_vk` 新用例（计数器） |
+| T3 | 记录路径的缓存锁为 0；整帧获取次数**不随 draw 数增长**（实测 4：帧首 1 + 数簿 2 + 帧尾 1） | `test_vk` `VkFrameHeadTest.AFramesCacheWorkDoesNotGrowWithItsDrawingCalls`（1 条 vs 6 条命令；变异 6 → 10 红） |
 | T4 | 两会话同时首画同一几何：不崩、两图都对、上传 ≤ 2 | `test_vk` 新用例 + 变异（去掉撤回 ⇒ 红） |
 | T5 | 两会话画同一目标：一个 pass 被跳过 + 一条报告 | `test_vk` 新用例 |
 | T6 | 释放与在飞帧重叠：拷贝完成后才销毁，`deviceWaits()` 不涨 | `test_vk` 新用例 + 变异 |
@@ -524,14 +529,24 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   no-op）；`setDefaultContentProgram` 移到 `RenderFrameExecutor`；`RenderEngine` 持 `session_`（借/还，帧与默认程序
   走它）；vk 的默认程序归 `Session`。三套 **556 / 121 / 587** 全绿，变异 1/1 红。**S6b** 才是第二个真实驱动者：
   缓存/分配/提交三把锁（或帧首快照）、`ensureGeometry` 接 `ResidenceTable`、替换路径改 park、T8 并发证据。
-- **未做**：`T48` 的 S3–S9（缓存拆分、驻留三态、目标 claim、公开 `createSession()`、读回独立、vsg、收口）。
+- **已落地**：`T48` 的 **S6c-1（帧首快照）**——`ContentCaches` 有一把不可重入的锁（`ContentCaches::Lock`，`Lock&` 参数把
+  “我持锁”变成编译期证据）；帧只在**帧首**取它一次，`planCommand` / `planScreen` / `resolveTextures` 把 pipeline、
+  顶点/索引/实例 buffer 句柄、材质、纹理 view/sampler **按值**写进 `CommandPlan` / `ResolvedTextures`，纹理上传也
+  在帧首录进帧命令缓冲（render pass 之外，唯一合法处）。`ContentDraw` 只剩记录职责（`prepare`/`prepareScreen` 删除，
+  预热走与帧首相同的 `ContentCaches::planCommand`）。**记录路径不取锁、不碰缓存条目**；instance stream 换代与失败的
+  geometry 子树改 **park** 到水位，所以帧首解析的值整帧有效。观察点：`contentCacheCounters().cache_lock_acquisitions`
+  （整帧固定 4，不随 draw 数增长）。`test_vk` **128/128**（ASan 门禁 PASS），变异（记录路径改回逐 draw 取锁）⇒ 6 → 10 红。
+- **未做**：`T48` 的 **S6c-2**（真并行：去帧体锁 / 条目活到水位 / R6 非阻塞释放 / 目标 map 与图像 staging 按帧归属 /
+  `ResidenceTable` 接 `ensureGeometry` / T6·T8 并行证据）与 S7–S9（读回独立、vsg 的 F9、F10 收口 + TSan）。
 - **一处更正**：ADR 说"vsg 更接近"，准确说法是"vsg 的**窗口**会话已就位，**帧驱动者**仍是设备级单例"
   （§2.1）。这不改变结论，只改变迁移表的分工。
 
 ### 9.2 已知缺口 / 待办
 
 - `DeviceClock::WindowId` 的命名（`D7`）；`SessionId` 先做别名。
-- **T3 的锁计数**：S3 只做了结构性拆分；计数与帧首快照要等 S4 的第一个第二读者（否则是死机制，`G8`）。
+- **T3 已落地（按准确形式）**：S3 只做结构性拆分；S6c-1 让记录路径真的不取锁，计数器是 `
+  contentCacheCounters().cache_lock_acquisitions`，用例是 `VkFrameHeadTest`。整帧 4 次（帧首 1 + 数簿 2 + 帧尾 1），
+  旧的“稳态帧 0 次”指的是记录路径（见 §2.3 与 §8 T3 的订正）。
 ### 9.3 兼容性 / 迁移
 
 **原则：每一步都让树保持绿，每一步都能单独回滚。** 顺序按"先造机制、后公开形状"排。
@@ -567,8 +582,14 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   已起的设备上则当场建）；`releaseSession` 销毁并遗忘（设备自己的驱动者不可归还）。**设备持一把 `frame_mutex`**：会话各持机器，
   但缓存/分配器/队列还没在两条运行中的帧之间成立，所以帧体串行——这正是 `C10` 要求的"做不到就先写串行"。T8（两驱动者不同默认程序、
   各画各的）与 T10（两线程各 N 帧、两图各自正确）已绿；变异 2/2 红。`test_vk` **125/125**（ASan 门禁 PASS）。
-| S6c | **真并行**：帧首快照（记录路径零锁）、驻留条目活到水位（释放不搬走条目）、`releaseContent` 记下每个会话的 submitted
-  （R6：可在别人 frame 时调用且不阻塞到它结束）、`ResidenceTable` 接进 `ensureGeometry`、替换路径改 park、T3/T8 的并行证据 | T3/T6/T8 | 大 |
+| S6c-1 | **帧首快照**：`ContentCaches` 一把锁（`Lock` 参数化）/ 帧首一次 / `CommandPlan`·`ResolvedTextures` **按值** /
+  纹理上传搬到帧首 / 替换路径（instance stream、失败的 geometry）改 park / 锁计数接到 `contentCacheCounters` | T3 | 大 |
+| S6c-1 | **已落地 2026-11-15**：记录路径零锁（`record`/`recordScreen` 不调 `planCommand`，不碰 `images()`）；`ContentDraw`
+  只剩记录职责，计划由帧首/预热统一解析；`test_vk` **128/128**（含 ASan），变异（记录路径变回逐 draw 取锁）⇒ 整帧获取数
+  6 → 10，`VkFrameHeadTest` 红 | T3 | 大 |
+| S6c-2 | **真并行**：去掉帧体锁；驻留条目活到水位（`shared_ptr`/引用计数或开放帧持有水位）；`releaseContent` 记下每个会话的
+  submitted（R6：可在别人 frame 时调用且不阻塞到它结束）；`ResidenceTable` 接进 `ensureGeometry`；目标 map 快照与图像
+  staging 按帧归属；T6/T8 的并行证据 | T6/T8/T10 | 大 |
 | S7 | F7 读回独立化 | T7 | 低 |
 | S8 | vsg 的 F9（搬收集暂存 + 缓存加锁/快照） | T9 | 中 |
 | S9 | F10 收口 + TSan + 文档 | T11、T12 | 低 |
@@ -576,6 +597,9 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 **S6 是唯一改变并发语义的一步**：在它之前，两个会话只存在于单元用例里；S6a/S6b 之后，两个引擎各有自己的驱动者、
 可以同时**调用**，但设备把**帧体**串行化（缓存/分配/队列的锁与帧首快照是 S6c）。所以 S1–S5 的验收标准都是"单会话行为不变"；
 S6b 由 T8/T10 承担"两个驱动者各自正确"的证据，S6c 才承担"时间上重叠"的证据。
+**S6c 又分两半（D8）**：S6c-1（已落地）交付帧首快照与锁——记录路径不再碰缓存，替换对象一律 park，所以“帧首解析的值
+在整帧内有效”成为机制而不是假设；它仍**不**声称时间重叠。S6c-2 才是把帧体锁拿掉、把条目寿命与释放接到水位上、
+把目标 map 与图像 staging 按帧归属——那些每一条都是“两个帧体同时在飞”的直接前提，没做到就不该先删锁。
 **S1 已落地（与历史估计的一处差异）**：释放是**两件事**，而不是一件。缓存表**立刻**忘掉条目（所以`ResidencyLedger`、`progress().streams_live` 的数字照旧立即下降，下一帧重传），而 GPU 对象在
 集合队列里等水位——一个 slot 时是 `submitted + 2`，即**最多两帧后**才销毁。新的观察点是
 `Device::retirementNumbers()`（`pending` / `released` / `device_waits`），而不是驻留账。两帧不是 bug：它是

@@ -336,3 +336,71 @@ TEST(VkDeviceClockTest, AFrameReportsItsDeviceTime)
     backend->shutdown();
     EXPECT_FALSE(backend->frameReport().timing.has_value()) << "a device that is down keeps no clock";
 }
+
+TEST(VkFrameHeadTest, AFramesCacheWorkDoesNotGrowWithItsDrawingCalls)
+{
+    // THE FRAME HEAD IS THE ONLY PLACE A FRAME CONSULTS THE DEVICE'S CACHES (S6c-1): a steady frame resolves every
+    // program, stream, pipeline and texture slot under ONE hold, and the recording path then works from values (see
+    // ContentCaches::CommandPlan). The witness is the cache's own acquisition counter: if a later edit goes back to
+    // resolving per drawing call, the delta below grows with the number of commands and this case fails.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr) << "the registry hands out the vk backend this case is about";
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget();
+    const intrusive_ptr<ShaderProgram> program  = makeProgram();
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+    const intrusive_ptr<Material>      material = intrusive_ptr<Material>(new Material());
+    material->setBaseColor(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+
+    const auto make_commands = [&](std::size_t count) {
+        std::vector<RenderCommand> commands;
+        commands.reserve(count);
+        for (std::size_t index = 0; index < count; ++index) {
+            RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+            command.program              = program;
+            command.program_description  = program->description();
+            command.material             = material;
+            command.material_description = material->description();
+            commands.push_back(std::move(command));
+        }
+        return std::make_shared<const std::vector<RenderCommand>>(std::move(commands));
+    };
+
+    const FrameDescription one_command = drawingFrame(target.get(), make_commands(1));
+    const FrameDescription six_commands = drawingFrame(target.get(), make_commands(6));
+
+    // FRAME ONE: every identity is a MISS (compile, upload, pipeline). The misses are built inside the head's one
+    // hold, so they cost the same acquisitions a steady frame does.
+    const std::uint64_t before_first = device->contentCacheCounters().cache_lock_acquisitions;
+    (void)backend->executeFrame(one_command, nullptr);
+    const std::uint64_t after_first = device->contentCacheCounters().cache_lock_acquisitions;
+    const std::uint64_t first_delta = after_first - before_first;
+
+    // FRAME TWO: one drawing call, STEADY (nothing to build).
+    const std::uint64_t before_steady = device->contentCacheCounters().cache_lock_acquisitions;
+    (void)backend->executeFrame(one_command, nullptr);
+    const std::uint64_t steady_delta = device->contentCacheCounters().cache_lock_acquisitions - before_steady;
+
+    // FRAME THREE: the same pass, SIX times the drawing commands. The recording path takes no lock, so the frame head's
+    // cost must be identical - this is the assertion "one hold per frame" is shortened to.
+    const std::uint64_t before_six = device->contentCacheCounters().cache_lock_acquisitions;
+    (void)backend->executeFrame(six_commands, nullptr);
+    const std::uint64_t six_delta = device->contentCacheCounters().cache_lock_acquisitions - before_six;
+
+    EXPECT_EQ(six_delta, steady_delta) << "the cache work grew with the number of drawing commands";
+    EXPECT_EQ(first_delta, steady_delta) << "a frame with misses paid the cache more than a steady one";
+    EXPECT_LE(six_delta, 8U) << "the per-frame cache work is the head plus the two book reads and the frame end";
+
+    // AND THE SIX-COMMAND FRAME REALLY DREW: a cheaper head must not have been bought by skipping the picture.
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
+    EXPECT_EQ(pixelAt(pixels, kTargetSize / 2, kTargetSize / 2), (std::array<int, 4>{ 255, 0, 0, 255 }));
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+    backend->shutdown();
+}

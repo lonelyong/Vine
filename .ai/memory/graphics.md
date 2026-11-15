@@ -159,6 +159,15 @@
   `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
   ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
   别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
+- **S6c-1 已落地（2026-11-15，T48 第六步 c 的上半，帧首快照）**：设备缓存有了**唯一一把锁**（`ContentCaches::Lock`，
+  不可重入；`Lock&` 参数把"我持锁"变成编译期证据），帧只在**帧首**取一次：`planCommand`/`planScreen`/`resolveTextures`
+  把 pipeline、顶点/索引/实例 buffer 句柄、材质、纹理 view/sampler **按值**写进 `CommandPlan`/`ResolvedTextures`，
+  纹理上传也在帧首录进帧命令缓冲；`record`/`recordScreen` 只读这些值。观察点：`contentCacheCounters().cache_lock_acquisitions`
+  ——整帧固定 **4**（帧首 1 + 数簿 2 + `endFrame` 1），**不随 draw 数增长**；`VkFrameHeadTest` 1 条 vs 6 条命令同数，
+  变异（记录路径逐 draw 取锁）⇒ 6 → 10 红。三条教训：①**计划必须是值**——计划里存缓存条目指针，一旦"释放可以在帧中
+  插进来"就是寿命缺陷；②**纹理上传只能在帧首**（render pass 里录 copy/barrier 非法），所以 `preparePass` 只留给预热；
+  ③**不可重入锁**要求"要么收 `Lock&`、要么自己取"二分清楚——`progress()` 与 `imageProgress()` 各自取锁，所以帧里的
+  数簿改用一次读两半的 `numbers()`，否则在持锁路径上调它们就是死锁。
 - **S6b 补齐（2026-11-15）：宿主动词也上同一把设备锁**。多驱动者之后"帧之间"不再是宿主能命名的时刻，所以
   `readColorBuffer` / `readDepthBuffer` / `releaseContent` ×3 / `releaseRenderTarget` / `setDefaultContentProgram` /
   `setRenderTarget` / `createSurfaceTarget` / `setMemoryBlockCreator` / 诊断读取全部取 `Impl::frame_mutex`：可能等待

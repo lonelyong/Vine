@@ -57,6 +57,11 @@ VN_BACKEND_VK_NS_BEGIN
  *          `setDefaultContentProgram`, `releaseRenderTarget`, `createSurfaceTarget`, the diagnostic readers) takes the
  *          same lock: it may WAIT for the body in flight, and it does not race it. `initialize()`/`shutdown()` stay the
  *          creator's calls, made with no frame in flight.
+ *
+ * @note A FRAME CONSULTS THE CACHES ONCE (S6c-1). The frame head resolves every program, stream, pipeline and texture
+ *       upload under one cache hold and keeps the answers as values (`ContentCaches::CommandPlan`); the recording path
+ *       then takes no cache lock and names no cache entry. That is why a texture copy is recorded at the head rather
+ *       than per pass, and why a release announced by another thread can only change what the NEXT frame resolves.
  */
 class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
   public:
@@ -393,6 +398,10 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
         std::uint64_t ring_builds{ 0 }; ///< Uniform rings created, cumulative (one in a steady session).
         std::uint64_t set_builds{ 0 };  ///< Descriptor sets BUILT, cumulative - a cache miss, not a draw.
         std::uint64_t sets_live{ 0 };   ///< Descriptor sets cached NOW.
+        /// CACHE LOCK ACQUISITIONS, cumulative (see ContentCaches::lockAcquisitions). THE WITNESS FOR "THE RECORDING
+        /// PATH TAKES NO CACHE LOCK": a frame resolves its content once at its head, so this number grows with FRAMES
+        /// and with host verbs, never with the drawing calls inside a frame.
+        std::uint64_t cache_lock_acquisitions{ 0 };
     };
 
     /** @brief What the park queue holds: the releases waiting for the frame that could still name them. */

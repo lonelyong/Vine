@@ -38,6 +38,20 @@ using detail::vertexFormatOf;
 } // namespace
 
 struct ContentCaches::Impl {
+    /**
+     * @brief ONE LOCK FOR THE WHOLE CACHE (`G10`): the tables are edited at a frame head or by a host verb, never on the
+     *        recording path - `Lock` (see the header) is the proof a caller holds it.
+     *
+     * @details
+     * - IT GUARDS THE TABLES, THE BOOKS, THE SHARED LAYOUTS' LIFETIME AND THE IMAGE CACHE'S TABLES. The immutable
+     *   projections (`table()`, the layouts, the line width) are set by `create` and read without it: they never change
+     *   while the device is up, and the recording path reads them on every draw.
+     * - THE COUNTER IS ATOMIC SO READING IT DOES NOT NEED THE LOCK: a test asks `lockAcquisitions()` while no frame is
+     *   in flight, and the number must not change the mechanism it measures.
+     */
+    mutable std::mutex          lock{};
+    std::atomic<std::uint64_t>  acquisitions{ 0 };
+
     /// @brief The program cache's key: one TEXT (its identity and revision are the pointer) under one VARIANT.
     struct ProgramKey {
         const vn::graphics::ShaderProgramDescription* description{ nullptr };
@@ -349,7 +363,21 @@ struct ContentCaches::Impl {
         if (entry.buffer != VK_NULL_HANDLE && entry.revision == revision) {
             return &entry;
         }
-        destroyBuffer(entry.buffer, entry.memory); // a new revision replaces the bytes
+        // A NEW REVISION REPLACES THE BYTES, AND THE OLD BUFFER IS PARKED (see releaseLater): a frame that resolved the
+        // previous revision may still be recording, so destroying the buffer here would pull the bytes out from under
+        // a command buffer that has already named it. The plan carries the handle by value, and the park is what keeps
+        // it valid until the device's watermark.
+        if (entry.buffer != VK_NULL_HANDLE) {
+            const VkBuffer    replaced       = entry.buffer;
+            const MemorySlice replaced_memory = entry.memory;
+            entry.buffer = VK_NULL_HANDLE;
+            entry.memory = MemorySlice{};
+            releaseLater([target = this, replaced, replaced_memory]() mutable {
+                VkBuffer    buffer = replaced;
+                MemorySlice memory = replaced_memory;
+                target->destroyBuffer(buffer, memory);
+            });
+        }
         const std::span<const float> floats = buffer.view();
         if (floats.empty()) {
             why = vn::String(u8"vk: an instance stream carries no transforms");
@@ -547,7 +575,34 @@ struct ContentCaches::Impl {
     GeometryEntry* failGeometry(GeometryEntry& entry, vn::String why)
     {
         entry.failed = true;
-        stream_releases_ += destroyGeometryStreams(entry);
+        // THE STREAMS ARE PARKED, NOT DESTROYED: an entry that failed halfway may already have been resolved by a
+        // frame that is still recording (see releaseLater), so the buffers it would name live until the watermark.
+        std::vector<VkBuffer>    buffers;
+        std::vector<MemorySlice> memories;
+        for (VertexStream& stream : entry.streams) {
+            if (stream.buffer != VK_NULL_HANDLE) {
+                buffers.push_back(stream.buffer);
+                memories.push_back(stream.memory);
+                stream.buffer = VK_NULL_HANDLE;
+                stream.memory = MemorySlice{};
+            }
+        }
+        for (IndexStream& stream : entry.indices) {
+            if (stream.buffer != VK_NULL_HANDLE) {
+                buffers.push_back(stream.buffer);
+                memories.push_back(stream.memory);
+                stream.buffer = VK_NULL_HANDLE;
+                stream.memory = MemorySlice{};
+            }
+        }
+        stream_releases_ += static_cast<std::uint32_t>(buffers.size());
+        if (!buffers.empty()) {
+            releaseLater([target = this, buffers = std::move(buffers), memories = std::move(memories)]() mutable {
+                for (std::size_t index = 0; index < buffers.size(); ++index) {
+                    target->destroyBuffer(buffers[index], memories[index]);
+                }
+            });
+        }
         return nullptr;
     }
 
@@ -924,6 +979,7 @@ struct ContentCaches::Impl {
                                    CommandPlan&                                           plan,
                                    ContentRefusal&                                        refusal)
     {
+        plan = CommandPlan{}; // a failure leaves an empty plan: `pipeline == VK_NULL_HANDLE` is what the recorder skips
         const vn::graphics::ShaderProgramDescriptionPtr program =
             pass.program_override_description != nullptr ? pass.program_override_description : command.programDescription();
         const vn::graphics::ShaderProgramDescription* program_description = program != nullptr ? program.get() : default_program;
@@ -1007,11 +1063,18 @@ struct ContentCaches::Impl {
                            pipeline_why.empty() ? vn::String(u8"vk: the content pipeline could not be built") : std::move(pipeline_why));
             return false;
         }
-        plan.program   = compiled;
-        plan.streams   = streams;
-        plan.material  = std::move(material);
-        plan.instances = instances;
-        plan.variant   = variant;
+        plan.material    = std::move(material);
+        plan.variant     = variant;
+        plan.vertex_count = streams->vertex_count;
+        plan.vertex_streams.reserve(streams->streams.size());
+        for (const VertexStream& stream : streams->streams) {
+            plan.vertex_streams.push_back(stream.buffer);
+        }
+        plan.instance_buffer = instances != nullptr ? instances->buffer : VK_NULL_HANDLE;
+        if (command.primitive_index < streams->indices.size()) {
+            plan.index_buffer = streams->indices[command.primitive_index].buffer;
+            plan.index_count  = streams->indices[command.primitive_index].count;
+        }
         return true;
     }
 
@@ -1035,6 +1098,7 @@ struct ContentCaches::Impl {
                                   ScreenPlan&                                            plan,
                                   ContentRefusal&                                        refusal)
     {
+        plan = ScreenPlan{}; // see planCommand: an empty plan is "this draw records nothing"
         // THE PROGRAM'S TEXT: the value the frame carries, else the live program's cached description.
         vn::graphics::ShaderProgramDescriptionPtr fragment_description = draw.program_description;
         if (fragment_description == nullptr && draw.program != nullptr) {
@@ -1086,7 +1150,6 @@ struct ContentCaches::Impl {
                            pipeline_why.empty() ? vn::String(u8"vk: the screen pipeline could not be built") : std::move(pipeline_why));
             return false;
         }
-        plan.fragment = fragment;
         return true;
     }
 
@@ -1135,6 +1198,103 @@ struct ContentCaches::Impl {
         pipelines.clear();
     }
 
+    /**
+     * @brief The content numbers, computed WITH the lock held (the caller owns it; see @c lock).
+     *
+     * @return The numbers (see Progress).
+     */
+    [[nodiscard]] Progress progressLocked() const noexcept
+    {
+        Progress out;
+        out.stream_builds     = stream_builds_;
+        out.stream_bytes      = stream_bytes_;
+        out.stream_releases   = stream_releases_;
+        out.program_builds    = program_builds_;
+        out.pipeline_builds   = created_;
+        out.pipeline_releases = pipeline_releases_;
+        out.pipelines_live    = static_cast<std::uint32_t>(pipelines.size());
+        // LIVE, FROM THE TABLES: a hole a release left has a null buffer and is not resident.
+        for (const auto& [description, entry] : geometries) {
+            (void)description;
+            for (const VertexStream& stream : entry.streams) {
+                if (stream.buffer != VK_NULL_HANDLE) {
+                    ++out.streams_live;
+                    out.stream_bytes_live += stream.bytes;
+                }
+            }
+            for (const IndexStream& stream : entry.indices) {
+                if (stream.buffer != VK_NULL_HANDLE) {
+                    ++out.streams_live;
+                    out.stream_bytes_live += stream.bytes;
+                }
+            }
+        }
+        // The instance streams are streams too: a command that read one paid for its bytes and fills a row of the same
+        // ledger (see ResidencyKind::Streams), so a host release that drops one is visible there like any other.
+        for (const auto& [buffer, entry] : instance_streams) {
+            (void)buffer;
+            if (entry.buffer != VK_NULL_HANDLE) {
+                ++out.streams_live;
+                out.stream_bytes_live += entry.bytes;
+            }
+        }
+        return out;
+    }
+
+    /**
+     * @brief Destroys every Vulkan object and blanks the books (the body of the public @c destroy, called with the lock).
+     *
+     * @details
+     * - ONE IMPLEMENTATION, TWO CALLERS: `create` needs the same teardown at its start and on every failed step, and it
+     *   already holds the lock - calling the public verb there would deadlock a non-recursive mutex (see `Lock`).
+     */
+    void destroyAll() noexcept
+    {
+        // A TEARDOWN DESTROYS, IT DOES NOT PARK: the device has idled its queue before calling this, so nothing can
+        // still name what is about to go - and a park here would outlive the queue that would have run it.
+        retirement = nullptr;
+        timeline   = nullptr;
+        images.setRetirement(nullptr, nullptr);
+        if (device != VK_NULL_HANDLE && table != nullptr) {
+            images.destroy();
+            destroyPipelines();
+            destroyPrograms();
+            destroyGeometries();
+            destroyInstanceStreams();
+            if (pipeline_cache != VK_NULL_HANDLE) {
+                table->vkDestroyPipelineCache(device, pipeline_cache, nullptr);
+                pipeline_cache = VK_NULL_HANDLE;
+            }
+            if (content_pipeline_layout != VK_NULL_HANDLE) {
+                table->vkDestroyPipelineLayout(device, content_pipeline_layout, nullptr);
+                content_pipeline_layout = VK_NULL_HANDLE;
+            }
+            if (screen_pipeline_layout != VK_NULL_HANDLE) {
+                table->vkDestroyPipelineLayout(device, screen_pipeline_layout, nullptr);
+                screen_pipeline_layout = VK_NULL_HANDLE;
+            }
+            for (VkDescriptorSetLayout* layout : { &content_set_layout, &draw_set_layout, &screen_set_layout }) {
+                if (*layout != VK_NULL_HANDLE) {
+                    table->vkDestroyDescriptorSetLayout(device, *layout, nullptr);
+                    *layout = VK_NULL_HANDLE;
+                }
+            }
+        }
+        table             = nullptr;
+        device            = VK_NULL_HANDLE;
+        allocator         = nullptr;
+        screen_vertex     = nullptr;
+        stream_builds_      = 0;
+        stream_bytes_       = 0;
+        stream_releases_    = 0;
+        program_builds_     = 0;
+        pipeline_releases_  = 0;
+        created_            = 0;
+        cache_hits_         = 0;
+        preload_refused_    = false;
+        preload_handed_     = false;
+    }
+
 };
 
 ContentCaches::ContentCaches()
@@ -1154,7 +1314,8 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
                            const std::uint32_t        uniform_alignment,
                            const std::span<const std::byte> pipeline_cache_data)
 {
-    destroy();
+    const Lock held = lock();
+    impl->destroyAll();
     if (device == VK_NULL_HANDLE) {
         return false;
     }
@@ -1198,7 +1359,7 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
     layout_info.bindingCount = 9U;
     layout_info.pBindings    = content_bindings;
     if (impl->table->vkCreateDescriptorSetLayout(impl->device, &layout_info, nullptr, &impl->content_set_layout) != VK_SUCCESS) {
-        destroy();
+        impl->destroyAll();
         return false;
     }
 
@@ -1211,7 +1372,7 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
     layout_info.bindingCount = 1U;
     layout_info.pBindings    = &draw_binding;
     if (impl->table->vkCreateDescriptorSetLayout(impl->device, &layout_info, nullptr, &impl->draw_set_layout) != VK_SUCCESS) {
-        destroy();
+        impl->destroyAll();
         return false;
     }
 
@@ -1240,7 +1401,7 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
     layout_info.bindingCount = 8U;
     layout_info.pBindings    = screen_bindings;
     if (impl->table->vkCreateDescriptorSetLayout(impl->device, &layout_info, nullptr, &impl->screen_set_layout) != VK_SUCCESS) {
-        destroy();
+        impl->destroyAll();
         return false;
     }
 
@@ -1258,7 +1419,7 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
     pipeline_info.pushConstantRangeCount = 1U;
     pipeline_info.pPushConstantRanges    = &push;
     if (impl->table->vkCreatePipelineLayout(impl->device, &pipeline_info, nullptr, &impl->content_pipeline_layout) != VK_SUCCESS) {
-        destroy();
+        impl->destroyAll();
         return false;
     }
 
@@ -1268,7 +1429,7 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
     pipeline_info.pushConstantRangeCount = 0U;
     pipeline_info.pPushConstantRanges    = nullptr;
     if (impl->table->vkCreatePipelineLayout(impl->device, &pipeline_info, nullptr, &impl->screen_pipeline_layout) != VK_SUCCESS) {
-        destroy();
+        impl->destroyAll();
         return false;
     }
 
@@ -1293,7 +1454,7 @@ bool ContentCaches::create(const VolkDeviceTable&     table,
     }
 
     if (!impl->images.create(table, device, allocator)) {
-        destroy();
+        impl->destroyAll();
         return false;
     }
 
@@ -1308,48 +1469,8 @@ void ContentCaches::destroy() noexcept
     if (!impl) {
         return;
     }
-    // A TEARDOWN DESTROYS, IT DOES NOT PARK: the device has idled its queue before calling this, so nothing can still
-    // name what is about to go - and a park here would outlive the queue that would have run it.
-    impl->retirement = nullptr;
-    impl->timeline   = nullptr;
-    if (impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
-        impl->images.destroy();
-        impl->destroyPipelines();
-        impl->destroyPrograms();
-        impl->destroyGeometries();
-        impl->destroyInstanceStreams();
-        if (impl->pipeline_cache != VK_NULL_HANDLE) {
-            impl->table->vkDestroyPipelineCache(impl->device, impl->pipeline_cache, nullptr);
-            impl->pipeline_cache = VK_NULL_HANDLE;
-        }
-        if (impl->content_pipeline_layout != VK_NULL_HANDLE) {
-            impl->table->vkDestroyPipelineLayout(impl->device, impl->content_pipeline_layout, nullptr);
-            impl->content_pipeline_layout = VK_NULL_HANDLE;
-        }
-        if (impl->screen_pipeline_layout != VK_NULL_HANDLE) {
-            impl->table->vkDestroyPipelineLayout(impl->device, impl->screen_pipeline_layout, nullptr);
-            impl->screen_pipeline_layout = VK_NULL_HANDLE;
-        }
-        for (VkDescriptorSetLayout* layout : { &impl->content_set_layout, &impl->draw_set_layout, &impl->screen_set_layout }) {
-            if (*layout != VK_NULL_HANDLE) {
-                impl->table->vkDestroyDescriptorSetLayout(impl->device, *layout, nullptr);
-                *layout = VK_NULL_HANDLE;
-            }
-        }
-    }
-    impl->table             = nullptr;
-    impl->device            = VK_NULL_HANDLE;
-    impl->allocator         = nullptr;
-    impl->screen_vertex     = nullptr;
-    impl->stream_builds_      = 0;
-    impl->stream_bytes_       = 0;
-    impl->stream_releases_    = 0;
-    impl->program_builds_     = 0;
-    impl->pipeline_releases_  = 0;
-    impl->created_            = 0;
-    impl->cache_hits_         = 0;
-    impl->preload_refused_    = false;
-    impl->preload_handed_     = false;
+    const Lock held = lock();
+    impl->destroyAll();
 }
 
 bool ContentCaches::ready() const noexcept
@@ -1404,8 +1525,10 @@ bool ContentCaches::planCommand(const vn::graphics::RenderCommand&              
                                 const VkRenderPass                                     render_pass,
                                 const std::uint32_t                                    color_attachments,
                                 CommandPlan&                                           plan,
-                                ContentRefusal&                                        refusal)
+                                ContentRefusal&                                        refusal,
+                                const Lock&                                            held)
 {
+    (void)held; // the type is the proof; an unheld lock cannot be built outside this class (see Lock)
     return impl->planCommand(command, pass, default_program, compatibility, render_pass, color_attachments, plan, refusal);
 }
 
@@ -1415,46 +1538,71 @@ bool ContentCaches::planScreen(const vn::graphics::DrawDescription&             
                                const VkRenderPass                                     render_pass,
                                const std::uint32_t                                    color_attachments,
                                ScreenPlan&                                            plan,
-                               ContentRefusal&                                        refusal)
+                               ContentRefusal&                                        refusal,
+                               const Lock&                                            held)
 {
+    (void)held; // see planCommand
     return impl->planScreen(draw, pass, compatibility, render_pass, color_attachments, plan, refusal);
+}
+
+ContentCaches::Lock ContentCaches::lock() const
+{
+    // COUNTED BEFORE BLOCKING, so the number says "a caller asked for the caches", not "a caller got in": a test that
+    // asserts the count does not grow with drawing calls must not depend on how long a concurrent holder took.
+    impl->acquisitions.fetch_add(1U, std::memory_order_relaxed);
+    return Lock(std::unique_lock<std::mutex>(impl->lock));
+}
+
+std::uint64_t ContentCaches::lockAcquisitions() const noexcept
+{
+    return impl->acquisitions.load(std::memory_order_relaxed);
 }
 
 std::uint64_t ContentCaches::pipelinesCreated() const noexcept
 
 {
+    const Lock held = lock();
     return impl->created_;
 }
 
 void ContentCaches::setCreationFeedback(const bool on) noexcept
 {
+    const Lock held = lock();
     impl->creation_feedback = on;
 }
 
 void ContentCaches::setRetirement(vn::graphics::backend::RetirementQueue* const retirement,
                                 const vn::graphics::backend::FrameTimeline* const timeline) noexcept
 {
+    const Lock held = lock();
     impl->retirement = retirement;
     impl->timeline   = timeline;
+    // THE IMAGES FOLLOW THE SAME EVIDENCE: a released texture is dated against the same watermark a released stream is
+    // (see ContentImages::setRetirement), which is what keeps one clock for "may this object go".
+    impl->images.setRetirement(retirement, timeline);
 }
 
 std::uint64_t ContentCaches::pipelineCacheHits() const noexcept
 {
+    const Lock held = lock();
     return impl->cache_hits_;
 }
 
 bool ContentCaches::pipelineCachePreloadRefused() const noexcept
 {
+    const Lock held = lock();
     return impl->preload_refused_;
 }
 
 bool ContentCaches::pipelineCachePreloadHanded() const noexcept
 {
+    const Lock held = lock();
     return impl->preload_handed_;
 }
 
 std::vector<std::byte> ContentCaches::pipelineCacheBytes() const
 {
+    const Lock held = lock();
     std::vector<std::byte> bytes;
     if (impl->pipeline_cache == VK_NULL_HANDLE || impl->table == nullptr || impl->device == VK_NULL_HANDLE) {
         return bytes;
@@ -1475,64 +1623,60 @@ std::vector<std::byte> ContentCaches::pipelineCacheBytes() const
     return bytes;
 }
 
-ContentCaches::Progress ContentCaches::progress() const noexcept
+ContentCaches::Progress ContentCaches::progress() const
 {
-    Progress out;
-    out.stream_builds   = impl->stream_builds_;
-    out.stream_bytes    = impl->stream_bytes_;
-    out.stream_releases = impl->stream_releases_;
-    out.program_builds  = impl->program_builds_;
-    out.pipeline_builds = impl->created_;
-    out.pipeline_releases = impl->pipeline_releases_;
-    out.pipelines_live    = static_cast<std::uint32_t>(impl->pipelines.size());
-    // LIVE, FROM THE TABLES: a hole a release left has a null buffer and is not resident.
-    for (const auto& [description, entry] : impl->geometries) {
-        (void)description;
-        for (const VertexStream& stream : entry.streams) {
-            if (stream.buffer != VK_NULL_HANDLE) {
-                ++out.streams_live;
-                out.stream_bytes_live += stream.bytes;
-            }
-        }
-        for (const IndexStream& stream : entry.indices) {
-            if (stream.buffer != VK_NULL_HANDLE) {
-                ++out.streams_live;
-                out.stream_bytes_live += stream.bytes;
-            }
-        }
-    }
-    // The instance streams are streams too: a command that read one paid for its bytes and fills a row of the same
-    // ledger (see ResidencyKind::Streams), so a host release that drops one is visible there like any other.
-    for (const auto& [buffer, entry] : impl->instance_streams) {
-        (void)buffer;
-        if (entry.buffer != VK_NULL_HANDLE) {
-            ++out.streams_live;
-            out.stream_bytes_live += entry.bytes;
-        }
-    }
+    const Lock held = lock();
+    return impl->progressLocked();
+}
+
+ContentImages::Progress ContentCaches::imageProgress() const
+{
+    const Lock held = lock();
+    return impl->images.progress();
+}
+
+ContentCaches::Numbers ContentCaches::numbers() const
+{
+    const Lock held = lock();
+    Numbers    out;
+    out.content = impl->progressLocked();
+    out.images  = impl->images.progress();
     return out;
 }
 
-ContentImages& ContentCaches::images() noexcept
+void ContentCaches::setMaxAnisotropy(const float max_anisotropy) noexcept
 {
-    return impl->images;
+    const Lock held = lock();
+    impl->images.setMaxAnisotropy(max_anisotropy);
+}
+
+bool ContentCaches::hasPendingUploads() const
+{
+    const Lock held = lock();
+    return impl->images.hasPendingUploads();
+}
+
+void ContentCaches::releaseUploadStaging() noexcept
+{
+    const Lock held = lock();
+    impl->images.releaseUploadStaging();
+}
+
+bool ContentCaches::releaseTexture(const vn::graphics::Texture& texture)
+{
+    const Lock held = lock();
+    return impl->images.releaseTexture(texture);
 }
 
 void ContentCaches::setLineWidthLimit(const float max_line_width) noexcept
 {
-    if (!impl) {
-        return;
-    }
+    const Lock held = lock();
     impl->max_line_width = max_line_width >= 1.0F ? max_line_width : 1.0F;
-}
-
-const ContentImages& ContentCaches::images() const noexcept
-{
-    return impl->images;
 }
 
 std::size_t ContentCaches::releaseGeometry(const vn::graphics::GeometryDescription* description)
 {
+    const Lock held = lock();
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || description == nullptr) {
         return 0;
     }
@@ -1554,6 +1698,7 @@ std::size_t ContentCaches::releaseGeometry(const vn::graphics::GeometryDescripti
 
 std::size_t ContentCaches::releaseProgram(const vn::graphics::ShaderProgramDescription* description)
 {
+    const Lock held = lock();
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || description == nullptr) {
         return 0;
     }
@@ -1609,6 +1754,7 @@ std::size_t ContentCaches::releaseProgram(const vn::graphics::ShaderProgramDescr
 
 std::size_t ContentCaches::releaseStreams(const void* buffer)
 {
+    const Lock held = lock();
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || buffer == nullptr) {
         return 0;
     }
@@ -1666,8 +1812,9 @@ std::size_t ContentCaches::releaseStreams(const void* buffer)
     return dropped;
 }
 
-void ContentCaches::preparePass(const VkCommandBuffer commands, const std::span<const vn::graphics::DrawDescription> draws)
+void ContentCaches::preparePass(const VkCommandBuffer commands, const std::span<const vn::graphics::DrawDescription> draws, const Lock& held)
 {
+    (void)held; // see Lock: the caller's hold is the precondition
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || commands == VK_NULL_HANDLE) {
         return;
     }
@@ -1696,8 +1843,65 @@ void ContentCaches::preparePass(const VkCommandBuffer commands, const std::span<
     }
 }
 
+bool ContentCaches::ensureFallback(const VkCommandBuffer commands, const Lock& held, vn::String* const why)
+{
+    (void)held;
+    return impl->images.ensureFallback(commands, why);
+}
+
+void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* const material,
+                                    const VkCommandBuffer                          commands,
+                                    ResolvedTextures&                              out,
+                                    ContentRefusal&                                refusal,
+                                    const Lock&                                    held)
+{
+    (void)held;
+    out = ResolvedTextures{};
+    // THE STAND-IN FIRST: it is what an absent slot binds, and its own copy has to be recorded before any render pass
+    // begins - which is where this runs (the frame head, or a warm-up's transfer batch for preparePass).
+    vn::String why;
+    if (commands != VK_NULL_HANDLE) {
+        (void)impl->images.ensureFallback(commands, &why);
+    }
+    out.fallback_view    = impl->images.fallbackView();
+    out.fallback_sampler = impl->images.fallbackSampler();
+    out.shadow_sampler   = impl->images.samplerFor(detail::kShadowSampler);
+    if (material == nullptr) {
+        for (SlotBinding& binding : out.slots) {
+            binding.view    = out.fallback_view;
+            binding.sampler = out.fallback_sampler;
+        }
+        return;
+    }
+    const vn::graphics::MaterialParameters& values = material->values();
+    for (std::uint32_t slot = 0; slot < kTextureSlots; ++slot) {
+        SlotBinding& binding = out.slots[slot];
+        binding.view         = out.fallback_view;
+        binding.sampler      = out.fallback_sampler;
+        const vn::graphics::TextureSlotBinding& named = values.textures[slot];
+        if (named.texture == nullptr || !named.texture->isComplete()) {
+            continue;
+        }
+        vn::String        upload_why;
+        const VkImageView view = impl->images.viewFor(*named.texture, commands, &upload_why);
+        if (view == VK_NULL_HANDLE) {
+            refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                           u8"vk.content.material_texture_skipped",
+                           upload_why.empty() ? vn::String(u8"vk: a material texture could not be uploaded") : std::move(upload_why));
+            continue;
+        }
+        binding.view    = view;
+        binding.present = true;
+        const VkSampler authored = impl->images.samplerFor(named.sampler);
+        if (authored != VK_NULL_HANDLE) {
+            binding.sampler = authored;
+        }
+    }
+}
+
 void ContentCaches::endFrame() noexcept
 {
+    const Lock held = lock();
     if (impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
         impl->images.releaseFrame();
     }

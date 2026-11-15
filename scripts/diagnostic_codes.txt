@@ -57,6 +57,7 @@ vk.content.uniform_ring_full        — the frame's uniform ring had no slice le
 vk.content.descriptor_set_missing   — the descriptor cache could not hand out a set: the draw was skipped
 vk.content.material_texture_skipped — a material's texture could not be made resident: the slot was left absent
 vk.content.nothing_to_draw          — the draw named neither an index stream nor vertices: it drew nothing
+vk.content.plan_missing           — the frame head did not resolve every command of a drawing call: the recorder refused rather than guessing
 vk.content.no_runnable_pass         — the frame had no pass this backend can run: nothing was submitted
 
 # --- engine: what a frame's compile found (see graphics-frame-pipeline.md) ---
