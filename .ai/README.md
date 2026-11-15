@@ -83,7 +83,7 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（81）
+## decisions/ —— 决策记录（ADR）（85）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
@@ -91,7 +91,9 @@
 - `ADR-2026-11-14-sample-count-refused-not-lowered.md` —— **采样数是计数，设备建不了的请求只拒绝一次、不降级**：`Capabilities::max_samples` 是 2 的幂的计数（`vsg` 原来答位掩码 15）；超上限或不是 2 的幂都拒绝（`SamplesUnsupported` / `UnsupportedRequest`，报一次），所以 `RenderTarget::samples()` 永远是画出来的那个数；否决降级、向上取整、给 `Capabilities` 加位集。
 - `ADR-2026-11-14-prepare-may-submit-transfers.md` —— **预热可以提交一批“只有传输”的工作**：`prepareFrame` 仍然不提交帧（不 acquire / 不 present / 不动 `FrameProgress`），但可以记录并提交**一个**只含拷贝与布局转换的命令缓冲，用自己的 fence 等它完成——纹理上传因此在加载期落地，`R23` 不再“除了纹理”；否决第二个入口、后台线程、填充即上传。
 
-- `ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` —— **vk 保持一帧在飞**：实测一次 `renderFrame()` 墙钟中位 8.63–8.94 ms、同一帧设备时间 7.95 ms ⇒ **设备占 ~90%，宿主侧的活只有 ~0.9 ms**，多帧在飞的收益上限约 10%，而代价是改掉“画完即读”的契约；否决多槽与“只等上一帧”，触发条件（设备时间 < 墙钟一半、需要与 GPU 重叠的产物形态、第二个后端要同一语义）写在 ADR 里。**同时更正** `design/vk-backend.md` §2.3 早先把“含栅栏等待的墙钟”当成宿主工作量的读法。- `ADR-2026-11-14-vk-becomes-the-default-target.md` —— **`gfx_backend_vk` 转为生产后端、最终替代 `vsg`**：平台先 Linux/X11、Win32 后续（每设备一个 `WindowSystem` 的接缝，加平台是加法）；未实现能力诚实答 `Unsupported` + 一次诊断，不静默降级；切换默认前必须过的门（`releaseRenderTarget`、`readDepthBuffer` 或差异表、device-lost 诊断、ASan/TSan/validation、平台与性能证据、用户文档）写在 ADR 里；否决立刻切默认与双后端长期并存。
+- `ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` —— **vk 保持一帧在飞**：实测一次 `renderFrame()` 墙钟中位 8.63–8.94 ms、同一帧设备时间 7.95 ms ⇒ **设备占 ~90%，宿主侧的活只有 ~0.9 ms**，多帧在飞的收益上限约 10%，而代价是改掉“画完即读”的契约；否决多槽与“只等上一帧”，触发条件（设备时间 < 墙钟一半、需要与 GPU 重叠的产物形态、第二个后端要同一语义）写在 ADR 里。**同时更正** `design/vk-backend.md` §2.3 早先把“含栅栏等待的墙钟”当成宿主工作量的读法。
+- `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` —— **设备是资源池，会话拥有帧**：两个引擎共享 geometry / shader / 纹理（一次上传、一次编译），但**帧不共享**——`RenderDevice` 是池（内存、驻留缓存、目标、管线缓存，按资源加锁），`RenderFrameExecutor` 是会话（命令池 / 栅栏 / 常量环 / 描述符池，线程限定）；驻留三态 `Absent → Uploading(owner, frame) → Resident`，只有 `Resident` 可画，竞争会话建临时副本而不等待（不引入会话间阻塞）；目标一帧 claim、冲突只跳过那个 pass；释放 park 到所有会话 `completed ≥ epoch`；否决全局设备锁、per-entry 读写锁与每引擎一设备；分两步（第一步帧闸 + 契约，第二步拆分，~1350–2100 行）。
+- `ADR-2026-11-14-vk-becomes-the-default-target.md` —— **`gfx_backend_vk` 转为生产后端、最终替代 `vsg`**：平台先 Linux/X11、Win32 后续（每设备一个 `WindowSystem` 的接缝，加平台是加法）；未实现能力诚实答 `Unsupported` + 一次诊断，不静默降级；切换默认前必须过的门（`releaseRenderTarget`、`readDepthBuffer` 或差异表、device-lost 诊断、ASan/TSan/validation、平台与性能证据、用户文档）写在 ADR 里；否决立刻切默认与双后端长期并存。
 - `ADR-2026-11-13-content-seam-stays-in-the-plugin.md` —— 内容记账半边（事实表/半边/键，被 `check_vsg_content_seam.cmake` 守卫）**继续留在后端插件里**，不提成 SDK 库（`G8`：没有第二个后端，打包不该先于消费者）；第二个后端出现时按 seam 移动/复制。
 - `ADR-2026-11-13-staging-keeps-the-reusable-block.md` —— 上传暂存**保留可复用下限块**（`staging->size <= minimumStagingBufferSize`），只还大于下限的一次性大块：每帧上传的宿主稳态零分配，模型载入的 1.2 GB 常驻仍不回来；取代 ADR-2026-11-10 的“全部不保留”。
 - `ADR-2026-11-13-one-engine-one-surface.md` —— **一个引擎驱动一个表面**：否决 graphics-next 的 F8（一引擎多 Surface / `Target{SurfaceId}`），多窗口 = 一个设备服务多个引擎（每窗一引擎 / 一区 / 一个 `Viewer`）；`FrameResult.present` / `PresentRecord` 保持单值；触发条件（真实-host 双视口 / 第二后端）写在 ADR 里。

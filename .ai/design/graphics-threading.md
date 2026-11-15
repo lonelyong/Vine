@@ -4,7 +4,7 @@
 > 跨线程的载荷只剩「一次发布出的不可变快照」与「两个原子 revision」。历史（为什么曾经那样、哪条被否决）见
 > `../decisions/ADR-2026-11-12-adopt-graphics-next.md`、`../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`
 > 与 git 历史；`C1–C15` 与 `N1–N14` 里只服务于被删机制的条目已退役，编号不复用（见 §5.1、§5.3 的说明）。
-> **最后核对**：2026-11-13
+> **最后核对**：2026-11-15
 > **范围**：一帧的工作在两条线程上各归谁 —— 内容侧与引擎侧各拥有什么、跨侧只允许过什么值、表面与交换链归谁、
 > 并行放在哪、关闭怎么收。
 > **不含** appfw 的通用异步（`appfw-startup-phases.md`、`async-design.md`）与 Vulkan 同步细节（`vsg-backend.md`）。
@@ -270,6 +270,26 @@
 - **验收**：`T34` / `T17` / `FrameRunnerTest.ManyFramesThroughTheEngineThreadStayEquivalent`；
   `FrameExpandTest.ADrawNoPublicationAnswersDrawsNothing` 钉住"没发布就什么也不画"。
 
+### 2.16 共享设备的三个面：内容共享、目标不共享、帧串行（`G1` / `G4`）
+
+- **是什么**（今天的三个事实，各有一条可核对的依据）：
+  - **内容共享已经成立**：一个 `RenderDevice` 可以被多个 `RenderEngine` 借用（`setDevice` 的契约：引擎不
+    `initialize` / 不 `shutdown` 设备），而驻留按**身份**缓存（几何 = `GeometryDescription` 的地址 + revision），
+    所以两个引擎画同一份几何是**同一个键**。
+  - **目标不共享**：一个窗口一个目标（`createSurfaceTarget` 的 `WindowOccupied`），一张图像在任一时刻只有
+    一个 layout；引擎的 transient 由 compile 拥有，天然私有。
+  - **帧串行**：一个设备只答一个执行器（`RenderDevice::executor()` 的契约："是属性，不是状态"），身下是
+    **一个**命令池 + **一个**栅栏 + 一个常量环 + 一个描述符池。两条线程同时 `executeFrame` 是数据竞争，
+    不是"慢一点"。
+- **为什么**：一帧的机器是设备级的（`ContentDraw` 的 `beginFrame` 重置描述符池、`endFrame` 释放逐 draw UBO），
+  而内容缓存又没有"正在上传"这个状态（miss 就把拷贝录进当前帧的命令缓冲）——所以"并发"今天**没有定义**。
+- **边界**：appfw 还没用上共享（`SurfaceWindow` 每窗口造一个设备，`docs/guides/render-views.md` §7 记的是
+  "以后"）；用例 `OneDeviceServesSeveralAreasWithoutCrossingThem` 证明的是**共享**——它的两帧是先后跑的，
+  用例名里的 "without crossing them" 就是这个意思。
+- **目标形状**：设备 = 池、会话拥有帧（驻留三态、目标 claim、跨会话退休、三把锁）。决定与论证在
+  `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，落地是 `../backlog/graphics.md` 的
+  `T47` / `T48`。**本文件只写现在**——ADR 存在不移动这条边界。
+
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -391,6 +411,7 @@
 | C18 | 批内版本不推进：`beginEdit()` 之后、最外层 `endEdit()` 之前，发布停在原处 —— 落在批中间的帧**不发布任何东西**，画批次开始时的状态；整批在 `endEdit()` 之后那一帧作为**一次**发布落地。 |
 | C19 | 材质以**值**过帧：命令携带 `MaterialDescriptionPtr`（`revision` + 解析后的参数），引擎侧只读值，不读 `Material::resolved()`。值的取点在内容侧，批内不取。 |
 | C20 | 会话形状（pass 集合、资源表、后端保留态）**只在帧与帧之间**改：帧在飞时 `applyPlan`（任何一种形态）一律答 `PlanResult::Refused` + `PlanRefusal::Busy`（`sessionChangeAllowed`），并按 episode 报**一条** `PassProtocolViolation`。 |
+| C21 | **一个设备可被多个引擎借用，但帧不并发**：内容驻留按身份共享（一次上传、一次编译）；一个窗口只有一个目标；一帧的机器（命令池 / 栅栏 / 常量环 / 描述符池）是**设备级**的，所以同一设备上两条线程同时 `executeFrame` 是契约违反。今天没有守卫，第一步补设备级帧闸（`T47`）；并发形状见 `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`。 |
 
 ### 5.2 要求（R#）
 
@@ -405,6 +426,7 @@
 | R15 | 机器人 28~70 关节每帧变化时，引擎侧重算量只与链路成正比，且每帧零分配。 |
 | R16 | 线程化之后 `frame()` 只花 O(passes)（构建 + 交出）加一次握手；expand 与 present 不在调用者的关键路径上。 |
 | R17 | 一次仿真步 / 一次装配 = **一次发布**，不是一关节一次。 |
+| R18 | 共享设备上的并发帧必须可被**证明**：第一步用设备级帧闸把并发变成正确串行 + 至多一条诊断；第二步让两个会话真正并行，且**记录路径零锁**（锁只在帧首快照与驻留 miss 上）。 |
 
 ### 5.3 不变量（N#）
 
@@ -415,6 +437,7 @@
 | N15 | 线程化之后画面比内容晚一帧（引擎半段跑的是上一帧）；`waitForFrame` 是唯一"等到那一帧"的手段。 | 把"已提交"当"已上屏" |
 | N16 | 一帧之内只有一份发布：钩子写的内容对该帧所有 pass 可见。 | 帧内半新半旧 |
 | N17 | 相机在内容侧、事件即刻生效，画面是上一帧的相机快照。所以**把指针变成世界点的查询（拾取、锚点）用“用户看到的那一帧”的相机**：`RenderEngine::frameResult().query`（`view` + 它画的那份 `snapshot`）发布它，`presentedCamera()` 是其中 `view` 的简写；经 `SceneView::setPresentedCamera` 到达 manipulator；没有发布值时退回当前相机。 | 低帧率下枢轴/选择偏一帧 |
+| N18 | 设备级单槽只剩**默认内容程序**：两个引擎声明不同的默认程序时不组合，后声明者生效（`setDefaultContentProgram`）；诊断路由**已经是多路的**（每个引擎各收一份，`setDiagnosticsRoute`）。 | 第二个引擎悄悄改掉第一个的着色 |
 
 ## 6. 注意事项与陷阱
 
@@ -485,6 +508,7 @@
 | D10 | 流水线深度 > 1 | 多一份在飞帧换来的是内存与延迟，没有实测收益（`G8`） | ADR-2026-11-12 |
 | D11 | UI 线程回调 `onPresented` | 引擎线程回头读 UI，两个写者再次相遇（`G2`） | ADR-2026-11-12 |
 | D12 | 表面事件通道 | 一帧在飞 + 载值已经能带过引擎半段要的每个值（`G8`） | ADR-2026-11-12 |
+| D13 | 全局锁包住每个设备动词 | 把复杂度转移成"每次调用都可能阻塞"（`G7`），且锁粒度与资源无关（`G1`：把"线程安全"当成一个概念） | `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` |
 
 ## 8. 测试与验收
 
@@ -516,6 +540,11 @@
 - **派生层并行**（F11）：只有测量给出"选择段占帧时间 > 预算"的证据才做。
 - **公开面没有"这一帧画了哪一份"的回读**：`FrameResult` 的目标形状（`graphics-frame-pipeline.md` F12）会补上
   `snapshot` / `view`；现在的等价物是 `presentRecord().frame` 加宿主自己保存的 `SceneSnapshotRef`。
+- **共享设备的并发帧**（`T47` / `T48`）：共享已成立、并发未定义（§2.16）。形状与论证在
+  `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`；第一步是帧闸 + 契约，第二步是
+  "设备 = 池、会话拥有帧"。
+- **默认内容程序是设备级单槽**（`N18`）：两个引擎声明不同的默认程序时后者生效、不组合；修法随第二步
+  （程序归会话）。
 
 ### 9.3 兼容性 / 迁移
 

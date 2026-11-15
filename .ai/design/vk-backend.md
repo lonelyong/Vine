@@ -146,6 +146,22 @@
 - **为什么**：G11（模块可被单独测试、失败可被定位）。没有窗口的测试让 CI 与桌面走同一条路径。
 - **边界**：`test_vk` 的设备用例在无 Vulkan 设备的机器上 **skip** 而不是失败（环境不是契约）。
 
+### 2.11 一个 `Device` 对象 = 一个会话（`G1` / `G8`）
+
+- **是什么**：本插件的 `Device` 同时是**设备**与**会话**：一个 `VkInstance` / `VkPhysicalDevice` / `VkDevice` / 图形队列，
+  加**一份**帧机器（`command_pool` + `completion` 栅栏 + `ContentDraw` 里的常量环与描述符池）。`RenderDevice::executor()`
+  答的就是它自己。
+- **为什么今天是这个形状**：一帧在飞（§2.3）让"帧之间"成为一个**时刻**，于是释放、读回、缓存填充都能共用一份机器；
+  `ContentDraw` 的 `beginFrame` / `endFrame` 重置的是设备级状态，正是这条的直接后果。在那个前提下把它拆成两个对象
+  只会多一层转发（`G8`）。
+- **边界**：**两个引擎同时 frame 不成立**——同一设备上两条线程进 `executeFrame` 是数据竞争（`ContentDraw` 与
+  `Device` 的 `@warning` 都写着"一次一帧、一条线程"）。这不是本插件的缺陷，是接缝今天的契约
+  （`graphics-threading.md` 的 `C21`）。形状与落地在
+  `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，两步分别记在 backlog `T47` / `T48`。
+- **拆分时哪些东西会动**（清单是起点，不是拆分本身）：`ContentDraw` 的 `Impl` 一半是**缓存**（模块 / 流 / 管线 /
+  布局，归设备）、一半是**帧状态**（常量环 / 描述符池 / 逐 draw UBO，归会话）；`command_pool` 与 `completion` 归会话；
+  `allocator`、`targets`、`surfaces`、管线缓存、`default_program` 归设备。
+
 ## 3. 功能点
 
 ### 3.1 功能索引
@@ -496,6 +512,7 @@
 | D4 | 现在就上 synchronization2 / dynamic rendering | G8：当前目标是 API 1.2；现有屏障表是单一定义且被验证覆盖，升级到 1.3 时整层替换（审查 F9/F10） | — |
 | D5 | 把“缓存文件格式”放进 SDK | G1：SDK 不知道 Vulkan；正确的接缝是“宿主给位置、后端给格式”（§2.9） | — |
 | D6 | 多帧在飞直接实现 | G4：动“画完即读”的契约必须先有决策文档；实测收益上限约 10%（设备占 90%） | `../decisions/ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` |
+| D7 | 现在就拆“设备 / 会话”两个对象 | G8：今天的契约是一帧在飞、一次一帧，拆分只会多一层转发；并发帧的需求已明确，所以按**两步**落地（先帧闸 + 契约，再拆分），而不是顺手一起做 | `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` |
 
 ## 8. 测试与验收
 
@@ -532,6 +549,9 @@
   `releaseRenderTarget` 已真正释放附件、`readDepthBuffer` 与设备丢失报告已落地；**仍缺** Win32 实机证据（未过之前
   不支持 Windows 上线）、Wayland 回退实测、`releasePass` 的显式 no-op + 理由、`docs/guides/` 的 vk 用户页。
 - **backlog `T41`**：`PrepareReport.passes` 与录制后的 `FrameCounters.passes` 口径不一致（SDK 字段契约缺陷，跨后端）。
+- **共享设备的并发帧**（backlog `T47` / `T48`）：本插件的 `Device` 是“设备 + 一个会话”，两个引擎同时 frame 今天是
+  数据竞争（§2.11、`graphics-threading.md` 的 `C21`）。形状与论证见
+  `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`。
 - **backlog `T12` / `T13`**：Windows 窗口读像素、Wayland 回退实测。
 
 ### 9.3 兼容性 / 迁移
