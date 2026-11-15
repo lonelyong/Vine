@@ -159,6 +159,18 @@
   `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
   ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
   别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
+- **S6c-2b 已落地（2026-11-16，R6/T6：释放不再等帧）**：`releaseContent`（三种重载）与 `releaseRenderTarget` 脱离体闸——只等
+  **一次缓存操作**（帧首解析持有的锁），不等一整帧。安全性来自已有机制：缓存锁（帧首解析与释放互斥）+ park（帧已解析的句柄活到
+  水位）+ 开着的帧按住水位。为此 `targets` 的条目改成 `shared_ptr<TargetImages>`：**旧的 `releaseRenderTarget` 把值从 map 节点里
+  move 出来再 erase，帧手里的 `TargetImages*` 当场悬垂**；共享所有权让“已经解析它的帧”在释放后仍有一个有效对象，park 的引用
+  把它压到水位。`released_nodes` 改成原子（两个宿主线程可同时释放）；队列的读者（`retirementNumbers()`、`frameReport()` 里的
+  `deviceWaits()`）也取 `clock_mutex`——释放不再取体闸后，它们与 park 会并发。证据：`VkMultiSessionTest.AReleaseDoesNotWait…`
+  （帧被 sink 停住时宿主释放该帧已解析的内容 + 一个已建目标，必须在 2 s 内返回；帧随后仍画完、`device_waits` 不涨、park 未放行）；
+  变异（把体闸加回 `releaseContent`）⇒ 2 s 超时红。教训：**R6 的用例必须用“另一线程 + 截止时间”写**——直接调用会在回归时挂死整套，
+  而超时把回归变成一条红断言；失败路径也必须先解锁、再 join 两条线程。
+- **环境事实（2026-11-16 再次确认）**：`HostWindowReadTest.AReadOfWhatTheWindowShowsComesBackAndReportsNoError` 在**全量**
+  `test_vsg` 里会失败（服务端 10 s 都没报 viewable、`readError=8 BadMatch`），**单独跑 1 ms 通过**；用 `git stash` 在上一提交上做
+  A/B，**同样失败** ⇒ 与本次改动无关，是 X 服务的时序/环境（本文件早先记过同一类）。别为它改代码，先单跑 + A/B。
 - **S6c-2a 已落地（2026-11-16，帧体真并行）**：设备的大锁变成 `std::shared_mutex body_gate`——**帧体 SHARED**（两驱动者
   同时记录/提交）、**出窗口的帧与宿主动词 EXCLUSIVE**（可等帧、不竞争），`shutdown` 也 EXCLUSIVE。为此补齐：`FrameTimeline`
   **多开帧**（`begin()` 每次铸造新号，`submitted`/`abandoned` 按 token 关闭——旧的单槽让第二个驱动者拿到第一个的 token，

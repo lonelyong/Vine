@@ -16,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -58,6 +59,7 @@ using vn::graphics::FrameDescription;
 using vn::graphics::Geometry;
 using vn::graphics::Material;
 using vn::graphics::PassDraw;
+using vn::graphics::PresentOutcome;
 using vn::graphics::Primitive;
 using vn::graphics::RenderBackendRegistry;
 using vn::graphics::RenderCommand;
@@ -205,6 +207,42 @@ void main()
     texture->setImage(image);
     material->setTexture(TextureSlot::BaseColor, texture);
     return material;
+}
+
+/// @brief A frame with ONE pass whose drawing calls are issued in order (a good draw, then a refusing one).
+[[nodiscard]] FrameDescription drawingFrameWith(RenderTarget* target, std::vector<DrawDescription> draws)
+{
+    FrameDescription frame;
+
+    FrameDescription::Pass entry;
+    entry.pass  = vn::test::framePassForTest();
+    entry.order = 0;
+
+    PassDraw pass;
+    pass.target       = target;
+    pass.clear        = ClearPolicy{};
+    pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.draws        = std::move(draws);
+    entry.draw        = std::move(pass);
+
+    frame.passes.push_back(std::move(entry));
+    return frame;
+}
+
+/// @brief One scene draw that NAMES its program (so the frame records it without a default program).
+[[nodiscard]] DrawDescription programDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program)
+{
+    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+    command.program             = program;
+    command.program_description = program->description();
+    commands->push_back(std::move(command));
+
+    DrawDescription draw;
+    draw.kind     = DrawDescription::Kind::Scene;
+    draw.camera   = identityCamera();
+    draw.commands = commands;
+    return draw;
 }
 
 /// @brief A frame with ONE pass that clears @p target and issues @p draw.
@@ -580,5 +618,105 @@ TEST(VkMultiSessionTest, AFrameBodyDoesNotWaitForAnotherDriversFrame)
 
     backend->setDiagnosticSink({});
     device->releaseSession(*second);
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroyWhatItUses)
+{
+    // R6, OBSERVED: a release announced while a frame body is in flight RETURNS while that frame is still inside - and
+    // the frame then finishes with what it had already resolved, because the release PARKS the objects instead of
+    // destroying them (T6). The frame is held by the diagnostic sink (a refused drawing call reaches the host there),
+    // so the release is attempted at a moment the body beyond doubt still holds its share of the device.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+    const intrusive_ptr<ShaderProgram> program  = redProgram();
+    const intrusive_ptr<RenderTarget>  blocked_target = makeTarget(u8"release_blocked");
+    const intrusive_ptr<RenderTarget>  spare_target   = makeTarget(u8"release_spare");
+
+    // Build the spare target so there is a built target to release (a release of something never built answers "already
+    // true" and would prove nothing).
+    (void)backend->executeFrame(drawingFrame(spare_target.get(), programDraw(geometry, program)), nullptr);
+
+    std::atomic<bool> sink_entered{ false };
+    std::atomic<bool> release_done{ false };
+
+    backend->setDiagnosticSink([&](const vn::graphics::RenderDiagnostic& diagnostic) {
+        if (diagnostic.category != vn::graphics::DiagnosticCategory::ContentSkipped) {
+            return;
+        }
+        if (sink_entered.exchange(true)) {
+            return; // only the first refusal holds the frame
+        }
+        // HOLD THE FRAME, BOUNDED, UNTIL THE RELEASE HAS HAPPENED. The five seconds are a failure detector, not a
+        // schedule: the release below is expected in milliseconds.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!release_done.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    // The frame draws ONE good call (recorded with the handles the head resolved) and then a call with no program (the
+    // refusal that reaches the sink) - so the release below targets objects the frame has already resolved.
+    std::vector<DrawDescription> draws;
+    draws.push_back(programDraw(geometry, program));
+    draws.push_back(programlessDraw(geometry));
+
+    PresentOutcome outcome = PresentOutcome::Lost;
+    std::thread    blocker([&]() { outcome = backend->executeFrame(drawingFrameWith(blocked_target.get(), std::move(draws)), nullptr); });
+
+    const auto enter_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!sink_entered.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < enter_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(sink_entered.load()) << "the frame never reached its refusal";
+
+    // THE RELEASES, ON A THREAD WITH A DEADLINE: if any of them waits for the frame body, the wait below times out and
+    // the test fails - a serialised release cannot hang the suite, it fails it.
+    std::promise<void> released;
+    std::future<void>  released_future = released.get_future();
+    std::thread        releaser([&]() {
+        (void)backend->releaseContent(program.get());
+        (void)backend->releaseContent(geometry.get());
+        backend->releaseRenderTarget(spare_target.get());
+        released.set_value();
+    });
+
+    const std::future_status status = released_future.wait_for(std::chrono::seconds(2));
+
+    // ALWAYS UNBLOCK AND JOIN, whatever the deadline said: a test that returned here would leave a frame and a releaser
+    // running against a device it is about to shut down.
+    release_done.store(true, std::memory_order_release);
+    blocker.join();
+    releaser.join();
+
+    EXPECT_EQ(status, std::future_status::ready) << "a release waited for the frame in flight (R6)";
+    EXPECT_EQ(outcome, PresentOutcome::Skipped) << "the frame did not finish after its content was released";
+
+    // THE FRAME DREW WITH WHAT IT HAD RESOLVED: the release parked the program and the geometry, it did not pull them
+    // out from under the command buffer that names them.
+    std::vector<std::uint8_t> pixels;
+    ASSERT_TRUE(backend->readColorBuffer(blocked_target.get(), 0, pixels));
+    const std::array<int, 4> centre = centreOf(pixels);
+    EXPECT_GE(centre[0], 254) << "the frame lost the content a release announced while it was in flight";
+    EXPECT_LE(centre[1], 1);
+
+    // NO DEVICE IDLE WAS TAKEN: the releases were parked, not run under a counted stop.
+    EXPECT_EQ(device->retirementNumbers().device_waits, 0U) << "a release could not be parked and idled the device";
+    // AND THE PARK STILL HOLDS THE OBJECTS: the frame that named them submitted after the release, so the watermark is
+    // not past their retire point yet.
+    EXPECT_GE(device->retirementNumbers().pending, 1U) << "the released objects were destroyed while the frame was in flight";
+
+    // THE SPARE TARGET IS GONE (the release answered as if it were never built), and the device still frames.
+    std::vector<std::uint8_t> spare_pixels;
+    EXPECT_FALSE(backend->readColorBuffer(spare_target.get(), 0, spare_pixels)) << "the released target was still readable";
+
+    backend->setDiagnosticSink({});
     backend->shutdown();
 }

@@ -49,16 +49,19 @@ VN_BACKEND_VK_NS_BEGIN
  * @note The class is `Device` and not `VkDevice`: the latter is Vulkan's own type, and this header's implementation
  *       includes volk (see `backend_vk_global.hpp`).
  *
- * @warning FRAME BODIES OVERLAP; HOST VERBS DO NOT. `executeFrame` and `prepareFrame` go through their driver's
- *          `FrameGate` first (a second call from the same thread is refused; another thread waits for that DRIVER), and
- *          then take the device's body gate SHARED: two drivers' frames record and submit at the same time (S6c-2).
- *          What a frame touches is its own (scratch, command pool, fence, upload batch) or under its own lock (the
- *          caches at the frame head, the allocator, the target map, the device clock). A frame that PRESENTS is the
- *          exception - the swapchain and its semaphores are one device resource - so a window frame takes the gate
- *          EXCLUSIVELY. Every host verb that touches shared state (`readColorBuffer`, `releaseContent`,
- *          `setDefaultContentProgram`, `releaseRenderTarget`, `createSurfaceTarget`, the diagnostic readers) takes the
- *          gate EXCLUSIVELY too: it may WAIT for the frames in flight, and it does not race them. `initialize()` and
- *          `shutdown()` are the creator's calls, made with no frame in flight (`shutdown` waits for them itself).
+ * @warning FRAME BODIES OVERLAP; MOST HOST VERBS WAIT FOR THEM. `executeFrame` and `prepareFrame` go through their
+ *          driver's `FrameGate` first (a second call from the same thread is refused; another thread waits for that
+ *          DRIVER), and then take the device's body gate SHARED: two drivers' frames record and submit at the same
+ *          time (S6c-2). What a frame touches is its own (scratch, command pool, fence, upload batch) or under its own
+ *          lock (the caches at the frame head, the allocator, the target map, the device clock). A frame that
+ *          PRESENTS is the exception - the swapchain and its semaphores are one device resource - so a window frame
+ *          takes the gate EXCLUSIVELY. THE RELEASE VERBS DO NOT TAKE IT (R6): `releaseContent` (all three) and
+ *          `releaseRenderTarget` remove what the host named and PARK it against the completion watermark, so they may
+ *          run while another driver's frame records or submits - they wait at most for one cache operation, never for
+ *          a frame. The verbs that cannot overlap a frame - `readColorBuffer`, `readDepthBuffer`,
+ *          `setDefaultContentProgram`, `createSurfaceTarget`, the diagnostic readers, `shutdown` - take the gate
+ *          EXCLUSIVELY and may WAIT for the frames in flight; they do not race them. `initialize()` is the creator's
+ *          call, made with no frame in flight.
  *
  * @note A FRAME CONSULTS THE CACHES ONCE (S6c-1). The frame head resolves every program, stream, pipeline and texture
  *       upload under one cache hold and keeps the answers as values (`ContentCaches::CommandPlan`); the recording path
@@ -167,9 +170,9 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * - WHAT IT KEEPS. The host's `RenderTarget` object: it is a description, and a later frame that names it builds
      *   the attachments again through the same `planTarget` path (so the shape is re-checked, never assumed).
      *   Release is a residency choice, not a lifetime change.
-     * - WHEN IT RUNS. Between frames, on the frame thread. This device submits and waits on one frame at a time, so
-     *   between frames nothing in flight names these images and the destroy is immediate (see RetirementQueue for
-     *   the machinery devices with overlapping frames need).
+     * - WHEN IT RUNS. ANY TIME, including while another driver's frame is in flight (R6): the entry leaves the table
+     *   at once and the images are PARKED against the device's completion watermark, so the call returns without
+     *   waiting for a frame - it waits at most for one cache operation (the frame head's lock). See RetirementQueue.
      * - NOT THE WINDOW HALF. A window target's swapchain belongs to the device's lifetime (`createSurfaceTarget`);
      *   this verb is for the off-screen targets the host announced, which is what `RenderDevice` states.
      * - A target this device never built, or one already released, answers immediately: there is nothing to free and
@@ -214,9 +217,10 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   by the program, the target shape and the vertex layout), and the next frame that draws the content uploads
      *   or compiles it again - which is what the release costs. The object itself stays valid and keeps its
      *   revision; a copy is released, never the host's object.
-     * - WHEN IT RUNS. Between frames, on the frame thread. This device records, submits and waits on one frame at a
-     *   time, so between frames nothing is in flight and what the host released is destroyed immediately (the
-     *   parked-release machinery exists for devices whose frames overlap; see RetirementQueue).
+     * - WHEN IT RUNS. ANY TIME, including while another driver's frame is in flight (R6): what this call lets go of
+     *   leaves the caches at once and its Vulkan objects are PARKED against the completion watermark, so a frame that
+     *   had already resolved them finishes with them, and a later frame builds them again. It waits at most for one
+     *   cache operation, never for a frame (see RetirementQueue).
      * - NOT the window half or a target: a window target's swapchain belongs to the device's lifetime, `releasePass`
      *   is a no-op (this device keeps no per-pass objects), and `releaseRenderTarget` frees a target's attachments
      *   (see its own note).

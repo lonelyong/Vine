@@ -725,7 +725,11 @@ struct Device::Impl {
     float timestamp_period{ 0.0F };
 
     /// One entry per off-screen target this device built, keyed by the host's object (the identity the frame names).
-    std::unordered_map<const RenderTarget*, TargetImages> targets{};
+    ///
+    /// SHARED OWNERSHIP BECAUSE A RELEASE MAY OUTLIVE THE MAP ENTRY (S6c-2b): a frame records against the entry it
+    /// found (a raw pointer into the object), and `releaseRenderTarget` moves the map's reference into the park - so
+    /// the object, and the images it owns, stay alive until the watermark that release is dated against.
+    std::unordered_map<const RenderTarget*, std::shared_ptr<TargetImages>> targets{};
 
     /// M2's content path, DEVICE HALF: compiled programs, uploaded streams, pipelines, the shared layouts and the
     /// image cache. The frame's own half (the uniform ring and the descriptor pool) is each driver's `FrameScratch`.
@@ -916,7 +920,8 @@ struct Device::Impl {
     mutable std::mutex loss_mutex{};
 
     /// How many nodes a release announcement let go, cumulative (a frame's own number is 0 - see FrameUploads).
-    std::uint64_t released_nodes{ 0 };
+    /// ATOMIC because two host threads may release at the same time now that releases do not take the body gate.
+    std::atomic<std::uint64_t> released_nodes{ 0 };
 
     /** @brief Reads the content path's cumulative numbers (see ContentTotals). */
     [[nodiscard]] ContentTotals contentNumbers() const noexcept
@@ -966,8 +971,8 @@ struct Device::Impl {
             {
                 const std::lock_guard<std::mutex> targets_held(targets_mutex);
                 const auto images = targets.find(&map);
-                if (images != targets.end() && images->second.built() && images->second.hasDepth()) {
-                    map_images = &images->second;
+                if (images != targets.end() && images->second->built() && images->second->hasDepth()) {
+                    map_images = images->second.get();
                 }
             }
             if (map_images == nullptr) {
@@ -1412,7 +1417,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
         count_pass();
         TargetImages& claimed_images = [&]() -> TargetImages& {
             const std::lock_guard<std::mutex> targets_held(owner.targets_mutex);
-            return owner.targets.at(draw.target);
+            return *owner.targets.at(draw.target);
         }();
         runnable_passes.push_back(Runnable{ &entry,
                                             &draw,
@@ -1599,8 +1604,8 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
             {
                 const std::lock_guard<std::mutex> targets_held(owner.targets_mutex);
                 const auto source = owner.targets.find(description.source);
-                if (source != owner.targets.end() && source->second.built() && !source->second.color_sampled) {
-                    sampled_images = &source->second;
+                if (source != owner.targets.end() && source->second->built() && !source->second->color_sampled) {
+                    sampled_images = source->second.get();
                 }
             }
             if (sampled_images == nullptr) {
@@ -1770,9 +1775,9 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
                 {
                     const std::lock_guard<std::mutex> targets_held(owner.targets_mutex);
                     const auto source_images = description.source != nullptr ? owner.targets.find(description.source) : owner.targets.end();
-                    if (source_images != owner.targets.end() && source_images->second.built()) {
-                        source.images = source_images->second.colors;
-                        source.views  = source_images->second.color_views;
+                    if (source_images != owner.targets.end() && source_images->second->built()) {
+                        source.images = source_images->second->colors;
+                        source.views  = source_images->second->color_views;
                     }
                 }
                 (void)recorder.recordScreen(commands,
@@ -2094,7 +2099,7 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
                 if (!owner.ensure_target(*draw.target)) {
                     continue;
                 }
-                TargetImages& images = owner.targets.at(draw.target);
+                TargetImages& images = *owner.targets.at(draw.target);
                 render_pass   = images.renderPassFor(false, false);
                 color_count   = static_cast<std::uint32_t>(images.colorCount());
                 compatibility = images.compatibility();
@@ -2247,7 +2252,10 @@ vn::graphics::FrameReport Device::Session::frameReport() const noexcept
     retention.released_nodes = owner.released_nodes;
     // THE QUEUE IS THE ONE COUNTING (see Impl::releaseLater): a release it could not park idles the device instead, and
     // a report that kept its own number would disagree with `retirementNumbers()` about the same fact.
-    retention.device_waits   = owner.retirement.deviceWaits();
+    {
+        const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
+        retention.device_waits = owner.retirement.deviceWaits();
+    }
     if ((owner.device != VK_NULL_HANDLE && !owner.device_lost)) {
         // WHAT IS RESIDENT, PER KIND: the three kinds this backend retains, composed here where all three tables are
         // reachable. Material blocks and descriptor sets are per-frame objects, so no row claims them.
@@ -2892,7 +2900,7 @@ void Device::shutdown()
 
         for (auto& [target, images] : impl->targets) {
             (void)target;
-            destroyTarget(impl->device_table, impl->device, impl->allocator, images);
+            destroyTarget(impl->device_table, impl->device, impl->allocator, *images);
         }
         impl->targets.clear();
 
@@ -3168,32 +3176,34 @@ void Device::setRenderTarget(RenderTarget* target)
 
 void Device::releaseRenderTarget(RenderTarget* target)
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // NO BODY GATE (R6, S6c-2b): this verb does not wait for the frames in flight, it removes the entry and PARKS the
+    // images. A frame that had already resolved this target keeps a pointer into the entry, and the park keeps the
+    // object alive until the watermark has passed that frame - so the release is safe without stopping anything.
     if (target == nullptr) {
         return;
     }
-    const auto found = impl->targets.find(target);
-    if (found == impl->targets.end()) {
-        // Never built, or already released: the host's statement is already true.
-        return;
+    std::shared_ptr<TargetImages> doomed;
+    {
+        const std::lock_guard<std::mutex> targets_held(impl->targets_mutex);
+        const auto                        found = impl->targets.find(target);
+        if (found == impl->targets.end()) {
+            // Never built, or already released: the host's statement is already true.
+            return;
+        }
+        doomed = std::move(found->second);
+        impl->targets.erase(found);
     }
-    if (impl->device != VK_NULL_HANDLE) {
-        // THE ATTACHMENTS LEAVE THE TABLE NOW AND THE OBJECTS FOLLOW (see Impl::releaseLater): the target is no longer
-        // built (so a later frame rebuilds it), and the images die once the device's watermark has passed every frame
-        // that could still be drawing into them - which is what makes this call legal while another session frames.
-        TargetImages doomed = std::move(found->second);
+    if (impl->device != VK_NULL_HANDLE && doomed != nullptr) {
+        // THE OBJECT LEAVES THE TABLE NOW AND DIES AT THE WATERMARK (see Impl::releaseLater): the target is no longer
+        // built (so a later frame rebuilds it), the images die once no frame that could still draw into them is in
+        // flight, and the shared reference crossing to the park is why a frame's pointer stays valid meanwhile.
         impl->releaseLater([table = impl->device_table,
                             device = impl->device,
                             allocator = &impl->allocator,
                             doomed = std::move(doomed)]() mutable {
-            destroyTarget(table, device, *allocator, doomed);
+            destroyTarget(table, device, *allocator, *doomed);
         });
     }
-    impl->targets.erase(found);
 }
 
 vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void* native_handle, SurfaceTargetResult* why)
@@ -3414,7 +3424,7 @@ bool Device::ensureTarget(const RenderTarget& target)
         }
         impl->borrow_samples_report.rearm(); // a single-sample borrower: the episode is over
         const auto source = impl->targets.find(lender);
-        if (source == impl->targets.end() || !source->second.built() || !source->second.hasDepth()) {
+        if (source == impl->targets.end() || !source->second->built() || !source->second->hasDepth()) {
             if (impl->borrow_source_report.shouldReport()) {
                 reportDiagnostic(targetDiagnostic(target,
                                                   DiagnosticSeverity::Warning,
@@ -3440,15 +3450,20 @@ bool Device::ensureTarget(const RenderTarget& target)
             return false;
         }
         impl->borrow_extent_report.rearm(); // equally sized: the episode is over
-        lender_view = source->second.depthPictureView();
+        lender_view = source->second->depthPictureView();
         // THE LENDER'S DEPTH FORMAT IS WHAT THIS TARGET'S PASS IS BUILT WITH: the borrower's own declaration is not a
         // picture anyone has, and the shape states what the attachment IS - so a lender rebuilt at another format
         // rebuilds the borrower through `planTarget`'s own comparison.
-        wanted.shape.depth_format        = source->second.desc.shape.depth_format;
-        wanted.shape.device_depth_format = source->second.desc.shape.device_depth_format;
+        wanted.shape.depth_format        = source->second->desc.shape.depth_format;
+        wanted.shape.device_depth_format = source->second->desc.shape.device_depth_format;
     }
 
-    TargetImages& images = impl->targets[&target];
+    const auto [entry, inserted] = impl->targets.try_emplace(&target);
+    (void)inserted;
+    if (entry->second == nullptr) {
+        entry->second = std::make_shared<TargetImages>();
+    }
+    TargetImages& images = *entry->second;
     TargetInstance current;
     current.desc                   = images.desc;
     current.generation             = 0U;
@@ -3529,11 +3544,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
 
 bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // NO BODY GATE (R6, S6c-2b): a release does not wait for the frames in flight. What makes it safe is the cache
+    // lock (a frame head resolves under it, so the tables are never read mid-erase) plus the park (a frame that
+    // already resolved these objects keeps them alive until the watermark). It waits at most for ONE cache
+    // operation, never for a whole frame.
     if (content == nullptr || !initialized()) {
         return false;
     }
@@ -3576,11 +3590,10 @@ bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
 
 bool Device::releaseContent(const vn::Buffer<float>& buffer)
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // NO BODY GATE (R6, S6c-2b): a release does not wait for the frames in flight. What makes it safe is the cache
+    // lock (a frame head resolves under it, so the tables are never read mid-erase) plus the park (a frame that
+    // already resolved these objects keeps them alive until the watermark). It waits at most for ONE cache
+    // operation, never for a whole frame.
     if (!initialized()) {
         return false;
     }
@@ -3595,11 +3608,10 @@ bool Device::releaseContent(const vn::Buffer<float>& buffer)
 
 bool Device::releaseContent(const vn::Buffer<std::uint32_t>& buffer)
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // NO BODY GATE (R6, S6c-2b): a release does not wait for the frames in flight. What makes it safe is the cache
+    // lock (a frame head resolves under it, so the tables are never read mid-erase) plus the park (a frame that
+    // already resolved these objects keeps them alive until the watermark). It waits at most for ONE cache
+    // operation, never for a whole frame.
     if (!initialized()) {
         return false;
     }
@@ -3647,10 +3659,10 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     }
 
     const auto found = impl->targets.find(target);
-    if (found == impl->targets.end() || !found->second.built()) {
+    if (found == impl->targets.end() || !found->second->built()) {
         return fail(ReadbackResult::NotReady);
     }
-    TargetImages& images = found->second;
+    TargetImages& images = *found->second;
     if (attachment < 0 || static_cast<std::size_t>(attachment) >= images.colorCount()) {
         return fail(ReadbackResult::Invalid);
     }
@@ -3773,7 +3785,7 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
     }
 
     const auto found = impl->targets.find(target);
-    if (found == impl->targets.end() || !found->second.built()) {
+    if (found == impl->targets.end() || !found->second->built()) {
         return fail(ReadbackResult::NotReady);
     }
     // A BORROWED DEPTH IS READ THROUGH THE SOURCE (the SDK's rule, see RenderBackend::readDepthBuffer): the image
@@ -3781,7 +3793,7 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
     if (target->depthSource() != nullptr) {
         return fail(ReadbackResult::Unsupported);
     }
-    TargetImages& images = found->second;
+    TargetImages& images = *found->second;
     if (!images.hasDepth()) {
         return fail(ReadbackResult::Invalid); // no depth attachment at all: the request names nothing
     }
@@ -3951,6 +3963,9 @@ Device::RetirementNumbers Device::retirementNumbers() const noexcept
     // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
     // shared/exclusive gate and not one plain lock.
     const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // AND THE QUEUE'S OWN LOCK: a release no longer waits for the frames (R6), so a park may be appending while this
+    // verb reads the numbers.
+    const std::lock_guard<std::mutex> clock_held(impl->clock_mutex);
     RetirementNumbers numbers;
     numbers.pending      = impl->retirement.pending();
     numbers.released     = impl->retirement.released();

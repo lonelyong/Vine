@@ -167,6 +167,10 @@
   纹理 staging 与被替换图像按 `ContentImages::BatchId` 归驱动者，替换图像 park 到水位。采样目标（screen 源 / pass
   输入）也取目标 lease。**证据**：`VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`（一个帧体被诊断 sink
   停住时，另一驱动者的帧必须整帧完成；变异回独占闸 ⇒ 红）。
+- **2026-11-16（T48 S6c-2b）后的形状**：**释放不再等帧（R6）**。`releaseContent`（三种重载）与 `releaseRenderTarget` 脱离体闸：
+  它们只等一次缓存操作（帧首解析持有的锁），安全由缓存锁 + park + 水位的开帧规则共同给出。为此 `targets` 的条目变成
+  `shared_ptr<TargetImages>`（释放把引用交给 park，已经解析它的帧仍持有有效指针），`released_nodes` 改原子，队列的读者
+  （`retirementNumbers` / `frameReport`）也取 `clock_mutex`。**证据**：`VkMultiSessionTest.AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroyWhatItUses`。
 - **2026-11-15（T48 S6b）后的形状**：`createSession()` 真的造一个 `Session`（可早于 `initialize()`，由它统一拉起；已起的
   设备上当场建），`releaseSession()` 销毁并遗忘（设备自己的驱动者不可归还）。**设备持一把 `frame_mutex` 串行化帧体**：
   每个驱动者有自己的命令池 / 栅栏 / 时间戳池 / 帧闸 / scratch / 默认程序，但缓存、分配器与队列尚未在两条运行中的帧之间
@@ -716,8 +720,8 @@
   分家，§2.16）、S4（`ResidenceTable` 三态状态机，§2.17）、S5（`TargetClaims` 租约 + 帧/预热接线，§2.18）、
   S6a（SDK 会话接缝 + 引擎持有驱动者 + 默认程序归会话）、S6b（多驱动者 + 设备串行帧体）、
   S6c-1（帧首快照：记录路径零锁、计划按值、条目 park 到水位）、S6c-2a（帧体真并行：体闸 shared/exclusive + 多开帧 +
-  各小锁 + 每驱动者批量）已落地；S6c-2b（R6：释放不等帧）与 S7–S9 见 `.ai/design/graphics-sessions.md` §9.3。
-- `test_vk` **129 例 / 34 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **557**、`test_graphics` **587**；
+  各小锁 + 每驱动者批量）、S6c-2b（R6：释放不等帧）已落地；S7–S9 见 `.ai/design/graphics-sessions.md` §9.3。
+- `test_vk` **130 例 / 34 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **557**、`test_graphics` **587**；
   Debug 全量 ctest **32/32**；`BackendParityTest` **12/12**。
 - **一条构建教训**：SDK 的虚表改动后，**动态插件必须一起重建**（旧 `.so` 让 `VsgBackendPluginTest` 段错误）。
 - 实测（lavapipe，真实宿主）：11 pass / 10 draw，稳态中位 **8.24 ms**，GPU **7.15–7.74 ms**；ring + set 缓存改动

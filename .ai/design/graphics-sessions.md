@@ -385,7 +385,7 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 | R3 | 稳态帧的**记录路径**设备缓存锁获取次数为 0（帧首那次除外；整帧次数不随 draw 数增长，有计数器与用例） |
 | R4 | 驻留条目不可变；`Uploading` 不得长期存在（发布或撤回）。 |
 | R5 | 目标重建只由 claim 持有者做。 |
-| R6 | 释放可在别的会话 frame 时调用，且不阻塞到那一帧结束。 |
+| R6 | 释放可在别的会话 frame 时调用，且不阻塞到那一帧结束（等待上界是一次缓存操作；2026-11-16 落地，T6） |
 | R7 | 读回读到"最新已完成"的帧。 |
 | R8 | 单会话后端行为与今天逐字节相同。 |
 | R9 | `BackendParityTest` 的逐字节对拍在两会话下仍成立。 |
@@ -489,7 +489,8 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 | T3 | 记录路径的缓存锁为 0；整帧获取次数**不随 draw 数增长**（实测 4：帧首 1 + 数簿 2 + 帧尾 1） | `test_vk` `VkFrameHeadTest.AFramesCacheWorkDoesNotGrowWithItsDrawingCalls`（1 条 vs 6 条命令；变异 6 → 10 红） |
 | T4 | 两会话同时首画同一几何：不崩、两图都对、上传 ≤ 2 | `test_vk` 新用例 + 变异（去掉撤回 ⇒ 红） |
 | T5 | 两会话画同一目标：一个 pass 被跳过 + 一条报告 | `test_vk` 新用例 |
-| T6 | 释放与在飞帧重叠：拷贝完成后才销毁，`deviceWaits()` 不涨 | `test_vk` 新用例 + 变异 |
+| T6 | 释放与在飞帧重叠：释放不等到帧结束，帧仍用已解析的句柄完成，对象 park 到水位，`deviceWaits()` 不涨 |
+  `VkMultiSessionTest.AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroyWhatItUses`（变异：释放重新取体闸 ⇒ 红） |
 | T7 | 交替画不同目标 + 穿插读回：各读各的最新完成帧 | `test_vk` 新用例 |
 | T8 | 两会话不同默认程序：各画各的 | `test_vk` 新用例 + 变异（共用单槽 ⇒ 红） |
 | T9 | 两会话下 `BackendParityTest` 逐字节对拍不变 | `test_vsg` |
@@ -548,8 +549,9 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   表面列表各一把小锁；采样目标（screen 源与 pass 输入）也取目标 lease；纹理上传/替换图像按驱动者 batch 归属（替换图像
   park 到水位）。确定性别据：`VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame` 用诊断 sink 停住一帧，
   另一驱动者的帧必须整帧完成；变异回独占闸 ⇒ 红。`test_vk` **129/129**（ASan PASS）、`test_vsg` 557、`test_graphics` 587。
-- **未做**：`T48` 的 **S6c-2b**（R6：释放不等帧——`releaseContent`/`releaseRenderTarget` 脱离体闸，目标图像 `shared_ptr` +
-  水位 park，离屏 staging 及时回收，T6 证据）与 S7–S9。
+- **已落地**：`T48` 的 **S6c-2b（R6 / T6）**——释放不再等帧（`releaseContent` ×3 与 `releaseRenderTarget` 只等一次缓存操作）；
+  目标条目共享所有权使“已经解析它的帧”在释放后仍有一个有效指针；park 与水位的开帧规则保证对象不被提前销毁。见 §9.3 的 S6c-2b 行。
+- **未做**：`T48` 的 S7–S9（读回独立、vsg 的 F9、F10 收口 + TSan）。
 - **一处更正**：ADR 说"vsg 更接近"，准确说法是"vsg 的**窗口**会话已就位，**帧驱动者**仍是设备级单例"
   （§2.1）。这不改变结论，只改变迁移表的分工。
 
@@ -606,9 +608,14 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   （开帧时铸造号，两驱动者不再共用 token）；`DeviceClock`/`RetirementQueue` 由设备的 `clock_mutex` 串行（P4）；
   分配器、目标 map、报告 sink 各一把小锁；每驱动者一个纹理 batch；被替换的纹理图像 park。`test_vk` **129/129**
   （ASan 门禁 PASS）、`test_vsg` **557**、`test_graphics` **587** | T10 | 大 |
-| S6c-2b | **释放不再等帧（R6）**：`releaseContent` / `releaseRenderTarget` 不再取体闸；目标图像改 `shared_ptr` + 水位 park；
-  离屏帧的 staging 及时回收；T6 证据 | T6 | 中 |
-| S6c-2b | 未做。今天的约定是诚实的“释放可以等帧”：它取体闸 EXCLUSIVE，因此在飞帧全部结束后才返回 | T6 | 中 |
+| S6c-2b | **释放不再等帧（R6）**：`releaseContent` ×3 / `releaseRenderTarget` 脱离体闸；目标条目改共享所有权 + 水位 park | T6 | 中 |
+| S6c-2b | **已落地 2026-11-16**：三种 `releaseContent` 与 `releaseRenderTarget` 不再取体闸——它们只等**一次缓存操作**（帧首解析持有的那一把），
+  不等一整帧。安全来自已有的两件事：缓存锁（帧首解析与释放互斥）与 park（帧已解析的句柄活到水位，而开着的帧把水位按住）。
+  `targets` 的条目改成 `shared_ptr<TargetImages>`（`releaseRenderTarget` 不能再把值从 map 节点里搬走——帧持有的是指向节点的指针）；
+  `released_nodes` 改原子；`retirementNumbers()` / `frameReport()` 读队列时也取 `clock_mutex`（释放现在可与它们并发）。
+  **证据**：`VkMultiSessionTest.AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroyWhatItUses`——帧被诊断 sink 停住时，宿主线程
+  释放该帧已解析的程序/几何与一个已建目标，释放必须在 2 s 内返回；帧随后仍用解析出的句柄画完，`device_waits` 不涨、park 尚未放行。
+  变异（把体闸加回 `releaseContent`）⇒ 2 s 超时后红。`test_vk` **130/130**（ASan PASS）。 | T6 | 中 |
 | S7 | F7 读回独立化 | T7 | 低 |
 | S8 | vsg 的 F9（搬收集暂存 + 缓存加锁/快照） | T9 | 中 |
 | S9 | F10 收口 + TSan + 文档 | T11、T12 | 低 |
@@ -618,8 +625,8 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 S6b 由 T8/T10 承担"两个驱动者各自正确"的证据，S6c 才承担"时间上重叠"的证据。
 **S6c 又分三步（D8）**：S6c-1（已落地）交付帧首快照与锁——记录路径不再碰缓存，替换对象一律 park；S6c-2a（已落地）
 把体闸改成 `shared_mutex`（帧 SHARED、宿主动词 EXCLUSIVE）并补齐两帧同时跑所需的每一把小锁与每个驱动者的纹
-理 batch，于是“时间上重叠”有了确定性证据；S6c-2b 才把 `releaseContent` / `releaseRenderTarget` 从体闸上拿下来
-（R6：可在别人 frame 时调用且不阻塞到它结束）——今天它们**会等**在飞帧，这是写进契约的限制，不是隐含行为。
+理 batch，于是“时间上重叠”有了确定性证据；S6c-2b（已落地）把 `releaseContent` / `releaseRenderTarget` 从体闸上拿下来
+（R6：可在别人 frame 时调用且不阻塞到它结束），安全由缓存锁、park 与“开着的帧按住水位”共同给出。
 **S1 已落地（与历史估计的一处差异）**：释放是**两件事**，而不是一件。缓存表**立刻**忘掉条目（所以`ResidencyLedger`、`progress().streams_live` 的数字照旧立即下降，下一帧重传），而 GPU 对象在
 集合队列里等水位——一个 slot 时是 `submitted + 2`，即**最多两帧后**才销毁。新的观察点是
 `Device::retirementNumbers()`（`pending` / `released` / `device_waits`），而不是驻留账。两帧不是 bug：它是
