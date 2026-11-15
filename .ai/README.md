@@ -175,9 +175,17 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## research/ —— 调研与提案（12 文件 / 1 组提案）
+## research/ —— 调研与提案（13 文件 / 1 组提案）
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
+
+- `graphics-2026-11-15-independent-audit.md` —— **渲染栈独立审计（先定标准，再下判词）**：七组 26 条判据
+  （`C1`–`C26`：契约真实性 / 寿命 / 同步 / 成本 / 失败语义 / 证据 / 可演进），逐组判词与 14 条发现
+  （`A1`–`A14`）：分配路径把**设备丢失吞成“显存不足”**且拒绝理由算出来又被丢掉、无内存压力策略、
+  诊断无 code 与结构化字段（与 `R28` 相反）、`FrameDescription` 的类级“全是借用”句被三个 owning 字段反驳、
+  GPU 计时无 per-pass 归因、`Device` 一个对象六个关注点（16 个 `ReportOnce`）、接缝 18 个动词 13 个有默认体、
+  失败路径不可注入、TSan 证据缺、五套失败词汇表、退休规则两个实现、扩展点成本无表；同时列出**核过并判为正确**
+  的八项（sRGB、插件 ABI 握手、条件变量线程、屏障表、暴露边界门禁、逐字节对拍、`ReportOnce` 纪律、预热契约）。
 
 - `graphics-2026-11-14-vk-industry-review.md` —— **`gfx_backend_vk` 的工业标准审查**（只读 + 两处小修）：
   规范符合性/可诊断性是工业级（validation 0 VUID、跨后端逐字节对拍、设备丢失分类、barrier 表、pipeline key），
