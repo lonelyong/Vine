@@ -29,11 +29,20 @@ MACROS = ("VN_LOGI", "VN_LOGW", "VN_LOGE", "VN_LOGD")
 #
 # A diagnostic a host cannot match on without parsing prose is a log line. The SDK therefore carries a stable `code`
 # (see RenderDiagnostic), each module names its own (`vk.<class>.<cause>`), and this file keeps the two halves in
-# step: every code a source file states is registered with a meaning, every registered code is used, and a report
-# call that states NO code may not grow past the ceiling `diagnostic_code_baseline.txt` records for its file.
+# step:
+#   * every code-shaped literal anywhere under `src/` (a report argument, a refusal builder, a `.code = ...`) is
+#     registered with a meaning, and every registered code is stated by a source;
+#   * a report call that BUILDS a diagnostic (three or more arguments) must state a code, and may not grow past the
+#     ceiling `diagnostic_code_baseline.txt` records for its file;
+#   * a report call that HANDS OVER one (`reportDiagnostic(diagnostic)`) is exempt, because the value it forwards
+#     carries the code as a member - the cause is named where it is known, not at the sink (see forwards_a_diagnostic).
 CODE_RE = re.compile(r'u8"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+){2,})"')
-ASSIGNED_CODE_RE = re.compile(r'\.code\s*=\s*(?:vn::String\()?u8"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+){2,})"')
 REPORT_NAMES = ("reportDiagnostic", "reportEngineProblem", "noteProblem")
+# The functions that BUILD a diagnostic, so a code stated there is a use even though no report call mentions it. Keyed
+# by the names this tree has; a builder added later belongs in this tuple (the family is "takes the cause, returns or
+# fills the diagnostic", and the registry's other half still catches a code that stops being stated).
+CODE_BUILDER_NAMES = ("deviceDiagnostic", "backendDiagnostic", "targetDiagnostic", "compileProblem", "wiringProblem", "refuse")
+CODE_ASSIGN_RE = re.compile(r'\b\w*code\w*\s*=\s*u8"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+){2,})"')
 CODES_FILE = "scripts/diagnostic_codes.txt"
 BASELINE_FILE = "scripts/diagnostic_code_baseline.txt"
 DEFAULT_GLOBS = (
@@ -169,8 +178,22 @@ def ceilings(root):
     return limits
 
 
+def forwards_a_diagnostic(args):
+    """Answers whether a report call HANDS OVER a whole diagnostic instead of building one.
+
+    A `RenderDiagnostic` carries its code as a member, so `reportDiagnostic(value)` cannot drop the cause - the call is
+    the sink or the route, and the cause was named where the value was built. What must stay checked is the other
+    shape: `reportDiagnostic(backendDiagnostic(...))` is a CONSTRUCTION the gate can look inside (and a literal must be
+    there), while `reportDiagnostic(diagnostic)` and `reportDiagnostic(entry->diagnostic)` are plain expressions.
+    """
+    if len(args) != 1:
+        return False
+    single = args[0]
+    return "(" not in single and "{" not in single and '"' not in single
+
+
 def check_codes(root):
-    """Codes used vs codes registered, and the ratchet on reports that state no code."""
+    """Codes used vs codes registered, and the ratchet on reports that BUILD a diagnostic without a code."""
     findings = 0
     known = registry(root)
     limits = ceilings(root)
@@ -184,6 +207,16 @@ def check_codes(root):
         text = path.read_text(encoding="utf-8", errors="ignore")
         relative = path.relative_to(root).as_posix()
         missing = 0
+        # WHERE A CODE IS STATED. A cause is named at the place that BUILDS a diagnostic - a `*Diagnostic` /
+        # `*Problem` builder, a refusal's `refuse`, a field assigned a literal - and at the report that builds one
+        # inline. All three are scanned; a dotted literal anywhere else (a command id, a tab id) is another
+        # vocabulary and is not this registry's business.
+        for builder in CODE_BUILDER_NAMES:
+            for line, body in split_calls(text, builder):
+                for code in CODE_RE.findall(body):
+                    used.setdefault(code, []).append(f"{relative}:{line}")
+        for match in CODE_ASSIGN_RE.finditer(text):
+            used.setdefault(match.group(1), []).append(f"{relative}:{text[:match.start()].count(chr(10)) + 1}")
         for name in REPORT_NAMES:
             # A DEFINITION IS NOT A CALL: `RenderDevice::reportDiagnostic(...)` is where the report is made, and it
             # names no cause because it IS the cause's consumer. The positions come from the same expression
@@ -192,14 +225,15 @@ def check_codes(root):
             for (line, body), start in zip(split_calls(text, name), positions):
                 if start >= 2 and text[start - 2:start] == "::":
                     continue
-                codes = CODE_RE.findall(body)
-                for code in codes:
-                    used.setdefault(code, []).append(f"{relative}:{line}")
-                if not codes:
+                args = split_top(body, ",")
+                if forwards_a_diagnostic(args):
+                    # A FORWARDED VALUE ALREADY CARRIES ITS CODE (`RenderDiagnostic::code` is a member), so a report
+                    # that hands one over cannot drop it: `reportDiagnostic(diagnostic)` is the sink and the route,
+                    # not a place where a cause is named. Its code is stated where the value was built, which the
+                    # scan above covers.
+                    continue
+                if not CODE_RE.findall(body):
                     missing += 1
-        # A report built field by field states its code as an assignment instead of an argument.
-        for match in ASSIGNED_CODE_RE.finditer(text):
-            used.setdefault(match.group(1), []).append(f"{relative}:{text[:match.start()].count(chr(10)) + 1}")
         if missing and path.suffix == ".cpp":
             # THE RATCHET IS ABOUT REPORTS, and a header DECLARES them: `virtual void reportRenderTarget(...)` names no
             # cause because it is not where any report is made.

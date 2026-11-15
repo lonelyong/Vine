@@ -116,7 +116,7 @@
   超预算先回收再失败。
 - **代价**：约 150–250 行 + 用例。**触发**：真实宿主出现"显存够但分配失败"，或需要软预算。
 
-### A3（高，C1 / C20）诊断没有 code，也没有结构化字段（**部分落地 2026-11-15**）
+### A3（高，C1 / C20）诊断没有 code，也没有结构化字段（**两个后端已全部落地 2026-11-15**）
 
 - **证据**：`RenderDiagnostic` = `{severity, category, message}`；`DiagnosticCategory` 有 12 个值，按
   "后果"分（`RenderDiagnostic.hpp` 自己写明），所以同一 category 下的不同原因不可区分。而
@@ -127,6 +127,7 @@
   `content` 身份 / `requested` 与 `supported` 两个整数）；`message` 只给人看；
   `check_diagnostic_formats.py` 升级为"每条报告必须带 code"。
 - **代价**：SDK + 两个后端约 200–300 行；门禁 1 条。**触发：无**（`R28` 已经要求）。
+- **落地后的一条设计结论**：code 必须在**知道原因的那一层**命名。设备层把内容拒绝降成 `category` + 句子时，七种原因塌成一种；把它换成 `ContentRefusal`（category + code + 句子，先到者胜）之后，设备只是**转发**——这也是门禁判据改成「构造 vs 转发」的原因：转发一个值，sink 就不可能把 code 丢掉。
 
 ### A4（高，C1 / C2）`FrameDescription` 的类级契约句是错的（**已落地 2026-11-15**）
 
@@ -281,7 +282,7 @@ RenderDevice（接缝：身份 / 能力 / 生命周期 / 工厂）
 | 批次 | 内容 | 量级 | 触发 |
 |---|---|---|---|
 | 1 | A1 + A8：分配失败分类 + 故障注入 + 两条用例 | ~250 行 | **已落地 2026-11-15**（`MemoryRefusalReport` + sink + `MemoryBlockCreator`，5 条新用例，3 个变异各自被对应用例杀掉） |
-| 2 | A3 + A10：诊断 code + 统一失败词汇 + 门禁 | ~350 行 | **A3 部分落地 2026-11-15，分四批**：`RenderDiagnostic` 加 `code` / `subject` / `limit`；门禁双向检查 + baseline 棘轮。已转换 37 个 code：vk 的**内存 / 会话 / 目标 / 窗口**四族 24 个，引擎的**编译问题**9 个（`CompileProblem` 现在携带整个诊断，情节重发不再压平 category）与**接线检查**4 个。**剩余 68 处**在 `scripts/diagnostic_code_baseline.txt` 里按文件记着上限（vk 内容族 32、vsg 11、引擎其余 15、其余 10 散在小文件），其中 2 处是**记录在案的转发调用**（三参数入口与情节重发，它们没有自己的原因）。**A10 暂缓**：五个枚举回答的是不同问题，统一它们会丢精度（无消费者，`G8`）。**A2 已落地**（同一提交系列）：`free_bytes` / `largest_free_run` 只在拒绝时算并写进句子；池内无阶梯可加（见 `vk-backend.md` §2.12） |
+| 2 | A3 + A10：诊断 code + 统一失败词汇 + 门禁 | ~350 行 | **A3 部分落地 2026-11-15，分六批**：`RenderDiagnostic` 加 `code` / `subject` / `limit`；门禁双向检查 + baseline 棘轮，判据是「**构造**诊断的报告必须写 code，**转发**整个 `RenderDiagnostic` 的调用不算」（值里带着 code，sink 丢不掉）。已转换 **96 个 code**：vk 后端**全部七族 61 个**（内存 / 会话 / 目标 / 窗口 / 初始化 / 帧与预热 / 内容）、vsg 后端**全部四族 22 个**（会话与内容 / 窗口与目标 / 块存储 / 读回）、引擎的**编译问题** 9 个（`CompileProblem` 现在携带整个诊断，情节重发不再压平 category）与**接线检查** 4 个。内容路径的七种「这条 draw 为什么没画」现在由记录器命名（`ContentRefusal`，见 `vk-backend.md` §2.14），读回的九种拒绝由 `HostReadbackRefusal` 的一个无 `default` switch 映射（`vsg-backend.md` C7）。**剩余 22 处**是引擎自身的报告（`RenderEngine` 13、`RenderSurface` 5、`Viewer` / `ChainBuilder` / `DiagnosticsRoute` / `SceneView` 各 1），在 `scripts/diagnostic_code_baseline.txt` 里记着上限——下一批即可清零。**A10 暂缓**：五个枚举回答的是不同问题，统一它们会丢精度（无消费者，`G8`）。**A2 已落地**（同一提交系列）：`free_bytes` / `largest_free_run` 只在拒绝时算并写进句子；池内无阶梯可加（见 `vk-backend.md` §2.12） |
 | 3 | A4 + A14：契约句修正 | 文档 | **已落地 2026-11-15**（逐字段的拥有/借用规则；`releaseRenderTarget` 的前置条件） |
 | 4 | A5：per-pass GPU 时间 | ~150 行 | **已落地 2026-11-15**（`FrameTiming::passes` + 每 pass 一条边界 + 可增长的 query 池；两个变异各自被杀） |
 | 5 | A6 + A7 + A11：设备四单元 + 接缝四面 + 退休点上移 | ~1400 行 | ADR 第二步 / 第二个 API 家族 |

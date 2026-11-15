@@ -163,7 +163,9 @@
   匹配的东西，`message` 可以改措辞、code 不行；`subject` 说"这个报告是关于哪个目标"，`limit` 是
   `requested` / `supported` 一对。词汇表登记在 `scripts/diagnostic_codes.txt`（双向检查：用到的必须登记、
   登记的必须被用到），`check_diagnostic_formats.py` 用 `scripts/diagnostic_code_baseline.txt` 给尚未转换的
-  调用点设**上限**——新写的报告不带 code 会红。vk 的内存/会话/目标三类已转换。
+  调用点设**上限**——新写的报告不带 code 会红。**判据**：**构造**诊断（≥3 实参）必须写 code，**转发**一个 `RenderDiagnostic`（`reportDiagnostic(diagnostic)`）不算——值里带着 code。
+  2026-11-15 **vk 七族 61 个 + vsg 四族 22 个 + 引擎 13 个 = 96 个 code**，两个后端已全部转换；剩下 22 处是引擎自己的报告（`RenderEngine` 13 / `RenderSurface` 5 / 四个小文件各 1）。
+  **原因在知道它的那一层命名**：vk 的内容拒绝是 `ContentRefusal`（category + code + 句子，先到者胜），设备只转发；vsg 的读回拒绝由 `readbackRefusalDiagnostic` 一个无 `default` 的 switch 映射，枚举新增就必须命名 code。
 
 - `test_graphics`（模型无关）、`test_vsg`（后端，含真实设备用例）、`test_gui`、`test_core`。
 - `scripts/vsg_rewrite_gate.sh`：suite 两跑 0 VUID / 0 SYNC-HAZARD、相位行闭合、应用画面百分比。

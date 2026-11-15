@@ -193,9 +193,25 @@
 - **边界**：code 的词汇表属于**报告它的模块**（SDK 不认识 `Vk*`，`C3` / `C10`），所以它是字符串而不是中央枚举；
   `check_diagnostic_formats.py` 双向检查（用到的必须登记、登记的必须被用到），并用
   `scripts/diagnostic_code_baseline.txt` 给尚未转换的调用点设**上限**——新报告必须带 code。
-- **已转换**：本后端的**内存、会话、目标、窗口**四类（24 个 code）；其余（缓存、内容）在 baseline 里，逐批转换。
+- **已转换**：本后端**全部报告**——内存、会话、目标、窗口、初始化、帧与预热、内容七族共 58 个 code；
+  `scripts/diagnostic_code_baseline.txt` 里已没有本插件的文件（审计 `A3`）。
 - **成本**：报告路径上一个 `String` 字段（情节已去重，所以不在热路径）；`limit` 是 `std::optional`，不报 limit
   时零成本。
+
+### 2.14 原因在知道它的地方命名：内容拒绝是一个值，不是两个出参（`G1` / `G4` / `G7`）
+
+- **是什么**：内容路径的拒绝（这条 draw 为什么没画出来）由**记录器**给出——只有它知道是哪一级拒绝的（程序、流、实例
+  流、管线、环形缓冲、描述符集）。它产出一个 `ContentRefusal`：`category` + **code** + 句子，三者一起；设备的
+  `executeFrame` / `prepareFrame` 只把它**转发**成 `RenderDiagnostic`。
+- **为什么**：这条路径原本是 `(vn::String* why, DiagnosticCategory* category)` 两个出参——能填一个而忘了另一个，
+  而且"跳过一条 draw"的七种原因到宿主那里只剩一个 `ContentSkipped`。把 code 放在**知道原因的那一侧**，宿主与用例
+  才第一次能说"这条 draw 没有程序"，而不是"有条 draw 被跳过了"（`R28` 的落点）。
+- **边界**：`refuse()` 是唯一的写入者，且**先到者胜**——第二个原因（"没有几何，所以也没有管线"）不会覆盖第一个，
+  这条规则原来在调用点用 `if (why.empty())` 重复了三遍。空句子 + 有 code 仍是拒绝：句子的有无从来不是判据。
+  `ContentRefusal` 是**内部头**（`internal/ContentDraw.hpp`），不进 SDK。
+- **门禁的两半**：报告调用若**构造**诊断（≥3 个实参）就必须写 code；若**转发**一个 `RenderDiagnostic`
+  （`reportDiagnostic(diagnostic)`）则不算——值里带着 code，sink 丢不掉它。`check_diagnostic_formats.py`
+  同时双向检查登记表：用到的必须登记，登记的必须被某个 builder 或报告用到。
 
 ## 3. 功能点
 

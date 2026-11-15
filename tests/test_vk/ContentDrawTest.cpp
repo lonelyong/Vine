@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include <vine/Buffer.hpp>
@@ -45,6 +46,7 @@
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector3.hpp>
 
+#include <vine/backend_vk/internal/ContentDraw.hpp>
 #include <vine/backend_vk/internal/ShaderCompiler.hpp>
 
 #include "PlanTestSupport.hpp"
@@ -417,6 +419,82 @@ TEST(VkContentDrawTest, AProgramLessDrawUsesTheDevicesDefaultProgram)
     EXPECT_EQ(centre[3], 255);
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
+
+    backend->shutdown();
+}
+
+TEST(VkContentRefusalTest, TheFirstReasonWinsAndOnlyACodeMakesARefusal)
+{
+    // THE VALUE THAT CARRIES A CAUSE (see ContentRefusal): a recording path meets the first failure that explains the
+    // draw and must not let a later, consequential one overwrite it - the rule the recorder used to spell out with
+    // `if (why.empty())` at every call site, now in one place - and "this draw was refused" and "this refusal has a
+    // code" are the same question, so a sentence alone cannot be reported as a cause.
+    vn::backend_vk::ContentRefusal refusal;
+    EXPECT_FALSE(refusal.isRefused()) << "a fresh refusal is not a refusal";
+    EXPECT_EQ(refusal.code(), nullptr) << "nothing was refused, so no cause is named";
+
+    refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped, u8"vk.content.no_geometry", String(u8"first"));
+    ASSERT_TRUE(refusal.isRefused());
+    EXPECT_TRUE(std::u8string_view(refusal.code()) == u8"vk.content.no_geometry");
+    EXPECT_EQ(refusal.category(), vn::graphics::DiagnosticCategory::ContentSkipped);
+
+    // THE SECOND REASON IS A CONSEQUENCE, not the cause: a draw with no geometry also has no pipeline, and reporting the
+    // pipeline would send a host to the wrong place.
+    refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed, u8"vk.content.pipeline_refused", String(u8"second"));
+    EXPECT_TRUE(std::u8string_view(refusal.code()) == u8"vk.content.no_geometry") << "a later failure replaced the cause";
+    EXPECT_EQ(refusal.category(), vn::graphics::DiagnosticCategory::ContentSkipped) << "the category moved with it";
+    EXPECT_TRUE(refusal.message().std_u8str_view() == u8"first") << "the sentence moved with it";
+
+    // A CODE WITH NO SENTENCE IS STILL A REFUSAL (some causes need no prose), and clearing makes the value reusable -
+    // which is what `record` does on entry, so a caller may hand the same value back for another draw.
+    refusal.clear();
+    EXPECT_FALSE(refusal.isRefused());
+    EXPECT_EQ(refusal.code(), nullptr);
+    EXPECT_TRUE(refusal.message().empty());
+    refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped, u8"vk.content.nothing_to_draw", String{});
+    EXPECT_TRUE(refusal.isRefused()) << "a code alone is a refusal: the sentence is optional, the cause is not";
+}
+
+TEST(VkContentDrawTest, ADrawWithNoProgramArrivesWithTheCodeOfItsCause)
+{
+    // A HOST ACTS ON THE CODE (audit A3): "a draw was skipped" covers causes with different repairs - no program, no
+    // geometry, a primitive the geometry lacks, a pipeline the driver refused - and the code is what tells them apart
+    // without parsing the sentence. This is the deterministic one: a command that names no program, on a device that was
+    // never given a default one.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    const intrusive_ptr<RenderTarget> target   = makeTarget();
+    const intrusive_ptr<Geometry>     geometry = makeTriangle();
+
+    auto commands = std::make_shared<std::vector<RenderCommand>>();
+    commands->push_back(RenderCommand(geometry, nullptr, vn::math::Mat4d{})); // no program, and none announced
+
+    DrawDescription draw;
+    draw.kind     = DrawDescription::Kind::Scene;
+    draw.camera   = identityCamera();
+    draw.commands = commands;
+
+    (void)backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
+
+    bool saw_refusal = false;
+    for (const vn::graphics::RenderDiagnostic& diagnostic : reported) {
+        if (diagnostic.code.std_u8str_view() != u8"vk.content.no_program") {
+            continue;
+        }
+        saw_refusal = true;
+        EXPECT_EQ(diagnostic.category, vn::graphics::DiagnosticCategory::ContentSkipped)
+            << "a missing program is skipped content, not a compile failure";
+        EXPECT_NE(diagnostic.message.std_u8str_view().find(u8"program"), std::u8string_view::npos)
+            << "the sentence must still say what a human needs";
+    }
+    EXPECT_TRUE(saw_refusal) << "the skipped draw did not arrive with the code of its cause";
 
     backend->shutdown();
 }

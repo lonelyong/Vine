@@ -18,6 +18,47 @@ vk.memory.invalid_request     — a resource asked for zero bytes: a content def
 vk.memory.not_open            — device memory was asked for before the pool was opened: a wiring defect
 vk.memory.internal            — the pool contradicted its own invariant: a defect in the allocator
 
+# --- vk backend: bringing the device up ---
+vk.init.loader_missing           — no Vulkan loader could be opened; install a driver (or point VK_ICD_FILENAMES at one)
+vk.init.instance_failed          — vkCreateInstance refused: the loader is there and this machine cannot be a Vulkan client
+vk.init.no_device                — the machine lists no usable physical device (none at all, or the loader could not list them)
+vk.init.no_queue                 — a physical device exists but none serves a graphics queue (plus present, when a window was asked for)
+vk.init.device_failed            — vkCreateDevice refused: the driver would not serve this feature/extension set
+vk.init.command_machinery_failed — the command pool or the frame fence could not be created: the session cannot drive frames
+vk.init.memory_pool_failed       — the device memory pool could not be opened (see the memory report beside it)
+vk.init.content_pool_failed      — the content layouts / descriptor pool could not be created: this device cannot draw
+
+# --- vk backend: the frame and the warm-up (see vk-backend.md F4/F5) ---
+vk.session.not_initialized       — a frame was handed to a device that is not up: initialize it (or rebuild the lost session)
+vk.frame.command_buffer_missing  — no command buffer could be allocated: the frame was skipped
+vk.frame.begin_failed            — vkBeginCommandBuffer refused: the frame was skipped
+vk.frame.end_failed              — vkEndCommandBuffer refused: nothing that was recorded ran
+vk.frame.did_not_complete        — the submitted frame's fence did not signal and the device is not lost: the picture is incomplete
+vk.prepare.batch_failed          — the warm-up's transfer batch could not be opened: the next frame uploads that content again
+vk.prepare.batch_not_closed      — the warm-up's batch could not be closed: the copies it recorded never ran and cannot be retried
+vk.prepare.batch_not_run         — the warm-up's batch was submitted and the queue refused it: the images were never written
+vk.driver.message                — a Vulkan layer or driver logged a message: its text is the driver's own, not ours
+
+# --- vk backend: what a draw could not be drawn with (see vk-backend.md F2) ---
+vk.content.no_program               — the draw named no program and the device has no default one: it drew nothing
+vk.content.no_geometry              — the draw carried no geometry description: it drew nothing
+vk.content.primitive_absent         — the draw names a primitive its geometry does not have: it drew nothing
+vk.content.program_refused          — the program could not be staged (compile or shader module); the loader's report says which stage
+vk.content.geometry_refused         — the geometry's streams could not be formatted or uploaded: the draw was skipped
+vk.content.instance_stream_refused  — the draw's instance transforms could not become a vertex stream: the draw was skipped
+vk.content.pipeline_refused         — vkCreateGraphicsPipelines refused the state the draw resolves to: the draw was skipped
+vk.content.screen_no_program        — a full-screen draw named no fragment program: it drew nothing
+vk.content.screen_program_refused   — a full-screen draw's fragment or vertex stage could not be staged: it drew nothing
+vk.content.screen_pipeline_refused  — the full-screen pipeline was refused: the draw was skipped
+vk.content.screen_no_source         — a full-screen draw named no source target, so there is nothing to sample
+vk.content.wrong_path               — a screen draw reached the content path (or a scene draw the screen path): a wiring defect
+vk.content.stand_in_missing         — the 1x1 stand-in every absent texture slot binds could not be made: draws were skipped
+vk.content.uniform_ring_full        — the frame's uniform ring had no slice left: the draw was skipped and the ring grows
+vk.content.descriptor_set_missing   — the descriptor cache could not hand out a set: the draw was skipped
+vk.content.material_texture_skipped — a material's texture could not be made resident: the slot was left absent
+vk.content.nothing_to_draw          — the draw named neither an index stream nor vertices: it drew nothing
+vk.content.no_runnable_pass         — the frame had no pass this backend can run: nothing was submitted
+
 # --- engine: what a frame's compile found (see graphics-frame-pipeline.md) ---
 engine.compile.cycle                    — passes depend on each other in a cycle; those passes are skipped
 engine.compile.unpublished_scene        — a pass draws a scene that was never published
@@ -35,8 +76,35 @@ engine.pass.output_target_mismatch    — a pass promises a whole target it does
 engine.pass.output_image_mismatch     — a pass promises one image of a target it does not render into
 engine.pass.output_collision          — two passes claim one image as their output
 
-# --- vsg backend: the session ---
+# --- vsg backend: the session and the content world ---
 vsg.session.frame_reentry     — a frame or warm-up was started from the thread already driving one: refused (FrameGate)
+vsg.session.not_initialized   — a frame or warm-up arrived with no session that is up: initialize the device first
+vsg.content.no_content_world  — render() was collected while the content world is not up: the draw went nowhere
+
+# --- vsg backend: windows and targets (see vsg-backend.md) ---
+vsg.window.occupied                   — a window this device already serves was asked for again: one live swapchain per window
+vsg.window.foreign_target             — a frame named a surface target this device did not hand out: it was refused
+vsg.target.samples_above_limit        — the requested sample count is past what the device offers (limit pair)
+vsg.target.samples_not_a_count        — the requested sample count is not one the device offers
+vsg.target.borrow_multisampled        — a multisampled target cannot borrow its depth
+vsg.target.borrow_source_missing      — the depth lender is not held by this backend; it must be announced first
+vsg.target.build_failed               — the target's images, render pass or readback buffer could not be created
+
+# --- vsg backend: the block storage ---
+vsg.storage.material_arena_grown — the live material set outgrew the arena: the block storage was replaced
+vsg.storage.block_budget_grown   — the frame's block budget or the learned in-flight count needed more room: the storage was replaced
+
+# --- vsg backend: readback (see HostReadback) ---
+vsg.readback.refused            — a readback reached the report with no classified refusal: a defect in this backend
+vsg.readback.no_target          — the caller named no target: the request cannot be made
+vsg.readback.unknown_target     — this backend does not hold the target (never announced, or released)
+vsg.readback.not_built          — the target is held but has no built attachments yet
+vsg.readback.not_recorded       — no frame has drawn into it yet: there is nothing to read
+vsg.readback.unknown_attachment — the target has no such attachment
+vsg.readback.unreadable_format  — this backend cannot read that attachment's format
+vsg.readback.borrowed_depth     — the depth belongs to the lender: read the source target instead
+vsg.readback.no_device          — there is no device to copy with, or none that produced the values
+vsg.readback.transfer_failed    — the copy was submitted and did not produce a readable picture
 
 # --- vk backend: the session ---
 vk.session.device_lost        — a device call answered VK_ERROR_DEVICE_LOST: the session is over, rebuild it
@@ -49,6 +117,9 @@ vk.window.own_window_failed  — a Probe device's own window could not be brough
 vk.window.attach_failed      — the window's surface or swapchain could not be created (the repair is re-attaching)
 vk.window.presenter_missing  — a window pass named no presenter this device handed out
 vk.window.acquire_failed     — the swapchain's next image could not be acquired
+vk.window.present_unsupported     — this machine cannot present (no surface extension, or no VK_KHR_swapchain): the session runs off-screen
+vk.window.surface_failed          — the host window's surface could not be created on the instance: this session presents nothing
+vk.window.foreign_target          — a frame named a surface target this device did not hand out: it was refused
 
 # --- vk backend: targets (see vk-backend.md 2.6 / 2.11) ---
 vk.target.samples_above_limit             — the requested sample count is past what the device offers (limit pair)

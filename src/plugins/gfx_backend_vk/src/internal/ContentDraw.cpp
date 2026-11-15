@@ -29,6 +29,50 @@
 
 VN_BACKEND_VK_NS_BEGIN
 
+ContentRefusal::ContentRefusal() = default;
+
+void ContentRefusal::refuse(const vn::graphics::DiagnosticCategory category, const char8_t* const code, vn::String text)
+{
+    // THE FIRST REASON IS THE ONE THAT EXPLAINS THE DRAW: a second stage that fails as a consequence must not replace
+    // the cause that came first (the recorder used to spell this rule out with `if (why.empty())` at every call site).
+    if (isRefused()) {
+        return;
+    }
+    category_ = category;
+    code_     = code;
+    message_  = std::move(text);
+}
+
+void ContentRefusal::clear() noexcept
+{
+    category_ = vn::graphics::DiagnosticCategory::ContentSkipped;
+    code_     = nullptr;
+    message_  = vn::String();
+}
+
+bool ContentRefusal::isRefused() const noexcept
+{
+    // A CODE IS THE REFUSAL: `refuse` always states one, and the sentence beside it may be empty (a cause whose code
+    // is the whole message). "Refused" and "has a code" are therefore the same question - which is what keeps a
+    // caller from reporting a sentence with no cause.
+    return code_ != nullptr;
+}
+
+vn::graphics::DiagnosticCategory ContentRefusal::category() const noexcept
+{
+    return category_;
+}
+
+const char8_t* ContentRefusal::code() const noexcept
+{
+    return code_;
+}
+
+const vn::String& ContentRefusal::message() const noexcept
+{
+    return message_;
+}
+
 namespace
 {
 
@@ -1258,8 +1302,7 @@ struct ContentDraw::Impl {
      * @param render_pass       A render pass with that compatibility (used only when a pipeline must be CREATED).
      * @param color_attachments How many colour attachments the pass writes.
      * @param plan              Receives what was resolved (untouched when this answers false).
-     * @param why               Receives the reason a command could not be resolved.
-     * @param category          Receives that reason's category (CompileFailed for a build, ContentSkipped otherwise).
+     * @param refusal           Receives the reason a command could not be resolved, with its code and category.
      * @return true when the command can be recorded.
      */
     [[nodiscard]] bool planCommand(const vn::graphics::RenderCommand&                     command,
@@ -1269,28 +1312,30 @@ struct ContentDraw::Impl {
                                    VkRenderPass                                           render_pass,
                                    std::uint32_t                                          color_attachments,
                                    CommandPlan&                                           plan,
-                                   vn::String&                                            why,
-                                   vn::graphics::DiagnosticCategory&                       category)
+                                   ContentRefusal&                                        refusal)
     {
         const vn::graphics::ShaderProgramDescriptionPtr program =
             pass.program_override_description != nullptr ? pass.program_override_description : command.programDescription();
         const vn::graphics::ShaderProgramDescription* program_description = program != nullptr ? program.get() : default_program;
         if (program_description == nullptr) {
-            why      = vn::String(u8"vk: a content draw named no program and the device has no default content program");
-            category = vn::graphics::DiagnosticCategory::ContentSkipped;
+            refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                           u8"vk.content.no_program",
+                           vn::String(u8"vk: a content draw named no program and the device has no default content program"));
             return false;
         }
 
         const vn::graphics::GeometryDescriptionPtr geometry = command.geometryDescription();
         if (geometry == nullptr) {
-            why      = vn::String(u8"vk: a content draw carried no geometry description");
-            category = vn::graphics::DiagnosticCategory::ContentSkipped;
+            refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                           u8"vk.content.no_geometry",
+                           vn::String(u8"vk: a content draw carried no geometry description"));
             return false;
         }
         const std::span<const vn::graphics::Primitive> primitives = geometry->primitives();
         if (command.primitive_index >= primitives.size()) {
-            why      = vn::String(u8"vk: a content draw named a primitive its geometry does not have");
-            category = vn::graphics::DiagnosticCategory::ContentSkipped;
+            refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                           u8"vk.content.primitive_absent",
+                           vn::String(u8"vk: a content draw named a primitive its geometry does not have"));
             return false;
         }
 
@@ -1307,22 +1352,25 @@ struct ContentDraw::Impl {
         vn::String          build_why;
         ProgramEntry* const compiled = ensureProgram(program_description, variant, build_why);
         if (compiled == nullptr) {
-            why      = build_why.empty() ? vn::String(u8"vk: the content program could not be compiled") : std::move(build_why);
-            category = vn::graphics::DiagnosticCategory::CompileFailed;
+            refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
+                           u8"vk.content.program_refused",
+                           build_why.empty() ? vn::String(u8"vk: the content program could not be compiled") : std::move(build_why));
             return false;
         }
         GeometryEntry* const streams = ensureGeometry(*geometry, build_why);
         if (streams == nullptr) {
-            why      = build_why.empty() ? vn::String(u8"vk: the geometry's streams could not be uploaded") : std::move(build_why);
-            category = vn::graphics::DiagnosticCategory::ContentSkipped;
+            refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                           u8"vk.content.geometry_refused",
+                           build_why.empty() ? vn::String(u8"vk: the geometry's streams could not be uploaded") : std::move(build_why));
             return false;
         }
         InstanceStream* instances = nullptr;
         if (instanced) {
             instances = ensureInstanceStream(*command.instance_transforms.values, build_why);
             if (instances == nullptr) {
-                why      = build_why.empty() ? vn::String(u8"vk: the instance stream could not be uploaded") : std::move(build_why);
-                category = vn::graphics::DiagnosticCategory::ContentSkipped;
+                refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                               u8"vk.content.instance_stream_refused",
+                               build_why.empty() ? vn::String(u8"vk: the instance stream could not be uploaded") : std::move(build_why));
                 return false;
             }
         }
@@ -1344,8 +1392,9 @@ struct ContentDraw::Impl {
                                               color_attachments,
                                               pipeline_why);
         if (plan.pipeline == VK_NULL_HANDLE) {
-            why      = pipeline_why.empty() ? vn::String(u8"vk: the content pipeline could not be built") : std::move(pipeline_why);
-            category = vn::graphics::DiagnosticCategory::CompileFailed;
+            refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
+                           u8"vk.content.pipeline_refused",
+                           pipeline_why.empty() ? vn::String(u8"vk: the content pipeline could not be built") : std::move(pipeline_why));
             return false;
         }
         plan.program   = compiled;
@@ -1375,8 +1424,7 @@ struct ContentDraw::Impl {
      * @param render_pass       A render pass with that compatibility (used only when a pipeline must be CREATED).
      * @param color_attachments How many colour attachments the destination writes.
      * @param plan              Receives what was resolved.
-     * @param why               Receives the reason the draw could not be resolved.
-     * @param category          Receives that reason's category.
+     * @param refusal           Receives the reason the draw could not be resolved, with its code and category.
      * @return true when the draw can be recorded.
      */
     [[nodiscard]] bool planScreen(const vn::graphics::DrawDescription&                  draw,
@@ -1385,8 +1433,7 @@ struct ContentDraw::Impl {
                                   VkRenderPass                                           render_pass,
                                   std::uint32_t                                          color_attachments,
                                   ScreenPlan&                                            plan,
-                                  vn::String&                                            why,
-                                  vn::graphics::DiagnosticCategory&                       category)
+                                  ContentRefusal&                                        refusal)
     {
         // THE PROGRAM'S TEXT: the value the frame carries, else the live program's cached description.
         vn::graphics::ShaderProgramDescriptionPtr fragment_description = draw.program_description;
@@ -1394,22 +1441,25 @@ struct ContentDraw::Impl {
             fragment_description = draw.program->description();
         }
         if (fragment_description == nullptr) {
-            why      = vn::String(u8"vk: a screen draw named no fragment program");
-            category = vn::graphics::DiagnosticCategory::ContentSkipped;
+            refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                           u8"vk.content.screen_no_program",
+                           vn::String(u8"vk: a screen draw named no fragment program"));
             return false;
         }
 
         vn::String                build_why;
         ProgramEntry* const       fragment = ensureProgram(fragment_description.get(), ProgramVariant{}, build_why);
         if (fragment == nullptr) {
-            why      = build_why.empty() ? vn::String(u8"vk: the screen fragment program could not be compiled") : std::move(build_why);
-            category = vn::graphics::DiagnosticCategory::CompileFailed;
+            refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
+                           u8"vk.content.screen_program_refused",
+                           build_why.empty() ? vn::String(u8"vk: the screen fragment program could not be compiled") : std::move(build_why));
             return false;
         }
         ProgramEntry* const vertex = ensureProgram(screen_vertex.get(), ProgramVariant{}, build_why);
         if (vertex == nullptr) {
-            why      = build_why.empty() ? vn::String(u8"vk: the full-screen vertex program could not be compiled") : std::move(build_why);
-            category = vn::graphics::DiagnosticCategory::CompileFailed;
+            refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
+                           u8"vk.content.screen_program_refused",
+                           build_why.empty() ? vn::String(u8"vk: the full-screen vertex program could not be compiled") : std::move(build_why));
             return false;
         }
 
@@ -1431,8 +1481,9 @@ struct ContentDraw::Impl {
                                              color_attachments,
                                              pipeline_why);
         if (plan.pipeline == VK_NULL_HANDLE) {
-            why      = pipeline_why.empty() ? vn::String(u8"vk: the screen pipeline could not be built") : std::move(pipeline_why);
-            category = vn::graphics::DiagnosticCategory::CompileFailed;
+            refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
+                           u8"vk.content.screen_pipeline_refused",
+                           pipeline_why.empty() ? vn::String(u8"vk: the screen pipeline could not be built") : std::move(pipeline_why));
             return false;
         }
         plan.fragment = fragment;
@@ -2367,15 +2418,11 @@ void ContentDraw::prepare(const vn::graphics::backend::RenderPassCompatibility& 
                           const vn::graphics::DrawDescription&           draw,
                           const vn::graphics::PassDraw&                  pass,
                           const vn::graphics::ShaderProgramDescription* default_program,
-                          vn::String*                                    why,
-                          vn::graphics::DiagnosticCategory*              category)
+                          ContentRefusal* const                          refusal)
 {
-    vn::String                       local;
-    vn::String&                      reason        = why != nullptr ? *why : local;
-    vn::graphics::DiagnosticCategory local_category = vn::graphics::DiagnosticCategory::ContentSkipped;
-    vn::graphics::DiagnosticCategory& category_ref  = category != nullptr ? *category : local_category;
-    reason                                          = vn::String();
-    category_ref                                    = vn::graphics::DiagnosticCategory::ContentSkipped;
+    ContentRefusal  local;
+    ContentRefusal& out = refusal != nullptr ? *refusal : local;
+    out.clear();
 
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || draw.commands == nullptr) {
         return;
@@ -2384,23 +2431,18 @@ void ContentDraw::prepare(const vn::graphics::backend::RenderPassCompatibility& 
         return; // no view means no draw, and no draw means nothing to build
     }
     if (draw.kind != vn::graphics::DrawDescription::Kind::Scene) {
-        reason = vn::String(u8"vk: a screen draw reached the content path (it has its own recordScreen)");
+        out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                   u8"vk.content.wrong_path",
+                   vn::String(u8"vk: a screen draw reached the content path (it has its own recordScreen)"));
         return;
     }
 
     // NO FALLBACK IMAGE, NO DESCRIPTOR SET: a warm-up builds programs, streams and pipelines, and the 1x1 stand-in
     // and the texture copies are recorded afterwards by preparePass, on the transfer batch prepare() opens for them.
     for (const vn::graphics::RenderCommand& command : *draw.commands) {
-        Impl::CommandPlan                plan;
-        vn::String                       failure;
-        vn::graphics::DiagnosticCategory failure_category = vn::graphics::DiagnosticCategory::ContentSkipped;
-        if (impl->planCommand(command, pass, default_program, compatibility, render_pass, color_attachments, plan, failure, failure_category)) {
-            continue;
-        }
-        if (reason.empty()) {
-            reason       = std::move(failure);
-            category_ref = failure_category;
-        }
+        Impl::CommandPlan plan;
+        // THE FIRST COMMAND THAT CANNOT BE BUILT IS THE REASON: `refuse` keeps it, so a later one cannot replace it.
+        (void)impl->planCommand(command, pass, default_program, compatibility, render_pass, color_attachments, plan, out);
     }
 }
 
@@ -2409,15 +2451,11 @@ void ContentDraw::prepareScreen(const vn::graphics::backend::RenderPassCompatibi
                                 const std::uint32_t                            color_attachments,
                                 const vn::graphics::DrawDescription&           draw,
                                 const vn::graphics::PassDraw&                  pass,
-                                vn::String*                                    why,
-                                vn::graphics::DiagnosticCategory*              category)
+                                ContentRefusal* const                          refusal)
 {
-    vn::String                       local;
-    vn::String&                      reason        = why != nullptr ? *why : local;
-    vn::graphics::DiagnosticCategory local_category = vn::graphics::DiagnosticCategory::ContentSkipped;
-    vn::graphics::DiagnosticCategory& category_ref  = category != nullptr ? *category : local_category;
-    reason                                          = vn::String();
-    category_ref                                    = vn::graphics::DiagnosticCategory::ContentSkipped;
+    ContentRefusal  local;
+    ContentRefusal& out = refusal != nullptr ? *refusal : local;
+    out.clear();
 
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr) {
         return;
@@ -2425,13 +2463,8 @@ void ContentDraw::prepareScreen(const vn::graphics::backend::RenderPassCompatibi
     if (!draw.camera.present) {
         return;
     }
-    Impl::ScreenPlan                 plan;
-    vn::String                       failure;
-    vn::graphics::DiagnosticCategory failure_category = vn::graphics::DiagnosticCategory::ContentSkipped;
-    if (!impl->planScreen(draw, pass, compatibility, render_pass, color_attachments, plan, failure, failure_category)) {
-        reason       = std::move(failure);
-        category_ref = failure_category;
-    }
+    Impl::ScreenPlan plan;
+    (void)impl->planScreen(draw, pass, compatibility, render_pass, color_attachments, plan, out);
 }
 
 void ContentDraw::preparePass(const VkCommandBuffer commands, const std::span<const vn::graphics::DrawDescription> draws)
@@ -2474,15 +2507,11 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
                                   const vn::graphics::PassDraw&               pass,
                                   const vn::graphics::ShaderProgramDescription* default_program,
                                   ShadowSource                                shadow,
-                                  vn::String*                                 why,
-                                  vn::graphics::DiagnosticCategory*           category)
+                                  ContentRefusal* const                       refusal)
 {
-    vn::String                       local;
-    vn::String&                      reason        = why != nullptr ? *why : local;
-    vn::graphics::DiagnosticCategory local_category = vn::graphics::DiagnosticCategory::ContentSkipped;
-    vn::graphics::DiagnosticCategory& category_ref  = category != nullptr ? *category : local_category;
-    reason                                          = vn::String();
-    category_ref                                    = vn::graphics::DiagnosticCategory::ContentSkipped;
+    ContentRefusal  local;
+    ContentRefusal& out = refusal != nullptr ? *refusal : local;
+    out.clear();
 
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || draw.commands == nullptr) {
         return 0;
@@ -2492,13 +2521,20 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         return 0;
     }
     if (draw.kind != vn::graphics::DrawDescription::Kind::Scene) {
-        reason = vn::String(u8"vk: a screen draw reached the content path (it has its own recordScreen)");
+        out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                   u8"vk.content.wrong_path",
+                   vn::String(u8"vk: a screen draw reached the content path (it has its own recordScreen)"));
         return 0;
     }
 
     // THE 1x1 WHITE STAND-IN: prepared outside the render pass by preparePass, so no descriptor a shader might read
     // is left undefined.
-    if (!impl->images.ensureFallback(VK_NULL_HANDLE, &reason)) {
+    vn::String stand_in_why;
+    if (!impl->images.ensureFallback(VK_NULL_HANDLE, &stand_in_why)) {
+        out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                   u8"vk.content.stand_in_missing",
+                   stand_in_why.empty() ? vn::String(u8"vk: the 1x1 stand-in every absent texture slot binds could not be made")
+                                        : std::move(stand_in_why));
         return 0;
     }
 
@@ -2534,23 +2570,16 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
     std::uint64_t recorded       = 0;
     VkPipeline    bound_pipeline = VK_NULL_HANDLE;
 
-    const auto fail = [&reason, &category_ref](vn::String text, vn::graphics::DiagnosticCategory kind) {
-        if (reason.empty()) {
-            reason       = std::move(text);
-            category_ref = kind;
-        }
+    const auto refuse = [&out](vn::graphics::DiagnosticCategory kind, const char8_t* const code, vn::String text) {
+        out.refuse(kind, code, std::move(text));
     };
-    const auto note = [&fail](const char8_t* text) { fail(vn::String(text), vn::graphics::DiagnosticCategory::ContentSkipped); };
 
     for (const vn::graphics::RenderCommand& command : *draw.commands) {
         // WHAT THIS COMMAND DRAWS WITH - the same resolution a warm-up runs (see planCommand): program compiled,
         // streams uploaded, pipeline selected. Without it there is nothing to record.
-        Impl::CommandPlan                 plan;
-        vn::String                        failure;
-        vn::graphics::DiagnosticCategory  failure_category = vn::graphics::DiagnosticCategory::ContentSkipped;
-        if (!impl->planCommand(command, pass, default_program, compatibility, render_pass, color_attachments, plan, failure, failure_category)) {
-            fail(std::move(failure), failure_category);
-            continue;
+        Impl::CommandPlan plan;
+        if (!impl->planCommand(command, pass, default_program, compatibility, render_pass, color_attachments, plan, out)) {
+            continue; // the refusal already names the stage that refused, and the first one is kept
         }
         const vn::graphics::ResolvedCommandState& resolved = plan.resolved;
 
@@ -2579,7 +2608,9 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
                         texture_flags |= 1U << slot;
                     }
                     else {
-                        note(upload_why.empty() ? u8"vk: a material texture could not be uploaded" : upload_why.c_str());
+                        refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                               u8"vk.content.material_texture_skipped",
+                               upload_why.empty() ? vn::String(u8"vk: a material texture could not be uploaded") : std::move(upload_why));
                     }
                 }
             }
@@ -2606,7 +2637,9 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
         // a frame that does not fit skips the draw and grows the ring before the next one.
         VkDeviceSize slice = 0;
         if (!impl->reserveSlice(slice)) {
-            note(u8"vk: the frame's uniform ring is full; this draw was skipped and the ring grows before the next frame");
+            refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                   u8"vk.content.uniform_ring_full",
+                   vn::String(u8"vk: the frame's uniform ring is full; this draw was skipped and the ring grows before the next frame"));
             continue;
         }
         // The material block's DEFAULTS are the default material's values, so a call with no material packs nothing
@@ -2625,7 +2658,9 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
             impl->contentSetFor(slots, shadow_view, shadow_sampler != VK_NULL_HANDLE ? shadow_sampler : impl->images.fallbackSampler());
         const VkDescriptorSet draw_set    = content_set != VK_NULL_HANDLE ? impl->drawSetFor() : VK_NULL_HANDLE;
         if (content_set == VK_NULL_HANDLE || draw_set == VK_NULL_HANDLE) {
-            note(u8"vk: the descriptor cache could not hand out a set");
+            refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                   u8"vk.content.descriptor_set_missing",
+                   vn::String(u8"vk: the descriptor cache could not hand out a set"));
             continue;
         }
 
@@ -2698,7 +2733,9 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                             co
             ++recorded;
         }
         else {
-            note(u8"vk: a draw named neither an index stream nor vertices");
+            refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                   u8"vk.content.nothing_to_draw",
+                   vn::String(u8"vk: a draw named neither an index stream nor vertices"));
         }
     }
     return recorded;
@@ -2714,15 +2751,11 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
                                         const vn::graphics::PassDraw&               pass,
                                         ScreenSource                                source,
                                         ShadowSource                                shadow,
-                                        vn::String*                                 why,
-                                        vn::graphics::DiagnosticCategory*           category)
+                                        ContentRefusal* const                       refusal)
 {
-    vn::String                       local;
-    vn::String&                      reason        = why != nullptr ? *why : local;
-    vn::graphics::DiagnosticCategory local_category = vn::graphics::DiagnosticCategory::ContentSkipped;
-    vn::graphics::DiagnosticCategory& category_ref  = category != nullptr ? *category : local_category;
-    reason                                          = vn::String();
-    category_ref                                    = vn::graphics::DiagnosticCategory::ContentSkipped;
+    ContentRefusal  local;
+    ContentRefusal& out = refusal != nullptr ? *refusal : local;
+    out.clear();
 
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || commands == VK_NULL_HANDLE) {
         return 0;
@@ -2732,20 +2765,23 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
         return 0;
     }
     if (source.views.empty()) {
-        reason = vn::String(u8"vk: a screen draw named no source target, so there is nothing to sample");
+        out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                   u8"vk.content.screen_no_source",
+                   vn::String(u8"vk: a screen draw named no source target, so there is nothing to sample"));
         return 0;
     }
-    if (!impl->images.ensureFallback(VK_NULL_HANDLE, &reason)) {
+    vn::String stand_in_why;
+    if (!impl->images.ensureFallback(VK_NULL_HANDLE, &stand_in_why)) {
+        out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                   u8"vk.content.stand_in_missing",
+                   stand_in_why.empty() ? vn::String(u8"vk: the 1x1 stand-in every absent texture slot binds could not be made")
+                                        : std::move(stand_in_why));
         return 0;
     }
 
     // THE PROGRAM AND THE PIPELINE - the same resolution a warm-up runs (see planScreen).
-    Impl::ScreenPlan                 plan;
-    vn::String                       failure;
-    vn::graphics::DiagnosticCategory failure_category = vn::graphics::DiagnosticCategory::ContentSkipped;
-    if (!impl->planScreen(draw, pass, compatibility, render_pass, color_attachments, plan, failure, failure_category)) {
-        reason       = std::move(failure);
-        category_ref = failure_category;
+    Impl::ScreenPlan plan;
+    if (!impl->planScreen(draw, pass, compatibility, render_pass, color_attachments, plan, out)) {
         return 0;
     }
     const vn::graphics::ResolvedCommandState& resolved = plan.resolved;
@@ -2799,8 +2835,10 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
     // offsets; the set itself depends only on the images it names.
     VkDeviceSize slice = 0;
     if (!impl->reserveSlice(slice)) {
-        reason = vn::String(u8"vk: the frame's uniform ring is full; this draw was skipped and the ring grows before the "
-                                  u8"next frame");
+        out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                   u8"vk.content.uniform_ring_full",
+                   vn::String(u8"vk: the frame's uniform ring is full; this draw was skipped and the ring grows before the "
+                              u8"next frame"));
         return 0;
     }
     impl->writeSlice(slice, vn::graphics::VineMaterialBlock{}, lights_block, vn::graphics::VineDrawBlock{}, shadow_block);
@@ -2811,7 +2849,9 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
                                                           shadow_view,
                                                           shadow_sampler != VK_NULL_HANDLE ? shadow_sampler : impl->images.fallbackSampler());
     if (set == VK_NULL_HANDLE) {
-        reason = vn::String(u8"vk: the descriptor cache could not hand out a set");
+        out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
+                   u8"vk.content.descriptor_set_missing",
+                   vn::String(u8"vk: the descriptor cache could not hand out a set"));
         return 0;
     }
 

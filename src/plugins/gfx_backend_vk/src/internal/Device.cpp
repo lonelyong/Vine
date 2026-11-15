@@ -839,9 +839,10 @@ bool Device::initialize()
     }
 
     if (volkInitialize() != VK_SUCCESS) {
-        reportDiagnostic(DiagnosticSeverity::Error,
-                         DiagnosticCategory::InitFailed,
-                         u8"vk: no Vulkan loader (libvulkan / vulkan-1 could not be opened)");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.loader_missing",
+                                          u8"vk: no Vulkan loader (libvulkan / vulkan-1 could not be opened)"));
         return false;
     }
 
@@ -895,9 +896,10 @@ bool Device::initialize()
             // session rather than a quiet degradation - a host that wants the off-screen form asks for None. A
             // Handle device keeps its session: the off-screen path still runs whole frames.
             const bool probe = impl->desc.presentation == DevicePresentation::Probe;
-            reportDiagnostic(probe ? DiagnosticSeverity::Error : DiagnosticSeverity::Warning,
-                             probe ? DiagnosticCategory::InitFailed : DiagnosticCategory::UnsupportedRequest,
-                             why.empty() ? vn::String(u8"vk: no window system is available, so this device presents nothing") : std::move(why));
+            reportDiagnostic(deviceDiagnostic(probe ? DiagnosticSeverity::Error : DiagnosticSeverity::Warning,
+                                              probe ? DiagnosticCategory::InitFailed : DiagnosticCategory::UnsupportedRequest,
+                                              u8"vk.window.system_missing",
+                                              why.empty() ? vn::String(u8"vk: no window system is available, so this device presents nothing") : std::move(why)));
             if (probe) {
                 shutdown();
                 return false;
@@ -908,9 +910,10 @@ bool Device::initialize()
     if (impl->presentation_wanted && impl->desc.presentation == DevicePresentation::Probe && impl->surfaces.empty()) {
         vn::String why;
         if (!impl->window_system->openOwnWindow(kProbeWindowWidth, kProbeWindowHeight, &why)) {
-            reportDiagnostic(DiagnosticSeverity::Error,
-                             DiagnosticCategory::InitFailed,
-                             why.empty() ? vn::String(u8"vk: the device-owned (Probe) window could not be brought up") : std::move(why));
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::InitFailed,
+                                              u8"vk.window.own_window_failed",
+                                              why.empty() ? vn::String(u8"vk: the device-owned (Probe) window could not be brought up") : std::move(why)));
             shutdown();
             return false;
         }
@@ -918,15 +921,17 @@ bool Device::initialize()
     }
     if (impl->presentation_wanted && impl->desc.presentation == DevicePresentation::Handle && impl->desc.native_handle == nullptr &&
         impl->surfaces.empty()) {
-        reportDiagnostic(DiagnosticSeverity::Error,
-                         DiagnosticCategory::UnsupportedRequest,
-                         u8"vk: DevicePresentation::Handle needs a native window handle; this device presents nothing");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::UnsupportedRequest,
+                                          u8"vk.window.handle_missing",
+                                          u8"vk: DevicePresentation::Handle needs a native window handle; this device presents nothing"));
         impl->presentation_wanted = false;
     }
     if (impl->presentation_wanted && (!has_surface_extension || !has_platform_extension)) {
-        reportDiagnostic(DiagnosticSeverity::Warning,
-                         DiagnosticCategory::UnsupportedRequest,
-                         u8"vk: the instance does not offer the surface extensions a window needs; this device presents nothing");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                          DiagnosticCategory::UnsupportedRequest,
+                                          u8"vk.window.present_unsupported",
+                                          u8"vk: the instance does not offer the surface extensions a window needs; this device presents nothing"));
         impl->presentation_wanted = false;
     }
     if (impl->presentation_wanted && impl->desc.presentation == DevicePresentation::Handle && impl->surfaces.empty()) {
@@ -970,7 +975,10 @@ bool Device::initialize()
     instance_info.ppEnabledExtensionNames = extension_name_count > 0U ? extension_names : nullptr;
 
     if (vkCreateInstance(&instance_info, nullptr, &impl->instance) != VK_SUCCESS) {
-        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed, u8"vk: vkCreateInstance failed");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.instance_failed",
+                                          u8"vk: vkCreateInstance failed"));
         shutdown();
         return false;
     }
@@ -984,9 +992,10 @@ bool Device::initialize()
         for (const auto& surface : impl->surfaces) {
             vn::String why;
             if (!surface->createSurface(impl->instance, &why)) {
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::UnsupportedRequest,
-                                 why.empty() ? vn::String(u8"vk: the host window's surface could not be created") : std::move(why));
+                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.window.surface_failed",
+                                                  why.empty() ? vn::String(u8"vk: the host window's surface could not be created") : std::move(why)));
                 impl->presentation_wanted = false;
                 break;
             }
@@ -1014,15 +1023,19 @@ bool Device::initialize()
     // asked for there.
     std::uint32_t physical_count = 0;
     if (vkEnumeratePhysicalDevices(impl->instance, &physical_count, nullptr) != VK_SUCCESS || physical_count == 0U) {
-        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed, u8"vk: no Vulkan physical device");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.no_device",
+                                          u8"vk: no Vulkan physical device"));
         shutdown();
         return false;
     }
     std::vector<VkPhysicalDevice> physical_devices(physical_count);
     if (vkEnumeratePhysicalDevices(impl->instance, &physical_count, physical_devices.data()) != VK_SUCCESS) {
-        reportDiagnostic(DiagnosticSeverity::Error,
-                         DiagnosticCategory::InitFailed,
-                         u8"vk: vkEnumeratePhysicalDevices failed on its second call");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.no_device",
+                                          u8"vk: vkEnumeratePhysicalDevices failed on its second call"));
         shutdown();
         return false;
     }
@@ -1070,9 +1083,10 @@ bool Device::initialize()
         }
     }
     if (impl->physical == VK_NULL_HANDLE) {
-        reportDiagnostic(DiagnosticSeverity::Error,
-                         DiagnosticCategory::InitFailed,
-                         u8"vk: no physical device has a graphics queue family");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.no_queue",
+                                          u8"vk: no physical device has a graphics queue family"));
         shutdown();
         return false;
     }
@@ -1141,9 +1155,10 @@ bool Device::initialize()
             device_extension_names.push_back("VK_KHR_swapchain");
         }
         else {
-            reportDiagnostic(DiagnosticSeverity::Warning,
-                             DiagnosticCategory::UnsupportedRequest,
-                             u8"vk: the device does not offer VK_KHR_swapchain; this device presents nothing");
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                              DiagnosticCategory::UnsupportedRequest,
+                                              u8"vk.window.present_unsupported",
+                                              u8"vk: the device does not offer VK_KHR_swapchain; this device presents nothing"));
             impl->presentation_wanted = false;
         }
     }
@@ -1157,7 +1172,10 @@ bool Device::initialize()
     }
 
     if (vkCreateDevice(impl->physical, &device_info, nullptr, &impl->device) != VK_SUCCESS) {
-        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed, u8"vk: vkCreateDevice failed");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.device_failed",
+                                          u8"vk: vkCreateDevice failed"));
         shutdown();
         return false;
     }
@@ -1171,7 +1189,10 @@ bool Device::initialize()
     pool_info.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     pool_info.queueFamilyIndex = impl->queue_family;
     if (impl->device_table.vkCreateCommandPool(impl->device, &pool_info, nullptr, &impl->command_pool) != VK_SUCCESS) {
-        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed, u8"vk: vkCreateCommandPool failed");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.command_machinery_failed",
+                                          u8"vk: vkCreateCommandPool failed"));
         shutdown();
         return false;
     }
@@ -1179,7 +1200,10 @@ bool Device::initialize()
     VkFenceCreateInfo fence_info{};
     fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     if (impl->device_table.vkCreateFence(impl->device, &fence_info, nullptr, &impl->completion) != VK_SUCCESS) {
-        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::InitFailed, u8"vk: vkCreateFence failed");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.command_machinery_failed",
+                                          u8"vk: vkCreateFence failed"));
         shutdown();
         return false;
     }
@@ -1191,9 +1215,10 @@ bool Device::initialize()
     // which memory type serves a purpose (see MemoryAllocator). `bufferImageGranularity` is the device's rule about
     // which slices may share a page, so it is a device fact, read here and nowhere else.
     if (!impl->allocator.open(impl->device_table, impl->device, impl->memory, properties.limits.bufferImageGranularity)) {
-        reportDiagnostic(DiagnosticSeverity::Error,
-                         DiagnosticCategory::InitFailed,
-                         u8"vk: the device's memory pool could not be opened");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.memory_pool_failed",
+                                          u8"vk: the device's memory pool could not be opened"));
         shutdown();
         return false;
     }
@@ -1211,9 +1236,10 @@ bool Device::initialize()
         for (const auto& surface : impl->surfaces) {
             vn::String why;
             if (!surface->attach(window_device, &why)) {
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::UnsupportedRequest,
-                                 why.empty() ? vn::String(u8"vk: the host window's swapchain could not be created") : std::move(why));
+                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.window.attach_failed",
+                                                  why.empty() ? vn::String(u8"vk: the host window's swapchain could not be created") : std::move(why)));
                 impl->presentation_wanted = false;
                 break;
             }
@@ -1290,9 +1316,10 @@ bool Device::initialize()
                               impl->allocator,
                               properties.limits.minUniformBufferOffsetAlignment,
                               initial_pipeline_cache)) {
-        reportDiagnostic(DiagnosticSeverity::Error,
-                         DiagnosticCategory::InitFailed,
-                         u8"vk: the content layout / descriptor pool could not be created");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::InitFailed,
+                                          u8"vk.init.content_pool_failed",
+                                          u8"vk: the content layout / descriptor pool could not be created"));
         shutdown();
         return false;
     }
@@ -1443,12 +1470,10 @@ bool Device::noteDeviceLost(const VkResult result, const char* what)
         const std::string sentence = std::string("vk: ") + (what != nullptr ? what : "a device call") +
                                      " answered VK_ERROR_DEVICE_LOST; this session cannot continue - rebuild it with "
                                      "shutdown() and initialize()";
-        vn::graphics::RenderDiagnostic diagnostic;
-        diagnostic.severity = DiagnosticSeverity::Error;
-        diagnostic.category = DiagnosticCategory::SubmissionFailed;
-        diagnostic.code     = vn::String(u8"vk.session.device_lost");
-        diagnostic.message  = vn::String::fromUtf8(sentence);
-        reportDiagnostic(diagnostic);
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::SubmissionFailed,
+                                          u8"vk.session.device_lost",
+                                          vn::String::fromUtf8(sentence)));
     }
     return true;
 }
@@ -1910,9 +1935,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
             // says its picture did not arrive - Lost is the outcome a host acts on.
             return present_to != nullptr ? PresentOutcome::Lost : PresentOutcome::Skipped;
         }
-        reportDiagnostic(DiagnosticSeverity::Error,
-                         DiagnosticCategory::SubmissionFailed,
-                         u8"vk: a frame was handed to a device that is not up");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::SubmissionFailed,
+                                          u8"vk.session.not_initialized",
+                                          u8"vk: a frame was handed to a device that is not up"));
         return PresentOutcome::Skipped;
     }
 
@@ -2030,10 +2056,11 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
 
     if (runnable_passes.empty()) {
         if (!refused_pass && impl->no_targets_report.shouldReport()) {
-            reportDiagnostic(DiagnosticSeverity::Info,
-                             DiagnosticCategory::UnsupportedRequest,
-                             u8"vk: the frame had no pass this backend can run (off-screen targets and host windows are "
-                             u8"served); nothing was submitted");
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Info,
+                                              DiagnosticCategory::UnsupportedRequest,
+                                              u8"vk.content.no_runnable_pass",
+                                              u8"vk: the frame had no pass this backend can run (off-screen targets and host windows are "
+                                              u8"served); nothing was submitted"));
         }
         return PresentOutcome::Skipped;
     }
@@ -2061,7 +2088,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
 
     VkCommandBuffer commands{ VK_NULL_HANDLE };
     if (impl->device_table.vkAllocateCommandBuffers(impl->device, &allocate, &commands) != VK_SUCCESS) {
-        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed, u8"vk: no command buffer");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::SubmissionFailed,
+                                          u8"vk.frame.command_buffer_missing",
+                                          u8"vk: no command buffer"));
         return PresentOutcome::Skipped;
     }
 
@@ -2069,7 +2099,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     if (impl->device_table.vkBeginCommandBuffer(commands, &begin) != VK_SUCCESS) {
-        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed, u8"vk: vkBeginCommandBuffer failed");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::SubmissionFailed,
+                                          u8"vk.frame.begin_failed",
+                                          u8"vk: vkBeginCommandBuffer failed"));
         impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
         return PresentOutcome::Skipped;
     }
@@ -2263,8 +2296,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         // GPU draw (M3: resolved state selects the pipeline, one `RenderCommand` = one indexed draw). The frame's
         // DRAWING-CALL count was taken from the frame's shape above - a call is the description, not its commands.
         for (const DrawDescription& description : draw.draws) {
-            vn::String                       why;
-            vn::graphics::DiagnosticCategory category = DiagnosticCategory::ContentSkipped;
+            ContentRefusal refusal;
             if (description.kind == DrawDescription::Kind::Screen) {
                 // THE FULL-SCREEN ABI: the source's colour attachments, bound in order. A source this device never
                 // built answers an empty span, which makes the recorder report (and skip) the draw.
@@ -2284,8 +2316,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                                                  draw,
                                                  source,
                                                  shadow,
-                                                 &why,
-                                                 &category);
+                                                 &refusal);
             }
             else {
                 (void)impl->content.record(commands,
@@ -2298,13 +2329,16 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                                            draw,
                                            impl->default_program.get(),
                                            shadow,
-                                           &why,
-                                           &category);
+                                           &refusal);
             }
-            if (!why.empty()) {
+            if (refusal.isRefused()) {
                 content_refused = true;
                 if (impl->content_report.shouldReport()) {
-                    reportDiagnostic(DiagnosticSeverity::Warning, category, why);
+                    // THE CAUSE WAS NAMED WHERE IT WAS KNOWN (see ContentRefusal), so this report FORWARDS the value the
+                    // recorder built - the code travels with the sentence instead of being guessed at the sink.
+                    const vn::graphics::RenderDiagnostic diagnostic =
+                        deviceDiagnostic(DiagnosticSeverity::Warning, refusal.category(), refusal.code(), refusal.message());
+                    reportDiagnostic(diagnostic);
                 }
             }
         }
@@ -2331,7 +2365,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     }
 
     if (impl->device_table.vkEndCommandBuffer(commands) != VK_SUCCESS) {
-        reportDiagnostic(DiagnosticSeverity::Error, DiagnosticCategory::SubmissionFailed, u8"vk: vkEndCommandBuffer failed");
+        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::SubmissionFailed,
+                                          u8"vk.frame.end_failed",
+                                          u8"vk: vkEndCommandBuffer failed"));
         impl->content.endFrame();
         impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
         return PresentOutcome::Skipped;
@@ -2416,9 +2453,10 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         // A LOST DEVICE GETS ITS OWN SENTENCE, ONCE (see noteDeviceLost); the generic one is for the failures a retry
         // can still fix, which is the difference that matters to a host.
         if (!noteDeviceLost(submit_result, "vkQueueSubmit") && !noteDeviceLost(fence_result, "vkWaitForFences")) {
-            reportDiagnostic(DiagnosticSeverity::Error,
-                             DiagnosticCategory::SubmissionFailed,
-                             u8"vk: the frame's command buffer did not run to completion");
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::SubmissionFailed,
+                                              u8"vk.frame.did_not_complete",
+                                              u8"vk: the frame's command buffer did not run to completion"));
         }
     }
 
@@ -2546,9 +2584,10 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
         }
         if (window == nullptr) {
             if (impl->prepare_target_report.shouldReport()) {
-                reportDiagnostic(DiagnosticSeverity::Warning,
-                                 DiagnosticCategory::UnsupportedRequest,
-                                 u8"vk: a frame named a surface target this device did not hand out; nothing was prepared");
+                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.window.foreign_target",
+                                                  u8"vk: a frame named a surface target this device did not hand out; nothing was prepared"));
             }
             return PrepareReport{ PrepareReport::Outcome::Refused };
         }
@@ -2628,26 +2667,27 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
             begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             if (impl->device_table.vkAllocateCommandBuffers(impl->device, &allocate, &batch) != VK_SUCCESS) {
                 batch = VK_NULL_HANDLE;
-                reportDiagnostic(DiagnosticSeverity::Error,
-                                 DiagnosticCategory::SubmissionFailed,
-                                 u8"vk: the preparation's transfer batch could not be recorded; the next frame uploads the "
-                                 u8"content again");
+                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                                  DiagnosticCategory::SubmissionFailed,
+                                                  u8"vk.prepare.batch_failed",
+                                                  u8"vk: the preparation's transfer batch could not be recorded; the next frame uploads the "
+                                                  u8"content again"));
             }
             else if (impl->device_table.vkBeginCommandBuffer(batch, &begin) != VK_SUCCESS) {
                 impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &batch);
                 batch = VK_NULL_HANDLE;
-                reportDiagnostic(DiagnosticSeverity::Error,
-                                 DiagnosticCategory::SubmissionFailed,
-                                 u8"vk: the preparation's transfer batch could not be recorded; the next frame uploads the "
-                                 u8"content again");
+                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                                  DiagnosticCategory::SubmissionFailed,
+                                                  u8"vk.prepare.batch_failed",
+                                                  u8"vk: the preparation's transfer batch could not be recorded; the next frame uploads the "
+                                                  u8"content again"));
             }
         }
 
         for (const DrawDescription& description : draw.draws) {
-            vn::String                       why;
-            vn::graphics::DiagnosticCategory category = DiagnosticCategory::ContentSkipped;
+            ContentRefusal refusal;
             if (description.kind == DrawDescription::Kind::Screen) {
-                impl->content.prepareScreen(compatibility, render_pass, color_count, description, draw, &why, &category);
+                impl->content.prepareScreen(compatibility, render_pass, color_count, description, draw, &refusal);
             }
             else {
                 impl->content.prepare(compatibility,
@@ -2656,13 +2696,15 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
                                       description,
                                       draw,
                                       impl->default_program.get(),
-                                      &why,
-                                      &category);
+                                      &refusal);
             }
-            if (!why.empty()) {
+            if (refusal.isRefused()) {
                 content_refused = true;
                 if (impl->content_report.shouldReport()) {
-                    reportDiagnostic(DiagnosticSeverity::Warning, category, why);
+                    // The same forwarding the frame path does (see above).
+                    const vn::graphics::RenderDiagnostic diagnostic =
+                        deviceDiagnostic(DiagnosticSeverity::Warning, refusal.category(), refusal.code(), refusal.message());
+                    reportDiagnostic(diagnostic);
                 }
             }
         }
@@ -2683,9 +2725,10 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
             // THE BUFFER NEVER CLOSED, so whatever it recorded never ran - and it cannot be recorded again: the copies
             // were already recorded against entries this call made resident. Said plainly, because "the next frame
             // uploads it again" would be a promise the revision check does not keep.
-            reportDiagnostic(DiagnosticSeverity::Error,
-                             DiagnosticCategory::SubmissionFailed,
-                             u8"vk: the preparation's transfer batch could not be closed; the copies it recorded never ran");
+            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::SubmissionFailed,
+                                              u8"vk.prepare.batch_not_closed",
+                                              u8"vk: the preparation's transfer batch could not be closed; the copies it recorded never ran"));
             impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &batch);
         }
         else if (!impl->content.images().hasPendingUploads()) {
@@ -2713,10 +2756,11 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
                 // They cannot buy a re-upload, though - the entries were already made resident with what the copies were
                 // going to write - so this says what actually happened rather than promising a retry: a queue that
                 // refuses a submit is a device-level failure (out of memory or lost device), not a content problem.
-                reportDiagnostic(DiagnosticSeverity::Error,
-                                 DiagnosticCategory::SubmissionFailed,
-                                 u8"vk: the preparation's transfer batch did not run (the queue refused it); the images it "
-                                 u8"was going to fill were never written");
+                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
+                                                  DiagnosticCategory::SubmissionFailed,
+                                                  u8"vk.prepare.batch_not_run",
+                                                  u8"vk: the preparation's transfer batch did not run (the queue refused it); the images it "
+                                                  u8"was going to fill were never written"));
             }
         }
     }
@@ -3069,7 +3113,7 @@ void Device::reportDriverMessage(int severity_flags, const char* text)
     }
     // M0 has no frame, so every driver message it can produce is about coming up - which is also why InitFailed is
     // the right category rather than a per-draw one (see the header).
-    reportDiagnostic(severity, DiagnosticCategory::InitFailed, messageOf(text));
+    reportDiagnostic(deviceDiagnostic(severity, DiagnosticCategory::InitFailed, u8"vk.driver.message", messageOf(text)));
 }
 
 VN_BACKEND_VK_NS_END

@@ -23,6 +23,62 @@ VN_BACKEND_VK_NS_BEGIN
 class ContentImages;
 
 /**
+ * @brief Why a recording path drew nothing: the cause's STABLE CODE, the category it belongs to and the sentence.
+ *
+ * @details
+ * - THE CAUSE IS NAMED WHERE IT IS KNOWN. A recorder sees which stage refused (the program, the streams, the pipeline,
+ *   the ring) and the callers above it do not, so the code is decided here and travels with the sentence. The device's
+ *   report then forwards all three - which is what keeps `RenderDiagnostic::code` matchable instead of prose.
+ * - ONE VALUE, NOT TWO OUT-PARAMETERS. The message and its category used to be separate `why` / `category` arguments,
+ *   so a new refusal could fill one and forget the other; this type has no way to hold a message without a code
+ *   (`refuse` is the only writer, and it is the only place the "first reason wins" rule lives).
+ * - THE FIRST REASON WINS: a second `refuse` on the same value does nothing, because the first one is what explains
+ *   the draw - the same rule the recorder had when it tested `why.empty()` by hand.
+ *
+ * @note The codes are the `vk.content.*` family in `scripts/diagnostic_codes.txt`; a value that is not refused carries
+ *       no code at all (`code()` answers null), so a caller must ask `isRefused()` first.
+ */
+class VN_BACKEND_VK_API ContentRefusal final
+{
+  public:
+    /** @brief Builds "nothing was refused": no category, no code, no sentence. */
+    ContentRefusal();
+
+    /**
+     * @brief Records @p text as the reason, unless a reason is already recorded.
+     *
+     * @details
+     * - The message is taken even when empty: a caller that has nothing to add still states the code, and the report
+     *   then carries the code with no sentence rather than the wrong cause.
+     *
+     * @param category The coarse class the cause belongs to.
+     * @param code     The stable identifier (`vk.content.*`), never null.
+     * @param text     The sentence for a human (may be empty).
+     */
+    void refuse(vn::graphics::DiagnosticCategory category, const char8_t* code, vn::String text);
+
+    /** @brief Forgets any reason, so the value can be handed to another call (what `record` does on entry). */
+    void clear() noexcept;
+
+    /** @brief Answers whether a reason was recorded. */
+    [[nodiscard]] bool isRefused() const noexcept;
+
+    /** @brief Gets the category of the recorded reason (ContentSkipped when nothing was refused). */
+    [[nodiscard]] vn::graphics::DiagnosticCategory category() const noexcept;
+
+    /** @brief Gets the recorded reason's stable code, or null when nothing was refused. */
+    [[nodiscard]] const char8_t* code() const noexcept;
+
+    /** @brief Gets the recorded sentence (empty when nothing was refused, or when the refusal stated only a code). */
+    [[nodiscard]] const vn::String& message() const noexcept;
+
+  private:
+    vn::graphics::DiagnosticCategory category_{ vn::graphics::DiagnosticCategory::ContentSkipped };
+    const char8_t*                   code_{ nullptr };
+    vn::String                       message_{};
+};
+
+/**
  * @brief The content path (M2-M6): the draws of one pass become indexed Vulkan drawing calls, and what they built is
  *        accounted for, can be prepared ahead of time, and can be let go when the host says the content is done.
  *
@@ -327,8 +383,8 @@ class VN_BACKEND_VK_API ContentDraw final {
      * - THE WARM-UP HALF OF @ref record: the same program resolution, the same stream upload and the same pipeline
      *   selection (one implementation, see `planCommand`), stopping before any drawing command. Nothing is
      *   acquired, submitted or presented.
-     * - A command that cannot be built is reported through @p why with @p category, exactly as @ref record reports
-     *   it; the rest of the draw is still prepared.
+     * - A command that cannot be built is reported through @p refusal with its code and category, exactly as
+     *   @ref record reports it; the rest of the draw is still prepared.
      *
      * @param compatibility     The target's pipeline compatibility (as @ref record).
      * @param render_pass       A render pass with that compatibility (used only when a pipeline must be CREATED).
@@ -336,8 +392,7 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param draw              The draw to prepare (borrowed).
      * @param pass              The pass drawing it (its override and state are read; borrowed).
      * @param default_program   The program content without one of its own is drawn with, or null.
-     * @param why               Receives the first reason a command could not be built (empty when all were).
-     * @param category          Receives the category of that reason, or null to ignore.
+     * @param refusal           Receives the first reason a command could not be built (cleared on entry), or null.
      */
     void prepare(const vn::graphics::backend::RenderPassCompatibility& compatibility,
                  VkRenderPass                               render_pass,
@@ -345,8 +400,7 @@ class VN_BACKEND_VK_API ContentDraw final {
                  const vn::graphics::DrawDescription&       draw,
                  const vn::graphics::PassDraw&              pass,
                  const vn::graphics::ShaderProgramDescription* default_program,
-                 vn::String*                                why,
-                 vn::graphics::DiagnosticCategory*          category = nullptr);
+                 ContentRefusal*                            refusal = nullptr);
 
     /**
      * @brief Builds what a SCREEN draw needs (its fragment stage and the composed pipeline), recording nothing.
@@ -356,16 +410,14 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param color_attachments How many colour attachments the destination has.
      * @param draw              The screen draw (its fragment program is read; borrowed).
      * @param pass              The pass drawing it (state is read; borrowed).
-     * @param why               Receives the reason when the draw could not be prepared (empty when it was).
-     * @param category          Receives the category of that reason, or null to ignore.
+     * @param refusal           Receives the reason when the draw could not be prepared (cleared on entry), or null.
      */
     void prepareScreen(const vn::graphics::backend::RenderPassCompatibility& compatibility,
                        VkRenderPass                               render_pass,
                        std::uint32_t                              color_attachments,
                        const vn::graphics::DrawDescription&       draw,
                        const vn::graphics::PassDraw&              pass,
-                       vn::String*                                why,
-                       vn::graphics::DiagnosticCategory*          category = nullptr);
+                       ContentRefusal*                            refusal = nullptr);
 
     /**
      * @brief Records one CONTENT draw description's commands into @p commands.
@@ -400,9 +452,8 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param pass            The pass drawing it (its override, state and viewport are read; borrowed).
      * @param default_program The program content without one of its own is drawn with, or null.
      * @param shadow          The shadow map this pass samples (see ShadowSource), or an empty one for none.
-     * @param why             Receives the first reason a command was skipped (empty when every command was recorded).
-     * @param category        Receives the category that reason belongs to (CompileFailed for a program or pipeline
-     *                        that could not be built, ContentSkipped for anything else), or null to ignore.
+     * @param refusal         Receives the first reason a command was skipped (cleared on entry; empty when every
+     *                        command was recorded), or null.
      * @return How many drawing calls were recorded.
      */
     std::uint64_t record(VkCommandBuffer                            commands,
@@ -415,8 +466,7 @@ class VN_BACKEND_VK_API ContentDraw final {
                          const vn::graphics::PassDraw&              pass,
                          const vn::graphics::ShaderProgramDescription* default_program,
                          ShadowSource                               shadow,
-                         vn::String*                                why,
-                         vn::graphics::DiagnosticCategory*          category = nullptr);
+                         ContentRefusal*                            refusal = nullptr);
 
     /**
      * @brief Records one SCREEN draw description: a full-screen triangle sampling @p source.
@@ -446,8 +496,7 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param pass              The pass drawing it (state and viewport; borrowed).
      * @param source            The source target's colour images/views (see ScreenSource).
      * @param shadow            The map this pass resolved (see ShadowSource), or an empty one for none.
-     * @param why               Receives the reason when the draw was skipped (empty when it was recorded).
-     * @param category          Receives the category of that reason, or null to ignore.
+     * @param refusal           Receives the reason when the draw was skipped (cleared on entry), or null.
      * @return 1 when the full-screen draw was recorded, 0 otherwise.
      */
     std::uint64_t recordScreen(VkCommandBuffer                            commands,
@@ -460,8 +509,7 @@ class VN_BACKEND_VK_API ContentDraw final {
                                const vn::graphics::PassDraw&              pass,
                                ScreenSource                               source,
                                ShadowSource                               shadow,
-                               vn::String*                                why,
-                               vn::graphics::DiagnosticCategory*          category = nullptr);
+                               ContentRefusal*                            refusal = nullptr);
 
   private:
     struct Impl;

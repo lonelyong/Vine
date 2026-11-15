@@ -261,6 +261,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | C4 | `TargetShape` 决定图像/通道/管线兼容性；bootstrap 清所有附件。 |
 | C5 | `StreamKey` = buffer + buffer revision + 段；稳态零重传。 |
 | C6 | T15 触发前，不再向 SDK `graphics/backend/` 新增 Vulkan 拼写（`VkFormat` / `ImageLayout` / subpass）：新的设备无关表述先在插件 `internal/` 落地，等第二个后端把这条边界推上去。 |
+| C7 | 本插件每条报告带 `vsg.<族>.<原因>` 稳定 code（登记在 `scripts/diagnostic_codes.txt`）；读回的九种拒绝由 `readbackRefusalDiagnostic` 的**一个无 `default` 的 switch** 映射，所以新增一个 `HostReadbackRefusal` 编译期就必须命名它的 code——词汇表跟着枚举走，不靠人记。规则的来由见 `vk-backend.md` §2.13 / §2.14（同一个门禁、同一套值语义）。 |
 
 ### 5.2 要求（R#）
 

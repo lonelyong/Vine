@@ -4993,3 +4993,38 @@ TEST(VsgBackendTest, ADeviceCapThatIsReachedIsAReasonAndNotAnException)
     const vn::backend_vsg::DeviceResult reused = vn::backend_vsg::createDevice();
     EXPECT_TRUE(reused.ok) << as_bytes(reused.error);
 }
+TEST(VsgBackendTest, AReadbackRefusalCarriesTheCodeOfItsCause)
+{
+    // THE NINE CAUSES A READBACK HAS (audit A3): "the readback refused" is not actionable - the code says whether the
+    // request itself was wrong (no target), the target was never announced (announce it), no frame has drawn into it
+    // (draw first), or the copy failed (a device problem). Two of them are deterministic without a picture, and they
+    // are the two a host meets first.
+    if (!deviceCaseAvailable()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+    ASSERT_TRUE(backend->initialize());
+
+    // ONE REFUSAL PER EPISODE PER ENTRY POINT (see the case above): the two causes are asked through the two casts, so
+    // each has its own armed episode - the same a host sees, since a refused readback never re-arms one.
+    std::vector<std::uint8_t>    pixels;
+    std::vector<float>           depths;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Ok;
+    const vn::intrusive_ptr<RenderTarget> never_announced(new RenderTarget());
+    EXPECT_FALSE(backend->readColorBuffer(nullptr, 0, pixels, &why));
+    EXPECT_FALSE(backend->readDepthBuffer(never_announced.get(), depths, &why));
+
+    bool saw_no_target = false;
+    bool saw_unknown   = false;
+    for (const vn::graphics::RenderDiagnostic& diagnostic : reported) {
+        saw_no_target = saw_no_target || diagnostic.code.std_u8str_view() == u8"vsg.readback.no_target";
+        saw_unknown   = saw_unknown || diagnostic.code.std_u8str_view() == u8"vsg.readback.unknown_target";
+    }
+    EXPECT_TRUE(saw_no_target) << "a readback with no target did not name that as its cause";
+    EXPECT_TRUE(saw_unknown) << "a target this backend was never told about did not name that as its cause";
+
+    backend->shutdown();
+}

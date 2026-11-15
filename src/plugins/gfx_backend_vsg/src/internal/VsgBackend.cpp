@@ -347,6 +347,41 @@ std::span<const PassContent> recordContent(ContentAssembly&                     
     return diagnostic;
 }
 
+/**
+ * @brief Builds the diagnostic for a REFUSED readback: the cause's stable code beside the sentence that explains it.
+ *
+ * @details
+ * - ONE SWITCH FOR THE WHOLE ENUM, and no `default`: a refusal added to `HostReadbackRefusal` cannot compile without a
+ *   `vsg.readback.*` code here, which is what keeps the vocabulary complete as the enum grows.
+ * - THE TWO ENTRY POINTS SHARE IT (colour and depth): the cause belongs to the request, not to the attachment, and the
+ *   sentence already names which cast was asked for.
+ * - `None` is mapped too, and it means "this backend reached the report with no refusal": a defect here, said as one.
+ *
+ * @param refusal The classified refusal.
+ * @param what    The entry point's name, as the sentence states it.
+ * @return The diagnostic, ready to hand to reportDiagnostic.
+ */
+[[nodiscard]] vn::graphics::RenderDiagnostic readbackRefusalDiagnostic(const HostReadbackRefusal refusal, const char* what)
+{
+    const char8_t* code = u8"vsg.readback.refused";
+    switch (refusal) {
+    case HostReadbackRefusal::None:              code = u8"vsg.readback.refused"; break;
+    case HostReadbackRefusal::NoTarget:          code = u8"vsg.readback.no_target"; break;
+    case HostReadbackRefusal::UnknownTarget:     code = u8"vsg.readback.unknown_target"; break;
+    case HostReadbackRefusal::NotBuilt:          code = u8"vsg.readback.not_built"; break;
+    case HostReadbackRefusal::NotRecorded:       code = u8"vsg.readback.not_recorded"; break;
+    case HostReadbackRefusal::UnknownAttachment: code = u8"vsg.readback.unknown_attachment"; break;
+    case HostReadbackRefusal::UnreadableFormat:  code = u8"vsg.readback.unreadable_format"; break;
+    case HostReadbackRefusal::BorrowedDepth:     code = u8"vsg.readback.borrowed_depth"; break;
+    case HostReadbackRefusal::NoDevice:          code = u8"vsg.readback.no_device"; break;
+    case HostReadbackRefusal::TransferFailed:    code = u8"vsg.readback.transfer_failed"; break;
+    }
+    return backendDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                             vn::graphics::DiagnosticCategory::ContentSkipped,
+                             code,
+                             readbackRefusalMessage(refusal, what));
+}
+
 } // namespace
 
 namespace detail
@@ -828,12 +863,13 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> VsgBackend::createSurfaceTarget(v
                 *why = vn::graphics::SurfaceTargetResult::WindowOccupied;
             }
             if (d->occupied_report.shouldReport()) {
-                reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
-                                 vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                                 vn::String::fromUtf8("a window this device already serves was asked for again: it was "
-                                                      "left alone (one live swapchain per window - see "
-                                                      "createSurfaceTarget, and .ai/design/graphics-window-device-"
-                                                      "viewer.md)"));
+                reportDiagnostic(backendDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                                                   vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                                   u8"vsg.window.occupied",
+                                                   vn::String::fromUtf8("a window this device already serves was asked for again: it was "
+                                                                        "left alone (one live swapchain per window - see "
+                                                                        "createSurfaceTarget, and .ai/design/graphics-window-device-"
+                                                                        "viewer.md)")));
             }
             return nullptr;
         }
@@ -997,11 +1033,12 @@ vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameD
         }
         if (index >= d->windows.size()) {
             if (d->foreign_target_report.shouldReport()) {
-                reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
-                                 vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                                 vn::String::fromUtf8("a frame named a surface target this device did not hand out: "
-                                                      "nothing was recorded (a device serves the windows it created, "
-                                                      "see createSurfaceTarget)"));
+                reportDiagnostic(backendDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                                                   vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                                   u8"vsg.window.foreign_target",
+                                                   vn::String::fromUtf8("a frame named a surface target this device did not hand out: "
+                                                                        "nothing was recorded (a device serves the windows it created, "
+                                                                        "see createSurfaceTarget)")));
             }
             return vn::graphics::PresentOutcome::Lost; // a surface was named and nothing could reach it
         }
@@ -1116,11 +1153,12 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
             // The same episode the frame path reports (one sentence, one fact): a surface this device did not hand
             // out is wiring it could not have produced, whether it arrives to be prepared or to be run.
             if (d->foreign_target_report.shouldReport()) {
-                reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
-                                 vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                                 vn::String::fromUtf8("a frame named a surface target this device did not hand out: "
-                                                      "nothing was prepared (a device serves the windows it created, "
-                                                      "see createSurfaceTarget)"));
+                reportDiagnostic(backendDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                                                   vn::graphics::DiagnosticCategory::UnsupportedRequest,
+                                                   u8"vsg.window.foreign_target",
+                                                   vn::String::fromUtf8("a frame named a surface target this device did not hand out: "
+                                                                        "nothing was prepared (a device serves the windows it created, "
+                                                                        "see createSurfaceTarget)")));
             }
             return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::Refused };
         }
@@ -1602,7 +1640,8 @@ void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget>
     // (and the executor reports the passes that needed one that was never completed). The targets are NAMED (the
     // SDK's own label, see RenderTarget::setName): "a target could not be built" is a sentence a host cannot act
     // on, and the pipeline builder names everything it creates.
-    std::string message;
+    std::string    message;
+    const char8_t* code = u8"vsg.target.build_failed"; // the branch below replaces it when the reason is a narrower one
     if (reason == UnbuildableReason::SamplesUnsupported) {
         // The reasons a sample count is refused, said as the difference they are: a count above what the device
         // offers, a number that is not a sample count at all, and a multisampled target asking for what a
@@ -1614,20 +1653,24 @@ void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget>
         const bool          above_a_count = (samples & (samples - 1U)) != 0U;
         message                           = nameOf(target) + " asks for " + std::to_string(samples) + " samples per pixel, ";
         if (too_many) {
+            code = u8"vsg.target.samples_above_limit";
             message += "above what this device offers (up to " + std::to_string(max_samples) +
                        "): the passes that draw into it are skipped (see Capabilities::max_samples)";
         }
         else if (above_a_count) {
+            code = u8"vsg.target.samples_not_a_count";
             message += "that is not a sample count the device offers (the counts are powers of two, up to " +
                        std::to_string(max_samples) + "): the passes that draw into it are skipped (see Capabilities::max_samples)";
         }
         else {
+            code = u8"vsg.target.borrow_multisampled";
             message += "and borrows its depth from another target: a borrowed depth is that target's resolved "
                        "single-sample picture, and a framebuffer's attachments share one sample count - announce the "
                        "borrower at one sample, or let it own its depth";
         }
     }
     else if (reason == UnbuildableReason::DepthSourceMissing) {
+        code = u8"vsg.target.borrow_source_missing";
         // The lender is read from the target itself (shareDepth keeps it alive), so this works whether or
         // not it was ever announced - which is exactly the case being reported.
         message = nameOf(target) + " borrows its depth from " + nameOf(target->depthSource()) +
@@ -1638,7 +1681,11 @@ void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget>
         message = nameOf(target) + " could not be built (its images, render pass or readback buffer failed to create, or "
                                    "its description is not a target): the passes that draw into it are skipped";
     }
-    reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::TargetBuildFailed, vn::String::fromUtf8(message));
+    const vn::graphics::RenderDiagnostic diagnostic = backendDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
+                                                                        vn::graphics::DiagnosticCategory::TargetBuildFailed,
+                                                                        code,
+                                                                        vn::String::fromUtf8(message));
+    reportDiagnostic(diagnostic);
 }
 
 void VsgBackend::openPassScope(vn::raw_ptr<const vn::graphics::RenderPass> pass)
@@ -1911,9 +1958,8 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target,
             *why = readbackResultOf(refusal);
         }
         if (episode.shouldReport()) {
-            reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
-                             vn::graphics::DiagnosticCategory::ContentSkipped,
-                             readbackRefusalMessage(refusal, "readColorBuffer()"));
+            const vn::graphics::RenderDiagnostic diagnostic = readbackRefusalDiagnostic(refusal, "readColorBuffer()");
+            reportDiagnostic(diagnostic);
         }
         return false;
     };
@@ -1979,9 +2025,8 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::
             *why = readbackResultOf(refusal);
         }
         if (episode.shouldReport()) {
-            reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
-                             vn::graphics::DiagnosticCategory::ContentSkipped,
-                             readbackRefusalMessage(refusal, "readDepthBuffer()"));
+            const vn::graphics::RenderDiagnostic diagnostic = readbackRefusalDiagnostic(refusal, "readDepthBuffer()");
+            reportDiagnostic(diagnostic);
         }
         return false;
     };
@@ -2136,12 +2181,13 @@ void VsgBackend::growMaterialArenaIfNeeded()
 
     // The same shape of sentence as the block budgets' growth: Info, because the request was served by a bigger
     // buffer rather than by dropping content.
-    reportDiagnostic(vn::graphics::DiagnosticSeverity::Info,
-                     vn::graphics::DiagnosticCategory::ContentSkipped,
-                     formatDiagnostic(u8"the live material set outgrew the arena, so the block storage was replaced "
-                                      u8"(a new buffer; the old one is parked): materials %u -> %u",
-                                      before.materials.capacity,
-                                      wanted.materials.capacity));
+    reportDiagnostic(backendDiagnostic(vn::graphics::DiagnosticSeverity::Info,
+                                       vn::graphics::DiagnosticCategory::ContentSkipped,
+                                       u8"vsg.storage.material_arena_grown",
+                                       formatDiagnostic(u8"the live material set outgrew the arena, so the block storage was replaced "
+                                                        u8"(a new buffer; the old one is parked): materials %u -> %u",
+                                                        before.materials.capacity,
+                                                        wanted.materials.capacity)));
 }
 
 void VsgBackend::growBlockStorageIfNeeded()
@@ -2207,7 +2253,10 @@ void VsgBackend::growBlockStorageIfNeeded()
     append("draws", before.draws.blocks_per_frame, wanted.draws.blocks_per_frame);
     append("lights", before.lights.blocks_per_frame, wanted.lights.blocks_per_frame);
     append("shadows", before.shadows.blocks_per_frame, wanted.shadows.blocks_per_frame);
-    reportDiagnostic(vn::graphics::DiagnosticSeverity::Info, vn::graphics::DiagnosticCategory::ContentSkipped, vn::String::fromUtf8(reason));
+    reportDiagnostic(backendDiagnostic(vn::graphics::DiagnosticSeverity::Info,
+                                       vn::graphics::DiagnosticCategory::ContentSkipped,
+                                       u8"vsg.storage.block_budget_grown",
+                                       vn::String::fromUtf8(reason)));
 }
 
 bool VsgBackend::adoptBlockStorage(std::shared_ptr<BlockStorage> storage)
@@ -2241,10 +2290,15 @@ void VsgBackend::reportUnserved(std::size_t slot) noexcept
     if (slot >= kUnservedCount || !d->unserved_reports[slot].shouldReport()) {
         return;
     }
-    reportDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
-                     vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                     vn::String::fromUtf8(std::string(kUnservedNames[slot]) + " has nowhere to go: every part of the frame protocol needs a session that is "
-                                                                              "up (see .ai/design/vsg-backend.md)"));
+// THE SLOT IS THE CAUSE: a frame that arrived with no session and a `render()` collected before the content world
+    // exists are two different repairs (initialize, versus wait for the content world), so each states its own code.
+    const vn::graphics::RenderDiagnostic diagnostic = backendDiagnostic(
+        vn::graphics::DiagnosticSeverity::Warning,
+        vn::graphics::DiagnosticCategory::UnsupportedRequest,
+        slot == kUnservedNoSession ? u8"vsg.session.not_initialized" : u8"vsg.content.no_content_world",
+        vn::String::fromUtf8(std::string(kUnservedNames[slot]) + " has nowhere to go: every part of the frame protocol needs a session that is "
+                                                              "up (see .ai/design/vsg-backend.md)"));
+    reportDiagnostic(diagnostic);
 }
 
 namespace detail
