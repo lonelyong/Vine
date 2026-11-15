@@ -732,7 +732,23 @@ void VsgBackend::releaseContentWorld() noexcept
 
 void VsgBackend::shutdown()
 {
-    // The device's objects FIRST (see releaseContentWorld), then the sessions, then the device itself: what is
+    // THE GPU IS FINISHED BEFORE ANYTHING IT NAMES IS DESTROYED. The sessions PIPELINE frames (see
+    // core::FrameTimeline and the slot rings), so "the last executeFrame returned" does not mean "the queue is
+    // empty" - and this backend keeps no fence wait of its own outside the sessions. Destroying a material image, a
+    // command graph or a buffer a submission still reads is a use-after-free inside the driver's worker thread, which
+    // is exactly what a memory checker measured (see .ai/bugs/vsg-teardown-frees-in-flight-resources.md): the block
+    // freed by MaterialImages::~Data here was read by lavapipe's thread afterwards. Every session is idled first, in
+    // the device's own vocabulary (Viewer::deviceWaitIdle), and the wait is counted like every other device wait.
+    if (d->offscreen != nullptr) {
+        d->offscreen->waitDeviceIdle();
+    }
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
+        if (window != nullptr && window->session != nullptr) {
+            detail::SessionContentAccess::waitDeviceIdle(*window->session);
+        }
+    }
+
+    // The device's objects NEXT (see releaseContentWorld), then the sessions, then the device itself: what is
     // destroyed must not be named by anything still alive. The off-screen session is one of those sessions - it
     // borrows the device and reports into the device's clock - so it goes before the clock and the device do.
     releaseContentWorld();

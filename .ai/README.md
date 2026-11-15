@@ -237,7 +237,7 @@
 - `robotics-kinematics.md` —— Robotics kinematics 要点。
 - `robotics-proximity.md` —— Robotics proximity 要点。
 
-## bugs/ —— Bug 记录（34）
+## bugs/ —— Bug 记录（35）
 
 现象 / 根因 / 状态 / 涉及文件 / 验证，一 bug 一文件；已修复记录保留历史标记，未修复项标明状态。
 
@@ -278,6 +278,7 @@
 - `vk-screen-pass-shaded-without-the-map.md` —— vk 的全屏 set 恒绑阴影的白 stand-in/零块：延迟光照程序拿不到
   真实 shadow map（前向有阴影、延迟没有、零诊断）；screen 路径改用 pass 解析的 `ShadowSource` 并补了回归用例。
 - `demo-preview-passes-shared-one-name.md` —— demo 的四个 G-buffer 预览共用 `gbuffer_preview` 一个名字，计划按
+- `vsg-teardown-frees-in-flight-resources.md` —— vsg 后端拆机/换代时释放仍在被提交读取的资源（堆破坏的来源）；含 valgrind 证据、已修的两处与仍剩的 prepare-only 路径。
   `(owner, name)` 认行 ⇒ 只剩最后一个；布局重排也只改对象、不重新声明，矩形从未生效。改为一预览一名 + 布局步
   重新声明。
 

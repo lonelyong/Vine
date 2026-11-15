@@ -29,6 +29,24 @@
 #include <cstddef>
 #include <cstdlib>
 #include <new>
+// A SANITIZER MAY OWN THE REPLACEABLE ALLOCATION FUNCTIONS ITSELF. ThreadSanitizer links a C++ runtime whose
+// `operator new` / `operator delete` are STRONG definitions, so a replacement here is a duplicate symbol at link time
+// (the defect backlog T34 recorded). Under TSan this file therefore compiles to nothing: `AllocationGate`'s
+// `countsAvailable()` stays false, and the cases that assert an allocation COUNT skip instead of claiming a number
+// nobody measured (see BackendEvidenceTest).
+#if defined(__has_feature)
+#    if __has_feature(thread_sanitizer)
+#        define VN_TEST_ALLOCATOR_REPLACED 0
+#    endif
+#endif
+#if defined(__SANITIZE_THREAD__) && !defined(VN_TEST_ALLOCATOR_REPLACED)
+#    define VN_TEST_ALLOCATOR_REPLACED 0
+#endif
+#ifndef VN_TEST_ALLOCATOR_REPLACED
+#    define VN_TEST_ALLOCATOR_REPLACED 1
+#endif
+
+#if VN_TEST_ALLOCATOR_REPLACED
 
 #include <vine/graphics/backend/AllocationGate.hpp>
 
@@ -210,3 +228,5 @@ void operator delete[](void* block, std::align_val_t alignment, const std::nothr
 {
     ::operator delete(block, alignment);
 }
+
+#endif // VN_TEST_ALLOCATOR_REPLACED

@@ -23,6 +23,10 @@
 #   VN_TSAN_FILTER='RenderEngineTest.*' scripts/tsan_check.sh
 #   VN_TSAN_REBUILD=1 scripts/tsan_check.sh   # reconfigure an existing tree
 #   VN_TSAN_TARGET=test_vk scripts/tsan_check.sh   # the vk backend's own suites
+#   VN_TSAN_TARGET=test_vsg VN_TSAN_FILTER='-*Window*:*Probe*' scripts/tsan_check.sh
+#                                                 # the reference backend without its window suites: test_vsg compiles
+#                                                 # its allocator replacement OUT under TSan, so the allocation-count
+#                                                 # cases SKIP rather than fail (backlog T34)
 #
 # The tree is <root>/build-tsan. It is NOT the developer's build: a sanitizer
 # run is a separate artifact, and mixing the two would put instrumented and
@@ -38,9 +42,25 @@ TARGET="${VN_TSAN_TARGET:-test_graphics}"
 
 if [[ ! -f "$BUILD/CMakeCache.txt" || "${VN_TSAN_REBUILD:-0}" == "1" ]]; then
     echo "--- configuring $BUILD (thread sanitizer)"
+    # THE COMPILER IS WHATEVER CLANG THIS MACHINE HAS (VN_TSAN_CXX overrides): this used to hardcode clang-23, so a
+    # machine with clang-22 could not run the gate at all - and a check nobody can run is a check that is not there.
+    CXX_BIN="${VN_TSAN_CXX:-}"
+    if [[ -z "$CXX_BIN" ]]; then
+        for candidate in clang++-23 clang++-22 clang++-21 clang++-20 clang++; do
+            if command -v "$candidate" >/dev/null 2>&1; then
+                CXX_BIN="$candidate"
+                break
+            fi
+        done
+    fi
+    if [[ -z "$CXX_BIN" ]]; then
+        echo "no clang++ found; set VN_TSAN_CXX" >&2
+        exit 2
+    fi
+    C_BIN="${VN_TSAN_CC:-${CXX_BIN/++/}}"
     cmake -S "$ROOT" -B "$BUILD" -G Ninja \
           -DCMAKE_BUILD_TYPE=Debug \
-          -DCMAKE_C_COMPILER=clang-23 -DCMAKE_CXX_COMPILER=clang++-23 \
+          -DCMAKE_C_COMPILER="$C_BIN" -DCMAKE_CXX_COMPILER="$CXX_BIN" \
           -DCMAKE_C_FLAGS="-fsanitize=thread" \
           -DCMAKE_CXX_FLAGS="-fsanitize=thread" \
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \

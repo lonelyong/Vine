@@ -534,6 +534,24 @@
   钉“索引说有就留、索引说没有就 park”。backlog `T28` 已删（收口项，不再是触发项）。
 - **计数**：`test_vsg` 544 / `test_graphics` 554 / ctest 30/30 / TSan 554 用例 0 warning。
 
+## 2026-11-15 —— `test_vsg` Release 堆破坏定位（vsg 后端资源寿命）+ 内存检查器配方
+
+- **症状**：Release 全套 `test_vsg` 约 50% 崩（`malloc(): unaligned tcache chunk` / SIGSEGV，落点漂移：
+  `FrameUploadsTest`、`PrepareUploadTest`）；Debug 很少；**旧提交同样**（A/B 过）。
+- **武器顺序（重要）**：ASan（Debug 树）连跑 3 次全绿 ⇒ 不是普通越界；`valgrind --tool=memcheck` 跑**会崩的
+  Release 二进制**一次抓到 5 处 `Invalid read`：读方全是 `libvulkan_lvp.so` 的工作线程，释放栈全在本进程 ⇒
+  **宿主提前释放了驱动内存**。validation 看不见这种（Vulkan 对象之间的关系是合法的，被 free 的是驱动的簿记块）。
+- **两处根因（已修）**：①`OffscreenSession/Session::assignFrameGraphs()` 直接替换 `task->commandGraphs`，上一帧的
+  `vsg::CommandGraph` 失去最后引用 → `~Buffer` 释放驱动内存；②`VsgBackend::shutdown()` 直接
+  `releaseContentWorld()`，而会话仍是流水线（`FrameTimeline` + slot 环），`MaterialImages` 的图被销毁时驱动线程还在读。
+- **修法**：①拆机在任何销毁前让**每个会话** `waitDeviceIdle()`（计入 `RetirementQueue::noteDeviceWait()`）；
+  ②新增 `detail::GraphLifetime`（`GraphLifetime.hpp`）：被替换的帧图进 keep-alive 列表，按
+  **`FrameTimeline::completedFrame()`**（slot 回收给的完成证据，和内容退休同一套）逐帧丢弃——稳态不牺牲流水线。
+- **量**：Release 全套 **4/4 全绿**（修前约每 2 次崩 1 次）。仍剩 prepare-only 拆机的窄路径
+  （`waitDeviceIdle()` 因 `submittedFrame()==0` 早退，而 VSG viewer/传输线程还可能跑），记 backlog T46。
+- **配方**：内存/生命周期缺陷先在 ASan 树跑 3 次（排除越界），再用 valgrind 跑 Release 二进制（`--gtest_filter`
+  可收窄），`--num-callers=16` 才看得到「Block was free'd at」的释放栈。
+
 ## 2026-11-15 —— `PrepareReport.passes` 一种口径（T41 关闭）+ 一个真 VUID：变体之间“依赖也进兼容性”
 
 - **口径定了（SDK 一处）**：`FrameShape` / `frameShapeOf` / `isDrawingCall` / `passHasEffect` 进了

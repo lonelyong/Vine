@@ -1,5 +1,7 @@
 #include <vine/backend_vsg/internal/OffscreenSession.hpp>
 
+#include <vine/backend_vsg/internal/GraphLifetime.hpp>
+
 #include <chrono>
 #include <exception>
 #include <string>
@@ -27,6 +29,8 @@ using vn::graphics::DiagnosticSeverity;
 } // namespace
 
 struct OffscreenSession::Impl {
+    /// The graphs this session stopped recording but a pipelined submission may still read (see detail::GraphLifetime).
+    detail::GraphLifetime retired_graphs;
     core::FrameTimeline   timeline;        // One clock for the session, when the device's is not borrowed.
     core::RetirementQueue retirement{ 0 }; // Constructed for real once the slots are learned.
     /// The DEVICE's clock and park queue, when this session is one of several frame sources on one device (see
@@ -145,7 +149,10 @@ void OffscreenSession::shutdown() noexcept
     }
 
     // The viewer (which owns the task, its fences and the graph) goes first; the device reference after it, and the
-    // bookkeeping last - a session that is not ready owns no evidence.
+    // bookkeeping last - a session that is not ready owns no evidence. The kept-alive graphs go with the viewer: this
+    // session is being torn down, so nothing it submitted can still be read (VsgBackend::shutdown idles the device
+    // before any of it, see there).
+    impl->retired_graphs.clear();
     impl->ready         = false;
     impl->lost_frames   = 0;
     impl->slots         = 0;
@@ -359,11 +366,15 @@ bool OffscreenSession::assignFrameGraphs(const ::vsg::CommandGraphs& graphs)
     // THE TASK SURVIVES THE HANDOVER: it owns the fences and semaphores a submission in flight still names, so the
     // graphs are given to it instead of the task list being rebuilt (the windowed session's rule, for the same
     // measured reason).
+    // THE OUTGOING GRAPHS OUTLIVE THEIR SUBMISSION (see detail::GraphLifetime): the tasks are about to forget them, and
+    // a pipelined frame may still be reading the buffers their destructors release.
+    impl->retired_graphs.dropCompleted(timeline().completedFrame());
     if (impl->viewer->recordAndSubmitTasks.empty()) {
         impl->viewer->assignRecordAndSubmitTaskAndPresentation(graphs);
     }
     else {
         for (const auto& task : impl->viewer->recordAndSubmitTasks) {
+            impl->retired_graphs.retire(task->commandGraphs, timeline().submittedFrame());
             task->commandGraphs = graphs;
         }
     }

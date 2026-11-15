@@ -1,5 +1,7 @@
 #include <vine/backend_vsg/internal/Session.hpp>
 
+#include <vine/backend_vsg/internal/GraphLifetime.hpp>
+
 #include <chrono>
 #include <cstdlib>
 
@@ -55,6 +57,8 @@ unsigned int envLevel(const char* name, unsigned int fallback)
 } // namespace
 
 struct Session::Impl {
+    /// The graphs this session stopped recording but a pipelined submission may still read (see detail::GraphLifetime).
+    detail::GraphLifetime retired_graphs;
     core::FrameTimeline   timeline;        // One clock for the session (see the class note).
     core::RetirementQueue retirement{ 0 }; // Constructed for real once the slots are learned.
     /// The DEVICE's clock and park queue, when this session is one of several windows on one device (see
@@ -297,7 +301,9 @@ void Session::shutdown() noexcept
     // A whole-session replacement, in one order that cannot half-apply: the viewer (which owns the device
     // and the swapchain) goes first, the window after it, and the bookkeeping is reset last - a session
     // that is not ready owns no evidence, and saying otherwise is what makes a re-initialize read the
-    // previous session's numbers.
+    // previous session's numbers. The kept-alive graphs go with the viewer: VsgBackend::shutdown idles the
+    // device before any of this runs.
+    impl->retired_graphs.clear();
     impl->ready            = false;
     impl->frames_presented = 0;
     impl->slots            = 0;
@@ -759,6 +765,10 @@ bool SessionContentAccess::assignFrameGraphs(api::Session& session, const ::vsg:
     // command buffers in use, and a crash inside the validation layer that a run without it hides). One
     // frame's graphs become the session's by handing them to the tasks it already has; only a viewer with no
     // task at all (not this session: it comes up with its own frame graph) is built by the viewer.
+    // THE OUTGOING GRAPHS OUTLIVE THEIR SUBMISSION (see detail::GraphLifetime): the tasks survive the handover, but the
+    // graphs they were recording are dropped here, and a pipelined frame may still be reading the buffers their
+    // destructors release.
+    session.impl->retired_graphs.dropCompleted(session.timeline().completedFrame());
     if (session.impl->viewer->recordAndSubmitTasks.empty()) {
         session.impl->viewer->assignRecordAndSubmitTaskAndPresentation(graphs);
     }
@@ -766,6 +776,7 @@ bool SessionContentAccess::assignFrameGraphs(api::Session& session, const ::vsg:
         // One session has one task (one window, one device, one queue family), so this is a formality - and
         // it keeps every task's fences, its WSI semaphores and the window they present on untouched.
         for (const auto& task : session.impl->viewer->recordAndSubmitTasks) {
+            session.impl->retired_graphs.retire(task->commandGraphs, session.timeline().submittedFrame());
             task->commandGraphs = graphs;
         }
     }
