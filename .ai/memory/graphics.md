@@ -159,6 +159,10 @@
   `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
   ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
   别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
+- **S2b 已落地（2026-11-15）**：`executor()` 答 `Device::Session`，帧体也在它里，`Device` 只剩三个转发。
+  帧体不直接调 `Device` 的成员：报告（protected，内嵌类沿不到）/ 建目标 / 认定丢失走 `Impl` 上的
+  `report` / `ensure_target` / `note_device_lost` 三个面（设备析构时装配）。帧体里的 `initialized()` 换成
+  `owner.device != VK_NULL_HANDLE && !owner.device_lost`。
 - **S2a 已落地（2026-11-15）**：帧机器在 `Device::Session`（命令池 / 栅欄 / 时间戳池 / `FrameBooks` /
   `FrameGate` / clock window），设备拥有它并在 `shutdown()` 里 `destroy()`（**不重置指针**：停机后读报告要答
   “什么都没量”而不是崩）。帧体（`executeFrame` / `prepareFrame` / `frameReport`）仍在 `Device`——S2b；

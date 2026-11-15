@@ -443,7 +443,7 @@ struct ContentTotals {
  *
  * @warning One frame at a time per driver, CHECKED (`FrameGate`): a second thread waits, a re-entrant call is refused.
  */
-class Device::Session final
+class Device::Session final : public vn::graphics::RenderFrameExecutor
 {
   public:
     /// @brief What `create()` refused, so the device can report which object never came up.
@@ -462,6 +462,10 @@ class Device::Session final
     Session& operator=(const Session&) = delete;
 
   public:
+    PresentOutcome              executeFrame(const FrameDescription& frame, PresentTarget* present_to) override;
+    vn::graphics::PrepareReport prepareFrame(const FrameDescription& frame, PresentTarget* present_to) override;
+    vn::graphics::FrameReport   frameReport() const noexcept override;
+
     /** @brief Creates the objects a frame needs (idempotent; safe again after `destroy()`). */
     [[nodiscard]] CreateRefusal create() noexcept;
 
@@ -514,6 +518,13 @@ class Device::Session final
 };
 
 struct Device::Impl {
+    /// The three device verbs a driver still calls. `RenderDevice::reportDiagnostic` is protected, so a nested class
+    /// cannot reach it through the device object; building a target (`ensureTarget`) and classifying a lost device
+    /// (`noteDeviceLost`) are DECISIONS OF THE DEVICE - one per pass at most and one per failure, never per draw.
+    vn::graphics::DiagnosticSink               report{};
+    std::function<bool(const RenderTarget&)>   ensure_target{};
+    std::function<bool(VkResult, const char*)> note_device_lost{};
+
     /// THE FRAME DRIVER this device hands out: it owns the command machinery, the frame books and the gate.
     std::unique_ptr<Session> session{};
     DeviceDesc      desc{};
@@ -1003,6 +1014,847 @@ void Device::Session::closeFrameBooks(const ContentTotals& before, const vn::gra
     books.uploads = frame_uploads;
 }
 
+PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, PresentTarget* present_to)
+{
+    // ONE FRAME AT A TIME PER DRIVER, AS A CHECKED FACT (see FrameGate): another thread waits here, and a frame started
+    // from the thread that is ALREADY driving one is refused - a re-entrant frame would corrupt this driver's command
+    // buffer and fence silently. The gate is the DRIVER's, so a second driver (step 2's `createSession()`) is not
+    // serialised against this one for free. The lease releases the gate on EVERY return below, which is why it is a
+    // lease and not a pair of calls.
+    const vn::graphics::backend::FrameGate::Lease frame_lease = frames.enter();
+    if (!frame_lease) {
+        if (frame_reentry_report.shouldReport()) {
+            owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::PassProtocolViolation,
+                                              u8"vk.session.frame_reentry",
+                                              u8"vk: a frame was started from the thread that is already driving one (a hook "
+                                              u8"or a sink drove another engine); this frame was refused - a device drives "
+                                              u8"one frame at a time, so drive the second engine from another thread or after "
+                                              u8"waitForFrame"));
+        }
+        return PresentOutcome::Refused;
+    }
+
+    if (!(owner.device != VK_NULL_HANDLE && !owner.device_lost)) {
+        if (owner.device_lost) {
+            // The one loss report already said why and what to do (see noteDeviceLost): a frame asked after it is
+            // skipped without touching the device, not re-explained per frame. A frame that expected a window still
+            // says its picture did not arrive - Lost is the outcome a host acts on.
+            return present_to != nullptr ? PresentOutcome::Lost : PresentOutcome::Skipped;
+        }
+        owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::SubmissionFailed,
+                                          u8"vk.session.not_initialized",
+                                          u8"vk: a frame was handed to a device that is not up"));
+        return PresentOutcome::Skipped;
+    }
+
+    // THE FRAME'S BOOKS OPEN HERE AND CLOSE ON EVERY EXIT (see closeFrameBooks): the report always describes the
+    // frame that just ended - an empty one included - and the upload numbers are this frame's own delta.
+    const vn::graphics::backend::FrameToken frame_token = owner.clock.begin();
+    FrameTokenCloser                        frame_close{ owner.clock, owner.retirement, frame_token };
+    const ContentTotals    before = owner.contentNumbers();
+    vn::graphics::FrameCounters   counters{};
+    struct BooksCloser {
+        Session*                     session;
+        const ContentTotals&         before;
+        vn::graphics::FrameCounters& counters;
+        ~BooksCloser()
+        {
+            session->closeFrameBooks(before, counters);
+        }
+    } books_closer{ this, before, counters };
+
+    // WHICH PASSES THIS BACKEND CAN RUN: off-screen passes, and WINDOW passes when the frame names one of this
+    // device's own targets as its presenter. A frame that names no presenter presents nowhere (a first-class state:
+    // an offline bake), and a pass that names no target while a presenter IS named draws into that window.
+    WindowTarget* window = nullptr;
+    if (present_to != nullptr) {
+        auto* candidate = dynamic_cast<WindowTarget*>(present_to);
+        for (const auto& surface : owner.surfaces) {
+            if (surface.get() == candidate) {
+                window = candidate;
+                break;
+            }
+        }
+    }
+
+    struct Runnable {
+        const FrameDescription::Pass* entry{ nullptr };
+        const PassDraw*               draw{ nullptr };
+        bool                          window{ false };
+    };
+
+    std::vector<Runnable> runnable_passes;
+    runnable_passes.reserve(frame.passes.size());
+    bool window_acquired = false;
+    // Whether a pass was dropped because a description this device cannot build was named (a sample count, say). The
+    // refusal has already said WHY, so the generic "nothing I can run" sentence below would be the same fact twice.
+    bool refused_pass = false;
+    for (const FrameDescription::Pass& entry : frame.passes) {
+        if (entry.pass == nullptr) {
+            continue; // the SDK's rule: an entry that names no pass is nothing to run (see RenderFrameExecutor)
+        }
+        if (!entry.draw.has_value()) {
+            continue; // a pass that issued nothing: the scope opens and closes, nothing to record
+        }
+        const PassDraw& draw = *entry.draw;
+
+        // WHAT THE FRAME'S SHAPE RECORDS (see FrameCounters): a scope enters the plan when it has an effect - it drew
+        // something, or it announced a clear (a clear is the pass' own load-op, so a clear-only pass is a real pass
+        // with no draws). The reference recorder states the same rule, which is what makes the two reports comparable.
+        std::uint64_t calls = 0U;
+        for (const DrawDescription& description : draw.draws) {
+            calls += vn::graphics::isDrawingCall(description) ? 1U : 0U;
+        }
+        // COUNTED ONLY FOR A PASS THIS DEVICE CAN RUN: a drawing call is recorded, and a pass whose target could not
+        // be built recorded nothing (see the sample-count refusals in ensureTarget) - reporting its calls would say a
+        // frame drew when nothing reached the queue.
+        const bool has_effect = vn::graphics::passHasEffect(draw);
+        const auto count_pass = [&counters, calls, has_effect]() {
+            if (has_effect) {
+                ++counters.passes;
+                counters.draws += calls;
+            }
+        };
+        if (draw.target == nullptr) {
+            if (window == nullptr || !window->ready()) {
+                if (owner.window_reports.presenter.shouldReport()) {
+                    owner.report(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                      DiagnosticCategory::UnsupportedRequest,
+                                                      u8"vk.window.presenter_missing",
+                                                      u8"vk: a window pass names no presenter this device handed out; it was left out"));
+                }
+                refused_pass = true;
+                continue;
+            }
+            owner.window_reports.presenter.rearm(); // the pass named a presenter this device handed out
+            if (!window_acquired) {
+                vn::String why;
+                if (!window->acquire(&why)) {
+                    if (window->deviceLost()) {
+                        // The frame is over: nothing can run on a lost device, so the walk stops here instead of
+                        // letting every later pass build against it. The sentence is reported once (see
+                        // noteDeviceLost), and Lost is the outcome the host acts on.
+                        (void)owner.note_device_lost(VK_ERROR_DEVICE_LOST, "vkAcquireNextImageKHR");
+                        return PresentOutcome::Lost;
+                    }
+                    if (owner.window_reports.acquire.shouldReport()) {
+                        owner.report(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                          DiagnosticCategory::UnsupportedRequest,
+                                                          u8"vk.window.acquire_failed",
+                                                          why.empty() ? vn::String(u8"vk: the window's next image could not be acquired") : std::move(why)));
+                    }
+                    refused_pass = true;
+                    continue;
+                }
+                owner.window_reports.acquire.rearm(); // the image arrived: this episode is over
+                window_acquired = true;
+            }
+            count_pass();
+            runnable_passes.push_back(Runnable{ &entry, &draw, true });
+            continue;
+        }
+        if (!owner.ensure_target(*draw.target)) {
+            refused_pass = true;
+            continue;
+        }
+        count_pass();
+        runnable_passes.push_back(Runnable{ &entry, &draw, false });
+    }
+
+    if (runnable_passes.empty()) {
+        if (!refused_pass && owner.no_targets_report.shouldReport()) {
+            owner.report(deviceDiagnostic(DiagnosticSeverity::Info,
+                                              DiagnosticCategory::UnsupportedRequest,
+                                              u8"vk.content.no_runnable_pass",
+                                              u8"vk: the frame had no pass this backend can run (off-screen targets and host windows are "
+                                              u8"served); nothing was submitted"));
+        }
+        return PresentOutcome::Skipped;
+    }
+    owner.no_targets_report.rearm(); // a pass ran: the "nothing I can run" episode is over
+
+    // THE DEPTHS THIS FRAME LENDS: every target another pass' target borrows its depth from (RenderTarget::shareDepth
+    // resolves to one pointer per borrower, and the borrower was built above). `resolveShadow` skips them - an image
+    // cannot be a shader's picture and a pass' depth attachment in the same frame.
+    std::unordered_set<const RenderTarget*> lent_depths;
+    for (const Runnable& item : runnable_passes) {
+        if (item.draw->target != nullptr) {
+            if (const vn::raw_ptr<RenderTarget> lender = item.draw->target->depthSource(); lender != nullptr) {
+                lent_depths.insert(lender);
+            }
+        }
+    }
+
+    // ONE COMMAND BUFFER, ONE FENCE, ONE WAIT. The frame is submitted and finished before the call returns, which is
+    // what makes "read the pixels right after" mean what it says.
+    VkCommandBufferAllocateInfo allocate{};
+    allocate.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocate.commandPool        = command_pool;
+    allocate.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocate.commandBufferCount = 1U;
+
+    VkCommandBuffer commands{ VK_NULL_HANDLE };
+    if (owner.device_table.vkAllocateCommandBuffers(owner.device, &allocate, &commands) != VK_SUCCESS) {
+        owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::SubmissionFailed,
+                                          u8"vk.frame.command_buffer_missing",
+                                          u8"vk: no command buffer"));
+        return PresentOutcome::Skipped;
+    }
+
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (owner.device_table.vkBeginCommandBuffer(commands, &begin) != VK_SUCCESS) {
+        owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::SubmissionFailed,
+                                          u8"vk.frame.begin_failed",
+                                          u8"vk: vkBeginCommandBuffer failed"));
+        owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &commands);
+        return PresentOutcome::Skipped;
+    }
+
+    // THE DEVICE CLOCK OPENS HERE (see FrameTiming): the reset is legal outside a render pass, which is where this is,
+    // and the pair is closed before the buffer ends below. SAMPLED, not every frame (see kTimestampSampleFrames).
+    ++clock_frames;
+    const bool sample_clock = timestamps && (clock_frames % kTimestampSampleFrames) == 1U;
+    // THE PER-PASS BOUNDARIES NEED ONE QUERY PER PASS PLUS THE TAIL, beside the frame's own pair (see PassTiming). A
+    // frame that needs more than the pool holds recreates it here, which is legal because no command buffer is in
+    // flight; a device that cannot grow it keeps the frame's own clock and answers no attribution.
+    const std::uint32_t pass_count     = static_cast<std::uint32_t>(runnable_passes.size());
+    const std::uint32_t query_count    = 2U + pass_count + 1U;
+    const bool          per_pass_clock = sample_clock && ensureTimestampQueries(query_count);
+    if (per_pass_clock) {
+        owner.device_table.vkCmdResetQueryPool(commands, timestamp_pool, 0U, query_count);
+        owner.device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 0U);
+    }
+
+    // ONE DESCRIPTOR POOL RESET PER FRAME: the pool's sets are the per-draw uniform bindings, and the previous frame
+    // is complete by now (the device submits synchronously), so nothing still names them.
+    owner.content.beginFrame();
+    // The pass count was taken from the frame's shape above (a pass whose draws were all skipped is still a pass
+    // that ran); what the loop below adds is the drawing calls this backend actually recorded.
+
+    bool first_window_pass = true;
+    // Whether a draw this frame named could not be recorded. The refused-content episode ends when a frame records
+    // everything it was handed - a frame that still names one bad draw keeps the episode open (see ReportOnce).
+    bool content_refused = false;
+    std::uint32_t pass_index = 0;
+    for (const Runnable& item : runnable_passes) {
+        // THE PASS' OWN BOUNDARY, written BEFORE its uploads: the transitions and copies a pass asks for exist because
+        // it asked, so they are billed to it rather than to the frame (see PassTiming).
+        if (per_pass_clock) {
+            owner.device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 2U + pass_index);
+        }
+        ++pass_index;
+        const PassDraw& draw = *item.draw;
+        // THE PASS' TEXTURES ARE PREPARED BEFORE ITS RENDER PASS BEGINS: an upload records image barriers and
+        // buffer-to-image copies, neither of which is legal inside a render pass instance.
+        owner.content.preparePass(commands, draw.draws);
+
+        // A SOURCE A SCREEN DRAW SAMPLES is about to be read: transition it to SHADER_READ_ONLY now, where an image
+        // barrier is unambiguously allowed (before any render pass instance begins).
+        for (const DrawDescription& description : draw.draws) {
+            if (description.kind != DrawDescription::Kind::Screen || description.source == nullptr) {
+                continue;
+            }
+            const auto source = owner.targets.find(description.source);
+            if (source == owner.targets.end() || !source->second.built() || source->second.color_sampled) {
+                continue;
+            }
+            TargetImages& sampled = source->second;
+            for (const VkImage image : sampled.colors) {
+                const ImageState from = sampled.fresh ? stateOf(ImageLayout::Undefined) : stateOf(ImageLayout::ColorAttachment);
+                const ImageState to   = stateOf(ImageLayout::ShaderReadOnly);
+                const VkImageMemoryBarrier barrier = barrierBetween(image, from, to, VK_IMAGE_ASPECT_COLOR_BIT);
+                owner.device_table.vkCmdPipelineBarrier(commands,
+                                                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                                        0U,
+                                                        0U,
+                                                        nullptr,
+                                                        0U,
+                                                        nullptr,
+                                                        1U,
+                                                        &barrier);
+            }
+            sampled.color_sampled = true;
+        }
+
+        // THE SHADOW MAP THIS PASS SAMPLES, if it declared one: resolved from the target's own statement and moved to
+        // SHADER_READ_ONLY here, before the render pass begins (see resolveShadow).
+        ContentDraw::ShadowSource shadow{};
+        (void)owner.resolveShadow(commands, item.entry->inputs, lent_depths, shadow);
+
+        TargetImages*                                  images        = nullptr;
+        VkRenderPass                                   render_pass   = VK_NULL_HANDLE;
+        VkFramebuffer                                  framebuffer   = VK_NULL_HANDLE;
+        VkExtent2D                                     extent{};
+        std::uint32_t                                  color_count   = 0U;
+        bool                                           has_depth     = false;
+        vn::graphics::backend::RenderPassCompatibility compatibility{};
+
+        if (item.window) {
+            // A WINDOW PASS: the swapchain's image, the window's render pass. The first pass into a frame's image
+            // clears both attachments; a later pass into the same image loads what the earlier one wrote.
+            const bool load = !first_window_pass;
+            render_pass     = window->renderPass(load, load);
+            framebuffer     = window->framebuffer();
+            extent          = VkExtent2D{ window->width(), window->height() };
+            color_count     = 1U;
+            has_depth       = true;
+            compatibility   = window->compatibility();
+            first_window_pass = false;
+        }
+        else {
+            images = &owner.targets.at(draw.target);
+
+            // A TARGET A SCREEN DRAW SAMPLED is in SHADER_READ_ONLY: put its colour images back before this pass
+            // writes them.
+            if (images->color_sampled) {
+                for (const VkImage image : images->colors) {
+                    const VkImageMemoryBarrier back = barrierBetween(image,
+                                                                     stateOf(ImageLayout::ShaderReadOnly),
+                                                                     stateOf(ImageLayout::ColorAttachment),
+                                                                     VK_IMAGE_ASPECT_COLOR_BIT);
+                    owner.device_table.vkCmdPipelineBarrier(commands,
+                                                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                                            0U,
+                                                            0U,
+                                                            nullptr,
+                                                            0U,
+                                                            nullptr,
+                                                            1U,
+                                                            &back);
+                }
+                images->color_sampled = false;
+            }
+
+            // A TARGET A PASS SAMPLED AS A SHADOW MAP has its depth PICTURE in SHADER_READ_ONLY: put it back before
+            // this pass writes the depth (the mirror of the colour rule above, on the depth attachment).
+            if (images->depth_sampled) {
+                const VkImageMemoryBarrier back = barrierBetween(images->depthPicture(),
+                                                                 stateOf(ImageLayout::ShaderReadOnly),
+                                                                 stateOf(ImageLayout::DepthAttachment),
+                                                                 depthAspectMask(images->depthFormat()));
+                owner.device_table.vkCmdPipelineBarrier(commands,
+                                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                                                        0U,
+                                                        0U,
+                                                        nullptr,
+                                                        0U,
+                                                        nullptr,
+                                                        1U,
+                                                        &back);
+                images->depth_sampled = false;
+            }
+
+            // A FRESH attachment set is UNDEFINED: a pass that asked to preserve something gets the CLEAR variant for
+            // its first frame (there is nothing to load yet). A pass that announces NO clear loads both attachments;
+            // a fresh target falls back to CLEAR, the honest reading of "load an image nobody wrote".
+            const bool has_clear  = draw.clear.has_value();
+            const bool load_color = !has_clear && !images->fresh;
+            const bool load_depth = has_clear ? (!draw.clear->depth && !images->fresh) : !images->fresh;
+            render_pass           = images->renderPassFor(load_depth, load_color);
+            framebuffer           = images->framebuffer;
+            extent                = VkExtent2D{ static_cast<std::uint32_t>(images->width()), static_cast<std::uint32_t>(images->height()) };
+            color_count           = static_cast<std::uint32_t>(images->colorCount());
+            has_depth             = images->hasDepth();
+            compatibility         = images->compatibility();
+        }
+
+        // PER-ATTACHMENT CLEAR (a LOAD variant ignores these values): the clear values are indexed by ATTACHMENT, and
+        // attachment 0 is the pass' colour while the rest of the COLOUR slots come from extra_colors (an absent entry
+        // is transparent black - see ClearPolicy). A MULTISAMPLED target's array is [sample buffers, resolve images,
+        // depth], so its depth slot is not `color_count`; the resolve slots in between are DONT_CARE and their values
+        // are never read (see TargetImages' class note).
+        const std::size_t         depth_slot  = images != nullptr ? images->depthAttachmentIndex() : static_cast<std::size_t>(color_count);
+        std::vector<VkClearValue> clear_values(depth_slot + (has_depth ? 1U : 0U));
+        const Colorf              colour      = draw.clear.has_value() ? draw.clear->color : Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        if (color_count != 0U) {
+            // A DEPTH-ONLY PASS (a shadow map) has no colour slot to clear: its clear values start at the depth.
+            clear_values[0].color = { { colour.r, colour.g, colour.b, colour.a } };
+        }
+        for (std::size_t index = 1; index < color_count; ++index) {
+            const Colorf extra = images != nullptr && draw.clear.has_value() && index - 1U < draw.clear->extra_colors.size()
+                                     ? draw.clear->extra_colors[index - 1U]
+                                     : Colorf(0.0F, 0.0F, 0.0F, 0.0F);
+            clear_values[index].color = { { extra.r, extra.g, extra.b, extra.a } };
+        }
+        if (has_depth) {
+            // Reverse-Z: every backend clears depth to its own far plane, and this camera convention's far plane is 0
+            // (see ClearPolicy: the policy states WHETHER, never to what).
+            clear_values[depth_slot].depthStencil = { 0.0F, 0U };
+        }
+
+        VkRenderPassBeginInfo pass_begin{};
+        pass_begin.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        pass_begin.renderPass        = render_pass;
+        pass_begin.framebuffer       = framebuffer;
+        pass_begin.renderArea.offset = VkOffset2D{ 0, 0 };
+        pass_begin.renderArea.extent = extent;
+        pass_begin.clearValueCount   = static_cast<std::uint32_t>(clear_values.size());
+        pass_begin.pClearValues      = clear_values.data();
+
+        owner.device_table.vkCmdBeginRenderPass(commands, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
+        // WHAT THIS PASS DRAWS. Each draw description is borrowed for this call; every command inside it becomes one
+        // GPU draw (M3: resolved state selects the pipeline, one `RenderCommand` = one indexed draw). The frame's
+        // DRAWING-CALL count was taken from the frame's shape above - a call is the description, not its commands.
+        for (const DrawDescription& description : draw.draws) {
+            ContentRefusal refusal;
+            if (description.kind == DrawDescription::Kind::Screen) {
+                // THE FULL-SCREEN ABI: the source's colour attachments, bound in order. A source this device never
+                // built answers an empty span, which makes the recorder report (and skip) the draw.
+                ContentDraw::ScreenSource source{};
+                const auto                source_images = description.source != nullptr ? owner.targets.find(description.source) : owner.targets.end();
+                if (source_images != owner.targets.end() && source_images->second.built()) {
+                    source.images = source_images->second.colors;
+                    source.views  = source_images->second.color_views;
+                }
+                (void)owner.content.recordScreen(commands,
+                                                 render_pass,
+                                                 compatibility,
+                                                 color_count,
+                                                 static_cast<int>(extent.width),
+                                                 static_cast<int>(extent.height),
+                                                 description,
+                                                 draw,
+                                                 source,
+                                                 shadow,
+                                                 &refusal);
+            }
+            else {
+                (void)owner.content.record(commands,
+                                           render_pass,
+                                           compatibility,
+                                           color_count,
+                                           static_cast<int>(extent.width),
+                                           static_cast<int>(extent.height),
+                                           description,
+                                           draw,
+                                           owner.default_program.get(),
+                                           shadow,
+                                           &refusal);
+            }
+            if (refusal.isRefused()) {
+                content_refused = true;
+                if (owner.content_report.shouldReport()) {
+                    // THE CAUSE WAS NAMED WHERE IT WAS KNOWN (see ContentRefusal), so this report FORWARDS the value the
+                    // recorder built - the code travels with the sentence instead of being guessed at the sink.
+                    const vn::graphics::RenderDiagnostic diagnostic =
+                        deviceDiagnostic(DiagnosticSeverity::Warning, refusal.category(), refusal.code(), refusal.message());
+                    owner.report(diagnostic);
+                }
+            }
+        }
+        owner.device_table.vkCmdEndRenderPass(commands);
+        if (images != nullptr) {
+            images->fresh = false;
+        }
+    }
+    if (!content_refused) {
+        owner.content_report.rearm(); // every draw the frame named was recorded: the episode is over
+    }
+
+    // THE PRESENT TRANSITION, after the window's last pass and before the command buffer ends: every window pass
+    // stores into COLOR_ATTACHMENT_OPTIMAL, and vkQueuePresentKHR reads PRESENT_SRC_KHR.
+    if (window_acquired) {
+        window->recordPresentTransition(commands);
+    }
+
+    if (per_pass_clock) {
+        // THE TAIL BOUNDARY: the last pass' span ends here, so what follows (the present transition, the frame's own
+        // tail) belongs to no pass - the honest split, because no pass asked for it.
+        owner.device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_pool, 2U + pass_count);
+        owner.device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamp_pool, 1U);
+    }
+
+    if (owner.device_table.vkEndCommandBuffer(commands) != VK_SUCCESS) {
+        owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::SubmissionFailed,
+                                          u8"vk.frame.end_failed",
+                                          u8"vk: vkEndCommandBuffer failed"));
+        owner.content.endFrame();
+        owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &commands);
+        return PresentOutcome::Skipped;
+    }
+
+    VkSubmitInfo submit{};
+    submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1U;
+    submit.pCommandBuffers    = &commands;
+
+    // THE WINDOW'S SEMAPHORES: the acquire signalled image_available, the submit waits on it and signals
+    // render_finished, and the present waits on that. One frame at a time (the device waits on its fence below), so
+    // one pair per window target is enough.
+    const VkSemaphore          wait_semaphore   = window_acquired ? window->imageAvailableSemaphore() : VK_NULL_HANDLE;
+    const VkSemaphore          signal_semaphore = window_acquired ? window->renderFinishedSemaphore() : VK_NULL_HANDLE;
+    const VkPipelineStageFlags wait_stage       = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    if (window_acquired) {
+        submit.waitSemaphoreCount   = 1U;
+        submit.pWaitSemaphores      = &wait_semaphore;
+        submit.pWaitDstStageMask    = &wait_stage;
+        submit.signalSemaphoreCount = 1U;
+        submit.pSignalSemaphores    = &signal_semaphore;
+    }
+
+    const VkResult submit_result = owner.device_table.vkQueueSubmit(owner.queue, 1U, &submit, completion);
+    const bool     submitted     = submit_result == VK_SUCCESS;
+    if (submitted) {
+        ++books.progress.submitted;
+        frame_close.submitted = true;
+    }
+    const VkResult fence_result = submitted ? owner.device_table.vkWaitForFences(owner.device, 1U, &completion, VK_TRUE, UINT64_MAX)
+                                            : submit_result;
+    const bool     completed    = fence_result == VK_SUCCESS;
+    if (completed) {
+        ++books.progress.completed;
+        // THE COMPLETION EVIDENCE THE PARK QUEUE WAITS FOR (see Impl::releaseLater): the frame's GPU work is provably
+        // done, so every object a release handed over while this frame was in flight may now go.
+        owner.clock.windowCompleted(clock_window, frame_token.frame);
+        // THE PAIR IS READABLE NOW (the fence says the frame ran): one read, one value, and the report carries it as
+        // the frame's device time (see FrameTiming). A frame the clock did not sample answers DISENGAGED - never the
+        // previous frame's value.
+        if (per_pass_clock) {
+            std::vector<std::uint64_t> stamps(query_count, 0U);
+            if (owner.device_table.vkGetQueryPoolResults(owner.device,
+                                                         timestamp_pool,
+                                                         0U,
+                                                         query_count,
+                                                         stamps.size() * sizeof(std::uint64_t),
+                                                         stamps.data(),
+                                                         sizeof(std::uint64_t),
+                                                         VK_QUERY_RESULT_64_BIT) == VK_SUCCESS &&
+                stamps[1] > stamps[0]) {
+                const double             to_micros = static_cast<double>(owner.timestamp_period) / 1000.0;
+                vn::graphics::FrameTiming timing;
+                timing.gpu_micros = static_cast<std::uint64_t>(static_cast<double>(stamps[1] - stamps[0]) * to_micros);
+                // PER-PASS ATTRIBUTION, in EXECUTION order: pass i spans boundary 2+i to 2+i+1, and the name is the
+                // frame's own - a report a host can match against the plan it read (see PassTiming).
+                timing.passes.reserve(pass_count);
+                for (std::uint32_t index = 0; index < pass_count; ++index) {
+                    const std::uint64_t from = stamps[2U + index];
+                    const std::uint64_t to   = stamps[2U + index + 1U];
+                    vn::graphics::PassTiming entry;
+                    if (runnable_passes[index].entry != nullptr && runnable_passes[index].entry->pass != nullptr) {
+                        entry.pass = runnable_passes[index].entry->pass->name();
+                    }
+                    entry.gpu_micros = to > from ? static_cast<std::uint64_t>(static_cast<double>(to - from) * to_micros) : 0U;
+                    timing.passes.push_back(std::move(entry));
+                }
+                books.timing = std::move(timing);
+            }
+            else {
+                books.timing.reset();
+            }
+        }
+        else {
+            books.timing.reset();
+        }
+    }
+    (void)owner.device_table.vkResetFences(owner.device, 1U, &completion);
+    owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &commands);
+    // The per-draw uniform buffers were named by the command buffer that just finished (or failed to): the queue is
+    // idle either way, so the bytes can go.
+    owner.content.endFrame();
+
+    if (!completed) {
+        // A LOST DEVICE GETS ITS OWN SENTENCE, ONCE (see noteDeviceLost); the generic one is for the failures a retry
+        // can still fix, which is the difference that matters to a host.
+        if (!owner.note_device_lost(submit_result, "vkQueueSubmit") && !owner.note_device_lost(fence_result, "vkWaitForFences")) {
+            owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::SubmissionFailed,
+                                              u8"vk.frame.did_not_complete",
+                                              u8"vk: the frame's command buffer did not run to completion"));
+        }
+    }
+
+    // THE FRAME'S TAIL: the executor is what presents the frame it ran (see RenderFrameExecutor::executeFrame).
+    PresentOutcome outcome = PresentOutcome::Skipped;
+    if (window_acquired) {
+        outcome = completed ? window->present() : PresentOutcome::Lost;
+        if (window->deviceLost()) {
+            // A present that found the device gone is the same session-level fact as a lost submit: one report, and
+            // the frame's Lost outcome is what the host acts on (see PresentOutcome::Lost).
+            (void)owner.note_device_lost(VK_ERROR_DEVICE_LOST, "vkQueuePresentKHR");
+        }
+        if (outcome == PresentOutcome::Presented) {
+            ++books.progress.presented;
+        }
+    }
+    return outcome;
+}
+
+vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription& frame, PresentTarget* present_to)
+{
+    using vn::graphics::EngineNotReady;
+    using vn::graphics::PrepareReport;
+
+    // THE SAME GATE AS executeFrame, because a warm-up records and may submit a transfer batch of its own (see
+    // ADR-2026-11-14): a warm-up racing a frame would share this driver's command pool. `Refused` carries no reason -
+    // the report says which refusal it was (see executeFrame).
+    const vn::graphics::backend::FrameGate::Lease frame_lease = frames.enter();
+    if (!frame_lease) {
+        if (frame_reentry_report.shouldReport()) {
+            owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::PassProtocolViolation,
+                                              u8"vk.session.frame_reentry",
+                                              u8"vk: a warm-up was started from the thread that is already driving a frame "
+                                              u8"(a hook or a sink drove another engine); it was refused - a device drives one "
+                                              u8"frame at a time"));
+        }
+        return PrepareReport{ PrepareReport::Outcome::Refused };
+    }
+
+    if (!(owner.device != VK_NULL_HANDLE && !owner.device_lost)) {
+        // "There is nothing to prebuild" and "the device is not up" are different answers (see PrepareReport).
+        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReady::NotInitialized };
+    }
+
+    // WHICH SURFACE THE FRAME NAMES - the same resolution executeFrame makes, minus everything that would touch it:
+    // nothing is acquired, resized or presented, and the frame water level does not move (see
+    // RenderFrameExecutor::prepareFrame, P11). The ONE command buffer this call records holds transfers only.
+    WindowTarget* window = nullptr;
+    if (present_to != nullptr) {
+        auto* candidate = dynamic_cast<WindowTarget*>(present_to);
+        for (const auto& surface : owner.surfaces) {
+            if (surface.get() == candidate) {
+                window = candidate;
+                break;
+            }
+        }
+        if (window == nullptr) {
+            if (owner.prepare_target_report.shouldReport()) {
+                owner.report(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.window.foreign_target",
+                                                  u8"vk: a frame named a surface target this device did not hand out; nothing was prepared"));
+            }
+            return PrepareReport{ PrepareReport::Outcome::Refused };
+        }
+        owner.prepare_target_report.rearm(); // the frame named a target this device handed out
+    }
+
+    // THE WARM-UP IS A SUBMISSION TOO (see ADR-2026-11-14): it opens a frame on the clock, so the transfer batch it may
+    // submit carries a frame number the park queue can date a release against - and a warm-up that records nothing
+    // spends the token without moving the submitted watermark.
+    const vn::graphics::backend::FrameToken warmup_token = owner.clock.begin();
+    FrameTokenCloser                        warmup_close{ owner.clock, owner.retirement, warmup_token };
+    const ContentTotals before = owner.contentNumbers();
+    PrepareReport             report;
+    report.outcome = PrepareReport::Outcome::Prepared;
+    // THE ONE THING THIS CALL MAY SUBMIT IS A TRANSFER BATCH OF ITS OWN (see RenderFrameExecutor::prepareFrame and
+    // ADR-2026-11-14): the builds that need a command buffer - the 1x1 stand-in and every material texture of a pass -
+    // are recorded on one command buffer here, submitted on the device's own fence and waited for before this call
+    // answers. It is NOT a frame: no swapchain image is acquired, no render pass opens, nothing is drawn or presented,
+    // and `books.progress` does not move. The buffer is allocated LAZILY, on the first pass this device can serve: a
+    // frame whose passes it cannot serve records nothing and therefore allocates nothing.
+    VkCommandBuffer batch{ VK_NULL_HANDLE };
+    bool            batch_attempted{ false };
+    // Whether a draw this call could not prepare. The refused-content episode ends when a call prepares everything it
+    // was handed, exactly as the frame path ends it (see ReportOnce).
+    bool content_refused{ false };
+
+    // THE SHAPE OF THE FRAME ASKED FOR, computed by the SDK (see FrameShape): one definition, so this backend and the
+    // reference one cannot report different shapes for the same frame - and the rule is the one a recorded frame's
+    // `FrameCounters` follows (a pass that draws something or announces a clear).
+    const vn::graphics::FrameShape shape = vn::graphics::frameShapeOf(frame);
+    report.passes = shape.passes;
+    report.draws  = shape.draws;
+
+    for (const FrameDescription::Pass& entry : frame.passes) {
+        if (entry.pass == nullptr) {
+            continue; // the SDK's rule: an entry that names no pass is nothing to run (see executeFrame)
+        }
+        if (!entry.draw.has_value()) {
+            continue;
+        }
+        const PassDraw& draw = *entry.draw;
+        if (!vn::graphics::passHasEffect(draw)) {
+            continue; // nothing drawn, nothing cleared: there is nothing to prepare
+        }
+
+        VkRenderPass                                  render_pass   = VK_NULL_HANDLE;
+        std::uint32_t                                 color_count   = 0U;
+        vn::graphics::backend::RenderPassCompatibility compatibility{};
+        if (draw.target == nullptr) {
+            // A WINDOW PASS: its shape is known only once a swapchain exists - and preparing must not create one.
+            if (window == nullptr || !window->ready()) {
+                continue;
+            }
+            render_pass   = window->renderPass(false, false);
+            color_count   = 1U;
+            compatibility = window->compatibility();
+        }
+        else {
+            // THE TARGET'S ATTACHMENTS ARE WHAT THE FRAME WOULD BUILD ANYWAY, so preparing them is the point.
+            if (!owner.ensure_target(*draw.target)) {
+                continue;
+            }
+            TargetImages& images = owner.targets.at(draw.target);
+            render_pass   = images.renderPassFor(false, false);
+            color_count   = static_cast<std::uint32_t>(images.colorCount());
+            compatibility = images.compatibility();
+        }
+
+        // THE BATCH IS OPENED ON THE FIRST PASS THIS DEVICE CAN SERVE - the same condition the branch above just
+        // answered, so a frame nothing can be built for never allocates a command buffer.
+        if (!batch_attempted) {
+            batch_attempted = true;
+            VkCommandBufferAllocateInfo allocate{};
+            allocate.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            allocate.commandPool        = command_pool;
+            allocate.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocate.commandBufferCount = 1U;
+            batch                       = VK_NULL_HANDLE;
+            VkCommandBufferBeginInfo begin{};
+            begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            if (owner.device_table.vkAllocateCommandBuffers(owner.device, &allocate, &batch) != VK_SUCCESS) {
+                batch = VK_NULL_HANDLE;
+                owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                                  DiagnosticCategory::SubmissionFailed,
+                                                  u8"vk.prepare.batch_failed",
+                                                  u8"vk: the preparation's transfer batch could not be recorded; the next frame uploads the "
+                                                  u8"content again"));
+            }
+            else if (owner.device_table.vkBeginCommandBuffer(batch, &begin) != VK_SUCCESS) {
+                owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &batch);
+                batch = VK_NULL_HANDLE;
+                owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                                  DiagnosticCategory::SubmissionFailed,
+                                                  u8"vk.prepare.batch_failed",
+                                                  u8"vk: the preparation's transfer batch could not be recorded; the next frame uploads the "
+                                                  u8"content again"));
+            }
+        }
+
+        for (const DrawDescription& description : draw.draws) {
+            ContentRefusal refusal;
+            if (description.kind == DrawDescription::Kind::Screen) {
+                owner.content.prepareScreen(compatibility, render_pass, color_count, description, draw, &refusal);
+            }
+            else {
+                owner.content.prepare(compatibility,
+                                      render_pass,
+                                      color_count,
+                                      description,
+                                      draw,
+                                      owner.default_program.get(),
+                                      &refusal);
+            }
+            if (refusal.isRefused()) {
+                content_refused = true;
+                if (owner.content_report.shouldReport()) {
+                    // The same forwarding the frame path does (see above).
+                    const vn::graphics::RenderDiagnostic diagnostic =
+                        deviceDiagnostic(DiagnosticSeverity::Warning, refusal.category(), refusal.code(), refusal.message());
+                    owner.report(diagnostic);
+                }
+            }
+        }
+
+        // THE PASS' OWN UPLOADS, recorded into the batch: exactly the copies the frame would record before this pass'
+        // render pass begins (see ContentDraw::preparePass), so the frame then finds them resident and records
+        // nothing. A pass whose batch could not be opened is still prepared; the next frame uploads it.
+        if (batch != VK_NULL_HANDLE) {
+            owner.content.preparePass(batch, draw.draws);
+        }
+    }
+
+    // THE BATCH RUNS BEFORE THIS CALL ANSWERS: one submit on the device's frame fence, no semaphore (nothing was
+    // acquired, so the queue has nothing to wait for), one wait, and the staging buffers go as soon as the copies
+    // have run - the release the frame path reaches through ContentDraw::endFrame -> ContentImages::releaseFrame.
+    if (batch != VK_NULL_HANDLE) {
+        if (owner.device_table.vkEndCommandBuffer(batch) != VK_SUCCESS) {
+            // THE BUFFER NEVER CLOSED, so whatever it recorded never ran - and it cannot be recorded again: the copies
+            // were already recorded against entries this call made resident. Said plainly, because "the next frame
+            // uploads it again" would be a promise the revision check does not keep.
+            owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                              DiagnosticCategory::SubmissionFailed,
+                                              u8"vk.prepare.batch_not_closed",
+                                              u8"vk: the preparation's transfer batch could not be closed; the copies it recorded never ran"));
+            owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &batch);
+        }
+        else if (!owner.content.images().hasPendingUploads()) {
+            // ZERO WORK, ZERO SUBMIT: an unchanged frame records no copy, so there is nothing to run and nothing is
+            // submitted - the property a second prepare of the same frame is observed by (see ADR-2026-11-14).
+            owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &batch);
+        }
+        else {
+            VkSubmitInfo submit{};
+            submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit.commandBufferCount = 1U;
+            submit.pCommandBuffers    = &batch;
+            const VkResult submit_result = owner.device_table.vkQueueSubmit(owner.queue, 1U, &submit, completion);
+            const VkResult fence_result  = submit_result == VK_SUCCESS
+                                               ? owner.device_table.vkWaitForFences(owner.device, 1U, &completion, VK_TRUE, UINT64_MAX)
+                                               : submit_result;
+            const bool     completed     = fence_result == VK_SUCCESS;
+            warmup_close.submitted       = submit_result == VK_SUCCESS;
+            if (completed) {
+                owner.clock.windowCompleted(clock_window, warmup_token.frame);
+            }
+            (void)owner.device_table.vkResetFences(owner.device, 1U, &completion);
+            owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &batch);
+            if (completed) {
+                owner.content.images().releaseUploadStaging();
+            }
+            else if (!owner.note_device_lost(submit_result, "vkQueueSubmit") && !owner.note_device_lost(fence_result, "vkWaitForFences")) {
+                // The staging buffers stay: the next frame's releaseFrame lets go of them once its own queue is idle.
+                // They cannot buy a re-upload, though - the entries were already made resident with what the copies were
+                // going to write - so this says what actually happened rather than promising a retry: a queue that
+                // refuses a submit is a device-level failure (out of memory or lost device), not a content problem.
+                owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                                  DiagnosticCategory::SubmissionFailed,
+                                                  u8"vk.prepare.batch_not_run",
+                                                  u8"vk: the preparation's transfer batch did not run (the queue refused it); the images it "
+                                                  u8"was going to fill were never written"));
+            }
+        }
+    }
+
+    // WHAT THIS CALL BUILT, not what is resident: a second prepare of an unchanged frame answers zeros (see
+    // PrepareReport). `uploads` counts BOTH kinds FrameUploads reports - the streams this call uploaded and the
+    // textures it made resident (see ADR-2026-11-14). `sets` stays 0 because no descriptor set outlives a frame here.
+    if (!content_refused) {
+        owner.content_report.rearm(); // every draw the call named was prepared: the episode is over
+    }
+    const ContentTotals after = owner.contentNumbers();
+    report.halves    = after.program_builds - before.program_builds;
+    report.pipelines = after.pipeline_builds - before.pipeline_builds;
+    report.uploads   = (after.stream_builds - before.stream_builds) + (after.texture_builds - before.texture_builds);
+    return report;
+}
+
+vn::graphics::FrameReport Device::Session::frameReport() const noexcept
+{
+    vn::graphics::FrameReport report;
+    report.counters = books.counters;
+    report.progress = books.progress;
+    report.uploads  = books.uploads; // this frame's own delta; absent until a frame ran
+    report.timing   = books.timing;  // the device's own clock; absent when the device keeps none (see FrameTiming)
+
+    vn::graphics::RetentionStats retention;
+    retention.released_nodes = owner.released_nodes;
+    // THE QUEUE IS THE ONE COUNTING (see Impl::releaseLater): a release it could not park idles the device instead, and
+    // a report that kept its own number would disagree with `retirementNumbers()` about the same fact.
+    retention.device_waits   = owner.retirement.deviceWaits();
+    if ((owner.device != VK_NULL_HANDLE && !owner.device_lost)) {
+        // WHAT IS RESIDENT, PER KIND: the three kinds this backend retains, composed here where all three tables are
+        // reachable. Material blocks and descriptor sets are per-frame objects, so no row claims them.
+        vn::graphics::ResidencyLedger ledger;
+        owner.noteResidency(ledger);
+        retention.residency = std::move(ledger);
+    }
+    report.retention = std::move(retention);
+    return report;
+}
+
 Device::Device(const DeviceDesc& desc)
   : impl(std::make_unique<Impl>())
 {
@@ -1010,6 +1862,9 @@ Device::Device(const DeviceDesc& desc)
     // before `initialize()` and after `shutdown()`, and `create()` is what gives it objects.
     impl->session = std::make_unique<Session>(*impl);
     impl->desc    = desc;
+    impl->report           = [this](const vn::graphics::RenderDiagnostic& diagnostic) { reportDiagnostic(diagnostic); };
+    impl->ensure_target    = [this](const RenderTarget& target) { return ensureTarget(target); };
+    impl->note_device_lost = [this](const VkResult result, const char* what) { return noteDeviceLost(result, what); };
     // THE HOST'S DIRECTORY, converted ONCE: vn::String carries UTF-8 bytes, and std::filesystem::path is what the file
     // work speaks, so the two meet here instead of at every use.
     if (!desc.cache_directory.empty()) {
@@ -1774,7 +2629,9 @@ void Device::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::Shad
 
 vn::graphics::RenderFrameExecutor& Device::executor()
 {
-    return *this;
+    // THE DEVICE'S OWN DRIVER (see Device::Session): the frames a host drives through the device are this object's
+    // frames, and step 2 of the ADR is what makes `createSession()` hand out the others.
+    return *impl->session;
 }
 
 void Device::setRenderTarget(RenderTarget* target)
@@ -2125,576 +2982,9 @@ Capabilities Device::capabilities() const noexcept
 
 PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget* present_to)
 {
-    // ONE FRAME AT A TIME, AS A CHECKED FACT (see FrameGate): another thread waits here, and a frame started from the
-    // thread that is ALREADY driving one is refused - the shared machinery (command pool, fence, ring, descriptor
-    // pool) is device-wide, so a re-entrant frame would corrupt it silently. The lease releases the gate on EVERY
-    // return below, which is why it is a lease and not a pair of calls.
-    const vn::graphics::backend::FrameGate::Lease frame_lease = impl->session->frames.enter();
-    if (!frame_lease) {
-        if (impl->session->frame_reentry_report.shouldReport()) {
-            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                              DiagnosticCategory::PassProtocolViolation,
-                                              u8"vk.session.frame_reentry",
-                                              u8"vk: a frame was started from the thread that is already driving one (a hook "
-                                              u8"or a sink drove another engine); this frame was refused - a device drives "
-                                              u8"one frame at a time, so drive the second engine from another thread or after "
-                                              u8"waitForFrame"));
-        }
-        return PresentOutcome::Refused;
-    }
-
-    if (!initialized()) {
-        if (impl->device_lost) {
-            // The one loss report already said why and what to do (see noteDeviceLost): a frame asked after it is
-            // skipped without touching the device, not re-explained per frame. A frame that expected a window still
-            // says its picture did not arrive - Lost is the outcome a host acts on.
-            return present_to != nullptr ? PresentOutcome::Lost : PresentOutcome::Skipped;
-        }
-        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                          DiagnosticCategory::SubmissionFailed,
-                                          u8"vk.session.not_initialized",
-                                          u8"vk: a frame was handed to a device that is not up"));
-        return PresentOutcome::Skipped;
-    }
-
-    // THE FRAME'S BOOKS OPEN HERE AND CLOSE ON EVERY EXIT (see closeFrameBooks): the report always describes the
-    // frame that just ended - an empty one included - and the upload numbers are this frame's own delta.
-    const vn::graphics::backend::FrameToken frame_token = impl->clock.begin();
-    FrameTokenCloser                        frame_close{ impl->clock, impl->retirement, frame_token };
-    const ContentTotals    before = impl->contentNumbers();
-    vn::graphics::FrameCounters   counters{};
-    struct BooksCloser {
-        Impl*                        impl;
-        const ContentTotals&  before;
-        vn::graphics::FrameCounters& counters;
-        ~BooksCloser()
-        {
-            impl->session->closeFrameBooks(before, counters);
-        }
-    } books_closer{ impl.get(), before, counters };
-
-    // WHICH PASSES THIS BACKEND CAN RUN: off-screen passes, and WINDOW passes when the frame names one of this
-    // device's own targets as its presenter. A frame that names no presenter presents nowhere (a first-class state:
-    // an offline bake), and a pass that names no target while a presenter IS named draws into that window.
-    WindowTarget* window = nullptr;
-    if (present_to != nullptr) {
-        auto* candidate = dynamic_cast<WindowTarget*>(present_to);
-        for (const auto& surface : impl->surfaces) {
-            if (surface.get() == candidate) {
-                window = candidate;
-                break;
-            }
-        }
-    }
-
-    struct Runnable {
-        const FrameDescription::Pass* entry{ nullptr };
-        const PassDraw*               draw{ nullptr };
-        bool                          window{ false };
-    };
-
-    std::vector<Runnable> runnable_passes;
-    runnable_passes.reserve(frame.passes.size());
-    bool window_acquired = false;
-    // Whether a pass was dropped because a description this device cannot build was named (a sample count, say). The
-    // refusal has already said WHY, so the generic "nothing I can run" sentence below would be the same fact twice.
-    bool refused_pass = false;
-    for (const FrameDescription::Pass& entry : frame.passes) {
-        if (entry.pass == nullptr) {
-            continue; // the SDK's rule: an entry that names no pass is nothing to run (see RenderFrameExecutor)
-        }
-        if (!entry.draw.has_value()) {
-            continue; // a pass that issued nothing: the scope opens and closes, nothing to record
-        }
-        const PassDraw& draw = *entry.draw;
-
-        // WHAT THE FRAME'S SHAPE RECORDS (see FrameCounters): a scope enters the plan when it has an effect - it drew
-        // something, or it announced a clear (a clear is the pass' own load-op, so a clear-only pass is a real pass
-        // with no draws). The reference recorder states the same rule, which is what makes the two reports comparable.
-        std::uint64_t calls = 0U;
-        for (const DrawDescription& description : draw.draws) {
-            calls += vn::graphics::isDrawingCall(description) ? 1U : 0U;
-        }
-        // COUNTED ONLY FOR A PASS THIS DEVICE CAN RUN: a drawing call is recorded, and a pass whose target could not
-        // be built recorded nothing (see the sample-count refusals in ensureTarget) - reporting its calls would say a
-        // frame drew when nothing reached the queue.
-        const bool has_effect = vn::graphics::passHasEffect(draw);
-        const auto count_pass = [&counters, calls, has_effect]() {
-            if (has_effect) {
-                ++counters.passes;
-                counters.draws += calls;
-            }
-        };
-        if (draw.target == nullptr) {
-            if (window == nullptr || !window->ready()) {
-                if (impl->window_reports.presenter.shouldReport()) {
-                    reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
-                                                      DiagnosticCategory::UnsupportedRequest,
-                                                      u8"vk.window.presenter_missing",
-                                                      u8"vk: a window pass names no presenter this device handed out; it was left out"));
-                }
-                refused_pass = true;
-                continue;
-            }
-            impl->window_reports.presenter.rearm(); // the pass named a presenter this device handed out
-            if (!window_acquired) {
-                vn::String why;
-                if (!window->acquire(&why)) {
-                    if (window->deviceLost()) {
-                        // The frame is over: nothing can run on a lost device, so the walk stops here instead of
-                        // letting every later pass build against it. The sentence is reported once (see
-                        // noteDeviceLost), and Lost is the outcome the host acts on.
-                        (void)noteDeviceLost(VK_ERROR_DEVICE_LOST, "vkAcquireNextImageKHR");
-                        return PresentOutcome::Lost;
-                    }
-                    if (impl->window_reports.acquire.shouldReport()) {
-                        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
-                                                          DiagnosticCategory::UnsupportedRequest,
-                                                          u8"vk.window.acquire_failed",
-                                                          why.empty() ? vn::String(u8"vk: the window's next image could not be acquired") : std::move(why)));
-                    }
-                    refused_pass = true;
-                    continue;
-                }
-                impl->window_reports.acquire.rearm(); // the image arrived: this episode is over
-                window_acquired = true;
-            }
-            count_pass();
-            runnable_passes.push_back(Runnable{ &entry, &draw, true });
-            continue;
-        }
-        if (!ensureTarget(*draw.target)) {
-            refused_pass = true;
-            continue;
-        }
-        count_pass();
-        runnable_passes.push_back(Runnable{ &entry, &draw, false });
-    }
-
-    if (runnable_passes.empty()) {
-        if (!refused_pass && impl->no_targets_report.shouldReport()) {
-            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Info,
-                                              DiagnosticCategory::UnsupportedRequest,
-                                              u8"vk.content.no_runnable_pass",
-                                              u8"vk: the frame had no pass this backend can run (off-screen targets and host windows are "
-                                              u8"served); nothing was submitted"));
-        }
-        return PresentOutcome::Skipped;
-    }
-    impl->no_targets_report.rearm(); // a pass ran: the "nothing I can run" episode is over
-
-    // THE DEPTHS THIS FRAME LENDS: every target another pass' target borrows its depth from (RenderTarget::shareDepth
-    // resolves to one pointer per borrower, and the borrower was built above). `resolveShadow` skips them - an image
-    // cannot be a shader's picture and a pass' depth attachment in the same frame.
-    std::unordered_set<const RenderTarget*> lent_depths;
-    for (const Runnable& item : runnable_passes) {
-        if (item.draw->target != nullptr) {
-            if (const vn::raw_ptr<RenderTarget> lender = item.draw->target->depthSource(); lender != nullptr) {
-                lent_depths.insert(lender);
-            }
-        }
-    }
-
-    // ONE COMMAND BUFFER, ONE FENCE, ONE WAIT. The frame is submitted and finished before the call returns, which is
-    // what makes "read the pixels right after" mean what it says.
-    VkCommandBufferAllocateInfo allocate{};
-    allocate.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocate.commandPool        = impl->session->command_pool;
-    allocate.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocate.commandBufferCount = 1U;
-
-    VkCommandBuffer commands{ VK_NULL_HANDLE };
-    if (impl->device_table.vkAllocateCommandBuffers(impl->device, &allocate, &commands) != VK_SUCCESS) {
-        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                          DiagnosticCategory::SubmissionFailed,
-                                          u8"vk.frame.command_buffer_missing",
-                                          u8"vk: no command buffer"));
-        return PresentOutcome::Skipped;
-    }
-
-    VkCommandBufferBeginInfo begin{};
-    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    if (impl->device_table.vkBeginCommandBuffer(commands, &begin) != VK_SUCCESS) {
-        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                          DiagnosticCategory::SubmissionFailed,
-                                          u8"vk.frame.begin_failed",
-                                          u8"vk: vkBeginCommandBuffer failed"));
-        impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &commands);
-        return PresentOutcome::Skipped;
-    }
-
-    // THE DEVICE CLOCK OPENS HERE (see FrameTiming): the reset is legal outside a render pass, which is where this is,
-    // and the pair is closed before the buffer ends below. SAMPLED, not every frame (see kTimestampSampleFrames).
-    ++impl->session->clock_frames;
-    const bool sample_clock = impl->session->timestamps && (impl->session->clock_frames % kTimestampSampleFrames) == 1U;
-    // THE PER-PASS BOUNDARIES NEED ONE QUERY PER PASS PLUS THE TAIL, beside the frame's own pair (see PassTiming). A
-    // frame that needs more than the pool holds recreates it here, which is legal because no command buffer is in
-    // flight; a device that cannot grow it keeps the frame's own clock and answers no attribution.
-    const std::uint32_t pass_count     = static_cast<std::uint32_t>(runnable_passes.size());
-    const std::uint32_t query_count    = 2U + pass_count + 1U;
-    const bool          per_pass_clock = sample_clock && impl->session->ensureTimestampQueries(query_count);
-    if (per_pass_clock) {
-        impl->device_table.vkCmdResetQueryPool(commands, impl->session->timestamp_pool, 0U, query_count);
-        impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, impl->session->timestamp_pool, 0U);
-    }
-
-    // ONE DESCRIPTOR POOL RESET PER FRAME: the pool's sets are the per-draw uniform bindings, and the previous frame
-    // is complete by now (the device submits synchronously), so nothing still names them.
-    impl->content.beginFrame();
-    // The pass count was taken from the frame's shape above (a pass whose draws were all skipped is still a pass
-    // that ran); what the loop below adds is the drawing calls this backend actually recorded.
-
-    bool first_window_pass = true;
-    // Whether a draw this frame named could not be recorded. The refused-content episode ends when a frame records
-    // everything it was handed - a frame that still names one bad draw keeps the episode open (see ReportOnce).
-    bool content_refused = false;
-    std::uint32_t pass_index = 0;
-    for (const Runnable& item : runnable_passes) {
-        // THE PASS' OWN BOUNDARY, written BEFORE its uploads: the transitions and copies a pass asks for exist because
-        // it asked, so they are billed to it rather than to the frame (see PassTiming).
-        if (per_pass_clock) {
-            impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, impl->session->timestamp_pool, 2U + pass_index);
-        }
-        ++pass_index;
-        const PassDraw& draw = *item.draw;
-        // THE PASS' TEXTURES ARE PREPARED BEFORE ITS RENDER PASS BEGINS: an upload records image barriers and
-        // buffer-to-image copies, neither of which is legal inside a render pass instance.
-        impl->content.preparePass(commands, draw.draws);
-
-        // A SOURCE A SCREEN DRAW SAMPLES is about to be read: transition it to SHADER_READ_ONLY now, where an image
-        // barrier is unambiguously allowed (before any render pass instance begins).
-        for (const DrawDescription& description : draw.draws) {
-            if (description.kind != DrawDescription::Kind::Screen || description.source == nullptr) {
-                continue;
-            }
-            const auto source = impl->targets.find(description.source);
-            if (source == impl->targets.end() || !source->second.built() || source->second.color_sampled) {
-                continue;
-            }
-            TargetImages& sampled = source->second;
-            for (const VkImage image : sampled.colors) {
-                const ImageState from = sampled.fresh ? stateOf(ImageLayout::Undefined) : stateOf(ImageLayout::ColorAttachment);
-                const ImageState to   = stateOf(ImageLayout::ShaderReadOnly);
-                const VkImageMemoryBarrier barrier = barrierBetween(image, from, to, VK_IMAGE_ASPECT_COLOR_BIT);
-                impl->device_table.vkCmdPipelineBarrier(commands,
-                                                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                                        0U,
-                                                        0U,
-                                                        nullptr,
-                                                        0U,
-                                                        nullptr,
-                                                        1U,
-                                                        &barrier);
-            }
-            sampled.color_sampled = true;
-        }
-
-        // THE SHADOW MAP THIS PASS SAMPLES, if it declared one: resolved from the target's own statement and moved to
-        // SHADER_READ_ONLY here, before the render pass begins (see resolveShadow).
-        ContentDraw::ShadowSource shadow{};
-        (void)impl->resolveShadow(commands, item.entry->inputs, lent_depths, shadow);
-
-        TargetImages*                                  images        = nullptr;
-        VkRenderPass                                   render_pass   = VK_NULL_HANDLE;
-        VkFramebuffer                                  framebuffer   = VK_NULL_HANDLE;
-        VkExtent2D                                     extent{};
-        std::uint32_t                                  color_count   = 0U;
-        bool                                           has_depth     = false;
-        vn::graphics::backend::RenderPassCompatibility compatibility{};
-
-        if (item.window) {
-            // A WINDOW PASS: the swapchain's image, the window's render pass. The first pass into a frame's image
-            // clears both attachments; a later pass into the same image loads what the earlier one wrote.
-            const bool load = !first_window_pass;
-            render_pass     = window->renderPass(load, load);
-            framebuffer     = window->framebuffer();
-            extent          = VkExtent2D{ window->width(), window->height() };
-            color_count     = 1U;
-            has_depth       = true;
-            compatibility   = window->compatibility();
-            first_window_pass = false;
-        }
-        else {
-            images = &impl->targets.at(draw.target);
-
-            // A TARGET A SCREEN DRAW SAMPLED is in SHADER_READ_ONLY: put its colour images back before this pass
-            // writes them.
-            if (images->color_sampled) {
-                for (const VkImage image : images->colors) {
-                    const VkImageMemoryBarrier back = barrierBetween(image,
-                                                                     stateOf(ImageLayout::ShaderReadOnly),
-                                                                     stateOf(ImageLayout::ColorAttachment),
-                                                                     VK_IMAGE_ASPECT_COLOR_BIT);
-                    impl->device_table.vkCmdPipelineBarrier(commands,
-                                                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                                            0U,
-                                                            0U,
-                                                            nullptr,
-                                                            0U,
-                                                            nullptr,
-                                                            1U,
-                                                            &back);
-                }
-                images->color_sampled = false;
-            }
-
-            // A TARGET A PASS SAMPLED AS A SHADOW MAP has its depth PICTURE in SHADER_READ_ONLY: put it back before
-            // this pass writes the depth (the mirror of the colour rule above, on the depth attachment).
-            if (images->depth_sampled) {
-                const VkImageMemoryBarrier back = barrierBetween(images->depthPicture(),
-                                                                 stateOf(ImageLayout::ShaderReadOnly),
-                                                                 stateOf(ImageLayout::DepthAttachment),
-                                                                 depthAspectMask(images->depthFormat()));
-                impl->device_table.vkCmdPipelineBarrier(commands,
-                                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                                                        0U,
-                                                        0U,
-                                                        nullptr,
-                                                        0U,
-                                                        nullptr,
-                                                        1U,
-                                                        &back);
-                images->depth_sampled = false;
-            }
-
-            // A FRESH attachment set is UNDEFINED: a pass that asked to preserve something gets the CLEAR variant for
-            // its first frame (there is nothing to load yet). A pass that announces NO clear loads both attachments;
-            // a fresh target falls back to CLEAR, the honest reading of "load an image nobody wrote".
-            const bool has_clear  = draw.clear.has_value();
-            const bool load_color = !has_clear && !images->fresh;
-            const bool load_depth = has_clear ? (!draw.clear->depth && !images->fresh) : !images->fresh;
-            render_pass           = images->renderPassFor(load_depth, load_color);
-            framebuffer           = images->framebuffer;
-            extent                = VkExtent2D{ static_cast<std::uint32_t>(images->width()), static_cast<std::uint32_t>(images->height()) };
-            color_count           = static_cast<std::uint32_t>(images->colorCount());
-            has_depth             = images->hasDepth();
-            compatibility         = images->compatibility();
-        }
-
-        // PER-ATTACHMENT CLEAR (a LOAD variant ignores these values): the clear values are indexed by ATTACHMENT, and
-        // attachment 0 is the pass' colour while the rest of the COLOUR slots come from extra_colors (an absent entry
-        // is transparent black - see ClearPolicy). A MULTISAMPLED target's array is [sample buffers, resolve images,
-        // depth], so its depth slot is not `color_count`; the resolve slots in between are DONT_CARE and their values
-        // are never read (see TargetImages' class note).
-        const std::size_t         depth_slot  = images != nullptr ? images->depthAttachmentIndex() : static_cast<std::size_t>(color_count);
-        std::vector<VkClearValue> clear_values(depth_slot + (has_depth ? 1U : 0U));
-        const Colorf              colour      = draw.clear.has_value() ? draw.clear->color : Colorf(0.0F, 0.0F, 0.0F, 1.0F);
-        if (color_count != 0U) {
-            // A DEPTH-ONLY PASS (a shadow map) has no colour slot to clear: its clear values start at the depth.
-            clear_values[0].color = { { colour.r, colour.g, colour.b, colour.a } };
-        }
-        for (std::size_t index = 1; index < color_count; ++index) {
-            const Colorf extra = images != nullptr && draw.clear.has_value() && index - 1U < draw.clear->extra_colors.size()
-                                     ? draw.clear->extra_colors[index - 1U]
-                                     : Colorf(0.0F, 0.0F, 0.0F, 0.0F);
-            clear_values[index].color = { { extra.r, extra.g, extra.b, extra.a } };
-        }
-        if (has_depth) {
-            // Reverse-Z: every backend clears depth to its own far plane, and this camera convention's far plane is 0
-            // (see ClearPolicy: the policy states WHETHER, never to what).
-            clear_values[depth_slot].depthStencil = { 0.0F, 0U };
-        }
-
-        VkRenderPassBeginInfo pass_begin{};
-        pass_begin.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        pass_begin.renderPass        = render_pass;
-        pass_begin.framebuffer       = framebuffer;
-        pass_begin.renderArea.offset = VkOffset2D{ 0, 0 };
-        pass_begin.renderArea.extent = extent;
-        pass_begin.clearValueCount   = static_cast<std::uint32_t>(clear_values.size());
-        pass_begin.pClearValues      = clear_values.data();
-
-        impl->device_table.vkCmdBeginRenderPass(commands, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
-        // WHAT THIS PASS DRAWS. Each draw description is borrowed for this call; every command inside it becomes one
-        // GPU draw (M3: resolved state selects the pipeline, one `RenderCommand` = one indexed draw). The frame's
-        // DRAWING-CALL count was taken from the frame's shape above - a call is the description, not its commands.
-        for (const DrawDescription& description : draw.draws) {
-            ContentRefusal refusal;
-            if (description.kind == DrawDescription::Kind::Screen) {
-                // THE FULL-SCREEN ABI: the source's colour attachments, bound in order. A source this device never
-                // built answers an empty span, which makes the recorder report (and skip) the draw.
-                ContentDraw::ScreenSource source{};
-                const auto                source_images = description.source != nullptr ? impl->targets.find(description.source) : impl->targets.end();
-                if (source_images != impl->targets.end() && source_images->second.built()) {
-                    source.images = source_images->second.colors;
-                    source.views  = source_images->second.color_views;
-                }
-                (void)impl->content.recordScreen(commands,
-                                                 render_pass,
-                                                 compatibility,
-                                                 color_count,
-                                                 static_cast<int>(extent.width),
-                                                 static_cast<int>(extent.height),
-                                                 description,
-                                                 draw,
-                                                 source,
-                                                 shadow,
-                                                 &refusal);
-            }
-            else {
-                (void)impl->content.record(commands,
-                                           render_pass,
-                                           compatibility,
-                                           color_count,
-                                           static_cast<int>(extent.width),
-                                           static_cast<int>(extent.height),
-                                           description,
-                                           draw,
-                                           impl->default_program.get(),
-                                           shadow,
-                                           &refusal);
-            }
-            if (refusal.isRefused()) {
-                content_refused = true;
-                if (impl->content_report.shouldReport()) {
-                    // THE CAUSE WAS NAMED WHERE IT WAS KNOWN (see ContentRefusal), so this report FORWARDS the value the
-                    // recorder built - the code travels with the sentence instead of being guessed at the sink.
-                    const vn::graphics::RenderDiagnostic diagnostic =
-                        deviceDiagnostic(DiagnosticSeverity::Warning, refusal.category(), refusal.code(), refusal.message());
-                    reportDiagnostic(diagnostic);
-                }
-            }
-        }
-        impl->device_table.vkCmdEndRenderPass(commands);
-        if (images != nullptr) {
-            images->fresh = false;
-        }
-    }
-    if (!content_refused) {
-        impl->content_report.rearm(); // every draw the frame named was recorded: the episode is over
-    }
-
-    // THE PRESENT TRANSITION, after the window's last pass and before the command buffer ends: every window pass
-    // stores into COLOR_ATTACHMENT_OPTIMAL, and vkQueuePresentKHR reads PRESENT_SRC_KHR.
-    if (window_acquired) {
-        window->recordPresentTransition(commands);
-    }
-
-    if (per_pass_clock) {
-        // THE TAIL BOUNDARY: the last pass' span ends here, so what follows (the present transition, the frame's own
-        // tail) belongs to no pass - the honest split, because no pass asked for it.
-        impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, impl->session->timestamp_pool, 2U + pass_count);
-        impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, impl->session->timestamp_pool, 1U);
-    }
-
-    if (impl->device_table.vkEndCommandBuffer(commands) != VK_SUCCESS) {
-        reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                          DiagnosticCategory::SubmissionFailed,
-                                          u8"vk.frame.end_failed",
-                                          u8"vk: vkEndCommandBuffer failed"));
-        impl->content.endFrame();
-        impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &commands);
-        return PresentOutcome::Skipped;
-    }
-
-    VkSubmitInfo submit{};
-    submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1U;
-    submit.pCommandBuffers    = &commands;
-
-    // THE WINDOW'S SEMAPHORES: the acquire signalled image_available, the submit waits on it and signals
-    // render_finished, and the present waits on that. One frame at a time (the device waits on its fence below), so
-    // one pair per window target is enough.
-    const VkSemaphore          wait_semaphore   = window_acquired ? window->imageAvailableSemaphore() : VK_NULL_HANDLE;
-    const VkSemaphore          signal_semaphore = window_acquired ? window->renderFinishedSemaphore() : VK_NULL_HANDLE;
-    const VkPipelineStageFlags wait_stage       = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    if (window_acquired) {
-        submit.waitSemaphoreCount   = 1U;
-        submit.pWaitSemaphores      = &wait_semaphore;
-        submit.pWaitDstStageMask    = &wait_stage;
-        submit.signalSemaphoreCount = 1U;
-        submit.pSignalSemaphores    = &signal_semaphore;
-    }
-
-    const VkResult submit_result = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->session->completion);
-    const bool     submitted     = submit_result == VK_SUCCESS;
-    if (submitted) {
-        ++impl->session->books.progress.submitted;
-        frame_close.submitted = true;
-    }
-    const VkResult fence_result = submitted ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->session->completion, VK_TRUE, UINT64_MAX)
-                                            : submit_result;
-    const bool     completed    = fence_result == VK_SUCCESS;
-    if (completed) {
-        ++impl->session->books.progress.completed;
-        // THE COMPLETION EVIDENCE THE PARK QUEUE WAITS FOR (see Impl::releaseLater): the frame's GPU work is provably
-        // done, so every object a release handed over while this frame was in flight may now go.
-        impl->clock.windowCompleted(impl->session->clock_window, frame_token.frame);
-        // THE PAIR IS READABLE NOW (the fence says the frame ran): one read, one value, and the report carries it as
-        // the frame's device time (see FrameTiming). A frame the clock did not sample answers DISENGAGED - never the
-        // previous frame's value.
-        if (per_pass_clock) {
-            std::vector<std::uint64_t> stamps(query_count, 0U);
-            if (impl->device_table.vkGetQueryPoolResults(impl->device,
-                                                         impl->session->timestamp_pool,
-                                                         0U,
-                                                         query_count,
-                                                         stamps.size() * sizeof(std::uint64_t),
-                                                         stamps.data(),
-                                                         sizeof(std::uint64_t),
-                                                         VK_QUERY_RESULT_64_BIT) == VK_SUCCESS &&
-                stamps[1] > stamps[0]) {
-                const double             to_micros = static_cast<double>(impl->timestamp_period) / 1000.0;
-                vn::graphics::FrameTiming timing;
-                timing.gpu_micros = static_cast<std::uint64_t>(static_cast<double>(stamps[1] - stamps[0]) * to_micros);
-                // PER-PASS ATTRIBUTION, in EXECUTION order: pass i spans boundary 2+i to 2+i+1, and the name is the
-                // frame's own - a report a host can match against the plan it read (see PassTiming).
-                timing.passes.reserve(pass_count);
-                for (std::uint32_t index = 0; index < pass_count; ++index) {
-                    const std::uint64_t from = stamps[2U + index];
-                    const std::uint64_t to   = stamps[2U + index + 1U];
-                    vn::graphics::PassTiming entry;
-                    if (runnable_passes[index].entry != nullptr && runnable_passes[index].entry->pass != nullptr) {
-                        entry.pass = runnable_passes[index].entry->pass->name();
-                    }
-                    entry.gpu_micros = to > from ? static_cast<std::uint64_t>(static_cast<double>(to - from) * to_micros) : 0U;
-                    timing.passes.push_back(std::move(entry));
-                }
-                impl->session->books.timing = std::move(timing);
-            }
-            else {
-                impl->session->books.timing.reset();
-            }
-        }
-        else {
-            impl->session->books.timing.reset();
-        }
-    }
-    (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->session->completion);
-    impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &commands);
-    // The per-draw uniform buffers were named by the command buffer that just finished (or failed to): the queue is
-    // idle either way, so the bytes can go.
-    impl->content.endFrame();
-
-    if (!completed) {
-        // A LOST DEVICE GETS ITS OWN SENTENCE, ONCE (see noteDeviceLost); the generic one is for the failures a retry
-        // can still fix, which is the difference that matters to a host.
-        if (!noteDeviceLost(submit_result, "vkQueueSubmit") && !noteDeviceLost(fence_result, "vkWaitForFences")) {
-            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                              DiagnosticCategory::SubmissionFailed,
-                                              u8"vk.frame.did_not_complete",
-                                              u8"vk: the frame's command buffer did not run to completion"));
-        }
-    }
-
-    // THE FRAME'S TAIL: the executor is what presents the frame it ran (see RenderFrameExecutor::executeFrame).
-    PresentOutcome outcome = PresentOutcome::Skipped;
-    if (window_acquired) {
-        outcome = completed ? window->present() : PresentOutcome::Lost;
-        if (window->deviceLost()) {
-            // A present that found the device gone is the same session-level fact as a lost submit: one report, and
-            // the frame's Lost outcome is what the host acts on (see PresentOutcome::Lost).
-            (void)noteDeviceLost(VK_ERROR_DEVICE_LOST, "vkQueuePresentKHR");
-        }
-        if (outcome == PresentOutcome::Presented) {
-            ++impl->session->books.progress.presented;
-        }
-    }
-    return outcome;
+    // THE FRAME IS THE DRIVER'S (see Device::Session): this verb exists because a device is also a RenderFrameExecutor
+    // (RenderBackend is the aggregate), so it answers the driver `executor()` hands out.
+    return impl->session->executeFrame(frame, present_to);
 }
 
 bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
@@ -2767,268 +3057,14 @@ bool Device::releaseContent(const vn::Buffer<std::uint32_t>& buffer)
 
 vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, PresentTarget* present_to)
 {
-    using vn::graphics::EngineNotReady;
-    using vn::graphics::PrepareReport;
-
-    // THE SAME GATE AS executeFrame, because a warm-up records and may submit a transfer batch of its own (see
-    // ADR-2026-11-14): a prepare racing a frame would share the command pool. `Refused` carries no reason - the
-    // report says which refusal it was (see executeFrame).
-    const vn::graphics::backend::FrameGate::Lease frame_lease = impl->session->frames.enter();
-    if (!frame_lease) {
-        if (impl->session->frame_reentry_report.shouldReport()) {
-            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                              DiagnosticCategory::PassProtocolViolation,
-                                              u8"vk.session.frame_reentry",
-                                              u8"vk: a warm-up was started from the thread that is already driving a frame "
-                                              u8"(a hook or a sink drove another engine); it was refused - a device drives one "
-                                              u8"frame at a time"));
-        }
-        return PrepareReport{ PrepareReport::Outcome::Refused };
-    }
-
-    if (!initialized()) {
-        // "There is nothing to prebuild" and "the device is not up" are different answers (see PrepareReport).
-        return PrepareReport{ PrepareReport::Outcome::NotReady, EngineNotReady::NotInitialized };
-    }
-
-    // WHICH SURFACE THE FRAME NAMES - the same resolution executeFrame makes, minus everything that would touch it:
-    // nothing is acquired, resized or presented, and the frame water level does not move (see
-    // RenderFrameExecutor::prepareFrame, P11). The ONE command buffer this call records holds transfers only.
-    WindowTarget* window = nullptr;
-    if (present_to != nullptr) {
-        auto* candidate = dynamic_cast<WindowTarget*>(present_to);
-        for (const auto& surface : impl->surfaces) {
-            if (surface.get() == candidate) {
-                window = candidate;
-                break;
-            }
-        }
-        if (window == nullptr) {
-            if (impl->prepare_target_report.shouldReport()) {
-                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
-                                                  DiagnosticCategory::UnsupportedRequest,
-                                                  u8"vk.window.foreign_target",
-                                                  u8"vk: a frame named a surface target this device did not hand out; nothing was prepared"));
-            }
-            return PrepareReport{ PrepareReport::Outcome::Refused };
-        }
-        impl->prepare_target_report.rearm(); // the frame named a target this device handed out
-    }
-
-    // THE WARM-UP IS A SUBMISSION TOO (see ADR-2026-11-14): it opens a frame on the clock, so the transfer batch it may
-    // submit carries a frame number the park queue can date a release against - and a warm-up that records nothing
-    // spends the token without moving the submitted watermark.
-    const vn::graphics::backend::FrameToken warmup_token = impl->clock.begin();
-    FrameTokenCloser                        warmup_close{ impl->clock, impl->retirement, warmup_token };
-    const ContentTotals before = impl->contentNumbers();
-    PrepareReport             report;
-    report.outcome = PrepareReport::Outcome::Prepared;
-    // THE ONE THING THIS CALL MAY SUBMIT IS A TRANSFER BATCH OF ITS OWN (see RenderFrameExecutor::prepareFrame and
-    // ADR-2026-11-14): the builds that need a command buffer - the 1x1 stand-in and every material texture of a pass -
-    // are recorded on one command buffer here, submitted on the device's own fence and waited for before this call
-    // answers. It is NOT a frame: no swapchain image is acquired, no render pass opens, nothing is drawn or presented,
-    // and `books.progress` does not move. The buffer is allocated LAZILY, on the first pass this device can serve: a
-    // frame whose passes it cannot serve records nothing and therefore allocates nothing.
-    VkCommandBuffer batch{ VK_NULL_HANDLE };
-    bool            batch_attempted{ false };
-    // Whether a draw this call could not prepare. The refused-content episode ends when a call prepares everything it
-    // was handed, exactly as the frame path ends it (see ReportOnce).
-    bool content_refused{ false };
-
-    // THE SHAPE OF THE FRAME ASKED FOR, computed by the SDK (see FrameShape): one definition, so this backend and the
-    // reference one cannot report different shapes for the same frame - and the rule is the one a recorded frame's
-    // `FrameCounters` follows (a pass that draws something or announces a clear).
-    const vn::graphics::FrameShape shape = vn::graphics::frameShapeOf(frame);
-    report.passes = shape.passes;
-    report.draws  = shape.draws;
-
-    for (const FrameDescription::Pass& entry : frame.passes) {
-        if (entry.pass == nullptr) {
-            continue; // the SDK's rule: an entry that names no pass is nothing to run (see executeFrame)
-        }
-        if (!entry.draw.has_value()) {
-            continue;
-        }
-        const PassDraw& draw = *entry.draw;
-        if (!vn::graphics::passHasEffect(draw)) {
-            continue; // nothing drawn, nothing cleared: there is nothing to prepare
-        }
-
-        VkRenderPass                                  render_pass   = VK_NULL_HANDLE;
-        std::uint32_t                                 color_count   = 0U;
-        vn::graphics::backend::RenderPassCompatibility compatibility{};
-        if (draw.target == nullptr) {
-            // A WINDOW PASS: its shape is known only once a swapchain exists - and preparing must not create one.
-            if (window == nullptr || !window->ready()) {
-                continue;
-            }
-            render_pass   = window->renderPass(false, false);
-            color_count   = 1U;
-            compatibility = window->compatibility();
-        }
-        else {
-            // THE TARGET'S ATTACHMENTS ARE WHAT THE FRAME WOULD BUILD ANYWAY, so preparing them is the point.
-            if (!ensureTarget(*draw.target)) {
-                continue;
-            }
-            TargetImages& images = impl->targets.at(draw.target);
-            render_pass   = images.renderPassFor(false, false);
-            color_count   = static_cast<std::uint32_t>(images.colorCount());
-            compatibility = images.compatibility();
-        }
-
-        // THE BATCH IS OPENED ON THE FIRST PASS THIS DEVICE CAN SERVE - the same condition the branch above just
-        // answered, so a frame nothing can be built for never allocates a command buffer.
-        if (!batch_attempted) {
-            batch_attempted = true;
-            VkCommandBufferAllocateInfo allocate{};
-            allocate.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-            allocate.commandPool        = impl->session->command_pool;
-            allocate.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-            allocate.commandBufferCount = 1U;
-            batch                       = VK_NULL_HANDLE;
-            VkCommandBufferBeginInfo begin{};
-            begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-            if (impl->device_table.vkAllocateCommandBuffers(impl->device, &allocate, &batch) != VK_SUCCESS) {
-                batch = VK_NULL_HANDLE;
-                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                                  DiagnosticCategory::SubmissionFailed,
-                                                  u8"vk.prepare.batch_failed",
-                                                  u8"vk: the preparation's transfer batch could not be recorded; the next frame uploads the "
-                                                  u8"content again"));
-            }
-            else if (impl->device_table.vkBeginCommandBuffer(batch, &begin) != VK_SUCCESS) {
-                impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &batch);
-                batch = VK_NULL_HANDLE;
-                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                                  DiagnosticCategory::SubmissionFailed,
-                                                  u8"vk.prepare.batch_failed",
-                                                  u8"vk: the preparation's transfer batch could not be recorded; the next frame uploads the "
-                                                  u8"content again"));
-            }
-        }
-
-        for (const DrawDescription& description : draw.draws) {
-            ContentRefusal refusal;
-            if (description.kind == DrawDescription::Kind::Screen) {
-                impl->content.prepareScreen(compatibility, render_pass, color_count, description, draw, &refusal);
-            }
-            else {
-                impl->content.prepare(compatibility,
-                                      render_pass,
-                                      color_count,
-                                      description,
-                                      draw,
-                                      impl->default_program.get(),
-                                      &refusal);
-            }
-            if (refusal.isRefused()) {
-                content_refused = true;
-                if (impl->content_report.shouldReport()) {
-                    // The same forwarding the frame path does (see above).
-                    const vn::graphics::RenderDiagnostic diagnostic =
-                        deviceDiagnostic(DiagnosticSeverity::Warning, refusal.category(), refusal.code(), refusal.message());
-                    reportDiagnostic(diagnostic);
-                }
-            }
-        }
-
-        // THE PASS' OWN UPLOADS, recorded into the batch: exactly the copies the frame would record before this pass'
-        // render pass begins (see ContentDraw::preparePass), so the frame then finds them resident and records
-        // nothing. A pass whose batch could not be opened is still prepared; the next frame uploads it.
-        if (batch != VK_NULL_HANDLE) {
-            impl->content.preparePass(batch, draw.draws);
-        }
-    }
-
-    // THE BATCH RUNS BEFORE THIS CALL ANSWERS: one submit on the device's frame fence, no semaphore (nothing was
-    // acquired, so the queue has nothing to wait for), one wait, and the staging buffers go as soon as the copies
-    // have run - the release the frame path reaches through ContentDraw::endFrame -> ContentImages::releaseFrame.
-    if (batch != VK_NULL_HANDLE) {
-        if (impl->device_table.vkEndCommandBuffer(batch) != VK_SUCCESS) {
-            // THE BUFFER NEVER CLOSED, so whatever it recorded never ran - and it cannot be recorded again: the copies
-            // were already recorded against entries this call made resident. Said plainly, because "the next frame
-            // uploads it again" would be a promise the revision check does not keep.
-            reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                              DiagnosticCategory::SubmissionFailed,
-                                              u8"vk.prepare.batch_not_closed",
-                                              u8"vk: the preparation's transfer batch could not be closed; the copies it recorded never ran"));
-            impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &batch);
-        }
-        else if (!impl->content.images().hasPendingUploads()) {
-            // ZERO WORK, ZERO SUBMIT: an unchanged frame records no copy, so there is nothing to run and nothing is
-            // submitted - the property a second prepare of the same frame is observed by (see ADR-2026-11-14).
-            impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &batch);
-        }
-        else {
-            VkSubmitInfo submit{};
-            submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-            submit.commandBufferCount = 1U;
-            submit.pCommandBuffers    = &batch;
-            const VkResult submit_result = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->session->completion);
-            const VkResult fence_result  = submit_result == VK_SUCCESS
-                                               ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->session->completion, VK_TRUE, UINT64_MAX)
-                                               : submit_result;
-            const bool     completed     = fence_result == VK_SUCCESS;
-            warmup_close.submitted       = submit_result == VK_SUCCESS;
-            if (completed) {
-                impl->clock.windowCompleted(impl->session->clock_window, warmup_token.frame);
-            }
-            (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->session->completion);
-            impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &batch);
-            if (completed) {
-                impl->content.images().releaseUploadStaging();
-            }
-            else if (!noteDeviceLost(submit_result, "vkQueueSubmit") && !noteDeviceLost(fence_result, "vkWaitForFences")) {
-                // The staging buffers stay: the next frame's releaseFrame lets go of them once its own queue is idle.
-                // They cannot buy a re-upload, though - the entries were already made resident with what the copies were
-                // going to write - so this says what actually happened rather than promising a retry: a queue that
-                // refuses a submit is a device-level failure (out of memory or lost device), not a content problem.
-                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
-                                                  DiagnosticCategory::SubmissionFailed,
-                                                  u8"vk.prepare.batch_not_run",
-                                                  u8"vk: the preparation's transfer batch did not run (the queue refused it); the images it "
-                                                  u8"was going to fill were never written"));
-            }
-        }
-    }
-
-    // WHAT THIS CALL BUILT, not what is resident: a second prepare of an unchanged frame answers zeros (see
-    // PrepareReport). `uploads` counts BOTH kinds FrameUploads reports - the streams this call uploaded and the
-    // textures it made resident (see ADR-2026-11-14). `sets` stays 0 because no descriptor set outlives a frame here.
-    if (!content_refused) {
-        impl->content_report.rearm(); // every draw the call named was prepared: the episode is over
-    }
-    const ContentTotals after = impl->contentNumbers();
-    report.halves    = after.program_builds - before.program_builds;
-    report.pipelines = after.pipeline_builds - before.pipeline_builds;
-    report.uploads   = (after.stream_builds - before.stream_builds) + (after.texture_builds - before.texture_builds);
-    return report;
+    // The same forward the frame takes: a warm-up submits a transfer batch of its own, so it is a driver verb too.
+    return impl->session->prepareFrame(frame, present_to);
 }
 
 vn::graphics::FrameReport Device::frameReport() const noexcept
 {
-    vn::graphics::FrameReport report;
-    report.counters = impl->session->books.counters;
-    report.progress = impl->session->books.progress;
-    report.uploads  = impl->session->books.uploads; // this frame's own delta; absent until a frame ran
-    report.timing   = impl->session->books.timing;  // the device's own clock; absent when the device keeps none (see FrameTiming)
-
-    vn::graphics::RetentionStats retention;
-    retention.released_nodes = impl->released_nodes;
-    // THE QUEUE IS THE ONE COUNTING (see Impl::releaseLater): a release it could not park idles the device instead, and
-    // a report that kept its own number would disagree with `retirementNumbers()` about the same fact.
-    retention.device_waits   = impl->retirement.deviceWaits();
-    if (initialized()) {
-        // WHAT IS RESIDENT, PER KIND: the three kinds this backend retains, composed here where all three tables are
-        // reachable. Material blocks and descriptor sets are per-frame objects, so no row claims them.
-        vn::graphics::ResidencyLedger ledger;
-        impl->noteResidency(ledger);
-        retention.residency = std::move(ledger);
-    }
-    report.retention = std::move(retention);
-    return report;
+    // A report about THIS device's frames is its driver's books plus the device-level retention and residency numbers.
+    return impl->session->frameReport();
 }
 
 bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels, ReadbackResult* why)
