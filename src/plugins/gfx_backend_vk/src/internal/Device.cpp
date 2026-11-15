@@ -181,30 +181,6 @@ constexpr std::uint32_t kSampleCounts[] = { 64U, 32U, 16U, 8U, 4U, 2U, 1U };
 }
 
 /**
- * @brief Whether @p description is a DRAWING CALL at all (see FrameCounters::draws).
- *
- * @details
- * - A drawing call is one `DrawDescription` a backend can issue, NOT the GPU commands inside it: one drawable is one
- *   call whatever its primitives (the reference recorder counts it the same way, which is what makes the two frame
- *   reports comparable - see the parity suite).
- * - The conditions are the SDK's own: a call with no view is no call at all, a screen call without a program draws
- *   nothing, and a content call with an empty list has nothing to draw.
- *
- * @param description The drawing call as the frame describes it.
- * @return true when it is a call the record counts.
- */
-[[nodiscard]] bool isDrawingCall(const vn::graphics::DrawDescription& description) noexcept
-{
-    if (!description.camera.present) {
-        return false;
-    }
-    if (description.kind == vn::graphics::DrawDescription::Kind::Screen) {
-        return description.program != nullptr || description.program_description != nullptr;
-    }
-    return description.commands != nullptr && !description.commands->empty();
-}
-
-/**
  * @brief The debug-utils callback: forwards every layer message to the device that installed it.
  *
  * @param severity   The layer's severity flags.
@@ -1617,12 +1593,12 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         // with no draws). The reference recorder states the same rule, which is what makes the two reports comparable.
         std::uint64_t calls = 0U;
         for (const DrawDescription& description : draw.draws) {
-            calls += isDrawingCall(description) ? 1U : 0U;
+            calls += vn::graphics::isDrawingCall(description) ? 1U : 0U;
         }
         // COUNTED ONLY FOR A PASS THIS DEVICE CAN RUN: a drawing call is recorded, and a pass whose target could not
         // be built recorded nothing (see the sample-count refusals in ensureTarget) - reporting its calls would say a
         // frame drew when nothing reached the queue.
-        const bool has_effect = calls != 0U || draw.clear.has_value();
+        const bool has_effect = vn::graphics::passHasEffect(draw);
         const auto count_pass = [&counters, calls, has_effect]() {
             if (has_effect) {
                 ++counters.passes;
@@ -2169,6 +2145,13 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
     // was handed, exactly as the frame path ends it (see ReportOnce).
     bool content_refused{ false };
 
+    // THE SHAPE OF THE FRAME ASKED FOR, computed by the SDK (see FrameShape): one definition, so this backend and the
+    // reference one cannot report different shapes for the same frame - and the rule is the one a recorded frame's
+    // `FrameCounters` follows (a pass that draws something or announces a clear).
+    const vn::graphics::FrameShape shape = vn::graphics::frameShapeOf(frame);
+    report.passes = shape.passes;
+    report.draws  = shape.draws;
+
     for (const FrameDescription::Pass& entry : frame.passes) {
         if (entry.pass == nullptr) {
             continue; // the SDK's rule: an entry that names no pass is nothing to run (see executeFrame)
@@ -2177,16 +2160,9 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
             continue;
         }
         const PassDraw& draw = *entry.draw;
-        if (draw.draws.empty()) {
-            continue;
+        if (!vn::graphics::passHasEffect(draw)) {
+            continue; // nothing drawn, nothing cleared: there is nothing to prepare
         }
-        // THE SHAPE OF THE FRAME ASKED FOR (see PrepareReport): counted whether or not this device can build it.
-        ++report.passes;
-        std::uint32_t calls = 0U;
-        for (const DrawDescription& description : draw.draws) {
-            calls += isDrawingCall(description) ? 1U : 0U;
-        }
-        report.draws += calls;
 
         VkRenderPass                                  render_pass   = VK_NULL_HANDLE;
         std::uint32_t                                 color_count   = 0U;

@@ -534,6 +534,23 @@
   钉“索引说有就留、索引说没有就 park”。backlog `T28` 已删（收口项，不再是触发项）。
 - **计数**：`test_vsg` 544 / `test_graphics` 554 / ctest 30/30 / TSan 554 用例 0 warning。
 
+## 2026-11-15 —— `PrepareReport.passes` 一种口径（T41 关闭）+ 一个真 VUID：变体之间“依赖也进兼容性”
+
+- **口径定了（SDK 一处）**：`FrameShape` / `frameShapeOf` / `isDrawingCall` / `passHasEffect` 进了
+  `FrameDescription.hpp`（inline，不新增导出符号）。规则 = **有作用域的 pass**：至少一个 drawing call，**或**声明了
+  clear（“只清屏”的 pass 是真 pass）；`draw == nullopt` 的条目不进（它连 target 都没声明）。两个后端此前各算各的：
+  vk 数“有 draws 的条目”（把没有相机的调用也当 draw，+1），vsg 数“编译后 draws 非空的 pass”（漏掉只清屏的 pass，
+  −1），而 `FrameCounters` 是第三种。现在两边都调 `frameShapeOf(frame)`，与录制计数按构造一致。
+- **真 VUID（新用例顺带抓到，已修）**：`TargetImages` 的三个 render-pass 变体里，`depth_load == LOAD` 的变体把
+  `srcStage/srcAccess` 加宽（覆盖“读上一个 pass 写的深度”），CLEAR 变体不加 ⇒ **dependency 不同 ⇒ 变体不兼容**；同一
+  framebuffer 只与 CLEAR 变体兼容，于是“一帧两个 pass 写同一个带深度的目标”在 `vkCmdBeginRenderPass` 报
+  `VUID-VkRenderPassBeginInfo-renderPass-00904`。修法：依赖**不随 load op 变**（CLEAR 变体覆盖同样的源作用域不花
+  钱）。既有跨后端用例都是“每 pass 各自一个目标”，所以一直没暴露。
+- **用例**：`BackendParityTest.APrepareReportsTheShapeBothBackendsThenRecord`——一帧三 pass（只清屏 / 有调用但无相机 /
+  真画），断言两个后端的 `PrepareReport` 都是 `passes=2, draws=1`、录制计数与之一致，并在跑帧期间**断言 vk 零
+  warning/error**。变异：把依赖加宽改回“只对 LOAD”，该用例立刻红（“the direct backend reported a problem”）。
+- **计数**：`test_vk` 89；`BackendParityTest` **13**（原 12 + 1）；Debug 全量 ctest 32/32；Release `test_vk` 89/89。
+
 ## 2026-11-15 —— `gfx_backend_vk` 跨会话管线缓存（F4/T44 落地）：位置归宿主、键归设备、证人要诚实
 
 - **概念**：`DeviceDesc::cache_directory`（SDK，创建输入）= **宿主说“文件可以放哪”**，后端说“存什么”。宿主不写时

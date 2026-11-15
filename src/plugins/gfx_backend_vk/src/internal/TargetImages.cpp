@@ -346,13 +346,15 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
     if (images.hasDepth()) {
         dependency.dstStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
         dependency.dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        if (depth_load == VK_ATTACHMENT_LOAD_OP_LOAD) {
-            // A LOAD over a depth an EARLIER pass wrote is a READ OF A WRITE - the borrower's case (its depth is the
-            // lender's image, left in this layout by the lender's pass) and the LOAD variants' - so the source scope
-            // has to cover the fragment-test write as well as a sampled read. Without it the two passes could overlap.
-            dependency.srcStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-            dependency.srcAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        }
+        // THE SOURCE SCOPE DOES NOT DEPEND ON THE LOAD OP, DELIBERATELY. A LOAD over a depth an EARLIER pass wrote is a
+        // read of a write (the LOAD variants and the borrower's case), so the source scope has to cover the fragment-test
+        // write as well as a sampled read - and a CLEAR variant covering the same scope costs nothing. The alternative,
+        // widening it only for LOAD, makes the variants' DEPENDENCIES differ - and a dependency is part of render-pass
+        // COMPATIBILITY, so the one framebuffer every variant shares would no longer be compatible with the LOAD ones
+        // (VUID-VkRenderPassBeginInfo-renderPass-00904, measured on a frame with two passes into one depth-attached
+        // target).
+        dependency.srcStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        dependency.srcAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     }
 
     if (images.resolvesDepth()) {

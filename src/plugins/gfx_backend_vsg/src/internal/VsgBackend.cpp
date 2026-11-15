@@ -1131,13 +1131,12 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
 
     vn::graphics::PrepareReport report;
     report.outcome = vn::graphics::PrepareReport::Outcome::Prepared;
-    for (const core::CompiledPass& pass : plan.passes) {
-        if (pass.draws.empty()) {
-            continue; // a pass with nothing to draw has nothing to prepare (its clear is the plan's own)
-        }
-        ++report.passes;
-        report.draws += static_cast<std::uint32_t>(pass.draws.size());
-    }
+    // THE SHAPE OF THE FRAME ASKED FOR, computed by the SDK (see FrameShape): the same function the direct backend
+    // calls, over the same value, so the two reports agree by construction - and the rule is the one a recorded frame's
+    // `FrameCounters` follows (a pass that draws something or announces a clear; a clear-only pass is a real pass).
+    const vn::graphics::FrameShape shape = vn::graphics::frameShapeOf(frame);
+    report.passes = shape.passes;
+    report.draws  = shape.draws;
     // THE SHAPE THE FRAME ASKED FOR, not what this backend managed to walk (see PrepareReport): a pass the walk above
     // skipped because its target has no objects yet is still counted here, and the build deltas below are what say
     // how much of the request actually became objects. Two numbers, two questions - and neither pretends to be the

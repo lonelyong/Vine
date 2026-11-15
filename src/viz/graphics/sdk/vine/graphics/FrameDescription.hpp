@@ -269,4 +269,98 @@ FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass,
                                                  std::vector<ImageSource>  inputs,
                                                  std::optional<PassDraw>   description);
 
+/**
+ * @brief Whether @p description is a DRAWING CALL a recorder issues.
+ *
+ * @details
+ * - THE ONE DEFINITION the two backends and the reports share (see FrameCounters::draws). A drawing call is one
+ *   `DrawDescription` a backend can issue, NOT the GPU commands inside it: one drawable is one call whatever its
+ *   primitives. The conditions are the value's own:
+ *   - a call with no camera (`camera.present == false`) issues nothing - the pass said it has no view to build;
+ *   - a screen call needs a program (the object or its text) - without one there is nothing to run;
+ *   - a scene call needs commands - an empty list draws nothing.
+ * - IT IS INLINE ON PURPOSE: a predicate over a value header must not become an exported symbol every backend links
+ *   against, and it is what keeps "how a call is counted" a single sentence instead of one per backend.
+ *
+ * @param description The drawing call as a frame describes it.
+ * @return true when it is a call a recorder counts.
+ */
+[[nodiscard]] inline bool isDrawingCall(const DrawDescription& description) noexcept
+{
+    if (!description.camera.present) {
+        return false;
+    }
+    if (description.kind == DrawDescription::Kind::Screen) {
+        return description.program != nullptr || description.program_description != nullptr;
+    }
+    return description.commands != nullptr && !description.commands->empty();
+}
+
+/**
+ * @brief Whether @p draw has an EFFECT in its pass: at least one drawing call, or an announced clear.
+ *
+ * @details
+ * - A PASS WITH NO CALLS IS NOT AUTOMATICALLY EMPTY: a pass that announces a clear clears its target even when it draws
+ *   nothing, so it is a real pass a recorder enters and a frame counter counts (see FrameCounters::passes). A pass with
+ *   neither is skipped - it would open a scope with no effect.
+ * - A pass whose `draw` is absent entirely (`FrameDescription::Pass::draw == nullopt`) is NOT this function's business:
+ *   it announced nothing, not even its target (see Pass).
+ *
+ * @param draw The pass' description.
+ * @return true when the pass draws something or clears something.
+ */
+[[nodiscard]] inline bool passHasEffect(const PassDraw& draw) noexcept
+{
+    if (draw.clear.has_value()) {
+        return true;
+    }
+    for (const DrawDescription& description : draw.draws) {
+        if (isDrawingCall(description)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief The SHAPE a frame asks for: the passes that have an effect, and their drawing calls.
+ *
+ * @details
+ * - ONE PLACE COMPUTES IT, so the two backends cannot report different shapes for the same frame (they used to: one
+ *   counted frame entries, the other compiled passes, and `FrameCounters` counted a third thing). `PrepareReport`'s
+ *   `passes` / `draws` are this value; a recorded frame's `FrameCounters` follows the same rule.
+ * - IT IS THE ASKED SHAPE, not what a backend managed to build: a pass whose target cannot be built still counts here,
+ *   and the report's `halves` / `pipelines` / ... are what say how much of it became objects.
+ */
+struct VN_GRAPHICS_API FrameShape {
+    std::uint32_t passes{ 0 }; ///< Passes that draw something or clear something.
+    std::uint32_t draws{ 0 };  ///< Drawing calls those passes issue.
+};
+
+/**
+ * @brief Computes the shape @p frame asks for (see FrameShape).
+ *
+ * @param frame The frame value a backend is handed.
+ * @return The passes with an effect and their drawing calls.
+ */
+[[nodiscard]] inline FrameShape frameShapeOf(const FrameDescription& frame) noexcept
+{
+    FrameShape shape;
+    for (const FrameDescription::Pass& entry : frame.passes) {
+        if (!entry.draw.has_value()) {
+            continue; // it announced nothing at all - not even a target (see Pass)
+        }
+        std::uint32_t calls = 0U;
+        for (const DrawDescription& description : entry.draw->draws) {
+            calls += isDrawingCall(description) ? 1U : 0U;
+        }
+        if (calls == 0U && !entry.draw->clear.has_value()) {
+            continue; // no effect: nothing drawn, nothing cleared
+        }
+        ++shape.passes;
+        shape.draws += calls;
+    }
+    return shape;
+}
+
 VN_GRAPHICS_NS_END

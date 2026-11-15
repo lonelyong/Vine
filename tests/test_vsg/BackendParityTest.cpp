@@ -633,6 +633,88 @@ TEST_F(BackendParityTest, TheSameTriangleIsTheSamePicture)
     EXPECT_EQ(pixelAt(candidate.pixels, kSide / 2, kSide / 2), pixelAt(reference.pixels, kSide / 2, kSide / 2));
 }
 
+TEST_F(BackendParityTest, APrepareReportsTheShapeBothBackendsThenRecord)
+{
+    // T41: `PrepareReport.passes` / `draws` are the ASKED SHAPE of the frame (see vn::graphics::FrameShape), and a
+    // recorded frame's `FrameCounters` follows the same rule. The three passes below are chosen so every half of the
+    // rule is exercised at once:
+    //   - a CLEAR-ONLY pass: no drawing call, but it clears - a real pass a recorder enters;
+    //   - a pass whose only call issues NOTHING (no camera): it announced neither a draw nor a clear;
+    //   - a pass that draws.
+    // The asked shape is therefore TWO passes and ONE call, and both backends must say so - and then record it.
+    RenderTarget* const shared = target();
+
+    const intrusive_ptr<ShaderProgram> program  = makeProgramWith(kFragmentStage, u8"parity_prepare_shape");
+    const intrusive_ptr<Geometry>      geometry = makeTriangle(0.5F);
+    const intrusive_ptr<Material>      red      = makeMaterial(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+
+    std::optional<ClearPolicy> clear = ClearPolicy{};
+    clear->color                     = Colorf(0.0F, 0.0F, 0.25F, 1.0F);
+
+    DrawDescription idle = sceneDraw(commandsOf({ commandOf(geometry, program, red) }));
+    idle.camera          = CameraSnapshot{}; // present == false: the pass has no view, so it issues no call
+
+    // ONE PASS IDENTITY PER ENTRY (a backend keys retained per-pass state by it; two passes never share one).
+    // VALIDATION IS PART OF THE CASE, not a log nobody reads: three passes into one depth-attached target is exactly
+    // where a LOAD render-pass variant whose subpass dependency differed from the CLEAR variant's stopped being
+    // compatible with the framebuffer they share (VUID-VkRenderPassBeginInfo-renderPass-00904). A backend that brings
+    // that back fails here.
+    auto reported = std::make_shared<int>(0);
+    vk->setDiagnosticSink([reported](const vn::graphics::RenderDiagnostic& diagnostic) {
+        if (diagnostic.severity == vn::graphics::DiagnosticSeverity::Error ||
+            diagnostic.severity == vn::graphics::DiagnosticSeverity::Warning) {
+            std::printf("[parity/vk] severity=%d category=%d %s\n",
+                        static_cast<int>(diagnostic.severity),
+                        static_cast<int>(diagnostic.category),
+                        std::string(reinterpret_cast<const char*>(diagnostic.message.data()), diagnostic.message.size()).c_str());
+            ++*reported;
+        }
+    });
+
+    std::vector<FrameDescription::Pass>                  frame_passes;
+    std::vector<intrusive_ptr<vn::graphics::RenderPass>> pass_objects;
+    auto add = [&](std::optional<ClearPolicy> announced, std::vector<DrawDescription> draws) {
+        pass_objects.push_back(intrusive_ptr<vn::graphics::RenderPass>(new vn::graphics::RenderPass()));
+        FrameDescription::Pass entry;
+        entry.pass  = pass_objects.back().get();
+        entry.order = static_cast<int>(pass_objects.size()) - 1;
+        PassDraw pass;
+        pass.target      = shared;
+        pass.clear       = std::move(announced);
+        pass.state.depth = DepthMode::TestAndWrite;
+        pass.draws       = std::move(draws);
+        entry.draw       = std::move(pass);
+        frame_passes.push_back(std::move(entry));
+    };
+
+    add(clear, {});
+    add(std::nullopt, { idle });
+    add(std::nullopt, { sceneDraw(commandsOf({ commandOf(geometry, program, red) })) });
+
+    FrameDescription frame;
+    frame.passes = std::move(frame_passes);
+
+    const vn::graphics::PrepareReport reference = vsg->prepareFrame(frame, nullptr);
+    const vn::graphics::PrepareReport candidate = vk->prepareFrame(frame, nullptr);
+
+    ASSERT_TRUE(reference.prepared()) << "the reference backend would not prepare the frame";
+    ASSERT_TRUE(candidate.prepared()) << "the direct backend would not prepare the frame";
+    EXPECT_EQ(reference.passes, 2U) << "the reference backend did not report the asked shape";
+    EXPECT_EQ(candidate.passes, reference.passes) << "the two backends reported different asked shapes";
+    EXPECT_EQ(reference.draws, 1U) << "the reference backend counted a call that issues nothing";
+    EXPECT_EQ(candidate.draws, reference.draws) << "the two backends counted different drawing calls";
+
+    const Ran reference_run = run(*vsg, frame, shared);
+    const Ran candidate_run = run(*vk, frame, shared);
+
+    // THE RECORDED FRAME AGREES WITH THE ASKED SHAPE: that is the promise `PrepareReport` makes.
+    expectTheSameRecord(reference_run, candidate_run, 2, 1, "clear + idle + drawing");
+    ASSERT_TRUE(candidate_run.report.counters.has_value());
+    EXPECT_EQ(candidate_run.report.counters->passes, candidate.passes) << "the recorded pass count moved from the asked one";
+    EXPECT_EQ(candidate_run.report.counters->draws, candidate.draws) << "the recorded call count moved from the asked one";
+    EXPECT_EQ(*reported, 0) << "the direct backend reported a problem while preparing and recording the frame";
+}
+
 TEST_F(BackendParityTest, TheNearerFragmentSurvivesOnBothBackends)
 {
     // DEPTH ORDER, with the DISTANT triangle drawn LAST: if either backend ignored the depth test, the far red would

@@ -197,7 +197,7 @@
   目标的深度视图。
 - **约束**：`C5`、`C8`、`N2`。
 - **验收**：`MsaaTest`、`ContentTargetTest`、`OffscreenClearTest`、`DeferredTest`。
-- **注意**：`P4`。
+- **注意**：`P4`、`P15`（变体之间连**依赖**都要一致）。
 
 ### 3.1.5 F5 内容绘制
 
@@ -471,6 +471,16 @@
 - **怎么判**：关机时崩溃 / validation 的“destroyed while in use”；报告字段在关机后变 0（P8 的另一种形态）。
 - **怎么防**：`shutdown()` 固定顺序——`vkDeviceWaitIdle` → 写缓存 → 内容 → 目标 → 窗口 → **池** → 命令池/栅栏/查询池
   → 设备 → instance；每步幂等，任一步失败都不跳过后续。
+
+### 6.15 P15 一个 framebuffer 服务多个 render-pass 变体时，**依赖**也必须一致
+
+- **会怎么错**：load op 不进兼容性，**但 subpass dependency 进**。给 LOAD 变体加宽 `srcStage/srcAccess`（“读到上一
+  个 pass 写的深度”）而 CLEAR 变体不加，两个变体的依赖就不同，同一个 framebuffer 只与 CLEAR 变体兼容——第二个写同一
+  个深度目标的 pass 开始录制时报 `VUID-VkRenderPassBeginInfo-renderPass-00904`（实测；只在“一帧两个 pass 写同一个
+  带深度的目标”时出现，所以既有的跨目标用例看不见）。
+- **怎么判**：validation 的 00904（renderPass 与 framebuffer 不兼容）；肉眼是“多 pass 同目标”的帧。
+- **怎么防**：三个变体**用同一份依赖**，需要加宽就一律加宽（CLEAR 变体覆盖同样的源作用域不花钱）；用例
+  `BackendParityTest.APrepareReportsTheShapeBothBackendsThenRecord` 在跑帧期间断言 vk 后端零 warning/error。
 
 ## 7. 已否决选项
 

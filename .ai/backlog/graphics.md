@@ -22,7 +22,6 @@
 
 | # | 项 | 内容 | 触发条件 | 出处 |
 |---|---|---|---|---|
-| T41 | `PrepareReport.passes` 没有单一口径 | 同一帧 `vk` 报 8、`vsg` 报 6，而录制后的 `FrameCounters.passes` 是 7：`vk` 数 `FrameDescription` 里所有带 draws 的条目（含录制器会丢的“未发布场景”），`vsg` 数编译计划的 passes。字段文档说它与录制帧可比 ⇒ 今天不可比。定一种口径（asked vs prepared）并用跨后端用例钉住 | 无（公共报告字段的契约缺陷；2026-11-14 性能基线实测） | `src/viz/graphics/sdk/vine/graphics/PrepareReport.hpp`、`src/plugins/gfx_backend_vk/src/internal/Device.cpp`、`src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp` |
 | T1 | LOD / 空间划分 | 无 LOD 节点、无八叉树 / 可见性集合 | 大场景“每帧收集本身成为瓶颈” | `../design/graphics-scene.md` §2.3 |
 | T2 | 选择态 | 选中集 / 描边 / 框选 / 多选不在框架 | 多处调用点各自重写同一套选择与高亮 | `../design/graphics-scene.md` §2.5 |
 | T4 | L2b 分层目标 | 数组层 + 一次写多层；L2a 已裁决不做 | VR / 单 pass 多视图真正落地，或实测 N-pass 开销成为瓶颈 | `../design/graphics-rendering.md` §2.1 |
