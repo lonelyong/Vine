@@ -298,6 +298,14 @@ class VN_GRAPHICS_API RenderDevice {
      * - The RenderTarget object stays a logical description owned by the caller, and the device must not keep a
      *   pointer to it.
      *
+     * @warning
+     * - BETWEEN FRAMES: the caller guarantees that no frame in flight still names @p target. A device that submits and
+     *   waits inside its frame can free immediately because of that guarantee - the guarantee is the contract, not the
+     *   device's timing - and a device that retires asynchronously (see
+     *   `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`) parks the free until every session is
+     *   past it. Calling this while another thread drives a frame that names the target is the host's error, and the
+     *   device cannot see it.
+     *
      * @param target The target being removed (borrowed for the call).
      */
     virtual void releaseRenderTarget(RenderTarget* target)

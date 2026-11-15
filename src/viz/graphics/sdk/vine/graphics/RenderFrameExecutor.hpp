@@ -39,12 +39,19 @@ VN_GRAPHICS_NS_BEGIN
  *   nothing is presented, while the passes that name a render target still run. Such a frame is COMPLETE when
  *   executeFrame() returns - and so is a frame WITH a target: it is submitted and presented inside the call. A device
  *   that presents nothing serves only such frames, and it is the answer a display-less run gets instead of an error.
- * - BORROWED ARGUMENTS. Every pointer or reference INSIDE a FrameDescription (camera, commands, lights, target,
- *   program) is borrowed for the duration of executeFrame() and never owned: the producer keeps them alive while the
- *   call runs, and the engine reuses its own storage for them (a pass' resolved input vector, a scene's command list)
- *   as soon as the call returns. A backend that needs the data later must copy or upload it and must never keep such
- *   a pointer - which includes one that retains the whole frame (a render-graph builder, an offline renderer): it
- *   copies what it keeps, at the moment it is called.
+ * - WHAT A FRAME OWNS AND WHAT IT BORROWS - two rules, because a FrameDescription is both, and a value that mixes them
+ *   without saying which is which is a lifetime bug waiting for its second reader.
+ *   - BORROWED for the duration of executeFrame() and never owned: `camera` and `light_values` (values, copied into the
+ *     description), the pass' `target` / `viewport` / `clear` / `state`, the `DrawDescription::content` source,
+ *     `source`, and every resolved input. The producer keeps them alive while the call runs, and the engine reuses its
+ *     own storage for them (a pass' resolved input vector, a scene's command list) as soon as it returns - so a
+ *     backend that needs the data later copies what it keeps, at the moment it is called.
+ *   - OWNED, and these three members are the whole list: `DrawDescription::commands` (a `shared_ptr`),
+ *     `DrawDescription::program` and `PassDraw::program_override` (both `intrusive_ptr`). They keep what they name
+ *     alive for as long as the value that holds them lives - which is what lets a described frame outlive the edit
+ *     that produced it - so a backend MAY keep them across the call without copying, and doing so is not a leak: the
+ *     reference is the value's.
+ *   - A member added later says which of the two it is, in its own comment.
  * - WHAT MAY BE RETAINED. Retained GPU state (a content view, a compiled pipeline, a sampling slot, a texture cache)
  *   is expected, but it must be keyed by the lifetime of what it serves (a pass' identity, the target's object),
  *   released by the matching release* call (see RenderDevice), and must not grow with the frame count: a long-running

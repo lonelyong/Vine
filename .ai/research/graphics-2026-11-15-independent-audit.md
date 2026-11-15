@@ -128,7 +128,7 @@
   `check_diagnostic_formats.py` 升级为"每条报告必须带 code"。
 - **代价**：SDK + 两个后端约 200–300 行；门禁 1 条。**触发：无**（`R28` 已经要求）。
 
-### A4（高，C1 / C2）`FrameDescription` 的类级契约句是错的
+### A4（高，C1 / C2）`FrameDescription` 的类级契约句是错的（**已落地 2026-11-15**）
 
 - **证据**：`RenderFrameExecutor.hpp` 写 "BORROWED ARGUMENTS. Every pointer or reference INSIDE a
   FrameDescription (camera, commands, lights, target, program) is borrowed for the duration of executeFrame()
@@ -224,7 +224,7 @@
   （"0 个设备用例被执行"不是绿）。
 - **代价**：CI 配置。**触发**：无。
 
-### A14（低，C2 / C11）`releaseRenderTarget` 的"立即销毁"是未定义，不是契约
+### A14（低，C2 / C11）`releaseRenderTarget` 的"立即销毁"是未定义，不是契约（**已落地 2026-11-15**）
 
 - **证据**：文档写"between frames, on the frame thread"，但没有任何用例在帧在飞时调用它。
 - **最佳设计**：写成前置条件（"调用者保证没有在飞帧命名它"），并在 ADR 第二步换成退休点。
@@ -282,7 +282,7 @@ RenderDevice（接缝：身份 / 能力 / 生命周期 / 工厂）
 |---|---|---|---|
 | 1 | A1 + A8：分配失败分类 + 故障注入 + 两条用例 | ~250 行 | **已落地 2026-11-15**（`MemoryRefusalReport` + sink + `MemoryBlockCreator`，5 条新用例，3 个变异各自被对应用例杀掉） |
 | 2 | A3 + A10：诊断 code + 统一失败词汇 + 门禁 | ~350 行 | **A3 部分落地 2026-11-15**：`RenderDiagnostic` 加 `code` / `subject` / `limit`，vk 的内存/会话/目标三类共 16 个 code 已转换并登记，门禁双向检查 + baseline 棘轮；剩余 90 个调用点在 `scripts/diagnostic_code_baseline.txt` 里逐批转。**A10 暂缓**：五个枚举回答的是不同问题，统一它们会丢精度（无消费者，`G8`） |
-| 3 | A4 + A14：契约句修正 | 文档 | 无 |
+| 3 | A4 + A14：契约句修正 | 文档 | **已落地 2026-11-15**（逐字段的拥有/借用规则；`releaseRenderTarget` 的前置条件） |
 | 4 | A5：per-pass GPU 时间 | ~150 行 | **已落地 2026-11-15**（`FrameTiming::passes` + 每 pass 一条边界 + 可增长的 query 池；两个变异各自被杀） |
 | 5 | A6 + A7 + A11：设备四单元 + 接缝四面 + 退休点上移 | ~1400 行 | ADR 第二步 / 第二个 API 家族 |
 | 6 | A9 的第一步：`FrameGate`（一帧一次，检查而非假设）+ 两线程用例 | ~200 行 | **已落地 2026-11-15**（`backend/FrameGate.hpp`，vk 与 vsg 同一实现，`PresentOutcome::Refused`） |
