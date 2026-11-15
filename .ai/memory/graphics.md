@@ -159,6 +159,10 @@
   `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
   ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
   别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
+- **T48 的实施设计在 `.ai/design/graphics-sessions.md`（状态：草案，2026-11-15）**：会话 = **帧驱动者**（不是窗口）；帧首快照让记录路径零锁；驻留三态「发布或撤回」；
+  目标 claim 冲突只跳那个 pass；退休**复用** `DeviceClock` + `RetirementQueue`（vsg 已在用）。
+  一处更正：vsg 的 `api::Session` 是**窗口会话**，收集/编译暂存（`recorder` / `compiler` / `arena` /
+  `facts` / `packets` / `frame` / `driving`）仍是 `VsgBackend::Data` 里的**设备级单例** —— ADR 「vsg 更接近」只对了一半。
 - **诊断带稳定 code（2026-11-15，审计 A3）**：`RenderDiagnostic` 的 `code`（`vk.<class>.<cause>`）是宿主与用例
   匹配的东西，`message` 可以改措辞、code 不行；`subject` 说"这个报告是关于哪个目标"，`limit` 是
   `requested` / `supported` 一对。词汇表登记在 `scripts/diagnostic_codes.txt`（双向检查：用到的必须登记、

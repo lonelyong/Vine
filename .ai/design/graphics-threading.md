@@ -287,8 +287,9 @@
   "以后"）；用例 `OneDeviceServesSeveralAreasWithoutCrossingThem` 证明的是**共享**——它的两帧是先后跑的，
   用例名里的 "without crossing them" 就是这个意思。
 - **目标形状**：设备 = 池、会话拥有帧（驻留三态、目标 claim、跨会话退休、三把锁）。决定与论证在
-  `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，落地是 `../backlog/graphics.md` 的
-  `T47` / `T48`。**本文件只写现在**——ADR 存在不移动这条边界。
+  `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，**实施形状**在
+  `graphics-sessions.md`（类型、锁表、状态机、九步迁移表），落地是 `../backlog/graphics.md` 的
+  `T47` / `T48`。**本文件只写现在**——ADR 与施工图存在不移动这条边界。
 
 ## 3. 功能点
 

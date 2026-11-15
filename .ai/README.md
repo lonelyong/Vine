@@ -15,12 +15,12 @@
 `tools/<名字>` 放**不安装的开发工具**（`tools/urdf2vine`）；`tests/` 放用例。可执行文件不等于产品：
 一个模块自己的进程半边（如 `src/base/crash/handler` 的 `CrashHandler.exe`）留在模块里，不搬进 `src/apps/`。
 
-## design/ —— 现行设计文档（55）
+## design/ —— 现行设计文档（56）
 
 每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
 否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
 
-**graphics / vsg（11）**
+**graphics / vsg（12）**
 - `graphics-architecture.md` —— 分层、设备/窗口/引擎/链/视图、一帧与调度。
 - `graphics-scene.md` —— 节点、状态、收集、层、视图上下文、拾取。
 - `graphics-geometry.md` —— 通道、`Primitive`、实例化、revision、包围盒、存储与共享；网格三角形身份（`triangleCount()` / `triangleCorners()`）与三角形树缓存（F32）。
@@ -31,6 +31,7 @@
 - `vsg-pitfalls.md` —— vsg 后端 P1–P82 坑表，按九个风险域分组，每条带症状与判据。
 - `graphics-shader-params.md` —— 着色参数 ABI：五个块每份声明一个 owner，GLSL 去重、名字只在接线期。
 - `graphics-material.md` —— 材质：metallic-roughness PBR、纹理集、资产/实例、两条路径一致（草案）。
+- `graphics-sessions.md` —— 设备/会话的**实施设计**（**草案**）：会话是帧驱动者（不是窗口），帧首快照让记录路径零锁，驻留三态（发布或撤回、竞争即复制），目标 claim，跨会话退休复用 `DeviceClock` + `RetirementQueue`，九步迁移表。`T48` 的实施依据。
 - `graphics-threading.md` —— 线程模型（**现行**）：内容侧 `publish()` 出一份不可变快照，引擎半段只读它；
 - `vk-backend.md` —— **`gfx_backend_vk`（直连 Vulkan）的规范设计**：会话/一帧/目标/内容/内存池/管线缓存，`F1–F15` / `C1–C9` / `R1–R6` / `N1–N7` / `P1–P15` / `D1–D6` / `T1–T9`；§9.2 是它的缺口。
   两条线程各有一个写者，跨边界的载荷只有「发布的值」与「完成报告」，字节内容靠两个原子 revision 轮询；
