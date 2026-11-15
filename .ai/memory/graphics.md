@@ -159,6 +159,11 @@
   `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
   ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
   别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
+- **S2a 已落地（2026-11-15）**：帧机器在 `Device::Session`（命令池 / 栅欄 / 时间戳池 / `FrameBooks` /
+  `FrameGate` / clock window），设备拥有它并在 `shutdown()` 里 `destroy()`（**不重置指针**：停机后读报告要答
+  “什么都没量”而不是崩）。帧体（`executeFrame` / `prepareFrame` / `frameReport`）仍在 `Device`——S2b；
+  它的两个阻碍已定位：帧体里 ~25 处 `reportDiagnostic` 是 `RenderDevice` 的 protected 成员（内嵌类拿不到，
+  需要 `Impl` 上一个装配好的 sink），以及 `initialized()` 要换成 `owner.device != VK_NULL_HANDLE`。
 - **S1 已落地（2026-11-15，T48 第一步）**：vk 采用 `backend/DeviceClock.hpp` + `RetirementQueue`（会话 = clock window，
   `slots = 1`）。`releaseContent` / `releaseRenderTarget` 是**两件事**：缓存条目**当场忘掉**（驻留数立刻降、下帧重传），
   Vulkan 对象**交给队列**等水位（一个 slot ⇒ `submitted + 2`，最多两帧后才销毁）。观察点 `Device::retirementNumbers()`

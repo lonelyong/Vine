@@ -152,6 +152,10 @@
 - **是什么**：本插件的 `Device` 同时是**设备**与**会话**：一个 `VkInstance` / `VkPhysicalDevice` / `VkDevice` / 图形队列，
   加**一份**帧机器（`command_pool` + `completion` 栅栏 + `ContentDraw` 里的常量环与描述符池）。`RenderDevice::executor()`
   答的就是它自己。
+- **2026-11-15（T48 S2a）后的形状**：帧机器已经不在 `Device::Impl` 里了，而在 `Device::Session`
+  （命令池 / 栅欄 / 时间戳池 / 帧账 / `FrameGate` / clock window），设备拥有它并在 `shutdown()` 里销毁它的对象；
+  `ContentDraw` 里的常量环与描述符池仍在（S3 拆）。`RenderDevice::executor()` 今天仍答设备自己：帧体
+  还在设备上，用的是会话的机器（搬帧体的两个阻碍见 `.ai/design/graphics-sessions.md` §9.2）。
 - **为什么今天是这个形状**：一帧在飞（§2.3）让"帧之间"成为一个**时刻**，于是释放、读回、缓存填充都能共用一份机器；
   `ContentDraw` 的 `beginFrame` / `endFrame` 重置的是设备级状态，正是这条的直接后果。在那个前提下把它拆成两个对象
   只会多一层转发（`G8`）。

@@ -468,13 +468,18 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
   vk 的 `vk.*` 诊断 code 全族；`graphics-threading.md` 的 `C21` / `R18` / `N18` / `D13`。
 - **已落地**：`T48` 的 **S1**——vk 采用 `backend/DeviceClock.hpp` + `RetirementQueue`（会话 = clock window），
   `releaseContent` / `releaseRenderTarget` 把对象**交给队列**，`shutdown()` 在 idle 之后 `releaseAll()`（SDK 新增的拆除动词）。
-- **未做**：`T48` 的全部（F1–F9），以及 F10 的收口。
+- **未做**：`T48` 的 S2b–S9（帧体搬家、缓存拆分、驻留三态、目标 claim、公开 `createSession()`、读回独立、vsg、收口）。
 - **一处更正**：ADR 说"vsg 更接近"，准确说法是"vsg 的**窗口**会话已就位，**帧驱动者**仍是设备级单例"
   （§2.1）。这不改变结论，只改变迁移表的分工。
 
 ### 9.2 已知缺口 / 待办
 
 - `DeviceClock::WindowId` 的命名（`D7`）；`SessionId` 先做别名。
+- **S2b 的两个阻碍**（已定位，实现时先解它们）：① 帧体里有 ~25 处 `reportDiagnostic(...)`，而它是
+  `RenderDevice` 的 **protected** 成员：内嵌类 `Session` 不是派生类，不能通过对象调（请求者视野
+  规则）⇒ 给 `Impl` 一个由 `Device` 装配的 `DiagnosticSink`，帧体改叫 `owner.report(...)`（顺带把报告去向
+  变成一个可注入的面，对测试也好）；② 帧体里的 `initialized()` 是 `Device` 的成员，改成
+  `owner.device != VK_NULL_HANDLE`。两个都是机械替换，但**必须先做**，否则搬完才发现编译不过。
 - `build-tsan` 构建树不存在（`T11` 目前无法执行）：需要一次带 TSan 的构建才能把 F4 / F5 / P4 的竞争
   变成工具证据。挂 `../backlog/graphics.md`。
 - 第二个 API 家族（D3D12 / Metal）落地时，"会话"要成为接缝的正式名词（ADR 的触发条件 3）。
@@ -486,7 +491,8 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 | 步 | 做什么 | 结束时可验收 | 风险 |
 |---|---|---|---|
 | S1 | vk 采用 `DeviceClock` + `RetirementQueue`（单会话）；`releaseContent` 变成 park | **已落地 2026-11-15**：T6 单会话版 + `test_vk` 103 全绿，3 个变异各自被杀 | 低（契约文本已允许） |
-| S2 | 把 `Device::Impl` 的帧机器搬进 `Session`（仍只有一个）；`Device::executor()` 返回它 | T2 | 低（纯搬家） |
+| S2a | 帧机器搬进 `Device::Session`（命令池 / 栅欄 / 时间戳池 / 帧账 / 帧闸 / clock window） | **已落地 2026-11-15**：`test_vk` 103 全绿，帧体仍在 `Device` | 低 |
+| S2b | 把 `executeFrame` / `prepareFrame` / `frameReport` 的**帧体**搬进 `Session`，`executor()` 返回它，`Device` 只剩转发 | T2 + 新增“会话就是执行器”用例 | 中（两个阻碍已点名，见 §9.2） |
 | S3 | 拆 `ContentDraw` → `ContentCaches` + `FrameScratch`；记录一次"锁计数" | T3（单会话版） | 中（500–700 行搬家） |
 | S4 | `ResidenceTable` 三态 + 发布/撤回；用**两个内部会话**做单元用例 | T4 | 中（状态机） |
 | S5 | `TargetClaims`；仍用两个内部会话验证 | T5 | 低 |

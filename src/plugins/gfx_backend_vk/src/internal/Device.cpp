@@ -397,7 +397,125 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBits
 
 } // namespace
 
+/**
+ * @brief What ONE frame did: its counters, what it built and how long it took on the device.
+ *
+ * @details
+ * - IT LIVES WITH THE FRAME DRIVER (see `Device::Session`), not with the device: `counters` / `uploads` describe the
+ *   frame that just ended, and a second driver keeps its own. `progress` is a delta of the device's cumulative numbers,
+ *   which is why closing the books reads both.
+ * - `uploads` stays disengaged until a frame has run: an unmeasured frame must not read like an empty one.
+ */
+struct FrameBooks {
+    vn::graphics::FrameCounters               counters{};
+    vn::graphics::FrameProgress               progress{};
+    std::optional<vn::graphics::FrameUploads> uploads;
+    /// What the last frame cost on the device (see FrameTiming); disengaged when the device keeps no clock.
+    std::optional<vn::graphics::FrameTiming> timing;
+};
+
+/** @brief One snapshot of the content path's cumulative numbers (a frame's own delta is the difference of two). */
+struct ContentTotals {
+    std::uint64_t stream_builds{ 0 };
+    std::uint64_t stream_bytes{ 0 };
+    std::uint64_t program_builds{ 0 };
+    std::uint64_t pipeline_builds{ 0 };
+    std::uint64_t texture_builds{ 0 };
+    std::uint64_t texture_bytes{ 0 };
+};
+
+/**
+ * @brief ONE FRAME DRIVER: the command machinery a frame needs, its books, and the gate that makes them safe.
+ *
+ * @details
+ * - WHAT IT OWNS, and why that is not the device's: a command pool, the fence a frame is waited on, the timestamp pool
+ *   its GPU time is read from, its books and the `FrameGate` that turns "one frame at a time" from a sentence into a
+ *   check. Every one of those is written WHILE A FRAME RUNS and means nothing between frames - the definition of
+ *   per-session state (see `.ai/design/graphics-sessions.md`).
+ * - WHAT IT DOES NOT OWN: the Vulkan device and queue, the memory pool, the content caches, the targets, the clock and
+ *   the park queue. Those belong to the device and are shared by every session it will ever hand out; this type reaches
+ *   them through the `Impl` it borrows, which is what step 2 of the ADR turns into an explicit `createSession()`.
+ * - ONE SESSION TODAY, and the device drives its own frames through it: `Device::executeFrame` / `prepareFrame` are
+ *   still the bodies, and the machinery they use is this object's. When `createSession()` hands out more than one, the
+ *   bodies move in here (they will change at step 3 anyway) and the gate becomes one per session for free.
+ * - THE DEVICE DESTROYS IT (`Device::shutdown`), never the destructor: the objects need the device's entry points and
+ *   an idle queue, and `shutdown` is the one place that has both.
+ *
+ * @warning One frame at a time per driver, CHECKED (`FrameGate`): a second thread waits, a re-entrant call is refused.
+ */
+class Device::Session final
+{
+  public:
+    /// @brief What `create()` refused, so the device can report which object never came up.
+    enum class CreateRefusal : std::uint8_t
+    {
+        Ok,          ///< Both objects exist (or already existed).
+        NoDevice,    ///< There is no Vulkan device to create them on.
+        CommandPool, ///< `vkCreateCommandPool` refused.
+        Fence,       ///< `vkCreateFence` refused.
+    };
+
+  public:
+    explicit Session(Impl& owner_device) noexcept;
+
+    Session(const Session&)            = delete;
+    Session& operator=(const Session&) = delete;
+
+  public:
+    /** @brief Creates the objects a frame needs (idempotent; safe again after `destroy()`). */
+    [[nodiscard]] CreateRefusal create() noexcept;
+
+    /** @brief Destroys them (idempotent): the device is idle and nothing can still name them. */
+    void destroy() noexcept;
+
+    /**
+     * @brief Makes the clock's query pool hold at least @p needed queries, recreating it when it does not.
+     *
+     * @details
+     * - GROWING IS A BETWEEN-FRAMES ACT: this driver submits and waits inside `executeFrame`, so when this runs no
+     *   command buffer names the old pool. The pool is therefore sized by the LARGEST frame seen so far, not by a
+     *   guessed maximum - a frame with more passes pays one recreate, once.
+     * - A device that cannot create the pool keeps `timestamps == false`, and the report answers timing DISENGAGED
+     *   rather than a fabricated zero (see FrameTiming).
+     *
+     * @param needed Queries the next frame needs (2 + passes + 1).
+     * @return true when the pool holds at least @p needed queries.
+     */
+    [[nodiscard]] bool ensureTimestampQueries(std::uint32_t needed) noexcept;
+
+    /**
+     * @brief Closes one frame's books: what the frame built is the difference from @p before.
+     *
+     * @param before   The content numbers when the frame opened.
+     * @param counters The frame's own recording counters (passes, draws).
+     */
+    void closeFrameBooks(const ContentTotals& before, const vn::graphics::FrameCounters& counters) noexcept;
+
+  public:
+    VkCommandPool command_pool{ VK_NULL_HANDLE };
+    VkFence       completion{ VK_NULL_HANDLE };
+    /// The GPU clock's query pool for THIS driver's frames (see ensureTimestampQueries).
+    VkQueryPool   timestamp_pool{ VK_NULL_HANDLE };
+    bool          timestamps{ false };
+    std::uint64_t clock_frames{ 0 }; ///< Frames this driver has begun (the sampling counter).
+    std::uint32_t timestamp_queries{ 0 };
+    FrameBooks    books{};
+    /// The ONE-FRAME-AT-A-TIME gate: one per driver, which is what will make two of them concurrent (see FrameGate).
+    vn::graphics::backend::FrameGate frames{};
+    /// The episode of "a frame was started from the thread that already drives one".
+    vn::graphics::ReportOnce frame_reentry_report{};
+    /// This driver's clock window: the id its completion evidence is reported under (see DeviceClock).
+    vn::graphics::backend::DeviceClock::WindowId clock_window{ 0 };
+    bool                                         clock_window_live{ false };
+
+  private:
+    /// The device whose services this driver borrows (it owns this object, so it outlives it).
+    Impl& owner;
+};
+
 struct Device::Impl {
+    /// THE FRAME DRIVER this device hands out: it owns the command machinery, the frame books and the gate.
+    std::unique_ptr<Session> session{};
     DeviceDesc      desc{};
     Capabilities    caps{};
     RenderTarget*   target{ nullptr };
@@ -467,60 +585,16 @@ struct Device::Impl {
     bool creation_feedback{ false };
 
     /**
-     * @brief The device clock: one query pair written around each frame's command buffer (see FrameTiming).
+     * @brief The device's clock TICK, in nanoseconds (`VkPhysicalDeviceLimits::timestampPeriod`).
      *
      * @details
-     * - WHY ONE PAIR IS ENOUGH: this device submits and waits inside executeFrame, so the pair of the frame that just
-     *   ran is readable as soon as its fence signals - no ring of queries, no waiting for a frame in flight.
-     * - A DEVICE THAT DOES NOT REPORT `timestampComputeAndGraphics` keeps no clock at all, and the report answers
-     *   disengaged rather than a fabricated zero (see FrameTiming).
+     * - THE TICK IS THE DEVICE'S; THE QUERY POOL IS THE DRIVER'S (see `Device::Session`). A frame's GPU time is one
+     *   pair of queries written around its command buffer, and which pool holds them is a per-driver fact - while what
+     *   a tick is worth is a property of this GPU that never changes.
+     * - A device that does not report `timestampComputeAndGraphics` leaves this 0, its drivers keep no pool, and the
+     *   report answers timing DISENGAGED rather than a fabricated zero (see FrameTiming).
      */
-    VkQueryPool timestamp_pool{ VK_NULL_HANDLE };
-    float       timestamp_period{ 0.0F }; // nanoseconds per tick, from the device's limits
-    bool        timestamps{ false };
-    std::uint64_t clock_frames{ 0 }; // frames executeFrame has begun (the sampling counter)
-    /// How many queries `timestamp_pool` holds: the frame's pair plus one boundary per pass (see ensureTimestampQueries).
-    std::uint32_t timestamp_queries{ 0 };
-
-    /**
-     * @brief Makes the clock's query pool hold at least @p needed queries, recreating it when it does not.
-     *
-     * @details
-     * - GROWING IS A BETWEEN-FRAMES ACT: this device submits and waits inside `executeFrame`, so when this runs no
-     *   command buffer names the old pool (the same rule the ring follows, see P6). The pool is therefore sized by the
-     *   LARGEST frame seen so far, not by a guessed maximum - a frame with more passes pays one recreate, once.
-     * - A device that cannot create the pool keeps `timestamps == false` and answers timing DISENGAGED rather than a
-     *   fabricated zero (see FrameTiming).
-     *
-     * @param needed Queries the next frame needs (2 + passes + 1).
-     * @return true when the pool holds at least @p needed queries.
-     */
-    [[nodiscard]] bool ensureTimestampQueries(const std::uint32_t needed)
-    {
-        if (timestamp_pool != VK_NULL_HANDLE && timestamp_queries >= needed) {
-            return true;
-        }
-        if (timestamp_pool != VK_NULL_HANDLE) {
-            device_table.vkDestroyQueryPool(device, timestamp_pool, nullptr);
-            timestamp_pool    = VK_NULL_HANDLE;
-            timestamp_queries = 0U;
-        }
-        VkQueryPoolCreateInfo info{};
-        info.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-        info.queryType  = VK_QUERY_TYPE_TIMESTAMP;
-        info.queryCount = needed;
-        if (device_table.vkCreateQueryPool(device, &info, nullptr, &timestamp_pool) != VK_SUCCESS) {
-            timestamp_pool    = VK_NULL_HANDLE;
-            timestamp_queries = 0U;
-            return false;
-        }
-        timestamp_queries = needed;
-        return true;
-    }
-
-    /// The command machinery every frame and every readback borrows: one pool, one fence, one buffer at a time.
-    VkCommandPool command_pool{ VK_NULL_HANDLE };
-    VkFence       completion{ VK_NULL_HANDLE };
+    float timestamp_period{ 0.0F };
 
     /// One entry per off-screen target this device built, keyed by the host's object (the identity the frame names).
     std::unordered_map<const RenderTarget*, TargetImages> targets{};
@@ -648,20 +722,6 @@ struct Device::Impl {
     MemoryReports memory_reports{};
 
     /**
-     * @brief The device's ONE-FRAME-AT-A-TIME gate (see FrameGate): today's contract, checked instead of assumed.
-     *
-     * @details
-     * - A second THREAD waits here; the thread that already drives a frame is refused, because waiting would be it
-     *   waiting for itself. Both verbs that touch the frame machinery go through it (`executeFrame` and
-     *   `prepareFrame`, which submits a transfer batch of its own).
-     * - Step 2 of `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` replaces it with per-session state; until
-     *   then it is what makes "a device drives one frame at a time" true rather than documented.
-     */
-    vn::graphics::backend::FrameGate frames{};
-    /// The episode of "a frame was started from the thread that already drives one" (see executeFrame).
-    vn::graphics::ReportOnce frame_reentry_report{};
-
-    /**
      * @brief The device's completion clock and its park queue: WHEN an object a host released may really be destroyed.
      *
      * @details
@@ -677,8 +737,6 @@ struct Device::Impl {
      */
     vn::graphics::backend::DeviceClock       clock{};
     vn::graphics::backend::RetirementQueue   retirement{ 0 };
-    /// The clock window this device's frames report through (valid once `initialize` registered it).
-    vn::graphics::backend::DeviceClock::WindowId clock_window{ 0 };
     bool                                         clock_registered{ false };
     /// Frames in flight on this device today: one, because `executeFrame` submits and waits inside the call.
     static constexpr std::uint32_t               kFramesInFlight = 1U;
@@ -716,41 +774,15 @@ struct Device::Impl {
     /// One report for the loss itself, whatever number of calls saw it afterwards (the session is the episode).
     vn::graphics::ReportOnce device_lost_report{};
 
-    /**
-     * @brief What the last frame did and what this device has done so far (see FrameReport).
-     *
-     * @details
-     * - `counters` / `uploads` describe the frame that just ended, `progress` / `released_nodes` are cumulative.
-     * - `uploads` stays disengaged until a frame has run: an unmeasured frame must not read like an empty one.
-     * - The count of DESTRUCTIVE IDLES is not here: the park queue owns it (`retirement.deviceWaits()`, reported
-     *   through `retirementNumbers()`), because it is the queue that decides between parking and idling.
-     */
-    struct Books {
-        vn::graphics::FrameCounters               counters{};
-        vn::graphics::FrameProgress               progress{};
-        std::optional<vn::graphics::FrameUploads> uploads;
-        /// What the last frame cost on the device (see FrameTiming); disengaged when the device keeps no clock.
-        std::optional<vn::graphics::FrameTiming> timing;
-        std::uint64_t                            released_nodes{ 0 };
-    };
-    Books books{};
+    /// How many nodes a release announcement let go, cumulative (a frame's own number is 0 - see FrameUploads).
+    std::uint64_t released_nodes{ 0 };
 
-    /** @brief One snapshot of the content path's cumulative numbers (a frame's own delta is the difference of two). */
-    struct ContentNumbers {
-        std::uint64_t stream_builds{ 0 };
-        std::uint64_t stream_bytes{ 0 };
-        std::uint64_t program_builds{ 0 };
-        std::uint64_t pipeline_builds{ 0 };
-        std::uint64_t texture_builds{ 0 };
-        std::uint64_t texture_bytes{ 0 };
-    };
-
-    /** @brief Reads the content path's cumulative numbers (see ContentNumbers). */
-    [[nodiscard]] ContentNumbers contentNumbers() const noexcept
+    /** @brief Reads the content path's cumulative numbers (see ContentTotals). */
+    [[nodiscard]] ContentTotals contentNumbers() const noexcept
     {
         const ContentDraw::Progress   content_numbers = content.progress();
         const ContentImages::Progress image_numbers   = content.images().progress();
-        ContentNumbers                numbers;
+        ContentTotals                 numbers;
         numbers.stream_builds    = content_numbers.stream_builds;
         numbers.stream_bytes     = content_numbers.stream_bytes;
         numbers.program_builds   = content_numbers.program_builds;
@@ -758,27 +790,6 @@ struct Device::Impl {
         numbers.texture_builds   = image_numbers.builds;
         numbers.texture_bytes    = image_numbers.bytes;
         return numbers;
-    }
-
-    /**
-     * @brief Closes one frame's books: what the frame built is the difference from @p before.
-     *
-     * @param before   The numbers when the frame opened.
-     * @param counters The frame's own recording counters (passes, draws).
-     */
-    void closeFrameBooks(const ContentNumbers& before, const vn::graphics::FrameCounters& counters) noexcept
-    {
-        const ContentNumbers after = contentNumbers();
-        books.counters             = counters;
-        // `stream_releases` / `texture_releases` stay 0 for a frame: this device only lets go when a host says so,
-        // which happens BETWEEN frames - and an explicit release is an announcement, not a frame's own number (see
-        // FrameUploads). A texture a new revision replaced is a BUILD (it never stopped being resident).
-        vn::graphics::FrameUploads frame_uploads;
-        frame_uploads.stream_uploads  = after.stream_builds - before.stream_builds;
-        frame_uploads.stream_bytes    = after.stream_bytes - before.stream_bytes;
-        frame_uploads.texture_uploads = after.texture_builds - before.texture_builds;
-        frame_uploads.texture_bytes   = after.texture_bytes - before.texture_bytes;
-        books.uploads = frame_uploads;
     }
 
     /**
@@ -885,10 +896,120 @@ struct Device::Impl {
     }
 };
 
+Device::Session::Session(Impl& owner_device) noexcept
+  : owner(owner_device)
+{
+}
+
+Device::Session::CreateRefusal Device::Session::create() noexcept
+{
+    if (owner.device == VK_NULL_HANDLE) {
+        return CreateRefusal::NoDevice;
+    }
+    if (command_pool == VK_NULL_HANDLE) {
+        VkCommandPoolCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        // A frame re-records ONE buffer, so the pool may reset it; the pool itself lives as long as this driver.
+        info.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        info.queueFamilyIndex = owner.queue_family;
+        if (owner.device_table.vkCreateCommandPool(owner.device, &info, nullptr, &command_pool) != VK_SUCCESS) {
+            command_pool = VK_NULL_HANDLE;
+            return CreateRefusal::CommandPool;
+        }
+    }
+    if (completion == VK_NULL_HANDLE) {
+        VkFenceCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        if (owner.device_table.vkCreateFence(owner.device, &info, nullptr, &completion) != VK_SUCCESS) {
+            completion = VK_NULL_HANDLE;
+            return CreateRefusal::Fence;
+        }
+    }
+    // THE CLOCK WINDOW: a frame reports its completion through this id (see DeviceClock), and the park queue dates a
+    // release against the watermark it feeds. The clock starts a joining window AT the current watermark, which is
+    // right for a driver created with the device: it proves nothing about frames it never drove.
+    if (!clock_window_live) {
+        clock_window      = owner.clock.addWindow();
+        owner.clock.setWindowSlots(clock_window, Impl::kFramesInFlight);
+        clock_window_live = true;
+    }
+    return CreateRefusal::Ok;
+}
+
+void Device::Session::destroy() noexcept
+{
+    // THE WINDOW LEAVES FIRST: a device clock that still lists this driver keeps the device watermark where it is, and
+    // a queue that waits for evidence from a driver that no longer exists would never release anything.
+    if (clock_window_live) {
+        owner.clock.removeWindow(clock_window);
+        clock_window_live      = false;
+        owner.clock_registered = false;
+    }
+    if (owner.device != VK_NULL_HANDLE) {
+        if (completion != VK_NULL_HANDLE) {
+            owner.device_table.vkDestroyFence(owner.device, completion, nullptr);
+            completion = VK_NULL_HANDLE;
+        }
+        if (command_pool != VK_NULL_HANDLE) {
+            owner.device_table.vkDestroyCommandPool(owner.device, command_pool, nullptr);
+            command_pool = VK_NULL_HANDLE;
+        }
+        if (timestamp_pool != VK_NULL_HANDLE) {
+            owner.device_table.vkDestroyQueryPool(owner.device, timestamp_pool, nullptr);
+            timestamp_pool = VK_NULL_HANDLE;
+        }
+    }
+    timestamps        = false;
+    timestamp_queries = 0U;
+    clock_frames      = 0U;
+    books             = FrameBooks{};
+}
+
+bool Device::Session::ensureTimestampQueries(const std::uint32_t needed) noexcept
+{
+    if (timestamp_pool != VK_NULL_HANDLE && timestamp_queries >= needed) {
+        return true;
+    }
+    if (timestamp_pool != VK_NULL_HANDLE) {
+        owner.device_table.vkDestroyQueryPool(owner.device, timestamp_pool, nullptr);
+        timestamp_pool    = VK_NULL_HANDLE;
+        timestamp_queries = 0U;
+    }
+    VkQueryPoolCreateInfo info{};
+    info.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    info.queryType  = VK_QUERY_TYPE_TIMESTAMP;
+    info.queryCount = needed;
+    if (owner.device_table.vkCreateQueryPool(owner.device, &info, nullptr, &timestamp_pool) != VK_SUCCESS) {
+        timestamp_pool    = VK_NULL_HANDLE;
+        timestamp_queries = 0U;
+        return false;
+    }
+    timestamp_queries = needed;
+    return true;
+}
+
+void Device::Session::closeFrameBooks(const ContentTotals& before, const vn::graphics::FrameCounters& counters) noexcept
+{
+    const ContentTotals after = owner.contentNumbers();
+    books.counters            = counters;
+    // `stream_releases` / `texture_releases` stay 0 for a frame: this device only lets go when a host says so, which
+    // happens BETWEEN frames - and an explicit release is an announcement, not a frame's own number (see
+    // FrameUploads). A texture a new revision replaced is a BUILD (it never stopped being resident).
+    vn::graphics::FrameUploads frame_uploads;
+    frame_uploads.stream_uploads  = after.stream_builds - before.stream_builds;
+    frame_uploads.stream_bytes    = after.stream_bytes - before.stream_bytes;
+    frame_uploads.texture_uploads = after.texture_builds - before.texture_builds;
+    frame_uploads.texture_bytes   = after.texture_bytes - before.texture_bytes;
+    books.uploads = frame_uploads;
+}
+
 Device::Device(const DeviceDesc& desc)
   : impl(std::make_unique<Impl>())
 {
-    impl->desc = desc;
+    // THE DRIVER IS CREATED WITH THE DEVICE, not with the Vulkan session: it holds the bookkeeping a report reads
+    // before `initialize()` and after `shutdown()`, and `create()` is what gives it objects.
+    impl->session = std::make_unique<Session>(*impl);
+    impl->desc    = desc;
     // THE HOST'S DIRECTORY, converted ONCE: vn::String carries UTF-8 bytes, and std::filesystem::path is what the file
     // work speaks, so the two meet here instead of at every use.
     if (!desc.cache_directory.empty()) {
@@ -1264,27 +1385,27 @@ bool Device::initialize()
     volkLoadDeviceTable(&impl->device_table, impl->device);
     impl->device_table.vkGetDeviceQueue(impl->device, impl->queue_family, 0U, &impl->queue);
 
-    // THE COMMAND MACHINERY: one pool (the backend records one frame at a time) and one fence it waits on.
-    VkCommandPoolCreateInfo pool_info{};
-    pool_info.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    pool_info.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    pool_info.queueFamilyIndex = impl->queue_family;
-    if (impl->device_table.vkCreateCommandPool(impl->device, &pool_info, nullptr, &impl->command_pool) != VK_SUCCESS) {
+    // THE FRAME DRIVER: a session owns the command machinery a frame needs, and this device drives its frames through
+    // it (see Device::Session). Its clock window is registered here too, which is what arms the park queue.
+    impl->clock = vn::graphics::backend::DeviceClock{};
+    switch (impl->session->create()) {
+    case Session::CreateRefusal::Ok:
+        break;
+    case Session::CreateRefusal::CommandPool:
         reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                           DiagnosticCategory::InitFailed,
                                           u8"vk.init.command_machinery_failed",
                                           u8"vk: vkCreateCommandPool failed"));
         shutdown();
         return false;
-    }
-
-    VkFenceCreateInfo fence_info{};
-    fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    if (impl->device_table.vkCreateFence(impl->device, &fence_info, nullptr, &impl->completion) != VK_SUCCESS) {
+    case Session::CreateRefusal::Fence:
         reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                           DiagnosticCategory::InitFailed,
                                           u8"vk.init.command_machinery_failed",
                                           u8"vk: vkCreateFence failed"));
+        shutdown();
+        return false;
+    case Session::CreateRefusal::NoDevice:
         shutdown();
         return false;
     }
@@ -1339,7 +1460,7 @@ bool Device::initialize()
     // frame that needs them, between frames (see ensureTimestampQueries).
     impl->timestamp_period = properties.limits.timestampPeriod;
     if (properties.limits.timestampComputeAndGraphics != VK_FALSE && impl->timestamp_period > 0.0F) {
-        impl->timestamps = impl->ensureTimestampQueries(2U);
+        impl->session->timestamps = impl->session->ensureTimestampQueries(2U);
     }
 
     impl->caps                         = Capabilities{};
@@ -1412,12 +1533,9 @@ bool Device::initialize()
     impl->content.images().setMaxAnisotropy(impl->caps.max_anisotropy);
     impl->content.setCreationFeedback(impl->creation_feedback);
 
-    // THE CLOCK AND THE PARK QUEUE, from the first frame on: a frame reports its completion through this window, and
-    // every released object waits for that watermark (see Impl::releaseLater). Registered AFTER the content objects
-    // exist, because they are what borrows the seam.
-    impl->clock              = vn::graphics::backend::DeviceClock{};
-    impl->clock_window       = impl->clock.addWindow();
-    impl->clock.setWindowSlots(impl->clock_window, Impl::kFramesInFlight);
+    // THE PARK QUEUE'S WINDOW, from the first frame on: the driver registered its clock window in create(), so the
+    // queue knows how many frames may be in flight and every released object waits for that watermark (see
+    // Impl::releaseLater).
     impl->retirement.setSlots(impl->clock.widestSlots());
     impl->clock_registered   = true;
     impl->content.setRetirement(&impl->retirement, &impl->clock.timeline());
@@ -1470,20 +1588,11 @@ void Device::shutdown()
         impl->surfaces.clear();
         impl->presentation_wanted = false;
 
-        if (impl->completion != VK_NULL_HANDLE) {
-            impl->device_table.vkDestroyFence(impl->device, impl->completion, nullptr);
-            impl->completion = VK_NULL_HANDLE;
-        }
-        if (impl->command_pool != VK_NULL_HANDLE) {
-            impl->device_table.vkDestroyCommandPool(impl->device, impl->command_pool, nullptr);
-            impl->command_pool = VK_NULL_HANDLE;
-        }
-        if (impl->timestamp_pool != VK_NULL_HANDLE) {
-            impl->device_table.vkDestroyQueryPool(impl->device, impl->timestamp_pool, nullptr);
-            impl->timestamp_pool = VK_NULL_HANDLE;
-        }
-        impl->timestamps = false;
-        impl->books.timing.reset();
+        // THE DRIVER'S OBJECTS GO AFTER THE RESOURCES THEY RECORDED AGAINST and before the device they borrowed: the
+        // queue was idle above, so nothing names them.
+        // THE DRIVER STAYS (its objects go): a report read after `shutdown()` must answer "this device measured
+        // nothing", not crash - the same reason the content recorder outlives its own `destroy()`.
+        impl->session->destroy();
 
         // THE POOL GOES AFTER THE RESOURCES IT SERVED, BEFORE THE DEVICE IT BORROWED: every slice above has been
         // released by now, so this unmaps and frees the blocks while the entry points still exist.
@@ -1534,8 +1643,8 @@ void Device::shutdown()
         impl->window_system->close();
         impl->window_system.reset();
     }
-    // The frame's books go with the session: the next initialize() starts a device that measured nothing yet.
-    impl->books = Impl::Books{};
+    // The frame's books went with the driver (see Session::destroy): the next initialize() starts a device that
+    // measured nothing yet.
 }
 
 bool Device::ensureWindowSystem(vn::String* why)
@@ -2020,9 +2129,9 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     // thread that is ALREADY driving one is refused - the shared machinery (command pool, fence, ring, descriptor
     // pool) is device-wide, so a re-entrant frame would corrupt it silently. The lease releases the gate on EVERY
     // return below, which is why it is a lease and not a pair of calls.
-    const vn::graphics::backend::FrameGate::Lease frame_lease = impl->frames.enter();
+    const vn::graphics::backend::FrameGate::Lease frame_lease = impl->session->frames.enter();
     if (!frame_lease) {
-        if (impl->frame_reentry_report.shouldReport()) {
+        if (impl->session->frame_reentry_report.shouldReport()) {
             reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                               DiagnosticCategory::PassProtocolViolation,
                                               u8"vk.session.frame_reentry",
@@ -2052,15 +2161,15 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     // frame that just ended - an empty one included - and the upload numbers are this frame's own delta.
     const vn::graphics::backend::FrameToken frame_token = impl->clock.begin();
     FrameTokenCloser                        frame_close{ impl->clock, impl->retirement, frame_token };
-    const Impl::ContentNumbers    before = impl->contentNumbers();
+    const ContentTotals    before = impl->contentNumbers();
     vn::graphics::FrameCounters   counters{};
     struct BooksCloser {
         Impl*                        impl;
-        const Impl::ContentNumbers&  before;
+        const ContentTotals&  before;
         vn::graphics::FrameCounters& counters;
         ~BooksCloser()
         {
-            impl->closeFrameBooks(before, counters);
+            impl->session->closeFrameBooks(before, counters);
         }
     } books_closer{ impl.get(), before, counters };
 
@@ -2190,7 +2299,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     // what makes "read the pixels right after" mean what it says.
     VkCommandBufferAllocateInfo allocate{};
     allocate.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocate.commandPool        = impl->command_pool;
+    allocate.commandPool        = impl->session->command_pool;
     allocate.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocate.commandBufferCount = 1U;
 
@@ -2211,23 +2320,23 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                                           DiagnosticCategory::SubmissionFailed,
                                           u8"vk.frame.begin_failed",
                                           u8"vk: vkBeginCommandBuffer failed"));
-        impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
+        impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &commands);
         return PresentOutcome::Skipped;
     }
 
     // THE DEVICE CLOCK OPENS HERE (see FrameTiming): the reset is legal outside a render pass, which is where this is,
     // and the pair is closed before the buffer ends below. SAMPLED, not every frame (see kTimestampSampleFrames).
-    ++impl->clock_frames;
-    const bool sample_clock = impl->timestamps && (impl->clock_frames % kTimestampSampleFrames) == 1U;
+    ++impl->session->clock_frames;
+    const bool sample_clock = impl->session->timestamps && (impl->session->clock_frames % kTimestampSampleFrames) == 1U;
     // THE PER-PASS BOUNDARIES NEED ONE QUERY PER PASS PLUS THE TAIL, beside the frame's own pair (see PassTiming). A
     // frame that needs more than the pool holds recreates it here, which is legal because no command buffer is in
     // flight; a device that cannot grow it keeps the frame's own clock and answers no attribution.
     const std::uint32_t pass_count     = static_cast<std::uint32_t>(runnable_passes.size());
     const std::uint32_t query_count    = 2U + pass_count + 1U;
-    const bool          per_pass_clock = sample_clock && impl->ensureTimestampQueries(query_count);
+    const bool          per_pass_clock = sample_clock && impl->session->ensureTimestampQueries(query_count);
     if (per_pass_clock) {
-        impl->device_table.vkCmdResetQueryPool(commands, impl->timestamp_pool, 0U, query_count);
-        impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, impl->timestamp_pool, 0U);
+        impl->device_table.vkCmdResetQueryPool(commands, impl->session->timestamp_pool, 0U, query_count);
+        impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, impl->session->timestamp_pool, 0U);
     }
 
     // ONE DESCRIPTOR POOL RESET PER FRAME: the pool's sets are the per-draw uniform bindings, and the previous frame
@@ -2245,7 +2354,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         // THE PASS' OWN BOUNDARY, written BEFORE its uploads: the transitions and copies a pass asks for exist because
         // it asked, so they are billed to it rather than to the frame (see PassTiming).
         if (per_pass_clock) {
-            impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, impl->timestamp_pool, 2U + pass_index);
+            impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, impl->session->timestamp_pool, 2U + pass_index);
         }
         ++pass_index;
         const PassDraw& draw = *item.draw;
@@ -2468,8 +2577,8 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
     if (per_pass_clock) {
         // THE TAIL BOUNDARY: the last pass' span ends here, so what follows (the present transition, the frame's own
         // tail) belongs to no pass - the honest split, because no pass asked for it.
-        impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, impl->timestamp_pool, 2U + pass_count);
-        impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, impl->timestamp_pool, 1U);
+        impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, impl->session->timestamp_pool, 2U + pass_count);
+        impl->device_table.vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, impl->session->timestamp_pool, 1U);
     }
 
     if (impl->device_table.vkEndCommandBuffer(commands) != VK_SUCCESS) {
@@ -2478,7 +2587,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                                           u8"vk.frame.end_failed",
                                           u8"vk: vkEndCommandBuffer failed"));
         impl->content.endFrame();
-        impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
+        impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &commands);
         return PresentOutcome::Skipped;
     }
 
@@ -2501,27 +2610,27 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
         submit.pSignalSemaphores    = &signal_semaphore;
     }
 
-    const VkResult submit_result = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion);
+    const VkResult submit_result = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->session->completion);
     const bool     submitted     = submit_result == VK_SUCCESS;
     if (submitted) {
-        ++impl->books.progress.submitted;
+        ++impl->session->books.progress.submitted;
         frame_close.submitted = true;
     }
-    const VkResult fence_result = submitted ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX)
+    const VkResult fence_result = submitted ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->session->completion, VK_TRUE, UINT64_MAX)
                                             : submit_result;
     const bool     completed    = fence_result == VK_SUCCESS;
     if (completed) {
-        ++impl->books.progress.completed;
+        ++impl->session->books.progress.completed;
         // THE COMPLETION EVIDENCE THE PARK QUEUE WAITS FOR (see Impl::releaseLater): the frame's GPU work is provably
         // done, so every object a release handed over while this frame was in flight may now go.
-        impl->clock.windowCompleted(impl->clock_window, frame_token.frame);
+        impl->clock.windowCompleted(impl->session->clock_window, frame_token.frame);
         // THE PAIR IS READABLE NOW (the fence says the frame ran): one read, one value, and the report carries it as
         // the frame's device time (see FrameTiming). A frame the clock did not sample answers DISENGAGED - never the
         // previous frame's value.
         if (per_pass_clock) {
             std::vector<std::uint64_t> stamps(query_count, 0U);
             if (impl->device_table.vkGetQueryPoolResults(impl->device,
-                                                         impl->timestamp_pool,
+                                                         impl->session->timestamp_pool,
                                                          0U,
                                                          query_count,
                                                          stamps.size() * sizeof(std::uint64_t),
@@ -2545,18 +2654,18 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
                     entry.gpu_micros = to > from ? static_cast<std::uint64_t>(static_cast<double>(to - from) * to_micros) : 0U;
                     timing.passes.push_back(std::move(entry));
                 }
-                impl->books.timing = std::move(timing);
+                impl->session->books.timing = std::move(timing);
             }
             else {
-                impl->books.timing.reset();
+                impl->session->books.timing.reset();
             }
         }
         else {
-            impl->books.timing.reset();
+            impl->session->books.timing.reset();
         }
     }
-    (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
-    impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &commands);
+    (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->session->completion);
+    impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &commands);
     // The per-draw uniform buffers were named by the command buffer that just finished (or failed to): the queue is
     // idle either way, so the bytes can go.
     impl->content.endFrame();
@@ -2582,7 +2691,7 @@ PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget
             (void)noteDeviceLost(VK_ERROR_DEVICE_LOST, "vkQueuePresentKHR");
         }
         if (outcome == PresentOutcome::Presented) {
-            ++impl->books.progress.presented;
+            ++impl->session->books.progress.presented;
         }
     }
     return outcome;
@@ -2601,7 +2710,7 @@ bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
         const vn::graphics::GeometryDescriptionPtr description = geometry->description();
         const std::size_t dropped = description != nullptr ? impl->content.releaseGeometry(description.get()) : 0U;
         if (dropped > 0U) {
-            ++impl->books.released_nodes;
+            ++impl->released_nodes;
         }
         return true;
     }
@@ -2609,7 +2718,7 @@ bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
         const vn::graphics::ShaderProgramDescriptionPtr description = program->description();
         const std::size_t dropped = description != nullptr ? impl->content.releaseProgram(description.get()) : 0U;
         if (dropped > 0U) {
-            ++impl->books.released_nodes;
+            ++impl->released_nodes;
         }
         return true;
     }
@@ -2623,7 +2732,7 @@ bool Device::releaseContent(vn::raw_ptr<const vn::Object> content)
         const std::uint64_t before = impl->content.images().progress().releases;
         const bool          answered = impl->content.images().releaseTexture(*texture);
         if (answered && impl->content.images().progress().releases != before) {
-            ++impl->books.released_nodes;
+            ++impl->released_nodes;
         }
         return answered;
     }
@@ -2639,7 +2748,7 @@ bool Device::releaseContent(const vn::Buffer<float>& buffer)
     // ContentDraw::releaseStreams), so the two overloads share one rule and one body would.
     const std::size_t dropped = impl->content.releaseStreams(&buffer);
     if (dropped > 0U) {
-        ++impl->books.released_nodes;
+        ++impl->released_nodes;
     }
     return true;
 }
@@ -2651,7 +2760,7 @@ bool Device::releaseContent(const vn::Buffer<std::uint32_t>& buffer)
     }
     const std::size_t dropped = impl->content.releaseStreams(&buffer);
     if (dropped > 0U) {
-        ++impl->books.released_nodes;
+        ++impl->released_nodes;
     }
     return true;
 }
@@ -2664,9 +2773,9 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
     // THE SAME GATE AS executeFrame, because a warm-up records and may submit a transfer batch of its own (see
     // ADR-2026-11-14): a prepare racing a frame would share the command pool. `Refused` carries no reason - the
     // report says which refusal it was (see executeFrame).
-    const vn::graphics::backend::FrameGate::Lease frame_lease = impl->frames.enter();
+    const vn::graphics::backend::FrameGate::Lease frame_lease = impl->session->frames.enter();
     if (!frame_lease) {
-        if (impl->frame_reentry_report.shouldReport()) {
+        if (impl->session->frame_reentry_report.shouldReport()) {
             reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                               DiagnosticCategory::PassProtocolViolation,
                                               u8"vk.session.frame_reentry",
@@ -2711,7 +2820,7 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
     // spends the token without moving the submitted watermark.
     const vn::graphics::backend::FrameToken warmup_token = impl->clock.begin();
     FrameTokenCloser                        warmup_close{ impl->clock, impl->retirement, warmup_token };
-    const Impl::ContentNumbers before = impl->contentNumbers();
+    const ContentTotals before = impl->contentNumbers();
     PrepareReport             report;
     report.outcome = PrepareReport::Outcome::Prepared;
     // THE ONE THING THIS CALL MAY SUBMIT IS A TRANSFER BATCH OF ITS OWN (see RenderFrameExecutor::prepareFrame and
@@ -2774,7 +2883,7 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
             batch_attempted = true;
             VkCommandBufferAllocateInfo allocate{};
             allocate.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-            allocate.commandPool        = impl->command_pool;
+            allocate.commandPool        = impl->session->command_pool;
             allocate.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
             allocate.commandBufferCount = 1U;
             batch                       = VK_NULL_HANDLE;
@@ -2790,7 +2899,7 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
                                                   u8"content again"));
             }
             else if (impl->device_table.vkBeginCommandBuffer(batch, &begin) != VK_SUCCESS) {
-                impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &batch);
+                impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &batch);
                 batch = VK_NULL_HANDLE;
                 reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                                   DiagnosticCategory::SubmissionFailed,
@@ -2845,29 +2954,29 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
                                               DiagnosticCategory::SubmissionFailed,
                                               u8"vk.prepare.batch_not_closed",
                                               u8"vk: the preparation's transfer batch could not be closed; the copies it recorded never ran"));
-            impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &batch);
+            impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &batch);
         }
         else if (!impl->content.images().hasPendingUploads()) {
             // ZERO WORK, ZERO SUBMIT: an unchanged frame records no copy, so there is nothing to run and nothing is
             // submitted - the property a second prepare of the same frame is observed by (see ADR-2026-11-14).
-            impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &batch);
+            impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &batch);
         }
         else {
             VkSubmitInfo submit{};
             submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
             submit.commandBufferCount = 1U;
             submit.pCommandBuffers    = &batch;
-            const VkResult submit_result = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->completion);
+            const VkResult submit_result = impl->device_table.vkQueueSubmit(impl->queue, 1U, &submit, impl->session->completion);
             const VkResult fence_result  = submit_result == VK_SUCCESS
-                                               ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->completion, VK_TRUE, UINT64_MAX)
+                                               ? impl->device_table.vkWaitForFences(impl->device, 1U, &impl->session->completion, VK_TRUE, UINT64_MAX)
                                                : submit_result;
             const bool     completed     = fence_result == VK_SUCCESS;
             warmup_close.submitted       = submit_result == VK_SUCCESS;
             if (completed) {
-                impl->clock.windowCompleted(impl->clock_window, warmup_token.frame);
+                impl->clock.windowCompleted(impl->session->clock_window, warmup_token.frame);
             }
-            (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->completion);
-            impl->device_table.vkFreeCommandBuffers(impl->device, impl->command_pool, 1U, &batch);
+            (void)impl->device_table.vkResetFences(impl->device, 1U, &impl->session->completion);
+            impl->device_table.vkFreeCommandBuffers(impl->device, impl->session->command_pool, 1U, &batch);
             if (completed) {
                 impl->content.images().releaseUploadStaging();
             }
@@ -2891,7 +3000,7 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
     if (!content_refused) {
         impl->content_report.rearm(); // every draw the call named was prepared: the episode is over
     }
-    const Impl::ContentNumbers after = impl->contentNumbers();
+    const ContentTotals after = impl->contentNumbers();
     report.halves    = after.program_builds - before.program_builds;
     report.pipelines = after.pipeline_builds - before.pipeline_builds;
     report.uploads   = (after.stream_builds - before.stream_builds) + (after.texture_builds - before.texture_builds);
@@ -2901,13 +3010,13 @@ vn::graphics::PrepareReport Device::prepareFrame(const FrameDescription& frame, 
 vn::graphics::FrameReport Device::frameReport() const noexcept
 {
     vn::graphics::FrameReport report;
-    report.counters = impl->books.counters;
-    report.progress = impl->books.progress;
-    report.uploads  = impl->books.uploads; // this frame's own delta; absent until a frame ran
-    report.timing   = impl->books.timing;  // the device's own clock; absent when the device keeps none (see FrameTiming)
+    report.counters = impl->session->books.counters;
+    report.progress = impl->session->books.progress;
+    report.uploads  = impl->session->books.uploads; // this frame's own delta; absent until a frame ran
+    report.timing   = impl->session->books.timing;  // the device's own clock; absent when the device keeps none (see FrameTiming)
 
     vn::graphics::RetentionStats retention;
-    retention.released_nodes = impl->books.released_nodes;
+    retention.released_nodes = impl->released_nodes;
     // THE QUEUE IS THE ONE COUNTING (see Impl::releaseLater): a release it could not park idles the device instead, and
     // a report that kept its own number would disagree with `retirementNumbers()` about the same fact.
     retention.device_waits   = impl->retirement.deviceWaits();
@@ -2962,7 +3071,7 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(images.width()) * static_cast<VkDeviceSize>(images.height()) * 4U;
 
     ReadbackStaging staging;
-    const StagingRefusal opened = staging.open(impl->device_table, impl->device, impl->allocator, impl->command_pool, bytes);
+    const StagingRefusal opened = staging.open(impl->device_table, impl->device, impl->allocator, impl->session->command_pool, bytes);
     if (opened == StagingRefusal::Unsupported) {
         return fail(ReadbackResult::Unsupported); // no host-visible coherent memory: this device cannot copy to the host
     }
@@ -3023,7 +3132,7 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
                                             1U,
                                             &to_attachment);
 
-    const StagingRun run = staging.run(impl->queue, impl->completion);
+    const StagingRun run = staging.run(impl->queue, impl->session->completion);
     if (!run.ran()) {
         // The mechanism hands back the VkResults so the session-level fact is classified where every other queue call
         // is (see noteDeviceLost); the read itself answers Failed like any other failed transfer.
@@ -3091,7 +3200,7 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
                                static_cast<VkDeviceSize>(packed.bytes_per_texel);
 
     ReadbackStaging staging;
-    const StagingRefusal opened = staging.open(impl->device_table, impl->device, impl->allocator, impl->command_pool, bytes);
+    const StagingRefusal opened = staging.open(impl->device_table, impl->device, impl->allocator, impl->session->command_pool, bytes);
     if (opened == StagingRefusal::Unsupported) {
         return fail(ReadbackResult::Unsupported); // no host-visible coherent memory: this device cannot copy to the host
     }
@@ -3155,7 +3264,7 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
                                             1U,
                                             &to_attachment);
 
-    const StagingRun run = staging.run(impl->queue, impl->completion);
+    const StagingRun run = staging.run(impl->queue, impl->session->completion);
     if (!run.ran()) {
         // The mechanism hands back the VkResults so the session-level fact is classified where every other queue call
         // is (see noteDeviceLost); the read itself answers Failed like any other failed transfer.

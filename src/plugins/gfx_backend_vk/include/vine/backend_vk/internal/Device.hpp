@@ -532,6 +532,9 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      */
     void noteMemoryRefusal(const MemoryRefusalReport& report);
 
+    /// The frame driver this device owns (see the class note): it holds the command machinery and the gate.
+    class Session;
+
     struct Impl;
 
     std::unique_ptr<Impl> impl;
