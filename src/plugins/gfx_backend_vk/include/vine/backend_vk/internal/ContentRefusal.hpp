@@ -2,65 +2,70 @@
 
 #include <vine/backend_vk/backend_vk_global.hpp>
 
-#include <vine/String.hpp>
-#include <vine/graphics/RenderDiagnostic.hpp>
+#include <cstdint>
+
+#include <vine/graphics/backend/DiagnosticDraft.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
 /**
- * @brief Why a recording path drew nothing: the cause's STABLE CODE, the category it belongs to and the sentence.
+ * @brief WHY a recording path drew nothing: every cause this backend's planner can refuse for.
  *
  * @details
- * - THE CAUSE IS NAMED WHERE IT IS KNOWN. A planner sees which stage refused (the program, the streams, the pipeline)
- *   and the callers above it do not, so the code is decided here and travels with the sentence. The device's report
- *   then forwards all three - which is what keeps `RenderDiagnostic::code` matchable instead of prose.
- * - ONE VALUE, NOT TWO OUT-PARAMETERS. The message and its category used to be separate `why` / `category` arguments,
- *   so a new refusal could fill one and forget the other; this type has no way to hold a message without a code
- *   (`refuse` is the only writer, and it is the only place the "first reason wins" rule lives).
- * - THE FIRST REASON WINS: a second `refuse` on the same value does nothing, because the first one is what explains
- *   the draw - the same rule the planner had when it tested `why.empty()` by hand.
- *
- * @note The codes are the `vk.content.*` family in `scripts/diagnostic_codes.txt`; a value that is not refused carries
- *       no code at all (`code()` answers null), so a caller must ask `isRefused()` first.
+ * - A CAUSE IS A NAME, NOT A STRING. The planner used to pass the code literal at each of its refusal sites,
+ *   so a new cause could ship with a typo, or with no code at all, and nothing failed to compile. Here the
+ *   cause is an enumerator and `contentRefusalCode` is a switch WITHOUT a `default`: adding a cause to this
+ *   enum is a compile error until its `vk.content.*` code is written down (D-22; the same shape the vsg
+ *   backend's `HostReadbackRefusal` mapping has).
+ * - The codes are the `vk.content.*` family in `scripts/diagnostic_codes.txt`; the gate keeps the registry
+ *   and the sources in step.
  */
-class VN_BACKEND_VK_API ContentRefusal final
+enum class ContentRefusalCause : std::uint8_t
 {
-  public:
-    /** @brief Builds "nothing was refused": no category, no code, no sentence. */
-    ContentRefusal();
+    NoProgram,              // The drawable names no program and the frame has no default one either.
+    ProgramRefused,         // A content program could not be turned into a pipeline for this pass.
+    ScreenNoProgram,        // A screen draw names no program.
+    ScreenProgramRefused,   // A screen program could not be compiled.
+    ScreenPipelineRefused,  // A screen pipeline could not be created for this pass.
+    ScreenNoSource,         // A screen draw names a source target the device does not hold.
+    GeometryRefused,        // A geometry's streams could not be prepared for this pass.
+    NoGeometry,             // The drawable names no geometry.
+    PrimitiveAbsent,        // The geometry has no such primitive.
+    InstanceStreamRefused,  // The instance stream could not be prepared.
+    PipelineRefused,        // The pipeline for this draw could not be created (see the compile report beside it).
+    MaterialTextureSkipped, // A material texture slot could not be resolved; the draw uses the stand-in.
+    StandInMissing,         // The white stand-in image is not available: nothing can bind the sampled slots.
+    UniformRingFull,        // The per-draw uniform ring this frame uses is full.
+    DescriptorSetMissing,   // A descriptor set this draw needs is not cached.
+    NothingToDraw,          // The pass' content listed nothing this frame.
+    NoRunnablePass,         // The frame names a pass that has nothing it can record.
+    PlanMissing,            // The resolved draw plan for this pass is missing.
+    WrongPath,              // A draw was planned for the other path (content vs screen).
 
-    /**
-     * @brief Records @p text as the reason, unless a reason is already recorded.
-     *
-     * @details
-     * - The message is taken even when empty: a caller that has nothing to add still states the code, and the report
-     *   then carries the code with no sentence rather than the wrong cause.
-     *
-     * @param category The coarse class the cause belongs to.
-     * @param code     The stable identifier (`vk.content.*`), never null.
-     * @param text     The sentence for a human (may be empty).
-     */
-    void refuse(vn::graphics::DiagnosticCategory category, const char8_t* code, vn::String text);
-
-    /** @brief Forgets any reason, so the value can be handed to another call (what `record` does on entry). */
-    void clear() noexcept;
-
-    /** @brief Answers whether a reason was recorded. */
-    [[nodiscard]] bool isRefused() const noexcept;
-
-    /** @brief Gets the category of the recorded reason (ContentSkipped when nothing was refused). */
-    [[nodiscard]] vn::graphics::DiagnosticCategory category() const noexcept;
-
-    /** @brief Gets the recorded reason's stable code, or null when nothing was refused. */
-    [[nodiscard]] const char8_t* code() const noexcept;
-
-    /** @brief Gets the recorded sentence (empty when nothing was refused, or when the refusal stated only a code). */
-    [[nodiscard]] const vn::String& message() const noexcept;
-
-  private:
-    vn::graphics::DiagnosticCategory category_{ vn::graphics::DiagnosticCategory::ContentSkipped };
-    const char8_t*                   code_{ nullptr };
-    vn::String                       message_{};
+    Count, // Number of causes (not a cause itself; lets a test walk the table).
 };
+
+/**
+ * @brief Gets the stable diagnostic code for @p cause.
+ *
+ * @details
+ * - NO `default` (see the enum's note): a new cause must be given a code here or this file does not compile.
+ *
+ * @param cause The refusal's cause.
+ * @return The `vk.content.*` code, never null.
+ */
+[[nodiscard]] VN_BACKEND_VK_API const char8_t* contentRefusalCode(ContentRefusalCause cause) noexcept;
+
+/**
+ * @brief The shared refusal shape (see `vine/graphics/backend/DiagnosticDraft.hpp`): first reason wins.
+ *
+ * @details
+ * - THE BACKEND'S SPELLING OF THE SEAM'S TYPE, kept as an alias so the planner's call sites read the same
+ *   while the shape itself is the seam's (category + code + subject + limit + message). A second refusal
+ *   on the same draft does nothing: the first reason is the one that explains the draw.
+ * - `refuse()` always states a code, so "refused" and "has a code" are the same question; a value that is
+ *   not refused carries no code at all (`code()` answers null), so a caller must ask `isRefused()` first.
+ */
+using ContentRefusal = vn::graphics::backend::DiagnosticDraft;
 
 VN_BACKEND_VK_NS_END

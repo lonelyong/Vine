@@ -12,6 +12,7 @@
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ScreenPass.hpp>
 
+#include "EngineDiagnostics.hpp"
 #include "EngineFrame.hpp"
 #include "FrameExpand.hpp"
 #include "FrameResources.hpp"
@@ -43,13 +44,7 @@ namespace
                                                           vn::String                             message,
                                                           vn::String                             subject)
 {
-    vn::graphics::RenderDiagnostic diagnostic;
-    diagnostic.severity = vn::graphics::DiagnosticSeverity::Warning;
-    diagnostic.category = category;
-    diagnostic.code     = vn::String(code);
-    diagnostic.message  = std::move(message);
-    diagnostic.subject  = std::move(subject);
-    return diagnostic;
+    return detail::engineProblem(code, category, std::move(message), std::move(subject));
 }
 
 } // namespace
@@ -171,6 +166,11 @@ std::size_t RenderEngine::diagnosticCount() const noexcept
     return static_cast<std::size_t>(diagnostics_.total());
 }
 
+std::size_t RenderEngine::diagnosticCount(const DiagnosticOrigin origin) const noexcept
+{
+    return static_cast<std::size_t>(diagnostics_.total(origin));
+}
+
 std::size_t RenderEngine::diagnosticCount(DiagnosticCategory category) const noexcept
 {
     return static_cast<std::size_t>(diagnostics_.count(category));
@@ -183,8 +183,10 @@ bool RenderEngine::diagnosticsClean() const noexcept
 
 void RenderEngine::reportEngineProblem(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const String& message)
 {
-    // THE MIGRATION FORM (see the header): the caller named no finer cause than the category.
+    // THE HOST'S FORM (see the header): the caller named no finer cause than the category, and the report is
+    // marked Host so the engine's own count (diagnosticCount) stays decidable (A-06).
     vn::graphics::RenderDiagnostic diagnostic;
+    diagnostic.origin   = vn::graphics::DiagnosticOrigin::Host;
     diagnostic.severity = severity;
     diagnostic.category = category;
     diagnostic.message  = message;
@@ -235,11 +237,11 @@ bool RenderEngine::initialize()
     if (!device_->initialized()) {
         initialized_ = false;
         if (device_not_up_.shouldReport()) {
-            reportEngineProblem(DiagnosticSeverity::Warning,
-                                DiagnosticCategory::UnsupportedRequest,
-                                u8"RenderEngine::initialize(): the device this engine borrows is not up - the party "
-                                u8"that created it brings it up (RenderDevice::initialize); this engine only drives "
-                                u8"frames through it");
+            reportEngineProblem(detail::engineProblem(u8"engine.device.not_up",
+                                                      DiagnosticCategory::UnsupportedRequest,
+                                                      u8"RenderEngine::initialize(): the device this engine borrows is not up - the party "
+                                                      u8"that created it brings it up (RenderDevice::initialize); this engine only drives "
+                                                      u8"frames through it"));
         }
         return false;
     }
@@ -554,12 +556,13 @@ void RenderEngine::buildContentHalf(detail::EngineFrame& frame)
     // the host is told that the pipeline it built cannot mean what it says.
     if (raw_ptr<const RenderPass> unsupported = passNeedingAnUnsupportedTarget(); unsupported != nullptr) {
         if (unsupported_target_reported_.shouldReport()) {
-            reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                vn::graphics::DiagnosticCategory::TargetBuildFailed,
-                                String(u8"the backend reports no off-screen render target support, so pass '") + reportedPassName(unsupported) +
-                                    String(u8"' (and any other pass rendering into a target) is not drawn where "
-                                           u8"the pipeline expects it: the backend ignores the target and draws "
-                                           u8"into the window"));
+            reportEngineProblem(detail::engineProblem(u8"engine.target.unsupported_offscreen",
+                                                      vn::graphics::DiagnosticCategory::TargetBuildFailed,
+                                                      String(u8"the backend reports no off-screen render target support, so pass '") +
+                                                          reportedPassName(unsupported) +
+                                                          String(u8"' (and any other pass rendering into a target) is not drawn where "
+                                                                 u8"the pipeline expects it: the backend ignores the target and draws "
+                                                                 u8"into the window")));
         }
     }
     else {
@@ -736,12 +739,11 @@ bool RenderEngine::sessionChangeAllowed(const char* verb)
         return true;
     }
     if (session_change_episode_.shouldReport()) {
-        reportEngineProblem(DiagnosticSeverity::Warning,
-                            DiagnosticCategory::PassProtocolViolation,
-                            String(u8"a session's passes cannot change while a frame is being recorded: ") +
-                                String::fromUtf8(verb) +
-                                String(u8" was refused (wait for the frame with RenderEngine::waitForFrame, or change "
-                                        "passes between frames)"));
+        reportEngineProblem(detail::engineProblem(u8"engine.pass.changed_during_frame",
+                                                  DiagnosticCategory::PassProtocolViolation,
+                                                  String(u8"a session's passes cannot change while a frame is being recorded: ") + String::fromUtf8(verb) +
+                                                      String(u8" was refused (wait for the frame with RenderEngine::waitForFrame, or change "
+                                                             "passes between frames)")));
     }
     return false;
 }
@@ -879,11 +881,11 @@ void RenderEngine::reportUnproducedInput(raw_ptr<RenderPass> pass, const OutputI
     if (unusableInputReported(pass, identity)) {
         return;
     }
-    reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                        vn::graphics::DiagnosticCategory::ContentSkipped,
-                        String(u8"pass '") + reportedPassName(pass) + String(u8"' declares ") + what +
-                            String(u8" but nothing produced it this frame, so the pass draws nothing"
-                                   u8" (check the producer's order and its enabled state)"));
+    reportEngineProblem(detail::engineProblem(u8"engine.pass.input_not_produced",
+                                              vn::graphics::DiagnosticCategory::ContentSkipped,
+                                              String(u8"pass '") + reportedPassName(pass) + String(u8"' declares ") + what +
+                                                  String(u8" but nothing produced it this frame, so the pass draws nothing"
+                                                         u8" (check the producer's order and its enabled state)")));
 }
 
 RenderEngine::OutputIdentity RenderEngine::OutputIdentity::of(const ImageRef& image) noexcept
@@ -1169,7 +1171,7 @@ void RenderEngine::collectPlanProblems()
                                   String(u8"' of target '") + target_name(output->target()) +
                                   String(u8"', one of them as part of the whole target; a consumer of it gets"
                                          u8" whichever pass runs last");
-                    reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped, message);
+                    reportEngineProblem(detail::engineProblem(u8"engine.pass.output_collision", vn::graphics::DiagnosticCategory::ContentSkipped, message));
                 }
             }
         }
@@ -1208,7 +1210,8 @@ void RenderEngine::collectPlanProblems()
                 const String consumer = reportedPassName(pass);
                 const String message  = String(u8"pass '") + consumer + String(u8"' declares the input target '") + target_name(target.get()) +
                                         String(u8"' but no pass writes it, so nothing fills it");
-                reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped, message);
+                reportEngineProblem(
+                    detail::engineProblem(u8"engine.pass.input_target_not_produced", vn::graphics::DiagnosticCategory::ContentSkipped, message));
             }
         }
 
@@ -1257,7 +1260,7 @@ void RenderEngine::collectPlanProblems()
                                                     : String(u8"pass '") + consumer + String(u8"' declares the input image '") + image->label() +
                                                           String(u8"' (the depth of target '") + target_name(identity.target) +
                                                           String(u8"') but that target has no depth attachment, so nothing fills it");
-                reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped, message);
+                reportEngineProblem(detail::engineProblem(u8"engine.pass.input_image_not_produced", vn::graphics::DiagnosticCategory::ContentSkipped, message));
             }
         }
     }
@@ -1279,13 +1282,13 @@ void RenderEngine::collectPlanProblems()
         // picture a pass draws is exactly what it named.
         if (pass->program() == nullptr) {
             {
-                reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                    vn::graphics::DiagnosticCategory::ContentSkipped,
-                                    String(u8"pass '") + reportedPassName(pass) +
-                                        String(u8"' is a ScreenPass with no program, so it can never draw: name one"
-                                               u8" (BuiltinShaders::screenCopyProgram() for a plain copy of the"
-                                               u8" source's colour attachment, deferredLightProgram() for deferred"
-                                               u8" lighting, or your own fragment stage)"));
+                reportEngineProblem(detail::engineProblem(u8"engine.screen.no_program",
+                                                          vn::graphics::DiagnosticCategory::ContentSkipped,
+                                                          String(u8"pass '") + reportedPassName(pass) +
+                                                              String(u8"' is a ScreenPass with no program, so it can never draw: name one"
+                                                                     u8" (BuiltinShaders::screenCopyProgram() for a plain copy of the"
+                                                                     u8" source's colour attachment, deferredLightProgram() for deferred"
+                                                                     u8" lighting, or your own fragment stage)")));
             }
             continue;
         }
@@ -1295,11 +1298,11 @@ void RenderEngine::collectPlanProblems()
         // (phase 2).
         if (pass->inputs().empty() && pass->inputTargets().empty() && pass->inputNames().empty()) {
             {
-                reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                    vn::graphics::DiagnosticCategory::ContentSkipped,
-                                    String(u8"pass '") + reportedPassName(pass) +
-                                        String(u8"' is a ScreenPass that declares no input, so it can never draw"
-                                               u8" (give it addInput / addInputName)"));
+                reportEngineProblem(detail::engineProblem(u8"engine.screen.no_input",
+                                                          vn::graphics::DiagnosticCategory::ContentSkipped,
+                                                          String(u8"pass '") + reportedPassName(pass) +
+                                                              String(u8"' is a ScreenPass that declares no input, so it can never draw"
+                                                                     u8" (give it addInput / addInputName)")));
             }
             continue;
         }
@@ -1310,12 +1313,12 @@ void RenderEngine::collectPlanProblems()
         // post-process that never appears with no reason for it.
         if (pass->camera() == nullptr) {
             {
-                reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                    vn::graphics::DiagnosticCategory::ContentSkipped,
-                                    String(u8"pass '") + reportedPassName(pass) +
-                                        String(u8"' has a fullscreen program but no camera, so it can never draw: the"
-                                               u8" fullscreen path builds its view from the pass camera (and pushes the"
-                                               u8" scene's lights through it) — give the pass a camera (setCamera)"));
+                reportEngineProblem(detail::engineProblem(u8"engine.screen.no_camera",
+                                                          vn::graphics::DiagnosticCategory::ContentSkipped,
+                                                          String(u8"pass '") + reportedPassName(pass) +
+                                                              String(u8"' has a fullscreen program but no camera, so it can never draw: the"
+                                                                     u8" fullscreen path builds its view from the pass camera (and pushes the"
+                                                                     u8" scene's lights through it) — give the pass a camera (setCamera)")));
             }
         }
     }
@@ -1330,16 +1333,16 @@ void RenderEngine::collectPlanProblems()
         if (isColliding(OutputIdentity::of(*unbound.image))) {
             continue;
         }
-        reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                            vn::graphics::DiagnosticCategory::ContentSkipped,
-                            unbound.as_output
-                                ? String(u8"pass '") + reportedPassName(unbound.pass) + String(u8"' declares the output image '") + unbound.image->label() +
-                                      String(u8"' but that image is not bound to a target, so no consumer can resolve"
-                                             u8" it and the promise cannot be checked against what the pass renders"
-                                             u8" into — bind it (ImageRef::bind(target, attachment))")
-                                : String(u8"pass '") + reportedPassName(unbound.pass) + String(u8"' declares the input image '") + unbound.image->label() +
-                                      String(u8"' but that image is not bound to a target, so nothing can fill it —"
-                                             u8" bind it (ImageRef::bind(target, attachment))"));
+        reportEngineProblem(detail::engineProblem(
+            u8"engine.pass.image_unbound",
+            vn::graphics::DiagnosticCategory::ContentSkipped,
+            unbound.as_output ? String(u8"pass '") + reportedPassName(unbound.pass) + String(u8"' declares the output image '") + unbound.image->label() +
+                                    String(u8"' but that image is not bound to a target, so no consumer can resolve"
+                                           u8" it and the promise cannot be checked against what the pass renders"
+                                           u8" into — bind it (ImageRef::bind(target, attachment))")
+                              : String(u8"pass '") + reportedPassName(unbound.pass) + String(u8"' declares the input image '") + unbound.image->label() +
+                                    String(u8"' but that image is not bound to a target, so nothing can fill it —"
+                                           u8" bind it (ImageRef::bind(target, attachment))")));
     }
 }
 
@@ -1347,7 +1350,7 @@ void RenderEngine::publish(const String& name, intrusive_ptr<RenderTarget> targe
 {
     const String problem = resources_->publish(name, std::move(target));
     if (!problem.empty()) {
-        reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning, vn::graphics::DiagnosticCategory::ContentSkipped, problem);
+        reportEngineProblem(detail::engineProblem(u8"engine.target.publish_refused", vn::graphics::DiagnosticCategory::ContentSkipped, problem));
     }
 }
 
@@ -1411,11 +1414,11 @@ intrusive_ptr<RenderSurface> RenderEngine::createSurface()
     // out on, both silent.
     if (area_ != nullptr) {
         if (area_refused_.shouldReport()) {
-            reportEngineProblem(DiagnosticSeverity::Warning,
-                                DiagnosticCategory::UnsupportedRequest,
-                                u8"RenderEngine::createSurface: this engine already drives one render area, so a "
-                                u8"second one was refused - an engine drives one area, and a second window wants "
-                                u8"its own engine (one device may serve several engines)");
+            reportEngineProblem(detail::engineProblem(u8"engine.area.second_refused",
+                                                      DiagnosticCategory::UnsupportedRequest,
+                                                      u8"RenderEngine::createSurface: this engine already drives one render area, so a "
+                                                      u8"second one was refused - an engine drives one area, and a second window wants "
+                                                      u8"its own engine (one device may serve several engines)"));
         }
         return nullptr;
     }

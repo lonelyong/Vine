@@ -15,6 +15,8 @@
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/math/Point3.hpp>
 
+#include "EngineDiagnostics.hpp"
+
 VN_GRAPHICS_NS_BEGIN
 
 namespace detail
@@ -171,9 +173,8 @@ void ChainBuilder::reportRequestedShadows() const
 
     // The integer goes in as ASCII digits, like every other message in the SDK.
     const auto report = [this](const std::string& message) {
-        engine_->reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                     vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                                     String::fromUtf8(message));
+        engine_->reportEngineProblem(
+            detail::engineProblem(u8"engine.shadow.not_built", vn::graphics::DiagnosticCategory::UnsupportedRequest, String::fromUtf8(message)));
     };
 
     if (buildable > shadows_built_) {

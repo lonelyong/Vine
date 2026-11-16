@@ -43,13 +43,20 @@ class VN_GRAPHICS_API DiagnosticsRoute {
      */
     void setSink(vn::graphics::DiagnosticSink sink);
 
-    /** @brief Gets how many diagnostics the route has seen.
+    /** @brief Gets how many diagnostics the ENGINE and its DEVICE reported through the route.
      *
      * @return The total count (0 when the engine is gone).
      */
     [[nodiscard]] std::size_t count() const noexcept;
 
-    /** @brief Gets how many diagnostics of @p category the route has seen.
+    /** @brief Gets how many diagnostics of @p origin the route has seen.
+     *
+     * @param origin Origin to count.
+     * @return The count for that origin (0 when the engine is gone).
+     */
+    [[nodiscard]] std::size_t count(vn::graphics::DiagnosticOrigin origin) const noexcept;
+
+    /** @brief Gets how many diagnostics of @p category the ENGINE and its DEVICE reported.
      *
      * @param category Category to count.
      * @return The count for that category (0 when the engine is gone).
@@ -62,11 +69,15 @@ class VN_GRAPHICS_API DiagnosticsRoute {
      */
     [[nodiscard]] bool isClean() const noexcept;
 
-    /** @brief Reports one diagnostic through the engine's route.
+    /** @brief Reports one diagnostic through the engine's route: the cause is the ENGINE's finding.
      *
      * @details
      * - The call is counted and forwarded to the sink exactly as a report from the engine itself; during a compile
-     *   it is collected and the episode rule decides whether it is said out loud.
+     *   it is collected and the episode rule decides whether it is said out loud. The origin is Engine, because
+     *   the handle is how a RECIPE (a chain, a layout) reports what it could not express on the engine's behalf -
+     *   a host's own findings go through RenderEngine::reportEngineProblem, which marks them Host (A-06).
+     * - NAMING NO CODE: the caller's sentence is all there is, so this is the migration form the diagnostic gate
+     *   ratchets; a report whose cause is known carries it as a RenderDiagnostic through the engine.
      *
      * @param severity How bad it is.
      * @param category Machine-matchable category the host can switch on.

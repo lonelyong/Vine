@@ -80,10 +80,17 @@ struct Viewer::Impl {
             return;
         }
         foreign_view_reported = true;
-        engine->reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                    vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                                    u8"Viewer: a view bound to another engine cannot draw this area (its passes are "
-                                    u8"registered on that engine's frame), so it was refused");
+        // A HOST FINDING, NAMED AS ONE: the viewer is the layer above the engine, so the report carries the
+        // Host origin (it does not change the engine's own count, see RenderDiagnostic::origin) and its own
+        // stable code - a host that matches on it is not parsing the sentence (A-06).
+        vn::graphics::RenderDiagnostic diagnostic;
+        diagnostic.origin   = vn::graphics::DiagnosticOrigin::Host;
+        diagnostic.severity = vn::graphics::DiagnosticSeverity::Warning;
+        diagnostic.category = vn::graphics::DiagnosticCategory::UnsupportedRequest;
+        diagnostic.code     = u8"appfw.viewer.foreign_view";
+        diagnostic.message  = u8"Viewer: a view bound to another engine cannot draw this area (its passes are "
+                              u8"registered on that engine's frame), so it was refused";
+        engine->reportEngineProblem(diagnostic);
     }
 };
 

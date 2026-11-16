@@ -9,6 +9,8 @@
 #   vk.*      the direct-Vulkan backend (`src/plugins/gfx_backend_vk`)
 #   vsg.*     the vsg backend (`src/plugins/gfx_backend_vsg`)
 #   engine.*  the render engine itself (`src/viz/graphics`)
+#   appfw.*   the host framework above the engine (`src/fw/appfw`): a finding the layer above injects
+#             through RenderEngine::reportEngineProblem, which the engine counts under origin Host
 
 # --- vk backend: the memory pool (see vk-backend.md 2.12) ---
 vk.memory.out_of_memory       — the device heap is exhausted; releasing content may help
@@ -79,6 +81,25 @@ engine.pass.layer_mask_empty          — a content pass' layer mask selects not
 engine.pass.output_target_mismatch    — a pass promises a whole target it does not render into
 engine.pass.output_image_mismatch     — a pass promises one image of a target it does not render into
 engine.pass.output_collision          — two passes claim one image as their output
+engine.pass.input_not_produced        — a pass' declared input was produced by nothing this frame: it draws nothing
+engine.pass.input_target_not_produced — a pass reads a whole target no pass writes, so nothing fills it
+engine.pass.input_image_not_produced  — a pass reads an image (or a depth) no pass declares, so nothing fills it
+engine.pass.image_unbound             — a declared image is bound to no target, so it cannot be resolved either way
+engine.pass.changed_during_frame      — a pass verb arrived while a frame was recording: refused, change passes between frames
+engine.screen.no_program              — a ScreenPass named no program, so it can never draw
+engine.screen.no_input                — a ScreenPass declared no input at all, so it samples nothing
+engine.screen.no_camera               — a ScreenPass with a fullscreen program has no camera to build its view from
+engine.device.not_up                  — the device an engine borrows is not initialized: the party that created it brings it up
+engine.target.unsupported_offscreen   — the backend reports no off-screen target support, so a pass staged through one lands in the window
+engine.target.publish_refused         — publishing a named target was refused (the name is taken or the target is unusable)
+engine.area.second_refused            — an engine already drives one render area: a second one was refused
+engine.area.picture_already_declared  — one area draws one picture: the second presentation was refused
+engine.area.foreign                   — the area is not the one its engine drives, so nothing it declares reaches the frame
+engine.present.view_foreign           — a view bound to another engine cannot present this surface
+engine.present.no_chain               — a view with no chain has nothing to present: build a chain and adopt it first
+engine.present.pass_unregistered      — the pass named for presentation is not registered on this surface' engine
+engine.shadow.not_built               — shadow-casting lights have no shadow pass (or fewer maps than casters): they are drawn unshadowed
+engine.view.content_mismatch          — the view adopted a pipeline whose passes draw other content: its scene never reaches the surface
 
 # --- vsg backend: the session and the content world ---
 vsg.session.frame_reentry     — a frame or warm-up was started from the thread already driving one: refused
@@ -139,3 +160,6 @@ vk.target.size_unknown                    — the target has no usable extent (0
 vk.target.resize_failed                   — the attachments could not be rebuilt at the new extent (see the memory report)
 vk.target.build_failed                    — the attachments could not be built (see the memory report)
 vk.target.claim_conflict                  — another frame driver holds this target for the frame in progress
+
+# --- host layer (see DiagnosticOrigin): a finding the layer above injects through the engine ---
+appfw.viewer.foreign_view     — a view bound to another engine cannot draw this viewer's area: it was refused

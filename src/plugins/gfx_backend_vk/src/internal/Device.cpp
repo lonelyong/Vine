@@ -1475,10 +1475,10 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
     if (runnable_passes.empty()) {
         if (!refused_pass && no_targets_report.shouldReport()) {
             owner.report(deviceDiagnostic(DiagnosticSeverity::Info,
-                                              DiagnosticCategory::UnsupportedRequest,
-                                              u8"vk.content.no_runnable_pass",
-                                              u8"vk: the frame had no pass this backend can run (off-screen targets and host windows are "
-                                              u8"served); nothing was submitted"));
+                                          DiagnosticCategory::UnsupportedRequest,
+                                          contentRefusalCode(ContentRefusalCause::NoRunnablePass),
+                                          u8"vk: the frame had no pass this backend can run (off-screen targets and host windows are "
+                                          u8"served); nothing was submitted"));
         }
         return PresentOutcome::Skipped;
     }

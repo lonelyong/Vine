@@ -177,6 +177,17 @@ commit(cmd, target)                // 1 次设备锁：提交、present、帧账
   `check_include_hygiene.py` 钉住接缝的**文件集**（多一个文件就红）。`CoreTimelineTest`（5 例）随 `FrameTimeline`
   搬进 `tests/BackendSeamTest.cpp`（三个测试二进制都编它）；**零用例改名**，`test_graphics` 612 / `test_vk` 164 /
   `test_vsg` 571、对拍 13，九道门禁全绿。
+- **批次 4（拒绝只有一种形状 + 诊断来源）已落地（2026-11-16）**：接缝新增 `backend/DiagnosticDraft`（category + code +
+  subject + limit + message，`refuse()` 唯一写者、先到者胜，`diagnostic()` 转成 SDK 的值）；vk 的 `ContentRefusal` 成为它的
+  别名，且原因改成 `ContentRefusalCause` 枚举 + `contentRefusalCode()` 的**无 `default` switch**（D-22：加一个原因不写 code
+  就编不过，`VkContentRefusalTest.EveryCauseNamesAStableCodeAndTheDraftIsTheSharedShape` 走一遍全表并验形状）；vsg 的读回拒绝
+  （`HostReadbackRefusal`）也经 draft 产出同一个值。引擎侧 20 条报告全部带 `engine.*` code（`detail::engineProblem` 是唯一
+  构造者），宿主一条带 `appfw.viewer.foreign_view`；`scripts/diagnostic_code_baseline.txt` **清零**（门禁：122 个 code
+  双向对齐、0 条未编码报告）。**`RenderDiagnostic::origin`（Engine / Device / Host）** 落地（A-06 / CAP-87）：`reportEngineProblem`
+  的三实参形式是宿主入口、带 `Host`；`diagnostics().report` 是引擎/配方入口、带 `Engine`；设备的报告默认 `Device`。于是
+  `diagnosticCount()` / `diagnosticsClean()` / `diagnosticCount(category)` 只算引擎 + 设备（**BC-10 落地**），宿主另有
+  `diagnosticCount(DiagnosticOrigin::Host)`；见证 `RenderEngineTest.AHostReportIsCountedApartFromTheEnginesOwnFindings`。
+  零用例改名：`test_graphics` 613 / `test_vk` 165 / `test_vsg` 571、对拍 13。
 - **阶段三（迁移）**：**实施中**。批次表与顺序以 `../research/graphics-2026-11-16-redesign-r2.md` §10 为准；
   每批一个可回滚提交，每批结束在提交正文列出"哪些能力 ID 从旧证据切到新证据"——git 是批次进度的档案，
   本文只记状态。

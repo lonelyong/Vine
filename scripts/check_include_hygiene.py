@@ -175,6 +175,7 @@ def group_of(quote, header):
 SEAM_HEADERS = {
     "BackendHalfGuard.hpp",
     "DeviceClock.hpp",
+    "DiagnosticDraft.hpp",
     "FrameGate.hpp",
     "FrameTimeline.hpp",
     "Keys.hpp",
@@ -182,7 +183,7 @@ SEAM_HEADERS = {
     "RetirementQueue.hpp",
     "TargetPlan.hpp",
 }
-SEAM_SOURCES = {"DeviceClock.cpp", "FrameTimeline.cpp", "Keys.cpp", "Readback.cpp", "RetirementQueue.cpp", "TargetPlan.cpp"}
+SEAM_SOURCES = {"DeviceClock.cpp", "DiagnosticDraft.cpp", "FrameTimeline.cpp", "Keys.cpp", "Readback.cpp", "RetirementQueue.cpp", "TargetPlan.cpp"}
 SEAM_SCOPE = (("src/viz/graphics/sdk/vine/graphics/backend", SEAM_HEADERS, "*.hpp"),
               ("src/viz/graphics/src/backend", SEAM_SOURCES, "*.cpp"))
 

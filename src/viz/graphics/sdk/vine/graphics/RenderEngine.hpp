@@ -294,46 +294,62 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     [[nodiscard]] std::uint64_t contentCollectReuseCount() const noexcept;
 
-    /** @brief Gets how many diagnostics were reported through this engine's route.
+    /** @brief Gets how many diagnostics the ENGINE and its DEVICE reported through this engine's route.
      *
      * @details
      * - ONE NUMBER, because there is one route: what the engine could not wire and what the backend could
      *   not serve are counted in the same place.
+     * - THE HOST IS NOT PART OF IT (see DiagnosticOrigin): a report the layer above injected through
+     *   reportEngineProblem is counted by the route but not here, so "how many problems did the engine find"
+     *   stays decidable - a host bug and a wiring bug no longer read as one number (A-06 / CAP-87).
      * - Counted whether or not a sink is installed, so a host can gate on "did anything unexpected
      *   happen" without listening.
      *
-     * @return Total number of diagnostics reported through this engine.
+     * @return Total number of diagnostics the engine and its device reported.
      */
     [[nodiscard]] std::size_t diagnosticCount() const noexcept;
 
-    /** @brief Gets how many diagnostics of @p category were reported through this engine's route.
+    /** @brief Gets how many diagnostics of @p origin were reported through this engine's route.
+     *
+     * @param origin Origin to count.
+     * @return Number of reported diagnostics with that origin.
+     */
+    [[nodiscard]] std::size_t diagnosticCount(DiagnosticOrigin origin) const noexcept;
+
+    /** @brief Gets how many diagnostics of @p category the ENGINE and its DEVICE reported.
+     *
+     * @details
+     * - The same scope as @ref diagnosticCount(): the per-category answer is about what the engine and its
+     *   device ran into, not about what the host itself injected.
      *
      * @param category Category to count.
      * @return Number of reported diagnostics in that category.
      */
     [[nodiscard]] std::size_t diagnosticCount(DiagnosticCategory category) const noexcept;
 
-    /** @brief Gets whether nothing at all was reported through this engine's route.
+    /** @brief Gets whether neither the engine nor its device reported anything.
      *
      * @details
      * - The gate a phase asserts on: a steady run that is expected to be uneventful asks this instead of
-     *   reading the log.
+     *   reading the log. It uses the same scope as @ref diagnosticCount(), so the two answers agree.
      *
-     * @return true when no diagnostic was reported.
+     * @return true when no diagnostic was reported by the engine or its device.
      */
     [[nodiscard]] bool diagnosticsClean() const noexcept;
 
-    /** @brief Reports one problem the engine, or a helper acting for it, found.
+    /** @brief Reports one problem THE HOST found: counted, and marked with origin Host.
      *
      * @details
-     * - The engine owns the route, so the message reaches the host whether or not a backend is set (a
-     *   wiring problem exists before any backend draws); counted in diagnosticCount().
-     * - Public because the engine's own builders report through it too (e.g. the chain build tells)
-     *   the host that content asks for shadows while no shadow pass is built).
+     * - THE HOST'S ENTRY, and that is what the origin records: a problem the layer above noticed is real
+     *   and belongs on the same route (so the host's sink and the engine's log agree), but it is not an
+     *   engine finding - diagnosticCount() leaves it out and diagnosticCount(DiagnosticOrigin::Host) counts
+     *   it (A-06).
+     * - NAMING NO CODE: the caller's sentence is all there is, so this is the migration form the gate
+     *   ratchets; a report whose cause is known carries it as a RenderDiagnostic instead.
      *
      * @param severity How bad the situation is.
      * @param category What it is about.
-     * @param message  Human-readable detail, naming the pass and the slot.
+     * @param message  Human-readable detail, naming the object it is about.
      */
     void reportEngineProblem(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const String& message);
 

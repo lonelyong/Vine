@@ -81,6 +81,7 @@
 | 帧闸与时钟 | `FrameGate` `DeviceClock` `FrameTimeline` `RetirementQueue` |
 | 读回与目标 | `Readback` `TargetPlan` |
 | 键 | `Keys` |
+| 拒绝形状 | `DiagnosticDraft`（vk 的 `ContentRefusal`、vsg 的读回拒绝都产它） |
 | 包含守卫 | `BackendHalfGuard` |
 
 > 该目录的**文件集由 `scripts/check_include_hygiene.py` 钉住**：只有两个后端都读的机制能留下。
@@ -90,7 +91,8 @@
 
 > `Diagnostics` / `ReportOnce` 已上移 SDK（`vine/graphics/Diagnostics.hpp` / `ReportOnce.hpp`，2026-09-27）：
 > 引擎持有唯一的诊断路线，本插件自己那条路线的 sink 转发进去 —— 宿主的 sink 与
-> `RenderEngine::diagnosticCount()` 因此能看到 session 自己的报告，而本层不重复上报。
+> `RenderEngine::diagnosticCount()` 因此能看到 session 自己的报告，而本层不重复上报。它只数
+> 引擎 + 设备：宿主经 `reportEngineProblem` 注入的另算（`diagnosticCount(DiagnosticOrigin::Host)`，A-06）。
 >
 > `DeviceRequirements` 相反：**从后端半移入本插件**（`include/vine/backend_vsg/internal/` + `src/internal/`，2026-10-21）。
 > 它命名的是 Vulkan 1.4 地板与 `VK_EXT_*` 要求，只有 Vulkan 后端能用；留在"随 SDK 安装"的那一半里

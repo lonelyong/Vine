@@ -5,16 +5,9 @@
 #   * a file not listed may not have any uncoded report at all, so new code names its cause;
 #   * when a file drops below its ceiling, lower the number (and delete the line at 0) - the gate prints a hint.
 #
-# The numbers are what the tree had on 2026-11-15, after the vk backend and the vsg backend were converted in full
-# (audit A3): every report in those two plugins either states a `vk.*` / `vsg.*` code or forwards a diagnostic a
-# builder gave a code to. What is left is the ENGINE's own reports - the next tranche.
+# EMPTY SINCE 2026-11-16 (batch 4): the engine's own reports now name `engine.*` codes, the host's
+# `appfw.viewer.*`, and both backends name `vk.*` / `vsg.*` - every report that BUILDS a diagnostic states its
+# cause. A line coming back here is a report that went backwards.
 #
 # A report that HANDS OVER a whole diagnostic (`reportDiagnostic(diagnostic)`) is not counted at all: the value carries
 # the code as a member, so the sink cannot drop it (see check_diagnostic_formats.forwards_a_diagnostic).
-
-src/fw/appfw/src/gui/Viewer.cpp                                     1
-src/viz/graphics/src/ChainBuilder.cpp                                1
-src/viz/graphics/src/DiagnosticsRoute.cpp                            1
-src/viz/graphics/src/RenderEngine.cpp                               13
-src/viz/graphics/src/RenderSurface.cpp                               5
-src/viz/graphics/src/SceneView.cpp                                   1

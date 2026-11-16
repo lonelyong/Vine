@@ -126,7 +126,9 @@
 
 ## 6. 诊断与验证
 
-* **诊断通道**（sink）+ `diagnosticCount()`：实体是 `DiagnosticSeverity` × `DiagnosticCategory`；
+* **诊断通道**（sink）+ `diagnosticCount()`：实体是 `DiagnosticSeverity` × `DiagnosticCategory`，外加
+  **`DiagnosticOrigin`**（Engine / Device / Host）——`diagnosticCount()` 只数引擎 + 设备，宿主经
+  `reportEngineProblem` 注入的另算（`diagnosticCount(DiagnosticOrigin::Host)`，A-06）；
   **episode** 规则（同一问题只报一次，句柄归调用方）写在各自的作用域里。
 * **读数**：`framesPresented()` / `deviceWaits()` / `releasedContentObjects()` / `releasedTextures()` /
   `ContentStore::builds()` / `StreamUploads::uploads()` / `VariantPool::created()`（见设计文档 §4 的表）。

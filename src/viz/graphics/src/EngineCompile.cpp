@@ -17,6 +17,7 @@
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/Viewport.hpp>
 
+#include "EngineDiagnostics.hpp"
 #include "EngineFrame.hpp"
 #include "FrameExpand.hpp"
 #include "FrameResources.hpp"
@@ -90,13 +91,7 @@ std::string shapeText(double shape)
                                                            vn::String                             message,
                                                            vn::String                             subject = {})
 {
-    vn::graphics::RenderDiagnostic diagnostic;
-    diagnostic.severity = vn::graphics::DiagnosticSeverity::Warning;
-    diagnostic.category = category;
-    diagnostic.code     = vn::String(code);
-    diagnostic.message  = std::move(message);
-    diagnostic.subject  = std::move(subject);
-    return diagnostic;
+    return detail::engineProblem(code, category, std::move(message), std::move(subject));
 }
 
 } // namespace

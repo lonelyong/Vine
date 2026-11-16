@@ -81,6 +81,27 @@ struct VN_GRAPHICS_API DiagnosticLimit
 };
 
 /**
+ * @brief Who reported a diagnostic: the engine, the device it drives, or the layer above them.
+ *
+ * @details
+ * - WHY IT EXISTS. The route counts what it was told, and both halves tell it things: the engine about its
+ *   own wiring, a device about what it could not serve. A host may also inject a report of its own through
+ *   the engine's public entry, and once that is counted the same way, "how many problems did the engine
+ *   find" stops being decidable - a host bug reads exactly like a wiring bug (`G4` / `G11`).
+ * - THE COUNTS THAT SAY "the engine" (RenderEngine::diagnosticCount, Diagnostics::total) cover Engine +
+ *   Device and nothing else; a party that wants the host's number asks for it (A-06 / CAP-87).
+ * - Append a new value before Count so existing tables keep their meaning.
+ */
+enum class DiagnosticOrigin : std::uint8_t
+{
+    Engine, // The render engine (or a helper acting for it) found it while compiling or attaching a frame.
+    Device, // The render backend found it while serving a request - the type's default.
+    Host,   // The layer above injected it through the engine's report entry; it is not the engine's finding.
+
+    Count, // Number of origins (not an origin itself; keeps count tables sized).
+};
+
+/**
  * @brief One backend diagnostic: how bad, about what, why - and, when it applies, the object and the limit.
  *
  * @details
@@ -100,6 +121,7 @@ struct VN_GRAPHICS_API DiagnosticLimit
  *   the shape the migration is ratcheting away from, and the gate refuses NEW reports of that shape.
  */
 struct VN_GRAPHICS_API RenderDiagnostic {
+    DiagnosticOrigin               origin   = DiagnosticOrigin::Device;             ///< Who reported it (see DiagnosticOrigin).
     DiagnosticSeverity severity = DiagnosticSeverity::Error;            // How bad it is.
     DiagnosticCategory category = DiagnosticCategory::GeometryRejected; // What it is about.
     String             code;     // Stable identifier of the cause; empty means "the category is all there is".

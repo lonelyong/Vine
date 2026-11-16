@@ -557,12 +557,14 @@ class VN_GRAPHICS_API RenderDevice {
      * - Counted whether or not a sink is installed, so a host can gate on "did anything unexpected happen" without
      *   listening. Once an engine has installed its route this is the engine's count as well: there is one route, so
      *   there is one number.
+     * - THE SCOPE IS ENGINE + DEVICE (see DiagnosticOrigin), the same one RenderEngine::diagnosticCount() uses: a
+     *   report the host injected is not one of this device's findings.
      *
-     * @return Total number of diagnostics reported through the active route.
+     * @return Total number of diagnostics reported by the engine and the device through the active route.
      */
     std::size_t diagnosticCount() const;
 
-    /** @brief Gets how many diagnostics of @p category were reported through the active route.
+    /** @brief Gets how many diagnostics of @p category the engine and the device reported through the active route.
      *
      * @param category Category to count.
      * @return Number of reported diagnostics in that category.

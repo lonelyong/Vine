@@ -67,7 +67,7 @@
     计划），`frame()` 只答 Ran / Submitted，`applyPlan` 三态，`SessionBusy` 不再是一个 plan problem code。
     理由：迁移期分两次改会让三套形状并存；现在一套形状，公开签名与文档一致（`G1` / `G6`）。
 
-2.9 **`backend/` 是后端接缝，不是宿主 SDK**：`sdk/vine/graphics/backend/`（7 个机制 + 1 个守卫）只被
+2.9 **`backend/` 是后端接缝，不是宿主 SDK**：`sdk/vine/graphics/backend/`（7 个机制 + 1 个守卫 + `DiagnosticDraft`）只被
     `gfx_backend_*` 与 `libGraphics` 自己消费，宿主包含它是编译错误（`BackendHalfGuard.hpp`）。它的
     **ABI 随后端变、不随宿主变**，所以安装时单独成一个组件（`VineGraphicsBackendSdk`），不在默认 include
     树里——"装进 include 但禁止包含"是自相矛盾的（`G1` / `G6`）。**接缝的定义是"两个后端都用"**：只有 vsg

@@ -19,34 +19,35 @@
 #include <vsg/vk/Device.h>
 #include <vsg/vk/PhysicalDevice.h>
 
-#include <vine/graphics/Diagnostics.hpp>
-#include <vine/graphics/RenderCommand.hpp>
 #include <vine/backend_vsg/internal/AllocationGate.hpp>
-#include <vine/backend_vsg/internal/FrameCompiler.hpp>
-#include <vine/backend_vsg/internal/FrameRecorder.hpp>
-#include <vine/backend_vsg/internal/Observe.hpp>
-#include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/BackendContent.hpp>
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
 #include <vine/backend_vsg/internal/ContentAssembly.hpp>
 #include <vine/backend_vsg/internal/ContentStore.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
-#include <vine/graphics/backend/FrameGate.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameRecorder.hpp>
 #include <vine/backend_vsg/internal/FrameScratch.hpp>
 #include <vine/backend_vsg/internal/HostReadback.hpp>
 #include <vine/backend_vsg/internal/HostTargets.hpp>
 #include <vine/backend_vsg/internal/MaterialImages.hpp>
+#include <vine/backend_vsg/internal/Observe.hpp>
 #include <vine/backend_vsg/internal/OffscreenSession.hpp>
 #include <vine/backend_vsg/internal/PassRegistry.hpp>
-#include <vine/backend_vsg/internal/WindowSession.hpp>
 #include <vine/backend_vsg/internal/SessionContent.hpp>
 #include <vine/backend_vsg/internal/TransferStaging.hpp>
+#include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/ViewBlock.hpp>
-#include <vine/backend_vsg/internal/VsgExecutor.hpp>
 #include <vine/backend_vsg/internal/VsgDriver.hpp>
+#include <vine/backend_vsg/internal/VsgExecutor.hpp>
+#include <vine/backend_vsg/internal/WindowSession.hpp>
 #include <vine/backend_vsg/internal/WindowTarget.hpp>
 #include <vine/backend_vsg/support/VsgSceneRules.hpp>
 #include <vine/backend_vsg/support/VsgUtils.hpp>
+#include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/backend/DiagnosticDraft.hpp>
+#include <vine/graphics/backend/FrameGate.hpp>
 
 VN_BACKEND_VSG_NS_BEGIN
 
@@ -493,10 +494,11 @@ bool prepareContent(ContentAssembly&                                            
     case HostReadbackRefusal::InsideFrame:       code = u8"vsg.readback.in_frame"; break;
     case HostReadbackRefusal::TransferFailed:    code = u8"vsg.readback.transfer_failed"; break;
     }
-    return backendDiagnostic(vn::graphics::DiagnosticSeverity::Warning,
-                             vn::graphics::DiagnosticCategory::ContentSkipped,
-                             code,
-                             readbackRefusalMessage(refusal, what));
+    // THE SHARED REFUSAL SHAPE (see DiagnosticDraft): one writer, a code and the sentence - the same value the vk
+    // backend's planner fills, so the two backends hand the route the same type (ADR-2026-11-16 §4).
+    core::DiagnosticDraft draft;
+    draft.refuse(vn::graphics::DiagnosticCategory::ContentSkipped, code, readbackRefusalMessage(refusal, what));
+    return draft.diagnostic(vn::graphics::DiagnosticSeverity::Warning);
 }
 
 } // namespace

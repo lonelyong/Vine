@@ -90,29 +90,51 @@ class VN_GRAPHICS_API Diagnostics {
      */
     bool reportOnce(ReportOnce& episode, vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const vn::String& message);
 
-    /** @brief Gets how many diagnostics were reported in total. */
+    /** @brief Gets how many diagnostics the ENGINE and its DEVICE reported (not the host's own).
+     *
+     * @details
+     * - THE SCOPE IS THE POINT (see DiagnosticOrigin): a report the layer above injected through
+     *   RenderEngine::reportEngineProblem is counted, but not here - "how many problems did the engine find"
+     *   has to stay decidable, and a host bug is not one of them (A-06).
+     *
+     * @return The total of the Engine and Device origins.
+     */
     [[nodiscard]] std::uint64_t total() const noexcept;
 
-    /** @brief Gets how many diagnostics of @p category were reported.
+    /** @brief Gets how many diagnostics @p origin reported.
+     *
+     * @param origin Origin to count; an out-of-range value counts nothing.
+     * @return The count for that origin.
+     */
+    [[nodiscard]] std::uint64_t total(vn::graphics::DiagnosticOrigin origin) const noexcept;
+
+    /** @brief Gets how many diagnostics of @p category the ENGINE and its DEVICE reported.
+     *
+     * @details
+     * - The same scope as @ref total(): the per-category numbers answer "what did the engine and its device
+     *   run into", and a host's own injection is visible through @ref total(DiagnosticOrigin::Host).
      *
      * @param category Category to count; an out-of-range value counts nothing.
      */
     [[nodiscard]] std::uint64_t count(vn::graphics::DiagnosticCategory category) const noexcept;
 
-    /** @brief Gets whether nothing at all was reported.
+    /** @brief Gets whether nothing was reported by the ENGINE or its DEVICE.
      *
      * @details
-     * - The gate a phase asserts on: a steady run that is expected to be uneventful asks this instead of reading the
-     *   log.
+     * - The gate a phase asserts on: a steady run that is expected to be uneventful asks this instead of reading
+     *   the log. It uses @ref total()'s scope, so `diagnosticCount() == 0` and this answer agree.
      */
     [[nodiscard]] bool clean() const noexcept;
 
 
   private:
-    /// One counter per category; the SDK's `Count` enumerator is the table's size.
-    std::array<std::uint64_t, static_cast<std::size_t>(vn::graphics::DiagnosticCategory::Count)> per_category_{};
-    std::uint64_t                                                                                total_{ 0 };
-    vn::graphics::DiagnosticSink                                                                 sink_;
+    /// One counter per (origin, category); `DiagnosticOrigin::Count` sizes the first dimension, the SDK's `Count` the second.
+    std::array<std::array<std::uint64_t, static_cast<std::size_t>(vn::graphics::DiagnosticCategory::Count)>,
+               static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Count)>
+        per_category_{};
+    /// One counter per origin; `DiagnosticOrigin::Count` is its size.
+    std::array<std::uint64_t, static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Count)> per_origin_{};
+    vn::graphics::DiagnosticSink                                                               sink_;
 };
 
 VN_GRAPHICS_NS_END

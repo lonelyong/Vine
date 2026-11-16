@@ -233,24 +233,30 @@
   `check_diagnostic_formats.py` 双向检查（用到的必须登记、登记的必须被用到），并用
   `scripts/diagnostic_code_baseline.txt` 给尚未转换的调用点设**上限**——新报告必须带 code。
 - **已转换**：本后端**全部报告**——内存、会话、目标、窗口、初始化、帧与预热、内容七族共 58 个 code；
-  `scripts/diagnostic_code_baseline.txt` 里已没有本插件的文件（审计 `A3`）。
+  `scripts/diagnostic_code_baseline.txt` 里已没有本插件的文件（审计 `A3`），且该文件自批次 4 起**全空**。
 - **成本**：报告路径上一个 `String` 字段（情节已去重，所以不在热路径）；`limit` 是 `std::optional`，不报 limit
   时零成本。
 
 ### 2.14 原因在知道它的地方命名：内容拒绝是一个值，不是两个出参（`G1` / `G4` / `G7`）
 
 - **是什么**：内容路径的拒绝（这条 draw 为什么没画出来）由**记录器**给出——只有它知道是哪一级拒绝的（程序、流、实例
-  流、管线、环形缓冲、描述符集）。它产出一个 `ContentRefusal`：`category` + **code** + 句子，三者一起；设备的
-  `executeFrame` / `prepareFrame` 只把它**转发**成 `RenderDiagnostic`。
+  流、管线、环形缓冲、描述符集）。它填一个 `ContentRefusal`——**它就是接缝的 `backend::DiagnosticDraft` 的别名**
+  （`category` + **code** + subject + limit + 句子，`refuse()` 唯一写者、先到者胜）；`executeFrame` / `prepareFrame`
+  只把它**转发**成 `RenderDiagnostic`。vsg 的读回拒绝（`HostReadbackRefusal` 枚举）也产出同一个类型：拒绝只有一种形状
+  （ADR-2026-11-16 §4）。
 - **为什么**：这条路径原本是 `(vn::String* why, DiagnosticCategory* category)` 两个出参——能填一个而忘了另一个，
   而且"跳过一条 draw"的七种原因到宿主那里只剩一个 `ContentSkipped`。把 code 放在**知道原因的那一侧**，宿主与用例
   才第一次能说"这条 draw 没有程序"，而不是"有条 draw 被跳过了"（`R28` 的落点）。
 - **边界**：`refuse()` 是唯一的写入者，且**先到者胜**——第二个原因（"没有几何，所以也没有管线"）不会覆盖第一个，
   这条规则原来在调用点用 `if (why.empty())` 重复了三遍。空句子 + 有 code 仍是拒绝：句子的有无从来不是判据。
-  `ContentRefusal` 是**内部头**（`internal/ContentRefusal.hpp`），不进 SDK。
+  `ContentRefusal` 是**内部头**（`internal/ContentRefusal.hpp`），不进 SDK；形状本身住在 SDK 的后端半。
+- **原因是一个枚举，code 是一张无 `default` 的 switch**（`ContentRefusalCause` / `contentRefusalCode`）：`refuse`
+  的调用点曾直接写字符串字面量，所以新增一种原因可以不带 code 编译通过（D-22）。现在加一个枚举值时，缺那个
+  `case` 就编不过（学 vsg 的 `HostReadbackRefusal` 映射）；`VkContentRefusalTest.EveryCauseNamesAStableCode…`
+  还验一遍"每个值都有 code、没有两个值共用一个"。
 - **门禁的两半**：报告调用若**构造**诊断（≥3 个实参）就必须写 code；若**转发**一个 `RenderDiagnostic`
   （`reportDiagnostic(diagnostic)`）则不算——值里带着 code，sink 丢不掉它。`check_diagnostic_formats.py`
-  同时双向检查登记表：用到的必须登记，登记的必须被某个 builder 或报告用到。
+  同时双向检查登记表：用到的必须登记，登记的必须被某个 builder / code 表 / 报告用到。
 
 ### 2.15 释放是交给队列，不是立刻销毁（`G4` / `G10`）
 

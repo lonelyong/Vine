@@ -4473,6 +4473,39 @@ TEST(RenderEngineTest, ABackendThatCannotDrawTargetsIsToldOncePerEpisode)
     EXPECT_EQ(engine->diagnosticCount(), quiet + 2);
 }
 
+TEST(RenderEngineTest, AHostReportIsCountedApartFromTheEnginesOwnFindings)
+{
+    // CAP-87 / A-06: the route receives the engine's findings, its device's reports AND whatever the layer
+    // above injects - and the host's report is not an engine finding. `diagnosticCount()` covers Engine +
+    // Device, so a host bug no longer reads as "the engine found something" (BC-10).
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    ASSERT_EQ(engine->diagnosticCount(), 0u);
+    ASSERT_EQ(engine->diagnosticCount(DiagnosticOrigin::Host), 0u);
+    ASSERT_TRUE(engine->diagnosticsClean());
+
+    // The host's entry: reported (sink and log), marked Host, and LEFT OUT of the engine's number.
+    engine->reportEngineProblem(DiagnosticSeverity::Warning, DiagnosticCategory::UnsupportedRequest, u8"the host noticed something");
+    EXPECT_EQ(engine->diagnosticCount(), 0u) << "a host finding was counted as the engine's";
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticOrigin::Host), 1u);
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 0u) << "the per-category count uses the same scope as the total";
+    EXPECT_TRUE(engine->diagnosticsClean()) << "the engine itself is still clean";
+
+    // A finding the engine BUILDS carries the Engine origin, and that does move both numbers.
+    RenderDiagnostic engine_finding;
+    engine_finding.origin   = DiagnosticOrigin::Engine;
+    engine_finding.severity = DiagnosticSeverity::Warning;
+    engine_finding.category = DiagnosticCategory::ContentSkipped;
+    engine_finding.code     = u8"engine.pass.input_not_produced";
+    engine_finding.message  = u8"pass 'GBuffer' declares an input nothing produced";
+    engine->reportEngineProblem(engine_finding);
+    EXPECT_EQ(engine->diagnosticCount(), 1u);
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::ContentSkipped), 1u);
+    EXPECT_FALSE(engine->diagnosticsClean());
+
+    // The host's number is an ANSWER, not a remainder: it does not move when the engine reports.
+    EXPECT_EQ(engine->diagnosticCount(DiagnosticOrigin::Host), 1u);
+}
+
 TEST(RenderEngineTest, FrameBeforeInitializeIsNoOp)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());

@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -453,6 +454,41 @@ TEST(VkContentRefusalTest, TheFirstReasonWinsAndOnlyACodeMakesARefusal)
     EXPECT_TRUE(refusal.message().empty());
     refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped, u8"vk.content.nothing_to_draw", String{});
     EXPECT_TRUE(refusal.isRefused()) << "a code alone is a refusal: the sentence is optional, the cause is not";
+}
+
+TEST(VkContentRefusalTest, EveryCauseNamesAStableCodeAndTheDraftIsTheSharedShape)
+{
+    // A CAUSE IS AN ENUMERATOR, NOT A STRING (D-22, see ContentRefusalCause): every value must answer a
+    // non-null `vk.content.*` code, and no two causes may share one - which is the runtime half of the
+    // switch that has no `default` (a cause added without a case does not compile clean).
+    std::vector<std::u8string_view> codes;
+    for (std::uint32_t value = 0; value < static_cast<std::uint32_t>(vn::backend_vk::ContentRefusalCause::Count); ++value) {
+        const auto           cause = static_cast<vn::backend_vk::ContentRefusalCause>(value);
+        const char8_t* const code  = vn::backend_vk::contentRefusalCode(cause);
+        ASSERT_NE(code, nullptr) << "cause " << value << " names no code";
+        codes.emplace_back(code);
+    }
+    std::sort(codes.begin(), codes.end());
+    EXPECT_EQ(std::adjacent_find(codes.begin(), codes.end()), codes.end()) << "two causes share one code: a host cannot tell them apart";
+
+    // ONE SHAPE FOR EVERY BACKEND (see DiagnosticDraft): the draft carries the object and the limit the
+    // SDK's value has, and `diagnostic()` hands all of it on under the severity the call site states.
+    vn::backend_vk::ContentRefusal draft;
+    draft.refuse(vn::graphics::DiagnosticCategory::TargetBuildFailed,
+                 vn::backend_vk::contentRefusalCode(vn::backend_vk::ContentRefusalCause::NoProgram),
+                 String(u8"GBuffer"),
+                 vn::graphics::DiagnosticLimit{ 8, 4 },
+                 String(u8"no program"));
+    const vn::graphics::RenderDiagnostic diagnostic = draft.diagnostic(vn::graphics::DiagnosticSeverity::Error);
+    EXPECT_EQ(diagnostic.severity, vn::graphics::DiagnosticSeverity::Error);
+    EXPECT_EQ(diagnostic.category, vn::graphics::DiagnosticCategory::TargetBuildFailed);
+    EXPECT_TRUE(diagnostic.code.std_u8str_view() == u8"vk.content.no_program");
+    EXPECT_TRUE(diagnostic.subject.std_u8str_view() == u8"GBuffer");
+    ASSERT_TRUE(diagnostic.limit.has_value());
+    EXPECT_EQ(diagnostic.limit->requested, 8U);
+    EXPECT_EQ(diagnostic.limit->supported, 4U);
+    EXPECT_TRUE(diagnostic.message.std_u8str_view() == u8"no program");
+    EXPECT_EQ(diagnostic.origin, vn::graphics::DiagnosticOrigin::Device) << "a backend value is a device report";
 }
 
 TEST(VkContentDrawTest, ADrawWithNoProgramArrivesWithTheCodeOfItsCause)

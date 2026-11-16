@@ -18,10 +18,15 @@ void Diagnostics::report(const vn::graphics::RenderDiagnostic& diagnostic)
 {
     // Counted first, and counted whether or not a sink is installed: the count is what a phase gates
     // on, and a host that never installed a sink must still be able to see that something happened.
-    ++total_;
-    const auto index = static_cast<std::size_t>(diagnostic.category);
-    if (index < per_category_.size()) {
-        ++per_category_[index];
+    // The ORIGIN decides which numbers move (see DiagnosticOrigin): a host's own injection is counted, but
+    // not in the engine's total - that is what keeps "the engine found nothing" decidable.
+    const auto origin = static_cast<std::size_t>(diagnostic.origin);
+    if (origin < per_origin_.size()) {
+        ++per_origin_[origin];
+        const auto category = static_cast<std::size_t>(diagnostic.category);
+        if (category < per_category_[origin].size()) {
+            ++per_category_[origin][category];
+        }
     }
 
     if (sink_) {
@@ -62,18 +67,32 @@ bool Diagnostics::reportOnce(ReportOnce&                      episode,
 
 std::uint64_t Diagnostics::total() const noexcept
 {
-    return total_;
+    // THE ENGINE'S NUMBER, NOT THE ROUTE'S: Engine + Device, per DiagnosticOrigin. A host's injection is a
+    // separate answer (total(DiagnosticOrigin::Host)), so a host bug cannot read as an engine problem.
+    return per_origin_[static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Engine)] +
+           per_origin_[static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Device)];
 }
 
-std::uint64_t Diagnostics::count(vn::graphics::DiagnosticCategory category) const noexcept
+std::uint64_t Diagnostics::total(const vn::graphics::DiagnosticOrigin origin) const noexcept
+{
+    const auto index = static_cast<std::size_t>(origin);
+    return index < per_origin_.size() ? per_origin_[index] : 0;
+}
+
+std::uint64_t Diagnostics::count(const vn::graphics::DiagnosticCategory category) const noexcept
 {
     const auto index = static_cast<std::size_t>(category);
-    return index < per_category_.size() ? per_category_[index] : 0;
+    if (index >= per_category_[0].size()) {
+        return 0;
+    }
+    // Same scope as total(): a host's own report does not change what the engine addressed.
+    return per_category_[static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Engine)][index] +
+           per_category_[static_cast<std::size_t>(vn::graphics::DiagnosticOrigin::Device)][index];
 }
 
 bool Diagnostics::clean() const noexcept
 {
-    return total_ == 0;
+    return total() == 0;
 }
 
 VN_GRAPHICS_NS_END

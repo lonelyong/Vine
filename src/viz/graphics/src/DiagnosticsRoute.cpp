@@ -26,6 +26,12 @@ std::size_t DiagnosticsRoute::count() const noexcept
     return engine != nullptr ? engine->diagnosticCount() : 0;
 }
 
+std::size_t DiagnosticsRoute::count(vn::graphics::DiagnosticOrigin origin) const noexcept
+{
+    raw_ptr<RenderEngine> engine = engine_.get();
+    return engine != nullptr ? engine->diagnosticCount(origin) : 0;
+}
+
 std::size_t DiagnosticsRoute::count(vn::graphics::DiagnosticCategory category) const noexcept
 {
     raw_ptr<RenderEngine> engine = engine_.get();
@@ -41,7 +47,15 @@ bool DiagnosticsRoute::isClean() const noexcept
 void DiagnosticsRoute::report(vn::graphics::DiagnosticSeverity severity, vn::graphics::DiagnosticCategory category, const String& message)
 {
     if (raw_ptr<RenderEngine> engine = engine_.get()) {
-        engine->reportEngineProblem(severity, category, message);
+        // THE ENGINE'S FINDING, delivered through its handle (see the header): a recipe says what it could not
+        // express on the engine's behalf, so the value carries the Engine origin and the engine applies its own
+        // compile/episode rule to it.
+        vn::graphics::RenderDiagnostic diagnostic;
+        diagnostic.origin   = vn::graphics::DiagnosticOrigin::Engine;
+        diagnostic.severity = severity;
+        diagnostic.category = category;
+        diagnostic.message  = message;
+        engine->reportEngineProblem(diagnostic);
     }
 }
 

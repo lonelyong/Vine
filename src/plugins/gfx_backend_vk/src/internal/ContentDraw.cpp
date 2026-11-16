@@ -185,7 +185,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
     }
     if (draw.kind != vn::graphics::DrawDescription::Kind::Scene) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                   u8"vk.content.wrong_path",
+                   contentRefusalCode(ContentRefusalCause::WrongPath),
                    vn::String(u8"vk: a screen draw reached the content path (it has its own recordScreen)"));
         return 0;
     }
@@ -193,7 +193,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
     // some of them would record a draw nobody resolved, so this call refuses rather than guessing.
     if (plans.size() < draw.commands->size()) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                   u8"vk.content.plan_missing",
+                   contentRefusalCode(ContentRefusalCause::PlanMissing),
                    vn::String(u8"vk: the frame head did not resolve every command of this drawing call"));
         return 0;
     }
@@ -204,7 +204,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
     }
     if (head.fallback_view == VK_NULL_HANDLE) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                   u8"vk.content.stand_in_missing",
+                   contentRefusalCode(ContentRefusalCause::StandInMissing),
                    vn::String(u8"vk: the 1x1 stand-in every absent texture slot binds could not be made"));
         return 0;
     }
@@ -292,7 +292,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
         VkDeviceSize slice = 0;
         if (!scratch.reserveSlice(slice)) {
             refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                   u8"vk.content.uniform_ring_full",
+                   contentRefusalCode(ContentRefusalCause::UniformRingFull),
                    vn::String(u8"vk: the frame's uniform ring is full; this draw was skipped and the ring grows before the next frame"));
             continue;
         }
@@ -314,7 +314,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
         const VkDescriptorSet draw_set    = content_set != VK_NULL_HANDLE ? scratch.drawSetFor() : VK_NULL_HANDLE;
         if (content_set == VK_NULL_HANDLE || draw_set == VK_NULL_HANDLE) {
             refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                   u8"vk.content.descriptor_set_missing",
+                   contentRefusalCode(ContentRefusalCause::DescriptorSetMissing),
                    vn::String(u8"vk: the descriptor cache could not hand out a set"));
             continue;
         }
@@ -384,7 +384,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
         }
         else {
             refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                   u8"vk.content.nothing_to_draw",
+                   contentRefusalCode(ContentRefusalCause::NothingToDraw),
                    vn::String(u8"vk: a draw named neither an index stream nor vertices"));
         }
     }
@@ -415,13 +415,13 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
     }
     if (source.views.empty()) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                   u8"vk.content.screen_no_source",
+                   contentRefusalCode(ContentRefusalCause::ScreenNoSource),
                    vn::String(u8"vk: a screen draw named no source target, so there is nothing to sample"));
         return 0;
     }
     if (head.fallback_view == VK_NULL_HANDLE) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                   u8"vk.content.stand_in_missing",
+                   contentRefusalCode(ContentRefusalCause::StandInMissing),
                    vn::String(u8"vk: the 1x1 stand-in every absent texture slot binds could not be made"));
         return 0;
     }
@@ -481,7 +481,7 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
     VkDeviceSize slice = 0;
     if (!scratch.reserveSlice(slice)) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                   u8"vk.content.uniform_ring_full",
+                   contentRefusalCode(ContentRefusalCause::UniformRingFull),
                    vn::String(u8"vk: the frame's uniform ring is full; this draw was skipped and the ring grows before the "
                               u8"next frame"));
         return 0;
@@ -493,7 +493,7 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
     const VkDescriptorSet set        = scratch.screenSetFor(slots, shadow_view, shadow_sampler);
     if (set == VK_NULL_HANDLE) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                   u8"vk.content.descriptor_set_missing",
+                   contentRefusalCode(ContentRefusalCause::DescriptorSetMissing),
                    vn::String(u8"vk: the descriptor cache could not hand out a set"));
         return 0;
     }

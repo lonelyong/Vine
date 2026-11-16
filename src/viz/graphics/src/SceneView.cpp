@@ -18,6 +18,8 @@
 #include <vine/window/InputEvent.hpp>
 #include <vine/window/MouseButton.hpp>
 
+#include "EngineDiagnostics.hpp"
+
 VN_GRAPHICS_NS_BEGIN
 
 namespace
@@ -110,12 +112,13 @@ void SceneView::checkChainContent()
     if (!content_mismatch_.shouldReport()) {
         return;
     }
-    engine->reportEngineProblem(vn::graphics::DiagnosticSeverity::Warning,
-                                vn::graphics::DiagnosticCategory::ContentSkipped,
-                                u8"this view adopted a pipeline whose passes draw other content: none of them draws the view's scene, so the"
-                                u8" view's content never reaches the surface - build the chain for the view's scene"
-                                u8" (ChainDesc::content), or bind the pass that should draw it"
-                                u8" (RenderEngine::bindPassContent)");
+    engine->reportEngineProblem(
+        detail::engineProblem(u8"engine.view.content_mismatch",
+                              vn::graphics::DiagnosticCategory::ContentSkipped,
+                              u8"this view adopted a pipeline whose passes draw other content: none of them draws the view's scene, so the"
+                              u8" view's content never reaches the surface - build the chain for the view's scene"
+                              u8" (ChainDesc::content), or bind the pass that should draw it"
+                              u8" (RenderEngine::bindPassContent)"));
 }
 
 int SceneView::surfaceWidth() const noexcept

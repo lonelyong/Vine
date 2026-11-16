@@ -1079,7 +1079,7 @@ struct ContentCaches::Impl {
         const vn::graphics::ShaderProgramDescription* program_description = program != nullptr ? program.get() : default_program;
         if (program_description == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                           u8"vk.content.no_program",
+                           contentRefusalCode(ContentRefusalCause::NoProgram),
                            vn::String(u8"vk: a content draw named no program and the device has no default content program"));
             return false;
         }
@@ -1087,14 +1087,14 @@ struct ContentCaches::Impl {
         const vn::graphics::GeometryDescriptionPtr geometry = command.geometryDescription();
         if (geometry == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                           u8"vk.content.no_geometry",
+                           contentRefusalCode(ContentRefusalCause::NoGeometry),
                            vn::String(u8"vk: a content draw carried no geometry description"));
             return false;
         }
         const std::span<const vn::graphics::Primitive> primitives = geometry->primitives();
         if (command.primitive_index >= primitives.size()) {
             refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                           u8"vk.content.primitive_absent",
+                           contentRefusalCode(ContentRefusalCause::PrimitiveAbsent),
                            vn::String(u8"vk: a content draw named a primitive its geometry does not have"));
             return false;
         }
@@ -1113,14 +1113,14 @@ struct ContentCaches::Impl {
         ProgramEntry* const compiled = ensureProgram(program_description, variant, build_why);
         if (compiled == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
-                           u8"vk.content.program_refused",
+                           contentRefusalCode(ContentRefusalCause::ProgramRefused),
                            build_why.empty() ? vn::String(u8"vk: the content program could not be compiled") : std::move(build_why));
             return false;
         }
         GeometryEntry* const streams = ensureGeometry(*geometry, builds, build_why);
         if (streams == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                           u8"vk.content.geometry_refused",
+                           contentRefusalCode(ContentRefusalCause::GeometryRefused),
                            build_why.empty() ? vn::String(u8"vk: the geometry's streams could not be uploaded") : std::move(build_why));
             return false;
         }
@@ -1129,7 +1129,7 @@ struct ContentCaches::Impl {
             instances = ensureInstanceStream(*command.instance_transforms.values, build_why);
             if (instances == nullptr) {
                 refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                               u8"vk.content.instance_stream_refused",
+                               contentRefusalCode(ContentRefusalCause::InstanceStreamRefused),
                                build_why.empty() ? vn::String(u8"vk: the instance stream could not be uploaded") : std::move(build_why));
                 return false;
             }
@@ -1153,7 +1153,7 @@ struct ContentCaches::Impl {
                                               pipeline_why);
         if (plan.pipeline == VK_NULL_HANDLE) {
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
-                           u8"vk.content.pipeline_refused",
+                           contentRefusalCode(ContentRefusalCause::PipelineRefused),
                            pipeline_why.empty() ? vn::String(u8"vk: the content pipeline could not be built") : std::move(pipeline_why));
             return false;
         }
@@ -1201,7 +1201,7 @@ struct ContentCaches::Impl {
         }
         if (fragment_description == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                           u8"vk.content.screen_no_program",
+                           contentRefusalCode(ContentRefusalCause::ScreenNoProgram),
                            vn::String(u8"vk: a screen draw named no fragment program"));
             return false;
         }
@@ -1210,14 +1210,14 @@ struct ContentCaches::Impl {
         ProgramEntry* const       fragment = ensureProgram(fragment_description.get(), ProgramVariant{}, build_why);
         if (fragment == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
-                           u8"vk.content.screen_program_refused",
+                           contentRefusalCode(ContentRefusalCause::ScreenProgramRefused),
                            build_why.empty() ? vn::String(u8"vk: the screen fragment program could not be compiled") : std::move(build_why));
             return false;
         }
         ProgramEntry* const vertex = ensureProgram(screen_vertex.get(), ProgramVariant{}, build_why);
         if (vertex == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
-                           u8"vk.content.screen_program_refused",
+                           contentRefusalCode(ContentRefusalCause::ScreenProgramRefused),
                            build_why.empty() ? vn::String(u8"vk: the full-screen vertex program could not be compiled") : std::move(build_why));
             return false;
         }
@@ -1241,7 +1241,7 @@ struct ContentCaches::Impl {
                                              pipeline_why);
         if (plan.pipeline == VK_NULL_HANDLE) {
             refusal.refuse(vn::graphics::DiagnosticCategory::CompileFailed,
-                           u8"vk.content.screen_pipeline_refused",
+                           contentRefusalCode(ContentRefusalCause::ScreenPipelineRefused),
                            pipeline_why.empty() ? vn::String(u8"vk: the screen pipeline could not be built") : std::move(pipeline_why));
             return false;
         }
@@ -2091,7 +2091,7 @@ void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* con
         const VkImageView view = impl->images.viewFor(*named.texture, commands, batch, &upload_why);
         if (view == VK_NULL_HANDLE) {
             refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
-                           u8"vk.content.material_texture_skipped",
+                           contentRefusalCode(ContentRefusalCause::MaterialTextureSkipped),
                            upload_why.empty() ? vn::String(u8"vk: a material texture could not be uploaded") : std::move(upload_why));
             continue;
         }

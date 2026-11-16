@@ -41,7 +41,11 @@ REPORT_NAMES = ("reportDiagnostic", "reportEngineProblem", "noteProblem")
 # The functions that BUILD a diagnostic, so a code stated there is a use even though no report call mentions it. Keyed
 # by the names this tree has; a builder added later belongs in this tuple (the family is "takes the cause, returns or
 # fills the diagnostic", and the registry's other half still catches a code that stops being stated).
-CODE_BUILDER_NAMES = ("deviceDiagnostic", "backendDiagnostic", "targetDiagnostic", "compileProblem", "wiringProblem", "refuse")
+CODE_BUILDER_NAMES = ("deviceDiagnostic", "backendDiagnostic", "targetDiagnostic", "compileProblem", "wiringProblem", "engineProblem", "refuse")
+# Functions whose whole body IS the cause-to-code table (a switch with no `default`), so each `return u8"..."` states a
+# code. Kept apart from the builders because these return the code, not a diagnostic - but the registry's two-way rule
+# is the same one.
+CODE_TABLE_NAMES = ("contentRefusalCode",)
 CODE_ASSIGN_RE = re.compile(r'\b\w*code\w*\s*=\s*u8"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+){2,})"')
 CODES_FILE = "scripts/diagnostic_codes.txt"
 BASELINE_FILE = "scripts/diagnostic_code_baseline.txt"
@@ -192,6 +196,25 @@ def forwards_a_diagnostic(args):
     return "(" not in single and "{" not in single and '"' not in single
 
 
+def split_definition_body(text, name):
+    """Yield the BRACE body of every `name(...) ... { ... }` definition.
+
+    A code-table function is a definition whose body is the switch, so unlike a builder call its codes sit after the
+    parameter list's `)`. Finding the opening brace (past `const` / `noexcept` / a trailing return type) and scanning
+    the balanced braces is what lets the registry's two-way rule see those codes.
+    """
+    opener = re.compile(r"\b" + re.escape(name) + r"\s*\([^)]*\)[^;{}]*\{")
+    for match in opener.finditer(text):
+        index, depth = match.end(), 1
+        while index < len(text) and depth:
+            if text[index] == "{":
+                depth += 1
+            elif text[index] == "}":
+                depth -= 1
+            index += 1
+        yield text[: match.start()].count("\n") + 1, text[match.end():index]
+
+
 def check_codes(root):
     """Codes used vs codes registered, and the ratchet on reports that BUILD a diagnostic without a code."""
     findings = 0
@@ -213,6 +236,10 @@ def check_codes(root):
         # vocabulary and is not this registry's business.
         for builder in CODE_BUILDER_NAMES:
             for line, body in split_calls(text, builder):
+                for code in CODE_RE.findall(body):
+                    used.setdefault(code, []).append(f"{relative}:{line}")
+        for table in CODE_TABLE_NAMES:
+            for line, body in split_definition_body(text, table):
                 for code in CODE_RE.findall(body):
                     used.setdefault(code, []).append(f"{relative}:{line}")
         for match in CODE_ASSIGN_RE.finditer(text):

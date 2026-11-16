@@ -1,51 +1,35 @@
 #include <vine/backend_vk/internal/ContentRefusal.hpp>
 
-#include <utility>
-
 VN_BACKEND_VK_NS_BEGIN
 
-ContentRefusal::ContentRefusal() = default;
-
-void ContentRefusal::refuse(const vn::graphics::DiagnosticCategory category, const char8_t* const code, vn::String text)
+const char8_t* contentRefusalCode(const ContentRefusalCause cause) noexcept
 {
-    // THE FIRST REASON IS THE ONE THAT EXPLAINS THE DRAW: a second stage that fails as a consequence must not replace
-    // the cause that came first (the planner used to spell this rule out with `if (why.empty())` at every call site).
-    if (isRefused()) {
-        return;
+    // ONE TABLE, NO `default`: a cause added to the enum cannot reach a release without a code here - that is
+    // the compile-time half of "a refusal always names its cause" (D-22). The strings are the `vk.content.*`
+    // family in scripts/diagnostic_codes.txt and are never reworded.
+    switch (cause) {
+    case ContentRefusalCause::NoProgram: return u8"vk.content.no_program";
+    case ContentRefusalCause::ProgramRefused: return u8"vk.content.program_refused";
+    case ContentRefusalCause::ScreenNoProgram: return u8"vk.content.screen_no_program";
+    case ContentRefusalCause::ScreenProgramRefused: return u8"vk.content.screen_program_refused";
+    case ContentRefusalCause::ScreenPipelineRefused: return u8"vk.content.screen_pipeline_refused";
+    case ContentRefusalCause::ScreenNoSource: return u8"vk.content.screen_no_source";
+    case ContentRefusalCause::GeometryRefused: return u8"vk.content.geometry_refused";
+    case ContentRefusalCause::NoGeometry: return u8"vk.content.no_geometry";
+    case ContentRefusalCause::PrimitiveAbsent: return u8"vk.content.primitive_absent";
+    case ContentRefusalCause::InstanceStreamRefused: return u8"vk.content.instance_stream_refused";
+    case ContentRefusalCause::PipelineRefused: return u8"vk.content.pipeline_refused";
+    case ContentRefusalCause::MaterialTextureSkipped: return u8"vk.content.material_texture_skipped";
+    case ContentRefusalCause::StandInMissing: return u8"vk.content.stand_in_missing";
+    case ContentRefusalCause::UniformRingFull: return u8"vk.content.uniform_ring_full";
+    case ContentRefusalCause::DescriptorSetMissing: return u8"vk.content.descriptor_set_missing";
+    case ContentRefusalCause::NothingToDraw: return u8"vk.content.nothing_to_draw";
+    case ContentRefusalCause::NoRunnablePass: return u8"vk.content.no_runnable_pass";
+    case ContentRefusalCause::PlanMissing: return u8"vk.content.plan_missing";
+    case ContentRefusalCause::WrongPath: return u8"vk.content.wrong_path";
+    case ContentRefusalCause::Count: break; // the sentinel names no cause
     }
-    category_ = category;
-    code_     = code;
-    message_  = std::move(text);
-}
-
-void ContentRefusal::clear() noexcept
-{
-    category_ = vn::graphics::DiagnosticCategory::ContentSkipped;
-    code_     = nullptr;
-    message_  = vn::String();
-}
-
-bool ContentRefusal::isRefused() const noexcept
-{
-    // A CODE IS THE REFUSAL: `refuse` always states one, and the sentence beside it may be empty (a cause whose code
-    // is the whole message). "Refused" and "has a code" are therefore the same question - which is what keeps a
-    // caller from reporting a sentence with no cause.
-    return code_ != nullptr;
-}
-
-vn::graphics::DiagnosticCategory ContentRefusal::category() const noexcept
-{
-    return category_;
-}
-
-const char8_t* ContentRefusal::code() const noexcept
-{
-    return code_;
-}
-
-const vn::String& ContentRefusal::message() const noexcept
-{
-    return message_;
+    return u8"vk.content.wrong_path"; // unreachable for a valid enumerator; never a silent null
 }
 
 VN_BACKEND_VK_NS_END
