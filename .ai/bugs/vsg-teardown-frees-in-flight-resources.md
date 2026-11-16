@@ -5,7 +5,7 @@
 > **结论**：vsg 后端的**资源寿命与其提交不同步**——三处释放发生在 GPU/驱动线程仍在读之后，全部已修（见 §4）；
 > 内存检查器在修复后对同一批套件报告 0 处 `Invalid read`。
 > **权威来源**：`src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp`（拆机顺序）、`OffscreenSession.cpp` 与
-> `Session.cpp`（帧图换代）、`include/vine/backend_vsg/internal/GraphLifetime.hpp`（keep-alive）；内存检查器的原始栈在
+> `Session.cpp`（帧图换代；现名 `WindowSession.cpp`） <!-- drift-ok -->、`include/vine/backend_vsg/internal/GraphLifetime.hpp`（keep-alive）；内存检查器的原始栈在
 > 本文 §2。
 
 ## 1. 症状

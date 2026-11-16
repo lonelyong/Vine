@@ -54,7 +54,7 @@
 | 层 | 位置 | 内容 |
 |---|---|---|
 | SDK 后端契约 | `src/viz/graphics/sdk/vine/graphics/backend/` | `FrameRecorder` / `FrameCompiler` / `Keys` / `TargetPlan` / `ClearPlan` / `VariantPool` / `StateRegistry` / `RetirementQueue` / `FrameTimeline` / `FrameArena` / `FrameRing` / `MaterialArena` / `Streams` / `SlotProbe` / `Observe` / 证据夹具 |
-| 插件内部 | `src/plugins/gfx_backend_vsg/src/internal/` | `VsgBackend`（门面）/ `api::Device` / `api::Session` / `WindowTarget` / `OffscreenSession` / `OffscreenTarget` / `HostTargets` / `VsgExecutor` / `ContentStore` / `StreamUploads` / `ContentPipeline` / `ContentDraw` / `BlockStorage` / `BlockDescriptors` / `StateCommands` / `MaterialImages` |
+| 插件内部 | `src/plugins/gfx_backend_vsg/src/internal/` | `VsgBackend`（门面）/ `api::Device` / `api::WindowSession` / `WindowTarget` / `OffscreenSession` / `OffscreenTarget` / `HostTargets` / `VsgExecutor` / `ContentStore` / `StreamUploads` / `ContentPipeline` / `ContentDraw` / `BlockStorage` / `BlockDescriptors` / `StateCommands` / `MaterialImages` |
 | 插件支撑 | `src/plugins/gfx_backend_vsg/src/support/` | `VsgHostWindow` / `RenderStateMapper` / `VsgDynamicState` / `VsgSceneRules` / 入口点 |
 | 插件外壳 | `src/plugins/gfx_backend_vsg/src/shell/` | 插件注册、`RenderBackendFactory` |
 
@@ -139,7 +139,7 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 | 对象 | 回答的问题 |
 |---|---|
 | `VsgBackend` | `RenderBackend` / `RenderDevice` / `RenderFrameExecutor` 的门面；持有 Impl |
-| `api::Session` / `WindowTarget` | 窗口、交换链、槽位、present |
+| `api::WindowSession` / `WindowTarget` | 窗口、交换链、槽位、present |
 | `api::OffscreenSession` | 无窗口的帧源；headless 设备的 device-wide work |
 | `HostTargets` | 宿主声明的离屏目标；描述拷贝、对象懒建、resize/借深度的拒绝 |
 | `VsgExecutor` | 按 `CompiledFrame` 的顺序把 pass 录进 render graph |

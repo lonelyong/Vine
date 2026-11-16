@@ -148,6 +148,16 @@ commit(cmd, target)                // 1 次设备锁：提交、present、帧账
   （vk 也预建，补 CAP-86），不退役动词。
 - **阶段一（审核）**：完成（`.ai/research/graphics-2026-11-16-redesign.md` §2–§5）。
 - **阶段二（目标设计 + 本 ADR）**：完成并批准。
+- **批次 0（characterization）+ 批次 10（规范清扫）已落地（2026-11-16）**：CAP-44 / CAP-45 / CAP-86 的三条新用例；
+  四条规范文字（字段一行 `///`、禁止 section comment、枚举底层类型、数值类型与访问器/命令、所有权词汇表）与 26 处
+  section comment 的清扫。证据：`test_vk` 140、`test_vsg` 564 全绿，九道门禁零新增。
+- **批次 1（词汇与身份）已落地（2026-11-16）**：`backend::FrameDriverId`（u32）成为帧驱动者身份的唯一定义，
+  `TargetClaims::SessionId`（u32）与 `ResidenceTable::SessionId`（u64）合并进它（后者收窄到 u32，全仓无 64 位来源）；
+  vsg `api::Session` → `api::WindowSession`（文件、include、`tests/test_vsg/CMakeLists.txt` 清单、`SessionOptions` →
+  `WindowSessionOptions`）；vk `Device::Session` → `Device::FrameDriver`；`DeviceClock::WindowId` 留一版 `@deprecated`
+  别名。**纯改名，零行为**：三套用例的名字一个没动（它们是指纹），`VkMultiSessionTest.TwoDriversShadeWithTheirOwnDefaultProgram` /
+  `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram` / `HeadlessBackendTest.OneDeviceServesSeveralAreasWithoutCrossingThem`
+  改名后仍绿；`DeviceClock` 的**动词**仍是 `addWindow` / `windowCompleted`（只改类型，动词留给下一个批次决定）。
 - **阶段三（迁移）**：**实施中**。批次表与顺序以 `../research/graphics-2026-11-16-redesign-r2.md` §10 为准；
   每批一个可回滚提交，每批结束在提交正文列出"哪些能力 ID 从旧证据切到新证据"——git 是批次进度的档案，
   本文只记状态。

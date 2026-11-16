@@ -37,7 +37,7 @@ class TransferTask;
  *   clock and the park queue are.
  * - WHAT IT DOES NOT DO. It never presents: `framesPresented()` is always 0, and the only call that ends a frame is
  *   commitFrame(). It also has no surface to keep, so initialize() is idempotent rather than following the windowed
- *   session's keep/move/rebuild table (Session::wouldKeep does not apply here).
+ *   session's keep/move/rebuild table (WindowSession::wouldKeep does not apply here).
  * - COMPLETION IS EVIDENCE, NOT A GUESS, exactly as in the windowed session: committing frame F proves that every
  *   frame up to F - slots is finished, because the framework waits a slot's fence before re-recording it. The
  *   session registers itself on the DEVICE's clock (core::DeviceClock::addWindow) and reports that one frame's
@@ -219,7 +219,7 @@ class OffscreenSession {
     /** @brief Gives this session's upload staging back, as much of it as is provably free (see detail::releaseStaging).
      *
      * @details
-     * - The windowless twin of `api::Session::releaseUploadStaging`, and the SAME body: one mechanism, so the
+     * - The windowless twin of `api::WindowSession::releaseUploadStaging`, and the SAME body: one mechanism, so the
      *   backend can ask either session kind with one call.
      * - It does not stop the device: a staging buffer is the source of one `vkCmdCopyBuffer`, so that copy's own fence is
      *   the proof it may go. Nothing is parked and no device idle is taken.

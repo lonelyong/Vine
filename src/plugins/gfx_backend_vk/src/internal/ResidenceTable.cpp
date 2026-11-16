@@ -76,7 +76,7 @@ ResidenceTable::~ResidenceTable()
     clear();
 }
 
-ResidenceTable::Decision ResidenceTable::admit(const Key key, const SessionId session)
+ResidenceTable::Decision ResidenceTable::admit(const Key key, const FrameDriverId session)
 {
     const std::lock_guard<std::mutex> guard(lock_);
 

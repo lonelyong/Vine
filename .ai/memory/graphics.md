@@ -200,7 +200,7 @@
   设备级设置（`setDefaultContentProgram` / `releaseRenderTarget`）对**每个**会话的 scratch 生效，开帧时再补一次默认程序。
   **抓到的坑**：默认程序原先只写进设备唯一的 recorder——会话在设定之后才起来（或又一次 initialize）时它的 recorder 没听过，
   画面报 "the content layer was never told about this identity"。修法 = 开帧选 scratch 时补一次指针拷贝
-  （`Data::default_program_text` 缓存文本，避免逐帧重建 description）。`VsgExecutor.hpp` 不再 include `Session.hpp`
+  （`Data::default_program_text` 缓存文本，避免逐帧重建 description）。`VsgExecutor.hpp` 不再 include `Session.hpp` <!-- drift-ok -->
   （执行器只要按引用；断掉 FrameScratch→Executor→Session 的环）。验证：`test_vsg` 557/557、`BackendParityTest` 13/13、
   `test_graphics` 587、`test_vk` 133；TSan 子集 0 报告；ASan 全量的 736 B/10 处泄漏 **A/B 证明旧提交同样存在**（测试自己
   `Buffer` 的泄漏，与本次无关）。**剩余 S8b**：`VsgExecutor` 的帧状态（`window_` / `window_recorded_` / `recorded_` /

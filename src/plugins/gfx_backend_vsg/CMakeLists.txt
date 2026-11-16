@@ -59,7 +59,7 @@ if(VN_USE_FETCHCONTENT)
     # shape (a view brings its own control - see appfw-document-model.md §9), so the cap is reached by
     # opening one more area than the build allows, and the backend answers THAT by refusing the attach with a
     # reason instead of letting vsg's exception leave the event loop (gfx_backend_vsg/src/internal/Device.cpp
-    # + Session.cpp, pinned by test_vsg's
+    # + WindowSession.cpp, pinned by test_vsg's
     # VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException).
     set(VSG_MAX_DEVICES 4 CACHE STRING "" FORCE)
     FetchContent_MakeAvailable(vsg)

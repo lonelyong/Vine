@@ -38,7 +38,7 @@
 #include <vine/backend_vsg/internal/MaterialImages.hpp>
 #include <vine/backend_vsg/internal/OffscreenSession.hpp>
 #include <vine/backend_vsg/internal/PassRegistry.hpp>
-#include <vine/backend_vsg/internal/Session.hpp>
+#include <vine/backend_vsg/internal/WindowSession.hpp>
 #include <vine/backend_vsg/internal/SessionContent.hpp>
 #include <vine/backend_vsg/internal/TransferStaging.hpp>
 #include <vine/backend_vsg/internal/ViewBlock.hpp>
@@ -118,7 +118,7 @@ struct FrameInFlight {
     VsgExecutor*           executor{ nullptr };  // The driver whose frame is open on this thread.
     FrameScratch*          scratch{ nullptr };   // The driving session's scratch (its plan is the frame's).
     std::size_t            driving{ kNoWindow }; // The window index the frame drives, or kNoWindow.
-    api::Session*          window{ nullptr };    // The window's session, or null for the off-screen form.
+    api::WindowSession*    window{ nullptr };    // The window's session, or null for the off-screen form.
     api::OffscreenSession* offscreen{ nullptr }; // The off-screen session, or null for the window form.
 };
 
@@ -599,7 +599,7 @@ struct VsgBackend::Data {
      */
     struct WindowSlot {
         void*                         host_handle{ nullptr };
-        std::unique_ptr<api::Session> session;
+        std::unique_ptr<api::WindowSession> session;
         /// The object the SDK sees. Set for EVERY window, the first included: the device hands out what presents and
         /// is not one of them (see the header), and one identity per window is what keeps "which window is this frame
         /// for" answerable by a pointer compare.
@@ -641,7 +641,7 @@ struct VsgBackend::Data {
     std::recursive_mutex episodes{};
     /// THE DEVICE'S completion clock and park queue, shared by every window (see core::DeviceClock): whether a buffer
     /// or a pipeline may be destroyed is a question about the whole device, because the windows draw with the same
-    /// objects. A session driven on its own keeps its own pair (see api::SessionOptions).
+    /// objects. A session driven on its own keeps its own pair (see api::WindowSessionOptions).
     core::DeviceClock     clock;
     core::RetirementQueue retirement{ 0 };
     /// The device itself, held here rather than only inside the windows: it outlives every window (the content world
@@ -775,7 +775,7 @@ bool VsgBackend::initialize()
         for (std::size_t index = 0; index < d->windows.size(); ++index) {
             Data::WindowSlot& window = *d->windows[index];
 
-            api::SessionOptions options;
+            api::WindowSessionOptions options;
             options.width         = d->announced_width;
             options.height        = d->announced_height;
             options.validation    = validation;
@@ -794,7 +794,7 @@ bool VsgBackend::initialize()
 
             // A KEEP IS NOT A REPLACEMENT: this window is on the surface it is already on, so its device, its
             // swapchain and every compiled pipeline survive, and the content world below stays with them (the
-            // session's own decision table is what answers this, see Session::wouldKeep).
+            // session's own decision table is what answers this, see WindowSession::wouldKeep).
             if (window.session->wouldKeep(options)) {
                 continue;
             }
@@ -869,7 +869,7 @@ void VsgBackend::ensureWindowAt(std::size_t index)
 {
     while (d->windows.size() <= index) {
         auto window     = std::make_unique<Data::WindowSlot>();
-        window->session = std::make_unique<api::Session>();
+        window->session = std::make_unique<api::WindowSession>();
         // EVERY window gets its own target object, including the first: the device holds and hands out what presents
         // (see the header), and it is not one of them - one shape for N windows, and "which window is this frame
         // for" stays a pointer compare.
@@ -878,7 +878,7 @@ void VsgBackend::ensureWindowAt(std::size_t index)
     }
 }
 
-api::Session& VsgBackend::sessionAt(std::size_t index)
+api::WindowSession& VsgBackend::sessionAt(std::size_t index)
 {
     ensureWindowAt(index);
     return *d->windows[index]->session;
@@ -928,7 +928,7 @@ void VsgBackend::releaseContentWorld() noexcept
     // right after a frame that had switched to a newly compiled program or topology produced four
     // VUID-vkDestroyPipeline-pipeline-00765 messages (see the per-frame cost recipe in test_vsg/VsgBackendTest,
     // which is the case that creates a pipeline after frames have started). The waits are COUNTED because "the frame
-    // path never idles the device" has to stay checkable - see Session::deviceWaits and RetentionStats::device_waits.
+    // path never idles the device" has to stay checkable - see WindowSession::deviceWaits and RetentionStats::device_waits.
     for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
         detail::SessionContentAccess::waitDeviceIdle(*window->session);
     }
@@ -1406,7 +1406,7 @@ vn::graphics::PresentOutcome VsgBackend::executeFrameFor(VsgExecutor& executor,
         // The window this frame belongs to: the executor's default-framebuffer target is ITS, and the frame's tail
         // finds the same drive state back through the thread-local (see presentWindow).
         drive.driving         = index;
-        api::Session& session = sessionAt(index);
+        api::WindowSession& session = sessionAt(index);
         if (!session.initialized()) {
             reportUnserved(kUnservedNoSession);
             // Nothing runs and nothing presents: the session that would record it is not up, so the picture did not
@@ -1740,7 +1740,7 @@ void VsgBackend::resetFrameScratch() noexcept
     }
 }
 
-vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(VsgExecutor& executor, api::Session* window, api::OffscreenSession* offscreen)
+vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(VsgExecutor& executor, api::WindowSession* window, api::OffscreenSession* offscreen)
 {
     if (window == nullptr && offscreen == nullptr) {
         return vn::graphics::PresentOutcome::Skipped;
@@ -1985,7 +1985,7 @@ void VsgBackend::resizeWindow(std::size_t index, int width, int height)
     // excludes, and the gate's exclusive side already excludes every body - this is the same fact stated once more,
     // for the frame that is prepared/executed on this window by THIS thread (the host leased, so none is).
     std::lock_guard<std::mutex> claim(d->windows[index]->frame);
-    api::Session& session = sessionAt(index);
+    api::WindowSession& session = sessionAt(index);
     if (session.initialized()) {
         // THE SURFACE OWNS ITS SIZE (PresentTarget::resize's authority order: surface > announcement >
         // default), so a live announcement is served by FOLLOWING the surface: the session re-reads the one
@@ -2096,7 +2096,7 @@ vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
     const core::FrameTimeline& timeline = d->clock.timeline();
 
     // PRESENTED is the window half's own count: every frame a window's session committed was handed to the platform's
-    // present call (see api::Session::framesPresented - the off-screen carrier presents nothing and answers 0). The
+    // present call (see api::WindowSession::framesPresented - the off-screen carrier presents nothing and answers 0). The
     // sum is kept MONOTONIC: a window that leaves stops being counted, and a host-visible watermark must not go
     // backwards (see FrameProgress).
     std::uint64_t presented = 0;

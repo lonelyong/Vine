@@ -39,7 +39,7 @@ struct OffscreenSession::Impl {
     /// core::DeviceClock): the borrowed pair then REPLACES the two above, which stay unused.
     core::DeviceClock*          clock{ nullptr };
     core::RetirementQueue*      shared_retirement{ nullptr };
-    core::DeviceClock::WindowId clock_window{ 0 };
+    core::FrameDriverId         clock_window{ 0 };
     bool                        clock_window_live{ false };
     vn::graphics::Diagnostics*  diagnostics{ nullptr }; // Where the session's reasons go (borrowed).
     /// THIS SESSION'S FRAME SCRATCH (see FrameScratch): the arena and the plan of the frame it drives. Host memory

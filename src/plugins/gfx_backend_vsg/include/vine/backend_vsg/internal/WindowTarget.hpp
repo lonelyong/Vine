@@ -146,7 +146,7 @@ class VN_BACKEND_VSG_API WindowTarget {
      *
      * The ONE event this answers is the platform having rebuilt the surface with another format (see
      * VsgHostWindow::moveToHostSurface, which refuses a different presentation format for a live session,
-     * and Session::initialize, which rebuilds the session instead): the render pass this window's pipelines
+     * and WindowSession::initialize, which rebuilds the session instead): the render pass this window's pipelines
      * are compiled against is the swapchain's, so such a change has to be RE-READ rather than assumed - a
      * target still serving a stale shape would hand those pipelines a render pass they were not compiled
      * for. Nothing is adopted from a caller's claim: the only writer of this target's shape is the platform.

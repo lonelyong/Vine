@@ -6,6 +6,8 @@
 #include <mutex>
 #include <unordered_map>
 
+#include <vine/graphics/backend/DeviceClock.hpp>
+
 VN_BACKEND_VK_NS_BEGIN
 
 /**
@@ -54,8 +56,8 @@ class VN_BACKEND_VK_API ResidenceTable final {
     /// @brief Identity of one resident thing: the address of a description (which carries its own revision).
     using Key = const void*;
 
-    /// @brief Who is building or using an entry (a frame driver's id; `DeviceClock::WindowId` today).
-    using SessionId = std::uint64_t;
+    /// @brief Who is building or using an entry: a frame driver's id, as the DEVICE's clock mints it.
+    using FrameDriverId = vn::graphics::backend::FrameDriverId;
 
     /// @brief What the table knows about a key.
     enum class State : std::uint8_t
@@ -125,9 +127,9 @@ class VN_BACKEND_VK_API ResidenceTable final {
             Copy,  ///< Somebody else is `Uploading`: build a temporary copy for this frame and discard it.
         };
 
-        Kind      kind{ Kind::Use };
-        SessionId owner{ 0 };  ///< `Copy`: the driver filling the entry (for the report that names it).
-        Claim     claim{};     ///< `Build`: the ticket to publish or withdraw.
+        Kind        kind{ Kind::Use };
+        FrameDriverId owner{ 0 }; ///< `Copy`: the driver filling the entry (for the report that names it).
+        Claim         claim{};    ///< `Build`: the ticket to publish or withdraw.
     };
 
     /**
@@ -175,7 +177,7 @@ class VN_BACKEND_VK_API ResidenceTable final {
      * @param session Who is asking (a frame driver's id).
      * @return The decision; `Decision::claim` is engaged only for `Build`.
      */
-    [[nodiscard]] Decision admit(Key key, SessionId session);
+    [[nodiscard]] Decision admit(Key key, FrameDriverId session);
 
     /** @brief Gets what the table knows about @p key right now (a diagnostic view, not a reservation). */
     [[nodiscard]] State stateOf(Key key) const;
@@ -205,7 +207,7 @@ class VN_BACKEND_VK_API ResidenceTable final {
     /// @brief What one live key remembers: its state, the driver building it and that claim's token.
     struct Entry {
         State         state{ State::Absent };
-        SessionId     owner{ 0 };
+        FrameDriverId owner{ 0 };
         std::uint64_t token{ 0 };
     };
 

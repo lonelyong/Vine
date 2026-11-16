@@ -96,7 +96,7 @@ namespace api
 {
 
 class OffscreenSession;
-class Session;
+class WindowSession;
 
 } // namespace api
 
@@ -496,7 +496,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      *                  (exactly one of the two is non-null).
      * @return What the frame did (see PresentOutcome).
      */
-    vn::graphics::PresentOutcome commitFrameThrough(VsgExecutor& executor, api::Session* window, api::OffscreenSession* offscreen);
+    vn::graphics::PresentOutcome commitFrameThrough(VsgExecutor& executor, api::WindowSession* window, api::OffscreenSession* offscreen);
 
     /** @brief Runs @p frame through @p executor: the body the device's own driver and every handed-out one share.
      *
@@ -596,7 +596,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      * @param index Window index.
      * @return The session (never null; see core::DeviceClock for what it shares when it is not alone).
      */
-    [[nodiscard]] api::Session& sessionAt(std::size_t index);
+    [[nodiscard]] api::WindowSession& sessionAt(std::size_t index);
 
     /** @brief Brings up (lazily) the session a frame naming NO window runs through, or answers null.
      *

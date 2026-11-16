@@ -30,7 +30,7 @@
 #include <vine/graphics/backend/SlotProbe.hpp>
 #include <vine/backend_vsg/internal/DeviceProbe.hpp>
 #include <vine/backend_vsg/internal/OffscreenTarget.hpp>
-#include <vine/backend_vsg/internal/Session.hpp>
+#include <vine/backend_vsg/internal/WindowSession.hpp>
 #include <vine/backend_vsg/internal/SessionContent.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>
 
@@ -55,8 +55,8 @@ using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::TargetShape;
 using vn::backend_vsg::OffscreenTarget;
 using vn::backend_vsg::VsgExecutor;
-using vn::backend_vsg::api::Session;
-using vn::backend_vsg::api::SessionOptions;
+using vn::backend_vsg::api::WindowSession;
+using vn::backend_vsg::api::WindowSessionOptions;
 
 namespace
 {
@@ -115,15 +115,15 @@ TEST(SessionTest, ASecondSessionRendersOnTheDeviceTheFirstOneCreated)
     std::vector<vn::graphics::RenderDiagnostic> reported;
     diagnostics.setSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
 
-    Session first;
-    ASSERT_TRUE(first.initialize(SessionOptions{}, diagnostics));
+    WindowSession first;
+    ASSERT_TRUE(first.initialize(WindowSessionOptions{}, diagnostics));
     const ::vsg::ref_ptr<::vsg::Device> device = vn::backend_vsg::detail::SessionContentAccess::device(first);
     ASSERT_NE(device, nullptr);
 
     // The second session ADOPTS the first one's device: its window brings nothing but a surface and a swapchain.
-    SessionOptions shared_options;
+    WindowSessionOptions shared_options;
     shared_options.device = device.get();
-    Session second;
+    WindowSession second;
     ASSERT_TRUE(second.initialize(shared_options, diagnostics));
     EXPECT_TRUE(vn::backend_vsg::detail::SessionContentAccess::device(second) == device) << "the second session renders on the device the first one created";
     EXPECT_TRUE(vn::backend_vsg::detail::SessionContentAccess::windowTarget(second) != vn::backend_vsg::detail::SessionContentAccess::windowTarget(first))
@@ -154,8 +154,8 @@ TEST(SessionTest, EmptyFramesAreCommittedAndAParkedObjectWaitsForTheCompletionEv
                     static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
-    Session session;
-    ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+    WindowSession session;
+    ASSERT_TRUE(session.initialize(WindowSessionOptions{}, diagnostics));
     EXPECT_TRUE(session.initialized());
     EXPECT_EQ(session.slots(), 0U) << "nothing may be assumed before the count is learned";
     EXPECT_FALSE(session.retirement().parkingAvailable()) << "a session does not park on an assumed window: the count is learned, not guessed";
@@ -223,9 +223,9 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    Diagnostics diagnostics;
-    Session     session;
-    ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+    Diagnostics     diagnostics;
+    WindowSession   session;
+    ASSERT_TRUE(session.initialize(WindowSessionOptions{}, diagnostics));
 
     // Two off-screen targets, one colour each - so WHICH graph the session submitted is readable: each frame
     // hands over its own graph (one per frame, see makeFrameGraph) and writes one of them with its own clear.
@@ -366,8 +366,8 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     // Frame 1: the happy path, on a session of its own - committed through the drive, and the pixels are the
     // evidence that the off-screen pass really reached the device through the session's submission.
     {
-        Session session;
-        ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+        WindowSession session;
+        ASSERT_TRUE(session.initialize(WindowSessionOptions{}, diagnostics));
 
         // The frame drive of the window path: one executor that holds the window and the off-screen target,
         // so every target the plan can resolve to is one it knows.
@@ -449,8 +449,8 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     // Frames 2 and 3: a session of its own again, because a lost frame leaves the swapchain holding an image
     // it never presented (see the case above) - which is exactly the state a host rebuilds the session from,
     // not one it keeps driving.
-    Session session;
-    ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+    WindowSession session;
+    ASSERT_TRUE(session.initialize(WindowSessionOptions{}, diagnostics));
     const ::vsg::ref_ptr<::vsg::Device> device = vn::backend_vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(device, nullptr);
     auto target = OffscreenTarget::create(device,
@@ -608,9 +608,9 @@ TEST(SessionTest, AWindowPlanThatGotTheFormatWrongIsNotRecorded)
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    Diagnostics diagnostics;
-    Session     session;
-    ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+    Diagnostics   diagnostics;
+    WindowSession session;
+    ASSERT_TRUE(session.initialize(WindowSessionOptions{}, diagnostics));
 
     vn::backend_vsg::WindowTarget* window = vn::backend_vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window, nullptr);
@@ -688,9 +688,9 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }
 
-    Diagnostics diagnostics;
-    Session     session;
-    ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+    Diagnostics   diagnostics;
+    WindowSession session;
+    ASSERT_TRUE(session.initialize(WindowSessionOptions{}, diagnostics));
 
     vn::backend_vsg::WindowTarget* window = vn::backend_vsg::detail::SessionContentAccess::windowTarget(session);
     ASSERT_NE(window, nullptr);
@@ -810,8 +810,8 @@ TEST(SessionTest, ACommitWhoseSubmissionFailsSaysSoAndTheFrameIsStillOver)
     }
 
     vn::graphics::Diagnostics diagnostics;
-    Session                   session;
-    ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+    WindowSession             session;
+    ASSERT_TRUE(session.initialize(WindowSessionOptions{}, diagnostics));
 
     // The session's own frame graph, with a node that fails the submission's record step on command: a
     // queue submit the driver refuses cannot be summoned on lavapipe, and vsg's own failure vocabulary for
@@ -853,7 +853,7 @@ TEST(SessionTest, ACommitWhoseSubmissionFailsSaysSoAndTheFrameIsStillOver)
     failing->armed = false;
     failing        = {};
     graph.reset();
-    ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+    ASSERT_TRUE(session.initialize(WindowSessionOptions{}, diagnostics));
     ASSERT_TRUE(session.beginFrame());
     EXPECT_TRUE(session.commitFrame()) << "a session that came up again submits and presents";
     EXPECT_EQ(session.framesPresented(), 1U);
@@ -875,7 +875,7 @@ TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevi
                     static_cast<int>(diagnostic.category),
                     as_bytes(diagnostic.message).c_str());
     });
-    const auto frame = [](Session& session) {
+    const auto frame = [](WindowSession& session) {
         EXPECT_TRUE(session.beginFrame());
         EXPECT_TRUE(session.commitFrame());
     };
@@ -883,13 +883,13 @@ TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevi
     // OFF (the default): nothing is measured, and a read says so instead of reporting zeros that would look
     // like a frame that cost nothing.
     {
-        Session session;
-        ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+        WindowSession session;
+        ASSERT_TRUE(session.initialize(WindowSessionOptions{}, diagnostics));
         EXPECT_FALSE(session.profiling());
         for (int index = 0; index < 4; ++index) {
             frame(session);
         }
-        const Session::GpuProfile profile = session.gpuProfile();
+        const WindowSession::GpuProfile profile = session.gpuProfile();
         EXPECT_FALSE(profile.enabled);
         EXPECT_FALSE(profile.readable);
         EXPECT_TRUE(profile.passes.empty());
@@ -900,8 +900,8 @@ TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevi
     // rest of the process - and the next session - sees what it saw before).
     setEnvironmentFlag("VN_VSG_PROFILE", true);
     {
-        Session session;
-        ASSERT_TRUE(session.initialize(SessionOptions{}, diagnostics));
+        WindowSession session;
+        ASSERT_TRUE(session.initialize(WindowSessionOptions{}, diagnostics));
         EXPECT_TRUE(session.profiling());
 
         // Frames first, then the read: the profiler's log only holds frames whose timestamps are back.
@@ -909,8 +909,8 @@ TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevi
             frame(session);
         }
 
-        const std::size_t         waits_before = session.deviceWaits();
-        const Session::GpuProfile profile      = session.gpuProfile();
+        const std::size_t               waits_before = session.deviceWaits();
+        const WindowSession::GpuProfile profile      = session.gpuProfile();
         EXPECT_EQ(session.deviceWaits(), waits_before) << "reading the profile must not stop the device: zero frames of lag would mean a blocking read";
 
         EXPECT_TRUE(profile.enabled);
@@ -925,7 +925,7 @@ TEST(SessionTest, TheProfileIsTheEnvironmentsSwitchAndReadingItNeverStopsTheDevi
             // nothing here is wrapped (the executor wraps passes, and this session has none), so the frame
             // interval is what a lone session can report.
             EXPECT_GE(profile.frame_gpu_ms, 0.0);
-            for (const Session::GpuSample& sample : profile.passes) {
+            for (const WindowSession::GpuSample& sample : profile.passes) {
                 EXPECT_NE(sample.key, nullptr) << "a sample without a key cannot be attributed at all";
                 EXPECT_GE(sample.gpu_ms, 0.0);
             }

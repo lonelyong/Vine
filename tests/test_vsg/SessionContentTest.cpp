@@ -53,7 +53,7 @@
 #include <vine/backend_vsg/internal/DeviceProbe.hpp>
 #include <vine/backend_vsg/internal/GeometryFacts.hpp>
 #include <vine/backend_vsg/internal/OffscreenTarget.hpp>
-#include <vine/backend_vsg/internal/Session.hpp>
+#include <vine/backend_vsg/internal/WindowSession.hpp>
 #include <vine/backend_vsg/internal/SessionContent.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 #include <vine/backend_vsg/internal/ViewBlock.hpp>
@@ -132,8 +132,8 @@ using vn::backend_vsg::ViewportRect;
 using vn::backend_vsg::VsgExecutor;
 using vn::backend_vsg::WindowTarget;
 using vn::backend_vsg::api::probePhysicalDevices;
-using vn::backend_vsg::api::Session;
-using vn::backend_vsg::api::SessionOptions;
+using vn::backend_vsg::api::WindowSession;
+using vn::backend_vsg::api::WindowSessionOptions;
 
 #if !defined(_WIN32)
 
@@ -227,8 +227,8 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
                     static_cast<int>(diagnostic.category),
                     std::string(reinterpret_cast<const char*>(diagnostic.message.data()), diagnostic.message.size()).c_str());
     });
-    Session        session;
-    SessionOptions options;
+    WindowSession        session;
+    WindowSessionOptions options;
     options.width         = kWidth;
     options.height        = kHeight;
     options.native_handle = window.handle();
@@ -379,8 +379,8 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
                     static_cast<int>(diagnostic.category),
                     std::string(reinterpret_cast<const char*>(diagnostic.message.data()), diagnostic.message.size()).c_str());
     });
-    Session        session;
-    SessionOptions options;
+    WindowSession        session;
+    WindowSessionOptions options;
     options.width         = kWidth;
     options.height        = kHeight;
     options.native_handle = window.handle();

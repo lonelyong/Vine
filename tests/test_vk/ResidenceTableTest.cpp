@@ -28,8 +28,8 @@ namespace
 using vn::backend_vk::ResidenceTable;
 
 /// Two driver ids stand in for two sessions: the table only ever compares them.
-constexpr ResidenceTable::SessionId kFirst  = 11U;
-constexpr ResidenceTable::SessionId kSecond = 22U;
+constexpr ResidenceTable::FrameDriverId kFirst  = 11U;
+constexpr ResidenceTable::FrameDriverId kSecond = 22U;
 
 } // namespace
 
@@ -218,7 +218,7 @@ TEST(ResidenceTableTest, OnlyOneOfManyRacingDriversWinsTheKey)
     for (int index = 0; index < kDrivers; ++index) {
         drivers.emplace_back([&table, &content, &decisions, &arrived, &published, index]() {
             decisions[static_cast<std::size_t>(index)].emplace(
-                table.admit(&content, static_cast<ResidenceTable::SessionId>(index + 1U)));
+                table.admit(&content, static_cast<ResidenceTable::FrameDriverId>(index + 1U)));
             arrived.fetch_add(1);
             while (!published.load()) {
                 std::this_thread::yield();

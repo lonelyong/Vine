@@ -1,4 +1,4 @@
-#include <vine/backend_vsg/internal/Session.hpp>
+#include <vine/backend_vsg/internal/WindowSession.hpp>
 
 #include <vine/backend_vsg/internal/GraphLifetime.hpp>
 
@@ -56,7 +56,7 @@ unsigned int envLevel(const char* name, unsigned int fallback)
 
 } // namespace
 
-struct Session::Impl {
+struct WindowSession::Impl {
     /// The graphs this session stopped recording but a pipelined submission may still read (see detail::GraphLifetime).
     detail::GraphLifetime retired_graphs;
     core::FrameTimeline   timeline;        // One clock for the session (see the class note).
@@ -65,7 +65,7 @@ struct Session::Impl {
     /// core::DeviceClock): the borrowed pair then REPLACES the two above, which stay unused.
     core::DeviceClock*          clock{ nullptr };
     core::RetirementQueue*      shared_retirement{ nullptr };
-    core::DeviceClock::WindowId clock_window{ 0 };
+    core::FrameDriverId         clock_window{ 0 };
     bool                        clock_window_live{ false };
     vn::graphics::Diagnostics*  diagnostics{ nullptr }; // Where the session's reasons go (borrowed).
     /// THIS SESSION'S FRAME SCRATCH (see FrameScratch): the arena and the plan of the frame it drives. Host memory
@@ -74,7 +74,7 @@ struct Session::Impl {
     /// created outside a backend).
     std::unique_ptr<FrameScratch> scratch;
     std::unique_ptr<core::Observe> own_observe;
-    /// The device profiler, when the switch asked for one (see Session::profiling): the executor wraps the
+    /// The device profiler, when the switch asked for one (see WindowSession::profiling): the executor wraps the
     /// passes, this owns the query pool and the log they are read from.
     ::vsg::ref_ptr<::vsg::Profiler> profiler;
     ::vsg::ref_ptr<::vsg::Window>   window;
@@ -87,12 +87,12 @@ struct Session::Impl {
     core::SlotTracker               slot_tracker;            // Folds per-frame probes until the count stops growing.
     std::uint64_t                   frames_presented{ 0 };
     std::uint64_t                   lost_frames{ 0 }; // Commits whose submission did not happen (see commitFrame).
-    // The frame clock the view block reads (see Session::frameSeconds): the session's own start is the zero
+    // The frame clock the view block reads (see WindowSession::frameSeconds): the session's own start is the zero
     // of the time line, and the value is re-sampled once per opened frame.
     std::chrono::steady_clock::time_point started_at{};
     float                                 frame_seconds{ 0.0F };
     bool                                  ready{ false };
-    // Statistics about how this Session object brought sessions up. NOT reset by shutdown(): they answer
+    // Statistics about how this WindowSession object brought sessions up. NOT reset by shutdown(): they answer
     // "what did this host's announcements cost", which a teardown does not change.
     std::uint64_t moves{ 0 };
     std::uint64_t rebuilds{ 0 };
@@ -100,16 +100,16 @@ struct Session::Impl {
     std::uint64_t generation{ 0 };
 };
 
-Session::Session()
+WindowSession::WindowSession()
   : impl(std::make_unique<Impl>())
 {}
 
-Session::~Session()
+WindowSession::~WindowSession()
 {
     shutdown();
 }
 
-bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostics& diagnostics)
+bool WindowSession::initialize(const WindowSessionOptions& options, vn::graphics::Diagnostics& diagnostics)
 {
     impl->diagnostics = &diagnostics;
 
@@ -309,7 +309,7 @@ bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostic
     }
 }
 
-void Session::shutdown() noexcept
+void WindowSession::shutdown() noexcept
 {
     if (!impl) {
         return;
@@ -345,12 +345,12 @@ void Session::shutdown() noexcept
     impl->shared_retirement = nullptr;
 }
 
-bool Session::initialized() const noexcept
+bool WindowSession::initialized() const noexcept
 {
     return impl && impl->ready;
 }
 
-bool Session::wouldKeep(const SessionOptions& options) const noexcept
+bool WindowSession::wouldKeep(const WindowSessionOptions& options) const noexcept
 {
     if (impl == nullptr) {
         return false;
@@ -365,7 +365,7 @@ bool Session::wouldKeep(const SessionOptions& options) const noexcept
     return core::planSessionMove(facts).action == core::MoveAction::Keep;
 }
 
-core::FrameToken Session::beginFrame()
+core::FrameToken WindowSession::beginFrame()
 {
     if (!impl || !impl->ready) {
         return {};
@@ -389,7 +389,7 @@ core::FrameToken Session::beginFrame()
     return timeline().begin();
 }
 
-void Session::probeSlots()
+void WindowSession::probeSlots()
 {
     const auto outcome = core::probeSlotCount([this](std::uint32_t index) {
         return !impl->viewer->recordAndSubmitTasks.empty() && impl->viewer->recordAndSubmitTasks.front()->fence(index) != nullptr;
@@ -424,7 +424,7 @@ void Session::probeSlots()
                                                    std::to_string(impl->slot_tracker.framesObserved()) + " frames)"));
 }
 
-bool Session::commitFrame()
+bool WindowSession::commitFrame()
 {
     if (!impl || !impl->ready) {
         return false;
@@ -502,32 +502,32 @@ bool Session::commitFrame()
     return true;
 }
 
-std::uint32_t Session::slots() const noexcept
+std::uint32_t WindowSession::slots() const noexcept
 {
     return impl ? impl->slots : 0;
 }
 
-std::uint64_t Session::framesPresented() const noexcept
+std::uint64_t WindowSession::framesPresented() const noexcept
 {
     return impl ? impl->frames_presented : 0;
 }
 
-std::uint64_t Session::lostFrames() const noexcept
+std::uint64_t WindowSession::lostFrames() const noexcept
 {
     return impl ? impl->lost_frames : 0;
 }
 
-float Session::frameSeconds() const noexcept
+float WindowSession::frameSeconds() const noexcept
 {
     return impl ? impl->frame_seconds : 0.0F;
 }
 
-bool Session::profiling() const noexcept
+bool WindowSession::profiling() const noexcept
 {
     return impl != nullptr && impl->profiler != nullptr;
 }
 
-Session::GpuProfile Session::gpuProfile() const
+WindowSession::GpuProfile WindowSession::gpuProfile() const
 {
     GpuProfile profile;
     profile.enabled = profiling();
@@ -602,7 +602,7 @@ Session::GpuProfile Session::gpuProfile() const
     return profile;
 }
 
-std::size_t Session::deviceWaits() const noexcept
+std::size_t WindowSession::deviceWaits() const noexcept
 {
     // One number, whichever queue is in use: a session that shares its device's queue (see core::DeviceClock) is
     // counted where the device counts, so "the frame path never idles the device" stays one fact about one device.
@@ -612,22 +612,22 @@ std::size_t Session::deviceWaits() const noexcept
     return impl->shared_retirement != nullptr ? impl->shared_retirement->deviceWaits() : impl->retirement.deviceWaits();
 }
 
-core::FrameTimeline& Session::timeline() noexcept
+core::FrameTimeline& WindowSession::timeline() noexcept
 {
     return impl->clock != nullptr ? impl->clock->timeline() : impl->timeline;
 }
 
-core::RetirementQueue& Session::retirement() noexcept
+core::RetirementQueue& WindowSession::retirement() noexcept
 {
     return impl->shared_retirement != nullptr ? *impl->shared_retirement : impl->retirement;
 }
 
-FrameScratch* Session::frameScratch() noexcept
+FrameScratch* WindowSession::frameScratch() noexcept
 {
     return impl->scratch.get();
 }
 
-bool Session::releaseUploadStaging()
+bool WindowSession::releaseUploadStaging()
 {
     if (impl == nullptr || impl->viewer == nullptr) {
         return false;
@@ -637,7 +637,7 @@ bool Session::releaseUploadStaging()
     return detail::releaseStaging(*impl->viewer) > 0;
 }
 
-std::uint64_t Session::stagedBytes() const noexcept
+std::uint64_t WindowSession::stagedBytes() const noexcept
 {
     if (impl == nullptr || impl->viewer == nullptr) {
         return 0;
@@ -645,32 +645,32 @@ std::uint64_t Session::stagedBytes() const noexcept
     return detail::stagedBytesOf(detail::transferTaskOf(*impl->viewer).get()).value_or(0);
 }
 
-std::uint64_t Session::moves() const noexcept
+std::uint64_t WindowSession::moves() const noexcept
 {
     return impl->moves;
 }
 
-std::uint64_t Session::rebuilds() const noexcept
+std::uint64_t WindowSession::rebuilds() const noexcept
 {
     return impl->rebuilds;
 }
 
-std::uint64_t Session::keeps() const noexcept
+std::uint64_t WindowSession::keeps() const noexcept
 {
     return impl->keeps;
 }
 
-std::uint64_t Session::generation() const noexcept
+std::uint64_t WindowSession::generation() const noexcept
 {
     return impl->generation;
 }
 
-void* Session::hostHandle() const noexcept
+void* WindowSession::hostHandle() const noexcept
 {
     return impl->host_handle;
 }
 
-bool Session::moveTo(void* handle)
+bool WindowSession::moveTo(void* handle)
 {
     if (!impl->ready || !impl->viewer || !impl->window || handle == nullptr) {
         return false;
@@ -710,16 +710,16 @@ bool Session::moveTo(void* handle)
 namespace detail
 {
 
-void SessionContentAccess::waitDeviceIdle(api::Session& session) noexcept
+void SessionContentAccess::waitDeviceIdle(api::WindowSession& session) noexcept
 {
     if (session.impl == nullptr || session.impl->viewer == nullptr) {
         return; // nothing was ever submitted: there is nothing to wait for
     }
     session.impl->viewer->deviceWaitIdle();
-    session.retirement().noteDeviceWait(); // the same counter Session::deviceWaits() answers with
+    session.retirement().noteDeviceWait(); // the same counter WindowSession::deviceWaits() answers with
 }
 
-void SessionContentAccess::followResizedSurface(api::Session& session) noexcept
+void SessionContentAccess::followResizedSurface(api::WindowSession& session) noexcept
 {
     if (session.impl == nullptr || session.impl->window == nullptr) {
         return; // nothing is on a surface: there is nothing to follow
@@ -744,12 +744,12 @@ void SessionContentAccess::followResizedSurface(api::Session& session) noexcept
     session.retirement().noteDeviceWait();
 }
 
-::vsg::ref_ptr<::vsg::Group> SessionContentAccess::root(const api::Session& session) noexcept
+::vsg::ref_ptr<::vsg::Group> SessionContentAccess::root(const api::WindowSession& session) noexcept
 {
     return session.impl != nullptr ? session.impl->content : ::vsg::ref_ptr<::vsg::Group>{};
 }
 
-::vsg::ref_ptr<::vsg::Device> SessionContentAccess::device(const api::Session& session) noexcept
+::vsg::ref_ptr<::vsg::Device> SessionContentAccess::device(const api::WindowSession& session) noexcept
 {
     if (session.impl == nullptr || session.impl->window == nullptr) {
         return {};
@@ -757,7 +757,7 @@ void SessionContentAccess::followResizedSurface(api::Session& session) noexcept
     return session.impl->window->getOrCreateDevice();
 }
 
-WindowTarget* SessionContentAccess::windowTarget(const api::Session& session) noexcept
+WindowTarget* SessionContentAccess::windowTarget(const api::WindowSession& session) noexcept
 {
     if (session.impl == nullptr) {
         return nullptr;
@@ -765,7 +765,7 @@ WindowTarget* SessionContentAccess::windowTarget(const api::Session& session) no
     return session.impl->window_target.get();
 }
 
-::vsg::ref_ptr<::vsg::CommandGraph> SessionContentAccess::makeFrameGraph(const api::Session& session) noexcept
+::vsg::ref_ptr<::vsg::CommandGraph> SessionContentAccess::makeFrameGraph(const api::WindowSession& session) noexcept
 {
     if (session.impl == nullptr || session.impl->window == nullptr) {
         return {};
@@ -775,7 +775,7 @@ WindowTarget* SessionContentAccess::windowTarget(const api::Session& session) no
     return ::vsg::CommandGraph::create(session.impl->window);
 }
 
-bool SessionContentAccess::assignFrameGraphs(api::Session& session, const ::vsg::CommandGraphs& graphs)
+bool SessionContentAccess::assignFrameGraphs(api::WindowSession& session, const ::vsg::CommandGraphs& graphs)
 {
     if (session.impl == nullptr || session.impl->viewer == nullptr) {
         return false;
@@ -809,7 +809,7 @@ bool SessionContentAccess::assignFrameGraphs(api::Session& session, const ::vsg:
     return SessionContentAccess::recompile(session);
 }
 
-bool SessionContentAccess::recompile(api::Session& session)
+bool SessionContentAccess::recompile(api::WindowSession& session)
 {
     if (session.impl == nullptr || session.impl->viewer == nullptr) {
         return false;
@@ -831,7 +831,7 @@ bool SessionContentAccess::recompile(api::Session& session)
     return true;
 }
 
-::vsg::ref_ptr<::vsg::TransferTask> SessionContentAccess::transferTask(const api::Session& session) noexcept
+::vsg::ref_ptr<::vsg::TransferTask> SessionContentAccess::transferTask(const api::WindowSession& session) noexcept
 {
     if (session.impl == nullptr || session.impl->viewer == nullptr) {
         return {};

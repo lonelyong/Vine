@@ -7,7 +7,7 @@ VN_BACKEND_VK_NS_BEGIN
 
 TargetClaims::Lease::Lease() noexcept = default;
 
-TargetClaims::Lease::Lease(TargetClaims& table, const SessionId session) noexcept
+TargetClaims::Lease::Lease(TargetClaims& table, const FrameDriverId session) noexcept
   : table_(&table)
   , session_(session)
 {
@@ -90,12 +90,12 @@ TargetClaims::~TargetClaims()
     clear();
 }
 
-TargetClaims::Lease TargetClaims::begin(const SessionId session)
+TargetClaims::Lease TargetClaims::begin(const FrameDriverId session)
 {
     return Lease{ *this, session };
 }
 
-std::optional<TargetClaims::SessionId> TargetClaims::holderOf(const Target target) const
+std::optional<TargetClaims::FrameDriverId> TargetClaims::holderOf(const Target target) const
 {
     const std::lock_guard<std::mutex> guard(lock_);
     const auto                        found = holders_.find(target);
@@ -119,7 +119,7 @@ TargetClaims::Numbers TargetClaims::numbers() const noexcept
     return out;
 }
 
-bool TargetClaims::tryClaim(const Target target, const SessionId session) noexcept
+bool TargetClaims::tryClaim(const Target target, const FrameDriverId session) noexcept
 {
     const std::lock_guard<std::mutex> guard(lock_);
     const auto                        found = holders_.find(target);
@@ -136,7 +136,7 @@ bool TargetClaims::tryClaim(const Target target, const SessionId session) noexce
     return false;
 }
 
-void TargetClaims::releaseOne(const Target target, const SessionId session) noexcept
+void TargetClaims::releaseOne(const Target target, const FrameDriverId session) noexcept
 {
     const std::lock_guard<std::mutex> guard(lock_);
     const auto                        found = holders_.find(target);

@@ -11,8 +11,11 @@
 #include <vine/backend_vsg/internal/FrameScratch.hpp>
 
 /**
- * @brief A render session: one window, one device, one swapchain - and the frame pairing the contract
- * demands, with the API kept behind a pointer.
+ * @brief ONE WINDOW SESSION: a window, a device and a swapchain, plus the frame pairing the contract demands.
+ *
+ * IT IS NOT A FRAME DRIVER. A frame driver is what a host borrows (`RenderDevice::createSession`) and owns the command
+ * machinery a frame is recorded on; this object owns one platform surface and its swapchain, which is what a driver
+ * presents through. The two are named apart on purpose (see `.ai/design/graphics-sessions.md` §2.1).
  *
  * THE API DOES NOT LEAK THROUGH THIS HEADER, and that is deliberate (design §2.3): a session's job is to
  * own the API's objects and to expose the RULES - open a frame, commit it, learn how many frames may be
@@ -48,8 +51,8 @@ VN_BACKEND_VSG_NS_BEGIN
 namespace api
 {
 
-/** @brief What a session needs to come up. */
-struct SessionOptions {
+/** @brief What a window session needs to come up. */
+struct WindowSessionOptions {
     int  width{ 640 };        // Window width in device pixels (the swapchain follows it).
     int  height{ 360 };       // Window height in device pixels.
     bool validation{ false }; // Whether to ask the loader for the validation layer.
@@ -77,13 +80,13 @@ struct SessionOptions {
 /**
  * @brief One window/device/swapchain session with the frame pairing the contract requires.
  */
-class Session {
+class WindowSession {
   public:
-    Session();
-    ~Session();
+    WindowSession();
+    ~WindowSession();
 
-    Session(const Session&)            = delete;
-    Session& operator=(const Session&) = delete;
+    WindowSession(const WindowSession&)            = delete;
+    WindowSession& operator=(const WindowSession&) = delete;
 
     /** @brief Brings the session up: window, device, swapchain, slot probe.
      *
@@ -94,7 +97,7 @@ class Session {
      * @param diagnostics Where the reasons go (the session never throws and never degrades silently).
      * @return true when the session is ready to render; false when it is not (the reason is reported).
      */
-    [[nodiscard]] bool initialize(const SessionOptions& options, vn::graphics::Diagnostics& diagnostics);
+    [[nodiscard]] bool initialize(const WindowSessionOptions& options, vn::graphics::Diagnostics& diagnostics);
 
     /** @brief Tears the session down.
      *
@@ -119,7 +122,7 @@ class Session {
      * @param options What a caller is about to initialize with.
      * @return true when that would leave an established session exactly as it is.
      */
-    [[nodiscard]] bool wouldKeep(const SessionOptions& options) const noexcept;
+    [[nodiscard]] bool wouldKeep(const WindowSessionOptions& options) const noexcept;
 
     /** @brief Opens a frame.
      *

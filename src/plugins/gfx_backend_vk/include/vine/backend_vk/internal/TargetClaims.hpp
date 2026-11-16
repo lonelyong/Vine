@@ -9,6 +9,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <vine/graphics/backend/DeviceClock.hpp>
+
 VN_BACKEND_VK_NS_BEGIN
 
 /**
@@ -45,8 +47,8 @@ class VN_BACKEND_VK_API TargetClaims final {
     /// @brief Identity of a target: the address of the host's `RenderTarget` (the identity a frame names).
     using Target = const void*;
 
-    /// @brief A frame driver's id (`DeviceClock::WindowId` today; `SessionId` by type alias, see `D7`).
-    using SessionId = std::uint32_t;
+    /// @brief A frame driver's id, as the DEVICE's clock mints it (see `vn::graphics::backend::FrameDriverId`).
+    using FrameDriverId = vn::graphics::backend::FrameDriverId;
 
     /**
      * @brief One frame's claims: `claim` takes a target, the destructor gives every one of them back.
@@ -93,13 +95,13 @@ class VN_BACKEND_VK_API TargetClaims final {
       private:
         friend class TargetClaims;
 
-        Lease(TargetClaims& table, SessionId session) noexcept;
+        Lease(TargetClaims& table, FrameDriverId session) noexcept;
 
         /** @brief Gives back every held target (the destructor's one release point). */
         void releaseAll() noexcept;
 
         TargetClaims*       table_{ nullptr };
-        SessionId           session_{ 0 };
+        FrameDriverId       session_{ 0 };
         std::vector<Target> held_{};
     };
 
@@ -131,13 +133,13 @@ class VN_BACKEND_VK_API TargetClaims final {
     /**
      * @brief Starts one frame's lease for @p session.
      *
-     * @param session The asking driver (`DeviceClock::WindowId` today).
+     * @param session The asking driver (see FrameDriverId).
      * @return The lease; claims nothing until `Lease::claim` is called.
      */
-    [[nodiscard]] Lease begin(SessionId session);
+    [[nodiscard]] Lease begin(FrameDriverId session);
 
     /** @brief Gets which session holds @p target, or nothing when it is free (a diagnostic view, not a reservation). */
-    [[nodiscard]] std::optional<SessionId> holderOf(Target target) const;
+    [[nodiscard]] std::optional<FrameDriverId> holderOf(Target target) const;
 
     /** @brief Forgets every claim (device teardown): the leases that are still alive can only release no-ops. */
     void clear() noexcept;
@@ -148,12 +150,12 @@ class VN_BACKEND_VK_API TargetClaims final {
   private:
     friend class Lease;
 
-    bool tryClaim(Target target, SessionId session) noexcept;
-    void releaseOne(Target target, SessionId session) noexcept;
+    bool tryClaim(Target target, FrameDriverId session) noexcept;
+    void releaseOne(Target target, FrameDriverId session) noexcept;
 
   private:
     mutable std::mutex                         lock_{};
-    std::unordered_map<Target, SessionId>      holders_{};
+    std::unordered_map<Target, FrameDriverId>  holders_{};
     Numbers                                    numbers_{};
 };
 

@@ -63,7 +63,7 @@ VN_BACKEND_VSG_NS_BEGIN
 namespace api
 {
 
-class Session;
+class WindowSession;
 class OffscreenSession;
 
 } // namespace api
@@ -335,7 +335,7 @@ class VN_BACKEND_VSG_API VsgExecutor {
      *
      * THE WINDOW PATH'S TWIN OF @ref submit, and the reason it is a separate call: the window's submission
      * goes through the SESSION (it owns the swapchain, the present and the frame protocol), so the step that
-     * knows whether the submission happened is `Session::commitFrame()` - which reports its own failure and
+     * knows whether the submission happened is `WindowSession::commitFrame()` - which reports its own failure and
      * answers false (see its declaration). What this executor adds is the half the session cannot know:
      * WHICH of the frame's targets are now holding contents nobody can vouch for. One call, and the caller
      * never has to interpret either answer.
@@ -350,7 +350,7 @@ class VN_BACKEND_VSG_API VsgExecutor {
      * @return true when the frame was submitted and presented; false when it was not (the frame's written
      *         targets were marked, and the session reported why).
      */
-    bool commit(const core::CompiledFrame& frame, api::Session& session);
+    bool commit(const core::CompiledFrame& frame, api::WindowSession& session);
 
     /**
      * @brief Commits @p frame through @p session: submit and completion evidence, with NO present.

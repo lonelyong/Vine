@@ -43,7 +43,7 @@
  * announced a sub-rectangle draws inside a larger picture, and a screen-space effect that used the rectangle
  * would reconstruct against a size no attachment has. The sub-rectangle is the viewport command's business.
  *
- * THE TIME comes from the session (it owns the frame clock): `Session::frameSeconds()`, the same value for
+ * THE TIME comes from the session (it owns the frame clock): `WindowSession::frameSeconds()`, the same value for
  * every pass of a frame - a frame is one moment, and two passes that disagreed about "now" would animate
  * against each other.
  *
@@ -57,7 +57,7 @@ VN_BACKEND_VSG_NS_BEGIN
 /** @brief Builds the view block for one pass (see the file note for the conventions it applies).
  *
  * @param camera       The pass' camera snapshot, as the plan carries it (its matrices and eye).
- * @param time_seconds The frame's time, in seconds since the session opened (see Session::frameSeconds).
+ * @param time_seconds The frame's time, in seconds since the session opened (see WindowSession::frameSeconds).
  * @param width        Width of the target the pass draws into, in device pixels.
  * @param height       Height of the target the pass draws into, in device pixels.
  * @return The block, in the ABI's shape (`VineViewBlock`), ready for BlockStorage::writeView.

@@ -4,15 +4,15 @@
 
 VN_GRAPHICSBACKEND_NS_BEGIN
 
-DeviceClock::WindowId DeviceClock::addWindow() noexcept
+FrameDriverId DeviceClock::addWindow() noexcept
 {
     // A window that joins proves nothing about the frames before it existed, so it starts AT the watermark: starting
     // it at zero would hold the whole device's evidence at zero for as long as that window lives.
     windows_.push_back(Window{ completed_, 0, true });
-    return static_cast<WindowId>(windows_.size() - 1U);
+    return static_cast<FrameDriverId>(windows_.size() - 1U);
 }
 
-void DeviceClock::removeWindow(WindowId window) noexcept
+void DeviceClock::removeWindow(FrameDriverId window) noexcept
 {
     if (window >= windows_.size()) {
         return;
@@ -21,7 +21,7 @@ void DeviceClock::removeWindow(WindowId window) noexcept
     updateWatermark();
 }
 
-void DeviceClock::setWindowSlots(WindowId window, std::uint32_t slots) noexcept
+void DeviceClock::setWindowSlots(FrameDriverId window, std::uint32_t slots) noexcept
 {
     if (window >= windows_.size()) {
         return;
@@ -29,7 +29,7 @@ void DeviceClock::setWindowSlots(WindowId window, std::uint32_t slots) noexcept
     windows_[window].slots = slots;
 }
 
-void DeviceClock::windowCompleted(WindowId window, std::uint64_t frame) noexcept
+void DeviceClock::windowCompleted(FrameDriverId window, std::uint64_t frame) noexcept
 {
     if (window >= windows_.size()) {
         return;

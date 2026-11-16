@@ -282,7 +282,7 @@ class BlockStorage {
      *
      * @param layout           The layout to check.
      * @param frames_in_flight Frames that may be in flight: the assumed count until the session learned its
-     *                         own (see Session::slots), the learned count afterwards.
+     *                         own (see WindowSession::slots), the learned count afterwards.
      * @return true when every per-frame shape owns at least core::perFrameCopies(@p frames_in_flight) slabs.
      */
     [[nodiscard]] static bool hasSlabsForInFlight(const Layout& layout, std::uint32_t frames_in_flight) noexcept;

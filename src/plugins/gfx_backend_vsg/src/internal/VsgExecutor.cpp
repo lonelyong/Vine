@@ -7,7 +7,7 @@
 #include <vsg/core/Exception.h>
 
 #include <vine/backend_vsg/internal/OffscreenSession.hpp>
-#include <vine/backend_vsg/internal/Session.hpp>
+#include <vine/backend_vsg/internal/WindowSession.hpp>
 
 VN_BACKEND_VSG_NS_BEGIN
 
@@ -401,7 +401,7 @@ bool VsgExecutor::submit(const core::CompiledFrame& frame, ::vsg::Viewer& viewer
     return false;
 }
 
-bool VsgExecutor::commit(const core::CompiledFrame& frame, api::Session& session)
+bool VsgExecutor::commit(const core::CompiledFrame& frame, api::WindowSession& session)
 {
     if (session.commitFrame()) {
         return true;

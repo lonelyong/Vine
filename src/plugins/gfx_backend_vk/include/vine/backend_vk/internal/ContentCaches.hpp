@@ -280,9 +280,9 @@ class VN_BACKEND_VK_API ContentCaches final {
          * @brief Builds the admissions of one frame of @p owner, asked in the name of @p session.
          *
          * @param owner   The caches this frame resolves against (borrowed; it outlives the frame).
-         * @param session The frame driver's id (`DeviceClock::WindowId` today; see `ResidenceTable::SessionId`).
+         * @param session The frame driver's id (see `ResidenceTable::FrameDriverId`).
          */
-        FrameBuilds(ContentCaches& owner, ResidenceTable::SessionId session) noexcept;
+        FrameBuilds(ContentCaches& owner, ResidenceTable::FrameDriverId session) noexcept;
 
         /** @brief Withdraws every unresolved claim and disposes every copy (see the class note). */
         ~FrameBuilds();
@@ -297,8 +297,8 @@ class VN_BACKEND_VK_API ContentCaches final {
         FrameBuilds& operator=(const FrameBuilds&) = delete;
 
       public:
-        /** @brief Gets the id this frame asks the residence table in (see `ResidenceTable::SessionId`). */
-        [[nodiscard]] ResidenceTable::SessionId session() const noexcept;
+        /** @brief Gets the id this frame asks the residence table in (see `ResidenceTable::FrameDriverId`). */
+        [[nodiscard]] ResidenceTable::FrameDriverId session() const noexcept;
 
         /** @brief Gets what this frame already resolved for @p description, or null (no second table ask). */
         [[nodiscard]] GeometryEntry* entryOf(const vn::graphics::GeometryDescription* description) const noexcept;
@@ -338,7 +338,7 @@ class VN_BACKEND_VK_API ContentCaches final {
         void reset() noexcept;
 
         ContentCaches*                                              owner_{ nullptr };
-        ResidenceTable::SessionId                                   session_{ 0 };
+        ResidenceTable::FrameDriverId                               session_{ 0 };
         std::unordered_map<const vn::graphics::GeometryDescription*, GeometryEntry*> resolved_{};
         std::vector<ResidenceTable::Claim>                          claimed_{};
         std::vector<std::unique_ptr<GeometryEntry>>                 copies_{};

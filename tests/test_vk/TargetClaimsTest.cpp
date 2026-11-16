@@ -20,8 +20,8 @@ namespace
 
 using vn::backend_vk::TargetClaims;
 
-constexpr TargetClaims::SessionId kFirst  = 11U;
-constexpr TargetClaims::SessionId kSecond = 22U;
+constexpr TargetClaims::FrameDriverId kFirst  = 11U;
+constexpr TargetClaims::FrameDriverId kSecond = 22U;
 
 } // namespace
 

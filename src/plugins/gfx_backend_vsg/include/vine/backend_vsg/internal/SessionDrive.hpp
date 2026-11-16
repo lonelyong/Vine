@@ -12,7 +12,7 @@
  * @brief The two pieces every session's frame drive is made of, shared by the windowed and the off-screen session.
  *
  * @details
- * - WHY THEY ARE SHARED RATHER THAN WRITTEN TWICE. A windowed session (api::Session) and an off-screen one
+ * - WHY THEY ARE SHARED RATHER THAN WRITTEN TWICE. A windowed session (api::WindowSession) and an off-screen one
  *   (api::OffscreenSession) submit through the SAME framework object, and the two things that must not differ are
  *   exactly the two below: that events are never pumped behind the host's back, and that a submission the driver
  *   refused is KEPT rather than dropped. A copy of either in the second session is a place for the two frame paths

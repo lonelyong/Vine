@@ -1392,7 +1392,7 @@ struct ContentCaches::Impl {
 
 ContentCaches::FrameBuilds::FrameBuilds() noexcept = default;
 
-ContentCaches::FrameBuilds::FrameBuilds(ContentCaches& owner, const ResidenceTable::SessionId session) noexcept
+ContentCaches::FrameBuilds::FrameBuilds(ContentCaches& owner, const ResidenceTable::FrameDriverId session) noexcept
   : owner_(&owner)
   , session_(session)
 {
@@ -1425,7 +1425,7 @@ ContentCaches::FrameBuilds& ContentCaches::FrameBuilds::operator=(FrameBuilds&& 
     return *this;
 }
 
-ResidenceTable::SessionId ContentCaches::FrameBuilds::session() const noexcept
+ResidenceTable::FrameDriverId ContentCaches::FrameBuilds::session() const noexcept
 {
     return session_;
 }

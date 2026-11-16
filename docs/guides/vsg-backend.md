@@ -86,7 +86,7 @@
 ## 5. 生命周期与所有权
 
 * **每帧的收集暂存归会话**：arena、recorder / compiler、目标事实表、输入表、`packets` 与当前计划合成
-  **`FrameScratch`**，由**驱动这一帧的会话**（窗口的 `api::Session` 或离屏的 `api::OffscreenSession`）持有；
+  **`FrameScratch`**，由**驱动这一帧的会话**（窗口的 `api::WindowSession` 或离屏的 `api::OffscreenSession`）持有；
   后端只在开帧时借一个句柄，帧结束即清。设备级设置（默认内容程序、释放目标）会作用到**每个**会话的暂存，
   所以"会话在设定之后才起来"不会丢掉默认程序。计划只属于一帧，设备上不存在第二份。
 * **帧状态归驱动者**：`createSession()` 交出 **`VsgDriver`**——它自己拥有一个执行器（本次帧的窗口、已录的 pass、
@@ -104,7 +104,7 @@
   材质槽 / 纹理视图 / 块偏移 / pipeline 身份 → 会话的 **`ContentPlan`**（`internal/ContentPlan.hpp`，每驱动一份的**值**））、
   **录制**（`ContentPlan::record`，**不取设备锁**：值 → vsg 节点）、**提交**（`executor.record` + 清扫 + 会话提交，
   再一次内容锁）、**呈现**。窗口槽与离屏会话各有一把**帧主张**：同一窗口（或离屏会话）的两帧等待彼此（交换链只有一份），
-  不同窗口互不等待。计数器归会话（`SessionOptions::observe` 不再借设备的）：recorder 开帧会重置它们，共享一份会让两个驱动者互相覆盖；
+  不同窗口互不等待。计数器归会话（`WindowSessionOptions::observe` 不再借设备的）：recorder 开帧会重置它们，共享一份会让两个驱动者互相覆盖；
   `frameReport()` 引用最后结束那一帧的副本。`ContentDraw::plan()` 是解析半（取 layer 与 variant pool），
   `ContentDraw::record` / `recordScreen` 只绑已解析的 pipeline；计划钉住 halves 的生产者（`ContentHalves::pin`），
   所以另一个驱动者的清扫不会释放这一帧还要用的录制器。**`C3`（记录路径零锁）对 vsg 自此成立。**

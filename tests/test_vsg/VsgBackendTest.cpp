@@ -1665,7 +1665,7 @@ TEST(VsgBackendTest, AClearColourIsAStoredLinearValueNotAnEncodedOne)
 /*
  * @brief The frame report says how many frames were handed to PRESENT: the fact a window reader waits for.
  *
- * The count is the WINDOW half's own (`api::Session::framesPresented`): an off-screen frame names no window and
+ * The count is the WINDOW half's own (`api::WindowSession::framesPresented`): an off-screen frame names no window and
  * presents nothing, so it leaves the number alone; a committed window frame is handed to the platform's present call
  * even when it drew nothing, so the number moves by one per frame. It is a WATERMARK, not a sample of a moving clock:
  * asking twice without a frame between changes nothing.
@@ -1695,7 +1695,7 @@ TEST(VsgBackendTest, TheFrameReportSaysHowManyFramesWereHandedToPresent)
     ASSERT_TRUE(progress.has_value()) << "this backend keeps the frame clock";
     const std::uint64_t presented_before = progress->presented;
 
-    // Two frames that draw nothing are still committed, and committing presents (see Session::commit).
+    // Two frames that draw nothing are still committed, and committing presents (see WindowSession::commit).
     backend->executeFrame(vn::graphics::FrameDescription{});
     backend->executeFrame(vn::graphics::FrameDescription{});
 

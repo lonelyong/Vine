@@ -4,7 +4,7 @@
 #include <vsg/core/ref_ptr.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/backend_vsg/internal/Session.hpp>
+#include <vine/backend_vsg/internal/WindowSession.hpp>
 #include <vine/backend_vsg/internal/WindowTarget.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
@@ -46,12 +46,12 @@ class SessionContentAccess {
      *
      * The node is a group the session owns: a caller adds its recorded content to it. It exists only while
      * the session is up, and it is EMPTY after a rebuild (a new session has a new root, and content built
-     * against the old device is stale by definition - see `Session::generation`).
+     * against the old device is stale by definition - see `WindowSession::generation`).
      *
      * @param session Session to ask.
      * @return The content root, or null when the session is not up.
      */
-    [[nodiscard]] static ::vsg::ref_ptr<::vsg::Group> root(const api::Session& session) noexcept;
+    [[nodiscard]] static ::vsg::ref_ptr<::vsg::Group> root(const api::WindowSession& session) noexcept;
 
     /** @brief Gets the device a session's content must be built on.
      *
@@ -61,9 +61,9 @@ class SessionContentAccess {
      * @param session Session to ask.
      * @return The session's device, or null.
      */
-    [[nodiscard]] static ::vsg::ref_ptr<::vsg::Device> device(const api::Session& session) noexcept;
+    [[nodiscard]] static ::vsg::ref_ptr<::vsg::Device> device(const api::WindowSession& session) noexcept;
 
-    /** @brief Stops the device: every submission has finished, and the wait is COUNTED (see Session::deviceWaits).
+    /** @brief Stops the device: every submission has finished, and the wait is COUNTED (see WindowSession::deviceWaits).
      *
      * The one spelling of "wait for the device" for a caller that needs the last submission to have landed -
      * a synchronous readback above all, whose copy must not race the frame that wrote the pixels. The count
@@ -72,7 +72,7 @@ class SessionContentAccess {
      *
      * @param session Session whose device is stopped (a session with no viewer waits for nothing).
      */
-    static void waitDeviceIdle(api::Session& session) noexcept;
+    static void waitDeviceIdle(api::WindowSession& session) noexcept;
 
     /** @brief Re-reads the surface the session is on and rebuilds its swapchain when the surface moved.
      *
@@ -82,7 +82,7 @@ class SessionContentAccess {
      *
      * @param session The session to follow (nothing happens when it is not initialized).
      */
-    static void followResizedSurface(api::Session& session) noexcept;
+    static void followResizedSurface(api::WindowSession& session) noexcept;
 
     /** @brief Gets the session's window as the frame's default-framebuffer target.
      *
@@ -93,7 +93,7 @@ class SessionContentAccess {
      * @param session Session to ask.
      * @return The window target, or null when the session is not up.
      */
-    [[nodiscard]] static WindowTarget* windowTarget(const api::Session& session) noexcept;
+    [[nodiscard]] static WindowTarget* windowTarget(const api::WindowSession& session) noexcept;
 
     /** @brief Creates the command graph ONE frame records into, bound to the session's window.
      *
@@ -107,7 +107,7 @@ class SessionContentAccess {
      * @param session Session to ask.
      * @return The graph, or null when the session is not up.
      */
-    [[nodiscard]] static ::vsg::ref_ptr<::vsg::CommandGraph> makeFrameGraph(const api::Session& session) noexcept;
+    [[nodiscard]] static ::vsg::ref_ptr<::vsg::CommandGraph> makeFrameGraph(const api::WindowSession& session) noexcept;
 
     /** @brief Hands the session the command graphs THIS frame records, replacing the ones it set up.
      *
@@ -122,14 +122,14 @@ class SessionContentAccess {
      * @return true when the graphs were assigned and compiled; false when the session is not up or the
      *         compile pass failed (reported).
      */
-    static bool assignFrameGraphs(api::Session& session, const ::vsg::CommandGraphs& graphs);
+    static bool assignFrameGraphs(api::WindowSession& session, const ::vsg::CommandGraphs& graphs);
 
     /** @brief Compiles content that was attached after the session came up.
      *
      * @param session Session to compile.
      * @return true when the compile pass ran; false when the session is not up.
      */
-    static bool recompile(api::Session& session);
+    static bool recompile(api::WindowSession& session);
 
     /** @brief Gets the transfer task this session's uploads are queued into.
      *
@@ -139,7 +139,7 @@ class SessionContentAccess {
      * @param session Session to ask.
      * @return The task, or null when the session is not up.
      */
-    [[nodiscard]] static ::vsg::ref_ptr<::vsg::TransferTask> transferTask(const api::Session& session) noexcept;
+    [[nodiscard]] static ::vsg::ref_ptr<::vsg::TransferTask> transferTask(const api::WindowSession& session) noexcept;
 };
 
 } // namespace detail

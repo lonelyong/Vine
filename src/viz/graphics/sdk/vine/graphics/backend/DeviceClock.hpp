@@ -30,34 +30,56 @@
  * - This is the device-level equivalent of what Filament (`Driver::destroyDeferred`), Unreal (`FRHIResource` deferred
  *   delete) and wgpu (submission index) do: ONE submission watermark per device, not one per window. See
  *   `.ai/design/graphics-architecture.md` §11.
+ * - "WINDOW" BELOW MEANS ONE FRAME DRIVER'S REGISTRATION. What a driver reports here is a recycle of one of its
+ *   swapchain image slots; a windowed driver gets those from a window's swapchain, an off-screen one from its own
+ *   frames, and both register once. That is why the identity this clock mints is a `FrameDriverId` - the verbs keep
+ *   the older spelling for one release (see the alias in the class).
  *
  * NOT thread-safe: the device is driven from one thread (see RenderDevice's threading note).
  */
 VN_GRAPHICSBACKEND_NS_BEGIN
 
 /**
- * @brief One device's frame clock and the completion watermark its windows agree on (see the file note).
+ * @brief The identity of ONE frame driver on a device: what `DeviceClock` mints and what every id-carrying seam type
+ *        takes.
+ *
+ * @details
+ * - MINTED BY THE CLOCK, never by the caller: `DeviceClock::addWindow()` answers one, and it stays valid until that
+ *   clock removes it.
+ * - NEVER REUSED within one clock: a removed driver's id is not handed out again, so an id that outlived its driver
+ *   answers "unknown" rather than naming another driver's frames.
+ * - ONE SPELLING: `DeviceClock`'s verbs, `TargetClaims::begin` and `ResidenceTable::admit` all take this type. The two
+ *   backends used to spell the same concept `WindowId` / `SessionId`, in three widths (`D-01`).
+ * - WHY u32: a device hands out a handful of drivers in its lifetime, so the width is a namespace, not a count.
+ *
+ * @note An id means something WITHIN the clock that minted it: two devices both start at 0, so it is not a
+ *       process-wide key.
+ */
+using FrameDriverId = std::uint32_t;
+
+/**
+ * @brief One device's frame clock and the completion watermark its frame drivers agree on (see the file note).
  */
 class VN_GRAPHICS_API DeviceClock {
   public:
-    /** @brief Identity of one window on this device. */
-    using WindowId = std::uint32_t;
+    /// @brief The identity's old spelling, from when a clock window was read as a platform window.
+    using WindowId [[deprecated("use FrameDriverId: one clock window is a frame driver, not a window")]] = FrameDriverId;
 
-    /** @brief Registers a window: from now on its evidence constrains the watermark.
+    /** @brief Registers a frame driver: from now on its evidence constrains the watermark.
      *
      * @details
      * - It starts AT the current watermark, because it existed for no earlier frame - a window that has not drawn
      *   yet must not hold the device's evidence at zero.
      *
-     * @return The window's id, for the calls below.
+     * @return The driver's id, for the calls below.
      */
-    [[nodiscard]] WindowId addWindow() noexcept;
+    [[nodiscard]] FrameDriverId addWindow() noexcept;
 
     /** @brief Unregisters a window: its evidence stops constraining the watermark.
      *
      * @param window Id returned by @ref addWindow (an unknown or already removed id changes nothing).
      */
-    void removeWindow(WindowId window) noexcept;
+    void removeWindow(FrameDriverId window) noexcept;
 
     /** @brief Reports the in-flight slot count a window learned, or 0 when it could not learn one.
      *
@@ -69,7 +91,7 @@ class VN_GRAPHICS_API DeviceClock {
      * @param window Window that learned the count.
      * @param slots  Slots in flight, or 0 when unknown.
      */
-    void setWindowSlots(WindowId window, std::uint32_t slots) noexcept;
+    void setWindowSlots(FrameDriverId window, std::uint32_t slots) noexcept;
 
     /** @brief Reports one window's evidence: all work IT submitted up to @p frame is complete.
      *
@@ -80,7 +102,7 @@ class VN_GRAPHICS_API DeviceClock {
      * @param window Window whose slot was recycled.
      * @param frame  Highest frame that window's recycled slot proves finished.
      */
-    void windowCompleted(WindowId window, std::uint64_t frame) noexcept;
+    void windowCompleted(FrameDriverId window, std::uint64_t frame) noexcept;
 
     /** @brief Opens a frame on the device's clock (see FrameTimeline::begin). */
     [[nodiscard]] FrameToken begin() noexcept;

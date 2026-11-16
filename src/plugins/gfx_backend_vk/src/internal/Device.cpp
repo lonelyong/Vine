@@ -440,7 +440,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBits
  * @brief What ONE frame did: its counters, what it built and how long it took on the device.
  *
  * @details
- * - IT LIVES WITH THE FRAME DRIVER (see `Device::Session`), not with the device: `counters` / `uploads` describe the
+ * - IT LIVES WITH THE FRAME DRIVER (see `Device::FrameDriver`), not with the device: `counters` / `uploads` describe the
  *   frame that just ended, and a second driver keeps its own. `progress` is a delta of the device's cumulative numbers,
  *   which is why closing the books reads both.
  * - `uploads` stays disengaged until a frame has run: an unmeasured frame must not read like an empty one.
@@ -474,15 +474,15 @@ struct ContentTotals {
  * - WHAT IT DOES NOT OWN: the Vulkan device and queue, the memory pool, the content caches, the targets, the clock and
  *   the park queue. Those belong to the device and are shared by every session it will ever hand out; this type reaches
  *   them through the `Impl` it borrows, which is what step 2 of the ADR turns into an explicit `createSession()`.
- * - ONE SESSION TODAY, and the device drives its own frames through it: `Device::executeFrame` / `prepareFrame` are
+ * - ONE FRAME DRIVER TODAY, and the device drives its own frames through it: `Device::executeFrame` / `prepareFrame` are
  *   still the bodies, and the machinery they use is this object's. When `createSession()` hands out more than one, the
- *   bodies move in here (they will change at step 3 anyway) and the gate becomes one per session for free.
+ *   bodies move in here (they will change at step 3 anyway) and the gate becomes one per driver for free.
  * - THE DEVICE DESTROYS IT (`Device::shutdown`), never the destructor: the objects need the device's entry points and
  *   an idle queue, and `shutdown` is the one place that has both.
  *
  * @warning One frame at a time per driver, CHECKED (`FrameGate`): a second thread waits, a re-entrant call is refused.
  */
-class Device::Session final : public vn::graphics::RenderFrameExecutor
+class Device::FrameDriver final : public vn::graphics::RenderFrameExecutor
 {
   private:
     /// The device whose services this driver borrows (it owns this object, so it outlives it). Declared FIRST so the
@@ -523,10 +523,10 @@ class Device::Session final : public vn::graphics::RenderFrameExecutor
     };
 
   public:
-    explicit Session(Impl& owner_device) noexcept;
+    explicit FrameDriver(Impl& owner_device) noexcept;
 
-    Session(const Session&)            = delete;
-    Session& operator=(const Session&) = delete;
+    FrameDriver(const FrameDriver&)            = delete;
+    FrameDriver& operator=(const FrameDriver&) = delete;
 
   public:
     PresentOutcome              executeFrame(const FrameDescription& frame, PresentTarget* present_to) override;
@@ -620,8 +620,8 @@ class Device::Session final : public vn::graphics::RenderFrameExecutor
     /// lost its target says so ONCE, and a frame/prepare that completes without a conflict ends the episode.
     std::unordered_set<const RenderTarget*> claim_conflicts{};
     /// This driver's clock window: the id its completion evidence is reported under (see DeviceClock).
-    vn::graphics::backend::DeviceClock::WindowId clock_window{ 0 };
-    bool                                         clock_window_live{ false };
+    vn::graphics::backend::FrameDriverId clock_window{ 0 };
+    bool                                 clock_window_live{ false };
 
   public:
     /**
@@ -652,9 +652,9 @@ struct Device::Impl {
     std::function<bool(VkResult, const char*)> note_device_lost{};
 
     /// THE DEVICE'S OWN FRAME DRIVER: it owns the command machinery, the frame books and the gate.
-    std::unique_ptr<Session> session{};
+    std::unique_ptr<FrameDriver> session{};
     /// Every OTHER driver a host borrowed (see Device::createSession); the device owns them too.
-    std::vector<std::unique_ptr<Session>> extra_sessions{};
+    std::vector<std::unique_ptr<FrameDriver>> extra_sessions{};
     ///
     /// THE DEVICE'S TWO LOCKS, ONE FOR EACH QUESTION.
     /// - `body_gate` answers "may any frame body run while this verb runs?". FRAME BODIES TAKE IT SHARED, so two
@@ -753,7 +753,7 @@ struct Device::Impl {
      * @brief The device's clock TICK, in nanoseconds (`VkPhysicalDeviceLimits::timestampPeriod`).
      *
      * @details
-     * - THE TICK IS THE DEVICE'S; THE QUERY POOL IS THE DRIVER'S (see `Device::Session`). A frame's GPU time is one
+     * - THE TICK IS THE DEVICE'S; THE QUERY POOL IS THE DRIVER'S (see `Device::FrameDriver`). A frame's GPU time is one
      *   pair of queries written around its command buffer, and which pool holds them is a per-driver fact - while what
      *   a tick is worth is a property of this GPU that never changes.
      * - A device that does not report `timestampComputeAndGraphics` leaves this 0, its drivers keep no pool, and the
@@ -1095,13 +1095,13 @@ struct Device::Impl {
     }
 };
 
-Device::Session::Session(Impl& owner_device) noexcept
+Device::FrameDriver::FrameDriver(Impl& owner_device) noexcept
   : owner(owner_device)
   , recorder(owner_device.caches, scratch)
 {
 }
 
-void Device::Session::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
+void Device::FrameDriver::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
 {
     // THE VALUE, NOT THE OBJECT: what a frame records is the text that was current when the host announced it, so a
     // later edit of the program cannot change a frame that is already described.
@@ -1109,7 +1109,7 @@ void Device::Session::setDefaultContentProgram(vn::intrusive_ptr<const vn::graph
     default_program = program != nullptr ? program->description() : vn::graphics::ShaderProgramDescriptionPtr{};
 }
 
-Device::Session::CreateRefusal Device::Session::create() noexcept
+Device::FrameDriver::CreateRefusal Device::FrameDriver::create() noexcept
 {
     if (owner.device == VK_NULL_HANDLE) {
         return CreateRefusal::NoDevice;
@@ -1145,7 +1145,7 @@ Device::Session::CreateRefusal Device::Session::create() noexcept
     return CreateRefusal::Ok;
 }
 
-bool Device::Session::createScratch() noexcept
+bool Device::FrameDriver::createScratch() noexcept
 {
     return scratch.create(owner.device_table,
                           owner.device,
@@ -1156,7 +1156,7 @@ bool Device::Session::createScratch() noexcept
                           owner.caches.screenSetLayout());
 }
 
-void Device::Session::destroy() noexcept
+void Device::FrameDriver::destroy() noexcept
 {
     // THE SCRATCH GOES FIRST of this driver's objects: its descriptor pool holds the cached sets, and the device's
     // layouts (which the sets were allocated against) outlive it - `Device::shutdown` destroys the scratch before the
@@ -1190,7 +1190,7 @@ void Device::Session::destroy() noexcept
     default_program   = nullptr;
 }
 
-bool Device::Session::ensureTimestampQueries(const std::uint32_t needed) noexcept
+bool Device::FrameDriver::ensureTimestampQueries(const std::uint32_t needed) noexcept
 {
     if (timestamp_pool != VK_NULL_HANDLE && timestamp_queries >= needed) {
         return true;
@@ -1213,7 +1213,7 @@ bool Device::Session::ensureTimestampQueries(const std::uint32_t needed) noexcep
     return true;
 }
 
-void Device::Session::closeFrameBooks(const ContentTotals& before, const vn::graphics::FrameCounters& counters) noexcept
+void Device::FrameDriver::closeFrameBooks(const ContentTotals& before, const vn::graphics::FrameCounters& counters) noexcept
 {
     const ContentTotals after = owner.contentNumbers();
     books.counters            = counters;
@@ -1228,7 +1228,7 @@ void Device::Session::closeFrameBooks(const ContentTotals& before, const vn::gra
     books.uploads = frame_uploads;
 }
 
-PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, PresentTarget* present_to)
+PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, PresentTarget* present_to)
 {
     // THE CALLING THREAD IS INSIDE A FRAME BODY NOW (see s_frame_depth): a host verb it calls back into would wait for
     // this frame, so the verbs that wait refuse instead (see Device::readColorBuffer).
@@ -1292,7 +1292,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
     const ContentTotals    before = owner.contentNumbers();
     vn::graphics::FrameCounters   counters{};
     struct BooksCloser {
-        Session*                     session;
+        FrameDriver*                 session;
         const ContentTotals&         before;
         vn::graphics::FrameCounters& counters;
         ~BooksCloser()
@@ -1304,7 +1304,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
     // driver's name, a build it wins is PUBLISHED below once the fence says the fill is provably complete, and a
     // competitor's temporary copy dies with this object (see ContentCaches::FrameBuilds). Declared here, OUTSIDE the
     // head's hold, because its destructor takes the cache lock to dispose a copy.
-    ContentCaches::FrameBuilds frame_builds(owner.caches, static_cast<ResidenceTable::SessionId>(clock_window));
+    ContentCaches::FrameBuilds frame_builds(owner.caches, clock_window);
 
     // WHICH PASSES THIS BACKEND CAN RUN: off-screen passes, and WINDOW passes when the frame names one of this
     // device's own targets as its presenter. A frame that names no presenter presents nowhere (a first-class state:
@@ -2022,7 +2022,7 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
     return outcome;
 }
 
-vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription& frame, PresentTarget* present_to)
+vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescription& frame, PresentTarget* present_to)
 {
     using vn::graphics::EngineNotReady;
     using vn::graphics::PrepareReport;
@@ -2091,7 +2091,7 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
     FrameTokenCloser                        warmup_close{ owner.clock, owner.retirement, owner.clock_mutex, warmup_token };
     // THE WARM-UP'S ADMISSIONS (F4): a warm-up may BUILD a geometry too, and it publishes on its own evidence - the
     // return of its transfer-only submit (see `ResidenceTable` rule 2 and `ContentCaches::FrameBuilds`).
-    ContentCaches::FrameBuilds warmup_builds(owner.caches, static_cast<ResidenceTable::SessionId>(clock_window));
+    ContentCaches::FrameBuilds warmup_builds(owner.caches, clock_window);
     const ContentTotals before = owner.contentNumbers();
     PrepareReport             report;
     report.outcome = PrepareReport::Outcome::Prepared;
@@ -2329,7 +2329,7 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
     return report;
 }
 
-vn::graphics::FrameReport Device::Session::frameReport() const noexcept
+vn::graphics::FrameReport Device::FrameDriver::frameReport() const noexcept
 {
     vn::graphics::FrameReport report;
     report.counters = books.counters;
@@ -2361,7 +2361,7 @@ Device::Device(const DeviceDesc& desc)
 {
     // THE DRIVER IS CREATED WITH THE DEVICE, not with the Vulkan session: it holds the bookkeeping a report reads
     // before `initialize()` and after `shutdown()`, and `create()` is what gives it objects.
-    impl->session = std::make_unique<Session>(*impl);
+    impl->session = std::make_unique<FrameDriver>(*impl);
     impl->desc    = desc;
     // ONE REPORT AT A TIME AT THE HOST'S SINK: two drivers' frames report on two threads (S6c-2), and the sink is the
     // host's - it is not asked to be thread-safe. A diagnostic is never on a frame's path (it is a refusal or a loss).
@@ -2747,26 +2747,26 @@ bool Device::initialize()
     impl->device_table.vkGetDeviceQueue(impl->device, impl->queue_family, 0U, &impl->queue);
 
     // THE FRAME DRIVER: a session owns the command machinery a frame needs, and this device drives its frames through
-    // it (see Device::Session). Its clock window is registered here too, which is what arms the park queue.
+    // it (see Device::FrameDriver). Its clock window is registered here too, which is what arms the park queue.
     impl->clock = vn::graphics::backend::DeviceClock{};
     switch (impl->session->create()) {
-    case Session::CreateRefusal::Ok:
+    case FrameDriver::CreateRefusal::Ok:
         break;
-    case Session::CreateRefusal::CommandPool:
+    case FrameDriver::CreateRefusal::CommandPool:
         reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                           DiagnosticCategory::InitFailed,
                                           u8"vk.init.command_machinery_failed",
                                           u8"vk: vkCreateCommandPool failed"));
         shutdown();
         return false;
-    case Session::CreateRefusal::Fence:
+    case FrameDriver::CreateRefusal::Fence:
         reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                           DiagnosticCategory::InitFailed,
                                           u8"vk.init.command_machinery_failed",
                                           u8"vk: vkCreateFence failed"));
         shutdown();
         return false;
-    case Session::CreateRefusal::NoDevice:
+    case FrameDriver::CreateRefusal::NoDevice:
         shutdown();
         return false;
     }
@@ -2898,8 +2898,8 @@ bool Device::initialize()
     // (R1 - an engine attaches first) gets its command machinery and its frame scratch HERE, where the layouts
     // exist. A driver that cannot hold its constants is not a driver that can draw, so the device refuses to
     // come up rather than answer frames with nothing.
-    const auto bring_up = [this](Session& driver) -> bool {
-        if (driver.create() != Session::CreateRefusal::Ok) {
+    const auto bring_up = [this](FrameDriver& driver) -> bool {
+        if (driver.create() != FrameDriver::CreateRefusal::Ok) {
             reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Error,
                                               DiagnosticCategory::InitFailed,
                                               u8"vk.init.command_machinery_failed",
@@ -2919,7 +2919,7 @@ bool Device::initialize()
         shutdown();
         return false;
     }
-    for (std::unique_ptr<Session>& extra : impl->extra_sessions) {
+    for (std::unique_ptr<FrameDriver>& extra : impl->extra_sessions) {
         if (!bring_up(*extra)) {
             shutdown();
             return false;
@@ -2974,7 +2974,7 @@ void Device::shutdown()
 
         // EVERY OTHER DRIVER GOES FIRST for the same reason the device's own scratch does: its pool holds cached
         // sets and its ring is a slice, while the layouts belong to the caches below.
-        for (std::unique_ptr<Session>& extra : impl->extra_sessions) {
+        for (std::unique_ptr<FrameDriver>& extra : impl->extra_sessions) {
             extra->destroy();
         }
         impl->extra_sessions.clear();
@@ -3049,7 +3049,7 @@ void Device::shutdown()
         impl->window_system->close();
         impl->window_system.reset();
     }
-    // The frame's books went with the driver (see Session::destroy): the next initialize() starts a device that
+    // The frame's books went with the driver (see FrameDriver::destroy): the next initialize() starts a device that
     // measured nothing yet.
 }
 
@@ -3203,9 +3203,9 @@ vn::graphics::RenderFrameExecutor* Device::createSession()
     // A DRIVER BORROWED BEFORE initialize() IS BUILT BY IT (R1: an engine attaches first); one borrowed from a device
     // that is ALREADY up must come up here, or it would answer frames with no command pool.
     const std::unique_lock<std::shared_mutex> guard(impl->body_gate);
-    std::unique_ptr<Session>          session = std::make_unique<Session>(*impl);
+    std::unique_ptr<FrameDriver>      session = std::make_unique<FrameDriver>(*impl);
     if (impl->device != VK_NULL_HANDLE) {
-        if (session->create() != Session::CreateRefusal::Ok) {
+        if (session->create() != FrameDriver::CreateRefusal::Ok) {
             session->destroy();
             impl->report(deviceDiagnostic(DiagnosticSeverity::Error,
                                           DiagnosticCategory::InitFailed,
@@ -3232,7 +3232,7 @@ void Device::releaseSession(vn::graphics::RenderFrameExecutor& session)
         return; // the device's own driver is not a host's to return (see the header)
     }
     const std::unique_lock<std::shared_mutex> guard(impl->body_gate);
-    const auto found = std::find_if(impl->extra_sessions.begin(), impl->extra_sessions.end(), [&session](const std::unique_ptr<Session>& candidate) {
+    const auto found = std::find_if(impl->extra_sessions.begin(), impl->extra_sessions.end(), [&session](const std::unique_ptr<FrameDriver>& candidate) {
         return candidate.get() == &session;
     });
     if (found == impl->extra_sessions.end()) {
@@ -3248,7 +3248,7 @@ void Device::releaseSession(vn::graphics::RenderFrameExecutor& session)
 
 vn::graphics::RenderFrameExecutor& Device::executor()
 {
-    // THE DEVICE'S OWN DRIVER (see Device::Session): the frames a host drives through the device are this object's
+    // THE DEVICE'S OWN DRIVER (see Device::FrameDriver): the frames a host drives through the device are this object's
     // frames, and step 2 of the ADR is what makes `createSession()` hand out the others.
     return *impl->session;
 }
@@ -3635,7 +3635,7 @@ Capabilities Device::capabilities() const noexcept
 
 PresentOutcome Device::executeFrame(const FrameDescription& frame, PresentTarget* present_to)
 {
-    // THE FRAME IS THE DRIVER'S (see Device::Session): this verb exists because a device is also a RenderFrameExecutor
+    // THE FRAME IS THE DRIVER'S (see Device::FrameDriver): this verb exists because a device is also a RenderFrameExecutor
     // (RenderBackend is the aggregate), so it answers the driver `executor()` hands out.
     return impl->session->executeFrame(frame, present_to);
 }
