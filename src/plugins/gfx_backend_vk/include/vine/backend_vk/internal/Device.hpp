@@ -285,7 +285,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   frames in flight (one counted stop in `RetirementNumbers::device_waits`, like the colour readback) and is
      *   refused with `Failed` when asked from inside a frame body.
      * - IT READS THE DEPTH PICTURE: a multisampled target's resolved single-sample image (see
-     *   `TargetImages::depthPicture`), never the sample buffer - multisampling cannot change the depths a reader sees.
+     *   `TargetObjects::depthPicture`), never the sample buffer - multisampling cannot change the depths a reader sees.
      * - WHICH FORMATS, from the SDK's own table (`core::depthReadbackOf`, the table `decodeDepth` reads): D16, D32 and
      *   D32F have a plain depth copy; D24 is Vulkan's COMBINED depth/stencil format with no plain depth copy, so it
      *   answers Unsupported instead of decoding bytes that are not depths - the reference backend answers the same way.

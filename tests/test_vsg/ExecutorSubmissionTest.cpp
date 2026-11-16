@@ -14,7 +14,7 @@
 #include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/backend_vsg/internal/FrameRecorder.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>
 
 #include "FailingStepNode.hpp"
@@ -38,7 +38,7 @@ namespace
 constexpr std::uint32_t kSize = 64U;
 
 /// @brief The plan's facts for one off-screen target (what the compiler needs to resolve it).
-TargetFacts factsOf(std::unique_ptr<vn::backend_vsg::OffscreenTarget>& target)
+TargetFacts factsOf(std::unique_ptr<vn::backend_vsg::TargetObjects>& target)
 {
     TargetFacts entry;
     entry.target        = target.get();
@@ -64,11 +64,11 @@ TEST(ExecutorSubmissionTest, ALostSubmissionIsRepairedByTheNextFrameExactlyOnce)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    vn::backend_vsg::OffscreenTarget::Layout layout;
+    vn::backend_vsg::TargetObjects::Layout layout;
     layout.width                                      = kSize;
     layout.height                                     = kSize;
-    std::unique_ptr<vn::backend_vsg::OffscreenTarget> written = vn::backend_vsg::OffscreenTarget::create(created.device, layout);
-    std::unique_ptr<vn::backend_vsg::OffscreenTarget> other   = vn::backend_vsg::OffscreenTarget::create(created.device, layout);
+    std::unique_ptr<vn::backend_vsg::TargetObjects> written = vn::backend_vsg::TargetObjects::create(created.device, layout);
+    std::unique_ptr<vn::backend_vsg::TargetObjects> other   = vn::backend_vsg::TargetObjects::create(created.device, layout);
     ASSERT_NE(written, nullptr);
     ASSERT_NE(other, nullptr);
 
@@ -85,7 +85,7 @@ TEST(ExecutorSubmissionTest, ALostSubmissionIsRepairedByTheNextFrameExactlyOnce)
     clear.color          = true;
     clear.color_value[3] = 1.0F;
 
-    const auto record_frame = [&](std::uint64_t number, std::uint32_t pass_id, const std::unique_ptr<vn::backend_vsg::OffscreenTarget>& into) {
+    const auto record_frame = [&](std::uint64_t number, std::uint32_t pass_id, const std::unique_ptr<vn::backend_vsg::TargetObjects>& into) {
         recorder.beginFrame(FrameToken{ number });
         recorder.beginPass(pass_id);
         recorder.setRenderTarget(into.get());
@@ -136,11 +136,11 @@ TEST(ExecutorSubmissionTest, TheSubmissionStepItselfMarksWhatAFailedFrameWrote)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    vn::backend_vsg::OffscreenTarget::Layout layout;
+    vn::backend_vsg::TargetObjects::Layout layout;
     layout.width                                      = kSize;
     layout.height                                     = kSize;
-    std::unique_ptr<vn::backend_vsg::OffscreenTarget> written = vn::backend_vsg::OffscreenTarget::create(created.device, layout);
-    std::unique_ptr<vn::backend_vsg::OffscreenTarget> other   = vn::backend_vsg::OffscreenTarget::create(created.device, layout);
+    std::unique_ptr<vn::backend_vsg::TargetObjects> written = vn::backend_vsg::TargetObjects::create(created.device, layout);
+    std::unique_ptr<vn::backend_vsg::TargetObjects> other   = vn::backend_vsg::TargetObjects::create(created.device, layout);
     ASSERT_NE(written, nullptr);
     ASSERT_NE(other, nullptr);
 
@@ -157,7 +157,7 @@ TEST(ExecutorSubmissionTest, TheSubmissionStepItselfMarksWhatAFailedFrameWrote)
     clear.color          = true;
     clear.color_value[3] = 1.0F;
 
-    const auto record_frame = [&](std::uint64_t number, std::uint32_t pass_id, const std::unique_ptr<vn::backend_vsg::OffscreenTarget>& into) {
+    const auto record_frame = [&](std::uint64_t number, std::uint32_t pass_id, const std::unique_ptr<vn::backend_vsg::TargetObjects>& into) {
         recorder.beginFrame(FrameToken{ number });
         recorder.beginPass(pass_id);
         recorder.setRenderTarget(into.get());

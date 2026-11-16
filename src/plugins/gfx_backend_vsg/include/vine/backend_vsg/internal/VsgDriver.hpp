@@ -36,11 +36,11 @@ class VN_BACKEND_VSG_API VsgDriver final : public vn::graphics::RenderFrameExecu
      *
      * @param device      The device that owns this driver (borrowed; outlives it).
      * @param diagnostics The device's one diagnostic route (borrowed).
-     * @param registry    The device's target table, shared by every driver (borrowed).
+     * @param targets    The device's target table, shared by every driver (borrowed).
      */
-    VsgDriver(VsgBackend& device, vn::graphics::Diagnostics& diagnostics, VsgTargetRegistry& registry) noexcept
+    VsgDriver(VsgBackend& device, vn::graphics::Diagnostics& diagnostics, TargetTable& targets) noexcept
       : device_(device)
-      , executor_(diagnostics, registry)
+      , executor_(diagnostics, targets)
     {
     }
 

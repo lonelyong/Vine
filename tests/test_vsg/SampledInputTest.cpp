@@ -56,7 +56,7 @@
 #include <vine/backend_vsg/internal/ContentSources.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
 #include <vine/backend_vsg/internal/GeometryFacts.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>
 #include <vine/backend_vsg/support/VsgDynamicState.hpp>
@@ -104,7 +104,7 @@ using vn::backend_vsg::FactMiss;
 using vn::backend_vsg::GeometryFacts;
 using vn::backend_vsg::InputImages;
 using vn::backend_vsg::MaterialFacts;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::PassContent;
 using vn::backend_vsg::ProgramFacts;
 using vn::backend_vsg::StreamUploads;
@@ -171,22 +171,22 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout source_layout;
+    TargetObjects::Layout source_layout;
     source_layout.width  = kSize;
     source_layout.height = kSize;
     for (std::size_t index = 0; index < 4U; ++index) {
         source_layout.clear_color[index] = kRed[index];
     }
-    std::unique_ptr<OffscreenTarget> source = OffscreenTarget::create(created.device, source_layout);
+    std::unique_ptr<TargetObjects> source = TargetObjects::create(created.device, source_layout);
     ASSERT_NE(source, nullptr);
 
-    OffscreenTarget::Layout destination_layout;
+    TargetObjects::Layout destination_layout;
     destination_layout.width  = kSize;
     destination_layout.height = kSize;
     for (std::size_t index = 0; index < 4U; ++index) {
         destination_layout.clear_color[index] = kBlue[index];
     }
-    std::unique_ptr<OffscreenTarget> destination = OffscreenTarget::create(created.device, destination_layout);
+    std::unique_ptr<TargetObjects> destination = TargetObjects::create(created.device, destination_layout);
     ASSERT_NE(destination, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -265,7 +265,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     // The shape is the target's own, in both spellings: a plan told only the engine's half would be
     // describing a target nobody has (see CompiledShape). The facts come from the target itself
     // (`instance()`): nothing has been written into it yet, so its first pass is its bootstrap one and must
-    // clear (see OffscreenTarget::instance).
+    // clear (see TargetObjects::instance).
     source_facts.wanted.shape  = source->shape();
     source_facts.current       = source->instance();
 
@@ -405,16 +405,16 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout source_layout;
+    TargetObjects::Layout source_layout;
     source_layout.width  = kSize;
     source_layout.height = kSize;
     for (std::size_t index = 0; index < 4U; ++index) {
         source_layout.clear_color[index] = kRed[index];
     }
-    std::unique_ptr<OffscreenTarget> source = OffscreenTarget::create(created.device, source_layout);
+    std::unique_ptr<TargetObjects> source = TargetObjects::create(created.device, source_layout);
     ASSERT_NE(source, nullptr);
 
-    OffscreenTarget::TargetLayout destination_layout;
+    TargetObjects::TargetLayout destination_layout;
     destination_layout.width                     = kSize;
     destination_layout.height                    = kSize;
     destination_layout.color_formats             = { RenderTarget::ColorFormat::RGBA8 };
@@ -428,7 +428,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     destination_layout.clear.color_value[1]      = kBlue[1];
     destination_layout.clear.color_value[2]      = kBlue[2];
     destination_layout.clear.color_value[3]      = 1.0F;
-    std::unique_ptr<OffscreenTarget> destination = OffscreenTarget::create(created.device, destination_layout);
+    std::unique_ptr<TargetObjects> destination = TargetObjects::create(created.device, destination_layout);
     ASSERT_NE(destination, nullptr);
     ASSERT_TRUE(destination->hasDepth()) << "the case needs a depth attachment for its claim to be testable";
 
@@ -595,19 +595,19 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
 
     // The shadow map: a DEPTH-ONLY target (the shape a shadow pass renders into), sampleable, so a later pass
     // can read it. No colour formats at all.
-    OffscreenTarget::TargetLayout shadow_layout;
+    TargetObjects::TargetLayout shadow_layout;
     shadow_layout.width  = kSize;
     shadow_layout.height = kSize;
     shadow_layout.color_formats.clear(); // DEPTH ONLY: the shape is the shadow map's, not a colour target's
     shadow_layout.depth_format                  = RenderTarget::DepthFormat::D32;
     shadow_layout.depth_sampleable              = true;
     shadow_layout.clear.depth                   = true; // the reverse-Z far plane (0.0), the value "nothing was written"
-    std::unique_ptr<OffscreenTarget> shadow_map = OffscreenTarget::create(created.device, shadow_layout);
+    std::unique_ptr<TargetObjects> shadow_map = TargetObjects::create(created.device, shadow_layout);
     ASSERT_NE(shadow_map, nullptr);
     ASSERT_TRUE(shadow_map->hasDepth());
     EXPECT_NE(shadow_map->depthView(), nullptr) << "a shader samples the DEPTH view";
 
-    OffscreenTarget::Layout receiver_layout;
+    TargetObjects::Layout receiver_layout;
     receiver_layout.width  = kSize;
     receiver_layout.height = kSize;
     for (std::size_t index = 0; index < 4U; ++index) {
@@ -620,7 +620,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
     for (std::size_t index = 0; index < 4U; ++index) {
         receiver_clear.color_value[index] = kBlue[index];
     }
-    std::unique_ptr<OffscreenTarget> receiver = OffscreenTarget::create(created.device, receiver_layout);
+    std::unique_ptr<TargetObjects> receiver = TargetObjects::create(created.device, receiver_layout);
     ASSERT_NE(receiver, nullptr);
 
     // The identity the plan names the shadow map by: the SDK handle the host announced it with (the same

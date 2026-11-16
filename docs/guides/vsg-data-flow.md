@@ -78,7 +78,7 @@ executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟�
 ## 4. 执行段（`VsgExecutor` + 会话）
 
 * `VsgExecutor` 按计划**顺序**录制每个 pass 的命令图：`WindowTarget`（窗口那趟，含"一次清"）、
-  `OffscreenTarget`（按加载变体建 render pass/framebuffer）、`HostTargets`（宿主的离屏目标，懒建、快照描述）。
+  `TargetObjects`（按加载变体建 render pass/framebuffer）、`TargetTable`（宿主的离屏目标，懒建、快照描述）。
 * 目标自己说事实：`shape()`/`instance()`/`written()`/`passVariantCount()`；计划的答案由
   `applyTargetPlans` 应用（窗口路径**问平台**，其余按计划）。
 * `Session`：帧时钟 `FrameTimeline`（`submitted` 与 `completed` 分开）、`RetirementQueue`（停靠窗口 = `slots + 1`）、

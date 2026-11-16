@@ -43,7 +43,7 @@ set(SRC_FILE_LIST
 	ContentDrawTest.cpp
 	StreamRevisionTest.cpp
 	DevicePhaseTest.cpp
-	OffscreenTargetTest.cpp
+	TargetObjectsTest.cpp
 	ContentStackTest.cpp
 	SampledInputTest.cpp
 	ScreenDrawTest.cpp
@@ -60,7 +60,7 @@ set(SRC_FILE_LIST
 	PrepareUploadTest.cpp
 	HostWindowReadTest.cpp
 	PassRegistryTest.cpp
-	HostTargetsTest.cpp
+	TargetTableTest.cpp
 	GfxBackendVsgPluginTest.cpp
 	RenderStateMapperTest.cpp
 	GlslCompileTest.cpp
@@ -137,7 +137,7 @@ target_sources(${TEST_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ReadbackStaging.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ResidenceTable.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ShaderCompiler.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/TargetImages.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/TargetObjects.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/TargetTable.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/WindowTarget.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/WindowSystem.cpp
@@ -192,7 +192,7 @@ target_sources(${TEST_NAME} PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/TransferStaging.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/PassRegistry.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/HostTargets.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/TargetTable.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/HostReadback.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/StreamUploads.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/BlockStorage.cpp
@@ -205,7 +205,7 @@ target_sources(${TEST_NAME} PRIVATE
 	# The device POLICY (version floor, feature/extension sets) is this backend's Vulkan policy and lives with it:
 	# it is no longer part of the installed SDK (see the module audit's R1).
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/DeviceRequirements.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/OffscreenTarget.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/TargetObjects.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/VsgExecutor.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ContentFacts.cpp
 

@@ -51,7 +51,7 @@
 #include <vine/backend_vsg/internal/ContentSources.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
 #include <vine/backend_vsg/internal/GeometryFacts.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/ShadowBlock.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>
@@ -108,7 +108,7 @@ using vn::backend_vsg::FactMiss;
 using vn::backend_vsg::GeometryFacts;
 using vn::backend_vsg::InputImages;
 using vn::backend_vsg::MaterialFacts;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetObjects;
 using vn::graphics::packedSlotOf;
 using vn::graphics::packLightBlock;
 using vn::backend_vsg::packShadowBlock;
@@ -482,24 +482,24 @@ TEST(ShadowBlockTest, TheMapScalesTheOneLightItBelongsToAndNothingElse)
     }
 
     // The map: a DEPTH-ONLY, sampleable target, cleared to the reverse-Z far plane (0.0).
-    OffscreenTarget::TargetLayout map_layout;
+    TargetObjects::TargetLayout map_layout;
     map_layout.width  = kSize;
     map_layout.height = kSize;
     map_layout.color_formats.clear();
     map_layout.depth_format              = RenderTarget::DepthFormat::D32;
     map_layout.depth_sampleable          = true;
     map_layout.clear.depth               = true;
-    std::unique_ptr<OffscreenTarget> map = OffscreenTarget::create(created.device, map_layout);
+    std::unique_ptr<TargetObjects> map = TargetObjects::create(created.device, map_layout);
     ASSERT_NE(map, nullptr);
     ASSERT_TRUE(map->hasDepth());
 
-    OffscreenTarget::Layout receiver_layout;
+    TargetObjects::Layout receiver_layout;
     receiver_layout.width  = kSize;
     receiver_layout.height = kSize;
     for (std::size_t index = 0; index < 4U; ++index) {
         receiver_layout.clear_color[index] = kClear[index];
     }
-    std::unique_ptr<OffscreenTarget> receiver = OffscreenTarget::create(created.device, receiver_layout);
+    std::unique_ptr<TargetObjects> receiver = TargetObjects::create(created.device, receiver_layout);
     ASSERT_NE(receiver, nullptr);
 
     // The map's identity and its own statements: the target says whose shadow it is and how to read it.

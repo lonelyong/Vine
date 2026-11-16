@@ -72,7 +72,7 @@ struct ViewportRect {
  *
  * @param samples Samples per pixel; 0 and 1 both mean one sample. A value between two API counts rounds DOWN,
  *                which is the LAST-RESORT projection for a number nobody should hand over: a target's count is
- *                refused before it reaches this call when the device does not offer it (see HostTargets and
+ *                refused before it reaches this call when the device does not offer it (see TargetTable and
  *                ADR-2026-11-14-sample-count-refused-not-lowered).
  * @return The API's count (never 0 for an input of at least 1).
  */

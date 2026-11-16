@@ -26,7 +26,7 @@
 #include <vine/backend_vsg/internal/ContentStore.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
 #include <vine/backend_vsg/internal/DeviceProbe.hpp>
-#include <vine/backend_vsg/internal/HostTargets.hpp>
+#include <vine/backend_vsg/internal/TargetTable.hpp>
 #include <vine/backend_vsg/internal/MaterialImages.hpp>
 #include <vine/backend_vsg/internal/VsgBackend.hpp>
 #include <vine/backend_vsg/internal/VsgDriver.hpp>
@@ -71,7 +71,7 @@ using vn::test::setPrimitiveIndices;
 using vn::backend_vsg::BlockStorage;
 using vn::backend_vsg::ContentAssembly;
 using vn::backend_vsg::ContentStore;
-using vn::backend_vsg::HostTargets;
+using vn::backend_vsg::TargetTable;
 using vn::backend_vsg::PassRegistry;
 using vn::backend_vsg::StreamUploads;
 using vn::backend_vsg::WindowTarget;
@@ -885,8 +885,8 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     EXPECT_EQ(recorded[1], BackendContentAccess::passes(*backend).adopt(window_pass.get()));
 
     // The facts of a BUILT target, which are what the plan was compiled from.
-    HostTargets&        targets = BackendContentAccess::targets(*backend);
-    HostTargets::Entry* entry   = targets.find(offscreen.get());
+    TargetTable&        targets = BackendContentAccess::targets(*backend);
+    TargetTable::Entry* entry   = targets.find(offscreen.get());
     ASSERT_NE(entry, nullptr);
     ASSERT_NE(entry->target, nullptr) << "the target was built when its first pass was announced";
     TargetFacts row;
@@ -894,7 +894,7 @@ TEST(VsgBackendTest, TheSdkOffscreenTargetIsDrawnIntoSampledAndRebuilt)
     EXPECT_EQ(row.wanted.width, 64);
     EXPECT_EQ(row.wanted.height, 64);
     EXPECT_FALSE(row.wanted.shape.device_color_formats.empty()) << "a built target states the device's own spelling of its shape";
-    EXPECT_TRUE(row.current.built) << "its first pass has been recorded (see OffscreenTarget::written)";
+    EXPECT_TRUE(row.current.built) << "its first pass has been recorded (see TargetObjects::written)";
     EXPECT_EQ(row.depth.has_depth, false) << "the host attached no depth";
 
     settle();
@@ -2321,7 +2321,7 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     borrower->setSize(16, 16);
     backend->setRenderTarget(borrower.get());
 
-    HostTargets& targets = BackendContentAccess::targets(*backend);
+    TargetTable& targets = BackendContentAccess::targets(*backend);
     ASSERT_NE(targets.find(borrower.get()), nullptr);
     ASSERT_NE(targets.find(borrower.get())->target, nullptr) << "the borrower was built on the lender's depth";
     EXPECT_FALSE(backend->readDepthBuffer(borrower.get(), depths, &why));
@@ -2690,8 +2690,8 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
     shadow->setDepthPromotion(true);
 
     backend->setRenderTarget(shadow.get());
-    HostTargets&        targets      = BackendContentAccess::targets(*backend);
-    HostTargets::Entry* shadow_entry = targets.find(shadow.get());
+    TargetTable&        targets      = BackendContentAccess::targets(*backend);
+    TargetTable::Entry* shadow_entry = targets.find(shadow.get());
     ASSERT_NE(shadow_entry, nullptr);
     ASSERT_NE(shadow_entry->target, nullptr) << "a depth-only target is built like any other";
     EXPECT_EQ(shadow_entry->target->colorAttachmentCount(), 0U);

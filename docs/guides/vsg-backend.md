@@ -15,7 +15,7 @@
 | `initialize()` | 由公告（宿主句柄、尺寸、默认程序）建会话；失败时**自己清理半成品**。设备是“什么都不呈现”（`DeviceDesc::None`，见 `RenderDevice.hpp` 的 `DeviceDesc`）时改走无窗口缝：建一块 `vsg::Device`、不建窗口 | `true/false` + 诊断；`false` 后没有会话 |
 | `executeFrame(value, present_to)` | **一帧的整个身体**（`beginFrame()`/`endFrame()` 的那两半都在这里）：会话开帧（取交换链图、推进槽位时钟）+ 录制器开一帧 → 按值走每条 pass（身份 / order / 输入 → 它的 target、viewport、清屏、状态与每条绘制调用，内容副作用在绘制那一层）+ 描述定稿 → **编译** → 记录并提交 → **帧尾 present**（有目标时经它；`nullptr` 时走离屏会话、不 present，见 `graphics-architecture.md`） | 没有会话时上报一次；调用返回时这一帧已经完整（提交 + 呈递都由它做完） |
 | `present_to->present()` | **不再由宿主调用**：它是帧尾的**机制**（`PresentTarget` 的呈递那一半，窗口实现是 `WindowPresentTarget`），由 `executeFrame()` 在帧尾调用；直接驱动一帧的宿主在自己 present 只会找到“没有开着的帧” | `framesPresented()` +1（由执行器那一次调用造成）；丢帧会被点名为诊断 |
-| `setRenderTarget(target)` | 宿主的**目标公告**：离屏目标描述送进 `HostTargets`（**快照**，稳态零分配）。pass 画进哪张目标写在帧值里，不走这条 | 目标懒建；拒绝原因分说 |
+| `setRenderTarget(target)` | 宿主的**目标公告**：离屏目标描述送进 `TargetTable`（**快照**，稳态零分配）。pass 画进哪张目标写在帧值里，不走这条 | 目标懒建；拒绝原因分说 |
 | `setClearPolicy` 等 per-pass 入口 | **已删**：清屏 / 视口 / 灯 / pass 状态 / 输入全部随帧值到达（见上） | 与计划一致与否在执行段核对 |
 | `createSurfaceTarget(handle, why)` | 答**这块窗口自己的目标对象**（每块窗口一个）：本后端有窗口那一半，宿主/引擎经它驱动句柄/尺寸/呈现；**一把窗口一次**，第二把答 `WindowOccupied` + 报一次，设备**不是**其中任何一块（见 `graphics-architecture.md`）。设备建的时候就说了“不呈现”时（`DeviceDesc::None`）早退：**静默**答 `NoPresentation`，窗口数为 0 | 只离屏的设备不用覆写：默认答 `NoPresentation`，一个窗口入口都不必实现 |
 | 目标上的 `setWindowHandle`/`resize` | 采纳宿主表面 / 跟随表面（**停一次设备，计数**） | `deviceWaits()` |
@@ -90,7 +90,7 @@
   后端只在开帧时借一个句柄，帧结束即清。设备级设置（默认内容程序、释放目标）会作用到**每个**会话的暂存，
   所以"会话在设定之后才起来"不会丢掉默认程序。计划只属于一帧，设备上不存在第二份。
 * **帧状态归驱动者**：`createSession()` 交出 **`VsgDriver`**——它自己拥有一个执行器（本次帧的窗口、已录的 pass、
-  测量条目、跳过数）与**它自己的默认内容程序**；目标注册表是设备唯一的一张（`VsgTargetRegistry`），所有驱动者共用。
+  测量条目、跳过数）与**它自己的默认内容程序**；目标表是设备唯一的一张（`TargetTable`），所有驱动者共用。
   设备自己的驱动者就是聚合本身（`executor()`）；交出去的由设备拥有，`releaseSession` 销毁。帧自己的运行状态在
   `VsgExecutor::FrameDrive`（scratch / 窗口索引 / 上传基线 / 上一帧的读数），帧尾即清；`presentWindow` 经
   **线程本地的在飞帧**取回本次帧的驱动者（窗口目标的 `present()` 没有帧参数）。

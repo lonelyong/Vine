@@ -522,7 +522,7 @@ TEST(VkContentTargetTest, TheDepthAttachmentReadsBackAsNormalisedRowMajorValues)
 /**
  * @brief A multisampled target's depth reads back as its RESOLVED picture, not the sample buffer.
  *
- * The render pass resolves the depth into a single-sample image (`TargetImages::depthPicture`, `sample0`, backlog
+ * The render pass resolves the depth into a single-sample image (`TargetObjects::depthPicture`, `sample0`, backlog
  * T40), and that image is what a reader sees - so the depths are the single-sampled ones, one per pixel. Reading the
  * sample buffer instead would be a multi-texels-per-pixel copy, which the packed size below (width * height) rules out.
  */
@@ -553,7 +553,7 @@ TEST(VkContentTargetTest, AMultisampledTargetsDepthReadsItsResolvePicture)
     std::vector<float> depths;
     ReadbackResult     why = ReadbackResult::Failed;
     ASSERT_TRUE(backend->readDepthBuffer(target.get(), depths, &why))
-        << "a multisampled target's resolved depth is served now (see TargetImages::depthPicture), refused: " << static_cast<int>(why);
+        << "a multisampled target's resolved depth is served now (see TargetObjects::depthPicture), refused: " << static_cast<int>(why);
     EXPECT_EQ(why, ReadbackResult::Ok);
     ASSERT_EQ(depths.size(), std::size_t{ 64U * 64U }) << "one value per PIXEL, not per sample";
 

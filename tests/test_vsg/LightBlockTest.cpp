@@ -60,7 +60,7 @@
 #include <vine/backend_vsg/internal/ContentSources.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
 #include <vine/backend_vsg/internal/GeometryFacts.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>
 
@@ -111,7 +111,7 @@ using vn::backend_vsg::ContentPipeline;
 using vn::backend_vsg::FactMiss;
 using vn::backend_vsg::GeometryFacts;
 using vn::backend_vsg::MaterialFacts;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::PassContent;
 using vn::backend_vsg::ProgramAbi;
 using vn::backend_vsg::ProgramFacts;
@@ -175,13 +175,13 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerDrawingCall)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout layout;
+    TargetObjects::Layout layout;
     layout.width  = kSize;
     layout.height = kSize;
     for (std::size_t index = 0; index < 4U; ++index) {
         layout.clear_color[index] = kGreen[index];
     }
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, layout);
     ASSERT_NE(target, nullptr);
 
     // The camera every call announces: at +Z, looking at the origin. A world +Z light therefore travels TOWARDS
@@ -469,13 +469,13 @@ TEST(LightBlockTest, TheLightsReachTheFragmentStagePerFullScreenCall)
     }
 
     constexpr float         kBlue[4]{ 0.0F, 0.0F, 0.75F, 1.0F };
-    OffscreenTarget::Layout destination_layout;
+    TargetObjects::Layout destination_layout;
     destination_layout.width  = kSize;
     destination_layout.height = kSize;
     for (std::size_t index = 0; index < 4U; ++index) {
         destination_layout.clear_color[index] = kBlue[index];
     }
-    std::unique_ptr<OffscreenTarget> destination = OffscreenTarget::create(created.device, destination_layout);
+    std::unique_ptr<TargetObjects> destination = TargetObjects::create(created.device, destination_layout);
     ASSERT_NE(destination, nullptr);
 
     // The program: the engine's canonical full-screen vertex stage (buildScreenProgramFacts composes it) with a

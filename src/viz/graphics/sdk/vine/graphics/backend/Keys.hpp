@@ -160,7 +160,7 @@ struct VN_GRAPHICS_API RenderPassCompatibility {
  *   pipeline only depends on the compatibility half. Vulkan draws the line in the same place:
  *   load/store operations and layouts are NOT part of render pass compatibility, so several variants
  *   of one attachment set MAY share one compiled pipeline - which is what makes a target able to
- *   serve a clearing pass and a loading pass without recompiling anything (see OffscreenTarget,
+ *   serve a clearing pass and a loading pass without recompiling anything (see TargetObjects,
  *   which keys its render pass objects by exactly this type).
  * - WHAT IT HAS TO CARRY is therefore every property of the render pass OBJECT a graph is built with:
  *   whether each attachment clears or keeps what is there, whether its result survives, and which

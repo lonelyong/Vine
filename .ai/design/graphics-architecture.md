@@ -84,7 +84,7 @@
 | 扩展点 | 今天要动的地方（实际文件） | 处数 |
 |---|---|---|
 | 一个 **pass 种类**（如 compute） | `PassDesc.hpp` 的 `PassKind`；`Plan.cpp` 的校验；`RenderPass.cpp` 的 kind → 节点映射；一个新节点类（照 `ScreenPass.cpp`）；`EngineCompile.cpp` 的 describe；每个后端按 `DrawDescription::Kind` 录制 | 6–8 |
-| 一个 **像素格式** | `RenderTarget.hpp` 的 `ColorFormat` / `DepthFormat`；vk `TargetImages.cpp` 的 `colorFormatOf` / `depthFormatOf`；vk `ContentImages.cpp` 的 `toVkFormat`；vsg `VsgSceneRules.cpp` 的格式映射 | 4 |
+| 一个 **像素格式** | `RenderTarget.hpp` 的 `ColorFormat` / `DepthFormat`；vk `TargetObjects.cpp` 的 `colorFormatOf` / `depthFormatOf`；vk `ContentImages.cpp` 的 `toVkFormat`；vsg `VsgSceneRules.cpp` 的格式映射 | 4 |
 | 一个 **pass 声明字段** | `PassDesc.hpp`；`Plan.cpp`（差分与校验）；`FrameDescription.hpp` 的 `PassDraw`；每个后端的录制器 | 4+ |
 | 一个 **内容通道**（顶点属性） | `Geometry.hpp` 的 `GeometryDescription` 通道表；`ShaderAbi.hpp` 的块布局；vk `ContentDraw.cpp` 的通道 → location 映射与顶点格式；vsg 的绑定 | 4 |
 | 一个 **后端** | 新插件（`Plugin.cpp` + `BackendFactory.cpp`）、`RenderBackend` 两半、自己的 `test_*`、`check_*_exposure` 门禁、`RenderBackendRegistry` 自注册 | 约 6 类文件 |

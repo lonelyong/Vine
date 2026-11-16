@@ -16,12 +16,12 @@ namespace
 
 VsgExecutor::VsgExecutor(vn::graphics::Diagnostics& diagnostics) noexcept
   : diagnostics_(diagnostics)
-  , registry_(own_registry_)
+  , targets_(own_targets_)
 {}
 
-VsgExecutor::VsgExecutor(vn::graphics::Diagnostics& diagnostics, VsgTargetRegistry& registry) noexcept
+VsgExecutor::VsgExecutor(vn::graphics::Diagnostics& diagnostics, TargetTable& targets) noexcept
   : diagnostics_(diagnostics)
-  , registry_(registry)
+  , targets_(targets)
 {}
 
 void VsgExecutor::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
@@ -46,67 +46,11 @@ void VsgExecutor::setWindow(WindowTarget* window) noexcept
     window_ = window;
 }
 
-void VsgExecutor::addTarget(const void* identity, OffscreenTarget* target, const char* label) noexcept
+void VsgExecutor::addTarget(const void* identity, TargetObjects* target, const char* label) noexcept
 {
-    registry_.add(identity, target, label);
-}
-
-void VsgExecutor::clearTargets() noexcept
-{
-    registry_.clear();
-}
-
-void VsgTargetRegistry::add(const void* identity, OffscreenTarget* target, const char* label) noexcept
-{
-    for (Entry& entry : entries_) {
-        if (entry.identity == identity) {
-            entry.target = target;
-            entry.label  = label;
-            return;
-        }
+    if (TargetTable::Entry* entry = targets_.adopt(identity, target); entry != nullptr && label != nullptr) {
+        entry->label = label;
     }
-    entries_.push_back(Entry{ identity, target, label });
-}
-
-void VsgTargetRegistry::clear() noexcept
-{
-    entries_.clear();
-}
-
-VsgTargetRegistry::Entry* VsgTargetRegistry::find(const void* identity) noexcept
-{
-    for (Entry& entry : entries_) {
-        if (entry.identity == identity) {
-            return &entry;
-        }
-    }
-    return nullptr;
-}
-
-const VsgTargetRegistry::Entry* VsgTargetRegistry::find(const void* identity) const noexcept
-{
-    for (const Entry& entry : entries_) {
-        if (entry.identity == identity) {
-            return &entry;
-        }
-    }
-    return nullptr;
-}
-
-OffscreenTarget* VsgTargetRegistry::resolve(const void* identity) const noexcept
-{
-    const Entry* entry = find(identity);
-    return entry != nullptr ? entry->target : nullptr;
-}
-
-std::span<const VsgTargetRegistry::Entry> VsgTargetRegistry::entries() const noexcept
-{
-    return entries_;
-}
-
-std::size_t VsgTargetRegistry::size() const noexcept
-{
-    return entries_.size();
 }
 
 bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg::CommandGraph> command_graph, std::span<const PassContent> content)
@@ -166,7 +110,7 @@ bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg:
     // The copies go after every pass, per target: a probe reads the frame's final picture, and a copy
     // recorded between two passes would read one that is not final.
     for (const core::CompiledTarget& compiled_target : frame.targets) {
-        OffscreenTarget* target = resolve(compiled_target);
+        TargetObjects* target = resolve(compiled_target);
         if (target != nullptr) {
             // A depth-only target (a shadow map) copies its DEPTH back; a colour one copies attachment 0.
             // Adding the null a colour-less target would answer with a colour capture is a vsg Group with a
@@ -229,7 +173,7 @@ bool VsgExecutor::recordOffscreen(const core::CompiledPass&                  pas
                                   const ::vsg::ref_ptr<::vsg::CommandGraph>& command_graph,
                                   std::span<const PassContent>               content)
 {
-    OffscreenTarget* target = resolve(compiled_target);
+    TargetObjects* target = resolve(compiled_target);
     if (target == nullptr) {
         reportSkipped(compiled_target, "this executor was not told about it");
         return false;
@@ -253,14 +197,14 @@ bool VsgExecutor::recordOffscreen(const core::CompiledPass&                  pas
         return false;
     }
 
-    // Name the images for the validation layer on the first frame that CAN (see OffscreenTarget::nameImages):
+    // Name the images for the validation layer on the first frame that CAN (see TargetObjects::nameImages):
     // a create-info has no Vulkan handle until the first compile allocates it, so this is retried until it
     // sticks and costs one flag check per pass afterwards. The plan's own identity is the name - it is what
     // the host calls this target and what a validation message should say.
     if (compiled_target.target != nullptr) {
-        const VsgTargetRegistry::Entry* entry = entryOf(compiled_target.target);
-        if (entry != nullptr && entry->label != nullptr) {
-            (void)target->nameImages(entry->label);
+        const TargetTable::Entry* entry = entryOf(compiled_target.target);
+        if (entry != nullptr && !entry->label.empty()) {
+            (void)target->nameImages(entry->label.c_str());
         }
     }
 
@@ -349,10 +293,10 @@ std::size_t VsgExecutor::noteLostSubmission(const core::CompiledFrame& frame) no
         if (identity == nullptr) {
             continue; // the default framebuffer: its contents are the presentation's, not ours
         }
-        OffscreenTarget* target = nullptr;
-        for (const VsgTargetRegistry::Entry& entry : registry_.entries()) {
-            if (entry.identity == identity) {
-                target = entry.target;
+        TargetObjects* target = nullptr;
+        for (const std::unique_ptr<TargetTable::Entry>& entry : targets_.entries()) {
+            if (entry->identity == identity) {
+                target = entry->target.get();
                 break;
             }
         }
@@ -441,7 +385,7 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
 
     // WHAT ORDER THESE ARE APPLIED IN, and why it is a lease question rather than a bookkeeping one: a
     // borrower's framebuffer names its LENDER's depth image, so replacing the lender's attachments first is
-    // what makes the borrower's own build name the image the lender now serves (see OffscreenTarget::resize,
+    // what makes the borrower's own build name the image the lender now serves (see TargetObjects::resize,
     // which refuses in the other order for the VUID a framebuffer smaller than its own attachment is).
     // Applying a borrower first would refuse its resize every frame and leave both targets at the size they
     // were built at - which is exactly what happened to the engine's deferred pipeline, silently.
@@ -480,7 +424,7 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
     // framebuffer attachment must be at least as large as the framebuffer it is attached to
     // (VUID-VkFramebufferCreateInfo-pAttachments-00861), so a lender may not shrink below a borrower that is
     // not shrinking with it. The target itself cannot answer this (it does not know who its borrowers are,
-    // which is what the facts are for), and the refusal is the mirror image of the one OffscreenTarget::resize
+    // which is what the facts are for), and the refusal is the mirror image of the one TargetObjects::resize
     // makes for a borrower that grows past its lender.
     //
     // WHAT THE BORROWER WILL BE, not what it is: a borrower with an application of its own is applied AFTER
@@ -591,7 +535,7 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
             continue;
         }
 
-        OffscreenTarget* target = resolve(compiled);
+        TargetObjects* target = resolve(compiled);
         if (target == nullptr) {
             continue; // not registered here: record() reports the pass that needed it
         }
@@ -619,7 +563,7 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
                                 "shrinking with it)");
                 continue;
             }
-            const OffscreenTarget::Resized resized =
+            const TargetObjects::Resized resized =
                 target->resize(static_cast<std::uint32_t>(wanted->wanted.width), static_cast<std::uint32_t>(wanted->wanted.height), timeline, retirement);
             replaced = resized.replaced;
             if (resized.replaced) {
@@ -635,8 +579,8 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
         else {
             // Rebuild: the plan changed the SHAPE, and everything the target is NOT changing here is its own -
             // the clear policy it was created with and whether its depth was asked to be sampleable (the plan's
-            // description carries neither, see OffscreenTarget::layout).
-            OffscreenTarget::TargetLayout layout   = target->layout();
+            // description carries neither, see TargetObjects::layout).
+            TargetObjects::TargetLayout layout   = target->layout();
             layout.width                           = static_cast<std::uint32_t>(wanted->wanted.width);
             layout.height                          = static_cast<std::uint32_t>(wanted->wanted.height);
             layout.color_formats                   = wanted->wanted.shape.color_formats;
@@ -646,7 +590,7 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
             // target disagreeing (the shape agreement in record() would catch it, but only after a frame was
             // wasted on images nobody can draw into at the new count).
             layout.samples                         = wanted->wanted.shape.samples;
-            const OffscreenTarget::Rebuilt rebuilt = target->rebuild(layout, timeline, retirement);
+            const TargetObjects::Rebuilt rebuilt = target->rebuild(layout, timeline, retirement);
             replaced                               = rebuilt.replaced;
             if (rebuilt.replaced) {
                 ++applied.rebuilt;
@@ -670,14 +614,14 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
             // reportUnapplied.
             reportUnapplied(compiled,
                             action == core::TargetAction::ResizeInPlace ? "its new extent could not be applied (a leased depth needs its lender "
-                                                                          "applied first, see the lease rules in OffscreenTarget)"
+                                                                          "applied first, see the lease rules in TargetObjects)"
                                                                         : "its new shape could not be applied (a leased depth cannot change shape "
                                                                           "while the lease is in force)");
             continue;
         }
 
         replaced_identities.push_back(compiled.target);
-        if (VsgTargetRegistry::Entry* entry = entryOf(compiled.target)) {
+        if (TargetTable::Entry* entry = entryOf(compiled.target)) {
             entry->noteApplied(); // the application took effect: a later failure is a new episode
         }
     }
@@ -688,7 +632,7 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
     // still names the replaced image - which is the case this pass exists for.
     for (const void* lender : replaced_identities) {
         for (const void* borrower : borrowersOf(lender)) {
-            if (OffscreenTarget* borrower_target = resolveIdentity(borrower)) {
+            if (TargetObjects* borrower_target = resolveIdentity(borrower)) {
                 (void)borrower_target->repointBorrowedDepth(timeline, retirement);
             }
         }
@@ -711,14 +655,14 @@ const VsgExecutor::FrameDrive& VsgExecutor::drive() const noexcept
     return drive_;
 }
 
-OffscreenTarget* VsgExecutor::resolve(const core::CompiledTarget& target) const noexcept
+TargetObjects* VsgExecutor::resolve(const core::CompiledTarget& target) const noexcept
 {
-    return registry_.resolve(target.target);
+    return targets_.resolve(target.target);
 }
 
-OffscreenTarget* VsgExecutor::resolveIdentity(const void* identity) const noexcept
+TargetObjects* VsgExecutor::resolveIdentity(const void* identity) const noexcept
 {
-    return registry_.resolve(identity);
+    return targets_.resolve(identity);
 }
 
 void VsgExecutor::reportUnapplied(const core::CompiledTarget& target, const char* why)
@@ -731,19 +675,19 @@ void VsgExecutor::reportUnapplied(const core::CompiledTarget& target, const char
     // The episode is PER TARGET (one ReportOnce per registered entry): two targets that cannot follow their
     // descriptions are two problems, and a single episode would report whichever failed first and swallow the
     // other until it recovered.
-    VsgTargetRegistry::Entry* entry = entryOf(target.target);
+    TargetTable::Entry* entry = entryOf(target.target);
     if (entry == nullptr || !entry->unapplied.shouldReport()) {
         return; // not registered here: record() reports the passes that needed it
     }
-    const std::string which = entry->label != nullptr ? std::string(entry->label) : std::string("a target");
+    const std::string which = !entry->label.empty() ? entry->label : std::string("a target");
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                         vn::graphics::DiagnosticCategory::TargetBuildFailed,
                         vn::String::fromUtf8("the target '" + which + "' did not follow its description: " + why));
 }
 
-VsgTargetRegistry::Entry* VsgExecutor::entryOf(const void* identity) noexcept
+TargetTable::Entry* VsgExecutor::entryOf(const void* identity) noexcept
 {
-    return registry_.find(identity);
+    return targets_.find(identity);
 }
 
 void VsgExecutor::reportSkipped(const core::CompiledTarget& target, const char* why)

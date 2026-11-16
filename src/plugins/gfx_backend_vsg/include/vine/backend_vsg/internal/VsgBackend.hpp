@@ -36,7 +36,7 @@
  *     into the passes the plan asked for, with the view block built from the pass' own camera and the
  *     frame's clock - the host's picture, drawn by the pieces that already existed;
  *   * the OFF-SCREEN HALF: `capabilities()` answers `render_targets = true`, `setRenderTarget()` holds the host's
- *     targets in api/HostTargets (the description is COPIED, the objects are built lazily, and the resize /
+ *     targets in api/TargetTable (the description is COPIED, the objects are built lazily, and the resize /
  *     rebuild after that is the plan's answer applied by the executor), a pass' declared inputs (the value's
  *     `inputs`) announce what it reads - and the images of those inputs are what the content recording binds -
  *     and a draw of `Kind::Screen` is the full-screen call whose source is one of them. `releaseRenderTarget()`
@@ -553,7 +553,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
     /** @brief Announces the target a pass draws into, as the recorder's identity for it.
      *
      * null means the default framebuffer, which the plan spells the same way. The target itself was HELD and built (as
-     * far as its description allows) by the frame head (see openFrameHead and HostTargets) - the collection walk only
+     * far as its description allows) by the frame head (see openFrameHead and TargetTable) - the collection walk only
      * tells the recorder which identity the pass names, so it touches no device table.
      */
     void announceTarget(FrameScratch& scratch, vn::raw_ptr<vn::graphics::RenderTarget> target);
@@ -632,7 +632,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      *                        objects at all is REPORTED then (inside a frame, where it blocks the picture) and is
      *                        silent otherwise, because a host configures a target before it draws into it and a
      *                        borrow whose lender arrives later in that setup is order rather than failure.
-     * @return true when the target is held (see HostTargets::State for what its objects are).
+     * @return true when the target is held (see TargetTable::State for what its objects are).
      */
     bool adoptHostTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, bool picture_depends);
 

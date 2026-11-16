@@ -342,7 +342,7 @@ struct Output {                                  // 这个 pass 承诺产出什�
   `TargetImages`（vk 的 GPU 对象）/ `TargetClaims`（租约）/ `HostTargets`（vsg 的表）/
   `VsgTargetRegistry`（vsg 的表）/ `OffscreenTarget`（vsg 的对象 + 探针）。其中
   `OffscreenTarget` 是**生产类型**（`HostTargets` / `VsgExecutor` / `HostReadback` 都用它），但名字听起来像测试夹具。
-- **证据**：文件名清单；`OffscreenTarget.hpp` 的用户。
+- **证据**：文件名清单；`OffscreenTarget.hpp` 的用户。 <!-- drift-ok -->
 - **判据**：`G1`（一个概念一个名字）；`G6`（两后端的同角色类型不对齐）。
 - **更好的形状**（词表，不新增类型）：
   | 角色 | 名字 | 谁拥有 |

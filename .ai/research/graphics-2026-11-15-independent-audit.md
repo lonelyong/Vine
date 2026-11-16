@@ -94,7 +94,7 @@
 - **证据**：`MemoryAllocator.cpp` 的 `createBlock` 对任何非 `VK_SUCCESS` 一律给
   `MemoryRefusal::AllocationFailed`，`VkResult` 被丢弃；`MemoryRefusal` 只有 `Ok` / `NoType` /
   `AllocationFailed` 三态，而注释自己写着"`VK_ERROR_OUT_OF_DEVICE_MEMORY`、a lost device、a bad handle"
-  三类合流。**五个业务分配点**（`TargetImages.cpp` 一处、`ContentDraw.cpp` 一处、`ContentImages.cpp` 三处）
+  三类合流。**五个业务分配点**（`TargetImages.cpp` 一处、`ContentDraw.cpp` 一处、`ContentImages.cpp` 三处） <!-- drift-ok -->
   **都不传 `refusal_out` / `why`**——只有 `ReadbackStaging.cpp` 传，所以理由在其余五处算出来就丢。
 - **为什么是问题**：设备丢失是仓库自己定的"会话结束"类，`noteDeviceLost` 是唯一分类点——这条路径绕过了它。
   宿主看到的是"目标建不起来"，于是继续在死设备上重试，正是 `vk-backend.md` §2.2 说要避免的形态。
@@ -315,7 +315,7 @@ RenderDevice（接缝：身份 / 能力 / 生命周期 / 工厂）
 ## 8. 参考
 
 - 代码：`RenderDevice.hpp`、`RenderFrameExecutor.hpp`、`RenderDiagnostic.hpp`、`Diagnostics.hpp`、
-  `MemoryAllocator.cpp`、`TargetImages.cpp`、`ContentDraw.cpp`、`ContentImages.cpp`、`Device.cpp`、
+  `MemoryAllocator.cpp`、`TargetImages.cpp`、`ContentDraw.cpp`、`ContentImages.cpp`、`Device.cpp`、 <!-- drift-ok -->
   `WindowTarget.cpp`、`FrameRunner.cpp`、`BarrierPlan.cpp`、`PipelineCacheFile.hpp`、`Plan.hpp`、`Plugin.hpp`
 - 文档：`../design/graphics-frame-pipeline.md`（`R28`）、`../design/vk-backend.md`（§2.2 / §9.2）、
   `../design/graphics-threading.md`、`../design/vsg-backend.md`

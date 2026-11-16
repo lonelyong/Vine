@@ -67,7 +67,7 @@ class Device;
 VN_BACKEND_VSG_NS_BEGIN
 
 /** @brief An off-screen colour target plus its copy-back path. */
-class OffscreenTarget {
+class TargetObjects {
   public:
     /** @brief The target's shape and what the pass clears it to. */
     struct Layout {
@@ -101,7 +101,7 @@ class OffscreenTarget {
      *         when the extent is 0 (there is no image of no size - the lifecycle plan calls that state
      *         `Repair(SizeUnknown)` and no target is built for it, see core::planTarget).
      */
-    static std::unique_ptr<OffscreenTarget> create(::vsg::ref_ptr<::vsg::Device> device, const Layout& layout);
+    static std::unique_ptr<TargetObjects> create(::vsg::ref_ptr<::vsg::Device> device, const Layout& layout);
 
     /** @brief Creates a target with the given shape (several colour attachments and/or a depth attachment).
      *
@@ -119,13 +119,13 @@ class OffscreenTarget {
      * @return The target, or null when any image, the pass or a readback buffer could not be created, or when
      *         the borrowed depth does not fit (no source depth, mismatched formats, a LOAD plan without one).
      */
-    static std::unique_ptr<OffscreenTarget>
-    create(::vsg::ref_ptr<::vsg::Device> device, const TargetLayout& layout, const OffscreenTarget* depth_source = nullptr);
+    static std::unique_ptr<TargetObjects>
+    create(::vsg::ref_ptr<::vsg::Device> device, const TargetLayout& layout, const TargetObjects* depth_source = nullptr);
 
-    ~OffscreenTarget();
+    ~TargetObjects();
 
-    OffscreenTarget(const OffscreenTarget&)            = delete;
-    OffscreenTarget& operator=(const OffscreenTarget&) = delete;
+    TargetObjects(const TargetObjects&)            = delete;
+    TargetObjects& operator=(const TargetObjects&) = delete;
 
   public:
     /** @brief Gets the render graph to add content to (the caller's children are drawn after the clear). */
@@ -364,7 +364,7 @@ class OffscreenTarget {
     [[nodiscard]] core::DepthPlan depth() const noexcept;
 
     /** @brief Gets the target whose depth image this target uses, or null when it owns its own. */
-    [[nodiscard]] const OffscreenTarget* depthSource() const noexcept;
+    [[nodiscard]] const TargetObjects* depthSource() const noexcept;
 
     /** @brief Gets the node that copies the DEPTH attachment into host-visible memory.
      *
@@ -527,7 +527,7 @@ class OffscreenTarget {
     // Lexically after Data so the out-of-line destructor is the only place that needs the complete type.
     std::unique_ptr<Data> d;
 
-    OffscreenTarget();
+    TargetObjects();
 
     /** @brief Gets the render pass for @p key, building and remembering it when this target has not served
      *         that load-op variant before (see LoadOpVariantKey).

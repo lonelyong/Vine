@@ -70,7 +70,7 @@
 | 内容层 | `ContentAssembly` `ContentPass` `ContentHalves` `ContentDraw` `ContentFacts` `ContentSources` `ContentStore` `ContentImages` `ContentPush` `ContentSets` `ContentPipeline` `DrawNeeds` |
 | 数据与表 | `GeometryFacts` `ShadowBlock` `ViewBlock` `ProgramAbi` `ProgramVariant` `MaterialImages` `MaterialSlotCheck` `StreamUploads` `BlockStorage` `BlockDescriptors` `VariantPool` `PassRegistry` `StateCommands` `FactResult` |
 | 可移植半边（原 SDK `graphics/backend`） | `FrameRecorder` `FrameCompiler` `FrameArena` `FrameRing` `ClearPlan` `StateRegistry` `MaterialArena` `Streams` `SlotProbe` `Observe` `PhaseTable` `PixelProbe` `DepthProbe` `AllocationGate` `ResourceTable` |
-| 目标与读回 | `OffscreenTarget` `HostTargets` `HostReadback` `WhiteImage` `OneShot` |
+| 目标与读回 | `TargetObjects` `TargetTable` `HostReadback` `WhiteImage` `OneShot` |
 | 内部视图（仅测试） | `BackendContent` |
 
 **`graphics/backend`**（图形模块的**接缝**：头在 `src/viz/graphics/sdk/vine/graphics/backend/`（导出、随 SDK 安装），

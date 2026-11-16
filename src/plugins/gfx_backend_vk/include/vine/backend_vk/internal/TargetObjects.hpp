@@ -48,7 +48,7 @@ VN_BACKEND_VK_NS_BEGIN
  * - IT IS A VALUE-LIKE RECORD with explicit build/destroy calls, because Vulkan has no destructors: `destroyTarget()`
  *   is idempotent so an error path may call it unconditionally.
  */
-struct TargetImages {
+struct TargetObjects {
     /// The extent and the shape (engine formats + device formats) these objects were built for.
     vn::graphics::backend::TargetDesc desc{};
 
@@ -296,7 +296,7 @@ struct TargetImages {
  * @param images    The record to fill.
  * @return true when every object exists.
  */
-[[nodiscard]] bool buildTarget(const VolkDeviceTable& table, VkDevice device, MemoryAllocator& allocator, TargetImages& images);
+[[nodiscard]] bool buildTarget(const VolkDeviceTable& table, VkDevice device, MemoryAllocator& allocator, TargetObjects& images);
 
 /**
  * @brief Rebuilds the images, views and framebuffer for a new EXTENT, keeping the render passes.
@@ -312,7 +312,7 @@ struct TargetImages {
  * @param images    The record whose `desc` already states the new extent and the unchanged shape.
  * @return true when the new attachments exist.
  */
-[[nodiscard]] bool resizeTarget(const VolkDeviceTable& table, VkDevice device, MemoryAllocator& allocator, TargetImages& images);
+[[nodiscard]] bool resizeTarget(const VolkDeviceTable& table, VkDevice device, MemoryAllocator& allocator, TargetObjects& images);
 
 /**
  * @brief Destroys every object `images` holds (idempotent), including the render passes and the description.
@@ -322,6 +322,6 @@ struct TargetImages {
  * @param allocator The device's memory pool (the slices are given back to it).
  * @param images    The record to clear.
  */
-void destroyTarget(const VolkDeviceTable& table, VkDevice device, MemoryAllocator& allocator, TargetImages& images) noexcept;
+void destroyTarget(const VolkDeviceTable& table, VkDevice device, MemoryAllocator& allocator, TargetObjects& images) noexcept;
 
 VN_BACKEND_VK_NS_END

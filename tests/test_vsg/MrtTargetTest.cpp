@@ -37,7 +37,7 @@
 #include <vine/backend_vsg/internal/ContentDraw.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 #include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>
 
@@ -75,7 +75,7 @@ using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentPipeline;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::StreamUploads;
 using vn::backend_vsg::ViewportRect;
 
@@ -89,9 +89,9 @@ constexpr std::uint32_t kSize = 64U;
 constexpr float kClear[4]{ 0.5F, 0.25F, 0.0F, 1.0F };
 
 /// @brief The engine-side shape under test: two colour attachments and a depth attachment.
-OffscreenTarget::TargetLayout mrtLayout()
+TargetObjects::TargetLayout mrtLayout()
 {
-    OffscreenTarget::TargetLayout layout;
+    TargetObjects::TargetLayout layout;
     layout.width         = kSize;
     layout.height        = kSize;
     layout.color_formats = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA8 };
@@ -157,7 +157,7 @@ ContentPipeline::Shaders mrtShaders()
 /// @brief What a case needs: an MRT target and the stack that can draw into it.
 struct Fixture {
     vn::backend_vsg::DeviceResult             created;
-    std::unique_ptr<OffscreenTarget>  target;
+    std::unique_ptr<TargetObjects>  target;
     std::unique_ptr<BlockStorage>     storage;
     std::unique_ptr<BlockDescriptors> descriptors;
     std::unique_ptr<ContentPipeline>  pipelines;
@@ -175,7 +175,7 @@ struct Fixture {
         if (!created.ok) {
             return false;
         }
-        target = OffscreenTarget::create(created.device, mrtLayout());
+        target = TargetObjects::create(created.device, mrtLayout());
         if (target == nullptr || target->colorAttachmentCount() != 2U || !target->hasDepth()) {
             return false;
         }

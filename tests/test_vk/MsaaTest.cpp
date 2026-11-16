@@ -462,7 +462,7 @@ TEST(VkMsaaTest, ASampleableDepthResolvesWithTheColour)
     (void)backend->executeFrame(drawingFrame(target.get(), constantDraw(program, geometry)), nullptr);
 
     EXPECT_EQ(backend->diagnosticCount(DiagnosticCategory::UnsupportedRequest), reported_before)
-        << "a multisampled target with a depth attachment is served now (see TargetImages::depthPicture)";
+        << "a multisampled target with a depth attachment is served now (see TargetObjects::depthPicture)";
     const FrameReport report = backend->frameReport();
     ASSERT_TRUE(report.counters.has_value());
     EXPECT_EQ(report.counters->draws, 1U) << "the pass into the multisampled depth-attached target was skipped";

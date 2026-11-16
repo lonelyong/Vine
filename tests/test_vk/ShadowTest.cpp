@@ -546,7 +546,7 @@ TEST(VkShadowTest, AMultisampledMapCastsTheSameShadow)
     const std::vector<std::uint8_t> multisampled_map = runAndRead(*backend, shadowFrame(smooth, /*declare*/ true, /*casting*/ true), smooth.target.get());
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), reported_before)
-        << "a multisampled map is served now (see TargetImages::resolvesDepth)";
+        << "a multisampled map is served now (see TargetObjects::resolvesDepth)";
     ASSERT_EQ(multisampled_map.size(), single_sampled_map.size());
     EXPECT_EQ(multisampled_map, single_sampled_map)
         << "the multisampled map shaded a different picture: the depth resolve or the sampling of its picture is wrong";

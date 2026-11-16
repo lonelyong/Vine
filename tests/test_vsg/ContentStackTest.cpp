@@ -9,7 +9,7 @@
  *   `BlockDescriptors`   one set, three dynamic offsets, chosen per draw
  *   `ContentPipeline`    the pipeline for the identity (compiled by the viewer's traversal)
  *   `ContentDraw`        the command graph: pipeline, dynamic block, descriptor bind, geometry, draw
- *   `OffscreenTarget`    the pixels, read back headlessly
+ *   `TargetObjects`    the pixels, read back headlessly
  *
  * The second case is the one that proves the DYNAMIC OFFSETS are what selects a draw's block: one frame, two
  * triangles, two draw blocks - each triangle moves exactly as its own block says, and the space between them
@@ -43,7 +43,7 @@
 #include <vine/backend_vsg/internal/ContentDraw.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 #include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>
 
@@ -80,7 +80,7 @@ using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentPipeline;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::StreamUploads;
 using vn::backend_vsg::ViewportRect;
 
@@ -152,7 +152,7 @@ struct Fixture {
     static constexpr float kClear[4]{ 0.0F, 0.0F, 0.25F, 1.0F };
 
     vn::backend_vsg::DeviceResult             created;
-    std::unique_ptr<OffscreenTarget>  target;
+    std::unique_ptr<TargetObjects>  target;
     std::unique_ptr<BlockStorage>     storage;
     std::unique_ptr<BlockDescriptors> descriptors;
     std::unique_ptr<ContentPipeline>  pipelines;
@@ -170,8 +170,8 @@ struct Fixture {
         if (!created.ok) {
             return false;
         }
-        target = OffscreenTarget::create(created.device,
-                                         OffscreenTarget::Layout{
+        target = TargetObjects::create(created.device,
+                                         TargetObjects::Layout{
                                            kSize,
                                            kSize,
                                            { kClear[0], kClear[1], kClear[2], kClear[3] }

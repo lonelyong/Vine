@@ -138,7 +138,7 @@ Resident ──releaseContent──▶ Retiring(epoch) ──设备水位 ≥ ep
 
 ### 2.5 目标 claim：一帧一 claim，冲突只跳过那个 pass（`G6`）
 
-- **是什么**：设备持一张 `TargetClaims`（`RenderTarget*` → `FrameDriverId`）。帧首对**本帧要画的目标集合**
+- **是什么**：设备持一张 `TargetTable`（`RenderTarget*` → `FrameDriverId`）。帧首对**本帧要画的目标集合**
   逐个 try-claim；冲突的目标**不 claim**，用它的那个 pass **跳过**并报一条（按 `(目标, episode)` 去重）。
 - **为什么按 pass 而不是按帧**：一帧里其余的 pass 与冲突目标无关，整帧失败会放大一次局部冲突
   （`G7`：把复杂性吸收在局部）。
@@ -233,7 +233,7 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 | F2 | 每会话帧机器 | 命令池 / 栅栏 / 时间戳池 / 帧账 / 帧闸按会话各一份 | **已落地（S2a+S2b）**：`Device::FrameDriver` 拥有帧机器与帧体，`Device` 只转发 |
 | F3 | 设备缓存 + 帧首快照 | 缓存只在帧首读一次，记录路径零锁 | **已落地（S3 + S6c-1）**：`ContentCaches` / `FrameScratch` 分家；计划按值；观察点 `contentCacheCounters().cache_lock_acquisitions`（整帧固定 4 次） |
 | F4 | 驻留三态 | `Absent → Uploading → Resident`，发布或撤回，竞争即复制 | **已落地（S4 + F4 接线，2026-11-16）**：状态机 + 8 条单元用例；`ensureGeometry` 问表（`Use`/`Build`/`Copy`），`FrameBuilds` 在帧完成时发布、竞争的帧建临时副本、失败与释放各有归属（见 §3.1.4） |
-| F5 | 目标 claim | 一帧一 claim，冲突只跳过那个 pass | **已落地（S5 + S6b）**：`TargetClaims` 租约 + 帧/预热接线；公开 `createSession()` 之后两会话冲突真的会发生（只跳该 pass，报 `vk.target.claim_conflict`） |
+| F5 | 目标 claim | 一帧一 claim，冲突只跳过那个 pass | **已落地（S5 + S6b）**：`TargetTable` 租约 + 帧/预热接线；公开 `createSession()` 之后两会话冲突真的会发生（只跳该 pass，报 `vk.target.claim_conflict`） |
 | F6 | 跨会话退休 | vk 采用 `DeviceClock` + `RetirementQueue`；释放可在别人 frame 时调用 | **已落地（S1 + S6c-2b）**：时钟 / park 队列 / 水位 / 开帧规则都在树上；释放不等帧（R6） |
 | F7 | 设备级读回 | 自己的池与栅栏，拷贝前等设备水位，计入 `deviceWaits()` | **已落地（S7）**：`ReadbackStaging` 自带命令池与栅栏；等待 = 体闸的"帧之间"，每次读回计一次 `deviceWaits()`；帧体内调用答 `Failed`（见 §3.1.7） |
 | F8 | 默认内容程序归会话 | 会话上可设；设备级只服务直接调用方；单会话后端行为不变 | **已落地（S6a+S6b）**：声明在 `RenderFrameExecutor`；vk 的每个 `FrameDriver` 各持一份，两驱动者各画各的（T8 用例） |
@@ -303,13 +303,15 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
 - **验收**（T5）：两会话画同一目标 ⇒ 一个会话那个 pass 被跳过并报一条（且只一条）。
 - **注意**（P3）：任何提前返回都要经过同一个释放点（作用域守卫）。
 
-**S5 落地（2026-11-15）**：`internal/TargetClaims.hpp`——设备持一张 `RenderTarget* → FrameDriverId` 表；
-`begin(session)` 发一个帧作用域的 `Lease`，`Lease::claim(target)` 冲突时答 false，析构把本帧所有 claim 还回去
-（`P3` 由类型强制）。`FrameDriver::executeFrame` 与 `prepareFrame` 都在 **`ensure_target` 之前** claim（重建是持有者的
+**S5 落地（2026-11-15）**：`internal/TargetTable.hpp`——设备持一张 `RenderTarget* → FrameDriverId` 表；
+`lease(driver)` 发一个帧作用域的 `Lease`，`Lease::claim(target)` 冲突时答 false，析构把本帧所有 claim 还回去
+（`P3` 由类型强制）。`FrameDriver::executeFrame` 与 `prepareFrame` 都在 **`ensure` 之前** claim（重建是持有者的
 动词，`R5`）；冲突只跳过那个 pass，报 `vk.target.claim_conflict` **每个（目标, 情节）一条**：情节在本帧/本次预热
 无冲突地跑完时结束。窗口目标不 claim（`createSurfaceTarget` 已经保证一窗一会话）。
-**验证**：`TargetClaimsTest` 7 例 + `TargetClaimFrameTest` 2 例（设备级：用一条冒充“另一个驱动者”的租约让 pass 被
+**验证**：`TargetTableTest` 8 例 + `TargetClaimFrameTest` 2 例（设备级：用一条冒充“另一个驱动者”的租约让 pass 被
 跳过、两次只报一条、干净帧后新冲突再报）；变异 2/2 红（租约不释放 / 情节不结束）。
+**B5a（2026-11-16）**：租约不再是第三张表——map、形状/构建与 claim 书籍同属 `internal/TargetTable`；
+`release(target)` 一次做完“条目离开 map + 记录交给 park”，`drain()` 一次清记录与租约（+1 例钉住）。
 
 ### 3.1.6 F6 跨会话退休
 
@@ -380,8 +382,9 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
 
 **S8b 落地（2026-11-16）**：
 
-- **`VsgTargetRegistry`**：目标注册表从执行器里分出来，成为设备唯一的一张表（一个身份一条，借用条目）；
-  每个驱动者的执行器借用它，所以两个驱动者解析同一张身份表（`P8`：没有第二份）。独立构造的执行器（测试）自备一份。
+- **`TargetTable`**：目标表与身份解析合为一（B5b）——设备唯一的一张表（一个身份一条：描述、对象、
+  拥有者的标签，以及执行器的“没应用”情节）；每个驱动者的执行器借用它，所以两个驱动者解析同一张身份表（`P8`：
+  没有第二份）。独立构造的执行器（测试）自备一份，`adopt` 登记别人建好的对象（非拥有）。
 - **`VsgDriver`**（`internal/VsgDriver.hpp`）：`createSession()` 交出的帧驱动者，`RenderFrameExecutor` 的实现；
   自己拥有一个 `VsgExecutor`（`window_` / `window_recorded_` / `recorded_` / `profile_entries_` / `skipped_`）与
   它自己的默认内容程序；设备拥有它，`releaseSession` 销毁，`shutdown` 带走。
@@ -398,7 +401,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
 
 - **设备闸换了形状**：vsg 的设备闸是 **`backend::FrameGate`**（S2 批 2 起与 vk 同一个类型、设备各有实例）——帧体取**共享**侧（两个驱动者的帧体可以同时进入），宿主动词取**独占**侧（initialize / shutdown / 读回 / `frameReport` / 窗口集 / resize）。从帧体线程调用的宿主动词得到**空租约**并回答拒绝（读回回答 `InsideFrame`，内容动词回答 false / 不动并报一条 `vsg.device.reentry`），从不等待自己。诊断路由与 episode 锁是**递归**的，因为 sink 本身可能回调。
 - **帧状态归驱动**：`VsgExecutor::FrameDrive`（scratch / 本次窗口索引 / 上传基线 / 上一帧的 delta）取代 `Data::{driving, scratch, driving_executor, uploads_before, last_uploads}`（最后一项保留为设备的“最后一帧”副本）。`presentWindow` 通过**线程本地的在飞帧**（`FrameInFlight`）取回本次帧的驱动者——窗口目标的 `present()` 没有帧参数，设备级单份会把一帧的计划交给另一驱动的 present。
-- **帧首快照（vsg 的形状）**：`openFrameHead` 在**一次**内容锁下解析这一帧会读的所有**设备事实**——每个 pass 的编号（`PassRegistry::adopt` 写入 `FrameScratch::pass_ids`）、它画的每个宿主目标（`adoptHostTarget`）、它采样的每个目标（`HostTargets::observe`）、它命令里点名的内容（`ContentStore::track`）、目标事实表的副本（`FrameScratch::facts`）、staging 清扫与块存储的增长。**收集**（`collectFrame`）与**计划编译**（`closeFrameBooks`）随后只读会话自己的 scratch，因此它们里的报告（计划编译器的“这个输入/目标解析不了”）到达 sink 时**不持任何设备锁**。
+- **帧首快照（vsg 的形状）**：`openFrameHead` 在**一次**内容锁下解析这一帧会读的所有**设备事实**——每个 pass 的编号（`PassRegistry::adopt` 写入 `FrameScratch::pass_ids`）、它画的每个宿主目标（`adoptHostTarget`）、它采样的每个目标（`TargetTable::observe`）、它命令里点名的内容（`ContentStore::track`）、目标事实表的副本（`FrameScratch::facts`）、staging 清扫与块存储的增长。**收集**（`collectFrame`）与**计划编译**（`closeFrameBooks`）随后只读会话自己的 scratch，因此它们里的报告（计划编译器的“这个输入/目标解析不了”）到达 sink 时**不持任何设备锁**。
 - **内容相是设备唯一的串行段**：`commitFrameThrough` 在**一次**内容锁下做 `applyTargetPlans` / 材质 arena 增长 / `recordContent`（assembly 开帧 + 录制）/ `executor.record` / 清扫 / 会话提交，并在每个出口发布本帧的上传 delta 与计数器（`Data::last_uploads` / `last_counters`）。
 - **每会话一个帧主张**：窗口槽与离屏会话各一把 `frame` 互斥锁，帧体持到结束——同一窗口/离屏会话的两帧**等待**（与旧设备闸同语义：两个引擎都离屏出图是受支持的形态，不能拒绝），**不同窗口互不等待**。
 - **计数器归会话**（`WindowSessionOptions::observe` 不再借设备的 `Observe`）：recorder 开帧会**重置**计数器（`FrameRecorder::beginFrame`），共享一份会让两个驱动者互相覆盖；`frameReport()` 引用**最后结束**那一帧的副本（`Data::last_counters`），retention 仍是设备的。
@@ -462,7 +465,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
 | `FrameScratch` | 环 / 描述符池 / set 表 / `FrameSnapshot` | 从 `ContentDraw` 拆出 |
 | `ResidenceTable` | 三态 + 发布/撤回/退休 | 复用 `RetirementQueue` 的 epoch 语义 |
 | `ContentCaches::FrameBuilds` | 一帧的容纳结果：`Use` 命中、`Build` 的 claim、`Copy` 的临时副本 | 帧作用域值；`publishAll` 在帧完成后调用，析构收拾其余 |
-| `TargetClaims` | 目标 → 会话；try-claim / release | 冲突报一条，按 (目标, episode) 去重 |
+| `TargetTable` | 目标 → 会话；try-claim / release | 冲突报一条，按 (目标, episode) 去重 |
 
 ## 5. 约束、要求与不变量
 
@@ -626,9 +629,9 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
   `Absent`；token 单调不复用，`forget` 之后的老 claim 无法复活。`ResidenceTableTest` **8 例**（含 8 线程抢一键
   恰一个 `Build`），变异 2/2 红（去掉析构撤回 / 去掉 token 比较）。`test_vk` 111/111。**设备接线仍未做**（截至
   2026-11-16）：先造机器再接线，而不是半接（`D8`）；见 §3.1.4 与 §9.2。
-- **已落地**：`T48` 的 **S5**——`internal/TargetClaims.hpp`：设备持 `RenderTarget* → FrameDriverId`；`begin(session)`
+- **已落地**：`T48` 的 **S5**——`internal/TargetTable.hpp`：设备持 `RenderTarget* → FrameDriverId`；`begin(session)`
   发帧作用域 `Lease`，`claim` 冲突答 false、析构释放（`P3`）；`executeFrame` / `prepareFrame` 在 `ensure_target`
-  之前 claim，冲突只跳该 pass 并报 `vk.target.claim_conflict`（每（目标, 情节）一条）。`TargetClaimsTest` 7 例 +
+  之前 claim，冲突只跳该 pass 并报 `vk.target.claim_conflict`（每（目标, 情节）一条）。`TargetTableTest` 7 例 +
   `TargetClaimFrameTest` 2 例，变异 2/2 红；`test_vk` 120/120（Debug + ASan 门禁）。
 - **已落地**：`T48` 的 **S6b（串行版）**——vk 真的多发驱动者：`createSession()` 造 `FrameDriver`（早于 `initialize()` 的由
   initialize 统一拉起；已起的设备上当场建），`releaseSession` 销毁并遗忘，设备自己的驱动者不可归还。设备持一把
@@ -668,7 +671,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
 - **已落地**：`T48` 的 **S8a（vsg 的收集暂存搬进会话）**——`internal/FrameScratch.hpp`（arena / recorder /
   compiler / facts / 输入表 / packets / frame）由窗口与离屏会话各持一份；设备只借 `Data::scratch` 驱动会话的句柄，
   默认程序与释放目标这类设备设置覆盖每个会话的 scratch。`test_vsg` 557/557、对拍 13/13、TSan 0 报告。
-- **已落地**：`T48` 的 **S8b（vsg 的执行器帧状态 + 驱动者接缝）**——目标注册表分成设备唯一的 `VsgTargetRegistry`；
+- **已落地**：`T48` 的 **S8b（vsg 的执行器帧状态 + 驱动者接缝）**——目标注册表分成设备唯一的 `TargetTable`；
   `createSession()` 交出 `VsgDriver`（自己的执行器与默认程序，借用设备的内容/目标表），帧体参数化为
   `executeFrameFor` / `prepareFrameFor`；默认程序按驱动者（`C8`），开帧时交给驱动会话的 recorder。
   `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram`：两驱动者各自的默认互不覆盖、各自出图，释放其一另一个照常；
@@ -729,8 +732,8 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
   恰一个 `Build`）；变异 2/2 红（去掉析构撤回 / 去掉 token 比较）。**接线已落地 2026-11-16（F4）**：`ensureGeometry`
   问表，`FrameBuilds` 在帧完成时发布、竞争建临时副本、释放 forget；`VkResidenceWireTest` 4 例，变异 3/3 红（见
   §3.1.4） | T4 | 低 |
-| S5 | `TargetClaims`；仍用两个内部会话验证 | T5 | 低 |
-| S5 | **已落地 2026-11-15**：`internal/TargetClaims.hpp/.cpp`（`begin` → 帧作用域 `Lease`，冲突 false，析构释放）；
+| S5 | `TargetTable`；仍用两个内部会话验证 | T5 | 低 |
+| S5 | **已落地 2026-11-15**：`internal/TargetTable.hpp/.cpp`（`begin` → 帧作用域 `Lease`，冲突 false，析构释放）；
   `FrameDriver::executeFrame` / `prepareFrame` 在 `ensure_target` 之前 claim，冲突只跳该 pass 并报
   `vk.target.claim_conflict`（每（目标, 情节）一条）；`Device::targetClaims()` 是内部可观察量。`test_vk` **120/120**
   （Debug + ASan 门禁），变异 2/2 红 | T5（单会话 + 冒充租约） | 低 |
@@ -759,7 +762,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
 | S6c-2b | **释放不再等帧（R6）**：`releaseContent` ×3 / `releaseRenderTarget` 脱离体闸；目标条目改共享所有权 + 水位 park | T6 | 中 |
 | S6c-2b | **已落地 2026-11-16**：三种 `releaseContent` 与 `releaseRenderTarget` 不再取体闸——它们只等**一次缓存操作**（帧首解析持有的那一把），
   不等一整帧。安全来自已有的两件事：缓存锁（帧首解析与释放互斥）与 park（帧已解析的句柄活到水位，而开着的帧把水位按住）。
-  `targets` 的条目改成 `shared_ptr<TargetImages>`（`releaseRenderTarget` 不能再把值从 map 节点里搬走——帧持有的是指向节点的指针）；
+  `targets` 的条目改成 `shared_ptr<TargetObjects>`（`releaseRenderTarget` 不能再把值从 map 节点里搬走——帧持有的是指向节点的指针）；
   `released_nodes` 改原子；`retirementNumbers()` / `frameReport()` 读队列时也取 `clock_mutex`（释放现在可与它们并发）。
   **证据**：`VkMultiSessionTest.AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroyWhatItUses`——帧被诊断 sink 停住时，宿主线程
   释放该帧已解析的程序/几何与一个已建目标，释放必须在 2 s 内返回；帧随后仍用解析出的句柄画完，`device_waits` 不涨、park 尚未放行。
@@ -771,7 +774,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
   frame）；窗口与离屏会话各持一份，设备只借 `Data::scratch` 驱动会话的句柄；设备级设置（默认程序、释放目标）覆盖
   每个会话的 scratch。`test_vsg` 557/557、`BackendParityTest` 13/13、TSan 0 报告 | T9 | 低 |
 | S8b | vsg 的执行器帧状态 + 驱动者接缝 | T9 | 中 |
-| S8b | **已落地 2026-11-16**：`VsgTargetRegistry`（设备唯一注册表）+ `VsgDriver`（每驱动者一个执行器与默认程序）；
+| S8b | **已落地 2026-11-16**：`TargetTable`（设备唯一的目标表；B5b 起也承担身份解析、标签与“没应用”情节）+ `VsgDriver`（每驱动者一个执行器与默认程序）；
   帧体参数化为 `executeFrameFor` / `prepareFrameFor`，`Data::driving_executor` 记录本次帧的驱动者；
   `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram` 钉住两个默认程序互不覆盖与各自像素。`test_vsg` 558/558 | T9、T8 | 中 |
 | S8c | vsg 的设备缓存锁/帧首快照 + 解禁帧闸（帧体真并行） | T9、T11 | 中 |

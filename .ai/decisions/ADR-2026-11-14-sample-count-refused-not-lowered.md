@@ -4,7 +4,7 @@
 - 日期：2026-11-14
 - 相关：`../design/graphics-rendering.md` §3.2（F6–F10）、`Capabilities::max_samples`、`RenderTarget::setSamples`、
   `../backlog/graphics.md`、`src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp`、
-  `src/plugins/gfx_backend_vsg/src/internal/HostTargets.cpp`、`src/plugins/gfx_backend_vk/src/internal/Device.cpp`、
+  `src/plugins/gfx_backend_vsg/src/internal/HostTargets.cpp`、`src/plugins/gfx_backend_vk/src/internal/Device.cpp`、 <!-- drift-ok -->
   `tests/test_vsg/MsaaTargetTest.cpp`、`tests/test_vk/MsaaTest.cpp`
 
 ## 背景

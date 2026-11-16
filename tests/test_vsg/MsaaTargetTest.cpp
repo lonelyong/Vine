@@ -40,8 +40,8 @@
 #include <vine/backend_vsg/internal/ContentDraw.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
-#include <vine/backend_vsg/internal/HostTargets.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetTable.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 #include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>
 
@@ -63,7 +63,7 @@ using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentPipeline;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::StreamUploads;
 using vn::backend_vsg::ViewportRect;
 
@@ -74,9 +74,9 @@ constexpr std::uint32_t kSize = 64U;
 constexpr float kClear[4]{ 0.5F, 0.25F, 0.0F, 1.0F };
 
 /// @brief The target under test: one colour attachment, one depth attachment, @p samples samples per pixel.
-OffscreenTarget::TargetLayout msaaLayout(std::uint32_t samples)
+TargetObjects::TargetLayout msaaLayout(std::uint32_t samples)
 {
-    OffscreenTarget::TargetLayout layout;
+    TargetObjects::TargetLayout layout;
     layout.width         = kSize;
     layout.height        = kSize;
     layout.color_formats = { RenderTarget::ColorFormat::RGBA8 };
@@ -154,7 +154,7 @@ std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uintArray>&
 /// @brief What a case needs: a target of a given sample count and the stack that can draw into it.
 struct Fixture {
     vn::backend_vsg::DeviceResult             created;
-    std::unique_ptr<OffscreenTarget>  target;
+    std::unique_ptr<TargetObjects>  target;
     std::unique_ptr<BlockStorage>     storage;
     std::unique_ptr<BlockDescriptors> descriptors;
     std::unique_ptr<ContentPipeline>  pipelines;
@@ -182,7 +182,7 @@ struct Fixture {
     {
         samples = sample_count;
         created = device;
-        target  = OffscreenTarget::create(created.device, msaaLayout(samples));
+        target  = TargetObjects::create(created.device, msaaLayout(samples));
         if (target == nullptr || target->colorAttachmentCount() != 1U || !target->hasDepth()) {
             return false;
         }
@@ -383,7 +383,7 @@ TEST(MsaaTargetTest, AFourSampleTargetsDepthIsTheResolvedPicture)
     ASSERT_TRUE(four.frame({ four_triangle }));
 
     // COLOUR and DEPTH are both readable, and both are the RESOLVED single-sample images (see
-    // OffscreenTarget::Attachments::picture / depthPicture): the sample count never reaches a copy.
+    // TargetObjects::Attachments::picture / depthPicture): the sample count never reaches a copy.
     EXPECT_TRUE(four.target->probe(0U).valid()) << "the resolved colour image is what a capture copies";
 
     const DepthProbe sharp  = single.target->depthProbe();
@@ -439,21 +439,21 @@ TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCan
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    vn::backend_vsg::HostTargets targets;
+    vn::backend_vsg::TargetTable targets;
     targets.setMaxSamples(4U);
 
     const vn::intrusive_ptr<RenderTarget> too_many(new RenderTarget());
     too_many->attachColor(RenderTarget::ColorFormat::RGBA8);
     too_many->setSize(16, 16);
     too_many->setSamples(8U);
-    EXPECT_EQ(targets.ensure(*too_many, created.device).state, vn::backend_vsg::HostTargets::State::SamplesUnsupported)
+    EXPECT_EQ(targets.ensure(*too_many, created.device).state, vn::backend_vsg::TargetTable::State::SamplesUnsupported)
         << "eight samples is above this table's limit of four";
 
     const vn::intrusive_ptr<RenderTarget> not_a_count(new RenderTarget());
     not_a_count->attachColor(RenderTarget::ColorFormat::RGBA8);
     not_a_count->setSize(16, 16);
     not_a_count->setSamples(3U);
-    EXPECT_EQ(targets.ensure(*not_a_count, created.device).state, vn::backend_vsg::HostTargets::State::SamplesUnsupported)
+    EXPECT_EQ(targets.ensure(*not_a_count, created.device).state, vn::backend_vsg::TargetTable::State::SamplesUnsupported)
         << "the counts are powers of two (see Capabilities::max_samples), so three is not one of them - and it is "
            "refused rather than rounded, or shape().samples and the images would answer two different numbers";
 
@@ -462,14 +462,14 @@ TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCan
     lender->attachDepth(RenderTarget::DepthFormat::D32);
     lender->setDepthPromotion(false);
     lender->setSize(16, 16);
-    EXPECT_EQ(targets.ensure(*lender, created.device).state, vn::backend_vsg::HostTargets::State::Ready);
+    EXPECT_EQ(targets.ensure(*lender, created.device).state, vn::backend_vsg::TargetTable::State::Ready);
 
     const vn::intrusive_ptr<RenderTarget> borrower(new RenderTarget());
     borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
     borrower->shareDepth(lender);
     borrower->setSize(16, 16);
     borrower->setSamples(4U);
-    EXPECT_EQ(targets.ensure(*borrower, created.device).state, vn::backend_vsg::HostTargets::State::SamplesUnsupported)
+    EXPECT_EQ(targets.ensure(*borrower, created.device).state, vn::backend_vsg::TargetTable::State::SamplesUnsupported)
         << "one depth image cannot be a four-sample attachment for one pass and a single-sample one for "
            "another";
 
@@ -477,12 +477,12 @@ TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCan
     // single-sample, which is the shape the refusal above rules out when it is not.
     lender->setSamples(4U);
     (void)targets.observe(*lender);
-    EXPECT_EQ(targets.ensure(*lender, created.device).state, vn::backend_vsg::HostTargets::State::Ready)
+    EXPECT_EQ(targets.ensure(*lender, created.device).state, vn::backend_vsg::TargetTable::State::Ready)
         << "a multisampled target lends its resolved depth picture like any other depth";
 
     borrower->setSamples(1U);
     (void)targets.observe(*borrower);
-    EXPECT_EQ(targets.ensure(*borrower, created.device).state, vn::backend_vsg::HostTargets::State::Ready)
+    EXPECT_EQ(targets.ensure(*borrower, created.device).state, vn::backend_vsg::TargetTable::State::Ready)
         << "a single-sample pass borrowing that picture is the case the resolve made possible";
 
     // Promoting a multisampled target's OWN depth: legal, and it is the resolved image a shader samples.
@@ -492,7 +492,7 @@ TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCan
     promoted->setSize(16, 16);
     promoted->setSamples(4U);
     EXPECT_TRUE(promoted->isDepthPromoted()) << "the SDK default asks for a sampleable depth";
-    EXPECT_EQ(targets.ensure(*promoted, created.device).state, vn::backend_vsg::HostTargets::State::Ready)
+    EXPECT_EQ(targets.ensure(*promoted, created.device).state, vn::backend_vsg::TargetTable::State::Ready)
         << "the multisampled image is a draw target only; the RESOLVED one is what promotion makes sampleable";
 }
 
@@ -502,7 +502,7 @@ TEST(MsaaTargetTest, ADescriptionTheDeviceCannotBuildIsRefusedWithTheReasonItCan
  * The count is part of the shape, so a host that announces a different one gets a plan that says Rebuild and a
  * target that replaces its image set - a target cannot draw multisampled into images built for one sample, and
  * pretending otherwise would be a stale picture nobody could explain. The clear policy and the depth policy are
- * the target's own and survive the rebuild (see OffscreenTarget::layout).
+ * the target's own and survive the rebuild (see TargetObjects::layout).
  */
 TEST(MsaaTargetTest, RebuildingAtANewCountReplacesTheImages)
 {
@@ -510,7 +510,7 @@ TEST(MsaaTargetTest, RebuildingAtANewCountReplacesTheImages)
     if (!created.ok) {
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
-    auto target = OffscreenTarget::create(created.device, msaaLayout(1U));
+    auto target = TargetObjects::create(created.device, msaaLayout(1U));
     ASSERT_NE(target, nullptr);
     EXPECT_EQ(target->shape().samples, 1U);
     const ::vsg::ref_ptr<::vsg::RenderGraph> before = target->renderGraph();
@@ -518,10 +518,10 @@ TEST(MsaaTargetTest, RebuildingAtANewCountReplacesTheImages)
     vn::graphics::backend::FrameTimeline   timeline;
     vn::graphics::backend::RetirementQueue queue(3U);
 
-    OffscreenTarget::TargetLayout four = target->layout();
+    TargetObjects::TargetLayout four = target->layout();
     EXPECT_EQ(four.samples, 1U) << "the layout is what the target was built for";
     four.samples                           = 4U;
-    const OffscreenTarget::Rebuilt rebuilt = target->rebuild(four, timeline, queue);
+    const TargetObjects::Rebuilt rebuilt = target->rebuild(four, timeline, queue);
     EXPECT_TRUE(rebuilt.replaced) << "a different count is a different shape: it has to be built, not drawn on";
     EXPECT_EQ(target->shape().samples, 4U);
     EXPECT_EQ(target->layout().samples, 4U);

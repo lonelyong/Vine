@@ -1,10 +1,10 @@
-#include <vine/backend_vsg/internal/HostTargets.hpp>
+#include <vine/backend_vsg/internal/TargetTable.hpp>
 
 #include <optional>
 
 VN_BACKEND_VSG_NS_BEGIN
 
-void HostTargets::describe(const vn::graphics::RenderTarget& target, Description& out)
+void TargetTable::describe(const vn::graphics::RenderTarget& target, Description& out)
 {
     out.width  = target.width();
     out.height = target.height();
@@ -30,7 +30,7 @@ void HostTargets::describe(const vn::graphics::RenderTarget& target, Description
     }
 }
 
-HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device> device, std::uint32_t max_samples)
+TargetTable::State TargetTable::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device> device, std::uint32_t max_samples)
 {
     const Description& description = entry.description;
 
@@ -56,20 +56,20 @@ HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device
         return State::SamplesUnsupported;
     }
     // What multisampling still refuses, and no longer refuses: a multisampled target can PROMOTE and LEND its
-    // depth (both read the resolved single-sample image - see OffscreenTarget's class note), but it cannot
+    // depth (both read the resolved single-sample image - see TargetObjects's class note), but it cannot
     // BORROW one: what it would attach is the lender's single-sample picture while its own pass draws at
     // another count, and a framebuffer's attachments share one count. Refused rather than approximated.
     if (description.samples > 1U && description.has_depth && description.depth_source != nullptr) {
         return State::SamplesUnsupported;
     }
 
-    OffscreenTarget::TargetLayout layout;
+    TargetObjects::TargetLayout layout;
     layout.width         = static_cast<std::uint32_t>(description.width);
     layout.height        = static_cast<std::uint32_t>(description.height);
     layout.color_formats = description.color_formats;
     layout.samples       = description.samples;
 
-    const OffscreenTarget* depth_source = nullptr;
+    const TargetObjects* depth_source = nullptr;
     if (description.has_depth) {
         if (description.depth_source != nullptr) {
             // A borrowed depth: the lender's objects must be held (and built) here - the SDK's own shareDepth
@@ -88,14 +88,14 @@ HostTargets::State HostTargets::build(Entry& entry, ::vsg::ref_ptr<::vsg::Device
         }
     }
 
-    entry.target = OffscreenTarget::create(std::move(device), layout, depth_source);
+    entry.target = TargetObjects::create(std::move(device), layout, depth_source);
     if (entry.target == nullptr) {
         return State::BuildFailed;
     }
     return State::Ready;
 }
 
-HostTargets::Ensured HostTargets::ensure(const vn::graphics::RenderTarget& target, ::vsg::ref_ptr<::vsg::Device> device)
+TargetTable::Ensured TargetTable::ensure(const vn::graphics::RenderTarget& target, ::vsg::ref_ptr<::vsg::Device> device)
 {
     Entry* entry = find(&target);
     if (entry == nullptr) {
@@ -126,7 +126,7 @@ HostTargets::Ensured HostTargets::ensure(const vn::graphics::RenderTarget& targe
     return Ensured{ entry, build(*entry, std::move(device), max_samples_) };
 }
 
-HostTargets::Entry* HostTargets::observe(const vn::graphics::RenderTarget& target)
+TargetTable::Entry* TargetTable::observe(const vn::graphics::RenderTarget& target)
 {
     Entry* entry = find(&target);
     if (entry == nullptr) {
@@ -138,7 +138,7 @@ HostTargets::Entry* HostTargets::observe(const vn::graphics::RenderTarget& targe
     return entry;
 }
 
-HostTargets::Entry* HostTargets::find(const void* identity) noexcept
+TargetTable::Entry* TargetTable::find(const void* identity) noexcept
 {
     if (identity == nullptr) {
         return nullptr;
@@ -151,7 +151,46 @@ HostTargets::Entry* HostTargets::find(const void* identity) noexcept
     return nullptr;
 }
 
-bool HostTargets::release(const void* identity) noexcept
+const TargetTable::Entry* TargetTable::find(const void* identity) const noexcept
+{
+    if (identity == nullptr) {
+        return nullptr;
+    }
+    for (const std::unique_ptr<Entry>& entry : entries_) {
+        if (entry->identity == identity) {
+            return entry.get();
+        }
+    }
+    return nullptr;
+}
+
+TargetObjects* TargetTable::resolve(const void* identity) const noexcept
+{
+    const Entry* entry = find(identity);
+    return entry != nullptr ? entry->target.get() : nullptr;
+}
+
+TargetTable::Entry* TargetTable::adopt(const void* identity, TargetObjects* target) noexcept
+{
+    if (identity == nullptr) {
+        return nullptr;
+    }
+    if (target == nullptr) {
+        (void)release(identity);
+        return nullptr;
+    }
+    Entry* entry = find(identity);
+    if (entry == nullptr) {
+        entries_.push_back(std::make_unique<Entry>());
+        entry           = entries_.back().get();
+        entry->identity = identity;
+    }
+    // NON-OWNING: the caller built these objects and keeps them; forgetting the registration must not destroy them.
+    entry->target = std::shared_ptr<TargetObjects>(target, [](TargetObjects*) {});
+    return entry;
+}
+
+bool TargetTable::release(const void* identity) noexcept
 {
     if (identity == nullptr) {
         return false;
@@ -168,22 +207,22 @@ bool HostTargets::release(const void* identity) noexcept
     return false;
 }
 
-void HostTargets::clear() noexcept
+void TargetTable::clear() noexcept
 {
     entries_.clear();
 }
 
-std::size_t HostTargets::live() const noexcept
+std::size_t TargetTable::live() const noexcept
 {
     return entries_.size();
 }
 
-const std::vector<std::unique_ptr<HostTargets::Entry>>& HostTargets::entries() const noexcept
+const std::vector<std::unique_ptr<TargetTable::Entry>>& TargetTable::entries() const noexcept
 {
     return entries_;
 }
 
-void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
+void TargetTable::facts(const Entry& entry, core::TargetFacts& out) const
 {
     out        = core::TargetFacts{};
     out.target = entry.identity;
@@ -200,7 +239,7 @@ void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
         entry.description.has_depth ? std::optional{ entry.description.depth_format } : std::optional<vn::graphics::RenderTarget::DepthFormat>{};
     // The sample count is the host's word like the formats are - NOT the built target's: a host that changes it
     // announces a different shape, which is what makes the plan answer Rebuild instead of quietly drawing into
-    // the old images (a target's objects are built for one count, see OffscreenTarget).
+    // the old images (a target's objects are built for one count, see TargetObjects).
     out.wanted.shape.samples = entry.description.samples == 0U ? 1U : entry.description.samples;
 
     if (entry.target != nullptr) {
@@ -218,7 +257,7 @@ void HostTargets::facts(const Entry& entry, core::TargetFacts& out) const
 
     // The depth facts: whether there is one, whether it is the host's own promotion or a lender's, and who
     // the lender is. Once built, the TARGET's own policy answers for the promotion - it is what the plan's
-    // depth decision has to agree with (a rebuild keeps the target's own promotion, see OffscreenTarget).
+    // depth decision has to agree with (a rebuild keeps the target's own promotion, see TargetObjects).
     out.depth.has_depth = entry.description.has_depth;
     out.depth.borrowed  = entry.description.depth_source != nullptr;
     out.depth.source    = entry.description.depth_source;

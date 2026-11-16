@@ -44,8 +44,8 @@
 #include <vine/backend_vsg/internal/ContentDraw.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
-#include <vine/backend_vsg/internal/HostTargets.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetTable.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 #include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>
 
@@ -81,8 +81,8 @@ using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentPipeline;
-using vn::backend_vsg::HostTargets;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetTable;
+using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::StreamUploads;
 using vn::backend_vsg::ViewportRect;
 
@@ -96,9 +96,9 @@ constexpr std::uint32_t kSize = 64U;
 constexpr float kClear[4]{ 0.0F, 0.0F, 0.25F, 1.0F };
 
 /// @brief The shape under test: one colour attachment and a depth attachment.
-OffscreenTarget::TargetLayout depthLayout(bool sampleable)
+TargetObjects::TargetLayout depthLayout(bool sampleable)
 {
-    OffscreenTarget::TargetLayout layout;
+    TargetObjects::TargetLayout layout;
     layout.width            = kSize;
     layout.height           = kSize;
     layout.color_formats    = { RenderTarget::ColorFormat::RGBA8 };
@@ -328,11 +328,11 @@ void runSharedDepthPhase(const vn::backend_vsg::DeviceResult& device, DevicePhas
         FAIL() << "build threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
     }
 
-    std::unique_ptr<OffscreenTarget> lender;
-    std::unique_ptr<OffscreenTarget> borrower;
+    std::unique_ptr<TargetObjects> lender;
+    std::unique_ptr<TargetObjects> borrower;
     try {
-        lender   = OffscreenTarget::create(device.device, depthLayout(/*sampleable*/ false));
-        borrower = lender != nullptr ? OffscreenTarget::create(device.device, depthLayout(/*sampleable*/ false), lender.get()) : nullptr;
+        lender   = TargetObjects::create(device.device, depthLayout(/*sampleable*/ false));
+        borrower = lender != nullptr ? TargetObjects::create(device.device, depthLayout(/*sampleable*/ false), lender.get()) : nullptr;
     }
     catch (const ::vsg::Exception& error) {
         FAIL() << "target create threw a vsg exception: " << error.message << " (VkResult " << error.result << ")";
@@ -460,7 +460,7 @@ TEST(SharedDepthTest, ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromoti
     const auto& device = created.device;
 
     // The lender owns a depth and asked for it to be sampleable: that is the promotion.
-    auto lender = OffscreenTarget::create(device, depthLayout(/*sampleable*/ true));
+    auto lender = TargetObjects::create(device, depthLayout(/*sampleable*/ true));
     ASSERT_NE(lender, nullptr);
     ASSERT_TRUE(lender->hasDepth());
     EXPECT_TRUE(lender->depth().has_depth);
@@ -470,15 +470,15 @@ TEST(SharedDepthTest, ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromoti
 
     // A colour-only target has nothing to lend, and a different depth format cannot be borrowed: both are
     // refused before anything is built.
-    auto colour_only = OffscreenTarget::create(device, OffscreenTarget::TargetLayout{ kSize, kSize });
+    auto colour_only = TargetObjects::create(device, TargetObjects::TargetLayout{ kSize, kSize });
     ASSERT_NE(colour_only, nullptr) << "a colour-only target is a valid target (it just has no depth to lend)";
-    EXPECT_EQ(OffscreenTarget::create(device, depthLayout(false), colour_only.get()), nullptr)
+    EXPECT_EQ(TargetObjects::create(device, depthLayout(false), colour_only.get()), nullptr)
         << "borrowing a depth from a target that has none must be refused, not built";
-    OffscreenTarget::TargetLayout refused = depthLayout(false);
+    TargetObjects::TargetLayout refused = depthLayout(false);
     refused.depth_format                  = RenderTarget::DepthFormat::D24;
-    EXPECT_EQ(OffscreenTarget::create(device, refused, lender.get()), nullptr) << "formats are part of the pass description: a mismatched borrow is refused";
+    EXPECT_EQ(TargetObjects::create(device, refused, lender.get()), nullptr) << "formats are part of the pass description: a mismatched borrow is refused";
 
-    auto borrower = OffscreenTarget::create(device, depthLayout(false), lender.get());
+    auto borrower = TargetObjects::create(device, depthLayout(false), lender.get());
     ASSERT_NE(borrower, nullptr);
     EXPECT_TRUE(borrower->hasDepth());
     EXPECT_EQ(borrower->depthSource(), lender.get());
@@ -536,22 +536,22 @@ TEST(SharedDepthTest, TheHostTargetRowsSayWhoReadsTheDepthTheLenderWrites)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    // The pair as a HOST announces it (HostTargets is where the plan's facts come from, see its note): a
+    // The pair as a HOST announces it (TargetTable is where the plan's facts come from, see its note): a
     // lender with a colour attachment and a depth, and a borrower that shares that depth.
-    HostTargets                           targets;
+    TargetTable                           targets;
     const vn::intrusive_ptr<RenderTarget> lender(new RenderTarget());
     lender->attachColor(RenderTarget::ColorFormat::RGBA8);
     lender->attachDepth(RenderTarget::DepthFormat::D24);
     lender->setSize(32, 32);
-    const HostTargets::Ensured lender_ensured = targets.ensure(*lender, created.device);
-    ASSERT_EQ(lender_ensured.state, HostTargets::State::Ready) << "a colour + depth description builds";
+    const TargetTable::Ensured lender_ensured = targets.ensure(*lender, created.device);
+    ASSERT_EQ(lender_ensured.state, TargetTable::State::Ready) << "a colour + depth description builds";
 
     const vn::intrusive_ptr<RenderTarget> borrower(new RenderTarget());
     borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
     borrower->shareDepth(lender);
     borrower->setSize(32, 32);
-    const HostTargets::Ensured borrower_ensured = targets.ensure(*borrower, created.device);
-    ASSERT_EQ(borrower_ensured.state, HostTargets::State::Ready);
+    const TargetTable::Ensured borrower_ensured = targets.ensure(*borrower, created.device);
+    ASSERT_EQ(borrower_ensured.state, TargetTable::State::Ready);
 
     vn::graphics::backend::TargetFacts lender_row;
     targets.facts(*targets.find(lender.get()), lender_row);
@@ -577,7 +577,7 @@ TEST(SharedDepthTest, TheHostTargetRowsSayWhoReadsTheDepthTheLenderWrites)
 
     // And the pair is released in the LENDER's order, which is the order a registry walks its entries in: the
     // lender's objects may go before the borrower's, and the borrower's own destruction must not read them
-    // (see ~OffscreenTarget: the count it drops is the shared one - a count kept in the lender was a
+    // (see ~TargetObjects: the count it drops is the shared one - a count kept in the lender was a
     // double free, which is what this case caught while it was written).
     EXPECT_TRUE(targets.release(lender.get()));
     EXPECT_TRUE(targets.release(borrower.get()));

@@ -29,7 +29,7 @@
 #include <vine/backend_vsg/internal/FrameRecorder.hpp>
 #include <vine/backend_vsg/internal/FrameScratch.hpp>
 #include <vine/backend_vsg/internal/HostReadback.hpp>
-#include <vine/backend_vsg/internal/HostTargets.hpp>
+#include <vine/backend_vsg/internal/TargetTable.hpp>
 #include <vine/backend_vsg/internal/MaterialImages.hpp>
 #include <vine/backend_vsg/internal/Observe.hpp>
 #include <vine/backend_vsg/internal/OffscreenSession.hpp>
@@ -68,7 +68,7 @@ const char* const kUnservedNames[kUnservedCount]{
     "render() (the content world is not up)",
 };
 
-/// @brief The readback episode slots, one per entry point (a held target keeps its own, see HostTargets::Entry).
+/// @brief The readback episode slots, one per entry point (a held target keeps its own, see TargetTable::Entry).
 enum ReadbackReport : std::size_t
 {
     kReadbackColour = 0U,
@@ -240,7 +240,7 @@ struct PassOffers {
 [[nodiscard]] PassOffers offerInputs(const core::CompiledPass&                                   pass,
                                      const core::CompiledFrame&                                  frame,
                                      WindowTarget*                                               window,
-                                     HostTargets&                                                targets,
+                                     TargetTable&                                                targets,
                                      MaterialImages&                                             images,
                                      vn::graphics::Diagnostics&                                  diagnostics,
                                      std::vector<InputImages>&                                   input_scratch,
@@ -258,7 +258,7 @@ struct PassOffers {
         offers.height        = window->height();
     }
     else {
-        const HostTargets::Entry* entry = targets.find(compiled_target.target);
+        const TargetTable::Entry* entry = targets.find(compiled_target.target);
         if (entry == nullptr || entry->target == nullptr) {
             return offers;
         }
@@ -311,7 +311,7 @@ struct PassOffers {
             continue;
         }
 
-        const HostTargets::Entry* entry = targets.find(pass.inputs[index].target);
+        const TargetTable::Entry* entry = targets.find(pass.inputs[index].target);
         if (entry == nullptr || entry->target == nullptr) {
             continue;
         }
@@ -371,7 +371,7 @@ struct PassOffers {
 /// and the executor reports it.
 void resolveContent(ContentAssembly&                                            assembly,
                     WindowTarget*                                               window,
-                    HostTargets&                                                targets,
+                    TargetTable&                                                targets,
                     MaterialImages&                                             images,
                     vn::graphics::Diagnostics&                                  diagnostics,
                     core::FrameTimeline&                                        timeline,
@@ -412,7 +412,7 @@ void resolveContent(ContentAssembly&                                            
 /// kept and no block is written (the ring's rotation belongs to the frame, see api/ContentAssembly::prepare).
 bool prepareContent(ContentAssembly&                                            assembly,
                     WindowTarget*                                               window,
-                    HostTargets&                                                targets,
+                    TargetTable&                                                targets,
                     MaterialImages&                                             images,
                     vn::graphics::Diagnostics&                                  diagnostics,
                     core::FrameTimeline&                                        timeline,
@@ -561,16 +561,15 @@ struct VsgBackend::Data {
     /// is the engine's when an engine drives this backend - that is what makes the host read one number.
     vn::graphics::Diagnostics diagnostics;
     core::Observe             observe;
-    /// THE TARGETS A PLAN RESOLVES BY IDENTITY, one table for every driver (see VsgTargetRegistry): a target is the
+    /// THE TARGETS A PLAN RESOLVES BY IDENTITY, one table for every driver (see TargetTable): a target is the
     /// device's to hold, and two drivers must resolve the same identities.
-    VsgTargetRegistry registry;
+    TargetTable targets;
     /// THE DEVICE'S OWN DRIVER's frame state (the aggregate answers `executor()`); every driver handed out by
-    /// createSession() owns one of its own and SHARES @ref registry.
-    VsgExecutor       executor{ diagnostics, registry };
+    /// createSession() owns one of its own and SHARES @ref targets.
+    VsgExecutor       executor{ diagnostics, targets };
     /// The drivers createSession() handed out (the device owns them; releaseSession destroys one).
     std::vector<std::unique_ptr<VsgDriver>> drivers;
     PassRegistry              passes;  // The SDK's pass objects, as the numbers the plan carries (see the header).
-    HostTargets               targets; // The host's off-screen targets (see the header and api/HostTargets).
     // The content world: built with the session because its pieces belong to the session's device (see
     // initialize), torn down before the session because the device goes with it. The store is device-free,
     // but it is what the assembly reads its tables from - so the set lives and dies together.
@@ -856,7 +855,7 @@ bool VsgBackend::initialize()
     }
 
     // The sample-count limit is the DEVICE's, read once here rather than at every target build: a target's
-    // description is refused against it (see HostTargets::State::SamplesUnsupported), and the same number is
+    // description is refused against it (see TargetTable::State::SamplesUnsupported), and the same number is
     // what capabilities() reports - one fact, one source. The device answers with a BIT SET, while the limit is a
     // COUNT, so the intersection is collapsed to the largest count it offers (a host that read the bits would be
     // told "15" by a device that offers 1/2/4/8 - see ADR-2026-11-14-sample-count-refused-not-lowered).
@@ -984,7 +983,6 @@ void VsgBackend::releaseContentWorld() noexcept
     for (const std::unique_ptr<VsgDriver>& driver : d->drivers) {
         driver->executor().setWindow(nullptr);
     }
-    d->executor.clearTargets(); // the registry is shared: one clear empties it for every driver
     // The content world FIRST: its GPU objects (and the sets the assembly built) belong to the device, which the
     // windows drop on the way down.
     d->assembly.reset();
@@ -995,7 +993,7 @@ void VsgBackend::releaseContentWorld() noexcept
     // reset: a fresh storage states its own, see BlockStorage::layout).
     d->kept_storage.clear();
     // And the host's targets: their objects belong to the same device (a borrower's share of a lender's image
-    // goes with its own entry - see api/HostTargets).
+    // goes with its own entry - see api/TargetTable).
     d->targets.clear();
 }
 
@@ -1063,7 +1061,7 @@ vn::graphics::RenderFrameExecutor* VsgBackend::createSession()
     if (!host) {
         return nullptr;
     }
-    auto driver = std::make_unique<VsgDriver>(*this, d->diagnostics, d->registry);
+    auto driver = std::make_unique<VsgDriver>(*this, d->diagnostics, d->targets);
     auto* raw   = driver.get();
     d->drivers.push_back(std::move(driver));
     return raw;
@@ -1205,7 +1203,7 @@ void VsgBackend::openFrameHead(VsgExecutor& executor, FrameScratch& scratch, con
             if (input.isProduced() && input.target != nullptr) {
                 // The description of every produced input is kept current here: its objects were built when a pass
                 // drew into it, and what has to be fresh is the facts row the plan resolves the input's shape from
-                // (see HostTargets::observe).
+                // (see TargetTable::observe).
                 (void)d->targets.observe(*input.target);
             }
         }
@@ -1339,7 +1337,7 @@ void VsgBackend::collectTargetFacts(FrameScratch& scratch, std::size_t driving)
     // The facts the plan is compiled against: the window as the default framebuffer, answered by the target
     // itself (see WindowTarget::facts), plus one row per host target this backend holds - built or not,
     // because the plan has to be able to say "this one has no objects yet", and because the compiler resolves
-    // a pass' declared INPUTS from this same table (see HostTargets::facts).
+    // a pass' declared INPUTS from this same table (see TargetTable::facts).
     //
     // A FRAME WITH NO WINDOW has no default-framebuffer row at all: that row is what the frame's passes naming no
     // target resolve to, and compiling without it is how "this pass has nowhere to draw" becomes a reported skip
@@ -1353,7 +1351,7 @@ void VsgBackend::collectTargetFacts(FrameScratch& scratch, std::size_t driving)
             scratch.facts.push_back(window->facts());
         }
     }
-    for (const std::unique_ptr<HostTargets::Entry>& entry : d->targets.entries()) {
+    for (const std::unique_ptr<TargetTable::Entry>& entry : d->targets.entries()) {
         core::TargetFacts row;
         d->targets.facts(*entry, row);
         scratch.facts.push_back(row);
@@ -2092,7 +2090,7 @@ vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
     std::lock_guard<std::mutex> guard(d->content);
     // Both halves are served - EXCEPT THE WINDOW ONE when the device was created to present nothing (see
     // DeviceDesc): frames are presented through a target this device handed out, a non-null target is held
-    // (api/HostTargets), drawn into by the passes that announce it, and read back through the readback entry points -
+    // (api/TargetTable), drawn into by the passes that announce it, and read back through the readback entry points -
     // and a `None` device says in the same value that it has no window half at all.
     vn::graphics::Capabilities answer{
         .render_targets = true,
@@ -2209,7 +2207,7 @@ void VsgBackend::setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
     std::lock_guard<std::mutex> guard(d->content);
 
     // The host's own target, configured before any frame draws into it: held, and built as far as its description
-    // allows (see HostTargets - the resize / rebuild after that is the plan's answer, applied by the executor).
+    // allows (see TargetTable - the resize / rebuild after that is the plan's answer, applied by the executor).
     // OUTSIDE a frame this is CONFIGURATION and says nothing: a borrow whose lender is announced later in that
     // setup is order, not failure (the engine's own pipeline does exactly that - measured on the demo, the
     // composite arrives before its G-buffer). A frame that then draws into a target no objects were made for is
@@ -2229,21 +2227,23 @@ void VsgBackend::announceTarget(FrameScratch& scratch, vn::raw_ptr<vn::graphics:
 
 bool VsgBackend::adoptHostTarget(vn::raw_ptr<vn::graphics::RenderTarget> target, bool picture_depends)
 {
-    const HostTargets::Ensured ensured = d->targets.ensure(*target, d->device);
-    if (ensured.state == HostTargets::State::Ready) {
+    const TargetTable::Ensured ensured = d->targets.ensure(*target, d->device);
+    if (ensured.state == TargetTable::State::Ready) {
         ensured.entry->report.rearm(); // the condition ended: the same breakage reports again
     }
-    else if (ensured.state != HostTargets::State::NotBuilt && picture_depends && ensured.entry->report.shouldReport()) {
+    else if (ensured.state != TargetTable::State::NotBuilt && picture_depends && ensured.entry->report.shouldReport()) {
         reportUnbuildableTarget(
             target,
-            ensured.state == HostTargets::State::DepthSourceMissing
+            ensured.state == TargetTable::State::DepthSourceMissing
                 ? UnbuildableReason::DepthSourceMissing
-                : (ensured.state == HostTargets::State::SamplesUnsupported ? UnbuildableReason::SamplesUnsupported : UnbuildableReason::BuildFailed),
+                : (ensured.state == TargetTable::State::SamplesUnsupported ? UnbuildableReason::SamplesUnsupported : UnbuildableReason::BuildFailed),
             d->targets.maxSamples());
     }
 
     if (ensured.entry->target != nullptr) {
-        d->executor.addTarget(target, ensured.entry->target.get(), target->name().as_std_str().c_str());
+        // THE LABEL IS THE TABLE'S (copied): the entry names the images and the diagnostics, and the host may rename
+        // or destroy its string - a borrowed pointer here was a dangling read the first time a frame named images.
+        ensured.entry->label = target->name().as_std_str();
     }
     return ensured.entry->target != nullptr;
 }
@@ -2484,7 +2484,6 @@ void VsgBackend::releaseRenderTarget(vn::graphics::RenderTarget* target)
     // scope announcement (the recorder drops it: a pass that would have drawn into it is SKIPPED and
     // reported, never redirected to the window - see the SDK's own note).
     (void)d->targets.release(target);
-    d->executor.addTarget(target, nullptr);
     // EVERY SESSION'S SCRATCH: a pending scope announcement is the recorder's, and one lives per session (see
     // FrameScratch). A pass that would have drawn into the target is skipped and reported either way.
     for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
@@ -2603,7 +2602,7 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target,
     if (target == nullptr) {
         return refuse(HostReadbackRefusal::NoTarget, d->readback_reports[kReadbackColour]);
     }
-    HostTargets::Entry* entry = d->targets.find(target);
+    TargetTable::Entry* entry = d->targets.find(target);
     if (entry == nullptr) {
         // Never announced, or released: the SDK's own answer is NotReady (a later frame or a re-announced
         // handle can make it readable), not Unsupported - which is the answer to "this backend never will".
@@ -2677,7 +2676,7 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::
     if (target == nullptr) {
         return refuse(HostReadbackRefusal::NoTarget, d->readback_reports[kReadbackDepth]);
     }
-    HostTargets::Entry* entry = d->targets.find(target);
+    TargetTable::Entry* entry = d->targets.find(target);
     if (entry == nullptr) {
         return refuse(HostReadbackRefusal::UnknownTarget, d->readback_reports[kReadbackDepth]);
     }
@@ -3015,7 +3014,7 @@ void BackendContentAccess::setRecordSeam(VsgBackend& backend, std::function<void
     backend.d->record_seam = std::move(seam);
 }
 
-HostTargets& BackendContentAccess::targets(VsgBackend& backend) noexcept
+TargetTable& BackendContentAccess::targets(VsgBackend& backend) noexcept
 {
     return backend.d->targets;
 }

@@ -13,7 +13,7 @@
 
 #include <vine/backend_vk/backend_vk_global.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
-#include <vine/backend_vk/internal/TargetImages.hpp>
+#include <vine/backend_vk/internal/TargetObjects.hpp>
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ReportOnce.hpp>
@@ -27,11 +27,11 @@ VN_BACKEND_VK_NS_BEGIN
  *
  * @details
  * - WHY ONE OBJECT (`G1` / `G5`). A target's lifetime used to be three owners: the device's map (`Impl::targets`),
- *   a claim table that decided who may build or write it, and the `TargetImages` record that holds the images. "Who
+ *   a claim table that decided who may build or write it, and the `TargetObjects` record that holds the images. "Who
  *   may build / change / release this target" could not be answered without reading all three. Here the table IS the
  *   answer: one lock for the map, one set of claim books, one release path - and `Device` only forwards.
  * - WHAT IT OWNS. The map from the host's `RenderTarget` (its address is the identity a frame names) to the
- *   `TargetImages` the device built for it, the CJK-shaped claim books (`claimed` / `refused` / `released` / `live`),
+ *   `TargetObjects` the device built for it, the CJK-shaped claim books (`claimed` / `refused` / `released` / `live`),
  *   and the six refusal episodes a build can speak through (`ensure`).
  * - WHAT IT DOES NOT OWN. The Vulkan device, queue and memory pool (borrowed through `open`), and the park queue a
  *   released record goes to (borrowed as `Park`): whether an image may really be destroyed is dated against the
@@ -102,7 +102,7 @@ class VN_BACKEND_VK_API TargetTable final {
     /// @brief How a refusal reaches the device's diagnostic route (see Device::reportDiagnostic).
     using Report = std::function<void(const vn::graphics::RenderDiagnostic&)>;
     /// @brief Where a released record goes instead of being destroyed: the device's park queue.
-    using Park = std::function<void(std::shared_ptr<TargetImages>)>;
+    using Park = std::function<void(std::shared_ptr<TargetObjects>)>;
 
     /**
      * @brief One frame's claims: `claim` takes a target, the destructor gives every one of them back.
@@ -208,7 +208,7 @@ class VN_BACKEND_VK_API TargetTable final {
      * @param target The target's identity.
      * @return The record (shared, so a concurrent release's park keeps it alive), or null when it is not held.
      */
-    [[nodiscard]] std::shared_ptr<TargetImages> lookup(Target target) const noexcept;
+    [[nodiscard]] std::shared_ptr<TargetObjects> lookup(Target target) const noexcept;
 
     /**
      * @brief Removes @p target's entry and hands its record to the park.
@@ -231,7 +231,7 @@ class VN_BACKEND_VK_API TargetTable final {
      *
      * @return The records that were held, in no particular order.
      */
-    [[nodiscard]] std::vector<std::shared_ptr<TargetImages>> drain() noexcept;
+    [[nodiscard]] std::vector<std::shared_ptr<TargetObjects>> drain() noexcept;
 
     /**
      * @brief Starts one frame's lease for @p driver.
@@ -255,7 +255,7 @@ class VN_BACKEND_VK_API TargetTable final {
 
   private:
     mutable std::mutex                                       map_mutex_{};
-    std::unordered_map<Target, std::shared_ptr<TargetImages>> targets_{};
+    std::unordered_map<Target, std::shared_ptr<TargetObjects>> targets_{};
 
     mutable std::mutex                                        claims_mutex_{};
     std::unordered_map<Target, FrameDriverId>                 holders_{};

@@ -5,7 +5,7 @@
 
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/backend/Readback.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
 namespace vsg
@@ -67,7 +67,7 @@ enum class HostReadbackRefusal : std::uint8_t
  * @param attachment Colour attachment index (ignored for Depth).
  * @return `None` when a readback can be served, the refusal otherwise.
  */
-[[nodiscard]] HostReadbackRefusal classifyReadback(OffscreenTarget& target, core::ReadbackKind kind, std::uint32_t attachment) noexcept;
+[[nodiscard]] HostReadbackRefusal classifyReadback(TargetObjects& target, core::ReadbackKind kind, std::uint32_t attachment) noexcept;
 
 /** @brief Reads colour attachment @p attachment of @p target back as tightly packed RGBA8 rows.
  *
@@ -80,7 +80,7 @@ enum class HostReadbackRefusal : std::uint8_t
  * @return `None` when the pixels were read, the refusal otherwise.
  */
 [[nodiscard]] HostReadbackRefusal
-readColorAttachment(OffscreenTarget& target, std::uint32_t attachment, ::vsg::Device* device, std::vector<std::uint8_t>& outPixels);
+readColorAttachment(TargetObjects& target, std::uint32_t attachment, ::vsg::Device* device, std::vector<std::uint8_t>& outPixels);
 
 /** @brief Reads @p target's depth attachment back as normalised values in [0, 1], row-major.
  *
@@ -90,7 +90,7 @@ readColorAttachment(OffscreenTarget& target, std::uint32_t attachment, ::vsg::De
  * @param outDepths Receives `width * height` values on success; untouched otherwise.
  * @return `None` when the values were read, the refusal otherwise.
  */
-[[nodiscard]] HostReadbackRefusal readDepthAttachment(OffscreenTarget& target, ::vsg::Device* device, std::vector<float>& outDepths);
+[[nodiscard]] HostReadbackRefusal readDepthAttachment(TargetObjects& target, ::vsg::Device* device, std::vector<float>& outDepths);
 
 /** @brief Translates a refusal into the SDK's machine-readable result.
  *

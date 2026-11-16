@@ -52,7 +52,7 @@
 #include <vine/backend_vsg/internal/ContentSources.hpp>
 #include <vine/backend_vsg/internal/DeviceProbe.hpp>
 #include <vine/backend_vsg/internal/GeometryFacts.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/WindowSession.hpp>
 #include <vine/backend_vsg/internal/SessionContent.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
@@ -124,7 +124,7 @@ using vn::backend_vsg::ContentPipeline;
 using vn::backend_vsg::FactMiss;
 using vn::backend_vsg::GeometryFacts;
 using vn::backend_vsg::MaterialFacts;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::PassContent;
 using vn::backend_vsg::ProgramFacts;
 using vn::backend_vsg::StreamUploads;

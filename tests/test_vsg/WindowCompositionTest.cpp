@@ -79,7 +79,7 @@
 #include <vine/backend_vsg/internal/ContentSources.hpp>
 #include <vine/backend_vsg/internal/DeviceProbe.hpp>
 #include <vine/backend_vsg/internal/GeometryFacts.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/WindowSession.hpp>
 #include <vine/backend_vsg/internal/SessionContent.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
@@ -129,7 +129,7 @@ using vn::backend_vsg::FactMiss;
 using vn::backend_vsg::GeometryFacts;
 using vn::backend_vsg::InputImages;
 using vn::backend_vsg::MaterialFacts;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::PassContent;
 using vn::backend_vsg::ProgramFacts;
 using vn::backend_vsg::StreamUploads;
@@ -219,16 +219,16 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // The two off-screen targets: A is the picture the overlay samples (a plain clear), B is the target whose
     // pass has the SAME engine shape as a window pass - same colour format, same depth format, same samples -
     // which is exactly the case whose render passes are nevertheless NOT compatible (see the file note).
-    OffscreenTarget::Layout picture_layout;
+    TargetObjects::Layout picture_layout;
     picture_layout.width  = kSourceSize;
     picture_layout.height = kSourceSize;
     for (std::size_t index = 0; index < 4U; ++index) {
         picture_layout.clear_color[index] = kPictureClear[index];
     }
-    std::unique_ptr<OffscreenTarget> picture = OffscreenTarget::create(device, picture_layout);
+    std::unique_ptr<TargetObjects> picture = TargetObjects::create(device, picture_layout);
     ASSERT_NE(picture, nullptr);
 
-    OffscreenTarget::TargetLayout shared_layout;
+    TargetObjects::TargetLayout shared_layout;
     shared_layout.width            = kSourceSize;
     shared_layout.height           = kSourceSize;
     shared_layout.color_formats    = { RenderTarget::ColorFormat::RGBA8 };
@@ -244,7 +244,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     for (std::size_t index = 0; index < 4U; ++index) {
         shared_layout.clear.color_value[index] = kSceneClear[index];
     }
-    std::unique_ptr<OffscreenTarget> shared_target = OffscreenTarget::create(device, shared_layout);
+    std::unique_ptr<TargetObjects> shared_target = TargetObjects::create(device, shared_layout);
     ASSERT_NE(shared_target, nullptr);
     ASSERT_TRUE(shared_target->hasDepth());
 
@@ -541,7 +541,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // background with `read-error 0`; see TestHostWindow::waitForPixel). Re-submitting the recorded graph
     // re-presents the picture and still re-runs the off-screen passes and their copies, which is what makes
     // this fixture the one that found the copy-back's cross-frame ordering gap (a second frame writing the
-    // same destination buffer with no declared dependency; see OffscreenTarget's capture).
+    // same destination buffer with no declared dependency; see TargetObjects's capture).
     for (int settle = 0; settle < 2; ++settle) {
         ASSERT_TRUE(session.beginFrame());
         ASSERT_TRUE(vn::backend_vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));

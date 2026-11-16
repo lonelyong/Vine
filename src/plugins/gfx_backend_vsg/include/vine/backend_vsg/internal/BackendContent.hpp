@@ -7,7 +7,7 @@
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
 #include <vine/backend_vsg/internal/ContentAssembly.hpp>
 #include <vine/backend_vsg/internal/ContentStore.hpp>
-#include <vine/backend_vsg/internal/HostTargets.hpp>
+#include <vine/backend_vsg/internal/TargetTable.hpp>
 #include <vine/backend_vsg/internal/PassRegistry.hpp>
 #include <vine/backend_vsg/internal/VsgBackend.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>
@@ -112,7 +112,7 @@ class BackendContentAccess {
      * @param backend Backend to ask.
      * @return The registry, valid for the backend's lifetime.
      */
-    [[nodiscard]] static HostTargets& targets(VsgBackend& backend) noexcept;
+    [[nodiscard]] static TargetTable& targets(VsgBackend& backend) noexcept;
 
     /** @brief Gets the executor the frame drive records through (its log is this frame's evidence).
      *

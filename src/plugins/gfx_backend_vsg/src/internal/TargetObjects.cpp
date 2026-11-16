@@ -1,4 +1,4 @@
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 
 #include <vine/backend_vsg/internal/StateCommands.hpp>
 
@@ -315,13 +315,13 @@ void fillClearValues(::vsg::RenderGraph& graph, const core::PassClearPlan& plan,
 
 } // namespace
 
-struct OffscreenTarget::Data {
+struct TargetObjects::Data {
     ::vsg::ref_ptr<::vsg::Device> device;
     /// Everything whose description contains the extent: replaced as ONE set by a resize, and parked as one set
-    /// when it is (see OffscreenTarget::Attachments).
+    /// when it is (see TargetObjects::Attachments).
     Attachments                                            attachments;
     std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;
-    const OffscreenTarget*                                 depth_source{ nullptr };   // The lender, when the depth is borrowed.
+    const TargetObjects*                                 depth_source{ nullptr };   // The lender, when the depth is borrowed.
     std::shared_ptr<std::uint32_t>                         lending{};                 // The count of targets loading this depth: SHARED with them.
     bool                                                   depth_sampleable{ false }; // The host asked for a sampleable depth.
     /// The clear policy `create` was given: the initial graph's clear values come from it, and a rebuilt graph
@@ -335,10 +335,10 @@ struct OffscreenTarget::Data {
     std::uint32_t                     height{ 0 };
     core::TargetShape                 shape;                   // What the render pass was built against.
     bool                              depth_borrowed{ false }; // The depth is the lender's image.
-    /// Whether anything has been recorded into the attachments yet (see OffscreenTarget::written).
+    /// Whether anything has been recorded into the attachments yet (see TargetObjects::written).
     bool written{ false };
     /// Whether a submission into these attachments was lost: they exist and were written into, but their
-    /// contents can no longer be trusted (see OffscreenTarget::invalidateAttachments). The plan answers
+    /// contents can no longer be trusted (see TargetObjects::invalidateAttachments). The plan answers
     /// Repair(Bootstrap) for such a target, so the next frame's first writer clears instead of loading.
     bool attachments_invalidated{ false };
 
@@ -359,20 +359,20 @@ struct OffscreenTarget::Data {
     std::vector<PassVariant> variants;
 };
 
-OffscreenTarget::OffscreenTarget()
+TargetObjects::TargetObjects()
   : d(std::make_unique<Data>())
 {}
 
-core::ImageLayout OffscreenTarget::depthSteadyLayout() const noexcept
+core::ImageLayout TargetObjects::depthSteadyLayout() const noexcept
 {
     // The image's OWNER answers: a borrowed depth is wherever the lender leaves it, and a lender that leaves it
     // sampleable (a shadow map) makes the borrower's pass START in that layout - the alternative is a pass that
     // declares the attachment layout for an image that is not in it.
-    const OffscreenTarget* owner = d->depth_source != nullptr ? d->depth_source : this;
+    const TargetObjects* owner = d->depth_source != nullptr ? d->depth_source : this;
     return core::depthFinalLayout(owner->d->shape, owner->d->depth_sampleable);
 }
 
-::vsg::ref_ptr<::vsg::RenderPass> OffscreenTarget::renderPassFor(const core::LoadOpVariantKey& key)
+::vsg::ref_ptr<::vsg::RenderPass> TargetObjects::renderPassFor(const core::LoadOpVariantKey& key)
 {
     for (const Data::PassVariant& variant : d->variants) {
         if (variant.key == key) {
@@ -390,7 +390,7 @@ core::ImageLayout OffscreenTarget::depthSteadyLayout() const noexcept
     return render_pass;
 }
 
-core::TargetShape OffscreenTarget::shapeOf(const TargetLayout& layout)
+core::TargetShape TargetObjects::shapeOf(const TargetLayout& layout)
 {
     core::TargetShape shape;
     shape.color_formats = layout.color_formats;
@@ -411,7 +411,7 @@ core::TargetShape OffscreenTarget::shapeOf(const TargetLayout& layout)
     return shape;
 }
 
-OffscreenTarget::TargetLayout OffscreenTarget::layout() const noexcept
+TargetObjects::TargetLayout TargetObjects::layout() const noexcept
 {
     TargetLayout out;
     out.width            = d->width;
@@ -424,7 +424,7 @@ OffscreenTarget::TargetLayout OffscreenTarget::layout() const noexcept
     return out;
 }
 
-std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::Device> device, const Layout& layout)
+std::unique_ptr<TargetObjects> TargetObjects::create(::vsg::ref_ptr<::vsg::Device> device, const Layout& layout)
 {
     TargetLayout target_layout;
     target_layout.width         = layout.width;
@@ -438,7 +438,7 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     return create(std::move(device), target_layout, nullptr);
 }
 
-std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::Device> device, const TargetLayout& layout, const OffscreenTarget* depth_source)
+std::unique_ptr<TargetObjects> TargetObjects::create(::vsg::ref_ptr<::vsg::Device> device, const TargetLayout& layout, const TargetObjects* depth_source)
 {
     if (device == nullptr || layout.width == 0U || layout.height == 0U || (layout.color_formats.empty() && !layout.depth_format.has_value())) {
         // A target with NOTHING to attach is not a target; a DEPTH-ONLY one is the shadow-map shape and is
@@ -482,7 +482,7 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
         return nullptr;
     }
 
-    auto target                 = std::unique_ptr<OffscreenTarget>(new OffscreenTarget());
+    auto target                 = std::unique_ptr<TargetObjects>(new TargetObjects());
     target->d->device           = std::move(device);
     target->d->width            = layout.width;
     target->d->height           = layout.height;
@@ -532,7 +532,7 @@ std::unique_ptr<OffscreenTarget> OffscreenTarget::create(::vsg::ref_ptr<::vsg::D
     return target;
 }
 
-bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height, Attachments& out)
+bool TargetObjects::buildAttachments(std::uint32_t width, std::uint32_t height, Attachments& out)
 {
     // Fresh images: whatever names the old set had belong to the old set (see nameImages).
     d->names_set = false;
@@ -541,7 +541,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
     const VkSampleCountFlagBits samples      = samplesToVk(d->shape.samples);
     const bool                  multisampled = samples != VK_SAMPLE_COUNT_1_BIT;
     for (const vn::graphics::RenderTarget::ColorFormat format : d->shape.color_formats) {
-        OffscreenTarget::Attachments::Color color;
+        TargetObjects::Attachments::Color color;
         // The image is created with SAMPLED usage as well as colour-attachment: the pass leaves colour
         // attachments in SHADER_READ_ONLY (see makeOffscreenRenderPass) so a later pass can sample them, and an
         // image view read as a sampled image has to be created for it. TRANSFER_SRC is the readback's half (the
@@ -654,14 +654,14 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
     // framebuffer's i-th view IS the pass' i-th attachment, so a missing or misplaced one makes every
     // attachment after it describe the wrong image.
     ::vsg::ImageViews attachments;
-    for (const OffscreenTarget::Attachments::Color& color : out.colors) {
+    for (const TargetObjects::Attachments::Color& color : out.colors) {
         attachments.push_back(color.view);
     }
     if (plan.has_depth) {
         attachments.push_back(out.depth_view);
     }
     if (d->shape.samples > 1U) {
-        for (const OffscreenTarget::Attachments::Color& color : out.colors) {
+        for (const TargetObjects::Attachments::Color& color : out.colors) {
             attachments.push_back(color.resolve_view);
         }
         if (plan.has_depth) {
@@ -700,7 +700,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
     // (VUID-vkCmdCopyImageToBuffer-pRegions-00183). The pass still renders into it; only the readback is
     // refused, and it says so (core::ReadbackRefusal::UnreadableFormat).
     for (std::size_t index = 0; index < out.colors.size(); ++index) {
-        OffscreenTarget::Attachments::Color& color  = out.colors[index];
+        TargetObjects::Attachments::Color& color  = out.colors[index];
         const core::ReadbackFormat           packed = core::colorReadbackOf(d->shape.color_formats[index]);
         if (!packed.readable) {
             continue;
@@ -901,7 +901,7 @@ bool OffscreenTarget::buildAttachments(std::uint32_t width, std::uint32_t height
     return true;
 }
 
-OffscreenTarget::~OffscreenTarget()
+TargetObjects::~TargetObjects()
 {
     // Lending is a fact of the lender's frame, so the fact goes away with the borrower: a promotion that a
     // borrower revoked comes back once nothing loads this target's depth any more. The count is the SHARED one
@@ -911,12 +911,12 @@ OffscreenTarget::~OffscreenTarget()
     }
 }
 
-::vsg::ref_ptr<::vsg::RenderGraph> OffscreenTarget::renderGraph() const noexcept
+::vsg::ref_ptr<::vsg::RenderGraph> TargetObjects::renderGraph() const noexcept
 {
     return d->attachments.render_graph;
 }
 
-::vsg::ref_ptr<::vsg::RenderGraph> OffscreenTarget::passGraph(const core::ClearValues& policy, bool bootstrap)
+::vsg::ref_ptr<::vsg::RenderGraph> TargetObjects::passGraph(const core::ClearValues& policy, bool bootstrap)
 {
     if (d->render_pass == nullptr || d->attachments.framebuffer == nullptr) {
         return {};
@@ -958,17 +958,17 @@ OffscreenTarget::~OffscreenTarget()
     return graph;
 }
 
-std::size_t OffscreenTarget::passVariantCount() const noexcept
+std::size_t TargetObjects::passVariantCount() const noexcept
 {
     return d->variants.size();
 }
 
-bool OffscreenTarget::written() const noexcept
+bool TargetObjects::written() const noexcept
 {
     return d->written;
 }
 
-core::TargetInstance OffscreenTarget::instance() const noexcept
+core::TargetInstance TargetObjects::instance() const noexcept
 {
     core::TargetInstance instance;
     instance.desc                    = core::TargetDesc{ static_cast<int>(d->width), static_cast<int>(d->height), d->shape };
@@ -980,12 +980,12 @@ core::TargetInstance OffscreenTarget::instance() const noexcept
     return instance;
 }
 
-bool OffscreenTarget::repointBorrowedDepth(const core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+bool TargetObjects::repointBorrowedDepth(const core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
     if (d->depth_source == nullptr || d->attachments.render_graph == nullptr) {
         return false; // no borrowed depth, or nothing built to re-point
     }
-    const OffscreenTarget& lender = *d->depth_source;
+    const TargetObjects& lender = *d->depth_source;
     if (lender.d->attachments.depth_view == nullptr || lender.d->attachments.depth_view == d->attachments.depth_view) {
         return false; // the lender serves the same image this target already names
     }
@@ -1038,14 +1038,14 @@ bool OffscreenTarget::repointBorrowedDepth(const core::FrameTimeline& timeline, 
     return true;
 }
 
-void OffscreenTarget::invalidateAttachments() noexcept
+void TargetObjects::invalidateAttachments() noexcept
 {
     // Not a teardown: the images stay, the FACT about their contents changes. `written` is deliberately left
     // alone - "something was recorded" is still true, and the two facts answer different questions.
     d->attachments_invalidated = true;
 }
 
-bool OffscreenTarget::nameImages(const char* label) noexcept
+bool TargetObjects::nameImages(const char* label) noexcept
 {
     if (d->names_set) {
         return true;
@@ -1056,7 +1056,7 @@ bool OffscreenTarget::nameImages(const char* label) noexcept
     // EVERY image has to exist before any of them is named: naming one half of a set and then failing would
     // make the flag record something that is not true.
     const std::uint32_t device_id = d->device->deviceID;
-    for (const OffscreenTarget::Attachments::Color& color : d->attachments.colors) {
+    for (const TargetObjects::Attachments::Color& color : d->attachments.colors) {
         if (color.image == nullptr || color.image->vk(device_id) == nullptr) {
             return false;
         }
@@ -1086,12 +1086,12 @@ bool OffscreenTarget::nameImages(const char* label) noexcept
     return true;
 }
 
-::vsg::ref_ptr<::vsg::Node> OffscreenTarget::capture() const noexcept
+::vsg::ref_ptr<::vsg::Node> TargetObjects::capture() const noexcept
 {
     return capture(0U);
 }
 
-::vsg::ref_ptr<::vsg::Node> OffscreenTarget::capture(std::uint32_t attachment) const
+::vsg::ref_ptr<::vsg::Node> TargetObjects::capture(std::uint32_t attachment) const
 {
     if (attachment >= d->attachments.colors.size()) {
         return nullptr;
@@ -1099,19 +1099,19 @@ bool OffscreenTarget::nameImages(const char* label) noexcept
     // Handing the node out is the recording half of a readback: from here on a probe is meaningful (see the
     // declaration). The flag lives in the ATTACHMENT SET, so a resize starts it false - the new buffers hold
     // nothing until a frame copies into them.
-    OffscreenTarget::Attachments::Color& color = d->attachments.colors[attachment];
+    TargetObjects::Attachments::Color& color = d->attachments.colors[attachment];
     if (color.capture != nullptr) {
         color.captured = true;
     }
     return color.capture;
 }
 
-core::PixelProbe OffscreenTarget::probe() const
+core::PixelProbe TargetObjects::probe() const
 {
     return probe(0U);
 }
 
-core::PixelProbe OffscreenTarget::probe(std::uint32_t attachment) const
+core::PixelProbe TargetObjects::probe(std::uint32_t attachment) const
 {
     // The same table readbackResult() answers with: "can this be served, and if not why" is one question,
     // and a probe that decided it for itself could disagree with the classification a caller asked for.
@@ -1119,7 +1119,7 @@ core::PixelProbe OffscreenTarget::probe(std::uint32_t attachment) const
     if (!check.ok || attachment >= d->attachments.colors.size()) {
         return core::PixelProbe(0, 0, {});
     }
-    const OffscreenTarget::Attachments::Color& color = d->attachments.colors[attachment];
+    const TargetObjects::Attachments::Color& color = d->attachments.colors[attachment];
     if (color.mapped == nullptr || color.mapped->data() == nullptr) {
         return core::PixelProbe(0, 0, {});
     }
@@ -1130,7 +1130,7 @@ core::PixelProbe OffscreenTarget::probe(std::uint32_t attachment) const
     return core::PixelProbe(static_cast<int>(d->width), static_cast<int>(d->height), std::move(pixels));
 }
 
-core::ReadbackResult OffscreenTarget::readbackResult(const core::ReadbackRequest& request) const noexcept
+core::ReadbackResult TargetObjects::readbackResult(const core::ReadbackRequest& request) const noexcept
 {
     core::ReadbackState state;
     state.color_attachments = static_cast<std::uint32_t>(d->attachments.colors.size());
@@ -1145,12 +1145,12 @@ core::ReadbackResult OffscreenTarget::readbackResult(const core::ReadbackRequest
     return core::readbackOf(state, request);
 }
 
-std::uint32_t OffscreenTarget::colorAttachmentCount() const noexcept
+std::uint32_t TargetObjects::colorAttachmentCount() const noexcept
 {
     return static_cast<std::uint32_t>(d->attachments.colors.size());
 }
 
-::vsg::ref_ptr<::vsg::ImageView> OffscreenTarget::colorView(std::uint32_t attachment) const noexcept
+::vsg::ref_ptr<::vsg::ImageView> TargetObjects::colorView(std::uint32_t attachment) const noexcept
 {
     if (attachment >= d->attachments.colors.size()) {
         return {};
@@ -1158,12 +1158,12 @@ std::uint32_t OffscreenTarget::colorAttachmentCount() const noexcept
     return d->attachments.colors[attachment].view;
 }
 
-::vsg::ref_ptr<::vsg::ImageView> OffscreenTarget::depthView() const noexcept
+::vsg::ref_ptr<::vsg::ImageView> TargetObjects::depthView() const noexcept
 {
     return d->attachments.depth_view;
 }
 
-::vsg::ref_ptr<::vsg::Node> OffscreenTarget::readback() const noexcept
+::vsg::ref_ptr<::vsg::Node> TargetObjects::readback() const noexcept
 {
     if (!d->attachments.colors.empty()) {
         return capture(0U);
@@ -1172,17 +1172,17 @@ std::uint32_t OffscreenTarget::colorAttachmentCount() const noexcept
     return captureDepth();
 }
 
-core::TargetShape OffscreenTarget::shape() const noexcept
+core::TargetShape TargetObjects::shape() const noexcept
 {
     return d->shape;
 }
 
-bool OffscreenTarget::hasDepth() const noexcept
+bool TargetObjects::hasDepth() const noexcept
 {
     return d->attachments.depth_view != nullptr;
 }
 
-core::DepthPlan OffscreenTarget::depth() const noexcept
+core::DepthPlan TargetObjects::depth() const noexcept
 {
     core::DepthFacts facts;
     facts.has_depth                = d->attachments.depth_view != nullptr;
@@ -1195,12 +1195,12 @@ core::DepthPlan OffscreenTarget::depth() const noexcept
     return core::depthPlan(facts);
 }
 
-const OffscreenTarget* OffscreenTarget::depthSource() const noexcept
+const TargetObjects* TargetObjects::depthSource() const noexcept
 {
     return d->depth_source;
 }
 
-::vsg::ref_ptr<::vsg::Node> OffscreenTarget::captureDepth() const
+::vsg::ref_ptr<::vsg::Node> TargetObjects::captureDepth() const
 {
     if (d->attachments.depth_capture != nullptr) {
         d->attachments.depth_captured = true;
@@ -1208,7 +1208,7 @@ const OffscreenTarget* OffscreenTarget::depthSource() const noexcept
     return d->attachments.depth_capture;
 }
 
-core::DepthProbe OffscreenTarget::depthProbe() const
+core::DepthProbe TargetObjects::depthProbe() const
 {
     // One classification (see readbackResult) and one decoder (core::decodeDepth), so "why is there no
     // probe" and "what do the numbers mean" cannot drift apart between the entry points.
@@ -1226,23 +1226,23 @@ core::DepthProbe OffscreenTarget::depthProbe() const
     return core::DepthProbe(static_cast<int>(d->width), static_cast<int>(d->height), std::move(values));
 }
 
-std::uint32_t OffscreenTarget::width() const noexcept
+std::uint32_t TargetObjects::width() const noexcept
 {
     return d->width;
 }
 
-std::uint32_t OffscreenTarget::height() const noexcept
+std::uint32_t TargetObjects::height() const noexcept
 {
     return d->height;
 }
 
-std::uint64_t OffscreenTarget::generation() const noexcept
+std::uint64_t TargetObjects::generation() const noexcept
 {
     return d->generation;
 }
 
-OffscreenTarget::Resized
-OffscreenTarget::resize(std::uint32_t width, std::uint32_t height, const core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+TargetObjects::Resized
+TargetObjects::resize(std::uint32_t width, std::uint32_t height, const core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
     // The PLAN decides, not this function. The wanted shape is the target's own: the attachment formats and the
     // render pass are fixed at create (a different shape is a different target, not a resize), so the arms that
@@ -1283,7 +1283,7 @@ OffscreenTarget::resize(std::uint32_t width, std::uint32_t height, const core::F
     //     it is attached to (VUID-VkFramebufferCreateInfo-pAttachments-00861), and a lender applied first
     //     makes it true in the same frame.
     if (d->depth_source != nullptr) {
-        const OffscreenTarget& lender = *d->depth_source;
+        const TargetObjects& lender = *d->depth_source;
         if (lender.d->attachments.depth_view == nullptr || width > lender.d->width || height > lender.d->height) {
             result.refused = true;
             return result;
@@ -1331,7 +1331,7 @@ OffscreenTarget::resize(std::uint32_t width, std::uint32_t height, const core::F
     return result;
 }
 
-OffscreenTarget::Rebuilt OffscreenTarget::rebuild(const TargetLayout& wanted, const core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+TargetObjects::Rebuilt TargetObjects::rebuild(const TargetLayout& wanted, const core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
     Rebuilt result;
     // Every path that decides "nothing is replaced" has to answer with the generation still in force, and

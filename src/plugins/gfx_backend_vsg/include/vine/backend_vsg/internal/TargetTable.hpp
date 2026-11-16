@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <vsg/core/ref_ptr.h>
@@ -10,9 +11,10 @@
 
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/ReportOnce.hpp>
 #include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/math/Matrix4x4.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
 /**
@@ -20,7 +22,7 @@
  * objects a frame draws into, and the facts the plan is compiled from.
  *
  * WHY A LAYER OF ITS OWN. The SDK's `RenderTarget` is a description and nothing else ("the backend owns the
- * attachments; the RenderTarget stays a logical description"), while api/OffscreenTarget owns one set of GPU
+ * attachments; the RenderTarget stays a logical description"), while api/TargetObjects owns one set of GPU
  * objects for one shape. Between them sit three facts nobody else can hold:
  *
  *   * the DESCRIPTION is COPIED, never borrowed. The SDK's contract says a pointer argument is valid for the
@@ -36,10 +38,17 @@
  *     statement - one row per target, and a row cannot disagree with the object it describes because both
  *     come from here.
  *
- * LIFETIME. An entry owns its OffscreenTarget through a shared_ptr, and a target that BORROWS another's depth
+ * LIFETIME. An entry owns its TargetObjects through a shared_ptr, and a target that BORROWS another's depth
  * holds a share of the lender's: releasing the lender (the SDK announces that the host may destroy it now)
  * drops the registry's entry while a borrower keeps the image alive - the SDK's own shareDepth keeps the
  * source alive on its side, and this is the matching rule on ours.
+ *
+ * ONE TABLE, THREE QUESTIONS (`G1`). "What did this target become", "which target does this identity name"
+ * and "why did this one not follow its description" are three questions about the SAME entry, so they used to be
+ * two tables (this one and the executor's identity registry) with a registration that had to be kept in step by
+ * hand - and a borrowed label pointer that could dangle. The table now owns all three: `ensure`/`observe` copy the
+ * description and build, `adopt` registers an object somebody else built (the standalone executor's tests), the
+ * executor resolves through `resolve`, and `Entry::unapplied` is the per-entry episode it reports.
  *
  * WHAT IT DOES NOT HOLD: the window (its own type, see WindowTarget) and anything about what a pass DOES with
  * a target - the clear policy, the load ops, the scheduling. Those are the plan's, and a target that started
@@ -50,7 +59,7 @@
 VN_BACKEND_VSG_NS_BEGIN
 
 /** @brief The host's off-screen targets and the facts the frame is compiled from (see the file note). */
-class VN_BACKEND_VSG_API HostTargets {
+class VN_BACKEND_VSG_API TargetTable {
   public:
     /** @brief The SDK's description of one target, copied (see the file note). */
     struct Description {
@@ -83,11 +92,23 @@ class VN_BACKEND_VSG_API HostTargets {
     /** @brief One host target: the copied description, its objects, and the lender's when its depth is borrowed. */
     struct Entry {
         const void*                      identity{ nullptr }; // The SDK object this entry stands for.
+        /// @brief What the host calls this target, for the images' debug names and the diagnostics.
+        ///
+        /// OWNED, not borrowed: the host names its target once and may rename it, so keeping a pointer into the
+        /// caller's string was a dangling read waiting for the first frame that named the images.
+        std::string                      label{};
         Description                      description{};       // The snapshot last observed from the host.
-        std::shared_ptr<OffscreenTarget> target{};            // The GPU objects, once built.
-        std::shared_ptr<OffscreenTarget> depth_owner{};       // The lender's objects, while its depth is reused.
+        std::shared_ptr<TargetObjects> target{};            // The GPU objects, once built.
+        std::shared_ptr<TargetObjects> depth_owner{};       // The lender's objects, while its depth is reused.
         vn::graphics::ReportOnce         report{};            // One episode per entry (the caller decides what to say).
         vn::graphics::ReportOnce         readback_report{};   // A readback refusal's own episode (re-armed by success).
+        vn::graphics::ReportOnce         unapplied{};         // The executor's "it did not follow its description" episode.
+
+        /** @brief Re-arms the "not applied" episode: the target followed its description, so a later failure is new. */
+        void noteApplied() noexcept
+        {
+            unapplied.rearm();
+        }
     };
 
     /** @brief What ensuring an entry did (the caller owns the diagnostic stream and the sentences). */
@@ -109,10 +130,10 @@ class VN_BACKEND_VSG_API HostTargets {
     };
 
   public:
-    HostTargets() = default;
+    TargetTable() = default;
 
-    HostTargets(const HostTargets&)            = delete;
-    HostTargets& operator=(const HostTargets&) = delete;
+    TargetTable(const TargetTable&)            = delete;
+    TargetTable& operator=(const TargetTable&) = delete;
 
     /** @brief Copies @p target's description into its entry (creating the entry) and builds what it asks for.
      *
@@ -138,6 +159,26 @@ class VN_BACKEND_VSG_API HostTargets {
 
     /** @brief Gets the entry @p identity stands for, or null when this backend does not hold it. */
     [[nodiscard]] Entry* find(const void* identity) noexcept;
+
+    /** @brief Gets the entry @p identity stands for, or null when this backend does not hold it. */
+    [[nodiscard]] const Entry* find(const void* identity) const noexcept;
+
+    /** @brief Gets the objects @p identity names, or null when they are not held (see the executor's resolve). */
+    [[nodiscard]] TargetObjects* resolve(const void* identity) const noexcept;
+
+    /**
+     * @brief Registers an object somebody ELSE built under @p identity (a standalone executor's targets).
+     *
+     * @details
+     * - The table does not own it: the entry holds a NON-OWNING share, so `release`/`clear` forget the registration
+     *   without destroying an object whose owner is still alive. `ensure` keeps the owning form; an adopted entry
+     *   never has a description to build from.
+     *
+     * @param identity The identity the plan's CompiledTarget carries.
+     * @param target   The objects to resolve @p identity to; null forgets the registration (and the entry).
+     * @return The entry, or null when @p identity or @p target is null.
+     */
+    [[nodiscard]] Entry* adopt(const void* identity, TargetObjects* target) noexcept;
 
     /** @brief Forgets @p identity: the SDK's announcement that the host may destroy the target now.
      *

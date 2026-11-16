@@ -112,7 +112,7 @@
 - **是什么**：render pass 由**形状**（颜色/深度格式、采样数）决定；图像、视图、framebuffer 由 **extent** 决定。
   `planTarget` 据此给出 Rebuild / ResizeInPlace / Repair 三答案（SDK 的 `TargetPlan`）。
 - **为什么**：G1（形状与尺寸是两个概念）+ G9（新格式/新采样数只扩展形状表）+ G10（resize 不付重编代价）。
-- **边界**：`ResizeInPlace` 保留 render pass（管线兼容），`Rebuild` 才换形状；`TargetImages` 的三个 load-op 变体
+- **边界**：`ResizeInPlace` 保留 render pass（管线兼容），`Rebuild` 才换形状；`TargetObjects` 的三个 load-op 变体
   共享一个 framebuffer（load op 不进兼容性）。
 
 ### 2.7 屏障是一张表，不是散落的调用
@@ -174,7 +174,7 @@
   一条 `vk.device.reentry`，帧照常结束）。
 - **2026-11-16（T48 S6c-2b）后的形状**：**释放不再等帧（R6）**。`releaseContent`（三种重载）与 `releaseRenderTarget` 脱离体闸：
   它们只等一次缓存操作（帧首解析持有的锁），安全由缓存锁 + park + 水位的开帧规则共同给出。为此 `targets` 的条目变成
-  `shared_ptr<TargetImages>`（释放把引用交给 park，已经解析它的帧仍持有有效指针），`released_nodes` 改原子，队列的读者
+  `shared_ptr<TargetObjects>`（释放把引用交给 park，已经解析它的帧仍持有有效指针），`released_nodes` 改原子，队列的读者
   （`retirementNumbers` / `frameReport`）也取 `clock_mutex`。**证据**：`VkMultiSessionTest.AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroyWhatItUses`。
 - **2026-11-15（T48 S6b）后的形状**：`createSession()` 真的造一个 `FrameDriver`（可早于 `initialize()`，由它统一拉起；已起的
   设备上当场建），`releaseSession()` 销毁并遗忘（设备自己的驱动者不可归还）。**设备持一把 `frame_mutex` 串行化帧体**：
@@ -324,16 +324,22 @@
 - **今天的位置**：S4 只交付状态机与它的 8 条单元用例（两个 session id 模拟两会话，含 8 线程抢一键恰一个
   `Build`）；`ContentCaches::ensureGeometry` 仍走原路径，S6 传入会话 id 时才接上（`D8`：半接比没接更糟）。
 
-### 2.18 目标 claim：一帧一个持有者，冲突只跳那个 pass（`G6` / `G7`）
+### 2.18 目标表：对象、形状与一帧一个持有者（`G1` / `G6` / `G7`）
 
-- **是什么**：设备持一张 `TargetClaims`（`RenderTarget* → FrameDriverId`）。`begin(session)` 发一个帧作用域的
-  `Lease`；`executeFrame` 与 `prepareFrame` 在每个 pass 的 **`ensure_target` 之前** `claim` 它的目标。冲突时那个
+- **是什么**：设备持一张 `TargetTable`——从宿主的 `RenderTarget*` 到它成的 `TargetObjects`（map + 形状缓存 +
+  构建/重建/修复）、六条目标拒绝情节，以及每帧的租约（`RenderTarget* → FrameDriverId`）**是同一张表的三个问题**
+  （B5a；之前 map / `TargetClaims` / `TargetImages` 三个对象各管一段寿命）。`lease(driver)` 发一个帧作用域的
+  `Lease`；`executeFrame` 与 `prepareFrame` 在每个 pass 的 **`ensure` 之前** `claim` 它的目标。冲突时那个
   pass **被跳过**（帧里其它 pass 照跑），并报 `vk.target.claim_conflict`——**每个（目标, 情节）一条**，情节在无冲突
   的一帧/一次预热后结束。
 - **为什么是每 pass 而不是整帧**：一次局部冲突不该放大成“整帧失败”；冲突走的是已有“这个设备建不起这个目标”
   同一条报告路径（`G6`），只是多了一个 code。
-- **为什么 claim 在 `ensure_target` 之前**：建/重建附件是**持有者的动词**（`R5`），所以“谁可以重建”与“谁可以画”
+- **为什么 claim 在 `ensure` 之前**：建/重建附件是**持有者的动词**（`R5`），所以“谁可以重建”与“谁可以画”
   是同一个答案；claim 晚一步，两个会话就可能在同一个目标上交错重建。
+- **为什么一张表**：map 与租约回答的是同一个问题——“这个目标现在是什么、谁可以动它”。拆成两张表时，释放要
+  在两处各做一半，测试也不得不同时驱动两个对象（`G1`）；合并后 `release(target)` 是“条目离开 map + 记录交给
+  park”一个调用，`drain()` 是“记录与租约一起清”。租约仍持有自己的锁（另一个驱动者的 per-pass claim 不能排在
+  一次构建后面）。
 - **边界**：租约不是锁（`C5`）——等待会让两个引擎的帧率互相绑死；冲突不销毁任何东西，目标下一帧再试。
   `Lease` 的析构是**唯一释放点**（`P3`），所以帧的任何一个提前返回都不会把目标钉住。窗口目标不需要 claim：
   `createSurfaceTarget` 已经保证一个窗口只属于一个会话（`WindowOccupied`）。
@@ -389,7 +395,7 @@
 
 ### 3.1.4 F4 离屏目标
 
-- **行为**：`TargetImages` 持有颜色/采样缓冲/深度/深度 resolve 图像与视图、三个 render pass 变体（清深度、载
+- **行为**：`TargetObjects` 持有颜色/采样缓冲/深度/深度 resolve 图像与视图、三个 render pass 变体（清深度、载
   深度、全载）、一个 framebuffer。MSAA 目标把颜色 resolve 进单采样图；深度用 `vkCreateRenderPass2` 的
   `pDepthStencilResolveAttachment`（`sample0`）resolve；深度-only 目标即阴影图；`shareDepth` 的目标借用另一个
   目标的深度视图。
@@ -531,10 +537,11 @@
 
 | 单元 | 责任 | 关键契约 |
 |---|---|---|
-| `Device` | 会话、帧、目标表、窗口表、报告 | 本节 4.1 |
+| `Device` | 会话、帧、窗口表、报告（目标表见 `TargetTable`） | 本节 4.1 |
 | `ContentDraw` | 内容/全屏录制、程序与管线、ring、set 缓存、管线缓存对象 | F5 / F6 / F8 / F9 / F12 |
 | `ContentImages` | 纹理 revision、sampler、stand-in | F7 |
-| `TargetImages` | 离屏目标的对象与 pass 变体 | F4 |
+| `TargetTable` | 宿主目标 → 对象（map + 形状 + 构建/重建/修复）+ 每帧租约 + 释放/park | F4 / §2.18 |
+| `TargetObjects` | 离屏目标的对象与 pass 变体 | F4 |
 | `WindowTarget` / `WindowSystem` | swapchain 与 surface | F3 |
 | `MemoryAllocator` | 设备内存池（块/切片/映射） | F10 |
 | `PipelineCacheFile` | 缓存文件格式、校验、原子写 | F12 |
@@ -735,14 +742,15 @@
 
 - M0–M13 全部落地；审查项 F1/F2/F4/F7/F8/F12 已落地，审查 F5/F9/F10/F11/F13 按 §1.3 保留。
 - **T48 进度**：S1（释放走队列）、S2a/S2b（帧机器与帧体进 `Device::FrameDriver`）、S3（`ContentCaches` + `FrameScratch`
-  分家，§2.16）、S4（`ResidenceTable` 三态状态机，§2.17）、S5（`TargetClaims` 租约 + 帧/预热接线，§2.18）、
+  分家，§2.16）、S4（`ResidenceTable` 三态状态机，§2.17）、S5（`TargetTable` 租约 + 帧/预热接线，§2.18）、
   S6a（SDK 会话接缝 + 引擎持有驱动者 + 默认程序归会话）、S6b（多驱动者 + 设备串行帧体）、
   S6c-1（帧首快照：记录路径零锁、计划按值、条目 park 到水位）、S6c-2a（帧体真并行：体闸 shared/exclusive + 多开帧 +
   各小锁 + 每驱动者批量）、S6c-2b（R6：释放不等帧）、S7（读回独立化：自带命令池/栅栏 + 计数等待 + 帧体内拒绝，
   并补上 ADR 早就写明的 `vkQueueSubmit` / `vkDeviceWaitIdle` 提交锁）、S9（契约收口 + TSan：`test_vk` 133/133 **0 race
   report**）已落地；S8 见 `.ai/design/graphics-sessions.md` §9.3。
-- `test_vk` **133 例 / 34 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **557**、`test_graphics` **587**；
-  Debug 全量 ctest **32/32**；`BackendParityTest` **12/12**。
+- `test_vk` **166 例 / 41 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **571**、`test_graphics` **613**；
+  `BackendParityTest` **13/13**。S4（B5a）把目标 map、形状与租约归一为 `TargetTable`（`TargetClaims.{hpp,cpp}` 删除，
+  用例迁到 `TargetTableTest`，+1 例）。
 - **一条构建教训**：SDK 的虚表改动后，**动态插件必须一起重建**（旧 `.so` 让 `VsgBackendPluginTest` 段错误）。
 - 实测（lavapipe，真实宿主）：11 pass / 10 draw，稳态中位 **8.24 ms**，GPU **7.15–7.74 ms**；ring + set 缓存改动
   −10%（9.03–9.23 → 8.16–8.30 ms）。
@@ -778,7 +786,7 @@
 ### 10.1 代码
 
 - `src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/**`：全部契约（`Device`、`ContentDraw`、
-  `TargetImages`、`ContentImages`、`WindowTarget`、`MemoryAllocator`、`PipelineCacheFile`、`ReadbackStaging`、
+  `TargetObjects`、`ContentImages`、`WindowTarget`、`MemoryAllocator`、`PipelineCacheFile`、`ReadbackStaging`、
   `BarrierPlan`、`StateMapping`、`Handles`）。
 - `src/plugins/gfx_backend_vk/src/shell/**`：`Plugin`、`BackendFactory`。
 - `tests/test_vk/**`：行为；`tests/test_vsg/BackendParityTest.cpp`：对拍。

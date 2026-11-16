@@ -49,7 +49,7 @@
 #include <vine/backend_vsg/internal/ContentDraw.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>
 #include <vine/backend_vsg/support/VsgDynamicState.hpp>
@@ -107,7 +107,7 @@ using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentPipeline;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::PassContent;
 using vn::backend_vsg::StreamUploads;
 using vn::backend_vsg::ViewportRect;
@@ -155,8 +155,8 @@ struct Fixture {
     FrameRecorder                    recorder{ arena, diagnostics, observe };
     FrameCompiler                    compiler{ arena, diagnostics, observe };
     vn::backend_vsg::DeviceResult            created;
-    std::unique_ptr<OffscreenTarget> first;
-    std::unique_ptr<OffscreenTarget> second;
+    std::unique_ptr<TargetObjects> first;
+    std::unique_ptr<TargetObjects> second;
     std::vector<TargetFacts>         facts;
     VsgExecutor                      executor{ diagnostics };
     ::vsg::ref_ptr<::vsg::Viewer>    viewer;
@@ -289,12 +289,12 @@ struct Fixture {
     /// @brief The material identity this fixture's one material is known by.
     static int material_identity;
 
-    std::unique_ptr<OffscreenTarget> makeTarget()
+    std::unique_ptr<TargetObjects> makeTarget()
     {
-        OffscreenTarget::Layout layout;
+        TargetObjects::Layout layout;
         layout.width  = kSize;
         layout.height = kSize;
-        auto target   = OffscreenTarget::create(created.device, layout);
+        auto target   = TargetObjects::create(created.device, layout);
         if (target == nullptr) {
             return nullptr;
         }
@@ -348,7 +348,7 @@ struct Fixture {
     }
 
     /// @brief Reads the centre pixel of @p target.
-    Rgba8 centre(const OffscreenTarget& target) const
+    Rgba8 centre(const TargetObjects& target) const
     {
         return target.probe().pixel(static_cast<int>(kSize) / 2, static_cast<int>(kSize) / 2);
     }
@@ -370,8 +370,8 @@ void runPlanDrivenTargetPhase(const vn::backend_vsg::DeviceResult& device, Devic
 {
     const float kFirst[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
 
-    auto target = OffscreenTarget::create(device.device,
-                                          OffscreenTarget::Layout{
+    auto target = TargetObjects::create(device.device,
+                                          TargetObjects::Layout{
                                             8U,
                                             4U,
                                             { kFirst[0], kFirst[1], kFirst[2], 1.0F }
@@ -382,8 +382,8 @@ void runPlanDrivenTargetPhase(const vn::backend_vsg::DeviceResult& device, Devic
     // A second target this executor holds and no frame of this phase names. The drive walks the PLAN's
     // targets, so this one must not move - the observable that says "the plan was applied" rather than
     // "everything the executor holds was reshaped".
-    auto bystander = OffscreenTarget::create(device.device,
-                                             OffscreenTarget::Layout{
+    auto bystander = TargetObjects::create(device.device,
+                                             TargetObjects::Layout{
                                                8U,
                                                4U,
                                                { 0.0F, 0.0F, 0.0F, 1.0F }
@@ -566,7 +566,7 @@ void runLeasedTargetOrderPhase(const vn::backend_vsg::DeviceResult& device, Devi
     // depth image it borrows (VUID-VkFramebufferCreateInfo-pAttachments-00861) and be refused, leaving the
     // pair at different extents. That is the shape that kept the engine's deferred chain at its build-time
     // extent for a whole session, silently (measured 2026-09-23).
-    OffscreenTarget::TargetLayout lender_layout;
+    TargetObjects::TargetLayout lender_layout;
     lender_layout.width                = 8U;
     lender_layout.height               = 4U;
     lender_layout.color_formats        = { RenderTarget::ColorFormat::RGBA8 };
@@ -574,12 +574,12 @@ void runLeasedTargetOrderPhase(const vn::backend_vsg::DeviceResult& device, Devi
     lender_layout.clear.color          = true;
     lender_layout.clear.color_value[0] = 0.5F;
 
-    OffscreenTarget::TargetLayout borrower_layout = lender_layout;
+    TargetObjects::TargetLayout borrower_layout = lender_layout;
     borrower_layout.clear.color_value[0]          = 0.25F; // a different clear: the two pictures are told apart
 
-    auto lender = OffscreenTarget::create(device.device, lender_layout);
+    auto lender = TargetObjects::create(device.device, lender_layout);
     EXPECT_NE(lender, nullptr);
-    auto borrower = OffscreenTarget::create(device.device, borrower_layout, lender.get());
+    auto borrower = TargetObjects::create(device.device, borrower_layout, lender.get());
     EXPECT_NE(borrower, nullptr) << "the borrower (its own colour, the lender's depth) must be creatable";
     counters.targets_built += 2U;
     if (lender == nullptr || borrower == nullptr) {
@@ -597,7 +597,7 @@ void runLeasedTargetOrderPhase(const vn::backend_vsg::DeviceResult& device, Devi
     executor.addTarget(borrower.get(), borrower.get());
     executor.addTarget(lender.get(), lender.get());
 
-    const auto clear_of = [](const OffscreenTarget::TargetLayout& layout) {
+    const auto clear_of = [](const TargetObjects::TargetLayout& layout) {
         ClearValues policy;
         policy.color       = true;
         policy.depth       = true;
@@ -611,8 +611,8 @@ void runLeasedTargetOrderPhase(const vn::backend_vsg::DeviceResult& device, Devi
     // The facts state what each target should become; the sizing is the caller's, so one lambda fills them for
     // whichever frame is being compiled.
     std::vector<TargetFacts> facts(2U);
-    const auto               facts_for = [&facts](const OffscreenTarget& borrower_target, const OffscreenTarget& lender_target, int width, int height) {
-        const auto one = [width, height](const OffscreenTarget& target) {
+    const auto               facts_for = [&facts](const TargetObjects& borrower_target, const TargetObjects& lender_target, int width, int height) {
+        const auto one = [width, height](const TargetObjects& target) {
             TargetFacts entry;
             entry.target                                 = &target;
             entry.wanted.width                           = width;
@@ -642,8 +642,8 @@ void runLeasedTargetOrderPhase(const vn::backend_vsg::DeviceResult& device, Devi
     const auto record_frame = [&](std::uint64_t token, int width, int height, bool borrower_first) -> const CompiledFrame* {
         const std::uint32_t    first         = borrower_first ? 1U : 2U;
         const std::uint32_t    second        = borrower_first ? 2U : 1U;
-        const OffscreenTarget& first_target  = borrower_first ? *borrower : *lender;
-        const OffscreenTarget& second_target = borrower_first ? *lender : *borrower;
+        const TargetObjects& first_target  = borrower_first ? *borrower : *lender;
+        const TargetObjects& second_target = borrower_first ? *lender : *borrower;
         EXPECT_TRUE(recorder.beginFrame(FrameToken{ token }));
         EXPECT_TRUE(recorder.beginPass(first));
         EXPECT_TRUE(recorder.setRenderTarget(&first_target));
@@ -714,7 +714,7 @@ void runLeasedTargetOrderPhase(const vn::backend_vsg::DeviceResult& device, Devi
     submit(*rendered);
     ++counters.frames;
 
-    const auto expects_clear = [](const OffscreenTarget& target, float value, const char* which) {
+    const auto expects_clear = [](const TargetObjects& target, float value, const char* which) {
         const vn::graphics::backend::PixelProbe probe = target.probe();
         ASSERT_TRUE(probe.valid()) << which;
         EXPECT_EQ(probe.width(), 16) << which;
@@ -1139,14 +1139,14 @@ TEST(ExecutorTest, ATargetThatDidNotFollowItsDescriptionIsNamedInTheReport)
     // A lender and a borrower: the borrower's depth is the lender's image, so the borrower may not grow past
     // it (VUID-VkFramebufferCreateInfo-pAttachments-00861, see core::coversBorrowers). A plan that asks it to
     // is REFUSED - and the refusal is exactly the answer that has to name the target.
-    OffscreenTarget::TargetLayout layout;
+    TargetObjects::TargetLayout layout;
     layout.width                            = 8U;
     layout.height                           = 6U;
     layout.color_formats                    = { RenderTarget::ColorFormat::RGBA8 };
     layout.depth_format                     = RenderTarget::DepthFormat::D32;
-    std::unique_ptr<OffscreenTarget> lender = OffscreenTarget::create(fixture.created.device, layout);
+    std::unique_ptr<TargetObjects> lender = TargetObjects::create(fixture.created.device, layout);
     ASSERT_NE(lender, nullptr);
-    std::unique_ptr<OffscreenTarget> borrower = OffscreenTarget::create(fixture.created.device, layout, lender.get());
+    std::unique_ptr<TargetObjects> borrower = TargetObjects::create(fixture.created.device, layout, lender.get());
     ASSERT_NE(borrower, nullptr);
 
     // Registered under the names the backend passes along, and watched through the host's sink.
@@ -1162,7 +1162,7 @@ TEST(ExecutorTest, ATargetThatDidNotFollowItsDescriptionIsNamedInTheReport)
     lying[0].wanted.height = 6;
     lying[0].wanted.shape  = lender->shape();
     // A shape change on the LENDER: a target another target loads the depth of does not rebuild (see
-    // OffscreenTarget::rebuild), so this is the answer that gets refused.
+    // TargetObjects::rebuild), so this is the answer that gets refused.
     lying[0].wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA16F);
     lying[0].current       = lender->instance();
     lying[1]               = lying[0];

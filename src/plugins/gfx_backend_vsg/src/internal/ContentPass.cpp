@@ -544,7 +544,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
     // The bindings read the inputs in DECLARATION order: input by input, and inside one input its colour
     // attachments in attachment order and then its depth. The image layouts are the ones the producers leave
     // behind (a colour attachment ends sampleable, and a depth a shader may sample ends sampleable too - see
-    // OffscreenTarget), so the descriptors name the layouts the producers' passes really left.
+    // TargetObjects), so the descriptors name the layouts the producers' passes really left.
     //
     // WHICH SAMPLER READS ONE BINDING. An imported input that declared a state carries its samplers aligned
     // with its colours; every other binding (a produced image, or an imported one that stated nothing) uses the

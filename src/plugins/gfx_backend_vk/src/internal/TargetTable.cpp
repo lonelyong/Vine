@@ -232,7 +232,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
     wanted.shape.samples = requested_samples;
     wanted.shape.subpass = 0U;
     // A MULTISAMPLED DEPTH IS RESOLVED, and a device that cannot do that refuses the combination (ADR-2026-11-14).
-    // `TargetImages` builds the single-sample picture the render pass resolves into and every reader uses
+    // `TargetObjects` builds the single-sample picture the render pass resolves into and every reader uses
     // (`depthPicture`: the shadow path samples it), with `sample0` as the mode - so multisampling cannot change the
     // depth a later pass tests against. The resolve is Vulkan 1.2 (see Limits::depth_resolve_supported), and a device
     // below that genuinely cannot serve this shape: nothing is created, nothing is drawn, and `readColorBuffer`
@@ -325,9 +325,9 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
     const auto [entry, inserted] = targets_.try_emplace(&target);
     (void)inserted;
     if (entry->second == nullptr) {
-        entry->second = std::make_shared<TargetImages>();
+        entry->second = std::make_shared<TargetObjects>();
     }
-    TargetImages& images = *entry->second;
+    TargetObjects& images = *entry->second;
     TargetInstance current;
     current.desc                    = images.desc;
     current.generation              = 0U;
@@ -400,7 +400,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
     return false;
 }
 
-std::shared_ptr<TargetImages> TargetTable::lookup(const Target target) const noexcept
+std::shared_ptr<TargetObjects> TargetTable::lookup(const Target target) const noexcept
 {
     const std::lock_guard<std::mutex> map_held(map_mutex_);
     const auto                        found = targets_.find(target);
@@ -412,7 +412,7 @@ std::shared_ptr<TargetImages> TargetTable::lookup(const Target target) const noe
 
 bool TargetTable::release(const Target target)
 {
-    std::shared_ptr<TargetImages> doomed;
+    std::shared_ptr<TargetObjects> doomed;
     {
         const std::lock_guard<std::mutex> map_held(map_mutex_);
         const auto                        found = targets_.find(target);
@@ -432,9 +432,9 @@ bool TargetTable::release(const Target target)
     return true;
 }
 
-std::vector<std::shared_ptr<TargetImages>> TargetTable::drain() noexcept
+std::vector<std::shared_ptr<TargetObjects>> TargetTable::drain() noexcept
 {
-    std::vector<std::shared_ptr<TargetImages>> out;
+    std::vector<std::shared_ptr<TargetObjects>> out;
     {
         const std::lock_guard<std::mutex> map_held(map_mutex_);
         out.reserve(targets_.size());

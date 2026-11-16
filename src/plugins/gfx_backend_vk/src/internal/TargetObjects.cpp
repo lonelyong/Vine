@@ -1,4 +1,4 @@
-#include <vine/backend_vk/internal/TargetImages.hpp>
+#include <vine/backend_vk/internal/TargetObjects.hpp>
 
 #include <cstdint>
 #include <cstring>
@@ -86,7 +86,7 @@ namespace
 
 } // namespace
 
-bool TargetImages::built() const noexcept
+bool TargetObjects::built() const noexcept
 {
     // A DEPTH-ONLY TARGET (a shadow map) has every object too: its render pass and framebuffer exist, it simply owns
     // no colour view. A target with NEITHER attachment is the one shape that is not built.
@@ -152,7 +152,7 @@ namespace
  * @param allocator The device's memory pool (the slices are given back to it).
  * @param images    The record to strip.
  */
-void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, MemoryAllocator& allocator, TargetImages& images) noexcept
+void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, MemoryAllocator& allocator, TargetObjects& images) noexcept
 {
     if (device == VK_NULL_HANDLE) {
         return;
@@ -240,7 +240,7 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
  */
 [[nodiscard]] bool createRenderPass(const VolkDeviceTable& table,
                                     const VkDevice         device,
-                                    const TargetImages&    images,
+                                    const TargetObjects&    images,
                                     const VkAttachmentLoadOp color_load,
                                     const VkAttachmentLoadOp depth_load,
                                     VkRenderPass&          out)
@@ -299,7 +299,7 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
         depth.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         // A LOAD op may not name an UNDEFINED image (VUID-VkAttachmentDescription-format-06699): the LOAD variant is
-        // only ever used after a CLEAR variant left the image in its attachment layout (see TargetImages::fresh).
+        // only ever used after a CLEAR variant left the image in its attachment layout (see TargetObjects::fresh).
         depth.initialLayout  = depth_load == VK_ATTACHMENT_LOAD_OP_LOAD ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
         depth.finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         attachments.push_back(depth);
@@ -477,7 +477,7 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
 [[nodiscard]] bool createAttachments(const VolkDeviceTable& table,
                                      const VkDevice         device,
                                      MemoryAllocator&       allocator,
-                                     TargetImages&          images)
+                                     TargetObjects&          images)
 {
     const auto width  = static_cast<std::uint32_t>(images.desc.width);
     const auto height = static_cast<std::uint32_t>(images.desc.height);
@@ -556,7 +556,7 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
             return false;
         }
 
-        // THE DEPTH PICTURE of a multisampled target: the resolve attachment (see TargetImages::depthPicture). It keeps
+        // THE DEPTH PICTURE of a multisampled target: the resolve attachment (see TargetObjects::depthPicture). It keeps
         // every capability a single-sample depth attachment used to have - DEPTH_STENCIL_ATTACHMENT (the pass resolves
         // into it, a borrower attaches it), SAMPLED (a shader samples it) and TRANSFER_SRC (a readback copies it) - at
         // one sample per texel.
@@ -602,7 +602,7 @@ void destroyAttachments(const VolkDeviceTable& table, const VkDevice device, Mem
 
 } // namespace
 
-bool buildTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAllocator& allocator, TargetImages& images)
+bool buildTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAllocator& allocator, TargetObjects& images)
 {
     if (images.desc.width <= 0 || images.desc.height <= 0 || (images.colorCount() == 0U && !images.hasDepth())) {
         return false;
@@ -636,7 +636,7 @@ bool buildTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAllo
     return true;
 }
 
-bool resizeTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAllocator& allocator, TargetImages& images)
+bool resizeTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAllocator& allocator, TargetObjects& images)
 {
     if (images.render_pass == VK_NULL_HANDLE) {
         return false; // nothing to keep: a resize presupposes a built target
@@ -654,7 +654,7 @@ bool resizeTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAll
     return true;
 }
 
-void destroyTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAllocator& allocator, TargetImages& images) noexcept
+void destroyTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAllocator& allocator, TargetObjects& images) noexcept
 {
     destroyAttachments(table, device, allocator, images);
     if (device != VK_NULL_HANDLE) {

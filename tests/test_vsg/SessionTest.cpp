@@ -29,7 +29,7 @@
 #include <vine/backend_vsg/internal/Observe.hpp>
 #include <vine/backend_vsg/internal/SlotProbe.hpp>
 #include <vine/backend_vsg/internal/DeviceProbe.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/WindowSession.hpp>
 #include <vine/backend_vsg/internal/SessionContent.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>
@@ -53,7 +53,7 @@ using vn::graphics::backend::Rgba8;
 using vn::graphics::backend::TargetAction;
 using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::TargetShape;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::VsgExecutor;
 using vn::backend_vsg::api::WindowSession;
 using vn::backend_vsg::api::WindowSessionOptions;
@@ -231,14 +231,14 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
     // hands over its own graph (one per frame, see makeFrameGraph) and writes one of them with its own clear.
     const ::vsg::ref_ptr<::vsg::Device> device = vn::backend_vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(device, nullptr);
-    auto first_target  = OffscreenTarget::create(device,
-                                                 OffscreenTarget::Layout{
+    auto first_target  = TargetObjects::create(device,
+                                                 TargetObjects::Layout{
                                                    8U,
                                                    8U,
                                                    { 0.2F, 0.0F, 0.0F, 1.0F }
     });
-    auto second_target = OffscreenTarget::create(device,
-                                                 OffscreenTarget::Layout{
+    auto second_target = TargetObjects::create(device,
+                                                 TargetObjects::Layout{
                                                    8U,
                                                    8U,
                                                    { 0.6F, 0.0F, 0.0F, 1.0F }
@@ -266,7 +266,7 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
     // (when asked) one off-screen pass, compile, hand the session THIS frame's graph, and commit. Every
     // handover happens while the previous frame's submission is still in flight - nothing here waits the
     // device - which is exactly what the session has to survive.
-    const auto drive = [&](OffscreenTarget* into, float value) {
+    const auto drive = [&](TargetObjects* into, float value) {
         const FrameToken token = session.beginFrame();
         EXPECT_TRUE(token);
 
@@ -373,8 +373,8 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
         // so every target the plan can resolve to is one it knows.
         const ::vsg::ref_ptr<::vsg::Device> device = vn::backend_vsg::detail::SessionContentAccess::device(session);
         ASSERT_NE(device, nullptr);
-        auto target = OffscreenTarget::create(device,
-                                              OffscreenTarget::Layout{
+        auto target = TargetObjects::create(device,
+                                              TargetObjects::Layout{
                                                 8U,
                                                 8U,
                                                 { 0.25F, 0.5F, 0.75F, 1.0F }
@@ -430,7 +430,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
         EXPECT_EQ(session.deviceWaits(), 0U) << "a frame that goes through does not stop the device";
         EXPECT_FALSE(target->instance().attachments_invalidated) << "a submission that happened leaves nothing to repair";
         // The pixels are read AFTER the session stops, and that order is the point rather than an accident: a probe
-        // reads the mapped buffer the GPU's copy fills (see OffscreenTarget::probe), while right after commit the
+        // reads the mapped buffer the GPU's copy fills (see TargetObjects::probe), while right after commit the
         // submission is still in flight - the session's own stop is the completion point THIS half has (the
         // lost-frame half below drives frames instead: a frame waits the fence of the slot it enters).
         session.shutdown();
@@ -453,8 +453,8 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     ASSERT_TRUE(session.initialize(WindowSessionOptions{}, diagnostics));
     const ::vsg::ref_ptr<::vsg::Device> device = vn::backend_vsg::detail::SessionContentAccess::device(session);
     ASSERT_NE(device, nullptr);
-    auto target = OffscreenTarget::create(device,
-                                          OffscreenTarget::Layout{
+    auto target = TargetObjects::create(device,
+                                          TargetObjects::Layout{
                                             8U,
                                             8U,
                                             { 0.25F, 0.5F, 0.75F, 1.0F }
@@ -726,8 +726,8 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
     // from a real target, because the layer compares format codes and never invents them.
     const TargetShape live = window->facts().wanted.shape;
     ASSERT_EQ(live.device_color_formats.size(), 1U);
-    auto other_target = OffscreenTarget::create(device,
-                                                OffscreenTarget::Layout{
+    auto other_target = TargetObjects::create(device,
+                                                TargetObjects::Layout{
                                                   8U,
                                                   8U,
                                                   { 0.0F, 0.0F, 0.0F, 1.0F }

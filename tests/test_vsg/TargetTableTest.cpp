@@ -1,6 +1,6 @@
 /**
  * @brief The host's off-screen targets: the description COPIED, and the facts the plan resolves from (see
- * `.ai/design/vsg-backend.md` §11.16bf, `api/HostTargets.hpp`).
+ * `.ai/design/vsg-backend.md` §11.16bf, `api/TargetTable.hpp`).
  *
  * Device-free by construction: with no device nothing is built - `ensure` keeps the description and answers
  * `NotBuilt` - so what is checked here is the half a device cannot prove: that no host object is
@@ -16,15 +16,15 @@
 #include <vine/graphics/Light.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/backend_vsg/internal/FrameCompiler.hpp>
-#include <vine/backend_vsg/internal/HostTargets.hpp>
+#include <vine/backend_vsg/internal/TargetTable.hpp>
 
 using vn::graphics::RenderTarget;
 using vn::graphics::backend::TargetFacts;
-using vn::backend_vsg::HostTargets;
+using vn::backend_vsg::TargetTable;
 
-TEST(HostTargetsTest, TheDescriptionIsASnapshotAndTheFactsSayWhatIsBuilt)
+TEST(TargetTableTest, TheDescriptionIsASnapshotAndTheFactsSayWhatIsBuilt)
 {
-    HostTargets targets;
+    TargetTable targets;
 
     const vn::intrusive_ptr<RenderTarget> sdk(new RenderTarget());
     sdk->attachColor(RenderTarget::ColorFormat::RGBA16F);
@@ -33,9 +33,9 @@ TEST(HostTargetsTest, TheDescriptionIsASnapshotAndTheFactsSayWhatIsBuilt)
 
     // With no device nothing can be built, and the description is still KEPT: a host configures a target
     // before a session exists (the engine announces sizes and builds pipelines before initialize()).
-    const HostTargets::Ensured ensured = targets.ensure(*sdk, {});
+    const TargetTable::Ensured ensured = targets.ensure(*sdk, {});
     ASSERT_NE(ensured.entry, nullptr);
-    EXPECT_EQ(ensured.state, HostTargets::State::NotBuilt);
+    EXPECT_EQ(ensured.state, TargetTable::State::NotBuilt);
     EXPECT_EQ(targets.live(), 1U);
     ASSERT_EQ(ensured.entry->target, nullptr);
 
@@ -66,7 +66,7 @@ TEST(HostTargetsTest, TheDescriptionIsASnapshotAndTheFactsSayWhatIsBuilt)
 
     // A description that cannot make a target yet (no colour attachment, or no extent).
     const vn::intrusive_ptr<RenderTarget> bare(new RenderTarget());
-    EXPECT_EQ(targets.ensure(*bare, {}).state, HostTargets::State::NotBuilt);
+    EXPECT_EQ(targets.ensure(*bare, {}).state, TargetTable::State::NotBuilt);
 
     // The release forgets the identity, and answers once.
     EXPECT_TRUE(targets.release(sdk.get()));
@@ -75,28 +75,28 @@ TEST(HostTargetsTest, TheDescriptionIsASnapshotAndTheFactsSayWhatIsBuilt)
     EXPECT_EQ(targets.live(), 1U) << "the bare target is still held";
 }
 
-TEST(HostTargetsTest, ABorrowedDepthAndAShadowStatementAreTheHostsOwnWords)
+TEST(TargetTableTest, ABorrowedDepthAndAShadowStatementAreTheHostsOwnWords)
 {
-    HostTargets targets;
+    TargetTable targets;
 
     const vn::intrusive_ptr<RenderTarget> lender(new RenderTarget());
     lender->attachColor(RenderTarget::ColorFormat::RGBA8);
     lender->attachDepth(RenderTarget::DepthFormat::D24);
     lender->setDepthPromotion(false); // it will be depth-tested against, so it must not become a texture
     lender->setSize(32, 32);
-    EXPECT_EQ(targets.ensure(*lender, {}).state, HostTargets::State::NotBuilt);
+    EXPECT_EQ(targets.ensure(*lender, {}).state, TargetTable::State::NotBuilt);
 
     const vn::intrusive_ptr<RenderTarget> borrower(new RenderTarget());
     borrower->attachColor(RenderTarget::ColorFormat::RGBA8);
     borrower->shareDepth(lender);
     borrower->setSize(32, 32);
-    const HostTargets::Ensured ensured = targets.ensure(*borrower, {});
+    const TargetTable::Ensured ensured = targets.ensure(*borrower, {});
 
     // With NO DEVICE nothing is built at all, so that answers first - "NotBuilt" is not a diagnosis, it is
     // the state a description waits in. What a missing LENDER is answered with belongs to a build (`ensure`
     // with a device resolves the lender while it still holds the host's word - see VsgBackendTest's off-screen
     // case, which drives it).
-    EXPECT_EQ(ensured.state, HostTargets::State::NotBuilt);
+    EXPECT_EQ(ensured.state, TargetTable::State::NotBuilt);
 
     TargetFacts borrower_row;
     targets.facts(*ensured.entry, borrower_row);
@@ -134,9 +134,9 @@ TEST(HostTargetsTest, ABorrowedDepthAndAShadowStatementAreTheHostsOwnWords)
  * one thing that must never be wrong: the DEFAULT. A table nobody configured refuses multisampling, because
  * a device that said nothing about its counts is treated as one that cannot multisample.
  */
-TEST(HostTargetsTest, TheSampleCountLimitStartsAtOneAndZeroMeansOne)
+TEST(TargetTableTest, TheSampleCountLimitStartsAtOneAndZeroMeansOne)
 {
-    HostTargets targets;
+    TargetTable targets;
     EXPECT_EQ(targets.maxSamples(), 1U) << "an unconfigured table cannot multisample";
 
     targets.setMaxSamples(8U);

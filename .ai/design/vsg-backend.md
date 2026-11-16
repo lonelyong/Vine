@@ -55,7 +55,7 @@
 |---|---|---|
 | SDK 后端契约（两个后端共用的机制） | `src/viz/graphics/sdk/vine/graphics/backend/` | `FrameGate` / `DeviceClock` / `FrameTimeline` / `RetirementQueue` / `Readback` / `Keys` / `TargetPlan` + `BackendHalfGuard` |
 | 本后端的可移植半边（原 SDK `backend/`，ADR-2026-11-16 §2 搬入） | `include/vine/backend_vsg/internal/` + `src/internal/` | `FrameRecorder` / `FrameCompiler` / `FrameArena` / `FrameRing` / `ClearPlan` / `VariantPool` / `StateRegistry` / `MaterialArena` / `Streams` / `SlotProbe` / `Observe` / `PhaseTable` / `PixelProbe` / `DepthProbe` / `SessionMove` / `AllocationGate` / `ResourceTable` |
-| 插件内部 | `src/plugins/gfx_backend_vsg/src/internal/` | `VsgBackend`（门面）/ `api::Device` / `api::WindowSession` / `WindowTarget` / `OffscreenSession` / `OffscreenTarget` / `HostTargets` / `VsgExecutor` / `ContentStore` / `StreamUploads` / `ContentPipeline` / `ContentDraw` / `BlockStorage` / `BlockDescriptors` / `StateCommands` / `MaterialImages` |
+| 插件内部 | `src/plugins/gfx_backend_vsg/src/internal/` | `VsgBackend`（门面）/ `api::Device` / `api::WindowSession` / `WindowTarget` / `OffscreenSession` / `TargetObjects` / `TargetTable` / `VsgExecutor` / `ContentStore` / `StreamUploads` / `ContentPipeline` / `ContentDraw` / `BlockStorage` / `BlockDescriptors` / `StateCommands` / `MaterialImages` |
 | 插件支撑 | `src/plugins/gfx_backend_vsg/src/support/` | `VsgHostWindow` / `RenderStateMapper` / `VsgDynamicState` / `VsgSceneRules` / 入口点 |
 | 插件外壳 | `src/plugins/gfx_backend_vsg/src/shell/` | 插件注册、`RenderBackendFactory` |
 
@@ -79,7 +79,7 @@ classDiagram
     class OffscreenSession
     class VsgExecutor
     class ContentStore
-    class HostTargets
+    class TargetTable
     class BlockStorage
     class MaterialImages
     class ContentPass
@@ -104,7 +104,7 @@ classDiagram
     VsgBackendImpl *-- OffscreenSession
     VsgBackendImpl *-- VsgExecutor
     VsgBackendImpl *-- ContentStore
-    VsgBackendImpl *-- HostTargets
+    VsgBackendImpl *-- TargetTable
     VsgBackendImpl *-- BlockStorage
     VsgBackendImpl *-- MaterialImages
     SdkFrameRecorder --> SdkFrameCompiler : CollectedFrame
@@ -119,7 +119,7 @@ classDiagram
     ContentPipeline --> VariantPool
     BlockStorage --> SdkFrameRing
     BlockStorage --> SdkMaterialArena
-    HostTargets --> OffscreenSession
+    TargetTable --> OffscreenSession
 ```
 
 #### 2.9.3 一帧的生命周期
@@ -142,7 +142,7 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 | `VsgBackend` | `RenderBackend` / `RenderDevice` / `RenderFrameExecutor` 的门面；持有 Impl |
 | `api::WindowSession` / `WindowTarget` | 窗口、交换链、槽位、present |
 | `api::OffscreenSession` | 无窗口的帧源；headless 设备的 device-wide work |
-| `HostTargets` | 宿主声明的离屏目标；描述拷贝、对象懒建、resize/借深度的拒绝 |
+| `TargetTable` | 宿主声明的离屏目标（描述拷贝、对象懒建、resize/借深度的拒绝）**与**身份解析（身份 → 对象、标签、"没应用"情节）：一张表回答三个问题（B5b；之前 `HostTargets` + `VsgTargetRegistry` 两张表靠手工保持同步） |
 | `VsgExecutor` | 按 `CompiledFrame` 的顺序把 pass 录进 render graph |
 | `ContentStore` | 内容世界：身份、驻留、流、管线、块、材质 |
 | `ContentPass` | 一个 pass 的内容录制（命令 → GPU 工作） |

@@ -55,7 +55,7 @@
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
 #include <vine/backend_vsg/internal/ContentSources.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 #include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>
 
@@ -96,7 +96,7 @@ using vn::backend_vsg::buildScreenProgramFacts;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentPipeline;
 using vn::backend_vsg::FactMiss;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::ProgramFacts;
 using vn::backend_vsg::StreamUploads;
 using vn::backend_vsg::ViewportRect;
@@ -163,7 +163,7 @@ class Fixture {
             return false;
         }
 
-        OffscreenTarget::TargetLayout source_layout;
+        TargetObjects::TargetLayout source_layout;
         source_layout.width       = kSize;
         source_layout.height      = kSize;
         source_layout.clear.color = true;
@@ -171,17 +171,17 @@ class Fixture {
             source_layout.clear.color_value[index] = kSourceClear[index];
         }
         source_layout.color_formats.assign(source_attachments, RenderTarget::ColorFormat::RGBA8);
-        source = OffscreenTarget::create(created.device, source_layout);
+        source = TargetObjects::create(created.device, source_layout);
         if (source == nullptr) {
             return false;
         }
 
-        OffscreenTarget::Layout destination_layout{
+        TargetObjects::Layout destination_layout{
             kSize,
             kSize,
             { kDestinationClear[0], kDestinationClear[1], kDestinationClear[2], kDestinationClear[3] }
         };
-        destination = OffscreenTarget::create(created.device, destination_layout);
+        destination = TargetObjects::create(created.device, destination_layout);
         if (destination == nullptr) {
             return false;
         }
@@ -334,7 +334,7 @@ class Fixture {
     PixelProbe frame(::vsg::ref_ptr<::vsg::Node> destination_content)
     {
         auto command_graph = ::vsg::CommandGraph::create(created.device, created.queue_family);
-        // The source's pass runs FIRST: it leaves its attachments in SHADER_READ_ONLY (see OffscreenTarget),
+        // The source's pass runs FIRST: it leaves its attachments in SHADER_READ_ONLY (see TargetObjects),
         // which is what the samplers below name.
         command_graph->addChild(source->renderGraph());
         destination->renderGraph()->addChild(destination_content);
@@ -393,8 +393,8 @@ class Fixture {
 
   public:
     vn::backend_vsg::DeviceResult                          created;
-    std::unique_ptr<OffscreenTarget>               source;
-    std::unique_ptr<OffscreenTarget>               destination;
+    std::unique_ptr<TargetObjects>               source;
+    std::unique_ptr<TargetObjects>               destination;
     vn::intrusive_ptr<vn::graphics::ShaderProgram> program;
     vn::graphics::ContentRef                       program_ref{};
     std::unique_ptr<ContentPipeline>               pipelines;

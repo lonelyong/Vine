@@ -18,7 +18,7 @@ namespace
 /// The frame's own copy is preferred (it needs no submission). A copy the frame did not make is submitted
 /// here, and only for a target that has been DRAWN INTO: the copy commands transition the image from the
 /// layout a render pass leaves it in, which a never-rendered image is not in.
-HostReadbackRefusal ensureCopy(OffscreenTarget& target, core::ReadbackKind kind, std::uint32_t attachment, ::vsg::Device* device)
+HostReadbackRefusal ensureCopy(TargetObjects& target, core::ReadbackKind kind, std::uint32_t attachment, ::vsg::Device* device)
 {
     const core::ReadbackResult servable = target.readbackResult(core::ReadbackRequest{ kind, attachment });
     if (servable.ok) {
@@ -53,7 +53,7 @@ HostReadbackRefusal ensureCopy(OffscreenTarget& target, core::ReadbackKind kind,
 
 } // namespace
 
-HostReadbackRefusal classifyReadback(OffscreenTarget& target, core::ReadbackKind kind, std::uint32_t attachment) noexcept
+HostReadbackRefusal classifyReadback(TargetObjects& target, core::ReadbackKind kind, std::uint32_t attachment) noexcept
 {
     const core::ReadbackResult servable = target.readbackResult(core::ReadbackRequest{ kind, attachment });
     if (servable.ok) {
@@ -71,7 +71,7 @@ HostReadbackRefusal classifyReadback(OffscreenTarget& target, core::ReadbackKind
     return HostReadbackRefusal::TransferFailed;
 }
 
-HostReadbackRefusal readColorAttachment(OffscreenTarget& target, std::uint32_t attachment, ::vsg::Device* device, std::vector<std::uint8_t>& outPixels)
+HostReadbackRefusal readColorAttachment(TargetObjects& target, std::uint32_t attachment, ::vsg::Device* device, std::vector<std::uint8_t>& outPixels)
 {
     const HostReadbackRefusal copy = ensureCopy(target, core::ReadbackKind::Color, attachment, device);
     if (copy != HostReadbackRefusal::None) {
@@ -85,7 +85,7 @@ HostReadbackRefusal readColorAttachment(OffscreenTarget& target, std::uint32_t a
     return HostReadbackRefusal::None;
 }
 
-HostReadbackRefusal readDepthAttachment(OffscreenTarget& target, ::vsg::Device* device, std::vector<float>& outDepths)
+HostReadbackRefusal readDepthAttachment(TargetObjects& target, ::vsg::Device* device, std::vector<float>& outDepths)
 {
     const HostReadbackRefusal copy = ensureCopy(target, core::ReadbackKind::Depth, 0U, device);
     if (copy != HostReadbackRefusal::None) {

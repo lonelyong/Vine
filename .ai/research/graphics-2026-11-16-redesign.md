@@ -454,7 +454,7 @@ vk 插件 12.0k 行、vsg 插件 17.2k 行、接缝实现 3.2k 行、三套测�
   三个宿主动词的锁语义。A6 已经判过"剩下的 `Targets` / `Report` 两个单元今天没有消费者"（`G8`），
   但那条判决是在"设备只有一个会话"的前提下作的；`TargetClaims` 出现之后，"谁拥有一个目标的哪一段寿命"
   变成三个对象共管：`Impl::targets`（map + 构建）、`TargetClaims`（租约）、`TargetImages`（对象）。
-- **证据**：`Device.cpp` 4179 行；`TargetClaims.hpp` 7 例 + `TargetClaimFrameTest` 2 例；
+- **证据**：`Device.cpp` 4179 行；`TargetClaims.hpp` 7 例 + `TargetClaimFrameTest` 2 例； <!-- drift-ok -->
   `vk-backend.md` §2.18（"claim 在 `ensure_target` 之前"）。
 - **重设计建议**：抽 `TargetTable`（map + 形状缓存 + 构建/重建 + claim 合并 + 释放/park），
   `Device` 只留装配与转发。**收益可测**：`Device.cpp` 降到 ~3000 行；"一个目标谁可以建/改/放"
@@ -480,7 +480,7 @@ vk 插件 12.0k 行、vsg 插件 17.2k 行、接缝实现 3.2k 行、三套测�
   保留同名词汇反而有价值——两后端同名同义的三个词是 `ContentDraw`（记录器）、`ContentImages`
   （纹理）、`ContentPipeline`（编译半边）。这三对名字保持一致即可）。
 
-#### 3.4.4 `TargetImages.cpp`（683 行）/ `WindowTarget.cpp`（784 行）/ `WindowSystem.cpp`（426 行）
+#### 3.4.4 `TargetImages.cpp`（683 行）/ `WindowTarget.cpp`（784 行）/ `WindowSystem.cpp`（426 行） <!-- drift-ok -->
 
 - **判决**：窗口系统是**每设备一个**平台接缝，加 Win32 = 新实现文件 + 选择点（正确的扩展点）。
   `TargetImages` 的三个 load-op 变体共享 framebuffer、依赖也必须一致（P15 的教训）——这是一条
@@ -575,7 +575,7 @@ vk 插件 12.0k 行、vsg 插件 17.2k 行、接缝实现 3.2k 行、三套测�
   `VsgExecutor` 保留（它是"把帧录进 vsg"的执行器），`VsgDriver` 保留（帧驱动者）。
   公开面零变化。第 1 批（与 `FrameDriverId` 同批）。
 
-#### 3.5.6 `OffscreenTarget.cpp`（1465 行）/ `HostTargets` / `WindowTarget` / `OffscreenSession`
+#### 3.5.6 `OffscreenTarget.cpp`（1465 行）/ `HostTargets` / `WindowTarget` / `OffscreenSession` <!-- drift-ok -->
 
 - **判决**：vsg 的目标层比 vk 厚（因为它自己管 render graph / 清屏计划 / 借用深度 / 探测）。
   14 个 `HostReadbackRefusal` 的 code 映射用一个**无 `default` 的 switch**——这是全仓最好的诊断形状。
@@ -689,7 +689,7 @@ vk 插件 12.0k 行、vsg 插件 17.2k 行、接缝实现 3.2k 行、三套测�
 | vk `ContentCaches.cpp` | 2124 | 四个缓存（program/geometry/pipeline/image）+ 帧首解析 + 驻留接线 | 一个职责"驻留"，可接受 |
 | vsg `ContentPass.cpp` | 1492 | 一个 pass 的解析 + 录制（两半） | 可接受（S8c-2 之后已是两段） |
 | `RenderEngine.cpp` | 1427 | 组合根 + 帧泵 + 形状 + 表面账 | 可拆（D-08） |
-| vsg `OffscreenTarget.cpp` | 1465 | render graph + 清屏计划 + 深度借用 + 探测 | 可接受（平台/格式复杂） |
+| vsg `OffscreenTarget.cpp` | 1465 | render graph + 清屏计划 + 深度借用 + 探测 | <!-- drift-ok --> 可接受（平台/格式复杂） |
 | vsg `ContentStore.cpp` | 1284 | 身份 + 行 + 声明索引 + 五个表的 pin | 可接受 |
 | `EngineCompile.cpp` | 972 | 计划应用 + 接线检查 + 描述 | 规则表化（§3.3.2） |
 
@@ -772,7 +772,7 @@ vk 插件 12.0k 行、vsg 插件 17.2k 行、接缝实现 3.2k 行、三套测�
 | D-03 | 接缝 25 个头里 18 个只有 vsg 一个消费者，实现还编在 `libGraphics` | G1 G5 G13 | A | §3.2.1 的 include 计数 | 18 个头 + 18 个 `.cpp` 移进 vsg；接缝留 6 个共享机制 | CAP-79/80/84 及 vsg 全部 | 批次 3 |
 | D-04 | 帧首解析值：vk 三类型（`CommandPlan`/`ScreenPlan`/`ResolvedTextures`），vsg 一类型 | G6 | A | `ContentCaches.hpp:149/162/184` vs `ContentPlan.hpp:68` | 两边同名同形：`FrameHead` + `DrawPlan`（kind + 载荷） | CAP-38 | 批次 2 |
 | D-05 | 选择规则两份实现（publisher 直接行走 + snapshot select），靠 600 帧对拍保持等价 | G1 G5 | A | `ScenePublisher.cpp:50`、`SnapshotSource.cpp:64`、`SnapshotSourceTest` 600 帧 | 收敛为 snapshot + `selectSnapshot`；删除第二份 memo | CAP-07/08 | 批次 7（先量） |
-| D-06 | 一个目标寿命三个对象共管（`Impl::targets` / `TargetClaims` / `TargetImages`） | G1 G5 | A | `Device.cpp` targets + `TargetClaims.hpp` + `TargetImages.hpp` | 抽 `TargetTable`（map + 形状 + 构建 + claim + park） | CAP-36/39/42/47 | 批次 5 |
+| D-06 | 一个目标寿命三个对象共管（`Impl::targets` / `TargetClaims` / `TargetImages`） | G1 G5 | A | `Device.cpp` targets + `TargetClaims.hpp` + `TargetImages.hpp` | 抽 `TargetTable`（map + 形状 + 构建 + claim + park） | CAP-36/39/42/47 | 批次 5 | <!-- drift-ok -->
 | D-07 | `Device.cpp` 4179 行 / `VsgBackend.cpp` 3010 行：设备+目标+窗口+报告 | G5 G12 | B | 行数 + 职责表 §4.6 | 与 D-06 同批；vsg 把内容表集合命名 | CAP-30..38 | 批次 5 |
 | D-08 | `RenderEngine` 组合根里住机制（帧泵/形状/表面账），改线程要动 9 个文件 | G5 G12 | B | `RenderEngine.hpp` 56 签名；architecture §2.8 自述 | 抽 `detail::SessionShape` / `FramePump` / `SurfaceLedger`；公开面零变化 | CAP-18..29 | 批次 6 |
 | D-09 | 一次拒绝三种形状（`RenderDiagnostic` / `ContentRefusal` / `HostReadbackRefusal`） | G1 G6 | B | `ContentRefusal.hpp`、`vsg-backend.md` C7 | `backend/DiagnosticDraft`（category+code+subject+limit+message，first-wins） | CAP-73 | 批次 4 |
@@ -1035,7 +1035,7 @@ struct FrameLocks {                 // FrameReport 的新可选字段
 | 批 | 主题 | 要动的文件 | 能力 ID：旧证据 → 新证据 | 回滚 | 风险 |
 |---|---|---|---|---|---|
 | **0** | characterization：把标红的两条钉住 | `tests/test_vk/WindowPresentTest.cpp`（或 `ProbeTest.cpp`）、`tests/test_vsg/VsgBackendTest.cpp` | CAP-44 无 → 新两例；CAP-45 vsg 有、vk 无 → 新 vk 一例 | 删新用例 | 无（只加测试） |
-| **1** | 词汇与身份：`FrameDriverId`；`api::Session`→`WindowSession`；vk `Session`→`FrameDriver`；`WindowId` 弃用别名 | `sdk/backend/DeviceClock.hpp`、vsg `Session.hpp/.cpp`、vk `Device.hpp/.cpp`、`ContentCaches.hpp`、`TargetClaims.hpp`、`ResidenceTable.hpp`、相关测试 include | CAP-32：三条用例不变（改名后仍绿）；CAP-33/34：同两条 | `git revert` | 低（纯改名 + 一个 using） |
+| **1** | 词汇与身份：`FrameDriverId`；`api::Session`→`WindowSession`；vk `Session`→`FrameDriver`；`WindowId` 弃用别名 | `sdk/backend/DeviceClock.hpp`、vsg `Session.hpp/.cpp`、vk `Device.hpp/.cpp`、`ContentCaches.hpp`、`TargetClaims.hpp`、`ResidenceTable.hpp`、相关测试 include | CAP-32：三条用例不变（改名后仍绿）；CAP-33/34：同两条 | `git revert` | 低（纯改名 + 一个 using） | <!-- drift-ok -->
 | **2** | 一帧三相位：`FrameHead`/`DrawPlan` 统一；帧体闸上移；`FrameReport.locking`；`Core*Test` 编进两个二进制；契约文本 | vk `ContentCaches.{hpp,cpp}`、vsg `ContentPlan.{hpp,cpp}`、`sdk/backend/FrameGate.hpp`、vk `Device.cpp`、vsg `DeviceGate.*`、`sdk/RenderFrameExecutor.hpp`、`sdk/FrameStats.hpp`、两个 `CMakeLists.txt` | CAP-38：`VkFrameHeadTest` → 同一条 + `FrameReport.locking` + vsg 新例；CAP-33/34：同两条 + gate 共享实现；CAP-37：同四条 | revert | **中**（碰线程/锁）——TSan 必跑 |
 | **3** | 接缝归位：18 个头 + 18 个 `.cpp` 移进 vsg；`libGraphics` 只剩 5 个 `backend/*.cpp`（机制实现）+ 守卫；安装组件缩小；加一条"文件名集合"门禁 | `sdk/vine/graphics/backend/*`（18 个）、`src/viz/graphics/src/backend/*`（18 个）、vsg include/src、`tests/test_vsg/CMakeLists.txt`、`cmake/VineLibraryHelper.cmake`（若路径写死）、`docs/guides` 若引用 | CAP-79/80/84：三条门禁 + 新门禁；其余 vsg 能力：全部既有用例 | revert | **中**（大搬家，漏一个 `.cpp` = 链接错） |
 | **4** | 拒绝只有一种形状：`backend/DiagnosticDraft`；vk `ContentRefusal` 变成它的别名 + 枚举→code 无 `default` switch；engine 的 20 条报告补 code，baseline 清零 | `sdk/backend/DiagnosticDraft.hpp`（新）、vk `ContentRefusal.*`、vsg `HostReadback.*`、`RenderEngine.cpp` / `RenderSurface.cpp` / `Viewer` / `ChainBuilder` / `DiagnosticsRoute` / `SceneView` 的报告点、`scripts/diagnostic_code_baseline.txt` | CAP-73：同两条 + baseline 0 + 编译期证据 | revert | 低–中（code 只增不改；句子不变） |

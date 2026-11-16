@@ -33,7 +33,7 @@
 #include <vine/backend_vk/internal/TargetTable.hpp>
 #include <vine/backend_vk/internal/WindowSystem.hpp>
 #include <vine/backend_vk/internal/StateMapping.hpp>
-#include <vine/backend_vk/internal/TargetImages.hpp>
+#include <vine/backend_vk/internal/TargetObjects.hpp>
 #include <vine/backend_vk/internal/WindowTarget.hpp>
 #include <vine/graphics/Capabilities.hpp>
 #include <vine/graphics/FrameDescription.hpp>
@@ -875,11 +875,11 @@ struct Device::Impl {
                 continue;
             }
             const RenderTarget& map = *input.target;
-            const std::shared_ptr<TargetImages> map_entry = target_table.lookup(&map);
+            const std::shared_ptr<TargetObjects> map_entry = target_table.lookup(&map);
             if (map_entry == nullptr || !map_entry->built() || !map_entry->hasDepth()) {
                 continue;
             }
-            TargetImages* map_images = map_entry.get();
+            TargetObjects* map_images = map_entry.get();
             const vn::raw_ptr<const vn::graphics::Light> light = map.shadowOf();
             if (light == nullptr || !map.hasProducerViewProjection()) {
                 continue; // not a map, or a map nobody said how to read (shading nothing is the honest answer)
@@ -901,7 +901,7 @@ struct Device::Impl {
             // THE MAP IS ABOUT TO BE READ: one transition, from the attachment layout the producer left it in (or
             // UNDEFINED when nobody wrote it yet) to the sampled one. IT IS THE PICTURE that moves - on a
             // multisampled map that is the resolved depth image, which is also the only one a shader may sample.
-            TargetImages& sampled = *map_images;
+            TargetObjects& sampled = *map_images;
             if (!sampled.depth_sampled) {
                 const ImageState from = stateOf(sampled.fresh ? ImageLayout::Undefined : ImageLayout::DepthAttachment);
                 const VkImageMemoryBarrier barrier =
@@ -1200,7 +1200,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         bool                          window{ false };
         /// The target's attachments (null for a window pass), resolved where the target was claimed - the frame head
         /// needs them to resolve pipelines, and the recording loop must not look the target up again.
-        TargetImages*                 images{ nullptr };
+        TargetObjects*                 images{ nullptr };
         /// A render pass with the target's compatibility, used only where a pipeline must be CREATED.
         VkRenderPass                  pipeline_pass{ VK_NULL_HANDLE };
         std::uint32_t                 color_count{ 0 };
@@ -1345,7 +1345,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         count_pass();
         // THE ENTRY EXISTS NOW (the build above inserted it): the frame keeps a borrowed pointer into it, and a
         // release during its recording hands the record to the park instead of destroying it (S6c-2b).
-        TargetImages& claimed_images = *owner.target_table.lookup(draw.target);
+        TargetObjects& claimed_images = *owner.target_table.lookup(draw.target);
         runnable_passes.push_back(Runnable{ &entry,
                                             &draw,
                                             false,
@@ -1525,11 +1525,11 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             if (description.kind != DrawDescription::Kind::Screen || description.source == nullptr) {
                 continue;
             }
-            const std::shared_ptr<TargetImages> source_entry = owner.target_table.lookup(description.source);
+            const std::shared_ptr<TargetObjects> source_entry = owner.target_table.lookup(description.source);
             if (source_entry == nullptr || !source_entry->built() || source_entry->color_sampled) {
                 continue;
             }
-            TargetImages& sampled = *source_entry;
+            TargetObjects& sampled = *source_entry;
             for (const VkImage image : sampled.colors) {
                 const ImageState from = sampled.fresh ? stateOf(ImageLayout::Undefined) : stateOf(ImageLayout::ColorAttachment);
                 const ImageState to   = stateOf(ImageLayout::ShaderReadOnly);
@@ -1553,7 +1553,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         ContentDraw::ShadowSource shadow{};
         (void)owner.resolveShadow(commands, item.entry->inputs, lent_depths, shadow);
 
-        TargetImages*                                  images        = nullptr;
+        TargetObjects*                                  images        = nullptr;
         VkRenderPass                                   render_pass   = VK_NULL_HANDLE;
         VkFramebuffer                                  framebuffer   = VK_NULL_HANDLE;
         VkExtent2D                                     extent{};
@@ -1636,7 +1636,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         // attachment 0 is the pass' colour while the rest of the COLOUR slots come from extra_colors (an absent entry
         // is transparent black - see ClearPolicy). A MULTISAMPLED target's array is [sample buffers, resolve images,
         // depth], so its depth slot is not `color_count`; the resolve slots in between are DONT_CARE and their values
-        // are never read (see TargetImages' class note).
+        // are never read (see TargetObjects' class note).
         const std::size_t         depth_slot  = images != nullptr ? images->depthAttachmentIndex() : static_cast<std::size_t>(color_count);
         std::vector<VkClearValue> clear_values(depth_slot + (has_depth ? 1U : 0U));
         const Colorf              colour      = draw.clear.has_value() ? draw.clear->color : Colorf(0.0F, 0.0F, 0.0F, 1.0F);
@@ -1690,7 +1690,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                 // THE FULL-SCREEN ABI: the source's colour attachments, bound in order. A source this device never
                 // built answers an empty span, which makes the recorder report (and skip) the draw.
                 ContentDraw::ScreenSource source{};
-                const std::shared_ptr<TargetImages> source_entry =
+                const std::shared_ptr<TargetObjects> source_entry =
                     description.source != nullptr ? owner.target_table.lookup(description.source) : nullptr;
                 if (source_entry != nullptr && source_entry->built()) {
                     source.images = source_entry->colors;
@@ -2041,7 +2041,7 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
                 if (!owner.target_table.ensure(*draw.target)) {
                     continue;
                 }
-                TargetImages& images = *owner.target_table.lookup(draw.target);
+                TargetObjects& images = *owner.target_table.lookup(draw.target);
                 render_pass   = images.renderPassFor(false, false);
                 color_count   = static_cast<std::uint32_t>(images.colorCount());
                 compatibility = images.compatibility();
@@ -2827,7 +2827,7 @@ bool Device::initialize()
     impl->target_table.open(TargetTable::Device{ impl->device, &impl->device_table, &impl->allocator },
                             TargetTable::Limits{ impl->supported_sample_counts, impl->depth_resolve_supported },
                             [this](const vn::graphics::RenderDiagnostic& diagnostic) { reportDiagnostic(diagnostic); },
-                            [impl = impl.get()](std::shared_ptr<TargetImages> doomed) {
+                            [impl = impl.get()](std::shared_ptr<TargetObjects> doomed) {
                                 impl->releaseLater([table = impl->device_table,
                                                     device = impl->device,
                                                     allocator = &impl->allocator,
@@ -2897,7 +2897,7 @@ void Device::shutdown()
         // THE TARGETS' RECORDS GO BEFORE THE POOL THEY SLICED: the queue was idle above, so nothing names
         // them. `drain()` takes the map AND the claims: "the targets are gone" and "nobody holds them" are one
         // fact, which is the reason they live in one table.
-        for (const std::shared_ptr<TargetImages>& images : impl->target_table.drain()) {
+        for (const std::shared_ptr<TargetObjects>& images : impl->target_table.drain()) {
             destroyTarget(impl->device_table, impl->device, impl->allocator, *images);
         }
         impl->target_table.close();
@@ -3463,7 +3463,7 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     // rebuild the target while this verb waits below, so every answer is checked AGAIN under the gate - this pass only
     // spares the device the stop.
     {
-        const std::shared_ptr<TargetImages> peek = impl->target_table.lookup(target);
+        const std::shared_ptr<TargetObjects> peek = impl->target_table.lookup(target);
         if (peek == nullptr || !peek->built()) {
             return fail(ReadbackResult::NotReady);
         }
@@ -3494,11 +3494,11 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     }
 
     // THE AUTHORITATIVE LOOK: the frames that ran while this verb waited may have rebuilt or replaced the target.
-    const std::shared_ptr<TargetImages> entry = impl->target_table.lookup(target);
+    const std::shared_ptr<TargetObjects> entry = impl->target_table.lookup(target);
     if (entry == nullptr || !entry->built()) {
         return fail(ReadbackResult::NotReady);
     }
-    TargetImages& images = *entry;
+    TargetObjects& images = *entry;
     if (attachment < 0 || static_cast<std::size_t>(attachment) >= images.colorCount()) {
         return fail(ReadbackResult::Invalid);
     }
@@ -3629,7 +3629,7 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
     // copy, so it is refused rather than decoded into numbers that look like depths and are not (the same table the
     // copy and the decoder use is the SDK's `depthReadbackOf`).
     {
-        const std::shared_ptr<TargetImages> peek = impl->target_table.lookup(target);
+        const std::shared_ptr<TargetObjects> peek = impl->target_table.lookup(target);
         if (peek == nullptr || !peek->built()) {
             return fail(ReadbackResult::NotReady);
         }
@@ -3659,14 +3659,14 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
     }
 
     // THE AUTHORITATIVE LOOK: the frames that ran while this verb waited may have rebuilt or replaced the target.
-    const std::shared_ptr<TargetImages> entry = impl->target_table.lookup(target);
+    const std::shared_ptr<TargetObjects> entry = impl->target_table.lookup(target);
     if (entry == nullptr || !entry->built()) {
         return fail(ReadbackResult::NotReady);
     }
     if (target->depthSource() != nullptr) {
         return fail(ReadbackResult::Unsupported);
     }
-    TargetImages& images = *entry;
+    TargetObjects& images = *entry;
     if (!images.hasDepth()) {
         return fail(ReadbackResult::Invalid); // no depth attachment at all: the request names nothing
     }

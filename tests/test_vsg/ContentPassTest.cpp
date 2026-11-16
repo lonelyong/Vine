@@ -64,7 +64,7 @@
 #include <vine/backend_vsg/internal/DrawNeeds.hpp>
 #include <vine/backend_vsg/internal/GeometryFacts.hpp>
 #include <vine/backend_vsg/internal/MaterialImages.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>
 #include <vine/backend_vsg/internal/WhiteImage.hpp>
@@ -117,7 +117,7 @@ using vn::backend_vsg::FactMiss;
 using vn::backend_vsg::GeometryFacts;
 using vn::backend_vsg::InputImages;
 using vn::backend_vsg::MaterialFacts;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::PassContent;
 using vn::backend_vsg::ProgramFacts;
 using vn::backend_vsg::StreamUploads;
@@ -226,10 +226,10 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout layout;
+    TargetObjects::Layout layout;
     layout.width                            = kSize;
     layout.height                           = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -410,10 +410,10 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout layout;
+    TargetObjects::Layout layout;
     layout.width                            = kSize;
     layout.height                           = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -602,10 +602,10 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout target_layout;
+    TargetObjects::Layout target_layout;
     target_layout.width                     = kSize;
     target_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, target_layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -885,10 +885,10 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout layout;
+    TargetObjects::Layout layout;
     layout.width                            = kSize;
     layout.height                           = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, layout);
     ASSERT_NE(target, nullptr);
     EXPECT_EQ(target->passVariantCount(), 1U) << "create() builds the bootstrap variant; no pass has run yet";
 
@@ -1084,10 +1084,10 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout target_layout;
+    TargetObjects::Layout target_layout;
     target_layout.width                     = kSize;
     target_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, target_layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -1273,10 +1273,10 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout target_layout;
+    TargetObjects::Layout target_layout;
     target_layout.width                     = kSize;
     target_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, target_layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -1461,10 +1461,10 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout target_layout;
+    TargetObjects::Layout target_layout;
     target_layout.width                     = kSize;
     target_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, target_layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -1707,10 +1707,10 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout target_layout;
+    TargetObjects::Layout target_layout;
     target_layout.width                     = kSize;
     target_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, target_layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -1942,13 +1942,13 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     }
 
     const auto makeTarget = [&] {
-        OffscreenTarget::Layout layout;
+        TargetObjects::Layout layout;
         layout.width  = kSize;
         layout.height = kSize;
-        return OffscreenTarget::create(created.device, layout);
+        return TargetObjects::create(created.device, layout);
     };
-    std::unique_ptr<OffscreenTarget> first_target  = makeTarget();
-    std::unique_ptr<OffscreenTarget> second_target = makeTarget();
+    std::unique_ptr<TargetObjects> first_target  = makeTarget();
+    std::unique_ptr<TargetObjects> second_target = makeTarget();
     ASSERT_NE(first_target, nullptr);
     ASSERT_NE(second_target, nullptr);
 
@@ -2062,7 +2062,7 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
-    const auto targetFacts = [](std::unique_ptr<OffscreenTarget>& which) {
+    const auto targetFacts = [](std::unique_ptr<TargetObjects>& which) {
         TargetFacts entry;
         entry.target        = which.get();
         entry.wanted.width  = static_cast<int>(kSize);
@@ -2228,10 +2228,10 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout target_layout;
+    TargetObjects::Layout target_layout;
     target_layout.width                     = kSize;
     target_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, target_layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -2506,11 +2506,11 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout target_layout;
+    TargetObjects::Layout target_layout;
     target_layout.width                     = kSize;
     target_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> source = OffscreenTarget::create(created.device, target_layout);
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> source = TargetObjects::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, target_layout);
     ASSERT_NE(source, nullptr);
     ASSERT_NE(target, nullptr);
 
@@ -2524,7 +2524,7 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
     FrameCompiler compiler{ arena, diagnostics, observe };
     VsgExecutor   executor(diagnostics);
 
-    const auto targetFacts = [](OffscreenTarget& which) {
+    const auto targetFacts = [](TargetObjects& which) {
         TargetFacts entry;
         entry.target        = &which;
         entry.wanted.width  = static_cast<int>(kSize);
@@ -2757,10 +2757,10 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout target_layout;
+    TargetObjects::Layout target_layout;
     target_layout.width                     = kSize;
     target_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, target_layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -2960,28 +2960,28 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     }
 
     // The map: DEPTH-ONLY and sampleable (the shadow-map shape), cleared to 0.25 by its own pass.
-    OffscreenTarget::TargetLayout map_layout;
+    TargetObjects::TargetLayout map_layout;
     map_layout.width  = kSize;
     map_layout.height = kSize;
     map_layout.color_formats.clear();
     map_layout.depth_format              = RenderTarget::DepthFormat::D32;
     map_layout.depth_sampleable          = true;
     map_layout.clear.depth               = true;
-    std::unique_ptr<OffscreenTarget> map = OffscreenTarget::create(created.device, map_layout);
+    std::unique_ptr<TargetObjects> map = TargetObjects::create(created.device, map_layout);
     ASSERT_NE(map, nullptr);
     ASSERT_TRUE(map->hasDepth());
 
     // ... and a second, identical one the pass also samples: sampleable, but its target states NO light, so
     // it is NOT the map (the trap above - two sampleable depths, one of them the map).
-    std::unique_ptr<OffscreenTarget> plain_depth = OffscreenTarget::create(created.device, map_layout);
+    std::unique_ptr<TargetObjects> plain_depth = TargetObjects::create(created.device, map_layout);
     ASSERT_NE(plain_depth, nullptr);
 
-    OffscreenTarget::Layout shading_layout;
+    TargetObjects::Layout shading_layout;
     shading_layout.width                   = kSize;
     shading_layout.height                  = kSize;
-    std::unique_ptr<OffscreenTarget> lit   = OffscreenTarget::create(created.device, shading_layout);
-    std::unique_ptr<OffscreenTarget> flat  = OffscreenTarget::create(created.device, shading_layout);
-    std::unique_ptr<OffscreenTarget> plain = OffscreenTarget::create(created.device, shading_layout);
+    std::unique_ptr<TargetObjects> lit   = TargetObjects::create(created.device, shading_layout);
+    std::unique_ptr<TargetObjects> flat  = TargetObjects::create(created.device, shading_layout);
+    std::unique_ptr<TargetObjects> plain = TargetObjects::create(created.device, shading_layout);
     ASSERT_NE(lit, nullptr);
     ASSERT_NE(flat, nullptr);
     ASSERT_NE(plain, nullptr);
@@ -3090,7 +3090,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     camera->lookAt(vn::math::Vec3d(0.0, 0.0, 1.5), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
     camera->setOrthographic(-1.0, 1.0, -1.0, 1.0, 0.5, 4.0);
 
-    const auto targetFacts = [](OffscreenTarget& which, const void* handle) {
+    const auto targetFacts = [](TargetObjects& which, const void* handle) {
         TargetFacts entry;
         entry.target          = handle;
         entry.wanted.width    = static_cast<int>(kSize);
@@ -3396,39 +3396,39 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     // RGBA16F, because the two that must not be clipped are the normal (its octahedral coordinates are signed)
     // and the position (its z is negative - an eight-bit attachment clamps it to zero, which the lighting reads
     // as its "nothing was drawn" background). The emission's HDR value is the reason the third one is not 8 bit.
-    OffscreenTarget::TargetLayout gbuffer_layout;
+    TargetObjects::TargetLayout gbuffer_layout;
     gbuffer_layout.width                     = kSize;
     gbuffer_layout.height                    = kSize;
     gbuffer_layout.color_formats             = { RenderTarget::ColorFormat::RGBA16F,
                                                  RenderTarget::ColorFormat::RGBA16F,
                                                  RenderTarget::ColorFormat::RGBA16F,
                                                  RenderTarget::ColorFormat::RGBA16F };
-    std::unique_ptr<OffscreenTarget> gbuffer = OffscreenTarget::create(created.device, gbuffer_layout);
+    std::unique_ptr<TargetObjects> gbuffer = TargetObjects::create(created.device, gbuffer_layout);
     ASSERT_NE(gbuffer, nullptr);
     ASSERT_EQ(gbuffer->colorAttachmentCount(), 4U);
 
     // The maps: depth-only and sampleable (the shadow-map shape), each CLEARED by its own draw-less pass
     // below - a map whose clearing pass is not recorded compares against whatever the image happened to
     // hold, so both are part of the recorded frame.
-    OffscreenTarget::TargetLayout map_layout;
+    TargetObjects::TargetLayout map_layout;
     map_layout.width  = kSize;
     map_layout.height = kSize;
     map_layout.color_formats.clear();
     map_layout.depth_format                       = RenderTarget::DepthFormat::D32;
     map_layout.depth_sampleable                   = true;
     map_layout.clear.depth                        = true;
-    std::unique_ptr<OffscreenTarget> lit_map      = OffscreenTarget::create(created.device, map_layout);
-    std::unique_ptr<OffscreenTarget> shadowed_map = OffscreenTarget::create(created.device, map_layout);
+    std::unique_ptr<TargetObjects> lit_map      = TargetObjects::create(created.device, map_layout);
+    std::unique_ptr<TargetObjects> shadowed_map = TargetObjects::create(created.device, map_layout);
     ASSERT_NE(lit_map, nullptr);
     ASSERT_NE(shadowed_map, nullptr);
 
-    OffscreenTarget::Layout shade_layout;
+    TargetObjects::Layout shade_layout;
     shade_layout.width                        = kSize;
     shade_layout.height                       = kSize;
-    std::unique_ptr<OffscreenTarget> lit      = OffscreenTarget::create(created.device, shade_layout);
-    std::unique_ptr<OffscreenTarget> shadowed = OffscreenTarget::create(created.device, shade_layout);
-    std::unique_ptr<OffscreenTarget> flat     = OffscreenTarget::create(created.device, shade_layout);
-    std::unique_ptr<OffscreenTarget> plain    = OffscreenTarget::create(created.device, shade_layout);
+    std::unique_ptr<TargetObjects> lit      = TargetObjects::create(created.device, shade_layout);
+    std::unique_ptr<TargetObjects> shadowed = TargetObjects::create(created.device, shade_layout);
+    std::unique_ptr<TargetObjects> flat     = TargetObjects::create(created.device, shade_layout);
+    std::unique_ptr<TargetObjects> plain    = TargetObjects::create(created.device, shade_layout);
     ASSERT_NE(lit, nullptr);
     ASSERT_NE(shadowed, nullptr);
     ASSERT_NE(flat, nullptr);
@@ -3564,7 +3564,7 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     FrameRecorder recorder{ arena, diagnostics, observe };
     FrameCompiler compiler{ arena, diagnostics, observe };
 
-    const auto targetFacts = [](OffscreenTarget& which, const void* handle) {
+    const auto targetFacts = [](TargetObjects& which, const void* handle) {
         TargetFacts entry;
         entry.target          = handle;
         entry.wanted.width    = static_cast<int>(kSize);
@@ -3832,21 +3832,21 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
 
     // The G-buffer: the engine's four attachments AND their formats (`defaultGbufferTarget`) - a position
     // the camera is touching is only representable because that attachment is RGBA16F.
-    OffscreenTarget::TargetLayout gbuffer_layout;
+    TargetObjects::TargetLayout gbuffer_layout;
     gbuffer_layout.width                     = kSize;
     gbuffer_layout.height                    = kSize;
     gbuffer_layout.color_formats             = { RenderTarget::ColorFormat::RGBA16F,
                                                  RenderTarget::ColorFormat::RGBA16F,
                                                  RenderTarget::ColorFormat::RGBA16F,
                                                  RenderTarget::ColorFormat::RGBA16F };
-    std::unique_ptr<OffscreenTarget> gbuffer = OffscreenTarget::create(created.device, gbuffer_layout);
+    std::unique_ptr<TargetObjects> gbuffer = TargetObjects::create(created.device, gbuffer_layout);
     ASSERT_NE(gbuffer, nullptr);
     ASSERT_EQ(gbuffer->colorAttachmentCount(), 4U);
 
-    OffscreenTarget::Layout lit_layout;
+    TargetObjects::Layout lit_layout;
     lit_layout.width                     = kSize;
     lit_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> lit = OffscreenTarget::create(created.device, lit_layout);
+    std::unique_ptr<TargetObjects> lit = TargetObjects::create(created.device, lit_layout);
     ASSERT_NE(lit, nullptr);
 
     const vn::intrusive_ptr<RenderTarget> gbuffer_handle(new RenderTarget());
@@ -3946,7 +3946,7 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
     FrameRecorder recorder{ arena, diagnostics, observe };
     FrameCompiler compiler{ arena, diagnostics, observe };
 
-    const auto targetFacts = [](OffscreenTarget& which, const void* handle) {
+    const auto targetFacts = [](TargetObjects& which, const void* handle) {
         TargetFacts entry;
         entry.target          = handle;
         entry.wanted.width    = static_cast<int>(kSize);
@@ -4112,25 +4112,25 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout single_layout;
+    TargetObjects::Layout single_layout;
     single_layout.width                              = kSize;
     single_layout.height                             = kSize;
-    std::unique_ptr<OffscreenTarget> forward_black   = OffscreenTarget::create(created.device, single_layout);
-    std::unique_ptr<OffscreenTarget> forward_quarter = OffscreenTarget::create(created.device, single_layout);
-    std::unique_ptr<OffscreenTarget> deferred        = OffscreenTarget::create(created.device, single_layout);
+    std::unique_ptr<TargetObjects> forward_black   = TargetObjects::create(created.device, single_layout);
+    std::unique_ptr<TargetObjects> forward_quarter = TargetObjects::create(created.device, single_layout);
+    std::unique_ptr<TargetObjects> deferred        = TargetObjects::create(created.device, single_layout);
     ASSERT_NE(forward_black, nullptr);
     ASSERT_NE(forward_quarter, nullptr);
     ASSERT_NE(deferred, nullptr);
 
     // The G-buffer: the engine's four attachments and their formats (`defaultGbufferTarget`).
-    OffscreenTarget::TargetLayout gbuffer_layout;
+    TargetObjects::TargetLayout gbuffer_layout;
     gbuffer_layout.width                     = kSize;
     gbuffer_layout.height                    = kSize;
     gbuffer_layout.color_formats             = { RenderTarget::ColorFormat::RGBA16F,
                                                  RenderTarget::ColorFormat::RGBA16F,
                                                  RenderTarget::ColorFormat::RGBA16F,
                                                  RenderTarget::ColorFormat::RGBA16F };
-    std::unique_ptr<OffscreenTarget> gbuffer = OffscreenTarget::create(created.device, gbuffer_layout);
+    std::unique_ptr<TargetObjects> gbuffer = TargetObjects::create(created.device, gbuffer_layout);
     ASSERT_NE(gbuffer, nullptr);
 
     const vn::intrusive_ptr<RenderTarget> forward_black_handle(new RenderTarget());
@@ -4234,7 +4234,7 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     FrameRecorder recorder{ arena, diagnostics, observe };
     FrameCompiler compiler{ arena, diagnostics, observe };
 
-    const auto targetFacts = [](OffscreenTarget& which, const void* handle) {
+    const auto targetFacts = [](TargetObjects& which, const void* handle) {
         TargetFacts entry;
         entry.target          = handle;
         entry.wanted.width    = static_cast<int>(kSize);
@@ -4444,10 +4444,10 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout layout;
+    TargetObjects::Layout layout;
     layout.width                            = kSize;
     layout.height                           = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, layout);
     ASSERT_NE(target, nullptr);
     const vn::intrusive_ptr<RenderTarget> target_handle(new RenderTarget());
 
@@ -4598,10 +4598,10 @@ TEST(ContentPassTest, MeasureWhatAnEightBitAlbedoDoesToDarkShades)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout layout;
+    TargetObjects::Layout layout;
     layout.width                            = kSize;
     layout.height                           = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, layout);
     ASSERT_NE(target, nullptr);
     const vn::intrusive_ptr<RenderTarget> target_handle(new RenderTarget());
 
@@ -4777,10 +4777,10 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout layout;
+    TargetObjects::Layout layout;
     layout.width                            = kSize;
     layout.height                           = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, layout);
     ASSERT_NE(target, nullptr);
     const vn::intrusive_ptr<RenderTarget> target_handle(new RenderTarget());
 
@@ -4972,27 +4972,27 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::TargetLayout eight_bit_layout;
+    TargetObjects::TargetLayout eight_bit_layout;
     eight_bit_layout.width                              = kSize;
     eight_bit_layout.height                             = kSize;
     eight_bit_layout.color_formats                      = { RenderTarget::ColorFormat::RGBA8,
                                                             RenderTarget::ColorFormat::RGBA16F,
                                                             RenderTarget::ColorFormat::RGBA16F,
                                                             RenderTarget::ColorFormat::RGBA16F };
-    OffscreenTarget::TargetLayout half_float_layout     = eight_bit_layout;
+    TargetObjects::TargetLayout half_float_layout     = eight_bit_layout;
     half_float_layout.color_formats[0]                  = RenderTarget::ColorFormat::RGBA16F;
-    std::unique_ptr<OffscreenTarget> eight_bit_gbuffer  = OffscreenTarget::create(created.device, eight_bit_layout);
-    std::unique_ptr<OffscreenTarget> half_float_gbuffer = OffscreenTarget::create(created.device, half_float_layout);
+    std::unique_ptr<TargetObjects> eight_bit_gbuffer  = TargetObjects::create(created.device, eight_bit_layout);
+    std::unique_ptr<TargetObjects> half_float_gbuffer = TargetObjects::create(created.device, half_float_layout);
     ASSERT_NE(eight_bit_gbuffer, nullptr);
     ASSERT_NE(half_float_gbuffer, nullptr);
 
-    OffscreenTarget::Layout out_layout;
+    TargetObjects::Layout out_layout;
     out_layout.width                                   = kSize;
     out_layout.height                                  = kSize;
-    std::unique_ptr<OffscreenTarget> dim_eight_bit     = OffscreenTarget::create(created.device, out_layout);
-    std::unique_ptr<OffscreenTarget> dim_half_float    = OffscreenTarget::create(created.device, out_layout);
-    std::unique_ptr<OffscreenTarget> bright_eight_bit  = OffscreenTarget::create(created.device, out_layout);
-    std::unique_ptr<OffscreenTarget> bright_half_float = OffscreenTarget::create(created.device, out_layout);
+    std::unique_ptr<TargetObjects> dim_eight_bit     = TargetObjects::create(created.device, out_layout);
+    std::unique_ptr<TargetObjects> dim_half_float    = TargetObjects::create(created.device, out_layout);
+    std::unique_ptr<TargetObjects> bright_eight_bit  = TargetObjects::create(created.device, out_layout);
+    std::unique_ptr<TargetObjects> bright_half_float = TargetObjects::create(created.device, out_layout);
     ASSERT_NE(dim_eight_bit, nullptr);
     ASSERT_NE(dim_half_float, nullptr);
     ASSERT_NE(bright_eight_bit, nullptr);
@@ -5096,7 +5096,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     FrameRecorder recorder{ arena, diagnostics, observe };
     FrameCompiler compiler{ arena, diagnostics, observe };
 
-    const auto targetFacts = [](OffscreenTarget& which, const void* handle) {
+    const auto targetFacts = [](TargetObjects& which, const void* handle) {
         TargetFacts entry;
         entry.target          = handle;
         entry.wanted.width    = static_cast<int>(kSize);
@@ -5210,7 +5210,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
                                 std::span<const ContentPass::Scope::Entry>            halves,
                                 const vn::graphics::backend::RenderPassCompatibility& compatibility,
                                 std::span<const InputImages>                          inputs,
-                                OffscreenTarget&                                      target,
+                                TargetObjects&                                      target,
                                 StateRegistry&                                        registry) {
         ContentPass::Scope scope;
         scope.entries  = halves;
@@ -5270,7 +5270,7 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
         int levels;
     };
 
-    const auto measure = [](OffscreenTarget& target, double light) {
+    const auto measure = [](TargetObjects& target, double light) {
         Output output{ 0, 0 };
         int    previous = -1;
         for (int column = 0; column < static_cast<int>(kSize); ++column) {
@@ -5327,10 +5327,10 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout target_layout;
+    TargetObjects::Layout target_layout;
     target_layout.width                     = kSize;
     target_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, target_layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -5574,10 +5574,10 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout target_layout;
+    TargetObjects::Layout target_layout;
     target_layout.width                     = kSize;
     target_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, target_layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -5801,10 +5801,10 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout target_layout;
+    TargetObjects::Layout target_layout;
     target_layout.width                     = kSize;
     target_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, target_layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -6024,10 +6024,10 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout target_layout;
+    TargetObjects::Layout target_layout;
     target_layout.width                     = kSize;
     target_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, target_layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -6259,10 +6259,10 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout target_layout;
+    TargetObjects::Layout target_layout;
     target_layout.width                     = kSize;
     target_layout.height                    = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, target_layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, target_layout);
     ASSERT_NE(target, nullptr);
 
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
@@ -6537,10 +6537,10 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
         GTEST_SKIP() << "no Vulkan device available (lavapipe + X11 are needed): " << created.error.as_std_str();
     }
 
-    OffscreenTarget::Layout layout;
+    TargetObjects::Layout layout;
     layout.width                            = kSize;
     layout.height                           = kSize;
-    std::unique_ptr<OffscreenTarget> target = OffscreenTarget::create(created.device, layout);
+    std::unique_ptr<TargetObjects> target = TargetObjects::create(created.device, layout);
     ASSERT_NE(target, nullptr);
     std::unique_ptr<BlockStorage> storage = BlockStorage::create(created.device, BlockStorage::Layout{});
     ASSERT_NE(storage, nullptr);

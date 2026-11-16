@@ -53,7 +53,7 @@
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
 #include <vine/backend_vsg/internal/OffscreenSession.hpp>
-#include <vine/backend_vsg/internal/OffscreenTarget.hpp>
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/SessionContent.hpp>
 #include <vine/backend_vsg/internal/SessionDrive.hpp>
 #include <vine/backend_vsg/internal/TransferStaging.hpp>
@@ -81,7 +81,7 @@ using vn::graphics::backend::TargetFacts;
 using vn::graphics::backend::TargetInstance;
 using vn::backend_vsg::createDevice;
 using vn::backend_vsg::DeviceResult;
-using vn::backend_vsg::OffscreenTarget;
+using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::api::OffscreenSessionOptions;
 
 namespace
@@ -120,7 +120,7 @@ struct RecordedFrame {
 ///        one colour attachment needs one per attachment a case reads back).
 /// @return The frame's viewer and graph, both alive.
 RecordedFrame recordOneFrame(const DeviceResult&                       created,
-                             OffscreenTarget&                          target,
+                             TargetObjects&                          target,
                              const vn::graphics::backend::ClearValues& policy,
                              bool                                      with_depth_capture = false,
                              std::uint32_t                             color_captures     = 1U)
@@ -154,7 +154,7 @@ RecordedFrame recordOneFrame(const DeviceResult&                       created,
 }
 
 /// @brief The refusal @p target reports for one readback (the classification every entry point shares).
-ReadbackRefusal refusalOf(const OffscreenTarget& target, ReadbackKind kind, std::uint32_t attachment = 0U)
+ReadbackRefusal refusalOf(const TargetObjects& target, ReadbackKind kind, std::uint32_t attachment = 0U)
 {
     return target.readbackResult(ReadbackRequest{ kind, attachment }).refusal;
 }
@@ -185,8 +185,8 @@ vn::graphics::backend::ClearValues clearPolicy(const float (&color)[4], bool ask
 
 void runOffscreenReadbackPhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
-    auto target = OffscreenTarget::create(device.device,
-                                          OffscreenTarget::Layout{
+    auto target = TargetObjects::create(device.device,
+                                          TargetObjects::Layout{
                                             8U,
                                             4U,
                                             { 0.25F, 0.5F, 0.75F, 1.0F }
@@ -225,8 +225,8 @@ void runOffscreenReadbackPhase(const vn::backend_vsg::DeviceResult& device, Devi
 
 void runTargetResizePhase(const vn::backend_vsg::DeviceResult& device, DevicePhaseCounters& counters)
 {
-    auto target = OffscreenTarget::create(device.device,
-                                          OffscreenTarget::Layout{
+    auto target = TargetObjects::create(device.device,
+                                          TargetObjects::Layout{
                                             8U,
                                             4U,
                                             { 0.25F, 0.5F, 0.75F, 1.0F }
@@ -260,7 +260,7 @@ void runTargetResizePhase(const vn::backend_vsg::DeviceResult& device, DevicePha
     timeline.submitted(token); // the frame that recorded those attachments: retire point = 1 + 3 + 1
     RetirementQueue queue(3U);
 
-    const OffscreenTarget::Resized resized = target->resize(16U, 12U, timeline, queue);
+    const TargetObjects::Resized resized = target->resize(16U, 12U, timeline, queue);
 
     EXPECT_EQ(static_cast<int>(resized.decision.action), static_cast<int>(vn::graphics::backend::TargetAction::ResizeInPlace));
     EXPECT_FALSE(resized.refused);
@@ -315,8 +315,8 @@ void runTargetRebuildPhase(const vn::backend_vsg::DeviceResult& device, DevicePh
     const float kFirst[4]{ 0.25F, 0.5F, 0.75F, 1.0F };
     const float kSecond[4]{ 0.1F, 0.2F, 0.3F, 1.0F };
 
-    auto target = OffscreenTarget::create(device.device,
-                                          OffscreenTarget::Layout{
+    auto target = TargetObjects::create(device.device,
+                                          TargetObjects::Layout{
                                             8U,
                                             4U,
                                             { kFirst[0], kFirst[1], kFirst[2], 1.0F }
@@ -348,7 +348,7 @@ void runTargetRebuildPhase(const vn::backend_vsg::DeviceResult& device, DevicePh
     // The new shape, in the terms the SDK asks for: TWO colour attachments and a depth, at a new extent -
     // the whole point of the Rebuild arm (the count is even visible to the executor's plan-vs-target check,
     // and the depth format is part of compatibility).
-    OffscreenTarget::TargetLayout wanted;
+    TargetObjects::TargetLayout wanted;
     wanted.width         = 16U;
     wanted.height        = 12U;
     wanted.color_formats = { RenderTarget::ColorFormat::RGBA8, RenderTarget::ColorFormat::RGBA8 };
@@ -360,7 +360,7 @@ void runTargetRebuildPhase(const vn::backend_vsg::DeviceResult& device, DevicePh
     timeline.submitted(token); // the frame that recorded the attachments being replaced
     RetirementQueue queue(3U);
 
-    const OffscreenTarget::Rebuilt rebuilt = target->rebuild(wanted, timeline, queue);
+    const TargetObjects::Rebuilt rebuilt = target->rebuild(wanted, timeline, queue);
 
     EXPECT_EQ(static_cast<int>(rebuilt.decision.action), static_cast<int>(TargetAction::Rebuild))
         << "the shape changed: compatibility is the plan's answer, not this call's guess";
@@ -457,8 +457,8 @@ void runLostSubmissionPhase(const vn::backend_vsg::DeviceResult& device, DeviceP
     const float kGreen[4]{ 0.0F, 1.0F, 0.0F, 1.0F };
     const float kBlue[4]{ 0.0F, 0.0F, 1.0F, 1.0F };
 
-    auto target = OffscreenTarget::create(device.device,
-                                          OffscreenTarget::Layout{
+    auto target = TargetObjects::create(device.device,
+                                          TargetObjects::Layout{
                                             8U,
                                             8U,
                                             { kRed[0], kRed[1], kRed[2], 1.0F }
@@ -600,7 +600,7 @@ void runLostSubmissionPhase(const vn::backend_vsg::DeviceResult& device, DeviceP
     target->invalidateAttachments();
     FrameTimeline                  timeline;
     RetirementQueue                queue(3U);
-    const OffscreenTarget::Resized resized = target->resize(16U, 8U, timeline, queue);
+    const TargetObjects::Resized resized = target->resize(16U, 8U, timeline, queue);
     EXPECT_TRUE(resized.replaced);
     EXPECT_FALSE(target->instance().attachments_invalidated) << "the images that were lost are gone with the set";
     EXPECT_EQ(target->instance().generation, 1U);
@@ -629,8 +629,8 @@ TEST(OffscreenTargetTest, ABlackClearReadsBackAsNoContent)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    auto target = OffscreenTarget::create(created.device,
-                                          OffscreenTarget::Layout{
+    auto target = TargetObjects::create(created.device,
+                                          TargetObjects::Layout{
                                             4U,
                                             4U,
                                             { 0.0F, 0.0F, 0.0F, 1.0F }
@@ -662,8 +662,8 @@ TEST(OffscreenTargetTest, ASecondFrameReadsBackTheSamePicture)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    auto target = OffscreenTarget::create(created.device,
-                                          OffscreenTarget::Layout{
+    auto target = TargetObjects::create(created.device,
+                                          TargetObjects::Layout{
                                             16U,
                                             16U,
                                             { 1.0F, 0.0F, 0.0F, 1.0F }
@@ -719,8 +719,8 @@ TEST(OffscreenTargetTest, ARedundantResizeRepairsNothingAndReplacesNothing)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    auto target = OffscreenTarget::create(created.device,
-                                          OffscreenTarget::Layout{
+    auto target = TargetObjects::create(created.device,
+                                          TargetObjects::Layout{
                                             8U,
                                             4U,
                                             { 0.0F, 1.0F, 0.0F, 1.0F }
@@ -737,7 +737,7 @@ TEST(OffscreenTargetTest, ARedundantResizeRepairsNothingAndReplacesNothing)
 
     // The same extent: the plan says None, and "the caller asked for the extent it already has" must not be a
     // replacement - that would regenerate images (and bump the generation) once per frame for nothing.
-    const OffscreenTarget::Resized resized = target->resize(8U, 4U, timeline, queue);
+    const TargetObjects::Resized resized = target->resize(8U, 4U, timeline, queue);
     EXPECT_EQ(static_cast<int>(resized.decision.action), static_cast<int>(vn::graphics::backend::TargetAction::None));
     EXPECT_FALSE(resized.replaced);
     EXPECT_FALSE(resized.refused);
@@ -750,7 +750,7 @@ TEST(OffscreenTargetTest, ARedundantResizeRepairsNothingAndReplacesNothing)
 
     // An extent of 0 is the other "nothing changes" answer: the plan repairs (a frame may not have learned its
     // size yet) and no GPU object is touched.
-    const OffscreenTarget::Resized repaired = target->resize(0U, 4U, timeline, queue);
+    const TargetObjects::Resized repaired = target->resize(0U, 4U, timeline, queue);
     EXPECT_EQ(static_cast<int>(repaired.decision.action), static_cast<int>(vn::graphics::backend::TargetAction::Repair));
     EXPECT_EQ(static_cast<int>(repaired.decision.reason), static_cast<int>(vn::graphics::backend::RepairReason::SizeUnknown));
     EXPECT_FALSE(repaired.replaced);
@@ -779,8 +779,8 @@ TEST(OffscreenTargetTest, AResizeWithoutAParkingWindowCountsTheDeviceIdle)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    auto target = OffscreenTarget::create(created.device,
-                                          OffscreenTarget::Layout{
+    auto target = TargetObjects::create(created.device,
+                                          TargetObjects::Layout{
                                             8U,
                                             4U,
                                             { 1.0F, 1.0F, 0.0F, 1.0F }
@@ -809,7 +809,7 @@ TEST(OffscreenTargetTest, AResizeWithoutAParkingWindowCountsTheDeviceIdle)
     timeline.submitted(token);
     RetirementQueue queue(0U); // a caller that never learned how many frames may be in flight
 
-    const OffscreenTarget::Resized resized = target->resize(16U, 8U, timeline, queue);
+    const TargetObjects::Resized resized = target->resize(16U, 8U, timeline, queue);
 
     EXPECT_TRUE(resized.replaced);
     EXPECT_FALSE(resized.parked) << "no parking window means no parking, and the queue must say so";
@@ -842,7 +842,7 @@ TEST(OffscreenTargetTest, AResizeRebuildsTheDepthReadbackForTheNewExtent)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    OffscreenTarget::TargetLayout layout;
+    TargetObjects::TargetLayout layout;
     layout.width                = 8U;
     layout.height               = 6U;
     layout.color_formats        = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
@@ -853,7 +853,7 @@ TEST(OffscreenTargetTest, AResizeRebuildsTheDepthReadbackForTheNewExtent)
     layout.clear.color_value[2] = 0.0F;
     layout.clear.color_value[3] = 1.0F;
 
-    auto target = OffscreenTarget::create(created.device, layout);
+    auto target = TargetObjects::create(created.device, layout);
     ASSERT_NE(target, nullptr);
 
     // A frame that records the pass AND the depth readback: the depth copy is what makes the depth probe
@@ -880,7 +880,7 @@ TEST(OffscreenTargetTest, AResizeRebuildsTheDepthReadbackForTheNewExtent)
 
     FrameTimeline                  timeline;
     RetirementQueue                queue(3U);
-    const OffscreenTarget::Resized resized = target->resize(20U, 10U, timeline, queue);
+    const TargetObjects::Resized resized = target->resize(20U, 10U, timeline, queue);
     EXPECT_TRUE(resized.replaced);
     EXPECT_TRUE(resized.parked);
 
@@ -915,7 +915,7 @@ TEST(OffscreenTargetTest, ALeasedPairIsResizedLenderFirstAndTheBorrowerFollows)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    OffscreenTarget::TargetLayout layout;
+    TargetObjects::TargetLayout layout;
     layout.width                = 8U;
     layout.height               = 6U;
     layout.color_formats        = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
@@ -923,9 +923,9 @@ TEST(OffscreenTargetTest, ALeasedPairIsResizedLenderFirstAndTheBorrowerFollows)
     layout.clear.color          = true;
     layout.clear.color_value[0] = 0.5F;
 
-    auto lender = OffscreenTarget::create(created.device, layout);
+    auto lender = TargetObjects::create(created.device, layout);
     ASSERT_NE(lender, nullptr);
-    auto borrower = OffscreenTarget::create(created.device, layout, lender.get());
+    auto borrower = TargetObjects::create(created.device, layout, lender.get());
     ASSERT_NE(borrower, nullptr) << "the borrower (its own colour, the lender's depth) must be creatable";
 
     FrameTimeline   timeline;
@@ -934,7 +934,7 @@ TEST(OffscreenTargetTest, ALeasedPairIsResizedLenderFirstAndTheBorrowerFollows)
     // The image a borrower's framebuffer names belongs to the LENDER, so the borrower cannot move BEYOND it:
     // a framebuffer attachment must be at least as large as the framebuffer it is attached to
     // (VUID-VkFramebufferCreateInfo-pAttachments-00861). That - and only that - is what stops a borrower.
-    const OffscreenTarget::Resized too_big = borrower->resize(16U, 12U, timeline, queue);
+    const TargetObjects::Resized too_big = borrower->resize(16U, 12U, timeline, queue);
     EXPECT_EQ(static_cast<int>(too_big.decision.action), static_cast<int>(vn::graphics::backend::TargetAction::ResizeInPlace));
     EXPECT_TRUE(too_big.refused) << "the borrower may not grow past the image it draws against";
     EXPECT_FALSE(too_big.replaced);
@@ -945,7 +945,7 @@ TEST(OffscreenTargetTest, ALeasedPairIsResizedLenderFirstAndTheBorrowerFollows)
     // the borrowers' framebuffers then still name the image that was just replaced. That is a STALE read the
     // caller answers in the same frame - it used to refuse here instead, which left a leased pair at the
     // extent it was built at for a whole session (the engine's own deferred pipeline, measured).
-    const OffscreenTarget::Resized lent = lender->resize(16U, 12U, timeline, queue);
+    const TargetObjects::Resized lent = lender->resize(16U, 12U, timeline, queue);
     EXPECT_FALSE(lent.refused) << "the lender's own attachments are its own to replace";
     EXPECT_TRUE(lent.replaced);
     EXPECT_TRUE(lent.parked);
@@ -964,7 +964,7 @@ TEST(OffscreenTargetTest, ALeasedPairIsResizedLenderFirstAndTheBorrowerFollows)
 
     // And a borrower that DOES resize now goes through: its framebuffer is built against the image the lender
     // serves now, which is what made the earlier refusal a permanent one.
-    const OffscreenTarget::Resized borrowed = borrower->resize(16U, 12U, timeline, queue);
+    const TargetObjects::Resized borrowed = borrower->resize(16U, 12U, timeline, queue);
     EXPECT_FALSE(borrowed.refused) << "the lender's image covers the new extent";
     EXPECT_TRUE(borrowed.replaced);
     EXPECT_EQ(borrower->width(), 16U);
@@ -972,7 +972,7 @@ TEST(OffscreenTargetTest, ALeasedPairIsResizedLenderFirstAndTheBorrowerFollows)
 
     // And the resized lender can lend again: the new depth image is a legal source, which is the half a
     // bookkeeping-only assertion would miss.
-    auto next_borrower = OffscreenTarget::create(created.device, layout, lender.get());
+    auto next_borrower = TargetObjects::create(created.device, layout, lender.get());
     EXPECT_NE(next_borrower, nullptr) << "a resized lender offers its new depth like the old one";
 
     // The pixels agree with the bookkeeping: the replaced attachments really are what the lender serves.
@@ -995,7 +995,7 @@ TEST(OffscreenTargetTest, ARebuildIsRefusedWhileADepthLeaseIsInForce)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    OffscreenTarget::TargetLayout layout;
+    TargetObjects::TargetLayout layout;
     layout.width                = 8U;
     layout.height               = 6U;
     layout.color_formats        = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
@@ -1003,14 +1003,14 @@ TEST(OffscreenTargetTest, ARebuildIsRefusedWhileADepthLeaseIsInForce)
     layout.clear.color          = true;
     layout.clear.color_value[0] = 0.5F;
 
-    auto lender = OffscreenTarget::create(created.device, layout);
+    auto lender = TargetObjects::create(created.device, layout);
     ASSERT_NE(lender, nullptr);
-    auto borrower = OffscreenTarget::create(created.device, layout, lender.get());
+    auto borrower = TargetObjects::create(created.device, layout, lender.get());
     ASSERT_NE(borrower, nullptr) << "the borrower (its own colour, the lender's depth) must be creatable";
 
     // A shape a rebuild would really serve (two colours and a depth): it has to differ from the current one,
     // or the plan answers "nothing structural changed" before the lease is ever consulted.
-    OffscreenTarget::TargetLayout wanted = layout;
+    TargetObjects::TargetLayout wanted = layout;
     wanted.color_formats                 = { vn::graphics::RenderTarget::ColorFormat::RGBA8, vn::graphics::RenderTarget::ColorFormat::RGBA8 };
 
     FrameTimeline   timeline;
@@ -1019,7 +1019,7 @@ TEST(OffscreenTargetTest, ARebuildIsRefusedWhileADepthLeaseIsInForce)
     // The lender half: every borrower's framebuffer names ITS image, and the lender does not know who its
     // borrowers are - so the shape it serves is not the lender's to change while one exists. The plan wanted
     // the rebuild; the lease is what stops it.
-    const OffscreenTarget::Rebuilt lent = lender->rebuild(wanted, timeline, queue);
+    const TargetObjects::Rebuilt lent = lender->rebuild(wanted, timeline, queue);
     EXPECT_EQ(static_cast<int>(lent.decision.action), static_cast<int>(TargetAction::Rebuild));
     EXPECT_TRUE(lent.refused) << "a target another target loads the depth of does not rebuild";
     EXPECT_FALSE(lent.replaced);
@@ -1029,7 +1029,7 @@ TEST(OffscreenTargetTest, ARebuildIsRefusedWhileADepthLeaseIsInForce)
 
     // The borrower half refuses too: it holds another target's depth, and a new pass with new attachments
     // would have to adopt an image whose extent and layout belong to a lender this call was not told about.
-    const OffscreenTarget::Rebuilt borrowed = borrower->rebuild(wanted, timeline, queue);
+    const TargetObjects::Rebuilt borrowed = borrower->rebuild(wanted, timeline, queue);
     EXPECT_EQ(static_cast<int>(borrowed.decision.action), static_cast<int>(TargetAction::Rebuild));
     EXPECT_TRUE(borrowed.refused) << "a shape is not the borrower's to change while it draws against another "
                                      "target's depth";
@@ -1039,7 +1039,7 @@ TEST(OffscreenTargetTest, ARebuildIsRefusedWhileADepthLeaseIsInForce)
 
     // The lease is the only thing that blocked it: once the borrower is gone, the same call rebuilds.
     borrower.reset();
-    const OffscreenTarget::Rebuilt loan_repaid = lender->rebuild(wanted, timeline, queue);
+    const TargetObjects::Rebuilt loan_repaid = lender->rebuild(wanted, timeline, queue);
     EXPECT_FALSE(loan_repaid.refused) << "the refusal is the lease, not the target";
     EXPECT_TRUE(loan_repaid.replaced);
     EXPECT_TRUE(loan_repaid.parked);
@@ -1047,9 +1047,9 @@ TEST(OffscreenTargetTest, ARebuildIsRefusedWhileADepthLeaseIsInForce)
     EXPECT_EQ(lender->generation(), 1U);
 
     // And the rebuilt lender offers its NEW depth as a source: the half a bookkeeping-only assertion misses.
-    auto next_borrower = OffscreenTarget::create(
+    auto next_borrower = TargetObjects::create(
         created.device,
-        OffscreenTarget::TargetLayout{ 8U, 6U, { vn::graphics::RenderTarget::ColorFormat::RGBA8 }, vn::graphics::RenderTarget::DepthFormat::D32 },
+        TargetObjects::TargetLayout{ 8U, 6U, { vn::graphics::RenderTarget::ColorFormat::RGBA8 }, vn::graphics::RenderTarget::DepthFormat::D32 },
         lender.get());
     EXPECT_NE(next_borrower, nullptr) << "a rebuilt lender offers its new depth like the old one";
 
@@ -1078,7 +1078,7 @@ TEST(OffscreenTargetTest, AProbeBeforeAnyCaptureIsRefusedNotAnswered)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    OffscreenTarget::TargetLayout layout;
+    TargetObjects::TargetLayout layout;
     layout.width                = 8U;
     layout.height               = 8U;
     layout.color_formats        = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
@@ -1087,7 +1087,7 @@ TEST(OffscreenTargetTest, AProbeBeforeAnyCaptureIsRefusedNotAnswered)
     layout.clear.color_value[0] = 0.25F;
     layout.clear.color_value[1] = 0.5F;
 
-    auto target = OffscreenTarget::create(created.device, layout);
+    auto target = TargetObjects::create(created.device, layout);
     ASSERT_NE(target, nullptr);
 
     // Nothing has run: the mapped buffers hold whatever the allocation held, which is not a picture of anything.
@@ -1137,7 +1137,7 @@ TEST(OffscreenTargetTest, AD16DepthIsScaledByItsRangeAndAD24DepthIsRefused)
     // conversion the format defines. The clear value is what the pass really wrote, so the number a probe
     // answers with is the device's own conversion seen from the CPU.
     {
-        OffscreenTarget::TargetLayout layout;
+        TargetObjects::TargetLayout layout;
         layout.width             = 4U;
         layout.height            = 4U;
         layout.color_formats     = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
@@ -1146,7 +1146,7 @@ TEST(OffscreenTargetTest, AD16DepthIsScaledByItsRangeAndAD24DepthIsRefused)
         layout.clear.depth       = true;
         layout.clear.depth_value = 0.5F;
 
-        auto target = OffscreenTarget::create(created.device, layout);
+        auto target = TargetObjects::create(created.device, layout);
         ASSERT_NE(target, nullptr) << "a D16 depth attachment is an ordinary target";
 
         const float         kClear[4]{ 0.0F, 0.0F, 0.0F, 1.0F };
@@ -1166,7 +1166,7 @@ TEST(OffscreenTargetTest, AD16DepthIsScaledByItsRangeAndAD24DepthIsRefused)
     // D24 is the COMBINED depth/stencil format: there is no plain depth copy, so the honest answer is a
     // refusal - and the rest of the target is still a picture.
     {
-        OffscreenTarget::TargetLayout layout;
+        TargetObjects::TargetLayout layout;
         layout.width                = 4U;
         layout.height               = 4U;
         layout.color_formats        = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
@@ -1175,7 +1175,7 @@ TEST(OffscreenTargetTest, AD16DepthIsScaledByItsRangeAndAD24DepthIsRefused)
         layout.clear.color_value[0] = 0.0F;
         layout.clear.color_value[1] = 0.5F;
 
-        auto target = OffscreenTarget::create(created.device, layout);
+        auto target = TargetObjects::create(created.device, layout);
         ASSERT_NE(target, nullptr);
 
         EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Depth)), static_cast<int>(ReadbackRefusal::UnreadableFormat));
@@ -1201,7 +1201,7 @@ TEST(OffscreenTargetTest, AFloatColourAttachmentIsRenderedButNotReadBack)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    OffscreenTarget::TargetLayout layout;
+    TargetObjects::TargetLayout layout;
     layout.width             = 4U;
     layout.height            = 4U;
     layout.color_formats     = { vn::graphics::RenderTarget::ColorFormat::RGBA16F };
@@ -1210,7 +1210,7 @@ TEST(OffscreenTargetTest, AFloatColourAttachmentIsRenderedButNotReadBack)
     layout.clear.depth       = true;
     layout.clear.depth_value = 0.8F;
 
-    auto target = OffscreenTarget::create(created.device, layout);
+    auto target = TargetObjects::create(created.device, layout);
     ASSERT_NE(target, nullptr) << "an RGBA16F target is an ordinary target: only its READBACK is refused";
 
     // No destination buffer and no copy: the readback packs RGBA8, and a buffer sized as if a 16-bit texel were
@@ -1256,7 +1256,7 @@ TEST(OffscreenTargetTest, ARePointIsRefusedWhenTheLenderShrankBelowTheBorrower)
         GTEST_SKIP() << "no device satisfies the device-floor requirements";
     }
 
-    OffscreenTarget::TargetLayout layout;
+    TargetObjects::TargetLayout layout;
     layout.width                = 8U;
     layout.height               = 6U;
     layout.color_formats        = { vn::graphics::RenderTarget::ColorFormat::RGBA8 };
@@ -1264,9 +1264,9 @@ TEST(OffscreenTargetTest, ARePointIsRefusedWhenTheLenderShrankBelowTheBorrower)
     layout.clear.color          = true;
     layout.clear.color_value[0] = 0.5F;
 
-    auto lender = OffscreenTarget::create(created.device, layout);
+    auto lender = TargetObjects::create(created.device, layout);
     ASSERT_NE(lender, nullptr);
-    auto borrower = OffscreenTarget::create(created.device, layout, lender.get());
+    auto borrower = TargetObjects::create(created.device, layout, lender.get());
     ASSERT_NE(borrower, nullptr);
 
     FrameTimeline   timeline;
@@ -1274,7 +1274,7 @@ TEST(OffscreenTargetTest, ARePointIsRefusedWhenTheLenderShrankBelowTheBorrower)
 
     // The lender grows: the borrower still names the image the lender used to serve, and following is what the
     // executioner does in the same frame (see VsgExecutor::applyTargetPlans).
-    const OffscreenTarget::Resized grown = lender->resize(16U, 12U, timeline, queue);
+    const TargetObjects::Resized grown = lender->resize(16U, 12U, timeline, queue);
     ASSERT_TRUE(grown.replaced);
     EXPECT_TRUE(borrower->repointBorrowedDepth(timeline, queue)) << "the borrower follows the new image";
     EXPECT_EQ(borrower->depthView().get(), lender->depthView().get());
@@ -1285,7 +1285,7 @@ TEST(OffscreenTargetTest, ARePointIsRefusedWhenTheLenderShrankBelowTheBorrower)
     // here (see VsgExecutor::applyTargetPlans' coversBorrowers) - but a caller that got here anyway must not
     // be handed a re-point that the API forbids: a framebuffer attachment has to be at least as large as the
     // framebuffer it is attached to (VUID-VkFramebufferCreateInfo-pAttachments-00861).
-    const OffscreenTarget::Resized shrunk = lender->resize(4U, 3U, timeline, queue);
+    const TargetObjects::Resized shrunk = lender->resize(4U, 3U, timeline, queue);
     ASSERT_TRUE(shrunk.replaced) << "the lender's own attachments are its own to replace";
     EXPECT_FALSE(borrower->repointBorrowedDepth(timeline, queue)) << "an image smaller than the framebuffer is not an answer: the refusal is the answer";
     EXPECT_EQ(borrower->depthView().get(), followed.get()) << "and the borrower keeps the image it named (a stale read at worst, never an invalid framebuffer)";
