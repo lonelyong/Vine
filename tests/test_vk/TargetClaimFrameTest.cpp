@@ -1,8 +1,8 @@
 /**
  * @brief The target lease at the FRAME level: a pass whose target another driver is drawing into is skipped, and the
- *        device says so once per episode (see TargetClaims and `.ai/design/graphics-sessions.md` §2.5).
+ *        device says so once per episode (see TargetTable and `.ai/design/graphics-sessions.md` §2.5).
  *
- * WHY THIS FILE EXISTS. `TargetClaimsTest` pins the state machine; this one pins what the DEVICE does with a lost
+ * WHY THIS FILE EXISTS. `TargetTableTest` pins the state machine; this one pins what the DEVICE does with a lost
  * claim: the pass is skipped, the REST of the frame still runs (a one-pass frame makes the skip observable as "nothing
  * was recorded"), and the sentence arrives ONCE - a second frame that loses the same target is the same episode and is
  * not re-reported. S6's public `createSession()` is what makes this a two-engine story; until then a lease taken by
@@ -159,31 +159,31 @@ TEST(TargetClaimFrameTest, AFrameThatLostItsTargetSkipsThatPassAndSaysSoOncePerE
 
     // THE OTHER DRIVER: a session id the device's own driver does not have, holding the target for a "frame" of its
     // own. Until S6 hands out a second session, this lease IS the second engine.
-    auto other = device->targetClaims().begin(9999U);
+    auto other = device->targetTable().lease(9999U);
     ASSERT_TRUE(other.claim(target.get()));
-    ASSERT_EQ(device->targetClaims().holderOf(target.get()), 9999U);
+    ASSERT_EQ(device->targetTable().holderOf(target.get()), 9999U);
 
     // THE SAME FRAME TWICE: the pass loses its target both times, and it is SAID once. `refused` counting twice is
     // what separates "reported per episode" from "skipped silently".
     EXPECT_EQ(backend->executeFrame(drawingFrame(target.get(), makeDraw()), nullptr), PresentOutcome::Skipped);
     EXPECT_EQ(backend->executeFrame(drawingFrame(target.get(), makeDraw()), nullptr), PresentOutcome::Skipped);
     EXPECT_EQ(conflictsIn(reported), 1U) << "a driven-out pass was reported once per frame instead of once per episode";
-    EXPECT_EQ(device->targetClaims().numbers().refused, 2U) << "the second frame did not lose the target";
-    EXPECT_EQ(device->targetClaims().numbers().live, 1U) << "the other driver's claim vanished";
+    EXPECT_EQ(device->targetTable().claimNumbers().refused, 2U) << "the second frame did not lose the target";
+    EXPECT_EQ(device->targetTable().claimNumbers().live, 1U) << "the other driver's claim vanished";
 
     // THE OTHER DRIVER FINISHES: its lease releases, the next frame runs its pass, and the episode ends.
-    other = vn::backend_vk::TargetClaims::Lease{};
-    EXPECT_FALSE(device->targetClaims().holderOf(target.get()).has_value());
+    other = vn::backend_vk::TargetTable::Lease{};
+    EXPECT_FALSE(device->targetTable().holderOf(target.get()).has_value());
     (void)backend->executeFrame(drawingFrame(target.get(), makeDraw()), nullptr);
     EXPECT_EQ(conflictsIn(reported), 1U);
 
     // A NEW CONFLICT IS A NEW EPISODE: the same target taken again earns one more sentence, not silence.
-    auto again = device->targetClaims().begin(9999U);
+    auto again = device->targetTable().lease(9999U);
     ASSERT_TRUE(again.claim(target.get()));
     (void)backend->executeFrame(drawingFrame(target.get(), makeDraw()), nullptr);
     EXPECT_EQ(conflictsIn(reported), 2U) << "the conflict episode never ended after a clean frame";
 
-    again = vn::backend_vk::TargetClaims::Lease{};
+    again = vn::backend_vk::TargetTable::Lease{};
     backend->shutdown();
 }
 
@@ -205,13 +205,13 @@ TEST(TargetClaimFrameTest, APreparationThatLostItsTargetIsSkippedAndReportedToo)
     const intrusive_ptr<RenderTarget> target = makeTarget();
     const FrameDescription            frame  = drawingFrame(target.get(), makeDraw());
 
-    auto other = device->targetClaims().begin(9999U);
+    auto other = device->targetTable().lease(9999U);
     ASSERT_TRUE(other.claim(target.get()));
 
     const vn::graphics::PrepareReport blocked = backend->prepareFrame(frame);
     EXPECT_EQ(conflictsIn(reported), 1U) << "a preparation that lost its target said nothing";
 
-    other = vn::backend_vk::TargetClaims::Lease{};
+    other = vn::backend_vk::TargetTable::Lease{};
     const vn::graphics::PrepareReport allowed = backend->prepareFrame(frame);
     EXPECT_EQ(conflictsIn(reported), 1U) << "a clean preparation re-reported the old conflict";
 

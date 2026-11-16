@@ -26,9 +26,11 @@
 #include <vine/backend_vk/internal/ContentImages.hpp>
 #include <vine/backend_vk/internal/FrameHead.hpp>
 #include <vine/backend_vk/internal/FrameScratch.hpp>
+#include <vine/backend_vk/internal/NumberText.hpp>
 #include <vine/backend_vk/internal/PipelineCacheFile.hpp>
 #include <vine/backend_vk/internal/ReadbackStaging.hpp>
-#include <vine/backend_vk/internal/TargetClaims.hpp>
+#include <vine/backend_vk/internal/SampleCounts.hpp>
+#include <vine/backend_vk/internal/TargetTable.hpp>
 #include <vine/backend_vk/internal/WindowSystem.hpp>
 #include <vine/backend_vk/internal/StateMapping.hpp>
 #include <vine/backend_vk/internal/TargetImages.hpp>
@@ -168,63 +170,6 @@ constexpr int kProbeWindowHeight = 360;
     return vn::String(reinterpret_cast<const char8_t*>(text != nullptr ? text : ""));
 }
 
-/// @brief The sample counts Vulkan offers, largest first (see largestSampleCount / ensureBuildableSamples).
-constexpr std::uint32_t kSampleCounts[] = { 64U, 32U, 16U, 8U, 4U, 2U, 1U };
-
-/**
- * @brief Whether @p samples is a count this device can build a target with.
- *
- * @details
- * - A COUNT IS A COUNT (see ADR-2026-11-14-sample-count-refused-not-lowered): the legal counts are the powers of two,
- *   so a number between two of them (three, say) is a count the device does not offer at all - mapping it through
- *   `StateMapping::sampleCount` would silently answer one sample, which is the same lie as lowering an over-large
- *   request. `Capabilities::max_samples` plus "the counts are powers of two" names the whole set, and this is where
- *   that set is checked, once, before any object is made.
- *
- * @param samples Samples per pixel a target asks for (already normalised: 0 is not a count).
- * @param supported The device's `framebufferColorSampleCounts & framebufferDepthSampleCounts` flags.
- * @return true when @p samples is a power of two the @p supported flags contain.
- */
-[[nodiscard]] bool ensureBuildableSamples(const std::uint32_t samples, const std::uint32_t supported) noexcept
-{
-    if (samples == 0U || (samples & (samples - 1U)) != 0U) {
-        return false;
-    }
-    return (supported & static_cast<std::uint32_t>(StateMapping::sampleCount(samples))) != 0U;
-}
-
-/**
- * @brief Gets the largest sample count @p supported flags offer.
- *
- * @param supported The device's `framebufferColorSampleCounts & framebufferDepthSampleCounts` flags.
- * @return The largest supported count; 1 when the flags offer nothing usable.
- */
-[[nodiscard]] std::uint32_t largestSampleCount(const std::uint32_t supported) noexcept
-{
-    for (const std::uint32_t count : kSampleCounts) {
-        if ((supported & static_cast<std::uint32_t>(StateMapping::sampleCount(count))) != 0U) {
-            return count;
-        }
-    }
-    return 1U;
-}
-
-/**
- * @brief Builds a message fragment from a count.
- *
- * @details
- * - A diagnostic that names the numbers a host can act on ("asks for 8, this device offers 4") is worth more than one
- *   that only says "too many", and `vn::String` holds UTF-8 while `std::to_string` answers UTF-8 bytes, so the
- *   conversion is a copy.
- *
- * @param value The number to spell.
- * @return The number as text.
- */
-[[nodiscard]] vn::String numberText(const std::uint32_t value)
-{
-    return vn::String::fromUtf8(std::to_string(value));
-}
-
 /**
  * @brief Spells a byte count the way a host reads it: "3.2 MiB", "512 KiB", "900 B".
  *
@@ -320,41 +265,6 @@ constexpr std::uint32_t kSampleCounts[] = { 64U, 32U, 16U, 8U, 4U, 2U, 1U };
                     bytesText(report.stats.largest_free_run) + u8")";
     }
     return sentence;
-}
-
-/**
- * @brief Builds a diagnostic about ONE target: severity, category, stable code, the target's name and (when it
- *        applies) the limit it exceeded.
- *
- * @details
- * - WHY A HELPER: a target refusal is the same five facts at eight sites, and the `subject` (the target's name) is
- *   what a host badges on - it must not be forgotten at one of them (see `RenderDiagnostic`).
- * - THE CODE IS THE STABLE HALF: `message` may be reworded, `code` may not (`scripts/diagnostic_codes.txt` is the
- *   registry both directions are checked against).
- *
- * @param target   The target the report is about (its name becomes the subject).
- * @param severity How bad it is.
- * @param category The coarse class.
- * @param code     The stable identifier of the cause.
- * @param message  The human sentence (with the numbers in it).
- * @param limit    The requested/supported pair, when the report is about a device limit.
- * @return The diagnostic, ready to hand to reportDiagnostic.
- */
-[[nodiscard]] vn::graphics::RenderDiagnostic targetDiagnostic(const RenderTarget&                          target,
-                                                             const DiagnosticSeverity                     severity,
-                                                             const DiagnosticCategory                     category,
-                                                             const char8_t*                               code,
-                                                             vn::String                                   message,
-                                                             std::optional<vn::graphics::DiagnosticLimit> limit = std::nullopt)
-{
-    vn::graphics::RenderDiagnostic diagnostic;
-    diagnostic.severity = severity;
-    diagnostic.category = category;
-    diagnostic.code     = vn::String(code);
-    diagnostic.message  = std::move(message);
-    diagnostic.subject  = target.name();
-    diagnostic.limit    = limit;
-    return diagnostic;
 }
 
 /**
@@ -571,7 +481,7 @@ class Device::FrameDriver final : public vn::graphics::RenderFrameExecutor
     /// The episode of "a frame was started from the thread that already drives one".
     vn::graphics::ReportOnce frame_reentry_report{};
     ///
-    /// The targets whose claim conflict was already reported in this episode (see TargetClaims): a pass that
+    /// The targets whose claim conflict was already reported in this episode (see TargetTable): a pass that
     /// lost its target says so ONCE, and a frame/prepare that completes without a conflict ends the episode.
     std::unordered_set<const RenderTarget*> claim_conflicts{};
     /// This driver's clock window: the id its completion evidence is reported under (see DeviceClock).
@@ -599,11 +509,10 @@ class Device::FrameDriver final : public vn::graphics::RenderFrameExecutor
 };
 
 struct Device::Impl {
-    /// The three device verbs a driver still calls. `RenderDevice::reportDiagnostic` is protected, so a nested class
-    /// cannot reach it through the device object; building a target (`ensureTarget`) and classifying a lost device
-    /// (`noteDeviceLost`) are DECISIONS OF THE DEVICE - one per pass at most and one per failure, never per draw.
+    /// The two device verbs a driver still calls. `RenderDevice::reportDiagnostic` is protected, so a nested class
+    /// cannot reach it through the device object; classifying a lost device (`noteDeviceLost`) is a DECISION OF THE
+    /// DEVICE - one per failure, never per draw.
     vn::graphics::DiagnosticSink               report{};
-    std::function<bool(const RenderTarget&)>   ensure_target{};
     std::function<bool(VkResult, const char*)> note_device_lost{};
 
     /// THE DEVICE'S OWN FRAME DRIVER: it owns the command machinery, the frame books and the gate.
@@ -645,8 +554,6 @@ struct Device::Impl {
     vn::graphics::ReportOnce         host_reentry_report{};
     mutable std::mutex               reentry_mutex{};
     std::function<void(const char8_t*)> report_host_reentry{};
-    /// One map operation at a time on the built targets: two frame heads may build/snapshot different targets.
-    mutable std::mutex        targets_mutex{};
     /// One operation at a time on the surface list: a frame resolves its presenter while a host may add one.
     mutable std::mutex        surfaces_mutex{};
     DeviceDesc      desc{};
@@ -705,12 +612,12 @@ struct Device::Impl {
 
     /// The sample counts the device's COLOUR and DEPTH attachments both offer, as Vulkan spells them
     /// (`VK_SAMPLE_COUNT_*_BIT`): one target has one sample count, so a count either attachment cannot do is a count
-    /// this device cannot build (see `ensureTarget`).
+    /// this device cannot build (see `TargetTable::ensure`).
     std::uint32_t supported_sample_counts{ VK_SAMPLE_COUNT_1_BIT };
 
     /// Whether this device can resolve a multisampled DEPTH (`VkSubpassDescriptionDepthStencilResolve`, and with it
     /// `vkCreateRenderPass2`): true from Vulkan 1.2, which is the version that made both core. A device below it still
-    /// serves every other shape - only "multisampled AND depth-attached" is refused (see `ensureTarget`).
+    /// serves every other shape - only "multisampled AND depth-attached" is refused (see `TargetTable::ensure`).
     bool depth_resolve_supported{ false };
 
     /// Whether this device answers PIPELINE CREATION FEEDBACK (Vulkan 1.3 or `VK_EXT_pipeline_creation_feedback`): the
@@ -728,13 +635,6 @@ struct Device::Impl {
      *   report answers timing DISENGAGED rather than a fabricated zero (see FrameTiming).
      */
     float timestamp_period{ 0.0F };
-
-    /// One entry per off-screen target this device built, keyed by the host's object (the identity the frame names).
-    ///
-    /// SHARED OWNERSHIP BECAUSE A RELEASE MAY OUTLIVE THE MAP ENTRY (S6c-2b): a frame records against the entry it
-    /// found (a raw pointer into the object), and `releaseRenderTarget` moves the map's reference into the park - so
-    /// the object, and the images it owns, stay alive until the watermark that release is dated against.
-    std::unordered_map<const RenderTarget*, std::shared_ptr<TargetImages>> targets{};
 
     /// M2's content path, DEVICE HALF: compiled programs, uploaded streams, pipelines, the shared layouts and the
     /// image cache. The frame's own half (the uniform ring and the descriptor pool) is each driver's `FrameScratch`.
@@ -758,17 +658,7 @@ struct Device::Impl {
      * - ONE EPISODE PER CONDITION: two refusals sharing a flag means the first one silences the second for the rest of
      *   the session - the host fixes that wiring and hears nothing about what is actually wrong.
      */
-    vn::graphics::ReportOnce size_unknown_report{};
-    vn::graphics::ReportOnce samples_report{};
-    vn::graphics::ReportOnce samples_depth_report{};
     vn::graphics::ReportOnce prepare_target_report{};
-    /// A multisampled target asked to borrow its depth (one image cannot be a multi-sample attachment and a
-    /// single-sample picture at once).
-    vn::graphics::ReportOnce borrow_samples_report{};
-    /// A target borrows a depth from one this device has not built (or one that has none).
-    vn::graphics::ReportOnce borrow_source_report{};
-    /// A target and the target it borrows its depth from are not equally sized.
-    vn::graphics::ReportOnce borrow_extent_report{};
 
     /**
      * @brief The window half's refusals, one episode each (see ReportOnce).
@@ -878,10 +768,10 @@ struct Device::Impl {
     vn::graphics::backend::DeviceClock       clock{};
     vn::graphics::backend::RetirementQueue   retirement{ 0 };
     ///
-    /// THE TARGETS' PER-FRAME LEASES (see TargetClaims): one claim per target a pass names, released when the
-    /// frame (or the warm-up) that took it ends. Device-level because a target outlives every session and is
-    /// exactly what two of them can contend for.
-    TargetClaims target_claims{};
+    /// THE DEVICE'S OFF-SCREEN TARGETS, one object (see TargetTable): the map from a host target to the images it
+    /// became, the per-frame leases two drivers contend for, and the release that parks what it removed. Device-level
+    /// because a target outlives every session and is exactly what two of them can contend for.
+    TargetTable target_table{};
     /// Frames in flight on this device today: one, because `executeFrame` submits and waits inside the call.
     static constexpr std::uint32_t               kFramesInFlight = 1U;
 
@@ -985,17 +875,11 @@ struct Device::Impl {
                 continue;
             }
             const RenderTarget& map = *input.target;
-            TargetImages*       map_images = nullptr;
-            {
-                const std::lock_guard<std::mutex> targets_held(targets_mutex);
-                const auto images = targets.find(&map);
-                if (images != targets.end() && images->second->built() && images->second->hasDepth()) {
-                    map_images = images->second.get();
-                }
-            }
-            if (map_images == nullptr) {
+            const std::shared_ptr<TargetImages> map_entry = target_table.lookup(&map);
+            if (map_entry == nullptr || !map_entry->built() || !map_entry->hasDepth()) {
                 continue;
             }
+            TargetImages* map_images = map_entry.get();
             const vn::raw_ptr<const vn::graphics::Light> light = map.shadowOf();
             if (light == nullptr || !map.hasProducerViewProjection()) {
                 continue; // not a map, or a map nobody said how to read (shading nothing is the honest answer)
@@ -1325,8 +1209,8 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
 
     // THIS FRAME'S TARGET CLAIMS: one lease, and its destructor is the ONE release point every early return
     // below passes through (`P3`).
-    TargetClaims::Lease target_lease = owner.target_claims.begin(clock_window);
-    bool                claim_refused = false;
+    TargetTable::Lease target_lease = owner.target_table.lease(clock_window);
+    bool              claim_refused = false;
 
     std::vector<Runnable> runnable_passes;
     runnable_passes.reserve(frame.passes.size());
@@ -1385,8 +1269,8 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             calls += vn::graphics::isDrawingCall(description) ? 1U : 0U;
         }
         // COUNTED ONLY FOR A PASS THIS DEVICE CAN RUN: a drawing call is recorded, and a pass whose target could not
-        // be built recorded nothing (see the sample-count refusals in ensureTarget) - reporting its calls would say a
-        // frame drew when nothing reached the queue.
+        // be built recorded nothing (see the sample-count refusals in TargetTable::ensure) - reporting its calls would
+        // say a frame drew when nothing reached the queue.
         const bool has_effect = vn::graphics::passHasEffect(draw);
         const auto count_pass = [&counters, calls, has_effect]() {
             if (has_effect) {
@@ -1435,7 +1319,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             runnable_passes.push_back(Runnable{ &entry, &draw, true, nullptr, window->renderPass(false, false), 1U, window->compatibility() });
             continue;
         }
-        // ONE DRIVER AT A TIME, ONE FRAME AT A TIME (see TargetClaims): the claim is taken BEFORE the
+        // ONE DRIVER AT A TIME, ONE FRAME AT A TIME (see TargetTable): the claim is taken BEFORE the
         // attachments are built, because rebuilding a target is the claim holder's verb (`R5`). A lost claim
         // skips THIS pass - the rest of the frame still runs (`G7`) - and says so once per (target, episode).
         if (!target_lease.claim(draw.target)) {
@@ -1454,15 +1338,14 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         if (!claim_pass_samples(draw, entry)) {
             continue;
         }
-        if (!owner.ensure_target(*draw.target)) {
+        if (!owner.target_table.ensure(*draw.target)) {
             refused_pass = true;
             continue;
         }
         count_pass();
-        TargetImages& claimed_images = [&]() -> TargetImages& {
-            const std::lock_guard<std::mutex> targets_held(owner.targets_mutex);
-            return *owner.targets.at(draw.target);
-        }();
+        // THE ENTRY EXISTS NOW (the build above inserted it): the frame keeps a borrowed pointer into it, and a
+        // release during its recording hands the record to the park instead of destroying it (S6c-2b).
+        TargetImages& claimed_images = *owner.target_table.lookup(draw.target);
         runnable_passes.push_back(Runnable{ &entry,
                                             &draw,
                                             false,
@@ -1642,18 +1525,11 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             if (description.kind != DrawDescription::Kind::Screen || description.source == nullptr) {
                 continue;
             }
-            TargetImages* sampled_images = nullptr;
-            {
-                const std::lock_guard<std::mutex> targets_held(owner.targets_mutex);
-                const auto source = owner.targets.find(description.source);
-                if (source != owner.targets.end() && source->second->built() && !source->second->color_sampled) {
-                    sampled_images = source->second.get();
-                }
-            }
-            if (sampled_images == nullptr) {
+            const std::shared_ptr<TargetImages> source_entry = owner.target_table.lookup(description.source);
+            if (source_entry == nullptr || !source_entry->built() || source_entry->color_sampled) {
                 continue;
             }
-            TargetImages& sampled = *sampled_images;
+            TargetImages& sampled = *source_entry;
             for (const VkImage image : sampled.colors) {
                 const ImageState from = sampled.fresh ? stateOf(ImageLayout::Undefined) : stateOf(ImageLayout::ColorAttachment);
                 const ImageState to   = stateOf(ImageLayout::ShaderReadOnly);
@@ -1814,13 +1690,11 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                 // THE FULL-SCREEN ABI: the source's colour attachments, bound in order. A source this device never
                 // built answers an empty span, which makes the recorder report (and skip) the draw.
                 ContentDraw::ScreenSource source{};
-                {
-                    const std::lock_guard<std::mutex> targets_held(owner.targets_mutex);
-                    const auto source_images = description.source != nullptr ? owner.targets.find(description.source) : owner.targets.end();
-                    if (source_images != owner.targets.end() && source_images->second->built()) {
-                        source.images = source_images->second->colors;
-                        source.views  = source_images->second->color_views;
-                    }
+                const std::shared_ptr<TargetImages> source_entry =
+                    description.source != nullptr ? owner.target_table.lookup(description.source) : nullptr;
+                if (source_entry != nullptr && source_entry->built()) {
+                    source.images = source_entry->colors;
+                    source.views  = source_entry->color_views;
                 }
                 (void)recorder.recordScreen(commands,
                                             static_cast<int>(extent.width),
@@ -2110,8 +1984,8 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
 
     // A WARM-UP WRITES TARGETS TOO (an attachment build, a texture copy into one), so it takes the same
     // claims a frame does - and gives them back on every path out of here (`P3`).
-    TargetClaims::Lease target_lease = owner.target_claims.begin(clock_window);
-    bool                claim_refused = false;
+    TargetTable::Lease target_lease = owner.target_table.lease(clock_window);
+    bool               claim_refused = false;
 
     // THE WARM-UP RESOLVES UNDER THE SAME HOLD A FRAME HEAD TAKES (see ContentCaches::Lock): it and a frame may be
     // driven from two threads, and both consult the same tables. The hold ends with the pass walk: the batch's submit
@@ -2164,10 +2038,10 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
                     continue;
                 }
                 // THE TARGET'S ATTACHMENTS ARE WHAT THE FRAME WOULD BUILD ANYWAY, so preparing them is the point.
-                if (!owner.ensure_target(*draw.target)) {
+                if (!owner.target_table.ensure(*draw.target)) {
                     continue;
                 }
-                TargetImages& images = *owner.targets.at(draw.target);
+                TargetImages& images = *owner.target_table.lookup(draw.target);
                 render_pass   = images.renderPassFor(false, false);
                 color_count   = static_cast<std::uint32_t>(images.colorCount());
                 compatibility = images.compatibility();
@@ -2383,7 +2257,6 @@ Device::Device(const DeviceDesc& desc)
                                           u8"the device); it did nothing - the verb needs the frames in flight to "
                                           u8"end, so ask between frames"));
     };
-    impl->ensure_target    = [this](const RenderTarget& target) { return ensureTarget(target); };
     impl->note_device_lost = [this](const VkResult result, const char* what) { return noteDeviceLost(result, what); };
     // THE HOST'S DIRECTORY, converted ONCE: vn::String carries UTF-8 bytes, and std::filesystem::path is what the file
     // work speaks, so the two meet here instead of at every use.
@@ -2861,7 +2734,7 @@ bool Device::initialize()
     // device offers is the INTERSECTION of the two (a device whose depth tops out lower is the binding side). That
     // intersection is a `VkSampleCountFlags` BIT SET, while `Capabilities::max_samples` states the largest COUNT a
     // target may ask for - the number a host hands to `RenderTarget::setSamples` - so the limit is read OUT of the
-    // set rather than being the set. The same set is what `ensureTarget` clamps a request against.
+    // set rather than being the set. The same set is what `TargetTable::ensure` clamps a request against.
     impl->supported_sample_counts      = static_cast<std::uint32_t>(properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts);
     impl->caps.max_samples             = largestSampleCount(impl->supported_sample_counts);
     // THE LIMITS TRAVEL BESIDE THE BITS, and each is the device's own answer: "anisotropy exists" and "how much of
@@ -2948,6 +2821,21 @@ bool Device::initialize()
     // its clock and its queue (see Impl::releaseLater). That is what lets two drivers share one clock safely.
     impl->caches.setRetirement([impl = impl.get()](std::function<void()> destroy) { impl->releaseLater(std::move(destroy)); });
 
+    // THE TARGET TABLE'S SESSION (see TargetTable::open): the same park seam the caches got, plus the device facts a
+    // build compares against. A release parks THROUGH the table, so "the entry left the map" and "the images wait for
+    // the watermark" are one call and no caller can do half of it.
+    impl->target_table.open(TargetTable::Device{ impl->device, &impl->device_table, &impl->allocator },
+                            TargetTable::Limits{ impl->supported_sample_counts, impl->depth_resolve_supported },
+                            [this](const vn::graphics::RenderDiagnostic& diagnostic) { reportDiagnostic(diagnostic); },
+                            [impl = impl.get()](std::shared_ptr<TargetImages> doomed) {
+                                impl->releaseLater([table = impl->device_table,
+                                                    device = impl->device,
+                                                    allocator = &impl->allocator,
+                                                    doomed = std::move(doomed)]() mutable {
+                                    destroyTarget(table, device, *allocator, *doomed);
+                                });
+                            });
+
     // WHAT THE RECORDER DID WITH THE FILE, recorded where it will outlive the session (see pipelineCacheReport): the
     // hand-over and any refusal happen ONCE, at creation, and `content.destroy()` is what would erase them.
     impl->cache_books.hits_measured   = impl->creation_feedback;
@@ -3006,11 +2894,13 @@ void Device::shutdown()
         // caches first is still the order that keeps teardown simple (the queue is idle, nothing names them).
         impl->caches.destroy();
 
-        for (auto& [target, images] : impl->targets) {
-            (void)target;
+        // THE TARGETS' RECORDS GO BEFORE THE POOL THEY SLICED: the queue was idle above, so nothing names
+        // them. `drain()` takes the map AND the claims: "the targets are gone" and "nobody holds them" are one
+        // fact, which is the reason they live in one table.
+        for (const std::shared_ptr<TargetImages>& images : impl->target_table.drain()) {
             destroyTarget(impl->device_table, impl->device, impl->allocator, *images);
         }
-        impl->targets.clear();
+        impl->target_table.close();
 
         // The window targets first: their destructors use the device table/instance this block is about to destroy.
         impl->surfaces.clear();
@@ -3048,14 +2938,9 @@ void Device::shutdown()
     // present when it is brought up again.
     impl->caps.presentation   = impl->desc.presentation != DevicePresentation::None;
     // THE NEXT SESSION STARTS WITH NOTHING REPORTED: these episodes are about one session's wiring and one session's
-    // answers, so the rebuild a lost device needs must be able to tell its own story (see ReportOnce).
-    impl->size_unknown_report.rearm();
-    impl->samples_report.rearm();
-    impl->samples_depth_report.rearm();
+    // answers, so the rebuild a lost device needs must be able to tell its own story (see ReportOnce). The target
+    // table's six episodes are re-armed by its own `open()`.
     impl->prepare_target_report.rearm();
-    impl->borrow_samples_report.rearm();
-    impl->borrow_source_report.rearm();
-    impl->borrow_extent_report.rearm();
     impl->window_reports.rearmAll();
     impl->depth_resolve_supported = false;
     impl->device_lost             = false;
@@ -3305,31 +3190,12 @@ void Device::releaseRenderTarget(RenderTarget* target)
     // NO BODY GATE (R6, S6c-2b): this verb does not wait for the frames in flight, it removes the entry and PARKS the
     // images. A frame that had already resolved this target keeps a pointer into the entry, and the park keeps the
     // object alive until the watermark has passed that frame - so the release is safe without stopping anything.
+    // THE PARK IS THE TABLE'S OWN SEAM (see TargetTable::open): "the entry leaves the map" and "the images wait for
+    // the watermark" are one call, so no caller can do half of it.
     if (target == nullptr) {
         return;
     }
-    std::shared_ptr<TargetImages> doomed;
-    {
-        const std::lock_guard<std::mutex> targets_held(impl->targets_mutex);
-        const auto                        found = impl->targets.find(target);
-        if (found == impl->targets.end()) {
-            // Never built, or already released: the host's statement is already true.
-            return;
-        }
-        doomed = std::move(found->second);
-        impl->targets.erase(found);
-    }
-    if (impl->device != VK_NULL_HANDLE && doomed != nullptr) {
-        // THE OBJECT LEAVES THE TABLE NOW AND DIES AT THE WATERMARK (see Impl::releaseLater): the target is no longer
-        // built (so a later frame rebuilds it), the images die once no frame that could still draw into them is in
-        // flight, and the shared reference crossing to the park is why a frame's pointer stays valid meanwhile.
-        impl->releaseLater([table = impl->device_table,
-                            device = impl->device,
-                            allocator = &impl->allocator,
-                            doomed = std::move(doomed)]() mutable {
-            destroyTarget(table, device, *allocator, *doomed);
-        });
-    }
+    (void)impl->target_table.release(target);
 }
 
 vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void* native_handle, SurfaceTargetResult* why)
@@ -3460,215 +3326,6 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
     impl->window_reports.rearmCreation();
     answer(SurfaceTargetResult::Ok);
     return raw;
-}
-
-bool Device::ensureTarget(const RenderTarget& target)
-{
-    // ONE TARGET MAP OPERATION AT A TIME: two frame heads may build (or find) different targets on two threads, and a
-    // host verb may be releasing one under the exclusive gate (S6c-2).
-    const std::lock_guard<std::mutex> targets_held(impl->targets_mutex);
-    // WHAT THE HOST'S OBJECT ASKS FOR, in the value `planTarget` compares: an extent plus the shape - the engine's
-    // formats AND the device spelling only this backend can fill (see TargetShape).
-    TargetDesc wanted;
-    wanted.width  = target.width();
-    wanted.height = target.height();
-    for (int index = 0; index < target.colorCount(); ++index) {
-        wanted.shape.color_formats.push_back(target.colorFormat(index));
-        wanted.shape.device_color_formats.push_back(static_cast<std::uint32_t>(colorFormatOf(target.colorFormat(index))));
-    }
-    if (target.hasDepth()) {
-        wanted.shape.depth_format        = target.depthFormat();
-        wanted.shape.device_depth_format = static_cast<std::uint32_t>(depthFormatOf(target.depthFormat()));
-    }
-    if (wanted.width > 0 && wanted.height > 0) {
-        // A USABLE EXTENT EXISTS: the "unusable extent" episode is over (see ReportOnce). It is a different fact from
-        // the sample-count refusals below, so it has an episode of its own.
-        impl->size_unknown_report.rearm();
-    }
-    // A COUNT IS A COUNT (see ADR-2026-11-14-sample-count-refused-not-lowered): the target states the number of
-    // samples it is drawn with, and `wanted.shape.samples` is that number - never another one. A count this device
-    // cannot build (above its limit, or not a power of two) REFUSES the target: one warning naming the request and
-    // the limit, nothing created, nothing drawn into it, and `readColorBuffer` answering NotReady. Lowering it would
-    // leave `RenderTarget::samples()` saying a number the images are not drawn with, which no value in this shape can
-    // express.
-    const std::uint32_t requested_samples = target.samples() == 0U ? 1U : target.samples();
-    const std::uint32_t largest_samples   = largestSampleCount(impl->supported_sample_counts);
-    if (!ensureBuildableSamples(requested_samples, impl->supported_sample_counts)) {
-        if (impl->samples_report.shouldReport()) {
-            // The two reasons a count is unbuildable are said as the difference they are: a request past the limit,
-            // and a number that is not a sample count at all. Both carry the pair a host acts on (requested vs
-            // offered) and their own code, so the two are distinguishable without reading the sentence.
-            const vn::String request = vn::String(u8"vk: a target asks for ") + numberText(requested_samples) + u8" samples per pixel";
-            const bool       above   = requested_samples > largest_samples;
-            const vn::String why     = above
-                                           ? request + u8", above what this device offers (up to " + numberText(largest_samples) +
-                                                 u8"; see Capabilities::max_samples)"
-                                           : request + u8", which is not a sample count this device offers (the counts are powers of two, up to " +
-                                                 numberText(largest_samples) + u8"; see Capabilities::max_samples)";
-            reportDiagnostic(targetDiagnostic(target,
-                                              DiagnosticSeverity::Warning,
-                                              DiagnosticCategory::UnsupportedRequest,
-                                              above ? u8"vk.target.samples_above_limit" : u8"vk.target.samples_not_a_count",
-                                              why,
-                                              vn::graphics::DiagnosticLimit{ requested_samples, largest_samples }));
-        }
-        return false;
-    }
-    impl->samples_report.rearm(); // a target with a count this device builds: the episode is over
-    wanted.shape.samples = requested_samples;
-    wanted.shape.subpass = 0U;
-    // A MULTISAMPLED DEPTH IS RESOLVED, and a device that cannot do that refuses the combination (ADR-2026-11-14).
-    // `TargetImages` builds the single-sample picture the render pass resolves into and every reader uses
-    // (`depthPicture`: the shadow path samples it), with `sample0` as the mode - so multisampling cannot change the
-    // depth a later pass tests against. The resolve is Vulkan 1.2 (see Impl::depth_resolve_supported), and a device
-    // below that genuinely cannot serve this shape: nothing is created, nothing is drawn, and `readColorBuffer`
-    // answers NotReady.
-    if (requested_samples > 1U && target.hasDepth() && !impl->depth_resolve_supported) {
-        if (impl->samples_depth_report.shouldReport()) {
-            reportDiagnostic(targetDiagnostic(target,
-                                              DiagnosticSeverity::Warning,
-                                              DiagnosticCategory::UnsupportedRequest,
-                                              u8"vk.target.multisampled_depth_unsupported",
-                                              vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
-                                                  u8" samples per pixel and a depth attachment; this device cannot resolve a multisampled depth "
-                                                  u8"(it needs Vulkan 1.2's depth/stencil resolve), so the target is refused (see Capabilities::max_samples)",
-                                              vn::graphics::DiagnosticLimit{ requested_samples, 1U }));
-        }
-        return false;
-    }
-    impl->samples_depth_report.rearm(); // a depth-attached target this device can resolve: the episode is over
-
-    // A BORROWED DEPTH (RenderTarget::shareDepth): this target draws against ANOTHER target's depth image instead of
-    // owning one, which is what makes "the composite tests against the G-buffer's depth" a composition rather than
-    // two copies of one picture. Three facts are the host's to satisfy, and each refusal is its own episode because
-    // each has a different repair:
-    //  - a MULTISAMPLED target cannot borrow: one image cannot be a multi-sample attachment for one pass and a
-    //    single-sample picture for another (the SDK says every backend refuses that combination);
-    //  - the LENDER is a target THIS device has built and that has a depth - the SDK's ordering rule (the lender
-    //    renders earlier in the frame) is what makes that true, and a frame that breaks it is wiring, not a capability;
-    //  - both targets are EQUALLY SIZED: the lender's picture is bound into a framebuffer of the borrower's extent.
-    const vn::graphics::RenderTarget* lender      = target.depthSource();
-    VkImageView                       lender_view = VK_NULL_HANDLE;
-    if (lender != nullptr) {
-        if (requested_samples > 1U) {
-            if (impl->borrow_samples_report.shouldReport()) {
-                reportDiagnostic(targetDiagnostic(target,
-                                                  DiagnosticSeverity::Warning,
-                                                  DiagnosticCategory::UnsupportedRequest,
-                                                  u8"vk.target.borrow_multisampled",
-                                                  vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
-                                                      u8" samples per pixel and borrows its depth (RenderTarget::shareDepth); one depth image "
-                                                      u8"cannot be a multi-sample attachment for one pass and a single-sample picture for another",
-                                                  vn::graphics::DiagnosticLimit{ requested_samples, 1U }));
-            }
-            return false;
-        }
-        impl->borrow_samples_report.rearm(); // a single-sample borrower: the episode is over
-        const auto source = impl->targets.find(lender);
-        if (source == impl->targets.end() || !source->second->built() || !source->second->hasDepth()) {
-            if (impl->borrow_source_report.shouldReport()) {
-                reportDiagnostic(targetDiagnostic(target,
-                                                  DiagnosticSeverity::Warning,
-                                                  DiagnosticCategory::UnsupportedRequest,
-                                                  u8"vk.target.borrow_source_missing",
-                                                  u8"vk: a target borrows its depth from a target this device has not built (or one with no "
-                                                  u8"depth attachment); the lender must render earlier in the same frame (see RenderTarget::shareDepth)"));
-            }
-            return false;
-        }
-        impl->borrow_source_report.rearm(); // the lender is built here: the episode is over
-        if (lender->width() != target.width() || lender->height() != target.height()) {
-            if (impl->borrow_extent_report.shouldReport()) {
-                reportDiagnostic(targetDiagnostic(target,
-                                                  DiagnosticSeverity::Warning,
-                                                  DiagnosticCategory::UnsupportedRequest,
-                                                  u8"vk.target.borrow_extent_mismatch",
-                                                  vn::String(u8"vk: a target borrows the depth of a differently sized target (") + numberText(static_cast<std::uint32_t>(lender->width())) +
-                                                      u8"x" + numberText(static_cast<std::uint32_t>(lender->height())) + u8" against " +
-                                                      numberText(static_cast<std::uint32_t>(target.width())) + u8"x" +
-                                                      numberText(static_cast<std::uint32_t>(target.height())) + u8"); a shared depth has one extent"));
-            }
-            return false;
-        }
-        impl->borrow_extent_report.rearm(); // equally sized: the episode is over
-        lender_view = source->second->depthPictureView();
-        // THE LENDER'S DEPTH FORMAT IS WHAT THIS TARGET'S PASS IS BUILT WITH: the borrower's own declaration is not a
-        // picture anyone has, and the shape states what the attachment IS - so a lender rebuilt at another format
-        // rebuilds the borrower through `planTarget`'s own comparison.
-        wanted.shape.depth_format        = source->second->desc.shape.depth_format;
-        wanted.shape.device_depth_format = source->second->desc.shape.device_depth_format;
-    }
-
-    const auto [entry, inserted] = impl->targets.try_emplace(&target);
-    (void)inserted;
-    if (entry->second == nullptr) {
-        entry->second = std::make_shared<TargetImages>();
-    }
-    TargetImages& images = *entry->second;
-    TargetInstance current;
-    current.desc                   = images.desc;
-    current.generation             = 0U;
-    current.built                  = images.built();
-    current.attachments_invalidated = false;
-
-    TargetDecision decision = planTarget(current, wanted);
-    // THE BORROW EDGE IS PART OF WHAT WAS BUILT even though `planTarget` does not compare it: it is not a property of
-    // the shape but a relationship to another record, so a target that started or stopped borrowing - or that borrows
-    // a lender whose depth picture was rebuilt - has a different framebuffer to bind. A target with no usable extent
-    // still decides first, as always.
-    const bool borrow_moved = images.built() && (images.borrowsDepth() != (lender != nullptr) ||
-                                                 (lender != nullptr && images.borrowed_depth_view != lender_view));
-    if (borrow_moved && !(decision.action == TargetAction::Repair && decision.reason == RepairReason::SizeUnknown)) {
-        decision.action = TargetAction::Rebuild;
-        decision.reason = RepairReason::None;
-    }
-    switch (decision.action) {
-    case TargetAction::None:
-        return true;
-    case TargetAction::Repair:
-        if (decision.reason == RepairReason::SizeUnknown) {
-            if (impl->size_unknown_report.shouldReport()) {
-                reportDiagnostic(targetDiagnostic(target,
-                                                  DiagnosticSeverity::Warning,
-                                                  DiagnosticCategory::TargetBuildFailed,
-                                                  u8"vk.target.size_unknown",
-                                                  u8"vk: a target with an unusable extent (0 in a dimension) was left unbuilt"));
-            }
-            return false;
-        }
-        // Bootstrap: the attachments exist and have the right shape; the colour attachments always CLEAR, so the first
-        // pass in does not need a second variant.
-        return true;
-    case TargetAction::ResizeInPlace:
-        images.desc = wanted;
-        if (!resizeTarget(impl->device_table, impl->device, impl->allocator, images)) {
-            reportDiagnostic(targetDiagnostic(target,
-                                              DiagnosticSeverity::Error,
-                                              DiagnosticCategory::TargetBuildFailed,
-                                              u8"vk.target.resize_failed",
-                                              u8"vk: the target's attachments could not be rebuilt at the new extent (see the memory report)"));
-            return false;
-        }
-        return true;
-    case TargetAction::Rebuild:
-        // The shape changed: the render pass, the framebuffer and the attachments are rebuilt; pipelines are keyed by
-        // compatibility, so the ones built for the old shape are simply never asked for again (and a resize, which
-        // keeps the shape, reuses them - see ContentDraw).
-        destroyTarget(impl->device_table, impl->device, impl->allocator, images);
-        images.desc                = wanted;
-        images.depth_borrowed      = lender != nullptr;
-        images.borrowed_depth_view = lender_view;
-        if (!buildTarget(impl->device_table, impl->device, impl->allocator, images)) {
-            reportDiagnostic(targetDiagnostic(target,
-                                              DiagnosticSeverity::Error,
-                                              DiagnosticCategory::TargetBuildFailed,
-                                              u8"vk.target.build_failed",
-                                              u8"vk: the off-screen target's attachments could not be built (see the memory report)"));
-            return false;
-        }
-        return true;
-    }
-    return false;
 }
 
 Capabilities Device::capabilities() const noexcept
@@ -3806,15 +3463,14 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     // rebuild the target while this verb waits below, so every answer is checked AGAIN under the gate - this pass only
     // spares the device the stop.
     {
-        const std::lock_guard<std::mutex> targets_held(impl->targets_mutex);
-        const auto found = impl->targets.find(target);
-        if (found == impl->targets.end() || !found->second->built()) {
+        const std::shared_ptr<TargetImages> peek = impl->target_table.lookup(target);
+        if (peek == nullptr || !peek->built()) {
             return fail(ReadbackResult::NotReady);
         }
-        if (attachment < 0 || static_cast<std::size_t>(attachment) >= found->second->colorCount()) {
+        if (attachment < 0 || static_cast<std::size_t>(attachment) >= peek->colorCount()) {
             return fail(ReadbackResult::Invalid);
         }
-        if (found->second->colorFormat(static_cast<std::size_t>(attachment)) != VK_FORMAT_R8G8B8A8_UNORM) {
+        if (peek->colorFormat(static_cast<std::size_t>(attachment)) != VK_FORMAT_R8G8B8A8_UNORM) {
             return fail(ReadbackResult::Unsupported);
         }
     }
@@ -3838,11 +3494,11 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     }
 
     // THE AUTHORITATIVE LOOK: the frames that ran while this verb waited may have rebuilt or replaced the target.
-    const auto found = impl->targets.find(target);
-    if (found == impl->targets.end() || !found->second->built()) {
+    const std::shared_ptr<TargetImages> entry = impl->target_table.lookup(target);
+    if (entry == nullptr || !entry->built()) {
         return fail(ReadbackResult::NotReady);
     }
-    TargetImages& images = *found->second;
+    TargetImages& images = *entry;
     if (attachment < 0 || static_cast<std::size_t>(attachment) >= images.colorCount()) {
         return fail(ReadbackResult::Invalid);
     }
@@ -3973,15 +3629,14 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
     // copy, so it is refused rather than decoded into numbers that look like depths and are not (the same table the
     // copy and the decoder use is the SDK's `depthReadbackOf`).
     {
-        const std::lock_guard<std::mutex> targets_held(impl->targets_mutex);
-        const auto found = impl->targets.find(target);
-        if (found == impl->targets.end() || !found->second->built()) {
+        const std::shared_ptr<TargetImages> peek = impl->target_table.lookup(target);
+        if (peek == nullptr || !peek->built()) {
             return fail(ReadbackResult::NotReady);
         }
         if (target->depthSource() != nullptr) {
             return fail(ReadbackResult::Unsupported);
         }
-        if (!found->second->hasDepth()) {
+        if (!peek->hasDepth()) {
             return fail(ReadbackResult::Invalid);
         }
         if (!depthReadbackOf(target->depthFormat()).readable) {
@@ -4004,14 +3659,14 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
     }
 
     // THE AUTHORITATIVE LOOK: the frames that ran while this verb waited may have rebuilt or replaced the target.
-    const auto found = impl->targets.find(target);
-    if (found == impl->targets.end() || !found->second->built()) {
+    const std::shared_ptr<TargetImages> entry = impl->target_table.lookup(target);
+    if (entry == nullptr || !entry->built()) {
         return fail(ReadbackResult::NotReady);
     }
     if (target->depthSource() != nullptr) {
         return fail(ReadbackResult::Unsupported);
     }
-    TargetImages& images = *found->second;
+    TargetImages& images = *entry;
     if (!images.hasDepth()) {
         return fail(ReadbackResult::Invalid); // no depth attachment at all: the request names nothing
     }
@@ -4170,14 +3825,14 @@ MemoryStats Device::memoryStats() const noexcept
     return impl->allocator.stats();
 }
 
-TargetClaims& Device::targetClaims() noexcept
+TargetTable& Device::targetTable() noexcept
 {
-    return impl->target_claims;
+    return impl->target_table;
 }
 
-const TargetClaims& Device::targetClaims() const noexcept
+const TargetTable& Device::targetTable() const noexcept
 {
-    return impl->target_claims;
+    return impl->target_table;
 }
 
 ResidenceTable& Device::residence() noexcept

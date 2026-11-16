@@ -6,7 +6,7 @@
 #include <vine/backend_vk/internal/Handles.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/backend_vk/internal/ResidenceTable.hpp>
-#include <vine/backend_vk/internal/TargetClaims.hpp>
+#include <vine/backend_vk/internal/TargetTable.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -474,24 +474,27 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
     [[nodiscard]] RetirementNumbers retirementNumbers() const noexcept;
 
     /**
-     * @brief Gets the device's TARGET CLAIMS: the per-frame leases two drivers contend for (see TargetClaims).
+     * @brief Gets the device's TARGET TABLE: the built targets, the objects a host target became and the per-frame
+     *        claims two drivers contend for (see TargetTable).
      *
      * @details
      * - EXPOSED FOR THE SAME REASON `retirementNumbers()` IS: a claim is a fact about the DEVICE, not about one
      *   frame, and a test that plays "the other driver" must be able to take a target for a while. It is not a
      *   verb `RenderDevice` promises.
+     * - ONE OBJECT ANSWERS ALL OF IT: which objects a target became, who may build or write it this frame, and what
+     *   a release removed (see TargetTable's class note) - so "what is this target now" has one place to look.
      *
-     * @return The claims (no target is held between frames).
+     * @return The table (empty between frames, its claim books all zero when nothing is held).
      */
-    [[nodiscard]] TargetClaims& targetClaims() noexcept;
-    /** @brief Gets the target claims for a reader that only reports on them (see the mutable overload). */
-    [[nodiscard]] const TargetClaims& targetClaims() const noexcept;
+    [[nodiscard]] TargetTable& targetTable() noexcept;
+    /** @brief Gets the target table for a reader that only reports on it (see the mutable overload). */
+    [[nodiscard]] const TargetTable& targetTable() const noexcept;
 
     /**
      * @brief Gets the device's RESIDENCE TABLE: who may build a geometry and who has to copy it (see ResidenceTable).
      *
      * @details
-     * - EXPOSED FOR THE SAME REASON `targetClaims()` IS: residency is a fact about the DEVICE, not about one frame,
+     * - EXPOSED FOR THE SAME REASON `targetTable()` IS: residency is a fact about the DEVICE, not about one frame,
      *   and a test that plays "the other driver" must be able to hold a claim over a key while a real frame runs
      *   (see `.ai/design/graphics-sessions.md` §3.1.4, F4). It is not a verb `RenderDevice` promises.
      * - It is not gated on the body gate: it has its own lock, and the frame path asks it while a frame runs.
@@ -559,18 +562,6 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
     void setMemoryBlockCreator(MemoryBlockCreator creator);
 
   private:
-    /**
-     * @brief Builds (or rebuilds) the Vulkan objects for @p target when they do not fit it.
-     *
-     * @details
-     * - M1 compares the description it built against the target's current one; M3 replaces the comparison with
-     *   `planTarget`'s `TargetDecision` (ResizeInPlace keeps the render pass, Rebuild replaces it).
-     *
-     * @param target The host's target (borrowed).
-     * @return true when the objects exist and fit the target.
-     */
-    [[nodiscard]] bool ensureTarget(const vn::graphics::RenderTarget& target);
-
     /**
      * @brief Brings up the session's window system, opening its connection once.
      *

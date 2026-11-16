@@ -134,7 +134,7 @@ struct StateMapping {
      *   mapping is stated once, here, because the render pass and the pipeline must read the same answer - two
      *   spellings would be a render pass and a pipeline that disagree about how many samples they draw.
      * - A count Vulkan has no flag for (0, or a number that is not one of its counts) answers 1: the request is clamped
-     *   to what the device offers before it reaches this table (see `Device::ensureTarget`), so an unknown value is a
+     *   to what the device offers before it reaches this table (see `TargetTable::ensure`), so an unknown value is a
      *   bug upstream, and drawing single-sampled is the only safe reading of it.
      *
      * @param samples Samples per pixel, as the target's shape states them.

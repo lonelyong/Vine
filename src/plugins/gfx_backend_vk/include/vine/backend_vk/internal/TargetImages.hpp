@@ -85,7 +85,7 @@ struct TargetImages {
     bool depth_borrowed{ false };
     /// The view a borrowing target's framebuffer attaches: the lender's `depthPictureView()` as it was when this one
     /// was built. NOT owned here - the lender's record owns the image, and this target is rebuilt whenever that
-    /// picture moves (see Device::ensureTarget), so the value can never outlive what it names.
+    /// picture moves (see TargetTable::ensure), so the value can never outlive what it names.
     VkImageView borrowed_depth_view{ VK_NULL_HANDLE };
 
     /// The render pass whose depth attachment is CLEARed (the first pass into a fresh target).

@@ -98,7 +98,7 @@ bool TargetImages::built() const noexcept
     // and it is the image a shader samples (see depthPicture).
     const bool depth_picture = !resolvesDepth() || hasDepthResolve();
     // A BORROWED depth has no images of its own to check: what it needs is the lender's view, which the device
-    // resolved when it built this record (see Device::ensureTarget).
+    // resolved when it built this record (see TargetTable::ensure).
     const bool depth_attachment = !depth_borrowed || borrowed_depth_view != VK_NULL_HANDLE;
     return render_pass != VK_NULL_HANDLE && framebuffer != VK_NULL_HANDLE && attachments && sample_buffers && depth_picture &&
            depth_attachment;

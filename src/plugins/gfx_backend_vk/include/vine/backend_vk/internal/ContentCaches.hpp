@@ -497,7 +497,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @brief Gets the device's RESIDENCE TABLE: who may build a geometry, who may use it, and who has to copy it.
      *
      * @details
-     * - THE DEVICE-LEVEL FACT TWO DRIVERS SHARE, exposed for the same reason `Device::targetClaims()` is: a claim is
+     * - THE DEVICE-LEVEL FACT TWO DRIVERS SHARE, exposed for the same reason `Device::targetTable()` is: a claim is
      *   about the DEVICE, not one frame, and a test that plays "the other driver" must be able to hold one (see
      *   `.ai/design/graphics-sessions.md` §3.1.4). The frame path asks it through `FrameBuilds`; nothing outside this
      *   backend is promised this shape.
