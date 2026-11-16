@@ -249,7 +249,24 @@ bool ContentPass::record(const core::CompiledPass&            pass,
                          std::span<const std::byte>           view_block,
                          ::vsg::ref_ptr<::vsg::Node>&         out)
 {
-    return walk(pass, facts, compatibility, inputs, view_block, out, Mode::Record);
+    // THE TWO PHASES IN ONE CALL (see the header): the values first, the recording of them second - the same order
+    // the frame path takes, with the device's lock held around the first only. A caller that owns the device (a
+    // test, a tool) can take both here; the frame path keeps them apart so its recording takes no lock.
+    ContentPlan::Pass resolved;
+    resolved.registry    = scope_.registry;
+    const bool complete  = resolve(pass, facts, compatibility, inputs, view_block, resolved);
+    const bool recorded  = ContentPlan::record(resolved, out);
+    return complete && recorded;
+}
+
+bool ContentPass::resolve(const core::CompiledPass&            pass,
+                          const ContentFacts&                  facts,
+                          const core::RenderPassCompatibility& compatibility,
+                          std::span<const InputImages>         inputs,
+                          std::span<const std::byte>           view_block,
+                          ContentPlan::Pass&                   out)
+{
+    return walk(pass, facts, compatibility, inputs, view_block, out, Mode::Resolve);
 }
 
 bool ContentPass::prepare(const core::CompiledPass&            pass,
@@ -257,8 +274,11 @@ bool ContentPass::prepare(const core::CompiledPass&            pass,
                           const core::RenderPassCompatibility& compatibility,
                           std::span<const InputImages>         inputs)
 {
-    ::vsg::ref_ptr<::vsg::Node> discarded;
-    return walk(pass, facts, compatibility, inputs, {}, discarded, Mode::Prepare);
+    // PREPARING RESOLVES NOTHING THE RECORDING COULD READ: the walk stops at the identity (see Mode::Prepare), and the
+    // slot it fills holds no call - which is exactly "this frame's values are still the frame's".
+    ContentPlan::Pass unused;
+    unused.registry = scope_.registry;
+    return walk(pass, facts, compatibility, inputs, {}, unused, Mode::Prepare);
 }
 
 bool ContentPass::walk(const core::CompiledPass&            pass,
@@ -266,11 +286,10 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
                        const core::RenderPassCompatibility& compatibility,
                        std::span<const InputImages>         inputs,
                        std::span<const std::byte>           view_block,
-                       ::vsg::ref_ptr<::vsg::Node>&         out,
+                       ContentPlan::Pass&                   out,
                        Mode                                 mode)
 {
-    const bool recording = mode == Mode::Record;
-    auto       group     = ::vsg::Group::create();
+    const bool resolving = mode == Mode::Resolve;
 
     // The refusal ledger belongs to THIS pass, and its summary has to be said however the pass ends - so it
     // is cleared here and emitted by a guard, not by a call before every `return`.
@@ -295,7 +314,6 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
                             vn::String::fromUtf8("the pass is not drawn: it declares " + std::to_string(pass.inputs.size()) +
                                                  " input(s) and the caller offered " + std::to_string(inputs.size()) +
                                                  " (one entry per declared input, in declaration order)"));
-        out = group;
         return false;
     }
     for (std::size_t index = 0; index < inputs.size(); ++index) {
@@ -311,7 +329,6 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
                                                                      "sampleable (a depth a pass preserves, or a lender's, cannot be sampled)"
                                                                    : " offers no depth texture where the plan says its depth IS sampleable "
                                                                      "(the shader's binding would have nothing to read)")));
-            out = group;
             return false;
         }
 
@@ -321,7 +338,6 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
                                 vn::String::fromUtf8("the pass is not drawn: input " + std::to_string(index) + " offers " +
                                                      std::to_string(inputs[index].colors.size()) + " colour texture(s) where the plan says " +
                                                      std::to_string(pass.inputs[index].color_attachments)));
-            out = group;
             return false;
         }
     }
@@ -357,20 +373,17 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
             diagnostics_.report(vn::graphics::DiagnosticSeverity::Warning,
                                 vn::graphics::DiagnosticCategory::ContentSkipped,
                                 vn::String::fromUtf8("why that pass has no content half: " + describeMissingContentHalf(pass, facts)));
-            out = group;
             return false;
         }
         // What the pass cannot fill is refused BEFORE any pipeline is acquired or any set is built (see
         // serveHalf): a program whose blocks live in a set nobody built for it would otherwise be drawn with
         // another set's bytes.
         if (!serveHalf(*content_half, sampled_color_count + sampled_depth_count, nullptr)) {
-            out = group;
             return false;
         }
         input_set = makeInputSet(pass, inputs, *content_half->pipelines);
         if ((sampled_color_count != 0U || sampled_depth_count != 0U) && input_set == nullptr) {
-            out = group; // makeInputSet reported why
-            return false;
+            return false; // makeInputSet reported why
         }
     }
 
@@ -380,11 +393,10 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
     // frame - consuming one here would make the next frame write the slab the oldest in-flight frame reads (see
     // core::FrameRing), which is a torn picture rather than a slow one.
     BlockStorage::Block view{};
-    if (recording) {
+    if (resolving) {
         view = scope_.storage->writeView(view_block);
         if (!view.valid) {
             reportRefused("the pass' view block", "the frame's block budget is full");
-            out = group;
             return false;
         }
     }
@@ -440,7 +452,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
             // inputs, the counts its set and its pipeline carry, and the identity its key is spelled from - the
             // same answer the warm-up path reads, so the pipeline this call compiles is the one it promised.
             const DrawNeeds needs = drawNeeds(pass, draw, inputs);
-            if (!recording) {
+            if (!resolving) {
                 // PREPARING: the identity is all a full-screen call offers to build ahead of time. Its set is the
                 // CALL's (its own light and shadow block offsets), so it is built when the call is recorded.
                 if (!half->draws->prepare(needs.keyFor(compatibility))) {
@@ -449,9 +461,14 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
                 }
                 continue;
             }
-            if (!recordScreenDraw(draw, *half, pass, compatibility, inputs, needs, *group)) {
+            // THE CALL THE RECORDING WILL RUN (see api/ContentPlan): everything it binds is resolved here - the
+            // set, the map, the identity's pipeline - so the recording reads no table and takes no lock.
+            ContentPlan::Call call;
+            if (!resolveScreenDraw(draw, *half, pass, compatibility, inputs, needs, call)) {
                 complete = false;
+                continue;
             }
+            out.calls.push_back(std::move(call));
             continue;
         }
 
@@ -462,11 +479,11 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
         vn::graphics::VineLightsBlock lights_block;
         const std::size_t            represented = vn::graphics::packLightBlock(draw.lights, draw.camera, lights_block);
         BlockStorage::Block          lights{};
-        if (recording) {
+        if (resolving) {
             lights = scope_.storage->writeLights(bytesOf(lights_block));
         }
         reportLightsDropped(enabledLightCount(draw.lights), represented, draw.camera.present);
-        if (recording && !lights.valid) {
+        if (resolving && !lights.valid) {
             reportRefused("the drawing call's light block", "the frame's block budget is full");
             complete = false;
             continue;
@@ -478,24 +495,30 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
         vn::graphics::VineShadowBlock shadow_block;
         const bool                    shadow_on = packShadowBlock(pass.shadow, draw, shadow_block);
         BlockStorage::Block           shadow{};
-        if (recording) {
+        if (resolving) {
             shadow = scope_.storage->writeShadows(bytesOf(shadow_block));
         }
         (void)shadow_on;
-        if (recording && !shadow.valid) {
+        if (resolving && !shadow.valid) {
             reportRefused("the drawing call's shadow block", "the frame's block budget is full");
             complete = false;
             continue;
         }
 
         for (const core::CompiledCommand& command : draw.commands) {
-            if (!recordCommand(command, draw, pass, facts, compatibility, view.offset, lights.offset, shadow.offset, input_set, *group, mode)) {
+            ContentPlan::Call call;
+            if (!resolveCommand(command, draw, pass, facts, compatibility, view.offset, lights.offset, shadow.offset, input_set, call, mode)) {
                 complete = false;
+                continue;
+            }
+            // PREPARING INSERTS NOTHING (see Mode::Prepare): the identity is what the verb ensures, and the values
+            // are the frame's - so the slot it was handed stays empty.
+            if (resolving) {
+                out.calls.push_back(std::move(call));
             }
         }
     }
 
-    out = group;
     return complete;
 }
 
@@ -610,13 +633,13 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
     return ::vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, layer.layoutFor(texture_count, depth_count), ContentPipeline::kInputSet, set);
 }
 
-bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
-                                   const Scope::Entry&                  entry,
-                                   const core::CompiledPass&            pass,
-                                   const core::RenderPassCompatibility& compatibility,
-                                   std::span<const InputImages>         inputs,
-                                   const DrawNeeds&                     needs,
-                                   ::vsg::Group&                        into)
+bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
+                                    const Scope::Entry&                  entry,
+                                    const core::CompiledPass&            pass,
+                                    const core::RenderPassCompatibility& compatibility,
+                                    std::span<const InputImages>         inputs,
+                                    const DrawNeeds&                     needs,
+                                    ContentPlan::Call&                   call)
 {
     ContentPipeline* const layer = entry.pipelines;
     if (layer == nullptr) {
@@ -941,12 +964,23 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
         samples->dynamicOffsets = std::move(dynamic_offsets);
     }
 
-    ContentDraw::ScreenDraw full_screen;
+    // THE CALL THE RECORDING WILL RUN (see api/ContentPlan): the set it binds, the identity's pipeline and the
+    // state are all resolved here - and the pipeline is what the recording binds, never a layer lookup.
+    ContentDraw::ScreenDraw& full_screen = call.screen_draw;
+    call.draws                           = entry.draws;
+    call.screen                          = true;
     // THE IDENTITY, spelled ONCE (see api/DrawNeeds): the counts it carries are the source's colours and the
     // source's own depth - the map and the block are the text's own declarations, so they cannot vary with the
     // pass - and it states no `depth_sampleable`, because the full-screen ABI's depth question is answered by the
     // counts (see DrawNeeds::keyFor).
-    full_screen.key               = needs.keyFor(compatibility);
+    full_screen.key = needs.keyFor(compatibility);
+    const ContentDraw::Identity identity = entry.draws->plan(full_screen.key);
+    full_screen.pipeline                 = identity.pipeline;
+    full_screen.variant                  = identity.variant;
+    if (full_screen.pipeline == nullptr) {
+        reportRefused("a full-screen drawing call", "its pipeline for this target could not be built");
+        return false;
+    }
     full_screen.dynamic           = draw.dynamic;
     full_screen.samplers          = samples;
     // No push: the SDK's full-screen programs read their lights from the light BLOCK (see LightBlock), and a
@@ -960,27 +994,20 @@ bool ContentPass::recordScreenDraw(const core::CompiledDraw&            draw,
     full_screen.depth_min         = pass.depth_range.min;
     full_screen.depth_max         = pass.depth_range.max;
     full_screen.color_attachments = pass.color_attachments;
-
-    const auto group = entry.draws->recordScreen(*scope_.registry, full_screen);
-    if (group == nullptr) {
-        reportRefused("a full-screen drawing call", "its pipeline for this target could not be built");
-        return false;
-    }
-    into.addChild(group);
     return true;
 }
 
-bool ContentPass::recordCommand(const core::CompiledCommand&                    command,
-                                const core::CompiledDraw&                       draw,
-                                const core::CompiledPass&                       pass,
-                                const ContentFacts&                             facts,
-                                const core::RenderPassCompatibility&            compatibility,
-                                std::uint64_t                                   view_offset,
-                                std::uint64_t                                   lights_offset,
-                                std::uint64_t                                   shadow_offset,
-                                const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
-                                ::vsg::Group&                                   into,
-                                Mode                                            mode)
+bool ContentPass::resolveCommand(const core::CompiledCommand&                    command,
+                                 const core::CompiledDraw&                       draw,
+                                 const core::CompiledPass&                       pass,
+                                 const ContentFacts&                             facts,
+                                 const core::RenderPassCompatibility&            compatibility,
+                                 std::uint64_t                                   view_offset,
+                                 std::uint64_t                                   lights_offset,
+                                 std::uint64_t                                   shadow_offset,
+                                 const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
+                                 ContentPlan::Call&                              call,
+                                 Mode                                            mode)
 {
     // WHAT THIS DRAWABLE NEEDS (see api/DrawNeeds): the identity a pipeline is compiled for, answered by the one
     // function the warm-up path answers it with as well. The recorder READS it here instead of deriving it a
@@ -1071,7 +1098,7 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     vn::graphics::VineDrawBlock draw_block;
     BlockStorage::Block         block{};
     BlockStorage::MaterialWrite material_write{};
-    if (mode == Mode::Record) {
+    if (mode == Mode::Resolve) {
         vn::graphics::packDrawBlock(command.model, command.opacity, command.point_size, draw_block);
         block          = scope_.storage->writeDraw(bytesOf(draw_block));
         material_write = scope_.storage->writeMaterial(needs.material_entry->material.as<vn::graphics::MaterialTag>(),
@@ -1143,6 +1170,14 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     }
     const PrimitiveFacts& primitive = needs.geometry_entry->primitives[command.primitive];
 
+    // A DRAW THAT NAMES NEITHER AN INDEX STREAM NOR A VERTEX COUNT produces no command (see api/ContentDraw's file
+    // note): refused HERE, before any identity is resolved for it - a refused draw compiles nothing (the property
+    // the recorder's own ordering keeps, one phase later).
+    if (!primitive.indices.has_value() && needs.geometry_entry->vertex_count == 0U) {
+        reportRefused("the command", "it names neither an index stream nor a vertex count");
+        return false;
+    }
+
     // The stream the draw is ASSEMBLED from, and the two modes are different commands: with an index stream
     // the span travels with the draw (the bind aliases the whole buffer, so an index arena is uploaded once),
     // and without one the vertex streams themselves are the geometry (see api/GeometryFacts).
@@ -1158,7 +1193,11 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
         index_bind = acquired.bind;
     }
 
-    ContentDraw::Draw record;
+    // THE CALL THE RECORDING WILL RUN (see api/ContentPlan): the identity, the state, the binds and the counts are
+    // all resolved here - the recording adds a node and reads nothing.
+    ContentDraw::Draw& record = call.draw;
+    call.draws                = entry->draws;
+    call.screen               = false;
     // THE IDENTITY, spelled ONCE (see api/DrawNeeds): the same value the warm-up path reads, so this draw cannot
     // be compiled for an identity the answer does not name. The variant is identity like the layout is, and so
     // is the topology the half's pipeline BAKES (the API accepts a dynamically set topology only within the
@@ -1176,7 +1215,18 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
         }
         return true;
     }
-    record.dynamic                                           = command.dynamic;
+
+    // THE PIPELINE THE RECORDING BINDS is resolved with the identity (`C3` / `S8c-2`): the recording binds this
+    // object and never asks the layer, and the pass' registry counts its binds from the resolved VARIANT - so the
+    // recording touches neither the layer nor the pool.
+    const ContentDraw::Identity identity = entry->draws->plan(record.key);
+    record.pipeline                      = identity.pipeline;
+    record.variant                       = identity.variant;
+    if (record.pipeline == nullptr) {
+        reportRefused("the command", "its pipeline identity has no compiled pipeline");
+        return false;
+    }
+    record.dynamic = command.dynamic;
     // The device's lineWidthRange is a LIMIT the API enforces by refusing the call, so the width is clamped here -
     // where the draw is prepared - rather than at the Vulkan boundary, which cannot report why it refused. 1.0 is
     // the floor for the same reason a point is at least one pixel: "0" must not become a way to hide lines.
@@ -1184,28 +1234,25 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
     record.dynamic.line_width                                = std::clamp(record.dynamic.line_width, 1.0F, widest_line);
     // The blocks: one bind per set the PROGRAM declares (its own `layout(set = ..., binding = ...)` qualifiers,
     // see api/ProgramAbi). Which sets those are came from `serveHalf`, which also refused the half when the
-    // caller built no set for one of them.
+    // caller built no set for one of them. THE BINDS ARE THE PLAN'S (see api/ContentPlan): the recording adds
+    // them to a node and never builds one, because a bind names the offsets resolved here.
     const ::vsg::ref_ptr<::vsg::PipelineLayout> block_layout = entry->pipelines->layoutFor(needs.key_colors, needs.key_depths);
     const BlockDescriptors::Offsets             block_offsets{ view_offset, block.offset, material_write.offset, lights_offset, shadow_offset };
-    std::array<::vsg::ref_ptr<::vsg::BindDescriptorSet>, kMaxBlockSets> block_binds;
-    std::size_t                                                         bound_sets = 0U;
     for (std::size_t index = 0U; index < half_block_count_; ++index) {
-        block_binds[bound_sets] = half_blocks_[index]->bind(block_layout, block_offsets);
-        if (block_binds[bound_sets] == nullptr) {
+        ::vsg::ref_ptr<::vsg::BindDescriptorSet>& bind = call.blocks[call.block_count];
+        bind                                            = half_blocks_[index]->bind(block_layout, block_offsets);
+        if (bind == nullptr) {
             reportRefused("the command's block set", "one of its dynamic offsets is not one the device accepts");
             return false;
         }
-        ++bound_sets;
+        ++call.block_count;
     }
-    record.blocks = std::span<const ::vsg::ref_ptr<::vsg::BindDescriptorSet>>(block_binds.data(), bound_sets);
     // The pushes: one command per range the PROGRAM declares, filled from this pass' camera and THIS drawable's
     // model matrix (api/ContentPush) - a declared push is re-written for every drawable, because `modelView`
     // carries the drawable's model matrix, and an unwritten one would carry the last drawable's. The range's
     // offset, size and stages are the declaration's, so the words and the pipeline layout cannot disagree.
-    std::array<::vsg::ref_ptr<::vsg::PushConstants>, kMaxPushRanges> push_commands;
-    std::size_t                                                      push_count = 0U;
     for (const AbiPushRange& range : needs.program_entry->abi.pushes) {
-        if (push_count == push_commands.size()) {
+        if (call.push_count == call.pushes.size()) {
             reportRefused("the command's push range", "its program declares more push ranges than this pass writes");
             return false;
         }
@@ -1219,19 +1266,24 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
         }
         ::vsg::ref_ptr<::vsg::ubyteArray> bytes = ::vsg::ubyteArray::create(static_cast<std::uint32_t>(push_bytes_.size()));
         std::memcpy(bytes->data(), push_bytes_.data(), push_bytes_.size());
-        push_commands[push_count] = ::vsg::PushConstants::create(static_cast<VkShaderStageFlags>(pushStagesOf(range.stages)), range.offset, bytes);
-        if (push_commands[push_count] == nullptr) {
+        ::vsg::ref_ptr<::vsg::PushConstants>& push =
+            call.pushes[call.push_count] = ::vsg::PushConstants::create(static_cast<VkShaderStageFlags>(pushStagesOf(range.stages)), range.offset, bytes);
+        if (push == nullptr) {
             reportRefused("the command's push range", "its bytes could not be prepared");
             return false;
         }
-        ++push_count;
+        ++call.push_count;
     }
-    record.pushes         = std::span<const ::vsg::ref_ptr<::vsg::PushConstants>>(push_commands.data(), push_count);
     // The pass' sampled images are bound only by a program that reads them (see programSamplesInputSet in
     // api/DrawNeeds): binding a set the pipeline layout has no room for is an API violation, and the engine's own
     // programs have their inputs served by name in their own sets.
-    record.inputs         = needs.reads_inputs ? inputs : nullptr;
-    record.vertex_binds   = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(binds.data(), bound);
+    record.inputs = needs.reads_inputs ? inputs : nullptr;
+    // The streams: the binds `acquireVertex` / `acquireIndex` answered are the plan's, in the same order the walk
+    // built them (one per channel, then the instance stream).
+    for (std::size_t index = 0U; index < bound; ++index) {
+        call.vertex_binds[index] = binds[index];
+    }
+    call.vertex_bind_count = bound;
     record.index          = index_bind;
     record.instances      = instanced ? command.instance_count : 1U;
     record.first_instance = instanced ? command.first_instance : 0U;
@@ -1252,15 +1304,6 @@ bool ContentPass::recordCommand(const core::CompiledCommand&                    
         record.vertex_count = needs.geometry_entry->vertex_count;
     }
     record.color_attachments = pass.color_attachments;
-
-    ::vsg::ref_ptr<::vsg::Node> node = entry->draws->record(*scope_.registry, record);
-    if (node == nullptr) {
-        // The recorder refuses when the identity has no compiled pipeline: a state group without a pipeline bind
-        // would draw with whatever was bound last.
-        reportRefused("the command", "its pipeline identity has no compiled pipeline");
-        return false;
-    }
-    into.addChild(node);
     return true;
 }
 

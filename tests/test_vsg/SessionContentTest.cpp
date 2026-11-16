@@ -305,6 +305,11 @@ TEST(SessionContentTest, ContentAttachedToTheSessionReachesTheWindowsPixels)
     draw.index        = index_bind.bind;
     draw.viewport     = ViewportRect{ 0.0F, 0.0F, static_cast<float>(kWidth), static_cast<float>(kHeight) };
     draw.index_count  = 3U;
+    // THE IDENTITY IS RESOLVED FIRST (see api/ContentDraw): the recorder binds the value, never the layer.
+    const ContentDraw::Identity identity = recorder.plan(draw.key);
+    draw.pipeline                        = identity.pipeline;
+    draw.variant                         = identity.variant;
+    ASSERT_NE(draw.pipeline, nullptr) << "the identity must compile before the recording";
 
     const auto content = recorder.record(registry, draw);
     ASSERT_NE(content, nullptr) << "the draw must record";

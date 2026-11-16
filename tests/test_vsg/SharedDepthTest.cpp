@@ -259,6 +259,13 @@ struct Stack {
         draw.index        = index_bind.bind;
         draw.viewport     = ViewportRect{ 0.0F, 0.0F, static_cast<float>(kSize), static_cast<float>(kSize) };
         draw.index_count  = 3U;
+        // THE IDENTITY IS RESOLVED FIRST (see api/ContentDraw): the recorder binds the value, never the layer.
+        const ContentDraw::Identity identity = recorder->plan(draw.key);
+        draw.pipeline                        = identity.pipeline;
+        draw.variant                         = identity.variant;
+        if (draw.pipeline == nullptr) {
+            return {};
+        }
         return recorder->record(*registry, draw);
     }
 

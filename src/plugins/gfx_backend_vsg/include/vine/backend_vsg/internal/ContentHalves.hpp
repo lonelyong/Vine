@@ -105,6 +105,21 @@ class ContentHalves {
     /** @brief Gets how many compiled halves are alive (a steady pass raises this by nothing). */
     [[nodiscard]] std::size_t halves() const noexcept;
 
+    /** @brief Gets this producer's lifetime handle, so a frame's PLAN can pin the halves it resolved.
+     *
+     * @details
+     * - WHY A PLAN PINS THE PRODUCER AND NOT EACH HALF (`G10`): the calls a plan holds name the halves' recorders by
+     *   raw pointer, and a sweep in ANOTHER driver's frame head may let a half go before this frame records. A
+     *   retirement park is not that guarantee - it is dated against the frames in flight when it was made, and the
+     *   frame holding the plan may not have been submitted yet (see core::RetirementQueue). Holding the producer's
+     *   own handle keeps every half it answered alive for exactly as long as the plan names them.
+     * - The handle is opaque on purpose (`shared_ptr<const void>`): what the plan needs is the lease, not the
+     *   producer's types.
+     *
+     * @return The handle (never null once the producer exists).
+     */
+    [[nodiscard]] std::shared_ptr<const void> pin() const noexcept;
+
     /** @brief Gets how many layers were built in total. A REFUSED build counts once: it is never retried. */
     [[nodiscard]] std::uint64_t builds() const noexcept;
 

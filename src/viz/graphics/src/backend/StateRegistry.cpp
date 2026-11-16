@@ -8,13 +8,19 @@ StateRegistry::StateRegistry(VariantPool& pool) noexcept
 
 StateRegistry::Resolution StateRegistry::resolve(const PipelineKey& key, const DynamicState& state, const void* inputs)
 {
+    // THE POOL IS ASKED HERE AND ONLY HERE: an identity that is not compiled yet gets a variant (and the caller
+    // compiles for it). The recording path takes the variant as a value (see the header's second spelling).
     const VariantPool::Lookup lookup = pool_->acquire(key);
+    return resolve(lookup.id, state, inputs);
+}
 
+StateRegistry::Resolution StateRegistry::resolve(std::uint64_t variant, const DynamicState& state, const void* inputs)
+{
     Resolution resolution;
-    resolution.variant          = lookup.id;
+    resolution.variant          = variant;
     // "Nothing is bound yet" counts as a switch: the pass has to bind before it draws, and a caller that
     // skipped that because "the variant did not change" would draw with whatever was bound last.
-    resolution.variant_switched = !bound_ || lookup.id != current_variant_;
+    resolution.variant_switched = !bound_ || variant != current_variant_;
     // The dynamic values live in the recording, so a fresh recording has none: only a value that is equal to
     // what this pass ALREADY issued can be skipped.
     resolution.dynamic_issued   = !bound_ || !(state == current_state_);
@@ -40,7 +46,7 @@ StateRegistry::Resolution StateRegistry::resolve(const PipelineKey& key, const D
     }
 
     bound_           = true;
-    current_variant_ = lookup.id;
+    current_variant_ = variant;
     current_state_   = state;
     current_inputs_  = resolution.inputs_issued ? inputs : current_inputs_;
     return resolution;

@@ -260,6 +260,13 @@ class Fixture {
         full_screen.samplers                  = samplers;
         full_screen.viewport                  = viewport;
         full_screen.color_attachments         = destination->colorAttachmentCount();
+        // THE IDENTITY IS RESOLVED FIRST (see api/ContentDraw): the recorder binds the value, never the layer.
+        const ContentDraw::Identity identity = recorder->plan(full_screen.key);
+        full_screen.pipeline                 = identity.pipeline;
+        full_screen.variant                  = identity.variant;
+        if (full_screen.pipeline == nullptr) {
+            return {};
+        }
         return recorder->recordScreen(*registry, full_screen);
     }
 
@@ -307,6 +314,13 @@ class Fixture {
         draw.viewport          = ViewportRect{ 0.0F, 0.0F, static_cast<float>(kSize), static_cast<float>(kSize) };
         draw.index_count       = 3U;
         draw.color_attachments = 2U; // the source's pass writes two attachments; the blend command covers both
+        // THE IDENTITY IS RESOLVED FIRST (see api/ContentDraw): the recorder binds the value, never the layer.
+        const ContentDraw::Identity content_identity = content_recorder->plan(draw.key);
+        draw.pipeline                                = content_identity.pipeline;
+        draw.variant                                 = content_identity.variant;
+        if (draw.pipeline == nullptr) {
+            return false;
+        }
 
         const auto content = content_recorder->record(*content_registry, draw);
         if (content == nullptr) {

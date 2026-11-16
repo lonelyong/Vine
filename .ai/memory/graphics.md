@@ -1460,3 +1460,32 @@
 - **证据**：`test_vsg` 561/561、对拍 13/13；`ACompilingFrameDoesNotWaitForAnotherDriversFrame`（变异：闸改回独占
   ⇒ 5 s 超时红）、`TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`、`AReadbackFromInsideAFrameBodyAnswersInsideFrame`；
   TSan（vsg 子集）0 报告（521 通过 / 6 预期 skip，抑制仅 lavapipe 290 条）；ASan 新路径 PASS。
+
+## 2026-11-16 —— vsg S8c-2：记录路径零锁，内容拆成解析/录制/提交三相（T48）
+
+- **新增单元**：`internal/ContentPlan`（`ContentPlan.hpp/.cpp`）——一帧解析出的**值**：每个绘制调用一个 `Call`
+  （`ContentDraw*` 录制器 + 已解析的 `Draw`/`ScreenDraw` + 块绑定/推送块/顶点绑定的定长数组），每个 pass 一个槽
+  （自带 `core::StateRegistry`）；`Pass::pass/registry` 是借用的，`halves_` 是 `shared_ptr<const void>` 的**钉**
+  （`ContentHalves::pin()`），所以另一个驱动者的帧首清扫不释放这一帧还要用的录制器（退役 park 不管"尚未提交的帧"）。
+  调用里**不存 span**（`Call::value()` 用调用自己的数组现拼）——vector 重排会让指向自身体内的 span 失效。
+- **`commitFrameThrough` 三段**：**解析**（内容锁：`applyTargetPlans`、材质 arena 增长、`resolveContent` →
+  `ContentAssembly::resolve` → `ContentPass::resolve`，拒绝/报告都在这里）、**录制**（无锁：`ContentPlan::record`
+  建 vsg 节点）、**提交**（再取锁：`executor.record`、清扫、会话提交、`finish`）。帧首写 view/lights/shadow/draw/
+  material 块并只把偏移交给录制——另一个帧首在中间轮转环/清扫/增长都不影响这一帧。
+- **解析半/录制半分开**：`ContentDraw::plan(key)`（取 layer + variant pool，返回 `Identity{pipeline, variant}`）与
+  `record`/`recordScreen`（只绑已解析的 pipeline，**不 acquire、不碰 pool**）；`core::StateRegistry` 新增
+  `resolve(std::uint64_t variant, …)` 重载——池只在帧首被问，录制带值。`ContentDraw` 的计数器改成 `std::atomic`
+  （同一 half 可被两个驱动者同时录制）。零几何的命令在**解析**阶段就拒绝（先于身份解析，"拒绝的画不编译"仍然成立）。
+- **`ContentHalves::Scope::Entry` 增加尾部字段 `keep_alive`**（`ContentPlan::Pin`）；`serve()` 现在收 `shared_ptr<Half>`。
+  `ContentAssembly::record`（旧便利入口）保留 = `resolve` + `ContentPlan::record`；`prepareContent` 是预热走同一
+  offer 循环（`offerInputs` 抽出来了）但只 `prepare`。
+- **测试缝**：`BackendContentAccess::setRecordSeam`（录制开始处、不持内容锁）；新用例
+  `VsgBackendTest.ARecordingFrameDoesNotStopAnotherDriversContent`（离屏帧被停在录制里，窗口帧整帧完成，且被停帧
+  读回的像素仍是自己的红）；**变异：三相位改回 S8c-1 单锁 ⇒ 5 s 超时红**。测试端：所有直接 `ContentDraw::record`
+  的用例改成先 `plan()` 再 record（`ContentDrawTest` 的"拒绝在记忆化之前"改为手搓无身份的 Draw）。
+- **证据**：`test_vsg` **562/562**、对拍 13/13、`test_graphics` 587、`test_vk` 133；TSan vsg 子集 0 报告（三次复跑
+  全绿；偶发的一次 `initialize()` false 是既有的 `VSG_MAX_DEVICES` 抖动，见 backlog T36/T33，非本步）；ASan
+  新路径 PASS；九个文档/代码门禁 0 发现（`check_doc_symbols` 需在 `docs/guides/vsg-backend.md` §5 点名
+  `ContentPlan.hpp`）。`C3` 对 vsg 自此成立；`T48` 的迁移表全部落地（backlog 条目已按规则删除）。
+- **测试基建注意**：`build/` 里 plugin `.so` 与 test 二进制必须**同源重建**——`git stash` 前后混编会出现
+  `undefined symbol` 与莫名的设备上限失败（本次排查花了时间，教训：stash 后 `ninja test_vsg gfx_backend_vsg` 一起建）。

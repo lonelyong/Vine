@@ -5351,12 +5351,145 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
 }
 
 /**
+ * @brief A frame held INSIDE ITS RECORDING does not stop another driver's content (T48 S8c-2's overlap witness).
+ *
+ * WHY THIS IS THE PROOF THE CONTENT LOCK'S SCOPE NEEDS: a frame's device half - the tables, the halves, the declared
+ * sets, the streams, the material arena, the blocks and the pipeline identities - used to be resolved BY the
+ * recording, so the device's content lock had to be held across it and no two drivers' content phases could
+ * overlap. It is now resolved in the frame's HEAD, into the session's own plan (see api/ContentPlan), and the
+ * recording reads only those values. The hold here is the record seam, which runs with the content lock NOT held;
+ * the second driver's WHOLE frame - its head, its recording and its commit, all of which take the lock - must finish
+ * while the first is held there. A build that still held the lock across the recording would block that frame until
+ * the bounded wait expires, which is the failing assertion rather than a hang.
+ *
+ * THE HELD FRAME IS OFF-SCREEN AND THE OTHER ONE IS THE WINDOW: the two claims are different ones (the off-screen
+ * session's and the window's), so the only thing the case can be measuring is the DEVICE's content lock.
+ */
+TEST(VsgBackendTest, ARecordingFrameDoesNotStopAnotherDriversContent)
+{
+    if (!deviceCaseAvailable()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow                host(connection, screen, 128, 96);
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    // TWO DRIVERS, EACH WITH ITS OWN DEFAULT PROGRAM (as in the compilation witness): the held one shades its
+    // program-less triangle red, the other green.
+    auto* const second = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createSession());
+    ASSERT_NE(second, nullptr);
+    backend->setDefaultContentProgram(solidColourProgram(u8R"(
+#version 450
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }
+)"));
+    second->setDefaultContentProgram(solidColourProgram(u8R"(
+#version 450
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
+)"));
+
+    const vn::intrusive_ptr<RenderTarget> destination = makeTarget64();
+    backend->setRenderTarget(destination.get());
+
+    TriangleFixture triangle = makeTriangle();
+    triangle.commands.front().program = nullptr; // the driver's default shades it
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const vn::intrusive_ptr<RenderPass>           held_pass(new RenderPass());
+    const vn::intrusive_ptr<RenderPass>           other_pass(new RenderPass());
+
+    // THE HELD FRAME: off-screen, into `destination`, one ordinary content pass - nothing about it is refused, so its
+    // plan resolves and its recording is the phase the seam holds.
+    const auto held_frame = TestFrame()
+                                .pass(held_pass.get())
+                                .target(destination.get())
+                                .clear(clear)
+                                .depth(vn::graphics::DepthMode::Disabled)
+                                .content(triangle.commands, camera.get())
+                                .value();
+
+    // THE OTHER DRIVER'S FRAME: the window, its own program-less triangle, its own default program.
+    const vn::raw_ptr<vn::graphics::WindowPresentTarget> window_target = BackendContentAccess::surfaceTarget(*backend, 0);
+    ASSERT_NE(window_target, nullptr);
+    const auto other_frame = TestFrame()
+                                 .pass(other_pass.get())
+                                 .target(nullptr)
+                                 .clear(clear)
+                                 .depth(vn::graphics::DepthMode::Disabled)
+                                 .content(triangle.commands, camera.get())
+                                 .value();
+
+    std::atomic<bool> seam_entered{ false };
+    std::atomic<bool> other_finished{ false };
+    std::atomic<bool> other_finished_inside{ false };
+    BackendContentAccess::setRecordSeam(*backend, [&] {
+        if (seam_entered.exchange(true)) {
+            return; // only the held frame blocks; the other driver's recording passes through
+        }
+        // WAIT, BOUNDED, FOR THE OTHER DRIVER'S WHOLE FRAME. Five seconds is orders of magnitude more than a frame
+        // takes; a build that held the content lock across the recording would spend all of it here and fail the
+        // assertion below. THE WITNESS IS SET HERE, while this frame is still inside its recording: "the other frame
+        // finished DURING this one", not "at some point".
+        if (waitFor(other_finished, std::chrono::seconds(5))) {
+            other_finished_inside.store(true, std::memory_order_relaxed);
+        }
+    });
+
+    std::atomic<int> held_outcome{ -1 };
+    std::thread      held([&] {
+        held_outcome.store(static_cast<int>(backend->executeFrame(held_frame, nullptr)), std::memory_order_relaxed);
+    });
+
+    ASSERT_TRUE(waitFor(seam_entered, std::chrono::seconds(5))) << "the held frame never reached its recording";
+
+    std::atomic<int> other_outcome{ -1 };
+    std::thread      other([&] {
+        other_outcome.store(static_cast<int>(second->executeFrame(other_frame, window_target)), std::memory_order_relaxed);
+        // RELEASE THE HELD FRAME: the seam records whether this return happened while it was still held.
+        other_finished.store(true, std::memory_order_release);
+    });
+
+    other.join();
+    held.join();
+    BackendContentAccess::setRecordSeam(*backend, {});
+
+    EXPECT_TRUE(other_finished_inside.load()) << "the other driver's content phase could only run after the held frame ended";
+    EXPECT_EQ(other_outcome.load(), static_cast<int>(vn::graphics::PresentOutcome::Presented))
+        << "the frame that overlapped the recording did not reach the window";
+    // AND THE HELD FRAME COMPLETED TOO: its plan was resolved at its head, its recording ran, and the off-screen form
+    // submits without presenting.
+    EXPECT_EQ(held_outcome.load(), static_cast<int>(vn::graphics::PresentOutcome::Skipped));
+    // THE HELD FRAME'S PICTURE IS STILL ITS OWN: its head resolved the blocks into the frame's slab, its binds and its
+    // pipeline BEFORE the other frame's head rotated the ring, swept the halves and recorded its own content - and the
+    // plan's values survived all of it. A plan that held references into the tables instead of values would render
+    // another frame's bytes here, or nothing at all.
+    const std::array<std::uint8_t, 3> red = centreOfTarget(*backend, *destination);
+    EXPECT_TRUE(isColourByte(red[0], 1.0) && isColourByte(red[1], 0.0) && isColourByte(red[2], 0.0))
+        << "the held frame's picture was not its own red default";
+
+    backend->releaseSession(*second);
+    backend->shutdown();
+}
+
+/**
  * @brief Two drivers, two threads, two pictures: each frame is shaded by ITS driver's default program.
  *
- * The concurrency here is horizontal (the two frames' bodies overlap where they can - collection, compilation) and
- * vertical (the one session that serves off-screen frames serialises them, so the case is deterministic: no frame is
- * dropped, no frame sees the other's content). What the picture proves is the per-driver state S8b introduced: two
- * default programs, two resolves, no overwrite.
+ * The concurrency here is horizontal (the two frames' bodies overlap where they can - collection, compilation and,
+ * since S8c-2, their RECORDINGS) and vertical (the one session that serves off-screen frames serialises them, so the
+ * case is deterministic: no frame is dropped, no frame sees the other's content). What the picture proves is the
+ * per-driver state S8b introduced: two default programs, two resolves, no overwrite.
  */
 TEST(VsgBackendTest, TwoDriversOnTwoThreadsEachKeepTheirOwnPicture)
 {

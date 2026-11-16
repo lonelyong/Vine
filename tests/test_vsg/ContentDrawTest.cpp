@@ -112,6 +112,12 @@ class Fixture {
         result.key.program                      = vn::test::programRef(1, revision);
         result.key.vertex_layout.canonical_mask = 0x1U;
         result.key.compatibility.samples        = 1U;
+        // THE IDENTITY IS RESOLVED BEFORE THE RECORDING (see api/ContentDraw): the recorder binds a value and never
+        // asks the pool, so a case that records through it resolves the identity first - the same order a frame's
+        // head and its recording take.
+        const ContentDraw::Identity identity = recorder->plan(result.key);
+        result.pipeline                      = identity.pipeline;
+        result.variant                       = identity.variant;
         block_binds[0]                          = blocks();
         result.blocks                           = block_binds;
         result.vertex_binds                     = std::span<const ::vsg::ref_ptr<::vsg::BindVertexBuffers>>(&vertex_bind, 1);
@@ -227,15 +233,21 @@ TEST(ContentDrawTest, ADrawThatNamesNoGeometryIsRefusedBeforeAnythingIsMemoised)
     Fixture       fixture;
     StateRegistry registry(fixture.pool);
 
-    ContentDraw::Draw empty = fixture.draw();
-    empty.index             = nullptr;
-    empty.index_count       = 0U;
-    empty.vertex_count      = 0U;
+    // A draw assembled by hand, with NO identity resolved: the recorder's first answer is about the geometry, and it
+    // must come before anything else is touched - a refused draw records nothing, memoises nothing and does not tell
+    // the registry a variant is bound (or the next draw would run with whatever the last pass left bound).
+    ContentDraw::Draw empty;
+    empty.key.program                      = vn::test::programRef(1, 1U);
+    empty.key.vertex_layout.canonical_mask = 0x1U;
+    empty.key.compatibility.samples        = 1U;
+    empty.index                            = nullptr;
+    empty.vertex_count                     = 0U;
 
     EXPECT_EQ(fixture.recorder->record(registry, empty), nullptr);
     EXPECT_EQ(fixture.recorder->refusals(), 1U);
     EXPECT_EQ(fixture.recorder->draws(), 0U);
     EXPECT_EQ(fixture.pool.created(), 0U) << "a refused draw compiles nothing";
+    EXPECT_EQ(registry.resolutions(), 0U) << "a refused draw marks no variant as bound";
 
     // ...and the registry was not told the variant is bound: the next real draw still binds its pipeline, or it
     // would run with whatever the last pass left bound (the failure this recorder's memoisation can cause).
@@ -450,6 +462,11 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     draw.viewport                   = ViewportRect{ 8.0F, 8.0F, 32.0F, 16.0F };
     ASSERT_NE(draw.samplers, nullptr) << "the set must have been created";
     ASSERT_NE(draw.push, nullptr) << "the push block must have been created";
+    // THE IDENTITY IS RESOLVED BEFORE THE RECORDING (see api/ContentDraw).
+    const ContentDraw::Identity identity = recorder.plan(draw.key);
+    draw.pipeline                        = identity.pipeline;
+    draw.variant                         = identity.variant;
+    ASSERT_NE(draw.pipeline, nullptr) << "the screen identity must have compiled";
 
     const auto group = recorder.recordScreen(registry, draw);
     ASSERT_NE(group, nullptr);
@@ -492,10 +509,11 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     EXPECT_EQ(recorder.draws(), 2U);
     EXPECT_EQ(recorder.input_binds(), 1U) << "one bind per pass, not per draw";
 
-    // An identity of the OTHER kind is refused, not recorded: the layer compiles one descriptor ABI.
+    // An identity of the OTHER kind is refused BY THE RESOLVER, before anything is recorded: the layer compiles one
+    // descriptor ABI, so the content kind has no pipeline in a screen layer (see api/ContentDraw).
     ContentDraw::ScreenDraw wrong_kind = draw;
     wrong_kind.key.kind                = vn::graphics::backend::DrawKind::Content;
-    EXPECT_EQ(recorder.recordScreen(registry, wrong_kind), nullptr);
+    EXPECT_EQ(recorder.plan(wrong_kind.key).pipeline, nullptr);
     EXPECT_EQ(recorder.refusals(), 1U);
-    EXPECT_EQ(recorder.draws(), 2U) << "a refused draw is not a recorded one";
+    EXPECT_EQ(recorder.draws(), 2U) << "a refused identity is not a recorded draw";
 }

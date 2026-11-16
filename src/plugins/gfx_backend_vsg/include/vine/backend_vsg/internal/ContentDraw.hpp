@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <span>
 
@@ -46,7 +47,15 @@
  * variant bound for a draw that produces no command would make the next draw of that variant skip its own
  * bind.
  *
- * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
+ * THE IDENTITY ARRIVES RESOLVED (see api/ContentPlan). `record` binds the pipeline the CALLER resolved; it does
+ * not acquire one. That is the seam that lets a frame's recording take no device lock (`C3`, `S8c-2`): the layer
+ * that compiles an identity is the frame's head, and the layer that writes nodes for it reads a value. The
+ * counters are therefore atomics - two drivers' frames may record through the SAME half at once - while the
+ * resolver's half (`plan`, `prepare`) is called under the device's content lock.
+ *
+ * NOT thread-safe for the RESOLVING half (`plan` / `prepare` touch the layer and the pool): those run at a frame
+ * head, under the content lock. The recording half (`record` / `recordScreen`) is safe from several frames at
+ * once, which is what the plan exists for.
  */
 VN_BACKEND_VSG_NS_BEGIN
 
@@ -56,6 +65,12 @@ class ContentDraw {
     /** @brief One resolved draw: identity, state, geometry and the block set to bind. */
     struct Draw {
         core::PipelineKey  key;     // Identity (the pool answers whether it is compiled).
+        /// The VARIANT the identity resolved to (the pool's own id), resolved with the pipeline: the pass' registry
+        /// counts its binds from this value, so the recording never asks the pool (`C3`).
+        std::uint64_t                           variant{ 0 };
+        /// The pipeline that identity resolved to (see `plan`), or null when the identity has none - which the
+        /// resolver reports once and omits from the plan. `record` binds THIS object; it never asks the layer.
+        ::vsg::ref_ptr<::vsg::GraphicsPipeline> pipeline;
         core::DynamicState dynamic; // The set-command half of the state.
         /// This draw's block binds, one per set the PROGRAM declares blocks in (the canonical arrangement is
         /// one set; the engine's own programs put the per-drawable block in a set of its own). Empty for a
@@ -98,6 +113,10 @@ class ContentDraw {
      */
     struct ScreenDraw {
         core::PipelineKey                        key;                    // Identity (kind = Screen: the full-screen descriptor ABI).
+        /// The VARIANT the identity resolved to (see Draw::variant).
+        std::uint64_t                            variant{ 0 };
+        /// The pipeline that identity resolved to (see `plan`), or null when it has none (see Draw::pipeline).
+        ::vsg::ref_ptr<::vsg::GraphicsPipeline>  pipeline;
         core::DynamicState                       dynamic;                // The set-command half of the state.
         ::vsg::ref_ptr<::vsg::BindDescriptorSet> samplers;               // Set 0: binding i is the source's attachment i.
         ::vsg::ref_ptr<::vsg::PushConstants>     push;                   // The push block the program declares, or null to push
@@ -107,6 +126,12 @@ class ContentDraw {
         float                                    depth_min{ 0.0F };      // The depth band's far end the pass maps into.
         float                                    depth_max{ 1.0F };      // The depth band's near end the pass maps into.
         std::uint32_t                            color_attachments{ 1 }; // Colour attachments of the pass (for the blend state).
+    };
+
+    /** @brief An identity resolved to what a draw records with (see @ref plan). */
+    struct Identity {
+        ::vsg::ref_ptr<::vsg::GraphicsPipeline> pipeline;      // The object the draw binds (null when refused).
+        std::uint64_t                           variant{ 0 };  // The pool's id for it (see Draw::variant).
     };
 
   public:
@@ -146,6 +171,20 @@ class ContentDraw {
      * @return The command graph, or null when the identity has no pipeline (see the file note).
      */
     [[nodiscard]] ::vsg::ref_ptr<::vsg::StateGroup> recordScreen(core::StateRegistry& registry, const ScreenDraw& draw);
+
+    /** @brief Resolves @p key's identity to the pipeline a draw binds - the RESOLVER's half of @ref record.
+     *
+     * @details
+     * - THE ONE PLACE A VARIANT IS LOOKED UP OR COMPILED: `ContentPipeline::acquire` is called here and nowhere in
+     *   the recording half, so "what the head resolved" and "what the frame binds" cannot disagree (`R23`).
+     * - Called under the device's content lock (a frame's head, or the warm-up), never from the recording path:
+     *   the layer and the pool are device tables (see api/ContentPlan).
+     *
+     * @param key The pipeline identity (see DrawNeeds::keyFor).
+     * @return The pipeline and the variant it resolved to, or both empty when the layer refused the identity
+     *         (counted as a refusal).
+     */
+    [[nodiscard]] Identity plan(const core::PipelineKey& key);
 
     /** @brief Ensures @p key's identity has a compiled variant, WITHOUT recording a command.
      *
@@ -189,13 +228,15 @@ class ContentDraw {
     ContentPipeline*                pipelines_;
     core::VariantPool*              pool_;
     detail::DynamicStateEntryPoints entry_points_;
-    std::uint64_t                   draws_{ 0 };
-    std::uint64_t                   screen_draws_{ 0 };
-    std::uint64_t                   pipeline_binds_{ 0 };
-    std::uint64_t                   dynamic_commands_{ 0 };
-    std::uint64_t                   input_binds_{ 0 };
-    std::uint64_t                   push_commands_{ 0 };
-    std::uint64_t                   refusals_{ 0 };
+    // ATOMIC, because the recording half is the one verb two drivers' frames may run at once through one half
+    // (see the file note): the counters are evidence, and evidence must not be a torn read.
+    std::atomic<std::uint64_t>      draws_{ 0 };
+    std::atomic<std::uint64_t>      screen_draws_{ 0 };
+    std::atomic<std::uint64_t>      pipeline_binds_{ 0 };
+    std::atomic<std::uint64_t>      dynamic_commands_{ 0 };
+    std::atomic<std::uint64_t>      input_binds_{ 0 };
+    std::atomic<std::uint64_t>      push_commands_{ 0 };
+    std::atomic<std::uint64_t>      refusals_{ 0 };
 };
 
 VN_BACKEND_VSG_NS_END

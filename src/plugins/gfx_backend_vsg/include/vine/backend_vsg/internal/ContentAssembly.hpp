@@ -135,6 +135,31 @@ class ContentAssembly {
                               std::span<const std::byte>           view_block,
                               ::vsg::ref_ptr<::vsg::Node>&         out);
 
+    /** @brief Resolves @p pass into @p plan - everything the recording will read, as values - and records NOTHING.
+     *
+     * @details
+     * - THE DEVICE HALF OF @ref record, AS A SEPARATE VERB (`C3` / `S8c-2`): the caller surrounds this call with the
+     *   device's content lock, and the recording that reads the plan ({@link ContentPlan::record}) then takes no
+     *   lock at all. The frame path keeps the two apart; a caller that owns the device may call @ref record and get
+     *   both in one.
+     * - Open the frame with `beginFrame` (or `prepare`) first: this method refuses (answers false, with no slot in
+     *   the plan) before one, exactly as `record` does.
+     * - The plan is PINNED to the producers it read (see {@link ContentPlan::pin}): its values name the compiled
+     *   halves' recorders, and another driver's frame head may sweep them before this frame records.
+     *
+     * @param plan          The plan to resolve into (the caller's; one per frame driver).
+     * @param pass          The compiled pass to resolve.
+     * @param compatibility The target's shape (the pipeline key's half - the plan names the target).
+     * @param inputs        The images the pass' inputs offer, one entry per `pass.inputs` entry.
+     * @param view_block    The view block's bytes for this pass.
+     * @return true when every command resolved; false when at least one was refused (reported).
+     */
+    [[nodiscard]] bool resolve(ContentPlan&                         plan,
+                               const core::CompiledPass&            pass,
+                               const core::RenderPassCompatibility& compatibility,
+                               std::span<const InputImages>         inputs,
+                               std::span<const std::byte>           view_block);
+
     /** @brief Ensures everything @p pass would need to be recorded, and records NOTHING.
      *
      * @details

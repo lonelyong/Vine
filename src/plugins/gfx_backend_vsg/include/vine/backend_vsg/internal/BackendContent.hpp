@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+#include <functional>
+
 #include <vine/graphics/backend/VariantPool.hpp>
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
 #include <vine/backend_vsg/internal/ContentAssembly.hpp>
@@ -84,6 +87,25 @@ class BackendContentAccess {
      * @param frames_in_flight The count to justify the layout against (0 = ask the session again).
      */
     static void assumeInFlightSlots(VsgBackend& backend, std::uint32_t frames_in_flight) noexcept;
+
+    /** @brief Holds the frame that is INSIDE ITS RECORDING (the seam the content lock's scope is witnessed with).
+     *
+     * @details
+     * - WHY THIS EXISTS. `S8c-2` states that a frame's RECORDING takes no device lock: the head resolved every answer
+     *   it reads into the session's plan (see api/ContentPlan), so the phase that turns those values into vsg nodes
+     *   must let another driver's whole frame - its head, its recording and its commit - run to completion. Nothing
+     *   observable from outside the backend marks that phase (no diagnostic is reported there, by design), so the
+     *   witness needs a hold exactly where the property is claimed: this hook runs with the content lock NOT held,
+     *   before the plan's first node is built.
+     * - WHAT IT IS FOR: a test blocks the hook until another driver's frame returns, and reads that return as "the
+     *   recording did not stop the other content phase". A build that held the lock across the recording would
+     *   deadlock the other frame until the hook's deadline, which is the failing assertion.
+     * - NOT A PRODUCTION HOOK. Set between frames; cleared with an empty function. The frame body reads it once.
+     *
+     * @param backend Backend to hold.
+     * @param seam    The hook (an empty one removes the seam).
+     */
+    static void setRecordSeam(VsgBackend& backend, std::function<void()> seam);
 
     /** @brief Gets the host targets the facade holds (their entries are the plan's off-screen world).
      *

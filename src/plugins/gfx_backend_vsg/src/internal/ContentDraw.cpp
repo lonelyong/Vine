@@ -22,9 +22,10 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool, de
     // The three "only when" answers come from the pass' registry: the variant bind only after a SWITCH, the
     // dynamic block only when a value differs from what this pass already issued, and the sampled-input set
     // only when this pass has not already bound that very set.
-    const core::StateRegistry::Resolution resolution = registry.resolve(draw.key, draw.dynamic, draw.inputs.get());
-    const ContentPipeline::Result         compiled   = pipelines_->acquire(*pool_, draw.key);
-    if (compiled.pipeline == nullptr) {
+    const core::StateRegistry::Resolution resolution = registry.resolve(draw.variant, draw.dynamic, draw.inputs.get());
+    // THE PIPELINE IS THE ONE THE CALLER RESOLVED (see the header and api/ContentPlan): this verb binds a value,
+    // it does not ask the layer or the pool - which is what keeps the recording path free of the device's lock.
+    if (draw.pipeline == nullptr) {
         // Nothing is recorded: a group without a pipeline bind would draw with whatever was bound last.
         ++refusals_;
         return {};
@@ -32,7 +33,7 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool, de
 
     auto group = ::vsg::StateGroup::create();
     if (resolution.variant_switched) {
-        group->add(::vsg::BindGraphicsPipeline::create(compiled.pipeline));
+        group->add(::vsg::BindGraphicsPipeline::create(draw.pipeline));
         ++pipeline_binds_;
     }
     if (resolution.dynamic_issued) {
@@ -94,14 +95,20 @@ bool ContentDraw::prepare(const core::PipelineKey& key)
     // ONE CALL, THE SAME ONE A RECORDED DRAW MAKES (see the header): the pool decides whether this is a compile or a
     // reuse, and the layer keeps the object alive for the frame that will bind it. The registry is untouched, so the
     // first real draw of that identity still issues its own pipeline bind.
+    return plan(key).pipeline != nullptr;
+}
+
+ContentDraw::Identity ContentDraw::plan(const core::PipelineKey& key)
+{
+    // THE RESOLVER'S HALF OF `record` (see the header): the one place a variant is looked up or compiled. A refused
+    // identity is counted exactly as a recorded refusal is: the host reads one number for "this identity has no
+    // pipeline" however the identity was asked about.
     const ContentPipeline::Result compiled = pipelines_->acquire(*pool_, key);
     if (compiled.pipeline == nullptr) {
-        // Counted exactly as a recorded refusal is: the host reads one number for "this identity has no pipeline"
-        // however the identity was asked about.
         ++refusals_;
-        return false;
+        return Identity{};
     }
-    return true;
+    return Identity{ compiled.pipeline, compiled.id };
 }
 
 ::vsg::ref_ptr<::vsg::StateGroup> ContentDraw::recordScreen(core::StateRegistry& registry, const ScreenDraw& draw)
@@ -109,9 +116,9 @@ bool ContentDraw::prepare(const core::PipelineKey& key)
     // The same three "only when" answers a content draw gets, over the same identity arithmetic: a full-screen
     // draw is a different SHAPE, not a different bookkeeping. Its sampled set IS the whole state it binds, so
     // it plays the role the content path's inputs play (one bind per pass that samples).
-    const core::StateRegistry::Resolution resolution = registry.resolve(draw.key, draw.dynamic, draw.samplers.get());
-    const ContentPipeline::Result         compiled   = pipelines_->acquire(*pool_, draw.key);
-    if (compiled.pipeline == nullptr) {
+    const core::StateRegistry::Resolution resolution = registry.resolve(draw.variant, draw.dynamic, draw.samplers.get());
+    // The identity resolved by the caller, exactly as in `record` (see the header).
+    if (draw.pipeline == nullptr) {
         // Nothing is recorded: a group without a pipeline bind would draw with whatever was bound last.
         ++refusals_;
         return {};
@@ -119,7 +126,7 @@ bool ContentDraw::prepare(const core::PipelineKey& key)
 
     auto group = ::vsg::StateGroup::create();
     if (resolution.variant_switched) {
-        group->add(::vsg::BindGraphicsPipeline::create(compiled.pipeline));
+        group->add(::vsg::BindGraphicsPipeline::create(draw.pipeline));
         ++pipeline_binds_;
     }
     if (resolution.dynamic_issued) {
@@ -156,37 +163,37 @@ bool ContentDraw::prepare(const core::PipelineKey& key)
 
 std::uint64_t ContentDraw::draws() const noexcept
 {
-    return draws_;
+    return draws_.load(std::memory_order_relaxed);
 }
 
 std::uint64_t ContentDraw::screen_draws() const noexcept
 {
-    return screen_draws_;
+    return screen_draws_.load(std::memory_order_relaxed);
 }
 
 std::uint64_t ContentDraw::pipeline_binds() const noexcept
 {
-    return pipeline_binds_;
+    return pipeline_binds_.load(std::memory_order_relaxed);
 }
 
 std::uint64_t ContentDraw::dynamic_commands() const noexcept
 {
-    return dynamic_commands_;
+    return dynamic_commands_.load(std::memory_order_relaxed);
 }
 
 std::uint64_t ContentDraw::input_binds() const noexcept
 {
-    return input_binds_;
+    return input_binds_.load(std::memory_order_relaxed);
 }
 
 std::uint64_t ContentDraw::push_commands() const noexcept
 {
-    return push_commands_;
+    return push_commands_.load(std::memory_order_relaxed);
 }
 
 std::uint64_t ContentDraw::refusals() const noexcept
 {
-    return refusals_;
+    return refusals_.load(std::memory_order_relaxed);
 }
 
 VN_BACKEND_VSG_NS_END

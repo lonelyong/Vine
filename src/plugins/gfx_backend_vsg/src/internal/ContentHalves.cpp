@@ -69,23 +69,29 @@ struct ContentHalves::Data {
     std::uint64_t                    builds{ 0 };
     std::size_t                      refused{ 0 };
 
-    /** @brief Adds @p half's entry to this call's list, once. */
-    void serve(Half& half)
+    /** @brief Adds @p half's entry to this call's list, once.
+     *
+     * THE ENTRY CARRIES THE HALF'S OWN HANDLE (`keep_alive`, see ContentPass::Scope::Entry): a plan that copies the
+     * entry outlives this producer's list, and another driver's sweep must not free what that plan will record
+     * through.
+     */
+    void serve(const std::shared_ptr<Half>& half)
     {
         for (const ContentPass::Scope::Entry& entry : entries) {
-            if (entry.pipelines == half.layer.get()) {
+            if (entry.pipelines == half->layer.get()) {
                 return; // the same half, drawn twice in one pass
             }
         }
-        entries.push_back(ContentPass::Scope::Entry{ half.key.kind,
-                                                     half.key.program,
-                                                     half.key.layout,
-                                                     half.layer.get(),
-                                                     half.draws.get(),
-                                                     half.key.variant,
-                                                     half.key.topology,
-                                                     &half.reported,
-                                                     &half.shadow_reported });
+        entries.push_back(ContentPass::Scope::Entry{ half->key.kind,
+                                                     half->key.program,
+                                                     half->key.layout,
+                                                     half->layer.get(),
+                                                     half->draws.get(),
+                                                     half->key.variant,
+                                                     half->key.topology,
+                                                     &half->reported,
+                                                     &half->shadow_reported,
+                                                     half });
     }
 
     /** @brief Ensures the half @p needs names, building it from @p program (and @p geometry, for content). */
@@ -136,7 +142,7 @@ struct ContentHalves::Data {
             refused_keys.insert(key);
             return;
         }
-        serve(**acquired.value);
+        serve(*acquired.value);
     }
 };
 
@@ -219,6 +225,13 @@ void ContentHalves::sweep(const ContentFacts& facts, core::FrameTimeline& timeli
 std::size_t ContentHalves::halves() const noexcept
 {
     return d->halves.live();
+}
+
+std::shared_ptr<const void> ContentHalves::pin() const noexcept
+{
+    // THE PRODUCER'S OWN HANDLE: a plan that holds it keeps every half this producer answered alive (see the
+    // header's note on why the lease is the producer's and not a per-half reference).
+    return d;
 }
 
 std::uint64_t ContentHalves::builds() const noexcept

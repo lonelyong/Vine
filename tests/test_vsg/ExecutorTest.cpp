@@ -276,6 +276,13 @@ struct Fixture {
                                                static_cast<float>(pass.viewport.height) };
         draw.index_count       = 3U;
         draw.color_attachments = pass.color_attachments;
+        // THE IDENTITY IS RESOLVED FIRST (see api/ContentDraw): the recorder binds the value, never the layer.
+        const ContentDraw::Identity identity = draws->plan(draw.key);
+        draw.pipeline                        = identity.pipeline;
+        draw.variant                         = identity.variant;
+        if (draw.pipeline == nullptr) {
+            return {};
+        }
         return draws->record(*registry, draw);
     }
 

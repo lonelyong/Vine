@@ -63,6 +63,22 @@ class VN_GRAPHICS_API StateRegistry {
      */
     [[nodiscard]] Resolution resolve(const PipelineKey& key, const DynamicState& state, const void* inputs = nullptr);
 
+    /** @brief Resolves the state a draw needs from an identity that is ALREADY resolved (see @ref resolve).
+     *
+     * @details
+     * - WHY A SECOND SPELLING: @ref resolve asks the variant pool - a device table - for the identity's variant, which
+     *   makes it a frame-head verb. A frame that resolved its content ahead of time (see api/ContentPlan) hands the
+     *   variant over as a VALUE, and the recording path then takes no lock and touches no table (`C3`).
+     * - Everything else is the same arithmetic: "a different variant than the last one bound HERE", "a dynamic block
+     *   that differs from what this pass already issued", and "a sampled-input set this pass has not bound yet".
+     *
+     * @param variant The variant id the identity resolved to (the pool's answer; never read back from the pool).
+     * @param state   Dynamic state - the set-command half.
+     * @param inputs  Identity of the sampled-input set this draw binds, or nullptr when the pass has none.
+     * @return The variant and the three costs (see @ref Resolution).
+     */
+    [[nodiscard]] Resolution resolve(std::uint64_t variant, const DynamicState& state, const void* inputs = nullptr);
+
     /** @brief Forgets what is bound, so the next resolution issues everything again.
      *
      * @details

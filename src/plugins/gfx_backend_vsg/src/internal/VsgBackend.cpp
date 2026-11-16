@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -209,167 +210,231 @@ bool isScreenSource(const core::CompiledPass& pass, const void* target) noexcept
 /// image offers are resolved exactly as a frame resolves them - that is what makes a prepared identity the one the
 /// frame asks for - and then the pass is PREPARED instead of recorded, so no packet is produced and no block is
 /// written. The two verbs therefore cannot disagree about which passes exist or what they need.
-std::span<const PassContent> recordContent(ContentAssembly&                                            assembly,
-                                           WindowTarget*                                               window,
-                                           HostTargets&                                                targets,
-                                           MaterialImages&                                             images,
-                                           vn::graphics::Diagnostics&                                  diagnostics,
-                                           core::FrameTimeline&                                        timeline,
-                                           core::RetirementQueue&                                      retirement,
-                                           float                                                       frame_seconds,
-                                           const core::CompiledFrame&                                  frame,
-                                           std::vector<InputImages>&                                   input_scratch,
-                                           std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_views,
-                                           std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_screen_views,
-                                           std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>>&   input_color_samplers,
-                                           std::vector<PassContent>&                                   packets,
-                                           bool                                                        prepare_only)
+/// One pass' resolved shape and image offers: what it draws into, and what its declared inputs offer.
+///
+/// @see offerInputs for what "served" means, and recordContent's file note for why the two verbs share it.
+struct PassOffers {
+    bool                          served{ false }; // false when this backend holds nothing for the pass' target.
+    core::RenderPassCompatibility compatibility{}; // The target's shape (the pipeline key's half).
+    std::uint32_t                 width{ 0 };      // The target's extent (the view block's contract).
+    std::uint32_t                 height{ 0 };
+};
+
+/// @brief Resolves one pass' target shape and its declared inputs' image offers.
+///
+/// WHICH TARGET decides the shape and the extent: a pass drawing into the window is compatible with the window's own
+/// shape and reconstructs from the window's extent, and a pass drawing into one of the host's targets is compatible
+/// with THAT target's shape. A pass whose target this backend does not hold answers `served == false`: the executor
+/// reports the pass instead of drawing it somewhere else. A frame with NO WINDOW (the off-screen form) has no
+/// default-framebuffer target, so a pass naming none has nowhere to draw and answers the same.
+///
+/// THE INPUTS ARE ONE ENTRY PER DECLARATION, in declaration order: what the input target offers a shader - each of
+/// its colour attachments, plus its depth while the plan says that one is sampleable. An input this backend does not
+/// hold offers nothing: the content recorder reads one entry per declaration, so a shorter span would read past its
+/// end - and "nothing offered" is the fact it reports, which a missing entry would not be.
+///
+/// ONE WALK FOR BOTH VERBS (see api/ContentPlan): the shape and offers a PREPARE resolves and the ones a frame
+/// resolves are the same questions, so they share this function - "what prepare built" and "what the frame asks
+/// for" cannot drift (`G1`; `T32`).
+[[nodiscard]] PassOffers offerInputs(const core::CompiledPass&                                   pass,
+                                     const core::CompiledFrame&                                  frame,
+                                     WindowTarget*                                               window,
+                                     HostTargets&                                                targets,
+                                     MaterialImages&                                             images,
+                                     vn::graphics::Diagnostics&                                  diagnostics,
+                                     std::vector<InputImages>&                                   input_scratch,
+                                     std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_views,
+                                     std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_screen_views,
+                                     std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>>&   input_color_samplers)
 {
-    packets.clear();
-    // THE SAME OPENING FOR BOTH VERBS (see api/ContentAssembly): a recording frame opens the block storage's frame,
-    // a preparing one does not - the ring's rotation belongs to the frame (P11's "value side only").
-    if (prepare_only) {
-        (void)assembly.prepare(frame, timeline, retirement);
+    PassOffers offers;
+    if (const core::CompiledTarget& compiled_target = frame.targets[pass.target_index]; compiled_target.target == nullptr) {
+        if (window == nullptr) {
+            return offers; // no window: a pass that names no target of its own has nowhere to draw
+        }
+        offers.compatibility = window->shape().compatibility();
+        offers.width         = window->width();
+        offers.height        = window->height();
     }
     else {
-        (void)assembly.beginFrame(frame, timeline, retirement);
+        const HostTargets::Entry* entry = targets.find(compiled_target.target);
+        if (entry == nullptr || entry->target == nullptr) {
+            return offers;
+        }
+        offers.compatibility = entry->target->shape().compatibility();
+        offers.width         = entry->target->width();
+        offers.height        = entry->target->height();
     }
-    for (const core::CompiledPass& pass : frame.passes) {
-        if (pass.draws.empty()) {
+    offers.served = true;
+
+    input_scratch.assign(pass.inputs.size(), InputImages{});
+    input_views.assign(pass.inputs.size(), {});
+    input_screen_views.assign(pass.inputs.size(), {});
+    input_color_samplers.assign(pass.inputs.size(), {});
+    for (std::size_t index = 0; index < pass.inputs.size(); ++index) {
+        InputImages&                                   offer = input_scratch[index];
+        std::vector<::vsg::ref_ptr<::vsg::ImageView>>& views = input_views[index];
+        views.clear();
+
+        if (pass.inputs[index].kind == vn::graphics::ImageSource::Kind::ImportedTexture) {
+            // An imported texture is one sampled image: the pass' program reads it at the input set's
+            // sampler (the input walk's by-name rule), not at the cache's material sampler. The view is
+            // copied into the per-pass vector so the span stays valid until assembly.record returns.
+            const auto* texture = static_cast<const vn::graphics::Texture*>(pass.inputs[index].texture);
+            if (texture == nullptr) {
+                continue; // an empty declaration produces nothing to bind
+            }
+            vn::backend_vsg::detail::TextureReject reject = vn::backend_vsg::detail::TextureReject::Ok;
+            // The state belongs to the INPUT: the same texture declared with two states uploads once and
+            // yields two samplers (see MaterialImages). No state = the backend's input sampler, the
+            // behavior every imported input had before state existed.
+            const SamplerImage sampled =
+                pass.inputs[index].sampler.has_value() ? images.acquire(texture, *pass.inputs[index].sampler, reject) : images.acquire(texture, reject);
+            if (reject != vn::backend_vsg::detail::TextureReject::Ok || sampled.view == nullptr) {
+                diagnostics.report(vn::graphics::DiagnosticSeverity::Warning,
+                                   vn::graphics::DiagnosticCategory::ContentSkipped,
+                                   vn::String(u8"pass input texture could not be sampled; the input binds the white "
+                                              u8"stand-in: ") +
+                                       vn::backend_vsg::detail::textureRejectMessage(reject, *texture));
+            }
+            if (sampled.view != nullptr) {
+                views.push_back(sampled.view);
+            }
+            offer.colors = views;
+            if (sampled.sampler != nullptr) {
+                std::vector<::vsg::ref_ptr<::vsg::Sampler>>& samplers = input_color_samplers[index];
+                samplers.clear();
+                samplers.push_back(sampled.sampler);
+                offer.color_samplers = samplers;
+            }
             continue;
         }
 
-        core::RenderPassCompatibility compatibility;
-        std::uint32_t                 width  = 0;
-        std::uint32_t                 height = 0;
-        if (const core::CompiledTarget& compiled_target = frame.targets[pass.target_index]; compiled_target.target == nullptr) {
-            if (window == nullptr) {
-                continue; // no window: a pass that names no target of its own has nowhere to draw
-            }
-            compatibility = window->shape().compatibility();
-            width         = window->width();
-            height        = window->height();
+        const HostTargets::Entry* entry = targets.find(pass.inputs[index].target);
+        if (entry == nullptr || entry->target == nullptr) {
+            continue;
         }
-        else {
-            const HostTargets::Entry* entry = targets.find(compiled_target.target);
-            if (entry == nullptr || entry->target == nullptr) {
-                continue;
-            }
-            compatibility = entry->target->shape().compatibility();
-            width         = entry->target->width();
-            height        = entry->target->height();
-        }
+        const core::CompiledInput& input       = pass.inputs[index];
+        const std::uint32_t        attachments = entry->target->colorAttachmentCount();
 
-        // One entry per DECLARED input, in declaration order: what the input target offers a shader - each of
-        // its colour attachments, plus its depth while the plan says that one is sampleable. An input this
-        // backend does not hold offers nothing: the content recorder reads one entry per declaration, so a
-        // shorter span would read past its end - and "nothing offered" is the fact it reports, which a missing
-        // entry would not be.
-        input_scratch.assign(pass.inputs.size(), InputImages{});
-        input_views.assign(pass.inputs.size(), {});
-        input_screen_views.assign(pass.inputs.size(), {});
-        input_color_samplers.assign(pass.inputs.size(), {});
-        for (std::size_t index = 0; index < pass.inputs.size(); ++index) {
-            InputImages&                                   offer = input_scratch[index];
-            std::vector<::vsg::ref_ptr<::vsg::ImageView>>& views = input_views[index];
-            views.clear();
-
-            if (pass.inputs[index].kind == vn::graphics::ImageSource::Kind::ImportedTexture) {
-                // An imported texture is one sampled image: the pass' program reads it at the input set's
-                // sampler (the input walk's by-name rule), not at the cache's material sampler. The view is
-                // copied into the per-pass vector so the span stays valid until assembly.record returns.
-                const auto* texture = static_cast<const vn::graphics::Texture*>(pass.inputs[index].texture);
-                if (texture == nullptr) {
-                    continue; // an empty declaration produces nothing to bind
-                }
-                vn::backend_vsg::detail::TextureReject reject = vn::backend_vsg::detail::TextureReject::Ok;
-                // The state belongs to the INPUT: the same texture declared with two states uploads once and
-                // yields two samplers (see MaterialImages). No state = the backend's input sampler, the
-                // behavior every imported input had before state existed.
-                const SamplerImage sampled =
-                    pass.inputs[index].sampler.has_value() ? images.acquire(texture, *pass.inputs[index].sampler, reject) : images.acquire(texture, reject);
-                if (reject != vn::backend_vsg::detail::TextureReject::Ok || sampled.view == nullptr) {
-                    diagnostics.report(vn::graphics::DiagnosticSeverity::Warning,
-                                       vn::graphics::DiagnosticCategory::ContentSkipped,
-                                       vn::String(u8"pass input texture could not be sampled; the input binds the white "
-                                                  u8"stand-in: ") +
-                                           vn::backend_vsg::detail::textureRejectMessage(reject, *texture));
-                }
-                if (sampled.view != nullptr) {
-                    views.push_back(sampled.view);
-                }
-                offer.colors = views;
-                if (sampled.sampler != nullptr) {
-                    std::vector<::vsg::ref_ptr<::vsg::Sampler>>& samplers = input_color_samplers[index];
-                    samplers.clear();
-                    samplers.push_back(sampled.sampler);
-                    offer.color_samplers = samplers;
-                }
-                continue;
-            }
-
-            const HostTargets::Entry* entry = targets.find(pass.inputs[index].target);
-            if (entry == nullptr || entry->target == nullptr) {
-                continue;
-            }
-            const core::CompiledInput& input       = pass.inputs[index];
-            const std::uint32_t        attachments = entry->target->colorAttachmentCount();
-
-            if (input.kind == vn::graphics::ImageSource::Kind::ProducedImage) {
-                // ONE image, the attachment the plan narrowed the input to. Offering the whole target here is
-                // what used to happen, and it made a content program's binding 0 answer with attachment 0 even
-                // when the pass declared attachment 1 (the declaration was a selector nothing read).
-                if (input.depth) {
-                    if (input.depth_sampleable) {
-                        offer.depth = entry->target->depthView();
-                    }
-                }
-                else if (input.attachment >= 0 && static_cast<std::uint32_t>(input.attachment) < attachments) {
-                    views.push_back(entry->target->colorView(static_cast<std::uint32_t>(input.attachment)));
-                    offer.colors = views;
-                }
-            }
-            else {
-                // The coarse declaration: every colour attachment, plus the depth while the plan says it is
-                // sampleable.
-                for (std::uint32_t attachment = 0; attachment < attachments; ++attachment) {
-                    views.push_back(entry->target->colorView(attachment));
-                }
-                offer.colors = views;
+        if (input.kind == vn::graphics::ImageSource::Kind::ProducedImage) {
+            // ONE image, the attachment the plan narrowed the input to. Offering the whole target here is
+            // what used to happen, and it made a content program's binding 0 answer with attachment 0 even
+            // when the pass declared attachment 1 (the declaration was a selector nothing read).
+            if (input.depth) {
                 if (input.depth_sampleable) {
                     offer.depth = entry->target->depthView();
                 }
             }
-
-            // The full-screen ABI's compatibility path: binding N reads the source's attachment N, so a call
-            // whose source is this input reads the WHOLE target - even when the pass declared the source as one
-            // ProducedImage (ScreenPass's addInput(ImageRef) is that shape, and the engine's G-buffer previews
-            // are built on it). The content path above keeps the narrowed offer.
-            if (isScreenSource(pass, input.target)) {
-                std::vector<::vsg::ref_ptr<::vsg::ImageView>>& screen_views = input_screen_views[index];
-                screen_views.clear();
-                for (std::uint32_t attachment = 0; attachment < attachments; ++attachment) {
-                    screen_views.push_back(entry->target->colorView(attachment));
-                }
-                offer.screen_colors = screen_views;
+            else if (input.attachment >= 0 && static_cast<std::uint32_t>(input.attachment) < attachments) {
+                views.push_back(entry->target->colorView(static_cast<std::uint32_t>(input.attachment)));
+                offer.colors = views;
+            }
+        }
+        else {
+            // The coarse declaration: every colour attachment, plus the depth while the plan says it is
+            // sampleable.
+            for (std::uint32_t attachment = 0; attachment < attachments; ++attachment) {
+                views.push_back(entry->target->colorView(attachment));
+            }
+            offer.colors = views;
+            if (input.depth_sampleable) {
+                offer.depth = entry->target->depthView();
             }
         }
 
-        // The view block is the PASS' (the content layer's contract), built from the first drawing call's
-        // camera - the engine's passes draw through one camera per scope, so the first is the pass'.
-        if (prepare_only) {
-            // PREPARING: everything the pass needs and nothing the FRAME owns - no view block, no draw/lights/shadow
-            // block, no command graph (see api/ContentAssembly::prepare). A pass this backend could not serve was
-            // skipped above, exactly as the recorded frame skips it, so both verbs answer the same set of passes.
-            (void)assembly.prepare(pass, compatibility, input_scratch);
+        // The full-screen ABI's compatibility path: binding N reads the source's attachment N, so a call
+        // whose source is this input reads the WHOLE target - even when the pass declared the source as one
+        // ProducedImage (ScreenPass's addInput(ImageRef) is that shape, and the engine's G-buffer previews
+        // are built on it). The content path above keeps the narrowed offer.
+        if (isScreenSource(pass, input.target)) {
+            std::vector<::vsg::ref_ptr<::vsg::ImageView>>& screen_views = input_screen_views[index];
+            screen_views.clear();
+            for (std::uint32_t attachment = 0; attachment < attachments; ++attachment) {
+                screen_views.push_back(entry->target->colorView(attachment));
+            }
+            offer.screen_colors = screen_views;
+        }
+    }
+    return offers;
+}
+
+/// @brief THE FRAME'S DEVICE HALF (see api/ContentPlan): opens the content frame and resolves every pass into @p plan.
+///
+/// The caller surrounds this call with the device's content lock: it touches the tables, the compiled halves, the
+/// declared sets, the stream uploads, the material images, the block storage's ring and the targets - one
+/// acquisition for the whole frame, which is the trade `D2` accepts. What it produces is values; the recording that
+/// follows reads them and takes no lock (`C3` / `S8c-2`).
+///
+/// A pass the backend holds no target for produces no slot in the plan - exactly the pass the recorded frame skips,
+/// and the executor reports it.
+void resolveContent(ContentAssembly&                                            assembly,
+                    WindowTarget*                                               window,
+                    HostTargets&                                                targets,
+                    MaterialImages&                                             images,
+                    vn::graphics::Diagnostics&                                  diagnostics,
+                    core::FrameTimeline&                                        timeline,
+                    core::RetirementQueue&                                      retirement,
+                    float                                                       frame_seconds,
+                    const core::CompiledFrame&                                  frame,
+                    ContentPlan&                                                plan,
+                    std::vector<InputImages>&                                   input_scratch,
+                    std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_views,
+                    std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_screen_views,
+                    std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>>&   input_color_samplers)
+{
+    plan.beginFrame(frame.passes.size());
+    // THE FRAME'S TABLES AND ITS SWEEPS (see api/ContentAssembly): the facts, the streams, the images, the arena's
+    // returned slots, the halves and sets whose content left, the sampled-input sets - and the block storage's ring,
+    // whose rotation is the frame's first act.
+    (void)assembly.beginFrame(frame, timeline, retirement);
+
+    for (const core::CompiledPass& pass : frame.passes) {
+        if (pass.draws.empty()) {
+            continue; // a pass with no draws: its clear is the plan's own and records without help
+        }
+        const PassOffers offers = offerInputs(pass, frame, window, targets, images, diagnostics, input_scratch, input_views, input_screen_views, input_color_samplers);
+        if (!offers.served) {
             continue;
         }
-        const vn::graphics::VineViewBlock view_block = buildViewBlock(pass.draws[0].camera, frame_seconds, width, height);
-        ::vsg::ref_ptr<::vsg::Node>       content;
-        (void)assembly.record(pass, compatibility, input_scratch, std::as_bytes(std::span<const vn::graphics::VineViewBlock>(&view_block, 1U)), content);
-        packets.push_back(PassContent{ pass.pass, std::move(content) });
+        // The view block is the PASS' (the content layer's contract), built from the first drawing call's camera -
+        // the engine's passes draw through one camera per scope, so the first is the pass'.
+        const vn::graphics::VineViewBlock view_block = buildViewBlock(pass.draws[0].camera, frame_seconds, offers.width, offers.height);
+        (void)assembly.resolve(plan, pass, offers.compatibility, input_scratch, std::as_bytes(std::span<const vn::graphics::VineViewBlock>(&view_block, 1U)));
     }
-    return packets;
+}
+
+/// @brief THE WARM-UP'S WALK (see RenderFrameExecutor::prepareFrame): the same offers a frame resolves, prepared.
+///
+/// The per-pass shape and image offers are resolved exactly as a frame resolves them - that is what makes a prepared
+/// identity the one the frame asks for - and then the pass is PREPARED instead of resolved into values, so nothing is
+/// kept and no block is written (the ring's rotation belongs to the frame, see api/ContentAssembly::prepare).
+bool prepareContent(ContentAssembly&                                            assembly,
+                    WindowTarget*                                               window,
+                    HostTargets&                                                targets,
+                    MaterialImages&                                             images,
+                    vn::graphics::Diagnostics&                                  diagnostics,
+                    core::FrameTimeline&                                        timeline,
+                    core::RetirementQueue&                                      retirement,
+                    const core::CompiledFrame&                                  frame,
+                    std::vector<InputImages>&                                   input_scratch,
+                    std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_views,
+                    std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_screen_views,
+                    std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>>&   input_color_samplers)
+{
+    (void)assembly.prepare(frame, timeline, retirement);
+    bool complete = true;
+    for (const core::CompiledPass& pass : frame.passes) {
+        if (pass.draws.empty()) {
+            continue;
+        }
+        const PassOffers offers = offerInputs(pass, frame, window, targets, images, diagnostics, input_scratch, input_views, input_screen_views, input_color_samplers);
+        if (!offers.served) {
+            continue; // exactly the pass a recorded frame skips, so both verbs answer the same set
+        }
+        complete = assembly.prepare(pass, offers.compatibility, input_scratch) && complete;
+    }
+    return complete;
 }
 
 /**
@@ -594,6 +659,11 @@ struct VsgBackend::Data {
     vn::graphics::ReportOnce frame_reentry_report{};
     /// The episode of "a host verb was called from inside a frame body" (see reportReentry).
     vn::graphics::ReportOnce host_reentry_report{};
+    /// TEST SEAM (see BackendContentAccess::setRecordSeam): a hook the RECORDING phase calls once per frame, with the
+    /// device's content lock NOT held - the one place a test can hold a frame open while another driver's whole frame
+    /// runs, which is how the overlap witness states "the recording takes no device lock". Set between frames; a
+    /// frame body reads it once (see commitFrameThrough).
+    std::function<void()> record_seam{};
     /// What the frame's steps have let go; zero while the host holds everything.
     std::size_t                             released_objects{ 0 };
     std::size_t                             released_textures{ 0 };
@@ -1525,13 +1595,13 @@ vn::graphics::PrepareReport VsgBackend::prepareFrameFor(VsgExecutor& executor,
     const core::CompiledFrame& plan = *scratch->frame;
     scratch->frame                  = nullptr; // PREPARE LEAVES NO FRAME TO PRESENT: there is nothing recorded
 
-    // THE VALUE SIDE, AND ONLY IT - ONE CONTENT PHASE (see the header's frame phases): the same walk a frame takes
-    // (`recordContent`) resolves each pass' shape and image offers and then PREPARES it instead of recording it (see
-    // api/ContentPass::prepare): the compiled halves, the declared sets, the sampled-input sets, the stream uploads and
-    // the pipeline identities are what it builds, and what it produces is no command graph at all. Running the frame's
-    // own walk is what makes "what prepare built" and "what the frame builds" ONE implementation rather than two
-    // spellings that can drift (`G1`; `T32` pins the identity half, `T33` the whole). Nothing here acquires, submits,
-    // presents or rotates the block ring.
+    // THE VALUE SIDE, AND ONLY IT - ONE CONTENT PHASE (see the header's frame phases): the same walk a frame's head
+    // takes (`resolveContent` resolves each pass' shape and image offers) is run here with `prepareContent`, which
+    // PREPARES what the frame would resolve (see api/ContentPass::prepare): the compiled halves, the declared sets,
+    // the sampled-input sets, the stream uploads and the pipeline identities are what it builds, and what it produces
+    // is no value at all. Running the frame's own walk is what makes "what prepare built" and "what the frame builds"
+    // ONE implementation rather than two spellings that can drift (`G1`; `T32` pins the identity half, `T33` the
+    // whole). Nothing here acquires, submits, presents or rotates the block ring.
     std::uint64_t built_halves    = 0;
     std::uint64_t built_sets      = 0;
     std::uint64_t built_uploads   = 0;
@@ -1553,23 +1623,18 @@ vn::graphics::PrepareReport VsgBackend::prepareFrameFor(VsgExecutor& executor,
         const std::uint64_t pool_before     = d->pool.created();
 
         WindowTarget* const window_target = index < d->windows.size() ? detail::SessionContentAccess::windowTarget(sessionAt(index)) : nullptr;
-        (void)recordContent(*d->assembly,
-                            window_target,
-                            d->targets,
-                            *d->images,
-                            d->diagnostics,
-                            d->clock.timeline(),
-                            d->retirement,
-                            // No frame clock is read: a preparing pass builds no view block (the frame's own clock,
-                            // sampled when it opens, is what its view block carries).
-                            0.0F,
-                            plan,
-                            scratch->input_scratch,
-                            scratch->input_views,
-                            scratch->input_screen_views,
-                            scratch->input_color_samplers,
-                            scratch->packets,
-                            /*prepare_only*/ true);
+        (void)prepareContent(*d->assembly,
+                             window_target,
+                             d->targets,
+                             *d->images,
+                             d->diagnostics,
+                             d->clock.timeline(),
+                             d->retirement,
+                             plan,
+                             scratch->input_scratch,
+                             scratch->input_views,
+                             scratch->input_screen_views,
+                             scratch->input_color_samplers);
 
         // THE TEXTURES THIS CALL STAGED ARE COPIED NOW, through the frame's own transfer step - not a second copy path
         // (ADR-2026-11-14; backlog T39). `MaterialImages::acquire` only stages bytes into the image; the viewer's
@@ -1651,6 +1716,9 @@ void VsgBackend::resetFrameScratch() noexcept
             scratch->facts.clear();
             scratch->pass_ids.clear();
             scratch->packets.clear();
+            // THE CONTENT PLAN GOES WITH THEM: its values name device objects, and a plan that outlived a teardown
+            // would keep a replaced storage's binds alive (memory spent, nothing dangling - but no reason to keep it).
+            scratch->content.clear();
         }
     };
     for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
@@ -1683,13 +1751,17 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(VsgExecutor& executo
         return vn::graphics::PresentOutcome::Skipped;
     }
 
-    // ONE CONTENT PHASE AT A TIME (see Data::content): what follows touches the device's tables - the content store's
-    // sweep, the block storage's material arena, the assembly's tables/halves/sets/uploads, the target registry and
-    // the session's commit - so another driver's content phase waits here, and its COLLECTION and plan compilation do
-    // not (they ran on its own scratch, before this call). A host verb that only touches those tables (releaseContent,
-    // setRenderTarget, the default program) takes the same lock, which is why it can run while a frame is between its
-    // phases (R6's shape) but never during this one.
-    std::lock_guard<std::mutex> guard(d->content);
+    // THE FRAME'S CONTENT HAS THREE PHASES, AND THE DEVICE'S LOCK IS TAKEN TWICE (see Data::content; `C3` /
+    // `S8c-2`):
+    //   1. THE HEAD resolves every device fact the frame will read into the session's own plan - the tables, the
+    //      compiled halves, the declared sets, the stream uploads, the material arena, the blocks and the pipeline
+    //      identities - under one acquisition, because another driver's head touches the same tables;
+    //   2. THE RECORDING turns those values into vsg nodes and takes NO DEVICE LOCK, which is where two drivers'
+    //      content phases genuinely overlap (a held frame stops neither the other's head nor its commit);
+    //   3. THE COMMIT places the recorded nodes in the frame's graph, sweeps what the host let go and submits,
+    //      under one acquisition, because the targets, the store and the session's commit are the device's.
+    // A host verb that only touches those tables (releaseContent, setRenderTarget, the default program) takes the
+    // same lock, which is why it can run between the phases (R6's shape) but never during one.
 
     // WHAT THE FRAME ACTUALLY BUILT, as one delta (see FrameReport::uploads): counts and bytes the recording below
     // copies, and the entries the residency sweep lets go of. Read inside this phase (the counters are the tables'),
@@ -1742,6 +1814,10 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(VsgExecutor& executo
         // dropped something, and the sweep's place is the frame's - not "the frames that drew". The content side is
         // opened first for the same reason: the table walk is what PUBLISHES the declaration indexes the residency
         // sweeps ask (see ContentAssembly::beginFrame), so a host that stops drawing must still lose its uploads.
+        //
+        // ONE PHASE: a frame with no content has no recording to overlap, so its whole device half is one acquisition
+        // (the same opening the head does, and no plan to resolve).
+        std::lock_guard<std::mutex> guard(d->content);
         if (d->assembly != nullptr) {
             (void)d->assembly->beginFrame(*frame_scratch->frame, timeline, retirement);
         }
@@ -1755,51 +1831,77 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(VsgExecutor& executo
     const ::vsg::ref_ptr<::vsg::CommandGraph> graph = window != nullptr ? detail::SessionContentAccess::makeFrameGraph(*window) : offscreen->makeFrameGraph();
     if (graph == nullptr) {
         // The frame's graph could not be built, so none of its picture was ever going to reach the surface.
+        std::lock_guard<std::mutex> guard(d->content);
         frame_scratch->frame = nullptr;
         return finish(vn::graphics::PresentOutcome::Lost);
     }
 
-    // The frame drive's own order, once (see VsgExecutor): what the plan answered for its targets becomes real, the
-    // frame's content is assembled and recorded into the passes this slice can serve, the plan is recorded into this
-    // frame's graph, and the graph is the session's - which is the call that submits (and, for a window, presents),
-    // and the one whose false answer means the writes never happened.
-    (void)executor.applyTargetPlans(*frame_scratch->frame, frame_scratch->facts, timeline, retirement);
-    // THE MATERIAL ARENA IS SIZED BEFORE ANYTHING IS RECORDED (see the declaration): every live row keeps a
-    // slot until the host releases it, so the frame that would have run out is given a bigger one first.
-    growMaterialArenaIfNeeded();
-    std::span<const PassContent> packets{};
-    if (d->assembly != nullptr && d->images != nullptr && (window_target != nullptr || window == nullptr)) {
-        packets = recordContent(*d->assembly,
-                                window_target,
-                                d->targets,
-                                *d->images,
-                                d->diagnostics,
-                                timeline,
-                                retirement,
-                                frame_seconds,
-                                *frame_scratch->frame,
-                                frame_scratch->input_scratch,
-                                frame_scratch->input_views,
-                                frame_scratch->input_screen_views,
-                                frame_scratch->input_color_samplers,
-                                frame_scratch->packets,
-                                /*prepare_only*/ false);
+    // PHASE 1 - THE HEAD: the frame drive's own order, once (see VsgExecutor): what the plan answered for its
+    // targets becomes real and the frame's content is resolved into the session's plan, all of it under the device's
+    // content lock. A host verb may run before or after this phase, never inside it.
+    {
+        std::lock_guard<std::mutex> guard(d->content);
+        (void)executor.applyTargetPlans(*frame_scratch->frame, frame_scratch->facts, timeline, retirement);
+        // THE MATERIAL ARENA IS SIZED BEFORE ANYTHING IS RESOLVED (see the declaration): every live row keeps a
+        // slot until the host releases it, so the frame that would have run out is given a bigger one first.
+        growMaterialArenaIfNeeded();
+        // THE PLAN IS ONE FRAME'S: a frame that resolves nothing (a resumed session with no content world, or a
+        // window whose session is not up) must not record the plan the LAST frame left.
+        frame_scratch->content.clear();
+        if (d->assembly != nullptr && d->images != nullptr && (window_target != nullptr || window == nullptr)) {
+            resolveContent(*d->assembly,
+                           window_target,
+                           d->targets,
+                           *d->images,
+                           d->diagnostics,
+                           timeline,
+                           retirement,
+                           frame_seconds,
+                           *frame_scratch->frame,
+                           frame_scratch->content,
+                           frame_scratch->input_scratch,
+                           frame_scratch->input_views,
+                           frame_scratch->input_screen_views,
+                           frame_scratch->input_color_samplers);
+        }
     }
-    (void)executor.record(*frame_scratch->frame, graph, packets);
-    // WHAT THE HOST LET GO IS LET GO HERE: the frame's content has been recorded, and the commit below is
-    // what advances the retirement queue - so this is the last moment a park can be dated against this frame
-    // (see the frame drive's ordering note, and the ordering rule core::RetirementQueue states).
-    sweepAbandonedContent();
-    const bool assigned  = window != nullptr ? detail::SessionContentAccess::assignFrameGraphs(*window, ::vsg::CommandGraphs{ graph })
-                                             : offscreen->assignFrameGraphs(::vsg::CommandGraphs{ graph });
-    bool       committed = false;
-    if (assigned) {
-        // The executor reports its own failure and marks what it wrote; the answer is whether the picture got out.
-        committed = window != nullptr ? executor.commit(*frame_scratch->frame, *window)
-                                      : executor.commit(*frame_scratch->frame, *offscreen);
+
+    // PHASE 2 - THE RECORDING, AND IT TAKES NO DEVICE LOCK (`C3` / `S8c-2`): every call in the plan is a value the
+    // head resolved, so turning them into vsg nodes reads no table and waits for no other driver. This is the window
+    // the overlap witness holds a frame open in (see BackendContentAccess::setRecordSeam).
+    if (d->record_seam) {
+        d->record_seam();
     }
-    frame_scratch->frame = nullptr;
-    return finish(settled(committed));
+    frame_scratch->packets.clear();
+    frame_scratch->packets.reserve(frame_scratch->content.passes().size());
+    for (const ContentPlan::Pass& pass : frame_scratch->content.passes()) {
+        ::vsg::ref_ptr<::vsg::Node> content;
+        (void)ContentPlan::record(pass, content);
+        frame_scratch->packets.push_back(PassContent{ pass.pass, std::move(content) });
+    }
+
+    // PHASE 3 - THE COMMIT: the plan is recorded into this frame's graph, the host's abandoned content is swept and
+    // the graph is the session's - which is the call that submits (and, for a window, presents), and the one whose
+    // false answer means the writes never happened. All of it under the device's content lock: the targets, the
+    // store and the session's commit are the device's.
+    {
+        std::lock_guard<std::mutex> guard(d->content);
+        (void)executor.record(*frame_scratch->frame, graph, frame_scratch->packets);
+        // WHAT THE HOST LET GO IS LET GO HERE: the frame's content has been recorded, and the commit below is
+        // what advances the retirement queue - so this is the last moment a park can be dated against this frame
+        // (see the frame drive's ordering note, and the ordering rule core::RetirementQueue states).
+        sweepAbandonedContent();
+        const bool assigned  = window != nullptr ? detail::SessionContentAccess::assignFrameGraphs(*window, ::vsg::CommandGraphs{ graph })
+                                                 : offscreen->assignFrameGraphs(::vsg::CommandGraphs{ graph });
+        bool       committed = false;
+        if (assigned) {
+            // The executor reports its own failure and marks what it wrote; the answer is whether the picture got out.
+            committed = window != nullptr ? executor.commit(*frame_scratch->frame, *window)
+                                          : executor.commit(*frame_scratch->frame, *offscreen);
+        }
+        frame_scratch->frame = nullptr;
+        return finish(settled(committed));
+    }
 }
 
 bool VsgBackend::releaseFinishedUploadStaging()
@@ -2851,6 +2953,11 @@ bool BackendContentAccess::useBlockStorage(VsgBackend& backend, const BlockStora
 void BackendContentAccess::assumeInFlightSlots(VsgBackend& backend, std::uint32_t frames_in_flight) noexcept
 {
     backend.d->stated_in_flight = frames_in_flight;
+}
+
+void BackendContentAccess::setRecordSeam(VsgBackend& backend, std::function<void()> seam)
+{
+    backend.d->record_seam = std::move(seam);
 }
 
 HostTargets& BackendContentAccess::targets(VsgBackend& backend) noexcept

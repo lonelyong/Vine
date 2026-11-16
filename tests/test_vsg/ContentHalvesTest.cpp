@@ -1014,6 +1014,12 @@ TEST(ContentHalvesTest, TheReportedNeedsAreWhatTheFrameBuilds)
         draw.vertex_count      = geometry_facts.vertex_count;
         draw.viewport          = vn::backend_vsg::ViewportRect{ 0.0F, 0.0F, 64.0F, 64.0F };
         draw.color_attachments = pass.color_attachments;
+        // THE FRAME RESOLVES THE IDENTITY, THEN RECORDS IT (see api/ContentDraw): the recorder binds a value and
+        // never asks the pool, which is what keeps the recording free of the pool (and of the device's lock).
+        const ContentDraw::Identity identity = half->draws->plan(draw.key);
+        draw.pipeline                        = identity.pipeline;
+        draw.variant                         = identity.variant;
+        ASSERT_NE(draw.pipeline, nullptr) << "the half resolves the identity the answer named";
         ASSERT_NE(half->draws->record(registry, draw), nullptr) << "the frame builds the identity the answer named";
     }
     EXPECT_EQ(pool.created(), static_cast<std::uint64_t>(expected.size())) << "one compiled identity per answer, and no other";

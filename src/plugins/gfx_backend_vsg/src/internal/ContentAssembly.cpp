@@ -177,16 +177,41 @@ bool ContentAssembly::record(const core::CompiledPass&            pass,
                              std::span<const std::byte>           view_block,
                              ::vsg::ref_ptr<::vsg::Node>&         out)
 {
-    if (d->facts == nullptr) {
-        // A frame recorded before beginFrame() is a caller bug, not a content condition: the answer is an
-        // empty node and false, with nothing reported (see the file note).
+    // THE TWO PHASES IN ONE CALL (see the header): resolve the pass into a plan of this call's own, then record it.
+    // The frame path keeps them apart so its recording takes no device lock; a caller that owns the device can take
+    // both here.
+    ContentPlan plan;
+    const bool resolved = resolve(plan, pass, compatibility, inputs, view_block);
+    const std::span<const ContentPlan::Pass> passes = plan.passes();
+    if (passes.empty()) {
+        // The resolution refused before it had a slot (see resolve): an empty node and false, with nothing reported -
+        // the same answer `record` gave before the split.
         out = ::vsg::Group::create();
         return false;
     }
+    const bool recorded = ContentPlan::record(passes.front(), out);
+    return resolved && recorded;
+}
 
-    core::StateRegistry registry(*d->pool);
-    ContentPass         recorder(scopeFor(pass, inputs, registry), *d->diagnostics);
-    return recorder.record(pass, *d->facts, compatibility, inputs, view_block, out);
+bool ContentAssembly::resolve(ContentPlan&                         plan,
+                              const core::CompiledPass&            pass,
+                              const core::RenderPassCompatibility& compatibility,
+                              std::span<const InputImages>         inputs,
+                              std::span<const std::byte>           view_block)
+{
+    if (d->facts == nullptr) {
+        // A frame recorded before beginFrame() is a caller bug, not a content condition: no slot, false, nothing
+        // reported (see the file note).
+        return false;
+    }
+
+    ContentPlan::Pass& slot = plan.beginPass(pass.pass, *d->pool);
+    // THE PLAN PINS THE PRODUCER (see ContentHalves::pin): the calls it will hold name the compiled halves'
+    // recorders by raw pointer, and another driver's frame head may sweep them before this frame records.
+    plan.pin(d->halves->pin());
+
+    ContentPass recorder(scopeFor(pass, inputs, *slot.registry), *d->diagnostics);
+    return recorder.resolve(pass, *d->facts, compatibility, inputs, view_block, slot);
 }
 
 bool ContentAssembly::prepare(const core::CompiledPass& pass, const core::RenderPassCompatibility& compatibility, std::span<const InputImages> inputs)

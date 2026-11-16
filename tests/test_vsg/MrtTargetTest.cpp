@@ -251,6 +251,13 @@ struct Fixture {
         // to cover every attachment the render pass has (VUID-vkCmdDrawIndexed-firstAttachment-07476), so the
         // count is told to the recorder rather than left at its single-attachment default.
         draw.color_attachments = 2U;
+        // THE IDENTITY IS RESOLVED FIRST (see api/ContentDraw): the recorder binds the value, never the layer.
+        const ContentDraw::Identity identity = recorder->plan(draw.key);
+        draw.pipeline                        = identity.pipeline;
+        draw.variant                         = identity.variant;
+        if (draw.pipeline == nullptr) {
+            return {};
+        }
         return recorder->record(*registry, draw);
     }
 
