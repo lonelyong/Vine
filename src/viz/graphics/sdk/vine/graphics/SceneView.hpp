@@ -29,7 +29,7 @@ class CameraManipulator;
 class PassChain;
 class RenderEngine;
 class RenderPass;
-class RenderSurface;
+class RenderArea;
 class Scene;
 
 /**
@@ -37,7 +37,7 @@ class Scene;
  *
  * @details
  * - The view owns WHAT is drawn (a Camera and a content Scene) and WHERE (the whole area it presents - see
- *   RenderSurface); WHICH passes draw it is a PassChain it ADOPTS (setChain), built by PassChain::build -
+ *   RenderArea); WHICH passes draw it is a PassChain it ADOPTS (setChain), built by PassChain::build -
  *   so a shading mode or overlay change is a call on the chain (PassChain::setShadingMode / setGizmoVisible),
  *   never a view rebuild, and a view with no chain draws nothing.
  * - It borrows an engine (setEngine) rather than being one: the engine stays content- and camera-agnostic, while
@@ -52,13 +52,13 @@ class Scene;
  *   (RenderPass::setViewport) and clear policy; the engine never manages layout.
  *
  * @note
- * - Whether a pass presents the surface is the SURFACE's declaration (RenderSurface::present), never a guess: a
+ * - Whether a pass presents the surface is the SURFACE's declaration (RenderArea::present), never a guess: a
  *   view is not suppressed because some pass elsewhere happens to carry its camera.
  * - setSurface and applySurfaceGeometry are NOT host API - a presentation drives them, and a host calling one by
  *   hand would make the surface believe in a view nobody declared.
  */
 class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
-    friend class RenderSurface; // binds this view to the area it presents, and hands its size back on unbind
+    friend class RenderArea; // binds this view to the area it presents, and hands its size back on unbind
 
   public:
     /** @brief Constructs a view with a default camera and an empty content scene.
@@ -155,14 +155,14 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *
      * @details
      * - The size is the whole surface the host renders into: this view's area IS that surface (one area draws one
-     *   picture - see RenderSurface), so there is no second rectangle to state.
+     *   picture - see RenderArea), so there is no second rectangle to state.
      * - What the one size becomes, in order: the camera aspect and the manipulator's resize, the adopted
      *   pipeline's own resize (its off-screen targets and HUD boxes - a view drawing through a built pipeline
      *   needs no layout step at all), then every callback registered with addSurfaceLayout().
-     * - A view that PRESENTS a surface forwards this to RenderSurface::resize (the size of the thing the picture
+     * - A view that PRESENTS a surface forwards this to RenderArea::resize (the size of the thing the picture
      *   ends up in is the SURFACE's fact - recorded there and fanned out), so this entry is the one for a view
      *   that presents nothing; a view that presents later is sized at once from what the surface remembers.
-     * - The verb and the default match RenderSurface::resize on purpose: the SAME announcement, addressed to
+     * - The verb and the default match RenderArea::resize on purpose: the SAME announcement, addressed to
      *   whichever of the two a host holds, and a call that omits the ratio keeps the one already in force.
      *
      * @param width        New surface width in logical pixels (<= 0 is ignored).
@@ -211,12 +211,12 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *
      * @return Surface width in logical pixels, 0 when nobody has sized anything yet.
      */
-    [[nodiscard]] int surfaceWidth() const noexcept;
+    [[nodiscard]] int areaWidth() const noexcept;
 
-    /** @brief The surface height (logical px) this view derives its picture from (see surfaceWidth). */
-    [[nodiscard]] int surfaceHeight() const noexcept;
+    /** @brief The surface height (logical px) this view derives its picture from (see areaWidth). */
+    [[nodiscard]] int areaHeight() const noexcept;
 
-    /** @brief The device pixel ratio this view derives its picture from (see surfaceWidth). */
+    /** @brief The device pixel ratio this view derives its picture from (see areaWidth). */
     [[nodiscard]] double surfacePixelRatio() const noexcept;
 
   public:
@@ -301,11 +301,11 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      */
     void setChain(intrusive_ptr<PassChain> pipeline);
 
-    /** @brief Gets whether this view presents a surface (RenderSurface::present bound it to one).
+    /** @brief Gets whether this view presents a surface (RenderArea::present bound it to one).
      *
      * @details
      * - The question a host with its own surface and view asks: the surface feeds every view that presents it
-     *   (RenderSurface::resize), so a presenting view needs nothing else - a view that is not one of its
+     *   (RenderArea::resize), so a presenting view needs nothing else - a view that is not one of its
      *   presentations is the only one left to feed by hand.
      *
      * @return true when this view presents a surface.
@@ -313,10 +313,10 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     [[nodiscard]] bool hasSurface() const noexcept;
 
   private:
-    /** @brief Binds this view to the surface it presents, or unbinds it (RenderSurface::present / dismiss).
+    /** @brief Binds this view to the surface it presents, or unbinds it (RenderArea::present / dismiss).
      *
      * @details
-     * - Not host API: the door is RenderSurface::present, and this pointer is what that table uses to find this
+     * - Not host API: the door is RenderArea::present, and this pointer is what that table uses to find this
      *   view's window pass again - a host setting it by hand would make the surface believe in a presentation
      *   nobody declared.
      * - The pair is bound both ways (the surface names the view, the view names the surface) and both borrowed:
@@ -324,13 +324,13 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *
      * @param surface Surface this view presents (borrowed), or null when it presents none.
      */
-    void setSurface(raw_ptr<RenderSurface> surface) noexcept;
+    void setSurface(raw_ptr<RenderArea> surface) noexcept;
 
     /** @brief Records the surface size (and ratio) a view with NO surface derives from.
      *
      * @details
      * - The step resize() takes when this view presents nothing; a presenting view reads the surface's numbers
-     *   instead (see surfaceWidth - the size has ONE owner and that is the surface, RenderSurface::resize).
+     *   instead (see areaWidth - the size has ONE owner and that is the surface, RenderArea::resize).
      *
      * @param width        Surface width in logical pixels.
      * @param height       Surface height in logical pixels.
@@ -341,9 +341,9 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     /** @brief Turns {surface size, pixel ratio} into this view's picture, in one place.
      *
      * @details
-     * - The step RenderSurface::resize fans out to the presenting view (the view is what a size is FOR), and the
+     * - The step RenderArea::resize fans out to the presenting view (the view is what a size is FOR), and the
      *   step this view runs on its own when it presents nothing; not host API either way - the announcement
-     *   that leads here is resize() / RenderSurface::resize.
+     *   that leads here is resize() / RenderArea::resize.
      */
     void applySurfaceGeometry();
 
@@ -362,13 +362,13 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     // The bound engine is borrowed (the host owns it and keeps it alive).
     Lease<RenderEngine> engine_;
 
-    // The surface this view presents, while one says so (RenderSurface::present). Borrowed, and unbound from
+    // The surface this view presents, while one says so (RenderArea::present). Borrowed, and unbound from
     // either side: the surface must not be reached once it is gone, and it must stop naming this view when the
-    // view goes (see ~SceneView and ~RenderSurface).
-    raw_ptr<RenderSurface> surface_ = nullptr;
+    // view goes (see ~SceneView and ~RenderArea).
+    raw_ptr<RenderArea> surface_ = nullptr;
 
     // The size this view lays its picture out with while it presents NO surface (the host's announcement). A view
-    // that presents one reads the SURFACE's numbers instead (see surfaceWidth / RenderSurface::resize): the size of
+    // that presents one reads the SURFACE's numbers instead (see areaWidth / RenderArea::resize): the size of
     // the thing the picture ends up in has one owner, and it is not the view. The steps registered against it live
     // there too (see LayoutParticipant).
     LayoutParticipant layout_;

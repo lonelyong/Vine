@@ -8,7 +8,7 @@ set(SRC_FILE_LIST
 	GraphicsTest.cpp
 	HeadlessBackendTest.cpp
 	PlanTest.cpp
-	RenderSurfaceTest.cpp
+	RenderAreaTest.cpp
 	ChannelSliceTest.cpp
 	EmbeddedShadersTest.cpp
 	MaterialInstanceTest.cpp

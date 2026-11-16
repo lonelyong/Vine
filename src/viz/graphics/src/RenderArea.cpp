@@ -1,4 +1,4 @@
-#include <vine/graphics/RenderSurface.hpp>
+#include <vine/graphics/RenderArea.hpp>
 
 #include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/RenderEngine.hpp>
@@ -9,28 +9,28 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-RenderSurface::RenderSurface(RenderEngine& engine)
+RenderArea::RenderArea(RenderEngine& engine)
   : engine_(engine.lease())
 {
-    // Built only by RenderEngine::createSurface, which keeps the result: the 1:1 relation (one engine, one area) is
+    // Built only by RenderEngine::createArea, which keeps the result: the 1:1 relation (one engine, one area) is
     // OWNED by the engine, so there is nothing to register here and no way to create a second one. The lease records
     // that the engine is a borrow - an area a host kept after the engine went away answers "no engine" instead of
     // calling into freed memory.
 }
 
-RenderSurface::~RenderSurface()
+RenderArea::~RenderArea()
 {
     // The view is the host's, and it outlives this area whenever the host says so: stop naming it, so a view
     // destroyed later does not call back into a surface that is gone (see SceneView::~SceneView).
     if (view_ != nullptr) {
         view_->setSurface(nullptr);
     }
-    // Nothing is unregistered: the engine OWNS this area (RenderEngine::createSurface), so it is the engine that
+    // Nothing is unregistered: the engine OWNS this area (RenderEngine::createArea), so it is the engine that
     // drops it (and clears its own handle first, see ~RenderEngine). The lease still guards the one window where the
     // engine is already gone - a host that kept a handle: no call reaches the destroyed engine.
 }
 
-raw_ptr<RenderPass> RenderSurface::passOf(raw_ptr<SceneView> view) const
+raw_ptr<RenderPass> RenderArea::passOf(raw_ptr<SceneView> view) const
 {
     if (view == nullptr) {
         return nullptr;
@@ -41,21 +41,21 @@ raw_ptr<RenderPass> RenderSurface::passOf(raw_ptr<SceneView> view) const
     return pipeline != nullptr ? pipeline->presentingPass() : nullptr;
 }
 
-void RenderSurface::reportSecondPresentation()
+void RenderArea::reportSecondPresentation()
 {
     if (const raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr && refused_.shouldReport()) {
         // ONE condition, not a per-call event: a host that tries every frame must not be flooded, and the moment
         // it stops trying (or takes the first presentation away) is what arms the next report.
         engine->reportEngineProblem(detail::engineProblem(u8"engine.area.picture_already_declared",
                                                           DiagnosticCategory::PassProtocolViolation,
-                                                          u8"RenderSurface::present: this area already draws a picture, and one area "
+                                                          u8"RenderArea::present: this area already draws a picture, and one area "
                                                           u8"draws one picture - dismiss the presentation that is there first (a second "
                                                           u8"one is a second pass writing the same window, which is neither an overlay "
                                                           u8"nor a split)"));
     }
 }
 
-bool RenderSurface::present(SceneView& view)
+bool RenderArea::present(SceneView& view)
 {
     const raw_ptr<RenderEngine> engine = engine_.get();
     if (engine == nullptr) {
@@ -76,20 +76,20 @@ bool RenderSurface::present(SceneView& view)
             engine->reportEngineProblem(
                 detail::engineProblem(u8"engine.area.foreign",
                                       DiagnosticCategory::UnsupportedRequest,
-                                      u8"RenderSurface::present: this area is not the one its engine drives (an engine drives one area, "
-                                      u8"see RenderEngine::createSurface), so nothing it declares would reach the frame: give this window its "
+                                      u8"RenderArea::present: this area is not the one its engine drives (an engine drives one area, "
+                                      u8"see RenderEngine::createArea), so nothing it declares would reach the frame: give this window its "
                                       u8"own engine"));
         }
         return false;
     }
     // A presentation is a statement about THIS engine's frame: the pass is registered there, and the order comes
-    // from there. A view bound to another engine (or to none) could present this surface never, and "declared, but
+    // from there. A view bound to another engine (or to none) could present this area never, and "declared, but
     // nothing is drawn" is exactly the silence this area exists to end - so it is refused out loud.
     if (view.engine() != engine) {
         engine->reportEngineProblem(detail::engineProblem(u8"engine.present.view_foreign",
                                                           DiagnosticCategory::PassProtocolViolation,
-                                                          u8"RenderSurface::present: this view is not bound to the engine of this surface, so its window pass "
-                                                          u8"is registered on another frame and will never present this surface; bind the view to the same "
+                                                          u8"RenderArea::present: this view is not bound to the engine of this area, so its window pass "
+                                                          u8"is registered on another frame and will never present this area; bind the view to the same "
                                                           u8"engine first (SceneView::setEngine)"));
         return false;
     }
@@ -104,9 +104,9 @@ bool RenderSurface::present(SceneView& view)
     }
     view_ = &view;
     // The view and the area name each other while the presentation stands: the area resolves the view's window pass
-    // from it, and the view reads this surface's size and reports back when its chain is rebuilt.
+    // from it, and the view reads this area's size and reports back when its chain is rebuilt.
     view.setSurface(this);
-    // DECLARING A VIEW IS DECLARING ITS CHAIN. What presents this surface is the pass of the chain the view
+    // DECLARING A VIEW IS DECLARING ITS CHAIN. What presents this area is the pass of the chain the view
     // ADOPTED (SceneView::setChain - built by PassChain::build), and this area reads it back through the
     // view, so it never has to know a recipe, a chain or an overlay: a view with no chain has nothing to
     // resolve, and a declaration without one would leave a host believing a window is being drawn into.
@@ -116,13 +116,13 @@ bool RenderSurface::present(SceneView& view)
         if (refused_.shouldReport()) {
             engine->reportEngineProblem(detail::engineProblem(u8"engine.present.no_chain",
                                                               DiagnosticCategory::PassProtocolViolation,
-                                                              u8"RenderSurface::present: this view has no pipeline to draw with, so nothing could declare this "
-                                                              u8"surface: build one (PassChain::build) and adopt it (SceneView::setChain) first"));
+                                                              u8"RenderArea::present: this view has no pipeline to draw with, so nothing could declare this "
+                                                              u8"area: build one (PassChain::build) and adopt it (SceneView::setChain) first"));
         }
         return false;
     }
     refused_.rearm(); // the condition is over: the next refusal is a new episode
-    // The size this surface last saw reaches the new presentation AT ONCE (the view reads it from here): a view
+    // The size this area last saw reaches the new presentation AT ONCE (the view reads it from here): a view
     // added to a running surface is sized without the host feeding it (that is what makes the surface the ONE owner
     // of the size), and its geometry follows from it - its window pass keeps no viewport of its own, so a full-area
     // view costs nothing extra.
@@ -130,7 +130,7 @@ bool RenderSurface::present(SceneView& view)
     return true;
 }
 
-bool RenderSurface::present(raw_ptr<RenderPass> pass)
+bool RenderArea::present(raw_ptr<RenderPass> pass)
 {
     if (pass == nullptr) {
         return false;
@@ -156,7 +156,7 @@ bool RenderSurface::present(raw_ptr<RenderPass> pass)
             engine->reportEngineProblem(
                 detail::engineProblem(u8"engine.present.pass_unregistered",
                                       DiagnosticCategory::PassProtocolViolation,
-                                      u8"RenderSurface::present: this pass is not registered on the engine of this surface, so it draws "
+                                      u8"RenderArea::present: this pass is not registered on the engine of this area, so it draws "
                                       u8"nothing here; state it first (RenderEngine::applyPlan - a chain states its own when it is "
                                       u8"built) and declare it again"));
         }
@@ -171,13 +171,13 @@ bool RenderSurface::present(raw_ptr<RenderPass> pass)
     return true;
 }
 
-bool RenderSurface::dismiss(raw_ptr<SceneView> view)
+bool RenderArea::dismiss(raw_ptr<SceneView> view)
 {
     if (view_ != view) {
         return false;
     }
     view_ = nullptr;
-    // Called from ~SceneView as well: the view stops naming this surface. Nothing here touches it beyond this
+    // Called from ~SceneView as well: the view stops naming this area. Nothing here touches it beyond this
     // pointer, so a half-destroyed view is safe to pass.
     if (view != nullptr) {
         view->setSurface(nullptr);
@@ -185,7 +185,7 @@ bool RenderSurface::dismiss(raw_ptr<SceneView> view)
     return true;
 }
 
-bool RenderSurface::dismiss(raw_ptr<RenderPass> pass)
+bool RenderArea::dismiss(raw_ptr<RenderPass> pass)
 {
     if (pass_ == nullptr || pass_.get() != pass) {
         return false;
@@ -194,7 +194,7 @@ bool RenderSurface::dismiss(raw_ptr<RenderPass> pass)
     return true;
 }
 
-bool RenderSurface::hasPresentation() const noexcept
+bool RenderArea::hasPresentation() const noexcept
 {
     // "Declared" is not "drawn": a host-declared pass that has left the frame presents nothing, and answering true
     // for it would keep a default path from building its own picture (see Viewer::takeArea) while the window stays
@@ -206,7 +206,7 @@ bool RenderSurface::hasPresentation() const noexcept
     return pass_ != nullptr && engine != nullptr && engine->passOrder(pass_.get()).has_value();
 }
 
-raw_ptr<RenderPass> RenderSurface::presentingPass() const
+raw_ptr<RenderPass> RenderArea::presentingPass() const
 {
     if (pass_ != nullptr) {
         const raw_ptr<RenderEngine> engine = engine_.get();
@@ -215,12 +215,12 @@ raw_ptr<RenderPass> RenderSurface::presentingPass() const
     return passOf(view_);
 }
 
-raw_ptr<SceneView> RenderSurface::presentedView() const noexcept
+raw_ptr<SceneView> RenderArea::presentedView() const noexcept
 {
     return view_;
 }
 
-void RenderSurface::resize(int width, int height, double pixel_ratio)
+void RenderArea::resize(int width, int height, double pixel_ratio)
 {
     if (width <= 0 || height <= 0) {
         return;
@@ -232,7 +232,7 @@ void RenderSurface::resize(int width, int height, double pixel_ratio)
     }
     // The frame hears the same ONE announcement: the engine records it, and its frame context is what passes lay
     // themselves out on (the engine owns no size of its own - see RenderEngine). An area its engine does not drive
-    // is NOT heard (see createSurface): its size is not what this frame lays out on.
+    // is NOT heard (see createArea): its size is not what this frame lays out on.
     if (const raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
         engine->announceAreaSize(this, width, height);
     }
@@ -240,20 +240,20 @@ void RenderSurface::resize(int width, int height, double pixel_ratio)
     // and it belongs to the frame (`RenderEngine` hands the recorded size to the target at the frame's head - see
     // design 2.12). Telling it from this call would be the UI thread writing engine-side state, one call away from
     // being the wrong thread, and it would resize a surface whose next frame is already laid out on the new number.
-    // Handed to the view that presents this surface, and only to it: a pass a host declared has no view to feed,
+    // Handed to the view that presents this area, and only to it: a pass a host declared has no view to feed,
     // and it states its own rectangle in device pixels. The view RE-DERIVES its geometry from the numbers recorded
-    // here (it reads them - see SceneView::surfaceWidth), so there is one size and no copy to keep in step.
+    // here (it reads them - see SceneView::areaWidth), so there is one size and no copy to keep in step.
     if (view_ != nullptr) {
         view_->applySurfaceGeometry();
     }
 }
 
-double RenderSurface::pixelRatio() const noexcept
+double RenderArea::pixelRatio() const noexcept
 {
     return pixel_ratio_;
 }
 
-void RenderSurface::bindTarget(raw_ptr<WindowPresentTarget> target)
+void RenderArea::bindTarget(raw_ptr<WindowPresentTarget> target)
 {
     // The area holds the object its device made (see RenderDevice::createSurfaceTarget): nothing has to be handed
     // on, refused or reported here - a device that presents nothing never made one, and said so where it was
@@ -261,12 +261,12 @@ void RenderSurface::bindTarget(raw_ptr<WindowPresentTarget> target)
     target_ = target;
 }
 
-raw_ptr<WindowPresentTarget> RenderSurface::target() const noexcept
+raw_ptr<WindowPresentTarget> RenderArea::target() const noexcept
 {
     return target_;
 }
 
-bool RenderSurface::hasTarget() const noexcept
+bool RenderArea::hasTarget() const noexcept
 {
     return target_ != nullptr;
 }

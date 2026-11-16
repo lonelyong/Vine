@@ -308,7 +308,7 @@
   `requested` / `supported` 一对。词汇表登记在 `scripts/diagnostic_codes.txt`（双向检查：用到的必须登记、
   登记的必须被用到），`check_diagnostic_formats.py` 用 `scripts/diagnostic_code_baseline.txt` 给尚未转换的
   调用点设**上限**——新写的报告不带 code 会红。**判据**：**构造**诊断（≥3 实参）必须写 code，**转发**一个 `RenderDiagnostic`（`reportDiagnostic(diagnostic)`）不算——值里带着 code。
-  2026-11-15 **vk 七族 61 个 + vsg 四族 22 个 + 引擎 13 个 = 96 个 code**，两个后端已全部转换；剩下 22 处是引擎自己的报告（`RenderEngine` 13 / `RenderSurface` 5 / 四个小文件各 1）。
+  2026-11-15 **vk 七族 61 个 + vsg 四族 22 个 + 引擎 13 个 = 96 个 code**，两个后端已全部转换；剩下 22 处是引擎自己的报告（`RenderEngine` 13 / `RenderArea` 5 / 四个小文件各 1）。
   **原因在知道它的那一层命名**：vk 的内容拒绝是 `ContentRefusal`（category + code + 句子，先到者胜），设备只转发；vsg 的读回拒绝由 `readbackRefusalDiagnostic` 一个无 `default` 的 switch 映射，枚举新增就必须命名 code。
 
 - `test_graphics`（模型无关）、`test_vsg`（后端，含真实设备用例）、`test_gui`、`test_core`。
@@ -1205,7 +1205,7 @@
 - **决定**：`ADR-2026-11-13-one-engine-one-surface.md` —— 保持一引擎一区；多窗口 = 一设备多引擎（每窗一引擎 / 一区 / 一个 `Viewer`）。
 - **删/改写**：graphics-next 的 F8、`R37`、`T29`、`K10`、§9.3 步 4 删除；`R21` / `R27` 改成一引擎一表面；`SurfaceId` 离开 id 表；
   §3.8 改成"多窗口：一个引擎驱动一个表面"；§7 新增 `D12`。
-- **修掉的文档矛盾**：`graphics-architecture.md` F19 曾写"一个引擎可服务多个窗口"（与代码 `createSurface()` 拒绝第二区、以及
+- **修掉的文档矛盾**：`graphics-architecture.md` F19 曾写"一个引擎可服务多个窗口"（与代码 `createArea()` 拒绝第二区、以及
   同文 §7 D2 都相反），已改；D2 补 ADR 链接；§2.8 里"`Session` 类型随 F8 落地"改成"没有也不需要"。
 - **理由**（评估结论）：无真实消费者（`G8`）；`FrameResult` / `PresentRecord` 刚在 F12 落成单值，改 per-surface 是返工（`G10`）；
   appfw 所有权（窗口拥有引擎）要重写；估算 ~900–1400 行 / 14–20 文件。

@@ -43,7 +43,7 @@
 #include <vine/graphics/Node.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderSurface.hpp>
+#include <vine/graphics/RenderArea.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
@@ -1087,8 +1087,8 @@ void addOffscreenValidationPass(vn::appfw::gui::RenderControl* render_control)
     // middle of the window instead of its corner.
     const auto anchorRect = [render_control, margin, dpr](int w, int h, int& out_x, int& out_y) {
         auto* engine_ptr = render_control->engine();
-        int   sw         = (engine_ptr != nullptr) ? engine_ptr->surfaceWidth() : 0;
-        int   sh         = (engine_ptr != nullptr) ? engine_ptr->surfaceHeight() : 0;
+        int   sw         = (engine_ptr != nullptr) ? engine_ptr->areaWidth() : 0;
+        int   sh         = (engine_ptr != nullptr) ? engine_ptr->areaHeight() : 0;
         sw               = static_cast<int>(sw * dpr);
         sh               = static_cast<int>(sh * dpr);
         if (sw <= 0 || sh <= 0) {
@@ -1127,8 +1127,8 @@ void addOffscreenValidationPass(vn::appfw::gui::RenderControl* render_control)
     // Re-anchor once the backend surface is realized and sized.
     QTimer::singleShot(600, [render_control, screen, pip_w, pip_h, margin, dpr] {
         auto* engine_ptr = render_control->engine();
-        int   sw         = (engine_ptr != nullptr) ? engine_ptr->surfaceWidth() : 0;
-        int   sh         = (engine_ptr != nullptr) ? engine_ptr->surfaceHeight() : 0;
+        int   sw         = (engine_ptr != nullptr) ? engine_ptr->areaWidth() : 0;
+        int   sh         = (engine_ptr != nullptr) ? engine_ptr->areaHeight() : 0;
         sw               = static_cast<int>(sw * dpr); // the viewport below is device pixels (see anchorRect)
         sh               = static_cast<int>(sh * dpr);
         if (sw <= 0 || sh <= 0) {
@@ -1275,8 +1275,8 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     int          sx    = 0;
     int          sy    = 0;
     {
-        int sw = engine->surfaceWidth();
-        int sh = engine->surfaceHeight();
+        int sw = engine->areaWidth();
+        int sh = engine->areaHeight();
         if (sw <= 0 || sh <= 0) {
             sw = 1280;
             sh = 720;
@@ -1503,7 +1503,7 @@ bool demoUsesDeferred()
  * An axis gizmo mirroring the view camera is always added (configurable via
  * ChainDesc::gizmo) and - together with any Deferred G-buffer - is kept
  * in step with the window by a single surface-layout step. This chain's
- * window pass is DECLARED as the surface's presentation (RenderSurface), which
+ * window pass is DECLARED as the surface's presentation (RenderArea), which
  * is what keeps RenderControl from adding a default forward pass beside it.
  *
  * @param render_control Render view whose engine receives the passes.
@@ -1559,10 +1559,10 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     view->setChain(pipeline);
 
     // This pipeline presents the surface. Saying so is what keeps the control from building its own default window
-    // pass beside it (see RenderSurface): the main pass of this pipeline draws to the backbuffer, so two such
+    // pass beside it (see RenderArea): the main pass of this pipeline draws to the backbuffer, so two such
     // passes would draw over each other. Declared here rather than in the control because the demo - not the
     // control - owns this pipeline.
-    if (auto* surface = render_control->surface(); surface != nullptr) {
+    if (auto* surface = render_control->area(); surface != nullptr) {
         surface->present(pipeline->presentingPass());
     }
 

@@ -11,7 +11,7 @@ namespace vn::graphics
 {
 
 class RenderEngine;
-class RenderSurface;
+class RenderArea;
 class SceneView;
 
 } // namespace vn::graphics
@@ -23,11 +23,11 @@ class RenderControl;
 /**
  * @brief The REQUEST half of one render area: what the picture that draws it is built from, and the build itself.
  *
- * One render area draws one picture (see RenderSurface), and this is the object that turns "how the host wants it
+ * One render area draws one picture (see RenderArea), and this is the object that turns "how the host wants it
  * drawn" into the chain that draws it: the request is a VALUE (ViewerOptions - path, shading mode, which overlays,
  * off-screen size), and every structural change is one build plus one adoption on the area's view
  * (SceneView::setChain). What is left over in the area - who draws it, how big it is, which window it is - stays
- * where it was: on the surface (RenderSurface), which this class READS and never copies.
+ * where it was: on the surface (RenderArea), which this class READS and never copies.
  *
  * WHAT IT IS NOT. It is not an owner of the area's presentation: isActive() READS it (a pass a host declared there, a view
  * released elsewhere), so this class never holds a second answer; view() is the view it draws with, which is the host's
@@ -40,7 +40,7 @@ class RenderControl;
  * object, which is why a Viewer is owned by whoever owns the area (RenderControl hands one out through viewer()).
  *
  * THE TAKEOVER. An area is presented by this viewer's view unless a host declared a main pass of its OWN on the
- * area (RenderSurface::present(RenderPass)), which is how a host that brings a picture of its own keeps the default
+ * area (RenderArea::present(RenderPass)), which is how a host that brings a picture of its own keeps the default
  * chain from being built beside it: such a pass makes isActive() answer false, and takeArea() leaves the area
  * alone. A view whose drawing a host takes over is given back with release().
  */
@@ -58,7 +58,7 @@ class VN_APPFW_API Viewer {
      * @param view    The view that draws the area; null leaves the viewer with no view (nothing to build for and
      *                nothing to declare).
      */
-    Viewer(raw_ptr<vn::graphics::RenderEngine> engine, raw_ptr<vn::graphics::RenderSurface> surface, intrusive_ptr<vn::graphics::SceneView> view);
+    Viewer(raw_ptr<vn::graphics::RenderEngine> engine, raw_ptr<vn::graphics::RenderArea> surface, intrusive_ptr<vn::graphics::SceneView> view);
 
     /**
      * @brief Destroys the viewer.
@@ -108,7 +108,7 @@ class VN_APPFW_API Viewer {
     /**
      * @brief Gives the view back to the host: the area's picture leaves this viewer.
      *
-     * The declaration this viewer made is withdrawn (RenderSurface::dismiss), the view is forgotten and the
+     * The declaration this viewer made is withdrawn (RenderArea::dismiss), the view is forgotten and the
      * reference this viewer held is dropped - the view is the host's again, and a host that keeps it may destroy
      * it. The chain this viewer built stays ADOPTED on the view: a chain belongs to the view it draws, so a host
      * that takes the picture over replaces it (SceneView::setChain) rather than starting from nothing.
@@ -133,7 +133,7 @@ class VN_APPFW_API Viewer {
      * @brief Whether this viewer is the area's presenter: the area shows its view and no pass a host declared.
      *
      * The question a host asks to know whether the default picture is still this viewer's: a pass declared on the
-     * area (RenderSurface::present(RenderPass)) means the host took the area over, and a view released or never
+     * area (RenderArea::present(RenderPass)) means the host took the area over, and a view released or never
      * declared is not presenting anything. The answer is read from the area, so it moves the moment the area does.
      *
      * @return true when this viewer's view presents the area and no host-declared pass does.

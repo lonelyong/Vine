@@ -20,7 +20,7 @@ VN_GRAPHICS_NS_BEGIN
  *   announcement and the step list in one small object is what lets a host participate in layout without reaching
  *   into a view's internals - and what keeps `SceneView` a facade rather than the place every layout rule accumulates.
  * - THE SIZE HERE IS THE VIEW'S OWN, used when it presents nothing. A view that presents a surface reads the
- *   SURFACE's size instead (see RenderSurface::resize): the size of the thing the picture ends up in has one owner,
+ *   SURFACE's size instead (see RenderArea::resize): the size of the thing the picture ends up in has one owner,
  *   and it is not the view.
  *
  * @note
@@ -106,7 +106,7 @@ class VN_GRAPHICS_API LayoutParticipant {
      *
      * @details
      * - The form a consumer uses when the size is not this participant's to own: a view that PRESENTS a surface reads
-     *   that surface's size (the thing the picture ends up in owns it - see RenderSurface::resize) and still wants
+     *   that surface's size (the thing the picture ends up in owns it - see RenderArea::resize) and still wants
      *   its host-registered steps run. The recorded size is not consulted or changed.
      * - Same order and same skip rule as apply().
      *

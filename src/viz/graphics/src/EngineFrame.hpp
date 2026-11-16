@@ -43,7 +43,7 @@ struct EngineFrame {
     /// The target this frame resolves to: the area's window, or the one the device made for itself (null when the
     /// device presents nothing - a first-class state, not an error).
     raw_ptr<PresentTarget> target = nullptr;
-    /// Surface width in LOGICAL pixels, as the frame was laid out on it (see RenderSurface::resize).
+    /// Surface width in LOGICAL pixels, as the frame was laid out on it (see RenderArea::resize).
     int width = 0;
     /// Surface height in logical pixels, as the frame was laid out on it.
     int height = 0;

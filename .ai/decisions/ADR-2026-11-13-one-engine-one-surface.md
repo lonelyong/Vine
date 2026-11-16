@@ -73,5 +73,5 @@
 - `docs/guides/render-views.md` §7（现役多窗口立场）
 - `src/viz/graphics/src/RenderEngine.cpp`：`createSurface()`、`announceAreaSize()`、`buildContentHalf()` 的
   `frame.target`
-- `tests/test_graphics/RenderSurfaceTest.cpp`（第二区被拒）、
+- `tests/test_graphics/RenderSurfaceTest.cpp`（第二区被拒）、 <!-- drift-ok -->
   `tests/test_graphics/HeadlessBackendTest.cpp`（`OneDeviceServesSeveralAreasWithoutCrossingThem`）

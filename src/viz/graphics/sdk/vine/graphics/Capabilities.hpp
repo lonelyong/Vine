@@ -51,7 +51,7 @@ struct VN_GRAPHICS_API Capabilities {
     bool render_targets{ false };
 
     /// Frames can be presented somewhere: this session has a window to show a picture through (see
-    /// RenderDevice::createSurfaceTarget, and RenderSurface::bindTarget for the window an area is bound to).
+    /// RenderDevice::createSurfaceTarget, and RenderArea::bindTarget for the window an area is bound to).
     ///
     /// False is a first-class state, not an error: a session brought up to draw only into render targets runs
     /// whole frames and presents nothing (an offline bake, a display-less run). It answers "was this session

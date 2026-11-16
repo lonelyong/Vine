@@ -41,7 +41,7 @@
 | --- | --- | --- |
 | `RenderControl`（公开控件） | 私有 `SurfaceWindow`；转发 `engine()` / `view()` / `viewer()` / `surface()` / `init()` / `state()` | 不自己建链、不自己解释配方 |
 | `SurfaceWindow`（私有实现） | 原生 `QWindow`、`RenderEngine`、`SceneView`、`Viewer`；attach 规则、延迟 resize、Qt 事件 → 视图输入 | 不存第二份表面/尺寸事实 |
-| `RenderSurface`（图形层） | 一块区的呈现声明、尺寸、目标；只**解析**声明 | 不建链、不建视图、不猜默认 pass |
+| `RenderArea`（图形层） | 一块区的呈现声明、尺寸、目标；只**解析**声明 | 不建链、不建视图、不猜默认 pass |
 | `SceneView`（图形层） | 相机、内容场景、操纵器、二维组与输入、**采纳的那条链**（强引用） | 不拥有配方、不拥有表面 |
 | `PassChain`（图形层） | 一条链的 pass、离屏目标、overlay、`ChainDesc` 的构建结果；析构时把 pass 还给引擎 | 不拥有引擎（租约）、不拥有视图 |
 | `Viewer`（appfw） | **一块区的请求**（`ViewerOptions`）+ 建链/采纳/声明/重建搬运行期选择 | 不拥有呈现（`isActive()` 读区）、不拥有视图 |
@@ -64,7 +64,7 @@
 
 ### 2.3 一块区只画一幅画
 
-`RenderSurface` 一条呈现，第二次呈现被拒并报一次。多幅画面由应用自己算矩形、给 pass 子视口、自己决定清屏。
+`RenderArea` 一条呈现，第二次呈现被拒并报一次。多幅画面由应用自己算矩形、给 pass 子视口、自己决定清屏。
 宿主接管时 `surface()->present(pass)` 声明自己的主 pass，默认链让位。
 
 ### 2.4 输入只有操纵器一条通道
@@ -98,7 +98,7 @@
 
 ### 3.1.2 F2 `Viewer` 把请求变成链
 
-- **行为**：`setViewerOptions(options)` 按 `ViewerOptions` 建 `PassChain`，采纳到 `view()`，并在 `RenderSurface`
+- **行为**：`setViewerOptions(options)` 按 `ViewerOptions` 建 `PassChain`，采纳到 `view()`，并在 `RenderArea`
   上声明呈现。没有请求时 `takeArea()` 用默认 `ViewerOptions` 建一条。
 - **约束**（C2）：链必须为这个视图的相机/内容建；`setChain` 不检查，引擎在形状不一致时报告。
 - **要求**（R2）：同一份请求重复设置不得重建（幂等）；区上已有宿主声明时不得建默认链。
@@ -121,7 +121,7 @@
 
 ### 3.1.4 F4 一块区一幅画与宿主接管
 
-- **行为**：`RenderSurface` 一条呈现；第二次呈现被拒并报一次。宿主 `surface()->present(pass)` 声明自己的主 pass 后，
+- **行为**：`RenderArea` 一条呈现；第二次呈现被拒并报一次。宿主 `surface()->present(pass)` 声明自己的主 pass 后，
   `Viewer::isActive()` 为 false，`takeArea()` 不动；`release(view)` 把视图还给宿主。
 - **约束**（C4）：一块区不能同时有宿主 pass 和默认链；一个区两幅画没有正确的清屏/顺序答案。
 - **要求**（R4）：宿主接管时 `Viewer` 不得建链、不得声明；`release(view)` 后链仍采纳在视图上，由宿主替换。
@@ -143,7 +143,7 @@
 - **行为**：每个 3D 文档一块 `RenderControl`（自己的面/会话/设备/管线）；应用级共享的只有 DockPanel/Ribbon 外壳。
 - **约束**（C6）：`VSG_MAX_DEVICES=4`；第 5 块由 `vsg::Device` 构造抛异常拒绝，`deviceFailureMessage()` 转成原因。
 - **要求**（R6）：第 5 块失败必须带“at most 4 simultaneous render devices”的理由，不能抛到事件循环。
-- **验收**（T6）：`ModelViewerTest.EachDocumentViewOwnsItsOwnRenderSurface`、
+- **验收**（T6）：`ModelViewerTest.EachDocumentViewOwnsItsOwnRenderArea`、
   `VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException`。
 - **注意**（N6）：`<=4` 的固定数组分支不做边界检查，不能让第 5 块写下去。
 
@@ -175,7 +175,7 @@
 | --- | --- | --- |
 | `PassChain::build(engine, desc)` | 唯一的建链入口；失败返回 null 并报一次 | 见 `PassChain.hpp` |
 | `SceneView::setChain(chain)` | 采纳/替换/丢弃链 | 链必须为这个视图的相机/内容建 |
-| `RenderSurface::present(view/pass)` | 声明呈现 | 一块区一条呈现 |
+| `RenderArea::present(view/pass)` | 声明呈现 | 一块区一条呈现 |
 | `SceneView::setManipulator(...)` | 换输入处理 | 唯一输入通道 |
 
 ## 5. 约束、要求与不变量
@@ -258,7 +258,7 @@
 | T3 | 重建搬运行期选择 | `ARebuildCarriesTheLiveChainsRuntimeChoices` |
 | T4 | 宿主主 pass 接管、释放视图 | `AHostPassTakesTheAreaAndTheViewerStandsDown`、`ReleasingTheViewTakesItOutOfTheArea` |
 | T5 | 输入到视图、拖拽仍转向机 | `TheViewReceivesInputAndADragKeepsSteeringIt` |
-| T6 | 每个文档视图自带渲染面；第 5 块给理由 | `ModelViewerTest.EachDocumentViewOwnsItsOwnRenderSurface`、`VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException` |
+| T6 | 每个文档视图自带渲染面；第 5 块给理由 | `ModelViewerTest.EachDocumentViewOwnsItsOwnRenderArea`、`VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException` |
 | T7 | 一视图两窗格：目标带视图，哪块算数由视图答 | `DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast` |
 
 ## 9. 状态与演进
@@ -288,7 +288,7 @@ F1–F6 均已落地；多格/共享会话已删除。`Viewer` 是一块区的�
 - `src/fw/appfw/sdk/vine/appfw/gui/ViewerOptions.hpp`
 - `src/viz/graphics/sdk/vine/graphics/SceneView.hpp`
 - `src/viz/graphics/sdk/vine/graphics/PassChain.hpp`
-- `src/viz/graphics/sdk/vine/graphics/RenderSurface.hpp`
+- `src/viz/graphics/sdk/vine/graphics/RenderArea.hpp`
 
 ### 10.2 文档与 ADR
 

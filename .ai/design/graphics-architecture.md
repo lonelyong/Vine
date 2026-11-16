@@ -4,7 +4,7 @@
 > **最后核对**：2026-11-16
 > **范围**：设备/窗口/区/视图/引擎的分层，一帧的编译与调度。
 > **权威来源**：`RenderEngine.hpp` / `PassChain.hpp` / `PassRegistry.hpp` / `OutputRegistry.hpp` /
-> `DiagnosticsRoute.hpp` / `SceneView.hpp` / `RenderSurface.hpp` / `RenderBackend.hpp`。
+> `DiagnosticsRoute.hpp` / `SceneView.hpp` / `RenderArea.hpp` / `RenderBackend.hpp`。
 > **待办**：`../backlog/graphics.md`
 
 ## 1. 概要设计
@@ -33,7 +33,7 @@
 2.1 **机制进 SDK，组合归应用层**：分屏布局、多 transient 互借深度、便利对象的边界都不做成引擎政策。
 2.2 **声明与执行分离**：pass 是声明，帧编译成值（`FrameDescription` / `FrameTable`），后端只消费值。
 2.3 **一个事实一个家**：pass 登记只有 `PassRegistry`；命名产出只有 `OutputRegistry`；诊断只有
-    `DiagnosticsRoute`；呈递只有 `RenderSurface` 的呈现表。
+    `DiagnosticsRoute`；呈递只有 `RenderArea` 的呈现表。
 2.4 **设备不是窗口**：`RenderDevice` 拥有 GPU 设备与队列，可服务多个窗口；窗口目标由设备发放。
 2.5 **调度只有一个实现**：引擎的 `detail::FrameScheduler` 排序；后端不再按依赖重排、不再报环。
 
@@ -52,7 +52,7 @@
 
 2.8 **`RenderEngine` 是组合根，不是功能的家**：它拥有三样东西 —— 帧泵（`frame` / `waitForFrame` /
     `setFrameThreading` / `frameNumber`）、会话形状（pass 声明、`plan` / `applyPlan` 与帧编译）、设备借用
-    （`initialize` / `shutdown` / `device` / `createSurface`）与报告（`frameReport` / `presentRecord` /
+    （`initialize` / `shutdown` / `device` / `createArea`）与报告（`frameReport` / `presentRecord` /
     `presentedCamera`）。为什么：`RenderEngine.hpp` 1462 行、56 个公共签名，一个类里住着 8 类职责；线程策略的
     **机制**只有 `detail::FrameRunner`（123 行）与 5 个调用点，但**语义契约**外溢到 9 个文件——不写下来，下一次
     加功能会继续默认往里塞（`G5` / `G12`）。边界：新的**机制**属于 `detail::`，不属于 `RenderEngine`；它只组合
@@ -96,7 +96,7 @@
 |---|---|---|
 | F1 | 设备 | `RenderDevice`（`RenderBackend`）：设备 + 队列；不拥有窗口。 |
 | F2 | 窗口目标 | `WindowPresentTarget`：窗口句柄 + 交换链；一个窗口一个目标。 |
-| F3 | 区 | `RenderSurface`：尺寸 + 呈现表；由 `RenderEngine::createSurface()` 创建；一区一幅画。 |
+| F3 | 区 | `RenderArea`：尺寸 + 呈现表；由 `RenderEngine::createArea()` 创建；一区一幅画。 |
 | F4 | 视图 | `SceneView`：相机 + 场景 + 操纵器 + 输入 + 采纳的 `PassChain`；回答“哪条 pass 画我”（输入的归属见 `appfw-render-view.md` §2.1 / §2.4）。 |
 | F5 | 引擎 | `RenderEngine`：`initialize` / `shutdown` / `frame() → FrameOutcome`、设备借用、尺寸、能力、报告。 |
 
@@ -125,15 +125,15 @@
 | F14 | 编译 | `compileFrame()`：解析输入 → 建边 → 稳定拓扑排序 → 分配 transient → `FrameDescription`。 |
 | F15 | 记录 | `beginFrame` → 每 pass（`beginPass` / `setPassOrder` / `setPassInputs` / `execute` / `endPass`）→ `endFrame`。 |
 | F16 | 物化 | 后端按 `FrameDescription.passes` 建目标/subpass/barrier/clear、记录命令、报告无法服务项。 |
-| F17 | 呈递 | `RenderSurface` 的呈现表解析到具体 pass；`PresentTarget` / `WindowPresentTarget` 两层。 |
+| F17 | 呈递 | `RenderArea` 的呈现表解析到具体 pass；`PresentTarget` / `WindowPresentTarget` 两层。 |
 
 ### 3.5 呈现与多窗口
 
 | # | 功能 | 说明 |
 |---|---|---|
-| F18 | 声明式呈递 | `RenderSurface::present(view)` / `present(pass)`；谁画这块面由视图/表面回答一次。 |
+| F18 | 声明式呈递 | `RenderArea::present(view)` / `present(pass)`；谁画这块面由视图/表面回答一次。 |
 | F19 | 多窗口 | **一个设备可服务多个引擎**（每窗口一个引擎 / 一个区 / 一个 `Viewer`）；窗口销毁不带走其他窗口。一个引擎驱动多个窗口已否决（一帧一表面，见 §7 D2 与 ADR-2026-11-13）。 |
-| F20 | 尺寸 | 表面尺寸唯一 owner 是 `RenderSurface`；视图通过 `resize` / `addSurfaceLayout` 跟随。 |
+| F20 | 尺寸 | 表面尺寸唯一 owner 是 `RenderArea`；视图通过 `resize` / `addSurfaceLayout` 跟随。 |
 
 ## 4. 公开接口
 
@@ -145,13 +145,13 @@
 | `frame()` | 编译并执行一帧；返回 `FrameOutcome`（Ran / Submitted；`NotReady` + `EngineNotReady`） |
 | `passes()` / `outputs()` / `diagnostics()` | 三个门面 |
 | `device()` / `setDevice()` | 借用/安装设备 |
-| `createSurface()` | 创建唯一的区 |
+| `createArea()` | 创建唯一的区 |
 | `applyPlan()` / `applyPlan(plan, owner)` / `plan()` / `planFor(owner)` | 宿主与贡献者的形状（`PlanResult` 三态；`addPass` 家族已删） |
 | `publish()` / `resolve()` / `unpublish()` | 命名产出（等价于 `outputs()`） |
 | `transientTarget()` | transient 目标 |
 | `releaseContent()` | 释放内容的 GPU 驻留 |
 | `frameTable()` / `frameDescription()` | 本帧的编译产物 |
-| `surfaceWidth()` / `surfaceHeight()` / `capabilities()` / `frameReport()` | 查询 |
+| `areaWidth()` / `areaHeight()` / `capabilities()` / `frameReport()` | 查询 |
 
 ### 4.2 注册表与诊断
 
@@ -177,7 +177,7 @@
 | `setGizmoVisible()` / `setStatsVisible()` | overlay 开关 |
 | `overlayPass(role)` / `overlayContent(role)` / `setOverlayVisible(role, on)` | overlay 查询/开关 |
 
-### 4.4 `SceneView` / `RenderSurface`
+### 4.4 `SceneView` / `RenderArea`
 
 | 接口 | 作用 |
 |---|---|
@@ -185,8 +185,8 @@
 | `SceneView::setChain()` / `chain()` | 采纳配方 |
 | `SceneView::presentingPass()` | 转发表面的问题 |
 | `SceneView::resize()` / `addSurfaceLayout()` | 跟随尺寸 |
-| `RenderSurface::present(view)` / `present(pass)` | 声明呈递 |
-| `RenderSurface::resize(w, h, ratio)` | 表面尺寸唯一定义 |
+| `RenderArea::present(view)` / `present(pass)` | 声明呈递 |
+| `RenderArea::resize(w, h, ratio)` | 表面尺寸唯一定义 |
 
 ## 5. 约束、要求与不变量
 

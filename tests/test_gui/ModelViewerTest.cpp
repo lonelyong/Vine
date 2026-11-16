@@ -40,7 +40,7 @@
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderSurface.hpp>
+#include <vine/graphics/RenderArea.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
 #include <vine/window/InputEvent.hpp>
@@ -574,7 +574,7 @@ TEST(ModelViewerTest, TheShadingModeCommandsDriveTheCurrentModelView)
     EXPECT_TRUE(vn::appfw::gui::resolveCommandTarget(&window).isEmpty()) << "没有上屏的视图时没有目标可给";
 }
 
-TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderSurface)
+TEST(ModelViewerTest, EachDocumentViewOwnsItsOwnRenderArea)
 {
     // 视图层那三段（注册表 / 宿主 / 中央容器）在 DocumentViewTest 里各自被钉过；这条钉的是**插件自己**那一段，
     // 以及"一个文档 = 一个视图 = 它自己那份资源"：视图自带渲染控件（自己的面/会话/设备），两份文档的控件与引擎

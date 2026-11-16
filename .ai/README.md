@@ -89,7 +89,7 @@
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
-- `ADR-2026-11-16-authoring-view-and-target-vocabulary.md` —— **值承载声明，行为归对象**：一个 `View` 值（`CameraSnapshot` + `Viewport` + 层掩码，`CollectView` 退役）、`RenderSurface` → `RenderArea`（surface 留给平台）、一个 pass 的目标收成 `Target` + `Output` 两个值、`PassDesc` 是唯一作者形状（`RenderPass` 的 35 个 setter 收成只读活句柄）、值里零回调（`before_draw` 归对象的 `update()`，`OverlayLayout` 返回 `Viewport`）、删死字段 `tag`、`setRenderTarget` 变真（vk 预建，新增 CAP-86）或退役、`releasePass` 收窄契约、`Capabilities` = `Features` + `Limits`、诊断加 `origin`（CAP-87）、灯集不再每 pass 分配；四条规范文字修订 + 26 处 section comment 清扫。**提议，待批准**；审校与 18 批顺序在 `research/graphics-2026-11-16-redesign-r2.md`。
+- `ADR-2026-11-16-authoring-view-and-target-vocabulary.md` —— **值承载声明，行为归对象**：一个 `View` 值（`CameraSnapshot` + `Viewport` + 层掩码，`CollectView` 退役）、`RenderArea` → `RenderArea`（surface 留给平台）、一个 pass 的目标收成 `Target` + `Output` 两个值、`PassDesc` 是唯一作者形状（`RenderPass` 的 35 个 setter 收成只读活句柄）、值里零回调（`before_draw` 归对象的 `update()`，`OverlayLayout` 返回 `Viewport`）、删死字段 `tag`、`setRenderTarget` 变真（vk 预建，新增 CAP-86）或退役、`releasePass` 收窄契约、`Capabilities` = `Features` + `Limits`、诊断加 `origin`（CAP-87）、灯集不再每 pass 分配；四条规范文字修订 + 26 处 section comment 清扫。**提议，待批准**；审校与 18 批顺序在 `research/graphics-2026-11-16-redesign-r2.md`。
 - `ADR-2026-11-16-redesign-seam-and-vocabulary.md` —— **重设计的是名字与归属，不是能力**：两后端图形栈的接缝（`backend/` 25 个头只留 6 个共享机制 + 守卫，18 个 vsg 专用头搬进插件）、词汇（设计名词 `Session` 退役，统一 `FrameDriver` / `FrameDriverId` / `WindowSession` / `FrameHead`）、一帧三相位（帧首解析一次锁 / 无锁录制 / 提交一次锁，`prepare` = `Submission::TransferOnly`）、拒绝只有一种形状（`DiagnosticDraft`）、目标表与引擎组合根归位、选择规则收成一份；保留 `RenderBackend` 聚合与 `RenderDevice` 五个职责面（`G8` 无消费者），触发条件写在 ADR 里。**提议，待批准**；施工图在 `research/graphics-2026-11-16-redesign.md`。
 - `ADR-2026-11-14-sample-count-refused-not-lowered.md` —— **采样数是计数，设备建不了的请求只拒绝一次、不降级**：`Capabilities::max_samples` 是 2 的幂的计数（`vsg` 原来答位掩码 15）；超上限或不是 2 的幂都拒绝（`SamplesUnsupported` / `UnsupportedRequest`，报一次），所以 `RenderTarget::samples()` 永远是画出来的那个数；否决降级、向上取整、给 `Capabilities` 加位集。
 - `ADR-2026-11-14-prepare-may-submit-transfers.md` —— **预热可以提交一批“只有传输”的工作**：`prepareFrame` 仍然不提交帧（不 acquire / 不 present / 不动 `FrameProgress`），但可以记录并提交**一个**只含拷贝与布局转换的命令缓冲，用自己的 fence 等它完成——纹理上传因此在加载期落地，`R23` 不再“除了纹理”；否决第二个入口、后台线程、填充即上传。
@@ -183,7 +183,7 @@
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
 
 - `graphics-2026-11-16-redesign-r2.md` —— **第二轮：概念 / 能力语义 / 实现 / 规范**：`E-01…E-12`（视图没有类型、
-  `RenderSurface` 是区、目标 7 字段、pass 两个作者形状、值里回调、死字段 `tag`、`Content*` 前缀、目标四角色…）、
+  `RenderArea` 是区、目标 7 字段、pass 两个作者形状、值里回调、死字段 `tag`、`Content*` 前缀、目标四角色…）、
   `A-01…A-08`（`setRenderTarget` 在 vk 是 1 写 0 读的死存储、`releasePass` 契约过剩、读回三处不对称、
   `Capabilities` 拆 `Features`/`Limits`、诊断缺 origin…）、`I-01…I-08`（每 pass 每帧灯向量分配、vk 零分配
   无证人…）、`S-01…S-12`（九道门禁全绿下的法/习惯不一致、26 处 section comment、37/94 枚举无底层类型…）、

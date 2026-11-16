@@ -62,7 +62,7 @@ class VN_GRAPHICS_API PresentTarget {
      *   this call to re-derive what hangs off the size, whereas one that owns its surface (headless, or it created
      *   the window itself) applies the announcement.
      * - WHO CALLS IT: the FRAME, at its head, with the size that frame was laid out on (see design 2.12) - once per
-     *   frame at most, and only when the number changed. A host announces a size to the area (RenderSurface::resize),
+     *   frame at most, and only when the number changed. A host announces a size to the area (RenderArea::resize),
      *   the area records it, and the next frame hands it here; nothing on the host's side waits for the device.
      * - The engine records the announced numbers either way: its frame context is what the passes that lay themselves
      *   out on the surface size read (see RenderEngine::resize, which is the announcement's way in).

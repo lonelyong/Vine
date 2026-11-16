@@ -287,7 +287,7 @@ class VN_GRAPHICS_API RenderDevice {
      *                      SurfaceTargetResult.
      * @return The target, or nullptr when this device hands none out (see @p why). The target is BORROWED, and the
      *         device that made it owns it: it lives until that device is DESTROYED or the area is unbound (see
-     *         RenderSurface::bindTarget - RenderEngine::shutdown unbinds it, and the device's creator is the one that
+     *         RenderArea::bindTarget - RenderEngine::shutdown unbinds it, and the device's creator is the one that
      *         releases the device). A window closing is the device's own business: it DETACHES the target (the handle
      *         is gone, and a resize or a present afterwards is a no-op that answers the truth), it does not hand the
      *         area a dangling object.

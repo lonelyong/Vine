@@ -28,7 +28,7 @@ class Scene;
  *   so a table can be handed to a log line, a test or a HUD without keeping anything alive (the two pointers
  *   are borrowed).
  * - What it deliberately does NOT carry: whether this pass presents a SURFACE - that is the surface's table
- *   (RenderSurface); the engine draws whatever is registered, and "who this is for" is not its to know.
+ *   (RenderArea); the engine draws whatever is registered, and "who this is for" is not its to know.
  */
 struct VN_GRAPHICS_API PassRow {
     /// The registered pass this describes (identity: two tables of the same pass compare equal here).

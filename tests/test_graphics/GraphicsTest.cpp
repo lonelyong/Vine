@@ -34,7 +34,7 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderSurface.hpp>
+#include <vine/graphics/RenderArea.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/SceneView.hpp>
@@ -107,7 +107,7 @@ constexpr double kSceneAspect{ 1.0 };
  *
  * This is the fact a presentation used to be INFERRED from (the removed RenderEngine::hasWindowPass, which asked
  * the engine whether any pass carried a camera and a null target). Which pass draws into which surface is now
- * declared on the surface (RenderSurface) - these tests ask the pass they got, about the fact itself.
+ * declared on the surface (RenderArea) - these tests ask the pass they got, about the fact itself.
  *
  * @param pass   Pass to describe.
  * @param camera Camera it should draw through.
@@ -4270,7 +4270,7 @@ TEST(RenderEngineTest, PassOrderAnswersWhereARegisteredPassRuns)
 {
     // The order lives in the ENGINE (addPass places the pass in its slot list), so this is the only way to ask
     // where a pass sits in the frame - and an answer doubles as "this pass is registered at all", which is what
-    // RenderSurface's presentation table is ordered by and what a handle somebody remembers needs to know.
+    // RenderArea's presentation table is ordered by and what a handle somebody remembers needs to know.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto camera = intrusive_ptr<Camera>(new Camera());
     auto pass   = intrusive_ptr<RenderPass>(new RenderPass());
@@ -4856,7 +4856,7 @@ TEST(SceneViewTest, AdoptingAPipelineDoesNotStandDownForSomebodyElsesPass)
 { // "Whoever speaks first presents" is gone: a pass carrying this view's camera with a null target used to
     // suppress the view's default window pass, inferred from the engine's pass list (global, order-sensitive, and it
     // dropped the SECOND view sharing a camera). Which pass presents which SURFACE is declared on the surface now
-    // (RenderSurface) - so a view draws the chain it adopted, and the engine's list is only where passes live.
+    // (RenderArea) - so a view draws the chain it adopted, and the engine's list is only where passes live.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
@@ -5524,7 +5524,7 @@ TEST(SceneViewViewportTest, TheAreaSizeHasOneOwnerAndTheViewReadsIt)
     // number is the one every consumer derives from, and the host feeding the view its own is not read. A view that
     // presents nothing is on its own and behaves exactly as it always did.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
     auto view    = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
 
@@ -5537,8 +5537,8 @@ TEST(SceneViewViewportTest, TheAreaSizeHasOneOwnerAndTheViewReadsIt)
     surface->resize(800, 400, 1.0);
     ASSERT_TRUE(surface->present(*view));
     EXPECT_DOUBLE_EQ(view->camera()->aspect(), 2.0);
-    EXPECT_EQ(view->surfaceWidth(), 800);
-    EXPECT_EQ(view->surfaceHeight(), 400);
+    EXPECT_EQ(view->areaWidth(), 800);
+    EXPECT_EQ(view->areaHeight(), 400);
     EXPECT_DOUBLE_EQ(view->surfacePixelRatio(), 1.0);
 
     // 3) The area changes: the view was fed nothing and follows anyway - the measured form of "no second copy".
@@ -5548,10 +5548,10 @@ TEST(SceneViewViewportTest, TheAreaSizeHasOneOwnerAndTheViewReadsIt)
     // 4) Dismissed: the area hands its last size over to the view, which keeps drawing where it was rather than
     //    jumping back to the number from before it was presented.
     ASSERT_TRUE(surface->dismiss(view.get()));
-    EXPECT_EQ(view->surfaceWidth(), 320);
-    EXPECT_EQ(view->surfaceHeight(), 400);
+    EXPECT_EQ(view->areaWidth(), 320);
+    EXPECT_EQ(view->areaHeight(), 400);
     surface->resize(1280, 720, 1.0);
-    EXPECT_EQ(view->surfaceWidth(), 320) << "an area no longer feeds a view it does not present";
+    EXPECT_EQ(view->areaWidth(), 320) << "an area no longer feeds a view it does not present";
 
     // 5) Its own announcement is the size again.
     view->resize(300, 600, 1.0);
@@ -5602,7 +5602,7 @@ TEST(SceneViewViewportTest, AnApplicationWindowPassLeavesTheViewWithNothingToDec
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
 
     // The application presents this surface itself (its own deferred main pass) and DECLARES it.
     auto main = intrusive_ptr<RenderPass>(new RenderPass());
@@ -5651,7 +5651,7 @@ TEST(SceneViewViewportTest, AViewWhoseEngineWasReleasedReportsIt)
     // What the view owns is unaffected: the size is the view's own statement and the camera's shape follows it.
     view->resize(800, 600, 1.0);
     EXPECT_DOUBLE_EQ(view->camera()->aspect(), 800.0 / 600.0);
-    EXPECT_EQ(view->surfaceWidth(), 800);
+    EXPECT_EQ(view->areaWidth(), 800);
     EXPECT_FALSE(pipeline->presentingPass()->hasViewport()) << "the picture is the area: no rectangle of its own";
 }
 
@@ -5916,8 +5916,8 @@ TEST(RenderEngineTest, ResizeDoesNotManagePassLayout)
     pass->setViewport(10, 20, 100, 50);
     vn::test::registerPassForTest(*engine, pass, 5);
 
-    // The size the passes lay themselves out on is the AREA's announcement (see RenderSurface).
-    auto area = engine->createSurface();
+    // The size the passes lay themselves out on is the AREA's announcement (see RenderArea).
+    auto area = engine->createArea();
     area->resize(1600, 900);
 
     // The pass's viewport and the target size are untouched by the engine.
@@ -7101,7 +7101,7 @@ TEST(PassChainTest, DeferredPresetBuildsGbufferAndLightingPasses)
     // G-buffer (order < 0) + fullscreen lighting window pass (order 0).
     EXPECT_EQ(engine->passCount(), 2u);
     // The lighting pass presents the view camera, so a host that declares it owns the surface's presentation
-    // (RenderSurface) - no second forward window pass beside it.
+    // (RenderArea) - no second forward window pass beside it.
     EXPECT_TRUE(drawsToWindow(pipeline->presentingPass(), cam.get()));
 
     RenderPass* window = pipeline->presentingPass();
@@ -11438,7 +11438,7 @@ TEST(RenderEngineTest, TheAnsweredFramesCameraIsWhatAPointerQueryShouldAimWith)
     auto scene = intrusive_ptr<Scene>(new Scene());
     setIdentityRoot(*scene)->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
 
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
     auto view    = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
     // A view's picture is a CHAIN (a view with none presents nowhere), so this asks for the default one before the area
@@ -11487,7 +11487,7 @@ TEST(RenderEngineTest, TheFrameResultIsThePictureThatWasAnswered)
     const auto root  = setIdentityRoot(*scene);
     root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
 
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
     auto view    = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
     view->setScene(scene); // the view's picture is THIS scene: publishContent publishes what the chain draws
@@ -12300,7 +12300,7 @@ TEST(RenderEngineTest, ACameraWhoseShapeIsNotThePassRectangleIsReportedOnce)
     pass->setName(u8"window");
     pass->setCamera(camera);
     vn::test::registerPassForTest(*engine, pass, scene, 0);
-    auto area = engine->createSurface();
+    auto area = engine->createArea();
     area->resize(800, 600); // the window pass' rectangle: shape 4:3
 
     (void)scene->publish(); // the host's verb (see Scene::publish)
@@ -12370,7 +12370,7 @@ TEST(RenderEngineTest, TheRectangleIsThePassViewportAndAScreenPassIsNotMeasured)
     preview->setCamera(camera);
     preview->setViewport(600, 0, 400, 400); // shape 1.0, the camera's own
     vn::test::registerPassForTest(*engine, preview, scene, 0);
-    auto area = engine->createSurface();
+    auto area = engine->createArea();
     area->resize(800, 600); // the SURFACE is 4:3, the pass draws into a square
 
     (void)scene->publish(); // the host's verb (see Scene::publish)
@@ -12824,7 +12824,7 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
-    auto area = engine->createSurface();
+    auto area = engine->createArea();
     area->resize(320, 180);
 
     auto camera = intrusive_ptr<Camera>(new Camera());
@@ -13500,7 +13500,7 @@ TEST(RenderEngineTest, PassReadingTheTargetItDrawsIntoIsLeftToTheBackend)
  * A host knows its surface size before it has a backend to tell (it sizes its widget first), and the
  * engine used to drop that announcement: the backend was only ever told about resizes that happened
  * after initialization, so the first frames ran at the backend's default size. The AREA now owns the
- * announcement (RenderSurface::resize is the one spelling - see RenderEngine, which keeps no size of
+ * announcement (RenderArea::resize is the one spelling - see RenderEngine, which keeps no size of
  * its own): it records the numbers in the frame context (which the passes lay themselves out on) and
  * hands them over as soon as initialization succeeded.
  */
@@ -13509,13 +13509,13 @@ TEST(RenderEngineTest, TheAreasSizeAnnouncedBeforeInitializeReachesTheBackend)
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
-    auto area = engine->createSurface();
+    auto area = engine->createArea();
 
     // Announced first: the backend does not exist yet as far as the size is concerned.
     area->resize(800, 600);
     EXPECT_EQ(backend->surface_half.resize_calls, 0);
-    EXPECT_EQ(engine->surfaceWidth(), 800);
-    EXPECT_EQ(engine->surfaceHeight(), 600);
+    EXPECT_EQ(engine->areaWidth(), 800);
+    EXPECT_EQ(engine->areaHeight(), 600);
 
     // The size is recorded by the area and READ by the frame's layout; the WINDOW half is the frame's own call, made
     // at its head (design 2.12) - so initialize() itself hands nothing over and no frame has run yet.
@@ -13531,7 +13531,7 @@ TEST(RenderEngineTest, TheAreasSizeAnnouncedBeforeInitializeReachesTheBackend)
     // the number that travels is the one the frame is laid out on, not a queue of every size a host ever reported.
     area->resize(1024, 768);
     EXPECT_EQ(backend->surface_half.resize_calls, 1) << "a host may resize while a frame runs: nothing waits on the device";
-    EXPECT_EQ(engine->surfaceWidth(), 1024) << "the layout the next frame reads is already the new number";
+    EXPECT_EQ(engine->areaWidth(), 1024) << "the layout the next frame reads is already the new number";
     area->resize(1280, 720);
     engine->frame();
     EXPECT_EQ(backend->surface_half.resize_calls, 2) << "one resize for the frame, carrying the size it was built on";
@@ -13554,7 +13554,7 @@ TEST(RenderEngineTest, NoSurfaceSizeAnnouncementIsNotForwarded)
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
-    auto area = engine->createSurface();
+    auto area = engine->createArea();
 
     ASSERT_TRUE(engine->initialize());
     EXPECT_EQ(backend->surface_half.resize_calls, 0);
@@ -13562,7 +13562,7 @@ TEST(RenderEngineTest, NoSurfaceSizeAnnouncementIsNotForwarded)
     // A non-positive announcement is ignored (the engine does not record it either).
     area->resize(0, 0);
     EXPECT_EQ(backend->surface_half.resize_calls, 0);
-    EXPECT_EQ(engine->surfaceWidth(), 0);
+    EXPECT_EQ(engine->areaWidth(), 0);
 }
 
 /**

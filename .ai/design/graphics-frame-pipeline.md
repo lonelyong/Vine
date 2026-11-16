@@ -253,14 +253,14 @@
 
 ### 3.8 多窗口：一个引擎驱动一个表面
 
-- **行为**：`RenderEngine::createSurface()` 造出它**唯一**的区；帧的默认 framebuffer 就是这个区的目标
+- **行为**：`RenderEngine::createArea()` 造出它**唯一**的区；帧的默认 framebuffer 就是这个区的目标
   （无区时是设备自建的目标，见 `initialize`）。多窗口 = **一个 `RenderDevice` 服务多个引擎**，每窗口一个引擎 /
   一个区 / 一个 `Viewer`。
 - **约束**（`I6` / `R27`）：只有一条引擎线程碰设备，所以一个设备没有两条引擎线程——它服务的是多个**引擎**，
   不是一个引擎的多个区。
 - **要求**（`R21` / `R27`）：增删 pass 不调用 add/remove；一帧一个表面，`FrameResult.present` /
   `PresentRecord` 是单值。
-- **验收**：`RenderSurfaceTest.ASecondAreaIsAConstructionFailureNotASecondObject`（第二区被拒）、
+- **验收**：`RenderAreaTest.ASecondAreaIsAConstructionFailureNotASecondObject`（第二区被拒）、
   `HeadlessBackendTest.OneDeviceServesSeveralAreasWithoutCrossingThem`（一个设备两个引擎）。
 - **注意**（`P4`）：表面事件只在帧首应用；交换链只在自己的引擎帧里重建。
 - **已否决**："一个引擎驱动多个 Surface"（graphics-next F8 / `R37` / `T29` / `K10`）——没有消费者、会把 `FrameResult`

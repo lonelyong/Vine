@@ -59,7 +59,7 @@
 
 ### 2.4 attach 的次序
 
-1. **先保证这块表面有呈现**：视图没有链就按 `ViewerOptions` 建一条默认链并采纳，然后在 `RenderSurface` 上声明；
+1. **先保证这块表面有呈现**：视图没有链就按 `ViewerOptions` 建一条默认链并采纳，然后在 `RenderArea` 上声明；
    宿主已用自己的 pass 声明过 ⇒ 这一步不动。
 2. **补默认后端**：`useDefaultBackend()` 只在引擎没有后端时取注册表第一个；晚注册的后端仍会被下一次 attach 捡起。
 3. **没有后端** ⇒ `failAttach("no render backend is registered")`，状态 `Failed`。

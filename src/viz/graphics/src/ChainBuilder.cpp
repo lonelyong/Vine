@@ -358,8 +358,8 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     int width  = options.offscreen_width;
     int height = options.offscreen_height;
     if (width <= 0 || height <= 0) {
-        width  = engine_->surfaceWidth();
-        height = engine_->surfaceHeight();
+        width  = engine_->areaWidth();
+        height = engine_->areaHeight();
     }
     if (width <= 0 || height <= 0) {
         width  = 640;
@@ -502,7 +502,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     // Present the baked composite to the window (order 2). Carrying the view
     // camera with a null render target is what makes it a window pass; a host
     // that built this pipeline declares it as the surface's presentation
-    // (RenderSurface::present), which is what keeps a default forward pass from
+    // (RenderArea::present), which is what keeps a default forward pass from
     // being added beside it. The HUD overlays (orders 10 / 30) stack above it.
     PassDesc present_desc;
     present_desc.name                       = u8"present";

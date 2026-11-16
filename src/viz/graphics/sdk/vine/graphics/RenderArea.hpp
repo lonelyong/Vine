@@ -21,12 +21,12 @@ class SceneView;
  *
  * @details
  * - The presentation is a DECLARATION with exactly one owner (this object): a host names its own main pass
- *   (`surface->present(pipeline->presentingPass())`), and with nothing declared a view's default window pass presents
- *   the area (`surface->present(*view)`).
+ *   (`area->present(pipeline->presentingPass())`), and with nothing declared a view's default window pass presents
+ *   the area (`area->present(*view)`).
  * - ONE AREA, ONE PICTURE: a second presentation of any kind is refused and reported once - two passes cannot both
  *   be the picture, and the swapchain's ONE clear means the presenting pass is whose clear policy the frame starts
  *   with.
- * - ONE AREA, ONE ENGINE, AND THE ENGINE OWNS IT: the only way to get an area is RenderEngine::createSurface,
+ * - ONE AREA, ONE ENGINE, AND THE ENGINE OWNS IT: the only way to get an area is RenderEngine::createArea,
  *   which keeps it - so the relation has an owner rather than a convention, a second area cannot be constructed at
  *   all, and two windows never share a frame. This area's size is always the size that frame's passes lay
  *   themselves out on.
@@ -42,9 +42,9 @@ class SceneView;
  *   picture), does not divide into panes, route input or hold a focus - one area draws one view, and layout, hit
  *   testing and focus belong to the host (multi-pane was landed, then deliberately dropped).
  */
-class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
+class VN_GRAPHICS_API RenderArea : public RefCounted<RenderArea> {
   public:
-    friend class RenderEngine; // the ONE creator (createSurface), which owns the result
+    friend class RenderEngine; // the ONE creator (createArea), which owns the result
 
     /** @brief Destroys the area: the view stops naming it; the pass stays registered and the view keeps its
      * pipeline (a declaration owns neither).
@@ -52,12 +52,12 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * @details
      * - Normally reached by ~RenderEngine, which owns this area: the engine releases its handle while it is still an
      * object, so nothing here can call into a destroyed engine. A host that kept its own handle after dropping the
-     * control keeps a surface whose lease is empty (see engine()), which reports no presentation instead of failing.
+     * control keeps an area whose lease is empty (see engine()), which reports no presentation instead of failing.
      */
-    ~RenderSurface();
+    ~RenderArea();
 
   public:
-    /** @brief Declares that @p view presents this surface: the pass of the chain the view adopted.
+    /** @brief Declares that @p view presents this area: the pass of the chain the view adopted.
      *
      * @details
      * - The declaration for a host with no main pass of its own; the area never builds the pass - it resolves it
@@ -66,17 +66,17 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      * - Refused and reported, each for its own reason: a view that draws through ANOTHER engine (its passes live
      *   in that engine's frame), an area that is not the one its engine drives, and a second presentation of any
      *   kind (one area draws one picture).
-     * - A view presenting another surface needs no rule of its own: a view can only present the area of its own
-     *   engine (an engine drives one area - RenderEngine::createSurface).
+     * - A view presenting another area needs no rule of its own: a view can only present the area of its own
+     *   engine (an engine drives one area - RenderEngine::createArea).
      *
-     * @param view View to present; must have adopted a chain, be bound to this surface's engine, present no
-     *             other surface, and be the area's only presentation.
-     * @return true when this declared the area's presentation; false when @p view already presented this surface,
+     * @param view View to present; must have adopted a chain, be bound to this area's engine, present no
+     *             other area, and be the area's only presentation.
+     * @return true when this declared the area's presentation; false when @p view already presented this area,
      *         or could not.
      */
     bool present(SceneView& view);
 
-    /** @brief Declares that @p pass presents this surface (the declaration for a host-built main pass).
+    /** @brief Declares that @p pass presents this area (the declaration for a host-built main pass).
      *
      * @details
      * - While it stands, the view's default window pass is NOT built, so the host keeps full control; a second
@@ -87,15 +87,15 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      *   (RenderEngine::applyPlan - a pipeline registers its own when built); a pass outside the frame is the same
      *   silence present(SceneView&) refuses.
      *
-     * @param pass Pass that presents this surface; null is a no-op, and a pass that is not registered on this
-     *             surface's engine is refused.
-     * @return true when this declared the area's presentation; false when @p pass already presented this surface,
+     * @param pass Pass that presents this area; null is a no-op, and a pass that is not registered on this
+     *             area's engine is refused.
+     * @return true when this declared the area's presentation; false when @p pass already presented this area,
      *         was not the engine's, or a presentation was already there.
      */
     bool present(raw_ptr<RenderPass> pass);
 
     /** @brief Drops the presentation @p view declared: the view keeps its pipeline (that is the view's) and the
-     * pass stays registered - what leaves is the statement that this surface is theirs.
+     * pass stays registered - what leaves is the statement that this area is theirs.
      *
      * @param view View whose presentation to drop.
      * @return true when a presentation was dropped.
@@ -109,7 +109,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      */
     bool dismiss(raw_ptr<RenderPass> pass);
 
-    /** @brief Whether anything PRESENTS this surface (not merely "something was declared").
+    /** @brief Whether anything PRESENTS this area (not merely "something was declared").
      *
      * @details
      * - A declaration whose pass has left the frame (RenderEngine::removePass, a cleared pass list) presents
@@ -120,19 +120,19 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      */
     [[nodiscard]] bool hasPresentation() const noexcept;
 
-    /** @brief Gets the pass that draws this surface now, or null when nothing presents it.
+    /** @brief Gets the pass that draws this area now, or null when nothing presents it.
      *
      * @details
      * - Resolved on every read, never remembered: a rebuilt pipeline (a recipe change) is a NEW window pass, and
      *   this is the answer a host names the engine's pass with. A declared pass no longer registered answers null
      *   as well - "declared" is not "drawn", and this is one answer the area must never invent.
      *
-     * @return The presenting pass, or null (nothing presents this surface, the view has no window pass yet, or the
+     * @return The presenting pass, or null (nothing presents this area, the view has no window pass yet, or the
      *         declared pass left the frame).
      */
     [[nodiscard]] raw_ptr<RenderPass> presentingPass() const;
 
-    /** @brief Gets the view this surface is presented by, or null.
+    /** @brief Gets the view this area is presented by, or null.
      *
      * @details
      * - Null means the area's presentation is a pass a host declared itself (see present(RenderPass*)), and it is
@@ -142,7 +142,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      */
     [[nodiscard]] raw_ptr<SceneView> presentedView() const noexcept;
 
-    /** @brief Records the size of this surface and gives it to the view that presents it.
+    /** @brief Records the size of this area and gives it to the view that presents it.
      *
      * @details
      * - The size of the thing a picture ends up in is a fact about the SURFACE: a host reports it ONCE here (its
@@ -157,15 +157,15 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      *
      * @param width        Surface width in logical pixels (<= 0 is ignored, with the ratio).
      * @param height       Surface height in logical pixels (<= 0 is ignored, with the ratio).
-     * @param pixel_ratio  Device pixels per logical pixel; <= 0 keeps the ratio this surface last saw.
+     * @param pixel_ratio  Device pixels per logical pixel; <= 0 keeps the ratio this area last saw.
      */
     void resize(int width, int height, double pixel_ratio = 0.0);
 
-    /** @brief Gets the device pixel ratio this surface last saw (resize).
+    /** @brief Gets the device pixel ratio this area last saw (resize).
      *
      * @details
      * - The ratio a view laid its geometry out with, and the one a host needs to turn a mouse position (device
-     *   pixels) into the logical surface it reported.
+     *   pixels) into the logical area it reported.
      *
      * @return Device pixels per logical pixel; 1.0 until a host reports one.
      */
@@ -214,7 +214,7 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
   private:
     friend class SceneView; // reads the size it lays its geometry out with (see resize)
 
-    /** @brief Creates the presentation of one surface rendered through @p engine (see RenderEngine::createSurface).
+    /** @brief Creates the presentation of one area rendered through @p engine (see RenderEngine::createArea).
      *
      * @details
      * - PRIVATE, because the relation is 1:1 and has an owner: the engine creates the area it drives and keeps it,
@@ -224,9 +224,9 @@ class VN_GRAPHICS_API RenderSurface : public RefCounted<RenderSurface> {
      *
      * @param engine Engine this area is driven by (must be the engine creating it).
      */
-    explicit RenderSurface(RenderEngine& engine);
+    explicit RenderArea(RenderEngine& engine);
 
-    /** @brief The pass a presented view draws this surface through: the window pass of its live pipeline.
+    /** @brief The pass a presented view draws this area through: the window pass of its live pipeline.
      *
      * @param view View to resolve.
      * @return The pass, or nullptr when there is none to resolve (no pipeline, no window pass).

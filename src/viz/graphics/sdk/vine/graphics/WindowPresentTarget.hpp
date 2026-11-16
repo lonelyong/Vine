@@ -18,8 +18,8 @@ VN_GRAPHICS_NS_BEGIN
  * - WHO HANDS ONE OUT. The DEVICE (RenderDevice::createSurfaceTarget, from the host's native handle): one presenter
  *   per window, because the platform allows one live swapchain per window, so a device that serves several windows
  *   hands out one per window and a device that presents nothing hands out none (it answers "no presentation"
- *   instead). The AREA holds it (RenderSurface::bindTarget) and is what announces the host's window and size
- *   (RenderSurface::resize, WindowPresentTarget::setWindowHandle), and the executor presents the frame it just ran
+ *   instead). The AREA holds it (RenderArea::bindTarget) and is what announces the host's window and size
+ *   (RenderArea::resize, WindowPresentTarget::setWindowHandle), and the executor presents the frame it just ran
  *   through the presenter that frame named (see RenderFrameExecutor::executeFrame).
  * - THREADING and lifetime follow the device's own rules (see RenderDevice): one thread, serialised calls, and a
  *   target outlives neither the window it is on nor the device that made it.

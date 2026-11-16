@@ -516,7 +516,7 @@ WindowTarget::~WindowTarget()
     }
 }
 
-bool WindowTarget::createSurface(const VkInstance instance, vn::String* why)
+bool WindowTarget::createArea(const VkInstance instance, vn::String* why)
 {
     if (impl->surface != VK_NULL_HANDLE) {
         return true;
@@ -534,7 +534,7 @@ bool WindowTarget::createSurface(const VkInstance instance, vn::String* why)
         }
         return false;
     }
-    if (!impl->window_system->createSurface(instance, impl->handle, impl->surface, why)) {
+    if (!impl->window_system->createArea(instance, impl->handle, impl->surface, why)) {
         return false;
     }
     return true;
@@ -545,7 +545,7 @@ bool WindowTarget::attach(const WindowDevice& device, vn::String* why)
     impl->device      = device;
     impl->attached    = true;
     impl->device_lost = false; // a fresh device: the previous session's loss says nothing about this one
-    if (!createSurface(device.instance, why)) {
+    if (!createArea(device.instance, why)) {
         impl->attached = false;
         return false;
     }
@@ -795,7 +795,7 @@ void WindowTarget::setWindowHandle(void* native_handle)
         return;
     }
     vn::String why;
-    if (!createSurface(impl->instance, &why) || !impl->createSwapchain(&why)) {
+    if (!createArea(impl->instance, &why) || !impl->createSwapchain(&why)) {
         impl->detached = true;
     }
 }

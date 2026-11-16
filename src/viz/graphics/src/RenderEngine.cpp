@@ -7,7 +7,7 @@
 #include <vine/graphics/ImageRef.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderSurface.hpp>
+#include <vine/graphics/RenderArea.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ScreenPass.hpp>
@@ -90,10 +90,10 @@ Lease<RenderEngine> RenderEngine::lease() noexcept
 RenderEngine::~RenderEngine()
 {
     shutdown();
-    // The area is OURS (createSurface), so it is released HERE, while this engine is still an object and `area_` is
+    // The area is OURS (createArea), so it is released HERE, while this engine is still an object and `area_` is
     // already null: the area's own destructor unnames its view, and a host still holding a handle keeps a surface
     // whose engine is gone rather than a dangling one.
-    intrusive_ptr<RenderSurface> area = std::move(area_);
+    intrusive_ptr<RenderArea> area = std::move(area_);
     // Every lease this engine handed out stops referring to it HERE, before anything it owns is torn down: a holder
     // that outlives the engine (a pipeline a host kept) then has nothing to call into, instead of a pointer into
     // freed memory.
@@ -491,8 +491,8 @@ void RenderEngine::buildContentHalf(detail::EngineFrame& frame)
     // THE FRAME'S SIZE AND TARGET ARE TAKEN ONCE, when the frame starts: the passes below lay themselves out on these
     // numbers, and the engine half applies THAT size to THAT target - so an announcement arriving while the frame is
     // being answered belongs to the next frame instead of tearing this one in half (design 2.12).
-    frame.width         = surface_width_;
-    frame.height        = surface_height_;
+    frame.width         = area_width_;
+    frame.height        = area_height_;
     frame.target        = (area_ != nullptr && area_->target() != nullptr) ? area_->target() : own_target_;
     frame.content_frame = content_frame_;
     // THE CAMERA THE USER WILL BE LOOKING AT, taken now as the same value `describe` puts in the frame's draws: the pass
@@ -683,14 +683,14 @@ std::uint64_t RenderEngine::contentCollectReuseCount() const noexcept
     return publications_->memoHits();
 }
 
-int RenderEngine::surfaceWidth() const noexcept
+int RenderEngine::areaWidth() const noexcept
 {
-    return surface_width_;
+    return area_width_;
 }
 
-int RenderEngine::surfaceHeight() const noexcept
+int RenderEngine::areaHeight() const noexcept
 {
-    return surface_height_;
+    return area_height_;
 }
 
 std::optional<int> RenderEngine::passOrder(raw_ptr<RenderPass> pass) const
@@ -1398,28 +1398,28 @@ intrusive_ptr<const ShaderProgram> RenderEngine::defaultContentProgram() const
     return default_content_program_;
 }
 
-void RenderEngine::announceAreaSize(raw_ptr<const RenderSurface> from, int width, int height)
+void RenderEngine::announceAreaSize(raw_ptr<const RenderArea> from, int width, int height)
 {
     if (width <= 0 || height <= 0) {
         return;
     }
-    // ONLY the engine's own area feeds the frame context (see createSurface): letting anything else through would lay
+    // ONLY the engine's own area feeds the frame context (see createArea): letting anything else through would lay
     // this frame's passes out on another window's size.
     if (from == nullptr || area_ == nullptr || area_.get() != from) {
         return;
     }
     // Recorded even when there is no device yet: the frame context is what the passes lay
     // themselves out on, and the announcement is replayed to the target at initialize().
-    surface_width_  = width;
-    surface_height_ = height;
+    area_width_  = width;
+    area_height_ = height;
     // No layout fan-out here, and no window half either: target sizes, pass viewports and camera
     // projections are maintained by their creators on the surface size
     // (e.g. SceneView::addSurfaceLayout), and the WINDOW's own half of the size belongs to the AREA's target,
-    // which the area announces to directly (see RenderSurface::resize). The engine only records the surface
+    // which the area announces to directly (see RenderArea::resize). The engine only records the surface
     // size the passes read.
 }
 
-intrusive_ptr<RenderSurface> RenderEngine::createSurface()
+intrusive_ptr<RenderArea> RenderEngine::createArea()
 {
     // ONE engine drives ONE area, and the engine OWNS it (see the class note): the relation has an owner instead of
     // a paragraph of documentation, so "the area must die first" and "a second area is refused" stop being
@@ -1430,13 +1430,13 @@ intrusive_ptr<RenderSurface> RenderEngine::createSurface()
         if (area_refused_.shouldReport()) {
             reportEngineProblem(detail::engineProblem(u8"engine.area.second_refused",
                                                       DiagnosticCategory::UnsupportedRequest,
-                                                      u8"RenderEngine::createSurface: this engine already drives one render area, so a "
+                                                      u8"RenderEngine::createArea: this engine already drives one render area, so a "
                                                       u8"second one was refused - an engine drives one area, and a second window wants "
                                                       u8"its own engine (one device may serve several engines)"));
         }
         return nullptr;
     }
-    auto area = intrusive_ptr<RenderSurface>(new RenderSurface(*this));
+    auto area = intrusive_ptr<RenderArea>(new RenderArea(*this));
     area_     = area;
     return area;
 }

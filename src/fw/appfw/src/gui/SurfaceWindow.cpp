@@ -26,7 +26,7 @@
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
-#include <vine/graphics/RenderSurface.hpp>
+#include <vine/graphics/RenderArea.hpp>
 #include <vine/graphics/SceneView.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/logging/Log.hpp>
@@ -222,11 +222,11 @@ struct SurfaceWindow::Impl {
     vn::intrusive_ptr<vn::graphics::RenderEngine> engine;
     /// This surface's own view: one control holds one session (see appfw-document-model.md §9).
     vn::intrusive_ptr<vn::graphics::SceneView> view;
-    /// Which passes draw into this surface, and in which order (see RenderSurface). The AREA belongs to the engine
-    /// (RenderEngine::createSurface) and this is the host's handle to the same object, so the member order here only
+    /// Which passes draw into this surface, and in which order (see RenderArea). The AREA belongs to the engine
+    /// (RenderEngine::createArea) and this is the host's handle to the same object, so the member order here only
     /// says when the host stops looking at it - the area cannot outlive the engine, and dropping this handle early
     /// leaves the engine driving an area nobody presents into, which is a legal state.
-    vn::intrusive_ptr<vn::graphics::RenderSurface> surface;
+    vn::intrusive_ptr<vn::graphics::RenderArea> surface;
     /// The request this area's picture is built from (see Viewer). Declared after the engine, the view and
     /// the surface so it is destroyed before them: it borrows all three.
     std::unique_ptr<Viewer> viewer;
@@ -339,10 +339,10 @@ SurfaceWindow::SurfaceWindow(QWidget* host)
     d->view       = vn::intrusive_ptr<vn::graphics::SceneView>(new vn::graphics::SceneView());
     d->view->setEngine(d->engine.get());
     // The one thing that knows which passes draw into THIS surface: the control falls back to its own view (see
-    // init()), and a host that brought a main pass of its own declares it here (RenderSurface::present). The AREA is
-    // the engine's (createSurface): this handle is the host's view of the same object, so the window can be torn down
+    // init()), and a host that brought a main pass of its own declares it here (RenderArea::present). The AREA is
+    // the engine's (createArea): this handle is the host's view of the same object, so the window can be torn down
     // in any order without leaving a surface that names a dead engine.
-    d->surface = d->engine->createSurface();
+    d->surface = d->engine->createArea();
     // The area's picture (see Viewer): the control's own view, registered with the default request but neither a
     // chain nor a declaration - the first attach is where that becomes a picture, so a host that never touches the
     // viewer pays no build until there is an area to draw into.
@@ -388,7 +388,7 @@ vn::graphics::SceneView* SurfaceWindow::view() const
     return d->view.get();
 }
 
-vn::graphics::RenderSurface* SurfaceWindow::surface() const
+vn::graphics::RenderArea* SurfaceWindow::area() const
 {
     return d->surface.get();
 }
@@ -429,7 +429,7 @@ void SurfaceWindow::armRecreateHatch()
     if (const char* recreate_ms = std::getenv("VN_RECREATE_SURFACE_MS"); recreate_ms != nullptr && *recreate_ms != '\0') {
         d->recreate_hatch_armed = true;
         const int delay_ms      = std::atoi(recreate_ms);
-        QTimer::singleShot(delay_ms, this, [this] { recreateSurface(); });
+        QTimer::singleShot(delay_ms, this, [this] { recreateArea(); });
     }
 }
 
@@ -634,7 +634,7 @@ void SurfaceWindow::feedSurfaceSize(int width, int height)
 {
     const double ratio = devicePixelRatio();
     // Size AND ratio, stated once on the SURFACE: the size of the thing the picture ends up in is a fact about
-    // it, so it is recorded there and fanned out to the view that presents it (see RenderSurface::resize).
+    // it, so it is recorded there and fanned out to the view that presents it (see RenderArea::resize).
     d->surface->resize(width, height, ratio);
     // This surface's own view is fed separately ONLY when it does not present (a host declared a main pass of its
     // own, so nothing fans out to it): its geometry would otherwise stay at whatever it last saw.
@@ -716,7 +716,7 @@ bool SurfaceWindow::init()
     }
 
     // Test hatch: force a platform-window recreation after VN_RECREATE_SURFACE_MS, once per session (following a
-    // recreated window re-enters here, and re-arming would recreate it forever). See recreateSurface().
+    // recreated window re-enters here, and re-arming would recreate it forever). See recreateArea().
     armRecreateHatch();
 
     // THE DEVICE AND THE SURFACE BELONG TO THE ENGINE'S SIDE OF THE SEAM (design graphics-threading.md 2.12): a
@@ -818,7 +818,7 @@ void SurfaceWindow::fitToScreen()
     renderFrame();
 }
 
-void SurfaceWindow::recreateSurface()
+void SurfaceWindow::recreateArea()
 {
     // destroy() + create() is how a platform window is recreated; the follow path does the rest.
     vn::logging::defaultLogger().info("[RenderControl] test hatch: recreating the render surface");

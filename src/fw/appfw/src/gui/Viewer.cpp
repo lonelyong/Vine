@@ -5,7 +5,7 @@
 #include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
-#include <vine/graphics/RenderSurface.hpp>
+#include <vine/graphics/RenderArea.hpp>
 #include <vine/graphics/SceneView.hpp>
 
 VN_APPFWGUI_NS_BEGIN
@@ -14,7 +14,7 @@ struct Viewer::Impl {
     /// The engine the chain is built on and registered with (borrowed; must outlive the viewer).
     raw_ptr<vn::graphics::RenderEngine> engine   = nullptr;
     /// The area this viewer draws (borrowed; must outlive the viewer).
-    raw_ptr<vn::graphics::RenderSurface> surface = nullptr;
+    raw_ptr<vn::graphics::RenderArea> surface = nullptr;
     /// The view that draws the area, and the request its chain is built from. One area draws one picture: the view
     /// is the picture's camera and content, the request is how it is drawn.
     intrusive_ptr<vn::graphics::SceneView> view;
@@ -94,7 +94,7 @@ struct Viewer::Impl {
     }
 };
 
-Viewer::Viewer(raw_ptr<vn::graphics::RenderEngine> engine, raw_ptr<vn::graphics::RenderSurface> surface, intrusive_ptr<vn::graphics::SceneView> view)
+Viewer::Viewer(raw_ptr<vn::graphics::RenderEngine> engine, raw_ptr<vn::graphics::RenderArea> surface, intrusive_ptr<vn::graphics::SceneView> view)
   : d(new Impl())
 {
     d->engine  = engine;
@@ -137,7 +137,7 @@ bool Viewer::setViewerOptions(const ViewerOptions& options)
     }
 
     // The picture is declared on the area unless the host brought one of its own (a pass a host declared is not
-    // overruled, and the area reports a second presentation by itself - see RenderSurface::present).
+    // overruled, and the area reports a second presentation by itself - see RenderArea::present).
     if (d->surface != nullptr && d->surface->presentedView() != d->view.get()) {
         (void)d->surface->present(*d->view);
     }

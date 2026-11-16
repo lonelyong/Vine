@@ -25,7 +25,7 @@
 #include <vine/graphics/RenderBackendRegistry.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderEngine.hpp>
-#include <vine/graphics/RenderSurface.hpp>
+#include <vine/graphics/RenderArea.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/SceneView.hpp>
 #include <vine/window/InputEvent.hpp>
@@ -336,7 +336,7 @@ class HostedControl {
 /**
  * @brief A second pane on @p engine: its own view with the chain a HOST builds for it, adopted.
  *
- * The order a host has on a surface of its own is build -> adopt -> declare: RenderSurface::present resolves a
+ * The order a host has on a surface of its own is build -> adopt -> declare: RenderArea::present resolves a
  * view's declaration to the window pass of the pipeline the view adopted and builds nothing itself (a pane whose
  * chain nobody built has nothing to point at, and is refused). The control does this for ITS view (see
  * RenderControl::viewerOptions); a pane the test adds is the test's own.
@@ -390,7 +390,7 @@ TEST(RenderControlTest, AttachesItselfOnceTheBackendAndWindowAreThere)
     EXPECT_TRUE(host.surface()->isVisible()); // 有帧可看 ⇒ 表面就位
 }
 
-// 这块表面由**谁**画：控件把自己的视图声明在表面自己的呈现表上（`RenderControl::surface()`）。这条表是
+// 这块表面由**谁**画：控件把自己的视图声明在表面自己的呈现表上（`RenderControl::area()`）。这条表是
 // "谁呈现"的唯一记录（今天只有一条；分屏就是多声明几条），宿主要接手时也声明在这里。
 TEST(RenderControlTest, TheControlsSurfacePresentsItsOwnViewByDefault)
 {
@@ -399,13 +399,13 @@ TEST(RenderControlTest, TheControlsSurfacePresentsItsOwnViewByDefault)
     ASSERT_TRUE(pumpUntil([&] { return host.control()->state() == RenderControl::SurfaceState::Presenting; }, 3000));
 
     auto* control = host.control();
-    auto* surface = control->surface();
+    auto* surface = control->area();
     ASSERT_NE(surface, nullptr);
     ASSERT_TRUE(surface->hasPresentation());
     EXPECT_EQ(surface->presentedView(), control->view());
     EXPECT_NE(surface->presentingPass(), nullptr);
 
-    // 那块 pass 就是该视图默认管线里那条窗口 pass（视图重建时表跟着走 —— 见 RenderSurfaceTest）。
+    // 那块 pass 就是该视图默认管线里那条窗口 pass（视图重建时表跟着走 —— 见 RenderAreaTest）。
     ASSERT_NE(control->view()->chain(), nullptr);
     EXPECT_EQ(surface->presentingPass(), control->view()->chain()->presentingPass());
     // 这块表面的**唯一一口清屏**留在要清的那条 pass 上（默认画面照旧清成窗口灰）：区不碰它的清屏策略。
@@ -834,7 +834,7 @@ TEST(RenderControlTest, TheViewerDrawsTheAreaFromItsRequest)
 
     auto* control = host.control();
     auto* viewer  = control->viewer();
-    auto* surface = control->surface();
+    auto* surface = control->area();
     ASSERT_NE(viewer, nullptr);
     ASSERT_NE(surface, nullptr);
     EXPECT_TRUE(viewer->isActive()) << "默认路径：这块区由查看器的视图呈现";
@@ -864,14 +864,14 @@ TEST(RenderControlTest, TheViewerDrawsTheAreaFromItsRequest)
     control->renderFrame();
 }
 
-// 宿主自建 pass 就是"接管这块表面"（见 RenderSurface）：查看器一条都不声明（次序 = demo_plugin 那样，声明先落、
+// 宿主自建 pass 就是"接管这块表面"（见 RenderArea）：查看器一条都不声明（次序 = demo_plugin 那样，声明先落、
 // attach 后到），已经上线之后再接管也立刻为 false —— 判据是表，不是查看器自己记的一个开关。
 TEST(RenderControlTest, AHostPassTakesTheAreaAndTheViewerStandsDown)
 {
     // 前半：声明先落、attach 后到 —— 查看器连链都不建（默认画面不许在主人的 pass 旁边再画一遍）。
     HostedControl host;
     auto*         control = host.control();
-    auto*         surface = control->surface();
+    auto*         surface = control->area();
     auto*         view    = control->view();
     ASSERT_NE(control->viewer(), nullptr);
 
@@ -902,12 +902,12 @@ TEST(RenderControlTest, AHostPassTakesTheAreaAndTheViewerStandsDown)
     live_options.content = live_view->scene();
     auto taken_over      = vn::graphics::PassChain::build(live.control()->engine(), live_options);
     ASSERT_NE(taken_over, nullptr);
-    EXPECT_FALSE(live.control()->surface()->present(taken_over->presentingPass())) << "查看器还在呈现这块区：第二条呈现是被拒的";
+    EXPECT_FALSE(live.control()->area()->present(taken_over->presentingPass())) << "查看器还在呈现这块区：第二条呈现是被拒的";
     ASSERT_TRUE(live.control()->viewer()->release(live_view)) << "查看器放手";
-    ASSERT_TRUE(live.control()->surface()->present(taken_over->presentingPass()));
+    ASSERT_TRUE(live.control()->area()->present(taken_over->presentingPass()));
     EXPECT_FALSE(live.control()->viewer()->isActive()) << "接管之后：呈现者是宿主自建的 pass";
-    EXPECT_EQ(live.control()->surface()->presentedView(), nullptr);
-    EXPECT_EQ(live.control()->surface()->presentingPass(), taken_over->presentingPass());
+    EXPECT_EQ(live.control()->area()->presentedView(), nullptr);
+    EXPECT_EQ(live.control()->area()->presentingPass(), taken_over->presentingPass());
 }
 
 // release(view)：撤掉查看器为这个视图做的那条声明 —— 表里没有它，isActive() 也立刻为 false。还给宿主的只是这个
@@ -920,7 +920,7 @@ TEST(RenderControlTest, ReleasingTheViewTakesItOutOfTheArea)
 
     auto* control = host.control();
     auto* viewer  = control->viewer();
-    auto* surface = control->surface();
+    auto* surface = control->area();
     auto  view    = vn::intrusive_ptr<vn::graphics::SceneView>(control->view());
 
     EXPECT_TRUE(viewer->isActive());
@@ -987,7 +987,7 @@ TEST(RenderControlTest, TheControlAsksItsDeviceForTheTargetOfTheWindowItGot)
     auto*         control = host.control();
     ASSERT_TRUE(pumpUntil([&] { return control->state() == RenderControl::SurfaceState::Presenting; }, 3000));
 
-    auto* surface = control->surface();
+    auto* surface = control->area();
     ASSERT_NE(surface, nullptr);
     ASSERT_NE(surface->target(), nullptr) << "区持有设备为这个窗口造的那把目标";
     EXPECT_EQ(surface->target(), &host.stub()->surface_half);

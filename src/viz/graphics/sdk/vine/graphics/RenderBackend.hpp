@@ -38,7 +38,7 @@ class RenderTarget;
  *   that hands out no surface.
  * - WHAT A HOST SEES. A host talks to the faces: it asks the device what it can do (RenderDevice::capabilities), asks
  *   it for a window (RenderDevice::createSurfaceTarget - the target an area then holds, see
- *   RenderSurface::bindTarget), announces what it will draw into (RenderDevice::setRenderTarget), and drives frames
+ *   RenderArea::bindTarget), announces what it will draw into (RenderDevice::setRenderTarget), and drives frames
  *   through the executor (RenderFrameExecutor::executeFrame) the device hands out (RenderDevice::executor).
  *   Everything those faces document applies here: the one-wire frame value, the optional window half, the borrowed
  *   arguments of a frame, what may be retained, the threading rules and the failure rules.

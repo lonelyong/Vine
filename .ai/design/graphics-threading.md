@@ -119,7 +119,7 @@
 ### 2.6 表面归内容侧（UI），交换链归引擎侧
 
 - **是什么**：表面的创建/销毁在拥有原生窗口的线程（Qt 的句柄与 display 属于 Qt）；`acquire / present / 交换链重建`
-  只在引擎线程。宿主把尺寸作为**值**交给面积（`RenderSurface::resize`），引擎在**帧首**把"这一帧的尺寸"交给 target，
+  只在引擎线程。宿主把尺寸作为**值**交给面积（`RenderArea::resize`），引擎在**帧首**把"这一帧的尺寸"交给 target，
   且只在数字变了时。
 - **为什么**：句柄的生命周期是宿主的，交换链的生命周期是设备的；两者交叉的那一点（重建）必须只有一个写者（`G2`）。
 - **边界**：设备动词（`createSurfaceTarget` / `setWindowHandle` / `device->initialize`）是**宿主在帧与帧之间**的操作，
@@ -178,7 +178,7 @@
 | 东西 | 持有者 | 唯一写者 | 跨边界的形态 |
 |---|---|---|---|
 | 原生窗口句柄 / display | UI（Qt） | UI | 值（尺寸、可见性） |
-| `RenderSurface`（面积） | 引擎（`createSurface` 给的 share） | 引擎线程 | — |
+| `RenderArea`（面积） | 引擎（`createArea` 给的 share） | 引擎线程 | — |
 | `WindowPresentTarget` + 交换链 | 引擎（设备造，`createSurfaceTarget`） | 引擎线程 | — |
 | `RenderDevice` / 会话 / 帧值 / 退休队列 | 引擎 | 引擎线程 | — |
 | 帧的**内容半段**：帧号、`compileFrame`、`before_draw` 钩子、发布（每帧每场景一次）、`describe` | 内容线程 | 内容线程 | 帧值交出去 |
@@ -201,7 +201,7 @@
 - **完成通知是报告，不是回调**（`G10`）：一帧的**呈现结局**是 `PresentOutcome` 的值，与它的帧号一起作为
   `RenderEngine::presentRecord()` 发布（一个原子字打包，任何线程任何时刻可读）。引擎线程**从不**回调 UI、也从不
   回头读 UI。要"等第 N 帧上屏"就 `waitForFrame(N)`，要"这一帧怎么了"就读 `presentRecord()`。
-- **尺寸随帧走，交换链在帧首跟随**（已落地）：`RenderSurface::resize` 只做两件事 —— 记录这个面积自己的尺寸、
+- **尺寸随帧走，交换链在帧首跟随**（已落地）：`RenderArea::resize` 只做两件事 —— 记录这个面积自己的尺寸、
   把几何交给 presenting view —— 而**不碰** target；`frame()` 在装配完之后、执行之前，把"这一帧的尺寸"交给 target，
   且**只在数字变了时**。于是：宿主在一次帧中间 resize 也不等设备，两帧之间的多次 resize 只付一次交换链重建。
 - **关闭**（F10）：`stop()` 投"不要再要帧" → 引擎半段跑完手上这一帧（或丢弃）→ 在引擎线程释放 present target、
@@ -475,7 +475,7 @@
 
 - 会怎么错：`createSurfaceTarget` / `setWindowHandle` / `initialize` 改的是引擎线程正在记录的会话。
 - 怎么判：TSan 或再现场的崩溃。
-- 怎么防：宿主先 `waitForFrame()`；尺寸只经 `RenderSurface::resize` 作为值交给帧（§2.6）。
+- 怎么防：宿主先 `waitForFrame()`；尺寸只经 `RenderArea::resize` 作为值交给帧（§2.6）。
 
 ### 6.4 P4 批被当成事务
 

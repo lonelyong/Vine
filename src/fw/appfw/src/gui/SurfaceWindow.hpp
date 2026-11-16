@@ -21,7 +21,7 @@ namespace vn::graphics
 {
 
 class RenderEngine;
-class RenderSurface;
+class RenderArea;
 class SceneView;
 
 } // namespace vn::graphics
@@ -85,7 +85,7 @@ class SurfaceWindow : public QWindow {
      *
      * @return The surface (never null while the surface is alive).
      */
-    vn::graphics::RenderSurface* surface() const;
+    vn::graphics::RenderArea* area() const;
 
     /**
      * @brief Gets the viewer managing this area's picture (see Viewer).
@@ -245,7 +245,7 @@ class SurfaceWindow : public QWindow {
      *
      * A window-system recreation cannot be produced on demand from outside the process, and the answer to it
      * (re-announce the handle) is the thing worth gating. */
-    void recreateSurface();
+    void recreateArea();
 
     struct Impl;
     Impl* const d;

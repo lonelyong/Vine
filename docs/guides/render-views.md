@@ -17,7 +17,7 @@
 | `Viewer` | [Viewer.hpp](../../src/fw/appfw/sdk/vine/appfw/gui/Viewer.hpp) | "这块区怎么画"（appfw 层的请求与建链） | 一条请求（[ViewerOptions.hpp](../../src/fw/appfw/sdk/vine/appfw/gui/ViewerOptions.hpp)） |
 | `SceneView` | [SceneView.hpp](../../src/viz/graphics/sdk/vine/graphics/SceneView.hpp) | "一台相机看什么" | 相机、内容场景、操纵器、采纳的那条链 |
 | `RenderEngine` | [RenderEngine.hpp](../../src/viz/graphics/sdk/vine/graphics/RenderEngine.hpp) | "这一帧画什么、按什么顺序" | pass 注册表、帧上下文 |
-| `RenderSurface` | [RenderSurface.hpp](../../src/viz/graphics/sdk/vine/graphics/RenderSurface.hpp) | "**哪条 pass 画这块窗口**、多大" | 呈现（一条）、尺寸与比例、目标（借用） |
+| `RenderArea` | [RenderArea.hpp](../../src/viz/graphics/sdk/vine/graphics/RenderArea.hpp) | "**哪条 pass 画这块窗口**、多大" | 呈现（一条）、尺寸与比例、目标（借用） |
 | `PassChain` | [PassChain.hpp](../../src/viz/graphics/sdk/vine/graphics/PassChain.hpp) | "一个视图怎么画"（一条链的配方与运行期开关） | 一条链的 pass、档、离屏目标 |
 
 **一块区只画一幅画**（多格已下线）。这不是省事：一帧里两条都画默认帧缓冲的 pass 会互相擦，而"点归谁、谁有焦点、谁清屏"
@@ -41,7 +41,7 @@ graph TB
     subgraph gfx["graphics SDK —— 图形层"]
         ENG["RenderEngine<br/>一帧：画什么、按什么顺序"]
         VIEW["SceneView<br/>相机 / 内容 / 采纳的链"]
-        AREA["RenderSurface 区<br/>哪条 pass 画这块窗口 / 尺寸"]
+        AREA["RenderArea 区<br/>哪条 pass 画这块窗口 / 尺寸"]
         PIPE["PassChain<br/>一条链的配方与开关"]
     end
 
@@ -73,7 +73,7 @@ graph TB
 分层读法（自上而下，每层只依赖下一层的契约）：
 
 - **appfw**：把"窗口"这一件平台的事收进 `RenderControl` / `SurfaceWindow`（attach、尺寸、输入、失败状态机），把"这块区怎么画"收进 `Viewer`。
-- **graphics SDK**：帧的单位是引擎（`RenderEngine`）；视图只采纳链（`SceneView` + `PassChain`）；"谁画这块窗口"是区自己的呈现（`RenderSurface`）。
+- **graphics SDK**：帧的单位是引擎（`RenderEngine`）；视图只采纳链（`SceneView` + `PassChain`）；"谁画这块窗口"是区自己的呈现（`RenderArea`）。
 - **后端契约**：设备（`RenderDevice`）造目标（`WindowPresentTarget`，即 `PresentTarget` 的窗口实现）、跑帧（`RenderFrameExecutor`）；三者今天由插件的一个对象同时实现（`RenderBackend` 是那个聚合）。**帧只认 `PresentTarget`**（`resize` + `present`）：窗口那两条动词（`setWindowHandle` / `nativeHandle`）只属于拥有窗口的宿主。
 - **插件**：Vulkan 的会话、录制与提交，宿主不直接碰。
 
@@ -87,7 +87,7 @@ classDiagram
         +engine() RenderEngine*
         +view() SceneView*
         +viewer() Viewer*
-        +surface() RenderSurface*
+        +surface() RenderArea*
         +init() bool
         +renderFrame()
         +viewerOptions() ViewerOptions
@@ -97,7 +97,7 @@ classDiagram
     class SurfaceWindow {
         +engine() RenderEngine*
         +view() SceneView*
-        +surface() RenderSurface*
+        +surface() RenderArea*
         +viewer() Viewer*
         +init() bool
         +renderFrame()
@@ -123,7 +123,7 @@ classDiagram
         +applyPlan(plan)
         +frame(dt)
     }
-    class RenderSurface {
+    class RenderArea {
         +present(view) bool
         +present(pass) bool
         +dismiss(view) bool
@@ -151,26 +151,26 @@ classDiagram
     RenderControl *-- SurfaceWindow : 拥有
     SurfaceWindow *-- RenderEngine : 拥有
     SurfaceWindow *-- SceneView : 拥有
-    SurfaceWindow *-- RenderSurface : 拥有
+    SurfaceWindow *-- RenderArea : 拥有
     SurfaceWindow *-- Viewer : 拥有
     Viewer o-- "0..1" SceneView : 一条请求，一个视图
-    RenderSurface o-- "0..1" SceneView : 呈现（声明关系）
-    RenderSurface o-- "0..1" RenderPass : 呈现（宿主自建的 pass）
+    RenderArea o-- "0..1" SceneView : 呈现（声明关系）
+    RenderArea o-- "0..1" RenderPass : 呈现（宿主自建的 pass）
     SceneView "N" --> "1" RenderEngine : 借用
     SceneView "N" --> "0..1" PassChain : 采纳
-    RenderEngine "1" --> "1" RenderSurface : 驱动
+    RenderEngine "1" --> "1" RenderArea : 驱动
     RenderEngine "N" --> "1" RenderDevice : 设置（共享引用）
-    RenderSurface "1" --> "0..1" WindowPresentTarget : 借用（设备造）
+    RenderArea "1" --> "0..1" WindowPresentTarget : 借用（设备造）
     RenderDevice ..> WindowPresentTarget : 造
     WindowPresentTarget --|> PresentTarget : 窗口那一面（帧只认基类）
 ```
 
 关系上的四条要点：
 
-1. **拥有 vs 借用**：`RenderControl`/`SurfaceWindow` 拥有引擎、区、视图与 `Viewer`；视图是**借**引擎的（`SceneView::setEngine`）；**区是引擎自己的**（`RenderEngine::createSurface()` 造出来并由引擎持有，宿主拿的只是一个句柄）。
+1. **拥有 vs 借用**：`RenderControl`/`SurfaceWindow` 拥有引擎、区、视图与 `Viewer`；视图是**借**引擎的（`SceneView::setEngine`）；**区是引擎自己的**（`RenderEngine::createArea()` 造出来并由引擎持有，宿主拿的只是一个句柄）。
 2. **`Viewer` 不拥有"呈现"**：`isActive()` / `view()` 读的是区（`presentedView()`），`Viewer` 只存那条请求与为建链持有的视图引用。
 3. **一个视图同时只呈现在一块区上**：呈现在别处的视图会被区**拒绝 + 报一次**（它从"自己呈现的那块区"读尺寸，两处就说不清画哪）。
-4. **目标由设备造、区借用**：`RenderDevice::createSurfaceTarget(...)` 交出的目标归设备；`RenderSurface::bindTarget(target)` 只是借来用（重建窗口是**在旧目标上重公告**，不是第二把目标）。
+4. **目标由设备造、区借用**：`RenderDevice::createSurfaceTarget(...)` 交出的目标归设备；`RenderArea::bindTarget(target)` 只是借来用（重建窗口是**在旧目标上重公告**，不是第二把目标）。
 
 ## 4. 简单使用 demo：一块窗口，一幅画面
 

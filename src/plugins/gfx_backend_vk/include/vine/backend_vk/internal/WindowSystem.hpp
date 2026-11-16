@@ -61,7 +61,7 @@ class VN_BACKEND_VK_API WindowSystem final {
      * - Idempotent, and a no-op that answers true on platforms whose surface creation needs no connection (Win32).
      *
      * @param why Receives the reason when the connection cannot be opened, or null.
-     * @return true when @ref createSurface can be called.
+     * @return true when @ref createArea can be called.
      */
     [[nodiscard]] bool open(vn::String* why);
 
@@ -82,7 +82,7 @@ class VN_BACKEND_VK_API WindowSystem final {
      * @param why      Receives the reason when it cannot be created, or null.
      * @return true when @p surface exists.
      */
-    [[nodiscard]] bool createSurface(VkInstance instance, void* window, VkSurfaceKHR& surface, vn::String* why) const;
+    [[nodiscard]] bool createArea(VkInstance instance, void* window, VkSurfaceKHR& surface, vn::String* why) const;
 
     /**
      * @brief Brings up the window a `Probe` device presents through, once per session.

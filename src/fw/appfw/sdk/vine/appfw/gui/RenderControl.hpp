@@ -17,7 +17,7 @@ namespace vn::graphics
 {
 
 class RenderEngine;
-class RenderSurface;
+class RenderArea;
 class SceneView;
 
 } // namespace vn::graphics
@@ -196,7 +196,7 @@ class VN_APPFW_API RenderControl : public Control {
      */
     bool setShadingMode(vn::graphics::ShadingMode mode);
 
-    /** @brief Gets the surface this control renders into (see RenderSurface).
+    /** @brief Gets the surface this control renders into (see RenderArea).
      *
      * The pass that draws this surface, and the window it is presented through: the ONE place that answers "who
      * presents this surface". By default the control's viewer does (the control's own view draws it), and a host
@@ -205,7 +205,7 @@ class VN_APPFW_API RenderControl : public Control {
      *
      * @code
      * auto pipeline = builder.build(options);
-     * control->surface()->present(pipeline->presentingPass());   // before the first attach (install is synchronous)
+     * control->area()->present(pipeline->presentingPass());   // before the first attach (install is synchronous)
      * @endcode
      *
      * The control keeps the same fallback it always had: with nothing declared, the viewer's view presents the
@@ -213,7 +213,7 @@ class VN_APPFW_API RenderControl : public Control {
      *
      * @return The control's render surface (never null while the control is alive).
      */
-    vn::graphics::RenderSurface* surface() const;
+    vn::graphics::RenderArea* area() const;
 
     /** @brief Attaches the backend to the native surface and initializes it.
      *

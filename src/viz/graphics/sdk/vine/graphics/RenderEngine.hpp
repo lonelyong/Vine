@@ -34,7 +34,7 @@
 #include "Plan.hpp"
 #include "PrepareReport.hpp"
 #include "RenderDiagnostic.hpp"
-#include "RenderSurface.hpp"
+#include "RenderArea.hpp"
 #include "ReportOnce.hpp"
 #include "SceneSnapshotRef.hpp"
 
@@ -155,9 +155,9 @@ enum class FrameThreading : std::uint8_t
  * - A pure scheduler: it carries no content scene, no camera and no input forwarding. Every pass draws the
  *   content its own declaration states (PassDesc::content) or nothing; the primary interactive view
  *   lives in a SceneView that borrows this engine. Which pass draws into which SURFACE is the surface's own
- *   declaration (see RenderSurface), never something the engine infers.
+ *   declaration (see RenderArea), never something the engine infers.
  * - THE ENGINE KNOWS NO WINDOW: the window belongs to the AREA - the area holds the TARGET its device made
- *   (RenderSurface::bindTarget) and the size a host reports (resize), and the engine holds neither. It
+ *   (RenderArea::bindTarget) and the size a host reports (resize), and the engine holds neither. It
  *   drives the frame: with no area target it asks the device (one that presents nothing answers none), it
  *   names the area's target in the frame it hands over, and it presents through it at the frame's tail
  *   (PresentTarget::present). A device that presents nothing presents nothing - a frame is complete
@@ -376,7 +376,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - A device that is not up fails the attach and is reported ONCE per episode: a frame driven through it would
      *   look like a running engine drawing nothing.
      * - What the attach does: asks the device for a target when this engine's area holds none (the device's own
-     *   window, or "no presentation" for a display-less device), replays the announced surface size to the area's
+     *   window, or "no presentation" for a display-less device), replays the announced area size to the area's
      *   target, and marks the engine ready.
      *
      * @return true when the engine is ready to render; false when it has no device or the device is not up.
@@ -578,7 +578,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     [[nodiscard]] std::optional<CameraSnapshot> presentedCamera() const;
 
-    /** @brief Gets the width the frame is laid out on, as the host announced it (see RenderSurface::resize).
+    /** @brief Gets the width the frame is laid out on, as the host announced it (see RenderArea::resize).
      *
      * @details
      * - The surface's shape is the one number a builder or a host needs from the engine while it is assembling
@@ -587,13 +587,13 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @return Width in the units the host announced (logical pixels for the Qt host; 0 until the first resize).
      */
-    [[nodiscard]] int surfaceWidth() const noexcept;
+    [[nodiscard]] int areaWidth() const noexcept;
 
-    /** @brief Gets the height the frame is laid out on (see surfaceWidth).
+    /** @brief Gets the height the frame is laid out on (see areaWidth).
      *
      * @return Height in the units the host announced (0 until the first resize).
      */
-    [[nodiscard]] int surfaceHeight() const noexcept;
+    [[nodiscard]] int areaHeight() const noexcept;
 
     /** @brief Gets what the device can do, as one value (see RenderDevice::capabilities).
      *
@@ -625,8 +625,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   ask where it sits - and an answer doubles as the liveness query: a removed pass answers nothing, so
      *   an answer IS the pass being in the frame.
      * - The caller this exists for is a HOST (and tests): the area a pass presents is a declaration
-     *   (RenderSurface::present), and this is how a host finds out whether that pass is still in the frame
-     *   (see RenderSurface::presentingPass).
+     *   (RenderArea::present), and this is how a host finds out whether that pass is still in the frame
+     *   (see RenderArea::presentingPass).
      *
      * @param pass Pass to look up (by pointer; null answers nothing).
      * @return The pass' order, or nullopt when no such pass is registered.
@@ -923,7 +923,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void unpublish(const String& name);
 
-    /** @brief Creates the ONE render area this engine drives (see RenderSurface).
+    /** @brief Creates the ONE render area this engine drives (see RenderArea).
      *
      * @details
      * - ONE ENGINE, ONE AREA, OWNED HERE: the engine keeps the area it created, so the 1:1 relation has an owner
@@ -939,23 +939,23 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @return The area this engine now drives, or nullptr when it already drives one (reported once).
      */
-    [[nodiscard]] intrusive_ptr<RenderSurface> createSurface();
+    [[nodiscard]] intrusive_ptr<RenderArea> createArea();
 
   private:
-    friend class RenderSurface; // its one area: announces its size, and asks whether it is the one
+    friend class RenderArea; // its one area: announces its size, and asks whether it is the one
 
     /** @brief Records the area's size for the frame and replays it to the target once a session can honour it.
      *
      * @details
-     * - The engine's ONE size announcement (see RenderSurface::resize): recorded even with no device yet
+     * - The engine's ONE size announcement (see RenderArea::resize): recorded even with no device yet
      *   (the frame context is what the passes read), replayed by initialize(). Only the engine's own area is
-     *   heard (see createSurface) - a frame laid out on another window's size would be a silent disagreement.
+     *   heard (see createArea) - a frame laid out on another window's size would be a silent disagreement.
      *
      * @param from   Area announcing (the engine's own is the only one it acts on).
      * @param width  Area width in pixels (> 0; the caller refuses the rest).
      * @param height Area height in pixels (> 0).
      */
-    void announceAreaSize(raw_ptr<const RenderSurface> from, int width, int height);
+    void announceAreaSize(raw_ptr<const RenderArea> from, int width, int height);
 
     /** @brief One registered pass: the node, where it sits in the frame, and what a frame produced for it.
      *
@@ -1392,10 +1392,10 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     std::vector<OutputIdentity>     wiring_colliding_;
     std::vector<UnboundDeclaration> wiring_unbound_;
     std::vector<OutputIdentity>     wiring_promised_images_;
-    // The shape the frame is laid out on, as the host announced it (see surfaceWidth / RenderSurface::resize):
+    // The shape the frame is laid out on, as the host announced it (see areaWidth / RenderArea::resize):
     // recorded even before a device exists, because the passes and their targets are built from it.
-    int surface_width_                 = 0;
-    int surface_height_                = 0;
+    int area_width_                 = 0;
+    int area_height_                = 0;
     // What the frame's target was LAST told (see RenderEngine::frame's head): the swapchain follows the frame, so a
     // frame only pays for a resize when the number it was laid out on differs from the one the target already has.
     // Reset by shutdown(), because the target a re-initialized engine asks for is a new object with the device's own
@@ -1409,12 +1409,12 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // that never renders sees (no memoising at all).
     std::uint64_t content_frame_       = 0;
     bool          initialized_         = false;
-    // The one area this engine drives (see createSurface): OWNED, because a 1:1 relation needs one of its two ends
+    // The one area this engine drives (see createArea): OWNED, because a 1:1 relation needs one of its two ends
     // to own it. It is the only place the engine reads a target from - the engine owns no window and no handle (see
     // the class contract) - and a host holding the same object cannot outlive it: dropping the host's handle leaves
     // the engine's, and the engine releases it while it is still an object (see ~RenderEngine).
-    intrusive_ptr<RenderSurface> area_ = nullptr;
-    /// "A second area was asked for" is one condition, not a per-call event (see createSurface).
+    intrusive_ptr<RenderArea> area_ = nullptr;
+    /// "A second area was asked for" is one condition, not a per-call event (see createArea).
     ReportOnce area_refused_{};
     /// "The borrowed device is not up" is one condition too (see initialize): re-armed when a device is set, so the
     /// same device answering the same thing does not say it twice, and a different one gets its own say.

@@ -7,7 +7,7 @@
 #include <vine/graphics/RenderDiagnostic.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderSurface.hpp>
+#include <vine/graphics/RenderArea.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/graphics/WindowPresentTarget.hpp>
@@ -363,14 +363,14 @@ TEST(HeadlessBackendTest, AFrameIsCompleteWithoutATarget)
     auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
-    auto area = engine->createSurface();
+    auto area = engine->createArea();
 
     area->resize(320, 240); // a size the passes lay themselves out on - not a surface to follow
     const int asks_before_attach = backend->targets_asked;
     ASSERT_TRUE(engine->initialize());
     EXPECT_EQ(backend->targets_asked, asks_before_attach + 1) << "the engine asked the device for a target of its own (the area held none)";
     EXPECT_FALSE(area->hasTarget()) << "this device makes none, so the area has nothing to present through";
-    EXPECT_EQ(engine->surfaceWidth(), 320) << "the size stays in the frame context: there is no window half to take it";
+    EXPECT_EQ(engine->areaWidth(), 320) << "the size stays in the frame context: there is no window half to take it";
 
     auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
     target->attachColor(RenderTarget::ColorFormat::RGBA8);
@@ -412,7 +412,7 @@ TEST(HeadlessBackendTest, PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNot
     auto backend = intrusive_ptr<HeadlessBackend>(new HeadlessBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
-    auto area = engine->createSurface();
+    auto area = engine->createArea();
     area->resize(320, 240);
     ASSERT_TRUE(engine->initialize());
 
@@ -584,7 +584,7 @@ TEST(HeadlessBackendTest, ATargetTheHostMadeReachesTheFrameUnreported)
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
 
-    auto  area   = engine->createSurface();
+    auto  area   = engine->createArea();
     int   marker = 0;
     void* handle = &marker;
 
@@ -634,7 +634,7 @@ TEST(HeadlessBackendTest, AStoppedEngineUnbindsTheAreasTargetFirst)
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
 
-    auto area = engine->createSurface();
+    auto area = engine->createArea();
     ASSERT_TRUE(engine->initialize());
     ASSERT_TRUE(area->hasTarget()) << "the engine asked its device for the area's window target";
 
@@ -649,7 +649,7 @@ TEST(HeadlessBackendTest, AStoppedEngineUnbindsTheAreasTargetFirst)
     area->resize(640, 480);
     engine->frame(); // ... and with no target there is nobody to hand it to
     EXPECT_EQ(backend->resize_calls, resize_calls_before) << "and a later resize does not reach the target";
-    EXPECT_EQ(engine->surfaceWidth(), 640) << "the frame size is still the area's to announce: the device was never this engine's to take down";
+    EXPECT_EQ(engine->areaWidth(), 640) << "the frame size is still the area's to announce: the device was never this engine's to take down";
 
     // Coming back is the documented path: a host that lost its device initializes again, and the engine asks its
     // device for a target again rather than resurrecting the object the area let go of. This double hands one window
@@ -672,7 +672,7 @@ TEST(HeadlessBackendTest, AReAnnouncedWindowMovesTheTargetAndTheDeviceStays)
     auto backend = intrusive_ptr<WindowedBackend>(new WindowedBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
-    auto area = engine->createSurface();
+    auto area = engine->createArea();
     area->resize(320, 240);
 
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
@@ -721,8 +721,8 @@ TEST(HeadlessBackendTest, OneDeviceServesSeveralAreasWithoutCrossingThem)
     engine_a->setDevice(device);
     engine_b->setDevice(device);
 
-    auto area_a = engine_a->createSurface();
-    auto area_b = engine_b->createSurface();
+    auto area_a = engine_a->createArea();
+    auto area_b = engine_b->createArea();
 
     int handle_a = 0;
     int handle_b = 0;
@@ -776,7 +776,7 @@ TEST(HeadlessBackendTest, TheEngineForwardsAContentReleaseToItsDevice)
 TEST(HeadlessBackendTest, TheDeviceIsAskedForItsOwnTargetOnlyWhenTheAreaHoldsNone)
 {
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto area   = engine->createSurface();
+    auto area   = engine->createArea();
     area->resize(800, 600);
 
     auto backend = intrusive_ptr<WindowedBackend>(new WindowedBackend());

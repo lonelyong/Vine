@@ -50,7 +50,7 @@ bool isCurrentShadingMode(vn::graphics::ShadingMode mode);
  *
  * **作用在哪个视图上**：**派发时解析出的目标**（`CommandExecutionContext::target()`）—— 目标是视图，视图
  * 自己回答它那块 3D 区（`DocumentView::renderControl()`），一块渲染区只画一幅画（多格已下线，见
- * `RenderSurface`）。命令因此不需要认识任何具体视图类，也不需要问“谁是当前窗口”：目标随执行走，两个窗口/两个
+ * `RenderArea`）。命令因此不需要认识任何具体视图类，也不需要问“谁是当前窗口”：目标随执行走，两个窗口/两个
  * 窗格各答各的。前提用 `CommandFlags::NeedsView` 声明，缺 3D 区时由框架统一拒绝（不再在这里写空链判断）。
  *
  * 剩下的一道守卫是**类型**：

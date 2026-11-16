@@ -13,7 +13,7 @@
 #include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderSurface.hpp>
+#include <vine/graphics/RenderArea.hpp>
 #include <vine/graphics/Scene.hpp>
 #include <vine/window/InputEvent.hpp>
 #include <vine/window/MouseButton.hpp>
@@ -47,10 +47,10 @@ SceneView::~SceneView()
     }
 }
 
-void SceneView::setSurface(raw_ptr<RenderSurface> surface) noexcept
+void SceneView::setSurface(raw_ptr<RenderArea> surface) noexcept
 {
     if (surface == nullptr && surface_ != nullptr) {
-        // The size the surface owned becomes this view's own statement (see RenderSurface::dismiss): a view that
+        // The size the surface owned becomes this view's own statement (see RenderArea::dismiss): a view that
         // stops presenting must keep being sizeable by its host from here on, and the surface is not there to be
         // asked any more.
         layout_.resize(surface_->width_, surface_->height_, surface_->pixel_ratio_);
@@ -121,12 +121,12 @@ void SceneView::checkChainContent()
                               u8" (RenderEngine::bindPassContent)"));
 }
 
-int SceneView::surfaceWidth() const noexcept
+int SceneView::areaWidth() const noexcept
 {
     return surface_ != nullptr ? surface_->width_ : layout_.width();
 }
 
-int SceneView::surfaceHeight() const noexcept
+int SceneView::areaHeight() const noexcept
 {
     return surface_ != nullptr ? surface_->height_ : layout_.height();
 }
@@ -138,8 +138,8 @@ double SceneView::surfacePixelRatio() const noexcept
 
 void SceneView::applySurfaceGeometry()
 {
-    const int surface_w = surfaceWidth();
-    const int surface_h = surfaceHeight();
+    const int surface_w = areaWidth();
+    const int surface_h = areaHeight();
     if (surface_w <= 0 || surface_h <= 0) {
         return;
     }

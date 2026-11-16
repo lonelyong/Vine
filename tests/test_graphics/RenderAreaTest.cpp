@@ -1,7 +1,7 @@
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
-#include <vine/graphics/RenderSurface.hpp>
+#include <vine/graphics/RenderArea.hpp>
 #include <vine/graphics/SceneView.hpp>
 
 #include <vine/Color.hpp>
@@ -62,7 +62,7 @@ intrusive_ptr<SceneView> viewOn(RenderEngine* engine, const ChainDesc& options =
  * a host with its own pass declares that one), and the area declares nothing else - no panes, no rectangles, no
  * focus, and no clear policy of its own. One area, one picture.
  */
-TEST(RenderSurfaceTest, PresentingAViewDeclaresWhatItDraws)
+TEST(RenderAreaTest, PresentingAViewDeclaresWhatItDraws)
 {
     // The declaration a host makes when it has no main pass of its own: this area is presented by the pass of the
     // pipeline the VIEW adopted. The area resolves the pass back through the view (it builds nothing), so the host
@@ -70,7 +70,7 @@ TEST(RenderSurfaceTest, PresentingAViewDeclaresWhatItDraws)
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
 
     EXPECT_FALSE(surface->hasPresentation());
     EXPECT_EQ(surface->presentingPass(), nullptr);
@@ -99,13 +99,13 @@ TEST(RenderSurfaceTest, PresentingAViewDeclaresWhatItDraws)
     EXPECT_EQ(engine->passCount(), 1u);
 }
 
-TEST(RenderSurfaceTest, APassRegisteredOnTheEngineIsNotAPresentation)
+TEST(RenderAreaTest, APassRegisteredOnTheEngineIsNotAPresentation)
 {
     // Merely existing is not a presentation (that inference is what S7 removed): a pass carrying this very camera and
     // drawing the default framebuffer presents nothing until somebody says so. A HUD pass is the case that matters -
     // a null-target pass that is not the picture.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
     auto hud     = intrusive_ptr<RenderPass>(new RenderPass());
     hud->setName(vn::String(u8"fps_overlay"));
     vn::test::registerPassForTest(*engine, hud, 30);
@@ -115,12 +115,12 @@ TEST(RenderSurfaceTest, APassRegisteredOnTheEngineIsNotAPresentation)
     EXPECT_EQ(surface->presentingPass(), nullptr);
 }
 
-TEST(RenderSurfaceTest, AHostDeclaredPassIsTheSurfacesPresentation)
+TEST(RenderAreaTest, AHostDeclaredPassIsTheSurfacesPresentation)
 {
     // The declaration a host makes when it built its own main pass (the demo's deferred pipeline does exactly this):
     // the pass presents the area, and there is no view to name.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
     auto main    = intrusive_ptr<RenderPass>(new RenderPass());
     main->setName(vn::String(u8"deferred_lighting"));
     vn::test::registerPassForTest(*engine, main, 0);
@@ -134,14 +134,14 @@ TEST(RenderSurfaceTest, AHostDeclaredPassIsTheSurfacesPresentation)
     EXPECT_FALSE(surface->hasPresentation());
 }
 
-TEST(RenderSurfaceTest, ThePassFollowsARebuiltPipeline)
+TEST(RenderAreaTest, ThePassFollowsARebuiltPipeline)
 {
     // The pass is not remembered as a pointer: it is resolved through the view every time the area is read, so a
     // recipe change (which rebuilds the pipeline and creates a NEW window pass) is followed instead of leaving the
     // area naming a pass that left the frame.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(engine.get());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
     ASSERT_TRUE(surface->present(*view));
     RenderPass* const first = surface->presentingPass();
     ASSERT_NE(first, nullptr);
@@ -159,13 +159,13 @@ TEST(RenderSurfaceTest, ThePassFollowsARebuiltPipeline)
     EXPECT_EQ(surface->presentedView(), view.get());
 }
 
-TEST(RenderSurfaceTest, AViewWithNoPipelineIsRefusedOutLoud)
+TEST(RenderAreaTest, AViewWithNoPipelineIsRefusedOutLoud)
 {
     // A declaration without a chain would leave a host believing a window is being drawn into while nothing draws.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view   = intrusive_ptr<SceneView>(new SceneView());
     view->setEngine(engine.get());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
 
     EXPECT_EQ(view->chain(), nullptr);
     EXPECT_FALSE(surface->present(*view));
@@ -173,14 +173,14 @@ TEST(RenderSurfaceTest, AViewWithNoPipelineIsRefusedOutLoud)
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u);
 }
 
-TEST(RenderSurfaceTest, AViewOnAnotherEngineIsRefusedOutLoud)
+TEST(RenderAreaTest, AViewOnAnotherEngineIsRefusedOutLoud)
 {
     // A view bound to another engine registers its passes on THAT frame: it could present this surface never. The
     // refusal says so instead of leaving a host looking at an empty area.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto other   = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(other.get());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
 
     ASSERT_NE(view->chain(), nullptr);
     EXPECT_FALSE(surface->present(*view));
@@ -189,19 +189,19 @@ TEST(RenderSurfaceTest, AViewOnAnotherEngineIsRefusedOutLoud)
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u);
 }
 
-TEST(RenderSurfaceTest, ASecondAreaIsAConstructionFailureNotASecondObject)
+TEST(RenderAreaTest, ASecondAreaIsAConstructionFailureNotASecondObject)
 {
-    // ONE engine drives ONE area, and the ENGINE OWNS it (RenderEngine::createSurface): two areas would both declare
+    // ONE engine drives ONE area, and the ENGINE OWNS it (RenderEngine::createArea): two areas would both declare
     // a picture for one swapchain (they draw over each other, and only one's target is the frame's default
     // framebuffer) while the other's size quietly drove the passes. What used to be a refusal at registration is now
     // impossible to construct: the second call answers null, ONCE, and says why. A host that wants a second window
     // builds a second engine (a device may serve several).
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto first  = engine->createSurface();
+    auto first  = engine->createArea();
     ASSERT_NE(first, nullptr);
 
-    auto second = engine->createSurface();
-    auto third  = engine->createSurface();
+    auto second = engine->createArea();
+    auto third  = engine->createArea();
     EXPECT_EQ(second, nullptr) << "there is no second area to get";
     EXPECT_EQ(third, nullptr);
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::UnsupportedRequest), 1u) << "one condition, one report - not one per attempt";
@@ -214,32 +214,32 @@ TEST(RenderSurfaceTest, ASecondAreaIsAConstructionFailureNotASecondObject)
     EXPECT_TRUE(first->hasPresentation());
 }
 
-TEST(RenderSurfaceTest, ARefusedSecondAreaCannotReshapeTheFrame)
+TEST(RenderAreaTest, ARefusedSecondAreaCannotReshapeTheFrame)
 {
     // The frame context is what the passes lay themselves out on, so exactly one thing may feed it. There is only one
     // area to resize, which is the point of the ownership: the "another window's size shaped my frame" failure has no
     // object to come from any more. What is worth pinning is that the refusal leaves the standing area in charge.
     auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto first  = engine->createSurface();
+    auto first  = engine->createArea();
     ASSERT_NE(first, nullptr);
-    EXPECT_EQ(engine->createSurface(), nullptr);
+    EXPECT_EQ(engine->createArea(), nullptr);
 
     first->resize(800, 600);
-    EXPECT_EQ(engine->surfaceWidth(), 800);
-    EXPECT_EQ(engine->surfaceHeight(), 600);
+    EXPECT_EQ(engine->areaWidth(), 800);
+    EXPECT_EQ(engine->areaHeight(), 600);
 
     first->resize(1024, 768);
-    EXPECT_EQ(engine->surfaceWidth(), 1024) << "the engine's own area is still the one it hears";
-    EXPECT_EQ(engine->surfaceHeight(), 768);
+    EXPECT_EQ(engine->areaWidth(), 1024) << "the engine's own area is still the one it hears";
+    EXPECT_EQ(engine->areaHeight(), 768);
 }
 
-TEST(RenderSurfaceTest, APassThatIsNotInTheFrameCannotPresentTheArea)
+TEST(RenderAreaTest, APassThatIsNotInTheFrameCannotPresentTheArea)
 {
     // "Declared, but nothing is drawn" is the silence this area exists to end: a pass the engine does not run draws
     // nothing here, so declaring it is refused and reported once - the demo and every host register their pass first
     // (RenderEngine::addPass, which a pipeline does itself when it is built).
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
     auto pass    = intrusive_ptr<RenderPass>(new RenderPass());
     pass->setName(vn::String(u8"deferred_lighting"));
 
@@ -256,13 +256,13 @@ TEST(RenderSurfaceTest, APassThatIsNotInTheFrameCannotPresentTheArea)
     EXPECT_EQ(surface->presentingPass(), pass.get());
 }
 
-TEST(RenderSurfaceTest, APresentationWhosePassLeavesTheFrameStopsPresenting)
+TEST(RenderAreaTest, APresentationWhosePassLeavesTheFrameStopsPresenting)
 {
     // The other half of the same rule: a declared pass can leave the frame (RenderEngine::removePass, a pipeline that
     // was thrown away), and then the area presents NOTHING - "declared" is not "drawn". Answering otherwise would keep
     // a default path from building its own picture (Viewer::takeArea) while the window stayed empty.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
     auto pass    = intrusive_ptr<RenderPass>(new RenderPass());
     vn::test::registerPassForTest(*engine, pass, 0);
     ASSERT_TRUE(surface->present(pass.get()));
@@ -274,14 +274,14 @@ TEST(RenderSurfaceTest, APresentationWhosePassLeavesTheFrameStopsPresenting)
     EXPECT_TRUE(surface->dismiss(pass.get())) << "and the declaration can still be taken back";
 }
 
-TEST(RenderSurfaceTest, OneAreaDrawsOnePicture)
+TEST(RenderAreaTest, OneAreaDrawsOnePicture)
 {
     // The rule that replaced the multi-pane table: a second presentation (a view or a host pass) is refused, and the
     // refusal is REPORTED once per episode instead of silently drawing two passes into one window.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto first   = viewOn(engine.get());
     auto second  = viewOn(engine.get());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
     ASSERT_TRUE(surface->present(*first));
 
     EXPECT_FALSE(surface->present(*second)) << "a second view is not a split - it is a second picture";
@@ -301,44 +301,44 @@ TEST(RenderSurfaceTest, OneAreaDrawsOnePicture)
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 2u);
 }
 
-TEST(RenderSurfaceTest, TheAreaOwnsTheSizeAndTheViewReadsIt)
+TEST(RenderAreaTest, TheAreaOwnsTheSizeAndTheViewReadsIt)
 {
     // The size of the thing the picture ends up in is a fact about the AREA: a host announces it once, and the view
     // reads it from there (its camera shape, its off-screen targets, its HUD boxes and its layout steps all follow
     // from it). A view presented LATER gets the remembered size at once - the host does not have to feed it.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(engine.get());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
     ASSERT_TRUE(surface->present(*view));
 
     surface->resize(800, 600, 2.0);
     EXPECT_EQ(surface->pixelRatio(), 2.0);
-    EXPECT_EQ(view->surfaceWidth(), 800);
-    EXPECT_EQ(view->surfaceHeight(), 600);
+    EXPECT_EQ(view->areaWidth(), 800);
+    EXPECT_EQ(view->areaHeight(), 600);
     EXPECT_EQ(view->surfacePixelRatio(), 2.0);
     EXPECT_NEAR(view->camera()->aspect(), 800.0 / 600.0, 1e-9) << "the camera is shaped for the area";
     EXPECT_FALSE(surface->presentingPass()->hasViewport()) << "a full-area picture is what a pass without a viewport already means";
 
     // State the size before anything is presented: the view that comes later is laid out with it at once. A second
-    // WINDOW is a second engine (see RenderEngine::createSurface), which is what this half uses.
+    // WINDOW is a second engine (see RenderEngine::createArea), which is what this half uses.
     auto other_engine = intrusive_ptr<RenderEngine>(new RenderEngine());
-    auto other        = other_engine->createSurface();
+    auto other        = other_engine->createArea();
     auto later        = viewOn(other_engine.get());
     other->resize(400, 400, 1.0);
     ASSERT_TRUE(other->present(*later));
-    EXPECT_EQ(later->surfaceWidth(), 400);
-    EXPECT_EQ(later->surfaceHeight(), 400);
+    EXPECT_EQ(later->areaWidth(), 400);
+    EXPECT_EQ(later->areaHeight(), 400);
     EXPECT_NEAR(later->camera()->aspect(), 1.0, 1e-9);
 }
 
-TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
+TEST(RenderAreaTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
 {
     // What the area owns is WHO paints it - not whether that pass clears. The pass' own ask stands (a HUD-style pass
     // that draws over what is there keeps asking for no clear), and the backend's rule (the first clear announced per
     // attachment wins) is exactly the swapchain's own: one area, one picture, one clear.
     auto              engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto              view    = viewOn(engine.get());
-    auto              surface = engine->createSurface();
+    auto              surface = engine->createArea();
     RenderPass* const window  = view->chain()->presentingPass();
     ASSERT_NE(window, nullptr);
     EXPECT_TRUE(window->isClearEnabled());
@@ -362,19 +362,19 @@ TEST(RenderSurfaceTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
     ChainDesc deferred;
     deferred.path      = ShadingPath::Deferred;
     auto deferred_view = viewOn(deferred_engine.get(), deferred);
-    auto deferred_area = deferred_engine->createSurface();
+    auto deferred_area = deferred_engine->createArea();
     ASSERT_TRUE(deferred_area->present(*deferred_view));
     ASSERT_NE(deferred_view->chain()->presentingPass(), nullptr);
     EXPECT_FALSE(deferred_view->chain()->presentingPass()->isClearEnabled());
 }
 
-TEST(RenderSurfaceTest, APresentedViewThatDiesLeavesTheSurface)
+TEST(RenderAreaTest, APresentedViewThatDiesLeavesTheSurface)
 {
     // The area borrows its view (it is the host's), so a host that drops it must not leave the area pointing at it:
     // the view leaves the area itself, in its own destructor, while the area is still there to be told.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(engine.get());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
     ASSERT_TRUE(surface->present(*view));
     RenderPass* const window = surface->presentingPass();
 
@@ -385,47 +385,47 @@ TEST(RenderSurfaceTest, APresentedViewThatDiesLeavesTheSurface)
     EXPECT_NE(window, nullptr) << "the pass itself is the pipeline's, and the pipeline went with the view";
 }
 
-TEST(RenderSurfaceTest, AViewThatOutlivesItsSurfaceDoesNotCallIntoIt)
+TEST(RenderAreaTest, AViewThatOutlivesItsSurfaceDoesNotCallIntoIt)
 {
     // The other order: the host drops the surface (or the whole control) while its view lives on. The view must stop
     // naming it - it is going away, and a view that outlived it must not reach back into it.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(engine.get());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
     ASSERT_TRUE(surface->present(*view));
     surface->resize(320, 240, 1.0);
-    ASSERT_EQ(view->surfaceWidth(), 320);
+    ASSERT_EQ(view->areaWidth(), 320);
 
     surface = nullptr;
     // The view keeps the numbers it last derived from the area, and is its own again: the host sizes it directly.
-    EXPECT_EQ(view->surfaceWidth(), 320);
-    EXPECT_EQ(view->surfaceHeight(), 240);
+    EXPECT_EQ(view->areaWidth(), 320);
+    EXPECT_EQ(view->areaHeight(), 240);
     view->resize(640, 480);
-    EXPECT_EQ(view->surfaceWidth(), 640);
-    EXPECT_EQ(view->surfaceHeight(), 480);
+    EXPECT_EQ(view->areaWidth(), 640);
+    EXPECT_EQ(view->areaHeight(), 480);
     EXPECT_NE(view->chain(), nullptr) << "the pipeline is the view's, not the surface's";
 }
 
-TEST(RenderSurfaceTest, DismissingAViewStopsFeedingItTheSize)
+TEST(RenderAreaTest, DismissingAViewStopsFeedingItTheSize)
 {
     // A dismissed view is the host's again and draws nothing into the area, so the area's size announcements must not
     // reach it any more: what it derives from is its own last-known size, which the dismissal hands back to it.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto view    = viewOn(engine.get());
-    auto surface = engine->createSurface();
+    auto surface = engine->createArea();
     ASSERT_TRUE(surface->present(*view));
     surface->resize(640, 480, 1.0);
-    ASSERT_EQ(view->surfaceWidth(), 640);
+    ASSERT_EQ(view->areaWidth(), 640);
 
     ASSERT_TRUE(surface->dismiss(view.get()));
     surface->resize(1280, 720, 1.0);
-    EXPECT_EQ(view->surfaceWidth(), 640) << "the area no longer feeds a view it does not present";
-    EXPECT_EQ(view->surfaceHeight(), 480);
+    EXPECT_EQ(view->areaWidth(), 640) << "the area no longer feeds a view it does not present";
+    EXPECT_EQ(view->areaHeight(), 480);
 
     // Presented again, it follows the area's current size (one owner, no second copy to keep in step).
     ASSERT_TRUE(surface->present(*view));
-    EXPECT_EQ(view->surfaceWidth(), 1280);
-    EXPECT_EQ(view->surfaceHeight(), 720);
+    EXPECT_EQ(view->areaWidth(), 1280);
+    EXPECT_EQ(view->areaHeight(), 720);
 }
 
 /**
@@ -433,15 +433,15 @@ TEST(RenderSurfaceTest, DismissingAViewStopsFeedingItTheSize)
  *
  * The area borrows its engine (it is 1:1 with it and registers itself on it), and "borrowed" used to mean a raw
  * pointer plus a comment: a host that kept the area past the engine's destruction called into freed memory from
- * ~RenderSurface, from resize() and from hasPresentation(). The borrow is a Lease now - the same one the view and
+ * ~RenderArea, from resize() and from hasPresentation(). The borrow is a Lease now - the same one the view and
  * the pipeline hold - so every use asks whether the engine is still there.
  */
-TEST(RenderSurfaceTest, AnAreaOutlivingItsEngineAnswersNothingInsteadOfCallingIntoIt)
+TEST(RenderAreaTest, AnAreaOutlivingItsEngineAnswersNothingInsteadOfCallingIntoIt)
 {
-    intrusive_ptr<RenderSurface> surface;
+    intrusive_ptr<RenderArea> surface;
     {
         auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
-        surface     = engine->createSurface();
+        surface     = engine->createArea();
         surface->resize(640, 480, 1.0);
         EXPECT_FALSE(surface->hasPresentation());
     } // the engine goes first

@@ -76,7 +76,7 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
      * @param why      Receives the reason when the surface cannot be created, or null.
      * @return true when the surface exists and the device may be brought up for it.
      */
-    [[nodiscard]] bool createSurface(VkInstance instance, vn::String* why);
+    [[nodiscard]] bool createArea(VkInstance instance, vn::String* why);
 
     /**
      * @brief Gives the target the device objects it borrows, then creates the surface and the swapchain.

@@ -2441,7 +2441,7 @@ bool Device::initialize()
     if (impl->presentation_wanted) {
         for (const auto& surface : impl->surfaces) {
             vn::String why;
-            if (!surface->createSurface(impl->instance, &why)) {
+            if (!surface->createArea(impl->instance, &why)) {
                 reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
                                                   DiagnosticCategory::UnsupportedRequest,
                                                   u8"vk.window.surface_failed",

@@ -5,7 +5,7 @@
 
 #include <vine/appfw/gui/Viewer.hpp>
 
-#include <vine/graphics/RenderSurface.hpp>
+#include <vine/graphics/RenderArea.hpp>
 
 #include "ControlData.hpp"
 #include "SurfaceWindow.hpp"
@@ -115,9 +115,9 @@ vn::graphics::SceneView* RenderControl::view() const
     return dptr()->surface->view();
 }
 
-vn::graphics::RenderSurface* RenderControl::surface() const
+vn::graphics::RenderArea* RenderControl::area() const
 {
-    return dptr()->surface->surface();
+    return dptr()->surface->area();
 }
 
 Viewer* RenderControl::viewer() const

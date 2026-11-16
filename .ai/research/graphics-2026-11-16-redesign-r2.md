@@ -92,7 +92,7 @@
 **先更正第一轮的两处数字**（诚实优先）：
 
 - 第一轮写"20 条 engine 侧报告没有 code"——**实际是 22 处调用、6 个文件**：
-  `RenderEngine.cpp` 13、`RenderSurface.cpp` 5、`ChainBuilder.cpp` 1、`DiagnosticsRoute.cpp` 1、
+  `RenderEngine.cpp` 13、`RenderSurface.cpp` 5、`ChainBuilder.cpp` 1、`DiagnosticsRoute.cpp` 1、 <!-- drift-ok -->
   `SceneView.cpp` 1、appfw `Viewer.cpp` 1。`diagnostic_code_baseline.txt` 是"每文件上限"，
   不是"条数清单"，我第一轮把它读成了条数。
 - 第一轮写"欠文档 baseline 976"——**当前 974**（期间有两条被偿还）。本文一律用当前值。

@@ -125,7 +125,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 
 - `RenderEngine` —— 帧泵 + 账本：`initialize()` / `shutdown()`、`setDevice()`、`applyPlan(plan)` / `plan()`、
   `frame()`（返回 `FrameOutcome`：`Ran` / `Submitted`；引擎没起来时 `NotReady` + `EngineNotReady`）、
-  `createSurface()`（尺寸走 `RenderSurface::resize()`）、`publish/resolve`（命名输出）、
+  `createArea()`（尺寸走 `RenderArea::resize()`）、`publish/resolve`（命名输出）、
   `frameTable()` / `frameDescription()` / `frameReport()` / `frameResult()` / `diagnostics()` / `releaseContent()`。
   - **发布与绑定**：`Scene::publish()` 回答 `Posted` / `Unchanged` / `InsideBatch`，并把**这一份**快照
     （`SceneSnapshotRef`，可用 `valid()` / `revision()` 查）交回来；`bindSnapshot(scene, ref)` 说“这个引擎画这一份”。
@@ -310,7 +310,7 @@ auto engine = make_intrusive<RenderEngine>();
 engine->setDevice(RenderBackendRegistry::instance().create(u8"vsg"));  // 需插件已加载
 
 // 窗口与尺寸归**区**（一块表面的表）：窗口那一半由**设备**造（S10a），尺寸在这里报一次 —— 引擎不收裸句柄。
-auto area = make_intrusive<RenderSurface>(engine.get());
+auto area = make_intrusive<RenderArea>(engine.get());
 vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
 vn::raw_ptr<vn::graphics::WindowPresentTarget> target = engine->device()->createSurfaceTarget(window_handle, &why);
 if (target == nullptr) { return false; }  // 无呈现能力 / 服务不了这块 surface / 窗口已被占用（见 @p why）
@@ -838,10 +838,10 @@ chain->setStatsVisible(false);           // pass->setEnabled(false) —— 没�
 chain->setGizmoVisible(true);
 chain->setShadingMode(vn::graphics::ShadingMode::Wireframe);  // 见下
 
-// 几何（改它**不重建**）：视图的画面就是它呈现的那块区 —— 尺寸归区（`RenderSurface::resize` 一次扇出），
+// 几何（改它**不重建**）：视图的画面就是它呈现的那块区 —— 尺寸归区（`RenderArea::resize` 一次扇出），
 // 相机宽高比与管线尺寸都从它推；**不设** pass 的设备像素视口 ⇒ 全幅（要多幅画面自己给 pass 设子视口）
 view->resize(w, h, dpr);                  // 只喂**表面**尺寸 + 比例；"这一块"是视图自己算的
-                                          // （视图挂在表面上时这句转发给 RenderSurface::resize，见 §3.11）
+                                          // （视图挂在表面上时这句转发给 RenderArea::resize，见 §3.11）
 ```
 
 - **建链的选项 vs 链上的开关**：`ChainDesc` 回答"这条链**有没有**这个档、走哪条链"（变更 = 一次建链），
@@ -857,7 +857,7 @@ view->resize(w, h, dpr);                  // 只喂**表面**尺寸 + 比例；"
   `isGizmoVisible()` / `isStatsVisible()`；档由请求记着）。链自己只知道选项说了什么。
 - **灯是场景的，不是面的**：`scene->addLighting(vn::graphics::LightRig::studio())`（零灯只有后端
   `ambient=0.15` 的常量填充 ⇒ 一片平色，看起来像"没装灯"）。
-- **谁呈现这块表面是声明的**（`RenderSurface`，见 §3.11）：表只**解析**声明（视图的声明 → 它采纳的那条链的窗口
+- **谁呈现这块表面是声明的**（`RenderArea`，见 §3.11）：表只**解析**声明（视图的声明 → 它采纳的那条链的窗口
   pass），它不建任何东西。宿主自建主 pass 时声明自己那条，视图那条就一句都不建（**不采纳就没有默认链**：
   "没有任何声明就建默认链"这条兜底归 appfw 的 `Viewer::takeArea()`）。
 - **宿主那一层（appfw）**：`RenderControl::viewer()`（`vn::appfw::gui::Viewer`）管**这块区画成什么样** ——
@@ -871,9 +871,9 @@ view->resize(w, h, dpr);                  // 只喂**表面**尺寸 + 比例；"
   [`.ai/design/appfw-render-view.md`](../../.ai/design/appfw-render-view.md) §3、§5、§6，链与 pass 的历史
   沿革见 [`.ai/design/graphics-architecture.md`](../../.ai/design/graphics-architecture.md) 的 S7/S8 记录。
 
-### 3.11 一块窗口由谁画：`RenderSurface`
+### 3.11 一块窗口由谁画：`RenderArea`
 
-`SceneView` 回答"**怎么画**"，`RenderSurface` 回答"**这块窗口由哪条 pass 画、多大、挂在哪个窗口上**"
+`SceneView` 回答"**怎么画**"，`RenderArea` 回答"**这块窗口由哪条 pass 画、多大、挂在哪个窗口上**"
 （一块区 = 一个交换链 / 宿主的一个原生窗口）。它**不是** framebuffer，一个像素都不持有（窗口的图像属于目标，
 离屏的属于 `RenderTarget`）。它记三件事：
 

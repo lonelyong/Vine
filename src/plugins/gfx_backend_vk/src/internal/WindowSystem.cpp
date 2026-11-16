@@ -191,7 +191,7 @@ void WindowSystem::close() noexcept
 #endif
 }
 
-bool WindowSystem::createSurface(const VkInstance instance, void* window, VkSurfaceKHR& surface, vn::String* why) const
+bool WindowSystem::createArea(const VkInstance instance, void* window, VkSurfaceKHR& surface, vn::String* why) const
 {
     surface = VK_NULL_HANDLE;
     if (instance == VK_NULL_HANDLE || window == nullptr) {
