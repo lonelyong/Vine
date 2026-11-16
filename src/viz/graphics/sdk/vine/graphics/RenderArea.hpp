@@ -16,6 +16,11 @@ class RenderEngine;
 class RenderPass;
 class SceneView;
 
+namespace detail
+{
+class SurfaceLedger; // the ONE creator (createArea), which owns the result (see src/SurfaceLedger.hpp).
+}
+
 /**
  * @brief One render area: the ONE pass that draws this host window, how big the window is, and which window it is.
  *
@@ -44,7 +49,8 @@ class SceneView;
  */
 class VN_GRAPHICS_API RenderArea : public RefCounted<RenderArea> {
   public:
-    friend class RenderEngine; // the ONE creator (createArea), which owns the result
+    friend class RenderEngine;        // answers whether this area is the one its engine drives
+    friend class detail::SurfaceLedger; // the ONE creator (createArea), which owns the result
 
     /** @brief Destroys the area: the view stops naming it; the pass stays registered and the view keeps its
      * pipeline (a declaration owns neither).

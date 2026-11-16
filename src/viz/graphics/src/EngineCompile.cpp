@@ -1,4 +1,4 @@
-﻿#include <vine/graphics/RenderEngine.hpp>
+﻿#include "SessionShape.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -9,22 +9,26 @@
 #include <vector>
 
 #include <vine/graphics/Camera.hpp>
+#include <vine/graphics/ImageRef.hpp>
 #include <vine/graphics/PassDesc.hpp>
 #include <vine/graphics/Plan.hpp>
 #include <vine/graphics/RenderBackend.hpp>
 #include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/RenderTarget.hpp>
+#include <vine/graphics/Scene.hpp>
 #include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/Viewport.hpp>
 
 #include "EngineDiagnostics.hpp"
-#include "EngineFrame.hpp"
 #include "FrameExpand.hpp"
 #include "FrameResources.hpp"
 #include "FrameScheduler.hpp"
 #include "PublicationStore.hpp"
 
 VN_GRAPHICS_NS_BEGIN
+
+namespace detail
+{
 
 namespace
 {
@@ -96,7 +100,21 @@ std::string shapeText(double shape)
 
 } // namespace
 
-void RenderEngine::compileFrame()
+void SessionShape::compile(EngineFrame& frame, RenderBackend* device)
+{
+    // The compile is one call with two borrowed facts: the frame value it fills and the device a replaced transient
+    // is released through. Neither outlives the call (see the class note).
+    frame_  = &frame;
+    device_ = device;
+    compileFrame();
+    // The problems the compile found are reported once per episode: what the previous compile already found is not
+    // said again, and what is gone is forgotten (see reportPlanProblems).
+    reportPlanProblems();
+    frame_  = nullptr;
+    device_ = nullptr;
+}
+
+void SessionShape::compileFrame()
 {
     // THIS IS THE FRAME. Everything the frame needs to know is derived here, from the declarations as they
     // stand right now: which pass runs when (the slot list is already ordered), what each declared input
@@ -105,7 +123,7 @@ void RenderEngine::compileFrame()
     // nothing beyond what the compile's own bookkeeping already has capacity for.
     plan_problems_.clear();
     plan_rows_.clear();
-    resources_->beginFrame();
+    resources_.beginFrame();
     unusable_inputs_this_frame_.clear();
     // From here until the list is complete, every report the checks make is COLLECTED, not emitted: the
     // episode rule is applied once, at the end (see reportPlanProblems).
@@ -114,20 +132,20 @@ void RenderEngine::compileFrame()
     // A host binding is filled by the HOST: it is there from the start of the frame and no pass owns its
     // hand-off, so it seeds what this frame has already produced (an object-typed input addressing one is
     // answered like one addressing a pass' target).
-    resources_->seedFromHostBindings();
+    resources_.seedFromHostBindings();
 
     // Transients first: a slot that declares one gets its target before anything reads a target, and one
     // nobody declares this frame is let go of.
-    resources_->beginTransientCompile();
+    resources_.beginTransientCompile();
     for (Slot& slot : slots_) {
         if (slot.pass != nullptr && slot.pass->declaration().target.isTransient()) {
             resolveTransientTarget(slot);
         }
     }
-    resources_->retireUndeclared(device_.get());
+    resources_.retireUndeclared(device_);
 
     // The structural checks read DECLARATIONS only, so they run before anything is resolved: a wire the check
-    // already spoke about is one problem, and the resolution below stays quiet about it (see hasPlanProblem).
+    // already spoke about is one problem, and the resolution below stays quiet about it (see unusableInputReported).
     collectPlanProblems();
 
     plan_rows_.reserve(slots_.size());
@@ -159,7 +177,7 @@ void RenderEngine::compileFrame()
         // What it fills: drawing into a target fills every image it has, which is what an object-typed declared
         // input is answered from. Linear and idempotent - several passes may fill one target.
         if (raw_ptr<RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
-            resources_->recordProduced(drawn_into);
+            resources_.recordProduced(drawn_into);
         }
     }
 
@@ -176,7 +194,7 @@ void RenderEngine::compileFrame()
     collecting_problems_ = false;
 }
 
-void RenderEngine::scheduleRows()
+void SessionShape::scheduleRows()
 {
     // The announced key of every row, in one contiguous buffer the scheduler reads (reused, like its own tables).
     frame_order_keys_.clear();
@@ -276,7 +294,7 @@ void RenderEngine::scheduleRows()
     }
 }
 
-void RenderEngine::buildFrameValue()
+void SessionShape::buildFrameValue()
 {
     // EVERY ENABLED PASS HAS AN ENTRY, whether it issues anything or not: "this pass ran and had nothing to
     // issue" is a fact of the frame (its scope opens and closes, and a backend keys per-pass retained state by
@@ -289,10 +307,10 @@ void RenderEngine::buildFrameValue()
     // lives on the FRAME, so the two halves share no mutable state: this half fills it, the engine half walks it.
     frame_->engine_order.clear();
     frame_->engine_micros.clear();
-    // A window pass has no target to read a device-pixel size from. The engine states the surface size (converted
-    // with the surface's pixel ratio) on every pass; RenderPass::describe prefers a sub-viewport or the target's
-    // own size, so off-screen passes are unaffected.
-    const double pixel_ratio   = area_ != nullptr ? area_->pixelRatio() : 1.0;
+    // A window pass has no target to read a device-pixel size from. The frame states the surface size (converted
+    // with the surface's pixel ratio, taken when the frame started - see EngineFrame) on every pass;
+    // RenderPass::describe prefers a sub-viewport or the target's own size, so off-screen passes are unaffected.
+    const double pixel_ratio   = frame_->pixel_ratio;
     const int    device_width  = static_cast<int>(std::lround(static_cast<double>(frame_->width) * pixel_ratio));
     const int    device_height = static_cast<int>(std::lround(static_cast<double>(frame_->height) * pixel_ratio));
     // Rows and slots are one per index (see compileFrame): the row is the frame's answer about a pass, the slot
@@ -366,8 +384,8 @@ void RenderEngine::buildFrameValue()
             // content and starts naming its rows (see detail::bindSceneDraws). A pass with no content binds nothing -
             // its draws are already what it described.
             if (row.content != nullptr) {
-                const SceneSnapshotRef publication = publications_->publicationFor(*row.content);
-                detail::SnapshotSource* const source = publications_->sourceFor(*row.content, publication);
+                const SceneSnapshotRef publication = publications_.publicationFor(*row.content);
+                detail::SnapshotSource* const source = publications_.sourceFor(*row.content, publication);
                 detail::bindSceneDraws(*entry.draw, source);
                 if (source == nullptr) {
                     // "You drew a scene that never published": reported once per episode, and the pass draws nothing -
@@ -398,36 +416,7 @@ void RenderEngine::buildFrameValue()
     }
 }
 
-void RenderEngine::expandFrameValue(detail::EngineFrame& frame)
-{
-    // A FRAME IS OPEN: the token every per-view memo is keyed by (a list outlives one frame, but nothing is memoised
-    // outside one - see DrawListMemo). Opened HERE and not where the frame was built, because it writes the publications'
-    // memos - the very state this half reads - and because the token travels on the frame (see detail::EngineFrame):
-    // a frame answered late opens its OWN number, never the one the content has moved on to.
-    publications_->beginFrame(frame.content_frame);
-
-    // THE ENGINE HALF'S EXPANSION: every draw of the described frame is answered here, one expansion per pass, in
-    // run order (see design 2.12 - the two halves are the seam a thread crosses, so they are two functions and not one
-    // loop). Nothing in this function reads content: every scene draw was bound to its content's publication by the
-    // content half (see detail::bindSceneDraws) and `expandPass` asks that publication, which is exactly what makes it
-    // safe to run away from the content's thread.
-    //
-    // record_micros keeps meaning "describe + collect": the content half measured its part per pass, and the
-    // expansion adds its own here - one clock read per pass, not per draw.
-    std::size_t entry = 0;
-    frame.engine_micros.clear();
-    for (const std::uint32_t index : frame.engine_order) {
-        FrameDescription::Pass& described = frame.description.passes[entry++];
-        const auto              started   = std::chrono::steady_clock::now();
-        if (described.draw.has_value()) {
-            detail::expandPass(*described.draw);
-        }
-        frame.engine_micros.push_back(
-            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count()));
-    }
-}
-
-void RenderEngine::collectPictureShapeMismatches()
+void SessionShape::collectPictureShapeMismatches()
 {
     // ONE CAMERA, ONE PICTURE SHAPE (see Camera). A pass' picture is projected with its CAMERA's shape while the
     // rectangle it lands in is its viewport, or the whole target it draws into (the surface, for the window) - and
@@ -513,7 +502,7 @@ void RenderEngine::collectPictureShapeMismatches()
     shape_mismatches_this_frame_.clear();
 }
 
-void RenderEngine::resolveTransientTarget(Slot& slot)
+void SessionShape::resolveTransientTarget(Slot& slot)
 {
     // The extent: what the declaration states, or the surface this frame is presenting (a transient is
     // normally the size of the picture that consumes it). A surface nobody has sized yet is not a reason to
@@ -527,23 +516,13 @@ void RenderEngine::resolveTransientTarget(Slot& slot)
         height = 1;
     }
 
-    slot.transient = resources_->resolveTransient(declared.name, shape, width, height, device_.get());
+    slot.transient = resources_.resolveTransient(declared.name, shape, width, height, device_);
     // THE RESOLUTION IS EXECUTION STATE, not a rewrite of the declaration: the pass keeps saying "I asked for this
     // identity" while the frame that resolved it answers `renderTarget()` (see RenderPass::setResolvedTarget).
     slot.pass->setResolvedTarget(slot.transient);
 }
 
-std::size_t RenderEngine::transientTargetCount() const noexcept
-{
-    return resources_->transientCount();
-}
-
-raw_ptr<RenderTarget> RenderEngine::transientTarget(const String& identity) const
-{
-    return resources_->transient(identity);
-}
-
-void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageSource>& out)
+void SessionShape::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageSource>& out)
 {
     out.clear();
     if (pass == nullptr) {
@@ -582,7 +561,7 @@ void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageS
     }
     out.reserve(names.size());
     for (const auto& name : names) {
-        raw_ptr<RenderTarget> resolved = resources_->resolve(name);
+        raw_ptr<RenderTarget> resolved = resources_.resolve(name);
         out.push_back(resolved != nullptr ? ImageSource::producedTarget(resolved) : ImageSource{});
     }
 
@@ -595,15 +574,15 @@ void RenderEngine::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageS
     if (any_resolved) {
         return;
     }
-    reportEngineProblem(compileProblem(u8"engine.compile.input_not_produced",
-                                       vn::graphics::DiagnosticCategory::ContentSkipped,
-                                       String(u8"pass '") + reportedPassName(pass) + String(u8"' declared input '") + names.front() +
-                                           String(u8"' but no pass published it this frame; the pass draws nothing"
-                                                  u8" (check the producer's order, its enabled state and its output name)"),
-                                       reportedPassName(pass)));
+    noteProblem(compileProblem(u8"engine.compile.input_not_produced",
+                               vn::graphics::DiagnosticCategory::ContentSkipped,
+                               String(u8"pass '") + reportedPassName(pass) + String(u8"' declared input '") + names.front() +
+                                   String(u8"' but no pass published it this frame; the pass draws nothing"
+                                          u8" (check the producer's order, its enabled state and its output name)"),
+                               reportedPassName(pass)));
 }
 
-void RenderEngine::publishRowOutput(raw_ptr<RenderPass> pass)
+void SessionShape::publishRowOutput(raw_ptr<RenderPass> pass)
 {
     if (pass == nullptr) {
         return;
@@ -617,36 +596,36 @@ void RenderEngine::publishRowOutput(raw_ptr<RenderPass> pass)
         // The registry hands out a SAMPLEABLE target, and a pass rendering into the window has none. Reported
         // instead of dropping the declaration: a consumer of that name would otherwise be told "nothing
         // produced it this frame", pointing at the consumer for the producer's mistake.
-        reportEngineProblem(compileProblem(u8"engine.compile.output_to_window",
-                                           vn::graphics::DiagnosticCategory::ContentSkipped,
-                                           String(u8"pass '") + reportedPassName(pass) + String(u8"' publishes the output name '") + name +
-                                               String(u8"' but renders into the window (no render target), so nothing is"
-                                                      u8" published and a consumer of '") +
-                                               name +
-                                               String(u8"' finds nothing — give the pass a render target, or drop the"
-                                                      u8" output name"),
-                                           reportedPassName(pass)));
+        noteProblem(compileProblem(u8"engine.compile.output_to_window",
+                                   vn::graphics::DiagnosticCategory::ContentSkipped,
+                                   String(u8"pass '") + reportedPassName(pass) + String(u8"' publishes the output name '") + name +
+                                       String(u8"' but renders into the window (no render target), so nothing is"
+                                              u8" published and a consumer of '") +
+                                       name +
+                                       String(u8"' finds nothing — give the pass a render target, or drop the"
+                                              u8" output name"),
+                                   reportedPassName(pass)));
         return;
     }
-    if (detail::FramePublication* published = resources_->findPublication(name); published != nullptr) {
+    if (detail::FramePublication* published = resources_.findPublication(name); published != nullptr) {
         if (published->target != nullptr && published->target != target) {
             // Two passes published DIFFERENT targets under one name: every consumer of that name silently gets
             // whichever pass ran last, and only the whole table can see the collision (each pass is
             // individually valid).
             const String first  = published->target->name().empty() ? String(u8"(unnamed)") : published->target->name();
             const String second = target->name().empty() ? String(u8"(unnamed)") : target->name();
-            reportEngineProblem(compileProblem(u8"engine.compile.duplicate_output",
-                                               vn::graphics::DiagnosticCategory::ContentSkipped,
-                                               String(u8"pass output '") + name + String(u8"' is published by two passes this frame (targets '") + first +
-                                                   String(u8"' and '") + second + String(u8"'); every consumer of '") + name + String(u8"' samples whichever pass ran last")));
+            noteProblem(compileProblem(u8"engine.compile.duplicate_output",
+                                       vn::graphics::DiagnosticCategory::ContentSkipped,
+                                       String(u8"pass output '") + name + String(u8"' is published by two passes this frame (targets '") + first +
+                                           String(u8"' and '") + second + String(u8"'); every consumer of '") + name + String(u8"' samples whichever pass ran last")));
         }
         published->target = target; // the latest publication serves the name for the rest of the frame
         return;
     }
-    resources_->recordPublication(pass, target);
+    resources_.recordPublication(pass, target);
 }
 
-void RenderEngine::noteProblem(const vn::graphics::RenderDiagnostic& diagnostic)
+void SessionShape::noteProblem(const vn::graphics::RenderDiagnostic& diagnostic)
 {
     // One problem per sentence per frame: the checks visit a subject once, but a subject can be reached from
     // more than one direction (a second and a third claimant of one image), and one mistake should read as one
@@ -659,7 +638,7 @@ void RenderEngine::noteProblem(const vn::graphics::RenderDiagnostic& diagnostic)
     }
 }
 
-bool RenderEngine::unusableInputReported(raw_ptr<const RenderPass> pass, const OutputIdentity& identity) const noexcept
+bool SessionShape::unusableInputReported(raw_ptr<const RenderPass> pass, const OutputIdentity& identity) const noexcept
 {
     const auto key = std::make_pair(pass, identity);
     return std::any_of(unusable_inputs_this_frame_.begin(),
@@ -670,7 +649,7 @@ bool RenderEngine::unusableInputReported(raw_ptr<const RenderPass> pass, const O
                        });
 }
 
-void RenderEngine::reportPlanProblems()
+void SessionShape::reportPlanProblems()
 {
     for (const CompileProblem& problem : plan_problems_) {
         const auto previous = std::find_if(previous_problems_.begin(), previous_problems_.end(), [&problem](const CompileProblem& earlier) {
@@ -681,7 +660,7 @@ void RenderEngine::reportPlanProblems()
         }
         // THE WHOLE DIAGNOSTIC IS RE-EMITTED: the code, the category and the subject the check stated survive the
         // episode rule - flattening them here is what used to turn every compiled problem into "content skipped".
-        reportEngineProblem(problem.diagnostic);
+        diagnostics_.report(problem.diagnostic);
     }
     // What this compile found becomes what the next compile compares against: a problem that is gone drops out,
     // so the same breakage later is a new episode.
@@ -689,282 +668,533 @@ void RenderEngine::reportPlanProblems()
     plan_problems_.clear();
 }
 
-intrusive_ptr<RenderPass> RenderEngine::insertSlot(Slot slot)
+raw_ptr<RenderTarget> SessionShape::resolveDeclaredTarget(raw_ptr<RenderPass> pass, raw_ptr<RenderTarget> target)
 {
-    if (slot.pass == nullptr) {
+    // Resolved against what the frame has produced so far (FrameResources): a target the frame fills LATER is
+    // not something this pass can read, which is the same answer the per-pass resolution used to give.
+    if (resources_.wasProduced(static_cast<raw_ptr<const RenderTarget>>(target))) {
+        return target;
+    }
+    // A pass reading what it draws into is the feedback pattern, and whether the actual draw call is
+    // a feedback loop is the BACKEND's to judge (the vsg backend rejects source == destination and
+    // says so): this layer stays quiet about it, so one mistake is reported once.
+    if (pass->renderTarget() == target) {
         return nullptr;
     }
-    // Registering the same pass instance twice is ignored: it would otherwise run twice per frame. To rebind
-    // content use bindPassContent(); to change the order remove the pass and re-add it.
-    for (const auto& existing : slots_) {
-        if (existing.pass.get() == slot.pass.get()) {
-            return nullptr;
-        }
-    }
-    // Keep the slots ascending by order; equal orders preserve insertion order (stable), so ties are resolved
-    // by the order a plan states.
-    const int  order      = slot.order;
-    const auto it         = std::find_if(slots_.begin(), slots_.end(), [order](const Slot& existing) { return existing.order > order; });
-    const auto registered = slots_.insert(it, std::move(slot));
-    return registered->pass;
+    reportUnproducedInput(pass,
+                          OutputIdentity::targetOf(*target),
+                          String(u8"the input target '") + (target->name().empty() ? String(u8"(unnamed target)") : target->name()) + u8"'");
+    return nullptr;
 }
 
-intrusive_ptr<RenderPass> RenderEngine::makePassNode(const PassDesc& desc)
+raw_ptr<RenderTarget> SessionShape::resolveDeclaredImage(raw_ptr<RenderPass> pass, const ImageRef& image)
 {
-    // The declaration is turned into the execution node of its kind ONCE, and the node then IS the declaration
-    // (RenderPass::setDesc): a descriptor-declared pass and a hand-built one cannot drift apart, because by the time
-    // the engine holds it, it is a hand-built pass (which is also what keeps the escape hatch the same thing).
-    intrusive_ptr<RenderPass> node;
-    if (desc.kind == PassKind::Screen) {
-        node = make_intrusive<ScreenPass>();
+    raw_ptr<RenderTarget> target = image.target();
+    if (target == nullptr) {
+        // An unbound declaration names nothing that can be read this frame. The wiring check already
+        // reports the declaration itself; nothing more to say per frame.
+        return nullptr;
     }
-    else {
-        node = make_intrusive<RenderPass>();
+    const bool depth_usable = (image.kind() != ImageRef::Kind::Depth) || target->hasDepth();
+    const bool produced     = resources_.wasProduced(static_cast<raw_ptr<const RenderTarget>>(target));
+    if (depth_usable && produced) {
+        return target;
     }
-
-    // The depth edge comes with the pass that states it (see PassDesc::depth_view). Three answers, in the order a
-    // host can act on them:
-    //   * a LAYERED view is not a mechanism this SDK has yet (a target carries one depth image) - refused, said
-    //     once, and never silently turned into "the whole image";
-    //   * a target draws against ONE depth image, so a second, DIFFERENT declaration is refused too, once per
-    //     (target, image) pair - the first declaration stands;
-    //   * otherwise the declaration becomes the target's mechanism (setDesc applies it, and the pass keeps it, so a
-    //     later setRenderTarget carries the edge along).
-    // A refused view is dropped from what the pass adopts rather than left to the pass: the refusal is this compile's
-    // judgement, and a declaration the SDK cannot honour must not look accepted on the node.
-    PassDesc adopted = desc;
-    if (adopted.depth_view.has_value()) {
-        const DepthView declared = *adopted.depth_view;
-        if (declared.isValid() && declared.layer() != 0) {
-            if (layered_depth_reported_.shouldReport()) {
-                reportEngineProblem(compileProblem(u8"engine.compile.layered_depth_refused",
-                                                   vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                                                   u8"a pass names a layered depth view; layered targets are not built yet, so "
-                                                   u8"the declaration is refused"));
-            }
-            adopted.depth_view.reset();
-        }
-        else if (adopted.target.target != nullptr && declared.isValid()) {
-            const DepthView current = adopted.target.target->sharedDepth();
-            if (current.isValid() && current.target() != declared.target()) {
-                if (depth_view_conflicts_.insert(std::make_pair(adopted.target.target.get(), declared.target())).second) {
-                    reportEngineProblem(compileProblem(u8"engine.compile.depth_view_conflict",
-                                                       vn::graphics::DiagnosticCategory::UnsupportedRequest,
-                                                       u8"two passes name different depth views for one target; the first "
-                                                       u8"declaration stands and this one is refused"));
-                }
-                adopted.depth_view.reset();
-            }
-        }
+    // Same as above: a pass that reads the target it draws into is the feedback pattern, judged by
+    // the backend (the depth case included — its layout is the backend's business).
+    if (pass->renderTarget() == target) {
+        return nullptr;
     }
-    node->setDesc(std::move(adopted));
-    return node;
+    reportUnproducedInput(pass, OutputIdentity::of(image), String(u8"the input image '") + image.label() + u8"'");
+    return nullptr;
 }
 
-PlanResult RenderEngine::applyPlan(const Plan& plan)
+void SessionShape::reportUnproducedInput(raw_ptr<RenderPass> pass, const OutputIdentity& identity, const String& what)
 {
-    return applyPlan(plan, nullptr);
+    // A wire the structural check already reported THIS compile (no producer at all, or one registered too
+    // late) is ONE problem: the resolution does not repeat it in frame terms. Both are collected by the same
+    // compile (see collectPlanProblems), so this is a question about this frame, not about the last episode.
+    if (unusableInputReported(pass, identity)) {
+        return;
+    }
+    noteProblem(compileProblem(u8"engine.pass.input_not_produced",
+                               vn::graphics::DiagnosticCategory::ContentSkipped,
+                               String(u8"pass '") + reportedPassName(pass) + String(u8"' declares ") + what +
+                                   String(u8" but nothing produced it this frame, so the pass draws nothing"
+                                          u8" (check the producer's order and its enabled state)")));
 }
 
-PlanResult RenderEngine::applyPlan(const Plan& plan, const void* owner)
+SessionShape::OutputIdentity SessionShape::OutputIdentity::of(const ImageRef& image) noexcept
 {
-    // THE SHAPE IS A VALUE, so applying it is one call - but the table it replaces is what a frame may be walking,
-    // so the one rule every shape change obeys still holds here (see sessionChangeAllowed). A busy engine is a
-    // REFUSAL, not a problem with the shape: the plan was not even examined, and the same call works between frames.
-    if (!sessionChangeAllowed("applyPlan")) {
-        PlanResult refused;
-        refused.outcome = PlanResult::Outcome::Refused;
-        refused.refusal = PlanRefusal::Busy;
-        return refused;
-    }
-
-    // The host's own bindings serve names too (see publish), so validation must know them or it would refuse a plan
-    // that reads a picture the host hands in. A SCOPED plan also reads names its siblings publish: those rows are not
-    // in this plan, so they are external inputs exactly like a host binding.
-    std::vector<String> external = hostOutputNames();
-    if (owner != nullptr) {
-        for (const Slot& slot : slots_) {
-            if (slot.pass == nullptr || slot.owner == owner) {
-                continue;
-            }
-            // A sibling's PASS name is a valid input name, and so is the OUTPUT name it publishes: a scoped plan may
-            // read either without owning the row.
-            external.push_back(slot.pass->name());
-            if (!slot.pass->outputName().empty()) {
-                external.push_back(slot.pass->outputName());
-            }
-        }
-    }
-
-    PlanResult result;
-    result.problems = validatePlan(plan, std::span<const String>(external.data(), external.size()));
-    if (!result.problems.empty()) {
-        // ALL OR NOTHING: a half-applied shape would be a shape nobody declared. The answer is the return value; the
-        // diagnostic is for the log, one per problem per CALL (a host call, not a frame, so the call is the episode).
-        for (const PlanProblem& problem : result.problems) {
-            reportEngineProblem(compileProblem(u8"engine.compile.plan_refused",
-                                               vn::graphics::DiagnosticCategory::PassProtocolViolation,
-                                               String(u8"plan refused [") + planCodeText(problem.code) + String(u8"]: ") + problem.detail));
-        }
-        result.outcome = PlanResult::Outcome::Invalid;
-        return result;
-    }
-
-    applyPlanRows(plan, owner);
-    return result;
+    OutputIdentity identity;
+    identity.target     = image.target();
+    identity.attachment = image.attachment();
+    identity.depth      = (image.kind() == ImageRef::Kind::Depth);
+    // Only while there is no address: the object is all the identity that exists yet.
+    identity.declared   = (identity.target == nullptr) ? &image : nullptr;
+    return identity;
 }
 
-void RenderEngine::applyPlanRows(const Plan& plan, const void* owner)
+SessionShape::OutputIdentity SessionShape::OutputIdentity::colorOf(const RenderTarget& target, int attachment) noexcept
 {
-    // PHASE 1 - REMOVE what the plan no longer names. Collected first: removePass() mutates the table and releases
-    // backend state, so it must run once per pass and never while the table is being walked.
+    OutputIdentity identity;
+    identity.target     = &target;
+    identity.attachment = attachment;
+    return identity;
+}
+
+SessionShape::OutputIdentity SessionShape::OutputIdentity::depthOf(const RenderTarget& target) noexcept
+{
+    OutputIdentity identity;
+    identity.target     = &target;
+    identity.attachment = 0; // a depth attachment has no colour index; `depth` is what tells them apart
+    identity.depth      = true;
+    return identity;
+}
+
+SessionShape::OutputIdentity SessionShape::OutputIdentity::targetOf(const RenderTarget& target) noexcept
+{
+    OutputIdentity identity;
+    identity.target     = &target;
+    identity.attachment = kWholeTarget;
+    return identity;
+}
+
+bool SessionShape::OutputIdentity::operator==(const OutputIdentity& other) const noexcept
+{
+    return target == other.target && attachment == other.attachment && depth == other.depth && declared == other.declared;
+}
+
+bool SessionShape::OutputIdentity::operator<(const OutputIdentity& other) const noexcept
+{
+    if (target != other.target) {
+        // std::less, not the built-in `<`: comparing unrelated pointers with `<` is unspecified,
+        // and these keys are addresses of distinct objects (as CollisionPair does for pairs).
+        return std::less<const void*>{}(target, other.target);
+    }
+    if (target == nullptr) {
+        // Both unbound: the declared object is the only identity there is.
+        return std::less<const void*>{}(declared, other.declared);
+    }
+    if (depth != other.depth) {
+        return depth < other.depth;
+    }
+    return attachment < other.attachment;
+}
+
+void SessionShape::collectPlanProblems()
+{
+    // Every pass on its own is valid, so only the whole table can see these; and they are properties of the
+    // DECLARATION, not of a frame's outcome. Run as part of the compile, so the answer is about THIS frame;
+    // what is REPORTED is decided once, by comparing this list with the previous compile's (see
+    // reportPlanProblems) - the checks below only say what they found.
     //
-    // ONLY THE WHOLE-SESSION FORM REMOVES: a scoped plan states one contributor's rows and never speaks for the
-    // session, so "not in my plan" there means "not mine", not "gone" (see applyPlan's note).
-    std::vector<raw_ptr<RenderPass>> doomed;
-    for (const Slot& slot : slots_) {
-        if (slot.pass == nullptr || owner != nullptr) {
-            continue; // a scoped plan states rows; it never speaks for the session (see applyPlan's note)
+    // Two phases, because a consumer may be registered before its producer: the producers have to be collected
+    // before any consumer is judged against them.
+    const auto target_name = [](raw_ptr<const RenderTarget> target) -> String {
+        if (target == nullptr) {
+            return String(u8"(no target)");
         }
-        const String name  = slot.pass->name();
-        const bool   named = std::any_of(plan.passes.begin(), plan.passes.end(), [&name](const PassDesc& desc) { return desc.name == name; });
-        if (!named) {
-            doomed.push_back(slot.pass.get());
+        return target->name().empty() ? String(u8"(unnamed target)") : target->name();
+    };
+    /// What a pass writes, for a message about a promise it cannot keep (null render target = the
+    /// window, which is a wire of its own).
+    const auto drawn_into_name = [&target_name](raw_ptr<const RenderPass> pass) -> String {
+        raw_ptr<const RenderTarget> drawn_into = pass->renderTarget();
+        return (drawn_into == nullptr) ? String(u8"the window") : target_name(drawn_into);
+    };
+    const auto identity_name = [&target_name](const OutputIdentity& identity) -> String {
+        if (identity.attachment == OutputIdentity::kWholeTarget) {
+            return String(u8"the images of target '") + target_name(identity.target) + u8"'";
+        }
+        if (identity.depth) {
+            return String(u8"the depth of target '") + target_name(identity.target) + u8"'";
+        }
+        return String(u8"an image of target '") + target_name(identity.target) + u8"'";
+    };
+
+    /// Who fills what: the lowest-indexed pass that renders into a target or promises the whole of
+    /// it. Keyed by TARGET, because filling a target fills every image it has. A DISABLED pass still
+    /// declares its wire: toggling a pass off is not a wiring mistake, it is a paused pass.
+    /// Who claims which image: a fine promise, and the images of a coarse one. Two claimants of one
+    /// image is what the collision report is about.
+    /// Both tables (and the collision/unbound ones below) are the ENGINE's, cleared here: the pass count is small, so a
+    /// flat scan both beats a tree and keeps its capacity - a steady frame allocates nothing while it checks the wiring.
+    auto& filled           = wiring_filled_;
+    auto& claimed          = wiring_claimed_;
+    auto& colliding_images = wiring_colliding_;
+    auto& unbound_declared = wiring_unbound_;
+    filled.clear();
+    claimed.clear();
+    colliding_images.clear();
+    unbound_declared.clear();
+
+    // First wins in every table, exactly as the keyed containers did: a second filler of one target, or a second
+    // claimant of one image, is a fact the reports below are about, not a replacement.
+    const auto findFilled = [this](raw_ptr<const RenderTarget> target) -> const Declaration* {
+        const auto it = std::find_if(wiring_filled_.begin(), wiring_filled_.end(), [target](const Declaration& entry) { return entry.target == target; });
+        return it == wiring_filled_.end() ? nullptr : &*it;
+    };
+    const auto noteFilled = [this, &findFilled](Declaration declaration) {
+        if (findFilled(declaration.target) == nullptr) {
+            wiring_filled_.push_back(std::move(declaration));
+        }
+    };
+    const auto findClaimed = [this](const OutputIdentity& identity) -> const Declaration* {
+        const auto it =
+            std::find_if(wiring_claimed_.begin(), wiring_claimed_.end(), [&identity](const Declaration& entry) { return entry.identity == identity; });
+        return it == wiring_claimed_.end() ? nullptr : &*it;
+    };
+    const auto noteColliding = [this](const OutputIdentity& identity) {
+        const auto known =
+            std::any_of(wiring_colliding_.begin(), wiring_colliding_.end(), [&identity](const OutputIdentity& entry) { return entry == identity; });
+        if (!known) {
+            wiring_colliding_.push_back(identity);
+        }
+    };
+    const auto isColliding = [this](const OutputIdentity& identity) {
+        return std::any_of(wiring_colliding_.begin(), wiring_colliding_.end(), [&identity](const OutputIdentity& entry) { return entry == identity; });
+    };
+    const auto noteUnbound = [this](raw_ptr<const ImageRef> image, raw_ptr<const RenderPass> pass, bool as_output) {
+        const auto known =
+            std::any_of(wiring_unbound_.begin(), wiring_unbound_.end(), [image](const UnboundDeclaration& entry) { return entry.image == image; });
+        if (!known) {
+            wiring_unbound_.push_back(UnboundDeclaration{ image, pass, as_output });
+        }
+    };
+
+    // Phase 1: who fills and who claims. The fillers come from ALL passes (a declaration is a
+    // declaration), the claims from the ENABLED ones only — what the collision report is about is
+    // "whoever runs last silently wins", and a disabled pass runs nothing.
+    //
+    // A host binding (publish) is filled by the HOST: it is there from the start of the frame and no
+    // pass owns its hand-off, so a declared input addressing it is answered like one addressing a
+    // pass' target.
+    for (const auto& binding : resources_.hostBindings()) {
+        if (binding.second != nullptr) {
+            noteFilled(Declaration{ nullptr, binding.second.get(), nullptr, 0 });
         }
     }
-    for (raw_ptr<RenderPass> pass : doomed) {
-        removePass(pass);
+
+    for (std::size_t index = 0; index < slots_.size(); ++index) {
+        RenderPass* pass = slots_[index].pass.get();
+        if (pass == nullptr) {
+            continue;
+        }
+
+        // THE DECLARATION'S OWN SHAPE (see Target / Output): a value that states two forms at once is a
+        // declaration mistake, reported here instead of letting one of them win silently.
+        if (!pass->declaration().target.isValid()) {
+            noteProblem(compileProblem(u8"engine.pass.target_invalid",
+                                       vn::graphics::DiagnosticCategory::ContentSkipped,
+                                       String(u8"pass '") + reportedPassName(pass) +
+                                           String(u8"' states a target that mixes its forms: a Target is the "
+                                                  u8"window, one explicit target, or one transient name - not several"),
+                                       reportedPassName(pass)));
+        }
+        if (!pass->declaration().output.isValid()) {
+            noteProblem(compileProblem(u8"engine.pass.output_invalid",
+                                       vn::graphics::DiagnosticCategory::ContentSkipped,
+                                       String(u8"pass '") + reportedPassName(pass) +
+                                           String(u8"' promises both a whole target and one image for its output; "
+                                                  u8"one name covers one claim"),
+                                       reportedPassName(pass)));
+        }
+
+        // Drawing into a target fills it: every attachment it has holds this pass' content
+        // afterwards. This is the physical fact the input rules below are answered from.
+        if (raw_ptr<RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
+            noteFilled(Declaration{ nullptr, drawn_into, pass, index });
+        }
+
+        // A content pass whose mask selects nothing. Legal (see PassDesc::layer_mask), and nearly always a
+        // mistake, so it is said once per episode instead of showing up later as an empty picture with no
+        // reason attached. The sentence states the declaration, not an outcome: what a pass does with a
+        // content scene is the pass' own business (a screen pass uses one for its lights, not for a walk).
+        if (pass->layerMask() == 0 && pass->content() != nullptr) {
+            noteProblem(compileProblem(u8"engine.pass.layer_mask_empty",
+                                       vn::graphics::DiagnosticCategory::ContentSkipped,
+                                       String(u8"pass '") + reportedPassName(pass) +
+                                           String(u8"' has a layer mask of 0, so no layer of its content is selected —"
+                                                  u8" state the layers it draws (RenderPass::setLayerMask / Node::setLayers)"),
+                                       reportedPassName(pass)));
+        }
+
+        if (!pass->isEnabled()) {
+            continue;
+        }
+
+        // A promise that names a WHOLE target: it claims every image of the target the pass DRAWS INTO (see
+        // Output::whole_target). A window pass has no target, so its promise is about nothing and is reported.
+        if (pass->declaration().output.whole_target && pass->renderTarget() == nullptr) {
+            noteProblem(compileProblem(u8"engine.pass.output_target_mismatch",
+                                       vn::graphics::DiagnosticCategory::ContentSkipped,
+                                       String(u8"pass '") + reportedPassName(pass) +
+                                           String(u8"' promises the whole of its target as its output but draws into "
+                                                  u8"the window, so the promise is about content this pass never writes"),
+                                       reportedPassName(pass)));
+        }
+        if (raw_ptr<RenderTarget> promised = pass->outputTarget(); promised != nullptr) {
+            noteFilled(Declaration{ nullptr, promised, pass, index });
+
+            std::vector<OutputIdentity>& promised_images = wiring_promised_images_;
+            promised_images.clear();
+            promised_images.reserve(static_cast<std::size_t>(promised->colorCount()) + 1);
+            for (int attachment = 0; attachment < promised->colorCount(); ++attachment) {
+                promised_images.push_back(OutputIdentity::colorOf(*promised, attachment));
+            }
+            if (promised->hasDepth()) {
+                // The depth of a promised target is part of the promise, and it is a DIFFERENT
+                // image from colour attachment 0 (which is why the identity carries the kind).
+                promised_images.push_back(OutputIdentity::depthOf(*promised));
+            }
+
+            for (const auto& identity : promised_images) {
+                const Declaration* entry = findClaimed(identity);
+                if (entry == nullptr) {
+                    claimed.push_back(Declaration{ nullptr, promised, pass, index, identity });
+                    continue;
+                }
+                if (entry->pass == pass) {
+                    continue; // one pass claiming twice is one claim
+                }
+                noteColliding(identity);
+                {
+                    noteProblem(compileProblem(u8"engine.pass.output_collision",
+                                               vn::graphics::DiagnosticCategory::ContentSkipped,
+                                               String(u8"two passes ('") + reportedPassName(entry->pass) + String(u8"' and '") + reportedPassName(pass) +
+                                                   String(u8"') claim ") + identity_name(identity) +
+                                                   String(u8" as their output, so a consumer of it gets whichever pass"
+                                                          u8" runs last"),
+                                               String{}));
+                }
+            }
+        }
+
+        // A fine promise that names ONE image: the address is the claim, so two passes that each
+        // declared their OWN ImageRef for one image are caught as well — the host may build its
+        // wiring out of two references to the same attachment and never notice.
+        if (raw_ptr<ImageRef> output = pass->output(); output != nullptr) {
+            // An UNBOUND promise cannot be checked at all: there is no target to compare with the
+            // one this pass renders into, so a promise about nothing would pass unnoticed — and no
+            // consumer could resolve it either (an unbound identity has no address). Reported once
+            // per image, here (the producer side) so the consumer side below stays quiet about the
+            // same object.
+            if (!output->isBound()) {
+                // Recorded, not reported yet: if another pass also claims this image, the collision
+                // report below names both passes and the image, and binding the image alone would not
+                // fix a double claim — one mistake, one message. Phase 4 reports the rest.
+                noteUnbound(output, pass, true);
+            }
+            // Same rule as the coarse form: a fine promise is about a target this pass has to write.
+            raw_ptr<RenderTarget> promised_target = output->target();
+            if (promised_target != nullptr && pass->renderTarget() != promised_target) {
+                const OutputIdentity identity = OutputIdentity::of(*output);
+                {
+                    noteProblem(compileProblem(u8"engine.pass.output_image_mismatch",
+                                               vn::graphics::DiagnosticCategory::ContentSkipped,
+                                               String(u8"pass '") + reportedPassName(pass) + String(u8"' promises the image '") + output->label() +
+                                                   String(u8"' of target '") + target_name(promised_target) + String(u8"' as its output but renders into '") +
+                                                   drawn_into_name(pass) + String(u8"', so the promise is about content this pass never writes"),
+                                               reportedPassName(pass)));
+                }
+            }
+            const OutputIdentity identity = OutputIdentity::of(*output);
+            const Declaration*   entry    = findClaimed(identity);
+            if (entry == nullptr) {
+                claimed.push_back(Declaration{ output, output->target(), pass, index, identity });
+            }
+            else if (entry->pass != pass) {
+                noteColliding(identity);
+                {
+                    const String first  = reportedPassName(entry->pass);
+                    const String second = reportedPassName(pass);
+                    // One format string per branch: the cases do not print the same thing (one image
+                    // declared twice, two images that turn out to be one attachment, or an image
+                    // claimed next to a whole target).
+                    const String message =
+                        (entry->image == output) ? String(u8"image '") + output->label() + String(u8"' is declared as the output of two passes ('") + first +
+                                                       String(u8"' and '") + second + String(u8"'); a consumer of it gets whichever pass runs last")
+                        : (entry->image != nullptr)
+                            ? String(u8"two passes ('") + first + String(u8"' and '") + second + String(u8"') declared DIFFERENT images ('") +
+                                  entry->image->label() + String(u8"' and '") + output->label() +
+                                  String(u8"') that are the same attachment of one target; a consumer of it"
+                                         u8" gets whichever pass runs last")
+                            : String(u8"two passes ('") + first + String(u8"' and '") + second + String(u8"') claim the image '") + output->label() +
+                                  String(u8"' of target '") + target_name(output->target()) +
+                                  String(u8"', one of them as part of the whole target; a consumer of it gets"
+                                         u8" whichever pass runs last");
+                    noteProblem(detail::engineProblem(u8"engine.pass.output_collision", vn::graphics::DiagnosticCategory::ContentSkipped, message));
+                }
+            }
+        }
     }
 
-    // PHASE 2 - UPDATE the names both shapes state, ADD the ones only the plan states.
-    for (const PassDesc& desc : plan.passes) {
-        const int order = desc.order.value_or(passStageOrder(desc.stage));
+    // Phase 2: every declared input its consumer cannot draw from — nobody fills the image (or the
+    // whole target), or the image asked for is a depth the target does not have. WHERE the producer was
+    // registered is no longer a wiring fact: the scheduler orders a later-announced producer first (see
+    // scheduleRows), so registration order says nothing about execution order.
+    for (std::size_t index = 0; index < slots_.size(); ++index) {
+        RenderPass* pass = slots_[index].pass.get();
+        if (pass == nullptr) {
+            continue;
+        }
 
-        // A scoped plan speaks only for its own rows: its identity is (owner, name), so two contributors may each
-        // state a pass of the same name (two views of one engine, each with its own "main").
-        Slot* existing = nullptr;
-        for (Slot& slot : slots_) {
-            if (slot.pass == nullptr || (owner != nullptr && slot.owner != owner)) {
+        for (const auto& target : pass->inputTargets()) {
+            if (target == nullptr) {
                 continue;
             }
-            if (slot.pass->name() == desc.name) {
-                existing = &slot;
-                break;
+            const OutputIdentity identity = OutputIdentity::targetOf(*target);
+            const Declaration*   entry    = findFilled(target.get());
+            // A pass reading what it draws into is a feedback loop the backend supports on purpose
+            // (an overlay reading the frame it is about to composite into): never a bogus wire.
+            if (entry != nullptr && entry->pass == pass) {
+                continue;
+            }
+            if (entry != nullptr) {
+                continue; // someone fills it; the scheduler puts that pass before this one
+            }
+            // The structural check speaks for this wire; the collect keeps its subject so the RESOLUTION of the
+            // same input stays quiet about it (see unusableInputReported / reportUnproducedInput).
+            unusable_inputs_this_frame_.emplace(pass, identity);
+            {
+                const String consumer = reportedPassName(pass);
+                const String message  = String(u8"pass '") + consumer + String(u8"' declares the input target '") + target_name(target.get()) +
+                                        String(u8"' but no pass writes it, so nothing fills it");
+                noteProblem(detail::engineProblem(u8"engine.pass.input_target_not_produced", vn::graphics::DiagnosticCategory::ContentSkipped, message));
             }
         }
 
-        if (existing != nullptr && existing->pass->declaration().kind == desc.kind) {
-            // IN PLACE: the node survives, so everything the backend keyed by it survives too - and a declaration
-            // that only changed its target is an update, not a remove plus an add (see P7).
-            existing->pass->setDesc(desc);
-            existing->order = order;
+        for (const ImageInput& input : pass->inputs()) {
+            raw_ptr<ImageRef> image = input.image();
+            if (image == nullptr) {
+                continue; // an imported texture has no producer/wiring rule to check
+            }
+            const OutputIdentity identity = OutputIdentity::of(*image);
+            // An UNBOUND image can never be delivered (resolveDeclaredImage returns null for it, and
+            // deliberately says nothing — declaring it is what is wrong). Reported once per IMAGE:
+            // by the producer side above when a pass declares it as its output, otherwise here.
+            if (!image->isBound()) {
+                noteUnbound(image, pass, false);
+                continue;
+            }
+            // An unbound image has no address, so no target account can say anything about it: only
+            // a promise of that same object can.
+            const Declaration* claim = findClaimed(identity);
+            const Declaration* entry = (identity.target != nullptr) ? findFilled(identity.target) : nullptr;
+
+            // A pass that promises the very image it reads, or draws into its target, is a feedback
+            // loop the backend supports on purpose (an overlay reading the frame it composites
+            // into): never a bogus wire.
+            if ((claim != nullptr && claim->pass == pass) || (entry != nullptr && entry->pass == pass)) {
+                continue;
+            }
+
+            // Whoever can fill the image: a pass that promises this very image, a pass that draws into its target
+            // (drawing into a target fills all of its images), or the host (a host binding is filled by the host).
+            // WHERE that pass sits in registration order is not a question any more: the scheduler orders it.
+            const bool has_filler = claim != nullptr || entry != nullptr;
+
+            if (has_filler && (!identity.depth || identity.target->hasDepth())) {
+                continue; // filled, by a pass the scheduler orders before this one (or by the host)
+            }
+
+            // The structural check speaks for this wire; the collect keeps its subject so the RESOLUTION of the
+            // same input stays quiet about it (see unusableInputReported / reportUnproducedInput).
+            unusable_inputs_this_frame_.emplace(pass, identity);
+            {
+                const String consumer = reportedPassName(pass);
+                // Two problems, two fixes: nobody declares it, or the target simply has no depth.
+                const String message  = !has_filler ? String(u8"pass '") + consumer + String(u8"' declares the input image '") + image->label() +
+                                                          String(u8"' but no pass declares it as an output, so nothing fills it")
+                                                    : String(u8"pass '") + consumer + String(u8"' declares the input image '") + image->label() +
+                                                          String(u8"' (the depth of target '") + target_name(identity.target) +
+                                                          String(u8"') but that target has no depth attachment, so nothing fills it");
+                noteProblem(detail::engineProblem(u8"engine.pass.input_image_not_produced", vn::graphics::DiagnosticCategory::ContentSkipped, message));
+            }
+        }
+    }
+
+    // Phase 3: a ScreenPass that cannot draw what it declares. Every one of these is a property of
+    // the DECLARATION (nothing else can see them: the backend only ever sees "a pass with nothing to
+    // draw"), they are found by the compile (so the frame they belong to is the frame that says so), and
+    // they are checked in the order a host has to fix them — each check `continue`s, because the next one is
+    // moot until this one is answered and one mistake should read as one message.
+    for (const auto& slot : slots_) {
+        auto* pass = obj_cast<ScreenPass>(slot.pass.get());
+        if (pass == nullptr || !pass->isEnabled()) {
             continue;
         }
 
-        // A NAME THAT CHANGED KIND cannot become the other object: replace it, keeping who owned it.
-        const void* existing_owner = nullptr;
-        if (existing != nullptr) {
-            existing_owner = existing->owner;
-            removePass(existing->pass.get());
-        }
-
-        Slot slot;
-        slot.pass  = makePassNode(desc);
-        slot.order = order;
-        slot.owner = owner != nullptr ? owner : existing_owner;
-        insertSlot(std::move(slot));
-    }
-
-    // PHASE 3 - the table is ordered by the orders the plan just stated (an update can move a pass in the frame).
-    std::stable_sort(slots_.begin(), slots_.end(), [](const Slot& left, const Slot& right) { return left.order < right.order; });
-}
-
-raw_ptr<RenderPass> RenderEngine::passFor(const String& name, const void* owner) const
-{
-    if (owner == nullptr) {
-        return pass(name);
-    }
-    for (const Slot& slot : slots_) {
-        if (slot.pass != nullptr && slot.owner == owner && slot.pass->name() == name) {
-            return slot.pass.get();
-        }
-    }
-    return nullptr;
-}
-
-raw_ptr<RenderPass> RenderEngine::pass(const String& name) const
-{
-    for (const Slot& slot : slots_) {
-        if (slot.pass != nullptr && slot.pass->name() == name) {
-            return slot.pass.get();
-        }
-    }
-    return nullptr;
-}
-
-Plan RenderEngine::planFor(const void* owner) const
-{
-    if (owner == nullptr) {
-        return plan();
-    }
-    Plan shape;
-    for (const Slot& slot : slots_) {
-        if (slot.pass == nullptr || slot.owner != owner) {
+        // 1. No program: the shading is a CHOICE the host makes (a ScreenPass has no implicit one —
+        // there is no "plain copy" a backend fills in), so a pass without a program draws nothing.
+        // This is the first thing to answer, and it is the one a host is most likely to hit: the
+        // picture a pass draws is exactly what it named.
+        if (pass->program() == nullptr) {
+            {
+                noteProblem(detail::engineProblem(u8"engine.screen.no_program",
+                                                  vn::graphics::DiagnosticCategory::ContentSkipped,
+                                                  String(u8"pass '") + reportedPassName(pass) +
+                                                      String(u8"' is a ScreenPass with no program, so it can never draw: name one"
+                                                             u8" (BuiltinShaders::screenCopyProgram() for a plain copy of the"
+                                                             u8" source's colour attachment, deferredLightProgram() for deferred"
+                                                             u8" lighting, or your own fragment stage)")));
+            }
             continue;
         }
-        PassDesc desc = slot.pass->declaration();
-        desc.order    = slot.order;
-        shape.passes.push_back(std::move(desc));
-    }
-    return shape;
-}
 
-Plan RenderEngine::plan() const
-{
-    Plan shape;
-    shape.passes.reserve(slots_.size());
-    for (const Slot& slot : slots_) {
-        if (slot.pass == nullptr) {
+        // 2. No input at all (no image, no target, no name): it samples one input and returns without
+        // it. Not "an input that failed to resolve", nor "an input nobody fills" (phase 2).
+        if (pass->inputs().empty() && pass->inputTargets().empty() && pass->inputNames().empty()) {
+            {
+                noteProblem(detail::engineProblem(u8"engine.screen.no_input",
+                                                  vn::graphics::DiagnosticCategory::ContentSkipped,
+                                                  String(u8"pass '") + reportedPassName(pass) +
+                                                      String(u8"' is a ScreenPass that declares no input, so it can never draw"
+                                                             u8" (give it addInput / addInputName)")));
+            }
             continue;
         }
-        PassDesc desc = slot.pass->declaration();
-        // The EFFECTIVE order, stated: the shape read back is the shape that reproduces it, even when the
-        // declaration only named a stage.
-        desc.order    = slot.order;
-        shape.passes.push_back(std::move(desc));
-    }
-    return shape;
-}
 
-std::vector<String> RenderEngine::hostOutputNames() const
-{
-    std::vector<String> names;
-    if (resources_ == nullptr) {
-        return names;
-    }
-    names.reserve(resources_->hostBindings().size());
-    for (const auto& binding : resources_->hostBindings()) {
-        names.push_back(binding.first);
-    }
-    return names;
-}
-
-void RenderEngine::removePassesOwnedBy(const void* owner) noexcept
-{
-    if (owner == nullptr) {
-        return; // unowned passes belong to whoever added them; no chain can take them back
-    }
-    // Collected first: removePass() mutates the table, and the release path it takes (backend state, an owned
-    // target) must run once per pass - which is exactly what removePass does for a handle.
-    std::vector<raw_ptr<RenderPass>> doomed;
-    for (const Slot& slot : slots_) {
-        if (slot.owner == owner && slot.pass != nullptr) {
-            doomed.push_back(slot.pass.get());
+        // 3. No camera: the fullscreen path builds the pass' view from it and pushes the scene's
+        // lights through that view space, so without one the pass describes nothing and the frame hands the
+        // backend no draw at all. The fix is static (setCamera), and a host would otherwise see a
+        // post-process that never appears with no reason for it.
+        if (pass->camera() == nullptr) {
+            {
+                noteProblem(detail::engineProblem(u8"engine.screen.no_camera",
+                                                  vn::graphics::DiagnosticCategory::ContentSkipped,
+                                                  String(u8"pass '") + reportedPassName(pass) +
+                                                      String(u8"' has a fullscreen program but no camera, so it can never draw: the"
+                                                             u8" fullscreen path builds its view from the pass camera (and pushes the"
+                                                             u8" scene's lights through it) — give the pass a camera (setCamera)")));
+            }
         }
     }
-    for (raw_ptr<RenderPass> pass : doomed) {
-        removePass(pass);
+
+    // Phase 4: a declared image nobody bound to a target. An unbound identity has no address, so
+    // nothing can be delivered through it (resolveDeclaredImage() returns null and says nothing,
+    // because declaring it is what is wrong) and the promise check had nothing to compare with the
+    // target the pass renders into. One report per IMAGE: a producer and its consumers share the same
+    // unbound object. An image whose double claim the collision check already reported is skipped —
+    // that message names both passes and the fix, and one mistake gets one message.
+    for (const UnboundDeclaration& unbound : unbound_declared) {
+        if (isColliding(OutputIdentity::of(*unbound.image))) {
+            continue;
+        }
+        noteProblem(detail::engineProblem(
+            u8"engine.pass.image_unbound",
+            vn::graphics::DiagnosticCategory::ContentSkipped,
+            unbound.as_output ? String(u8"pass '") + reportedPassName(unbound.pass) + String(u8"' declares the output image '") + unbound.image->label() +
+                                    String(u8"' but that image is not bound to a target, so no consumer can resolve"
+                                           u8" it and the promise cannot be checked against what the pass renders"
+                                           u8" into — bind it (ImageRef::bind(target, attachment))")
+                              : String(u8"pass '") + reportedPassName(unbound.pass) + String(u8"' declares the input image '") + unbound.image->label() +
+                                    String(u8"' but that image is not bound to a target, so nothing can fill it —"
+                                           u8" bind it (ImageRef::bind(target, attachment))")));
     }
 }
+
+} // namespace detail
 
 VN_GRAPHICS_NS_END

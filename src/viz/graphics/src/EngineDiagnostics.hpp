@@ -5,6 +5,7 @@
 
 #include <vine/String.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
+#include <vine/graphics/RenderPass.hpp>
 
 /**
  * @brief The ENGINE's one way to build a coded report about its own wiring (a private header: no host sees it).
@@ -28,6 +29,25 @@ namespace graphics
 {
 namespace detail
 {
+
+/**
+ * @brief Answers the name a pass is reported under: its own, or a readable fallback when it has none.
+ *
+ * @details
+ * - ONE SPELLING for every report that names a pass (the compile's checks, the engine's capability report): the
+ *   subject a host badges and the sentence it reads have to agree, and an unnamed pass is still something a host
+ *   can act on.
+ *
+ * @param pass Pass to name (may be null).
+ * @return The pass' name, or `(unnamed)` when it has none.
+ */
+[[nodiscard]] inline String reportedPassName(raw_ptr<const RenderPass> pass)
+{
+    if (pass == nullptr || pass->name().empty()) {
+        return String(u8"(unnamed)");
+    }
+    return pass->name();
+}
 
 /**
  * @brief Builds a Warning about the engine's own wiring, with origin Engine and the cause's stable code.

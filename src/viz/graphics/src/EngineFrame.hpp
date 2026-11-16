@@ -6,6 +6,7 @@
 
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
+#include <vine/graphics/PresentTarget.hpp>
 #include <vine/graphics/SceneSnapshotRef.hpp>
 #include <vine/graphics/View.hpp>
 
@@ -47,6 +48,9 @@ struct EngineFrame {
     int width = 0;
     /// Surface height in logical pixels, as the frame was laid out on it.
     int height = 0;
+    /// The surface's pixel ratio at the moment the frame started (1.0 when there is no area): the scale between the
+    /// logical size above and the device pixels a pass draws into.
+    double pixel_ratio = 1.0;
     /// The frame token the per-view memos are keyed by (the same number the content's scenes were told, see
     /// Scene::setContentFrame): one frame of grace, and 0 means "no frame is open".
     std::uint64_t content_frame = 0;

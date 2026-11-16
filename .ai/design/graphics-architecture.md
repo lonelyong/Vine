@@ -50,14 +50,14 @@
 为什么：静默 no-op 让宿主把“没生效”当成“生效”；返回值是调用点唯一能判断的答案。边界：`removePass` 保持幂等、不返回——
 移除未注册的 pass 与移除已移除的 pass 是同一个结果。满足 `G4` / `G6`；代价是每个调用点多一个可忽略的返回值。
 
-2.8 **`RenderEngine` 是组合根，不是功能的家**：它拥有三样东西 —— 帧泵（`frame` / `waitForFrame` /
-    `setFrameThreading` / `frameNumber`）、会话形状（pass 声明、`plan` / `applyPlan` 与帧编译）、设备借用
-    （`initialize` / `shutdown` / `device` / `createArea`）与报告（`frameReport` / `presentRecord` /
-    `presentedCamera`）。为什么：`RenderEngine.hpp` 1462 行、56 个公共签名，一个类里住着 8 类职责；线程策略的
-    **机制**只有 `detail::FrameRunner`（123 行）与 5 个调用点，但**语义契约**外溢到 9 个文件——不写下来，下一次
-    加功能会继续默认往里塞（`G5` / `G12`）。边界：新的**机制**属于 `detail::`，不属于 `RenderEngine`；它只组合
-    现有机制。`addPass` 家族已删（W9d），`slots_` / `applyPlanRows` 若要继续下沉，目标仍是 `detail::SessionShape`——那次拆分
-    有真实消费者，不是今天预建的抽象（`G8`）。
+2.8 **`RenderEngine` 是组合根，不是功能的家**：它拥有并组合三样机制 —— 帧泵（`detail::FramePump`：帧号、一帧在飞、
+    `waitForFrame`、`presentRecord`）、会话形状（`detail::SessionShape`：pass 声明、`plan` / `applyPlan`、帧编译与接线检查）、
+    表面账（`detail::SurfaceLedger`：唯一的 area、公告尺寸、窗口目标）——而它自己只剩组合与生命周期（`initialize` /
+    `shutdown` / `device` / `createArea` 与报告的转发）。为什么：这些机制各有自己的状态与失败方式；放在组合根里时，
+    改线程策略要动 9 个文件，加一条接线检查要往 1500 行的头里加一段（`G5` / `G12`）。边界：新的**机制**属于 `detail::`，
+    不属于 `RenderEngine`；`FramePump` 只答“另一半在哪跑、什么时候答完”，`SessionShape` 只答“这一帧跑什么、顺序如何、
+    哪里接错”，`SurfaceLedger` 只答“这一帧落在哪个目标、尺寸是多少”——每一件都有今天的消费者（两个线程模式、两个后端的
+    编译对拍、一个引擎一个表面），不是预建的抽象（`G8`）。
     附带一条名词纪律：`PlanRefusal::Busy` 的文档含义是“**引擎里有帧在录**”；SDK 里今天**没有** `Session` 类型，
     也不需要：**一个引擎驱动一个表面**（[ADR-2026-11-13](ADR-2026-11-13-one-engine-one-surface.md)），`Session` 只作为设计
     名词指一个引擎的执行侧。文档与新接口都不再引用一个不存在的类型。

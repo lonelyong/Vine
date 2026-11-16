@@ -71,7 +71,7 @@ bool RenderArea::present(SceneView& view)
     // An area this engine does not drive is not a place a picture can end up in: the frame resolves its default
     // framebuffer through the area the engine registered, so this one would present nothing at all. Refused out
     // loud, once - a host that built two areas on one engine has to hear which one is dead.
-    if (engine->area_ != this) {
+    if (!engine->drivesArea(this)) {
         if (not_the_engines_.shouldReport()) {
             engine->reportEngineProblem(
                 detail::engineProblem(u8"engine.area.foreign",
