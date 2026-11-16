@@ -618,7 +618,7 @@ TEST(VkContentDrawTest, TheLightBlockCarriesTheAmbientTerm)
     draw.kind        = DrawDescription::Kind::Scene;
     draw.camera      = identityCamera();
     draw.commands    = commands;
-    draw.light_values = std::vector<LightValue>{ ambient };
+    draw.light_values = vn::graphics::LightSet::create({ ambient });
     backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
 
     std::vector<std::uint8_t> pixels;

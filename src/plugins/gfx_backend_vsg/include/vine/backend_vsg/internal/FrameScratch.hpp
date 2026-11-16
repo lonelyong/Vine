@@ -79,8 +79,6 @@ class FrameScratch final
     /// walk reads them, so recording a frame never touches the device's pass registry (see the frame head and
     /// PassRegistry's "identity must not depend on when the first frame arrives").
     std::vector<core::PassId>             pass_ids;
-    /// Reused by the lights announcement (no per-pass allocation).
-    std::vector<vn::graphics::LightValue> light_scratch;
     /// The image offers one content pass declares, reused per pass (see recordContent).
     std::vector<InputImages>              input_scratch;
     /// One colour-view list per declared input, reused per pass: the `InputImages` spans point into these, so they

@@ -67,6 +67,7 @@ bool Light::isEnabled() const
 void Light::setEnabled(bool enabled)
 {
     enabled_ = enabled;
+    ++revision_;
 }
 
 Colorf Light::color() const
@@ -77,6 +78,7 @@ Colorf Light::color() const
 void Light::setColor(const Colorf& color)
 {
     color_ = color;
+    ++revision_;
 }
 
 float Light::intensity() const
@@ -87,6 +89,7 @@ float Light::intensity() const
 void Light::setIntensity(float intensity)
 {
     intensity_ = intensity;
+    ++revision_;
 }
 
 bool Light::hasDirection() const
@@ -104,6 +107,7 @@ vn::math::Vec3d Light::direction() const
 void Light::setDirection(const vn::math::Vec3d& direction)
 {
     direction_ = direction;
+    ++revision_;
 }
 
 bool Light::hasPosition() const
@@ -119,6 +123,7 @@ vn::math::Vec3d Light::position() const
 void Light::setPosition(const vn::math::Vec3d& position)
 {
     position_ = position;
+    ++revision_;
 }
 
 float Light::range() const
@@ -129,6 +134,7 @@ float Light::range() const
 void Light::setRange(float range)
 {
     range_ = range;
+    ++revision_;
 }
 
 double Light::innerConeAngle() const
@@ -144,6 +150,7 @@ void Light::setInnerConeAngle(double degrees)
     if (inner_cone_degrees_ > outer_cone_degrees_) {
         inner_cone_degrees_ = outer_cone_degrees_;
     }
+    ++revision_;
 }
 
 double Light::outerConeAngle() const
@@ -157,6 +164,7 @@ void Light::setOuterConeAngle(double degrees)
     if (outer_cone_degrees_ < inner_cone_degrees_) {
         inner_cone_degrees_ = outer_cone_degrees_;
     }
+    ++revision_;
 }
 
 bool Light::isCastingShadow() const
@@ -167,6 +175,7 @@ bool Light::isCastingShadow() const
 void Light::setCastShadow(bool cast)
 {
     cast_shadow_ = cast;
+    ++revision_;
 }
 
 const ShadowSettings& Light::shadowSettings() const
@@ -177,16 +186,24 @@ const ShadowSettings& Light::shadowSettings() const
 void Light::setShadowSettings(const ShadowSettings& settings)
 {
     shadow_settings_ = settings;
+    ++revision_;
 }
 
 void Light::setShadowResolution(uint32_t resolution)
 {
     shadow_settings_.resolution = resolution;
+    ++revision_;
 }
 
 void Light::setShadowBias(float bias)
 {
     shadow_settings_.bias = bias;
+    ++revision_;
+}
+
+std::uint64_t Light::revision() const noexcept
+{
+    return revision_;
 }
 
 LightValue Light::value() const noexcept

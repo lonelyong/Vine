@@ -153,7 +153,7 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
     vn::graphics::ShaderProgramDescriptionPtr captured_program;
     vn::graphics::MaterialDescriptionPtr      captured_material;
     vn::graphics::ContentRef                  captured_material_ref;
-    std::optional<std::vector<vn::graphics::LightValue>> captured_lights;
+    vn::graphics::LightSetPtr                 captured_lights;
 
     std::thread engine_thread([&] {
         ready.set_value();
@@ -190,9 +190,9 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
     ASSERT_NE(captured_material, nullptr);
     EXPECT_EQ(captured_material->values().base_color, (Colorf{ 0.9F, 0.1F, 0.1F, 1.0F })) << "frame N keeps its material values";
     EXPECT_EQ(captured_material_ref.revision, material_revision_v1);
-    ASSERT_TRUE(captured_lights.has_value());
+    ASSERT_TRUE(captured_lights != nullptr);
     ASSERT_EQ(captured_lights->size(), 1U);
-    EXPECT_EQ(captured_lights->front().color, (Colorf{ 0.5F, 0.5F, 1.0F, 1.0F })) << "frame N keeps the light it was lit with";
+    EXPECT_EQ(captured_lights->values().front().color, (Colorf{ 0.5F, 0.5F, 1.0F, 1.0F })) << "frame N keeps the light it was lit with";
 
     // THE CONTENT DID MOVE: the next publication/description is what carries the new values.
     EXPECT_NE(program->revision(), program_revision_v1);
@@ -211,7 +211,53 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
     ASSERT_NE(next_commands.front().material_description, nullptr);
     EXPECT_EQ(next_commands.front().material_description->values().base_color, (Colorf{ 0.1F, 0.9F, 0.1F, 1.0F }));
     ASSERT_TRUE(next.passes.front().draw.has_value());
-    ASSERT_TRUE(next.passes.front().draw->draws.front().light_values.has_value());
+    ASSERT_TRUE(next.passes.front().draw->draws.front().light_values != nullptr);
     ASSERT_EQ(next.passes.front().draw->draws.front().light_values->size(), 1U);
-    EXPECT_EQ(next.passes.front().draw->draws.front().light_values->front().color, (Colorf{ 1.0F, 0.7F, 0.2F, 1.0F }));
+    EXPECT_EQ(next.passes.front().draw->draws.front().light_values->values().front().color, (Colorf{ 1.0F, 0.7F, 0.2F, 1.0F }));
+}
+
+TEST(ValueChannelTest, EveryPassOfOneFrameHoldsTheSameLightSetUntilALightMoves)
+{
+    // THE DEFECT THIS PINS (I-01): each pass used to copy the scene's lights into its own `std::vector`, once per pass
+    // per frame - a heap allocation outside the frame arena whose count was a function of the PASS count while the
+    // light set is a function of the SCENE. Now the scene owns one immutable set (`Scene::lightSet`) and every pass of
+    // a frame holds the same shared value.
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    scene->setRoot(oneTriangle());
+    auto light = Light::createDirectional(Vec3d(0.0, 0.0, -1.0));
+    light->setColor(Colorf{ 0.5F, 0.5F, 1.0F, 1.0F });
+    scene->addLight(light);
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    RenderPass first;
+    first.setContent(scene);
+    first.setCamera(camera);
+    RenderPass second;
+    second.setContent(scene);
+    second.setCamera(camera);
+
+    PublicationStore store;
+    ASSERT_EQ(scene->publish().status, ScenePublishStatus::Posted);
+
+    const FrameDescription a = describedFrame(first, scene, store);
+    const FrameDescription b = describedFrame(second, scene, store);
+    const vn::graphics::LightSetPtr& lights_a = a.passes.front().draw->draws.front().light_values;
+    const vn::graphics::LightSetPtr& lights_b = b.passes.front().draw->draws.front().light_values;
+    ASSERT_NE(lights_a, nullptr);
+    ASSERT_NE(lights_b, nullptr);
+    EXPECT_EQ(lights_a, lights_b) << "two passes of one scene copied the light set twice";
+
+    // A STEADY FRAME REUSES IT: nothing moved, so the scene answers the same value and no copy is made.
+    const FrameDescription next = describedFrame(first, scene, store);
+    EXPECT_EQ(next.passes.front().draw->draws.front().light_values, lights_a) << "a steady frame rebuilt the light set";
+
+    // A LIGHT EDIT IS A NEW SET, and it carries the new numbers: the cache is keyed by each light's revision (a light
+    // announces nothing on the graph), so an edit reaches the next description exactly as it reached the live vector.
+    light->setColor(Colorf{ 1.0F, 0.7F, 0.2F, 1.0F });
+    const FrameDescription edited = describedFrame(first, scene, store);
+    const vn::graphics::LightSetPtr& lights_edited = edited.passes.front().draw->draws.front().light_values;
+    ASSERT_NE(lights_edited, nullptr);
+    EXPECT_NE(lights_edited, lights_a) << "the edit reused the old set";
+    ASSERT_EQ(lights_edited->size(), 1U);
+    EXPECT_EQ(lights_edited->values().front().color, (Colorf{ 1.0F, 0.7F, 0.2F, 1.0F }));
 }

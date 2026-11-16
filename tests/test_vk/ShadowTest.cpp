@@ -167,7 +167,7 @@ makeQuad(float x0, float x1, float z)
 
 /// @brief One scene drawing call: @p commands through the identity camera, optionally announcing @p lights.
 [[nodiscard]] DrawDescription sceneDraw(std::shared_ptr<const std::vector<RenderCommand>> commands,
-                                        std::optional<std::vector<LightValue>>              lights = std::nullopt)
+                                        vn::graphics::LightSetPtr                         lights = nullptr)
 {
     DrawDescription draw;
     draw.kind        = DrawDescription::Kind::Scene;
@@ -257,7 +257,7 @@ struct Scene {
     main_pass.clear        = ClearPolicy{};
     main_pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     main_pass.state.depth  = DepthMode::TestAndWrite;
-    main_pass.draws.push_back(sceneDraw(receiver_list, std::move(lights)));
+    main_pass.draws.push_back(sceneDraw(receiver_list, vn::graphics::LightSet::create(std::move(lights))));
     main_entry.draw = std::move(main_pass);
     frame.passes.push_back(std::move(main_entry));
 

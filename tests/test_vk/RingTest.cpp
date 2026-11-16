@@ -459,3 +459,53 @@ TEST(VkFrameHeadTest, AFrameReportsWhatItSpentOnTheCacheLock)
 
     backend->shutdown();
 }
+
+TEST(VkFrameHeadTest, ASteadyFrameDoesNotGrowTheHeadsStorage)
+{
+    // I-02's witness, at the claim's own scope: FrameHead's file note promises that a steady frame "resolves without
+    // growing the vectors", and the number that moves when a slot is rebuilt instead of cleared is the head's own
+    // growth count. Three warm-up frames may grow it freely; the five after them must leave it where it was.
+    // WHAT THIS DOES AND DOES NOT PROVE: it proves the PASS/CALL storage is reused. It is NOT a claim that the whole
+    // frame allocates nothing - the pipeline key and the content caches own allocations of their own, which this batch
+    // neither measures nor fixes.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget();
+    const intrusive_ptr<ShaderProgram> program  = makeProgram();
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+    const intrusive_ptr<Material>      material = intrusive_ptr<Material>(new Material());
+    material->setBaseColor(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+
+    std::vector<RenderCommand> commands;
+    for (std::size_t index = 0; index < 2; ++index) {
+        RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+        command.program              = program;
+        command.program_description  = program->description();
+        command.material             = material;
+        command.material_description = material->description();
+        commands.push_back(std::move(command));
+    }
+    const FrameDescription frame =
+        drawingFrame(target.get(), std::make_shared<const std::vector<RenderCommand>>(std::move(commands)));
+
+    // WARM-UP: the first frames compile, upload, build pipelines and size the head's slots. Only the frames AFTER that
+    // are the promise.
+    for (int warmup = 0; warmup < 3; ++warmup) {
+        (void)backend->executeFrame(frame, nullptr);
+    }
+    const std::uint64_t grown = device->frameHeadStorageGrows();
+    EXPECT_GT(grown, 0U) << "the counter never saw the warm-up grow anything, so this case would prove nothing";
+
+    for (int steady = 0; steady < 5; ++steady) {
+        (void)backend->executeFrame(frame, nullptr); // an off-screen frame presents nothing, so the outcome here is Skipped
+    }
+    EXPECT_EQ(device->frameHeadStorageGrows(), grown) << "a steady frame rebuilt the head's storage instead of clearing it";
+
+    backend->shutdown();
+}

@@ -152,6 +152,7 @@ class FrameHead final {
     {
         if (passes_.capacity() < reserve_passes) {
             passes_.reserve(reserve_passes);
+            ++storage_grows_;
         }
         for (Pass& slot : passes_) {
             slot.clear();
@@ -172,14 +173,36 @@ class FrameHead final {
     {
         if (used_ == passes_.size()) {
             passes_.emplace_back();
+            ++storage_grows_;
         }
         Pass& slot = passes_[used_];
         for (Call& call : slot.draws) {
             call.clear();
         }
+        if (draw_count > slot.draws.capacity()) {
+            ++storage_grows_;
+        }
         slot.draws.resize(draw_count);
         ++used_;
         return slot;
+    }
+
+    /**
+     * @brief Gets how many times the reusable storage had to GROW (a warm-up count, not a per-frame one).
+     *
+     * @details
+     * - THE WITNESS FOR THE FILE NOTE'S REUSE PROMISE (`G11`): "a steady frame resolves without growing the
+     *   vectors" is a claim about capacity, and this is the number that moves when a vector is rebuilt instead of
+     *   cleared. A steady frame must leave it unchanged; the first frames may grow it freely.
+     * - WHAT IT DOES NOT COUNT: the plan storage's other growth (`DrawPlan::vertex_streams`, the pipeline key's
+     *   channel list) happens outside this class and is not counted here - the counter proves the PASS/CALL storage,
+     *   which is the part this class owns.
+     *
+     * @return The cumulative growth count (0 before the first frame).
+     */
+    [[nodiscard]] std::uint64_t storageGrows() const noexcept
+    {
+        return storage_grows_;
     }
 
     /** @brief Gets the passes resolved since beginFrame, in the frame's order. */
@@ -211,8 +234,9 @@ class FrameHead final {
     VkSampler shadow_sampler{ VK_NULL_HANDLE };
 
   private:
-    std::vector<Pass> passes_{};  ///< Slots, reused across frames (see beginPass).
-    std::size_t       used_{ 0 }; ///< Passes resolved since beginFrame.
+    std::vector<Pass> passes_{};             ///< Slots, reused across frames (see beginPass).
+    std::size_t       used_{ 0 };            ///< Passes resolved since beginFrame.
+    std::uint64_t     storage_grows_{ 0 };   ///< How many times the reusable storage had to grow (see storageGrows).
 };
 
 VN_BACKEND_VK_NS_END

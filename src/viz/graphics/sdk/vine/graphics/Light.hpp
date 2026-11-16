@@ -331,7 +331,18 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
      * @return The light's fields as a value (a copy; no sharing, no lifetime).
      */
     [[nodiscard]] LightValue value() const noexcept;
-
+    /**
+     * @brief Gets how many times this light's VALUES moved (see LightValue).
+     *
+     * @details
+     * - A LIGHT ANNOUNCES NOTHING ON THE GRAPH: its setters write fields in place, so `Scene` cannot see an edit
+     *   through the node epochs. This counter is the cheap key a cache needs (`Scene::lightSet` rebuilds the shared
+     *   set only when one of its lights' revisions moved).
+     * - `setName` does NOT bump it: the name is not part of the value a frame carries.
+     *
+     * @return The revision (1 for a light that was never edited).
+     */
+    [[nodiscard]] std::uint64_t revision() const noexcept;
 
   private:
     String          name_;
@@ -346,6 +357,8 @@ class VN_GRAPHICS_API Light : public Object, public RefCounted<Light> {
     double          outer_cone_degrees_{ 30.0 };
     bool            cast_shadow_{ false };
     ShadowSettings  shadow_settings_;
+    /// How many times a setter that feeds `value()` ran (see revision()); `setName` does not count.
+    std::uint64_t   revision_{ 1 };
 };
 
 VN_GRAPHICS_NS_END

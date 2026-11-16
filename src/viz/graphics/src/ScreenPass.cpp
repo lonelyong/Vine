@@ -74,17 +74,12 @@ bool ScreenPass::describe(raw_ptr<Scene> scene, PassDraw& out)
     draw.program_description = desc_.program != nullptr ? desc_.program->description() : ShaderProgramDescriptionPtr{};
     // Forward the content scene's lights so the backend can push them to the
     // fullscreen fragment program (mirrors how scene passes feed their lights).
-    // A pass with no scene announces NONE rather than an empty list: a screen pass is content-agnostic, and
+    // A pass with no scene announces NONE rather than an empty set: a screen pass is content-agnostic, and
     // "there is no scene" is not a statement about the lighting.
     if (scene != nullptr) {
-        // AS VALUES (see LightValue): the numbers the recorder reads, so a light edited while the frame records cannot
-        // change what it lights. A null entry keeps its slot as the default disabled light.
-        std::vector<LightValue> light_values;
-        light_values.reserve(scene->lights().size());
-        for (const auto& light : scene->lights()) {
-            light_values.push_back(light != nullptr ? light->value() : LightValue{});
-        }
-        draw.light_values = std::move(light_values);
+        // THE SCENE'S ONE SHARED SET (see LightSet): a screen pass and a scene pass of the same frame hold the same
+        // value, so a light edited while the frame records cannot change what it lights and nothing is copied per pass.
+        draw.light_values = scene->lightSet();
     }
     out.draws.push_back(std::move(draw));
     return true;

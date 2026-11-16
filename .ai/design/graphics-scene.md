@@ -156,6 +156,7 @@
 | `Scene::setRoot()` / `root()` / `clear()` | 内容根（已在别处的节点先被摘下） |
 | `Scene::setVisible()` / `setOpacity()` | 场景级折叠 |
 | `Scene::addLight()` / `lights()` / `setLighting()` | 灯 |
+| `Scene::lightSet()` | 灯的一份**不可变共享值**（`LightSet`）：按每个灯的 `revision()` 缓存，描述 pass 时零拷贝（B11） |
 | `Scene::collectRenderCommands()` | 收集 |
 | `Scene::boundingBox(mask)` | 可见内容盒 |
 | `Scene::setContentFrame()` | memo 帧令牌 |

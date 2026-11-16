@@ -341,7 +341,7 @@ void main()
 
 /// @brief The drawing call that renders @p commands through the identity camera, announcing @p lights.
 [[nodiscard]] DrawDescription sceneDraw(std::shared_ptr<const std::vector<RenderCommand>> commands,
-                                        std::optional<std::vector<LightValue>>              lights = std::nullopt)
+                                        vn::graphics::LightSetPtr                         lights = nullptr)
 {
     DrawDescription draw;
     draw.kind         = DrawDescription::Kind::Scene;
@@ -1008,7 +1008,7 @@ TEST_F(BackendParityTest, TheSameShadowMapIsTheSamePictureOnBothBackends)
     main_pass.target      = picture;
     main_pass.clear       = clear;
     main_pass.state.depth = DepthMode::TestAndWrite;
-    main_pass.draws.push_back(sceneDraw(commandsOf({ commandOf(ground, program, material) }), std::move(lights)));
+    main_pass.draws.push_back(sceneDraw(commandsOf({ commandOf(ground, program, material) }), vn::graphics::LightSet::create(std::move(lights))));
     main_entry.draw = std::move(main_pass);
     frame.passes.push_back(std::move(main_entry));
 
@@ -1095,7 +1095,7 @@ TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
     ambient.type        = LightType::Ambient;
     ambient.color       = Colorf(1.0F, 1.0F, 1.0F, 1.0F);
     ambient.intensity   = 1.0F;
-    screen.light_values = std::vector<LightValue>{ ambient };
+    screen.light_values = vn::graphics::LightSet::create({ ambient });
 
     PassDraw light_pass;
     light_pass.target       = result;

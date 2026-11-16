@@ -444,6 +444,20 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
     [[nodiscard]] ContentCacheCounters contentCacheCounters() const noexcept;
 
     /**
+     * @brief Gets how many times the frame head's reusable storage had to GROW (see FrameHead::storageGrows).
+     *
+     * @details
+     * - THE WITNESS FOR "A STEADY FRAME DOES NOT REBUILD ITS STORAGE" (I-02): the head clears its pass/call slots and
+     *   keeps their capacity, so a steady frame leaves this number where it was. It is exposed for the same reason
+     *   `contentCacheCounters()` is - the cost model needs an observable number, not a comment.
+     * - NOT A `FrameReport` FIELD: that report describes a frame's cost to the HOST, while this number exists to keep
+     *   a promise about the BACKEND, so it must not enter the public report.
+     *
+     * @return The cumulative growth count of the device's own driver (0 before the first frame).
+     */
+    [[nodiscard]] std::uint64_t frameHeadStorageGrows() const noexcept;
+
+    /**
      * @brief Gets the device memory pool's numbers (see MemoryStats).
      *
      * @details

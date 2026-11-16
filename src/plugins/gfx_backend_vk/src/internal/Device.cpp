@@ -3794,6 +3794,11 @@ std::uint64_t Device::contentPipelines() const noexcept
     return impl->caches.pipelinesCreated();
 }
 
+std::uint64_t Device::frameHeadStorageGrows() const noexcept
+{
+    return impl->session != nullptr ? impl->session->frame_head.storageGrows() : 0U;
+}
+
 Device::ContentCacheCounters Device::contentCacheCounters() const noexcept
 {
     // A HOST VERB OWNS THE GATE (see Impl::body_gate). Called from a frame body's thread it answers an empty set of

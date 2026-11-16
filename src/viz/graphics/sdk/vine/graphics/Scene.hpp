@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <vine/Object.hpp>
@@ -13,6 +14,7 @@
 
 #include "CollectView.hpp"
 #include "Light.hpp"
+#include "LightSet.hpp"
 #include "Node.hpp"
 #include "RenderCommand.hpp"
 #include "SceneSnapshotRef.hpp"
@@ -247,6 +249,23 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      */
     bool hasLights() const;
 
+    /**
+     * @brief Gets the scene's lights as one immutable value, rebuilt only when a light or the list changed.
+     *
+     * @details
+     * - ONE SET PER SCENE, NOT ONE PER PASS (`G10`): the scene owns the copy, every pass a frame describes holds
+     *   the same shared value, and a steady frame copies nothing at all.
+     * - THE CACHE KEY IS (identity, revision) OF EVERY LIGHT, in order: a light's setters bump its revision (a light
+     *   announces nothing on the graph, see Light::revision) and a list edit moves the identities - so a `setColor`
+     *   reaches the next `describe` exactly like it reached the live vector before, without a rebuild when it did
+     *   not happen.
+     * - The value is what a drawing call announces (`DrawDescription::light_values`); it is NOT a publication, and a
+     *   frame that was already described keeps the set it was lit with.
+     *
+     * @return The shared set (never null; empty when the scene has no lights).
+     */
+    [[nodiscard]] std::shared_ptr<const LightSet> lightSet() const;
+
     /** @brief Computes the bounding box of the visible scene, as the picture with @p layer_mask sees it.
      *
      * @details
@@ -470,6 +489,10 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     float                 opacity_ = 1.0f;
     NodePtr               root_;
     std::vector<LightPtr> lights_;
+    /// The shared light value and the (identity, revision) pairs it was built for (see lightSet). Mutable: a describe,
+    /// a collect and a publish all read the same cached answer, and none of them edits the scene.
+    mutable std::shared_ptr<const LightSet>                     light_set_{};
+    mutable std::vector<std::pair<const Light*, std::uint64_t>> light_key_{};
 
     /// The derived side (see detail::ScenePublisher): the baked rows, the per-view memo and the publication. Created
     /// by the constructor, which is also why this class' constructor and destructor are out of line.

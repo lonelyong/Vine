@@ -3700,10 +3700,10 @@ class MockBackend : public RenderBackend {
         }
         pass_state = description.state;
         for (const DrawDescription& draw : description.draws) {
-            if (draw.light_values.has_value()) {
+            if (draw.light_values != nullptr) {
                 ++light_sets;
                 last_light_count = draw.light_values->size();
-                last_light       = draw.light_values->empty() ? std::nullopt : std::optional<vn::graphics::LightValue>{ (*draw.light_values).front() };
+                last_light       = draw.light_values->empty() ? std::nullopt : std::optional<vn::graphics::LightValue>{ draw.light_values->values().front() };
             }
             if (!draw.camera.present) {
                 continue; // a drawing call with no view is no call at all
@@ -6112,7 +6112,7 @@ TEST(PassDrawTest, WhatAScenePassDescribesIsWhatItAnnounces)
     ASSERT_NE(draw.commands, nullptr);
     EXPECT_FALSE(draw.commands->empty()) << "三角形必须在里面，否则这条只验证了空集合相等";
     EXPECT_EQ(draw.commands->size(), backend->render_command_counts.back());
-    ASSERT_TRUE(draw.light_values.has_value()) << "有相机 ⇒ 灯一定被公告（哪怕是空的）";
+    ASSERT_TRUE(draw.light_values != nullptr) << "有相机 ⇒ 灯一定被公告（哪怕是空的）";
     EXPECT_EQ(draw.light_values->size(), backend->last_light_count);
     EXPECT_EQ(backend->render_calls, 1);
     EXPECT_EQ(backend->program_draws, 0) << "场景档走 render()，不走全屏程序";
@@ -6158,7 +6158,7 @@ TEST(PassDrawTest, WhatAScreenPassDescribesIsWhatItAnnounces)
     EXPECT_EQ(draw.source, source.get());
     EXPECT_EQ(draw.program.get(), program.get());
     EXPECT_TRUE(draw.camera.view.isEqual(cam->viewMatrix(), 1e-12)) << "the pass' own view, as a value";
-    EXPECT_FALSE(draw.light_values.has_value()) << "没有场景 ⇒ 不公告灯（\"没有场景\"不是关于光照的陈述）";
+    EXPECT_FALSE(draw.light_values != nullptr) << "没有场景 ⇒ 不公告灯（\"没有场景\"不是关于光照的陈述）";
     EXPECT_EQ(backend->light_sets, 0);
     // 线上走的真的是全屏程序那条路，参数就是描述里那几个
     EXPECT_EQ(backend->program_draws, 1);

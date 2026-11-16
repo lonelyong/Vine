@@ -304,6 +304,11 @@
   逐 draw 取锁会让它变红（实测 6 → 10）。
 - **观察点（另一半）**：`Device::contentCacheCounters()` 由两半拼成——ring / set 数字来自设备**自己那个驱动者**的
   `FrameScratch`，其余来自 `caches.numbers()`。单会话语义与拆分前逐值相同（`test_vk` 全绿，`BackendParityTest` 12/12）。
+- **帧首存储的复用与证人（B11 / I-02）**：`FrameHead` 的 pass / call 槽位是 `clear()` 而不是重建（`storageGrows()`
+  只在容量不够时增加）；`Device::frameHeadStorageGrows()` 把它暴露给测试，`VkFrameHeadTest.ASteadyFrameDoesNotGrowTheHeadsStorage`
+  用“3 帧预热后 5 帧不变”钉住。**它证明的只是头部的存储复用**，不是整帧零分配（管线键与内容缓存有它们自己的分配，
+  本批不声称也不测量）。同批修掉一个真实缺陷：`planDraw` 原先用 `plan = FrameHead::DrawPlan{}` 清空，等于每命令释放并重建
+  复用向量——现在是 `plan.clear()`。
 
 ### 2.17 驻留三态：一个键只有一个发布者（`G1` / `G4` / `G10`）
 
@@ -748,9 +753,9 @@
   各小锁 + 每驱动者批量）、S6c-2b（R6：释放不等帧）、S7（读回独立化：自带命令池/栅栏 + 计数等待 + 帧体内拒绝，
   并补上 ADR 早就写明的 `vkQueueSubmit` / `vkDeviceWaitIdle` 提交锁）、S9（契约收口 + TSan：`test_vk` 133/133 **0 race
   report**）已落地；S8 见 `.ai/design/graphics-sessions.md` §9.3。
-- `test_vk` **166 例 / 41 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **571**、`test_graphics` **613**；
+- `test_vk` **167 例 / 41 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **571**、`test_graphics` **614**；
   `BackendParityTest` **13/13**。S4（B5a）把目标 map、形状与租约归一为 `TargetTable`（`TargetClaims.{hpp,cpp}` 删除，
-  用例迁到 `TargetTableTest`，+1 例）。
+  用例迁到 `TargetTableTest`，+1 例）；B11 加了一条帧首存储证人、删掉每 pass 一份灯向量（`LightSet`）。
 - **一条构建教训**：SDK 的虚表改动后，**动态插件必须一起重建**（旧 `.so` 让 `VsgBackendPluginTest` 段错误）。
 - 实测（lavapipe，真实宿主）：11 pass / 10 draw，稳态中位 **8.24 ms**，GPU **7.15–7.74 ms**；ring + set 缓存改动
   −10%（9.03–9.23 → 8.16–8.30 ms）。

@@ -46,8 +46,8 @@ struct OwnedDraw {
     intrusive_ptr<RenderTarget> source;
     /// Screen kind: the fragment program to draw the source through (held).
     intrusive_ptr<const ShaderProgram> program;
-    /// The lights this draw announces, as values, or nullopt for NONE (see DrawDescription::light_values).
-    std::optional<std::vector<LightValue>> light_values;
+    /// The lights this draw announces, as values, or null for NONE (see DrawDescription::light_values).
+    LightSetPtr light_values;
 };
 
 /**

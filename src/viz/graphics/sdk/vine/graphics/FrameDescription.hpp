@@ -14,6 +14,7 @@
 #include "DepthRange.hpp"
 #include "ImageSource.hpp"
 #include "Light.hpp"
+#include "LightSet.hpp"
 #include "Node.hpp"
 #include "RenderCommand.hpp"
 #include "StateResolution.hpp"
@@ -145,11 +146,12 @@ struct VN_GRAPHICS_API DrawDescription {
     /// The lights this draw announces, as VALUES taken when the pass described itself (see LightValue).
     ///
     /// THE ONE CHANNEL: a frame carries numbers, never `Light` objects, so a light edited on the content thread
-    /// cannot change what a frame that is already described draws. Engaged-but-empty is a real state (a scene with no
-    /// lights: the announcement happens and says so, which is what restores a backend's default light), which is why
-    /// this is an optional and not a vector: "announce nothing" and "announce that there are none" are different
-    /// statements.
-    std::optional<std::vector<LightValue>> light_values;
+    /// cannot change what a frame that is already described draws. THE SET IS SHARED, NOT COPIED PER PASS: the scene
+    /// builds it once (`Scene::lightSet`) and every pass of a frame holds the same `shared_ptr`, so N passes cost one
+    /// value and a steady frame copies nothing (`G10`). Null means "announce nothing" and an engaged-but-empty set
+    /// means "there are none" (which is what restores a backend's default light) - two different statements, which is
+    /// why the field is nullable.
+    LightSetPtr light_values;
 };
 
 /**

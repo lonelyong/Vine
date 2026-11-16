@@ -249,6 +249,32 @@ bool Scene::hasLights() const
     return !lights_.empty();
 }
 
+std::shared_ptr<const LightSet> Scene::lightSet() const
+{
+    // THE KEY IS THE LIST ITSELF, AS IDENTITY + REVISION: a light's setters write fields in place (nothing on the graph
+    // announces it), so the revision is what tells "the same eight lights" from "the same eight lights, one recoloured".
+    // The comparison walks the list on every ask - the copy it replaces walked and copied the same values.
+    bool unchanged = light_set_ != nullptr && light_key_.size() == lights_.size();
+    for (std::size_t index = 0; unchanged && index < lights_.size(); ++index) {
+        const Light* light = lights_[index].get();
+        unchanged          = light_key_[index].first == light &&
+                             light_key_[index].second == (light != nullptr ? light->revision() : 0U);
+    }
+    if (!unchanged) {
+        std::vector<LightValue> values;
+        values.reserve(lights_.size());
+        light_key_.resize(lights_.size());
+        for (std::size_t index = 0; index < lights_.size(); ++index) {
+            const Light* light = lights_[index].get();
+            // A null entry keeps its slot as the default disabled light, exactly as the per-pass copy did.
+            values.push_back(light != nullptr ? light->value() : LightValue{});
+            light_key_[index] = { light, light != nullptr ? light->revision() : 0U };
+        }
+        light_set_ = LightSet::create(std::move(values));
+    }
+    return light_set_;
+}
+
 Aabbd Scene::boundingBox(std::uint32_t layer_mask) const
 {
     if (!visible_ || !hasRootedRoot()) {

@@ -236,15 +236,11 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
         }
     }
     draw.collect_viewport = viewport;
-    // The pass lights whatever content scene it renders: forward the scene's lights AS VALUES (see LightValue), so
-    // editing a light while this frame records cannot change what it lights. Announced even when there are none:
-    // "there are no lights" restores a backend's default. A null entry keeps its slot as the default disabled light.
-    std::vector<LightValue> light_values;
-    light_values.reserve(scene->lights().size());
-    for (const auto& light : scene->lights()) {
-        light_values.push_back(light != nullptr ? light->value() : LightValue{});
-    }
-    draw.light_values = std::move(light_values);
+    // The pass lights whatever content scene it renders: forward the scene's lights AS ONE SHARED VALUE (see
+    // LightValue / LightSet), so editing a light while this frame records cannot change what it lights, and a frame
+    // with several passes copies the set once (the scene owns it, not the pass). Announced even when there are none:
+    // "there are no lights" restores a backend's default.
+    draw.light_values = scene->lightSet();
     // The command list is NOT collected here: `draw.commands` stays null and the frame's expansion asks the source the
     // draw was bound to (see FrameExpand and detail::bindSceneDraws). A program override is a PASS fact, not a
     // per-command rewrite (see PassDraw::program_override): the backend resolves it per command exactly like the

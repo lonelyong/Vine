@@ -1073,7 +1073,11 @@ struct ContentCaches::Impl {
                                 ContentRefusal&                                        refusal,
                                 FrameBuilds&                                           builds)
     {
-        plan = FrameHead::DrawPlan{}; // a failure leaves an empty plan: `pipeline == VK_NULL_HANDLE` is what the recorder skips
+        // A FAILURE LEAVES AN EMPTY PLAN (`pipeline == VK_NULL_HANDLE` is what the recorder skips) - via `clear()`, NOT
+        // a fresh DrawPlan: the plan's stream vector lives in the frame head's reused storage, and assigning over it
+        // freed and reallocated that storage on every command of every frame (the exact defect the head's file note
+        // promises cannot happen).
+        plan.clear();
         const vn::graphics::ShaderProgramDescriptionPtr program =
             pass.program_override_description != nullptr ? pass.program_override_description : command.programDescription();
         const vn::graphics::ShaderProgramDescription* program_description = program != nullptr ? program.get() : default_program;

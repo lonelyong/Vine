@@ -107,13 +107,14 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
 {
     vn::graphics::VineShadowBlock block{};
     if (shadow.light == nullptr || !shadow.has_view_projection || shadow.view == VK_NULL_HANDLE || !draw.camera.present ||
-        !draw.light_values.has_value())
+        draw.light_values == nullptr)
     {
         return block;
     }
 
-    const vn::graphics::LightValue* caster = nullptr;
-    for (const vn::graphics::LightValue& light : *draw.light_values) {
+    const std::span<const vn::graphics::LightValue> announced = draw.light_values->values();
+    const vn::graphics::LightValue*                caster    = nullptr;
+    for (const vn::graphics::LightValue& light : announced) {
         if (light.identity == shadow.light) {
             caster = &light;
             break;
@@ -125,7 +126,7 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
         return block;
     }
 
-    const std::size_t slot = vn::graphics::packedSlotOf(*draw.light_values, shadow.light);
+    const std::size_t slot = vn::graphics::packedSlotOf(announced, shadow.light);
     if (slot >= vn::graphics::kMaxLights) {
         return block;
     }
@@ -276,8 +277,8 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
         // THE LIGHTS: the draw's announcement, packed in view space (see LightAbi.hpp's packLightBlock). No
         // announcement and an empty one both mean the backend default, an ambient-lit scene.
         vn::graphics::VineLightsBlock lights_block{};
-        if (draw.light_values.has_value()) {
-            (void)vn::graphics::packLightBlock(*draw.light_values, draw.camera, lights_block);
+        if (draw.light_values != nullptr) {
+            (void)vn::graphics::packLightBlock(draw.light_values->values(), draw.camera, lights_block);
         }
         else {
             (void)vn::graphics::packLightBlock({}, draw.camera, lights_block);
@@ -464,8 +465,8 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
     }
 
     vn::graphics::VineLightsBlock lights_block{};
-    if (draw.light_values.has_value()) {
-        (void)vn::graphics::packLightBlock(*draw.light_values, draw.camera, lights_block);
+    if (draw.light_values != nullptr) {
+        (void)vn::graphics::packLightBlock(draw.light_values->values(), draw.camera, lights_block);
     }
     else {
         (void)vn::graphics::packLightBlock({}, draw.camera, lights_block);

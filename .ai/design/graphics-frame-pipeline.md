@@ -322,7 +322,7 @@
 | `ContentRef{Handle id, uint64 revision}` | 跨层键；`contentRefOf()` 是唯一构造 | 已存在 |
 | `Geometry::description()` / `MaterialBase::description()` | 按 revision 缓存的不可变值 | 已存在 |
 | `ShaderProgram::description() → ShaderProgramDescriptionPtr` | 程序文本 + id + revision；按 revision 缓存 | 已落地（W1） |
-| `Light::value() → LightValue` | 灯的值半边；pass 描述自己时快照成 `DrawDescription::light_values` | 已落地（W1） |
+| `Light::value() → LightValue` | 灯的值半边；`Scene::lightSet()` 把它们组成**一份不可变集合**（`LightSet`），pass 描述自己时共享给 `DrawDescription::light_values`（B11；之前每 pass 一份 `vector`） | 已落地（W1 / B11） |
 
 ### 4.2 派生层
 
@@ -425,7 +425,7 @@
 | N3 | 快照常驻 ≤ 2× 行表字节数 | `alloc_trace.c` / RSS |
 | N4 | TSan 0 条警告 | `scripts/tsan_check.sh` |
 | N5 | 既有用例语义断言改动 ≤ 5% | 直接数 |
-| N6 | 帧内 arena 外 0 次分配 | 分配计数 |
+| N6 | 帧内 arena 外 0 次分配 | 分配计数；B11 先钉住帧首存储的复用：`Scene::lightSet` 一份共享灯集（`ValueChannelTest.EveryPassOfOneFrameHoldsTheSameLightSetUntilALightMoves`）+ vk `VkFrameHeadTest.ASteadyFrameDoesNotGrowTheHeadsStorage`（只证明头部存储，不声称整帧零分配） |
 | N7 | 头文件依赖不增 | `check_include_hygiene.py` |
 | N8 | Windows / Linux 同一套代码 | CI |
 | N9 | 不引入第三方依赖 | review + `_vcpkg.json` |

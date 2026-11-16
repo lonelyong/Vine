@@ -1311,8 +1311,8 @@ void VsgBackend::collectFrame(FrameScratch& scratch, const vn::graphics::FrameDe
                 announceDepthRange(scratch, *description.depth_range);
             }
             for (const vn::graphics::DrawDescription& draw : description.draws) {
-                if (draw.light_values.has_value()) {
-                    announceLights(scratch, *draw.light_values);
+                if (draw.light_values != nullptr) {
+                    announceLights(scratch, draw.light_values->values());
                 }
                 if (!draw.camera.present) {
                     continue; // a drawing call with no view is no call at all (see DrawDescription)
@@ -2341,10 +2341,10 @@ void VsgBackend::announceLights(FrameScratch& scratch, std::span<const vn::graph
     if (!scratch.recorder.inPass()) {
         return;
     }
-    // The values are already a copy taken on the content side (see Light::value): only the container has to become a
-    // span, and the scratch vector keeps that from being an allocation per pass per frame.
-    scratch.light_scratch.assign(lights.begin(), lights.end());
-    (void)scratch.recorder.setLights(std::span<const vn::graphics::LightValue>(scratch.light_scratch));
+    // NO INTERMEDIATE COPY: the frame value holds the scene's ONE set (see LightSet), and the recorder snapshots the
+    // span into its frame arena before returning - a per-driver scratch vector here would be the second copy of the
+    // same numbers on every pass.
+    (void)scratch.recorder.setLights(lights);
 }
 
 void VsgBackend::announcePassInputs(FrameScratch& scratch, const std::vector<vn::graphics::ImageSource>& inputs)

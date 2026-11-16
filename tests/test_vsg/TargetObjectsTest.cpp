@@ -607,7 +607,7 @@ void runLostSubmissionPhase(const vn::backend_vsg::DeviceResult& device, DeviceP
     EXPECT_FALSE(target->instance().built) << "the new images have never been written into either";
 }
 
-TEST(OffscreenTargetTest, AClearedTargetReadsBackAsItsClearColour)
+TEST(TargetObjectsTest, AClearedTargetReadsBackAsItsClearColour)
 {
     // The phase body is also what the phase table runs (see DevicePhases.hpp): ONE spelling of the
     // capability, read out here as a gtest case and there as a `[selftest]` line.
@@ -622,7 +622,7 @@ TEST(OffscreenTargetTest, AClearedTargetReadsBackAsItsClearColour)
     EXPECT_EQ(counters.targets_built, 1U);
 }
 
-TEST(OffscreenTargetTest, ABlackClearReadsBackAsNoContent)
+TEST(TargetObjectsTest, ABlackClearReadsBackAsNoContent)
 {
     const auto created = createDevice();
     if (!created.ok) {
@@ -655,7 +655,7 @@ TEST(OffscreenTargetTest, ABlackClearReadsBackAsNoContent)
     EXPECT_TRUE(probe.wholeImageMatches(Rgba8{ 0U, 0U, 0U, 255U }));
 }
 
-TEST(OffscreenTargetTest, ASecondFrameReadsBackTheSamePicture)
+TEST(TargetObjectsTest, ASecondFrameReadsBackTheSamePicture)
 {
     const auto created = createDevice();
     if (!created.ok) {
@@ -700,7 +700,7 @@ TEST(OffscreenTargetTest, ASecondFrameReadsBackTheSamePicture)
     }
 }
 
-TEST(OffscreenTargetTest, AResizeReplacesTheExtentAndParksWhatItReplaced)
+TEST(TargetObjectsTest, AResizeReplacesTheExtentAndParksWhatItReplaced)
 {
     const auto created = createDevice();
     if (!created.ok) {
@@ -712,7 +712,7 @@ TEST(OffscreenTargetTest, AResizeReplacesTheExtentAndParksWhatItReplaced)
     EXPECT_EQ(counters.parked, 1U);
 }
 
-TEST(OffscreenTargetTest, ARedundantResizeRepairsNothingAndReplacesNothing)
+TEST(TargetObjectsTest, ARedundantResizeRepairsNothingAndReplacesNothing)
 {
     const auto created = createDevice();
     if (!created.ok) {
@@ -772,7 +772,7 @@ TEST(OffscreenTargetTest, ARedundantResizeRepairsNothingAndReplacesNothing)
     }
 }
 
-TEST(OffscreenTargetTest, AResizeWithoutAParkingWindowCountsTheDeviceIdle)
+TEST(TargetObjectsTest, AResizeWithoutAParkingWindowCountsTheDeviceIdle)
 {
     const auto created = createDevice();
     if (!created.ok) {
@@ -835,7 +835,7 @@ TEST(OffscreenTargetTest, AResizeWithoutAParkingWindowCountsTheDeviceIdle)
     }
 }
 
-TEST(OffscreenTargetTest, AResizeRebuildsTheDepthReadbackForTheNewExtent)
+TEST(TargetObjectsTest, AResizeRebuildsTheDepthReadbackForTheNewExtent)
 {
     const auto created = createDevice();
     if (!created.ok) {
@@ -908,7 +908,7 @@ TEST(OffscreenTargetTest, AResizeRebuildsTheDepthReadbackForTheNewExtent)
            "change because the image was rebuilt";
 }
 
-TEST(OffscreenTargetTest, ALeasedPairIsResizedLenderFirstAndTheBorrowerFollows)
+TEST(TargetObjectsTest, ALeasedPairIsResizedLenderFirstAndTheBorrowerFollows)
 {
     const auto created = createDevice();
     if (!created.ok) {
@@ -988,7 +988,7 @@ TEST(OffscreenTargetTest, ALeasedPairIsResizedLenderFirstAndTheBorrowerFollows)
     }
 }
 
-TEST(OffscreenTargetTest, ARebuildIsRefusedWhileADepthLeaseIsInForce)
+TEST(TargetObjectsTest, ARebuildIsRefusedWhileADepthLeaseIsInForce)
 {
     const auto created = createDevice();
     if (!created.ok) {
@@ -1071,7 +1071,7 @@ TEST(OffscreenTargetTest, ARebuildIsRefusedWhileADepthLeaseIsInForce)
     }
 }
 
-TEST(OffscreenTargetTest, AProbeBeforeAnyCaptureIsRefusedNotAnswered)
+TEST(TargetObjectsTest, AProbeBeforeAnyCaptureIsRefusedNotAnswered)
 {
     const auto created = createDevice();
     if (!created.ok) {
@@ -1126,7 +1126,7 @@ TEST(OffscreenTargetTest, AProbeBeforeAnyCaptureIsRefusedNotAnswered)
     EXPECT_EQ(static_cast<int>(refusalOf(*target, ReadbackKind::Color, 3U)), static_cast<int>(ReadbackRefusal::UnknownAttachment));
 }
 
-TEST(OffscreenTargetTest, AD16DepthIsScaledByItsRangeAndAD24DepthIsRefused)
+TEST(TargetObjectsTest, AD16DepthIsScaledByItsRangeAndAD24DepthIsRefused)
 {
     const auto created = createDevice();
     if (!created.ok) {
@@ -1194,7 +1194,7 @@ TEST(OffscreenTargetTest, AD16DepthIsScaledByItsRangeAndAD24DepthIsRefused)
     }
 }
 
-TEST(OffscreenTargetTest, AFloatColourAttachmentIsRenderedButNotReadBack)
+TEST(TargetObjectsTest, AFloatColourAttachmentIsRenderedButNotReadBack)
 {
     const auto created = createDevice();
     if (!created.ok) {
@@ -1238,7 +1238,7 @@ TEST(OffscreenTargetTest, AFloatColourAttachmentIsRenderedButNotReadBack)
         << "capturing the depth does not change what the colour half can do";
 }
 
-TEST(OffscreenTargetTest, ALostSubmissionIsRepairedByTheNextFrameAndOnlyOnce)
+TEST(TargetObjectsTest, ALostSubmissionIsRepairedByTheNextFrameAndOnlyOnce)
 {
     const auto created = createDevice();
     if (!created.ok) {
@@ -1249,7 +1249,7 @@ TEST(OffscreenTargetTest, ALostSubmissionIsRepairedByTheNextFrameAndOnlyOnce)
     EXPECT_EQ(counters.frames, 3U) << "the phase drives three frames: fresh, repaired, steady";
 }
 
-TEST(OffscreenTargetTest, ARePointIsRefusedWhenTheLenderShrankBelowTheBorrower)
+TEST(TargetObjectsTest, ARePointIsRefusedWhenTheLenderShrankBelowTheBorrower)
 {
     const auto created = createDevice();
     if (!created.ok) {

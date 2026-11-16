@@ -243,7 +243,7 @@ struct Scene {
     draw.source               = scene.gbuffer.get();
     draw.program              = scene.light_program;
     draw.program_description  = scene.light_program->description();
-    draw.light_values         = std::vector<LightValue>{ ambientLight() };
+    draw.light_values         = vn::graphics::LightSet::create({ ambientLight() });
     pass.draws.push_back(std::move(draw));
 
     entry.draw = std::move(pass);
