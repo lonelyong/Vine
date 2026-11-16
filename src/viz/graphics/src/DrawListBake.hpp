@@ -84,13 +84,13 @@ struct Row {
     /// from a later node built at the same address.
     NodeId identity{};
 
-    // ---- structure: walk order, so a row is followed by its own subtree
-    std::uint32_t parent{ 0xFFFFFFFFU };        ///< 0-based row index; the table's first row has none.
+    /// 0-based row index into the WALK-ORDERED table (so a row is followed by its own subtree); the first row has none.
+    std::uint32_t parent{ 0xFFFFFFFFU };
     std::uint32_t end{ 0 };                     ///< One past this row's subtree.
     std::uint32_t child_count{ 0 };
 
-    // ---- OWN facts (the fold's input)
-    Mat4d                        local{};        ///< Placement in the parent's frame.
+    /// Placement in the parent's frame; this and the fields below it are the row's OWN contribution - the fold's input.
+    Mat4d                        local{};
     float                        own_opacity{ 1.0F };
     std::optional<std::uint32_t> own_layers{};
     std::optional<int>           own_draw_order{};
@@ -122,8 +122,9 @@ struct Row {
     GeometryDescriptionPtr       description{};
     std::vector<DrawFacts>       draws{};
 
-    // ---- RESOLVED facts (the fold's output; what a select reads)
-    Mat4d            world{};                    ///< Placed by this row's own `local`, from the fold (no camera read).
+    /// Placed by this row's own `local`, from the fold (no camera read); this and the fields below it are the
+    /// fold's OUTPUT - what a select reads once the placement has been accumulated.
+    Mat4d            world{};
     /// The placement accumulated ABOVE this row.
     ///
     /// A per-view placement produces the row's WHOLE local matrix (it replaces `local`), so it has to be composed

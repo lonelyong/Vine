@@ -1241,11 +1241,12 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     [[nodiscard]] std::vector<String> hostOutputNames() const;
 
-    // ---- Registration by owner (see PassChain): one slot table, an owner pointer per row ----
-
     friend class PassRegistry;
 
     /** @brief Removes every pass whose slot is owned by @p owner (each one as removePass).
+     *
+     * @details
+     * - Ownership is ONE SLOT TABLE with an owner pointer per row (see PassChain): a row is removed by its own name inside that owner's scope, and taking a whole owner back is one walk.
      *
      * @param owner Owner whose passes are taken back (null is a no-op: unowned passes belong to whoever added them).
      */
@@ -1349,7 +1350,6 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     void reportUnproducedInput(raw_ptr<RenderPass> pass, const OutputIdentity& identity, const String& what);
 
-    // ---- Fields ----
     intrusive_ptr<RenderBackend> device_;
     // THIS ENGINE'S FRAME DRIVER: borrowed from the device (RenderDevice::createSession) and returned to it
     // (RenderDevice::releaseSession) when the device is replaced or this engine dies. The device owns it, so a NULL

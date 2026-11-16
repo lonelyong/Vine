@@ -440,9 +440,8 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
         return true;
     }
 
-    // ---- Deferred + forward composite (transparent content present) ----
-    // One off-screen composite target whose single render pass stacks the
-    // passes in record order: fullscreen lighting (0) -> forward (+1). It does
+    // THE DEFERRED + FORWARD COMPOSITE (transparent content present): one off-screen composite target whose single
+    // render pass stacks the passes in record order: fullscreen lighting (0) -> forward (+1). It does
     // NOT own a depth buffer: its passes draw against the G-buffer's depth (a
     // DepthView edge, stated by each pass that draws into it), so the opaque
     // scene is rasterised once and the forward content tests against that same

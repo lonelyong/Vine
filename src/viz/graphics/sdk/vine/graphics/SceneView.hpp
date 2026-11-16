@@ -73,8 +73,6 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     ~SceneView();
 
   public:
-    // ---- Camera and content ----
-
     /** @brief Gets the view camera (non-owning). */
     raw_ptr<Camera> camera() const;
 
@@ -110,8 +108,6 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     void publishContent();
 
   public:
-    // ---- Navigation ----
-
     /** @brief Gets the camera manipulator driving this view's camera.
      *
      * @details
@@ -155,8 +151,6 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     void home();
 
   public:
-    // ---- Geometry ----
-
     /** @brief Refreshes this view's geometry for a new surface size and device pixel ratio.
      *
      * @details
@@ -226,8 +220,6 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     [[nodiscard]] double surfacePixelRatio() const noexcept;
 
   public:
-    // ---- Input ----
-
     /** @brief Pushes a mouse event to the manipulator.
      *
      * @param event Mouse event to forward.
@@ -260,8 +252,6 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     [[nodiscard]] const InputRouter& inputRouter() const noexcept;
 
   public:
-    // ---- Presentation ----
-
     /** @brief Binds the engine this view renders through (borrowed through a lease; null detaches).
      *
      * @details

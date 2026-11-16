@@ -700,7 +700,7 @@ void addForwardShowcase(vn::graphics::Group* root)
     using vn::graphics::StateNode;
     using vn::math::Vec3d;
 
-    // --- StateNode{ PolygonMode::Line }: wireframe box ----------------------
+    // A WIREFRAME BOX: the state node turns polygon mode to lines for the box under it.
     // Each box is attached under ITS state node only (single parent).
     {
         auto state = make_intrusive<StateNode>();
@@ -709,7 +709,7 @@ void addForwardShowcase(vn::graphics::Group* root)
         root->addChild(state);
     }
 
-    // --- StateNode{ CullMode::Back }: single-sided box ----------------------
+    // A SINGLE-SIDED BOX: back-face culling is this node's contribution, so the geometry shows one side of each face.
     {
         auto state = make_intrusive<StateNode>();
         state->setCullMode(vn::graphics::CullMode::Back);
@@ -717,7 +717,8 @@ void addForwardShowcase(vn::graphics::Group* root)
         root->addChild(state);
     }
 
-    // --- Custom magenta program on a box (Geometry::setProgram) -------------
+    // A CUSTOM PROGRAM ON ONE BOX (Geometry::setProgram): the geometry carries its own magenta fragment instead of
+    // the library's, which is what the per-geometry program slot is for.
     {
         auto program = make_intrusive<ShaderProgram>();
         program->setName(u8"demo_magenta");
@@ -742,7 +743,7 @@ void addForwardShowcase(vn::graphics::Group* root)
         }
     }
 
-    // --- Point cloud: primitive Topology::Points + cyan program -------------
+    // A POINT CLOUD: its own cyan program and a primitive whose topology is Points.
     {
         auto program = make_intrusive<ShaderProgram>();
         program->setName(u8"demo_cyan_points");
@@ -786,7 +787,7 @@ void addForwardShowcase(vn::graphics::Group* root)
         root->addChild(cloud);
     }
 
-    // --- Nested MatrixTransform: world-matrix chain --------------------------
+    // A WORLD-MATRIX CHAIN: two nested transforms, so the inner box is placed by both.
     {
         auto outer = make_intrusive<MatrixTransform>();
         outer->setName(u8"nested_outer");
@@ -1947,7 +1948,7 @@ void DemoScene::installContent(const DemoCubeImages& images)
 {
     using vn::math::Vec3d;
 
-    // --- Cube-mapped box: the material's texture is sampled BY DIRECTION ---
+    // THE CUBE-MAPPED BOX: its material's texture is sampled BY DIRECTION.
     // Its texcoord channel carries THREE components (a direction, not a UV pair), which is what makes the
     // content set sample the texture as a cube map - see Geometry::setTexcoords3. BOTH paths build the
     // `samplerCube` variant from that width: the forward content set and the G-buffer geometry stage. It

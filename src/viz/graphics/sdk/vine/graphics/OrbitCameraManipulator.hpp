@@ -51,8 +51,6 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     ~OrbitCameraManipulator() override;
 
   public:
-    // ---- Orbit / pan / zoom ----
-
     /** @brief Orbits the camera around the current centre (yaw/pitch).
      *
      * @param deltaYaw   Yaw angle change in radians.
@@ -130,8 +128,6 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     /** @brief Restores the view captured when the manipulator was constructed. */
     void home() override;
 
-    // ---- Properties ----
-
     /** @brief Sets whether wheel zoom keeps the cursor anchor fixed on screen.
      *
      * @details
@@ -191,8 +187,6 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     void apply() override;
 
   public:
-    // ---- Window input callbacks ----
-
     /** @brief Handles a mouse button press (see CameraManipulator). */
     void onMousePress(const vn::window::MouseEvent& event) override;
 
@@ -262,8 +256,7 @@ class VN_GRAPHICS_API OrbitCameraManipulator : public CameraManipulator {
     double viewportAspect() const;
 
   private:
-    // ---- State ----
-
+    /// The scene ray picking, anchor fallback and fitToScreen() read; BORROWED, and null when the host gave none.
     raw_ptr<Scene> scene_ = nullptr;
 
     Vec3d  center_{ 0.0, 0.0, 0.0 };

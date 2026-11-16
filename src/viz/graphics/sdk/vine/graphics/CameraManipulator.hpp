@@ -83,9 +83,7 @@ class VN_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
     virtual void home();
 
   public:
-    // ---- Window input callbacks (typically driven by a SceneView) ----
-
-    /** @brief Handles a mouse button press.
+    /** @brief Handles a mouse button press (typically delivered by a SceneView).
      *
      * Starts a drag interaction (rotate for the left button, pan for the
      * middle/right button).
@@ -166,8 +164,7 @@ class VN_GRAPHICS_API CameraManipulator : public RefCounted<CameraManipulator> {
      */
     explicit CameraManipulator(raw_ptr<Camera> camera);
 
-    // ---- State shared with derived classes ----
-
+    /// The camera this manipulator drives; BORROWED, and it outlives the manipulator (see the constructor).
     raw_ptr<Camera> camera_ = nullptr;
     Mode            mode_   = Mode::Orbit;
     /// The picture the user sees, when it is not the live camera (see setPresentedCamera).

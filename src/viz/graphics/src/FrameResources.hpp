@@ -56,8 +56,6 @@ class FrameResources {
     FrameResources& operator=(const FrameResources&) = delete;
 
   public:
-    // ---- Host bindings: standing, across frames ----
-
     /** @brief Adds or replaces a host binding, returning the report a caller should emit for an unusable one.
      *
      * @details
@@ -82,8 +80,6 @@ class FrameResources {
      * @return The bindings; a binding with a null target is never stored.
      */
     [[nodiscard]] const std::map<String, intrusive_ptr<RenderTarget>>& hostBindings() const noexcept;
-
-    // ---- This frame's production and publication tables ----
 
     /** @brief Clears the per-frame tables: one call at the start of a compile. */
     void beginFrame();
@@ -129,8 +125,6 @@ class FrameResources {
      * @return The target the name serves, or null when nothing produced it.
      */
     [[nodiscard]] raw_ptr<RenderTarget> resolve(const String& name) const noexcept;
-
-    // ---- Transient targets ----
 
     /** @brief Marks every transient as undeclared, ready for this compile's declarations. */
     void beginTransientCompile();
