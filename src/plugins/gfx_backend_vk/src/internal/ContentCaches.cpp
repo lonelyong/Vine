@@ -1063,17 +1063,17 @@ struct ContentCaches::Impl {
      * @param builds            This frame's admissions (see FrameBuilds).
      * @return true when the command can be recorded.
      */
-    [[nodiscard]] bool planCommand(const vn::graphics::RenderCommand&                     command,
-                                   const vn::graphics::PassDraw&                          pass,
-                                   const vn::graphics::ShaderProgramDescription*          default_program,
-                                   const vn::graphics::backend::RenderPassCompatibility&  compatibility,
-                                   VkRenderPass                                           render_pass,
-                                   std::uint32_t                                          color_attachments,
-                                   CommandPlan&                                           plan,
-                                   ContentRefusal&                                        refusal,
-                                   FrameBuilds&                                           builds)
+    [[nodiscard]] bool planDraw(const vn::graphics::RenderCommand&                     command,
+                                const vn::graphics::PassDraw&                          pass,
+                                const vn::graphics::ShaderProgramDescription*          default_program,
+                                const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                                VkRenderPass                                           render_pass,
+                                std::uint32_t                                          color_attachments,
+                                FrameHead::DrawPlan&                                   plan,
+                                ContentRefusal&                                        refusal,
+                                FrameBuilds&                                           builds)
     {
-        plan = CommandPlan{}; // a failure leaves an empty plan: `pipeline == VK_NULL_HANDLE` is what the recorder skips
+        plan = FrameHead::DrawPlan{}; // a failure leaves an empty plan: `pipeline == VK_NULL_HANDLE` is what the recorder skips
         const vn::graphics::ShaderProgramDescriptionPtr program =
             pass.program_override_description != nullptr ? pass.program_override_description : command.programDescription();
         const vn::graphics::ShaderProgramDescription* program_description = program != nullptr ? program.get() : default_program;
@@ -1173,7 +1173,7 @@ struct ContentCaches::Impl {
     }
 
     /**
-     * @brief Resolves one screen draw's fragment program and pipeline (see @ref planCommand for the shared idea).
+     * @brief Resolves one screen draw's fragment program and pipeline (see @ref planDraw for the shared idea).
      *
      * @param draw              The screen draw (its fragment program is read).
      * @param pass              The pass drawing it (state is read).
@@ -1184,15 +1184,16 @@ struct ContentCaches::Impl {
      * @param refusal           Receives the reason the draw could not be resolved, with its code and category.
      * @return true when the draw can be recorded.
      */
-    [[nodiscard]] bool planScreen(const vn::graphics::DrawDescription&                  draw,
-                                  const vn::graphics::PassDraw&                          pass,
-                                  const vn::graphics::backend::RenderPassCompatibility&  compatibility,
-                                  VkRenderPass                                           render_pass,
-                                  std::uint32_t                                          color_attachments,
-                                  ScreenPlan&                                            plan,
-                                  ContentRefusal&                                        refusal)
+    [[nodiscard]] bool planDraw(const vn::graphics::DrawDescription&                  draw,
+                                const vn::graphics::PassDraw&                          pass,
+                                const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                                VkRenderPass                                           render_pass,
+                                std::uint32_t                                          color_attachments,
+                                FrameHead::DrawPlan&                                   plan,
+                                ContentRefusal&                                        refusal)
     {
-        plan = ScreenPlan{}; // see planCommand: an empty plan is "this draw records nothing"
+        plan      = FrameHead::DrawPlan{}; // see planDraw(RenderCommand): an empty plan is "this draw records nothing"
+        plan.kind = FrameHead::Kind::Screen;
         // THE PROGRAM'S TEXT: the value the frame carries, else the live program's cached description.
         vn::graphics::ShaderProgramDescriptionPtr fragment_description = draw.program_description;
         if (fragment_description == nullptr && draw.program != nullptr) {
@@ -1704,32 +1705,32 @@ VkPipelineLayout ContentCaches::screenPipelineLayout() const noexcept
     return impl->screen_pipeline_layout;
 }
 
-bool ContentCaches::planCommand(const vn::graphics::RenderCommand&                     command,
-                                const vn::graphics::PassDraw&                          pass,
-                                const vn::graphics::ShaderProgramDescription*          default_program,
-                                const vn::graphics::backend::RenderPassCompatibility&  compatibility,
-                                const VkRenderPass                                     render_pass,
-                                const std::uint32_t                                    color_attachments,
-                                CommandPlan&                                           plan,
-                                ContentRefusal&                                        refusal,
-                                const Lock&                                            held,
-                                FrameBuilds&                                           builds)
+bool ContentCaches::planDraw(const vn::graphics::RenderCommand&                     command,
+                             const vn::graphics::PassDraw&                          pass,
+                             const vn::graphics::ShaderProgramDescription*          default_program,
+                             const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                             const VkRenderPass                                     render_pass,
+                             const std::uint32_t                                    color_attachments,
+                             FrameHead::DrawPlan&                                   plan,
+                             ContentRefusal&                                        refusal,
+                             const Lock&                                            held,
+                             FrameBuilds&                                           builds)
 {
     (void)held; // the type is the proof; an unheld lock cannot be built outside this class (see Lock)
-    return impl->planCommand(command, pass, default_program, compatibility, render_pass, color_attachments, plan, refusal, builds);
+    return impl->planDraw(command, pass, default_program, compatibility, render_pass, color_attachments, plan, refusal, builds);
 }
 
-bool ContentCaches::planScreen(const vn::graphics::DrawDescription&                  draw,
-                               const vn::graphics::PassDraw&                          pass,
-                               const vn::graphics::backend::RenderPassCompatibility&  compatibility,
-                               const VkRenderPass                                     render_pass,
-                               const std::uint32_t                                    color_attachments,
-                               ScreenPlan&                                            plan,
-                               ContentRefusal&                                        refusal,
-                               const Lock&                                            held)
+bool ContentCaches::planDraw(const vn::graphics::DrawDescription&                  draw,
+                             const vn::graphics::PassDraw&                          pass,
+                             const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                             const VkRenderPass                                     render_pass,
+                             const std::uint32_t                                    color_attachments,
+                             FrameHead::DrawPlan&                                   plan,
+                             ContentRefusal&                                        refusal,
+                             const Lock&                                            held)
 {
-    (void)held; // see planCommand
-    return impl->planScreen(draw, pass, compatibility, render_pass, color_attachments, plan, refusal);
+    (void)held; // see the content overload
+    return impl->planDraw(draw, pass, compatibility, render_pass, color_attachments, plan, refusal);
 }
 
 ContentCaches::Lock ContentCaches::lock() const
@@ -2052,34 +2053,36 @@ bool ContentCaches::ensureFallback(const VkCommandBuffer commands, const Lock& h
 
 void ContentCaches::resolveTextures(const vn::graphics::MaterialDescription* const material,
                                     const VkCommandBuffer                          commands,
-                                    ResolvedTextures&                              out,
+                                    FrameHead&                                     head,
+                                    FrameHead::DrawPlan&                           plan,
                                     ContentRefusal&                                refusal,
                                     const Lock&                                    held,
                                     const ContentImages::BatchId                   batch)
 {
     (void)held;
-    out = ResolvedTextures{};
+    plan.slots = {};
     // THE STAND-IN FIRST: it is what an absent slot binds, and its own copy has to be recorded before any render pass
-    // begins - which is where this runs (the frame head, or a warm-up's transfer batch for preparePass).
+    // begins - which is where this runs (the frame head, or a warm-up's transfer batch for preparePass). The stand-in
+    // and the two samplers are the same for every call of one frame, so they land on the HEAD, not on the plan.
     vn::String why;
     if (commands != VK_NULL_HANDLE) {
         (void)impl->images.ensureFallback(commands, batch, &why);
     }
-    out.fallback_view    = impl->images.fallbackView();
-    out.fallback_sampler = impl->images.fallbackSampler();
-    out.shadow_sampler   = impl->images.samplerFor(detail::kShadowSampler);
+    head.fallback_view    = impl->images.fallbackView();
+    head.fallback_sampler = impl->images.fallbackSampler();
+    head.shadow_sampler   = impl->images.samplerFor(detail::kShadowSampler);
     if (material == nullptr) {
-        for (SlotBinding& binding : out.slots) {
-            binding.view    = out.fallback_view;
-            binding.sampler = out.fallback_sampler;
+        for (FrameHead::SlotBinding& binding : plan.slots) {
+            binding.view    = head.fallback_view;
+            binding.sampler = head.fallback_sampler;
         }
         return;
     }
     const vn::graphics::MaterialParameters& values = material->values();
     for (std::uint32_t slot = 0; slot < kTextureSlots; ++slot) {
-        SlotBinding& binding = out.slots[slot];
-        binding.view         = out.fallback_view;
-        binding.sampler      = out.fallback_sampler;
+        FrameHead::SlotBinding& binding = plan.slots[slot];
+        binding.view                    = head.fallback_view;
+        binding.sampler                 = head.fallback_sampler;
         const vn::graphics::TextureSlotBinding& named = values.textures[slot];
         if (named.texture == nullptr || !named.texture->isComplete()) {
             continue;

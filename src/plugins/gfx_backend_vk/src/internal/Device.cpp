@@ -24,6 +24,7 @@
 #include <vine/backend_vk/internal/ContentCaches.hpp>
 #include <vine/backend_vk/internal/ContentDraw.hpp>
 #include <vine/backend_vk/internal/ContentImages.hpp>
+#include <vine/backend_vk/internal/FrameHead.hpp>
 #include <vine/backend_vk/internal/FrameScratch.hpp>
 #include <vine/backend_vk/internal/PipelineCacheFile.hpp>
 #include <vine/backend_vk/internal/ReadbackStaging.hpp>
@@ -476,29 +477,6 @@ class Device::FrameDriver final : public vn::graphics::RenderFrameExecutor
         Fence,       ///< `vkCreateFence` refused.
     };
 
-    /**
-     * @brief One drawing call's resolved content: the frame head's answers, reused frame after frame.
-     *
-     * @details
-     * - THE RECORDING PATH READS ONLY THIS. `plans` and `textures` are parallel to the drawing call's commands (see
-     *   `ContentCaches::CommandPlan`); a screen draw uses `screen` / `screen_textures` instead. `refusal` carries the
-     *   head's first reason the call could not be resolved, so the frame loop reports it where the draw is recorded.
-     * - THE CONTAINERS ARE REUSED, NOT REALLOCATED: `resize` keeps what the previous frame reserved, so a steady
-     *   frame resolves without touching the allocator (G10).
-     */
-    struct DrawContent {
-        std::vector<ContentCaches::CommandPlan>      plans{};
-        std::vector<ContentCaches::ResolvedTextures> textures{};
-        ContentCaches::ScreenPlan                    screen{};
-        ContentCaches::ResolvedTextures              screen_textures{};
-        ContentRefusal                               refusal{};
-    };
-
-    /// @brief One pass' resolved drawing calls, parallel to the frame's `draw.draws`.
-    struct PassContent {
-        std::vector<DrawContent> draws{};
-    };
-
   public:
     explicit FrameDriver(Impl& owner_device) noexcept;
 
@@ -615,9 +593,9 @@ class Device::FrameDriver final : public vn::graphics::RenderFrameExecutor
     /// It owns neither, and it is constructed after both are in place (see the constructor).
     ContentDraw recorder;
     ///
-    /// THE FRAME HEAD'S ANSWERS (see DrawContent): one entry per runnable pass, reused across frames. The recording
-    /// path takes no cache lock because everything it reads was resolved into this table (S6c).
-    std::vector<PassContent> frame_content{};
+    /// THE FRAME HEAD'S ANSWERS (see FrameHead): one entry per runnable pass, reused across frames. The recording
+    /// path takes no cache lock because everything it reads was resolved into this value (S6c).
+    FrameHead frame_head{};
 };
 
 struct Device::Impl {
@@ -1585,55 +1563,52 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             const std::lock_guard<std::mutex> program_held(program_mutex);
             head_program = default_program;
         }
-        frame_content.resize(runnable_passes.size());
-        for (std::size_t pass_position = 0; pass_position < runnable_passes.size(); ++pass_position) {
-            const Runnable& item        = runnable_passes[pass_position];
-            const PassDraw& pass_draw   = *item.draw;
-            PassContent&    pass_content = frame_content[pass_position];
-            pass_content.draws.resize(pass_draw.draws.size());
+        frame_head.beginFrame(runnable_passes.size());
+        for (const Runnable& item : runnable_passes) {
+            const PassDraw&   pass_draw = *item.draw;
+            FrameHead::Pass&  pass_head = frame_head.beginPass(pass_draw.draws.size());
             for (std::size_t draw_index = 0; draw_index < pass_draw.draws.size(); ++draw_index) {
-                const DrawDescription& description  = pass_draw.draws[draw_index];
-                DrawContent&           draw_content = pass_content.draws[draw_index];
-                draw_content.refusal.clear();
-                draw_content.plans.clear();
-                draw_content.textures.clear();
+                const DrawDescription& description = pass_draw.draws[draw_index];
+                FrameHead::Call&        call        = pass_head.draws[draw_index];
                 if (description.kind == DrawDescription::Kind::Screen) {
-                    (void)owner.caches.planScreen(description,
-                                                  pass_draw,
-                                                  item.compatibility,
-                                                  item.pipeline_pass,
-                                                  item.color_count,
-                                                  draw_content.screen,
-                                                  draw_content.refusal,
-                                                  cache_lock);
+                    call.plans.resize(1U);
+                    FrameHead::DrawPlan& plan = call.plans.front();
+                    (void)owner.caches.planDraw(description,
+                                                pass_draw,
+                                                item.compatibility,
+                                                item.pipeline_pass,
+                                                item.color_count,
+                                                plan,
+                                                call.refusal,
+                                                cache_lock);
                     // The destination's stand-in and shadow sampler: a screen draw samples the target it names, so its
                     // slots are the source's views (assembled where the source is, below), not a material's.
-                    owner.caches.resolveTextures(nullptr, commands, draw_content.screen_textures, draw_content.refusal, cache_lock, uploadBatch());
+                    owner.caches.resolveTextures(nullptr, commands, frame_head, plan, call.refusal, cache_lock, uploadBatch());
                     continue;
                 }
                 if (description.commands == nullptr) {
                     continue;
                 }
-                draw_content.plans.resize(description.commands->size());
-                draw_content.textures.resize(description.commands->size());
+                call.plans.resize(description.commands->size());
                 for (std::size_t command_index = 0; command_index < description.commands->size(); ++command_index) {
-                    ContentCaches::CommandPlan& plan = draw_content.plans[command_index];
-                    if (!owner.caches.planCommand((*description.commands)[command_index],
-                                                  pass_draw,
-                                                  head_program.get(),
-                                                  item.compatibility,
-                                                  item.pipeline_pass,
-                                                  item.color_count,
-                                                  plan,
-                                                  draw_content.refusal,
-                                                  cache_lock,
-                                                  frame_builds)) {
+                    FrameHead::DrawPlan& plan = call.plans[command_index];
+                    if (!owner.caches.planDraw((*description.commands)[command_index],
+                                               pass_draw,
+                                               head_program.get(),
+                                               item.compatibility,
+                                               item.pipeline_pass,
+                                               item.color_count,
+                                               plan,
+                                               call.refusal,
+                                               cache_lock,
+                                               frame_builds)) {
                         continue; // the plan stays empty and `record` skips exactly this command
                     }
                     owner.caches.resolveTextures(plan.material.get(),
                                                  commands,
-                                                 draw_content.textures[command_index],
-                                                 draw_content.refusal,
+                                                 frame_head,
+                                                 plan,
+                                                 call.refusal,
                                                  cache_lock,
                                                  uploadBatch());
                 }
@@ -1819,19 +1794,19 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         // command inside a call becomes one GPU draw (M3: the plan selected the pipeline, one `RenderCommand` = one
         // indexed draw). The frame's DRAWING-CALL count was taken from the frame's shape above - a call is the
         // description, not its commands.
-        const PassContent& pass_content = frame_content[pass_index];
+        const FrameHead::Pass&  pass_head = frame_head.passes()[pass_index];
         for (std::size_t draw_index = 0; draw_index < draw.draws.size(); ++draw_index) {
-            const DrawDescription& description  = draw.draws[draw_index];
-            const DrawContent&     draw_content = pass_content.draws[draw_index];
-            // THE HEAD'S REFUSAL IS REPORTED WHERE THE DRAW IS (see planCommand): the code travels with the sentence
+            const DrawDescription& description = draw.draws[draw_index];
+            const FrameHead::Call&  call        = pass_head.draws[draw_index];
+            // THE HEAD'S REFUSAL IS REPORTED WHERE THE DRAW IS (see planDraw): the code travels with the sentence
             // instead of being guessed at the sink, and a call whose later commands DID resolve still records them.
-            if (draw_content.refusal.isRefused()) {
+            if (call.refusal.isRefused()) {
                 content_refused = true;
                 if (content_report.shouldReport()) {
                     owner.report(deviceDiagnostic(DiagnosticSeverity::Warning,
-                                                  draw_content.refusal.category(),
-                                                  draw_content.refusal.code(),
-                                                  draw_content.refusal.message()));
+                                                  call.refusal.category(),
+                                                  call.refusal.code(),
+                                                  call.refusal.message()));
                 }
             }
             ContentRefusal refusal;
@@ -1848,26 +1823,26 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
                     }
                 }
                 (void)recorder.recordScreen(commands,
-                                                 static_cast<int>(extent.width),
-                                                 static_cast<int>(extent.height),
-                                                 description,
-                                                 draw,
-                                                 draw_content.screen,
-                                                 draw_content.screen_textures,
-                                                 source,
-                                                 shadow,
-                                                 &refusal);
+                                            static_cast<int>(extent.width),
+                                            static_cast<int>(extent.height),
+                                            description,
+                                            draw,
+                                            call.plans.front(),
+                                            frame_head,
+                                            source,
+                                            shadow,
+                                            &refusal);
             }
             else {
                 (void)recorder.record(commands,
-                                           static_cast<int>(extent.width),
-                                           static_cast<int>(extent.height),
-                                           description,
-                                           draw,
-                                           draw_content.plans,
-                                           draw_content.textures,
-                                           shadow,
-                                           &refusal);
+                                      static_cast<int>(extent.width),
+                                      static_cast<int>(extent.height),
+                                      description,
+                                      draw,
+                                      call.plans,
+                                      frame_head,
+                                      shadow,
+                                      &refusal);
             }
             if (refusal.isRefused()) {
                 content_refused = true;
@@ -2233,15 +2208,15 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
             for (const DrawDescription& description : draw.draws) {
                 ContentRefusal refusal;
                 if (description.kind == DrawDescription::Kind::Screen) {
-                    ContentCaches::ScreenPlan plan;
-                    (void)owner.caches.planScreen(description, draw, compatibility, render_pass, color_count, plan, refusal, cache_lock);
+                    FrameHead::DrawPlan plan;
+                    (void)owner.caches.planDraw(description, draw, compatibility, render_pass, color_count, plan, refusal, cache_lock);
                 }
                 else if (description.commands != nullptr) {
-                    // ONE PLAN PER COMMAND, the same resolution the frame head runs (see ContentCaches::planCommand): a
+                    // ONE PLAN PER COMMAND, the same resolution the frame head runs (see ContentCaches::planDraw): a
                     // warm-up may not build something the frame would not ask for, and vice versa.
                     for (const vn::graphics::RenderCommand& command : *description.commands) {
-                        ContentCaches::CommandPlan plan;
-                        (void)owner.caches.planCommand(command, draw, head_program.get(), compatibility, render_pass, color_count, plan, refusal, cache_lock, warmup_builds);
+                        FrameHead::DrawPlan plan;
+                        (void)owner.caches.planDraw(command, draw, head_program.get(), compatibility, render_pass, color_count, plan, refusal, cache_lock, warmup_builds);
                     }
                 }
                 if (refusal.isRefused()) {

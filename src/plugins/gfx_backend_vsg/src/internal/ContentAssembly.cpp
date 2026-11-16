@@ -180,20 +180,20 @@ bool ContentAssembly::record(const core::CompiledPass&            pass,
     // THE TWO PHASES IN ONE CALL (see the header): resolve the pass into a plan of this call's own, then record it.
     // The frame path keeps them apart so its recording takes no device lock; a caller that owns the device can take
     // both here.
-    ContentPlan plan;
+    FrameHead plan;
     const bool resolved = resolve(plan, pass, compatibility, inputs, view_block);
-    const std::span<const ContentPlan::Pass> passes = plan.passes();
+    const std::span<const FrameHead::Pass> passes = plan.passes();
     if (passes.empty()) {
         // The resolution refused before it had a slot (see resolve): an empty node and false, with nothing reported -
         // the same answer `record` gave before the split.
         out = ::vsg::Group::create();
         return false;
     }
-    const bool recorded = ContentPlan::record(passes.front(), out);
+    const bool recorded = FrameHead::record(passes.front(), out);
     return resolved && recorded;
 }
 
-bool ContentAssembly::resolve(ContentPlan&                         plan,
+bool ContentAssembly::resolve(FrameHead&                           plan,
                               const core::CompiledPass&            pass,
                               const core::RenderPassCompatibility& compatibility,
                               std::span<const InputImages>         inputs,
@@ -205,7 +205,7 @@ bool ContentAssembly::resolve(ContentPlan&                         plan,
         return false;
     }
 
-    ContentPlan::Pass& slot = plan.beginPass(pass.pass, *d->pool);
+    FrameHead::Pass& slot = plan.beginPass(pass.pass, *d->pool);
     // THE PLAN PINS THE PRODUCER (see ContentHalves::pin): the calls it will hold name the compiled halves'
     // recorders by raw pointer, and another driver's frame head may sweep them before this frame records.
     plan.pin(d->halves->pin());

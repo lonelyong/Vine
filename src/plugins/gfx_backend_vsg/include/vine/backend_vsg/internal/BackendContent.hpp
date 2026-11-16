@@ -92,7 +92,7 @@ class BackendContentAccess {
      *
      * @details
      * - WHY THIS EXISTS. `S8c-2` states that a frame's RECORDING takes no device lock: the head resolved every answer
-     *   it reads into the session's plan (see api/ContentPlan), so the phase that turns those values into vsg nodes
+     *   it reads into the session's plan (see api/FrameHead), so the phase that turns those values into vsg nodes
      *   must let another driver's whole frame - its head, its recording and its commit - run to completion. Nothing
      *   observable from outside the backend marks that phase (no diagnostic is reported there, by design), so the
      *   witness needs a hold exactly where the property is claimed: this hook runs with the content lock NOT held,

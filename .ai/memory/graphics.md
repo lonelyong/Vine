@@ -1486,7 +1486,7 @@
 - **证据**：`test_vsg` **562/562**、对拍 13/13、`test_graphics` 587、`test_vk` 133；TSan vsg 子集 0 报告（三次复跑
   全绿；偶发的一次 `initialize()` false 是既有的 `VSG_MAX_DEVICES` 抖动，见 backlog T36/T33，非本步）；ASan
   新路径 PASS；九个文档/代码门禁 0 发现（`check_doc_symbols` 需在 `docs/guides/vsg-backend.md` §5 点名
-  `ContentPlan.hpp`）。`C3` 对 vsg 自此成立；`T48` 的迁移表全部落地（backlog 条目已按规则删除）。
+  `ContentPlan.hpp`）。`C3` 对 vsg 自此成立；`T48` 的迁移表全部落地（backlog 条目已按规则删除）。 <!-- drift-ok -->
 - **测试基建注意**：`build/` 里 plugin `.so` 与 test 二进制必须**同源重建**——`git stash` 前后混编会出现
   `undefined symbol` 与莫名的设备上限失败（本次排查花了时间，教训：stash 后 `ninja test_vsg gfx_backend_vsg` 一起建）。
 
@@ -1550,3 +1550,25 @@
   `FrameLockingTest.AFrameReportsWhatItSpentOnTheContentLock`（vsg）；`VkConcurrentFrameTest.AHostVerbCalledFromInsideAFrameIsRefusedInsteadOfHanging`
   （sink 里的 `contentPipelines()` 答 0 + 一条 reentry，帧照常结束）。
 - **计数**：`test_graphics` 607 / `test_vk` 158 / `test_vsg` 571 / `BackendParityTest` 13。
+
+## 2026-11-16 S2 批 2b：`FrameHead` 词汇（两后端同名同形，不共享类型）
+
+- **一个概念两个形状 → 同一名字与形状**：帧首解析出的值在 vk 原是 `CommandPlan` + `ScreenPlan` + `ResolvedTextures`
+  三件、在 vsg 是 `ContentPlan::Call`；现在两边都叫 **`FrameHead`** + **`FrameHead::DrawPlan`**。
+  **不做共享头**：ADR 已否决“两后端共用 `ResolvedDraw`”（只能类型擦除，`G7` 反面）——统一的是名字与形状，不是类型。
+- **vsg**：`internal/ContentPlan.{hpp,cpp}` → `FrameHead.{hpp,cpp}`；类 `ContentPlan` → `FrameHead`，嵌套 `Call` → `DrawPlan`
+  （`Pass` / `Pin` / `kMax*` 随类改前缀）。`FrameScratch::content` 类型跟着变；`tests/test_vsg/CMakeLists.txt` 手工列表同步；
+  `docs/guides/vsg-backend.md` §5 点名 `FrameHead.hpp`（`check_doc_symbols` 要求每个 unit 被点名）。
+- **vk**：新头 `internal/FrameHead.hpp`（只有头，没有新 `.cpp`）：`FrameHead` 持每 pass 的 `Pass{std::vector<Call> draws}`、
+  `Call{std::vector<DrawPlan> plans; ContentRefusal refusal}`、**帧级** `fallback_view` / `fallback_sampler` / `shadow_sampler`；
+  `DrawPlan` = `kind`（Content/Screen）+ pipeline/resolved + 内容载荷（material/variant/streams/…）+ 本调用的 `slots`。
+  `ContentCaches::planCommand` / `planScreen` **收成一个动词两个重载** `planDraw(RenderCommand,…)` / `planDraw(DrawDescription,…)`；
+  `resolveTextures(material, commands, FrameHead&, FrameHead::DrawPlan&, refusal, lock, batch)` 把帧级事实写 head、槽写 plan。
+  `ContentDraw::record(…, span<const FrameHead::DrawPlan> plans, const FrameHead& head, …)`、`recordScreen(…, const DrawPlan&, const FrameHead&, …)`。
+  原 `FrameDriver::DrawContent` / `PassContent` 删除，换成一个 `FrameHead frame_head`。
+- **一处可见差异（如实）**：`record` 的“1x1 stand-in 缺失”检查从“本调用第一张 plan 的 fallback”改成“帧的 fallback”。
+  今天首命令被拒的调用会因此多报一条 `vk.content.stand_in_missing`（stand-in 其实存在）；改后只报真正的 head 拒绝。
+  无用例钉这个措辞；stand-in 只有 OOM 会缺，且新检查仍然在它真的缺失时拒绝。
+- **零行为、零用例改名**：`test_graphics` **607** / `test_vk` **159** / `test_vsg` **571** / `BackendParityTest` 13；
+  九门禁 + `content_seam` / `vk_exposure` 全绿；本批不碰线程（不需要 TSan）。
+- **坑**：vsg 插件是 GLOB 源列表 → 改 `.cpp` 文件名后**必须重配 `build/`**（`cmake -S . -B build`），否则旧路径还挂在 target 上。

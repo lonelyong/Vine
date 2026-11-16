@@ -91,16 +91,16 @@ miss"两处协调。
   `Uploading(owner, token)` 发布出去（§2.4），并把句柄记回会话本地的表。所以"零锁"的准确说法是：
   **记录路径零锁；帧首一次**。后者是本节开头写的那一次，前者是它的结果——两个数字要分开说，别把它们並成
   “稳态帧 0 次”（那是记录路径的说法，不是整帧的说法）。
-- **已落地（S6c-1）的实测形状**：`ContentCaches` 的一把锁在**帧首**取一次，`planCommand` / `planScreen` /
-  `resolveTextures` 把结果**按值**交给会话（`CommandPlan` / `ResolvedTextures`），纹理上传也在帧首录进帧命令缓冲；
+- **已落地（S6c-1 + S2 批 2b）的实测形状**：`ContentCaches` 的一把锁在**帧首**取一次，`planDraw`（两个重载） /
+  `resolveTextures` 把结果**按值**交给驱动者（`FrameHead`：每调用一个 `FrameHead::DrawPlan`，帧级纹理/采样器事实挂 head），纹理上传也在帧首录进帧命令缓冲；
   `record` / `recordScreen` 只读这些值。一整帧的获取数固定为 **4**（帧首 1 + 帧首/帧尾数簿各 1 + `endFrame` 1），
   **不随 draw 数增长**（`VkFrameHeadTest`：1 条 vs 6 条命令同数；变异成逐 draw 取锁后 6 → 10，红）。
 - **vsg 的形状（S8c-1 + S8c-2，2026-11-16）**：同一原则落在 vsg 的两段上。**帧首**（`openFrameHead`）在一次性内容锁下解析
   pass 编号 / 目标 / 采样目标 / 内容跟踪 / 目标事实表 / 存储增长并记录上传基线；**收集与计划编译**只读会话 scratch，
   不取设备锁；**内容相**再分两段（S8c-2）：**解析**（`resolveContent`，内容锁下一次）把 halves / declared sets / stream
-  bind / 材质槽 / 纹理视图 / 块偏移 / pipeline 身份写成会话`ContentPlan`的**值**，**录制**（`ContentPlan::record`）只读这些
+  bind / 材质槽 / 纹理视图 / 块偏移 / pipeline 身份写成驱动者 `FrameHead` 的**值**，**录制**（`FrameHead::record`）只读这些
   值、不取设备锁，**提交**（`executor.record` + 清扫 + 会话提交）再取一次锁。与 vk 的差别只剩形状（vsg 的“值”是一组 vsg
-  节点 + 偏移，vk 的是一张`CommandPlan`），`C3` 对 vsg 现在成立（见 §3.1.9 的 S8c-2）。
+  节点 + 偏移，vk 的是一组 `FrameHead::DrawPlan`），`C3` 对 vsg 现在成立（见 §3.1.9 的 S8c-2）。
 - **记录也按驱动者归属（S6c-2a）**：纹理上传的 staging 与被替换的图像按 `ContentImages::BatchId`（= `clock_window + 1`）
   分组，帧尾只释放**自己**那一批；被替换的图像本身 park 到水位——另一个驱动者的在飞帧可能还拿着旧 view。
 - **管线是例外，但它本来就在 miss 上**：管线键含状态（拓扑 / 混合 / 深度），状态是每命令解析的，
@@ -216,7 +216,7 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 |---|---|---|
 | 帧机器今天在哪 | 全在 `Device::Impl`：`command_pool` / `completion` / 时间戳池 / `Books`（`Device.cpp:445`–`655`） | 命令图/提交**已经在每个窗口**（`api::WindowSession` 持 `vsg::Viewer`）；**收集暂存已入会话（S8a，2026-11-16）**：`FrameScratch`（arena / recorder / compiler / facts / 输入表 / packets / frame）由窗口与离屏会话各持一份 |
 | 帧暂存在哪 | **已分家**（S3）：`ContentCaches`（设备）持 programs / geometries / pipelines / 布局 / 图像；`FrameScratch`（会话）持环 / 描述符池 / set 表 / `frame_index`；`ContentDraw` 只剩“把一条 draw 变成命令”的记录器 | `BlockStorage`（每帧 slab 轮转）+ `ContentAssembly` 的 `beginFrame` 清扫（设备缓存，S8b 才加锁/快照） |
-| 要搬什么 | 拆 `ContentDraw` 为 `ContentCaches`（设备）+ `FrameScratch`（会话） | **已搬（S8a）**；**执行器帧状态已归驱动（S8b）**；**帧首快照与内容锁已落地（S8c-1，2026-11-16）**：设备闸两侧化、`FrameDrive`、帧首解析、内容相一把锁；**记录路径零锁已落地（S8c-2，2026-11-16）**：`ContentPlan`（每驱动一份的值）+ 三相位（解析持锁 / 录制无锁 / 提交持锁） |
+| 要搬什么 | 拆 `ContentDraw` 为 `ContentCaches`（设备）+ `FrameScratch`（会话） | **已搬（S8a）**；**执行器帧状态已归驱动（S8b）**；**帧首快照与内容锁已落地（S8c-1，2026-11-16）**：设备闸两侧化、`FrameDrive`、帧首解析、内容相一把锁；**记录路径零锁已落地（S8c-2，2026-11-16）**：`FrameHead`（每驱动一份的值）+ 三相位（解析持锁 / 录制无锁 / 提交持锁） |
 | 完成证据 | **没有**——需要采用 `DeviceClock` + `RetirementQueue` | **已有**（`d->clock` / `d->retirement`，由会话借用） |
 | 量级 | 大（约 900–1400 行） | 小（约 300–500 行） |
 
@@ -237,7 +237,7 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 | F6 | 跨会话退休 | vk 采用 `DeviceClock` + `RetirementQueue`；释放可在别人 frame 时调用 | **已落地（S1 + S6c-2b）**：时钟 / park 队列 / 水位 / 开帧规则都在树上；释放不等帧（R6） |
 | F7 | 设备级读回 | 自己的池与栅栏，拷贝前等设备水位，计入 `deviceWaits()` | **已落地（S7）**：`ReadbackStaging` 自带命令池与栅栏；等待 = 体闸的"帧之间"，每次读回计一次 `deviceWaits()`；帧体内调用答 `Failed`（见 §3.1.7） |
 | F8 | 默认内容程序归会话 | 会话上可设；设备级只服务直接调用方；单会话后端行为不变 | **已落地（S6a+S6b）**：声明在 `RenderFrameExecutor`；vk 的每个 `FrameDriver` 各持一份，两驱动者各画各的（T8 用例） |
-| F9 | vsg 的对应落地 | 收集暂存搬进会话；缓存加锁/快照；完成证据已有 | **已落地（S8a+S8b+S8c-1+S8c-2）**：收集暂存入会话（`FrameScratch`）；执行器帧状态归驱动（`VsgDriver` + 每驱动默认程序）；帧首快照 + 内容锁 + 设备闸两侧化（S8c-1）；记录路径零锁（`ContentPlan`，S8c-2） |
+| F9 | vsg 的对应落地 | 收集暂存搬进会话；缓存加锁/快照；完成证据已有 | **已落地（S8a+S8b+S8c-1+S8c-2）**：收集暂存入会话（`FrameScratch`）；执行器帧状态归驱动（`VsgDriver` + 每驱动默认程序）；帧首快照 + 内容锁 + 设备闸两侧化（S8c-1）；记录路径零锁（`FrameHead`，S8c-2） |
 | F10 | 契约与文档收口 | `C21` / `N18` 改写、三处头文件文本、ADR 状态、审计行 | **已落地（S9）**：`C21` / `R18` / `N18` 改成"帧按会话并发"；`RenderDevice` / `RenderFrameExecutor` / vk `Device` 的线程段同步；ADR 追加实施状态；审计 A6/A7/A9/A11 逐条标状态 |
 
 ### 3.1.1 F1 会话类型与创建
@@ -406,14 +406,14 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
 - **`ContentStore` 的行/表由内容锁串行，而记录不再碰它们**：S8c-1 时 vsg 的**记录路径仍读设备表**（halves / sets / uploads / images / 材质槽都在 `recordContent` 里查），所以 `C3` 在那一步没有满足；**S8c-2 把它收口**（见下一小节）。
 - **证据**：`test_vsg` **561/561**、`BackendParityTest` 13/13、TSan（vsg 子集）**0 报告**、ASan 新路径 PASS。新增三例：`ACompilingFrameDoesNotWaitForAnotherDriversFrame`（一帧被 sink 停在**编译**里时，另一驱动者的整帧完成；变异：设备闸改回独占 ⇒ 5 s 超时红）、`TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`（两线程各 3 帧、各画各的默认程序，读回各是自己的颜色）、`AReadbackFromInsideAFrameBodyAnswersInsideFrame`（sink 里读回答 `Failed`，一次一条 `vsg.readback.in_frame`）。
 
-**S8c-2 落地（2026-11-16）：记录路径零锁（`ContentPlan`）**
+**S8c-2 落地（2026-11-16）：记录路径零锁（`FrameHead`）**
 
 - **内容相拆成三段**：`commitFrameThrough` 现在是 **解析**（一次内容锁：`applyTargetPlans`、材质 arena 增长、`resolveContent`）、
-  **录制**（无设备锁：`ContentPlan::record` 把值变成 vsg 节点）、**提交**（再一次内容锁：`executor.record`、清扫、会话提交、
+  **录制**（无设备锁：`FrameHead::record` 把值变成 vsg 节点）、**提交**（再一次内容锁：`executor.record`、清扫、会话提交、
   上传 delta 与计数器发布）。“记录也要读表”不再是前提，`C3` 对 vsg 自此成立。
-- **`internal/ContentPlan`（新）：一帧解析出的值**。每个绘制调用一个 `Call`：它命中的 half 的录制器（`ContentDraw*`）、已解析的
+- **`internal/FrameHead`（S2 批 2b 前叫 `ContentPlan`）：一帧解析出的值**。每个绘制调用一个 `DrawPlan`：它命中的 half 的录制器（`ContentDraw*`）、已解析的
   `ContentDraw::Draw` / `ScreenDraw`（身份 + pipeline + 变体 id + 动态状态 + 几何 span 计数）、块绑定、推送块、顶点/索引绑定；
-  每个 pass 一个槽，自带它的 `core::StateRegistry`（跨“解析/录制”两相的状态内存）。它是 vk `CommandPlan` 的 vsg 对形：
+  每个 pass 一个槽，自带它的 `core::StateRegistry`（跨“解析/录制”两相的状态内存）。它是 vk `FrameHead::DrawPlan` 的 vsg 对形：
   **值，且拥有它点名的对象**（全部 `ref_ptr`），生命周期上还有一个钉：`ContentHalves::pin()` 把 halves 的生产者租给计划，
   另一个驱动者的帧首清扫就不会释放这一帧还要用到的录制器（退役 park 不管“尚未提交的帧还没交上去”这件事）。
 - **解析半与录制半分开的两个 API**：`ContentDraw::plan(key)`（解析，取 layer 与 variant pool，在内容锁下）与
@@ -472,7 +472,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
 |---|---|
 | C1 | 会话由**设备**拥有；引擎只借（`createSession` / `releaseSession`）。 |
 | C2 | 帧机器（命令池 / 栅栏 / 环 / 描述符池 / 帧账）**只**在会话里。 |
-| C3 | 记录路径**不得**取设备缓存的锁；设备缓存的读只发生在帧首快照。vk 自 S6c-1、vsg 自 S8c-2（`ContentPlan`）起成立：两边的记录都只读帧首解析出的值。 |
+| C3 | 记录路径**不得**取设备缓存的锁；设备缓存的读只发生在帧首快照。vk 自 S6c-1、vsg 自 S8c-2（`FrameHead`）起成立：两边的记录都只读帧首解析出的值。 |
 | C4 | 只有 `Resident` 的条目可被非 owner 使用；`Uploading` 对别人等于 `Absent` + 临时副本。 |
 | C5 | 一个目标同一时刻只有一个会话；claim 是租约，帧尾必须归还。 |
 | C6 | 销毁只能发生在**设备水位**之后；不得用设备空转换正确性。 |
@@ -642,10 +642,10 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
   走它）；vk 的默认程序归 `FrameDriver`。三套 **556 / 121 / 587** 全绿，变异 1/1 红。**S6b** 才是第二个真实驱动者：
   缓存/分配/提交三把锁（或帧首快照）、`ensureGeometry` 接 `ResidenceTable`、替换路径改 park、T8 并发证据。
 - **已落地**：`T48` 的 **S6c-1（帧首快照）**——`ContentCaches` 有一把不可重入的锁（`ContentCaches::Lock`，`Lock&` 参数把
-  “我持锁”变成编译期证据）；帧只在**帧首**取它一次，`planCommand` / `planScreen` / `resolveTextures` 把 pipeline、
-  顶点/索引/实例 buffer 句柄、材质、纹理 view/sampler **按值**写进 `CommandPlan` / `ResolvedTextures`，纹理上传也
+  “我持锁”变成编译期证据）；帧只在**帧首**取它一次，`planDraw`（两个重载）/ `resolveTextures` 把 pipeline、
+  顶点/索引/实例 buffer 句柄、材质、纹理 view/sampler **按值**写进 `FrameHead::DrawPlan`（帧级纹理/采样器事实挂 `FrameHead`），纹理上传也
   在帧首录进帧命令缓冲（render pass 之外，唯一合法处）。`ContentDraw` 只剩记录职责（`prepare`/`prepareScreen` 删除，
-  预热走与帧首相同的 `ContentCaches::planCommand`）。**记录路径不取锁、不碰缓存条目**；instance stream 换代与失败的
+  预热走与帧首相同的 `ContentCaches::planDraw`）。**记录路径不取锁、不碰缓存条目**；instance stream 换代与失败的
   geometry 子树改 **park** 到水位，所以帧首解析的值整帧有效。观察点：`contentCacheCounters().cache_lock_acquisitions`
   （整帧固定 4，不随 draw 数增长）。`test_vk` **128/128**（ASan 门禁 PASS），变异（记录路径改回逐 draw 取锁）⇒ 6 → 10 红。
 - **已落地**：`T48` 的 **S6c-2a（帧体真并行）**——体闸改成 `std::shared_mutex`：帧体取 SHARED（两驱动者同时记录/提交），
@@ -680,11 +680,11 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
   `VsgBackendTest.ACompilingFrameDoesNotWaitForAnotherDriversFrame`（变异回独占闸 ⇒ 5 s 超时红）、
   `TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`、`AReadbackFromInsideAFrameBodyAnswersInsideFrame`；
   `test_vsg` **561/561**、对拍 13/13、TSan 0 报告、ASan 新路径 PASS。
-- **已落地**：`T48` 的 **S8c-2（vsg 的记录路径零锁）**——`internal/ContentPlan`（每驱动一份的值：一次调用的
+- **已落地**：`T48` 的 **S8c-2（vsg 的记录路径零锁）**——`internal/FrameHead`（每驱动一份的值：一次调用的
   `ContentDraw::Draw`/`ScreenDraw`、块绑定、推送块、顶点/索引绑定，以及它所命中的 half 的录制器）把内容相拆成三段：
   **解析**（`resolveContent` → `ContentAssembly::resolve` → `ContentPass::resolve`，内容锁下一次：halves、declared sets、
   stream uploads、材质 arena、view/lights/shadow/draw 块与 pipeline 身份都解析成值，拒绝也在这里说）、**录制**
-  （`ContentPlan::record`，不取设备锁：只建 vsg 节点）、**提交**（`executor.record` + 清扫 + 会话提交，再取一次锁）。
+  （`FrameHead::record`，不取设备锁：只建 vsg 节点）、**提交**（`executor.record` + 清扫 + 会话提交，再取一次锁）。
   `ContentDraw::record` 绑的是已解析的 pipeline 与变体 id（`plan()` 是解析半），所以录制不碰 layer 也不碰 variant pool；
   计划钉住 halves 的生产者（`ContentHalves::pin`），另一个驱动者的清扫不会释放这一帧还要用的录制器。
   证据：`test_vsg` **562/562**（+`ARecordingFrameDoesNotStopAnotherDriversContent`：一帧被停在**录制**里时另一驱动者的
@@ -744,9 +744,9 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
   已起的设备上则当场建）；`releaseSession` 销毁并遗忘（设备自己的驱动者不可归还）。**设备持一把 `frame_mutex`**：会话各持机器，
   但缓存/分配器/队列还没在两条运行中的帧之间成立，所以帧体串行——这正是 `C10` 要求的"做不到就先写串行"。T8（两驱动者不同默认程序、
   各画各的）与 T10（两线程各 N 帧、两图各自正确）已绿；变异 2/2 红。`test_vk` **125/125**（ASan 门禁 PASS）。
-| S6c-1 | **帧首快照**：`ContentCaches` 一把锁（`Lock` 参数化）/ 帧首一次 / `CommandPlan`·`ResolvedTextures` **按值** /
+| S6c-1 | **帧首快照**：`ContentCaches` 一把锁（`Lock` 参数化）/ 帧首一次 / `FrameHead`（`DrawPlan` + 帧级事实）**按值** /
   纹理上传搬到帧首 / 替换路径（instance stream、失败的 geometry）改 park / 锁计数接到 `contentCacheCounters` | T3 | 大 |
-| S6c-1 | **已落地 2026-11-15**：记录路径零锁（`record`/`recordScreen` 不调 `planCommand`，不碰 `images()`）；`ContentDraw`
+| S6c-1 | **已落地 2026-11-15**：记录路径零锁（`record`/`recordScreen` 不调 `planDraw`，不碰 `images()`）；`ContentDraw`
   只剩记录职责，计划由帧首/预热统一解析；`test_vk` **128/128**（含 ASan），变异（记录路径变回逐 draw 取锁）⇒ 整帧获取数
   6 → 10，`VkFrameHeadTest` 红 | T3 | 大 |
 | S6c-2a | **真并行（帧体）**：`shared_mutex` 体闸（帧 SHARED、宿主动词 EXCLUSIVE）、窗口帧独占、多开帧 token、
@@ -781,8 +781,8 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
   本帧读数；窗口/离屏会话各有一把帧主张；每会话自己的 `Observe`。**仍待**：记录路径零锁（`C3`）。
   证据见 §3.1.9；`test_vsg` 561/561、对拍 13/13、TSan 0 报告、ASan 新路径 PASS | T13 | 中 |
 | S8c-2 | vsg 的记录路径零锁：帧首把 per-draw 的需要（half / set / stream bind / 材质槽 / 纹理视图）解析成值
-  （每驱动一份），记录只读这些值（与 vk `CommandPlan` 同形） | T13 | 大 |
-| S8c-2 | **已落地 2026-11-16**：`internal/ContentPlan`（每驱动一份的值）+ `ContentDraw::plan` / `StateRegistry::resolve(variant,…)`
+  （每驱动一份），记录只读这些值（与 vk `FrameHead::DrawPlan` 同形） | T13 | 大 |
+| S8c-2 | **已落地 2026-11-16**：`internal/FrameHead`（每驱动一份的值）+ `ContentDraw::plan` / `StateRegistry::resolve(variant,…)`
   把内容相拆成解析（持锁）/ 录制（无锁）/ 提交（持锁）；计划钉住 halves 的生产者；帧首写块，录制只带偏移。
   `ARecordingFrameDoesNotStopAnotherDriversContent`（变异：改回单锁 ⇒ 5 s 超时红）；`test_vsg` **562/562**、对拍 13/13、
   TSan vsg 子集 0 报告、ASan 新路径 PASS。`C3` 对 vsg 自此成立 | T13 | 大 |

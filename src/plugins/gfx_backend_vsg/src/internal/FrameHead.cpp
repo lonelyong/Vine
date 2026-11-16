@@ -1,10 +1,10 @@
-#include <vine/backend_vsg/internal/ContentPlan.hpp>
+#include <vine/backend_vsg/internal/FrameHead.hpp>
 
 #include <vsg/nodes/Group.h>
 
 VN_BACKEND_VSG_NS_BEGIN
 
-void ContentPlan::beginFrame(std::size_t reserve_passes)
+void FrameHead::beginFrame(std::size_t reserve_passes)
 {
     if (passes_.capacity() < reserve_passes) {
         passes_.reserve(reserve_passes);
@@ -19,7 +19,7 @@ void ContentPlan::beginFrame(std::size_t reserve_passes)
     halves_.reset();
 }
 
-ContentPlan::Pass& ContentPlan::beginPass(core::PassId pass, core::VariantPool& pool)
+FrameHead::Pass& FrameHead::beginPass(core::PassId pass, core::VariantPool& pool)
 {
     if (used_ == passes_.size()) {
         passes_.emplace_back();
@@ -39,19 +39,19 @@ ContentPlan::Pass& ContentPlan::beginPass(core::PassId pass, core::VariantPool& 
     return slot;
 }
 
-std::span<const ContentPlan::Pass> ContentPlan::passes() const noexcept
+std::span<const FrameHead::Pass> FrameHead::passes() const noexcept
 {
     return std::span<const Pass>(passes_.data(), used_);
 }
 
-void ContentPlan::pin(Pin producer) noexcept
+void FrameHead::pin(Pin producer) noexcept
 {
     if (producer != nullptr) {
         halves_ = std::move(producer);
     }
 }
 
-void ContentPlan::clear() noexcept
+void FrameHead::clear() noexcept
 {
     for (Pass& slot : passes_) {
         slot.clear();
@@ -60,7 +60,7 @@ void ContentPlan::clear() noexcept
     halves_.reset();
 }
 
-bool ContentPlan::record(const Pass& pass, ::vsg::ref_ptr<::vsg::Node>& out)
+bool FrameHead::record(const Pass& pass, ::vsg::ref_ptr<::vsg::Node>& out)
 {
     if (pass.registry == nullptr) {
         // A plan whose slot was never resolved here is a caller bug, not a content condition: the answer is an
@@ -71,7 +71,7 @@ bool ContentPlan::record(const Pass& pass, ::vsg::ref_ptr<::vsg::Node>& out)
 
     auto group    = ::vsg::Group::create();
     bool complete = true;
-    for (const Call& call : pass.calls) {
+    for (const DrawPlan& call : pass.calls) {
         // THE TWO DRAWING CALLS, EACH THROUGH THE HALF THAT RESOLVED IT: the recorder is the half's own, and the
         // value is the plan's. Neither call touches a table - that is the property this type exists to give.
         ::vsg::ref_ptr<::vsg::StateGroup> node;

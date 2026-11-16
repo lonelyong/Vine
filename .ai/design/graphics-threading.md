@@ -289,7 +289,7 @@
     独占；设备内容（表 / halves /
     sets / uploads / images / targets / pool / storage）由**一把内容锁**串行，但只串行帧首的**解析**与帧尾的
     **提交**：解析把 per-draw 的需要（half / set / stream bind / 材质槽 / 纹理视图 / 块偏移 / pipeline 身份）写成
-    会话`ContentPlan`的**值**（`S8c-2`），**录制**只读这些值、不取设备锁，收集与计划编译在会话 scratch 上不加锁；
+    驱动者 `FrameHead` 的**值**（`S8c-2`），**录制**只读这些值、不取设备锁，收集与计划编译在会话 scratch 上不加锁；
     同一窗口 / 离屏会话的两帧由它的**帧主张**排队，不同窗口互不等待。`C3` 对 vsg 自此成立。
 - **为什么**：内容缓存今天有"正在上传"这个状态（`ResidenceTable` 的三态；设备接线仍未做，见
   `graphics-sessions.md` §9.2）——但缓存锁已把并发上传串行化，所以即使接线前"并发"也有定义：两个引擎同时
@@ -298,7 +298,7 @@
   "以后"）；用例 `OneDeviceServesSeveralAreasWithoutCrossingThem` 证明的是**共享**（两帧先后跑），
   `VkMultiSessionTest` 的两条用例才证明**并发**（两线程各 N 帧；一帧被停住时另一帧整帧完成）。
 - **落地与剩余**：设备 = 池、会话拥有帧已对 vk 落地（S1–S7/S9），vsg 的 S8a / S8b / S8c-1 / S8c-2 也已落地（收集暂存与
-  执行器帧状态归会话/驱动者、帧首快照 + 内容锁 + 设备闸两侧化、`ContentPlan` 值计划与记录路径零锁）；剩余 `ResidenceTable`
+  执行器帧状态归会话/驱动者、帧首快照 + 内容锁 + 设备闸两侧化、`FrameHead` 值计划与记录路径零锁）；剩余 `ResidenceTable`
   的设备接线。决定与论证在 `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，**实施形状**在
   `graphics-sessions.md`（类型、锁表、状态机、九步迁移表）。**本文件只写现在**——ADR 与施工图存在不移动这条边界。
 

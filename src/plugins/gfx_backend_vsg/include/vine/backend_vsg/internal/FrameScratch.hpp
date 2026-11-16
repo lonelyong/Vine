@@ -13,7 +13,7 @@
 #include <vine/graphics/backend/FrameRecorder.hpp>
 #include <vine/graphics/backend/Observe.hpp>
 #include <vine/backend_vsg/internal/ContentImages.hpp>
-#include <vine/backend_vsg/internal/ContentPlan.hpp>
+#include <vine/backend_vsg/internal/FrameHead.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
@@ -92,11 +92,11 @@ class FrameScratch final
     std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>>   input_color_samplers;
     /// The recorded content of every pass with any, reused per frame (see recordContent).
     std::vector<PassContent>                                   packets;
-    /// WHAT THIS FRAME'S CONTENT RESOLVED TO (see api/ContentPlan): the device half of the content, as one frame's
+    /// WHAT THIS FRAME'S CONTENT RESOLVED TO (see api/FrameHead): the device half of the content, as one frame's
     /// values. It is filled by the frame's head (under the device's content lock) and consumed by the recording
     /// (which takes no lock), and it pins the producers its values name - so it belongs to the session that drives
     /// the frame, exactly as the packets do.
-    ContentPlan                                                content;
+    FrameHead                                                  content;
     /// This frame's plan, between the collection's close and the commit; null when no frame is open.
     const core::CompiledFrame*                                 frame{ nullptr };
 };

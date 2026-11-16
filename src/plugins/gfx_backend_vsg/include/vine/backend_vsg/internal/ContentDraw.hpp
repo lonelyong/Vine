@@ -47,7 +47,7 @@
  * variant bound for a draw that produces no command would make the next draw of that variant skip its own
  * bind.
  *
- * THE IDENTITY ARRIVES RESOLVED (see api/ContentPlan). `record` binds the pipeline the CALLER resolved; it does
+ * THE IDENTITY ARRIVES RESOLVED (see api/FrameHead). `record` binds the pipeline the CALLER resolved; it does
  * not acquire one. That is the seam that lets a frame's recording take no device lock (`C3`, `S8c-2`): the layer
  * that compiles an identity is the frame's head, and the layer that writes nodes for it reads a value. The
  * counters are therefore atomics - two drivers' frames may record through the SAME half at once - while the
@@ -178,7 +178,7 @@ class ContentDraw {
      * - THE ONE PLACE A VARIANT IS LOOKED UP OR COMPILED: `ContentPipeline::acquire` is called here and nowhere in
      *   the recording half, so "what the head resolved" and "what the frame binds" cannot disagree (`R23`).
      * - Called under the device's content lock (a frame's head, or the warm-up), never from the recording path:
-     *   the layer and the pool are device tables (see api/ContentPlan).
+     *   the layer and the pool are device tables (see api/FrameHead).
      *
      * @param key The pipeline identity (see DrawNeeds::keyFor).
      * @return The pipeline and the variant it resolved to, or both empty when the layer refused the identity

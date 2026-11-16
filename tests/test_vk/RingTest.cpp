@@ -341,7 +341,7 @@ TEST(VkFrameHeadTest, AFramesCacheWorkDoesNotGrowWithItsDrawingCalls)
 {
     // THE FRAME HEAD IS THE ONLY PLACE A FRAME CONSULTS THE DEVICE'S CACHES (S6c-1): a steady frame resolves every
     // program, stream, pipeline and texture slot under ONE hold, and the recording path then works from values (see
-    // ContentCaches::CommandPlan). The witness is the cache's own acquisition counter: if a later edit goes back to
+    // FrameHead::DrawPlan). The witness is the cache's own acquisition counter: if a later edit goes back to
     // resolving per drawing call, the delta below grows with the number of commands and this case fails.
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
     ASSERT_NE(backend, nullptr);

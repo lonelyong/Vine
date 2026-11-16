@@ -20,6 +20,7 @@
 #include <vine/backend_vk/internal/ContentAbi.hpp>
 #include <vine/backend_vk/internal/ContentImages.hpp>
 #include <vine/backend_vk/internal/ContentRefusal.hpp>
+#include <vine/backend_vk/internal/FrameHead.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/backend_vk/internal/ProgramVariant.hpp>
 #include <vine/backend_vk/internal/ResidenceTable.hpp>
@@ -45,10 +46,10 @@ VN_BACKEND_VK_NS_BEGIN
  * - WHAT IT IS NOT. Nothing of the frame: no ring, no descriptor pool, no per-frame counters - those are
  *   `FrameScratch`'s, one per driver, because mixing two frames' slices is a correctness problem while sharing a
  *   compiled pipeline is the point (see `.ai/design/graphics-sessions.md` §3.1.3).
- * - THE PLANNER IS HERE, NOT IN THE RECORDER. `planCommand` / `planScreen` answer what a drawing call builds with
- *   (program, streams, pipeline, resolved state) and nothing else: the warm-up and the frame head run the SAME
+ * - THE PLANNER IS HERE, NOT IN THE RECORDER. `planDraw` answers what a drawing call builds with (program, streams,
+ *   pipeline, resolved state, texture slots) and nothing else: the warm-up and the frame head run the SAME
  *   resolution, so a frame cannot ask for something the warm-up would not have built - and the answers CROSS the seam
- *   as values (`CommandPlan`), which is what lets the recording path take no lock.
+ *   as values (`FrameHead`), which is what lets the recording path take no lock.
  * - ONE LOCK, ONE OWNER OF THE HOT PATH (`G10`). The tables are edited only at a frame head or by a host verb; a frame
  *   holds `Lock` while it resolves everything it will draw, and `record` / `recordScreen` then work from the values in
  *   the plan. The lock's acquisitions are counted (`lockAcquisitions`), which is how a test states "a frame's cache
@@ -134,61 +135,6 @@ class VN_BACKEND_VK_API ContentCaches final {
     };
 
     /**
-     * @brief What one scene command draws with, COPIED as values when the frame head resolves it.
-     *
-     * @details
-     * - A PLAN IS A VALUE, NOT A VIEW INTO THE CACHE (`G4`). Everything here was true when the caches were asked (the
-     *   buffers, the pipeline, the state); a release or a replacement that lands while the frame records cannot change
-     *   what this frame already resolved, and the objects the values name are parked until the device's watermark (see
-     *   `releaseLater`), so they stay valid for the frame that copied them.
-     * - `pipeline == VK_NULL_HANDLE` means "this command cannot be recorded": the head already stated why in the
-     *   drawing call's `ContentRefusal`, and the recorder skips exactly this command.
-     * - THE ONE RESOLUTION the recorder and the warm-up share: "what does this command draw with" is answered by
-     *   `planCommand` once, so a warm-up cannot build something the frame would not ask for (and vice versa).
-     */
-    struct CommandPlan {
-        VkPipeline                           pipeline{ VK_NULL_HANDLE };
-        vn::graphics::MaterialDescriptionPtr material{};       // the material it is shaded with, or null (defaults)
-        ProgramVariant                       variant{};        // what the program was compiled under
-        vn::graphics::ResolvedCommandState   resolved{};
-        std::vector<VkBuffer>                vertex_streams{}; // the geometry's non-empty channels, in binding order
-        std::uint32_t                        vertex_count{ 0 };
-        VkBuffer                             instance_buffer{ VK_NULL_HANDLE }; // the LAST binding, or null
-        VkBuffer                             index_buffer{ VK_NULL_HANDLE };    // this command's primitive, or null
-        std::uint32_t                        index_count{ 0 };
-    };
-
-    /// @brief What one screen drawing call draws with (see @ref CommandPlan for why it is a value).
-    struct ScreenPlan {
-        VkPipeline                         pipeline{ VK_NULL_HANDLE };
-        vn::graphics::ResolvedCommandState resolved{};
-    };
-
-    /// @brief One texture slot as the frame head resolved it: the view and the sampler it is read with.
-    struct SlotBinding {
-        VkImageView view{ VK_NULL_HANDLE };    ///< The uploaded image's view, or the 1x1 stand-in.
-        VkSampler   sampler{ VK_NULL_HANDLE };
-        bool        present{ false };          ///< Whether the material really names this slot (the shading's bit).
-    };
-
-    /**
-     * @brief The texture side of one drawing call, resolved at the frame head.
-     *
-     * @details
-     * - RESOLVED BEFORE THE RENDER PASS BEGINS, because a texture upload records a buffer-to-image copy and an image
-     *   barrier, neither of which is legal inside a render pass instance (the same rule @ref preparePass states for the
-     *   warm-up path). The copies land on the frame's own command buffer, ahead of every pass.
-     * - `fallback_*` and `shadow_sampler` are frame-wide values the recorder would otherwise ask the image cache for
-     *   once per draw; resolving them once is what lets the recording path touch no cache at all.
-     */
-    struct ResolvedTextures {
-        std::array<SlotBinding, detail::kTextureSlots> slots{};
-        VkImageView                            fallback_view{ VK_NULL_HANDLE };
-        VkSampler                              fallback_sampler{ VK_NULL_HANDLE };
-        VkSampler                              shadow_sampler{ VK_NULL_HANDLE };
-    };
-
-    /**
      * @brief THE CACHE'S ONE LOCK, held while a frame head resolves its content or a host verb edits the caches.
      *
      * @details
@@ -196,8 +142,8 @@ class VN_BACKEND_VK_API ContentCaches final {
      *   `Lock&`, so "I am holding the cache lock" is enforced by the compiler at the call site instead of by a
      *   comment (`G4`). The lock is acquired through @ref lock, which counts the acquisition - the witness a test uses
      *   to show that a frame's cost does not grow with its drawing calls.
-     * - A FRAME HOLDS IT ONCE, at its head: `planCommand` / `planScreen` / `resolveTextures` run there, and everything
-     *   the recording path needs afterwards is a value (see @ref CommandPlan).
+     * - A FRAME HOLDS IT ONCE, at its head: `planDraw` / `resolveTextures` run there, and everything
+     *   the recording path needs afterwards is a value (see `FrameHead`).
      * - HOST VERBS (release, progress, `endFrame`) take it internally: they are announcements, not frame work.
      *
      * @warning Not recursive. Holding one and calling a verb that takes its own lock (for example @ref releaseGeometry)
@@ -620,25 +566,29 @@ class VN_BACKEND_VK_API ContentCaches final {
     void preparePass(VkCommandBuffer commands, std::span<const vn::graphics::DrawDescription> draws, const Lock& held);
 
     /**
-     * @brief Resolves one drawing call's texture bindings, recording every upload that is missing on @p commands.
+     * @brief Resolves one drawing call's texture bindings into @p plan, recording every upload that is missing on
+     *        @p commands; the frame-level stand-in facts land on @p head.
      *
      * @details
      * - THE FRAME HEAD'S TEXTURE HALF: a slot the material names is uploaded here (the copy is legal only outside a
      *   render pass, which is where the head runs), and a slot it does not name answers the 1x1 stand-in with
      *   `present == false`. A texture the cache cannot serve is reported through @p refusal and stays absent.
-     * - The fallback view/sampler and the shadow sampler are filled every time, so the recorder never has to ask the
-     *   image cache for them.
+     * - THE FRAME-LEVEL FACTS ARE THE HEAD'S: the stand-in's view and sampler and the shadow sampler are the same for
+     *   every call of one frame, so they are resolved onto @p head and the recording reads them from there. The slots
+     *   are per call and stay in @p plan.
      *
      * @param material The material to resolve (its slots are read; null means "no material", everything absent).
      * @param commands The frame's command buffer (uploads are recorded before any render pass begins).
-     * @param out      Receives the bindings (cleared on entry).
+     * @param head     The frame's head (its stand-in view/sampler and shadow sampler are (re)filled here).
+     * @param plan     Receives the slots (cleared on entry).
      * @param refusal  Receives the first reason a texture could not be served (kept when already refused).
      * @param held     The cache lock (see @ref Lock).
      * @param batch    The driver recording the uploads (see @ref ContentImages::BatchId).
      */
     void resolveTextures(const vn::graphics::MaterialDescription* material,
                          VkCommandBuffer                         commands,
-                         ResolvedTextures&                       out,
+                         FrameHead&                              head,
+                         FrameHead::DrawPlan&                    plan,
                          ContentRefusal&                         refusal,
                          const Lock&                             held,
                          ContentImages::BatchId                  batch);
@@ -672,9 +622,16 @@ class VN_BACKEND_VK_API ContentCaches final {
     void endFrame(const ContentImages::BatchId batch) noexcept;
 
     /**
-     * @brief Resolves one scene command's program, streams and pipeline (building each on a miss).
+     * @brief Resolves ONE CONTENT COMMAND into @p plan: its program, streams, pipeline and resolved state, building
+     *        each on a miss.
      *
-     * @param command           The drawing call to resolve.
+     * @details
+     * - ONE VERB, TWO INPUT SHAPES (see the screen overload): both answers are a `FrameHead::DrawPlan`, because the
+     *   recording path reads one shape - the plan's `kind` says which payload is filled.
+     * - THE ONE RESOLUTION the recorder and the warm-up share: "what does this command draw with" is answered here
+     *   once, so a warm-up cannot build something the frame would not ask for (and vice versa).
+     *
+     * @param command           The command to resolve.
      * @param pass              The pass drawing it (its program override and state are read).
      * @param default_program   The program content without one of its own is drawn with, or null.
      * @param compatibility     The target's pipeline compatibility.
@@ -687,19 +644,26 @@ class VN_BACKEND_VK_API ContentCaches final {
      *                          and a key another driver is building is copied instead of waited for.
      * @return true when the command can be recorded.
      */
-    [[nodiscard]] bool planCommand(const vn::graphics::RenderCommand&                     command,
-                                   const vn::graphics::PassDraw&                          pass,
-                                   const vn::graphics::ShaderProgramDescription*          default_program,
-                                   const vn::graphics::backend::RenderPassCompatibility&  compatibility,
-                                   VkRenderPass                                           render_pass,
-                                   std::uint32_t                                          color_attachments,
-                                   CommandPlan&                                           plan,
-                                   ContentRefusal&                                        refusal,
-                                   const Lock&                                            held,
-                                   FrameBuilds&                                           builds);
+    [[nodiscard]] bool planDraw(const vn::graphics::RenderCommand&                     command,
+                                const vn::graphics::PassDraw&                          pass,
+                                const vn::graphics::ShaderProgramDescription*          default_program,
+                                const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                                VkRenderPass                                           render_pass,
+                                std::uint32_t                                          color_attachments,
+                                FrameHead::DrawPlan&                                   plan,
+                                ContentRefusal&                                        refusal,
+                                const Lock&                                            held,
+                                FrameBuilds&                                           builds);
 
     /**
-     * @brief Resolves one screen draw's fragment program and pipeline (see @ref planCommand for the shared idea).
+     * @brief Resolves ONE SCREEN DRAW into @p plan: its fragment program, pipeline and resolved state.
+     *
+     * @details
+     * - THE SAME VERB AS THE CONTENT OVERLOAD (one entry, two input shapes): a full-screen call has no geometry,
+     *   material or streams, so its plan fills the shared half (pipeline, resolved state) and leaves the content
+     *   payload empty.
+     * - THE DEPTH POLICY IS FORCED OFF for this kind (see the implementation): a full-screen triangle is at the far
+     *   plane under reverse-Z, and the destination's depth is not the content's business.
      *
      * @param draw              The screen draw (its fragment program is read).
      * @param pass              The pass drawing it (state is read).
@@ -711,14 +675,14 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param held              The cache lock (see @ref Lock).
      * @return true when the draw can be recorded.
      */
-    [[nodiscard]] bool planScreen(const vn::graphics::DrawDescription&                  draw,
-                                  const vn::graphics::PassDraw&                          pass,
-                                  const vn::graphics::backend::RenderPassCompatibility&  compatibility,
-                                  VkRenderPass                                           render_pass,
-                                  std::uint32_t                                          color_attachments,
-                                  ScreenPlan&                                            plan,
-                                  ContentRefusal&                                        refusal,
-                                  const Lock&                                            held);
+    [[nodiscard]] bool planDraw(const vn::graphics::DrawDescription&                  draw,
+                                const vn::graphics::PassDraw&                          pass,
+                                const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                                VkRenderPass                                           render_pass,
+                                std::uint32_t                                          color_attachments,
+                                FrameHead::DrawPlan&                                   plan,
+                                ContentRefusal&                                        refusal,
+                                const Lock&                                            held);
 
   private:
     struct Impl;

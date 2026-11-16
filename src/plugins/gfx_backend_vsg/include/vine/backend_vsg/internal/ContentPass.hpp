@@ -20,8 +20,8 @@
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
 #include <vine/backend_vsg/internal/ContentImages.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
-#include <vine/backend_vsg/internal/ContentPlan.hpp>
 #include <vine/backend_vsg/internal/DrawNeeds.hpp>
+#include <vine/backend_vsg/internal/FrameHead.hpp>
 #include <vine/backend_vsg/internal/ProgramVariant.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
@@ -218,11 +218,11 @@ class VN_BACKEND_VSG_API ContentPass {
             /// frame (registered 2026-09-25, M11m).
             vn::graphics::ReportOnce* reported{ nullptr };
             vn::graphics::ReportOnce* shadow_reported{ nullptr };
-            /// The producer's lease on the half this entry names (see api/ContentPlan): a PLAN that copied the
+            /// The producer's lease on the half this entry names (see api/FrameHead): a PLAN that copied the
             /// entry holds it, so a sweep in another driver's head cannot free the recorder the plan will record
             /// through. The recorder never reads it. Null - the default, and what a hand-built entry means - is
             /// correct for a caller that owns its halves (a unit test), which is why it is not required.
-            ContentPlan::Pin          keep_alive{};
+            FrameHead::Pin            keep_alive{};
         };
 
         std::span<const Entry> entries;             // One per (program, revision, layout, VARIANT) it draws with.
@@ -281,7 +281,7 @@ class VN_BACKEND_VSG_API ContentPass {
      * The caller has already opened the frame's block budget (BlockStorage::beginFrame) and owns the
      * descriptors, streams and pipelines this scope drives.
      *
-     * A CONVENIENCE OVER THE TWO PHASES (see @ref resolve and api/ContentPlan): it resolves the pass into a plan of
+     * A CONVENIENCE OVER THE TWO PHASES (see @ref resolve and api/FrameHead): it resolves the pass into a plan of
      * its own and records that plan in the same call. The frame path keeps the two apart, because the device's
      * content lock is held for the resolution and NOT for the recording (`S8c-2`); a caller that owns the
      * device itself (a test, a tool) may take both at once.
@@ -312,12 +312,12 @@ class VN_BACKEND_VSG_API ContentPass {
      * - THE DEVICE HALF OF @ref record, and the reason it exists (`C3` / `S8c-2`): the compiled halves, the declared
      *   sets, the stream uploads, the material slots, the blocks and the pipeline identities are resolved here,
      *   under whatever lock the caller surrounds the call with, and the answer crosses to the recording as
-     *   values (see api/ContentPlan - the vk `CommandPlan` shape). The recording then reads no table and takes no
+     *   values (see api/FrameHead - the vk `FrameHead::DrawPlan` shape). The recording then reads no table and takes no
      *   lock, which is what lets two drivers' content phases overlap.
      * - The refusals are said HERE (they are facts about content, and the resolution is where the tables are
      *   read), so a call that resolves has nothing left to refuse: a refused drawing call is simply not in the
      *   plan, and its sentence has already been reported.
-     * - The caller owns the plan's registry (see ContentPlan::beginPass) and must keep it alive until the plan is
+     * - The caller owns the plan's registry (see FrameHead::beginPass) and must keep it alive until the plan is
      *   recorded: it is the pass' state memory, and the recording is its second phase.
      *
      * @param pass          The compiled pass to resolve.
@@ -326,7 +326,7 @@ class VN_BACKEND_VSG_API ContentPass {
      * @param inputs        The images the pass' inputs offer, one entry per `pass.inputs` entry.
      * @param view_block    The view block's bytes for this pass (skipped for a preparing caller, which writes no
      *                      block: see prepare()).
-     * @param out           The plan slot to fill (its registry must already be set, see ContentPlan::beginPass).
+     * @param out           The plan slot to fill (its registry must already be set, see FrameHead::beginPass).
      * @return true when every command resolved; false when at least one was refused (it was reported).
      */
     bool resolve(const core::CompiledPass&            pass,
@@ -334,7 +334,7 @@ class VN_BACKEND_VSG_API ContentPass {
                  const core::RenderPassCompatibility& compatibility,
                  std::span<const InputImages>         inputs,
                  std::span<const std::byte>           view_block,
-                 ContentPlan::Pass&                   out);
+                 FrameHead::Pass&                     out);
 
     /** @brief Ensures everything @p pass needs to be recorded, and records NOTHING.
      *
@@ -375,7 +375,7 @@ class VN_BACKEND_VSG_API ContentPass {
     };
 
     /** @brief The most channels one geometry may feed through this layer (beyond it the command is refused). */
-    static constexpr std::size_t kMaxChannels = ContentPlan::kMaxChannels;
+    static constexpr std::size_t kMaxChannels = FrameHead::kMaxChannels;
 
     /** @brief Walks @p pass in @p mode: see resolve() and prepare(). */
     bool walk(const core::CompiledPass&            pass,
@@ -383,7 +383,7 @@ class VN_BACKEND_VSG_API ContentPass {
               const core::RenderPassCompatibility& compatibility,
               std::span<const InputImages>         inputs,
               std::span<const std::byte>           view_block,
-              ContentPlan::Pass&                   out,
+              FrameHead::Pass&                     out,
               Mode                                 mode);
 
     /** @brief Resolves one command into @p call; false when it was refused (and reported). */
@@ -396,7 +396,7 @@ class VN_BACKEND_VSG_API ContentPass {
                         std::uint64_t                                   lights_offset,
                         std::uint64_t                                   shadow_offset,
                         const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
-                        ContentPlan::Call&                              call,
+                        FrameHead::DrawPlan&                            call,
                         Mode                                            mode);
 
     /** @brief Gets the compiled half @p needs is drawn through, or null when none serves it (already reported).
@@ -503,7 +503,7 @@ class VN_BACKEND_VSG_API ContentPass {
                            const core::RenderPassCompatibility& compatibility,
                            std::span<const InputImages>         inputs,
                            const DrawNeeds&                     needs,
-                           ContentPlan::Call&                   call);
+                           FrameHead::DrawPlan&                 call);
 
     /** @brief Reports one refused command, naming the identity and the reason the lookup gave. */
     void reportRefused(const char* what, FactMiss miss);
@@ -546,10 +546,10 @@ class VN_BACKEND_VSG_API ContentPass {
 
   private:
     /** @brief The most block sets one program can declare and still be served (the five roles' bound). */
-    static constexpr std::size_t kMaxBlockSets = ContentPlan::kMaxBlockSets;
+    static constexpr std::size_t kMaxBlockSets = FrameHead::kMaxBlockSets;
 
     /** @brief The most push ranges one program can declare and still be served (the engine declares one). */
-    static constexpr std::size_t kMaxPushRanges = ContentPlan::kMaxPushRanges;
+    static constexpr std::size_t kMaxPushRanges = FrameHead::kMaxPushRanges;
 
     /** @brief Gets the episode state of the light-drop report: the caller's when it keeps one, else this one.
      *

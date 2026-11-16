@@ -252,10 +252,10 @@ bool ContentPass::record(const core::CompiledPass&            pass,
     // THE TWO PHASES IN ONE CALL (see the header): the values first, the recording of them second - the same order
     // the frame path takes, with the device's lock held around the first only. A caller that owns the device (a
     // test, a tool) can take both here; the frame path keeps them apart so its recording takes no lock.
-    ContentPlan::Pass resolved;
+    FrameHead::Pass resolved;
     resolved.registry    = scope_.registry;
     const bool complete  = resolve(pass, facts, compatibility, inputs, view_block, resolved);
-    const bool recorded  = ContentPlan::record(resolved, out);
+    const bool recorded  = FrameHead::record(resolved, out);
     return complete && recorded;
 }
 
@@ -264,7 +264,7 @@ bool ContentPass::resolve(const core::CompiledPass&            pass,
                           const core::RenderPassCompatibility& compatibility,
                           std::span<const InputImages>         inputs,
                           std::span<const std::byte>           view_block,
-                          ContentPlan::Pass&                   out)
+                          FrameHead::Pass&                     out)
 {
     return walk(pass, facts, compatibility, inputs, view_block, out, Mode::Resolve);
 }
@@ -276,7 +276,7 @@ bool ContentPass::prepare(const core::CompiledPass&            pass,
 {
     // PREPARING RESOLVES NOTHING THE RECORDING COULD READ: the walk stops at the identity (see Mode::Prepare), and the
     // slot it fills holds no call - which is exactly "this frame's values are still the frame's".
-    ContentPlan::Pass unused;
+    FrameHead::Pass unused;
     unused.registry = scope_.registry;
     return walk(pass, facts, compatibility, inputs, {}, unused, Mode::Prepare);
 }
@@ -286,7 +286,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
                        const core::RenderPassCompatibility& compatibility,
                        std::span<const InputImages>         inputs,
                        std::span<const std::byte>           view_block,
-                       ContentPlan::Pass&                   out,
+                       FrameHead::Pass&                     out,
                        Mode                                 mode)
 {
     const bool resolving = mode == Mode::Resolve;
@@ -461,9 +461,9 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
                 }
                 continue;
             }
-            // THE CALL THE RECORDING WILL RUN (see api/ContentPlan): everything it binds is resolved here - the
+            // THE CALL THE RECORDING WILL RUN (see api/FrameHead): everything it binds is resolved here - the
             // set, the map, the identity's pipeline - so the recording reads no table and takes no lock.
-            ContentPlan::Call call;
+            FrameHead::DrawPlan call;
             if (!resolveScreenDraw(draw, *half, pass, compatibility, inputs, needs, call)) {
                 complete = false;
                 continue;
@@ -506,7 +506,7 @@ bool ContentPass::walk(const core::CompiledPass&            pass,
         }
 
         for (const core::CompiledCommand& command : draw.commands) {
-            ContentPlan::Call call;
+            FrameHead::DrawPlan call;
             if (!resolveCommand(command, draw, pass, facts, compatibility, view.offset, lights.offset, shadow.offset, input_set, call, mode)) {
                 complete = false;
                 continue;
@@ -639,7 +639,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
                                     const core::RenderPassCompatibility& compatibility,
                                     std::span<const InputImages>         inputs,
                                     const DrawNeeds&                     needs,
-                                    ContentPlan::Call&                   call)
+                                    FrameHead::DrawPlan&                 call)
 {
     ContentPipeline* const layer = entry.pipelines;
     if (layer == nullptr) {
@@ -964,7 +964,7 @@ bool ContentPass::resolveScreenDraw(const core::CompiledDraw&            draw,
         samples->dynamicOffsets = std::move(dynamic_offsets);
     }
 
-    // THE CALL THE RECORDING WILL RUN (see api/ContentPlan): the set it binds, the identity's pipeline and the
+    // THE CALL THE RECORDING WILL RUN (see api/FrameHead): the set it binds, the identity's pipeline and the
     // state are all resolved here - and the pipeline is what the recording binds, never a layer lookup.
     ContentDraw::ScreenDraw& full_screen = call.screen_draw;
     call.draws                           = entry.draws;
@@ -1006,7 +1006,7 @@ bool ContentPass::resolveCommand(const core::CompiledCommand&                   
                                  std::uint64_t                                   lights_offset,
                                  std::uint64_t                                   shadow_offset,
                                  const ::vsg::ref_ptr<::vsg::BindDescriptorSet>& inputs,
-                                 ContentPlan::Call&                              call,
+                                 FrameHead::DrawPlan&                            call,
                                  Mode                                            mode)
 {
     // WHAT THIS DRAWABLE NEEDS (see api/DrawNeeds): the identity a pipeline is compiled for, answered by the one
@@ -1193,7 +1193,7 @@ bool ContentPass::resolveCommand(const core::CompiledCommand&                   
         index_bind = acquired.bind;
     }
 
-    // THE CALL THE RECORDING WILL RUN (see api/ContentPlan): the identity, the state, the binds and the counts are
+    // THE CALL THE RECORDING WILL RUN (see api/FrameHead): the identity, the state, the binds and the counts are
     // all resolved here - the recording adds a node and reads nothing.
     ContentDraw::Draw& record = call.draw;
     call.draws                = entry->draws;
@@ -1234,7 +1234,7 @@ bool ContentPass::resolveCommand(const core::CompiledCommand&                   
     record.dynamic.line_width                                = std::clamp(record.dynamic.line_width, 1.0F, widest_line);
     // The blocks: one bind per set the PROGRAM declares (its own `layout(set = ..., binding = ...)` qualifiers,
     // see api/ProgramAbi). Which sets those are came from `serveHalf`, which also refused the half when the
-    // caller built no set for one of them. THE BINDS ARE THE PLAN'S (see api/ContentPlan): the recording adds
+    // caller built no set for one of them. THE BINDS ARE THE PLAN'S (see api/FrameHead): the recording adds
     // them to a node and never builds one, because a bind names the offsets resolved here.
     const ::vsg::ref_ptr<::vsg::PipelineLayout> block_layout = entry->pipelines->layoutFor(needs.key_colors, needs.key_depths);
     const BlockDescriptors::Offsets             block_offsets{ view_offset, block.offset, material_write.offset, lights_offset, shadow_offset };

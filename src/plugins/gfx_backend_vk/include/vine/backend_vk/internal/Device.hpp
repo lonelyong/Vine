@@ -65,7 +65,7 @@ VN_BACKEND_VK_NS_BEGIN
  *          call, made with no frame in flight.
  *
  * @note A FRAME CONSULTS THE CACHES ONCE (S6c-1). The frame head resolves every program, stream, pipeline and texture
- *       upload under one cache hold and keeps the answers as values (`ContentCaches::CommandPlan`); the recording path
+ *       upload under one cache hold and keeps the answers as values (`FrameHead`); the recording path
  *       then takes no cache lock and names no cache entry. Texture uploads and the images a revision replaced belong to
  *       the DRIVER's batch (`ContentImages::BatchId`), and a replaced image is parked against the watermark, so the
  *       frame that ends first cannot free an object the frame still recording names.

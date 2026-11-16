@@ -67,7 +67,7 @@ class VN_GRAPHICS_API StateRegistry {
      *
      * @details
      * - WHY A SECOND SPELLING: @ref resolve asks the variant pool - a device table - for the identity's variant, which
-     *   makes it a frame-head verb. A frame that resolved its content ahead of time (see api/ContentPlan) hands the
+     *   makes it a frame-head verb. A frame that resolved its content ahead of time (see api/FrameHead) hands the
      *   variant over as a VALUE, and the recording path then takes no lock and touches no table (`C3`).
      * - Everything else is the same arithmetic: "a different variant than the last one bound HERE", "a dynamic block
      *   that differs from what this pass already issued", and "a sampled-input set this pass has not bound yet".

@@ -10,6 +10,7 @@
 #include <vine/backend_vk/internal/ContentAbi.hpp>
 #include <vine/backend_vk/internal/ContentCaches.hpp>
 #include <vine/backend_vk/internal/ContentRefusal.hpp>
+#include <vine/backend_vk/internal/FrameHead.hpp>
 #include <vine/graphics/DrawAbi.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/LightAbi.hpp>
@@ -36,7 +37,7 @@ class FrameScratch;
  *   one `DrawDescription` into commands, which is why a second driver needs a second scratch and NOT a second cache.
  * - IT HOLDS a borrowed reference to the device's caches for their IMMUTABLE projections only (`table()`, the pipeline
  *   layouts, the line-width limit): what a drawing call draws with arrives as the frame head's resolved values
- *   (`ContentCaches::CommandPlan`), so the recording path takes no cache lock and names no cache entry.
+ *   (`FrameHead::DrawPlan`), so the recording path takes no cache lock and names no cache entry.
  * - WHAT IT DOES NOT DO. It does not compile, upload or build pipelines: the frame head resolves every command (and
  *   `prepareFrame` runs the SAME resolution), so a frame cannot ask for something the preparation would not have built
  *   (`R23`) - and the recorder cannot change what the caches hold.
@@ -133,21 +134,21 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param draw            The draw to record (borrowed for the call).
      * @param pass            The pass drawing it (its override, state and viewport are read; borrowed).
      * @param plans           One resolved plan per command of @p draw, from the frame head (same order).
-     * @param textures        One resolved texture set per command of @p draw, from the frame head (same order).
+     * @param head            The frame's head: the stand-in view/sampler and the shadow sampler every call reads.
      * @param shadow          The shadow map this pass samples (see ShadowSource), or an empty one for none.
      * @param refusal         Receives the first reason a command was skipped (cleared on entry; empty when every
      *                        command was recorded), or null.
      * @return How many drawing calls were recorded.
      */
-    std::uint64_t record(VkCommandBuffer                                  commands,
-                         int                                              width,
-                         int                                              height,
-                         const vn::graphics::DrawDescription&             draw,
-                         const vn::graphics::PassDraw&                    pass,
-                         std::span<const ContentCaches::CommandPlan>      plans,
-                         std::span<const ContentCaches::ResolvedTextures> textures,
-                         ShadowSource                                     shadow,
-                         ContentRefusal*                                  refusal = nullptr);
+    std::uint64_t record(VkCommandBuffer                           commands,
+                         int                                       width,
+                         int                                       height,
+                         const vn::graphics::DrawDescription&      draw,
+                         const vn::graphics::PassDraw&             pass,
+                         std::span<const FrameHead::DrawPlan>      plans,
+                         const FrameHead&                          head,
+                         ShadowSource                              shadow,
+                         ContentRefusal*                           refusal = nullptr);
 
     /**
      * @brief Records one SCREEN draw description: a full-screen triangle sampling @p source.
@@ -173,22 +174,22 @@ class VN_BACKEND_VK_API ContentDraw final {
      * @param draw              The screen draw (its fragment program and camera are read; borrowed).
      * @param pass              The pass drawing it (state and viewport; borrowed).
      * @param plan              The resolved program and state, from the frame head.
-     * @param textures          The resolved fallback and shadow sampler, from the frame head.
+     * @param head              The frame's head: the fallback view/sampler and the shadow sampler.
      * @param source            The source target's colour images/views (see ScreenSource).
      * @param shadow            The map this pass resolved (see ShadowSource), or an empty one for none.
      * @param refusal           Receives the reason when the draw was skipped (cleared on entry), or null.
      * @return 1 when the full-screen draw was recorded, 0 otherwise.
      */
-    std::uint64_t recordScreen(VkCommandBuffer                                  commands,
-                               int                                              width,
-                               int                                              height,
-                               const vn::graphics::DrawDescription&             draw,
-                               const vn::graphics::PassDraw&                    pass,
-                               const ContentCaches::ScreenPlan&                 plan,
-                               const ContentCaches::ResolvedTextures&           textures,
-                               ScreenSource                                     source,
-                               ShadowSource                                     shadow,
-                               ContentRefusal*                                  refusal = nullptr);
+    std::uint64_t recordScreen(VkCommandBuffer                               commands,
+                               int                                           width,
+                               int                                           height,
+                               const vn::graphics::DrawDescription&          draw,
+                               const vn::graphics::PassDraw&                 pass,
+                               const FrameHead::DrawPlan&                    plan,
+                               const FrameHead&                              head,
+                               ScreenSource                                  source,
+                               ShadowSource                                  shadow,
+                               ContentRefusal*                               refusal = nullptr);
 
   private:
     /**

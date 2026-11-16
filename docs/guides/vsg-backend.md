@@ -102,8 +102,8 @@
   稳态是常数、`waits` 为 0）。一帧的段：**帧首**（`openFrameHead`，一次内容锁：pass 编号 → `FrameScratch::pass_ids`、
   目标、采样、内容跟踪、目标事实、存储增长）、**收集与计划编译**（只读会话 scratch，不取设备锁）、
   **内容解析**（`resolveContent`，一次内容锁：计划的目标答复、材质 arena、halves / declared sets / stream bind /
-  材质槽 / 纹理视图 / 块偏移 / pipeline 身份 → 会话的 **`ContentPlan`**（`internal/ContentPlan.hpp`，每驱动一份的**值**））、
-  **录制**（`ContentPlan::record`，**不取设备锁**：值 → vsg 节点）、**提交**（`executor.record` + 清扫 + 会话提交，
+  材质槽 / 纹理视图 / 块偏移 / pipeline 身份 → 会话的 **`FrameHead`**（`internal/FrameHead.hpp`，每驱动一份的**值**））、
+  **录制**（`FrameHead::record`，**不取设备锁**：值 → vsg 节点）、**提交**（`executor.record` + 清扫 + 会话提交，
   再一次内容锁）、**呈现**。窗口槽与离屏会话各有一把**帧主张**：同一窗口（或离屏会话）的两帧等待彼此（交换链只有一份），
   不同窗口互不等待。计数器归会话（`WindowSessionOptions::observe` 不再借设备的）：recorder 开帧会重置它们，共享一份会让两个驱动者互相覆盖；
   `frameReport()` 引用最后结束那一帧的副本。`ContentDraw::plan()` 是解析半（取 layer 与 variant pool），

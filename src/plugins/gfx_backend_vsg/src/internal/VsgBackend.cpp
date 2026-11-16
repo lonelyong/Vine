@@ -233,7 +233,7 @@ struct PassOffers {
 /// hold offers nothing: the content recorder reads one entry per declaration, so a shorter span would read past its
 /// end - and "nothing offered" is the fact it reports, which a missing entry would not be.
 ///
-/// ONE WALK FOR BOTH VERBS (see api/ContentPlan): the shape and offers a PREPARE resolves and the ones a frame
+/// ONE WALK FOR BOTH VERBS (see api/FrameHead): the shape and offers a PREPARE resolves and the ones a frame
 /// resolves are the same questions, so they share this function - "what prepare built" and "what the frame asks
 /// for" cannot drift (`G1`; `T32`).
 [[nodiscard]] PassOffers offerInputs(const core::CompiledPass&                                   pass,
@@ -359,7 +359,7 @@ struct PassOffers {
     return offers;
 }
 
-/// @brief THE FRAME'S DEVICE HALF (see api/ContentPlan): opens the content frame and resolves every pass into @p plan.
+/// @brief THE FRAME'S DEVICE HALF (see api/FrameHead): opens the content frame and resolves every pass into @p plan.
 ///
 /// The caller surrounds this call with the device's content lock: it touches the tables, the compiled halves, the
 /// declared sets, the stream uploads, the material images, the block storage's ring and the targets - one
@@ -377,7 +377,7 @@ void resolveContent(ContentAssembly&                                            
                     core::RetirementQueue&                                      retirement,
                     float                                                       frame_seconds,
                     const core::CompiledFrame&                                  frame,
-                    ContentPlan&                                                plan,
+                    FrameHead&                                                  plan,
                     std::vector<InputImages>&                                   input_scratch,
                     std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_views,
                     std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>>& input_screen_views,
@@ -1926,9 +1926,9 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(VsgExecutor& executo
     }
     frame_scratch->packets.clear();
     frame_scratch->packets.reserve(frame_scratch->content.passes().size());
-    for (const ContentPlan::Pass& pass : frame_scratch->content.passes()) {
+    for (const FrameHead::Pass& pass : frame_scratch->content.passes()) {
         ::vsg::ref_ptr<::vsg::Node> content;
-        (void)ContentPlan::record(pass, content);
+        (void)FrameHead::record(pass, content);
         frame_scratch->packets.push_back(PassContent{ pass.pass, std::move(content) });
     }
 

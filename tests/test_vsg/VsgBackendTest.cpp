@@ -5420,7 +5420,7 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
  * WHY THIS IS THE PROOF THE CONTENT LOCK'S SCOPE NEEDS: a frame's device half - the tables, the halves, the declared
  * sets, the streams, the material arena, the blocks and the pipeline identities - used to be resolved BY the
  * recording, so the device's content lock had to be held across it and no two drivers' content phases could
- * overlap. It is now resolved in the frame's HEAD, into the session's own plan (see api/ContentPlan), and the
+ * overlap. It is now resolved in the frame's HEAD, into the session's own plan (see api/FrameHead), and the
  * recording reads only those values. The hold here is the record seam, which runs with the content lock NOT held;
  * the second driver's WHOLE frame - its head, its recording and its commit, all of which take the lock - must finish
  * while the first is held there. A build that still held the lock across the recording would block that frame until

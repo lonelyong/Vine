@@ -23,7 +23,7 @@ ContentDraw::ContentDraw(ContentPipeline& pipelines, core::VariantPool& pool, de
     // dynamic block only when a value differs from what this pass already issued, and the sampled-input set
     // only when this pass has not already bound that very set.
     const core::StateRegistry::Resolution resolution = registry.resolve(draw.variant, draw.dynamic, draw.inputs.get());
-    // THE PIPELINE IS THE ONE THE CALLER RESOLVED (see the header and api/ContentPlan): this verb binds a value,
+    // THE PIPELINE IS THE ONE THE CALLER RESOLVED (see the header and api/FrameHead): this verb binds a value,
     // it does not ask the layer or the pool - which is what keeps the recording path free of the device's lock.
     if (draw.pipeline == nullptr) {
         // Nothing is recorded: a group without a pipeline bind would draw with whatever was bound last.

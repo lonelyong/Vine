@@ -162,15 +162,15 @@ void ContentDraw::writeSlice(const VkDeviceSize                    slice,
     std::memcpy(bytes + scratch.shadowOffset(), &shadow, sizeof(shadow));
 }
 
-std::uint64_t ContentDraw::record(VkCommandBuffer                                        commands,
-                                  int                                                    width,
-                                  int                                                    height,
-                                  const vn::graphics::DrawDescription&                   draw,
-                                  const vn::graphics::PassDraw&                          pass,
-                                  const std::span<const ContentCaches::CommandPlan>      plans,
-                                  const std::span<const ContentCaches::ResolvedTextures> textures,
-                                  ShadowSource                                           shadow,
-                                  ContentRefusal* const                                  refusal)
+std::uint64_t ContentDraw::record(VkCommandBuffer                              commands,
+                                  int                                          width,
+                                  int                                          height,
+                                  const vn::graphics::DrawDescription&         draw,
+                                  const vn::graphics::PassDraw&                pass,
+                                  const std::span<const FrameHead::DrawPlan>   plans,
+                                  const FrameHead&                             head,
+                                  ShadowSource                                 shadow,
+                                  ContentRefusal* const                        refusal)
 {
     ContentRefusal  local;
     ContentRefusal& out = refusal != nullptr ? *refusal : local;
@@ -189,9 +189,9 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                               
                    vn::String(u8"vk: a screen draw reached the content path (it has its own recordScreen)"));
         return 0;
     }
-    // ONE PLAN PER COMMAND IS THE FRAME HEAD'S CONTRACT (see ContentCaches::CommandPlan): a caller that resolved only
+    // ONE PLAN PER COMMAND IS THE FRAME HEAD'S CONTRACT (see FrameHead::DrawPlan): a caller that resolved only
     // some of them would record a draw nobody resolved, so this call refuses rather than guessing.
-    if (plans.size() < draw.commands->size() || textures.size() < draw.commands->size()) {
+    if (plans.size() < draw.commands->size()) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    u8"vk.content.plan_missing",
                    vn::String(u8"vk: the frame head did not resolve every command of this drawing call"));
@@ -202,7 +202,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                               
     if (draw.commands->empty()) {
         return 0; // nothing named, nothing drawn (not a refusal: the call is simply empty)
     }
-    if (textures.front().fallback_view == VK_NULL_HANDLE) {
+    if (head.fallback_view == VK_NULL_HANDLE) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    u8"vk.content.stand_in_missing",
                    vn::String(u8"vk: the 1x1 stand-in every absent texture slot binds could not be made"));
@@ -246,10 +246,9 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                               
     };
 
     for (std::size_t command_index = 0; command_index < draw.commands->size(); ++command_index) {
-        const vn::graphics::RenderCommand&     command  = (*draw.commands)[command_index];
-        const ContentCaches::CommandPlan&      plan     = plans[command_index];
-        const ContentCaches::ResolvedTextures& resolved_textures = textures[command_index];
-        // A COMMAND THE HEAD COULD NOT RESOLVE IS SKIPPED, AND THE HEAD ALREADY SAID WHY (see planCommand): the
+        const vn::graphics::RenderCommand& command = (*draw.commands)[command_index];
+        const FrameHead::DrawPlan&         plan    = plans[command_index];
+        // A COMMAND THE HEAD COULD NOT RESOLVE IS SKIPPED, AND THE HEAD ALREADY SAID WHY (see planDraw): the
         // drawing call's refusal carries that reason, and a later command still records.
         if (plan.pipeline == VK_NULL_HANDLE) {
             continue;
@@ -265,7 +264,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                               
         std::array<VkDescriptorImageInfo, kTextureSlots> slots{};
         std::uint32_t                                    texture_flags = 0U;
         for (std::uint32_t slot_index = 0; slot_index < kTextureSlots; ++slot_index) {
-            const ContentCaches::SlotBinding& binding = resolved_textures.slots[slot_index];
+            const FrameHead::SlotBinding& binding = plan.slots[slot_index];
             slots[slot_index].sampler     = binding.sampler;
             slots[slot_index].imageView   = binding.view;
             slots[slot_index].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -307,10 +306,10 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                               
         (void)vn::graphics::packDrawBlock(command.model_matrix, command.opacity, resolved.state.pointSize, draw_block);
         writeSlice(slice, material_block, lights_block, draw_block, shadow_block);
 
-        const VkImageView shadow_view    = shadow.view != VK_NULL_HANDLE ? shadow.view : resolved_textures.fallback_view;
-        const VkSampler   shadow_sampler = resolved_textures.shadow_sampler != VK_NULL_HANDLE
-                                               ? resolved_textures.shadow_sampler
-                                               : resolved_textures.fallback_sampler;
+        const VkImageView shadow_view    = shadow.view != VK_NULL_HANDLE ? shadow.view : head.fallback_view;
+        const VkSampler   shadow_sampler = head.shadow_sampler != VK_NULL_HANDLE
+                                               ? head.shadow_sampler
+                                               : head.fallback_sampler;
         const VkDescriptorSet content_set = scratch.contentSetFor(slots, shadow_view, shadow_sampler);
         const VkDescriptorSet draw_set    = content_set != VK_NULL_HANDLE ? scratch.drawSetFor() : VK_NULL_HANDLE;
         if (content_set == VK_NULL_HANDLE || draw_set == VK_NULL_HANDLE) {
@@ -397,8 +396,8 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
                                         int                                        height,
                                         const vn::graphics::DrawDescription&       draw,
                                         const vn::graphics::PassDraw&              pass,
-                                        const ContentCaches::ScreenPlan&           plan,
-                                        const ContentCaches::ResolvedTextures&     textures,
+                                        const FrameHead::DrawPlan&                 plan,
+                                        const FrameHead&                           head,
                                         ScreenSource                               source,
                                         ShadowSource                               shadow,
                                         ContentRefusal* const                      refusal)
@@ -420,7 +419,7 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
                    vn::String(u8"vk: a screen draw named no source target, so there is nothing to sample"));
         return 0;
     }
-    if (textures.fallback_view == VK_NULL_HANDLE) {
+    if (head.fallback_view == VK_NULL_HANDLE) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                    u8"vk.content.stand_in_missing",
                    vn::String(u8"vk: the 1x1 stand-in every absent texture slot binds could not be made"));
@@ -459,8 +458,8 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
     // screen program only declares the bindings its own ABI states, so nothing reads them).
     std::array<VkDescriptorImageInfo, kTextureSlots> slots{};
     for (std::uint32_t slot_index = 0; slot_index < kTextureSlots; ++slot_index) {
-        slots[slot_index].sampler     = textures.fallback_sampler;
-        slots[slot_index].imageView   = slot_index < source.views.size() ? source.views[slot_index] : textures.fallback_view;
+        slots[slot_index].sampler     = head.fallback_sampler;
+        slots[slot_index].imageView   = slot_index < source.views.size() ? source.views[slot_index] : head.fallback_view;
         slots[slot_index].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
@@ -489,8 +488,8 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
     }
     writeSlice(slice, vn::graphics::VineMaterialBlock{}, lights_block, vn::graphics::VineDrawBlock{}, shadow_block);
 
-    const VkImageView shadow_view    = shadow.view != VK_NULL_HANDLE ? shadow.view : textures.fallback_view;
-    const VkSampler   shadow_sampler = textures.shadow_sampler != VK_NULL_HANDLE ? textures.shadow_sampler : textures.fallback_sampler;
+    const VkImageView shadow_view    = shadow.view != VK_NULL_HANDLE ? shadow.view : head.fallback_view;
+    const VkSampler   shadow_sampler = head.shadow_sampler != VK_NULL_HANDLE ? head.shadow_sampler : head.fallback_sampler;
     const VkDescriptorSet set        = scratch.screenSetFor(slots, shadow_view, shadow_sampler);
     if (set == VK_NULL_HANDLE) {
         out.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,

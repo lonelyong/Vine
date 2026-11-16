@@ -286,9 +286,9 @@
   它只属于自己的驱动者。
 - **代价（如实）**：`ContentDraw` 的 `record` 每帧多一次指针间接（两个借用引用），换来的是“谁拥有帧内状态”可以一行
   指向一个对象。
-- **锁与帧首快照（S6c-1，已落地）**：`ContentCaches` 有一把**自己的锁**（`ContentCaches::Lock`，不可重入），帧只在**帧首**取它
-  一次：`planCommand` / `planScreen` / `resolveTextures` 把每一调用要画的东西（pipeline、顶点/索引/实例 buffer 句柄、
-  材质、纹理 view/sampler、阴影 sampler）**按值**写进 `CommandPlan` / `ResolvedTextures`，纹理上传也在帧首录进帧自己的
+- **锁与帧首快照（S6c-1 + S2 批 2b，已落地）**：`ContentCaches` 有一把**自己的锁**（`ContentCaches::Lock`，不可重入），帧只在**帧首**取它
+  一次：`planDraw`（两个重载）/ `resolveTextures` 把每一调用要画的东西（pipeline、顶点/索引/实例 buffer 句柄、
+  材质、纹理 view/sampler、阴影 sampler）**按值**写进 `FrameHead::DrawPlan`（帧级纹理/采样器事实挂 `FrameHead`），纹理上传也在帧首录进帧自己的
   命令缓冲（render pass 之外，唯一合法的地方）。**记录路径此后不取锁、不碰缓存条目**；条目被替换/释放时旧对象**park 到
   水位**，所以“帧首解析过的值”在整帧内有效（`G10`）。`Lock&` 参数把“我持锁”变成编译期证据（`G4`）。
 - **观察点（T3 的准确形式）**：`Device::contentCacheCounters().cache_lock_acquisitions` 是累计获取次数。一整帧固定 **4 次**

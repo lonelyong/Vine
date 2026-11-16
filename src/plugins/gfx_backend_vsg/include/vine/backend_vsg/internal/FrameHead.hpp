@@ -23,7 +23,7 @@
 /**
  * @brief What ONE frame's content resolved to: values, one per drawing call, that the recording consumes.
  *
- * WHY IT EXISTS (`C3`, the vk `CommandPlan` shape). A frame's content has two halves that used to be one function:
+ * WHY IT EXISTS (`C3`, the vk `FrameHead` shape). A frame's content has two halves that used to be one function:
  * the DEVICE half - the facts' rows, the compiled halves, the declared sets, the stream uploads, the material
  * arena, the pipeline identities - and the RECORDING half, which turns those answers into vsg nodes. While they
  * were one function, the device's content lock had to be held across the recording, so two drivers' content phases
@@ -31,7 +31,7 @@
  * value here (under the device's content lock, once), and the recording then reads only these values - no table,
  * no cache, no lock.
  *
- * A PLAN IS A VALUE, AND IT OWNS WHAT IT NAMES (`G4` / `G10`). Every vsg object a call names - the pipeline, the
+ * THE HEAD IS A VALUE, AND IT OWNS WHAT IT NAMES (`G4` / `G10`). Every vsg object a call names - the pipeline, the
  * descriptor binds, the vertex binds, the push blocks - is held by a `ref_ptr` here, and `halves` is a lease on
  * the producer whose recorders the calls run through (see ContentHalves::pin): another driver's head may sweep a
  * half or a declared set between this frame's resolution and its recording, and the objects this plan resolved
@@ -39,7 +39,7 @@
  * against the frames that were in flight when it was made, and the frame holding a plan may not have been
  * submitted yet (see core::RetirementQueue).
  *
- * WHAT IT IS NOT. It is not the plan of the FRAME (see core::CompiledFrame - what the pass means), and it is not
+ * WHAT IT IS NOT. It is not the FRAME's plan (see core::CompiledFrame - what the pass means), and it is not
  * the frame's scratch (see FrameScratch - the arena and the recorder). It is the layer between them: "what the
  * device answered for the plan's drawing calls, as one frame's values". It is reused across frames (its calls
  * keep their capacity), it belongs to ONE frame at a time, and it is not thread-safe: each driver owns one (see
@@ -52,7 +52,7 @@
 VN_BACKEND_VSG_NS_BEGIN
 
 /** @brief One frame's resolved content: see the file note for what crosses the seam and what it owns. */
-class ContentPlan {
+class FrameHead {
   public:
     /// @brief The lease a plan holds on a producer whose answers it copied (see @ref pin).
     using Pin = std::shared_ptr<const void>;
@@ -65,7 +65,7 @@ class ContentPlan {
     static constexpr std::size_t kMaxChannels = 8U;
 
     /** @brief One drawing call, resolved: everything recording it reads, and nothing recording it would ask. */
-    struct Call {
+    struct DrawPlan {
         /// The compiled half's recorder. Not const: recording counts into it (its counters are atomics, see
         /// api/ContentDraw - two drivers' frames may record through one half at once).
         ContentDraw* draws{ nullptr };
@@ -132,14 +132,14 @@ class ContentPlan {
     struct Pass {
         core::PassId         pass{ 0 };           // Which pass of the plan this is (see PassContent).
         core::StateRegistry* registry{ nullptr }; // This pass' state memory (the plan owns it, see beginPass).
-        std::vector<Call>    calls;               // One per drawing call that resolved and has something to record.
+        std::vector<DrawPlan>    calls;               // One per drawing call that resolved and has something to record.
 
         /** @brief Releases the calls and forgets the pass; the vector keeps its capacity. */
         void clear() noexcept
         {
             pass     = 0;
             registry = nullptr;
-            for (Call& call : calls) {
+            for (DrawPlan& call : calls) {
                 call.clear();
             }
             calls.clear();
@@ -147,9 +147,9 @@ class ContentPlan {
     };
 
   public:
-    ContentPlan() = default;
-    ContentPlan(const ContentPlan&)            = delete;
-    ContentPlan& operator=(const ContentPlan&) = delete;
+    FrameHead() = default;
+    FrameHead(const FrameHead&)            = delete;
+    FrameHead& operator=(const FrameHead&) = delete;
 
   public:
     /** @brief Opens a frame: forgets every pass and the previous frame's leases; the storage is kept.

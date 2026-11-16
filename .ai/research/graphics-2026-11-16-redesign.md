@@ -543,7 +543,7 @@ vk 插件 12.0k 行、vsg 插件 17.2k 行、接缝实现 3.2k 行、三套测�
   这是**对的方向**。问题：`ContentPlan`（解析出的值）与 `ContentPass`（消费值的录制）在同一个文件族里
   纠缠，`ContentPlan::record` 又回到 `ContentPass`/`ContentDraw` 去录——边界是"值 vs 行为"，
   今天用命名区分（`ContentPlan` vs `ContentPass`），可以。
-- **证据**：`ContentPlan.hpp` 的三相位注释；`ContentPlan.cpp`；`VsgBackendTest.ARecordingFrameDoesNotStopAnotherDriversContent`。
+- **证据**：`ContentPlan.hpp` 的三相位注释；`ContentPlan.cpp`；`VsgBackendTest.ARecordingFrameDoesNotStopAnotherDriversContent`。 <!-- drift-ok -->
 - **重设计建议**：只改名（`ContentPlan` → `FrameHead`、`Call` → `DrawPlan`），与 vk 对齐。第 2 批。
 
 #### 3.5.3 `ContentStore.cpp`（1284 行）+ `ContentFacts` / `ContentHalves` / `ContentSets` / `MaterialImages` / `StreamUploads`
@@ -561,7 +561,7 @@ vk 插件 12.0k 行、vsg 插件 17.2k 行、接缝实现 3.2k 行、三套测�
 
 - **判决**：vsg 的"帧首解析"比 vk 更早成形（三相位 + `Pin`），这套词汇是**第二实现教第一实现的证据**。
   `ProgramAbi` 的扫描器（834 行）是 vsg 特有（因为 vsg 的 ShaderSet 需要绑定信息），不属于共享机制。
-- **证据**：`ContentPlan.hpp`；`ProgramAbiTest`；`vsg-backend.md` §2.10。
+- **证据**：`ContentPlan.hpp`；`ProgramAbiTest`；`vsg-backend.md` §2.10。 <!-- drift-ok -->
 - **重设计建议**：`ProgramAbi` / `ProgramVariant` 随 18 个头一起搬进插件内部（§3.2.1）。
 
 #### 3.5.5 `Session` / `OffscreenSession` / `VsgDriver` / `VsgExecutor`

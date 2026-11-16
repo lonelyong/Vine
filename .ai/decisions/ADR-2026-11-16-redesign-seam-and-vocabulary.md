@@ -158,6 +158,15 @@ commit(cmd, target)                // 1 次设备锁：提交、present、帧账
   别名。**纯改名，零行为**：三套用例的名字一个没动（它们是指纹），`VkMultiSessionTest.TwoDriversShadeWithTheirOwnDefaultProgram` /
   `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram` / `HeadlessBackendTest.OneDeviceServesSeveralAreasWithoutCrossingThem`
   改名后仍绿；`DeviceClock` 的**动词**仍是 `addWindow` / `windowCompleted`（只改类型，动词留给下一个批次决定）。
+- **批次 2（一帧三相位 + 帧闸）已落地（2026-11-16）**：`backend::FrameGate` 只剩一份实现（`enterShared` /
+  `enterExclusive` + 租约 + 每闸每线程嵌套栈 + `Counters`），vk 的设备体闸与 vsg 的 `internal::DeviceGate` 都换成了它；
+  13 个 vk 宿主动词从"同线程死锁"改成拒绝值 + 一条 `vk.device.reentry`；`FrameReport::locking` 落地（两后端各一条
+  "稳态常数 + waits 0"的用例）。**批次 2b（`FrameHead` 词汇）同日落地**：帧首解析出的值在两后端都叫 `FrameHead` +
+  `FrameHead::DrawPlan`——vsg 的 `internal/ContentPlan`（类 `ContentPlan` / `Call`）改名，
+  vk 的 `CommandPlan` / `ScreenPlan` / `ResolvedTextures` 合并进新头 `internal/FrameHead.hpp`（`planDraw` 一个动词
+  两个重载、帧级纹理/采样器事实挂 `FrameHead`，screen 计划也是 `DrawPlan`、用 `kind` 区分）。**不建共享头**，统一的是
+  名字与形状（本文"被否决的路"里的 `ResolvedDraw`）。纯改名/合并，零用例改名：`test_graphics` 607 / `test_vk` 159 /
+  `test_vsg` 571、对拍 13；九道门禁与 `content_seam` / `vk_exposure` 全绿。
 - **阶段三（迁移）**：**实施中**。批次表与顺序以 `../research/graphics-2026-11-16-redesign-r2.md` §10 为准；
   每批一个可回滚提交，每批结束在提交正文列出"哪些能力 ID 从旧证据切到新证据"——git 是批次进度的档案，
   本文只记状态。
