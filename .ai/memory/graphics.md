@@ -1572,3 +1572,28 @@
 - **零行为、零用例改名**：`test_graphics` **607** / `test_vk` **159** / `test_vsg` **571** / `BackendParityTest` 13；
   九门禁 + `content_seam` / `vk_exposure` 全绿；本批不碰线程（不需要 TSan）。
 - **坑**：vsg 插件是 GLOB 源列表 → 改 `.cpp` 文件名后**必须重配 `build/`**（`cmake -S . -B build`），否则旧路径还挂在 target 上。
+
+## 2026-11-16 S4：目标表归一（B5）+ 灯一份共享值（B11）
+
+- **B5a `0e9a9b84`（vk `TargetTable`）**：map、形状/构建/重建、claim 书籍、release/park、`drain` 同一对象；
+  `TargetClaims.{hpp,cpp}` 删除，`TargetTableTest` 8 例（+1：drain 一次清记录与租约），`TargetClaimFrameTest` 2 例；
+  `Device::targetTable()` 取代 `targetClaims()`；读回持 `shared_ptr`（并发 release 的 park 而不是 map 保活）；
+  `ReleaseRenderTarget` 变成一句 `table.release()`。`test_vk` 165 → 166。
+- **B5b `81e0ba0d`（词汇 + vsg 一张表）**：vk `TargetImages`→`TargetObjects`；vsg `OffscreenTarget`→`TargetObjects`、
+  `HostTargets`→`TargetTable`，并把 `VsgTargetRegistry` **并入**：`Entry` 持拥有者标签（`std::string`，修掉旧
+  `const char*` 指向临时 `std::string::c_str()` 的悬垂读）与执行器的 `unapplied` 情节；`resolve` / `adopt` 是表动词，
+  `clearTargets` / `addTarget(nullptr)` 路径消失。三套用例名除 `TargetObjectsTest` 套件名随类型外零变化。
+- **B11 `1d57dc77`（灯不再每 pass 分配）**：SDK 新 `LightSet`（`std::shared_ptr<const LightSet>`，不可变
+  `vector<LightValue>`）；`Light::revision()` 由每个喂 `value()` 的 setter 递增；`Scene::lightSet()` 按
+  （身份, revision）缓存它的值；`DrawDescription::light_values` 改为 `LightSetPtr`（null = 不公告，空集 = 没有灯），
+  两后端读 `->values()`，vsg 每 pass 的 `light_scratch` 中间拷贝删除（recorder 自己快照进 frame arena）。
+  引擎证人：`ValueChannelTest.EveryPassOfOneFrameHoldsTheSameLightSetUntilALightMoves`（两 pass 同一指针、稳态同指针、
+  改灯即新集）。vk 证人：`FrameHead::storageGrows()` + `Device::frameHeadStorageGrows()`（**不是** `FrameReport` 字段），
+  `VkFrameHeadTest.ASteadyFrameDoesNotGrowTheHeadsStorage`（3 帧预热后 5 帧不动）。顺手修掉 `planDraw` 的
+  `plan = FrameHead::DrawPlan{}`（每命令释放复用向量）→ `plan.clear()`。
+- **如实**：**整帧仍约 97 次分配/帧**（管线键的 `channels`/`bindings`/`attributes`、`buildPipeline` 的按值 key 拷贝、
+  内容缓存的 map 插入）——B11 只证明头部 pass/call 存储复用，不声称全局零分配；见打包件里的调查记录。
+- **坑（改名工具）**：`vscode_renameSymbol` 与 `mv` 组合会把**旧路径的文件写回**（内容已用新名字），结果是新旧两份
+  同名符号 → 链接期 multiple definition。改名顺序：先改符号、再 `mv`，最后 `git status` 看“旧名的新文件”并删掉。
+- **计数**：`test_graphics` **614** / `test_vk` **167** / `test_vsg` **571** / `BackendParityTest` 13；TSan 三套 0 报告；
+  `Vine --open demo` 0 error。
