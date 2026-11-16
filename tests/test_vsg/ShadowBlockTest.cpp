@@ -38,10 +38,10 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameRecorder.hpp>
+#include <vine/backend_vsg/internal/StateRegistry.hpp>
+#include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/BlockDescriptors.hpp>
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
 #include <vine/backend_vsg/internal/ContentDraw.hpp>

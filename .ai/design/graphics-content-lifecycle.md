@@ -1,10 +1,10 @@
 # graphics 内容生命周期：释放与缓存
 
 > **状态**：现行
-> **最后核对**：2026-11-12
+> **最后核对**：2026-11-16
 > **范围**：内容对象的宿主所有权、GPU 驻留释放与缓存策略，以及上传暂存的回收。
 > **权威来源**：`RenderDevice.hpp` / `RenderEngine.hpp` / `MaterialImages.hpp` /
-> `core/MaterialArena.hpp` / `core/Streams.hpp` / `core/BlockStorage.hpp`。
+> `vine/backend_vsg/internal/MaterialArena.hpp` / `.../Streams.hpp` / `.../ResourceTable.hpp` / `BlockStorage.hpp`。
 > **待办**：`../backlog/graphics.md`
 
 ## 1. 概要设计
@@ -38,7 +38,7 @@
     条目持有它键名的那个 `Buffer`，地址与条目同寿。驻留寿命**不看时间**，由两个 O(1) 事实决定：
     内容层发布的声明索引（`ContentFacts::declarations`，由 `ContentStore` 在行变更时同步维护的
     地址→声明计数）说“还有没有活内容声明这块 buffer”；条目自己的句柄说“revision 是不是它上传时的那个”。
-    没有声明、或 revision 已经走了的条目停车离场（`backend/ResourceTable`）。每帧成本 O(#驻留条目)，
+    没有声明、或 revision 已经走了的条目停车离场（`vine/backend_vsg/internal/ResourceTable.hpp`）。每帧成本 O(#驻留条目)，
     不随内容规模走（裁剪不删行，所以扫行会把“什么都没画”的帧变成最贵的帧）。
 2.6 **按身份做键的表，键还活着时条目必须活着；只有上传仍按地址**：几何 / 材质 / 程序的事实行按内容句柄
     `(id, revision)` 做键（`ContentId.hpp`），编译半边与描述符集按同一个 `ContentRef`（再加 layout / variant /

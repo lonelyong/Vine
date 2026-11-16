@@ -29,9 +29,9 @@
 #include <vsg/core/Array.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/Streams.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/backend_vsg/internal/StateRegistry.hpp>
+#include <vine/backend_vsg/internal/Streams.hpp>
+#include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/BlockDescriptors.hpp>
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
 #include <vine/backend_vsg/internal/ContentDraw.hpp>

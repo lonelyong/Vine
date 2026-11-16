@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <span>
 
-#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/graphics/backend/Keys.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
 #include <vine/backend_vsg/internal/ContentImages.hpp>

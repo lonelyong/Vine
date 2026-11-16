@@ -4,7 +4,7 @@
 #include <unordered_set>
 #include <utility>
 
-#include <vine/graphics/backend/ResourceTable.hpp>
+#include <vine/backend_vsg/internal/ResourceTable.hpp>
 #include <vine/backend_vsg/internal/ContentDraw.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
 #include <vine/backend_vsg/internal/DrawNeeds.hpp>

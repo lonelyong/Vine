@@ -39,8 +39,8 @@
 #include <vine/graphics/BuiltinShaders.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/backend_vsg/internal/StateRegistry.hpp>
+#include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
 #include <vine/backend_vsg/internal/ContentSources.hpp>
 #include <vine/backend_vsg/internal/ProgramAbi.hpp>

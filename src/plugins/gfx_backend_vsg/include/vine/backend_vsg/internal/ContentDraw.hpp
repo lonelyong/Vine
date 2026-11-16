@@ -15,8 +15,8 @@
 #include <vsg/state/GraphicsPipeline.h>
 #include <vsg/state/PushConstants.h>
 
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/backend_vsg/internal/StateRegistry.hpp>
+#include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
 #include <vine/backend_vsg/internal/StateCommands.hpp>
 #include <vine/backend_vsg/support/VsgVulkanEntryPoints.hpp>

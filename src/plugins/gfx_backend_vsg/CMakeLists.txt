@@ -3,8 +3,11 @@
 # The plugin is a MODULE DLL (vn_add_plugin). Its implementation is the rewritten backend under src/internal
 # and src/core, plus the handful of flat translation units those share (the host window, the scene rules,
 # the vulkan entry points, the dynamic-state mapper and the backend utility layer - see the source list
-# in tests/test_vsg/CMakeLists.txt). When loaded by PluginManager, GfxBackendVsgPlugin::load() registers
-# the "vsg" backend into RenderBackendRegistry.
+# in tests/test_vsg/CMakeLists.txt). Since the seam relocation (ADR-2026-11-16 §2) src/internal also holds
+# this backend's device-free frame machinery (FrameCompiler / FrameRecorder / Streams / arenas / probes):
+# those are this backend's portable side, not part of the shape a second backend must read.
+# When loaded by PluginManager, GfxBackendVsgPlugin::load() registers the "vsg" backend into
+# RenderBackendRegistry.
 #
 # The retired renderer (VsgRenderer and everything it drove: SceneBridge, CameraBridge, the texture and
 # mesh caches, the pipeline factory, the retire ring, ...) has been deleted; its last caller was gone once

@@ -14,10 +14,10 @@
 #include <vine/graphics/Texture.hpp>
 #include <vine/intrusive_ptr.hpp>
 
-#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/backend_vsg/internal/StateRegistry.hpp>
 #include <vine/backend_vsg/internal/ContentDraw.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
 #include <vine/backend_vsg/internal/ContentHalves.hpp>

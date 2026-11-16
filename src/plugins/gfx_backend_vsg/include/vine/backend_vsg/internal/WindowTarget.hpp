@@ -9,8 +9,8 @@
 #include <vsg/nodes/Group.h>
 #include <vsg/nodes/Node.h>
 
-#include <vine/graphics/backend/ClearPlan.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/ClearPlan.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
 namespace vsg

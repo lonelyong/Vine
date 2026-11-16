@@ -11,8 +11,8 @@
 
 #include <vine/graphics/RenderTarget.hpp>
 
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameRecorder.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
 #include <vine/backend_vsg/internal/OffscreenTarget.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>

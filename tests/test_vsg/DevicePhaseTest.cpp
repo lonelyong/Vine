@@ -25,7 +25,7 @@
 #include <string>
 #include <vector>
 
-#include <vine/graphics/backend/PhaseTable.hpp>
+#include <vine/backend_vsg/internal/PhaseTable.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
 
 #include "DevicePhases.hpp"

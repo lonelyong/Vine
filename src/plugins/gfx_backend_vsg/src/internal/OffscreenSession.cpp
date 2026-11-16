@@ -10,7 +10,7 @@
 #include <vsg/core/Exception.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/graphics/backend/SlotProbe.hpp>
+#include <vine/backend_vsg/internal/SlotProbe.hpp>
 #include <vine/backend_vsg/internal/SessionDrive.hpp>
 #include <vine/backend_vsg/internal/SessionContent.hpp>
 #include <vine/backend_vsg/internal/TransferStaging.hpp>

@@ -47,8 +47,8 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 
-#include <vine/graphics/backend/PixelProbe.hpp>
-#include <vine/graphics/backend/Streams.hpp>
+#include <vine/backend_vsg/internal/PixelProbe.hpp>
+#include <vine/backend_vsg/internal/Streams.hpp>
 #include <vine/backend_vsg/internal/BlockDescriptors.hpp>
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
 #include <vine/backend_vsg/internal/ContentDraw.hpp>

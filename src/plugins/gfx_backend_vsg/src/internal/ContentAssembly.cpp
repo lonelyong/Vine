@@ -2,7 +2,7 @@
 
 #include <vsg/nodes/Group.h>
 
-#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/backend_vsg/internal/StateRegistry.hpp>
 
 VN_BACKEND_VSG_NS_BEGIN
 

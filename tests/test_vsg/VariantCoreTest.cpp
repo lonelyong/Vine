@@ -27,8 +27,8 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/StateNode.hpp>
 #include <vine/graphics/backend/Keys.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/backend_vsg/internal/StateRegistry.hpp>
+#include <vine/backend_vsg/internal/VariantPool.hpp>
 
 #include "TestProgramFacts.hpp"
 

@@ -32,7 +32,7 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/Texture.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/intrusive_ptr.hpp>
 
 #include "TestProgramFacts.hpp"

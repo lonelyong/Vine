@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <map>
 
-#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/backend_vsg/internal/FrameRecorder.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
 /**

@@ -8,7 +8,7 @@
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/intrusive_ptr.hpp>

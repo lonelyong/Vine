@@ -166,9 +166,25 @@ target_sources(${TEST_NAME} PRIVATE
 	# AllocationGate's COUNTING half has an instrumenter (see the file's note). It must be part of this target
 	# and not of the library: replacing the allocator is the host's choice to make, not the backend's.
 	${CMAKE_CURRENT_SOURCE_DIR}/AllocationCounter.cpp
-	# The backend half (frame description -> compiled frame -> executor) is compiled into
-	# libGraphics now (sdk/vine/graphics/backend): device-free by construction - no vsg::
-	# include anywhere - which is the design's §2.3 boundary.
+    # This backend's device-free frame machinery (formerly in libGraphics' backend
+    # half, now its own portable side): no vsg:: include anywhere and no device, so it
+    # compiles into this suite exactly like the API-side code below.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/AllocationGate.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ClearPlan.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/DepthProbe.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/FrameArena.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/FrameCompiler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/FrameRecorder.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/FrameRing.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/MaterialArena.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/Observe.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/PhaseTable.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/PixelProbe.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/SessionMove.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/SlotProbe.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/StateRegistry.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/Streams.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/VariantPool.cpp
 	# The API side of the boundary: the only new code that touches the graphics API.
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/DeviceProbe.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/WindowSession.cpp

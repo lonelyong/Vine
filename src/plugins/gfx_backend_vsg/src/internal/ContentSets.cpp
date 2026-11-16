@@ -7,7 +7,7 @@
 #include <vsg/state/Sampler.h>
 
 #include <vine/graphics/Texture.hpp>
-#include <vine/graphics/backend/ResourceTable.hpp>
+#include <vine/backend_vsg/internal/ResourceTable.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
 #include <vine/backend_vsg/internal/ProgramVariant.hpp>
 

@@ -20,6 +20,11 @@ Two kinds of defect are invisible to the compiler and therefore rot silently:
     VsgProgramSlot.hpp included vine/graphics/Camera.hpp twice.  `#pragma once` makes
     them harmless, which is exactly why nobody notices them.
 
+It also pins the backend half's FILE SET (one rule, same theme: a dependency the
+compiler cannot see). The seam is the mechanisms BOTH backends use; a header only
+one backend reads is that backend's, and the directory's own list is what keeps
+the distinction checkable (see seam_file_set_findings).
+
 In a .cpp the FIRST include is the file's own header (the rule says so), so it is
 not part of the group order — but the group ORDER is only checked in headers:
 
@@ -162,6 +167,49 @@ def group_of(quote, header):
     return THIRD_PARTY
 
 
+# The seam's FILE SET is part of its definition (ADR-2026-11-16 §2): the mechanisms BOTH backends use,
+# plus the include guard, and nothing else. A header only one backend reads belongs in that backend -
+# the directory already grew into "the first backend's portable half" once (18 of its 24 mechanisms had
+# a single consumer), and a file set nobody checks is how it would grow back. Extending either list is
+# a decision about the seam, not an implementation detail; the batch that makes it says so.
+SEAM_HEADERS = {
+    "BackendHalfGuard.hpp",
+    "DeviceClock.hpp",
+    "FrameGate.hpp",
+    "FrameTimeline.hpp",
+    "Keys.hpp",
+    "Readback.hpp",
+    "RetirementQueue.hpp",
+    "TargetPlan.hpp",
+}
+SEAM_SOURCES = {"DeviceClock.cpp", "FrameTimeline.cpp", "Keys.cpp", "Readback.cpp", "RetirementQueue.cpp", "TargetPlan.cpp"}
+SEAM_SCOPE = (("src/viz/graphics/sdk/vine/graphics/backend", SEAM_HEADERS, "*.hpp"),
+              ("src/viz/graphics/src/backend", SEAM_SOURCES, "*.cpp"))
+
+
+def seam_file_set_findings():
+    """Return the files that make the backend half's DIRECTORY disagree with its definition."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    findings = []
+    for folder, allowed, pattern in SEAM_SCOPE:
+        directory = root / folder
+        if not directory.is_dir():
+            findings.append(f"{folder}: the backend half's directory is gone")
+            continue
+        present = set()
+        for path in sorted(directory.glob(pattern)):
+            present.add(path.name)
+            if path.name not in allowed:
+                findings.append(
+                    f"{path.relative_to(root)}: only the shared mechanisms live in the seam "
+                    f"(ADR-2026-11-16 §2) - a one-backend header/file belongs in that backend")
+        for missing in sorted(allowed - present):
+            findings.append(
+                f"{folder}/{missing}: a shared mechanism is missing from the seam "
+                f"(retire it from SEAM_HEADERS / SEAM_SOURCES in the same batch)")
+    return findings
+
+
 def check_file(path):
     """Return the findings for one file as (line, message) pairs."""
     lines = path.read_text(encoding="utf-8", errors="ignore").split("\n")
@@ -215,6 +263,9 @@ def main():
         for number, message in check_file(path):
             print(f"{path}:{number}: {message}")
             total += 1
+    for message in seam_file_set_findings():
+        print(message)
+        total += 1
     print(f"--- {total} include-hygiene finding(s) in {len(files)} file(s)")
     return 1 if total else 0
 

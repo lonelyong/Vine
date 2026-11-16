@@ -167,6 +167,16 @@ commit(cmd, target)                // 1 次设备锁：提交、present、帧账
   两个重载、帧级纹理/采样器事实挂 `FrameHead`，screen 计划也是 `DrawPlan`、用 `kind` 区分）。**不建共享头**，统一的是
   名字与形状（本文"被否决的路"里的 `ResolvedDraw`）。纯改名/合并，零用例改名：`test_graphics` 607 / `test_vk` 159 /
   `test_vsg` 571、对拍 13；九道门禁与 `content_seam` / `vk_exposure` 全绿。
+- **批次 3（接缝归位）已落地（2026-11-16）**：`sdk/vine/graphics/backend/` 只留 7 个机制 + 守卫——`FrameGate` /
+  `DeviceClock` / `FrameTimeline` / `RetirementQueue` / `Readback` / `Keys` / `TargetPlan`；17 个头与 16 个 `.cpp`
+  （原文的 18 + 18 里，`FrameTimeline` 留下、`ResourceTable` 本来就没有实现）搬进
+  `gfx_backend_vsg/{include/vine/backend_vsg/internal,src/internal}`。`FrameTimeline` 的判据：`DeviceClock` 持有它、
+  `RetirementQueue::retire/advance/retirePoint` 以它为参数——搬它是接缝重构，不是搬家（`G1`）；vk 在 Device.cpp 的
+  注释里也引用它。搬走的类换成 `VN_BACKEND_VSG_API`（`VN_GRAPHICS_API` 在插件里会展开成 dllimport，Windows 链接错），
+  不再包含 `BackendHalfGuard.hpp`（它们不再是那一半）。`libGraphics` 的 `src/backend/` 只剩 6 个 `.cpp`；新门禁
+  `check_include_hygiene.py` 钉住接缝的**文件集**（多一个文件就红）。`CoreTimelineTest`（5 例）随 `FrameTimeline`
+  搬进 `tests/BackendSeamTest.cpp`（三个测试二进制都编它）；**零用例改名**，`test_graphics` 612 / `test_vk` 164 /
+  `test_vsg` 571、对拍 13，九道门禁全绿。
 - **阶段三（迁移）**：**实施中**。批次表与顺序以 `../research/graphics-2026-11-16-redesign-r2.md` §10 为准；
   每批一个可回滚提交，每批结束在提交正文列出"哪些能力 ID 从旧证据切到新证据"——git 是批次进度的档案，
   本文只记状态。

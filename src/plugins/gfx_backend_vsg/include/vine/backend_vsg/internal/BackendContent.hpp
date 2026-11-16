@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <functional>
 
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
 #include <vine/backend_vsg/internal/ContentAssembly.hpp>
 #include <vine/backend_vsg/internal/ContentStore.hpp>

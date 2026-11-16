@@ -13,7 +13,7 @@
 #include <vsg/state/ShaderStage.h>
 
 #include <vine/graphics/backend/Keys.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/BlockDescriptors.hpp>
 #include <vine/backend_vsg/internal/ProgramAbi.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>

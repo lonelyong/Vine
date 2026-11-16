@@ -14,9 +14,9 @@
 #include <vsg/state/BindDescriptorSet.h>
 #include <vsg/state/PushConstants.h>
 
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/StateRegistry.hpp>
+#include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/ContentDraw.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 

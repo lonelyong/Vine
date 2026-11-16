@@ -22,7 +22,7 @@
 #include <utility>
 
 #include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/ResourceTable.hpp>
+#include <vine/backend_vsg/internal/ResourceTable.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 
 using vn::graphics::backend::forgetUnpinned;

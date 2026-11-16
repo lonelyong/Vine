@@ -14,7 +14,7 @@
 #include <vine/graphics/FrameStats.hpp>
 #include <vine/graphics/ReportOnce.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/backend_vsg/internal/OffscreenTarget.hpp>

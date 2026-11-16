@@ -22,9 +22,9 @@
 #include <cstdint>
 #include <vector>
 
-#include <vine/graphics/backend/FrameRing.hpp>
-#include <vine/graphics/backend/MaterialArena.hpp>
-#include <vine/graphics/backend/Streams.hpp>
+#include <vine/backend_vsg/internal/FrameRing.hpp>
+#include <vine/backend_vsg/internal/MaterialArena.hpp>
+#include <vine/backend_vsg/internal/Streams.hpp>
 
 using vn::graphics::backend::FrameRing;
 using vn::graphics::backend::kAssumedInFlightSlots;

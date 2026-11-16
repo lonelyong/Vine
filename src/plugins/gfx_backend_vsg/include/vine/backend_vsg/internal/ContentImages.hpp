@@ -9,7 +9,7 @@
 #include <vsg/state/ImageView.h>
 #include <vsg/state/Sampler.h>
 
-#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/backend_vsg/internal/ProgramAbi.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 

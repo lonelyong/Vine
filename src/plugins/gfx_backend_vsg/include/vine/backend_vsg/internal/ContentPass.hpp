@@ -12,8 +12,8 @@
 #include <vsg/state/ImageView.h>
 
 #include <vine/graphics/Diagnostics.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/StateRegistry.hpp>
 #include <vine/backend_vsg/internal/BlockDescriptors.hpp>
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
 #include <vine/backend_vsg/internal/ContentDraw.hpp>

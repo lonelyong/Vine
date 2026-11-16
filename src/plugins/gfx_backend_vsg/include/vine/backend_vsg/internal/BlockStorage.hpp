@@ -10,9 +10,9 @@
 #include <vsg/vk/Device.h>
 
 #include <vine/graphics/Residency.hpp>
-#include <vine/graphics/backend/FrameRing.hpp>
-#include <vine/graphics/backend/MaterialArena.hpp>
-#include <vine/graphics/backend/SlotProbe.hpp>
+#include <vine/backend_vsg/internal/FrameRing.hpp>
+#include <vine/backend_vsg/internal/MaterialArena.hpp>
+#include <vine/backend_vsg/internal/SlotProbe.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
 /**

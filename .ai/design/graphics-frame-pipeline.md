@@ -1,10 +1,10 @@
 # graphics 帧管线（下一版）
 
 > **状态**：草案 —— `graphics-next` 已采纳（ADR-2026-11-12），按 §9.3 分步替换现役形状；每步的状态见 §3.1。
-> **最后核对**：2026-11-14
+> **最后核对**：2026-11-16
 > **范围**：内容 → 快照 → 派生 → 执行 这四层的形状、身份、寿命与计划语义。不含几何/拾取算法、材质模型、
 > 后端实现细节（`vsg-backend.md`）、线程契约的迁移期现状（`graphics-threading.md`）。
-> **权威来源**：`src/viz/graphics/sdk/vine/graphics/ContentId.hpp`、`sdk/vine/graphics/backend/ResourceTable.hpp`、
+> **权威来源**：`src/viz/graphics/sdk/vine/graphics/ContentId.hpp`、`src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ResourceTable.hpp`、
 > `src/viz/graphics/src/SceneSnapshot.hpp`（原型）、`Scene.hpp` / `RenderEngine.hpp`（现役入口）。
 > **待办**：`../backlog/graphics.md`
 
@@ -693,7 +693,7 @@
 - `src/viz/graphics/src/DrawListDiff.hpp` / `DrawListDiff.cpp`（5a 的字段级比较）
 - `src/viz/graphics/src/SceneRows.cpp`（发布的缓存侧）
 - `src/viz/graphics/src/DrawListBake.cpp`（现役收集与排序）
-- `src/viz/graphics/sdk/vine/graphics/backend/ResourceTable.hpp`（按键驻留）
+- `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ResourceTable.hpp`（按键驻留）
 - `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/DrawNeeds.hpp` / `src/internal/DrawNeeds.cpp`（`drawNeeds`：预热与录制共用的唯一键构造者）
 - `src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp`（事实行与 epoch 回收）
 

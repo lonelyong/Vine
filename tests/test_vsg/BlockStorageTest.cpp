@@ -34,7 +34,7 @@
 #include <vsg/app/WindowTraits.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/graphics/backend/SlotProbe.hpp>
+#include <vine/backend_vsg/internal/SlotProbe.hpp>
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
 

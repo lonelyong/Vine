@@ -9,9 +9,9 @@
 
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/Light.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
-#include <vine/graphics/backend/Observe.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameRecorder.hpp>
+#include <vine/backend_vsg/internal/Observe.hpp>
 #include <vine/backend_vsg/internal/ContentImages.hpp>
 #include <vine/backend_vsg/internal/FrameHead.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>

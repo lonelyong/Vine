@@ -283,7 +283,7 @@
 ### 5.1 代码
 
 - `src/viz/graphics/src/DrawListBake.hpp`、`src/viz/graphics/sdk/vine/graphics/RenderCommand.hpp`（载荷）
-- `src/viz/graphics/src/RenderPass.cpp`、`src/viz/graphics/src/backend/FrameRecorder.cpp`（跨线程读）
+- `src/viz/graphics/src/RenderPass.cpp`、`src/plugins/gfx_backend_vsg/src/internal/FrameRecorder.cpp`（跨线程读）
 - `src/viz/graphics/src/EngineCompile.cpp`、`src/viz/graphics/src/FrameWorker.cpp`（发布与半段） <!-- drift-ok -->
 - `src/viz/graphics/src/Scene.cpp`、`src/viz/graphics/src/SceneRows.hpp`、`src/viz/graphics/src/SnapshotSource.cpp`（场景与派生）
 - `src/viz/graphics/sdk/vine/graphics/backend/`（24 个头）

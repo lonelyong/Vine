@@ -8,7 +8,7 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/intrusive_ptr.hpp>
 
-#include <vine/graphics/backend/Streams.hpp>
+#include <vine/backend_vsg/internal/Streams.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
 #include <vine/backend_vsg/internal/FactResult.hpp>
 #include <vine/backend_vsg/internal/GeometryFacts.hpp>

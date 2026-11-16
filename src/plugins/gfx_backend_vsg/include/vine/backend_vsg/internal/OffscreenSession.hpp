@@ -10,7 +10,7 @@
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/backend/DeviceClock.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/Observe.hpp>
+#include <vine/backend_vsg/internal/Observe.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 #include <vine/backend_vsg/internal/FrameScratch.hpp>

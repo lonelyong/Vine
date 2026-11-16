@@ -19,8 +19,8 @@
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameRecorder.hpp>
 
 using vn::graphics::Diagnostics;
 using vn::graphics::RenderCommand;

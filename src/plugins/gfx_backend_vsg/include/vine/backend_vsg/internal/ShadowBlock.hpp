@@ -1,7 +1,7 @@
 #pragma once
 
 #include <vine/graphics/ShaderAbi.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
 /**

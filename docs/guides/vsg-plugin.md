@@ -68,20 +68,25 @@
 | --- | --- |
 | 门面与会话 | `VsgBackend` `Session` `OffscreenSession` `GraphLifetime` `SessionDrive` `SessionContent` `SessionMove` `TransferStaging` `WindowTarget` `Device` `DeviceFeatures` `DeviceRequirements` `DeviceProbe` `VsgExecutor` |
 | 内容层 | `ContentAssembly` `ContentPass` `ContentHalves` `ContentDraw` `ContentFacts` `ContentSources` `ContentStore` `ContentImages` `ContentPush` `ContentSets` `ContentPipeline` `DrawNeeds` |
-| 数据与表 | `GeometryFacts` `ShadowBlock` `ViewBlock` `ProgramAbi` `ProgramVariant` `MaterialImages` `MaterialSlotCheck` `StreamUploads` `BlockStorage` `BlockDescriptors` `VariantPool` `PassRegistry` `StateCommands` |
-| 目标与读回 | `OffscreenTarget` `HostTargets` `HostReadback` `WhiteImage` |
+| 数据与表 | `GeometryFacts` `ShadowBlock` `ViewBlock` `ProgramAbi` `ProgramVariant` `MaterialImages` `MaterialSlotCheck` `StreamUploads` `BlockStorage` `BlockDescriptors` `VariantPool` `PassRegistry` `StateCommands` `FactResult` |
+| 可移植半边（原 SDK `graphics/backend`） | `FrameRecorder` `FrameCompiler` `FrameArena` `FrameRing` `ClearPlan` `StateRegistry` `MaterialArena` `Streams` `SlotProbe` `Observe` `PhaseTable` `PixelProbe` `DepthProbe` `AllocationGate` `ResourceTable` |
+| 目标与读回 | `OffscreenTarget` `HostTargets` `HostReadback` `WhiteImage` `OneShot` |
 | 内部视图（仅测试） | `BackendContent` |
 
-**`graphics/backend`**（图形模块的后端半：头在 `src/viz/graphics/sdk/vine/graphics/backend/`（导出、随 SDK 安装，**一个扁平目录，内部不再分组**），
-实现在 `src/viz/graphics/src/backend/`；分层与依赖规则见 `.ai/design/graphics-architecture.md`）——无 vsg 的规则与账本（已从本插件移出，编进 `libGraphics`）：
+**`graphics/backend`**（图形模块的**接缝**：头在 `src/viz/graphics/sdk/vine/graphics/backend/`（导出、随 SDK 安装），
+实现在 `src/viz/graphics/src/backend/`；分层与依赖规则见 `.ai/design/graphics-architecture.md`）——**两个后端都用的机制**：
 
 | 组 | 单元 |
 | --- | --- |
-| 协议与帧 | `FrameRecorder` `FrameCompiler` `FrameArena` `FrameRing` `FrameTimeline` `RetirementQueue` |
-| 键与状态 | `Keys` `StateRegistry` `VariantPool`（声明在 core） `ClearPlan` `TargetPlan` `DepthProbe` |
-| 内容身份与存储 | `Streams` `MaterialArena` `FactResult` |
-| 设备约束 | `AllocationGate` |
-| 证据 | `Observe` `PhaseTable` `PixelProbe` `SlotProbe` `Readback` `OneShot` |
+| 帧闸与时钟 | `FrameGate` `DeviceClock` `FrameTimeline` `RetirementQueue` |
+| 读回与目标 | `Readback` `TargetPlan` |
+| 键 | `Keys` |
+| 包含守卫 | `BackendHalfGuard` |
+
+> 该目录的**文件集由 `scripts/check_include_hygiene.py` 钉住**：只有两个后端都读的机制能留下。
+> 只有本后端读的 17 个头与 16 个 `.cpp`（原 SDK 的 `graphics/backend` 大半）已搬进本插件的
+> `internal/`（ADR-2026-11-16 §2）；`FrameTimeline` 留下，因为 `DeviceClock` 持有它、`RetirementQueue` 以它为参数。
+
 
 > `Diagnostics` / `ReportOnce` 已上移 SDK（`vine/graphics/Diagnostics.hpp` / `ReportOnce.hpp`，2026-09-27）：
 > 引擎持有唯一的诊断路线，本插件自己那条路线的 sink 转发进去 —— 宿主的 sink 与

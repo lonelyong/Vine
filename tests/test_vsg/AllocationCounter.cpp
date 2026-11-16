@@ -48,7 +48,7 @@
 
 #if VN_TEST_ALLOCATOR_REPLACED
 
-#include <vine/graphics/backend/AllocationGate.hpp>
+#include <vine/backend_vsg/internal/AllocationGate.hpp>
 
 #if defined(_MSC_VER)
 #    include <malloc.h>

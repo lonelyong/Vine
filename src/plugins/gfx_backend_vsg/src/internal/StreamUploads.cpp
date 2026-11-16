@@ -5,7 +5,7 @@
 #include <optional>
 
 #include <vine/graphics/ShaderAbi.hpp>
-#include <vine/graphics/backend/ResourceTable.hpp>
+#include <vine/backend_vsg/internal/ResourceTable.hpp>
 #include <vine/backend_vsg/support/VsgSceneRules.hpp>
 
 VN_BACKEND_VSG_NS_BEGIN

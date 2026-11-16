@@ -13,7 +13,7 @@
 #include <vine/Buffer.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
-#include <vine/graphics/backend/Streams.hpp>
+#include <vine/backend_vsg/internal/Streams.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 

@@ -16,8 +16,10 @@ vn_use_embedded_shaders(${GRAPHICS_TARGET_NAME} OUTPUT vine/graphics/EmbeddedSha
 #
 #   sdk/vine/graphics/…    everything EXPORTED, and therefore installed: the host half (scene, camera,
 #                          RenderEngine, RenderPass, RenderTarget, the RenderBackend contract) and
-#                          the backend half (sdk/vine/graphics/backend/: one flat directory - the frame
-#                          discipline, the device facts, the byte arenas and the evidence fixtures).
+#                          the backend half (sdk/vine/graphics/backend/: the mechanisms BOTH backends
+#                          use - the frame gate, the device clock and its frame timeline, retirement,
+#                          readback, the format/compatibility keys, the target plan - plus the include
+#                          guard). What only one backend needs lives in that backend (ADR-2026-11-16 §2).
 #   src/…                  what only this DLL uses: implementations, plus private headers sitting NEXT
 #                          TO their .cpp (the appfw convention, included with "..."). Those are on no
 #                          include root, so nothing outside this module can include them at all.

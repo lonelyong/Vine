@@ -11,9 +11,9 @@
 #include <vsg/state/ImageView.h>
 
 #include <vine/graphics/RenderTarget.hpp>
-#include <vine/graphics/backend/ClearPlan.hpp>
-#include <vine/graphics/backend/DepthProbe.hpp>
-#include <vine/graphics/backend/PixelProbe.hpp>
+#include <vine/backend_vsg/internal/ClearPlan.hpp>
+#include <vine/backend_vsg/internal/DepthProbe.hpp>
+#include <vine/backend_vsg/internal/PixelProbe.hpp>
 #include <vine/graphics/backend/Readback.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/graphics/backend/TargetPlan.hpp>

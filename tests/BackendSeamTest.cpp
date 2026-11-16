@@ -11,11 +11,14 @@
  *   * `CoreKeysTest` - what a pipeline is keyed by, and the audit table that says so;
  *   * `CoreReadbackTest` - what can be read back, in which format, and how the depth decode works;
  *   * `CoreDeviceClockTest` - the completion watermark is what EVERY window proved, and nothing else;
+ *   * `CoreTimelineTest` - the device's frame clock: submitted is not completed, tokens are minted, and a
+ *     park's release point is derived from the slot count;
  *   * `FrameGateTest` - frame bodies share a gate, host verbs own it, and no caller waits for itself.
  *
  * The vsg-only core (the frame arena, the phase table, the observe cross-check, the depth probe and the device
  * requirements) stays in `tests/test_vsg/BackendCoreTest.cpp`: those headers are that backend's portable half, not
- * the seam (see `.ai/research/graphics-2026-11-16-redesign.md` §3.2.1).
+ * the seam (see `.ai/research/graphics-2026-11-16-redesign.md` §3.2.1, and ADR-2026-11-16 §2 for the relocation
+ * that gave the vsg-only frame machinery its own home).
  */
 
 #include <gtest/gtest.h>
@@ -644,4 +647,117 @@ TEST(FrameGateTest, ANestedGateOnAnotherObjectIsNotARefusal)
     EXPECT_TRUE(driver.heldByThisThread());
     EXPECT_TRUE(device.inSharedEntry());
     EXPECT_FALSE(driver.inSharedEntry()) << "the sides of two gates were mixed up";
+}
+
+TEST(CoreTimelineTest, SubmittedAndCompletedAreDifferentClocks)
+{
+    FrameTimeline timeline;
+    EXPECT_FALSE(timeline.hasOpenFrame());
+
+    const auto token = timeline.begin();
+    EXPECT_TRUE(timeline.hasOpenFrame());
+    EXPECT_TRUE(timeline.isOpenFrame(token));
+
+    timeline.submitted(token);
+    EXPECT_FALSE(timeline.hasOpenFrame());
+    EXPECT_EQ(timeline.submittedFrame(), 1u);
+    EXPECT_EQ(timeline.completedFrame(), 0u); // submitted is not completed
+
+    timeline.completeUpTo(1);
+    EXPECT_EQ(timeline.completedFrame(), 1u);
+
+    // Completion is a fact about the past: a lower report cannot un-do it.
+    timeline.completeUpTo(0);
+    EXPECT_EQ(timeline.completedFrame(), 1u);
+}
+
+TEST(CoreTimelineTest, AStaleTokenDoesNotAdvanceTheTimeline)
+{
+    FrameTimeline timeline;
+    const auto    first = timeline.begin();
+    timeline.submitted(first);
+
+    const auto second = timeline.begin();
+    EXPECT_EQ(second.frame, 2u);
+
+    // A token from the previous frame must not commit the open one.
+    timeline.submitted(first);
+    EXPECT_TRUE(timeline.hasOpenFrame());
+    EXPECT_EQ(timeline.submittedFrame(), 1u);
+}
+
+TEST(CoreTimelineTest, AnAbandonedFrameIsOverWithoutBecomingASubmission)
+{
+    FrameTimeline timeline;
+    const auto    token = timeline.begin();
+    timeline.abandoned(token);
+
+    // The frame is over - the next one can be opened - but the submitted watermark is a count of
+    // SUBMISSIONS, so it does not move: nothing was handed to the queue.
+    EXPECT_FALSE(timeline.hasOpenFrame());
+    EXPECT_EQ(timeline.submittedFrame(), 0u);
+
+    // NUMBERS ARE MINTED AT OPENING AND NEVER REUSED (the same rule the residency table's claim tokens
+    // follow): a frame that never reached the queue still spent its number. That is what lets two drivers
+    // hold open frames at the same time without either one's token naming the other's frame - and it is
+    // why a token is not a receipt either way: an abandoned token is stale for submission, and the number
+    // it carried never comes back.
+    const auto next = timeline.begin();
+    EXPECT_NE(next.frame, token.frame);
+    EXPECT_GT(next.frame, token.frame);
+    timeline.abandoned(next);
+    EXPECT_EQ(timeline.submittedFrame(), 0u);
+
+    // A real submission moves it TO THE NUMBER THAT WAS SUBMITTED (numbers are minted, so the abandoned
+    // frames spent 1 and 2 and this one is 3).
+    const auto real = timeline.begin();
+    timeline.submitted(real);
+    EXPECT_EQ(timeline.submittedFrame(), real.frame);
+    EXPECT_NE(real.frame, token.frame);
+
+    // The dating a park during an abandoned frame gets: the last frame that really was submitted - which
+    // is what makes the object releasable at all (nothing in flight names the abandoned frame's objects).
+    timeline.abandoned(timeline.begin());
+    EXPECT_EQ(timeline.submittedFrame(), real.frame);
+    EXPECT_EQ(FrameTimeline::retirePoint(timeline.submittedFrame(), 3), real.frame + 4U);
+}
+
+TEST(CoreTimelineTest, TwoDriversMayHoldAFrameOpenAtTheSameTime)
+{
+    // THE DEVICE TIMELINE WITH TWO FRAME DRIVERS (S6c-2): each driver opens its own frame, and the two are
+    // two frames - not one shared token. The old single-slot form handed the second caller the first's
+    // token, which made two drivers collapse into one frame number in every watermark comparison.
+    FrameTimeline timeline;
+    const auto    first  = timeline.begin();
+    const auto    second = timeline.begin();
+
+    EXPECT_NE(first.frame, second.frame);
+    EXPECT_TRUE(timeline.hasOpenFrame());
+    EXPECT_TRUE(timeline.isOpenFrame(first));
+    EXPECT_TRUE(timeline.isOpenFrame(second));
+    EXPECT_EQ(timeline.current().frame, second.frame); // the most recently opened one
+
+    // Committing one leaves the other open: the submission watermark is the highest frame handed to a
+    // queue, and a stale token for the *other* open frame is not stale - it is still open.
+    timeline.submitted(second);
+    EXPECT_TRUE(timeline.isOpenFrame(first));
+    EXPECT_FALSE(timeline.isOpenFrame(second));
+    EXPECT_EQ(timeline.submittedFrame(), second.frame);
+
+    timeline.abandoned(first);
+    EXPECT_FALSE(timeline.hasOpenFrame());
+    EXPECT_EQ(timeline.submittedFrame(), second.frame);
+
+    // A later frame is minted after both, even though the second was the only submission.
+    const auto third = timeline.begin();
+    EXPECT_GT(third.frame, second.frame);
+    timeline.abandoned(third);
+}
+
+TEST(CoreTimelineTest, TheRetirePointIsOneMoreThanTheSlotCount)
+{
+    // Derived, not magic: the slot that could still reference a parked object has been recycled (and so
+    // had its fence waited) by then.
+    EXPECT_EQ(FrameTimeline::retirePoint(1, 3), 5u);
+    EXPECT_EQ(FrameTimeline::retirePoint(0, 1), 2u);
 }

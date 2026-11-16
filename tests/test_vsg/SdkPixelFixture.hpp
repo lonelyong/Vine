@@ -6,7 +6,7 @@
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/Scene.hpp>
-#include <vine/graphics/backend/PixelProbe.hpp>
+#include <vine/backend_vsg/internal/PixelProbe.hpp>
 #include <vine/backend_vsg/internal/VsgBackend.hpp>
 
 /**

@@ -25,8 +25,8 @@
 #include <vsg/vk/DeviceFeatures.h>
 #include <vsg/vk/PhysicalDevice.h>
 
-#include <vine/graphics/backend/SessionMove.hpp>
-#include <vine/graphics/backend/SlotProbe.hpp>
+#include <vine/backend_vsg/internal/SessionMove.hpp>
+#include <vine/backend_vsg/internal/SlotProbe.hpp>
 #include <vine/backend_vsg/internal/DeviceRequirements.hpp>
 #include <vine/backend_vsg/support/VsgBackendUtility.hpp>
 #include <vine/backend_vsg/support/VsgHostWindow.hpp>

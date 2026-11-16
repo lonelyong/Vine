@@ -21,11 +21,11 @@
 
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/RenderCommand.hpp>
-#include <vine/graphics/backend/AllocationGate.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
-#include <vine/graphics/backend/Observe.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/backend_vsg/internal/AllocationGate.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameRecorder.hpp>
+#include <vine/backend_vsg/internal/Observe.hpp>
+#include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/BackendContent.hpp>
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
 #include <vine/backend_vsg/internal/ContentAssembly.hpp>

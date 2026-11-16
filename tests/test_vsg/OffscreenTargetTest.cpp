@@ -45,11 +45,11 @@
 #include <vine/graphics/RenderTarget.hpp>
 
 #include <vine/graphics/Diagnostics.hpp>
-#include <vine/graphics/backend/FrameArena.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/backend_vsg/internal/FrameArena.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameRecorder.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/Observe.hpp>
+#include <vine/backend_vsg/internal/Observe.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
 #include <vine/backend_vsg/internal/OffscreenSession.hpp>

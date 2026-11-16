@@ -31,7 +31,7 @@
 
 #include <vine/math/Matrix4x4.hpp>
 
-#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/backend_vsg/internal/FrameRecorder.hpp>
 #include <vine/backend_vsg/internal/ContentPush.hpp>
 #include <vine/backend_vsg/internal/ContentSources.hpp>
 #include <vine/backend_vsg/internal/ProgramAbi.hpp>

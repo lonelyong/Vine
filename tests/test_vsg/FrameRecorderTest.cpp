@@ -33,7 +33,7 @@
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/backend_vsg/internal/FrameRecorder.hpp>
 
 #include "TestProgramFacts.hpp"
 #include "LightValues.hpp"

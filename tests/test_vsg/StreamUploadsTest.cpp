@@ -32,7 +32,7 @@
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
-#include <vine/graphics/backend/Streams.hpp>
+#include <vine/backend_vsg/internal/Streams.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>

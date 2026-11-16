@@ -4,7 +4,7 @@
 - 日期：2026-11-10
 - 相关：`../design/graphics-content-lifecycle.md`、`../design/vsg-backend.md` §2.10、`../backlog/graphics.md`
   `src/viz/graphics/src/Scene.cpp`、`src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp`、
-  `src/viz/graphics/sdk/vine/graphics/backend/Streams.hpp`、`src/viz/graphics/sdk/vine/graphics/Residency.hpp`
+  `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/Streams.hpp`、`src/viz/graphics/sdk/vine/graphics/Residency.hpp`
 
 ## 背景
 
@@ -109,7 +109,7 @@
 差别只在键与值（`G1`、`G6`）。把它写成一张表，`StreamUploads` 就只剩"什么算一条流、一次上传要建哪些对象"；
 后面的四步不再各自重写一遍"表 + 停车 + 代次"，也不会各自长出一套寿命判据（`G5`：变化留在模块里）。
 
-#### 接口（`src/viz/graphics/sdk/vine/graphics/backend/ResourceTable.hpp`，Vulkan-free）
+#### 接口（`src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ResourceTable.hpp`，Vulkan-free）
 
 ```cpp
 template <class Key, class Value, class Hash = std::hash<Key>>

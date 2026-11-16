@@ -20,7 +20,7 @@
 #include <cstdint>
 #include <vector>
 
-#include <vine/graphics/backend/ClearPlan.hpp>
+#include <vine/backend_vsg/internal/ClearPlan.hpp>
 
 using vn::graphics::RenderTarget;
 using vn::graphics::backend::AttachmentClear;

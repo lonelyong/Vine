@@ -38,13 +38,13 @@
 #include <vine/backend_vsg/internal/ContentPass.hpp>
 
 #include <vine/graphics/Diagnostics.hpp>
-#include <vine/graphics/backend/AllocationGate.hpp>
-#include <vine/graphics/backend/ClearPlan.hpp>
-#include <vine/graphics/backend/FrameArena.hpp>
-#include <vine/graphics/backend/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
-#include <vine/graphics/backend/PhaseTable.hpp>
-#include <vine/graphics/backend/PixelProbe.hpp>
+#include <vine/backend_vsg/internal/AllocationGate.hpp>
+#include <vine/backend_vsg/internal/ClearPlan.hpp>
+#include <vine/backend_vsg/internal/FrameArena.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameRecorder.hpp>
+#include <vine/backend_vsg/internal/PhaseTable.hpp>
+#include <vine/backend_vsg/internal/PixelProbe.hpp>
 
 using vn::graphics::DiagnosticCategory;
 using vn::graphics::Diagnostics;

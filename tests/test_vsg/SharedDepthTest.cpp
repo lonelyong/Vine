@@ -34,11 +34,11 @@
 #include <vsg/core/Exception.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/graphics/backend/DepthProbe.hpp>
-#include <vine/graphics/backend/StateRegistry.hpp>
-#include <vine/graphics/backend/Streams.hpp>
+#include <vine/backend_vsg/internal/DepthProbe.hpp>
+#include <vine/backend_vsg/internal/StateRegistry.hpp>
+#include <vine/backend_vsg/internal/Streams.hpp>
 #include <vine/graphics/backend/TargetPlan.hpp>
-#include <vine/graphics/backend/VariantPool.hpp>
+#include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/BlockDescriptors.hpp>
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
 #include <vine/backend_vsg/internal/ContentDraw.hpp>

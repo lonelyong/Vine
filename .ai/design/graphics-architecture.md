@@ -1,7 +1,7 @@
 # graphics 架构：设备、引擎、链、一帧
 
 > **状态**：现行
-> **最后核对**：2026-11-12
+> **最后核对**：2026-11-16
 > **范围**：设备/窗口/区/视图/引擎的分层，一帧的编译与调度。
 > **权威来源**：`RenderEngine.hpp` / `PassChain.hpp` / `PassRegistry.hpp` / `OutputRegistry.hpp` /
 > `DiagnosticsRoute.hpp` / `SceneView.hpp` / `RenderSurface.hpp` / `RenderBackend.hpp`。
@@ -67,12 +67,15 @@
     计划），`frame()` 只答 Ran / Submitted，`applyPlan` 三态，`SessionBusy` 不再是一个 plan problem code。
     理由：迁移期分两次改会让三套形状并存；现在一套形状，公开签名与文档一致（`G1` / `G6`）。
 
-2.9 **`backend/` 是后端接缝，不是宿主 SDK**：`sdk/vine/graphics/backend/`（24 个头）只被 `gfx_backend_*` 与
-    `libGraphics` 自己消费，宿主包含它是编译错误（`BackendHalfGuard.hpp`）。它的 **ABI 随后端变、不随宿主变**，
-    所以安装时单独成一个组件（`VineGraphicsBackendSdk`），不在默认 include 树里——“装进 include 但禁止包含”
-    是自相矛盾的（`G1` / `G6`）。边界：作为“驻留与帧纪律”，它把复杂性吸收在后端（`G7` 做对了）；`Keys` /
-    `ClearPlan` / `TargetPlan` / `FrameCompiler` 里仍是 Vulkan 拼写（`VkFormat` / `ImageLayout` / subpass）——
-    第二个后端落地前不再新增这类拼写，把它改成不透明设备格式码是那一轮的入口（`vsg-backend.md` C6）。
+2.9 **`backend/` 是后端接缝，不是宿主 SDK**：`sdk/vine/graphics/backend/`（7 个机制 + 1 个守卫）只被
+    `gfx_backend_*` 与 `libGraphics` 自己消费，宿主包含它是编译错误（`BackendHalfGuard.hpp`）。它的
+    **ABI 随后端变、不随宿主变**，所以安装时单独成一个组件（`VineGraphicsBackendSdk`），不在默认 include
+    树里——"装进 include 但禁止包含"是自相矛盾的（`G1` / `G6`）。**接缝的定义是"两个后端都用"**：只有 vsg
+    读的 17 个头与 16 个 `.cpp` 已搬进 `gfx_backend_vsg/internal/`（ADR-2026-11-16 §2，`G13`）；`FrameTimeline`
+    留下是因为 `DeviceClock` 持有它、`RetirementQueue` 以它为参数——搬它是接缝重构，不是搬家。目录的文件集由
+    `check_include_hygiene.py` 钉住（多一个文件就红）。边界：作为"驻留与帧纪律"，它把复杂性吸收在后端（`G7`
+    做对了）；`Keys` / `TargetPlan` 里仍是 Vulkan 拼写（`VkFormat` / `ImageLayout` / subpass）——第二个后端
+    落地前不再新增这类拼写，把它改成不透明设备格式码是那一轮的入口（`vsg-backend.md` C6）。
 2.11 **扩展点的成本是表，不是形容词**（审计 `A12`）：说"易于扩展"而不说"加一个要动哪几处"是无法证伪的。
     所以每个扩展点在这里有一行，列的是**今天的实际文件**——加东西之前先读这张表，改完回来更新它。
     判据：一个扩展点如果开始需要改**核心模型**（`FrameDescription` 的形状、引擎的编译、调度），那它就不是扩展

@@ -31,7 +31,7 @@
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
-#include <vine/graphics/backend/FrameRecorder.hpp>
+#include <vine/backend_vsg/internal/FrameRecorder.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector3.hpp>
 #include <vine/backend_vsg/internal/ViewBlock.hpp>

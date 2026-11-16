@@ -5,7 +5,7 @@
 #include <string_view>
 #include <vector>
 
-#include <vine/graphics/backend/FrameCompiler.hpp>
+#include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/backend_vsg/internal/ProgramAbi.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>

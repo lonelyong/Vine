@@ -1,7 +1,7 @@
 # graphics 着色参数 ABI：块定义、去重与名字
 
 > **状态**：现行（P0 已实现：GLSL 声明去重 + 构建期 inline；P1 未做，见 §9.2）
-> **最后核对**：2026-11-14
+> **最后核对**：2026-11-16
 > **范围**：view / draw / material / shadow / lights 五个参数块的声明归属、名字解析、后端写值契约。
 > **权威来源**：`ShaderAbi.hpp` / `LightAbi.hpp` / `shaders/vine_params.glsl`（现行块布局）。
 > **待办**：`../backlog/graphics.md`
@@ -144,7 +144,8 @@ C++ 侧保持手写与 `static_assert`。**形状**（`ShaderAbi.hpp`）与**填
 `packedSlotOf`）、材质（`packMaterialBlock`）、draw（`packDrawBlock`）各自成头。理由：填充要吃模型/数学值，
 把它们拉进形状头就是一条回边（G2），而且每个只读形状的消费者都会付那部分 include 扇出（G10）；依赖方向固定为
 `ShaderAbi.hpp` <- `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp` <- 后端。场影块是例外：它的输入
-`ShadowFacts` 在后端半（`backend/FrameCompiler.hpp`，D1 不开放），两个后端各自打包，但槽位推导必须调用
+`ShadowFacts` 在 vsg 的可移植半边（`vine/backend_vsg/internal/FrameCompiler.hpp`，D1 不开放）；两个后端各自打包
+自己的阴影值，但槽位推导必须调用
 `packedSlotOf`。
 片段与结构体仍是两份手写，靠相邻 review 与 `ProgramAbiTest` 的绑定数/块大小断言守住。
 
