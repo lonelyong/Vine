@@ -215,12 +215,6 @@ TEST(VkProbeTest, AProbeDeviceBringsUpItsOwnWindowAndPresents)
     EXPECT_EQ(prepared.passes, 1U);
     EXPECT_EQ(prepared.draws, 1U);
 
-    // A SECOND ASK for the device's window is refused: one window carries one live swapchain, and the host already
-    // holds the target the first ask answered (see RenderDevice::createSurfaceTarget).
-    const vn::raw_ptr<vn::graphics::WindowPresentTarget> again = backend->createSurfaceTarget(nullptr, &why);
-    EXPECT_EQ(again, nullptr);
-    EXPECT_EQ(why, SurfaceTargetResult::WindowOccupied);
-
     // THE SWAPCHAIN FOLLOWS THE SURFACE: a resize is another presenting frame, not a new target.
     target->resize(640, 360);
     EXPECT_EQ(presentUntilReady(*backend, windowFrame(), target, 40), PresentOutcome::Presented);
@@ -231,12 +225,45 @@ TEST(VkProbeTest, AProbeDeviceBringsUpItsOwnWindowAndPresents)
     // A REBUILT SESSION MEANS A REBUILT WINDOW: shutdown() destroyed the window with the surface made on it, so
     // bringing the device up again creates a new one (the only way that teardown is observable from outside). The
     // ask comes BEFORE the session again - the SDK's documented order, and the one that answers the target (a
-    // device that already brought its window up answers the second ask with WindowOccupied, see above).
+    // device that already brought its window up answers the second ask with WindowOccupied, see
+    // AWindowAlreadyServedIsRefusedWithItsReason).
     backend->shutdown();
     const vn::raw_ptr<vn::graphics::WindowPresentTarget> rebuilt = backend->createSurfaceTarget(nullptr, &why);
     ASSERT_NE(rebuilt, nullptr) << "the rebuilt session did not bring its window up (result " << static_cast<int>(why) << ")";
     ASSERT_TRUE(backend->initialize()) << "a Probe device has to come up again after shutdown()";
     EXPECT_EQ(presentUntilReady(*backend, windowFrame(), rebuilt, 40), PresentOutcome::Presented);
+
+    backend->shutdown();
+}
+
+TEST(VkProbeTest, AWindowAlreadyServedIsRefusedWithItsReason)
+{
+    // CAP-44, THE SENTENCE BOTH BACKENDS SAY (the reference backend's case has the same name): one window carries
+    // one live swapchain, so the second ask hands out nothing and answers WindowOccupied - and the host has to HEAR
+    // it. createSurfaceTarget promises that the two refusals which are not "this device presents nothing" are
+    // reported once per episode, so this case counts reports, not just result codes.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{});
+    ASSERT_NE(backend, nullptr);
+
+    // The device's own window, asked for with no handle: the first ask is not an episode.
+    SurfaceTargetResult why = SurfaceTargetResult::Ok;
+    const vn::raw_ptr<vn::graphics::WindowPresentTarget> target = backend->createSurfaceTarget(nullptr, &why);
+    if (target == nullptr) {
+        GTEST_SKIP() << "this machine cannot bring a device-owned window up (result " << static_cast<int>(why) << ")";
+    }
+    ASSERT_EQ(why, SurfaceTargetResult::Ok);
+    EXPECT_EQ(backend->diagnosticCount(), 0U) << "the first window is not an episode";
+
+    // THE SECOND ASK: refused, and said once.
+    EXPECT_EQ(backend->createSurfaceTarget(nullptr, &why), nullptr);
+    EXPECT_EQ(why, SurfaceTargetResult::WindowOccupied);
+    ASSERT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U)
+        << "a host that asked for a window it cannot have has to hear why no picture appears";
+
+    // ONCE PER EPISODE, however often the same ask comes.
+    EXPECT_EQ(backend->createSurfaceTarget(nullptr, &why), nullptr);
+    EXPECT_EQ(why, SurfaceTargetResult::WindowOccupied);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U);
 
     backend->shutdown();
 }

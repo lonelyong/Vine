@@ -2148,6 +2148,51 @@ TEST(VsgBackendTest, AnImportedTextureInputReachesAScreenProgram)
     EXPECT_EQ(pixels[at + 3], 255U);
 }
 
+TEST(VsgBackendTest, ADeclaredTargetIsBuiltWithoutAFrame)
+{
+    // CAP-86: `setRenderTarget` is the host's announcement that a target exists, and this backend BUILDS it there -
+    // no frame has to name it first. The witness is the difference between two refusals, which no pixel assertion
+    // could make cheaper: a target the device holds answers questions about its attachments (Invalid for an index it
+    // has none of), while a target it does not hold answers NotReady. (The vk backend does not build on the announce
+    // yet - see VkOffscreenTest.ADeclaredTargetIsNotBuiltUntilAFrameNamesIt; BC-09 is the batch that flips it.)
+    if (!deviceCaseAvailable()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    // A windowless device: the announce path is the same one a windowed device takes, and this case does not need a
+    // display to prove what the target table did.
+    vn::graphics::DeviceDesc desc;
+    desc.presentation = vn::graphics::DevicePresentation::None;
+    const vn::intrusive_ptr<VsgBackend> backend(new VsgBackend(desc));
+    ASSERT_TRUE(backend->initialize());
+
+    const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(64, 64);
+
+    // NOT ANNOUNCED: nothing is held, so there is nothing to read.
+    std::vector<std::uint8_t> pixels;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Ok;
+    EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why));
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::NotReady) << "never announced to this backend";
+
+    // ANNOUNCED: built, and the answer says so - an attachment index this target does not have is a wrong request,
+    // which only a built target can answer (a target with no images answers NotReady instead).
+    const std::size_t waits_before = backend->deviceWaits();
+    backend->setRenderTarget(target.get());
+    EXPECT_FALSE(backend->readColorBuffer(target.get(), 1, pixels, &why));
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::Invalid) << "the announce built the one colour attachment it states";
+    EXPECT_TRUE(pixels.empty()) << "a refused read leaves the destination untouched";
+    EXPECT_EQ(backend->deviceWaits(), waits_before) << "building on the announce is not a device stop";
+
+    // AND RELEASING IT takes the answer back to NotReady: the table, not a frame, is what the readback reads.
+    backend->releaseRenderTarget(target.get());
+    EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why));
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::NotReady);
+
+    backend->shutdown();
+}
+
 TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
 {
     if (!deviceCaseAvailable()) {
@@ -2258,7 +2303,7 @@ TEST(VsgBackendTest, TheSdkReadsBackItsOwnTargetsPixelsAndDepths)
     const vn::intrusive_ptr<RenderTarget> floats(new RenderTarget());
     floats->attachColor(RenderTarget::ColorFormat::RGBA16F);
     floats->setSize(8, 8);
-    backend->setRenderTarget(floats.get()); // held and built (no frame is needed to build one)
+    backend->setRenderTarget(floats.get()); // held and built here - ADeclaredTargetIsBuiltWithoutAFrame is that fact
     EXPECT_FALSE(backend->readColorBuffer(floats.get(), 0, scratch, &why));
     EXPECT_EQ(why, vn::graphics::ReadbackResult::Unsupported) << "this backend packs RGBA8 only";
     EXPECT_EQ(backend->deviceWaits(), waits_before + 2U) << "a refused readback never stops the device";
@@ -4525,12 +4570,12 @@ TEST(VsgBackendTest, TheDocumentedScaleGrowsTheDrawBudgetOnceAndThenServesEveryC
 
 #endif // !defined(_WIN32)
 
-TEST(VsgBackendTest, TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTarget)
+TEST(VsgBackendTest, AWindowAlreadyServedIsRefusedWithItsReason)
 {
-    // ONE DEVICE, SEVERAL WINDOWS (S10b). What a device hands out is one target per WINDOW, because a window is a
-    // surface plus a swapchain and the platform allows one live swapchain per window; the DEVICE is the thing that
-    // is shared. So: the same window asked for twice is the "occupied" episode, said once; a different window gets
-    // its own target object - and the first window is answered by the aggregate itself (RenderBackend).
+    // CAP-44, THE SENTENCE BOTH BACKENDS SAY (the vk backend's case has the same name): a window is a surface plus a
+    // swapchain and the platform allows one live swapchain per window, so the same window asked for twice is refused
+    // with WindowOccupied, nothing is handed out, and the host HEARS it - once per episode, with a code, not just a
+    // result code it has to interpret (RenderDevice::createSurfaceTarget).
     vn::intrusive_ptr<VsgBackend>               backend(new VsgBackend());
     std::vector<vn::graphics::RenderDiagnostic> reported;
     backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
@@ -4543,17 +4588,36 @@ TEST(VsgBackendTest, TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTa
     EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::Ok);
     EXPECT_EQ(own->nativeHandle(), nullptr) << "nothing is attached before a session comes up";
     EXPECT_EQ(backend->diagnosticCount(), 0U) << "the first window is not an episode";
-    EXPECT_EQ(backend->windowCount(), 1U);
 
-    // The same window again: occupied, said once.
+    // THE SECOND ASK: refused, and said once, with its code.
     EXPECT_EQ(backend->createSurfaceTarget(nullptr, &why), nullptr);
     EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::WindowOccupied);
-    ASSERT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U);
+    ASSERT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U)
+        << "a host that asked for a window it cannot have has to hear why no picture appears";
     ASSERT_EQ(reported.size(), 1U);
     EXPECT_EQ(reported.front().severity, vn::graphics::DiagnosticSeverity::Warning);
+    EXPECT_EQ(as_bytes(reported.front().code), "vsg.window.occupied");
 
+    // ONCE PER EPISODE, however often the same ask comes.
     EXPECT_EQ(backend->createSurfaceTarget(nullptr, &why), nullptr);
-    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U) << "one report per episode, however often the same ask comes";
+    EXPECT_EQ(why, vn::graphics::SurfaceTargetResult::WindowOccupied);
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U);
+    EXPECT_EQ(reported.size(), 1U);
+}
+
+TEST(VsgBackendTest, ADifferentWindowGetsItsOwnTarget)
+{
+    // ONE DEVICE, SEVERAL WINDOWS (S10b): what a device hands out is one target per WINDOW, because a window is a
+    // surface plus a swapchain; the DEVICE is the thing that is shared. So a second window is served through its own
+    // target object - and the first window keeps answering through the aggregate itself (RenderBackend).
+    vn::intrusive_ptr<VsgBackend>               backend(new VsgBackend());
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    backend->setDiagnosticSink([&reported](const vn::graphics::RenderDiagnostic& diagnostic) { reported.push_back(diagnostic); });
+
+    vn::graphics::SurfaceTargetResult              why = vn::graphics::SurfaceTargetResult::Ok;
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> own = backend->createSurfaceTarget(nullptr, &why);
+    ASSERT_NE(own, nullptr);
+    EXPECT_EQ(backend->windowCount(), 1U);
 
     // The device comes up on the one window it serves. (Done HERE, before the second window is asked for: every
     // window a device knows is brought up by initialize(), and `second` below is a value the test can name but the
@@ -4575,7 +4639,7 @@ TEST(VsgBackendTest, TheSameWindowIsNeverServedTwiceAndADifferentOneGetsItsOwnTa
     EXPECT_NE(static_cast<const void*>(other), static_cast<const void*>(backend.get()));
     EXPECT_EQ(other->nativeHandle(), nullptr) << "nothing is attached before ITS session comes up";
     EXPECT_EQ(backend->windowCount(), 2U);
-    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 1U) << "a second window is not an episode";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), 0U) << "a second window is not an episode";
     EXPECT_EQ(backend->deviceWaits(), 0U) << "handing out a target is not a device stop either";
 }
 

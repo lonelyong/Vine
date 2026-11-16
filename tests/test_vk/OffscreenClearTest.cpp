@@ -72,6 +72,40 @@ namespace
 
 } // namespace
 
+TEST(VkOffscreenTest, ADeclaredTargetIsNotBuiltUntilAFrameNamesIt)
+{
+    // CAP-86, TODAY'S GAP, PINNED. `RenderDevice::setRenderTarget` says the device holds the target and builds its
+    // attachments, and the reference backend does exactly that (VsgBackendTest.ADeclaredTargetIsBuiltWithoutAFrame).
+    // This backend only remembers the pointer (Device::setRenderTarget), so a target announced before any frame is
+    // still "nothing to read" - which is what this case states, so that the batch which makes the verb true (BC-09)
+    // has to REPLACE it with the shared sentence rather than discover it later.
+    //
+    // The witness is the difference between two refusals: a target this device built can be asked about an attachment
+    // it does not have (Invalid), while one it never built answers NotReady. No pixel is compared.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<RenderTarget> target = makeTarget(); // RGBA8 + D24, one colour attachment
+    std::vector<std::uint8_t>         pixels;
+
+    backend->setRenderTarget(target.get());
+    ReadbackResult why = ReadbackResult::Ok;
+    EXPECT_FALSE(backend->readColorBuffer(target.get(), 1, pixels, &why));
+    EXPECT_EQ(why, ReadbackResult::NotReady) << "the announce built nothing: no frame has named the target yet";
+
+    // A FRAME THAT NAMES IT is what builds it - and the same question then answers Invalid, because the images exist.
+    backend->executeFrame(clearingFrame(target.get(), Colorf(0.0F, 0.0F, 0.0F, 1.0F)));
+    EXPECT_FALSE(backend->readColorBuffer(target.get(), 1, pixels, &why));
+    EXPECT_EQ(why, ReadbackResult::Invalid) << "the frame built the one colour attachment the target states";
+    EXPECT_TRUE(pixels.empty());
+
+    backend->releaseRenderTarget(target.get());
+    backend->shutdown();
+}
+
 TEST(VkOffscreenTest, AClearedTargetReadsBackAsThatColour)
 {
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });

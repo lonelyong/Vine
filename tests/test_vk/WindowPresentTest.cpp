@@ -28,6 +28,7 @@
 #include <vine/backend_vk/internal/WindowTarget.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
+#include <vine/graphics/FrameStats.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Primitive.hpp>
 #include <vine/graphics/RenderBackendRegistry.hpp>
@@ -253,6 +254,21 @@ void main()
     return frame;
 }
 
+/// @brief Runs @p frame until it presents (a freshly created swapchain's first acquires may answer Lost while the
+///        surface settles), or answers the last outcome after @p attempts frames.
+[[nodiscard]] PresentOutcome presentUntilReady(vn::graphics::RenderBackend& backend, const FrameDescription& frame, vn::raw_ptr<vn::graphics::WindowPresentTarget> target, int attempts)
+{
+    PresentOutcome outcome = PresentOutcome::Lost;
+    for (int attempt = 0; attempt < attempts; ++attempt) {
+        outcome = backend.executeFrame(frame, target);
+        if (outcome == PresentOutcome::Presented) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    return outcome;
+}
+
 #endif // VN_TEST_HAVE_XCB
 
 } // namespace
@@ -356,6 +372,62 @@ TEST(VkWindowPresentTest, AWindowFrameIsDrawnAndPresented)
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
         << "validation reported something on the window path";
+
+    backend->shutdown();
+#endif
+}
+
+TEST(VkWindowPresentTest, AWindowHandleMovesWithoutRebuildingTheDevice)
+{
+#if !defined(VN_TEST_HAVE_XCB)
+    GTEST_SKIP() << "this build has no xcb development package, so the window test has no measuring instrument";
+#else
+    // CAP-45: a platform may destroy and recreate a host window under the application, and the SDK's answer is one
+    // announcement ON THE TARGET (WindowPresentTarget::setWindowHandle) - not a new target, not a new device. This is
+    // the fact the vk side never had a named case for (the reference backend has SessionMoveTest).
+    TestWindow first;
+    TestWindow second;
+    if (!first.create() || !second.create()) {
+        GTEST_SKIP() << "no X display is reachable through xcb";
+    }
+
+    const DeviceDesc desc{ DevicePresentation::Handle, first.handle() };
+    auto             backend = RenderBackendRegistry::instance().create(u8"vk", desc);
+    ASSERT_NE(backend, nullptr) << "the factory did not answer the vk backend";
+
+    SurfaceTargetResult result = SurfaceTargetResult::NoPresentation;
+    vn::raw_ptr<vn::graphics::WindowPresentTarget> target = backend->createSurfaceTarget(first.handle(), &result);
+    ASSERT_NE(target, nullptr) << "createSurfaceTarget answered " << static_cast<int>(result);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    // ONE FRAME VALUE, RUN TWICE: the content it names is what residency is about, so a rebuilt device would show up
+    // as an upload on the second frame (see the report half below).
+    const FrameDescription frame = windowFrame();
+    EXPECT_EQ(presentUntilReady(*backend, frame, target, 40), PresentOutcome::Presented);
+    EXPECT_EQ(presentUntilReady(*backend, frame, target, 40), PresentOutcome::Presented)
+        << "the steady frame through the original handle did not present";
+
+    // THE WINDOW IS RECREATED UNDER THE APPLICATION: the host announces the new handle on the target it already holds.
+    target->setWindowHandle(second.handle());
+    EXPECT_EQ(target->nativeHandle(), second.handle()) << "the target did not follow the handle";
+
+    // THE DEVICE IS STILL THE SAME DEVICE: no shutdown()/initialize() happened, so it is up, it still presents, and
+    // what it built for this content is still resident.
+    EXPECT_TRUE(backend->initialized()) << "moving a window handle is not a session rebuild";
+    EXPECT_TRUE(backend->capabilities().presentation);
+
+    EXPECT_EQ(presentUntilReady(*backend, frame, target, 40), PresentOutcome::Presented)
+        << "a frame through the moved handle did not reach the present call";
+
+    const vn::graphics::FrameReport after = backend->frameReport();
+    ASSERT_TRUE(after.uploads.has_value()) << "this backend keeps upload counters";
+    EXPECT_EQ(after.uploads->stream_uploads, 0U) << "the geometry stayed resident: a rebuilt device would re-upload it";
+    EXPECT_EQ(after.uploads->texture_uploads, 0U);
+
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::InitFailed), 0U)
+        << "validation reported something on the move path";
 
     backend->shutdown();
 #endif
