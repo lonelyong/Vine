@@ -118,6 +118,7 @@ vk.window.handle_missing     — a Handle device was asked for a target and has 
 vk.window.system_missing     — no window system is available, so no window surface can exist
 vk.window.own_window_failed  — a Probe device's own window could not be brought up
 vk.window.attach_failed      — the window's surface or swapchain could not be created (the repair is re-attaching)
+vk.window.occupied           — a window this device already hands a target out for was asked for again: one window carries one live swapchain
 vk.window.presenter_missing  — a window pass named no presenter this device handed out
 vk.window.acquire_failed     — the swapchain's next image could not be acquired
 vk.window.present_unsupported     — this machine cannot present (no surface extension, or no VK_KHR_swapchain): the session runs off-screen

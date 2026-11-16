@@ -820,6 +820,8 @@ struct Device::Impl {
         vn::graphics::ReportOnce window_system;
         /// The window's surface / swapchain could not be created.
         vn::graphics::ReportOnce attach;
+        /// A window this device already hands a target out for was asked for again.
+        vn::graphics::ReportOnce occupied;
         /// A window pass named no presenter this device handed out.
         vn::graphics::ReportOnce presenter;
         /// The window's next image could not be acquired.
@@ -837,6 +839,9 @@ struct Device::Impl {
         /**
          * @brief Ends every window episode: the next session starts with nothing reported (see shutdown).
          *
+         * @details
+         * - `occupied` ends here and not in rearmCreation(): its episode is "the host still holds a target for a window", which is true until the session ends, so a window created afterwards does not end it.
+         *
          * @note
          * - The two FRAME episodes are re-armed at their own sites (a pass that found a presenter, an image that
          *   arrived), not here: those are the moments each condition is observed to have ended.
@@ -844,6 +849,7 @@ struct Device::Impl {
         void rearmAll() noexcept
         {
             rearmCreation();
+            occupied.rearm();
             presenter.rearm();
             acquire.rearm();
         }
@@ -3368,6 +3374,15 @@ vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void*
             // THE ASK IS REFUSED, and the host already holds the target the first ask answered (see RenderDevice):
             // one window carries one live swapchain, so a second target would be a second owner of the same surface.
             answer(SurfaceTargetResult::WindowOccupied);
+            // AND THE HOST HAS TO HEAR IT: createSurfaceTarget promises that the two refusals which are not "this
+            // device presents nothing" are said once per episode, and a host that asked has to learn why the picture
+            // it expected never appears (the reference backend says the same sentence, see vsg.window.occupied).
+            if (impl->window_reports.occupied.shouldReport()) {
+                reportDiagnostic(deviceDiagnostic(DiagnosticSeverity::Warning,
+                                                  DiagnosticCategory::UnsupportedRequest,
+                                                  u8"vk.window.occupied",
+                                                  u8"vk: this device already serves that window - one window carries one live swapchain, so the second ask hands out no target"));
+            }
             return nullptr;
         }
     }
