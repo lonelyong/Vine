@@ -8,7 +8,7 @@
 #include <vine/models/TriangleMesh.hpp>
 
 #include <vine/graphics/CameraSnapshot.hpp>
-#include <vine/graphics/CollectView.hpp>
+#include <vine/graphics/View.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
@@ -22,7 +22,7 @@
 #include "SnapshotSource.hpp"
 
 using vn::graphics::CameraSnapshot;
-using vn::graphics::CollectView;
+using vn::graphics::View;
 using vn::graphics::DrawDescription;
 using vn::graphics::FrameDescription;
 using vn::graphics::GeometryPtr;
@@ -56,9 +56,9 @@ FrameDescription onePassFrame(const vn::graphics::DrawListSource& content){
 
     DrawDescription draw;
     draw.kind       = DrawDescription::Kind::Scene;
-    draw.camera     = camera;
+    draw.view.camera = camera;
     draw.content    = &content;
-    draw.layer_mask = vn::graphics::kAllLayers;
+    draw.view.layer_mask = vn::graphics::kAllLayers;
 
     PassDraw pass;
     pass.draws.push_back(draw);
@@ -126,9 +126,9 @@ TEST(FrameRunnerTest, BothModesExpandAFrameToTheSamePicture)
     scene.setRoot(root);
 
     // The content's own answer, for the SAME view the frames state (a query on the thread that owns it).
-    CollectView view;
-    view.eye = Vec3d(0.0, 0.0, 10.0);
-    const std::vector<RenderCommand> from_content = *scene.collectRenderCommands(view, vn::graphics::kAllLayers);
+    View view;
+    view.camera.eye = Vec3d(0.0, 0.0, 10.0);
+    const std::vector<RenderCommand> from_content = *scene.collectRenderCommands(view);
 
     // A JOB IS ONE FRAME'S ENGINE HALF (see RenderEngine::runEngineHalf): the expansion of a value that already names
     // the publications it draws, which is what a caller without a device has to hand over.
@@ -168,15 +168,15 @@ TEST(FrameRunnerTest, ManyFramesThroughTheEngineThreadStayEquivalent)
     ASSERT_NE(source, nullptr);
     FrameRunner runner{ RunnerMode::Threaded };
 
-    CollectView view;
-    view.eye = Vec3d(0.0, 0.0, 10.0);
+    View view;
+    view.camera.eye = Vec3d(0.0, 0.0, 10.0);
 
     constexpr int kFrames = 64;
     for (int frame_index = 0; frame_index < kFrames; ++frame_index) {
         FrameDescription frame = onePassFrame(*source);
         runner.run([&] { expandFrame(frame); });
         ASSERT_EQ(commandsOf(frame).size(), 2U) << "frame " << frame_index;
-        const std::vector<RenderCommand> reference = *scene.collectRenderCommands(view, vn::graphics::kAllLayers);
+        const std::vector<RenderCommand> reference = *scene.collectRenderCommands(view);
         expectSamePicture(commandsOf(frame), reference);
     }
     EXPECT_EQ(runner.frames(), static_cast<std::uint64_t>(kFrames));

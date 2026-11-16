@@ -1208,7 +1208,7 @@ void VsgBackend::openFrameHead(VsgExecutor& executor, FrameScratch& scratch, con
             }
         }
         for (const vn::graphics::DrawDescription& draw : description.draws) {
-            if (!draw.camera.present) {
+            if (!draw.view.camera.present) {
                 continue; // a drawing call with no view is no call at all (see DrawDescription)
             }
             if (draw.kind == vn::graphics::DrawDescription::Kind::Screen) {
@@ -1314,17 +1314,17 @@ void VsgBackend::collectFrame(FrameScratch& scratch, const vn::graphics::FrameDe
                 if (draw.light_values != nullptr) {
                     announceLights(scratch, draw.light_values->values());
                 }
-                if (!draw.camera.present) {
+                if (!draw.view.camera.present) {
                     continue; // a drawing call with no view is no call at all (see DrawDescription)
                 }
                 if (draw.kind == vn::graphics::DrawDescription::Kind::Screen) {
-                    collectScreenDraw(scratch, draw.source, draw.program.get(), draw.program_description, draw.camera);
+                    collectScreenDraw(scratch, draw.source, draw.program.get(), draw.program_description, draw.view.camera);
                 }
                 else if (draw.commands != nullptr) {
                     // The override is a PASS fact (see PassDraw::program_override), so every drawing call of the
                     // pass is drawn with it; the command list itself is never rewritten. Its TEXT travels with it
                     // (PassDraw::program_override_description), which is what the recorder applies.
-                    collectContentDraw(scratch, *draw.commands, draw.camera, description.program_override_description);
+                    collectContentDraw(scratch, *draw.commands, draw.view.camera, description.program_override_description);
                 }
             }
         }

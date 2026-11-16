@@ -3,9 +3,9 @@
 
 #include <cstdint>
 
-#include "CameraSnapshot.hpp"
 #include "PresentTarget.hpp"
 #include "SceneSnapshotRef.hpp"
+#include "View.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -13,9 +13,10 @@ VN_GRAPHICS_NS_BEGIN
  * @brief The world ONE answered frame saw: what a pointer query must aim with (see FrameResult).
  *
  * @details
- * - TWO VALUES, ONE MOMENT: the publication the picture was drawn from and the camera value it was taken with. Both
- *   were taken when the frame was BUILT, so a pick, an anchor or a fit aimed with them asks about the picture the user
- *   is looking at - never about content or a camera that moved while the frame was being answered (`I7`, design N17).
+ * - TWO VALUES, ONE MOMENT: the publication the picture was drawn from and the VIEW it was taken with (the camera
+ *   value plus the device-pixel area and the layers the picture draws). Both were taken when the frame was BUILT, so
+ *   a pick, an anchor or a fit aimed with them asks about the picture the user is looking at - never about content or
+ *   a camera that moved while the frame was being answered (`I7`, design N17).
  * - AN EMPTY SNAPSHOT IS A FACT, not an error: the presenting pass draws no content (a screen pass, an overlay-only
  *   picture), so a query has no rows to hit and says so rather than aiming at whatever the scene holds now.
  * - WHAT IS NOT HERE YET: poses. The prototype/instance layer is what would produce them (`graphics-frame-pipeline.md`
@@ -25,8 +26,8 @@ VN_GRAPHICS_NS_BEGIN
 struct VN_GRAPHICS_API FrameQuery {
     /// The publication the picture was drawn from (empty when the presenting pass draws no content).
     SceneSnapshotRef snapshot{};
-    /// The camera that picture was taken with; `present` is false when nothing presents this engine's area.
-    CameraSnapshot view{};
+    /// The view that picture was taken with; `camera.present` is false when nothing presents this engine's area.
+    View view{};
 };
 
 /**
@@ -52,7 +53,7 @@ struct VN_GRAPHICS_API FrameResult {
     std::uint64_t frame{ 0 };
     /// What became of the frame's picture (see PresentOutcome).
     PresentOutcome present{ PresentOutcome::Skipped };
-    /// The world the picture saw: the publication it drew and the camera it was taken with.
+    /// The world the picture saw: the publication it drew and the view it was taken with.
     FrameQuery query{};
     /// Enabled passes the frame ran.
     std::uint32_t passes{ 0 };

@@ -41,8 +41,7 @@ std::uint64_t SnapshotSource::memoStores() const noexcept
 }
 
 std::shared_ptr<const std::vector<vn::graphics::RenderCommand>> SnapshotSource::collectRenderCommands(
-    const vn::graphics::CollectView& view,
-    std::uint32_t                    layer_mask) const
+    const vn::graphics::View& view) const
 {
     SceneSnapshotPtr snapshot;
     {
@@ -54,16 +53,16 @@ std::shared_ptr<const std::vector<vn::graphics::RenderCommand>> SnapshotSource::
     }
 
     const auto view_proj = view.viewProjection();
-    if (DrawListMemo::Entry* entry = memo_.find(view_proj, view.eye, view.viewport, layer_mask, snapshot->revision)) {
+    if (DrawListMemo::Entry* entry = memo_.find(view_proj, view.camera.eye, view.viewport, view.layer_mask, snapshot->revision)) {
         entry->last_used_frame = frame_;
         return entry->commands;
     }
 
     std::vector<vn::graphics::RenderCommand> commands;
     bool                                    viewport_used = false;
-    selectSnapshot(*snapshot, view, layer_mask, commands, viewport_used);
+    selectSnapshot(*snapshot, view, commands, viewport_used);
     auto shared = std::make_shared<const std::vector<vn::graphics::RenderCommand>>(std::move(commands));
-    (void)memo_.store(view_proj, view.eye, view.viewport, layer_mask, viewport_used, snapshot->revision, shared, frame_);
+    (void)memo_.store(view_proj, view.camera.eye, view.viewport, view.layer_mask, viewport_used, snapshot->revision, shared, frame_);
     return shared;
 }
 

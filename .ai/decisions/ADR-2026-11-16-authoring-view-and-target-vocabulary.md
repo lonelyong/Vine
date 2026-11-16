@@ -4,7 +4,7 @@
   `setRenderTarget` 走"变真"方案）；批次顺序见 `../research/graphics-2026-11-16-redesign-r2.md` §10。
 - 日期：2026-11-16
 - 影响范围：`PassDesc.hpp`（`target` / `output` / `tag` / `before_draw`）、`PassChain.hpp`（`OverlayLayout` /
-  `update()`）、`CollectView.hpp` → `View`、`RenderSurface` → `RenderArea`、`RenderDevice.hpp`
+  `update()`）、`CollectView.hpp` → `View`、`RenderSurface` → `RenderArea`、`RenderDevice.hpp` <!-- drift-ok -->
   （`setRenderTarget` / `releasePass` / 读回签名）、`Capabilities.hpp`（`Features` + `Limits`）、
   `RenderDiagnostic.hpp`（`origin`）、`RenderPass.hpp`（35 个 setter 的公开面）、
   `ChainBuilder` / demo / 链预设，以及 `.github/copilot-instructions.md` 的四条规范文字。

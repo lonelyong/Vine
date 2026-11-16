@@ -17,7 +17,7 @@
 #include <vine/math/Vector3.hpp>
 #include <vine/models/TriangleMesh.hpp>
 
-#include <vine/graphics/CollectView.hpp>
+#include <vine/graphics/View.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
@@ -30,7 +30,7 @@
 #include "SceneSnapshot.hpp"
 
 using vn::graphics::Aabbd;
-using vn::graphics::CollectView;
+using vn::graphics::View;
 using vn::graphics::Geometry;
 using vn::graphics::GeometryPtr;
 using vn::graphics::Group;
@@ -52,10 +52,10 @@ namespace
 ///
 /// The test content is authored to sit inside that box, so "is it drawn" needs no camera object: the two sides are
 /// compared on the same view value, which is exactly the input a frame passes both of them.
-CollectView clipBoxView()
+View clipBoxView()
 {
-    CollectView view;
-    view.eye = Vec3d(0.0, 0.0, 10.0);
+    View view;
+    view.camera.eye = Vec3d(0.0, 0.0, 10.0);
     return view;
 }
 
@@ -160,14 +160,14 @@ TEST(SnapshotTest, ThePureSelectMatchesTheScene)
     Scene          scene;
     scene.setRoot(assembly.root);
 
-    const CollectView view     = clipBoxView();
+    const View view     = clipBoxView();
     const auto        snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
     ASSERT_NE(snapshot, nullptr);
 
     std::vector<RenderCommand> selected;
     bool                       viewport_used = false;
-    vn::graphics::detail::selectSnapshot(*snapshot, view, vn::graphics::kAllLayers, selected, viewport_used);
-    expectSameDrawList(selected, scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+    vn::graphics::detail::selectSnapshot(*snapshot, view, selected, viewport_used);
+    expectSameDrawList(selected, scene.collectRenderCommands(view));
 }
 
 TEST(SnapshotTest, AnOlderSnapshotKeepsTheMaterialValuesItWasPublishedWith)
@@ -186,12 +186,12 @@ TEST(SnapshotTest, AnOlderSnapshotKeepsTheMaterialValuesItWasPublishedWith)
 
     Scene scene;
     scene.setRoot(root);
-    const CollectView view = clipBoxView();
+    const View view = clipBoxView();
 
     const auto old_snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
     std::vector<RenderCommand> old_commands;
     bool                       viewport_used = false;
-    vn::graphics::detail::selectSnapshot(*old_snapshot, view, vn::graphics::kAllLayers, old_commands, viewport_used);
+    vn::graphics::detail::selectSnapshot(*old_snapshot, view, old_commands, viewport_used);
     ASSERT_EQ(old_commands.size(), 1U);
     const auto old_values = old_commands.front().material_description;
     ASSERT_NE(old_values, nullptr);
@@ -200,7 +200,7 @@ TEST(SnapshotTest, AnOlderSnapshotKeepsTheMaterialValuesItWasPublishedWith)
     material->setMetallic(0.75F);
     const auto fresh_snapshot = vn::graphics::detail::SceneRows::snapshot(scene);
     std::vector<RenderCommand> fresh_commands;
-    vn::graphics::detail::selectSnapshot(*fresh_snapshot, view, vn::graphics::kAllLayers, fresh_commands, viewport_used);
+    vn::graphics::detail::selectSnapshot(*fresh_snapshot, view, fresh_commands, viewport_used);
     ASSERT_EQ(fresh_commands.size(), 1U);
     const auto fresh_values = fresh_commands.front().material_description;
     ASSERT_NE(fresh_values, nullptr);
@@ -209,7 +209,7 @@ TEST(SnapshotTest, AnOlderSnapshotKeepsTheMaterialValuesItWasPublishedWith)
 
     // The old snapshot is still the old picture after the edit.
     std::vector<RenderCommand> old_again;
-    vn::graphics::detail::selectSnapshot(*old_snapshot, view, vn::graphics::kAllLayers, old_again, viewport_used);
+    vn::graphics::detail::selectSnapshot(*old_snapshot, view, old_again, viewport_used);
     ASSERT_EQ(old_again.size(), 1U);
     EXPECT_EQ(old_again.front().material_description.get(), old_values.get());
     EXPECT_FLOAT_EQ(old_again.front().material_description->values().metallic, 0.0F);
@@ -227,7 +227,7 @@ TEST(SnapshotTest, MeasureWhatOneEditCostsToPublishAndSelect)
     Scene scene;
     scene.setRoot(root);
 
-    const CollectView view = clipBoxView();
+    const View view = clipBoxView();
     std::vector<RenderCommand> selected;
     bool                       viewport_used = false;
     const auto                 warm_snapshot = vn::graphics::detail::SceneRows::snapshot(scene); // warm the bake
@@ -244,7 +244,7 @@ TEST(SnapshotTest, MeasureWhatOneEditCostsToPublishAndSelect)
         const auto after_publish  = std::chrono::steady_clock::now();
         latest_snapshot           = snapshot;
 
-        vn::graphics::detail::selectSnapshot(*snapshot, view, vn::graphics::kAllLayers, selected, viewport_used);
+        vn::graphics::detail::selectSnapshot(*snapshot, view, selected, viewport_used);
         const auto after_select = std::chrono::steady_clock::now();
 
         publish_us += std::chrono::duration_cast<std::chrono::microseconds>(after_publish - before_publish).count();
@@ -281,7 +281,7 @@ TEST(SnapshotTest, AnEditedTransformRepublishesAndMatchesTheScene)
     Scene          scene;
     scene.setRoot(assembly.root);
 
-    const CollectView view   = clipBoxView();
+    const View view   = clipBoxView();
     const auto        before = vn::graphics::detail::SceneRows::snapshot(scene);
 
     assembly.arm->setMatrix(vn::math::translate(0.25, 0.1, 0.0));
@@ -291,8 +291,8 @@ TEST(SnapshotTest, AnEditedTransformRepublishesAndMatchesTheScene)
 
     std::vector<RenderCommand> selected;
     bool                       viewport_used = false;
-    vn::graphics::detail::selectSnapshot(*after, view, vn::graphics::kAllLayers, selected, viewport_used);
-    expectSameDrawList(selected, scene.collectRenderCommands(view, vn::graphics::kAllLayers));
+    vn::graphics::detail::selectSnapshot(*after, view, selected, viewport_used);
+    expectSameDrawList(selected, scene.collectRenderCommands(view));
 }
 
 TEST(SnapshotTest, MeasureWhatASnapshotKeepsResident)
@@ -308,8 +308,8 @@ TEST(SnapshotTest, MeasureWhatASnapshotKeepsResident)
     Scene scene;
     scene.setRoot(root);
 
-    const CollectView view = clipBoxView();
-    (void)scene.collectRenderCommands(view, vn::graphics::kAllLayers); // build the rows (the baseline)
+    const View view = clipBoxView();
+    (void)scene.collectRenderCommands(view); // build the rows (the baseline)
 
     const std::size_t before = mallinfo2().uordblks;
     const auto        snapshot = vn::graphics::detail::SceneRows::snapshot(scene);

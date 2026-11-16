@@ -47,8 +47,10 @@ ScenePublisher::ScenePublisher(vn::graphics::Scene& scene) noexcept
 ScenePublisher::~ScenePublisher() = default;
 
 std::shared_ptr<const std::vector<vn::graphics::RenderCommand>>
-ScenePublisher::collectRenderCommands(const vn::graphics::CollectView& view, std::uint32_t layer_mask) const
+ScenePublisher::collectRenderCommands(const vn::graphics::View& view) const
 {
+    // The mask is part of the view: one argument states what the picture draws (see View).
+    const std::uint32_t layer_mask = view.layer_mask;
     // The empty answer, shared rather than built: an empty scene asks for nothing, and paying an allocation
     // for "nothing" would make the cheap case the expensive one. A root that is no longer a ROOT is the same
     // answer, and the check runs BEFORE the memo lookup on purpose: the memo must not hand back a list built
@@ -59,7 +61,7 @@ ScenePublisher::collectRenderCommands(const vn::graphics::CollectView& view, std
     // The shape is part of the view: the projection encodes it (the camera states it, see Camera), so the memo
     // below (which matches on the view-projection) cannot answer for one shape with another's walk.
     const Mat4d    view_proj = view.viewProjection();
-    const Vec3d    eye       = view.eye;
+    const Vec3d    eye       = view.camera.eye;
     const Viewport viewport  = view.viewport;
     // THE MEMO OUTLIVES ONE FRAME. A collected list is a pure function of the graph and the view, so it is reused
     // for as long as NOTHING changed - which the graph announces through the content epoch of THIS SCENE'S ROOT
@@ -108,7 +110,7 @@ ScenePublisher::collectRenderCommands(const vn::graphics::CollectView& view, std
     bool                                     viewport_used = false;
     std::vector<SortKey>                     keys;
     keys.reserve(rows.rows.size());
-    selectFromBake(rows, frustum, view, layer_mask, viewport_used, commands, &keys);
+    selectFromBake(rows, frustum, view, viewport_used, commands, &keys);
     // The view's half ends in one order, and the order is the same rule for every producer of a draw list (the
     // snapshot path sorts with this very function - see DrawListBake.hpp / SortKey).
     sortCollected(commands, keys);

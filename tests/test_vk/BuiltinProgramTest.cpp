@@ -177,7 +177,7 @@ constexpr int kTargetSize = 64;
 
     DrawDescription draw;
     draw.kind     = DrawDescription::Kind::Scene;
-    draw.camera   = camera;
+    draw.view.camera   = camera;
     draw.commands = commands;
 
     FrameDescription frame;

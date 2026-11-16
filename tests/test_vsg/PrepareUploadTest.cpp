@@ -222,7 +222,7 @@ struct TexturedScene {
 
     DrawDescription draw;
     draw.kind     = DrawDescription::Kind::Scene;
-    draw.camera   = identityCamera();
+    draw.view.camera = identityCamera();
     draw.commands = commands;
 
     FrameDescription::Pass entry;

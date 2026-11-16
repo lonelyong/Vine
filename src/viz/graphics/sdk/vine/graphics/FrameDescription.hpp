@@ -18,6 +18,7 @@
 #include "Node.hpp"
 #include "RenderCommand.hpp"
 #include "StateResolution.hpp"
+#include "View.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -107,27 +108,19 @@ struct VN_GRAPHICS_API DrawDescription {
 
     /// Which of the two calls this describes.
     Kind kind = Kind::Scene;
-    /// The view this draw is projected and lit with, as a VALUE taken when the pass described itself.
+    /// The view this draw is projected, lit and collected with, as a VALUE taken when the pass described itself.
     ///
-    /// `present == false` means the pass issues NO draw at all (there is no view to build), which is what a pass with
-    /// no camera or no program says by leaving it default. Taken once here, so one frame's culling, projection and
-    /// shading cannot see a camera that moved in between.
-    CameraSnapshot camera{};
+    /// Its camera half carries `present == false` when the pass issues NO draw at all (there is no view to build),
+    /// which is what a pass with no camera or no program says by leaving it default. Taken once here, so one frame's
+    /// culling, projection and shading cannot see a camera that moved in between; its area is the device-pixel
+    /// rectangle the collection needs (see View), never the backend's viewport - that is @ref PassDraw::viewport, a
+    /// different question asked a stage later.
+    View view{};
     /// Scene kind: WHOSE commands this draw issues (see DrawListSource).
     ///
-    /// The frame's expansion asks it for the list behind @ref camera / @ref collect_viewport / @ref layer_mask, so a
-    /// host that hands a view does not also have to collect. Null (or a description that already carries
-    /// @ref commands) means nothing is collected.
+    /// The frame's expansion asks it for the list behind @ref view, so a host that hands a view does not also have to
+    /// collect. Null (or a description that already carries @ref commands) means nothing is collected.
     raw_ptr<const DrawListSource> content = nullptr;
-    /// Scene kind: the device-pixel rectangle the collection needs, or an invalid one when the caller cannot state it.
-    ///
-    /// A view-dependent node (AutoTransform) uses it for screen-space scaling and keeps its authored values when it
-    /// is absent. It is NOT the backend's viewport - that is @ref PassDraw::viewport, a different question asked a
-    /// stage later.
-    Viewport collect_viewport{};
-    /// Scene kind: layers this picture draws (see Node::setLayers). Part of the view: two passes drawing the same
-    /// camera with different masks do NOT draw the same list.
-    std::uint32_t layer_mask = kAllLayers;
     /// Scene kind: the commands this draw issues, collected for THIS frame's picture shape.
     ///
     /// FILLED BY THE EXPANSION from @ref content (or carried by a hand-built description). Shared rather than copied:
@@ -289,7 +282,7 @@ FrameDescription VN_GRAPHICS_API singlePassFrame(raw_ptr<const RenderPass> pass,
  */
 [[nodiscard]] inline bool isDrawingCall(const DrawDescription& description) noexcept
 {
-    if (!description.camera.present) {
+    if (!description.view.present()) {
         return false;
     }
     if (description.kind == DrawDescription::Kind::Screen) {

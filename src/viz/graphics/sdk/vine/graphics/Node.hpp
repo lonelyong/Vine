@@ -12,7 +12,6 @@
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/raw_ptr.hpp>
 
-#include "CollectView.hpp"
 #include "ContentId.hpp"
 #include "ViewPlacement.hpp"
 

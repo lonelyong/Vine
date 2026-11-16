@@ -176,7 +176,7 @@ struct Scene {
 
     DrawDescription draw;
     draw.kind     = DrawDescription::Kind::Scene;
-    draw.camera   = identityCamera();
+    draw.view.camera   = identityCamera();
     draw.commands = std::move(commands);
     return draw;
 }
@@ -239,7 +239,7 @@ struct Scene {
 
     DrawDescription draw;
     draw.kind                 = DrawDescription::Kind::Screen;
-    draw.camera               = identityCamera();
+    draw.view.camera               = identityCamera();
     draw.source               = scene.gbuffer.get();
     draw.program              = scene.light_program;
     draw.program_description  = scene.light_program->description();
@@ -269,7 +269,7 @@ struct Scene {
 
     DrawDescription draw;
     draw.kind                = DrawDescription::Kind::Screen;
-    draw.camera              = identityCamera();
+    draw.view.camera              = identityCamera();
     draw.source              = source;
     draw.program             = program;
     draw.program_description = program->description();

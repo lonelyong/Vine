@@ -106,7 +106,7 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
 [[nodiscard]] vn::graphics::VineShadowBlock buildShadowBlock(const ContentDraw::ShadowSource& shadow, const vn::graphics::DrawDescription& draw) noexcept
 {
     vn::graphics::VineShadowBlock block{};
-    if (shadow.light == nullptr || !shadow.has_view_projection || shadow.view == VK_NULL_HANDLE || !draw.camera.present ||
+    if (shadow.light == nullptr || !shadow.has_view_projection || shadow.view == VK_NULL_HANDLE || !draw.view.camera.present ||
         draw.light_values == nullptr)
     {
         return block;
@@ -131,7 +131,7 @@ void copyMatrix(const vn::math::Mat4d& source, std::array<float, 16>& destinatio
         return block;
     }
 
-    const vn::math::Mat4d view_to_light = shadow.view_projection * draw.camera.view.inverted();
+    const vn::math::Mat4d view_to_light = shadow.view_projection * draw.view.camera.view.inverted();
     copyMatrix(view_to_light, block.view_to_light);
     block.params = { 1.0F, caster->shadow_bias, 1.0F, static_cast<float>(slot) };
     return block;
@@ -181,7 +181,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
         return 0;
     }
     // NO CAMERA MEANS NO DRAW (see DrawDescription::camera): the pass issues nothing, and that is not a failure.
-    if (!draw.camera.present) {
+    if (!draw.view.camera.present) {
         return 0;
     }
     if (draw.kind != vn::graphics::DrawDescription::Kind::Scene) {
@@ -278,10 +278,10 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
         // announcement and an empty one both mean the backend default, an ambient-lit scene.
         vn::graphics::VineLightsBlock lights_block{};
         if (draw.light_values != nullptr) {
-            (void)vn::graphics::packLightBlock(draw.light_values->values(), draw.camera, lights_block);
+            (void)vn::graphics::packLightBlock(draw.light_values->values(), draw.view.camera, lights_block);
         }
         else {
-            (void)vn::graphics::packLightBlock({}, draw.camera, lights_block);
+            (void)vn::graphics::packLightBlock({}, draw.view.camera, lights_block);
         }
 
         // THE SHADOW: the map the pass samples becomes a block for THIS call (the caster's slot, its bias and the
@@ -346,7 +346,7 @@ std::uint64_t ContentDraw::record(VkCommandBuffer                              c
                                              4U,
                                              offsets);
 
-        const detail::ContentPushConstants push = pushConstantsOf(draw.camera, command.model_matrix);
+        const detail::ContentPushConstants push = pushConstantsOf(draw.view.camera, command.model_matrix);
         caches.table().vkCmdPushConstants(commands,
                                         caches.contentPipelineLayout(),
                                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -411,7 +411,7 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
         return 0;
     }
     // The same contract a content draw follows: no camera names no picture.
-    if (!draw.camera.present) {
+    if (!draw.view.camera.present) {
         return 0;
     }
     if (source.views.empty()) {
@@ -466,10 +466,10 @@ std::uint64_t ContentDraw::recordScreen(VkCommandBuffer                         
 
     vn::graphics::VineLightsBlock lights_block{};
     if (draw.light_values != nullptr) {
-        (void)vn::graphics::packLightBlock(draw.light_values->values(), draw.camera, lights_block);
+        (void)vn::graphics::packLightBlock(draw.light_values->values(), draw.view.camera, lights_block);
     }
     else {
-        (void)vn::graphics::packLightBlock({}, draw.camera, lights_block);
+        (void)vn::graphics::packLightBlock({}, draw.view.camera, lights_block);
     }
 
     // THE SHADOW THIS CALL SHADES WITH: the map the pass resolved (the same resolution a content draw uses - see

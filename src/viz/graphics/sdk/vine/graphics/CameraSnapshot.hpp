@@ -20,7 +20,7 @@ class Camera;
  *   the target and the up vector. Keeping the `Camera` object instead would make the frame's validity depend on the
  *   authoring object's lifetime and on the thread that owns it - and a frame that crosses to a recording side has
  *   exactly those two problems (see `.ai/design/graphics-threading.md`).
- * - WHAT IT IS FOR. The collection context (`CollectView`), the view block (`buildViewBlock`) and the CPU light
+ * - WHAT IT IS FOR. The collection context (`View`), the view block (`buildViewBlock`) and the CPU light
  *   transform all read these numbers; a pass takes the snapshot once, when it describes itself, so the culling, the
  *   projection and the shading of one frame cannot see a camera that moved in between.
  * - `present` is a FACT, not an optional: "this drawing call named no camera" is a real answer (the call issues

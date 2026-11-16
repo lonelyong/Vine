@@ -164,7 +164,7 @@
   于是 `DrawDescription` 带 `camera` + `collect_viewport` + `layer_mask` 三个字段，
   `PassDesc` 带 `camera` + `viewport` + `layer_mask` 三个字段，`selectSnapshot(snapshot, view, layer_mask)`
   把视图与掩码分开传。
-- **证据**：`CollectView.hpp`（5 字段，3 个与 `CameraSnapshot` 重复）、`CameraSnapshot.hpp:32`、
+- **证据**：`CollectView.hpp`（5 字段，3 个与 `CameraSnapshot` 重复）、`CameraSnapshot.hpp:32`、 <!-- drift-ok -->
   `DrawDescription` 的三个字段、`PassDesc::layer_mask`、`selectSnapshot` 的签名（第一轮 §3.3.4）。
 - **判据**：一个设计名词没有类型，就只能靠"每个调用点自己记得带三个字段"来保证一致；两个重叠的值
   更容易漂移（`CameraSnapshot` 有 `target`，`CollectView` 没有；`CollectView` 有 `viewport`，另一个没有）。

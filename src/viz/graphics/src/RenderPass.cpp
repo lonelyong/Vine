@@ -215,14 +215,15 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
         return true;
     }
     DrawDescription draw;
-    draw.kind         = DrawDescription::Kind::Scene;
-    // THE VIEW, AS A VALUE (see CameraSnapshot). Taking it here is what lets the frame's expansion collect on
-    // another thread, and what keeps this frame's culling and shading on one camera state.
-    draw.camera       = CameraSnapshot::of(*desc_.camera);
-    // WHOSE PUBLICATION ANSWERS THE VIEW is bound at the frame boundary, not here: a description states the VIEW, and
-    // the engine points it at the scene's published snapshot (see detail::bindSceneDraws). A live scene never travels
-    // in a frame value - one edit on the content thread could otherwise reach a frame that is already being recorded.
-    draw.layer_mask   = desc_.layer_mask;
+    draw.kind = DrawDescription::Kind::Scene;
+    // THE VIEW, AS A VALUE (see View). Taking it here is what lets the frame's expansion collect on another
+    // thread, and what keeps this frame's culling and shading on one camera state.
+    draw.view.camera = CameraSnapshot::of(*desc_.camera);
+    // WHOSE PUBLICATION ANSWERS THE VIEW is bound at the frame boundary, not here: a description states the VIEW,
+    // and the engine points it at the scene's published snapshot (see detail::bindSceneDraws). A live scene never
+    // travels in a frame value - one edit on the content thread could otherwise reach a frame that is already being
+    // recorded.
+    draw.view.layer_mask = desc_.layer_mask;
     // The viewport this pass lands in, in DEVICE pixels. A sub-viewport wins; otherwise an explicit target's
     // size; otherwise the surface size the engine/chain stated for a window pass. Collection needs it for
     // view-dependent features (AutoTransform screen-space scaling), not for the backend's own viewport.
@@ -235,7 +236,7 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
             viewport = draw_size_;
         }
     }
-    draw.collect_viewport = viewport;
+    draw.view.viewport = viewport;
     // The pass lights whatever content scene it renders: forward the scene's lights AS ONE SHARED VALUE (see
     // LightValue / LightSet), so editing a light while this frame records cannot change what it lights, and a frame
     // with several passes copies the set once (the scene owns it, not the pass). Announced even when there are none:

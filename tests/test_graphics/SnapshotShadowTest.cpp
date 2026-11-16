@@ -10,7 +10,7 @@
 #include <vine/math/Vector3.hpp>
 #include <vine/models/TriangleMesh.hpp>
 
-#include <vine/graphics/CollectView.hpp>
+#include <vine/graphics/View.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
@@ -24,7 +24,7 @@
 #include "SceneSnapshot.hpp"
 #include "SnapshotSource.hpp"
 
-using vn::graphics::CollectView;
+using vn::graphics::View;
 using vn::graphics::GeometryPtr;
 using vn::graphics::Group;
 using vn::graphics::MaterialPtr;
@@ -44,10 +44,10 @@ namespace
 {
 
 /// @brief The clip box [-1, 1]^3, eye on +Z: the view both the source and the Scene are asked with.
-CollectView clipBoxView()
+View clipBoxView()
 {
-    CollectView view;
-    view.eye = Vec3d(0.0, 0.0, 10.0);
+    View view;
+    view.camera.eye = Vec3d(0.0, 0.0, 10.0);
     return view;
 }
 
@@ -98,10 +98,10 @@ Assembly makeAssembly()
 }
 
 /// @brief Asserts the published source's list and the Scene's direct list are field-exact for @p view.
-void expectSourceAgrees(SnapshotSource& source, const Scene& scene, const CollectView& view, const char* what)
+void expectSourceAgrees(SnapshotSource& source, const Scene& scene, const View& view, const char* what)
 {
-    const auto actual   = source.collectRenderCommands(view, vn::graphics::kAllLayers);
-    const auto expected = scene.collectRenderCommands(view, vn::graphics::kAllLayers);
+    const auto actual   = source.collectRenderCommands(view);
+    const auto expected = scene.collectRenderCommands(view);
     ASSERT_TRUE(actual != nullptr);
     ASSERT_TRUE(expected != nullptr);
 
@@ -122,7 +122,7 @@ TEST(SnapshotSourceTest, ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames
     scene.setRoot(assembly.root);
 
     SnapshotSource source;
-    const CollectView view = clipBoxView();
+    const View view = clipBoxView();
     for (std::uint64_t frame = 1; frame <= 600U; ++frame) {
         const double phase = static_cast<double>(frame) * 0.01;
         assembly.arm->setMatrix(vn::math::translate(0.2 * std::sin(phase), 0.1 * std::cos(phase), 0.0));
@@ -158,8 +158,8 @@ TEST(SnapshotSourceTest, AnEditBatchKeepsTheSourceOnTheOldPicture)
     source.setSnapshot(SceneRows::snapshot(scene));
     source.beginFrame(1U);
 
-    const CollectView view = clipBoxView();
-    const auto        before = source.collectRenderCommands(view, vn::graphics::kAllLayers);
+    const View view = clipBoxView();
+    const auto        before = source.collectRenderCommands(view);
     ASSERT_FALSE(before->empty());
 
     scene.beginEdit();
@@ -167,7 +167,7 @@ TEST(SnapshotSourceTest, AnEditBatchKeepsTheSourceOnTheOldPicture)
     assembly.link_geometry->setOpacity(0.25F);
     EXPECT_EQ(scene.publish().status, ScenePublishStatus::InsideBatch);
     source.beginFrame(2U);
-    const auto inside = source.collectRenderCommands(view, vn::graphics::kAllLayers);
+    const auto inside = source.collectRenderCommands(view);
     EXPECT_TRUE(diffDrawLists(*inside, *before).same) << "a frame inside the batch keeps the batch's starting picture";
 
     scene.endEdit();
@@ -192,12 +192,12 @@ TEST(SnapshotSourceTest, AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWit
 
     Scene scene;
     scene.setRoot(root);
-    const CollectView view = clipBoxView();
+    const View view = clipBoxView();
 
     const auto old_snapshot = SceneRows::snapshot(scene);
     std::vector<vn::graphics::RenderCommand> old_commands;
     bool                                     viewport_used = false;
-    selectSnapshot(*old_snapshot, view, vn::graphics::kAllLayers, old_commands, viewport_used);
+    selectSnapshot(*old_snapshot, view, old_commands, viewport_used);
     ASSERT_EQ(old_commands.size(), 1U);
     const auto old_description = old_commands.front().description;
     const auto old_material    = old_commands.front().material_description;
@@ -217,7 +217,7 @@ TEST(SnapshotSourceTest, AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWit
 
     const auto fresh_snapshot = SceneRows::snapshot(scene);
     std::vector<vn::graphics::RenderCommand> fresh_commands;
-    selectSnapshot(*fresh_snapshot, view, vn::graphics::kAllLayers, fresh_commands, viewport_used);
+    selectSnapshot(*fresh_snapshot, view, fresh_commands, viewport_used);
     ASSERT_EQ(fresh_commands.size(), 1U);
     EXPECT_NE(fresh_commands.front().description.get(), old_description.get()) << "a geometry revision is a new value";
     EXPECT_NE(fresh_commands.front().material_description.get(), old_material.get())
@@ -226,7 +226,7 @@ TEST(SnapshotSourceTest, AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWit
 
     // The old snapshot is still the old picture after all three edits.
     std::vector<vn::graphics::RenderCommand> old_again;
-    selectSnapshot(*old_snapshot, view, vn::graphics::kAllLayers, old_again, viewport_used);
+    selectSnapshot(*old_snapshot, view, old_again, viewport_used);
     ASSERT_EQ(old_again.size(), 1U);
     EXPECT_EQ(old_again.front().description.get(), old_description.get());
     EXPECT_EQ(old_again.front().material_description.get(), old_material.get());
@@ -246,12 +246,12 @@ TEST(SnapshotSourceTest, ADifferentSnapshotIsReportedAsADifference)
     source.setSnapshot(SceneRows::snapshot(scene));
     source.beginFrame(1U);
 
-    const CollectView view = clipBoxView();
-    const auto        scene_list = scene.collectRenderCommands(view, vn::graphics::kAllLayers);
+    const View view = clipBoxView();
+    const auto        scene_list = scene.collectRenderCommands(view);
     ASSERT_FALSE(scene_list->empty());
 
     source.setSnapshot(nullptr);
-    const auto        empty = source.collectRenderCommands(view, vn::graphics::kAllLayers);
+    const auto        empty = source.collectRenderCommands(view);
     const DrawListDiff diff = diffDrawLists(*scene_list, *empty);
     EXPECT_FALSE(diff.same);
     EXPECT_STREQ(diff.field, "count");

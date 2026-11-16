@@ -7,21 +7,24 @@
 #include <vine/math/Vector3.hpp>
 #include <vine/models/TriangleMesh.hpp>
 
+#include <vine/graphics/Camera.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
-#include <vine/graphics/CollectView.hpp>
+#include <vine/graphics/View.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/MatrixTransform.hpp>
 #include <vine/graphics/RenderCommand.hpp>
+#include <vine/graphics/RenderPass.hpp>
 #include <vine/graphics/Scene.hpp>
 
 #include "FrameExpand.hpp"
 #include "PublicationStore.hpp"
 #include "SnapshotSource.hpp"
 
+using vn::graphics::Camera;
 using vn::graphics::CameraSnapshot;
-using vn::graphics::CollectView;
+using vn::graphics::View;
 using vn::graphics::DrawDescription;
 using vn::graphics::FrameDescription;
 using vn::graphics::GeometryPtr;
@@ -29,6 +32,7 @@ using vn::graphics::Group;
 using vn::graphics::MatrixTransform;
 using vn::graphics::PassDraw;
 using vn::graphics::RenderCommand;
+using vn::graphics::RenderPass;
 using vn::graphics::Scene;
 using vn::graphics::ScenePublishResult;
 using vn::graphics::ScenePublishStatus;
@@ -63,9 +67,9 @@ FrameDescription onePassFrame(const vn::graphics::DrawListSource* content)
 
     DrawDescription draw;
     draw.kind       = DrawDescription::Kind::Scene;
-    draw.camera     = camera;
+    draw.view.camera = camera;
     draw.content    = content;
-    draw.layer_mask = vn::graphics::kAllLayers;
+    draw.view.layer_mask = vn::graphics::kAllLayers;
 
     PassDraw pass;
     pass.draws.push_back(draw);
@@ -77,10 +81,10 @@ FrameDescription onePassFrame(const vn::graphics::DrawListSource* content)
 }
 
 /// @brief The view the frames above state, so the content's own answer is asked with the same numbers.
-CollectView theView()
+View theView()
 {
-    CollectView view;
-    view.eye = Vec3d(0.0, 0.0, 10.0);
+    View view;
+    view.camera.eye = Vec3d(0.0, 0.0, 10.0);
     return view;
 }
 
@@ -130,7 +134,7 @@ TEST(FrameExpandTest, AFrameExpandsTheSamePictureTheSceneWould)
     scene.setRoot(root);
 
     // The content's own answer, for the SAME view value (a query on the thread that owns it - see Scene).
-    const auto from_content = scene.collectRenderCommands(theView(), vn::graphics::kAllLayers);
+    const auto from_content = scene.collectRenderCommands(theView());
 
     // The engine side's answer: publish the content, bind the draw to its publication, then expand.
     PublicationStore store;
@@ -310,4 +314,77 @@ TEST(FrameExpandTest, ADrawNoPublicationAnswersDrawsNothing)
     ASSERT_EQ(frame.passes.front().draw->draws.size(), 1U);
     EXPECT_EQ(frame.passes.front().draw->draws.front().commands, nullptr) << "no source, no collection";
     EXPECT_TRUE(commandsOf(frame).empty());
+}
+
+TEST(FrameExpandTest, AViewValueDrivesSelectAndDescribeTheSameWay)
+{
+    // ONE VIEW, TWO CONSUMERS. A pass describes itself into a View (camera value + device-pixel area + layer mask)
+    // and the pure select takes that SAME value. If the two sides ever assembled their inputs differently, the
+    // picture a frame draws and the picture a host collects would differ by a number nobody stated.
+    auto root = intrusive_ptr<Group>(new Group());
+    root->addChild(triangleAt(0.0));
+    root->addChild(triangleAt(0.6));
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    scene->setRoot(root);
+
+    auto camera = intrusive_ptr<Camera>(new Camera());
+    camera->setPerspective(60.0, 0.1, 100.0);
+    camera->lookAt(Vec3d(0.0, 0.0, 10.0), Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 1.0, 0.0));
+
+    RenderPass pass;
+    pass.setCamera(camera);
+    pass.setContent(scene);
+    pass.setViewport(0, 0, 800, 600);
+    pass.setLayerMask(vn::graphics::kAllLayers);
+
+    PassDraw described;
+    ASSERT_TRUE(pass.describe(scene.get(), described));
+    ASSERT_EQ(described.draws.size(), 1U);
+    const View& view = described.draws.front().view;
+
+    // The description took the camera AS A VALUE and the area the pass stated: the two halves a host could not
+    // restate differently.
+    ASSERT_TRUE(view.camera.present);
+    EXPECT_EQ(view.viewport.width, 800);
+    EXPECT_EQ(view.viewport.height, 600);
+    EXPECT_EQ(view.layer_mask, vn::graphics::kAllLayers);
+
+    // The publication answers the view (the frame boundary does this bind, see detail::bindSceneDraws).
+    PublicationStore store;
+    ASSERT_TRUE(scene->publish());
+    SnapshotSource* const source = frameSourceFor(store, *scene);
+    ASSERT_NE(source, nullptr);
+    bindSceneDraws(described, source);
+
+    expandPass(described);
+    ASSERT_NE(described.draws.front().commands, nullptr) << "the expansion collected through the View";
+    const std::vector<RenderCommand>& described_commands = *described.draws.front().commands;
+
+    // The pure select, fed the very same value, answers the same list.
+    const vn::graphics::detail::SceneSnapshotPtr snapshot = source->snapshot();
+    ASSERT_NE(snapshot, nullptr);
+
+    std::vector<RenderCommand> selected;
+    bool                       viewport_used = false;
+    vn::graphics::detail::selectSnapshot(*snapshot, view, selected, viewport_used);
+
+    ASSERT_EQ(selected.size(), described_commands.size()) << "one View, one picture";
+    for (std::size_t index = 0; index < selected.size(); ++index) {
+        EXPECT_EQ(selected[index].geometry.get(), described_commands[index].geometry.get()) << "command " << index;
+        EXPECT_EQ(selected[index].primitive_index, described_commands[index].primitive_index) << "command " << index;
+        for (int row = 0; row < 4; ++row) {
+            for (int column = 0; column < 4; ++column) {
+                EXPECT_DOUBLE_EQ(selected[index].model_matrix(row, column),
+                                 described_commands[index].model_matrix(row, column))
+                    << "command " << index << ": model matrix element (" << row << ", " << column << ")";
+            }
+        }
+    }
+
+    // THE MASK TRAVELS IN THE VIEW: a picture that selects no layer draws nothing, and the select says so.
+    View filtered = view;
+    filtered.layer_mask = 0U;
+    selected.clear();
+    vn::graphics::detail::selectSnapshot(*snapshot, filtered, selected, viewport_used);
+    EXPECT_TRUE(selected.empty()) << "the mask is part of the view, not an argument beside it";
 }

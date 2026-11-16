@@ -557,8 +557,7 @@ std::uint32_t refreshValues(SceneBake& bake)
 
 void selectFromBake(const SceneBake&            bake,
                     const Frustum&              frustum,
-                    const CollectView&          view,
-                    std::uint32_t               layer_mask,
+                    const View&                 view,
                     bool&                       viewport_used,
                     std::vector<RenderCommand>& out,
                     std::vector<SortKey>*       keys)
@@ -567,7 +566,6 @@ void selectFromBake(const SceneBake&            bake,
                [&bake](std::uint32_t index) -> const Row& { return bake.rows[index]; },
                frustum,
                view,
-               layer_mask,
                viewport_used,
                out,
                keys);

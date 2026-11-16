@@ -5,7 +5,7 @@
 #include <memory>
 #include <vector>
 
-#include <vine/graphics/CollectView.hpp>
+#include <vine/graphics/View.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 
 #include "DrawListBake.hpp"
@@ -82,14 +82,12 @@ using SceneSnapshotPtr = std::shared_ptr<const SceneSnapshot>;
  *   reports it to its memo.
  *
  * @param snapshot      The published rows to select from.
- * @param view          The view value to select for.
- * @param layer_mask    Layers this selection draws.
+ * @param view          The view value to select for (camera value, device-pixel area and layer mask).
  * @param out           Receives the commands (replaced).
  * @param viewport_used Receives whether the view's viewport affected a placement.
  */
 void selectSnapshot(const SceneSnapshot&        snapshot,
-                    const CollectView&          view,
-                    std::uint32_t               layer_mask,
+                    const View&                 view,
                     std::vector<RenderCommand>& out,
                     bool&                       viewport_used);
 

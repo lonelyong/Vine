@@ -171,7 +171,7 @@ makeQuad(float x0, float x1, float z)
 {
     DrawDescription draw;
     draw.kind        = DrawDescription::Kind::Scene;
-    draw.camera      = identityCamera();
+    draw.view.camera      = identityCamera();
     draw.commands    = std::move(commands);
     draw.light_values = std::move(lights);
     return draw;
@@ -479,7 +479,7 @@ void main()
 
     DrawDescription screen_draw;
     screen_draw.kind                = DrawDescription::Kind::Screen;
-    screen_draw.camera              = identityCamera();
+    screen_draw.view.camera              = identityCamera();
     screen_draw.source              = source.get();
     screen_draw.program             = read_program;
     screen_draw.program_description = read_program->description();

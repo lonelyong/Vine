@@ -345,7 +345,7 @@ void main()
 {
     DrawDescription draw;
     draw.kind         = DrawDescription::Kind::Scene;
-    draw.camera       = identityCamera();
+    draw.view.camera  = identityCamera();
     draw.commands     = std::move(commands);
     draw.light_values = std::move(lights);
     return draw;
@@ -652,7 +652,7 @@ TEST_F(BackendParityTest, APrepareReportsTheShapeBothBackendsThenRecord)
     clear->color                     = Colorf(0.0F, 0.0F, 0.25F, 1.0F);
 
     DrawDescription idle = sceneDraw(commandsOf({ commandOf(geometry, program, red) }));
-    idle.camera          = CameraSnapshot{}; // present == false: the pass has no view, so it issues no call
+    idle.view.camera     = CameraSnapshot{}; // present == false: the pass has no view, so it issues no call
 
     // ONE PASS IDENTITY PER ENTRY (a backend keys retained per-pass state by it; two passes never share one).
     // VALIDATION IS PART OF THE CASE, not a log nobody reads: three passes into one depth-attached target is exactly
@@ -798,7 +798,7 @@ TEST_F(BackendParityTest, TheSameScreenCopySamplesTheSameColours)
 
     DrawDescription screen;
     screen.kind                = DrawDescription::Kind::Screen;
-    screen.camera              = identityCamera();
+    screen.view.camera         = identityCamera();
     screen.source              = source;
     screen.program             = copy;
     screen.program_description = copy->description();
@@ -1083,7 +1083,7 @@ TEST_F(BackendParityTest, TheSameDeferredFrameIsTheSamePictureOnBothBackends)
 
     DrawDescription screen;
     screen.kind                = DrawDescription::Kind::Screen;
-    screen.camera              = identityCamera();
+    screen.view.camera         = identityCamera();
     screen.source              = gbuffer;
     screen.program             = light_program;
     screen.program_description = light_program->description();

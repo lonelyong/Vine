@@ -214,7 +214,7 @@ void main()
     pass.clear->color = Colorf(0.0F, 0.0F, 0.0F, 1.0F);
     vn::graphics::DrawDescription draw;
     draw.kind     = vn::graphics::DrawDescription::Kind::Scene;
-    draw.camera   = vn::graphics::CameraSnapshot{};
+    draw.view.camera   = vn::graphics::CameraSnapshot{};
     draw.commands = commands;
     pass.draws.push_back(std::move(draw));
     entry.draw = std::move(pass);

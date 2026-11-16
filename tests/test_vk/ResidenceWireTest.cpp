@@ -162,7 +162,7 @@ void main()
 
     DrawDescription draw;
     draw.kind     = DrawDescription::Kind::Scene;
-    draw.camera   = identityCamera();
+    draw.view.camera   = identityCamera();
     draw.commands = commands;
     return draw;
 }

@@ -37,9 +37,9 @@ class RenderPass;
 struct OwnedDraw {
     /// Which drawing call this is (see DrawDescription::Kind).
     DrawDescription::Kind kind{ DrawDescription::Kind::Scene };
-    /// The view this draw is projected and lit with, as the VALUE the frame carries (`present == false` = no draw).
-    /// It is owned by being a value: no camera object has to outlive the frame for it to be replayable.
-    CameraSnapshot camera{};
+    /// The view this draw is projected and lit with, as the VALUE the frame carries (`camera.present == false` = no
+    /// draw). It is owned by being a value: no camera object has to outlive the frame for it to be replayable.
+    View view{};
     /// Scene kind: the commands this draw issues (held; the collection owns its geometry and materials).
     std::shared_ptr<const std::vector<RenderCommand>> commands;
     /// Screen kind: the target whose colour attachments the program samples (held).
@@ -183,7 +183,7 @@ class OwnedFrame {
         for (const OwnedDraw& draw : owned.draws) {
             DrawDescription borrowed_draw;
             borrowed_draw.kind     = draw.kind;
-            borrowed_draw.camera   = draw.camera;
+            borrowed_draw.view     = draw.view;
             borrowed_draw.commands = draw.commands;
             borrowed_draw.source   = draw.source.get();
             borrowed_draw.program  = draw.program;

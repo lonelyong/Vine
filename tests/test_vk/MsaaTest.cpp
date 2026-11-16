@@ -178,7 +178,7 @@ constexpr std::array<int, 4> kFragmentColor{ 51, 102, 153, 255 };
 
     DrawDescription draw;
     draw.kind     = DrawDescription::Kind::Scene;
-    draw.camera   = identityCamera();
+    draw.view.camera   = identityCamera();
     draw.commands = std::move(commands);
     return draw;
 }

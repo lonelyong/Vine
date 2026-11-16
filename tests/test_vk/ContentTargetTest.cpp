@@ -285,7 +285,7 @@ void main()
 
     DrawDescription draw;
     draw.kind     = DrawDescription::Kind::Scene;
-    draw.camera   = identityCamera();
+    draw.view.camera   = identityCamera();
     draw.commands = list;
 
     FrameDescription frame;
@@ -704,7 +704,7 @@ TEST(VkContentTargetTest, ABorrowedDepthRejectsTheFragmentTheLenderAlreadyCovere
 
         DrawDescription draw;
         draw.kind     = DrawDescription::Kind::Scene;
-        draw.camera   = identityCamera();
+        draw.view.camera   = identityCamera();
         draw.commands = list;
 
         PassDraw pass;

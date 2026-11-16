@@ -290,16 +290,20 @@ Scene::collectRenderCommands(raw_ptr<const Camera> camera, std::uint32_t layer_m
         // The empty answer, shared rather than built: a caller with no camera asks for nothing.
         return detail::noCommands();
     }
-    const Viewport    draw_viewport = viewport != nullptr ? *viewport : Viewport{};
-    const CollectView view{ camera->projectionMatrix(), camera->viewMatrix(), camera->eye(), camera->up(), draw_viewport };
-    return collectRenderCommands(view, layer_mask);
+    // The camera overload states the same view as the value overload: one camera snapshot, the rectangle the caller
+    // could state, and the layers to draw (see View).
+    View view;
+    view.camera     = CameraSnapshot::of(*camera);
+    view.viewport   = viewport != nullptr ? *viewport : Viewport{};
+    view.layer_mask = layer_mask;
+    return collectRenderCommands(view);
 }
 
-std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(const CollectView& view, std::uint32_t layer_mask) const
+std::shared_ptr<const std::vector<RenderCommand>> Scene::collectRenderCommands(const View& view) const
 {
     // THE QUESTION BELONGS TO THE DERIVED SIDE (see detail::ScenePublisher): this scene's baked rows, its memo key
     // and its edit batch are what the answer depends on, and none of them is authored content.
-    return publisher_->collectRenderCommands(view, layer_mask);
+    return publisher_->collectRenderCommands(view);
 }
 
 ScenePublishResult Scene::publish()

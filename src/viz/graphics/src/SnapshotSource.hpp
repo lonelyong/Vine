@@ -4,7 +4,7 @@
 #include <memory>
 #include <mutex>
 
-#include <vine/graphics/CollectView.hpp>
+#include <vine/graphics/View.hpp>
 #include <vine/graphics/DrawListSource.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 
@@ -70,15 +70,13 @@ class SnapshotSource final : public vn::graphics::DrawListSource
 
   public:
     /**
-     * @brief Collects what @p view draws from the current snapshot (see DrawListSource).
+     * @brief Collects the commands @p view draws from the current snapshot (see DrawListSource).
      *
-     * @param view       The view to collect for.
-     * @param layer_mask Layers this picture draws.
+     * @param view The view to collect for: camera value, device-pixel area and layer mask.
      * @return The commands, in draw order; empty when no snapshot was published.
      */
     [[nodiscard]] std::shared_ptr<const std::vector<vn::graphics::RenderCommand>> collectRenderCommands(
-        const vn::graphics::CollectView& view,
-        std::uint32_t                    layer_mask) const override;
+        const vn::graphics::View& view) const override;
 
   private:
     mutable std::mutex snapshot_mutex_;

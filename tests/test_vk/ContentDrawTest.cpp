@@ -356,7 +356,7 @@ TEST(VkContentDrawTest, ATriangleIsDrawnIntoTheTargetAndProbed)
 
     DrawDescription draw;
     draw.kind     = DrawDescription::Kind::Scene;
-    draw.camera   = identityCamera();
+    draw.view.camera   = identityCamera();
     draw.commands = commands;
 
     const PresentOutcome outcome = backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
@@ -404,7 +404,7 @@ TEST(VkContentDrawTest, AProgramLessDrawUsesTheDevicesDefaultProgram)
 
     DrawDescription draw;
     draw.kind     = DrawDescription::Kind::Scene;
-    draw.camera   = identityCamera();
+    draw.view.camera   = identityCamera();
     draw.commands = commands;
 
     backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
@@ -514,7 +514,7 @@ TEST(VkContentDrawTest, ADrawWithNoProgramArrivesWithTheCodeOfItsCause)
 
     DrawDescription draw;
     draw.kind     = DrawDescription::Kind::Scene;
-    draw.camera   = identityCamera();
+    draw.view.camera   = identityCamera();
     draw.commands = commands;
 
     (void)backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
@@ -572,7 +572,7 @@ TEST(VkContentDrawTest, ABaseColorTextureIsUploadedAndSampled)
 
     DrawDescription draw;
     draw.kind     = DrawDescription::Kind::Scene;
-    draw.camera   = identityCamera();
+    draw.view.camera   = identityCamera();
     draw.commands = commands;
     backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
 
@@ -616,7 +616,7 @@ TEST(VkContentDrawTest, TheLightBlockCarriesTheAmbientTerm)
 
     DrawDescription draw;
     draw.kind        = DrawDescription::Kind::Scene;
-    draw.camera      = identityCamera();
+    draw.view.camera      = identityCamera();
     draw.commands    = commands;
     draw.light_values = vn::graphics::LightSet::create({ ambient });
     backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
@@ -660,7 +660,7 @@ TEST(VkContentDrawTest, AScreenCopySamplesTheSourceTarget)
 
     DrawDescription scene_draw;
     scene_draw.kind     = DrawDescription::Kind::Scene;
-    scene_draw.camera   = identityCamera();
+    scene_draw.view.camera   = identityCamera();
     scene_draw.commands = commands;
     backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
 
@@ -668,7 +668,7 @@ TEST(VkContentDrawTest, AScreenCopySamplesTheSourceTarget)
 
     DrawDescription screen_draw;
     screen_draw.kind                 = DrawDescription::Kind::Screen;
-    screen_draw.camera               = identityCamera();
+    screen_draw.view.camera               = identityCamera();
     screen_draw.source               = source.get();
     screen_draw.program              = copy;
     screen_draw.program_description  = copy->description();
@@ -721,7 +721,7 @@ TEST(VkContentDrawTest, AScreenCopyIsDrawnWhateverThePassDepthPolicySays)
 
     DrawDescription scene_draw;
     scene_draw.kind     = DrawDescription::Kind::Scene;
-    scene_draw.camera   = identityCamera();
+    scene_draw.view.camera   = identityCamera();
     scene_draw.commands = commands;
     backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
 
@@ -731,7 +731,7 @@ TEST(VkContentDrawTest, AScreenCopyIsDrawnWhateverThePassDepthPolicySays)
 
     DrawDescription screen_draw;
     screen_draw.kind                = DrawDescription::Kind::Screen;
-    screen_draw.camera              = identityCamera();
+    screen_draw.view.camera              = identityCamera();
     screen_draw.source              = source.get();
     screen_draw.program             = copy;
     screen_draw.program_description = copy->description();
@@ -798,7 +798,7 @@ TEST(VkContentDrawTest, ABlendedDrawFollowsTheEngineOrder)
 
     DrawDescription draw;
     draw.kind     = DrawDescription::Kind::Scene;
-    draw.camera   = identityCamera();
+    draw.view.camera   = identityCamera();
     draw.commands = commands;
 
     FrameDescription frame;
@@ -897,7 +897,7 @@ TEST(VkContentDrawTest, ACubeMapIsUploadedWithEveryFaceAndSampled)
 
         DrawDescription draw;
         draw.kind     = DrawDescription::Kind::Scene;
-        draw.camera   = identityCamera();
+        draw.view.camera   = identityCamera();
         draw.commands = commands;
         backend->executeFrame(drawingFrame(target.get(), std::move(draw)));
 
@@ -942,7 +942,7 @@ TEST(VkContentDrawTest, AShadowedFullScreenPassGetsTheEngineShadowBindings)
 
         DrawDescription scene_draw;
         scene_draw.kind     = DrawDescription::Kind::Scene;
-        scene_draw.camera   = identityCamera();
+        scene_draw.view.camera   = identityCamera();
         scene_draw.commands = commands;
         backend->executeFrame(drawingFrame(source.get(), std::move(scene_draw)));
     }
@@ -952,7 +952,7 @@ TEST(VkContentDrawTest, AShadowedFullScreenPassGetsTheEngineShadowBindings)
 
     DrawDescription screen_draw;
     screen_draw.kind                = DrawDescription::Kind::Screen;
-    screen_draw.camera              = identityCamera();
+    screen_draw.view.camera              = identityCamera();
     screen_draw.source              = source.get();
     screen_draw.program             = lit;
     screen_draw.program_description = lit->description();

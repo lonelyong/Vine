@@ -6,9 +6,9 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
-#include "CollectView.hpp"
-
 VN_GRAPHICS_NS_BEGIN
+
+struct View;
 
 using vn::geom::spatial::Aabbd;
 using vn::math::Mat4d;
@@ -74,7 +74,7 @@ class VN_GRAPHICS_API ViewPlacement : public RefCounted<ViewPlacement> {
      * @return None when this view needs no per-view placement at all (the caller keeps the view-independent
      *         matrix); otherwise the strongest input it read.
      */
-    [[nodiscard]] virtual ViewDependence dependence(const CollectView& view) const noexcept = 0;
+    [[nodiscard]] virtual ViewDependence dependence(const View& view) const noexcept = 0;
 
     /**
      * @brief Resolves this placement for one view: the node's LOCAL matrix (the parent is applied by the caller).
@@ -83,7 +83,7 @@ class VN_GRAPHICS_API ViewPlacement : public RefCounted<ViewPlacement> {
      * @param view         The view to resolve for.
      * @return The local matrix to compose with @p parent_world.
      */
-    [[nodiscard]] virtual Mat4d localMatrix(const Mat4d& parent_world, const CollectView& view) const = 0;
+    [[nodiscard]] virtual Mat4d localMatrix(const Mat4d& parent_world, const View& view) const = 0;
 
     /**
      * @brief Bounds the subtree for EVERY view, in the PARENT frame.
@@ -129,7 +129,7 @@ using ViewPlacementPtr = intrusive_ptr<const ViewPlacement>;
  */
 [[nodiscard]] VN_GRAPHICS_API ViewDependence localToWorldForView(const ViewPlacement& placement,
                                                                 const Mat4d&         parent_world,
-                                                                const CollectView&   view,
+                                                                const View&   view,
                                                                 Mat4d&               world);
 
 VN_GRAPHICS_NS_END

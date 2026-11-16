@@ -12,7 +12,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
-#include "CollectView.hpp"
+#include "View.hpp"
 #include "Light.hpp"
 #include "LightSet.hpp"
 #include "Node.hpp"
@@ -316,16 +316,16 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     /** @brief Collects the commands for one explicit view (the primary entry point).
      *
      * @details
-     * - The same rules as the camera overload; the caller states projection / view / eye / up / viewport
-     *   directly. A host that drives a pass itself collects this way, without owning a Camera.
-     * - The memo key is the view-projection, the eye and the viewport: two cameras (or two rectangles) that
-     *   look differently get their own lists.
+     * - The same rules as the camera overload; the caller states the view as one value: the camera snapshot, the
+     *   device-pixel area and the layers to draw (see View). A host that drives a pass itself collects this way,
+     *   without owning a Camera.
+     * - The memo key is the view-projection, the eye, the viewport and the mask: two views that look differently
+     *   (or select different layers) get their own lists.
      *
-     * @param view      The view this picture is collected for.
-     * @param layer_mask Layers this picture draws (see Node::setLayers).
+     * @param view The view this picture is collected for.
      * @return The shared list of collected render commands (empty when there is nothing to draw).
      */
-    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(const CollectView& view, std::uint32_t layer_mask = kAllLayers) const;
+    std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(const View& view) const;
 
     /**
      * @brief Publishes the scene's current rows as an immutable snapshot, or answers why it did not.

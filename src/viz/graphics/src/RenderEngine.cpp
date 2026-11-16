@@ -463,7 +463,8 @@ bool RenderEngine::waitForFrame(std::chrono::milliseconds timeout)
 std::optional<CameraSnapshot> RenderEngine::presentedCamera() const
 {
     const std::lock_guard<std::mutex> lock(frame_result_mutex_);
-    return frame_result_.query.view.present ? std::optional<CameraSnapshot>(frame_result_.query.view) : std::nullopt;
+    return frame_result_.query.view.camera.present ? std::optional<CameraSnapshot>(frame_result_.query.view.camera)
+                                                   : std::nullopt;
 }
 
 FrameResult RenderEngine::frameResult() const
@@ -498,11 +499,24 @@ void RenderEngine::buildContentHalf(detail::EngineFrame& frame)
     // that presents this engine's area is the picture, so its camera is the one a pointer query must aim with once this
     // frame is answered (design N17). Nothing presents the area (an offline bake, a device with no window) => empty,
     // and a query keeps aiming with the live camera.
-    frame.presented_camera = CameraSnapshot{};
+    frame.presented_view = View{};
     if (area_ != nullptr) {
         if (raw_ptr<RenderPass> presenting = area_->presentingPass();
             presenting != nullptr && presenting->camera() != nullptr) {
-            frame.presented_camera = CameraSnapshot::of(*presenting->camera());
+            // The SAME VIEW the pass describes: its camera as a value, the device-pixel rectangle it lands in, and
+            // the layers it draws. A query that aims with this value asks about the picture the user is looking at.
+            frame.presented_view.camera     = CameraSnapshot::of(*presenting->camera());
+            frame.presented_view.layer_mask = presenting->layerMask();
+            Viewport viewport               = presenting->viewport();
+            if (!viewport.isValid()) {
+                if (raw_ptr<RenderTarget> target = presenting->renderTarget(); target != nullptr) {
+                    viewport = Viewport{ 0, 0, target->width(), target->height() };
+                }
+                else {
+                    viewport = presenting->drawSize();
+                }
+            }
+            frame.presented_view.viewport = viewport;
         }
     }
     // THE PUBLICATION THE PICTURE IS DRAWN FROM, taken the same way and at the same moment as the camera: the presenting
@@ -632,7 +646,7 @@ void RenderEngine::runEngineHalf(detail::EngineFrame& frame)
         result.frame          = frame.number;
         result.present        = frame.outcome;
         result.query.snapshot = frame.presented_snapshot;
-        result.query.view     = frame.presented_camera;
+        result.query.view     = frame.presented_view;
         for (const FrameDescription::Pass& pass : frame.description.passes) {
             ++result.passes;
             if (pass.draw.has_value()) {

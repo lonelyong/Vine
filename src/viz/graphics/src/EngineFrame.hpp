@@ -7,6 +7,7 @@
 #include <vine/graphics/CameraSnapshot.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/SceneSnapshotRef.hpp>
+#include <vine/graphics/View.hpp>
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -58,10 +59,10 @@ struct EngineFrame {
     /// What the expansion cost per entry of @ref engine_order, in microseconds: the engine half's share of a pass'
     /// `record_micros` (the content half measured its own share while it described). Same length as engine_order.
     std::vector<std::uint64_t> engine_micros;
-    /// The camera THIS frame's picture was taken with (the presenting pass' camera, as a value), or an empty snapshot
-    /// when nothing presents this engine's area. It is what a pointer query should aim with once the frame is answered
-    /// (design N17): `RenderEngine::presentedCamera` hands it to the host.
-    CameraSnapshot presented_camera{};
+    /// The VIEW THIS frame's picture was taken with (the presenting pass' camera, area and layer mask, as values), or
+    /// an empty view when nothing presents this engine's area. It is what a pointer query should aim with once the
+    /// frame is answered (design N17): `RenderEngine::presentedCamera` hands its camera half to the host.
+    View presented_view{};
     /// The publication THIS frame's picture is drawn from (the presenting pass' content, as the store resolved it when
     /// the frame was built), or empty when that pass draws no content. It is the snapshot half of the value a query aims
     /// with (see RenderEngine::frameResult).

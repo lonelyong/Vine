@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include <vine/graphics/View.hpp>
 #include <vine/math/Transform3.hpp>
 
 VN_GRAPHICS_NS_BEGIN
@@ -141,7 +142,7 @@ double screenScaleFor(const Point3d& position,
                       const Vec3d&   authored,
                       double         minimum_scale,
                       double         maximum_scale,
-                      const CollectView& view,
+                      const View& view,
                       const Mat4d&   parent_world)
 {
     // OSG's pixelSize(position, 0.48): 0.48 local units at the node cover N pixels, and the scale that keeps
@@ -153,7 +154,7 @@ double screenScaleFor(const Point3d& position,
     // Project one local unit along X and Y at the node's position. The model-view includes the parent, so a
     // parent scale/rotation (and a perspective depth) is part of the measured pixel size. This is the same
     // quantity OSG's computePixelSizeVector measures, without assuming the parent is rigid.
-    const Mat4d   view_projection = view.projection * (view.view * parent_world);
+    const Mat4d   view_projection = view.camera.projection * (view.camera.view * parent_world);
     const Point3d origin          = view_projection * position;
     const Point3d x_axis          = view_projection * Point3d(position.x + 1.0, position.y, position.z);
     const Point3d y_axis          = view_projection * Point3d(position.x, position.y + 1.0, position.z);
@@ -220,7 +221,7 @@ class AutoTransformPlacement final : public ViewPlacement {
         return mode_ != AutoTransform::AutoRotateMode::NoRotation ? ViewDependence::View : ViewDependence::None;
     }
 
-    [[nodiscard]] ViewDependence dependence(const CollectView& view) const noexcept override
+    [[nodiscard]] ViewDependence dependence(const View& view) const noexcept override
     {
         const bool auto_rotate = mode_ != AutoTransform::AutoRotateMode::NoRotation;
         const bool auto_scale  = auto_scale_ && view.hasViewport();
@@ -230,7 +231,7 @@ class AutoTransformPlacement final : public ViewPlacement {
         return auto_scale ? ViewDependence::ViewAndViewport : ViewDependence::View;
     }
 
-    [[nodiscard]] Mat4d localMatrix(const Mat4d& parent_world, const CollectView& view) const override
+    [[nodiscard]] Mat4d localMatrix(const Mat4d& parent_world, const View& view) const override
     {
         // The automatic rotation is computed in THIS node's frame, exactly as OSG does: the model-view includes
         // the parent transform, so a parent rotation is cancelled by the local rotation and a parent scale is
@@ -238,15 +239,15 @@ class AutoTransformPlacement final : public ViewPlacement {
         Mat4d auto_rotation;
         if (mode_ != AutoTransform::AutoRotateMode::NoRotation) {
             if (mode_ == AutoTransform::AutoRotateMode::RotateToScreen) {
-                auto_rotation = screenRotation(view.view * parent_world);
+                auto_rotation = screenRotation(view.camera.view * parent_world);
             }
             else {
                 Mat4d         parent_inverse = parent_world;
                 const bool    inverted       = parent_inverse.invert();
-                const Point3d local_point    = inverted ? parent_inverse * Point3d(view.eye.x, view.eye.y, view.eye.z) : Point3d(view.eye.x, view.eye.y, view.eye.z);
+                const Point3d local_point    = inverted ? parent_inverse * Point3d(view.camera.eye.x, view.camera.eye.y, view.camera.eye.z) : Point3d(view.camera.eye.x, view.camera.eye.y, view.camera.eye.z);
                 const Vec3d   local_eye(local_point.x, local_point.y, local_point.z);
                 if (mode_ == AutoTransform::AutoRotateMode::RotateToCamera) {
-                    const Vec3d local_up = inverted ? parent_inverse * view.up : view.up;
+                    const Vec3d local_up = inverted ? parent_inverse * view.camera.up : view.camera.up;
                     auto_rotation        = cameraRotation(position_, local_eye, local_up);
                 }
                 else {

@@ -5,13 +5,14 @@
 #include <memory>
 #include <vector>
 
-#include <vine/graphics/CollectView.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/Viewport.hpp>
 #include <vine/math/Matrix4x4.hpp>
 #include <vine/math/Vector3.hpp>
 
 VN_GRAPHICS_NS_BEGIN
+
+using vn::math::Vec3d;
 
 namespace detail
 {

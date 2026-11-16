@@ -10,7 +10,7 @@
 
 #include <vine/SmallVector.hpp>
 
-#include <vine/graphics/CollectView.hpp>
+#include <vine/graphics/View.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
@@ -480,8 +480,7 @@ SortKey makeSortKey(const RenderCommand& command, std::uint32_t layers, const Aa
  * @param row_count     Number of rows to walk.
  * @param row_at        Accessor answering one row.
  * @param frustum       The view's frustum.
- * @param view          The view being drawn.
- * @param layer_mask    Layers this picture draws.
+ * @param view          The view being drawn (its layer mask is the content selection).
  * @param viewport_used Receives true when a per-view row needs the device-pixel viewport.
  * @param out           Receives the commands, in walk order.
  * @param keys          Receives the sort key of every appended command, or null when the caller sorts elsewhere.
@@ -490,8 +489,7 @@ template <class RowAt>
 void selectRows(std::uint32_t               row_count,
                 RowAt                       row_at,
                 const Frustum&              frustum,
-                const CollectView&          view,
-                std::uint32_t               layer_mask,
+                const View&                 view,
                 bool&                       viewport_used,
                 std::vector<RenderCommand>& out,
                 std::vector<SortKey>*       keys = nullptr)
@@ -534,7 +532,7 @@ void selectRows(std::uint32_t               row_count,
             resolved = true;
         }
 
-        if ((row.layers_union & layer_mask) == 0U) {
+        if ((row.layers_union & view.layer_mask) == 0U) {
             index = row.end;
             continue;
         }
@@ -582,7 +580,7 @@ void selectRows(std::uint32_t               row_count,
                     keys->push_back(makeSortKey(out.back(),
                                                 row.layers,
                                                 sort_box,
-                                                view.view,
+                                                view.camera.view,
                                                 (static_cast<std::uint64_t>(index) << 32U) | draw.primitive_index));
                 }
             }
@@ -596,16 +594,14 @@ void selectRows(std::uint32_t               row_count,
  *
  * @param bake          The table (see bakeSubtree).
  * @param frustum       The view's frustum.
- * @param view          The view being drawn.
- * @param layer_mask    Layers this picture draws.
+ * @param view          The view being drawn (its layer mask is the content selection).
  * @param viewport_used Receives true when a per-view row needs the device-pixel viewport.
  * @param out           Receives the commands, in walk order.
  * @param keys          Receives the sort key of every appended command (see selectRows).
  */
 void selectFromBake(const SceneBake&            bake,
                     const Frustum&              frustum,
-                    const CollectView&          view,
-                    std::uint32_t               layer_mask,
+                    const View&                 view,
                     bool&                       viewport_used,
                     std::vector<RenderCommand>& out,
                     std::vector<SortKey>*       keys = nullptr);

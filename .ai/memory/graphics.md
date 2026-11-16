@@ -10,9 +10,9 @@
 - `RenderEngine`：生命周期 / `frame()` / 设备借用 / 尺寸 / 能力与报告；三个门面是 `PassRegistry`、`OutputRegistry`、`DiagnosticsRoute`。
 - `frame()` 返回 `FrameOutcome`（`Ran` / `Submitted`；`NotReady` + `EngineNotReady`），`applyPlan` 返回 `PlanResult` 三态；pass 的内容住在 `PassDesc::content`，`bindPassContent` 返回是否命中。
 - **排序键是 `detail::SortKey`**（`DrawListBake.hpp`）：drawOrder → 层（最小层号）→ 不透明/透明 → 量化相机空间深度（1/4096 单位）→ 行/图元索引。代表点是**世界盒中心**（无盒退回矩阵原点），`sortCollected` 用 `std::sort`（`tie` 保证无相等键）。
-- **帧结果是值**：`RenderEngine::frameResult()` → `FrameResult{frame, present, query{snapshot, view}, passes, draws, diagnostics}`，在帧被回答时一次写入（`frame_result_mutex_`）；`presentedCamera()` 是 `query.view` 的简写。`poses` 半边等 F10。
+- **帧结果是值**：`RenderEngine::frameResult()` → `FrameResult{frame, present, query{snapshot, view}, passes, draws, diagnostics}`，在帧被回答时一次写入（`frame_result_mutex_`）；`query.view` 是 `View` 值（相机快照 + 设备像素区域 + 层掩码），`presentedCamera()` 是它的相机半边。`poses` 半边等 F10。
 - **排序键是 `detail::SortKey`**（`DrawListBake.hpp`）：drawOrder → 层（最小层号）→ 不透明/透明 → 量化相机空间深度（1/4096 单位）→ 行/图元索引。代表点是**世界盒中心**（无盒退回矩阵原点），`sortCollected` 用 `std::sort`（`tie` 保证无相等键）。
-- **帧结果是值**：`RenderEngine::frameResult()` → `FrameResult{frame, present, query{snapshot, view}, passes, draws, diagnostics}`，在帧被回答时一次写入（`frame_result_mutex_`）；`presentedCamera()` 是 `query.view` 的简写。`pose` 半边等 F10。
+- **帧结果是值**：`RenderEngine::frameResult()` → `FrameResult{frame, present, query{snapshot, view}, passes, draws, diagnostics}`，在帧被回答时一次写入（`frame_result_mutex_`）；`query.view` 是 `View` 值（相机快照 + 设备像素区域 + 层掩码），`presentedCamera()` 是它的相机半边。`pose` 半边等 F10。
 - 节点 / pass / 几何的 `Object` 派生类型判断用 `obj_cast<T>`（core 元类型链），不要用 `dynamic_cast`；`CameraManipulator` 与第三方 vsg 类型例外。
 - `PassChain`：一张画面的配方 + 注册归属。`PassChain::build(engine, ChainDesc)` 建链并注册 pass；析构把手里的 pass 交还引擎；`SceneView::setChain` 采纳它。
 - 一帧：`beginFrame` → 每个 pass（`beginPass` / `setPassOrder` / `setPassInputs` / `execute` / `endPass`）→ `endFrame` → present。

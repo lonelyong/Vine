@@ -39,7 +39,7 @@
 它的深度就不能再被当作几何距离读回。
 2.3.2 **解析出来的每一项有一个终点**：pipeline 变体（`topology`）/ 动态状态（depth、cull、blend、`polygonMode`、`lineWidth`）/ **数据块**（`pointSize` → draw 块的 `params.y`，因为点大小是顶点着色器输出而不是 API 状态）。终点决定"改它要不要重编"：三类都不重编（本引擎的 cull/polygon/线宽都是动态状态），只有 `topology` 进变体键 —— 但 `pointSize` 的终点是**数据**，所以它连动态状态都不是。这一点必须写在 `StateResolution.hpp` 的 item 注释里，否则下一项很容易被顺手塞进 `PipelineKey`。
 2.4 **收集是纯函数**：相机 + 场景内容 + 层掩码 → 共享不可变命令表；memo 只在这些输入变化时失效。
-2.5 **视图上下文显式**：`CollectView` 携带 projection / view / eye / up / viewport；billboard 只在这里生效。
+2.5 **视图上下文显式**：`View` 携带相机值（`CameraSnapshot`）、设备像素 `viewport` 与 `layer_mask`；billboard 只在这里生效。
 2.6 **拾取是机制**：射线 + 场景走查；选择/描边/框选不在框架里。
 2.7 **灯是场景的环境量**：灯挂在 `Scene` 上而不是节点上（一个场景一份光照，每个 pass 拿到同一份，所以主/离屏/阴影 pass 的灯永远一致），位置与方向都是世界坐标。节点灯（灯跟着子树动）与逐 draw 选灯是触发条件型（backlog T7 / S7），不是今天的模型。
 
@@ -94,7 +94,7 @@
 
 | # | 功能 | 说明 |
 |---|---|---|
-| F12 | 命令表 | `Scene::collectRenderCommands(camera, layer_mask, viewport?)` / `(CollectView, layer_mask)`。 |
+| F12 | 命令表 | `Scene::collectRenderCommands(camera, layer_mask, viewport?)` / `(View)`。 |
 | F13 | 命令快照 | geometry、primitive、model matrix、opacity、draw_order、state、material、program、instance。 |
 | F14 | memo | 键 = view-projection + eye + layer_mask（必要时 + viewport）；根子树 epoch 失效。 |
 | F15 | 视锥剔除 | 子树盒 `subtreeBounds` 在节点自身坐标系持久缓存；移动相机不重算。 |
@@ -107,7 +107,7 @@
 |---|---|---|
 | F18 | L1 内容掩码 | `Node::setLayers` + `PassDesc::layer_mask`；判定在可绘制节点上。 |
 | F19 | 子树层并集 | `subtreeLayerUnion` 懒缓存；`(union & mask) == 0` 整棵跳过（缓存按进程级层 epoch 失效，见 N11）。 |
-| F20 | `CollectView` | projection / view / eye / up / 设备像素 viewport。 |
+| F20 | `View` | 相机值 / 设备像素 viewport / 层掩码；收集与描述共用同一个值。 |
 | F21 | ViewDependence | `None` / `View` / `ViewAndViewport`；只有后者把 viewport 进 memo 键。 |
 | F22 | AutoTransform | `RotateToScreen` / `RotateToCamera` / `RotateToAxis`；`setAutoScaleToScreen` 恒像素。 |
 | F23 | 保守包围盒 | AutoTransform 以 position 为球心的球盒；场景盒不随最后相机变化。 |

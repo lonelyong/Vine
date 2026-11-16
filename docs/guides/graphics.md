@@ -138,7 +138,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
     预热过的帧再录制时 `builds` / `uploads` 增量为 0。
   - **线程与帧的回读**：`setFrameThreading(Inline | EngineThread)`（生命周期决定，不是每帧开关）、
     `waitForFrame(n)`（唯一显式等待，“这一帧上屏了”）、`frameResult()`（上一帧的完整值：`query.snapshot` /
-    `query.view` / passes / draws / 诊断 / present）、`presentRecord()` / `presentedCamera()`（前者的两个简写）。
+    `query.view`（`View`：相机快照 + 设备像素区域 + 层掩码）/ passes / draws / 诊断 / present）、`presentRecord()` / `presentedCamera()`（后者的相机半边与两个简写）。
     拾取 / 锚点 / fit 一律用 `frameResult().query`，不要用活相机或活场景。
 - `RenderPass` —— 相机 + 渲染目标 + 渲染状态 + 清屏/深度策略。**没有 renderTarget 的 pass 画进窗口**，
   order 决定先后。

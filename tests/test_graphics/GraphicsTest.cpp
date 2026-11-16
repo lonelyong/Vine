@@ -547,9 +547,12 @@ void setupLookAtCamera(Camera& cam)
  * @param viewport Device-pixel rectangle (invalid by default, as a host collecting without a target).
  * @return The view value the collection and view-dependent nodes consume.
  */
-CollectView viewOf(const Camera& camera, const Viewport& viewport = Viewport{})
+View viewOf(const Camera& camera, const Viewport& viewport = Viewport{})
 {
-    return CollectView{ camera.projectionMatrix(), camera.viewMatrix(), camera.eye(), camera.up(), viewport };
+    View view;
+    view.camera   = CameraSnapshot::of(camera);
+    view.viewport = viewport;
+    return view;
 }
 
 /**
@@ -565,7 +568,7 @@ CollectView viewOf(const Camera& camera, const Viewport& viewport = Viewport{})
  * @param world        Receives the node's world matrix when the answer is not None.
  * @return None when the node's placement is view-independent for this view.
  */
-ViewDependence resolveView(const Node& node, const Mat4d& parent_world, const CollectView& view, Mat4d& world)
+ViewDependence resolveView(const Node& node, const Mat4d& parent_world, const View& view, Mat4d& world)
 {
     const auto placement = node.viewPlacement();
     if (placement == nullptr) {
@@ -2945,7 +2948,7 @@ TEST(AutoTransformTest, AutoScaleCancelsAUniformParentScale)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const CollectView view = viewOf(cam, Viewport{ 0, 0, 800, 600 });
+    const View view = viewOf(cam, Viewport{ 0, 0, 800, 600 });
 
     Mat4d plain_world;
     ASSERT_EQ(resolveView(billboard, Mat4d(), view, plain_world), ViewDependence::ViewAndViewport);
@@ -3004,15 +3007,15 @@ TEST(AutoTransformTest, AutoScaleKeepsAConstantPixelSize)
     far_camera.setAspect(4.0 / 3.0);
 
     const Viewport    viewport{ 0, 0, 800, 600 };
-    const CollectView near_view = viewOf(near_camera, viewport);
-    const CollectView far_view  = viewOf(far_camera, viewport);
+    const View near_view = viewOf(near_camera, viewport);
+    const View far_view  = viewOf(far_camera, viewport);
 
     Mat4d near_world;
     Mat4d far_world;
     ASSERT_EQ(resolveView(billboard, Mat4d(), near_view, near_world), ViewDependence::ViewAndViewport);
     ASSERT_EQ(resolveView(billboard, Mat4d(), far_view, far_world), ViewDependence::ViewAndViewport);
 
-    const auto screen_height = [](const CollectView& view, const Mat4d& world) {
+    const auto screen_height = [](const View& view, const Mat4d& world) {
         const Mat4d   view_projection = view.viewProjection();
         const Point3d bottom          = view_projection * (world * Point3d(0, 0, 0));
         const Point3d top             = view_projection * (world * Point3d(0, 1, 0));
@@ -3035,7 +3038,7 @@ TEST(AutoTransformTest, AutoScaleClampsToTheConfiguredRange)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const CollectView view = viewOf(cam, Viewport{ 0, 0, 800, 600 });
+    const View view = viewOf(cam, Viewport{ 0, 0, 800, 600 });
     Mat4d             world;
     ASSERT_EQ(resolveView(billboard, Mat4d(), view, world), ViewDependence::ViewAndViewport);
 
@@ -3052,7 +3055,7 @@ TEST(AutoTransformTest, AutoScaleWithoutAViewportKeepsTheAuthoredScale)
 
     Camera cam;
     setupLookAtCamera(cam);
-    const CollectView view = viewOf(cam); // no viewport
+    const View view = viewOf(cam); // no viewport
 
     Mat4d world;
     ASSERT_EQ(resolveView(billboard, Mat4d(), view, world), ViewDependence::View);
@@ -3705,17 +3708,17 @@ class MockBackend : public RenderBackend {
                 last_light_count = draw.light_values->size();
                 last_light       = draw.light_values->empty() ? std::nullopt : std::optional<vn::graphics::LightValue>{ draw.light_values->values().front() };
             }
-            if (!draw.camera.present) {
+            if (!draw.view.camera.present) {
                 continue; // a drawing call with no view is no call at all
             }
             if (draw.kind == DrawDescription::Kind::Screen) {
                 ++program_draws;
                 last_program_source = draw.source;
                 last_program        = draw.program.get();
-                last_program_camera = draw.camera;
+                last_program_camera = draw.view.camera;
             }
             else if (draw.commands != nullptr) {
-                consumeCommands(*draw.commands, draw.camera, description.program_override.get());
+                consumeCommands(*draw.commands, draw.view.camera, description.program_override.get());
             }
         }
     }
@@ -6108,7 +6111,7 @@ TEST(PassDrawTest, WhatAScenePassDescribesIsWhatItAnnounces)
     const vn::graphics::DrawDescription& draw = described.draws.front();
     EXPECT_EQ(draw.kind, vn::graphics::DrawDescription::Kind::Scene);
     ASSERT_FALSE(backend->render_cameras.empty());
-    EXPECT_TRUE(draw.camera.view.isEqual(backend->render_cameras.back().view, 1e-12)) << "the view the frame carried";
+    EXPECT_TRUE(draw.view.camera.view.isEqual(backend->render_cameras.back().view, 1e-12)) << "the view the frame carried";
     ASSERT_NE(draw.commands, nullptr);
     EXPECT_FALSE(draw.commands->empty()) << "三角形必须在里面，否则这条只验证了空集合相等";
     EXPECT_EQ(draw.commands->size(), backend->render_command_counts.back());
@@ -6157,14 +6160,14 @@ TEST(PassDrawTest, WhatAScreenPassDescribesIsWhatItAnnounces)
     EXPECT_EQ(draw.kind, vn::graphics::DrawDescription::Kind::Screen);
     EXPECT_EQ(draw.source, source.get());
     EXPECT_EQ(draw.program.get(), program.get());
-    EXPECT_TRUE(draw.camera.view.isEqual(cam->viewMatrix(), 1e-12)) << "the pass' own view, as a value";
+    EXPECT_TRUE(draw.view.camera.view.isEqual(cam->viewMatrix(), 1e-12)) << "the pass' own view, as a value";
     EXPECT_FALSE(draw.light_values != nullptr) << "没有场景 ⇒ 不公告灯（\"没有场景\"不是关于光照的陈述）";
     EXPECT_EQ(backend->light_sets, 0);
     // 线上走的真的是全屏程序那条路，参数就是描述里那几个
     EXPECT_EQ(backend->program_draws, 1);
     EXPECT_EQ(backend->last_program_source, draw.source);
     EXPECT_EQ(backend->last_program, draw.program.get());
-    EXPECT_TRUE(backend->last_program_camera.view.isEqual(draw.camera.view, 1e-12)) << "the same view the description stated";
+    EXPECT_TRUE(backend->last_program_camera.view.isEqual(draw.view.camera.view, 1e-12)) << "the same view the description stated";
     EXPECT_EQ(backend->render_calls, 0) << "全屏档走 drawScreenProgram()，不走 render()";
     // 清屏在构造里就关了：描述里没有 clear，线上也没收到 setClearPolicy（0 值不是"清了黑色"）
     EXPECT_FALSE(described.clear.has_value());
@@ -6437,7 +6440,7 @@ class DescribeOnlyPass : public RenderPass {
         fillPassFacts(out);
         DrawDescription draw;
         draw.kind   = DrawDescription::Kind::Scene;
-        draw.camera = CameraSnapshot::of(*camera());
+        draw.view.camera = CameraSnapshot::of(*camera());
         out.draws.push_back(std::move(draw));
         (void)scene; // the pass is content-agnostic: its picture is the camera's
         return true;
@@ -7619,7 +7622,7 @@ TEST(OwnedFrameTest, TheOwnedFrameKeepsWhatItsProducersReleased)
         description.target = target;
         description.clear  = ClearPolicy{ Color(0, 0, 0, 255).toLinear(), true };
         OwnedDraw draw;
-        draw.camera   = CameraSnapshot::of(*camera);
+        draw.view.camera = CameraSnapshot::of(*camera);
         draw.commands = commands;
         description.draws.push_back(std::move(draw));
 
@@ -7641,7 +7644,7 @@ TEST(OwnedFrameTest, TheOwnedFrameKeepsWhatItsProducersReleased)
     EXPECT_EQ(description.target, target_raw);
     ASSERT_TRUE(description.clear.has_value());
     ASSERT_EQ(description.draws.size(), 1U);
-    EXPECT_TRUE(description.draws[0].camera.view.isEqual(camera_view, 1e-12)) << "the camera the pass held, as a value";
+    EXPECT_TRUE(description.draws[0].view.camera.view.isEqual(camera_view, 1e-12)) << "the camera the pass held, as a value";
     ASSERT_NE(description.draws[0].commands, nullptr) << "the command collection is held, not borrowed";
     EXPECT_EQ(description.draws[0].commands->size(), 1U);
 
@@ -11478,7 +11481,7 @@ TEST(RenderEngineTest, TheFrameResultIsThePictureThatWasAnswered)
 
     EXPECT_FALSE(engine->frameResult().answered()) << "nothing has been answered yet";
     EXPECT_FALSE(engine->frameResult().query.snapshot.valid());
-    EXPECT_FALSE(engine->frameResult().query.view.present);
+    EXPECT_FALSE(engine->frameResult().query.view.camera.present);
 
     auto       scene = intrusive_ptr<Scene>(new Scene());
     const auto root  = setIdentityRoot(*scene);
@@ -11503,8 +11506,8 @@ TEST(RenderEngineTest, TheFrameResultIsThePictureThatWasAnswered)
     EXPECT_EQ(result.frame, engine->frameNumber());
     EXPECT_EQ(result.present, engine->presentRecord().outcome) << "one answer, both spellings agree";
     EXPECT_EQ(result.query.snapshot.revision(), drawn.revision()) << "the picture the frame actually drew";
-    ASSERT_TRUE(result.query.view.present);
-    EXPECT_NEAR(result.query.view.eye.z, view->camera()->eye().z, 1e-9) << "the camera that picture was taken with";
+    ASSERT_TRUE(result.query.view.camera.present);
+    EXPECT_NEAR(result.query.view.camera.eye.z, view->camera()->eye().z, 1e-9) << "the camera that picture was taken with";
     EXPECT_GE(result.passes, 1u) << "a frame with a presenting pass has at least one pass";
     EXPECT_GE(result.draws, 1u) << "the triangle is drawn";
     EXPECT_EQ(result.diagnostics, engine->diagnosticCount() - diagnostics_before) << "the frame's own share of the reports";
@@ -12188,7 +12191,7 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
     EXPECT_EQ(scene_pass.viewport->width, 160);
     ASSERT_EQ(scene_pass.draws.size(), 1u);
     ASSERT_EQ(backend->render_cameras.size(), 1u);
-    EXPECT_TRUE(scene_pass.draws[0].camera.view.isEqual(backend->render_cameras[0].view, 1e-12));
+    EXPECT_TRUE(scene_pass.draws[0].view.camera.view.isEqual(backend->render_cameras[0].view, 1e-12));
     EXPECT_EQ(scene_pass.draws[0].commands->size(), backend->render_command_counts[0]);
     // 覆盖是 PASS 的事实（见 PassDraw::program_override）：命令表是共享的、原样的，画的时候由后端逐命令解析。
     EXPECT_EQ(scene_pass.program_override.get(), override_program.get()) << "the pass states the override once, and the backend draws its commands with it";

@@ -4,7 +4,7 @@
 #include <memory>
 #include <vector>
 
-#include <vine/graphics/CollectView.hpp>
+#include <vine/graphics/View.hpp>
 #include <vine/graphics/RenderCommand.hpp>
 #include <vine/graphics/Scene.hpp>
 
@@ -67,18 +67,17 @@ class ScenePublisher final
 
   public:
     /**
-     * @brief Collects what @p view draws, restricted to @p layer_mask (see Scene::collectRenderCommands).
+     * @brief Collects the commands @p view draws (see Scene::collectRenderCommands).
      *
      * @details
      * - NOT A FRAME SOURCE: a frame draws a publication (see SnapshotSource); this is the content thread's own query,
      *   which `Scene::collectRenderCommands` forwards to.
      *
-     * @param view       The view to collect for.
-     * @param layer_mask Layers this picture draws.
+     * @param view The view to collect for: camera value, device-pixel area and layer mask.
      * @return The shared, immutable command list.
      */
     [[nodiscard]] std::shared_ptr<const std::vector<vn::graphics::RenderCommand>>
-    collectRenderCommands(const vn::graphics::CollectView& view, std::uint32_t layer_mask) const;
+    collectRenderCommands(const vn::graphics::View& view) const;
 
     /**
      * @brief Publishes the scene's current rows as an immutable snapshot, or answers why it did not.

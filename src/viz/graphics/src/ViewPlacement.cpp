@@ -4,7 +4,7 @@ VN_GRAPHICS_NS_BEGIN
 
 ViewPlacement::~ViewPlacement() = default;
 
-ViewDependence localToWorldForView(const ViewPlacement& placement, const Mat4d& parent_world, const CollectView& view, Mat4d& world)
+ViewDependence localToWorldForView(const ViewPlacement& placement, const Mat4d& parent_world, const View& view, Mat4d& world)
 {
     const ViewDependence dependence = placement.dependence(view);
     if (dependence == ViewDependence::None) {

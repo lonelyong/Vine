@@ -328,7 +328,7 @@
 
 | 接口 | 契约 | 备注 |
 |---|---|---|
-| `detail::selectSnapshot(const SceneSnapshot&, const CollectView&, ...)` | 纯函数；内部原型 | 已存在（`SceneSnapshot.hpp`） |
+| `detail::selectSnapshot(const SceneSnapshot&, const View&, ...)` | 纯函数；内部原型 | 已存在（`SceneSnapshot.hpp`） |
 | 排序键 | 全序值 + 两段；比较规则文档化 | 目标，见 §3.11 |
 
 ### 4.3 会话侧

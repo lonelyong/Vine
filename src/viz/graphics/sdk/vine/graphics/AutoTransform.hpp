@@ -41,7 +41,7 @@ using vn::math::Vec3d;
  *   PositionAttitudeTransform and is what worldMatrix(), picking and Scene::boundingBox() see.
  * - setAutoScaleToScreen(true) adds OSG's screen-space scaling: the node is scaled uniformly so the same
  *   local geometry keeps a constant pixel size. It needs the device-pixel viewport, which collection
- *   receives in CollectView; without one it keeps the authored scale.
+ *   receives in View; without one it keeps the authored scale.
  *
  * @note
  * - This node is view-dependent by design. Its boundingBox() is conservative (a sphere-bound around

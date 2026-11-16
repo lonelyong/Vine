@@ -17,7 +17,7 @@
 
 #include <vine/graphics/Camera.hpp>
 #include <vine/graphics/CameraSnapshot.hpp>
-#include <vine/graphics/CollectView.hpp>
+#include <vine/graphics/View.hpp>
 #include <vine/graphics/Geometry.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/Material.hpp>
@@ -34,7 +34,7 @@
 #include "SnapshotSource.hpp"
 
 using vn::geom::spatial::Aabbd;
-using vn::graphics::CollectView;
+using vn::graphics::View;
 using vn::graphics::GeometryPtr;
 using vn::graphics::Material;
 using vn::graphics::MatrixTransform;
@@ -106,18 +106,18 @@ void buildSelectScene(Scene& scene)
 }
 
 /** @brief A view value looking at @p target from @p eye, with a stated device-pixel rectangle. */
-CollectView viewFrom(const Vec3d& eye, const Vec3d& target, const Viewport& viewport)
+View viewFrom(const Vec3d& eye, const Vec3d& target, const Viewport& viewport)
 {
     auto camera = intrusive_ptr<vn::graphics::Camera>(new vn::graphics::Camera());
     camera->lookAt(eye, target, Vec3d(0.0, 1.0, 0.0));
     camera->setPerspective(60.0, 0.1, 100.0);
 
     const vn::graphics::CameraSnapshot value = vn::graphics::CameraSnapshot::of(*camera);
-    CollectView                             view;
-    view.projection = value.projection;
-    view.view       = value.view;
-    view.eye        = value.eye;
-    view.up         = value.up;
+    View                             view;
+    view.camera.projection = value.projection;
+    view.camera.view       = value.view;
+    view.camera.eye        = value.eye;
+    view.camera.up         = value.up;
     view.viewport   = viewport;
     return view;
 }
@@ -232,24 +232,24 @@ TEST(SelectTest, SameInputSameList)
     const vn::graphics::detail::SceneSnapshotPtr snapshot = SceneRows::snapshot(scene);
     ASSERT_GT(snapshot->row_count, 0U);
 
-    const CollectView view_a = viewFrom(Vec3d(0.0, 0.0, 10.0), Vec3d(0.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 });
-    const CollectView view_b = viewFrom(Vec3d(7.0, 5.0, 12.0), Vec3d(0.0, 0.0, 0.0), Viewport{ 0, 0, 320, 240 });
+    const View view_a = viewFrom(Vec3d(0.0, 0.0, 10.0), Vec3d(0.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 });
+    const View view_b = viewFrom(Vec3d(7.0, 5.0, 12.0), Vec3d(0.0, 0.0, 0.0), Viewport{ 0, 0, 320, 240 });
 
     bool                       viewport_used = false;
     std::vector<RenderCommand> first;
-    selectSnapshot(*snapshot, view_a, vn::graphics::kAllLayers, first, viewport_used);
+    selectSnapshot(*snapshot, view_a, first, viewport_used);
     ASSERT_FALSE(first.empty()) << "the fixture is in view: an empty list would make 'same' trivial";
 
     std::vector<RenderCommand> again;
-    selectSnapshot(*snapshot, view_a, vn::graphics::kAllLayers, again, viewport_used);
+    selectSnapshot(*snapshot, view_a, again, viewport_used);
     const auto repeated = diffDrawLists(again, first);
     EXPECT_TRUE(repeated.same) << "same snapshot, same view: a different list at index " << repeated.index << " ("
                                << repeated.field << ")";
 
     std::vector<RenderCommand> other_view;
-    selectSnapshot(*snapshot, view_b, vn::graphics::kAllLayers, other_view, viewport_used);
+    selectSnapshot(*snapshot, view_b, other_view, viewport_used);
     std::vector<RenderCommand> back_to_a;
-    selectSnapshot(*snapshot, view_a, vn::graphics::kAllLayers, back_to_a, viewport_used);
+    selectSnapshot(*snapshot, view_a, back_to_a, viewport_used);
     const auto interleaved = diffDrawLists(back_to_a, first);
     EXPECT_TRUE(interleaved.same) << "a different view in between is not state (index " << interleaved.index << ")";
 
@@ -257,7 +257,7 @@ TEST(SelectTest, SameInputSameList)
     // picture. Its rows hold shares, and select never asks a Scene, a Node or a material for a value.
     scene.setRoot(nullptr);
     std::vector<RenderCommand> from_the_value;
-    selectSnapshot(*snapshot, view_a, vn::graphics::kAllLayers, from_the_value, viewport_used);
+    selectSnapshot(*snapshot, view_a, from_the_value, viewport_used);
     const auto detached = diffDrawLists(from_the_value, first);
     EXPECT_TRUE(detached.same) << "select reads the publication, not the content it was published from (index "
                                << detached.index << ")";
@@ -274,11 +274,11 @@ TEST(SelectTest, SameInputSameList)
     for (int thread = 0; thread < kThreads; ++thread) {
         workers.emplace_back([&, thread] {
             for (int round = 0; round < kRounds; ++round) {
-                const CollectView&                view     = (round % 2 == 0) ? view_a : view_b;
+                const View&                view     = (round % 2 == 0) ? view_a : view_b;
                 const std::vector<RenderCommand>& expected = (round % 2 == 0) ? first : other_view;
                 std::vector<RenderCommand>        answer;
                 bool                              used = false;
-                selectSnapshot(*snapshot, view, vn::graphics::kAllLayers, answer, used);
+                selectSnapshot(*snapshot, view, answer, used);
                 if (!diffDrawLists(answer, expected).same) {
                     int none = -1;
                     first_bad_thread.compare_exchange_strong(none, thread);
@@ -347,20 +347,20 @@ TEST(SelectTest, OneChunkCullsEachRowOnItsOwnBox)
     EXPECT_NE(outside_row.parent_world.element(0, 3), inside_row.parent_world.element(0, 3))
         << "the segments sit under different parent transforms (x = 1000 vs x = 0)";
 
-    const CollectView looking_at_inside = viewFrom(Vec3d(0.0, 0.0, 10.0), Vec3d(0.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 });
+    const View looking_at_inside = viewFrom(Vec3d(0.0, 0.0, 10.0), Vec3d(0.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 });
     const Frustum     frustum           = Frustum::fromViewProjection(looking_at_inside.viewProjection());
     EXPECT_TRUE(frustum.isOutside(outside_row.world_box)) << "the block's FIRST row is the one out of view";
     EXPECT_FALSE(frustum.isOutside(inside_row.world_box)) << "the second row is in view - it must not be culled";
 
     bool                       viewport_used = false;
     std::vector<RenderCommand> visible;
-    selectSnapshot(*snapshot, looking_at_inside, vn::graphics::kAllLayers, visible, viewport_used);
+    selectSnapshot(*snapshot, looking_at_inside, visible, viewport_used);
     ASSERT_EQ(visible.size(), 1U) << "one segment per parent and one of them in view: a whole-block skip answers none";
     EXPECT_EQ(visible.front().node, inside_geometry->id());
 
-    const CollectView          looking_at_outside = viewFrom(Vec3d(1000.0, 0.0, 10.0), Vec3d(1000.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 });
+    const View          looking_at_outside = viewFrom(Vec3d(1000.0, 0.0, 10.0), Vec3d(1000.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 });
     std::vector<RenderCommand> other;
-    selectSnapshot(*snapshot, looking_at_outside, vn::graphics::kAllLayers, other, viewport_used);
+    selectSnapshot(*snapshot, looking_at_outside, other, viewport_used);
     ASSERT_EQ(other.size(), 1U) << "the other camera answers the other segment - culling is still ON";
     EXPECT_EQ(other.front().node, outside_geometry->id());
 }
@@ -410,7 +410,7 @@ TEST(SelectTest, MeasureWhatOneSelectCostsWithAMovingCamera)
 
         // Pre-built views: the recipe times SELECT, not camera construction. Each moves the eye a little, so no two
         // share a view-projection and nothing may be answered from a memo.
-        std::vector<CollectView> views;
+        std::vector<View> views;
         views.reserve(kRepetitions);
         for (int step = 0; step < kRepetitions; ++step) {
             views.push_back(viewFrom(Vec3d(0.001 * static_cast<double>(step), 0.0, 10.0), Vec3d(0.0, 0.0, -3.0), Viewport{ 0, 0, 800, 600 }));
@@ -418,12 +418,12 @@ TEST(SelectTest, MeasureWhatOneSelectCostsWithAMovingCamera)
 
         bool                       viewport_used = false;
         std::vector<RenderCommand> selected;
-        selectSnapshot(*snapshot, views.front(), vn::graphics::kAllLayers, selected, viewport_used); // warm
+        selectSnapshot(*snapshot, views.front(), selected, viewport_used); // warm
         ASSERT_EQ(selected.size(), drawables) << "the fixture fills the view; a culled grid would time the prune";
 
         const auto select_began = std::chrono::steady_clock::now();
-        for (const CollectView& view : views) {
-            selectSnapshot(*snapshot, view, vn::graphics::kAllLayers, selected, viewport_used);
+        for (const View& view : views) {
+            selectSnapshot(*snapshot, view, selected, viewport_used);
         }
         const long long select_us =
             std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - select_began).count() / kRepetitions;
@@ -434,7 +434,7 @@ TEST(SelectTest, MeasureWhatOneSelectCostsWithAMovingCamera)
         const auto source_began = std::chrono::steady_clock::now();
         for (int step = 0; step < kRepetitions; ++step) {
             source.beginFrame(static_cast<std::uint64_t>(step) + 1U);
-            const auto list = source.collectRenderCommands(views[static_cast<std::size_t>(step)], vn::graphics::kAllLayers);
+            const auto list = source.collectRenderCommands(views[static_cast<std::size_t>(step)]);
             ASSERT_NE(list, nullptr);
             ASSERT_EQ(list->size(), drawables);
         }

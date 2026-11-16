@@ -65,10 +65,10 @@ bool ScreenPass::describe(raw_ptr<Scene> scene, PassDraw& out)
         return true;
     }
     DrawDescription draw;
-    draw.kind    = DrawDescription::Kind::Screen;
-    draw.camera  = CameraSnapshot::of(*camera());
-    draw.source  = source_;
-    draw.program = desc_.program;
+    draw.kind        = DrawDescription::Kind::Screen;
+    draw.view.camera = CameraSnapshot::of(*camera());
+    draw.source      = source_;
+    draw.program     = desc_.program;
     // Its text as a value, taken with the pointer (see DrawDescription::program_description): the recorder reads the
     // value, so a program edited while a frame is in flight keeps the text it was described with.
     draw.program_description = desc_.program != nullptr ? desc_.program->description() : ShaderProgramDescriptionPtr{};

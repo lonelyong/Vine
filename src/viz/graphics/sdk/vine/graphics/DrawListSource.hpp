@@ -5,7 +5,7 @@
 #include <memory>
 #include <vector>
 
-#include "CollectView.hpp"
+#include "View.hpp"
 #include "RenderCommand.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -39,15 +39,13 @@ class VN_GRAPHICS_API DrawListSource {
     DrawListSource& operator=(const DrawListSource&) = delete;
 
     /**
-     * @brief Collects what @p view draws from this source, restricted to @p layer_mask.
+     * @brief Collects the commands @p view draws from this source.
      *
-     * @param view       The view to collect for (projection / view / eye / up / device-pixel viewport).
-     * @param layer_mask Layers this picture draws (see Node::setLayers): part of what makes two views differ.
+     * @param view The view to collect for: its camera value, its device-pixel area and the layers it draws.
      * @return The commands, in draw order; empty when nothing is drawn. Shared because every pass of a frame that
      *         draws this view names the same list.
      */
-    [[nodiscard]] virtual std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(const CollectView& view,
-                                                                                                 std::uint32_t       layer_mask) const = 0;
+    [[nodiscard]] virtual std::shared_ptr<const std::vector<RenderCommand>> collectRenderCommands(const View& view) const = 0;
 };
 
 VN_GRAPHICS_NS_END

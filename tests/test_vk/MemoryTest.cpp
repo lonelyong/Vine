@@ -98,7 +98,7 @@ constexpr int kTargetSize = 64;
 
     vn::graphics::DrawDescription draw;
     draw.kind     = vn::graphics::DrawDescription::Kind::Scene;
-    draw.camera   = CameraSnapshot{};
+    draw.view.camera   = CameraSnapshot{};
     draw.commands = std::move(commands);
     pass.draws.push_back(std::move(draw));
 

@@ -547,13 +547,14 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   when that frame is answered - so a host reading while the next frame is being recorded never sees this frame's
      *   id beside the last frame's picture.
      * - THE VALUE A QUERY AIMS WITH: `query.snapshot` is the publication the picture was drawn from and `query.view`
-     *   the camera it was taken with, both taken when the frame was built. A pick, an anchor or a fit that asks about
-     *   "what the user sees" reads them here instead of the live scene and camera (`I7`, design N17).
+     *   the view it was taken with (camera value, device-pixel area, layer mask), both taken when the frame was
+     *   built. A pick, an anchor or a fit that asks about "what the user sees" reads them here instead of the live
+     *   scene and camera (`I7`, design N17).
      * - `frame` stays 0 until something is answered (`answered()`), and `present` is the same answer `presentRecord()`
      *   carries - the one field a host must ACT on (`Lost` -> re-attach, between frames).
      *
      * @note
-     * - `presentedCamera()` is the `query.view` half of this value, kept as its own entry for callers that only aim.
+     * - `presentedCamera()` is the camera half of `query.view`, kept as its own entry for callers that only aim.
      *
      * @return The last answered frame's result; an empty value (frame 0) before the first answer.
      */
@@ -570,7 +571,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   and published when the frame is answered - beside presentRecord(), and read from any thread.
      * - Absent when nothing presents this engine's area (an offline bake, a device that presents nothing): a query then
      *   keeps using the live camera, which is the right answer when there is no picture to disagree with.
-     * - It is the `query.view` half of RenderEngine::frameResult, kept as its own entry for callers that only aim.
+     * - It is the camera half of `query.view` in RenderEngine::frameResult, kept as its own entry for callers that
+     *   only aim.
      *
      * @return The snapshot, or nullopt (see above).
      */

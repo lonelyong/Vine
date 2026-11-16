@@ -73,8 +73,7 @@ SceneSnapshotPtr makeSceneSnapshot(const SceneBake&        rows,
 }
 
 void selectSnapshot(const SceneSnapshot&        snapshot,
-                    const CollectView&          view,
-                    std::uint32_t               layer_mask,
+                    const View&                 view,
                     std::vector<RenderCommand>& out,
                     bool&                       viewport_used)
 {
@@ -90,7 +89,6 @@ void selectSnapshot(const SceneSnapshot&        snapshot,
                [&snapshot](std::uint32_t index) -> const Row& { return snapshot.row(index); },
                frustum,
                view,
-               layer_mask,
                viewport_used,
                out,
                &keys);
