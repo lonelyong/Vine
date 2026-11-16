@@ -301,7 +301,29 @@ struct WindowTarget::Impl {
         return true;
     }
 
-    /** @brief Destroys the swapchain and everything hanging off it (idempotent). */
+    /**
+     * @brief Ends the queue's use of the swapchain, then destroys it (idempotent).
+     *
+     * @details
+     * - THE WAIT IS THE POINT: a submitted batch still refers to the swapchain and to its per-image present
+     *   semaphores, so destroying either while the queue holds them is undefined behaviour - validation says so by
+     *   name (`VUID-vkDestroySemaphore-semaphore-05149`, found by moving a window onto a new handle).
+     * - Every teardown goes through this, never through destroySwapchain(): a host verb and a session teardown are
+     *   both moments when frames may be in flight, and `createSwapchain` needs the same idle before it replaces the
+     *   chain. The wait costs one stall per window move / resize / shutdown - never a steady frame.
+     */
+    void destroySwapchainWhenIdle() noexcept
+    {
+        if (device.device != VK_NULL_HANDLE && device.table != nullptr) {
+            (void)device.table->vkDeviceWaitIdle(device.device);
+        }
+        destroySwapchain();
+    }
+
+    /** @brief Destroys the swapchain and everything hanging off it (idempotent).
+     *
+     * @warning The caller has proved the queue names none of it (see destroySwapchainWhenIdle).
+     */
     void destroySwapchain() noexcept
     {
         if (device.device != VK_NULL_HANDLE && device.table != nullptr) {
@@ -361,8 +383,7 @@ struct WindowTarget::Impl {
             return false;
         }
 
-        (void)device.table->vkDeviceWaitIdle(device.device);
-        destroySwapchain();
+        destroySwapchainWhenIdle();
 
         VkSurfaceCapabilitiesKHR capabilities{};
         if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device.physical, surface, &capabilities) != VK_SUCCESS) {
@@ -479,7 +500,10 @@ WindowTarget::~WindowTarget()
     if (impl == nullptr) {
         return;
     }
-    impl->destroySwapchain();
+    // THE SESSION'S OWN TEARDOWN ALREADY STOOD THE QUEUE DOWN (Device::shutdown), so this wait answers "already idle"
+    // - it is here so the destructor does not depend on that order being remembered (an object that is dropped while
+    // a frame is in flight must still not hand a live semaphore to vkDestroySemaphore).
+    impl->destroySwapchainWhenIdle();
     if (impl->device.device != VK_NULL_HANDLE && impl->device.table != nullptr) {
         if (impl->image_available != VK_NULL_HANDLE) {
             impl->device.table->vkDestroySemaphore(impl->device.device, impl->image_available, nullptr);
@@ -758,7 +782,7 @@ void WindowTarget::setWindowHandle(void* native_handle)
     if (impl == nullptr || impl->handle == native_handle) {
         return;
     }
-    impl->destroySwapchain();
+    impl->destroySwapchainWhenIdle();
     if (impl->surface != VK_NULL_HANDLE && impl->instance != VK_NULL_HANDLE) {
         vkDestroySurfaceKHR(impl->instance, impl->surface, nullptr);
         impl->surface = VK_NULL_HANDLE;
