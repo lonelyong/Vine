@@ -415,6 +415,12 @@ TEST(CoreAllocationGateTest, ADeliberateAllocationIsCaught)
     if (!AllocationGate::supported()) {
         GTEST_SKIP() << "this platform cannot report heap usage";
     }
+    if (!AllocationGate::countsAvailable()) {
+        // A SANITIZER OWNS THE ALLOCATOR (see AllocationCounter.cpp): the counting instrument is compiled out and
+        // mallinfo2 cannot see through ThreadSanitizer's allocator either, so a planted allocation measures zero. The
+        // gate's teeth are not weakened - every non-sanitizer build still proves it can fail.
+        GTEST_SKIP() << "this build does not replace the global allocator (a sanitizer owns it; see AllocationCounter.cpp)";
+    }
 #if defined(VN_TEST_UNDER_ASAN)
     // The gate's instrument is mallinfo2, which tracks glibc's arena - and AddressSanitizer replaces the
     // allocator wholesale, so under ASan this deliberately-planted allocation is invisible TO THE INSTRUMENT

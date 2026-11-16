@@ -6,7 +6,9 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <span>
 #include <vector>
 
@@ -783,9 +785,16 @@ class VN_GRAPHICS_API Geometry : public Node {
      *   revision() produces a new description (a new identity) on the next call.
      * - It does NOT move revision() and does not announce anything: it is a read.
      *
+     * @note
+     * - TWO ENGINES MAY DESCRIBE ONE GEOMETRY AT THE SAME TIME: everything it holds is a handle or a value, and the
+     *   lazy cache is guarded by a shared lock, so a second reader either finds the built value or waits for the one
+     *   builder. That is what makes "two engines share content" (ADR-2026-11-15-device-is-a-pool-sessions-own-frames)
+     *   hold on the content side too; the TSan gate found the unguarded cache (2026-11-16).
+     *
      * @warning
-     * - Cache write: call it from the thread that owns this geometry, like every other accessor. A render side takes
-     *   the value it was handed instead of calling this (see `.ai/design/graphics-threading.md`).
+     * - Shape EDITS stay the owning thread's: a setter, `setRevision` / `bumpRevision` and the declaration writes are
+     *   content-thread acts, exactly as before. The lock protects the cache, so describing is safe beside another
+     *   reader - not beside an edit.
      *
      * @return The description for the current revision (never null).
      */
@@ -1122,6 +1131,10 @@ class VN_GRAPHICS_API Geometry : public Node {
     /// The shape as a shared immutable value, rebuilt only when revision_ moves (see description()). Mutable for the
     /// same reason as local_bounds_: reading a derived value while keeping it is not a write to the geometry.
     mutable GeometryDescriptionPtr description_;
+    /// Guards @ref description_ for CONCURRENT READERS: shared for the cached answer, unique for the single builder
+    /// (two engines may describe one geometry at the same time; the TSan gate found the unguarded cache). It does NOT
+    /// guard the authored content - shape edits remain the owning thread's act (see description()).
+    mutable std::shared_mutex description_mutex_;
 };
 
 using GeometryPtr = intrusive_ptr<Geometry>;

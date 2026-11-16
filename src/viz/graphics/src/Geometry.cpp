@@ -443,6 +443,18 @@ GeometryDescriptionPtr Geometry::description() const
     // The cache key IS the revision: the shape setters deliberately do not move it (a host reports where its edit
     // ended), so a description built here stays the current one for as long as the host says so - which is what lets
     // a backend key its rows by this object and rebuild nothing on a steady frame.
+    //
+    // TWO ENGINES MAY DESCRIBE ONE GEOMETRY AT THE SAME TIME: the value is immutable, so readers take the cache under a
+    // SHARED lock and never exclude each other (the TSan gate found the unguarded cache, 2026-11-16).
+    {
+        const std::shared_lock<std::shared_mutex> held(description_mutex_);
+        if (description_ != nullptr && description_->revision() == revision_) {
+            return description_;
+        }
+    }
+    // ONE BUILDER: a reader that missed the same revision waits here and then finds what the first one built, so a
+    // race costs one extra check rather than two identities for one revision.
+    const std::unique_lock<std::shared_mutex> held(description_mutex_);
     if (description_ != nullptr && description_->revision() == revision_) {
         return description_;
     }

@@ -1,6 +1,7 @@
 # ADR-2026-11-15：设备是资源池，会话拥有帧 —— 两个引擎共享内容、各自出图
 
-- 状态：已采纳（本文定**契约与形状**；落地分两步，见 §决定 第 9 条）
+- 状态：已采纳（本文定**契约与形状**；落地分两步，见 §决定 第 9 条。第一步 `T47` 已落地 2026-11-15；第二步
+  `T48` 的 vk 侧 S1–S7 / S9 已落地 2026-11-16——见文末「实施状态」）
 - 日期：2026-11-15
 - 影响范围：`../design/graphics-threading.md`（新增 §2.16 / `C21` / `R18` / `N18` / `D13`）、
   `../design/vk-backend.md`（新增 §2.11 / `§9.2` 缺口）、`../backlog/graphics.md`（`T47` / `T48`）、
@@ -286,3 +287,20 @@ Absent ──第一个需要的会话 claim──▶ Uploading(owner, frame)
 - **数字**：`ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` 的 8.63–8.94 ms / 7.95 ms；
   本机无法测出并发收益，理由见 §后果。
 - **门禁**：`scripts/tsan_check.sh`（第二步的竞争证据）；`scripts/check_vk_exposure.py`（形状变了但边界不变）。
+
+## 实施状态（追加，2026-11-16）
+
+- **第一步（`T47`）：已落地 2026-11-15**——设备级帧闸（`backend/FrameGate.hpp`，两个后端同一实现）、三处契约文本、
+  并发用例。
+- **第二步（`T48`）：vk 侧已落地**——S1（释放走 `RetirementQueue`）、S2a/S2b（帧机器与帧体进 `Device::Session`）、
+  S3（`ContentCaches` + `FrameScratch`）、S4（`ResidenceTable` 三态状态机）、S5（`TargetClaims` 租约）、S6a/S6b
+  （`createSession()` + 引擎持有驱动者 + 默认程序归会话）、S6c-1（帧首快照）、S6c-2a（帧体真并行）、S6c-2b（释放
+  不等帧）、S7（读回独立：自带池/栅栏 + 计数等待）、S9（契约/文档收口 + TSan）。
+  **仍未做**：S8（vsg 的收集暂存搬进会话）与 `ResidenceTable` 的设备接线——状态机在树上、缓存仍走原路径，两个
+  驱动者首次同时构建同一内容时在缓存锁上**串行**（`graphics-sessions.md` §9.2）。
+- **契约文本已按实现改写**：`graphics-threading.md` 的 `C21` / `R18` / `N18`（帧按会话并发；默认程序归会话）、
+  `RenderDevice.hpp` / `RenderFrameExecutor.hpp` 的线程段、vk `Device.hpp` 的 `@warning`。
+- **竞争证据（TSan，2026-11-16）**：`test_vk` 133/133、`test_graphics` 587/587、`test_vsg`（除去窗口 / probe / 插件
+  套件）各 **0 race report**。工具发现并修掉一处**真缺陷**：`Geometry::description()` 的惰性缓存无保护（两个引擎
+  的 content 线程同时描述同一几何即竞争）——现在读者持共享锁、单个构建者持独占锁。
+- **平台**：Linux/X11；Win32 / Wayland 的实机证据仍按切换门（`T35`）未过。

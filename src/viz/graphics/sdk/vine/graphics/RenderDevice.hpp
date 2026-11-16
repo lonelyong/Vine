@@ -164,7 +164,8 @@ struct VN_GRAPHICS_API DeviceDesc {
  *   must still keep the host's sink safe: it calls the sink from one thread at a time. A device must not assume its
  *   state stays on the same thread across an initialize()/shutdown() pair. The
  *   diagnostic sink is invoked synchronously from inside a device call, so a sink must record and return, never call
- *   back into the device (a re-entrant frame is refused, not queued).
+ *   back into the device (a re-entrant frame is refused, not queued, and a readback asked from inside a frame answers
+ *   `ReadbackResult::Failed` instead of waiting for the frame it is itself inside).
  * - FAILURE. A device reports what it could not do instead of degrading silently (see setDiagnosticSink) and never
  *   throws across this interface: initialize() returns false, the readback methods return false,
  *   createSurfaceTarget() answers nullptr with a reason, and a request that cannot be served leaves the previous

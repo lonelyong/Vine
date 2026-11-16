@@ -270,26 +270,30 @@
 - **验收**：`T34` / `T17` / `FrameRunnerTest.ManyFramesThroughTheEngineThreadStayEquivalent`；
   `FrameExpandTest.ADrawNoPublicationAnswersDrawsNothing` 钉住"没发布就什么也不画"。
 
-### 2.16 共享设备的三个面：内容共享、目标不共享、帧串行（`G1` / `G4`）
+### 2.16 共享设备的三个面：内容共享、目标不共享、帧按会话并发（`G1` / `G4`）
 
 - **是什么**（今天的三个事实，各有一条可核对的依据）：
   - **内容共享已经成立**：一个 `RenderDevice` 可以被多个 `RenderEngine` 借用（`setDevice` 的契约：引擎不
     `initialize` / 不 `shutdown` 设备），而驻留按**身份**缓存（几何 = `GeometryDescription` 的地址 + revision），
-    所以两个引擎画同一份几何是**同一个键**。
+    所以两个引擎画同一份几何是**同一个键**。`Geometry::description()` 的惰性缓存对并发读者安全（共享锁；
+    2026-11-16 由 TSan 发现并修）。
   - **目标不共享**：一个窗口一个目标（`createSurfaceTarget` 的 `WindowOccupied`），一张图像在任一时刻只有
-    一个 layout；引擎的 transient 由 compile 拥有，天然私有。
-  - **帧串行**：一个设备只答一个执行器（`RenderDevice::executor()` 的契约："是属性，不是状态"），身下是
-    **一个**命令池 + **一个**栅栏 + 一个常量环 + 一个描述符池。两条线程同时 `executeFrame` 是数据竞争，
-    不是"慢一点"。
-- **为什么**：一帧的机器是设备级的（`ContentDraw` 的 `beginFrame` 重置描述符池、`endFrame` 释放逐 draw UBO），
-  而内容缓存又没有"正在上传"这个状态（miss 就把拷贝录进当前帧的命令缓冲）——所以"并发"今天**没有定义**。
+    一个 layout；引擎的 transient 由 compile 拥有，天然私有。离屏目标由**目标 claim** 管：一帧一个持有者，
+    冲突只跳过那个 pass 并报一条。
+  - **帧按会话并发（2026-11-15/16，`T48` S1–S7）**：一帧的机器（命令池 / 栅栏 / 常量环 / 描述符池 / 帧闸）
+    是**会话级**的，不同会话的帧体**真的同时跑**（一个被诊断 sink 停住时，另一驱动者的帧整帧完成）；
+    同一会话的两帧仍由它的 `FrameGate` 串行（另一条线程等待、同线程重入拒绝并报一条）。设备级共享件各有自己的锁
+    （缓存只在帧首取，分配器 / 目标 map / 时钟 / 报告 sink 各一把），出窗口的帧独占体闸；宿主动词是
+    **设备的承诺**：要么等待（并计入 `deviceWaits()`，如读回），要么按 park 规则不等帧（释放，`R6`）。
+- **为什么**：内容缓存今天有"正在上传"这个状态（`ResidenceTable` 的三态；设备接线仍未做，见
+  `graphics-sessions.md` §9.2）——但缓存锁已把并发上传串行化，所以即使接线前"并发"也有定义：两个引擎同时
+  首次构建同一内容会**串行**在缓存锁上，不会得到两份身份。帧机器分家之后，其余共享件都由自己的锁保护。
 - **边界**：appfw 还没用上共享（`SurfaceWindow` 每窗口造一个设备，`docs/guides/render-views.md` §7 记的是
-  "以后"）；用例 `OneDeviceServesSeveralAreasWithoutCrossingThem` 证明的是**共享**——它的两帧是先后跑的，
-  用例名里的 "without crossing them" 就是这个意思。
-- **目标形状**：设备 = 池、会话拥有帧（驻留三态、目标 claim、跨会话退休、三把锁）。决定与论证在
-  `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，**实施形状**在
-  `graphics-sessions.md`（类型、锁表、状态机、九步迁移表），落地是 `../backlog/graphics.md` 的
-  `T47` / `T48`。**本文件只写现在**——ADR 与施工图存在不移动这条边界。
+  "以后"）；用例 `OneDeviceServesSeveralAreasWithoutCrossingThem` 证明的是**共享**（两帧先后跑），
+  `VkMultiSessionTest` 的两条用例才证明**并发**（两线程各 N 帧；一帧被停住时另一帧整帧完成）。
+- **落地与剩余**：设备 = 池、会话拥有帧已对 vk 落地（S1–S7/S9）；`S8`（vsg 的收集暂存）与 `ResidenceTable` 的
+  设备接线仍开着。决定与论证在 `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，**实施形状**在
+  `graphics-sessions.md`（类型、锁表、状态机、九步迁移表）。**本文件只写现在**——ADR 与施工图存在不移动这条边界。
 
 ## 3. 功能点
 
@@ -412,7 +416,7 @@
 | C18 | 批内版本不推进：`beginEdit()` 之后、最外层 `endEdit()` 之前，发布停在原处 —— 落在批中间的帧**不发布任何东西**，画批次开始时的状态；整批在 `endEdit()` 之后那一帧作为**一次**发布落地。 |
 | C19 | 材质以**值**过帧：命令携带 `MaterialDescriptionPtr`（`revision` + 解析后的参数），引擎侧只读值，不读 `Material::resolved()`。值的取点在内容侧，批内不取。 |
 | C20 | 会话形状（pass 集合、资源表、后端保留态）**只在帧与帧之间**改：帧在飞时 `applyPlan`（任何一种形态）一律答 `PlanResult::Refused` + `PlanRefusal::Busy`（`sessionChangeAllowed`），并按 episode 报**一条** `PassProtocolViolation`。 |
-| C21 | **一个设备可被多个引擎借用，但帧不并发**：内容驻留按身份共享（一次上传、一次编译）；一个窗口只有一个目标；一帧的机器（命令池 / 栅栏 / 常量环 / 描述符池）是**设备级**的，所以同一设备上两条线程同时 `executeFrame` 是契约违反。**守卫已落地（2026-11-15）**：`backend/FrameGate.hpp` —— 另一条线程**等待**，同一线程重入**拒绝**并报一条（`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`），两个后端走同一个实现；真正的并行是 `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` 的第二步。 |
+| C21 | **一个设备可被多个引擎借用，帧按会话并发**：内容驻留按身份共享（一次上传、一次编译）；一个窗口只有一个目标；一帧的机器（命令池 / 栅栏 / 常量环 / 描述符池）是**会话级**的，所以不同会话的帧体可以同时跑（vk，2026-11-16，`T48` S6c-2a）。同一会话的两帧仍由它的 `FrameGate` 串行：另一条线程**等待**，同线程重入**拒绝**并报一条（`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`）。设备级共享件各有自己的锁（缓存只在帧首取，分配器 / 目标 map / 时钟 / 报告 sink）；出窗口的帧独占体闸，宿主动词是**设备的承诺**（等待并计数，或按 `R6` park 不等帧）。共享内容的 `Geometry::description()` 缓存对并发读者安全（2026-11-16 TSan 发现并修）；形状编辑仍是内容线程的动作。 |
 
 ### 5.2 要求（R#）
 
@@ -427,7 +431,7 @@
 | R15 | 机器人 28~70 关节每帧变化时，引擎侧重算量只与链路成正比，且每帧零分配。 |
 | R16 | 线程化之后 `frame()` 只花 O(passes)（构建 + 交出）加一次握手；expand 与 present 不在调用者的关键路径上。 |
 | R17 | 一次仿真步 / 一次装配 = **一次发布**，不是一关节一次。 |
-| R18 | 共享设备上的并发帧必须可被**证明**：第一步用设备级帧闸把并发变成正确串行 + 至多一条诊断；第二步让两个会话真正并行，且**记录路径零锁**（锁只在帧首快照与驻留 miss 上）。 |
+| R18 | 共享设备上的并发帧必须可被**证明**：（a）两会话的帧体时间上真的重叠（一个被诊断 sink 停住时另一帧整帧完成，`VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`）；（b）**记录路径零锁**（`contentCacheCounters().cache_lock_acquisitions` 整帧固定 4 次、不随 draw 数增长）；（c）**TSan 证据**（2026-11-16，S9）：`test_vk` 133/133、`test_graphics` 587/587、`test_vsg`（除去窗口 / probe / 插件套件）各 **0 race report**。 |
 
 ### 5.3 不变量（N#）
 
@@ -438,7 +442,7 @@
 | N15 | 线程化之后画面比内容晚一帧（引擎半段跑的是上一帧）；`waitForFrame` 是唯一"等到那一帧"的手段。 | 把"已提交"当"已上屏" |
 | N16 | 一帧之内只有一份发布：钩子写的内容对该帧所有 pass 可见。 | 帧内半新半旧 |
 | N17 | 相机在内容侧、事件即刻生效，画面是上一帧的相机快照。所以**把指针变成世界点的查询（拾取、锚点）用“用户看到的那一帧”的相机**：`RenderEngine::frameResult().query`（`view` + 它画的那份 `snapshot`）发布它，`presentedCamera()` 是其中 `view` 的简写；经 `SceneView::setPresentedCamera` 到达 manipulator；没有发布值时退回当前相机。 | 低帧率下枢轴/选择偏一帧 |
-| N18 | 设备级单槽只剩**默认内容程序**：两个引擎声明不同的默认程序时不组合，后声明者生效（`setDefaultContentProgram`）；诊断路由**已经是多路的**（每个引擎各收一份，`setDiagnosticsRoute`）。 | 第二个引擎悄悄改掉第一个的着色 |
+| N18 | 默认内容程序归**会话**（2026-11-15，S6a；取代"设备级单槽"）：两个引擎声明不同的默认程序时各画各的（`VkMultiSessionTest.TwoDriversShadeWithTheirOwnDefaultProgram`）；诊断路由本来就是多路的（每个引擎各收一份，`setDiagnosticsRoute`）。 | 第二个引擎悄悄改掉第一个的着色 |
 
 ## 6. 注意事项与陷阱
 
@@ -524,7 +528,7 @@
 | T31 | 批内 publish | 见 T3（同一组用例） | 已实现 |
 | T34 | 发布源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` + `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould` | 已实现 |
 | T35 | 绑定即渲染真值 | `FrameExpandTest.ABoundPublicationIsThePictureTheFrameDraws` | 已实现（2026-11-12） |
-| T13 | 无数据竞争 | `scripts/tsan_check.sh` | 收尾跑 |
+| T13 | 无数据竞争 | `scripts/tsan_check.sh` | 已跑（2026-11-16：`test_vk` / `test_graphics` / `test_vsg` 子集各 0 report） |
 
 ## 9. 状态与演进
 
@@ -541,11 +545,9 @@
 - **派生层并行**（F11）：只有测量给出"选择段占帧时间 > 预算"的证据才做。
 - **公开面没有"这一帧画了哪一份"的回读**：`FrameResult` 的目标形状（`graphics-frame-pipeline.md` F12）会补上
   `snapshot` / `view`；现在的等价物是 `presentRecord().frame` 加宿主自己保存的 `SceneSnapshotRef`。
-- **共享设备的并发帧**（`T47` / `T48`）：共享已成立、并发未定义（§2.16）。形状与论证在
-  `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`；第一步是帧闸 + 契约，第二步是
-  "设备 = 池、会话拥有帧"。
-- **默认内容程序是设备级单槽**（`N18`）：两个引擎声明不同的默认程序时后者生效、不组合；修法随第二步
-  （程序归会话）。
+- **共享设备的并发帧**（`T47` / `T48`）：**已落地（T48 S1–S7/S9，§2.16）**——设备 = 池、会话拥有帧；帧体真并行；
+  释放不等帧；读回独立；TSan 0 报告。仍开着：`S8`（vsg 的收集暂存）与 `ResidenceTable` 的设备接线
+  （`graphics-sessions.md` §9.2）。
 
 ### 9.3 兼容性 / 迁移
 

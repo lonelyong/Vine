@@ -152,7 +152,7 @@
   `FrameReport` 加 `per_pass` 数组（缺席 = 不报时钟，不是 0）。
 - **代价**：约 150 行 + 1 条用例（"各 pass 时间之和 ≤ 整帧 + 噪声"）。
 
-### A6（高，C25 / C26）一个 `Device` 对象六个关注点
+### A6（高，C25 / C26）一个 `Device` 对象六个关注点（**部分落地 2026-11-16**）
 
 - **证据**：9,552 行 `.cpp`；`Impl` 一个结构装设备身份 / 内存池 / 驻留缓存 / 目标 / 窗口 / 帧机器 / 报告；
   **16 个 `ReportOnce` 成员**——这个对象回答 16 个互不相干的条件。
@@ -160,8 +160,11 @@
   `Device` 只做装配与转发。这与 `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` 是同一根因的两侧：
   那份 ADR 解决"谁拥有帧"，这里解决"池自己怎么分"。
 - **代价**：约 800–1200 行搬家。**触发**：与 ADR 第二步同一批（避免搬两次）。
+- **状态（2026-11-16，T48 S1–S7）**：`Session`（帧机器 / 帧体）、`ContentCaches`、`FrameScratch`、`MemoryAllocator`、
+  `TargetClaims`、`ResidenceTable` 已是独立单元；`Impl` 仍持目标 map + `ensureTarget` 与 16 个 `ReportOnce` 条件——
+  `Targets` / `Report` 两个单元的搬家今天没有消费者（`G8`），等第二个 API 家族或第三个消费者。
 
-### A7（中高，C1 / C26）SDK 的 `RenderDevice` 18 个动词、13 个有默认实现
+### A7（中高，C1 / C26）SDK 的 `RenderDevice` 18 个动词、13 个有默认实现（**不触发，2026-11-16 裁定**）
 
 - **证据**：`RenderDevice.hpp` 18 个动词（另有 1 个析构），其中 **5 个 pure**（`initialize` / `shutdown` /
   `initialized` / `executor` / `setRenderTarget`）、**13 个有默认体**；`RenderFrameExecutor` 已经
@@ -172,6 +175,8 @@
   `RenderTargetFactory`（目标 + 表面）、`RenderDiagnostics`（路由 + 计数）；`RenderBackend` 仍是聚合。
 - **代价**：约 400 行 + 所有后端与测试的签名。**触发**：**第二个 API 家族的后端**（D3D12 / Metal）——
   那时接缝形状是被迫的；今天拆只是美学（`G8`）。
+- **状态（2026-11-16）**：仍不触发（`G8`）；T48 交付的是**执行器**面的拆分（`RenderFrameExecutor` 成为帧的设置与
+  入口），它就是将来拆 `RenderDevice` 四个面的先例。
 
 ### A8（中高，C19 / C21）失败路径没有可注入的测试（**已落地 2026-11-15**）
 
@@ -183,13 +188,17 @@
   `shutdown` + `initialize` 恢复"。
 - **代价**：约 150 行测试装置 + 2–3 条用例。**触发：无**。
 
-### A9（中，C12）线程契约没有 TSan 证据（**部分落地 2026-11-15**）
+### A9（中，C12）线程契约没有 TSan 证据（**已落地 2026-11-16**）
 
 - **证据**：backlog `T34` 自认"TSan 树里实跑 `test_vsg` 的子集仍缺"。
 - **后果**：本仓库最核心的线程主张（两个世界各一个写者）今天的证据是推理，不是工具。
 - **最佳设计**：把 TSan 跑成门禁的一部分（一个目标 + 一个脚本 + 一条记录），并把 ADR 第二步的两会话用例
   一起跑。
 - **代价**：环境（clang TSan 运行时）。**触发**：下一次线程改动（ADR 第二步）。
+- **状态（2026-11-16，S9）**：`scripts/tsan_check.sh` 跑完三套——`test_vk` 133/133、`test_graphics` 587/587、
+  `test_vsg`（除去窗口 / probe / 插件套件）——各 **0 race report**。工具发现一处真缺陷：`Geometry::description()`
+  的惰性缓存无保护（两个引擎的 content 线程同时描述同一几何即竞争），已修为共享锁读者 + 单构建者；两处 TSan 树
+  的兼容处理也落了地（分配计数用例在 TSan 下 `GTEST_SKIP`；插件套件不属 TSan 树，进过滤器的文档）。
 
 ### A10（中，C26 / C1）五套"为什么不行"的词汇表
 
@@ -200,7 +209,7 @@
   `NoCapacity` / `DeviceLost`），各接口在自己的枚举里引用同一套语义与顺序。
 - **代价**：SDK 层约 200 行（多为映射）。**触发**：与 A3 同批（同一个改动面）。
 
-### A11（中，C6 / C26）"毁之前证明没人读"有两个实现，其中一个叫"不需要"
+### A11（中，C6 / C26）"毁之前证明没人读"有两个实现，其中一个叫"不需要"（**已落地 2026-11-15**）
 
 - **证据**：vsg 有 `RetirementQueue` + `FrameTimeline`；vk 的 `releaseRenderTarget` 写"this device
   submits and waits on one frame at a time, so ... the destroy is immediate"。
@@ -208,6 +217,8 @@
 - **最佳设计**：把"退休点"变成接缝的一个值（每个会话的 `submitted` / `completed`），vk 的同步模型是它的
   **退化情形**（`completed == submitted`）——一份规则、两个后端、零漂移。
 - **代价**：约 150 行（把 vsg 的机制上移一半）。**触发**：ADR 第二步。
+- **状态（2026-11-15，T48 S1）**：vk 采用 `backend/DeviceClock.hpp` + `RetirementQueue`（会话 = clock window，
+  `slots = 1`），释放与目标都交给 park 队列；参考后端同一套机制——一份规则、两个后端、零漂移。
 
 ### A12（中，C25）扩展点成本没有表（**已落地 2026-11-15**）
 

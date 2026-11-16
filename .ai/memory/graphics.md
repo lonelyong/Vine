@@ -184,6 +184,17 @@
   第二帧返回后读 `sink_entered`，而被序列化的设备 5 s 后也会让它为真——判据必须由**停住的那一帧在临界区里**设置
   （“另一帧在我还没出来时完成了”）；③**多开帧先改时间线**：只改体闸不改 token，两个驱动者共用帧号，水位与 park 全部
   失去意义。
+- **S9 已落地（2026-11-16，T48 收口：F10 + TSan + 文档）**：三处契约文本按**代码现在的保证**改写——`C21` / `R18` / `N18` 从
+  "帧不并发 / 设备级单槽 / 记录路径锁"改成"**帧按会话并发**（同会话仍由 `FrameGate` 串行）/ 默认程序归会话 / 记录路径零锁"，
+  `RenderDevice.hpp` 与 `RenderFrameExecutor.hpp` 的线程段同步（vk `Device.hpp` 的 `@warning` 在 S7 已写）。ADR 追加「实施状态」，
+  审计 A6（部分：`Targets`/`Report` 单元仍未搬）、A7（不触发，等第二个 API 家族）、A9（TSan，已落地）、A11（退休点上移，已落地）
+  逐条标状态。**TSan 证据（三套 0 报告）**：`test_vk` 133/133、`test_graphics` 587/587、`test_vsg`（窗口/probe/插件套件排除，
+  见 `tsan_check.sh` 用法）各 0 race report。**工具抓到一处真竞争**：`Geometry::description()` 的惰性缓存无保护——两个引擎的
+  content 线程同时描述同一几何（T10 用例正是如此）会同时读 `description_` 并各自构建。修法是**读者共享锁 + 单构建者独占锁**
+  （`description_mutex_`，命中路径一次 shared_lock），形状编辑仍是内容线程的动作。另外两处 TSan 树兼容：分配计数用例
+  `ADeliberateAllocationIsCaught` 在 `!countsAvailable()` 时也要 `GTEST_SKIP`（漏了一条，TSan 下必红）；`VsgBackendPluginTest`
+  不进 TSan 树（没有部署的插件 .so，过滤器写进脚本注释）。backlog `T34` 因此关闭（已从 backlog 删除）。**教训**：sanitizer
+  门禁的价值在"跑没有跑过的那条路径"——这次它只抓到一个缺陷，但那个缺陷恰好是 ADR 的核心承诺（两个引擎共享内容）。
 - **S7 已落地（2026-11-16，T48 第七步：读回独立化）**：`ReadbackStaging` 现在拥有**自己的命令池与栅栏**（一次拷贝一套；对着
   一次 GPU 往返，创建/销毁是噪声），读回不再借 `Session` 的命令池/栅栏（C7）。等待仍是设备的"帧之间"（体闸 EXCLUSIVE），
   但**每次读回计一次** `deviceWaits()`（与参考后端的 `waitDeviceIdle` 同一个读数，G6）；**能在等待前回答的拒绝**（未知/未建

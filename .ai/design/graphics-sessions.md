@@ -1,7 +1,7 @@
 # 设备是池、会话拥有帧：类型、所有权、并发规则与迁移
 
 > **状态**：实施中（`T47` 已落地；`T48` 进行中——S1 / S2a / S2b / S3 / S4 / S5 / S6a / S6b /
-> S6c-1 / S6c-2a / S6c-2b / S7 已落地，S8–S9 未做）
+> S6c-1 / S6c-2a / S6c-2b / S7 / S9 已落地，S8 未做）
 > **最后核对**：2026-11-16
 > **范围**：一个 `RenderDevice` 被多个引擎借用时，"共享什么、谁拥有帧、怎么并发、怎么退休、怎么迁移"
 > 的**实施形状**；契约的**为什么**在 ADR，线程模型的**现在**在 `graphics-threading.md`。
@@ -225,7 +225,7 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 | F7 | 设备级读回 | 自己的池与栅栏，拷贝前等设备水位，计入 `deviceWaits()` | **已落地（S7）**：`ReadbackStaging` 自带命令池与栅栏；等待 = 体闸的"帧之间"，每次读回计一次 `deviceWaits()`；帧体内调用答 `Failed`（见 §3.1.7） |
 | F8 | 默认内容程序归会话 | 会话上可设；设备级只服务直接调用方；单会话后端行为不变 | **已落地（S6a+S6b）**：声明在 `RenderFrameExecutor`；vk 的每个 `Session` 各持一份，两驱动者各画各的（T8 用例） |
 | F9 | vsg 的对应落地 | 收集暂存搬进会话；缓存加锁/快照；完成证据已有 | 部分（窗口会话已有） |
-| F10 | 契约与文档收口 | `C21` / `N18` 改写、三处头文件文本、ADR 状态、审计行 | 部分（T47 改了三处文本） |
+| F10 | 契约与文档收口 | `C21` / `N18` 改写、三处头文件文本、ADR 状态、审计行 | **已落地（S9）**：`C21` / `R18` / `N18` 改成"帧按会话并发"；`RenderDevice` / `RenderFrameExecutor` / vk `Device` 的线程段同步；ADR 追加实施状态；审计 A6/A7/A9/A11 逐条标状态 |
 
 ### 3.1.1 F1 会话类型与创建
 
@@ -514,7 +514,7 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 | T9 | 两会话下 `BackendParityTest` 逐字节对拍不变 | `test_vsg` |
 | T10 | 两会话各一条线程各 N 帧：两张图各自正确，重入被拒绝；**帧体时间上真的重叠**（一帧被 sink 停住时另一帧整帧完成） | `VkMultiSessionTest.TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`（各持一张自己的贴图）、
   `VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`（变异回独占闸 ⇒ 红）；T47 的“同线程重入被拒”断言保留 |
-| T11 | 数据竞争有工具证据 | `scripts/tsan_check.sh`（需要 `build-tsan`，见 §9.2） |
+| T11 | 数据竞争有工具证据（已跑，2026-11-16：三套 0 报告） | `scripts/tsan_check.sh`（`test_vk` / `test_graphics` / `test_vsg` 子集） |
 | T12 | 文档与代码一致 | `python3 scripts/check_ai_docs.py --strict`、`python3 scripts/check_design_docs.py` |
 
 ## 9. 状态与演进
@@ -573,7 +573,11 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   **每次读回计一次** `deviceWaits()`（与参考后端的读数一致，G6）；等待前可回答的拒绝不停止设备；帧体内读答
   `Failed`（`FrameBodyDepth`）。**顺带修掉 S6c-2a 的外部同步缺口**：`vkQueueSubmit` / `vkDeviceWaitIdle` 过设备的
   `queue_submit` 锁。`test_vk` **133/133**，变异 2/2 红（体闸改 SHARED ⇒ 等待用例红；去掉计数 ⇒ 计数断言红）。
-- **未做**：`T48` 的 S8–S9（vsg 的 F9、F10 收口 + TSan）。
+- **已落地**：`T48` 的 **S9（F10 收口 + TSan + 文档）**——`C21` / `R18` / `N18` 改写为"帧按会话并发"；
+  `RenderDevice` / `RenderFrameExecutor` / vk `Device` 的线程段与代码一致；ADR 追加实施状态；审计 A6/A7/A9/A11
+  逐条标状态。**TSan 三套 0 报告**（`test_vk` 133/133、`test_graphics` 587/587、`test_vsg` 子集），并修掉工具
+  发现的真竞争：`Geometry::description()` 的惰性缓存（读者共享锁 + 单构建者）。
+- **未做**：`T48` 的 S8（vsg 的收集暂存搬进会话；vk 侧没有这一步）。
 - **一处更正**：ADR 说"vsg 更接近"，准确说法是"vsg 的**窗口**会话已就位，**帧驱动者**仍是设备级单例"
   （§2.1）。这不改变结论，只改变迁移表的分工。
 
@@ -646,6 +650,12 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 | S7 | **已落地 2026-11-16**：`ReadbackStaging` 拥有自己的命令池与栅栏（C7 结构性成立）；等待是设备的\"帧之间\"\n  （体闸 EXCLUSIVE）且**每次读回计一次** `deviceWaits()`；等待前可回答的拒绝不停止设备；帧体内读答 `Failed`\n  （`FrameBodyDepth`）；`vkQueueSubmit` / `vkDeviceWaitIdle` 补上 ADR 早就写明的提交锁。`VkMultiSessionTest`\n  新增 3 例（交错读回各自最后一帧、等待并计数、帧体内拒绝），变异 2/2 红；`test_vk` **133/133** | T7（两会话） | 低 |
 | S8 | vsg 的 F9（搬收集暂存 + 缓存加锁/快照） | T9 | 中 |
 | S9 | F10 收口 + TSan + 文档 | T11、T12 | 低 |
+| S9 | **已落地 2026-11-16**：`C21` / `R18` / `N18` 改写；`RenderDevice.hpp` / `RenderFrameExecutor.hpp` / vk
+  `Device.hpp` 的线程段与实现一致；ADR 追加「实施状态」；审计 A6/A7/A9/A11 逐条标状态。**TSan 三套 0 报告**
+  （`test_vk` 133/133、`test_graphics` 587/587、`test_vsg` 子集），且工具发现一处真竞争：`Geometry::description()`
+  的惰性缓存——已修为共享锁读者 + 单构建者（两个引擎的 content 线程可同时描述同一几何）。`test_vsg` 的分配计数用例
+  在 TSan 下 `GTEST_SKIP`（仪器被 sanitizer 取代），插件套件不进 TSan 树（过滤器写进 `tsan_check.sh` 的用法）。
+  文档门禁 0 finding | T11、T12 | 低 |
 
 **S6 是唯一改变并发语义的一步**：在它之前，两个会话只存在于单元用例里；S6a/S6b 之后，两个引擎各有自己的驱动者、
 可以同时**调用**，但设备把**帧体**串行化（缓存/分配/队列的锁与帧首快照是 S6c）。所以 S1–S5 的验收标准都是"单会话行为不变"；

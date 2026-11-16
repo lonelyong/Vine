@@ -23,10 +23,11 @@
 #   VN_TSAN_FILTER='RenderEngineTest.*' scripts/tsan_check.sh
 #   VN_TSAN_REBUILD=1 scripts/tsan_check.sh   # reconfigure an existing tree
 #   VN_TSAN_TARGET=test_vk scripts/tsan_check.sh   # the vk backend's own suites
-#   VN_TSAN_TARGET=test_vsg VN_TSAN_FILTER='-*Window*:*Probe*' scripts/tsan_check.sh
-#                                                 # the reference backend without its window suites: test_vsg compiles
-#                                                 # its allocator replacement OUT under TSan, so the allocation-count
-#                                                 # cases SKIP rather than fail (backlog T34)
+#   VN_TSAN_TARGET=test_vsg VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_check.sh
+#                                                 # the reference backend without its window suites, its probe
+#                                                 # device and its plugin-loading suites: a sanitizer tree builds
+#                                                 # libraries and tests, not the deployed plugin modules, so those
+#                                                 # cases have no .so to load (2026-11-16, 0 race reports)
 #
 # The tree is <root>/build-tsan. It is NOT the developer's build: a sanitizer
 # run is a separate artifact, and mixing the two would put instrumented and

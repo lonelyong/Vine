@@ -726,7 +726,8 @@
   S6a（SDK 会话接缝 + 引擎持有驱动者 + 默认程序归会话）、S6b（多驱动者 + 设备串行帧体）、
   S6c-1（帧首快照：记录路径零锁、计划按值、条目 park 到水位）、S6c-2a（帧体真并行：体闸 shared/exclusive + 多开帧 +
   各小锁 + 每驱动者批量）、S6c-2b（R6：释放不等帧）、S7（读回独立化：自带命令池/栅栏 + 计数等待 + 帧体内拒绝，
-  并补上 ADR 早就写明的 `vkQueueSubmit` / `vkDeviceWaitIdle` 提交锁）已落地；S8–S9 见 `.ai/design/graphics-sessions.md` §9.3。
+  并补上 ADR 早就写明的 `vkQueueSubmit` / `vkDeviceWaitIdle` 提交锁）、S9（契约收口 + TSan：`test_vk` 133/133 **0 race
+  report**）已落地；S8 见 `.ai/design/graphics-sessions.md` §9.3。
 - `test_vk` **133 例 / 34 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **557**、`test_graphics` **587**；
   Debug 全量 ctest **32/32**；`BackendParityTest` **12/12**。
 - **一条构建教训**：SDK 的虚表改动后，**动态插件必须一起重建**（旧 `.so` 让 `VsgBackendPluginTest` 段错误）。
@@ -745,7 +746,7 @@
   不支持 Windows 上线）、Wayland 回退实测、`releasePass` 的显式 no-op + 理由、`docs/guides/` 的 vk 用户页。
 - **backlog `T41`**：已关闭（2026-11-15，`PrepareReport.passes` 与 `FrameCounters.passes` 统一为一种口径）。
 - **共享设备的并发帧**（backlog `T47` / `T48`）：T47 与 T48 的 S1–S7 已落地（§2.11、`graphics-sessions.md`）；
-  S8（vsg 的收集暂存）与 S9（契约收口 + TSan）仍未做，F4 的 `ResidenceTable` 设备接线也未做（`graphics-sessions.md` §9.2）。
+  S8（vsg 的收集暂存）仍未做，F4 的 `ResidenceTable` 设备接线也未做（`graphics-sessions.md` §9.2）。
   形状与论证见
   `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`。
 - **backlog `T12` / `T13`**：Windows 窗口读像素、Wayland 回退实测。
