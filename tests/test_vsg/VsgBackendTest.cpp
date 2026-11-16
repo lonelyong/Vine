@@ -27,6 +27,7 @@
 #include <vine/backend_vsg/internal/HostTargets.hpp>
 #include <vine/backend_vsg/internal/MaterialImages.hpp>
 #include <vine/backend_vsg/internal/VsgBackend.hpp>
+#include <vine/backend_vsg/internal/VsgDriver.hpp>
 #include <vine/backend_vsg/internal/WindowTarget.hpp>
 
 #include <vine/Buffer.hpp>
@@ -5026,5 +5027,122 @@ TEST(VsgBackendTest, AReadbackRefusalCarriesTheCodeOfItsCause)
     EXPECT_TRUE(saw_no_target) << "a readback with no target did not name that as its cause";
     EXPECT_TRUE(saw_unknown) << "a target this backend was never told about did not name that as its cause";
 
+    backend->shutdown();
+}
+
+/*
+ * @brief Two drivers on one device each shade program-less content with THEIR OWN default program (T8, S8b).
+ *
+ * The device's own driver answers `executor()`; `createSession()` hands out drivers that own their executor state and
+ * share the device's content and target table. A driver's default program is a DRIVER setting (C8): the two must not
+ * overwrite each other, and the picture each driver produces must be its own.
+ */
+TEST(VsgBackendTest, TwoDriversKeepTheirOwnDefaultProgram)
+{
+    if (!deviceCaseAvailable()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow                host(connection, screen, 128, 96);
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    // TWO DRIVERS, TWO EXECUTOR STATES (see VsgDriver): the same device, its own frame state each.
+    auto* first  = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createSession());
+    auto* second = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createSession());
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    EXPECT_NE(first, second);
+    EXPECT_NE(&first->executor(), &second->executor()) << "the drivers share their frame state";
+    EXPECT_NE(&first->executor(), &BackendContentAccess::executor(*backend)) << "a handed-out driver IS the device's own";
+
+    // A SOLID program: the view-block vertex stage every content program uses and a constant fragment.
+    const auto solid = [](const char8_t* fragment) {
+        vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+        ShaderStage vertex;
+        vertex.type   = ShaderStageType::Vertex;
+        vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                    "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                    "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                    "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+        ShaderStage output;
+        output.type   = ShaderStageType::Fragment;
+        output.source = vn::String(fragment);
+        program->addStage(vertex);
+        program->addStage(output);
+        return program;
+    };
+
+    first->setDefaultContentProgram(solid(u8R"(
+#version 450
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }
+)"));
+    second->setDefaultContentProgram(solid(u8R"(
+#version 450
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
+)"));
+    EXPECT_NE(first->executor().defaultProgramText(), second->executor().defaultProgramText())
+        << "one driver's announcement overwrote the other's";
+    EXPECT_EQ(BackendContentAccess::executor(*backend).defaultProgramText(), nullptr)
+        << "a driver's announcement reached the device's own driver";
+
+    // A PROGRAM-LESS draw: the driver's default is what shades it.
+    const vn::intrusive_ptr<RenderTarget> destination(new RenderTarget());
+    destination->attachColor(RenderTarget::ColorFormat::RGBA8);
+    destination->setSize(64, 64);
+    backend->setRenderTarget(destination.get());
+
+    TriangleFixture triangle = makeTriangle();
+    triangle.commands.front().program = nullptr;
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::intrusive_ptr<RenderPass>           pass_object(new RenderPass());
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const vn::graphics::FrameDescription frame = TestFrame()
+                                                     .pass(pass_object.get(), 0)
+                                                     .target(destination.get())
+                                                     .clear(clear)
+                                                     .depth(vn::graphics::DepthMode::Disabled)
+                                                     .content(triangle.commands, camera.get())
+                                                     .value();
+
+    const auto centre = [&destination, &backend]() {
+        std::vector<std::uint8_t>    pixels;
+        vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
+        EXPECT_TRUE(backend->readColorBuffer(destination.get(), 0, pixels, &why)) << "the destination is read back";
+        const std::size_t at = (32U * 64U + 32U) * 4U;
+        EXPECT_LT(at + 3U, pixels.size());
+        return std::array<std::uint8_t, 3>{ pixels[at], pixels[at + 1U], pixels[at + 2U] };
+    };
+
+    first->executeFrame(frame, nullptr);
+    const std::array<std::uint8_t, 3> red = centre();
+    EXPECT_TRUE(isColourByte(red[0], 1.0) && isColourByte(red[1], 0.0) && isColourByte(red[2], 0.0))
+        << "the first driver's program-less content was not shaded by ITS red default";
+
+    second->executeFrame(frame, nullptr);
+    const std::array<std::uint8_t, 3> green = centre();
+    EXPECT_TRUE(isColourByte(green[1], 1.0) && isColourByte(green[0], 0.0) && isColourByte(green[2], 0.0))
+        << "the second driver's program-less content was not shaded by ITS green default";
+
+    // RELEASING ONE LEAVES THE OTHER WORKING: the device owns what it handed out, and a released driver is gone.
+    backend->releaseSession(*first);
+    second->executeFrame(frame, nullptr);
+    const std::array<std::uint8_t, 3> again = centre();
+    EXPECT_TRUE(isColourByte(again[1], 1.0) && isColourByte(again[0], 0.0) && isColourByte(again[2], 0.0))
+        << "the remaining driver lost its own default after the other was released";
+
+    backend->releaseSession(*second);
     backend->shutdown();
 }

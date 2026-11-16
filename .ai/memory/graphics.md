@@ -184,6 +184,15 @@
   第二帧返回后读 `sink_entered`，而被序列化的设备 5 s 后也会让它为真——判据必须由**停住的那一帧在临界区里**设置
   （“另一帧在我还没出来时完成了”）；③**多开帧先改时间线**：只改体闸不改 token，两个驱动者共用帧号，水位与 park 全部
   失去意义。
+- **S8b 已落地（2026-11-16，T48 第八步·中：vsg 的执行器帧状态 + 驱动者接缝）**：目标注册表从执行器里分出来成
+  `VsgTargetRegistry`（设备唯一一张，借用条目），每个驱动者的执行器借用它；`createSession()` 交出 `VsgDriver`
+  （`RenderFrameExecutor` 实现，自己拥有一个 `VsgExecutor` 与自己的默认内容程序），设备拥有、`releaseSession` 销毁、
+  `shutdown` 带走。`VsgBackend::executeFrame` / `prepareFrame` 变成两行转发，真相在 `executeFrameFor(executor, ...)` /
+  `prepareFrameFor(executor, ...)`；`Data::driving_executor` 像 `Data::scratch` 一样开帧时设、每个出口清，
+  `presentWindow` 从它取回本次帧的驱动者。**默认程序归驱动（C8）**：值在 `VsgExecutor`，开帧时交给驱动会话的 recorder；
+  设备级 `setDefaultContentProgram` 只设设备自己的驱动者，store 登记仍是设备的。**证据**：
+  `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram`——两个默认互不覆盖、同一目标 A 红 B 绿、释放 A 后 B 照常；
+  `test_vsg` 558/558、对拍 13/13。**剩余 S8c**：设备缓存锁/帧首快照 + 解禁帧闸（帧体真并行）；在那之前帧闸仍串行。
 - **S8a 已落地（2026-11-16，T48 第八步·上半：vsg 的收集暂存搬进会话）**：新 `internal/FrameScratch.hpp` 收拢 vsg 的
   arena / recorder / compiler / `facts` / `light_scratch` / `input_*` / `packets` / `frame`；**窗口会话与离屏会话各持一份**
   （`SessionOptions` / `OffscreenSessionOptions` 新增 `observe`，null = 会话自备，独立建会话的测试照旧）。设备只剩

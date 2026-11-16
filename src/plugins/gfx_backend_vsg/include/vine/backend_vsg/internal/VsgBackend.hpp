@@ -93,6 +93,9 @@ class BackendContentAccess;
 
 } // namespace detail
 
+class VsgDriver;
+class VsgExecutor;
+
 /** @brief The SDK's render device, driven by the rewrite's session (see the file note). */
 class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
   public:
@@ -240,6 +243,22 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
 
     /** @brief Answers the ONE report: frame counters, retention, and the session's frame clock (see the file note). */
     [[nodiscard]] vn::graphics::FrameReport frameReport() const noexcept override;
+
+    /** @brief Hands out a new FRAME DRIVER: its own executor state, the device's content and target registry.
+     *
+     * @details
+     * - WHAT A DRIVER OWNS (S8b): the frame state that is one frame's - the window the frame drives, the passes it
+     *   recorded, its measurement entries, its skip count - and the default content program the engine declared. What
+     *   it BORROWS is the device: its content world, its target registry, its clock and park queue.
+     * - The device owns what it hands out (see RenderDevice::createSession): the pointer is valid until
+     *   releaseSession() or shutdown().
+     *
+     * @return The driver; never null (the device's own driver is `&executor()`).
+     */
+    [[nodiscard]] vn::graphics::RenderFrameExecutor* createSession() override;
+
+    /** @brief Returns a driver handed out by @ref createSession (the device's own is a no-op, per the SDK). */
+    void releaseSession(vn::graphics::RenderFrameExecutor& session) override;
 
     /** @brief Remembers the default content program, tells the plan, and tracks it (see the file note). */
     void setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program) override;
@@ -427,11 +446,41 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      * - A frame with no passes still commits: a window's opens an image that has to be handed back, and the
      *   off-screen session's graph is a valid empty submission.
      *
+     * @param executor  The DRIVER whose executor state this frame uses (see createSession).
      * @param window    The window's session that owns the frame, or null when the frame names no window.
      * @param offscreen The off-screen session that owns the frame, or null when the frame belongs to a window
      *                  (exactly one of the two is non-null).
      */
-    vn::graphics::PresentOutcome commitFrameThrough(api::Session* window, api::OffscreenSession* offscreen);
+    vn::graphics::PresentOutcome commitFrameThrough(VsgExecutor& executor, api::Session* window, api::OffscreenSession* offscreen);
+
+    /** @brief Runs @p frame through @p executor: the body the device's own driver and every handed-out one share.
+     *
+     * @param executor  The driver's executor state (see createSession).
+     * @param frame     The frame to run, in run order.
+     * @param present_to Target the frame's default framebuffer resolves to, or nullptr to present nowhere.
+     * @return What the frame did (see PresentOutcome).
+     */
+    vn::graphics::PresentOutcome executeFrameFor(VsgExecutor& executor,
+                                                 const vn::graphics::FrameDescription& frame,
+                                                 vn::graphics::PresentTarget*          present_to);
+
+    /** @brief Prepares @p frame's content through @p executor (see RenderFrameExecutor::prepareFrame).
+     *
+     * @param executor  The driver's executor state (see createSession).
+     * @param frame     The frame to prepare, in execution order.
+     * @param present_to Target the frame's default framebuffer resolves to, or nullptr for the off-screen form.
+     * @return What the call built (see PrepareReport).
+     */
+    [[nodiscard]] vn::graphics::PrepareReport prepareFrameFor(VsgExecutor& executor,
+                                                              const vn::graphics::FrameDescription& frame,
+                                                              vn::graphics::PresentTarget*          present_to);
+
+    /** @brief Announces @p executor's default content program and tracks it in the device's store.
+     *
+     * @param executor The driver that made the announcement.
+     * @param program  The program, or null for "none".
+     */
+    void adoptDefaultProgram(VsgExecutor& executor, vn::intrusive_ptr<const vn::graphics::ShaderProgram> program);
 
     /** @brief Opens a pass' scope under the pass' own number (see api/PassRegistry). */
     void openPassScope(vn::raw_ptr<const vn::graphics::RenderPass> pass);
@@ -597,6 +646,8 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
 
   private:
     friend class detail::BackendContentAccess;
+    /// The driver hands its own executor state to the device's frame body (see createSession).
+    friend class VsgDriver;
 
     struct Data;
     std::unique_ptr<Data> d;

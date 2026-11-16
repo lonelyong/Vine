@@ -16,7 +16,30 @@ namespace
 
 VsgExecutor::VsgExecutor(vn::graphics::Diagnostics& diagnostics) noexcept
   : diagnostics_(diagnostics)
+  , registry_(own_registry_)
 {}
+
+VsgExecutor::VsgExecutor(vn::graphics::Diagnostics& diagnostics, VsgTargetRegistry& registry) noexcept
+  : diagnostics_(diagnostics)
+  , registry_(registry)
+{}
+
+void VsgExecutor::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
+{
+    default_program_      = std::move(program);
+    default_program_text_ = default_program_ != nullptr ? default_program_->description()
+                                                       : vn::graphics::ShaderProgramDescriptionPtr{};
+}
+
+const vn::intrusive_ptr<const vn::graphics::ShaderProgram>& VsgExecutor::defaultProgram() const noexcept
+{
+    return default_program_;
+}
+
+const vn::graphics::ShaderProgramDescriptionPtr& VsgExecutor::defaultProgramText() const noexcept
+{
+    return default_program_text_;
+}
 
 void VsgExecutor::setWindow(WindowTarget* window) noexcept
 {
@@ -25,19 +48,65 @@ void VsgExecutor::setWindow(WindowTarget* window) noexcept
 
 void VsgExecutor::addTarget(const void* identity, OffscreenTarget* target, const char* label) noexcept
 {
-    for (Entry& entry : targets_) {
+    registry_.add(identity, target, label);
+}
+
+void VsgExecutor::clearTargets() noexcept
+{
+    registry_.clear();
+}
+
+void VsgTargetRegistry::add(const void* identity, OffscreenTarget* target, const char* label) noexcept
+{
+    for (Entry& entry : entries_) {
         if (entry.identity == identity) {
             entry.target = target;
             entry.label  = label;
             return;
         }
     }
-    targets_.push_back(Entry{ identity, target, label });
+    entries_.push_back(Entry{ identity, target, label });
 }
 
-void VsgExecutor::clearTargets() noexcept
+void VsgTargetRegistry::clear() noexcept
 {
-    targets_.clear();
+    entries_.clear();
+}
+
+VsgTargetRegistry::Entry* VsgTargetRegistry::find(const void* identity) noexcept
+{
+    for (Entry& entry : entries_) {
+        if (entry.identity == identity) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+const VsgTargetRegistry::Entry* VsgTargetRegistry::find(const void* identity) const noexcept
+{
+    for (const Entry& entry : entries_) {
+        if (entry.identity == identity) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+OffscreenTarget* VsgTargetRegistry::resolve(const void* identity) const noexcept
+{
+    const Entry* entry = find(identity);
+    return entry != nullptr ? entry->target : nullptr;
+}
+
+std::span<const VsgTargetRegistry::Entry> VsgTargetRegistry::entries() const noexcept
+{
+    return entries_;
+}
+
+std::size_t VsgTargetRegistry::size() const noexcept
+{
+    return entries_.size();
 }
 
 bool VsgExecutor::record(const core::CompiledFrame& frame, ::vsg::ref_ptr<::vsg::CommandGraph> command_graph, std::span<const PassContent> content)
@@ -189,7 +258,7 @@ bool VsgExecutor::recordOffscreen(const core::CompiledPass&                  pas
     // sticks and costs one flag check per pass afterwards. The plan's own identity is the name - it is what
     // the host calls this target and what a validation message should say.
     if (compiled_target.target != nullptr) {
-        const Entry* entry = entryOf(compiled_target.target);
+        const VsgTargetRegistry::Entry* entry = entryOf(compiled_target.target);
         if (entry != nullptr && entry->label != nullptr) {
             (void)target->nameImages(entry->label);
         }
@@ -281,7 +350,7 @@ std::size_t VsgExecutor::noteLostSubmission(const core::CompiledFrame& frame) no
             continue; // the default framebuffer: its contents are the presentation's, not ours
         }
         OffscreenTarget* target = nullptr;
-        for (const Entry& entry : targets_) {
+        for (const VsgTargetRegistry::Entry& entry : registry_.entries()) {
             if (entry.identity == identity) {
                 target = entry.target;
                 break;
@@ -608,7 +677,7 @@ VsgExecutor::TargetApplications VsgExecutor::applyTargetPlans(const core::Compil
         }
 
         replaced_identities.push_back(compiled.target);
-        if (Entry* entry = entryOf(compiled.target)) {
+        if (VsgTargetRegistry::Entry* entry = entryOf(compiled.target)) {
             entry->noteApplied(); // the application took effect: a later failure is a new episode
         }
     }
@@ -634,17 +703,12 @@ std::uint64_t VsgExecutor::skipped() const noexcept
 
 OffscreenTarget* VsgExecutor::resolve(const core::CompiledTarget& target) const noexcept
 {
-    return resolveIdentity(target.target);
+    return registry_.resolve(target.target);
 }
 
 OffscreenTarget* VsgExecutor::resolveIdentity(const void* identity) const noexcept
 {
-    for (const Entry& entry : targets_) {
-        if (entry.identity == identity) {
-            return entry.target;
-        }
-    }
-    return nullptr;
+    return registry_.resolve(identity);
 }
 
 void VsgExecutor::reportUnapplied(const core::CompiledTarget& target, const char* why)
@@ -657,7 +721,7 @@ void VsgExecutor::reportUnapplied(const core::CompiledTarget& target, const char
     // The episode is PER TARGET (one ReportOnce per registered entry): two targets that cannot follow their
     // descriptions are two problems, and a single episode would report whichever failed first and swallow the
     // other until it recovered.
-    Entry* entry = entryOf(target.target);
+    VsgTargetRegistry::Entry* entry = entryOf(target.target);
     if (entry == nullptr || !entry->unapplied.shouldReport()) {
         return; // not registered here: record() reports the passes that needed it
     }
@@ -667,14 +731,9 @@ void VsgExecutor::reportUnapplied(const core::CompiledTarget& target, const char
                         vn::String::fromUtf8("the target '" + which + "' did not follow its description: " + why));
 }
 
-VsgExecutor::Entry* VsgExecutor::entryOf(const void* identity) noexcept
+VsgTargetRegistry::Entry* VsgExecutor::entryOf(const void* identity) noexcept
 {
-    for (Entry& entry : targets_) {
-        if (entry.identity == identity) {
-            return &entry;
-        }
-    }
-    return nullptr;
+    return registry_.find(identity);
 }
 
 void VsgExecutor::reportSkipped(const core::CompiledTarget& target, const char* why)

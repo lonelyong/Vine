@@ -40,6 +40,7 @@
 #include <vine/backend_vsg/internal/TransferStaging.hpp>
 #include <vine/backend_vsg/internal/ViewBlock.hpp>
 #include <vine/backend_vsg/internal/VsgExecutor.hpp>
+#include <vine/backend_vsg/internal/VsgDriver.hpp>
 #include <vine/backend_vsg/internal/WindowTarget.hpp>
 #include <vine/backend_vsg/support/VsgSceneRules.hpp>
 #include <vine/backend_vsg/support/VsgUtils.hpp>
@@ -443,7 +444,17 @@ struct VsgBackend::Data {
     /// is the engine's when an engine drives this backend - that is what makes the host read one number.
     vn::graphics::Diagnostics diagnostics;
     core::Observe             observe;
-    VsgExecutor               executor{ diagnostics };
+    /// THE TARGETS A PLAN RESOLVES BY IDENTITY, one table for every driver (see VsgTargetRegistry): a target is the
+    /// device's to hold, and two drivers must resolve the same identities.
+    VsgTargetRegistry registry;
+    /// THE DEVICE'S OWN DRIVER's frame state (the aggregate answers `executor()`); every driver handed out by
+    /// createSession() owns one of its own and SHARES @ref registry.
+    VsgExecutor       executor{ diagnostics, registry };
+    /// The drivers createSession() handed out (the device owns them; releaseSession destroys one).
+    std::vector<std::unique_ptr<VsgDriver>> drivers;
+    /// WHICH DRIVER IS THE FRAME IN FLIGHT'S (see Data::scratch): set when a frame opens, cleared when it ends; the
+    /// present callback and the commit read it back (the device is serial today, C10).
+    VsgExecutor* driving_executor{ nullptr };
     PassRegistry              passes;  // The SDK's pass objects, as the numbers the plan carries (see the header).
     HostTargets               targets; // The host's off-screen targets (see the header and api/HostTargets).
 
@@ -467,10 +478,6 @@ struct VsgBackend::Data {
     void*                                                host_handle{ nullptr };  // The handle the host announced (nullptr = a window of our own).
     int                                                  announced_width{ 640 };  // What the next initialize() creates its windows at.
     int                                                  announced_height{ 360 }; // What the next initialize() creates its windows at.
-    vn::intrusive_ptr<const vn::graphics::ShaderProgram> default_program;         // See the header.
-    /// The default program's TEXT, the value a recorder resolves program-less content against: kept beside the
-    /// object so a scratch that starts driving a frame is told it without rebuilding the description per frame.
-    vn::graphics::ShaderProgramDescriptionPtr default_program_text;
 
     /**
      * @brief One window this device serves: its own session, and the target object the host holds.
@@ -703,9 +710,18 @@ bool VsgBackend::initialize()
         d->store    = std::make_unique<ContentStore>();
         d->assembly = std::make_unique<ContentAssembly>(*d->store, d->device, d->pool, *d->storage, *d->images, d->diagnostics);
     }
-    // The default program was announced before the device came up (the engine's own order), so it is tracked now -
-    // the tables must answer for it before any plan names it.
-    trackProgram(d->store.get(), d->default_program);
+    // THE DEFAULT PROGRAM was announced before the device came up (the engine's own order), so it is tracked now -
+    // the tables must answer for it before any plan names it. Each DRIVER announced its own (C8), so each is tracked.
+    trackProgram(d->store.get(), d->executor.defaultProgram());
+    if (d->store != nullptr) {
+        d->store->track(d->executor.defaultProgramText());
+    }
+    for (const std::unique_ptr<VsgDriver>& driver : d->drivers) {
+        trackProgram(d->store.get(), driver->executor().defaultProgram());
+        if (d->store != nullptr) {
+            d->store->track(driver->executor().defaultProgramText());
+        }
+    }
     return true;
 }
 
@@ -780,7 +796,10 @@ void VsgBackend::releaseContentWorld() noexcept
 
     resetFrameScratch();
     d->executor.setWindow(nullptr);
-    d->executor.clearTargets();
+    for (const std::unique_ptr<VsgDriver>& driver : d->drivers) {
+        driver->executor().setWindow(nullptr);
+    }
+    d->executor.clearTargets(); // the registry is shared: one clear empties it for every driver
     // The content world FIRST: its GPU objects (and the sets the assembly built) belong to the device, which the
     // windows drop on the way down.
     d->assembly.reset();
@@ -817,6 +836,7 @@ void VsgBackend::shutdown()
     // destroyed must not be named by anything still alive. The off-screen session is one of those sessions - it
     // borrows the device and reports into the device's clock - so it goes before the clock and the device do.
     releaseContentWorld();
+    d->drivers.clear(); // the handed-out drivers own no GPU objects; their device is about to go
     d->offscreen.reset();
     for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
         window->session->shutdown();
@@ -834,6 +854,23 @@ vn::graphics::RenderFrameExecutor& VsgBackend::executor()
 {
     // The frame half of this device is its own (see RenderDevice::executor): the aggregate answers both faces.
     return *this;
+}
+
+vn::graphics::RenderFrameExecutor* VsgBackend::createSession()
+{
+    // A DRIVER IS A FRAME'S OWN STATE (see VsgDriver): the device's own driver is the aggregate; one handed out here
+    // owns its executor and SHARES the device's content and target table (S8b). The device owns what it hands out.
+    auto driver = std::make_unique<VsgDriver>(*this, d->diagnostics, d->registry);
+    auto* raw   = driver.get();
+    d->drivers.push_back(std::move(driver));
+    return raw;
+}
+
+void VsgBackend::releaseSession(vn::graphics::RenderFrameExecutor& session)
+{
+    // Releasing the device's own executor is a NO-OP (the SDK's rule), so a host may release what it borrowed
+    // unconditionally. One of ours is destroyed here - the device owns it, the caller never does.
+    std::erase_if(d->drivers, [&session](const std::unique_ptr<VsgDriver>& driver) { return driver.get() == &session; });
 }
 
 vn::raw_ptr<vn::graphics::WindowPresentTarget> VsgBackend::createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why)
@@ -985,6 +1022,15 @@ void VsgBackend::closeFrameBooks()
 
 vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to)
 {
+    // THE AGGREGATE IS THE DEVICE'S OWN DRIVER (see RenderDevice::executor): its frames run through its executor, the
+    // same body every handed-out driver runs through its own (see executeFrameFor).
+    return executeFrameFor(d->executor, frame, present_to);
+}
+
+vn::graphics::PresentOutcome VsgBackend::executeFrameFor(VsgExecutor& executor,
+                                                      const vn::graphics::FrameDescription& frame,
+                                                      vn::graphics::PresentTarget*          present_to)
+{
     // ONE FRAME AT A TIME, AS A CHECKED FACT (see FrameGate): another thread waits here, and a frame started from the
     // thread that already drives one is refused. This is the same rule the vk backend states - the frame machinery is
     // device-wide in both - so a host that drives two engines from one thread hears the same answer from either.
@@ -1049,7 +1095,7 @@ vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameD
         // NO WINDOW IN THE FRAME, SO NONE IN THE EXECUTOR: a pass that names no target has nowhere to draw, and
         // the plan it is compiled against says so (see closeFrameBooks).
         d->driving = kNoWindow;
-        d->executor.setWindow(nullptr);
+        executor.setWindow(nullptr);
     }
     else {
         // The window this frame belongs to: the executor's default-framebuffer target is ITS, and presentWindow()
@@ -1062,7 +1108,7 @@ vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameD
             // reach the surface the frame named.
             return vn::graphics::PresentOutcome::Lost;
         }
-        d->executor.setWindow(detail::SessionContentAccess::windowTarget(session));
+        executor.setWindow(detail::SessionContentAccess::windowTarget(session));
     }
 
     // THE FRAME'S SCRATCH IS THE DRIVING SESSION'S (see FrameScratch, `.ai/design/graphics-sessions.md` F9): a plan is
@@ -1076,12 +1122,14 @@ vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameD
     }
     // THE DEVICE SETTING REACHES THE SESSION THAT DRIVES (see setDefaultContentProgram): a scratch may belong to a
     // session that came up after the setting was announced, so the value is handed over here - one pointer copy.
-    (void)d->scratch->recorder.setDefaultContentProgram(d->default_program_text.get());
+    (void)d->scratch->recorder.setDefaultContentProgram(executor.defaultProgramText().get());
+    d->driving_executor = &executor;
     struct ScratchCloser {
         Data& data;
         ~ScratchCloser()
         {
-            data.scratch = nullptr;
+            data.scratch          = nullptr;
+            data.driving_executor = nullptr;
         }
     } scratch_closer{ *d };
 
@@ -1104,7 +1152,7 @@ vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameD
     // the one making the call - and in this backend that call is what commits the frame and shows it. WITHOUT a
     // window there is nothing to present, so the off-screen session commits it inline.
     const vn::graphics::PresentOutcome outcome = offscreen != nullptr
-                                                     ? commitFrameThrough(nullptr, offscreen)
+                                                     ? commitFrameThrough(executor, nullptr, offscreen)
                                                      : (present_to != nullptr ? present_to->present() : vn::graphics::PresentOutcome::Skipped);
 
     // WHAT THE FRAME ACTUALLY BUILT, as one delta (see FrameReport::uploads): counts and bytes the recording above
@@ -1122,6 +1170,14 @@ vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameD
 }
 
 vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to)
+{
+    // THE AGGREGATE IS THE DEVICE'S OWN DRIVER: the same warm-up body every handed-out driver runs (see prepareFrameFor).
+    return prepareFrameFor(d->executor, frame, present_to);
+}
+
+vn::graphics::PrepareReport VsgBackend::prepareFrameFor(VsgExecutor& executor,
+                                                     const vn::graphics::FrameDescription& frame,
+                                                     vn::graphics::PresentTarget*          present_to)
 {
     // THE SAME GATE AS executeFrame: a warm-up walks the content path and may record a transfer batch, so it shares the
     // machinery a frame drives. `Refused` carries no reason - the report says which refusal it was.
@@ -1196,12 +1252,14 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
         return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::Refused };
     }
     // THE DEVICE SETTING REACHES THE SESSION THAT DRIVES, exactly as in executeFrame.
-    (void)d->scratch->recorder.setDefaultContentProgram(d->default_program_text.get());
+    (void)d->scratch->recorder.setDefaultContentProgram(executor.defaultProgramText().get());
+    d->driving_executor = &executor;
     struct ScratchCloser {
         Data& data;
         ~ScratchCloser()
         {
-            data.scratch = nullptr;
+            data.scratch          = nullptr;
+            data.driving_executor = nullptr;
         }
     } scratch_closer{ *d };
 
@@ -1319,12 +1377,12 @@ vn::graphics::PresentOutcome VsgBackend::presentWindow(std::size_t index)
     }
     api::Session& session = sessionAt(index);
     FrameScratch* const scratch = session.frameScratch();
-    if (scratch == nullptr || scratch->frame == nullptr || !session.initialized()) {
+    if (d->driving_executor == nullptr || scratch == nullptr || scratch->frame == nullptr || !session.initialized()) {
         // No frame is open (executeFrame closed none, and says why), or the session is down: there is a surface and
         // nothing to hand it, which is a loss rather than "present nothing" - the host re-attaches on it.
         return vn::graphics::PresentOutcome::Lost;
     }
-    return commitFrameThrough(&session, nullptr);
+    return commitFrameThrough(*d->driving_executor, &session, nullptr);
 }
 
 void VsgBackend::resetFrameScratch() noexcept
@@ -1346,10 +1404,11 @@ void VsgBackend::resetFrameScratch() noexcept
     if (d->offscreen != nullptr) {
         reset(d->offscreen->frameScratch());
     }
-    d->scratch = nullptr;
+    d->scratch          = nullptr;
+    d->driving_executor = nullptr;
 }
 
-vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession* offscreen)
+vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(VsgExecutor& executor, api::Session* window, api::OffscreenSession* offscreen)
 {
     if (window == nullptr && offscreen == nullptr) {
         return vn::graphics::PresentOutcome::Skipped;
@@ -1394,8 +1453,8 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window
             (void)d->assembly->beginFrame(*frame_scratch->frame, timeline, retirement);
         }
         sweepAbandonedContent();
-        const bool committed = window != nullptr ? d->executor.commit(*frame_scratch->frame, *window)
-                                                 : d->executor.commit(*frame_scratch->frame, *offscreen);
+        const bool committed = window != nullptr ? executor.commit(*frame_scratch->frame, *window)
+                                                 : executor.commit(*frame_scratch->frame, *offscreen);
         frame_scratch->frame = nullptr;
         return settled(committed);
     }
@@ -1411,7 +1470,7 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window
     // frame's content is assembled and recorded into the passes this slice can serve, the plan is recorded into this
     // frame's graph, and the graph is the session's - which is the call that submits (and, for a window, presents),
     // and the one whose false answer means the writes never happened.
-    (void)d->executor.applyTargetPlans(*frame_scratch->frame, frame_scratch->facts, timeline, retirement);
+    (void)executor.applyTargetPlans(*frame_scratch->frame, frame_scratch->facts, timeline, retirement);
     // THE MATERIAL ARENA IS SIZED BEFORE ANYTHING IS RECORDED (see the declaration): every live row keeps a
     // slot until the host releases it, so the frame that would have run out is given a bigger one first.
     growMaterialArenaIfNeeded();
@@ -1433,7 +1492,7 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window
                                 frame_scratch->packets,
                                 /*prepare_only*/ false);
     }
-    (void)d->executor.record(*frame_scratch->frame, graph, packets);
+    (void)executor.record(*frame_scratch->frame, graph, packets);
     // WHAT THE HOST LET GO IS LET GO HERE: the frame's content has been recorded, and the commit below is
     // what advances the retirement queue - so this is the last moment a park can be dated against this frame
     // (see the frame drive's ordering note, and the ordering rule core::RetirementQueue states).
@@ -1443,8 +1502,8 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window
     bool       committed = false;
     if (assigned) {
         // The executor reports its own failure and marks what it wrote; the answer is whether the picture got out.
-        committed = window != nullptr ? d->executor.commit(*frame_scratch->frame, *window)
-                                      : d->executor.commit(*frame_scratch->frame, *offscreen);
+        committed = window != nullptr ? executor.commit(*frame_scratch->frame, *window)
+                                      : executor.commit(*frame_scratch->frame, *offscreen);
     }
     frame_scratch->frame = nullptr;
     return settled(committed);
@@ -1530,33 +1589,21 @@ void VsgBackend::resizeWindow(std::size_t index, int width, int height)
 
 void VsgBackend::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
 {
-    d->default_program = std::move(program);
-    // The plan needs it now - content without a program of its own is drawn with this one, and the
-    // compiler resolves that before the plan exists - and the store must know it before any frame names
-    // it, because the tables are what the recording reads. The TEXT is taken here, on the content side (this call is
-    // a host API), and both halves travel: the object for the store's ownership/abandon rule, the value for its rows.
-    const vn::graphics::ShaderProgramDescriptionPtr text =
-        d->default_program != nullptr ? d->default_program->description() : vn::graphics::ShaderProgramDescriptionPtr{};
-    d->default_program_text = text;
-    // EVERY SESSION'S SCRATCH, because the setting is the DEVICE's and any of its sessions may drive the next frame:
-    // the plan resolves program-less content against the recorder, and the recorder is the session's (see
-    // FrameScratch). A session created later is told when its scratch starts driving (see executeFrame).
-    const auto applyDefault = [&text](FrameScratch* scratch) {
-        if (scratch != nullptr) {
-            (void)scratch->recorder.setDefaultContentProgram(text.get());
-        }
-    };
-    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
-        if (window->session != nullptr) {
-            applyDefault(window->session->frameScratch());
-        }
-    }
-    if (d->offscreen != nullptr) {
-        applyDefault(d->offscreen->frameScratch());
-    }
-    trackProgram(d->store.get(), d->default_program);
+    // THE AGGREGATE IS THE DEVICE'S OWN DRIVER: its announcement sets ITS driver's value (see adoptDefaultProgram).
+    adoptDefaultProgram(d->executor, std::move(program));
+}
+
+void VsgBackend::adoptDefaultProgram(VsgExecutor& executor, vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
+{
+    // A DRIVER SETTING (`C8`): the value belongs to the driver that announced it, and every frame that driver runs
+    // hands it to the driving session's recorder (see executeFrameFor). Two engines therefore shade program-less
+    // content differently instead of overwriting each other.
+    executor.setDefaultContentProgram(std::move(program));
+    // THE STORE MUST KNOW IT BEFORE ANY FRAME NAMES IT (see setDefaultContentProgram): the object for the store's own
+    // ownership/abandon rule, the text for its rows - the same two halves every announcement tracks.
+    trackProgram(d->store.get(), executor.defaultProgram());
     if (d->store != nullptr) {
-        d->store->track(text);
+        d->store->track(executor.defaultProgramText());
     }
 }
 

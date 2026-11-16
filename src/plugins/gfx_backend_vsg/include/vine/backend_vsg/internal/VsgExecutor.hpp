@@ -10,12 +10,15 @@
 #include <vsg/nodes/InstrumentationNode.h>
 
 #include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/ReportOnce.hpp>
+#include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/backend_vsg/internal/OffscreenTarget.hpp>
 #include <vine/backend_vsg/internal/WindowTarget.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
+#include <vine/intrusive_ptr.hpp>
 
 /**
  * @brief The frame's EXECUTION stage: it walks the compiled plan and records it, deciding nothing.
@@ -77,18 +80,121 @@ struct PassContent {
 };
 
 /**
+ * @brief The targets a plan can resolve BY IDENTITY: one entry per target the DEVICE holds.
+ *
+ * @details
+ * - WHY IT IS NOT THE EXECUTOR'S (`G1`): a registration is a DEVICE fact - the same host target is drawn into by
+ *   whichever driver a frame drives - while the executor's other state (the window of the frame, the passes it
+ *   recorded, the measurement entries) belongs to ONE frame. Two drivers must resolve the same identities, so the
+ *   table is one object the device owns and every driver borrows (`.ai/design/graphics-sessions.md` S8b); a standalone
+ *   executor (the tests) owns one of its own.
+ * - BORROWED ENTRIES, like every other registered argument in this backend: the caller keeps the target (and the
+ *   label it named it with) alive while the registration stands.
+ * - `Entry::unapplied` is PER ENTRY: two targets that cannot follow their descriptions are two problems, and a
+ *   single device-wide episode would report whichever failed first and swallow the other.
+ *
+ * @warning Not thread-safe: registrations are host announcements between frames (see RenderDevice's threading note).
+ */
+class VN_BACKEND_VSG_API VsgTargetRegistry final
+{
+  public:
+    /** @brief One registered target: the identity the plan uses, and the target itself. */
+    struct Entry {
+        const void*      identity{ nullptr }; // What CompiledTarget::target carries.
+        OffscreenTarget* target{ nullptr };   // The target, borrowed.
+        /// @brief What the host calls this target, for the images' debug names and the diagnostics.
+        ///
+        /// Borrowed like the identity itself: the caller's target has to outlive the registration, and the
+        /// name belongs to it. Null when the caller did not name it - naming is then simply skipped.
+        const char*              label{ nullptr };
+        vn::graphics::ReportOnce unapplied; // The episode the executor's reportUnapplied reports this entry through.
+
+        /** @brief Re-arms the episode: the target followed its description, so a later failure is new. */
+        void noteApplied() noexcept
+        {
+            unapplied.rearm();
+        }
+    };
+
+  public:
+    /** @brief Builds an empty table: no identity resolves. */
+    VsgTargetRegistry() = default;
+
+    VsgTargetRegistry(const VsgTargetRegistry&)            = delete;
+    VsgTargetRegistry& operator=(const VsgTargetRegistry&) = delete;
+
+  public:
+    /** @brief Registers (or re-points) @p identity at @p target.
+     *
+     * @param identity The identity the plan's CompiledTarget carries.
+     * @param target   The target to draw into, or nullptr to unregister.
+     * @param label    What the host calls this target (borrowed), or null.
+     */
+    void add(const void* identity, OffscreenTarget* target, const char* label = nullptr) noexcept;
+
+    /** @brief Forgets every registered target. */
+    void clear() noexcept;
+
+    /** @brief Gets the entry @p identity resolves to, or null when it is not registered. */
+    [[nodiscard]] Entry* find(const void* identity) noexcept;
+
+    /** @brief Gets the entry @p identity resolves to, or null when it is not registered. */
+    [[nodiscard]] const Entry* find(const void* identity) const noexcept;
+
+    /** @brief Gets the target @p identity resolves to, or null when it is not registered. */
+    [[nodiscard]] OffscreenTarget* resolve(const void* identity) const noexcept;
+
+    /** @brief Gets every registration, for a walk that must touch each one (see noteLostSubmission). */
+    [[nodiscard]] std::span<const Entry> entries() const noexcept;
+
+    /** @brief Gets how many targets are registered. */
+    [[nodiscard]] std::size_t size() const noexcept;
+
+  private:
+    std::vector<Entry> entries_;
+};
+
+/**
  * @brief The execution stage (see the file note for what it decides, which is nothing).
  */
 class VN_BACKEND_VSG_API VsgExecutor {
   public:
     /** @brief Creates an executor reporting what it cannot serve through @p diagnostics.
      *
+     * The executor OWNS a target registry when none is given: that is the standalone form the tests use (a plan's
+     * identities resolve against the targets the test registered itself). A device hands in its own registry so every
+     * driver resolves the same identities (see VsgTargetRegistry).
+     *
      * @param diagnostics The backend's one diagnostic route.
      */
     explicit VsgExecutor(vn::graphics::Diagnostics& diagnostics) noexcept;
 
+    /** @brief Creates an executor resolving identities against @p registry, which @p registry outlives.
+     *
+     * @param diagnostics The backend's one diagnostic route.
+     * @param registry    The DEVICE's target table (borrowed; every driver of one device shares it).
+     */
+    VsgExecutor(vn::graphics::Diagnostics& diagnostics, VsgTargetRegistry& registry) noexcept;
+
     VsgExecutor(const VsgExecutor&)            = delete;
     VsgExecutor& operator=(const VsgExecutor&) = delete;
+
+    /** @brief Announces this DRIVER's default content program (see RenderFrameExecutor::setDefaultContentProgram).
+     *
+     * @details
+     * - A DRIVER setting, not a device one (`C8`): two engines on one device each set their own, and the frame that
+     *   drives a session hands this value to that session's recorder before the frame is collected. The object is
+     *   kept (its description is what a plan resolves), so an announcement outlives the caller's handle.
+     *
+     * @param program The program, or null for "none".
+     */
+    void setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program);
+
+    /** @brief Gets this driver's default program (empty when none was announced). */
+    [[nodiscard]] const vn::intrusive_ptr<const vn::graphics::ShaderProgram>& defaultProgram() const noexcept;
+
+    /** @brief Gets this driver's default program TEXT (what the recorder resolves program-less content against). */
+    [[nodiscard]] const vn::graphics::ShaderProgramDescriptionPtr& defaultProgramText() const noexcept;
 
     /** @brief Registers the window that passes targeting the default framebuffer are recorded into.
      *
@@ -315,26 +421,8 @@ class VN_BACKEND_VSG_API VsgExecutor {
 
 
   private:
-    /** @brief One registered target: the identity the plan uses, and the target itself. */
-    struct Entry {
-        const void*      identity{ nullptr }; // What CompiledTarget::target carries.
-        OffscreenTarget* target{ nullptr };   // The target, borrowed.
-        /// @brief What the host calls this target, for the images' debug names and the diagnostics.
-        ///
-        /// Borrowed like the identity itself: the caller's target has to outlive the registration, and the
-        /// name belongs to it. Null when the caller did not name it - naming is then simply skipped.
-        const char*              label{ nullptr };
-        vn::graphics::ReportOnce unapplied; // The episode @ref reportUnapplied reports this entry through.
-
-        /** @brief Re-arms the episode: the target followed its description, so a later failure is new. */
-        void noteApplied() noexcept
-        {
-            unapplied.rearm();
-        }
-    };
-
-    /** @brief The registered entry for @p identity (null for an identity this executor does not hold). */
-    [[nodiscard]] Entry* entryOf(const void* identity) noexcept;
+    /** @brief The registered entry for @p identity (null for an identity the registry does not hold). */
+    [[nodiscard]] VsgTargetRegistry::Entry* entryOf(const void* identity) noexcept;
 
     /** @brief Records one pass into an off-screen target; false when it could not be served. */
     [[nodiscard]] bool recordOffscreen(const core::CompiledPass&                  pass,
@@ -401,8 +489,15 @@ class VN_BACKEND_VSG_API VsgExecutor {
 
 
   private:
-    vn::graphics::Diagnostics& diagnostics_;              // The one diagnostic route.
-    std::vector<Entry>         targets_;                  // Registered targets, borrowed.
+    vn::graphics::Diagnostics& diagnostics_; // The one diagnostic route.
+    /// The registry used when this executor was created WITHOUT one (see the constructors): the standalone form.
+    VsgTargetRegistry          own_registry_;
+    /// THE target table this executor resolves identities against: the device's, or @ref own_registry_.
+    VsgTargetRegistry&         registry_;
+    /// This DRIVER's default content program and its text (see setDefaultContentProgram): a driver setting, so two
+    /// engines on one device shade program-less content differently (C8).
+    vn::intrusive_ptr<const vn::graphics::ShaderProgram> default_program_;
+    vn::graphics::ShaderProgramDescriptionPtr            default_program_text_;
     WindowTarget*              window_{ nullptr };        // The registered window (borrowed).
     bool                       profiling_{ false };       // Wrap each pass for measurement (see setProfiling).
     std::vector<ProfileEntry>  profile_entries_;          // The wrapped passes of the last recorded frame.
