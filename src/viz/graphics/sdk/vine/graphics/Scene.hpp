@@ -286,22 +286,26 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
     /** @brief Collects render commands for @p camera, as a picture of the camera's aspect sees it.
      *
      * @details
-     * - ONE COLLECTION, ONE ENTRY. The list is built by walking the tree (frustum culling, bounds caching,
-     *   ordering) and handed over SHARED: the passes of one frame draw the same commands, so copying the list per
-     *   pass charged an intrusive_ptr increment per command plus a memcpy on every pass of every frame, for a list
-     *   nobody was going to change. A caller that must change something copies what it needs (`*list`) - which is
-     *   what makes the cost of a copy an explicit statement instead of an accident of which overload was called.
+     * - ONE COLLECTION, ONE ENTRY, ONE RULE. The list is SELECTED from the scene's current publication with the same
+     *   `selectSnapshot` a frame's source runs (layer prune, frustum test against the camera's picture shape, and the
+     *   one ordering below) - there is no second walk over the live rows. It is handed over SHARED: the passes of one
+     *   frame draw the same commands, so copying the list per pass charged an intrusive_ptr increment per command plus
+     *   a memcpy on every pass of every frame, for a list nobody was going to change. A caller that must change
+     *   something copies what it needs (`*list`) - which is what makes the cost of a copy an explicit statement
+     *   instead of an accident of which overload was called.
      * - The order: the content's declared draw order first (Node::setDrawOrder - higher is drawn later), and inside
      *   one order the picture the collection has always produced - opaque front-to-back, then transparent
      *   back-to-front.
      * - The list is immutable by contract and stays valid until the scene changes or the content frame ends (see
      *   setContentFrame): do not hold it past the frame it was collected in.
+     * - INSIDE AN EDIT BATCH the answer is the picture the batch started from, exactly as Scene::publish reports it:
+     *   one publication per batch is the contract a frame rests on, and this query says the same thing.
      * - A root that is no longer a root (it was attached under another Group after setRoot) takes the scene out
      *   of the picture: the empty list is answered, never the list memoised while the node was still a root.
      *
      * @param camera Camera used for culling/ordering. Its own aspect is the picture's shape (see Camera - one
      *               camera, one picture shape), and the memo matches on the view-projection it was built with, so a
-     *               camera whose shape changes gets its own walk.
+     *               camera whose shape changes gets its own selection.
      * @param layer_mask Layers this picture draws (see Node::setLayers); part of the memo's key, because two passes
      *                   drawing the same view with different masks do NOT draw the same list.
      * @param viewport   Device-pixel rectangle this picture lands in, or null when the caller cannot state one.
@@ -364,14 +368,14 @@ class VN_GRAPHICS_API Scene : public Object, public RefCounted<Scene> {
      *
      * @details
      * - The engine announces one content frame per rendered frame. Within a frame, every pass drawing this scene
-     *   through the same camera shares one walk; ACROSS frames the list is reused for as long as THIS scene's graph
-     *   does not change (every node mutator announces through `Node::announceContentChange`, which climbs to the root
-     *   the memo compares against), so a static scene costs one walk when it changes, not one per frame.
+     *   through the same camera shares one selection; ACROSS frames the list is reused for as long as this scene's
+     *   publication does not change (a publication is rebuilt exactly when the graph, a box or a value moved - see
+     *   `publish`), so a static scene costs one selection when it changes, not one per frame.
      * - The announcement is scoped to the root subtree: editing another scene never ends this scene's memo.
      * - An entry nothing asked for in the previous frame is dropped here, which is what keeps the memo bounded by the
      *   views actually drawn instead of growing with the frame count.
      * - Nothing is memoised until a frame has been opened, so a caller that drives the collection itself keeps the
-     *   plain "walk on every call" behaviour.
+     *   plain "select on every call" behaviour.
      * - Idempotent: announcing the same token again does nothing, so any number of passes may announce it.
      *
      * @param frame Opaque frame token; the same token means the same frame.

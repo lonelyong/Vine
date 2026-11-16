@@ -590,23 +590,6 @@ void selectRows(std::uint32_t               row_count,
 }
 
 /**
- * @brief Collects one view's commands from the rows: the VIEW half of a collection, and it reads rows only.
- *
- * @param bake          The table (see bakeSubtree).
- * @param frustum       The view's frustum.
- * @param view          The view being drawn (its layer mask is the content selection).
- * @param viewport_used Receives true when a per-view row needs the device-pixel viewport.
- * @param out           Receives the commands, in walk order.
- * @param keys          Receives the sort key of every appended command (see selectRows).
- */
-void selectFromBake(const SceneBake&            bake,
-                    const Frustum&              frustum,
-                    const View&                 view,
-                    bool&                       viewport_used,
-                    std::vector<RenderCommand>& out,
-                    std::vector<SortKey>*       keys = nullptr);
-
-/**
  * @brief Reorders @p commands into the order a frame draws them in, in place.
  *
  * @details
@@ -614,7 +597,8 @@ void selectFromBake(const SceneBake&            bake,
  *   the transparent one, then quantized camera-space depth (front-to-back opaque, back-to-front transparent), and
  *   finally the row/primitive index. Because the last field is unique, no two commands compare equal - so any
  *   permutation of the same commands sorts to the same list and `std::sort` (not `stable_sort`) is correct.
- * - It exists as its own step because BOTH producers of a draw list need it and neither may own a copy.
+ * - It exists as its own step because the view half (see SceneSnapshot.cpp) fills commands and keys in one pass and
+ *   then needs one reordering; no producer owns a second copy of the list.
  *
  * @param commands Commands to reorder (replaced by their sorted order).
  * @param keys     The key of every command, in the commands' current order (see selectRows).

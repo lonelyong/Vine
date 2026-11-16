@@ -43,8 +43,8 @@ class DrawListMemo;
  *   one thread, and the authoring half stays an object the host holds.
  * - WHAT IT DOES NOT OWN. The content: no node, no light, no material. It holds a reference to the scene it reads
  *   (the scene owns it, both live on the content thread) and only ever reads the authored side.
- * - THREADS. Content thread, like the scene: `collectRenderCommands` walks the graph and `publish` builds from it.
- *   The immutable results (`SceneSnapshotPtr`, the shared command lists) are what may leave the thread.
+ * - THREADS. Content thread, like the scene: `collectRenderCommands` selects from the publication and `publish`
+ *   builds it. The immutable results (`SceneSnapshotPtr`, the shared command lists) are what may leave the thread.
  *
  * @note
  * - The door for the publication value is `snapshot()`, which `detail::SceneRows::snapshot` forwards to: the row
@@ -70,8 +70,11 @@ class ScenePublisher final
      * @brief Collects the commands @p view draws (see Scene::collectRenderCommands).
      *
      * @details
+     * - ONE SELECTION RULE: the query answers from the scene's current publication (the value a frame draws) through
+     *   the same `selectSnapshot` the frame's source runs. There is no second walk over the live rows.
      * - NOT A FRAME SOURCE: a frame draws a publication (see SnapshotSource); this is the content thread's own query,
-     *   which `Scene::collectRenderCommands` forwards to.
+     *   which `Scene::collectRenderCommands` forwards to - and inside an edit batch it answers the picture the batch
+     *   started from, exactly as `publish()` reports it.
      *
      * @param view The view to collect for: camera value, device-pixel area and layer mask.
      * @return The shared, immutable command list.
@@ -120,10 +123,11 @@ class ScenePublisher final
      * - The one snapshot builder: it brings the rows up to date (boxes and material values included), shares unchanged
      *   chunks with the previous publication, and returns the cached value when nothing moved (see
      *   `detail::SceneRows`, its one caller).
+     * - Const because a query (see collectRenderCommands) reads it too: everything it maintains is a mutable cache.
      *
      * @return The immutable publication; never null.
      */
-    [[nodiscard]] SceneSnapshotPtr snapshot();
+    [[nodiscard]] SceneSnapshotPtr snapshot() const;
 
   public:
     /** @brief Gets how many times the tree was walked to collect commands. */
@@ -150,19 +154,11 @@ class ScenePublisher final
   private:
     vn::graphics::Scene& scene_;
 
-    // Bumped by every scene-level content change, so a memo built before the change is not reused (see
-    // invalidateContent) - and by a material whose values moved (see detail::refreshValues, which runs during a
-    // collection because a material edit announces nothing on the graph).
-    mutable std::uint64_t content_revision_ = 1;
     // Token of the content frame currently open, 0 = none (no memoising).
     std::uint64_t content_frame_ = 0;
-    // THIS SCENE'S ROOT SUBTREE content epoch when the memo was last validated: a different value means something in
-    // this scene's graph changed since (Node::announceContentChange climbs to the root), so every collected list may
-    // be stale and the memo is dropped before it is looked up again. Mutable: collecting is a const operation that
-    // maintains the memo (see content_collect_count_).
-    mutable std::uint64_t memo_epoch_ = 0;
-    // The collected lists of the views in use (one per camera), reused while the graph does not change and dropped
-    // when nothing asked for them in the previous frame - so the memo is bounded by the views drawn, not by frames.
+    // The collected lists of the views in use (one per view), reused while the publication's revision does not change
+    // and dropped when nothing asked for them in the previous frame. Keyed by the publication, not by a second epoch:
+    // the snapshot's own versions are what say a list is stale (see snapshot()).
     mutable std::unique_ptr<DrawListMemo> content_memo_;
     // The GRAPH half of the same collection, keyed by the same epoch: placements, world boxes and folds, in walk
     // order. A view reads it instead of recomputing it, which is why a moving camera costs the prune and the sort

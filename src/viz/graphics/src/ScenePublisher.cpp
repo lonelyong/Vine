@@ -49,81 +49,53 @@ ScenePublisher::~ScenePublisher() = default;
 std::shared_ptr<const std::vector<vn::graphics::RenderCommand>>
 ScenePublisher::collectRenderCommands(const vn::graphics::View& view) const
 {
-    // The mask is part of the view: one argument states what the picture draws (see View).
-    const std::uint32_t layer_mask = view.layer_mask;
-    // The empty answer, shared rather than built: an empty scene asks for nothing, and paying an allocation
-    // for "nothing" would make the cheap case the expensive one. A root that is no longer a ROOT is the same
-    // answer, and the check runs BEFORE the memo lookup on purpose: the memo must not hand back a list built
-    // while the node was still this scene's root (see Scene::setRoot).
+    // THE EMPTY ANSWER, SHARED rather than built: an empty scene asks for nothing, and paying an allocation for
+    // "nothing" would make the cheap case the expensive one. A root that is no longer a ROOT is the same answer,
+    // and the check runs BEFORE any cache lookup on purpose: a list built while the node was still this scene's
+    // root must not answer for a scene that no longer draws it (see Scene::setRoot).
     if (!scene_.visible_ || !scene_.hasRootedRoot()) {
         return noCommands();
     }
-    // The shape is part of the view: the projection encodes it (the camera states it, see Camera), so the memo
-    // below (which matches on the view-projection) cannot answer for one shape with another's walk.
-    const Mat4d    view_proj = view.viewProjection();
-    const Vec3d    eye       = view.camera.eye;
-    const Viewport viewport  = view.viewport;
-    // THE MEMO OUTLIVES ONE FRAME. A collected list is a pure function of the graph and the view, so it is reused
-    // for as long as NOTHING changed - which the graph announces through the content epoch of THIS SCENE'S ROOT
-    // SUBTREE (every mutator bumps itself and every ancestor, see Node::announceContentChange). The scope is
-    // deliberate: editing another scene's tree leaves this root's epoch alone, so its lists survive. Before the
-    // memo existed an entry lived for one frame only and a static scene paid a full walk per frame (measured:
-    // SceneTest.MeasureWhatOneCollectionCosts*).
-    // THE VALUE HALVES, RE-TAKEN BEFORE THE MEMO IS ASKED: a material or a program is edited through a live object, so
-    // no epoch moves when its values change (see detail::refreshValues) - and a memoised list built from the old values
-    // would otherwise be handed out for as long as the graph stays still. Outside a batch only: a batch publishes
-    // nothing, so the values it moves are taken by the collection that closes it (C18).
-    if (edit_depth_ == 0 && content_bake_ != nullptr && detail::refreshValues(*content_bake_) > 0U) {
-        ++value_generation_;
-        ++content_revision_; // the memo key moved: every view's list was built from the values that just changed
-    }
-    const std::uint64_t epoch = scene_.root_->contentEpoch();
-    if (content_memo_ != nullptr && epoch != memo_epoch_) {
-        // Something in THIS scene's graph changed since the last look: every view's list may be stale, and re-deriving
-        // each one is the walk a miss does anyway.
-        content_memo_->clear();
-    }
-    // Recorded even when the memo was just cleared (or does not exist yet): the next call has to compare against THIS
-    // look, or it would invalidate a memo it built itself.
-    memo_epoch_ = epoch;
-    const bool memoising = content_frame_ != 0; // nothing is memoised until a frame is open (a caller drives it)
+
+    // ONE SELECTION RULE. The content query answers from the SAME immutable publication a frame draws: the snapshot
+    // is brought up to date (rows, boxes and the values a row carries) and `selectSnapshot` is THE view half - the
+    // function the frame's source also runs. The direct walk (`selectFromBake` over the live rows) is gone, so a
+    // rule change is one edit, not two (G1 / G5).
+    //
+    // INSIDE AN EDIT BATCH the answer is the picture the batch started from, exactly as `publish()` reports it: one
+    // publication per batch is the contract a frame rests on, and the content query says the same thing.
+    const SceneSnapshotPtr current = snapshot();
+
+    // The memo is the same `DrawListMemo` the frame's source uses, keyed by the publication's revision: a new
+    // snapshot (an edit, a moved box, a value that moved) is a new key, so invalidation is the snapshot's own
+    // rule rather than a second epoch to compare.
+    const Mat4d view_proj = view.viewProjection();
+    const bool  memoising = content_frame_ != 0; // nothing is memoised until a frame is open (a caller drives it)
     if (memoising && content_memo_ == nullptr) {
         content_memo_ = std::make_unique<DrawListMemo>();
     }
     if (memoising) {
-        if (DrawListMemo::Entry* hit = content_memo_->find(view_proj, eye, viewport, layer_mask, content_revision_)) {
+        if (DrawListMemo::Entry* hit = content_memo_->find(view_proj, view.camera.eye, view.viewport, view.layer_mask, current->revision)) {
             ++content_reuse_count_;
             hit->last_used_frame = content_frame_;
-            // The SHARED list itself, not a copy of it: the list is immutable once built (what a pass may change is its
-            // own view of it, see RenderPass::execute), so handing out one more reference costs a refcount instead of
-            // one copy of every command -- the per-pass copy this replaced was N intrusive_ptr increments plus an
-            // N x sizeof(RenderCommand) memcpy, on every pass of every frame.
             return hit->commands;
         }
     }
     ++content_collect_count_;
 
-    const SceneBake& rows = ensureRows();
-
     std::vector<vn::graphics::RenderCommand> commands;
-    const Frustum                            frustum       = Frustum::fromViewProjection(view_proj);
-    bool                                     viewport_used = false;
-    std::vector<SortKey>                     keys;
-    keys.reserve(rows.rows.size());
-    selectFromBake(rows, frustum, view, viewport_used, commands, &keys);
-    // The view's half ends in one order, and the order is the same rule for every producer of a draw list (the
-    // snapshot path sorts with this very function - see DrawListBake.hpp / SortKey).
-    sortCollected(commands, keys);
-    // Into the shared list by MOVE: the walk's result is the only copy that ever exists.
+    bool                                    viewport_used = false;
+    selectSnapshot(*current, view, commands, viewport_used);
+    // Into the shared list by MOVE: the selection's result is the only copy that ever exists.
     auto shared = std::make_shared<const std::vector<vn::graphics::RenderCommand>>(std::move(commands));
     if (memoising) {
-        if (DrawListMemo::Entry* entry = content_memo_->find(view_proj, eye, viewport, layer_mask, content_revision_)) {
-            entry->commands           = shared; // the same view asked again after a change
+        if (DrawListMemo::Entry* entry = content_memo_->find(view_proj, view.camera.eye, view.viewport, view.layer_mask, current->revision)) {
+            entry->commands           = shared;
             entry->viewport_sensitive = viewport_used;
             entry->last_used_frame    = content_frame_;
         }
         else {
-            (void)content_memo_->store(view_proj, eye, viewport, layer_mask, viewport_used, content_revision_, shared, content_frame_);
+            (void)content_memo_->store(view_proj, view.camera.eye, view.viewport, view.layer_mask, viewport_used, current->revision, shared, content_frame_);
         }
     }
     return shared;
@@ -185,7 +157,6 @@ void ScenePublisher::setContentFrame(std::uint64_t frame)
 
 void ScenePublisher::invalidateContent()
 {
-    ++content_revision_;
     if (scene_.root_ != nullptr) {
         // Scene-level facts (a swapped root, scene visibility / opacity, an edit no setter could see) are announced
         // on the root's own subtree epoch: the memo then drops its entries at the next collect, and the per-entry
@@ -199,7 +170,7 @@ void ScenePublisher::invalidateContent()
     }
 }
 
-SceneSnapshotPtr ScenePublisher::snapshot()
+SceneSnapshotPtr ScenePublisher::snapshot() const
 {
     // Ensuring the rows is what makes the answer CURRENT: the build is keyed by the epoch, and the refresh is what
     // notices a box or material value that moved under it. Inside an edit batch the PUBLISHED pair stays where it
@@ -363,10 +334,8 @@ const SceneBake& ScenePublisher::ensureRows() const
     // the whole batch becomes ONE publication in the frame after the outermost endEdit.
     if (edit_depth_ == 0 && refreshValues(*content_bake_) > 0U) {
         // The values a row carries moved (see refreshValues): nothing on the graph announced it, so the version a
-        // publication compares and the memo key both have to move here, or the picture keeps the values the material
-        // had before the edit.
+        // publication compares moves here, and the publication built from it is a new memo key for both readers.
         ++value_generation_;
-        ++content_revision_;
     }
     if (edit_depth_ == 0) {
         published_epoch_  = bake_epoch_;

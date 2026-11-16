@@ -407,7 +407,8 @@
 
 - 内容的编辑 API（`Scene` / `Node` / `Geometry` / `Material`）不变，全部在内容线程同步调用。
 - `DrawListSource`（"这个视图画什么"）不变：`SnapshotSource` 是生产实现（帧只画发布），宿主也可以实现它；
-  `Scene` 不再是它的实现（W9a）——`Scene::collectRenderCommands` 是内容线程的查询，不是帧的来源。
+  `Scene` 不再是它的实现（W9a）——`Scene::collectRenderCommands` 是内容线程的查询，答的是当前发布对一张视图画什么，
+  与帧的来源共用同一条 `detail::selectSnapshot` 规则（不是第二份行走）。
 
 ## 5. 约束、要求与不变量
 

@@ -555,22 +555,6 @@ std::uint32_t refreshValues(SceneBake& bake)
     return moved;
 }
 
-void selectFromBake(const SceneBake&            bake,
-                    const Frustum&              frustum,
-                    const View&                 view,
-                    bool&                       viewport_used,
-                    std::vector<RenderCommand>& out,
-                    std::vector<SortKey>*       keys)
-{
-    selectRows(static_cast<std::uint32_t>(bake.rows.size()),
-               [&bake](std::uint32_t index) -> const Row& { return bake.rows[index]; },
-               frustum,
-               view,
-               viewport_used,
-               out,
-               keys);
-}
-
 SortKey makeSortKey(const RenderCommand& command, std::uint32_t layers, const Aabbd& box, const Mat4d& view, std::uint64_t tie)
 {
     SortKey key;

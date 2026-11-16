@@ -38,7 +38,7 @@
 就无法反解，拾取也没有唯一答案）。映射保序，但重映射后的深度**不再是距离**：一张 target 的写者若用不同区间，
 它的深度就不能再被当作几何距离读回。
 2.3.2 **解析出来的每一项有一个终点**：pipeline 变体（`topology`）/ 动态状态（depth、cull、blend、`polygonMode`、`lineWidth`）/ **数据块**（`pointSize` → draw 块的 `params.y`，因为点大小是顶点着色器输出而不是 API 状态）。终点决定"改它要不要重编"：三类都不重编（本引擎的 cull/polygon/线宽都是动态状态），只有 `topology` 进变体键 —— 但 `pointSize` 的终点是**数据**，所以它连动态状态都不是。这一点必须写在 `StateResolution.hpp` 的 item 注释里，否则下一项很容易被顺手塞进 `PipelineKey`。
-2.4 **收集是纯函数**：相机 + 场景内容 + 层掩码 → 共享不可变命令表；memo 只在这些输入变化时失效。
+2.4 **收集只从发布值选择，且只有一份规则**：相机 + 场景发布（`SceneSnapshot`）+ 层掩码 → 共享不可变命令表；内容查询与帧的来源都走 `detail::selectSnapshot`，不存在第二份直接行走。memo 的键是**发布的 revision + view-projection + eye + layer_mask（必要时 + viewport）**：发布的 revision 恰好在图、盒或值变化时前进，所以“什么让列表失效”由发布本身的版本回答，而不是第二份 epoch 记账。编辑批内查询给出批开始时的图（与 `publish` 同一口径）。
 2.5 **视图上下文显式**：`View` 携带相机值（`CameraSnapshot`）、设备像素 `viewport` 与 `layer_mask`；billboard 只在这里生效。
 2.6 **拾取是机制**：射线 + 场景走查；选择/描边/框选不在框架里。
 2.7 **灯是场景的环境量**：灯挂在 `Scene` 上而不是节点上（一个场景一份光照，每个 pass 拿到同一份，所以主/离屏/阴影 pass 的灯永远一致），位置与方向都是世界坐标。节点灯（灯跟着子树动）与逐 draw 选灯是触发条件型（backlog T7 / S7），不是今天的模型。
@@ -58,12 +58,13 @@
 且 meta 父链必须与 C++ 继承一致；错链会让 `static_cast` 静默落到错误地址。不是 `Object` 派生的类型（`CameraManipulator`、第三方 vsg 类型）
 继续用 `dynamic_cast`。满足 `G6` / `G10`，代价是元类型链必须维护正确。
 
-2.11 **派生状态单独一个对象**：`Scene` 只持有作者树、灯与查询；烘焙行（`SceneBake`）、per-view memo、内容 epoch、编辑批
+2.11 **派生状态单独一个对象**：`Scene` 只持有作者树、灯与查询；烘焙行（`SceneBake`）、per-view memo、编辑批
 深度与发布值住在 `detail::ScenePublisher`（`src/viz/graphics/src/ScenePublisher.hpp`），`Scene` 的 `collectRenderCommands` /
 `publish` / `beginEdit` / `endEdit` / `setContentFrame` / `invalidateContent` 与三个计数全部委托。为什么：三者住在一个类里时，
 改缓存或改发布都要动作者的类（`G1` / `G5`），作者 API 也要背它们不拥有的寿命规则；拆开后依赖只有 Scene → publisher 一条
 （publisher 读作者的树，反向不成立）。边界：`Scene` **不是**帧的来源（W9a 删掉了它的 `DrawListSource` 继承）——
-一帧画的是发布（`SnapshotSource`），`Scene::collectRenderCommands` 只是内容线程自己的查询；公开 API 与测试语义不变；
+一帧画的是发布（`SnapshotSource`），`Scene::collectRenderCommands` 答的是“当前发布对这张视图画什么”（与帧的来源同一条
+`selectSnapshot` 规则，只是在自己线程上读）；公开 API 与测试语义不变；
 `detail::SceneRows::snapshot` 仍是模块唯一的一行门，背后转给 publisher。
 
 ## 3. 功能点
@@ -96,9 +97,9 @@
 |---|---|---|
 | F12 | 命令表 | `Scene::collectRenderCommands(camera, layer_mask, viewport?)` / `(View)`。 |
 | F13 | 命令快照 | geometry、primitive、model matrix、opacity、draw_order、state、material、program、instance。 |
-| F14 | memo | 键 = view-projection + eye + layer_mask（必要时 + viewport）；根子树 epoch 失效。 |
+| F14 | memo | 键 = 发布 revision + view-projection + eye + layer_mask（必要时 + viewport）；发布因图/盒/值变化而新建时自动失效。 |
 | F15 | 视锥剔除 | 子树盒 `subtreeBounds` 在节点自身坐标系持久缓存；移动相机不重算。 |
-| F16 | 排序 | `detail::SortKey` 全序：drawOrder → 层 → 不透明段/透明段 → 量化相机深度 → 行/图元索引；代表点是世界盒中心。分类在收集时求值、顺序冻结在表里（见 §6.3）。 |
+| F16 | 排序 | `detail::SortKey` 全序：drawOrder → 层 → 不透明段/透明段 → 量化相机深度 → 行/图元索引；代表点是世界盒中心。分类在收集时求值、顺序冻结在表里（见 §6.3）；内容查询与帧的来源使用同一个 `selectSnapshot`。 |
 | F17 | 场景盒 | `Scene::boundingBox(mask)` 只算可见且命中层掩码的内容。 |
 
 ### 3.4 层与视图上下文
