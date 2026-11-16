@@ -260,8 +260,9 @@
 - **边界**：**拆除不 park**。`shutdown()` 先 `vkDeviceWaitIdle`，再把接缝置空并 `releaseAll()`（它就是“仲裁已经
   出现”的那个动词）；否则 park 的对象会随会话泄漏。**替换路径**（重传时的旧 buffer、ring 重建）仍是
   立即销毁，因为它发生在记录本帧时、提交之前；多会话之后它们必须一同 park（见设计文档 S6）。
-- **观察点**：`Device::retirementNumbers()`（`pending` / `released` / `device_waits`）。`device_waits` 应恒为 0：非零意味着某次释放
-  无法 park、宁可空转也不猜窗口。
+- **观察点**：`Device::retirementNumbers()`（`pending` / `released` / `device_waits`）。`device_waits` 记"宿主把设备停了一下"：
+  无法 park 的破坏性路径，以及**读回的等待**（S7：读回等它要读的帧完成，等一次记一次）。帧的组装路径（记录 / 提交 /
+  栅栏等待）永远不抬高它——那才是这条数字要守的不变量。
 
 ### 2.16 设备是池、驱动者是帧：缓存与帧暂存分家（`G1` / `G4` / `G10`）
 
@@ -342,7 +343,7 @@
 | F8 | 常量 ring | 每帧一个持久映射 buffer，切片 + dynamic offsets | 已落地 |
 | F9 | 描述符集缓存 | 按（视图集合、阴影图）缓存；逐条释放，定期清扫 | 已落地 |
 | F10 | 设备内存池 | 块 + 切片、usage/kind、granularity、整块映射 | 已落地 |
-| F11 | 读回 | 颜色（RGBA8）与深度（D32）；staging 一次一份 | 已落地 |
+| F11 | 读回 | 颜色（RGBA8）与深度（D32）；自有池与栅栏（S7）；一次读回一次计数等待 | 已落地 |
 | F12 | 管线缓存 | 会话内 `VkPipelineCache` + 跨会话设备键控文件 | 已落地 |
 | F13 | 设备时钟 | `FrameTiming`（每 30 帧采样一次） | 已落地 |
 | F14 | 报告与诊断 | `FrameReport`、`PrepareReport`、驱动消息、`ReportOnce` | 已落地 |
@@ -438,11 +439,15 @@
 
 ### 3.1.11 F11 读回
 
-- **行为**：`ReadbackStaging` 一次一份（buffer + 一次性命令缓冲 + 提交/等待/映射）；颜色读回要求目标附件是
-  `R8G8B8A8_UNORM`，深度读回把 D32 转成 float 数组；结果是 `ReadbackResult` 四态（`NotReady` / `Unsupported` / `Invalid` / `Failed`，由调用方分类）。
-- **约束**：`C1`、`R3`。
-- **验收**：`VkMemoryPoolTest.AReadbackGivesItsStagingBytesBack`、`OffscreenClearTest`、`ContentTargetTest`。
-- **注意**：`P9`。
+- **行为**：`ReadbackStaging` 一次一份，并且**自带命令池与栅栏**（S7：读回不借任何会话的帧机器，C7）；颜色读回要求
+  目标附件是 `R8G8B8A8_UNORM`，深度读回把 D32 转成 float 数组；结果是 `ReadbackResult` 四态（`NotReady` /
+  `Unsupported` / `Invalid` / `Failed`，由调用方分类）。读回取体闸 EXCLUSIVE（设备的"帧之间"）并**计一次**
+  `deviceWaits()`；能在等待前回答的拒绝（未知/未建目标、越界附件、不支持的格式、借用深度）不停止设备；帧体内
+  回调读回答 `Failed`（`FrameBodyDepth`，不等待自己）。
+- **约束**：`C1`、`R3`、`R28`。
+- **验收**：`VkMemoryPoolTest.AReadbackGivesItsStagingBytesBack`、`OffscreenClearTest`、`ContentTargetTest`，
+  `VkMultiSessionTest` 的三例（交错读回各自最后一帧 / 等待且计数 / 帧体内拒绝）。
+- **注意**：`P9`、`P7`（读回不在帧预算里）。
 
 ### 3.1.12 F12 管线缓存
 
@@ -720,8 +725,9 @@
   分家，§2.16）、S4（`ResidenceTable` 三态状态机，§2.17）、S5（`TargetClaims` 租约 + 帧/预热接线，§2.18）、
   S6a（SDK 会话接缝 + 引擎持有驱动者 + 默认程序归会话）、S6b（多驱动者 + 设备串行帧体）、
   S6c-1（帧首快照：记录路径零锁、计划按值、条目 park 到水位）、S6c-2a（帧体真并行：体闸 shared/exclusive + 多开帧 +
-  各小锁 + 每驱动者批量）、S6c-2b（R6：释放不等帧）已落地；S7–S9 见 `.ai/design/graphics-sessions.md` §9.3。
-- `test_vk` **130 例 / 34 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **557**、`test_graphics` **587**；
+  各小锁 + 每驱动者批量）、S6c-2b（R6：释放不等帧）、S7（读回独立化：自带命令池/栅栏 + 计数等待 + 帧体内拒绝，
+  并补上 ADR 早就写明的 `vkQueueSubmit` / `vkDeviceWaitIdle` 提交锁）已落地；S8–S9 见 `.ai/design/graphics-sessions.md` §9.3。
+- `test_vk` **133 例 / 34 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **557**、`test_graphics` **587**；
   Debug 全量 ctest **32/32**；`BackendParityTest` **12/12**。
 - **一条构建教训**：SDK 的虚表改动后，**动态插件必须一起重建**（旧 `.so` 让 `VsgBackendPluginTest` 段错误）。
 - 实测（lavapipe，真实宿主）：11 pass / 10 draw，稳态中位 **8.24 ms**，GPU **7.15–7.74 ms**；ring + set 缓存改动
@@ -737,9 +743,10 @@
 - **backlog `T35`（成为默认后端）**的门禁（`../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`）：
   `releaseRenderTarget` 已真正释放附件、`readDepthBuffer` 与设备丢失报告已落地；**仍缺** Win32 实机证据（未过之前
   不支持 Windows 上线）、Wayland 回退实测、`releasePass` 的显式 no-op + 理由、`docs/guides/` 的 vk 用户页。
-- **backlog `T41`**：`PrepareReport.passes` 与录制后的 `FrameCounters.passes` 口径不一致（SDK 字段契约缺陷，跨后端）。
-- **共享设备的并发帧**（backlog `T47` / `T48`）：本插件的 `Device` 是“设备 + 一个会话”，两个引擎同时 frame 今天是
-  数据竞争（§2.11、`graphics-threading.md` 的 `C21`）。形状与论证见
+- **backlog `T41`**：已关闭（2026-11-15，`PrepareReport.passes` 与 `FrameCounters.passes` 统一为一种口径）。
+- **共享设备的并发帧**（backlog `T47` / `T48`）：T47 与 T48 的 S1–S7 已落地（§2.11、`graphics-sessions.md`）；
+  S8（vsg 的收集暂存）与 S9（契约收口 + TSan）仍未做，F4 的 `ResidenceTable` 设备接线也未做（`graphics-sessions.md` §9.2）。
+  形状与论证见
   `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`。
 - **backlog `T12` / `T13`**：Windows 窗口读像素、Wayland 回退实测。
 

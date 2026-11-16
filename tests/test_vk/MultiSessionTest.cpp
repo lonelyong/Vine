@@ -707,8 +707,10 @@ TEST(VkMultiSessionTest, AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroy
     EXPECT_GE(centre[0], 254) << "the frame lost the content a release announced while it was in flight";
     EXPECT_LE(centre[1], 1);
 
-    // NO DEVICE IDLE WAS TAKEN: the releases were parked, not run under a counted stop.
-    EXPECT_EQ(device->retirementNumbers().device_waits, 0U) << "a release could not be parked and idled the device";
+    // NO DEVICE IDLE WAS TAKEN BY THE RELEASES: they were parked, not run under a counted stop. The readback above is
+    // this test's ONE counted stop (S7: a readback waits for the frames in flight, and says so).
+    const std::size_t waits = device->retirementNumbers().device_waits;
+    EXPECT_EQ(waits, 1U) << "a release could not be parked and idled the device (the readback is the only counted stop)";
     // AND THE PARK STILL HOLDS THE OBJECTS: the frame that named them submitted after the release, so the watermark is
     // not past their retire point yet.
     EXPECT_GE(device->retirementNumbers().pending, 1U) << "the released objects were destroyed while the frame was in flight";
@@ -716,6 +718,193 @@ TEST(VkMultiSessionTest, AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroy
     // THE SPARE TARGET IS GONE (the release answered as if it were never built), and the device still frames.
     std::vector<std::uint8_t> spare_pixels;
     EXPECT_FALSE(backend->readColorBuffer(spare_target.get(), 0, spare_pixels)) << "the released target was still readable";
+    EXPECT_EQ(device->retirementNumbers().device_waits, waits) << "a refused readback never stops the device";
+
+    backend->setDiagnosticSink({});
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, EachDriversTargetReadsBackItsOwnLastCompletedFrame)
+{
+    // T7 / R7: two drivers frame their own targets in an interleaved order, and a readback between those frames answers
+    // THE TARGET'S OWN last completed frame. The readback is a DEVICE verb (S7): its command machinery is the staging
+    // copy's own, so "which session framed last" cannot change what it reads.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    RenderFrameExecutor* const second = device->createSession();
+    ASSERT_NE(second, nullptr);
+    device->setDefaultContentProgram(redProgram());
+    second->setDefaultContentProgram(greenProgram());
+
+    const intrusive_ptr<Geometry>     geometry    = makeTriangle();
+    const intrusive_ptr<RenderTarget> own_target  = makeTarget(u8"readback_own");
+    const intrusive_ptr<RenderTarget> busy_target = makeTarget(u8"readback_other");
+
+    const std::size_t waits_before = device->retirementNumbers().device_waits;
+
+    constexpr int kRounds = 4;
+    for (int round = 0; round < kRounds; ++round) {
+        // BOTH DRIVERS FRAME BETWEEN THE OTHER'S READBACK, so a readback that answered "whatever was drawn last"
+        // would show the other driver's colour in every round.
+        const PresentOutcome first = backend->executeFrame(drawingFrame(own_target.get(), programlessDraw(geometry)), nullptr);
+        const PresentOutcome next  = second->executeFrame(drawingFrame(busy_target.get(), programlessDraw(geometry)), nullptr);
+        ASSERT_EQ(first, PresentOutcome::Skipped);
+        ASSERT_EQ(next, PresentOutcome::Skipped);
+
+        std::vector<std::uint8_t> own_pixels;
+        ASSERT_TRUE(backend->readColorBuffer(own_target.get(), 0, own_pixels)) << "round " << round;
+        const std::array<int, 4> own = centreOf(own_pixels);
+        EXPECT_GE(own[0], 254) << "round " << round << ": the own target lost its red";
+        EXPECT_LE(own[1], 1);
+        EXPECT_LE(own[2], 1);
+
+        std::vector<std::uint8_t> other_pixels;
+        ASSERT_TRUE(backend->readColorBuffer(busy_target.get(), 0, other_pixels)) << "round " << round;
+        const std::array<int, 4> other = centreOf(other_pixels);
+        EXPECT_GE(other[1], 254) << "round " << round << ": a readback answered another target's frame";
+        EXPECT_LE(other[0], 1);
+        EXPECT_LE(other[2], 1);
+    }
+
+    // EVERY READBACK IS ONE COUNTED DEVICE STOP (F7): the wait the verb takes for the frames in flight is the number.
+    EXPECT_EQ(device->retirementNumbers().device_waits, waits_before + 2U * kRounds)
+        << "a readback's wait for the frames in flight is not counted";
+
+    device->releaseSession(*second);
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, AReadbackFromInsideAFrameIsRefusedInsteadOfWaitingForIt)
+{
+    // A DIAGNOSTIC SINK RUNS INSIDE THE FRAME BODY. A readback there would wait for the frame it is itself inside -
+    // the deadlock the frame-body depth exists to name - so the verb answers `Failed` at once, touches no GPU state and
+    // touches no host vector. The frame then finishes: the refusal is an answer, not a stall.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+    const intrusive_ptr<ShaderProgram> program  = redProgram();
+    const intrusive_ptr<RenderTarget>  target   = makeTarget(u8"inside_read");
+
+    std::atomic<bool>            asked{ false };
+    std::atomic<bool>            refused{ false };
+    vn::graphics::ReadbackResult reason{ vn::graphics::ReadbackResult::Ok };
+    std::size_t                  handed{ 1234U };
+
+    backend->setDiagnosticSink([&](const vn::graphics::RenderDiagnostic& diagnostic) {
+        if (diagnostic.category != vn::graphics::DiagnosticCategory::ContentSkipped) {
+            return;
+        }
+        if (asked.exchange(true)) {
+            return; // only the first refusal asks
+        }
+        std::vector<std::uint8_t> pixels;
+        refused.store(!backend->readColorBuffer(target.get(), 0, pixels, &reason));
+        handed = pixels.size();
+    });
+
+    // ONE GOOD CALL (the target is built and the frame is inside its body) and one program-less call, whose refusal
+    // reaches the sink.
+    std::vector<DrawDescription> draws;
+    draws.push_back(programDraw(geometry, program));
+    draws.push_back(programlessDraw(geometry));
+    (void)backend->executeFrame(drawingFrameWith(target.get(), std::move(draws)), nullptr);
+
+    EXPECT_TRUE(asked.load()) << "the frame's refusal never reached the sink";
+    EXPECT_TRUE(refused.load()) << "a readback answered from inside the frame body (it should have been refused)";
+    EXPECT_EQ(reason, vn::graphics::ReadbackResult::Failed) << "the inside-frame refusal means the verb did not run";
+    EXPECT_EQ(handed, 0U) << "a refused readback must not touch the host's vector";
+
+    backend->setDiagnosticSink({});
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, AReadbackWaitsForTheFrameInFlightAndCountsTheWait)
+{
+    // F7: the readback waits for the frames in flight (that IS the completion evidence) and the wait is COUNTED. The
+    // frame is held inside its sink, so the readback below is beyond doubt waiting for it; the bounded future turns
+    // "did not wait" and "waited forever" into the same failure instead of a hang.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+    const intrusive_ptr<ShaderProgram> program  = redProgram();
+    const intrusive_ptr<RenderTarget>  target   = makeTarget(u8"waiting_read");
+
+    // THE TARGET IS BUILT AND PAINTED RED BEFORE THE HELD FRAME, so the pixels below say the held frame ran.
+    ASSERT_EQ(backend->executeFrame(drawingFrame(target.get(), programDraw(geometry, program)), nullptr), PresentOutcome::Skipped);
+
+    // THE SNAPSHOT COMES BEFORE THE FRAME IS HELD: retirementNumbers() is itself a host verb that waits for the frames
+    // in flight, so asking it from behind a held frame would wait for the sink below.
+    const std::size_t waits_before = device->retirementNumbers().device_waits;
+
+    std::atomic<bool> sink_entered{ false };
+    std::atomic<bool> release_done{ false };
+    backend->setDiagnosticSink([&](const vn::graphics::RenderDiagnostic& diagnostic) {
+        if (diagnostic.category != vn::graphics::DiagnosticCategory::ContentSkipped) {
+            return;
+        }
+        if (sink_entered.exchange(true)) {
+            return; // only the first refusal holds the frame
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!release_done.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    std::vector<DrawDescription> draws;
+    draws.push_back(programDraw(geometry, program));
+    draws.push_back(programlessDraw(geometry)); // the refusal that holds the frame
+    const FrameDescription blocked = drawingFrameWith(target.get(), std::move(draws));
+
+    std::thread blocker([&]() { (void)backend->executeFrame(blocked, nullptr); });
+    const auto  enter_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!sink_entered.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < enter_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(sink_entered.load()) << "the frame never reached its refusal";
+
+    std::promise<void>        read_done;
+    std::future<void>         read_future = read_done.get_future();
+    std::vector<std::uint8_t> pixels;
+    bool                      read_ok = false;
+    std::thread               reader([&]() {
+        read_ok = backend->readColorBuffer(target.get(), 0, pixels);
+        read_done.set_value();
+    });
+
+    // THE READBACK MUST STILL BE WAITING: a verb that returned while the frame is inside its body did not wait.
+    const std::future_status status = read_future.wait_for(std::chrono::milliseconds(150));
+
+    // ALWAYS UNBLOCK AND JOIN, whatever the deadline said: a test that returned here would leave a frame and a reader
+    // running against a device it is about to shut down.
+    release_done.store(true, std::memory_order_release);
+    blocker.join();
+    reader.join();
+
+    EXPECT_EQ(status, std::future_status::timeout) << "the readback did not wait for the frame in flight (F7)";
+    ASSERT_TRUE(read_ok) << "the readback failed after the frame it waited for ended";
+    const std::array<int, 4> centre = centreOf(pixels);
+    EXPECT_GE(centre[0], 254) << "the readback did not see the frame it waited for";
+    EXPECT_LE(centre[1], 1);
+
+    EXPECT_EQ(device->retirementNumbers().device_waits, waits_before + 1U)
+        << "the readback's wait is one counted device stop";
 
     backend->setDiagnosticSink({});
     backend->shutdown();

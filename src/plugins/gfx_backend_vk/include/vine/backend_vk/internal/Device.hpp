@@ -254,12 +254,19 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * - M1 answers the targets it built, as packed RGBA8 (the SDK's readback contract), and nothing else: another colour
      *   format, an attachment index above 0, a target it never saw or a target whose attachments are not built answer
      *   the matching `ReadbackResult` instead of a picture.
-     * - The copy is synchronous: one command buffer, one fence, the pixels the last frame left (the staging mechanism
-     *   itself is `ReadbackStaging` - this verb says WHAT to copy).
+     * - The copy is synchronous: one command buffer, one fence, the pixels the last frame left. THE MACHINERY IS THE
+     *   READBACK'S OWN (`ReadbackStaging`'s command pool and fence), so a readback never borrows a frame driver's
+     *   command buffer (C7 of `.ai/design/graphics-sessions.md`).
+     * - IT WAITS FOR THE FRAMES IN FLIGHT, AND THE WAIT IS COUNTED: with several drivers "between frames" is a moment
+     *   the device names for the host, and every readback is one stop in `RetirementNumbers::device_waits` (the same
+     *   witness the reference backend raises with its readback idle). A refusal answered without waiting does not.
+     * - REFUSED FROM INSIDE A FRAME: a diagnostic sink or hook that calls this while this device drives a frame
+     *   answers `Failed` instead of waiting for the frame it is itself inside; read from the host's own thread, after
+     *   the frame.
      *
      * @param target     Target to read (borrowed, may not be null).
      * @param attachment Colour attachment index; M1 serves 0.
-     * @param outPixels  Receives `width * height * 4` bytes on success.
+     * @param outPixels  Receives `width * height * 4` bytes on success (untouched on every refusal).
      * @param why        Receives why the read did not happen (Ok when it did), or null to ignore.
      * @return true when the pixels were read.
      */
@@ -273,7 +280,9 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *
      * @details
      * - The copy is synchronous, like readColorBuffer: one command buffer, one fence, the depths the last frame left,
-     *   as `width * height` floats in [0, 1], row-major (the staging mechanism is `ReadbackStaging`).
+     *   as `width * height` floats in [0, 1], row-major. It owns the command pool and fence it runs on, waits for the
+     *   frames in flight (one counted stop in `RetirementNumbers::device_waits`, like the colour readback) and is
+     *   refused with `Failed` when asked from inside a frame body.
      * - IT READS THE DEPTH PICTURE: a multisampled target's resolved single-sample image (see
      *   `TargetImages::depthPicture`), never the sample buffer - multisampling cannot change the depths a reader sees.
      * - WHICH FORMATS, from the SDK's own table (`core::depthReadbackOf`, the table `decodeDepth` reads): D16, D32 and

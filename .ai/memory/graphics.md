@@ -184,6 +184,19 @@
   第二帧返回后读 `sink_entered`，而被序列化的设备 5 s 后也会让它为真——判据必须由**停住的那一帧在临界区里**设置
   （“另一帧在我还没出来时完成了”）；③**多开帧先改时间线**：只改体闸不改 token，两个驱动者共用帧号，水位与 park 全部
   失去意义。
+- **S7 已落地（2026-11-16，T48 第七步：读回独立化）**：`ReadbackStaging` 现在拥有**自己的命令池与栅栏**（一次拷贝一套；对着
+  一次 GPU 往返，创建/销毁是噪声），读回不再借 `Session` 的命令池/栅栏（C7）。等待仍是设备的"帧之间"（体闸 EXCLUSIVE），
+  但**每次读回计一次** `deviceWaits()`（与参考后端的 `waitDeviceIdle` 同一个读数，G6）；**能在等待前回答的拒绝**（未知/未建
+  目标、越界附件、不支持格式、借用深度）在相位一回答、不停止设备；相位二在闸内重新解析（等闸期间帧可能重建目标）。
+  帧体内（sink/hook）调用读回答 `Failed`：`s_frame_depth`（`thread_local` 帧体深度，`FrameBodyDepth` RAII）把"等自己"
+  变成可回答的拒绝。**顺带修掉 S6c-2a 的外部同步缺口**：`vkQueueSubmit` 与 `vkDeviceWaitIdle` 现在过 `Impl::queue_submit`
+  （ADR 的硬约束表早写了提交锁，代码里却没有——两个驱动者同时提交是 Vulkan 外部同步违规；读回是第三个提交者，必须先补）。
+  证据：`VkMultiSessionTest` 新增 3 例（两驱动者交错画、穿插读回各得自己的最后一帧；读回在帧被 sink 停住时必须等待、
+  结束后读到该帧像素、计数 +1；帧体内读 `Failed` 且不碰宿主 vector）；变异 2/2 红（体闸改 SHARED ⇒ 等待用例红；去掉
+  `noteDeviceWait` ⇒ 计数断言红）。`test_vk` **133/133**（Debug）。三条教训：①**`retirementNumbers()` 本身是宿主动词**
+  （取体闸 EXCLUSIVE）——测试若在被停住的帧后面读计数，会先等到帧结束；快照要在停帧之前取；②**相位一的字段读是安全的**，
+  因为 `ensureTarget` 的整段体都持 `targets_mutex`（`built()`/`colorCount()`/格式只在 build/resize 时变），先确认这点再
+  在闸外读 `TargetImages`；③**加一个提交者先补提交锁**：`vkQueueSubmit` 的对象级外部同步不因"各自不同栅栏"而消失。
 - **S6c-1 已落地（2026-11-15，T48 第六步 c 的上半，帧首快照）**：设备缓存有了**唯一一把锁**（`ContentCaches::Lock`，
   不可重入；`Lock&` 参数把"我持锁"变成编译期证据），帧只在**帧首**取一次：`planCommand`/`planScreen`/`resolveTextures`
   把 pipeline、顶点/索引/实例 buffer 句柄、材质、纹理 view/sampler **按值**写进 `CommandPlan`/`ResolvedTextures`，

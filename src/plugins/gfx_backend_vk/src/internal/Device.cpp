@@ -115,6 +115,34 @@ namespace
 constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 
 /**
+ * @brief How many frame bodies the CALLING THREAD is inside (see FrameBodyDepth).
+ *
+ * @details
+ * - A FRAME CAN CALL BACK INTO THE DEVICE (a diagnostic sink, a content hook), and a HOST VERB started from there would
+ *   wait for the frame it is itself inside - a deadlock the body gate cannot see, because the same thread already
+ *   holds it. The readback verbs therefore answer `Failed` instead of waiting (see Device::readColorBuffer).
+ * - THREAD-LOCAL, because a frame body is: two drivers on two threads each count their own, and the host's thread never
+ *   sees a frame it did not start.
+ */
+thread_local std::uint32_t s_frame_depth{ 0 };
+
+/** @brief Marks the calling thread as inside a frame body while it lives (see s_frame_depth). */
+struct FrameBodyDepth {
+    FrameBodyDepth() noexcept
+    {
+        ++s_frame_depth;
+    }
+
+    ~FrameBodyDepth()
+    {
+        --s_frame_depth;
+    }
+
+    FrameBodyDepth(const FrameBodyDepth&)            = delete;
+    FrameBodyDepth& operator=(const FrameBodyDepth&) = delete;
+};
+
+/**
  * @brief How often the device clock is sampled: every Nth frame, starting with the first (see Impl::timestamps).
  *
  * @details
@@ -638,6 +666,15 @@ struct Device::Impl {
     ///   `clock.timeline()` happens inside it - the reference never escapes.
     mutable std::shared_mutex body_gate{};
     mutable std::mutex        clock_mutex{};
+    ///
+    /// THE QUEUE'S EXTERNAL SYNCHRONIZATION (Vulkan: host access to a `VkQueue` must be serialized). Two drivers submit
+    /// on two threads (S6c-2), and a readback submits from the host's - so every `vkQueueSubmit` and `vkDeviceWaitIdle`
+    /// in this file runs under this lock. It is held for the DRIVER CALL ONLY: the fence wait, where the time goes,
+    /// stays outside, which is what keeps two frames' device time overlapping.
+    ///
+    /// `vkQueuePresentKHR` is the one queue call that does not take it: a window frame holds `body_gate` EXCLUSIVELY, so
+    /// no other submitter can be inside while it presents (see executeFrame).
+    mutable std::mutex        queue_submit{};
     /// One report at a time at the host's sink: frames on two threads both report, and the sink is the host's.
     mutable std::mutex        report_mutex{};
     /// One map operation at a time on the built targets: two frame heads may build/snapshot different targets.
@@ -898,8 +935,11 @@ struct Device::Impl {
             }
         }
         // NO EVIDENCE, SO NO PARKING: the honest answer to "we cannot prove it" is to stop the device (and count it),
-        // never to guess a window that would destroy an object a submitted command buffer still names.
+        // never to guess a window that would destroy an object a submitted command buffer still names. The idle is a
+        // host call on every queue, so it takes the queue's external-synchronization lock (see queue_submit): a frame
+        // on another thread may be inside its submit right now (a release runs beside frames, R6).
         if (device != VK_NULL_HANDLE) {
+            const std::lock_guard<std::mutex> submit_held(queue_submit);
             (void)device_table.vkDeviceWaitIdle(device);
         }
         {
@@ -1184,6 +1224,10 @@ void Device::Session::closeFrameBooks(const ContentTotals& before, const vn::gra
 
 PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, PresentTarget* present_to)
 {
+    // THE CALLING THREAD IS INSIDE A FRAME BODY NOW (see s_frame_depth): a host verb it calls back into would wait for
+    // this frame, so the verbs that wait refuse instead (see Device::readColorBuffer).
+    const FrameBodyDepth frame_body{};
+
     // ONE FRAME AT A TIME PER DRIVER, AS A CHECKED FACT (see FrameGate): another thread waits here, and a frame started
     // from the thread that is ALREADY driving one is refused - a re-entrant frame would corrupt this driver's command
     // buffer and fence silently. The gate is the DRIVER's, so a second driver (step 2's `createSession()`) is not
@@ -1864,7 +1908,12 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
         submit.pSignalSemaphores    = &signal_semaphore;
     }
 
-    const VkResult submit_result = owner.device_table.vkQueueSubmit(owner.queue, 1U, &submit, completion);
+    const VkResult submit_result = [&]() {
+        // THE QUEUE IS EXTERNALLY SYNCHRONIZED (see Impl::queue_submit): another driver may be submitting on its own
+        // thread right now, and the lock is taken for the driver call only - the fence wait below stays outside it.
+        const std::lock_guard<std::mutex> submit_held(owner.queue_submit);
+        return owner.device_table.vkQueueSubmit(owner.queue, 1U, &submit, completion);
+    }();
     const bool     submitted     = submit_result == VK_SUCCESS;
     if (submitted) {
         ++books.progress.submitted;
@@ -1959,6 +2008,10 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
 {
     using vn::graphics::EngineNotReady;
     using vn::graphics::PrepareReport;
+
+    // THE CALLING THREAD IS INSIDE A FRAME BODY NOW (see s_frame_depth), exactly as in executeFrame: the batch this
+    // call may submit is frame work, and a host verb it called back into must refuse rather than wait for it.
+    const FrameBodyDepth frame_body{};
 
     // THE SAME GATE AS executeFrame, because a warm-up records and may submit a transfer batch of its own (see
     // ADR-2026-11-14): a warm-up racing a frame would share this driver's command pool. `Refused` carries no reason -
@@ -2195,7 +2248,11 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
             submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
             submit.commandBufferCount = 1U;
             submit.pCommandBuffers    = &batch;
-            const VkResult submit_result = owner.device_table.vkQueueSubmit(owner.queue, 1U, &submit, completion);
+            const VkResult submit_result = [&]() {
+                // THE QUEUE IS EXTERNALLY SYNCHRONIZED (see Impl::queue_submit): held for the driver call only.
+                const std::lock_guard<std::mutex> submit_held(owner.queue_submit);
+                return owner.device_table.vkQueueSubmit(owner.queue, 1U, &submit, completion);
+            }();
             const VkResult fence_result  = submit_result == VK_SUCCESS
                                                ? owner.device_table.vkWaitForFences(owner.device, 1U, &completion, VK_TRUE, UINT64_MAX)
                                                : submit_result;
@@ -3636,11 +3693,6 @@ vn::graphics::FrameReport Device::frameReport() const noexcept
 
 bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels, ReadbackResult* why)
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     const auto fail = [why](const ReadbackResult reason) {
         if (why != nullptr) {
             *why = reason;
@@ -3651,6 +3703,13 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     if (why != nullptr) {
         *why = ReadbackResult::Ok;
     }
+
+    // A READBACK ASKED FROM INSIDE A FRAME WOULD WAIT FOR THAT SAME FRAME (see s_frame_depth): it is refused, not
+    // hung. `Failed` says the verb did not run; a hook or a sink calling back into the device is a host protocol
+    // violation, not a device fact worth a report on the frame's diagnostic channel.
+    if (s_frame_depth != 0) {
+        return fail(ReadbackResult::Failed);
+    }
     if (!initialized()) {
         return fail(ReadbackResult::Failed);
     }
@@ -3658,6 +3717,40 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
         return fail(ReadbackResult::Invalid);
     }
 
+    // THE REFUSALS THAT NEED NO WAIT COME FIRST (the reference backend's rule, and the same answers): a target this
+    // device never built, an attachment that does not exist, a format the readback contract does not serve. A frame may
+    // rebuild the target while this verb waits below, so every answer is checked AGAIN under the gate - this pass only
+    // spares the device the stop.
+    {
+        const std::lock_guard<std::mutex> targets_held(impl->targets_mutex);
+        const auto found = impl->targets.find(target);
+        if (found == impl->targets.end() || !found->second->built()) {
+            return fail(ReadbackResult::NotReady);
+        }
+        if (attachment < 0 || static_cast<std::size_t>(attachment) >= found->second->colorCount()) {
+            return fail(ReadbackResult::Invalid);
+        }
+        if (found->second->colorFormat(static_cast<std::size_t>(attachment)) != VK_FORMAT_R8G8B8A8_UNORM) {
+            return fail(ReadbackResult::Unsupported);
+        }
+    }
+
+    // THE WAIT THE DEVICE NAMES FOR THE HOST, AND IT IS COUNTED (see Impl::body_gate): with several drivers, "between
+    // frames" is not a moment the host can see, so the gate says "no frame body runs while this verb runs" - it waits
+    // for the frames in flight, not for a session. THE COMMAND MACHINERY IS THE READBACK'S OWN (see ReadbackStaging):
+    // nothing here borrows a driver's command pool, fence or ring.
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    {
+        // ONE COUNTED DEVICE STOP per readback (F7): this is the counter the host reads, and the same counter the
+        // reference backend raises with its readback idle (G6). A refusal answered above never reaches this line.
+        const std::lock_guard<std::mutex> clock_held(impl->clock_mutex);
+        impl->retirement.noteDeviceWait();
+    }
+    if (!initialized()) {
+        return fail(ReadbackResult::Failed); // the device went down while this verb waited for the gate
+    }
+
+    // THE AUTHORITATIVE LOOK: the frames that ran while this verb waited may have rebuilt or replaced the target.
     const auto found = impl->targets.find(target);
     if (found == impl->targets.end() || !found->second->built()) {
         return fail(ReadbackResult::NotReady);
@@ -3673,13 +3766,14 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
         return fail(ReadbackResult::Unsupported);
     }
 
-    // THE COPY MECHANISM IS ReadbackStaging's (buffer, memory, command buffer, submit, wait, mapping); this function
-    // says WHAT to copy and what the bytes mean. The target's own layout state (color_sampled) is still this backend's
-    // knowledge, recorded below through the staging command buffer.
+    // THE COPY MECHANISM IS ReadbackStaging's (its own command pool and fence, the staging buffer, submit, wait,
+    // mapping); this function says WHAT to copy and what the bytes mean. The target's own layout state (color_sampled)
+    // is still this backend's knowledge, recorded below through the staging command buffer.
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(images.width()) * static_cast<VkDeviceSize>(images.height()) * 4U;
 
     ReadbackStaging staging;
-    const StagingRefusal opened = staging.open(impl->device_table, impl->device, impl->allocator, impl->session->command_pool, bytes);
+    const StagingRefusal opened =
+        staging.open(impl->device_table, impl->device, impl->allocator, impl->queue_family, bytes);
     if (opened == StagingRefusal::Unsupported) {
         return fail(ReadbackResult::Unsupported); // no host-visible coherent memory: this device cannot copy to the host
     }
@@ -3740,7 +3834,7 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
                                             1U,
                                             &to_attachment);
 
-    const StagingRun run = staging.run(impl->queue, impl->session->completion);
+    const StagingRun run = staging.run(impl->queue, impl->queue_submit);
     if (!run.ran()) {
         // The mechanism hands back the VkResults so the session-level fact is classified where every other queue call
         // is (see noteDeviceLost); the read itself answers Failed like any other failed transfer.
@@ -3762,11 +3856,6 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
 
 bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& outDepths, ReadbackResult* why)
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
     const auto fail = [why](const ReadbackResult reason) {
         if (why != nullptr) {
             *why = reason;
@@ -3777,6 +3866,12 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
     if (why != nullptr) {
         *why = ReadbackResult::Ok;
     }
+
+    // A READBACK ASKED FROM INSIDE A FRAME WOULD WAIT FOR THAT SAME FRAME (see s_frame_depth): refused, not hung (the
+    // colour readback says the same; `Failed` means the verb did not run).
+    if (s_frame_depth != 0) {
+        return fail(ReadbackResult::Failed);
+    }
     if (!initialized()) {
         return fail(ReadbackResult::Failed);
     }
@@ -3784,12 +3879,45 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
         return fail(ReadbackResult::Invalid);
     }
 
+    // THE REFUSALS THAT NEED NO WAIT COME FIRST, and every one of them is checked again under the gate below (a frame
+    // may rebuild the target while this verb waits). A BORROWED DEPTH IS READ THROUGH THE SOURCE (the SDK's rule, see
+    // RenderBackend::readDepthBuffer): the image belongs to the lender, and this target never promised it - so that
+    // refusal comes before any format question. D24 is Vulkan's COMBINED depth/stencil format with no plain depth
+    // copy, so it is refused rather than decoded into numbers that look like depths and are not (the same table the
+    // copy and the decoder use is the SDK's `depthReadbackOf`).
+    {
+        const std::lock_guard<std::mutex> targets_held(impl->targets_mutex);
+        const auto found = impl->targets.find(target);
+        if (found == impl->targets.end() || !found->second->built()) {
+            return fail(ReadbackResult::NotReady);
+        }
+        if (target->depthSource() != nullptr) {
+            return fail(ReadbackResult::Unsupported);
+        }
+        if (!found->second->hasDepth()) {
+            return fail(ReadbackResult::Invalid);
+        }
+        if (!depthReadbackOf(target->depthFormat()).readable) {
+            return fail(ReadbackResult::Unsupported);
+        }
+    }
+
+    // THE WAIT THE DEVICE NAMES FOR THE HOST, AND IT IS COUNTED, exactly as in readColorBuffer: the frames in flight
+    // are what the gate waits for, and the command machinery below is the readback's own (see ReadbackStaging).
+    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    {
+        const std::lock_guard<std::mutex> clock_held(impl->clock_mutex);
+        impl->retirement.noteDeviceWait();
+    }
+    if (!initialized()) {
+        return fail(ReadbackResult::Failed); // the device went down while this verb waited for the gate
+    }
+
+    // THE AUTHORITATIVE LOOK: the frames that ran while this verb waited may have rebuilt or replaced the target.
     const auto found = impl->targets.find(target);
     if (found == impl->targets.end() || !found->second->built()) {
         return fail(ReadbackResult::NotReady);
     }
-    // A BORROWED DEPTH IS READ THROUGH THE SOURCE (the SDK's rule, see RenderBackend::readDepthBuffer): the image
-    // belongs to the lender, and this target never promised it - so the refusal comes before any format question.
     if (target->depthSource() != nullptr) {
         return fail(ReadbackResult::Unsupported);
     }
@@ -3798,10 +3926,8 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
         return fail(ReadbackResult::Invalid); // no depth attachment at all: the request names nothing
     }
 
-    // ONE TABLE SAYS WHAT A DEPTH READBACK IS - the SDK's, the same one `decodeDepth` reads. D24 is Vulkan's COMBINED
-    // depth/stencil format with no plain depth copy, so it is refused here rather than decoded into numbers that
-    // look like depths and are not (the reference backend answers the same way, and the rule is why `depthReadbackOf`
-    // exists at all). The per-texel size below is the table's too, so the copy and the decoder cannot disagree.
+    // ONE TABLE SAYS WHAT A DEPTH READBACK IS - the SDK's, the same one `decodeDepth` reads. The per-texel size below
+    // is the table's too, so the copy and the decoder cannot disagree.
     const vn::graphics::backend::ReadbackFormat packed = depthReadbackOf(target->depthFormat());
     if (!packed.readable) {
         return fail(ReadbackResult::Unsupported);
@@ -3813,7 +3939,8 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
                                static_cast<VkDeviceSize>(packed.bytes_per_texel);
 
     ReadbackStaging staging;
-    const StagingRefusal opened = staging.open(impl->device_table, impl->device, impl->allocator, impl->session->command_pool, bytes);
+    const StagingRefusal opened =
+        staging.open(impl->device_table, impl->device, impl->allocator, impl->queue_family, bytes);
     if (opened == StagingRefusal::Unsupported) {
         return fail(ReadbackResult::Unsupported); // no host-visible coherent memory: this device cannot copy to the host
     }
@@ -3877,7 +4004,7 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
                                             1U,
                                             &to_attachment);
 
-    const StagingRun run = staging.run(impl->queue, impl->session->completion);
+    const StagingRun run = staging.run(impl->queue, impl->queue_submit);
     if (!run.ran()) {
         // The mechanism hands back the VkResults so the session-level fact is classified where every other queue call
         // is (see noteDeviceLost); the read itself answers Failed like any other failed transfer.

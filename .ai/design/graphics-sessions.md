@@ -1,7 +1,8 @@
 # 设备是池、会话拥有帧：类型、所有权、并发规则与迁移
 
-> **状态**：草案（`T47` 已落地；`T48` 进行中——S1 / S2a / S2b / S3 已落地，S4–S9 未做）
-> **最后核对**：2026-11-15
+> **状态**：实施中（`T47` 已落地；`T48` 进行中——S1 / S2a / S2b / S3 / S4 / S5 / S6a / S6b /
+> S6c-1 / S6c-2a / S6c-2b / S7 已落地，S8–S9 未做）
+> **最后核对**：2026-11-16
 > **范围**：一个 `RenderDevice` 被多个引擎借用时，"共享什么、谁拥有帧、怎么并发、怎么退休、怎么迁移"
 > 的**实施形状**；契约的**为什么**在 ADR，线程模型的**现在**在 `graphics-threading.md`。
 > **权威来源**：`RenderDevice.hpp` / `RenderFrameExecutor.hpp` / `RenderBackend.hpp`（契约）、
@@ -215,13 +216,13 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 
 | # | 功能 | 行为 | 状态 |
 |---|---|---|---|
-| F1 | 会话类型与创建 | 设备拥有会话；`createSession()` 借出，默认答 `&executor()` | **已落地（S6a+S6b）**：SDK 默认接缝 + 引擎持有；vk 真的多发驱动者（各自命令池/栅栏/暂存/默认程序）。设备今天**串行化帧体**，时间重叠见 S6c |
-| F2 | 每会话帧机器 | 命令池 / 栅栏 / 时间戳池 / 帧账 / 帧闸按会话各一份 | 未做 |
-| F3 | 设备缓存 + 帧首快照 | 缓存只在帧首读一次，记录路径零锁 | **部分（S3）**：缓存与帧暂存已分家（`ContentCaches` / `FrameScratch`）；帧首快照与锁计数随 S4 的第一个第二读者 |
-| F4 | 驻留三态 | `Absent → Uploading → Resident`，发布或撤回，竞争即复制 | **部分（S4）**：状态机 + 8 条单元用例已落地（两个 session id 模拟两会话）；设备接线（`ensureGeometry` 走 `admit`）随 S6 |
-| F5 | 目标 claim | 一帧一 claim，冲突只跳过那个 pass | **部分（S5）**：`TargetClaims` 租约 + 帧/预热的接线已落地；两会话冲突的报告实践由单元 + 设备用例验证，公开 `createSession()` 随 S6 |
-| F6 | 跨会话退休 | vk 采用 `DeviceClock` + `RetirementQueue`；释放可在别人 frame 时调用 | **部分（S1 已落地）**：时钟 / park 队列 / 水位 / 清结已在树上，仍只有一个会话 |
-| F7 | 设备级读回 | 自己的池与栅栏，拷贝前等设备水位，计入 `deviceWaits()` | 未做（today 借帧栅栏） |
+| F1 | 会话类型与创建 | 设备拥有会话；`createSession()` 借出，默认答 `&executor()` | **已落地（S6a+S6b）**：SDK 默认接缝 + 引擎持有；vk 真的多发驱动者（各自命令池/栅栏/暂存/默认程序），**帧体真并行**（S6c-2a），窗口帧独占体闸 |
+| F2 | 每会话帧机器 | 命令池 / 栅栏 / 时间戳池 / 帧账 / 帧闸按会话各一份 | **已落地（S2a+S2b）**：`Device::Session` 拥有帧机器与帧体，`Device` 只转发 |
+| F3 | 设备缓存 + 帧首快照 | 缓存只在帧首读一次，记录路径零锁 | **已落地（S3 + S6c-1）**：`ContentCaches` / `FrameScratch` 分家；计划按值；观察点 `contentCacheCounters().cache_lock_acquisitions`（整帧固定 4 次） |
+| F4 | 驻留三态 | `Absent → Uploading → Resident`，发布或撤回，竞争即复制 | **部分（S4）**：状态机 + 8 条单元用例已落地；**设备接线仍未做**（见 §2.17、§9.2）——同一内容的并发首次构建仍在缓存锁上串行 |
+| F5 | 目标 claim | 一帧一 claim，冲突只跳过那个 pass | **已落地（S5 + S6b）**：`TargetClaims` 租约 + 帧/预热接线；公开 `createSession()` 之后两会话冲突真的会发生（只跳该 pass，报 `vk.target.claim_conflict`） |
+| F6 | 跨会话退休 | vk 采用 `DeviceClock` + `RetirementQueue`；释放可在别人 frame 时调用 | **已落地（S1 + S6c-2b）**：时钟 / park 队列 / 水位 / 开帧规则都在树上；释放不等帧（R6） |
+| F7 | 设备级读回 | 自己的池与栅栏，拷贝前等设备水位，计入 `deviceWaits()` | **已落地（S7）**：`ReadbackStaging` 自带命令池与栅栏；等待 = 体闸的"帧之间"，每次读回计一次 `deviceWaits()`；帧体内调用答 `Failed`（见 §3.1.7） |
 | F8 | 默认内容程序归会话 | 会话上可设；设备级只服务直接调用方；单会话后端行为不变 | **已落地（S6a+S6b）**：声明在 `RenderFrameExecutor`；vk 的每个 `Session` 各持一份，两驱动者各画各的（T8 用例） |
 | F9 | vsg 的对应落地 | 收集暂存搬进会话；缓存加锁/快照；完成证据已有 | 部分（窗口会话已有） |
 | F10 | 契约与文档收口 | `C21` / `N18` 改写、三处头文件文本、ADR 状态、审计行 | 部分（T47 改了三处文本） |
@@ -267,8 +268,9 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 `admit(key, session)` 答 `Use` / `Build`（带 move-only 的 `Claim`）/ `Copy(owner)`；`Claim::publish()` 是 owner
 “填充已完成”的声明，`Claim` 析构时未决议的条目退回 `Absent`（规则 3 由类型强制，不靠调用点记得）；
 token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的老 claim 不可能把条目复活。
-**未接线**：`ContentCaches::ensureGeometry` 仍走原来的路径，S6 引入会话 id 后才把 `admit` 接进去——
-半接的状态机比没接更糟（`D8`），而状态机自身的验收（T4 的机器半）不依赖设备。
+**未接线（截至 2026-11-16）**：`ContentCaches::ensureGeometry` 仍走原来的路径——S6 引入会话 id 之后仍未把 `admit`
+接进去（半接的状态机比没接更糟，`D8`；状态机自身的验收不依赖设备）。今天的后果是：两个驱动者首次同时构建同一份
+内容时在**缓存锁上串行**（不是等待对方的帧）。触发接线：真实宿主"一边编辑一边烘焙"让 miss 进入帧预算。
 
 ### 3.1.5 F5 目标 claim
 
@@ -303,6 +305,22 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 - **要求**（R7）：读回在两会话各跑若干帧之后，读到的是**最新已完成**的那一帧（与今天单会话语义一致）。
 - **验收**（T7）：两会话交替画不同目标、穿插读回 ⇒ 每张图都是它自己最后一次完成的帧。
 - **注意**（P7）：读回是"最慢的动词"，别把它放进帧预算；它的等待要可观测。
+
+**S7 落地（2026-11-16）**：
+
+- **自己的机器**：`ReadbackStaging` 现在拥有**自己的命令池与栅栏**（一次拷贝一套；创建/销毁对着一次 GPU 往返是
+  噪声，`G10`），读回路径不再碰 `Session` 的命令池与栅栏（C7 结构性成立）。
+- **等待是设备的"帧之间"**：以体闸 EXCLUSIVE 表达——它在墙上仍等**在飞的帧**（这就是完成证据），但那不是某个
+  会话的机器；**每次读回计一次** `deviceWaits()`，与参考后端的 `waitDeviceIdle` 同一个读数（`G6`）。
+- **拒绝不停止设备**：能在等待前回答的拒绝（未知/未建目标、越界附件、不支持的格式、借用深度）在相位一回答；
+  相位二在闸内**重新解析**，因为等闸期间帧可能重建或替换了目标。
+- **帧体内的调用**：诊断 sink / hook 在帧体里回调本设备时，读回答 `Failed` 而不是等自己——`FrameBodyDepth`
+  （线程内帧体深度）把这类死锁变成可回答的拒绝；`Device.hpp` 写明了这条契约。
+- **顺带修掉的外部同步缺口**：`vkQueueSubmit` / `vkDeviceWaitIdle` 现在过设备的 `queue_submit` 锁（ADR 的硬
+  约束表早就写了"提交锁"，S6c-2a 的代码里没有——两驱动者同时提交是 Vulkan 的外部同步违规）。
+- **证据**：`VkMultiSessionTest` 新增 3 例——两个驱动者交替画、穿插读回各自都是自己的最后一帧（T7）；读回在
+  帧被 sink 停住时必须**等待**，结束读到该帧像素，计数 +1；帧体内读回答 `Failed` 且不碰宿主 vector。变异：
+  体闸改回 SHARED ⇒ 等待用例红；去掉计数 ⇒ 计数断言红。
 
 ### 3.1.8 F8 默认内容程序归会话
 
@@ -518,8 +536,8 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 - **已落地**：`T48` 的 **S4**——`internal/ResidenceTable.hpp`：一条键一条条目，`admit` 答 `Use` / `Build`
   （move-only `Claim`）/ `Copy(owner)`；`Claim::publish()` 是 owner 的"填充已完成"声明，析构时未决议的条目退回
   `Absent`；token 单调不复用，`forget` 之后的老 claim 无法复活。`ResidenceTableTest` **8 例**（含 8 线程抢一键
-  恰一个 `Build`），变异 2/2 红（去掉析构撤回 / 去掉 token 比较）。`test_vk` 111/111。**设备接线随 S6**：现在没有
-  会话 id 可传，半接的状态机比没接更糟（`D8`）。
+  恰一个 `Build`），变异 2/2 红（去掉析构撤回 / 去掉 token 比较）。`test_vk` 111/111。**设备接线仍未做**（截至
+  2026-11-16）：先造机器再接线，而不是半接（`D8`）；见 §3.1.4 与 §9.2。
 - **已落地**：`T48` 的 **S5**——`internal/TargetClaims.hpp`：设备持 `RenderTarget* → SessionId`；`begin(session)`
   发帧作用域 `Lease`，`claim` 冲突答 false、析构释放（`P3`）；`executeFrame` / `prepareFrame` 在 `ensure_target`
   之前 claim，冲突只跳该 pass 并报 `vk.target.claim_conflict`（每（目标, 情节）一条）。`TargetClaimsTest` 7 例 +
@@ -551,12 +569,20 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   另一驱动者的帧必须整帧完成；变异回独占闸 ⇒ 红。`test_vk` **129/129**（ASan PASS）、`test_vsg` 557、`test_graphics` 587。
 - **已落地**：`T48` 的 **S6c-2b（R6 / T6）**——释放不再等帧（`releaseContent` ×3 与 `releaseRenderTarget` 只等一次缓存操作）；
   目标条目共享所有权使“已经解析它的帧”在释放后仍有一个有效指针；park 与水位的开帧规则保证对象不被提前销毁。见 §9.3 的 S6c-2b 行。
-- **未做**：`T48` 的 S7–S9（读回独立、vsg 的 F9、F10 收口 + TSan）。
+- **已落地**：`T48` 的 **S7（读回独立化）**——`ReadbackStaging` 自带命令池与栅栏（C7），等待 = 体闸的“帧之间”且
+  **每次读回计一次** `deviceWaits()`（与参考后端的读数一致，G6）；等待前可回答的拒绝不停止设备；帧体内读答
+  `Failed`（`FrameBodyDepth`）。**顺带修掉 S6c-2a 的外部同步缺口**：`vkQueueSubmit` / `vkDeviceWaitIdle` 过设备的
+  `queue_submit` 锁。`test_vk` **133/133**，变异 2/2 红（体闸改 SHARED ⇒ 等待用例红；去掉计数 ⇒ 计数断言红）。
+- **未做**：`T48` 的 S8–S9（vsg 的 F9、F10 收口 + TSan）。
 - **一处更正**：ADR 说"vsg 更接近"，准确说法是"vsg 的**窗口**会话已就位，**帧驱动者**仍是设备级单例"
   （§2.1）。这不改变结论，只改变迁移表的分工。
 
 ### 9.2 已知缺口 / 待办
 
+- **F4 的设备接线（`ResidenceTable::admit` 进 `ensureGeometry`）仍未做**：状态机与它的用例在树上，缓存仍走原路径。
+  今天两个驱动者首次同时构建同一内容时**在缓存锁上串行**（不是等待对方的帧）；触发条件是一个真实宿主的
+  "一边编辑一边烘焙"让 miss 进入帧预算。接线形状见 §3.1.4（`Build` 留下的 `Claim` 在条目建成后 `publish`，竞争
+  者拿 `Copy` 建临时副本）。
 - `DeviceClock::WindowId` 的命名（`D7`）；`SessionId` 先做别名。
 - **T3 已落地（按准确形式）**：S3 只做结构性拆分；S6c-1 让记录路径真的不取锁，计数器是 `
   contentCacheCounters().cache_lock_acquisitions`，用例是 `VkFrameHeadTest`。整帧 4 次（帧首 1 + 数簿 2 + 帧尾 1），
@@ -617,6 +643,7 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   释放该帧已解析的程序/几何与一个已建目标，释放必须在 2 s 内返回；帧随后仍用解析出的句柄画完，`device_waits` 不涨、park 尚未放行。
   变异（把体闸加回 `releaseContent`）⇒ 2 s 超时后红。`test_vk` **130/130**（ASan PASS）。 | T6 | 中 |
 | S7 | F7 读回独立化 | T7 | 低 |
+| S7 | **已落地 2026-11-16**：`ReadbackStaging` 拥有自己的命令池与栅栏（C7 结构性成立）；等待是设备的\"帧之间\"\n  （体闸 EXCLUSIVE）且**每次读回计一次** `deviceWaits()`；等待前可回答的拒绝不停止设备；帧体内读答 `Failed`\n  （`FrameBodyDepth`）；`vkQueueSubmit` / `vkDeviceWaitIdle` 补上 ADR 早就写明的提交锁。`VkMultiSessionTest`\n  新增 3 例（交错读回各自最后一帧、等待并计数、帧体内拒绝），变异 2/2 红；`test_vk` **133/133** | T7（两会话） | 低 |
 | S8 | vsg 的 F9（搬收集暂存 + 缓存加锁/快照） | T9 | 中 |
 | S9 | F10 收口 + TSan + 文档 | T11、T12 | 低 |
 

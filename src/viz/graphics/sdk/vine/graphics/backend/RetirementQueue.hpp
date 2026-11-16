@@ -117,17 +117,20 @@ class VN_GRAPHICS_API RetirementQueue {
     /** @brief Gets how many objects have been released. */
     [[nodiscard]] std::size_t released() const noexcept;
 
-    /** @brief Gets how many counted device idles have been taken.
+    /** @brief Gets how many counted device waits have been taken.
      *
      * @details
      * - The judge of the "no device wait on a frame-assembly path" invariant: this queue exists to avoid those waits,
      *   so a frame that raises it is doing the thing the queue was built to prevent.
+     * - Host verbs that must stop the device count here too: an unreleasable object (see the file note), and a
+     *   readback waiting for the frames in flight - "the host stopped the device" has one number wherever it happened.
      */
     [[nodiscard]] std::size_t deviceWaits() const noexcept;
 
-    /** @brief Records that the device was idled.
+    /** @brief Records that the device was waited for.
      *
-     * Called by the destructive paths (session teardown, target release) - never by parking.
+     * Called by the destructive paths (session teardown, target release) and by a readback's wait for the frames in
+     * flight - never by parking, and never on a frame-assembly path.
      */
     void noteDeviceWait() noexcept;
 
