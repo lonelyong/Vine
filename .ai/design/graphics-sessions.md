@@ -1,7 +1,7 @@
 # 设备是池、会话拥有帧：类型、所有权、并发规则与迁移
 
 > **状态**：实施中（`T47` 已落地；`T48` 进行中——S1 / S2a / S2b / S3 / S4 / S5 / S6a / S6b /
-> S6c-1 / S6c-2a / S6c-2b / S7 / S8a / S8b / S8c-1 / S8c-2 / S9 已落地）
+> S6c-1 / S6c-2a / S6c-2b / S7 / S8a / S8b / S8c-1 / S8c-2 / S9 / F4 接线已落地）
 > **最后核对**：2026-11-16
 > **范围**：一个 `RenderDevice` 被多个引擎借用时，"共享什么、谁拥有帧、怎么并发、怎么退休、怎么迁移"
 > 的**实施形状**；契约的**为什么**在 ADR，线程模型的**现在**在 `graphics-threading.md`。
@@ -9,7 +9,7 @@
 > `backend/FrameGate.hpp` / `backend/DeviceClock.hpp` / `backend/RetirementQueue.hpp`（机制）、
 > `src/plugins/gfx_backend_vk/src/internal/Device.cpp` 与 `ContentDraw.cpp`（今天的设备级帧机器）、
 > `src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp`（已经是"设备 + 每窗口"的那一半）。
-> **待办**：`../backlog/graphics.md` 的 `T48`
+> **待办**：无未落地的会话迁移步骤；触发型工作见 §9.2 与 `../backlog/graphics.md`
 
 ## 1. 概要设计
 
@@ -108,10 +108,10 @@ miss"两处协调。
 ### 2.4 驻留三态：发布或撤回，竞争即复制（`G3` / `G4`）
 
 ```
-Absent ──快照 miss，持锁发布──▶ Uploading(owner, token)
+Absent ──帧首 miss，claim 赢得──▶ Uploading(owner, token)
                                    │  owner 的帧完成（今天：executeFrame 返回已 wait 过栅栏）
-                                   ├──▶ Resident          （发布）
-                                   └──▶ Absent            （撤回：帧失败/取消，见下）
+                                   ├──▶ Resident          （发布：FrameBuilds::publishAll）
+                                   └──▶ Absent            （撤回：填充失败/帧失败，由守卫完成）
 Resident ──releaseContent──▶ Retiring(epoch) ──设备水位 ≥ epoch──▶ 释放
 ```
 
@@ -124,10 +124,16 @@ Resident ──releaseContent──▶ Retiring(epoch) ──设备水位 ≥ ep
 3. **发布或撤回，二者必居其一**：owner 在帧尾用作用域守卫把本帧建的条目**全部**置为 `Resident` 或
    全部置回 `Absent`。没有第三条路——挂在 `Uploading` 的条目会让**所有**会话永远 miss（`P1`）。
 
-竞争（另一个会话在快照里看到 `Uploading`）：**建一份不发布的临时副本**，本次帧用完即弃。
+竞争（另一个会话在帧首看到 `Uploading`）：**建一份不发布的临时副本**，本次帧用完即弃。
 `P2` 说明为什么不是"等"：等待是唯一能把两个会话**互相锁死**的形状；复制是有界的（每个身份至多
 `N−1` 份，且只在"两个引擎第一次同时画它"的那一帧）。`prepare()` 在加载期就把它做掉了，真实宿主通常
 一次都碰不到。
+
+**已落地（F4，2026-11-16）**：三条规则由 `ContentCaches::ensureGeometry` + `ContentCaches::FrameBuilds` 强制，
+而不是靠调用点自觉。帧首问表、按答案分流（`Use` 用缓存条目并补上释放打出的洞 / `Build` 填充并留下 claim /
+`Copy` 建本帧专用副本）；`publishAll()` 只在帧栅栏 wait 过后发布本帧持有的 claim，失败的填充从不登记、由守卫退回 `Absent`；
+析构把未发出的 claim 与副本一并收拾。两个驱动者的**帧首解析**仍在缓存的一把锁上（`C3` 管的是记录路径），
+接线决定的是"谁能建、谁复制"。
 
 ### 2.5 目标 claim：一帧一 claim，冲突只跳过那个 pass（`G6`）
 
@@ -225,7 +231,7 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 | F1 | 会话类型与创建 | 设备拥有会话；`createSession()` 借出，默认答 `&executor()` | **已落地（S6a+S6b）**：SDK 默认接缝 + 引擎持有；vk 真的多发驱动者（各自命令池/栅栏/暂存/默认程序），**帧体真并行**（S6c-2a），窗口帧独占体闸 |
 | F2 | 每会话帧机器 | 命令池 / 栅栏 / 时间戳池 / 帧账 / 帧闸按会话各一份 | **已落地（S2a+S2b）**：`Device::Session` 拥有帧机器与帧体，`Device` 只转发 |
 | F3 | 设备缓存 + 帧首快照 | 缓存只在帧首读一次，记录路径零锁 | **已落地（S3 + S6c-1）**：`ContentCaches` / `FrameScratch` 分家；计划按值；观察点 `contentCacheCounters().cache_lock_acquisitions`（整帧固定 4 次） |
-| F4 | 驻留三态 | `Absent → Uploading → Resident`，发布或撤回，竞争即复制 | **部分（S4）**：状态机 + 8 条单元用例已落地；**设备接线仍未做**（见 §2.17、§9.2）——同一内容的并发首次构建仍在缓存锁上串行 |
+| F4 | 驻留三态 | `Absent → Uploading → Resident`，发布或撤回，竞争即复制 | **已落地（S4 + F4 接线，2026-11-16）**：状态机 + 8 条单元用例；`ensureGeometry` 问表（`Use`/`Build`/`Copy`），`FrameBuilds` 在帧完成时发布、竞争的帧建临时副本、失败与释放各有归属（见 §3.1.4） |
 | F5 | 目标 claim | 一帧一 claim，冲突只跳过那个 pass | **已落地（S5 + S6b）**：`TargetClaims` 租约 + 帧/预热接线；公开 `createSession()` 之后两会话冲突真的会发生（只跳该 pass，报 `vk.target.claim_conflict`） |
 | F6 | 跨会话退休 | vk 采用 `DeviceClock` + `RetirementQueue`；释放可在别人 frame 时调用 | **已落地（S1 + S6c-2b）**：时钟 / park 队列 / 水位 / 开帧规则都在树上；释放不等帧（R6） |
 | F7 | 设备级读回 | 自己的池与栅栏，拷贝前等设备水位，计入 `deviceWaits()` | **已落地（S7）**：`ReadbackStaging` 自带命令池与栅栏；等待 = 体闸的"帧之间"，每次读回计一次 `deviceWaits()`；帧体内调用答 `Failed`（见 §3.1.7） |
@@ -274,9 +280,19 @@ virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program
 `admit(key, session)` 答 `Use` / `Build`（带 move-only 的 `Claim`）/ `Copy(owner)`；`Claim::publish()` 是 owner
 “填充已完成”的声明，`Claim` 析构时未决议的条目退回 `Absent`（规则 3 由类型强制，不靠调用点记得）；
 token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的老 claim 不可能把条目复活。
-**未接线（截至 2026-11-16）**：`ContentCaches::ensureGeometry` 仍走原来的路径——S6 引入会话 id 之后仍未把 `admit`
-接进去（半接的状态机比没接更糟，`D8`；状态机自身的验收不依赖设备）。今天的后果是：两个驱动者首次同时构建同一份
-内容时在**缓存锁上串行**（不是等待对方的帧）。触发接线：真实宿主"一边编辑一边烘焙"让 miss 进入帧预算。
+**F4 接线落地（2026-11-16）**：`ContentCaches::ensureGeometry` 先问表再上传——`Use` 用缓存条目（顺带补上
+`releaseStreams` 打出的洞），`Build` 填充缓存条目、把 `Claim` 交给本帧的 `ContentCaches::FrameBuilds`，`Copy` 在表外
+建一份**脱钩**几何只服务本帧。`FrameBuilds` 是帧作用域的值：`publishAll()` 在**帧栅栏 wait 过之后**发布可用的填充
+（失败的填充**从不登记 claim**：失败处就让守卫把它退回 `Absent`，`Resident` 不能被一次失败的填充取得），析构把未发布的 claim 撤回、把临时副本
+**立即销毁**（副本从不进表，只有本帧能命名它，而本帧已结束；它的上传计入 `stream_builds`，销毁不是释放，不计
+`stream_releases`）。预热的发布点是它那次只含传输的提交返回；`releaseGeometry` 同时 `forget` 键，`destroy` 清表。
+**证据**：`VkResidenceWireTest` 4 例——假租约下的一帧复制且像素正确（恰好两条流、`used_bytes` 回位）、真两会话
+两线程首画同一几何（claims 1 / published 1 / copies ≤ 1 / 两图红 / 随后帧零上传）、失败的填充被撤回（`uploading 0`、
+`stateOf == Absent`、不报 Resident）、释放后键可再建；变异 3/3 红（不问表 ⇒ 4 例红；发布失败的填充 ⇒ 撤回用例红；
+释放不 forget ⇒ 释放用例红）。
+**仍是的边界**：两个驱动者的帧首解析仍在缓存的一把锁上（`C3` 要的是记录路径零锁）；今天 vk 的填充是主机可见
+memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将来把上传搬到设备本地（M6）时，发布点仍是同一个
+`publishAll`，只是证据换成栅栏。
 
 ### 3.1.5 F5 目标 claim
 
@@ -444,6 +460,7 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 | `ContentCaches` | programs / geometries / pipelines / 布局 / 图像 / 分配器 + 一把独占锁 | 从 `ContentDraw` 拆出 |
 | `FrameScratch` | 环 / 描述符池 / set 表 / `FrameSnapshot` | 从 `ContentDraw` 拆出 |
 | `ResidenceTable` | 三态 + 发布/撤回/退休 | 复用 `RetirementQueue` 的 epoch 语义 |
+| `ContentCaches::FrameBuilds` | 一帧的容纳结果：`Use` 命中、`Build` 的 claim、`Copy` 的临时副本 | 帧作用域值；`publishAll` 在帧完成后调用，析构收拾其余 |
 | `TargetClaims` | 目标 → 会话；try-claim / release | 冲突报一条，按 (目标, episode) 去重 |
 
 ## 5. 约束、要求与不变量
@@ -574,7 +591,7 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 | T1 | 单会话后端行为零变化 | `build/bin/test_graphics`、`test_vsg`（默认 `createSession`） |
 | T2 | `test_vk` 在"只有一个会话"的树上全绿 | `build/bin/test_vk` |
 | T3 | 记录路径的缓存锁为 0；整帧获取次数**不随 draw 数增长**（实测 4：帧首 1 + 数簿 2 + 帧尾 1） | `test_vk` `VkFrameHeadTest.AFramesCacheWorkDoesNotGrowWithItsDrawingCalls`（1 条 vs 6 条命令；变异 6 → 10 红） |
-| T4 | 两会话同时首画同一几何：不崩、两图都对、上传 ≤ 2 | `test_vk` 新用例 + 变异（去掉撤回 ⇒ 红） |
+| T4 | 两会话同时首画同一几何：不崩、两图都对、上传 ≤ 2 | `test_vk` `VkResidenceWireTest.TwoDriversFirstDrawingOneGeometryShareOneEntryAndAtMostOneCopy`（真两会话两线程：claims 1 / published 1 / copies ≤ 1 / 两图红 / 随后帧零上传）、`AKeyAnotherDriverIsFillingIsCopiedForThisFrameAndDiscarded`（假租约：复制、恰好两条流、`used_bytes` 回位）、`ARefusedBuildIsWithdrawnInsteadOfPublished`、`AReleasedGeometryIsForgottenSoTheNextFrameMayBuildItAgain`；变异 3/3 红（不问表 / 发布失败的填充 / 释放不 forget） |
 | T5 | 两会话画同一目标：一个 pass 被跳过 + 一条报告 | `test_vk` 新用例 |
 | T6 | 释放与在飞帧重叠：释放不等到帧结束，帧仍用已解析的句柄完成，对象 park 到水位，`deviceWaits()` 不涨 |
   `VkMultiSessionTest.AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroyWhatItUses`（变异：释放重新取体闸 ⇒ 红） |
@@ -672,19 +689,24 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
   证据：`test_vsg` **562/562**（+`ARecordingFrameDoesNotStopAnotherDriversContent`：一帧被停在**录制**里时另一驱动者的
   整帧完成且被停帧的像素仍是自己的；变异：三相位改回 S8c-1 的单锁 ⇒ 5 s 超时红）、对拍 13/13、TSan vsg 子集 0 报告、
   ASan 新路径 PASS。`C3` 对 vsg 自这一步起成立。
+- **已落地**：`T48` 的最后一块 **F4（驻留三态的接线）**——`ContentCaches::ensureGeometry` 先问 `ResidenceTable`
+  再上传：`Use` 用缓存条目（顺带补 `releaseStreams` 打出的洞）、`Build` 填充并把 claim 交给本帧的
+  `ContentCaches::FrameBuilds`、`Copy` 建一份本帧专用的临时几何。`publishAll()` 在帧栅栏 wait 过之后发布本帧持有的 claim，
+  失败的填充从不登记、由守卫退回 `Absent`；副本在帧结束时立即销毁（不进表，不计 release）。预热在自己的传输提交
+  返回时发布；`releaseGeometry` 顺带 `forget` 键。证据：`test_vk` **137/137**（+`VkResidenceWireTest` 4 例：假租约
+  复制并丢弃、真两会话两线程 claims 1 / published 1 / copies ≤ 1 且随后零上传、失败的填充被撤回、释放后键可再建）、
+  TSan 0 报告（132/132，窗口/探针/插件用例按既往规则排除）、ASan 新路径 PASS；变异 3/3 红（不问表 ⇒ 4 例红、
+  发布失败填充 ⇒ 撤回用例红、释放不 forget ⇒ 释放用例红）。
 - **一处更正**：ADR 说"vsg 更接近"，准确说法是"vsg 的**窗口**会话已就位，**帧驱动者**仍是设备级单例"
   （§2.1）。这不改变结论，只改变迁移表的分工。
 
 ### 9.2 已知缺口 / 待办
 
-- **F4 的设备接线（`ResidenceTable::admit` 进 `ensureGeometry`）仍未做**：状态机与它的用例在树上，缓存仍走原路径。
-  今天两个驱动者首次同时构建同一内容时**在缓存锁上串行**（不是等待对方的帧）；触发条件是一个真实宿主的
-  "一边编辑一边烘焙"让 miss 进入帧预算。接线形状见 §3.1.4（`Build` 留下的 `Claim` 在条目建成后 `publish`，竞争
-  者拿 `Copy` 建临时副本）。
 - `DeviceClock::WindowId` 的命名（`D7`）；`SessionId` 先做别名。
 - **T3 已落地（按准确形式）**：S3 只做结构性拆分；S6c-1 让记录路径真的不取锁，计数器是 `
   contentCacheCounters().cache_lock_acquisitions`，用例是 `VkFrameHeadTest`。整帧 4 次（帧首 1 + 数簿 2 + 帧尾 1），
   旧的“稳态帧 0 次”指的是记录路径（见 §2.3 与 §8 T3 的订正）。
+
 ### 9.3 兼容性 / 迁移
 
 **原则：每一步都让树保持绿，每一步都能单独回滚。** 顺序按"先造机制、后公开形状"排。
@@ -703,8 +725,9 @@ token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的�
 | S4 | **已落地 2026-11-15**：`internal/ResidenceTable.hpp/.cpp`——`admit` 答 `Use`/`Build`/`Copy`，move-only
   `Claim` 发布或撤回，token 单调且不复用（`forget` 后的老 claim 不能复活）；`Numbers` 见证 `claims` /
   `published` / `withdrawn` / `copies` / `stale` / `uploading`。`ResidenceTableTest` **8 例**（含 8 线程抢一键：
-  恰一个 `Build`）；变异 2/2 红（去掉析构撤回 / 去掉 token 比较）。**未接线**：`ContentCaches::ensureGeometry`
-  仍走原路径，S6 接入会话 id 时切换 | T4（机器半） | 低 |
+  恰一个 `Build`）；变异 2/2 红（去掉析构撤回 / 去掉 token 比较）。**接线已落地 2026-11-16（F4）**：`ensureGeometry`
+  问表，`FrameBuilds` 在帧完成时发布、竞争建临时副本、释放 forget；`VkResidenceWireTest` 4 例，变异 3/3 红（见
+  §3.1.4） | T4 | 低 |
 | S5 | `TargetClaims`；仍用两个内部会话验证 | T5 | 低 |
 | S5 | **已落地 2026-11-15**：`internal/TargetClaims.hpp/.cpp`（`begin` → 帧作用域 `Lease`，冲突 false，析构释放）；
   `Session::executeFrame` / `prepareFrame` 在 `ensure_target` 之前 claim，冲突只跳该 pass 并报

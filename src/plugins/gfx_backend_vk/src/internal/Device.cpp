@@ -1294,6 +1294,11 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
             session->closeFrameBooks(before, counters);
         }
     } books_closer{ this, before, counters };
+    // THIS FRAME'S ADMISSIONS (F4): the geometries it resolves are asked of the DEVICE's residence table in this
+    // driver's name, a build it wins is PUBLISHED below once the fence says the fill is provably complete, and a
+    // competitor's temporary copy dies with this object (see ContentCaches::FrameBuilds). Declared here, OUTSIDE the
+    // head's hold, because its destructor takes the cache lock to dispose a copy.
+    ContentCaches::FrameBuilds frame_builds(owner.caches, static_cast<ResidenceTable::SessionId>(clock_window));
 
     // WHICH PASSES THIS BACKEND CAN RUN: off-screen passes, and WINDOW passes when the frame names one of this
     // device's own targets as its presenter. A frame that names no presenter presents nowhere (a first-class state:
@@ -1604,7 +1609,8 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
                                                   item.color_count,
                                                   plan,
                                                   draw_content.refusal,
-                                                  cache_lock)) {
+                                                  cache_lock,
+                                                  frame_builds)) {
                         continue; // the plan stays empty and `record` skips exactly this command
                     }
                     owner.caches.resolveTextures(plan.material.get(),
@@ -1971,6 +1977,12 @@ PresentOutcome Device::Session::executeFrame(const FrameDescription& frame, Pres
         }
     }
     (void)owner.device_table.vkResetFences(owner.device, 1U, &completion);
+    // THE FILL IS PROVABLY COMPLETE (ResidenceTable rule 2): every geometry this frame uploaded becomes usable by
+    // every driver. A frame the fence did not complete publishes nothing - its claim is withdrawn when `frame_builds`
+    // dies at the end of this call, so no key is left Uploading (`P1`).
+    if (completed) {
+        frame_builds.publishAll();
+    }
     owner.device_table.vkFreeCommandBuffers(owner.device, command_pool, 1U, &commands);
     // The per-draw uniform buffers were named by the command buffer that just finished (or failed to): the queue is
     // idle either way, so the bytes can go - and only THIS driver's texture staging, never a frame that is still
@@ -2071,6 +2083,9 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
         warmup_token = owner.clock.begin();
     }
     FrameTokenCloser                        warmup_close{ owner.clock, owner.retirement, owner.clock_mutex, warmup_token };
+    // THE WARM-UP'S ADMISSIONS (F4): a warm-up may BUILD a geometry too, and it publishes on its own evidence - the
+    // return of its transfer-only submit (see `ResidenceTable` rule 2 and `ContentCaches::FrameBuilds`).
+    ContentCaches::FrameBuilds warmup_builds(owner.caches, static_cast<ResidenceTable::SessionId>(clock_window));
     const ContentTotals before = owner.contentNumbers();
     PrepareReport             report;
     report.outcome = PrepareReport::Outcome::Prepared;
@@ -2201,7 +2216,7 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
                     // warm-up may not build something the frame would not ask for, and vice versa.
                     for (const vn::graphics::RenderCommand& command : *description.commands) {
                         ContentCaches::CommandPlan plan;
-                        (void)owner.caches.planCommand(command, draw, head_program.get(), compatibility, render_pass, color_count, plan, refusal, cache_lock);
+                        (void)owner.caches.planCommand(command, draw, head_program.get(), compatibility, render_pass, color_count, plan, refusal, cache_lock, warmup_builds);
                     }
                 }
                 if (refusal.isRefused()) {
@@ -2227,11 +2242,15 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
     // THE BATCH RUNS BEFORE THIS CALL ANSWERS: one submit on the device's frame fence, no semaphore (nothing was
     // acquired, so the queue has nothing to wait for), one wait, and the staging buffers go as soon as the copies
     // have run - the release the frame path reaches through ContentDraw::endFrame -> ContentImages::releaseFrame.
+    // WHETHER THE WARM-UP'S FILL IS PROVABLE (F4): a batch that never closed or never ran publishes nothing, and the
+    // geometries it claimed are withdrawn when `warmup_builds` dies - so no key is left Uploading.
+    bool transfers_completed = true;
     if (batch != VK_NULL_HANDLE) {
         if (owner.device_table.vkEndCommandBuffer(batch) != VK_SUCCESS) {
             // THE BUFFER NEVER CLOSED, so whatever it recorded never ran - and it cannot be recorded again: the copies
             // were already recorded against entries this call made resident. Said plainly, because "the next frame
             // uploads it again" would be a promise the revision check does not keep.
+            transfers_completed = false;
             owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
                                               DiagnosticCategory::SubmissionFailed,
                                               u8"vk.prepare.batch_not_closed",
@@ -2257,6 +2276,7 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
                                                ? owner.device_table.vkWaitForFences(owner.device, 1U, &completion, VK_TRUE, UINT64_MAX)
                                                : submit_result;
             const bool     completed     = fence_result == VK_SUCCESS;
+            transfers_completed          = completed;
             warmup_close.submitted       = submit_result == VK_SUCCESS;
             if (completed) {
                 const std::lock_guard<std::mutex> clock_held(owner.clock_mutex);
@@ -2279,6 +2299,12 @@ vn::graphics::PrepareReport Device::Session::prepareFrame(const FrameDescription
                                                   u8"was going to fill were never written"));
             }
         }
+    }
+
+    // THE WARM-UP'S FILL IS PROVABLY COMPLETE (ResidenceTable rule 2): publish every geometry it built. A batch with
+    // zero work submits nothing, and nothing was pending - the fills were host copies - so that path publishes too.
+    if (transfers_completed) {
+        warmup_builds.publishAll();
     }
 
     // WHAT THIS CALL BUILT, not what is resident: a second prepare of an unchanged frame answers zeros (see
@@ -4081,6 +4107,16 @@ TargetClaims& Device::targetClaims() noexcept
 const TargetClaims& Device::targetClaims() const noexcept
 {
     return impl->target_claims;
+}
+
+ResidenceTable& Device::residence() noexcept
+{
+    return impl->caches.residence();
+}
+
+const ResidenceTable& Device::residence() const noexcept
+{
+    return impl->caches.residence();
 }
 
 Device::RetirementNumbers Device::retirementNumbers() const noexcept

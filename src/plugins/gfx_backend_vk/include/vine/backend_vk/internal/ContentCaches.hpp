@@ -22,6 +22,7 @@
 #include <vine/backend_vk/internal/ContentRefusal.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/backend_vk/internal/ProgramVariant.hpp>
+#include <vine/backend_vk/internal/ResidenceTable.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/MaterialBase.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -56,6 +57,13 @@ VN_BACKEND_VK_NS_BEGIN
  *   question they are asked and the next frame uploads again) while the Vulkan objects park on the device's
  *   completion watermark (`setRetirement`) until no submitted frame can still name them. Without a queue they are
  *   destroyed immediately, which is correct before `initialize()` and during `shutdown` (both sit on an idle queue).
+ * - WHO MAY BUILD A GEOMETRY IS THE DEVICE'S TABLE (F4). `ensureGeometry` asks `ResidenceTable::admit` before it
+ *   uploads a stream: a key this driver may build is uploaded into the cache's entry and PUBLISHED when the frame is
+ *   proven complete (`FrameBuilds::publishAll`), a key another driver is building is COPIED for this frame and thrown
+ *   away with it (`FrameBuilds`), and a resident key is used. So a driver never waits for another driver's FRAME over
+ *   one geometry, and the copies are bounded: at most one per competitor, only on the frame in which two drivers
+ *   first draw the same thing (`.ai/design/graphics-sessions.md` §2.4, §3.1.4). The frame HEAD is still one hold of
+ *   this cache's lock - the admission decides who builds, not how many drivers may hold the tables.
  * - MEMORY MODEL. Streams and staging copies live in host-visible coherent memory; the residency step (M6) is what
  *   moves streams to device-local memory behind one copy.
  *
@@ -63,7 +71,13 @@ VN_BACKEND_VK_NS_BEGIN
  *          takes its own lock (a release, `endFrame`, the progress readers) must not be called while a hold is alive.
  *          The rule is enforced by the signatures, not by a runtime check.
  *
- * @see `ContentDraw` (the recorder that consumes the plans), `FrameScratch` (the frame's own half).
+ * @note LOCK ORDER. Where a verb holds this cache's lock and asks the residence table, the order is always
+ *       cache-then-table; nothing holds the table's lock and asks this cache. `FrameBuilds::publishAll` takes only
+ *       the table's, and its destructor takes this cache's without holding the table's, so the order is a property of
+ *       the code and not of a comment a later edit may contradict.
+ *
+ * @see `ContentDraw` (the recorder that consumes the plans), `FrameScratch` (the frame's own half), `ResidenceTable`
+ *      (who may build a key), `FrameBuilds` (one frame's admissions and the copies it owns).
  */
 class VN_BACKEND_VK_API ContentCaches final {
   public:
@@ -221,6 +235,116 @@ class VN_BACKEND_VK_API ContentCaches final {
     };
 
     /**
+     * @brief ONE FRAME'S ADMISSIONS: the geometries it resolved, the build claims it must settle, and the temporary
+     *        copies it built instead of waiting for another driver.
+     *
+     * @details
+     * - WHY THE FRAME OWNS THIS AND NOT THE CACHE. A claim is a promise that ends at a KNOWN point - the frame's
+     *   completion evidence - so its owner must be the frame; and a copy serves exactly one frame's commands and dies
+     *   with it. Keeping both here is what lets the recording path work from values and still hand everything back on
+     *   every exit path (`G3`): the destructor WITHDRAWS what was not published and DISPOSES the copies, so an
+     *   abandoned frame leaves no key `Uploading` (`P1`) and no bytes behind.
+     * - THREE ANSWERS, THREE LIFETIMES (see `ResidenceTable::admit`). `Use` is remembered so the frame's later
+     *   commands do not ask the table twice. `Build` is remembered AND its claim kept: `publishAll` publishes it when
+     *   the frame completed, and a fill that FAILED never gets here - `ensureGeometry` lets the claim's own destructor
+     *   return the key to `Absent`, so a refused fill can never publish itself. `Copy` is a detached entry this object
+     *   owns for the rest of the frame.
+     * - IT HOLDS CLAIMS, NOT POINTERS INTO THE CACHE: a host may release a geometry while this frame is in flight
+     *   (R6 allows it), which moves the entry out of the cache's table. A claim is self-contained (a table, a key and
+     *   a token), so publishing it after such a release is a counted `stale` answer instead of a read of freed memory.
+     * - A COPY IS FRAME SCRATCH AFTER IT IS BUILT. Its streams are counted in `Progress::stream_builds` (they were
+     *   really uploaded) but never in the live fields: those answer "what is resident", and a copy is not. Disposing
+     *   one is not a release announcement, so `stream_releases` stays unmoved.
+     * - THE PLANNER'S VERBS ARE PUBLIC because `ContentCaches::Impl` is a SIBLING nested type and the two cannot see
+     *   each other's private half; the frame body is the caller of `publishAll` and of the destructor, and `entryOf`
+     *   is how `ensureGeometry` answers "this frame already resolved it".
+     *
+     * @warning NOT thread-safe and NOT shared: one frame driver creates it, on the thread that drives that frame.
+     *          The table it talks to IS shared (its own lock), which is the point. Its destructor takes the cache's
+     *          lock to dispose a copy, so destroy it WITHOUT a `Lock` alive - that is where the frame body declares
+     *          it, outside the head's hold.
+     *
+     * @note Publish on the frame's COMPLETION EVIDENCE, not when the head returns: the design's rule 2 is "not before
+     *       the fill is provably complete", and this backend's evidence today is the frame's waited fence (a warm-up
+     *       publishes when its transfer-only submit returns). A frame that returns without reaching that point - a
+     *       refused command buffer, a failed submit - must let the destructor withdraw instead.
+     *
+     * @see `.ai/design/graphics-sessions.md` §2.4, §3.1.4 (F4).
+     */
+    class FrameBuilds final {
+      public:
+        /** @brief Builds a value that owns nothing and publishes nothing (a caller with no device). */
+        FrameBuilds() noexcept;
+
+        /**
+         * @brief Builds the admissions of one frame of @p owner, asked in the name of @p session.
+         *
+         * @param owner   The caches this frame resolves against (borrowed; it outlives the frame).
+         * @param session The frame driver's id (`DeviceClock::WindowId` today; see `ResidenceTable::SessionId`).
+         */
+        FrameBuilds(ContentCaches& owner, ResidenceTable::SessionId session) noexcept;
+
+        /** @brief Withdraws every unresolved claim and disposes every copy (see the class note). */
+        ~FrameBuilds();
+
+        /** @brief Takes over @p other's admissions; @p other is left empty. */
+        FrameBuilds(FrameBuilds&& other) noexcept;
+
+        /** @brief Settles what this object held, then takes over @p other's admissions. */
+        FrameBuilds& operator=(FrameBuilds&& other) noexcept;
+
+        FrameBuilds(const FrameBuilds&)            = delete;
+        FrameBuilds& operator=(const FrameBuilds&) = delete;
+
+      public:
+        /** @brief Gets the id this frame asks the residence table in (see `ResidenceTable::SessionId`). */
+        [[nodiscard]] ResidenceTable::SessionId session() const noexcept;
+
+        /** @brief Gets what this frame already resolved for @p description, or null (no second table ask). */
+        [[nodiscard]] GeometryEntry* entryOf(const vn::graphics::GeometryDescription* description) const noexcept;
+
+        /** @brief Remembers a `Use` answer: @p entry is the cache's resident entry for @p description. */
+        void noteUsed(const vn::graphics::GeometryDescription& description, GeometryEntry& entry);
+
+        /**
+         * @brief Remembers a `Build` answer: @p claim settles at the frame's completion evidence (see the class note).
+         *
+         * @param claim The table's ticket (moved in).
+         */
+        void noteClaim(ResidenceTable::Claim claim);
+
+        /**
+         * @brief Remembers a `Copy` answer: takes ownership of @p copy and answers the entry this frame uses.
+         *
+         * @param description The identity the copy was built for (the frame's later commands look it up by this).
+         * @param copy        The detached entry (its `description` member keeps the identity alive).
+         * @return The entry this frame names; owned by this object until it is destroyed.
+         */
+        [[nodiscard]] GeometryEntry* noteCopy(const vn::graphics::GeometryDescription& description, GeometryEntry copy);
+
+        /**
+         * @brief Publishes every claim this frame holds: the fills they name are provably complete.
+         *
+         * @details
+         * - EVERY CLAIM HERE NAMES A USABLE FILL: a build that failed never records one (its ticket returns the key to
+         *   `Absent` where the failure happened), so publishing them all cannot make a broken entry `Resident`.
+         * - A CLAIM WHOSE KEY A HOST RELEASED in the meantime answers `stale` instead - the documented, counted
+         *   outcome, not an error (see `ResidenceTable::Numbers::stale`).
+         * - Idempotent: a published claim is empty, and the destructor's withdrawal of an empty claim does nothing.
+         */
+        void publishAll();
+
+      private:
+        void reset() noexcept;
+
+        ContentCaches*                                              owner_{ nullptr };
+        ResidenceTable::SessionId                                   session_{ 0 };
+        std::unordered_map<const vn::graphics::GeometryDescription*, GeometryEntry*> resolved_{};
+        std::vector<ResidenceTable::Claim>                          claimed_{};
+        std::vector<std::unique_ptr<GeometryEntry>>                 copies_{};
+    };
+
+    /**
      * @brief What the caches have built, what they let go and what they hold now.
      *
      * @details
@@ -233,6 +357,9 @@ class VN_BACKEND_VK_API ContentCaches final {
      *
      * @note The frame scratch's numbers (the ring and the descriptor sets) are NOT here: they belong to the driver,
      *       and `Device::contentCacheCounters()` composes both halves into one answer.
+     * @note A COMPETITOR'S TEMPORARY COPY COUNTS IN THE CUMULATIVE FIELDS ONLY: it was a real upload
+     *       (`stream_builds` / `stream_bytes`), but it never enters these tables, so it is not live - and disposing it
+     *       is not a release announcement, so `stream_releases` stays unmoved (see `FrameBuilds`).
      */
     struct Progress {
         std::uint64_t stream_builds{ 0 };     ///< Uploaded vertex/index buffers, cumulative.
@@ -409,6 +536,21 @@ class VN_BACKEND_VK_API ContentCaches final {
     [[nodiscard]] std::uint64_t lockAcquisitions() const noexcept;
 
     /**
+     * @brief Gets the device's RESIDENCE TABLE: who may build a geometry, who may use it, and who has to copy it.
+     *
+     * @details
+     * - THE DEVICE-LEVEL FACT TWO DRIVERS SHARE, exposed for the same reason `Device::targetClaims()` is: a claim is
+     *   about the DEVICE, not one frame, and a test that plays "the other driver" must be able to hold one (see
+     *   `.ai/design/graphics-sessions.md` §3.1.4). The frame path asks it through `FrameBuilds`; nothing outside this
+     *   backend is promised this shape.
+     *
+     * @return The table (empty before `create`, cleared by `destroy`).
+     */
+    [[nodiscard]] ResidenceTable& residence() noexcept;
+    /** @brief Gets the residence table for a reader that only reports on it (see the mutable overload). */
+    [[nodiscard]] const ResidenceTable& residence() const noexcept;
+
+    /**
      * @brief Takes the cache's one lock (see @ref Lock): the frame head holds it while it resolves its content.
      *
      * @return The hold; it releases the cache when it goes out of scope.
@@ -421,6 +563,8 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @details
      * - The pipelines stay: they are keyed by the program, the target's compatibility and the vertex LAYOUT - never
      *   by the geometry's identity - so a geometry coming back uploads its streams and reuses what it compiled.
+     * - THE RESIDENCE KEY IS FORGOTTEN TOO (F4): the next frame may claim and build the key again, and a claim still
+     *   in flight over it becomes stale and cannot resurrect what the host let go (see `ResidenceTable::forget`).
      *
      * @param description The geometry's shape as the frame named it (the same value a released `Geometry` answers).
      * @return Entries dropped: 1 when a cache entry left, 0 when nothing was resident (already released).
@@ -527,6 +671,8 @@ class VN_BACKEND_VK_API ContentCaches final {
      * @param plan              Receives what was resolved (untouched when this answers false).
      * @param refusal           Receives the reason a command could not be resolved, with its code and category.
      * @param held              The cache lock (see @ref Lock).
+     * @param builds            This frame's admissions (see @ref FrameBuilds): the geometry is admitted once per frame
+     *                          and a key another driver is building is copied instead of waited for.
      * @return true when the command can be recorded.
      */
     [[nodiscard]] bool planCommand(const vn::graphics::RenderCommand&                     command,
@@ -537,7 +683,8 @@ class VN_BACKEND_VK_API ContentCaches final {
                                    std::uint32_t                                          color_attachments,
                                    CommandPlan&                                           plan,
                                    ContentRefusal&                                        refusal,
-                                   const Lock&                                            held);
+                                   const Lock&                                            held,
+                                   FrameBuilds&                                           builds);
 
     /**
      * @brief Resolves one screen draw's fragment program and pipeline (see @ref planCommand for the shared idea).
@@ -563,6 +710,21 @@ class VN_BACKEND_VK_API ContentCaches final {
 
   private:
     struct Impl;
+
+    /**
+     * @brief Destroys the streams of the temporary copies a frame owns (see `FrameBuilds`).
+     *
+     * @details
+     * - IMMEDIATE, NOT PARKED, AND THAT IS THE DIFFERENCE FROM `releaseGeometry`: a copy was never in the cache's
+     *   tables, so no OTHER driver's frame can name it - only the frame that owns it could, and this is called when
+     *   that frame is over (its fence was waited, or nothing was submitted). Parking would date the destruction
+     *   against a watermark the copy does not need.
+     * - Takes the cache's lock: the allocator behind it is shared with the frame heads, and this runs on the frame's
+     *   thread after the frame body, when another driver's head may be uploading.
+     *
+     * @param copies The copies to destroy; cleared on return.
+     */
+    void releaseTemporary(std::vector<std::unique_ptr<GeometryEntry>>& copies) noexcept;
 
     std::unique_ptr<Impl> impl;
 };

@@ -5,6 +5,7 @@
 #include <vine/backend_vk/backend_vk_global.hpp>
 #include <vine/backend_vk/internal/Handles.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
+#include <vine/backend_vk/internal/ResidenceTable.hpp>
 #include <vine/backend_vk/internal/TargetClaims.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
@@ -482,6 +483,21 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
     [[nodiscard]] TargetClaims& targetClaims() noexcept;
     /** @brief Gets the target claims for a reader that only reports on them (see the mutable overload). */
     [[nodiscard]] const TargetClaims& targetClaims() const noexcept;
+
+    /**
+     * @brief Gets the device's RESIDENCE TABLE: who may build a geometry and who has to copy it (see ResidenceTable).
+     *
+     * @details
+     * - EXPOSED FOR THE SAME REASON `targetClaims()` IS: residency is a fact about the DEVICE, not about one frame,
+     *   and a test that plays "the other driver" must be able to hold a claim over a key while a real frame runs
+     *   (see `.ai/design/graphics-sessions.md` §3.1.4, F4). It is not a verb `RenderDevice` promises.
+     * - It is not gated on the body gate: it has its own lock, and the frame path asks it while a frame runs.
+     *
+     * @return The table (empty before `initialize()`, cleared by `shutdown()`).
+     */
+    [[nodiscard]] ResidenceTable& residence() noexcept;
+    /** @brief Gets the residence table for a reader that only reports on it (see the mutable overload). */
+    [[nodiscard]] const ResidenceTable& residence() const noexcept;
 
     /**
      * @brief What the persisted pipeline cache did for this session (see PipelineCacheFile).

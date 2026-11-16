@@ -23,6 +23,7 @@ add_executable(${TEST_NAME}
         ProbeTest.cpp
         ResidencyTest.cpp
         ResidenceTableTest.cpp
+        ResidenceWireTest.cpp
         RingTest.cpp
         SessionShapeTest.cpp
         ShadowTest.cpp

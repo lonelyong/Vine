@@ -221,6 +221,17 @@ struct ContentCaches::Impl {
     /// One entry per INSTANCE buffer a command read (keyed by the buffer's address, see InstanceStream).
     std::unordered_map<const vn::Buffer<float>*, InstanceStream>                    instance_streams;
     std::map<PipelineKey, VkPipeline>                                               pipelines;
+    /**
+     * @brief WHO MAY BUILD a geometry: the device table two frame drivers share (F4, see `ResidenceTable`).
+     *
+     * @details
+     * - IT AGREES WITH @c geometries AT ALL TIMES: an entry exists there while its key is `Resident` (published), and
+     *   a key leaves the table when its entry does (`releaseGeometry` forgets, `destroyAll` clears). The map stays the
+     *   TRUTH - a table that names a key this map does not hold is repaired, never trusted (see `ensureGeometry`).
+     * - ITS OWN LOCK, SO THE ADMISSION DOES NOT NEED THIS CACHE'S: a competitor asks before it needs the tables. The
+     *   order is always cache-lock-then-table-lock (see the class note).
+     */
+    ResidenceTable                                                                 residence;
     /// How many pipelines were CREATED (a resize must leave this unmoved; see pipelinesCreated).
     std::uint64_t created_{ 0 };
 
@@ -466,63 +477,141 @@ struct ContentCaches::Impl {
     }
 
     /**
-     * @brief Gets (or uploads) one geometry revision's streams.
+     * @brief Gets (or uploads) one geometry revision's streams, ASKING THE RESIDENCE TABLE WHO MAY BUILD IT (F4).
      *
      * @details
+     * - THREE ANSWERS, THREE FILLS (see `ResidenceTable::admit`). `Use` returns the resident entry. `Build` fills the
+     *   cache's entry and keeps the claim for the frame to publish. `Copy` fills a DETACHED entry the caller's frame
+     *   owns and throws away - another driver is building this key, and waiting is the one shape in which two drivers
+     *   can deadlock each other (`P2`).
      * - A REPEAT CALL PAYS NOTHING when every stream is resident, and repairs the HOLES a host release left: a
      *   release drops the buffer of the streams it named while the entry - and its other streams - stay, so the
      *   next frame uploads exactly what left (`RenderDevice::releaseContent(Buffer)`).
      * - A REFUSED BUILD IS REMEMBERED: an entry that could not be uploaded answers null from then on, so a broken
-     *   geometry is reported once instead of failing the same way every frame.
+     *   geometry is reported once instead of failing the same way every frame. Its claim is NOT published - `Resident`
+     *   has to mean "usable" - so the key returns to `Absent` and the next frame may claim it again (it then finds the
+     *   remembered refusal and answers null without uploading).
+     * - THE FRAME ASKS ONCE per description: `builds` answers every later command of the same frame, so a frame with
+     *   a thousand draws of one geometry costs one admission, not a thousand.
      *
      * @param description The geometry's shape as a value (the entry keeps it alive).
+     * @param builds      This frame's admissions (see `FrameBuilds`).
      * @param why         Receives the first failure's reason.
-     * @return The entry, or null when a stream could not be uploaded.
+     * @return The entry this frame names (the cache's, or this frame's temporary copy), or null when a stream could not
+     *         be uploaded.
      */
-    [[nodiscard]] GeometryEntry* ensureGeometry(const vn::graphics::GeometryDescription& description, vn::String& why)
+    [[nodiscard]] GeometryEntry* ensureGeometry(const vn::graphics::GeometryDescription& description, FrameBuilds& builds, vn::String& why)
     {
-        const auto found = geometries.find(&description);
-        if (found != geometries.end() && found->second.failed) {
-            return nullptr;
+        if (GeometryEntry* const known = builds.entryOf(&description)) {
+            return known;
         }
 
-        GeometryEntry* entry = nullptr;
-        if (found == geometries.end()) {
-            GeometryEntry fresh;
-            fresh.description = vn::graphics::GeometryDescriptionPtr(&description);
-            // One slot per NON-EMPTY channel, in channel order: that is the vertex-input binding order the pipeline
-            // states, so a hole and its binding stay aligned.
-            for (const vn::graphics::GeometryChannel& channel : description.channels()) {
-                if (!channel.channel.empty()) {
-                    fresh.streams.emplace_back();
+        ResidenceTable::Decision decision = residence.admit(&description, builds.session());
+        if (decision.kind == ResidenceTable::Decision::Kind::Use) {
+            const auto found = geometries.find(&description);
+            if (found != geometries.end() && !found->second.failed) {
+                // A RELEASED STREAM LEAVES A HOLE IN A RESIDENT ENTRY, and filling it is this path's job: the release
+                // names one `Buffer`, and the next frame that needs the geometry uploads exactly what left (see
+                // `releaseStreams`). A complete entry pays nothing here.
+                GeometryEntry& entry = found->second;
+                if (!fillStreams(entry, description, why)) {
+                    return failGeometry(entry, std::move(why));
                 }
+                builds.noteUsed(description, entry);
+                return &entry;
             }
-            fresh.indices.resize(description.primitives().size());
-            entry = &geometries.emplace(&description, std::move(fresh)).first->second;
-        }
-        else {
-            entry = &found->second;
+            // THE TABLE AND THE TABLES DISAGREE: a key the table called usable that this cache does not hold cannot be
+            // used, and refusing the draw would charge the host for a bookkeeping slip. The cache is the truth, so
+            // the key is forgotten and asked again - one turn, which answers Build and builds it.
+            (void)residence.forget(&description);
+            return ensureGeometry(description, builds, why);
         }
 
+        if (decision.kind == ResidenceTable::Decision::Kind::Build) {
+            const auto found = geometries.find(&description);
+            if (found != geometries.end() && found->second.failed) {
+                // THE REFUSAL WAS REPORTED WHEN IT HAPPENED: the claim is left to `decision`, whose destructor returns
+                // the key to Absent, so the answer is "broken" without pretending the key is resident.
+                return nullptr;
+            }
+            GeometryEntry* const entry = found != geometries.end()
+                                             ? &found->second
+                                             : &geometries.emplace(&description, shapedFor(description)).first->second;
+            // THE FILL IS THE CLAIM'S. A failure here leaves `decision` owning the ticket, so the key returns to
+            // Absent at once - the next frame may try again instead of finding it Uploading forever (`P1`, `R4`).
+            if (!fillStreams(*entry, description, why)) {
+                return failGeometry(*entry, std::move(why));
+            }
+            builds.noteUsed(description, *entry);
+            builds.noteClaim(std::move(decision.claim));
+            return entry;
+        }
+
+        // COPY: another driver is building this key, so this frame gets its own streams and keeps none of them (see
+        // the class note and `FrameBuilds`). The copy is NOT inserted into the tables: a second entry under one key
+        // would be a second thing every later frame could find.
+        GeometryEntry copy = shapedFor(description);
+        if (!fillStreams(copy, description, why)) {
+            return failGeometry(copy, std::move(why));
+        }
+        return builds.noteCopy(description, std::move(copy));
+    }
+
+    /**
+     * @brief Builds one entry's SLOT SHAPE: a stream per non-empty channel (binding order) and a slot per primitive.
+     *
+     * @param description The geometry's shape.
+     * @return The entry with every stream still missing (a null buffer) and its description held.
+     */
+    [[nodiscard]] static GeometryEntry shapedFor(const vn::graphics::GeometryDescription& description)
+    {
+        GeometryEntry fresh;
+        fresh.description = vn::graphics::GeometryDescriptionPtr(&description);
+        // One slot per NON-EMPTY channel, in channel order: that is the vertex-input binding order the pipeline
+        // states, so a hole and its binding stay aligned.
+        for (const vn::graphics::GeometryChannel& channel : description.channels()) {
+            if (!channel.channel.empty()) {
+                fresh.streams.emplace_back();
+            }
+        }
+        fresh.indices.resize(description.primitives().size());
+        return fresh;
+    }
+
+    /**
+     * @brief Uploads every stream of @p entry that is missing, and computes the entry's vertex count.
+     *
+     * @details
+     * - A FRESH ENTRY HAS EVERY STREAM MISSING; an entry a release punched holes in uploads exactly those, which is
+     *   what makes releasing one `Buffer` cost one upload.
+     * - A FAILED FILL IS THE CALLER'S TO SETTLE (`failGeometry`): this only says which stream failed and why.
+     *
+     * @param entry       The entry to fill (its slot shape must already match @p description).
+     * @param description The geometry's shape.
+     * @param why         Receives the first failure's reason.
+     * @return true when every named stream is resident.
+     */
+    [[nodiscard]] bool fillStreams(GeometryEntry& entry, const vn::graphics::GeometryDescription& description, vn::String& why)
+    {
         std::size_t slot = 0;
         for (const vn::graphics::GeometryChannel& channel : description.channels()) {
             const std::span<const float> scalars = channel.channel.scalars();
             if (scalars.empty()) {
                 continue;
             }
-            VertexStream& stream = entry->streams[slot];
+            VertexStream& stream = entry.streams[slot];
             if (stream.buffer == VK_NULL_HANDLE) {
                 const std::uint32_t components = channel.channel.components;
                 if (vertexFormatOf(components) == VK_FORMAT_UNDEFINED) {
                     why = vn::String(u8"vk: an attribute channel states a component count Vulkan has no format for");
-                    return failGeometry(*entry, std::move(why));
+                    return false;
                 }
                 stream.location   = channel.location;
                 stream.components = components;
                 stream.source     = channel.channel.values.get();
                 if (!upload(std::as_bytes(scalars), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, stream.buffer, stream.memory)) {
                     why = vn::String(u8"vk: a vertex channel could not be uploaded");
-                    return failGeometry(*entry, std::move(why));
+                    return false;
                 }
                 stream.bytes = static_cast<std::uint64_t>(scalars.size_bytes());
                 ++stream_builds_;
@@ -540,7 +629,7 @@ struct ContentCaches::Impl {
             }
             smallest = std::min(smallest, static_cast<std::uint32_t>(channel.channel.vertexCount()));
         }
-        entry->vertex_count = smallest == std::numeric_limits<std::uint32_t>::max() ? 0U : smallest;
+        entry.vertex_count = smallest == std::numeric_limits<std::uint32_t>::max() ? 0U : smallest;
 
         const std::span<const vn::graphics::Primitive> primitives = description.primitives();
         for (std::size_t index = 0; index < primitives.size(); ++index) {
@@ -548,21 +637,21 @@ struct ContentCaches::Impl {
             if (indices.empty()) {
                 continue;
             }
-            IndexStream& stream = entry->indices[index];
+            IndexStream& stream = entry.indices[index];
             if (stream.buffer != VK_NULL_HANDLE) {
                 continue;
             }
             stream.source = primitives[index].indices.values.get();
             if (!upload(std::as_bytes(indices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, stream.buffer, stream.memory)) {
                 why = vn::String(u8"vk: an index stream could not be uploaded");
-                return failGeometry(*entry, std::move(why));
+                return false;
             }
             stream.count = static_cast<std::uint32_t>(indices.size());
             stream.bytes = static_cast<std::uint64_t>(indices.size_bytes());
             ++stream_builds_;
             stream_bytes_ += stream.bytes;
         }
-        return entry;
+        return true;
     }
 
     /**
@@ -968,6 +1057,7 @@ struct ContentCaches::Impl {
      * @param color_attachments How many colour attachments the pass writes.
      * @param plan              Receives what was resolved (untouched when this answers false).
      * @param refusal           Receives the reason a command could not be resolved, with its code and category.
+     * @param builds            This frame's admissions (see FrameBuilds).
      * @return true when the command can be recorded.
      */
     [[nodiscard]] bool planCommand(const vn::graphics::RenderCommand&                     command,
@@ -977,7 +1067,8 @@ struct ContentCaches::Impl {
                                    VkRenderPass                                           render_pass,
                                    std::uint32_t                                          color_attachments,
                                    CommandPlan&                                           plan,
-                                   ContentRefusal&                                        refusal)
+                                   ContentRefusal&                                        refusal,
+                                   FrameBuilds&                                           builds)
     {
         plan = CommandPlan{}; // a failure leaves an empty plan: `pipeline == VK_NULL_HANDLE` is what the recorder skips
         const vn::graphics::ShaderProgramDescriptionPtr program =
@@ -1023,7 +1114,7 @@ struct ContentCaches::Impl {
                            build_why.empty() ? vn::String(u8"vk: the content program could not be compiled") : std::move(build_why));
             return false;
         }
-        GeometryEntry* const streams = ensureGeometry(*geometry, build_why);
+        GeometryEntry* const streams = ensureGeometry(*geometry, builds, build_why);
         if (streams == nullptr) {
             refusal.refuse(vn::graphics::DiagnosticCategory::ContentSkipped,
                            u8"vk.content.geometry_refused",
@@ -1254,6 +1345,9 @@ struct ContentCaches::Impl {
         // still name what is about to go - and a park here would outlive the queue that would have run it.
         park = {};
         images.setRetirement({});
+        // THE RESIDENCE TABLE GOES WITH THE ENTRIES: nothing is resident after a teardown, and a claim that outlives
+        // one (a frame destroyed with the device) becomes stale rather than resurrecting what the device let go.
+        residence.clear();
         if (device != VK_NULL_HANDLE && table != nullptr) {
             images.destroy();
             destroyPipelines();
@@ -1295,6 +1389,96 @@ struct ContentCaches::Impl {
     }
 
 };
+
+ContentCaches::FrameBuilds::FrameBuilds() noexcept = default;
+
+ContentCaches::FrameBuilds::FrameBuilds(ContentCaches& owner, const ResidenceTable::SessionId session) noexcept
+  : owner_(&owner)
+  , session_(session)
+{
+}
+
+ContentCaches::FrameBuilds::~FrameBuilds()
+{
+    reset();
+}
+
+ContentCaches::FrameBuilds::FrameBuilds(FrameBuilds&& other) noexcept
+  : owner_(std::exchange(other.owner_, nullptr))
+  , session_(other.session_)
+  , resolved_(std::move(other.resolved_))
+  , claimed_(std::move(other.claimed_))
+  , copies_(std::move(other.copies_))
+{
+}
+
+ContentCaches::FrameBuilds& ContentCaches::FrameBuilds::operator=(FrameBuilds&& other) noexcept
+{
+    if (this != &other) {
+        reset();
+        owner_    = std::exchange(other.owner_, nullptr);
+        session_  = other.session_;
+        resolved_ = std::move(other.resolved_);
+        claimed_  = std::move(other.claimed_);
+        copies_   = std::move(other.copies_);
+    }
+    return *this;
+}
+
+ResidenceTable::SessionId ContentCaches::FrameBuilds::session() const noexcept
+{
+    return session_;
+}
+
+ContentCaches::GeometryEntry* ContentCaches::FrameBuilds::entryOf(const vn::graphics::GeometryDescription* description) const noexcept
+{
+    const auto found = resolved_.find(description);
+    return found != resolved_.end() ? found->second : nullptr;
+}
+
+void ContentCaches::FrameBuilds::noteUsed(const vn::graphics::GeometryDescription& description, GeometryEntry& entry)
+{
+    resolved_.emplace(&description, &entry);
+}
+
+void ContentCaches::FrameBuilds::noteClaim(ResidenceTable::Claim claim)
+{
+    claimed_.push_back(std::move(claim));
+}
+
+ContentCaches::GeometryEntry* ContentCaches::FrameBuilds::noteCopy(const vn::graphics::GeometryDescription& description, GeometryEntry copy)
+{
+    // THE COPY LIVES IN THIS OBJECT, NOT IN THE CACHE (see the class note): the cache's tables are keyed by identity,
+    // and a second entry under one key would be a second thing every later frame could find.
+    copies_.push_back(std::make_unique<GeometryEntry>(std::move(copy)));
+    GeometryEntry* const stored = copies_.back().get();
+    resolved_.emplace(&description, stored);
+    return stored;
+}
+
+void ContentCaches::FrameBuilds::publishAll()
+{
+    // EVERY CLAIM HERE NAMES A USABLE FILL: a failed build never records one (its ticket withdraws where the failure
+    // happened). A claim whose key a host released in the meantime answers `stale` - counted, not an error.
+    for (ResidenceTable::Claim& claim : claimed_) {
+        (void)claim.publish();
+    }
+}
+
+void ContentCaches::FrameBuilds::reset() noexcept
+{
+    // WITHDRAW FIRST, DISPOSE SECOND: the claim's destructor puts an unresolved key back to Absent (P1's prevention,
+    // not its cleanup), and the copies then leave without a key ever naming them.
+    claimed_.clear();
+    if (!copies_.empty()) {
+        if (owner_ != nullptr) {
+            owner_->releaseTemporary(copies_);
+        }
+        copies_.clear();
+    }
+    resolved_.clear();
+    owner_ = nullptr;
+}
 
 ContentCaches::ContentCaches()
   : impl(std::make_unique<Impl>())
@@ -1525,10 +1709,11 @@ bool ContentCaches::planCommand(const vn::graphics::RenderCommand&              
                                 const std::uint32_t                                    color_attachments,
                                 CommandPlan&                                           plan,
                                 ContentRefusal&                                        refusal,
-                                const Lock&                                            held)
+                                const Lock&                                            held,
+                                FrameBuilds&                                           builds)
 {
     (void)held; // the type is the proof; an unheld lock cannot be built outside this class (see Lock)
-    return impl->planCommand(command, pass, default_program, compatibility, render_pass, color_attachments, plan, refusal);
+    return impl->planCommand(command, pass, default_program, compatibility, render_pass, color_attachments, plan, refusal, builds);
 }
 
 bool ContentCaches::planScreen(const vn::graphics::DrawDescription&                  draw,
@@ -1677,6 +1862,10 @@ std::size_t ContentCaches::releaseGeometry(const vn::graphics::GeometryDescripti
     if (impl->device == VK_NULL_HANDLE || impl->table == nullptr || description == nullptr) {
         return 0;
     }
+    // THE KEY IS FORGOTTEN EVEN WHEN NOTHING WAS RESIDENT (F4): after an announcement the table must agree with the
+    // cache, or the next frame would find a key it may not claim. A claim still in flight over it becomes stale and
+    // cannot resurrect what the host let go (see ResidenceTable::forget).
+    (void)impl->residence.forget(description);
     const auto found = impl->geometries.find(description);
     if (found == impl->geometries.end()) {
         return 0; // nothing was resident: already released
@@ -1903,6 +2092,33 @@ void ContentCaches::endFrame(const ContentImages::BatchId batch) noexcept
     if (impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
         impl->images.releaseFrame(batch);
     }
+}
+
+ResidenceTable& ContentCaches::residence() noexcept
+{
+    return impl->residence;
+}
+
+const ResidenceTable& ContentCaches::residence() const noexcept
+{
+    return impl->residence;
+}
+
+void ContentCaches::releaseTemporary(std::vector<std::unique_ptr<GeometryEntry>>& copies) noexcept
+{
+    if (copies.empty()) {
+        return;
+    }
+    const Lock held = lock();
+    for (const std::unique_ptr<GeometryEntry>& copy : copies) {
+        if (copy != nullptr && impl->device != VK_NULL_HANDLE && impl->table != nullptr) {
+            // DESTROY NOW, DO NOT PARK: the copy was never in the tables, so only the frame that owned it could name
+            // it - and that frame is over (see the header's note). The release counters stay unmoved: a copy is not
+            // an announced release, and the live numbers answer what the cache RESIDES, which never included it.
+            (void)impl->destroyGeometryStreams(*copy);
+        }
+    }
+    copies.clear();
 }
 
 VN_BACKEND_VK_NS_END

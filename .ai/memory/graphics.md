@@ -1489,3 +1489,36 @@
   `ContentPlan.hpp`）。`C3` 对 vsg 自此成立；`T48` 的迁移表全部落地（backlog 条目已按规则删除）。
 - **测试基建注意**：`build/` 里 plugin `.so` 与 test 二进制必须**同源重建**——`git stash` 前后混编会出现
   `undefined symbol` 与莫名的设备上限失败（本次排查花了时间，教训：stash 后 `ninja test_vsg gfx_backend_vsg` 一起建）。
+
+## 2026-11-16 —— vk F4：驻留三态接进设备（`ensureGeometry` 问表，`FrameBuilds` 在帧完成时发布）
+
+- **接线形状**：`ContentCaches::Impl` 持 `ResidenceTable residence`；`ensureGeometry(description, builds, why)`
+  先查本帧已解析（`builds.entryOf`），再 `residence.admit(&description, session)`：`Use` 用缓存条目（**并调用
+  `fillStreams` 补 `releaseStreams` 打出的洞**——这条曾经漏掉，`VkResidencyTest.ReleasingOneBuffer…` 立刻红）、
+  `Build` 填充缓存条目并把 `Claim` 交给 `FrameBuilds`、`Copy` 建**脱钩**条目（`builds.noteCopy`）。表与缓存不一致
+  （`Use` 但无条目）时 `forget` 后重问一次——缓存是真相。
+- **`ContentCaches::FrameBuilds`（嵌套类，帧作用域值）**：`resolved_`（本帧 Use/Build/Copy 的答案）、
+  `claimed_`（`Claim` + 条目指针，用于跳过失败的填充）、`copies_`（`unique_ptr<GeometryEntry>`）。
+  `publishAll()` 在帧栅栏 wait 过后调用；失败的填充**从不登记 claim**，所以 `FrameBuilds` 只持 claim、不持缓存条目指针
+  （宿主在帧在飞时 `releaseContent` 会把条目移走，指针会悬垂）；析构撤回未发布的 claim 并调
+  `owner_->releaseTemporary(copies_)`（**立即销毁**：副本从不进表，只有本帧能命名它；不在帧首锁内，自己取锁）。
+  副本的上传计 `stream_builds`，销毁**不计** `stream_releases`（不是释放公告）。
+- **发布点**：`executeFrame` 在 `completed` 后 `publishAll()`（提交失败/命令缓冲没关闭 ⇒ 不发布，守卫撤回）；
+  `prepareFrame` 用 `transfers_completed` 标志（批没关闭或没跑 ⇒ 不发布；零工作批 = 主机 memcpy 已完 ⇒ 发布）。
+  `FrameBuilds` 声明在帧首 `{ }` 之外，析构取缓存锁时不持锁。
+- **释放/拆除**：`releaseGeometry` 先 `residence.forget(description)`（即使条目不存在）；`destroyAll` 清表。
+  锁序恒为 缓存锁 → 表锁；`publishAll` 只取表锁（因此 `VkFrameHeadTest` 的锁计数不变）。
+- **测试**：`tests/test_vk/ResidenceWireTest.cpp` 4 例——(1) 假租约（`device->residence().admit(desc, 9999)`，同
+  `TargetClaimFrameTest` 的门）下的一帧复制且像素正确，恰好 2 条流、`used_bytes` 回位；撤租后下一帧 Build+发布、
+  再下一帧零分配；(2) 真两会话两线程首画同一几何：claims 1 / published 1 / copies ≤ 1 / 两图红 / 随后每会话零上传；
+  (3) `setMemoryBlockCreator` 拒块 + 20 MiB 顶点流（>16 MiB host-visible 首块）⇒ 失败的填充被撤回
+  （`uploading 0`、`stateOf Absent`），释放后重建成功；(4) 释放后 `stateOf Absent`、下一帧重新 claim/publish。
+  **变异 3/3 红**：不问表（4 例红）、失败填充发布 claim（用例 3 红）、释放不 forget（用例 4 红）。
+- **证据**：`test_vk` **137/137**、`test_vsg`（含对拍）全绿、`test_graphics` 587；TSan `test_vk` 0 报告
+  （132/132，窗口/探针/插件按既往规则排除，抑制仅 lavapipe）；ASan 聚焦
+  （`VkResidenceWireTest`+`VkResidencyTest`+`VkMultiSessionTest`+`VkFrameHeadTest`）PASS。
+- **构建注意**：`tests/test_vsg` 也编译 vk 后端源码，新加的 `ResidenceTable.cpp` 必须同时进
+  `tests/test_vk/CMakeLists.txt` **和** `tests/test_vsg/CMakeLists.txt`，否则 `all` 在 test_vsg 链接处报一串
+  `ResidenceTable::Claim` 未定义。
+- **仍是边界**：两个驱动者的帧首解析仍在一把缓存锁上（`C3` 管记录路径）；填充是主机 memcpy，故 `fillStreams`
+  返回即可证明完成——M6 把上传搬到设备本地后，发布点仍是 `publishAll`，证据换成栅栏。
