@@ -136,7 +136,7 @@ class FrameResources {
      *   target, because a built target's attachment set cannot change; the old one is released through @p device
      *   when there is one.
      *
-     * @param identity Declared identity (`PassDesc::writes_image`).
+     * @param identity Declared identity (`PassDesc::target.name`).
      * @param shape    Attachment set the declaration asks for.
      * @param width    Extent in device pixels (> 0).
      * @param height   Extent in device pixels (> 0).
@@ -180,7 +180,7 @@ class FrameResources {
 
   private:
     struct TransientTarget {
-        String                      identity;              // The declared identity (`PassDesc::writes_image`).
+        String                      identity;              // The declared identity (`PassDesc::target.name`).
         TransientShape              shape;                 // The shape it was built at.
         intrusive_ptr<RenderTarget> target;                // The target itself.
         bool                        declared_now{ false }; // Whether this compile saw the declaration.

@@ -50,25 +50,30 @@ void RenderPass::setDesc(PassDesc desc)
 {
     // The whole declaration, not a merge: whatever this pass stated before is gone, which is what makes "adopt this
     // descriptor" and "build the pass by hand" the same object (see RenderEngine::addPass).
-    desc_                = std::move(desc);
+    desc_ = std::move(desc);
+    // A resolved transient belonged to the declaration that asked for it; a new declaration needs a new resolution.
+    resolved_target_.reset();
     // A STATED view is applied to the declared target; an absent (or invalid) one is not a statement about the
     // target - the same rule setRenderTarget follows - so re-stating a declaration never un-says another pass' edge
     // (which is what the engine relies on when it refuses a conflicting view and adopts the rest).
     const DepthView view = depthView();
-    if (desc_.writes != nullptr && view.isValid() && view.layer() == 0) {
-        desc_.writes->shareDepth(view);
+    if (desc_.target.target != nullptr && view.isValid() && view.layer() == 0) {
+        desc_.target.target->shareDepth(view);
     }
 }
 
 void RenderPass::setRenderTarget(intrusive_ptr<RenderTarget> target)
 {
-    desc_.writes         = std::move(target);
+    // THE AUTHORING SETTER states an EXPLICIT target (see Target): "draw into this object". A transient is
+    // declared through the declaration instead, and its resolution comes from the compile (setResolvedTarget).
+    desc_.target = target != nullptr ? Target::explicitTarget(std::move(target)) : Target{};
+    resolved_target_.reset();
     // The edge follows the target: a pass that stated a depth view keeps drawing against it when it is moved. A pass
     // that stated NONE does not un-say what another pass set (attaching a pass to a target is not a statement about
     // the target's depth) - hence the isValid() gate.
     const DepthView view = depthView();
-    if (desc_.writes != nullptr && view.isValid() && view.layer() == 0) {
-        desc_.writes->shareDepth(view);
+    if (desc_.target.target != nullptr && view.isValid() && view.layer() == 0) {
+        desc_.target.target->shareDepth(view);
     }
 }
 
@@ -80,8 +85,8 @@ void RenderPass::setDepthView(DepthView view)
     // An INVALID view is a statement of its own ("no borrowed depth") and clears what an earlier declaration set,
     // which is why there is no isValid() gate here.
     const DepthView stated = depthView();
-    if (desc_.writes != nullptr && stated.layer() == 0) {
-        desc_.writes->shareDepth(stated);
+    if (desc_.target.target != nullptr && stated.layer() == 0) {
+        desc_.target.target->shareDepth(stated);
     }
 }
 
@@ -186,7 +191,7 @@ std::optional<ClearPolicy> RenderPass::clearPolicy() const
 
 void RenderPass::fillPassFacts(PassDraw& out)
 {
-    out.target           = desc_.writes.get();
+    out.target           = renderTarget();
     out.viewport         = desc_.viewport;
     out.depth_range      = desc_.depth_range;
     out.clear            = clearPolicy();
@@ -229,8 +234,8 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
     // view-dependent features (AutoTransform screen-space scaling), not for the backend's own viewport.
     Viewport viewport = desc_.viewport.value_or(Viewport{});
     if (!viewport.isValid()) {
-        if (desc_.writes != nullptr) {
-            viewport = Viewport{ 0, 0, desc_.writes->width(), desc_.writes->height() };
+        if (raw_ptr<RenderTarget> target = renderTarget(); target != nullptr) {
+            viewport = Viewport{ 0, 0, target->width(), target->height() };
         }
         else {
             viewport = draw_size_;

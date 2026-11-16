@@ -268,10 +268,10 @@ intrusive_ptr<RenderTarget> ChainBuilder::buildShadowPass(PassChain& pipeline, c
     // what the picture does not show does not cast either, which is the whole point of drawing one content
     // through several passes.
     desc.layer_mask    = content_layers_;
-    desc.writes        = shadow_map;
+    desc.target        = Target::explicitTarget(shadow_map);
     // Its only writer owns the hand-off: the pass that samples it declares this target as an input,
     // and the engine answers that from the passes that DREW into it.
-    desc.output_target = shadow_map;
+    desc.output.whole_target = true;
     pipeline.addPass(desc);
     // It is built: reportRequestedShadows() is about what this pipeline did NOT build.
     ++shadows_built_;
@@ -393,18 +393,18 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     gbuf_desc.camera           = camera_;
     gbuf_desc.content          = content_;
     gbuf_desc.layer_mask       = content_layers_;
-    gbuf_desc.writes           = gbuffer;
+    gbuf_desc.target           = Target::explicitTarget(gbuffer);
     // The program is a SCENE pass' override (`PassDesc::program_override`): `PassDesc::program` is the
     // full-screen field a Screen pass draws through, so naming it here left the G-buffer pass with no program at
     // all - every body then drew with its own (or the engine's forward) program, which writes ONE colour output:
     // the geometry landed in albedo and the normal / specular / position attachments kept their transparent-black
     // clear, so the lighting read nothing and a PiP of either of those three was black.
     gbuf_desc.program_override = std::move(gbuf_program);
-    gbuf_desc.output_name      = u8"GBuffer";
+    gbuf_desc.output.name      = u8"GBuffer";
     // The same wire, declared at object level: this pass is the G-buffer's ONLY writer, so it owns the
     // hand-off and promises the whole target (one line instead of one per colour attachment — the
     // promise is shape-agnostic). The name above still drives the per-frame registry (design §14).
-    gbuf_desc.output_target    = gbuffer;
+    gbuf_desc.output.whole_target    = true;
     pipeline.addPass(gbuf_desc);
 
     // Fullscreen deferred lighting. Without transparent content it runs at
@@ -463,7 +463,7 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     light_desc.kind          = PassKind::Screen;
     light_desc.camera        = intrusive_ptr<Camera>(camera_);
     light_desc.content       = content_;
-    light_desc.writes        = composite;
+    light_desc.target        = Target::explicitTarget(composite);
     light_desc.input_names   = { u8"GBuffer" };
     light_desc.input_targets = { gbuffer }; // reads the whole G-buffer (see the comment on the program path)
     if (shadow_map != nullptr) {
@@ -487,15 +487,15 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     transparent_desc.camera        = intrusive_ptr<Camera>(camera_);
     transparent_desc.content       = transparent_;
     transparent_desc.layer_mask    = content_layers_;
-    transparent_desc.writes        = composite;
+    transparent_desc.target        = Target::explicitTarget(composite);
     transparent_desc.clear_enabled = false;
     transparent_desc.depth_mode    = DepthMode::TestOnly;
-    transparent_desc.output_name   = u8"Composite";
+    transparent_desc.output.name   = u8"Composite";
     transparent_desc.depth_view    = depthViewOf(gbuffer);
     // The composite's LAST writer owns the hand-off (the lighting pass above also draws into the same
     // target but promises nothing): promising on both would be a collision report, and the collision
     // report is exactly about two passes both claiming to be the source of one image.
-    transparent_desc.output_target = composite;
+    transparent_desc.output.whole_target = true;
     pipeline.addPass(transparent_desc);
     pipeline.setTransparentContent(transparent_); // see PassChain::publishContent
 

@@ -133,7 +133,8 @@ struct VN_GRAPHICS_API DeviceDesc {
  *     whether the device has a window half at all (DevicePresentation::None is a device created without a window);
  *   - setRenderTarget(target): a target the host will draw into or read back, so the device can hold it and build its
  *     attachments before any frame names it (null selects the default framebuffer, which needs none);
- *   - releasePass / releaseRenderTarget: the pass / target is going away - free what it owns (see each entry);
+ *   - releasePass / releaseRenderTarget: the pass / target is going away - forget what was keyed by it (see each
+ *     entry);
  *   - setDefaultContentProgram: the program content with no program of its own is drawn with - a property of the
  *     FRAME half, so it is announced to the executor or session that draws (RenderFrameExecutor::setDefaultContentProgram),
  *     and a device that runs its own frames forwards it there;
@@ -306,8 +307,9 @@ class VN_GRAPHICS_API RenderDevice {
      * @details
      * - The host's announcement of a target it is about to draw into or read back - a RESOURCE announcement, not a
      *   frame call: which pass draws into which target travels inside the frame value (see PassDraw::target),
-     *   and this is how a host configures a target BEFORE any frame names it, which is what the device builds the
-     *   target's GPU attachments from (lazily, and again when its description changes).
+     *   and this is how a host configures a target BEFORE any frame names it. The device BUILDS the target's GPU
+     *   attachments from the announcement (a shape it cannot build is reported once and the announcement is not
+     *   taken), so the first frame that names it builds nothing.
      * - nullptr selects the default framebuffer, which needs no announcement: a frame that names no target draws into
      *   it.
      *
@@ -315,19 +317,23 @@ class VN_GRAPHICS_API RenderDevice {
      */
     virtual void setRenderTarget(RenderTarget* target) = 0;
 
-    /** @brief Releases the device GPU resources a pass owns.
+    /** @brief Forgets every piece of state the device keyed by this pass' identity.
      *
      * @details
-     * - Called by the engine just before a removed pass is dropped. The device owns everything it retained for that
-     *   pass (its content view / compiled pipelines / per-pass scene-bridge cache, any sampling slot it drew through,
-     *   and the window layer it presented through), so it must free that state here to keep a closed resource loop;
-     *   the RenderPass object itself stays a logical description owned by the caller.
-     * - It is separate from releaseRenderTarget(): a pass may own a render target (freed by both), while the retained
-     *   per-pass GPU state is only known to the device and is keyed by the pass identity a frame's entry names (see
-     *   FrameDescription::Pass).
-     * - The default no-op lets devices that keep no per-pass GPU state ignore the call.
+     * - WHAT THIS IS: the host (through RenderEngine::removePass) says "this pass will not exist again", so a
+     *   backend may drop whatever it retained UNDER THAT IDENTITY. The vk backend retains nothing by pass
+     *   identity and has nothing to forget; the vsg backend forgets the slot id it keyed by it.
+     * - WHAT THIS IS NOT: it does not free a target. A pass owns no target - what a pass draws into is either the
+     *   host's (released by releaseRenderTarget) or the frame's transient (owned by the engine's resource table),
+     *   and RenderEngine::removePass releases the explicit one in the same place. Nor does any backend keep a
+     *   compiled pipeline per pass identity (pipelines are keyed by their own description), so "free the pass'
+     *   GPU objects" is not a statement a backend can keep.
+     * - It is separate from releaseRenderTarget() because the two identities are separate: a target may outlive
+     *   the pass that drew into it, and a pass may draw into the window.
+     * - The default no-op lets a device that keeps no per-pass state ignore the call; that is the honest answer,
+     *   not a missing implementation.
      *
-     * @param pass The pass being removed (borrowed for the call).
+     * @param pass The pass being removed (borrowed for the call; the RenderPass object stays the caller's).
      */
     virtual void releasePass(raw_ptr<const RenderPass> pass)
     {

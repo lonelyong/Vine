@@ -155,7 +155,12 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
     void setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program) override;
 
     /**
-     * @brief Remembers the target a host announced; M0 builds no attachments for it.
+     * @brief Builds the target a host announced, before any frame names it.
+     *
+     * @details
+     * - The same ability the reference backend has (BC-09): the attachments come from `TargetTable::ensure` here,
+     *   so a frame that later names the target finds them built and builds nothing. A shape this device cannot build
+     *   is reported once, on the call, and the announcement is not taken.
      *
      * @param target Target the host will draw into, or null for the default framebuffer.
      */

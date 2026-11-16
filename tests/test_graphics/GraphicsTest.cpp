@@ -7303,7 +7303,7 @@ TEST(PassChainTest, AnImportedTextureIsAnInputInDeclarationOrder)
     producer.kind    = PassKind::Scene;
     producer.camera  = camera;
     producer.content = intrusive_ptr<Scene>(new Scene());
-    producer.writes  = source;
+    producer.target  = vn::graphics::Target::explicitTarget(source);
     vn::test::registerPassForTest(*engine, producer);
 
     // The state belongs to the INPUT: a content pass may read this texture with point/clamp while another
@@ -7356,7 +7356,7 @@ TEST(PassChainTest, AScreenPassKeepsImportedTextureInputsForItsProgram)
     producer.name   = u8"producer";
     producer.kind   = PassKind::Scene;
     producer.camera = camera;
-    producer.writes = source;
+    producer.target = vn::graphics::Target::explicitTarget(source);
     vn::test::registerPassForTest(*engine, producer);
 
     const intrusive_ptr<Texture2D> texture(new Texture2D(4, 4, PixelFormat::Rgba8Unorm));
@@ -7463,7 +7463,7 @@ TEST(DepthViewTest, APassStatesTheDepthEdgeAndItsTargetGetsTheMechanism)
     drawn_into->setSize(64, 64);
     PassDesc desc;
     desc.kind       = PassKind::Scene;
-    desc.writes     = drawn_into;
+    desc.target     = vn::graphics::Target::explicitTarget(drawn_into);
     desc.depth_view = depthViewOf(lender);
     const auto pass = vn::test::applyPassForTest(*engine, desc);
     ASSERT_NE(pass, nullptr);
@@ -7509,7 +7509,7 @@ TEST(DepthViewTest, ALayeredDepthViewIsRefusedRatherThanPointingAtTheWholeImage)
 
     PassDesc desc;
     desc.kind       = PassKind::Scene;
-    desc.writes     = target;
+    desc.target     = vn::graphics::Target::explicitTarget(target);
     desc.depth_view = depthViewOf(lender, 2);
 
     const auto pass = vn::test::applyPassForTest(*engine, desc);
@@ -7549,7 +7549,7 @@ TEST(DepthViewTest, TwoDifferentDepthViewsForOneTargetAreRefusedOnce)
 
     PassDesc agrees;
     agrees.kind         = PassKind::Scene;
-    agrees.writes       = drawn_into;
+    agrees.target       = vn::graphics::Target::explicitTarget(drawn_into);
     agrees.depth_view   = depthViewOf(first);
     const auto accepted = vn::test::applyPassForTest(*engine, agrees);
     ASSERT_NE(accepted, nullptr);
@@ -7677,7 +7677,7 @@ TEST(RenderPassTest, EachAttachmentClearColourTravelsWithThePassPolicy)
 
     PassDesc desc;
     desc.kind        = PassKind::Scene;
-    desc.writes      = target;
+    desc.target      = vn::graphics::Target::explicitTarget(target);
     desc.clear_color = vn::Color(255, 0, 0, 255).toLinear();
     desc.clear_extra_colors.push_back(vn::Color(0, 255, 0, 255).toLinear());
 
@@ -12673,8 +12673,8 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     desc.kind          = PassKind::Scene;
     desc.camera        = camera;
     desc.content       = scene;
-    desc.writes        = target;
-    desc.output_name   = u8"SceneColor";
+    desc.target        = vn::graphics::Target::explicitTarget(target);
+    desc.output.name   = u8"SceneColor";
     desc.clear_enabled = true;
     desc.before_draw   = [&enabled_calls] { ++enabled_calls; };
     vn::test::registerPassForTest(*engine, desc);
@@ -12734,8 +12734,8 @@ TEST(RenderEngineTest, AScreenPassCanBeDeclaredAsAValueToo)
     producer.kind        = PassKind::Scene;
     producer.camera      = camera;
     producer.content     = scene;
-    producer.writes      = source;
-    producer.output_name = u8"SceneColor";
+    producer.target      = vn::graphics::Target::explicitTarget(source);
+    producer.output.name = u8"SceneColor";
     vn::test::registerPassForTest(*engine, producer);
 
     // The consumer: a screen pass that samples the published name through a program.
@@ -12833,15 +12833,18 @@ TEST(RenderEngineTest, ATransientTargetIsOnePerDeclaredImageAndTheCompileOwnsIt)
 
     const auto declare = [&](const vn::String& name, int width, int height, bool depth) {
         PassDesc desc;
-        desc.name                = name;
-        desc.kind                = PassKind::Scene;
-        desc.camera              = camera;
-        desc.content             = scene;
-        desc.writes_image        = u8"gbuffer";
-        desc.writes_shape.width  = width;
-        desc.writes_shape.height = height;
-        desc.writes_shape.colors = { RenderTarget::ColorFormat::RGBA8 };
-        desc.writes_shape.depth  = depth ? std::optional<RenderTarget::DepthFormat>(RenderTarget::DepthFormat::D24) : std::nullopt;
+        desc.name    = name;
+        desc.kind    = PassKind::Scene;
+        desc.camera  = camera;
+        desc.content = scene;
+        // ONE Target value: the identity and shape it asks for (see Target), and the extent only when it states one.
+        vn::graphics::TransientShape shape;
+        shape.colors = { RenderTarget::ColorFormat::RGBA8 };
+        shape.depth  = depth ? std::optional<RenderTarget::DepthFormat>(RenderTarget::DepthFormat::D24) : std::nullopt;
+        desc.target = vn::graphics::Target::transient(u8"gbuffer", shape);
+        if (width > 0 && height > 0) {
+            desc.target.extent = vn::graphics::Extent{ width, height };
+        }
         vn::test::registerPassForTest(*engine, desc);
     };
 
@@ -14176,11 +14179,9 @@ TEST(RenderEngineTest, PromiseAboutATargetThePassDoesNotWriteIsReported)
     auto drawn_into = RenderTargetPtr(new RenderTarget());
     drawn_into->setName(u8"drawn_into");
     drawn_into->attachColor(RenderTarget::ColorFormat::RGBA8);
-    // Two DIFFERENT targets neither pass writes — so the only reports are the mismatches (two passes
-    // promising one target would be a collision, which is another rule).
-    auto promised_coarse = RenderTargetPtr(new RenderTarget());
-    promised_coarse->setName(u8"promised_coarse");
-    promised_coarse->attachColor(RenderTarget::ColorFormat::RGBA8);
+    // TWO LIES A VALUE CAN EXPRESS. A whole-target claim names the target the pass draws into, so "promises one
+    // target but draws into another" is unrepresentable now (see Output::whole_target); what remains is a whole
+    // claim on a WINDOW pass (no target to promise), and a fine image of a target the pass does not draw into.
     auto promised_fine = RenderTargetPtr(new RenderTarget());
     promised_fine->setName(u8"promised_fine");
     promised_fine->attachColor(RenderTarget::ColorFormat::RGBA8);
@@ -14191,8 +14192,8 @@ TEST(RenderEngineTest, PromiseAboutATargetThePassDoesNotWriteIsReported)
     auto coarse = intrusive_ptr<RenderPass>(new RenderPass());
     coarse->setName(u8"coarse_liar");
     coarse->setCamera(camera);
-    coarse->setRenderTarget(drawn_into);
-    coarse->setOutputTarget(promised_coarse);
+    // No setRenderTarget: this pass draws into the window, so its whole-target claim promises nothing.
+    coarse->setOutputTarget(drawn_into);
 
     auto fine = intrusive_ptr<RenderPass>(new RenderPass());
     fine->setName(u8"fine_liar");
@@ -14205,11 +14206,11 @@ TEST(RenderEngineTest, PromiseAboutATargetThePassDoesNotWriteIsReported)
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 2u); // one per declaration form
     ASSERT_EQ(received.size(), 2u);
-    for (const auto& diagnostic : received) {
-        EXPECT_EQ(diagnostic.category, DiagnosticCategory::ContentSkipped);
-        EXPECT_NE(diagnostic.message.find(u8"drawn_into"), vn::String::npos);
-    }
-    EXPECT_NE(received[0].message.find(u8"promised_coarse"), vn::String::npos);
+    EXPECT_EQ(received[0].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[0].message.find(u8"window"), vn::String::npos)
+        << "the coarse claim has no target to name";
+    EXPECT_EQ(received[1].category, DiagnosticCategory::ContentSkipped);
+    EXPECT_NE(received[1].message.find(u8"drawn_into"), vn::String::npos);
     EXPECT_NE(received[1].message.find(u8"promised_fine"), vn::String::npos);
 
     // The same broken promise next frame is the same episode: one message each, not one per frame.
@@ -14217,13 +14218,13 @@ TEST(RenderEngineTest, PromiseAboutATargetThePassDoesNotWriteIsReported)
     EXPECT_EQ(engine->diagnosticCount(), 2u);
 
     // Promising what it draws into is what the rule asks for: silent.
-    coarse->setOutputTarget(drawn_into);
+    coarse->setRenderTarget(drawn_into);
     fine->setRenderTarget(promised_fine);
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 2u);
 
-    // Breaking it again is a new episode.
-    coarse->setOutputTarget(promised_coarse);
+    // Breaking it again is a new episode: the coarse pass stops drawing into the target it claims.
+    coarse->setRenderTarget(nullptr);
     engine->frame();
     EXPECT_EQ(engine->diagnosticCount(), 3u);
 }

@@ -13,13 +13,14 @@
 #include "Camera.hpp"
 #include "DepthMode.hpp"
 #include "DepthRange.hpp"
-#include "ImageRef.hpp"
 #include "ImageSource.hpp"
+#include "Output.hpp"
 #include "PassStage.hpp"
 #include "PolygonMode.hpp"
 #include "RenderTarget.hpp"
 #include "Scene.hpp"
 #include "ShaderProgram.hpp"
+#include "Target.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -42,27 +43,6 @@ enum class PassKind : std::uint8_t
 {
     Scene,  // Draws a content scene through a camera: the ordinary pass (opaque, G-buffer, shadow, HUD).
     Screen, // Draws a full-screen triangle through a program over its resolved inputs (composite, lighting).
-};
-
-/**
- * @brief The shape a transient target is built at (see PassDesc::writes_image).
- *
- * @details
- * - A transient is declared rather than created: the pass says what IMAGE it needs, and the frame's compile
- *   allocates the attachment, keys it by (identity, shape), reuses it while the declaration holds, and lets
- *   it go when the declaration goes away (see RenderEngine::transientTargetCount).
- */
-struct TransientShape {
-    /// Extent in DEVICE pixels, or 0 for "the size of what this pass' frame is presenting" (see RenderEngine::resize).
-    int width{ 0 };
-    /// Extent in DEVICE pixels, or 0 for the same fallback as width.
-    int height{ 0 };
-    /// Colour attachments, in attachment order (empty means depth-only).
-    std::vector<RenderTarget::ColorFormat> colors{ RenderTarget::ColorFormat::RGBA8 };
-    /// Depth attachment, or unset for none.
-    std::optional<RenderTarget::DepthFormat> depth{ RenderTarget::DepthFormat::D24 };
-    /// Whether the depth attachment ends up sampleable (see RenderTarget::setDepthPromotion).
-    bool depth_promotion{ true };
 };
 
 /**
@@ -102,18 +82,16 @@ struct VN_GRAPHICS_API PassDesc {
     /// Content a Scene pass draws (held). Null draws nothing; an overlay pass may own its own scene.
     intrusive_ptr<Scene> content{ nullptr };
 
-    /// The target this pass draws into (held). Null draws into the window / the frame's own presented image.
-    intrusive_ptr<RenderTarget> writes{ nullptr };
-    /// The transient image this pass needs, by identity ("" = it writes an explicit target or the window).
+    /// WHERE this pass draws: the window, an explicit target, or a transient declared by identity (see Target).
     ///
-    /// A transient is the pass saying WHAT it needs instead of the host creating it: the compile allocates it
-    /// at writes_shape, hands it to this pass, and shares it with every other pass declaring the same
-    /// identity and shape (see RenderEngine::transientTargetCount). Its owner reaches it by this identity
-    /// (RenderEngine::transientTarget), and a handle across a shape change is stale on purpose: a replaced
-    /// transient is a new target.
-    String writes_image;
-    /// The shape writes_image is built at (ignored when writes_image is empty).
-    TransientShape writes_shape;
+    /// ONE FIELD: the kind says whether the window, @ref Target::target, or @ref Target::name / @ref Target::shape
+    /// is meaningful, so "which of these wins" is not a question a reader has to answer.
+    Target target{};
+
+    /// WHAT this pass publishes for later passes (see Output).
+    ///
+    /// ONE FIELD: the name is the registry key, and @ref Output::whole_target / @ref Output::image say what it covers.
+    Output output{};
 
     /// The depth image this pass draws against when it is ANOTHER pass' (see DepthView).
     ///
@@ -122,14 +100,6 @@ struct VN_GRAPHICS_API PassDesc {
     /// is what draws; the engine applies the declaration to the target when the pass is registered (the target's
     /// borrow is the mechanism a backend builds its framebuffer from).
     std::optional<DepthView> depth_view;
-
-    /// Publishes this pass' target under this name for the rest of the frame ("" = publishes nothing).
-    String output_name;
-    /// Promises the WHOLE of this target as this pass' output (a coarse claim; see RenderPass::setOutputTarget).
-    intrusive_ptr<RenderTarget> output_target{ nullptr };
-    /// Promises ONE image (a target's attachment, or its depth) as this pass' output: the fine-grained claim every
-    /// consumer points at (see RenderPass::setOutput). Null means the pass promises no single image.
-    intrusive_ptr<ImageRef> output{ nullptr };
 
     /// Fine-grained declared inputs, in declaration order: produced images or imported textures (see
     /// RenderPass::addInput).

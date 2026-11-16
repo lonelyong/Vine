@@ -2153,8 +2153,8 @@ TEST(VsgBackendTest, ADeclaredTargetIsBuiltWithoutAFrame)
     // CAP-86: `setRenderTarget` is the host's announcement that a target exists, and this backend BUILDS it there -
     // no frame has to name it first. The witness is the difference between two refusals, which no pixel assertion
     // could make cheaper: a target the device holds answers questions about its attachments (Invalid for an index it
-    // has none of), while a target it does not hold answers NotReady. (The vk backend does not build on the announce
-    // yet - see VkOffscreenTest.ADeclaredTargetIsNotBuiltUntilAFrameNamesIt; BC-09 is the batch that flips it.)
+    // has none of), while a target it does not hold answers NotReady. The vk backend builds on the announce too
+    // (see VkOffscreenTest.ADeclaredTargetIsBuiltWithoutAFrame): BC-09 is one ability in both backends.
     if (!deviceCaseAvailable()) {
         GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
     }

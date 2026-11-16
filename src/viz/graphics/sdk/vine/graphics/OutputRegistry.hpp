@@ -59,7 +59,7 @@ class VN_GRAPHICS_API OutputRegistry {
 
     /** @brief Gets the transient target a declaration asked for, by its declared identity.
      *
-     * @param identity Identity a pass declared as its transient (PassDesc::writes_image).
+     * @param identity Identity a pass declared as its transient (PassDesc::target.name).
      * @return The instance live now, or null when nothing declares that identity yet.
      */
     [[nodiscard]] raw_ptr<RenderTarget> transientTarget(const String& identity) const;

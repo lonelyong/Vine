@@ -369,15 +369,15 @@ scene_pass.kind          = vn::graphics::PassKind::Scene;
 scene_pass.order         = -1;                                  // -1 < 0：排在主 pass 之前
 scene_pass.camera        = camera;
 scene_pass.content       = scene;
-scene_pass.writes        = scene_rt;
+scene_pass.target        = vn::graphics::Target::explicitTarget(scene_rt);
 scene_pass.clear_enabled = true;                                // 自己是第一笔，清屏
 scene_pass.clear_color   = vn::Color(26, 26, 31).toLinear();    // vn::Color 是 0..255 的 uint8 构造
 scene_pass.clear_depth   = true;
 scene_pass.depth_mode    = vn::graphics::DepthMode::TestAndWrite; // 不透明内容：测 + 写
-scene_pass.output_name   = u8"SceneColor";                      // 命名输出（每帧进名字表）
-scene_pass.output_target = scene_rt;                            // 对象级承诺：它是这张 target 的唯一写者
+scene_pass.output.name   = u8"SceneColor";                      // 命名输出（每帧进名字表）
+scene_pass.output.whole_target = true;                            // 对象级承诺：它是这张 target 的唯一写者
 
-// ③ 合成 pass：作为**窗口 pass**（不写 writes ⇒ 画进窗口），order 0。
+// ③ 合成 pass：作为**窗口 pass**（target 留默认 ⇒ 画进窗口），order 0。
 vn::graphics::PassDesc compose_pass;
 compose_pass.name          = u8"compose_to_window";
 compose_pass.order         = 0;
@@ -433,10 +433,10 @@ gbuffer_pass.order           = -3;
 gbuffer_pass.kind            = vn::graphics::PassKind::Scene;
 gbuffer_pass.camera          = camera;
 gbuffer_pass.content         = scene;
-gbuffer_pass.writes          = gbuffer;
+gbuffer_pass.target          = vn::graphics::Target::explicitTarget(gbuffer);
 gbuffer_pass.program_override = gbuffer_program;   // 场景 pass 也可以带自己的 program
-gbuffer_pass.output_name     = u8"GBuffer";
-gbuffer_pass.output_target   = gbuffer;            // 唯一写者 ⇒ 承诺整张 target
+gbuffer_pass.output.name     = u8"GBuffer";
+gbuffer_pass.output.whole_target = true;            // 唯一写者 ⇒ 承诺整张 target
 
 // ③ 延迟光照 + 前向透明的共同落点：一张离屏 composite，它**借** G-buffer 的深度，
 //    于是不透明场景只光栅化一次，前向内容能正确地被不透明物体遮挡。
@@ -453,7 +453,7 @@ light_pass.name          = u8"deferred_lighting";
 light_pass.order         = 0;
 light_pass.kind          = vn::graphics::PassKind::Screen;
 light_pass.camera        = camera;                  // program 路径**必须**有相机
-light_pass.writes        = composite;
+light_pass.target        = vn::graphics::Target::explicitTarget(composite);
 light_pass.input_names   = { vn::String(u8"GBuffer") };
 light_pass.input_targets = { gbuffer };             // 读整捆：program 按 binding 自己挑
 light_pass.program       = defaultDeferredLightProgram();
@@ -465,13 +465,13 @@ forward_pass.order         = 1;
 forward_pass.kind          = vn::graphics::PassKind::Scene;
 forward_pass.camera        = camera;
 forward_pass.content       = transparent_scene;
-forward_pass.writes        = composite;
+forward_pass.target        = vn::graphics::Target::explicitTarget(composite);
 forward_pass.clear_enabled = false;
 forward_pass.depth_mode    = vn::graphics::DepthMode::TestOnly;
-forward_pass.output_name   = u8"Composite";
-forward_pass.output_target = composite;
+forward_pass.output.name   = u8"Composite";
+forward_pass.output.whole_target = true;
 
-// ⑥ 呈现：把烘好的 composite 拷到窗口（窗口 pass，不写 writes）。
+// ⑥ 呈现：把烘好的 composite 拷到窗口（窗口 pass，target 留默认）。
 vn::graphics::PassDesc present_pass;
 present_pass.name          = u8"present";
 present_pass.order         = 2;
@@ -984,7 +984,7 @@ desc.kind          = PassKind::Screen;         // 怎么执行：Scene（画一�
 desc.camera        = camera.get();
 desc.program       = vn::graphics::screenCopyProgram();
 desc.input_names   = { vn::String(u8"Composite") };   // 声明的输入（名字／ImageRef／target 三种写法与 RenderPass 相同）
-desc.output_name   = u8"Presented";
+desc.output.name   = u8"Presented";
 desc.before_draw   = [&hud] { hud.update(); };  // 每帧跑一次的内容更新钩子（不需要钩子就留空）
 engine->applyPlan(vn::graphics::Plan{ { desc } });   // 注册 = 把声明交给计划（W9d 起唯一的路）
 ```
@@ -992,13 +992,14 @@ engine->applyPlan(vn::graphics::Plan{ { desc } });   // 注册 = 把声明交给
 - **位置**由 `stage` 决定；要精确插到某个数就用 `desc.order`（逃生口，见 `PassStage` 的刻度）。
 - **`before_draw`** 是"内容每帧自己更新"的唯一钩子（FPS 读数、镜像的坐标轴）：它写**内容**，所以在 pass 记录任何状态之前跑，
   禁用的 pass 不跑。
-- **transient 目标**：不写 `desc.writes` 而是声明你需要哪张图、什么形状，帧的编译就替你分配、复用、并在没人再声明时释放：
+- **transient 目标**：不写 `desc.target` 而是声明你需要哪张图、什么形状，帧的编译就替你分配、复用、并在没人再声明时释放：
 
 ```cpp
-desc.writes_image      = u8"gbuffer";                  // 身份：同身份同形状 = **同一张**目标
-desc.writes_shape.colors = { RenderTarget::ColorFormat::RGBA8 };
-desc.writes_shape.depth  = RenderTarget::DepthFormat::D24;
-// 宽高留 0 ⇒ 跟着这一帧呈现的表面尺寸（engine->resize() 报的那个）
+vn::graphics::TransientShape shape;
+shape.colors = { RenderTarget::ColorFormat::RGBA8 };
+shape.depth  = RenderTarget::DepthFormat::D24;
+desc.target = vn::graphics::Target::transient(u8"gbuffer", shape);
+// 不写 extent ⇒ 跟着这一帧呈现的区域尺寸（engine->resize() 报的那个）
 ```
 
   计数/复用可以用 `RenderEngine::transientTargetCount()` 直接断言（一张声明一张目标；稳态帧不重建；形状变则**替换**而不是新增）。

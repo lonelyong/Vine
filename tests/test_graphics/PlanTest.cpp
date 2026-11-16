@@ -147,7 +147,7 @@ PassDesc namedPass(const char8_t* name, intrusive_ptr<RenderTarget> target, int 
     desc.order  = order;
     desc.kind   = PassKind::Scene;
     desc.camera = std::move(camera);
-    desc.writes = std::move(target);
+    desc.target = vn::graphics::Target::explicitTarget(std::move(target));
     return desc;
 }
 
@@ -386,11 +386,11 @@ TEST(PlanTest, ACycleIsRefusedWithItsCodeAndFeedbackIsNotACycle)
 {
     PassDesc a;
     a.name        = u8"a";
-    a.output_name = u8"a-out";
+    a.output.name = u8"a-out";
     a.input_names = { String(u8"b-out") };
     PassDesc b;
     b.name        = u8"b";
-    b.output_name = u8"b-out";
+    b.output.name = u8"b-out";
     b.input_names = { String(u8"a-out") };
     Plan cycle;
     cycle.passes.push_back(a);
@@ -399,7 +399,7 @@ TEST(PlanTest, ACycleIsRefusedWithItsCodeAndFeedbackIsNotACycle)
 
     PassDesc feedback;
     feedback.name        = u8"feedback";
-    feedback.output_name = u8"self";
+    feedback.output.name = u8"self";
     feedback.input_names = { String(u8"self") };
     Plan allowed;
     allowed.passes.push_back(feedback);
@@ -545,4 +545,49 @@ TEST(PlanTest, TheDescriptionNamesEveryFactADiffTurnsOn)
     EXPECT_NE(text.find(u8"order=0"), String::npos);
     EXPECT_NE(text.find(u8"target=explicit"), String::npos);
     EXPECT_EQ(Plan{}.describe(), u8"(empty plan)");
+}
+
+/**
+ * @brief A declaration that states two forms of one fact is refused, not resolved by precedence.
+ *
+ * `Target` says WHERE a pass draws and `Output` says WHAT it publishes; both are single values, so
+ * "an explicit target beside a transient name" and "a whole-target promise beside one image" are
+ * values the plan refuses instead of letting one of them win at compile time (see Target::isValid /
+ * Output::isValid). The consistent value is accepted, which is what keeps the refusal about the
+ * shape and not about the fields being used at all.
+ */
+TEST(PlanTest, ATargetValueAndAnOutputValueCannotBothBeStated)
+{
+    auto target = intrusive_ptr<RenderTarget>(new RenderTarget());
+    target->setName(u8"gbuffer");
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    auto image = intrusive_ptr<ImageRef>(new ImageRef(u8"gbuffer.color"));
+    image->bind(target, 0);
+
+    PassDesc pass;
+    pass.name = u8"mixed";
+    // TWO FORMS OF ONE FACT: an explicit target and a transient identity for the same place.
+    pass.target.kind   = Target::Kind::Transient;
+    pass.target.name   = u8"gbuffer";
+    pass.target.target = target;
+    // TWO PROMISES FOR ONE NAME: the whole target and one of its images.
+    pass.output.name         = u8"out";
+    pass.output.whole_target = true;
+    pass.output.image        = image;
+
+    const std::vector<PlanProblem> problems = validatePlan(Plan{ { pass } });
+    bool                           target_refused = false;
+    bool                           output_refused = false;
+    for (const PlanProblem& problem : problems) {
+        target_refused = target_refused || problem.code == PlanProblemCode::InvalidTarget;
+        output_refused = output_refused || problem.code == PlanProblemCode::InvalidOutput;
+    }
+    EXPECT_TRUE(target_refused) << "a Target that states an explicit target and a transient name was accepted";
+    EXPECT_TRUE(output_refused) << "an Output that promises a whole target and one image was accepted";
+
+    // The consistent spelling is accepted: one transient identity, one fine image claim.
+    pass.target = Target::transient(u8"gbuffer");
+    pass.output.whole_target = false;
+    pass.output.image        = image;
+    EXPECT_TRUE(validatePlan(Plan{ { pass } }).empty()) << "a consistent Target/Output pair must be a valid plan";
 }

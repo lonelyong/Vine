@@ -160,9 +160,9 @@ raw_ptr<ScreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
     preview_desc.stage         = PassStage::Geometry;
     preview_desc.camera        = intrusive_ptr<Camera>(camera);
     preview_desc.content       = std::move(content);
-    preview_desc.writes        = target;
-    preview_desc.output_name   = output_slot;
-    preview_desc.output_target = target; // its only writer: it owns the hand-off
+    preview_desc.target        = Target::explicitTarget(target);
+    preview_desc.output.name   = output_slot;
+    preview_desc.output.whole_target = true; // its only writer: it owns the hand-off
 
     // The order > 0 ScreenPass sampling the slot into the PiP sub-viewport. Its picture is the SDK's copy program,
     // and it carries the view camera because a fullscreen program is drawn through the pass' view.

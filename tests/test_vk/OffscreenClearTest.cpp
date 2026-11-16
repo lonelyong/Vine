@@ -72,13 +72,11 @@ namespace
 
 } // namespace
 
-TEST(VkOffscreenTest, ADeclaredTargetIsNotBuiltUntilAFrameNamesIt)
+TEST(VkOffscreenTest, ADeclaredTargetIsBuiltWithoutAFrame)
 {
-    // CAP-86, TODAY'S GAP, PINNED. `RenderDevice::setRenderTarget` says the device holds the target and builds its
-    // attachments, and the reference backend does exactly that (VsgBackendTest.ADeclaredTargetIsBuiltWithoutAFrame).
-    // This backend only remembers the pointer (Device::setRenderTarget), so a target announced before any frame is
-    // still "nothing to read" - which is what this case states, so that the batch which makes the verb true (BC-09)
-    // has to REPLACE it with the shared sentence rather than discover it later.
+    // CAP-86 / BC-09. `RenderDevice::setRenderTarget` says the device holds the target and builds its attachments,
+    // and now BOTH backends do exactly that (see VsgBackendTest.ADeclaredTargetIsBuiltWithoutAFrame). A target
+    // announced before any frame answers about its images at once, and the first frame that names it builds nothing.
     //
     // The witness is the difference between two refusals: a target this device built can be asked about an attachment
     // it does not have (Invalid), while one it never built answers NotReady. No pixel is compared.
@@ -94,13 +92,19 @@ TEST(VkOffscreenTest, ADeclaredTargetIsNotBuiltUntilAFrameNamesIt)
     backend->setRenderTarget(target.get());
     ReadbackResult why = ReadbackResult::Ok;
     EXPECT_FALSE(backend->readColorBuffer(target.get(), 1, pixels, &why));
-    EXPECT_EQ(why, ReadbackResult::NotReady) << "the announce built nothing: no frame has named the target yet";
+    EXPECT_EQ(why, ReadbackResult::Invalid) << "the announcement built the one colour attachment the target states";
+    EXPECT_TRUE(pixels.empty());
+    // BUILT IS NOT DRAWN: the image exists, but no pass has written it, so the picture is still NotReady.
+    EXPECT_FALSE(backend->readColorBuffer(target.get(), 0, pixels, &why));
+    EXPECT_EQ(why, ReadbackResult::NotReady) << "nothing has drawn into the announced target yet";
 
-    // A FRAME THAT NAMES IT is what builds it - and the same question then answers Invalid, because the images exist.
+    // A FRAME THAT NAMES IT finds it built: the same question still answers Invalid, and the clear it recorded is
+    // readable - the frame built no attachment of its own.
     backend->executeFrame(clearingFrame(target.get(), Colorf(0.0F, 0.0F, 0.0F, 1.0F)));
     EXPECT_FALSE(backend->readColorBuffer(target.get(), 1, pixels, &why));
-    EXPECT_EQ(why, ReadbackResult::Invalid) << "the frame built the one colour attachment the target states";
+    EXPECT_EQ(why, ReadbackResult::Invalid) << "the frame did not have to build what the announcement built";
     EXPECT_TRUE(pixels.empty());
+    EXPECT_TRUE(backend->readColorBuffer(target.get(), 0, pixels, &why)) << "the frame's clear is readable";
 
     backend->releaseRenderTarget(target.get());
     backend->shutdown();

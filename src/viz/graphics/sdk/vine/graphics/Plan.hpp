@@ -30,6 +30,8 @@ enum class PlanProblemCode : std::uint8_t
 {
     EmptyPassName,     // A pass has no name, so a plan cannot diff it against the shape it replaces.
     DuplicatePassName, // Two passes answer the same name: one plan, one pass of that name.
+    InvalidTarget,     // A pass' Target value states two forms at once (or a form without its payload).
+    InvalidOutput,     // A pass' Output value promises both a whole target and one image.
     UnknownInput,      // A named input no pass of the plan (and no host binding) publishes.
     DependencyCycle,   // The named inputs form a cycle: no execution order satisfies it.
     TooManyPasses,     // More passes than kMaxPlanPasses (the plan is refused, not truncated).
@@ -205,7 +207,7 @@ struct VN_GRAPHICS_API Plan {
  * - What it checks, in the order a host reads them: `TooManyPasses`, `EmptyPassName`, `DuplicatePassName`,
  *   `UnknownInput`, `DependencyCycle`. It returns EVERY problem, not the first, so one call tells a host
  *   everything that has to change.
- * - Inputs are matched BY NAME (`PassDesc::input_names` against `PassDesc::output_name`); the object-typed
+ * - Inputs are matched BY NAME (`PassDesc::input_names` against `PassDesc::output.name`); the object-typed
  *   inputs are identities, not names, so they are checked by the compile that resolves them (see
  *   RenderEngine::frameTable). A pass that names its own output is feedback, not a cycle, and is allowed -
  *   the same rule the compile applies.

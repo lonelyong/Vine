@@ -42,7 +42,7 @@ using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
  *   copy of the clear colour, the camera, the inputs or the layer mask to keep in step, so "the value form and the
  *   node form disagree" is not a defect this type can have.
  * - WHAT IS NOT HERE: the facts the FRAME produces - the transient target a compile resolved, the measured record
- *   time - belong to the engine's slot. A pass that declares `writes_image` still draws into the target the compile
+ *   time - belong to the engine's slot. A pass that declares a transient target still draws into the target the compile
  *   handed it (see renderTarget()).
  * - THE EXTENSION POINT IS describe(). A pass issues what it describes, and describe() needs nothing from a backend
  *   (the picture's shape is the camera's), so a whole frame of descriptions can be assembled before anything runs.
@@ -138,11 +138,15 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     /**
      * @brief Gets the target this pass draws into.
      *
+     * @details
+     * - The EFFECTIVE target: an explicit target as declared, the target the compile resolved for a transient
+     *   declaration, or null for the window (see Target / resolvedTarget).
+     *
      * @return The target, or null for the window / the frame's own presented image.
      */
     [[nodiscard]] raw_ptr<RenderTarget> renderTarget() const noexcept
     {
-        return desc_.writes.get();
+        return resolved_target_ != nullptr ? resolved_target_.get() : desc_.target.target.get();
     }
 
     /**
@@ -151,13 +155,29 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * @details
      * - The pass keeps the target alive: it draws into it every frame, so it must not be able to outlive it.
      * - The compile also calls this with the transient target it resolved for a pass that declared
-     *   `PassDesc::writes_image`, which is why the effective target is the one this returns.
+     *   `PassDesc::target.name`, which is why the effective target is the one this returns.
      * - A stated depth view is applied to the new target (see setDepthView); a pass that stated none does not un-say
      *   what another pass set.
      *
      * @param target Target to draw into, or null for the window.
      */
     void setRenderTarget(intrusive_ptr<RenderTarget> target);
+
+    /**
+     * @brief Takes the target the frame compile resolved for this pass' transient declaration.
+     *
+     * @details
+     * - EXECUTION STATE, not a declaration: the declaration keeps saying "I asked for this identity" (see
+     *   Target), while the target that answered it belongs to the frame that resolved it - so a compile can
+     *   replace it without rewriting what the host stated (which is what the old `setRenderTarget` did).
+     * - Called by the engine's compile (see compileFrame) and by nobody else; a null value drops the resolution.
+     *
+     * @param target The target a transient declaration resolved to, or null to drop the resolution.
+     */
+    void setResolvedTarget(intrusive_ptr<RenderTarget> target) noexcept
+    {
+        resolved_target_ = std::move(target);
+    }
 
     /**
      * @brief Gets the depth image this pass draws against.
@@ -501,7 +521,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      */
     void setOutputName(const String& name)
     {
-        desc_.output_name = name;
+        desc_.output.name = name;
     }
 
     /**
@@ -511,7 +531,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      */
     [[nodiscard]] String outputName() const
     {
-        return desc_.output_name;
+        return desc_.output.name;
     }
 
     /**
@@ -527,7 +547,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      */
     void setOutput(intrusive_ptr<ImageRef> image)
     {
-        desc_.output = std::move(image);
+        desc_.output.image = std::move(image);
     }
 
     /**
@@ -537,7 +557,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      */
     [[nodiscard]] raw_ptr<ImageRef> output() const noexcept
     {
-        return desc_.output.get();
+        return desc_.output.image.get();
     }
 
     /**
@@ -548,22 +568,25 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *   attachments in one render scope, so promising them one by one would mean repeating the attachment count at
      *   every producer.
      * - Shape-agnostic on purpose: the promise covers whatever the target has when the engine validates it.
+     * - The claim has NO target of its own (see Output::whole_target): it always names the target the pass DRAWS
+     *   INTO, so @p target only states or clears the claim - naming another target cannot make the promise about
+     *   it, because the value cannot express that.
      *
      * @param target Target whose images this pass produces (null clears the declaration).
      */
     void setOutputTarget(intrusive_ptr<RenderTarget> target)
     {
-        desc_.output_target = std::move(target);
+        desc_.output.whole_target = target != nullptr;
     }
 
     /**
      * @brief Gets the whole target this pass promises to consumers.
      *
-     * @return The declared output target, or null when none was declared.
+     * @return The target the pass draws into when the whole-target claim is stated, or null.
      */
     [[nodiscard]] raw_ptr<RenderTarget> outputTarget() const noexcept
     {
-        return desc_.output_target.get();
+        return desc_.output.whole_target ? renderTarget() : nullptr;
     }
 
     /**
@@ -901,6 +924,12 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
 
     /// Device-pixel size of the surface for a pass that has no target (see setDrawSize).
     Viewport draw_size_{};
+
+    /// The target a transient declaration resolved to this frame, or null when the declaration is not transient.
+    ///
+    /// EXECUTION STATE beside the declaration: set by the frame compile (see setResolvedTarget), cleared when the
+    /// declaration changes, so renderTarget() answers the effect while declaration().target keeps the request.
+    intrusive_ptr<RenderTarget> resolved_target_{};
 };
 
 using RenderPassPtr = intrusive_ptr<RenderPass>;

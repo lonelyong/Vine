@@ -78,6 +78,8 @@ engine.compile.plan_refused             — the plan statement was refused (see 
 
 # --- engine: a pass declaration the engine could not honour ---
 engine.pass.layer_mask_empty          — a content pass' layer mask selects nothing, so it draws an empty picture
+engine.pass.target_invalid            — a pass' Target value states two forms at once (or a form without its payload)
+engine.pass.output_invalid            — a pass' Output value promises both a whole target and one image
 engine.pass.output_target_mismatch    — a pass promises a whole target it does not render into
 engine.pass.output_image_mismatch     — a pass promises one image of a target it does not render into
 engine.pass.output_collision          — two passes claim one image as their output

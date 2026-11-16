@@ -558,7 +558,6 @@ struct Device::Impl {
     mutable std::mutex        surfaces_mutex{};
     DeviceDesc      desc{};
     Capabilities    caps{};
-    RenderTarget*   target{ nullptr };
 
     VkInstance               instance{ VK_NULL_HANDLE };
     VkDebugUtilsMessengerEXT messenger{ VK_NULL_HANDLE };
@@ -3182,7 +3181,13 @@ void Device::setRenderTarget(RenderTarget* target)
         impl->report_host_reentry(u8"setRenderTarget()");
         return;
     }
-    impl->target = target;
+    // THE VERB BUILDS WHAT IT ANNOUNCES (BC-09, see RenderDevice::setRenderTarget and the reference backend):
+    // "a target can be built without a frame" is one ability in both backends, so a later frame that names this
+    // target finds its attachments built and builds nothing. The table reports its own refusal once and answers
+    // false; the announcement is then not taken (the host learns at the call site, not on the first frame).
+    if (target != nullptr) {
+        (void)impl->target_table.ensure(*target);
+    }
 }
 
 void Device::releaseRenderTarget(RenderTarget* target)
@@ -3470,6 +3475,12 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
         if (attachment < 0 || static_cast<std::size_t>(attachment) >= peek->colorCount()) {
             return fail(ReadbackResult::Invalid);
         }
+        if (peek->fresh) {
+            // BUILT IS NOT DRAWN: the images exist now that `setRenderTarget` builds the announce, but their
+            // contents are UNDEFINED until a pass writes them, and "undefined" is not a picture. Asked after the
+            // range check, so an index the target does not have is Invalid whether or not anything drew.
+            return fail(ReadbackResult::NotReady);
+        }
         if (peek->colorFormat(static_cast<std::size_t>(attachment)) != VK_FORMAT_R8G8B8A8_UNORM) {
             return fail(ReadbackResult::Unsupported);
         }
@@ -3501,6 +3512,9 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     TargetObjects& images = *entry;
     if (attachment < 0 || static_cast<std::size_t>(attachment) >= images.colorCount()) {
         return fail(ReadbackResult::Invalid);
+    }
+    if (images.fresh) {
+        return fail(ReadbackResult::NotReady); // built but never drawn (see the pre-gate check's note)
     }
     const std::size_t   attachment_index = static_cast<std::size_t>(attachment);
     const VkImage       color_image      = images.colors[attachment_index];
@@ -3639,6 +3653,9 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
         if (!peek->hasDepth()) {
             return fail(ReadbackResult::Invalid);
         }
+        if (peek->fresh) {
+            return fail(ReadbackResult::NotReady); // built but never drawn: the depth is UNDEFINED
+        }
         if (!depthReadbackOf(target->depthFormat()).readable) {
             return fail(ReadbackResult::Unsupported);
         }
@@ -3669,6 +3686,9 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
     TargetObjects& images = *entry;
     if (!images.hasDepth()) {
         return fail(ReadbackResult::Invalid); // no depth attachment at all: the request names nothing
+    }
+    if (images.fresh) {
+        return fail(ReadbackResult::NotReady); // built but never drawn (see the pre-gate check's note)
     }
 
     // ONE TABLE SAYS WHAT A DEPTH READBACK IS - the SDK's, the same one `decodeDepth` reads. The per-texel size below

@@ -603,8 +603,11 @@
   在钉它们；F6 在 `Plan.hpp` / `Plan.cpp` / `EngineCompile.cpp`（`applyPlan`）里，由 `PlanTest` 钉住；F7 在
   `DrawNeeds.*`（身份）与 `RenderEngine::prepare()` / `RenderFrameExecutor::prepareFrame` / `VsgBackend::prepareFrame`
   （预建）里，由 `T32` / `T33` 钉住。
-  F6 的**半边**：`Target` 还不是值（仍是显式 `RenderTarget` 句柄）；`addPass` 家族已删（W9d）；`FrameTable` 是
-  编译后的帧表，`PlanResult` 三态与 `frame()` 两态已收口（W9e）。
+  F6 的 **Target/Output 半边已落地（B14，2026-11-16）**：`PassDesc::target` 是一个 `Target` 值
+  （`Window | Explicit | Transient`，§2.8），`PassDesc::output` 是一个 `Output` 值（name + whole_target + image）；
+  `writes` / `writes_image` / `writes_shape` / `output_name` / `output_target` / `output` 六个字段已删，格式不一致的
+  值由 `validatePlan` 拒绝（`InvalidTarget` / `InvalidOutput`）。同一轮的 `View` 值（B12）与 `RenderSurface →
+  RenderArea`（B13）也已落地。
 - **快照已是生产收集（5b-1 / 5b-2a，2026-11-12）**：F1（快照发布）、F2（纯派生）由 `SnapshotSource` 回答
   Published 模式的每个 draw；`Scene::collectRenderCommands` 仍是 Direct 模式的直接路径；`K1`（203 µs）、
   `K2`（1.03×）、`K3` 已由 `SnapshotTest` 证明。

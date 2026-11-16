@@ -52,7 +52,24 @@ std::vector<PlanProblem> validatePlan(const Plan& plan, std::span<const String> 
     std::map<String, std::size_t> producer_of;
     std::map<String, std::size_t> published_by;
     for (std::size_t index = 0; index < plan.passes.size(); ++index) {
-        const String& name = plan.passes[index].name;
+        const PassDesc& pass = plan.passes[index];
+        const String&   name = pass.name;
+        // THE DECLARATION'S OWN SHAPE: a Target or an Output that states two forms at once is a value defect,
+        // refused here instead of letting one of them win at compile time (see Target::isValid / Output::isValid).
+        if (!pass.target.isValid()) {
+            problems.push_back(PlanProblem{ PlanProblemCode::InvalidTarget,
+                                            name,
+                                            String(u8"pass '") + name +
+                                                String(u8"' states a target that mixes its forms: a Target is the "
+                                                       u8"window, one explicit target, or one transient name - not several") });
+        }
+        if (!pass.output.isValid()) {
+            problems.push_back(PlanProblem{ PlanProblemCode::InvalidOutput,
+                                            name,
+                                            String(u8"pass '") + name +
+                                                String(u8"' promises both a whole target and one image for its output; "
+                                                       u8"one name covers one claim") });
+        }
         if (name.empty()) {
             problems.push_back(PlanProblem{ PlanProblemCode::EmptyPassName,
                                             String(),
@@ -67,7 +84,7 @@ std::vector<PlanProblem> validatePlan(const Plan& plan, std::span<const String> 
                                             String(u8"two passes answer the name '") + name +
                                                 String(u8"'; one plan is one pass per name, so the diff has one node to update") });
         }
-        const String& output = plan.passes[index].output_name;
+        const String& output = plan.passes[index].output.name;
         if (!output.empty()) {
             // Two publishers of one name is the compile's business (the latest publication serves the name);
             // for the EDGE it is enough that the name is served, so the first publisher answers it.
@@ -153,14 +170,16 @@ String Plan::describe() const
         text += String(u8"pass[") + digits(index) + String(u8"] name='") + pass.name + String(u8"' kind=") +
                 (pass.kind == PassKind::Screen ? String(u8"Screen") : String(u8"Scene")) + String(u8" order=") +
                 digits(static_cast<std::size_t>(pass.order.value_or(passStageOrder(pass.stage)))) + String(u8" target=") +
-                (pass.writes != nullptr ? String(u8"explicit") : String(u8"window")) + String(u8" inputs=[");
+                (pass.target.isExplicit() ? String(u8"explicit")
+                                          : (pass.target.isTransient() ? String(u8"transient") : String(u8"window"))) +
+                String(u8" inputs=[");
         for (std::size_t input = 0; input < pass.input_names.size(); ++input) {
             if (input != 0) {
                 text += String(u8", ");
             }
             text += pass.input_names[input];
         }
-        text += String(u8"] output=") + (pass.output_name.empty() ? String(u8"-") : pass.output_name);
+        text += String(u8"] output=") + (pass.output.name.empty() ? String(u8"-") : pass.output.name);
     }
     return text;
 }

@@ -776,7 +776,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     [[nodiscard]] const FrameDescription& frameDescription() const noexcept;
 
-    /** @brief Gets how many transient targets the current plan hands out (see PassDesc::writes_image).
+    /** @brief Gets how many transient targets the current plan hands out (see PassDesc::target.name).
      *
      * @details
      * - The witness of the compile owning transient storage: one per DISTINCT transient a frame declares
@@ -788,17 +788,17 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     [[nodiscard]] std::size_t transientTargetCount() const noexcept;
 
     /** @brief Gets the transient target a declaration asked for, by its declared identity
-     * (PassDesc::writes_image).
+     * (PassDesc::target.name).
      *
      * @details
      * - A declared transient is owned by the compile, so this is how its OWNER reaches it (to preview it,
      *   read it back, or state a relationship the declaration cannot - "this target borrows that transient's
      *   depth" is a composition, RenderTarget::shareDepth its mechanism).
      * - The answer is the instance live NOW: re-ask after a shape change, because a transient is REPLACED
-     *   when its declared shape moves (PassDesc::writes_shape) - a handle kept across a resize describes a
+     *   when its declared shape moves (PassDesc::target.shape) - a handle kept across a resize describes a
      *   target the compile has already let go.
      *
-     * @param identity Identity a pass declared (its `writes_image`).
+     * @param identity Identity a pass declared (its target name).
      * @return The target, or null when nothing declares that identity (including every call before the
      *         first compiled frame - a transient is the compile's product, not the build's).
      */
@@ -1115,7 +1115,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * - THE ONE PLACE A FRAME IS DECIDED. Compiled every frame - no declaration tells the engine it moved,
      *   because reading the declarations IS the compile (a steady frame costs the same walk, nothing kept
      *   in step with a revision). Two things come out, both the frame's own: the ORDER and WIRING (which
-     *   pass runs when, what declared inputs resolve to, which transients allocate - PassDesc::writes_image)
+     *   pass runs when, what declared inputs resolve to, which transients allocate - PassDesc::target.name)
      *   and this set's PROBLEMS, reported once per episode by comparing with the previous compile's.
      */
     void compileFrame();

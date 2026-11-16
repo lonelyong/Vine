@@ -1055,6 +1055,25 @@ void RenderEngine::collectPlanProblems()
             continue;
         }
 
+        // THE DECLARATION'S OWN SHAPE (see Target / Output): a value that states two forms at once is a
+        // declaration mistake, reported here instead of letting one of them win silently.
+        if (!pass->declaration().target.isValid()) {
+            reportEngineProblem(wiringProblem(u8"engine.pass.target_invalid",
+                                              vn::graphics::DiagnosticCategory::ContentSkipped,
+                                              String(u8"pass '") + reportedPassName(pass) +
+                                                  String(u8"' states a target that mixes its forms: a Target is the "
+                                                         u8"window, one explicit target, or one transient name - not several"),
+                                              reportedPassName(pass)));
+        }
+        if (!pass->declaration().output.isValid()) {
+            reportEngineProblem(wiringProblem(u8"engine.pass.output_invalid",
+                                              vn::graphics::DiagnosticCategory::ContentSkipped,
+                                              String(u8"pass '") + reportedPassName(pass) +
+                                                  String(u8"' promises both a whole target and one image for its output; "
+                                                         u8"one name covers one claim"),
+                                              reportedPassName(pass)));
+        }
+
         // Drawing into a target fills it: every attachment it has holds this pass' content
         // afterwards. This is the physical fact the input rules below are answered from.
         if (raw_ptr<RenderTarget> drawn_into = pass->renderTarget(); drawn_into != nullptr) {
@@ -1078,25 +1097,18 @@ void RenderEngine::collectPlanProblems()
             continue;
         }
 
-        // A promise that names a WHOLE target: it claims every image that target has (the
-        // declaration stays shape-agnostic; only the comparison is per image).
+        // A promise that names a WHOLE target: it claims every image of the target the pass DRAWS INTO (see
+        // Output::whole_target). A window pass has no target, so its promise is about nothing and is reported.
+        if (pass->declaration().output.whole_target && pass->renderTarget() == nullptr) {
+            reportEngineProblem(wiringProblem(u8"engine.pass.output_target_mismatch",
+                                              vn::graphics::DiagnosticCategory::ContentSkipped,
+                                              String(u8"pass '") + reportedPassName(pass) +
+                                                  String(u8"' promises the whole of its target as its output but draws into "
+                                                         u8"the window, so the promise is about content this pass never writes"),
+                                              reportedPassName(pass)));
+        }
         if (raw_ptr<RenderTarget> promised = pass->outputTarget(); promised != nullptr) {
             noteFilled(Declaration{ nullptr, promised, pass, index });
-
-            // A promise is a claim about the content a consumer gets, so it has to be about the
-            // target this pass WRITES: promising a target the pass never draws into is a claim about
-            // nothing, and it would make the collision report fire on wires that do not exist.
-            if (pass->renderTarget() != promised) {
-                const OutputIdentity identity = OutputIdentity::targetOf(*promised);
-                {
-                    reportEngineProblem(wiringProblem(u8"engine.pass.output_target_mismatch",
-                                                      vn::graphics::DiagnosticCategory::ContentSkipped,
-                                                      String(u8"pass '") + reportedPassName(pass) + String(u8"' promises target '") + target_name(promised) +
-                                                          String(u8"' as its output but renders into '") + drawn_into_name(pass) +
-                                                          String(u8"', so the promise is about content this pass never writes"),
-                                                      reportedPassName(pass)));
-                }
-            }
 
             std::vector<OutputIdentity>& promised_images = wiring_promised_images_;
             promised_images.clear();

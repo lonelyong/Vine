@@ -62,6 +62,7 @@
 ## 3. 目标、层、颜色、图源
 
 - `RenderTarget` 是**描述**，后端按描述造图；`RenderTarget::setSamples` 是 MSAA 唯一入口，采样数进 `TargetShape` ⇒ 管线键 ⇒ 通道/图像。颜色与深度各解析一张单采样图（深度 `sample0`，不平均）。
+- **pass 的目标与发布各是一个值**（B14）：`PassDesc::target` = `Target{Kind::Window|Explicit|Transient, target, name, extent, shape}`（`Target.hpp`），`PassDesc::output` = `Output{name, whole_target, image}`（`Output.hpp`）；`writes*` / `output_*` 六个字段已删。`Target::isValid` / `Output::isValid` 由 `validatePlan` 检查（`InvalidTarget` / `InvalidOutput`）；compile 解析出的 transient 进 `RenderPass::setResolvedTarget`，**不**改写声明。
 - 层：`Node::setLayers` + `PassDesc::layer_mask`；最近声明获胜；`Node::subtreeLayerUnion` 是 layer epoch 驱动的懒缓存，三条 walk 在可见性之后先判 `(union & mask) == 0`。
 - 颜色：`Colorf` 是线性光，`Color` 是 sRGB 编码字节；`toLinear()` / `toColor()` 一对转换；清屏与 pass 颜色用线性值。
 - 图源：`ImageInput` / `ImageSource`；produced（`ImageRef`：target + attachment）与 imported（`Texture`）两种生命周期不合并。`MaterialImages` 上传键 `(Texture*, revision)`，sampler 按值缓存。
@@ -557,7 +558,7 @@
   的 pass 不会因为读回而被重排）。
 - **命名**：`RenderEngine` 原来的私有 `PlanProblem`（句子身份）改名 `CompileProblem`——公开的 `PlanProblem`
   是“形状缺陷 + 稳定 code”，两者不是一回事；`FramePlan` 仍是**编译后**的视图，`Plan` 是声明。
-- **坑**：`validatePlan` 必须用**两个** map——pass 名字（差分身份，要唯一）与 `output_name`（消费者解析的
+- **坑**：`validatePlan` 必须用**两个** map——pass 名字（差分身份，要唯一）与 `output.name`（消费者解析的
   生产者）。第一版混成一个 map，环与 feedback 两个用例当场红。
 - **测试**：`PlanTest`（12 个）——T7（无 add 调用即有 pass 并真的跑）、读回幂等、改名、原地更新、四类 code +
   feedback 不是环、拒绝后形状不变、code 拼写、`describe`。`test_graphics` 571 / `test_vsg` 540（一个

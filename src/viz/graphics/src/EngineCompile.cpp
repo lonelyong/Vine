@@ -120,7 +120,7 @@ void RenderEngine::compileFrame()
     // nobody declares this frame is let go of.
     resources_->beginTransientCompile();
     for (Slot& slot : slots_) {
-        if (slot.pass != nullptr && !slot.pass->declaration().writes_image.empty()) {
+        if (slot.pass != nullptr && slot.pass->declaration().target.isTransient()) {
             resolveTransientTarget(slot);
         }
     }
@@ -518,16 +518,19 @@ void RenderEngine::resolveTransientTarget(Slot& slot)
     // The extent: what the declaration states, or the surface this frame is presenting (a transient is
     // normally the size of the picture that consumes it). A surface nobody has sized yet is not a reason to
     // build nothing: a 1x1 target keeps the pass' shape defined until the host reports a size.
-    const TransientShape& shape  = slot.pass->declaration().writes_shape;
-    int                   width  = shape.width > 0 ? shape.width : frame_->width;
-    int                   height = shape.height > 0 ? shape.height : frame_->height;
+    const Target&         declared = slot.pass->declaration().target;
+    const TransientShape  shape    = declared.shape.value_or(TransientShape{});
+    int                   width    = declared.extent.has_value() ? declared.extent->width : frame_->width;
+    int                   height   = declared.extent.has_value() ? declared.extent->height : frame_->height;
     if (width <= 0 || height <= 0) {
         width  = 1;
         height = 1;
     }
 
-    slot.transient = resources_->resolveTransient(slot.pass->declaration().writes_image, shape, width, height, device_.get());
-    slot.pass->setRenderTarget(slot.transient);
+    slot.transient = resources_->resolveTransient(declared.name, shape, width, height, device_.get());
+    // THE RESOLUTION IS EXECUTION STATE, not a rewrite of the declaration: the pass keeps saying "I asked for this
+    // identity" while the frame that resolved it answers `renderTarget()` (see RenderPass::setResolvedTarget).
+    slot.pass->setResolvedTarget(slot.transient);
 }
 
 std::size_t RenderEngine::transientTargetCount() const noexcept
@@ -741,10 +744,10 @@ intrusive_ptr<RenderPass> RenderEngine::makePassNode(const PassDesc& desc)
             }
             adopted.depth_view.reset();
         }
-        else if (adopted.writes != nullptr && declared.isValid()) {
-            const DepthView current = adopted.writes->sharedDepth();
+        else if (adopted.target.target != nullptr && declared.isValid()) {
+            const DepthView current = adopted.target.target->sharedDepth();
             if (current.isValid() && current.target() != declared.target()) {
-                if (depth_view_conflicts_.insert(std::make_pair(adopted.writes.get(), declared.target())).second) {
+                if (depth_view_conflicts_.insert(std::make_pair(adopted.target.target.get(), declared.target())).second) {
                     reportEngineProblem(compileProblem(u8"engine.compile.depth_view_conflict",
                                                        vn::graphics::DiagnosticCategory::UnsupportedRequest,
                                                        u8"two passes name different depth views for one target; the first "
