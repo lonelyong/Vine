@@ -68,6 +68,12 @@ struct Session::Impl {
     core::DeviceClock::WindowId clock_window{ 0 };
     bool                        clock_window_live{ false };
     vn::graphics::Diagnostics*  diagnostics{ nullptr }; // Where the session's reasons go (borrowed).
+    /// THIS SESSION'S FRAME SCRATCH (see FrameScratch): the arena and the plan of the frame it drives. Host memory
+    /// only - it borrows the route and the instrumentation, so it outlives a device teardown harmlessly and is only
+    /// freed with the session. `own_observe` is the fallback when the creator gave no instrumentation (a session
+    /// created outside a backend).
+    std::unique_ptr<FrameScratch> scratch;
+    std::unique_ptr<core::Observe> own_observe;
     /// The device profiler, when the switch asked for one (see Session::profiling): the executor wraps the
     /// passes, this owns the query pool and the log they are read from.
     ::vsg::ref_ptr<::vsg::Profiler> profiler;
@@ -106,6 +112,17 @@ Session::~Session()
 bool Session::initialize(const SessionOptions& options, vn::graphics::Diagnostics& diagnostics)
 {
     impl->diagnostics = &diagnostics;
+
+    // THE FRAME SCRATCH BELONGS TO THE SESSION (see FrameScratch, `.ai/design/graphics-sessions.md` F9): it is
+    // created before the keep/move/rebuild decision, because a KEEP session keeps it too, and it has no device
+    // resources of its own (host memory over the device's route and instrumentation).
+    if (impl->scratch == nullptr) {
+        if (options.observe == nullptr) {
+            impl->own_observe = std::make_unique<core::Observe>();
+        }
+        core::Observe& observe = options.observe != nullptr ? *options.observe : *impl->own_observe;
+        impl->scratch          = std::make_unique<FrameScratch>(diagnostics, observe);
+    }
 
     // The decision comes FIRST, and before anything is torn down: keeping a session is the cheap answer and
     // must not travel through a teardown to be reached (see core::planSessionMove).
@@ -603,6 +620,11 @@ core::FrameTimeline& Session::timeline() noexcept
 core::RetirementQueue& Session::retirement() noexcept
 {
     return impl->shared_retirement != nullptr ? *impl->shared_retirement : impl->retirement;
+}
+
+FrameScratch* Session::frameScratch() noexcept
+{
+    return impl->scratch.get();
 }
 
 bool Session::releaseUploadStaging()

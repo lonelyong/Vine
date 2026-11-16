@@ -10,8 +10,10 @@
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/backend/DeviceClock.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/backend/Observe.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
+#include <vine/backend_vsg/internal/FrameScratch.hpp>
 
 namespace vsg
 {
@@ -64,6 +66,9 @@ struct OffscreenSessionOptions {
     core::DeviceClock* clock{ nullptr };
     /// The DEVICE's park queue, which stands in for the session's own when @ref clock is borrowed. Null = own.
     core::RetirementQueue* retirement{ nullptr };
+    /// The DEVICE's instrumentation, which this session's frame scratch borrows (see FrameScratch). Null = the session
+    /// owns one.
+    core::Observe* observe{ nullptr };
 };
 
 /**
@@ -172,6 +177,15 @@ class OffscreenSession {
 
     /** @brief Gets the frame timeline: this session's own, or the DEVICE's when it was given one. */
     [[nodiscard]] core::FrameTimeline& timeline() noexcept;
+
+    /** @brief Gets this session's frame scratch: the arena and plan of the frame THIS session drives.
+     *
+     * @details
+     * - THE SESSION OWNS IT (see FrameScratch and `.ai/design/graphics-sessions.md` F9): a plan is one frame's.
+     *
+     * @return The scratch, or null before initialize().
+     */
+    [[nodiscard]] FrameScratch* frameScratch() noexcept;
 
     /** @brief Gets the retirement queue: this session's own, or the DEVICE's when it was given one. */
     [[nodiscard]] core::RetirementQueue& retirement() noexcept;

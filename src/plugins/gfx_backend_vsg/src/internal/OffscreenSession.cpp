@@ -42,6 +42,10 @@ struct OffscreenSession::Impl {
     core::DeviceClock::WindowId clock_window{ 0 };
     bool                        clock_window_live{ false };
     vn::graphics::Diagnostics*  diagnostics{ nullptr }; // Where the session's reasons go (borrowed).
+    /// THIS SESSION'S FRAME SCRATCH (see FrameScratch): the arena and the plan of the frame it drives. Host memory
+    /// only; `own_observe` is the fallback when the creator gave no instrumentation.
+    std::unique_ptr<FrameScratch>  scratch;
+    std::unique_ptr<core::Observe> own_observe;
     /// The device is BORROWED (the session takes its own reference to the caller's object): an off-screen session
     /// submits onto a device somebody else created and keeps alive.
     ::vsg::ref_ptr<::vsg::Device> device;
@@ -68,6 +72,16 @@ OffscreenSession::~OffscreenSession()
 bool OffscreenSession::initialize(const OffscreenSessionOptions& options, vn::graphics::Diagnostics& diagnostics)
 {
     impl->diagnostics = &diagnostics;
+
+    // THE FRAME SCRATCH BELONGS TO THE SESSION (see FrameScratch, `.ai/design/graphics-sessions.md` F9): it has no
+    // device resources, so it survives a teardown and is only freed with the session.
+    if (impl->scratch == nullptr) {
+        if (options.observe == nullptr) {
+            impl->own_observe = std::make_unique<core::Observe>();
+        }
+        core::Observe& observe = options.observe != nullptr ? *options.observe : *impl->own_observe;
+        impl->scratch          = std::make_unique<FrameScratch>(diagnostics, observe);
+    }
 
     // IDEMPOTENT, and that is the whole of this session's move table: it has no surface to keep or move, so a
     // second announcement of the same device changes nothing (see the header).
@@ -363,6 +377,11 @@ core::FrameTimeline& OffscreenSession::timeline() noexcept
 core::RetirementQueue& OffscreenSession::retirement() noexcept
 {
     return impl->shared_retirement != nullptr ? *impl->shared_retirement : impl->retirement;
+}
+
+FrameScratch* OffscreenSession::frameScratch() noexcept
+{
+    return impl->scratch.get();
 }
 
 ::vsg::ref_ptr<::vsg::CommandGraph> OffscreenSession::makeFrameGraph() const

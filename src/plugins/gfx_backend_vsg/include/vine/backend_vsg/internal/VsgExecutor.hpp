@@ -14,7 +14,6 @@
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/backend_vsg/internal/OffscreenTarget.hpp>
-#include <vine/backend_vsg/internal/Session.hpp>
 #include <vine/backend_vsg/internal/WindowTarget.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
@@ -59,6 +58,7 @@ VN_BACKEND_VSG_NS_BEGIN
 namespace api
 {
 
+class Session;
 class OffscreenSession;
 
 } // namespace api

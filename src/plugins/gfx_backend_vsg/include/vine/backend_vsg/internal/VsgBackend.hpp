@@ -361,6 +361,15 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      */
     bool releaseFinishedUploadStaging();
 
+    /** @brief Drops the frame in flight's plan and tables on every session's scratch (see FrameScratch).
+     *
+     * @details
+     * - WHAT IT IS FOR: a teardown or a re-initialize must not leave a plan that a later present could commit. The
+     *   plans live in the sessions' scratches (a plan is one frame's), so clearing them is the device's one sweep
+     *   over the sessions it holds - not a second copy of the frame state (`P8`).
+     */
+    void resetFrameScratch() noexcept;
+
     /** @brief Opens the frame's books: storage, token, acquisition, and the plan's own frame.
      *
      * The first half of what used to be `beginFrame()` (the SDK's frame is one call now - see

@@ -29,6 +29,7 @@
 #include <vine/backend_vsg/internal/ContentAssembly.hpp>
 #include <vine/backend_vsg/internal/ContentStore.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
+#include <vine/backend_vsg/internal/FrameScratch.hpp>
 #include <vine/backend_vsg/internal/HostReadback.hpp>
 #include <vine/backend_vsg/internal/HostTargets.hpp>
 #include <vine/backend_vsg/internal/MaterialImages.hpp>
@@ -441,10 +442,7 @@ struct VsgBackend::Data {
     /// This layer's inner route: its sink forwards into the SDK's ACTIVE route (see the constructor), which
     /// is the engine's when an engine drives this backend - that is what makes the host read one number.
     vn::graphics::Diagnostics diagnostics;
-    core::FrameArena          arena{ 64 * 1024 };
     core::Observe             observe;
-    core::FrameRecorder       recorder{ arena, diagnostics, observe };
-    core::FrameCompiler       compiler{ arena, diagnostics, observe };
     VsgExecutor               executor{ diagnostics };
     PassRegistry              passes;  // The SDK's pass objects, as the numbers the plan carries (see the header).
     HostTargets               targets; // The host's off-screen targets (see the header and api/HostTargets).
@@ -470,6 +468,9 @@ struct VsgBackend::Data {
     int                                                  announced_width{ 640 };  // What the next initialize() creates its windows at.
     int                                                  announced_height{ 360 }; // What the next initialize() creates its windows at.
     vn::intrusive_ptr<const vn::graphics::ShaderProgram> default_program;         // See the header.
+    /// The default program's TEXT, the value a recorder resolves program-less content against: kept beside the
+    /// object so a scratch that starts driving a frame is told it without rebuilding the description per frame.
+    vn::graphics::ShaderProgramDescriptionPtr default_program_text;
 
     /**
      * @brief One window this device serves: its own session, and the target object the host holds.
@@ -495,6 +496,10 @@ struct VsgBackend::Data {
     /// Which session the OPEN frame belongs to: an index into @ref windows, or kNoWindow when the frame is off-screen
     /// (executeFrame names it; presentWindow and the content seam read it back).
     std::size_t driving{ kNoWindow };
+    /// THE FRAME IN FLIGHT'S COLLECTION SCRATCH (see FrameScratch): the SESSION that drives the frame owns the object
+    /// (a window's or the off-screen one's); this is the backend's borrowed handle for the collection helpers, set
+    /// when a frame opens and cleared when it ends. A plan is one frame's, so it never lives on the device.
+    FrameScratch* scratch{ nullptr };
     /// THE DEVICE'S completion clock and park queue, shared by every window (see core::DeviceClock): whether a buffer
     /// or a pipeline may be destroyed is a question about the whole device, because the windows draw with the same
     /// objects. A session driven on its own keeps its own pair (see api::SessionOptions).
@@ -520,18 +525,6 @@ struct VsgBackend::Data {
     std::size_t                             released_objects{ 0 };
     std::size_t                             released_textures{ 0 };
     std::size_t                             released_streams{ 0 };
-    std::vector<core::TargetFacts>          facts;         // This frame's target table (borrowed rows).
-    std::vector<vn::graphics::LightValue> light_scratch; // Reused by announceLights (no per-call allocation).
-    std::vector<InputImages>                input_scratch; // Reused per content pass (see recordContent).
-    /// One colour-view list per declared input, reused per pass: the InputImages spans point into these, so
-    /// they must outlive the record call and must not be reallocated while it runs (see recordContent).
-    std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>> input_views;
-    /// The same, for the WHOLE source target of a full-screen call (see InputImages::screen_colors).
-    std::vector<std::vector<::vsg::ref_ptr<::vsg::ImageView>>> input_screen_views;
-    /// One sampler list per declared input (see InputImages::color_samplers); imported inputs fill one entry.
-    std::vector<std::vector<::vsg::ref_ptr<::vsg::Sampler>>> input_color_samplers;
-    std::vector<PassContent>                                 packets;          // Reused per frame (see recordContent).
-    const core::CompiledFrame*                               frame{ nullptr }; // This frame's plan, between end and swap.
 
     /// The layers' cumulative upload counters, as one block: the frame's own numbers are the difference of two of
     /// these (see FrameReport::uploads).
@@ -650,6 +643,7 @@ bool VsgBackend::initialize()
             options.device        = d->device.get();
             options.clock         = &d->clock;
             options.retirement    = &d->retirement;
+            options.observe       = &d->observe;
 
             // A KEEP IS NOT A REPLACEMENT: this window is on the surface it is already on, so its device, its
             // swapchain and every compiled pipeline survive, and the content world below stays with them (the
@@ -687,7 +681,7 @@ bool VsgBackend::initialize()
 
     // THE CONTENT WORLD BELONGS TO THE DEVICE, and is built ONCE: a window that came up, was re-attached or joined
     // later does not invalidate what was uploaded or compiled on the same device.
-    d->frame = nullptr;
+    resetFrameScratch();
     if (d->storage != nullptr) {
         return true;
     }
@@ -757,6 +751,7 @@ api::OffscreenSession* VsgBackend::ensureOffscreenSession()
     // watermark every shared resource is dated against (see core::DeviceClock).
     options.clock        = &d->clock;
     options.retirement   = &d->retirement;
+    options.observe      = &d->observe;
     if (!d->offscreen->initialize(options, d->diagnostics)) {
         return nullptr; // it reported why (InitFailed, forwarded to the SDK's route)
     }
@@ -783,9 +778,7 @@ void VsgBackend::releaseContentWorld() noexcept
         d->offscreen->waitDeviceIdle();
     }
 
-    d->frame = nullptr;
-    d->facts.clear();
-    d->packets.clear();
+    resetFrameScratch();
     d->executor.setWindow(nullptr);
     d->executor.clearTargets();
     // The content world FIRST: its GPU objects (and the sets the assembly built) belong to the device, which the
@@ -908,7 +901,7 @@ void VsgBackend::openFrameBooks()
     else if (d->offscreen != nullptr) {
         token = d->offscreen->beginFrame();
     }
-    (void)d->recorder.beginFrame(token); // it answers whether the frame's books could be opened (see its note)
+    (void)d->scratch->recorder.beginFrame(token); // it answers whether the frame's books could be opened (see its note)
 }
 
 void VsgBackend::collectFrame(const vn::graphics::FrameDescription& frame)
@@ -969,25 +962,25 @@ void VsgBackend::collectTargetFacts()
     // A FRAME WITH NO WINDOW has no default-framebuffer row at all: that row is what the frame's passes naming no
     // target resolve to, and compiling without it is how "this pass has nowhere to draw" becomes a reported skip
     // instead of a picture in a window nobody named.
-    d->facts.clear();
+    d->scratch->facts.clear();
     if (d->driving < d->windows.size()) {
         if (WindowTarget* window = detail::SessionContentAccess::windowTarget(sessionAt(d->driving))) {
-            d->facts.push_back(window->facts());
+            d->scratch->facts.push_back(window->facts());
         }
     }
     for (const std::unique_ptr<HostTargets::Entry>& entry : d->targets.entries()) {
         core::TargetFacts row;
         d->targets.facts(*entry, row);
-        d->facts.push_back(row);
+        d->scratch->facts.push_back(row);
     }
 }
 
 void VsgBackend::closeFrameBooks()
 {
-    (void)d->recorder.endFrame();
-    (void)d->recorder.swapBuffers(); // closes the frame's books: endFrame() alone only leaves the pass scope
+    (void)d->scratch->recorder.endFrame();
+    (void)d->scratch->recorder.swapBuffers(); // closes the frame's books: endFrame() alone only leaves the pass scope
     collectTargetFacts();
-    d->frame = &d->compiler.compile(d->recorder.description(), core::FrameFacts{ d->facts });
+    d->scratch->frame = &d->scratch->compiler.compile(d->scratch->recorder.description(), core::FrameFacts{ d->scratch->facts });
 }
 
 vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameDescription& frame, vn::graphics::PresentTarget* present_to)
@@ -1072,6 +1065,26 @@ vn::graphics::PresentOutcome VsgBackend::executeFrame(const vn::graphics::FrameD
         d->executor.setWindow(detail::SessionContentAccess::windowTarget(session));
     }
 
+    // THE FRAME'S SCRATCH IS THE DRIVING SESSION'S (see FrameScratch, `.ai/design/graphics-sessions.md` F9): a plan is
+    // one frame's, and the session that drives it owns the arena the plan lives in. It is set here and cleared on
+    // EVERY exit below - a later verb must not find a stale plan (the device is serial today; the handle is still the
+    // device's, the object is the session's).
+    d->scratch = offscreen != nullptr ? offscreen->frameScratch() : sessionAt(index).frameScratch();
+    if (d->scratch == nullptr) {
+        reportUnserved(kUnservedNoSession);
+        return vn::graphics::PresentOutcome::Skipped;
+    }
+    // THE DEVICE SETTING REACHES THE SESSION THAT DRIVES (see setDefaultContentProgram): a scratch may belong to a
+    // session that came up after the setting was announced, so the value is handed over here - one pointer copy.
+    (void)d->scratch->recorder.setDefaultContentProgram(d->default_program_text.get());
+    struct ScratchCloser {
+        Data& data;
+        ~ScratchCloser()
+        {
+            data.scratch = nullptr;
+        }
+    } scratch_closer{ *d };
+
     // WHAT THIS FRAME MOVES: the layers' counters are cumulative, so the frame's own numbers are the difference taken
     // across the whole frame. The baseline is read here - after the staging sweep, before the books open - and the delta
     // is published at the tail, AFTER the recording (streams and images are built by recordContent, which the commit
@@ -1132,8 +1145,9 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
                                             vn::graphics::EngineNotReady::NotInitialized };
     }
     // A FRAME IS OPEN ON THIS BACKEND (executeFrame between its books and its present): its plan and its recorded
-    // packets belong to it, and collecting a second frame over them would corrupt both. Refused, never queued.
-    if (d->frame != nullptr) {
+    // packets belong to it, and collecting a second frame over them would corrupt both. Refused, never queued. The
+    // gate above already serialises the two verbs, so this is the assertion of that fact over the sessions' scratches.
+    if (d->scratch != nullptr && d->scratch->frame != nullptr) {
         return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::Refused };
     }
 
@@ -1174,6 +1188,23 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
     // session's transfer task is where a prepared texture's copies go (see the flush below).
     api::OffscreenSession* const offscreen = index < d->windows.size() ? nullptr : ensureOffscreenSession();
 
+    // THE WARM-UP COLLECTS INTO THE SESSION IT WILL RUN IN (see FrameScratch): the same scratch executeFrame would
+    // use, so what it prepares is what the frame finds. Cleared on every exit below.
+    d->scratch = offscreen != nullptr ? offscreen->frameScratch() : sessionAt(index).frameScratch();
+    if (d->scratch == nullptr) {
+        d->driving = kNoWindow;
+        return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::Refused };
+    }
+    // THE DEVICE SETTING REACHES THE SESSION THAT DRIVES, exactly as in executeFrame.
+    (void)d->scratch->recorder.setDefaultContentProgram(d->default_program_text.get());
+    struct ScratchCloser {
+        Data& data;
+        ~ScratchCloser()
+        {
+            data.scratch = nullptr;
+        }
+    } scratch_closer{ *d };
+
     // THE SESSION IS TOLD A PREPARE WENT THROUGH IT (see OffscreenSession::notePreparedWork): a prepare creates
     // pipelines and flushes uploads without opening a frame, and the teardown's device idle follows that fact rather
     // than a frame counter.
@@ -1198,15 +1229,15 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
     // is what gives the plan its scopes), and an answer taken after a warm-up must still describe the last EXECUTED
     // frame - see FrameCounters ("the frame that just ended").
     const vn::graphics::FrameCounters counters_before = d->observe.counters();
-    if (!d->recorder.beginFrame(core::FrameToken{})) {
+    if (!d->scratch->recorder.beginFrame(core::FrameToken{})) {
         d->driving = kNoWindow;
         return vn::graphics::PrepareReport{ vn::graphics::PrepareReport::Outcome::Refused };
     }
     collectFrame(frame);
     closeFrameBooks();
     d->observe.counters() = counters_before;
-    const core::CompiledFrame& plan = *d->frame;
-    d->frame                        = nullptr; // PREPARE LEAVES NO FRAME TO PRESENT: there is nothing recorded
+    const core::CompiledFrame& plan = *d->scratch->frame;
+    d->scratch->frame               = nullptr; // PREPARE LEAVES NO FRAME TO PRESENT: there is nothing recorded
 
     // THE VALUE SIDE, AND ONLY IT. The same walk a frame takes (`recordContent`) resolves each pass' shape and image
     // offers and then PREPARES it instead of recording it (see api/ContentPass::prepare): the compiled halves, the
@@ -1232,11 +1263,11 @@ vn::graphics::PrepareReport VsgBackend::prepareFrame(const vn::graphics::FrameDe
                         // sampled when it opens, is what its view block carries).
                         0.0F,
                         plan,
-                        d->input_scratch,
-                        d->input_views,
-                        d->input_screen_views,
-                        d->input_color_samplers,
-                        d->packets,
+                        d->scratch->input_scratch,
+                        d->scratch->input_views,
+                        d->scratch->input_screen_views,
+                        d->scratch->input_color_samplers,
+                        d->scratch->packets,
                         /*prepare_only*/ true);
 
     // THE TEXTURES THIS CALL STAGED ARE COPIED NOW, through the frame's own transfer step - not a second copy path
@@ -1287,7 +1318,8 @@ vn::graphics::PresentOutcome VsgBackend::presentWindow(std::size_t index)
         return vn::graphics::PresentOutcome::Skipped;
     }
     api::Session& session = sessionAt(index);
-    if (d->frame == nullptr || !session.initialized()) {
+    FrameScratch* const scratch = session.frameScratch();
+    if (scratch == nullptr || scratch->frame == nullptr || !session.initialized()) {
         // No frame is open (executeFrame closed none, and says why), or the session is down: there is a surface and
         // nothing to hand it, which is a loss rather than "present nothing" - the host re-attaches on it.
         return vn::graphics::PresentOutcome::Lost;
@@ -1295,9 +1327,36 @@ vn::graphics::PresentOutcome VsgBackend::presentWindow(std::size_t index)
     return commitFrameThrough(&session, nullptr);
 }
 
+void VsgBackend::resetFrameScratch() noexcept
+{
+    // A PLAN IS ONE FRAME'S AND THE SESSIONS HOLD THEM (see FrameScratch): a teardown or a re-initialize drops what
+    // they collected, so no later present can commit a plan whose device-side objects are being replaced.
+    const auto reset = [](FrameScratch* scratch) {
+        if (scratch != nullptr) {
+            scratch->frame = nullptr;
+            scratch->facts.clear();
+            scratch->packets.clear();
+        }
+    };
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
+        if (window->session != nullptr) {
+            reset(window->session->frameScratch());
+        }
+    }
+    if (d->offscreen != nullptr) {
+        reset(d->offscreen->frameScratch());
+    }
+    d->scratch = nullptr;
+}
+
 vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window, api::OffscreenSession* offscreen)
 {
-    if (d->frame == nullptr || (window == nullptr && offscreen == nullptr)) {
+    if (window == nullptr && offscreen == nullptr) {
+        return vn::graphics::PresentOutcome::Skipped;
+    }
+    // THE PLAN IS THE DRIVING SESSION'S (see FrameScratch): the one it collected into, never a copy on the device.
+    FrameScratch* const frame_scratch = window != nullptr ? window->frameScratch() : offscreen->frameScratch();
+    if (frame_scratch == nullptr || frame_scratch->frame == nullptr) {
         return vn::graphics::PresentOutcome::Skipped;
     }
     // A WINDOW PRESENTS, AN OFF-SCREEN SESSION DOES NOT: both commit, and the answer says which happened, so the
@@ -1316,7 +1375,7 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window
     const float            frame_seconds = window != nullptr ? window->frameSeconds() : offscreen->frameSeconds();
     WindowTarget*          window_target = window != nullptr ? detail::SessionContentAccess::windowTarget(*window) : nullptr;
 
-    if (d->frame->passes.empty()) {
+    if (frame_scratch->frame->passes.empty()) {
         // NOTHING TO RECORD, and the frame is still submitted - the session's own rule (an acquired image has to be
         // handed back), and the graph it submits is the one the session created with its window's render graph in it.
         // That graph is not decoration: it is what moves the acquired image out of UNDEFINED, and a present of an
@@ -1332,18 +1391,19 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window
         // opened first for the same reason: the table walk is what PUBLISHES the declaration indexes the residency
         // sweeps ask (see ContentAssembly::beginFrame), so a host that stops drawing must still lose its uploads.
         if (d->assembly != nullptr) {
-            (void)d->assembly->beginFrame(*d->frame, timeline, retirement);
+            (void)d->assembly->beginFrame(*frame_scratch->frame, timeline, retirement);
         }
         sweepAbandonedContent();
-        const bool committed = window != nullptr ? d->executor.commit(*d->frame, *window) : d->executor.commit(*d->frame, *offscreen);
-        d->frame             = nullptr;
+        const bool committed = window != nullptr ? d->executor.commit(*frame_scratch->frame, *window)
+                                                 : d->executor.commit(*frame_scratch->frame, *offscreen);
+        frame_scratch->frame = nullptr;
         return settled(committed);
     }
 
     const ::vsg::ref_ptr<::vsg::CommandGraph> graph = window != nullptr ? detail::SessionContentAccess::makeFrameGraph(*window) : offscreen->makeFrameGraph();
     if (graph == nullptr) {
         // The frame's graph could not be built, so none of its picture was ever going to reach the surface.
-        d->frame = nullptr;
+        frame_scratch->frame = nullptr;
         return vn::graphics::PresentOutcome::Lost;
     }
 
@@ -1351,7 +1411,7 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window
     // frame's content is assembled and recorded into the passes this slice can serve, the plan is recorded into this
     // frame's graph, and the graph is the session's - which is the call that submits (and, for a window, presents),
     // and the one whose false answer means the writes never happened.
-    (void)d->executor.applyTargetPlans(*d->frame, d->facts, timeline, retirement);
+    (void)d->executor.applyTargetPlans(*frame_scratch->frame, frame_scratch->facts, timeline, retirement);
     // THE MATERIAL ARENA IS SIZED BEFORE ANYTHING IS RECORDED (see the declaration): every live row keeps a
     // slot until the host releases it, so the frame that would have run out is given a bigger one first.
     growMaterialArenaIfNeeded();
@@ -1365,15 +1425,15 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window
                                 timeline,
                                 retirement,
                                 frame_seconds,
-                                *d->frame,
-                                d->input_scratch,
-                                d->input_views,
-                                d->input_screen_views,
-                                d->input_color_samplers,
-                                d->packets,
+                                *frame_scratch->frame,
+                                frame_scratch->input_scratch,
+                                frame_scratch->input_views,
+                                frame_scratch->input_screen_views,
+                                frame_scratch->input_color_samplers,
+                                frame_scratch->packets,
                                 /*prepare_only*/ false);
     }
-    (void)d->executor.record(*d->frame, graph, packets);
+    (void)d->executor.record(*frame_scratch->frame, graph, packets);
     // WHAT THE HOST LET GO IS LET GO HERE: the frame's content has been recorded, and the commit below is
     // what advances the retirement queue - so this is the last moment a park can be dated against this frame
     // (see the frame drive's ordering note, and the ordering rule core::RetirementQueue states).
@@ -1383,9 +1443,10 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(api::Session* window
     bool       committed = false;
     if (assigned) {
         // The executor reports its own failure and marks what it wrote; the answer is whether the picture got out.
-        committed = window != nullptr ? d->executor.commit(*d->frame, *window) : d->executor.commit(*d->frame, *offscreen);
+        committed = window != nullptr ? d->executor.commit(*frame_scratch->frame, *window)
+                                      : d->executor.commit(*frame_scratch->frame, *offscreen);
     }
-    d->frame = nullptr;
+    frame_scratch->frame = nullptr;
     return settled(committed);
 }
 
@@ -1476,7 +1537,23 @@ void VsgBackend::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::
     // a host API), and both halves travel: the object for the store's ownership/abandon rule, the value for its rows.
     const vn::graphics::ShaderProgramDescriptionPtr text =
         d->default_program != nullptr ? d->default_program->description() : vn::graphics::ShaderProgramDescriptionPtr{};
-    (void)d->recorder.setDefaultContentProgram(text.get());
+    d->default_program_text = text;
+    // EVERY SESSION'S SCRATCH, because the setting is the DEVICE's and any of its sessions may drive the next frame:
+    // the plan resolves program-less content against the recorder, and the recorder is the session's (see
+    // FrameScratch). A session created later is told when its scratch starts driving (see executeFrame).
+    const auto applyDefault = [&text](FrameScratch* scratch) {
+        if (scratch != nullptr) {
+            (void)scratch->recorder.setDefaultContentProgram(text.get());
+        }
+    };
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
+        if (window->session != nullptr) {
+            applyDefault(window->session->frameScratch());
+        }
+    }
+    if (d->offscreen != nullptr) {
+        applyDefault(d->offscreen->frameScratch());
+    }
     trackProgram(d->store.get(), d->default_program);
     if (d->store != nullptr) {
         d->store->track(text);
@@ -1597,8 +1674,8 @@ void VsgBackend::setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
 void VsgBackend::announceTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
 {
     if (target == nullptr) {
-        if (d->recorder.inPass()) {
-            (void)d->recorder.setRenderTarget(nullptr); // the default framebuffer, spelled as the plan does
+        if (d->scratch->recorder.inPass()) {
+            (void)d->scratch->recorder.setRenderTarget(nullptr); // the default framebuffer, spelled as the plan does
         }
         return;
     }
@@ -1606,9 +1683,9 @@ void VsgBackend::announceTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
     // A pass of THIS frame draws into it, so a description that cannot become objects at all blocks the picture
     // and is reported once (see adoptHostTarget). The target is held either way, whether or not it could be
     // built yet.
-    (void)adoptHostTarget(target, d->recorder.inFrame());
-    if (d->recorder.inPass()) {
-        (void)d->recorder.setRenderTarget(target); // the plan's identity for it: the host's own object
+    (void)adoptHostTarget(target, d->scratch->recorder.inFrame());
+    if (d->scratch->recorder.inPass()) {
+        (void)d->scratch->recorder.setRenderTarget(target); // the plan's identity for it: the host's own object
     }
 }
 
@@ -1694,46 +1771,46 @@ void VsgBackend::openPassScope(vn::raw_ptr<const vn::graphics::RenderPass> pass)
         return; // no pass announced: whatever needed a scope is refused and reported by the recorder
     }
     const core::PassId id = d->passes.adopt(pass);
-    if (d->recorder.inFrame()) {
-        (void)d->recorder.beginPass(id);
+    if (d->scratch->recorder.inFrame()) {
+        (void)d->scratch->recorder.beginPass(id);
     }
 }
 
 void VsgBackend::closePassScope()
 {
-    if (d->recorder.inFrame()) {
-        (void)d->recorder.endPass();
+    if (d->scratch->recorder.inFrame()) {
+        (void)d->scratch->recorder.endPass();
     }
 }
 
 void VsgBackend::announcePassOrder(int order)
 {
-    if (d->recorder.inPass()) {
-        (void)d->recorder.setPassOrder(order);
+    if (d->scratch->recorder.inPass()) {
+        (void)d->scratch->recorder.setPassOrder(order);
     }
 }
 
 void VsgBackend::announceViewport(const vn::graphics::Viewport& viewport)
 {
-    if (d->recorder.inPass()) {
-        (void)d->recorder.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
+    if (d->scratch->recorder.inPass()) {
+        (void)d->scratch->recorder.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
     }
 }
 
 void VsgBackend::announceLights(std::span<const vn::graphics::LightValue> lights)
 {
-    if (!d->recorder.inPass()) {
+    if (!d->scratch->recorder.inPass()) {
         return;
     }
     // The values are already a copy taken on the content side (see Light::value): only the container has to become a
     // span, and the scratch vector keeps that from being an allocation per pass per frame.
-    d->light_scratch.assign(lights.begin(), lights.end());
-    (void)d->recorder.setLights(std::span<const vn::graphics::LightValue>(d->light_scratch));
+    d->scratch->light_scratch.assign(lights.begin(), lights.end());
+    (void)d->scratch->recorder.setLights(std::span<const vn::graphics::LightValue>(d->scratch->light_scratch));
 }
 
 void VsgBackend::announcePassInputs(const std::vector<vn::graphics::ImageSource>& inputs)
 {
-    if (!d->recorder.inPass()) {
+    if (!d->scratch->recorder.inPass()) {
         return;
     }
     for (const vn::graphics::ImageSource& input : inputs) {
@@ -1746,26 +1823,26 @@ void VsgBackend::announcePassInputs(const std::vector<vn::graphics::ImageSource>
     }
     // The identities, in the pass' declaration order, empties included: "nothing produced it this frame" is
     // a fact the plan carries (see InputRef), and the recording reads one entry per declaration.
-    (void)d->recorder.setPassInputs(inputs);
+    (void)d->scratch->recorder.setPassInputs(inputs);
 }
 
 void VsgBackend::announcePassState(const vn::graphics::PassRenderState& state)
 {
-    if (d->recorder.inPass()) {
-        (void)d->recorder.setPassState(state);
+    if (d->scratch->recorder.inPass()) {
+        (void)d->scratch->recorder.setPassState(state);
     }
 }
 
 void VsgBackend::announceDepthRange(const vn::graphics::DepthRange& range)
 {
-    if (d->recorder.inPass()) {
-        (void)d->recorder.setDepthRange(range);
+    if (d->scratch->recorder.inPass()) {
+        (void)d->scratch->recorder.setDepthRange(range);
     }
 }
 
 void VsgBackend::announceClear(const vn::graphics::ClearPolicy& policy)
 {
-    if (!d->recorder.inPass()) {
+    if (!d->scratch->recorder.inPass()) {
         return;
     }
     // The SDK's policy is linear floats plus a depth flag; the plan's is floats plus a depth VALUE. The colour is
@@ -1792,14 +1869,14 @@ void VsgBackend::announceClear(const vn::graphics::ClearPolicy& policy)
         translated.extra_color_values.push_back({ colour.r, colour.g, colour.b, colour.a });
     }
     translated.depth = policy.depth;
-    (void)d->recorder.setClearPolicy(translated);
+    (void)d->scratch->recorder.setClearPolicy(translated);
 }
 
 void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
                                     const vn::graphics::CameraSnapshot&             camera,
                                     const vn::graphics::ShaderProgramDescriptionPtr& program_override)
 {
-    if (!d->recorder.inFrame()) {
+    if (!d->scratch->recorder.inFrame()) {
         return; // nothing is collected outside a frame
     }
     if (d->store == nullptr) {
@@ -1837,7 +1914,7 @@ void VsgBackend::collectContentDraw(const std::vector<vn::graphics::RenderComman
     }
     // The pass' override is resolved when the draw is recorded (see FrameRecorder::render): the command list stays the
     // shared one the engine collected, and nothing here rewrites it.
-    (void)d->recorder.render(commands, camera, program_override.get()); // refusing (a released target) is the recorder's to report
+    (void)d->scratch->recorder.render(commands, camera, program_override.get()); // refusing (a released target) is the recorder's to report
 }
 
 void VsgBackend::collectScreenDraw(vn::graphics::RenderTarget*                    source,
@@ -1845,7 +1922,7 @@ void VsgBackend::collectScreenDraw(vn::graphics::RenderTarget*                  
                                    const vn::graphics::ShaderProgramDescriptionPtr& program_description,
                                    const vn::graphics::CameraSnapshot&            camera)
 {
-    if (!d->recorder.inFrame()) {
+    if (!d->scratch->recorder.inFrame()) {
         return; // nothing is collected outside a frame
     }
     // The VALUE the pass carried is what the tables and the recorder read; a hand-built description that named only
@@ -1861,7 +1938,7 @@ void VsgBackend::collectScreenDraw(vn::graphics::RenderTarget*                  
     }
     // The source is an IDENTITY here, exactly like a content draw's program: which images it offers was
     // announced with the pass' inputs (the value's resolved `inputs`), and the content layer resolves it among them.
-    (void)d->recorder.drawScreenProgram(source, text.get(), camera);
+    (void)d->scratch->recorder.drawScreenProgram(source, text.get(), camera);
 }
 
 void VsgBackend::releasePass(vn::raw_ptr<const vn::graphics::RenderPass> pass)
@@ -1884,7 +1961,20 @@ void VsgBackend::releaseRenderTarget(vn::graphics::RenderTarget* target)
     // reported, never redirected to the window - see the SDK's own note).
     (void)d->targets.release(target);
     d->executor.addTarget(target, nullptr);
-    (void)d->recorder.releaseRenderTarget(target);
+    // EVERY SESSION'S SCRATCH: a pending scope announcement is the recorder's, and one lives per session (see
+    // FrameScratch). A pass that would have drawn into the target is skipped and reported either way.
+    for (const std::unique_ptr<Data::WindowSlot>& window : d->windows) {
+        if (window->session != nullptr) {
+            if (FrameScratch* scratch = window->session->frameScratch(); scratch != nullptr) {
+                (void)scratch->recorder.releaseRenderTarget(target);
+            }
+        }
+    }
+    if (d->offscreen != nullptr) {
+        if (FrameScratch* scratch = d->offscreen->frameScratch(); scratch != nullptr) {
+            (void)scratch->recorder.releaseRenderTarget(target);
+        }
+    }
 }
 
 bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)

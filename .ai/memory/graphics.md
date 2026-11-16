@@ -184,6 +184,18 @@
   第二帧返回后读 `sink_entered`，而被序列化的设备 5 s 后也会让它为真——判据必须由**停住的那一帧在临界区里**设置
   （“另一帧在我还没出来时完成了”）；③**多开帧先改时间线**：只改体闸不改 token，两个驱动者共用帧号，水位与 park 全部
   失去意义。
+- **S8a 已落地（2026-11-16，T48 第八步·上半：vsg 的收集暂存搬进会话）**：新 `internal/FrameScratch.hpp` 收拢 vsg 的
+  arena / recorder / compiler / `facts` / `light_scratch` / `input_*` / `packets` / `frame`；**窗口会话与离屏会话各持一份**
+  （`SessionOptions` / `OffscreenSessionOptions` 新增 `observe`，null = 会话自备，独立建会话的测试照旧）。设备只剩
+  `Data::scratch` 这个"驱动会话的句柄"：开帧时设、`ScratchCloser` 每个出口清；`commitFrameThrough` 从会话参数取回同一份。
+  设备级设置（`setDefaultContentProgram` / `releaseRenderTarget`）对**每个**会话的 scratch 生效，开帧时再补一次默认程序。
+  **抓到的坑**：默认程序原先只写进设备唯一的 recorder——会话在设定之后才起来（或又一次 initialize）时它的 recorder 没听过，
+  画面报 "the content layer was never told about this identity"。修法 = 开帧选 scratch 时补一次指针拷贝
+  （`Data::default_program_text` 缓存文本，避免逐帧重建 description）。`VsgExecutor.hpp` 不再 include `Session.hpp`
+  （执行器只要按引用；断掉 FrameScratch→Executor→Session 的环）。验证：`test_vsg` 557/557、`BackendParityTest` 13/13、
+  `test_graphics` 587、`test_vk` 133；TSan 子集 0 报告；ASan 全量的 736 B/10 处泄漏 **A/B 证明旧提交同样存在**（测试自己
+  `Buffer` 的泄漏，与本次无关）。**剩余 S8b**：`VsgExecutor` 的帧状态（`window_` / `window_recorded_` / `recorded_` /
+  `profile_entries_` / `skipped_`）与 `driving` 的去处、设备缓存锁/帧首快照、开帧句柄解禁（帧体真并行）。
 - **S9 已落地（2026-11-16，T48 收口：F10 + TSan + 文档）**：三处契约文本按**代码现在的保证**改写——`C21` / `R18` / `N18` 从
   "帧不并发 / 设备级单槽 / 记录路径锁"改成"**帧按会话并发**（同会话仍由 `FrameGate` 串行）/ 默认程序归会话 / 记录路径零锁"，
   `RenderDevice.hpp` 与 `RenderFrameExecutor.hpp` 的线程段同步（vk `Device.hpp` 的 `@warning` 在 S7 已写）。ADR 追加「实施状态」，

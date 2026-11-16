@@ -8,6 +8,7 @@
 #include <vine/graphics/backend/FrameTimeline.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
+#include <vine/backend_vsg/internal/FrameScratch.hpp>
 
 /**
  * @brief A render session: one window, one device, one swapchain - and the frame pairing the contract
@@ -68,6 +69,9 @@ struct SessionOptions {
     /// session owns its own, which is what a session driven on its own needs; both must outlive the session.
     core::DeviceClock*     clock{ nullptr };
     core::RetirementQueue* retirement{ nullptr };
+    /// The DEVICE's instrumentation, which this session's frame scratch borrows (see FrameScratch). Null = the session
+    /// owns one, which is what a session created outside a backend (the tests) reports into.
+    core::Observe*         observe{ nullptr };
 };
 
 /**
@@ -250,6 +254,17 @@ class Session {
      *   which is the only question a shared buffer or pipeline can be answered with.
      */
     [[nodiscard]] core::FrameTimeline& timeline() noexcept;
+
+    /** @brief Gets this session's frame scratch: the arena and plan of the frame THIS session drives.
+     *
+     * @details
+     * - THE SESSION OWNS IT, not the backend: a plan is one frame's, and the session is the frame driver (see
+     *   `.ai/design/graphics-sessions.md` F9). It borrows the device's diagnostic route and instrumentation, exists
+     *   from the first initialize() and lives until the session is destroyed.
+     *
+     * @return The scratch, or null before initialize().
+     */
+    [[nodiscard]] FrameScratch* frameScratch() noexcept;
 
     /** @brief Gets the retirement queue: this session's own, or the DEVICE's when it was given one. */
     [[nodiscard]] core::RetirementQueue& retirement() noexcept;

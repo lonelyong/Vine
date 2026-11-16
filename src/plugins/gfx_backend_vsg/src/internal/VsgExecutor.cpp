@@ -7,6 +7,7 @@
 #include <vsg/core/Exception.h>
 
 #include <vine/backend_vsg/internal/OffscreenSession.hpp>
+#include <vine/backend_vsg/internal/Session.hpp>
 
 VN_BACKEND_VSG_NS_BEGIN
 
