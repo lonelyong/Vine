@@ -8,8 +8,8 @@
 #include <unordered_set>
 #include <utility>
 
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 #include <vine/graphics/graphics_global.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
@@ -44,7 +44,7 @@
  *
  * NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /**
  * @brief Keyed residency with build-on-miss, pin-driven retirement and parked destruction (see the file note).
@@ -278,4 +278,4 @@ std::size_t forgetUnpinned(std::unordered_set<Key, Hash>& keys, Live&& is_live)
     return forgotten;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

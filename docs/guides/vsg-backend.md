@@ -78,7 +78,7 @@
 * **几何**：`Geometry::bumpRevision()` 是唯一公告 ⇒ 新 revision = 新行 + **该几何所有流重传**
   （流身份含 revision；替换 buffer 与就地改写一样贵）。增量/缩容见设计文档 §6 的 B6。
 * **状态**：`ResolvedRenderState` 走动态状态（cull/polygon/blend/depth/同类 topology），**diff 才发命令**，
-  永不重编；跨拓扑**类**才是新管线（理由在 `Keys.hpp`）。
+  永不重编；跨拓扑**类**才是新管线（理由在 `DrawState.hpp`）。
 * **程序**：identity（program + revision + variant + 顶点布局 + 兼容性 + 采样计数）；新变体**编译一次**，
   之后复用（实测新 program 第一帧 ≈ +1.6 ms 一次性）。
 * **目标**：加载操作是"交换半边"（不进键）；`written()`/`bootstrap` 决定谁清屏；丢帧 ⇒ `Repair(Bootstrap)`。
@@ -94,7 +94,7 @@
   设备自己的驱动者就是聚合本身（`executor()`）；交出去的由设备拥有，`releaseSession` 销毁。帧自己的运行状态在
   `VsgExecutor::FrameDrive`（scratch / 窗口索引 / 上传基线 / 上一帧的读数），帧尾即清；`presentWindow` 经
   **线程本地的在飞帧**取回本次帧的驱动者（窗口目标的 `present()` 没有帧参数）。
-* **帧体共享设备，设备内容一把锁，记录路径零锁（S8c-1 + S8c-2）**：设备闸是 **`backend::FrameGate`**（`vine/graphics/backend/FrameGate.hpp`，与 vk 后端同一个类型）的两侧——
+* **帧体共享设备，设备内容一把锁，记录路径零锁（S8c-1 + S8c-2）**：设备闸是 **`graphics::FrameGate`**（`vine/graphics/FrameGate.hpp`，与 vk 后端同一个类型）的两侧——
   **帧体取共享侧**（两个驱动者的帧体可以同时跑），**宿主动词取独占侧**（initialize / shutdown / 读回 /
   `frameReport` / 窗口集 / resize）。从帧体线程回调的宿主动词得到**空租约**并回答拒绝
   （读回 `vsg.readback.in_frame`，内容动词 `vsg.device.reentry`），从不等待自己；诊断路由与 episode 锁是递归的，

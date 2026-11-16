@@ -9,8 +9,7 @@
 # PLATFORMS. Linux/X11 is the first supported target; Win32 is next and joins through WindowSystem (one
 # implementation file, no change to Device). A platform this build does not serve answers UnsupportedSurface.
 #
-# WHAT IT CONSUMES. The SDK's backend half (vine/graphics/backend/), which is why it defines
-# VN_GRAPHICS_BACKEND_CONSUMER: the same opt-in the vsg plugin states. Its shell headers expose no Vulkan type (the
+# WHAT IT CONSUMES. The graphics SDK (vine/graphics/): its shell headers expose no Vulkan type (the
 # factory and the plugin entry only name RenderBackend); everything Vulkan-shaped lives under src/internal.
 #
 # NAMING. Vulkan's own spellings (`VkDevice`, `VkInstance`, ...) belong to the driver layer; this module's classes are
@@ -24,10 +23,6 @@ vn_add_plugin(VK_BACKEND_TARGET gfx_backend_vk)
 # vn_add_plugin derives the export macro from the short name (gfx_backend_vk -> VN_GFX_BACKEND_VK_LIB), but
 # backend_vk_global.hpp checks VN_BACKEND_VK_LIB. Define it explicitly so VN_BACKEND_VK_API expands to dllexport when building.
 target_compile_definitions(${VK_BACKEND_TARGET} PRIVATE VN_BACKEND_VK_LIB)
-
-# This plugin consumes the backend half of graphics (`vine/graphics/backend/`), so it opts in
-# (see that half's BackendHalfGuard.hpp).
-target_compile_definitions(${VK_BACKEND_TARGET} PRIVATE VN_GRAPHICS_BACKEND_CONSUMER)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 

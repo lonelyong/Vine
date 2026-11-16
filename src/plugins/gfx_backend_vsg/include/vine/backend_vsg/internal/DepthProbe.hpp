@@ -21,7 +21,7 @@
  *   (D32 as its raw float, D16 divided by its full scale), and a format that cannot be read yields no probe at all
  *   rather than a plausible-looking conversion (see the target's depth capture).
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief Depth values of one attachment, in the row-major, tightly packed order the copy produced. */
 class VN_BACKEND_VSG_API DepthProbe {
@@ -83,4 +83,4 @@ class VN_BACKEND_VSG_API DepthProbe {
     std::vector<float> values_;
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

@@ -17,7 +17,7 @@
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/ReportOnce.hpp>
-#include <vine/graphics/backend/DeviceClock.hpp>
+#include <vine/graphics/DeviceClock.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -58,8 +58,8 @@ class VN_BACKEND_VK_API TargetTable final {
     /// @brief Identity of a target: the address of the host's `RenderTarget` (the identity a frame names).
     using Target = const void*;
 
-    /// @brief A frame driver's id, as the DEVICE's clock mints it (see `vn::graphics::backend::FrameDriverId`).
-    using FrameDriverId = vn::graphics::backend::FrameDriverId;
+    /// @brief A frame driver's id, as the DEVICE's clock mints it (see `vn::graphics::FrameDriverId`).
+    using FrameDriverId = vn::graphics::FrameDriverId;
 
     /**
      * @brief What the table builds through; null while no session is up.

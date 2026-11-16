@@ -36,8 +36,8 @@
 #include <vine/math/Vector3.hpp>
 #include <vine/backend_vsg/internal/ViewBlock.hpp>
 
-using vn::graphics::VineViewBlock;
-using vn::graphics::backend::CameraSnapshot;
+using vn::backend_vsg::core::VineViewBlock;
+using vn::graphics::CameraSnapshot;
 using vn::math::Mat4d;
 using vn::math::Vec3d;
 using vn::backend_vsg::buildViewBlock;

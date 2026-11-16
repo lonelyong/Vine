@@ -74,25 +74,25 @@ using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
-using vn::graphics::VineLightsBlock;
-using vn::graphics::backend::CameraSnapshot;
-using vn::graphics::backend::ClearValues;
-using vn::graphics::backend::CompiledDraw;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::backend::CompiledPass;
-using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameCompiler;
-using vn::graphics::backend::FrameFacts;
-using vn::graphics::backend::FrameRecorder;
-using vn::graphics::backend::FrameToken;
-using vn::graphics::backend::LightRef;
-using vn::graphics::backend::Observe;
-using vn::graphics::backend::Rgba8;
-using vn::graphics::backend::ShadowFacts;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::TargetFacts;
-using vn::graphics::backend::VariantPool;
+using vn::backend_vsg::core::VineLightsBlock;
+using vn::graphics::CameraSnapshot;
+using vn::backend_vsg::core::ClearValues;
+using vn::backend_vsg::core::CompiledDraw;
+using vn::backend_vsg::core::CompiledFrame;
+using vn::backend_vsg::core::CompiledPass;
+using vn::graphics::DrawKind;
+using vn::backend_vsg::core::FrameArena;
+using vn::backend_vsg::core::FrameCompiler;
+using vn::backend_vsg::core::FrameFacts;
+using vn::backend_vsg::core::FrameRecorder;
+using vn::graphics::FrameToken;
+using vn::backend_vsg::core::LightRef;
+using vn::backend_vsg::core::Observe;
+using vn::backend_vsg::core::Rgba8;
+using vn::backend_vsg::core::ShadowFacts;
+using vn::backend_vsg::core::StateRegistry;
+using vn::backend_vsg::core::TargetFacts;
+using vn::backend_vsg::core::VariantPool;
 using vn::test::setPrimitiveIndices;
 using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
@@ -203,7 +203,7 @@ TEST(ShadowBlockTest, TheBlockMapsViewSpaceIntoTheProducerClipThroughTheWorld)
     shadow.has_view_projection = true;
     shadow.view_projection     = vp;
 
-    vn::graphics::VineShadowBlock block;
+    vn::backend_vsg::core::VineShadowBlock block;
     ASSERT_TRUE(packShadowBlock(shadow, draw, block)) << "the map, its light and a camera are all here";
 
     EXPECT_FLOAT_EQ(block.params[0], 1.0F) << "the ABI's switch";
@@ -254,7 +254,7 @@ TEST(ShadowBlockTest, EveryMissingStatementLeavesTheSwitchOff)
     const auto pack_unusable = [&](const ShadowFacts& shadow, std::span<const LightRef> lights, const CameraSnapshot& cam) {
         std::vector<LightRef>         storage;
         const CompiledDraw            draw = drawWith(cam, lights, storage);
-        vn::graphics::VineShadowBlock block;
+        vn::backend_vsg::core::VineShadowBlock block;
         const bool                    on = packShadowBlock(shadow, draw, block);
         for (const float value : block.view_to_light) {
             EXPECT_FLOAT_EQ(value, 0.0F) << "an unusable map must not leave a matrix behind";
@@ -279,7 +279,7 @@ TEST(ShadowBlockTest, EveryMissingStatementLeavesTheSwitchOff)
     {
         std::vector<LightRef>         storage;
         const CompiledDraw            draw = drawWith(camera, std::span<const LightRef>(casting_only, 1U), storage);
-        vn::graphics::VineShadowBlock block;
+        vn::backend_vsg::core::VineShadowBlock block;
         EXPECT_TRUE(packShadowBlock(good, draw, block)) << "the reference case: every statement is present";
     }
     ShadowFacts no_map;
@@ -317,7 +317,7 @@ TEST(ShadowBlockTest, ACasterTheBlockCannotNameLeavesTheSwitchOff)
 
     std::vector<LightRef>         storage;
     const CompiledDraw            draw = drawWith(camera, std::span<const LightRef>(announced), storage);
-    vn::graphics::VineShadowBlock block;
+    vn::backend_vsg::core::VineShadowBlock block;
     EXPECT_FALSE(packShadowBlock(shadow, draw, block)) << "the owner is the ninth directional light, and the block holds eight";
 
     // The block still represents the lights that FIT (the caller's drop report is about the ninth).
@@ -444,7 +444,7 @@ TEST(ShadowBlockTest, ASpotCasterPacksTheSameBlockAsADirectionalOne)
     shadow.has_view_projection = true;
     shadow.view_projection     = mixedProducerMatrix();
 
-    vn::graphics::VineShadowBlock block;
+    vn::backend_vsg::core::VineShadowBlock block;
     ASSERT_TRUE(packShadowBlock(shadow, draw, block));
     EXPECT_FLOAT_EQ(block.params[0], 1.0F) << "the switch is on for a spot caster too";
     EXPECT_FLOAT_EQ(block.params[1], 0.004F) << "the spot's own bias";
@@ -456,7 +456,7 @@ TEST(ShadowBlockTest, ASpotCasterPacksTheSameBlockAsADirectionalOne)
     point.type     = LightType::Point;
     const LightRef                point_announced[]{ point };
     const CompiledDraw            point_draw = drawWith(camera, std::span<const LightRef>(point_announced, 1U), storage);
-    vn::graphics::VineShadowBlock point_block;
+    vn::backend_vsg::core::VineShadowBlock point_block;
     EXPECT_FALSE(packShadowBlock(shadow, point_draw, point_block));
     EXPECT_FLOAT_EQ(point_block.params[0], 0.0F) << "a point caster leaves the switch off";
 }

@@ -5,8 +5,7 @@
 #include <vector>
 
 #include <vine/graphics/RenderTarget.hpp>
-#include <vine/graphics/backend/BackendHalfGuard.hpp>
-#include <vine/graphics/backend/Keys.hpp>
+#include <vine/graphics/DrawState.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
 /**
@@ -37,7 +36,7 @@
  *   pass must stop being bindable as a texture. One function decides all three, so the three cannot
  *   disagree.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /** @brief What to do with an off-screen target this frame. */
 enum class TargetAction : std::uint8_t
@@ -162,4 +161,4 @@ struct DepthPlan {
  */
 [[nodiscard]] VN_GRAPHICS_API DepthPlan depthPlan(const DepthFacts& facts) noexcept;
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

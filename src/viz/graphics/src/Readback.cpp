@@ -1,29 +1,29 @@
-#include <vine/graphics/backend/Readback.hpp>
+#include <vine/graphics/Readback.hpp>
 
 #include <cstring>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
-ReadbackResult readbackOf(const ReadbackState& state, const ReadbackRequest& request) noexcept
+ReadbackAnswer readbackOf(const ReadbackState& state, const ReadbackRequest& request) noexcept
 {
     // 1. Does the request name something the target has? (A request that can never be served answers the
     //    same way whatever the target currently holds.)
     if (request.kind == ReadbackKind::Color) {
         if (request.attachment >= state.color_attachments) {
-            return ReadbackResult{ false, ReadbackRefusal::UnknownAttachment };
+            return ReadbackAnswer{ false, ReadbackRefusal::UnknownAttachment };
         }
         // 2. Can this backend read that format at all? (A permanent property of the target, not of this
         //    frame.)
         if (!colorReadbackOf(state.color_format).readable) {
-            return ReadbackResult{ false, ReadbackRefusal::UnreadableFormat };
+            return ReadbackAnswer{ false, ReadbackRefusal::UnreadableFormat };
         }
     }
     else {
         if (!state.depth_format.has_value()) {
-            return ReadbackResult{ false, ReadbackRefusal::UnknownAttachment };
+            return ReadbackAnswer{ false, ReadbackRefusal::UnknownAttachment };
         }
         if (!depthReadbackOf(state.depth_format.value()).readable) {
-            return ReadbackResult{ false, ReadbackRefusal::UnreadableFormat };
+            return ReadbackAnswer{ false, ReadbackRefusal::UnreadableFormat };
         }
     }
 
@@ -31,10 +31,10 @@ ReadbackResult readbackOf(const ReadbackState& state, const ReadbackRequest& req
     //    whatever the allocation held.
     const bool captured = request.kind == ReadbackKind::Color ? state.color_captured : state.depth_captured;
     if (!captured) {
-        return ReadbackResult{ false, ReadbackRefusal::NotCaptured };
+        return ReadbackAnswer{ false, ReadbackRefusal::NotCaptured };
     }
 
-    return ReadbackResult{ true, ReadbackRefusal::None };
+    return ReadbackAnswer{ true, ReadbackRefusal::None };
 }
 
 std::string_view refusalName(ReadbackRefusal refusal) noexcept
@@ -101,4 +101,4 @@ std::vector<float> decodeDepth(vn::graphics::RenderTarget::DepthFormat format, s
     return values;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

@@ -1,6 +1,6 @@
 #include <vine/backend_vsg/internal/SlotProbe.hpp>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 SlotProbeOutcome probeSlotCount(const std::function<bool(std::uint32_t)>& has_slot, std::uint32_t limit) noexcept
 {
@@ -67,4 +67,4 @@ bool SlotTracker::agreesWithAssumption() const noexcept
     return known_ && best_ == kAssumedInFlightSlots;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

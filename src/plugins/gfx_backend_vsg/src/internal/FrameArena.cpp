@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 FrameArena::FrameArena(std::size_t chunk_size)
   : chunk_size_(chunk_size == 0 ? 4096 : chunk_size)
@@ -85,4 +85,4 @@ void FrameArena::addChunk(std::size_t bytes)
     ++allocations_;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

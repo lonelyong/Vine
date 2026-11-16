@@ -37,7 +37,7 @@
 #include <vine/backend_vsg/internal/DepthProbe.hpp>
 #include <vine/backend_vsg/internal/StateRegistry.hpp>
 #include <vine/backend_vsg/internal/Streams.hpp>
-#include <vine/graphics/backend/TargetPlan.hpp>
+#include <vine/graphics/TargetPlan.hpp>
 #include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/BlockDescriptors.hpp>
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
@@ -73,10 +73,10 @@ inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uint
 }
 
 using vn::graphics::RenderTarget;
-using vn::graphics::backend::PixelProbe;
-using vn::graphics::backend::Rgba8;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::VariantPool;
+using vn::backend_vsg::core::PixelProbe;
+using vn::backend_vsg::core::Rgba8;
+using vn::backend_vsg::core::StateRegistry;
+using vn::backend_vsg::core::VariantPool;
 using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
 using vn::backend_vsg::ContentDraw;
@@ -418,7 +418,7 @@ void runSharedDepthPhase(const vn::backend_vsg::DeviceResult& device, DevicePhas
     // The depth is the other half of the evidence, and the half a colour picture cannot give: "the triangle
     // is hidden" and "the depth buffer is empty" look the same in pixels. These numbers say which pass wrote
     // what into the image both targets share.
-    const vn::graphics::backend::DepthProbe depth = lender->depthProbe();
+    const vn::backend_vsg::core::DepthProbe depth = lender->depthProbe();
     if (!depth.valid()) {
         GTEST_SKIP() << "the depth attachment of this device cannot be read back";
     }
@@ -435,7 +435,7 @@ void runSharedDepthPhase(const vn::backend_vsg::DeviceResult& device, DevicePhas
     // The borrower reads the SAME image back: its own copy-back node copies the lender's attachment, so the
     // numbers are the two passes' writes in one picture. A borrower that owned a depth of its own would answer
     // with its clear value where the lender's near triangle is.
-    const vn::graphics::backend::DepthProbe borrowed_depth = borrower->depthProbe();
+    const vn::backend_vsg::core::DepthProbe borrowed_depth = borrower->depthProbe();
     if (!borrowed_depth.valid()) {
         GTEST_SKIP() << "the shared depth cannot be read back through the borrower on this device";
     }
@@ -497,16 +497,16 @@ TEST(SharedDepthTest, ABorrowedDepthIsNeverSampleableAndRevokesTheLendersPromoti
     // Readback of a shared depth is PER TARGET: each target copies the image into a buffer of its own, so the
     // lender's capture says nothing about the borrower's - a borrower whose own copy never ran would otherwise
     // answer a probe with whatever its buffer held.
-    const vn::graphics::backend::ReadbackRequest depth_request{ vn::graphics::backend::ReadbackKind::Depth, 0U };
-    EXPECT_EQ(static_cast<int>(lender->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::backend::ReadbackRefusal::NotCaptured));
-    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::backend::ReadbackRefusal::NotCaptured));
+    const vn::graphics::ReadbackRequest depth_request{ vn::graphics::ReadbackKind::Depth, 0U };
+    EXPECT_EQ(static_cast<int>(lender->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::ReadbackRefusal::NotCaptured));
+    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::ReadbackRefusal::NotCaptured));
     EXPECT_TRUE(lender->captureDepth() != nullptr);
-    EXPECT_EQ(static_cast<int>(lender->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::backend::ReadbackRefusal::None));
-    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::backend::ReadbackRefusal::NotCaptured))
+    EXPECT_EQ(static_cast<int>(lender->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::ReadbackRefusal::None));
+    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::ReadbackRefusal::NotCaptured))
         << "the lender's copy-back is the lender's: the borrower's probe reads the borrower's buffer";
     EXPECT_FALSE(borrower->depthProbe().valid());
     EXPECT_TRUE(borrower->captureDepth() != nullptr) << "the borrower gets its own destination and copy";
-    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::backend::ReadbackRefusal::None));
+    EXPECT_EQ(static_cast<int>(borrower->readbackResult(depth_request).refusal), static_cast<int>(vn::graphics::ReadbackRefusal::None));
 
     borrower.reset();
     EXPECT_TRUE(lender->depth().sampleable) << "the revocation goes away with the borrower";
@@ -553,15 +553,15 @@ TEST(SharedDepthTest, TheHostTargetRowsSayWhoReadsTheDepthTheLenderWrites)
     const TargetTable::Ensured borrower_ensured = targets.ensure(*borrower, created.device);
     ASSERT_EQ(borrower_ensured.state, TargetTable::State::Ready);
 
-    vn::graphics::backend::TargetFacts lender_row;
+    vn::backend_vsg::core::TargetFacts lender_row;
     targets.facts(*targets.find(lender.get()), lender_row);
-    vn::graphics::backend::TargetFacts borrower_row;
+    vn::backend_vsg::core::TargetFacts borrower_row;
     targets.facts(*targets.find(borrower.get()), borrower_row);
 
     // The borrower: its passes read the lender's image, so they preserve it and never promise it to a shader.
     EXPECT_TRUE(borrower_row.depth.borrowed);
     EXPECT_TRUE(borrower_row.depth.any_pass_preserves_depth) << "a borrower's passes read the depth the lender's pass wrote and must never clear it";
-    const vn::graphics::backend::DepthPlan borrower_plan = vn::graphics::backend::depthPlan(borrower_row.depth);
+    const vn::graphics::DepthPlan borrower_plan = vn::graphics::depthPlan(borrower_row.depth);
     EXPECT_TRUE(borrower_plan.preserve);
     EXPECT_FALSE(borrower_plan.sampleable);
 
@@ -570,7 +570,7 @@ TEST(SharedDepthTest, TheHostTargetRowsSayWhoReadsTheDepthTheLenderWrites)
     // The host asked for promotion (the SDK's default), and the loan is what revokes it.
     EXPECT_TRUE(lender_row.depth.promotion) << "the host's own word: promotion was never turned off";
     EXPECT_TRUE(lender_row.depth.any_pass_preserves_depth) << "the lender's depth is read by the borrower's passes: it is preserved while the loan lasts";
-    const vn::graphics::backend::DepthPlan lender_plan = vn::graphics::backend::depthPlan(lender_row.depth);
+    const vn::graphics::DepthPlan lender_plan = vn::graphics::depthPlan(lender_row.depth);
     EXPECT_TRUE(lender_plan.preserve);
     EXPECT_FALSE(lender_plan.sampleable) << "one image cannot be a texture and an attachment at the same time (measured: the deferred demo's "
                                             "depth ends in the attachment layout, so a sampler on it is a validation error, not a picture)";

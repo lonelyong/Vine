@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 MaterialArena::MaterialArena(const Layout& layout)
 {
@@ -172,4 +172,4 @@ void MaterialArena::clear() noexcept
     next_slot_ = 0;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

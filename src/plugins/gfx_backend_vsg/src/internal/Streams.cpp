@@ -1,6 +1,6 @@
 #include <vine/backend_vsg/internal/Streams.hpp>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 bool StreamKey::operator==(const StreamKey& other) const noexcept
 {
@@ -28,4 +28,4 @@ std::size_t StreamKeyHash::operator()(const StreamKey& key) const noexcept
     return hash;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

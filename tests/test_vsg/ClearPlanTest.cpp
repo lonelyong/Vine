@@ -23,17 +23,17 @@
 #include <vine/backend_vsg/internal/ClearPlan.hpp>
 
 using vn::graphics::RenderTarget;
-using vn::graphics::backend::AttachmentClear;
-using vn::graphics::backend::ClearValues;
-using vn::graphics::backend::DepthClear;
-using vn::graphics::backend::depthFinalLayout;
-using vn::graphics::backend::ImageLayout;
-using vn::graphics::backend::kReverseZFarDepth;
-using vn::graphics::backend::LoadOp;
-using vn::graphics::backend::loadOpVariantOf;
-using vn::graphics::backend::PassClearPlan;
-using vn::graphics::backend::planClearValues;
-using vn::graphics::backend::TargetShape;
+using vn::backend_vsg::core::AttachmentClear;
+using vn::backend_vsg::core::ClearValues;
+using vn::backend_vsg::core::DepthClear;
+using vn::backend_vsg::core::depthFinalLayout;
+using vn::graphics::ImageLayout;
+using vn::backend_vsg::core::kReverseZFarDepth;
+using vn::graphics::LoadOp;
+using vn::backend_vsg::core::loadOpVariantOf;
+using vn::backend_vsg::core::PassClearPlan;
+using vn::backend_vsg::core::planClearValues;
+using vn::graphics::TargetShape;
 
 namespace
 {
@@ -105,7 +105,7 @@ TEST(CoreClearPlanTest, APassThatClearsNothingLoadsEverything)
 
     ASSERT_EQ(plan.colors.size(), 1U);
     EXPECT_EQ(plan.colors[0].load, LoadOp::Load);
-    EXPECT_EQ(plan.colors[0].store, vn::graphics::backend::StoreOp::Store);
+    EXPECT_EQ(plan.colors[0].store, vn::graphics::StoreOp::Store);
     EXPECT_FALSE(plan.has_depth);
     EXPECT_FALSE(plan.bootstrap);
 }
@@ -174,7 +174,7 @@ TEST(CoreClearPlanTest, ABorrowedDepthIsNeverClearedAndAnOwnDepthIsNotPreservedF
         const auto borrowed = planClearValues(multiTarget(), policy, /*bootstrap*/ true, /*depth_borrowed*/ true);
         EXPECT_EQ(borrowed.colors[0].load, LoadOp::Clear) << "the colour is still cleared: only the depth is spared";
         EXPECT_EQ(borrowed.depth.load, LoadOp::Load) << "the lender's image is not this target's to clear";
-        EXPECT_EQ(borrowed.depth.store, vn::graphics::backend::StoreOp::Store);
+        EXPECT_EQ(borrowed.depth.store, vn::graphics::StoreOp::Store);
     }
 
     // An OWN depth whose image was just built is the opposite case, and it is the one that cost a picture: a

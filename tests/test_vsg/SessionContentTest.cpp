@@ -100,16 +100,16 @@ using vn::graphics::RenderCommand;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
-using vn::graphics::backend::ClearValues;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameCompiler;
-using vn::graphics::backend::FrameFacts;
-using vn::graphics::backend::FrameRecorder;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::TargetFacts;
-using vn::graphics::backend::TargetShape;
-using vn::graphics::backend::VariantPool;
+using vn::backend_vsg::core::ClearValues;
+using vn::backend_vsg::core::CompiledFrame;
+using vn::backend_vsg::core::FrameArena;
+using vn::backend_vsg::core::FrameCompiler;
+using vn::backend_vsg::core::FrameFacts;
+using vn::backend_vsg::core::FrameRecorder;
+using vn::backend_vsg::core::StateRegistry;
+using vn::backend_vsg::core::TargetFacts;
+using vn::graphics::TargetShape;
+using vn::backend_vsg::core::VariantPool;
 using vn::test::setPrimitiveIndices;
 using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
@@ -486,11 +486,11 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
 
     // The plan: one pass into the default framebuffer, whose frame token is the SESSION's.
     FrameArena                     arena{ 64 * 1024 };
-    vn::graphics::backend::Observe observe;
+    vn::backend_vsg::core::Observe observe;
     FrameRecorder                  recorder{ arena, diagnostics, observe };
     FrameCompiler                  compiler{ arena, diagnostics, observe };
 
-    const vn::graphics::backend::FrameToken token = session.beginFrame();
+    const vn::graphics::FrameToken token = session.beginFrame();
     ASSERT_TRUE(token) << "the session opens the frame the plan belongs to";
     recorder.beginFrame(token);
     recorder.beginPass(7U);
@@ -511,7 +511,7 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
     // frame clock - the extent is the window's, which is the picture the shading reconstructs from.
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   vn::test::programRef(*program),
                                   geometry_facts.layout,
                                   pipelines.get(),
@@ -527,8 +527,8 @@ TEST(SessionContentTest, APlanDrivenFrameReachesTheWindowAndTheViewBlockItsShade
 
     const std::uint32_t               target_width  = window_target->width();
     const std::uint32_t               target_height = window_target->height();
-    const vn::graphics::VineViewBlock view_block    = buildViewBlock(frame.passes[0].draws[0].camera, session.frameSeconds(), target_width, target_height);
-    const std::span<const std::byte>  view_bytes    = std::as_bytes(std::span<const vn::graphics::VineViewBlock>(&view_block, 1U));
+    const vn::backend_vsg::core::VineViewBlock view_block    = buildViewBlock(frame.passes[0].draws[0].camera, session.frameSeconds(), target_width, target_height);
+    const std::span<const std::byte>  view_bytes    = std::as_bytes(std::span<const vn::backend_vsg::core::VineViewBlock>(&view_block, 1U));
 
     ::vsg::ref_ptr<::vsg::Node> content_node;
     ASSERT_TRUE(content.record(frame.passes[0], facts, window_target->shape().compatibility(), {}, view_bytes, content_node));

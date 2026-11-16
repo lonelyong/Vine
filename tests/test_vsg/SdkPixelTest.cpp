@@ -37,8 +37,8 @@ using vn::graphics::SceneView;
 using vn::graphics::ScreenPass;
 using vn::graphics::ShadingMode;
 using vn::graphics::ShadingPath;
-using vn::graphics::backend::PixelProbe;
-using vn::graphics::backend::Rgba8;
+using vn::backend_vsg::core::PixelProbe;
+using vn::backend_vsg::core::Rgba8;
 using vn::test::setPrimitiveIndices;
 
 namespace
@@ -411,7 +411,7 @@ makeCoplanarQuad(const vn::intrusive_ptr<vn::graphics::Group>& parent, const vn:
 }
 
 /// @brief 这个像素是否以 @p channel 为主（无光照档下材质色直接落地，颜色空间由平台决定）。
-bool dominantly(const vn::graphics::backend::Rgba8& pixel, char channel)
+bool dominantly(const vn::backend_vsg::core::Rgba8& pixel, char channel)
 {
     const auto& r = pixel.r;
     const auto& g = pixel.g;

@@ -228,7 +228,7 @@ Absent ──第一个需要的会话 claim──▶ Uploading(owner, frame)
 |---|---|---|
 | `createSession()` 动词 + 引擎持有自己的会话 | `RenderDevice.hpp`、`RenderEngine.cpp/hpp`、`RenderBackend.hpp` | 200–350 行 |
 | `ContentDraw` 拆成 `ContentCaches`（设备）+ `FrameScratch`（会话） | `ContentDraw.hpp/.cpp`、`Device.hpp/.cpp` | 500–700 行（多为搬家） |
-| 驻留状态机 + 帧首快照 | 同上 + `Keys.hpp` | 200–300 行 |
+| 驻留状态机 + 帧首快照 | 同上 + `Keys.hpp` | 200–300 行 | <!-- drift-ok -->
 | 三把锁（提交 / 管线 / 分配）+ 目标 claim | `Device.cpp`、`MemoryAllocator.cpp` | 150–250 行 |
 | 多会话退休（§决定 第 5 条） | `RetirementQueue.hpp`、`FrameTimeline.hpp` | 100–200 行 |
 | 用例（`test_vk` 两会话 / `test_graphics` 两引擎 / TSan） | `tests/test_vk`、`tests/test_graphics` | 200–300 行 |

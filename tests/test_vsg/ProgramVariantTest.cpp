@@ -48,7 +48,7 @@ const void* const kAuthoredBuffer = reinterpret_cast<const void*>(0x11U);
 ChannelFacts channelAt(std::uint32_t location, std::uint32_t components, const void* buffer = kAuthoredBuffer)
 {
     ChannelFacts facts;
-    facts.key.kind       = vn::graphics::backend::StreamKind::Vertex;
+    facts.key.kind       = vn::backend_vsg::core::StreamKind::Vertex;
     facts.key.location   = location;
     facts.key.components = components;
     facts.key.buffer     = buffer;

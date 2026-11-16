@@ -29,7 +29,7 @@
  *   than a lost one, and with a moving camera a visibly wrong one.
  * - NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief Per-frame storage: a fixed ring of blocks, one slab per frame that may still read it. */
 class VN_BACKEND_VSG_API FrameRing {
@@ -117,4 +117,4 @@ class VN_BACKEND_VSG_API FrameRing {
     std::uint64_t overflows_{ 0 };
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

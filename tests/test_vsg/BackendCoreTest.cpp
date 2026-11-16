@@ -30,18 +30,18 @@
 
 #include <vine/backend_vsg/internal/DepthProbe.hpp>
 #include <vine/backend_vsg/internal/FrameArena.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
 #include <vine/backend_vsg/internal/Observe.hpp>
 #include <vine/backend_vsg/internal/PhaseTable.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 #include <vine/backend_vsg/internal/DeviceRequirements.hpp>
 
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::Observe;
-using vn::graphics::backend::Phase;
-using vn::graphics::backend::PhaseTable;
-using vn::graphics::backend::RetirementQueue;
+using vn::backend_vsg::core::FrameArena;
+using vn::graphics::FrameTimeline;
+using vn::backend_vsg::core::Observe;
+using vn::backend_vsg::core::Phase;
+using vn::backend_vsg::core::PhaseTable;
+using vn::graphics::RetirementQueue;
 
 TEST(CoreArenaTest, GrowthPreservesWhatWasAlreadyHandedOut)
 {
@@ -159,7 +159,7 @@ TEST(CorePhaseTableTest, PhasesPrintTheEvidenceFormatAndOnlyCloseWhenEverythingP
 
 TEST(CoreDeviceRequirementsTest, TheVersionFloorIgnoresThePatch)
 {
-    using namespace vn::graphics::backend;
+    using namespace vn::backend_vsg::core;
 
     // Below the floor is refused - including a device whose patch is enormous, because the policy is
     // about major/minor capability and drivers report their patch freely.
@@ -174,7 +174,7 @@ TEST(CoreDeviceRequirementsTest, TheVersionFloorIgnoresThePatch)
 
 TEST(CoreDeviceRequirementsTest, EveryRequiredFeatureIsNamedAndCounted)
 {
-    using namespace vn::graphics::backend;
+    using namespace vn::backend_vsg::core;
 
     DeviceFacts bare;
     bare.api_version = kRequiredApiVersion;
@@ -212,7 +212,7 @@ TEST(CoreDeviceRequirementsTest, EveryRequiredFeatureIsNamedAndCounted)
 
 TEST(CoreDeviceRequirementsTest, AFeatureOffMeansTheDeviceIsRefused)
 {
-    using namespace vn::graphics::backend;
+    using namespace vn::backend_vsg::core;
 
     DeviceFacts facts;
     facts.api_version = makeApiVersion(1, 4);
@@ -252,7 +252,7 @@ TEST(CoreDeviceRequirementsTest, AFeatureOffMeansTheDeviceIsRefused)
 
 TEST(CoreDepthProbeTest, AnInvalidProbeAnswersNothingRatherThanZeroes)
 {
-    using namespace vn::graphics::backend;
+    using namespace vn::backend_vsg::core;
 
     const DepthProbe empty;
     EXPECT_FALSE(empty.valid());
@@ -269,7 +269,7 @@ TEST(CoreDepthProbeTest, AnInvalidProbeAnswersNothingRatherThanZeroes)
 
 TEST(CoreDepthProbeTest, TheValuesAreRowMajorAndCountedWithinATolerance)
 {
-    using namespace vn::graphics::backend;
+    using namespace vn::backend_vsg::core;
 
     std::vector<float> values(4U * 3U, 0.0F);
     values[1U * 4U + 2U] = 0.75F; // row 1, column 2

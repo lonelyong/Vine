@@ -72,10 +72,10 @@ inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uint
     return array == nullptr ? std::span<const std::uint32_t>{} : std::span<const std::uint32_t>(array->data(), array->size());
 }
 
-using vn::graphics::backend::PipelineKey;
-using vn::graphics::backend::PixelProbe;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::VariantPool;
+using vn::graphics::PipelineKey;
+using vn::backend_vsg::core::PixelProbe;
+using vn::backend_vsg::core::StateRegistry;
+using vn::backend_vsg::core::VariantPool;
 using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
 using vn::backend_vsg::ContentDraw;
@@ -288,13 +288,13 @@ Pixel pixelAt(float x_ndc, float y_ndc)
     return { static_cast<int>((x_ndc + 1.0F) * 0.5F * static_cast<float>(kSize)), static_cast<int>((y_ndc + 1.0F) * 0.5F * static_cast<float>(kSize)) };
 }
 
-bool isGreen(const vn::graphics::backend::Rgba8& pixel)
+bool isGreen(const vn::backend_vsg::core::Rgba8& pixel)
 {
     return pixel.g > 200U && pixel.r < 60U && pixel.b < 60U;
 }
 
 /// @brief Whether @p pixel is the target's clear colour (0, 0, 0.25) within a UNORM step.
-bool isClear(const vn::graphics::backend::Rgba8& pixel)
+bool isClear(const vn::backend_vsg::core::Rgba8& pixel)
 {
     const auto near = [](std::uint8_t value, int expected) { return std::abs(static_cast<int>(value) - expected) <= 2; };
     return near(pixel.r, 0) && near(pixel.g, 0) && near(pixel.b, 64) && near(pixel.a, 255);

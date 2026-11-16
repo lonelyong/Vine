@@ -31,7 +31,7 @@
  *   objects under a counted device wait instead (see RetirementQueue). "We do not know yet" is a state the rest of
  *   the backend can act on; a guess is not.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief What one slot probe learned. */
 struct SlotProbeOutcome {
@@ -125,4 +125,4 @@ class VN_BACKEND_VSG_API SlotTracker {
     std::size_t   frames_{ 0 };    // Frames observed.
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

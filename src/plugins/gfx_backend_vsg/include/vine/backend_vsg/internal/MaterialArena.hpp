@@ -40,7 +40,7 @@
  *   the dynamic offset.
  * - NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief Persistent material storage: slots, in-flight copies and write accounting. */
 class VN_BACKEND_VSG_API MaterialArena {
@@ -243,4 +243,4 @@ class VN_BACKEND_VSG_API MaterialArena {
     std::uint64_t                                bytes_written_{ 0 };
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

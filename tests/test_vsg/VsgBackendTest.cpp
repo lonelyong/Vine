@@ -64,9 +64,9 @@ using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
-using vn::graphics::backend::depthPlan;
-using vn::graphics::backend::TargetFacts;
-using vn::graphics::backend::VariantPool;
+using vn::graphics::depthPlan;
+using vn::backend_vsg::core::TargetFacts;
+using vn::backend_vsg::core::VariantPool;
 using vn::test::setPrimitiveIndices;
 using vn::backend_vsg::BlockStorage;
 using vn::backend_vsg::ContentAssembly;
@@ -351,7 +351,7 @@ struct EditCostCounters {
 /// @param assembly The facade's content world (its stream sharing owns the upload count).
 /// @param pool     The facade's compiled-pipeline pool.
 /// @return The counters as they are now.
-EditCostCounters readEditCosts(const ContentStore& store, ContentAssembly& assembly, const vn::graphics::backend::VariantPool& pool)
+EditCostCounters readEditCosts(const ContentStore& store, ContentAssembly& assembly, const vn::backend_vsg::core::VariantPool& pool)
 {
     EditCostCounters counters;
     counters.builds  = store.builds();
@@ -782,7 +782,7 @@ TEST(VsgBackendTest, TheSdkPassProtocolDrawsContentIntoTheWindow)
     // 5. The pass identity is this layer's bookkeeping: the SDK's releasePass() forgets it (nothing retained
     // is keyed by a pass yet), and a re-announced object is a NEW pass - the plan's numbers are never
     // re-issued, because what they keyed may still be remembered elsewhere (see api/PassRegistry).
-    const vn::graphics::backend::PassId first_id = registry.adopt(pass.get());
+    const vn::backend_vsg::core::PassId first_id = registry.adopt(pass.get());
     backend->releasePass(pass.get());
     EXPECT_FALSE(registry.contains(pass.get()));
     EXPECT_EQ(registry.live(), 0U);
@@ -2703,12 +2703,12 @@ TEST(VsgBackendTest, ADepthOnlyTargetIsHeldBuiltAndOfferedAsASampledInput)
     // was built with, and core::depthPlan answers "sampleable" - so a pass that declares the map as an input
     // is offered its depth (see the facade's offer loop). Before this slice the row could not exist at all:
     // the description was refused before anything was built, and the app's lighting pass lost its input.
-    vn::graphics::backend::TargetFacts row;
+    vn::backend_vsg::core::TargetFacts row;
     targets.facts(*shadow_entry, row);
     EXPECT_TRUE(row.depth.has_depth);
     EXPECT_FALSE(row.depth.borrowed);
     EXPECT_TRUE(row.depth.promotion) << "the built target's own policy answers";
-    EXPECT_TRUE(vn::graphics::backend::depthPlan(row.depth).sampleable) << "and the plan promises the depth to a shader";
+    EXPECT_TRUE(vn::graphics::depthPlan(row.depth).sampleable) << "and the plan promises the depth to a shader";
 
     // A frame that presents with it held is served silently - the target is part of the frame's world now,
     // and nothing about it needs saying.
@@ -4251,11 +4251,11 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
 
     BlockStorage* const before = BackendContentAccess::storage(*backend);
     ASSERT_NE(before, nullptr);
-    ASSERT_EQ(before->layout().views.slabs, vn::graphics::backend::perFrameCopies(vn::graphics::backend::kAssumedInFlightSlots))
+    ASSERT_EQ(before->layout().views.slabs, vn::backend_vsg::core::perFrameCopies(vn::backend_vsg::core::kAssumedInFlightSlots))
         << "the session starts on the assumed count; the floor is what create() built";
     const std::uint64_t before_capacity = before->capacityBytes();
 
-    BackendContentAccess::assumeInFlightSlots(*backend, vn::graphics::backend::kAssumedInFlightSlots + 1U);
+    BackendContentAccess::assumeInFlightSlots(*backend, vn::backend_vsg::core::kAssumedInFlightSlots + 1U);
 
     const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.5);
     const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
@@ -4276,7 +4276,7 @@ TEST(VsgBackendTest, ACountDeeperThanTheRingsServeReplacesTheStorageBeforeTheNex
 
     BlockStorage* const after = BackendContentAccess::storage(*backend);
     ASSERT_NE(after, before) << "replaced, not resized - the same swap growth makes";
-    const std::uint32_t deeper = vn::graphics::backend::perFrameCopies(vn::graphics::backend::kAssumedInFlightSlots + 1U);
+    const std::uint32_t deeper = vn::backend_vsg::core::perFrameCopies(vn::backend_vsg::core::kAssumedInFlightSlots + 1U);
     EXPECT_EQ(after->layout().views.slabs, deeper);
     EXPECT_EQ(after->layout().draws.slabs, deeper) << "every per-frame shape is re-laid out together";
     EXPECT_EQ(after->layout().materials.copies, deeper);

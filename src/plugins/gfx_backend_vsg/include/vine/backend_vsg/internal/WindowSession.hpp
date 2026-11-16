@@ -4,9 +4,9 @@
 #include <memory>
 
 #include <vine/graphics/Diagnostics.hpp>
-#include <vine/graphics/backend/DeviceClock.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/DeviceClock.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 #include <vine/backend_vsg/internal/FrameScratch.hpp>
 

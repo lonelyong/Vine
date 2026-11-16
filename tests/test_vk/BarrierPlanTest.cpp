@@ -12,7 +12,7 @@
 #include <set>
 
 #include <vine/backend_vk/internal/BarrierPlan.hpp>
-#include <vine/graphics/backend/Keys.hpp>
+#include <vine/graphics/DrawState.hpp>
 
 using vn::backend_vk::barrierFor;
 using vn::backend_vk::ImageState;
@@ -20,9 +20,9 @@ using vn::backend_vk::loadOpOf;
 using vn::backend_vk::requiresTransition;
 using vn::backend_vk::stateOf;
 using vn::backend_vk::storeOpOf;
-using vn::graphics::backend::ImageLayout;
-using vn::graphics::backend::LoadOp;
-using vn::graphics::backend::StoreOp;
+using vn::graphics::ImageLayout;
+using vn::graphics::LoadOp;
+using vn::graphics::StoreOp;
 
 namespace
 {

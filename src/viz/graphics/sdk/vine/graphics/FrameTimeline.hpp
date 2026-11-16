@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <vector>
 
-#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
 /**
@@ -31,7 +30,7 @@
  *   never share a number. `submitted` / `abandoned` close the token they name; the submission watermark is the highest
  *   number actually handed to a queue, which is what a park is dated against.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /** @brief Identity of one frame between executeFrame() and present(). */
 struct FrameToken {
@@ -131,4 +130,4 @@ class VN_GRAPHICS_API FrameTimeline {
     std::vector<std::uint64_t> open_{};         // The numbers opened and not yet submitted/abandoned.
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

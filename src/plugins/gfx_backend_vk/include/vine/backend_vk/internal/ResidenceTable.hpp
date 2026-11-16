@@ -6,7 +6,7 @@
 #include <mutex>
 #include <unordered_map>
 
-#include <vine/graphics/backend/DeviceClock.hpp>
+#include <vine/graphics/DeviceClock.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -37,7 +37,7 @@ VN_BACKEND_VK_NS_BEGIN
  *   died after the host released the content (`forget`), a claim that was already withdrawn, and a newer claim made
  *   after either. Stale attempts are COUNTED instead of ignored (`Numbers::stale`), because they mean a caller
  *   believes it owns something it does not.
- * - WHAT IT IS NOT. It is not `vn::graphics::backend::ResourceTable`: that table answers "may this resident value go
+ * - WHAT IT IS NOT. It is not `vn::graphics::ResourceTable`: that table answers "may this resident value go
  *   now?" for ONE thread and retires by pins; this one answers "who may build this key?" for TWO drivers and never
  *   decides destruction. It also does not destroy anything, and it is not a retirement schedule: the caller forgets
  *   the entry (`forget`) and hands the Vulkan objects to `RetirementQueue`, exactly as `releaseContent` does today
@@ -57,7 +57,7 @@ class VN_BACKEND_VK_API ResidenceTable final {
     using Key = const void*;
 
     /// @brief Who is building or using an entry: a frame driver's id, as the DEVICE's clock mints it.
-    using FrameDriverId = vn::graphics::backend::FrameDriverId;
+    using FrameDriverId = vn::graphics::FrameDriverId;
 
     /// @brief What the table knows about a key.
     enum class State : std::uint8_t

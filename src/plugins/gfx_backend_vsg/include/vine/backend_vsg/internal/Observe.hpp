@@ -3,7 +3,7 @@
 #include <cstdint>
 
 #include <vine/graphics/FrameStats.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 #include <vine/graphics/graphics_global.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
@@ -30,7 +30,7 @@
  * - This is instrumentation, not a layer: nothing here decides anything, and everything here is called from the
  *   places that do.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 // The two aggregates live at the module's public level (vine/graphics/FrameStats.hpp): a HUD, a tool
 // and a gate read them through RenderEngine::frameReport, and the backend fills the SAME structs
@@ -70,4 +70,4 @@ class VN_BACKEND_VSG_API Observe {
     vn::graphics::RetentionStats retention_;
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

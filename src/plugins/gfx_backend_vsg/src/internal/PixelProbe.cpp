@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <utility>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 bool Rgba8::operator==(const Rgba8& other) const noexcept
 {
@@ -139,4 +139,4 @@ const std::vector<std::uint8_t>& PixelProbe::pixels() const noexcept
     return pixels_;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

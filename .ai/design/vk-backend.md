@@ -16,7 +16,7 @@
 
 ### 1.1 问题与背景
 
-- SDK 的 backend half（`vine/graphics/backend/`）需要一个**第二实现**来被评判：只有一个后端时，“这是接缝的要求”
+- SDK 的共享机制（`vine/graphics/`）需要一个**第二实现**来被评判：只有一个 后端时，“这是接缝的要求”
   与“这是 vsg 的习惯”分不开。本插件是那个第二实现，路径是**直连 Vulkan**（自建 `VkInstance` / `VkDevice` /
   pipeline），不经 VulkanSceneGraph。
 - 它消费的是接缝，不是引擎：绘制什么由 `FrameDescription` 说，怎么画由本后端说。这使它可以被 `test_vk` 直接
@@ -159,7 +159,7 @@
 - **2026-11-15（T48 S6a）后的形状**：SDK 的会话接缝已在树上（`createSession()` / `releaseSession()` 默认答
   `&executor()` / no-op；默认内容程序归 `RenderFrameExecutor`，本设备的每个 `FrameDriver` 各持一份，`Device` 覆写转发给
   自带的驱动者）。
-- **2026-11-16（T48 S6c-2a）后的形状**：**帧体真并行**。设备的大锁换成 `backend::FrameGate body_gate`：帧体（非窗口）
+- **2026-11-16（T48 S6c-2a）后的形状**：**帧体真并行**。设备的大锁换成 `graphics::FrameGate body_gate`：帧体（非窗口）
   取 SHARED，两个驱动者在两条线程上同时记录/提交；出窗口的帧与所有宿主动词（读回 / 释放 / 默认程序 / 释放目标 /
   建窗口 / 诊断读取）取 EXCLUSIVE（可等帧，不竞争）；`shutdown` 也取 EXCLUSIVE。**从帧体线程调用的宿主动词得到空租约**：
   它回答自己的拒绝值（读回答 `Failed`、建目标答 `UnsupportedSurface`、计数器答 0）并报**一条** `vk.device.reentry`
@@ -240,7 +240,7 @@
 ### 2.14 原因在知道它的地方命名：内容拒绝是一个值，不是两个出参（`G1` / `G4` / `G7`）
 
 - **是什么**：内容路径的拒绝（这条 draw 为什么没画出来）由**记录器**给出——只有它知道是哪一级拒绝的（程序、流、实例
-  流、管线、环形缓冲、描述符集）。它填一个 `ContentRefusal`——**它就是接缝的 `backend::DiagnosticDraft` 的别名**
+  流、管线、环形缓冲、描述符集）。它填一个 `ContentRefusal`——**它就是接缝的 `graphics::DiagnosticDraft` 的别名**
   （`category` + **code** + subject + limit + 句子，`refuse()` 唯一写者、先到者胜）；`executeFrame` / `prepareFrame`
   只把它**转发**成 `RenderDiagnostic`。vsg 的读回拒绝（`HostReadbackRefusal` 枚举）也产出同一个类型：拒绝只有一种形状
   （ADR-2026-11-16 §4）。
@@ -261,8 +261,8 @@
 ### 2.15 释放是交给队列，不是立刻销毁（`G4` / `G10`）
 
 - **是什么**：`releaseContent` / `releaseRenderTarget` 把缓存条目**当场忘掉**（驻留数立即下降、下一帧重传），
-  而它背后的 Vulkan 对象交给 `backend/RetirementQueue.hpp`，**等设备的完成水位越过**那一帧才销毁。
-  完成证据来自 `backend/DeviceClock.hpp`：本后端注册**一个** clock window（一帧在飞，`slots = 1`）。
+  而它背后的 Vulkan 对象交给 `graphics/RetirementQueue.hpp`，**等设备的完成水位越过**那一帧才销毁。
+  完成证据来自 `graphics/DeviceClock.hpp`：本后端注册**一个** clock window（一帧 在飞，`slots = 1`）。
 - **为什么**：释放要说的是两件事——“这份内容还在不在”与“这个对象现在能不能毁”——合在一处就是
 "
   "“释放只能在帧之间调”这条宿主必须守的时序。拆开之后 vsg 已经在用的同一套机制装上了两个实现（`G6`），

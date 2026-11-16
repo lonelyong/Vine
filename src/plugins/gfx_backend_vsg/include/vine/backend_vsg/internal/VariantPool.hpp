@@ -5,7 +5,7 @@
 #include <list>
 #include <unordered_map>
 
-#include <vine/graphics/backend/Keys.hpp>
+#include <vine/graphics/DrawState.hpp>
 #include <vine/graphics/graphics_global.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
@@ -33,7 +33,7 @@
  *   anything alive.
  * - NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief Variants indexed by pipeline identity, with a bounded number of them. */
 class VN_BACKEND_VSG_API VariantPool {
@@ -122,4 +122,4 @@ class VN_BACKEND_VSG_API VariantPool {
     std::uint64_t                                                                evictions_{ 0 };
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

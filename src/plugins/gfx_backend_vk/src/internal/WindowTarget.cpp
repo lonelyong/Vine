@@ -677,10 +677,10 @@ std::uint32_t WindowTarget::height() const noexcept
     return impl->extent.height;
 }
 
-vn::graphics::backend::RenderPassCompatibility WindowTarget::compatibility() const noexcept
+vn::graphics::RenderPassCompatibility WindowTarget::compatibility() const noexcept
 {
     using vn::graphics::RenderTarget;
-    vn::graphics::backend::TargetShape shape;
+    vn::graphics::TargetShape shape;
     shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
     shape.device_color_formats.push_back(static_cast<std::uint32_t>(impl->format));
     shape.depth_format        = RenderTarget::DepthFormat::D24;

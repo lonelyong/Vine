@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <string>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 namespace
 {
@@ -371,4 +371,4 @@ void FrameCompiler::report(vn::graphics::DiagnosticCategory category, const std:
     diagnostics_.report(vn::graphics::DiagnosticSeverity::Error, category, vn::String::fromUtf8(message));
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

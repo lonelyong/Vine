@@ -35,7 +35,7 @@
 #include "TestGeometryFacts.hpp"
 
 using vn::graphics::Geometry;
-using vn::graphics::backend::StreamKind;
+using vn::backend_vsg::core::StreamKind;
 using vn::test::setPrimitiveIndices;
 using vn::backend_vsg::buildGeometryFacts;
 using vn::backend_vsg::ChannelFacts;

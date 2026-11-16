@@ -3,7 +3,7 @@
 #include <cmath>
 #include <cstddef>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 using vn::graphics::FrameCounters;
 
@@ -456,4 +456,4 @@ std::span<const CollectedCommand> FrameRecorder::snapshotCommands(std::span<cons
     return copy;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

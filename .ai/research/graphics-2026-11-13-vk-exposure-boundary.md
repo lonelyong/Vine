@@ -28,7 +28,7 @@
 | 位置 | 命中 | 性质 | 结论 |
 |---|---|---|---|
 | SDK 宿主面 `sdk/vine/graphics/*.hpp` | **3** | 全部是**注释里的文字**（`Sampler.hpp` 解释"Vulkan 把采样器放在 image 之外"、`RenderBackendRegistry.hpp` 的 `"vulkan \| opengl3"` 示例串） | **零 Vk 类型**，零 `<vulkan>` include |
-| SDK 后端面 `sdk/vine/graphics/backend/*.hpp` | **2** | 全部是 `Keys.hpp` 注释里的 `VkFormat` / `VkPipeline`（解释"设备格式码"与一次真实 VUID 事故） | **零 Vk 类型**，零 `<vulkan>` / `<vsg>` include |
+| SDK 后端面 `sdk/vine/graphics/backend/*.hpp` | **2** | 全部是 `Keys.hpp` 注释里的 `VkFormat` / `VkPipeline`（解释"设备格式码"与一次真实 VUID 事故） | **零 Vk 类型**，零 `<vulkan>` / `<vsg>` include | <!-- drift-ok -->
 | 插件 `include/vine/backend_vsg/internal/` + `support/` | 18 / 57 个头含 `Vk*` | 真实类型（`VkDevice`、`VkPipeline`、`VkCommandBuffer`…） | 允许，且是今天的主力 |
 | 插件 `include/vine/backend_vsg/shell/` | **0** | `GfxBackendVsgPlugin.hpp` / `VsgRenderBackendFactory.hpp` | 干净 |
 
@@ -260,7 +260,7 @@ V2 / V4 今天已经是事实，可以直接写成脚本断言；V1 需要"只�
 - `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md`（选项 D 否决资源基类；"其它库怎么做的"一节的写法是本文的体例来源）
 - `../decisions/ADR-2026-11-13-content-seam-stays-in-the-plugin.md`（内容缝留在插件内）
 - `graphics-2026-11-13-gpu-resource-abstraction.md` §8（vk 的形态与里程碑）、§9（通用化边界 J1–J3）
-- 代码：`src/viz/graphics/sdk/vine/graphics/backend/BackendHalfGuard.hpp`、`scripts/check_include_hygiene.py`、`cmake/VinePluginHelper.cmake`
+- 代码：`src/viz/graphics/sdk/vine/graphics/backend/BackendHalfGuard.hpp`、`scripts/check_include_hygiene.py`、`cmake/VinePluginHelper.cmake` <!-- drift-ok -->
 
 **外部**
 

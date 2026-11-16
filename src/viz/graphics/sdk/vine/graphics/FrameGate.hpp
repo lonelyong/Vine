@@ -7,10 +7,9 @@
 #include <cstdint>
 #include <shared_mutex>
 
-#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief One gate, two sides: FRAME BODIES share it, HOST VERBS own it, and no caller ever waits for itself.
@@ -335,4 +334,4 @@ class FrameGate
     inline static thread_local std::size_t s_depth{ 0 };
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

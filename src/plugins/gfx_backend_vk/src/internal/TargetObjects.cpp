@@ -677,7 +677,7 @@ void destroyTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAl
     images.fresh                  = true;
     images.color_sampled          = false;
     images.depth_sampled          = false;
-    images.desc                   = vn::graphics::backend::TargetDesc{};
+    images.desc                   = vn::graphics::TargetDesc{};
 }
 
 VN_BACKEND_VK_NS_END

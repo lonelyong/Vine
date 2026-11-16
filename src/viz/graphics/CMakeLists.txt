@@ -1,8 +1,4 @@
-vn_add_library(GRAPHICS_TARGET_NAME Graphics BACKEND_SDK_SUBDIR vine/graphics/backend)
-
-# libGraphics compiles the backend half (sdk/vine/graphics/backend/), so it is a backend-half consumer:
-# those headers refuse to compile unless this is defined (see backend/BackendHalfGuard.hpp).
-target_compile_definitions(${GRAPHICS_TARGET_NAME} PRIVATE VN_GRAPHICS_BACKEND_CONSUMER)
+vn_add_library(GRAPHICS_TARGET_NAME Graphics)
 
 # Source files (src/*.cpp, incl. the HUD overlays AxisGizmo.cpp / FpsOverlay.cpp)
 # are collected from src/ by vn_add_library's glob; add a new file -> reconfigure.
@@ -11,23 +7,21 @@ target_compile_definitions(${GRAPHICS_TARGET_NAME} PRIVATE VN_GRAPHICS_BACKEND_C
 # the library as the generated vine/graphics/EmbeddedShaders.hpp.
 vn_use_embedded_shaders(${GRAPHICS_TARGET_NAME} OUTPUT vine/graphics/EmbeddedShaders.hpp SOURCES)
 
-# Two layers inside one module and one target (see .ai/design/graphics-architecture.md), divided by what
-# crosses the DLL boundary - not by who happens to read them:
+# One module, one target, divided by what crosses the DLL boundary - not by who happens to read it:
 #
-#   sdk/vine/graphics/…    everything EXPORTED, and therefore installed: the host half (scene, camera,
-#                          RenderEngine, RenderPass, RenderTarget, the RenderBackend contract) and
-#                          the backend half (sdk/vine/graphics/backend/: the mechanisms BOTH backends
-#                          use - the frame gate, the device clock and its frame timeline, retirement,
-#                          readback, the format/compatibility keys, the target plan - plus the include
-#                          guard). What only one backend needs lives in that backend (ADR-2026-11-16 §2).
+#   sdk/vine/graphics/…    everything EXPORTED, and therefore installed: the scene, camera, RenderEngine,
+#                          RenderPass, RenderTarget and the RenderBackend contract, plus the frame
+#                          mechanisms the backends share (the frame gate, the device clock and its frame
+#                          timeline, retirement, readback, the format/compatibility keys, the target plan
+#                          and the refusal draft). What only one backend needs lives in that backend.
 #   src/…                  what only this DLL uses: implementations, plus private headers sitting NEXT
 #                          TO their .cpp (the appfw convention, included with "..."). Those are on no
 #                          include root, so nothing outside this module can include them at all.
 #
-# Who may include what is a RULE, not a directory: a host must not include sdk/vine/graphics/backend/
-# (check_include_hygiene.py), the backend half must not include any particular backend (same script),
-# and anything exported must be DECLARED in sdk/ (check_export_annotations.py).
+# What the SDK may not do is a RULE, not a directory: it must not include a particular backend
+# (check_include_hygiene.py), it must name no render API (check_vk_exposure.py), and anything exported
+# must be DECLARED in sdk/ (check_export_annotations.py).
 #
-# One target because neither half can exist without this module - they are layers of graphics, not a
-# second component - and because a backend then depends on exactly one thing: vn::Graphics.
+# One target because every part of graphics depends on this module, and because a backend then depends on
+# exactly one thing: vn::Graphics.
 target_link_libraries(${GRAPHICS_TARGET_NAME} PUBLIC vn::Core vn::Global vn::Geom vn::Models vn::Window vn::Imaging)

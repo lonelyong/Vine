@@ -19,7 +19,7 @@
 #include <vine/backend_vsg/internal/TargetTable.hpp>
 
 using vn::graphics::RenderTarget;
-using vn::graphics::backend::TargetFacts;
+using vn::backend_vsg::core::TargetFacts;
 using vn::backend_vsg::TargetTable;
 
 TEST(TargetTableTest, TheDescriptionIsASnapshotAndTheFactsSayWhatIsBuilt)

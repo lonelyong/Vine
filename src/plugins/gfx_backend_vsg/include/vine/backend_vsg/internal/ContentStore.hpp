@@ -9,8 +9,8 @@
 #include <vine/graphics/Material.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/backend_vsg/internal/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>

@@ -28,7 +28,7 @@
  *   to the image: a phase that asks about a rectangle larger than the surface gets the overlap counted,
  *   not an out-of-range read.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief One pixel, in the packing the readback API produces. */
 struct VN_BACKEND_VSG_API Rgba8 {
@@ -132,4 +132,4 @@ class VN_BACKEND_VSG_API PixelProbe {
     std::vector<std::uint8_t> pixels_;
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

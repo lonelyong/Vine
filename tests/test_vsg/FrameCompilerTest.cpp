@@ -47,26 +47,26 @@ using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
 using vn::graphics::Sampler;
 using vn::graphics::ShaderProgram;
-using vn::graphics::backend::ClearValues;
-using vn::graphics::backend::CompiledCommand;
-using vn::graphics::backend::CompiledDraw;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::backend::CompiledInput;
-using vn::graphics::backend::CompiledPass;
-using vn::graphics::backend::CompiledShape;
-using vn::graphics::backend::DepthFacts;
-using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameCompiler;
-using vn::graphics::backend::FrameFacts;
-using vn::graphics::backend::FrameRecorder;
-using vn::graphics::backend::FrameToken;
-using vn::graphics::backend::Observe;
-using vn::graphics::backend::RepairReason;
-using vn::graphics::backend::statedShapeAgrees;
-using vn::graphics::backend::TargetAction;
-using vn::graphics::backend::TargetFacts;
-using vn::graphics::backend::TargetShape;
+using vn::backend_vsg::core::ClearValues;
+using vn::backend_vsg::core::CompiledCommand;
+using vn::backend_vsg::core::CompiledDraw;
+using vn::backend_vsg::core::CompiledFrame;
+using vn::backend_vsg::core::CompiledInput;
+using vn::backend_vsg::core::CompiledPass;
+using vn::backend_vsg::core::CompiledShape;
+using vn::graphics::DepthFacts;
+using vn::graphics::DrawKind;
+using vn::backend_vsg::core::FrameArena;
+using vn::backend_vsg::core::FrameCompiler;
+using vn::backend_vsg::core::FrameFacts;
+using vn::backend_vsg::core::FrameRecorder;
+using vn::graphics::FrameToken;
+using vn::backend_vsg::core::Observe;
+using vn::graphics::RepairReason;
+using vn::backend_vsg::core::statedShapeAgrees;
+using vn::graphics::TargetAction;
+using vn::backend_vsg::core::TargetFacts;
+using vn::graphics::TargetShape;
 
 namespace
 {
@@ -147,7 +147,7 @@ TEST(FrameCompilerTest, AScreenDrawCarriesItsKindItsSourceAndItsOwnResolvedState
     r.recorder.setRenderTarget(source.get());
     // The producer pass announces a clear: "a pass that announced them and drew nothing" is still a pass (and a
     // pass with neither is not one - the plan drops it).
-    vn::graphics::backend::ClearValues fill;
+    vn::backend_vsg::core::ClearValues fill;
     fill.color          = true;
     fill.color_value[0] = 0.25F;
     fill.color_value[3] = 1.0F;

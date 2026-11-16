@@ -134,7 +134,7 @@ TEST(VkConcurrentFrameTest, TwoThreadsDriveOneDeviceAndBothPicturesAreRight)
 
 TEST(VkConcurrentFrameTest, AHostVerbCalledFromInsideAFrameIsRefusedInsteadOfHanging)
 {
-    // THE GATE'S OTHER HALF (see backend::FrameGate and Impl::body_gate): a host verb called from the thread that is
+    // THE GATE'S OTHER HALF (see graphics::FrameGate and Impl::body_gate): a host verb called from the thread that is
     // inside a frame gets an EMPTY lease, answers its refusal value, and says why ONCE. Before the gate could answer
     // "no", this call was a deadlock - the thread waiting for the frame it was itself inside. A diagnostic sink is the
     // reachable way to make that call: it runs on the frame's own thread, in the middle of the frame body.

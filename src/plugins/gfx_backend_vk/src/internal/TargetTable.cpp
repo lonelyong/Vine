@@ -9,12 +9,12 @@
 
 VN_BACKEND_VK_NS_BEGIN
 
-using vn::graphics::backend::planTarget;
-using vn::graphics::backend::RepairReason;
-using vn::graphics::backend::TargetAction;
-using vn::graphics::backend::TargetDecision;
-using vn::graphics::backend::TargetDesc;
-using vn::graphics::backend::TargetInstance;
+using vn::graphics::planTarget;
+using vn::graphics::RepairReason;
+using vn::graphics::TargetAction;
+using vn::graphics::TargetDecision;
+using vn::graphics::TargetDesc;
+using vn::graphics::TargetInstance;
 
 namespace
 {
@@ -181,7 +181,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
     }
     // WHAT THE HOST'S OBJECT ASKS FOR, in the value `planTarget` compares: an extent plus the shape - the engine's
     // formats AND the device spelling only this backend can fill (see TargetShape).
-    vn::graphics::backend::TargetDesc wanted;
+    vn::graphics::TargetDesc wanted;
     wanted.width  = target.width();
     wanted.height = target.height();
     for (int index = 0; index < target.colorCount(); ++index) {

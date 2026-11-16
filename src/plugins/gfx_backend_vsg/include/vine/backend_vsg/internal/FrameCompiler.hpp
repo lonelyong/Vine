@@ -10,9 +10,9 @@
 #include <vine/graphics/Sampler.hpp>
 #include <vine/backend_vsg/internal/FrameArena.hpp>
 #include <vine/backend_vsg/internal/FrameRecorder.hpp>
-#include <vine/graphics/backend/Keys.hpp>
+#include <vine/graphics/DrawState.hpp>
 #include <vine/backend_vsg/internal/Observe.hpp>
-#include <vine/graphics/backend/TargetPlan.hpp>
+#include <vine/graphics/TargetPlan.hpp>
 #include <vine/graphics/graphics_global.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 #include <vine/intrusive_ptr.hpp>
@@ -48,7 +48,7 @@
  *   pinned it).
  */
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief What a target states about being a SHADOW MAP: whose it is, and how a fragment maps into it.
  *
@@ -359,4 +359,4 @@ class VN_BACKEND_VSG_API FrameCompiler {
     std::vector<TargetSlot>    targets_;      // The target table of the frame being compiled.
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

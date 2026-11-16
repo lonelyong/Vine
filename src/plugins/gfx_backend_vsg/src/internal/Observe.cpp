@@ -1,6 +1,6 @@
 #include <vine/backend_vsg/internal/Observe.hpp>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 using vn::graphics::FrameCounters;
 using vn::graphics::RetentionStats;
@@ -34,4 +34,4 @@ bool Observe::agreesWith(const RetirementQueue& queue) const noexcept
     return retention_.released_nodes == queue.released() && retention_.device_waits == queue.deviceWaits();
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

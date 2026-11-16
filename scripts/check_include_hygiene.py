@@ -20,10 +20,10 @@ Two kinds of defect are invisible to the compiler and therefore rot silently:
     VsgProgramSlot.hpp included vine/graphics/Camera.hpp twice.  `#pragma once` makes
     them harmless, which is exactly why nobody notices them.
 
-It also pins the backend half's FILE SET (one rule, same theme: a dependency the
-compiler cannot see). The seam is the mechanisms BOTH backends use; a header only
-one backend reads is that backend's, and the directory's own list is what keeps
-the distinction checkable (see seam_file_set_findings).
+It also keeps the graphics module free of a render API and of any backend (one rule, same theme: a
+dependency the compiler cannot see). The property is about DEPENDENCY, not about a directory: one
+`vsg/` include under `graphics/` would tie every backend, present and future, to vsg (see
+graphics_module_findings).
 
 In a .cpp the FIRST include is the file's own header (the rule says so), so it is
 not part of the group order — but the group ORDER is only checked in headers:
@@ -90,36 +90,24 @@ STD_HEADERS = frozenset((
 INCLUDE = re.compile(r'^#include\s*([<"])([^>"]+)[>"]\s*$')
 DEFAULT_PATHS = ("src", "tests", "tools")
 SKIP_PARTS = ("build/", "_deps/", "/vsg_selftest/")
-# The backend half of graphics (`vine/graphics/backend`) must stay API-agnostic (see
-# .ai/design/graphics-architecture.md): it may include the host half of graphics and the standard library,
-# but nothing from a render API's own headers and nothing from a backend. It used to live inside
-# gfx_backend_vsg, which is what made it unreachable for a second backend. A prose rule ("only the
-# executor touches vsg") decays the moment it is inconvenient; a directory plus this check is what
-# makes it hold.
-BACKEND_HALF_DIRS = ("/graphics/src/backend/", "/vine/graphics/backend/")
-# Allowed inside it: its own headers plus the project's global header (the namespace macros - the
-# coding guidelines make that one the first include of any file). Allowing only `vine/graphics/backend/`
-# is ALSO what forbids the reverse direction: a `vsg/...` or `vine/backend_vsg/...` include here is a finding,
-# so the backend half can never grow back into one particular backend again.
-BACKEND_HALF_ALLOWED_PREFIXES = ("vine/graphics/backend/",)
-# Who may include the backend half: a backend plugin, the backend half itself, and the backend's own
-# test suite. Everything else - the SDK's host half, appfw, app plugins, other test suites - may not:
-# the half is a backend's tooling, and a host renders through the host half only.
-# A backend plugin, its implementation test and the backend half itself are the audience of `vine/graphics/backend/`
-# (a host never includes it). A new backend adds its `test_<backend>` tree here - `test_vk` compiles the plugin sources
-# directly, exactly like `test_vsg`.
-BACKEND_HALF_AUDIENCE = ("/graphics/src/backend/", "/vine/graphics/backend/", "/gfx_backend_", "/test_vsg/", "/test_vk/", "/BackendSeamTest.cpp")
+# The graphics module (its SDK and its sources) must stay API-agnostic (see
+# .ai/design/graphics-architecture.md): it may include the standard library and its own headers, but
+# nothing from a render API and nothing from a backend plugin. The old rule was stated over a
+# `backend/` directory; the property it protected is about DEPENDENCY, not about a path - one `vsg/`
+# include here ties every backend, present and future, to vsg.
+GRAPHICS_MODULE_DIRS = ("/graphics/src/", "/vine/graphics/")
+GRAPHICS_FORBIDDEN_PREFIXES = ("vsg/", "vine/backend_vsg/", "vine/backend_vk/")
 
 
-def is_backend_half(path):
-    """Return whether @p path belongs to the backend half (the API-agnostic half of graphics)."""
+def is_graphics_module(path):
+    """Return whether @p path belongs to the graphics module (its SDK headers or its sources)."""
     text = str(path).replace("\\", "/")
-    return any(marker in text for marker in BACKEND_HALF_DIRS)
+    return any(marker in text for marker in GRAPHICS_MODULE_DIRS)
 
 
-def backend_half_findings(path, lines):
-    """Return the findings that keep the backend half free of the render API and of the layer above it."""
-    if not is_backend_half(path):
+def graphics_module_findings(path, lines):
+    """Return the findings that keep the graphics module free of the render API and of any backend."""
+    if not is_graphics_module(path):
         return []
 
     findings = []
@@ -128,29 +116,11 @@ def backend_half_findings(path, lines):
         if not match:
             continue
         header = match.group(2)
-        if header.startswith("vsg/"):
-            findings.append((number, f"the backend half includes the render API ({header}): {line.strip()}"))
-        elif header.startswith("vine/backend_vsg/") and not header.startswith(BACKEND_HALF_ALLOWED_PREFIXES):
-            findings.append((number, f"the backend half includes the layer above it ({header}): {line.strip()}"))
-    return findings
-
-def host_audience_findings(path, lines):
-    """Return the findings that keep the backend half out of every host's include list.
-
-    `vine/graphics/backend/` is a backend's business (see .ai/design/graphics-architecture.md): a host
-    renders through the SDK's host half, so reaching into the backend half is a layering error even
-    though it compiles - and, unchecked, the two halves would drift back into one.
-    """
-    text = str(path).replace("\\", "/")
-    if any(marker in text for marker in BACKEND_HALF_AUDIENCE):
-        return []
-
-    findings = []
-    for number, line in enumerate(lines, start=1):
-        match = INCLUDE.match(line)
-        if match and match.group(2).startswith("vine/graphics/backend/"):
-            findings.append(
-                (number, f"host layer includes the backend half ({match.group(2)}): {line.strip()}"))
+        for prefix in GRAPHICS_FORBIDDEN_PREFIXES:
+            if header.startswith(prefix):
+                findings.append(
+                    (number, f"the graphics module includes a render API or a backend ({header}): {line.strip()}"))
+                break
     return findings
 
 
@@ -167,47 +137,20 @@ def group_of(quote, header):
     return THIRD_PARTY
 
 
-# The seam's FILE SET is part of its definition (ADR-2026-11-16 §2): the mechanisms BOTH backends use,
-# plus the include guard, and nothing else. A header only one backend reads belongs in that backend -
-# the directory already grew into "the first backend's portable half" once (18 of its 24 mechanisms had
-# a single consumer), and a file set nobody checks is how it would grow back. Extending either list is
-# a decision about the seam, not an implementation detail; the batch that makes it says so.
-SEAM_HEADERS = {
-    "BackendHalfGuard.hpp",
-    "DeviceClock.hpp",
-    "DiagnosticDraft.hpp",
-    "FrameGate.hpp",
-    "FrameTimeline.hpp",
-    "Keys.hpp",
-    "Readback.hpp",
-    "RetirementQueue.hpp",
-    "TargetPlan.hpp",
-}
-SEAM_SOURCES = {"DeviceClock.cpp", "DiagnosticDraft.cpp", "FrameTimeline.cpp", "Keys.cpp", "Readback.cpp", "RetirementQueue.cpp", "TargetPlan.cpp"}
-SEAM_SCOPE = (("src/viz/graphics/sdk/vine/graphics/backend", SEAM_HEADERS, "*.hpp"),
-              ("src/viz/graphics/src/backend", SEAM_SOURCES, "*.cpp"))
+# A rule that finds no file is a false green (that has happened twice in this tree): the graphics
+# module's two roots are named here, and a missing one is a finding rather than an empty result.
+GRAPHICS_MODULE_ANCHORS = ("src/viz/graphics/sdk/vine/graphics", "src/viz/graphics/src")
 
 
-def seam_file_set_findings():
-    """Return the files that make the backend half's DIRECTORY disagree with its definition."""
+def graphics_module_file_set_findings():
+    """Return a finding when either graphics root is gone, so the rule above cannot silently scan nothing."""
     root = pathlib.Path(__file__).resolve().parent.parent
     findings = []
-    for folder, allowed, pattern in SEAM_SCOPE:
+    for folder in GRAPHICS_MODULE_ANCHORS:
         directory = root / folder
-        if not directory.is_dir():
-            findings.append(f"{folder}: the backend half's directory is gone")
-            continue
-        present = set()
-        for path in sorted(directory.glob(pattern)):
-            present.add(path.name)
-            if path.name not in allowed:
-                findings.append(
-                    f"{path.relative_to(root)}: only the shared mechanisms live in the seam "
-                    f"(ADR-2026-11-16 §2) - a one-backend header/file belongs in that backend")
-        for missing in sorted(allowed - present):
+        if not directory.is_dir() or not (any(directory.rglob("*.hpp")) or any(directory.rglob("*.cpp"))):
             findings.append(
-                f"{folder}/{missing}: a shared mechanism is missing from the seam "
-                f"(retire it from SEAM_HEADERS / SEAM_SOURCES in the same batch)")
+                f"{folder}: the graphics root is gone - the API-agnostic rule would silently cover nothing")
     return findings
 
 
@@ -238,8 +181,7 @@ def check_file(path):
             findings.append((number, f"duplicated (also on line {seen[text]}): {text}"))
         else:
             seen[text] = number
-    findings.extend(backend_half_findings(path, lines))
-    findings.extend(host_audience_findings(path, lines))
+    findings.extend(graphics_module_findings(path, lines))
     return findings
 
 
@@ -260,11 +202,15 @@ def collect(arguments):
 def main():
     files = collect(sys.argv[1:])
     total = 0
+    if not files:
+        # A run that scans nothing reports green for free - the same false green a renamed path produces.
+        print("no file to scan: pass a path, or run with no arguments to check the default tree")
+        total += 1
     for path in files:
         for number, message in check_file(path):
             print(f"{path}:{number}: {message}")
             total += 1
-    for message in seam_file_set_findings():
+    for message in graphics_module_file_set_findings():
         print(message)
         total += 1
     print(f"--- {total} include-hygiene finding(s) in {len(files)} file(s)")

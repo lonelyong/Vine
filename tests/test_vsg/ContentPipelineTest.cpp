@@ -47,10 +47,10 @@
 
 #include "TestProgramFacts.hpp"
 
-using vn::graphics::backend::DynamicState;
-using vn::graphics::backend::PipelineKey;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::VariantPool;
+using vn::graphics::DynamicState;
+using vn::graphics::PipelineKey;
+using vn::backend_vsg::core::StateRegistry;
+using vn::backend_vsg::core::VariantPool;
 using vn::backend_vsg::buildScreenProgramFacts;
 using vn::backend_vsg::ContentPipeline;
 using vn::backend_vsg::FactMiss;
@@ -183,7 +183,7 @@ std::unique_ptr<ContentPipeline> screenLayer(const ContentPipeline::Shaders& sha
 PipelineKey screenKey(std::uint64_t revision, std::uint32_t sampled_colors = 1U)
 {
     PipelineKey key;
-    key.kind                  = vn::graphics::backend::DrawKind::Screen;
+    key.kind                  = vn::graphics::DrawKind::Screen;
     key.program               = vn::test::programRef(1, revision);
     key.compatibility.samples = 1U;
     key.sampled_color_count   = sampled_colors;
@@ -315,7 +315,7 @@ TEST(ContentPipelineTest, AnInstanceVariantDeclaresThePerInstanceStreamTheShader
 
     vn::backend_vsg::GeometryFacts geometry;
     vn::backend_vsg::ChannelFacts  position;
-    position.key.kind       = vn::graphics::backend::StreamKind::Vertex;
+    position.key.kind       = vn::backend_vsg::core::StreamKind::Vertex;
     position.key.location   = 0U;
     position.key.components = 3U;
     position.key.buffer     = reinterpret_cast<const void*>(0x1U);
@@ -359,7 +359,7 @@ TEST(ContentPipelineTest, AnInstanceVariantWithoutThePragmaIsRefused)
 
     vn::backend_vsg::GeometryFacts geometry;
     vn::backend_vsg::ChannelFacts  position;
-    position.key.kind       = vn::graphics::backend::StreamKind::Vertex;
+    position.key.kind       = vn::backend_vsg::core::StreamKind::Vertex;
     position.key.location   = 0U;
     position.key.components = 3U;
     position.key.buffer     = reinterpret_cast<const void*>(0x1U);
@@ -380,7 +380,7 @@ TEST(ContentPipelineTest, AGeometryChannelCannotTakeAnInstanceSlot)
 
     vn::backend_vsg::GeometryFacts geometry;
     vn::backend_vsg::ChannelFacts  custom;
-    custom.key.kind       = vn::graphics::backend::StreamKind::Vertex;
+    custom.key.kind       = vn::backend_vsg::core::StreamKind::Vertex;
     custom.key.location   = 12U;
     custom.key.components = 4U;
     custom.key.buffer     = reinterpret_cast<const void*>(0x1U);
@@ -425,7 +425,7 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     // sampler2D`, no set qualifier). A layer that mixed the two would compile a pipeline the draw cannot bind.
     auto layer = screenLayer(screenShaders());
     ASSERT_NE(layer, nullptr) << "the full-screen pair must compile";
-    EXPECT_EQ(layer->kind(), vn::graphics::backend::DrawKind::Screen);
+    EXPECT_EQ(layer->kind(), vn::graphics::DrawKind::Screen);
 
     // A CUBE declaration is refused HERE, unlike a content layer's: the full-screen ABI binds the SOURCE's
     // attachments and depth - 2D views, one per binding - so a text declaring a cube asks for an image this
@@ -474,7 +474,7 @@ TEST(ContentPipelineTest, AScreenLayerBindsItsSamplersAtSetZeroAndHasNoBlocks)
     // layer cannot build a pipeline for a descriptor ABI its draws do not bind.
     const std::uint64_t failures_before = layer->failures();
     PipelineKey         content_kind    = screenKey(1U);
-    content_kind.kind                   = vn::graphics::backend::DrawKind::Content;
+    content_kind.kind                   = vn::graphics::DrawKind::Content;
     const auto refused                  = layer->acquire(pool, content_kind);
     EXPECT_EQ(refused.pipeline, nullptr);
     EXPECT_EQ(layer->failures(), failures_before + 1U) << "a silently compiled wrong-ABI pipeline is the failure";

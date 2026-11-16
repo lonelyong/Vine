@@ -21,16 +21,16 @@
 
 using vn::graphics::Diagnostics;
 using vn::graphics::RenderTarget;
-using vn::graphics::backend::ClearValues;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameCompiler;
-using vn::graphics::backend::FrameFacts;
-using vn::graphics::backend::FrameRecorder;
-using vn::graphics::backend::FrameToken;
-using vn::graphics::backend::Observe;
-using vn::graphics::backend::Rgba8;
-using vn::graphics::backend::TargetFacts;
+using vn::backend_vsg::core::ClearValues;
+using vn::backend_vsg::core::CompiledFrame;
+using vn::backend_vsg::core::FrameArena;
+using vn::backend_vsg::core::FrameCompiler;
+using vn::backend_vsg::core::FrameFacts;
+using vn::backend_vsg::core::FrameRecorder;
+using vn::graphics::FrameToken;
+using vn::backend_vsg::core::Observe;
+using vn::backend_vsg::core::Rgba8;
+using vn::backend_vsg::core::TargetFacts;
 
 namespace
 {

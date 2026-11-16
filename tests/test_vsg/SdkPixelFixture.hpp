@@ -67,7 +67,7 @@ class SdkPixelFixture {
     /// pointed the pass that produces the picture at target().
     ///
     /// @return The picture, or an INVALID probe when the readback was refused (the reason is printed).
-    vn::graphics::backend::PixelProbe read();
+    vn::backend_vsg::core::PixelProbe read();
 
     vn::intrusive_ptr<vn::backend_vsg::VsgBackend>        backend;
     vn::intrusive_ptr<vn::graphics::RenderEngine> engine;

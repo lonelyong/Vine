@@ -1337,7 +1337,7 @@
 - **命名**：插件 `gfx_backend_vk`、注册名 `"vk"`、命名空间 `vn::backend_vk`、include 路径 `vine/backend_vk/`、
   类 `vn::backend_vk::{Device, BackendFactory, Plugin}`、宏 `VN_BACKEND_VK_{LIB,API,NS_BEGIN,NS_END}`、
   测试 `tests/test_vk`（`VkBackendTest`）。**命名空间两段各说一件事**：`backend` = 这是渲染接缝的**实现**
-  （`vine/graphics/backend/` 才是接缝本身），`vk` = 走**直连 Vulkan** 的实现路径（`vsg` 是经 VulkanSceneGraph）。
+  （`vine/graphics/` 才是接缝本身），`vk` = 走**直连 Vulkan** 的实现路径（`vsg` 是经 VulkanSceneGraph）。
   前一版是 `vn::vk`，被否的理由有两条：读起来像"Vine 对 Vulkan 的封装库"，且 `vn::vsg` 与 VulkanSceneGraph 自己的
   `::vsg` 命名空间同名。`"vk"` 作为**注册名**不变（宿主按名字创建）；`"vsg"` 与它同为 `RenderApi::Vulkan`，区别是
   实现路径而不是 API 家族。
@@ -1436,7 +1436,7 @@
 
 ## 2026-11-16 —— vsg S8c-1：帧体共享设备，设备内容进一把内容锁（T48）
 
-- **换了什么闸**：`backend::FrameGate`（一帧一次）在 vsg 的位置换成了 `internal/DeviceGate`（新单元）：
+- **换了什么闸**：`graphics::FrameGate`（一帧一次）在 vsg 的位置换成了 `internal/DeviceGate`（新单元）：
   帧体取 **SHARED**、宿主动词取 **EXCLUSIVE**，线程本地深度把"从帧体内回调"变成**空租约 + 拒绝**
   （读回 `InsideFrame` → `ReadbackResult::Failed`；内容动词 false/不动 + `vsg.device.reentry`），从不自等。
   诊断路由与 episode 锁必须**递归**（sink 会回调）。
@@ -1526,9 +1526,9 @@
 
 ## 2026-11-16 S2 批 2a：一个帧闸、两侧、两个后端（B2a）
 
-- **同一个规则原来有三份实现**：vk 每驱动者的 `backend::FrameGate`（`enter()` 独占 + 同线程重入拒绝）、vk 设备的
+- **同一个规则原来有三份实现**：vk 每驱动者的 `graphics::FrameGate`（`enter()` 独占 + 同线程重入拒绝）、vk 设备的
   `std::shared_mutex body_gate`（`Device.cpp` 16 处 unique/shared_lock）、vsg 私有的 `internal::DeviceGate`。现在
-  **一份**：`backend::FrameGate` 有 `enterShared()` / `enterExclusive()` + `Shared` / `Exclusive` 租约 +
+  **一份**：`graphics::FrameGate` 有 `enterShared()` / `enterExclusive()` + `Shared` / `Exclusive` 租约 +
   `heldByThisThread()` / `inSharedEntry()` + `Counters{acquisitions, waits}`；嵌套按**每闸**记在每线程栈上
   （vk 的驱动者闸 EXCLUSIVE 套设备闸 SHARED 是正常嵌套，单一 depth 会把内层当重入）。`internal/DeviceGate.hpp` 已删除。
 - **空租约在每个 vk 宿主动词站点都有拒绝值**：`shutdown` / `setMemoryBlockCreator` / `setDefaultContentProgram` /
@@ -1542,9 +1542,9 @@
   `ContentCaches::lock()`（新增 `waits`：try 失败即计，再阻塞；`lockWaits()` 原子读）与 `FrameBooks::locking`；
   vsg 用 `Data::lockContentForPhase()`（帧首 / 提交 / 预热才计，宿主 verb 直接用 `content` 不计）与
   `FrameDrive::locking_before` + `Data::last_locking`。稳态 = 常数 + `waits == 0`。
-- **测试搬了一次**：`tests/BackendSeamTest.cpp` = 接缝的 14 条 `Core*`（TargetPlan / RetirementQueue / Keys /
-  Readback / DeviceClock）+ 6 条 `FrameGateTest`，**三处 CMake** 各列一次（`test_graphics` 因此加
-  `VN_GRAPHICS_BACKEND_CONSUMER`，它读 `vine/graphics/backend/`）。vsg 专属的 Core（Timeline / Arena / Observe /
+- **测试搬了一次**：`tests/BackendSeamTest.cpp` = 接缝的 14 条 `Core*`（TargetPlan / RetirementQueue / DrawState /
+  Readback / DeviceClock）+ 6 条 `FrameGateTest`，**三处 CMake** 各列一次（`test_graphics` 直接读
+  `vine/graphics/`）。vsg 专属的 Core（Timeline / Arena / Observe /
   PhaseTable / DepthProbe / DeviceRequirements）留在 `tests/test_vsg/BackendCoreTest.cpp`；vk 套里的 FrameGate 用例文件
   随之删除（用例已并入共享源）。
 - **新用例**：`FrameGateTest` 6 条（共享侧、空宿主租约、跨闸嵌套、waits 计数）；`VkFrameHeadTest.AFrameReportsWhatItSpentOnTheCacheLock`；

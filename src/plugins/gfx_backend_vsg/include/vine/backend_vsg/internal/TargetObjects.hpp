@@ -14,9 +14,9 @@
 #include <vine/backend_vsg/internal/ClearPlan.hpp>
 #include <vine/backend_vsg/internal/DepthProbe.hpp>
 #include <vine/backend_vsg/internal/PixelProbe.hpp>
-#include <vine/graphics/backend/Readback.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
-#include <vine/graphics/backend/TargetPlan.hpp>
+#include <vine/graphics/Readback.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
+#include <vine/graphics/TargetPlan.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
 namespace vsg
@@ -282,7 +282,7 @@ class TargetObjects {
      * @param request Which attachment to ask about.
      * @return Whether it is servable, and the refusal category when it is not.
      */
-    [[nodiscard]] core::ReadbackResult readbackResult(const core::ReadbackRequest& request) const noexcept;
+    [[nodiscard]] core::ReadbackAnswer readbackResult(const core::ReadbackRequest& request) const noexcept;
 
     /** @brief Gets how many colour attachments this target has. */
     [[nodiscard]] std::uint32_t colorAttachmentCount() const noexcept;

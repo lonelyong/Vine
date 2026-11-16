@@ -59,10 +59,6 @@ add_executable(${TEST_NAME}
 target_include_directories(${TEST_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/include)
 
-# The device header derives from RenderBackend and lives under internal/, so the consumer opt-in is stated here too,
-# exactly as the plugin states it.
-target_compile_definitions(${TEST_NAME} PRIVATE VN_GRAPHICS_BACKEND_CONSUMER)
-
 # THE MODULE'S OWN EXPORT MACRO. This target compiles the plugin's sources instead of linking the MODULE, so it HAS to
 # define them the way the module does: `VN_BACKEND_VK_API` is dllexport under `VN_BACKEND_VK_LIB` and dllimport without
 # it, and a target that declares dllimport for symbols it compiles itself fails to link on Windows (on Linux the

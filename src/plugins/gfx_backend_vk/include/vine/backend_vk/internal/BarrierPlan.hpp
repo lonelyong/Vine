@@ -4,7 +4,7 @@
 
 #include <volk.h>
 
-#include <vine/graphics/backend/Keys.hpp>
+#include <vine/graphics/DrawState.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -44,10 +44,10 @@ struct ImageState {
  * - `Present` is the only value whose layout belongs to the platform rather than to a queue operation, so it is the
  *   only one that names an extension-provided layout.
  *
- * @param usage What the image is used for (see `vn::graphics::backend::ImageLayout`).
+ * @param usage What the image is used for (see `vn::graphics::ImageLayout`).
  * @return The layout, stages and access mask for @p usage.
  */
-[[nodiscard]] ImageState stateOf(vn::graphics::backend::ImageLayout usage) noexcept;
+[[nodiscard]] ImageState stateOf(vn::graphics::ImageLayout usage) noexcept;
 
 /**
  * @brief Answers whether a barrier is needed to go from @p from to @p to.
@@ -59,7 +59,7 @@ struct ImageState {
  * @param to   Usage the image is about to be in.
  * @return true when a barrier must be recorded; false when the two usages are identical.
  */
-[[nodiscard]] bool requiresTransition(vn::graphics::backend::ImageLayout from, vn::graphics::backend::ImageLayout to) noexcept;
+[[nodiscard]] bool requiresTransition(vn::graphics::ImageLayout from, vn::graphics::ImageLayout to) noexcept;
 
 /**
  * @brief Builds the barrier that moves @p image from one usage to another.
@@ -76,8 +76,8 @@ struct ImageState {
  * @return The barrier, ready to be recorded.
  */
 [[nodiscard]] VkImageMemoryBarrier barrierFor(VkImage           image,
-                                              vn::graphics::backend::ImageLayout from,
-                                              vn::graphics::backend::ImageLayout to,
+                                              vn::graphics::ImageLayout from,
+                                              vn::graphics::ImageLayout to,
                                               VkImageAspectFlags aspect) noexcept;
 
 /**
@@ -132,7 +132,7 @@ struct ImageState {
  * @param op The pass' neutral load operation (see ClearPlan).
  * @return The Vulkan attachment load operation.
  */
-[[nodiscard]] VkAttachmentLoadOp loadOpOf(vn::graphics::backend::LoadOp op) noexcept;
+[[nodiscard]] VkAttachmentLoadOp loadOpOf(vn::graphics::LoadOp op) noexcept;
 
 /**
  * @brief Gets the attachment store operation for @p op.
@@ -140,6 +140,6 @@ struct ImageState {
  * @param op The pass' neutral store operation (see ClearPlan).
  * @return The Vulkan attachment store operation.
  */
-[[nodiscard]] VkAttachmentStoreOp storeOpOf(vn::graphics::backend::StoreOp op) noexcept;
+[[nodiscard]] VkAttachmentStoreOp storeOpOf(vn::graphics::StoreOp op) noexcept;
 
 VN_BACKEND_VK_NS_END

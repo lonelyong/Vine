@@ -1,6 +1,6 @@
 #include <vine/backend_vsg/internal/ClearPlan.hpp>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 namespace
 {
@@ -108,4 +108,4 @@ LoadOpVariantKey loadOpVariantOf(const PassClearPlan& plan, ImageLayout color_fi
     return variant;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

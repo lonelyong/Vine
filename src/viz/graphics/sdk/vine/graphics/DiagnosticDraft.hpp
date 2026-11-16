@@ -2,7 +2,6 @@
 
 #include <optional>
 
-#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
 #include <vine/String.hpp>
 #include <vine/graphics/RenderDiagnostic.hpp>
@@ -31,7 +30,7 @@
  *
  * @note Not thread-safe only in the sense every value is: it is written and read by one call's thread.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 class VN_GRAPHICS_API DiagnosticDraft {
   public:
@@ -123,4 +122,4 @@ class VN_GRAPHICS_API DiagnosticDraft {
     vn::String                                    message_{};
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

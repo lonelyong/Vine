@@ -120,7 +120,7 @@ struct ContentCaches::Impl {
         /// The VARIANT's bits (see ProgramVariant): the same text compiled under different names is a different
         /// program, so two pipelines that differ only there are two pipelines.
         std::uint32_t                                          variant{ 0 };
-        vn::graphics::backend::RenderPassCompatibility         compatibility{};
+        vn::graphics::RenderPassCompatibility         compatibility{};
         VkPrimitiveTopology                                    topology{ VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
         PipelineState                                          state{};
         std::vector<std::pair<std::uint32_t, std::uint32_t>>   channels; // (location, components), in description order
@@ -910,7 +910,7 @@ struct ContentCaches::Impl {
                                                    const vn::graphics::GeometryDescription&              geometry,
                                                    const ProgramVariant&                                 variant,
                                                    bool                                                  instanced,
-                                                   const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                                   const vn::graphics::RenderPassCompatibility& compatibility,
                                                    VkRenderPass                                          render_pass,
                                                    VkPrimitiveTopology                                   topology,
                                                    const PipelineState&                                  state,
@@ -1012,7 +1012,7 @@ struct ContentCaches::Impl {
      */
     [[nodiscard]] VkPipeline ensureScreenPipeline(const ProgramEntry&                                   fragment,
                                                   const ProgramEntry&                                   vertex,
-                                                  const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                                  const vn::graphics::RenderPassCompatibility& compatibility,
                                                   VkRenderPass                                          render_pass,
                                                   const PipelineState&                                  state,
                                                   std::uint32_t                                         color_attachments,
@@ -1066,7 +1066,7 @@ struct ContentCaches::Impl {
     [[nodiscard]] bool planDraw(const vn::graphics::RenderCommand&                     command,
                                 const vn::graphics::PassDraw&                          pass,
                                 const vn::graphics::ShaderProgramDescription*          default_program,
-                                const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                                const vn::graphics::RenderPassCompatibility&  compatibility,
                                 VkRenderPass                                           render_pass,
                                 std::uint32_t                                          color_attachments,
                                 FrameHead::DrawPlan&                                   plan,
@@ -1190,7 +1190,7 @@ struct ContentCaches::Impl {
      */
     [[nodiscard]] bool planDraw(const vn::graphics::DrawDescription&                  draw,
                                 const vn::graphics::PassDraw&                          pass,
-                                const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                                const vn::graphics::RenderPassCompatibility&  compatibility,
                                 VkRenderPass                                           render_pass,
                                 std::uint32_t                                          color_attachments,
                                 FrameHead::DrawPlan&                                   plan,
@@ -1712,7 +1712,7 @@ VkPipelineLayout ContentCaches::screenPipelineLayout() const noexcept
 bool ContentCaches::planDraw(const vn::graphics::RenderCommand&                     command,
                              const vn::graphics::PassDraw&                          pass,
                              const vn::graphics::ShaderProgramDescription*          default_program,
-                             const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                             const vn::graphics::RenderPassCompatibility&  compatibility,
                              const VkRenderPass                                     render_pass,
                              const std::uint32_t                                    color_attachments,
                              FrameHead::DrawPlan&                                   plan,
@@ -1726,7 +1726,7 @@ bool ContentCaches::planDraw(const vn::graphics::RenderCommand&                 
 
 bool ContentCaches::planDraw(const vn::graphics::DrawDescription&                  draw,
                              const vn::graphics::PassDraw&                          pass,
-                             const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                             const vn::graphics::RenderPassCompatibility&  compatibility,
                              const VkRenderPass                                     render_pass,
                              const std::uint32_t                                    color_attachments,
                              FrameHead::DrawPlan&                                   plan,

@@ -12,10 +12,10 @@
  * @details
  * - WHY IT LIVES IN THIS PLUGIN (2026-10-21). The floor, the feature set and the extension names are VULKAN
  *   POLICY, not a property of the graphics SDK: they name `VK_EXT_extended_dynamic_state3` and a 1.4 API level.
- *   The header used to sit in the SDK's backend half (which is installed with the SDK), which claimed every
- *   backend could use it - no non-Vulkan backend can. It stays in `vn::graphics::backend` because this plugin
- *   aliases that namespace as `core`, and the policy is still "the backend layer's answer about a device"; what
- *   it no longer is, is part of what the SDK hands to hosts (see `.ai/backlog/graphics.md` R1).
+ *   The header used to sit in the SDK (which is installed with the SDK), which claimed every backend could
+ *   use it - no non-Vulkan backend can. It stays in this plugin, whose files alias the SDK as `core`, and the
+ *   policy is still "the backend layer's answer about a device"; what it is not is part of what the SDK hands
+ *   to hosts (see `.ai/backlog/graphics.md` R1).
  * - WHY THE POLICY IS SEPARATE FROM THE PROBE. "Which device will we run on" has two halves with very
  *   different testability: what the backend REQUIRES (a version floor and a handful of features, all of
  *   them decisions this backend made) and what a machine OFFERS (a driver's answer, only obtainable on a
@@ -36,7 +36,7 @@
  *   set is an enum of this layer's own. That is what keeps the whole file testable on a machine with no
  *   Vulkan loader at all.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief Packs a version the way the API's own headers do: major << 22 | minor << 12 | patch.
  *
@@ -181,4 +181,4 @@ struct VN_BACKEND_VSG_API DeviceFacts {
  */
 [[nodiscard]] VN_BACKEND_VSG_API bool satisfiesRequirements(const DeviceFacts& facts) noexcept;
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

@@ -9,7 +9,7 @@
 #endif
 
 // WHAT THE NAME SAYS. `backend_vk` has two parts and each part carries one fact:
-//   * `backend` - this is an IMPLEMENTATION of the render seam (`vine/graphics/backend/` is the seam itself), not a
+//   * `backend` - this is an IMPLEMENTATION of the render seam (`vine/graphics/` is the seam itself), not a
 //     wrapper library around Vulkan and not part of the host SDK;
 //   * `vk`      - it is the DIRECT Vulkan one: it creates its own VkInstance / VkDevice / pipelines instead of driving
 //     VulkanSceneGraph, which is what the `vsg` backend does. Both are Vulkan; the suffix names the path taken.

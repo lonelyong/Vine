@@ -46,8 +46,8 @@
 #include <vine/backend_vsg/support/VsgUtils.hpp>
 #include <vine/graphics/Diagnostics.hpp>
 #include <vine/graphics/RenderCommand.hpp>
-#include <vine/graphics/backend/DiagnosticDraft.hpp>
-#include <vine/graphics/backend/FrameGate.hpp>
+#include <vine/graphics/DiagnosticDraft.hpp>
+#include <vine/graphics/FrameGate.hpp>
 
 VN_BACKEND_VSG_NS_BEGIN
 
@@ -110,7 +110,7 @@ constexpr std::size_t kNoWindow = VsgExecutor::kNoWindow;
  *
  * WHY A THREAD-LOCAL AND NOT A DEVICE FIELD. The present of a frame arrives as `PresentTarget::present()` on the
  * window object the frame named - a call with no frame parameter - and it is made from INSIDE the frame body, on the
- * frame's own thread. Two drivers' frames may run at once (see backend::FrameGate), so a device-wide "the frame in flight"
+ * frame's own thread. Two drivers' frames may run at once (see graphics::FrameGate), so a device-wide "the frame in flight"
  * would hand one frame's plan to another's present. The frame's own state lives in the driving executor (see
  * VsgExecutor::FrameDrive); this is the one pointer that lets the callback find it again, and it is scoped to the
  * frame body exactly like the vk backend's frame-body depth.
@@ -619,10 +619,10 @@ struct VsgBackend::Data {
     /// THE OFF-SCREEN SESSION'S FRAME CLAIM: the same rule the windows' slots state, for the one session a frame
     /// naming no target runs through (frames wait for each other there; the session is the device's one).
     std::mutex offscreen_frame{};
-    /// THE DEVICE'S TWO-SIDED GATE (see backend::FrameGate): frame bodies SHARE it - two drivers' frames overlap -
+    /// THE DEVICE'S TWO-SIDED GATE (see graphics::FrameGate): frame bodies SHARE it - two drivers' frames overlap -
     /// and host verbs (initialize / shutdown / readback / the frame report / the window set) take it EXCLUSIVE. A verb
     /// called from inside a body's thread gets an empty lease and answers a refusal instead of waiting for itself.
-    vn::graphics::backend::FrameGate gate{};
+    vn::graphics::FrameGate gate{};
     /// THE DEVICE'S CONTENT LOCK: the tables a frame reads - the store, halves, sets, uploads, images, targets, the
     /// pass registry, the variant pool, the block storage and the clock/park queue - are touched by ONE CONTENT PHASE
     /// at a time. It is taken once by the frame's HEAD (see openFrameHead) and once by the phase that assembles,
@@ -765,8 +765,8 @@ bool VsgBackend::initialize()
 {
     // A HOST VERB: it creates or replaces the device, its windows and the content world, so it owns the gate - no
     // frame body runs beside it. Called from inside a frame body (a sink or a hook) it answers false instead of
-    // waiting for itself (see backend::FrameGate).
-    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
+    // waiting for itself (see graphics::FrameGate).
+    const vn::graphics::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return false;
     }
@@ -999,10 +999,10 @@ void VsgBackend::releaseContentWorld() noexcept
 
 void VsgBackend::shutdown()
 {
-    // A HOST VERB, and the most destructive one: it waits for every frame body to end (see backend::FrameGate), so
+    // A HOST VERB, and the most destructive one: it waits for every frame body to end (see graphics::FrameGate), so
     // "the last executeFrame returned" and "no frame is running" are the same fact before anything is destroyed.
     // Called from inside a frame body it does nothing: the device keeps what it has, which is the only safe answer.
-    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
+    const vn::graphics::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return;
     }
@@ -1057,7 +1057,7 @@ vn::graphics::RenderFrameExecutor* VsgBackend::createSession()
     // A HOST VERB: it appends to the device's driver list, which a running frame of another thread reads through the
     // gate - so it owns the gate, and a call from inside a frame body answers null instead of waiting for itself
     // (creating drivers from a sink is wiring this layer cannot serve).
-    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
+    const vn::graphics::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return nullptr;
     }
@@ -1075,7 +1075,7 @@ void VsgBackend::releaseSession(vn::graphics::RenderFrameExecutor& session)
     // A HOST VERB: the gate makes "the driver is gone" and "no frame of it is running" one fact. From inside a frame
     // body it does nothing (the caller is misusing the borrow rule, and destroying a driver a frame is running on
     // would be a use-after-free).
-    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
+    const vn::graphics::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return;
     }
@@ -1085,8 +1085,8 @@ void VsgBackend::releaseSession(vn::graphics::RenderFrameExecutor& session)
 vn::raw_ptr<vn::graphics::WindowPresentTarget> VsgBackend::createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why)
 {
     // A HOST VERB: it appends to the device's window list, which every frame body reads - so it owns the gate. From
-    // inside a frame body it answers UnsupportedSurface rather than waiting for itself (see backend::FrameGate).
-    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
+    // inside a frame body it answers UnsupportedSurface rather than waiting for itself (see graphics::FrameGate).
+    const vn::graphics::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         if (why != nullptr) {
             *why = vn::graphics::SurfaceTargetResult::UnsupportedSurface;
@@ -1288,7 +1288,7 @@ void VsgBackend::collectFrame(FrameScratch& scratch, const vn::graphics::FrameDe
     //
     // IT READS THE HEAD'S SNAPSHOT (see openFrameHead): the pass numbers come from the scratch, and nothing below
     // touches the device's pass registry, its targets or its content store - which is what lets two drivers' frame
-    // bodies run at once (see backend::FrameGate).
+    // bodies run at once (see graphics::FrameGate).
     for (std::size_t index = 0; index < frame.passes.size(); ++index) {
         const vn::graphics::FrameDescription::Pass& entry = frame.passes[index];
         if (entry.pass == nullptr || index >= scratch.pass_ids.size()) {
@@ -1376,11 +1376,11 @@ vn::graphics::PresentOutcome VsgBackend::executeFrameFor(VsgExecutor& executor,
                                                       const vn::graphics::FrameDescription& frame,
                                                       vn::graphics::PresentTarget*          present_to)
 {
-    // TWO DRIVERS' FRAME BODIES MAY RUN AT ONCE (see backend::FrameGate): this body takes the gate's SHARED side. What
+    // TWO DRIVERS' FRAME BODIES MAY RUN AT ONCE (see graphics::FrameGate): this body takes the gate's SHARED side. What
     // still excludes itself is the SESSION the frame runs in (a window owns one swapchain and one open frame - the
     // claim below) and the DEVICE'S CONTENT (one locked phase at a time, see commitFrameThrough). A frame started from
     // the thread that already drives one is REFUSED, not queued: waiting there would be the thread waiting for itself.
-    const vn::graphics::backend::FrameGate::Shared body = d->gate.enterShared();
+    const vn::graphics::FrameGate::Shared body = d->gate.enterShared();
     if (!body) {
         std::lock_guard<std::recursive_mutex> guard(d->episodes);
         if (d->frame_reentry_report.shouldReport()) {
@@ -1521,7 +1521,7 @@ vn::graphics::PrepareReport VsgBackend::prepareFrameFor(VsgExecutor& executor,
     // THE SAME GATE AS executeFrame, SHARED: a warm-up walks the content path and may record a transfer batch, so it
     // shares the machinery a frame drives - and two drivers' warm-ups may run at once, exactly like their frames.
     // `Refused` carries no reason - the report says which refusal it was.
-    const vn::graphics::backend::FrameGate::Shared body = d->gate.enterShared();
+    const vn::graphics::FrameGate::Shared body = d->gate.enterShared();
     if (!body) {
         std::lock_guard<std::recursive_mutex> guard(d->episodes);
         if (d->frame_reentry_report.shouldReport()) {
@@ -1995,7 +1995,7 @@ void VsgBackend::setWindowHandleAt(std::size_t index, void* native_handle)
 {
     // A HOST VERB: the handle list is read by initialize() and by nothing a frame body touches, but the window set is
     // the device's - so it owns the gate, and a call from a sink does nothing instead of waiting for itself.
-    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
+    const vn::graphics::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return;
     }
@@ -2023,8 +2023,8 @@ void VsgBackend::resizeWindow(std::size_t index, int width, int height)
         return; // not a size a surface can have: nothing to announce, and nothing to follow
     }
     // A HOST VERB: following a surface rebuilds its swapchain, which must not overlap its own frame - so this owns the
-    // gate (see backend::FrameGate) and, below, the WINDOW's claim. From inside a frame body it does nothing.
-    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
+    // gate (see graphics::FrameGate) and, below, the WINDOW's claim. From inside a frame body it does nothing.
+    const vn::graphics::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return;
     }
@@ -2134,9 +2134,9 @@ vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
 {
     // A HOST VERB: the answer composes device-wide state a frame body writes (the counters, the last frame's
     // uploads, the retention tables and the presented watermark), so it owns the gate - and called from inside a frame
-    // body it answers an EMPTY report rather than waiting for itself (see backend::FrameGate; the caller is a sink
+    // body it answers an EMPTY report rather than waiting for itself (see graphics::FrameGate; the caller is a sink
     // that is misusing an observable, and a wrong number is worse than none).
-    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
+    const vn::graphics::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return vn::graphics::FrameReport{};
     }
@@ -2593,7 +2593,7 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target,
     // A HOST VERB: the copy below waits the device's frames, so this owns the gate. From inside a frame body the
     // request answers InsideFrame at once - a readback that waited there would be the frame waiting for itself (the
     // same refusal the vk backend states for the same reason).
-    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
+    const vn::graphics::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         std::lock_guard<std::recursive_mutex> guard(d->episodes);
         return refuse(HostReadbackRefusal::InsideFrame, d->readback_reports[kReadbackColour]);
@@ -2667,7 +2667,7 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::
     };
 
     // A HOST VERB, for the same reason the colour readback is one (see its note).
-    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
+    const vn::graphics::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         std::lock_guard<std::recursive_mutex> guard(d->episodes);
         return refuse(HostReadbackRefusal::InsideFrame, d->readback_reports[kReadbackDepth]);

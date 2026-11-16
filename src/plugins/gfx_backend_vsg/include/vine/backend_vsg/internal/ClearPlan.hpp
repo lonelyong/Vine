@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <vector>
 
-#include <vine/graphics/backend/Keys.hpp>
-#include <vine/graphics/backend/TargetPlan.hpp>
+#include <vine/graphics/DrawState.hpp>
+#include <vine/graphics/TargetPlan.hpp>
 #include <vine/graphics/graphics_global.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
@@ -37,7 +37,7 @@
  *   for, and whether this pass is the bootstrap one), so a phase can assert the whole table without a
  *   device.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief The depth value a cleared depth attachment receives under the backend's reverse-Z convention. */
 inline constexpr float kReverseZFarDepth = 0.0F;
@@ -151,4 +151,4 @@ struct VN_BACKEND_VSG_API PassClearPlan {
                                                                ImageLayout          depth_steady,
                                                                ImageLayout          depth_final) noexcept;
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-#include <vine/graphics/backend/DiagnosticDraft.hpp>
+#include <vine/graphics/DiagnosticDraft.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -57,7 +57,7 @@ enum class ContentRefusalCause : std::uint8_t
 [[nodiscard]] VN_BACKEND_VK_API const char8_t* contentRefusalCode(ContentRefusalCause cause) noexcept;
 
 /**
- * @brief The shared refusal shape (see `vine/graphics/backend/DiagnosticDraft.hpp`): first reason wins.
+ * @brief The shared refusal shape (see `vine/graphics/DiagnosticDraft.hpp`): first reason wins.
  *
  * @details
  * - THE BACKEND'S SPELLING OF THE SEAM'S TYPE, kept as an alias so the planner's call sites read the same
@@ -66,6 +66,6 @@ enum class ContentRefusalCause : std::uint8_t
  * - `refuse()` always states a code, so "refused" and "has a code" are the same question; a value that is
  *   not refused carries no code at all (`code()` answers null), so a caller must ask `isRefused()` first.
  */
-using ContentRefusal = vn::graphics::backend::DiagnosticDraft;
+using ContentRefusal = vn::graphics::DiagnosticDraft;
 
 VN_BACKEND_VK_NS_END

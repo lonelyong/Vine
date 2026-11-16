@@ -28,7 +28,7 @@
  *   once the new window has been created and asked, so it is the move attempt's own result (see MoveAttemptResult),
  *   not a fact the caller could have supplied up front.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief What a session should do about an announced window. */
 enum class MoveAction : std::uint8_t
@@ -67,4 +67,4 @@ enum class MoveAttemptResult : std::uint8_t
     Refused,            // The window refused for another reason (the reason is reported by the caller).
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

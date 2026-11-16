@@ -6,8 +6,8 @@
 #include <span>
 
 #include <vine/backend_vsg/internal/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 #include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
 #include <vine/backend_vsg/internal/ContentPass.hpp>

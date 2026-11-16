@@ -351,7 +351,7 @@ struct ContentImages::Impl {
     [[nodiscard]] bool recordUpload(const vn::graphics::Texture& texture, Entry& entry, VkCommandBuffer commands, std::uint64_t batch, vn::String* why)
     {
         const auto aspect       = static_cast<VkImageAspectFlags>(VK_IMAGE_ASPECT_COLOR_BIT);
-        const ImageState from   = stateOf(vn::graphics::backend::ImageLayout::Undefined);
+        const ImageState from   = stateOf(vn::graphics::ImageLayout::Undefined);
         const ImageState to     = transferWriteState();
 
         // THE WHOLE IMAGE, NOT ITS LAYER 0: the loop below copies every layer and mip, and a barrier that names one
@@ -658,7 +658,7 @@ VkImageView ContentImages::viewFor(const vn::graphics::Texture& texture,
     }
 
     const ImageState transfer = transferWriteState();
-    const ImageState sampled  = stateOf(vn::graphics::backend::ImageLayout::ShaderReadOnly);
+    const ImageState sampled  = stateOf(vn::graphics::ImageLayout::ShaderReadOnly);
     // THE SAME RANGE THE UPLOAD WRITES (every layer and mip): a single-subresource transition here would leave the
     // faces the descriptor samples in TRANSFER_DST, which is the layout error the app measured.
     VkImageSubresourceRange whole{};
@@ -815,7 +815,7 @@ bool ContentImages::ensureFallback(const VkCommandBuffer commands, const BatchId
 
     const ImageState transfer = transferWriteState();
     const VkImageMemoryBarrier to_transfer =
-        barrierBetween(impl->fallback_image, stateOf(vn::graphics::backend::ImageLayout::Undefined), transfer, VK_IMAGE_ASPECT_COLOR_BIT);
+        barrierBetween(impl->fallback_image, stateOf(vn::graphics::ImageLayout::Undefined), transfer, VK_IMAGE_ASPECT_COLOR_BIT);
     impl->table->vkCmdPipelineBarrier(commands,
                                       VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                       VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -838,7 +838,7 @@ bool ContentImages::ensureFallback(const VkCommandBuffer commands, const BatchId
                                         1U,
                                         &region);
 
-    const ImageState sampled = stateOf(vn::graphics::backend::ImageLayout::ShaderReadOnly);
+    const ImageState sampled = stateOf(vn::graphics::ImageLayout::ShaderReadOnly);
     const VkImageMemoryBarrier to_sampled = barrierBetween(impl->fallback_image, transfer, sampled, VK_IMAGE_ASPECT_COLOR_BIT);
     impl->table->vkCmdPipelineBarrier(commands,
                                       VK_PIPELINE_STAGE_TRANSFER_BIT,

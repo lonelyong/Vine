@@ -59,7 +59,7 @@ Counters& counters() noexcept
 
 } // namespace
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 bool AllocationGate::supported() noexcept
 {
@@ -161,4 +161,4 @@ std::size_t AllocationGate::bytes() const noexcept
     return bytes_;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

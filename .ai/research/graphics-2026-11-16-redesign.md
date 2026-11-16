@@ -318,7 +318,7 @@ vk 插件 12.0k 行、vsg 插件 17.2k 行、接缝实现 3.2k 行、三套测�
   也就是说：**18 个头只有一个消费者**（`FrameRecorder` / `FrameCompiler` / `FrameRing` /
   `MaterialArena` / `Streams` / `StateRegistry` / `VariantPool` / `SlotProbe` / `Observe` /
   `PixelProbe` / `DepthProbe` / `PhaseTable` / `SessionMove` / `AllocationGate` / `FrameArena` /
-  `FrameTimeline` / `ResourceTable` / `ClearPlan`）（`BackendHalfGuard.hpp` 是包含守卫，不是机制）。
+  `FrameTimeline` / `ResourceTable` / `ClearPlan`）（`BackendHalfGuard.hpp` 是包含守卫，不是机制）。 <!-- drift-ok -->
 - **为什么是问题**：`graphics-architecture.md` §2.9 与 `vsg-backend.md` §2.9.1 把这一层叫做"后端契约"，
   并把它单独安装成组件 `VineGraphicsBackendSdk`。它承诺的是"第二个后端消费的形状"，而实际是
   **第一个后端的实现被提升为接缝**。这违反 `G1`（接缝的定义不是"谁用过"）与 `G5`（vsg 的变更被迫穿过 SDK）。
@@ -332,7 +332,7 @@ vk 插件 12.0k 行、vsg 插件 17.2k 行、接缝实现 3.2k 行、三套测�
   （门禁加一条"libGraphics 的 `backend/*.cpp` 只剩 5 个文件名"）。
   满足 `G13`（能力搬到它该在的一侧，即使没有新功能）。
 
-#### 3.2.2 `Keys.hpp` / `TargetPlan.hpp`：接缝里的 Vulkan 拼写（T15）
+#### 3.2.2 `Keys.hpp` / `TargetPlan.hpp`：接缝里的 Vulkan 拼写（T15） <!-- drift-ok -->
 
 > `ClearPlan.hpp` 虽然也用 `ImageLayout`，但 vk 不 include 它——它随 §3.2.1 的 18 个 vsg 专用头一起搬家，
 > 所以本节的去 Vulkan 拼写只涉及留下的两个。
@@ -588,7 +588,7 @@ vk 插件 12.0k 行、vsg 插件 17.2k 行、接缝实现 3.2k 行、三套测�
 
 - **判决**：S8c-1/S8b 的产物，各一个职责，且 `DeviceGate` 与 vk 的 `body_gate` 是**同一规则的两份实现**
   （帧体共享 / 宿主动词独占 / 重入拒绝）。它们语义相同但类型不同、计数不同。
-- **证据**：`src/viz/graphics/sdk/vine/graphics/backend/FrameGate.hpp`（vsg 私有的 `DeviceGate` 已在 S2 批 2 并入该类型）；
+- **证据**：`src/viz/graphics/sdk/vine/graphics/backend/FrameGate.hpp`（vsg 私有的 `DeviceGate` 已在 S2 批 2 并入该类型）； <!-- drift-ok -->
   `VsgBackendTest.AReadbackFromInsideAFrameBodyAnswersInsideFrame`；
   vk `VkMultiSessionTest.AReadbackFromInsideAFrameIsRefusedInsteadOfWaitingForIt`。
 - **重设计建议**：把"帧体闸"上移到 `backend/FrameGate.hpp`（它已经是一个共享机制，只是两侧化之后

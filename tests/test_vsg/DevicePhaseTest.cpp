@@ -30,8 +30,8 @@
 
 #include "DevicePhases.hpp"
 
-using vn::graphics::backend::Phase;
-using vn::graphics::backend::PhaseTable;
+using vn::backend_vsg::core::Phase;
+using vn::backend_vsg::core::PhaseTable;
 using vn::backend_vsg::createDevice;
 using vn::backend_vsg::DeviceOptions;
 using vn::backend_vsg::DeviceResult;

@@ -48,7 +48,7 @@
  *   which would be a gate that passes without checking anything. The counted half is independent of
  *   that, and `countsAvailable()` says whether anything is counting.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /**
  * @brief The heap-growth gate (see the file note for what it measures and what it deliberately is not).
@@ -145,4 +145,4 @@ class VN_BACKEND_VSG_API AllocationGate {
     std::size_t    bytes_{ 0 };        // Bytes the last closed window's allocations asked for.
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

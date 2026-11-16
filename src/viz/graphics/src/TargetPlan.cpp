@@ -1,6 +1,6 @@
-#include <vine/graphics/backend/TargetPlan.hpp>
+#include <vine/graphics/TargetPlan.hpp>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 bool TargetShape::operator==(const TargetShape& other) const noexcept
 {
@@ -91,4 +91,4 @@ DepthPlan depthPlan(const DepthFacts& facts) noexcept
     return plan;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

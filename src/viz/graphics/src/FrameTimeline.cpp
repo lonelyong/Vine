@@ -1,8 +1,8 @@
-#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
 
 #include <algorithm>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 FrameToken FrameTimeline::begin() noexcept
 {
@@ -72,4 +72,4 @@ std::uint64_t FrameTimeline::retirePoint(std::uint64_t submitted_frame, std::uin
     return submitted_frame + static_cast<std::uint64_t>(slots) + 1;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

@@ -67,15 +67,19 @@
     计划），`frame()` 只答 Ran / Submitted，`applyPlan` 三态，`SessionBusy` 不再是一个 plan problem code。
     理由：迁移期分两次改会让三套形状并存；现在一套形状，公开签名与文档一致（`G1` / `G6`）。
 
-2.9 **`backend/` 是后端接缝，不是宿主 SDK**：`sdk/vine/graphics/backend/`（7 个机制 + 1 个守卫 + `DiagnosticDraft`）只被
-    `gfx_backend_*` 与 `libGraphics` 自己消费，宿主包含它是编译错误（`BackendHalfGuard.hpp`）。它的
-    **ABI 随后端变、不随宿主变**，所以安装时单独成一个组件（`VineGraphicsBackendSdk`），不在默认 include
-    树里——"装进 include 但禁止包含"是自相矛盾的（`G1` / `G6`）。**接缝的定义是"两个后端都用"**：只有 vsg
-    读的 17 个头与 16 个 `.cpp` 已搬进 `gfx_backend_vsg/internal/`（ADR-2026-11-16 §2，`G13`）；`FrameTimeline`
-    留下是因为 `DeviceClock` 持有它、`RetirementQueue` 以它为参数——搬它是接缝重构，不是搬家。目录的文件集由
-    `check_include_hygiene.py` 钉住（多一个文件就红）。边界：作为"驻留与帧纪律"，它把复杂性吸收在后端（`G7`
-    做对了）；`Keys` / `TargetPlan` 里仍是 Vulkan 拼写（`VkFormat` / `ImageLayout` / subpass）——第二个后端
-    落地前不再新增这类拼写，把它改成不透明设备格式码是那一轮的入口（`vsg-backend.md` C6）。
+2.9 **共享机制与宿主 SDK 同住一个目录、一个命名空间**：`sdk/vine/graphics/` 里除宿主类型外，还有 8 个“两个后端都用”
+    的机制——`FrameGate`、`DeviceClock`、`FrameTimeline`、`RetirementQueue`、`Readback`、`DrawState`（原 `Keys`）、
+    `TargetPlan`、`DiagnosticDraft`。它们曾单独成目录、由一道包含守卫把“宿主包含”变成编译错误、并单独安装成
+    一个独立组件；这套“后端半边”已整体删除（
+    [ADR-2026-11-16-no-backend-half](ADR-2026-11-16-no-backend-half.md)）。理由：目录、守卫、安装组件与门禁四处维护
+    同一条边界，代价超过了它挡住的错误；而真正要保的性质是**依赖方向**，不是路径。
+    边界：仍然由门禁钉住的两条是——图形模块（`sdk/vine/graphics` 与 `src/`）不得 include 渲染 API 或任何具体后端
+    （`check_include_hygiene.py`、`check_vk_exposure.py` V2），共享机制的导出符号必须有 `VN_GRAPHICS_API`
+    （`check_export_annotations.py` 的文件清单）。**接缝的定义仍是“两个后端都用”**：只有 vsg 读的 17 个头与 16 个
+    `.cpp` 已在 ADR-2026-11-16 §2 搬进 `gfx_backend_vsg/internal/`，vsg 自己的类型住在 `vn::backend_vsg::core`
+    （`G13`）。代价如实说：宿主现在能 include 这些机制头，SDK 的命名空间里也看得见它们（`G7` 的残余）；换来的是
+    一条不需要四处同步的规则。`DrawState` / `TargetPlan` 里仍是 Vulkan 拼写（`VkFormat` / `ImageLayout` / subpass）
+    ——第二个后端落地前不再新增这类拼写，把它改成不透明设备格式码是那一轮的入口（`vsg-backend.md` C6）。
 2.11 **扩展点的成本是表，不是形容词**（审计 `A12`）：说"易于扩展"而不说"加一个要动哪几处"是无法证伪的。
     所以每个扩展点在这里有一行，列的是**今天的实际文件**——加东西之前先读这张表，改完回来更新它。
     判据：一个扩展点如果开始需要改**核心模型**（`FrameDescription` 的形状、引擎的编译、调度），那它就不是扩展

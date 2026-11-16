@@ -178,7 +178,7 @@ bool SdkPixelFixture::up()
     return true;
 }
 
-vn::graphics::backend::PixelProbe SdkPixelFixture::read()
+vn::backend_vsg::core::PixelProbe SdkPixelFixture::read()
 {
     // THE HOST'S PUBLICATION (see Scene::publish): the fixture owns the content every case draws, so it posts the
     // picture before driving the frame - the same verb SceneView::publishContent performs for a view's own scenes.
@@ -191,7 +191,7 @@ vn::graphics::backend::PixelProbe SdkPixelFixture::read()
     vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Ok;
     if (!backend->readColorBuffer(target.get(), 0, pixels, &why)) {
         std::printf("[sdk-pixels] the readback was refused (why=%d)\n", static_cast<int>(why));
-        return vn::graphics::backend::PixelProbe(0, 0, {});
+        return vn::backend_vsg::core::PixelProbe(0, 0, {});
     }
-    return vn::graphics::backend::PixelProbe(kSide, kSide, std::move(pixels));
+    return vn::backend_vsg::core::PixelProbe(kSide, kSide, std::move(pixels));
 }

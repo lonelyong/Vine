@@ -20,7 +20,7 @@ namespace
 /// layout a render pass leaves it in, which a never-rendered image is not in.
 HostReadbackRefusal ensureCopy(TargetObjects& target, core::ReadbackKind kind, std::uint32_t attachment, ::vsg::Device* device)
 {
-    const core::ReadbackResult servable = target.readbackResult(core::ReadbackRequest{ kind, attachment });
+    const core::ReadbackAnswer servable = target.readbackResult(core::ReadbackRequest{ kind, attachment });
     if (servable.ok) {
         return HostReadbackRefusal::None; // a frame copied it: the buffer is current
     }
@@ -55,7 +55,7 @@ HostReadbackRefusal ensureCopy(TargetObjects& target, core::ReadbackKind kind, s
 
 HostReadbackRefusal classifyReadback(TargetObjects& target, core::ReadbackKind kind, std::uint32_t attachment) noexcept
 {
-    const core::ReadbackResult servable = target.readbackResult(core::ReadbackRequest{ kind, attachment });
+    const core::ReadbackAnswer servable = target.readbackResult(core::ReadbackRequest{ kind, attachment });
     if (servable.ok) {
         return HostReadbackRefusal::None;
     }

@@ -101,17 +101,17 @@ using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
-using vn::graphics::backend::ClearValues;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameCompiler;
-using vn::graphics::backend::FrameFacts;
-using vn::graphics::backend::FrameRecorder;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::TargetFacts;
-using vn::graphics::backend::TargetShape;
-using vn::graphics::backend::VariantPool;
+using vn::backend_vsg::core::ClearValues;
+using vn::backend_vsg::core::CompiledFrame;
+using vn::graphics::DrawKind;
+using vn::backend_vsg::core::FrameArena;
+using vn::backend_vsg::core::FrameCompiler;
+using vn::backend_vsg::core::FrameFacts;
+using vn::backend_vsg::core::FrameRecorder;
+using vn::backend_vsg::core::StateRegistry;
+using vn::backend_vsg::core::TargetFacts;
+using vn::graphics::TargetShape;
+using vn::backend_vsg::core::VariantPool;
 using vn::test::setPrimitiveIndices;
 using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
@@ -368,7 +368,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // FOUR passes: the picture (cleared), the off-screen scene pass whose ENGINE shape equals the window's, the
     // window's scene pass (the FIRST window pass - it owns the clear) and the window's overlay pass.
     FrameArena                     arena{ 64 * 1024 };
-    vn::graphics::backend::Observe observe;
+    vn::backend_vsg::core::Observe observe;
     FrameRecorder                  recorder{ arena, diagnostics, observe };
     FrameCompiler                  compiler{ arena, diagnostics, observe };
 
@@ -424,7 +424,7 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
 
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 4U) << "a pass that only clears is still a pass (the picture's producer)";
-    const auto pass_of = [&frame](std::uint32_t id) -> const vn::graphics::backend::CompiledPass* {
+    const auto pass_of = [&frame](std::uint32_t id) -> const vn::backend_vsg::core::CompiledPass* {
         for (const auto& pass : frame.passes) {
             if (pass.pass == id) {
                 return &pass;
@@ -443,9 +443,9 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // the registry answers "is this variant already bound?" and a pipeline bound in another pass is not.
     storage->beginFrame();
 
-    const auto state_pass = [&](std::uint32_t id) -> const vn::graphics::backend::CompiledPass& {
+    const auto state_pass = [&](std::uint32_t id) -> const vn::backend_vsg::core::CompiledPass& {
         const auto*                                      found = pass_of(id);
-        static const vn::graphics::backend::CompiledPass empty{};
+        static const vn::backend_vsg::core::CompiledPass empty{};
         return found != nullptr ? *found : empty;
     };
     const auto view_block_for = [&](std::uint32_t pass_id, std::uint32_t width, std::uint32_t height) {
@@ -527,8 +527,8 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     };
     ASSERT_TRUE(executor.record(frame, command_graph, packets));
     EXPECT_EQ(executor.skipped(), 0U);
-    const std::span<const vn::graphics::backend::PassId> placed = executor.recorded();
-    EXPECT_EQ(std::vector<vn::graphics::backend::PassId>(placed.begin(), placed.end()), std::vector<vn::graphics::backend::PassId>({ 1U, 2U, 3U, 4U }))
+    const std::span<const vn::backend_vsg::core::PassId> placed = executor.recorded();
+    EXPECT_EQ(std::vector<vn::backend_vsg::core::PassId>(placed.begin(), placed.end()), std::vector<vn::backend_vsg::core::PassId>({ 1U, 2U, 3U, 4U }))
         << "the executor places the passes in the plan's order, not in the order they were announced";
 
     ASSERT_TRUE(vn::backend_vsg::detail::SessionContentAccess::assignFrameGraphs(session, ::vsg::CommandGraphs{ command_graph }));

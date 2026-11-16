@@ -11,7 +11,7 @@
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/WindowPresentTarget.hpp>
-#include <vine/graphics/backend/TargetPlan.hpp>
+#include <vine/graphics/TargetPlan.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -132,7 +132,7 @@ class VN_BACKEND_VK_API WindowTarget final : public vn::graphics::WindowPresentT
     [[nodiscard]] std::uint32_t height() const noexcept;
 
     /** @brief Gets the pipeline compatibility of the window's attachment set. */
-    [[nodiscard]] vn::graphics::backend::RenderPassCompatibility compatibility() const noexcept;
+    [[nodiscard]] vn::graphics::RenderPassCompatibility compatibility() const noexcept;
 
     /** @brief Gets the semaphore a submit must wait on (signalled by the acquire). */
     [[nodiscard]] VkSemaphore imageAvailableSemaphore() const noexcept;

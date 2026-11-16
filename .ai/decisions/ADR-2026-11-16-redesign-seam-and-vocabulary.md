@@ -2,6 +2,9 @@
 
 - 状态：**已采纳（实施中）**。2026-11-16 批准；阶段三按 `../research/graphics-2026-11-16-redesign-r2.md` §10 的
   18 个批次位置执行，进度见本文末"实施状态"。
+  **部分取代**：本文 §2（接缝归位：`backend/` 只留共享机制）与批次 3 中“目录即接缝”的那一半决定，已由
+  [ADR-2026-11-16-no-backend-half](ADR-2026-11-16-no-backend-half.md) 取代（2026-11-16）；本文的词汇、相位、
+  拒绝形状与其余批次不变。
 - 日期：2026-11-16
 - 影响范围：`graphics/sdk/vine/graphics/backend/**`（25 → 7 个头：6 机制 + 1 守卫）、`graphics-architecture.md`（§2.9 / §2.11）、
   `graphics-sessions.md`（§2.1 / §2.3 的词汇与相位）、`graphics-threading.md`（§2.16 的驱动者身份）、
@@ -173,7 +176,7 @@ commit(cmd, target)                // 1 次设备锁：提交、present、帧账
   `gfx_backend_vsg/{include/vine/backend_vsg/internal,src/internal}`。`FrameTimeline` 的判据：`DeviceClock` 持有它、
   `RetirementQueue::retire/advance/retirePoint` 以它为参数——搬它是接缝重构，不是搬家（`G1`）；vk 在 Device.cpp 的
   注释里也引用它。搬走的类换成 `VN_BACKEND_VSG_API`（`VN_GRAPHICS_API` 在插件里会展开成 dllimport，Windows 链接错），
-  不再包含 `BackendHalfGuard.hpp`（它们不再是那一半）。`libGraphics` 的 `src/backend/` 只剩 6 个 `.cpp`；新门禁
+  不再包含 `BackendHalfGuard.hpp`（它们不再是那一半）。`libGraphics` 的 `src/backend/` 只剩 6 个 `.cpp`；新门禁 <!-- drift-ok -->
   `check_include_hygiene.py` 钉住接缝的**文件集**（多一个文件就红）。`CoreTimelineTest`（5 例）随 `FrameTimeline`
   搬进 `tests/BackendSeamTest.cpp`（三个测试二进制都编它）；**零用例改名**，`test_graphics` 612 / `test_vk` 164 /
   `test_vsg` 571、对拍 13，九道门禁全绿。

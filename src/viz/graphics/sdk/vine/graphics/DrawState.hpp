@@ -10,7 +10,6 @@
 #include <vine/graphics/DepthMode.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 #include <vine/graphics/StateResolution.hpp>
-#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
 #include <vine/math/Matrix4x4.hpp>
 
@@ -39,7 +38,7 @@
  *   means touching the table (and the test), which is the moment to ask the question again. That is
  *   deliberately more friction than a comment and deliberately less than a code generator.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /** @brief Load operation of one attachment (backend-neutral: bound to the API's spelling in the vsg layer). */
 enum class LoadOp : std::uint8_t
@@ -301,4 +300,4 @@ struct KeyAuditEntry {
  */
 [[nodiscard]] VN_GRAPHICS_API std::span<const KeyAuditEntry> keyAuditTable() noexcept;
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

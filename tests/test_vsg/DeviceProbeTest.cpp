@@ -20,12 +20,12 @@
 #include <vine/backend_vsg/internal/DeviceProbe.hpp>
 #include <vine/backend_vsg/internal/DeviceRequirements.hpp>
 
-using vn::graphics::backend::kDeviceExtensionCount;
-using vn::graphics::backend::kDeviceFeatureCount;
-using vn::graphics::backend::missingExtensionCount;
-using vn::graphics::backend::missingFeatureCount;
-using vn::graphics::backend::satisfiesRequirements;
-using vn::graphics::backend::supportsRequiredVersion;
+using vn::backend_vsg::core::kDeviceExtensionCount;
+using vn::backend_vsg::core::kDeviceFeatureCount;
+using vn::backend_vsg::core::missingExtensionCount;
+using vn::backend_vsg::core::missingFeatureCount;
+using vn::backend_vsg::core::satisfiesRequirements;
+using vn::backend_vsg::core::supportsRequiredVersion;
 using vn::backend_vsg::api::probePhysicalDevices;
 
 namespace

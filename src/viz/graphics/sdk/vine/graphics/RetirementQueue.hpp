@@ -5,8 +5,7 @@
 #include <functional>
 #include <vector>
 
-#include <vine/graphics/backend/BackendHalfGuard.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
 /**
@@ -30,7 +29,7 @@
  *   the LAST step of a committed frame. Both rules are here as the documented contract of retire()/advance(); the
  *   frame's own order is the executor's to keep.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief The park queue (see the file note for what it owns and the two rules that order it).
@@ -147,4 +146,4 @@ class VN_GRAPHICS_API RetirementQueue {
     std::size_t        device_waits_{ 0 };
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

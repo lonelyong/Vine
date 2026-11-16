@@ -15,8 +15,8 @@
 #include <vine/graphics/ReportOnce.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/backend_vsg/internal/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 #include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/internal/TargetTable.hpp>
 #include <vine/backend_vsg/internal/WindowTarget.hpp>

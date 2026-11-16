@@ -19,7 +19,7 @@
 #include <vine/graphics/Viewport.hpp>
 #include <vine/backend_vsg/internal/ClearPlan.hpp>
 #include <vine/backend_vsg/internal/FrameArena.hpp>
-#include <vine/graphics/backend/Keys.hpp>
+#include <vine/graphics/DrawState.hpp>
 #include <vine/backend_vsg/internal/Observe.hpp>
 #include <vine/graphics/graphics_global.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
@@ -80,7 +80,7 @@
  * - WHAT IT COUNTS: the pass scopes that enter the plan and the drawing calls collected (Observe, the
  *   one place a phase gates on). There is deliberately no second tally here.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief Identity of a pass, assigned by the layer that owns the pass registry (the API layer). */
 using PassId = std::uint32_t;
@@ -494,4 +494,4 @@ class VN_BACKEND_VSG_API FrameRecorder {
     CollectedFrame             description_{}; // The published description (arena-backed spans).
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

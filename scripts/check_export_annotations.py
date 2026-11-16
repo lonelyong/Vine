@@ -1,26 +1,53 @@
 #!/usr/bin/env python3
-"""Check that the backend half's API is exported (it is part of libGraphics, not a private copy).
+"""Check that the shared graphics mechanisms' API is exported (they are part of libGraphics, not a private copy).
 
-`vine/graphics/backend/` is compiled into libGraphics, so a backend plugin resolves its symbols across
-the graphics DLL boundary: every type and free function declared there with an OUT-OF-LINE definition
-needs VN_GRAPHICS_API. On Windows a missing macro is an unresolved external at the plugin's link; on
-Linux the macro expands to nothing, so the mistake would go unnoticed here - this script is what makes
-the rule checkable on every platform. Data-only structs and enums need no macro (they have no
-symbols), and forward declarations are not declarations of an API.
+The mechanisms both backends use - the frame gate, the device clock and its frame timeline, retirement,
+readback, the draw-state keys, the target plan and the refusal draft - are compiled into libGraphics,
+so a backend plugin resolves their symbols across the graphics DLL boundary: every type and free
+function declared there with an OUT-OF-LINE definition needs VN_GRAPHICS_API. On Windows a missing
+macro is an unresolved external at the plugin's link; on Linux the macro expands to nothing, so the
+mistake would go unnoticed here - this script is what makes the rule checkable on every platform.
+Data-only structs and enums need no macro (they have no symbols), and forward declarations are not
+declarations of an API.
 
-The scope is the backend half on purpose: it is the part whose whole audience is outside the library.
-The host half also contains nested implementation types whose methods are defined out of line but are
-never called across the boundary, so "defined out of line" is not by itself a reason to export there.
+The scope is an explicit FILE LIST on purpose. Once these headers lived in their own directory and the
+scope could be a path; they now sit in the SDK root beside the host half, whose nested implementation
+types are defined out of line but never called across the boundary - so "defined out of line" is not
+by itself a reason to export there, and the list is what keeps the check meaningful.
 
-Usage: check_export_annotations.py [sdk-dir src-dir]...
+Usage: check_export_annotations.py [sdk-dir-or-file src-dir-or-file]...
 """
 
 import pathlib
 import re
 import sys
 
-# One entry per half that is compiled into a shared library and consumed from outside it.
-HALVES = (("src/viz/graphics/sdk/vine/graphics/backend", "src/viz/graphics/src/backend"),)
+# One entry per set of files compiled into a shared library and consumed from outside it. An entry
+# may be a directory (scanned recursively) or a single file; this one is a FILE LIST because the
+# shared mechanisms now live beside the host half (see the module note above).
+SHARED_MECHANISM_HEADERS = (
+    "DeviceClock.hpp",
+    "DiagnosticDraft.hpp",
+    "DrawState.hpp",
+    "FrameGate.hpp",
+    "FrameTimeline.hpp",
+    "Readback.hpp",
+    "RetirementQueue.hpp",
+    "TargetPlan.hpp",
+)
+SHARED_MECHANISM_SOURCES = (
+    "DeviceClock.cpp",
+    "DiagnosticDraft.cpp",
+    "DrawState.cpp",
+    "FrameTimeline.cpp",
+    "Readback.cpp",
+    "RetirementQueue.cpp",
+    "TargetPlan.cpp",
+)
+HALVES = ((
+    tuple(f"src/viz/graphics/sdk/vine/graphics/{name}" for name in SHARED_MECHANISM_HEADERS),
+    tuple(f"src/viz/graphics/src/{name}" for name in SHARED_MECHANISM_SOURCES),
+),)
 
 # Where private headers live (the appfw convention: next to their .cpp, included with "..."). A
 # declaration that crosses the DLL boundary must sit in the installed API root instead; this mirror
@@ -85,17 +112,38 @@ def declarations(headers):
     return found
 
 
-def check(sdk_dir, src_dir):
-    """Return the findings for one half as (path, line, message) triples and the annotation ratio."""
-    sdk = pathlib.Path(sdk_dir)
-    src = pathlib.Path(src_dir)
-    if not sdk.is_dir() or not src.is_dir():
-        # A check that reports "0/0" for a path that has moved is a false green (that happened once):
-        # a missing half is a finding, never an empty result.
-        missing = sdk_dir if not sdk.is_dir() else src_dir
-        return [(pathlib.Path(missing), 0, "the half does not exist - is the path right?")], 0, 0
-    owners, defined = defined_out_of_line(sorted(src.rglob("*.cpp")))
-    declared = declarations(sorted(sdk.rglob("*.hpp")))
+def expand(entries, pattern):
+    """Return the files named by @p entries: directories are scanned, single files are taken as they are."""
+    files = []
+    for raw in entries:
+        path = pathlib.Path(raw)
+        if path.is_dir():
+            files.extend(sorted(path.rglob(pattern)))
+        else:
+            files.append(path)
+    return files
+
+
+def label_of(paths):
+    """Return a short name for one side of the check, for the summary line."""
+    first = pathlib.Path(paths[0])
+    return f"{first.parent.name}/{first.name}" if first.is_file() else first.name
+
+
+def check(sdk_paths, src_paths):
+    """Return the findings for one set of files as (path, line, message) triples and the annotation ratio."""
+    if isinstance(sdk_paths, (str, pathlib.Path)):
+        sdk_paths = (sdk_paths,)
+    if isinstance(src_paths, (str, pathlib.Path)):
+        src_paths = (src_paths,)
+
+    missing = [raw for raw in (*sdk_paths, *src_paths) if not pathlib.Path(raw).exists()]
+    if missing:
+        # A check that reports "0/0" for a file that has moved is a false green (that happened once):
+        # a missing entry is a finding, never an empty result.
+        return [(pathlib.Path(missing[0]), 0, "the file does not exist - is the path right?")], 0, 0
+    owners, defined = defined_out_of_line(expand(src_paths, "*.cpp"))
+    declared = declarations(expand(sdk_paths, "*.hpp"))
 
     findings, annotated = [], 0
     for name in sorted(set(declared) & owners) + sorted(n for n in declared if n in defined):
@@ -137,15 +185,15 @@ def main():
     halves = halves or list(HALVES)
 
     total = 0
-    for sdk_dir, src_dir in halves:
-        findings, annotated, needed = check(sdk_dir, src_dir)
+    for sdk_paths, src_paths in halves:
+        findings, annotated, needed = check(sdk_paths, src_paths)
         for path, number, message in findings:
             print(f"{path}:{number}: {message}")
         total += len(findings)
         if needed == 0 and not findings:
-            print(f"{sdk_dir}:0: no exported entity found here - a moved half would report a false green")
+            print(f"{label_of(sdk_paths)}:0: no exported entity found here - a moved file would report a false green")
             total += 1
-        print(f"--- {pathlib.Path(sdk_dir).name}: {annotated}/{needed} exported entity(ies) annotated")
+        print(f"--- {label_of(sdk_paths)}: {annotated}/{needed} exported entity(ies) annotated")
 
     private = private_header_findings()
     for path, number, message in private:

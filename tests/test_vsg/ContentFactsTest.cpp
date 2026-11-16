@@ -20,8 +20,8 @@
 
 #include "TestProgramFacts.hpp"
 
-using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::StreamKind;
+using vn::graphics::DrawKind;
+using vn::backend_vsg::core::StreamKind;
 using vn::backend_vsg::blockFitsAbi;
 using vn::backend_vsg::ChannelFacts;
 using vn::backend_vsg::channelsMatchLayout;
@@ -220,10 +220,10 @@ TEST(ContentFactsTest, AMaterialWhoseBlockIsNotTheAbisSizeCannotBeDrawn)
 {
     const auto identity = materialRef(1U, 1U);
 
-    const MaterialHolder right(identity, sizeof(vn::graphics::VineMaterialBlock));
+    const MaterialHolder right(identity, sizeof(vn::backend_vsg::core::VineMaterialBlock));
     EXPECT_TRUE(blockFitsAbi(right.facts));
 
-    const MaterialHolder short_block(identity, sizeof(vn::graphics::VineMaterialBlock) - 1U);
+    const MaterialHolder short_block(identity, sizeof(vn::backend_vsg::core::VineMaterialBlock) - 1U);
     EXPECT_FALSE(blockFitsAbi(short_block.facts));
 
     Tables tables;

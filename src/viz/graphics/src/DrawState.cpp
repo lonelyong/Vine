@@ -1,8 +1,8 @@
-#include <vine/graphics/backend/Keys.hpp>
+#include <vine/graphics/DrawState.hpp>
 
 #include <array>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 bool VertexLayoutKey::operator==(const VertexLayoutKey& other) const noexcept
 {
@@ -121,4 +121,4 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
     return kAudit;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

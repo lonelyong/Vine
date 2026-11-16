@@ -22,7 +22,7 @@
  *   "the bytes may be freed" are different facts: an upload whose entry left is still read by everything that
  *   bound it. Keeping that split is what makes this file device-free and its rules testable without a GPU.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief Which stream a key describes. */
 enum class StreamKind : std::uint8_t
@@ -72,4 +72,4 @@ struct VN_BACKEND_VSG_API StreamKeyHash {
     std::size_t operator()(const StreamKey& key) const noexcept;
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

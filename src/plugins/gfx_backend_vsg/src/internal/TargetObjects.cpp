@@ -2,7 +2,7 @@
 
 #include <vine/backend_vsg/internal/StateCommands.hpp>
 
-#include <vine/graphics/backend/TargetPlan.hpp>
+#include <vine/graphics/TargetPlan.hpp>
 #include <vine/backend_vsg/support/VsgBackendUtility.hpp>
 
 #include <cstring>
@@ -88,14 +88,14 @@ VkFormat toDepthFormat(vn::graphics::RenderTarget::DepthFormat format) noexcept
  * @param layout The core's layout.
  * @return The API's layout (UNDEFINED for a layout the core does not have).
  */
-VkImageLayout toVkLayout(vn::graphics::backend::ImageLayout layout) noexcept
+VkImageLayout toVkLayout(vn::graphics::ImageLayout layout) noexcept
 {
     switch (layout) {
-    case vn::graphics::backend::ImageLayout::Undefined: return VK_IMAGE_LAYOUT_UNDEFINED;
-    case vn::graphics::backend::ImageLayout::ColorAttachment: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    case vn::graphics::backend::ImageLayout::DepthAttachment: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    case vn::graphics::backend::ImageLayout::ShaderReadOnly: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    case vn::graphics::backend::ImageLayout::Present: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    case vn::graphics::ImageLayout::Undefined: return VK_IMAGE_LAYOUT_UNDEFINED;
+    case vn::graphics::ImageLayout::ColorAttachment: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    case vn::graphics::ImageLayout::DepthAttachment: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    case vn::graphics::ImageLayout::ShaderReadOnly: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    case vn::graphics::ImageLayout::Present: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     }
     return VK_IMAGE_LAYOUT_UNDEFINED;
 }
@@ -104,13 +104,13 @@ VkImageLayout toVkLayout(vn::graphics::backend::ImageLayout layout) noexcept
                                                           const std::vector<vn::graphics::RenderTarget::ColorFormat>&   color_formats,
                                                           const std::optional<vn::graphics::RenderTarget::DepthFormat>& depth_format,
                                                           std::uint32_t                                                 samples,
-                                                          const vn::graphics::backend::LoadOpVariantKey&                variant)
+                                                          const vn::graphics::LoadOpVariantKey&                variant)
 {
     // One spelling for one conversion: the core's neutral spellings are the API's enums, bound here.
-    const auto toLoadOp = [](vn::graphics::backend::LoadOp load) noexcept {
-        return load == vn::graphics::backend::LoadOp::Clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+    const auto toLoadOp = [](vn::graphics::LoadOp load) noexcept {
+        return load == vn::graphics::LoadOp::Clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
     };
-    const auto toLayout = [](vn::graphics::backend::ImageLayout layout) noexcept { return toVkLayout(layout); };
+    const auto toLayout = [](vn::graphics::ImageLayout layout) noexcept { return toVkLayout(layout); };
 
     // The multisample rule this builder states once: a multisampled pass DRAWS into the multisampled images and
     // RESOLVES both colour and depth into single-sample images - the ones later passes sample, a borrower
@@ -134,7 +134,7 @@ VkImageLayout toVkLayout(vn::graphics::backend::ImageLayout layout) noexcept
         // variant's colour layouts describe the picture that crosses the frame boundary, and with samples > 1
         // that picture lives in the RESOLVE image (see below).
         description.initialLayout =
-            samples > 1U ? (variant.color_load == vn::graphics::backend::LoadOp::Clear ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+            samples > 1U ? (variant.color_load == vn::graphics::LoadOp::Clear ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
                          : toLayout(variant.color_initial);
         description.finalLayout = samples > 1U ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : toLayout(variant.color_final);
         attachments.push_back(description);
@@ -153,7 +153,7 @@ VkImageLayout toVkLayout(vn::graphics::backend::ImageLayout layout) noexcept
         // the resolve image (whose description follows the colour resolve ones below).
         description.initialLayout =
             samples > 1U
-                ? (variant.depth_load == vn::graphics::backend::LoadOp::Clear ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                ? (variant.depth_load == vn::graphics::LoadOp::Clear ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
                 : toLayout(variant.depth_initial);
         description.finalLayout = samples > 1U ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : toLayout(variant.depth_final);
         attachments.push_back(description);
@@ -1115,7 +1115,7 @@ core::PixelProbe TargetObjects::probe(std::uint32_t attachment) const
 {
     // The same table readbackResult() answers with: "can this be served, and if not why" is one question,
     // and a probe that decided it for itself could disagree with the classification a caller asked for.
-    const core::ReadbackResult check = readbackResult(core::ReadbackRequest{ core::ReadbackKind::Color, attachment });
+    const core::ReadbackAnswer check = readbackResult(core::ReadbackRequest{ core::ReadbackKind::Color, attachment });
     if (!check.ok || attachment >= d->attachments.colors.size()) {
         return core::PixelProbe(0, 0, {});
     }
@@ -1130,7 +1130,7 @@ core::PixelProbe TargetObjects::probe(std::uint32_t attachment) const
     return core::PixelProbe(static_cast<int>(d->width), static_cast<int>(d->height), std::move(pixels));
 }
 
-core::ReadbackResult TargetObjects::readbackResult(const core::ReadbackRequest& request) const noexcept
+core::ReadbackAnswer TargetObjects::readbackResult(const core::ReadbackRequest& request) const noexcept
 {
     core::ReadbackState state;
     state.color_attachments = static_cast<std::uint32_t>(d->attachments.colors.size());
@@ -1212,7 +1212,7 @@ core::DepthProbe TargetObjects::depthProbe() const
 {
     // One classification (see readbackResult) and one decoder (core::decodeDepth), so "why is there no
     // probe" and "what do the numbers mean" cannot drift apart between the entry points.
-    const core::ReadbackResult check = readbackResult(core::ReadbackRequest{ core::ReadbackKind::Depth, 0U });
+    const core::ReadbackAnswer check = readbackResult(core::ReadbackRequest{ core::ReadbackKind::Depth, 0U });
     if (!check.ok || d->attachments.depth_mapped == nullptr || d->attachments.depth_mapped->data() == nullptr) {
         return core::DepthProbe();
     }

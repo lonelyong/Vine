@@ -1,7 +1,8 @@
 /**
  * @brief The SDK backend seam's device-free facts, compiled into EVERY test binary that links the seam.
  *
- * The seam (`vine/graphics/backend/`) is what a backend consumes and the engine links: its types are pure values,
+ * The seam's mechanisms live in `vine/graphics/` beside the host types: they are what a backend consumes and
+ * the engine links, their types are pure values,
  * they need no device, and BOTH backends answer from them - so a case that pins one belongs in a binary that
  * carries both, not in the one backend's suite. The suites here are the seam's own (`Core*` after the layer they
  * pin, `FrameGateTest` after the type), and each of them used to live in `test_vsg`/`test_vk` alone:
@@ -33,28 +34,28 @@
 #include <thread>
 #include <vector>
 
-#include <vine/graphics/backend/DeviceClock.hpp>
-#include <vine/graphics/backend/FrameGate.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/Keys.hpp>
-#include <vine/graphics/backend/Readback.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
-#include <vine/graphics/backend/TargetPlan.hpp>
+#include <vine/graphics/DeviceClock.hpp>
+#include <vine/graphics/FrameGate.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
+#include <vine/graphics/DrawState.hpp>
+#include <vine/graphics/Readback.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
+#include <vine/graphics/TargetPlan.hpp>
 
 using vn::graphics::RenderTarget;
-using vn::graphics::backend::DeviceClock;
-using vn::graphics::backend::FrameGate;
-using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::LoadOpVariantKey;
-using vn::graphics::backend::PipelineKey;
-using vn::graphics::backend::ReadbackRequest;
-using vn::graphics::backend::ReadbackState;
-using vn::graphics::backend::RepairReason;
-using vn::graphics::backend::RetirementQueue;
-using vn::graphics::backend::TargetAction;
-using vn::graphics::backend::TargetDecision;
-using vn::graphics::backend::TargetDesc;
-using vn::graphics::backend::TargetInstance;
+using vn::graphics::DeviceClock;
+using vn::graphics::FrameGate;
+using vn::graphics::FrameTimeline;
+using vn::graphics::LoadOpVariantKey;
+using vn::graphics::PipelineKey;
+using vn::graphics::ReadbackRequest;
+using vn::graphics::ReadbackState;
+using vn::graphics::RepairReason;
+using vn::graphics::RetirementQueue;
+using vn::graphics::TargetAction;
+using vn::graphics::TargetDecision;
+using vn::graphics::TargetDesc;
+using vn::graphics::TargetInstance;
 
 namespace
 {
@@ -71,17 +72,17 @@ struct TargetCase {
 };
 
 /// @brief The compatible shape most cases share: one RGBA8 colour attachment, no depth.
-vn::graphics::backend::TargetShape singleColorShape()
+vn::graphics::TargetShape singleColorShape()
 {
-    vn::graphics::backend::TargetShape shape;
+    vn::graphics::TargetShape shape;
     shape.color_formats.push_back(vn::graphics::RenderTarget::ColorFormat::RGBA8);
     return shape;
 }
 
 /// @brief A shape with a depth attachment, used to move compatibility.
-vn::graphics::backend::TargetShape colorAndDepthShape()
+vn::graphics::TargetShape colorAndDepthShape()
 {
-    vn::graphics::backend::TargetShape shape = singleColorShape();
+    vn::graphics::TargetShape shape = singleColorShape();
     shape.depth_format                       = vn::graphics::RenderTarget::DepthFormat::D32;
     return shape;
 }
@@ -90,8 +91,8 @@ vn::graphics::backend::TargetShape colorAndDepthShape()
 
 TEST(CoreTargetPlanTest, TheActionTableIsDecidedByShapeSizeAndBuildState)
 {
-    const vn::graphics::backend::TargetShape single = singleColorShape();
-    const vn::graphics::backend::TargetShape with_d = colorAndDepthShape();
+    const vn::graphics::TargetShape single = singleColorShape();
+    const vn::graphics::TargetShape with_d = colorAndDepthShape();
 
     TargetDesc built_at_512{ 512, 256, single };
     TargetDesc built_at_1024{ 1024, 256, single };
@@ -123,7 +124,7 @@ TEST(CoreTargetPlanTest, TheActionTableIsDecidedByShapeSizeAndBuildState)
         instance.built                   = test_case.built;
         instance.attachments_invalidated = test_case.invalidated;
 
-        const TargetDecision decision = vn::graphics::backend::planTarget(instance, test_case.wanted);
+        const TargetDecision decision = vn::graphics::planTarget(instance, test_case.wanted);
         EXPECT_EQ(static_cast<int>(decision.action), static_cast<int>(test_case.action)) << test_case.what;
         EXPECT_EQ(static_cast<int>(decision.reason), static_cast<int>(test_case.reason)) << test_case.what;
     }
@@ -137,17 +138,17 @@ TEST(CoreTargetPlanTest, AnUnusableExtentIsDistinguishableFromInvalidatedAttachm
     instance.desc  = TargetDesc{ 8, 8, singleColorShape() };
     instance.built = true;
 
-    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(instance, TargetDesc{ 0, 0, {} }).reason), static_cast<int>(RepairReason::SizeUnknown));
+    EXPECT_EQ(static_cast<int>(vn::graphics::planTarget(instance, TargetDesc{ 0, 0, {} }).reason), static_cast<int>(RepairReason::SizeUnknown));
 
     instance.attachments_invalidated = true;
-    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(instance, instance.desc).reason), static_cast<int>(RepairReason::Bootstrap));
+    EXPECT_EQ(static_cast<int>(vn::graphics::planTarget(instance, instance.desc).reason), static_cast<int>(RepairReason::Bootstrap));
 }
 
 TEST(CoreTargetPlanTest, DepthPromotionBorrowingAndPreservationAreOneDecision)
 {
-    using vn::graphics::backend::DepthFacts;
-    using vn::graphics::backend::DepthPlan;
-    using vn::graphics::backend::depthPlan;
+    using vn::graphics::DepthFacts;
+    using vn::graphics::DepthPlan;
+    using vn::graphics::depthPlan;
 
     int lender = 0;
 
@@ -292,7 +293,7 @@ TEST(CoreKeysTest, AnExtentIsNotPartOfAPipelineKey)
     b.compatibility.samples       = large.shape.samples;
 
     EXPECT_TRUE(a == b);
-    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(TargetInstance{ small, 1, true, false }, large).action),
+    EXPECT_EQ(static_cast<int>(vn::graphics::planTarget(TargetInstance{ small, 1, true, false }, large).action),
               static_cast<int>(TargetAction::ResizeInPlace));
 }
 
@@ -312,13 +313,13 @@ TEST(CoreKeysTest, CompatibilityIsPartOfTheKeyWhileLoadOpVariantsAreNot)
     // the API's compatibility rule excludes load ops, which is why the bootstrap can swap one in.
     LoadOpVariantKey loaded;
     LoadOpVariantKey cleared;
-    cleared.color_load = vn::graphics::backend::LoadOp::Clear;
+    cleared.color_load = vn::graphics::LoadOp::Clear;
     EXPECT_FALSE(loaded == cleared);
 }
 
 TEST(CoreKeysTest, TheAuditTableNamesEveryKeyAndKeepsExtentsOutOfIdentity)
 {
-    const auto audit = vn::graphics::backend::keyAuditTable();
+    const auto audit = vn::graphics::keyAuditTable();
     ASSERT_EQ(audit.size(), 7u);
 
     const std::vector<std::string> expected_keys{
@@ -339,9 +340,9 @@ TEST(CoreKeysTest, TheAuditTableNamesEveryKeyAndKeepsExtentsOutOfIdentity)
 
 TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
 {
-    using vn::graphics::backend::ReadbackKind;
-    using vn::graphics::backend::readbackOf;
-    using vn::graphics::backend::ReadbackRefusal;
+    using vn::graphics::ReadbackKind;
+    using vn::graphics::readbackOf;
+    using vn::graphics::ReadbackRefusal;
 
     ReadbackState state;
     state.color_attachments = 2U;
@@ -373,9 +374,9 @@ TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
 
 TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
 {
-    using vn::graphics::backend::ReadbackKind;
-    using vn::graphics::backend::readbackOf;
-    using vn::graphics::backend::ReadbackRefusal;
+    using vn::graphics::ReadbackKind;
+    using vn::graphics::readbackOf;
+    using vn::graphics::ReadbackRefusal;
 
     ReadbackState state;
     state.color_attachments = 1U;
@@ -393,17 +394,17 @@ TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
         << "capturing more changes nothing: the format table is what says so";
     EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat));
 
-    EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::UnknownAttachment), "unknown-attachment");
-    EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::UnreadableFormat), "unreadable-format");
-    EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::NotCaptured), "not-captured");
-    EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::None), "none");
+    EXPECT_EQ(vn::graphics::refusalName(ReadbackRefusal::UnknownAttachment), "unknown-attachment");
+    EXPECT_EQ(vn::graphics::refusalName(ReadbackRefusal::UnreadableFormat), "unreadable-format");
+    EXPECT_EQ(vn::graphics::refusalName(ReadbackRefusal::NotCaptured), "not-captured");
+    EXPECT_EQ(vn::graphics::refusalName(ReadbackRefusal::None), "none");
 }
 
 TEST(CoreReadbackTest, TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexel)
 {
-    using vn::graphics::backend::colorReadbackOf;
-    using vn::graphics::backend::depthReadbackOf;
-    using vn::graphics::backend::ReadbackFormat;
+    using vn::graphics::colorReadbackOf;
+    using vn::graphics::depthReadbackOf;
+    using vn::graphics::ReadbackFormat;
 
     // The colour half packs RGBA8 only: the probes are 8-bit probes, and a float attachment converted into one
     // would be a picture of something the GPU never held.
@@ -422,7 +423,7 @@ TEST(CoreReadbackTest, TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexe
 
 TEST(CoreReadbackTest, TheDepthDecodeIsTheFormatsOwnConversion)
 {
-    using vn::graphics::backend::decodeDepth;
+    using vn::graphics::decodeDepth;
 
     // D32 / D32F: the stored bits are the value.
     {
@@ -463,7 +464,7 @@ TEST(CoreReadbackTest, TheDepthDecodeIsTheFormatsOwnConversion)
 /**
  * @brief The device's completion watermark is what EVERY window proved, and nothing else.
  *
- * This is the one rule one device with several windows rests on (see backend::DeviceClock): a buffer or a pipeline
+ * This is the one rule one device with several windows rests on (see graphics::DeviceClock): a buffer or a pipeline
  * the host replaced may still be named by a submission from ANY window, so "may it be destroyed" is answered by
  * the minimum over the windows - the frame every one of them has a recycled slot for.
  */

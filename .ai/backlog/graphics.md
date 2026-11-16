@@ -54,7 +54,7 @@
 
 | # | 项 | 内容 | 触发条件 |
 |---|---|---|---|
-| T15 | `backend/` 的设备无关性 | `backend/` 半仍是 Vulkan 策略：`Keys` 的 `VkFormat` / `ImageLayout`、`TargetPlan` 的 subpass；证据夹具随 SDK 安装。**触发前不再新增 Vulkan 拼写**（`../design/vsg-backend.md` C6） | 第二个 **API 家族**的后端（D3D12 / Metal / WebGPU）出现；手撸 Vulkan 同族，不触发 |
+| T15 | SDK 共享机制的设备无关性 | 这批机制仍是 Vulkan 策略：`DrawState` 的 `VkFormat` / `ImageLayout`、`TargetPlan` 的 subpass。**触发前不再新增 Vulkan 拼写**（`../design/vsg-backend.md` C6） | 第二个 **API 家族**的 后端（D3D12 / Metal / WebGPU）出现；手撸 Vulkan 同族，不触发 |
 | T17 | 异步上传 / 编译入口 | 无异步入口（契约是单线程串行） | 一次加载超过一帧预算 |
 | T18 | `OwnedFrame` 的消费者 | `OwnedFrame` 是零生产消费者的公开类型（仅自测） | 远程渲染 / 录制真正开工时再决定去留 |
 | T20 | 收集遍历的分派开销 | 已把 `Object` 派生类型的 `dynamic_cast` 换成 `obj_cast`（实测命中 21.7→8.2 ns、未命中 42.2→20.5 ns，Debug / MSVC）。仍可选的是 `contributeState` / `forEachChild` 虚钩子：`Group` / `StateNode` / `Geometry` 的新子类已被现有分派识别，不构成扩展性缺口；只有在替换后 profile 仍指向类型转换时才做。非 `Object` 类型（`CameraManipulator`、第三方 vsg 类型）保留 `dynamic_cast` | 大场景“每帧收集本身成为瓶颈”，且 profile 仍指向类型转换 |

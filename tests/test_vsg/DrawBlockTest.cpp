@@ -25,15 +25,15 @@
 using vn::graphics::Diagnostics;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
-using vn::graphics::backend::CompiledCommand;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameCompiler;
-using vn::graphics::backend::FrameFacts;
-using vn::graphics::backend::FrameRecorder;
-using vn::graphics::backend::FrameToken;
-using vn::graphics::backend::Observe;
-using vn::graphics::backend::TargetFacts;
+using vn::backend_vsg::core::CompiledCommand;
+using vn::backend_vsg::core::CompiledFrame;
+using vn::backend_vsg::core::FrameArena;
+using vn::backend_vsg::core::FrameCompiler;
+using vn::backend_vsg::core::FrameFacts;
+using vn::backend_vsg::core::FrameRecorder;
+using vn::graphics::FrameToken;
+using vn::backend_vsg::core::Observe;
+using vn::backend_vsg::core::TargetFacts;
 using vn::math::Mat4d;
 
 TEST(DrawBlockTest, TheValuesThePlanCarriesAreTheOnesThatReachTheBytes)
@@ -77,8 +77,8 @@ TEST(DrawBlockTest, TheValuesThePlanCarriesAreTheOnesThatReachTheBytes)
     ASSERT_EQ(frame.passes[0].draws.size(), 1U);
     ASSERT_EQ(frame.passes[0].draws[0].commands.size(), 1U);
 
-    vn::graphics::VineDrawBlock block;
-    const vn::graphics::backend::CompiledCommand& compiled = frame.passes[0].draws[0].commands[0];
+    vn::backend_vsg::core::VineDrawBlock block;
+    const vn::backend_vsg::core::CompiledCommand& compiled = frame.passes[0].draws[0].commands[0];
     vn::graphics::packDrawBlock(compiled.model, compiled.opacity, compiled.point_size, block);
 
     // The translation the host authored - through the recorder's snapshot, the compiler's plan and the packer.

@@ -38,7 +38,7 @@
 #include <vine/backend_vsg/internal/ViewBlock.hpp>
 
 using vn::graphics::ShaderProgram;
-using vn::graphics::backend::CameraSnapshot;
+using vn::graphics::CameraSnapshot;
 using vn::math::Mat4d;
 using vn::backend_vsg::AbiPushMember;
 using vn::backend_vsg::AbiPushRange;
@@ -183,7 +183,7 @@ TEST(ContentPushTest, ThePushCarriesTheSameMatricesTheViewBlockDoes)
 
     // `pc.projection == VineViewBlock.proj`: the fold is the view block's, spelled once (api/ViewBlock), so a
     // program that reads the push and one that reads the block agree about the clip convention.
-    const vn::graphics::VineViewBlock block = vn::backend_vsg::buildViewBlock(camera, 0.0F, 0U, 0U);
+    const vn::backend_vsg::core::VineViewBlock block = vn::backend_vsg::buildViewBlock(camera, 0.0F, 0U, 0U);
     for (int column = 0; column < 4; ++column) {
         for (int row = 0; row < 4; ++row) {
             EXPECT_NEAR(elementOf(bytes, 0U, row, column), block.proj[static_cast<std::size_t>(column) * 4U + static_cast<std::size_t>(row)], 1e-6)

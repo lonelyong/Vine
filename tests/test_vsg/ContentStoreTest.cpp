@@ -14,8 +14,8 @@
 #include <vine/intrusive_ptr.hpp>
 
 #include <vine/backend_vsg/internal/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
 #include <vine/backend_vsg/internal/ContentStore.hpp>
 #include <vine/backend_vsg/internal/ProgramVariant.hpp>
@@ -30,14 +30,14 @@ using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::Texture2D;
-using vn::graphics::backend::CompiledCommand;
-using vn::graphics::backend::CompiledDraw;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::backend::CompiledPass;
-using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::RetirementQueue;
-using vn::graphics::backend::VertexLayoutKey;
+using vn::backend_vsg::core::CompiledCommand;
+using vn::backend_vsg::core::CompiledDraw;
+using vn::backend_vsg::core::CompiledFrame;
+using vn::backend_vsg::core::CompiledPass;
+using vn::graphics::DrawKind;
+using vn::graphics::FrameTimeline;
+using vn::graphics::RetirementQueue;
+using vn::graphics::VertexLayoutKey;
 using vn::test::setPrimitiveIndices;
 using vn::backend_vsg::ContentFacts;
 using vn::backend_vsg::ContentStore;
@@ -172,9 +172,9 @@ vn::intrusive_ptr<Material> material(vn::Colorf diffuse, vn::intrusive_ptr<Textu
 }
 
 /// @brief Reads a material entry's block back as the engine's block (the bytes ARE the shading's input).
-vn::graphics::VineMaterialBlock blockOf(const MaterialFacts& facts)
+vn::backend_vsg::core::VineMaterialBlock blockOf(const MaterialFacts& facts)
 {
-    vn::graphics::VineMaterialBlock block{};
+    vn::backend_vsg::core::VineMaterialBlock block{};
     if (facts.block.size() == sizeof(block)) {
         std::memcpy(&block, facts.block.data(), sizeof(block));
     }
@@ -282,7 +282,7 @@ class Frames {
     /// @brief Records @p frame in one new frame of its own.
     [[nodiscard]] const ContentFacts& record(ContentStore& store, const CompiledFrame& frame)
     {
-        const vn::graphics::backend::FrameToken token = timeline_.begin();
+        const vn::graphics::FrameToken token = timeline_.begin();
         const ContentFacts&                     facts = store.tablesFor(frame, timeline_);
         timeline_.submitted(token);
         settle();

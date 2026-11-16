@@ -39,8 +39,8 @@
 
 #include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/backend_vsg/internal/FrameRecorder.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 #include <vine/backend_vsg/internal/StateRegistry.hpp>
 #include <vine/backend_vsg/internal/Streams.hpp>
 #include <vine/backend_vsg/internal/VariantPool.hpp>
@@ -83,26 +83,26 @@ inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uint
 using vn::graphics::Diagnostics;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderTarget;
-using vn::graphics::backend::ClearValues;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::backend::CompiledPass;
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameCompiler;
-using vn::graphics::backend::FrameFacts;
-using vn::graphics::backend::FrameRecorder;
-using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::FrameToken;
-using vn::graphics::backend::Observe;
-using vn::graphics::backend::PassId;
-using vn::graphics::backend::RepairReason;
-using vn::graphics::backend::RetirementQueue;
-using vn::graphics::backend::Rgba8;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::TargetAction;
-using vn::graphics::backend::TargetDesc;
-using vn::graphics::backend::TargetFacts;
-using vn::graphics::backend::TargetShape;
-using vn::graphics::backend::VariantPool;
+using vn::backend_vsg::core::ClearValues;
+using vn::backend_vsg::core::CompiledFrame;
+using vn::backend_vsg::core::CompiledPass;
+using vn::backend_vsg::core::FrameArena;
+using vn::backend_vsg::core::FrameCompiler;
+using vn::backend_vsg::core::FrameFacts;
+using vn::backend_vsg::core::FrameRecorder;
+using vn::graphics::FrameTimeline;
+using vn::graphics::FrameToken;
+using vn::backend_vsg::core::Observe;
+using vn::backend_vsg::core::PassId;
+using vn::graphics::RepairReason;
+using vn::graphics::RetirementQueue;
+using vn::backend_vsg::core::Rgba8;
+using vn::backend_vsg::core::StateRegistry;
+using vn::graphics::TargetAction;
+using vn::graphics::TargetDesc;
+using vn::backend_vsg::core::TargetFacts;
+using vn::graphics::TargetShape;
+using vn::backend_vsg::core::VariantPool;
 using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
 using vn::backend_vsg::ContentDraw;
@@ -471,7 +471,7 @@ void runPlanDrivenTargetPhase(const vn::backend_vsg::DeviceResult& device, Devic
     }
     EXPECT_TRUE(target->written()) << "the bootstrapping pass was recorded: the target holds something";
     {
-        const vn::graphics::backend::PixelProbe probe = target->probe();
+        const vn::backend_vsg::core::PixelProbe probe = target->probe();
         ASSERT_TRUE(probe.valid());
         EXPECT_EQ(probe.width(), 8);
         EXPECT_EQ(probe.height(), 4);
@@ -494,7 +494,7 @@ void runPlanDrivenTargetPhase(const vn::backend_vsg::DeviceResult& device, Devic
     EXPECT_EQ(target->height(), 12U);
     EXPECT_EQ(target->generation(), 1U);
     {
-        const vn::graphics::backend::PixelProbe probe = target->probe();
+        const vn::backend_vsg::core::PixelProbe probe = target->probe();
         ASSERT_TRUE(probe.valid());
         EXPECT_EQ(probe.width(), 16) << "the probe follows the extent the DRIVE's plan asked for";
         EXPECT_EQ(probe.height(), 12);
@@ -533,7 +533,7 @@ void runPlanDrivenTargetPhase(const vn::backend_vsg::DeviceResult& device, Devic
     EXPECT_TRUE(target->hasDepth());
     EXPECT_EQ(target->generation(), 2U);
     {
-        const vn::graphics::backend::PixelProbe probe = target->probe();
+        const vn::backend_vsg::core::PixelProbe probe = target->probe();
         ASSERT_TRUE(probe.valid());
         const Rgba8 expected{ quantise(kFirst[0]), quantise(kFirst[1]), quantise(kFirst[2]), 255U };
         const Rgba8 sampled = probe.pixel(8, 6);
@@ -541,7 +541,7 @@ void runPlanDrivenTargetPhase(const vn::backend_vsg::DeviceResult& device, Devic
         EXPECT_TRUE(probe.wholeImageMatches(sampled));
     }
     {
-        const vn::graphics::backend::PixelProbe extra = target->probe(1U);
+        const vn::backend_vsg::core::PixelProbe extra = target->probe(1U);
         ASSERT_TRUE(extra.valid()) << "the rebuilt shape has a second colour attachment, and it is readable";
         EXPECT_EQ(extra.width(), 16);
         EXPECT_EQ(extra.pixel(8, 6).a, 0U) << "an extra colour attachment clears to transparent black";
@@ -622,7 +622,7 @@ void runLeasedTargetOrderPhase(const vn::backend_vsg::DeviceResult& device, Devi
             // The LEASE, stated the way the target itself reports it: without this the executor cannot know
             // that one target's framebuffer names the other's depth image - and its ordering rule has nothing
             // to order by (measured while writing this phase: the borrower was applied first and refused).
-            const vn::graphics::backend::DepthPlan depth = target.depth();
+            const vn::graphics::DepthPlan depth = target.depth();
             entry.depth.has_depth                        = depth.has_depth;
             entry.depth.borrowed                         = depth.borrowed;
             entry.depth.source                           = depth.source;
@@ -715,7 +715,7 @@ void runLeasedTargetOrderPhase(const vn::backend_vsg::DeviceResult& device, Devi
     ++counters.frames;
 
     const auto expects_clear = [](const TargetObjects& target, float value, const char* which) {
-        const vn::graphics::backend::PixelProbe probe = target.probe();
+        const vn::backend_vsg::core::PixelProbe probe = target.probe();
         ASSERT_TRUE(probe.valid()) << which;
         EXPECT_EQ(probe.width(), 16) << which;
         EXPECT_EQ(probe.height(), 12) << which;
@@ -1177,8 +1177,8 @@ TEST(ExecutorTest, ATargetThatDidNotFollowItsDescriptionIsNamedInTheReport)
     fixture.recorder.endFrame();
     const CompiledFrame& frame = fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ lying });
 
-    vn::graphics::backend::FrameTimeline   timeline;
-    vn::graphics::backend::RetirementQueue queue(3U);
+    vn::graphics::FrameTimeline   timeline;
+    vn::graphics::RetirementQueue queue(3U);
     const VsgExecutor::TargetApplications  applied = fixture.executor.applyTargetPlans(frame, lying, timeline, queue);
     EXPECT_EQ(applied.refused, 1U) << "a lender with a borrower does not rebuild because a plan says so";
     EXPECT_EQ(applied.resized + applied.rebuilt + applied.failed, 0U);

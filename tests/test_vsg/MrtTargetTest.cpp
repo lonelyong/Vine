@@ -67,10 +67,10 @@ inline std::span<const std::uint32_t> indicesOf(const ::vsg::ref_ptr<::vsg::uint
 }
 
 using vn::graphics::RenderTarget;
-using vn::graphics::backend::PixelProbe;
-using vn::graphics::backend::Rgba8;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::VariantPool;
+using vn::backend_vsg::core::PixelProbe;
+using vn::backend_vsg::core::Rgba8;
+using vn::backend_vsg::core::StateRegistry;
+using vn::backend_vsg::core::VariantPool;
 using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
 using vn::backend_vsg::ContentDraw;

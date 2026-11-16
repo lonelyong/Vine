@@ -137,7 +137,7 @@
 
 **证据**
 
-- `sdk/vine/graphics/backend/` 24 个头；`cmake/VineLibraryHelper.cmake` 的 `install(DIRECTORY ${sdk_dir}/ ...)` 把它们装进公共 include；`BackendHalfGuard.hpp` 让宿主包含变成**编译错误**；`scripts/check_include_hygiene.py` 的 `BACKEND_HALF_AUDIENCE` 只允许 `gfx_backend_*`、`test_vsg` 与 `libGraphics` 自己。
+- `sdk/vine/graphics/backend/` 24 个头；`cmake/VineLibraryHelper.cmake` 的 `install(DIRECTORY ${sdk_dir}/ ...)` 把它们装进公共 include；`BackendHalfGuard.hpp` 让宿主包含变成**编译错误**；`scripts/check_include_hygiene.py` 的 `BACKEND_HALF_AUDIENCE` 只允许 `gfx_backend_*`、`test_vsg` 与 `libGraphics` 自己。 <!-- drift-ok -->
 - 24 个里有 4 个仍是 Vulkan 拼写：`Keys`（`VkFormat` + `ImageLayout`）、`ClearPlan`（`ImageLayout`）、`TargetPlan`（`ImageLayout` / subpass / device format）、`FrameCompiler`（subpass / device format）。
 
 **判断**
@@ -286,7 +286,7 @@
 - `src/viz/graphics/src/RenderPass.cpp`、`src/plugins/gfx_backend_vsg/src/internal/FrameRecorder.cpp`（跨线程读）
 - `src/viz/graphics/src/EngineCompile.cpp`、`src/viz/graphics/src/FrameWorker.cpp`（发布与半段） <!-- drift-ok -->
 - `src/viz/graphics/src/Scene.cpp`、`src/viz/graphics/src/SceneRows.hpp`、`src/viz/graphics/src/SnapshotSource.cpp`（场景与派生）
-- `src/viz/graphics/sdk/vine/graphics/backend/`（24 个头）
+- `src/viz/graphics/sdk/vine/graphics/backend/`（24 个头） <!-- drift-ok -->
 - `src/viz/graphics/sdk/vine/graphics/Plan.hpp`、`PassDesc.hpp`、`FramePlan.hpp`、`FrameDescription.hpp`（计划词汇）<!-- drift-ok -->
 - `src/viz/graphics/sdk/vine/graphics/PrepareReport.hpp`、`PresentTarget.hpp`、`Scene.hpp`、`RenderEngine.hpp`（结果 / 入口）
 - `scripts/measure_graphics_claims.py`、`scripts/check_include_hygiene.py`、`cmake/VineLibraryHelper.cmake`

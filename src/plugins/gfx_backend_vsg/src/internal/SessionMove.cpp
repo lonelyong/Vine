@@ -1,6 +1,6 @@
 #include <vine/backend_vsg/internal/SessionMove.hpp>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 MoveDecision planSessionMove(const MoveFacts& facts) noexcept
 {
@@ -28,4 +28,4 @@ MoveDecision planSessionMove(const MoveFacts& facts) noexcept
     return { MoveAction::Move, "moving onto the announced window keeps the device and the pipelines" };
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

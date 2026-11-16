@@ -44,7 +44,7 @@
 
 ### 2.2 接缝的词汇：一半已中性，一半是 Vulkan 策略
 
-- `sdk/vine/graphics/backend/`：24 个头、3,897 行；`BackendHalfGuard.hpp` 把"宿主包含它"变成**编译错误**，
+- `sdk/vine/graphics/backend/`：24 个头、3,897 行；`BackendHalfGuard.hpp` 把"宿主包含它"变成**编译错误**， <!-- drift-ok -->
   并单独装成 `VineGraphicsBackendSdk` 组件（`graphics-architecture.md` 2.9）。
 - 已经是中性拼写：`LoadOp` / `StoreOp` / `ImageLayout`（枚举，不是 Vulkan 类型）、`StreamKey`
   （buffer + revision + 段）、`VertexLayoutKey`、`ResidencyKind` / `ResidencyRow` / `ResidencyLedger`、
@@ -146,7 +146,7 @@
   - `ResidencyLedger` 的每一类都有 `live`，`bytes` 在两端都可空可答；
   - SDK `graphics/backend/` 不 include 任何后端的头（`BackendHalfGuard` 之外再加脚本门）；
   - `scripts/tsan_check.sh` 场景 0 warning；`test_vsg` 的 device-free 子集可跑；
-  - 一个 resize 不重编管线、一个 host 状态变更不重编管线（`Keys.hpp` 的 audit 表照搬）。
+  - 一个 resize 不重编管线、一个 host 状态变更不重编管线（`Keys.hpp` 的 audit 表照搬）。 <!-- drift-ok -->
 
 ## 7. 什么会推翻本文
 
@@ -243,7 +243,7 @@
 | 后端身份 | `RenderBackendInfo` + `RenderApi::Vulkan` | 已有 factory/registry，零改动 |
 | 能力 | `Capabilities`（features 位 + 极限值） | 已是值，`supports()` 已定义语义 |
 | 目标决策 | `planTarget(TargetInstance, TargetDesc)` | 已是纯函数、已测；vk 不自己判"尺寸变了" |
-| 管线身份 | `PipelineKey` / `PipelineKeyHash` / `VariantPool` | `Keys.hpp` 的 audit 表（什么可以进键）自动适用于第二后端 |
+| 管线身份 | `PipelineKey` / `PipelineKeyHash` / `VariantPool` | `Keys.hpp` 的 audit 表（什么可以进键）自动适用于第二后端 | <!-- drift-ok -->
 | 寿命 | `ResourceTable` / `RetirementQueue` / `FrameTimeline` | pin 规则与 API 无关 |
 | 驻留账 | `ResidencyLedger`（`bytes` 可 absent，`live` 必答） | absent ≠ 0 的规则已经定好 |
 | 读回 | `ReadbackResult`（机器可读原因） | 不要发明 bool + printf |
@@ -306,7 +306,7 @@ vk 的 pipeline builder 因此只接受 GLSL，并在源码不是 GLSL 时报告
 | D2 | `Vk*` 不出现在 vk 的**工厂/入口头**（`shell/`） | 只允许 `internal/` 与 `support/`（与 vsg 同形）；**不是门，是形状**——插件头未安装、`shell/` 无第二消费者（`G8`）。边界论证与升级条件见 `graphics-2026-11-13-vk-exposure-boundary.md` |
 | D3 | 驻留账完整 | `ResidencyLedger` 每类有行或显式 absent（`live` 必答） |
 | D4 | 同值同画 | 同一 `FrameDescription` 与 vsg 的记录/像素对拍（M7 已落地 2026-11-13：`tests/test_vsg/BackendParityTest.cpp`，8 例逐字节相同） |
-| D5 | 不重编 | resize 不重编管线、host 状态变更不重编管线（`Keys.hpp` audit 表照搬） |
+| D5 | 不重编 | resize 不重编管线、host 状态变更不重编管线（`Keys.hpp` audit 表照搬） | <!-- drift-ok -->
 
 ### 9.7 新加中性枚举时的判据
 

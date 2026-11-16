@@ -17,7 +17,7 @@
 #include "TestGeometryFacts.hpp"
 
 using vn::graphics::Geometry;
-using vn::graphics::backend::StreamKey;
+using vn::backend_vsg::core::StreamKey;
 using vn::backend_vsg::buildGeometryFacts;
 using vn::backend_vsg::ChannelFacts;
 using vn::backend_vsg::FactMiss;

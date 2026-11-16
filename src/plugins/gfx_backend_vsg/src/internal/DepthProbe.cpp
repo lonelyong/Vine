@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 DepthProbe::DepthProbe(int width, int height, std::vector<float> values)
   : width_(width)
@@ -55,4 +55,4 @@ const std::vector<float>& DepthProbe::values() const noexcept
     return values_;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

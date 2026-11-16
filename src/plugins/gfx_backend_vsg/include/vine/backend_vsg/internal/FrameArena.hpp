@@ -30,7 +30,7 @@
  * - ALIGNMENT LIMIT: chunks come from `new std::byte[]`, so the arena serves alignments up to
  *   `alignof(std::max_align_t)`. Anything more is refused rather than served misaligned.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /**
  * @brief A bump allocator for one frame's plan (see the file note for the ownership rule it enforces).
@@ -151,4 +151,4 @@ class VN_BACKEND_VSG_API FrameArena {
     std::size_t        allocations_{ 0 }; // Chunks started after construction.
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

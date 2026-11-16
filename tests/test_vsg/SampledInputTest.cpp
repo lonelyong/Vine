@@ -74,20 +74,20 @@ using vn::graphics::RenderTarget;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
-using vn::graphics::backend::ClearValues;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameCompiler;
-using vn::graphics::backend::FrameFacts;
-using vn::graphics::backend::FrameRecorder;
-using vn::graphics::backend::FrameToken;
-using vn::graphics::backend::Observe;
-using vn::graphics::backend::Rgba8;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::TargetFacts;
-using vn::graphics::backend::TargetShape;
-using vn::graphics::backend::VariantPool;
+using vn::backend_vsg::core::ClearValues;
+using vn::backend_vsg::core::CompiledFrame;
+using vn::graphics::DrawKind;
+using vn::backend_vsg::core::FrameArena;
+using vn::backend_vsg::core::FrameCompiler;
+using vn::backend_vsg::core::FrameFacts;
+using vn::backend_vsg::core::FrameRecorder;
+using vn::graphics::FrameToken;
+using vn::backend_vsg::core::Observe;
+using vn::backend_vsg::core::Rgba8;
+using vn::backend_vsg::core::StateRegistry;
+using vn::backend_vsg::core::TargetFacts;
+using vn::graphics::TargetShape;
+using vn::backend_vsg::core::VariantPool;
 using vn::test::setPrimitiveIndices;
 using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
@@ -317,7 +317,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 2U);
     ASSERT_EQ(frame.passes[0].pass, 1U) << "the producer runs first: the ENGINE scheduled it and handed the order over";
-    const vn::graphics::backend::CompiledPass& consumer = frame.passes[1];
+    const vn::backend_vsg::core::CompiledPass& consumer = frame.passes[1];
     ASSERT_EQ(consumer.inputs.size(), 1U) << "the plan carries what the pass declared";
     EXPECT_EQ(consumer.inputs[0].target, static_cast<const void*>(source_handle.get()));
     EXPECT_EQ(consumer.inputs[0].color_attachments, 1U);
@@ -325,7 +325,7 @@ TEST(SampledInputTest, APassInputReachesTheShaderAndItsPixelsProveIt)
     // 4. The content layer records pass 2, offered the images the SOURCE target has.
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   vn::test::programRef(*program),
                                   geometry_facts.layout,
                                   pipelines.get(),
@@ -521,7 +521,7 @@ TEST(SampledInputTest, APassInputReachesAFullScreenProgramThroughThePlan)
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 2U);
     ASSERT_EQ(frame.passes[0].pass, 1U) << "the producer runs first: the ENGINE scheduled it and handed the order over";
-    const vn::graphics::backend::CompiledPass& consumer = frame.passes[1];
+    const vn::backend_vsg::core::CompiledPass& consumer = frame.passes[1];
     ASSERT_EQ(consumer.draws.size(), 1U);
     ASSERT_EQ(consumer.draws[0].kind, DrawKind::Screen);
     EXPECT_EQ(consumer.draws[0].viewport.width, kPictureInPicture.width) << "the rectangle is the call's own";
@@ -865,7 +865,7 @@ TEST(SampledInputTest, APassSamplesTheDepthAShadowPassWrote)
 
     // What the producer wrote, read straight out of the shadow map's depth: 0.5 inside its triangle (the
     // vertex stage puts every fragment there) and the cleared far plane (0.0) outside it.
-    const vn::graphics::backend::DepthProbe depth = shadow_map->depthProbe();
+    const vn::backend_vsg::core::DepthProbe depth = shadow_map->depthProbe();
     ASSERT_TRUE(depth.valid()) << "a D32 depth target is readable";
     const float inside_depth  = depth.depthAt(16, 32);
     const float outside_depth = depth.depthAt(48, 32);

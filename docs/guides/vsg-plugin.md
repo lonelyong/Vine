@@ -69,24 +69,24 @@
 | 门面与会话 | `VsgBackend` `Session` `OffscreenSession` `GraphLifetime` `SessionDrive` `SessionContent` `SessionMove` `TransferStaging` `WindowTarget` `Device` `DeviceFeatures` `DeviceRequirements` `DeviceProbe` `VsgExecutor` |
 | 内容层 | `ContentAssembly` `ContentPass` `ContentHalves` `ContentDraw` `ContentFacts` `ContentSources` `ContentStore` `ContentImages` `ContentPush` `ContentSets` `ContentPipeline` `DrawNeeds` |
 | 数据与表 | `GeometryFacts` `ShadowBlock` `ViewBlock` `ProgramAbi` `ProgramVariant` `MaterialImages` `MaterialSlotCheck` `StreamUploads` `BlockStorage` `BlockDescriptors` `VariantPool` `PassRegistry` `StateCommands` `FactResult` |
-| 可移植半边（原 SDK `graphics/backend`） | `FrameRecorder` `FrameCompiler` `FrameArena` `FrameRing` `ClearPlan` `StateRegistry` `MaterialArena` `Streams` `SlotProbe` `Observe` `PhaseTable` `PixelProbe` `DepthProbe` `AllocationGate` `ResourceTable` |
+| 可移植半边（ADR-2026-11-16 §2 从 SDK 搬入） | `FrameRecorder` `FrameCompiler` `FrameArena` `FrameRing` `ClearPlan` `StateRegistry` `MaterialArena` `Streams` `SlotProbe` `Observe` `PhaseTable` `PixelProbe` `DepthProbe` `AllocationGate` `ResourceTable` |
 | 目标与读回 | `TargetObjects` `TargetTable` `HostReadback` `WhiteImage` `OneShot` |
 | 内部视图（仅测试） | `BackendContent` |
 
-**`graphics/backend`**（图形模块的**接缝**：头在 `src/viz/graphics/sdk/vine/graphics/backend/`（导出、随 SDK 安装），
-实现在 `src/viz/graphics/src/backend/`；分层与依赖规则见 `.ai/design/graphics-architecture.md`）——**两个后端都用的机制**：
+**图形模块的共享机制**（头在 `src/viz/graphics/sdk/vine/graphics/`（导出、随 SDK 安装），
+实现在 `src/viz/graphics/src/`；分层与依赖规则见 `.ai/design/graphics-architecture.md`）——**两个后端都用**：
 
 | 组 | 单元 |
 | --- | --- |
 | 帧闸与时钟 | `FrameGate` `DeviceClock` `FrameTimeline` `RetirementQueue` |
 | 读回与目标 | `Readback` `TargetPlan` |
-| 键 | `Keys` |
+| 键 | `DrawState` |
 | 拒绝形状 | `DiagnosticDraft`（vk 的 `ContentRefusal`、vsg 的读回拒绝都产它） |
-| 包含守卫 | `BackendHalfGuard` |
 
-> 该目录的**文件集由 `scripts/check_include_hygiene.py` 钉住**：只有两个后端都读的机制能留下。
-> 只有本后端读的 17 个头与 16 个 `.cpp`（原 SDK 的 `graphics/backend` 大半）已搬进本插件的
+> 只有本后端读的 17 个头与 16 个 `.cpp`（原 SDK 的一批可移植头）已搬进本插件的
 > `internal/`（ADR-2026-11-16 §2）；`FrameTimeline` 留下，因为 `DeviceClock` 持有它、`RetirementQueue` 以它为参数。
+> 这些机制现在与宿主类型同住 `sdk/vine/graphics/`、同属 `vn::graphics`（`ADR-2026-11-16-no-backend-half`）；
+> “宿主不得包含”不再是规则，硬化的是依赖方向：`scripts/check_include_hygiene.py` 禁止图形模块 include 任何具体后端。
 
 
 > `Diagnostics` / `ReportOnce` 已上移 SDK（`vine/graphics/Diagnostics.hpp` / `ReportOnce.hpp`，2026-09-27）：

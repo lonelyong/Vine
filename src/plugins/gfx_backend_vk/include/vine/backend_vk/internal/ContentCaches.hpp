@@ -28,8 +28,8 @@
 #include <vine/graphics/MaterialBase.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/StateResolution.hpp>
-#include <vine/graphics/backend/Keys.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/DrawState.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -647,7 +647,7 @@ class VN_BACKEND_VK_API ContentCaches final {
     [[nodiscard]] bool planDraw(const vn::graphics::RenderCommand&                     command,
                                 const vn::graphics::PassDraw&                          pass,
                                 const vn::graphics::ShaderProgramDescription*          default_program,
-                                const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                                const vn::graphics::RenderPassCompatibility&  compatibility,
                                 VkRenderPass                                           render_pass,
                                 std::uint32_t                                          color_attachments,
                                 FrameHead::DrawPlan&                                   plan,
@@ -677,7 +677,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      */
     [[nodiscard]] bool planDraw(const vn::graphics::DrawDescription&                  draw,
                                 const vn::graphics::PassDraw&                          pass,
-                                const vn::graphics::backend::RenderPassCompatibility&  compatibility,
+                                const vn::graphics::RenderPassCompatibility&  compatibility,
                                 VkRenderPass                                           render_pass,
                                 std::uint32_t                                          color_attachments,
                                 FrameHead::DrawPlan&                                   plan,

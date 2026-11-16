@@ -8,8 +8,8 @@
 #include <vsg/core/ref_ptr.h>
 #include <vsg/vk/Device.h>
 
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 #include <vine/backend_vsg/internal/BlockDescriptors.hpp>
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>

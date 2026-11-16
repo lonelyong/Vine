@@ -1,7 +1,7 @@
 #pragma once
 
 #include <vine/graphics/RenderBackend.hpp>
-#include <vine/graphics/backend/FrameGate.hpp>
+#include <vine/graphics/FrameGate.hpp>
 #include <vine/backend_vk/backend_vk_global.hpp>
 #include <vine/backend_vk/internal/Handles.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>

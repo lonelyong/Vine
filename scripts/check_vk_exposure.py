@@ -5,7 +5,7 @@
 three of them can be broken by accident, because only they have a consumer that would inherit the damage.
 This gate is that split made executable:
 
-  1. V2 - the SDK BACKEND face names no backend. `sdk/vine/graphics/backend/*.hpp` is installed as
+  1. V2 - the SDK BACKEND face names no backend. `sdk/vine/graphics/*.hpp` is installed as
      `VineGraphicsBackendSdk` and is included by every backend, including the ones that are not Vulkan, so
      one `#include <vulkan/...>` there turns Vulkan into a dependency of the whole backend seam and of the
      install package (§2.3). The face may use Vulkan SEMANTICS - it stores `VkFormat` values in
@@ -50,7 +50,7 @@ from pathlib import Path
 
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent
 
-SDK_BACKEND_FACE = "src/viz/graphics/sdk/vine/graphics/backend"
+SDK_FACE = "src/viz/graphics/sdk/vine/graphics"
 PLUGIN_SHELLS = "src/plugins/*/include/vine/*/shell"
 # E1 covers both halves of the plugin's internals: the sources that run a frame, and the headers that describe how.
 VK_INTERNALS = (
@@ -74,8 +74,9 @@ VK_GRAPHICS_FREE_UNITS = (
     "src/plugins/gfx_backend_vk/src/internal/WindowSystem.cpp",
 )
 
-# V2: the three headers a backend face may not include. `<vulkan` also covers `<vulkan.hpp>`; `<volk` and
-# `<vsg` are the other two ways the same dependency arrives, and the design names all three.
+# V2: the graphics SDK's headers must name no render API. `<vulkan` also covers `<vulkan.hpp>`; `<volk` and
+# `<vsg` are the other two ways the same dependency arrives, and the design names all three. The scope is the
+# WHOLE SDK because every backend and every host includes it - one such include ties them all to that API.
 VULKAN_INCLUDE_RE = re.compile(r"#\s*include\s*<(?:vulkan|volk|vsg)")
 # V4: a `Vk`-prefixed type token. `\b` keeps `myVkFormat` and `VK_NULL_HANDLE` out of the result.
 VK_TYPE_RE = re.compile(r"\bVk[A-Z]")
@@ -150,10 +151,10 @@ def main() -> int:
     # Each check is (label, repo-relative glob, pattern, why a hit is wrong).
     checks = (
         (
-            "V2 sdk-backend-face",
-            SDK_BACKEND_FACE,
+            "V2 graphics-sdk-face",
+            SDK_FACE,
             VULKAN_INCLUDE_RE,
-            "the SDK backend face must not include a backend: every backend and the install package inherit it",
+            "the graphics SDK must not include a render API: every backend and every host inherits it",
         ),
         (
             "V4 plugin-shell",

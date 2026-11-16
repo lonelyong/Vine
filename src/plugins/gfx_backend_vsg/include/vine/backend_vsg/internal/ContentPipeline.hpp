@@ -12,7 +12,7 @@
 #include <vsg/state/Sampler.h>
 #include <vsg/state/ShaderStage.h>
 
-#include <vine/graphics/backend/Keys.hpp>
+#include <vine/graphics/DrawState.hpp>
 #include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/BlockDescriptors.hpp>
 #include <vine/backend_vsg/internal/ProgramAbi.hpp>

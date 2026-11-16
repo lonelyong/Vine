@@ -6,7 +6,7 @@
 > **范围**：一个 `RenderDevice` 被多个引擎借用时，"共享什么、谁拥有帧、怎么并发、怎么退休、怎么迁移"
 > 的**实施形状**；契约的**为什么**在 ADR，线程模型的**现在**在 `graphics-threading.md`。
 > **权威来源**：`RenderDevice.hpp` / `RenderFrameExecutor.hpp` / `RenderBackend.hpp`（契约）、
-> `backend/FrameGate.hpp` / `backend/DeviceClock.hpp` / `backend/RetirementQueue.hpp`（机制）、
+> `graphics/FrameGate.hpp` / `graphics/DeviceClock.hpp` / `graphics/RetirementQueue.hpp`（机制）、
 > `src/plugins/gfx_backend_vk/src/internal/Device.cpp` 与 `ContentDraw.cpp`（今天的设备级帧机器）、
 > `src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp`（已经是"设备 + 每窗口"的那一半）。
 > **待办**：无未落地的会话迁移步骤；触发型工作见 §9.2 与 `../backlog/graphics.md`
@@ -157,7 +157,7 @@ Resident ──releaseContent──▶ Retiring(epoch) ──设备水位 ≥ ep
   `backend/RetirementQueue.hpp` 已经是"park + 到点释放"，且两者 **vsg 已经在用**（`d->clock` /
   `d->retirement`，由每个会话借用）。vk 采用它们 = 让两个后端共用同一套完成证据（`G6`），而不是在 vk
   里再造一个计数器（`G7`）。
-- **谁是谁**：**一个帧驱动者就是一个 clock window**（`DeviceClock` 发的就是 `backend::FrameDriverId`，u32；
+- **谁是谁**：**一个帧驱动者就是一个 clock window**（`DeviceClock` 发的就是 `graphics::FrameDriverId`，u32；
   离屏会话也注册一个）。三个拼写已统一到它（批次 1，2026-11-16）：`DeviceClock::WindowId` 只留一版 `@deprecated` 别名。
 - **释放的语义**：`releaseContent` / `releaseRenderTarget` 记下**当时每个会话的 `submitted`**，设备水位
   越过它才真正销毁；因此这两个动词**可以在别的会话正在 frame 时调用**。这条路 `RenderDevice.hpp:302`-
@@ -399,7 +399,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
 
 **S8c-1 落地（2026-11-16）：帧体共享设备，设备缓存进一把内容锁**
 
-- **设备闸换了形状**：vsg 的设备闸是 **`backend::FrameGate`**（S2 批 2 起与 vk 同一个类型、设备各有实例）——帧体取**共享**侧（两个驱动者的帧体可以同时进入），宿主动词取**独占**侧（initialize / shutdown / 读回 / `frameReport` / 窗口集 / resize）。从帧体线程调用的宿主动词得到**空租约**并回答拒绝（读回回答 `InsideFrame`，内容动词回答 false / 不动并报一条 `vsg.device.reentry`），从不等待自己。诊断路由与 episode 锁是**递归**的，因为 sink 本身可能回调。
+- **设备闸换了形状**：vsg 的设备闸是 **`graphics::FrameGate`**（S2 批 2 起与 vk 同一个类型、设备各有实例）——帧体取**共享**侧（两个驱动者的帧体可以同时进入），宿主动词取**独占**侧（initialize / shutdown / 读回 / `frameReport` / 窗口集 / resize）。从帧体线程调用的宿主动词得到**空租约**并回答拒绝（读回回答 `InsideFrame`，内容动词回答 false / 不动并报一条 `vsg.device.reentry`），从不等待自己。诊断路由与 episode 锁是**递归**的，因为 sink 本身可能回调。
 - **帧状态归驱动**：`VsgExecutor::FrameDrive`（scratch / 本次窗口索引 / 上传基线 / 上一帧的 delta）取代 `Data::{driving, scratch, driving_executor, uploads_before, last_uploads}`（最后一项保留为设备的“最后一帧”副本）。`presentWindow` 通过**线程本地的在飞帧**（`FrameInFlight`）取回本次帧的驱动者——窗口目标的 `present()` 没有帧参数，设备级单份会把一帧的计划交给另一驱动的 present。
 - **帧首快照（vsg 的形状）**：`openFrameHead` 在**一次**内容锁下解析这一帧会读的所有**设备事实**——每个 pass 的编号（`PassRegistry::adopt` 写入 `FrameScratch::pass_ids`）、它画的每个宿主目标（`adoptHostTarget`）、它采样的每个目标（`TargetTable::observe`）、它命令里点名的内容（`ContentStore::track`）、目标事实表的副本（`FrameScratch::facts`）、staging 清扫与块存储的增长。**收集**（`collectFrame`）与**计划编译**（`closeFrameBooks`）随后只读会话自己的 scratch，因此它们里的报告（计划编译器的“这个输入/目标解析不了”）到达 sink 时**不持任何设备锁**。
 - **内容相是设备唯一的串行段**：`commitFrameThrough` 在**一次**内容锁下做 `applyTargetPlans` / 材质 arena 增长 / `recordContent`（assembly 开帧 + 录制）/ `executor.record` / 清扫 / 会话提交，并在每个出口发布本帧的上传 delta 与计数器（`Data::last_uploads` / `last_counters`）。
@@ -460,7 +460,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
 
 | 类型 | 职责 | 备注 |
 |---|---|---|
-| `FrameDriver` | 帧机器 + 帧暂存 + 帧闸 + 帧账 + claim 集合 | 身份是 `backend::FrameDriverId`（`DeviceClock` 发） |
+| `FrameDriver` | 帧机器 + 帧暂存 + 帧闸 + 帧账 + claim 集合 | 身份是 `graphics::FrameDriverId`（`DeviceClock` 发） |
 | `ContentCaches` | programs / geometries / pipelines / 布局 / 图像 / 分配器 + 一把独占锁 | 从 `ContentDraw` 拆出 |
 | `FrameScratch` | 环 / 描述符池 / set 表 / `FrameSnapshot` | 从 `ContentDraw` 拆出 |
 | `ResidenceTable` | 三态 + 发布/撤回/退休 | 复用 `RetirementQueue` 的 epoch 语义 |
@@ -676,7 +676,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
   `executeFrameFor` / `prepareFrameFor`；默认程序按驱动者（`C8`），开帧时交给驱动会话的 recorder。
   `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram`：两驱动者各自的默认互不覆盖、各自出图，释放其一另一个照常；
   `test_vsg` **558/558**、对拍 13/13。
-- **已落地**：`T48` 的 **S8c-1（vsg 的帧首快照 + 内容锁 + 设备闸两侧化）**——帧体共享 `backend::FrameGate`、宿主动词独占；
+- **已落地**：`T48` 的 **S8c-1（vsg 的帧首快照 + 内容锁 + 设备闸两侧化）**——帧体共享 `graphics::FrameGate`、宿主动词独占；
   帧状态归 `VsgExecutor::FrameDrive`，`presentWindow` 经线程本地的在飞帧取回驱动者；`openFrameHead` 在一次内容锁下解析
   pass 编号/目标/采样/内容跟踪/目标事实/存储增长，收集与编译在会话 scratch 上不加锁，`commitFrameThrough` 在一次
   内容锁下装配、录制、清扫、提交；窗口与离屏会话各有一把帧主张（同会话的两帧等待，不同窗口互不等待）；计数器归会话。
@@ -778,7 +778,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
   帧体参数化为 `executeFrameFor` / `prepareFrameFor`，`Data::driving_executor` 记录本次帧的驱动者；
   `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram` 钉住两个默认程序互不覆盖与各自像素。`test_vsg` 558/558 | T9、T8 | 中 |
 | S8c | vsg 的设备缓存锁/帧首快照 + 解禁帧闸（帧体真并行） | T9、T11 | 中 |
-| S8c-1 | **已落地 2026-11-16**：`backend::FrameGate`（帧体共享 / 宿主动词独占，重入答拒绝；S2 批 2 起两个后端同一个类型）；`VsgExecutor::FrameDrive`
+| S8c-1 | **已落地 2026-11-16**：`graphics::FrameGate`（帧体共享 / 宿主动词独占，重入答拒绝；S2 批 2 起两个后端同一个类型）；`VsgExecutor::FrameDrive`
   取代设备的帧状态；`openFrameHead` 在一次内容锁下解析设备事实（pass 编号 / 目标 / 采样 / 内容跟踪 / 目标事实 /
   存储增长），收集与计划编译在会话 scratch 上不加锁；`commitFrameThrough` 在一次内容锁下装配、录制、清扫、提交并发布
   本帧读数；窗口/离屏会话各有一把帧主张；每会话自己的 `Observe`。**仍待**：记录路径零锁（`C3`）。
@@ -814,7 +814,7 @@ S6b 由 T8/T10 承担"两个驱动者各自正确"的证据，S6c 才承担"时�
 ### 10.1 代码
 
 - 契约：`src/viz/graphics/sdk/vine/graphics/RenderDevice.hpp`、`RenderFrameExecutor.hpp`、`RenderBackend.hpp`
-- 机制：`src/viz/graphics/sdk/vine/graphics/backend/FrameGate.hpp`、`DeviceClock.hpp`、`RetirementQueue.hpp`、`FrameTimeline.hpp`
+- 机制：`src/viz/graphics/sdk/vine/graphics/FrameGate.hpp`、`DeviceClock.hpp`、`RetirementQueue.hpp`、`FrameTimeline.hpp`
 - vk 的现状：`src/plugins/gfx_backend_vk/src/internal/Device.cpp`（`Impl` 的帧机器）、
   `src/plugins/gfx_backend_vk/src/internal/ContentDraw.cpp`（缓存与帧状态同居）
 - vsg 的现状：`src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp`（`Data` 的帧暂存单例）、

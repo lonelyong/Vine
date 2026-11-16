@@ -52,10 +52,10 @@
 
 #include "TestProgramFacts.hpp"
 
-using vn::graphics::backend::DynamicState;
-using vn::graphics::backend::PipelineKey;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::VariantPool;
+using vn::graphics::DynamicState;
+using vn::graphics::PipelineKey;
+using vn::backend_vsg::core::StateRegistry;
+using vn::backend_vsg::core::VariantPool;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentPipeline;
 using vn::backend_vsg::ViewportRect;
@@ -453,7 +453,7 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     ASSERT_NE(set, nullptr);
 
     ContentDraw::ScreenDraw draw;
-    draw.key.kind                   = vn::graphics::backend::DrawKind::Screen;
+    draw.key.kind                   = vn::graphics::DrawKind::Screen;
     draw.key.program                = vn::test::programRef(1, 1U);
     draw.key.compatibility.samples  = 1U;
     draw.key.sampled_color_count    = 2U;
@@ -512,7 +512,7 @@ TEST(ContentDrawTest, AScreenDrawRecordsThreeGeneratedVerticesAndTheSamplerSetAt
     // An identity of the OTHER kind is refused BY THE RESOLVER, before anything is recorded: the layer compiles one
     // descriptor ABI, so the content kind has no pipeline in a screen layer (see api/ContentDraw).
     ContentDraw::ScreenDraw wrong_kind = draw;
-    wrong_kind.key.kind                = vn::graphics::backend::DrawKind::Content;
+    wrong_kind.key.kind                = vn::graphics::DrawKind::Content;
     EXPECT_EQ(recorder.plan(wrong_kind.key).pipeline, nullptr);
     EXPECT_EQ(recorder.refusals(), 1U);
     EXPECT_EQ(recorder.draws(), 2U) << "a refused identity is not a recorded draw";

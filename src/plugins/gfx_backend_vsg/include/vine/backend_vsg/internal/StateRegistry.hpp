@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include <vine/graphics/backend/Keys.hpp>
+#include <vine/graphics/DrawState.hpp>
 #include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/graphics/graphics_global.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
@@ -27,7 +27,7 @@
  *   tells the three apart after the fact, instead of trusting a comment.
  * - NOT thread-safe: it is used from the frame's own thread, like the rest of the backend.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief The state of one pass: variant selection plus the dynamic block's issued values. */
 class VN_BACKEND_VSG_API StateRegistry {
@@ -126,4 +126,4 @@ class VN_BACKEND_VSG_API StateRegistry {
     std::uint64_t inputs_skipped_{ 0 };
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

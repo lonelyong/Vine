@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 namespace
 {
@@ -100,4 +100,4 @@ std::uint64_t FrameRing::overflows() const noexcept
     return overflows_;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

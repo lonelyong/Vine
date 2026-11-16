@@ -92,9 +92,6 @@ set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 # and the executable can neither import (no plugin .lib) nor resolve them ->
 # LNK2019 / C4273. Harmless (empty) on Linux.
 target_compile_definitions(${TEST_NAME} PRIVATE VN_BACKEND_VSG_LIB)
-# This suite compiles the backend half directly (its headers, and the plugin's device sources added
-# below), so it is a backend-half consumer (see that half's BackendHalfGuard.hpp).
-target_compile_definitions(${TEST_NAME} PRIVATE VN_GRAPHICS_BACKEND_CONSUMER)
 # The vk backend's sources are added below too, so its export macro has to expand to its definition form for the same
 # reason (see tests/test_vk): a target that declares dllimport for symbols it compiles itself cannot link on Windows.
 target_compile_definitions(${TEST_NAME} PRIVATE VN_BACKEND_VK_LIB)

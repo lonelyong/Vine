@@ -35,8 +35,8 @@ using vn::graphics::RenderPass;
 using vn::graphics::Scene;
 using vn::graphics::StateNode;
 using vn::graphics::Topology;
-using vn::graphics::backend::PixelProbe;
-using vn::graphics::backend::Rgba8;
+using vn::backend_vsg::core::PixelProbe;
+using vn::backend_vsg::core::Rgba8;
 
 namespace
 {

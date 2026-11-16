@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 VariantPool::VariantPool(std::size_t capacity)
   : capacity_(std::max<std::size_t>(capacity, 1U))
@@ -76,4 +76,4 @@ void VariantPool::clear() noexcept
     by_id_.clear();
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

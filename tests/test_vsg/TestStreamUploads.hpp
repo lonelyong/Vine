@@ -47,16 +47,16 @@ inline UploadedStreams uploadTriangle(vn::backend_vsg::StreamUploads& uploads, s
     out.positions = vn::intrusive_ptr<const vn::Buffer<float>>(new vn::Buffer<float>(std::vector<float>(scalars.begin(), scalars.end())));
     out.indices   = vn::intrusive_ptr<const vn::Buffer<std::uint32_t>>(new vn::Buffer<std::uint32_t>(std::vector<std::uint32_t>(indices.begin(), indices.end())));
 
-    vn::graphics::backend::StreamKey vertex_key;
-    vertex_key.kind       = vn::graphics::backend::StreamKind::Vertex;
+    vn::backend_vsg::core::StreamKey vertex_key;
+    vertex_key.kind       = vn::backend_vsg::core::StreamKind::Vertex;
     vertex_key.location   = vn::graphics::attributeLocation(vn::graphics::VertexAttribute::Position);
     vertex_key.components = 3U;
     vertex_key.buffer     = out.positions.get();
     vertex_key.revision   = out.positions->revision();
     vertex_key.count      = out.positions->size();
 
-    vn::graphics::backend::StreamKey index_key;
-    index_key.kind       = vn::graphics::backend::StreamKind::Index;
+    vn::backend_vsg::core::StreamKey index_key;
+    index_key.kind       = vn::backend_vsg::core::StreamKind::Index;
     index_key.location   = 0U;
     index_key.components = 1U;
     index_key.buffer     = out.indices.get();

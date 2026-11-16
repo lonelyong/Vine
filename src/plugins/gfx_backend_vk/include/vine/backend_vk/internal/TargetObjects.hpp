@@ -9,7 +9,7 @@
 
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/graphics/RenderTarget.hpp>
-#include <vine/graphics/backend/TargetPlan.hpp>
+#include <vine/graphics/TargetPlan.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
 
@@ -50,7 +50,7 @@ VN_BACKEND_VK_NS_BEGIN
  */
 struct TargetObjects {
     /// The extent and the shape (engine formats + device formats) these objects were built for.
-    vn::graphics::backend::TargetDesc desc{};
+    vn::graphics::TargetDesc desc{};
 
     /// THE PICTURE, one per colour attachment: the single-sample image a later pass samples, a readback copies and a
     /// single-sampled pass draws into - and, on a multisampled target, the RESOLVE image the render pass writes at the
@@ -230,7 +230,7 @@ struct TargetObjects {
     }
 
     /** @brief Gets the pipeline compatibility of this target's shape. */
-    [[nodiscard]] vn::graphics::backend::RenderPassCompatibility compatibility() const noexcept
+    [[nodiscard]] vn::graphics::RenderPassCompatibility compatibility() const noexcept
     {
         return desc.shape.compatibility();
     }
@@ -239,7 +239,7 @@ struct TargetObjects {
     [[nodiscard]] bool built() const noexcept;
 
     /** @brief Answers whether these objects were built for exactly @p wanted (extent and shape). */
-    [[nodiscard]] bool matches(const vn::graphics::backend::TargetDesc& wanted) const noexcept
+    [[nodiscard]] bool matches(const vn::graphics::TargetDesc& wanted) const noexcept
     {
         return desc == wanted;
     }

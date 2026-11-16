@@ -1,6 +1,6 @@
 #include <vine/backend_vsg/internal/StateRegistry.hpp>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 StateRegistry::StateRegistry(VariantPool& pool) noexcept
   : pool_(&pool)
@@ -99,4 +99,4 @@ std::uint64_t StateRegistry::inputs_skipped() const noexcept
     return inputs_skipped_;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

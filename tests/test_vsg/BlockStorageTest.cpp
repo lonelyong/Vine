@@ -40,8 +40,8 @@
 
 #include "SdkPixelFixture.hpp"
 
-using vn::graphics::backend::kAssumedInFlightSlots;
-using vn::graphics::backend::perFrameCopies;
+using vn::backend_vsg::core::kAssumedInFlightSlots;
+using vn::backend_vsg::core::perFrameCopies;
 using vn::backend_vsg::BlockStorage;
 
 namespace
@@ -186,7 +186,7 @@ TEST(BlockStorageTest, EveryBlockIsReadBackFromInsideItsOwnRegion)
 
     ASSERT_TRUE(view_result.valid);
     ASSERT_TRUE(draw_result.valid);
-    ASSERT_EQ(material_result.kind, vn::graphics::backend::MaterialArena::WriteKind::Allocated);
+    ASSERT_EQ(material_result.kind, vn::backend_vsg::core::MaterialArena::WriteKind::Allocated);
     EXPECT_TRUE(inside(view_result.offset, view.size(), regions.views_base, regions.views_bytes));
     EXPECT_TRUE(inside(draw_result.offset, draw.size(), regions.draws_base, regions.draws_bytes));
     EXPECT_TRUE(inside(material_result.offset, material.size(), regions.materials_base, regions.materials_bytes));
@@ -431,14 +431,14 @@ TEST(BlockStorageTest, ASteadyMaterialWritesNothingAndAnEditWritesExactlyOneBloc
 
     fixture.storage->beginFrame();
     const auto allocated = fixture.storage->writeMaterial(material, 1, first);
-    ASSERT_EQ(allocated.kind, vn::graphics::backend::MaterialArena::WriteKind::Allocated);
+    ASSERT_EQ(allocated.kind, vn::backend_vsg::core::MaterialArena::WriteKind::Allocated);
     EXPECT_EQ(allocated.bytes, first.size());
     EXPECT_EQ(readBack(*fixture.storage, allocated.offset, first.size()), first);
 
     // The steady frame: the same revision, so the bytes the GPU reads are already right.
     fixture.storage->beginFrame();
     const auto steady = fixture.storage->writeMaterial(material, 1, second);
-    EXPECT_EQ(steady.kind, vn::graphics::backend::MaterialArena::WriteKind::Unchanged);
+    EXPECT_EQ(steady.kind, vn::backend_vsg::core::MaterialArena::WriteKind::Unchanged);
     EXPECT_EQ(steady.bytes, 0U);
     EXPECT_EQ(steady.offset, allocated.offset) << "a hit still names the block: a draw binds THAT offset (offset 0 is another region's data)";
     EXPECT_EQ(readBack(*fixture.storage, allocated.offset, first.size()), first) << "a steady frame must not have overwritten anything";
@@ -446,13 +446,13 @@ TEST(BlockStorageTest, ASteadyMaterialWritesNothingAndAnEditWritesExactlyOneBloc
     // An edit: exactly one block, wherever this frame's copy lives.
     fixture.storage->beginFrame();
     const auto rewritten = fixture.storage->writeMaterial(material, 2, third);
-    ASSERT_EQ(rewritten.kind, vn::graphics::backend::MaterialArena::WriteKind::Rewritten);
+    ASSERT_EQ(rewritten.kind, vn::backend_vsg::core::MaterialArena::WriteKind::Rewritten);
     EXPECT_EQ(rewritten.bytes, third.size());
     EXPECT_EQ(readBack(*fixture.storage, rewritten.offset, third.size()), third);
 
     // A second edit in the SAME frame: the GPU can only ever see one of the two versions, so one write.
     const auto deduped = fixture.storage->writeMaterial(material, 3, fourth);
-    EXPECT_EQ(deduped.kind, vn::graphics::backend::MaterialArena::WriteKind::Unchanged);
+    EXPECT_EQ(deduped.kind, vn::backend_vsg::core::MaterialArena::WriteKind::Unchanged);
     EXPECT_EQ(deduped.bytes, 0U);
     EXPECT_EQ(deduped.offset, rewritten.offset) << "the frame's copy is where both answers point";
     EXPECT_EQ(readBack(*fixture.storage, rewritten.offset, third.size()), third) << "the frame's copy still holds the version the draw will use";
@@ -480,7 +480,7 @@ TEST(BlockStorageTest, TheMaterialCopiesRotateSoAnInFlightFrameIsNeverOverwritte
         const std::vector<std::byte> block  = blockOf(64, revision);
         const auto                   result = fixture.storage->writeMaterial(material, revision, block);
         ASSERT_EQ(result.kind,
-                  revision == 1 ? vn::graphics::backend::MaterialArena::WriteKind::Allocated : vn::graphics::backend::MaterialArena::WriteKind::Rewritten);
+                  revision == 1 ? vn::backend_vsg::core::MaterialArena::WriteKind::Allocated : vn::backend_vsg::core::MaterialArena::WriteKind::Rewritten);
         EXPECT_EQ(readBack(*fixture.storage, result.offset, block.size()), block);
         offsets.push_back(result.offset);
     }
@@ -507,7 +507,7 @@ TEST(BlockStorageTest, AMaterialRefusalAsksForTheWholeFramesNeed)
 
     // No eviction: the third material is refused, and the request is "one capacity that serves this frame".
     const auto refused = fixture.storage->writeMaterial(c, 1, blockOf(64, 0x30));
-    EXPECT_EQ(refused.kind, vn::graphics::backend::MaterialArena::WriteKind::Refused);
+    EXPECT_EQ(refused.kind, vn::backend_vsg::core::MaterialArena::WriteKind::Refused);
     EXPECT_FALSE(refused.valid) << "a refused write has no offset a draw may bind";
     EXPECT_EQ(fixture.storage->materialRefusals(), 1U);
     EXPECT_EQ(fixture.storage->liveMaterials(), 2U) << "the two live materials kept their slots";
@@ -524,7 +524,7 @@ TEST(BlockStorageTest, AMaterialRefusalAsksForTheWholeFramesNeed)
     EXPECT_EQ(fixture.storage->retireUnpinnedMaterials(declarations), 1U);
     const auto fitted = fixture.storage->writeMaterial(c, 1, blockOf(64, 0x30));
     EXPECT_TRUE(fitted.valid);
-    EXPECT_EQ(fitted.kind, vn::graphics::backend::MaterialArena::WriteKind::Allocated);
+    EXPECT_EQ(fitted.kind, vn::backend_vsg::core::MaterialArena::WriteKind::Allocated);
     EXPECT_EQ(fixture.storage->materialRefusals(), 1U) << "a return is not a refusal";
 }
 
@@ -567,11 +567,11 @@ TEST(BlockStorageTest, AMaterialSlotIsReturnedOnceNoLiveRowDeclaresIt)
     // The survivor is still a hit whose bytes nobody touched, and the room serves the third material instead of
     // refusing it (or growing the arena for it).
     const auto steady = fixture.storage->writeMaterial(a, 1, blockOf(64, 0x00));
-    EXPECT_EQ(steady.kind, vn::graphics::backend::MaterialArena::WriteKind::Unchanged);
+    EXPECT_EQ(steady.kind, vn::backend_vsg::core::MaterialArena::WriteKind::Unchanged);
     EXPECT_EQ(steady.offset, kept.offset);
     EXPECT_EQ(readBack(*fixture.storage, kept.offset, a_bytes.size()), a_bytes);
     const auto fitted = fixture.storage->writeMaterial(c, 1, blockOf(64, 0xC3));
-    EXPECT_EQ(fitted.kind, vn::graphics::backend::MaterialArena::WriteKind::Allocated);
+    EXPECT_EQ(fitted.kind, vn::backend_vsg::core::MaterialArena::WriteKind::Allocated);
     EXPECT_TRUE(fitted.valid) << "a returned slot makes room: nothing is refused, nothing has to grow";
     EXPECT_EQ(fixture.storage->materialRefusals(), 0U);
     EXPECT_EQ(fixture.storage->growthNeeded().materials, 0U);

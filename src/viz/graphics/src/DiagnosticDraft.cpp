@@ -1,8 +1,8 @@
-#include <vine/graphics/backend/DiagnosticDraft.hpp>
+#include <vine/graphics/DiagnosticDraft.hpp>
 
 #include <utility>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 DiagnosticDraft::DiagnosticDraft() = default;
 
@@ -94,4 +94,4 @@ vn::graphics::RenderDiagnostic DiagnosticDraft::diagnostic(const vn::graphics::D
     return diagnostic;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

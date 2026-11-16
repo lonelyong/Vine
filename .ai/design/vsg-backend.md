@@ -3,7 +3,7 @@
 > **状态**：现行
 > **最后核对**：2026-11-16
 > **范围**：vsg 后端如何把编译好的帧值物化成 Vulkan 命令；平台事实与已踩过的坑。
-> **权威来源**：`RenderBackend.hpp` / `ShaderAbi.hpp` / `src/viz/graphics/sdk/vine/graphics/backend/`（7 个共享机制）/
+> **权威来源**：`RenderBackend.hpp` / `ShaderAbi.hpp` / `src/viz/graphics/sdk/vine/graphics/`（7 个共享机制）/
 > `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/**`。
 > **待办**：`../backlog/graphics.md`
 
@@ -23,7 +23,7 @@
 ### 1.3 非目标
 
 - 不在后端重排 pass、自建依赖图或报环。
-- 不让 SDK `graphics/backend/` include vsg；只有插件 `internal/` 才 include both。
+- 不让 SDK `graphics/` include vsg；只有插 件 `internal/` 才 include both。
 - 不把平台差异写进引擎/应用层。
 
 ### 1.4 一句话结论
@@ -39,7 +39,7 @@
 2.5 **流按 buffer 身份共享**：`StreamKey` = buffer + 该 buffer 自己的 revision + 段；稳态零重传。
 2.6 **反向 Z + CW 正面**：Vulkan NDC z 就是 depth；世界 CCW 到 framebuffer 是 CW。
 2.7 **证据三重**：验证层 / 计数器 / 像素；三者缺一都不算“通过”。
-2.8 **物理边界**：SDK `graphics/backend/` 不 include vsg；插件 `internal/` 才 include both。
+2.8 **物理边界**：SDK `graphics/` 不 include vsg；插件 `internal/` 才 include both。
 **插件内部还有一条更窄的缝**：内容记账的半边（`ContentFacts` / `ContentStore` / `ContentHalves` / `ContentSources` /
 `ContentPush`）不许出现 `::vsg::`；设备一律经适配层（`StreamUploads` / `StateCommands` /
 `ContentPipeline` / `ContentDraw`）触达。为什么：插件 23.5k 行里 59% 是内容记账，而这半边实测已经是 0 处 vsg
@@ -53,17 +53,17 @@
 
 | 层 | 位置 | 内容 |
 |---|---|---|
-| SDK 后端契约（两个后端共用的机制） | `src/viz/graphics/sdk/vine/graphics/backend/` | `FrameGate` / `DeviceClock` / `FrameTimeline` / `RetirementQueue` / `Readback` / `Keys` / `TargetPlan` + `BackendHalfGuard` |
-| 本后端的可移植半边（原 SDK `backend/`，ADR-2026-11-16 §2 搬入） | `include/vine/backend_vsg/internal/` + `src/internal/` | `FrameRecorder` / `FrameCompiler` / `FrameArena` / `FrameRing` / `ClearPlan` / `VariantPool` / `StateRegistry` / `MaterialArena` / `Streams` / `SlotProbe` / `Observe` / `PhaseTable` / `PixelProbe` / `DepthProbe` / `SessionMove` / `AllocationGate` / `ResourceTable` |
+| SDK 共享机制（两个后端都用） | `src/viz/graphics/sdk/vine/graphics/` | `FrameGate` / `DeviceClock` / `FrameTimeline` / `RetirementQueue` / `Readback` / `DrawState` / `TargetPlan` / `DiagnosticDraft` |
+| 本后端的可移植半边（ADR-2026-11-16 §2 从 SDK 搬入，现居 `vn::backend_vsg::core`） | `include/vine/backend_vsg/internal/` + `src/internal/` | `FrameRecorder` / `FrameCompiler` / `FrameArena` / `FrameRing` / `ClearPlan` / `VariantPool` / `StateRegistry` / `MaterialArena` / `Streams` / `SlotProbe` / `Observe` / `PhaseTable` / `PixelProbe` / `DepthProbe` / `SessionMove` / `AllocationGate` / `ResourceTable` |
 | 插件内部 | `src/plugins/gfx_backend_vsg/src/internal/` | `VsgBackend`（门面）/ `api::Device` / `api::WindowSession` / `WindowTarget` / `OffscreenSession` / `TargetObjects` / `TargetTable` / `VsgExecutor` / `ContentStore` / `StreamUploads` / `ContentPipeline` / `ContentDraw` / `BlockStorage` / `BlockDescriptors` / `StateCommands` / `MaterialImages` |
 | 插件支撑 | `src/plugins/gfx_backend_vsg/src/support/` | `VsgHostWindow` / `RenderStateMapper` / `VsgDynamicState` / `VsgSceneRules` / 入口点 |
 | 插件外壳 | `src/plugins/gfx_backend_vsg/src/shell/` | 插件注册、`RenderBackendFactory` |
 
-内部类型按 `api::`（设备、会话、目标、内容录制）/ `core::`（SDK 后端契约的别名）/ `support::`（vsg 适配）分组，不是公开接口；公开契约只有 §4.1 的五个 SDK 类型。
+内部类型按 `api::`（设备、会话、目标、内容录制）/ `core::`（本后端自己的类型，外加 SDK 的共享词汇）/ `support::`（vsg 适配）分组，不是公开接口；公开契约只有 §4.1 的五个 SDK 类型。
 
 #### 2.9.2 类图
 
-`VsgBackendImpl` 就是 `VsgBackend::Impl`（私有实现）；`Sdk*` 是 SDK `backend/` 里的可移植类型，带
+`VsgBackendImpl` 就是 `VsgBackend::Impl`（私有实现）；`Sdk*` 是随 ADR-2026-11-16 §2 搬进本插件的可移植类型，带
 `<<SDK>>` 标记。
 
 ```mermaid
@@ -154,7 +154,7 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 
 - 是什么：后端每帧把这一帧画到的对象**触碰**（`track` + `updateMaterial`）一遍，用（身份指针, revision）查表；
   命中就是几次哈希/二分 + 整数比较，只有**键变了**才付“描述 / 上传 / 编译”的钱。三类状态的划分是
-  `graphics/backend/Keys.hpp` 的 IDENTITY（进管线键）/ DYNAMIC STATE（每 draw 一条 set 命令）/ DATA（写进 buffer +
+  `graphics/DrawState.hpp` 的 IDENTITY（进管线键）/ DYNAMIC STATE（每 draw 一条 set 命令）/ DATA（写进 buffer +
   材质引用），带审计表并由测试钉住。
 - 为什么：它让“改一个材质值”“改 cull”“改顶点字节”都不必编译管线，而这三种“把 DATA 漏进 IDENTITY”的错误
   在本后端历史上各出现过一次（见 `vsg-pitfalls.md`）。正确性也在此：材质编辑没有引擎侧公告，只能靠每帧
@@ -256,12 +256,12 @@ material 值 / 流字节 / cull 全部**不进**。
 
 | # | 约束 |
 |---|---|
-| C1 | SDK `graphics/backend/` 不 include vsg；插件 `internal/` 才 include both。 |
+| C1 | SDK `graphics/` 不 include vsg；插 件 `internal/` 才 include both。 |
 | C2 | 每 pass 状态私有；状态注册表不跨 pass 共享。 |
 | C3 | 调度只在引擎；后端按 `FrameDescription.passes` 物化。 |
 | C4 | `TargetShape` 决定图像/通道/管线兼容性；bootstrap 清所有附件。 |
 | C5 | `StreamKey` = buffer + buffer revision + 段；稳态零重传。 |
-| C6 | T15 触发前，不再向 SDK `graphics/backend/` 新增 Vulkan 拼写（`VkFormat` / `ImageLayout` / subpass）：新的设备无关表述先在插件 `internal/` 落地，等第二个后端把这条边界推上去。 |
+| C6 | T15 触发前，不再向 SDK `graphics/` 新增 Vulkan 拼写（`VkFormat` / `ImageLayout` / subpass）：新的设备无关表述先在插件 `internal/` 落地，等第二个后端把这条边界推上去。 |
 | C7 | 本插件每条报告带 `vsg.<族>.<原因>` 稳定 code（登记在 `scripts/diagnostic_codes.txt`）；读回的九种拒绝由 `readbackRefusalDiagnostic` 的**一个无 `default` 的 switch** 映射，所以新增一个 `HostReadbackRefusal` 编译期就必须命名它的 code——词汇表跟着枚举走，不靠人记。规则的来由见 `vk-backend.md` §2.13 / §2.14（同一个门禁、同一套值语义）。 |
 
 ### 5.2 要求（R#）
@@ -278,9 +278,9 @@ material 值 / 流字节 / cull 全部**不进**。
 | # | 不变量 |
 |---|---|
 | N1 | 后端不重排 pass、不自建依赖图、不报环。 |
-| N2 | 物理边界：SDK 后端契约不 include vsg。 |
+| N2 | 物理边界：SDK 的共享机制不 include vsg。 |
 | N3 | 平台事实（1.4、无 dynamic rendering、reverse-Z）不可协商。 |
-| N4 | 每帧的变化检测只比较（身份, revision）键，**不比较内容字节或值**；材质值、流字节、动态状态永远走 DATA / DYNAMIC 通道。键里出现矩阵、viewport、opacity、材质值、cull、blend 或 extent 就是错的（`Keys.hpp` 的审计表 + 测试）。 |
+| N4 | 每帧的变化检测只比较（身份, revision）键，**不比较内容字节或值**；材质值、流字节、动态状态永远走 DATA / DYNAMIC 通道。键里出现矩阵、viewport、opacity、材质值、cull、blend 或 extent 就是错的（`DrawState.hpp` 的审计表 + 测试）。 |
 
 ## 6. 注意事项与陷阱
 

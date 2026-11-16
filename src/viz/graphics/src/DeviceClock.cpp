@@ -1,8 +1,8 @@
-#include <vine/graphics/backend/DeviceClock.hpp>
+#include <vine/graphics/DeviceClock.hpp>
 
 #include <algorithm>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 FrameDriverId DeviceClock::addWindow() noexcept
 {
@@ -117,4 +117,4 @@ void DeviceClock::updateWatermark() noexcept
     timeline_.completeUpTo(completed_);
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

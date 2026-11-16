@@ -2,7 +2,7 @@
 
 #include <utility>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 bool PhaseTable::Report::ok() const noexcept
 {
@@ -57,4 +57,4 @@ std::size_t PhaseTable::size() const noexcept
     return phases_.size();
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

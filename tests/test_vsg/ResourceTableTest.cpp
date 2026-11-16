@@ -21,14 +21,14 @@
 #include <unordered_set>
 #include <utility>
 
-#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
 #include <vine/backend_vsg/internal/ResourceTable.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 
-using vn::graphics::backend::forgetUnpinned;
-using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::ResourceTable;
-using vn::graphics::backend::RetirementQueue;
+using vn::backend_vsg::core::forgetUnpinned;
+using vn::graphics::FrameTimeline;
+using vn::backend_vsg::core::ResourceTable;
+using vn::graphics::RetirementQueue;
 
 namespace
 {

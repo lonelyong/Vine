@@ -31,7 +31,7 @@
 #include <vsg/vk/Device.h>
 
 #include <vine/graphics/RenderTarget.hpp>
-#include <vine/graphics/backend/Readback.hpp>
+#include <vine/graphics/Readback.hpp>
 #include <vine/backend_vsg/internal/StateRegistry.hpp>
 #include <vine/backend_vsg/internal/Streams.hpp>
 #include <vine/backend_vsg/internal/VariantPool.hpp>
@@ -53,12 +53,12 @@ namespace
 {
 
 using vn::graphics::RenderTarget;
-using vn::graphics::backend::DepthProbe;
-using vn::graphics::backend::PixelProbe;
-using vn::graphics::backend::ReadbackKind;
-using vn::graphics::backend::Rgba8;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::VariantPool;
+using vn::backend_vsg::core::DepthProbe;
+using vn::backend_vsg::core::PixelProbe;
+using vn::graphics::ReadbackKind;
+using vn::backend_vsg::core::Rgba8;
+using vn::backend_vsg::core::StateRegistry;
+using vn::backend_vsg::core::VariantPool;
 using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
 using vn::backend_vsg::ContentDraw;
@@ -515,8 +515,8 @@ TEST(MsaaTargetTest, RebuildingAtANewCountReplacesTheImages)
     EXPECT_EQ(target->shape().samples, 1U);
     const ::vsg::ref_ptr<::vsg::RenderGraph> before = target->renderGraph();
 
-    vn::graphics::backend::FrameTimeline   timeline;
-    vn::graphics::backend::RetirementQueue queue(3U);
+    vn::graphics::FrameTimeline   timeline;
+    vn::graphics::RetirementQueue queue(3U);
 
     TargetObjects::TargetLayout four = target->layout();
     EXPECT_EQ(four.samples, 1U) << "the layout is what the target was built for";

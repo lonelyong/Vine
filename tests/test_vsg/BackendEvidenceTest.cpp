@@ -54,18 +54,18 @@ using vn::graphics::RenderDiagnostic;
 using vn::graphics::RenderTarget;
 using vn::graphics::ReportOnce;
 using vn::graphics::Viewport;
-using vn::graphics::backend::AllocationGate;
-using vn::graphics::backend::ClearValues;
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameCompiler;
-using vn::graphics::backend::FrameRecorder;
-using vn::graphics::backend::FrameToken;
-using vn::graphics::backend::Observe;
-using vn::graphics::backend::Phase;
-using vn::graphics::backend::PhaseTable;
-using vn::graphics::backend::PixelProbe;
-using vn::graphics::backend::Rgba8;
-using vn::graphics::backend::TargetShape;
+using vn::backend_vsg::core::AllocationGate;
+using vn::backend_vsg::core::ClearValues;
+using vn::backend_vsg::core::FrameArena;
+using vn::backend_vsg::core::FrameCompiler;
+using vn::backend_vsg::core::FrameRecorder;
+using vn::graphics::FrameToken;
+using vn::backend_vsg::core::Observe;
+using vn::backend_vsg::core::Phase;
+using vn::backend_vsg::core::PhaseTable;
+using vn::backend_vsg::core::PixelProbe;
+using vn::backend_vsg::core::Rgba8;
+using vn::graphics::TargetShape;
 
 namespace
 {
@@ -496,7 +496,7 @@ TEST(CoreAllocationGateTest, TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPa
     ClearValues policy;
     policy.color             = true;
     const std::uint64_t plan = measure(kCalls, [&]() -> std::uint64_t {
-        const vn::graphics::backend::PassClearPlan built = vn::graphics::backend::planClearValues(shape, policy, true, false);
+        const vn::backend_vsg::core::PassClearPlan built = vn::backend_vsg::core::planClearValues(shape, policy, true, false);
         return built.colors.size();
     });
     EXPECT_LE(plan, 2u * static_cast<std::uint64_t>(kCalls))
@@ -536,18 +536,18 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
     vn::intrusive_ptr<RenderTarget> first(new RenderTarget());
     vn::intrusive_ptr<RenderTarget> second(new RenderTarget());
 
-    vn::graphics::backend::TargetFacts first_facts;
+    vn::backend_vsg::core::TargetFacts first_facts;
     first_facts.target        = first.get();
     first_facts.wanted.width  = 64;
     first_facts.wanted.height = 64;
     first_facts.wanted.shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
     first_facts.current.desc                        = first_facts.wanted;
     first_facts.current.built                       = true;
-    vn::graphics::backend::TargetFacts second_facts = first_facts;
+    vn::backend_vsg::core::TargetFacts second_facts = first_facts;
     second_facts.target                             = second.get();
 
     const std::vector<RenderCommand>                      one_draw{ RenderCommand{} };
-    const std::vector<vn::graphics::backend::TargetFacts> one_target{ first_facts };
+    const std::vector<vn::backend_vsg::core::TargetFacts> one_target{ first_facts };
 
     // One frame, recorded the way the API layer records it: one pass, two content draws into the same target.
     // `swapBuffers()` is the contract's last call of a frame - it closes the books the next `beginFrame()`
@@ -563,8 +563,8 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
         EXPECT_TRUE(recorder.endFrame());
         EXPECT_TRUE(recorder.swapBuffers());
     };
-    const auto compile_frame = [&](const std::vector<vn::graphics::backend::TargetFacts>& facts) {
-        return &compiler.compile(recorder.description(), vn::graphics::backend::FrameFacts{ facts });
+    const auto compile_frame = [&](const std::vector<vn::backend_vsg::core::TargetFacts>& facts) {
+        return &compiler.compile(recorder.description(), vn::backend_vsg::core::FrameFacts{ facts });
     };
 
     // Warm-up: the plan path grows its own storage over the first frames (measured: the second compile
@@ -656,7 +656,7 @@ TEST(CorePhaseTableTest, AFramesPhaseGatesOnTheCountersAndOnTheHeap)
       [&]() { return kept_order(); },
     });
 
-    const vn::graphics::backend::PhaseTable::Report report = table.runAll();
+    const vn::backend_vsg::core::PhaseTable::Report report = table.runAll();
     for (const std::string& line : report.lines) {
         std::cout << line << '\n'; // the evidence line format, printed so a script can freeze it
     }

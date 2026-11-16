@@ -4,7 +4,7 @@
 #include <vector>
 
 #include <vine/graphics/RenderBackend.hpp>
-#include <vine/graphics/backend/Readback.hpp>
+#include <vine/graphics/Readback.hpp>
 #include <vine/backend_vsg/internal/TargetObjects.hpp>
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 

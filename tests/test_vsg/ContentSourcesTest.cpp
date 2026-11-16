@@ -208,9 +208,9 @@ TEST(ContentSourcesTest, AMaterialBecomesItsAbiBlockFieldForField)
 
     EXPECT_EQ(facts.material, identity);
     EXPECT_EQ(facts.material.revision, 9U);
-    EXPECT_EQ(facts.block.size(), sizeof(vn::graphics::VineMaterialBlock));
+    EXPECT_EQ(facts.block.size(), sizeof(vn::backend_vsg::core::VineMaterialBlock));
 
-    vn::graphics::VineMaterialBlock block;
+    vn::backend_vsg::core::VineMaterialBlock block;
     ASSERT_GE(facts.block.size(), sizeof(block));
     std::memcpy(&block, facts.block.data(), sizeof(block));
     EXPECT_FLOAT_EQ(block.base_color[0], 0.1F);
@@ -242,11 +242,11 @@ TEST(ContentSourcesTest, NoMaterialIsTheDefaultMaterialNotAMiss)
     // The entry's identity is null, which is what content without a material looks up - and the bytes are the
     // ABI's own defaults (the existing implementation hands the same block to a drawable that names none).
     EXPECT_TRUE(facts.material.isNull());
-    EXPECT_EQ(facts.block.size(), sizeof(vn::graphics::VineMaterialBlock));
+    EXPECT_EQ(facts.block.size(), sizeof(vn::backend_vsg::core::VineMaterialBlock));
 
-    vn::graphics::VineMaterialBlock block{};
+    vn::backend_vsg::core::VineMaterialBlock block{};
     std::memcpy(&block, facts.block.data(), sizeof(block));
-    const vn::graphics::VineMaterialBlock defaults{};
+    const vn::backend_vsg::core::VineMaterialBlock defaults{};
 
     // The ABI's own comparison - member-wise, on purpose: a field list written out in a backend would be a
     // second copy of the layout. The defaults are the default material's values, so content with no material
@@ -261,7 +261,7 @@ TEST(ContentSourcesTest, NoMaterialIsTheDefaultMaterialNotAMiss)
     std::vector<std::byte> again_storage;
     MaterialFacts          again;
     ASSERT_EQ(buildMaterialFacts(vn::graphics::ContentRef{}, nullptr, again, again_storage), FactMiss::None);
-    vn::graphics::VineMaterialBlock again_block{};
+    vn::backend_vsg::core::VineMaterialBlock again_block{};
     std::memcpy(&again_block, again.block.data(), sizeof(again_block));
     EXPECT_TRUE(again_block == block);
 

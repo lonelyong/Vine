@@ -2,9 +2,9 @@
 
 VN_BACKEND_VK_NS_BEGIN
 
-using vn::graphics::backend::ImageLayout;
-using vn::graphics::backend::LoadOp;
-using vn::graphics::backend::StoreOp;
+using vn::graphics::ImageLayout;
+using vn::graphics::LoadOp;
+using vn::graphics::StoreOp;
 
 ImageState stateOf(const ImageLayout usage) noexcept
 {

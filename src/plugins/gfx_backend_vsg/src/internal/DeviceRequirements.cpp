@@ -1,6 +1,6 @@
 #include <vine/backend_vsg/internal/DeviceRequirements.hpp>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 bool DeviceFacts::has(DeviceFeature feature) const noexcept
 {
@@ -97,4 +97,4 @@ bool satisfiesRequirements(const DeviceFacts& facts) noexcept
     return supportsRequiredVersion(facts.api_version) && missingFeatureCount(facts) == 0 && missingExtensionCount(facts) == 0;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

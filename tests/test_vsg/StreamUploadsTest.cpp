@@ -30,17 +30,17 @@
 
 #include <vine/Buffer.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 #include <vine/backend_vsg/internal/Streams.hpp>
 #include <vine/intrusive_ptr.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
 
-using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::RetirementQueue;
-using vn::graphics::backend::StreamKey;
-using vn::graphics::backend::StreamKind;
+using vn::graphics::FrameTimeline;
+using vn::graphics::RetirementQueue;
+using vn::backend_vsg::core::StreamKey;
+using vn::backend_vsg::core::StreamKind;
 using vn::backend_vsg::ContentDeclarationIndexes;
 using vn::backend_vsg::ContentDeclarations;
 using vn::backend_vsg::ContentFacts;

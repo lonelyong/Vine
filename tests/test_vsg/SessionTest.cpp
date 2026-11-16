@@ -39,20 +39,20 @@
 
 using vn::graphics::Diagnostics;
 using vn::graphics::RenderTarget;
-using vn::graphics::backend::ClearValues;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameCompiler;
-using vn::graphics::backend::FrameFacts;
-using vn::graphics::backend::FrameRecorder;
-using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::FrameToken;
-using vn::graphics::backend::Observe;
-using vn::graphics::backend::RetirementQueue;
-using vn::graphics::backend::Rgba8;
-using vn::graphics::backend::TargetAction;
-using vn::graphics::backend::TargetFacts;
-using vn::graphics::backend::TargetShape;
+using vn::backend_vsg::core::ClearValues;
+using vn::backend_vsg::core::CompiledFrame;
+using vn::backend_vsg::core::FrameArena;
+using vn::backend_vsg::core::FrameCompiler;
+using vn::backend_vsg::core::FrameFacts;
+using vn::backend_vsg::core::FrameRecorder;
+using vn::graphics::FrameTimeline;
+using vn::graphics::FrameToken;
+using vn::backend_vsg::core::Observe;
+using vn::graphics::RetirementQueue;
+using vn::backend_vsg::core::Rgba8;
+using vn::graphics::TargetAction;
+using vn::backend_vsg::core::TargetFacts;
+using vn::graphics::TargetShape;
 using vn::backend_vsg::TargetObjects;
 using vn::backend_vsg::VsgExecutor;
 using vn::backend_vsg::api::WindowSession;
@@ -204,7 +204,7 @@ TEST(SessionTest, EmptyFramesAreCommittedAndAParkedObjectWaitsForTheCompletionEv
 
     // The only thing a healthy session may report is the slot-count note, and only when the learned count
     // differs from the one this code was written against.
-    if (session.slots() == vn::graphics::backend::kAssumedInFlightSlots) {
+    if (session.slots() == vn::backend_vsg::core::kAssumedInFlightSlots) {
         EXPECT_TRUE(diagnostics.clean()) << "learning the expected count is not an event";
     }
     else {
@@ -328,10 +328,10 @@ TEST(SessionTest, AGraphHandedOverWhileASubmissionIsInFlightIsWhatTheNextCommitS
     {
         // The graphs that were SUBMITTED are the ones handed over per frame: a session that kept the first
         // frame's graph (or the one before it) would show the earlier clear here.
-        const vn::graphics::backend::PixelProbe first = first_target->probe();
+        const vn::backend_vsg::core::PixelProbe first = first_target->probe();
         ASSERT_TRUE(first.valid());
         EXPECT_NEAR(first.pixel(4, 4).r, quantise(0.4F), 1) << "the third frame's graph is what ran last for it";
-        const vn::graphics::backend::PixelProbe second = second_target->probe();
+        const vn::backend_vsg::core::PixelProbe second = second_target->probe();
         ASSERT_TRUE(second.valid());
         EXPECT_NEAR(second.pixel(4, 4).r, quantise(0.6F), 1);
     }
@@ -435,7 +435,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
         // lost-frame half below drives frames instead: a frame waits the fence of the slot it enters).
         session.shutdown();
         {
-            const vn::graphics::backend::PixelProbe probe = target->probe();
+            const vn::backend_vsg::core::PixelProbe probe = target->probe();
             ASSERT_TRUE(probe.valid());
             const Rgba8 sampled = probe.pixel(4, 4);
             const Rgba8 expected{ quantise(0.25F), quantise(0.5F), quantise(0.75F), 255U };
@@ -564,7 +564,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     ASSERT_EQ(third->passes.size(), 2U);
     bool offscreen_bootstraps = false;
     bool window_bootstraps    = false;
-    for (const vn::graphics::backend::CompiledPass& pass : third->passes) {
+    for (const vn::backend_vsg::core::CompiledPass& pass : third->passes) {
         if (third->targets[pass.target_index].target == target.get()) {
             offscreen_bootstraps = pass.bootstrap;
         }
@@ -589,7 +589,7 @@ TEST(SessionTest, ADriveThatCommitsThroughTheSessionMarksWhatALostFrameWrote)
     EXPECT_EQ(session.deviceWaits(), 1U) << "the swapchain rebuild a lost frame costs is counted, and it is the only one";
     EXPECT_EQ(diagnostics.total(), failures_before + 1U) << "the lost frame was the one event, and it was reported exactly once";
     {
-        const vn::graphics::backend::PixelProbe probe = target->probe();
+        const vn::backend_vsg::core::PixelProbe probe = target->probe();
         ASSERT_TRUE(probe.valid());
         const Rgba8 sampled = probe.pixel(4, 4);
         const Rgba8 expected{ quantise(0.25F), quantise(0.5F), quantise(0.75F), 255U };

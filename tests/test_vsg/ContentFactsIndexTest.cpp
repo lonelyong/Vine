@@ -30,8 +30,8 @@
 
 #include "TestProgramFacts.hpp"
 
-using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::StreamKind;
+using vn::graphics::DrawKind;
+using vn::backend_vsg::core::StreamKind;
 using vn::backend_vsg::ChannelFacts;
 using vn::backend_vsg::ContentFacts;
 using vn::backend_vsg::findGeometry;
@@ -187,10 +187,10 @@ void buildRows(const Identities& ids, Rows& out)
 
     // MATERIALS: the default (null) entry, the three identities, a REPLACED pair for one identity (two rows,
     // one identity: the first is the answer - see findMaterial) and a malformed block for another.
-    out.addMaterial(vn::graphics::MaterialId{}, 0U, sizeof(vn::graphics::VineMaterialBlock));
-    out.addMaterial(ids.materials[0], 1U, sizeof(vn::graphics::VineMaterialBlock));
-    out.addMaterial(ids.materials[1], 1U, sizeof(vn::graphics::VineMaterialBlock));
-    out.addMaterial(ids.materials[1], 2U, sizeof(vn::graphics::VineMaterialBlock));
+    out.addMaterial(vn::graphics::MaterialId{}, 0U, sizeof(vn::backend_vsg::core::VineMaterialBlock));
+    out.addMaterial(ids.materials[0], 1U, sizeof(vn::backend_vsg::core::VineMaterialBlock));
+    out.addMaterial(ids.materials[1], 1U, sizeof(vn::backend_vsg::core::VineMaterialBlock));
+    out.addMaterial(ids.materials[1], 2U, sizeof(vn::backend_vsg::core::VineMaterialBlock));
     out.addMaterial(ids.materials[2], 1U, 8U); // not the ABI's size: Malformed
 }
 

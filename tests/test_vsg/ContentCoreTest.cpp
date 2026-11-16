@@ -26,12 +26,12 @@
 #include <vine/backend_vsg/internal/MaterialArena.hpp>
 #include <vine/backend_vsg/internal/Streams.hpp>
 
-using vn::graphics::backend::FrameRing;
-using vn::graphics::backend::kAssumedInFlightSlots;
-using vn::graphics::backend::MaterialArena;
-using vn::graphics::backend::perFrameCopies;
-using vn::graphics::backend::StreamKey;
-using vn::graphics::backend::StreamKind;
+using vn::backend_vsg::core::FrameRing;
+using vn::backend_vsg::core::kAssumedInFlightSlots;
+using vn::backend_vsg::core::MaterialArena;
+using vn::backend_vsg::core::perFrameCopies;
+using vn::backend_vsg::core::StreamKey;
+using vn::backend_vsg::core::StreamKind;
 
 namespace
 {

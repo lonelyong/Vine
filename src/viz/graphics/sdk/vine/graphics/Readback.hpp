@@ -8,7 +8,6 @@
 #include <vector>
 
 #include <vine/graphics/RenderTarget.hpp>
-#include <vine/graphics/backend/BackendHalfGuard.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
 /**
@@ -47,7 +46,7 @@
  *   pixel-level thing here is the FORMAT table, because "how many bytes is one texel" and "may this
  *   format be read at all" are the same fact that decides servability.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /** @brief Which attachment of a target a readback is about. */
 enum class ReadbackKind : std::uint8_t
@@ -85,7 +84,7 @@ struct ReadbackState {
 };
 
 /** @brief The table's answer: whether the readback is servable, and why not when it is not. */
-struct ReadbackResult {
+struct ReadbackAnswer {
     bool            ok{ false };                      // True when the request can be served.
     ReadbackRefusal refusal{ ReadbackRefusal::None }; // The category; None exactly when ok.
 };
@@ -105,7 +104,7 @@ struct VN_GRAPHICS_API ReadbackFormat {
  * @param request What is asked for.
  * @return Whether it is servable, and the refusal category when it is not.
  */
-[[nodiscard]] VN_GRAPHICS_API ReadbackResult readbackOf(const ReadbackState& state, const ReadbackRequest& request) noexcept;
+[[nodiscard]] VN_GRAPHICS_API ReadbackAnswer readbackOf(const ReadbackState& state, const ReadbackRequest& request) noexcept;
 
 /** @brief Gets a stable, machine-friendly name for @p refusal (for messages and test output).
  *
@@ -152,4 +151,4 @@ struct VN_GRAPHICS_API ReadbackFormat {
  */
 [[nodiscard]] VN_GRAPHICS_API std::vector<float> decodeDepth(vn::graphics::RenderTarget::DepthFormat format, std::span<const std::byte> bytes);
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

@@ -15,8 +15,8 @@
 #include <vine/intrusive_ptr.hpp>
 
 #include <vine/backend_vsg/internal/FrameCompiler.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 #include <vine/backend_vsg/internal/StateRegistry.hpp>
 #include <vine/backend_vsg/internal/ContentDraw.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
@@ -38,16 +38,16 @@ using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
 using vn::graphics::Texture2D;
-using vn::graphics::backend::CompiledCommand;
-using vn::graphics::backend::CompiledDraw;
-using vn::graphics::backend::CompiledPass;
-using vn::graphics::backend::DrawKind;
-using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::PipelineKey;
-using vn::graphics::backend::RenderPassCompatibility;
-using vn::graphics::backend::RetirementQueue;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::VariantPool;
+using vn::backend_vsg::core::CompiledCommand;
+using vn::backend_vsg::core::CompiledDraw;
+using vn::backend_vsg::core::CompiledPass;
+using vn::graphics::DrawKind;
+using vn::graphics::FrameTimeline;
+using vn::graphics::PipelineKey;
+using vn::graphics::RenderPassCompatibility;
+using vn::graphics::RetirementQueue;
+using vn::backend_vsg::core::StateRegistry;
+using vn::backend_vsg::core::VariantPool;
 using vn::graphics::Topology;
 using vn::test::setPrimitiveIndices;
 using vn::backend_vsg::buildGeometryFacts;

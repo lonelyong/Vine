@@ -30,7 +30,7 @@
  *   everything passed. Reusing the existing format is what lets a rewritten backend be compared against the stored
  *   baseline byte for byte.
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_BACKEND_VSG_CORE_NS_BEGIN
 
 /** @brief One phase of the backend's self-test. */
 struct Phase {
@@ -84,4 +84,4 @@ class VN_BACKEND_VSG_API PhaseTable {
     std::vector<Phase> phases_;
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_BACKEND_VSG_CORE_NS_END

@@ -84,20 +84,20 @@ using vn::graphics::ReportOnce;
 using vn::graphics::ShaderProgram;
 using vn::graphics::ShaderStage;
 using vn::graphics::ShaderStageType;
-using vn::graphics::backend::ClearValues;
-using vn::graphics::backend::CompiledFrame;
-using vn::graphics::backend::FrameArena;
-using vn::graphics::backend::FrameCompiler;
-using vn::graphics::backend::FrameFacts;
-using vn::graphics::backend::FrameRecorder;
-using vn::graphics::backend::FrameToken;
-using vn::graphics::backend::Observe;
-using vn::graphics::backend::Rgba8;
-using vn::graphics::backend::StateRegistry;
-using vn::graphics::backend::TargetFacts;
-using vn::graphics::backend::TargetShape;
-using vn::graphics::backend::VariantPool;
-using vn::graphics::backend::VertexLayoutKey;
+using vn::backend_vsg::core::ClearValues;
+using vn::backend_vsg::core::CompiledFrame;
+using vn::backend_vsg::core::FrameArena;
+using vn::backend_vsg::core::FrameCompiler;
+using vn::backend_vsg::core::FrameFacts;
+using vn::backend_vsg::core::FrameRecorder;
+using vn::graphics::FrameToken;
+using vn::backend_vsg::core::Observe;
+using vn::backend_vsg::core::Rgba8;
+using vn::backend_vsg::core::StateRegistry;
+using vn::backend_vsg::core::TargetFacts;
+using vn::graphics::TargetShape;
+using vn::backend_vsg::core::VariantPool;
+using vn::graphics::VertexLayoutKey;
 using vn::test::setPrimitiveIndices;
 using vn::backend_vsg::BlockDescriptors;
 using vn::backend_vsg::BlockStorage;
@@ -332,7 +332,7 @@ TEST(ContentPassTest, TheTablesRecordTheFrameAndASecondFrameReusesWhatDidNotChan
     // 4. The content layer records that pass from the tables.
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   program_facts.program,
                                   geometry_facts.layout,
                                   pipelines.get(),
@@ -539,7 +539,7 @@ TEST(ContentPassTest, AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce)
 
     storage->beginFrame();
     ContentPass::Scope::Entry half{
-        vn::graphics::backend::DrawKind::Content, program_facts.program, geometry_facts.layout, pipelines.get(), &draws
+        vn::graphics::DrawKind::Content, program_facts.program, geometry_facts.layout, pipelines.get(), &draws
     };
     half.variant = program_facts.variant;
     const ContentPass::Scope::Entry halves[]{ half };
@@ -666,8 +666,8 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     ContentDraw   right_draws(*right_pipeline, pool, entry_points);
 
     const ContentPass::Scope::Entry halves[]{
-        { vn::graphics::backend::DrawKind::Content, green_facts.program, left_facts.layout,  left_pipeline.get(),  &left_draws  },
-        { vn::graphics::backend::DrawKind::Content, blue_facts.program,  right_facts.layout, right_pipeline.get(), &right_draws },
+        { vn::graphics::DrawKind::Content, green_facts.program, left_facts.layout,  left_pipeline.get(),  &left_draws  },
+        { vn::graphics::DrawKind::Content, blue_facts.program,  right_facts.layout, right_pipeline.get(), &right_draws },
     };
     const vn::intrusive_ptr<Material> material(new Material());
     material->setBaseColor(vn::Colorf(0.2F, 0.3F, 0.4F, 1.0F));
@@ -730,7 +730,7 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     const CompiledFrame& frame = compiler.compile(recorder.description(), FrameFacts{ target_table });
     ASSERT_EQ(frame.passes.size(), 1U);
     std::size_t recorded_commands = 0;
-    for (const vn::graphics::backend::CompiledDraw& draw : frame.passes[0].draws) {
+    for (const vn::backend_vsg::core::CompiledDraw& draw : frame.passes[0].draws) {
         recorded_commands += draw.commands.size();
     }
     ASSERT_EQ(recorded_commands, 3U);
@@ -754,26 +754,26 @@ TEST(ContentPassTest, AMultiLayoutScopeServesEveryHalfItWasBuiltFor)
     // reports" and "what the frame builds" from drifting apart - a drift is a key the pool holds that no answer
     // names, or the other way round.
     {
-        std::vector<vn::graphics::backend::PipelineKey> answered;
-        for (const vn::graphics::backend::CompiledDraw& draw : frame.passes[0].draws) {
-            for (const vn::graphics::backend::CompiledCommand& command : draw.commands) {
+        std::vector<vn::graphics::PipelineKey> answered;
+        for (const vn::backend_vsg::core::CompiledDraw& draw : frame.passes[0].draws) {
+            for (const vn::backend_vsg::core::CompiledCommand& command : draw.commands) {
                 const vn::backend_vsg::DrawNeeds needs = vn::backend_vsg::drawNeeds(frame.passes[0], command, facts);
                 ASSERT_TRUE(needs.answerable());
-                const vn::graphics::backend::PipelineKey key = needs.keyFor(target->shape().compatibility());
+                const vn::graphics::PipelineKey key = needs.keyFor(target->shape().compatibility());
                 if (std::find(answered.begin(), answered.end(), key) == answered.end()) {
                     answered.push_back(key);
                 }
             }
         }
         ASSERT_EQ(answered.size(), 2U) << "the pass asks for one identity per (program, layout) pair";
-        std::vector<vn::graphics::backend::PipelineKey> built;
+        std::vector<vn::graphics::PipelineKey> built;
         for (std::uint64_t id = 1U; built.size() < pool.variants(); ++id) {
-            if (const vn::graphics::backend::PipelineKey* key = pool.keyOf(id)) {
+            if (const vn::graphics::PipelineKey* key = pool.keyOf(id)) {
                 built.push_back(*key);
             }
         }
         ASSERT_EQ(built.size(), answered.size());
-        for (const vn::graphics::backend::PipelineKey& key : answered) {
+        for (const vn::graphics::PipelineKey& key : answered) {
             EXPECT_NE(std::find(built.begin(), built.end(), key), built.end()) << "the frame built the identity the answer named";
         }
     }
@@ -1003,7 +1003,7 @@ TEST(ContentPassTest, ASecondPassLoadsWhatTheFirstWroteAndBothDrawThroughOneVari
     // The content layer records each pass with its OWN registry (the second pass binds for itself).
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content, program_facts.program, left_facts.layout, pipelines.get(), &draws }
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content, program_facts.program, left_facts.layout, pipelines.get(), &draws }
     };
 
     ContentPass::Scope first_scope;
@@ -1210,7 +1210,7 @@ TEST(ContentPassTest, TheBlocksAreReadWhereverTheProgramDeclaresThem)
 
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   program_facts.program,
                                   geometry_facts.layout,
                                   pipelines.get(),
@@ -1401,7 +1401,7 @@ TEST(ContentPassTest, TheDeclaredPushCarriesTheCameraMatricesTheVertexStageReads
 
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   program_facts.program,
                                   geometry_facts.layout,
                                   pipelines.get(),
@@ -1631,7 +1631,7 @@ TEST(ContentPassTest, ATexturedMaterialSamplesTheTextureTheCacheUploaded)
     // with the textured variant of the program (see api/ProgramVariant - a pass only draws a command
     // through a half whose variant is the one its material and geometry ask for).
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   program_facts.program,
                                   geometry_facts.layout,
                                   pipelines.get(),
@@ -1879,7 +1879,7 @@ TEST(ContentPassTest, ACubeTextureIsSampledByTheDirectionTheFragmentComputes)
     // with the textured variant of the program (see api/ProgramVariant - a pass only draws a command
     // through a half whose variant is the one its material and geometry ask for).
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   program_facts.program,
                                   geometry_facts.layout,
                                   pipelines.get(),
@@ -2129,9 +2129,9 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     storage->beginFrame();
     BlockDescriptors* first_sets[]  = { first_declared.get() };
     BlockDescriptors* second_sets[] = { second_declared.get() };
-    const auto        recordPass    = [&](const vn::graphics::backend::CompiledPass&            pass,
+    const auto        recordPass    = [&](const vn::backend_vsg::core::CompiledPass&            pass,
                                           std::span<const ContentPass::Scope::Entry>            halves,
-                                          const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                          const vn::graphics::RenderPassCompatibility& compatibility,
                                           std::span<BlockDescriptors*>                          sets,
                                           StateRegistry&                                        registry,
                                           ContentPass::Scope&                                   scope) {
@@ -2151,7 +2151,7 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
     // Both halves serve the textured variant: the material carries a texture, and that is the variant
     // (see api/ProgramVariant) this drawable is drawn with.
     const ContentPass::Scope::Entry first_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   program_facts.program,
                                   geometry_facts.layout,
                                   pipelines.get(),
@@ -2159,7 +2159,7 @@ TEST(ContentPassTest, ARefilledTextureIsUploadedAgainForTheNextDraw)
                                   textured_variant }
     };
     const ContentPass::Scope::Entry second_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   program_facts.program,
                                   geometry_facts.layout,
                                   pipelines.get(),
@@ -2433,13 +2433,13 @@ TEST(ContentPassTest, TwoVariantsOfOneProgramAreDrawnInOnePass)
     // ONE scope holds BOTH halves - the same program, revision and layout, two variants. The textured half
     // is registered FIRST so that a pass which ignored the variant would use it for both draws.
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   textured_facts.program,
                                   geometry_facts.layout,
                                   textured_layer.get(),
                                   &textured_draws,
                                   textured_variant },
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   plain_facts.program,
                                   geometry_facts.layout,
                                   plain_layer.get(),
@@ -2676,7 +2676,7 @@ TEST(ContentPassTest, ADeclaredSetCarriesTheMaterialBlockAndItsMap)
 
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   program_facts.program,
                                   geometry_facts.layout,
                                   pipelines.get(),
@@ -2888,7 +2888,7 @@ TEST(ContentPassTest, AMaterialWithoutAMapSamplesWhite)
 
     storage->beginFrame();
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   program_facts.program,
                                   geometry_facts.layout,
                                   pipelines.get(),
@@ -3225,7 +3225,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     ASSERT_NE(unshadowed_layer, nullptr);
     ContentDraw                     unshadowed_draws(*unshadowed_layer, pool, entry_points);
     const ContentPass::Scope::Entry shadow_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   shadow_facts.program,
                                   geometry_facts.layout,
                                   shadow_layer.get(),
@@ -3235,7 +3235,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     // survive the recorder, which the frame path builds per frame.
     ReportOnce                      plain_shadow_episode;
     const ContentPass::Scope::Entry unshadowed_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   unshadowed_facts.program,
                                   geometry_facts.layout,
                                   unshadowed_layer.get(),
@@ -3249,9 +3249,9 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
     // One scope per pass, and each carries the half ITS command names: the two programs declare different
     // sets (the shadowed one names the map), so a scope that offered both to one pass would serve the wrong
     // set's descriptors to whichever half the lookup did not pick.
-    const auto recordPass = [&](const vn::graphics::backend::CompiledPass&            pass,
+    const auto recordPass = [&](const vn::backend_vsg::core::CompiledPass&            pass,
                                 std::span<const ContentPass::Scope::Entry>            halves,
-                                const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                const vn::graphics::RenderPassCompatibility& compatibility,
                                 std::span<const InputImages>                          inputs,
                                 std::span<BlockDescriptors* const>                    sets,
                                 StateRegistry&                                        registry) {
@@ -3674,21 +3674,21 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     ContentDraw                     shadowed_draws(*shadowed_layer, pool, entry_points);
     ContentDraw                     unshadowed_draws(*unshadowed_layer, pool, entry_points);
     const ContentPass::Scope::Entry writer_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   writer_facts.program,
                                   geometry_facts.layout,
                                   writer_layer.get(),
                                   &writer_draws }
     };
     const ContentPass::Scope::Entry shadowed_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Screen,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Screen,
                                   shadowed_facts.program,
                                   {},
                                   shadowed_layer.get(),
                                   &shadowed_draws }
     };
     const ContentPass::Scope::Entry unshadowed_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Screen,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Screen,
                                   unshadowed_facts.program,
                                   {},
                                   unshadowed_layer.get(),
@@ -3703,9 +3703,9 @@ TEST(ContentPassTest, TheEnginesScreenLightingShadesTheGbufferThroughTheMapItsTe
     for (std::size_t index = 0; index < frame.passes.size(); ++index) {
         registries.push_back(std::make_unique<StateRegistry>(pool));
     }
-    const auto recordPass = [&](const vn::graphics::backend::CompiledPass&            pass,
+    const auto recordPass = [&](const vn::backend_vsg::core::CompiledPass&            pass,
                                 std::span<const ContentPass::Scope::Entry>            halves,
-                                const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                const vn::graphics::RenderPassCompatibility& compatibility,
                                 std::span<const InputImages>                          inputs,
                                 StateRegistry&                                        registry) {
         ContentPass::Scope scope;
@@ -4005,14 +4005,14 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
     ContentDraw                     writer_draws(*writer_layer, pool, entry_points);
     ContentDraw                     lighting_draws(*lighting_layer, pool, entry_points);
     const ContentPass::Scope::Entry writer_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   writer_facts.program,
                                   geometry_facts.layout,
                                   writer_layer.get(),
                                   &writer_draws }
     };
     const ContentPass::Scope::Entry lighting_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Screen,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Screen,
                                   lighting_facts.program,
                                   {},
                                   lighting_layer.get(),
@@ -4034,9 +4034,9 @@ TEST(ContentPassTest, TheLightingBackgroundIsDecidedByWhetherTheGbufferWasWritte
     for (std::size_t index = 0; index < frame.passes.size(); ++index) {
         registries.push_back(std::make_unique<StateRegistry>(pool));
     }
-    const auto recordPass = [&](const vn::graphics::backend::CompiledPass&            pass,
+    const auto recordPass = [&](const vn::backend_vsg::core::CompiledPass&            pass,
                                 std::span<const ContentPass::Scope::Entry>            halves,
-                                const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                const vn::graphics::RenderPassCompatibility& compatibility,
                                 std::span<const InputImages>                          inputs,
                                 StateRegistry&                                        registry) {
         ContentPass::Scope scope;
@@ -4305,21 +4305,21 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     ContentDraw                     gbuffer_draws(*gbuffer_layer, pool, entry_points);
     ContentDraw                     lighting_draws(*lighting_layer, pool, entry_points);
     const ContentPass::Scope::Entry forward_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   forward_facts.program,
                                   geometry_facts.layout,
                                   forward_layer.get(),
                                   &forward_draws }
     };
     const ContentPass::Scope::Entry gbuffer_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   gbuffer_facts.program,
                                   geometry_facts.layout,
                                   gbuffer_layer.get(),
                                   &gbuffer_draws }
     };
     const ContentPass::Scope::Entry lighting_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Screen,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Screen,
                                   lighting_facts.program,
                                   {},
                                   lighting_layer.get(),
@@ -4366,10 +4366,10 @@ TEST(ContentPassTest, TheMaterialShadesTheSameValueOnBothPaths)
     for (std::size_t index = 0; index < frame.passes.size(); ++index) {
         registries.push_back(std::make_unique<StateRegistry>(pool));
     }
-    const auto recordPass = [&](const vn::graphics::backend::CompiledPass&            pass,
+    const auto recordPass = [&](const vn::backend_vsg::core::CompiledPass&            pass,
                                 std::span<const ContentPass::Scope::Entry>            halves,
                                 std::span<BlockDescriptors* const>                    sets,
-                                const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                const vn::graphics::RenderPassCompatibility& compatibility,
                                 std::span<const InputImages>                          inputs,
                                 StateRegistry&                                        registry) {
         ContentPass::Scope scope;
@@ -4558,7 +4558,7 @@ TEST(ContentPassTest, ManyRefusalsForOneReasonAreOneLinePlusACount)
     const auto                      entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw                     present_draws(*present_layer, pool, entry_points);
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   present_facts.program,
                                   geometry_facts.layout,
                                   present_layer.get(),
@@ -4695,7 +4695,7 @@ TEST(ContentPassTest, MeasureWhatAnEightBitAlbedoDoesToDarkShades)
     const auto                      entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw                     ramp_draws(*ramp_layer, pool, entry_points);
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   ramp_facts.program,
                                   geometry_facts.layout,
                                   ramp_layer.get(),
@@ -4907,7 +4907,7 @@ TEST(ContentPassTest, TheTwoSessionSentencesOutliveTheFrameAsWell)
     const auto                      entry_points = vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk());
     ContentDraw                     draws(*layer, pool, entry_points);
     const ContentPass::Scope::Entry halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content, program_facts.program, geometry_facts.layout, layer.get(), &draws }
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content, program_facts.program, geometry_facts.layout, layer.get(), &draws }
     };
 
     // PHASE 1 - the empty rectangle. The episode is the CALLER's (see Scope::empty_rectangle_episode), which is
@@ -5177,14 +5177,14 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     ContentDraw                     writer_draws(*writer_layer, pool, entry_points);
     ContentDraw                     lighting_draws(*lighting_layer, pool, entry_points);
     const ContentPass::Scope::Entry writer_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   writer_facts.program,
                                   geometry_facts.layout,
                                   writer_layer.get(),
                                   &writer_draws }
     };
     const ContentPass::Scope::Entry lighting_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Screen, lighting_facts.program, {}, lighting_layer.get(), &lighting_draws }
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Screen, lighting_facts.program, {}, lighting_layer.get(), &lighting_draws }
     };
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
     storage->beginFrame();
@@ -5206,9 +5206,9 @@ TEST(ContentPassTest, MeasureWhatAHalfFloatAlbedoWouldBuyEndToEnd)
     for (std::size_t index = 0; index < frame.passes.size(); ++index) {
         registries.push_back(std::make_unique<StateRegistry>(pool));
     }
-    const auto recordPass = [&](const vn::graphics::backend::CompiledPass&            pass,
+    const auto recordPass = [&](const vn::backend_vsg::core::CompiledPass&            pass,
                                 std::span<const ContentPass::Scope::Entry>            halves,
-                                const vn::graphics::backend::RenderPassCompatibility& compatibility,
+                                const vn::graphics::RenderPassCompatibility& compatibility,
                                 std::span<const InputImages>                          inputs,
                                 TargetObjects&                                      target,
                                 StateRegistry&                                        registry) {
@@ -5481,8 +5481,8 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     ASSERT_EQ(frame.passes.size(), 1U);
     ASSERT_EQ(frame.passes[0].draws.size(), 2U);
 
-    vn::graphics::backend::FrameTimeline   timeline;
-    vn::graphics::backend::RetirementQueue retirement(3U);
+    vn::graphics::FrameTimeline   timeline;
+    vn::graphics::RetirementQueue retirement(3U);
     const ContentFacts&                    facts = store.tablesFor(frame, timeline);
     ASSERT_EQ(store.programEntries(), 2U) << "one program, two texts: the store built both variants";
     ASSERT_EQ(store.builds(), 5U) << "the geometry, the two materials and the two variants";
@@ -5707,8 +5707,8 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
     ASSERT_EQ(frame.passes.size(), 1U);
     ASSERT_EQ(frame.passes[0].draws.size(), 2U);
 
-    vn::graphics::backend::FrameTimeline   timeline;
-    vn::graphics::backend::RetirementQueue retirement(3U);
+    vn::graphics::FrameTimeline   timeline;
+    vn::graphics::RetirementQueue retirement(3U);
     const ContentFacts&                    facts = store.tablesFor(frame, timeline);
 
     VariantPool   pool;
@@ -5934,8 +5934,8 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
     ASSERT_EQ(frame.passes.size(), 1U);
     ASSERT_EQ(frame.passes[0].draws.size(), 2U);
 
-    vn::graphics::backend::FrameTimeline   timeline;
-    vn::graphics::backend::RetirementQueue retirement(3U);
+    vn::graphics::FrameTimeline   timeline;
+    vn::graphics::RetirementQueue retirement(3U);
     const ContentFacts&                    facts = store.tablesFor(frame, timeline);
 
     VariantPool   pool;
@@ -6160,8 +6160,8 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
     // An assembly over the pieces that outlive the frame.
     VariantPool                            pool;
     vn::backend_vsg::ContentAssembly               assembly(store, created.device, pool, *storage, *images, diagnostics);
-    vn::graphics::backend::FrameTimeline   timeline;
-    vn::graphics::backend::RetirementQueue retirement(3U);
+    vn::graphics::FrameTimeline   timeline;
+    vn::graphics::RetirementQueue retirement(3U);
 
     // Recording before the frame is opened is a caller bug: an empty node and false, with nothing reported.
     ::vsg::ref_ptr<::vsg::Node> early;
@@ -6228,7 +6228,7 @@ TEST(ContentPassTest, AFrameIsAssembledAndRecordedInTwoCalls)
     ASSERT_GT(streams, 0U) << "the two frames bound the geometry's channels and its index stream";
 
     for (std::uint64_t step = 0U; step < 100U; ++step) {
-        const vn::graphics::backend::FrameToken token = timeline.begin();
+        const vn::graphics::FrameToken token = timeline.begin();
         timeline.submitted(token);
         (void)assembly.beginFrame(frame, timeline, retirement); // names nothing: no pass is recorded
     }
@@ -6422,8 +6422,8 @@ TEST(ContentPassTest, TheEngineSkyProgramDrawsTheSkyBoxsOwnCubeMap)
     ASSERT_NE(images, nullptr);
     VariantPool                            pool;
     vn::backend_vsg::ContentAssembly               assembly(store, created.device, pool, *storage, *images, diagnostics);
-    vn::graphics::backend::FrameTimeline   timeline;
-    vn::graphics::backend::RetirementQueue retirement(3U);
+    vn::graphics::FrameTimeline   timeline;
+    vn::graphics::RetirementQueue retirement(3U);
 
     (void)assembly.beginFrame(frame, timeline, retirement);
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
@@ -6633,8 +6633,8 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     ASSERT_NE(images, nullptr);
     VariantPool                            pool;
     vn::backend_vsg::ContentAssembly               assembly(store, created.device, pool, *storage, *images, diagnostics);
-    vn::graphics::backend::FrameTimeline   timeline;
-    vn::graphics::backend::RetirementQueue retirement(3U);
+    vn::graphics::FrameTimeline   timeline;
+    vn::graphics::RetirementQueue retirement(3U);
 
     (void)assembly.beginFrame(frame, timeline, retirement);
     const std::vector<std::byte> view_block(288U, std::byte{ 0 });
@@ -6698,7 +6698,7 @@ TEST(ContentPassTest, AnUnindexedPointCloudDrawsThroughThePointsPipeline)
     // The entry names NO topology: the default (Triangles) is what an entry written before the field existed
     // means, and it is the class this layer was built for.
     const ContentPass::Scope::Entry flat_halves[]{
-        ContentPass::Scope::Entry{ vn::graphics::backend::DrawKind::Content,
+        ContentPass::Scope::Entry{ vn::graphics::DrawKind::Content,
                                   live_program.program,
                                   live_geometry.entry->layout,
                                   flat.get(),

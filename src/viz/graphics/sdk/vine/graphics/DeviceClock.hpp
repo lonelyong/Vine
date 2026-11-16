@@ -4,8 +4,7 @@
 #include <cstdint>
 #include <vector>
 
-#include <vine/graphics/backend/BackendHalfGuard.hpp>
-#include <vine/graphics/backend/FrameTimeline.hpp>
+#include <vine/graphics/FrameTimeline.hpp>
 #include <vine/graphics/graphics_global.hpp>
 
 /**
@@ -37,7 +36,7 @@
  *
  * NOT thread-safe: the device is driven from one thread (see RenderDevice's threading note).
  */
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 /**
  * @brief The identity of ONE frame driver on a device: what `DeviceClock` mints and what every id-carrying seam type
@@ -156,4 +155,4 @@ class VN_GRAPHICS_API DeviceClock {
     std::uint64_t       completed_{ 0 }; // The device watermark (see completedFrame).
 };
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END

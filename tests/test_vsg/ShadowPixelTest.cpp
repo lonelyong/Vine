@@ -77,7 +77,7 @@ void addQuad(Group* root, const vn::intrusive_ptr<Geometry>& geometry)
 }
 
 /// @brief 把这张图打印成粗粒度的 ASCII 亮度图（只在失败时看，不做断言）。
-void printAscii(const vn::graphics::backend::PixelProbe& probe)
+void printAscii(const vn::backend_vsg::core::PixelProbe& probe)
 {
     const int side = probe.width();
     for (int y = 0; y < side; y += 2) {
@@ -92,13 +92,13 @@ void printAscii(const vn::graphics::backend::PixelProbe& probe)
 }
 
 /// @brief 一辆 [0,1] 的照度：像素三通道的平均。
-int brightnessOf(const vn::graphics::backend::Rgba8& pixel)
+int brightnessOf(const vn::backend_vsg::core::Rgba8& pixel)
 {
     return (static_cast<int>(pixel.r) + static_cast<int>(pixel.g) + static_cast<int>(pixel.b)) / 3;
 }
 
 /// @brief 世界 (x, y, 0) 在这张正交画面里的像素（相机是 [-1,1]^2、y 朝上，读回的行 0 是屏幕顶部）。
-vn::graphics::backend::Rgba8 worldPixel(const vn::graphics::backend::PixelProbe& probe, double x, double y)
+vn::backend_vsg::core::Rgba8 worldPixel(const vn::backend_vsg::core::PixelProbe& probe, double x, double y)
 {
     const int side = probe.width();
     const int col  = static_cast<int>((x + 1.0) * 0.5 * static_cast<double>(side));
@@ -136,7 +136,7 @@ vn::intrusive_ptr<Scene> buildCastingScene()
  * 亮区取挡板 -x 一侧的远处地面；影子区取 +x 一侧：挡板高 0.5、光的方向是 (0.5, 0, -0.866)，所以影子沿 +x
  * 偏移 0.5 * 0.5 / 0.866 ≈ 0.29，挡板的影子覆盖 x ∈ [0.04, 0.54]，取 x = 0.40。
  */
-void expectTheShadowFalls(const vn::graphics::backend::PixelProbe& probe)
+void expectTheShadowFalls(const vn::backend_vsg::core::PixelProbe& probe)
 {
     ASSERT_TRUE(probe.valid()) << "这一帧必须读得回来";
     const int lit      = brightnessOf(worldPixel(probe, -0.70, 0.0));
@@ -176,7 +176,7 @@ TEST(ShadowPixelTest, ACastingSunDarkensTheGroundWhereItsShadowFalls)
     }
     ASSERT_TRUE(has_shadow_pass) << "一盏 setCastShadow(true) 的方向灯必须让 Deferred 预设建出 shadow pass";
 
-    const vn::graphics::backend::PixelProbe read_back = fixture.read();
+    const vn::backend_vsg::core::PixelProbe read_back = fixture.read();
     printAscii(read_back);
     expectTheShadowFalls(read_back);
 }
@@ -213,7 +213,7 @@ TEST(ShadowPixelTest, TheSameShadowFallsWhenTheFrameCompositesAnOverlay)
     picture->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
     picture->setShouldClearDepth(true);
 
-    const vn::graphics::backend::PixelProbe read_back = fixture.read();
+    const vn::backend_vsg::core::PixelProbe read_back = fixture.read();
     expectTheShadowFalls(read_back);
 }
 
@@ -244,7 +244,7 @@ TEST(ShadowPixelTest, TheSameShadowFallsOnTheForwardPath)
     picture->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
     picture->setShouldClearDepth(true);
 
-    const vn::graphics::backend::PixelProbe read_back = fixture.read();
+    const vn::backend_vsg::core::PixelProbe read_back = fixture.read();
     printAscii(read_back);
     expectTheShadowFalls(read_back);
 }

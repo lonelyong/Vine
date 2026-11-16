@@ -3,7 +3,7 @@
 #include <vine/graphics/StateNode.hpp>
 #include <vine/backend_vsg/support/RenderStateMapper.hpp>
 
-using namespace vn::graphics;
+using namespace vn::backend_vsg::core;
 using vn::backend_vsg::makeRenderStateObjects;
 using vn::backend_vsg::RenderStateObjects;
 

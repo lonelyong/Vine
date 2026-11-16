@@ -57,7 +57,7 @@
 namespace
 {
 
-using vn::graphics::backend::AllocationGate;
+using vn::backend_vsg::core::AllocationGate;
 
 /// @brief Allocates @p bytes with an alignment the allocation functions must honour.
 ///

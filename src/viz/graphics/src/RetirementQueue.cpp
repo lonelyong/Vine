@@ -1,8 +1,8 @@
-#include <vine/graphics/backend/RetirementQueue.hpp>
+#include <vine/graphics/RetirementQueue.hpp>
 
 #include <utility>
 
-VN_GRAPHICSBACKEND_NS_BEGIN
+VN_GRAPHICS_NS_BEGIN
 
 RetirementQueue::RetirementQueue(std::uint32_t slots)
   : slots_(slots)
@@ -97,4 +97,4 @@ void RetirementQueue::noteDeviceWait() noexcept
     ++device_waits_;
 }
 
-VN_GRAPHICSBACKEND_NS_END
+VN_GRAPHICS_NS_END
