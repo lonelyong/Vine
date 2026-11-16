@@ -111,6 +111,7 @@ vn::graphics::ReadbackResult readbackResultOf(HostReadbackRefusal refusal) noexc
     case HostReadbackRefusal::UnreadableFormat:
     case HostReadbackRefusal::BorrowedDepth:
     case HostReadbackRefusal::NoDevice: return vn::graphics::ReadbackResult::Unsupported;
+    case HostReadbackRefusal::InsideFrame: return vn::graphics::ReadbackResult::Failed;
     case HostReadbackRefusal::TransferFailed: return vn::graphics::ReadbackResult::Failed;
     }
     return vn::graphics::ReadbackResult::Failed; // an unmapped case is a failure to look at, never "Ok"
@@ -139,6 +140,10 @@ vn::String readbackRefusalMessage(HostReadbackRefusal refusal, const char* what)
     case HostReadbackRefusal::NoDevice:
         return vn::String::fromUtf8(entry + ": there is no device to copy with, and no frame's copy could serve"
                                             "the request");
+    case HostReadbackRefusal::InsideFrame:
+        return vn::String::fromUtf8(entry + ": the call came from inside a frame body (a diagnostics sink or a hook) -"
+                                            "a readback waits for the device's frames, so it would wait for the frame "
+                                            "that is calling it; call it between frames");
     case HostReadbackRefusal::TransferFailed: return vn::String::fromUtf8(entry + ": the copy-back buffer does not hold a readable picture");
     }
     return vn::String();

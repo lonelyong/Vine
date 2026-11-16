@@ -1432,3 +1432,31 @@
   一例（recorder → compiler → 字节）。
 - **阴影块的例外**（写进 §3.3）：输入 `ShadowFacts` 在后端半（`backend/FrameCompiler.hpp`，D1 不开放），
   两个后端各自打包；但槽位推导必须调用 `packedSlotOf`。
+
+## 2026-11-16 —— vsg S8c-1：帧体共享设备，设备内容进一把内容锁（T48）
+
+- **换了什么闸**：`backend::FrameGate`（一帧一次）在 vsg 的位置换成了 `internal/DeviceGate`（新单元）：
+  帧体取 **SHARED**、宿主动词取 **EXCLUSIVE**，线程本地深度把"从帧体内回调"变成**空租约 + 拒绝**
+  （读回 `InsideFrame` → `ReadbackResult::Failed`；内容动词 false/不动 + `vsg.device.reentry`），从不自等。
+  诊断路由与 episode 锁必须**递归**（sink 会回调）。
+- **帧状态归驱动**：`VsgExecutor::FrameDrive`（scratch / driving / uploads_before / last_uploads）取代
+  `Data::{driving, scratch, driving_executor, uploads_before}`；`presentWindow` 用**线程本地在飞帧**
+  （`FrameInFlight`）取回驱动者——窗口 `present()` 没有帧参数。`driving` 在帧尾**不清**（测试缝
+  `BackendContentAccess::windowTarget` 与诊断读"最后一帧的窗口"），只在 shutdown 清。
+- **帧首快照**：`openFrameHead` 一次内容锁：`passes.adopt`→`FrameScratch::pass_ids`、`adoptHostTarget`、
+  `targets.observe`、`store.track`（把 `collectContentDraw/collectScreenDraw` 的跟踪搬走）、
+  `collectTargetFacts`→`scratch.facts`、staging 清扫、`growBlockStorageIfNeeded`、上传基线。
+  收集/编译（`collectFrame`/`closeFrameBooks`）只读 scratch ⇒ 计划编译器的报告到达 sink 时**不持锁**
+  （重叠证据就抓在这里）。**内容相**：`commitFrameThrough` 一次内容锁做 applyTargetPlans/材质 arena/
+  `recordContent`/`executor.record`/sweep/commit，并在每个出口写 `last_uploads` + `last_counters`。
+- **每会话帧主张**：`WindowSlot::frame` / `Data::offscreen_frame` 两把 mutex，帧体持到结束。同窗口/同离屏会话
+  的两帧**等待**（离屏两会话并发出图是受支持形态，不能 refuse）；不同窗口互不等待。
+- **计数器归会话**：`SessionOptions.observe` 不再借 `d->observe`（recorder 开帧会重置计数器，共享会被覆盖）；
+  `frameReport().counters = Data::last_counters`（最后结束那帧的副本），retention 仍设备级。
+- **踩到的真竞态**：两驱动者并发**首次**跑离屏帧时 `ensureOffscreenSession` 的无锁惰性创建让输家覆盖半建 viewer
+  （段错误，测试套件里不定期出现）——创建必须在内容锁下。
+- **仍待 S8c-2**：记录路径仍读设备表（halves/sets/uploads/images/材质槽）⇒ `C3` 对 vsg 未成立；形状 = 帧首把
+  per-draw 需要解析成值（与 vk `CommandPlan` 同形）。
+- **证据**：`test_vsg` 561/561、对拍 13/13；`ACompilingFrameDoesNotWaitForAnotherDriversFrame`（变异：闸改回独占
+  ⇒ 5 s 超时红）、`TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`、`AReadbackFromInsideAFrameBodyAnswersInsideFrame`；
+  TSan（vsg 子集）0 报告（521 通过 / 6 预期 skip，抑制仅 lavapipe 290 条）；ASan 新路径 PASS。

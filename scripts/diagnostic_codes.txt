@@ -78,9 +78,10 @@ engine.pass.output_image_mismatch     — a pass promises one image of a target 
 engine.pass.output_collision          — two passes claim one image as their output
 
 # --- vsg backend: the session and the content world ---
-vsg.session.frame_reentry     — a frame or warm-up was started from the thread already driving one: refused (FrameGate)
+vsg.session.frame_reentry     — a frame or warm-up was started from the thread already driving one: refused
 vsg.session.not_initialized   — a frame or warm-up arrived with no session that is up: initialize the device first
 vsg.content.no_content_world  — render() was collected while the content world is not up: the draw went nowhere
+vsg.device.reentry            — a host verb that touches the shared content world was called from inside a frame body: refused (it would wait for itself)
 
 # --- vsg backend: windows and targets (see vsg-backend.md) ---
 vsg.window.occupied                   — a window this device already serves was asked for again: one live swapchain per window
@@ -105,6 +106,7 @@ vsg.readback.unknown_attachment — the target has no such attachment
 vsg.readback.unreadable_format  — this backend cannot read that attachment's format
 vsg.readback.borrowed_depth     — the depth belongs to the lender: read the source target instead
 vsg.readback.no_device          — there is no device to copy with, or none that produced the values
+vsg.readback.in_frame           — the call came from inside a frame body: a readback would wait for the frame that is calling it
 vsg.readback.transfer_failed    — the copy was submitted and did not produce a readable picture
 
 # --- vk backend: the session ---

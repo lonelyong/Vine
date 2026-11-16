@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -10,6 +11,7 @@
 #include <vsg/nodes/InstrumentationNode.h>
 
 #include <vine/graphics/Diagnostics.hpp>
+#include <vine/graphics/FrameStats.hpp>
 #include <vine/graphics/ReportOnce.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
 #include <vine/graphics/backend/FrameCompiler.hpp>
@@ -65,6 +67,8 @@ class Session;
 class OffscreenSession;
 
 } // namespace api
+
+class FrameScratch;
 
 /**
  * @brief The content of one pass, as the layer that owns the content world recorded it.
@@ -419,6 +423,46 @@ class VN_BACKEND_VSG_API VsgExecutor {
     /** @brief Gets how many passes this frame it could not record. */
     [[nodiscard]] std::uint64_t skipped() const noexcept;
 
+    /** @brief The spelling of "this frame belongs to no window" (see @ref FrameDrive::driving). */
+    static constexpr std::size_t kNoWindow = static_cast<std::size_t>(-1);
+
+    /** @brief The layers' cumulative upload counters, as one block: the frame's own numbers are a difference. */
+    struct UploadCounters {
+        std::uint64_t streams{ 0 };
+        std::uint64_t stream_bytes{ 0 };
+        std::uint64_t stream_releases{ 0 };
+        std::uint64_t textures{ 0 };
+        std::uint64_t texture_bytes{ 0 };
+        std::uint64_t texture_releases{ 0 };
+    };
+
+    /** @brief WHAT ONE FRAME OF THIS DRIVER OWNS, set when the frame opens and cleared when it ends.
+     *
+     * @details
+     * - THESE ARE THE FRAME'S STATE, NOT THE DEVICE'S (`G1`): which session scratch the frame collected into,
+     *   which window it drives, and the upload baseline / delta the frame's answer quotes. Two drivers' frames may
+     *   run at the same time (the device gate's shared side), so a single device-wide copy would let one frame
+     *   overwrite another's plan or hand a frame its neighbour's numbers (`.ai/design/graphics-sessions.md` S8c).
+     * - THE VALUES ARE THE SAME ONES THE DEVICE USED TO KEEP: the runner assigns them at the frame head and its
+     *   scope guard clears them on every exit, so a later verb cannot find a stale plan.
+     */
+    struct FrameDrive {
+        /// The SESSION scratch this frame collects into (the driving session owns the object).
+        FrameScratch* scratch{ nullptr };
+        /// The window index the frame drives, or @ref kNoWindow for the off-screen form.
+        std::size_t driving{ kNoWindow };
+        /// The upload counters as the frame found them (the delta's baseline).
+        UploadCounters uploads_before{};
+        /// What the last EXECUTED frame of this driver uploaded and released (absent until one ran).
+        std::optional<vn::graphics::FrameUploads> last_uploads{};
+    };
+
+    /** @brief Gets this driver's frame state (see @ref FrameDrive). */
+    [[nodiscard]] FrameDrive& drive() noexcept;
+
+    /** @brief Gets this driver's frame state (see @ref FrameDrive). */
+    [[nodiscard]] const FrameDrive& drive() const noexcept;
+
 
   private:
     /** @brief The registered entry for @p identity (null for an identity the registry does not hold). */
@@ -504,6 +548,9 @@ class VN_BACKEND_VSG_API VsgExecutor {
     bool                       window_recorded_{ false }; // Whether this frame's window graph is in the graph.
     std::vector<core::PassId>  recorded_;                 // Passes recorded, in record order.
     std::uint64_t              skipped_{ 0 };             // Passes not recorded this frame.
+    /// THE FRAME THIS DRIVER IS RUNNING (see FrameDrive): the scratch, the window and the upload numbers of one
+    /// frame - the state a device-wide copy would make two drivers overwrite on each other.
+    FrameDrive                 drive_{};
 };
 
 VN_BACKEND_VSG_NS_END

@@ -52,6 +52,7 @@ enum class HostReadbackRefusal : std::uint8_t
     UnreadableFormat,  // This backend cannot read that attachment's format (see core::colorReadbackOf).
     BorrowedDepth,     // The depth is the LENDER's image: the source target is the one to read (SDK's rule).
     NoDevice,          // There is no device to copy with or whose work produced the values.
+    InsideFrame,       // The call came from inside a frame body (a sink or a hook): waiting there is a deadlock.
     TransferFailed,    // The copy was submitted/fenced and did not produce a readable picture.
 };
 

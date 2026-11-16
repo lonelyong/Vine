@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -8,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <vine/Color.hpp>
@@ -5144,5 +5146,366 @@ void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
         << "the remaining driver lost its own default after the other was released";
 
     backend->releaseSession(*second);
+    backend->shutdown();
+}
+
+namespace
+{
+
+/// @brief A content program that writes one constant colour (the view-block vertex stage every content program uses).
+///
+/// @param fragment The fragment stage's source (one `outColor = ...` statement).
+/// @return The program, ready for `setDefaultContentProgram`.
+vn::intrusive_ptr<ShaderProgram> solidColourProgram(const char8_t* fragment)
+{
+    vn::intrusive_ptr<ShaderProgram> program(new ShaderProgram());
+    ShaderStage                      vertex;
+    vertex.type   = ShaderStageType::Vertex;
+    vertex.source = vn::String(reinterpret_cast<const char8_t*>("layout(location = 0) in vec3 position;\n"
+                                                                "layout(set = 0, binding = 0, std140) uniform VineViewBlock {\n"
+                                                                "    mat4 view; mat4 inv_view; mat4 proj; mat4 view_proj; vec4 cam_pos; vec4 frame; } vb;\n"
+                                                                "void main() { gl_Position = vb.view_proj * vec4(position, 1.0); }\n"));
+    ShaderStage output;
+    output.type   = ShaderStageType::Fragment;
+    output.source = vn::String(fragment);
+    program->addStage(vertex);
+    program->addStage(output);
+    return program;
+}
+
+/// @brief A 64x64 RGBA8 target: the destination a held frame draws into, and each driver's own picture.
+vn::intrusive_ptr<RenderTarget> makeTarget64()
+{
+    const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(64, 64);
+    return target;
+}
+
+/// @brief A 32x32 RGBA8 target: the SOURCE a held frame declares an input of (one colour attachment, nothing else).
+vn::intrusive_ptr<RenderTarget> makeTarget32()
+{
+    const vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
+    target->attachColor(RenderTarget::ColorFormat::RGBA8);
+    target->setSize(32, 32);
+    return target;
+}
+
+/// @brief The centre pixel's first three channels of @p target (what a case reads to tell whose picture it sees).
+std::array<std::uint8_t, 3> centreOfTarget(VsgBackend& backend, const RenderTarget& target)
+{
+    std::vector<std::uint8_t>    pixels;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Failed;
+    EXPECT_TRUE(backend.readColorBuffer(&target, 0, pixels, &why)) << "the target is read back";
+    const std::size_t at = (32U * 64U + 32U) * 4U;
+    EXPECT_LT(at + 3U, pixels.size());
+    return std::array<std::uint8_t, 3>{ pixels[at], pixels[at + 1U], pixels[at + 2U] };
+}
+
+/// @brief Waits (bounded) until @p flag is set; false when it never was.
+///
+/// The bounded wait is what turns "the other frame could not run" from a hang into a failing assertion.
+bool waitFor(const std::atomic<bool>& flag, std::chrono::seconds budget)
+{
+    const auto deadline = std::chrono::steady_clock::now() + budget;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (flag.load(std::memory_order_acquire)) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
+}
+
+} // namespace
+
+/**
+ * @brief A frame held INSIDE ITS COMPILATION does not stop another driver's frame (T48 S8c's overlap witness).
+ *
+ * WHY THIS IS THE PROOF THE DEVICE GATE'S REMOVAL NEEDS: the device used to run one frame body at a time. A body now
+ * takes the gate's SHARED side, and the only serial sections left are its SESSION's claim and the device's content
+ * lock - so a frame held where neither is held must let a second driver run its WHOLE frame, head to present. The hold
+ * here is a plan-compilation report (a pass declares a colour attachment its sampled target does not offer): it
+ * reaches the diagnostic sink from the session's own memory, after the frame head released the content lock and
+ * before the content phase takes it - which is exactly the window this case watches. If the device still ran one body
+ * at a time, the second frame could not return until the first was released; the bounded wait turns that into a
+ * failing assertion instead of a hang.
+ */
+TEST(VsgBackendTest, ACompilingFrameDoesNotWaitForAnotherDriversFrame)
+{
+    if (!deviceCaseAvailable()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    int               screen_index = 0;
+    xcb_connection_t* connection   = xcb_connect(nullptr, &screen_index);
+    const TestXConnection connection_owner(connection);
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0) {
+        GTEST_SKIP() << "no X display to create a host window on";
+    }
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    ASSERT_NE(screen, nullptr);
+
+    TestHostWindow                host(connection, screen, 128, 96);
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend());
+    backend->setWindowHandle(host.handle());
+    ASSERT_TRUE(backend->initialize());
+
+    // TWO DRIVERS, EACH WITH ITS OWN DEFAULT PROGRAM: the blocked one shades its program-less triangle red, the other
+    // green - so the picture each produced is its own after the overlap.
+    auto* const second = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createSession());
+    ASSERT_NE(second, nullptr);
+    backend->setDefaultContentProgram(solidColourProgram(u8R"(
+#version 450
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }
+)"));
+    second->setDefaultContentProgram(solidColourProgram(u8R"(
+#version 450
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
+)"));
+
+    const vn::intrusive_ptr<RenderTarget> destination = makeTarget64();
+    const vn::intrusive_ptr<RenderTarget> source      = makeTarget32();
+    backend->setRenderTarget(destination.get());
+    backend->setRenderTarget(source.get());
+
+    TriangleFixture triangle = makeTriangle();
+    triangle.commands.front().program = nullptr; // the driver's default shades it
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const vn::intrusive_ptr<RenderPass>           blocked_pass(new RenderPass());
+    const vn::intrusive_ptr<RenderPass>           other_pass(new RenderPass());
+
+    // THE BLOCKED FRAME: off-screen, into `destination`, declaring attachment 7 of a target that offers ONE - the
+    // declaration the plan compiler reports while the frame is compiling (and everything else about the frame is
+    // perfectly valid, so it completes once released).
+    const auto blocked_frame = [&] {
+        return TestFrame()
+            .pass(blocked_pass.get())
+            .target(destination.get())
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::Disabled)
+            .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::producedImage(source.get(), 7, false) })
+            .content(triangle.commands, camera.get())
+            .value();
+    };
+
+    // THE OTHER DRIVER'S FRAME: the window, its own program-less triangle, its own default program.
+    const vn::raw_ptr<vn::graphics::WindowPresentTarget> window_target = BackendContentAccess::surfaceTarget(*backend, 0);
+    ASSERT_NE(window_target, nullptr);
+    const auto other_frame = TestFrame()
+                                 .pass(other_pass.get())
+                                 .target(nullptr)
+                                 .clear(clear)
+                                 .depth(vn::graphics::DepthMode::Disabled)
+                                 .content(triangle.commands, camera.get())
+                                 .value();
+
+    std::atomic<bool> sink_entered{ false };
+    std::atomic<bool> other_finished{ false };
+    std::atomic<bool> other_finished_inside{ false };
+    backend->setDiagnosticSink([&](const vn::graphics::RenderDiagnostic& diagnostic) {
+        if (diagnostic.category != vn::graphics::DiagnosticCategory::ContentSkipped) {
+            return;
+        }
+        if (sink_entered.exchange(true)) {
+            return; // only the compiling frame's own report blocks
+        }
+        // WAIT, BOUNDED, FOR THE OTHER DRIVER'S FRAME. Five seconds is orders of magnitude more than a frame takes; a
+        // serialised device would spend all of it here and fail the assertion below. THE WITNESS IS SET HERE, while
+        // this frame is still inside its body: "the other frame finished DURING this one", not "at some point".
+        if (waitFor(other_finished, std::chrono::seconds(5))) {
+            other_finished_inside.store(true, std::memory_order_relaxed);
+        }
+    });
+
+    std::atomic<int> blocked_outcome{ -1 };
+    std::thread      blocked([&] {
+        blocked_outcome.store(static_cast<int>(backend->executeFrame(blocked_frame(), nullptr)), std::memory_order_relaxed);
+    });
+
+    ASSERT_TRUE(waitFor(sink_entered, std::chrono::seconds(5))) << "the compiling frame never reached its report";
+
+    std::atomic<int> other_outcome{ -1 };
+    std::thread      other([&] {
+        other_outcome.store(static_cast<int>(second->executeFrame(other_frame, window_target)), std::memory_order_relaxed);
+        // RELEASE THE BLOCKED FRAME: the sink records whether this return happened while it was still inside.
+        other_finished.store(true, std::memory_order_release);
+    });
+
+    other.join();
+    blocked.join();
+    backend->setDiagnosticSink({});
+
+    EXPECT_TRUE(other_finished_inside.load()) << "the second driver's frame could only run after the first one ended";
+    EXPECT_EQ(other_outcome.load(), static_cast<int>(vn::graphics::PresentOutcome::Presented))
+        << "the frame that overlapped the compiling one did not reach the window";
+    // AND THE BLOCKED FRAME COMPLETED TOO - its plan was compiled, its content recorded (with the input the compiler
+    // could not resolve, which is reported and skipped), and the off-screen form submits.
+    EXPECT_EQ(blocked_outcome.load(), static_cast<int>(vn::graphics::PresentOutcome::Skipped));
+
+    backend->releaseSession(*second);
+    backend->shutdown();
+}
+
+/**
+ * @brief Two drivers, two threads, two pictures: each frame is shaded by ITS driver's default program.
+ *
+ * The concurrency here is horizontal (the two frames' bodies overlap where they can - collection, compilation) and
+ * vertical (the one session that serves off-screen frames serialises them, so the case is deterministic: no frame is
+ * dropped, no frame sees the other's content). What the picture proves is the per-driver state S8b introduced: two
+ * default programs, two resolves, no overwrite.
+ */
+TEST(VsgBackendTest, TwoDriversOnTwoThreadsEachKeepTheirOwnPicture)
+{
+    if (!deviceCaseAvailable()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    // A windowless device: both frames are off-screen, so the case needs no display.
+    vn::graphics::DeviceDesc desc;
+    desc.presentation = vn::graphics::DevicePresentation::None;
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend(desc));
+    ASSERT_TRUE(backend->initialize());
+
+    auto* const second = dynamic_cast<vn::backend_vsg::VsgDriver*>(backend->createSession());
+    ASSERT_NE(second, nullptr);
+    backend->setDefaultContentProgram(solidColourProgram(u8R"(
+#version 450
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }
+)"));
+    second->setDefaultContentProgram(solidColourProgram(u8R"(
+#version 450
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(0.0, 1.0, 0.0, 1.0); }
+)"));
+
+    const vn::intrusive_ptr<RenderTarget> first_target  = makeTarget64();
+    const vn::intrusive_ptr<RenderTarget> second_target = makeTarget64();
+    backend->setRenderTarget(first_target.get());
+    backend->setRenderTarget(second_target.get());
+
+    TriangleFixture triangle = makeTriangle();
+    triangle.commands.front().program = nullptr;
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const vn::intrusive_ptr<RenderPass>           first_pass(new RenderPass());
+    const vn::intrusive_ptr<RenderPass>           second_pass(new RenderPass());
+
+    const auto frame_into = [&](RenderPass* pass, RenderTarget* target) {
+        return TestFrame()
+            .pass(pass)
+            .target(target)
+            .clear(clear)
+            .depth(vn::graphics::DepthMode::Disabled)
+            .content(triangle.commands, camera.get())
+            .value();
+    };
+
+    const std::size_t waits_before = backend->deviceWaits();
+    constexpr int     kFrames      = 3;
+    std::atomic<int>  refused{ 0 };
+
+    std::thread first([&] {
+        for (int frame = 0; frame < kFrames; ++frame) {
+            if (backend->executeFrame(frame_into(first_pass.get(), first_target.get()), nullptr) == vn::graphics::PresentOutcome::Refused) {
+                ++refused;
+            }
+        }
+    });
+    std::thread other([&] {
+        for (int frame = 0; frame < kFrames; ++frame) {
+            if (second->executeFrame(frame_into(second_pass.get(), second_target.get()), nullptr) == vn::graphics::PresentOutcome::Refused) {
+                ++refused;
+            }
+        }
+    });
+    first.join();
+    other.join();
+
+    EXPECT_EQ(refused.load(), 0) << "two drivers' off-screen frames are queued, never refused";
+    EXPECT_EQ(backend->deviceWaits(), waits_before) << "a frame never stops the device";
+
+    const std::array<std::uint8_t, 3> red   = centreOfTarget(*backend, *first_target);
+    const std::array<std::uint8_t, 3> green = centreOfTarget(*backend, *second_target);
+    EXPECT_TRUE(isColourByte(red[0], 1.0) && isColourByte(red[1], 0.0) && isColourByte(red[2], 0.0))
+        << "the first driver's picture was not shaded by ITS red default";
+    EXPECT_TRUE(isColourByte(green[1], 1.0) && isColourByte(green[0], 0.0) && isColourByte(green[2], 0.0))
+        << "the second driver's picture was not shaded by ITS green default";
+
+    backend->releaseSession(*second);
+    backend->shutdown();
+}
+
+/**
+ * @brief A readback asked for from INSIDE a frame body answers `Failed` with its own sentence, never waits.
+ *
+ * The reason it matters: the readback waits for the device's frames (it stops the device), and a sink or a hook that
+ * asks for one is a frame waiting for itself. The refusal is the vk backend's `InsideFrame` rule, stated here on the
+ * backend that has to answer it from the compiler's own report.
+ */
+TEST(VsgBackendTest, AReadbackFromInsideAFrameBodyAnswersInsideFrame)
+{
+    if (!deviceCaseAvailable()) {
+        GTEST_SKIP() << "no device session that serves off-screen pixels on this machine";
+    }
+
+    vn::graphics::DeviceDesc desc;
+    desc.presentation = vn::graphics::DevicePresentation::None;
+    vn::intrusive_ptr<VsgBackend> backend(new VsgBackend(desc));
+    ASSERT_TRUE(backend->initialize());
+    backend->setDefaultContentProgram(solidColourProgram(u8R"(
+#version 450
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }
+)"));
+
+    const vn::intrusive_ptr<RenderTarget> destination = makeTarget64();
+    const vn::intrusive_ptr<RenderTarget> source      = makeTarget32();
+    backend->setRenderTarget(destination.get());
+    backend->setRenderTarget(source.get());
+
+    TriangleFixture triangle = makeTriangle();
+    triangle.commands.front().program = nullptr;
+    const vn::intrusive_ptr<vn::graphics::Camera> camera = cameraLookingAt(0.0);
+    const vn::graphics::ClearPolicy               clear{ vn::Colorf(0.0F, 0.0F, 1.0F, 1.0F), true };
+    const vn::intrusive_ptr<RenderPass>           pass(new RenderPass());
+
+    std::atomic<int>              depth{ 0 };
+    std::atomic<bool>             answered{ false };
+    bool                          readback_answered = true;
+    vn::graphics::ReadbackResult  why               = vn::graphics::ReadbackResult::Ok;
+    std::vector<std::uint8_t>     pixels;
+    backend->setDiagnosticSink([&](const vn::graphics::RenderDiagnostic& diagnostic) {
+        if (diagnostic.category != vn::graphics::DiagnosticCategory::ContentSkipped) {
+            return;
+        }
+        if (depth.fetch_add(1) != 0) {
+            return; // the refusal's own sentence re-enters this sink: it must not ask again
+        }
+        pixels.clear();
+        readback_answered = backend->readColorBuffer(destination.get(), 0, pixels, &why);
+        answered.store(true, std::memory_order_release);
+    });
+
+    (void)backend->executeFrame(TestFrame()
+                                    .pass(pass.get())
+                                    .target(destination.get())
+                                    .clear(clear)
+                                    .depth(vn::graphics::DepthMode::Disabled)
+                                    .inputs(std::vector<vn::graphics::ImageSource>{ vn::graphics::ImageSource::producedImage(source.get(), 7, false) })
+                                    .content(triangle.commands, camera.get())
+                                    .value(),
+                                nullptr);
+    backend->setDiagnosticSink({});
+
+    ASSERT_TRUE(answered.load()) << "the frame never reached the report the sink answers from";
+    EXPECT_FALSE(readback_answered) << "a readback from inside a frame body must not be served";
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::Failed);
+    EXPECT_TRUE(pixels.empty()) << "a refused read leaves the destination untouched";
+
     backend->shutdown();
 }

@@ -701,6 +701,16 @@ std::uint64_t VsgExecutor::skipped() const noexcept
     return skipped_;
 }
 
+VsgExecutor::FrameDrive& VsgExecutor::drive() noexcept
+{
+    return drive_;
+}
+
+const VsgExecutor::FrameDrive& VsgExecutor::drive() const noexcept
+{
+    return drive_;
+}
+
 OffscreenTarget* VsgExecutor::resolve(const core::CompiledTarget& target) const noexcept
 {
     return registry_.resolve(target.target);

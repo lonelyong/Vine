@@ -91,7 +91,20 @@
   所以"会话在设定之后才起来"不会丢掉默认程序。计划只属于一帧，设备上不存在第二份。
 * **帧状态归驱动者**：`createSession()` 交出 **`VsgDriver`**——它自己拥有一个执行器（本次帧的窗口、已录的 pass、
   测量条目、跳过数）与**它自己的默认内容程序**；目标注册表是设备唯一的一张（`VsgTargetRegistry`），所有驱动者共用。
-  设备自己的驱动者就是聚合本身（`executor()`）；交出去的由设备拥有，`releaseSession` 销毁。
+  设备自己的驱动者就是聚合本身（`executor()`）；交出去的由设备拥有，`releaseSession` 销毁。帧自己的运行状态在
+  `VsgExecutor::FrameDrive`（scratch / 窗口索引 / 上传基线 / 上一帧的读数），帧尾即清；`presentWindow` 经
+  **线程本地的在飞帧**取回本次帧的驱动者（窗口目标的 `present()` 没有帧参数）。
+* **帧体共享设备，设备内容一把锁（S8c-1）**：设备闸是 **`DeviceGate`**（`internal/DeviceGate.hpp`）的两侧——
+  **帧体取共享侧**（两个驱动者的帧体可以同时跑），**宿主动词取独占侧**（initialize / shutdown / 读回 /
+  `frameReport` / 窗口集 / resize）。从帧体线程回调的宿主动词得到**空租约**并回答拒绝
+  （读回 `vsg.readback.in_frame`，内容动词 `vsg.device.reentry`），从不等待自己；诊断路由与 episode 锁是递归的，
+  因为 sink 本身可能回调。一帧的段：**帧首**（`openFrameHead`，一次内容锁：pass 编号 → `FrameScratch::pass_ids`、
+  目标、采样、内容跟踪、目标事实、存储增长）、**收集与计划编译**（只读会话 scratch，不取设备锁）、
+  **内容相**（`commitFrameThrough`，一次内容锁：计划的目标答复、材质 arena、装配录制、清扫、会话提交）、**呈现**。
+  窗口槽与离屏会话各有一把**帧主张**：同一窗口（或离屏会话）的两帧等待彼此（交换链只有一份），不同窗口互不等待。
+  计数器归会话（`SessionOptions::observe` 不再借设备的）：recorder 开帧会重置它们，共享一份会让两个驱动者互相覆盖；
+  `frameReport()` 引用最后结束那一帧的副本。**仍待（S8c-2）**：记录路径零锁——今天录制仍读设备表
+  （halves / sets / uploads / images / 材质槽），所以 `C3` 对 vsg 尚未成立。
 * **帧份额**：绘制调用里点名的对象由内容世界**持一份**（计划/已录制的帧仍然命名它们），回归稳态后
   通过 **compare**（不是时间）判断是否要重新构建行。
 * **替换 = 停靠**：被顶替的行/流/变体/目标进出**退役队列**（窗口 `slots + 1` 帧）；槽数还没学会时

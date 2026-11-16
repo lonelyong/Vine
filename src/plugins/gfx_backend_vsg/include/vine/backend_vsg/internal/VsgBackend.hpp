@@ -71,12 +71,26 @@
  * and a draw before the content world is up. Each says so once per episode (vn::graphics::ReportOnce); a facade that
  * silently dropped them would look like a working backend with a black screen.
  *
- * ONE THREAD, LIKE EVERYTHING ELSE HERE: the engine drives a backend from one thread and never reentrantly
- * (see RenderBackend's class note), so this type keeps no synchronisation.
+ * ONE SESSION IS ONE THREAD'S, AND TWO DRIVERS MAY RUN AT ONCE (`.ai/design/graphics-sessions.md` S8c). The device
+ * gate has two sides (see DeviceGate): a frame body takes it SHARED, so two engines' frames overlap, and a host verb
+ * that reconfigures the device or reads a device-wide answer takes it EXCLUSIVE. What that leaves is TWO serial
+ * sections, each with its own lock:
+ *   * THE SAME WINDOW is driven by one frame at a time (a window owns one swapchain and one session); a second
+ *     frame naming it waits for the first to end.
+ *   * THE DEVICE'S CONTENT is touched by one CONTENT PHASE at a time (the backend's content lock): the frame head
+ *     (passes, targets, content tracking, the tables, the storage's growth) and the phase that assembles, records
+ *     and commits it. The COLLECTION and PLAN COMPILATION in between run on the driver's own scratch and take no
+ *     device lock - that is where two frames genuinely overlap today; making the record walk lock-free too is the
+ *     remaining half of S8c (`S8c-2`), and `C3`'s "record path takes no device lock" is NOT yet true for this
+ *     backend until it lands.
+ * A sink or a hook that calls back into the device from inside a frame gets a REFUSAL, never a wait (the readback
+ * answers `Failed`, a content verb answers false / drops with one report): waiting there would be the thread waiting
+ * for itself.
  */
 VN_BACKEND_VSG_NS_BEGIN
 
 class BlockStorage;
+class FrameScratch;
 
 namespace api
 {
@@ -392,15 +406,38 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
     /** @brief Opens the frame's books: storage, token, acquisition, and the plan's own frame.
      *
      * The first half of what used to be `beginFrame()` (the SDK's frame is one call now - see
-     * RenderFrameExecutor::executeFrame): the per-frame storage is brought up to what this frame needs HERE, between
-     * frames, where no recording is in progress and the previous frame's bytes can be left behind safely, and
-     * then the frame's token is minted and the session's clock advanced - the recorder opens the plan for
-     * the same token, so the description and the session's frame cannot disagree about which frame it is.
+     * RenderFrameExecutor::executeFrame): the frame's token is minted and the session's clock advanced - the recorder
+     * opens the plan for the same token, so the description and the session's frame cannot disagree about which frame
+     * it is. It takes no device lock: the token and the acquisition are the SESSION's.
      *
      * WHICH session opens it is the frame's own answer: the window a target names, or the off-screen session when the
      * frame names none (see executeFrame).
+     *
+     * @param scratch The driving session's collection scratch (the plan lives in it).
+     * @param driving The window index the frame drives, or VsgExecutor::kNoWindow for the off-screen form.
      */
-    void openFrameBooks();
+    void openFrameBooks(FrameScratch& scratch, std::size_t driving);
+
+    /** @brief Resolves, ONCE, everything the frame will read from the DEVICE (the frame's head).
+     *
+     * @details
+     * - WHY A HEAD AT ALL (`G10`): the collection walk that follows compiles a plan and records thousands of draws;
+     *   taking the device's content lock per lookup would pay a mutex per draw. So the device's half of a frame is
+     *   resolved HERE, under ONE acquisition of that lock: every pass' number (`PassRegistry::adopt`, into the
+     *   scratch's `pass_ids`), every host target the passes draw into (adopted and built as far as its description
+     *   allows), every sampled target's facts observed, every content object the drawing calls name tracked into the
+     *   content store, the target-fact table the plan compiles against, the staging sweep, and the block storage's
+     *   growth. The collection and compilation then read the SCRATCH only.
+     * - WHAT IT DOES NOT DO: it opens no session frame and records nothing - a frame whose head ran and whose
+     *   collection then fails simply leaves the tables as they were (a plan nobody commits).
+     *
+     * @param executor The driver whose frame this is (its default program was already handed to the scratch).
+     * @param scratch  The driving session's collection scratch (its tables are filled here).
+     * @param frame    The frame to collect, in execution order.
+     * @param executing Whether this is an EXECUTED frame (an executed frame replaces the device's upload answer; a
+     *                  warm-up leaves it describing the last frame that really ran).
+     */
+    void openFrameHead(VsgExecutor& executor, FrameScratch& scratch, const vn::graphics::FrameDescription& frame, bool executing);
 
     /** @brief Walks @p frame into the collection stage: one pass scope per entry, in the order the value states.
      *
@@ -410,30 +447,37 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      *   scopes, and their drawing calls are collected. `executeFrame` runs it and then records; `prepareFrame` runs
      *   the SAME one and then builds only the value side - so a prepared frame and a recorded frame cannot disagree
      *   about what the frame is (`G1`), which is what makes "prepared" carry over to the next frame.
+     * - IT READS THE SCRATCH'S SNAPSHOT, NOT THE DEVICE: the pass numbers come from `scratch.pass_ids` (filled by
+     *   openFrameHead), so the walk is a pure function of the frame value and the session's own memory. That is the
+     *   property the device gate's shared side needs: two drivers' collections run at once.
      * - It touches no session and no image: opening the frame's books is the caller's step (see openFrameBooks).
      *
-     * @param frame The frame to collect, in execution order.
+     * @param scratch The driving session's collection scratch.
+     * @param frame   The frame to collect, in execution order.
      */
-    void collectFrame(const vn::graphics::FrameDescription& frame);
+    void collectFrame(FrameScratch& scratch, const vn::graphics::FrameDescription& frame);
 
     /** @brief Rebuilds the target-facts table the plan is compiled against (the window row plus every held target).
      *
      * @details
      * - The rows are the same two sources `closeFrameBooks` has always used: the window the frame drives (answered by
      *   the target itself, a const question) and every host target this backend holds, built or not. They are read
-     *   into `d->facts` by `closeFrameBooks` and by `prepareFrame`, which is why the assembly is one function.
+     *   into `scratch.facts` by the frame's HEAD, because the table is a copy of the device's targets - reading it
+     *   while another driver's frame changes those targets is exactly the race the head's lock removes.
+     *
+     * @param scratch The driving session's collection scratch (its facts are replaced).
+     * @param driving The window index the frame drives, or VsgExecutor::kNoWindow for the off-screen form.
      */
-    void collectTargetFacts();
+    void collectTargetFacts(FrameScratch& scratch, std::size_t driving);
 
     /** @brief Closes the frame's books: the plan is closed and compiled against what the frame draws into.
      *
      * The second half of the old `endFrame()`: the collection stage's frame closes and swaps its buffers, and the
-     * plan is compiled against the facts the frame is answered for - the window as the default framebuffer (from
-     * the target itself) plus one row per host target this backend holds, built or not, because the plan has to be
-     * able to say "this one has no objects yet" and because the compiler resolves a pass' declared INPUTS from
-     * that same table (see HostTargets::facts).
+     * plan is compiled against the facts the frame is answered for. Runs on the driving session's scratch and takes
+     * no device lock; the compiler reports through the device's route, so a plan that could not be served is heard
+     * while no device lock is held (which is what lets a test hold a compiling frame and see another one finish).
      */
-    void closeFrameBooks();
+    void closeFrameBooks(FrameScratch& scratch);
 
     /** @brief Records and commits the frame whose books are closed, through the ONE session that owns it.
      *
@@ -450,6 +494,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      * @param window    The window's session that owns the frame, or null when the frame names no window.
      * @param offscreen The off-screen session that owns the frame, or null when the frame belongs to a window
      *                  (exactly one of the two is non-null).
+     * @return What the frame did (see PresentOutcome).
      */
     vn::graphics::PresentOutcome commitFrameThrough(VsgExecutor& executor, api::Session* window, api::OffscreenSession* offscreen);
 
@@ -482,50 +527,61 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      */
     void adoptDefaultProgram(VsgExecutor& executor, vn::intrusive_ptr<const vn::graphics::ShaderProgram> program);
 
-    /** @brief Opens a pass' scope under the pass' own number (see api/PassRegistry). */
-    void openPassScope(vn::raw_ptr<const vn::graphics::RenderPass> pass);
+    /** @brief Opens a pass' scope under the number the frame head resolved (see api/PassRegistry and scratch.pass_ids).
+     *
+     * @param scratch The driving session's collection scratch (the recorder lives in it).
+     * @param pass    The pass identity the value named (null is skipped by the caller).
+     * @param id      The pass number openFrameHead resolved for it (0 never reaches the recorder; the type is
+     *                core::PassId, spelled as uint32_t here so this header needs no recorder include - Qt defines
+     *                `slots` as a macro, and a recorder member of that name would collide in a Qt translation unit).
+     */
+    void openPassScope(FrameScratch& scratch, vn::raw_ptr<const vn::graphics::RenderPass> pass, std::uint32_t id);
 
     /** @brief Closes the pass scope (the recorder drops what no draw consumed). */
-    void closePassScope();
+    void closePassScope(FrameScratch& scratch);
 
     /** @brief Announces the pass' stacking order (see FrameDescription::Pass::order). */
-    void announcePassOrder(int order);
+    void announcePassOrder(FrameScratch& scratch, int order);
 
-    /** @brief Announces the pass' resolved inputs, in declaration order (see FrameDescription::Pass::inputs). */
-    void announcePassInputs(const std::vector<vn::graphics::ImageSource>& inputs);
-
-    /** @brief Announces the target a pass draws into, and reports it when it cannot be built at all.
+    /** @brief Announces the pass' resolved inputs, in declaration order (see FrameDescription::Pass::inputs).
      *
-     * null means the default framebuffer, which the plan spells the same way. A non-null target goes through the
-     * host-target half (held, built as far as its description allows) and, INSIDE a frame where a pass draws into
-     * it, a description that cannot become objects is REPORTED once per episode - a picture drawn where the host
-     * never asked for it is worse than one that did not arrive (see HostTargets).
+     * The targets' facts were already observed by the frame head (see openFrameHead); this is the recorder's own copy.
      */
-    void announceTarget(vn::raw_ptr<vn::graphics::RenderTarget> target);
+    void announcePassInputs(FrameScratch& scratch, const std::vector<vn::graphics::ImageSource>& inputs);
+
+    /** @brief Announces the target a pass draws into, as the recorder's identity for it.
+     *
+     * null means the default framebuffer, which the plan spells the same way. The target itself was HELD and built (as
+     * far as its description allows) by the frame head (see openFrameHead and HostTargets) - the collection walk only
+     * tells the recorder which identity the pass names, so it touches no device table.
+     */
+    void announceTarget(FrameScratch& scratch, vn::raw_ptr<vn::graphics::RenderTarget> target);
 
     /** @brief Announces the pass' sub-rectangle (see PassDraw::viewport). */
-    void announceViewport(const vn::graphics::Viewport& viewport);
+    void announceViewport(FrameScratch& scratch, const vn::graphics::Viewport& viewport);
 
     /** @brief Announces the pass' clear policy, translated into the plan's spelling (see PassDraw::clear). */
-    void announceClear(const vn::graphics::ClearPolicy& policy);
+    void announceClear(FrameScratch& scratch, const vn::graphics::ClearPolicy& policy);
 
     /** @brief Announces the pass' own state for the content it draws (see PassDraw::state). */
-    void announcePassState(const vn::graphics::PassRenderState& state);
+    void announcePassState(FrameScratch& scratch, const vn::graphics::PassRenderState& state);
 
     /** @brief Announces the depth band the pass maps its draws into (see PassDraw::depth_range). */
-    void announceDepthRange(const vn::graphics::DepthRange& range);
+    void announceDepthRange(FrameScratch& scratch, const vn::graphics::DepthRange& range);
 
     /** @brief Announces the lights of one drawing call, as VALUES (see DrawDescription::light_values). */
-    void announceLights(std::span<const vn::graphics::LightValue> lights);
+    void announceLights(FrameScratch& scratch, std::span<const vn::graphics::LightValue> lights);
 
-    /** @brief Collects one content drawing call, and tracks the objects it names (see the file note).
+    /** @brief Collects one content drawing call into the scratch (the objects it names were tracked by the head).
      *
+     * @param scratch          The driving session's collection scratch.
      * @param commands         The pass' collected commands (shared and immutable - never rewritten here).
      * @param camera           The view the draw is projected with (the frame's value, not the authored object).
      * @param program_override The pass' program override, applied to every command when the draw is recorded
      *                         (see PassDraw::program_override), or null for each command's own program.
      */
-    void collectContentDraw(const std::vector<vn::graphics::RenderCommand>& commands,
+    void collectContentDraw(FrameScratch&                                   scratch,
+                            const std::vector<vn::graphics::RenderCommand>& commands,
                             const vn::graphics::CameraSnapshot&             camera,
                             const vn::graphics::ShaderProgramDescriptionPtr& program_override);
 
@@ -554,11 +610,19 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      */
     [[nodiscard]] api::OffscreenSession* ensureOffscreenSession();
 
-    /** @brief Collects one full-screen drawing call whose source is one of the pass' declared inputs. */
-    void collectScreenDraw(vn::graphics::RenderTarget*                    source,
-                           vn::raw_ptr<const vn::graphics::ShaderProgram> program,
+    /** @brief Collects one full-screen drawing call whose source is one of the pass' declared inputs.
+     *
+     * @param scratch             The driving session's collection scratch.
+     * @param source              The target the call reads (its images were resolved by the content phase).
+     * @param program             The program the call shades with (already tracked by the frame head).
+     * @param program_description The program's text as the pass carried it.
+     * @param camera              The view the call is projected with.
+     */
+    void collectScreenDraw(FrameScratch&                                   scratch,
+                           vn::graphics::RenderTarget*                     source,
+                           vn::raw_ptr<const vn::graphics::ShaderProgram>  program,
                            const vn::graphics::ShaderProgramDescriptionPtr& program_description,
-                           const vn::graphics::CameraSnapshot&            camera);
+                           const vn::graphics::CameraSnapshot&             camera);
 
     /** @brief Holds the host's target and builds what its description can make (the half setRenderTarget shares).
      *
@@ -618,6 +682,19 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
 
     /** @brief Reports one unserved entry point, once per episode (see the file note). */
     void reportUnserved(std::size_t slot) noexcept;
+
+    /** @brief Reports (once per episode) a host verb refused because a frame body of THIS thread called it.
+     *
+     * @details
+     * - WHAT IT REPORTS AND WHY IT IS A REFUSAL: a diagnostics sink or a hook that calls a content verb is asking
+     *   the device to change the tables a running frame is reading, from inside that same frame. Answering with the
+     *   change would be a use-after-free of the frame's own plan; waiting would be the thread waiting for itself. So
+     *   the verb answers "nothing happened" and the reason is said once - the same shape the readback's
+     *   `InsideFrame` refusal takes.
+     *
+     * @param verb The entry point's name, as the sentence states it.
+     */
+    void reportReentry(const char* verb) noexcept;
 
     /** @brief Runs this frame's sweep: what the host let go is let go (see the class note and the frame drive).
      *

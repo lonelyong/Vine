@@ -29,13 +29,15 @@
  * - WHAT IT DOES NOT OWN: the device's content world (`ContentAssembly`, `MaterialImages`, `ContentStore`, the
  *   targets, the variant pool, the block storage) and its clock / park queue. Those are the pool every driver draws
  *   from; this object only carries the frame's own work.
- * - IT BORROWS `Diagnostics` and `Observe` from the device: the route and the counters outlive every session, and the
- *   recorder and compiler report and count through them (see `api::SessionOptions::observe`).
- * - ONE SCRATCH IS USED BY ONE FRAME AT A TIME: the backend's frame gate serialises frame bodies today (see
- *   `VsgBackend::executeFrame`). The type is prepared for one scratch per driver, which is what removing that gate
- *   needs (backlog `T48`, S8).
+ * - IT BORROWS `Diagnostics` and `Observe` from the device: the route outlives every session, and the counters are
+ *   THE FRAME'S OWN - a recorder resets them when a frame opens (see FrameRecorder::beginFrame), so two drivers
+ *   counting into one object would overwrite each other's answer. Every session therefore owns its instrumentation
+ *   (the device's report quotes the last frame that ended, see VsgBackend::commitFrameThrough).
+ * - ONE SCRATCH IS USED BY ONE FRAME AT A TIME, because it belongs to ONE session and a session is driven by one
+ *   frame at a time (the window's claim, see VsgBackend::executeFrameFor). Two DRIVERS' frames run at once - that is
+ *   what the device gate's shared side and the device's content lock make possible (S8c-1).
  *
- * @warning Not thread-safe: a scratch is one frame driver's, and the frame gate is what serialises its use today.
+ * @warning Not thread-safe: a scratch is one frame driver's, and the session's own claim is what serialises its use.
  */
 VN_BACKEND_VSG_NS_BEGIN
 
@@ -49,7 +51,8 @@ class FrameScratch final
      * @param observe     The device's instrumentation: frame counters and retention, the same lifetime.
      */
     FrameScratch(vn::graphics::Diagnostics& diagnostics, core::Observe& observe) noexcept
-      : recorder(arena, diagnostics, observe)
+      : observe(observe)
+      , recorder(arena, diagnostics, observe)
       , compiler(arena, diagnostics, observe)
     {
     }
@@ -60,6 +63,8 @@ class FrameScratch final
     FrameScratch& operator=(FrameScratch&&)      = delete;
 
   public:
+    /// The session's instrumentation (the recorder resets its counters when a frame opens).
+    core::Observe&      observe;
     /// The frame's own memory: the description the recorder builds and the plan the compiler derives live here.
     core::FrameArena    arena{ 64 * 1024 };
     /// Turns the frame value into a description (see FrameRecorder): the frame's identity, in declaration order.
@@ -69,6 +74,10 @@ class FrameScratch final
     /// The target-fact table the plan is compiled against: the window (as the default framebuffer) plus every host
     /// target this device holds. Borrowed rows, filled per frame.
     std::vector<core::TargetFacts>        facts;
+    /// The PASS NUMBERS the frame head resolved (one per pass of the value, in the value's order): the collection
+    /// walk reads them, so recording a frame never touches the device's pass registry (see the frame head and
+    /// PassRegistry's "identity must not depend on when the first frame arrives").
+    std::vector<core::PassId>             pass_ids;
     /// Reused by the lights announcement (no per-pass allocation).
     std::vector<vn::graphics::LightValue> light_scratch;
     /// The image offers one content pass declares, reused per pass (see recordContent).

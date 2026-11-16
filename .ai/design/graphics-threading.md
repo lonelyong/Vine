@@ -285,14 +285,19 @@
     同一会话的两帧仍由它的 `FrameGate` 串行（另一条线程等待、同线程重入拒绝并报一条）。设备级共享件各有自己的锁
     （缓存只在帧首取，分配器 / 目标 map / 时钟 / 报告 sink 各一把），出窗口的帧独占体闸；宿主动词是
     **设备的承诺**：要么等待（并计入 `deviceWaits()`，如读回），要么按 park 规则不等帧（释放，`R6`）。
+    **vsg 的形状（2026-11-16，S8c-1）**：帧体取 `DeviceGate` 的共享侧、宿主动词独占；设备内容（表 / halves /
+    sets / uploads / images / targets / pool / storage）由**一把内容锁**串行（帧首一次、内容相一次），收集与
+    计划编译在会话 scratch 上不加锁；同一窗口 / 离屏会话的两帧由它的**帧主张**排队，不同窗口互不等待。它的记录
+    路径仍读设备表（`C3` 对 vsg 未成立，S8c-2 收口）。
 - **为什么**：内容缓存今天有"正在上传"这个状态（`ResidenceTable` 的三态；设备接线仍未做，见
   `graphics-sessions.md` §9.2）——但缓存锁已把并发上传串行化，所以即使接线前"并发"也有定义：两个引擎同时
   首次构建同一内容会**串行**在缓存锁上，不会得到两份身份。帧机器分家之后，其余共享件都由自己的锁保护。
 - **边界**：appfw 还没用上共享（`SurfaceWindow` 每窗口造一个设备，`docs/guides/render-views.md` §7 记的是
   "以后"）；用例 `OneDeviceServesSeveralAreasWithoutCrossingThem` 证明的是**共享**（两帧先后跑），
   `VkMultiSessionTest` 的两条用例才证明**并发**（两线程各 N 帧；一帧被停住时另一帧整帧完成）。
-- **落地与剩余**：设备 = 池、会话拥有帧已对 vk 落地（S1–S7/S9）；`S8`（vsg 的收集暂存）与 `ResidenceTable` 的
-  设备接线仍开着。决定与论证在 `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，**实施形状**在
+- **落地与剩余**：设备 = 池、会话拥有帧已对 vk 落地（S1–S7/S9），vsg 的 S8a / S8b / S8c-1 也已落地（收集暂存与
+  执行器帧状态归会话/驱动者、帧首快照 + 内容锁 + 设备闸两侧化）；剩余 `S8c-2`（vsg 记录路径零锁）与 `ResidenceTable`
+  的设备接线。决定与论证在 `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，**实施形状**在
   `graphics-sessions.md`（类型、锁表、状态机、九步迁移表）。**本文件只写现在**——ADR 与施工图存在不移动这条边界。
 
 ## 3. 功能点
@@ -416,7 +421,7 @@
 | C18 | 批内版本不推进：`beginEdit()` 之后、最外层 `endEdit()` 之前，发布停在原处 —— 落在批中间的帧**不发布任何东西**，画批次开始时的状态；整批在 `endEdit()` 之后那一帧作为**一次**发布落地。 |
 | C19 | 材质以**值**过帧：命令携带 `MaterialDescriptionPtr`（`revision` + 解析后的参数），引擎侧只读值，不读 `Material::resolved()`。值的取点在内容侧，批内不取。 |
 | C20 | 会话形状（pass 集合、资源表、后端保留态）**只在帧与帧之间**改：帧在飞时 `applyPlan`（任何一种形态）一律答 `PlanResult::Refused` + `PlanRefusal::Busy`（`sessionChangeAllowed`），并按 episode 报**一条** `PassProtocolViolation`。 |
-| C21 | **一个设备可被多个引擎借用，帧按会话并发**：内容驻留按身份共享（一次上传、一次编译）；一个窗口只有一个目标；一帧的机器（命令池 / 栅栏 / 常量环 / 描述符池）是**会话级**的，所以不同会话的帧体可以同时跑（vk，2026-11-16，`T48` S6c-2a）。同一会话的两帧仍由它的 `FrameGate` 串行：另一条线程**等待**，同线程重入**拒绝**并报一条（`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`）。设备级共享件各有自己的锁（缓存只在帧首取，分配器 / 目标 map / 时钟 / 报告 sink）；出窗口的帧独占体闸，宿主动词是**设备的承诺**（等待并计数，或按 `R6` park 不等帧）。共享内容的 `Geometry::description()` 缓存对并发读者安全（2026-11-16 TSan 发现并修）；形状编辑仍是内容线程的动作。 |
+| C21 | **一个设备可被多个引擎借用，帧按会话并发**：内容驻留按身份共享（一次上传、一次编译）；一个窗口只有一个目标；一帧的机器（命令池 / 栅栏 / 常量环 / 描述符池）是**会话级**的，所以不同会话的帧体可以同时跑（vk，2026-11-16，`T48` S6c-2a）。同一会话的两帧仍由它的 `FrameGate` / 帧主张串行：另一条线程**等待**，同线程重入**拒绝**并报一条（`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`）。设备级共享件各有自己的锁（缓存只在帧首取，分配器 / 目标 map / 时钟 / 报告 sink）；出窗口的帧独占体闸，宿主动词是**设备的承诺**（等待并计数，或按 `R6` park 不等帧）。共享内容的 `Geometry::description()` 缓存对并发读者安全（2026-11-16 TSan 发现并修）；形状编辑仍是内容线程的动作。**vsg 的形状（2026-11-16，S8c-1）**：帧体取设备闸的**共享**侧、宿主动词独占；设备的内容（表 / halves / sets / uploads / images / targets / pool / storage）由**一把内容锁**串行，帧首解析一次、内容相一次；收集与计划编译在会话 scratch 上不加锁，所以一帧被 sink 停在编译里时另一驱动者的整帧能完成（`VsgBackendTest.ACompilingFrameDoesNotWaitForAnotherDriversFrame`）。它的**记录**仍读设备表（`C3` 对 vsg 尚未成立，S8c-2 收口）；宿主动词从帧体内调用答拒绝而不是等待（`vsg.readback.in_frame` / `vsg.device.reentry`）。 |
 
 ### 5.2 要求（R#）
 
