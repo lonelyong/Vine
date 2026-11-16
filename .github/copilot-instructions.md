@@ -99,6 +99,23 @@ acceptable — is in `.github/instructions/framework-design.instructions.md`.
 * Exception: fluent builder APIs are exempt from this rule. A setter that returns the
   object itself for chaining uses the property name without a `set` prefix and returns
   a reference (e.g. `ConfigItem& description(const String&)`, `ConfigItem& range(int, int)`).
+* **An accessor reads state; a command does work.** A member that goes and gets something
+  (asks the user, waits for a reply, fetches from a device) is a COMMAND and takes a verb
+  (`askStringAsync()`, `read`, `create`), never `get*`. The distinction is the point: a
+  caller may assume an accessor is cheap, repeatable and free of side effects, and must
+  not assume that of a command. `get*` is therefore wrong on both sides of the line - it
+  is not the accessor spelling and it hides a command's cost.
+
+### Numeric Types
+
+* **Sizes, coordinates and rectangles use `int`** - the spelling platform APIs use
+  (`Viewport`, `RenderTarget::setSize`, event geometry), so no conversion sits between the
+  host and the call.
+* **Identifiers, counts and bit masks use a fixed-width unsigned type** (`std::uint32_t` /
+  `std::uint64_t`), never `int`: an id that changes width between platforms is a bug waiting
+  for the platform to change.
+* Not backfilled: a new field follows this rule, an existing field changes only when the
+  batch already touches its layout (see the enum rule in "Comments and Documentation").
 
 
 ### Fields
@@ -230,7 +247,18 @@ Headers with special requirements (e.g. `GL.h` which must be included first) may
 * A section appears only when it carries content: never leave one empty, and never fill one with a restatement of the code.
 * Constructors and destructors use `@brief` only; use `@param` only for parameters with non-obvious meaning.
 * Comments must use `@param` for EVERY parameter of a function, never omit one.
-* Prefer multi-line comments; do not condense them into a single line.
+* **Fields may use one line of `///`** - a field is the one declaration with no parameters, no return value and no
+  failure mode to divide into sections, so a five-line block for one member is noise. The line still has to state the
+  contract (a unit, an invariant, "0 means unset", what the field is for), never restate the name:
+  `/// Pixels, device space; 0 means "inherit the area's extent".` Functions keep the multi-line `@brief` form.
+* **Do not create section comments.** `// ---- Host bindings ----` and its relatives are a table of contents inside a
+  type; the members' own documentation is what makes a group readable, and a marker that groups them is a second,
+  staler index. Name the group in the first member's line instead.
+* **An `enum class` that appears in a public value field or crosses a seam states its underlying type**
+  (`std::uint8_t` / `std::uint32_t`): the width is part of the layout, and letting the implementation pick it makes a
+  rebuild the only way to notice a change. An enum used only inside one function may omit it. Existing public-value
+  enums are migrated by the batch that already breaks the layout (a graphics ABI change), not by a comment sweep.
+* Prefer multi-line comments; do not condense them into a single line. (Exception: the field line above.)
 * Keep each sentence on one line: wrap to a new line after a sentence completes, so a full sentence occupies one line. A line should generally not exceed 160 characters (you may break earlier to keep a sentence on its own line).
 
 Example:
@@ -268,6 +296,27 @@ void setDepthRange(float min_depth, float max_depth);
 * Use `constexpr` where appropriate.
 * Use `noexcept` when correctness allows.
 * Consider thread safety when shared state is involved.
+
+### Ownership Vocabulary
+
+A signature says who owns what by WHICH spelling it uses. The four spellings below are the whole vocabulary; a
+type that means one of them is written with the one that means it, so a reader does not have to find the
+implementation to learn the lifetime.
+
+| Spelling | Meaning | What the caller may assume |
+|---|---|---|
+| `intrusive_ptr<T>` / `intrusive_ptr<const T>` | Shared ownership | It keeps what it names alive; the value may be handed across threads as a stable identity. |
+| `raw_ptr<T>` | Borrowed | Valid only for the call or the documented scope; a returning function's `@return` says "borrowed". |
+| `std::shared_ptr<const T>` | Immutable shared value | Nobody mutates it after publication; the holder may keep it and read it from another thread. |
+| `std::span<const T>` / `std::span<T>` | Non-owning contiguous data | Valid for the call; nothing about its size changes under the call. |
+
+* **A public signature uses these four spellings**; inventing a fifth is how a reader ends up opening the
+  implementation to learn a lifetime. A mutable `std::shared_ptr<T>` in a public signature is the signal that a
+  boundary is missing: shared AND mutable means two holders can disagree, and a caller cannot assume the value it
+  reads on another thread. Inside an implementation (a device's cache table, a PImpl block) a mutable
+  `shared_ptr` is ordinary bookkeeping under that unit's own lock and is not part of this vocabulary.
+* `@return` on a function returning a pointer or a reference states which of the four it is ("borrowed", "owned"),
+  because a return value has no parameter list to carry the promise.
 
 ## API Design
 

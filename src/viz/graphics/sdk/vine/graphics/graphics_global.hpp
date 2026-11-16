@@ -2,6 +2,26 @@
 
 #include <vine/vn_global.hpp>
 
+/**
+ * @brief This module's ownership vocabulary: which spelling a signature uses to say who owns what.
+ *
+ * @details
+ * - FOUR SPELLINGS, and a signature that means one of them is written with the one that means it - so a reader
+ *   learns a lifetime from the declaration instead of from the implementation:
+ *   - `intrusive_ptr<T>` / `intrusive_ptr<const T>`: SHARED OWNERSHIP. It keeps what it names alive, and the
+ *     identity is stable enough to hand across threads (a `Geometry`, a `ShaderProgram`, a published snapshot).
+ *   - `raw_ptr<T>`: BORROWED. Valid for the call or the documented scope, and a returning function's `@return`
+ *     says "borrowed" (a frame's draws borrow their content; a device hands out a window target it owns).
+ *   - `std::shared_ptr<const T>`: IMMUTABLE SHARED VALUE. Nobody mutates it after publication, so the holder may
+ *     keep it and read it from another thread (a command list, a scene snapshot).
+ *   - `std::span<const T>` / `std::span<T>`: NON-OWNING CONTIGUOUS DATA, valid for the call (packed blocks,
+ *     vertex data).
+ * - A MUTABLE `std::shared_ptr<T>` IN A PUBLIC SIGNATURE is a boundary that is missing, not a fifth spelling:
+ *   two holders of a shared AND mutable value can disagree, and no caller can say what it is looking at. Inside an
+ *   implementation (a cache table, a PImpl block) it is ordinary bookkeeping under that unit's own lock.
+ * - THE HOST PAYS FOR THIS BEING WRITTEN DOWN: a frame value (`FrameDescription`) may be retained only as its own
+ *   type says, and a function whose `@return` is silent about "borrowed" or "owned" is a documentation defect.
+ */
 #ifdef VN_GRAPHICS_LIB
 #    define VN_GRAPHICS_API VN_EXPORT
 #else
