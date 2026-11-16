@@ -1,17 +1,20 @@
 /**
  * @brief The device-free core of the rewritten vsg backend: the P0 contract, as tables.
  *
- * This file pins the four decisions that must be settled BEFORE any GPU code exists (see
- * `.ai/design/vsg-backend.md` §2.5):
+ * This file pins the decisions the backend settles BEFORE any GPU code exists (see `.ai/design/vsg-backend.md`
+ * §2.5) and that belong to ITS portable half rather than to the SDK seam:
  *
  *   * the protocol is a state machine that answers only "is this call legal" (P0-3) - so its rules are
  *     exercised as a transition table rather than as branches inside the renderer;
  *   * a frame's plan owns its own storage, so a borrowed host span cannot outlive the call that lent it
  *     (P0-1) - the arena's contract is "growth preserves, reset invalidates";
- *   * what changes a target's GPU objects is a decision function with three distinct answers, and
- *     extent is not identity (P0-5) - so "a resize must not rebuild" is checkable without a device;
- *   * deferred destruction is ordered by one timeline, and completion is evidence rather than
- *     assumption (P0-9 / D5).
+ *   * the cross-check between the retention queue and the observations that feed it;
+ *   * the evidence format a self-test prints, and the depth probe a readback is judged with.
+ *
+ * The types the SDK seam shares with the other backend - the target plan, the retirement queue, the key audit,
+ * readback and the device clock - are pinned in `tests/BackendSeamTest.cpp`, which every test binary that links
+ * the seam compiles: a seam fact belongs in a binary that carries both backends (see
+ * `.ai/research/graphics-2026-11-16-redesign.md` §3.2.1).
  *
  * Every case here is device-free by construction: the types under test never dereference a GPU object
  * and never include anything from `vsg::`. The suites are named `Core*` after the layer they pin.
@@ -19,182 +22,25 @@
 
 #include <gtest/gtest.h>
 
-#include <array>
 #include <cstdint>
 #include <span>
 #include <string>
 #include <vector>
 
 #include <vine/graphics/backend/DepthProbe.hpp>
-#include <vine/graphics/backend/DeviceClock.hpp>
 #include <vine/graphics/backend/FrameArena.hpp>
 #include <vine/graphics/backend/FrameTimeline.hpp>
-#include <vine/graphics/backend/Keys.hpp>
 #include <vine/graphics/backend/Observe.hpp>
 #include <vine/graphics/backend/PhaseTable.hpp>
-#include <vine/graphics/backend/Readback.hpp>
 #include <vine/graphics/backend/RetirementQueue.hpp>
-#include <vine/graphics/backend/TargetPlan.hpp>
 #include <vine/backend_vsg/internal/DeviceRequirements.hpp>
 
-using vn::graphics::RenderTarget;
-using vn::graphics::backend::DeviceClock;
 using vn::graphics::backend::FrameArena;
 using vn::graphics::backend::FrameTimeline;
-using vn::graphics::backend::LoadOpVariantKey;
 using vn::graphics::backend::Observe;
 using vn::graphics::backend::Phase;
 using vn::graphics::backend::PhaseTable;
-using vn::graphics::backend::PipelineKey;
-using vn::graphics::backend::ReadbackRequest;
-using vn::graphics::backend::ReadbackState;
-using vn::graphics::backend::RepairReason;
 using vn::graphics::backend::RetirementQueue;
-using vn::graphics::backend::TargetAction;
-using vn::graphics::backend::TargetDecision;
-using vn::graphics::backend::TargetDesc;
-using vn::graphics::backend::TargetInstance;
-
-namespace
-{
-
-/// @brief One line of the target-plan table.
-struct TargetCase {
-    const char*  what;
-    TargetDesc   current;
-    bool         built;
-    bool         invalidated;
-    TargetDesc   wanted;
-    TargetAction action;
-    RepairReason reason;
-};
-
-/// @brief The compatible shape most cases share: one RGBA8 colour attachment, no depth.
-vn::graphics::backend::TargetShape singleColorShape()
-{
-    vn::graphics::backend::TargetShape shape;
-    shape.color_formats.push_back(vn::graphics::RenderTarget::ColorFormat::RGBA8);
-    return shape;
-}
-
-/// @brief A shape with a depth attachment, used to move compatibility.
-vn::graphics::backend::TargetShape colorAndDepthShape()
-{
-    vn::graphics::backend::TargetShape shape = singleColorShape();
-    shape.depth_format                       = vn::graphics::RenderTarget::DepthFormat::D32;
-    return shape;
-}
-
-} // namespace
-
-TEST(CoreTargetPlanTest, TheActionTableIsDecidedByShapeSizeAndBuildState)
-{
-    const vn::graphics::backend::TargetShape single = singleColorShape();
-    const vn::graphics::backend::TargetShape with_d = colorAndDepthShape();
-
-    TargetDesc built_at_512{ 512, 256, single };
-    TargetDesc built_at_1024{ 1024, 256, single };
-
-    const std::vector<TargetCase> cases{
-        { "same size, same shape",                        built_at_512, true,  false, built_at_512,                    TargetAction::None,          RepairReason::None        },
-        { "new extent, same shape",                       built_at_512, true,  false, built_at_1024,                   TargetAction::ResizeInPlace, RepairReason::None        },
-        { "new shape at the same size",                   built_at_512, true,  false, TargetDesc{ 512, 256, with_d },  TargetAction::Rebuild,       RepairReason::None        },
-        { "new shape AND new extent: compatibility wins",
-         built_at_512,                                                  true,
-         false,                                                                       TargetDesc{ 1024, 256, with_d },
-         TargetAction::Rebuild,
-         RepairReason::None                                                                                                                                                   },
-        { "never built",                                  built_at_512, false, false, built_at_512,                    TargetAction::Repair,        RepairReason::Bootstrap   },
-        { "attachments invalidated",                      built_at_512, true,  true,  built_at_512,                    TargetAction::Repair,        RepairReason::Bootstrap   },
-        // A shape change outranks the load-op repairs: "the first pass in clears" is an instruction about
-        // attachment CONTENTS, and a rebuild replaces the pass those attachments belong to - the caller
-        // has to hear about the compatibility change even when nobody has written into the target yet
-        // (the rebuilt target's fresh attachments answer Repair(Bootstrap) on the next plan).
-        { "never built, new shape",                       built_at_512, false, false, TargetDesc{ 512, 256, with_d },  TargetAction::Rebuild,       RepairReason::None        },
-        { "invalidated, new shape",                       built_at_512, true,  true,  TargetDesc{ 512, 256, with_d },  TargetAction::Rebuild,       RepairReason::None        },
-        { "resized to nothing",                           built_at_512, true,  false, TargetDesc{ 0, 256, single },    TargetAction::Repair,        RepairReason::SizeUnknown },
-        { "laid out at zero",                             built_at_512, true,  false, TargetDesc{ 512, 0, single },    TargetAction::Repair,        RepairReason::SizeUnknown },
-    };
-
-    for (const TargetCase& test_case : cases) {
-        TargetInstance instance;
-        instance.desc                    = test_case.current;
-        instance.built                   = test_case.built;
-        instance.attachments_invalidated = test_case.invalidated;
-
-        const TargetDecision decision = vn::graphics::backend::planTarget(instance, test_case.wanted);
-        EXPECT_EQ(static_cast<int>(decision.action), static_cast<int>(test_case.action)) << test_case.what;
-        EXPECT_EQ(static_cast<int>(decision.reason), static_cast<int>(test_case.reason)) << test_case.what;
-    }
-}
-
-TEST(CoreTargetPlanTest, AnUnusableExtentIsDistinguishableFromInvalidatedAttachments)
-{
-    // "Resized to nothing" and "attachments invalidated" are both repairs, and they have different
-    // reasons precisely so a phase (and a log line) can tell them apart.
-    TargetInstance instance;
-    instance.desc  = TargetDesc{ 8, 8, singleColorShape() };
-    instance.built = true;
-
-    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(instance, TargetDesc{ 0, 0, {} }).reason), static_cast<int>(RepairReason::SizeUnknown));
-
-    instance.attachments_invalidated = true;
-    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(instance, instance.desc).reason), static_cast<int>(RepairReason::Bootstrap));
-}
-
-TEST(CoreTargetPlanTest, DepthPromotionBorrowingAndPreservationAreOneDecision)
-{
-    using vn::graphics::backend::DepthFacts;
-    using vn::graphics::backend::DepthPlan;
-    using vn::graphics::backend::depthPlan;
-
-    int lender = 0;
-
-    // No depth at all: nothing to plan.
-    {
-        DepthFacts      facts;
-        const DepthPlan plan = depthPlan(facts);
-        EXPECT_FALSE(plan.has_depth);
-        EXPECT_FALSE(plan.sampleable);
-    }
-
-    // Promotion with nothing preserving it: sampleable.
-    {
-        DepthFacts facts;
-        facts.has_depth      = true;
-        facts.promotion      = true;
-        const DepthPlan plan = depthPlan(facts);
-        EXPECT_TRUE(plan.sampleable);
-        EXPECT_FALSE(plan.preserve);
-    }
-
-    // A depth-preserving pass revokes the promotion for the whole target.
-    {
-        DepthFacts facts;
-        facts.has_depth                = true;
-        facts.promotion                = true;
-        facts.any_pass_preserves_depth = true;
-        const DepthPlan plan           = depthPlan(facts);
-        EXPECT_FALSE(plan.sampleable);
-        EXPECT_TRUE(plan.preserve);
-    }
-
-    // A borrowed depth: the policy is the lender's, so the borrower never samples it - and it PRESERVES it:
-    // the image holds the depth the lender's pass wrote, and a pass of the borrower that cleared it (a
-    // bootstrap clears) would erase the lender's depth for every reader after it (see depthPlan).
-    {
-        DepthFacts facts;
-        facts.has_depth      = true;
-        facts.promotion      = true;
-        facts.borrowed       = true;
-        facts.source         = &lender;
-        const DepthPlan plan = depthPlan(facts);
-        EXPECT_TRUE(plan.borrowed);
-        EXPECT_EQ(plan.source, &lender);
-        EXPECT_FALSE(plan.sampleable);
-        EXPECT_TRUE(plan.preserve);
-    }
-}
 
 TEST(CoreTimelineTest, SubmittedAndCompletedAreDifferentClocks)
 {
@@ -309,83 +155,6 @@ TEST(CoreTimelineTest, TheRetirePointIsOneMoreThanTheSlotCount)
     EXPECT_EQ(FrameTimeline::retirePoint(0, 1), 2u);
 }
 
-TEST(CoreRetirementQueueTest, NothingIsReleasedBeforeTheEvidenceArrives)
-{
-    FrameTimeline   timeline;
-    RetirementQueue queue(3);
-    int             releases = 0;
-
-    const auto token = timeline.begin();
-    timeline.submitted(token); // submitted frame 1 -> retire at 1 + 3 + 1 = 5
-    ASSERT_TRUE(queue.retire(timeline, [&releases] { ++releases; }));
-
-    EXPECT_EQ(queue.retirePoint(timeline), 5u);
-    EXPECT_EQ(queue.pending(), 1u);
-
-    timeline.completeUpTo(4);
-    queue.advance(timeline);
-    EXPECT_EQ(releases, 0); // not yet: the slot that recorded it may still be in flight
-    EXPECT_EQ(queue.pending(), 1u);
-
-    timeline.completeUpTo(5);
-    queue.advance(timeline);
-    EXPECT_EQ(releases, 1);
-    EXPECT_EQ(queue.pending(), 0u);
-    EXPECT_EQ(queue.released(), 1u);
-
-    // The point of parking instead of idling: this path never stopped the device.
-    EXPECT_EQ(queue.deviceWaits(), 0u);
-}
-
-TEST(CoreRetirementQueueTest, AReleaseCallbackMayParkSomethingNew)
-{
-    FrameTimeline   timeline;
-    RetirementQueue queue(1);
-    int             releases = 0;
-
-    const auto first = timeline.begin();
-    timeline.submitted(first);
-    ASSERT_TRUE(queue.retire(timeline, [&] {
-        ++releases;
-        // Re-entrant park: the queue compacts before it releases, so this must not corrupt it.
-        EXPECT_TRUE(queue.retire(timeline, [&releases] { ++releases; }));
-    }));
-
-    timeline.completeUpTo(queue.retirePoint(timeline));
-    queue.advance(timeline);
-
-    EXPECT_EQ(releases, 1);
-    EXPECT_EQ(queue.pending(), 1u); // the new park is dated against the same submitted frame
-    EXPECT_EQ(queue.deviceWaits(), 0u);
-}
-
-TEST(CoreRetirementQueueTest, ATeardownRunsEverythingParkedInOrder)
-{
-    // THE TEARDOWN VERB (see RetirementQueue::releaseAll): parking exists to wait for the evidence that no submitted
-    // frame can still name the object, and a device being torn down has produced that evidence by idling its queue.
-    // Without this call every parked object would leak with the session - so the case pins both halves: everything
-    // runs, and it runs in the order it was parked (a release may name an object another one is nested inside).
-    FrameTimeline   timeline;
-    RetirementQueue queue(1);
-    std::vector<int> order;
-
-    const auto token = timeline.begin();
-    timeline.submitted(token); // frame 1; nothing is completed, so advance() would release nothing
-
-    ASSERT_TRUE(queue.retire(timeline, [&order] { order.push_back(1); }));
-    ASSERT_TRUE(queue.retire(timeline, [&order] { order.push_back(2); }));
-    EXPECT_EQ(queue.pending(), 2u);
-
-    queue.advance(timeline);
-    EXPECT_TRUE(order.empty()) << "advance() released something the timeline has not proven yet";
-
-    queue.releaseAll();
-    EXPECT_EQ(order, (std::vector<int>{ 1, 2 })) << "the teardown did not run every release in park order";
-    EXPECT_EQ(queue.pending(), 0u);
-    EXPECT_EQ(queue.released(), 2u) << "the teardown's releases were not counted";
-    EXPECT_EQ(queue.deviceWaits(), 0u) << "flushing the queue is not a device idle";
-}
-
 TEST(CoreArenaTest, GrowthPreservesWhatWasAlreadyHandedOut)
 {
     FrameArena             arena(64);       // deliberately tiny, so the copy below must grow it
@@ -431,69 +200,6 @@ TEST(CoreArenaTest, ASteadyFrameDoesNotGrowTheArena)
     }
     // Repeating the same frame reuses the capacity: this is the "steady frame allocates nothing" rule.
     EXPECT_EQ(arena.allocations(), after_first_frame);
-}
-
-TEST(CoreKeysTest, AnExtentIsNotPartOfAPipelineKey)
-{
-    auto shape = singleColorShape();
-
-    // Two descriptions whose EXTENT differs: a resize. building the identity from the shape alone - and
-    // not from the description - is what makes "a resize must not recompile" structural.
-    const TargetDesc small{ 256, 256, shape };
-    const TargetDesc large{ 2048, 1024, shape };
-
-    PipelineKey a;
-    a.compatibility.color_formats = small.shape.color_formats;
-    a.compatibility.samples       = small.shape.samples;
-
-    PipelineKey b;
-    b.compatibility.color_formats = large.shape.color_formats;
-    b.compatibility.samples       = large.shape.samples;
-
-    EXPECT_TRUE(a == b);
-    EXPECT_EQ(static_cast<int>(vn::graphics::backend::planTarget(TargetInstance{ small, 1, true, false }, large).action),
-              static_cast<int>(TargetAction::ResizeInPlace));
-}
-
-TEST(CoreKeysTest, CompatibilityIsPartOfTheKeyWhileLoadOpVariantsAreNot)
-{
-    PipelineKey a;
-    a.compatibility.color_formats.push_back(vn::graphics::RenderTarget::ColorFormat::RGBA8);
-
-    PipelineKey b = a;
-    EXPECT_TRUE(a == b);
-
-    // A different attachment format is a different pipeline.
-    b.compatibility.color_formats[0] = vn::graphics::RenderTarget::ColorFormat::RGBA16F;
-    EXPECT_FALSE(a == b);
-
-    // A clear instead of a load is a different VARIANT of the same pipeline, not a different pipeline:
-    // the API's compatibility rule excludes load ops, which is why the bootstrap can swap one in.
-    LoadOpVariantKey loaded;
-    LoadOpVariantKey cleared;
-    cleared.color_load = vn::graphics::backend::LoadOp::Clear;
-    EXPECT_FALSE(loaded == cleared);
-}
-
-TEST(CoreKeysTest, TheAuditTableNamesEveryKeyAndKeepsExtentsOutOfIdentity)
-{
-    const auto audit = vn::graphics::backend::keyAuditTable();
-    ASSERT_EQ(audit.size(), 7u);
-
-    const std::vector<std::string> expected_keys{
-        "VertexLayoutKey", "RenderPassCompatibility", "LoadOpVariantKey", "PipelineKey", "DynamicState", "InstanceSlot", "TargetDesc.shape",
-    };
-    for (std::size_t i = 0; i < expected_keys.size(); ++i) {
-        EXPECT_EQ(std::string(audit[i].key), expected_keys[i]) << "audit line " << i;
-    }
-
-    // The rule the table exists for: no identity key may be described as taking an extent, and the one
-    // line that mentions it must be the one that forbids it.
-    for (const auto& entry : audit) {
-        const std::string allowed{ entry.allowed };
-        const bool        mentions_extent = allowed.find("extent") != std::string::npos;
-        EXPECT_EQ(mentions_extent, std::string(entry.key) == "TargetDesc.shape") << entry.key;
-    }
 }
 
 TEST(CoreObserveTest, TheAggregatesMustAgreeWithTheQueueThatProducedThem)
@@ -691,182 +397,4 @@ TEST(CoreDepthProbeTest, TheValuesAreRowMajorAndCountedWithinATolerance)
     EXPECT_EQ(probe.countNear(0.0F, 0.01F), 11U);
     EXPECT_EQ(probe.countNear(0.75F, 0.001F), 1U) << "the tolerance is absolute: a clear value and a written depth do not arrive by the same path";
     EXPECT_EQ(probe.countNear(0.75F, 0.0F), 1U);
-}
-
-TEST(CoreReadbackTest, TheTableClassifiesBeforeAnythingRuns)
-{
-    using vn::graphics::backend::ReadbackKind;
-    using vn::graphics::backend::readbackOf;
-    using vn::graphics::backend::ReadbackRefusal;
-
-    ReadbackState state;
-    state.color_attachments = 2U;
-    state.color_format      = RenderTarget::ColorFormat::RGBA8;
-    state.depth_format      = RenderTarget::DepthFormat::D32;
-
-    // Nothing has recorded a copy yet: the answer is "not yet" - a frame can fix it, and a caller that gets
-    // this one may retry instead of hunting for a format bug.
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::NotCaptured));
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal), static_cast<int>(ReadbackRefusal::NotCaptured));
-    EXPECT_FALSE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).ok);
-
-    state.color_captured = true;
-    state.depth_captured = true;
-    EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).ok) << "a captured RGBA8 attachment";
-    EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 1U }).ok) << "and the second one too";
-    EXPECT_TRUE(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).ok);
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::None))
-        << "ok and a category are two views of one answer, never contradictory";
-
-    // The request's own existence comes first: index 2 does not exist, and a target without a depth cannot
-    // answer a depth readback - whatever has been captured.
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 2U }).refusal), static_cast<int>(ReadbackRefusal::UnknownAttachment));
-    ReadbackState colorless = state;
-    colorless.depth_format.reset();
-    EXPECT_EQ(static_cast<int>(readbackOf(colorless, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal),
-              static_cast<int>(ReadbackRefusal::UnknownAttachment));
-}
-
-TEST(CoreReadbackTest, AnUnreadableFormatIsPermanentAndOutranksNotCaptured)
-{
-    using vn::graphics::backend::ReadbackKind;
-    using vn::graphics::backend::readbackOf;
-    using vn::graphics::backend::ReadbackRefusal;
-
-    ReadbackState state;
-    state.color_attachments = 1U;
-    state.color_format      = RenderTarget::ColorFormat::RGBA16F;
-    state.depth_format      = RenderTarget::DepthFormat::D24;
-
-    // NOTHING captured: the format is still the answer, because a frame cannot fix it. Reporting "not captured"
-    // here would send a caller off to run another frame that cannot change anything.
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat));
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat));
-
-    state.color_captured = true;
-    state.depth_captured = true;
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Color, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat))
-        << "capturing more changes nothing: the format table is what says so";
-    EXPECT_EQ(static_cast<int>(readbackOf(state, ReadbackRequest{ ReadbackKind::Depth, 0U }).refusal), static_cast<int>(ReadbackRefusal::UnreadableFormat));
-
-    EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::UnknownAttachment), "unknown-attachment");
-    EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::UnreadableFormat), "unreadable-format");
-    EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::NotCaptured), "not-captured");
-    EXPECT_EQ(vn::graphics::backend::refusalName(ReadbackRefusal::None), "none");
-}
-
-TEST(CoreReadbackTest, TheFormatTablesSayWhatCanBeReadAndWithHowManyBytesPerTexel)
-{
-    using vn::graphics::backend::colorReadbackOf;
-    using vn::graphics::backend::depthReadbackOf;
-    using vn::graphics::backend::ReadbackFormat;
-
-    // The colour half packs RGBA8 only: the probes are 8-bit probes, and a float attachment converted into one
-    // would be a picture of something the GPU never held.
-    EXPECT_EQ(colorReadbackOf(RenderTarget::ColorFormat::RGBA8), (ReadbackFormat{ 4U, true }));
-    EXPECT_FALSE(colorReadbackOf(RenderTarget::ColorFormat::RGBA16F).readable);
-    EXPECT_FALSE(colorReadbackOf(RenderTarget::ColorFormat::RGBA32F).readable);
-    EXPECT_EQ(colorReadbackOf(RenderTarget::ColorFormat::RGBA16F).bytes_per_texel, 0U);
-
-    // The depth half: D16 is two bytes (and gets scaled on decode), D32 / D32F four (raw float), and the
-    // combined format is refused rather than read as if its first bytes were depth.
-    EXPECT_EQ(depthReadbackOf(RenderTarget::DepthFormat::D16), (ReadbackFormat{ 2U, true }));
-    EXPECT_EQ(depthReadbackOf(RenderTarget::DepthFormat::D32), (ReadbackFormat{ 4U, true }));
-    EXPECT_EQ(depthReadbackOf(RenderTarget::DepthFormat::D32F), (ReadbackFormat{ 4U, true }));
-    EXPECT_FALSE(depthReadbackOf(RenderTarget::DepthFormat::D24).readable);
-}
-
-TEST(CoreReadbackTest, TheDepthDecodeIsTheFormatsOwnConversion)
-{
-    using vn::graphics::backend::decodeDepth;
-
-    // D32 / D32F: the stored bits are the value.
-    {
-        const std::array<float, 3> values{ 0.0F, 0.5F, 1.25F };
-        const auto                 bytes   = std::as_bytes(std::span(values));
-        const auto                 decoded = decodeDepth(RenderTarget::DepthFormat::D32, bytes);
-        ASSERT_EQ(decoded.size(), 3U);
-        EXPECT_FLOAT_EQ(decoded[0], 0.0F);
-        EXPECT_FLOAT_EQ(decoded[1], 0.5F);
-        EXPECT_FLOAT_EQ(decoded[2], 1.25F) << "raw, not clamped: the attachment's own numbers";
-    }
-
-    // D16_UNORM: the stored integer divided by its full scale (65535) - the conversion the format defines.
-    {
-        const std::array<std::uint16_t, 4> stored{ 0U, 32768U, 65535U, 1U };
-        const auto                         bytes   = std::as_bytes(std::span(stored));
-        const auto                         decoded = decodeDepth(RenderTarget::DepthFormat::D16, bytes);
-        ASSERT_EQ(decoded.size(), 4U);
-        EXPECT_FLOAT_EQ(decoded[0], 0.0F);
-        EXPECT_NEAR(decoded[1], 0.5000076F, 1.0e-6F) << "0.5 is not exactly representable in 16 bits, and the "
-                                                        "decode must not pretend otherwise";
-        EXPECT_FLOAT_EQ(decoded[2], 1.0F);
-        EXPECT_NEAR(decoded[3], 1.0F / 65535.0F, 1.0e-9F);
-    }
-
-    // A format that cannot be read, and a buffer that is not a whole number of texels: no probe at all rather
-    // than a plausible-looking half image.
-    {
-        const std::array<std::byte, 4> bytes{};
-        EXPECT_TRUE(decodeDepth(RenderTarget::DepthFormat::D24, bytes).empty());
-        const std::array<std::byte, 3> odd{};
-        EXPECT_TRUE(decodeDepth(RenderTarget::DepthFormat::D16, odd).empty())
-            << "half a texel is not a value: a probe built from it would claim a region is empty";
-        EXPECT_TRUE(decodeDepth(RenderTarget::DepthFormat::D32, odd).empty());
-    }
-}
-
-/**
- * @brief The device's completion watermark is what EVERY window proved, and nothing else.
- *
- * This is the one rule one device with several windows rests on (see core::DeviceClock): a buffer or a pipeline the
- * host replaced may still be named by a submission from ANY window, so "may it be destroyed" is answered by the
- * minimum over the windows - the frame every one of them has a recycled slot for.
- */
-TEST(CoreDeviceClockTest, TheWatermarkIsWhatEveryWindowProved)
-{
-    DeviceClock clock;
-    const auto  a = clock.addWindow();
-    const auto  b = clock.addWindow();
-    EXPECT_EQ(clock.windows(), 2U);
-    EXPECT_EQ(clock.completedFrame(), 0U);
-
-    // Reports before a window knows how many frames it may have in flight prove NOTHING: its evidence would be a
-    // guess, and a guess in this direction destroys an object a submitted command buffer still names.
-    clock.windowCompleted(a, 10U);
-    clock.windowCompleted(b, 10U);
-    EXPECT_EQ(clock.completedFrame(), 0U);
-
-    clock.setWindowSlots(a, 3U);
-    clock.setWindowSlots(b, 2U);
-    clock.windowCompleted(a, 7U);
-    clock.windowCompleted(b, 9U);
-    EXPECT_EQ(clock.completedFrame(), 7U) << "the window that is behind decides";
-
-    clock.windowCompleted(b, 12U);
-    EXPECT_EQ(clock.completedFrame(), 7U) << "one window moving on does not prove anything for the other";
-
-    clock.windowCompleted(a, 8U);
-    EXPECT_EQ(clock.completedFrame(), 8U);
-    EXPECT_EQ(clock.timeline().completedFrame(), 8U) << "and the frame clock carries the same number";
-
-    // Completion is a fact about the past: an older report never moves the device back.
-    clock.windowCompleted(a, 1U);
-    EXPECT_EQ(clock.completedFrame(), 8U);
-
-    // A window that leaves stops constraining the watermark (otherwise a closed window would hold the device at
-    // its last evidence forever).
-    clock.removeWindow(b);
-    clock.windowCompleted(a, 20U);
-    EXPECT_EQ(clock.completedFrame(), 20U);
-    EXPECT_EQ(clock.windows(), 1U);
-
-    // A window that joins LATER starts at the watermark: it existed for no earlier frame, so it must not roll the
-    // device's evidence back to zero.
-    const auto c = clock.addWindow();
-    clock.setWindowSlots(c, 3U);
-    clock.windowCompleted(c, 20U);
-    EXPECT_EQ(clock.completedFrame(), 20U) << "the newcomer did not roll the evidence back";
-
-    EXPECT_EQ(clock.widestSlots(), 3U) << "the park window is the widest a window owns, not the narrowest";
 }

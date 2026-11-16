@@ -103,7 +103,7 @@ BACKEND_HALF_ALLOWED_PREFIXES = ("vine/graphics/backend/",)
 # A backend plugin, its implementation test and the backend half itself are the audience of `vine/graphics/backend/`
 # (a host never includes it). A new backend adds its `test_<backend>` tree here - `test_vk` compiles the plugin sources
 # directly, exactly like `test_vsg`.
-BACKEND_HALF_AUDIENCE = ("/graphics/src/backend/", "/vine/graphics/backend/", "/gfx_backend_", "/test_vsg/", "/test_vk/")
+BACKEND_HALF_AUDIENCE = ("/graphics/src/backend/", "/vine/graphics/backend/", "/gfx_backend_", "/test_vsg/", "/test_vk/", "/BackendSeamTest.cpp")
 
 
 def is_backend_half(path):

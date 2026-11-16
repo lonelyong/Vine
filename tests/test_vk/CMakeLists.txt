@@ -11,7 +11,6 @@ add_executable(${TEST_NAME}
         ContentTargetTest.cpp
         ConcurrentFrameTest.cpp
         DeferredTest.cpp
-        FrameGateTest.cpp
         HandlesTest.cpp
         MemoryTest.cpp
         MsaaTest.cpp
@@ -32,6 +31,10 @@ add_executable(${TEST_NAME}
         TargetClaimsTest.cpp
         VariantTest.cpp
         WindowPresentTest.cpp
+
+        # The SDK backend seam's device-free facts (the frame gate among them): ONE source compiled into every
+        # binary that links the seam, not a copy per backend.
+        ${CMAKE_CURRENT_SOURCE_DIR}/../BackendSeamTest.cpp
 
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/BarrierPlan.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ContentCaches.cpp

@@ -588,7 +588,8 @@ vk 插件 12.0k 行、vsg 插件 17.2k 行、接缝实现 3.2k 行、三套测�
 
 - **判决**：S8c-1/S8b 的产物，各一个职责，且 `DeviceGate` 与 vk 的 `body_gate` 是**同一规则的两份实现**
   （帧体共享 / 宿主动词独占 / 重入拒绝）。它们语义相同但类型不同、计数不同。
-- **证据**：`DeviceGate.hpp`；`VsgBackendTest.AReadbackFromInsideAFrameBodyAnswersInsideFrame`；
+- **证据**：`src/viz/graphics/sdk/vine/graphics/backend/FrameGate.hpp`（vsg 私有的 `DeviceGate` 已在 S2 批 2 并入该类型）；
+  `VsgBackendTest.AReadbackFromInsideAFrameBodyAnswersInsideFrame`；
   vk `VkMultiSessionTest.AReadbackFromInsideAFrameIsRefusedInsteadOfWaitingForIt`。
 - **重设计建议**：把"帧体闸"上移到 `backend/FrameGate.hpp`（它已经是一个共享机制，只是两侧化之后
   vk 的 `body_gate` 又写了一遍）。收益：一张规则、两个实现变成一张规则、一个实现 + 两个租用者。

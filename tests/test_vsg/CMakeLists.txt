@@ -1,5 +1,8 @@
 set(TEST_NAME test_vsg)
 set(SRC_FILE_LIST
+	# The SDK backend seam's device-free facts (the frame gate among them): ONE source compiled into every binary
+	# that links the seam, not a copy per backend.
+	${CMAKE_CURRENT_SOURCE_DIR}/../BackendSeamTest.cpp
 	# The rewritten backend's device-free core (see .ai/design/vsg-backend.md): the plan/timeline
 	# types, the key audit and the evidence fixtures. No device, no vsg types.
 	BackendCoreTest.cpp
@@ -24,6 +27,8 @@ set(SRC_FILE_LIST
 	VariantCoreTest.cpp
 	StreamUploadsTest.cpp
 	FrameUploadsTest.cpp
+	# What a frame spent on the device's content lock (see FrameLocking and graphics-threading.md C3).
+	FrameLockingTest.cpp
 	BlockStorageTest.cpp
 	BlockDescriptorsTest.cpp
 	ContentPipelineTest.cpp

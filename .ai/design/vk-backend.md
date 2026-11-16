@@ -159,14 +159,19 @@
 - **2026-11-15（T48 S6a）后的形状**：SDK 的会话接缝已在树上（`createSession()` / `releaseSession()` 默认答
   `&executor()` / no-op；默认内容程序归 `RenderFrameExecutor`，本设备的每个 `FrameDriver` 各持一份，`Device` 覆写转发给
   自带的驱动者）。
-- **2026-11-16（T48 S6c-2a）后的形状**：**帧体真并行**。设备的大锁换成 `std::shared_mutex body_gate`：帧体（非窗口）
+- **2026-11-16（T48 S6c-2a）后的形状**：**帧体真并行**。设备的大锁换成 `backend::FrameGate body_gate`：帧体（非窗口）
   取 SHARED，两个驱动者在两条线程上同时记录/提交；出窗口的帧与所有宿主动词（读回 / 释放 / 默认程序 / 释放目标 /
-  建窗口 / 诊断读取）取 EXCLUSIVE（可等帧，不竞争）；`shutdown` 也取 EXCLUSIVE。支撑它的是一组小锁：`clock_mutex`
+  建窗口 / 诊断读取）取 EXCLUSIVE（可等帧，不竞争）；`shutdown` 也取 EXCLUSIVE。**从帧体线程调用的宿主动词得到空租约**：
+  它回答自己的拒绝值（读回答 `Failed`、建目标答 `UnsupportedSurface`、计数器答 0）并报**一条** `vk.device.reentry`
+  （`G4`：拒绝要能被听见，而不是静默继续）——在这之前那条路径是**死锁**。报告 sink 的锁是**递归**的，因为 sink 本身
+  可能回调（同一线程再报就是那条 `vk.device.reentry`）。支撑它的是一组小锁：`clock_mutex`
   （`DeviceClock` + `RetirementQueue`，两个 SDK 值类型仍标非线程安全，多线程设备自己提供锁，`P4`）、分配器一把、
   目标 map 一把、报告 sink 一把、每会话默认程序一把、表面列表一把。`FrameTimeline` 支持多开帧（开帧时铸造号）。
   纹理 staging 与被替换图像按 `ContentImages::BatchId` 归驱动者，替换图像 park 到水位。采样目标（screen 源 / pass
   输入）也取目标 lease。**证据**：`VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`（一个帧体被诊断 sink
-  停住时，另一驱动者的帧必须整帧完成；变异回独占闸 ⇒ 红）。
+  停住时，另一驱动者的帧必须整帧完成；变异回独占闸 ⇒ 红）、
+  `VkConcurrentFrameTest.AHostVerbCalledFromInsideAFrameIsRefusedInsteadOfHanging`（sink 里的 `contentPipelines()` 答 0 +
+  一条 `vk.device.reentry`，帧照常结束）。
 - **2026-11-16（T48 S6c-2b）后的形状**：**释放不再等帧（R6）**。`releaseContent`（三种重载）与 `releaseRenderTarget` 脱离体闸：
   它们只等一次缓存操作（帧首解析持有的锁），安全由缓存锁 + park + 水位的开帧规则共同给出。为此 `targets` 的条目变成
   `shared_ptr<TargetImages>`（释放把引用交给 park，已经解析它的帧仍持有有效指针），`released_nodes` 改原子，队列的读者
@@ -188,7 +193,9 @@
   只会多一层转发（`G8`）。
 - **边界**：**两个驱动者的帧体可以同时跑**（S6c-2a）；同一个驱动者的两帧仍由它的 `FrameGate` 串行（另一条线程**等待**，
   同一线程重入**拒绝**，`vk.session.frame_reentry` / `PresentOutcome::Refused`）。窗口帧独占体闸（交换链是一份设备资源）。
-  `releaseContent` / `releaseRenderTarget` / 读回仍取体闸 EXCLUSIVE，因此**会等**在飞帧——R6（释放不等帧）是 S6c-2b。
+  每帧自己报告它在缓存锁上花了什么（`FrameReport::locking`：帧首一次 hold + 帧尾一次采样，稳态是常数、`waits` 为 0，
+  见 `VkFrameHeadTest.AFrameReportsWhatItSpentOnTheCacheLock`）。`releaseContent` / `releaseRenderTarget` / 读回仍取体闸
+  EXCLUSIVE，因此**会等**在飞帧——R6（释放不等帧）是 S6c-2b。
   形状与落地在 `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，步骤记在 backlog `T47` / `T48`。
 - **拆分时哪些东西会动**（清单是起点，不是拆分本身）：`ContentDraw` 的 `Impl` 一半是**缓存**（模块 / 流 / 管线 /
   布局，归设备）、一半是**帧状态**（常量环 / 描述符池 / 逐 draw UBO，归会话）；`command_pool` 与 `completion` 归会话；

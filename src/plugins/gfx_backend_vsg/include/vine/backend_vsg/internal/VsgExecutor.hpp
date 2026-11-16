@@ -453,6 +453,8 @@ class VN_BACKEND_VSG_API VsgExecutor {
         std::size_t driving{ kNoWindow };
         /// The upload counters as the frame found them (the delta's baseline).
         UploadCounters uploads_before{};
+        /// The content lock's numbers as the frame found them (see FrameReport::locking).
+        vn::graphics::FrameLocking locking_before{};
         /// What the last EXECUTED frame of this driver uploaded and released (absent until one ran).
         std::optional<vn::graphics::FrameUploads> last_uploads{};
     };

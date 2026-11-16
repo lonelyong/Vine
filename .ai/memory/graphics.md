@@ -1522,3 +1522,31 @@
   `ResidenceTable::Claim` 未定义。
 - **仍是边界**：两个驱动者的帧首解析仍在一把缓存锁上（`C3` 管记录路径）；填充是主机 memcpy，故 `fillStreams`
   返回即可证明完成——M6 把上传搬到设备本地后，发布点仍是 `publishAll`，证据换成栅栏。
+
+## 2026-11-16 S2 批 2a：一个帧闸、两侧、两个后端（B2a）
+
+- **同一个规则原来有三份实现**：vk 每驱动者的 `backend::FrameGate`（`enter()` 独占 + 同线程重入拒绝）、vk 设备的
+  `std::shared_mutex body_gate`（`Device.cpp` 16 处 unique/shared_lock）、vsg 私有的 `internal::DeviceGate`。现在
+  **一份**：`backend::FrameGate` 有 `enterShared()` / `enterExclusive()` + `Shared` / `Exclusive` 租约 +
+  `heldByThisThread()` / `inSharedEntry()` + `Counters{acquisitions, waits}`；嵌套按**每闸**记在每线程栈上
+  （vk 的驱动者闸 EXCLUSIVE 套设备闸 SHARED 是正常嵌套，单一 depth 会把内层当重入）。`internal/DeviceGate.hpp` 已删除。
+- **空租约在每个 vk 宿主动词站点都有拒绝值**：`shutdown` / `setMemoryBlockCreator` / `setDefaultContentProgram` /
+  `createSession`（null）/ `releaseSession` / `setRenderTarget` / `createSurfaceTarget`（`UnsupportedSurface` + why）/
+  两个读回（`Failed`）/ `contentPipelines`（0）/ `contentCacheCounters` / `memoryStats` / `retirementNumbers` /
+  `pipelineCacheReport`（空值）。以前这些是**死锁**。一条 episode `vk.device.reentry`（新诊断 code）点名那个动词；
+  `Impl::report_mutex` 改成 `std::recursive_mutex`——sink 自己回调正是这条路径。
+- **`s_frame_depth` / `FrameBodyDepth` 已删除**：读回的前置检查改问 `impl->body_gate.heldByThisThread()`（窗口帧的
+  独占体也覆盖）。`executeFrame` / `prepareFrame` 的体租约也会拿到空租约（另一驱动者、同线程），答 `Refused`。
+- **`FrameReport::locking`（新 `FrameLocking{acquisitions, waits}`）**：帧自己的内容锁花费。vk 的 delta 来自
+  `ContentCaches::lock()`（新增 `waits`：try 失败即计，再阻塞；`lockWaits()` 原子读）与 `FrameBooks::locking`；
+  vsg 用 `Data::lockContentForPhase()`（帧首 / 提交 / 预热才计，宿主 verb 直接用 `content` 不计）与
+  `FrameDrive::locking_before` + `Data::last_locking`。稳态 = 常数 + `waits == 0`。
+- **测试搬了一次**：`tests/BackendSeamTest.cpp` = 接缝的 14 条 `Core*`（TargetPlan / RetirementQueue / Keys /
+  Readback / DeviceClock）+ 6 条 `FrameGateTest`，**三处 CMake** 各列一次（`test_graphics` 因此加
+  `VN_GRAPHICS_BACKEND_CONSUMER`，它读 `vine/graphics/backend/`）。vsg 专属的 Core（Timeline / Arena / Observe /
+  PhaseTable / DepthProbe / DeviceRequirements）留在 `tests/test_vsg/BackendCoreTest.cpp`；vk 套里的 FrameGate 用例文件
+  随之删除（用例已并入共享源）。
+- **新用例**：`FrameGateTest` 6 条（共享侧、空宿主租约、跨闸嵌套、waits 计数）；`VkFrameHeadTest.AFrameReportsWhatItSpentOnTheCacheLock`；
+  `FrameLockingTest.AFrameReportsWhatItSpentOnTheContentLock`（vsg）；`VkConcurrentFrameTest.AHostVerbCalledFromInsideAFrameIsRefusedInsteadOfHanging`
+  （sink 里的 `contentPipelines()` 答 0 + 一条 reentry，帧照常结束）。
+- **计数**：`test_graphics` 607 / `test_vk` 158 / `test_vsg` 571 / `BackendParityTest` 13。

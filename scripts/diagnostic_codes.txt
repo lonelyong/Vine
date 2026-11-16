@@ -60,6 +60,9 @@ vk.content.nothing_to_draw          — the draw named neither an index stream n
 vk.content.plan_missing           — the frame head did not resolve every command of a drawing call: the recorder refused rather than guessing
 vk.content.no_runnable_pass         — the frame had no pass this backend can run: nothing was submitted
 
+# --- vk backend: the device gate (see vk-backend.md 2.11) ---
+vk.device.reentry                   — a host verb was called from inside a frame body: it did nothing (it would wait for itself)
+
 # --- engine: what a frame's compile found (see graphics-frame-pipeline.md) ---
 engine.compile.cycle                    — passes depend on each other in a cycle; those passes are skipped
 engine.compile.unpublished_scene        — a pass draws a scene that was never published

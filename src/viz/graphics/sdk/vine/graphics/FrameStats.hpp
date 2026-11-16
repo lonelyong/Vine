@@ -143,6 +143,27 @@ struct VN_GRAPHICS_API FrameTiming {
 };
 
 /**
+ * @brief What one frame spent on the backend's CONTENT LOCK: how often it took it, and how often it had to wait first.
+ *
+ * @details
+ * - THE THREE-PHASE RULE, MEASURED. A frame is meant to take the backend's content lock at its HEAD and at its
+ *   COMMIT, and to resolve and record in between without holding it (see `graphics-threading.md` C3). `acquisitions`
+ *   is how many times the frame's own phases took it, and `waits` is how many of those had to block - so "a steady
+ *   frame costs the same handful of acquisitions whatever it draws, and never waits" is a number a host, a HUD or a
+ *   test reads instead of a claim in a document.
+ * - A WAIT IS NOT A DEFECT BY ITSELF: it says another engine's frame or a host verb held the lock at that moment,
+ *   which is what the lock is for. A single-engine loop between frames is where zero is expected.
+ * - IT COUNTS THE FRAME'S OWN ACQUISITIONS, not every acquisition of the lock: a host verb's use between frames
+ *   belongs to no frame, and counting it here would make the number say something about the host's rhythm.
+ * - ABSENT IS NOT ZERO, like every part of FrameReport: a backend that does not measure its content lock leaves the
+ *   part disengaged rather than answering a zero that would read as "the frame never took the lock".
+ */
+struct VN_GRAPHICS_API FrameLocking {
+    std::uint64_t acquisitions{ 0 }; ///< Content-lock acquisitions the frame's own phases took.
+    std::uint64_t waits{ 0 };        ///< Those that had to block for another holder.
+};
+
+/**
  * @brief What a backend can say about its frames, as ONE answer (see RenderFrameExecutor::frameReport).
  *
  * @details
@@ -164,6 +185,7 @@ struct VN_GRAPHICS_API FrameReport {
     std::optional<FrameProgress>  progress;  // Where the frame clock is; disengaged when none is kept.
     std::optional<FrameUploads>   uploads;   // What the frame that just ended added and dropped; disengaged when none is kept.
     std::optional<FrameTiming>    timing;    // What that frame cost ON THE DEVICE; disengaged when the clock is not kept.
+    std::optional<FrameLocking>   locking;   // What it spent on the content lock; disengaged when that is not measured.
 };
 
 VN_GRAPHICS_NS_END

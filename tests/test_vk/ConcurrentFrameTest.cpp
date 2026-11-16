@@ -131,3 +131,54 @@ TEST(VkConcurrentFrameTest, TwoThreadsDriveOneDeviceAndBothPicturesAreRight)
 
     backend->shutdown();
 }
+
+TEST(VkConcurrentFrameTest, AHostVerbCalledFromInsideAFrameIsRefusedInsteadOfHanging)
+{
+    // THE GATE'S OTHER HALF (see backend::FrameGate and Impl::body_gate): a host verb called from the thread that is
+    // inside a frame gets an EMPTY lease, answers its refusal value, and says why ONCE. Before the gate could answer
+    // "no", this call was a deadlock - the thread waiting for the frame it was itself inside. A diagnostic sink is the
+    // reachable way to make that call: it runs on the frame's own thread, in the middle of the frame body.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr) << "the registry hands out the vk backend this case is about";
+
+    std::vector<vn::graphics::RenderDiagnostic> reported;
+    std::optional<std::uint64_t>                pipelines_from_inside;
+    backend->setDiagnosticSink([&](const vn::graphics::RenderDiagnostic& diagnostic) {
+        reported.push_back(diagnostic);
+        if (!pipelines_from_inside.has_value()) {
+            // A HOST VERB, from the frame body's thread. It answers its refusal value instead of waiting for itself.
+            pipelines_from_inside = device->contentPipelines();
+        }
+    });
+
+    // A FRAME THAT REPORTS SOMETHING INSIDE ITS BODY: a pass entry with no drawing leaves nothing this backend can
+    // run, which it says once (see vk.content.no_runnable_pass) - while the frame body holds the gate.
+    FrameDescription       frame;
+    FrameDescription::Pass entry;
+    entry.pass = vn::test::framePassForTest();
+    frame.passes.push_back(std::move(entry));
+
+    EXPECT_EQ(backend->executeFrame(frame, nullptr), PresentOutcome::Skipped) << "the frame with nothing to run was not skipped";
+    ASSERT_TRUE(pipelines_from_inside.has_value()) << "the sink never ran inside a frame";
+    EXPECT_EQ(*pipelines_from_inside, 0U) << "a host verb from inside a frame answered a real number instead of refusing";
+
+    const auto has_code = [&reported](const char8_t* code) {
+        for (const vn::graphics::RenderDiagnostic& diagnostic : reported) {
+            if (diagnostic.code == String(code)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    EXPECT_TRUE(has_code(u8"vk.device.reentry")) << "the refusal was silent: a host has to hear it once";
+    EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::PassProtocolViolation), 1U)
+        << "the re-entry was reported once, not per verb";
+    EXPECT_TRUE(backend->initialized()) << "the device did not survive a verb called from inside its own frame";
+
+    backend->shutdown();
+}

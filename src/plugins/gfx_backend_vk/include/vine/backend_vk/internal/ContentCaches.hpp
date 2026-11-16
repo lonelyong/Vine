@@ -536,6 +536,18 @@ class VN_BACKEND_VK_API ContentCaches final {
     [[nodiscard]] std::uint64_t lockAcquisitions() const noexcept;
 
     /**
+     * @brief Gets how many of those acquisitions had to WAIT for another holder (see @ref Lock and FrameLocking).
+     *
+     * @details
+     * - THE HALF A CONTENTION CLAIM NEEDS: `lockAcquisitions()` says how often the lock was asked for, and this says
+     *   how often the asker blocked - a steady single-engine loop is where zero is expected, and a number that grows
+     *   there is what a regression would show.
+     *
+     * @return The waits, cumulative (atomic; reading it takes no lock).
+     */
+    [[nodiscard]] std::uint64_t lockWaits() const noexcept;
+
+    /**
      * @brief Gets the device's RESIDENCE TABLE: who may build a geometry, who may use it, and who has to copy it.
      *
      * @details

@@ -115,34 +115,6 @@ namespace
 constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 
 /**
- * @brief How many frame bodies the CALLING THREAD is inside (see FrameBodyDepth).
- *
- * @details
- * - A FRAME CAN CALL BACK INTO THE DEVICE (a diagnostic sink, a content hook), and a HOST VERB started from there would
- *   wait for the frame it is itself inside - a deadlock the body gate cannot see, because the same thread already
- *   holds it. The readback verbs therefore answer `Failed` instead of waiting (see Device::readColorBuffer).
- * - THREAD-LOCAL, because a frame body is: two drivers on two threads each count their own, and the host's thread never
- *   sees a frame it did not start.
- */
-thread_local std::uint32_t s_frame_depth{ 0 };
-
-/** @brief Marks the calling thread as inside a frame body while it lives (see s_frame_depth). */
-struct FrameBodyDepth {
-    FrameBodyDepth() noexcept
-    {
-        ++s_frame_depth;
-    }
-
-    ~FrameBodyDepth()
-    {
-        --s_frame_depth;
-    }
-
-    FrameBodyDepth(const FrameBodyDepth&)            = delete;
-    FrameBodyDepth& operator=(const FrameBodyDepth&) = delete;
-};
-
-/**
  * @brief How often the device clock is sampled: every Nth frame, starting with the first (see Impl::timestamps).
  *
  * @details
@@ -451,6 +423,8 @@ struct FrameBooks {
     std::optional<vn::graphics::FrameUploads> uploads;
     /// What the last frame cost on the device (see FrameTiming); disengaged when the device keeps no clock.
     std::optional<vn::graphics::FrameTiming> timing;
+    /// What the last frame spent on the cache lock (see FrameLocking); engaged from the first frame that ends.
+    std::optional<vn::graphics::FrameLocking> locking;
 };
 
 /** @brief One snapshot of the content path's cumulative numbers (a frame's own delta is the difference of two). */
@@ -461,6 +435,9 @@ struct ContentTotals {
     std::uint64_t pipeline_builds{ 0 };
     std::uint64_t texture_builds{ 0 };
     std::uint64_t texture_bytes{ 0 };
+    /// The cache lock's cumulative numbers: the frame's own use of the lock is the difference of two (see FrameLocking).
+    std::uint64_t cache_lock_acquisitions{ 0 };
+    std::uint64_t cache_lock_waits{ 0 };
 };
 
 /**
@@ -657,15 +634,17 @@ struct Device::Impl {
     std::vector<std::unique_ptr<FrameDriver>> extra_sessions{};
     ///
     /// THE DEVICE'S TWO LOCKS, ONE FOR EACH QUESTION.
-    /// - `body_gate` answers "may any frame body run while this verb runs?". FRAME BODIES TAKE IT SHARED, so two
-    ///   drivers record and submit at the same time (S6c-2); the host verbs that cannot overlap a frame - a readback,
-    ///   a target release, a teardown, the diagnostic readers - take it EXCLUSIVE and wait for the frames in flight.
+    /// - `body_gate` answers "may any frame body run while this verb runs?" (see backend::FrameGate). FRAME BODIES
+    ///   TAKE IT SHARED, so two drivers record and submit at the same time (S6c-2); a frame that PRESENTS takes it
+    ///   EXCLUSIVE (the swapchain is one device resource), and so do the host verbs that cannot overlap a frame - a
+    ///   readback, a target release, a teardown, the diagnostic readers. A host verb called from a frame body's thread
+    ///   gets an EMPTY lease and answers a refusal (see `report_host_reentry`) instead of deadlocking.
     ///   `releaseContent` deliberately does not take it: its objects are parked against the watermark (R6).
     /// - `clock_mutex` serialises the device's completion clock and park queue (P4). Both are single-threaded value
     ///   types (see DeviceClock / RetirementQueue); a device with two drivers is their lock, and every use of
     ///   `clock.timeline()` happens inside it - the reference never escapes.
-    mutable std::shared_mutex body_gate{};
-    mutable std::mutex        clock_mutex{};
+    mutable vn::graphics::backend::FrameGate body_gate{};
+    mutable std::mutex                        clock_mutex{};
     ///
     /// THE QUEUE'S EXTERNAL SYNCHRONIZATION (Vulkan: host access to a `VkQueue` must be serialized). Two drivers submit
     /// on two threads (S6c-2), and a readback submits from the host's - so every `vkQueueSubmit` and `vkDeviceWaitIdle`
@@ -676,7 +655,18 @@ struct Device::Impl {
     /// no other submitter can be inside while it presents (see executeFrame).
     mutable std::mutex        queue_submit{};
     /// One report at a time at the host's sink: frames on two threads both report, and the sink is the host's.
-    mutable std::mutex        report_mutex{};
+    /// RECURSIVE because the sink itself may call back into the device (a host verb from a diagnostic sink is exactly
+    /// the re-entry case `host_reentry_report` answers): that call reports on the same thread, and a plain mutex would
+    /// turn the case into a deadlock instead of a refusal.
+    mutable std::recursive_mutex report_mutex{};
+    ///
+    /// THE HOST-REENTRY EPISODE (see `body_gate`): a host verb called from a frame body's thread is refused, and the
+    /// reason is the same for every verb - so it is said ONCE per device, naming the verb that was refused. The flag is
+    /// a plain bool, so ask-and-set happens under `reentry_mutex`; the report itself happens AFTER that mutex is
+    /// dropped, because the host's sink may call back into the device and would otherwise meet a mutex it holds.
+    vn::graphics::ReportOnce         host_reentry_report{};
+    mutable std::mutex               reentry_mutex{};
+    std::function<void(const char8_t*)> report_host_reentry{};
     /// One map operation at a time on the built targets: two frame heads may build/snapshot different targets.
     mutable std::mutex        targets_mutex{};
     /// One operation at a time on the surface list: a frame resolves its presenter while a host may add one.
@@ -980,6 +970,10 @@ struct Device::Impl {
         totals.pipeline_builds  = numbers.content.pipeline_builds;
         totals.texture_builds   = numbers.images.builds;
         totals.texture_bytes    = numbers.images.bytes;
+        // THE LOCK'S OWN NUMBERS, read WITHOUT it (both are atomic): a frame's `locked` delta must not depend on the
+        // sample taking the lock it measures.
+        totals.cache_lock_acquisitions = caches.lockAcquisitions();
+        totals.cache_lock_waits        = caches.lockWaits();
         return totals;
     }
 
@@ -1226,20 +1220,22 @@ void Device::FrameDriver::closeFrameBooks(const ContentTotals& before, const vn:
     frame_uploads.texture_uploads = after.texture_builds - before.texture_builds;
     frame_uploads.texture_bytes   = after.texture_bytes - before.texture_bytes;
     books.uploads = frame_uploads;
+    // WHAT THE FRAME SPENT ON THE CACHE LOCK, as the same kind of delta (see FrameLocking): the head's one hold plus
+    // anything a host verb slipped in while this frame ran - a steady frame is a CONSTANT here, whatever it draws.
+    vn::graphics::FrameLocking locking;
+    locking.acquisitions = after.cache_lock_acquisitions - before.cache_lock_acquisitions;
+    locking.waits        = after.cache_lock_waits - before.cache_lock_waits;
+    books.locking        = locking;
 }
 
 PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, PresentTarget* present_to)
 {
-    // THE CALLING THREAD IS INSIDE A FRAME BODY NOW (see s_frame_depth): a host verb it calls back into would wait for
-    // this frame, so the verbs that wait refuse instead (see Device::readColorBuffer).
-    const FrameBodyDepth frame_body{};
-
     // ONE FRAME AT A TIME PER DRIVER, AS A CHECKED FACT (see FrameGate): another thread waits here, and a frame started
     // from the thread that is ALREADY driving one is refused - a re-entrant frame would corrupt this driver's command
     // buffer and fence silently. The gate is the DRIVER's, so a second driver (step 2's `createSession()`) is not
     // serialised against this one for free. The lease releases the gate on EVERY return below, which is why it is a
     // lease and not a pair of calls.
-    const vn::graphics::backend::FrameGate::Lease frame_lease = frames.enter();
+    const vn::graphics::backend::FrameGate::Exclusive frame_lease = frames.enterExclusive();
     if (!frame_lease) {
         if (frame_reentry_report.shouldReport()) {
             owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
@@ -1253,18 +1249,33 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         return PresentOutcome::Refused;
     }
 
-    // FRAME BODIES OVERLAP (see Impl::body_gate): a frame takes the gate SHARED, so another driver's frame may record
-    // and submit at the same time - everything a frame touches is either its own (scratch, command pool, fence) or
-    // under its own lock (the caches, the allocator, the target map). A frame that PRESENTS is the exception: the
-    // swapchain, its semaphores and the window's report episodes are one device resource, so a window frame takes the
-    // gate EXCLUSIVELY and is serialised with every other frame.
-    std::shared_lock<std::shared_mutex> shared_body(owner.body_gate, std::defer_lock);
-    std::unique_lock<std::shared_mutex> window_body(owner.body_gate, std::defer_lock);
+    // FRAME BODIES OVERLAP (see Impl::body_gate): an OFF-SCREEN frame takes the gate SHARED, so another driver's frame
+    // may record and submit at the same time - everything a frame touches is either its own (scratch, command pool,
+    // fence) or under its own lock (the caches, the allocator, the target map). A frame that PRESENTS is the exception:
+    // the swapchain, its semaphores and the window's report episodes are one device resource, so a window frame takes
+    // the gate EXCLUSIVELY and is serialised with every other frame.
+    //
+    // AND A BODY ENTERED FROM INSIDE ONE IS REFUSED, NOT QUEUED (see FrameGate): a hook driving another engine of this
+    // device runs on this thread, which already holds the gate - waiting there would be the thread waiting for itself.
+    std::optional<vn::graphics::backend::FrameGate::Shared>    offscreen_body;
+    std::optional<vn::graphics::backend::FrameGate::Exclusive> window_body;
     if (present_to != nullptr) {
-        window_body.lock();
+        window_body.emplace(owner.body_gate.enterExclusive());
     }
     else {
-        shared_body.lock();
+        offscreen_body.emplace(owner.body_gate.enterShared());
+    }
+    const bool body_entered = present_to != nullptr ? static_cast<bool>(*window_body) : static_cast<bool>(*offscreen_body);
+    if (!body_entered) {
+        if (frame_reentry_report.shouldReport()) {
+            owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::PassProtocolViolation,
+                                          u8"vk.session.frame_reentry",
+                                          u8"vk: a frame was started from a thread that is already inside a frame of this "
+                                          u8"device (a hook or a sink drove another engine); this frame was refused - a "
+                                          u8"thread drives one frame at a time"));
+        }
+        return PresentOutcome::Refused;
     }
 
     if (!(owner.device != VK_NULL_HANDLE && !owner.device_lost)) {
@@ -2027,14 +2038,10 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
     using vn::graphics::EngineNotReady;
     using vn::graphics::PrepareReport;
 
-    // THE CALLING THREAD IS INSIDE A FRAME BODY NOW (see s_frame_depth), exactly as in executeFrame: the batch this
-    // call may submit is frame work, and a host verb it called back into must refuse rather than wait for it.
-    const FrameBodyDepth frame_body{};
-
     // THE SAME GATE AS executeFrame, because a warm-up records and may submit a transfer batch of its own (see
     // ADR-2026-11-14): a warm-up racing a frame would share this driver's command pool. `Refused` carries no reason -
     // the report says which refusal it was (see executeFrame).
-    const vn::graphics::backend::FrameGate::Lease frame_lease = frames.enter();
+    const vn::graphics::backend::FrameGate::Exclusive frame_lease = frames.enterExclusive();
     if (!frame_lease) {
         if (frame_reentry_report.shouldReport()) {
             owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
@@ -2048,8 +2055,20 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
     }
 
     // THE SAME GATE AS executeFrame, in its SHARED form: a warm-up records transfers only, so it may overlap another
-    // driver's frame - but never its own (the FrameGate above already answered that).
-    const std::shared_lock<std::shared_mutex> device_body(owner.body_gate);
+    // driver's frame - but never a frame of this thread (both gates answer an empty lease for that), which is
+    // `Refused` here because a warm-up records and may submit, exactly like a frame.
+    const vn::graphics::backend::FrameGate::Shared device_body = owner.body_gate.enterShared();
+    if (!device_body) {
+        if (frame_reentry_report.shouldReport()) {
+            owner.report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                          DiagnosticCategory::PassProtocolViolation,
+                                          u8"vk.session.frame_reentry",
+                                          u8"vk: a warm-up was started from a thread that is already inside a frame of "
+                                          u8"this device (a hook or a sink drove another engine); it was refused - a "
+                                          u8"thread drives one frame at a time"));
+        }
+        return PrepareReport{ PrepareReport::Outcome::Refused };
+    }
 
     if (!(owner.device != VK_NULL_HANDLE && !owner.device_lost)) {
         // "There is nothing to prebuild" and "the device is not up" are different answers (see PrepareReport).
@@ -2336,6 +2355,7 @@ vn::graphics::FrameReport Device::FrameDriver::frameReport() const noexcept
     report.progress = books.progress;
     report.uploads  = books.uploads; // this frame's own delta; absent until a frame ran
     report.timing   = books.timing;  // the device's own clock; absent when the device keeps none (see FrameTiming)
+    report.locking  = books.locking; // what it spent on the cache lock; absent until a frame ended
 
     vn::graphics::RetentionStats retention;
     retention.released_nodes = owner.released_nodes;
@@ -2366,8 +2386,27 @@ Device::Device(const DeviceDesc& desc)
     // ONE REPORT AT A TIME AT THE HOST'S SINK: two drivers' frames report on two threads (S6c-2), and the sink is the
     // host's - it is not asked to be thread-safe. A diagnostic is never on a frame's path (it is a refusal or a loss).
     impl->report           = [this](const vn::graphics::RenderDiagnostic& diagnostic) {
-        const std::lock_guard<std::mutex> report_held(impl->report_mutex);
+        const std::lock_guard<std::recursive_mutex> report_held(impl->report_mutex);
         reportDiagnostic(diagnostic);
+    };
+    // THE HOST-REENTRY SENTENCE (see body_gate): one per device, naming the verb, because every host verb answers the
+    // same refusal and a host needs to hear it once rather than discover a call that did nothing.
+    impl->report_host_reentry = [this](const char8_t* verb) {
+        bool first = false;
+        {
+            const std::lock_guard<std::mutex> reentry_held(impl->reentry_mutex);
+            first = impl->host_reentry_report.shouldReport();
+        }
+        if (!first) {
+            return;
+        }
+        impl->report(deviceDiagnostic(DiagnosticSeverity::Error,
+                                      DiagnosticCategory::PassProtocolViolation,
+                                      u8"vk.device.reentry",
+                                      vn::String(u8"vk: ") + vn::String(verb) +
+                                          u8" was called from inside a frame body (a hook or a sink called back into "
+                                          u8"the device); it did nothing - the verb needs the frames in flight to "
+                                          u8"end, so ask between frames"));
     };
     impl->ensure_target    = [this](const RenderTarget& target) { return ensureTarget(target); };
     impl->note_device_lost = [this](const VkResult result, const char* what) { return noteDeviceLost(result, what); };
@@ -2946,8 +2985,13 @@ bool Device::initialize()
 void Device::shutdown()
 {
     // SHUTDOWN IS THE ONE HOST VERB THAT OWNS THE WHOLE DEVICE: every frame in flight must be over before anything is
-    // destroyed, so it takes the gate exclusively (see Impl::body_gate).
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // destroyed, so it takes the gate exclusively (see Impl::body_gate). Called from inside a frame body it does
+    // nothing: the device keeps what it has, which is the only safe answer (see host_reentry_report).
+    const vn::graphics::backend::FrameGate::Exclusive device_lock = impl->body_gate.enterExclusive();
+    if (!device_lock) {
+        impl->report_host_reentry(u8"shutdown()");
+        return;
+    }
     if (impl->device != VK_NULL_HANDLE) {
         // A counted stop: every queue is idle before the objects it recorded against go.
         (void)impl->device_table.vkDeviceWaitIdle(impl->device);
@@ -3172,11 +3216,13 @@ void Device::noteMemoryRefusal(const MemoryRefusalReport& report)
 
 void Device::setMemoryBlockCreator(MemoryBlockCreator creator)
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // A HOST VERB OWNS THE GATE (see Impl::body_gate): it waits for the frames in flight instead of racing them. Called
+    // from a frame body's thread it does nothing instead of waiting for itself (see host_reentry_report).
+    const vn::graphics::backend::FrameGate::Exclusive device_lock = impl->body_gate.enterExclusive();
+    if (!device_lock) {
+        impl->report_host_reentry(u8"setMemoryBlockCreator()");
+        return;
+    }
     // A TEST SEAM, NOT A POLICY (see the header): blocks are created lazily, so this is read by the first target or
     // texture that needs one, and empty means the device table's own `vkAllocateMemory`.
     impl->allocator.setBlockCreator(std::move(creator));
@@ -3184,11 +3230,13 @@ void Device::setMemoryBlockCreator(MemoryBlockCreator creator)
 
 void Device::setDefaultContentProgram(vn::intrusive_ptr<const vn::graphics::ShaderProgram> program)
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // A HOST VERB OWNS THE GATE (see Impl::body_gate): it waits for the frames in flight instead of racing them. Called
+    // from a frame body's thread it does nothing instead of waiting for itself (see host_reentry_report).
+    const vn::graphics::backend::FrameGate::Exclusive device_lock = impl->body_gate.enterExclusive();
+    if (!device_lock) {
+        impl->report_host_reentry(u8"setDefaultContentProgram()");
+        return;
+    }
     // THE DRIVER'S SETTING (see RenderFrameExecutor::setDefaultContentProgram): this device runs its own frames through
     // its own session, so a caller that drives the device directly keeps the shape it had - and a real second driver
     // would be told its own program, not this one's.
@@ -3201,8 +3249,14 @@ vn::graphics::RenderFrameExecutor* Device::createSession()
         return nullptr;
     }
     // A DRIVER BORROWED BEFORE initialize() IS BUILT BY IT (R1: an engine attaches first); one borrowed from a device
-    // that is ALREADY up must come up here, or it would answer frames with no command pool.
-    const std::unique_lock<std::shared_mutex> guard(impl->body_gate);
+    // that is ALREADY up must come up here, or it would answer frames with no command pool. A HOST VERB, so it owns
+    // the gate; from a frame body's thread it answers null (creating drivers from a sink is wiring this layer cannot
+    // serve).
+    const vn::graphics::backend::FrameGate::Exclusive guard = impl->body_gate.enterExclusive();
+    if (!guard) {
+        impl->report_host_reentry(u8"createSession()");
+        return nullptr;
+    }
     std::unique_ptr<FrameDriver>      session = std::make_unique<FrameDriver>(*impl);
     if (impl->device != VK_NULL_HANDLE) {
         if (session->create() != FrameDriver::CreateRefusal::Ok) {
@@ -3231,7 +3285,13 @@ void Device::releaseSession(vn::graphics::RenderFrameExecutor& session)
     if (&session == impl->session.get()) {
         return; // the device's own driver is not a host's to return (see the header)
     }
-    const std::unique_lock<std::shared_mutex> guard(impl->body_gate);
+    const vn::graphics::backend::FrameGate::Exclusive guard = impl->body_gate.enterExclusive();
+    if (!guard) {
+        // From a frame body's thread the answer is "nothing was released": destroying a driver a frame is running on
+        // would be a use-after-free, and waiting would be the thread waiting for itself.
+        impl->report_host_reentry(u8"releaseSession()");
+        return;
+    }
     const auto found = std::find_if(impl->extra_sessions.begin(), impl->extra_sessions.end(), [&session](const std::unique_ptr<FrameDriver>& candidate) {
         return candidate.get() == &session;
     });
@@ -3255,11 +3315,13 @@ vn::graphics::RenderFrameExecutor& Device::executor()
 
 void Device::setRenderTarget(RenderTarget* target)
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // A HOST VERB OWNS THE GATE (see Impl::body_gate): it waits for the frames in flight instead of racing them. Called
+    // from a frame body's thread it does nothing instead of waiting for itself (see host_reentry_report).
+    const vn::graphics::backend::FrameGate::Exclusive device_lock = impl->body_gate.enterExclusive();
+    if (!device_lock) {
+        impl->report_host_reentry(u8"setRenderTarget()");
+        return;
+    }
     impl->target = target;
 }
 
@@ -3297,11 +3359,17 @@ void Device::releaseRenderTarget(RenderTarget* target)
 
 vn::raw_ptr<vn::graphics::WindowPresentTarget> Device::createSurfaceTarget(void* native_handle, SurfaceTargetResult* why)
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // A HOST VERB OWNS THE GATE (see Impl::body_gate): it appends to the device's window list, which every frame body
+    // reads - so it waits for the frames in flight. Called from a frame body's thread it answers UnsupportedSurface
+    // rather than waiting for itself.
+    const vn::graphics::backend::FrameGate::Exclusive device_lock = impl->body_gate.enterExclusive();
+    if (!device_lock) {
+        impl->report_host_reentry(u8"createSurfaceTarget()");
+        if (why != nullptr) {
+            *why = SurfaceTargetResult::UnsupportedSurface;
+        }
+        return nullptr;
+    }
     const auto answer = [why](const SurfaceTargetResult result) {
         if (why != nullptr) {
             *why = result;
@@ -3745,10 +3813,10 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
         *why = ReadbackResult::Ok;
     }
 
-    // A READBACK ASKED FROM INSIDE A FRAME WOULD WAIT FOR THAT SAME FRAME (see s_frame_depth): it is refused, not
+    // A READBACK ASKED FROM INSIDE A FRAME WOULD WAIT FOR THAT SAME FRAME (see Impl::body_gate): it is refused, not
     // hung. `Failed` says the verb did not run; a hook or a sink calling back into the device is a host protocol
     // violation, not a device fact worth a report on the frame's diagnostic channel.
-    if (s_frame_depth != 0) {
+    if (impl->body_gate.heldByThisThread()) {
         return fail(ReadbackResult::Failed);
     }
     if (!initialized()) {
@@ -3780,7 +3848,10 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     // frames" is not a moment the host can see, so the gate says "no frame body runs while this verb runs" - it waits
     // for the frames in flight, not for a session. THE COMMAND MACHINERY IS THE READBACK'S OWN (see ReadbackStaging):
     // nothing here borrows a driver's command pool, fence or ring.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    const vn::graphics::backend::FrameGate::Exclusive device_lock = impl->body_gate.enterExclusive();
+    if (!device_lock) {
+        return fail(ReadbackResult::Failed); // the guard above covers this thread; a refused gate is still a refusal
+    }
     {
         // ONE COUNTED DEVICE STOP per readback (F7): this is the counter the host reads, and the same counter the
         // reference backend raises with its readback idle (G6). A refusal answered above never reaches this line.
@@ -3908,9 +3979,9 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
         *why = ReadbackResult::Ok;
     }
 
-    // A READBACK ASKED FROM INSIDE A FRAME WOULD WAIT FOR THAT SAME FRAME (see s_frame_depth): refused, not hung (the
+    // A READBACK ASKED FROM INSIDE A FRAME WOULD WAIT FOR THAT SAME FRAME (see Impl::body_gate): refused, not hung (the
     // colour readback says the same; `Failed` means the verb did not run).
-    if (s_frame_depth != 0) {
+    if (impl->body_gate.heldByThisThread()) {
         return fail(ReadbackResult::Failed);
     }
     if (!initialized()) {
@@ -3945,7 +4016,10 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
 
     // THE WAIT THE DEVICE NAMES FOR THE HOST, AND IT IS COUNTED, exactly as in readColorBuffer: the frames in flight
     // are what the gate waits for, and the command machinery below is the readback's own (see ReadbackStaging).
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    const vn::graphics::backend::FrameGate::Exclusive device_lock = impl->body_gate.enterExclusive();
+    if (!device_lock) {
+        return fail(ReadbackResult::Failed); // the guard above covers this thread; a refused gate is still a refusal
+    }
     {
         const std::lock_guard<std::mutex> clock_held(impl->clock_mutex);
         impl->retirement.noteDeviceWait();
@@ -4080,37 +4154,44 @@ Handles Device::handles() const noexcept
 
 std::uint64_t Device::contentPipelines() const noexcept
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // A HOST VERB OWNS THE GATE (see Impl::body_gate). Called from a frame body's thread it answers zero rather than
+    // waiting for itself: no pipeline count is a better answer than a hung sink (see host_reentry_report).
+    const vn::graphics::backend::FrameGate::Exclusive device_lock = impl->body_gate.enterExclusive();
+    if (!device_lock) {
+        impl->report_host_reentry(u8"contentPipelines()");
+        return 0U;
+    }
     return impl->caches.pipelinesCreated();
 }
 
 Device::ContentCacheCounters Device::contentCacheCounters() const noexcept
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // A HOST VERB OWNS THE GATE (see Impl::body_gate). Called from a frame body's thread it answers an empty set of
+    // counters rather than waiting for itself (see host_reentry_report).
+    const vn::graphics::backend::FrameGate::Exclusive device_lock = impl->body_gate.enterExclusive();
+    if (!device_lock) {
+        impl->report_host_reentry(u8"contentCacheCounters()");
+        return ContentCacheCounters{};
+    }
     // TWO OWNERS, ONE ANSWER: the ring and the descriptor sets belong to the device's own driver (a second driver would
     // have its own), while the caches answer the rest. `Device` reports its own session's frame scratch, which is the
     // same answer a single-session tree has always given.
     return ContentCacheCounters{ impl->session->scratch.ringBuilds(),
                                  impl->session->scratch.setBuilds(),
                                  impl->session->scratch.setsLive(),
-                                 impl->caches.lockAcquisitions() };
+                                 impl->caches.lockAcquisitions(),
+                                 impl->caches.lockWaits() };
 }
 
 MemoryStats Device::memoryStats() const noexcept
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // A HOST VERB OWNS THE GATE (see Impl::body_gate). Called from a frame body's thread it answers empty stats rather
+    // than waiting for itself (see host_reentry_report).
+    const vn::graphics::backend::FrameGate::Exclusive device_lock = impl->body_gate.enterExclusive();
+    if (!device_lock) {
+        impl->report_host_reentry(u8"memoryStats()");
+        return MemoryStats{};
+    }
     return impl->allocator.stats();
 }
 
@@ -4136,11 +4217,13 @@ const ResidenceTable& Device::residence() const noexcept
 
 Device::RetirementNumbers Device::retirementNumbers() const noexcept
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // A HOST VERB OWNS THE GATE (see Impl::body_gate). Called from a frame body's thread it answers zeros rather than
+    // waiting for itself (see host_reentry_report).
+    const vn::graphics::backend::FrameGate::Exclusive device_lock = impl->body_gate.enterExclusive();
+    if (!device_lock) {
+        impl->report_host_reentry(u8"retirementNumbers()");
+        return RetirementNumbers{};
+    }
     // AND THE QUEUE'S OWN LOCK: a release no longer waits for the frames (R6), so a park may be appending while this
     // verb reads the numbers.
     const std::lock_guard<std::mutex> clock_held(impl->clock_mutex);
@@ -4153,11 +4236,13 @@ Device::RetirementNumbers Device::retirementNumbers() const noexcept
 
 Device::PipelineCacheReport Device::pipelineCacheReport() const noexcept
 {
-    // A HOST VERB TAKES THE BODY GATE EXCLUSIVELY (see Impl::body_gate): it waits for the frames in flight instead
-    // of racing them. With several drivers, "between frames" is no longer a moment anyone can name on the host's
-    // behalf, so the DEVICE names it for them - and the frames themselves overlap, which is why this is a
-    // shared/exclusive gate and not one plain lock.
-    const std::unique_lock<std::shared_mutex> device_lock(impl->body_gate);
+    // A HOST VERB OWNS THE GATE (see Impl::body_gate). Called from a frame body's thread it answers an empty report
+    // rather than waiting for itself (see host_reentry_report).
+    const vn::graphics::backend::FrameGate::Exclusive device_lock = impl->body_gate.enterExclusive();
+    if (!device_lock) {
+        impl->report_host_reentry(u8"pipelineCacheReport()");
+        return PipelineCacheReport{};
+    }
     PipelineCacheReport report{
         .persisted       = impl->cache_books.persisted,
         .discarded       = impl->cache_books.discarded,
@@ -4187,7 +4272,7 @@ void Device::reportDriverMessage(int severity_flags, const char* text)
     }
     // M0 has no frame, so every driver message it can produce is about coming up - which is also why InitFailed is
     // the right category rather than a per-draw one (see the header).
-    const std::lock_guard<std::mutex> report_held(impl->report_mutex);
+    const std::lock_guard<std::recursive_mutex> report_held(impl->report_mutex);
     reportDiagnostic(deviceDiagnostic(severity, DiagnosticCategory::InitFailed, u8"vk.driver.message", messageOf(text)));
 }
 

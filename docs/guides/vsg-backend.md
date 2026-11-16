@@ -94,11 +94,12 @@
   设备自己的驱动者就是聚合本身（`executor()`）；交出去的由设备拥有，`releaseSession` 销毁。帧自己的运行状态在
   `VsgExecutor::FrameDrive`（scratch / 窗口索引 / 上传基线 / 上一帧的读数），帧尾即清；`presentWindow` 经
   **线程本地的在飞帧**取回本次帧的驱动者（窗口目标的 `present()` 没有帧参数）。
-* **帧体共享设备，设备内容一把锁，记录路径零锁（S8c-1 + S8c-2）**：设备闸是 **`DeviceGate`**（`internal/DeviceGate.hpp`）的两侧——
+* **帧体共享设备，设备内容一把锁，记录路径零锁（S8c-1 + S8c-2）**：设备闸是 **`backend::FrameGate`**（`vine/graphics/backend/FrameGate.hpp`，与 vk 后端同一个类型）的两侧——
   **帧体取共享侧**（两个驱动者的帧体可以同时跑），**宿主动词取独占侧**（initialize / shutdown / 读回 /
   `frameReport` / 窗口集 / resize）。从帧体线程回调的宿主动词得到**空租约**并回答拒绝
   （读回 `vsg.readback.in_frame`，内容动词 `vsg.device.reentry`），从不等待自己；诊断路由与 episode 锁是递归的，
-  因为 sink 本身可能回调。一帧的段：**帧首**（`openFrameHead`，一次内容锁：pass 编号 → `FrameScratch::pass_ids`、
+  因为 sink 本身可能回调。每帧还报告自己在内容锁上花了什么（`FrameReport::locking`：帧首与提交的 acquisition 数，
+  稳态是常数、`waits` 为 0）。一帧的段：**帧首**（`openFrameHead`，一次内容锁：pass 编号 → `FrameScratch::pass_ids`、
   目标、采样、内容跟踪、目标事实、存储增长）、**收集与计划编译**（只读会话 scratch，不取设备锁）、
   **内容解析**（`resolveContent`，一次内容锁：计划的目标答复、材质 arena、halves / declared sets / stream bind /
   材质槽 / 纹理视图 / 块偏移 / pipeline 身份 → 会话的 **`ContentPlan`**（`internal/ContentPlan.hpp`，每驱动一份的**值**））、

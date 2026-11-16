@@ -396,7 +396,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
 
 **S8c-1 落地（2026-11-16）：帧体共享设备，设备缓存进一把内容锁**
 
-- **设备闸换了形状**：`internal/DeviceGate` 取代 `backend::FrameGate` 在 vsg 的位置——帧体取**共享**侧（两个驱动者的帧体可以同时进入），宿主动词取**独占**侧（initialize / shutdown / 读回 / `frameReport` / 窗口集 / resize）。从帧体线程调用的宿主动词得到**空租约**并回答拒绝（读回回答 `InsideFrame`，内容动词回答 false / 不动并报一条 `vsg.device.reentry`），从不等待自己。诊断路由与 episode 锁是**递归**的，因为 sink 本身可能回调。
+- **设备闸换了形状**：vsg 的设备闸是 **`backend::FrameGate`**（S2 批 2 起与 vk 同一个类型、设备各有实例）——帧体取**共享**侧（两个驱动者的帧体可以同时进入），宿主动词取**独占**侧（initialize / shutdown / 读回 / `frameReport` / 窗口集 / resize）。从帧体线程调用的宿主动词得到**空租约**并回答拒绝（读回回答 `InsideFrame`，内容动词回答 false / 不动并报一条 `vsg.device.reentry`），从不等待自己。诊断路由与 episode 锁是**递归**的，因为 sink 本身可能回调。
 - **帧状态归驱动**：`VsgExecutor::FrameDrive`（scratch / 本次窗口索引 / 上传基线 / 上一帧的 delta）取代 `Data::{driving, scratch, driving_executor, uploads_before, last_uploads}`（最后一项保留为设备的“最后一帧”副本）。`presentWindow` 通过**线程本地的在飞帧**（`FrameInFlight`）取回本次帧的驱动者——窗口目标的 `present()` 没有帧参数，设备级单份会把一帧的计划交给另一驱动的 present。
 - **帧首快照（vsg 的形状）**：`openFrameHead` 在**一次**内容锁下解析这一帧会读的所有**设备事实**——每个 pass 的编号（`PassRegistry::adopt` 写入 `FrameScratch::pass_ids`）、它画的每个宿主目标（`adoptHostTarget`）、它采样的每个目标（`HostTargets::observe`）、它命令里点名的内容（`ContentStore::track`）、目标事实表的副本（`FrameScratch::facts`）、staging 清扫与块存储的增长。**收集**（`collectFrame`）与**计划编译**（`closeFrameBooks`）随后只读会话自己的 scratch，因此它们里的报告（计划编译器的“这个输入/目标解析不了”）到达 sink 时**不持任何设备锁**。
 - **内容相是设备唯一的串行段**：`commitFrameThrough` 在**一次**内容锁下做 `applyTargetPlans` / 材质 arena 增长 / `recordContent`（assembly 开帧 + 录制）/ `executor.record` / 清扫 / 会话提交，并在每个出口发布本帧的上传 delta 与计数器（`Data::last_uploads` / `last_counters`）。
@@ -673,7 +673,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
   `executeFrameFor` / `prepareFrameFor`；默认程序按驱动者（`C8`），开帧时交给驱动会话的 recorder。
   `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram`：两驱动者各自的默认互不覆盖、各自出图，释放其一另一个照常；
   `test_vsg` **558/558**、对拍 13/13。
-- **已落地**：`T48` 的 **S8c-1（vsg 的帧首快照 + 内容锁 + 设备闸两侧化）**——帧体共享 `DeviceGate`、宿主动词独占；
+- **已落地**：`T48` 的 **S8c-1（vsg 的帧首快照 + 内容锁 + 设备闸两侧化）**——帧体共享 `backend::FrameGate`、宿主动词独占；
   帧状态归 `VsgExecutor::FrameDrive`，`presentWindow` 经线程本地的在飞帧取回驱动者；`openFrameHead` 在一次内容锁下解析
   pass 编号/目标/采样/内容跟踪/目标事实/存储增长，收集与编译在会话 scratch 上不加锁，`commitFrameThrough` 在一次
   内容锁下装配、录制、清扫、提交；窗口与离屏会话各有一把帧主张（同会话的两帧等待，不同窗口互不等待）；计数器归会话。
@@ -775,7 +775,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
   帧体参数化为 `executeFrameFor` / `prepareFrameFor`，`Data::driving_executor` 记录本次帧的驱动者；
   `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram` 钉住两个默认程序互不覆盖与各自像素。`test_vsg` 558/558 | T9、T8 | 中 |
 | S8c | vsg 的设备缓存锁/帧首快照 + 解禁帧闸（帧体真并行） | T9、T11 | 中 |
-| S8c-1 | **已落地 2026-11-16**：`internal/DeviceGate`（帧体共享 / 宿主动词独占，重入答拒绝）；`VsgExecutor::FrameDrive`
+| S8c-1 | **已落地 2026-11-16**：`backend::FrameGate`（帧体共享 / 宿主动词独占，重入答拒绝；S2 批 2 起两个后端同一个类型）；`VsgExecutor::FrameDrive`
   取代设备的帧状态；`openFrameHead` 在一次内容锁下解析设备事实（pass 编号 / 目标 / 采样 / 内容跟踪 / 目标事实 /
   存储增长），收集与计划编译在会话 scratch 上不加锁；`commitFrameThrough` 在一次内容锁下装配、录制、清扫、提交并发布
   本帧读数；窗口/离屏会话各有一把帧主张；每会话自己的 `Observe`。**仍待**：记录路径零锁（`C3`）。

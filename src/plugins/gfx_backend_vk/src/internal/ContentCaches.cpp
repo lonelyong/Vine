@@ -46,11 +46,14 @@ struct ContentCaches::Impl {
      * - IT GUARDS THE TABLES, THE BOOKS, THE SHARED LAYOUTS' LIFETIME AND THE IMAGE CACHE'S TABLES. The immutable
      *   projections (`table()`, the layouts, the line width) are set by `create` and read without it: they never change
      *   while the device is up, and the recording path reads them on every draw.
-     * - THE COUNTER IS ATOMIC SO READING IT DOES NOT NEED THE LOCK: a test asks `lockAcquisitions()` while no frame is
-     *   in flight, and the number must not change the mechanism it measures.
+     * - THE COUNTERS ARE ATOMIC SO READING THEM DOES NOT NEED THE LOCK: a test asks `lockAcquisitions()` while no frame
+     *   is in flight, and the number must not change the mechanism it measures. `waits` is counted the way the frame
+     *   gate counts its own (try the lock, count a failure, then block), so "a steady frame never waited" is measured
+     *   identically at both places.
      */
     mutable std::mutex          lock{};
     std::atomic<std::uint64_t>  acquisitions{ 0 };
+    std::atomic<std::uint64_t>  waits{ 0 };
 
     /// @brief The program cache's key: one TEXT (its identity and revision are the pointer) under one VARIANT.
     struct ProgramKey {
@@ -1732,14 +1735,26 @@ bool ContentCaches::planScreen(const vn::graphics::DrawDescription&             
 ContentCaches::Lock ContentCaches::lock() const
 {
     // COUNTED BEFORE BLOCKING, so the number says "a caller asked for the caches", not "a caller got in": a test that
-    // asserts the count does not grow with drawing calls must not depend on how long a concurrent holder took.
+    // asserts the count does not grow with drawing calls must not depend on how long a concurrent holder took. A
+    // caller that had to WAIT is counted too (see FrameLocking): the try says whether the lock was free, and the count
+    // is the witness that a steady frame never waits for another frame's head.
     impl->acquisitions.fetch_add(1U, std::memory_order_relaxed);
-    return Lock(std::unique_lock<std::mutex>(impl->lock));
+    std::unique_lock<std::mutex> held(impl->lock, std::defer_lock);
+    if (!held.try_lock()) {
+        impl->waits.fetch_add(1U, std::memory_order_relaxed);
+        held.lock();
+    }
+    return Lock(std::move(held));
 }
 
 std::uint64_t ContentCaches::lockAcquisitions() const noexcept
 {
     return impl->acquisitions.load(std::memory_order_relaxed);
+}
+
+std::uint64_t ContentCaches::lockWaits() const noexcept
+{
+    return impl->waits.load(std::memory_order_relaxed);
 }
 
 std::uint64_t ContentCaches::pipelinesCreated() const noexcept

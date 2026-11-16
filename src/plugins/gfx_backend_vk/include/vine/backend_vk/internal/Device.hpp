@@ -418,6 +418,9 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
         /// PATH TAKES NO CACHE LOCK": a frame resolves its content once at its head, so this number grows with FRAMES
         /// and with host verbs, never with the drawing calls inside a frame.
         std::uint64_t cache_lock_acquisitions{ 0 };
+        /// How many of those had to WAIT for another holder (see ContentCaches::lockWaits): zero in a steady
+        /// single-engine loop, and the number a regression in the three-phase rule moves first.
+        std::uint64_t cache_lock_waits{ 0 };
     };
 
     /** @brief What the park queue holds: the releases waiting for the frame that could still name them. */

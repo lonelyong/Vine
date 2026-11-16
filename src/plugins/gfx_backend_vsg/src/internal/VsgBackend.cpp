@@ -31,7 +31,7 @@
 #include <vine/backend_vsg/internal/ContentAssembly.hpp>
 #include <vine/backend_vsg/internal/ContentStore.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
-#include <vine/backend_vsg/internal/DeviceGate.hpp>
+#include <vine/graphics/backend/FrameGate.hpp>
 #include <vine/backend_vsg/internal/FrameScratch.hpp>
 #include <vine/backend_vsg/internal/HostReadback.hpp>
 #include <vine/backend_vsg/internal/HostTargets.hpp>
@@ -109,7 +109,7 @@ constexpr std::size_t kNoWindow = VsgExecutor::kNoWindow;
  *
  * WHY A THREAD-LOCAL AND NOT A DEVICE FIELD. The present of a frame arrives as `PresentTarget::present()` on the
  * window object the frame named - a call with no frame parameter - and it is made from INSIDE the frame body, on the
- * frame's own thread. Two drivers' frames may run at once (see DeviceGate), so a device-wide "the frame in flight"
+ * frame's own thread. Two drivers' frames may run at once (see backend::FrameGate), so a device-wide "the frame in flight"
  * would hand one frame's plan to another's present. The frame's own state lives in the driving executor (see
  * VsgExecutor::FrameDrive); this is the one pointer that lets the callback find it again, and it is scoped to the
  * frame body exactly like the vk backend's frame-body depth.
@@ -618,16 +618,52 @@ struct VsgBackend::Data {
     /// THE OFF-SCREEN SESSION'S FRAME CLAIM: the same rule the windows' slots state, for the one session a frame
     /// naming no target runs through (frames wait for each other there; the session is the device's one).
     std::mutex offscreen_frame{};
-    /// THE DEVICE'S TWO-SIDED GATE (see DeviceGate): frame bodies SHARE it - two drivers' frames overlap - and host
-    /// verbs (initialize / shutdown / readback / the frame report / the window set) take it EXCLUSIVE. A verb called
-    /// from inside a body's thread gets an empty lease and answers a refusal instead of waiting for itself.
-    DeviceGate gate{};
+    /// THE DEVICE'S TWO-SIDED GATE (see backend::FrameGate): frame bodies SHARE it - two drivers' frames overlap -
+    /// and host verbs (initialize / shutdown / readback / the frame report / the window set) take it EXCLUSIVE. A verb
+    /// called from inside a body's thread gets an empty lease and answers a refusal instead of waiting for itself.
+    vn::graphics::backend::FrameGate gate{};
     /// THE DEVICE'S CONTENT LOCK: the tables a frame reads - the store, halves, sets, uploads, images, targets, the
     /// pass registry, the variant pool, the block storage and the clock/park queue - are touched by ONE CONTENT PHASE
     /// at a time. It is taken once by the frame's HEAD (see openFrameHead) and once by the phase that assembles,
     /// records and commits (see commitFrameThrough); the collection and plan compilation in between run on the
     /// driver's own scratch and take no device lock (`S8c-1`; a lock-free record walk is `S8c-2`).
     std::mutex content{};
+    ///
+    /// WHAT THE FRAME PHASES SPENT ON `content` (see FrameLocking): the head, the commit and a warm-up take the lock
+    /// through `lockContentForPhase`, which counts the acquisition and whether it had to block. Host verbs take
+    /// `content` directly, because their use between frames belongs to no frame. ATOMIC because the report is read by
+    /// a host thread while another driver's frame runs.
+    std::atomic<std::uint64_t> content_lock_acquisitions{ 0 };
+    std::atomic<std::uint64_t> content_lock_waits{ 0 };
+
+    /**
+     * @brief Takes the device's content lock for a FRAME PHASE, counting the acquisition and any wait.
+     *
+     * @details
+     * - THE TRY IS WHAT MAKES "the frame waited" measurable: a failed try is counted, and the block follows - the same
+     *   measurement the vk backend's cache lock takes, so the two reports compare.
+     * - Re-entering it from inside a phase (a sink calling a verb that takes the lock) is a deadlock, which is why the
+     *   content verbs ask `gate.inSharedEntry()` first (see reportReentry).
+     *
+     * @return The hold; it releases the content lock when it goes out of scope.
+     */
+    [[nodiscard]] std::unique_lock<std::mutex> lockContentForPhase()
+    {
+        content_lock_acquisitions.fetch_add(1U, std::memory_order_relaxed);
+        std::unique_lock<std::mutex> held(content, std::defer_lock);
+        if (!held.try_lock()) {
+            content_lock_waits.fetch_add(1U, std::memory_order_relaxed);
+            held.lock();
+        }
+        return held;
+    }
+
+    /** @brief Gets the content lock's cumulative numbers (see FrameLocking). */
+    [[nodiscard]] vn::graphics::FrameLocking contentLockNumbers() const noexcept
+    {
+        return vn::graphics::FrameLocking{ content_lock_acquisitions.load(std::memory_order_relaxed),
+                                           content_lock_waits.load(std::memory_order_relaxed) };
+    }
     /// THE ONE DIAGNOSTIC ROUTE, ONE SENTENCE AT A TIME: every frame body and every host verb reports through it,
     /// and a host's sink is not required to be re-entrant. RECURSIVE because the sink itself may call back into the
     /// backend (a host verb from a diagnostics sink is exactly the reentry case `reportReentry` answers): that call
@@ -689,6 +725,8 @@ struct VsgBackend::Data {
     /// The last EXECUTED frame's own upload/release numbers; absent until a frame has run (an unmeasured frame must
     /// not read like an empty one). The LAST frame to end, whichever driver ran it: the report describes one frame.
     std::optional<vn::graphics::FrameUploads> last_uploads{};
+    /// What that frame spent on the content lock (see FrameLocking); absent until one ran, for the same reason.
+    std::optional<vn::graphics::FrameLocking> last_locking{};
     /// The counters of the last EXECUTED frame (see FrameRecorder::beginFrame: they describe ONE frame, so the device
     /// keeps the last one it saw rather than adding them up).
     vn::graphics::FrameCounters last_counters{};
@@ -726,8 +764,8 @@ bool VsgBackend::initialize()
 {
     // A HOST VERB: it creates or replaces the device, its windows and the content world, so it owns the gate - no
     // frame body runs beside it. Called from inside a frame body (a sink or a hook) it answers false instead of
-    // waiting for itself (see DeviceGate).
-    const DeviceGate::HostLease host = d->gate.enterHost();
+    // waiting for itself (see backend::FrameGate).
+    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return false;
     }
@@ -961,10 +999,10 @@ void VsgBackend::releaseContentWorld() noexcept
 
 void VsgBackend::shutdown()
 {
-    // A HOST VERB, and the most destructive one: it waits for every frame body to end (see DeviceGate), so "the last
-    // executeFrame returned" and "no frame is running" are the same fact before anything is destroyed. Called from
-    // inside a frame body it does nothing: the device keeps what it has, which is the only safe answer.
-    const DeviceGate::HostLease host = d->gate.enterHost();
+    // A HOST VERB, and the most destructive one: it waits for every frame body to end (see backend::FrameGate), so
+    // "the last executeFrame returned" and "no frame is running" are the same fact before anything is destroyed.
+    // Called from inside a frame body it does nothing: the device keeps what it has, which is the only safe answer.
+    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return;
     }
@@ -1019,7 +1057,7 @@ vn::graphics::RenderFrameExecutor* VsgBackend::createSession()
     // A HOST VERB: it appends to the device's driver list, which a running frame of another thread reads through the
     // gate - so it owns the gate, and a call from inside a frame body answers null instead of waiting for itself
     // (creating drivers from a sink is wiring this layer cannot serve).
-    const DeviceGate::HostLease host = d->gate.enterHost();
+    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return nullptr;
     }
@@ -1037,7 +1075,7 @@ void VsgBackend::releaseSession(vn::graphics::RenderFrameExecutor& session)
     // A HOST VERB: the gate makes "the driver is gone" and "no frame of it is running" one fact. From inside a frame
     // body it does nothing (the caller is misusing the borrow rule, and destroying a driver a frame is running on
     // would be a use-after-free).
-    const DeviceGate::HostLease host = d->gate.enterHost();
+    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return;
     }
@@ -1047,8 +1085,8 @@ void VsgBackend::releaseSession(vn::graphics::RenderFrameExecutor& session)
 vn::raw_ptr<vn::graphics::WindowPresentTarget> VsgBackend::createSurfaceTarget(void* native_handle, vn::graphics::SurfaceTargetResult* why)
 {
     // A HOST VERB: it appends to the device's window list, which every frame body reads - so it owns the gate. From
-    // inside a frame body it answers UnsupportedSurface rather than waiting for itself.
-    const DeviceGate::HostLease host = d->gate.enterHost();
+    // inside a frame body it answers UnsupportedSurface rather than waiting for itself (see backend::FrameGate).
+    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         if (why != nullptr) {
             *why = vn::graphics::SurfaceTargetResult::UnsupportedSurface;
@@ -1111,7 +1149,11 @@ void VsgBackend::openFrameHead(VsgExecutor& executor, FrameScratch& scratch, con
     // samples, the content it names and the storage it writes into - so the collection and plan compilation that
     // follow touch the session's own memory and nothing else. A per-lookup lock in the record walk would pay a mutex
     // ~2000 times a frame (the trade `D2` rejects); this pays it twice.
-    std::lock_guard<std::mutex> guard(d->content);
+    //
+    // THE BASELINE IS TAKEN BEFORE THIS PHASE TAKES THE LOCK (see FrameReport::locking): the delta the frame publishes
+    // is what its own phases spent, so the head's own acquisition has to be inside it.
+    executor.drive().locking_before = d->contentLockNumbers();
+    const std::unique_lock<std::mutex> guard = d->lockContentForPhase();
 
     // WHAT THE LAST FRAME'S UPLOADS NO LONGER NEED, BEFORE THIS ONE RECORDS. A staging buffer is the source of one
     // vkCmdCopyBuffer; the moment that copy's fence signals, the bytes are dead weight - and vsg keeps them for the life
@@ -1133,6 +1175,8 @@ void VsgBackend::openFrameHead(VsgExecutor& executor, FrameScratch& scratch, con
     // not a frame and leaves the answer describing the last EXECUTED one.
     if (executing) {
         d->last_uploads = vn::graphics::FrameUploads{};
+        // The same rule for the lock numbers: absent is better than a previous frame's answer (see FrameLocking).
+        d->last_locking.reset();
     }
 
     // THE FRAME'S PASS NUMBERS, ITS TARGETS AND ITS CONTENT: everything below names DEVICE tables, so it happens once,
@@ -1244,7 +1288,7 @@ void VsgBackend::collectFrame(FrameScratch& scratch, const vn::graphics::FrameDe
     //
     // IT READS THE HEAD'S SNAPSHOT (see openFrameHead): the pass numbers come from the scratch, and nothing below
     // touches the device's pass registry, its targets or its content store - which is what lets two drivers' frame
-    // bodies run at once (see DeviceGate).
+    // bodies run at once (see backend::FrameGate).
     for (std::size_t index = 0; index < frame.passes.size(); ++index) {
         const vn::graphics::FrameDescription::Pass& entry = frame.passes[index];
         if (entry.pass == nullptr || index >= scratch.pass_ids.size()) {
@@ -1332,11 +1376,11 @@ vn::graphics::PresentOutcome VsgBackend::executeFrameFor(VsgExecutor& executor,
                                                       const vn::graphics::FrameDescription& frame,
                                                       vn::graphics::PresentTarget*          present_to)
 {
-    // TWO DRIVERS' FRAME BODIES MAY RUN AT ONCE (see DeviceGate): this body takes the gate's SHARED side. What still
-    // excludes itself is the SESSION the frame runs in (a window owns one swapchain and one open frame - the claim
-    // below) and the DEVICE'S CONTENT (one locked phase at a time, see commitFrameThrough). A frame started from the
-    // thread that already drives one is REFUSED, not queued: waiting there would be the thread waiting for itself.
-    const DeviceGate::BodyLease body = d->gate.enterBody();
+    // TWO DRIVERS' FRAME BODIES MAY RUN AT ONCE (see backend::FrameGate): this body takes the gate's SHARED side. What
+    // still excludes itself is the SESSION the frame runs in (a window owns one swapchain and one open frame - the
+    // claim below) and the DEVICE'S CONTENT (one locked phase at a time, see commitFrameThrough). A frame started from
+    // the thread that already drives one is REFUSED, not queued: waiting there would be the thread waiting for itself.
+    const vn::graphics::backend::FrameGate::Shared body = d->gate.enterShared();
     if (!body) {
         std::lock_guard<std::recursive_mutex> guard(d->episodes);
         if (d->frame_reentry_report.shouldReport()) {
@@ -1477,7 +1521,7 @@ vn::graphics::PrepareReport VsgBackend::prepareFrameFor(VsgExecutor& executor,
     // THE SAME GATE AS executeFrame, SHARED: a warm-up walks the content path and may record a transfer batch, so it
     // shares the machinery a frame drives - and two drivers' warm-ups may run at once, exactly like their frames.
     // `Refused` carries no reason - the report says which refusal it was.
-    const DeviceGate::BodyLease body = d->gate.enterBody();
+    const vn::graphics::backend::FrameGate::Shared body = d->gate.enterShared();
     if (!body) {
         std::lock_guard<std::recursive_mutex> guard(d->episodes);
         if (d->frame_reentry_report.shouldReport()) {
@@ -1610,7 +1654,7 @@ vn::graphics::PrepareReport VsgBackend::prepareFrameFor(VsgExecutor& executor,
         // THE DEVICE'S CONTENT LOCK, held for this phase and no longer (see Data::content): what the walk touches -
         // the tables, the halves, the declared sets, the image cache, the variant pool and the block storage's
         // material slots - is the device's, and another driver's frame owns the same tables.
-        std::lock_guard<std::mutex> guard(d->content);
+        const std::unique_lock<std::mutex> guard = d->lockContentForPhase();
 
         // THE MATERIAL ARENA IS SIZED BEFORE ANYTHING IS PREPARED, exactly as a frame's content phase does it: every
         // live row keeps a slot until the host releases it, so the preparation never loses a draw to a full arena.
@@ -1777,6 +1821,14 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(VsgExecutor& executo
         moved.texture_releases = after.texture_releases - executor.drive().uploads_before.texture_releases;
         executor.drive().last_uploads = moved;
         d->last_uploads               = moved;
+        // WHAT THE FRAME SPENT ON THE CONTENT LOCK (see FrameLocking): its own phases' acquisitions, and the ones that
+        // had to block. Read here, at the frame's tail, so the answer describes this frame and no other - and read
+        // from atomics, because this lambda runs with the content lock held on some paths.
+        const vn::graphics::FrameLocking lock_now = d->contentLockNumbers();
+        d->last_locking = vn::graphics::FrameLocking{
+            lock_now.acquisitions - executor.drive().locking_before.acquisitions,
+            lock_now.waits - executor.drive().locking_before.waits,
+        };
         // THE DEVICE'S FRAME ANSWER: the counters of the frame that just ended, copied from the SESSION that ran it
         // (each session owns its instrumentation, see initialize). A report taken later describes this frame.
         d->last_counters = frame_scratch->observe.counters();
@@ -1817,7 +1869,7 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(VsgExecutor& executo
         //
         // ONE PHASE: a frame with no content has no recording to overlap, so its whole device half is one acquisition
         // (the same opening the head does, and no plan to resolve).
-        std::lock_guard<std::mutex> guard(d->content);
+        const std::unique_lock<std::mutex> guard = d->lockContentForPhase();
         if (d->assembly != nullptr) {
             (void)d->assembly->beginFrame(*frame_scratch->frame, timeline, retirement);
         }
@@ -1831,7 +1883,7 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(VsgExecutor& executo
     const ::vsg::ref_ptr<::vsg::CommandGraph> graph = window != nullptr ? detail::SessionContentAccess::makeFrameGraph(*window) : offscreen->makeFrameGraph();
     if (graph == nullptr) {
         // The frame's graph could not be built, so none of its picture was ever going to reach the surface.
-        std::lock_guard<std::mutex> guard(d->content);
+        const std::unique_lock<std::mutex> guard = d->lockContentForPhase();
         frame_scratch->frame = nullptr;
         return finish(vn::graphics::PresentOutcome::Lost);
     }
@@ -1840,7 +1892,7 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(VsgExecutor& executo
     // targets becomes real and the frame's content is resolved into the session's plan, all of it under the device's
     // content lock. A host verb may run before or after this phase, never inside it.
     {
-        std::lock_guard<std::mutex> guard(d->content);
+        const std::unique_lock<std::mutex> guard = d->lockContentForPhase();
         (void)executor.applyTargetPlans(*frame_scratch->frame, frame_scratch->facts, timeline, retirement);
         // THE MATERIAL ARENA IS SIZED BEFORE ANYTHING IS RESOLVED (see the declaration): every live row keeps a
         // slot until the host releases it, so the frame that would have run out is given a bigger one first.
@@ -1885,7 +1937,7 @@ vn::graphics::PresentOutcome VsgBackend::commitFrameThrough(VsgExecutor& executo
     // false answer means the writes never happened. All of it under the device's content lock: the targets, the
     // store and the session's commit are the device's.
     {
-        std::lock_guard<std::mutex> guard(d->content);
+        const std::unique_lock<std::mutex> guard = d->lockContentForPhase();
         (void)executor.record(*frame_scratch->frame, graph, frame_scratch->packets);
         // WHAT THE HOST LET GO IS LET GO HERE: the frame's content has been recorded, and the commit below is
         // what advances the retirement queue - so this is the last moment a park can be dated against this frame
@@ -1943,7 +1995,7 @@ void VsgBackend::setWindowHandleAt(std::size_t index, void* native_handle)
 {
     // A HOST VERB: the handle list is read by initialize() and by nothing a frame body touches, but the window set is
     // the device's - so it owns the gate, and a call from a sink does nothing instead of waiting for itself.
-    const DeviceGate::HostLease host = d->gate.enterHost();
+    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return;
     }
@@ -1971,8 +2023,8 @@ void VsgBackend::resizeWindow(std::size_t index, int width, int height)
         return; // not a size a surface can have: nothing to announce, and nothing to follow
     }
     // A HOST VERB: following a surface rebuilds its swapchain, which must not overlap its own frame - so this owns the
-    // gate (see DeviceGate) and, below, the WINDOW's claim. From inside a frame body it does nothing.
-    const DeviceGate::HostLease host = d->gate.enterHost();
+    // gate (see backend::FrameGate) and, below, the WINDOW's claim. From inside a frame body it does nothing.
+    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return;
     }
@@ -2017,7 +2069,7 @@ void VsgBackend::adoptDefaultProgram(VsgExecutor& executor, vn::intrusive_ptr<co
     //
     // IT IS ALSO A CONTENT VERB (the store must answer for the program before any frame names it), so it takes the
     // content lock - and refuses a call from inside a frame body (see reportReentry).
-    if (DeviceGate::inFrameBody()) {
+    if (d->gate.inSharedEntry()) {
         reportReentry("setDefaultContentProgram()");
         return;
     }
@@ -2082,9 +2134,9 @@ vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
 {
     // A HOST VERB: the answer composes device-wide state a frame body writes (the counters, the last frame's
     // uploads, the retention tables and the presented watermark), so it owns the gate - and called from inside a frame
-    // body it answers an EMPTY report rather than waiting for itself (see DeviceGate; the caller is a sink that is
-    // misusing an observable, and a wrong number is worse than none).
-    const DeviceGate::HostLease host = d->gate.enterHost();
+    // body it answers an EMPTY report rather than waiting for itself (see backend::FrameGate; the caller is a sink
+    // that is misusing an observable, and a wrong number is worse than none).
+    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         return vn::graphics::FrameReport{};
     }
@@ -2111,6 +2163,7 @@ vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
     report.counters  = d->last_counters; // The frame that just ENDED (each session owns its counters, see initialize).
     report.retention = d->observe.retention();
     report.uploads   = d->last_uploads; // This frame's own delta (see FrameUploads); absent until one ran.
+    report.locking   = d->last_locking; // What it spent on the content lock (see FrameLocking); absent until one ran.
     report.progress =
         vn::graphics::FrameProgress{ .submitted = timeline.submittedFrame(), .completed = timeline.completedFrame(), .presented = d->presented_watermark };
 
@@ -2147,7 +2200,7 @@ void VsgBackend::setRenderTarget(vn::raw_ptr<vn::graphics::RenderTarget> target)
     // because it must stay usable while a frame is between its phases (the shape R6 gives releaseContent). Called from
     // inside a frame body (a sink), it changes nothing and says why once: the frame that is running already snapshotted
     // the targets its head resolved.
-    if (DeviceGate::inFrameBody()) {
+    if (d->gate.inSharedEntry()) {
         reportReentry("setRenderTarget()");
         return;
     }
@@ -2388,7 +2441,7 @@ void VsgBackend::releasePass(vn::raw_ptr<const vn::graphics::RenderPass> pass)
 {
     // A CONTENT VERB (see setRenderTarget): the pass registry is device state, so it takes the content lock and
     // refuses a call from inside a frame body instead of waiting for it.
-    if (DeviceGate::inFrameBody()) {
+    if (d->gate.inSharedEntry()) {
         reportReentry("releasePass()");
         return;
     }
@@ -2404,7 +2457,7 @@ void VsgBackend::releaseRenderTarget(vn::graphics::RenderTarget* target)
     if (target == nullptr) {
         return;
     }
-    if (DeviceGate::inFrameBody()) {
+    if (d->gate.inSharedEntry()) {
         reportReentry("releaseRenderTarget()");
         return;
     }
@@ -2451,7 +2504,7 @@ bool VsgBackend::releaseContent(vn::raw_ptr<const vn::Object> content)
     if (content == nullptr || !initialized() || d->store == nullptr || d->images == nullptr) {
         return false;
     }
-    if (DeviceGate::inFrameBody()) {
+    if (d->gate.inSharedEntry()) {
         // A RELEASE FROM INSIDE A FRAME would change the tables the running frame's plan was resolved against: refused
         // (and said once), never waited for (see reportReentry).
         reportReentry("releaseContent()");
@@ -2504,7 +2557,7 @@ bool VsgBackend::releaseStreamBuffer(const void* buffer)
     if (buffer == nullptr || !initialized() || d->assembly == nullptr) {
         return false;
     }
-    if (DeviceGate::inFrameBody()) {
+    if (d->gate.inSharedEntry()) {
         reportReentry("releaseContent(buffer)");
         return false;
     }
@@ -2539,7 +2592,7 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target,
     // A HOST VERB: the copy below waits the device's frames, so this owns the gate. From inside a frame body the
     // request answers InsideFrame at once - a readback that waited there would be the frame waiting for itself (the
     // same refusal the vk backend states for the same reason).
-    const DeviceGate::HostLease host = d->gate.enterHost();
+    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         std::lock_guard<std::recursive_mutex> guard(d->episodes);
         return refuse(HostReadbackRefusal::InsideFrame, d->readback_reports[kReadbackColour]);
@@ -2613,7 +2666,7 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::
     };
 
     // A HOST VERB, for the same reason the colour readback is one (see its note).
-    const DeviceGate::HostLease host = d->gate.enterHost();
+    const vn::graphics::backend::FrameGate::Exclusive host = d->gate.enterExclusive();
     if (!host) {
         std::lock_guard<std::recursive_mutex> guard(d->episodes);
         return refuse(HostReadbackRefusal::InsideFrame, d->readback_reports[kReadbackDepth]);

@@ -404,3 +404,58 @@ TEST(VkFrameHeadTest, AFramesCacheWorkDoesNotGrowWithItsDrawingCalls)
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::ContentSkipped), 0U);
     backend->shutdown();
 }
+
+TEST(VkFrameHeadTest, AFrameReportsWhatItSpentOnTheCacheLock)
+{
+    // THE THREE-PHASE RULE HAS A NUMBER (see FrameLocking): the frame says how many times its own phases took the
+    // cache lock, and whether any of those had to wait. Two frames drawing different numbers of calls must report the
+    // SAME acquisitions (the head's one hold, not one per call), and a serial loop must report NO waits - the number
+    // that would move first if the recording path went back to taking the lock.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+
+    EXPECT_FALSE(backend->frameReport().locking.has_value()) << "no frame has run yet";
+
+    const intrusive_ptr<RenderTarget>  target   = makeTarget();
+    const intrusive_ptr<ShaderProgram> program  = makeProgram();
+    const intrusive_ptr<Geometry>      geometry = makeTriangle();
+    const intrusive_ptr<Material>      material = intrusive_ptr<Material>(new Material());
+    material->setBaseColor(Colorf(1.0F, 0.0F, 0.0F, 1.0F));
+
+    const auto make_commands = [&](std::size_t count) {
+        std::vector<RenderCommand> commands;
+        commands.reserve(count);
+        for (std::size_t index = 0; index < count; ++index) {
+            RenderCommand command(geometry, nullptr, vn::math::Mat4d{});
+            command.program              = program;
+            command.program_description  = program->description();
+            command.material             = material;
+            command.material_description = material->description();
+            commands.push_back(std::move(command));
+        }
+        return std::make_shared<const std::vector<RenderCommand>>(std::move(commands));
+    };
+
+    (void)backend->executeFrame(drawingFrame(target.get(), make_commands(1)), nullptr);
+    const vn::graphics::FrameReport first = backend->frameReport();
+    ASSERT_TRUE(first.locking.has_value()) << "a frame that ran measured its locks";
+    EXPECT_GT(first.locking->acquisitions, 0U) << "the head takes the cache lock at least once";
+    EXPECT_EQ(first.locking->waits, 0U) << "a serial frame never waits for another";
+
+    (void)backend->executeFrame(drawingFrame(target.get(), make_commands(1)), nullptr);
+    const vn::graphics::FrameReport steady = backend->frameReport();
+    ASSERT_TRUE(steady.locking.has_value());
+    EXPECT_EQ(steady.locking->acquisitions, first.locking->acquisitions) << "a steady frame costs the same as the first";
+
+    (void)backend->executeFrame(drawingFrame(target.get(), make_commands(6)), nullptr);
+    const vn::graphics::FrameReport six = backend->frameReport();
+    ASSERT_TRUE(six.locking.has_value());
+    EXPECT_EQ(six.locking->acquisitions, steady.locking->acquisitions)
+        << "the cache-lock work grew with the number of drawing calls";
+    EXPECT_EQ(six.locking->waits, 0U) << "a serial loop waited for a lock nobody else held";
+
+    backend->shutdown();
+}

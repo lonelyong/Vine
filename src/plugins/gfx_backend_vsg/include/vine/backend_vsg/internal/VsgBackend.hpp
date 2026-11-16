@@ -72,8 +72,9 @@
  * silently dropped them would look like a working backend with a black screen.
  *
  * ONE SESSION IS ONE THREAD'S, AND TWO DRIVERS MAY RUN AT ONCE (`.ai/design/graphics-sessions.md` S8c). The device
- * gate has two sides (see DeviceGate): a frame body takes it SHARED, so two engines' frames overlap, and a host verb
- * that reconfigures the device or reads a device-wide answer takes it EXCLUSIVE. What that leaves is TWO serial
+ * gate has two sides (see `vine/graphics/backend/FrameGate.hpp`): a frame body takes it SHARED, so two engines'
+ * frames overlap, and a host verb that reconfigures the device or reads a device-wide answer takes it EXCLUSIVE.
+ * What that leaves is TWO serial
  * sections, each with its own lock:
  *   * THE SAME WINDOW is driven by one frame at a time (a window owns one swapchain and one session); a second
  *     frame naming it waits for the first to end.
