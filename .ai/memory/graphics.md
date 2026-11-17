@@ -763,882 +763,882 @@
   warning/error** while the frame runs. Mutation: widening the dependency back to “LOAD only” makes the case red at once (“the direct backend reported a problem”).
 - **Counts**: `test_vk` 89; `BackendParityTest` **13** (12 + 1); full Debug ctest 32/32; Release `test_vk` 89/89.
 
-## 2026-11-15 —— `gfx_backend_vk` 跨会话管线缓存（F4/T44 落地）：位置归宿主、键归设备、证人要诚实
+## 2026-11-15 —— `gfx_backend_vk` cross-session pipeline cache (F4/T44 landed): the location belongs to the host, the key to the device, the witness must be honest
 
-- **概念**：`DeviceDesc::cache_directory`（SDK，创建输入）= **宿主说“文件可以放哪”**，后端说“存什么”。宿主不写时
-  插件在 `Plugin::load` 里用 `PluginLoadContext::ensureDataDirectory()` 当默认值（框架自己的规则：插件文件住插件
-  数据目录），两者都没有 = 不持久化。`PipelineCacheFile` 只负责文件格式：`[magic][format][key][size][blob]`，
-  key = vendor/device/driver/api/`pipelineCacheUUID`；读侧严格（长度、magic、版本、键、**尾字节必须正好用尽**），
-  写侧临时文件 + rename。
-- **坑 1：`pipelineCacheReport` 曾经在关机后变回 0**。`Device::initialize` 里算好的 `preload_handed/refused`
-  存在 `ContentDraw` 的字段里，而 `shutdown()` 先 `content.destroy()` 再读 ⇒ 全被重置。正解：在 `create()` 之后
-  立刻**快照进 `Impl::CacheBooks`**（与 saved_bytes 同一个家）；只有 `cache_hits` 因为是累计量才在会话还活着时
-  读实时值。这是同一个坑的第三次（“报告字段活在会被销毁的对象里”）。
-- **坑 2：lavapipe 既**广播**creation feedback 扩展，又**从不**报 hit、且**不校验** `pInitialData`**（把 blob 的
-  vendor 改掉照收）。所以“缓存命中了”在软件光栅器上**不可观测**，用例不能强求；后端能诚实声明的是
-  **hand-over**（blob 真的交给了 `vkCreatePipelineCache`，`preload_handed`），命中数只上报
-  （`hits_measured` + `cache_hits`）。规则：**证人要属于自己能证明的那一半**，别把驱动的沉默当失败。
-- **一个恰好有用的边角**：`vkCreatePipelineCache` 拒收 preload 时**重试一次不带数据**（会话照常起来），并把
-  `preload_refused` 记下来——真实驱动上这就是“缓存过时”的可见答案。
-- **变异（4/4 承重）**：去掉键比较 → `AnotherDevicesFileIsRefused` 红；去掉长度/尾字节严格 → `ATruncated…` 红；
-  去掉版本检查 → `AnotherFormatVersion…` 红；把 `pInitialData` 抹掉 → `ASessionWritesWhatTheNextOneLoads` 红
-  （靠 `preload_handed`，不是靠命中数）。
-- **计数**：`test_vk` 89（新增 `VkPipelineCacheFileTest` 5 + `VkPipelineCacheSessionTest` 4）；全量 Debug ctest 32/32；
-  Release `test_vk` 89/89。
+- **Concept**: `DeviceDesc::cache_directory` (SDK, a creation input) = **the host says "where files may go"**, the backend says "what to store". When the host does not write it,
+  the plugin uses `PluginLoadContext::ensureDataDirectory()` as the default inside `Plugin::load` (the framework's own rule: plugin files live in the plugin
+  data directory); neither present = no persistence. `PipelineCacheFile` owns only the file format: `[magic][format][key][size][blob]`,
+  key = vendor/device/driver/api/`pipelineCacheUUID`; the read side is strict (length, magic, version, key, **the trailing bytes must be used exactly**),
+  the write side uses a temporary file + rename.
+- **Trap 1: `pipelineCacheReport` used to fall back to 0 after shutdown**. The `preload_handed/refused` computed in `Device::initialize`
+  lived in `ContentDraw` fields, and `shutdown()` calls `content.destroy()` before reading them ⇒ all reset. The fix: right after `create()`,
+  **snapshot into `Impl::CacheBooks`** (the same home as saved_bytes); only `cache_hits` is read live while the session is alive, because it is a cumulative count.
+  This is the third time for the same trap ("a report field living in an object that gets destroyed").
+- **Trap 2: lavapipe both **advertises** the creation feedback extension and **never** reports a hit, and **does not validate** `pInitialData`** (change the blob's
+  vendor and it is still accepted). So "the cache hit" is **not observable** on a software rasteriser and a test must not demand it; what the backend can honestly state is the
+  **hand-over** (the blob really went to `vkCreatePipelineCache`, `preload_handed`); the hit count is only reported
+  (`hits_measured` + `cache_hits`). The rule: **a witness must belong to the half you can prove**, do not treat driver silence as failure.
+- **One incidentally useful corner**: when `vkCreatePipelineCache` refuses the preload, **retry once without data** (the session comes up as usual) and record
+  `preload_refused` — on a real driver this is the visible answer to "the cache is stale".
+- **Mutations (4/4 load-bearing)**: drop the key comparison → `AnotherDevicesFileIsRefused` red; drop the length/trailing-byte strictness → `ATruncated…` red;
+  drop the version check → `AnotherFormatVersion…` red; erase `pInitialData` → `ASessionWritesWhatTheNextOneLoads` red
+  (via `preload_handed`, not via the hit count).
+- **Counts**: `test_vk` 89 (new `VkPipelineCacheFileTest` 5 + `VkPipelineCacheSessionTest` 4); full Debug ctest 32/32;
+  Release `test_vk` 89/89.
 
-## 2026-11-14 —— `gfx_backend_vk` 设备内存池（F7/T45 落地）：两条容易写错的规则 + 变异结果
+## 2026-11-14 —— `gfx_backend_vk` device memory pool (F7/T45 landed): two rules that are easy to get wrong + mutation results
 
-- **概念**：`MemoryAllocator`（`internal/MemoryAllocator.hpp`）= 会话级**设备内存池**：按 memory type 建
-  `VkDeviceMemory` 块，资源只持 `MemorySlice{memory, offset, size, block}` 并**按 offset 绑定**。
-  `MemoryUsage`（`DeviceLocal` / `HostVisible`，后者强制 `HOST_COHERENT`）由池翻成 memory type；`MemoryKind`
-  （`Linear` / `Optimal`）只为一件事存在：`bufferImageGranularity` 禁止 buffer 与 optimal 图共享一个
-  granularity 页——**只对异类邻居生效**，同类相邻不 padding。块内区间**排序且 live/free 交替** ⇒ 释放只与两个
-  邻居合并，分配 = 带 alignment/granularity 的 first fit。整块变空且同类型还有别的块 ⇒ 销毁（一次大读回不会把
-  显存钉到会话结束）；同类型的最后一块留热。`Device::memoryStats()` 是外部可读的证人。
-- **坑 1（实测，值得记住）：能否 `map` 是 MEMORY TYPE 的属性，不是“这个块最初为何创建”**。我先给 `Block`
-  记了 `usage` 并在 `map()` 里比对 ⇒ lavapipe（device-local 与 host-visible 是**同一个** type）上 ring 合法地
-  落进深度图的块，`map()` 却拒绝 ⇒ `ensureRing` 失败 ⇒ 整个设备起不来（窗口用例只报“no Vulkan device”）。
-  正解：`map()` 查 `memoryTypes[type].propertyFlags & HOST_VISIBLE`。
-- **坑 2：建立顺序**。池必须在**第一个消费内存的东西之前** open：窗口 swapchain 的深度图在 `attach` 时就建，
-  早于 `content.create`。`initialize()` 里现在紧跟 `vkGetPhysicalDeviceMemoryProperties/Properties` 之后 open；
-  关机时在最后一个资源释放之后、`vkDestroyDevice` 之前 close。
-- **变异（4/4 承重）**：关合并 → 只有 `FreeNeighboursMergeSoThePoolIsReused` 红；关 granularity → 只有
-  `LinearAndOptimalDoNotShareAGranularityPage` 红；关子分配（每片一个块）→ 只有
-  `ManyTargetsShareThePoolBlocks` 红；把释放改成保留 live → 只有 `AReadbackGivesItsStagingBytesBack` 红。
-- **`test_vsg` Release 在本机的偶发不稳是既有的，不是这次改动**：全套偶发
-  `malloc(): unaligned tcache chunk detected` / SIGSEGV（落点漂移：`FrameUploadsTest`、`PrepareUploadTest`），
-  也出现过 `WindowCompositionTest` 的 X11 像素读失败。**A/B 方法**：新旧两版 `build-release/bin/test_vsg` 各自
-  `cp` 到 `/tmp`、设 `LD_LIBRARY_PATH=<build>/lib`，交替各跑 5 次 —— **旧版同样 segv/abort**。两个读日志的坑：
-  ①复制到 `/tmp` 后 `$ORIGIN/../plugins` 失效，`VsgBackendPluginTest.*` 会因此**假红**；②stdout 重定向到文件时
-  gtest 是**全缓冲**的，“最后一行 `[ RUN ]`”不等于崩溃点（用 `stdbuf -oL`）。`test_vk` Release 连跑 5 次
-  80/80 稳定；Debug 全量 ctest 32/32 稳定。
-- **计数**：`test_vk` 80（新增 `VkMemoryPoolTest` 3 + `VkMemoryAllocatorTest` 2）。
+- **Concept**: `MemoryAllocator` (`internal/MemoryAllocator.hpp`) = a session-level **device memory pool**: it creates
+  `VkDeviceMemory` blocks per memory type, a resource holds only `MemorySlice{memory, offset, size, block}` and **binds by offset**.
+  `MemoryUsage` (`DeviceLocal` / `HostVisible`, the latter forces `HOST_COHERENT`) is translated to a memory type by the pool; `MemoryKind`
+  (`Linear` / `Optimal`) exists for exactly one thing: `bufferImageGranularity` forbids a buffer and an optimal image sharing one
+  granularity page — **only effective against a neighbour of the other kind**, same-kind neighbours get no padding. Ranges inside a block are **sorted and alternate live/free** ⇒ a release only merges with two
+  neighbours, an allocation = first fit with alignment/granularity. A block that becomes empty while another block of the same type exists ⇒ destroyed (one big readback does not pin
+  device memory until the session ends); the last block of a type stays warm. `Device::memoryStats()` is the externally readable witness.
+- **Trap 1 (measured, worth remembering): whether `map` works is a property of the MEMORY TYPE, not of "why this block was created"**. I first gave `Block`
+  a `usage` field and compared it in `map()` ⇒ on lavapipe (device-local and host-visible are the **same** type) the ring legally
+  landed in the depth image's block, yet `map()` refused ⇒ `ensureRing` failed ⇒ the whole device would not come up (the window case only reported "no Vulkan device").
+  The fix: `map()` asks `memoryTypes[type].propertyFlags & HOST_VISIBLE`.
+- **Trap 2: establishment order**. The pool must open **before the first thing that consumes memory**: the window swapchain's depth image is created during `attach`,
+  before `content.create`. `initialize()` now opens it right after `vkGetPhysicalDeviceMemoryProperties/Properties`;
+  shutdown closes it after the last resource is released and before `vkDestroyDevice`.
+- **Mutations (4/4 load-bearing)**: disable merging → only `FreeNeighboursMergeSoThePoolIsReused` red; disable granularity → only
+  `LinearAndOptimalDoNotShareAGranularityPage` red; disable suballocation (one block per slice) → only
+  `ManyTargetsShareThePoolBlocks` red; change release to keep live → only `AReadbackGivesItsStagingBytesBack` red.
+- **The flaky `test_vsg` Release on this machine is pre-existing, not from this change**: the full suite occasionally reports
+  `malloc(): unaligned tcache chunk detected` / SIGSEGV (the landing spot drifts: `FrameUploadsTest`, `PrepareUploadTest`),
+  and `WindowCompositionTest` has also failed an X11 pixel read. **The A/B method**: `cp` the old and the new `build-release/bin/test_vsg` each
+  to `/tmp`, set `LD_LIBRARY_PATH=<build>/lib`, run each 5 times alternately — **the old build segv/aborts the same way**. Two traps when reading the log:
+  (1) after copying to `/tmp`, `$ORIGIN/../plugins` breaks, so `VsgBackendPluginTest.*` **falsely reds**; (2) with stdout redirected to a file
+  gtest is **fully buffered**, so "the last `[ RUN ]` line" is not the crash point (use `stdbuf -oL`). `test_vk` Release run 5 times
+  is stable at 80/80; full Debug ctest is stable at 32/32.
+- **Counts**: `test_vk` 80 (new `VkMemoryPoolTest` 3 + `VkMemoryAllocatorTest` 2).
 
-## 2026-11-14 —— `gfx_backend_vk` 性能基线（真实宿主 `Vine --open demo`，lavapipe）
+## 2026-11-14 —— `gfx_backend_vk` performance baseline (real host `Vine --open demo`, lavapipe)
 
-- **量法（新 dev switch，demo 插件）**：`VN_BENCH_FRAMES=N` 在资产装好后用零间隔 `QTimer` 连打 N 次
-  `RenderControl::renderFrame()`（宿主自己的调用：publish + 引擎半段 + 后端记录/提交/呈现），逐次记墙钟；
-  `VN_BENCH_WARMUP=1` 先 `SceneView::publishContent()` 再 `RenderEngine::prepare()` 两次。日志三行
-  （`bench warm-up` / `bench first frames` / `bench`）+ 最后一帧计数的 `bench last frame`。
-  **量法要点**：帧是**异步移交**的（`frame()` 等的是上一帧的引擎半段）⇒ 第 1 个读数 ≈ 0，首帧成本落在
-  `first frames` 的第 2 个数；steady 用中位/p95（均值被上传帧拉偏）。对照 = 把 `gfx_backend_vk.so` 移出
-  `plugins/vine` 再跑同一命令（**记得移回**；本工具的 `trap EXIT` 不生效，要手工 `mv` 回来）。
-- **Release ×3（本机 WSL2 + lavapipe，`VK_ICD_FILENAMES=lvp_icd.json`，Qt xcb，60 帧）**：
+- **Measurement method (new dev switch, demo plugin)**: `VN_BENCH_FRAMES=N` fires N back-to-back `RenderControl::renderFrame()` calls with a zero-interval `QTimer`
+  after the assets are loaded (the host's own call: publish + engine half + backend record/submit/present), recording wall clock per call;
+  `VN_BENCH_WARMUP=1` first calls `SceneView::publishContent()` and then `RenderEngine::prepare()` twice. Three log lines
+  (`bench warm-up` / `bench first frames` / `bench`) + a last-frame count line `bench last frame`.
+  **Measurement points**: a frame is **handed over asynchronously** (`frame()` waits for the previous frame's engine half) ⇒ the first reading is ≈ 0, the first-frame cost lands in
+  the second number of `first frames`; steady state uses median/p95 (the mean is skewed by the upload frame). The control = move `gfx_backend_vk.so` out of
+  `plugins/vine` and rerun the same command (**remember to move it back**; this tool's `trap EXIT` does not fire, `mv` it back by hand).
+- **Release ×3 (this machine WSL2 + lavapipe, `VK_ICD_FILENAMES=lvp_icd.json`, Qt xcb, 60 frames)**:
 
-  | 项 | vk | vsg |
+  | Item | vk | vsg |
   |---|---|---|
-  | 会话起来 / 首幅画面 | 40 / 219 ms | 42 / 229 ms |
-  | 启动期应用线程最长占用（`VN_BOOT_TIMING`） | 316 ms | 336 ms |
-  | 预热批（ms / passes / draws / halves / sets / uploads / pipelines） | **16.1–22.3** / 8 / 6 / 2 / 0 / 5 / 2 | **9.7–11.3** / 6 / 6 / 2 / 4 / 5 / 2 |
-  | 稳态帧 median（三次） / p95 | **7.06, 7.44, 6.93** / 7.95, 8.90, 7.94 ms | **5.63, 5.60, 5.63** / 6.52, 6.64, 6.26 ms |
-
-  ⇒ vk 稳态 ≈ **+25–32%**，预热批 ≈ 1.8×，启动两段几乎相同（vk 略快）。
-- **预热批买到了什么（vk，有/无预热交替 ×3，40 帧）**：首帧 12.2–17.3 ms vs **30.2–35.8 ms**（那 5 个上传：
-  2 流 + 3 纹理）⇒ 首帧约 −18 ms；代价是加载期 16–23 ms；稳态中位数在噪声内不可分（两种都落在 7.2–9.4）。
-  第二次预热 0.08–0.41 ms 且全零 = “预热后帧不再建东西”的契约。
-- **两条实测发现（已登记 backlog）**：①`PrepareReport.passes` 同一帧 vk 8 / vsg 6 / 录制计数 7 —— 三套口径，
-  vk 数 `FrameDescription` 里所有带 draws 的条目（含录制器会丢的），vsg 数编译计划（T41）；
-  ②vk **每 draw 每帧**分配 content/draw/screen 描述符集（无 vsg 的跨帧声明集缓存）⇒ 预热 `sets` 恒 0、
-  首帧仍建集，可能是稳态 +25% 的一部分（未归因，T42）。
-- **边界**：lavapipe 是软件光栅器，绝对值只用于**同机对拍**与回归，不是 GPU 结论；Win32 与真 GPU 未测。
-  60 帧窗口里混有演示的 PiP/覆盖层定时器与一次资产上传帧。
-
-## 2026-11-14 —— vk 的每帧成本模型落地（T43+T42 同源；ring + 动态偏移 + 声明集缓存）
-
-- **形状**：`ContentDraw::Impl::UniformRing` 一个持久映射缓冲，`sliceSize()` 对齐切片；四个块写进切片，三个 set 布局
-  （**2026-11-15 S3 后**：环与 set 表在 `FrameScratch::Impl`，布局与 `buildPipeline` 在 `ContentCaches::Impl`；
-  下面的 `ContentDraw::*` 拼写指同一个机制）
-  全部 `UNIFORM_BUFFER_DYNAMIC`，绑定时给 4 个动态偏移（content set 的 0/6/8 + draw set 的 0；screen set 是 6/8）。
-  帧满**不在帧内扩容**（会销毁命令缓冲已点名的 buffer）：`reserveSlice` 记 demand、跳过该 draw，`beginFrame` 按
-  demand 扩容（与 vsg 的 BlockStorage 同规则）。
-- **set 的键是“它绑定的资源”**（5 个纹理视图 + shadow 视图；screen 同形）：池带 `FREE_DESCRIPTOR_SET`、按条目释放，
-  **不再每帧 reset**；draw set 整个 ring generation 只有一个句柄。淘汰：`last_frame + 600 < frame_index`，每 120 帧扫一次。
-- **见证**：`Device::contentCacheCounters()`（`ring_builds` / `set_builds` / `sets_live`）+ `VkUniformRingTest` 两例；
-  变异（缓存恒 miss）⇒ 两例同红。`test_vk` **74** 例。
-- **实测（Release + lavapipe，同一 11-pass 场景，各 3 次）**：稳态 median **9.03–9.23 → 8.16–8.30 ms（−10%）**；
-  vk 与 vsg 仍**逐字节相同**；预热不变（预热不画）。
-- **管线缓存**：会话内 `VkPipelineCache` 已加（两处 `vkCreateGraphicsPipelines` 都传）；跨会话落盘仍 T44。
-- **GPU 计时（T46 收口）**：SDK 新增 `FrameTiming{gpu_micros}` + `FrameReport::timing`（可选，缺席≠0）；vk 用一对
-  `VK_QUERY_TYPE_TIMESTAMP`（写 TOP/BOTTOM，栅栏后 `vkGetQueryPoolResults`，`timestampComputeAndGraphics` 为假则缺席）。
-  **必须抽样**：实测 lavapipe 上每帧写读时间戳要 **~0.8 ms**（关：median 8.30；开：9.01–9.20，各 3 次）⇒ 每 30 帧采一次
-  （`kTimestampSampleFrames`），未采样的帧答**缺席**（不是上一帧的值）。demo 的 `bench last frame` 在有样本时印 gpu 毫秒
-  （lavapipe 实测 **gpu 7.15–7.74 ms**，同一帧的**墙钟** median 8.2–9.0 —— 注意那是含栅栏等待的墙钟，
-  宿主侧只有 ~0.9 ms，见 2026-11-15 的 F5 裁决）。
-
-## 2026-11-14 —— `gfx_backend_vk` 工业标准审查（结论 + 两处小修）
-
-- **结论**：规范符合性/可诊断性**工业级**（validation 0 VUID、跨后端逐字节对拍、设备丢失分类、barrier 表、
-  pipeline key 完整）；资源与性能架构**原型级**（每 draw 每帧建/毁 UBO、每 draw 每帧分配描述符集、每帧分配命令缓冲、
-  无 `VkPipelineCache`、无子分配、无 GPU 计时）。单帧在飞是 **SDK 契约**（“画完就能读”）的代价，不是缺陷。
-  全文与 F1–F13 见 `../research/graphics-2026-11-14-vk-industry-review.md`；待办 T43–T46。
-- **已修两处**：①物理设备按 `VkPhysicalDeviceType` 排序（discrete > integrated > virtual > cpu > other，
-  同分保留先出现者）——原来取第一个可服务设备，笔记本上会默默用 iGPU；②`vkAcquireNextImageKHR` 的超时从
-  `UINT64_MAX` 改为 **1 s**（卡住的表面从“永久挂起”变成“跳过该帧 + 按情节报一次”）。
-- **量出来的数（别忘）**：演示帧 22 条内容 draw + 6 条全屏 draw ⇒ **28 次 buffer+memory 分配 / 帧**
-  （60 fps ≈ 1700 次/秒），全部 UBO 是 `UNIFORM_BUFFER`（无 dynamic offset）；`vkCreatePipelineCache`、
-  `vkCmdWriteTimestamp` 全仓 0 处。
-
-## 2026-11-14 —— 四处“录了、没画/没效果”的根因（demo 链未采纳 / vk 全屏继承深度 / vk 全屏只绑阴影 stand-in / demo 预览同名）
-
-- **宿主**：`PassChain::build()` **不自我采纳**，必须 `view->setChain(chain)`（`Viewer` 是范本）。不采纳 ⇒
-  `SceneView::publishContent` 不发布链拥有的透明场景（一条 `never published`，该 pass 画 nothing）、
-  `applySurfaceGeometry` 也不 resize 链（demo 曾在自己布局步里补 resize，两份尺寸来源）。demo 已修，见
-  `.ai/bugs/demo-chain-never-adopted.md`。
-- **vk**：全屏调用必须**恒** `DepthMode::Disabled`（`ContentDraw::planScreen` 强制，参考后端 M4b 的规则）。
-  全屏三角形在 z = 0.0 = reverse-Z 远平面；窗口 pass 的 D24 清 0、deferred 的 composite **借用** G-buffer
-  深度 ⇒ 继承 `TestAndWrite` 会整块被深度测试丢弃，而**零 VUID、记录层每条 `recorded=1`**。用例
-  `AScreenCopyIsDrawnWhateverThePassDepthPolicySays`；旧 screen fixture 显式设了 `Disabled`，这正是它没抓到的
-  原因。见 `.ai/bugs/vk-screen-draw-inherits-pass-depth.md`。
-- **vk 的 screen set 要绑 pass 解析到的 map**：binding 7/8 存在 ≠ 绑对了图。`recordScreen` 现在收
-  `ShadowSource`（`Device::executeFrame` 本来就为每个 pass 调了 `resolveShadow`）：有图绑真实深度 + 按 call 打包
-  的 `VineShadowBlock`，无图才是白 stand-in + `params.x = 0`。症状 = “前向有阴影、延迟没有、零诊断”；用例
-  `VkShadowTest.AScreenPassShadesWithTheMapItResolved`（采样 binding 7 写深度，白 stand-in 会读 255）。
-  见 `.ai/bugs/vk-screen-pass-shaded-without-the-map.md`。
-- **计划按 `(owner, name)` 认行，名字不是标签**：demo 的四个 G-buffer 预览都叫 `gbuffer_preview` ⇒ 四次声明
-  落在同一行、只剩最后一个（“只有第 4 块显示”）。另一个半边：布局步只改 demo 自己的 `ScreenPass`
-  （`setViewport`），而帧里的节点是**从声明建的** ⇒ 重排从未生效；改完对象必须**重新声明**（`addDemoPass`
-  再应用一次，同 owner 同名原地更新）。帧表可直视：`VN_FRAME_PLAN=1` 应看到 4 条 `gbuffer_preview_*`。
-  见 `.ai/bugs/demo-preview-passes-shared-one-name.md`。
-- **诊断配方（可复用）**：①记录层探针（每 pass 的 commands/recorded/why）分清“没进命令”与“进了没画”；
-  ②把待观察的 16F 目标**临时**改成 RGBA8（`ChainPresets.cpp`）即可用 `RenderEngine::device()->readColorBuffer`
-  读回中心像素；③把 GBuffer 直接拷到可读的 RGBA8 composite 再读，能分开“源空”与“拷贝坏”。探针用完即撤。
-- **两条静态审查发现（2026-11-14 修）**：①`RenderEngine::frameReport()` **不是**跨线程安全的（只有
-  `PresentRecord` 明写“任何线程可读”）⇒ 基准/HUD 读它之前要 `waitForFrame()`（文档把 "a benchmark" 列为
-  waitForFrame 的调用者）；②从**布局步**重新声明 pass（改 viewport）会被 `applyPlan` 以 `Busy` 拒绝
-  （帧在录）⇒ 必须看 `PlanResult::applied()`，`waitForFrame(250ms)` 后重述一次，否则矩形停在旧值且只有一条
-  一次性警告。
-- **clang-tidy 基线（`clang-tidy-22 -p build`，`bugprone-*` + `clang-analyzer-*`，2026-11-14）**：
-  `ContentDraw.cpp` 4 条 = 2 条 Vulkan 结构体零初始化（`stages[2]{}` / `multisample{}` 的 enum 字段随后被写，
-  惯例，不是缺陷）+ 1 条 `build_why` 的 use-after-move **误报**（`ensure*` 全收 `vn::String&`，该路径上没移动）
-  + `std::hash` 特化（`ContentId.hpp`，有意的）；`Device.cpp` 1 条 “Called C++ object pointer is null”
-  （`window` 经 `Runnable.window` 关联，收集处已保证非空——分析器丢了这层关联，误报）；`DemoScene.cpp` 1 条
-  `atoi`（dev 开关，与仓库其它 `VN_*` 开关一致）。⇒ 这三份 TU 的静态分析**干净**，新出现的条目应当先排除这几类。
-
-## 2026-11-13 —— `gfx_backend_vk` M9：阴影贴图
-
-- **形状**：`TargetImages` 接受**深度-only** 目标 —— `built()` 不再要求有颜色视图，`createRenderPass` 在 0 个颜色附件时
-  `colorAttachmentCount = 0` / `pColorAttachments = nullptr`，`buildPipeline` 同理（`blend.pAttachments`）；`Device`
-  的 per-attachment clear 从 `clear_values[0]` 起写，深度-only 时颜色槽不存在，必须跳过。
-- **哪张图是阴影**：只认**目标自己的声明**（`RenderTarget::shadowOf` + `producerViewProjection`），从 pass 的
-  `FrameDescription::Pass::inputs` 里取第一张（`Impl::resolveShadow`）。**不要**用“第一个带可采样深度的输入”——
-  G-buffer 也有深度（`graphics-rendering.md` 6.3 记着参考后端踩过的缺陷）。
-- **布局**：生产 pass 的 render pass 把深度留在 attachment 布局；消费 pass **之前**（render pass 外）转到
-  `SHADER_READ_ONLY`，`TargetImages::depth_sampled` 记账，下一次写该目标深度前再转回 —— 与 `color_sampled` 同一套规则。
-- **块**：`buildShadowBlock`（`ContentDraw.cpp`）四道开关：有图 / 发布了矩阵 / 灯在本 call 的 `light_values` 里且
-  `cast_shadow` 且是方向光或聚光 / 灯在 light block 里有槽。矩阵 = `producer VP * inverse(view)`，**不折**（SDK 裁剪约定，
-  转换在 shader 里）；`params = {1, 灯自己的 bias, 1, 槽}`。
-- **一个谓词两处用**：`LightBlock.cpp` 的 `takesSlot()` 同时驱动 `packLightBlock` 与 `packedSlotOf`；各自推导槽位会让 <!-- drift-ok -->
-  阴影去缩放**别的灯**。
-- **采样器**：`Nearest` + `ClampToEdge`（`kShadowSampler`），与参考端 `ContentPipeline::depthSampler()` 同值 —— 过滤会把
-  投射体深度与它身后的表面平均，剪影会动。
-- **坑（Windows 构建）**：`test_vk` / `test_vsg` 直接编译插件源码；目标上没有 `VN_BACKEND_VK_LIB` 时
-  `VN_BACKEND_VK_API` 展开成 `dllimport`，链接期 6 个未解析符号（Linux 上只是可见性属性，完全看不出来）。
-- **验证**：`test_vk` 51 例（新增 `VkShadowTest` 3 例）；`BackendParityTest` 第 10 例（Windows 上 `test_vsg` 因
-  `VsgBackendTest.cpp` 的 XCB 用例缺平台保护编译不过 —— 既有问题，Linux 是它的构建环境）。
-
-## 2026-11-14 —— `gfx_backend_vk` M10：延迟路径
-
-- **形状**：引擎的延迟帧 = 一条 scene pass 写四附件 RGBA16F + D24 G-buffer（`defaultGbufferGeometryProgram()`），
-  随后一条 SCREEN pass（`defaultDeferredLightProgram()`）按 pass 声明的输入（`Pass::inputs` +
-  `DrawDescription::source`）采样四张附件、灯块在 set 0 binding 6。**后端没有改动**：M3 的 MRT / 每附件 clear
-  （`extra_colors` 缺省 = 透明黑）、RGBA16F 图像、M4 的多源 screen draw 与灯块已经够用。这是"接缝够不够用"的证据，
-  不是新能力。
-- **画面事实**（本机）：合成中心 204/204/204（0.8 线性 albedo × 环境项的 sRGB 编码）；四张附件拷到 RGBA8 后分别
-  读回 204/204/204、0/0/127（法线 (0,0,1) 的八面体编码 + roughness 0.5）、255（alpha = occlusion）、4/0/127。
-- **测试**：`VkDeferredTest` 2 例（合成中心是环境光下的 albedo；四张附件逐张拷贝读回、序号真的换了东西）；
-  `BackendParityTest` 第 11 例（同一个延迟帧 0/4096 差异、passes=2 draws=2）。`test_vk` 53 例（52 过 1 跳过）、
-  `test_vsg` 519 例（516 过 3 跳过）。
-- **坑**：给 vk 的 G-buffer pass 喂带 texcoord 的几何会触发 validation 警告
-  "Vertex attribute at location 8 not consumed by vertex shader" —— vk 按几何通道列表建 vertex input，
-  不按 shader 消费过滤。测试里让几何只声明程序读的两条通道（位置 + 法线）即可；管线本身合法。
-- **Windows**：`VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing` 用 XCB 窗口却没有
-  `#if !defined(_WIN32)` 保护（既有问题，Linux 看不出来）；已补上与文件顶部同样的守卫，否则 Windows 上 `test_vsg`
-  编不过。
-- **T26 的旧断言**：`OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands` 末尾仍按"全还"断言，
-  与 ADR-2026-11-13（保留 ≤ `minimumStagingBufferSize` 的块）矛盾；改成"4 KiB 上传的块被保留（release 返回 0）+
-  32 MiB 一次性块被还掉"。
-
-## 2026-11-14 —— T39（`vsg` 预热真提交纹理）+ T40（`vk` 深度 resolve）
-
-- **T39 `vsg`**：`MaterialImages::queueUploads(Device&, TransferTask&)` 把仍带 staging 字节的图像交给该会话的传输任务
-  （需要时用 device 池自己 `compile` 出 VkImage——预热不跑 compile traversal）；`detail::flushUploads(task)` 用
-  `TransferTask::transferData(TRANSFER_ALL)`（帧自己那条拷贝路径）提交，再补一次“只等待”的 queue 提交消费完成信号量
-  并等 fence；成功后 `MaterialImages::releaseUploadedStaging()` 丢掉 host 字节（否则后编译的 descriptor 的
-  ImageInfo 会以“还没拷过”为由再拷一次）。`PrepareReport::uploads` 现在数**流 + 纹理**；`VsgBackend::prepareFrame`
-  对无窗口帧先 `ensureOffscreenSession()`（建 viewer/传输任务，不取图、不提交帧）。测试 `PrepareUploadTest` 2 例。
-- **T40 `vk`**：`TargetImages` 对“多采样 + 有深度”建 `depth_resolve` 图像/视图（`DEPTH_STENCIL_ATTACHMENT |
-  SAMPLED`），render pass 带 `VkSubpassDescriptionDepthStencilResolve`（`sample0`；D24 有 stencil，stencil 也
-  `sample0`）——它只能挂在 `VkSubpassDescription2` 上，所以这类 target 用 `vkCreateRenderPass2`（Vulkan 1.2），
-  其它 target 仍走 1.0 的 `vkCreateRenderPass`。附件顺序 = [样本缓冲…, colour resolve…, depth, depth resolve]；
-  `depthPicture()` / `depthPictureView()` 是读侧的唯一下标（`resolveShadow` 采样它、`depth_sampled` 的转移也作用在
-  它上面）；`ensureTarget` 的拒绝从“多采样 + 可采样深度”改成“设备低于 1.2”才拒。
-- **测试**：`VkMsaaTest.ASampleableDepthResolvesWithTheColour`；`VkShadowTest.AMultisampledMapCastsTheSameShadow`
-  （多采样 shadow map 与单采样逐字节相同 = resolve 真的跑了、采样的是画面）；`test_vk` 62 例、`test_vsg` 562 例、
-  `ctest` 32/32。
-- **坑**：`vsg::Device::deviceMemoryBufferPools` 是 observer —— compile pass 结束后池就没了，预热必须自己持有一个
-  `MemoryBufferPools`，否则拿出来永远是 null。`VkAttachmentReference` **不能** `reinterpret_cast` 成
-  `VkAttachmentReference2`（后者追加了 sType/pNext/viewMask），要逐字段建。
-
-## 2026-11-14 —— 采样数契约收口：`max_samples` 是计数，建不了就拒绝（框架优先）
-
-- **决策**：`../decisions/ADR-2026-11-14-sample-count-refused-not-lowered.md`。`Capabilities::max_samples`
-  是一个**计数**、合法计数是 2 的幂；设备建不了的请求（超上限或不是 2 的幂）**拒绝一次**、不降级 —— 这样
-  `RenderTarget::samples()` 永远是画出来的那个数。
-- **改前是三种答案**：文档说“拒绝、从不悄悄降低”；`vsg` 行为对但 `max_samples` / `setMaxSamples` 传的是
-  **位掩码**（本机答 15，宿主 `setSamples(15)` 一路走到 `samplesToVk` 取整 2 而 `shape().samples` 仍是 15），
-  且不检查“不是计数”的请求；“`vk`”（M11）把超限请求**降级**，又把“多采样 + 可被采样深度”降成单采样。
-- **`vsg`**：新增 `largestSampleCount(flags)`（`StateCommands`，与 `samplesToVk` 同处）；`capabilities()` 与
-  `setMaxSamples` 都传计数（本机 8）；`HostTargets::build` 额外拒绝非 2 的幂；`reportUnbuildableTarget` 把
-  “超过上限 / 不是计数 / 借来的深度”三句分开。
-- **`vk`**：`ensureTarget` 用 `ensureBuildableSamples(...)`（2 的幂 ∧ 在受支持集合里）判定，不成立就报一次并
-  `return false`（目标不建、pass 跳过、`readColorBuffer` 答 `NotReady`）；“多采样 + `isDepthPromoted`”
-  同样拒绝（backlog **T40**）；`clampSampleCount` 删除。
-- **帧计数顺带修正**：`executeFrame` 的 `FrameCounters` 只数**真正记录**的 pass / draw（这是 `FrameCounters`
-  文档的语义，也与 vsg 的 packets 一致），被拒的目标不再计一次 draw；被拒时也不再补一句 `Info`
-  “no pass this backend can run”（拒绝已经说过原因）。
-- **测试**：`VkMsaaTest` 5 例 —— 计数上限；4 采样画面（**现在真的多采样**：那张 target 原来默认 promote 深度，
-  被静默降成单采样，等于没测 resolve）；超限拒绝 + 报一次；3 被拒；多采样 + 可采样深度被拒。
-  `MsaaTargetTest` 增一个 3 的断言；新增 `BackendParityTest.TheSampleLimitsAgreeBetweenTheBackends`
-  （同一台机器两后端同一个数：本机 vsg=8 / vk=8）。
-- **验证**：`test_vk` 61 例（60 过 1 跳过，validation 静默）、`test_vsg` 520 例（517 过 3 跳过）、八个门禁全清。
-
-## 2026-11-14 —— `gfx_backend_vk` M13：预热自己提交“只含传输”的一批（框架优先）
-
-- **决策先写**：`../decisions/ADR-2026-11-14-prepare-may-submit-transfers.md`。`prepareFrame` 仍然**不提交帧**
-  （不 acquire、不 present、不动 `FrameProgress::submitted` / `presented`），但可以提交**一个只含传输**的命令缓冲：
-  拷贝 + 布局转换，没有 render pass、没有 draw。
-- **改了契约文字（不是只改后端）**：`RenderFrameExecutor::prepareFrame` 的 “must not submit” 拆成
-  “不提交帧 / 可以提交一个只含传输的批”；`PrepareReport::Outcome::Prepared` 与 `uploads` 的注释跟着改
-  （`uploads` 现在数**流 + 纹理**两类，与 `FrameUploads` 同义）；设计文档 §3.7 / §6.11 `P11` / §7 `D13` / §8 `T35`；
-  `.ai/README.md` 索引 +1。
-- **vk 实现**（`Device::prepareFrame`）：懒分配一个命令缓冲（第一个可服务的 pass 才分配），每个 pass 在
-  `content.prepare(...)` 之后调 `ContentDraw::preparePass(batch, draw.draws)`（1×1 stand-in + 材质纹理），
-  循环结束后 `hasPendingUploads()` 为真才 `vkQueueSubmit` + `vkWaitForFences`（复用 `impl->completion`），
-  成功即 `ContentImages::releaseUploadStaging()`。**零工作零提交**：第二次预热同一帧不提交任何东西。
-- **`ContentImages` 的两个小口**：`releaseUploadStaging()`（只放 staging，`releaseFrame()` 现在复用它）与
-  `hasPendingUploads()`（staging 非空 == 有一批拷贝已记录但没等过——这就是“要不要提交”的答案）。
-- **失败路径老实说**：submit / fence 失败是设备级失败（OOM / lost），条目已经驻留而图像没写过，所以只报
-  `SubmissionFailed`，**不**承诺“下一帧重传”（revision 没动就不会重传）。
-- **测试**：`VkPrepareUploadTest` 2 例（预热报 3 次上传 = 2 流 + 1 纹理，随后帧的 `stream_uploads` /
-  `texture_uploads` 全 0 且像素是纹理色；第二次预热的 `uploads` / `halves` / `pipelines` 全 0 且帧水位不动）；
-  `VkResidencyTest.PrepareBuildsWhatTheFrameNeedsAndSubmitsNothing` 原样通过（它现在同时钉住“传输批不算帧”）；
-  `test_vk` 59 例（58 过 1 跳过，validation 静默）、`test_vsg` 519 例（516 过 3 跳过）。
-- **`vsg` 仍把上传留给首帧**（它的拷贝在帧的传输任务里，不在帧的命令缓冲里）⇒ backlog **T39**。
-
-## 2026-11-14 —— `gfx_backend_vk` M12：暴露边界的逃生门与门禁
-
-- **形状**（`../research/graphics-2026-11-13-vk-exposure-boundary.md` §4.5）：`support/Handles.hpp` 只声明
-  `Handles vkHandles(const RenderDevice& noexcept)`；值 `Handles` 在 `internal/Handles.hpp`。**依赖方向只能
-  support → internal**：`internal/Device.hpp` 绝不 include `support/`（否则门就变成插件自己的依赖，E1 也就成了
-  空检查）。
-- **`Handles`**：instance / physical / device / graphics / graphics_family + `validation`（M0 的证据行靠它）。
-  未 `initialize()`、`shutdown()` 之后全空；非 vk 设备 `dynamic_cast` 失败答 `{}`。`Device::handles()` 是内部
-  访问器，`src/support/Handles.cpp` 才做那一次 `dynamic_cast`。
-- **门禁**：`scripts/check_vk_exposure.py`（CTest `vk_exposure`）—— V2 SDK 后端面不 include vulkan/volk/vsg；
-  V4 插件 `shell/` 零 `Vk*`（注释也算）；E1 两个 internal 半边都不 include `support/Handles.hpp`。
-  `internal/` 与 `support/` 故意不设门（§6.2：设门只会逼出影子类型）。
-- **测试**：`VkHandlesTest` 1 例（未起 → 运行 → 关机后的生命周期）；`test_vk` 57 例（56 过 1 跳过）。
-- **本机新发现**：`test_graphics` 在 Windows 链接不过（W3 的 `detail::expandFrame` / `FrameRunner` 没有
-  `VN_GRAPHICS_API`），已记为 backlog **T38**；所以“整树 ALL_BUILD”在这台机上不是有效判据，验证据
-  `test_vk` / `test_vsg` / 插件目标 + 门禁。
-
-## 2026-11-14 —— `gfx_backend_vk` M11：多采样目标
-
-- **上限是计数**：`caps.max_samples = largestSampleCount(framebufferColorSampleCounts & framebufferDepthSampleCounts)`
-  （本机 8）。`ensureTarget` 用同一集合把请求夹到“≤ 请求的最大受支持计数”，超限报一次并用最接近的计数建；
-  不受支持的奇数（如 3）静默下调。**vsg 那条仍答位掩码 15**（backlog T37）。
-- **形状**：`TargetImages` 多采样时建**样本缓冲**（只有 `COLOR_ATTACHMENT` usage）+ **单采样 resolve 图像**；
-  render pass 附件顺序 = [样本缓冲…, resolve…, depth]，`pResolveAttachments` 指向 resolve，framebuffer 同序。
-  **`colors` / `color_views` 从此是画面（resolve 图像）**：screen draw 采样它、`readColorBuffer` 读它、
-  `color_sampled` 的转移也作用在它上面；样本缓冲只在 render pass 内有效。
-- **depth 不 resolve**：同计数创建，但 `target.isDepthPromoted()`（深度可能被采样）时强制单采样并报一次——
-  否则 shader / 回读拿到的是样本而不是画面。
-- **clear 值按附件下标**：多采样目标的 depth 槽 = `colorCount()*2`（`depthAttachmentIndex()`），不是 `colorCount()`。
-- **pipeline**：`rasterizationSamples = StateMapping::sampleCount(key.compatibility.samples)`；
-  `RenderPassCompatibility` 已把 samples 纳入键，单采样与多采样不会共享同一条管线。
-- **测试**：`VkMsaaTest` 3 例（limit=8；4 采样目标的全屏单色中心/角落 = 51/102/153，且与单采样中心相同；
-  超限请求被服务且只报一次）；`test_vk` 56 例（55 过 1 跳过）；`test_vsg` 的 parity / offscreen / sdk-pixel 20 例全过。
-
-## 2026-11-13 —— 第三轮审计 W3：`FrameWorker` 拆成 `PublicationStore` + `FrameExpander`
-
-- **对象级回边消除**（`G2` / `G12`）：`detail::PublicationStore`（`src/viz/graphics/src/PublicationStore.hpp`）
-  住发布与绑定（`publish` / `bindSnapshot` / `hasExplicitSnapshot` / `beginFrame` / `sourceOf` + 表锁）；
-  `detail::FrameExpander`（`src/viz/graphics/src/FrameExpander.hpp`，W9a 已删）只读它（`runPass` / `run` / `unbound`）。<!-- drift-ok -->
-  内容半段不再需要引擎半段的对象；旧 `FrameWorker` 两个文件删除，`SceneSnapshotRef` 的 friend 改为
-  `detail::PublicationStore`。
-- **发布粒度**：`buildFrameValue` 先跑完本帧所有 `before_draw`（各自记钩子耗时），再按“每帧每场景一次”发布，
-  最后 describe。旧形状每 pass 发一次（后 N-1 次 `Unchanged` 仍付锁 + epoch 比较）；先发布再跑后面的钩子会把
-  钩子写的内容漏出本帧（`RenderEngineTest.AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote` 钉住这一点）。
-- **`record_micros`**：钩子阶段先记钩子耗时，describe 阶段把发布（首个命名该场景的 pass）+ resolve + describe
-  累加进去，总口径仍是“describe + collect”。
-- **测试**：旧的 `FrameWorkerTest`（已删除）拆成 `PublicationStoreTest.cpp` 与 `FrameExpanderTest.cpp`（W9a 改名为 `FrameExpandTest.cpp`）；<!-- drift-ok -->
-  `FrameRunnerTest` / `ValueChannelTest` 改成两个对象。`T3` / `T31` 由
-  `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch` 钉住；`T34` 由
-  `FrameExpanderTest.AFrameExpandsTheSamePictureTheSceneWould`、`T35` 由
-  `FrameExpanderTest.ABoundPublicationIsThePictureTheFrameDraws` 钉住。
-- **计数**：`test_graphics` 556 / `test_vsg` 542 / TSan 556 用例 0 warning。全量并行 ctest 在这台机上
-  偶发 `test_vsg` 的 `backend->initialize()` false（4 例）与移动相机测量超预算；单套件重跑即绿，先重跑再怀疑回归。
-
-## 2026-11-13 —— 第三轮审计 W4：计划只表达 `PassKind` 的形状
-
-- **规则**：计划只能说 `Scene` / `Screen`；子类 pass 是 `describe()` 的逃生口，不在计划契约内。同名同 kind
-  的声明原地更新会保留它（节点与 `describe()` 都活着）；kind 变更会被重建为内置基类，所以 `applyPlan` 拒绝。
-- **新 code**：`PlanProblemCode::SubclassPassWouldBeRebuilt`（`subclass-pass-would-be-rebuilt`），由
-  `RenderEngine::collectRebuildProblems` 在 `validatePlan` 之后判定——纯计划检查看不见"这个名字下已注册的
-  是哪个对象"。判定用 C++ 动态类型（`typeid`），不是 metatype：没写 `VN_OBJECT_META_DECL` 的快速子类也要被拦住。
-- **测试**：`PlanTest.AKindChangeOnACustomPassIsRefusedWithItsCode`（原地更新保留节点 → kind 变更被拒 →
-  内置 pass 仍可换 kind）；`TheCodeSpellingsAreStable` 增加新 token。`test_graphics` 557。
-
-## 2026-11-13 —— 第三轮审计 W6a：`Scene` 的派生侧搬进 `detail::ScenePublisher`
-
-- **搬走的东西**：`SceneBake`、per-view `DrawListMemo`、`content_revision_` / `memo_epoch_` / `content_frame_`、
-  编辑批 `edit_depth_`、发布版本对与 `published_snapshot_`、三个计数，全部落进 `src/ScenePublisher.{hpp,cpp}`。
-  `Scene` 只剩作者树（root / lights / visible / opacity）、查询（boundingBox / findNode）与委托
-  （collect / publish / beginEdit / endEdit / setContentFrame / invalidateContent / 计数）。依赖方向只有
-  Scene → publisher（publisher 以 `Scene&` 读作者的树；`Scene` 是它的 friend）。
-- **门没变**：`detail::SceneRows::snapshot(scene)` 仍是一行门，转给 `ScenePublisher::snapshot()`；`SnapshotShadowTest` /
-  `RenderWorldTest` 对它的引用不用改。空的共享命令表由一个 `detail::noCommands()` 统一（两个 TU 各存一份会破坏
-  `TheSharedCollectionIsOneListAndTheOwningSpellingCopiesIt` 的"空列表是同一个"断言）。
-- **新文件要 reconfigure**：库源码是 `file(GLOB_RECURSE)`（无 `CONFIGURE_DEPENDS`），加 .cpp 后必须
-  `cmake -S . -B build`（`build-tsan` 同）再构建，否则链接期只看到未定义符号。
-- **测试**：`test_graphics` 557 / `test_vsg`（gtest_list 546 例）全绿 / TSan 557 用例 0 warning；公开 API 与测试语义未动。
-
-## 2026-11-13 —— 第三轮审计 W2：迁移 API 的状态标记
-
-- 四个入口 `applyPlan` / `plan` / `bindSnapshot` / `prepare` 标为“迁移 API，尚未成为宿主契约”：设计文档
-  （`graphics-frame-pipeline.md` §4、`graphics-threading.md` §4.2、`graphics-architecture.md` §1.3 / §2.10）与
-  公开头文件的 `@note` 同时写明；5b-2c 前不再新增公共入口。
-- **决定**：`FramePlan` 在 5b-2c 改名 `FrameTable`（它读的是编译后的帧表，不是计划）；`SessionBusy` 随 `W7`
-  移出 `PlanProblemCode`（它描述运行时前置条件，不是形状缺陷）。两项都在 W9 窗口一次改完，之前不动公开签名（`C11`）。
-- 计数：0 代码改动；生产路径仍是 `addPass` 家族 + 帧首隐式发布。
-
-
-
-
-## 2026-11-13 —— W9a（W6b）：帧值只装发布，`Scene` 不再是 `DrawListSource`
-
-- `Scene` 去掉 `DrawListSource` 基类：`collectRenderCommands` 仍是内容线程自己的查询（不再 override），
-  `ScenePublisher` 也不再实现那个接口。帧的绑定与展开集中在 `detail::FrameExpand`：`bindSceneDraws` 把未绑定的
-  scene draw 指向发布源，`expandPass` / `expandFrame` 只读值。
-- `RenderPass::describe` 只写 VIEW（camera / lights 的值），不写内容；`buildFrameValue` 在 describe 之后绑定。
-  `FrameExpander`（bind + `unbound()`）整个删除——它只有 bind 一个职责；`PublicationStore::sourceOf` 改为按
-  `Scene` 查、只查不建（没发布 ⇒ null ⇒ 什么都不画，`FrameExpandTest.ADrawNoPublicationAnswersDrawsNothing`）。
-- `RenderPass::execute`（宿主自驱一遍）自己发布 + 绑定：`PublicationStore` 必须活到 `expandPass` 之后，写在
-  `if` 作用域里就是 use-after-free（本地已踩，`RenderPassTest.Execute*` 段错误）。
-- 测试：`FrameExpanderTest` → `FrameExpandTest`（6 例；文件与 suite 都改名），`FrameRunnerTest` / `ValueChannelTest`
-  改成传发布源，`PassDrawTest` 补走绑定。`test_graphics` 558 / `test_vsg` 546 全绿。
-
-## 2026-11-13 —— W9b：帧不再发布，发布是内容写者的动词
-
-- **删掉的**：`RenderEngine::buildFrameValue` 的"每帧每场景一次隐式发布"；`PublicationStore::publish` /
-  `hasExplicitSnapshot`。`bindSnapshot` 从"接管"降为**覆盖**（默认取场景自己的最新发布）。
-- **新增**：`Scene::publishedSnapshot()`（帧 build 时取的那一份）；`PublicationStore` 按 `(content, revision)`
-  一个 `SnapshotSource`，`beginFrame` 丢掉没人再画的源（在飞帧只有一个 ⇒ 每内容至多两份）；`SceneView::publishContent()`
-  / `PassChain::publishContent()`（链拥有的 transparent 场景）；`AxisGizmo::update` / `FpsOverlay::update` 在钩子里
-  自行发布（钩子写内容就必须发布，否则这一帧看不到）。
-- **宿主**：`SurfaceWindow::renderFrame` 每帧先 `view()->publishContent()` 再 `engine->frame()`。没等、没 bind——
-  在飞帧钉住的是 build 时取到的值。
-- **失败形状**：没发布的场景 ⇒ draw 不命名源 ⇒ 什么也不画 + 一次 `ContentSkipped`（"pass 'x' draws a scene that was
-  never published"），不再悄悄读活树。
-- **测试**：`PublicationStoreTest` 重写为四例（三态 / 一发布一源 / 源被丢 / 绑定覆盖）；`test_graphics` 561 /
-  `test_vsg` 546 全绿。引擎/像素用例改成"宿主动词"：`scene->publish()` 或 `view->publishContent()`，钩子用例在钩子里
-  发布。
-
-## 2026-11-13 —— W9c：灯的活指针通道删除
-
-- `DrawDescription::lights`（`raw_ptr<const Light>` 数组）与 `FrameRecorder::setLights(std::span<const Light* const>)`
-  / `snapshotLights(Light*...)` 删除；`light_values` 是唯一通道，`Light::value()` 只在内容侧调用。
-- 顺带删了 `FrameRecorder::render(..., const ShaderProgram*)` 这个读活程序的旧重载（只剩描述的版本）。
-- 测试：`MockBackend` 改读 `light_values`（`last_light` 变成 `std::optional<LightValue>`），`OwnedFrame` 复制
-  `light_values`；LightBlock/ShadowBlock/ContentPass 的测试用新的 `tests/test_vsg/LightValues.hpp` 在调用点转换。
-  `test_graphics` 561 / `test_vsg` 546 全绿。
-- `RenderCommand::geometry/material/program` 保留：只做身份与寿命（流绑定、驻留、`releaseContent` 的“还有谁持有”），
-  记录侧不再从它们读 revision / 透明 / 灯值；删它们需要内容注册通道（T30/T22 触发）。
-
-## 2026-11-13 —— W9d：`addPass` 家族删除，计划是唯一的形状
-
-- **删掉的**：`RenderEngine::addPass` ×3 / `removePass` / `clearPasses`（`removePass` 转私有，供计划自己的差分与
-  scope teardown）；`PassRegistry::add` ×3 / `remove` / `clear` / `addOwnedBy`；`PassProblemCode::SubclassPassWouldBeRebuilt`
-  （计划只表达 `PassKind`，子类 pass 不存在了）。
-- **新增**：`applyPlan(plan, const void* owner)`（作用域形态：**只 upsert，不删除**，身份是 `(owner, name)`）、
-  `planFor(owner)`、`pass(name)` / `passFor(name, owner)`；`PassRegistry::apply` / `find` / `findFor` / `clearOwnedBy`。
-- **链**：`PassChain` 只收集声明（`addPass` 不再碰引擎），`apply()` 一次提交整计划（所以"一条 pass 读另一条产的
-  名字"能整体校验）；`PassChain::build(engine, desc, owner)` 让宿主点名 scope，**重建是同一 scope 重述**（节点原地
-  更新，后端状态不清）；`SceneView` 是其链的 scope 并在析构时 `clearOwnedBy(this)`；`Viewer` / `buildFor` 传 view。
-- **其它贡献者**：`DemoScene` 用自己的 `RenderControl` 作 scope；`addOffscreenToScreen` 预设用引擎作 scope、两条声明
-  一个计划；测试用 `tests/PlanTestSupport.hpp`（`applyPassForTest` / `registerPassForTest`，scope = 引擎）。
-- **坑**：`apply()` 的"从节点刷新声明"只能对**已提交过**的行做（`applied_`），否则重建的新声明会被旧节点覆盖。
-- **测试**：`test_graphics` 560 / `test_vsg` 546 全绿（删 1 个只测子类 kind 变更的用例；`AddSamePassTwice...` 改为
-  "同名两次 = 一行，最后一次声明生效"）。
-
-## 2026-11-13 —— W9e：结果形状收口，`FramePlan` 改名 `FrameTable`
-
-- **`FramePlan` → `FrameTable`**（文件 / 类型 / 访问器）：`RenderEngine::framePlan()` → `frameTable()`，行类型
-  `PassPlan` → `PassRow`，dump 头改成 `frame table:`；demo 的 `logFramePlan` 同步为 `logFrameTable`。理由：它读的是
-  编译后的帧表，不是计划（`Plan` 才是声明）。
-- **`frame()` 两态**：`FrameOutcome` 从 enum 变成 struct —— `Status::{Ran, Submitted, NotReady}` + `reason`
-  (`EngineNotReady::{NoDevice, NotInitialized}`)，谓词 `ran()` / `submitted()` / `driven()`。`NotReady` 是前置条件，
-  不是帧结局；`prepare()` 复用同一个 `EngineNotReady`（`Outcome::NotReady` + `reason`）。
-- **`applyPlan()` 三态**：返回 `PlanResult` —— `Applied` / `Invalid` + `problems` / `Refused` + `PlanRefusal`
-  (`Busy` / `EngineGone`)；`PassRegistry::apply` 同型。`SessionBusy` 从 `PlanProblemCode` 删除（`planCodeText` 少一项），
-  忙 -> `Refused{Busy}`（校验之前答，诊断仍由 `sessionChangeAllowed` 每次 episode 一条）。
-- **迁移窗口关闭**：`applyPlan` / `plan` / `bindSnapshot` / `prepare` 的 “MIGRATION ENTRY” 注记删除，设计文档与
-  `docs/guides/graphics.md` 同步；guide 的旧 `addPass` 示例加了 W9d 的注册拼写说明（示例字段仍是 `RenderPass`
-  setter，注册按 `PassDesc` + `applyPlan` 翻译）。
-- **测试**：`test_graphics` 561（新增 `PlanTest.ABusyEngineRefusesThePlanInsteadOfBlamingItsShape`；`SessionBusy` 的
-  拼写断言删除；`frame()` 断言改谓词）/ `test_vsg` 546 全绿。
-
-## 2026-11-13 —— F11 + F12：全序排序键与 `FrameResult`
-
-- **F11**：`detail::SortKey`（`DrawListBake.hpp`）取代 `sortCollected(commands, eye)` 的 lambda —— drawOrder → 层
-  （`std::countr_zero(layers)`）→ 不透明/透明 → 量化相机空间深度（`view * center` 的 -z，1/4096 单位，±1e9 夹取）→
-  `(row_index << 32) | primitive_index`。代表点用行的 `world_box` 中心（view 解析过的行用 `local_box.transformed(world)`），
-  无盒退回矩阵原点。键由 `selectRows` 生成（行数据只在那一处），`sortCollected(commands, keys)` 用 `std::sort`
-  （tie 唯一 ⇒ 无相等键，不依赖稳定性）。两个生产者（`ScenePublisher` / `selectSnapshot`）都改传 keys。
-- **F12**：新 `sdk/vine/graphics/FrameResult.hpp` —— `FrameQuery{snapshot, view}` + `FrameResult{frame, present, query,
-  passes, draws, diagnostics}`；`RenderEngine::frameResult()` 在 `runEngineHalf` 一次写入（`frame_result_mutex_`），
-  `presentedCamera()` 读它的 `query.view`（删掉 `presented_camera_`）。`EngineFrame` 新增 `presented_snapshot`
-  （buildContentHalf 取 `publicationFor(presenting->content())`，与相机同刻）与 `diagnostics_before`（`diagnosticCount()` 的初值）。
-- **测试**：`SelectTest`（4 例：全序置换、字段顺序、盒中心 vs 节点原点、无盒退回）；`RenderEngineTest.
-  TheFrameResultIsThePictureThatWasAnswered`（空值 → 快照/相机/计数/诊断 → 帧间发布不改已答的帧）。`test_graphics` 566。
-
-## 2026-11-13 —— F8 否决：一个引擎驱动一个表面
-
-- **决定**：`ADR-2026-11-13-one-engine-one-surface.md` —— 保持一引擎一区；多窗口 = 一设备多引擎（每窗一引擎 / 一区 / 一个 `Viewer`）。
-- **删/改写**：graphics-next 的 F8、`R37`、`T29`、`K10`、§9.3 步 4 删除；`R21` / `R27` 改成一引擎一表面；`SurfaceId` 离开 id 表；
-  §3.8 改成"多窗口：一个引擎驱动一个表面"；§7 新增 `D12`。
-- **修掉的文档矛盾**：`graphics-architecture.md` F19 曾写"一个引擎可服务多个窗口"（与代码 `createArea()` 拒绝第二区、以及
-  同文 §7 D2 都相反），已改；D2 补 ADR 链接；§2.8 里"`Session` 类型随 F8 落地"改成"没有也不需要"。
-- **理由**（评估结论）：无真实消费者（`G8`）；`FrameResult` / `PresentRecord` 刚在 F12 落成单值，改 per-surface 是返工（`G10`）；
-  appfw 所有权（窗口拥有引擎）要重写；估算 ~900–1400 行 / 14–20 文件。
-- **触发条件**：真实宿主需要"同一计划两窗不同视口"；或第二个后端使"设备 = Session"成为必要。
-
-## 2026-11-13 —— T8：`select` 是纯函数，并发同结果
-
-- **测试**：`SelectTest.SameInputSameList` —— 40 节点场景（drawOrder / 层 / 透明 / 深度都有）的快照：同视图重复、
-  换视图穿插、`scene.setRoot(nullptr)` 之后，全部与串行参考 `diffDrawLists` 逐项相同；8 线程 × 32 轮共用一个快照、
-  各自输出，逐项等于串行答案。断言只在主线程，worker 用 `std::atomic` 计数并记录首个出错线程。
-- **为什么并发合法（证据）**：`intrusive_ptr` 计数器是 atomic（`RefCounted`）；快照 chunk 只读；`AutoTransformPlacement`
-  只持数值；`selectRows`/`Frustum`/`SortKey` 无静态状态。所以红了就是真 bug。
-- **边界**：测试直接调 `detail::selectSnapshot`，**不**经 `SnapshotSource`（memo 是引擎线程独有的）；`R15`（折叠一次）
-  沿用 `GraphicsTest` 的 `contentCollect*` 用例，不新增计数器。
-- **结果**：`test_graphics` 567 全绿；`scripts/tsan_check.sh` 567 例 0 warning（并行用例 31 ms）。
-
-## 2026-11-13 —— backlog §2.2 复核 + T25/T26/T29 落地
-
-- **复核结论（写回 backlog）**：T9（V2 `forget`）删除（`forget(` 在 src 与 vsg 1.1.16 都不存在）；T24 重写
-  （旧 1597 µs 测的是 `Scene::collectRenderCommands` 直接路径，帧已走 `SnapshotSource::selectSnapshot`，
-  先补 select 配方重测）；T31 升级为 §1 的**已知潜在竞态**（`StreamUploads.cpp` 引擎线程读 `Buffer::revision()`，
-  该字段非 atomic；今天没有宿主每帧改 buffer）；2.4 的重复 T22 → T32；T8 注明证据装置已就位；
-  “内容提库”条目删除（ADR-2026-11-13-content-seam-stays-in-the-plugin）。
-- **T25 + T29**：新 `FrameUploads`（SDK `FrameStats.hpp`）挂到 `FrameReport::uploads` —— 本帧 stream/texture
-  的上传数、字节与释放数。`StreamUploads` 加 `uploadedBytes()`，`MaterialImages` 加 `built()` / `uploadedBytes()`；
-  `VsgBackend` 在 `executeFrame` 开帧取基线、**录制完**取差值（上传发生在 `recordContent`，不在 `collectFrame`——
-  第一版把差值放在 collect 后，结果全 0），失败路径先置零。
-- **T26**：`StagingTask::releaseStaging()` 只还 `staging->size > minimumStagingBufferSize` 的块，等于下限的保留
-  （每帧上传宿主稳态零分配）；新 ADR 取代 ADR-2026-11-10 的“全部不保留”。
-- **测试**：新 `FrameUploadsTest`（增量、稳态 0、buffer revision 重传、换内容报释放）；`UploadScratchTest` 改成
-  “存活块都是下限的倍数 + 一次性大块被还掉”（`makeBigTriangle` 17 MiB）。`UploadScratchTest` 的 floor 不再固定为
-  16 MiB：每个用过的 frame slot 各留一块（至多 3 块）。
-- **共享夹具**：`tests/test_vsg/TestTriangleContent.hpp`（TriangleFixture / makeTriangle / makeBigTriangle / makeCamera）。
-
-## 2026-11-13 —— T24：剔除按行，不按块
-
-- **测试**：`SelectTest.OneChunkCullsEachRowOnItsOwnBox` —— 一个快照块（`row_count < kRowsPerChunk`）里两个
-  兄弟段各带自己的父变换（x = 1000 / x = 0），walk 顺序把**视外**的放前面；相机看向第二段时 select 恰答它
-  （按首行盒做块级跳过会答空），换相机后恰答另一段（剔除没有被关掉）。断言：`row.identity` 找人、
-  `parent_world.element(0,3)` 证明父变换不同、`Frustum::isOutside(row.world_box)` 证明两盒一内一外。
-- **口径**：chunk 是共享单位，不是剔除单位；将来若做“块级早期剔除”，块盒必须取块内所有行的并（保守），
-  不得用 `chain[0]`。
-- **文档**：`graphics-frame-pipeline.md` §3.3 F2 验收加 `T24`；§8 的 T24 判据改为“剔除按行、不按块”、已实现。
-
-## 2026-11-13 —— backlog T24：select 的 Release 配方与重测
-
-- **配方**：`SelectTest.MeasureWhatOneSelectCostsWithAMovingCamera` —— 2000 / 10000 drawables 的网格（全部在视内、
-  深度有层次），快照发布一次，10 个移过眼的 view（预建，计时不含相机构造）；打印纯 `detail::selectSnapshot` 与
-  生产 miss（`SnapshotSource::collectRenderCommands`，含 memo 查找与命令 vector 的 shared 分配），断答数与
-  “每个移动视图都是 miss”。
-- **数字（RelWithDebInfo，本机 ×3）**：2000 → select 337–340 µs / source 435–443 µs；10000 → select 2348–3067 µs /
-  source 3388–3626 µs。Debug 只作参考：1815 µs / 10675 µs。
-- **结论**：10k < 4 ms 门、2000 < 2 ms 线 ⇒ 不做优化，T24 保持触发条件型；但 10k 已越过 2 ms，生产路径比纯
-  select 多 ~0.9 ms（查找 + 分配），1 万 drawable 成为日常时先看这一半。
-- **文档**：backlog T24 换掉“先补配方”；`graphics-threading.md` §1.1 的 1597 µs/帧（旧直接路径）改成帧路径的
-  select / source 数字。
-
-## 2026-11-13 —— backlog T31：竞态复现 + TSan 证据
-
-- **用例**：`StreamUploadsTest.AnEditFromTheHostThreadRetiresTheSameUploadASerialOne` —— 一个线程循环跑
-  `StreamUploads::beginFrame`，主线程在 `Buffer::edit()` 作用域里改字节；普通构建断言“并发编辑与串行编辑同一答案”
-  （旧上传退役、下一次 acquire 重传）。
-- **TSan（clang-23，手工重链的 `test_vsg`）**：1 条 report —— write `Buffer<float>::bumpRevision()`
-  （`Buffer.hpp:363`，来自 `Edit::~Edit`，main）vs read `Buffer<float>::revision()`（`Buffer.hpp:181`，来自
-  `StreamUploads::beginFrame` 的 lambda，`StreamUploads.cpp:228`，T1）。
-- **链接坑**：`test_vsg` 不能直接 `-fsanitize=thread` 链接 —— `tests/test_vsg/AllocationCounter.cpp` 替换全局
-  new/delete，与 `libclang_rt.tsan_cxx` 的强定义冲突（multiple definition）。证据跑法：`ninja -t commands test_vsg`
-  取链接命令、去掉 `AllocationCounter.cpp.o` 后重链。正式覆盖记为 backlog T34。
-- **同类活读（修复要一起看）**：`ChannelFacts::streamKey()`（`ContentFacts.hpp:233`）、instance buffer
-  （`ContentPass.cpp:1123`）、textures（`ContentSets.cpp:268`、`MaterialImages.cpp:516`）。
-- **文档**：`graphics-threading.md` §2.4 加用例指针；backlog T31 记录证据与修法范围。
-
-## 2026-11-13 —— T31 修复：revision 计数器原子化
-
-- **改动**：`Buffer<T>::revision_` 与 `Texture::revision_` 改成 `std::atomic<std::uint64_t>`；写者（`Edit` 作用域
-  结束 / `setRevision` / `setLayer`）用 release，`revision()` 用 acquire。`Geometry` / `ShaderProgram` / `Material`
-  不动——帧那侧读的是描述值，不是活对象。
-- **为什么够**：观察到新 revision ⇒ 之前写的字节可见；轮询因此有定义顺序。仍不走值通道：公告之后再写字节不发新
-  revision 仍是合同外。
-- **验证**：`StreamUploadsTest.AnEditFromTheHostThreadRetiresTheSameUploadASerialOne` 在普通构建绿；同一个 TSan
-  二进制（去掉 `AllocationCounter.cpp.o` 重链，见 backlog T34）从「1 warning」变成 0 warning。
-- **文档**：`graphics-threading.md` §2.4 / F7 与 `graphics-geometry.md` F18 改成「计数器原子、字节仍不走值通道」；
-  backlog §1 清空，T34 的触发条件记为已命中。
-
-## 2026-11-13 —— T30 评估：GPU 资源抽象
-
-- **结论**：维持触发条件型（第二个后端）；不建 `GpuResource` 基类。规则层（pin / 退役 / 驻留账 / 帧值 / 能力 /
-  目标决策）**完备**；类型层**不完备也不该现在补**（宿主没有创建 GPU 资源的动词，`RenderDevice` 18 个虚动词里 0 个）。
-- **事实**：`backend/` 24 头 3,897 行（`BackendHalfGuard` 编译期隔离）；vsg 后端 28,354 行 / 85 个 internal 文件——
-  第二后端的成本在物化层，不在“资源类型”。装载路径已有：`RenderBackendRegistry` / `RenderBackendFactory` /
-  `RenderApi` / `vn_add_plugin`。
-- **前置**：T15（`device_color_formats` / `subpass` 等 Vulkan 策略 → 不透明设备格式码）与 T32（`RenderBackend` 聚合拆
-  成 device / executor 两个出口）；S4/S5 另算。
-- **文档**：`../research/graphics-2026-11-13-gpu-resource-abstraction.md`（dated，非现行），backlog T30 已链接。
-
-## 2026-11-13 —— vk 的通用化边界（设计论证）
-
-- **决定**：只做 Vulkan；新写的与好改的按通用形状落地；shader 不做实现层通用化、只留概念。
-- **原则**：通用化在「值 / 规则 / 映射表」，不在「API 对象」。判据 J1（输入 vs 输出）、J2（今天有第二个消费者吗）、
-  J3（要不要动公开面）。
-- **现在就通用（成本≈0，靠“不另写一份”）**：`RenderBackendInfo`、`Capabilities`、`planTarget`、`PipelineKey`/
-  `VariantPool`、`ResourceTable`/`RetirementQueue`/`FrameTimeline`、`ResidencyLedger`、`ReadbackResult`、
-  `DiagnosticsRoute`、`FrameDescription`。禁止影子类型（`vn::backend_vk::PipelineKey` 之类）。
-- **唯一新做的通用物**：`BarrierPlan` 映射表（`ImageLayout` 当作用途 + `LoadOp/StoreOp` + `AccessKind` → Vk
-  barrier），150–250 行 + 无设备表驱动测试；反例是“通用 barrier 类型”。
-- **shader 只留概念**：缺的是**源码语言**（不加字段，只写未来形状 `ShaderSourceLanguage` + 每后端编译入口），
-  不是块布局（`ShaderAbi.hpp:107` 已说明 std140 / cbuffer packing 都成立）；工具链（DXC / SPIRV-Cross）走 ADR。
-- **明确不做**：分配器抽象、第二套 recorder、descriptor 模型抽象、资源基类、swapchain 抽象、通用 barrier 类型。
-- **纪律门**：D1 `backend/` 公开面零 diff；D2 `Vk*` 只在 `src/internal/`；D3 驻留账完整；D4 同值同画；
-  D5 resize / 状态变更不重编管线。
-- **文档**：评估 §9（J1–J3、清单、D1–D5），backlog T35 已链接并把 `BarrierPlan` 排进 M1。
-
-## 2026-11-13 —— Vulkan 暴露边界（设计论证）
-
-- **结论**：插件 `internal/` + `support/` **随便**暴露 Vk（今天 18/57 个头含 `Vk*`）；SDK 宿主面与 SDK 后端面**零 Vk 类型**
-  （实测命中全是注释文字）；插件 `shell/` 为 0，但**只作形状不作门**（插件头未安装、无第二消费者，`G8`）。
-- **学习后端需要的 Vk 访问**：做成 `support/Handles.hpp` 的**自由函数**（不进 `RenderDevice` 动词表、名字带后端名、
-  不安装、生产路径不 include）——与 Diligent `ITextureVk` / QRhi `nativeTexture()` / Godot `get_driver_resource()` 同形。
-- **可检查的**：V1 宿主面零 Vk 类型（今天靠人工/注释区分）、V2 后端面零 `<vulkan>`/`<vsg>` include（已 0）、
-  V3 安装组件不含 Vulkan 头、V4 插件 `shell/` 零 Vk（已 0）。升级触发：插件头开始安装 / 第二个模块 include `shell/` /
-  `support/` 被生产路径 include。
-- **降级**：上一轮的 “D2 只允许 `src/internal/`” 撤回（与 vsg 的 `include/vine/backend_vsg/internal/` 分层不符，且无受害者），
-  换成 V4 + 升级条件。
-- **文档**：`../research/graphics-2026-11-13-vk-exposure-boundary.md`（dated，非现行）。
-
-## 2026-11-13 —— `gfx_backend_vk` M0 落地（命名两轮：`vkraw` → `vk` → `vn::backend_vk`）
-
-- **命名**：插件 `gfx_backend_vk`、注册名 `"vk"`、命名空间 `vn::backend_vk`、include 路径 `vine/backend_vk/`、
-  类 `vn::backend_vk::{Device, BackendFactory, Plugin}`、宏 `VN_BACKEND_VK_{LIB,API,NS_BEGIN,NS_END}`、
-  测试 `tests/test_vk`（`VkBackendTest`）。**命名空间两段各说一件事**：`backend` = 这是渲染接缝的**实现**
-  （`vine/graphics/` 才是接缝本身），`vk` = 走**直连 Vulkan** 的实现路径（`vsg` 是经 VulkanSceneGraph）。
-  前一版是 `vn::vk`，被否的理由有两条：读起来像"Vine 对 Vulkan 的封装库"，且 `vn::vsg` 与 VulkanSceneGraph 自己的
-  `::vsg` 命名空间同名。`"vk"` 作为**注册名**不变（宿主按名字创建）；`"vsg"` 与它同为 `RenderApi::Vulkan`，区别是
-  实现路径而不是 API 家族。
-- **硬约束**：`Vk*` 拼写在模块内属于 Vulkan 自己的类型（volk 带进 `vulkan.h`），所以自己的类**不能**叫 `VkDevice` /
-  `VkInstance` 这类名字；`vn::backend_vk::Device` 才安全。
-- **M0 内容**：volk 建 instance（validation 层与 debug-utils 按可用性启用）/ 选带 graphics 队列的物理设备 / 建逻辑设备；
-  `capabilities()` 诚实地报 `render_targets=false`、`presentation=false`；`executeFrame` 与 `setRenderTarget` 各只报一次
-  “M1/M2 未实现”；`shutdown()` 幂等且可重入。
-- **一个坑**：`tp::volk` 用 `VOLK_NO_DEVICE_PROTOTYPES` 编译，设备级函数**没有**自由函数声明；正确用法是
-  `volkLoadDeviceTable(&table, device)` 后用 `table.vkDestroyDevice(...)`。直接 include `<vulkan/vulkan.h>` + `<volk.h>`
-  会让 `vkEnumeratePhysicalDevices` 在全局与 `volk::` 之间二义。
-- **验证**：`test_vk` 3 例全绿；本机 `validation=on`、`InitFailed` 诊断计数 0；`plugins/vine/gfx_backend_vkd.so` 构建并部署。
-
-## 2026-11-13 —— vsg 后端对齐命名：`vn::backend_vsg`
-
-- **范围**：`vine/vsg/` → `vine/backend_vsg/`、`vsg_global.hpp` → `backend_vsg_global.hpp`（旧名仅在此记录 `<!-- drift-ok -->`）、`vn::vsg::` → `vn::backend_vsg::`、
-  `VN_VSG_{LIB,API,NS_BEGIN,NS_END}` → `VN_BACKEND_VSG_*`。共 176 个文件（src/tests/cmake/scripts/docs/.ai）。
-- **不动的**：VulkanSceneGraph 自己的 `::vsg`（2134 处 `::vsg::` 与全局 `namespace vsg {` 前向声明）——模块内一律用带前导
-  `::` 的拼写，这也是这次能安全批量替换的原因。
-- **类名暂不改**：`VsgBackend` / `VsgExecutor` / `VsgHostWindow` … 在 `vn::backend_vsg` 下前缀冗余，但那是 ~1000 处引用且无
-  行为收益；留作独立一步（若做，参照 vk 模块的 `Device` / `BackendFactory` / `Plugin`）。
-- **一个真坑（门禁静默失效）**：`scripts/check_doc_symbols.py` 的 `MAPPED_DIRS` 写的是
-  `PLUGIN / "include" / "vine" / "vsg"`（分段字符串），文本替换匹配不到，于是它**照样报 OK**，但覆盖的 unit 从 104 掉到 47。
-  已修为 `"backend_vsg"`，恢复 104。教训：改名后要看门禁的**计数**，不只是退出码。
-- **其余**：`scripts/vn_shader_check.sh` 注释里的旧路径同步；`content_seam` ctest 绿。
-- **验证**：`test_vsg` 548 全绿（5 次运行中 1 次 `EachAttachmentClearsToItsOwnColour` 偶发红，已记 backlog T36 并带诊断），
-  `test_vk` 3/3，`gfx_backend_vsg` / `gfx_backend_vk` 均构建部署，四个文档/头文件门禁 + 符号门禁全清。
-
-## 2026-11-13 —— `gfx_backend_vk` M1：离屏清屏 + 读回
-
-- **`BarrierPlan`**（§9.3 的那张通用表）：`ImageLayout`（当作“用途”）+ `LoadOp`/`StoreOp` → `VkImageLayout`/stage/
-  access；另加 `transferReadState()`（读回不是 pass，所以这一端没有 SDK 拼写，留在插件内）+ `barrierBetween`。
-  5 例无设备表驱动测试：每个用途一个独立布局、自身不需 barrier、barrier 两侧字段、Undefined/Present 两端、载/存映射。
-- **`TargetImages`**：每 target 一套 VkImage/内存/视图/render pass/framebuffer；render pass 固定 `CLEAR`/`STORE`、
-  initialLayout `UNDEFINED`（M1 的契约：画进 target 的 pass 必须声明 clear，否则报一次并跳过）。resize 在 M1 是重建
-  （M3 才换成 `planTarget` 的 `ResizeInPlace`）。
-- **设备**：命令池 + fence（init 建、shutdown 销），`executeFrame` 一帧一命令缓冲、提交后等 fence；
-  `readColorBuffer` 走 staging buffer（HOST_VISIBLE|COHERENT），barrier → `vkCmdCopyImageToBuffer` → barrier 回
-  `COLOR_ATTACHMENT_OPTIMAL`，只支持 RGBA8（其它格式答 `Unsupported`）。
-- **capabilities**：`render_targets` 改 true；`presentation` 仍 false。M0 的用例断言跟着改。
-- **验证**：`test_vk` 10 例全绿（3 backend + 5 barrier + 2 offscreen），本机 `validation=on` 且新路径无一句报错；
-  `plugins/vine/gfx_backend_vkd.so` 构建部署。
-
-## 2026-11-13 —— 第二个后端定为手撸 Vulkan（`vk`，学习/研究）
-
-- **触发修正**：它是**同 API 家族**的第二后端 ⇒ T15（设备无关性）与 T30（统一类型）都**不触发**，只收窄触发条件为
-  “第二个 **API 家族** 的后端”；T32 不阻塞（直接实现聚合）。
-- **它消费的是接缝**：`RenderDevice`（18 动词）+ `RenderFrameExecutor`（2 动词）+ `WindowPresentTarget`；寿命规则复用
-  `backend/` 的 `ResourceTable` / `RetirementQueue` / `FrameTimeline` / `ResidencyLedger`，L1 块沿用 `ShaderAbi`。
-- **形态**：插件 `gfx_backend_vk` 注册工厂 `"vk"`（`RenderApi::Vulkan`）；不是默认后端；测试独立
-  （新建 `test_vk`，像 `tests/test_vsg` 一样直接编译插件源码）。
-- **里程碑**：M0 插件+设备；M1 离屏清屏+读回；M2 一个 content draw（glslang→pipeline、通道→上传、View/Draw 块）；
-  M3 targets/state/MRT；M4 材质/纹理/灯/screen draw；M5 swapchain；M6 驻留/prepare；M7 与 vsg 对拍。
-  M0–M2 约 2–4k 行，M3–M6 约 10–20k 行。详见评估 §8。
-- **文档**：backlog §1 新 T35（唯一“现在可做”项）；评估 `graphics-2026-11-13-gpu-resource-abstraction.md` §8。
-
-## 2026-11-14 —— 灯块上移 SDK（`LightAbi.hpp`）：一个形状一个家
-
-- **动机**：`vk` 落地时把 `VineLightsBlock` 与 `packLightBlock` 从 vsg 复制了一份（M4/M9 的注记就是证据）——
-  同一 ABI 规则两份手写；对拍又证明这种副本会漂移（M7 的深度折法就是一例）。触发条件“第二个后端需要
-  同一份灯布局”已经命中，backlog `S5` 因此关闭。
-- **落点不是 `ShaderAbi.hpp`**：灯块的容量 `kMaxLights`、未用槽标签 `kLightKindEmpty`、形状 `VineLightsBlock`
-  与打包 `packLightBlock` / `packedSlotOf` 同在 `sdk/vine/graphics/LightAbi.hpp`（实现
-  `src/viz/graphics/src/LightAbi.cpp`）。理由：打包要吃 `LightValue` / `CameraSnapshot`，把它们拉进
-  `ShaderAbi.hpp` 会让 ABI 叶子依赖场景模型（回边 + 重编译扇出）；依赖方向固定为
-  `ShaderAbi.hpp` <- `LightAbi.hpp` <- 后端。
-- **删掉的副本**：两个后端各自的 `LightBlock.hpp` + `LightBlock.cpp`（`ContentPass` / <!-- drift-ok -->
-  `ShadowBlock` / `ContentPipeline` / `ContentDraw` 改 include `LightAbi.hpp`）；`vk` 的 `ContentDraw.cpp`
-  里私有 `struct VineShadowBlock`（80B，与 SDK 同形）也一并删除，改用 `vn::graphics::VineShadowBlock`。
-- **测试搬家**：纯打包用例从 `tests/test_vsg/LightBlockTest.cpp` 移到 `tests/test_graphics/LightBlockTest.cpp`
-  （10 例：形状/视图空间/旋转/禁用与不可用灯/空公告/点光/聚光/8 槽/无相机/槽位规则）；`test_vsg` 只留三个
-  设备画面用例（content 四带、两条路径同 binding、full-screen 三带）。
-- **新坑**：`LightValue::identity` 默认空指针——单测里拿栈上 `LightValue` 的**地址**当 identity 会永远答
-  `kMaxLights`；要点名的灯必须显式 `identity = &stable_id`。
-- **验证**：`test_graphics` / `test_vk` / `test_vsg` 全绿；门禁见同批提交。
-
-## 2026-11-14 —— 材质 / draw 块打包上移 SDK：一个块一处打包（C8）
-
-- **动机**：灯块那条尺的继续——材质与 draw 的字段映射在两个后端各写一份（vsg `blockOfMaterial` /
-  `packDrawBlock`，vk `buildMaterialBlock` / `buildDrawBlock`）。加一个因子要改两处，漏一处只在一个后端
-  “旧”，日志里什么都看不到。
-- **落点**：`MaterialAbi.hpp` 的 `packMaterialBlock(values, present_slots, out)`、`DrawAbi.hpp` 的
-  `packDrawBlock(model, opacity, point_size, out)`，实现各一个 `.cpp`；`ShaderAbi.hpp` 仍是零依赖叶子。
-  这条“形状 vs 填充面”的分层与“一块一处打包”已写进 `graphics-shader-params.md` §5.1 的 C7 / C8。
-- **细节**：材质块的槽位掩码是**调用方**的声明（vsg = 声明了贴图的槽；vk = 真的上传成功的槽，失败留 0 让
-  shader 走常量回退）；默认材质不调用打包（`VineMaterialBlock{}` 的成员默认就是默认材质的值）。draw 块的
-  保留字 `params.z/w` 恒写 0，不只是靠 `{}`。
-- **删掉的 vsg 单元**：`DrawBlock.hpp` / `DrawBlock.cpp`（公开名字随之消失，`packDrawBlock` 现在是 <!-- drift-ok -->
-  `vn::graphics::`）；`ContentPass` / `ContentSources` 改调 SDK；vk 的 `buildMaterialBlock` /
-  `buildDrawBlock` 删除，调用点自己把值交给 SDK。
-- **测试**：算术用例搬到 `tests/test_graphics/DrawBlockTest.cpp`（3 例），新增 `MaterialBlockTest.cpp`
-  （4 例：字段行 / 原样不钳制 / 默认材质 == ABI 默认 / 掩码直通）；vsg 的 `DrawBlockTest` 只留“值路径”
-  一例（recorder → compiler → 字节）。
-- **阴影块的例外**（写进 §3.3）：输入 `ShadowFacts` 在后端半（`backend/FrameCompiler.hpp`，D1 不开放），
-  两个后端各自打包；但槽位推导必须调用 `packedSlotOf`。
-
-## 2026-11-16 —— vsg S8c-1：帧体共享设备，设备内容进一把内容锁（T48）
-
-- **换了什么闸**：`graphics::FrameGate`（一帧一次）在 vsg 的位置换成了 `internal/DeviceGate`（新单元）：
-  帧体取 **SHARED**、宿主动词取 **EXCLUSIVE**，线程本地深度把"从帧体内回调"变成**空租约 + 拒绝**
-  （读回 `InsideFrame` → `ReadbackResult::Failed`；内容动词 false/不动 + `vsg.device.reentry`），从不自等。
-  诊断路由与 episode 锁必须**递归**（sink 会回调）。
-- **帧状态归驱动**：`VsgExecutor::FrameDrive`（scratch / driving / uploads_before / last_uploads）取代
-  `Data::{driving, scratch, driving_executor, uploads_before}`；`presentWindow` 用**线程本地在飞帧**
-  （`FrameInFlight`）取回驱动者——窗口 `present()` 没有帧参数。`driving` 在帧尾**不清**（测试缝
-  `BackendContentAccess::windowTarget` 与诊断读"最后一帧的窗口"），只在 shutdown 清。
-- **帧首快照**：`openFrameHead` 一次内容锁：`passes.adopt`→`FrameScratch::pass_ids`、`adoptHostTarget`、
-  `targets.observe`、`store.track`（把 `collectContentDraw/collectScreenDraw` 的跟踪搬走）、
-  `collectTargetFacts`→`scratch.facts`、staging 清扫、`growBlockStorageIfNeeded`、上传基线。
-  收集/编译（`collectFrame`/`closeFrameBooks`）只读 scratch ⇒ 计划编译器的报告到达 sink 时**不持锁**
-  （重叠证据就抓在这里）。**内容相**：`commitFrameThrough` 一次内容锁做 applyTargetPlans/材质 arena/
-  `recordContent`/`executor.record`/sweep/commit，并在每个出口写 `last_uploads` + `last_counters`。
-- **每会话帧主张**：`WindowSlot::frame` / `Data::offscreen_frame` 两把 mutex，帧体持到结束。同窗口/同离屏会话
-  的两帧**等待**（离屏两会话并发出图是受支持形态，不能 refuse）；不同窗口互不等待。
-- **计数器归会话**：`SessionOptions.observe` 不再借 `d->observe`（recorder 开帧会重置计数器，共享会被覆盖）；
-  `frameReport().counters = Data::last_counters`（最后结束那帧的副本），retention 仍设备级。
-- **踩到的真竞态**：两驱动者并发**首次**跑离屏帧时 `ensureOffscreenSession` 的无锁惰性创建让输家覆盖半建 viewer
-  （段错误，测试套件里不定期出现）——创建必须在内容锁下。
-- **仍待 S8c-2**：记录路径仍读设备表（halves/sets/uploads/images/材质槽）⇒ `C3` 对 vsg 未成立；形状 = 帧首把
-  per-draw 需要解析成值（与 vk `CommandPlan` 同形）。
-- **证据**：`test_vsg` 561/561、对拍 13/13；`ACompilingFrameDoesNotWaitForAnotherDriversFrame`（变异：闸改回独占
-  ⇒ 5 s 超时红）、`TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`、`AReadbackFromInsideAFrameBodyAnswersInsideFrame`；
-  TSan（vsg 子集）0 报告（521 通过 / 6 预期 skip，抑制仅 lavapipe 290 条）；ASan 新路径 PASS。
-
-## 2026-11-16 —— vsg S8c-2：记录路径零锁，内容拆成解析/录制/提交三相（T48）
-
-- **新增单元**：`internal/ContentPlan`（`ContentPlan.hpp/.cpp`）——一帧解析出的**值**：每个绘制调用一个 `Call`
-  （`ContentDraw*` 录制器 + 已解析的 `Draw`/`ScreenDraw` + 块绑定/推送块/顶点绑定的定长数组），每个 pass 一个槽
-  （自带 `core::StateRegistry`）；`Pass::pass/registry` 是借用的，`halves_` 是 `shared_ptr<const void>` 的**钉**
-  （`ContentHalves::pin()`），所以另一个驱动者的帧首清扫不释放这一帧还要用的录制器（退役 park 不管"尚未提交的帧"）。
-  调用里**不存 span**（`Call::value()` 用调用自己的数组现拼）——vector 重排会让指向自身体内的 span 失效。
-- **`commitFrameThrough` 三段**：**解析**（内容锁：`applyTargetPlans`、材质 arena 增长、`resolveContent` →
-  `ContentAssembly::resolve` → `ContentPass::resolve`，拒绝/报告都在这里）、**录制**（无锁：`ContentPlan::record`
-  建 vsg 节点）、**提交**（再取锁：`executor.record`、清扫、会话提交、`finish`）。帧首写 view/lights/shadow/draw/
-  material 块并只把偏移交给录制——另一个帧首在中间轮转环/清扫/增长都不影响这一帧。
-- **解析半/录制半分开**：`ContentDraw::plan(key)`（取 layer + variant pool，返回 `Identity{pipeline, variant}`）与
-  `record`/`recordScreen`（只绑已解析的 pipeline，**不 acquire、不碰 pool**）；`core::StateRegistry` 新增
-  `resolve(std::uint64_t variant, …)` 重载——池只在帧首被问，录制带值。`ContentDraw` 的计数器改成 `std::atomic`
-  （同一 half 可被两个驱动者同时录制）。零几何的命令在**解析**阶段就拒绝（先于身份解析，"拒绝的画不编译"仍然成立）。
-- **`ContentHalves::Scope::Entry` 增加尾部字段 `keep_alive`**（`ContentPlan::Pin`）；`serve()` 现在收 `shared_ptr<Half>`。
-  `ContentAssembly::record`（旧便利入口）保留 = `resolve` + `ContentPlan::record`；`prepareContent` 是预热走同一
-  offer 循环（`offerInputs` 抽出来了）但只 `prepare`。
-- **测试缝**：`BackendContentAccess::setRecordSeam`（录制开始处、不持内容锁）；新用例
-  `VsgBackendTest.ARecordingFrameDoesNotStopAnotherDriversContent`（离屏帧被停在录制里，窗口帧整帧完成，且被停帧
-  读回的像素仍是自己的红）；**变异：三相位改回 S8c-1 单锁 ⇒ 5 s 超时红**。测试端：所有直接 `ContentDraw::record`
-  的用例改成先 `plan()` 再 record（`ContentDrawTest` 的"拒绝在记忆化之前"改为手搓无身份的 Draw）。
-- **证据**：`test_vsg` **562/562**、对拍 13/13、`test_graphics` 587、`test_vk` 133；TSan vsg 子集 0 报告（三次复跑
-  全绿；偶发的一次 `initialize()` false 是既有的 `VSG_MAX_DEVICES` 抖动，见 backlog T36/T33，非本步）；ASan
-  新路径 PASS；九个文档/代码门禁 0 发现（`check_doc_symbols` 需在 `docs/guides/vsg-backend.md` §5 点名 <!-- drift-ok -->
-  `ContentPlan.hpp`）。`C3` 对 vsg 自此成立；`T48` 的迁移表全部落地（backlog 条目已按规则删除）。 <!-- drift-ok -->
-- **测试基建注意**：`build/` 里 plugin `.so` 与 test 二进制必须**同源重建**——`git stash` 前后混编会出现
-  `undefined symbol` 与莫名的设备上限失败（本次排查花了时间，教训：stash 后 `ninja test_vsg gfx_backend_vsg` 一起建）。
-
-## 2026-11-16 —— vk F4：驻留三态接进设备（`ensureGeometry` 问表，`FrameBuilds` 在帧完成时发布）
-
-- **接线形状**：`ContentCaches::Impl` 持 `ResidenceTable residence`；`ensureGeometry(description, builds, why)`
-  先查本帧已解析（`builds.entryOf`），再 `residence.admit(&description, session)`：`Use` 用缓存条目（**并调用
-  `fillStreams` 补 `releaseStreams` 打出的洞**——这条曾经漏掉，`VkResidencyTest.ReleasingOneBuffer…` 立刻红）、
-  `Build` 填充缓存条目并把 `Claim` 交给 `FrameBuilds`、`Copy` 建**脱钩**条目（`builds.noteCopy`）。表与缓存不一致
-  （`Use` 但无条目）时 `forget` 后重问一次——缓存是真相。
-- **`ContentCaches::FrameBuilds`（嵌套类，帧作用域值）**：`resolved_`（本帧 Use/Build/Copy 的答案）、
-  `claimed_`（`Claim` + 条目指针，用于跳过失败的填充）、`copies_`（`unique_ptr<GeometryEntry>`）。
-  `publishAll()` 在帧栅栏 wait 过后调用；失败的填充**从不登记 claim**，所以 `FrameBuilds` 只持 claim、不持缓存条目指针
-  （宿主在帧在飞时 `releaseContent` 会把条目移走，指针会悬垂）；析构撤回未发布的 claim 并调
-  `owner_->releaseTemporary(copies_)`（**立即销毁**：副本从不进表，只有本帧能命名它；不在帧首锁内，自己取锁）。
-  副本的上传计 `stream_builds`，销毁**不计** `stream_releases`（不是释放公告）。
-- **发布点**：`executeFrame` 在 `completed` 后 `publishAll()`（提交失败/命令缓冲没关闭 ⇒ 不发布，守卫撤回）；
-  `prepareFrame` 用 `transfers_completed` 标志（批没关闭或没跑 ⇒ 不发布；零工作批 = 主机 memcpy 已完 ⇒ 发布）。
-  `FrameBuilds` 声明在帧首 `{ }` 之外，析构取缓存锁时不持锁。
-- **释放/拆除**：`releaseGeometry` 先 `residence.forget(description)`（即使条目不存在）；`destroyAll` 清表。
-  锁序恒为 缓存锁 → 表锁；`publishAll` 只取表锁（因此 `VkFrameHeadTest` 的锁计数不变）。
-- **测试**：`tests/test_vk/ResidenceWireTest.cpp` 4 例——(1) 假租约（`device->residence().admit(desc, 9999)`，同
-  `TargetClaimFrameTest` 的门）下的一帧复制且像素正确，恰好 2 条流、`used_bytes` 回位；撤租后下一帧 Build+发布、
-  再下一帧零分配；(2) 真两会话两线程首画同一几何：claims 1 / published 1 / copies ≤ 1 / 两图红 / 随后每会话零上传；
-  (3) `setMemoryBlockCreator` 拒块 + 20 MiB 顶点流（>16 MiB host-visible 首块）⇒ 失败的填充被撤回
-  （`uploading 0`、`stateOf Absent`），释放后重建成功；(4) 释放后 `stateOf Absent`、下一帧重新 claim/publish。
-  **变异 3/3 红**：不问表（4 例红）、失败填充发布 claim（用例 3 红）、释放不 forget（用例 4 红）。
-- **证据**：`test_vk` **137/137**、`test_vsg`（含对拍）全绿、`test_graphics` 587；TSan `test_vk` 0 报告
-  （132/132，窗口/探针/插件按既往规则排除，抑制仅 lavapipe）；ASan 聚焦
-  （`VkResidenceWireTest`+`VkResidencyTest`+`VkMultiSessionTest`+`VkFrameHeadTest`）PASS。
-- **构建注意**：`tests/test_vsg` 也编译 vk 后端源码，新加的 `ResidenceTable.cpp` 必须同时进
-  `tests/test_vk/CMakeLists.txt` **和** `tests/test_vsg/CMakeLists.txt`，否则 `all` 在 test_vsg 链接处报一串
-  `ResidenceTable::Claim` 未定义。
-- **仍是边界**：两个驱动者的帧首解析仍在一把缓存锁上（`C3` 管记录路径）；填充是主机 memcpy，故 `fillStreams`
-  返回即可证明完成——M6 把上传搬到设备本地后，发布点仍是 `publishAll`，证据换成栅栏。
-
-## 2026-11-16 S2 批 2a：一个帧闸、两侧、两个后端（B2a）
-
-- **同一个规则原来有三份实现**：vk 每驱动者的 `graphics::FrameGate`（`enter()` 独占 + 同线程重入拒绝）、vk 设备的
-  `std::shared_mutex body_gate`（`Device.cpp` 16 处 unique/shared_lock）、vsg 私有的 `internal::DeviceGate`。现在
-  **一份**：`graphics::FrameGate` 有 `enterShared()` / `enterExclusive()` + `Shared` / `Exclusive` 租约 +
-  `heldByThisThread()` / `inSharedEntry()` + `Counters{acquisitions, waits}`；嵌套按**每闸**记在每线程栈上
-  （vk 的驱动者闸 EXCLUSIVE 套设备闸 SHARED 是正常嵌套，单一 depth 会把内层当重入）。`internal/DeviceGate.hpp` 已删除。
-- **空租约在每个 vk 宿主动词站点都有拒绝值**：`shutdown` / `setMemoryBlockCreator` / `setDefaultContentProgram` /
-  `createSession`（null）/ `releaseSession` / `setRenderTarget` / `createSurfaceTarget`（`UnsupportedSurface` + why）/
-  两个读回（`Failed`）/ `contentPipelines`（0）/ `contentCacheCounters` / `memoryStats` / `retirementNumbers` /
-  `pipelineCacheReport`（空值）。以前这些是**死锁**。一条 episode `vk.device.reentry`（新诊断 code）点名那个动词；
-  `Impl::report_mutex` 改成 `std::recursive_mutex`——sink 自己回调正是这条路径。
-- **`s_frame_depth` / `FrameBodyDepth` 已删除**：读回的前置检查改问 `impl->body_gate.heldByThisThread()`（窗口帧的
-  独占体也覆盖）。`executeFrame` / `prepareFrame` 的体租约也会拿到空租约（另一驱动者、同线程），答 `Refused`。
-- **`FrameReport::locking`（新 `FrameLocking{acquisitions, waits}`）**：帧自己的内容锁花费。vk 的 delta 来自
-  `ContentCaches::lock()`（新增 `waits`：try 失败即计，再阻塞；`lockWaits()` 原子读）与 `FrameBooks::locking`；
-  vsg 用 `Data::lockContentForPhase()`（帧首 / 提交 / 预热才计，宿主 verb 直接用 `content` 不计）与
-  `FrameDrive::locking_before` + `Data::last_locking`。稳态 = 常数 + `waits == 0`。
-- **测试搬了一次**：`tests/BackendSeamTest.cpp` = 接缝的 14 条 `Core*`（TargetPlan / RetirementQueue / DrawState /
-  Readback / DeviceClock）+ 6 条 `FrameGateTest`，**三处 CMake** 各列一次（`test_graphics` 直接读
-  `vine/graphics/`）。vsg 专属的 Core（Timeline / Arena / Observe /
-  PhaseTable / DepthProbe / DeviceRequirements）留在 `tests/test_vsg/BackendCoreTest.cpp`；vk 套里的 FrameGate 用例文件
-  随之删除（用例已并入共享源）。
-- **新用例**：`FrameGateTest` 6 条（共享侧、空宿主租约、跨闸嵌套、waits 计数）；`VkFrameHeadTest.AFrameReportsWhatItSpentOnTheCacheLock`；
-  `FrameLockingTest.AFrameReportsWhatItSpentOnTheContentLock`（vsg）；`VkConcurrentFrameTest.AHostVerbCalledFromInsideAFrameIsRefusedInsteadOfHanging`
-  （sink 里的 `contentPipelines()` 答 0 + 一条 reentry，帧照常结束）。
-- **计数**：`test_graphics` 607 / `test_vk` 158 / `test_vsg` 571 / `BackendParityTest` 13。
-
-## 2026-11-16 S2 批 2b：`FrameHead` 词汇（两后端同名同形，不共享类型）
-
-- **一个概念两个形状 → 同一名字与形状**：帧首解析出的值在 vk 原是 `CommandPlan` + `ScreenPlan` + `ResolvedTextures`
-  三件、在 vsg 是 `ContentPlan::Call`；现在两边都叫 **`FrameHead`** + **`FrameHead::DrawPlan`**。
-  **不做共享头**：ADR 已否决“两后端共用 `ResolvedDraw`”（只能类型擦除，`G7` 反面）——统一的是名字与形状，不是类型。
-- **vsg**：`internal/ContentPlan.{hpp,cpp}` → `FrameHead.{hpp,cpp}`；类 `ContentPlan` → `FrameHead`，嵌套 `Call` → `DrawPlan`
-  （`Pass` / `Pin` / `kMax*` 随类改前缀）。`FrameScratch::content` 类型跟着变；`tests/test_vsg/CMakeLists.txt` 手工列表同步；
-  `docs/guides/vsg-backend.md` §5 点名 `FrameHead.hpp`（`check_doc_symbols` 要求每个 unit 被点名）。 <!-- drift-ok -->
-- **vk**：新头 `internal/FrameHead.hpp`（只有头，没有新 `.cpp`）：`FrameHead` 持每 pass 的 `Pass{std::vector<Call> draws}`、
-  `Call{std::vector<DrawPlan> plans; ContentRefusal refusal}`、**帧级** `fallback_view` / `fallback_sampler` / `shadow_sampler`；
-  `DrawPlan` = `kind`（Content/Screen）+ pipeline/resolved + 内容载荷（material/variant/streams/…）+ 本调用的 `slots`。
-  `ContentCaches::planCommand` / `planScreen` **收成一个动词两个重载** `planDraw(RenderCommand,…)` / `planDraw(DrawDescription,…)`；
-  `resolveTextures(material, commands, FrameHead&, FrameHead::DrawPlan&, refusal, lock, batch)` 把帧级事实写 head、槽写 plan。
-  `ContentDraw::record(…, span<const FrameHead::DrawPlan> plans, const FrameHead& head, …)`、`recordScreen(…, const DrawPlan&, const FrameHead&, …)`。
-  原 `FrameDriver::DrawContent` / `PassContent` 删除，换成一个 `FrameHead frame_head`。
-- **一处可见差异（如实）**：`record` 的“1x1 stand-in 缺失”检查从“本调用第一张 plan 的 fallback”改成“帧的 fallback”。
-  今天首命令被拒的调用会因此多报一条 `vk.content.stand_in_missing`（stand-in 其实存在）；改后只报真正的 head 拒绝。
-  无用例钉这个措辞；stand-in 只有 OOM 会缺，且新检查仍然在它真的缺失时拒绝。
-- **零行为、零用例改名**：`test_graphics` **607** / `test_vk` **159** / `test_vsg` **571** / `BackendParityTest` 13；
-  九门禁 + `content_seam` / `vk_exposure` 全绿；本批不碰线程（不需要 TSan）。
-- **坑**：vsg 插件是 GLOB 源列表 → 改 `.cpp` 文件名后**必须重配 `build/`**（`cmake -S . -B build`），否则旧路径还挂在 target 上。
-
-## 2026-11-16 S4：目标表归一（B5）+ 灯一份共享值（B11）
-
-- **B5a `0e9a9b84`（vk `TargetTable`）**：map、形状/构建/重建、claim 书籍、release/park、`drain` 同一对象；
-  `TargetClaims.{hpp,cpp}` 删除，`TargetTableTest` 8 例（+1：drain 一次清记录与租约），`TargetClaimFrameTest` 2 例；
-  `Device::targetTable()` 取代 `targetClaims()`；读回持 `shared_ptr`（并发 release 的 park 而不是 map 保活）；
-  `ReleaseRenderTarget` 变成一句 `table.release()`。`test_vk` 165 → 166。
-- **B5b `81e0ba0d`（词汇 + vsg 一张表）**：vk `TargetImages`→`TargetObjects`；vsg `OffscreenTarget`→`TargetObjects`、
-  `HostTargets`→`TargetTable`，并把 `VsgTargetRegistry` **并入**：`Entry` 持拥有者标签（`std::string`，修掉旧
-  `const char*` 指向临时 `std::string::c_str()` 的悬垂读）与执行器的 `unapplied` 情节；`resolve` / `adopt` 是表动词，
-  `clearTargets` / `addTarget(nullptr)` 路径消失。三套用例名除 `TargetObjectsTest` 套件名随类型外零变化。
-- **B11 `1d57dc77`（灯不再每 pass 分配）**：SDK 新 `LightSet`（`std::shared_ptr<const LightSet>`，不可变
-  `vector<LightValue>`）；`Light::revision()` 由每个喂 `value()` 的 setter 递增；`Scene::lightSet()` 按
-  （身份, revision）缓存它的值；`DrawDescription::light_values` 改为 `LightSetPtr`（null = 不公告，空集 = 没有灯），
-  两后端读 `->values()`，vsg 每 pass 的 `light_scratch` 中间拷贝删除（recorder 自己快照进 frame arena）。
-  引擎证人：`ValueChannelTest.EveryPassOfOneFrameHoldsTheSameLightSetUntilALightMoves`（两 pass 同一指针、稳态同指针、
-  改灯即新集）。vk 证人：`FrameHead::storageGrows()` + `Device::frameHeadStorageGrows()`（**不是** `FrameReport` 字段），
-  `VkFrameHeadTest.ASteadyFrameDoesNotGrowTheHeadsStorage`（3 帧预热后 5 帧不动）。顺手修掉 `planDraw` 的
-  `plan = FrameHead::DrawPlan{}`（每命令释放复用向量）→ `plan.clear()`。
-- **如实**：**整帧仍约 97 次分配/帧**（管线键的 `channels`/`bindings`/`attributes`、`buildPipeline` 的按值 key 拷贝、
-  内容缓存的 map 插入）——B11 只证明头部 pass/call 存储复用，不声称全局零分配；见打包件里的调查记录。
-- **坑（改名工具）**：`vscode_renameSymbol` 与 `mv` 组合会把**旧路径的文件写回**（内容已用新名字），结果是新旧两份
-  同名符号 → 链接期 multiple definition。改名顺序：先改符号、再 `mv`，最后 `git status` 看“旧名的新文件”并删掉。
-- **计数**：`test_graphics` **614** / `test_vk` **167** / `test_vsg` **571** / `BackendParityTest` 13；TSan 三套 0 报告；
-  `Vine --open demo` 0 error。
-
-## 2026-11-17 B8：接缝去 Vulkan 拼写（`DeviceFormat` + `RenderPassKey`）
-
-- **一个类型两个职责**：设备格式码原是裸 `std::uint32_t`（注释说“这是 `VkFormat` 值”），subpass 是另一个
-  Vulkan 名词。现在 **`DeviceFormat`**（`std::uint32_t` 的强类型，`kUndefined` = 0）承载设备自己的格式码，
-  **`RenderPassKey`**（u64，`kNotStated` = 0）承载通道结构——由建 render pass 的后端计算，SDK 只哈希/比较。
-  `TargetShape` / `RenderPassCompatibility` 的字段变成 `std::vector<DeviceFormat>` / `DeviceFormat` / `RenderPassKey`；
-  `subpass` 从两个结构里消失。
-- **“未声明”规则保持**：`kNotStated`/`kUndefined` 在 vsg 的 `statedShapeAgrees` 里**不参与比较**（计划没学到就不争），
-  与旧设备格式的“unknown ≠ absent”同一条；vk 的 `TargetTable::ensure` 每次都把两个半边填满，所以 `planTarget` 两边一致。
-- **映射点**（两后端各一处）：vk `TargetTable::ensure` / `WindowTarget::compatibility`，vsg `TargetObjects::shapeOf` /
-  `WindowTarget::sampledShape`；两者各自发 `kSingleSubpassRenderPass`（“本后端的 render pass 都是单 subpass”），
-  常量住在各自 internal 的 `TargetObjects.hpp`（渲染通道的建造者）。
-- **类型安全的一处体现**：`ContentCaches::PipelineKey::operator<` 的 `lexicographical_compare` 直接吃 `DeviceFormat`
-  的 `operator<`；vk 内部取回 `VkFormat` 的地方统一写 `.code`。
-- **证据**：`test_graphics` **616** / `test_vk` **167** / `test_vsg` **572** 全绿；`content_seam`、`vk_exposure` 全绿；
-  九道文档/代码门禁全绿。零行为变化：像素对拍与既有用例（含 PlanCarries/StatedShape 两条）直接改类型后通过，
-  并加断言“计划里的渲染通道键是自己的副本”。
-
-## 2026-11-17 B16：一个 pass 作者形状（E-04 / E-05 / E-06，BC-08）
-
-- **B16a（`tag` 删除）**：`PassDesc::tag` / `PassRow::tag` 删除——12 处写、0 处读（E-06）。帧表用 `name`。
-- **B16b（回调归对象）**：SDK 新 `FrameUpdate`（`update()`，AxisGizmo / FpsOverlay 实现）；
-  `PassDesc::before_draw` 删除，`buildFrameValue` 不再跑钩子（`record_micros` 只剩 describe + expand）。
-  `PassChain::update()` 按注册顺序调 overlay 的 `update()`；`SceneView::update()` 转发；
-  `SurfaceWindow::renderFrame` 每帧 update → publishContent → frame。`OverlayLayout` 改为**返回** `Viewport`
-  （`std::function<Viewport(int,int,double)>`），`resize()` 由链重述矩形——回调不再拿到可变 pass。
-  证人 `PassChainTest.AnOverlaysUpdateRunsWhenTheChainUpdatesAndNeverInsideAFrame`。BC-08：宿主自己驱动引擎时
-  必须自己调 `SceneView::update()` / `PassChain::update()`。
-- **B16c（PassDesc 唯一作者形状）**：`RenderPass` 公开面只读（`declaration()`/`name()` + 各项读取器）；
-  35 个 setter 与 `ScreenPass::setProgram` 删除。引擎的写门是 `detail::PassNode`
-  （`adopt` / `resolveTarget` / `setDrawSize`，friend）。`PassChain::restate(desc)` 是链上"一次显式差分"
-  （命名偏离研究文档的 `chain->update(d)`：`update()` 已是每帧动词，避免同名两义）。`PassChain::apply()` 不再
-  从节点刷新——`pending_` 就是当前形状。`RenderEngine::bindPassContent` 改成 adopt 一份改过 content 的声明。
-  一个**语义保持点**：`adoptDesc` 里"engaged 的无效 `DepthView`"= 显式清除借用深度；`nullopt` = 不表态。
-  空输入名在计划校验与解析里被跳过（原 setter 的"空名忽略"）。
-- **迁移面**：demo（`addDemoPass` 收 `PassDesc`、PiP 重锚走 `applyPlan`、预览布局持声明值）、
-  `tests/PlanTestSupport.hpp`（`applyPassForTest(desc,order)`、`updatePassForTest`、`restatePassForTest`、
-  `asScreenPassForTest`）、test_graphics / test_vsg / test_vk / test_gui 全量。
-- **计数**：`test_graphics` **617** / `test_vk` **167** / `test_vsg` **572** 全绿；九道门禁全绿；
-  `Vine --open demo` 0 error（session up + Pending -> Presenting）。
-- **坑**：批量改测试时 `multi_replace` 的 oldString 要逐字核对（几条"成功"实际是命中了另一处）；
-  新建 `.cpp`（`FrameUpdate.cpp`）要重配 `build/`。`clang++-23` 偶发一次 parser bus error，重跑即过。
+  | Session up / first picture | 40 / 219 ms | 42 / 229 ms |
+  | Longest application-thread occupancy during startup (`VN_BOOT_TIMING`) | 316 ms | 336 ms |
+  | Warm-up batch (ms / passes / draws / halves / sets / uploads / pipelines) | **16.1–22.3** / 8 / 6 / 2 / 0 / 5 / 2 | **9.7–11.3** / 6 / 6 / 2 / 4 / 5 / 2 |
+  | Steady-state frame median (three runs) / p95 | **7.06, 7.44, 6.93** / 7.95, 8.90, 7.94 ms | **5.63, 5.60, 5.63** / 6.52, 6.64, 6.26 ms |
+
+  ⇒ vk steady state ≈ **+25–32%**, warm-up batch ≈ 1.8×, the two startup phases are nearly identical (vk slightly faster).
+- **What the warm-up batch buys (vk, with/without warm-up alternating ×3, 40 frames)**: first frame 12.2–17.3 ms vs **30.2–35.8 ms** (those 5 uploads:
+  2 streams + 3 textures) ⇒ first frame about −18 ms; the cost is 16–23 ms during load; steady-state medians are indistinguishable within noise (both land in 7.2–9.4).
+  The second warm-up is 0.08–0.41 ms and all zeros = the contract "a warmed frame builds nothing".
+- **Two measured findings (registered in the backlog)**: (1) `PrepareReport.passes` is vk 8 / vsg 6 / recorded count 7 on the same frame — three different accounts;
+  vk counts every `FrameDescription` entry with draws (including the ones the recorder drops), vsg counts the compiled plan (T41);
+  (2) vk allocates content/draw/screen descriptor sets **per draw per frame** (no cross-frame declared-set cache like vsg) ⇒ warm-up `sets` is always 0, the
+  first frame still builds sets, possibly part of the steady-state +25% (not attributed, T42).
+- **Boundary**: lavapipe is a software rasteriser, absolute values serve **same-machine comparison** and regression only, not GPU conclusions; Win32 and a real GPU are untested.
+  The 60-frame window mixes the demo's PiP/overlay timers and one asset-upload frame.
+
+## 2026-11-14 —— vk's per-frame cost model lands (T43+T42 from the same source; ring + dynamic offset + declared-set cache)
+
+- **Shape**: `ContentDraw::Impl::UniformRing`, one persistently mapped buffer, `sliceSize()`-aligned slices; the four blocks are written into a slice, three set layouts
+  (**after 2026-11-15 S3**: the ring and the set table live in `FrameScratch::Impl`, layouts and `buildPipeline` in `ContentCaches::Impl`;
+  the `ContentDraw::*` spellings below name the same mechanism)
+  are all `UNIFORM_BUFFER_DYNAMIC`, binding passes 4 dynamic offsets (content set 0/6/8 + draw set 0; the screen set is 6/8).
+  A full frame **does not grow inside the frame** (that would destroy a buffer the command buffer already named): `reserveSlice` records the demand, skips that draw, and `beginFrame` grows by
+  demand (the same rule as vsg's BlockStorage).
+- **A set's key is "the resources it binds"** (5 texture views + the shadow view; the screen set has the same shape): the pool uses `FREE_DESCRIPTOR_SET`, releases per entry,
+  **no longer resets every frame**; the draw set has one handle per ring generation. Eviction: `last_frame + 600 < frame_index`, scanned every 120 frames.
+- **Witness**: `Device::contentCacheCounters()` (`ring_builds` / `set_builds` / `sets_live`) + two `VkUniformRingTest` cases;
+  mutation (cache always misses) ⇒ both cases red. `test_vk` **74** cases.
+- **Measured (Release + lavapipe, the same 11-pass scene, 3 runs each)**: steady-state median **9.03–9.23 → 8.16–8.30 ms (−10%)**;
+  vk and vsg still **byte-identical**; warm-up unchanged (warm-up draws nothing).
+- **Pipeline cache**: an in-session `VkPipelineCache` is added (passed to both `vkCreateGraphicsPipelines` call sites); persisting across sessions is still T44.
+- **GPU timing (T46 closed)**: the SDK gains `FrameTiming{gpu_micros}` + `FrameReport::timing` (optional, absence ≠ 0); vk uses a pair of
+  `VK_QUERY_TYPE_TIMESTAMP` queries (write TOP/BOTTOM, `vkGetQueryPoolResults` after the fence, absent when `timestampComputeAndGraphics` is false).
+  **Sampling is mandatory**: measured on lavapipe, writing and reading a timestamp costs **~0.8 ms** per frame (off: median 8.30; on: 9.01–9.20, 3 runs each) ⇒ sample every 30 frames
+  (`kTimestampSampleFrames`), an unsampled frame answers **absent** (not the previous frame's value). The demo's `bench last frame` prints gpu milliseconds when a sample exists
+  (lavapipe measured **gpu 7.15–7.74 ms**, the same frame's **wall clock** median 8.2–9.0 — note that is wall clock including the fence wait,
+  the host side is only ~0.9 ms, see the 2026-11-15 F5 ruling).
+
+## 2026-11-14 —— `gfx_backend_vk` industry-standard review (conclusion + two small fixes)
+
+- **Conclusion**: specification conformance/diagnosability is **industry grade** (validation 0 VUID, byte-identical cross-backend comparison, device-loss classification, barrier table,
+  complete pipeline key); resource and performance architecture is **prototype grade** (per draw per frame UBO create/destroy, per draw per frame descriptor set allocation, per frame command buffer allocation,
+  no `VkPipelineCache`, no suballocation, no GPU timing). A single frame in flight is the price of the **SDK contract** ("readable when the draw is done"), not a defect.
+  The full text and F1–F13 are in `../research/graphics-2026-11-14-vk-industry-review.md`; backlog T43–T46.
+- **Two fixes already in**: (1) physical devices are sorted by `VkPhysicalDeviceType` (discrete > integrated > virtual > cpu > other,
+  ties keep the first seen) — it used to take the first serviceable device, silently using the iGPU on a laptop; (2) the `vkAcquireNextImageKHR` timeout changes from
+  `UINT64_MAX` to **1 s** (a stuck surface turns from "hangs forever" into "skip that frame + report once per episode").
+- **Measured numbers (do not forget)**: a demo frame is 22 content draws + 6 full-screen draws ⇒ **28 buffer+memory allocations / frame**
+  (60 fps ≈ 1700 per second), all UBOs are `UNIFORM_BUFFER` (no dynamic offset); `vkCreatePipelineCache` and
+  `vkCmdWriteTimestamp` appear 0 times in the whole repository.
+
+## 2026-11-14 —— root causes of four "recorded, not drawn / no effect" cases (demo chain never adopted / vk full-screen inherits pass depth / vk full-screen binds only the shadow stand-in / demo previews share one name)
+
+- **Host**: `PassChain::build()` **does not adopt itself**, `view->setChain(chain)` must be called (`Viewer` is the model). Without adoption,
+  `SceneView::publishContent` does not publish the chain-owned transparent scene (one `never published`, that pass draws nothing) and
+  `applySurfaceGeometry` does not resize the chain either (the demo used to resize in its own layout step, two sources of size). The demo is fixed, see
+  `.ai/bugs/demo-chain-never-adopted.md`.
+- **vk**: a full-screen call must **always** be `DepthMode::Disabled` (enforced by `ContentDraw::planScreen`, the reference backend's M4b rule).
+  A full-screen triangle sits at z = 0.0 = the reverse-Z far plane; the window pass's D24 clears to 0 and deferred's composite **borrows** the G-buffer
+  depth ⇒ inheriting `TestAndWrite` discards the whole block, while **zero VUIDs and every `recorded=1` in the recording layer**. The case is
+  `AScreenCopyIsDrawnWhateverThePassDepthPolicySays`; the old screen fixture explicitly set `Disabled`, which is exactly why it did not catch it.
+  See `.ai/bugs/vk-screen-draw-inherits-pass-depth.md`.
+- **vk's screen set must bind the map the pass resolved**: bindings 7/8 existing ≠ binding the right image. `recordScreen` now takes
+  `ShadowSource` (`Device::executeFrame` already called `resolveShadow` for every pass): with a map, bind the real depth + the per-call packed
+  `VineShadowBlock`; without one, the white stand-in + `params.x = 0`. Symptom = "forward has shadows, deferred does not, zero diagnostics"; the case
+  `VkShadowTest.AScreenPassShadesWithTheMapItResolved` (samples binding 7 and writes depth, a white stand-in reads 255).
+  See `.ai/bugs/vk-screen-pass-shaded-without-the-map.md`.
+- **The plan identifies rows by `(owner, name)`, a name is not a label**: the demo's four G-buffer previews were all called `gbuffer_preview` ⇒ four declarations
+  landed on the same row, only the last survived ("only block 4 shows"). The other half: the layout step only changed the demo's own `ScreenPass`
+  (`setViewport`), while the nodes in the frame are **built from declarations** ⇒ the reorder never took effect; after changing the object it must be **declared again** (`addDemoPass`
+  applied again, in-place update for the same owner and name). The frame table can be read directly: `VN_FRAME_PLAN=1` should show 4 `gbuffer_preview_*` rows.
+  See `.ai/bugs/demo-preview-passes-shared-one-name.md`.
+- **Diagnostic recipe (reusable)**: (1) a recording-layer probe (per pass commands/recorded/why) separates "not in the commands" from "in, but not drawn";
+  (2) **temporarily** change the 16F target under observation to RGBA8 (`ChainPresets.cpp`) to read the centre pixel back with `RenderEngine::device()->readColorBuffer`;
+  (3) copy the GBuffer straight into a readable RGBA8 composite and read that, separating "source empty" from "copy broken". Remove the probe when done.
+- **Two static-review findings (fixed 2026-11-14)**: (1) `RenderEngine::frameReport()` is **not** cross-thread safe (only
+  `PresentRecord` explicitly says "readable from any thread") ⇒ a benchmark/HUD must `waitForFrame()` before reading it (the docs list "a benchmark" as
+  a waitForFrame caller); (2) re-declaring a pass from the **layout step** (changing the viewport) is refused by `applyPlan` with `Busy`
+  (the frame is recording) ⇒ check `PlanResult::applied()`, restate after `waitForFrame(250ms)`, otherwise the rectangle stays at the old value with only a
+  one-shot warning.
+- **clang-tidy baseline (`clang-tidy-22 -p build`, `bugprone-*` + `clang-analyzer-*`, 2026-11-14)**:
+  `ContentDraw.cpp` 4 entries = 2 zero-initialised Vulkan structs (`stages[2]{}` / `multisample{}` whose enum fields are written afterwards,
+  a convention, not a defect) + 1 **false positive** use-after-move on `build_why` (every `ensure*` takes `vn::String&`, nothing is moved on that path)
+  + the `std::hash` specialisation (`ContentId.hpp`, intentional); `Device.cpp` 1 "Called C++ object pointer is null"
+  (`window` is associated via `Runnable.window`, the collection site guarantees non-null — the analyser lost that association, a false positive); `DemoScene.cpp` 1
+  `atoi` (a dev switch, consistent with the other `VN_*` switches). ⇒ static analysis of these three TUs is **clean**; new entries should first be ruled out against these categories.
+
+## 2026-11-13 —— `gfx_backend_vk` M9: shadow map
+
+- **Shape**: `TargetImages` accepts **depth-only** targets — `built()` no longer requires a colour view, `createRenderPass` with 0 colour attachments uses
+  `colorAttachmentCount = 0` / `pColorAttachments = nullptr`, `buildPipeline` likewise (`blend.pAttachments`); `Device`'s
+  per-attachment clear writes from `clear_values[0]`, and a depth-only target has no colour slot, so it must be skipped.
+- **Which image is the shadow**: only the **target's own declaration** counts (`RenderTarget::shadowOf` + `producerViewProjection`), taking the first
+  from the pass's `FrameDescription::Pass::inputs` (`Impl::resolveShadow`). **Do not** use "the first input with sampleable depth" —
+  the G-buffer has depth too (`graphics-rendering.md` 6.3 records the defect the reference backend hit).
+- **Layout**: the producing pass's render pass leaves depth in the attachment layout; **before** the consuming pass (outside the render pass) it moves to
+  `SHADER_READ_ONLY`, `TargetImages::depth_sampled` books it, and it moves back before the next write to that target's depth — the same rule set as `color_sampled`.
+- **Block**: `buildShadowBlock` (`ContentDraw.cpp`) has four switches: a map exists / the matrix is published / the light is in this call's `light_values` with
+  `cast_shadow` and is directional or spot / the light has a slot in the light block. Matrix = `producer VP * inverse(view)`, **not folded** (the SDK clipping convention,
+  the conversion happens in the shader); `params = {1, the light's own bias, 1, slot}`.
+- **One predicate, two users**: `takesSlot()` in `LightBlock.cpp` drives both `packLightBlock` and `packedSlotOf`; deriving the slot separately would let the <!-- drift-ok -->
+  shadow de-scale **another light**.
+- **Sampler**: `Nearest` + `ClampToEdge` (`kShadowSampler`), the same values as the reference side's `ContentPipeline::depthSampler()` — filtering would average
+  the caster's depth with the surface behind it and the silhouette would move.
+- **Trap (Windows build)**: `test_vk` / `test_vsg` compile the plugin sources directly; when the target has no `VN_BACKEND_VK_LIB`,
+  `VN_BACKEND_VK_API` expands to `dllimport` and 6 symbols stay unresolved at link time (on Linux it is only a visibility attribute, invisible).
+- **Verification**: `test_vk` 51 cases (new `VkShadowTest` 3 cases); `BackendParityTest` case 10 (on Windows `test_vsg` does not compile because
+  `VsgBackendTest.cpp`'s XCB case lacks a platform guard — pre-existing, Linux is its build environment).
+
+## 2026-11-14 —— `gfx_backend_vk` M10: deferred path
+
+- **Shape**: the engine's deferred frame = one scene pass writing a four-attachment RGBA16F + D24 G-buffer (`defaultGbufferGeometryProgram()`),
+  followed by one SCREEN pass (`defaultDeferredLightProgram()`) sampling the four attachments by the pass's declared inputs (`Pass::inputs` +
+  `DrawDescription::source`), with the light block at set 0 binding 6. **The backend needed no change**: M3's MRT / per-attachment clear
+  (`extra_colors` defaults to transparent black), RGBA16F images, M4's multi-source screen draw and the light block were already enough. This is evidence that "the seam is enough",
+  not a new capability.
+- **Picture facts** (this machine): composite centre 204/204/204 (0.8 linear albedo × the sRGB encoding of the ambient term); the four attachments copied to RGBA8 read back
+  204/204/204, 0/0/127 (octahedral encoding of normal (0,0,1) + roughness 0.5), 255 (alpha = occlusion), 4/0/127.
+- **Tests**: `VkDeferredTest` 2 cases (the composite centre is the albedo under ambient light; each of the four attachments is copied and read back, the index really changes what is read);
+  `BackendParityTest` case 11 (the same deferred frame 0/4096 differences, passes=2 draws=2). `test_vk` 53 cases (52 pass 1 skipped),
+  `test_vsg` 519 cases (516 pass 3 skipped).
+- **Trap**: feeding geometry with texcoords to vk's G-buffer pass triggers the validation warning
+  "Vertex attribute at location 8 not consumed by vertex shader" — vk builds the vertex input from the geometry channel list,
+  it does not filter by what the shader consumes. In the test, declare only the two channels the program reads (position + normal); the pipeline itself is legal.
+- **Windows**: `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing` uses an XCB window without
+  `#if !defined(_WIN32)` (pre-existing, invisible on Linux); the same guard as the top of the file is added, otherwise `test_vsg`
+  does not compile on Windows.
+- **T26's old assertion**: `OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands` still asserted "all given back",
+  contradicting ADR-2026-11-13 (blocks ≤ `minimumStagingBufferSize` are kept); changed to "the 4 KiB upload's block is kept (release returns 0) +
+  the one-off 32 MiB block is given back".
+
+## 2026-11-14 —— T39 (`vsg` warm-up really submits textures) + T40 (`vk` depth resolve)
+
+- **T39 `vsg`**: `MaterialImages::queueUploads(Device&, TransferTask&)` hands the images that still carry staging bytes to the session's transfer task
+  (compiling the VkImage with the device pool when needed — warm-up does not run the compile traversal); `detail::flushUploads(task)` submits with
+  `TransferTask::transferData(TRANSFER_ALL)` (the frame's own copy path), then adds a "wait only" queue submission to consume the completion semaphore
+  and waits on the fence; on success `MaterialImages::releaseUploadedStaging()` drops the host bytes (otherwise a later compiled descriptor's
+  ImageInfo would copy again on the grounds of "not copied yet"). `PrepareReport::uploads` now counts **streams + textures**; `VsgBackend::prepareFrame`
+  calls `ensureOffscreenSession()` first for a windowless frame (creates the viewer/transfer task, acquires no image, submits no frame). Tests `PrepareUploadTest` 2 cases.
+- **T40 `vk`**: `TargetImages` creates `depth_resolve` images/views for "multisampled + has depth" (`DEPTH_STENCIL_ATTACHMENT |
+  SAMPLED`), the render pass carries `VkSubpassDescriptionDepthStencilResolve` (`sample0`; D24 has stencil, stencil is
+  `sample0` too) — it can only hang off `VkSubpassDescription2`, so such targets use `vkCreateRenderPass2` (Vulkan 1.2), other targets still use 1.0's
+  `vkCreateRenderPass`. Attachment order = [sample buffers…, colour resolve…, depth, depth resolve]; `depthPicture()` / `depthPictureView()`
+  are the read side's only index (`resolveShadow` samples it, `depth_sampled` transitions act on it too); `ensureTarget`'s refusal changes from
+  "multisampled + sampleable depth" to "device below 1.2".
+- **Tests**: `VkMsaaTest.ASampleableDepthResolvesWithTheColour`; `VkShadowTest.AMultisampledMapCastsTheSameShadow`
+  (a multisampled shadow map is byte-identical to the single-sampled one = the resolve really ran and samples the picture); `test_vk` 62 cases, `test_vsg` 562 cases,
+  `ctest` 32/32.
+- **Trap**: `vsg::Device::deviceMemoryBufferPools` is an observer — the pool is gone after the compile pass, so warm-up must hold its own
+  `MemoryBufferPools`, otherwise what it gets is always null. `VkAttachmentReference` **cannot** be `reinterpret_cast` to
+  `VkAttachmentReference2` (the latter appends sType/pNext/viewMask), build it field by field.
+
+## 2026-11-14 —— sample-count contract closed: `max_samples` is a count, unbuildable requests are refused (framework first)
+
+- **Decision**: `../decisions/ADR-2026-11-14-sample-count-refused-not-lowered.md`. `Capabilities::max_samples`
+  is a **count**, legal counts are powers of two; a request the device cannot build (above the limit or not a power of two) is **refused once**, not lowered — so
+  `RenderTarget::samples()` is always the number that was drawn.
+- **Before the change there were three answers**: the docs said "refuse, never silently lower"; `vsg` behaved correctly but `max_samples` / `setMaxSamples` carried a
+  **bit mask** (this machine answers 15, a host `setSamples(15)` walks all the way to `samplesToVk` rounding to 2 while `shape().samples` stays 15),
+  and did not check for "not a count" requests; `vk` (M11) **lowered** over-limit requests, and lowered "multisampled + sampleable depth" to single sampling.
+- **`vsg`**: new `largestSampleCount(flags)` (`StateCommands`, next to `samplesToVk`); `capabilities()` and
+  `setMaxSamples` both carry counts (this machine 8); `HostTargets::build` additionally refuses non-powers-of-two; `reportUnbuildableTarget` separates
+  "above the limit / not a count / borrowed depth" into three sentences.
+- **`vk`**: `ensureTarget` decides with `ensureBuildableSamples(...)` (power of two ∧ in the supported set), otherwise reports once and
+  `return false` (target not built, pass skipped, `readColorBuffer` answers `NotReady`); "multisampled + `isDepthPromoted`"
+  is refused the same way (backlog **T40**); `clampSampleCount` is deleted.
+- **Frame counters corrected along the way**: `executeFrame`'s `FrameCounters` count only **actually recorded** passes / draws (the semantics
+  `FrameCounters` documents, and consistent with vsg's packets), a refused target no longer counts a draw; a refusal no longer adds an `Info`
+  "no pass this backend can run" either (the refusal already said why).
+- **Tests**: `VkMsaaTest` 5 cases — the count limit; a 4-sample picture (**now really multisampled**: that target used to promote depth by default,
+  was silently lowered to single sampling, i.e. resolve was never tested); over-limit refused + reported once; 3 refused; multisampled + sampleable depth refused.
+  `MsaaTargetTest` gains a 3 assertion; new `BackendParityTest.TheSampleLimitsAgreeBetweenTheBackends`
+  (the same machine, both backends, the same number: this machine vsg=8 / vk=8).
+- **Verification**: `test_vk` 61 cases (60 pass 1 skipped, validation silent), `test_vsg` 520 cases (517 pass 3 skipped), all eight gates clear.
+
+## 2026-11-14 —— `gfx_backend_vk` M13: warm-up submits its own "transfers only" batch (framework first)
+
+- **Decision written first**: `../decisions/ADR-2026-11-14-prepare-may-submit-transfers.md`. `prepareFrame` still **submits no frame**
+  (no acquire, no present, no touch of `FrameProgress::submitted` / `presented`), but may submit **one command buffer containing only transfers**:
+  copies + layout transitions, no render pass, no draw.
+- **Changed the contract text (not only the backend)**: `RenderFrameExecutor::prepareFrame`'s "must not submit" splits into
+  "submits no frame / may submit one transfers-only batch"; `PrepareReport::Outcome::Prepared` and the `uploads` comments change with it
+  (`uploads` now counts **streams + textures**, same meaning as `FrameUploads`); design doc §3.7 / §6.11 `P11` / §7 `D13` / §8 `T35`;
+  `.ai/README.md` index +1.
+- **vk implementation** (`Device::prepareFrame`): lazily allocate one command buffer (only at the first serviceable pass), each pass calls
+  `ContentDraw::preparePass(batch, draw.draws)` after `content.prepare(...)` (1×1 stand-in + material textures),
+  after the loop `vkQueueSubmit` + `vkWaitForFences` only when `hasPendingUploads()` is true (reusing `impl->completion`),
+  success then `ContentImages::releaseUploadStaging()`. **Zero work, zero submission**: a second warm-up of the same frame submits nothing.
+- **Two small mouths on `ContentImages`**: `releaseUploadStaging()` (drops staging only, `releaseFrame()` now reuses it) and
+  `hasPendingUploads()` (non-empty staging == a copy batch is recorded but never waited on — that is the answer to "submit or not").
+- **Honest failure path**: a submit / fence failure is a device-level failure (OOM / lost), the entry is already resident but the image was never written, so it reports
+  `SubmissionFailed` only, and **does not** promise "retransmit next frame" (an unchanged revision never retransmits).
+- **Tests**: `VkPrepareUploadTest` 2 cases (warm-up reports 3 uploads = 2 streams + 1 texture, the following frame's `stream_uploads` /
+  `texture_uploads` are all 0 and the pixels are the texture colour; the second warm-up's `uploads` / `halves` / `pipelines` are all 0 and the frame watermark does not move);
+  `VkResidencyTest.PrepareBuildsWhatTheFrameNeedsAndSubmitsNothing` passes as-is (it now also pins "a transfer batch is not a frame");
+  `test_vk` 59 cases (58 pass 1 skipped, validation silent), `test_vsg` 519 cases (516 pass 3 skipped).
+- **`vsg` still leaves the upload to the first frame** (its copies live in the frame's transfer task, not the frame's command buffer) ⇒ backlog **T39**.
+
+## 2026-11-14 —— `gfx_backend_vk` M12: the escape hatch at the exposure boundary and its gate
+
+- **Shape** (`../research/graphics-2026-11-13-vk-exposure-boundary.md` §4.5): `support/Handles.hpp` declares only
+  `Handles vkHandles(const RenderDevice& noexcept)`; the value `Handles` lives in `internal/Handles.hpp`. **The dependency direction can only be
+  support → internal**: `internal/Device.hpp` never includes `support/` (otherwise the gate becomes the plugin's own dependency, and E1 becomes
+  an empty check).
+- **`Handles`**: instance / physical / device / graphics / graphics_family + `validation` (M0's evidence line relies on it).
+  Empty before `initialize()` and after `shutdown()`; a non-vk device makes `dynamic_cast` fail and answers `{}`. `Device::handles()` is an internal
+  accessor; `src/support/Handles.cpp` is the one place that `dynamic_cast` happens.
+- **Gate**: `scripts/check_vk_exposure.py` (CTest `vk_exposure`) — the V2 SDK backend surface includes no vulkan/volk/vsg;
+  V4 the plugin `shell/` has zero `Vk*` (comments count); E1 neither internal half includes `support/Handles.hpp`.
+  `internal/` and `support/` deliberately have no gate (§6.2: a gate would only force out shadow types).
+- **Tests**: `VkHandlesTest` 1 case (not started → running → after shutdown lifecycle); `test_vk` 57 cases (56 pass 1 skipped).
+- **New finding on this machine**: `test_graphics` does not link on Windows (W3's `detail::expandFrame` / `FrameRunner` lack
+  `VN_GRAPHICS_API`), recorded as backlog **T38**; so "whole-tree ALL_BUILD" is not a valid criterion on this machine, the evidence is
+  `test_vk` / `test_vsg` / plugin targets + the gates.
+
+## 2026-11-14 —— `gfx_backend_vk` M11: multisampled targets
+
+- **The limit is a count**: `caps.max_samples = largestSampleCount(framebufferColorSampleCounts & framebufferDepthSampleCounts)`
+  (this machine 8). `ensureTarget` clamps a request to "the largest supported count ≤ the request" with the same set, reports once above the limit and builds with the closest count;
+  unsupported odd counts (e.g. 3) are silently lowered. **vsg still answers bit mask 15** (backlog T37).
+- **Shape**: `TargetImages` creates **sample buffers** (`COLOR_ATTACHMENT` usage only) + a **single-sampled resolve image** when multisampled;
+  render pass attachment order = [sample buffers…, resolve…, depth], `pResolveAttachments` points at the resolve, the framebuffer is in the same order.
+  **`colors` / `color_views` are the picture (the resolve image) from now on**: screen draws sample it, `readColorBuffer` reads it,
+  `color_sampled` transitions act on it too; the sample buffers are valid only inside the render pass.
+- **depth does not resolve**: created with the same count, but when `target.isDepthPromoted()` (depth may be sampled) it is forced to single sampling and reported once —
+  otherwise the shader / readback gets samples instead of the picture.
+- **Clear values by attachment index**: a multisampled target's depth slot = `colorCount()*2` (`depthAttachmentIndex()`), not `colorCount()`.
+- **pipeline**: `rasterizationSamples = StateMapping::sampleCount(key.compatibility.samples)`;
+  `RenderPassCompatibility` already includes samples in the key, so single and multisampled never share a pipeline.
+- **Tests**: `VkMsaaTest` 3 cases (limit=8; a 4-sample target's full-screen monochrome centre/corner = 51/102/153, and the centre equals the single-sampled one;
+  an over-limit request is served and reported once); `test_vk` 56 cases (55 pass 1 skipped); `test_vsg`'s parity / offscreen / sdk-pixel 20 cases all pass.
+
+## 2026-11-13 —— third-round audit W3: `FrameWorker` split into `PublicationStore` + `FrameExpander`
+
+- **Object-level back edge removed** (`G2` / `G12`): `detail::PublicationStore` (`src/viz/graphics/src/PublicationStore.hpp`)
+  owns publishing and binding (`publish` / `bindSnapshot` / `hasExplicitSnapshot` / `beginFrame` / `sourceOf` + the table lock);
+  `detail::FrameExpander` (`src/viz/graphics/src/FrameExpander.hpp`, deleted in W9a) only reads it (`runPass` / `run` / `unbound`).<!-- drift-ok -->
+  The content half no longer needs the engine half's objects; the two old `FrameWorker` files are deleted, `SceneSnapshotRef`'s friend changes to
+  `detail::PublicationStore`.
+- **Publication granularity**: `buildFrameValue` first runs every `before_draw` of this frame (recording each hook's cost), then publishes "once per frame per scene",
+  and finally describes. The old shape published once per pass (the following N-1 `Unchanged` still paid the lock + epoch comparison); publishing first and then running later hooks would leak
+  what a hook wrote out of this frame (`RenderEngineTest.AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote` pins this).
+- **`record_micros`**: the hook phase records hook costs first, the describe phase adds publishing (the first pass that names the scene) + resolve + describe,
+  the total account stays "describe + collect".
+- **Tests**: the old `FrameWorkerTest` (deleted) splits into `PublicationStoreTest.cpp` and `FrameExpanderTest.cpp` (renamed `FrameExpandTest.cpp` in W9a);<!-- drift-ok -->
+  `FrameRunnerTest` / `ValueChannelTest` use the two objects. `T3` / `T31` are pinned by
+  `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch`; `T34` by
+  `FrameExpanderTest.AFrameExpandsTheSamePictureTheSceneWould`, `T35` by
+  `FrameExpanderTest.ABoundPublicationIsThePictureTheFrameDraws`.
+- **Counts**: `test_graphics` 556 / `test_vsg` 542 / TSan 556 cases 0 warnings. Full parallel ctest on this machine
+  occasionally reports `test_vsg`'s `backend->initialize()` false (4 cases) and a moving-camera measurement over budget; a single-suite rerun is green, rerun before suspecting a regression.
+
+## 2026-11-13 —— third-round audit W4: the plan expresses only the shape of a `PassKind`
+
+- **Rule**: a plan can only say `Scene` / `Screen`; a subclass pass is `describe()`'s escape hatch, outside the plan contract. An in-place update of a declaration with the same name and kind
+  keeps it (the node and `describe()` both stay alive); a kind change would rebuild it as the built-in base class, so `applyPlan` refuses it.
+- **New code**: `PlanProblemCode::SubclassPassWouldBeRebuilt` (`subclass-pass-would-be-rebuilt`), decided by
+  `RenderEngine::collectRebuildProblems` after `validatePlan` — a pure plan check cannot see "which object is registered under this name".
+  The decision uses the C++ dynamic type (`typeid`), not the metatype: a quick subclass without `VN_OBJECT_META_DECL` must be caught too.
+- **Tests**: `PlanTest.AKindChangeOnACustomPassIsRefusedWithItsCode` (in-place update keeps the node → kind change refused →
+  a built-in pass can still change kind); `TheCodeSpellingsAreStable` gains the new token. `test_graphics` 557.
+
+## 2026-11-13 —— third-round audit W6a: `Scene`'s derived side moves into `detail::ScenePublisher`
+
+- **What moved**: `SceneBake`, the per-view `DrawListMemo`, `content_revision_` / `memo_epoch_` / `content_frame_`,
+  the edit batch `edit_depth_`, the published version pair and `published_snapshot_`, and three counters all land in `src/ScenePublisher.{hpp,cpp}`.
+  `Scene` keeps only the author tree (root / lights / visible / opacity), queries (boundingBox / findNode) and delegation
+  (collect / publish / beginEdit / endEdit / setContentFrame / invalidateContent / counters). The dependency direction is only
+  Scene → publisher (the publisher reads the author's tree via `Scene&`; `Scene` is its friend).
+- **The gate did not change**: `detail::SceneRows::snapshot(scene)` is still a one-line gate, forwarding to `ScenePublisher::snapshot()`; `SnapshotShadowTest` /
+  `RenderWorldTest` need no change to their references. The empty shared command table is unified by one `detail::noCommands()` (two TUs each holding a copy would break
+  `TheSharedCollectionIsOneListAndTheOwningSpellingCopiesIt`'s "the empty list is the same" assertion).
+- **New files need a reconfigure**: library sources are `file(GLOB_RECURSE)` (no `CONFIGURE_DEPENDS`), after adding a .cpp you must
+  `cmake -S . -B build` (`build-tsan` likewise) before building, otherwise the link only sees undefined symbols.
+- **Tests**: `test_graphics` 557 / `test_vsg` (gtest_list 546 cases) all green / TSan 557 cases 0 warnings; public API and test semantics untouched.
+
+## 2026-11-13 —— third-round audit W2: state marks on the migration APIs
+
+- The four entries `applyPlan` / `plan` / `bindSnapshot` / `prepare` are marked "migration API, not yet a host contract": the design docs
+  (`graphics-frame-pipeline.md` §4, `graphics-threading.md` §4.2, `graphics-architecture.md` §1.3 / §2.10) and the
+  public headers' `@note` say so together; no new public entry before 5b-2c.
+- **Decision**: `FramePlan` is renamed `FrameTable` in 5b-2c (it reads the compiled frame table, not the plan); `SessionBusy` moves out of
+  `PlanProblemCode` with `W7` (it describes a runtime precondition, not a shape defect). Both change together in the W9 window, public signatures stay untouched until then (`C11`).
+- Counts: 0 code changes; the production path is still the `addPass` family + the implicit publish at frame start.
+
+
+
+
+## 2026-11-13 —— W9a (W6b): the frame value holds only publications, `Scene` is no longer a `DrawListSource`
+
+- `Scene` drops the `DrawListSource` base class: `collectRenderCommands` is still the content thread's own query (no longer an override),
+  `ScenePublisher` no longer implements that interface either. The frame's binding and expansion are centralised in `detail::FrameExpand`: `bindSceneDraws` points unbound
+  scene draws at their publication source, `expandPass` / `expandFrame` only read values.
+- `RenderPass::describe` writes only VIEW (camera / lights values), not content; `buildFrameValue` binds after describe.
+  `FrameExpander` (bind + `unbound()`) is deleted entirely — binding was its only job; `PublicationStore::sourceOf` now looks up by
+  `Scene`, lookup only, no creation (not published ⇒ null ⇒ draws nothing, `FrameExpandTest.ADrawNoPublicationAnswersDrawsNothing`).
+- `RenderPass::execute` (the host driving one pass itself) publishes + binds itself: `PublicationStore` must outlive `expandPass`; putting it in the
+  `if` scope is a use-after-free (hit locally, `RenderPassTest.Execute*` segfaults).
+- Tests: `FrameExpanderTest` → `FrameExpandTest` (6 cases; file and suite both renamed), `FrameRunnerTest` / `ValueChannelTest`
+  changed to pass the publication source, `PassDrawTest` goes through binding too. `test_graphics` 558 / `test_vsg` 546 all green.
+
+## 2026-11-13 —— W9b: the frame no longer publishes, publishing is the content writer's verb
+
+- **Deleted**: `RenderEngine::buildFrameValue`'s "implicit publish once per frame per scene"; `PublicationStore::publish` /
+  `hasExplicitSnapshot`. `bindSnapshot` drops from "take over" to **override** (the default is the scene's own latest publication).
+- **Added**: `Scene::publishedSnapshot()` (the one the frame build takes); `PublicationStore` holds one `SnapshotSource` per `(content, revision)`,
+  `beginFrame` drops sources nobody draws any more (there is only one frame in flight ⇒ at most two per content); `SceneView::publishContent()`
+  / `PassChain::publishContent()` (the chain-owned transparent scene); `AxisGizmo::update` / `FpsOverlay::update` publish themselves in their hooks
+  (a hook that writes content must publish, otherwise this frame does not see it).
+- **Host**: `SurfaceWindow::renderFrame` calls `view()->publishContent()` then `engine->frame()` every frame. No wait, no bind —
+  the frame in flight pins the value taken at build time.
+- **Failure shape**: an unpublished scene ⇒ the draw names no source ⇒ nothing is drawn + one `ContentSkipped` ("pass 'x' draws a scene that was
+  never published"), instead of silently reading the live tree.
+- **Tests**: `PublicationStoreTest` rewritten as four cases (three states / one publication one source / a source dropped / binding overrides); `test_graphics` 561 /
+  `test_vsg` 546 all green. Engine/pixel cases move to "host verbs": `scene->publish()` or `view->publishContent()`, hook cases publish
+  inside the hook.
+
+## 2026-11-13 —— W9c: the light live-pointer channel is deleted
+
+- `DrawDescription::lights` (a `raw_ptr<const Light>` array) and `FrameRecorder::setLights(std::span<const Light* const>)`
+  / `snapshotLights(Light*...)` are deleted; `light_values` is the only channel, `Light::value()` is called on the content side only.
+- The old `FrameRecorder::render(..., const ShaderProgram*)` overload that read a live program is deleted along the way (only the description version remains).
+- Tests: `MockBackend` reads `light_values` (`last_light` becomes `std::optional<LightValue>`), `OwnedFrame` copies
+  `light_values`; LightBlock/ShadowBlock/ContentPass tests convert at the call site with the new `tests/test_vsg/LightValues.hpp`.
+  `test_graphics` 561 / `test_vsg` 546 all green.
+- `RenderCommand::geometry/material/program` stay: they only carry identity and lifetime (stream binding, residency, `releaseContent`'s "who still holds it"),
+  the recording side no longer reads revision / transparency / light values from them; deleting them needs a content registration channel (triggered by T30/T22).
+
+## 2026-11-13 —— W9d: the `addPass` family is deleted, the plan is the only shape
+
+- **Deleted**: `RenderEngine::addPass` ×3 / `removePass` / `clearPasses` (`removePass` becomes private, for the plan's own diff and
+  scope teardown); `PassRegistry::add` ×3 / `remove` / `clear` / `addOwnedBy`; `PassProblemCode::SubclassPassWouldBeRebuilt`
+  (a plan expresses only `PassKind`, subclass passes no longer exist).
+- **Added**: `applyPlan(plan, const void* owner)` (scope form: **upsert only, no deletion**, identity is `(owner, name)`),
+  `planFor(owner)`, `pass(name)` / `passFor(name, owner)`; `PassRegistry::apply` / `find` / `findFor` / `clearOwnedBy`.
+- **Chains**: `PassChain` only collects declarations (`addPass` no longer touches the engine), `apply()` submits the whole plan at once (so "one pass reads another's produced
+  name" validates as a whole); `PassChain::build(engine, desc, owner)` lets the host name the scope, **a rebuild restates the same scope** (nodes update in place,
+  backend state untouched); `SceneView` is its chain's scope and `clearOwnedBy(this)` on destruction; `Viewer` / `buildFor` pass the view.
+- **Other contributors**: `DemoScene` uses its own `RenderControl` as scope; the `addOffscreenToScreen` preset uses the engine as scope, two
+  declarations in one plan; tests use `tests/PlanTestSupport.hpp` (`applyPassForTest` / `registerPassForTest`, scope = the engine).
+- **Trap**: `apply()`'s "refresh declarations from nodes" can only work on **already submitted** rows (`applied_`), otherwise a rebuilt new declaration would be overwritten by the old node.
+- **Tests**: `test_graphics` 560 / `test_vsg` 546 all green (one case testing only the subclass kind change deleted; `AddSamePassTwice...` changed to
+  "same name twice = one row, the last declaration wins").
+
+## 2026-11-13 —— W9e: result shapes closed, `FramePlan` renamed `FrameTable`
+
+- **`FramePlan` → `FrameTable`** (file / type / accessor): `RenderEngine::framePlan()` → `frameTable()`, the row type
+  `PassPlan` → `PassRow`, the dump header becomes `frame table:`; the demo's `logFramePlan` becomes `logFrameTable`. Reason: it reads the
+  compiled frame table, not the plan (`Plan` is the declaration).
+- **`frame()` two states**: `FrameOutcome` changes from an enum to a struct — `Status::{Ran, Submitted, NotReady}` + `reason`
+  (`EngineNotReady::{NoDevice, NotInitialized}`), predicates `ran()` / `submitted()` / `driven()`. `NotReady` is a precondition,
+  not a frame ending; `prepare()` reuses the same `EngineNotReady` (`Outcome::NotReady` + `reason`).
+- **`applyPlan()` three states**: returns `PlanResult` — `Applied` / `Invalid` + `problems` / `Refused` + `PlanRefusal`
+  (`Busy` / `EngineGone`); `PassRegistry::apply` has the same shape. `SessionBusy` is deleted from `PlanProblemCode` (`planCodeText` loses one entry),
+  busy -> `Refused{Busy}` (answered before validation, diagnostics still come from `sessionChangeAllowed` once per episode).
+- **Migration window closed**: the "MIGRATION ENTRY" notes on `applyPlan` / `plan` / `bindSnapshot` / `prepare` are deleted, the design docs and
+  `docs/guides/graphics.md` follow; the guide's old `addPass` example gains W9d's registration spelling note (the example fields are still `RenderPass`
+  setters, registration translates through `PassDesc` + `applyPlan`).
+- **Tests**: `test_graphics` 561 (new `PlanTest.ABusyEngineRefusesThePlanInsteadOfBlamingItsShape`; the `SessionBusy`
+  spelling assertion deleted; `frame()` assertions use predicates) / `test_vsg` 546 all green.
+
+## 2026-11-13 —— F11 + F12: a total-order sort key and `FrameResult`
+
+- **F11**: `detail::SortKey` (`DrawListBake.hpp`) replaces `sortCollected(commands, eye)`'s lambda — drawOrder → layer
+  (`std::countr_zero(layers)`) → opaque/transparent → quantised camera-space depth (`view * center`'s -z, 1/4096 units, clamped to ±1e9) →
+  `(row_index << 32) | primitive_index`. The representative point is the row's `world_box` centre (a view-resolved row uses `local_box.transformed(world)`),
+  a box-less row falls back to the matrix origin. The key is produced by `selectRows` (row data lives only there), `sortCollected(commands, keys)` uses `std::sort`
+  (unique tie ⇒ no equal keys, no reliance on stability). Both producers (`ScenePublisher` / `selectSnapshot`) pass keys now.
+- **F12**: new `sdk/vine/graphics/FrameResult.hpp` — `FrameQuery{snapshot, view}` + `FrameResult{frame, present, query,
+  passes, draws, diagnostics}`; `RenderEngine::frameResult()` is written once in `runEngineHalf` (`frame_result_mutex_`),
+  `presentedCamera()` reads its `query.view` (`presented_camera_` deleted). `EngineFrame` gains `presented_snapshot`
+  (`buildContentHalf` takes `publicationFor(presenting->content())`, at the same moment as the camera) and `diagnostics_before` (`diagnosticCount()`'s initial value).
+- **Tests**: `SelectTest` (4 cases: total-order permutation, field order, box centre vs node origin, box-less fallback); `RenderEngineTest.
+  TheFrameResultIsThePictureThatWasAnswered` (empty value → snapshot/camera/counts/diagnostics → an inter-frame publication does not change the answered frame). `test_graphics` 566.
+
+## 2026-11-13 —— F8 rejected: one engine drives one surface
+
+- **Decision**: `ADR-2026-11-13-one-engine-one-surface.md` — keep one engine per area; multiple windows = one device with multiple engines (one engine / one area / one `Viewer` per window).
+- **Deleted / rewritten**: graphics-next's F8, `R37`, `T29`, `K10`, §9.3 step 4 deleted; `R21` / `R27` changed to one engine one surface; `SurfaceId` leaves the id table;
+  §3.8 becomes "multiple windows: one engine drives one surface"; §7 gains `D12`.
+- **Document contradiction fixed**: `graphics-architecture.md` F19 used to say "one engine can serve multiple windows" (contradicting the code's `createArea()` refusing a second area and
+  the same document's §7 D2), now fixed; D2 gains the ADR link; §2.8's "the `Session` type lands with F8" becomes "none needed and none exists".
+- **Reasons** (evaluation conclusion): no real consumer (`G8`); `FrameResult` / `PresentRecord` just landed as single values in F12, making them per-surface is rework (`G10`);
+  appfw ownership (a window owns an engine) would need a rewrite; estimated ~900–1400 lines / 14–20 files.
+- **Triggers**: a real host needs "the same plan in two windows with different viewports"; or a second backend makes "device = Session" necessary.
+
+## 2026-11-13 —— T8: `select` is a pure function, concurrent runs agree
+
+- **Test**: `SelectTest.SameInputSameList` — a 40-node scene (drawOrder / layer / transparency / depth all present) snapshot: repeating with the same view,
+  interleaving another view, and after `scene.setRoot(nullptr)`, all match the serial reference `diffDrawLists` item by item; 8 threads × 32 rounds share one snapshot,
+  each producing output, item by item equal to the serial answer. Assertions on the main thread only, workers count with `std::atomic` and record the first failing thread.
+- **Why concurrency is legal (evidence)**: `intrusive_ptr` counters are atomic (`RefCounted`); snapshot chunks are read-only; `AutoTransformPlacement`
+  holds numbers only; `selectRows`/`Frustum`/`SortKey` have no static state. So a red is a real bug.
+- **Boundary**: the test calls `detail::selectSnapshot` directly, **not** through `SnapshotSource` (the memo belongs to the engine thread alone); `R15` (fold once)
+  reuses `GraphicsTest`'s `contentCollect*` cases, no new counter.
+- **Result**: `test_graphics` 567 all green; `scripts/tsan_check.sh` 567 cases 0 warnings (the parallel case 31 ms).
+
+## 2026-11-13 —— backlog §2.2 review + T25/T26/T29 landed
+
+- **Review conclusion (written back to the backlog)**: T9 (V2 `forget`) deleted (`forget(` exists neither in src nor in vsg 1.1.16); T24 rewritten
+  (the old 1597 µs measured `Scene::collectRenderCommands`'s direct path, the frame goes through `SnapshotSource::selectSnapshot`,
+  re-measure with the select recipe first); T31 upgraded to §1's **known potential race** (`StreamUploads.cpp`'s engine thread reads `Buffer::revision()`,
+  that field is not atomic; today no host changes a buffer every frame); 2.4's duplicate T22 → T32; T8 notes the evidence rig is in place;
+  the "content out of the library" entry is deleted (ADR-2026-11-13-content-seam-stays-in-the-plugin).
+- **T25 + T29**: new `FrameUploads` (SDK `FrameStats.hpp`) hangs off `FrameReport::uploads` — this frame's stream/texture
+  upload count, bytes and release count. `StreamUploads` gains `uploadedBytes()`, `MaterialImages` gains `built()` / `uploadedBytes()`;
+  `VsgBackend` takes a baseline at `executeFrame` frame open and the difference **after recording** (uploads happen in `recordContent`, not `collectFrame` —
+  the first version took the difference after collect and got all 0), the failure path zeroes first.
+- **T26**: `StagingTask::releaseStaging()` gives back only blocks with `staging->size > minimumStagingBufferSize`, blocks at the limit are kept
+  (a steady-state host uploading every frame allocates nothing); a new ADR supersedes ADR-2026-11-10's "keep nothing".
+- **Tests**: new `FrameUploadsTest` (increments, steady state 0, buffer revision retransmit, content change reports releases); `UploadScratchTest` changed to
+  "every live block is a multiple of the floor + one-off big blocks are given back" (`makeBigTriangle` 17 MiB). `UploadScratchTest`'s floor is no longer fixed at
+  16 MiB: each used frame slot keeps one block (at most 3 blocks).
+- **Shared fixtures**: `tests/test_vsg/TestTriangleContent.hpp` (TriangleFixture / makeTriangle / makeBigTriangle / makeCamera).
+
+## 2026-11-13 —— T24: culling per row, not per chunk
+
+- **Test**: `SelectTest.OneChunkCullsEachRowOnItsOwnBox` — one snapshot chunk (`row_count < kRowsPerChunk`) with two
+  sibling segments each carrying its own parent transform (x = 1000 / x = 0), the walk order puts the **off-screen** one first; with the camera looking at the second segment, select answers exactly it
+  (a chunk-level skip by the first row's box would answer nothing), and after changing the camera it answers exactly the other one (culling was not disabled). Assertions: `row.identity` finds the node,
+  `parent_world.element(0,3)` proves the parent transforms differ, `Frustum::isOutside(row.world_box)` proves one box in and one out.
+- **Account**: a chunk is a sharing unit, not a culling unit; if "chunk-level early culling" is ever done, the chunk box must be the union of all rows in the chunk (conservative),
+  never `chain[0]`.
+- **Docs**: `graphics-frame-pipeline.md` §3.3 F2 acceptance gains `T24`; §8's T24 criterion becomes "culling per row, not per chunk", implemented.
+
+## 2026-11-13 —— backlog T24: select's Release recipe and re-measurement
+
+- **Recipe**: `SelectTest.MeasureWhatOneSelectCostsWithAMovingCamera` — 2000 / 10000 drawable grids (all in view,
+  depth layered), the snapshot published once, 10 views swept past the eye (pre-built, timing excludes camera construction); prints pure `detail::selectSnapshot` and
+  the production miss (`SnapshotSource::collectRenderCommands`, including the memo lookup and the command vector's shared allocation), asserts the answer count and
+  "every moving view is a miss".
+- **Numbers (RelWithDebInfo, this machine ×3)**: 2000 → select 337–340 µs / source 435–443 µs; 10000 → select 2348–3067 µs /
+  source 3388–3626 µs. Debug for reference only: 1815 µs / 10675 µs.
+- **Conclusion**: 10k < 4 ms gate, 2000 < 2 ms line ⇒ no optimisation, T24 stays trigger-gated; but 10k already crosses 2 ms, the production path costs ~0.9 ms more than pure
+  select (lookup + allocation), so when 10k drawables become everyday, look at that half first.
+- **Docs**: backlog T24 replaces "add the recipe first"; `graphics-threading.md` §1.1's 1597 µs/frame (the old direct path) becomes the frame path's
+  select / source numbers.
+
+## 2026-11-13 —— backlog T31: race reproduced + TSan evidence
+
+- **Case**: `StreamUploadsTest.AnEditFromTheHostThreadRetiresTheSameUploadASerialOne` — one thread loops
+  `StreamUploads::beginFrame`, the main thread changes bytes inside a `Buffer::edit()` scope; the normal build asserts "a concurrent edit and a serial edit give the same answer"
+  (the old upload retires, the next acquire retransmits).
+- **TSan (clang-23, hand-relinked `test_vsg`)**: 1 report — write `Buffer<float>::bumpRevision()`
+  (`Buffer.hpp:363`, from `Edit::~Edit`, main) vs read `Buffer<float>::revision()` (`Buffer.hpp:181`, from
+  `StreamUploads::beginFrame`'s lambda, `StreamUploads.cpp:228`, T1).
+- **Link trap**: `test_vsg` cannot be linked with `-fsanitize=thread` directly — `tests/test_vsg/AllocationCounter.cpp` replaces global
+  new/delete, conflicting with `libclang_rt.tsan_cxx`'s strong definitions (multiple definition). Evidence recipe: `ninja -t commands test_vsg`
+  to take the link command, drop `AllocationCounter.cpp.o` and relink. Formal coverage recorded as backlog T34.
+- **Same-kind live reads (fix them together)**: `ChannelFacts::streamKey()` (`ContentFacts.hpp:233`), the instance buffer
+  (`ContentPass.cpp:1123`), textures (`ContentSets.cpp:268`, `MaterialImages.cpp:516`).
+- **Docs**: `graphics-threading.md` §2.4 gains the case pointer; backlog T31 records the evidence and the fix scope.
+
+## 2026-11-13 —— T31 fix: revision counters made atomic
+
+- **Change**: `Buffer<T>::revision_` and `Texture::revision_` become `std::atomic<std::uint64_t>`; writers (`Edit` scope
+  end / `setRevision` / `setLayer`) use release, `revision()` uses acquire. `Geometry` / `ShaderProgram` / `Material`
+  untouched — the frame side reads description values, not live objects.
+- **Why it is enough**: observing a new revision ⇒ the bytes written before are visible; polling therefore has a defined order. Still not a value channel: writing bytes after the announcement without a new
+  revision remains outside the contract.
+- **Verification**: `StreamUploadsTest.AnEditFromTheHostThreadRetiresTheSameUploadASerialOne` is green in the normal build; the same TSan
+  binary (relinked without `AllocationCounter.cpp.o`, see backlog T34) goes from "1 warning" to 0 warnings.
+- **Docs**: `graphics-threading.md` §2.4 / F7 and `graphics-geometry.md` F18 become "counters atomic, bytes still not on the value channel";
+  backlog §1 is emptied, T34's trigger recorded as hit.
+
+## 2026-11-13 —— T30 evaluation: GPU resource abstraction
+
+- **Conclusion**: stays trigger-gated (a second backend); no `GpuResource` base class. The rule layer (pin / retirement / residency books / frame values / capabilities /
+  target decisions) is **complete**; the type layer is **incomplete and should not be completed now** (the host has no verb that creates a GPU resource, 0 of `RenderDevice`'s 18 virtual verbs).
+- **Facts**: `backend/` 24 headers 3,897 lines (`BackendHalfGuard` compile-time isolation); the vsg backend 28,354 lines / 85 internal files —
+  the second backend's cost is in the materialisation layer, not in "resource types". The loading path exists: `RenderBackendRegistry` / `RenderBackendFactory` /
+  `RenderApi` / `vn_add_plugin`.
+- **Preconditions**: T15 (`device_color_formats` / `subpass` and other Vulkan policies → opaque device format codes) and T32 (`RenderBackend` aggregate split
+  into device / executor exits); S4/S5 separately.
+- **Docs**: `../research/graphics-2026-11-13-gpu-resource-abstraction.md` (dated, non-normative), backlog T30 linked.
+
+## 2026-11-13 —— vk's generalisation boundary (design argument)
+
+- **Decision**: do Vulkan only; write new code and easily changed code in the general shape; shaders get no implementation-level generalisation, concepts only.
+- **Principle**: generalise in "values / rules / mapping tables", not in "API objects". Criteria J1 (input vs output), J2 (is there a second consumer today),
+  J3 (does it touch the public surface).
+- **General from now (cost ≈ 0, by "not writing a second copy")**: `RenderBackendInfo`, `Capabilities`, `planTarget`, `PipelineKey`/
+  `VariantPool`, `ResourceTable`/`RetirementQueue`/`FrameTimeline`, `ResidencyLedger`, `ReadbackResult`,
+  `DiagnosticsRoute`, `FrameDescription`. Shadow types forbidden (`vn::backend_vk::PipelineKey` and the like).
+- **The only new general thing**: the `BarrierPlan` mapping table (`ImageLayout` as purpose + `LoadOp/StoreOp` + `AccessKind` → Vk
+  barrier), 150–250 lines + device-free table-driven tests; the counter-example is a "general barrier type".
+- **Shaders keep concepts only**: what is missing is the **source language** (no fields, only the future shape `ShaderSourceLanguage` + a per-backend compile entry),
+  not the block layout (`ShaderAbi.hpp:107` already states that both std140 / cbuffer packing hold); the toolchain (DXC / SPIRV-Cross) goes through an ADR.
+- **Explicitly not done**: allocator abstraction, a second recorder, descriptor model abstraction, resource base class, swapchain abstraction, a general barrier type.
+- **Discipline gates**: D1 `backend/` public surface zero diff; D2 `Vk*` only in `src/internal/`; D3 residency books complete; D4 same values same picture;
+  D5 resize / state changes do not rebuild pipelines.
+- **Docs**: evaluation §9 (J1–J3, the list, D1–D5), backlog T35 linked and `BarrierPlan` scheduled into M1.
+
+## 2026-11-13 —— Vulkan exposure boundary (design argument)
+
+- **Conclusion**: the plugin's `internal/` + `support/` **may** expose Vk freely (18/57 headers contain `Vk*` today); the SDK host surface and the SDK backend surface carry **zero Vk types**
+  (the measured hits are all comment text); the plugin `shell/` is 0, but **shape only, not a gate** (plugin headers are not installed, no second consumer, `G8`).
+- **The Vk access a learning backend needs**: a **free function** in `support/Handles.hpp` (not in `RenderDevice`'s verb table, named after the backend,
+  not installed, not included by the production path) — the same shape as Diligent's `ITextureVk` / QRhi's `nativeTexture()` / Godot's `get_driver_resource()`.
+- **What is checkable**: V1 host surface zero Vk types (today distinguished by hand/comments), V2 backend surface zero `<vulkan>`/`<vsg>` includes (already 0),
+  V3 the install component contains no Vulkan headers, V4 the plugin `shell/` zero Vk (already 0). Upgrade triggers: plugin headers start being installed / a second module includes `shell/` /
+  `support/` is included by the production path.
+- **Downgrade**: the previous round's "D2 only allows `src/internal/`" is withdrawn (inconsistent with vsg's `include/vine/backend_vsg/internal/` layering, and with no victims),
+  replaced by V4 + upgrade conditions.
+- **Docs**: `../research/graphics-2026-11-13-vk-exposure-boundary.md` (dated, non-normative).
+
+## 2026-11-13 —— `gfx_backend_vk` M0 lands (two rounds of naming: `vkraw` → `vk` → `vn::backend_vk`)
+
+- **Naming**: plugin `gfx_backend_vk`, registration name `"vk"`, namespace `vn::backend_vk`, include path `vine/backend_vk/`,
+  classes `vn::backend_vk::{Device, BackendFactory, Plugin}`, macros `VN_BACKEND_VK_{LIB,API,NS_BEGIN,NS_END}`,
+  tests `tests/test_vk` (`VkBackendTest`). **The two namespace segments each say one thing**: `backend` = this is an **implementation** of the render seam
+  (`vine/graphics/` is the seam itself), `vk` = the **direct Vulkan** implementation path (`vsg` goes through VulkanSceneGraph).
+  The previous version was `vn::vk`, rejected for two reasons: it reads like "Vine's Vulkan wrapper library", and `vn::vsg` collides with VulkanSceneGraph's own
+  `::vsg` namespace. `"vk"` as a **registration name** is unchanged (the host creates by name); `"vsg"` is `RenderApi::Vulkan` like it, the difference is the
+  implementation path, not the API family.
+- **Hard constraint**: the `Vk*` spelling belongs to Vulkan's own types inside the module (volk brings in `vulkan.h`), so our own classes **cannot** be called `VkDevice` /
+  `VkInstance` and the like; `vn::backend_vk::Device` is the safe name.
+- **M0 content**: volk creates the instance (validation layer and debug-utils enabled by availability) / picks a physical device with a graphics queue / creates the logical device;
+  `capabilities()` honestly reports `render_targets=false`, `presentation=false`; `executeFrame` and `setRenderTarget` each report
+  "M1/M2 not implemented" once; `shutdown()` is idempotent and reentrant.
+- **One trap**: `tp::volk` is compiled with `VOLK_NO_DEVICE_PROTOTYPES`, device-level functions have **no** free-function declarations; the correct usage is
+  `volkLoadDeviceTable(&table, device)` then `table.vkDestroyDevice(...)`. Including `<vulkan/vulkan.h>` + `<volk.h>` directly
+  makes `vkEnumeratePhysicalDevices` ambiguous between the global and `volk::`.
+- **Verification**: `test_vk` 3 cases all green; this machine `validation=on`, `InitFailed` diagnostic count 0; `plugins/vine/gfx_backend_vkd.so` builds and deploys.
+
+## 2026-11-13 —— the vsg backend aligns its naming: `vn::backend_vsg`
+
+- **Scope**: `vine/vsg/` → `vine/backend_vsg/`, `vsg_global.hpp` → `backend_vsg_global.hpp` (the old name is recorded only here `<!-- drift-ok -->`), `vn::vsg::` → `vn::backend_vsg::`,
+  `VN_VSG_{LIB,API,NS_BEGIN,NS_END}` → `VN_BACKEND_VSG_*`. 176 files in total (src/tests/cmake/scripts/docs/.ai).
+- **Untouched**: VulkanSceneGraph's own `::vsg` (2134 `::vsg::` occurrences and the global `namespace vsg {` forward declarations) — inside the module the spelling always carries a leading
+  `::`, which is also why the batch replacement was safe.
+- **Class names unchanged for now**: `VsgBackend` / `VsgExecutor` / `VsgHostWindow` … are redundant under `vn::backend_vsg`, but that is ~1000 references with no
+  behavioural gain; left as a separate step (if done, follow the vk module's `Device` / `BackendFactory` / `Plugin`).
+- **One real trap (a gate failing silently)**: `scripts/check_doc_symbols.py`'s `MAPPED_DIRS` said
+  `PLUGIN / "include" / "vine" / "vsg"` (segmented strings), the text replacement could not match, so it **still reported OK**, but the covered units fell from 104 to 47.
+  Fixed to `"backend_vsg"`, restored to 104. Lesson: after a rename, look at the gate's **counts**, not only its exit code.
+- **Rest**: the old path in `scripts/vn_shader_check.sh`'s comments is updated; `content_seam` ctest green.
+- **Verification**: `test_vsg` 548 all green (1 of 5 runs had a flaky red `EachAttachmentClearsToItsOwnColour`, recorded as backlog T36 with diagnostics),
+  `test_vk` 3/3, `gfx_backend_vsg` / `gfx_backend_vk` both build and deploy, the four doc/header gates + the symbol gate all clear.
+
+## 2026-11-13 —— `gfx_backend_vk` M1: offscreen clear + readback
+
+- **`BarrierPlan`** (§9.3's general table): `ImageLayout` (as "purpose") + `LoadOp`/`StoreOp` → `VkImageLayout`/stage/
+  access; plus `transferReadState()` (a readback is not a pass, so this end has no SDK spelling, it stays in the plugin) + `barrierBetween`.
+  5 device-free table-driven tests: one distinct layout per purpose, no barrier needed for itself, fields on both sides of a barrier, Undefined/Present ends, load/store mapping.
+- **`TargetImages`**: one set of VkImage/memory/view/render pass/framebuffer per target; the render pass is fixed at `CLEAR`/`STORE`,
+  initialLayout `UNDEFINED` (M1's contract: a pass drawing into a target must declare clear, otherwise it reports once and skips). resize in M1 is a rebuild
+  (M3 replaces it with `planTarget`'s `ResizeInPlace`).
+- **Device**: command pool + fence (created in init, destroyed in shutdown), `executeFrame` one command buffer per frame, waits on the fence after submit;
+  `readColorBuffer` goes through a staging buffer (HOST_VISIBLE|COHERENT), barrier → `vkCmdCopyImageToBuffer` → barrier back to
+  `COLOR_ATTACHMENT_OPTIMAL`, supports RGBA8 only (other formats answer `Unsupported`).
+- **capabilities**: `render_targets` becomes true; `presentation` stays false. M0's test assertions change with it.
+- **Verification**: `test_vk` 10 cases all green (3 backend + 5 barrier + 2 offscreen), this machine `validation=on` and the new path reports nothing;
+  `plugins/vine/gfx_backend_vkd.so` builds and deploys.
+
+## 2026-11-13 —— the second backend is set to hand-rolled Vulkan (`vk`, learning/research)
+
+- **Trigger correction**: it is a second backend of the **same API family** ⇒ neither T15 (device independence) nor T30 (unified types) **triggers**; their trigger narrows to
+  "a second **API family** backend"; T32 does not block (implement the aggregate directly).
+- **What it consumes is the seam**: `RenderDevice` (18 verbs) + `RenderFrameExecutor` (2 verbs) + `WindowPresentTarget`; lifetime rules reuse
+  `backend/`'s `ResourceTable` / `RetirementQueue` / `FrameTimeline` / `ResidencyLedger`, L1 blocks follow `ShaderAbi`.
+- **Shape**: plugin `gfx_backend_vk` registers factory `"vk"` (`RenderApi::Vulkan`); not the default backend; tests separate
+  (new `test_vk`, compiling the plugin sources directly like `tests/test_vsg`).
+- **Milestones**: M0 plugin+device; M1 offscreen clear+readback; M2 one content draw (glslang→pipeline, channels→upload, View/Draw blocks);
+  M3 targets/state/MRT; M4 material/texture/light/screen draw; M5 swapchain; M6 residency/prepare; M7 comparison with vsg.
+  M0–M2 about 2–4k lines, M3–M6 about 10–20k lines. Details in evaluation §8.
+- **Docs**: backlog §1 new T35 (the only "doable now" item); evaluation `graphics-2026-11-13-gpu-resource-abstraction.md` §8.
+
+## 2026-11-14 —— the light block moves up into the SDK (`LightAbi.hpp`): one shape, one home
+
+- **Motivation**: when `vk` landed it copied `VineLightsBlock` and `packLightBlock` from vsg (the M4/M9 notes are the evidence) —
+  the same ABI rule written by hand twice; the comparison then proved such copies drift (M7's depth fold is one example). The trigger "a second backend needs
+  the same light layout" has hit, so backlog `S5` closes.
+- **The home is not `ShaderAbi.hpp`**: the light block's capacity `kMaxLights`, unused-slot label `kLightKindEmpty`, shape `VineLightsBlock`
+  and packing `packLightBlock` / `packedSlotOf` all live in `sdk/vine/graphics/LightAbi.hpp` (implementation
+  `src/viz/graphics/src/LightAbi.cpp`). Reason: packing needs `LightValue` / `CameraSnapshot`, pulling them into
+  `ShaderAbi.hpp` would make the ABI leaf depend on the scene model (back edge + rebuild fan-out); the dependency direction is fixed as
+  `ShaderAbi.hpp` <- `LightAbi.hpp` <- backends.
+- **Deleted copies**: each backend's `LightBlock.hpp` + `LightBlock.cpp` (`ContentPass` / <!-- drift-ok -->
+  `ShadowBlock` / `ContentPipeline` / `ContentDraw` now include `LightAbi.hpp`); `vk`'s `ContentDraw.cpp`
+  private `struct VineShadowBlock` (80B, same shape as the SDK) is deleted too, replaced by `vn::graphics::VineShadowBlock`.
+- **Tests moved**: the pure packing cases move from `tests/test_vsg/LightBlockTest.cpp` to `tests/test_graphics/LightBlockTest.cpp`
+  (10 cases: shape/view space/rotation/disabled and unavailable lights/empty announcement/point light/spot light/8 slots/no camera/slot rule); `test_vsg` keeps only three
+  device picture cases (content four-band, two paths same binding, full-screen three-band).
+- **New trap**: `LightValue::identity` defaults to null — taking the **address** of a stack `LightValue` as identity in a unit test always answers
+  `kMaxLights`; a light that must be named needs an explicit `identity = &stable_id`.
+- **Verification**: `test_graphics` / `test_vk` / `test_vsg` all green; gates in the same commit.
+
+## 2026-11-14 —— material / draw block packing moves up into the SDK: one block packed in one place (C8)
+
+- **Motivation**: the continuation of the light block's ruler — the material and draw field mappings were written once per backend (vsg `blockOfMaterial` /
+  `packDrawBlock`, vk `buildMaterialBlock` / `buildDrawBlock`). Adding one factor meant editing two places, and missing one left a backend
+  "old" with nothing in the log.
+- **Homes**: `MaterialAbi.hpp`'s `packMaterialBlock(values, present_slots, out)`, `DrawAbi.hpp`'s
+  `packDrawBlock(model, opacity, point_size, out)`, one `.cpp` implementation each; `ShaderAbi.hpp` stays the zero-dependency leaf.
+  This "shape vs fill surface" layering and "one block packed in one place" are written into `graphics-shader-params.md` §5.1's C7 / C8.
+- **Details**: the material block's slot mask is the **caller's** declaration (vsg = slots with declared textures; vk = slots that really uploaded, a failure leaves 0 so the
+  shader falls back to constants); the default material does not call packing (`VineMaterialBlock{}`'s member defaults are the default material's values). The draw block's
+  reserved words `params.z/w` are always written 0, not merely by `{}`.
+- **Deleted vsg units**: `DrawBlock.hpp` / `DrawBlock.cpp` (the public name disappears with them, `packDrawBlock` is now <!-- drift-ok -->
+  `vn::graphics::`); `ContentPass` / `ContentSources` call the SDK; vk's `buildMaterialBlock` /
+  `buildDrawBlock` are deleted, call sites hand the values to the SDK themselves.
+- **Tests**: the arithmetic cases move to `tests/test_graphics/DrawBlockTest.cpp` (3 cases), new `MaterialBlockTest.cpp`
+  (4 cases: field row / no clamping / default material == ABI default / mask passthrough); vsg's `DrawBlockTest` keeps only the "value path"
+  case (recorder → compiler → bytes).
+- **The shadow block's exception** (written into §3.3): the input `ShadowFacts` is in the backend half (`backend/FrameCompiler.hpp`, D1 not open),
+  each backend packs its own; but slot derivation must call `packedSlotOf`.
+
+## 2026-11-16 —— vsg S8c-1: the frame body shares the device, device content goes behind one content lock (T48)
+
+- **Which gate changed**: `graphics::FrameGate` (one frame at a time) in vsg's place becomes `internal/DeviceGate` (new unit):
+  the frame body takes **SHARED**, host verbs take **EXCLUSIVE**, thread-local depth turns "a callback from inside the frame body" into an **empty lease + refusal**
+  (readback `InsideFrame` → `ReadbackResult::Failed`; content verbs false/no-op + `vsg.device.reentry`), never waits on itself.
+  The diagnostic route and the episode lock must be **recursive** (the sink calls back).
+- **Frame state belongs to the driver**: `VsgExecutor::FrameDrive` (scratch / driving / uploads_before / last_uploads) replaces
+  `Data::{driving, scratch, driving_executor, uploads_before}`; `presentWindow` takes the driver back through the **thread-local frame in flight**
+  (`FrameInFlight`) — the window's `present()` has no frame parameter. `driving` is **not cleared** at frame end (the test seam
+  `BackendContentAccess::windowTarget` and diagnostics read "the last frame's window"), only cleared at shutdown.
+- **Frame-head snapshot**: `openFrameHead` takes the content lock once: `passes.adopt`→`FrameScratch::pass_ids`, `adoptHostTarget`,
+  `targets.observe`, `store.track` (moving the tracking out of `collectContentDraw/collectScreenDraw`),
+  `collectTargetFacts`→`scratch.facts`, staging sweep, `growBlockStorageIfNeeded`, upload baseline.
+  Collect/compile (`collectFrame`/`closeFrameBooks`) read scratch only ⇒ the plan compiler's report reaches the sink **without holding the lock**
+  (that is where the overlap evidence is caught). **Content phase**: `commitFrameThrough` takes the content lock once for applyTargetPlans/material arena/
+  `recordContent`/`executor.record`/sweep/commit, and writes `last_uploads` + `last_counters` at every exit.
+- **Per-session frame claim**: `WindowSlot::frame` / `Data::offscreen_frame` two mutexes, the frame body holds one until the end. Two frames of the same window / the same offscreen session
+  **wait** (two offscreen sessions producing pictures concurrently is a supported shape, it cannot refuse); different windows do not wait on each other.
+- **Counters belong to the session**: `SessionOptions.observe` no longer borrows `d->observe` (the recorder resets counters at frame open, sharing would overwrite them);
+  `frameReport().counters = Data::last_counters` (a copy of the last finished frame), retention stays device-level.
+- **The real race hit**: two drivers running an offscreen frame for the **first** time concurrently — `ensureOffscreenSession`'s lock-free lazy creation lets the loser overwrite a half-built viewer
+  (segfault, appearing irregularly in the test suite) — creation must happen under the content lock.
+- **Still open for S8c-2**: the recording path still reads the device tables (halves/sets/uploads/images/material slots) ⇒ `C3` does not hold for vsg yet; the shape = at frame head
+  resolve per-draw needs into values (the same shape as vk's `CommandPlan`).
+- **Evidence**: `test_vsg` 561/561, parity 13/13; `ACompilingFrameDoesNotWaitForAnotherDriversFrame` (mutation: the gate back to exclusive
+  ⇒ 5 s timeout red), `TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`, `AReadbackFromInsideAFrameBodyAnswersInsideFrame`;
+  TSan (vsg subset) 0 reports (521 pass / 6 expected skips, suppression only lavapipe's 290); ASan new path PASS.
+
+## 2026-11-16 —— vsg S8c-2: the recording path is lock-free, content split into resolve/record/commit phases (T48)
+
+- **New unit**: `internal/ContentPlan` (`ContentPlan.hpp/.cpp`) — the **values** resolved for one frame: one `Call` per draw call
+  (`ContentDraw*` recorder + the resolved `Draw`/`ScreenDraw` + fixed arrays for block bindings/push blocks/vertex bindings), one slot per pass
+  (with its own `core::StateRegistry`); `Pass::pass/registry` are borrowed, `halves_` is a **pin** on `shared_ptr<const void>`
+  (`ContentHalves::pin()`), so another driver's frame-head sweep does not release a recorder this frame still needs (retirement parking does not care about
+  "a frame not yet submitted"). A call **stores no spans** (`Call::value()` assembles from the call's own arrays) — vector reallocation would invalidate a span pointing into itself.
+- **`commitFrameThrough` three parts**: **resolve** (content lock: `applyTargetPlans`, material arena growth, `resolveContent` →
+  `ContentAssembly::resolve` → `ContentPass::resolve`, refusals/reports happen here), **record** (lock-free: `ContentPlan::record`
+  builds vsg nodes), **commit** (lock again: `executor.record`, sweep, session submit, `finish`). The frame head writes the view/lights/shadow/draw/
+  material blocks and hands only offsets to recording — another frame head rotating a ring/sweeping/growing in between does not affect this frame.
+- **Resolve half / record half separated**: `ContentDraw::plan(key)` (takes the layer + variant pool, returns `Identity{pipeline, variant}`) and
+  `record`/`recordScreen` (bind only the resolved pipeline, **no acquire, no pool touch**); `core::StateRegistry` gains a
+  `resolve(std::uint64_t variant, …)` overload — the pool is only asked at frame head, recording carries values. `ContentDraw`'s counters become `std::atomic`
+  (the same half may be recorded by two drivers at once). A command with zero geometry is refused in the **resolve** phase (before identity resolution, "a refused draw is not compiled" still holds).
+- **`ContentHalves::Scope::Entry` gains a trailing field `keep_alive`** (`ContentPlan::Pin`); `serve()` now takes `shared_ptr<Half>`.
+  `ContentAssembly::record` (the old convenience entry) is kept = `resolve` + `ContentPlan::record`; `prepareContent` is warm-up going through the same
+  offer loop (`offerInputs` extracted) but only `prepare`.
+- **Test seam**: `BackendContentAccess::setRecordSeam` (at recording start, no content lock held); new case
+  `VsgBackendTest.ARecordingFrameDoesNotStopAnotherDriversContent` (an offscreen frame is stopped inside recording, a window frame completes fully, and the stopped frame's
+  read-back pixels are still its own red); **mutation: three phases back to S8c-1's single lock ⇒ 5 s timeout red**. Test side: every case that called `ContentDraw::record`
+  directly now calls `plan()` first (ContentDrawTest's "refused before memoised" becomes a hand-built identity-less Draw).
+- **Evidence**: `test_vsg` **562/562**, parity 13/13, `test_graphics` 587, `test_vk` 133; TSan vsg subset 0 reports (three reruns
+  all green; the occasional `initialize()` false is the existing `VSG_MAX_DEVICES` flakiness, see backlog T36/T33, not this step); ASan
+  new path PASS; nine doc/code gates 0 findings (`check_doc_symbols` requires `docs/guides/vsg-backend.md` §5 to name <!-- drift-ok -->
+  `ContentPlan.hpp`). `C3` holds for vsg from now on; `T48`'s migration table is fully landed (the backlog entry deleted per the rules). <!-- drift-ok -->
+- **Test-infrastructure note**: the plugin `.so` and test binaries in `build/` must be **rebuilt from the same source** — mixing across `git stash` produces
+  `undefined symbol` and inexplicable device-limit failures (this investigation took time; lesson: after a stash, build `ninja test_vsg gfx_backend_vsg` together).
+
+## 2026-11-16 —— vk F4: the three-state residency wired into the device (`ensureGeometry` asks the table, `FrameBuilds` publishes at frame completion)
+
+- **Wiring shape**: `ContentCaches::Impl` holds `ResidenceTable residence`; `ensureGeometry(description, builds, why)`
+  first checks this frame's resolutions (`builds.entryOf`), then asks `residence.admit(&description, session)`: `Use` takes the cache entry (**and calls
+  `fillStreams` to fill the holes `releaseStreams` punched** — this was once missed and `VkResidencyTest.ReleasingOneBuffer…` went red immediately),
+  `Build` fills the cache entry and hands the `Claim` to `FrameBuilds`, `Copy` creates a **detached** entry (`builds.noteCopy`). When the table and the cache disagree
+  (`Use` but no entry), `forget` and ask again once — the cache is the truth.
+- **`ContentCaches::FrameBuilds` (nested class, frame-scope value)**: `resolved_` (this frame's Use/Build/Copy answers),
+  `claimed_` (`Claim` + entry pointer, used to skip failed fills), `copies_` (`unique_ptr<GeometryEntry>`).
+  `publishAll()` is called after the frame fence wait; a failed fill **never registers a claim**, so `FrameBuilds` holds claims only, not cache entry
+  pointers (a host `releaseContent` while the frame is in flight would move the entry away and the pointer would dangle); the destructor withdraws unpublished claims and calls
+  `owner_->releaseTemporary(copies_)` (**immediate destruction**: a copy never enters the table, only this frame can name it; not inside the frame-head lock, it takes the lock itself).
+  A copy's upload counts `stream_builds`, its destruction **does not count** `stream_releases` (not a release announcement).
+- **Publish points**: `executeFrame` calls `publishAll()` after `completed` (submit failed / command buffer not closed ⇒ no publish, the guard withdraws);
+  `prepareFrame` uses the `transfers_completed` flag (batch not closed or not run ⇒ no publish; zero-work batch = host memcpy already done ⇒ publish).
+  `FrameBuilds` is declared outside the frame head's `{ }`, so its destructor takes the cache lock without holding it.
+- **Release/teardown**: `releaseGeometry` calls `residence.forget(description)` first (even when the entry does not exist); `destroyAll` clears the table.
+  Lock order is always cache lock → table lock; `publishAll` takes the table lock only (so `VkFrameHeadTest`'s lock counts are unchanged).
+- **Tests**: `tests/test_vk/ResidenceWireTest.cpp` 4 cases — (1) under a fake lease (`device->residence().admit(desc, 9999)`, the same gate as
+  `TargetClaimFrameTest`), one frame copies and the pixels are correct, exactly 2 streams, `used_bytes` back to baseline; after revoking the lease the next frame Builds+publishes,
+  the frame after that allocates nothing; (2) two real sessions on two threads first-drawing the same geometry: claims 1 / published 1 / copies ≤ 1 / both pictures red / then zero uploads per session;
+  (3) `setMemoryBlockCreator` refuses the block + a 20 MiB vertex stream (>16 MiB host-visible first block) ⇒ the failed fill is withdrawn
+  (`uploading 0`, `stateOf Absent`), a rebuild after release succeeds; (4) after release `stateOf Absent`, the next frame claims/publishes again.
+  **Mutations 3/3 red**: do not ask the table (4 cases red), publish a claim for a failed fill (case 3 red), release without forget (case 4 red).
+- **Evidence**: `test_vk` **137/137**, `test_vsg` (including parity) all green, `test_graphics` 587; TSan `test_vk` 0 reports
+  (132/132, windows/probes/plugin excluded by the existing rules, suppression only lavapipe); ASan focused
+  (`VkResidenceWireTest`+`VkResidencyTest`+`VkMultiSessionTest`+`VkFrameHeadTest`) PASS.
+- **Build note**: `tests/test_vsg` compiles the vk backend sources too, the new `ResidenceTable.cpp` must go into
+  `tests/test_vk/CMakeLists.txt` **and** `tests/test_vsg/CMakeLists.txt`, otherwise `all` reports a run of
+  `ResidenceTable::Claim` undefined at the test_vsg link.
+- **Still a boundary**: the two drivers' frame-head resolution still sits on one cache lock (`C3` governs the recording path); a fill is a host memcpy, so `fillStreams`
+  returning proves completion — after M6 moves uploads to device-local, the publish point is still `publishAll`, the evidence becomes the fence.
+
+## 2026-11-16 S2 batch 2a: one frame gate, two sides, two backends (B2a)
+
+- **The same rule had three implementations**: vk's per-driver `graphics::FrameGate` (`enter()` exclusive + same-thread reentry refusal), the vk device's
+  `std::shared_mutex body_gate` (16 unique/shared_lock sites in `Device.cpp`), vsg's private `internal::DeviceGate`. Now
+  **one**: `graphics::FrameGate` has `enterShared()` / `enterExclusive()` + `Shared` / `Exclusive` leases +
+  `heldByThisThread()` / `inSharedEntry()` + `Counters{acquisitions, waits}`; nesting is recorded **per gate** on a per-thread stack
+  (vk's driver gate EXCLUSIVE wrapping the device gate SHARED is normal nesting, a single depth would treat the inner one as reentry). `internal/DeviceGate.hpp` is deleted.
+- **The empty lease has a refusal value at every vk host-verb site**: `shutdown` / `setMemoryBlockCreator` / `setDefaultContentProgram` /
+  `createSession` (null) / `releaseSession` / `setRenderTarget` / `createSurfaceTarget` (`UnsupportedSurface` + why) /
+  both readbacks (`Failed`) / `contentPipelines` (0) / `contentCacheCounters` / `memoryStats` / `retirementNumbers` /
+  `pipelineCacheReport` (empty). These used to be **deadlocks**. One `vk.device.reentry` episode (a new diagnostic code) names that verb;
+  `Impl::report_mutex` becomes `std::recursive_mutex` — the sink calling back is exactly this path.
+- **`s_frame_depth` / `FrameBodyDepth` are deleted**: the readback precondition asks `impl->body_gate.heldByThisThread()` (a window frame's
+  exclusive body covers it too). `executeFrame` / `prepareFrame`'s body lease can also get an empty lease (another driver, same thread), answering `Refused`.
+- **`FrameReport::locking` (new `FrameLocking{acquisitions, waits}`)**: the frame's own content-lock spending. vk's delta comes from
+  `ContentCaches::lock()` (new `waits`: a failed try counts, then blocks; `lockWaits()` atomic read) and `FrameBooks::locking`;
+  vsg uses `Data::lockContentForPhase()` (counted at frame head / commit / warm-up only, a host verb using `content` directly is not counted) and
+  `FrameDrive::locking_before` + `Data::last_locking`. Steady state = a constant + `waits == 0`.
+- **The tests moved once**: `tests/BackendSeamTest.cpp` = the seam's 14 `Core*` (TargetPlan / RetirementQueue / DrawState /
+  Readback / DeviceClock) + 6 `FrameGateTest`, listed once in **three CMake files** (`test_graphics` reads
+  `vine/graphics/` directly). The vsg-only Cores (Timeline / Arena / Observe /
+  PhaseTable / DepthProbe / DeviceRequirements) stay in `tests/test_vsg/BackendCoreTest.cpp`; the FrameGate case file in the vk suite
+  is deleted with it (the cases are merged into the shared source).
+- **New cases**: `FrameGateTest` 6 (shared side, empty host lease, cross-gate nesting, waits counting); `VkFrameHeadTest.AFrameReportsWhatItSpentOnTheCacheLock`;
+  `FrameLockingTest.AFrameReportsWhatItSpentOnTheContentLock` (vsg); `VkConcurrentFrameTest.AHostVerbCalledFromInsideAFrameIsRefusedInsteadOfHanging`
+  (`contentPipelines()` in the sink answers 0 + one reentry, the frame still ends).
+- **Counts**: `test_graphics` 607 / `test_vk` 158 / `test_vsg` 571 / `BackendParityTest` 13.
+
+## 2026-11-16 S2 batch 2b: the `FrameHead` vocabulary (same name, same shape in both backends, no shared type)
+
+- **One concept, two shapes → one name and shape**: the values resolved at frame head were `CommandPlan` + `ScreenPlan` + `ResolvedTextures`
+  in vk and `ContentPlan::Call` in vsg; now both are called **`FrameHead`** + **`FrameHead::DrawPlan`**.
+  **No shared header**: the ADR rejected "a shared `ResolvedDraw` across the backends" (only type erasure, the reverse of `G7`) — what is unified is the name and shape, not the type.
+- **vsg**: `internal/ContentPlan.{hpp,cpp}` → `FrameHead.{hpp,cpp}`; class `ContentPlan` → `FrameHead`, nested `Call` → `DrawPlan`
+  (`Pass` / `Pin` / `kMax*` follow the class prefix). `FrameScratch::content`'s type follows; `tests/test_vsg/CMakeLists.txt`'s hand-written list follows;
+  `docs/guides/vsg-backend.md` §5 names `FrameHead.hpp` (`check_doc_symbols` requires every unit to be named). <!-- drift-ok -->
+- **vk**: new header `internal/FrameHead.hpp` (header only, no new `.cpp`): `FrameHead` holds per-pass `Pass{std::vector<Call> draws}`,
+  `Call{std::vector<DrawPlan> plans; ContentRefusal refusal}`, and **frame-level** `fallback_view` / `fallback_sampler` / `shadow_sampler`;
+  `DrawPlan` = `kind` (Content/Screen) + pipeline/resolved + content payload (material/variant/streams/…) + this call's `slots`.
+  `ContentCaches::planCommand` / `planScreen` **merge into one verb, two overloads** `planDraw(RenderCommand,…)` / `planDraw(DrawDescription,…)`;
+  `resolveTextures(material, commands, FrameHead&, FrameHead::DrawPlan&, refusal, lock, batch)` writes frame-level facts into head, slots into plan.
+  `ContentDraw::record(…, span<const FrameHead::DrawPlan> plans, const FrameHead& head, …)`, `recordScreen(…, const DrawPlan&, const FrameHead&, …)`.
+  The old `FrameDriver::DrawContent` / `PassContent` are deleted, replaced by one `FrameHead frame_head`.
+- **One visible difference (honest)**: `record`'s "1x1 stand-in missing" check moves from "this call's first plan's fallback" to "the frame's fallback".
+  Today a call whose first command is refused would therefore report one extra `vk.content.stand_in_missing` (the stand-in actually exists); after the change only a real head refusal is reported.
+  No case pins that wording; the stand-in is only missing on OOM, and the new check still refuses when it is really missing.
+- **Zero behaviour, zero test renames**: `test_graphics` **607** / `test_vk` **159** / `test_vsg` **571** / `BackendParityTest` 13;
+  nine gates + `content_seam` / `vk_exposure` all green; this batch does not touch threading (no TSan needed).
+- **Trap**: the vsg plugin has a GLOB source list → after renaming a `.cpp` file you **must reconfigure `build/`** (`cmake -S . -B build`), otherwise the old path is still on the target.
+
+## 2026-11-16 S4: target tables unified (B5) + one shared light value (B11)
+
+- **B5a `0e9a9b84` (vk `TargetTable`)**: map, shape/build/rebuild, claim books, release/park, `drain` in one object;
+  `TargetClaims.{hpp,cpp}` deleted, `TargetTableTest` 8 cases (+1: drain clears records and leases in one go), `TargetClaimFrameTest` 2 cases;
+  `Device::targetTable()` replaces `targetClaims()`; a readback holds a `shared_ptr` (a concurrent release parks instead of the map keeping it alive);
+  `ReleaseRenderTarget` becomes one `table.release()` sentence. `test_vk` 165 → 166.
+- **B5b `81e0ba0d` (vocabulary + one vsg table)**: vk `TargetImages`→`TargetObjects`; vsg `OffscreenTarget`→`TargetObjects`,
+  `HostTargets`→`TargetTable`, with `VsgTargetRegistry` **merged in**: `Entry` holds the owner label (`std::string`, fixing the old
+  `const char*` dangling read into a temporary `std::string::c_str()`) and the executor's `unapplied` episode; `resolve` / `adopt` are table verbs,
+  the `clearTargets` / `addTarget(nullptr)` paths disappear. The three test sets keep their names except the `TargetObjectsTest` suite name following its type.
+- **B11 `1d57dc77` (lights no longer allocated per pass)**: the SDK gains `LightSet` (`std::shared_ptr<const LightSet>`, immutable
+  `vector<LightValue>`); `Light::revision()` is incremented by every setter that feeds `value()`; `Scene::lightSet()` caches its values by
+  (identity, revision); `DrawDescription::light_values` becomes `LightSetPtr` (null = no announcement, an empty set = no lights),
+  both backends read `->values()`, vsg's per-pass `light_scratch` intermediate copy is deleted (the recorder snapshots into the frame arena itself).
+  Engine witness: `ValueChannelTest.EveryPassOfOneFrameHoldsTheSameLightSetUntilALightMoves` (two passes share the pointer, steady state shares the pointer,
+  changing a light makes a new set). vk witness: `FrameHead::storageGrows()` + `Device::frameHeadStorageGrows()` (**not** a `FrameReport` field),
+  `VkFrameHeadTest.ASteadyFrameDoesNotGrowTheHeadsStorage` (5 frames unchanged after a 3-frame warm-up). Fixed along the way: `planDraw`'s
+  `plan = FrameHead::DrawPlan{}` (releasing and reusing the vector per command) → `plan.clear()`.
+- **Honest**: **the whole frame still makes about 97 allocations/frame** (the pipeline key's `channels`/`bindings`/`attributes`, `buildPipeline`'s by-value key
+  copy, content cache map inserts) — B11 only proves the head pass/call storage is reused, it does not claim global zero allocation; see the investigation record in the bundle.
+- **Trap (rename tooling)**: combining `vscode_renameSymbol` with `mv` writes **the old path's file back** (with the new name inside), resulting in two files with
+  the same symbols → multiple definition at link time. Rename order: change the symbol first, then `mv`, and finally look at `git status` for "new files under old names" and delete them.
+- **Counts**: `test_graphics` **614** / `test_vk` **167** / `test_vsg` **571** / `BackendParityTest` 13; TSan three suites 0 reports;
+  `Vine --open demo` 0 errors.
+
+## 2026-11-17 B8: the seam drops Vulkan spellings (`DeviceFormat` + `RenderPassKey`)
+
+- **One type, two responsibilities**: the device format code used to be a bare `std::uint32_t` (the comment said "this is a `VkFormat` value"), subpass was another
+  Vulkan noun. Now **`DeviceFormat`** (a strong type over `std::uint32_t`, `kUndefined` = 0) carries the device's own format codes,
+  **`RenderPassKey`** (u64, `kNotStated` = 0) carries the pass structure — computed by the backend that builds the render pass, the SDK only hashes/compares.
+  `TargetShape` / `RenderPassCompatibility`'s fields become `std::vector<DeviceFormat>` / `DeviceFormat` / `RenderPassKey`;
+  `subpass` disappears from both structures.
+- **The "not stated" rule stays**: `kNotStated`/`kUndefined` **do not take part in comparison** in vsg's `statedShapeAgrees` (do not argue about what the plan has not learned),
+  the same rule as the old device format's "unknown ≠ absent"; vk's `TargetTable::ensure` fills both halves every time, so `planTarget` agrees on both sides.
+- **Mapping points** (one per backend): vk `TargetTable::ensure` / `WindowTarget::compatibility`, vsg `TargetObjects::shapeOf` /
+  `WindowTarget::sampledShape`; each emits `kSingleSubpassRenderPass` ("every render pass of this backend is single-subpass"),
+  the constant lives in each internal's `TargetObjects.hpp` (the render-pass builder).
+- **One manifestation of type safety**: `ContentCaches::PipelineKey::operator<`'s `lexicographical_compare` eats `DeviceFormat`'s
+  `operator<` directly; places inside vk that take `VkFormat` back write `.code` uniformly.
+- **Evidence**: `test_graphics` **616** / `test_vk` **167** / `test_vsg` **572** all green; `content_seam`, `vk_exposure` all green;
+  nine doc/code gates all green. Zero behaviour change: the pixel comparison and existing cases (including the PlanCarries/StatedShape two) pass directly after the type change,
+  and an assertion is added that "the render pass key in the plan is its own copy".
+
+## 2026-11-17 B16: one pass author shape (E-04 / E-05 / E-06, BC-08)
+
+- **B16a (`tag` deleted)**: `PassDesc::tag` / `PassRow::tag` deleted — 12 writes, 0 reads (E-06). The frame table uses `name`.
+- **B16b (callbacks belong to the object)**: the SDK gains `FrameUpdate` (`update()`, implemented by AxisGizmo / FpsOverlay);
+  `PassDesc::before_draw` is deleted, `buildFrameValue` no longer runs hooks (`record_micros` is only describe + expand).
+  `PassChain::update()` calls the overlays' `update()` in registration order; `SceneView::update()` forwards;
+  `SurfaceWindow::renderFrame` updates → publishContent → frame every frame. `OverlayLayout` becomes **returning** `Viewport`
+  (`std::function<Viewport(int,int,double)>`), `resize()` restates the rectangle from the chain — the callback no longer receives a mutable pass.
+  Witness `PassChainTest.AnOverlaysUpdateRunsWhenTheChainUpdatesAndNeverInsideAFrame`. BC-08: a host driving the engine itself
+  must call `SceneView::update()` / `PassChain::update()` itself.
+- **B16c (PassDesc is the only author shape)**: `RenderPass`'s public surface is read-only (`declaration()`/`name()` + the readers);
+  the 35 setters and `ScreenPass::setProgram` are deleted. The engine's write gate is `detail::PassNode`
+  (`adopt` / `resolveTarget` / `setDrawSize`, friend). `PassChain::restate(desc)` is the chain's "one explicit diff"
+  (the name deviates from the research doc's `chain->update(d)`: `update()` is already a per-frame verb, avoid one name two meanings). `PassChain::apply()` no longer
+  refreshes from nodes — `pending_` is the current shape. `RenderEngine::bindPassContent` becomes adopting a declaration with changed content.
+  One **semantics-preserving point**: in `adoptDesc`, "an engaged invalid `DepthView`" = explicitly clear the borrowed depth; `nullopt` = say nothing.
+  An empty input name is skipped in plan validation and resolution (the old setter's "empty name ignored").
+- **Migration surface**: demo (`addDemoPass` takes `PassDesc`, PiP re-anchors through `applyPlan`, preview layout holds declaration values),
+  `tests/PlanTestSupport.hpp` (`applyPassForTest(desc,order)`, `updatePassForTest`, `restatePassForTest`,
+  `asScreenPassForTest`), all of test_graphics / test_vsg / test_vk / test_gui.
+- **Counts**: `test_graphics` **617** / `test_vk` **167** / `test_vsg` **572** all green; nine gates all green;
+  `Vine --open demo` 0 errors (session up + Pending -> Presenting).
+- **Trap**: when batch-editing tests, check every oldString of `multi_replace` character by character (several "successes" actually hit another site);
+  a new `.cpp` (`FrameUpdate.cpp`) needs a `build/` reconfigure. `clang++-23` occasionally had a parser bus error, a rerun passes.

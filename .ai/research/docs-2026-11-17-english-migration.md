@@ -35,7 +35,7 @@ Order is by "what a reader needs first", not by directory. One batch ≈ 1–1.5
 |---|---|---|---|
 | **M0** | `.github/skills/design-docs/SKILL.md` | 271 | the template authority: after M0, the skill itself states the English template it prescribes. **Landed 2026-11-17** |
 | **M1** | `.ai/README.md` | 331 | the map; a reader lands here first. **Landed 2026-11-17** |
-| **M2** | `.ai/memory/**` | 11 / 2,476 | traps and commands; the second thing a session reads. **M2a (6 notes, 310 lines), M2b (`appfw` / `loaders` / `imageio` / `geometry`, 522 lines) and M2c parts 1–3 (`graphics.md` current state + the 2026-11-11/12/15 record, lines 1–765): landed 2026-11-17.** Left: `graphics.md` lines 766–1,644 (the 2026-11-13/14/16/17 record), one more batch |
+| **M2** | `.ai/memory/**` | 11 / 2,476 | traps and commands; the second thing a session reads. **M2a (6 notes, 310 lines), M2b (`appfw` / `loaders` / `imageio` / `geometry`, 522 lines) and M2c (`graphics.md`, 1,644 lines, four batches): landed 2026-11-17.** Every memory note is English |
 | **M3** | graphics seam pages (`graphics-*`) | 10 / 4,343 (3 batches) | most cited from code and from the audit |
 | **M4** | backends (`vk-backend`, `vsg-*`) | 3 / 1,477 | the backend contract pages |
 | **M5** | appfw | 17 / 4,572 (3 batches) | independent of graphics |
