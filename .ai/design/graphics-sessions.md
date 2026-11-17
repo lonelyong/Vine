@@ -1,642 +1,656 @@
-# 设备是池、会话拥有帧：类型、所有权与并发规则
+# the device is a pool and sessions own frames: types, ownership and concurrency rules
 
-> **状态**：已落地（`T47` + `T48` 的 S1–S9 与 `F4` 接线）
-> **最后核对**：2026-11-17
-> **范围**：一个 `RenderDevice` 被多个引擎借用时，“共享什么、谁拥有帧、怎么并发、怎么退休”
-> 的**实施形状**；契约的**为什么**与落地记录在 ADR，线程模型的**现在**在 `graphics-threading.md`。
-> **权威来源**：`RenderDevice.hpp` / `RenderFrameExecutor.hpp` / `RenderBackend.hpp`（契约）、
-> `graphics/FrameGate.hpp` / `graphics/DeviceClock.hpp` / `graphics/RetirementQueue.hpp`（机制）、
-> `src/plugins/gfx_backend_vk/src/internal/Device.cpp` 与 `ContentDraw.cpp`（今天的设备级帧机器）、
-> `src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp`（已经是"设备 + 每窗口"的那一半）。
-> **待办**：无未落地的会话迁移步骤；触发型工作见 §9.2 与 `../backlog/graphics.md`
+> **Status**: current — the shape below is landed in both backends (§9.1).
+> **Last verified**: 2026-11-17
+> **Scope**: the **implementation shape** of what is shared, who owns a frame, how frames run concurrently and how retirement works when one `RenderDevice` is borrowed by
+> several engines; the contract's **why** and its landing record are in the ADR, and the threading model's **present** is in `graphics-threading.md`.
+> **Sources**: `RenderDevice.hpp` / `RenderFrameExecutor.hpp` / `RenderBackend.hpp` (the contract),
+> `graphics/FrameGate.hpp` / `graphics/DeviceClock.hpp` / `graphics/RetirementQueue.hpp` (the mechanisms),
+> `src/plugins/gfx_backend_vk/src/internal/Device.cpp` and `ContentDraw.cpp` (the device-level frame machinery),
+> `src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp` (the half that is already "device + per window").
+> **Backlog**: no session migration step is unlanded; trigger-gated work is in §9.2 and `../backlog/graphics.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-需求（用户原话）：**geometry / shader / 纹理资源共享，帧不共享；共享之后要线程安全；两个 engine 可以同时 frame。**
+The requirement, in the user's words: **geometry / shader / texture resources are shared, frames are not; sharing must stay thread-safe; two engines may frame at the same time.**
 
-`ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` 已经定下**契约与形状**（设备是池、会话拥有帧、
-驻留三态、目标 claim、跨会话退休、三把锁），并拆成两步：第一步 `T47`（设备级帧闸，让"一次一帧"从
-文档变成**检查**）已落地；第二步 `T48`（让并发真正成立）约 1350–2100 行、12–18 个文件。
+`ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` fixed the **contract and the shape** (the device is a pool, sessions own frames, residency's three states, target
+claims, cross-session retirement, the three locks). This page records the shape that resulted: which types exist, who owns what, where a frame takes each lock, and where
+state falls back on failure. It does not repeat the ADR's argument (the options, the industry comparison, Vulkan's external-synchronisation table) and only refers to it;
+it does not repeat `graphics-threading.md`'s `C21` either.
 
-**ADR 定的是"应该是什么"，本文定的是"怎么长成它"**：新增哪些类型、谁拥有谁、每帧在哪一步取锁、
-失败时状态往哪里退、以及**怎样分阶段落地而每一阶段都绿**。本文不重复 ADR 的论证（选型、业界对比、
-Vulkan 外部同步表），只引用它；也不重复 `graphics-threading.md` 的 `C21`（今天的契约）。
+### 1.2 Goals
 
-### 1.2 目标
+1. **Two sessions drive one device at the same time**: content is uploaded and compiled once; two frames record in parallel and submit on their own.
+2. **The recording path takes no lock**: a steady-state frame takes no device-level lock (`G10`'s account, see §2.3).
+3. **Every failure has one owner**: device loss, allocation failure, target conflict, upload race, release overlapping a frame in flight — each of the five has one
+   sentence of contract, one state and one report, and the host does not have to guess the ordering (`G4` / `G11`).
+4. **Migration is acceptable stage by stage**: at the end of each stage the existing `test_graphics` / `test_vk` / `test_vsg` are green, and the invariants that stage adds have
+   **a case that can go red** (§8).
 
-1. **两个会话同时驱动一个设备**：内容一次上传、一次编译；两帧并行记录、各自提交。
-2. **记录路径零锁**：稳态一帧不取任何设备级锁（`G10` 的账，见 §2.3）。
-3. **每个失败有唯一的归属**：设备丢失、分配失败、目标冲突、上传竞争、释放与在飞重叠——五类各有
-   一句契约、一个状态、一条报告，不需要宿主猜时序（`G4` / `G11`）。
-4. **迁移可分阶段验收**：每一阶段结束时，现有 `test_graphics` / `test_vk` / `test_vsg` 全绿，且该阶段
-   新增的不变量有**能红的用例**（§8）。
+### 1.3 Non-goals
 
-### 1.3 非目标
+- **No "one target drawn by two sessions at once"**: an image has one layout at any instant, and no lock can fix that (`G4`: saying "no" beats saying "maybe"). A conflict
+  **skips that pass only**, see §2.5.
+- **No global device lock** (`D1`) and **no per-entry read/write lock** (`D2`) — the ADR rejected both.
+- **No several frames in flight** (`ADR-2026-11-15-vk-keeps-one-frame-in-flight.md`): that is that ADR's topic. This page only guarantees that the retirement mechanism is
+  **shared** with it (§2.6), so either order needs no rework.
+- **No turning "one window, one target" into something shareable**: that is a platform constraint (`createSurfaceTarget`'s `WindowOccupied`).
+- **No change to appfw's usage**: `SurfaceWindow` builds one device per window, and sharing has no consumer there yet (`G8`).
 
-- **不做"一个目标被两个会话同时画"**：一张图像在一个时刻只有一个 layout，这不是锁能解决的（`G4`：
-  说"不"比说"也许"好）。冲突时**只跳过那个 pass**，见 §2.5。
-- **不做全局设备锁**（`D1`）、**不做 per-entry 读写锁**（`D2`）——ADR 已否决。
-- **不做多帧在飞**（`ADR-2026-11-15-vk-keeps-one-frame-in-flight.md`）：那是 `ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` 的话题。本文只保证
-  退休机制**与它共用**（§2.6），先做哪个都不返工。
-- **不把"一个窗口一个目标"改成可共享**：平台约束（`createSurfaceTarget` 的 `WindowOccupied`）。
-- **不改 appfw 的用法**：`SurfaceWindow` 今天每窗口造一个设备；共享设备在那里还没有消费者（`G8`）。
+### 1.4 One-paragraph conclusion
 
-### 1.4 一句话结论
+**A session is the "frame driver" (not the window); it owns the frame machinery and the frame scratch, while the device owns the GPU, the content caches and the targets and
+resolves those caches into session-local tables once at the frame head** — so concurrency needs no coordination on the recording path, only at "once per frame head" and at
+"a residency miss".
 
-**会话是"帧驱动者"（不是窗口），它拥有帧机器与帧暂存；设备拥有 GPU、内容缓存与目标，并把缓存
-在帧首一次性解析成会话本地的表**——于是并发不需要在记录路径上协调，只需要在"帧首一次"和"驻留
-miss"两处协调。
+## 2. Design Points
 
-## 2. 设计要点
+### 2.1 A session is a "frame driver", not a "window" (`G1`)
 
-### 2.1 会话是"帧驱动者"，不是"窗口"（`G1`）
+- **What it is**: `FrameDriver` = who drives frames: the command pool, command buffers, fence, constant ring, descriptor pool, the frame books, and the target it claims.
+  The type name stays `RenderFrameExecutor` (a public contract, the vocabulary of `ADR-2026-11-16`); a driver presents to **at most** one window (the window is its target,
+  not its identity).
+- **Why it needs a name**: `gfx_backend_vsg`'s `api::WindowSession` is **one window, one device, one swap chain** (`WindowSession.hpp`), while the
+  **collection / compilation / execution** frame pipeline is a **device-level singleton** in `VsgBackend::Data` (`recorder` / `compiler` / `arena` / `facts` / `packets` /
+  `frame` / `driving`, see `VsgBackend.cpp:444`–`534`). That is: **vsg's "session" is a window session, not a frame driver** — the ADR's "vsg is closer" was only half right.
+  That correction decides the division of work: what vsg has to move is the **collection scratch**, not the swap chain.
+- **Boundary**: a window is still "one live swap chain per platform surface"; a session may have no window (offscreen), in which case it presents to nothing.
 
-- **是什么**：`FrameDriver` = 谁在驱动帧：命令池、命令缓冲、栅栏、常量环、描述符池、帧账、它 claim 的目标。
-  类型名仍是 `RenderFrameExecutor`（公开契约，`ADR-2026-11-16` 的词汇表）；一个驱动者**至多**present 到一个窗口
-  （窗口是它的目标，不是它的身份）。
-- **为什么需要点名**：`gfx_backend_vsg` 的 `api::WindowSession` 是**一个窗口一个设备一个交换链**
-  （`WindowSession.hpp`），而**收集/编译/执行**这条帧管线在 `VsgBackend::Data` 里是**设备级单例**
-  （`recorder` / `compiler` / `arena` / `facts` / `packets` / `frame` / `driving`，见
-  `VsgBackend.cpp:444`–`534`）。也就是说：**vsg 的"会话"是窗口会话，不是帧驱动者**——ADR 说"vsg 更接近"
-  只对了一半。这条更正决定了迁移的分工：vsg 要搬的是**收集暂存**，不是交换链。
-- **边界**：窗口仍然是"一个平台表面一个活交换链"；会话可以没有窗口（离屏），此时它 present 到无。
+### 2.2 Shareable = immutable; not shareable = has a layout or is written inside a frame (`G1` / `G4`)
 
-### 2.2 共享面 = 不可变；非共享面 = 有 layout 或有帧内写入（`G1` / `G4`）
-
-| 归类 | 判据（一句话可判） | 例子（vk） |
+| Category | Criterion (one sentence decides it) | Example (vk) |
 |---|---|---|
-| 可共享 | 键含 revision，且发布后**不再改写** | 程序模块、管线、几何流、纹理、采样器、布局 |
-| 不可共享 | 在一个帧的生命周期内**被写** | 命令池、栅栏、常量环、描述符池、目标附件、交换链 |
+| shareable | the key carries a revision and it is **never rewritten** after publication | program modules, pipelines, geometry streams, textures, samplers, layouts |
+| not shareable | it is **written** during a frame's lifetime | command pools, fences, constant rings, descriptor pools, target attachments, swap chains |
 
-不可共享的东西一律**按会话各一份**，所以它们不需要锁：所有权把并发变成了"两条线程碰不到同一块内存"。
+Everything not shareable is **one copy per session**, so it needs no lock: ownership turns concurrency into "two threads never touch the same memory".
 
-### 2.3 帧首快照：缓存只在帧首读一次，记录路径零锁（`G10`）
+### 2.3 Frame-head snapshot: the caches are read once at the frame head, and the recording path takes no lock (`G10`)
 
-- **是什么**：一帧开始时，会话持设备缓存的**独占锁一次**，把这一帧**将要用的身份**（帧值本来就列出了
-  它们：每个 `RenderCommand` 的 geometry / program / material 描述、每个 pass 的目标）解析成
-  **会话本地的表**（`FrameSnapshot`：身份 → 句柄 + 状态）。记录时只读会话自己的表，**不再碰设备缓存**。
-- **为什么不能"每次查表加读锁"**：一帧 2000 draw，`std::shared_mutex` 一次读锁按 20–40 ns 算是
-  40–80 µs，占本机宿主侧帧时间（~0.9 ms）的 5–9%，而这笔钱买到的只是"读一个没人写的表"——`G10` 的
-  典型浪费，也是 `D2` 被否决的同一个理由。
-- **为什么快照不贵**：快照的开销是 O(本帧身份数)，不是 O(缓存)；稳态下它只做哈希查找，没有分配
-  （表按上一次的大小预留）。
-- **为什么快照取的是独占锁而不是读锁**：快照**会写**（miss 时要发布 `Uploading`），而
-  `std::shared_mutex` 不能升级；"先读锁扫一遍、放掉、再独占锁扫一遍"是两次遍历两把锁两个
-  竞争窗口（`G3`：一趟能说清的流程不拆两趟）。每帧一次独占锁的代价是两个会话的快照串行 ~50 ns，
-  占帧预算的十万分之一；这个数字比"读锁状态机"宾服得多。
-- **边界：miss 仍要锁。** 快照里状态为 `Absent` 的条目要在帧内建：建**必须在独占锁下**把条目以
-  `Uploading(owner, token)` 发布出去（§2.4），并把句柄记回会话本地的表。所以"零锁"的准确说法是：
-  **记录路径零锁；帧首一次**。后者是本节开头写的那一次，前者是它的结果——两个数字要分开说，别把它们並成
-  “稳态帧 0 次”（那是记录路径的说法，不是整帧的说法）。
-- **形状**：`ContentCaches` 的一把锁在**帧首**取一次，`planDraw`（两个重载） /
-  `resolveTextures` 把结果**按值**交给驱动者（`FrameHead`：每调用一个 `FrameHead::DrawPlan`，帧级纹理/采样器事实挂 head），纹理上传也在帧首录进帧命令缓冲；
-  `record` / `recordScreen` 只读这些值。一整帧的获取数固定为 **4**（帧首 1 + 帧首/帧尾数簿各 1 + `endFrame` 1），
-  **不随 draw 数增长**（`VkFrameHeadTest`）。
-- **vsg 的形状**：同一原则落在 vsg 的两段上。**帧首**（`openFrameHead`）在一次性内容锁下解析
-  pass 编号 / 目标 / 采样目标 / 内容跟踪 / 目标事实表 / 存储增长并记录上传基线；**收集与计划编译**只读会话 scratch，
-  不取设备锁；**内容相**再分两段：**解析**（`resolveContent`，内容锁下一次）把 halves / declared sets / stream
-  bind / 材质槽 / 纹理视图 / 块偏移 / pipeline 身份写成驱动者 `FrameHead` 的**值**，**录制**（`FrameHead::record`）只读这些
-  值、不取设备锁，**提交**（`executor.record` + 清扫 + 会话提交）再取一次锁。与 vk 的差别只剩形状（vsg 的“值”是一组 vsg
-  节点 + 偏移，vk 的是一组 `FrameHead::DrawPlan`），`C3` 对 vsg 成立（见 §3.1.9）。
-- **记录也按驱动者归属**：纹理上传的 staging 与被替换的图像按 `ContentImages::BatchId`（= `clock_window + 1`）
-  分组，帧尾只释放**自己**那一批；被替换的图像本身 park 到水位——另一个驱动者的在飞帧可能还拿着旧 view。
-- **管线是例外，但它本来就在 miss 上**：管线键含状态（拓扑 / 混合 / 深度），状态是每命令解析的，
-  帧首算不出来——但管线表只在**创建**时写，创建本身就是 ms 级 miss，取一次独占锁不影响结论。
+- **What it is**: at the start of a frame the session takes the device caches' **exclusive lock once** and resolves the identities this frame will use — the frame value already
+  lists them: each `RenderCommand`'s geometry / program / material description and each pass' target — into **session-local tables** (`FrameSnapshot`: identity → handle +
+  state). Recording then reads only the session's own tables and **never touches the device caches again**.
+- **Why not "take a read lock per lookup"**: a 2000-draw frame at 20–40 ns per `std::shared_mutex` read lock is 40–80 µs, 5–9% of this machine's host-side frame time
+  (~0.9 ms), and all that buys is "reading a table nobody writes" — `G10`'s textbook waste, and the same reason `D2` was rejected.
+- **Why the snapshot is not expensive**: its cost is O(identities in this frame), not O(the cache); in the steady state it only does hash lookups and allocates nothing
+  (the tables are reserved at the previous size).
+- **Why the snapshot takes the exclusive lock rather than a read lock**: a snapshot **writes** (a miss publishes `Uploading`), and `std::shared_mutex` cannot be upgraded;
+  "scan under a read lock, drop it, scan again under the exclusive lock" is two traversals, two locks and two race windows (`G3`: a flow that reads in one pass is not split
+  into two). One exclusive lock per frame costs two sessions' snapshots ~50 ns of serialisation, a hundred-thousandth of the frame budget — far cheaper than a read-lock state
+  machine.
+- **Boundary: a miss still takes the lock.** An entry whose state is `Absent` has to be built inside the frame: building **must** publish the entry as `Uploading(owner, token)`
+  under the exclusive lock (§2.4) and record the handle back into the session-local table. So "no lock" means exactly: **no lock on the recording path; one at the frame head**.
+  The latter is the one at the start of this section and the former is its consequence — the two numbers are stated separately, never merged into "a steady-state frame takes
+  0" (that is the recording path's claim, not the whole frame's).
+- **Shape**: one `ContentCaches` lock is taken **at the frame head**, and `planDraw` (both overloads) / `resolveTextures` hand the result **by value** to the driver
+  (`FrameHead`: one `FrameHead::DrawPlan` per draw call, with the frame-level texture / sampler facts hanging off the head); texture uploads are recorded into the frame's
+  command buffer at the frame head as well; `record` / `recordScreen` read only those values. A whole frame's acquisition count is a constant **4** (1 at the frame head +
+  1 each for the frame head's and the frame tail's bookkeeping + 1 in `endFrame`) and **does not grow with the draw count** (`VkFrameHeadTest`).
+- **vsg's shape**: the same principle lands on vsg's two halves. The **frame head** (`openFrameHead`) resolves, under one content lock, the pass numbering / targets /
+  sampled targets / content tracking / target fact tables / storage growth and records the upload baseline; **collection and plan compilation** read only the session scratch
+  and take no device lock; the **content phase** is split again: **resolution** (`resolveContent`, one content lock) writes halves / declared sets / stream bind / material
+  slot / texture view / block offset / pipeline identity as the driver `FrameHead`'s **values**, **recording** (`FrameHead::record`) only reads those values and takes no
+  device lock, and **submission** (`executor.record` + sweep + session submit) takes the lock once more. What remains of the difference from vk is shape (vsg's "values" are a
+  group of vsg nodes + offsets, vk's are a group of `FrameHead::DrawPlan`s), and `C3` holds for vsg (see §3.1.9).
+- **Recording is owned per driver too**: texture-upload staging and replaced images are grouped by `ContentImages::BatchId` (= `clock_window + 1`), and the frame tail
+  releases **only its own** batch; a replaced image is parked to the watermark, because another driver's in-flight frame may still hold the old view.
+- **Pipelines are the exception, and they were always on a miss**: a pipeline key includes state (topology / blend / depth), state is resolved per command, and the frame head
+  cannot compute it — but the pipeline table is written only on **creation**, which is an ms-scale miss anyway, so one exclusive lock there does not change the conclusion.
 
-### 2.4 驻留三态：发布或撤回，竞争即复制（`G3` / `G4`）
+### 2.4 Residency's three states: publish or withdraw, and a race means a copy (`G3` / `G4`)
 
 ```
-Absent ──帧首 miss，claim 赢得──▶ Uploading(owner, token)
-                                   │  owner 的帧完成（今天：executeFrame 返回已 wait 过栅栏）
-                                   ├──▶ Resident          （发布：FrameBuilds::publishAll）
-                                   └──▶ Absent            （撤回：填充失败/帧失败，由守卫完成）
-Resident ──releaseContent──▶ Retiring(epoch) ──设备水位 ≥ epoch──▶ 释放
+Absent ──frame-head miss, claim won──▶ Uploading(owner, token)
+                                   │  the owner's frame completes (today: executeFrame returns after the fence was waited)
+                                   ├──▶ Resident          (publish: FrameBuilds::publishAll)
+                                   └──▶ Absent            (withdraw: the fill or the frame failed, done by the guard)
+Resident ──releaseContent──▶ Retiring(epoch) ──device watermark ≥ epoch──▶ release
 ```
 
-三条规则（缺一条都不成立）：
+Three rules, and it does not hold without any one of them:
 
-1. **一个键只有一个发布者**：发布用 compare-and-set（`Absent → Uploading(me)`），输的一方**不发布**。
-2. **`Resident` 只在填充可证明完成之后发布**：今天是"这一帧的栅栏已经 wait 过"；**预热（`prepareFrame`）的发布点就是
-   它那次只含传输的提交返回**（`ADR-2026-11-14-prepare-may-submit-transfers.md`）；多帧在飞之后是"退休队列说
-   那一帧完成"——同一个信号（§2.6）。
-3. **发布或撤回，二者必居其一**：owner 在帧尾用作用域守卫把本帧建的条目**全部**置为 `Resident` 或
-   全部置回 `Absent`。没有第三条路——挂在 `Uploading` 的条目会让**所有**会话永远 miss（`P1`）。
+1. **One key has one publisher**: publication is a compare-and-set (`Absent → Uploading(me)`), and the loser **does not publish**.
+2. **`Resident` is published only once the fill is provably complete**: today that is "this frame's fence has been waited on"; **preparation's (`prepareFrame`) publication point
+   is the return of its transfer-only submission** (`ADR-2026-11-14-prepare-may-submit-transfers.md`); with several frames in flight it is "the retirement queue says that
+   frame completed" — the same signal (§2.6).
+3. **Publish or withdraw, one of the two**: at the frame tail the owner sets **every** entry this frame built to `Resident` or every one back to `Absent`, through a scope
+   guard. There is no third way — an entry stuck in `Uploading` makes **every** session miss for ever (`P1`).
 
-竞争（另一个会话在帧首看到 `Uploading`）：**建一份不发布的临时副本**，本次帧用完即弃。
-`P2` 说明为什么不是"等"：等待是唯一能把两个会话**互相锁死**的形状；复制是有界的（每个身份至多
-`N−1` 份，且只在"两个引擎第一次同时画它"的那一帧）。`prepare()` 在加载期就把它做掉了，真实宿主通常
-一次都碰不到。
+A race (another session sees `Uploading` at its frame head): **build an unpublished temporary copy** and discard it when this frame ends.
+`P2` explains why this is not "wait": waiting is the one shape that can lock two sessions **against each other**; copying is bounded (at most `N−1` copies per identity,
+and only in the frame where two engines first draw it at the same time). `prepare()` does it during loading, so a real host usually never hits it.
 
-**三条规则由类型与接线强制**：`ContentCaches::ensureGeometry` + `ContentCaches::FrameBuilds` 强制，
-而不是靠调用点自觉。帧首问表、按答案分流（`Use` 用缓存条目并补上释放打出的洞 / `Build` 填充并留下 claim /
-`Copy` 建本帧专用副本）；`publishAll()` 只在帧栅栏 wait 过后发布本帧持有的 claim，失败的填充从不登记、由守卫退回 `Absent`；
-析构把未发出的 claim 与副本一并收拾。两个驱动者的**帧首解析**仍在缓存的一把锁上（`C3` 管的是记录路径），
-接线决定的是"谁能建、谁复制"。
+**The three rules are enforced by the types and the wiring** — `ContentCaches::ensureGeometry` + `ContentCaches::FrameBuilds` — not by call sites remembering them. The
+frame head asks the table and dispatches on the answer (`Use` takes the cached entry and fills the hole a release punched / `Build` fills and leaves a claim / `Copy` builds
+this frame's own copy); `publishAll()` publishes this frame's claims only after the frame fence was waited on, a failed fill is never registered and the guard returns it to
+`Absent`, and the destructor collects unpublished claims and copies together. Two drivers' **frame-head resolution** still sits on the caches' one lock (`C3` is about the
+recording path); what the wiring decides is "who may build and who copies".
 
-### 2.5 目标 claim：一帧一 claim，冲突只跳过那个 pass（`G6`）
+### 2.5 Target claims: one claim per frame, a conflict skips only that pass (`G6`)
 
-- **是什么**：设备持一张 `TargetTable`（`RenderTarget*` → `FrameDriverId`）。帧首对**本帧要画的目标集合**
-  逐个 try-claim；冲突的目标**不 claim**，用它的那个 pass **跳过**并报一条（按 `(目标, episode)` 去重）。
-- **为什么按 pass 而不是按帧**：一帧里其余的 pass 与冲突目标无关，整帧失败会放大一次局部冲突
-  （`G7`：把复杂性吸收在局部）。
-- **为什么不是新失败形态**：既有语义里已经有"这个设备建不起这个目标 ⇒ 报一次并跳过它的 pass"；claim
-  冲突走同一条报告路径、同一个 category（`G6`）。
-- **边界**：窗口目标不需要 claim——一个窗口只属于一个会话（`WindowOccupied` / foreign target 已在）。
-  claim 在**帧尾全部释放**；注意力放在 `P3`：任何提前返回都必须经过同一个释放点。
-- **重建与 claim 的关系**：目标的重建（resize / repair）**只能由持有 claim 的会话做**；另一个会话看到
-  的是"这一帧跳过"，而不是"重建到一半的图像"。
+- **What it is**: the device holds a `TargetTable` (`RenderTarget*` → `FrameDriverId`). At the frame head each target in **this frame's set** is try-claimed; a conflicting
+  target is **not claimed**, the pass that would use it is **skipped**, and one report is made (deduplicated by `(target, episode)`).
+- **Why per pass rather than per frame**: the frame's other passes have nothing to do with the conflicting target, and failing the whole frame would amplify a local conflict
+  (`G7`: absorb the complexity locally).
+- **Why it is not a new failure shape**: the existing semantics already have "the device cannot build this target ⇒ report once and skip its pass"; a claim conflict goes
+  through the same report path and the same category (`G6`).
+- **Boundary**: a window target needs no claim — a window belongs to one session (`WindowOccupied` / a foreign target is already there). Claims are all released **at the
+  frame tail**; the attention goes to `P3`: any early return must pass through that one release point.
+- **Rebuild and claims**: a target's rebuild (resize / repair) **may only be done by the session holding the claim**; the other session sees "this frame skips it", not "an image
+  half rebuilt".
 
-### 2.6 跨会话退休：复用 `DeviceClock` + `RetirementQueue`，不新造（`G6` / `G9`）
+### 2.6 Cross-session retirement: reuse `DeviceClock` + `RetirementQueue`, invent nothing (`G6` / `G9`)
 
-- **是什么**：vk 目前"`executeFrame` 内部 wait ⇒ 下一帧之前一切都可以立即销毁"，所以 `releaseContent`
-  只能在帧之间调用。两个会话之后"帧之间"不再是一个时刻，需要**设备水位**。
-- **复用哪个**：`backend/DeviceClock.hpp` 已经是"每个窗口报自己的完成证据，设备水位取**最小值**"，
-  `backend/RetirementQueue.hpp` 已经是"park + 到点释放"，且两者 **vsg 已经在用**（`d->clock` /
-  `d->retirement`，由每个会话借用）。vk 采用它们 = 让两个后端共用同一套完成证据（`G6`），而不是在 vk
-  里再造一个计数器（`G7`）。
-- **谁是谁**：**一个帧驱动者就是一个 clock window**（`DeviceClock` 发的就是 `graphics::FrameDriverId`，u32；
-  离屏会话也注册一个）。三个拼写已统一到它：`DeviceClock::WindowId` 只留一版 `@deprecated` 别名。
-- **释放的语义**：`releaseContent` / `releaseRenderTarget` 记下**当时每个会话的 `submitted`**，设备水位
-  越过它才真正销毁；因此这两个动词**可以在别的会话正在 frame 时调用**。这条路 `RenderDevice.hpp:302`-
-  `308` 的契约文本**已经写好了**（"a device that retires asynchronously parks the free until every session
-  is past it"）——本文只是把 vk 变成那个设备。
-- **线程**：`DeviceClock` 与 `RetirementQueue` 的契约是“调用方负责串行，多线程设备自己提供锁”（`P4`）。
-  锁放在**设备**（`Impl::clock_mutex`），不放进两个 SDK 值类型：参考后端（vsg）是单线程，
-  给它加锁是没有消费者的机制（`G8`）。所有拿 `clock.timeline()` 引用的地方都在锁内，引用不离开临界区。
-- **多开帧**：`FrameTimeline` 是“每个驱动者一个”而不是“一个开着的帧槽”：`begin()` 每次铸造新号，
-  `submitted`/`abandoned` 按 token 关闭。否则第二个驱动者会拿到第一个的 token，两帧在水位比较里塌成一帧。
-- **释放是两件事**：缓存表**立刻**忘掉条目（驻留账的 `progress().streams_live` 立即下降，下一帧重传），
-  GPU 对象则在退役队列里等设备水位——一个 slot 时是 `submitted + 2`，即最多两帧后才销毁。观察点是
-  `Device::retirementNumbers()`（`pending` / `released` / `device_waits`），不是驻留账；这两帧不是缺陷，
-  它是“slot 已被回收”这份证据的代价，也是多会话下不可少的保守性。
-### 2.7 读回是设备的动词，不是会话的（`G4` / `G6`）
+- **What it is**: vk today waits inside `executeFrame`, so "everything before the next frame can be destroyed at once" and `releaseContent` may only be called between
+  frames. With two sessions "between frames" is no longer one instant, and a **device watermark** is needed.
+- **What is reused**: `backend/DeviceClock.hpp` is already "each window reports its own completion evidence, and the device watermark is the **minimum**", and
+  `backend/RetirementQueue.hpp` is already "park + release when due"; **vsg already uses both** (`d->clock` / `d->retirement`, borrowed per session). vk adopting them means the
+  two backends share one completion evidence (`G6`) instead of vk growing a second counter (`G7`).
+- **Who is who**: **a frame driver is a clock window** (what `DeviceClock` issues is a `graphics::FrameDriverId`, a u32; an offscreen session registers one too). The three
+  spellings are already unified on it: `DeviceClock::WindowId` survives only as one `@deprecated` alias.
+- **What release means**: `releaseContent` / `releaseRenderTarget` record **each session's `submitted`** at the time of the call, and the object is destroyed only once the
+  device watermark passes it; so those two verbs **may be called while another session is framing**. The contract text at `RenderDevice.hpp:302`–`308` already says exactly
+  this ("a device that retires asynchronously parks the free until every session is past it") — this page only makes vk such a device.
+- **Threads**: `DeviceClock` and `RetirementQueue` are contracted as "the caller serialises; a multi-threaded device supplies its own lock" (`P4`). The lock lives on the
+  **device** (`Impl::clock_mutex`), not inside the two SDK value types: the reference backend (vsg) is single-threaded, and a lock there would be a mechanism with no consumer
+  (`G8`). Every place that takes a `clock.timeline()` reference is inside the lock, and the reference does not leave the critical section.
+- **Several open frames**: `FrameTimeline` is "one per driver", not "one open frame slot": `begin()` mints a new number each time and `submitted` / `abandoned` close it by token.
+  Otherwise the second driver would get the first one's token and the two frames would collapse into one in the watermark comparison.
+- **Release is two things**: the cache table **forgets the entry at once** (the residency account's `progress().streams_live` drops immediately and the next frame uploads
+  again), while the GPU object waits in the retirement queue for the device watermark — with one slot that is `submitted + 2`, i.e. destroyed at most two frames later. The
+  observation point is `Device::retirementNumbers()` (`pending` / `released` / `device_waits`), not the residency account; those two frames are not a defect, they are the
+  price of the evidence "the slot has been reclaimed", and a conservatism that several sessions cannot do without.
 
-- **问题**：今天读回借的是帧的 `command_pool` + `completion` 栅栏（ADR "挡路的事实"第 2 条）。会话化之后
-  它不能借任何一个会话的——那会让读回和那个会话的帧互相等。
-- **做法**：读回有**自己的**池与栅栏（设备级、一把锁护住"同一时刻一次读回"），并在拷贝前**等设备水位**
-  （每个会话 `submitted` 都完成）。这正是 vsg 今天做的（`readColorBuffer` 里对**每个窗口**
-  `waitDeviceIdle`，并把它计入 `deviceWaits()`），vk 走同一条路（`G6`）。
-- **为什么诚实**：读回读的是"已经完成的东西"，不是"某个会话刚提交的东西"；等水位是把这句话变成机制，
-  而不是把"一帧在飞"当成隐含前提。
+### 2.7 Readback is the device's verb, not a session's (`G4` / `G6`)
 
-### 2.8 会话的接口形状：借出一个执行器，设备拥有它（`G4` / `G8`）
+- **The problem**: readback today borrows the frame's `command_pool` + `completion` fence (the ADR's "the fact that blocks" item 2). Once sessions exist it may borrow no
+  session's — that would make readback and that session's frame wait for each other.
+- **What is done**: readback has **its own** pool and fence (device-level, one lock guarding "one readback at a time") and **waits for the device watermark** (every session's
+  `submitted` completed) before copying. This is exactly what vsg does today (`waitDeviceIdle` for **every window** inside `readColorBuffer`, counted in `deviceWaits()`), and vk
+  takes the same path (`G6`).
+- **Why it is honest**: readback reads "what has already completed", not "what some session just submitted"; waiting for the watermark turns that sentence into a mechanism
+  instead of making "a frame in flight" an implicit premise.
+
+### 2.8 The shape of a session's interface: the device lends an executor it owns (`G4` / `G8`)
 
 ```cpp
 // RenderDevice
-virtual RenderFrameExecutor* createSession();                 // 默认：return &executor();（一个设备一个会话）
-virtual void                 releaseSession(RenderFrameExecutor& session);  // 默认：no-op
-// RenderFrameExecutor（新增一个可选项，不是要求）
-virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program);  // 默认：no-op
+virtual RenderFrameExecutor* createSession();                 // default: return &executor(); (one session per device)
+virtual void                 releaseSession(RenderFrameExecutor& session);  // default: no-op
+// RenderFrameExecutor (one new optional entry point, not a requirement)
+virtual void setDefaultContentProgram(intrusive_ptr<const ShaderProgram> program);  // default: no-op
 ```
 
-- **默认实现就是"今天"**：`createSession()` 默认返回 `&executor()`，所以**已有后端与所有用例一字不改**；
-  只有 vk 与 vsg 覆写它。这让"并发会话"成为一个**接缝**而不是一次全仓改造（`G9`），也不给第三个后端
-  强加它今天不需要的形状（`G8`）。
-- **所有权**：**设备拥有会话**；`createSession()` 借出一个引用，契约是"直到 `releaseSession` 或设备
-  `shutdown()`"。引擎在 `setDevice` 时创建、在换设备/析构时释放。`shutdown()` 之后引擎再 frame，先问
-  `initialized()`（已经如此）并报"设备没起来"，**不解引用**那个引用——`RenderDevice` 已有的
-  "the creator guarantees no frame in flight" 是同一条时序保证（`P5`）。
-- **默认内容程序归会话，且它的声明要**从 `RenderDevice` 移到 `RenderFrameExecutor`**。程序是引擎给的
-  （`RenderEngine` 的 `forwardProgram()`），它着色的是**帧**，解析发生在记录时——所以它是会话的设置。
-  vsg 早就这么建模了（`FrameRecorder::setDefaultContentProgram` 是**记录器**的，设备级字段只是它喂给
-  记录器的来源）。**移声明的第二个理由是实现层的**：`RenderBackend` 同时继承 `RenderDevice` 与
-  `RenderFrameExecutor`，两处同名同签名的 virtual 会让 `backend->setDefaultContentProgram(...)` 变成
-  二义调用（`G4`：接口不能要求调用方写限定名）。
-  `Device` 覆写它并转发给**设备自己的会话**，所以直接驱动设备的调用方（`test_vk`）行为不变；
-  `RenderEngine` 在 `setDevice` 里对**自己的会话**宣布。
-- **窗口**：`createSurfaceTarget` 留在设备上（一个平台表面不是会话的财产）；**第一个** claim 它的会话成为
-  它的主人，第二个会话拿到现有的"foreign target"拒绝。不需要新参数。
+- **The default implementation is "today"**: `createSession()` returns `&executor()` by default, so **existing backends and every case change not one line**; only vk and vsg
+  override it. That makes "concurrent sessions" a **seam** rather than a repository-wide rewrite (`G9`), and does not force a shape a third backend does not need today (`G8`).
+- **Ownership**: **the device owns the session**; `createSession()` lends a reference, contracted as "until `releaseSession` or the device's `shutdown()`". An engine creates one
+  in `setDevice` and releases it when the device changes or it is destroyed. An engine that frames after `shutdown()` asks `initialized()` first (as it already does) and
+  reports "the device is not up", **without dereferencing** the reference — `RenderDevice`'s existing "the creator guarantees no frame in flight" is the same ordering
+  guarantee (`P5`).
+- **The default content program belongs to the session, and its declaration moves** from `RenderDevice` to `RenderFrameExecutor`. The program is the engine's
+  (`RenderEngine::forwardProgram()`), it shades a **frame**, and resolution happens at record time — so it is a session setting. vsg has modelled it that way for a while
+  (`FrameRecorder::setDefaultContentProgram` belongs to the **recorder**, and the device-level field is only what feeds it). **The second reason to move the declaration is
+  the implementation**: `RenderBackend` inherits both `RenderDevice` and `RenderFrameExecutor`, and two virtuals with the same name and signature would make
+  `backend->setDefaultContentProgram(...)` ambiguous (`G4`: an interface must not require the caller to write a qualified name). `Device` overrides it and forwards to **its
+  own session**, so a caller driving the device directly (`test_vk`) behaves unchanged; `RenderEngine` declares it on **its own session** inside `setDevice`.
+- **Windows**: `createSurfaceTarget` stays on the device (a platform surface is not a session's property); the **first** session to claim it becomes its owner, and a second
+  session gets the existing "foreign target" refusal. No new parameter is needed.
 
-### 2.9 两个后端的形状差异（`G5` / `G10`）
+### 2.9 How the two backends differ in shape (`G5` / `G10`)
 
-| | vk（`gfx_backend_vk`） | vsg（`gfx_backend_vsg`） |
+| | vk (`gfx_backend_vk`) | vsg (`gfx_backend_vsg`) |
 |---|---|---|
-| 帧机器在哪 | 会话的 `FrameDriver`：`command_pool` / `completion` / 时间戳池 / `Books` / `FrameGate` | 命令图/提交在每个窗口（`api::WindowSession` 持 `vsg::Viewer`）；收集暂存在会话的 `FrameScratch`（arena / recorder / compiler / facts / 输入表 / packets / frame），窗口与离屏会话各持一份 |
-| 帧暂存在哪 | `ContentCaches`（设备）持 programs / geometries / pipelines / 布局 / 图像；`FrameScratch`（会话）持环 / 描述符池 / set 表 / `frame_index`；`ContentDraw` 只剩“把一条 draw 变成命令”的记录器 | `BlockStorage`（每帧 slab 轮转）+ `ContentAssembly` 的 `beginFrame` 清扫（设备缓存，帧首快照后只读）；设备闸两侧化、`FrameDrive`、`FrameHead`（每驱动一份的值）+ 三相位（解析持锁 / 录制无锁 / 提交持锁） |
-| 完成证据 | `DeviceClock` + `RetirementQueue`（与 vsg 同一套） | `d->clock` / `d->retirement`，由会话借用 |
+| where the frame machinery is | the session's `FrameDriver`: `command_pool` / `completion` / timestamp pool / `Books` / `FrameGate` | the command graph and submission per window (`api::WindowSession` holds the `vsg::Viewer`); the collection scratch on the session's `FrameScratch` (arena / recorder / compiler / facts / input tables / packets / frame), one copy per window and offscreen session |
+| where the frame scratch is | `ContentCaches` (the device) holds programs / geometries / pipelines / layouts / images; `FrameScratch` (the session) holds the ring / descriptor pool / set tables / `frame_index`; `ContentDraw` is only the recorder that turns one draw into commands | `BlockStorage` (a slab rotation per frame) + `ContentAssembly::beginFrame`'s sweep (device cache, read-only after the frame-head snapshot); the device gate split into two sides, `FrameDrive`, `FrameHead` (the values, one per driver) + the three phases (resolution takes the lock / recording takes none / submission takes it) |
+| completion evidence | `DeviceClock` + `RetirementQueue` (the same pair vsg uses) | `d->clock` / `d->retirement`, borrowed per session |
 
-**两个后端走同一条路**：会话各持帧机器与帧暂存，设备持内容缓存与目标，帧首解析成会话本地的值；
-差别只在完成证据的来源（vk 新采用 `DeviceClock`，vsg 一直在用）。
+**Both backends walk the same path**: each session holds its own frame machinery and frame scratch, the device holds the content caches and the targets, and the frame head
+resolves them into session-local values; the only difference is where the completion evidence comes from (vk adopts `DeviceClock`, vsg always used it).
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | 会话类型与创建 | 设备拥有会话；`createSession()` 借出，默认答 `&executor()` | 已落地：SDK 默认接缝 + 引擎持有；vk 多发驱动者（各自命令池/栅栏/暂存/默认程序），**帧体真并行**，窗口帧独占体闸 |
-| F2 | 每会话帧机器 | 命令池 / 栅栏 / 时间戳池 / 帧账 / 帧闸按会话各一份 | 已落地：`Device::FrameDriver` 拥有帧机器与帧体，`Device` 只转发 |
-| F3 | 设备缓存 + 帧首快照 | 缓存只在帧首读一次，记录路径零锁 | 已落地：`ContentCaches` / `FrameScratch` 分家；计划按值；观察点 `contentCacheCounters().cache_lock_acquisitions`（整帧固定 4 次） |
-| F4 | 驻留三态 | `Absent → Uploading → Resident`，发布或撤回，竞争即复制 | 已落地：状态机 + `ensureGeometry` 问表（`Use`/`Build`/`Copy`），`FrameBuilds` 在帧完成时发布、竞争的帧建临时副本、失败与释放各有归属（见 §3.1.4） |
-| F5 | 目标 claim | 一帧一 claim，冲突只跳过那个 pass | 已落地：`TargetTable` 租约 + 帧/预热接线；两会话冲突真的会发生（只跳该 pass，报 `vk.target.claim_conflict`） |
-| F6 | 跨会话退休 | vk 采用 `DeviceClock` + `RetirementQueue`；释放可在别人 frame 时调用 | 已落地：时钟 / park 队列 / 水位 / 开帧规则都在树上；释放不等帧（R6） |
-| F7 | 设备级读回 | 自己的池与栅栏，拷贝前等设备水位，计入 `deviceWaits()` | 已落地：`ReadbackStaging` 自带命令池与栅栏；等待 = 体闸的"帧之间"，每次读回计一次 `deviceWaits()`；帧体内调用答 `Failed`（见 §3.1.7） |
-| F8 | 默认内容程序归会话 | 会话上可设；设备级只服务直接调用方；单会话后端行为不变 | 已落地：声明在 `RenderFrameExecutor`；vk 的每个 `FrameDriver` 各持一份，两驱动者各画各的（T8 用例） |
-| F9 | vsg 的对应落地 | 收集暂存搬进会话；缓存加锁/快照；完成证据已有 | 已落地：收集暂存在会话（`FrameScratch`）；执行器帧状态归驱动（`VsgDriver` + 每驱动默认程序）；帧首快照 + 内容锁 + 设备闸两侧化；记录路径零锁（`FrameHead`） |
-| F10 | 契约与文档收口 | `C21` / `N18` 改写、三处头文件文本、ADR 状态、审计行 | 已落地：`C21` / `R18` / `N18` 是"帧按会话并发"；`RenderDevice` / `RenderFrameExecutor` / vk `Device` 的线程段同步 |
+| F1 | Session type and creation | the device owns sessions; `createSession()` lends one and answers `&executor()` by default | landed: the SDK's default seam + the engine holding it; vk has several drivers (each with its own command pool / fence / scratch / default program), **frame bodies really run in parallel**, and a window frame takes the body gate exclusively |
+| F2 | Per-session frame machinery | command pool / fence / timestamp pool / frame books / frame gate, one per session | landed: `Device::FrameDriver` owns the frame machinery and the frame body, and `Device` only forwards |
+| F3 | Device caches + frame-head snapshot | the caches are read once at the frame head; the recording path takes no lock | landed: `ContentCaches` / `FrameScratch` are separate; plans go by value; the observation point is `contentCacheCounters().cache_lock_acquisitions` (a constant 4 per frame) |
+| F4 | Residency's three states | `Absent → Uploading → Resident`, publish or withdraw, a race means a copy | landed: the state machine + `ensureGeometry` asking the table (`Use`/`Build`/`Copy`); `FrameBuilds` publishes when the frame completes, a racing frame builds a temporary copy, and failure and release each have an owner (see §3.1.4) |
+| F5 | Target claims | one claim per frame; a conflict skips only that pass | landed: the `TargetTable` lease + the frame/preparation wiring; a conflict between two sessions really happens (that pass alone is skipped, reported as `vk.target.claim_conflict`) |
+| F6 | Cross-session retirement | vk adopts `DeviceClock` + `RetirementQueue`; a release may be called while another session frames | landed: the clock / the park queue / the watermark / the open-frame rule are all in the tree; release does not wait for a frame (R6) |
+| F7 | Device-level readback | its own pool and fence, waits for the device watermark before copying, counted in `deviceWaits()` | landed: `ReadbackStaging` carries its own command pool and fence; the wait is the body gate's "between frames", and each readback counts one `deviceWaits()`; a call from inside a frame body answers `Failed` (see §3.1.7) |
+| F8 | The default content program belongs to the session | settable on a session; the device level serves direct callers only; single-session backends behave unchanged | landed: the declaration is on `RenderFrameExecutor`; each of vk's `FrameDriver`s holds its own, and two drivers each draw with their own (the T8 case) |
+| F9 | vsg's corresponding shape | the collection scratch moves into the session; the caches get a lock and a snapshot; the completion evidence is already there | landed: the collection scratch is on the session (`FrameScratch`); the executor's frame state belongs to the driver (`VsgDriver` + a per-driver default program); frame-head snapshot + content lock + the device gate split into two sides; the recording path takes no lock (`FrameHead`) |
+| F10 | Closing out the contract and the docs | `C21` / `N18` rewritten, three headers' text, the ADR's status, the audit rows | landed: `C21` / `R18` / `N18` say "frames are concurrent per session"; the threading sections of `RenderDevice` / `RenderFrameExecutor` / vk's `Device` agree |
 
-### 3.1.1 F1 会话类型与创建
+### 3.1.1 F1 Session type and creation
 
-- **行为**：`RenderDevice::createSession()` 默认 `return &executor();`；vk / vsg 覆写为"造一个会话"。
-  `releaseSession(RenderFrameExecutor&)` 默认 no-op。`RenderEngine` 持 `RenderFrameExecutor*`，
-  `setDevice` 创建、换设备/析构释放。
-- **约束**（C1）：会话由**设备**拥有；引擎只借。
-- **要求**（R1）：`createSession()` 可以在 `initialize()` 之前调用（设备由创建者 initialize，引擎先 attach）。
-- **验收**（T1）：单会话后端（默认实现）跑完 `test_graphics`，行为零变化。
-- **注意**（N1）：`shutdown()` 不给活着的会话留悬垂——见 `P5`。
+- **Behaviour**: `RenderDevice::createSession()` returns `&executor()` by default; vk / vsg override it to "build a session". `releaseSession(RenderFrameExecutor&)` is a no-op by
+  default. `RenderEngine` holds a `RenderFrameExecutor*`, creates it in `setDevice` and releases it on a device change or destruction.
+- **Constraints** (C1): the **device** owns a session; an engine only borrows it.
+- **Requirements** (R1): `createSession()` may be called before `initialize()` (the creator initializes the device and the engine attaches first).
+- **Acceptance** (T1): a single-session backend (the default implementation) runs `test_graphics` with no behaviour change.
+- **Caveat** (N1): `shutdown()` leaves no dangling session behind — see `P5`.
 
-### 3.1.2 F2 每会话帧机器
+### 3.1.2 F2 Per-session frame machinery
 
-- **行为**：`FrameDriver` 持 `command_pool` / `completion` 栅栏 / 时间戳池 / `Books` / `FrameGate` / 自己那一组
-  `ReportOnce`；`Device::executeFrame` 变成"转发给目标会话"。
-- **约束**（C2）：帧机器**只**在会话里；设备不再有第二个 `command_pool`。
-- **要求**（R2）：`executor()` 保留，含义收窄为"设备自己的那个会话"（`G6`，与 `setDiagnosticsRoute` 同形）。
-- **验收**（T2）：`test_vk` 102 例在"只有一个会话"的树上全绿（纯搬家，行为零变化）。
-- **注意**（N2）：`PrepareReport` / `FrameReport` 都是会话的答案，设备级的那个答自己的会话。
+- **Behaviour**: `FrameDriver` holds `command_pool` / the `completion` fence / the timestamp pool / `Books` / `FrameGate` / its own set of `ReportOnce`s; `Device::executeFrame`
+  becomes "forward to the target session".
+- **Constraints** (C2): the frame machinery exists **only** in a session; the device has no second `command_pool`.
+- **Requirements** (R2): `executor()` stays, with its meaning narrowed to "the device's own session" (`G6`, the same shape as `setDiagnosticsRoute`).
+- **Acceptance** (T2): `test_vk`'s 102 cases are green on a tree with "one session only" (a pure move, zero behaviour change).
+- **Caveat** (N2): `PrepareReport` / `FrameReport` are a session's answers; the device-level one answers for its own session.
 
-### 3.1.3 F3 设备缓存 + 帧首快照
+### 3.1.3 F3 Device caches + frame-head snapshot
 
-- **行为**：`ContentCaches`（设备）持 programs / geometries / pipelines / 布局 / 图像缓存 / 分配器；
-  `FrameScratch`（会话）持环、描述符池、set 表、逐帧计数与 `FrameSnapshot`。
-- **约束**（C3）：记录路径**不得**取设备缓存的锁；一切设备缓存读发生在帧首。
-- **要求**（R3）：稳态帧的设备锁获取次数为 **0**（可观测：一个计数器 + 一条用例）。
-- **验收**（T3）：2000 draw 的一帧，锁计数为 0；有 miss 的帧锁计数 ≤ miss 数 + 1。
-- **注意**（P6）：快照漏掉一个身份 = 该 draw 帧内 miss，**正确性不受影响**，只是多取一次锁。
+- **Behaviour**: `ContentCaches` (the device) holds programs / geometries / pipelines / layouts / the image cache / the allocator; `FrameScratch` (the session) holds the ring,
+  descriptor pools, set tables, per-frame counters and the `FrameSnapshot`.
+- **Constraints** (C3): the recording path **must not** take the device caches' lock; every device-cache read happens at the frame-head snapshot.
+- **Requirements** (R3): a steady-state frame's device-cache lock acquisition count is **0** (observable: one counter + one case).
+- **Acceptance** (T3): a 2000-draw frame has a lock count of 0; a frame with misses has a count ≤ the miss count + 1.
+- **Caveat** (P6): a snapshot that misses an identity = that draw misses inside the frame; **correctness is unaffected**, it just takes the lock once more.
 
-### 3.1.4 F4 驻留三态
+### 3.1.4 F4 Residency's three states
 
-- **行为**：条目状态 `Absent` / `Uploading(owner, token)` / `Resident` / `Retiring(epoch)`；发布用
-  compare-and-set；竞争会话建临时副本；owner 帧尾**发布或撤回**。
-- **约束**（C4）：只有 `Resident` 可被非 owner 使用；`Uploading` 的条目对别人等于 `Absent` + 复制。
-- **要求**（R4）：条目不可变（键含 revision）；任何 `Uploading` 不得长期存在。
-- **验收**（T4）：两会话同时首画同一几何 ⇒ 不崩、两张图都对、上传次数 ≤ 2；变异（去掉撤回）⇒ 用例红。
-- **注意**（P1）：卡在 `Uploading` 是**全设备**的疤，不是一条 draw 的失败。
+- **Behaviour**: an entry's state is `Absent` / `Uploading(owner, token)` / `Resident` / `Retiring(epoch)`; publication is a compare-and-set; a racing session builds a
+  temporary copy; the owner **publishes or withdraws** at the frame tail.
+- **Constraints** (C4): only a `Resident` entry may be used by a non-owner; an `Uploading` entry equals `Absent` + a copy for everyone else.
+- **Requirements** (R4): entries are immutable (the key carries a revision); no `Uploading` may persist.
+- **Acceptance** (T4): two sessions first-drawing the same geometry ⇒ no crash, both pictures right, uploads ≤ 2; a mutation (removing the withdrawal) ⇒ the case goes red.
+- **Caveat** (P1): an entry stuck in `Uploading` is a **device-wide** scar, not one draw's failure.
 
-**实现形状**：状态机是 `internal/ResidenceTable.hpp`（无 Vulkan 类型），一条键一条条目：
-`admit(key, session)` 答 `Use` / `Build`（带 move-only 的 `Claim`）/ `Copy(owner)`；`Claim::publish()` 是 owner
-“填充已完成”的声明，`Claim` 析构时未决议的条目退回 `Absent`（规则 3 由类型强制，不靠调用点记得）；
-token 单调递增且不复用，所以 `forget`（`releaseContent`）之后的老 claim 不可能把条目复活。
-**接线把三条规则落到缓存上**：`ContentCaches::ensureGeometry` 先问表再上传——`Use` 用缓存条目（顺带补上
-`releaseStreams` 打出的洞），`Build` 填充缓存条目、把 `Claim` 交给本帧的 `ContentCaches::FrameBuilds`，`Copy` 在表外
-建一份**脱钩**几何只服务本帧。`FrameBuilds` 是帧作用域的值：`publishAll()` 在**帧栅栏 wait 过之后**发布可用的填充
-（失败的填充**从不登记 claim**：失败处就让守卫把它退回 `Absent`，`Resident` 不能被一次失败的填充取得），析构把未发布的 claim 撤回、把临时副本
-**立即销毁**（副本从不进表，只有本帧能命名它，而本帧已结束；它的上传计入 `stream_builds`，销毁不是释放，不计
-`stream_releases`）。预热的发布点是它那次只含传输的提交返回；`releaseGeometry` 同时 `forget` 键，`destroy` 清表。
-**边界**：两个驱动者的帧首解析仍在缓存的一把锁上（`C3` 要的是记录路径零锁）；今天 vk 的填充是主机可见
-memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——上传搬到设备本地时，发布点仍是同一个
-`publishAll`，只是证据换成栅栏。
+**The implementation shape**: the state machine is `internal/ResidenceTable.hpp` (no Vulkan type), one entry per key: `admit(key, session)` answers `Use` / `Build` (with a
+move-only `Claim`) / `Copy(owner)`; `Claim::publish()` is the owner's declaration that "the fill is complete", and an unresolved entry falls back to `Absent` when the `Claim` is
+destroyed (rule 3 is enforced by the type, not by call sites remembering it); tokens increase monotonically and are never reused, so an old claim cannot resurrect an entry
+after `forget` (`releaseContent`).
+**The wiring lands the three rules on the cache**: `ContentCaches::ensureGeometry` asks the table before uploading — `Use` takes the cached entry (filling the hole
+`releaseStreams` punched), `Build` fills the cached entry and hands the `Claim` to this frame's `ContentCaches::FrameBuilds`, and `Copy` builds a **detached** geometry outside
+the table that serves this frame only. `FrameBuilds` is a frame-scoped value: `publishAll()` publishes the fills that worked **after the frame fence was waited on** (a failed
+fill **never registers a claim**: the failure site lets the guard return it to `Absent`, so `Resident` can never be reached by a failed fill), and the destructor withdraws
+unpublished claims and destroys the temporary copies **immediately** (a copy never enters the table, only this frame could name it, and this frame is over; its upload counts in
+`stream_builds`, and destroying it is not a release, so it does not count in `stream_releases`). Preparation's publication point is the return of its transfer-only submission;
+`releaseGeometry` also `forget`s the key, and `destroy` clears the table.
+**Boundary**: two drivers' frame-head resolution still sits on the caches' one lock (`C3` asks for a lock-free recording path); vk's fill today is a host-visible memcpy, so the
+fill is provably complete when `fillStreams` returns — when uploads move to device-local memory the publication point stays the same `publishAll`, only the evidence becomes a
+fence.
 
-### 3.1.5 F5 目标 claim
+### 3.1.5 F5 Target claims
 
-- **行为**：帧首 claim 本帧目标；冲突 ⇒ 跳过那个 pass 并报一条；帧尾全部释放。
-- **约束**（C5）：一个目标同一时刻只有一个会话；claim 是**租约**，不是锁。
-- **要求**（R5）：一个目标的重建只由 claim 持有者做。
-- **验收**（T5）：两会话画同一目标 ⇒ 一个会话那个 pass 被跳过并报一条（且只一条）。
-- **注意**（P3）：任何提前返回都要经过同一个释放点（作用域守卫）。
+- **Behaviour**: the frame head claims this frame's targets; a conflict ⇒ skip that pass and report once; the frame tail releases them all.
+- **Constraints** (C5): one target has one session at a time; a claim is a **lease**, not a lock.
+- **Requirements** (R5): a target's rebuild is done by the claim holder only.
+- **Acceptance** (T5): two sessions drawing one target ⇒ one session's pass is skipped and reported once (and only once).
+- **Caveat** (P3): any early return must pass through that one release point (a scope guard).
 
-**实现形状**：`internal/TargetTable` 是一张表——map、形状/构建与 claim 书籍同属它；`lease(driver)` 发一个帧作用域的
-`Lease`，`Lease::claim(target)` 冲突时答 false，析构把本帧所有 claim 还回去（`P3` 由类型强制）；`release(target)`
-一次做完“条目离开 map + 记录交给 park”，`drain()` 一次清记录与租约。`FrameDriver::executeFrame` 与 `prepareFrame` 都在
-**`ensure` 之前** claim（重建是持有者的动词，`R5`）；冲突只跳过那个 pass，报 `vk.target.claim_conflict` **每个（目标, 情节）一条**：
-情节在本帧/本次预热无冲突地跑完时结束。窗口目标不 claim（`createSurfaceTarget` 已经保证一窗一会话）。
+**The implementation shape**: `internal/TargetTable` is one table — the map, the shape/build and the claim bookkeeping all belong to it; `lease(driver)` issues a frame-scoped
+`Lease`, `Lease::claim(target)` answers false on a conflict, and the destructor returns every claim this frame took (`P3` enforced by the type); `release(target)` does "the entry
+leaves the map + the record goes to the park" in one go, and `drain()` clears records and leases in one go. `FrameDriver::executeFrame` and `prepareFrame` both claim **before
+`ensure`** (a rebuild is the holder's verb, `R5`); a conflict skips that pass only and reports `vk.target.claim_conflict` **once per (target, episode)**, where the episode ends
+when the frame or preparation finishes without a conflict. A window target is not claimed (`createSurfaceTarget` already guarantees one window, one session).
 
-### 3.1.6 F6 跨会话退休
+### 3.1.6 F6 Cross-session retirement
 
-- **行为**：vk 采用 `DeviceClock`（会话 = clock window）+ `RetirementQueue`（设备级）；释放记 epoch，
-  水位越过才销毁。
-- **约束**（C6）：销毁只能发生在设备水位之后；不得用 `vkDeviceWaitIdle` 换正确性（`G10`：那是把代价
-  从设计挪到每帧）。
-- **要求**（R6）：`releaseContent` 在另一个会话 frame 时调用**安全且不阻塞到那一帧结束**（只 park）。
-- **验收**（T6）：释放与在飞帧重叠 ⇒ 拷贝完成前不销毁（计数器 + 一条用例）；`deviceWaits()` 不涨。
-- **注意**（P4）：`DeviceClock` / `RetirementQueue` 要各加一把小锁，取用点只在帧首/帧尾。
+- **Behaviour**: vk adopts `DeviceClock` (a session = a clock window) + `RetirementQueue` (device level); a release records an epoch, and destruction happens once the
+  watermark passes it.
+- **Constraints** (C6): destruction may only happen after the device watermark; `vkDeviceWaitIdle` must not be traded for correctness (`G10`: that moves the cost from the
+  design to every frame).
+- **Requirements** (R6): `releaseContent` called while another session is framing is **safe and does not block until that frame ends** (it only parks).
+- **Acceptance** (T6): a release overlapping an in-flight frame ⇒ nothing is destroyed before the copy completes (a counter + one case); `deviceWaits()` does not rise.
+- **Caveat** (P4): `DeviceClock` / `RetirementQueue` each need a small lock, taken only at the frame head / frame tail.
 
-### 3.1.7 F7 设备级读回
+### 3.1.7 F7 Device-level readback
 
-- **行为**：读回用自己的池与栅栏；拷贝前等设备水位；等一次记一次 `deviceWaits()`。
-- **约束**（C7）：读回不得借任何会话的帧机器。
-- **要求**（R7）：读回在两会话各跑若干帧之后，读到的是**最新已完成**的那一帧（与今天单会话语义一致）。
-- **验收**（T7）：两会话交替画不同目标、穿插读回 ⇒ 每张图都是它自己最后一次完成的帧。
-- **注意**（P7）：读回是"最慢的动词"，别把它放进帧预算；它的等待要可观测。
+- **Behaviour**: readback uses its own pool and fence; it waits for the device watermark before copying; each wait counts one `deviceWaits()`.
+- **Constraints** (C7): readback must not borrow any session's frame machinery.
+- **Requirements** (R7): after two sessions have each run several frames, readback reads the **latest completed** frame (the same semantics as today's single session).
+- **Acceptance** (T7): two sessions alternately drawing different targets with readbacks interleaved ⇒ each picture is its own last completed frame.
+- **Caveat** (P7): readback is "the slowest verb"; do not put it in the frame budget, and its wait must be observable.
 
-**实现形状**：
+**The implementation shape**:
 
-- **自己的机器**：`ReadbackStaging` 拥有**自己的命令池与栅栏**（一次拷贝一套；创建/销毁对着一次 GPU 往返是
-  噪声，`G10`），读回路径不碰 `FrameDriver` 的命令池与栅栏（C7 结构性成立）。
-- **等待是设备的"帧之间"**：以体闸 EXCLUSIVE 表达——它在墙上仍等**在飞的帧**（这就是完成证据），但那不是某个
-  会话的机器；**每次读回计一次** `deviceWaits()`，与参考后端的 `waitDeviceIdle` 同一个读数（`G6`）。
-- **拒绝不停止设备**：能在等待前回答的拒绝（未知/未建目标、越界附件、不支持的格式、借用深度）在相位一回答；
-  相位二在闸内**重新解析**，因为等闸期间帧可能重建或替换了目标。
-- **帧体内的调用**：诊断 sink / hook 在帧体里回调本设备时，读回答 `Failed` 而不是等自己——`FrameBodyDepth`
-  （线程内帧体深度）把这类死锁变成可回答的拒绝；`Device.hpp` 写明了这条契约。
-- **外部同步**：`vkQueueSubmit` / `vkDeviceWaitIdle` 过设备的 `queue_submit` 锁（ADR 的硬约束表要求；两驱动者同时
-  提交是 Vulkan 的外部同步违规）。
+- **Its own machinery**: `ReadbackStaging` owns **its own command pool and fence** (one set per copy; creating and destroying them is noise against a GPU round trip, `G10`),
+  and the readback path never touches `FrameDriver`'s command pool or fence (C7 holds structurally).
+- **The wait is the device's "between frames"**: it is expressed as the body gate's EXCLUSIVE side — on the wall it still waits for the **in-flight frame** (that is the
+  completion evidence), but it is not some session's machinery; **each readback counts one** `deviceWaits()`, the same reading as the reference backend's `waitDeviceIdle` (`G6`).
+- **A refusal does not stop the device**: refusals that can be answered before waiting (unknown / unbuilt target, out-of-range attachment, unsupported format, borrowed depth)
+  are answered in phase one; phase two **re-resolves** inside the gate, because a frame may have rebuilt or replaced the target while waiting.
+- **A call from inside a frame body**: when a diagnostic sink / hook calls back into this device from inside a frame body, the read answers `Failed` instead of waiting for
+  itself — `FrameBodyDepth` (the in-thread frame-body depth) turns that class of deadlock into an answerable refusal; `Device.hpp` states this contract.
+- **External synchronisation**: `vkQueueSubmit` / `vkDeviceWaitIdle` go through the device's `queue_submit` lock (the ADR's hard-constraint table requires it; two drivers
+  submitting at once is a Vulkan external-synchronisation violation).
 
-**用例**：`VkMultiSessionTest`——两个驱动者交替画、穿插读回各自都是自己的最后一帧（T7）；读回在帧被 sink 停住时
-必须**等待**，结束读到该帧像素，计数 +1；帧体内读回答 `Failed` 且不碰宿主 vector。
+**Cases**: `VkMultiSessionTest` — two drivers alternately draw, and interleaved readbacks each get their own last frame (T7); a readback while a frame is stopped by a sink
+must **wait**, then read that frame's pixels and count +1; a read from inside a frame body answers `Failed` and touches no host vector.
 
-### 3.1.8 F8 默认内容程序归会话
+### 3.1.8 F8 The default content program belongs to the session
 
-- **行为**：`setDefaultContentProgram` 的声明从 `RenderDevice` 移到 `RenderFrameExecutor`（默认 no-op；`Device` 覆写它并转发给设备自己的会话），
-  引擎在 `setDevice` 里对**自己的会话**宣布；设备级的那个只服务"直接驱动设备"的调用方。
-- **约束**（C8）：两个引擎声明不同默认程序时，**各画各的**（不再"后声明者生效"）。
-- **要求**（R8）：单会话后端行为与今天逐字节相同。
-- **验收**（T8）：两会话声明不同默认程序 ⇒ 两帧的像素各是各自的程序；变异（共用设备级单槽）⇒ 红。
-- **注意**（N3）：这条把 `graphics-threading.md` 的 `N18`（设备级单槽）替换掉，见 F10。
+- **Behaviour**: the `setDefaultContentProgram` declaration moves from `RenderDevice` to `RenderFrameExecutor` (default no-op; `Device` overrides it and forwards to the
+  device's own session), and the engine declares it on **its own session** in `setDevice`; the device-level one serves only a caller that drives the device directly.
+- **Constraints** (C8): when two engines declare different default programs, **each draws with its own** (no more "the last declaration wins").
+- **Requirements** (R8): a single-session backend behaves byte for byte as today.
+- **Acceptance** (T8): two sessions declaring different default programs ⇒ each frame's pixels come from its own program; a mutation (sharing one device-level slot) ⇒ red.
+- **Caveat** (N3): this replaces `graphics-threading.md`'s `N18` (one device-level slot), see F10.
 
-### 3.1.9 F9 vsg 的对应形状
+### 3.1.9 F9 vsg's corresponding shape
 
-- **行为**：`recorder` / `compiler` / `arena` / `facts` / `light_scratch` / `input_*` / `packets` / `frame` /
-  `driving` 从 `VsgBackend::Data` 搬进会话；设备缓存（`store` / `halves` / `images` / `uploads` / `targets` /
-  `passes` / `pool` / `storage`）按 F3 加锁 + 快照。
-- **约束**（C9）：`api::WindowSession` 的**窗口**职责不动（交换链、`Viewer`、`WindowTarget` 已经是每窗口）。
-- **要求**（R9）：`BackendParityTest` 的逐字节对拍在两会话下仍成立。
-- **验收**（T9）：`test_vsg` 全绿 + 两会话用例；对拍不变。
-- **注意**（P8）：`d->driving` 是"哪张图属于哪个会话"的**唯一**记录，搬走后不能再有第二份。
+- **Behaviour**: `recorder` / `compiler` / `arena` / `facts` / `light_scratch` / `input_*` / `packets` / `frame` / `driving` move from `VsgBackend::Data` into the
+  session; the device caches (`store` / `halves` / `images` / `uploads` / `targets` / `passes` / `pool` / `storage`) get a lock + snapshot per F3.
+- **Constraints** (C9): `api::WindowSession`'s **window** duties do not move (the swap chain, the `Viewer` and `WindowTarget` are already per window).
+- **Requirements** (R9): `BackendParityTest`'s byte-for-byte comparison still holds with two sessions.
+- **Acceptance** (T9): `test_vsg` green + the two-session cases; the comparison unchanged.
+- **Caveat** (P8): `d->driving` is the **only** record of "which picture belongs to which session"; once it moves there may be no second copy.
 
-**vsg 的收集暂存**：
+**vsg's collection scratch**:
 
-- **`FrameScratch`**（`internal/FrameScratch.hpp`）：arena / recorder / compiler / `facts` / `light_scratch` /
-  `input_*` / `packets` / `frame` 收成一个类型；它借用设备的 `Diagnostics` 与 `Observe`（两者都比会话长寿）。
-- **归属**：`api::WindowSession`（窗口）与 `api::OffscreenSession` 各持一份，`initialize()` 建、随会话销毁；
-  `WindowSessionOptions` / `OffscreenSessionOptions` 的 `observe`（null = 会话自备一份，独立建立会话的测试仍可用）。
-- **设备只借一个句柄**：`Data::scratch` 在开帧时指向驱动会话的那一份，`ScratchCloser` 在**每个出口**清空；
-  `commitFrameThrough` 从会话参数取回同一份——设备上没有任何一份收集暂存。
-- **设备级设置覆盖所有会话**：`setDefaultContentProgram` 与 `releaseRenderTarget` 对每个会话的 scratch 生效；
-  开帧时再补一次默认程序（给设定之后才起来的会话），一个指针拷贝。
+- **`FrameScratch`** (`internal/FrameScratch.hpp`): arena / recorder / compiler / `facts` / `light_scratch` / `input_*` / `packets` / `frame` collected into one type; it
+  borrows the device's `Diagnostics` and `Observe` (both outlive any session).
+- **Ownership**: `api::WindowSession` (a window) and `api::OffscreenSession` each hold one, created in `initialize()` and destroyed with the session;
+  `WindowSessionOptions` / `OffscreenSessionOptions`' `observe` (null = the session brings its own, so a test that builds a session on its own still works).
+- **The device lends one handle only**: `Data::scratch` points at the driving session's copy while a frame is open, and `ScratchCloser` clears it **at every exit**;
+  `commitFrameThrough` takes the same copy back from the session parameter — no copy of the collection scratch lives on the device.
+- **A device-level setting covers every session**: `setDefaultContentProgram` and `releaseRenderTarget` apply to every session's scratch; opening a frame tops up the default
+  program once more (for sessions that started after the setting), which is one pointer copy.
 
-**vsg 的驱动者**：
+**vsg's driver**:
 
-- **`TargetTable`**：目标表与身份解析合为一——设备唯一的一张表（一个身份一条：描述、对象、
-  拥有者的标签，以及执行器的“没应用”情节）；每个驱动者的执行器借用它，所以两个驱动者解析同一张身份表（`P8`：
-  没有第二份）。独立构造的执行器（测试）自备一份，`adopt` 登记别人建好的对象（非拥有）。
-- **`VsgDriver`**（`internal/VsgDriver.hpp`）：`createSession()` 交出的帧驱动者，`RenderFrameExecutor` 的实现；
-  自己拥有一个 `VsgExecutor`（`window_` / `window_recorded_` / `recorded_` / `profile_entries_` / `skipped_`）与
-  它自己的默认内容程序；设备拥有它，`releaseSession` 销毁，`shutdown` 带走。
-- **设备自己也只用一条路**：`VsgBackend::executeFrame` / `prepareFrame` 是两行转发，真相在
-  `executeFrameFor(executor, ...)` / `prepareFrameFor(executor, ...)`；`Data::driving_executor` 像 `Data::scratch`
-  一样在开帧时设、每个出口清，`presentWindow` 从它取回本次帧的驱动者。
-- **默认程序归驱动（C8）**：`VsgExecutor` 持有对象与文本；设备级 `setDefaultContentProgram` 只设设备自己的驱动者，
-  每帧开帧时把**驱动者自己的**文本交给驱动会话的 recorder；程序仍在设备 store 里登记（内容表是设备的）。
-- **用例**：`VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram`——两个驱动者各自的默认程序互不覆盖，设备自己的
-  驱动者没被污染；同一张离屏目标上，A 画红、B 画绿；释放 A 后 B 仍按自己的绿色出图。
+- **`TargetTable`**: the target table and identity resolution are one — the device's single table (one row per identity: description, object, the owner's tag, and the
+  executor's "not applied" episode); each driver's executor borrows it, so two drivers resolve against the same identity table (`P8`: there is no second copy). A
+  separately constructed executor (a test) brings its own, and `adopt` registers an object someone else built (non-owning).
+- **`VsgDriver`** (`internal/VsgDriver.hpp`): the frame driver `createSession()` hands out, and the `RenderFrameExecutor` implementation; it owns a `VsgExecutor`
+  (`window_` / `window_recorded_` / `recorded_` / `profile_entries_` / `skipped_`) and its own default content program; the device owns it, `releaseSession` destroys it, and
+  `shutdown` takes it away.
+- **The device itself uses one path too**: `VsgBackend::executeFrame` / `prepareFrame` are two lines of forwarding, and the truth is in
+  `executeFrameFor(executor, ...)` / `prepareFrameFor(executor, ...)`; `Data::driving_executor` is set when a frame opens and cleared at every exit, like `Data::scratch`, and
+  `presentWindow` takes this frame's driver back from it.
+- **The default program belongs to the driver (C8)**: `VsgExecutor` holds the object and the text; the device-level `setDefaultContentProgram` sets the device's own driver
+  only, and each frame hands **the driver's own** text to the driving session's recorder when it opens; the program is still registered in the device store (the content tables
+  are the device's).
+- **Cases**: `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram` — two drivers' default programs do not overwrite each other and the device's own driver is not polluted;
+  on one offscreen target A draws red and B draws green; after A is released B still draws its own green.
 
-**vsg 的帧首快照与内容锁**
+**vsg's frame-head snapshot and content lock**
 
-- **设备闸**：vsg 的设备闸是 **`graphics::FrameGate`**（与 vk 同一个类型、设备各有实例）——帧体取**共享**侧（两个驱动者的帧体可以同时进入），宿主动词取**独占**侧（initialize / shutdown / 读回 / `frameReport` / 窗口集 / resize）。从帧体线程调用的宿主动词得到**空租约**并回答拒绝（读回回答 `InsideFrame`，内容动词回答 false / 不动并报一条 `vsg.device.reentry`），从不等待自己。诊断路由与 episode 锁是**递归**的，因为 sink 本身可能回调。
-- **帧状态归驱动**：`VsgExecutor::FrameDrive`（scratch / 本次窗口索引 / 上传基线 / 上一帧的 delta）是帧状态的唯一住所；设备的 `Data::last_uploads` 只留“最后一帧”的副本供 `frameReport()`。`presentWindow` 通过**线程本地的在飞帧**（`FrameInFlight`）取回本次帧的驱动者——窗口目标的 `present()` 没有帧参数，设备级单份会把一帧的计划交给另一驱动的 present。
-- **帧首快照（vsg 的形状）**：`openFrameHead` 在**一次**内容锁下解析这一帧会读的所有**设备事实**——每个 pass 的编号（`PassRegistry::adopt` 写入 `FrameScratch::pass_ids`）、它画的每个宿主目标（`adoptHostTarget`）、它采样的每个目标（`TargetTable::observe`）、它命令里点名的内容（`ContentStore::track`）、目标事实表的副本（`FrameScratch::facts`）、staging 清扫与块存储的增长。**收集**（`collectFrame`）与**计划编译**（`closeFrameBooks`）随后只读会话自己的 scratch，因此它们里的报告（计划编译器的“这个输入/目标解析不了”）到达 sink 时**不持任何设备锁**。
-- **内容相是设备唯一的串行段**：`commitFrameThrough` 在**一次**内容锁下做 `applyTargetPlans` / 材质 arena 增长 / `recordContent`（assembly 开帧 + 录制）/ `executor.record` / 清扫 / 会话提交，并在每个出口发布本帧的上传 delta 与计数器（`Data::last_uploads` / `last_counters`）。
-- **每会话一个帧主张**：窗口槽与离屏会话各一把 `frame` 互斥锁，帧体持到结束——同一窗口/离屏会话的两帧**等待**（与旧设备闸同语义：两个引擎都离屏出图是受支持的形态，不能拒绝），**不同窗口互不等待**。
-- **计数器归会话**（`WindowSessionOptions::observe` 不再借设备的 `Observe`）：recorder 开帧会**重置**计数器（`FrameRecorder::beginFrame`），共享一份会让两个驱动者互相覆盖；`frameReport()` 引用**最后结束**那一帧的副本（`Data::last_counters`），retention 仍是设备的。
-- **惰性设备件与帧首同锁**：`ensureOffscreenSession` 的惰性创建在内容锁下——否则两个驱动者并发地**首次**运行离屏帧时，输家会覆盖半建的 viewer（段错误）。
-- **`ContentStore` 的行/表由内容锁串行，而记录不碰它们**：记录只读帧首解析出的值（`FrameHead`），所以 `C3` 成立。
-- **用例**：`ACompilingFrameDoesNotWaitForAnotherDriversFrame`（一帧被 sink 停在**编译**里时，另一驱动者的整帧完成）、`TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`（两线程各 3 帧、各画各的默认程序，读回各是自己的颜色）、`AReadbackFromInsideAFrameBodyAnswersInsideFrame`（sink 里读回答 `Failed`，一次一条 `vsg.readback.in_frame`）。
+- **The device gate**: vsg's device gate is **`graphics::FrameGate`** (the same type vk uses, one instance per device) — a frame body takes the **shared** side (two drivers'
+  frame bodies may be inside at once) and a host verb takes the **exclusive** side (initialize / shutdown / readback / `frameReport` / window sets / resize). A host verb called
+  from a frame-body thread gets an **empty lease** and answers refused (readback answers `InsideFrame`; a content verb answers false / does nothing and reports one
+  `vsg.device.reentry`), and never waits for itself. Diagnostic routing and the episode locks are **recursive**, because a sink may itself call back.
+- **Frame state belongs to the driver**: `VsgExecutor::FrameDrive` (scratch / this frame's window index / the upload baseline / the previous frame's delta) is the only home
+  of frame state; the device's `Data::last_uploads` keeps a copy of "the last frame" for `frameReport()` only. `presentWindow` gets this frame's driver back through the
+  **thread-local in-flight frame** (`FrameInFlight`) — a window target's `present()` has no frame parameter, and a single device-level copy would hand one frame's plan to
+  another driver's present.
+- **The frame-head snapshot (vsg's shape)**: `openFrameHead` resolves, under **one** content lock, every **device fact** this frame will read — each pass' number
+  (`PassRegistry::adopt` writes `FrameScratch::pass_ids`), every host target it draws (`adoptHostTarget`), every target it samples (`TargetTable::observe`), the content its
+  commands name (`ContentStore::track`), a copy of the target fact tables (`FrameScratch::facts`), the staging sweep and the block storage's growth. **Collection**
+  (`collectFrame`) and **plan compilation** (`closeFrameBooks`) then read only the session's own scratch, so the reports inside them (the plan compiler's "this input / target
+  cannot be resolved") reach the sink **holding no device lock**.
+- **The content phase is the device's only serial section**: `commitFrameThrough` does `applyTargetPlans` / material arena growth / `recordContent` (assembly opens the frame and
+  records) / `executor.record` / the sweep / the session submission under **one** content lock, and publishes this frame's upload delta and counters at every exit
+  (`Data::last_uploads` / `last_counters`).
+- **One frame claim per session**: a window slot and an offscreen session each have a `frame` mutex, held by the frame body until it ends — two frames of the same window /
+  offscreen session **wait** (the same semantics as the old device gate: two engines both drawing offscreen is a supported shape and cannot be refused), while **different
+  windows never wait for each other**.
+- **Counters belong to the session** (`WindowSessionOptions::observe` no longer borrows the device's `Observe`): the recorder **resets** the counters when a frame opens
+  (`FrameRecorder::beginFrame`), and a shared copy would let two drivers overwrite each other; `frameReport()` refers to the copy of the frame that ended **last**
+  (`Data::last_counters`), while retention stays the device's.
+- **A lazily built device piece takes the same lock as the frame head**: `ensureOffscreenSession`'s lazy creation happens under the content lock — otherwise, when two drivers
+  run an offscreen frame for the **first** time concurrently, the loser would overwrite a half-built viewer (a segfault).
+- **`ContentStore`'s rows and tables are serialised by the content lock, and recording never touches them**: recording reads only the values resolved at the frame head
+  (`FrameHead`), so `C3` holds.
+- **Cases**: `ACompilingFrameDoesNotWaitForAnotherDriversFrame` (with one frame stopped by a sink inside **compilation**, another driver's whole frame completes),
+  `TwoDriversOnTwoThreadsEachKeepTheirOwnPicture` (two threads, 3 frames each, each drawing with its own default program, and each readback is its own colour),
+  `AReadbackFromInsideAFrameBodyAnswersInsideFrame` (a read inside a sink answers `Failed`, one `vsg.readback.in_frame`).
 
-**vsg 的记录路径零锁**
+**vsg's lock-free recording path**
 
-- **内容相拆成三段**：`commitFrameThrough` 是 **解析**（一次内容锁：`applyTargetPlans`、材质 arena 增长、`resolveContent`）、
-  **录制**（无设备锁：`FrameHead::record` 把值变成 vsg 节点）、**提交**（再一次内容锁：`executor.record`、清扫、会话提交、
-  上传 delta 与计数器发布）。录制不读设备表，所以 `C3` 对 vsg 成立。
-- **`internal/FrameHead`：一帧解析出的值**。每个绘制调用一个 `DrawPlan`：它命中的 half 的录制器（`ContentDraw*`）、已解析的
-  `ContentDraw::Draw` / `ScreenDraw`（身份 + pipeline + 变体 id + 动态状态 + 几何 span 计数）、块绑定、推送块、顶点/索引绑定；
-  每个 pass 一个槽，自带它的 `core::StateRegistry`（跨“解析/录制”两相的状态内存）。它是 vk `FrameHead::DrawPlan` 的 vsg 对形：
-  **值，且拥有它点名的对象**（全部 `ref_ptr`），生命周期上还有一个钉：`ProgramHalves::pin()` 把 halves 的生产者租给计划，
-  另一个驱动者的帧首清扫就不会释放这一帧还要用到的录制器（退役 park 不管“尚未提交的帧还没交上去”这件事）。
-- **解析半与录制半分开的两个 API**：`ContentDraw::plan(key)`（解析，取 layer 与 variant pool，在内容锁下）与
-  `ContentDraw::record` / `recordScreen`（录制，只绑已解析的 pipeline，不碰 layer、不碰 pool）；`core::StateRegistry`
-  因此多了 `resolve(variant, …)` 重载——录制用品值而不是回查 pool，这也是两个驱动者的录制可以真正同时跑的前提。
-  `ContentPass::resolve` 是不带副作用的解析半；`record` 只是“解析 + 录制”的便利入口（测试与 `ContentAssembly::record` 用它）。
-- **块也是在帧首写的**：view / lights / shadow / draw / material 块的偏移在解析时写进本帧 slab（`BlockStorage` 的轮转本来
-  就是帧首的事），录制只带偏移——所以另一个驱动者的帧首在中间轮转环、清扫 halves、增长 arena，都不影响这一帧的计划。
-- **接缝与用例**：`BackendContentAccess::setRecordSeam`（测试接缝，录相开始处、不持内容锁）；
-  `VsgBackendTest.ARecordingFrameDoesNotStopAnotherDriversContent`——一帧被停在**录制**里时，另一驱动者的整帧（帧首 + 录制 +
-  提交）完成，且被停帧读回的像素仍是自己的（计划的值跨过另一帧的帧首仍有效）。
+- **The content phase is split into three**: `commitFrameThrough` is **resolution** (one content lock: `applyTargetPlans`, material arena growth, `resolveContent`),
+  **recording** (no device lock: `FrameHead::record` turns values into vsg nodes), and **submission** (the content lock again: `executor.record`, the sweep, the session
+  submission, the upload delta and the counter publication). Recording reads no device table, so `C3` holds for vsg.
+- **`internal/FrameHead`: one frame's resolved values**. One `DrawPlan` per draw call: the recorder of the half it hit (`ContentDraw*`), the resolved `ContentDraw::Draw` /
+  `ScreenDraw` (identity + pipeline + variant id + dynamic state + geometry span count), the block bindings, the push blocks, the vertex / index bindings; one slot per pass,
+  carrying its own `core::StateRegistry` (the state memory that spans the resolution and recording phases). It is the vsg counterpart of vk's `FrameHead::DrawPlan`:
+  **a value that owns the objects it names** (all `ref_ptr`s), with one extra lifetime pin: `ProgramHalves::pin()` lends the halves' producers to the plan, so another
+  driver's frame-head sweep cannot release a recorder this frame still needs (the retirement park knows nothing about "an unsubmitted frame has not handed it over yet").
+- **Two APIs, resolution half and recording half**: `ContentDraw::plan(key)` (resolution, taking the layer and the variant pool, under the content lock) and
+  `ContentDraw::record` / `recordScreen` (recording, binding only the resolved pipeline, touching neither the layer nor the pool); `core::StateRegistry` therefore gained a
+  `resolve(variant, …)` overload — recording uses a value instead of looking the pool up again, which is also the precondition for two drivers' recordings to really run at
+  the same time. `ContentPass::resolve` is the side-effect-free resolution half; `record` is just the "resolve + record" convenience entry (tests and
+  `ContentAssembly::record` use it).
+- **Blocks are written at the frame head too**: the offsets of the view / lights / shadow / draw / material blocks are written into this frame's slab during resolution
+  (`BlockStorage`'s rotation is a frame-head matter anyway), and recording carries only offsets — so another driver's frame head rotating the ring, sweeping halves or growing
+  the arena mid-frame does not disturb this frame's plan.
+- **The seam and the case**: `BackendContentAccess::setRecordSeam` (a test seam at the start of recording, holding no content lock);
+  `VsgBackendTest.ARecordingFrameDoesNotStopAnotherDriversContent` — with one frame stopped inside **recording**, another driver's whole frame (frame head + recording +
+  submission) completes, and the stopped frame's readback pixels are still its own (the plan's values stay valid across another frame's frame head).
 
-### 3.1.10 F10 契约与文档收口
+### 3.1.10 F10 Closing out the contract and the docs
 
-- **行为**：`RenderDevice.hpp` / `RenderFrameExecutor.hpp` / 插件设备头的线程段改写；`C21` / `N18` /
-  `R18` 改写成"两会话可并发"；ADR 标明第二步已落地；审计 `A6` / `A7` / `A11` 逐条勾掉。
-- **约束**（C10）：契约文本必须与**代码的实际保证**一致（`G4`）；做不到就先写"串行"。
-- **要求**（R10）：`check_ai_docs.py --strict` 与 `check_design_docs.py` 0 finding。
-- **验收**（T10）：两道文档门禁 0 finding。
-- **注意**（N4）：`D13`（全局锁）与 `D2`（per-entry 锁）在文档里保持否决，别让"临时实现"复活它们。
+- **Behaviour**: the threading sections of `RenderDevice.hpp` / `RenderFrameExecutor.hpp` / the plugin device headers are rewritten; `C21` / `N18` / `R18` are rewritten to say
+  "two sessions may run concurrently"; the ADR records that the change is landed; the audit's `A6` / `A7` / `A11` rows are ticked off.
+- **Constraints** (C10): the contract text must match what the **code actually guarantees** (`G4`); if it cannot, write "serial" first.
+- **Requirements** (R10): `check_ai_docs.py --strict` and `check_design_docs.py` report 0 findings.
+- **Acceptance** (T10): both documentation gates report 0 findings.
+- **Caveat** (N4): `D13` (a global lock) and `D2` (per-entry locks) stay rejected in the documentation, so that no "temporary implementation" revives them.
 
-## 4. 公开接口
+## 4. Public Interface
 
-### 4.1 `RenderDevice`（SDK）
+### 4.1 `RenderDevice` (SDK)
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 |---|---|---|
-| `RenderFrameExecutor* createSession()` | 借出一个新的帧驱动者；设备拥有它；默认 `return &executor();` | 完整签名见 `RenderDevice.hpp` |
-| `void releaseSession(RenderFrameExecutor&)` | 归还；默认 no-op；`shutdown()` 会带走全部会话 | 与 `setDiagnosticsRoute` 同形的"借用/归还" |
-| ~~`setDefaultContentProgram`~~ | **移出**本类，见 4.2：它是帧的设置，且两处同签名 virtual 会二义 | `G1` / `G4` |
+| `RenderFrameExecutor* createSession()` | lends a new frame driver; the device owns it; by default `return &executor();` | the full signature is in `RenderDevice.hpp` |
+| `void releaseSession(RenderFrameExecutor&)` | gives it back; no-op by default; `shutdown()` takes every session with it | the same "lend / give back" shape as `setDiagnosticsRoute` |
+| ~~`setDefaultContentProgram`~~ | **moved out** of this class, see 4.2: it is a frame's setting, and two virtuals with the same signature would be ambiguous | `G1` / `G4` |
 
-### 4.2 `RenderFrameExecutor`（SDK）
+### 4.2 `RenderFrameExecutor` (SDK)
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 |---|---|---|
-| `executeFrame` / `prepareFrame` / `frameReport` | **按会话**：同一会话线程限定；**不同会话可并发** | 契约文本改写（F10） |
-| `void setDefaultContentProgram(intrusive_ptr<const ShaderProgram>)` | 本会话的程序缺失内容用什么；默认 no-op；`Device` 覆写并转发给设备自己的会话 | 从 `RenderDevice` 迁来 |
+| `executeFrame` / `prepareFrame` / `frameReport` | **per session**: one session's thread at a time; **different sessions may run concurrently** | the contract text is rewritten (F10) |
+| `void setDefaultContentProgram(intrusive_ptr<const ShaderProgram>)` | what this session's missing content is shaded with; no-op by default; `Device` overrides it and forwards to the device's own session | moved here from `RenderDevice` |
 
-### 4.3 `gfx_backend_vk`（内部）
+### 4.3 `gfx_backend_vk` (internal)
 
-| 类型 | 职责 | 备注 |
+| Type | Responsibility | Notes |
 |---|---|---|
-| `FrameDriver` | 帧机器 + 帧暂存 + 帧闸 + 帧账 + claim 集合 | 身份是 `graphics::FrameDriverId`（`DeviceClock` 发） |
-| `ContentCaches` | programs / geometries / pipelines / 布局 / 图像 / 分配器 + 一把独占锁 | 从 `ContentDraw` 拆出 |
-| `FrameScratch` | 环 / 描述符池 / set 表 / `FrameSnapshot` | 从 `ContentDraw` 拆出 |
-| `ResidenceTable` | 三态 + 发布/撤回/退休 | 复用 `RetirementQueue` 的 epoch 语义 |
-| `ContentCaches::FrameBuilds` | 一帧的容纳结果：`Use` 命中、`Build` 的 claim、`Copy` 的临时副本 | 帧作用域值；`publishAll` 在帧完成后调用，析构收拾其余 |
-| `TargetTable` | 目标 → 会话；try-claim / release | 冲突报一条，按 (目标, episode) 去重 |
+| `FrameDriver` | frame machinery + frame scratch + frame gate + frame books + the claim set | its identity is a `graphics::FrameDriverId` (issued by `DeviceClock`) |
+| `ContentCaches` | programs / geometries / pipelines / layouts / images / allocator + one exclusive lock | split out of `ContentDraw` |
+| `FrameScratch` | ring / descriptor pools / set tables / `FrameSnapshot` | split out of `ContentDraw` |
+| `ResidenceTable` | the three states + publish / withdraw / retire | reuses `RetirementQueue`'s epoch semantics |
+| `ContentCaches::FrameBuilds` | one frame's admissions: the `Use` hits, the `Build` claims, the `Copy` temporaries | a frame-scoped value; `publishAll` is called once the frame completes and the destructor collects the rest |
+| `TargetTable` | target → session; try-claim / release | a conflict reports once, deduplicated by (target, episode) |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 |---|---|
-| C1 | 会话由**设备**拥有；引擎只借（`createSession` / `releaseSession`）。 |
-| C2 | 帧机器（命令池 / 栅栏 / 环 / 描述符池 / 帧账）**只**在会话里。 |
-| C3 | 记录路径**不得**取设备缓存的锁；设备缓存的读只发生在帧首快照。vk 自 S6c-1、vsg 自 S8c-2（`FrameHead`）起成立：两边的记录都只读帧首解析出的值。 |
-| C4 | 只有 `Resident` 的条目可被非 owner 使用；`Uploading` 对别人等于 `Absent` + 临时副本。 |
-| C5 | 一个目标同一时刻只有一个会话；claim 是租约，帧尾必须归还。 |
-| C6 | 销毁只能发生在**设备水位**之后；不得用设备空转换正确性。 |
-| C7 | 读回不借任何会话的帧机器；它等水位，并把等待计数。 |
-| C8 | 默认内容程序归会话；两个引擎声明不同程序时各画各的。 |
-| C9 | vsg 的窗口职责（交换链 / `Viewer` / `WindowTarget`）不因会话化而移动。 |
-| C10 | 契约文本必须与代码的实际保证一致；做不到就先写"串行"。 |
+| C1 | The **device** owns a session; an engine only borrows it (`createSession` / `releaseSession`). |
+| C2 | The frame machinery (command pool / fence / ring / descriptor pools / frame books) exists **only** in a session. |
+| C3 | The recording path **must not** take the device caches' lock; device-cache reads happen at the frame-head snapshot only. It holds in both backends today: both sides' recording reads only the values resolved at the frame head. |
+| C4 | Only a `Resident` entry may be used by a non-owner; `Uploading` equals `Absent` + a temporary copy for everyone else. |
+| C5 | One target has one session at a time; a claim is a lease, and the frame tail must give it back. |
+| C6 | Destruction may only happen after the **device watermark**; device idleness must not be traded for correctness. |
+| C7 | Readback borrows no session's frame machinery; it waits for the watermark and counts the wait. |
+| C8 | The default content program belongs to the session; when two engines declare different programs each draws with its own. |
+| C9 | vsg's window duties (swap chain / `Viewer` / `WindowTarget`) do not move because of sessions. |
+| C10 | The contract text must match what the code actually guarantees; if it cannot, write "serial" first. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 |---|---|
-| R1 | `createSession()` 可在 `initialize()` 之前调用。 |
-| R2 | `executor()` 保留，含义是"设备自己的会话"。 |
-| R3 | 稳态帧的**记录路径**设备缓存锁获取次数为 0（帧首那次除外；整帧次数不随 draw 数增长，有计数器与用例） |
-| R4 | 驻留条目不可变；`Uploading` 不得长期存在（发布或撤回）。 |
-| R5 | 目标重建只由 claim 持有者做。 |
-| R6 | 释放可在别的会话 frame 时调用，且不阻塞到那一帧结束（等待上界是一次缓存操作；T6） |
-| R7 | 读回读到"最新已完成"的帧。 |
-| R8 | 单会话后端行为与今天逐字节相同。 |
-| R9 | `BackendParityTest` 的逐字节对拍在两会话下仍成立。 |
-| R10 | 文档门禁 0 finding。 |
+| R1 | `createSession()` may be called before `initialize()`. |
+| R2 | `executor()` stays, meaning "the device's own session". |
+| R3 | A steady-state frame's device-cache lock acquisitions on the **recording path** are 0 (apart from the frame-head one; the whole frame's count does not grow with the draw count, and there is a counter and a case) |
+| R4 | Residency entries are immutable; no `Uploading` may persist (publish or withdraw). |
+| R5 | A target's rebuild is done by the claim holder only. |
+| R6 | A release may be called while another session frames, and does not block until that frame ends (the wait's upper bound is one cache operation; T6) |
+| R7 | Readback reads the "latest completed" frame. |
+| R8 | A single-session backend behaves byte for byte as today. |
+| R9 | `BackendParityTest`'s byte-for-byte comparison still holds with two sessions. |
+| R10 | The documentation gates report 0 findings. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 |---|---|
-| N1 | 一个身份只有一个发布者；发布用 compare-and-set。 |
-| N2 | 每个 `Uploading` 条目在帧尾要么 `Resident`，要么回到 `Absent`。 |
-| N3 | 一个目标同一时刻只有一个 claim 持有者。 |
-| N4 | 记录路径上没有设备级锁（`N1`–`N3` 因此不必在热路径上检查）；帧首那一次是快照的机制，不是热路径 |
-| N5 | 设备丢失对**所有**会话同时成立（共用 `VkDevice`，不是失败分类能分开的）。 |
-| N6 | 能力（`capabilities()`）是设备级只读事实，任意会话任意时刻可问。 |
+| N1 | An identity has one publisher; publication is a compare-and-set. |
+| N2 | Every `Uploading` entry is either `Resident` or back to `Absent` at the frame tail. |
+| N3 | A target has one claim holder at a time. |
+| N4 | There is no device-level lock on the recording path (`N1`–`N3` therefore need no check on the hot path); the frame-head one is the snapshot's mechanism, not the hot path |
+| N5 | Device loss holds for **every** session at once (they share one `VkDevice`, which no failure classification can separate). |
+| N6 | Capabilities (`capabilities()`) are a device-level read-only fact, askable from any session at any time. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 `Uploading` 卡死（P1）
+### 6.1 P1 An entry stuck in `Uploading`
 
-- **会怎么错**：owner 的帧在发布前失败（分配拒绝、`vkBeginCommandBuffer` 拒绝、提前 return），条目停在
-  `Uploading`。之后**所有**会话都把它当"别人在上传"而复制——每帧都复制，正确但永不收敛。
-- **怎么判**：驻留账里"每帧临时副本数"不归零；或一个条目在 `Uploading` 超过一次设备水位。
-- **怎么防**：帧尾作用域守卫**无条件**发布或撤回（`N2`），并在 Debug 断言"帧结束时本会话建的条目全部已定态"。
+- How it fails: the owner's frame fails before publishing (allocation refused, `vkBeginCommandBuffer` refused, an early return) and the entry stays in `Uploading`. From
+  then on **every** session treats it as "someone else is uploading" and copies — every frame copies: correct, but it never converges.
+- How to detect it: the residency account's "temporaries per frame" does not return to zero; or an entry sits in `Uploading` for longer than one device watermark.
+- How to prevent it: the frame tail's scope guard publishes or withdraws **unconditionally** (`N2`), and a Debug assertion says "when the frame ends, every entry this
+  session built is decided".
 
-### 6.2 竞争时"等"而不是"复制"（P2）
+### 6.2 P2 Waiting instead of copying on a race
 
-- **会怎么错**：A 等 B 的 `Uploading`，B 的帧里又需要 A 正在画的某样东西 ⇒ 互相等，两只会话一起死。
-- **怎么判**：两会话用例挂死（不是失败）。
-- **怎么防**：**只复制，不等**；`Uploading` 对非 owner 没有等待路径（`C4` 的可判定形式）。
+- How it fails: A waits for B's `Uploading` while B's frame needs something A is drawing ⇒ they wait for each other and both sessions die.
+- How to detect it: the two-session case hangs (it does not fail).
+- How to prevent it: **copy only, never wait**; an `Uploading` entry has no wait path for a non-owner (the decidable form of `C4`).
 
-### 6.3 claim 泄漏（P3）
+### 6.3 P3 A leaked claim
 
-- **会怎么错**：某个 pass 的提前 return（未知目标、跳过）之后没有归还 claim，下一个会话永远跳过那个目标。
-- **怎么判**：T5 的第二个会话连续两帧都跳过同一目标。
-- **怎么防**：claim 集合由会话的帧守卫统一释放（RAII），不在 pass 循环里手工 release。
+- How it fails: after an early return in some pass (unknown target, skipped) the claim is not given back, and the next session skips that target for ever.
+- How to detect it: T5's second session skips the same target two frames in a row.
+- How to prevent it: the claim set is released by the session's frame guard (RAII), not by hand inside the pass loop.
 
-### 6.4 水位与 park 队列被两条线程碰（P4）
+### 6.4 P4 Two threads touching the watermark and the park queue
 
-- **会怎么错**：`DeviceClock::windowCompleted` 与 `RetirementQueue::retire/advance` 今天写着"单线程"，
-  两会话之后两条线程同时调 ⇒ 数据竞争（TSan 可见，或更糟：提前释放）。
-- **怎么判**：TSan；或 `pending()` 在释放后再涨。
-- **怎么防**：两者各一把小锁，**只在帧首/帧尾取用**；`retire` 与 `advance` 的顺序规则（先 park 再 advance）
-  写进会话的帧尾。
+- How it fails: `DeviceClock::windowCompleted` and `RetirementQueue::retire/advance` are documented as "single-threaded" today; with two sessions two threads call them at
+  once ⇒ a data race (visible to TSan, or worse: an early release).
+- How to detect it: TSan; or `pending()` rising again after a release.
+- How to prevent it: one small lock each, taken **only at the frame head / frame tail**; the ordering rule for `retire` and `advance` (park first, then advance) is written
+  into the session's frame tail.
 
-### 6.5 `shutdown()` 与活着的会话（P5）
+### 6.5 P5 `shutdown()` and a live session
 
-- **会怎么错**：引擎还持有会话引用，设备被创建者 `shutdown()`；下一次 `frame()` 解引用悬垂。
-- **怎么判**：ASan 的 UAF；或 Debug 断言"session's device is up"。
-- **怎么防**：引擎 `frame()` 先问 `device_->initialized()`（已如此）；`shutdown()` 把会话标为 dead 并把
-  引用置空；契约明写"创建者保证 shutdown 时没有帧在飞"。
+- How it fails: an engine still holds a session reference while the creator calls `shutdown()` on the device; the next `frame()` dereferences a dangling pointer.
+- How to detect it: ASan's UAF; or a Debug assertion "session's device is up".
+- How to prevent it: the engine's `frame()` asks `device_->initialized()` first (as it does); `shutdown()` marks sessions dead and clears the reference; the contract states
+  "the creator guarantees no frame is in flight at shutdown".
 
-### 6.6 快照漏项（P6）
+### 6.6 P6 A snapshot that misses an entry
 
-- **会怎么错**：快照只覆盖"帧值里显而易见的身份"（命令的 geometry / program），漏掉 pass 级或隐式身份
-  （shadow map 的可视、screen draw 的源目标）⇒ 每帧 miss、每帧取锁。
-- **怎么判**：R3 的锁计数在稳态不为 0。
-- **怎么防**：快照的输入是**同一次遍历**记录用的那份帧值（一次遍历出两种结果），而不是另写一份枚举。
+- How it fails: the snapshot covers only "the identities obvious in the frame value" (a command's geometry / program) and misses pass-level or implicit ones (a shadow map's
+  visibility, a screen draw's source target) ⇒ a miss and a lock every frame.
+- How to detect it: R3's lock count is not 0 in the steady state.
+- How to prevent it: the snapshot's input is the same frame value recording uses (one traversal, two results), not a second enumeration written by hand.
 
-### 6.7 "读回很快"的错觉（P7）
+### 6.7 P7 The illusion that "readback is cheap"
 
-- **会怎么错**：把读回当成便宜的动词，放进每帧路径；它等设备水位，等于把并发收益吃掉。
-- **怎么判**：`deviceWaits()` 随帧数线性涨。
-- **怎么防**：读回不进帧路径（SDK 文档已写"读回是宿主动作"）；用例断言两会话稳态帧 `deviceWaits()` 不涨。
+- How it fails: readback is treated as a cheap verb and put on the per-frame path; it waits for the device watermark, which eats the concurrency gain.
+- How to detect it: `deviceWaits()` grows linearly with the frame count.
+- How to prevent it: readback stays off the frame path (the SDK documentation already says "readback is a host action"); a case asserts that a steady-state frame with two
+  sessions does not raise `deviceWaits()`.
 
-### 6.8 `d->driving` 的第二份（P8）
+### 6.8 P8 A second copy of `d->driving`
 
-- **会怎么错**：vsg 的 `driving` 搬进会话后，设备仍留一份"最后驱动者"，两处不一致。
-- **怎么判**：一个帧的 pass 用到另一个会话的窗口目标。
-- **怎么防**：`driving` **只有**会话里一份；设备的 present 路径从 `PresentTarget` 反查会话（facade 已按索引转发）。
+- How it fails: after vsg's `driving` moves into the session, the device still keeps a "last driver", and the two disagree.
+- How to detect it: a frame's pass uses another session's window target.
+- How to prevent it: `driving` exists **only** in the session; the device's present path looks the session up from `PresentTarget` (the facade already forwards by index).
 
-### 6.9 内嵌类拿不到基类的 `protected` 成员（P9）
+### 6.9 P9 A nested class cannot reach its base class' `protected` members
 
-- **会怎么错**：`Device::FrameDriver` 是设备的**内嵌**类，拥有对 `Device` 私有成员的访问权——但 `reportDiagnostic` 是
-  `RenderDevice` 的 **protected** 成员：**通过对象**调用它只允许派生类自己，内嵌类不算（C++ 的请求者视野规则）。
-  帧体里有 ~25 处这样的调用，直接搬过去就是一片编译错误。
-- **怎么判**：编译器回 "call to non-static member function ... from nested type"。
-- **怎么防**：帧体不直接向设备提问，而是走 `Impl` 上由设备装配的三个面（`report` / `ensure_target` / `note_device_lost`）——
-  它们恰好只有“每 pass 一次”和“失败时一次”的调用频率，即使不在热路径上也不贵（`G10`），而且把“只有设备能做的决定”
-  变成了一个可注入的面（对用例也好）。
+- How it fails: `Device::FrameDriver` is a **nested** class of the device and has access to `Device`'s private members — but `reportDiagnostic` is a **protected** member of
+  `RenderDevice`: calling it **through an object** is allowed only to a derived class, and a nested class does not count (C++'s rule on the requestor's scope). The frame body
+  has ~25 such calls, and moving it as it is produces a wall of compile errors.
+- How to detect it: the compiler answers "call to non-static member function ... from nested type".
+- How to prevent it: the frame body does not ask the device directly but goes through the three faces the device assembles on `Impl` (`report` / `ensure_target` /
+  `note_device_lost`) — they happen to be called only "once per pass" and "once on failure", so they are not expensive even off the hot path (`G10`), and they turn "the
+  decisions only the device can make" into an injectable face (which helps tests too).
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 |---|---|---|---|
-| D1 | 全局设备锁包住每个动词 | `G7`：复杂度没被吸收，而是转移成"每次调用都可能阻塞"；`G1`：锁粒度与资源无关 | ADR 选项 E |
-| D2 | 每条目一把 `shared_mutex` | `G10`：读取的是一条不可变记录，per-entry 锁只在 2000 draw 路径上付原子操作；`G8`：没有写者要协调 | ADR 选项 F |
-| D3 | 竞争时"等"而不是"复制" | `G4`：可能互相锁死（`P2`）；有界复制更便宜 | ADR §3 |
-| D4 | 会话 = 窗口（沿用 vsg 今天的形状） | `G1`：离屏会话不是窗口；`G5`：把一个概念捆在另一个概念上，两个都会长歪 | 本文 §2.1 |
-| D5 | 引擎自己 new 一个会话对象 | `G1`：GPU 对象的所有者必须是设备；`G10`：引擎不该为命令池的寿命负责 | 本文 §2.8 |
-| D6 | 读回借某个会话的帧机器 | `G4`：读回读的是"已完成"，与"谁刚提交"无关；借谁的都会与那个会话互相等 | 本文 §2.7 |
-| D7 | 现在就把 `DeviceClock::WindowId` 改名 `SessionId` | `G8`：没有消费者需要这个拼写；先用类型别名（`SessionId = WindowId`），重命名留到有第二个 API 家族时一起做（**已由 `ADR-2026-11-16-redesign-seam-and-vocabulary` 取代**：批次 1 把三个拼写统一成 `FrameDriverId`，`WindowId` 只留一版 `@deprecated` 别名） | 本文 §2.6 |
-| D8 | 一次落地（不做分阶段） | `G11`：半拆的树比没拆更糟——每一步都要能单独验证 | ADR §9 |
+| D1 | a global device lock around every verb | `G7`: the complexity is not absorbed but turned into "every call may block"; `G1`: the lock's granularity has nothing to do with the resource | ADR option E |
+| D2 | one `shared_mutex` per entry | `G10`: what is read is an immutable record, and a per-entry lock only pays an atomic on the 2000-draw path; `G8`: there is no writer to coordinate | ADR option F |
+| D3 | waiting instead of copying on a race | `G4`: it can deadlock (`P2`); a bounded copy is cheaper | ADR §3 |
+| D4 | a session = a window (keeping vsg's shape) | `G1`: an offscreen session is not a window; `G5`: tying one concept to another makes both grow crooked | this page §2.1 |
+| D5 | the engine allocating the session object itself | `G1`: the GPU objects' owner must be the device; `G10`: the engine should not be responsible for a command pool's lifetime | this page §2.8 |
+| D6 | readback borrowing some session's frame machinery | `G4`: readback reads "what has completed", unrelated to "who just submitted"; borrowing either one makes them wait for each other | this page §2.7 |
+| D7 | renaming `DeviceClock::WindowId` to `SessionId` now | `G8`: no consumer needs that spelling; a type alias first (`SessionId = WindowId`), the rename left for when a second API family exists (**superseded by `ADR-2026-11-16-redesign-seam-and-vocabulary`**: the three spellings are unified as `FrameDriverId`, and `WindowId` survives only as one `@deprecated` alias) | this page §2.6 |
+| D8 | landing it in one go (no stages) | `G11`: a half-split tree is worse than an unsplit one — every step must be verifiable on its own | ADR §9 |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 |---|---|---|
-| T1 | 单会话后端行为零变化 | `build/bin/test_graphics`、`test_vsg`（默认 `createSession`） |
-| T2 | `test_vk` 在"只有一个会话"的树上全绿 | `build/bin/test_vk` |
-| T3 | 记录路径的缓存锁为 0；整帧获取次数**不随 draw 数增长**（实测 4：帧首 1 + 数簿 2 + 帧尾 1） | `test_vk` `VkFrameHeadTest.AFramesCacheWorkDoesNotGrowWithItsDrawingCalls`（1 条 vs 6 条命令；变异 6 → 10 红） |
-| T4 | 两会话同时首画同一几何：不崩、两图都对、上传 ≤ 2 | `test_vk` `VkResidenceWireTest.TwoDriversFirstDrawingOneGeometryShareOneEntryAndAtMostOneCopy`（真两会话两线程：claims 1 / published 1 / copies ≤ 1 / 两图红 / 随后帧零上传）、`AKeyAnotherDriverIsFillingIsCopiedForThisFrameAndDiscarded`（假租约：复制、恰好两条流、`used_bytes` 回位）、`ARefusedBuildIsWithdrawnInsteadOfPublished`、`AReleasedGeometryIsForgottenSoTheNextFrameMayBuildItAgain`；变异 3/3 红（不问表 / 发布失败的填充 / 释放不 forget） |
-| T5 | 两会话画同一目标：一个 pass 被跳过 + 一条报告 | `test_vk` 新用例 |
-| T6 | 释放与在飞帧重叠：释放不等到帧结束，帧仍用已解析的句柄完成，对象 park 到水位，`deviceWaits()` 不涨 |
-  `VkMultiSessionTest.AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroyWhatItUses`（变异：释放重新取体闸 ⇒ 红） |
-| T7 | 交替画不同目标 + 穿插读回：各读各的最新完成帧 | `test_vk` 新用例 |
-| T8 | 两会话不同默认程序：各画各的 | `test_vk` 新用例 + 变异（共用单槽 ⇒ 红） |
-| T9 | 两会话下 `BackendParityTest` 逐字节对拍不变 | `test_vsg` |
-| T10 | 两会话各一条线程各 N 帧：两张图各自正确，重入被拒绝；**帧体时间上真的重叠**（一帧被 sink 停住时另一帧整帧完成） | `VkMultiSessionTest.TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`（各持一张自己的贴图）、
-  `VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`（变异回独占闸 ⇒ 红）；T47 的“同线程重入被拒”断言保留 |
-| T11 | 数据竞争有工具证据（已跑，2026-11-16：三套 0 报告） | `scripts/tsan_check.sh`（`test_vk` / `test_graphics` / `test_vsg` 子集） |
-| T12 | 文档与代码一致 | `python3 scripts/check_ai_docs.py --strict`、`python3 scripts/check_design_docs.py` |
-| T13 | vsg：一帧被 sink 停在**编译**里时，另一驱动者的帧整帧完成；一帧被停在**录制**里时，另一驱动者的整帧（帧首 + 录制 + 提交）完成且被停帧像素仍正确；两线程各持自己的目标各画各的；帧体内读回答 `InsideFrame` | `test_vsg` `VsgBackendTest.ACompilingFrameDoesNotWaitForAnotherDriversFrame`（变异：设备闸改回独占 ⇒ 5 s 超时红）、`VsgBackendTest.ARecordingFrameDoesNotStopAnotherDriversContent`（变异：三相位改回单锁 ⇒ 5 s 超时红）、`TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`、`AReadbackFromInsideAFrameBodyAnswersInsideFrame` |
+| T1 | a single-session backend changes no behaviour | `build/bin/test_graphics`, `test_vsg` (the default `createSession`) |
+| T2 | `test_vk` is green on a tree with "one session only" | `build/bin/test_vk` |
+| T3 | the recording path's cache locks are 0; the whole frame's count **does not grow with the draw count** (measured 4: 1 at the frame head + 2 for the books + 1 at the frame tail) | `test_vk` `VkFrameHeadTest.AFramesCacheWorkDoesNotGrowWithItsDrawingCalls` (1 vs 6 commands; the mutation 6 → 10 goes red) |
+| T4 | two sessions first-drawing the same geometry at once: no crash, both pictures right, uploads ≤ 2 | `test_vk` `VkResidenceWireTest.TwoDriversFirstDrawingOneGeometryShareOneEntryAndAtMostOneCopy` (really two sessions on two threads: claims 1 / published 1 / copies ≤ 1 / both pictures red / the next frame uploads nothing), `AKeyAnotherDriverIsFillingIsCopiedForThisFrameAndDiscarded` (a fake lease: a copy, exactly two streams, `used_bytes` back in place), `ARefusedBuildIsWithdrawnInsteadOfPublished`, `AReleasedGeometryIsForgottenSoTheNextFrameMayBuildItAgain`; mutations 3/3 red (not asking the table / publishing a failed fill / not forgetting on release) |
+| T5 | two sessions drawing one target: one pass skipped + one report | a new `test_vk` case |
+| T6 | a release overlapping an in-flight frame: the release does not wait for the frame to end, the frame still completes with the handles it resolved, the object parks to the watermark, and `deviceWaits()` does not rise |
+  `VkMultiSessionTest.AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroyWhatItUses` (mutation: the release takes the body gate again ⇒ red) |
+| T7 | alternately drawing different targets + interleaved readbacks: each reads its own latest completed frame | a new `test_vk` case |
+| T8 | two sessions with different default programs: each draws its own | a new `test_vk` case + a mutation (sharing one slot ⇒ red) |
+| T9 | with two sessions `BackendParityTest`'s byte-for-byte comparison is unchanged | `test_vsg` |
+| T10 | two sessions, one thread each, N frames each: both pictures are right and reentry is refused; **the frame bodies really overlap in time** (with one frame stopped by a sink another whole frame completes) | `VkMultiSessionTest.TwoDriversOnTwoThreadsEachKeepTheirOwnPicture` (each with its own texture),
+  `VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame` (mutation back to an exclusive gate ⇒ red); the "same-thread reentry is refused" assertion is kept |
+| T11 | the data race has tool evidence (run, 2026-11-16: three suites, 0 reports) | `scripts/tsan_check.sh` (`test_vk` / `test_graphics` / `test_vsg` subsets) |
+| T12 | the documentation matches the code | `python3 scripts/check_ai_docs.py --strict`, `python3 scripts/check_design_docs.py` |
+| T13 | vsg: with one frame stopped by a sink inside **compilation** another driver's whole frame completes; with one frame stopped inside **recording** another driver's whole frame (frame head + recording + submission) completes and the stopped frame's pixels are still right; two threads each with their own target draw their own; a read inside a frame body answers `InsideFrame` | `test_vsg` `VsgBackendTest.ACompilingFrameDoesNotWaitForAnotherDriversFrame` (mutation: the device gate back to exclusive ⇒ a 5 s timeout, red), `VsgBackendTest.ARecordingFrameDoesNotStopAnotherDriversContent` (mutation: the three phases back to one lock ⇒ a 5 s timeout, red), `TwoDriversOnTwoThreadsEachKeepTheirOwnPicture`, `AReadbackFromInsideAFrameBodyAnswersInsideFrame` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-本页描述的形状已全部落地：`T47` 的设备级帧闸，`T48` 的 S1–S9 与 `F4` 的驻留接线，两个后端共用同一套契约。
-落地顺序、每一步的用例与变异证据、当天的 TSan 读数都是历史，记在
-`../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` 的「实施状态」与 git 历史里；
-本页只保留仍然约束今天代码的部分：§2 的设计要点、§3 的功能点、§4 的接口与 §5 的约束。
+The shape this page describes is entirely landed in both backends, which share one contract. How it landed, the cases and mutation evidence for each step, and that day's
+TSan reading are history and live in `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`'s "implementation status" and in git; this page keeps only what
+still binds today's code: §2's design points, §3's features, §4's interfaces and §5's constraints.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-- `DeviceClock` 的动词仍叫 `addWindow` / `windowCompleted`（身份类型已是 `FrameDriverId`）；动词改名留一版。
-- **T3 的准确读法**：整帧固定 4 次获取（帧首 1 + 数簿 2 + 帧尾 1），用例是 `VkFrameHeadTest`；
-  「稳态帧 0 次」指的是记录路径，不是整帧（见 §2.3 与 §8 T3）。
+- `DeviceClock`'s verbs are still `addWindow` / `windowCompleted` (the identity type is already `FrameDriverId`); the rename is left for a later version.
+- **How to read T3 correctly**: a whole frame takes a fixed 4 acquisitions (1 at the frame head + 2 for the books + 1 at the frame tail), and the case is `VkFrameHeadTest`;
+  "a steady-state frame takes 0" is about the recording path, not the whole frame (see §2.3 and §8 T3).
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-迁移已完成，没有待做的步骤。步骤的划分、顺序、每一步的验收与回滚条件属于决策记录，
-见 `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` §9「分两步落地」与「实施状态」；
-今天仍然约束代码的两条事实留在设计侧：释放是两件事（§2.6）、读回等设备水位并计数（§2.7）。
-触发型的后续工作见 §9.2 与 `../backlog/graphics.md`。
+The migration is complete and no step is left. The division into steps, their order, and each step's acceptance and rollback conditions belong to the decision record — see
+`../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` §9 ("landing in two steps" and "implementation status"). Two facts that still bind today's code stay
+on the design side: release is two things (§2.6), and readback waits for the device watermark and counts it (§2.7). Trigger-gated follow-up work is in §9.2 and
+`../backlog/graphics.md`.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
-- 契约：`src/viz/graphics/sdk/vine/graphics/RenderDevice.hpp`、`RenderFrameExecutor.hpp`、`RenderBackend.hpp`
-- 机制：`src/viz/graphics/sdk/vine/graphics/FrameGate.hpp`、`DeviceClock.hpp`、`RetirementQueue.hpp`、`FrameTimeline.hpp`
-- vk 的现状：`src/plugins/gfx_backend_vk/src/internal/Device.cpp`（`FrameDriver` 的帧机器）、
-  `src/plugins/gfx_backend_vk/src/internal/ContentDraw.cpp`（记录器与缓存接线）
-- vsg 的现状：`src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp`（`Data` 的帧暂存单例）、
-  `src/plugins/gfx_backend_vsg/src/internal/WindowSession.cpp`（窗口会话）、`src/plugins/gfx_backend_vsg/src/internal/OffscreenSession.cpp`
-- 引擎侧：`src/viz/graphics/src/RenderEngine.cpp`（`setDevice` / `frame`）、`src/viz/graphics/src/RenderPass.cpp`（单 pass 驱动）
+- the contract: `src/viz/graphics/sdk/vine/graphics/RenderDevice.hpp`, `RenderFrameExecutor.hpp`, `RenderBackend.hpp`
+- the mechanisms: `src/viz/graphics/sdk/vine/graphics/FrameGate.hpp`, `DeviceClock.hpp`, `RetirementQueue.hpp`, `FrameTimeline.hpp`
+- vk's present shape: `src/plugins/gfx_backend_vk/src/internal/Device.cpp` (`FrameDriver`'s frame machinery),
+  `src/plugins/gfx_backend_vk/src/internal/ContentDraw.cpp` (the recorder and the cache wiring)
+- vsg's present shape: `src/plugins/gfx_backend_vsg/src/internal/VsgBackend.cpp` (`Data`'s frame-scratch singleton),
+  `src/plugins/gfx_backend_vsg/src/internal/WindowSession.cpp` (the window session), `src/plugins/gfx_backend_vsg/src/internal/OffscreenSession.cpp`
+- the engine side: `src/viz/graphics/src/RenderEngine.cpp` (`setDevice` / `frame`), `src/viz/graphics/src/RenderPass.cpp` (the single-pass driver)
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
-- `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`（决定与选项）
-- `ADR-2026-11-15-vk-keeps-one-frame-in-flight.md`（共用退休机制）
-- `ADR-2026-11-13-one-engine-one-surface.md`（一引擎一表面，本设计的前提）
-- `graphics-threading.md` `C21` / `R18` / `N18` / `D13`（今天的契约）
-- `vk-backend.md` §2.11（一个 `Device` 对象 = 一个会话）、`vsg-backend.md` §2.9（后端架构）
-- `graphics-frame-pipeline.md`（帧是值、四层单向）
+- `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` (the decision and the options)
+- `ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` (the shared retirement mechanism)
+- `ADR-2026-11-13-one-engine-one-surface.md` (one engine, one surface — this design's premise)
+- `graphics-threading.md` `C21` / `R18` / `N18` / `D13` (the contract in use)
+- `vk-backend.md` §2.11 (one `Device` object = one session pool), `vsg-backend.md` §2.9 (the backend architecture)
+- `graphics-frame-pipeline.md` (frames are values, four layers, one-way edges)
 
-### 10.3 外部资料
+### 10.3 External material
 
-- Vulkan 规范：按对象的外部同步要求（队列 / 命令池 / 描述符池 / 管线缓存 / 栅栏）——ADR 的"硬约束"表
-- VSG 1.1.16：设备级 `MemoryBufferPools`（`mutable std::mutex`）+ 每任务帧状态——ADR 的核对
-- O3DE RHI / wgpu：设备线程安全、命令列表每线程（外部资料，未在本仓核对）
+- the Vulkan specification: the external-synchronisation requirements per object (queues / command pools / descriptor pools / pipeline caches / fences) — the ADR's
+  "hard constraints" table
+- VSG 1.1.16: the device-level `MemoryBufferPools` (`mutable std::mutex`) plus per-task frame state — the ADR's cross-check
+- O3DE RHI / wgpu: a thread-safe device and one command list per thread (external material, not verified in this repository)
