@@ -4,6 +4,8 @@
 - 日期：2026-11-06
 - 相关：`ADR-2026-11-06-shared-numeric-kernels-in-math.md`、`../design/geometry-axis-surfaces.md` 2.5、`../design/geometry-primitives.md` 2.7
 
+> **EN**: Record of a decision since replaced: kept the knot model and `Continuity` in `vn::math` and documented `math` as the base layer rather than only a maths library, on the ground that the position is forced by the dependency graph (`math` is the only module below both geometry trees) and that the problem was the name, not the layering. Its `spline/` and `Continuity` halves are superseded by `ADR-2026-11-06-spline-model-moves-to-geom`; the `numeric` reasoning is unaffected.
+
 ## 背景
 
 `vn::math` 里现在有三类东西，它们的共同点不是“数学”：

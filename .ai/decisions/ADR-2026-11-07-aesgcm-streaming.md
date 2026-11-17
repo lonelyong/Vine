@@ -4,6 +4,8 @@
 - 日期：2026-11-07
 - 相关：`.ai/design/crypto.md`（`C14`、`P4`、`D2`）、`ADR-2026-11-07-crypto-api-shape.md`（其“缓冲式增量 GCM”决定由本文取代）
 
+> **EN**: Replaced the buffered incremental AES-GCM with a real streaming implementation on the wolfSSL v5.9.4 entry points (`Init` / `Update` / `Final`), so memory stays constant for any input size; `update()` emits as many bytes as it takes (GCM is a CTR stream) and the `out&` overload writes into caller storage. The new contract, written into the header and the design page, is that decrypted bytes are untrusted until `finish()` succeeds, and `operator<<` is gone because nothing is buffered any more.
+
 ## 背景
 
 第一版 `AesGcm` 的增量形态是**缓冲式**：`update()` 把输入攒进一个 vector，`finish()` 一次算完。

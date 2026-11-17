@@ -4,6 +4,8 @@
 - 日期：2026-11-06
 - 相关：`../design/geometry-planar.md` 2.5、`ADR-2026-11-05-planar-curve-contract.md`、`ADR-2026-11-06-math-is-the-base-layer.md`、`ADR-2026-11-06-shared-numeric-kernels-in-math.md`
 
+> **EN**: Merged `vn::Geom3D` and `vn::Geom2D` into one `src/base/geom` module and one `vn::Geom` target with a single `geom_global.hpp` and `VN_GEOM_API`, keeping the SDK trees and namespaces unchanged; the 2D/3D isolation that the target boundary used to enforce is now enforced by `scripts/check_geom_layering.py`. Rejected keeping two modules with duplicated shared code and inserting a `GeomBase` module; the direct gain was de-duplicating `narrowCrossing` and three pairs of family algorithms.
+
 ## 背景
 
 两个几何模块一直是两个 CMake 单元：`vn::Geom3D` 是 SHARED（有显式实例化与三个非模板实现），`vn::Geom2D` 是 INTERFACE（17 个头、无 `src/`、零导出符号）。消费者也极不对称：`vn::Geom3D` 有 15 个 CMake 目标在用，`vn::Geom2D` 只有它自己的测试。

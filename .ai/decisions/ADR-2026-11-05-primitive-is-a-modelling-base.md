@@ -5,6 +5,8 @@
 - 取代：`ADR-2026-11-05-solid-family-and-variant.md`（其中"模型按值持有 `SolidShapef`"的部分；`Solid<T>` 族本身不变）
 - 相关：`../design/geometry-parametric.md`、`../design/geometry-solid.md`、`../../src/base/geometry/sdk/vine/geometry/Primitive.hpp`、`../../tests/test_geometry/SolidTest.cpp`
 
+> **EN**: Chose B, superseding the "model holds a `SolidShapef` by value" half of `ADR-2026-11-05-solid-family-and-variant`: `Primitive : Shape` owns no geometry and declares only `bounds()`, the five `final` subclasses hold their own dimensions and construct their `...Solidf` value on demand (`solid()`), and the geometry kinds are renamed `BoxSolid` / `SphereSolid` / ... so the modelling names are free. Non-solid primitives can now be derived; `visitPrimitive()` and `solidShapeOf()` answer the closed set.
+
 ## 背景
 
 当天早些时候的做法是：`Primitive` 是**唯一**的建模类，按值持有一个 `SolidShapef`（五个解析体的变体），`shapeType()` 由变体派生，消费者 `std::visit` 它。

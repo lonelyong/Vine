@@ -4,6 +4,8 @@
 - 日期：2026-11-06
 - 相关：`../design/math-base-layer.md`、`../design/geometry-module.md` 2.6 / 7、`ADR-2026-11-06-geom-detail-subtree.md`、`ADR-2026-11-06-spline-model-moves-to-geom.md`
 
+> **EN**: Chose B, superseding `ADR-2026-11-06-shared-numeric-kernels-in-math`: `Quadrature`, `RootFinding` and `BezierBlend` moved to `vn::geom::detail`, leaving `math` with eighteen vocabulary headers and no subdirectories, because the only consumers in the repository are geometric and one home beats two. The cost is explicit - a future non-geometric consumer must depend on `vn::Geom` or promote the kernels to their own module rather than leaving them in `geom` (option C is the recorded reversal).
+
 ## 背景
 
 同一天早些时候，B 样条的节点模型与 `Continuity` 从 `math` 移入几何模块，判据是“签名里有没有我们自己的数据模型”。那次移动留下了两个残余：

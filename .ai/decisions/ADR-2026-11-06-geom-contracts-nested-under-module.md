@@ -4,6 +4,8 @@
 - 日期：2026-11-06
 - 相关：`../design/geometry-module.md` 2.2 / 2.5 / 6、`ADR-2026-11-06-merged-geom-module.md`、`ADR-2026-11-06-geom-detail-subtree.md`
 
+> **EN**: Chose C, superseding the "keep sibling directories" decision: the two contracts moved down to `geom/{planar,spatial,detail}` and `vn::geom::{planar,spatial,detail}`, the `VN_GEOM*_NS_*` macros now expand into real nesting, and `geom_global.hpp` re-exports nothing. Cost was 850 code references and 265 documentation references; the expected saving of `geom::detail::` to `detail::` did not materialise because the contract-private `planar::detail` / `spatial::detail` collide in a translation unit.
+
 ## 背景
 
 同一天早些时候，`geom/detail` 下沉之后我评估过一次重排，结论是"维持 `geom2d` / `geom3d` 作为 `geom` 的兄弟目录"，理由是"重排只剩名字好看，而代价是 689 处引用"。那次评估把收益写成"删掉两句 `using`"，**估错了**：

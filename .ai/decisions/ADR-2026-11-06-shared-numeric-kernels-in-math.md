@@ -4,6 +4,8 @@
 - 日期：2026-11-06
 - 相关：`../design/geometry-curve-queries.md` 2.6、`../design/geometry-planar.md` 2.14、`../design/geometry-intersection.md` 2.7
 
+> **EN**: Record of a decision since replaced: put the dimension-independent numeric kernels (`adaptiveSimpson`, `parameterReaching`, and the existing `rootInBracket`) under `vn::math::numeric`, so geometry keeps only the sampling and result types and the two contract trees cannot drift apart. Superseded by `ADR-2026-11-06-math-keeps-only-vocabulary`, which moves them to `geom/detail`; the signature contracts and the "scalar function plus bracket" criterion still stand.
+
 ## 背景
 
 `geom/planar` 与 `geom/spatial` 各自有一份弧长与反解：自适应 Simpson 的递归、带二分保护的 Newton 迭代，逐行相同，只有“速度怎么算”和“长度用哪个点是不同维度”的差别。这类复制不是巧合——它们是照着 3D 版逐行移植出来的，于是同一段数值逻辑有两份可独立漂移的实现（`G1` 违反），而修一个数值缺陷要记得改两处。

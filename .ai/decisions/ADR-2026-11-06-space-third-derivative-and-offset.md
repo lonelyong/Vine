@@ -5,6 +5,8 @@
 - 取代：`ADR-2026-11-04-curve-third-derivative.md`
 - 相关：`../design/geometry-kinds.md` 2.7 / 2.8 / D9、`ADR-2026-11-05-curve-derivative-capability.md`、`../design/geometry-planar.md` 2.13
 
+> **EN**: Chose C, superseding `ADR-2026-11-04-curve-third-derivative`: concrete curve types gain a non-virtual `thirdDerivative(u)` and override `maxDerivativeOrder() == 3` / `derivativeAt(u, 3)`, and `geom::spatial::OffsetCurve` becomes a constructible value type computing `U''` from the basis third derivative, with order `min(2, basis capability - 1)` and `isValid()` false below it. The contract gains no pure virtual, and the 2D and 3D offsets are now the same shape.
+
 ## 背景
 
 2026-11-04 的决定是“不给 `Curve<T>` 加三阶导数，`OffsetCurve` 因此保持抽象”。半年后的能力协议（`maxDerivativeOrder()` / `derivativeAt()`）改变了这个前提：三阶导可以只作为**具体类型的能力**存在，契约不必多一项纯虚。于是“偏置必须抽象”这个结论失效了——它原来成立的理由是“运行期基曲线问不出三阶导”。

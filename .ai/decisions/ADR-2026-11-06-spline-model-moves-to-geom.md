@@ -4,6 +4,8 @@
 - 日期：2026-11-06
 - 相关：`../design/math-base-layer.md`、`../design/geometry-module.md` 2.3 / 7、`ADR-2026-11-06-geom-detail-subtree.md`、`ADR-2026-11-04-bspline-without-knot-breaks.md`
 
+> **EN**: Split `math/spline` by "does the signature mention our own data model": `BSplineBasis` moved to `vn::geom::detail` and `Continuity` to `vn::geom` (re-exported into both dimension namespaces), while `BezierBlend` stayed in `math/spline` as pure evaluation and `math/numeric` was untouched. Its Bernstein and numeric halves are superseded by `ADR-2026-11-06-math-keeps-only-vocabulary`; the knot model and `Continuity` move stands.
+
 ## 背景
 
 `math/spline/` 自建立起就装着两件事：`BezierBlend.hpp`（`deCasteljau` / `differences`，Bernstein 求值）与 `BSplineBasis.hpp`（相异节点 + 重数这一套节点模型，加上 Cox–de Boor 基函数）。它们进 `math` 的理由只是“当时没有别的位置”，`ADR-2026-11-06-math-is-the-base-layer.md` 为此把 `math` 重新定义成“底座层，不只是数学库”——**一篇文档要为名字辩护，本身就是错位的信号**（`G4`）。

@@ -4,6 +4,8 @@
 - 日期：2026-11-05
 - 相关：`../design/geometry-solid.md`、`../design/geometry-parametric.md`、`../../src/base/geometry/sdk/vine/geometry/Solid.hpp`、`../../tests/test_geometry/SolidTest.cpp`
 
+> **EN**: Chose D: analytic solids are an interface family `Solid<T>` (five pure virtuals) plus a closed variant `SolidShape<T>`, with `Primitive` holding that variant by value and `solidOf()` giving the family view by reference at zero copy. Rejected algorithms on the modelling types, a bare variant, and pointer-held interface objects (allocation and shared ownership). Its "model holds the variant" part is superseded by `ADR-2026-11-05-primitive-is-a-modelling-base`, and the variant itself is deleted by `ADR-2026-11-09-solid-closed-set-without-variant`; the family plus five kinds stands.
+
 ## 背景
 
 几何算法最初挂在建模类型上：三角化、射线求交、点到实体距离各是一个以 `shapeType()` 为唯一入口的自由函数。后果是同一个形状的公式散在三个文件里、模型的消费者认识算法入口、每加一个能力都要再写一遍标签分派。

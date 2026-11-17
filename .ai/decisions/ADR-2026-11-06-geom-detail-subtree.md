@@ -4,6 +4,8 @@
 - 日期：2026-11-06
 - 相关：`../design/geometry-module.md` 2.2–2.3 / 3.1、`../design/geometry-planar.md` C10 / D3、`ADR-2026-11-06-merged-geom-module.md`、`ADR-2026-11-06-math-is-the-base-layer.md`、`ADR-2026-11-06-shared-numeric-kernels-in-math.md`
 
+> **EN**: Added `vn::geom::detail` for the dimension-independent shared geometry implementations (`CurveTraits`, `CrossingSearch`, `CurveMeasure`, `CurvePairSearch`) while the public entry points stay in each contract namespace and forward, with `check_geom_layering.py` pinning that neither contract includes the other and `detail` includes neither. The test for sinking code is whether two copies differ only in type names and documentation; `math`'s numeric and spline kernels were not moved by this ADR (a same-day follow-up did move them).
+
 ## 背景
 
 合并 `geom/planar` / `geom/spatial` 解决了“库”，没解决“共享件的位置”。合并后实测：两棵树仍有逐行相同的实现，因为能同时看见两边的地方在库内并不存在——车库里只有两棵树和各自的 `detail`。

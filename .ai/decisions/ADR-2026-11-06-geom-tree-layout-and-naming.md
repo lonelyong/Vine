@@ -4,6 +4,8 @@
 - 日期：2026-11-06
 - 相关：`../design/geometry-module.md` 2.2–2.5 / 7、`ADR-2026-11-06-merged-geom-module.md`、`ADR-2026-11-06-geom-detail-subtree.md`
 
+> **EN**: Record of a decision since replaced: kept the sibling directory layout and the namespace-carried dimension (no `2` / `3` type suffixes), because the shared-helper problem was already solved by `geom/detail` and the reorder bought only tidier names for 689 rewritten references; the `2` / `3` suffix and "both trees tagged" options stay rejected. Superseded by `ADR-2026-11-06-geom-contracts-nested-under-module`, which did nest both directory and namespace.
+
 ## 背景
 
 同一个会话里出现过三个重排提议，都指向同一件事——"让模块的物理形状更像它自称的样子"：
