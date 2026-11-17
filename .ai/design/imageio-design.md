@@ -1,210 +1,210 @@
-# imageio —— 图像容器的编解码公开面
+# imageio: the public codec surface for image containers
 
-> **状态**：现行
-> **最后核对**：2026-10-27
-> **范围**：`src/loaders/imageio` 的公开 API：容器词汇、能力表、解码、编码与失败分类。
-> 不含 `imaging::Image` / `PixelFormat` 的数据形状（见 `imaging-design.md`），也不含 VFS / Stream（见 `iobase-vfs-design.md`）。
-> **权威来源**：`src/loaders/imageio/sdk/vine/imageio/ImageCodec.hpp`、`tests/test_imageio`。
-> **待办**：见 9.2。
+> **Status**: current
+> **Last verified**: 2026-10-27
+> **Scope**: the public API of `src/loaders/imageio`: the container vocabulary, the capability table, decoding, encoding and failure classification.
+> Not the data shape of `imaging::Image` / `PixelFormat` (see `imaging-design.md`) , and not VFS / Stream (see `iobase-vfs-design.md`).
+> **Sources**: `src/loaders/imageio/sdk/vine/imageio/ImageCodec.hpp`, `tests/test_imageio`.
+> **Backlog**: see 9.2.
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-编解码只有一条通道：stb 的 memory API（`STBI_NO_STDIO`），文件读写由本模块用 `std::filesystem` + `fstream` 做。
-平移过来之后暴露了三个公开面上的问题：
+The codec has one channel only: stb's memory API (`STBI_NO_STDIO`), while this module does the file I/O with `std::filesystem` + `fstream`.
+Once ported, three problems on the public surface showed up:
 
-1. **失败是异常**，而同层的 `meshio` / `brepio` 已经统一为 `Result` / `IoError`：同一层三个模块两套失败通道，
-   调用方要同时记住两种约定。唯一消费者（`DemoScene.cpp` 里的立方体贴图）用 `try/catch` 只为打印原因并跳过。
-2. **同一个事实四份副本**：`formatName()` / `formatFromPath()` / `canRead()` / `canWrite()` 各一个 `switch`，
-   加一个容器要改四处，且可以互相漂移（"能读"的表列了它、扩展名表忘了它）。
-3. **文件选择器没有单一来源**：`meshio` 有 `supportedExtensions()`，`imageio` 没有，任何对话框都得手写一份扩展名。
+1. **failure is an exception**, while `meshio` / `brepio` on the same layer have already unified on `Result` / `IoError`: three modules on one layer, two failure channels,
+   and a caller has to remember both conventions. The only consumer (the cube map in `DemoScene.cpp`) uses `try/catch` only to print the reason and skip.
+2. **four copies of one fact**: `formatName()` / `formatFromPath()` / `canRead()` / `canWrite()` each had its own `switch`,
+   so adding a container meant four edits, and the copies can drift (the "can read" table lists it, the extension table forgets it).
+3. **the file dialog had no single source**: `meshio` has `supportedExtensions()`, `imageio` had none, so any dialog had to hand-write its own extension list.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 容器是枚举，能力来自**一张表**：名字、扩展名、可读、可写都从它取，选择器的扩展名列表也由它生成。
-- 失败是值：读回 `Result<T>`，写回 `IoError`，与 `meshio` / `brepio` 同一套词汇。
-- 一个入口集合：读完公开头就知道能做什么；模块**无状态**。
+- A container is an enum and its capability comes from **one table**: the name, the extensions, readability and writability all come from it, and the dialog's extension list is generated from it too.
+- Failure is a value: a read answers `Result<T>`, a write answers `IoError`, the same vocabulary as `meshio` / `brepio`.
+- One set of entry points: reading the public header tells you what the module can do; the module is **stateless**.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做 `ImageLoader` / `ImageEncoder` 类（没有 options，也没有缓存）。
-- 不加 `std::istream` 重载、VFS 入口、`createSource()`：见 2.4 与 `D2`–`D4`。
-- 不生成 mip 链，不写 JPEG（写出有损且需要质量参数，本 API 刻意没有那个位置）。
+- No `ImageLoader` / `ImageEncoder` classes (there are no options and no cache).
+- No `std::istream` overload, no VFS entry point and no `createSource()`: see 2.4 and `D2`–`D4` .
+- No mip-chain generation and no JPEG writing (writing is lossy and needs a quality parameter, and this API deliberately has no place for one).
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**容器是枚举、能力是一张表；读走 `Result`、写走 `IoError`；四个编解码入口是无状态自由函数，没有第二个概念。**
+**A container is an enum and its capability is one table; a read goes through `Result`, a write through `IoError`; the four codec entry points are stateless free functions, and there is no second concept.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 格式是类型，能力来自一张表
+### 2.1 The format is a type, the capability comes from one table
 
-- **是什么**：`ImageFileFormat` 枚举；`ImageFormatInfo{ extensions, can_read, can_write }`；`formatInfo()` 取表；
-  `formatName()` / `formatFromPath()` / `canRead()` / `canWrite()` / `supportedExtensions()` 都是表上的查询。
-- **为什么**：`G1`、`G6` —— 同一事实只有一个家；与 `meshio` 的 `formatInfo()` / `supportedExtensions()` 同名同形。
-- **边界**：表就是读写契约——`can_write == false` 的容器写不出（JPEG）；表外扩展名回答 `Unknown`。
-- **与 meshio 的差异**：`meshio` 的表没有 `can_read` / `can_write`（"枚举即契约"：表内值都可读可写）；
-  图像不是这样（JPEG 只读），所以表里保留两个布尔。这是**领域差异**，不是风格差异。
+- **What it is**: the `ImageFileFormat` enum; `ImageFormatInfo{ extensions, can_read, can_write }`; `formatInfo()` reads the table;
+  `formatName()` / `formatFromPath()` / `canRead()` / `canWrite()` / `supportedExtensions()` are all queries on that table.
+- **Why**: `G1`, `G6` — one home for one fact; the same names and shapes as `meshio`'s `formatInfo()` / `supportedExtensions()`.
+- **Boundary**: the table is the read / write contract — a container with `can_write == false` cannot be written (JPEG); an extension outside the table answers `Unknown`.
+- **Difference from meshio**: `meshio`'s table has no `can_read` / `can_write` ("the enum is the contract": every value in the table is readable and writable);
+  an image is not like that (JPEG is read-only), so the table keeps two booleans. This is a **domain difference**, not a style difference.
 
-### 2.2 失败是值
+### 2.2 Failure is a value
 
-- **是什么**：`decodeImage()` / `loadImage()` 返回 `vn::io::Result<intrusive_ptr<Image>>`；
-  `encodeImage()` 返回 `Result<std::vector<std::byte>>`；`saveImage()` 返回 `IoError`（`Ok` 即成功）。
-- **为什么**：`G4`、`G6` —— 一个返回值说清成败与原因；与 `iobase`、`meshio`、`brepio` 同一条规则。
-- **分类**（`R1`）：布局无法承载 → `Unsupported`；字节不是可读图像 / 空文件 → `InvalidData`；
-  文件不存在 → `NotFound`；读不出、写不进、编码器没产出 → `IoFailure`；超过解码器可寻址长度 → `CapacityExceeded`。
-- **代价**：`Result` 只带分类，丢掉 stb 的 `stbi_failure_reason()` 文本 —— 与 `meshio` 放弃 assimp 错误文本同一代价，
-  且调用方本来就知道路径与格式（`D5`）。
+- **What it is**: `decodeImage()` / `loadImage()` return `vn::io::Result<intrusive_ptr<Image>>`;
+  `encodeImage()` returns `Result<std::vector<std::byte>>`; `saveImage()` returns `IoError` (`Ok` means success).
+- **Why**: `G4`, `G6` — one return value states the outcome and the reason; the same rule as `iobase`, `meshio` and `brepio`.
+- **Classification** (`R1`): a layout that cannot carry the image → `Unsupported`; bytes that are not a readable image, or an empty file → `InvalidData`;
+  a missing file → `NotFound`; a read that fails, a write that fails, no encoder output → `IoFailure`; a length beyond the decoder's addressable range → `CapacityExceeded`.
+- **Cost**: `Result` carries the category only and drops stb's `stbi_failure_reason()` text —  the same cost as `meshio` giving up assimp's error text,
+  and the caller knows the path and the format anyway (`D5`).
 
-### 2.3 无状态：四个自由函数，不是 Loader / Exporter
+### 2.3 Stateless: four free functions, not a Loader / Exporter
 
-- **是什么**：解码 `decodeImage(bytes, layout)` / `loadImage(path, layout)`；编码 `encodeImage(image, format)` /
+- **What it is**: decoding is `decodeImage(bytes, layout)` / `loadImage(path, layout)` ; encoding is `encodeImage(image, format)` /
   `saveImage(path, image, format)`。
-- **为什么**：`G8` —— 解码是纯函数，编码没有策略；`meshio` 之所以需要实例，是因为它有 options（缩放策略）与
-  内容指纹缓存。照搬类形状只会让每个调用方先构造一个对象再调一个方法。
-- **边界**：调用方要的像素布局是参数（`PixelFormat`），因为"解码出的 RGB8 没有 24-bit 纹理格式"是调用方的问题；
-  容器由字节嗅探，扩展名只作提示。
+- **Why**: `G8` — decoding is a pure function and encoding has no policy; `meshio` needs an instance because it has options (a scaling policy) and
+  a content-fingerprint cache. Copying the class shape would only make every caller build an object before calling one method.
+- **Boundary**: the pixel layout the caller wants is a parameter (`PixelFormat`), because "the decoded RGB8 has no 24-bit texture format" is the caller's problem;
+  the container is sniffed from the bytes and the extension is only a hint.
 
-### 2.4 只做编解码：不加流 / VFS / createSource
+### 2.4 Codec only: no stream, no VFS, no createSource
 
-- **流**：stb 是 memory API，"从流解码"必然先整体进内存，`decodeImage(span)` 就是那条路的终点；`istream` 重载
-  只替调用方 drain，却让库多承担一条"流中途坏掉"的路径（`G7` 的反向）。
-- **VFS**：`Vfs::read()` / `Vfs::addFile()` 与 `decodeImage()` / `encodeImage()` 组合即可，两行；加 VFS 入口会把
-  `Vfs` 类型拉进公开面只为一个组合（`G5`）。失败词汇（`IoError`）是另一回事：它是词汇，不是实现。
-- **`createSource()`**：`encodeImage()` 已经产出完整字节，`Vfs::addFile(path, span)` 直接收；延迟编码只省一次
-  几十毫秒的编码内存，却要引入一个必须持有 `intrusive_ptr<const Image>` 的源与一条生命周期契约（`G8`、`G10`）。
+- **Stream**: stb is a memory API, so "decode from a stream" necessarily reads it all into memory first, and `decodeImage(span)` is where that ends; an `istream` overload
+  would only drain it for the caller, while giving the library one more path ("the stream broke halfway") to own — the reverse of `G7`.
+- **VFS**: `Vfs::read()` / `Vfs::addFile()` combined with `decodeImage()` / `encodeImage()` is two lines; a VFS entry point would
+  drag the `Vfs` type into the public surface for one combination (`G5`). The failure vocabulary (`IoError`) is a different matter: it is vocabulary, not implementation.
+- **`createSource()`**: `encodeImage()` already produces the complete bytes and `Vfs::addFile(path, span)` takes them directly; deferred encoding saves one
+  encoding buffer of a few dozen milliseconds, at the price of a source that must hold `intrusive_ptr<const Image>` and a lifetime contract (`G8`, `G10`).
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | 容器词汇与能力表 | 枚举 + `formatInfo()` + 四个查询 + `supportedExtensions()` | 已落地 |
-| F2 | 内存解码 | `decodeImage(bytes, layout)` → `Result<Image>` | 已落地 |
-| F3 | 文件解码 | `loadImage(path, layout)` → `Result<Image>` | 已落地 |
-| F4 | 内存编码 | `encodeImage(image, format)` → `Result<vector<byte>>` | 已落地 |
-| F5 | 文件编码 | `saveImage(path, image, format)` → `IoError` | 已落地 |
+| F1 | container vocabulary and capability table | the enum + `formatInfo()` + the four queries + `supportedExtensions()` | landed |
+| F2 | in-memory decoding | `decodeImage(bytes, layout)` → `Result<Image>` | landed |
+| F3 | file decoding | `loadImage(path, layout)` → `Result<Image>` | landed |
+| F4 | in-memory encoding | `encodeImage(image, format)` → `Result<vector<byte>>` | landed |
+| F5 | file encoding | `saveImage(path, image, format)` → `IoError` | landed |
 
-### 3.1.1 F1 容器词汇与能力表
+### 3.1.1 F1 container vocabulary and the capability table
 
-- **行为**：`ImageFileFormat`（`Png` / `Jpeg` / `Bmp` / `Tga` / `Unknown`）；表回答扩展名、可读、可写。
-- **约束/要求/验收**：`C1`、`R2`、`T1`、`T2`。
-- **注意**：JPEG 两个扩展名（`.jpg` / `.jpeg`）；`Unknown` 的扩展名列表为空、两个能力都是假。
+- **Behaviour**: `ImageFileFormat` (`Png` / `Jpeg` / `Bmp` / `Tga` / `Unknown`) ; the table answers the extensions, readability and writability.
+- **Constraints / requirements / acceptance**: `C1`, `R2`, `T1`, `T2`.
+- **Caveats**: JPEG has two extensions (`.jpg` / `.jpeg`); `Unknown` has an empty extension list and both capabilities false.
 
-### 3.1.2 F2 / F3 解码
+### 3.1.2 F2 / F3 decoding
 
-- **行为**：容器由字节嗅探；布局由调用方指定；结果恒为 1 个 mip；BGRA 布局在解码后交换 R/B。
-- **约束/要求/验收**：`C2`、`C3`、`R1`、`T3`、`T4`。
-- **注意**：一通道是 Rec.601 **亮度**，不是源的红通道；二通道（灰度 + alpha）拒绝（`C4`、`P1`）。
+- **Behaviour**: the container is sniffed from the bytes; the layout is the caller's choice; the result is always one mip; a BGRA layout gets R/B swapped after decoding.
+- **Constraints / requirements / acceptance**: `C2`, `C3`, `R1`, `T3`, `T4`.
+- **Caveats**: a one-channel file is Rec.601 **luma**, not the source's red channel; a two-channel layout (gray + alpha) is refused (`C4`, `P1`).
 
-### 3.1.3 F4 / F5 编码
+### 3.1.3 F4 / F5 encoding
 
-- **行为**：只写 base mip；不支持写出 base 之外的级别；BGRA 在临时的 R/B 交换副本上编码，不改调用方像素。
-- **约束/要求/验收**：`C5`、`R1`、`T5`、`T6`。
-- **注意**：BMP 只有 24-bit RGB / 32-bit RGBA 两条路，一通道会被展开成灰度三通道（`P2`）。
+- **Behaviour**: only the base mip is written; levels beyond the base are not supported; BGRA is encoded from a temporary R/B-swapped copy, so the caller's pixels are untouched.
+- **Constraints / requirements / acceptance**: `C5`, `R1`, `T5`, `T6`.
+- **Caveats**: BMP has only the 24-bit RGB and 32-bit RGBA paths, and a one-channel image is expanded into a gray three-channel one (`P2`).
 
-## 4. 公开接口
+## 4. Public Interface
 
 ```cpp
-// vn::imageio —— 格式词汇（src/loaders/imageio/sdk/vine/imageio/ImageCodec.hpp）
+// vn::imageio —— the format vocabulary (src/loaders/imageio/sdk/vine/imageio/ImageCodec.hpp)
 enum class ImageFileFormat : std::uint8_t { Unknown = 0, Png, Jpeg, Bmp, Tga };
 struct ImageFormatInfo {
-    std::span<const char* const> extensions;  // 小写、带前导点；Unknown → 空
+    std::span<const char* const> extensions;  // lower case, leading dot; Unknown → empty
     bool                         can_read;
     bool                         can_write;
 };
 const ImageFormatInfo& formatInfo(ImageFileFormat) noexcept;
 const char*            formatName(ImageFileFormat) noexcept;          // "PNG"
-ImageFileFormat        formatFromPath(const std::filesystem::path&);  // 按扩展名，仅作提示
+ImageFileFormat        formatFromPath(const std::filesystem::path&);  // by extension, a hint only
 bool                   canRead(ImageFileFormat) noexcept;
 bool                   canWrite(ImageFileFormat) noexcept;
-const std::set<vn::String>& supportedExtensions();                    // 由表生成
+const std::set<vn::String>& supportedExtensions();                    // generated from the table
 ```
 
-| 接口 | 契约 | 失败 |
+| Interface | Contract | Failure |
 |---|---|---|
-| `Result<intrusive_ptr<Image>> decodeImage(span<const byte>, PixelFormat)` | 容器嗅探；布局由调用方给；1 个 mip | `Unsupported`（布局无对应形态）/ `InvalidData` / `CapacityExceeded` |
-| `Result<intrusive_ptr<Image>> loadImage(path, PixelFormat)` | 读整份文件后解码 | `NotFound` / `IoFailure` / 解码的失败 |
-| `Result<vector<byte>> encodeImage(const Image&, ImageFileFormat)` | 只写 base mip | `Unsupported` / `InvalidData` / `IoFailure` |
-| `IoError saveImage(path, const Image&, ImageFileFormat)` | 格式取自参数，不由扩展名猜 | 编码的失败 / `IoFailure` |
+| `Result<intrusive_ptr<Image>> decodeImage(span<const byte>, PixelFormat)` | container sniffing; the layout is the caller's; one mip | `Unsupported` (no shape for the layout) / `InvalidData` / `CapacityExceeded` |
+| `Result<intrusive_ptr<Image>> loadImage(path, PixelFormat)` | reads the whole file, then decodes | `NotFound` / `IoFailure` / whatever decoding fails with |
+| `Result<vector<byte>> encodeImage(const Image&, ImageFileFormat)` | writes the base mip only | `Unsupported` / `InvalidData` / `IoFailure` |
+| `IoError saveImage(path, const Image&, ImageFileFormat)` | the format comes from the parameter, never guessed from the extension | whatever encoding fails with / `IoFailure` |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束
+### 5.1 Constraints
 
-- `C1` 枚举与表是唯一的格式词汇：`supportedExtensions()`、`formatFromPath()`、读写两端都从它取，不得手写第二份。
-- `C2` 解码的容器由字节判定，扩展名不参与；文件名撒谎不影响结果。
-- `C3` 解码结果恒为 1 个 mip：容器存一张图，链是另一件事。
-- `C4` 两通道布局拒绝：文件里的两通道是灰度 + alpha，`Rg8Unorm` 是红 + 绿。
-- `C5` 编码只写 base mip；JPEG 不可写（`can_write == false`）。
+- `C1` The enum and the table are the only format vocabulary: `supportedExtensions()`, `formatFromPath()` and both read and write take it from there, and no second hand-written copy is allowed.
+- `C2` The decoded container is decided by the bytes and the extension takes no part; a lying file name does not change the result.
+- `C3` A decode result is always one mip: a container stores one image, and the chain is a different thing.
+- `C4` A two-channel layout is refused: two channels in a file are gray + alpha, while `Rg8Unorm` is red + green.
+- `C5` Encoding writes the base mip only; JPEG is not writable (`can_write == false`).
 
-### 5.2 要求
+### 5.2 Requirements
 
-- `R1` 失败必须分类（2.2 的五类），不得只回空值或抛异常。
-- `R2` 公开头只使用 base 模块的类型（`Imaging`、`IOBase`、`Core`），stb 不外泄（PRIVATE 链接）。
-- `R3` 公开入口无状态：同一组参数调两次得到同一份字节（`T6`）。
+- `R1` A failure must be classified (the five kinds in 2.2), not merely answered with an empty value or an exception.
+- `R2` The public header uses base-module types only (`Imaging`, `IOBase`, `Core`); stb does not leak out (PRIVATE link).
+- `R3` The public entry points are stateless: two calls with the same arguments produce the same bytes (`T6`).
 
-### 5.3 不变量
+### 5.3 Invariants
 
-- `N1` `Result` 的 `*` / `->` 在失败时是未定义行为，先判 `ok()`。
-- `N2` 每次解码分配一张新 `Image`，调用方独占；没有缓存，也没有共享实例。
-- `N3` 8-bit 颜色布局 = 1 / 3 / 4 通道；浮点与深度布局不在可编码范围内。
+- `N1` `Result`'s `*` / `->` are undefined behaviour on failure; check `ok()` first.
+- `N2` Every decode allocates a new `Image` owned by the caller; there is no cache and no shared instance.
+- `N3` An 8-bit colour layout = 1 / 3 / 4 channels; floating-point and depth layouts are outside what can be encoded.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-| # | 会怎么错 | 怎么判 | 怎么防 |
+| # | How it fails | How to detect it | How to prevent it |
 |---|---|---|---|
-| P1 | 把一通道当作源的红通道 | 灰度图与红通道采样不同 | `C4` 的注释；`ASingleChannelIsLumaAndNotTheSourcesRed` |
-| P2 | 以为 BMP 能存两通道 | 读回后第二通道恒为 `0xFF` | `canWrite` 表项 + BMP 只走 RGB/RGBA 两条路 |
-| P3 | 在 JPEG 上测亮度语义 | 亮度差一两步 | 亮度用例只跑无损容器（PNG） |
-| P4 | 用 `> INT_MAX` 的缓冲解码 | 长度被截断成 `int` | `CapacityExceeded` 在进解码器之前返回 |
-| P5 | 文件对话框自己写扩展名 | 新增格式后对话框不认 | 用 `supportedExtensions()`（`C1`） |
+| P1 | a one-channel image is taken for the source's red channel | a gray image and red-channel sampling differ | the comment on `C4`; `ASingleChannelIsLumaAndNotTheSourcesRed` |
+| P2 | assuming BMP can store two channels | the second channel reads back as `0xFF` | the `canWrite` table entry plus BMP's RGB/RGBA-only paths |
+| P3 | measuring luminance semantics on JPEG | the luminance is a step or two off | luminance cases run on lossless containers only (PNG) |
+| P4 | decoding a buffer larger than `INT_MAX` | the length is truncated to `int` | `CapacityExceeded` is returned before the decoder is entered |
+| P5 | the file dialog writes its own extensions | the dialog does not accept a new format | use `supportedExtensions()` (`C1`) |
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Why not | ADR |
 |---|---|---|---|
-| D1 | 照搬 `Loader` / `Exporter` 类形状 | `G8`：没有 options、没有缓存，类只增加生命周期 | — |
-| D2 | `load(std::istream&)` / `save(std::ostream&)` | `G7`：stb 是 memory API，重载只替调用方 drain | — |
-| D3 | `loadImage(Vfs&, path)` / 加 `DataSource` 入口 | `G5`/`G7`：`Vfs::read()` 与 `decodeImage()` 两行即可，加了要把 `Vfs` 拉进公开面 | — |
-| D4 | `createSource()`（延迟编码进包） | `G8`/`G10`：只省一次编码内存，换来一个持有 `Image` 的源与生命周期契约 | — |
-| D5 | 保留异常作失败通道 | `G4`/`G6`：同层模块两套失败约定，调用方无法按分类处理 | — |
-| D6 | 保留四个手写 `switch` | `G1`：同一事实四份副本，加格式要改四处 | — |
+| D1 | copy the `Loader` / `Exporter` class shape | `G8`: no options and no cache, so a class adds lifetime only | — |
+| D2 | `load(std::istream&)` / `save(std::ostream&)` | `G7`: stb is a memory API, the overload only drains for the caller | — |
+| D3 | `loadImage(Vfs&, path)` / a `DataSource` entry point | `G5`/`G7`: `Vfs::read()` plus `decodeImage()` is two lines, and adding it pulls `Vfs` into the public surface | — |
+| D4 | `createSource()` (deferred encoding into a package) | `G8`/`G10`: it saves one encoding buffer at the price of a source holding an `Image` and a lifetime contract | — |
+| D5 | keep exceptions as the failure channel | `G4`/`G6`: one layer with two failure conventions, so a caller cannot act on the category | — |
+| D6 | keep the four hand-written `switch`es | `G1`: four copies of one fact, and adding a format means four edits | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Test case / command |
 |---|---|---|
-| T1 | 表逐值自洽：`formatInfo()` 的每个扩展名都能被 `formatFromPath()` 认回，且出现在 `supportedExtensions()` 里 | `ImageFileFormatTest.TheTableStatesEachFormatsExtensionsAndCapabilities` |
-| T2 | 扩展名列表由表生成（5 项：png / jpg / jpeg / bmp / tga） | `ImageFileFormatTest.TheExtensionListIsDerivedFromTheTable` |
-| T3 | 每个可写容器 × 每个 8-bit 布局往返逐字节相同 | `ImageEncodeTest.EveryWritableContainerRoundTripsEveryLayoutExactly` |
-| T4 | 失败分类：缺失文件 `NotFound`、空文件 / 垃圾字节 `InvalidData`、不可写容器 `Unsupported`、写不进的路径 `IoFailure` | `ImageDecodeTest.ReportsAMissingFileAsNotFound` 等 |
-| T5 | 二通道与浮点布局被拒（`Unsupported`），不是静默转换 | `ImageDecodeTest.RefusesTwoChannelLayouts...`、`RefusesALayoutAContainerCannotHold` |
-| T6 | 同一输入两次编码字节相同；只写 base mip | `ImageEncodeTest.OnlyTheBaseLevelIsWritten` |
+| T1 | the table is self-consistent value by value: every extension of `formatInfo()` is recognised back by `formatFromPath()` and appears in `supportedExtensions()` | `ImageFileFormatTest.TheTableStatesEachFormatsExtensionsAndCapabilities` |
+| T2 | the extension list is generated from the table (5 entries: png / jpg / jpeg / bmp / tga) | `ImageFileFormatTest.TheExtensionListIsDerivedFromTheTable` |
+| T3 | every writable container × every 8-bit layout round-trips byte for byte | `ImageEncodeTest.EveryWritableContainerRoundTripsEveryLayoutExactly` |
+| T4 | failure classification: a missing file `NotFound`, an empty file / garbage bytes `InvalidData`, an unwritable container `Unsupported`, an unwritable path `IoFailure` | `ImageDecodeTest.ReportsAMissingFileAsNotFound` and others |
+| T5 | a two-channel or floating-point layout is refused (`Unsupported`), never silently converted | `ImageDecodeTest.RefusesTwoChannelLayouts...`, `RefusesALayoutAContainerCannotHold` |
+| T6 | the same input encodes to the same bytes twice; only the base mip is written | `ImageEncodeTest.OnlyTheBaseLevelIsWritten` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current Status
 
-公开面已按本文实现；`tests/test_imageio` 28 个用例全过。消费者只有 `demo_plugin` 的立方体贴图（六个 JPEG 面）。
+The public surface is implemented as this page states; the 28 cases in `tests/test_imageio` all pass. The only consumer is `demo_plugin`'s cube map (six JPEG faces).
 
-### 9.2 已知缺口
+### 9.2 Known Gaps
 
-- **mip 生成没有**：解码只产 base 级，链由上传侧另行生成（见 `imaging-design.md` 9.2）。
-- **JPEG 写出**：需要质量参数，属于"新增参数"而不是"打开表项"；有消费者时按 `WriteOptions` 的形式加。
-- **VFS / 包的出入口**：按 `D3` 由调用方组合；出现"不进内存地读包内大图"或"包内成批导出"时再评估（`../../.ai/backlog/` 无对应条目时不预置）。
+- **no mip generation**: decoding produces the base level only, and the chain is generated on the upload side (see `imaging-design.md` 9.2).
+- **JPEG writing**: it needs a quality parameter, which is "a new parameter" rather than "opening a table entry"; add it as a `WriteOptions` form when a consumer appears.
+- **the VFS / package entry point**: the caller composes it per `D3`; reassess when "read a large image inside a package without loading it" or "export a package in bulk" appears (nothing is pre-built while `../../.ai/backlog/` has no matching entry).
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility and Migration
 
-公开面破坏性变化：四个编解码入口从"抛异常 / 返回裸值"改为 `Result` / `IoError`，并新增 `formatInfo()` 与
-`supportedExtensions()`。仓内调用点（`demo_plugin` 与 `tests/test_imageio`）已全部迁移。
+A breaking change on the public surface: the four codec entry points went from "throw / return a bare value" to `Result` / `IoError`, and `formatInfo()` and
+`supportedExtensions()` were added. Every call site in the repository (`demo_plugin` and `tests/test_imageio`) is migrated.
 
-## 10. 参考
+## 10. References
 
-- 代码：`src/loaders/imageio/sdk/vine/imageio/ImageCodec.hpp`、`src/loaders/imageio/src/ImageFormat.cpp`、
+- Code: `src/loaders/imageio/sdk/vine/imageio/ImageCodec.hpp`, `src/loaders/imageio/src/ImageFormat.cpp`,
   `src/loaders/imageio/src/ImageCodec.cpp`。
-- 词汇来源：`src/base/iobase/sdk/vine/io/IoError.hpp`（`Result` / `IoError`）。
-- 同层对照：`meshio-brepio-design.md`（同一套失败语义与能力表；形状差别的理由见 2.3 / 2.4）。
-- 数据形状：`imaging-design.md`；VFS：`iobase-vfs-design.md`。
+- Vocabulary: `src/base/iobase/sdk/vine/io/IoError.hpp` (`Result` / `IoError`).
+- Same-layer comparison: `meshio-brepio-design.md` (the same failure semantics and capability table; the reason for the shape difference is in 2.3 / 2.4).
+- Data shape: `imaging-design.md`; VFS: `iobase-vfs-design.md`.
