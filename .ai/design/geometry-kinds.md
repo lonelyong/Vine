@@ -1,302 +1,304 @@
-# geometry 几何族：Curve 与 Surface
+# geometry kinds: Curve and Surface
 
-> **状态**：现行
-> **最后核对**：2026-11-04
-> **范围**：`Curve` / `Surface` 两个求值接口，以及具体值类型的归属与新增类型的最小契约。
-> 参数化几何（`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）**不构成族**：模型侧是一个建模类 `Primitive`，几何侧是族 `Solid<T>` 的五个 kind（见 `geometry-parametric.md`、`geometry-solid.md`）。
-> 不含具体类型的完整契约（见 `geometry-primitives.md`、`geometry-parametric.md`、`geometry-ray.md` 与各自头文件），不含求交与距离算法。
-> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/Curve.hpp`、`Surface.hpp`；`src/base/geom/sdk/vine/geom/Continuity.hpp`；`tests/test_geom_spatial/GeometryKindsTest.cpp`。
-> **待办**：`../backlog/geometry.md`
+> **Status**: current
+> **Last verified**: 2026-11-04
+> **Scope**: the two evaluation interfaces `Curve` / `Surface`, the membership of the concrete value types, and the minimum contract for a new type.
+> Parametric geometry (`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`) **is not a family**: the modelling side has one modelling class `Primitive`, and the geometry side has the five kinds of the family `Solid<T>` (see `geometry-parametric.md`, `geometry-solid.md`).
+> Not the full contract of a concrete type (see `geometry-primitives.md`, `geometry-parametric.md`, `geometry-ray.md` and the individual headers), not the intersection and distance algorithms.
+> **Sources**: `src/base/geom/sdk/vine/geom/spatial/Curve.hpp`, `Surface.hpp`; `src/base/geom/sdk/vine/geom/Continuity.hpp`; `tests/test_geom_spatial/GeometryKindsTest.cpp`.
+> **Backlog**: `../backlog/geometry.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-几何类型之间没有分类关系：`LineCurve`、`Ray`、`Plane`、`Box` 都是互不相关的类，"这是一条曲线 / 一个曲面 / 一个实体"这句话只存在于讨论里。想按族写一个约束、想把一族类型放进同一个容器、想回答"这个类型是几维的"，都只能靠命名猜测；运行期分类只有 `ShapeType`，而它只覆盖 `Shape` 子类，值类型根本不在其中。
+The geometry types have no classification relation: `LineCurve`, `Ray`, `Plane` and `Box` are unrelated classes, and "this is a curve / a surface / a solid" exists only in discussion. Writing a constraint over a family, putting a family into one container, or answering "how many dimensions does this type have" all rely on guessing from a name; the only run-time classification is `ShapeType`, which covers `Shape` subclasses only, so value types are not in it at all.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 两个族各有一个名字，归属写在类型定义处（`class CircleCurve : public ConicCurve`）。
-- 分类可以在编译期查询（`std::is_base_of_v<Curve<double>, CircleCurved>`）与枚举（`Surface::kParameterCount`）。
-- 几何可被当作“未知类型的参数化对象”使用：曲线是求值、导数、参数域、光滑度、反向映射（2.7），曲面是求值、两个一阶导、两个方向的参数域与闭合周期（2.10）。
+- Each of the two families has one name, and membership is declared at the type definition (`class CircleCurve : public ConicCurve`).
+- Classification is queryable at compile time (`std::is_base_of_v<Curve<double>, CircleCurved>`) and by enum (`Surface::kParameterCount`).
+- Geometry can be used as "a parameterised object of unknown type": for a curve evaluation, derivatives, parameter domain, smoothness and reversed mapping (2.7), for a surface evaluation, both first derivatives, the parameter domains and closed periods in both directions (2.10).
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 接口里只放“参数化对象必然能回答的事”：曲面的法向、包围盒、二阶导数与反向/变换都不进接口（2.10），曲线的同理（2.7）。
-- 不做异构容器：需要“一列混合曲线”时用 `std::variant` + `std::visit`；接口只回答“一条”曲线 / “一张”曲面（2.4）。
-- 不给参数化几何设族标签：它们不属于 `Curve` / `Surface` 树；几何侧是 `Solid<T>` 族（射线–盒仍是 `Aabb` 的 slab，实体语义归 `Solid<T>::intersectWith()`）；哪些形状能组成模型由 `ShapeType` 回答。
-- 族级曲面算法（最近点、射线 × 曲面）已在 `geometry-surface-queries.md`，点到曲线的最近点 / 距离已在 `geometry-curve-queries.md`；实体求交仍没有消费者（`G8`），见 `../backlog/geometry.md` G3。
+- The interface carries only what a parameterised object necessarily answers: a surface's normal, bounding box, second derivatives, reversal and transforms stay off it (2.10), and likewise for curves (2.7).
+- No heterogeneous container: a "list of mixed curves" uses `std::variant` + `std::visit`; the interface answers about "one" curve / "one" surface (2.4).
+- No family tag on parametric geometry: it belongs to neither the `Curve` nor the `Surface` tree; on the geometry side it is the family `Solid<T>` (ray–box is still the `Aabb` slab, and solid semantics belong to `Solid<T>::intersectWith()`); which shapes can form a model is answered by `ShapeType`.
+- The family-level surface algorithms (nearest point, ray × surface) are in `geometry-surface-queries.md`, and the nearest point / distance on a curve in `geometry-curve-queries.md`; solid intersection still has no consumer (`G8`), see `../backlog/geometry.md` G3.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**`Curve` 与 `Surface` 都是求值接口，曲面多一层分类标签；参数化几何不属于任何族，它们只是建模参数。**
+**`Curve` and `Surface` are both evaluation interfaces, and a surface has one more classification tag; parametric geometry belongs to no family — it is only a modelling parameter.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 曲线与曲面都是求值接口
+### 2.1 Curve and Surface are both evaluation interfaces
 
-- **是什么**：`Curve<T>`（2.7 的十一项）与 `Surface<T>`（2.10 的十四项）都是**抽象接口**：虚析构 + 求值与一阶导数 + 参数域、闭合、周期 + 光滑度 + 有效性。`LineCurve` / 四个圆锥曲线 / `TrimmedCurve` / `Plane` / `SphericalSurface` 实现它们。
-- **为什么**：`G4`、`G9` —— “未知类型也能求值并问参数域”只能靠虚函数。两个族问的是同一组事实，只是一个参数还是两个，所以接口也一对一（2.7 与 2.10）。
-- **代价**：实现了接口的类型带 vptr，不再是 trivially copyable，`sizeof` 多一个指针。曲线都是冷类型；`Plane` 在射线求交里被复制，所以它**不**额外存面内框架（2.10）。
-- **`Ray` 不在族里**：它在拾取里逐三角形按值拷贝，加 vptr 会把测到的内联收益退回去（`geometry-ray.md` 2.7）；它只保留 `pointAt`。
-- **`TrimmedCurve<T>`**：持 `std::shared_ptr<const Curve<T>>` 基曲线 + 参数区间，`evaluate` 转发给基曲线；闭合/周期性由基曲线与区间共同决定（跨满全域**且两端重合**才算闭合，跨满一个周期才算周期）。
+- **What**: `Curve<T>` (the eleven items of 2.7) and `Surface<T>` (the fourteen of 2.10) are both **abstract interfaces**: a virtual destructor + evaluation and the first derivatives + parameter domain, closedness, period + smoothness + validity. `LineCurve` / the four conics / `TrimmedCurve` / `Plane` / `SphericalSurface` implement them.
+- **Why**: `G4`, `G9` — "evaluate an unknown type and ask for its parameter domain" can only go through virtual functions. The two families ask the same group of facts, one with one parameter and one with two, so the interfaces correspond one to one (2.7 and 2.10).
+- **Cost**: a type implementing the interface carries a vptr, is no longer trivially copyable, and its `sizeof` grows by one pointer. Curves are all cold types; `Plane` is copied in ray intersection, which is why it stores **no** in-plane frame (2.10).
+- **`Ray` is not in the family**: it is copied by value per triangle in picking, and adding a vptr would give back the measured inline gain (`geometry-ray.md` 2.7); it keeps only `pointAt`.
+- **`TrimmedCurve<T>`**: holds a `std::shared_ptr<const Curve<T>>` basis curve + a parameter interval, and `evaluate` forwards to the basis; closedness / periodicity are decided by the basis and the interval together (closed only when the interval spans the whole domain **and the two ends coincide**, periodic only when it spans one period).
 
-### 2.2 分类标签本身仍是零成本
+### 2.2 The classification tag itself stays free
 
-- **是什么**：`ElementarySurface<T>` / `BoundedSurface<T>` 只做分类，不加状态、不加虚函数；`Surface<T>` 的 vptr 是曲面族唯一的多态代价。`sizeof(Planed)` = 两个向量 + vptr，`sizeof(SphericalSurfaced)` = 中心 + 半径 + vptr，由 `static_assert` 盯着。
-- **为什么**：`G10`、`G4` —— “派生”不应该再额外变大；标签层多一个成员就是每次拷贝多一份数据。
-- **边界**：不再声称“曲面零成本”——2026-11-04 起曲面与曲线一样付 vptr（`../decisions/ADR-2026-11-04-surface-evaluation-interface.md`）；`Ray` 仍在族外，圆锥曲线的框架在 `ConicCurve` 里统一存三份向量（2.9）。
+- **What**: `ElementarySurface<T>` / `BoundedSurface<T>` only classify, adding no state and no virtual function; the vptr of `Surface<T>` is the surface family's only polymorphism cost. `sizeof(Planed)` = two vectors + vptr, `sizeof(SphericalSurfaced)` = centre + radius + vptr, pinned by `static_assert`.
+- **Why**: `G10`, `G4` — "deriving" should not make a type any bigger; one more member in the tag layer is one more piece of data on every copy.
+- **Boundary**: we no longer claim "surfaces are free" — since 2026-11-04 a surface pays a vptr exactly as a curve does (`../decisions/ADR-2026-11-04-surface-evaluation-interface.md`); `Ray` is still outside the family, and a conic's frame stores three vectors once in `ConicCurve` (2.9).
 
-### 2.3 归属
+### 2.3 Membership
 
-| 族 | 维度 | 成员 | 参数的含义 |
+| Family | Dimension | Members | Meaning of the parameter |
 |---|---|---|---|
-| `Curve` | 1 | **抽象接口**：`evaluate` / 导数 / 参数域 / 闭合 / 周期 / 光滑度 / 反向映射 / 有效性（2.7）。实现者：`LineCurve`、`CircleCurve`、`EllipseCurve`、`HyperbolaCurve`、`ParabolaCurve`、`TrimmedCurve`、`BezierCurve`、`BSplineCurve`、`OffsetCurve`；抽象中间层 `ConicCurve`、`BoundedCurve` | `LineCurve` 是 `direction` 的倍数，圆/椭圆是离心角，双曲线是双曲角，抛物线是垂直轴上的偏移，两种样条是各自的节点表示 |
-| `Surface` | 2 | **抽象接口**：`evaluate` / 两个一阶导 / 参数域 / 两个方向的闭合与周期 / 光滑度（2.10）。实现者：`Plane`、`SphericalSurface`、`CylindricalSurface`、`ConicalSurface`、`ToroidalSurface`、`RectangularTrimmedSurface` | 球面用方位角与极角，平面用两个面内坐标 |
-| `ElementarySurface` | 2 | `Plane`、`SphericalSurface`、`CylindricalSurface`、`ConicalSurface`、`ToroidalSurface`（全部已实现）；旋转面各持一个 `Placement` 值（见 `geometry-axis-surfaces.md` 2.1） | 无界或半无限的解析支撑面 |
-| `BoundedSurface` | 2 | `RectangularTrimmedSurface`（视图）、`BezierSurface`、`BSplineSurface`（均已实现，见 `geometry-axis-surfaces.md` 2.4 / 2.5） | 参数域有限，总能回答 `bounds()` |
+| `Curve` | 1 | **abstract interface**: `evaluate` / derivatives / parameter domain / closedness / period / smoothness / reversed mapping / validity (2.7). Implemented by `LineCurve`, `CircleCurve`, `EllipseCurve`, `HyperbolaCurve`, `ParabolaCurve`, `TrimmedCurve`, `BezierCurve`, `BSplineCurve`, `OffsetCurve`; abstract intermediate layers `ConicCurve`, `BoundedCurve` | `LineCurve` is a multiple of `direction`, circle / ellipse the eccentric angle, hyperbola the hyperbolic angle, parabola the offset along the directrix axis, the two splines their own knot representation |
+| `Surface` | 2 | **abstract interface**: `evaluate` / both first derivatives / parameter domains / closedness and period in both directions / smoothness (2.10). Implemented by `Plane`, `SphericalSurface`, `CylindricalSurface`, `ConicalSurface`, `ToroidalSurface`, `RectangularTrimmedSurface` | sphere by azimuth and polar angle, plane by two in-plane coordinates |
+| `ElementarySurface` | 2 | `Plane`, `SphericalSurface`, `CylindricalSurface`, `ConicalSurface`, `ToroidalSurface` (all implemented); each surface of revolution holds one `Placement` value (see `geometry-axis-surfaces.md` 2.1) | unbounded or semi-infinite analytic support surfaces |
+| `BoundedSurface` | 2 | `RectangularTrimmedSurface` (a view), `BezierSurface`, `BSplineSurface` (both implemented, see `geometry-axis-surfaces.md` 2.4 / 2.5) | a finite parameter domain, so `bounds()` can always be answered |
 
-- **为什么**：`G1`、`G12` —— 维度只决定"取一个点要几个参数"，具体含义留在类型上；把参数含义统一进基类会造出一个每种类型都要重新解释的约定。
-- **默认构造只在两种情况下存在**：① 默认值本身就是有意义的几何（`Placement` 是单位框架，`CircleCurve` 是半径 1 的 XY 圆，`SphericalSurface` 是半径 1 的球）；② 默认值是**能被 `isValid()` 认出的空状态**（`BezierCurve` / `BSplineCurve` / `BezierSurface` / `BSplineSurface` 没有数据，`isValid()` 恒假）。旋转面与平面两者都不是——“单位圆柱看起来完全合法”，所以它们根本不声明默认构造，`static_assert(!std::is_default_constructible_v<CylindricalSurfaced>)` 盯着这件事。
-- **参数化几何不在表里**：`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` 是**建模类型**（`Primitive` 的子类，见 `geometry-parametric.md`），不是几何族成员。需要列“哪些几何能组成模型”时看 `Primitive` 的五个子类；需要算几何时用值类型（实体的值类型是 `Solid<T>`，见 `geometry-solid.md`）或曲面。
+- **Why**: `G1`, `G12` — the dimension decides only "how many parameters a point takes", and the concrete meaning stays on the type; lifting the parameter meaning into the base class would invent a convention every type has to reinterpret.
+- **Default construction exists in two cases only**: (1) the default value is itself meaningful geometry (`Placement` is the unit frame, `CircleCurve` is the unit XY circle, `SphericalSurface` is the unit sphere); (2) the default is an **empty state `isValid()` recognises** (`BezierCurve` / `BSplineCurve` / `BezierSurface` / `BSplineSurface` have no data and `isValid()` is always false). The surfaces of revolution and the plane are neither — "a unit cylinder looks entirely legal" — so they declare no default constructor at all, and `static_assert(!std::is_default_constructible_v<CylindricalSurfaced>)` pins that.
+- **Parametric geometry is not in the table**: `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` are **modelling types** (subclasses of `Primitive`, see `geometry-parametric.md`), not members of a geometry family. "Which geometries can form a model" is answered by the five subclasses of `Primitive`; computing geometry uses a value type (the solid value type is `Solid<T>`, see `geometry-solid.md`) or a surface.
 
-### 2.4 运行期多态用 variant
+### 2.4 Run-time polymorphism uses a variant
 
-- **是什么**：`Solid<T>::Shape`（`std::variant<Box, Sphere, Cylinder, Cone, Ellipsoid>`，五个解析体）是现行用例；`Solid<T>` 的成员与三角化都用 `std::visit` 分派，新增 kind 是编译错误。模型侧没有变体：`Primitive` 是带身份的基类，`brep` 与 `robotics::io` 按 `shapeType()` + `obj_cast` 分派。
-- **为什么**：`G4`、`G9` —— 变体是封闭集合，标签与内容不可能不一致；新增成员是编译错误提示所有消费点，而不是运行期静默落到 `default`。
-- **边界**：变体放的是**值**，所以它能和值语义共存；放指针加虚函数等于绕回被否决的方案。
+- **What**: `Solid<T>::Shape` (`std::variant<Box, Sphere, Cylinder, Cone, Ellipsoid>`, the five analytic solids) is the current case; the members and tessellation of `Solid<T>` dispatch through `std::visit`, so a new kind is a compile error. The modelling side has no variant: `Primitive` is a base class with identity, and `brep` and `robotics::io` dispatch by `shapeType()` + `obj_cast`.
+- **Why**: `G4`, `G9` — a variant is a closed set, so tag and content cannot disagree; adding a member is a compile error naming every consumer, not a run-time silent fall-through to `default`.
+- **Boundary**: the variant holds **values**, so it coexists with value semantics; holding pointers plus virtual functions would circle back to the rejected design.
 
-### 2.5 新增类型只给能验证的契约
+### 2.5 A new type gets only a contract that can be verified
 
-- **是什么**：`CircleCurve` 提供 `isValid()`、`pointAt(angle)`、`circumference()`、`bounds()`；椭圆/双曲线/抛物线提供 `isValid()`、`pointAt(u)`、`bounds()`（仅椭圆，闭合且有界）；`SphericalSurface` 提供 `pointAt(azimuth, polar)` / `normalAt` / `bounds()`；`LineCurve` 提供 `pointAt(t)` / `closestPoint` / `intersectWith`。
-- **单个三角形、四边形不做类型**：`intersectTriangle(ray, a, b, c, hit)` 直接吃三个角点，不需要类型；名字 `TriangleSurface` / `QuadSurface` 作为保留名登记在 backlog（`../backlog/geometry.md` G7），等它们长出自己的查询（射线–面求交、点到面距离）时再引入，且届时带 `Surface` 后缀——仓库里已有 `TriangleMesh` / `QuadMesh`，裸名会被读成网格元素（`G4`）。
-- **为什么**：`G8` —— 没有消费者的能力不写：射线求交、点到曲线的距离、曲面求交都在 backlog，等触发条件。有消费者的那些（族级曲面查询、点到曲线、解析实体）都按本条判据补上了消费者侧的证据。
-- **边界**：`PointCloud` 仍是 `Shape`，不是曲线也不是曲面：它是离散点集，没有参数化取点；`Box` 等解析体是建模类型（`Primitive` 子类）或值类型（`Solid<T>`），也不在任何一族里。
+- **What**: `CircleCurve` offers `isValid()`, `pointAt(angle)`, `circumference()`, `bounds()`; ellipse / hyperbola / parabola offer `isValid()`, `pointAt(u)`, `bounds()` (ellipse only, closed and bounded); `SphericalSurface` offers `pointAt(azimuth, polar)` / `normalAt` / `bounds()`; `LineCurve` offers `pointAt(t)` / `closestPoint` / `intersectWith`.
+- **A single triangle or quad gets no type**: `intersectTriangle(ray, a, b, c, hit)` takes three corner points directly and needs no type; the names `TriangleSurface` / `QuadSurface` are registered as reserved names in the backlog (`../backlog/geometry.md` G7), to be introduced when they grow queries of their own (ray–surface intersection, point-to-surface distance), and then with the `Surface` suffix — the repository already has `TriangleMesh` / `QuadMesh`, and a bare name would be read as a mesh element (`G4`).
+- **Why**: `G8` — a capability with no consumer is not written: ray intersection, point-to-curve distance and surface intersection are all in the backlog waiting for their trigger. Those with consumers (family-level surface queries, point to curve, analytic solids) have been given consumer-side evidence under this test.
+- **Boundary**: `PointCloud` is still a `Shape`, neither a curve nor a surface: it is a discrete point set with no parameterised point; `Box` and the other analytic solids are modelling types (subclasses of `Primitive`) or value types (`Solid<T>`), and belong to no family either.
 
-### 2.6 算法放在值类型上，不另设算法类
+### 2.6 Algorithms live on the value types, with no separate algorithm class
 
-- **是什么**：查询是**被交对象自己的成员**——`Aabb::intersectWith(const Ray&, RayHit&)`、`Obb::intersectWith(...)`、`Plane::intersectWith(const LineCurve&, ...)`、`Solid<T>::closestPoint()` / `intersectWith(Ray)`；没有值类型的三角形用自由函数 `intersectTriangle`。没有一个 `SphericalSurface` / `CylindricalSurface` 之类的算法类。
-- **为什么**：`G1`、`G6`、`G12`、`G13` —— 名字与数据各只有一份（半径在 `Solid<T>::Sphere` 里，算法类不再存一遍）；调用方不必查“球面求交住在哪个类”；与 `geometry-ray.md` 2.2 的既有形状一致；算法只能住在几何一侧（`G13`）。
-- **边界**：
-  - 两个对象之间的运算（布尔、实体间最近距离、实体–实体求交）不属于任何单一对象 → **自由函数**，放在两者共同的模块。
-  - 族级查询（点到曲面、射线 × 曲面、曲线 × 曲面）没有“一个能回答它的具体对象”，所以是自由函数 + 参数窗口（`geometry-surface-queries.md`、`geometry-intersection.md` 2.9）。
-  - 需要后端的运算（STEP 解析、B-rep 三角化）→ `brep`；纯数学的解析实体三角化留在 `geometry`，且因为是 float 而写成自由函数（`geometry-tessellation.md` 2.1）。
-  - 曲面族的解析面与裁剪面已全部在 `geometry` 里（轴对称曲面见 `geometry-axis-surfaces.md`），不依赖 OCCT；`brep` 一侧的 `Geom_*` 是另一套表示（引用计数 + 可变），不在这里重复实现（`G1`）。
+- **What**: a query is a **member of the object being intersected** — `Aabb::intersectWith(const Ray&, RayHit&)`, `Obb::intersectWith(...)`, `Plane::intersectWith(const LineCurve&, ...)`, `Solid<T>::closestPoint()` / `intersectWith(Ray)`; a triangle with no value type uses the free function `intersectTriangle`. There is no algorithm class such as `SphericalSurface` / `CylindricalSurface`.
+- **Why**: `G1`, `G6`, `G12`, `G13` — the name and the data exist once (the radius is in `Solid<T>::Sphere`, and an algorithm class would not store it again); a caller need not look up "which class owns sphere intersection"; it matches the existing shape in `geometry-ray.md` 2.2; and an algorithm can only live on the geometry side (`G13`).
+- **Boundary**:
+  - An operation between two objects (boolean, nearest distance between solids, solid–solid intersection) belongs to neither → **free function**, in the module both share.
+  - A family query (point to surface, ray × surface, curve × surface) has no "single concrete object that can answer it", so it is a free function plus a parameter window (`geometry-surface-queries.md`, `geometry-intersection.md` 2.9).
+  - An operation needing a backend (STEP parsing, B-rep tessellation) → `brep`; the pure-maths tessellation of the analytic solids stays in `geometry` and, because it is float, is written as a free function (`geometry-tessellation.md` 2.1).
+  - The analytic and trimmed surfaces of the surface family are all in `geometry` (the surfaces of revolution in `geometry-axis-surfaces.md`) and do not depend on OCCT; the `Geom_*` side of `brep` is another representation (reference-counted + mutable) and is not reimplemented here (`G1`).
 
-### 2.7 曲线接口的核心属性
+### 2.7 The core properties of the curve interface
 
-- **是什么**：`Curve<T>` 的五组属性，全部纯虚——① 求值与导数：`evaluate(u)`、`derivative(u)`、`secondDerivative(u)`；② 参数域与周期：`firstParameter()` / `lastParameter()` / `isClosed()` / `isPeriodic()` / `period()`；③ 光滑度：`continuity()`（及由它导出的非虚 `isCN(n)`）；④ 反向参数映射：`reversedParameter(u)`；⑤ 有效性：`isValid()`（状态能不能求值，与参数无关）。另有一对**非纯虚能力成员**：`maxDerivativeOrder()`（默认 2）与 `derivativeAt(u, order)`（默认答一、二阶，超出答 `std::nullopt`）。
-- **为什么**：`G4`、`G9` —— 这十一项是“参数化曲线”这个概念的最小完备集：一个点、它的变化率、它在哪里有效、它有多光滑、反着走时参数怎么变、这份状态到底能不能用。切线/法向、离散采样、曲率、B-rep 接缝判定都只依赖这些，不需要知道具体类型。
-- **`derivative` 是速度向量，不是单位切向**：`circle.derivative(u)` 的长度就是半径，要方向就自己归一化。这条写进接口而不是留给约定（`G4`）；`secondDerivative` 同理，只有弧长参数化时它才等于曲率向量。
-- **`continuity()` 用阶梯枚举**：`Continuity` 按光滑度排序，`>=` 即“至少这么光滑”；解析类型（直线、圆、平面）答 `CN`。`Polynomial` / `Rational` 不进去——它们描述表示法（nurbs 形式），不是光滑度。
-- **`period()` 只说“这个对象是否重复”**：`isPeriodic()` 为假时 `period()` 恒为 0，即使它是一段从周期曲线上裁下来的区间。裁剪视图因此**不**转发基曲线的周期：四分之一圆是“有两个端点的一小段”，回答 2π 会让 `if (period() > 0)` 这类调用方把一小段当成整圈（`G4`）。要基曲线的周期就问基曲线——`TrimmedCurve::basis_curve` 是 public 的。
-- **`reversedParameter` 而不是 `reverse()`**：反向是参数化的属性，不是对对象的编辑。曲线不可变、基曲线可被多条裁剪共享，可变反向会让共享同一基的裁剪互相干扰；想要反向曲线就构造它的镜像（直线取 `-direction`，圆取 `-normal`，裁剪交换区间），本函数只回答“同一个点在反向参数化里的参数”。裁剪在**自己区间内**反射（`first + last - u`），不在基曲线上反射。
-- **`isValid()` 在接口上**：每个实现早就各自回答“这份状态能不能求值”（C12），但同一个问题经 `const Curve<T>&` 问不出来——调用方要先知道具体类型。它是**状态**的答案，不依赖参数，与 `Shape` / `Primitive` 同一个问法；放上接口后，族级算法与扫描测试可以在一处守卫（见 `../decisions/ADR-2026-11-04-isvalid-on-family-interfaces.md`）。
-- **边界（不进接口的东西）**：
-  - `bounds()`：只有有限曲线总能回答，直线只能返回无穷盒，等于把“无界”伪装成盒子（`G4`）。
-  - 弧长 / `length()`：要算法与参数化精度，属算法不属属性。
-  - 变换族（OCCT 的 `Transform` / `TransformedParameter`）：坐标系住在 `Shape` 的节点上，曲线不持有放置。
-  - `curveType()` 枚举：`dynamic_cast` 与 vtable 已经回答了“我是什么”，再维护一份枚举就是两个家（`G1`）。
-  - 具体阶数的导数实现：阶数是**算法的参数、类型的能力**，所以接口只回答“能到几阶”（`maxDerivativeOrder()`）与“这一阶是多少”（`derivativeAt()`），三阶导的闭式实现留在能答的类型上；OCCT 的 `DN(order)` + `NotImplemented` 是反例（D10）。见 `../decisions/ADR-2026-11-05-curve-derivative-capability.md`。
+- **What**: the five groups of `Curve<T>`, all pure virtual — (1) evaluation and derivatives: `evaluate(u)`, `derivative(u)`, `secondDerivative(u)`; (2) parameter domain and period: `firstParameter()` / `lastParameter()` / `isClosed()` / `isPeriodic()` / `period()`; (3) smoothness: `continuity()` (and the non-virtual `isCN(n)` derived from it); (4) reversed parameter mapping: `reversedParameter(u)`; (5) validity: `isValid()` (whether the state can be evaluated, independent of the parameter). Plus one pair of **non-pure capability members**: `maxDerivativeOrder()` (default 2) and `derivativeAt(u, order)` (answers the first and second order by default, `std::nullopt` beyond).
+- **Why**: `G4`, `G9` — these eleven items are the minimal complete set for the concept "parameterised curve": a point, its rate of change, where it is valid, how smooth it is, how the parameter changes when walked backwards, and whether this state is usable at all. Tangent / normal, discrete sampling, curvature and B-rep seam decisions all depend on these alone and need not know the concrete type.
+- **`derivative` is the velocity vector, not a unit tangent**: `circle.derivative(u)` has the length of the radius, and a direction is normalised by the caller. This is written into the interface rather than left to a convention (`G4`); the same for `secondDerivative`, which equals the curvature vector only under an arc-length parameterisation.
+- **`continuity()` uses a ladder enum**: `Continuity` is ordered by smoothness, and `>=` means "at least this smooth"; the analytic types (line, circle, plane) answer `CN`. `Polynomial` / `Rational` are not in it — they describe a representation (the nurbs form), not smoothness.
+- **`period()` says only "does this object repeat"**: when `isPeriodic()` is false `period()` is always 0, even for an interval cut from a periodic curve. A trimmed view therefore does **not** forward the basis period: a quarter circle is "a short piece with two endpoints", and answering 2π would let callers of the form `if (period() > 0)` treat a short piece as a full turn (`G4`). The basis period is asked of the basis curve — `TrimmedCurve::basis_curve` is public.
+- **`reversedParameter` instead of `reverse()`**: reversal is a property of the parameterisation, not an edit of the object. A curve is immutable and a basis curve may be shared by several trims, so a mutable reversal would make trims sharing one basis interfere; a reversed curve is built as its mirror (negate `direction` for a line, `normal` for a circle, swap the interval for a trim), and this function only answers "the parameter of the same point under the reversed parameterisation". A trim reflects **inside its own interval** (`first + last - u`), not on the basis curve.
+- **`isValid()` is on the interface**: every implementation already answered "can this state be evaluated" (C12), but the same question could not be asked through `const Curve<T>&` — a caller had to know the concrete type. It is an answer about **state**, independent of the parameter, asked the same way as on `Shape` / `Primitive`; on the interface, family algorithms and sweep tests can guard in one place (see `../decisions/ADR-2026-11-04-isvalid-on-family-interfaces.md`).
+- **Boundary (what stays off the interface)**:
+  - `bounds()`: only a finite curve can always answer, and a line can only return an infinite box, which disguises "unbounded" as a box (`G4`).
+  - Arc length / `length()`: needs an algorithm and a parameterisation tolerance, so it is an algorithm, not a property.
+  - The transform family (OCCT's `Transform` / `TransformedParameter`): the coordinate system lives on a `Shape` node, and a curve holds no placement.
+  - The `curveType()` enum: `dynamic_cast` and the vtable already answer "what am I", and maintaining an enum too would be two homes (`G1`).
+  - Derivative implementations of specific orders: the order is an **algorithm parameter and a type capability**, so the interface answers only "how far can you go" (`maxDerivativeOrder()`) and "what is this order" (`derivativeAt()`), with the closed form of the third derivative left on the types that can answer it; OCCT's `DN(order)` + `NotImplemented` is the counter-example (D10). See `../decisions/ADR-2026-11-05-curve-derivative-capability.md`.
 
-### 2.8 导数阶梯到三阶：样条与偏置都能答
+### 2.8 The derivative ladder reaches the third order: splines and offsets both answer
 
-- **是什么**：`BezierCurve` / `BSplineCurve` / `OffsetCurve` 的十一项纯虚全部落地，三者都是**可构造的值类型**；整个空间曲线族报 `maxDerivativeOrder() == 3`（裁剪视图向基曲线转发），偏置报 2：
-  - `BezierCurve`：一个 de Casteljau 算法连用——极点、一阶差分、二阶差分、三阶差分，`P' = n * D1(u)`、`P'' = n * (n - 1) * D2(u)`、`P''' = n * (n - 1) * (n - 2) * D3(u)`；有理形式在齐次坐标上跑同一套，商法则依次替换 `P'` / `P''` / `P'''`。
-  - `BSplineCurve`：只需求值参数所在跨的 `degree + 1` 个基函数（Cox–de Boor 与导数递推），对极点加权求和，三阶导用同一递推的第三层；有理形式用商法则 `P''' = (A''' - 3 P'' w' - 3 P' w'' - P w''') / w`；`isClosed()` 比较两个端点，是几何事实而非数据事实。
-  - `OffsetCurve`：`evaluate` / `derivative` 用 `N = reference_direction x p'` 与 `N' = reference_direction x p''`；`secondDerivative` 再加一层 `N'' = reference_direction x p'''`，二次链用 `U = N/|N|`、`k = (N·N')/|N|²` 写成 `U'' = N''/R - 2 N' k/R + U (k² - k')`，叉乘退化时退回基曲线本身（不产生 NaN）。
-- **为什么契约仍只有十一项**：三阶导是**能力**而不是义务——具体类型把 `maxDerivativeOrder()` 报为 3 并覆写 `derivativeAt()`，`Curve<T>` 不多一项纯虚，自定义实现只到二阶也不需要写任何东西（2.7、`../decisions/ADR-2026-11-05-curve-derivative-capability.md`）。
-- **偏置为何报 2 而不是 3**：偏置的第 n 阶导需要基曲线的第 n+1 阶，`P''` 用到 `p'''`，`P'''` 就要 `p''''`。所以 `OffsetCurve::maxDerivativeOrder()` 是 `min(2, 基曲线能力 − 1)`：空间具体类型都答 3 时偏置答 2；偏置套偏置时答 1、`derivativeAt(u, 2)` 答空、`isValid()` 为假。这与平面侧同一个规则（`geometry-planar.md` 2.13）。见 `../decisions/ADR-2026-11-06-space-third-derivative-and-offset.md`。
-- **为什么补样条的数值回答**：数据模型与类型事实在 2.8 之前就已定义（`G1`），缺的只是数值函数；它们是仓库里唯一持有内存的曲线，构造与拷贝语义早已确定，补求值不改变任何契约。
-- **数据模型的三个取舍（不变）**：
-  - 节点存**相异值 + 重数**：重数是调用方唯一会问的东西，存展开向量等于每次查询都重新分组（`G4`）。两端重数 = 度 + 1（夹持），内部重数 ≤ 度——等于度加一时两侧完全独立，参数会跳，那是两段而不是一条曲线（C13、`../decisions/ADR-2026-11-04-bspline-without-knot-breaks.md`）。
-  - 权重用**空数组表示多项式**，不用 `is_rational` 布尔：一个标志和数据可以互相矛盾，空数组不会（`G1`）。
-  - `BezierCurve` 不存度数：度数是极点数 − 1，存两份就有一份会过期。
-- **边界**：
-  - 一次查询只碰一个跨的极点；`BSplineCurve` 用 `flatKnot()` 把扁平索引线性扫描回相异节点——一份事实、一次扫描，是 `G1` 让位给 `G10` 的显式取舍（头文件 `@note` 记录）。
-  - 越界行为两边不同：`BezierCurve` 是多项式外推，`BSplineCurve` 把参数夹进节点域、域外取端点值（与 OCCT 的 `Geom_BSplineCurve` 一致），两条都写在头文件里（C10、P3）。
-  - 三者仍是仓库里仅有的持有内存的曲线类型（`std::vector` 字段），所以它们是“深拷贝意义上的值”，不再 trivially copyable；`LineCurve` / 圆锥曲线 / `Ray` 依然零分配。
+- **What**: the eleven pure virtual items of `BezierCurve` / `BSplineCurve` / `OffsetCurve` are all implemented, and all three are **constructible value types**; the whole spatial curve family reports `maxDerivativeOrder() == 3` (a trimmed view forwards to its basis) and the offset reports 2:
+  - `BezierCurve`: one de Casteljau algorithm used repeatedly — poles, first differences, second differences, third differences, with `P' = n * D1(u)`, `P'' = n * (n - 1) * D2(u)`, `P''' = n * (n - 1) * (n - 2) * D3(u)`; the rational form runs the same set in homogeneous coordinates, with the quotient rule substituting `P'` / `P''` / `P'''` in turn.
+  - `BSplineCurve`: evaluate only the `degree + 1` basis functions of the span (Cox–de Boor with the derivative recursion), weight the poles and sum, and take the third derivative from the third layer of the same recursion; the rational form uses the quotient rule `P''' = (A''' - 3 P'' w' - 3 P' w'' - P w''') / w`; `isClosed()` compares the two endpoints, a geometric fact rather than a data fact.
+  - `OffsetCurve`: `evaluate` / `derivative` use `N = reference_direction x p'` and `N' = reference_direction x p''`; `secondDerivative` adds one more layer `N'' = reference_direction x p'''`, and the second-order chain is written with `U = N/|N|`, `k = (N·N')/|N|²` as `U'' = N''/R - 2 N' k/R + U (k² - k')`, falling back to the basis curve itself when the cross product degenerates (no NaN).
+- **Why the contract still has only eleven items**: the third derivative is a **capability**, not an obligation — a concrete type reports `maxDerivativeOrder()` as 3 and overrides `derivativeAt()`, `Curve<T>` gains no twelfth pure virtual, and a custom implementation that only reaches the second order writes nothing (2.7, `../decisions/ADR-2026-11-05-curve-derivative-capability.md`).
+- **Why the offset reports 2 and not 3**: the n-th derivative of an offset needs the (n+1)-th of the basis, `P''` uses `p'''` and `P'''` would need `p''''`. So `OffsetCurve::maxDerivativeOrder()` is `min(2, basis capability − 1)`: when every spatial concrete type answers 3 the offset answers 2; an offset of an offset answers 1, `derivativeAt(u, 2)` answers empty and `isValid()` is false. The same rule as the planar side (`geometry-planar.md` 2.13). See `../decisions/ADR-2026-11-06-space-third-derivative-and-offset.md`.
+- **Why the splines gained their numeric answers**: the data model and the type facts were defined before 2.8 (`G1`) and only the numeric functions were missing; they are the only curves in the repository that own memory, construction and copy semantics were already settled, and adding evaluation changes no contract.
+- **Three trade-offs of the data model (unchanged)**:
+  - knots store **distinct values + multiplicities**: the multiplicity is the only thing a caller asks for, and storing an expanded vector would mean regrouping on every query (`G4`). The two end multiplicities are degree + 1 (clamped) and an interior multiplicity is ≤ degree — at degree + 1 the two sides are completely independent and the parameter jumps, which is two curves rather than one (C13, `../decisions/ADR-2026-11-04-bspline-without-knot-breaks.md`).
+  - weights use **an empty array for the polynomial case**, not an `is_rational` boolean: a flag and the data can contradict each other, an empty array cannot (`G1`).
+  - `BezierCurve` stores no degree: the degree is the pole count − 1, and of two copies one goes stale.
+- **Boundary**:
+  - one query touches the poles of one span only; `BSplineCurve` uses `flatKnot()` to walk the flat index back to the distinct knots by linear scan — one fact, one scan, an explicit trade of `G1` for `G10` (recorded in the header's `@note`).
+  - behaviour outside the domain differs: `BezierCurve` extrapolates polynomially, `BSplineCurve` clamps the parameter into the knot domain and takes the endpoint value outside (as OCCT's `Geom_BSplineCurve` does), both stated in the header (C10, P3).
+  - the three are still the only curve types in the repository that own memory (`std::vector` fields), so they are "values in the deep-copy sense" and no longer trivially copyable; `LineCurve` / the conics / `Ray` still allocate nothing.
 
-### 2.9 圆锥曲线共有的框架与光滑度住在 `ConicCurve`
+### 2.9 The frame and the smoothness the conics share live in `ConicCurve`
 
-- **是什么**：`ConicCurve` 持有框架 `center` / `normal` / `x_direction`（构造时归一化），并提供派生的 `yAxis()` / `planeNormal()`，同时把 `continuity()` 定为 `CN`；四个圆锥曲线只声明自己的标量（半径 / 两个半轴 / 焦距）与数值回答。
-- **为什么**：`G1`、`G6` —— 框架若在 `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` 各存一份（`yAxis()` / `planeNormal()` / `continuity()` 各四份拷贝），改一处要改四处，四处的归一化规则也可以悄悄分叉。OCCT 的 `Geom_Conic` 同样用 `gp_Ax2` 持有框架、把 `Continuity()` 定为 Cn，这里只是把同一件事写进我们的类型。
-- **代价**：`CircleCurve` 不再每次由 `normal` 推导起始轴，而是构造时存一次 `x_direction`，因此多 24 字节（2.2 的大小断言跟着变）；同时框架字段构造后不可再改写——这从“写了会悄悄改变参数化起点”变成“写了会让三个向量互相矛盾”，后者更该被禁止，已写进每个圆锥曲线的 `@warning`。
-- **抛物线的原点就是顶点**：`ParabolaCurve` 不再单独存 `vertex`，用继承的 `center`（OCCT 的 `Geom_Conic::Location()` 对抛物线同样返回顶点）。
-- **退化框架的答案写在 `ConicCurve`**：`normal` 为零时 `yAxis()` 为零，参数化塌成沿 `x_direction` 的线段（圆、椭圆）或射线（双曲线、抛物线）；四个 `pointAt()` 的 `@return` 都指向这条规则，`isValid()` 是唯一判据（C12）。`CircleCurve::bounds()` 与 `EllipseCurve::bounds()` 用同一个支撑函数 `sqrt((a·X_i)² + (b·Y_i)²)` 造盒，所以退化时给出线段盒，而不是半径立方（`G1`）。
-- **边界**：`isClosed()` / `isPeriodic()` / `period()` 不往 `ConicCurve` 提升——圆与椭圆闭合周期、双曲线与抛物线无界非周期，两边各两行，硬造一层“闭合圆锥曲线”只会多一个类型（`G8`）。
+- **What**: `ConicCurve` holds the frame `center` / `normal` / `x_direction` (normalised at construction), offers the derived `yAxis()` / `planeNormal()`, and fixes `continuity()` at `CN`; the four conics declare only their own scalars (radius / two semi-axes / focal distance) and their numeric answers.
+- **Why**: `G1`, `G6` — if the frame lived once in each of `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` (`yAxis()` / `planeNormal()` / `continuity()` four copies each), one change would mean four edits, and the normalisation rule could silently diverge in four places. OCCT's `Geom_Conic` likewise holds the frame in a `gp_Ax2` and fixes `Continuity()` at Cn; this only writes the same thing into our types.
+- **Cost**: `CircleCurve` no longer derives its start axis from `normal` every time but stores `x_direction` once at construction, so it grows by 24 bytes (the size assertions in 2.2 follow); and the frame fields cannot be rewritten after construction — which turns "writing it silently moves the parameter start" into "writing it makes the three vectors contradict each other", the latter being what should be forbidden, as written in every conic's `@warning`.
+- **A parabola's origin is its vertex**: `ParabolaCurve` stores no separate `vertex` and uses the inherited `center` (OCCT's `Geom_Conic::Location()` likewise returns the vertex for a parabola).
+- **The answers of a degenerate frame live in `ConicCurve`**: with a zero `normal`, `yAxis()` is zero and the parameterisation collapses onto a segment along `x_direction` (circle, ellipse) or a ray (hyperbola, parabola); the `@return` of all four `pointAt()` points at this rule, and `isValid()` is the only test (C12). `CircleCurve::bounds()` and `EllipseCurve::bounds()` build the box from the same support function `sqrt((a·X_i)² + (b·Y_i)²)`, so a degenerate one gives a segment box rather than a radius cube (`G1`).
+- **Boundary**: `isClosed()` / `isPeriodic()` / `period()` are not lifted into `ConicCurve` — a circle and an ellipse are closed and periodic, a hyperbola and a parabola unbounded and non-periodic, two lines each side, and inventing a "closed conic" layer would add one type for nothing (`G8`).
 
-### 2.10 曲面接口的核心属性
+### 2.10 The core properties of the surface interface
 
-- **是什么**：`Surface<T>` 的十四项全纯虚——① 求值与一阶导：`evaluate(u, v)`、`derivativeU(u, v)`、`derivativeV(u, v)`；② 参数域：`firstUParameter()` / `lastUParameter()` / `firstVParameter()` / `lastVParameter()`；③ 两个方向的闭合与周期：`isUClosed()` / `isVClosed()` / `isUPeriodic()` / `isVPeriodic()` / `uPeriod()` / `vPeriod()`；④ 光滑度：`continuity()`（及非虚 `isCN(n)`）；⑤ 有效性：`isValid()`。
-- **为什么**：`G4`、`G9` —— 这是“参数化曲面”的最小完备集，与 `Curve<T>` 一一对应（一个参数变两个），所以记一套就够：面遍历、采样、求交的前置都只依赖这些。
-- **去掉的东西与理由**：
-  - `normalAt(u, v)`：它就是 `derivativeU × derivativeV` 归一化，一行就能写；放进接口就必须选一个朝向约定（球面向外、平面哪一侧？），等于把约定当契约（`G4`）。具体类型仍保留自己的 `normalAt`（球面的向外法向）。
-  - `bounds()`（包围盒）：对无界曲面只能返回无穷盒，与无界曲线同一个理由（2.7）。
-  - 二阶导数 / 曲率：真正要它的消费者（曲率、G2 拼接）还没有；曲面要三组（UU / UV / VV），是接口里最贵的一组（`G8`）。
-  - 反向与变换族（`uReversedParameter` / `transform`）：与曲线同理——反向用构造镜像表达，变换住在 `Shape` 节点上。
-- **`Plane` 不存面内框架**：两个面内轴由 `normal` 每次推导（世界轴里与法向最不平行的那个的投影），所以平面的大小不因为接口多一份数据，代价是每次求值多一次投影与叉乘——两个新函数今天没有调用方。零法向是平面唯一的退化输入，由 `isValid()` 报告（`normal.length() > EPS`），与圆锥曲线对退化框架的规则一致（P6）。
-- **`SphericalSurface` 的 v 方向不闭合**：`v` 从 0 到 π，两端是两个极点而不是一条缝；缝合与极点的参数化奇异是两件事，`continuity()` 仍答 `CN`。
-- **`SphericalSurface` 的 v 从 +Z 量起，与 OCCT 差一个平移（有意）**：OCCT 的 `Geom_SphericalSurface` 从赤道量起、域 `[-π/2, π/2]`；这里用标准球坐标 `[0, π]`（0 = +Z 极点），换算 `v_occt = π/2 - v`。理由：非负域、两端就是极点，读 `v` 不需要靠符号判断（`G4`）；代价是从 OCCT 转参数时要转一次。
-- **旋转面与裁剪见 `geometry-axis-surfaces.md`**：旋转面的坐标系值（`Placement`）、共用的“平面内轴”规则（`Frame.hpp`）、矩形裁剪曲面与样条曲面的现状，以及与 OCCT 的对齐 / 分歧都在那份文档里。
-- **裁剪视图的周期与曲线同一条规则**：`RectangularTrimmedSurface` 的 `uPeriod()` / `vPeriod()` 只在 `isUPeriodic()` / `isVPeriodic()` 为真时回答基曲面的周期，否则 0（`G6`：两种裁剪视图不许有两种答案）。
+- **What**: all fourteen items of `Surface<T>` are pure virtual — (1) evaluation and first derivatives: `evaluate(u, v)`, `derivativeU(u, v)`, `derivativeV(u, v)`; (2) parameter domain: `firstUParameter()` / `lastUParameter()` / `firstVParameter()` / `lastVParameter()`; (3) closedness and period in both directions: `isUClosed()` / `isVClosed()` / `isUPeriodic()` / `isVPeriodic()` / `uPeriod()` / `vPeriod()`; (4) smoothness: `continuity()` (and the non-virtual `isCN(n)`); (5) validity: `isValid()`.
+- **Why**: `G4`, `G9` — this is the minimal complete set for "a parameterised surface", corresponding one to one with `Curve<T>` (one parameter becomes two), so one set of notes suffices: face traversal, sampling and the preconditions of intersection depend on these alone.
+- **What was removed, and why**:
+  - `normalAt(u, v)`: it is `derivativeU × derivativeV` normalised, one line to write; on the interface it would force a choice of orientation convention (outward for a sphere, which side for a plane?), turning a convention into a contract (`G4`). A concrete type still keeps its own `normalAt` (the outward normal of a sphere).
+  - `bounds()` (bounding box): an unbounded surface can only return an infinite box, the same reason as for an unbounded curve (2.7).
+  - Second derivative / curvature: the consumer that really needs it (curvature, G2 stitching) does not exist yet; a surface would need three groups (UU / UV / VV), the most expensive group in an interface (`G8`).
+  - Reversal and the transform family (`uReversedParameter` / `transform`): as for curves — reversal is expressed by building a mirror, and transforms live on a `Shape` node.
+- **`Plane` stores no in-plane frame**: the two in-plane axes are derived from `normal` each time (the projection of the world axis least parallel to the normal), so the plane does not grow because the interface needs one more piece of data, at the cost of one projection and cross product per evaluation — two new functions with no caller today. A zero normal is the plane's only degenerate input, reported by `isValid()` (`normal.length() > EPS`), the same rule as the conics' degenerate frame (P6).
+- **`SphericalSurface`'s v direction is not closed**: `v` runs from 0 to π, and the two ends are the two poles rather than a seam; stitching and the parameterisation singularity at a pole are two different things, and `continuity()` still answers `CN`.
+- **`SphericalSurface`'s v is measured from +Z, one shift away from OCCT (deliberate)**: OCCT's `Geom_SphericalSurface` measures from the equator with the domain `[-π/2, π/2]`; here standard spherical coordinates `[0, π]` are used (0 = the +Z pole), with `v_occt = π/2 - v`. The reason: a non-negative domain whose two ends are the poles, so reading `v` needs no sign check (`G4`); the cost is one conversion when taking parameters from OCCT.
+- **Surfaces of revolution and trimming are in `geometry-axis-surfaces.md`**: the frame value of a surface of revolution (`Placement`), the shared "axis in a plane" rule (`Frame.hpp`), the current state of the rectangular trimmed surface and the spline surfaces, and the alignment with and divergence from OCCT are all in that page.
+- **A trimmed view follows the same period rule as a curve**: `uPeriod()` / `vPeriod()` of `RectangularTrimmedSurface` answer the basis period only when `isUPeriodic()` / `isVPeriodic()` is true and 0 otherwise (`G6`: two trimmed views may not have two answers).
 
-## 3. 功能点
+## 3. Features
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | 族分类 | 两个求值接口 + 曲面的两个分类标签，`Surface::kParameterCount` = 2 | 已落地 |
-| F2 | 曲线参数化 | `LineCurve` / `CircleCurve` 的 `pointAt`（`Ray::pointAt` 同形，但 `Ray` 不在族内，见 2.1） | 已落地 |
-| F3 | 球面参数化 | `SphericalSurface` 的方位角 / 极角与法向 | 已落地 |
-| F4 | 解析包围盒 | 每个新类型的 `bounds()` 返回精确或紧致的 `Aabb<T>` | 已落地 |
-| F5 | 曲线核心属性 | 求值与一二阶导数、参数域与周期、光滑度、反向参数映射 | 已落地 |
-| F6 | 圆锥曲线族 | `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` 四种解析圆锥曲线的求值、导数与参数域 | 已落地 |
-| F7 | 样条与偏置 | `BezierCurve` / `BSplineCurve` 的求值、一二阶导数与样条闭合；`OffsetCurve` 的点与一阶导数 | 部分：偏置二阶导数阻塞 |
-| F8 | 曲面接口 | `evaluate` / 两个一阶导、参数域与两个方向的闭合周期、光滑度；`Plane`、`SphericalSurface` 实现 | 已落地 |
+| F1 | Family classification | two evaluation interfaces + the two classification tags of surfaces, `Surface::kParameterCount` = 2 | landed |
+| F2 | Curve parameterisation | `pointAt` of `LineCurve` / `CircleCurve` (`Ray::pointAt` has the same shape, but `Ray` is not in the family, see 2.1) | landed |
+| F3 | Sphere parameterisation | azimuth / polar angle and the normal of `SphericalSurface` | landed |
+| F4 | Analytic bounding box | the `bounds()` of every new type returns an exact or tight `Aabb<T>` | landed |
+| F5 | Core curve properties | evaluation and the first two derivatives, parameter domain and period, smoothness, reversed parameter mapping | landed |
+| F6 | The conic family | evaluation, derivatives and parameter domain of the four analytic conics `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` | landed |
+| F7 | Splines and offset | evaluation, first two derivatives and spline closedness of `BezierCurve` / `BSplineCurve`; point and first derivative of `OffsetCurve` | partial: the offset's second derivative is blocked |
+| F8 | Surface interface | `evaluate` / both first derivatives, parameter domains and closed periods in both directions, smoothness; implemented by `Plane`, `SphericalSurface` | landed |
 
-旋转面、矩形裁剪与样条曲面的功能点在 `geometry-axis-surfaces.md` §3（F1–F3）。
+The features of the surfaces of revolution, the rectangular trim and the spline surfaces are in `geometry-axis-surfaces.md` §3 (F1–F3).
 
-### 3.1 F1 族分类
+### 3.1 F1 family classification
 
-- **约束**（C1）：标签无状态、无虚函数；族的归属只在类型定义处声明一次。
-- **验收**（T1）：`GeometryKindsTest.cpp` 的 `static_assert` 覆盖归属、非归属与大小。
+- **Constraint** (C1): the tags carry no state and no virtual function; family membership is declared once, at the type definition.
+- **Acceptance** (T1): the `static_assert`s in `GeometryKindsTest.cpp` cover membership, non-membership and size.
 
-### 3.2 F2 曲线参数化
+### 3.2 F2 curve parameterisation
 
-- **行为**：`CircleCurve::pointAt(angle)` 由 `normal` 导出的正交基行走；`LineCurve::pointAt(t)` 是 `direction` 的倍数，`Ray::pointAt(t)` 是距离。
-- **约束**（C2、C12）：退化输入不产生 NaN——零方向的直线由 `isValid()` 报告，`closestPoint()` 返回原点、`intersectWith()` 返回无标志（不除零）；退化框架的圆锥曲线塌成沿 `x_direction` 的线段/射线，同样不返回 NaN。
-- **验收**（T2）：端点、方向、周长与平面内行走各一例。
+- **Behaviour**: `CircleCurve::pointAt(angle)` walks an orthonormal basis derived from `normal`; `LineCurve::pointAt(t)` is a multiple of `direction`, and `Ray::pointAt(t)` is a distance.
+- **Constraint** (C2, C12): a degenerate input produces no NaN — a zero-direction line is reported by `isValid()`, `closestPoint()` returns the origin and `intersectWith()` returns no flag (no division by zero); a conic with a degenerate frame collapses onto a segment / ray along `x_direction` and likewise returns no NaN.
+- **Acceptance** (T2): one case each for the endpoints, the direction, the circumference and walking inside the plane.
 
-### 3.3 F3 球面参数化
+### 3.3 F3 sphere parameterisation
 
-- **行为**：`SphericalSurface::pointAt(azimuth, polar)` 极角自 +Z 量起、方位角绕 +Z（与 OCCT 的球面一致）；`normalAt` 返回背离圆心的单位向量。
-- **约束**（C3）：退化半径（≤ eps）时 `isValid()` 为假，`normalAt` 返回零向量而不是 NaN。
-- **验收**（T3）：角点对应、中心点、法向与共线退化。
+- **Behaviour**: `SphericalSurface::pointAt(azimuth, polar)` measures the polar angle from +Z and the azimuth around +Z (as OCCT's sphere does); `normalAt` returns the unit vector pointing away from the centre.
+- **Constraint** (C3): with a degenerate radius (≤ eps) `isValid()` is false and `normalAt` returns the zero vector rather than NaN.
+- **Acceptance** (T3): corner correspondence, the centre point, the normal and a collinear degenerate case.
 
-### 3.4 F4 解析包围盒
+### 3.4 F4 analytic bounding box
 
-- **行为**：`LineCurve` 无 `bounds()`（无界，见 D5）；`CircleCurve::bounds()` 按支撑函数 `radius * sqrt(X_i^2 + Y_i^2)` 逐轴取半宽——圆锥曲线共用这套推导，圆盘的盒因此是精确的，退化框架给出线段盒；三角形的盒由 `Aabb::compute(span)` 取三个角点。
-- **约束**（C4）：`bounds()` 是**局部**空间的盒，世界盒要乘节点变换。
+- **Behaviour**: `LineCurve` has no `bounds()` (unbounded, see D5); `CircleCurve::bounds()` takes the half width per axis from the support function `radius * sqrt(X_i^2 + Y_i^2)` — the conics share this derivation, so a disc's box is exact and a degenerate frame gives a segment box; a triangle's box comes from `Aabb::compute(span)` over its three corners.
+- **Constraint** (C4): `bounds()` is a box in **local** space; a world box multiplies by the node transform.
 
-### 3.5 F5 曲线核心属性
+### 3.5 F5 core curve properties
 
-- **行为**：`LineCurve` 答常速度 `direction`、零加速度、`CN`、`-u`；`CircleCurve` 答速度 `radius * (-X sin u + Y cos u)`、加速度 `centre - P(u)`、`CN`、`period - u`；`TrimmedCurve` 四项全部转发给基曲线，只有反向映射在自身区间内反射。
-- **约束**（C5）：导数返回 `Vector`（与 `evaluate()` 同一个点空间），长度是速度而不是 1；`reversedParameter` 是自反的。
-- **验收**（T5）：直线的常量导数、圆的速度/加速度与半径的关系、裁剪区间内的反射与转发。
+- **Behaviour**: `LineCurve` answers a constant velocity `direction`, zero acceleration, `CN` and `-u`; `CircleCurve` answers velocity `radius * (-X sin u + Y cos u)`, acceleration `centre - P(u)`, `CN` and `period - u`; `TrimmedCurve` forwards all four items to its basis and reflects only the reversed mapping inside its own interval.
+- **Constraint** (C5): a derivative returns a `Vector` (the same point space as `evaluate()`), and its length is the speed, not 1; `reversedParameter` is an involution.
+- **Acceptance** (T5): the constant derivative of a line, the relation between a circle's velocity / acceleration and its radius, and the reflection and forwarding inside a trimmed interval.
 
-### 3.6 F6 圆锥曲线族
+### 3.6 F6 the conic family
 
-- **行为**：四种圆锥曲线共用一套“平面 + 原点 + 面内轴”的解析形式，参数含义各自不同——圆与椭圆是离心角（闭合、周期 `2π`），双曲线是双曲角（无界，只参数化 `+X` 那一支），抛物线是垂直轴上的偏移（无界，`u = 0` 在顶点）。
-- **约束**（C6）：面内轴由 `Frame.hpp` 的 `inPlaneAxis()` 投影加归一化（`ConicCurve`、`Plane`、`Placement` 共用同一份），退化时按“与法向最不平行的世界轴”回退，因此退化输入只产生无意义曲线，不产生 NaN；`minor` 轴一律由 `normal × x_direction` 导出，不存第三份向量。
-- **验收**（T6）：椭圆两轴的端点、速度与半轴的关系、逐轴精确包围盒；双曲线顶点、顶点速度与加速度朝向；抛物线“到焦点距离 = 到准线距离”。
+- **Behaviour**: the four conics share one analytic form "plane + origin + in-plane axis", with different parameter meanings — the circle and ellipse use the eccentric angle (closed, period `2π`), the hyperbola the hyperbolic angle (unbounded, parameterising only the `+X` branch), the parabola the offset along the directrix axis (unbounded, `u = 0` at the vertex).
+- **Constraint** (C6): the in-plane axis comes from the projection and normalisation of `Frame.hpp`'s `inPlaneAxis()` (shared by `ConicCurve`, `Plane` and `Placement`), falling back to "the world axis least parallel to the normal" when degenerate, so a degenerate input only produces a meaningless curve and never NaN; the `minor` axis is always derived as `normal × x_direction` and no third vector is stored.
+- **Acceptance** (T6): the two axis endpoints of an ellipse, the relation between velocity and semi-axes, and the exact per-axis bounding box; the hyperbola's vertex, vertex velocity and acceleration direction; the parabola's "distance to the focus = distance to the directrix".
 
-### 3.7 F7 样条与偏置
+### 3.7 F7 splines and offset
 
-- **行为**：`BezierCurve::degree()` 等于极点数 − 1，求值是一串 de Casteljau 混合；`BSplineCurve::continuity()` 读内部重数，求值只累加参数所在跨的基函数；`OffsetCurve` 的所有参数域答案来自基曲线，位移方向是 `reference_direction x tangent`。
-- **约束**（C7、C10、C11）：`OffsetCurve` 可构造（`static_assert(!std::is_abstract_v<...>)` 守着），但其基曲线必须能答三阶导，否则 `isValid()` 为假；`BSplineCurve::isValid()` 要求夹持形式（首末重数 = `degree + 1`）、相异节点递增、重数之和 = 极点数 + 度数 + 1；两种样条的 `isValid()` 都要求权重为空或与极点数相等且严格为正；`OffsetCurve` 的基曲线不得为空。
-- **验收**（T7）：`aBezierCurveBlendsItsPoles` 验端点、中点、两端导数与常二阶差分；`aRationalBezierCurveIsPulledTowardsItsHeavierPole` 验商法则（`P(u) = 3u / (1 + 2u)` 的取值与两侧导数）；`aBSplineCurveBlendsItsClampedSpan` 验夹持端点、单跨与 Bezier 等价、域外取端点；`aRationalBSplineCurveTracesAQuarterCircle` 验有理基函数（四分之一圆）；`anOffsetCurveInheritsTheBasisDomain` 验域转发与位移几何。
+- **Behaviour**: `BezierCurve::degree()` equals the pole count − 1 and evaluation is a chain of de Casteljau blends; `BSplineCurve::continuity()` reads the interior multiplicities and evaluation sums only the basis functions of the span; every parameter-domain answer of `OffsetCurve` comes from the basis curve, and the displacement direction is `reference_direction x tangent`.
+- **Constraint** (C7, C10, C11): `OffsetCurve` is constructible (`static_assert(!std::is_abstract_v<...>)` pins it), but its basis must be able to answer a third derivative or `isValid()` is false; `BSplineCurve::isValid()` requires the clamped form (first and last multiplicity = `degree + 1`), strictly increasing distinct knots, and the sum of multiplicities = pole count + degree + 1; both splines' `isValid()` require the weights to be empty or equal to the pole count and strictly positive; an `OffsetCurve` basis may not be empty.
+- **Acceptance** (T7): `aBezierCurveBlendsItsPoles` checks the endpoints, the midpoint, the derivatives at both ends and the constant second difference; `aRationalBezierCurveIsPulledTowardsItsHeavierPole` checks the quotient rule (the values of `P(u) = 3u / (1 + 2u)` and its derivative on both sides); `aBSplineCurveBlendsItsClampedSpan` checks the clamped endpoints, a single span being equivalent to a Bézier, and clamping outside the domain; `aRationalBSplineCurveTracesAQuarterCircle` checks the rational basis (the quarter circle); `anOffsetCurveInheritsTheBasisDomain` checks domain forwarding and the displacement geometry.
 
-### 3.8 F8 曲面接口
+### 3.8 F8 the surface interface
 
-- **行为**：`Plane` 答 `evaluate(u, v) = origin + u * X + v * Y`（两轴由 `normal` 推导）、两个方向均无界且不闭合、`CN`；`SphericalSurface` 答 `u` 从 0 到 `2π`闭合且周期、`v` 从 0 到 `π`不闭合不周期、`CN`。
-- **约束**（C9）：两个已实现的曲面必须能通过 `const Surface<T>&` 回答全部十四项；`continuity()` 不被极点或缝合打断（极点不是不连续）。
-- **验收**（T8）：`aPlaneAnswersTheSurfaceInterface`、`aSphericalSheetClosesOnlyAroundItsAxis`，两者都经基类引用调用以证明虚分派。
+- **Behaviour**: `Plane` answers `evaluate(u, v) = origin + u * X + v * Y` (both axes derived from `normal`), unbounded and not closed in both directions, `CN`; `SphericalSurface` answers `u` closed and periodic from 0 to `2π`, `v` neither closed nor periodic from 0 to `π`, `CN`.
+- **Constraint** (C9): both implemented surfaces must answer all fourteen items through `const Surface<T>&`; `continuity()` is not broken by a pole or a seam (a pole is not a discontinuity).
+- **Acceptance** (T8): `aPlaneAnswersTheSurfaceInterface`, `aSphericalSheetClosesOnlyAroundItsAxis`, both called through a base reference to prove virtual dispatch.
 
-## 4. 公开接口
+## 4. Public Interface
 
-| 头文件 | 内容 |
+| Header | Content |
 |---|---|
-| `Curve.hpp` / `Surface.hpp` | `Curve` 与 `Surface` 两个接口；`Surface::kParameterCount` |
-| `Continuity.hpp` | 光滑度阶梯枚举，曲线与曲面共用 |
-| `Curve.hpp` / `ConicCurve.hpp` / `BoundedCurve.hpp` | 曲线族与两个中间层；具体曲线各自一个头 |
-| `LineCurve.hpp` / `CircleCurve.hpp` / `Ray.hpp` / `SphericalSurface.hpp` | 已实现的值类型与 `*f` / `*d` 别名；`Ray` 不在族内（2.1） |
-| `EllipseCurve.hpp` / `HyperbolaCurve.hpp` / `ParabolaCurve.hpp` | 另外三种解析圆锥曲线及 `*f` / `*d` 别名 |
-| `BezierCurve.hpp` / `BSplineCurve.hpp` | 两种可构造的样条值类型：极点 + 权重（+ 度数、节点、重数）与十个曲线属性 |
-| `OffsetCurve.hpp` | 偏置曲线：`shared_ptr` 基曲线 + 距离 + 参考方向；二阶导由基曲线三阶导给出（2.8） |
-| `Surface.hpp` / `ElementarySurface.hpp` / `BoundedSurface.hpp` | 曲面接口与两个分类标签 |
-| `Frame.hpp` | 共用的“平面内轴”规则（圆锥曲线、平面、旋转面共用） |
-| `Placement.hpp` / `CylindricalSurface.hpp` / `ConicalSurface.hpp` / `ToroidalSurface.hpp` / `RectangularTrimmedSurface.hpp` | 旋转面的坐标系值（`Placement`）与裁剪曲面，见 `geometry-axis-surfaces.md` |
-| `src/base/geom/src/Instantiations.cpp` | 纯头文件几何类型的显式实例化清单（`float` + `double`） |
+| `Curve.hpp` / `Surface.hpp` | the two interfaces `Curve` and `Surface`; `Surface::kParameterCount` |
+| `Continuity.hpp` | the smoothness ladder enum, shared by curves and surfaces |
+| `Curve.hpp` / `ConicCurve.hpp` / `BoundedCurve.hpp` | the curve family and its two intermediate layers; each concrete curve has its own header |
+| `LineCurve.hpp` / `CircleCurve.hpp` / `Ray.hpp` / `SphericalSurface.hpp` | the implemented value types and the `*f` / `*d` aliases; `Ray` is not in the family (2.1) |
+| `EllipseCurve.hpp` / `HyperbolaCurve.hpp` / `ParabolaCurve.hpp` | the other three analytic conics and their `*f` / `*d` aliases |
+| `BezierCurve.hpp` / `BSplineCurve.hpp` | the two constructible spline value types: poles + weights (+ degree, knots, multiplicities) and the ten curve properties |
+| `OffsetCurve.hpp` | the offset curve: a `shared_ptr` basis curve + distance + reference direction; the second derivative comes from the basis' third derivative (2.8) |
+| `Surface.hpp` / `ElementarySurface.hpp` / `BoundedSurface.hpp` | the surface interface and its two classification tags |
+| `Frame.hpp` | the shared "axis in a plane" rule (used by the conics, the plane and the surfaces of revolution) |
+| `Placement.hpp` / `CylindricalSurface.hpp` / `ConicalSurface.hpp` / `ToroidalSurface.hpp` / `RectangularTrimmedSurface.hpp` | the frame value of the surfaces of revolution (`Placement`) and the trimmed surface, see `geometry-axis-surfaces.md` |
+| `src/base/geom/src/Instantiations.cpp` | the explicit-instantiation list of the header-only geometry types (`float` + `double`) |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-- **C1**：曲面标签不携带状态、不声明虚函数；曲线接口的虚函数是全族唯一的多态点（2.1、2.7）。
-- **C2**：退化输入不产生 NaN；`isValid()` 是唯一的判定入口。
-- **C3**：族的归属在类型定义处声明一次，不在别处重复。
-- **C4**：所有 `bounds()` 都是局部空间盒，世界盒要乘节点变换。
-- **C5**：`derivative` / `secondDerivative` 返回速度与加速度向量，不是单位切向与曲率向量；`reversedParameter` 自反（`reversedParameter(reversedParameter(u)) == u`）。
-- **C6**：圆锥曲线的面内轴经 `Frame.hpp` 的 `inPlaneAxis()` 投影归一化（平面与旋转面共用这一份），第二轴由 `normal × x_direction` 导出；退化输入得到 `isValid() == false` 的曲线，不得产生 NaN。
-- **C7**：`isCN(n)` 是 `continuity()` 的查询，不单独描述曲线；`G1` / `G2` 不回答 `isCN(1)` / `isCN(2)`（几何连续不是导数连续）。
-- **C8**：圆锥曲线的框架（`center` / `normal` / `x_direction`）只在 `ConicCurve` 定义一次并在构造时归一化；四个圆锥曲线不得再声明同名字段，也不得在构造后改写框架。
-- **C9**：曲面接口的十四项必须能经 `const Surface<T>&` 回答；极点、缝合不属于“不连续”，`continuity()` 仍答 `CN`；分类标签不得再加状态或虚函数。
-- **C10**：越界参数的语义按类型定义，不靠约定——`BezierCurve` 是多项式外推，`BSplineCurve` 把参数夹进节点域后取端点值；两者都写在头文件里。
-- **C11**：有理曲线的权重必须严格为正，否则域内分母会穿过零；`BezierCurve` / `BSplineCurve` 的 `isValid()` 是唯一检查点。
-- **C12**：`isValid()` 覆盖四类退化输入：直线（零方向）、组合类型（裁剪的空基曲线或反向区间、偏置的空基曲线或零参考方向）、有理样条（非正权重）、圆锥曲线、平面与球面（退化框架 / 退化半径）；组合类型报告自己的输入是否可用，不把基曲线的有效性折叠进来。这个回答在 `Curve<T>` / `Surface<T>` 上是**纯虚**的（调用方拿 `const Curve<T>&` 就能问），退化复合曲线被查询时答退化值（原点、零向量、`C0`、假）而不是解引用空句柄——那是防崩环境的行为，不是几何事实。
-- **C13**：样条的内部节点重数不超过度数（两端仍是度 + 1 的夹持）。内部重数 = 度 + 1 是缺口而不是连接，`isValid()` 拒绝它；因此 `continuity()` 的 `C0` 始终意味着“各段交于一点”，`degree - 重数` 不需要被夹住。需要保留断点就拆成多条曲线，不把洞交给每个算法处理。
-- **N1**：`LineCurve::pointAt(t)` 的 `t` 乘的是 `direction` 的长度，只有单位方向时它才是距离；`Ray` 的方向恒为单位，所以两者同名不同量纲。
-- **N2**：默认构造的准入规则与 2.3 一致：要么默认值是有意义的几何，要么是可被 `isValid()` 认出的空状态；旋转面与平面两者都不是，所以不声明默认构造。`Plane` 是唯一不带 `Surface` 后缀的曲面（平面没有第二个含义，OCCT 同样如此）。
-- **R1**：零分配、不抛异常的范围是 `LineCurve` / 圆锥曲线 / `Aabb` 的 `pointAt` / `bounds` / `derivative`；`BSplineCurve` 的求值也做到零分配（只用局部标量），而 `BezierCurve` 每次求值拷贝一份极点数组的临时缓冲（de Casteljau 需要 `n` 个暂存值，不为此引入可变成员）。
-- **R2**：族分类不新增外部依赖；标签只 include `geom_global.hpp`，曲线接口额外只 include `vine/math` 的 `Point3` / `Vector3` 与本目录的 `Continuity.hpp`。
+- **C1**: a surface tag carries no state and declares no virtual function; the curve interface's virtual functions are the family's only polymorphism point (2.1, 2.7).
+- **C2**: a degenerate input produces no NaN; `isValid()` is the only entry point for the decision.
+- **C3**: family membership is declared once, at the type definition, and not repeated elsewhere.
+- **C4**: every `bounds()` is a local-space box; a world box multiplies by the node transform.
+- **C5**: `derivative` / `secondDerivative` return velocity and acceleration vectors, not unit tangents and curvature vectors; `reversedParameter` is an involution (`reversedParameter(reversedParameter(u)) == u`).
+- **C6**: a conic's in-plane axis is projected and normalised by `Frame.hpp`'s `inPlaneAxis()` (one copy, shared with the plane and the surfaces of revolution), and the second axis is derived as `normal × x_direction`; a degenerate input yields a curve with `isValid() == false` and may never produce NaN.
+- **C7**: `isCN(n)` is a query of `continuity()` and does not describe a curve on its own; `G1` / `G2` do not answer `isCN(1)` / `isCN(2)` (geometric continuity is not derivative continuity).
+- **C8**: a conic's frame (`center` / `normal` / `x_direction`) is defined once in `ConicCurve` and normalised at construction; the four conics may not declare fields of the same names, nor rewrite the frame after construction.
+- **C9**: all fourteen items of the surface interface must be answerable through `const Surface<T>&`; a pole or a seam is not "a discontinuity", and `continuity()` still answers `CN`; the classification tags may add neither state nor virtual functions.
+- **C10**: the meaning of a parameter outside the domain is defined per type, not by convention — `BezierCurve` extrapolates polynomially and `BSplineCurve` clamps the parameter into the knot domain and takes the endpoint value; both are written in the header.
+- **C11**: the weights of a rational curve must be strictly positive, or the denominator crosses zero inside the domain; `isValid()` of `BezierCurve` / `BSplineCurve` is the only check point.
+- **C12**: `isValid()` covers four kinds of degenerate input: a line (zero direction), a composite type (an empty basis curve or a reversed interval on a trim, an empty basis curve or a zero reference direction on an offset), a rational spline (non-positive weights), a conic, a plane and a sphere (a degenerate frame / radius); a composite type reports whether its own inputs are usable and does not fold the basis validity into it. This answer is **pure virtual** on `Curve<T>` / `Surface<T>` (a caller holding `const Curve<T>&` can ask it), and a degenerate composite curve answers a degenerate value when queried (the origin, the zero vector, `C0`, false) instead of dereferencing an empty handle — that is crash-prevention behaviour, not a geometric fact.
+- **C13**: a spline's interior knot multiplicity never exceeds the degree (both ends are still clamped at degree + 1). An interior multiplicity of degree + 1 is a gap, not a join, and `isValid()` rejects it; so `C0` from `continuity()` always means "the pieces meet at one point", and `degree - multiplicity` needs no clamping. A break that must be kept is split into several curves rather than handed to every algorithm as a hole.
+- **N1**: the `t` of `LineCurve::pointAt(t)` multiplies the length of `direction`, and is a distance only for a unit direction; a `Ray` direction is always unit, so the two same-named parameters have different dimensions.
+- **N2**: the default-construction admission rule matches 2.3: either the default value is meaningful geometry, or it is an empty state `isValid()` recognises; the surfaces of revolution and the plane are neither, so they declare no default constructor. `Plane` is the only surface without the `Surface` suffix (a plane has no second meaning, and OCCT does the same).
+- **R1**: the zero-allocation, non-throwing scope is `pointAt` / `bounds` / `derivative` of `LineCurve` / the conics / `Aabb`; evaluation of `BSplineCurve` is zero-allocation too (local scalars only), while `BezierCurve` copies a temporary pole array per evaluation (de Casteljau needs `n` scratch values, and no mutable member is introduced for it).
+- **R2**: the family classification adds no external dependency; a tag includes only `geom_global.hpp`, and the curve interface additionally includes only `Point3` / `Vector3` from `vine/math` and this directory's `Continuity.hpp`.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-- **P1**：往标签里加虚函数 = 给每个值类型加 vptr（`Ray` 在热循环里按值拷贝）。要共享算法就写自由函数。
-- **P2**：所有 `bounds()` 都是**局部**空间的盒，世界盒要乘节点变换；当成世界包围盒缓存会错在场景层级上。
-- **P3**：两种样条的域外行为不同（C10）。会怎么错：按同一种“外推”去采样域外参数，B 样条得到一条平线，而贝塞尔得到发散的曲线；怎么判：域外点是否突变成常量或切线是否突然为零；怎么防：外推前查 `firstParameter()` / `lastParameter()`，需要外推就在调用方做，曲线本身不改。
-- **P4**：有理曲线的分母是 `Σ N_i(u) w_i`。会怎么错：零或负权重让它在域内穿过零，`evaluate()` 返回无穷大或符号翻转的远点；怎么判：`isValid()` 为假，或中点附近坐标突变；怎么防：构造前保证权重全为正（C11）。
-- **P5**：`BSplineCurve` 的求值只覆盖夹持形式。会怎么错：拿未夹持的节点（首末重数 < `degree + 1`）去求值，域端点处基函数之和不为 1；怎么判：`isValid()` 为假；怎么防：按夹持形式构造，`continuity()` 的重数语义也依赖它。
-- **P6**：退化框架的圆锥曲线不是“半径为 0 的圆”。会怎么错：`normal` 为零时 `yAxis()` 为零，`evaluate()` 沿世界 X 轴走一条线段，`bounds()` 也只是那条线段；把结果当圆去取点或求周长只会得到一串共线点。怎么判：`isValid()` 为假。怎么防：构造前确认 `normal` 非零，让 `ConicCurve` 统一归一化框架。
-- **P7**：直线的“退化”只有一条阈值——`isValid()` 的 `|direction| > EPS`。会怎么错：另写一个 `|direction|² < EPS` 的判据（它等价于 `|direction| < 1e-4`），会把合法短方向当成零方向、把投影悄悄换成原点；怎么判：方向长度在 `EPS` 与 `sqrt(EPS)` 之间时两种答案不同；怎么防：判据只从 `isValid()` 来。
-- **P8**：裁剪视图不是基曲线 / 基曲面。会怎么错：拿 `TrimmedCurve::period()` 当基圆的 2π 去归一化参数，或以为 `isClosed()` 跟基曲线一致，于是四分之一圆被当成整圈做接缝判断；怎么判：裁剪的 `isPeriodic()` / `isClosed()` / `period()` 为假或 0，而基曲线的答案为真；怎么防：闭合、周期、周期值一律问裁剪自己（2.7 的周期规则、C12），要基曲线的数字就问 `basis_curve` / `basis`。
-- **P9**：`isValid()` 为假的组合类型仍能被查询。会怎么错：空基的裁剪 / 偏置答原点、零向量、`C0`，看起来像“退化成一条点的曲线”，被当成合法结果参与后续计算；怎么判：`isValid()` 为假；怎么防：拿到 `TrimmedCurve` / `OffsetCurve` / `RectangularTrimmedSurface` 先查 `isValid()`——退化答案只为避免解引用空指针而存在（C12）。
-- **P10**：把一段被切开的数据当成一条样条。会怎么错：内部重数写成了 `度 + 1`，曲线在节点处跳；求值仍能跑、参数区间也连续，于是采样出一串跨越缝的点。怎么判：`isValid()` 为假，或直接算 `continuity()`——重数等于度数时它确实答 `C0`（各段交于一点），两者不再混淆。怎么防：重建时按断点拆成多条曲线（C13）。
+- **P1**: adding a virtual function to a tag adds a vptr to every value type (`Ray` is copied by value in a hot loop). To share an algorithm, write a free function.
+- **P2**: every `bounds()` is a box in **local** space, and a world box multiplies by the node transform; caching it as a world bounding box goes wrong at the scene level.
+- **P3**: the two splines behave differently outside the domain (C10). How it fails: sample outside the domain with one idea of "extrapolation" and a B-spline gives a flat line while a Bézier gives a diverging curve. How to detect: whether points outside the domain jump to a constant, or the tangent suddenly becomes zero. How to prevent: check `firstParameter()` / `lastParameter()` before extrapolating, and do the extrapolation at the call site rather than in the curve.
+- **P4**: the denominator of a rational curve is `Σ N_i(u) w_i`. How it fails: a zero or negative weight makes it cross zero inside the domain, and `evaluate()` returns infinity or a far point with a flipped sign. How to detect: `isValid()` is false, or the coordinates jump near the midpoint. How to prevent: guarantee all weights are positive before construction (C11).
+- **P5**: `BSplineCurve` evaluation covers the clamped form only. How it fails: evaluate with unclamped knots (first and last multiplicity < `degree + 1`) and the basis functions do not sum to 1 at the domain ends. How to detect: `isValid()` is false. How to prevent: construct in the clamped form, which the multiplicity semantics of `continuity()` also depend on.
+- **P6**: a conic with a degenerate frame is not "a circle of radius 0". How it fails: with a zero `normal`, `yAxis()` is zero, `evaluate()` walks a segment along the world X axis, and `bounds()` is just that segment; taking the result as a circle to pick points or compute a perimeter yields a string of collinear points. How to detect: `isValid()` is false. How to prevent: confirm `normal` is non-zero before construction and let `ConicCurve` normalise the frame in one place.
+- **P7**: a line's "degenerate" has exactly one threshold — `|direction| > EPS` in `isValid()`. How it fails: write a second test `|direction|² < EPS` (equivalent to `|direction| < 1e-4`), which treats a legal short direction as a zero one and silently replaces the projection with the origin. How to detect: the two answers differ when the direction length is between `EPS` and `sqrt(EPS)`. How to prevent: take the test from `isValid()` only.
+- **P8**: a trimmed view is not its basis curve / basis surface. How it fails: use `TrimmedCurve::period()` as the basis circle's 2π to normalise parameters, or assume `isClosed()` matches the basis, so a quarter circle is treated as a full turn for seam decisions. How to detect: `isPeriodic()` / `isClosed()` / `period()` of the trim are false or 0 while the basis answers true. How to prevent: ask the trim itself for closedness, period and period value (the period rule of 2.7, C12), and ask `basis_curve` / `basis` when the basis number is wanted.
+- **P9**: a composite type whose `isValid()` is false can still be queried. How it fails: an empty-basis trim / offset answers the origin, the zero vector, `C0`, looking like "a curve degenerated to a point", and is then taken as a legal result in later computation. How to detect: `isValid()` is false. How to prevent: check `isValid()` on any `TrimmedCurve` / `OffsetCurve` / `RectangularTrimmedSurface` you receive — the degenerate answers exist only to avoid dereferencing an empty handle (C12).
+- **P10**: treating a cut-up piece of data as one spline. How it fails: an interior multiplicity written as `degree + 1` makes the curve jump at the knot; evaluation still runs and the parameter interval is still continuous, so sampling produces points across the seam. How to detect: `isValid()` is false, or compute `continuity()` directly — with multiplicity equal to the degree it does answer `C0` (the pieces meet at one point), so the two no longer blur. How to prevent: split into several curves at the break when rebuilding (C13).
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-- **D1** `Curve` / `Surface` 做成虚基类：给所有值类型加 vptr，打掉内联与 trivially copyable（`G10`、`G8`）。见 `../decisions/ADR-2026-11-04-geometry-kinds.md`。
-- **D2** 只提供 concept、不提供标签：`is_base_of` 这类编译期问法与"族"的文档位置都会消失，而且运行期仍需要 variant 覆盖同一集合（`G1`）。
-- **D3** 把参数含义提升进基类（统一 `pointAt(t)`）：每种曲线的 `t` 语义不同，统一签名只会把差异藏进文档（`G4`）。
-- **D4** 照 OCCT 提供可变的 `reverse()`：曲线不可变、基曲线可被多条裁剪共享，可变反向会互相干扰；反向表达为构造镜像 + `reversedParameter`（2.7）。
-- **D5** `bounds()` 进曲线接口：只有有限曲线总能回答；直线只能返回无穷盒，等于把“无界”伪装成盒子（`G4`）。
-- **D6** `curveType()` 枚举与 `D3` / `DN`：`dynamic_cast` 与 vtable 已能回答“我是什么”，再维护枚举就是两个家；三阶以上导数没有消费者（`G1`、`G8`）。
-- **D7** 曲面继续做空标签：标签答不了“未知曲面也能求值 + 问两个方向的参数域与周期”，而这正是面遍历、采样、求交前置需要的（`G4`、`G9`）。见 `../decisions/ADR-2026-11-04-surface-evaluation-interface.md`。
-- **D8** 曲面接口里放 `normalAt()` / `bounds()` / 二阶导数：前两个是派生值或伪值（无界盒），第三个没有消费者（2.10）。
-- **D9** 给 `Curve<T>` 加一项纯虚 `thirdDerivative()`，好让 `OffsetCurve::secondDerivative()` 落地：只为一条曲线的一种导数，给八种具体曲线各加一个纯虚义务，只到二阶的实现者也被迫付账（`G8`、`G4`）；实际答案是能力协议 + 在能答的类型上多一个非虚成员，契约仍是十一项。见 `../decisions/ADR-2026-11-05-curve-derivative-capability.md`。
-- **D10** 照 OCCT 把任意阶 `DN(order)` 放上接口，未实现就抛 `NotImplemented`：阶数是算法参数而不是类型身份，超出能力应当是**可判的空值**而不是异常或截断（`G4`、`G10`）。能力协议保留“按需询问”，不把异常语义带进几何查询。见 `../decisions/ADR-2026-11-05-curve-derivative-capability.md`。
+- **D1** Making `Curve` / `Surface` virtual base classes: adds a vptr to every value type and kills inlining and trivial copyability (`G10`, `G8`). See `../decisions/ADR-2026-11-04-geometry-kinds.md`.
+- **D2** Providing only concepts and no tags: compile-time questions such as `is_base_of` and the documentation home of "family" would disappear, and a run-time variant would still be needed to cover the same set (`G1`).
+- **D3** Lifting the parameter meaning into the base class (a unified `pointAt(t)`): each curve's `t` means something different, and a unified signature only hides the difference in documentation (`G4`).
+- **D4** Following OCCT and providing a mutable `reverse()`: a curve is immutable and a basis curve may be shared by several trims, so a mutable reversal would interfere; reversal is expressed as a constructed mirror plus `reversedParameter` (2.7).
+- **D5** Putting `bounds()` on the curve interface: only a finite curve can always answer; a line can only return an infinite box, disguising "unbounded" as a box (`G4`).
+- **D6** A `curveType()` enum, and `D3` / `DN`: `dynamic_cast` and the vtable already answer "what am I", so maintaining an enum too is two homes; a derivative above the third order has no consumer (`G1`, `G8`).
+- **D7** Leaving surfaces as empty tags: a tag cannot answer "evaluate an unknown surface and ask for its parameter domains and periods in both directions", which is exactly what face traversal, sampling and the preconditions of intersection need (`G4`, `G9`). See `../decisions/ADR-2026-11-04-surface-evaluation-interface.md`.
+- **D8** Putting `normalAt()` / `bounds()` / the second derivative on the surface interface: the first two are derived or fake values (an infinite box), and the third has no consumer (2.10).
+- **D9** Adding a pure virtual `thirdDerivative()` to `Curve<T>` so that `OffsetCurve::secondDerivative()` can land: for one derivative of one curve, eight concrete curves would each take on a pure virtual obligation, and an implementer who only reaches the second order pays too (`G8`, `G4`); the actual answer is the capability protocol plus one non-virtual member on the types that can answer, and the contract stays at eleven items. See `../decisions/ADR-2026-11-05-curve-derivative-capability.md`.
+- **D10** Following OCCT and putting an arbitrary-order `DN(order)` on the interface, throwing `NotImplemented` when unimplemented: the order is an algorithm parameter, not type identity, and going beyond the capability should be an **inspectable empty value** rather than an exception or a truncation (`G4`, `G10`). The capability protocol keeps "ask on demand" without bringing exception semantics into a geometric query. See `../decisions/ADR-2026-11-05-curve-derivative-capability.md`.
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| 验收 | 用例 |
-|---|---|
-| T1 归属、非归属与零成本 | `tests/test_geom_spatial/GeometryKindsTest.cpp` 顶部 `static_assert` |
-| T2 曲线参数化与退化输入 | 同文件 `aLineCurveAnswersThePointAtItsParameter`、`aCircleCurveWalksItsOwnPlane`、`aCircleCurveWithoutANormalIsInvalid` |
-| T3 球面参数化与退化输入 | 同文件 `aSphericalSheetPutsPolarZeroAtThePole`、`aCircleCurveWithoutANormalIsInvalid` |
-| T4 曲线接口的参数域与转发 | 同文件 `aCurveAnswersItsDomainAndPeriod`、`aTrimmedCurveForwardsToItsBasis` |
-| T5 曲线核心属性 | 同文件 `aLineCurveHasAConstantVelocity`、`aCircleCurveTurnsTowardsItsCentre`、`aTrimmedCurveMirrorsInsideItsOwnRange` |
-| T6 圆锥曲线族 | 同文件 `anEllipseCurveWalksItsTwoAxes`、`aHyperbolaBranchWalksAwayFromItsCentre`、`aParabolaIsEquidistantFromFocusAndDirectrix` |
-| T7 样条求值与偏置 | 同文件 `aBezierCurveDescribesItself`、`aBezierCurveBlendsItsPoles`、`aRationalBezierCurveIsPulledTowardsItsHeavierPole`、`aBSplineCurveDerivesItsContinuityFromItsMultiplicities`、`aBSplineCurveBlendsItsClampedSpan`、`aRationalBSplineCurveTracesAQuarterCircle`、`anOffsetCurveInheritsTheBasisDomain`、`continuityAnswersTheDerivativeOrderQuestion` || T10 | 三阶导数与偏置二阶导 | 同文件 `everySpaceCurveAnswersItsThirdDerivative`（八种类型的三阶导与二阶导中心差分一致，含两种有理形式，并对照圆/椭圆 `-P'`、双曲线 `P'`、直线/抛物线为零）、`theSpaceOffsetAnswersASecondDerivativeExactly`、`anOffsetOfAnOffsetStopsAtTheVelocity` || T8 曲面接口 | 同文件 `aPlaneAnswersTheSurfaceInterface`、`aSphericalSheetClosesOnlyAroundItsAxis`；轴对称曲面与矩形裁剪的验收见 `geometry-axis-surfaces.md` T1 |
-| T9 族级契约扫查 | 同文件 `everyCurveKeepsTheInterfacePromises` / `everySurfaceKeepsTheInterfacePromises` 与它们的 `…InFloat` 版本（**两种精度各跑一遍**：库对 float / double 都显式实例化导出）：对全部实现逐条问：域有序、`isValid()` 为真、闭合 / 周期与周期值一致、`isCN` 与 `continuity()` 一致、`reversedParameter` 自反、有限域内导数有限；裁剪的两条契约另有 `aTrimOfAPeriodicBasisReportsAPeriodOnlyWhenItRepeats`、`aTrimWithoutABasisAnswersInsteadOfDereferencingIt`、`anOffsetCurveWithoutABasisAnswersInsteadOfDereferencingIt`；默认构造的准入规则由顶部 `static_assert` 与 `anEmptyPatchIsRecognisablyEmpty` 盯住，接口上的有效性由 `validityIsAskableThroughTheInterface` 与两行 `static_assert` 盯住 |
-## 9. 状态与演进
+| # | Criterion | Case |
+|---|---|---|
+| T1 | membership, non-membership and zero cost | the `static_assert`s at the top of `tests/test_geom_spatial/GeometryKindsTest.cpp` |
+| T2 | curve parameterisation and degenerate input | `aLineCurveAnswersThePointAtItsParameter`, `aCircleCurveWalksItsOwnPlane`, `aCircleCurveWithoutANormalIsInvalid` in the same file |
+| T3 | sphere parameterisation and degenerate input | `aSphericalSheetPutsPolarZeroAtThePole`, `aCircleCurveWithoutANormalIsInvalid` in the same file |
+| T4 | parameter domain and forwarding of the curve interface | `aCurveAnswersItsDomainAndPeriod`, `aTrimmedCurveForwardsToItsBasis` in the same file |
+| T5 | core curve properties | `aLineCurveHasAConstantVelocity`, `aCircleCurveTurnsTowardsItsCentre`, `aTrimmedCurveMirrorsInsideItsOwnRange` in the same file |
+| T6 | the conic family | `anEllipseCurveWalksItsTwoAxes`, `aHyperbolaBranchWalksAwayFromItsCentre`, `aParabolaIsEquidistantFromFocusAndDirectrix` in the same file |
+| T7 | spline evaluation and offset | `aBezierCurveDescribesItself`, `aBezierCurveBlendsItsPoles`, `aRationalBezierCurveIsPulledTowardsItsHeavierPole`, `aBSplineCurveDerivesItsContinuityFromItsMultiplicities`, `aBSplineCurveBlendsItsClampedSpan`, `aRationalBSplineCurveTracesAQuarterCircle`, `anOffsetCurveInheritsTheBasisDomain`, `continuityAnswersTheDerivativeOrderQuestion` in the same file |
+| T10 | third derivative and the offset's second derivative | `everySpaceCurveAnswersItsThirdDerivative` in the same file (the third derivative of the eight types agreeing with the central difference of the second, including both rational forms, cross-checked against `-P'` for circle / ellipse, `P'` for the hyperbola and zero for line / parabola), `theSpaceOffsetAnswersASecondDerivativeExactly`, `anOffsetOfAnOffsetStopsAtTheVelocity` |
+| T8 | the surface interface | `aPlaneAnswersTheSurfaceInterface`, `aSphericalSheetClosesOnlyAroundItsAxis` in the same file; the acceptance of the surfaces of revolution and the rectangular trim is in `geometry-axis-surfaces.md` T1 |
+| T9 | family contract sweep | `everyCurveKeepsTheInterfacePromises` / `everySurfaceKeepsTheInterfacePromises` and their `…InFloat` versions in the same file (**both precisions run once each**: the library explicitly instantiates and exports float / double): every implementation asked in turn for an ordered domain, `isValid()` true, closedness / period agreeing with the period value, `isCN` agreeing with `continuity()`, `reversedParameter` an involution, and finite derivatives on a finite domain; the two trim contracts additionally have `aTrimOfAPeriodicBasisReportsAPeriodOnlyWhenItRepeats`, `aTrimWithoutABasisAnswersInsteadOfDereferencingIt`, `anOffsetCurveWithoutABasisAnswersInsteadOfDereferencingIt`; the default-construction admission rule is pinned by the `static_assert`s at the top and by `anEmptyPatchIsRecognisablyEmpty`, and validity on the interface by `validityIsAskableThroughTheInterface` and two lines of `static_assert` |
+## 9. Status and Evolution
 
-- 两个族、曲面分 `ElementarySurface` / `BoundedSurface`、四种值类型、归属与大小断言都在。
-- 曲线接口有十一项属性（2.7）；`TrimmedCurve` 是组合曲线，`BezierCurve` / `BSplineCurve` 是两种可构造的样条（F7，2.8）。
-- 曲面接口有十四项（F8，2.10），`Plane` 与 `SphericalSurface` 实现；两个分类标签无状态、无虚函数，但**曲面与曲线一样付 vptr**。
-- 四种圆锥曲线（F6）与 `BezierCurve` / `BSplineCurve` 的求值、一二三阶导数（F7，2.8）都在。**空间曲线族到此全部答三阶导**，`OffsetCurve` 用基曲线三阶导答二阶导并成为可构造值类型，阶数规则与平面侧一致（D9、`../decisions/ADR-2026-11-06-space-third-derivative-and-offset.md`）。
-- 三个轴对称解析曲面、矩形裁剪曲面与两个样条曲面见 `geometry-axis-surfaces.md`；曲面族没有占位类型。
-- 族级算法已存在两侧：曲面（最近点 / 距离、射线 × 曲面，见 `geometry-surface-queries.md`）与曲线（最近点 / 距离，见 `geometry-curve-queries.md`）；都用自由函数 + `requires std::is_base_of_v<…>` 约束，不给接口加虚函数。已知缺口：实体求交（backlog G3）、曲线 × 曲线的最近距离。
-- 兼容性：曲面接口是从非模板的 `Surface` 标签改为模板接口，是**破坏性变更**（`Surface` / `ElementarySurface` / `BoundedSurface` 现在都要带 `<T>`）；仓库内唯一消费点是 `tests`。
-- 兼容性：`TrimmedCurve::period()` 与 `RectangularTrimmedSurface::uPeriod()` / `vPeriod()` 在 `isPeriodic()` 为假时返回 0，而不是转发基曲线 / 基曲面的周期——行为变化，签名不变（仓库内无调用者）；两种裁剪视图的空基查询也不解引用空句柄（C12、P9）。两类事实由族级契约扫查 `everyCurveKeepsTheInterfacePromises` / `everySurfaceKeepsTheInterfacePromises` 盯住（T9）。
-- 兼容性（接口扩充）：`isValid()` 现在是 `Curve<T>` / `Surface<T>` 的纯虚函数（十项→十一项、十三项→十四项），所有实现原本就有这个方法，只是加上了 `override`；`Plane` 因此第一次有了真正的有效性判据（零法向为假，以前一律可用）。自定义实现者必须实现它——仓库内没有其他实现者。见 `../decisions/ADR-2026-11-04-isvalid-on-family-interfaces.md`。
+- Both families, the split of surfaces into `ElementarySurface` / `BoundedSurface`, the four value types, and the membership and size assertions are all in place.
+- The curve interface has eleven properties (2.7); `TrimmedCurve` is a composite curve, and `BezierCurve` / `BSplineCurve` are the two constructible splines (F7, 2.8).
+- The surface interface has fourteen items (F8, 2.10), implemented by `Plane` and `SphericalSurface`; the two classification tags carry no state and no virtual function, but **a surface pays a vptr just as a curve does**.
+- The four conics (F6) and the evaluation and first three derivatives of `BezierCurve` / `BSplineCurve` (F7, 2.8) are in place. **The spatial curve family answers the third derivative throughout**: `OffsetCurve` answers its second derivative from the basis' third derivative and is a constructible value type, and the order rule matches the planar side (D9, `../decisions/ADR-2026-11-06-space-third-derivative-and-offset.md`).
+- The three analytic surfaces of revolution, the rectangular trimmed surface and the two spline surfaces are in `geometry-axis-surfaces.md`; the surface family has no placeholder type.
+- Family algorithms exist on both sides: surfaces (nearest point / distance, ray × surface, see `geometry-surface-queries.md`) and curves (nearest point / distance, see `geometry-curve-queries.md`); all are free functions constrained with `requires std::is_base_of_v<…>`, adding no virtual function to an interface. Known gaps: solid intersection (backlog G3), the nearest distance between two curves.
+- Compatibility: the surface interface changed from the non-template `Surface` tag to a template interface, a **breaking change** (`Surface` / `ElementarySurface` / `BoundedSurface` now all carry `<T>`); the only consumer in the repository is `tests`.
+- Compatibility: `TrimmedCurve::period()` and `RectangularTrimmedSurface::uPeriod()` / `vPeriod()` return 0 when `isPeriodic()` is false instead of forwarding the basis period — a behaviour change with unchanged signatures (no caller in the repository); an empty-basis query on either trimmed view no longer dereferences an empty handle either (C12, P9). Both facts are pinned by the family contract sweep `everyCurveKeepsTheInterfacePromises` / `everySurfaceKeepsTheInterfacePromises` (T9).
+- Compatibility (interface extension): `isValid()` is now a pure virtual of `Curve<T>` / `Surface<T>` (ten → eleven items, thirteen → fourteen), every implementation already had the method and only gained `override`; `Plane` therefore has a real validity test for the first time (a zero normal is false, where it used to be always usable). A custom implementer must implement it — there is no other implementer in the repository. See `../decisions/ADR-2026-11-04-isvalid-on-family-interfaces.md`.
 
-## 10. 参考
+## 10. References
 
-- `geometry-primitives.md`（`Aabb` / `Obb` / `LineCurve` / `Plane` 的归属与头文件规则）
-- `geometry-parametric.md`（参数化几何与 `Primitive`）
-- `geometry-ray.md`（`Ray` 的契约与内联理由）
+- `geometry-primitives.md` (membership and header rules of `Aabb` / `Obb` / `LineCurve` / `Plane`)
+- `geometry-parametric.md` (parametric geometry and `Primitive`)
+- `geometry-ray.md` (the `Ray` contract and why it is inline)
 - `../decisions/ADR-2026-11-04-geometry-kinds.md`
-- `../decisions/ADR-2026-11-04-curve-evaluation-interface.md`（曲线接口）
-- `../decisions/ADR-2026-11-04-surface-evaluation-interface.md`（曲面接口）
-- `../decisions/ADR-2026-11-05-curve-derivative-capability.md`（导数按能力暴露）
-- `../decisions/ADR-2026-11-06-space-third-derivative-and-offset.md`（空间三阶导与可构造偏置）
-- `../decisions/ADR-2026-11-04-axis-surface-frame.md`（旋转面框架层与共用的平面内轴规则）
-- OCCT `Geom_Curve.hxx` / `Geom_Surface.hxx` / `Geom_Conic.hxx` / `Geom_BezierCurve.hxx` / `Geom_BSplineCurve.hxx` / `Geom_OffsetCurve.hxx`（接口词汇与数值算法的来源，本地源码在 `E:\opensrc\OCCT\src\ModelingData\TKG3d\Geom`）
+- `../decisions/ADR-2026-11-04-curve-evaluation-interface.md` (the curve interface)
+- `../decisions/ADR-2026-11-04-surface-evaluation-interface.md` (the surface interface)
+- `../decisions/ADR-2026-11-05-curve-derivative-capability.md` (derivatives exposed by capability)
+- `../decisions/ADR-2026-11-06-space-third-derivative-and-offset.md` (the spatial third derivative and the constructible offset)
+- `../decisions/ADR-2026-11-04-axis-surface-frame.md` (the frame layer of the surfaces of revolution and the shared axis-in-a-plane rule)
+- OCCT `Geom_Curve.hxx` / `Geom_Surface.hxx` / `Geom_Conic.hxx` / `Geom_BezierCurve.hxx` / `Geom_BSplineCurve.hxx` / `Geom_OffsetCurve.hxx` (source of the interface vocabulary and the numeric algorithms; the local source is in `E:\opensrc\OCCT\src\ModelingData\TKG3d\Geom`)
