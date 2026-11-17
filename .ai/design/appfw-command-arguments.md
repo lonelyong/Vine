@@ -1,215 +1,209 @@
-# appfw 命令参数设计
+# appfw's command arguments
 
-> **状态**：现行
-> **最后核对**：2026-11-03
-> **范围**：一行文本的切词、参数载体、传递路径、历史与事件的回放形态、空行语义；命令如何解释参数不在本文。
-> **权威来源**：`CommandArguments.hpp`、`CommandManager.cpp`、`tests/test_appfw/CommandArgumentsTest.cpp`。
-> **待办**：`.ai/backlog/appfw-command-arguments.md`（声明式参数、帮助/补全、缺参提问、对象参数、长度上界）。
+> **Status**: current
+> **Last verified**: 2026-11-03
+> **Scope**: tokenising one line of text, the argument carrier, the path they travel, the replayable form recorded in history and events, and the empty-line rule; how a command interprets its arguments is not this page.
+> **Sources**: `CommandArguments.hpp`, `CommandManager.cpp`, `tests/test_appfw/CommandArgumentsTest.cpp`.
+> **Backlog**: `.ai/backlog/appfw-command-arguments.md` (declared parameters, help / completion, asking for a missing argument, object arguments, an upper length bound).
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-名字入口（控制台、ribbon、快捷键、宏）本身不携带任何调用者数据，实例入口却靠字段携带；于是每个需要输入的
-命令都自己向用户提问，或者让宿主自己拆词——引号规则、错误格式、历史记录各长一套。历史只记名字，
-`open a` 与 `open b` 是两条无法区分的记录。
+The name entries (console, ribbon, shortcut, macro) carry no caller data of their own, while the instance entry carries it in fields; so every command that needs input either asks the user itself or leaves the host to split the words — and then the quoting rules, the error format and the history grow one copy each.
+History records names only, so `open a` and `open b` are two records nothing can tell apart.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 一行文本只按一份规则切词（引号、反斜杠），控制台、启动参数、宏回放、测试共用。
-- 参数随执行帧流动、执行期不可变、空参数是空容器。
-- 命令自己解释参数；框架不声明、不校验、不设置。
-- 历史与事件记录可回放的规范形。
+- One line of text is tokenised by one set of rules (quotes, backslashes) shared by the console, the startup arguments, macro replay and the tests.
+- Arguments travel with the execution frame, are immutable while it runs, and an empty argument list is an empty container.
+- A command interprets its own arguments; the framework does not declare, validate or set them.
+- History and events record the canonical, replayable form.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做声明式参数（类型/默认值/必选）、帮助、补全与**生成的**缺参提问——见待办；命令自己用 `UserIO` 提问是允许的（F5）。
-- 不解析 `--`、`-l10`、`--name=value` 的语义：分词器只切词，含义归命令。
-- 不引入对象引用（id/名字）、单位与量纲。
+- No declared parameters (type / default / required), help, completion or **generated** prompts for a missing argument — see the backlog; a command asking through `UserIO` itself is allowed (F5).
+- No interpretation of `--`, `-l10` or `--name=value`: the tokeniser only splits words, and the meaning belongs to the command.
+- No object references (id / name), units or dimensions.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**框架切一次词、随执行送一次 token，命令自己解释；历史记的是能被重新切回同一组 token 的规范文本。**
+**The framework tokenises once and hands one set of tokens along with the execution; the command interprets them; history records the canonical text that tokenises back into the same tokens.**
 
-## 2. 设计要点
+## 2. Design Points
 
-2.1 **分词归框架，语义归命令**：引号与转义是全局约定，每个命令各写一遍必然分叉；而"`-l 10` 是什么意思"
-是命令的语法，框架不猜。分词器不解释 `--`，它只是一个普通 token。
+2.1 **Tokenising belongs to the framework, meaning belongs to the command**: quoting and escaping are global conventions, and a copy per command would inevitably fork; but "what `-l 10` means" is the command's grammar, which the framework does not guess.
+The tokeniser does not interpret `--`; it is an ordinary token.
 
-2.2 **载体只装 token**：`CommandArguments` 是值语义、不可变，空参数是空容器而不是 nullptr；它不携带名字、
-指针、类型信息，也不保存原始行（`toString()` 已能还原）。
+2.2 **The carrier holds tokens only**: `CommandArguments` has value semantics and is immutable, and an empty argument list is an empty container rather than nullptr; it carries no name, no pointer and no type information, and does not keep the original line (`toString()` can already reconstruct it).
 
-2.3 **传递只在派发时发生一次**：文本入口切词后把首个 token 交给名字解析，其余 token 复制进执行帧；三个名字
-入口都接参数，实例入口不接（字段就是它的参数）。
+2.3 **Passing happens once, at dispatch**: the text entry tokenises and gives the first token to name resolution, copying the rest into the execution frame; all three name entries accept arguments, the instance entry does not (its fields are its arguments).
 
-2.4 **记录即可回放**：`toString()` 与 `tokenizeCommandLine()` 互为逆运算，所以一条历史或一次事件就能重建调用。
+2.4 **A record is a replay**: `toString()` and `tokenizeCommandLine()` are inverses of each other, so one history entry or one event reconstructs the call.
 
-2.5 **命令行优先，缺的才提问**：命令先把命令行给的 token 当值用，缺失的项才经 `UserIO` 询问（`test_createbox` 就是样板）：
-`test_createbox 10 20 30` 不打断用户，`test_createbox` 逐项问，写了半截只问剩下的。
-给了但写错的 token 是**调用者错误**（`Failed` + 用法），绝不退化成提问——那会把输入错误藏起来。
-这是**命令**的形状而不是框架行为：声明式参数落地后，提问可由派发按声明统一生成（见待办 T3）。
+2.5 **The command line wins; only what is missing is asked for**: a command uses the tokens it was given as values and asks through `UserIO` only for what is absent (`test_createbox` is the model): `test_createbox 10 20 30` interrupts nobody, `test_createbox` asks item by item, and a half-written line asks only for the rest.
+A token that is present but wrong is a **caller error** (`Failed` plus usage) and never degrades into a prompt — that would hide the mistake.
+This is the shape of a **command**, not framework behaviour: once declared parameters exist, the prompt can be generated from the declaration at dispatch (backlog T3).
 
-2.6 **变体是显式判别符，不是参数个数**：同一结果的不同输入表达（长宽高 / 两个对角点）由一个模式 token 选择：
-`size` / `corners`，另保留唯一无歧义简写（三个纯数字 = size）。判别符是 token，因此进历史与回放；两种模式同时出现直接拒绝。
-不同结果对象、不同算法不是变体，是两个命令（G1）。
+2.6 **A variant is an explicit discriminator, not a token count**: different ways of writing the same result (length / width / height, or two opposite corners) are chosen by a mode token: `size` / `corners`, plus the one unambiguous shorthand that remains (three plain numbers = size).
+The discriminator is a token, so it enters history and replay; both modes at once are refused outright.
+A different result object or a different algorithm is not a variant, it is two commands (G1).
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 文本切词 | `tokenizeCommandLine()`：空白分隔、双引号成组、反斜杠按 Windows C 运行库规则 | 已落地 |
-| F2 | 参数传递 | 三个名字入口接 `CommandArguments`；`context.arguments()` 只读 | 已落地 |
-| F3 | 历史与事件 | `args_record` 与 `executing`/`executed` 携带同一份规范化参数 | 已落地 |
-| F4 | 文本入口与空行 | `executeCommandLineAsync()` 是唯一分词点；空行派发前拒绝 | 已落地 |
-| F5 | 交互回退 | 命令行给全 ⇒ 直接执行；缺项 ⇒ `UserIO` 提问；写错 ⇒ `Failed`（`test_createbox`） | 已落地（命令侧） |
-| F6 | 参数变体 | 显式模式 token 选 `size`/`corners`；互斥、缺项提问、坐标与 `getPoint3dAsync` 同语法 | 已落地（命令侧） |
+| F1 | Tokenising text | `tokenizeCommandLine()`: whitespace separated, double quotes group, backslashes follow the Windows C runtime rules | landed |
+| F2 | Passing arguments | the three name entries take `CommandArguments`; `context.arguments()` is read-only | landed |
+| F3 | History and events | `args_record` and `executing` / `executed` carry the same canonical arguments | landed |
+| F4 | The text entry and the empty line | `executeCommandLineAsync()` is the only tokenising point; an empty line is refused before dispatch | landed |
+| F5 | Interactive fallback | a complete command line ⇒ run directly; a missing item ⇒ `UserIO` asks; a wrong one ⇒ `Failed` (`test_createbox`) | landed (command side) |
+| F6 | Argument variants | an explicit mode token selects `size` / `corners`; mutually exclusive, missing items asked for, coordinates in the same syntax as `getPoint3dAsync` | landed (command side) |
 
-### 3.1.1 F1 文本切词
+### 3.1.1 F1 Tokenising text
 
-- **行为**：`tokenizeCommandLine(line)` 返回 token 列表；`""` 是一个空 token；未闭合引号取到行尾。
-- **约束**（C1）：只切词，不解释选项语义；反斜杠只有紧邻引号时才是转义，`C:\dir\file` 原样保留。
-- **要求**（R1）：与进程 `argv` 的引号规则一致（Windows C 运行库）；所有文本来源共用一个实现。
-- **验收**（T1）：`CommandArgumentsTest.*`。
-- **注意**（N1）：方言是规范的一部分，改它等于改所有宏与脚本的语义。
+- **Behaviour**: `tokenizeCommandLine(line)` returns the token list; `""` is one empty token; an unterminated quote runs to the end of the line.
+- **Constraints** (C1): it only splits words and never interprets option semantics; a backslash escapes only immediately before a quote, so `C:\dir\file` is kept as it is.
+- **Requirements** (R1): the quoting rules match the process `argv` (Windows C runtime); every text source shares one implementation.
+- **Acceptance** (T1): `CommandArgumentsTest.*`.
+- **Caveat** (N1): the dialect is part of the contract; changing it changes what every macro and script means.
 
-### 3.1.2 F2 参数传递
+### 3.1.2 F2 Passing arguments
 
-- **行为**：`executeCommandAsync/AndWait/Detached(name, args, target)` 把 token 送进执行帧，命令经
-  `CommandExecutionContext::arguments()` 读取。
-- **约束**（C2）：值语义、执行期不可变；参数不写进命令对象；实例入参不接 args。
-- **要求**（R2）：空参数不是 nullptr；命令可在恢复到的任意线程读取。
-- **验收**（T2）：`CommandArgumentsManagerTest.ArgumentsReachTheCommandThroughTheNameEntry`、
-  `InstanceEntryCarriesNoArguments`。
-- **注意**（N2）：命令要字段化就在 `execute()` 开头自己绑成局部结构，框架不代劳。
+- **Behaviour**: `executeCommandAsync/AndWait/Detached(name, args, target)` puts the tokens into the execution frame, and the command reads them through `CommandExecutionContext::arguments()`.
+- **Constraints** (C2): value semantics, immutable while the execution runs; arguments are never written into the command object; the instance entry takes no args.
+- **Requirements** (R2): an empty argument list is not nullptr; the command may read it on any thread it resumes on.
+- **Acceptance** (T2): `CommandArgumentsManagerTest.ArgumentsReachTheCommandThroughTheNameEntry`, `InstanceEntryCarriesNoArguments`.
+- **Caveat** (N2): a command that wants fields binds them into a local structure at the top of `execute()`; the framework does not do it for it.
 
-### 3.1.3 F3 历史与事件
+### 3.1.3 F3 History and events
 
-- **行为**：`CommandHistoryEntry::args_record` 与两个事件参数携带 `args.toString()`。
-- **约束**（C3）：记录的是规范化文本，不是用户原始输入；执行、事件、历史三处一致。
-- **要求**（R3）：`tokenizeCommandLine(args_record)` 还原出命令看到的 token。
-- **验收**（T3）：`HistoryRecordsTheReplayableInvocation`、`EventsCarryTheSameArgumentsAsTheExecution`。
-- **注意**（N3）：参数长度目前只受历史条数约束，见待办 T5。
+- **Behaviour**: `CommandHistoryEntry::args_record` and the two event parameters carry `args.toString()`.
+- **Constraints** (C3): what is recorded is the canonical text, not the user's original input; execution, events and history agree.
+- **Requirements** (R3): `tokenizeCommandLine(args_record)` yields the tokens the command saw.
+- **Acceptance** (T3): `HistoryRecordsTheReplayableInvocation`, `EventsCarryTheSameArgumentsAsTheExecution`.
+- **Caveat** (N3): argument length is bounded only by the number of history entries today, see backlog T5.
 
-### 3.1.4 F4 文本入口与空行
+### 3.1.4 F4 The text entry and the empty line
 
-- **行为**：`executeCommandLineAsync(line)` 切词，首个 token 作为名字；无 token 时返回 `Failed`。
-- **约束**（C4）：这是唯一调用分词器的地方；空行不创建实例、不进历史、不发事件。
-- **要求**（R4）：控制台在调用前忽略空行；其他宿主拿到的是明确的 `Failed`。
-- **验收**（T4）：`EmptyLineIsRefusedBeforeAnythingRuns`。
-- **注意**（N4）：控制台补全只覆盖命令名，出现分隔符即不弹候选。
+- **Behaviour**: `executeCommandLineAsync(line)` tokenises and takes the first token as the name; with no token it returns `Failed`.
+- **Constraints** (C4): this is the only place that calls the tokeniser; an empty line creates no instance, enters no history and fires no event.
+- **Requirements** (R4): the console ignores an empty line before calling; every other host gets an explicit `Failed`.
+- **Acceptance** (T4): `EmptyLineIsRefusedBeforeAnythingRuns`.
+- **Caveat** (N4): console completion covers command names only and offers nothing once a separator appears.
 
-### 3.1.5 F5 交互回退
+### 3.1.5 F5 Interactive fallback
 
-- **行为**：有位置参数的命令先消费 `arguments()`，只对缺失项 `co_await io->getDoubleAsync(...)`；全部给齐时一次提问都没有。
-- **约束**（C5）：token 存在但不可转换 ⇒ `Failed` + 用法，不重新提问；多余的 token 同样拒绝。
-- **要求**（R5）：提示语与顺序由命令定义（今天）；语义校验（如长宽高必须为正）仍在命令里。
-- **验收**（T5）：控制台手工验收：`test_createbox 10 20 30` 无提问、`test_createbox` 逐项问、`test_createbox 10` 只问两项、`test_createbox 10 abc 30` ⇒ `Failed`。
-- **注意**（N5）：这是为了让带参命令在控制台与宏里都好用；生成式提问要等声明式参数（待办 T3），不要在框架里先长第二套参数语法。
+- **Behaviour**: a command with positional arguments consumes `arguments()` first and only `co_await io->getDoubleAsync(...)` for what is missing; when everything is given it asks nothing.
+- **Constraints** (C5): a token that exists but cannot be converted ⇒ `Failed` plus usage, never a second prompt; surplus tokens are refused the same way.
+- **Requirements** (R5): the prompts and their order are the command's (today); semantic validation (length, width and height must be positive) stays in the command.
+- **Acceptance** (T5): a manual console check: `test_createbox 10 20 30` asks nothing, `test_createbox` asks item by item, `test_createbox 10` asks for two, `test_createbox 10 abc 30` ⇒ `Failed`.
+- **Caveat** (N5): this exists so a command with arguments works well in the console and in a macro; generated prompts wait for declared parameters (backlog T3), so do not grow a second argument syntax in the framework first.
 
-### 3.1.6 F6 参数变体
+### 3.1.6 F6 Argument variants
 
-- **行为**：`test_createbox size <长> <宽> <高>` 与 `test_createbox corners <x,y,z> <x,y,z>`；简写 `test_createbox <长> <宽> <高>` = size。两者最终得到同一个盒子。
-- **约束**（C6）：只允许一个无歧义简写；判别符占第一个 token；第二个模式关键字出现 ⇒ `Failed`；每个模式固定 token 数量与类型。
-- **要求**（R6）：坐标语法与 `UserIO::getPoint3dAsync` 一致（恰好 `x,y,z` 三个有限数）；缺项才提问，一个 token 都没有时先问模式；两模式收敛到同一结果。
-- **验收**（T6）：控制台手工：`test_createbox 10 20 30`、`size 10 20 30`、`corners 0,0,0 10,20,30`、`test_createbox`（先问模式）；错误：`corner ...`（未知模式）、`size 1 2`（缺参→提问）、`corners 0,0,0`（缺第二个点→提问）、`corners 0,0,0 0,10,20`（轴重合 ⇒ `Failed`）、`size 1 2 corners 0,0,0 1,1,1`（两种模式 ⇒ `Failed`）。
-- **注意**（N6）：判别符进 `args_record`，所以回放不会漂到另一个模式；简写回放仍然确定。声明落地后升级为参数集（待办 T6）。
+- **Behaviour**: `test_createbox size <length> <width> <height>` and `test_createbox corners <x,y,z> <x,y,z>`; the shorthand `test_createbox <length> <width> <height>` = size. Both end up with the same box.
+- **Constraints** (C6): exactly one unambiguous shorthand; the discriminator occupies the first token; a second mode keyword ⇒ `Failed`; each mode fixes its token count and types.
+- **Requirements** (R6): the coordinate syntax matches `UserIO::getPoint3dAsync` (exactly three finite numbers as `x,y,z`); only missing items are asked for, and with no token at all the mode is asked first; both modes converge on one result.
+- **Acceptance** (T6): manual console: `test_createbox 10 20 30`, `size 10 20 30`, `corners 0,0,0 10,20,30`, `test_createbox` (asks the mode first); errors: `corner ...` (unknown mode), `size 1 2` (missing → asked), `corners 0,0,0` (second point missing → asked), `corners 0,0,0 0,10,20` (collinear axis ⇒ `Failed`), `size 1 2 corners 0,0,0 1,1,1` (both modes ⇒ `Failed`).
+- **Caveat** (N6): the discriminator enters `args_record`, so a replay cannot drift into the other mode; a shorthand replay stays deterministic. Once declarations exist this becomes a parameter set (backlog T6).
 
-## 4. 公开接口
+## 4. Public Interface
 
-### 4.1 `CommandArguments` / 分词
+### 4.1 `CommandArguments` / tokenising
 
-| 接口 | 契约 |
+| Interface | Contract |
 | --- | --- |
-| `tokenizeCommandLine(const String&)` | 纯函数，切词；一份方言 |
-| `CommandArguments::tokens()/size()/empty()/operator[]` | 只读 token 视图 |
-| `CommandArguments::toString()` | 规范文本；与分词器互为逆运算 |
+| `tokenizeCommandLine(const String&)` | pure function, tokenises; one dialect |
+| `CommandArguments::tokens()/size()/empty()/operator[]` | a read-only view of the tokens |
+| `CommandArguments::toString()` | canonical text; the inverse of the tokeniser |
 
-### 4.2 入口
+### 4.2 Entries
 
-| 接口 | 说明 |
+| Interface | Note |
 | --- | --- |
-| `executeCommandLineAsync(line, target)` | 文本入口，唯一分词点 |
-| `executeCommandAsync(name, args, target)` / `executeCommandAndWait(...)` / `executeDetached(...)` | 名字入口携带参数 |
-| `executeCommandAsync(Command*, target)` | 实例入口，不接参数 |
-| `CommandExecutionContext::arguments()` | 本次执行的 token，只读 |
+| `executeCommandLineAsync(line, target)` | the text entry, the only tokenising point |
+| `executeCommandAsync(name, args, target)` / `executeCommandAndWait(...)` / `executeDetached(...)` | the name entries, carrying arguments |
+| `executeCommandAsync(Command*, target)` | the instance entry, taking no arguments |
+| `CommandExecutionContext::arguments()` | this execution's tokens, read-only |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | 分词只做词法，不解释选项；反斜杠仅紧邻引号时转义。 |
-| C2 | 参数值语义、执行期不可变，不写进命令对象。 |
-| C3 | 历史/事件记录规范化文本。 |
-| C4 | 空行在派发前拒绝。 |
-| C5 | 存在但不可转换的 token ⇒ `Failed`，不重新提问；多余 token 拒绝。 |
-| C6 | 只允许一个无歧义简写；判别符占第一个 token；两种模式同时出现拒绝。 |
+| C1 | Tokenising is lexical only and interprets no options; a backslash escapes only immediately before a quote. |
+| C2 | Arguments have value semantics and are immutable during execution; they are never written into the command object. |
+| C3 | History and events record the canonical text. |
+| C4 | An empty line is refused before dispatch. |
+| C5 | A token that exists but cannot be converted ⇒ `Failed`, no second prompt; surplus tokens are refused. |
+| C6 | Exactly one unambiguous shorthand; the discriminator occupies the first token; both modes at once are refused. |
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | 所有文本来源共用分词器与方言。 |
-| R2 | 空参数是空容器；可从任意线程读取。 |
-| R3 | `toString()` 往返恒等。 |
-| R4 | 控制台忽略空行，其他宿主拿到 `Failed`。 |
-| R5 | 提示语与顺序、语义校验由命令定义；框架不代生成提问。 |
-| R6 | 模式决定 token 数量与类型；坐标与 `getPoint3dAsync` 同语法；两种模式产生同一结果。 |
+| R1 | Every text source shares the tokeniser and the dialect. |
+| R2 | An empty argument list is an empty container; readable from any thread. |
+| R3 | `toString()` round-trips identically. |
+| R4 | The console ignores an empty line; every other host gets `Failed`. |
+| R5 | The prompts, their order and the semantic validation are the command's; the framework generates no prompt. |
+| R6 | The mode fixes the token count and types; coordinates use the `getPoint3dAsync` syntax; both modes produce one result. |
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | 一次执行一份参数，执行结束随帧销毁。 |
-| N2 | 名字与 token 分开传递，名字不占 token 位。 |
-| N3 | 变体的判别符必须出现在调用记录里，或被唯一简写确定。 |
+| N1 | One execution has one argument list, destroyed with the frame when it ends. |
+| N2 | The name and the tokens travel separately; the name takes no token slot. |
+| N3 | A variant's discriminator appears in the call record, or the unambiguous shorthand determines it. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 把参数当成命令状态
+### 6.1 Treating arguments as command state
 
-- 会怎么错：写进命令成员，同一实例再次执行读到上次的值，并发执行数据竞争。
-- 怎么判：命令由工厂默认构造、执行完即销毁；实例入口允许复用同一指针。
-- 怎么防：只从 `context.arguments()` 读；需要字段就在 `execute()` 开头绑。
+- How it fails: they are written into a member, so a second execution on the same instance reads the previous values, and concurrent executions race.
+- How to detect it: a command is default-constructed by its factory and destroyed after it runs; the instance entry may reuse one pointer.
+- How to prevent it: read `context.arguments()` only; bind fields at the top of `execute()` when they are wanted.
 
-### 6.2 每个命令自带引号规则
+### 6.2 Every command carrying its own quoting rules
 
-- 会怎么错：`"C:\Program Files\x"` 在一个命令里是一个 token，在另一个里是三个。
-- 怎么判：出现第二份切词代码就是信号。
-- 怎么防：分词只允许调用 `tokenizeCommandLine()`。
+- How it fails: `"C:\Program Files\x"` is one token in one command and three in another.
+- How to detect it: a second tokenising implementation is the signal.
+- How to prevent it: tokenising may only call `tokenizeCommandLine()`.
 
-### 6.3 保存原始行而不是规范形
+### 6.3 Storing the original line instead of the canonical form
 
-- 会怎么错：回放依赖用户当时怎么写，别名、引号风格一变就重现不了。
-- 怎么判：历史条目里的字符串与 `toString()` 不一致。
-- 怎么防：只记 `toString()`；需要展示原文时另存一份，不作为回放依据。
+- How it fails: a replay depends on how the user happened to write the line, so a change of alias or quoting style cannot reproduce it.
+- How to detect it: the string in a history entry differs from `toString()`.
+- How to prevent it: record `toString()` only; if the original wording must be shown, keep it as a separate field that is not the replay source.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 |
+| # | Option | Reason |
 | --- | --- | --- |
-| D1 | 由管理器把值设置到命令成员 | 需要反射或字符串分发；引入"实例一次性""半初始化对象不得运行"两条新不变量。 |
-| D2 | 每类参数各造一个值类型（`any`/variant 全集） | 错误推迟到运行期，且与 `ConfigManager` 值模型打架；今天只需要 token。 |
-| D3 | 分词器解释 `--` 与短选项 | 没有声明就没有"短名属于谁"的答案；先切词，声明落地后再上语义。 |
-| D4 | 按参数个数推断变体（`0,0,0 10,10,10` vs `10 20 30`） | 缺参时报不清是哪种形式，回放无从判断，加一个可选参数就歧义。 |
+| D1 | The manager setting values into command members | It needs reflection or dispatch on strings, and adds two new invariants: "an instance is used once" and "a half-initialised object must not run". |
+| D2 | A value type per argument kind (a full `any` / variant) | Errors move to run time, and it fights the `ConfigManager` value model; tokens are all that is needed today. |
+| D3 | The tokeniser interpreting `--` and short options | Without a declaration there is no answer to "who owns the short name"; tokenise first, add semantics when declarations exist. |
+| D4 | Inferring the variant from the token count (`0,0,0 10,10,10` vs `10 20 30`) | With an item missing it cannot say which form was meant, a replay cannot decide, and one optional parameter makes it ambiguous. |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 | --- | --- | --- |
-| T1 | 切词：引号、转义、路径、未闭合引号 | `CommandArgumentsTest` |
-| T2 | 三个入口看到同一份参数；实例入口为空 | `CommandArgumentsManagerTest` |
-| T3 | 历史/事件可回放 | `HistoryRecordsTheReplayableInvocation`、`EventsCarryTheSameArgumentsAsTheExecution` |
-| T4 | 空行不执行 | `EmptyLineIsRefusedBeforeAnythingRuns` |
-| T5 | 交互回退（命令侧） | 控制台：`test_createbox 10 20 30` / `test_createbox` / `test_createbox 10` / `test_createbox 10 abc 30` |
-| T6 | 参数变体（命令侧） | 控制台：`size …` / `corners …` / 简写 / 未知模式 / 缺项 / 两种模式同时给 |
+| T1 | tokenising: quotes, escapes, paths, an unterminated quote | `CommandArgumentsTest` |
+| T2 | the three entries see one set of arguments; the instance entry sees none | `CommandArgumentsManagerTest` |
+| T3 | history and events replay | `HistoryRecordsTheReplayableInvocation`, `EventsCarryTheSameArgumentsAsTheExecution` |
+| T4 | an empty line runs nothing | `EmptyLineIsRefusedBeforeAnythingRuns` |
+| T5 | interactive fallback (command side) | console: `test_createbox 10 20 30` / `test_createbox` / `test_createbox 10` / `test_createbox 10 abc 30` |
+| T6 | argument variants (command side) | console: `size …` / `corners …` / the shorthand / unknown mode / missing item / both modes at once |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-机制已落地；声明式参数、帮助/补全、缺参提问、对象参数与长度上界按 `.ai/backlog/appfw-command-arguments.md`
-的触发条件推进。`CommandArguments` 是最终载体的子集：声明落地后增加类型化访问与派发前校验，`tokens()` 保留。
-交互回退（F5）与参数变体（F6）目前是**命令侧**实现（`test_createbox`）；第二条命令需要多写法时升级为声明里的参数集（待办 T6）。
+The mechanism is in place; declared parameters, help / completion, prompts for a missing argument, object arguments and an upper length bound follow the triggers in `.ai/backlog/appfw-command-arguments.md`.
+`CommandArguments` is a subset of the eventual carrier: once declarations exist it gains typed access and pre-dispatch validation, while `tokens()` stays.
+The interactive fallback (F5) and the argument variants (F6) are **command-side** implementations today (`test_createbox`); when a second command needs several forms they move into a parameter set in the declaration (backlog T6).
 
-## 10. 参考
+## 10. References
 
-- `src/fw/appfw/sdk/vine/appfw/CommandArguments.hpp`、`src/fw/appfw/src/CommandArguments.cpp`
-- `src/fw/appfw/sdk/vine/appfw/Command.hpp`（`arguments()`）、`src/fw/appfw/src/CommandManager.cpp`
+- `src/fw/appfw/sdk/vine/appfw/CommandArguments.hpp`, `src/fw/appfw/src/CommandArguments.cpp`
+- `src/fw/appfw/sdk/vine/appfw/Command.hpp` (`arguments()`), `src/fw/appfw/src/CommandManager.cpp`
 - `tests/test_appfw/CommandArgumentsTest.cpp`
-- `appfw-command-manager.md`（链、历史、事件）
+- `appfw-command-manager.md` (chains, history, events)

@@ -1,270 +1,258 @@
-# 命令条目的显示状态
+# The display state of a command item
 
-> **状态**：现行
-> **最后核对**：2026-10-28
-> **范围**：命令条目（按钮、下拉/应用菜单项、Backstage 条目）的 enabled / tooltip / 勾选态如何从
-> `CommandManager` 与本次派发目标派生；不含 Ribbon 的 tab/group 身份与放置（见 `appfw-ribbon.md`）。
-> **权威来源**：`src/fw/appfw/sdk/vine/appfw/CommandManager.hpp`、`gui/RibbonButton.hpp`、`gui/RibbonAction.hpp`、
-> `src/fw/appfw/src/gui/CommandBinding.hpp`；用例 `tests/test_gui`。
-> **待办**：`../backlog/appfw-ribbon.md`
+> **Status**: current
+> **Last verified**: 2026-10-28
+> **Scope**: how a command item (a button, a drop-down or application-menu entry, a Backstage item) derives its enabled / tooltip / checked state from `CommandManager` and from this dispatch's target; not the identity and placement of ribbon tabs and groups (see `appfw-ribbon.md`).
+> **Sources**: `src/fw/appfw/sdk/vine/appfw/CommandManager.hpp`, `gui/RibbonButton.hpp`, `gui/RibbonAction.hpp`, `src/fw/appfw/src/gui/CommandBinding.hpp`; the cases in `tests/test_gui`.
+> **Backlog**: `../backlog/appfw-ribbon.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-命令可以按名字执行，但"这个按钮现在能不能点、提示写什么、当前是不是这一档"过去由每个宿主/插件各自维护：
-有人订阅 `commandsChanged`，有人干脆在启动时写死。用户禁用一条命令后按钮照样能点、`NeedsDocument`/
-`NeedsView` 的命令在缺目标时点了才被拒绝、`CommandInfo::description` 写好了却没人当 tooltip 用、五档着色
-按钮看不出当前在哪一档。重复实现必然漂移，而把 `NotApplicable` 写进"禁用偏好"又会让临时状态变成永久设置。
+A command can be executed by name, but "can this button be clicked now, what does the tooltip say, is this the active mode" is a question about the command, not about the button — and when each host or plugin answers it for itself, the answers drift: a command the user disabled stays clickable, a `NeedsDocument` / `NeedsView` command is refused only after the click, a `CommandInfo::description` nobody shows as a tooltip, and five shading buttons with nothing to say which one is current.
+Writing `NotApplicable` into the disable preference is worse still: it turns a temporary context into a permanent setting.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 一条规则：`setCommand(name)` 的条目是命令的**视图**，显示状态只有一处派生。
-- 覆盖所有命令条目：Ribbon 按钮、下拉项、应用菜单项、Backstage 条目、快捷访问项。
-- 目标要求（`NeedsDocument`/`NeedsView`）按**本次派发目标**判断，缺目标时只灰显条目，不改偏好。
-- tooltip 跟命令描述；勾选态用可选的 provider，不引入"单选组"模型。
+- One rule: the item that called `setCommand(name)` is a **view** of the command, and its display state is derived in one place.
+- Every kind of command item is covered: ribbon buttons, drop-down items, application-menu items, Backstage items, quick-access items.
+- A target requirement (`NeedsDocument` / `NeedsView`) is judged against **this dispatch's target**, and a missing target only greys the item out without touching the preference.
+- The tooltip follows the command's description; the checked state comes from an optional provider, with no "radio group" model introduced.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不写 `CommandManager::setCommandEnabled()`：那是用户的持久化偏好，不是当前上下文。
-- 不做 `LongRunning` 期间的全局忙碌灰显（没有消费者，且会闪烁）。
-- 不做多窗口目标（今天是单窗口：刷新/派发都用 `MainWindow::current()`）。
-- 不做无命令控件的 id、上下文 tab、用户自定义布局（见 `../backlog/appfw-ribbon.md`）。
+- Not writing `CommandManager::setCommandEnabled()`: that is the user's persisted preference, not the current context.
+- No global busy grey-out during a `LongRunning` command (no consumer, and it would flicker).
+- No multi-window target (there is one window today: both refresh and dispatch use `MainWindow::current()`).
+- No id for a control without a command, no contextual tabs and no user-defined layout (see `../backlog/appfw-ribbon.md`).
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**命令条目只显示命令的状态：注册/偏好/目标要求由 `CommandManager` 回答，描述就是 tooltip，勾选态由 provider
-回答；规则只有 `CommandBinding` 一份实现。**
+**A command item only displays the command's state: registration, preference and target requirement are answered by `CommandManager`, the description is the tooltip, the checked state is answered by a provider; and the rule has exactly one implementation, `CommandBinding`.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 条目是视图，不是状态的第二个主人（G1、G5、G7）
+### 2.1 An item is a view, not a second owner of the state (G1, G5, G7)
 
-- 是什么：条目保存命令名（身份），其余状态每次从命令管理器重新算。
-- 为什么：同一条"能不能点"如果有条目自己的一份缓存，撤销注册、禁用、目标变化都会漏更新。
-- 边界：命令名仍是身份；条目自己的 `setEnabled`/`setTooltip`/`setChecked` 只对未绑定命令的条目有效。
+- What: the item keeps the command name (its identity) and recomputes every other state from the command manager.
+- Why: if "can it be clicked" also had a cached copy in the item, an unregistration, a disable or a target change would all be missed.
+- Boundary: the command name is still the identity; the item's own `setEnabled` / `setTooltip` / `setChecked` only affect an item that has no command bound.
 
-### 2.2 规则只有一份实现（G2、G6）
+### 2.2 The rule has exactly one implementation (G2, G6)
 
-- 是什么：`RibbonButton` 与 `RibbonAction` 各自持有一个内部 `detail::CommandBinding`（`src/gui/CommandBinding.hpp`），
-  由它订阅、计算、写回。二者只提供"把状态写到原生控件"的回调。
-- 为什么：按钮和菜单项/Backstage 条目如果各写一份，`NeedsDocument` 这类规则迟早只在一处更新。
-- 边界：这是 GUI 层内部类型，不新增公开 API；命令层（`CommandManager`）不认识控件。
+- What: `RibbonButton` and `RibbonAction` each hold an internal `detail::CommandBinding` (`src/gui/CommandBinding.hpp`) that subscribes, computes and writes back. They only supply the callback that puts the state onto the native control.
+- Why: if buttons and menu / Backstage items each wrote their own copy, a rule such as `NeedsDocument` would sooner or later be updated in one place only.
+- Boundary: it is a GUI-layer internal type and adds no public API; the command layer (`CommandManager`) knows nothing about widgets.
 
-### 2.3 派生的是显示态，不是持久化偏好（G1、G4）
+### 2.3 What is derived is the display state, not the persisted preference (G1, G4)
 
-- 是什么：`enabled = isCommandEnabled(name)`，再扣掉 `NeedsDocument`/`NeedsView` 在当前目标上不满足的情形。
-- 为什么：禁用偏好属于用户（写在配置里）；当前目标缺失属于上下文，两者混用会让"暂时不能点"变成"永久禁用"。
-- 边界：刷新只调用 `QWidget/QAction::setEnabled`，从不回写管理器；`NotApplicable` 也不是禁用。
+- What: `enabled = isCommandEnabled(name)`, minus the case where `NeedsDocument` / `NeedsView` is not satisfied by the current target.
+- Why: the disable preference belongs to the user (it is written into the configuration); a missing target belongs to the context, and mixing the two turns "cannot be clicked for now" into "permanently disabled".
+- Boundary: a refresh only calls `QWidget/QAction::setEnabled` and never writes back to the manager; `NotApplicable` is not a disable either.
 
-### 2.4 刷新由管理器事件驱动，跨线程先编组（G11）
+### 2.4 Refreshes are driven by manager events, marshalled when they cross a thread (G11)
 
-- 是什么：订阅 `commandsChanged`（注册/偏好/描述）、`executed`（provider 的答案可能变了）、
-  `DocumentManager::currentChanged`（目标变了）。
-- 为什么：状态没有轮询点；少订阅一个事件就是"偶尔不更新"的 bug。
-- 边界：`executed` 可能在工作线程触发（命令在定时器/IO 线程恢复），刷新经 `MainThreadDispatcher` 回到应用线程
-  后才碰控件；`setCommand()` 时立即求值一次，避免首次显示是错的。
+- What: subscribe to `commandsChanged` (registration / preference / description), `executed` (the provider's answer may have changed) and `DocumentManager::currentChanged` (the target changed).
+- Why: the state has no polling point; missing one of those subscriptions is an "occasionally stale" bug.
+- Boundary: `executed` may fire on a worker thread (a command resuming on a timer or an IO thread), so the refresh goes back to the application thread through `MainThreadDispatcher` before touching a control; `setCommand()` evaluates once immediately so the first paint is not wrong.
 
-### 2.5 tooltip 归绑定所有，直到调用方接管（G4）
+### 2.5 The tooltip belongs to the binding until the caller takes over (G4)
 
-- 是什么：绑定写入命令描述，并记住自己写的文本；发现控件当前 tooltip 与它不同，就认为调用方接管，从此不再覆盖。
-- 为什么：描述是命令的文档，应该默认出现；但条目也可能需要更具体的提示，二者不能互相静默覆盖。
-- 边界：描述变空且当前文本仍是绑定写的，就把 tooltip 清掉。
+- What: the binding writes the command description and remembers the text it wrote; if the control's current tooltip differs from that, the caller has taken over and the binding stops overwriting it.
+- Why: the description is the command's documentation and should appear by default, but an item may need a more specific hint; the two must not silently overwrite each other.
+- Boundary: when the description becomes empty and the current text is still the binding's, the tooltip is cleared.
 
-### 2.6 勾选态用 provider，不建"单选组"模型（G8）
+### 2.6 The checked state comes from a provider; no "radio group" model (G8)
 
-- 是什么：`setCheckedProvider(std::function<bool()>)` 回答"这一档现在是不是开着的"；有 provider 时条目变为
-  checkable，每次刷新重新求值。
-- 为什么：互斥关系是业务事实（当前着色模式），不是 Ribbon 的通用概念；五档按钮各自的 provider 读同一个目标，
-  天然只有一个为真。
-- 边界：provider 抛异常只记警告并保留原状态；没有 provider 时勾选完全归调用方。
+- What: `setCheckedProvider(std::function<bool()>)` answers "is this mode on right now"; with a provider the item becomes checkable and is re-evaluated on every refresh.
+- Why: the mutual exclusion is a business fact (the current shading mode), not a general ribbon concept; the five buttons' providers read the same target, so exactly one of them is true.
+- Boundary: a provider that throws is logged as a warning and the previous state is kept; with no provider the checked state belongs entirely to the caller.
 
-### 2.7 未绑定命令的条目不订阅、不改状态（G8）
+### 2.7 An item with no command subscribes to nothing and changes nothing (G8)
 
-- 是什么：`setCommand("")` 或从未设置命令时，绑定不持有任何订阅，也不写 enabled/tooltip/checked。
-- 为什么：没有消费者的监听只是噪声；调用方自己管理的按钮不该被框架"顺手"复位。
-- 边界：重新绑定命令时恢复订阅。
+- What: after `setCommand("")`, or when no command was ever set, the binding holds no subscription and writes no enabled / tooltip / checked state.
+- Why: a listener with no consumer is noise, and a button the caller manages itself must not be "helpfully" reset by the framework.
+- Boundary: binding a command again restores the subscriptions.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | 启用态跟随命令 | 注册、用户偏好、目标要求共同决定 | 已落地 |
-| F2 | 目标要求灰显 | `NeedsDocument`/`NeedsView` 缺目标时只灰显条目 | 已落地 |
-| F3 | 描述作为 tooltip | 调用方可接管 | 已落地 |
-| F4 | 勾选态 provider | 每次刷新重新求值 | 已落地 |
-| F5 | 覆盖所有条目 | 按钮、下拉项、应用菜单、Backstage | 已落地 |
+| F1 | Enabled state follows the command | registration, user preference and target requirement decide together | landed |
+| F2 | Target requirements grey the item out | a `NeedsDocument` / `NeedsView` command with no target only greys the item | landed |
+| F3 | The description as the tooltip | the caller may take over | landed |
+| F4 | The checked-state provider | re-evaluated on every refresh | landed |
+| F5 | Every item kind covered | buttons, drop-down items, application menus, Backstage | landed |
 
-### 3.1.1 F1 启用态跟随命令
+### 3.1.1 F1 The enabled state follows the command
 
-- **行为**：`setCommand(name)` 后立即求值，并在 `commandsChanged` / `currentChanged` 时重算。
-- **约束**（C1）：未注册与用户禁用都表现为不可执行；只显示，不写偏好。
-- **要求**（R1）：命令重新注册/启用后条目自动恢复。
-- **验收**（T1）：`GuiTest.RibbonItemsFollowTheCommandState`。
-- **注意**（N1）：构建 UI 时命令尚未注册的条目会先灰显，注册事件到达后恢复。
+- **Behaviour**: `setCommand(name)` evaluates immediately and recomputes on `commandsChanged` / `currentChanged`.
+- **Constraints** (C1): unregistered and user-disabled both show as not executable; the state is displayed only and no preference is written.
+- **Requirements** (R1): after a command is registered again or enabled, the item recovers by itself.
+- **Acceptance** (T1): `GuiTest.RibbonItemsFollowTheCommandState`.
+- **Caveat** (N1): an item built while its command is not yet registered starts greyed out and recovers when the registration event arrives.
 
-### 3.1.2 F2 目标要求灰显
+### 3.1.2 F2 Target requirements grey the item out
 
-- **行为**：`CommandFlags` 由 `CommandManager::commandFlags()` 读出；目标用 `resolveCommandTarget(MainWindow::current())`。
-- **约束**（C2）：只降低条目的可点性，不改变命令状态、不写配置。
-- **要求**（R2）：`NeedsDocument` 看 `target.document`，`NeedsView` 看 `target.view`（视图有 3D 区才算）。
-- **验收**（T2）：`GuiTest.RibbonItemsFollowTheResolvedTarget`。
-- **注意**（N2）：没有视图的当前文档解析出的目标是空的（`resolveCommandTarget` 从视图取文档）。
+- **Behaviour**: `CommandFlags` come from `CommandManager::commandFlags()`; the target comes from `resolveCommandTarget(MainWindow::current())`.
+- **Constraints** (C2): only the item's clickability is lowered; the command's state is unchanged and nothing is written to the configuration.
+- **Requirements** (R2): `NeedsDocument` looks at `target.document`, `NeedsView` at `target.view` (a view counts only when it has a 3D area).
+- **Acceptance** (T2): `GuiTest.RibbonItemsFollowTheResolvedTarget`.
+- **Caveat** (N2): the current document with no view resolves to an empty target (`resolveCommandTarget` takes the document from the view).
 
-### 3.1.3 F3 描述作为 tooltip
+### 3.1.3 F3 The description as the tooltip
 
-- **行为**：`commandDescription(name)` 写入 tooltip；描述变化时跟着改。
-- **约束**（C3）：调用方设置的不同文本优先，绑定从此不再覆盖。
-- **要求**（R3）：描述为空时清掉绑定写过的 tooltip，而不是留旧文本。
-- **验收**（T3）：`GuiTest.RibbonItemsFollowTheCommandState` 的 tooltip 断言；
-  `GuiTest.RibbonMenusShowCommandTooltips` 钉住菜单真的会显示它。
-- **注意**（N3）：菜单默认不显示 QAction tooltip，见 P4。
+- **Behaviour**: `commandDescription(name)` is written into the tooltip and follows a change of description.
+- **Constraints** (C3): different text set by the caller wins, and from then on the binding does not overwrite it.
+- **Requirements** (R3): an empty description clears the tooltip the binding wrote instead of leaving the old text.
+- **Acceptance** (T3): the tooltip assertions of `GuiTest.RibbonItemsFollowTheCommandState`; `GuiTest.RibbonMenusShowCommandTooltips` pins down that a menu really shows it.
+- **Caveat** (N3): a menu does not show a `QAction` tooltip by default, see P4.
 
-### 3.1.4 F4 勾选态 provider
+### 3.1.4 F4 The checked-state provider
 
-- **行为**：`setCheckedProvider(fn)`；每次刷新调用 `fn()`，有值时把条目设为 checkable 并写 checked。
-- **约束**（C4）：provider 属于绑定的命令；没有命令时不生效。异常只警告。
-- **要求**（R4）：命令执行后（`executed`）重新求值，于是"点完这档"立刻显示为选中。
-- **验收**（T4）：`GuiTest.RibbonItemsFollowTheCommandState`；`ModelViewerTest.TheShadingModeCommandsDriveTheCurrentModelView`
-  钉住 provider 读的就是命令作用的那块 3D 区。
-- **注意**（N4）：provider 读请求（`RenderControl::viewerOptions().mode`）而不是链，避免"表面还没 attach"时无答案。
+- **Behaviour**: `setCheckedProvider(fn)`; every refresh calls `fn()`, and when it has a value the item is made checkable and its checked state written.
+- **Constraints** (C4): the provider belongs to the bound command and has no effect without one; an exception is a warning only.
+- **Requirements** (R4): the state is re-evaluated after the command executes (`executed`), so "this mode was just clicked" shows as checked immediately.
+- **Acceptance** (T4): `GuiTest.RibbonItemsFollowTheCommandState`; `ModelViewerTest.TheShadingModeCommandsDriveTheCurrentModelView` pins down that the provider reads the very 3D area the command acts on.
+- **Caveat** (N4): the provider reads the request (`RenderControl::viewerOptions().mode`) rather than the chain, so there is an answer even before the surface is attached.
 
-### 3.1.5 F5 覆盖所有条目
+### 3.1.5 F5 Every item kind covered
 
-- **行为**：Ribbon 按钮、按钮下拉项、应用菜单项、Backstage 条目、快捷访问项都是 `RibbonButton`/`RibbonAction`。
-- **约束**（C5）：不新增条目类型；同一个命令可以出现在多个条目里，它们各自刷新。
-- **要求**（R5）：Backstage 的条目不自己维护一份状态（`QToolButton::setDefaultAction` 自动跟随）。
-- **验收**（T5）：`GuiTest.Backstage_PageItemsAreCommandBound` + 审查 `RibbonAction` 的绑定。
-- **注意**（N5）：同一命令的两个条目各有一份订阅；数量小，换来的是互不依赖。
+- **Behaviour**: ribbon buttons, button drop-down items, application-menu items, Backstage items and quick-access items are all `RibbonButton` / `RibbonAction`.
+- **Constraints** (C5): no new item type is introduced; one command may appear in several items, each refreshing itself.
+- **Requirements** (R5): a Backstage item keeps no state of its own (`QToolButton::setDefaultAction` follows the action).
+- **Acceptance** (T5): `GuiTest.Backstage_PageItemsAreCommandBound` plus a review of `RibbonAction`'s binding.
+- **Caveat** (N5): two items for one command hold two subscriptions; the count is small and the price buys independence.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 CommandManager
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 |---|---|---|
-| `commandFlags(name)` | 注册时缓存的 flags；别名照解析 | 未注册返回 `nullopt` |
-| `commandDescription(name)` | 注册时缓存的描述 | 未注册返回 `nullopt` |
-| `isCommandEnabled(name)` | 能否执行 | 禁用与未注册都为 false |
+| `commandFlags(name)` | the flags cached at registration; an alias resolves the same way | `nullopt` when unregistered |
+| `commandDescription(name)` | the description cached at registration | `nullopt` when unregistered |
+| `isCommandEnabled(name)` | whether it can be executed | false for both disabled and unregistered |
 
 ### 4.2 RibbonButton / RibbonAction
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 |---|---|---|
-| `setCommand(name)` / `command()` | 命令名即身份；绑定后状态派生 | 空名解除绑定 |
-| `setCheckedProvider(fn)` | 可选的勾选态回答 | 无 provider 时勾选归调用方 |
+| `setCommand(name)` / `command()` | the command name is the identity; once bound the state is derived | an empty name unbinds |
+| `setCheckedProvider(fn)` | the optional checked-state answer | with no provider the checked state is the caller's |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-- C1：只写条目显示状态，不写 `setCommandEnabled()`。
-- C2：目标要求在应用线程上解析；`executed` 跨线程时先编组。
-- C3：tooltip 只更新绑定自己写过的文本。
-- C4：provider 只随命名的命令生效；异常不传播。
-- C5：不引入新的条目类型或第二套身份。
+- C1: only the item's display state is written, never `setCommandEnabled()`.
+- C2: a target requirement is resolved on the application thread; `executed` from another thread is marshalled first.
+- C3: the tooltip is only updated where the binding itself wrote the text.
+- C4: a provider only takes effect with a named command; its exception is not propagated.
+- C5: no new item type and no second identity.
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-- R1：注册/启用变化后条目自动恢复可点。
-- R2：缺目标时条目灰显，命令本身不被改写。
-- R3：描述变化会反映到 tooltip；调用方接管后保持其文本。
-- R4：命令执行后勾选态重新求值。
-- R5：所有命令条目的规则只有 `CommandBinding` 一份实现。
+- R1: after a registration or enable change the item becomes clickable again by itself.
+- R2: a missing target greys the item out without rewriting the command.
+- R3: a change of description reaches the tooltip; once the caller takes over, its text is kept.
+- R4: the checked state is re-evaluated after the command executes.
+- R5: the rule for every command item has one implementation, `CommandBinding`.
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-- N1：条目保存的只有命令名，不缓存 enabled/描述/勾选。
-- N2：未绑定的条目没有订阅。
-- N3：一次刷新最多读三次命令注册表（enabled/flags/description），不实例化命令。
-- N4：刷新发生在应用线程。
+- N1: an item stores the command name only and caches no enabled / description / checked state.
+- N2: an unbound item holds no subscription.
+- N3: one refresh reads the command registry at most three times (enabled / flags / description) and instantiates no command.
+- N4: the refresh happens on the application thread.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 P1 对绑定条目调 setEnabled()
+### 6.1 P1 Calling setEnabled() on a bound item
 
-- 会怎么错：用户以为禁用了，下一次刷新又变回派生值。
-- 怎么判：`RibbonItemsFollowTheCommandState` 中 enabled 只跟命令管理器走。
-- 怎么防：长期禁用用 `CommandManager::setCommandEnabled()`；头文件已写明。
+- How it fails: the caller believes it disabled something, and the next refresh restores the derived value.
+- How to detect it: in `RibbonItemsFollowTheCommandState`, enabled follows the command manager only.
+- How to prevent it: for a lasting disable use `CommandManager::setCommandEnabled()`; the header says so.
 
-### 6.2 P2 构建 UI 时命令尚未注册
+### 6.2 P2 The command is not registered yet when the UI is built
 
-- 会怎么错：按钮先灰显，被误认为"坏了"。
-- 怎么判：注册后 `commandsChanged` 会自动恢复；日志里能看到注册。
-- 怎么防：宿主先注册再建条目（app_shell/model_viewer 的顺序就是这样）。
+- How it fails: the button starts greyed out and is mistaken for broken.
+- How to detect it: `commandsChanged` restores it once the registration arrives, and the registration is visible in the log.
+- How to prevent it: the host registers commands before it builds the items (which is the order app_shell and model_viewer use).
 
-### 6.3 P3 视图注册晚于文档
+### 6.3 P3 A view registered later than its document
 
-- 会怎么错：当前文档的视图在 `currentChanged` 之后才登记，目标不会重新解析。
-- 怎么判：需要视图注册表提供变更事件；今天没有。
-- 怎么防：插件在 `load()` 里登记视图（早于任何文档打开）；这是当前唯一支持的顺序。
+- How it fails: the current document's view registers after `currentChanged`, so the target is never resolved again.
+- How to detect it: it needs a change event from the view registry, which does not exist today.
+- How to prevent it: a plugin registers its views in `load()`, before any document opens; that is the only order supported today.
 
-### 6.4 P4 菜单不显示 tooltip
+### 6.4 P4 A menu does not show tooltips
 
-- 会怎么错：描述写好了，鼠标停在下拉/应用菜单项上没有提示。
-- 怎么判：菜单需要 `setToolTipsVisible(true)`（框架创建菜单时统一打开）。
-- 怎么防：`GuiTest.RibbonMenusShowCommandTooltips`；新增菜单创建点必须沿用同一设置。
+- How it fails: the description exists, and hovering a drop-down or application-menu item shows nothing.
+- How to detect it: the menu needs `setToolTipsVisible(true)` (the framework turns it on wherever it creates a menu).
+- How to prevent it: `GuiTest.RibbonMenusShowCommandTooltips`; a new place that creates a menu must use the same setting.
 
-### 6.5 P5 provider 抛异常
+### 6.5 P5 A provider throws
 
-- 会怎么错：刷新中断、按钮状态停在半路。
-- 怎么判：日志含 "checked-state provider threw"。
-- 怎么防：provider 只读状态、不做 IO；异常会让条目保留原勾选态。
+- How it fails: the refresh is interrupted and the button stops half-way.
+- How to detect it: the log contains "checked-state provider threw".
+- How to prevent it: a provider reads state and does no IO; after an exception the item keeps its previous checked state.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 |---|---|---|---|
-| D1 | 每个宿主/插件自己订阅并刷新条目 | 同一规则 N 份实现，必然漂移（G5、G6、G7） | 本文 §2.2 |
-| D2 | 用 `setCommandEnabled()` 表达"当前不适用" | 把临时上下文写成持久化偏好（G1、G4） | `appfw-command-manager.md` N3 |
-| D3 | 全局"当前勾选项"表 / 单选组模型 | 互斥是业务事实，通用机制没有消费者（G8） | 本文 §2.6 |
+| D1 | Every host or plugin subscribing and refreshing its own items | N implementations of one rule inevitably drift (G5, G6, G7) | §2.2 of this page |
+| D2 | `setCommandEnabled()` to express "not applicable right now" | It writes a temporary context into a persisted preference (G1, G4) | `appfw-command-manager.md` N3 |
+| D3 | A global "currently checked item" table or a radio-group model | The exclusion is a business fact and a general mechanism has no consumer (G8) | §2.6 of this page |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 |---|---|---|
-| T1 | enabled 跟随注册/偏好 | `GuiTest.RibbonItemsFollowTheCommandState` |
-| T2 | 目标要求驱动灰显 | `GuiTest.RibbonItemsFollowTheResolvedTarget` |
-| T3 | 描述成为 tooltip、调用方优先 | `GuiTest.RibbonItemsFollowTheCommandState` |
-| T4 | provider 与命令作用同一块区 | `GuiTest.RibbonItemsFollowTheCommandState`、`ModelViewerTest.TheShadingModeCommandsDriveTheCurrentModelView` |
-| T5 | 单条 flags/描述读取与别名 | `GuiTest.CommandManager_FlagsAndDescriptionResolveThroughAliases` |
-| T6 | 菜单显示条目 tooltip | `GuiTest.RibbonMenusShowCommandTooltips` |
-| T7 | 工作线程结束的命令经编组刷新 | `GuiTest.RibbonItemStateFromAWorkerThreadIsMarshalled` |
+| T1 | enabled follows registration and preference | `GuiTest.RibbonItemsFollowTheCommandState` |
+| T2 | a target requirement drives the grey-out | `GuiTest.RibbonItemsFollowTheResolvedTarget` |
+| T3 | the description becomes the tooltip, the caller wins | `GuiTest.RibbonItemsFollowTheCommandState` |
+| T4 | the provider and the command act on the same area | `GuiTest.RibbonItemsFollowTheCommandState`, `ModelViewerTest.TheShadingModeCommandsDriveTheCurrentModelView` |
+| T5 | a single read of flags and description, through aliases | `GuiTest.CommandManager_FlagsAndDescriptionResolveThroughAliases` |
+| T6 | a menu shows its items' tooltips | `GuiTest.RibbonMenusShowCommandTooltips` |
+| T7 | a command that finished on a worker thread is refreshed through the dispatcher | `GuiTest.RibbonItemStateFromAWorkerThreadIsMarshalled` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-F1–F5 落地；`test_gui` 全绿；model_viewer 的五档着色按钮使用 provider。
+F1–F5 are in place; `test_gui` is green; model_viewer's five shading buttons use a provider.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-- 多窗口：刷新与派发都问 `MainWindow::current()`；出现第二个窗口时按窗口解析（见 `../backlog/appfw-ribbon.md`）。
-- `LongRunning` 忙碌期的灰显、上下文 tab、无命令控件的 id：没有消费者，按 `../backlog/` 的触发条件重开。
-- 视图注册表变化不会重解目标（P3），需要时给注册表加事件。
+- Multiple windows: refresh and dispatch both ask `MainWindow::current()`; with a second window the target resolves per window (see `../backlog/appfw-ribbon.md`).
+- A grey-out during a `LongRunning` command, contextual tabs and an id for a control without a command have no consumer; they reopen on the triggers in `../backlog/`.
+- A change in the view registry does not re-resolve the target (P3); the registry gains an event when that is needed.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-- `CommandManager::commandFlags/commandDescription` 与 `setCheckedProvider` 都是新增的非虚接口，插件 ABI 不变。
-- `setCommand()` 的点击语义不变；绑定后 enabled/tooltip/checked 变为派生显示态。
+- `CommandManager::commandFlags/commandDescription` and `setCheckedProvider` are non-virtual additions, so the plugin ABI is unchanged.
+- The click semantics of `setCommand()` are unchanged; once bound, enabled / tooltip / checked become derived display state.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
-- `src/fw/appfw/src/gui/CommandBinding.hpp`（规则唯一实现）
-- `src/fw/appfw/src/gui/RibbonButton.cpp`、`RibbonAction.cpp`（写回原生控件）
-- `src/plugins/model_viewer/src/commands/ShadingModeCommands.hpp`（`isCurrentShadingMode` provider）
+- `src/fw/appfw/src/gui/CommandBinding.hpp` (the single implementation of the rule)
+- `src/fw/appfw/src/gui/RibbonButton.cpp`, `RibbonAction.cpp` (writing back to the native control)
+- `src/plugins/model_viewer/src/commands/ShadingModeCommands.hpp` (the `isCurrentShadingMode` provider)
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
-- `appfw-command-manager.md`（§4.1 的单条读取、N3）
-- `appfw-ribbon.md`（条目身份与放置）
-- `appfw-backstage.md`（条目是命令动作）
+- `appfw-command-manager.md` (the single-entry reads of §4.1, N3)
+- `appfw-ribbon.md` (item identity and placement)
+- `appfw-backstage.md` (an item is a command action)
 
-### 10.3 外部资料
+### 10.3 External material
 
-- Qt `QAction` / `QToolButton::setDefaultAction`：动作携带 enabled/checkable/checked/toolTip。
-- Office Ribbon：命令级启用与图标化状态。
+- Qt's `QAction` / `QToolButton::setDefaultAction`: an action carries enabled / checkable / checked / toolTip.
+- The Office ribbon: enabling at command level and iconographic state.

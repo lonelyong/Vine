@@ -1,57 +1,56 @@
-# appfw CommandManager 设计
+# appfw's CommandManager
 
-> **状态**：现行
-> **最后核对**：2026-11-03
-> **范围**：命令注册/执行链/历史/禁用/结果状态/参数携带；对话框与输入输出见 `appfw-userio.md`。
-> **权威来源**：`CommandManager.hpp`、`Command.hpp`、`CommandArguments.hpp`、`tests/test_appfw/CommandArgumentsTest.cpp`。
-> **待办**：无（开放项见 `../backlog/`）
+> **Status**: current
+> **Last verified**: 2026-11-03
+> **Scope**: command registration, the execution chain, history, disabling, the result status and carrying arguments; the dialog and the input / output are in `appfw-userio.md`.
+> **Sources**: `CommandManager.hpp`, `Command.hpp`, `CommandArguments.hpp`, `tests/test_appfw/CommandArgumentsTest.cpp`.
+> **Backlog**: none (open items are in `../backlog/`)
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-命令有四种入口（异步/同步 × 按名字/按实例），还要支持嵌套子命令、取消、排他、历史、禁用与
-“命令不适用”。过去同步入口会阻塞 UI 线程、排他只取消前台链、历史保存命令指针导致 UAF、
-`Failed` 与 `NotApplicable` 混为一谈。
+A command has four entries (async / sync × by name / by instance), and on top of that it needs nested sub-commands, cancellation, exclusion, history, disabling and "this command does not apply right now".
+Each of those turns into a requirement on the same object: a synchronous entry must not block the UI thread, exclusion must stop every live chain rather than the foreground one, history must not keep a pointer to a command that is already destroyed, and `Failed` must not be confused with `NotApplicable`.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 一条命令链 = 一个栈 + 一个取消源；链间独立。
-- 顶层入口统一收口异常，不让异常穿到 UI/DetachedTask。
-- 排他命令要么接管成功、要么明确拒绝；不与旧链并发。
-- 历史只存值快照；禁用是注册表标记，不是移除。
-- `Failed`（错误）与 `NotApplicable`（当下没对象）分开。
+- One command chain = one stack + one cancellation source; chains are independent of each other.
+- The top-level entries contain every exception, so none reaches the UI or a `DetachedTask`.
+- An exclusive command either takes over or is refused outright; it never runs alongside an older chain.
+- History keeps value snapshots only; disabling is a flag in the registry, not a removal.
+- `Failed` (an error) and `NotApplicable` (no object right now) stay apart.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做运行期热卸载命令；禁用只是标记。
-- 不让命令内部用同步 `executeCommandAndWait()`（会死锁）。
-- 不在框架里按文档类型过滤 ribbon。
-- 不做 `Scheduler` 类抽取；调度逻辑留在 `Impl`。
+- No run-time hot unload of a command; disabling is only a flag.
+- No synchronous `executeCommandAndWait()` inside a command (it would deadlock).
+- No filtering of the ribbon by document type in the framework.
+- No `Scheduler` class extraction; the scheduling logic stays in `Impl`.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-`CommandManager` 用一条链管一次顶层执行：链内嵌套、链间独立；顶层入口统一把异常转成 `Failed`；
-排他先停所有活链再接管；历史存值；禁用是标记；`NotApplicable` 不是错误。
+`CommandManager` runs one top-level execution per chain: nested inside a chain, independent between chains; the top-level entries turn every exception into `Failed`; exclusion stops every live chain before taking over; history keeps values; disabling is a flag; `NotApplicable` is not an error.
 
-## 2. 设计要点
+## 2. Design Points
 
-2.0 **命令声明它需要哪一层，框架统一拒绝**：应用 / 文档 / 视图三层都可空，命令用 `CommandFlags::NeedsDocument` / `NeedsView` 声明前提，派发前统一拒绝（`NotApplicable` + 说清缺哪层），命令体读 `CommandExecutionContext::target()` 而不自己判空；控制台与无 GUI 测试是合法情形。目标在**派发时**解析（`gui::resolveCommandTarget()`：当前文档视图 → 它的文档，视图只在有 3D 区时进目标），随执行走，见 `../decisions/ADR-2026-10-24-command-target.md`。
+2.0 **A command declares which layer it needs, and the framework refuses uniformly**: the application, document and view layers may all be absent, so a command declares its premise with `CommandFlags::NeedsDocument` / `NeedsView`, the refusal happens before dispatch (`NotApplicable` plus which layer is missing), and the command body reads `CommandExecutionContext::target()` instead of checking for null itself; the console and a headless test are legal situations.
+The target is resolved **at dispatch** (`gui::resolveCommandTarget()`: the current document's view → its document, and a view only enters the target when it has a 3D area) and travels with the execution, see `../decisions/ADR-2026-10-24-command-target.md`.
 
-### 2.1 四个公开入口
+### 2.1 The four public entries
 
-全部是**顶层入口**（`nested=false`）；只有 `CommandExecutionContext::executeChild()` 走 `nested=true`。
+All of them are **top-level entries** (`nested=false`); only `CommandExecutionContext::executeChild()` runs with `nested=true`.
 
-| 入口 | 用途 | 线程/阻塞 |
+| Entry | Use | Thread / blocking |
 | --- | --- | --- |
-| `executeCommandAsync(Command*)` | 顶层异步 | 立即返回 `Task` |
-| `executeCommandAsync(name)` | 顶层异步按名字 | 立即返回 `Task` |
-| `executeCommandAndWait(...)` | 工具/测试 | 阻塞当前线程 |
-| `executeDetached(...)` | ribbon/fire-and-forget | 不等人等结果 |
+| `executeCommandAsync(Command*)` | top-level async | returns a `Task` at once |
+| `executeCommandAsync(name)` | top-level async by name | returns a `Task` at once |
+| `executeCommandAndWait(...)` | tools / tests | blocks the calling thread |
+| `executeDetached(...)` | ribbon / fire-and-forget | waits for nobody and reports nothing |
 
-命令内部**不要**用同步入口；应 `co_await executeCommandAsync(...)` 或 `executeChild()`。
+A command must **not** use the synchronous entry inside itself; it should `co_await executeCommandAsync(...)` or call `executeChild()`.
 
-### 2.2 链模型
+### 2.2 The chain model
 
 ```
 CommandManager ── Impl ─┬─ shared_ptr<Chain> foreground
@@ -61,240 +60,236 @@ CommandManager ── Impl ─┬─ shared_ptr<Chain> foreground
                         ├─ map<String, RegisteredCommand> registry
                         ├─ map<String, String> aliases
                         ├─ mutex (foreground/live/history/snapshot)
-                        └─ registry_mutex (registry/owner/aliases, 叶子锁)
-Chain ── vector<Command*> commands (栈, innermost 在尾)
-      ├─ int runs (归零 = 本链收尾)
-      └─ stop_source (只停不换)
+                        └─ registry_mutex (registry/owner/aliases, leaf lock)
+Chain ── vector<Command*> commands (the stack, innermost at the tail)
+      ├─ int runs (zero = this chain is winding down)
+      └─ stop_source (stopped, never replaced)
 ```
 
-- 一条链 = 一个栈 + 一个取消源；链间不能清空/弹出/取消彼此。
-- 取消源只 `request_stop()`，不替换 ⇒ `Context` 发出的 `stop_token` 永远有效。
-- 链只有在自身帧彻底收尾后 `runs` 才归零（先弹栈、析构 `ProgressHost`，最后 `leaveChain()`）。
+- One chain = one stack + one cancellation source; chains cannot clear, pop or cancel each other.
+- The cancellation source only ever `request_stop()`s and is never replaced ⇒ a `stop_token` handed out through a `Context` stays valid.
+- A chain's `runs` reaches zero only after its own frame has completely wound down (pop the stack, destroy the `ProgressHost`, and only then `leaveChain()`).
 
-### 2.3 串联门与排他
+### 2.3 The serialisation gate and exclusion
 
-- 串联门：`foreground_busy || ProgressHost::current() != nullptr`；检查与占用在同一临界区，
-  由 `ChainGuard` 析构释放。
-- 排他：顶层 Exclusive 先取活链快照，对**每一条**活链 `request_stop()`，再 5ms 切片轮询等待
-  排空（上界 2s）。成功则绕过串联门；超时 ⇒ `Failed`，不与旧链并发。
-- `cancelAll()` 自增 `cancel_generation`，等待中的接管在下一个轮询点以 `Cancelled` 收尾。
-- 已知残余：排他是“启动时刻清场”，不是入场锁；运行期被准入的普通顶层命令仍可能与排他并存。
+- Serialisation gate: `foreground_busy || ProgressHost::current() != nullptr`; the check and the claim happen in one critical section, and `ChainGuard`'s destructor releases it.
+- Exclusion: a top-level Exclusive command takes a snapshot of the live chains, calls `request_stop()` on **each** of them, and then waits in 5 ms slices for them to drain (bounded at 2 s). On success it bypasses the serialisation gate; on timeout ⇒ `Failed`, and it never runs alongside an older chain.
+- `cancelAll()` bumps `cancel_generation`, so a waiting take-over winds down with `Cancelled` at its next polling point.
+- Known residue: exclusion is "clear the field at start time", not an entry lock; an ordinary top-level command admitted while it runs can still coexist with it.
 
-### 2.4 线程安全
+### 2.4 Thread safety
 
-- 命令 `execute()`、工厂、快照回调、事件回调、命令虚函数都在锁外。
-- `ProgressHost::current()` 在 `mutex` 之外采样。
-- `Signal` 本体是线程安全快照（不可变表 + 原子发布）；订阅/发火可并发。
-- 禁用偏好的读-改-写不是原子的（只有 UI 线程调；`ConfigManager` 自身加锁），有意不加互斥。
+- A command's `execute()`, the factory, the snapshot callbacks, the event callbacks and the command's virtual functions all run outside the locks.
+- `ProgressHost::current()` is sampled outside the `mutex`.
+- `Signal` itself is a thread-safe snapshot (an immutable table plus an atomic publish); subscribing and firing may run concurrently.
+- The read-modify-write of the disable preference is not atomic (only the UI thread calls it, and `ConfigManager` locks itself), deliberately without a mutex of its own.
 
-### 2.5 参数随执行走
+### 2.5 Arguments travel with the execution
 
-名字入口不携带调用者数据、实例入口靠字段携带，两者的差别是**来源**而不是两套机制：token 由框架切一次、随执行帧送到 `context.arguments()`，含义归命令（见 `appfw-command-arguments.md`）。
+The name entry carries no caller data and the instance entry carries it in fields; the difference is the **source**, not two mechanisms: the framework tokenises once and hands the tokens to `context.arguments()` with the execution frame, and the meaning belongs to the command (see `appfw-command-arguments.md`).
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 顶层执行 | 四个入口建新链、写 `foreground`、统一收口异常 | 已落地 |
-| F2 | 嵌套子命令 | `executeChild()` 入父链，深度上限 64 | 已落地 |
-| F3 | 结果状态 | `Success` / `Failed` / `Cancelled` / `NotApplicable` | 已落地 |
-| F4 | 取消/排空 | `cancelCurrent` / `cancelAll` / `cancelAllAndWait` | 已落地 |
-| F5 | 历史 | 值快照，容量上限 1024，不存结果载荷 | 已落地 |
-| F6 | 禁用 | 注册表标记 + 持久化偏好 + 两个入口把关 | 已落地 |
-| F7 | 命令管理器对话框 | 列表/状态/禁用/启用 | 已落地 |
+| F1 | Top-level execution | the four entries create a chain, write `foreground` and contain exceptions | landed |
+| F2 | Nested sub-commands | `executeChild()` joins the parent chain, depth capped at 64 | landed |
+| F3 | Result status | `Success` / `Failed` / `Cancelled` / `NotApplicable` | landed |
+| F4 | Cancel / drain | `cancelCurrent` / `cancelAll` / `cancelAllAndWait` | landed |
+| F5 | History | value snapshots, capacity 1024, no result payload | landed |
+| F6 | Disabling | a registry flag + a persisted preference + both entries gated | landed |
+| F7 | The command manager dialog | list / state / disable / enable | landed |
 
-### 3.1.1 F1 顶层执行
+### 3.1.1 F1 Top-level execution
 
-- **行为**：四个入口建新链、写 `foreground`；`nested=true` 用父链。
-- **约束**（C1）：顶层入口把一切逃逸异常（工厂/分配/命令体）转为 `Failed`。
-- **要求**（R1）：快照回调抛错 ⇒ 命令不执行；`executing`/`executed` 回调抛错只记日志。
-- **验收**（T1）：`CommandManager_*` 顶层执行用例。
-- **注意**（N1）：`DetachedTask` 未捕获异常即 `terminate`，所以必须收口。
+- **Behaviour**: the four entries create a new chain and write `foreground`; `nested=true` uses the parent chain.
+- **Constraints** (C1): the top-level entries turn every escaping exception (factory, allocation, command body) into `Failed`.
+- **Requirements** (R1): a snapshot callback that throws ⇒ the command does not run; a throwing `executing` / `executed` callback is logged only.
+- **Acceptance** (T1): the `CommandManager_*` top-level execution cases.
+- **Caveat** (N1): an uncaught exception in a `DetachedTask` is `terminate`, so the containment is not optional.
 
-### 3.1.2 F2 嵌套子命令
+### 3.1.2 F2 Nested sub-commands
 
-- **行为**：`context->executeChild(name)` 或 `executeChild(unique_ptr<Command>)`；入父链。
-- **约束**（C2）：`stackSize() >= maxChainDepth()` 拒绝并返回 `Failed`；实例重载拒 `nullptr` 与禁用实例。
-- **要求**（R2）：子命令以自己报告的名字进事件/历史；未注册则不出现在 `commandInfos()`。
-- **验收**（T2）：`CommandManager_ExecuteChildRunsACallerSuppliedInstance` 等。
-- **注意**（N2）：嵌套必须走 `executeChild()`；manager 无法区分“嵌套”与“新顶层”。
+- **Behaviour**: `context->executeChild(name)` or `executeChild(unique_ptr<Command>)`; it joins the parent chain.
+- **Constraints** (C2): `stackSize() >= maxChainDepth()` refuses and returns `Failed`; the instance overload refuses `nullptr` and a disabled instance.
+- **Requirements** (R2): a sub-command enters events and history under the name it reports itself; an unregistered one does not appear in `commandInfos()`.
+- **Acceptance** (T2): `CommandManager_ExecuteChildRunsACallerSuppliedInstance` and friends.
+- **Caveat** (N2): nesting must go through `executeChild()`; the manager cannot tell "nested" from "a new top level".
 
-### 3.1.3 F3 结果状态
+### 3.1.3 F3 Result status
 
-- **行为**：`Success` / `Failed` / `Cancelled` / `NotApplicable`。
-- **约束**（C3）：`NotApplicable` 不是失败；`succeeded()` 仍是 `status == Success`。
-- **要求**（R3）：三处用户可见路径分开：`logOutcome()` info、`executeDetached()` 转达、控制台 Warning。
-- **验收**（T3）：`CommandManager_DetachedNotApplicableIsExplainedAndNotReportedAsAFailure`、
-  `UserIOTest.NotApplicableTypedInTheConsoleIsAHintNotAnError`。
-- **注意**（N3）：不要用 `setCommandEnabled()` 表达“不适用”（那是持久化偏好）。
+- **Behaviour**: `Success` / `Failed` / `Cancelled` / `NotApplicable`.
+- **Constraints** (C3): `NotApplicable` is not a failure; `succeeded()` is still `status == Success`.
+- **Requirements** (R3): the three user-visible paths stay apart: `logOutcome()` logs at info level, `executeDetached()` passes it on, the console shows a warning.
+- **Acceptance** (T3): `CommandManager_DetachedNotApplicableIsExplainedAndNotReportedAsAFailure`, `UserIOTest.NotApplicableTypedInTheConsoleIsAHintNotAnError`.
+- **Caveat** (N3): never use `setCommandEnabled()` to express "not applicable" (that is the persisted preference).
 
-### 3.1.4 F4 取消/排空
+### 3.1.4 F4 Cancel / drain
 
-- **行为**：`cancelCurrent()` 只停前台链；`cancelAll()` 停所有活链；`cancelAllAndWait(timeout)` 等排空。
-- **约束**（C4）：链的 `runs` 归零前完成弹栈与宿主析构；等待用 5ms 轮询，不用 `AsyncEvent`。
-- **要求**（R4）：`Application::shutdown()` 先 `UserIO::cancelPendingInput()` 再 `cancelAllAndWait()`。
-- **验收**（T4）：`ExclusiveStopsEveryLiveChain`、`CancelAllAbortsWaitingTakeOver`。
-- **注意**（N4）：命令不能在自己内部调 `cancelAllAndWait()`；要停应用用 `Application::quit()`。
+- **Behaviour**: `cancelCurrent()` stops the foreground chain only; `cancelAll()` stops every live chain; `cancelAllAndWait(timeout)` waits for them to drain.
+- **Constraints** (C4): a chain's `runs` reaches zero only after the stack is popped and the host destroyed; the wait polls in 5 ms steps instead of using an `AsyncEvent`.
+- **Requirements** (R4): `Application::shutdown()` calls `UserIO::cancelPendingInput()` before `cancelAllAndWait()`.
+- **Acceptance** (T4): `ExclusiveStopsEveryLiveChain`, `CancelAllAbortsWaitingTakeOver`.
+- **Caveat** (N4): a command must not call `cancelAllAndWait()` inside itself; to stop the application use `Application::quit()`.
 
-### 3.1.5 F5 历史
+### 3.1.5 F5 History
 
-- **行为**：`deque` 满 `maxHistoryEntries()`（1024）时 `pop_front()`；`historyAt(0)` 是最早保留的一条。
-- **约束**（C5）：历史只存值快照；不存 `CommandResult::data()` 的 `std::any`。
-- **要求**（R5）：命令对象协程返回即可销毁；历史不保存指针。
-- **验收**（T5）：`CommandManager_*History*` 用例。
-- **注意**（N5）：条目数有界时字节数才会随之有界。
+- **Behaviour**: when the `deque` reaches `maxHistoryEntries()` (1024) it `pop_front()`s; `historyAt(0)` is the oldest entry kept.
+- **Constraints** (C5): history keeps value snapshots only; the `std::any` of `CommandResult::data()` is not stored.
+- **Requirements** (R5): a command object may be destroyed as soon as its coroutine returns; history holds no pointer.
+- **Acceptance** (T5): the `CommandManager_*History*` cases.
+- **Caveat** (N5): only a bounded number of entries makes the byte count bounded with it.
 
-### 3.1.6 F6 禁用
+### 3.1.6 F6 Disabling
 
-- **行为**：`setCommandEnabled()` 先 `resolveName()`，写偏好 + 翻 `RegisteredCommand::enabled`。
-- **约束**（C6）：禁用是标记，不移除；禁用项仍在 `names()`/`commandInfos()`。
-- **要求**（R6）：按名字与按实例两个入口都把关；`isRegistered()` 只查存在性。
-- **验收**（T6）：`CommandManager_DisableIsAFlagAndIsPersisted`、
-  `CommandManager_DisableBlocksCallerSuppliedInstance`。
-- **注意**（N6）：控制台补全跳过禁用命令；`list_commands` 行尾加 `[已禁用]`。
+- **Behaviour**: `setCommandEnabled()` resolves the name first, then writes the preference and flips `RegisteredCommand::enabled`.
+- **Constraints** (C6): disabling is a flag, not a removal; a disabled command is still in `names()` / `commandInfos()`.
+- **Requirements** (R6): both the by-name and the by-instance entries are gated; `isRegistered()` only tests existence.
+- **Acceptance** (T6): `CommandManager_DisableIsAFlagAndIsPersisted`, `CommandManager_DisableBlocksCallerSuppliedInstance`.
+- **Caveat** (N6): console completion skips disabled commands; `list_commands` appends `[disabled]` to the row.
 
-### 3.1.7 F7 命令管理器对话框
+### 3.1.7 F7 The command manager dialog
 
-- **行为**：筛选框 → 命令表（名称/状态/别名/来源/分组/描述）→ 刷新/禁用/关闭。
-- **约束**（C7）：禁用行灰显斜体，不隐藏；未选中时按钮置灰。
-- **要求**（R7）：对话框不提供“卸载命令”；禁用是标记。
-- **验收**（T7）：`CommandManagerDialogTest`。
-- **注意**（N7）：表格样式与插件管理器共用 `TableStyle.hpp`。
+- **Behaviour**: a filter box → the command table (name / state / alias / source / group / description) → refresh / disable / close.
+- **Constraints** (C7): a disabled row is greyed and italic, never hidden; the buttons are greyed until something is selected.
+- **Requirements** (R7): the dialog offers no "unload command"; disabling is a flag.
+- **Acceptance** (T7): `CommandManagerDialogTest`.
+- **Caveat** (N7): the table style is shared with the plugin manager through `TableStyle.hpp`.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `CommandManager`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 | --- | --- | --- |
-| `executeCommandAsync(Command*)` / `(name)` | 顶层异步 | 异常转 `Failed` |
-| `executeCommandAsync(name, args, target)` / `executeCommandAndWait(name, args, target)` / `executeDetached(name, args, target)` | 带参数的名字入口 | 参数只被携带 |
-| `executeCommandLineAsync(line, target)` | 文本入口 | 唯一调用 `tokenizeCommandLine` 的地方 |
-| `executeCommandAndWait(...)` | 阻塞 | 工具/测试 |
-| `executeDetached(...)` | fire-and-forget | 失败写 `UserIO` |
-| `cancelCurrent()` / `cancelAll()` / `cancelAllAndWait(timeout)` | 取消 | 链独立 |
-| `registerCommand<T>()` / `unregisterCommand()` | 注册 | 工厂探测一次 |
-| `setCommandEnabled()` / `isCommandEnabled()` / `disabledCommands()` | 禁用 | 持久化 |
-| `names()` / `commandInfos()` / `isRegistered()` | 列举/存在性 | 禁用项仍列出 |
-| `commandFlags()` / `commandDescription()` | 单条 flags/描述（注册时缓存，别名解析） | 命令 UI 见 `appfw-command-binding.md` |
-| `historySize()` / `historyAt()` / `clearHistory()` | 历史 | 值快照 |
+| `executeCommandAsync(Command*)` / `(name)` | top-level async | exceptions become `Failed` |
+| `executeCommandAsync(name, args, target)` / `executeCommandAndWait(name, args, target)` / `executeDetached(name, args, target)` | the name entries carrying arguments | arguments are only carried |
+| `executeCommandLineAsync(line, target)` | the text entry | the only place that calls `tokenizeCommandLine` |
+| `executeCommandAndWait(...)` | blocking | tools / tests |
+| `executeDetached(...)` | fire-and-forget | a failure goes to `UserIO` |
+| `cancelCurrent()` / `cancelAll()` / `cancelAllAndWait(timeout)` | cancellation | chains are independent |
+| `registerCommand<T>()` / `unregisterCommand()` | registration | the factory is probed once |
+| `setCommandEnabled()` / `isCommandEnabled()` / `disabledCommands()` | disabling | persisted |
+| `names()` / `commandInfos()` / `isRegistered()` | enumeration / existence | disabled commands are still listed |
+| `commandFlags()` / `commandDescription()` | one entry's flags / description (cached at registration, aliases resolved) | the command UI is in `appfw-command-binding.md` |
+| `historySize()` / `historyAt()` / `clearHistory()` | history | value snapshots |
 
 ### 4.2 `Command` / `CommandExecutionContext`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 | --- | --- | --- |
-| `execute(CommandExecutionContext&)` | 命令体 | 协程 |
-| `flags()` / `name()` / `group()` | 元数据 | 锁外调用 |
-| `arguments()` | 本次执行的 token | 不可变、随帧存活 |
-| `executeChild(name)` / `executeChild(unique_ptr<Command>)` | 嵌套 | 入父链 |
-| `stopToken()` / `isCancelled()` | 取消 | 只停不换 |
+| `execute(CommandExecutionContext&)` | the command body | a coroutine |
+| `flags()` / `name()` / `group()` | metadata | called outside the locks |
+| `arguments()` | this execution's tokens | immutable, alive with the frame |
+| `executeChild(name)` / `executeChild(unique_ptr<Command>)` | nesting | joins the parent chain |
+| `stopToken()` / `isCancelled()` | cancellation | stopped, never replaced |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | 顶层入口把逃逸异常转为 `Failed`。 |
-| C2 | 嵌套深度 ≤64；实例重载拒 `nullptr`/禁用实例。 |
-| C3 | `NotApplicable` 不是失败；`succeeded()` 仍是 `Success`。 |
-| C4 | 链 `runs` 归零前完成弹栈与宿主析构；等待用轮询。 |
-| C5 | 历史只存值快照，不存结果载荷。 |
-| C6 | 禁用是标记；按名字/按实例两个入口都把关。 |
-| C7 | 对话框禁用行灰显，不隐藏。 |
+| C1 | The top-level entries turn an escaping exception into `Failed`. |
+| C2 | Nesting depth ≤64; the instance overload refuses `nullptr` and a disabled instance. |
+| C3 | `NotApplicable` is not a failure; `succeeded()` is still `Success`. |
+| C4 | A chain's `runs` reaches zero only after the stack is popped and the host destroyed; the wait polls. |
+| C5 | History keeps value snapshots only, never a result payload. |
+| C6 | Disabling is a flag; both the by-name and the by-instance entries are gated. |
+| C7 | The dialog greys a disabled row out and never hides it. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | 快照回调抛错 ⇒ 不执行；事件回调抛错只记日志。 |
-| R2 | 子命令以自己报告的名字进事件/历史。 |
-| R3 | `NotApplicable` 的日志/控制台/ribbon 三处都分开。 |
-| R4 | `Application::shutdown()` 先取消挂起输入再排空命令链。 |
-| R5 | 命令对象执行返回即可销毁；历史不保存指针。 |
-| R6 | `isRegistered()` 只查存在性；能否执行问 `isCommandEnabled()`。 |
-| R7 | 对话框不提供“卸载命令”。 |
+| R1 | A snapshot callback that throws ⇒ nothing runs; a throwing event callback is logged only. |
+| R2 | A sub-command enters events and history under the name it reports itself. |
+| R3 | `NotApplicable` is distinguished in the log, the console and the ribbon. |
+| R4 | `Application::shutdown()` cancels pending input before draining the command chains. |
+| R5 | A command object may be destroyed once its execution returns; history holds no pointer. |
+| R6 | `isRegistered()` tests existence only; executability is `isCommandEnabled()`. |
+| R7 | The dialog offers no "unload command". |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | 一条链 = 一个栈 + 一个取消源；链间独立。 |
-| N2 | 取消源只停不换。 |
-| N3 | 锁内不跑用户回调。 |
-| N4 | 前台链唯一；`cancelCurrent()` 只作用于它。 |
-| N5 | 排他要么接管成功，要么 `Failed`；不存在两个排他并发。 |
-| N6 | 历史/嵌套深度有界。 |
+| N1 | One chain = one stack + one cancellation source; chains are independent. |
+| N2 | The cancellation source is stopped, never replaced. |
+| N3 | No user callback runs under a lock. |
+| N4 | The foreground chain is unique; `cancelCurrent()` acts on it only. |
+| N5 | An exclusive command either takes over or is `Failed`; two exclusives never run at once. |
+| N6 | History and nesting depth are bounded. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 排他不是入场锁
+### 6.1 Exclusion is not an entry lock
 
-- 会怎么错：排他启动后新准入的普通顶层命令与它并存。
-- 怎么判：`ExclusiveStopsEveryLiveChain` 只覆盖启动时刻；运行期窗口仍在。
-- 怎么防：需要“关门”状态才能彻底消除；属单独一轮 API 改造。
+- How it fails: an ordinary top-level command admitted after an exclusive one started runs alongside it.
+- How to detect it: `ExclusiveStopsEveryLiveChain` only covers the moment of start; the run-time window is still there.
+- How to prevent it: only a "closed door" state removes it, which is a separate API change.
 
-### 6.2 handler 内重入/取消
+### 6.2 Re-entrancy and cancellation inside a handler
 
-- 会怎么错：`executing`/`executed` 里再跑命令、注销刚跑完的命令、增删 handler。
-- 怎么判：Signal 快照语义；新增的本轮不生效，注销的不再调用。
-- 怎么防：通知在锁外；不要依赖“本轮新增立即生效”。
+- How it fails: running another command inside `executing` / `executed`, unregistering the command that just ran, adding or removing handlers.
+- How to detect it: `Signal`'s snapshot semantics — an addition this round has no effect, a removal is not called again.
+- How to prevent it: notifications happen outside the locks; never rely on "added this round takes effect immediately".
 
-### 6.3 关停时活链
+### 6.3 Live chains at shutdown
 
-- 会怎么错：管理器析构时还有命令帧指向 `Impl`/`CommandManager` → UAF。
-- 怎么判：`~CommandManager` 发现活链只告警。
-- 怎么防：宿主先 `cancelAllAndWait()` 再销毁；`Application::shutdown()` 已如此。
+- How it fails: a command frame still points at `Impl` / `CommandManager` when the manager is destroyed → use-after-free.
+- How to detect it: `~CommandManager` only warns when it finds a live chain.
+- How to prevent it: the host calls `cancelAllAndWait()` before destroying; `Application::shutdown()` already does.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 | --- | --- | --- | --- |
-| D1 | 命令内部用同步 `executeCommandAndWait()` | 阻塞的线程可能是 UI/定时器线程，恢复需要它转循环 → 死锁。 | — |
-| D2 | 排他只取消前台链 | 被顶出前台的 detached 链仍在跑，会并发。 | — |
-| D3 | 历史保存 `Command*` | 命令协程返回即析构，历史指针悬垂。 | — |
-| D4 | 用 `setCommandEnabled()` 表达“不适用” | 用户偏好会被持久化；不适用是临时事实。 | — |
-| D5 | 框架给命令带 `document_types` | 扩 `Command` 虚表/ABI；命令自己判断更准。 | — |
-| D6 | `Scheduler` 类抽取 | 审计确认现状与不变量一致，抽取无收益。 | — |
+| D1 | A synchronous `executeCommandAndWait()` inside a command | The blocked thread may be the UI or the timer thread, and resuming needs it to pump → deadlock. | — |
+| D2 | Exclusion cancelling the foreground chain only | A detached chain pushed out of the foreground keeps running, and the two run concurrently. | — |
+| D3 | History storing `Command*` | A command is destroyed as soon as its coroutine returns, so the pointer dangles. | — |
+| D4 | `setCommandEnabled()` to express "not applicable" | A user preference is persisted; not-applicable is a temporary fact. | — |
+| D5 | The framework carrying `document_types` on a command | It widens the `Command` vtable / ABI, and the command judges more accurately itself. | — |
+| D6 | Extracting a `Scheduler` class | The audit found the current shape consistent with the invariants, so the extraction buys nothing. | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 | --- | --- | --- |
-| T1 | 顶层执行/异常收口 | `CommandManager_*` |
-| T2 | 嵌套/实例子命令 | `CommandManager_ExecuteChildRunsACallerSuppliedInstance` |
-| T3 | `NotApplicable` 三处路径 | `DetachedNotApplicableIsExplained...`、`NotApplicableTypedInTheConsole...` |
-| T4 | 排他/取消/排空 | `ExclusiveStopsEveryLiveChain`、`CancelAllAbortsWaitingTakeOver` |
-| T5 | 禁用/持久化/实例入口 | `DisableIsAFlagAndIsPersisted`、`DisableBlocksCallerSuppliedInstance` |
-| T6 | 对话框 | `CommandManagerDialogTest` |
+| T1 | top-level execution / exception containment | `CommandManager_*` |
+| T2 | nested / instance sub-commands | `CommandManager_ExecuteChildRunsACallerSuppliedInstance` |
+| T3 | the three `NotApplicable` paths | `DetachedNotApplicableIsExplained...`, `NotApplicableTypedInTheConsole...` |
+| T4 | exclusion / cancellation / drain | `ExclusiveStopsEveryLiveChain`, `CancelAllAbortsWaitingTakeOver` |
+| T5 | disabling / persistence / the instance entry | `DisableIsAFlagAndIsPersisted`, `DisableBlocksCallerSuppliedInstance` |
+| T6 | the dialog | `CommandManagerDialogTest` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-四个入口、链模型、排他、取消/排空、历史、禁用、`NotApplicable`、对话框均已落地；参数携带见 `appfw-command-arguments.md`。
+The four entries, the chain model, exclusion, cancel / drain, history, disabling, `NotApplicable` and the dialog are all in place; the argument carrier is in `appfw-command-arguments.md`.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-- 参数只有 token：没有声明、类型、默认值与必选，未知/重复参数由命令自行报告；见 `.ai/backlog/appfw-command-arguments.md`。
-- 排他不是入场锁；运行期普通顶层命令仍可能与排他并存。
-- 禁用偏好的读-改-写不是原子的（只有 UI 线程调，未加互斥）；命令禁用/卸载不改变注册表布局，插件重注册会带着偏好回来。
+- Arguments are tokens only: no declarations, types, defaults or required flags, and an unknown or repeated argument is reported by the command itself; see `.ai/backlog/appfw-command-arguments.md`.
+- Exclusion is not an entry lock; an ordinary top-level command admitted while it runs can still coexist with it.
+- The read-modify-write of the disable preference is not atomic (only the UI thread calls it, so there is no mutex); disabling or unregistering a command does not change the registry layout, and a plugin that registers again comes back with its preference.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-`getIntAsync` 等 UserIO 迁移不在本文；`CommandStatus` 增加 `NotApplicable`，调用方要按状态区分“错误”与“不适用”。
+The migration of `getIntAsync` and the other `UserIO` calls is not this page; `CommandStatus` gained `NotApplicable`, so a caller has to distinguish "error" from "not applicable" by status.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
-- `src/fw/appfw/sdk/vine/appfw/`：`CommandManager.hpp`、`Command.hpp`
-- `src/fw/appfw/src/`：`CommandManager.cpp`、`gui/CommandManagerDialog.cpp`
+- `src/fw/appfw/sdk/vine/appfw/`: `CommandManager.hpp`, `Command.hpp`
+- `src/fw/appfw/src/`: `CommandManager.cpp`, `gui/CommandManagerDialog.cpp`
 - `tests/test_gui/test_gui.cpp`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
-- `appfw-userio.md`、`appfw-eventbus.md`、`appfw-command-arguments.md`、`../backlog/`
-- 外部资料：`Signal` 的线程安全快照语义；`ProgressHost` 的前台宿主语义。
+- `appfw-userio.md`, `appfw-eventbus.md`, `appfw-command-arguments.md`, `../backlog/`
+- External material: the thread-safe snapshot semantics of `Signal`; the foreground-host semantics of `ProgressHost`.
