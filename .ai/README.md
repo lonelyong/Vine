@@ -179,9 +179,14 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## research/ —— 调研与提案（15 文件 / 1 组提案）
+## research/ —— 调研与提案（16 文件 / 1 组提案）
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
+
+- `graphics-2026-11-17-audit-3.md` —— **第三轮重新建立事实的独立审计**：13 个维度的逐条结论（含「未发现问
+  题」）、24 条发现（`A3-01…A3-24`）、根命名空间 / 宏 / 能力三张清单、8 条风险实验、14 个批次、概念与语义再
+  审（`C-A3-01…16`，对照 Filament / UE / O3DE / wgpu / bgfx / Godot / VSG / Qt Quick）、17 条任务
+  （`T-00…T-16`）。TSan 当时唯一的真实竞争就是 `A3-01`。
 
 - `graphics-2026-11-16-redesign-r2.md` —— **第二轮：概念 / 能力语义 / 实现 / 规范**：`E-01…E-12`（视图没有类型、
   `RenderArea` 是区、目标 7 字段、pass 两个作者形状、值里回调、死字段 `tag`、`Content*` 前缀、目标四角色…）、
