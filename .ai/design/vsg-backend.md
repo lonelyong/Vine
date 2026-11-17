@@ -168,7 +168,7 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
     哈希、每贴图槽一次 `(Texture*, revision)` 哈希、一次 `VariantPool` 查询），全部 O(1)/O(log n)。
   - **随资源种类数**：半片与描述符集各自是一张 `ResourceTable` —— 查找是哈希、清扫是每个驻留条目一次 pin 询问
     （`findProgram` 的二分 + `declaresLayout` / `declaresTexture` 的哈希），不再有“每 pass 对每个 half 扫一遍
-    geometry facts”的反事实扫描（2026-11-12，ADR-2026-11-10 第五步）。`ContentStore` 总是发布 layout 声明
+    geometry facts”的反事实扫描（ADR-2026-11-10 第五步）。`ContentStore` 总是发布 layout 声明
     索引；手建 facts 不发布时按可选索引规则退回扫描。几十种组合与上百种组合是同一个数量级；真正变重的仍是
     下面两项。
   - **每 draw 的绝对大头不是簿记，而是 vsg 每帧新建的命令节点**：记录路径基线是 12 次分配/pass、约 33 次分配/
@@ -282,7 +282,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | C3 | 调度只在引擎；后端按 `FrameDescription.passes` 物化。 |
 | C4 | `TargetShape` 决定图像/通道/管线兼容性；bootstrap 清所有附件。 |
 | C5 | `StreamKey` = buffer + buffer revision + 段；稳态零重传。 |
-| C6 | 不再向 SDK `graphics/` 新增 Vulkan 拼写：B8（2026-11-17）起 `VkFormat` 值与 subpass 已从接缝清除（设备格式是 `DeviceFormat`，通道结构是后端计算的 `RenderPassKey`）；`ImageLayout` 仍是 Vulkan 语义，第三个后端落地时用同一手法收掉。新的设备无关表述先在插件 `internal/` 落地。 |
+| C6 | 不再向 SDK `graphics/` 新增 Vulkan 拼写：`VkFormat` 值与 subpass 已从接缝清除（设备格式是 `DeviceFormat`，通道结构是后端计算的 `RenderPassKey`）；`ImageLayout` 仍是 Vulkan 语义，第三个后端落地时用同一手法收掉。新的设备无关表述先在插件 `internal/` 落地。 |
 | C7 | 本插件每条报告带 `vsg.<族>.<原因>` 稳定 code（登记在 `scripts/diagnostic_codes.txt`）；读回的九种拒绝由 `readbackRefusalDiagnostic` 的**一个无 `default` 的 switch** 映射，所以新增一个 `HostReadbackRefusal` 编译期就必须命名它的 code——词汇表跟着枚举走，不靠人记。规则的来由见 `vk-backend.md` §2.13 / §2.14（同一个门禁、同一套值语义）。 |
 
 ### 5.2 要求（R#）

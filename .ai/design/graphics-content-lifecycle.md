@@ -58,7 +58,7 @@ This file defines the current design of graphics content lifecycle: release and 
 while the host staging one upload relays through (in vsg, `TransferTask`'s `staging`: one `HOST_VISIBLE` buffer for the whole upload, only ever grown) has
 **no second reader** once the copy has landed — it is neither the host object's residency nor a reusable cache, just temporary memory not yet given back to the system. Why: only once it is classified can anyone decide "when to give it back". It cannot enter `releaseContent`'s scope (that would decide residency on the host's behalf),
 nor should it become a capacity cap / budget (`G8`: no consumer).
-Boundary: **this staging is no longer retained, but the reusable minimum size stays** (2026-11-13, `../decisions/ADR-2026-11-13-staging-keeps-the-reusable-block.md`). It is the source of **one** `vkCmdCopyBuffer`, with no second reader; the moment the copy's fence completes it is dead weight.
+Boundary: **this staging is no longer retained, but the reusable minimum size stays** (see `../decisions/ADR-2026-11-13-staging-keeps-the-reusable-block.md`). It is the source of **one** `vkCmdCopyBuffer`, with no second reader; the moment the copy's fence completes it is dead weight.
 So "when to give it back" is not a question anyone has to decide: give it back when the evidence (that block's fence) arrives, and the trigger is the **frame boundary**, with the host neither participating nor needing to know (F16–F21).
 Satisfies `G1` / `G7` / `G10`: one rule, zero waiting; and the same thing no longer has a second name (there is no longer a "clear one upload" verb on `RenderDevice`).
 The cost is written in D14: it relies on vsg's protected block state (the derived task reads/clears it).
@@ -173,7 +173,7 @@ revision, so a hidden / culled material does not lose its textures, and only onc
 | `RenderEngine::releaseContent(...)` | The engine forwards it |
 
 Upload staging **has no entry point**: it reclaims itself at the frame boundary (F16–F19); the backend-side surface is `VsgBackend::uploadStagingBytes()` and
-the per-frame observation `FrameReport::uploads` (`FrameUploads`, 2026-11-13).
+the per-frame observation `FrameReport::uploads` (`FrameUploads`).
 `api::OffscreenSession::stagedBytes()` (read-only observation).
 
 ### 4.2 Caching and storage
@@ -285,13 +285,13 @@ the per-frame observation `FrameReport::uploads` (`FrameUploads`, 2026-11-13).
 | D7 | A timeline park (or `deviceWaitIdle`) as evidence | The evidence is that block's own fence, which is stronger than a window and cheaper than device idleness: zero waiting, zero idle. |
 | D8 | The engine "kindly" calling reclamation once per frame | The engine should have no resource policy, and it cannot see "has this copy completed". Looking at the fence at the frame boundary, in the backend itself, is the right place for the same thing. |
 | D9 | An environment variable as a switch | It is equivalent to "give it back once used", not an optional policy; a switch would only add one more line to explain. |
-| D10 | Adding a per-frame upload count to `FrameCounters` for the engine to trigger on | An SDK field nobody reads (`G8`). **The observation surface landed on 2026-11-13 as `FrameReport::uploads`** (`FrameUploads`: this frame's stream/texture uploads, bytes and releases); the engine still does not trigger on it. |
+| D10 | Adding a per-frame upload count to `FrameCounters` for the engine to trigger on | An SDK field nobody reads (`G8`). **The observation surface is `FrameReport::uploads`** (`FrameUploads`: this frame's stream/texture uploads, bytes and releases); the engine still does not trigger on it. |
 | D11 | Adding a forwarding entry point to the engine | The engine already has `device()`; one more entry point that only hops once is the same thing under two names (`G4`). |
 | D12 | Registering only a "to be cleaned" mark and leaving the real cleaning to the next frame | Registering is not giving back; the frame boundary is that "next frame", and no extra state is needed. |
 | D13 | Asking "does this DataToCopy still have data to copy" before clearing a block | It looks cheap, but such a table can stay non-empty for a long time with nothing pending, so the sweep skips forever (see 6.3 E). |
 | D14 | Using the device-level upload count (`uploads()` / `count()`) to decide "do I hold a block" | The count answers for the device, not for the session being asked (see 6.3 D). Ask the session's own task instead (F22). |
 | D15 | Replacing the whole `TransferTask` to release | It throws away each block's command pool / command buffer / fence, and the three hand-overs have to be got right again (`vsg-pitfalls.md` P42.1); clearing `staging` loses only that buffer. |
-| D16 | Clearing only blocks larger than `minimumStagingBufferSize` (keeping a reusable small block) | ~~Rejected~~ **Adopted (2026-11-13, T26)**: a host that uploads every frame reaches a steady state with zero allocations, and a one-off large block is still given back; see `../decisions/ADR-2026-11-13-staging-keeps-the-reusable-block.md`. |
+| D16 | Clearing only blocks larger than `minimumStagingBufferSize` (keeping a reusable small block) | ~~Rejected~~ **Adopted (T26)**: a host that uploads every frame reaches a steady state with zero allocations, and a one-off large block is still given back; see `../decisions/ADR-2026-11-13-staging-keeps-the-reusable-block.md`. |
 
 ## 8. Tests and Acceptance
 

@@ -293,7 +293,7 @@ P0 is implemented: the parameter blocks have one GLSL declaration (`shaders/vine
 `ShaderAbi.hpp`, the packing faces of lights / material / draw in `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp`, and both backends use
 the same copy. Bytes and the existing tests are unchanged.
 
-Since 2026-10-24 the light block is a "typed light array" (position / direction / range / cone angle, one UBO shared by both paths),
+The light block is a "typed light array" (position / direction / range / cone angle, one UBO shared by both paths),
 see [ADR](../decisions/ADR-2026-10-24-light-block-typed-lights.md).
 
 ### 9.2 Known gaps / backlog

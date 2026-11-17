@@ -1,7 +1,7 @@
 # graphics threading model (current contract)
 
-> **Status**: current. **Rewritten 2026-11-12**: the mirror / delta / three channels / memo+epoch generation of shapes was deleted with graphics-next 5b-2b,
-> and the only cross-thread payload left is "an immutable snapshot produced by one publication" and "two atomic revisions". The history (why it used to be that way, which option was rejected) is in
+> **Status**: current. The mirror / delta / three channels / memo+epoch generation of shapes is gone, and the only cross-thread payload left is
+> "an immutable snapshot produced by one publication" and "two atomic revisions". The history (why it used to be that way, which option was rejected) is in
 > `../decisions/ADR-2026-11-12-adopt-graphics-next.md`, `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`
 > and git history; the `C1–C15` and `N1–N14` entries that only served the deleted mechanism are retired, and their numbers are not reused (see §5.1, §5.3).
 > **Last verified**: 2026-11-15
@@ -28,8 +28,7 @@ The hard part is not "starting a thread" but **who writes the content**: the bac
 and collection walks the scene graph. As soon as rendering is on another thread, the two sides must have some relationship: share (locks), copy (a per-frame snapshot), or hand over (one writer).
 
 This module chooses: the content side folds the mutable tree into one **immutable value** at the moment of **publication**, and after that the two sides meet only through that value.
-In the 2026-11 period this layer had five answers at once to "when does this copy expire": mirror + delta + memo + reference counting + parking window;
-now only one remains (see §2.2).
+There is exactly one answer to "when does this copy expire": the publication value itself (see §2.2).
 
 ### 1.2 Goals
 
@@ -87,9 +86,8 @@ now only one remains (see §2.2).
 | **publication** (snapshot) | content → engine | immutable value: row table + material values + boxes + light set, with a `revision` | a publication landing mid-frame does not tear: the frame uses the one bound at the moment it started |
 | **report** (report) | engine → content/UI | values: `PresentRecord` (frame number + present outcome), `presentedCamera()`, `FrameReport`, diagnostics | what the host reads is always one complete version, with its frame number |
 
-- **Why only two**: the mirror era also had "delta" (a change announcement) and "handoff" (ownership transfer). delta was deleted with the mirror (a change is
-  the next publication's content, and there is no second way to say "what I changed"); handoff is still the **thread pool/loader**'s general shape, not this module's channel.
-  No channel without a consumer (`G8`).
+- **Why only two**: a change announcement ("delta") is not a channel — a change is the next publication's content, and there is no second way to say
+  "what I changed"; handoff (ownership transfer) is the **thread pool/loader**'s general shape, not this module's channel. No channel without a consumer (`G8`).
 - **Boundary**: publication has no return value and does not queue — it is **one pointer swap**, and "full" is not a state it has.
 
 ### 2.4 Byte content: the counters are atomic, the bytes still do not take the value channel
@@ -103,7 +101,7 @@ now only one remains (see §2.2).
 - **Why keep polling**: turning every `Buffer::edit()` into a publication would couple "edit" and "frame" tightly, and a publication would have to carry thousands per frame.
 - **Boundary**: the atomic covers only "the counter + the bytes before it"; a host that keeps writing the same bytes **after** announcing (without a new revision) is still outside the contract —
   the frame reads what was written. The frame payload's **content** (shape, material values, program text, lights) does not use this channel; it is all §2.14's values.
-  **Regression case (2026-11-13)**: `StreamUploadsTest.AnEditFromTheHostThreadRetiresTheSameUploadASerialOne` — it must be green in a normal build and
+  **Regression case**: `StreamUploadsTest.AnEditFromTheHostThreadRetiresTheSameUploadASerialOne` — it must be green in a normal build and
   under TSan (before the atomics, TSan reported the `bumpRevision()` vs `revision()` pair).
 
 ### 2.5 A publication is a pointer swap, not a transaction
@@ -184,7 +182,7 @@ now only one remains (see §2.2).
 | the frame's **content half**: frame number, `compileFrame`, publication (once per frame per scene), `describe` (an overlay's `FrameUpdate::update()`, before the frame, called by the host/chain) | content thread | content thread | the frame value is handed over |
 | the frame's **engine half**: surface events, `expandFrame` (expanding the bound views), `executeFrame`, present | engine thread | engine thread | — |
 
-- **One frame, two halves, one frame in flight on each side** (landed): while the content thread builds frame N+1 the engine thread is running frame N, **so the picture is one frame behind the content**
+- **One frame, two halves, one frame in flight on each side**: while the content thread builds frame N+1 the engine thread is running frame N, **so the picture is one frame behind the content**
   (N15). That is the only semantic cost, and what it buys is that a UI-side call costs only O(passes): no expand (O(drawables)), no present
   (which may wait for v-sync). Frame values therefore rotate between two slots (`frame_slots_`), the frame number travels with the frame (`detail::EngineFrame::number`), and
   `frame()` **only waits for the previous frame's engine half** before building (`waitIdle`, usually already done), and answers `waitForFrame` with the completion state.
@@ -201,7 +199,7 @@ now only one remains (see §2.2).
 - **The completion notification is a report, not a callback** (`G10`): a frame's **present outcome** is the `PresentOutcome` value, published with its frame number through
   `RenderEngine::presentRecord()` (packed into one atomic word, readable from any thread at any time). The engine thread **never** calls back into the UI, and never
   reads back from it. To "wait for frame N to be on screen" call `waitForFrame(N)`; to know "what happened to this frame" read `presentRecord()`.
-- **The size travels with the frame, and the swap chain follows at the frame head** (landed): `RenderArea::resize` does two things only — record this area's own size,
+- **The size travels with the frame, and the swap chain follows at the frame head**: `RenderArea::resize` does two things only — record this area's own size,
   and hand the geometry to the presenting view — and **does not touch** the target; `frame()` hands "this frame's size" to the target after assembly and before execution,
   and **only when the number changed**. So: a host resizing mid-frame does not wait for the device, and several resizes between two frames pay one swap-chain rebuild.
 - **Shutdown** (F10): `stop()` posts "no more frames" → the engine half finishes the frame in hand (or discards it) → release the present target,
@@ -239,7 +237,7 @@ now only one remains (see §2.2).
 - **Why** (`G1` / `G4` / `G10`): the **only class of real UB** is the UI changing lights/material/program while the engine thread reads the same non-atomic field (R3-1).
   The value channel makes "frame N draws the value it described with" value semantics rather than a convention; and each command saves 3 `intrusive_ptr` atomic increments/decrements.
   "Make the revision atomic" fixes one field only, and neither the lights nor the program text, and is **rejected** (`D12`).
-- **Boundary**: the lights' live-pointer channel is gone (W9c, 2026-11-13): `DrawDescription::lights` and `FrameRecorder`'s object-shaped
+- **Boundary**: the lights' live-pointer channel is gone: `DrawDescription::lights` and `FrameRecorder`'s object-shaped
   `setLights` are both gone, and `light_values` is the only channel. The live pointers that remain are `RenderCommand::geometry/material/program`
   and `PassDraw::program_override`: they carry **identity and lifetime** (stream binding needs objects, residency accounting needs shares, `releaseContent` needs to ask "who else
   holds it"), and the recording side reads only the **invariant** (id) from them — revision / isTransparent / light values all come from values. Deleting them would need a
@@ -255,9 +253,8 @@ now only one remains (see §2.2).
 - **Why one source per publication**: a source is one immutable value's `DrawListSource` face. A new publication gets a new source, so a frame already built keeps drawing
   the one it took, and a publication landing mid-frame cannot change its picture; an unchanged publication reuses the same source, so a static scene's per-view memo survives as usual.
   A source is named by only one or two frames, and `beginFrame` drops the ones nobody draws any more (there is one in-flight frame ⇒ at most two per content).
-- **Why**: `FrameWorker`'s split took two steps. The first (W3) divided publication (content side) from bind + expand (engine side) into
-  `PublicationStore` / `FrameExpander`, removing the back edge "the content half must know the engine half's objects". The second (W9a) removed bind
-  itself — it existed only because `RenderPass::describe` wrote the live `Scene` into the frame value. Now describe writes only the VIEW,
+- **Why**: publication (content side) is divided from bind + expand (engine side) into `PublicationStore` / `FrameExpander`, so there is no back edge
+  "the content half must know the engine half's objects". Binding belongs to the content side as well: `RenderPass::describe` writes only the VIEW,
   `buildFrameValue` binds after describe (`detail::bindSceneDraws`), so: the content side owns publication **and** binding, the engine side only
   expands values, and the frame value carries no live content across threads (`G2`); `Scene` is no longer a `DrawListSource` either (`G12`: the author tree is not the frame's source).
 - **Boundary**: what was split is objects, not threads. `FrameRunner` still hands only the engine half's expansion to the engine thread; `bindSnapshot` must still happen
@@ -276,32 +273,31 @@ now only one remains (see §2.2).
   - **content sharing already holds**: one `RenderDevice` can be borrowed by several `RenderEngine`s (`setDevice`'s contract: the engine does not
     `initialize` / does not `shutdown` the device), and residency is cached by **identity** (geometry = `GeometryDescription`'s address + revision),
     so two engines drawing the same geometry is **the same key**. `Geometry::description()`'s lazy cache is safe for concurrent readers (a shared lock;
-    found and fixed by TSan on 2026-11-16).
+    found and fixed by TSan).
   - **targets are not shared**: one window, one target (`createSurfaceTarget`'s `WindowOccupied`), and an image has only
     one layout at any instant; an engine's transient is owned by compile and private by nature. Offscreen targets are governed by a **target claim**: one holder per frame,
     and a conflict only skips that pass and reports once.
-  - **frames are concurrent per session (2026-11-15/16, `T48` S1–S7)**: a frame's machinery (command pool / fence / constant ring / descriptor pool / frame gate)
+  - **frames are concurrent per session**: a frame's machinery (command pool / fence / constant ring / descriptor pool / frame gate)
     is **session-level**, and different sessions' frame bodies **really do run at the same time** (with one stopped by a diagnostic sink, another driver's frame completes whole);
     two frames of the same session are still serialised by its `FrameGate` (another thread waits, a same-thread reentry is refused and reported once). Device-level shared pieces each have their own lock
     (the cache is taken only at the frame head; the allocator / target map / clock / report sink have one each), and a frame outside a window takes the body gate exclusively; a host verb is
     **the device's promise**: either wait (and count it in `deviceWaits()`, as readback does), or, under the park rule, not wait for a frame (release, `R6`).
-    **vsg's shape (2026-11-16, S8c-1 + S8c-2)**: a frame body takes `DeviceGate`'s shared side and a host verb
+    **vsg's shape**: a frame body takes `DeviceGate`'s shared side and a host verb
     the exclusive side; device content (tables / halves /
     sets / uploads / images / targets / pool / storage) is serialised by **one content lock**, but only the frame head's **resolution** and the frame tail's
     **submission** are serialised: resolution writes the per-draw needs (half / set / stream bind / material slot / texture view / block offset / pipeline identity) as
-    the driver `FrameHead`'s **values** (`S8c-2`), **recording** only reads those values and takes no device lock, and collection and plan compilation are unlocked on the session scratch;
+    the driver `FrameHead`'s **values**, **recording** only reads those values and takes no device lock, and collection and plan compilation are unlocked on the session scratch;
     two frames of the same window / offscreen session queue on its **frame claim**, and different windows do not wait for each other. `C3` holds for vsg from here on.
-- **Why**: the content cache today has an "uploading" state (`ResidenceTable`'s three states; the device wiring landed on 2026-11-16, see
-  `graphics-sessions.md` §9.2) — but the cache lock already serialises concurrent uploads, so even before the wiring "concurrency" had a definition: two engines
-  building the same content for the first time at once would **serialise** on the cache lock and would not get two identities. Once the frame machinery was separated, the remaining shared pieces are each protected by their own lock.
+- **Why**: the content cache has an "uploading" state (`ResidenceTable`'s three states; see `graphics-sessions.md` §9.2), and the cache lock already serialises
+  concurrent uploads, so "concurrency" has a definition: two engines building the same content for the first time at once **serialise** on the cache lock and do not
+  get two identities. The remaining shared pieces are each protected by their own lock.
 - **Boundary**: appfw does not use sharing yet (`SurfaceWindow` builds one device per window, and `docs/guides/render-views.md` §7 records
   "later"); the case `OneDeviceServesSeveralAreasWithoutCrossingThem` proves **sharing** (two frames run one after the other), and
   `VkMultiSessionTest`'s two cases are what prove **concurrency** (two threads with N frames each; with one frame stopped the other completes whole).
-- **Landed and remaining**: device = pool, sessions own frames has landed for vk (S1–S7/S9), and vsg's S8a / S8b / S8c-1 / S8c-2 have landed too (collection staging and
-  the executor's frame state belong to the session/driver, frame-head snapshot + content lock + the device gate split into two sides, `FrameHead` value plans and a lock-free recording path); **`ResidenceTable`'s
-  device wiring (F4) has landed too (2026-11-16)** — `ContentCaches::ensureGeometry` asks the table first, and the frame-scoped `FrameBuilds` publishes after the frame
-  fence waits. The decision and its argument are in `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`, and the **implementation shape** is in
-  `graphics-sessions.md` (types, lock table, state machines, the nine-step migration table). **This file writes only the present** — the ADR and the construction drawings existing does not move this boundary.
+- **Both backends**: vk and vsg keep the frame machinery on the session/driver (collection staging, frame-head snapshot, the device gate's two sides, `FrameHead` value plans,
+  a lock-free recording path), and both wire `ResidenceTable` into the frame (F4) — `ContentCaches::ensureGeometry` asks the table first, and the frame-scoped `FrameBuilds`
+  publishes after the frame fence waits. The decision and its argument are in `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`, and the shape of the
+  implementation is in `graphics-sessions.md` (types, lock table, state machines).
 
 ## 3. Features
 
@@ -394,21 +390,21 @@ now only one remains (see §2.2).
 
 | Interface | Contract | Notes |
 |---|---|---|
-| `Scene::publishedSnapshot()` | the handle of the scene's latest publication: what a frame build takes by default | new (W9b, 2026-11-13) |
-| `RenderEngine::bindSnapshot(scene, ref)` | **override**: this engine draws `ref` instead (until the next bind) | new (2026-11-12); since W9b it is only an override, not a required step |
-| `SceneView::publishContent()` / `PassChain::publishContent()` | the host's once-per-frame publication (the view + the chain-owned scenes) | new (W9b) |
-| `RenderEngine::frame() → FrameOutcome` | build + hand over (`Submitted`) or run in place (`Ran`); `NotReady` + `EngineNotReady` means nothing is driving it | exists (closed out at W9e) |
+| `Scene::publishedSnapshot()` | the handle of the scene's latest publication: what a frame build takes by default | new |
+| `RenderEngine::bindSnapshot(scene, ref)` | **override**: this engine draws `ref` instead (until the next bind) | new; it is only an override, not a required step |
+| `SceneView::publishContent()` / `PassChain::publishContent()` | the host's once-per-frame publication (the view + the chain-owned scenes) | new |
+| `RenderEngine::frame() → FrameOutcome` | build + hand over (`Submitted`) or run in place (`Ran`); `NotReady` + `EngineNotReady` means nothing is driving it | exists |
 | `RenderEngine::setFrameThreading(FrameThreading)` | `Inline` (default) / `EngineThread`; decides the lifetime | exists |
 | `RenderEngine::waitForFrame(n, timeout)` | the only explicit wait | exists |
 | `RenderEngine::presentRecord()` / `presentedCamera()` | the previous frame's present outcome / that frame's camera snapshot (N17); both are the two halves of `frameResult()` | exists |
-| `RenderEngine::frameResult() → FrameResult` | every fact of the previous frame: `query` (snapshot / view) + passes / draws / diagnostics / present | new (F12, 2026-11-13) |
+| `RenderEngine::frameResult() → FrameResult` | every fact of the previous frame: `query` (snapshot / view) + passes / draws / diagnostics / present | new (F12) |
 | `RenderEngine::prepare()` | a warm-up that builds without submitting (see `graphics-frame-pipeline.md` F7) | exists |
 
 ### 4.3 What does not change
 
 - The content editing API (`Scene` / `Node` / `Geometry` / `Material`) is unchanged, and every call is synchronous on the content thread.
 - `DrawListSource` ("what this view draws") is unchanged: `SnapshotSource` is the production implementation (a frame only draws publications), and a host may implement it too;
-  `Scene` is no longer its implementation (W9a) — `Scene::collectRenderCommands` is the content thread's query, answering what the current publication draws for one view,
+  `Scene` is not its implementation — `Scene::collectRenderCommands` is the content thread's query, answering what the current publication draws for one view,
   and it shares the one `detail::selectSnapshot` rule with the frame's source (not a second walk).
 
 ## 5. Constraints, Requirements and Invariants
@@ -425,12 +421,12 @@ now only one remains (see §2.2).
 | C18 | The version does not advance inside a batch: after `beginEdit()` and before the outermost `endEdit()`, publication stays where it is — a frame landing mid-batch **publishes nothing** and draws the state at the batch's start; the whole batch lands as **one** publication on the frame after `endEdit()`. |
 | C19 | Material crosses the frame as a **value**: a command carries a `MaterialDescriptionPtr` (`revision` + resolved parameters), and the engine side reads the value only, not `Material::resolved()`. The values are taken on the content side, and not inside a batch. |
 | C20 | The session shape (pass set, resource tables, backend retained state) changes **only between frames**: with a frame in flight, `applyPlan` (in any form) always answers `PlanResult::Refused` + `PlanRefusal::Busy` (`sessionChangeAllowed`), and reports **one** `PassProtocolViolation` per episode. |
-| C21 | **One device can be borrowed by several engines, and frames are concurrent per session**: content residency is shared by identity (one upload, one compile); one window has one target; a frame's machinery (command pool / fence / constant ring / descriptor pool) is **session-level**, so different sessions' frame bodies can run at the same time (vk, 2026-11-16, `T48` S6c-2a). Two frames of the same session are still serialised by its `FrameGate` / frame claim: another thread **waits**, and a same-thread reentry is **refused** and reported once (`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`). Device-level shared pieces each have their own lock (the cache is taken only at the frame head; the allocator / target map / clock / report sink); a frame outside a window takes the body gate exclusively, and a host verb is **the device's promise** (wait and count, or under `R6` park without waiting for a frame); **a host verb called from a frame-body thread is refused by both backends rather than waiting for itself** (vk reports one `vk.device.reentry`, vsg reports one `vsg.device.reentry` / the read answers `InsideFrame`), and both refusals come from **one type**: `graphics::FrameGate`'s shared/exclusive sides plus a per-thread nested-gate stack (2026-11-16, S2 batch 2; see the correction in `graphics-sessions.md` S8c-1). Shared content's `Geometry::description()` cache is safe for concurrent readers (found and fixed by TSan on 2026-11-16); shape editing is still the content thread's action. **Every frame also reports what it spent on the content lock** (`FrameReport::locking`: `acquisitions` is this frame's own phase count, `waits` how many of them really waited — the steady state is a constant with `waits` 0, measured the same way in both backends). **vsg's shape (2026-11-16, S8c-1 + S8c-2)**:
+| C21 | **One device can be borrowed by several engines, and frames are concurrent per session**: content residency is shared by identity (one upload, one compile); one window has one target; a frame's machinery (command pool / fence / constant ring / descriptor pool) is **session-level**, so different sessions' frame bodies can run at the same time (vk). Two frames of the same session are still serialised by its `FrameGate` / frame claim: another thread **waits**, and a same-thread reentry is **refused** and reported once (`PresentOutcome::Refused` / `PrepareReport::Outcome::Refused`). Device-level shared pieces each have their own lock (the cache is taken only at the frame head; the allocator / target map / clock / report sink); a frame outside a window takes the body gate exclusively, and a host verb is **the device's promise** (wait and count, or under `R6` park without waiting for a frame); **a host verb called from a frame-body thread is refused by both backends rather than waiting for itself** (vk reports one `vk.device.reentry`, vsg reports one `vsg.device.reentry` / the read answers `InsideFrame`), and both refusals come from **one type**: `graphics::FrameGate`'s shared/exclusive sides plus a per-thread nested-gate stack. Shared content's `Geometry::description()` cache is safe for concurrent readers (found and fixed by TSan); shape editing is still the content thread's action. **Every frame also reports what it spent on the content lock** (`FrameReport::locking`: `acquisitions` is this frame's own phase count, `waits` how many of them really waited — the steady state is a constant with `waits` 0, measured the same way in both backends). **vsg's shape**:
 a frame body takes the device gate's **shared** side and a host verb the exclusive side; device content (tables / halves / sets / uploads / images / targets / pool / storage)
 is serialised by **one content lock**, taken once at the frame head and once in the resolution phase (recording takes no lock, submission takes it once); collection and plan compilation are unlocked on the session scratch,
 so while one frame is stopped inside compilation by a sink another driver's whole frame can complete (`VsgBackendTest.ACompilingFrameDoesNotWaitForAnotherDriversFrame`),
-and while one frame is stopped inside **recording** another driver's whole frame (frame head + recording + submission) can complete too (`ARecordingFrameDoesNotStopAnotherDriversContent`,
-`S8c-2`'s value plan); the recording path reads no device table (`C3` holds); a host verb called from inside a frame body answers refused rather than waiting
+and while one frame is stopped inside **recording** another driver's whole frame (frame head + recording + submission) can complete too
+(`ARecordingFrameDoesNotStopAnotherDriversContent`); the recording path reads no device table (`C3` holds); a host verb called from inside a frame body answers refused rather than waiting
 (`vsg.readback.in_frame` / `vsg.device.reentry`). |
 
 ### 5.2 Requirements (R#)
@@ -465,7 +461,7 @@ VN_TSAN_TARGET=test_vsg VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan
 | N15 | After threading the picture is one frame behind the content (the engine half runs the previous frame); `waitForFrame` is the only way to "wait for that frame". | taking "submitted" for "on screen" |
 | N16 | Within one frame there is only one publication: what a hook writes is visible to all of that frame's passes. | half-new, half-old inside a frame |
 | N17 | The camera is on the content side and an event takes effect at once, so the picture is the previous frame's camera snapshot. Therefore **a query that turns a pointer into a world point (picking, anchors) uses the camera of "the frame the user saw"**: `RenderEngine::frameResult().query` (`view` + the `snapshot` it draws) publishes it, `presentedCamera()` is shorthand for its `view`; it reaches the manipulator through `SceneView::setPresentedCamera`; with no published value it falls back to the current camera. | at a low frame rate the pivot/selection is one frame off |
-| N18 | The default content program belongs to **the session** (2026-11-15, S6a; replacing "one device-level slot"): when two engines declare different default programs each shades with its own (`VkMultiSessionTest.TwoDriversShadeWithTheirOwnDefaultProgram`); diagnostic routing was already multi-way (each engine gets its own copy, `setDiagnosticsRoute`). | the second engine quietly changes the first one's shading |
+| N18 | The default content program belongs to **the session** (replacing "one device-level slot"): when two engines declare different default programs each shades with its own (`VkMultiSessionTest.TwoDriversShadeWithTheirOwnDefaultProgram`); diagnostic routing was already multi-way (each engine gets its own copy, `setDiagnosticsRoute`). | the second engine quietly changes the first one's shading |
 
 ## 6. Caveats and Traps
 
@@ -550,7 +546,7 @@ VN_TSAN_TARGET=test_vsg VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan
 | T17 | an old frame reads the old revision | `SnapshotSourceTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith` | implemented |
 | T31 | publish inside a batch | see T3 (the same set of cases) | implemented |
 | T34 | the published source equals a direct collection item by item | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` + `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould` | implemented |
-| T35 | a bound publication is the rendering truth | `FrameExpandTest.ABoundPublicationIsThePictureTheFrameDraws` | implemented (2026-11-12) |
+| T35 | a bound publication is the rendering truth | `FrameExpandTest.ABoundPublicationIsThePictureTheFrameDraws` | implemented |
 | T13 | no data races | `scripts/tsan_check.sh` | run (2026-11-16: `test_vk` / `test_graphics` / `test_vsg` subsets each 0 reports) |
 
 ## 9. Status and Evolution
@@ -560,7 +556,7 @@ VN_TSAN_TARGET=test_vsg VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan
 - **Landed**: the two worlds and publication (F1–F7, F12), the frame's two halves and the engine thread (`setFrameThreading` / `waitForFrame` /
   `presentRecord` / `presentedCamera`), surface and swap-chain ownership (F9), the shutdown phase (F10), the host taking over publication (§2.13).
 - **Not done**: F11 (derivation-layer parallelism) — it is the natural extension of a pure function, and it is not built before there is a consumer (`G8`).
-- **Implicit publication inside a frame is deleted (W9b, 2026-11-13)**: publication is the content writer's verb, and a frame takes the scene's value at build time;
+- **Publication is never implicit inside a frame**: publication is the content writer's verb, and a frame takes the scene's value at build time;
   a scene that was never published is not drawn and reports once `ContentSkipped` (§2.13). `bindSnapshot` has only the meaning "override".
 
 ### 9.2 Known gaps
@@ -568,13 +564,10 @@ VN_TSAN_TARGET=test_vsg VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan
 - **Derivation-layer parallelism** (F11): done only when measurement shows "the select step takes more than the budget of a frame".
 - **The public face has no readback of "which publication this frame drew"**: `FrameResult`'s target shape (`graphics-frame-pipeline.md` F12) will add
   `snapshot` / `view`; the present equivalent is `presentRecord().frame` plus the host's own `SceneSnapshotRef`.
-- **Concurrent frames on a shared device** (`T47` / `T48`): **landed (T48 S1–S9 + F4, §2.16)** — device = pool, sessions own frames; frame bodies really run in parallel;
-  release does not wait for a frame; readback is independent; `ResidenceTable`'s device wiring is done; TSan 0 reports.
 
 ### 9.3 Compatibility / migration
 
-This file describes the **present**, not the target. The target shape and the step-by-step migration are in `graphics-frame-pipeline.md` §9.3; where the two disagree,
-that file's status fields win (it marks step by step which ones have landed).
+This file describes the **present**, not the target. The target shape and its remaining work are in `graphics-frame-pipeline.md` §9.3 and `../backlog/graphics.md`.
 
 ## 10. References
 

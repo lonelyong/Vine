@@ -62,8 +62,8 @@ removing an unregistered pass and removing an already removed pass are the same 
     and needs none: **one engine drives one surface** ([ADR-2026-11-13](ADR-2026-11-13-one-engine-one-surface.md)), `Session` only names the execution side of one engine as a design
     term. Documentation and new interfaces no longer refer to a type that does not exist.
 
-2.10 **The migration APIs are closed**: 5b-2c (W9, 2026-11-13) deleted the `addPass` family, `Plan` is the only shape of a pass declaration;
-    `applyPlan` / `plan` / `bindSnapshot` / `prepare` became host contracts from migration entries. `FrameTable` is the compiled frame table (not the
+2.10 **The migration APIs are closed**: the `addPass` family is gone, `Plan` is the only shape of a pass declaration;
+    `applyPlan` / `plan` / `bindSnapshot` / `prepare` are host contracts rather than migration entries. `FrameTable` is the compiled frame table (not the
     plan), `frame()` answers only Ran / Submitted, `applyPlan` is three-state, `SessionBusy` is no longer a plan problem code.
     Reason: changing during migration in two passes would leave three shapes alive; now there is one shape and the public signatures match the documentation (`G1` / `G6`).
 
@@ -79,8 +79,8 @@ removing an unregistered pass and removing an already removed pass are the same 
     `.cpp` files only vsg reads moved into `gfx_backend_vsg/internal/` in ADR-2026-11-16 §2, vsg's own types live in `vn::backend_vsg::core`
     (`G13`). The price, honestly: the host can now include these mechanism headers and they are visible in the SDK's namespace (a residue of `G7`); what it buys is
     a rule that does not need syncing in four places. `DrawState` / `TargetPlan`'s device format codes are now the **opaque**
-    `DeviceFormat` (0 = the device's UNDEFINED), the render-pass structure is carried by the backend-computed `RenderPassKey` — since
-    B8 (2026-11-17) neither `VkFormat` values nor subpass are on the seam, so a third backend need not learn Vulkan's formats and
+    `DeviceFormat` (0 = the device's UNDEFINED), the render-pass structure is carried by the backend-computed `RenderPassKey` — neither
+    `VkFormat` values nor subpass are on the seam, so a third backend need not learn Vulkan's formats and
     subpass first; `ImageLayout` is still Vulkan semantics inside the SDK, C6's "no new spellings" still applies, and retiring it belongs to
     the same gate's next step.
 2.11 **An extension point's cost is a table, not an adjective** (audit `A12`): saying "easy to extend" without saying "which places a new one touches" cannot be falsified.

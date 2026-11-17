@@ -265,7 +265,7 @@ An instance copies neither textures nor bytes beyond the block.
 
 ### 9.1 Current status
 
-**M1–M4 have all landed** (2026-10-24, M4 = instances + alpha modes), only F11's per-material diagnostics are left: `Material` /`MaterialInstance`
+**M1–M4 have all landed** (M4 = instances + alpha modes), only F11's per-material diagnostics are left: `Material` /`MaterialInstance`
 share `MaterialBase` and `MaterialParameters`, every holder uses `MaterialBasePtr`; the block and the content-set bindings are unchanged since M1–M3 (material 0 /
 slots 1–5 / lights 6 / shadow 7–8, `VN_TEXTURED` one bit), shading is GGX / Smith / Schlick (`vine_brdf.glsl`),
 forward and deferred reconstruct the same set of surfaces from their own inputs and then call the same function. All three alpha branches are in the shading: Opaque ignores material alpha, Mask clips by

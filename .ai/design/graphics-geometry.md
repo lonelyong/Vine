@@ -392,8 +392,8 @@ Indexed and sequential triangles are unified as `TriangleMesh`, and an `IndexedT
 meshes and primitives no longer offer a precision template, aliases such as `Meshf` / `Boxd` are deleted,
 and new code is written against §4's interfaces. Old names appear only in git history.
 
-2026-11-07: `Mesh` gained the two virtual functions of triangle identity (`triangleCount()` / `triangleCorners()`, base-class defaults 0 / false) and the triangle tree
-cache; `TriangleMesh::triangleCount()` incidentally became its override, with an unchanged signature and meaning (only that "defined by this type alone" became a base-class declaration).
+`Mesh` declares the two virtual functions of triangle identity (`triangleCount()` / `triangleCorners()`, base-class defaults 0 / false) and the triangle tree
+cache; `TriangleMesh::triangleCount()` is its override, with an unchanged signature and meaning (only that "defined by this type alone" became a base-class declaration).
 
 ## 10. References
 

@@ -1,7 +1,6 @@
 # graphics scene graph: nodes, state, collection, layers, picking
 
-> **Status**: current (the relation between collection and snapshots is in `graphics-threading.md` §2.2; the mirror / delta / memo
-> generation was deleted on 2026-11-12, the wording about them in this file waits for the next rewrite to be aligned)
+> **Status**: current (the relation between collection and snapshots is in `graphics-threading.md` §2.2)
 > **Last verified**: 2026-11-16
 > **Scope**: strict tree, state folding, collection memo, layers and picking.
 > **Sources**: `Node.hpp` / `Group.hpp` / `StateNode.hpp` / `RenderState.hpp` / `StateResolution.hpp` /
