@@ -1,300 +1,305 @@
-# 文案翻译（i18n）
+# Text translation (i18n)
 
-> **状态**：现行
-> **最后核对**：2026-11-02
-> **范围**：appfw GUI 与由 PluginManager 加载的 UI 插件（包括 app_shell）的用户可见文案；不含宿主可执行文件自有目录、日志与异常文案或运行期切换。
-> **权威来源**：`src/fw/appfw/sdk/vine/appfw/AppConfig.hpp`、`Application.hpp`、`src/fw/appfw/src/TranslationCatalog.hpp`、`src/fw/appfw/src/Application.cpp`；用例 tests/test_appfw/TranslationTest.cpp。
-> **待办**：`../backlog/appfw-translation.md`
+> **Status**: current
+> **Last verified**: 2026-11-02
+> **Scope**: the user-visible text of the appfw GUI and of the UI plugins PluginManager loads (app_shell included); not the host executable's own catalogue, not logs or exception text, and not switching language at run time.
+> **Sources**: `src/fw/appfw/sdk/vine/appfw/AppConfig.hpp`, `Application.hpp`, `src/fw/appfw/src/TranslationCatalog.hpp`, `src/fw/appfw/src/Application.cpp`; the cases in `tests/test_appfw/TranslationTest.cpp`.
+> **Backlog**: `../backlog/appfw-translation.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-界面文案全部硬编码在源码里：appfw GUI 约 140 处 `QStringLiteral("…")`，app_shell 与插件同样，而且只有中文；界面也没有可用的语言设置。要支持另一种语言，今天只能改源码。
+Every piece of interface text is hard-coded in the source — roughly 140 `QStringLiteral("…")` calls in the appfw GUI, and the same in app_shell and the plugins — and there is no language setting in the interface either.
+Supporting another language otherwise means editing the source.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 只翻译**界面文案**：appfw（含命令结果、UserIO 提示、启动与进度行）与其 UI 插件（包括 app_shell）；当前 Vine 可执行文件没有自有可翻译文案。
-- 语言是配置项 `general.language`（跟随系统 / 中文 / English），未设置则跟随系统；没有对应译文时显示源串。
-- 语言集合只有中文与英文两种：源串是英文，所以只有一本**中文**目录（C7）。
-- 目录（`.ts`）是源码：可 diff、可评审；编译产物（`.qm`）随构建生成、嵌进它所属的模块，并可被同名文件覆盖（§2.10）。
-- 不给任何下层库增加“知道翻译存在”的依赖。
+- Translate **interface text** only: appfw (command results, `UserIO` prompts, startup and progress lines) and its UI plugins (app_shell included); the current Vine executable has no translatable text of its own.
+- The language is the configuration item `general.language` (follow the system / Chinese / English), following the system when unset; with no translation available the source string is shown.
+- There are exactly two languages: the source strings are English, so there is one **Chinese** catalogue only (C7).
+- The catalogue (`.ts`) is source: diffable and reviewable; the build product (`.qm`) is generated with the build, embedded into the module it belongs to, and may be overridden by a file of the same name (§2.10).
+- No lower layer gains a dependency that knows translation exists.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不翻译日志（`VN_LOG*`）与异常消息（`Exception`、`io::IoError` 的描述）：诊断契约，见 2.2。
-- 不翻译身份类字符串：命令名、页面 id、配置键、插件 id/uuid（G1：身份不是文案）。
-- 不做运行期切换语言（G8：没有消费者；G10：每个控件都要实现重译，成本远高于收益）。
-- 不为宿主可执行文件增加独立目录入口：出现自有可翻译文案时再设计（G8）。
-- 不翻译插件元数据（`PluginInfo` 的 name/description，v1）：它们是插件自报的标识，见 §9.2。
-- 本轮不处理底层的用户表面（崩溃窗口与崩溃报告）：维持现状（中文硬编码），见 §2.9 与 backlog T7/T8。
-- 不自造复数/性别规则：需要时用 Qt 的 `n` 参数，中文没有复数。
+- Logs (`VN_LOG*`) and exception messages (the descriptions of `Exception` and `io::IoError`) are not translated: they are a diagnostic contract, see 2.2.
+- Identity strings are not translated: command names, page ids, configuration keys, plugin ids and uuids (G1: an identity is not text).
+- No switching language at run time (G8: no consumer; G10: every widget would have to implement re-translation, at a cost far above the benefit).
+- No separate catalogue entry for the host executable: it is designed when that executable has translatable text of its own (G8).
+- Plugin metadata (the name and description of `PluginInfo`, v1) is not translated: they are the identity a plugin reports about itself, see §9.2.
+- The lower-level user surface (the crash window and the crash report) is not touched in this round: it stays as it is (hard-coded Chinese), see §2.9 and backlog T7/T8.
+- No home-grown plural or gender rules: use Qt's `n` argument when needed, and Chinese has no plurals.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**appfw 与 UI 插件的界面文案由 Qt `tr`/`.ts`/`.qm` 翻译；英文源、中文译文，语言在启动时选定，目录随模块并由拥有者持有，缺译文回退源串。**
+**The interface text of appfw and the UI plugins is translated by Qt's `tr`/`.ts`/`.qm`; English source, Chinese translation, the language chosen at startup, the catalogue travelling with its module and owned by whoever installed it, and a missing translation falling back to the source string.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 分层即边界（G2、G5、G4）
+### 2.1 Layering is the boundary (G2, G5, G4)
 
-- 是什么：可翻译文案只出现在 `src/fw/appfw` 与 UI 插件；`src/base`、`src/viz`、`src/robotics`、`src/loaders` 不调用 `tr()`、不包含翻译头文件。
-- 为什么：翻译是呈现层的事。让底层库认识翻译，等于给每个库加一条与界面生命周期绑定的依赖（换语言要重刷），也与“base 不知道 UI”的既有分层方向相反。
-- 边界：判断标准不是“用户看不看得见”，而是“这段字属于界面还是诊断”。日志、异常、断言、`Result` 的错误描述都属于诊断。
+- What: translatable text appears only in `src/fw/appfw` and the UI plugins; `src/base`, `src/viz`, `src/robotics` and `src/loaders` call no `tr()` and include no translation header.
+- Why: translation is the presentation layer's business. Teaching a lower library about translation adds a dependency bound to the interface's lifetime (a language change would have to re-push it) and runs against the existing direction, in which `base` knows nothing about UI.
+- Boundary: the test is not "can the user see it" but "does this text belong to the interface or to diagnostics". Logs, exceptions, assertions and a `Result`'s error description are all diagnostics.
 
-### 2.2 诊断文案永远英文（G4、G6）
+### 2.2 Diagnostic text stays English forever (G4, G6)
 
-- 是什么：`VN_LOG*`、`Exception::what()`、`io::IoError` 的名字与描述保持英文，不经过目录。
-- 为什么：日志要被 grep、被门禁脚本匹配、被贴进 issue；异常文本是开发者之间的契约，翻译后同一个错误在两种语言下对不上号。用户该看到的是界面上的提示，而不是把异常原文翻一遍。
-- 边界：面向用户的错误提示由界面层自己写（可翻译），需要时把诊断代码或原始细节附在后面（原文不翻译）。
+- What: `VN_LOG*`, `Exception::what()` and the names and descriptions of `io::IoError` stay English and never pass through a catalogue.
+- Why: logs are grepped, matched by gate scripts and pasted into issues; exception text is a contract between developers, and translating it would make the same error unrecognisable across two languages. What the user should see is an interface message, not a translated copy of the exception.
+- Boundary: a user-facing error message is written by the interface layer itself (and is translatable), with the diagnostic code or the original detail appended when needed (and that part is not translated).
 
-### 2.3 封装 Qt 的目录，不自造（G6、G9、G7）
+### 2.3 Wrap Qt's catalogue, do not invent one (G6, G9, G7)
 
-- 是什么：使用 `QCoreApplication::translate()`、`.ts` / `lupdate`、`.qm` / `lrelease` 与 `QTranslator`；框架只加薄的调用与装载点，不重写目录格式和工具。
-- 为什么：Qt Widgets 自带文案也依赖 Qt 的 translator；自造目录会产生两套查找、回退与编辑流程（G1、G7）。
-- 边界：装载只依赖 QtCore，可在无头 `Application` 中完成；不另包 `Translator` 服务类。
+- What: use `QCoreApplication::translate()`, `.ts` / `lupdate`, `.qm` / `lrelease` and `QTranslator`; the framework adds only a thin call and a load point, and rewrites neither the format nor the tooling.
+- Why: Qt Widgets' own text depends on Qt's translator too, and a home-grown catalogue would create two lookup, fallback and editing flows (G1, G7).
+- Boundary: loading depends on QtCore only and works inside a headless `Application`; there is no extra `Translator` service class.
 
-### 2.4 源语言是英文（G6、G8）
+### 2.4 The source language is English (G6, G8)
 
-- 是什么：源码里 `tr("About")` 的源串就是英文；目录是“英文 → 中文”，因此 `en` 不需要 `.qm`，`zh_CN` 才有。
-- 为什么：界面文案与日志/异常/配置键/命令名统一成一种约定，读代码不必在两套语言之间切换（G6）；缺译文回退到英文，而不是把中文漏进英文界面。
-- 代价：中文界面依赖 `zh_CN` 目录的完整性，漏一条就看到英文——`check_translations` 是这条的护栏；评审 `.ts` 的方向反过来。
-- ADR：`../decisions/ADR-2026-11-02-english-source-language.md`（取代 2026-11-01 的“中文源”，含被否决的选项与迁移方式）。
+- What: the source string in `tr("About")` is English; the catalogue maps English → Chinese, so `en` needs no `.qm` and only `zh_CN` has one.
+- Why: interface text, logs, exceptions, configuration keys and command names follow one convention, so reading the code needs no switching between two languages (G6); a missing translation falls back to English instead of leaking Chinese into an English interface.
+- Cost: the Chinese interface depends on the `zh_CN` catalogue being complete, and one missing entry shows English — `check_translations` is the guard for that, and a review of the `.ts` runs in the other direction.
+- ADR: `../decisions/ADR-2026-11-02-english-source-language.md` (why English is the source language, the rejected options and the migration).
 
-### 2.5 一个公共概念：`translate(context, source)`（G1、G4）
+### 2.5 One public concept: `translate(context, source)` (G1, G4)
 
-- 是什么：`vn::appfw::translate(context, source)` 返回 `vn::String`；GUI 用 Qt 原生 `Q_DECLARE_TR_FUNCTIONS(appfw)`，直接得到 `QString`。
-- 为什么：保留 Qt 函数名、参数顺序和源串键，保证 `lupdate` 提取并避免维护第二套 key（G1、P9）；`char8_t` 重载接收 C++20 UTF-8 字面量。
-- 边界：QObject 子类不能裸用 `tr()`，否则 context 变成类名（P7）；入口只查已装目录，缺失返回源串。文案由写它的模块翻：配置树的分类/分组标题与条目标签同样在节点创建时用 `translate()` 给出，标签随那一刻的语言冻结（`appfw-config.md` F4）。
+- What: `vn::appfw::translate(context, source)` returns a `vn::String`; a GUI class uses Qt's own `Q_DECLARE_TR_FUNCTIONS(appfw)` and gets a `QString` directly.
+- Why: keeping Qt's function name, parameter order and source-string key makes `lupdate` extract them and avoids a second set of keys (G1, P9); the `char8_t` overload takes a C++20 UTF-8 literal.
+- Boundary: a `QObject` subclass must not use a bare `tr()`, or the context becomes the class name (P7); the entry only looks in the catalogues already installed and returns the source string when it finds nothing.
+  Text is translated by the module that writes it: the category and group titles and the item labels of the configuration tree are likewise given with `translate()` when the node is created, and a label freezes at the language of that moment (`appfw-config.md` F4).
 
-### 2.6 装载一次，早于任何窗口（G3、G7）
+### 2.6 Loaded once, before any window (G3, G7)
 
-- 是什么：`Application::initialize()` 里、配置文件读完之后、`GuiApplication::createWindows()` 建主窗之前，装载 Qt 与框架目录。语言取配置项 `general.language`；缺省或 `"system"` 取系统语言——Windows 上取系统自己的 UI 语言（不看 `LANG`，那是启动它的 shell 留下的），其它平台取 `QLocale::system()`。
-- 目录从哪来：模块文件所在目录的同名文件优先，其次是模块内嵌资源；默认不需单独部署 `.qm`。
-- 为什么：窗口在构造函数里就 `setText`；装载晚于它就只能靠 `LanguageChange` 事后补，那正是 v1 不想做的复杂部分。
-- 边界：`Application` 只负责“按语言装载目录”，不认识任何窗口；宿主可执行文件当前没有独立目录入口，UI 由 appfw 与插件提供。
+- What: in `Application::initialize()`, after the configuration file is read and before `GuiApplication::createWindows()` builds the main window, the Qt and framework catalogues are loaded. The language comes from `general.language`; unset or `"system"` takes the system language — on Windows the system's own UI language (not `LANG`, which is left over from the shell that started the process), elsewhere `QLocale::system()`.
+- Where the catalogue comes from: a file of the same name beside the module file wins, then the module's embedded resource; by default no separate `.qm` needs to be deployed.
+- Why: a window calls `setText` in its constructor; loading later would leave only a `LanguageChange` catch-up, which is exactly the complexity v1 does not want.
+- Boundary: `Application` only loads a catalogue for a language and knows no window; the host executable has no separate catalogue entry today, because the UI comes from appfw and the plugins.
 
-### 2.7 插件的目录由加载器代管（G7、G5）
+### 2.7 The loader manages a plugin's catalogue (G7, G5)
 
-- 是什么：`PluginManager` 在调用 `plugin->load()` 前装载插件目录，卸载时移除；插件只在调用点写 `tr(u8"<id>", u8"…")`。
-- 目录是一个 `TranslationCatalog` 值，随装载记录（`LoadedPlugin`）一起活：装载即安装、记录析构即移除（§2.11）。
-- 没有清单：加载器不持有“哪些插件有目录”的表，只按 `<id>_<locale>` 约定查找（C6）。
-- 为什么：每个插件都重写一遍“找目录、装载、卸载”就是把复杂度转移给每个插件（G7）；插件文件的位置只有加载器知道。
-- 边界：context 与目录文件名都用插件 id（不是显示名）；目录缺失不是错误。
+- What: `PluginManager` loads a plugin's catalogue before calling `plugin->load()` and removes it on unload; the plugin only writes `tr(u8"<id>", u8"…")` at the call site.
+- A catalogue is a `TranslationCatalog` value that lives with the load record (`LoadedPlugin`): loading installs it, and the record's destruction removes it (§2.11).
+- No manifest: the loader keeps no table of "which plugins have a catalogue" and looks up by the `<id>_<locale>` convention only (C6).
+- Why: every plugin rewriting "find, load, unload the catalogue" pushes the complexity onto each plugin (G7), and only the loader knows where the plugin's file is.
+- Boundary: both the context and the catalogue's file name are the plugin id (not its display name); a missing catalogue is not an error.
 
-### 2.8 v1 不做运行期切换（G8、G10）
+### 2.8 v1 does not switch language at run time (G8, G10)
 
-- 是什么：语言只在启动时确定；改语言 = 改配置项 `general.language` 后重启。
-- 为什么：运行期切换要求每个控件在 `QEvent::LanguageChange` 里重设文本（appfw 有几十个构造时写死文字的控件，还有 SARibbon/DockingPanes 的上游控件），成本与风险远高于收益。
-- 边界：不做运行期切换**是产品决定**，不是缺口。所以语言项声明 `restartRequired()`，配置窗口据此提示“重启后生效”，`Application::pendingRestartKeys()` 则回答“现在是否有一项待重启”（`appfw-config.md` F6）。
+- What: the language is fixed at startup; changing it means changing `general.language` and restarting.
+- Why: a run-time switch requires every widget to reset its text on `QEvent::LanguageChange` (appfw has dozens of controls that write their text in the constructor, plus the upstream SARibbon and DockingPanes controls), at a cost and risk far above the benefit.
+- Boundary: not switching at run time **is a product decision**, not a gap. The language item therefore declares `restartRequired()`, the configuration window says "takes effect after a restart", and `Application::pendingRestartKeys()` answers "is a restart pending right now" (`appfw-config.md` F6).
 
-### 2.9 底层的用户表面：本轮维持现状，将来注入文案（G8、G2、G10）
+### 2.9 The lower-level user surface: unchanged for now, text injected later (G8, G2, G10)
 
-- 是什么：base 里面向用户的表面只有一个——崩溃窗口与崩溃报告（`src/base/crash/handler`，独立进程）。**本轮不动它**：窗口标题/正文/按钮与报告字段名继续是硬编码中文，不在翻译范围内。
-- 将来落地的形状（见 backlog T7）：`crash::Config` 提供一组可选的界面文案，由 appfw 在 `CrashHandler::install()` 时用 `tr()` 的结果填，handler 保留中文默认值。注入的是**字符串**，不是语言、不是目录。
-- 为什么不让 base 自己装载目录：base 目前**零 Qt 依赖**（core / global / logging / iobase / crypto / crash 只用 std、spdlog、zlib/libzip、wolfssl、X11/Xft）；引入 `QTranslator` 会把 QtCore 拖进最底层，而且崩溃时刻正是不该依赖应用框架的时刻（handler 是独立进程，Linux 版刻意只用 Xlib + Xft）。
-- 边界：报告 `.txt` 与窗口正文不同源——报告是给开发者的诊断（字段名应英文），窗口标题/正文/按钮才是界面文案；今天两者都是中文，一并留在 backlog（T8）。
+- What: `base` has exactly one user-facing surface — the crash window and the crash report (`src/base/crash/handler`, a separate process). **This round leaves it alone**: the window's title, body and buttons and the report's field names stay hard-coded Chinese and are outside the translation scope.
+- The shape it will take (backlog T7): `crash::Config` offers a set of optional interface strings, appfw fills them from `tr()` when it calls `CrashHandler::install()`, and the handler keeps its Chinese defaults. What is injected is **text**, not a language and not a catalogue.
+- Why `base` does not load a catalogue itself: `base` has **zero Qt dependency** (core / global / logging / iobase / crypto / crash use only std, spdlog, zlib/libzip, wolfssl and X11/Xft); pulling in `QTranslator` would drag QtCore into the very bottom, and the crash moment is precisely when the application framework must not be depended on (the handler is a separate process, and the Linux build deliberately uses Xlib + Xft only).
+- Boundary: the report `.txt` and the window body are not the same source — the report is a diagnostic for developers (its field names should be English) while the window title, body and buttons are interface text; today both are Chinese, and both stay in the backlog (T8).
 
-### 2.10 目录的归属与形态（G5、G9、G7）
+### 2.10 Ownership and shape of a catalogue (G5, G9, G7)
 
-- 是什么：翻译文件随模块走。框架（`appfw`）与每个 UI 插件各有一本 `<id>.ts`，放在**模块自己的 `res/translations/`** 下，编译成 `<id>_<locale>.qm`，在**自己的构建里**用 `vn_add_translations()` 嵌进自己的二进制（资源前缀 `/i18n`）。
-- 为什么归属在模块：文案、`.ts` 与代码同目录，改字符串与更目录落在同一个提交（P1 的预防）；新插件不修改 appfw 里的任何清单，加载器只按约定查找（G9）——appfw 不知道插件集合（G2）。
-- 为什么内嵌：安装树里不出现散落的 `.qm`，也不会被误删或换成坏文件；路径只剩一条约定，不再乘上“构建树 / 安装树 × Windows / Linux”（`vn_add_plugin` 已经在处理这些路径）。
-- 查找顺序：先 `<模块文件所在目录>/<id>_<locale>.qm`，再模块内嵌的 `:/i18n/<id>_<locale>.qm`，都没有则回退源串（C3）；不扫描 `translations/` 子目录。
-- context 约束：`appfw` 保留给框架；插件 ID 是插件 context，必须唯一且不得为 `appfw`。当前没有宿主可执行文件目录，因此无需另设 host context。
-- 边界：没有“集中收集所有 `.qm`”的步骤，`lrelease` 只处理本模块的 `.ts`；跨模块的术语一致靠词汇表与评审，不靠代码（G1：一本目录只说明一个模块的文案）。
+- What: translation files travel with the module. The framework (`appfw`) and each UI plugin have one `<id>.ts`, placed under **the module's own `res/translations/`**, compiled to `<id>_<locale>.qm` and embedded into that module's own binary **in that module's own build** with `vn_add_translations()` (resource prefix `/i18n`).
+- Why the module owns it: the text, the `.ts` and the code sit in one directory, so changing a string and updating the catalogue land in one commit (the P1 prevention); a new plugin edits no list inside appfw and the loader looks it up by convention (G9) — appfw does not know the plugin set (G2).
+- Why embedded: the install tree carries no loose `.qm` files that could be deleted or replaced with a broken one, and the path is one convention instead of "build tree / install tree × Windows / Linux" (`vn_add_plugin` already handles those paths).
+- Lookup order: `<the module file's directory>/<id>_<locale>.qm` first, then the module's embedded `:/i18n/<id>_<locale>.qm`, and the source string when neither exists (C3); no `translations/` subdirectory is scanned.
+- Context rule: `appfw` is reserved for the framework; a plugin id is the plugin's context and must be unique and must not be `appfw`. There is no host executable catalogue today, so no host context is needed.
+- Boundary: there is no "collect every `.qm`" step, and `lrelease` handles this module's `.ts` only; term consistency across modules comes from the glossary and review, not from code (G1: one catalogue describes one module's text).
 
-### 2.11 目录的所有权跟随安装者（G1、G10、G11）
+### 2.11 Catalogue ownership follows the installer (G1, G10, G11)
 
-- 是什么：没有“目录注册表”。一本目录就是一个 `TranslationCatalog` 值（`src/TranslationCatalog.hpp`）：构造即装载并安装到 `QCoreApplication`，析构即移除。`ApplicationData` 持有应用级两本（Qt 的与框架自己的），每条 `LoadedPlugin` 持有一本插件目录。
-- 为什么：`QCoreApplication` 只保存 translator 的指针、不拥有它，所以“谁装谁持有”是唯一不会漏的写法——没有 `remove` 调用要记得写；装载失败（`create()` 返回空或抛异常）时局部值随栈展开释放（C9、R4）。进程级静态更做不到：它拿不到语言（宏注册早于读配置），还会让同一进程里的第二个 `Application` 继承前一个的目录（D9）。
-- 边界：查找顺序由三个命名构造固化（`forQt` / `forFramework` / `forModule`），没有对外的候选路径参数；“没有目录”不是一个错误码，而是一个空值（C3）。
-- 代价：`QTranslator` 析构会向 `QCoreApplication` 发 `LanguageChange`，所以应用级两本声明在 `ApplicationData::app` 之后、`user_io` 之前——窗口先销毁、Qt 应用对象最后销毁，移除发生在两者之间。
+- What: there is no "catalogue registry". A catalogue is a `TranslationCatalog` value (`src/TranslationCatalog.hpp`): its constructor loads and installs it into `QCoreApplication`, and its destructor removes it. `ApplicationData` holds the two application-level ones (Qt's and the framework's), and each `LoadedPlugin` holds one plugin catalogue.
+- Why: `QCoreApplication` stores the translator's pointer and does not own it, so "whoever installs it holds it" is the only spelling that cannot leak — there is no `remove` call to forget, and on a failed load (`create()` returning empty or throwing) the local value is released by the stack unwinding (C9, R4). A process-level static cannot do this: it cannot see the language (macro registration precedes reading the configuration) and it would let a second `Application` in the same process inherit the previous one's catalogues (D9).
+- Boundary: the lookup order is fixed by three named constructors (`forQt` / `forFramework` / `forModule`) and there is no public candidate-path parameter; "no catalogue" is not an error code but an empty value (C3).
+- Cost: destroying a `QTranslator` sends `QCoreApplication` a `LanguageChange`, so the two application-level values are declared after `ApplicationData::app` and before `user_io` — the windows are destroyed first, the Qt application object last, and the removal happens in between.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | 框架文案 | `tr(u8"…")` 查 `appfw` 目录 | 机制已实现 |
-| F2 | 插件文案 | `tr(u8"<id>", u8"…")` 查插件目录 | 机制已实现 |
-| F3 | 语言选择 | 配置项 `general.language`（通用/语言）：跟随系统 / 中文 / English | 已实现 |
-| F4 | 缺译文回退 | 返回源串；不抛、不记日志 | 已实现 |
-| F5 | 目录的构建与形态 | `.ts` 进 git；`lrelease` 产出 `.qm` 并嵌进所属模块；模块旁的同名文件可覆盖 | 已实现 |
-| F6 | 不翻译清单 | 日志、异常、ID 不进目录（约定，靠评审与 grep 守） | 约定 |
-| F7 | context 唯一性 | 插件 ID 充当 context，保留 `appfw` 给框架 | 已实现 |
+| F1 | Framework text | `tr(u8"…")` looks in the `appfw` catalogue | mechanism implemented |
+| F2 | Plugin text | `tr(u8"<id>", u8"…")` looks in the plugin's catalogue | mechanism implemented |
+| F3 | Language choice | `general.language` (General / Language): follow the system / Chinese / English | implemented |
+| F4 | Fallback for a missing translation | returns the source string; throws nothing, logs nothing | implemented |
+| F5 | Building and shape of a catalogue | `.ts` in git; `lrelease` produces `.qm` embedded in its module; a file of the same name beside the module overrides it | implemented |
+| F6 | The not-translated list | logs, exceptions and ids stay out of the catalogues (a convention held by review and grep) | convention |
+| F7 | Context uniqueness | a plugin id serves as its context, `appfw` is reserved for the framework | implemented |
 
-## 4. 公开接口
+## 4. Public Interface
 
-### 4.1 翻译入口（新增头文件，SDK 层）
+### 4.1 The translation entries (a new header, SDK level)
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 |---|---|---|
-| `String translate(const char* context, const char* source)` | 在 context 里查 source；无译文返回 source | 兼容现有窄字符串调用；名字与参数顺序跟 `QCoreApplication::translate` 一致（P9） |
-| `String translate(const char8_t* context, const char8_t* source)` | 在 UTF-8 context 里查 UTF-8 source；无译文返回 source | 可直接传入 C++20 `u8"..."` 字面量，转发到同一 Qt 查找（P9） |
-| `Q_DECLARE_TR_FUNCTIONS(appfw)` + `tr(const char8_t*)` | GUI 类内用：同样的查找，直接返回 `QString` | 不是我们的接口，是 Qt 的宏；一行在类里，调用点最短（P7） |
+| `String translate(const char* context, const char* source)` | looks up source in context; returns source when there is no translation | compatible with existing narrow-string callers; the name and parameter order match `QCoreApplication::translate` (P9) |
+| `String translate(const char8_t* context, const char8_t* source)` | looks up a UTF-8 source in a UTF-8 context; returns source when there is no translation | a C++20 `u8"..."` literal can be passed directly and forwards to the same Qt lookup (P9) |
+| `Q_DECLARE_TR_FUNCTIONS(appfw)` + `tr(const char8_t*)` | used inside a GUI class: the same lookup, returning a `QString` | not our interface but Qt's macro; one line in the class and the call site is shortest (P7) |
 
-### 4.2 配置
+### 4.2 Configuration
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 |---|---|---|
-| `languageConfigKey()` | 返回键 `general.language` | 元数据由框架自己注册到 `General / Language`，owner 为空 |
-| `languageConfigItem()` | Choice 三项（`system` / `zh_CN` / `en`），默认 `system` | 标签走 `tr()`，所以必须在语言生效之后注册 |
-| `ConfigManager` 里的值 | 类型 String；缺省即“跟随系统” | 启动时读一次；用户在配置窗口改，下次启动生效 |
+| `languageConfigKey()` | returns the key `general.language` | the framework registers the metadata itself under `General / Language`, with an empty owner |
+| `languageConfigItem()` | a Choice of three (`system` / `zh_CN` / `en`), defaulting to `system` | the label goes through `tr()`, so it must be registered after the language takes effect |
+| the value in `ConfigManager` | type String; unset means "follow the system" | read once at startup; the user changes it in the configuration window and it takes effect on the next start |
 
-### 4.3 内部
+### 4.3 Internal
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 |---|---|---|
-| `TranslationCatalog`（`src/` 下） | 一本已装载目录的所有者：构造即安装，析构即移除 | 不导出、不安装；`Application` 持有应用级两本，`LoadedPlugin` 每插件一本（C8、C9、§2.11） |
-| `vn::format(pattern, 值…)`（`vine/Format.hpp`，core） | `std::format` 的 UTF-8 版本：`{}`/`{0}`/`{{`，坏模板或参数不足抛 `std::format_error`；另有收 `String` 列表的重载 | 公开头；诊断/内部模板用它 |
-| `formatQt(pattern, 值…)`（`src/Format.hpp`，appfw 私有） | 与 `QString::arg` 同语义：`%1`..`%99`、最低未替换标记、缺值保留、不抛 | 不导出（要用 Qt）；**文案用 `formatQt`**（N4） |
+| `TranslationCatalog` (under `src/`) | the owner of one loaded catalogue: the constructor installs it, the destructor removes it | not exported and not installed; `Application` holds the two application-level ones and each `LoadedPlugin` one (C8, C9, §2.11) |
+| `vn::format(pattern, values…)` (`vine/Format.hpp`, core) | the UTF-8 `std::format`: `{}` / `{0}` / `{{`, throwing `std::format_error` on a bad template or too few arguments; there is also an overload taking a list of `String` | a public header; diagnostics and internal templates use it |
+| `formatQt(pattern, values…)` (`src/Format.hpp`, appfw-private) | the semantics of `QString::arg`: `%1`..`%99`, lowest unreplaced mark, missing values kept, nothing thrown | not exported (it needs Qt); **interface text uses `formatQt`** (N4) |
 
-### 4.4 构建接口（新 CMake 函数）
+### 4.4 Build interface (a new CMake function)
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 |---|---|---|
-| `vn_add_translations(<target> CONTEXT <id> TS_FILES <files…>)` | 对目标自己的 `.ts` 跑 `lrelease`，把 `.qm` 嵌进目标的 `/i18n` 资源 | `CONTEXT` 必须等于 `tr()` 的 context 与文件名前缀（不匹配直接报错）；缺 `LinguistTools` 时只警告、不嵌（P6）；目标必须自己链 `Qt6::Core`；只跑 `lrelease`，不跑 `lupdate`（改 `.ts` 是人的动作） |
+| `vn_add_translations(<target> CONTEXT <id> TS_FILES <files…>)` | runs `lrelease` over the target's own `.ts` and embeds the `.qm` into the target's `/i18n` resource | `CONTEXT` must equal the `tr()` context and the file-name prefix (a mismatch is an error); with no `LinguistTools` it only warns and embeds nothing (P6); the target must link `Qt6::Core` itself; only `lrelease` runs, never `lupdate` (editing a `.ts` is a human action) |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-- C1：`src/base`、`src/viz`、`src/robotics`、`src/loaders` 不得包含翻译头文件或调用 `tr()`（G2）。
-- C2：目录只在 `Application::initialize()`（Qt + 框架）与插件加载器装载；窗口、对话框不装载。
-- C3：目录缺失是正常状态：回退源串，不算错误、不弹窗。
-- C4：`.ts` 是源码（可 diff、可评审）；`.qm` 是构建产物，不进 git。
-- C5：底层的用户可见表面（今天只有崩溃窗口）只接收宿主注入的文案；base 不得引入 Qt、不得装载目录（§2.9）。
-- C6：翻译文件随模块走（`<id>.ts` → `<id>_<locale>.qm`）；`PluginManager` 不持有插件翻译清单，只按约定查找（§2.10）。
-- C7：语言集合只有 `zh_CN` 与 `en`。源串本身是英文，所以**只有一本中文目录**，`en` 不产生 `.qm`；Qt 自带控件的文案仍由 `qtbase_zh_CN.qm` 提供（英文是 Qt 的源语言，没有 `qtbase_en.qm`）。
-- C8：“私有”由构建保证，不靠约定：`TranslationCatalog` 这类实现放在 `src/`（PRIVATE include 目录、不安装、不导出），SDK 只暴露 `translate()` 与配置项；GUI 用同一个 `translate("appfw", …)`（返回 `QString` 的内部重载），不自造包装函数名（P9）。
-- C9：目录的所有权跟随安装者：应用级两本在 `ApplicationData`，插件级每本在对应的 `LoadedPlugin`；不存在进程级目录注册表（§2.11）。
-- C10：`appfw` 是保留 context，插件 ID 唯一且不得占用它；当前没有宿主可执行文件自己的目录 context。
+- C1: `src/base`, `src/viz`, `src/robotics` and `src/loaders` must not include a translation header or call `tr()` (G2).
+- C2: catalogues are loaded only in `Application::initialize()` (Qt + framework) and by the plugin loader; windows and dialogs load none.
+- C3: a missing catalogue is a normal state: fall back to the source string, no error and no dialog.
+- C4: `.ts` is source (diffable, reviewable); `.qm` is a build product and stays out of git.
+- C5: the lower-level user-visible surface (today only the crash window) only receives text injected by the host; `base` must not pull in Qt and must not load a catalogue (§2.9).
+- C6: translation files travel with the module (`<id>.ts` → `<id>_<locale>.qm`); `PluginManager` keeps no list of plugin translations and looks up by convention (§2.10).
+- C7: the language set is `zh_CN` and `en` only. The source strings are English, so there is **one Chinese catalogue only** and `en` produces no `.qm`; Qt's own control text still comes from `qtbase_zh_CN.qm` (English is Qt's source language, so there is no `qtbase_en.qm`).
+- C8: "private" is guaranteed by the build, not by convention: an implementation such as `TranslationCatalog` lives under `src/` (a PRIVATE include directory, not installed, not exported), and the SDK exposes only `translate()` and the configuration item; the GUI uses the same `translate("appfw", …)` (the internal overload returning a `QString`) and invents no wrapper name of its own (P9).
+- C9: catalogue ownership follows the installer: the two application-level ones live in `ApplicationData`, and each plugin's one lives in its `LoadedPlugin`; there is no process-level catalogue registry (§2.11).
+- C10: `appfw` is a reserved context, a plugin id is unique and must not take it; there is no catalogue context for the host executable today.
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-- R1：装载完成早于任何窗口构造，界面文案在第一次 `setText` 时就是目标语言。
-- R2：同一语言下，缺某一条译文不影响其余条目（按条目回退，不是整本目录失效）。
-- R3：插件卸载后它的目录不再影响其它层的文案（translator 随卸载移除）。
-- R4：装载失败（`create()` 返回空或抛异常）不留下已安装的目录；下一次启动从干净状态开始。
-- R5：CTest 的 `check_translations` 必须找到 `lupdate` 并验证所有目录；缺工具不得让门禁静默通过。
+- R1: loading completes before any window is constructed, so the interface text is in the target language at the first `setText`.
+- R2: within one language, one missing translation does not affect the other entries (the fallback is per entry, not per catalogue).
+- R3: after a plugin unloads, its catalogue no longer affects any other layer's text (the translator is removed with the unload).
+- R4: a failed load (`create()` returning empty or throwing) leaves no installed catalogue behind; the next start begins from a clean state.
+- R5: CTest's `check_translations` must find `lupdate` and validate every catalogue; a missing tool must not let the gate pass silently.
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-- N1：`translate()` 的返回值永远非空，且在没有目录时逐字等于源串。
-- N2：context 与目录文件名、插件 id 三者一致。
-- N3：日志与异常文本不经过 `translate()`。
-- N4：可翻译的是**整句**。拼接片段（`“已注册（” + x + “）：”`）能翻，但逐段翻译的语序不一定对；新文案一律写成带 `%1` / `%2` 的整句，现有片段属于待偿债务（§9.1）。
-- N5：context 唯一；框架固定 `appfw`，插件加载器拒绝同名插件 ID。
+- N1: the return value of `translate()` is never empty and, with no catalogue, is byte-for-byte the source string.
+- N2: the context, the catalogue's file name and the plugin id agree.
+- N3: log and exception text never passes through `translate()`.
+- N4: what is translatable is a **whole sentence**. A concatenated fragment (such as `"Registered (" + x + "): "`) can be translated, but translating the pieces one by one does not necessarily give the right word order; new text is always written as one sentence with `%1` / `%2`, and the existing fragments are a debt (§9.1).
+- N5: the context is unique; the framework owns `appfw` and the plugin loader refuses a plugin id that repeats it.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 改了源串却没跑 `lupdate`（P1）
-- 会怎么错：目录里旧源串失效，新文案回退成英文（在中文界面里露出英文）。
-- 怎么判：`ctest --test-dir build -R '^check_translations$'`；它对每个目录跑 `lupdate` 并比较 `(context, source)` 与译文完整性。
-- 怎么防：改文案的提交与 `.ts` 更新放同一个提交；CTest 用 `--require-lupdate`，缺工具即失败。
+### 6.1 A source string changed without running `lupdate` (P1)
+- How it fails: the old source string in the catalogue no longer matches, so the new text falls back to English (English showing inside a Chinese interface).
+- How to detect it: `ctest --test-dir build -R '^check_translations$'`; it runs `lupdate` over every catalogue and compares the `(context, source)` pairs and the translation completeness.
+- How to prevent it: land the text change and the `.ts` update in one commit; CTest uses `--require-lupdate`, so a missing tool fails.
 
-### 6.2 装载顺序（P2）
-- 会怎么错：context 重名时，后装 translator 的同源条目可能覆盖先装目录的译文。
-- 怎么判：同一句在两个层里被翻成不同语言。
-- 怎么防：框架固定 `appfw`，插件 ID 唯一且不可占用该名；插件目录在其代码执行前装载。
+### 6.2 Load order (P2)
+- How it fails: with a duplicate context, a same-source entry from the later translator may override the earlier catalogue's translation.
+- How to detect it: one sentence is translated differently in two layers.
+- How to prevent it: the framework owns `appfw`, a plugin id is unique and may not take that name, and a plugin's catalogue is loaded before its code runs.
 
-### 6.3 译文比原文长（P3）
-- 会怎么错：导航行、按钮、Backstage 条目的文字变长后截断或顶出边界（我们按 40 px 行高、20 px 图标位排过版）。
-- 怎么判：切到英文目视检查每个界面。
-- 怎么防：控件一律允许省略（`elide`/`ElideRight`），不写死文字宽度；给最长语言的译文留余量。
+### 6.3 A translation longer than the original (P3)
+- How it fails: the text of a navigation row, a button or a Backstage item grows and is truncated or pushes past its bounds (the layouts are sized for a 40 px row and a 20 px icon slot).
+- How to detect it: switch to English and look at every screen.
+- How to prevent it: let every control elide (`elide` / `ElideRight`) instead of hard-coding a text width, and leave room for the longest language.
 
-### 6.4 把日志当文案翻（P4）
-- 会怎么错：日志被翻成中文后，门禁脚本与报错检索都对不上；同一错误在两份日志里文本不同。
-- 怎么判：`grep` 不到既有英文日志行。
-- 怎么防：C1 与评审；底层库不需要、也不允许包含翻译头文件。
+### 6.4 Translating a log line as if it were interface text (P4)
+- How it fails: once a log is translated into Chinese, the gate scripts and error searches stop matching, and the same error reads differently in two logs.
+- How to detect it: `grep` no longer finds the existing English log line.
+- How to prevent it: C1 plus review; a lower library neither needs nor may include a translation header.
 
-### 6.5 把内嵌当作保密（P5）
-- 会怎么错：以为 `.qm` 不落盘就“看不到译文/SDK 不外泄”，于是把不该进目录的东西（内部代号、未发布特性名）写进文案。
-- 怎么判：`lconvert -i x.qm -o x.ts` 一秒还原成可读文本，内嵌只改变**放在哪**，不改变**谁能读**。
-- 怎么防：内嵌的目的是安装树干净、不会被误删或换坏；真要保密就不写进文案。
+### 6.5 Treating embedding as secrecy (P5)
+- How it fails: assuming that a `.qm` never hitting the disk means "nobody can read the translations / the SDK does not leak", and therefore writing things into the text that do not belong in a catalogue (internal code names, unreleased feature names).
+- How to detect it: `lconvert -i x.qm -o x.ts` turns it back into readable text in a second; embedding changes **where** it sits, not **who** can read it.
+- How to prevent it: embedding exists so the install tree stays clean and nothing is deleted or swapped for a broken file; if something really must stay secret, it does not go into the text.
 
-### 6.6 机器上没有 `LinguistTools`（P6）
-- 会怎么错：`vn_add_translations()` 依赖 `lrelease`；缺组件时配置阶段就失败，或产出一个没有目录的二进制而无人发现。
-- 怎么判：构建日志里没有 `lrelease` 行；跑到英文界面发现全是中文。
-- 怎么防：`vn_add_translations()` 在缺工具时打 `WARNING` 并跳过嵌入（源码与构建仍能用）；CTest 翻译门禁要求安装 `lupdate`。
+### 6.6 No `LinguistTools` on the machine (P6)
+- How it fails: `vn_add_translations()` needs `lrelease`; without the component the configure step fails, or it produces a binary with no catalogue and nobody notices.
+- How to detect it: no `lrelease` line in the build log, and the English interface turns out to be all Chinese.
+- How to prevent it: `vn_add_translations()` prints a `WARNING` and skips embedding when the tool is missing (source and build still work), and the CTest translation gate requires `lupdate` to be installed.
 
-### 6.7 裸写 `tr` 被 `QObject::tr` 遮蔽（P7）
-- 会怎么错：在 `QObject` 派生类（几乎所有窗口、面板、Ribbon 子类）的成员函数里写 `tr(u8"…")`，非限定查找在类作用域就停住了：`QObject::tr` 的签名是 `(const char*, const char*, int)`，于是要么直接编译失败，要么用上 Qt 那个“拿类名当 context”的版本——目录里没有 `BackstageWindow` 这种 context，译文静默失效。
-- 怎么判：编译失败是显式的；静默失效则表现为“译文本该在这却没出现”，而 `lupdate` 报的 context 是类名。
-- 怎么防：GUI 类里写一行 `Q_DECLARE_TR_FUNCTIONS(appfw)`——它把 `tr` 变成 context 为 `appfw` 的静态成员，遮蔽问题消失、`lupdate` 也认得（已验证）；非类的自由函数用 `translate(u8"appfw", …)`。`.ts` 里出现类名 context 就是踩上了这条。
+### 6.7 A bare `tr` shadowed by `QObject::tr` (P7)
+- How it fails: inside a member function of a `QObject` subclass (almost every window, panel and ribbon subclass) a bare `tr(u8"…")` stops at class scope: `QObject::tr` has the signature `(const char*, const char*, int)`, so it either fails to compile or silently uses Qt's "take the class name as the context" version — and with no `BackstageWindow` context in the catalogue, the translation silently does nothing.
+- How to detect it: a compile error is explicit; a silent failure shows up as "the translation should be here and is not", and `lupdate` reports the class name as the context.
+- How to prevent it: put one `Q_DECLARE_TR_FUNCTIONS(appfw)` line in a GUI class — it makes `tr` a static member with the `appfw` context, so the shadowing disappears and `lupdate` recognises it (verified); a free function that is not a class member uses `translate(u8"appfw", …)`. A class-name context in the `.ts` is the trace of this mistake.
 
-### 6.8 自定义包装函数，lupdate 抽不到（P9）
-- 会怎么错：把调用点写成自己的短名（`guiTr(u8"…")`），或者把参数顺序改成 `tr(context, source)`——运行没问题，但 `lupdate` 只认已知函数名（`tr`、`translate`、`QT_TRANSLATE_NOOP` 等），产物要么漏条目，要么把 context 当成源串。
-- 怎么判：`lupdate` 的 “Found N source text(s)” 远小于实际调用点数；或 `.ts` 里 `<source>` 是一个 id。
-- 怎么防：名字和签名直接用 Qt 的（`translate(context, source)`；GUI 用 `Q_DECLARE_TR_FUNCTIONS`）。改名字或改签名之后立刻跑一次 `lupdate` 核对计数；**context 也必须是字面量**——写成常量（`kFrameworkContext`）时那条抽不到，编译却毫无提示（`languageConfigItem()` 的五条文案就这样漏了一整轮）。
+### 6.8 A home-grown wrapper that `lupdate` cannot extract (P9)
+- How it fails: the call site uses a short name of its own (`guiTr(u8"…")`), or the parameter order is changed to `tr(context, source)` — it runs fine, but `lupdate` only knows the functions it knows (`tr`, `translate`, `QT_TRANSLATE_NOOP` and so on), so the product either misses entries or takes the context as the source string.
+- How to detect it: `lupdate`'s "Found N source text(s)" is far below the real number of call sites, or the `<source>` in the `.ts` is an id.
+- How to prevent it: use Qt's own names and signatures (`translate(context, source)`; `Q_DECLARE_TR_FUNCTIONS` in a GUI class), and run `lupdate` once right after renaming or resigning something to check the count; **the context must be a literal too** — written as a constant (`kFrameworkContext`) that entry is not extracted and the compile says nothing about it (which is how the five labels of `languageConfigItem()` went missing for a whole round).
 
-### 6.9 部署只带了 `qt_*.qm`（P8）
-- 会怎么错：`windeployqt` 复制的是 Qt 的 **meta** 目录 `qt_<locale>.qm`（几十字节，里面只有依赖名），真正的 `qtbase_<locale>.qm`（一百多 KB）没有。于是我们自己的文案翻译了，`QMessageBox` 按钮、`QFileDialog`、输入框右键菜单还是英文。
-- 怎么判：`ls <exe>/translations` 只有 `qt_*.qm`；启动日志里 `UI language 'zh_CN': Qt catalogs loaded, framework catalog absent` 而 `qtbase_zh_CN.qm` 不在。
-- 怎么防：装载顺序把 `qtbase_<locale>.qm` 放在 `qt_<locale>.qm` 之前（meta 缺依赖时它什么也不改）；部署由 `cmake/VineDeployQt.cmake` 把 `qtbase_<locale>.qm` 拷到 `<exe>/translations`（`VN_UI_LANGUAGES`，默认 `zh_CN`）。
+### 6.9 Deploying only `qt_*.qm` (P8)
+- How it fails: `windeployqt` copies Qt's **meta** catalogues `qt_<locale>.qm` (a few dozen bytes listing dependencies) and not the real `qtbase_<locale>.qm` (over a hundred KB). So our own text is translated while the `QMessageBox` buttons, `QFileDialog` and the input context menu stay English.
+- How to detect it: `ls <exe>/translations` shows only `qt_*.qm`; the startup log says `UI language 'zh_CN': Qt catalogs loaded, framework catalog absent` while `qtbase_zh_CN.qm` is missing.
+- How to prevent it: the load order puts `qtbase_<locale>.qm` before `qt_<locale>.qm` (the meta one changes nothing when a dependency is missing), and `cmake/VineDeployQt.cmake` copies `qtbase_<locale>.qm` into `<exe>/translations` (`VN_UI_LANGUAGES`, `zh_CN` by default).
 
-### 6.10 用 grep 数 `translate(`，把 `vn::math::translate` 当文案（P10）
-- 会怎么错：`grep -c 'translate('` 会把 `vn::math::translate(Vec3d…)` 这类矩阵/向量函数也算进去，于是“这个模块有 N 处文案”是假的——照这个数字去建目录，得到的是一本空目录，或者把一个本来不欠目录的模块记成待办。
-- 怎么判 / 防：只认 `lupdate` 的 `Found N source text(s)` 与 `python3 scripts/check_translations.py` 结尾的 `N module(s) without one`，不认 grep（§9.1 曾经欠的清单就是因为这条记错的）。
+### 6.10 Counting `translate(` with grep and counting `vn::math::translate` as text (P10)
+- How it fails: `grep -c 'translate('` also counts matrix and vector functions such as `vn::math::translate(Vec3d…)`, so "this module has N pieces of text" is false — building a catalogue from that number yields an empty one, or marks a module as owing a catalogue when it owes none.
+- How to detect and prevent it: trust `lupdate`'s `Found N source text(s)` and the `N module(s) without one` line at the end of `python3 scripts/check_translations.py`, not grep (a list of modules owing a catalogue is exactly what gets recorded wrongly this way).
 
-### 6.11 插件占用保留 context（P11）
-- 会怎么错：插件与框架使用相同 context/source，后安装的 translator 可能覆盖框架译文。
-- 怎么判：加载插件时出现保留 context 拒绝 warning。
-- 怎么防：插件 ID 全局唯一且不得为 `appfw`；加载器在实例化之前拒绝冲突。
+### 6.11 A plugin taking the reserved context (P11)
+- How it fails: a plugin and the framework share the same context and source, and the later-installed translator may override the framework's translation.
+- How to detect it: a refusal warning about the reserved context when the plugin loads.
+- How to prevent it: a plugin id is globally unique and is not `appfw`; the loader refuses the conflict before instantiating.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 |---|---|---|---|
-| D1 | 维持中文源、只把默认语言改成英文 | 不解决源码里两套语言约定与回退方向（G6）；默认值一样可以单独改（`general.language`） | `../decisions/ADR-2026-11-02-english-source-language.md` |
-| D2 | 自造 JSON/CSV 目录 | 要自己实现 context、复数、查找顺序、回退与编辑器（G7）；失去 lupdate 与 Linguist | 同上 |
-| D3 | gettext（`.po`/`msgfmt`） | 新依赖；与 Qt 的 `translate()` 不共享查找，插件还得各带一套 | 同上 |
-| D4 | `.qm` 只内嵌 | 翻译热修必须重编程序（G9）；改为内嵌默认、模块旁文件覆盖（§2.10、嵌入 ADR） | 同上 + 嵌入 ADR |
-| D5 | v1 就做运行期切换 | 每个控件都要实现重译，SARibbon/DockingPanes 也要（G10）；今天没有消费者（G8） | 同上 |
-| D6 | 插件元数据也翻译 | v1 没有消费者；名字是插件自报的标识，翻译后同一插件在不同语言下叫不同名字（G1） | — |
-| D7 | 让 base（含崩溃 handler）自己装载目录 | base 零 Qt 依赖、崩溃进程不能依赖应用框架、诊断文案要可 grep（G2、G10）；改由宿主注入文案（§2.9） | 同上 |
-| D8 | 在 SDK 暴露 `Application::uiLanguage()` / 可重入的 `applyLanguage()` | 今天唯一的消费者是测试，而“语言生效了没有”用 `tr()` 的行为就能量（见 T7）；暴露它等于允许子类在窗口建好之后第二次装目录（§2.6 的时机变成靠约定守着）。真出现“要显示当前语言”这类消费者时再加（G8） | — |
-| D9 | 进程级目录注册表（三个自由函数 + 文件局部静态） | 拿不到语言（静态注册早于读配置）、同一进程里的第二个 `Application` 会继承前一个的目录、装载失败路径靠“记得调 remove”守着（G1、G10、G11）；改为目录值随安装者持有（§2.11） | — |
-| D10 | 现在给宿主可执行文件增加独立 context 与目录入口 | 当前宿主无自有可翻译 UI 文案，app_shell 已以插件身份携带目录；先扩 API 会违反 `G8` | — |
+| D1 | Keep Chinese source and only change the default language to English | It solves neither the two-language convention in the source nor the fallback direction (G6); the default can be changed on its own (`general.language`) | `../decisions/ADR-2026-11-02-english-source-language.md` |
+| D2 | A home-grown JSON or CSV catalogue | Contexts, plurals, lookup order, fallback and an editor all have to be implemented (G7), and `lupdate` and Linguist are lost | same |
+| D3 | gettext (`.po` / `msgfmt`) | A new dependency, a lookup that Qt's `translate()` does not share, and a second set for every plugin | same |
+| D4 | Embedding `.qm` only | Fixing a translation would need a rebuild of the program (G9); the design is embed by default with a file beside the module overriding it (§2.10, the embedding ADR) | same + the embedding ADR |
+| D5 | A run-time switch in v1 | Every widget would have to implement re-translation, SARibbon and DockingPanes included (G10), and there is no consumer today (G8) | same |
+| D6 | Translating plugin metadata too | No consumer in v1, and the name is the identity a plugin reports; translated, one plugin would be called differently in each language (G1) | — |
+| D7 | Letting `base` (the crash handler included) load a catalogue itself | `base` has zero Qt dependency, the crash process must not depend on the application framework, and diagnostic text must stay greppable (G2, G10); the host injects the text instead (§2.9) | same |
+| D8 | Exposing `Application::uiLanguage()` / a re-entrant `applyLanguage()` in the SDK | The only consumer today is a test, and "did the language take effect" is measurable through `tr()`'s behaviour (see T7); exposing it would let a subclass install a second catalogue after the windows exist (the timing of §2.6 would become a convention). Add it when a consumer such as "show the current language" appears (G8) | — |
+| D9 | A process-level catalogue registry (three free functions plus file-local statics) | It cannot see the language (static registration precedes reading the configuration), a second `Application` in one process inherits the previous one's catalogues, and the failed-load path relies on "remember to call remove" (G1, G10, G11); a catalogue value held by its installer replaces it (§2.11) | — |
+| D10 | Adding a separate context and catalogue entry for the host executable now | The host has no translatable UI text of its own and app_shell already carries its catalogue as a plugin; widening the API first would violate `G8` | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 |---|---|---|
-| T1 | 无目录时 `tr()` 逐字返回源串 | `TranslationTest.NoCatalogKeepsTheSourceText` |
-| T2 | 装载目录后，条目按 context 命中，未命中的条目仍回退 | `TranslationTest.APluginCatalogComesFromThePluginItself` |
-| T3 | 语言标签解析：空/`system` → 系统语言，`en`/`zh_CN` 原样 | `TranslationTest.LanguageTagsResolveToTheTwoSupportedLanguages`、`SystemAndUnknownSettingsFollowTheSystemLocale` |
-| T4 | 下层库不含翻译依赖 | `grep -rn "Translation.hpp" src/base src/viz src/robotics src/loaders` 为空 |
-| T5 | 一个松散文件都没有时，内嵌目录仍能命中 | `TranslationTest.APluginCatalogComesFromThePluginItself`（插件旁没有 `.qm`，`:/i18n` 仍命中） |
-| T6 | 模块旁的同名 `.qm` 覆盖内嵌版本 | `TranslationTest.ALooseFileOverridesTheEmbeddedCatalog`（构建期 `lrelease` 产出 `override/i18n_fixture_zh_CN.qm`） |
-| T7 | 插件目录在它自己的代码之前装好，卸载后移除 | `TranslationTest.APluginCatalogComesFromThePluginItself`（夹具插件内嵌 `:/i18n/i18n_fixture_zh_CN.qm`） |
-| T8 | 批量装载失败不留下目录 | `TranslationTest.AFailedBatchLoadLeavesNoCatalogInstalled`（夹具插件构造即抛，内嵌 `:/i18n/i18n_throwing_zh_CN.qm`） |
-| T9 | 目录与源码一致；缺少 `lupdate` 也必须失败 | CTest `check_translations` |
-| T10 | 插件不能占用框架 context | `TranslationTest.PluginsCannotClaimTheFrameworkTranslationContext` |
+| T1 | with no catalogue `tr()` returns the source string byte for byte | `TranslationTest.NoCatalogKeepsTheSourceText` |
+| T2 | after a catalogue is loaded, entries hit by context and the ones that miss still fall back | `TranslationTest.APluginCatalogComesFromThePluginItself` |
+| T3 | language tags: empty / `system` → the system language, `en` / `zh_CN` as they are | `TranslationTest.LanguageTagsResolveToTheTwoSupportedLanguages`, `SystemAndUnknownSettingsFollowTheSystemLocale` |
+| T4 | no lower library carries a translation dependency | `grep -rn "Translation.hpp" src/base src/viz src/robotics src/loaders` is empty |
+| T5 | with no loose file at all, the embedded catalogue still hits | `TranslationTest.APluginCatalogComesFromThePluginItself` (no `.qm` beside the plugin, `:/i18n` still hits) |
+| T6 | a `.qm` of the same name beside the module overrides the embedded one | `TranslationTest.ALooseFileOverridesTheEmbeddedCatalog` (the build-time `lrelease` produces `override/i18n_fixture_zh_CN.qm`) |
+| T7 | a plugin's catalogue is installed before its own code and removed on unload | `TranslationTest.APluginCatalogComesFromThePluginItself` (the fixture plugin embeds `:/i18n/i18n_fixture_zh_CN.qm`) |
+| T8 | a failed batch load leaves no catalogue installed | `TranslationTest.AFailedBatchLoadLeavesNoCatalogInstalled` (the fixture plugin throws in its constructor and embeds `:/i18n/i18n_throwing_zh_CN.qm`) |
+| T9 | the catalogues agree with the source; a missing `lupdate` must fail too | the CTest `check_translations` |
+| T10 | a plugin cannot claim the framework's translation context | `TranslationTest.PluginsCannotClaimTheFrameworkTranslationContext` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-机制已落地：Application 在构造窗口前安装 Qt/appfw 目录，PluginManager 在插件代码执行前安装其目录并随卸载移除。插件 ID 不得占用 `appfw` context。目录完整性由 CTest `check_translations` 验证；宿主可执行文件当前没有自有可翻译文案。
+The mechanism is in place: `Application` installs the Qt and appfw catalogues before it constructs a window, and `PluginManager` installs a plugin's catalogue before that plugin's code runs and removes it with the unload.
+A plugin id must not take the `appfw` context.
+Catalogue completeness is verified by the CTest `check_translations`, and the host executable has no translatable text of its own today.
 
-还差：把拼接式文案（`“已注册（” + x + “）：”` 这类）改成带 `%1` 的整句（N4）。
+Still owed: turning concatenated text (such as `"Registered (" + x + "): "`) into one sentence with `%1` (N4).
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-见 `../backlog/appfw-translation.md`：运行期切换、插件元数据、崩溃窗口的文案注入（T7）与报告字段名（T8）。本轮不碰崩溃窗口：它的界面文案与报告字段名仍是硬编码中文。
+See `../backlog/appfw-translation.md`: switching language at run time, plugin metadata, injecting text into the crash window (T7) and the report's field names (T8).
+The crash window is not touched in this round: its interface text and the report's field names are still hard-coded Chinese.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-- 新增头文件 `Translation.hpp`；配置体系新增一项 `general.language`（默认 `system`）。`AppConfig` **不**增加字段：语言只有这一个家（C1、G1）。
-- 宿主无需改动：不设该配置项就是今天的行为（跟随系统）。宿主想预设语言，就带一份配置文件（同 `AppConfig::config_file`）。
+- A new header `Translation.hpp`; the configuration system gains one item, `general.language` (default `system`). `AppConfig` gains **no** field: the language has this one home (C1, G1).
+- The host changes nothing: not setting the item is today's behaviour (follow the system). A host that wants to preset the language ships a configuration file (as with `AppConfig::config_file`).
 
-## 10. 参考
+## 10. References
 
-- 代码：`src/fw/appfw/sdk/vine/appfw/AppConfig.hpp`、`src/fw/appfw/sdk/vine/appfw/Translation.hpp`、`src/fw/appfw/src/TranslationCatalog.hpp`、`src/fw/appfw/src/Application.cpp`、`src/fw/appfw/src/gui/GuiApplication.cpp`、`src/fw/appfw/src/PluginManager.cpp`。
-- 构建：`cmake/VinePluginHelper.cmake`（插件目录与安装路径）、`cmake/VineEmbedShaders.cmake`（“真实文件、装进二进制”的同类先例）、`cmake/VineLibraryHelper.cmake`（薄封装的写法参照）。
-- 脚本：`scripts/check_translations.py`（目录与源码的一致性门禁：缺、陈旧、未译、无目录，P1、P10、T9）。
-- 文档：`appfw-backstage.md`（界面文案的现有排布与文案长度约束）、`appfw-plugin-system.md`（插件加载顺序）、`../decisions/ADR-2026-11-02-english-source-language.md`（源语言为什么是英文）。
-- 外部：Qt Linguist 手册（`lupdate` / `lrelease` / `QTranslator` / `QCoreApplication::translate`）。
+- Code: `src/fw/appfw/sdk/vine/appfw/AppConfig.hpp`, `src/fw/appfw/sdk/vine/appfw/Translation.hpp`, `src/fw/appfw/src/TranslationCatalog.hpp`, `src/fw/appfw/src/Application.cpp`, `src/fw/appfw/src/gui/GuiApplication.cpp`, `src/fw/appfw/src/PluginManager.cpp`.
+- Build: `cmake/VinePluginHelper.cmake` (the plugin catalogue and the install paths), `cmake/VineEmbedShaders.cmake` (the earlier example of the same "a real file, installed into the binary" pattern), `cmake/VineLibraryHelper.cmake` (the reference for how a thin wrapper is written).
+- Scripts: `scripts/check_translations.py` (the gate between catalogues and source: missing, stale, untranslated, absent — P1, P10, T9).
+- Documents: `appfw-backstage.md` (the existing arrangement of interface text and the text-length constraint), `appfw-plugin-system.md` (the plugin load order), `../decisions/ADR-2026-11-02-english-source-language.md` (why the source language is English).
+- External: the Qt Linguist manual (`lupdate` / `lrelease` / `QTranslator` / `QCoreApplication::translate`).
