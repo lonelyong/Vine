@@ -55,11 +55,15 @@
 |---|---|---|
 | SDK 共享机制（两个后端都用） | `src/viz/graphics/sdk/vine/graphics/` | `FrameGate` / `DeviceClock` / `FrameTimeline` / `RetirementQueue` / `Readback` / `DrawState` / `TargetPlan` / `DiagnosticDraft` |
 | 本后端的可移植半边（ADR-2026-11-16 §2 从 SDK 搬入，现居 `vn::backend_vsg::core`） | `include/vine/backend_vsg/internal/` + `src/internal/` | `FrameRecorder` / `FrameCompiler` / `FrameArena` / `FrameRing` / `ClearPlan` / `VariantPool` / `StateRegistry` / `MaterialArena` / `Streams` / `SlotProbe` / `Observe` / `PhaseTable` / `PixelProbe` / `DepthProbe` / `SessionMove` / `AllocationGate` / `ResourceTable` |
-| 插件内部 | `src/plugins/gfx_backend_vsg/src/internal/` | `VsgBackend`（门面）/ `api::Device` / `api::WindowSession` / `WindowTarget` / `OffscreenSession` / `TargetObjects` / `TargetTable` / `VsgExecutor` / `ContentStore` / `StreamUploads` / `ContentPipeline` / `ContentDraw` / `BlockStorage` / `BlockDescriptors` / `StateCommands` / `MaterialImages` |
+| 插件内部 | `src/plugins/gfx_backend_vsg/src/internal/` | `VsgBackend`（门面）/ `VsgExecutor` / `api::WindowSession` / `api::OffscreenSession` / `WindowTarget` / `TargetObjects` / `TargetTable` / `ContentStore` / `StreamUploads` / `ContentPipeline` / `ContentDraw` / `BlockStorage` / `BlockDescriptors` / `StateCommands` / `MaterialImages` |
 | 插件支撑 | `src/plugins/gfx_backend_vsg/src/support/` | `VsgHostWindow` / `RenderStateMapper` / `VsgDynamicState` / `VsgSceneRules` / 入口点 |
 | 插件外壳 | `src/plugins/gfx_backend_vsg/src/shell/` | 插件注册、`RenderBackendFactory` |
 
-内部类型按 `api::`（设备、会话、目标、内容录制）/ `core::`（本后端自己的类型，外加 SDK 的共享词汇）/ `support::`（vsg 适配）分组，不是公开接口；公开契约只有 §4.1 的五个 SDK 类型。
+内部类型只有**两个**命名空间，**目录不是命名空间**：`core::` 是本后端自己的可移植半边（外加经 using-directive 可见的
+SDK 共享词汇），`api::` 是设备枚举与两个会话（`WindowSession` / `OffscreenSession` 与它们的 Options、
+`ProbedDevice` / `ProbeResult`，加两个设备探针函数）；其余——`VsgBackend` 门面、`VsgExecutor`、`TargetObjects` /
+`TargetTable`、内容录制——住在 `vn::backend_vsg` 根，`include/.../support/` 与 `src/support/` 的适配代码在 `detail::`。
+都不是公开接口；公开契约只有 §4.1 的五个 SDK 类型。
 
 #### 2.9.2 类图
 

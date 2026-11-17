@@ -1,8 +1,8 @@
 # 设备是池、会话拥有帧：类型、所有权、并发规则与迁移
 
-> **状态**：实施中（`T47` 已落地；`T48` 进行中——S1 / S2a / S2b / S3 / S4 / S5 / S6a / S6b /
-> S6c-1 / S6c-2a / S6c-2b / S7 / S8a / S8b / S8c-1 / S8c-2 / S9 / F4 接线已落地）
-> **最后核对**：2026-11-16
+> **状态**：已落地（`T47` + `T48` 的 S1 / S2a / S2b / S3 / S4 / S5 / S6a / S6b /
+> S6c-1 / S6c-2a / S6c-2b / S7 / S8a / S8b / S8c-1 / S8c-2 / S9 / F4 接线，以及 §9.3 的 S8 收尾）
+> **最后核对**：2026-11-17
 > **范围**：一个 `RenderDevice` 被多个引擎借用时，"共享什么、谁拥有帧、怎么并发、怎么退休、怎么迁移"
 > 的**实施形状**；契约的**为什么**在 ADR，线程模型的**现在**在 `graphics-threading.md`。
 > **权威来源**：`RenderDevice.hpp` / `RenderFrameExecutor.hpp` / `RenderBackend.hpp`（契约）、
@@ -666,8 +666,9 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
   `queue_submit` 锁。`test_vk` **133/133**，变异 2/2 红（体闸改 SHARED ⇒ 等待用例红；去掉计数 ⇒ 计数断言红）。
 - **已落地**：`T48` 的 **S9（F10 收口 + TSan + 文档）**——`C21` / `R18` / `N18` 改写为"帧按会话并发"；
   `RenderDevice` / `RenderFrameExecutor` / vk `Device` 的线程段与代码一致；ADR 追加实施状态；审计 A6/A7/A9/A11
-  逐条标状态。**TSan 三套 0 报告**（`test_vk` 133/133、`test_graphics` 587/587、`test_vsg` 子集），并修掉工具
-  发现的真竞争：`Geometry::description()` 的惰性缓存（读者共享锁 + 单构建者）。
+  逐条标状态。**S9 当天的 TSan 读数**（2026-11-16）：`test_vk` 133/133、`test_graphics` 587/587、`test_vsg`
+  子集，各 0 报告；并修掉工具发现的真竞争：`Geometry::description()` 的惰性缓存（读者共享锁 + 单构建者）。
+  **今天的读数见 `graphics-threading.md` R18**（用例数已变，结论另测）。
 - **已落地**：`T48` 的 **S8a（vsg 的收集暂存搬进会话）**——`internal/FrameScratch.hpp`（arena / recorder /
   compiler / facts / 输入表 / packets / frame）由窗口与离屏会话各持一份；设备只借 `Data::scratch` 驱动会话的句柄，
   默认程序与释放目标这类设备设置覆盖每个会话的 scratch。`test_vsg` 557/557、对拍 13/13、TSan 0 报告。

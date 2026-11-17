@@ -153,8 +153,8 @@
 
 | # | 功能 | 行为 | 状态 |
 |---|---|---|---|
-| F1 | 快照发布 | 分块写时复制的行表 + 素材值 + 空间索引 + 灯集，一次指针交换 | 部分：`detail::SceneSnapshot` 已发布并被 `SceneRows` 缓存，生产收集仍读 `SceneBake` |
-| F2 | 纯派生 `select` | `selectSnapshot(snapshot, view)` 逐项等于现役收集 | 部分：实现存在，只有测试消费者；`T8` 已证明纯（串行/并发/内容清空后同一结果） |
+| F1 | 快照发布 | 分块写时复制的行表 + 素材值 + 空间索引 + 灯集，一次指针交换 | 已落地：`ScenePublisher::publish` 编出 `detail::SceneSnapshot`，帧编译经 `PublicationStore::sourceFor` 让 `SnapshotSource` 回答每个 draw（`EngineCompile.cpp`）；未发布的场景按 `engine.compile.unpublished_scene` 拒绝，不回读活动树 |
+| F2 | 纯派生 `select` | `selectSnapshot(snapshot, view)` 逐项等于现役收集 | 已落地：每个视图的 draw list 就是 `SnapshotSource` 跑的那一次 `selectSnapshot`（`ScenePublisher.cpp`：没有第二次遍历活动行）；`T8` 已证明纯（串行/并发/内容清空后同一结果） |
 | F3 | 内容身份与世代 | `Handle` + typed id + `ContentRef`，陈旧句柄答 gone | 已落地 |
 | F4 | 引擎表按 `(id, revision)` 驻留 | 事实表按 ref 建行；旧帧读旧版 | 已落地 |
 | F5 | 行级 epoch 回收 | 行按"最后一次被计划命中的帧"回收；条目在"宿主不要了 ∧ 没有行"时离开 | 已落地 |

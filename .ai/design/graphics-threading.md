@@ -446,7 +446,15 @@
 | R15 | 机器人 28~70 关节每帧变化时，引擎侧重算量只与链路成正比，且每帧零分配。 |
 | R16 | 线程化之后 `frame()` 只花 O(passes)（构建 + 交出）加一次握手；expand 与 present 不在调用者的关键路径上。 |
 | R17 | 一次仿真步 / 一次装配 = **一次发布**，不是一关节一次。 |
-| R18 | 共享设备上的并发帧必须可被**证明**：（a）两会话的帧体时间上真的重叠（一个被诊断 sink 停住时另一帧整帧完成，`VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`）；（b）**记录路径零锁**（`contentCacheCounters().cache_lock_acquisitions` 整帧固定 4 次、不随 draw 数增长）；（c）**TSan 证据**（2026-11-16，S9）：`test_vk` 133/133、`test_graphics` 587/587、`test_vsg`（除去窗口 / probe / 插件套件）各 **0 race report**。 |
+| R18 | 共享设备上的并发帧必须可被**证明**：（a）两会话的帧体时间上真的重叠（一个被诊断 sink 停住时另一帧整帧完成，`VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`）；（b）**记录路径零锁**（`contentCacheCounters().cache_lock_acquisitions` 整帧固定 4 次、不随 draw 数增长）；（c）**TSan 证据**（2026-11-17 实测）：`test_vk` 169/169、`test_graphics` 617/617、`test_vsg` 553 例（1 例在 TSan 下 `GTEST_SKIP`），三套各 **0 race report**。 |
+
+**R18(c) 的三条命令**（每次并发改动后重跑，数字随用例数走）：
+
+```bash
+VN_TSAN_TARGET=test_vk  scripts/tsan_check.sh
+scripts/tsan_check.sh                                   # test_graphics
+VN_TSAN_TARGET=test_vsg VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan_check.sh
+```
 
 ### 5.3 不变量（N#）
 

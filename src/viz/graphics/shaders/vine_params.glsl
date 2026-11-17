@@ -22,8 +22,8 @@
 // NOT HERE. `VineShadowBlock` names a set/binding that belongs to the PROGRAM that declares it (a full-screen
 // program's source already occupies the low bindings of its set), so its one declaration is
 // BuiltinShaders::shadowBindings(), which writes the numbers the declaring program needs. `VineViewBlock`
-// has no shipped GLSL declaration at all: the content path realizes the view as the 128-byte push range
-// (ContentPush.hpp), and a program that wants the block declares it where its own arrangement puts it.
+// has no shipped GLSL declaration at all: the content path realizes the view as the 128-byte push range,
+// and a program that wants the block declares it where its own arrangement puts it.
 
 #ifdef VN_PARAM_MATERIAL
 // The material the host assigned (Material -> VineMaterialBlock): the four 16-byte rows of graphics-material.md

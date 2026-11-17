@@ -175,7 +175,7 @@ bool WindowSession::initialize(const WindowSessionOptions& options, vn::graphics
         // The features and the extensions are ONE policy in two halves (see requiredDeviceExtensions): the
         // dynamic states whose bits are requested above live in EDS3, so a session that asked for the bits and
         // not for the names would compile pipelines the driver may reject. The session creates its device
-        // through a window rather than through api::Device, which is exactly why the policy is a function both
+        // through a window rather than through VsgBackend, which is exactly why the policy is a function both
         // call instead of a list written twice.
         for (const auto& name : requiredDeviceExtensions()) {
             traits->deviceExtensionNames.push_back(name);

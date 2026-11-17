@@ -1,7 +1,7 @@
 # vk 后端：直连 Vulkan 的渲染后端
 
 > **状态**：现行
-> **最后核对**：2026-11-15
+> **最后核对**：2026-11-17
 > **范围**：`gfx_backend_vk` 插件（注册名 `"vk"`）——`RenderBackend` 的**直连 Vulkan** 实现：设备与队列、
 > 目标与窗口、内容绘制、设备内存池、管线缓存、报告与诊断。**不含** SDK 接缝本身（见 `graphics-*`），
 > **不含** `gfx_backend_vsg`（见 `vsg-backend.md`）。
@@ -22,7 +22,7 @@
 - 它消费的是接缝，不是引擎：绘制什么由 `FrameDescription` 说，怎么画由本后端说。这使它可以被 `test_vk` 直接
   驱动（插件是 MODULE，测试编译其源码），**不需要窗口**。
 - 现状：里程碑 M0–M13 全部落地；工业标准审查（`../research/graphics-2026-11-14-vk-industry-review.md`，F1–F13）
-  中资源与成本模型项（审查 F1 / F2 / F4 / F7 / F8 / F12）已落地。行为由 `test_vk` **167 例 / 41 套**钉住，与 vsg 的对拍
+  中资源与成本模型项（审查 F1 / F2 / F4 / F7 / F8 / F12）已落地。行为由 `test_vk` **169 例 / 41 套**钉住，与 vsg 的对拍
   由 `BackendParityTest`（13 例，含在 `test_vsg` 内）保证。
 
 ### 1.2 目标
@@ -44,8 +44,9 @@
 - **专用传输队列 / 队列族所有权转移**（审查 F11）：同步提交模型下收益很小（G8）。
 - **`VMA`**：不引第三方依赖；自建池已经覆盖今天的消费者（§2.4、`MemoryAllocator`）。
 - **Win32 / Wayland 的实机证据**（backlog T12 / T13）：`WindowSystem` 预留了那一层，今天只交付 Linux/X11。
-- **成为默认后端**：门禁在 `../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`，未完成前 `"vsg"` 是
-  生产后端（backlog T35）。
+- **成为默认后端**：门禁在 `../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`。**本后端今天就是宿主默认跑的那一个**——
+  宿主的回退是注册表名字序的第一个，不是切换门的结论；切换门仍未全绿（Win32 实机、Wayland 回退），所以 Windows 不上线
+  （backlog T35 跟踪）。
 
 ### 1.4 一句话结论
 
@@ -232,7 +233,7 @@
 - **边界**：code 的词汇表属于**报告它的模块**（SDK 不认识 `Vk*`，`C3` / `C10`），所以它是字符串而不是中央枚举；
   `check_diagnostic_formats.py` 双向检查（用到的必须登记、登记的必须被用到），并用
   `scripts/diagnostic_code_baseline.txt` 给尚未转换的调用点设**上限**——新报告必须带 code。
-- **已转换**：本后端**全部报告**——内存、会话、目标、窗口、初始化、帧与预热、内容七族共 58 个 code；
+- **已转换**：本后端**全部报告**——内存、会话、目标、窗口、初始化、帧与预热、内容七族共 65 个 code；
   `scripts/diagnostic_code_baseline.txt` 里已没有本插件的文件（审计 `A3`），且该文件自批次 4 起**全空**。
 - **成本**：报告路径上一个 `String` 字段（情节已去重，所以不在热路径）；`limit` 是 `std::optional`，不报 limit
   时零成本。
@@ -738,8 +739,8 @@
 
 | # | 判据 | 用例 / 命令 |
 |---|---|---|
-| T1 | 全套行为 | `build/bin/test_vk`（167 例 / 41 套）；`ctest -R test_vk` |
-| T2 | 与 vsg 逐字节一致 | `test_vsg` 的 `BackendParityTest`（12 例） |
+| T1 | 全套行为 | `build/bin/test_vk`（169 例 / 41 套）；`ctest -R test_vk` |
+| T2 | 与 vsg 逐字节一致 | `test_vsg` 的 `BackendParityTest`（13 例） |
 | T3 | 暴露边界与低层免接缝 | `ctest -R vk_exposure`（V2 / V4 / E1 / E2，`scripts/check_vk_exposure.py`） |
 | T4 | 成本模型不回归 | `VkUniformRingTest.*`、`VkMemoryPoolTest.ASteadyFrameAllocatesNothing`（关缓存的变异必须红） |
 | T5 | validation 静默 | 上述运行中 `diagnosticCount(InitFailed)` 与 layer 计数为 0 |
@@ -758,16 +759,18 @@
   S6a（SDK 会话接缝 + 引擎持有驱动者 + 默认程序归会话）、S6b（多驱动者 + 设备串行帧体）、
   S6c-1（帧首快照：记录路径零锁、计划按值、条目 park 到水位）、S6c-2a（帧体真并行：体闸 shared/exclusive + 多开帧 +
   各小锁 + 每驱动者批量）、S6c-2b（R6：释放不等帧）、S7（读回独立化：自带命令池/栅栏 + 计数等待 + 帧体内拒绝，
-  并补上 ADR 早就写明的 `vkQueueSubmit` / `vkDeviceWaitIdle` 提交锁）、S9（契约收口 + TSan：`test_vk` 133/133 **0 race
-  report**）已落地；S8 见 `.ai/design/graphics-sessions.md` §9.3。
-- `test_vk` **167 例 / 41 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **571**、`test_graphics` **614**；
+  并补上 ADR 早就写明的 `vkQueueSubmit` / `vkDeviceWaitIdle` 提交锁）、S9（契约收口 + TSan：S9 当天
+  （2026-11-16）`test_vk` 133/133 **0 race report**）已落地；S8 见 `.ai/design/graphics-sessions.md` §9.3。
+  **今天的三套 TSan 读数见 `graphics-threading.md` R18。**
+- `test_vk` **169 例 / 41 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **572**、`test_graphics` **617**；
   `BackendParityTest` **13/13**。S4（B5a）把目标 map、形状与租约归一为 `TargetTable`（`TargetClaims.{hpp,cpp}` 删除，
   用例迁到 `TargetTableTest`，+1 例）；B11 加了一条帧首存储证人、删掉每 pass 一份灯向量（`LightSet`）。
 - **一条构建教训**：SDK 的虚表改动后，**动态插件必须一起重建**（旧 `.so` 让 `VsgBackendPluginTest` 段错误）。
 - 实测（lavapipe，真实宿主）：11 pass / 10 draw，稳态中位 **8.24 ms**，GPU **7.15–7.74 ms**；ring + set 缓存改动
   −10%（9.03–9.23 → 8.16–8.30 ms）。
-- 已知仓库级现象：`test_vsg` 在 Release 偶发堆破坏/段错误（`FrameUploadsTest` / `PrepareUploadTest` 附近），
-  A/B 证明**旧提交同样发生**，与本文档的后端无关（backlog T8 / T36 同族）。
+- 曾经记录为"已知仓库级现象"的 `test_vsg`（Release）偶发堆破坏/段错误已定位并修掉：vsg 有三处释放早于提交完成，
+  证据与修复见 `../bugs/vsg-teardown-frees-in-flight-resources.md`；`T36` 的 `EachAttachmentClearsToItsOwnColour`
+  偶发是另一件事（WSLg 下的窗口/设备创建，见 backlog）。
 
 ### 9.2 已知缺口 / 待办
 

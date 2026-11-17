@@ -77,3 +77,7 @@
   `check_include_hygiene.py`、`check_export_annotations.py`、`check_vk_exposure.py` 重新定范围；
   `graphics_global.hpp` 只剩一组命名空间宏。证据：`Graphics` / `gfx_backend_vk` / `gfx_backend_vsg` 编译零警告，
   `test_graphics` / `test_vk` / `test_vsg` 全绿，三道门禁零 finding。
+- **更正（2026-11-17，审计 A3-04）**：背景里第 4 件东西 `SEAM_HEADERS` / `SEAM_SOURCES` **从未存在过**——
+  本文决定删掉它时它就不在代码里。它留下的空缺（"接缝是哪 8 个头"没有门禁断言）曾被
+  `docs/guides/graphics-backends.md` 误写成"门禁已钉住文件集"，那一页已改正。是否补这条门禁是一次**新决定**
+  （与"触发条件"第 3 条同族），不是恢复"半边"；跟踪项见审计报告的 `T-04`。

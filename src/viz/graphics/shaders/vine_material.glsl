@@ -17,7 +17,7 @@
 // a slot the material does not have contributes what its FACTOR means on its own - white for the three
 // MULTIPLICATIVE slots (base colour, metallic-roughness, occlusion: multiplying by white leaves the factor),
 // (0, 0, 1) for the normal slot (no perturbation) and black for emissive. The backend still binds a stand-in of
-// the right KIND for an absent slot (content-set resolution, ContentSets), and that is all the stand-in is for:
+// the right KIND for an absent slot (the content-set resolution), and that is all the stand-in is for:
 // a white texel read as a normal map would tilt every surface 45 degrees, and read as emissive it would paint
 // the object white.
 //

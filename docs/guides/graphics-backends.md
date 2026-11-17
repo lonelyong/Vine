@@ -18,6 +18,8 @@
 
 * 两个后端都实现 `vn::graphics::RenderBackend`，宿主经 `RenderBackendRegistry::create(name, desc)` 按名创建，
   编译期不依赖任何后端。
+* **今天宿主默认跑哪个是名字序决定的**：承载窗口的宿主取注册表 `entries()` 的第一个（按名字排），所以是 `vk`。
+  这是回退行为，不是切换门的结论（切不切见下一条）；两个后端都随包安装，按名创建可显式选 `vsg`。
 * **切换门**（ADR-2026-11-14）：`releaseRenderTarget` / `readDepthBuffer` / 设备丢失报告 / `releasePass` 契约都已落地，
   `docs/guides` 的后端页也就是本页；**仍缺** Win32 实机证据与 Wayland 回退实测——在那之前 Windows 不上线。
 * 注册表**后注册者胜且不报告**：加载一个同名插件会把内建条目换成插件自己的工厂。必须验证"编进本二进制的实现"
@@ -92,8 +94,13 @@
 
 * 接缝的定义是**"两个后端都用"**；只有某一个后端读的类型住在该插件的
   `include/vine/backend_vsg/internal/`（`vn::backend_vsg::core`）与 vk 的 `internal/` 里。
-* 门禁钉住两条边界：接缝的文件集（`check_include_hygiene.py` 的 `SEAM_HEADERS` / `SEAM_SOURCES` 与
-  `scripts/check_vsg_content_seam.cmake`）、图形模块不得 include 任何具体后端（`check_vk_exposure.py` V2）。
+* 门禁钉住的是**边界的方向**，不是接缝的清单：图形模块不得 include 任何具体后端（`check_vk_exposure.py` V2）、
+  插件 `shell/` 零 `Vk*`（V4）、帧路径不 include `support/`（E1）；vsg 的内容记账半边（`ContentFacts` /
+  `ProgramHalves` / `PushRange` / `ContentSources` / `ContentStore`）不出现 `::vsg::`，由
+  `scripts/check_vsg_content_seam.cmake` 在 ctest `content_seam` 里断言。
+* **接缝的文件集本身今天没有门禁**，这是 [ADR-2026-11-16-no-backend-half](../../.ai/decisions/ADR-2026-11-16-no-backend-half.md)
+  的有意选择：门禁改成**按性质**（上面三条），文件清单靠上表与评审。加一个新头不会让任何检查变红——
+  接缝的定义仍是"两个后端都用"，那是人判断的。
 * **加一个后端要动哪几处**是一张表，不是形容词：见
   [`graphics-architecture.md`](../../.ai/design/graphics-architecture.md) §2.11。
 * 同角色类型在两个后端的名字对照见同一页 §2.12（`Content*` 命名法）。

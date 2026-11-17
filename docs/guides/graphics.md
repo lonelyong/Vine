@@ -1,12 +1,15 @@
 # Vine graphics 模块：架构与使用
 
+> **状态**：现行 ｜ **最后核对**：2026-11-17
+
 graphics 模块是 Vine 的**场景图 + 渲染资源 + 渲染引擎**。它自己**不碰 GPU**：它驱动一个
-`RenderBackend`，具体后端是插件（今天即 `src/plugins/gfx_backend_vsg`，后端名 `"vsg"`，经
-VulkanSceneGraph 落到 Vulkan）。
+`RenderBackend`，具体后端是插件。今天有两个：`gfx_backend_vk`（名字 `"vk"`，直连 Vulkan，
+宿主默认跑的就是它）与 `gfx_backend_vsg`（名字 `"vsg"`，经 VulkanSceneGraph 落到 Vulkan，
+是参考实现与逐字节对拍的另一端）——见 [`graphics-backends.md`](graphics-backends.md)。
 
 - 公开头：`src/viz/graphics/sdk/vine/graphics/`（target `vn::Graphics`）
 - 实现：`src/viz/graphics/src/`
-- 后端插件与它自己的说明：`src/plugins/gfx_backend_vsg/`
+- 后端插件与它们自己的说明：`src/plugins/gfx_backend_vk/`、`src/plugins/gfx_backend_vsg/`
 
 本文写的是**今天的实际行为**；凡属占位（还没实现）的地方都已明确标注。
 
@@ -19,9 +22,9 @@ graph TB
     Engine["RenderEngine<br/>pass · target · 接线校验 · 诊断"]
     Scene["场景模型<br/>Node / Group / MatrixTransform / PositionAttitudeTransform / AutoTransform / StateNode / Geometry"]
     Builder["PassChain::build<br/>配方：forward · deferred · 离屏+PiP"]
-    BackendIface["RenderBackend（三面一体：设备 / 执行器 / 目标工厂）"]
-    Plugin["gfx_backend_vsg 插件<br/>SceneBridge · VsgRenderer"]
-    VSG["VulkanSceneGraph → Vulkan"]
+    BackendIface["RenderBackend（聚合：设备 + 执行器，产出 WindowPresentTarget）"]
+    Plugin["后端插件（按名创建）<br/>gfx_backend_vk：Device · FrameDriver<br/>gfx_backend_vsg：VsgBackend · VsgExecutor"]
+    VSG["Vulkan（vk 直连；vsg 经 VulkanSceneGraph）"]
 
     Host --> UI --> Engine
     Host --> Scene
@@ -38,7 +41,7 @@ graph TB
 后端**按名字**创建，因此宿主对后端及其第三方库没有编译期依赖：
 
 ```cpp
-auto backend = vn::graphics::RenderBackendRegistry::instance().create(u8"vsg");  // 需插件已加载
+auto backend = vn::graphics::RenderBackendRegistry::instance().create(u8"vk");  // 或 u8"vsg"；需插件已加载
 engine.setDevice(backend);
 ```
 
@@ -59,14 +62,15 @@ engine.setDevice(backend);
 
 ### 2.2 属性沿树折叠的规则
 
-一次遍历（`Scene.cpp` 的 `collectNodeCommands`）把场景图压平成 `RenderCommand` 列表，各属性沿路径
-折叠。规则**故意各不相同**：
+一次烘焙（`DrawListBake` 的 `buildRows`：发布时把场景图压平成行）把属性沿路径折叠，帧里每个视图再跑一次
+`selectSnapshot` 取自己的 `RenderCommand` 列表；`Scene::collectRenderCommands` 是不经发布、直接问内容的查询。
+规则**故意各不相同**：
 
 | 属性 | 规则 |
 | --- | --- |
-| 变换 | **相乘**；折好的结果烘焙进 `RenderCommand::modelMatrix` |
+| 变换 | **相乘**；折好的结果烘焙进 `RenderCommand::model_matrix` |
 | `opacity` | **相乘**：scene × 各层祖先 × 自身，在叶子处夹取到 `[0, 1]`。它是透明度的**幅度**：材质的 alpha 模式决定它怎么用（Opaque 只用它、Mask 把它当阈值、Blend 乘上材质与贴图的 alpha 当输出 alpha），排序与混合开关读**同一个**分类（`RenderCommand::isTransparent`） |
-| 渲染状态（blend / depth / cull / polygon） | **最深者覆盖**（折叠进 `RenderCommand::authoredState`，**每项 optional**：没有 StateNode 说过某一项，那它在这里就是"没人说"，而不是"设成了默认值"） |
+| 渲染状态（blend / depth / cull / polygon） | **最深者覆盖**（折叠进 `RenderCommand::authored_state`，**每项 optional**：没有 StateNode 说过某一项，那它在这里就是"没人说"，而不是"设成了默认值"） |
 | 拓扑 | **不是状态**：每条 `Primitive` 自己说（数据事实，见 §3.21）；`RenderPass` 的 `topology` 可以把整片当点/线看，覆盖值由 `resolveRenderState` 报 `Pass` |
 | material / program | **图元**自己的优先 → `Geometry` 的几何级默认 → 最近的祖先 `StateNode` |
 | `isVisible` | **硬门**：不可见子树整棵不收集 |
@@ -155,7 +159,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   - **必须有相机**（否则什么都不画，引擎在接线期报一次）；**没有 program 也不画**（同样接线期报一次）。
 - `Camera` —— 观看（eye / target / up）+ 投影**参数**（fov / near / far、类型、正交盒）**与画面的形状**：
   `lookAt()`、`setPerspective(fov, near, far)`、`setOrthographic(...)`、
-  `setAspect(w / h)` / `aspectRatio()`、`projectionMatrix()`（**每次现算**）、`screenToWorldRay(pos)`。
+  `setAspect(w / h)` / `aspect()`、`projectionMatrix()`（**每次现算**）、`screenToWorldRay(pos)`。
   **一台相机 = 一张画面**（2026-10-11 定，见 §3.11）：形状是相机自己的状态，投影、剔除、拾取射线读的都是
   同这一个数，于是"矩形变了投影没跟上"这类错在结构上不存在。同一台相机放进**形状不同**的两块矩形不再被
   悄悄拉伸，而是被引擎在编译期**报出来**（`RenderEngine` 的 frame plan 诊断：pass 的矩形 vs 相机的画面形状）；
@@ -592,7 +596,8 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
     kind 走，建六层 cube view）；不完整的 cube 会绑**白 cube**并报一次。材质贴图路径同样支持 cube
     （`Material::setTexture(TextureSlot::BaseColor, cube)`，demo 天空盒即此路径）。
 
-`RenderEngine::validateWiring()` 每帧校验结构，并把每个问题**只报一次**（消失后重新武装）：
+**帧编译**（`SessionShape::compile`，`RenderEngine::frame` 每帧跑一次）校验结构，并把每个问题**只报一次**
+（同一句话在下一帧不重复；消失后再出现算新情节）：
 
 | 检查 | 什么时候报 |
 | --- | --- |
@@ -621,7 +626,7 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 | | 内建路径 | 自定义 program 路径 |
 | --- | --- | --- |
 | 触发条件 | 该 draw 的 program 为空 | `PassDesc::program_override` / `PassDesc::program` 给了 program |
-| ShaderSet 谁提供 | 内容的**默认 program**（`RenderEngine::setDefaultContentProgram`，默认 `forwardProgram()`；后端把它编译成 set） | 后端按**这个 geometry 的通道布局**现建（`assembleProgramShaderSet`） |
+| ShaderSet 谁提供 | 内容的**默认 program**（`RenderEngine::setDefaultContentProgram`，默认 `forwardProgram()`；后端把它编译成 set） | 后端按**这个 geometry 的通道布局**现建（键 = program + 布局） |
 | shader location 从哪来 | **vsg 自己的编号** | **通道 location 一一对应**（canonical 的 0/1/2/8 也是常量） |
 | 顶点数据从哪取 | 固定 `buffer(0)` / `buffer(1)` / `buffer(2)` / `buffer(8)` + 自定义通道 | **完全相同**（两条路径取的是同一批数据） |
 | 换路径时重建 | 只重建 state wrapper，数据节点复用 | 同左（唯一例外见下面的边角表） |
@@ -925,9 +930,9 @@ surface->dismiss(surface->presentedView());
   算的（按区的尺寸 × 比例），而**形状**是视图相机的（`SceneView::applySurfaceGeometry` 把区的形状 push 给相机）。
   宿主自建的 pass **没有**视图可喂：它在自己的声明里给 `viewport` 设备像素（它本来就知道尺寸）。
 - **两个协作对象，视图只当门面**：输入路由在 `SceneView::inputRouter()`（`InputRouter`：无按钮=移动、
-  有按钮=按下/松开、按键=down/up，直接交给操纵器）；布局参与在 `SceneView::layoutParticipant()`
-  （`LayoutParticipant`：记住“不呈现时”的尺寸/比例、保存宿主注册的步骤，并按“视图自己的步骤 → 两步步骤 →
-  带比例步骤”的固定顺序执行）。`pushEvent()` / `resize()` / `addSurfaceLayout()` 仍是门面入口，行为不变。
+  有按钮=按下/松开、按键=down/up，直接交给操纵器）；布局参与在视图私有的 `LayoutParticipant`（`layout_`：
+  记住“不呈现时”的尺寸/比例、保存宿主注册的步骤，并按“视图自己的步骤 → 两步步骤 → 带比例步骤”的固定顺序执行）。
+  `pushEvent()` / `resize()` / `addSurfaceLayout()` 仍是门面入口，行为不变。
 - **输入只有一个去处**：这块区的那条呈现有视图时就是它（`SurfaceWindow::routedView()`）；没有视图（宿主自建 pass）
   时 input 什么也不做。按下**总是**捕获（拖出控件不断线），松手之前那次拖拽一直是同一个视图 —— 见
   `RenderControlTest.TheViewReceivesInputAndADragKeepsSteeringIt`。
@@ -1392,8 +1397,10 @@ Vulkan loader + ICD。`scripts/gfx_lavapipe_check.sh` 可以无头跑在 **lavap
 | `VN_VSG_GBUFFER` | 任意值 | 加一个 G-buffer 彩色附件（base colour / normal+factors / emissive+occlusion / view position）的 PiP 预览 |
 | `VN_VSG_DEFERRED` | 任意值 | 加一条独立的"全屏延迟光照"pass（读 G-buffer 显示光照结果），用于 A/B 对照 |
 | `VN_VSG_OFFSCREEN_MULTISLOT` | 任意值 | 把一个离屏 target 烘成两个内容槽（主场景 + 顶层叠加）并以 PiP 显示 |
+| `VN_VSG_OFFSCREEN` | 任意值 | 加一条普通的离屏 target 配方（单槽），用于对照 |
+| `VN_VSG_EXTRA_SUNS` | 任意值 | 再加两盏方向光（验证灯块与阴影槽的容量边界） |
 | `VN_VSG_SLOT_DEMO` | 任意值 | 在主相机上再叠一个 (相机, 内容槽) 的 overlay pass，验证同视角多槽绘制 |
-| `VN_VSG_OWN_WINDOW` | 任意值 | **临时逃生口**：后端自建窗口而非用宿主窗口（仅测试用；会忽略公告的表面尺寸） |
+| `VN_BENCH_FRAMES` / `VN_BENCH_WARMUP` | 整数 | 基准取帧数与预热帧数（`runFrameBenchmark`）；不给就用默认值 |
 | `VN_TEST_DATA_DIR` | 目录 | demo 与各测试共用的**资产根目录**。不给时的查找顺序是 `<exe>/test_data` → `<exe>/../test_data`（源码树、build 树、安装树三种布局都覆盖）；demo 的 cube map 就从这里读，找不到时**跳过那只盒子并报一行**，而不是贴一张白图 |
 
 默认 demo（不给任何环境变量）的画面：不透明堆叠 + 主方向光投在 6×6 地面上的**阴影** + 一只**贴 cube map 的盒子** `env_box`。
@@ -1499,7 +1506,7 @@ VN_PIPELINE=forward_shadowed ./build/bin/Vine --open demo # 接受；与 forward
 bash scripts/vsg_rewrite_gate.sh      # 一条命令的后端门禁：构建 + 全套件（设备用例不许 SKIP）+ validation 层
                                       # 0 VUID + 同步验证 0 SYNC-HAZARD + 卫生脚本 + 自检相位行逐字节 + 真窗口读像素
 bash scripts/vn_shader_check.sh     # 每个 shader × define 变体过 glslangValidator + 嵌入副本同步
-ctest --test-dir build                # CTest 视角（24 个套件；见下面那段的口径）
+ctest --test-dir build                # CTest 视角（32 个套件；见下面那段的口径）
 ```
 
 **卫生脚本**（`vsg_rewrite_gate.sh` 第 5 阶段，也可以单独跑）：
@@ -1521,13 +1528,14 @@ ctest --test-dir build                # CTest 视角（24 个套件；见下面�
 只需要设备的用例也问它（`BlockStorageTest` / `BlockDescriptorsTest` / `SessionTest` / `VsgBackendTest`），
 只有真正需要 X11 宿主窗口的用例才另外自己 `xcb_connect` 一次并据此 `SKIP`。
 
-后端自检（`./build/bin/vsg_backend_selftest`，上面两个脚本都会跑它）会驱动整条管线 —— forward、
-deferred、离屏、深度共享、overlay —— 并打印 `[selftest]` 证据行。
-`scripts/vsg_selftest_evidence.sh` 是渲染改动的主要回归门禁：**逐字节相同否则失败**（`--update` 重设
-基线）。用 `VN_SELFTEST_FRAMES` 可以加大每个相位的帧数做压力跑。
+**后端自检已退役**：`vsg_backend_selftest` 与 `scripts/vsg_selftest_evidence.sh` 随旧渲染器一起删除（它们是那个渲染器自己的
+相位门禁）。今天的端到端证据是 `scripts/vsg_rewrite_gate.sh`：在 lavapipe + validation 层上跑 demo，resize 前后各取一张图，
+出现任何未知 VUID 即失败（见 `src/plugins/gfx_backend_vsg/CMakeLists.txt` 里那段注释）。
 
-仓库有 **24 个 CTest 套件**（`ctest --test-dir build -C Release`），2026-10-13 实测 **24/24 通过**：
-早先在这里登记为"既有失败"的 `test_cppstd`（5）/ `test_runtime`（28）/ `test_system`（12 + 1 skip）现在都是绿的。
+仓库有 **32 个 CTest 套件**（`ctest --test-dir build`；2026-11-17 计数）。判定看失败的是哪一条：
+`test_vsg` 的宿主窗口用例在 WSLg 下对 500 ms 的 resize 期限敏感——**同一二进制**直接跑绿、`ctest` 偶发红，
+用 `--repeat until-pass:3` 复验（backlog T36 同族）。早先在这里登记为"既有失败"的 `test_cppstd`（5）/
+`test_runtime`（28）/ `test_system`（12 + 1 skip）现在都是绿的。
 `test_gui` 在 CTest 下用 `QT_QPA_PLATFORM=offscreen`（见 `tests/test_gui/CMakeLists.txt`）：那条**脚本化真实文件对话框**的
 用例（`UserIOTest.PickingFilesFillsTheLineWithoutSubmitting`）在无头平台自动 `GTEST_SKIP`，因为无头平台没有
 可脚本化的模态窗口；offscreen 插件由测试目标自己部署（Release 树里 windeployqt 只带宿主平台插件，
