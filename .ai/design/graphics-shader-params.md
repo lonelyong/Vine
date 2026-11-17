@@ -131,7 +131,7 @@ include 解析，也不需要编译器扩展；用户 shader 想用同一套块�
 
 守卫是 `VN_PARAM_MATERIAL` / `VN_PARAM_DRAW` / `VN_PARAM_LIGHTS`；`#include` 必须独占一行行首（P5）。
 影子块（§1.1）与 view 块不在片段里：view 块没有内置 shader 声明它——content 路径把视图实现成 128 B push
-range（见 `ContentPush.hpp`），想要这个块的 program 按自己的布局声明它。
+range（见 `PushRange.hpp`），想要这个块的 program 按自己的布局声明它。
 
 灯块的 set/binding 是两条路径**共用**的 set 0 / binding 6（content 集：material 0、槽 1–5、lights 6、shadow 7/8，见 `graphics-material.md` §3.3）。
 2 因此空出；全屏集：source 颜色 0..N-1、深度 4、灯 5、shadow 对 6/7），所以片段里写的是同一个数字，不需要

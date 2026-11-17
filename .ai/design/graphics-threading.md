@@ -59,7 +59,7 @@
 
 - **是什么**：**内容世界** = `Scene` / `Node` / `Geometry` / `Buffer` / `Program` / `Material` / `Texture` / `Camera`，
   只被内容线程写；**引擎世界** = 快照的 `SnapshotSource`、事实表（`ContentStore`）、驻留表（`StreamUploads` /
-  `ContentHalves` / `ContentSets` / `MaterialImages`）、vsg 命令图、交换链，只被引擎线程写。
+  `ProgramHalves` / `BindingSets` / `MaterialImages`）、vsg 命令图、交换链，只被引擎线程写。
 - **为什么**：两个写者共享一个可变图，只能靠锁 —— 锁会进到每一次读路径，且与"稳态零分配"直接冲突（`G1` / `G10`）。
   各自一个写者 + 值通道，是唯一能让两边都保持零锁的形状。
 - **边界**：唯一的跨侧读取是“已发布不可变值”（§2.2）与随 pass 快照的值（§2.14）。引擎侧**不读**内容对象的任何可变字段。

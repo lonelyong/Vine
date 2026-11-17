@@ -53,7 +53,7 @@
 VN_BACKEND_VSG_NS_BEGIN
 
 /** @brief Which L1 value a declared push member names. */
-enum class ContentPushMember : std::uint8_t
+enum class PushRangeMember : std::uint8_t
 {
     Unknown,    // Not part of the L2 realization of the camera pair: refused by name, never zero-filled.
     Projection, // `projection`: the pass' projection, folded into the device's clip convention.
@@ -64,9 +64,9 @@ enum class ContentPushMember : std::uint8_t
  * @brief Reads one declared member name as the L1 value it asks for.
  *
  * @param member_name The name the text declared (`projection`, `modelView`, ...).
- * @return Which value it is, or ContentPushMember::Unknown when it is none of them.
+ * @return Which value it is, or PushRangeMember::Unknown when it is none of them.
  */
-[[nodiscard]] ContentPushMember contentPushMemberOf(std::string_view member_name) noexcept;
+[[nodiscard]] PushRangeMember pushRangeMemberOf(std::string_view member_name) noexcept;
 
 /**
  * @brief The declared name a value would be filled from (for diagnostics and test expectations).
@@ -74,7 +74,7 @@ enum class ContentPushMember : std::uint8_t
  * @param member Which value.
  * @return The name that fills it (`"projection"`, `"modelView"`; `"?"` for Unknown).
  */
-[[nodiscard]] const char* contentPushMemberName(ContentPushMember member) noexcept;
+[[nodiscard]] const char* pushRangeMemberName(PushRangeMember member) noexcept;
 
 /**
  * @brief Gets whether a declared member is a value this backend can put into a push range.
@@ -114,7 +114,7 @@ enum class ContentPushMember : std::uint8_t
  * @return true when the range was filled; false when it must be refused (an unfillable member, or a range
  *         with no size at all).
  */
-[[nodiscard]] bool packContentPush(const AbiPushRange&         range,
+[[nodiscard]] bool packPushRange(const AbiPushRange&         range,
                                    const core::CameraSnapshot& camera,
                                    const vn::math::Mat4d&      model,
                                    std::vector<std::byte>&     out,

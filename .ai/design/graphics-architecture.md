@@ -95,6 +95,20 @@
 | 一个 **pass 声明字段** | `PassDesc.hpp`；`Plan.cpp`（差分与校验）；`FrameDescription.hpp` 的 `PassDraw`；每个后端的录制器 | 4+ |
 | 一个 **内容通道**（顶点属性） | `Geometry.hpp` 的 `GeometryDescription` 通道表；`ShaderAbi.hpp` 的块布局；vk `ContentDraw.cpp` 的通道 → location 映射与顶点格式；vsg 的绑定 | 4 |
 | 一个 **后端** | 新插件（`Plugin.cpp` + `BackendFactory.cpp`）、`RenderBackend` 两半、自己的 `test_*`、`check_*_exposure` 门禁、`RenderBackendRegistry` 自注册 | 约 6 类文件 |
+
+2.12 **`Content*` 只给内容模型与身份**（命名法，`G12`）：`Content*` 前缀属于**内容对象本身**——`ContentId` /
+    `ContentRef` / `ContentRegistry` / `ContentDeclarations` / `ContentStore`（设备的"身份 + 行"表）。由内容
+    编译或缓存出来的 GPU 对象按**它们是什么**命名，不带 `Content` 前缀：`ProgramHalves`（每张
+    (program, revision, layout, variant) 的编译半片）、`BindingSets`（按声明建出的 descriptor 集合）、
+    `PushRange`（按名字填一个声明 push 范围的成员）。
+    为什么：一个前缀用在"描述符集""push 常量""编译半边"上也就不再说任何事（`G12`），而 `ContentPush` 读起来
+    像一个内容对象、实际是 push 字节的填充规则。边界：其余 `Content*` 名字（`ContentStore` / `ContentCaches` /
+    `ContentDraw` / `ContentImages` / `ContentPipeline` / `ContentAssembly` / `ContentPass` / `ContentFacts` /
+    `ContentSources`）**保留**——它们至少说得清自己处理的是内容（逐项改名是 churn，`G8`）；新名字按这条规则取。
+    拼写偏离：研究文档 `E-08` 建议的 `PushConstants` 没有采用——同一批 TU 里已有 `::vsg::PushConstants`
+    （实际被录制的那种对象），两个同名会给每个使用点制造"这是谁的"问题（`G1`）；`PushRange` 说的是本单元拥有
+    的事实（一个声明范围与它的具名成员）。
+
 ## 3. 功能点
 
 ### 3.1 设备、窗口、区、视图、引擎

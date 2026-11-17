@@ -17,7 +17,7 @@ VN_BACKEND_VSG_NS_BEGIN
  * - A violation is a REPORT, not a refusal: the slot still draws, with the map that is there, because dropping
  *   a drawable over a colour space would be worse than a gamma-shifted picture. The one case the content layer
  *   cannot bind at all is the KIND (a cube view where the text declares `sampler2D` is an invalid descriptor),
- *   and that one falls back to the declared kind's white and is counted - see ContentSets.
+ *   and that one falls back to the declared kind's white and is counted - see BindingSets.
  *
  * @note
  * - Judged from the FACTS the content layer already has (`MaterialFacts::slots`), so the same check serves the

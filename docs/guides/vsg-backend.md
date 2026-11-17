@@ -107,7 +107,7 @@
   再一次内容锁）、**呈现**。窗口槽与离屏会话各有一把**帧主张**：同一窗口（或离屏会话）的两帧等待彼此（交换链只有一份），
   不同窗口互不等待。计数器归会话（`WindowSessionOptions::observe` 不再借设备的）：recorder 开帧会重置它们，共享一份会让两个驱动者互相覆盖；
   `frameReport()` 引用最后结束那一帧的副本。`ContentDraw::plan()` 是解析半（取 layer 与 variant pool），
-  `ContentDraw::record` / `recordScreen` 只绑已解析的 pipeline；计划钉住 halves 的生产者（`ContentHalves::pin`），
+  `ContentDraw::record` / `recordScreen` 只绑已解析的 pipeline；计划钉住 halves 的生产者（`ProgramHalves::pin`），
   所以另一个驱动者的清扫不会释放这一帧还要用的录制器。**`C3`（记录路径零锁）对 vsg 自此成立。**
 * **帧份额**：绘制调用里点名的对象由内容世界**持一份**（计划/已录制的帧仍然命名它们），回归稳态后
   通过 **compare**（不是时间）判断是否要重新构建行。

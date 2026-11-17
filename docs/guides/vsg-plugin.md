@@ -67,7 +67,7 @@
 | 组 | 单元 |
 | --- | --- |
 | 门面与会话 | `VsgBackend` `Session` `OffscreenSession` `GraphLifetime` `SessionDrive` `SessionContent` `SessionMove` `TransferStaging` `WindowTarget` `Device` `DeviceFeatures` `DeviceRequirements` `DeviceProbe` `VsgExecutor` |
-| 内容层 | `ContentAssembly` `ContentPass` `ContentHalves` `ContentDraw` `ContentFacts` `ContentSources` `ContentStore` `ContentImages` `ContentPush` `ContentSets` `ContentPipeline` `DrawNeeds` |
+| 内容层 | `ContentAssembly` `ContentPass` `ProgramHalves` `ContentDraw` `ContentFacts` `ContentSources` `ContentStore` `ContentImages` `PushRange` `BindingSets` `ContentPipeline` `DrawNeeds` |
 | 数据与表 | `GeometryFacts` `ShadowBlock` `ViewBlock` `ProgramAbi` `ProgramVariant` `MaterialImages` `MaterialSlotCheck` `StreamUploads` `BlockStorage` `BlockDescriptors` `VariantPool` `PassRegistry` `StateCommands` `FactResult` |
 | 可移植半边（ADR-2026-11-16 §2 从 SDK 搬入） | `FrameRecorder` `FrameCompiler` `FrameArena` `FrameRing` `ClearPlan` `StateRegistry` `MaterialArena` `Streams` `SlotProbe` `Observe` `PhaseTable` `PixelProbe` `DepthProbe` `AllocationGate` `ResourceTable` |
 | 目标与读回 | `TargetObjects` `TargetTable` `HostReadback` `WhiteImage` `OneShot` |

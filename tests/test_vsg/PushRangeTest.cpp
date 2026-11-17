@@ -1,6 +1,6 @@
 /**
  * @brief The camera matrices a declared push block carries, filled by name (see `.ai/design/vsg-backend.md`
- * §11.16ag, `api/ContentPush.hpp`).
+ * §11.16ag, `api/PushRange.hpp`).
  *
  * Device-free by construction: the input is the range the ENGINE's own program declares (scanned out of its
  * text, api/ProgramAbi) plus a camera snapshot, and the judgement is arithmetic:
@@ -32,7 +32,7 @@
 #include <vine/math/Matrix4x4.hpp>
 
 #include <vine/backend_vsg/internal/FrameRecorder.hpp>
-#include <vine/backend_vsg/internal/ContentPush.hpp>
+#include <vine/backend_vsg/internal/PushRange.hpp>
 #include <vine/backend_vsg/internal/ContentSources.hpp>
 #include <vine/backend_vsg/internal/ProgramAbi.hpp>
 #include <vine/backend_vsg/internal/ViewBlock.hpp>
@@ -44,12 +44,12 @@ using vn::backend_vsg::AbiPushMember;
 using vn::backend_vsg::AbiPushRange;
 using vn::backend_vsg::buildProgramFacts;
 using vn::backend_vsg::canFillPushMember;
-using vn::backend_vsg::ContentPushMember;
-using vn::backend_vsg::contentPushMemberName;
-using vn::backend_vsg::contentPushMemberOf;
+using vn::backend_vsg::PushRangeMember;
+using vn::backend_vsg::pushRangeMemberName;
+using vn::backend_vsg::pushRangeMemberOf;
 using vn::backend_vsg::FactMiss;
 using vn::backend_vsg::foldToDeviceClip;
-using vn::backend_vsg::packContentPush;
+using vn::backend_vsg::packPushRange;
 using vn::backend_vsg::ProgramAbi;
 using vn::backend_vsg::ProgramFacts;
 
@@ -151,15 +151,15 @@ AbiPushRange enginePush()
 
 } // namespace
 
-TEST(ContentPushTest, TheDeclaredNamesAreTheOnesTheProgramsWrite)
+TEST(PushRangeTest, TheDeclaredNamesAreTheOnesTheProgramsWrite)
 {
-    EXPECT_EQ(contentPushMemberOf("projection"), ContentPushMember::Projection);
-    EXPECT_EQ(contentPushMemberOf("modelView"), ContentPushMember::ModelView);
-    EXPECT_EQ(contentPushMemberOf("tint"), ContentPushMember::Unknown);
-    EXPECT_EQ(contentPushMemberOf(""), ContentPushMember::Unknown);
+    EXPECT_EQ(pushRangeMemberOf("projection"), PushRangeMember::Projection);
+    EXPECT_EQ(pushRangeMemberOf("modelView"), PushRangeMember::ModelView);
+    EXPECT_EQ(pushRangeMemberOf("tint"), PushRangeMember::Unknown);
+    EXPECT_EQ(pushRangeMemberOf(""), PushRangeMember::Unknown);
 
-    EXPECT_STREQ(contentPushMemberName(ContentPushMember::Projection), "projection");
-    EXPECT_STREQ(contentPushMemberName(ContentPushMember::ModelView), "modelView");
+    EXPECT_STREQ(pushRangeMemberName(PushRangeMember::Projection), "projection");
+    EXPECT_STREQ(pushRangeMemberName(PushRangeMember::ModelView), "modelView");
 
     // A size is part of the answer: `vec4 projection` is a declaration whose bytes are not a matrix.
     EXPECT_TRUE(canFillPushMember(AbiPushMember{ "projection", 0U, 64U }));
@@ -168,7 +168,7 @@ TEST(ContentPushTest, TheDeclaredNamesAreTheOnesTheProgramsWrite)
     EXPECT_FALSE(canFillPushMember(AbiPushMember{ "tint", 0U, 16U }));
 }
 
-TEST(ContentPushTest, ThePushCarriesTheSameMatricesTheViewBlockDoes)
+TEST(PushRangeTest, ThePushCarriesTheSameMatricesTheViewBlockDoes)
 {
     const AbiPushRange range = enginePush();
     ASSERT_EQ(range.members.size(), 2U);
@@ -177,7 +177,7 @@ TEST(ContentPushTest, ThePushCarriesTheSameMatricesTheViewBlockDoes)
     const Mat4d            model  = makeModel();
     std::vector<std::byte> bytes;
     std::string_view       unhandled;
-    ASSERT_TRUE(packContentPush(range, camera, model, bytes, unhandled));
+    ASSERT_TRUE(packPushRange(range, camera, model, bytes, unhandled));
     ASSERT_EQ(bytes.size(), 128U);
     EXPECT_TRUE(unhandled.empty());
 
@@ -206,7 +206,7 @@ TEST(ContentPushTest, ThePushCarriesTheSameMatricesTheViewBlockDoes)
     EXPECT_TRUE(differs) << "the fixture must be one where the two orders differ, or the case proves nothing";
 }
 
-TEST(ContentPushTest, TheModelMatrixIsTheDrawablesAndLandsWhereTheDrawableGoes)
+TEST(PushRangeTest, TheModelMatrixIsTheDrawablesAndLandsWhereTheDrawableGoes)
 {
     const AbiPushRange range = enginePush();
     ASSERT_EQ(range.members.size(), 2U);
@@ -221,7 +221,7 @@ TEST(ContentPushTest, TheModelMatrixIsTheDrawablesAndLandsWhereTheDrawableGoes)
 
     std::vector<std::byte> bytes;
     std::string_view       unhandled;
-    ASSERT_TRUE(packContentPush(range, camera, model, bytes, unhandled));
+    ASSERT_TRUE(packPushRange(range, camera, model, bytes, unhandled));
 
     // view * model maps the origin to (10, 0, 0); model * view maps it to (20, 0, 0) - the two orders differ
     // by the translation being scaled, which is exactly the bug a swapped composition is.
@@ -231,7 +231,7 @@ TEST(ContentPushTest, TheModelMatrixIsTheDrawablesAndLandsWhereTheDrawableGoes)
     EXPECT_NEAR(elementOf(bytes, 64U, 0, 0), 2.0, 1e-6) << "the model's scale is not scaled by the view";
 }
 
-TEST(ContentPushTest, AMemberNobodyCanFillIsRefusedWithItsName)
+TEST(PushRangeTest, AMemberNobodyCanFillIsRefusedWithItsName)
 {
     const CameraSnapshot   camera = makeCamera();
     const Mat4d            model  = makeModel();
@@ -244,7 +244,7 @@ TEST(ContentPushTest, AMemberNobodyCanFillIsRefusedWithItsName)
     unknown.members = {
         AbiPushMember{ "tint", 0U, 64U }
     };
-    EXPECT_FALSE(packContentPush(unknown, camera, model, bytes, unhandled));
+    EXPECT_FALSE(packPushRange(unknown, camera, model, bytes, unhandled));
     EXPECT_EQ(unhandled, "tint");
 
     // A known name of the wrong size: `vec4 projection` is not a projection matrix.
@@ -254,16 +254,16 @@ TEST(ContentPushTest, AMemberNobodyCanFillIsRefusedWithItsName)
         AbiPushMember{ "projection", 0U,  16U },
         AbiPushMember{ "modelView",  16U, 16U }
     };
-    EXPECT_FALSE(packContentPush(wrong_size, camera, model, bytes, unhandled));
+    EXPECT_FALSE(packPushRange(wrong_size, camera, model, bytes, unhandled));
     EXPECT_EQ(unhandled, "projection");
 
     // A range nobody could size is not a range to write.
     AbiPushRange empty;
-    EXPECT_FALSE(packContentPush(empty, camera, model, bytes, unhandled));
+    EXPECT_FALSE(packPushRange(empty, camera, model, bytes, unhandled));
     EXPECT_TRUE(unhandled.empty());
 }
 
-TEST(ContentPushTest, ASnapshotWithNoCameraWritesZerosAndSaysSo)
+TEST(PushRangeTest, ASnapshotWithNoCameraWritesZerosAndSaysSo)
 {
     const AbiPushRange range = enginePush();
     ASSERT_EQ(range.members.size(), 2U);
@@ -275,7 +275,7 @@ TEST(ContentPushTest, ASnapshotWithNoCameraWritesZerosAndSaysSo)
     camera.present = false;
     std::vector<std::byte> bytes;
     std::string_view       unhandled;
-    ASSERT_TRUE(packContentPush(range, camera, makeModel(), bytes, unhandled));
+    ASSERT_TRUE(packPushRange(range, camera, makeModel(), bytes, unhandled));
     ASSERT_EQ(bytes.size(), 128U);
     for (const std::byte entry : bytes) {
         EXPECT_EQ(entry, std::byte{ 0 });

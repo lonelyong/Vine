@@ -20,7 +20,7 @@
 #include <vine/graphics/LightAbi.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/backend_vsg/internal/ContentImages.hpp>
-#include <vine/backend_vsg/internal/ContentPush.hpp>
+#include <vine/backend_vsg/internal/PushRange.hpp>
 #include <vine/backend_vsg/internal/GeometryFacts.hpp>
 #include <vine/backend_vsg/internal/StateCommands.hpp>
 #include <vine/backend_vsg/internal/StreamUploads.hpp>
@@ -353,7 +353,7 @@ std::unique_ptr<ContentPipeline> ContentPipeline::create(const ProgramAbi&      
     // that reads its camera matrices from a push block gets exactly the range its text declares, and one that
     // declares none gets none - pushing into a range that does not exist is an API violation, not a no-op.
     // The MEMBERS are checked here too: a range whose members are not the L2 realization of the L1 camera
-    // pair (see api/ContentPush) is one no pass can fill, so the layer that would compile against it refuses
+    // pair (see api/PushRange) is one no pass can fill, so the layer that would compile against it refuses
     // the program instead of drawing with zeros.
     ::vsg::PushConstantRanges push_ranges;
     for (const AbiPushRange& range : abi.pushes) {

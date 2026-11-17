@@ -52,7 +52,7 @@
 VN_BACKEND_VSG_NS_BEGIN
 
 /** @brief Produces the compiled halves a pass' draws need (see the file note). */
-class ContentHalves {
+class ProgramHalves {
   public:
     /**
      * @brief Creates the producer.
@@ -62,7 +62,7 @@ class ContentHalves {
      *                     (see api/ContentDraw - the halves can then be produced and looked at, but not
      *                     recorded).
      */
-    explicit ContentHalves(core::VariantPool& pool, detail::DynamicStateEntryPoints entry_points = {});
+    explicit ProgramHalves(core::VariantPool& pool, detail::DynamicStateEntryPoints entry_points = {});
 
     /**
      * @brief Ensures the halves @p pass' draws need, from @p facts, and returns them.
@@ -129,10 +129,10 @@ class ContentHalves {
     /** @brief Releases every half. The session-teardown path: nothing is parked. */
     void clear();
 
-    ~ContentHalves();
+    ~ProgramHalves();
 
-    ContentHalves(const ContentHalves&)            = delete;
-    ContentHalves& operator=(const ContentHalves&) = delete;
+    ProgramHalves(const ProgramHalves&)            = delete;
+    ProgramHalves& operator=(const ProgramHalves&) = delete;
 
   private:
     struct Data;

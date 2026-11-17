@@ -14,8 +14,8 @@ struct ContentAssembly::Data {
     MaterialImages*               images{ nullptr };
     vn::graphics::Diagnostics*    diagnostics{ nullptr };
 
-    std::unique_ptr<ContentHalves> halves{};
-    std::unique_ptr<ContentSets>   sets{};
+    std::unique_ptr<ProgramHalves> halves{};
+    std::unique_ptr<BindingSets>   sets{};
     StreamUploads                  uploads{}; // Stream sharing spans passes and frames (keyed by revision).
     /// The sampled-input sets the frames share (see api/ContentPass:InputSetCache): one per distinct set of
     /// images, which is what keeps a steady frame from writing a descriptor a pending frame still reads.
@@ -73,10 +73,10 @@ ContentAssembly::ContentAssembly(ContentStore&                 store,
     d->images      = &images;
     d->diagnostics = &diagnostics;
     // The halves' recorders issue the dynamic state of every draw, so they need the device's entry points -
-    // the calls cannot be named by link (see api/StateCommands). A device-free caller of api/ContentHalves
+    // the calls cannot be named by link (see api/StateCommands). A device-free caller of api/ProgramHalves
     // leaves them empty and does not record; THIS caller has the device and is about to record.
-    d->halves      = std::make_unique<ContentHalves>(pool, detail::fetchDynamicStateEntryPoints(d->device->vk(), d->device->getInstance()->vk()));
-    d->sets        = std::make_unique<ContentSets>(d->device, storage, images);
+    d->halves      = std::make_unique<ProgramHalves>(pool, detail::fetchDynamicStateEntryPoints(d->device->vk(), d->device->getInstance()->vk()));
+    d->sets        = std::make_unique<BindingSets>(d->device, storage, images);
     // How wide a rasterised LINE may be is the device's answer, and the API REFUSES a width above it - so it is
     // read here, once, and handed to every pass' recorder (see ContentPass::Scope::max_line_width).
     if (const ::vsg::PhysicalDevice* physical = d->device->getPhysicalDevice()) {
@@ -143,7 +143,7 @@ const ContentFacts& ContentAssembly::openTables(const core::CompiledFrame& frame
     // THE SESSION-LEVEL PRODUCTS follow it, at the FRAME's pace and not a pass': a compiled half is pinned by
     // (program@rev, layout declaration) and a declared set by (program@rev, the maps it sampled), both facts of
     // the tables above - so a frame that draws NOTHING still retires what content left. Doing this inside
-    // api/ContentHalves::halvesFor / api/ContentSets::setsFor would make "when does it die" depend on whether some
+    // api/ProgramHalves::halvesFor / api/BindingSets::setsFor would make "when does it die" depend on whether some
     // pass happened to walk the producer, and would scan the tables once per pass instead of once per frame.
     d->halves->sweep(*d->facts, timeline, retirement);
     d->sets->sweep(*d->facts, timeline, retirement);
@@ -206,7 +206,7 @@ bool ContentAssembly::resolve(FrameHead&                           plan,
     }
 
     FrameHead::Pass& slot = plan.beginPass(pass.pass, *d->pool);
-    // THE PLAN PINS THE PRODUCER (see ContentHalves::pin): the calls it will hold name the compiled halves'
+    // THE PLAN PINS THE PRODUCER (see ProgramHalves::pin): the calls it will hold name the compiled halves'
     // recorders by raw pointer, and another driver's frame head may sweep them before this frame records.
     plan.pin(d->halves->pin());
 
@@ -260,12 +260,12 @@ const ContentFacts& ContentAssembly::facts() const noexcept
     return d->facts != nullptr ? *d->facts : empty;
 }
 
-ContentHalves& ContentAssembly::halves() noexcept
+ProgramHalves& ContentAssembly::halves() noexcept
 {
     return *d->halves;
 }
 
-ContentSets& ContentAssembly::sets() noexcept
+BindingSets& ContentAssembly::sets() noexcept
 {
     return *d->sets;
 }

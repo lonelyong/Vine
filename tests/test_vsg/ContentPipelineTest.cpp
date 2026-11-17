@@ -848,7 +848,7 @@ TEST(ContentPipelineTest, ADeclarationThisBackendCannotFillIsRefused)
 TEST(ContentPipelineTest, APushNobodyCouldFillIsRefusedWhereTheLayoutIsBuilt)
 {
     // A push range is the one range whose bytes are ASSEMBLED rather than copied from an L1 struct
-    // (api/ContentPush), so the layer that would compile against it also has to know that every member is one
+    // (api/PushRange), so the layer that would compile against it also has to know that every member is one
     // the pass can fill: a program reading `pc.tint` would shade with zeros, and a `vec4 projection` would be
     // a projection written into bytes that are not its own. Both are refused where the layout is built, not
     // discovered when the picture is black.

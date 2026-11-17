@@ -1,4 +1,4 @@
-#include <vine/backend_vsg/internal/ContentSets.hpp>
+#include <vine/backend_vsg/internal/BindingSets.hpp>
 
 #include <optional>
 #include <unordered_set>
@@ -94,7 +94,7 @@ bool declaresShadowSampler(const ContentPipeline& layer, std::uint32_t set) noex
 
 } // namespace
 
-struct ContentSets::Data {
+struct BindingSets::Data {
     /** @brief What one set answers for (see the file note). */
     struct Key {
         vn::graphics::ContentRef      program{};
@@ -250,7 +250,7 @@ struct ContentSets::Data {
     }
 };
 
-ContentSets::ContentSets(::vsg::ref_ptr<::vsg::Device> device, const BlockStorage& storage, MaterialImages& images)
+BindingSets::BindingSets(::vsg::ref_ptr<::vsg::Device> device, const BlockStorage& storage, MaterialImages& images)
   : d(std::make_shared<Data>())
 {
     d->device  = std::move(device);
@@ -272,7 +272,7 @@ BlockDescriptors::ImageSource imageSourceOf(const MaterialFacts& material) noexc
     return source;
 }
 
-std::size_t ContentSets::repoint(const BlockStorage& storage, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+std::size_t BindingSets::repoint(const BlockStorage& storage, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
     d->storage            = &storage;
     std::size_t repointed = 0;
@@ -292,9 +292,9 @@ std::size_t ContentSets::repoint(const BlockStorage& storage, core::FrameTimelin
     return repointed;
 }
 
-ContentSets::~ContentSets() = default;
+BindingSets::~BindingSets() = default;
 
-std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass&                  pass,
+std::span<BlockDescriptors* const> BindingSets::setsFor(const core::CompiledPass&                  pass,
                                                         const ContentFacts&                        facts,
                                                         std::span<const ContentPass::Scope::Entry> halves,
                                                         std::span<const InputImages>               inputs,
@@ -367,7 +367,7 @@ std::span<BlockDescriptors* const> ContentSets::setsFor(const core::CompiledPass
     return d->candidates;
 }
 
-void ContentSets::sweep(const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+void BindingSets::sweep(const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
     // A set is pinned by its PROGRAM REVISION and by the MAPS it sampled. The program half is the
     // same question the halves ask; the map half is two O(1) facts per slot - is the texture still declared by a
@@ -405,27 +405,27 @@ void ContentSets::sweep(const ContentFacts& facts, core::FrameTimeline& timeline
     (void)core::forgetUnpinned(d->refused_keys, pinned);
 }
 
-std::size_t ContentSets::sets() const noexcept
+std::size_t BindingSets::sets() const noexcept
 {
     return d->sets.live();
 }
 
-std::uint64_t ContentSets::builds() const noexcept
+std::uint64_t BindingSets::builds() const noexcept
 {
     return d->builds;
 }
 
-std::size_t ContentSets::fallbacks() const noexcept
+std::size_t BindingSets::fallbacks() const noexcept
 {
     return d->fallbacks;
 }
 
-std::size_t ContentSets::refused() const noexcept
+std::size_t BindingSets::refused() const noexcept
 {
     return d->refused;
 }
 
-void ContentSets::clear()
+void BindingSets::clear()
 {
     d->sets.clear();
     d->refused_keys.clear();

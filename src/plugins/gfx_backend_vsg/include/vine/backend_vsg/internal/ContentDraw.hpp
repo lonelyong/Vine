@@ -77,7 +77,7 @@ class ContentDraw {
         /// program that declares none.
         std::span<const ::vsg::ref_ptr<::vsg::BindDescriptorSet>> blocks;
         /// The push ranges the program DECLARES, filled (one entry per range, each with its declaration's
-        /// offset, size and stages: see api/ContentPush and api/ProgramAbi). Empty for a program that declares
+        /// offset, size and stages: see api/PushRange and api/ProgramAbi). Empty for a program that declares
         /// none - and a program that declares one is never drawn without it (the layer refuses to compile a
         /// push whose members nobody can fill).
         std::span<const ::vsg::ref_ptr<::vsg::PushConstants>>     pushes;

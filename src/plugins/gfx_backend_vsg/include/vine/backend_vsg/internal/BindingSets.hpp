@@ -79,7 +79,7 @@ VN_BACKEND_VSG_NS_BEGIN
 [[nodiscard]] BlockDescriptors::ImageSource imageSourceOf(const MaterialFacts& material) noexcept;
 
 /** @brief Produces the declared sets a pass' drawables need (see the file note). */
-class ContentSets {
+class BindingSets {
   public:
     /**
      * @brief Creates the producer.
@@ -88,12 +88,12 @@ class ContentSets {
      * @param storage The frame's block storage the sets bind (its buffer).
      * @param images  The material images (the texture-set half of the by-name policy, plus the fallbacks).
      */
-    ContentSets(::vsg::ref_ptr<::vsg::Device> device, const BlockStorage& storage, MaterialImages& images);
+    BindingSets(::vsg::ref_ptr<::vsg::Device> device, const BlockStorage& storage, MaterialImages& images);
 
     /**
      * @brief Ensures the declared sets @p pass' drawables need, and returns them as candidates.
      *
-     * The walk is the one api/ContentHalves and api/ContentPass make: each command's geometry (at the
+     * The walk is the one api/ProgramHalves and api/ContentPass make: each command's geometry (at the
      * revision the plan names), its material, the variant both imply, and the half that serves it - so a set
      * exists for exactly the (set index, image source) pairs a pass will ask for. A command the tables or
      * the halves cannot answer contributes nothing (the recorder refuses it first, and says why).
@@ -103,7 +103,7 @@ class ContentSets {
      *
      * @param pass       The compiled pass whose draws the sets are for.
      * @param facts      The tables the identities are answered from.
-     * @param halves     The halves the pass was given (api/ContentHalves' answer: their layers carry the
+     * @param halves     The halves the pass was given (api/ProgramHalves' answer: their layers carry the
      *                   declared shapes and the input/depth samplers).
      * @param inputs     The images the pass' inputs offer (see ContentPass::record - nothing when it has
      *                   none).
@@ -169,10 +169,10 @@ class ContentSets {
     /** @brief Releases every set. The session-teardown path: nothing is parked. */
     void clear();
 
-    ~ContentSets();
+    ~BindingSets();
 
-    ContentSets(const ContentSets&)            = delete;
-    ContentSets& operator=(const ContentSets&) = delete;
+    BindingSets(const BindingSets&)            = delete;
+    BindingSets& operator=(const BindingSets&) = delete;
 
   private:
     struct Data;

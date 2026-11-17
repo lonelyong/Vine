@@ -117,7 +117,7 @@ class VN_GRAPHICS_API RenderFrameExecutor {
      *   identities), `executeFrame` continues into recording and submission.
      * - WHY IT EXISTS. Compiling a pipeline and uploading a stream or a texture are what make a frame's first seconds
      *   janky, and a host that knows what it is about to draw can pay that cost at load time instead. The criterion
-     *   is measurable: after `prepare`, a frame of the same declarations reports `ContentHalves::builds`, the variant
+     *   is measurable: after `prepare`, a frame of the same declarations reports `ProgramHalves::builds`, the variant
      *   pool's `created` and its own `FrameUploads` DELTAs of zero (`R23`).
      * - WHAT IT MUST NOT DO, and this is the whole risk of the entry. It must not open a frame on the surface (a
      *   windowed frame's `beginFrame` ACQUIRES the next swapchain image; an image acquired and never presented

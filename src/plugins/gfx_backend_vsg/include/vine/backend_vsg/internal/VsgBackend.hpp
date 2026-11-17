@@ -225,7 +225,7 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      * @details
      * - WHAT IT DOES. The value is collected and compiled exactly as executeFrame() does it - the plan, its target
      *   facts and its pass scopes come out identical - and then the VALUE side of the frame is built and the recorded
-     *   node is DROPPED: the compiled halves (`api/ContentHalves`), the declared sets (`api/ContentSets`), the
+     *   node is DROPPED: the compiled halves (`api/ProgramHalves`), the declared sets (`api/BindingSets`), the
      *   sampled-input sets, the stream uploads (`api/StreamUploads`) and every pipeline identity the frame would
      *   acquire (`ContentPipeline::acquire`, which is what moves the variant pool). A frame recorded afterwards finds
      *   all of it and builds nothing (`R23`), which is the criterion `T33` pins.

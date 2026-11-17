@@ -110,7 +110,7 @@ namespace
 /// @brief Side of the picture in pixels: the size the reference pixel cases use, so a diff covers the frame.
 constexpr int kSide = 64;
 
-/// @brief The content ABI's camera push: `projection` then `modelView`, both mat4 (see ShaderAbi / ContentPush).
+/// @brief The content ABI's camera push: `projection` then `modelView`, both mat4 (see ShaderAbi / PushRange).
 constexpr const char8_t* kVertexStage = u8R"(
 #version 450
 layout(location = 0) in vec3 in_position;

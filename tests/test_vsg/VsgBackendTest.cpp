@@ -21,8 +21,8 @@
 #include <vine/backend_vsg/internal/FrameCompiler.hpp>
 #include <vine/backend_vsg/internal/BackendContent.hpp>
 #include <vine/backend_vsg/internal/ContentAssembly.hpp>
-#include <vine/backend_vsg/internal/ContentHalves.hpp>
-#include <vine/backend_vsg/internal/ContentSets.hpp>
+#include <vine/backend_vsg/internal/ProgramHalves.hpp>
+#include <vine/backend_vsg/internal/BindingSets.hpp>
 #include <vine/backend_vsg/internal/ContentStore.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
 #include <vine/backend_vsg/internal/DeviceProbe.hpp>

@@ -82,8 +82,8 @@
      键里自己的 texture revision）。两者都走 `ResourceTable::retireUnpinned`，不再有“还有没有 geometry 问这个
      layout”的每帧扫描（手建 `ContentFacts` 未发布索引时按可选索引规则退回扫描，生产永远发布）；“最后一条
      使用该 layout 的几何离树 ⇒ 半片 park”由声明索引直接回答。
-     **扫描是帧的，不是 pass 的**：两张表的 park 都在 `ContentAssembly` 的帧首做一次（`ContentHalves::sweep` /
-     `ContentSets::sweep`），所以零 draw 的帧照样回收，N 个 pass 也不会把表扫 N 次。
+     **扫描是帧的，不是 pass 的**：两张表的 park 都在 `ContentAssembly` 的帧首做一次（`ProgramHalves::sweep` /
+     `BindingSets::sweep`），所以零 draw 的帧照样回收，N 个 pass 也不会把表扫 N 次。
      **已知残余**：pin 只覆盖键里“内容有没有变”的那两半（program@rev、layout / 贴图），
      而 topology、附件形状、variant 也进键 —— 它们变化留下的旧半片 / 旧集合**不会**因为 pin 而离场，
      要等 program 或 layout 也消失。每个这样的对象是一条编译过的管线（几十 KB），数量上界是

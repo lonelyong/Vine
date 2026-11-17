@@ -51,7 +51,7 @@
  * WHERE THE IDENTITY COMES FROM, AND WHY THAT IS NOT THIS FILE. What one drawing call needs - the vertex layout,
  * the variant the drawable's material and geometry imply, the program row for that variant, and the counts the
  * pipeline key carries - is answered by `drawNeeds` (api/DrawNeeds), and this layer READS that answer instead of
- * deriving it. The warm-up path (api/ContentHalves, and the `prepare()` entry that drives it) reads the same
+ * deriving it. The warm-up path (api/ProgramHalves, and the `prepare()` entry that drives it) reads the same
  * answer, so "what the warm-up reports" and "what the frame builds" are one value rather than two spellings that
  * happen to agree today (`G1`; the property `T32` pins). What stays here is what the answer cannot know: which
  * compiled half serves it, and how the half's blocks, streams and pushes are filled.
@@ -213,7 +213,7 @@ class VN_BACKEND_VSG_API ContentPass {
             /// @ref serveHalf writes ("the pass' content half" could not be served) and one for
             /// @ref reportShadowNotSampled. Null - the default, and what a hand-built entry means - keeps
             /// the recorder's own, whose episode lasts one ContentPass, i.e. ONE FRAME in the frame path.
-            /// api/ContentHalves hands the HALF's own state in, so a half that cannot be served (or whose
+            /// api/ProgramHalves hands the HALF's own state in, so a half that cannot be served (or whose
             /// pass declared a shadow its text cannot read) says so once per session instead of once per
             /// frame (registered 2026-09-25, M11m).
             vn::graphics::ReportOnce* reported{ nullptr };
@@ -528,7 +528,7 @@ class VN_BACKEND_VSG_API ContentPass {
      * This is the pass' ONE place that knows what it can fill today: a program's declared sets must be
      * covered by the sets the caller built for it (same index, same shape). A half that fails the check is
      * reported once per pass and its commands are not recorded - the rest of the pass still draws. The push
-     * ranges a program declares are NOT checked here: they are filled per command (see api/ContentPush), and
+     * ranges a program declares are NOT checked here: they are filled per command (see api/PushRange), and
      * a range nobody can fill is refused where the layout is built (ContentPipeline::create).
      *
      * @param entry       The compiled half.

@@ -240,7 +240,7 @@
   **缝**：`drawNeeds(compiled pass, draw)` 是唯一的键构造者——`prepare` 用它建、`ContentPass::record` 用它取，
   两边不可能漂移（`G1`）。
   **落地位置**（3a，2026-11-12）：`src/plugins/gfx_backend_vsg/{include/vine/backend_vsg/internal,src/internal}/DrawNeeds.{hpp,cpp}`
-  （`drawNeeds` 两个重载 + `DrawNeeds::keyFor`）；`ContentHalves::halvesFor`、`ContentPass::recordCommand` /
+  （`drawNeeds` 两个重载 + `DrawNeeds::keyFor`）；`ProgramHalves::halvesFor`、`ContentPass::recordCommand` /
   `recordScreenDraw` 与 `describeMissingContentHalf` 都只读它，录制路径不再自己拼键。
   **落地位置**（3b，2026-11-12）：`sdk/vine/graphics/PrepareReport.hpp`、`RenderFrameExecutor::prepareFrame`、
   `RenderEngine::prepare()`、`VsgBackend::prepareFrame`。后端复用帧自己的两半——`collectFrame`（值 → 采集）与
@@ -559,7 +559,7 @@
 | T28 | pose 剔除 | pose 子树部分出视 | 未做 |
 | T30 | 计划校验 | `PlanTest.*IsRefusedWithItsCode`（四类）+ `PlanTest.TheCodeSpellingsAreStable` + `PlanTest.AKindChangeOnACustomPassIsRefusedWithItsCode` | 已实现 |
 | T31 | 批内 publish | `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch`（`Posted` → `Unchanged` → `InsideBatch` → `Posted`）+ `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` | 已实现（2026-11-12） |
-| T32 | 预热的答案 = 帧的构建 | `ContentHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds`（键集相等，设备无关）+ `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` 的键集断言（录制侧） | 已实现（2026-11-12） |
+| T32 | 预热的答案 = 帧的构建 | `ProgramHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds`（键集相等，设备无关）+ `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` 的键集断言（录制侧） | 已实现（2026-11-12） |
 | T33 | 预热后录制 `builds` 增量 0，且预热不提交 / 不呈现 | `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing`（`halves().builds` / `sets().builds` / `uploads().uploads` / `inputSetBuilds` / `pool.created` 全 0，`progress->submitted` 不动，像素仍画出）+ `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing`（引擎侧：同一个 value、不执行、不取帧号） | 已实现（2026-11-12） |
 | T34 | 快照源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`（600 帧，transform / opacity / material / placement 编辑，逐项 diff）+ `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould`（绑定后的帧级接缝） | 已实现（2026-11-12） |
 | T36 | 帧结果是那一帧的值 | `RenderEngineTest.TheFrameResultIsThePictureThatWasAnswered`（快照 / 相机 / 计数 / 诊断 / present；发布落在帧间不改已答的帧） | 已实现（2026-11-13） |

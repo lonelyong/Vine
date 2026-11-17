@@ -1,4 +1,4 @@
-#include <vine/backend_vsg/internal/ContentHalves.hpp>
+#include <vine/backend_vsg/internal/ProgramHalves.hpp>
 
 #include <optional>
 #include <unordered_set>
@@ -12,7 +12,7 @@
 
 VN_BACKEND_VSG_NS_BEGIN
 
-struct ContentHalves::Data {
+struct ProgramHalves::Data {
     /** @brief What a compiled half is: everything the layer depends on (see the file note). */
     struct Key {
         core::DrawKind           kind{ core::DrawKind::Content };
@@ -146,17 +146,17 @@ struct ContentHalves::Data {
     }
 };
 
-ContentHalves::ContentHalves(core::VariantPool& pool, detail::DynamicStateEntryPoints entry_points)
+ProgramHalves::ProgramHalves(core::VariantPool& pool, detail::DynamicStateEntryPoints entry_points)
   : d(std::make_shared<Data>())
 {
     d->pool         = &pool;
     d->entry_points = entry_points;
 }
 
-ContentHalves::~ContentHalves() = default;
+ProgramHalves::~ProgramHalves() = default;
 
 std::span<const ContentPass::Scope::Entry>
-ContentHalves::halvesFor(const core::CompiledPass& pass, const ContentFacts& facts, core::FrameTimeline& /*timeline*/, core::RetirementQueue& /*retirement*/)
+ProgramHalves::halvesFor(const core::CompiledPass& pass, const ContentFacts& facts, core::FrameTimeline& /*timeline*/, core::RetirementQueue& /*retirement*/)
 {
     d->entries.clear();
 
@@ -189,7 +189,7 @@ ContentHalves::halvesFor(const core::CompiledPass& pass, const ContentFacts& fac
     return d->entries;
 }
 
-void ContentHalves::sweep(const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+void ProgramHalves::sweep(const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
     // A half is PINNED BY ITS PROGRAM REVISION AND ITS LAYOUT. While the tables still answer the
     // (identity, revision, variant, kind) it was compiled from AND some live geometry row still feeds its layout,
@@ -222,29 +222,29 @@ void ContentHalves::sweep(const ContentFacts& facts, core::FrameTimeline& timeli
     (void)core::forgetUnpinned(d->refused_keys, pinned);
 }
 
-std::size_t ContentHalves::halves() const noexcept
+std::size_t ProgramHalves::halves() const noexcept
 {
     return d->halves.live();
 }
 
-std::shared_ptr<const void> ContentHalves::pin() const noexcept
+std::shared_ptr<const void> ProgramHalves::pin() const noexcept
 {
     // THE PRODUCER'S OWN HANDLE: a plan that holds it keeps every half this producer answered alive (see the
     // header's note on why the lease is the producer's and not a per-half reference).
     return d;
 }
 
-std::uint64_t ContentHalves::builds() const noexcept
+std::uint64_t ProgramHalves::builds() const noexcept
 {
     return d->builds;
 }
 
-std::size_t ContentHalves::refused() const noexcept
+std::size_t ProgramHalves::refused() const noexcept
 {
     return d->refused;
 }
 
-void ContentHalves::clear()
+void ProgramHalves::clear()
 {
     d->halves.clear();
     d->refused_keys.clear();

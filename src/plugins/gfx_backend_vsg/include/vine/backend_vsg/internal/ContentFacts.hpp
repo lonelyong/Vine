@@ -50,7 +50,7 @@
  * a plan that names it may still be recorded (the same rule as every other borrowed argument in this
  * backend, and the same reason StreamUploads keys its binds by revision).
  *
- * WHY A LOOKUP IS NOT A SCAN. Each lookup runs several times per drawing call per frame (`api/ContentHalves`
+ * WHY A LOOKUP IS NOT A SCAN. Each lookup runs several times per drawing call per frame (`api/ProgramHalves`
  * and `api/ContentPass` both resolve the same three identities), and the tables only GROW: a linear scan is
  * therefore O(rows) per lookup, i.e. O(drawables x rows) per frame - invisible at the content sizes this
  * backend was written for (tens of rows) and a wall at a thousand (measured 2026-09-24: see the design log's
@@ -106,7 +106,7 @@ struct ContentDeclarationIndexes {
  *   a material row declares the TEXTURES its slots sample and its own IDENTITY (what the block arena holds a slot
  *   under). The first three are maps keyed by address or by the layout value, the last by a handle - but one type
  *   answers all four instead of four lookalikes, and every residency table that keys on any of them
- *   (api/StreamUploads, api/MaterialImages, the material arena, api/ContentHalves) asks the same way.
+ *   (api/StreamUploads, api/MaterialImages, the material arena, api/ProgramHalves) asks the same way.
  * - WHAT IT MEANS, AND WHAT IT DOES NOT. Membership says an address is still declared by some live row, at the
  *   moment that row was built. It says NOTHING about whether the bytes at that address are still the ones a
  *   residency entry was built from: `Buffer::edit()` / a texture refill move the object's revision without
@@ -131,7 +131,7 @@ class ContentDeclarations {
      * @brief Gets whether a live geometry row still feeds @p layout.
      *
      * @details
-     * - THE PIN OF A COMPILED HALF, together with `program@rev` (see api/ContentHalves): a half is kept while
+     * - THE PIN OF A COMPILED HALF, together with `program@rev` (see api/ProgramHalves): a half is kept while
      *   the program revision answers AND some live geometry still feeds the layout it was compiled for - so a
      *   layout whose last geometry left the tree retires its halves without any per-frame walk of the rows.
      *

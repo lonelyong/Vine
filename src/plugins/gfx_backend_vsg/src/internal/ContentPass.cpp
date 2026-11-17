@@ -22,8 +22,8 @@
 #include <vine/graphics/LightAbi.hpp>
 #include <vine/graphics/ShaderAbi.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
-#include <vine/backend_vsg/internal/ContentPush.hpp>
-#include <vine/backend_vsg/internal/ContentSets.hpp>
+#include <vine/backend_vsg/internal/PushRange.hpp>
+#include <vine/backend_vsg/internal/BindingSets.hpp>
 #include <vine/backend_vsg/internal/ContentStore.hpp>
 #include <vine/backend_vsg/internal/MaterialSlotCheck.hpp>
 #include <vine/backend_vsg/internal/ShadowBlock.hpp>
@@ -94,7 +94,7 @@ std::string describeMissingContentHalf(const core::CompiledPass& pass, const Con
             return text;
         }
         // The identity IS answerable, so the half itself was refused while it was being built - the one reason
-        // the tables cannot explain (see ContentHalves::refused).
+        // the tables cannot explain (see ProgramHalves::refused).
         return "the half for the first command's identity was REFUSED while it was built (its GLSL did not compile, or its "
                "vertex layout is one this backend cannot declare): program '" +
                (named.empty() ? std::string("<none>") : std::string(named)) + "'";
@@ -161,7 +161,7 @@ bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count
     const auto refuse = [&](const char* why) {
         const std::size_t index           = static_cast<std::size_t>(&entry - scope_.entries.data());
         // The caller's episode when it keeps one (a half's state spans passes and frames - see
-        // api/ContentHalves); the recorder's own otherwise, whose episode is this one ContentPass.
+        // api/ProgramHalves); the recorder's own otherwise, whose episode is this one ContentPass.
         vn::graphics::ReportOnce* episode = entry.reported;
         if (episode == nullptr && index < half_reported_.size()) {
             episode = &half_reported_[index];
@@ -173,7 +173,7 @@ bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count
     };
 
     // A push range is now FILLED, member by member, by every command that draws through this half (see
-    // api/ContentPush): the camera matrices the text names come from the pass' camera and the drawable's
+    // api/PushRange): the camera matrices the text names come from the pass' camera and the drawable's
     // model matrix, and the range's offset, size and stages are the declaration's. What is still refused is a
     // declaration this backend cannot fill at all - that is decided where the layout is built
     // (ContentPipeline::create refuses an unfillable member), so nothing is left to check here.
@@ -1248,7 +1248,7 @@ bool ContentPass::resolveCommand(const core::CompiledCommand&                   
         ++call.block_count;
     }
     // The pushes: one command per range the PROGRAM declares, filled from this pass' camera and THIS drawable's
-    // model matrix (api/ContentPush) - a declared push is re-written for every drawable, because `modelView`
+    // model matrix (api/PushRange) - a declared push is re-written for every drawable, because `modelView`
     // carries the drawable's model matrix, and an unwritten one would carry the last drawable's. The range's
     // offset, size and stages are the declaration's, so the words and the pipeline layout cannot disagree.
     for (const AbiPushRange& range : needs.program_entry->abi.pushes) {
@@ -1256,7 +1256,7 @@ bool ContentPass::resolveCommand(const core::CompiledCommand&                   
             reportRefused("the command's push range", "its program declares more push ranges than this pass writes");
             return false;
         }
-        if (!packContentPush(range, draw.camera, command.model, push_bytes_, unhandled_member_)) {
+        if (!packPushRange(range, draw.camera, command.model, push_bytes_, unhandled_member_)) {
             // A member the layer accepted but the packer cannot fill cannot happen (ContentPipeline refuses
             // those); it is reported rather than pushed as zeros because the bytes here ARE the shader's input.
             reportRefused("the command's push range",

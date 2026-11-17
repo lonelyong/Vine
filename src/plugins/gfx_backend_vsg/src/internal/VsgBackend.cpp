@@ -2933,7 +2933,7 @@ bool VsgBackend::adoptBlockStorage(std::shared_ptr<BlockStorage> storage)
         return false;
     }
     // The assembly first: it is what hands the storage to a record, and its cached sets bind the buffer
-    // (the replaced sets are parked through the session's own window - see ContentSets::repoint).
+    // (the replaced sets are parked through the session's own window - see BindingSets::repoint).
     if (d->assembly != nullptr) {
         d->assembly->repoint(*storage, d->clock.timeline(), d->retirement);
     }

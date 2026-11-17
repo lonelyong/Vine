@@ -53,11 +53,11 @@
 #include <vine/backend_vsg/internal/ContentAssembly.hpp>
 #include <vine/backend_vsg/internal/ContentDraw.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
-#include <vine/backend_vsg/internal/ContentHalves.hpp>
+#include <vine/backend_vsg/internal/ProgramHalves.hpp>
 #include <vine/backend_vsg/internal/ContentImages.hpp>
 #include <vine/backend_vsg/internal/ContentPass.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
-#include <vine/backend_vsg/internal/ContentSets.hpp>
+#include <vine/backend_vsg/internal/BindingSets.hpp>
 #include <vine/backend_vsg/internal/ContentSources.hpp>
 #include <vine/backend_vsg/internal/ContentStore.hpp>
 #include <vine/backend_vsg/internal/Device.hpp>
@@ -109,10 +109,10 @@ using vn::backend_vsg::ChannelFacts;
 using vn::backend_vsg::ContentAssembly;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentFacts;
-using vn::backend_vsg::ContentHalves;
+using vn::backend_vsg::ProgramHalves;
 using vn::backend_vsg::ContentPass;
 using vn::backend_vsg::ContentPipeline;
-using vn::backend_vsg::ContentSets;
+using vn::backend_vsg::BindingSets;
 using vn::backend_vsg::FactMiss;
 using vn::backend_vsg::GeometryFacts;
 using vn::backend_vsg::InputImages;
@@ -3231,7 +3231,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
                                   shadow_layer.get(),
                                   &shadow_draws }
     };
-    // The episode state belongs to the CALLER here, exactly as api/ContentHalves' entries carry it: it must
+    // The episode state belongs to the CALLER here, exactly as api/ProgramHalves' entries carry it: it must
     // survive the recorder, which the frame path builds per frame.
     ReportOnce                      plain_shadow_episode;
     const ContentPass::Scope::Entry unshadowed_halves[]{
@@ -5491,11 +5491,11 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     textured_variant.textured = true;
     const vn::backend_vsg::ProgramVariant plain_variant;
     // THE HALVES ARE PRODUCED the way a host produces them: the pass' tuples come from the store's tables
-    // and the layers are compiled from the entries they name (see api/ContentHalves) - no host loop, no
+    // and the layers are compiled from the entries they name (see api/ProgramHalves) - no host loop, no
     // layer built by hand. The entries are in first-seen order, so the plain command (collected first) is
     // served first.
     VariantPool   pool;
-    ContentHalves halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ProgramHalves halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
     const auto    entries = halves.halvesFor(frame.passes[0], facts, timeline, retirement);
     ASSERT_EQ(entries.size(), 2U) << "one program, two texts: the pass is served two halves";
     ASSERT_EQ(halves.halves(), 2U);
@@ -5712,7 +5712,7 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
     const ContentFacts&                    facts = store.tablesFor(frame, timeline);
 
     VariantPool   pool;
-    ContentHalves halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ProgramHalves halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
     const auto    entries = halves.halvesFor(frame.passes[0], facts, timeline, retirement);
     ASSERT_EQ(entries.size(), 1U) << "both drawables are the same variant: ONE half serves both";
     ASSERT_EQ(store.programEntries(), 1U) << "one text, one entry";
@@ -5793,7 +5793,7 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
 TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
 {
     // The same picture as the case above, but NOBODY BUILDS A SET BY HAND: the declared sets are PRODUCED
-    // (see api/ContentSets) - the images come from the drawables' own materials through MaterialImages, each
+    // (see api/BindingSets) - the images come from the drawables' own materials through MaterialImages, each
     // set is tagged with the texture revision it was resolved from, and the pass picks each drawable's own.
     // ONE half, TWO textures, and the only two sets that exist are the ones a steady frame needs.
     const vn::backend_vsg::DeviceResult created = vn::backend_vsg::createDevice();
@@ -5939,14 +5939,14 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
     const ContentFacts&                    facts = store.tablesFor(frame, timeline);
 
     VariantPool   pool;
-    ContentHalves halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    ProgramHalves halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
     const auto    entries = halves.halvesFor(frame.passes[0], facts, timeline, retirement);
     ASSERT_EQ(entries.size(), 1U) << "both drawables are the same variant: ONE half serves both";
     ASSERT_EQ(store.programEntries(), 1U) << "one text, one entry";
 
     // The produced sets: one per texture (one per image source), each tagged with the revision its images
     // were acquired at. The FIRST call builds them; a steady second call must build nothing.
-    vn::backend_vsg::ContentSets sets(created.device, *storage, *images);
+    vn::backend_vsg::BindingSets sets(created.device, *storage, *images);
     (void)sets.setsFor(frame.passes[0], facts, entries, {}, timeline, retirement);
     const auto candidates = sets.setsFor(frame.passes[0], facts, entries, {}, timeline, retirement);
     ASSERT_EQ(candidates.size(), 2U) << "one set per texture: the two drawables' images are different";
@@ -6001,13 +6001,13 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
 
     // The PIN: the program revision still answers, but no live material row declares either map. The program
     // half of the pin holds; the texture half does not, so both sets leave through the table's ordinary parking
-    // window (see api/ContentSets). No material-row walk was needed to answer that.
+    // window (see api/BindingSets). No material-row walk was needed to answer that.
     ContentFacts program_only;
     program_only.programs      = facts.programs;
     program_only.program_names = facts.program_names;
     program_only.program_order = facts.program_order;
     EXPECT_TRUE(sets.setsFor(frame.passes[0], program_only, entries, {}, timeline, retirement).empty());
-    sets.sweep(program_only, timeline, retirement); // the FRAME's step (see ContentSets::sweep)
+    sets.sweep(program_only, timeline, retirement); // the FRAME's step (see BindingSets::sweep)
     EXPECT_EQ(sets.sets(), 0U) << "a set whose maps no live row declares is not pinned by its program alone";
     EXPECT_EQ(retirement.pending(), 2U) << "both sets were parked, not freed in place";
 }

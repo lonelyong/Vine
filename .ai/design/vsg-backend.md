@@ -40,8 +40,8 @@
 2.6 **反向 Z + CW 正面**：Vulkan NDC z 就是 depth；世界 CCW 到 framebuffer 是 CW。
 2.7 **证据三重**：验证层 / 计数器 / 像素；三者缺一都不算“通过”。
 2.8 **物理边界**：SDK `graphics/` 不 include vsg；插件 `internal/` 才 include both。
-**插件内部还有一条更窄的缝**：内容记账的半边（`ContentFacts` / `ContentStore` / `ContentHalves` / `ContentSources` /
-`ContentPush`）不许出现 `::vsg::`；设备一律经适配层（`StreamUploads` / `StateCommands` /
+**插件内部还有一条更窄的缝**：内容记账的半边（`ContentFacts` / `ContentStore` / `ProgramHalves` / `ContentSources` /
+`PushRange`）不许出现 `::vsg::`；设备一律经适配层（`StreamUploads` / `StateCommands` /
 `ContentPipeline` / `ContentDraw`）触达。为什么：插件 23.5k 行里 59% 是内容记账，而这半边实测已经是 0 处 vsg
 引用——它干净，第二个后端才能直接复用；等它被 vsg 类型渗进去就只剩重写。可检查：
 `scripts/check_vsg_content_seam.cmake`，由 CTest 的 `content_seam` 用例执行（不靠记性）。满足 `G2` / `G9`；
@@ -314,7 +314,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | T2 | `scripts/vsg_rewrite_gate.sh`：0 VUID / 0 SYNC-HAZARD、相位行闭合、应用画面百分比。 |
 | T3 | `check_ai_docs.py --strict` / `check_doc_symbols.py` / `check_include_hygiene.py` / `check_export_annotations.py` / `check_diagnostic_formats.py` / `check_public_docs.py`。 |
 | T4 | 上传暂存保留可复用块（F16.2）：`UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack` —— 帧不 idle；存活块都是 `minimumStagingBufferSize` 的倍数（可复用块被保留），大于下限的一次性块被还掉；同一内容重画零上传；新流再上传、再回落到下限。`FrameUploadsTest.TheReportAnswersWhatThisFrameUploadedAndReleased` —— `FrameReport::uploads` 是本帧增量（首帧上传 >0、稳态全 0、buffer revision 一动重新上传一次、内容离开报释放）。`OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands`、`OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting` 不变。 |
-| T5 | 编辑成本与稳态（§2.10）：`VsgBackendTest.MeasureWhatEachKindOfEditCostsPerFrame` —— 打印 µs/帧与 `builds` / `uploads` / `created` 增量；断言稳态全 0、材质值 0 上传 0 编译、几何 revision ≥1 上传 0 编译、程序与拓扑变各 1 次编译。配套稳态钉：`ContentStoreTest.ASteadyFrameBuildsNothing`、`CoreMaterialArenaTest.ASteadyFrameWritesNothing`、`ContentHalves` / `ContentSets` 的 pin 用例。分配上限：`CoreAllocationGateTest.TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPass`（12 次/pass、约 33 次/一个被录制的三角）。这几个配方需要真实窗口，headless 机器上 `GTEST_SKIP`。 |
+| T5 | 编辑成本与稳态（§2.10）：`VsgBackendTest.MeasureWhatEachKindOfEditCostsPerFrame` —— 打印 µs/帧与 `builds` / `uploads` / `created` 增量；断言稳态全 0、材质值 0 上传 0 编译、几何 revision ≥1 上传 0 编译、程序与拓扑变各 1 次编译。配套稳态钉：`ContentStoreTest.ASteadyFrameBuildsNothing`、`CoreMaterialArenaTest.ASteadyFrameWritesNothing`、`ProgramHalves` / `BindingSets` 的 pin 用例。分配上限：`CoreAllocationGateTest.TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPass`（12 次/pass、约 33 次/一个被录制的三角）。这几个配方需要真实窗口，headless 机器上 `GTEST_SKIP`。 |
 
 ## 9. 状态与演进
 

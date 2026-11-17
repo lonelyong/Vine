@@ -16,7 +16,7 @@
  * @brief What one drawing call NEEDS: the identity a pipeline is compiled for, answered by exactly one builder.
  *
  * WHY IT EXISTS. Two layers need the same answer and must never disagree about it: the layer that BUILDS what a
- * frame needs ahead of time (api/ContentHalves, and the `prepare()` entry that will drive it) and the layer that
+ * frame needs ahead of time (api/ProgramHalves, and the `prepare()` entry that will drive it) and the layer that
  * RECORDS the frame (api/ContentPass). Before this type both spelled the tuple themselves - the geometry's
  * layout, the variant both facts imply, the program row for that variant, the counts the pipeline key carries -
  * and a frame that compiled one identity while the answer promised another is a pipeline compiled for a picture
@@ -161,7 +161,7 @@ struct DrawNeeds {
  *   while the content answer takes it from the plan.
  * - No table is consulted: which program KIND a full-screen call uses is a property of the call, and the
  *   compiled half is found by the caller (the scope). An offer of no inputs answers a call that reads no source,
- *   which is what a producer that only needs the half's shape (`api/ContentHalves`) hands in - the half's key
+ *   which is what a producer that only needs the half's shape (`api/ProgramHalves`) hands in - the half's key
  *   carries no counts.
  *
  * @param pass   The compiled pass the call belongs to (its colour attachment count).

@@ -619,8 +619,8 @@
   键集断言（录制侧）。
 - **变异验证 3/3 红**：`keyFor` 丢 topology / 丢 variant、`recordCommand` 里把 `record.key.compatibility`
   再覆盖掉。
-- **陷阱**：`ContentPassTest.cpp` / `ContentHalvesTest.cpp` 这类大文件**不要**整体 clang-format（会重排既有
-  `Scope::Entry{...}` 与 `using` 顺序）；只格式化新文件与 `ContentPass.*` / `ContentHalves.cpp`。
+- **陷阱**：`ContentPassTest.cpp` / `ContentHalvesTest.cpp` 这类大文件**不要**整体 clang-format（会重排既有 <!-- drift-ok -->
+  `Scope::Entry{...}` 与 `using` 顺序）；只格式化新文件与 `ContentPass.*` / `ContentHalves.cpp`。 <!-- drift-ok -->
 - `test_vsg` = 541 cases / 78 suites 全绿。下一步 = 3b：`RenderEngine::prepare()` 入口 +
   按答案预建（判据：预热后录制 `builds` 增量 0）。
 

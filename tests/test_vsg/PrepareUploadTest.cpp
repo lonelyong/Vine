@@ -80,7 +80,7 @@ constexpr int kTargetSize = 64;
 /// @brief The texel the texture is filled with, and therefore the colour the sampled pixel must be.
 constexpr std::array<int, 4> kTextureColour{ 0, 0, 255, 255 };
 
-/// @brief The content ABI's vertex stage: the camera push plus the per-draw block (see ShaderAbi / ContentPush).
+/// @brief The content ABI's vertex stage: the camera push plus the per-draw block (see ShaderAbi / PushRange).
 constexpr const char8_t* kVertexStage = u8R"(
 #version 450
 layout(location = 0) in vec3 in_position;

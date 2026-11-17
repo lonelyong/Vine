@@ -133,7 +133,7 @@ TEST(ProgramAbiTest, TheForwardProgramDeclaresTheContentAbiTheExistingBackendSer
 
     // One push block: the two camera matrices the vertex stage reads, which is the whole 128-byte budget.
     // The MEMBERS are facts too, and they are what the serving layer fills BY NAME: `projection` first, then
-    // `modelView`, each a mat4 (see api/ContentPush) - a push whose bytes were assembled by position would
+    // `modelView`, each a mat4 (see api/PushRange) - a push whose bytes were assembled by position would
     // swap the two the moment a program declared them in the other order.
     ASSERT_EQ(abi.pushes.size(), 1U);
     EXPECT_EQ(abi.pushes[0].offset, 0U);

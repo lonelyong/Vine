@@ -417,7 +417,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
 - **`internal/FrameHead`（S2 批 2b 前叫 `ContentPlan`）：一帧解析出的值**。每个绘制调用一个 `DrawPlan`：它命中的 half 的录制器（`ContentDraw*`）、已解析的
   `ContentDraw::Draw` / `ScreenDraw`（身份 + pipeline + 变体 id + 动态状态 + 几何 span 计数）、块绑定、推送块、顶点/索引绑定；
   每个 pass 一个槽，自带它的 `core::StateRegistry`（跨“解析/录制”两相的状态内存）。它是 vk `FrameHead::DrawPlan` 的 vsg 对形：
-  **值，且拥有它点名的对象**（全部 `ref_ptr`），生命周期上还有一个钉：`ContentHalves::pin()` 把 halves 的生产者租给计划，
+  **值，且拥有它点名的对象**（全部 `ref_ptr`），生命周期上还有一个钉：`ProgramHalves::pin()` 把 halves 的生产者租给计划，
   另一个驱动者的帧首清扫就不会释放这一帧还要用到的录制器（退役 park 不管“尚未提交的帧还没交上去”这件事）。
 - **解析半与录制半分开的两个 API**：`ContentDraw::plan(key)`（解析，取 layer 与 variant pool，在内容锁下）与
   `ContentDraw::record` / `recordScreen`（录制，只绑已解析的 pipeline，不碰 layer、不碰 pool）；`core::StateRegistry`
@@ -689,7 +689,7 @@ memcpy，所以填充在 `fillStreams` 返回时就已可证明完成——将�
   stream uploads、材质 arena、view/lights/shadow/draw 块与 pipeline 身份都解析成值，拒绝也在这里说）、**录制**
   （`FrameHead::record`，不取设备锁：只建 vsg 节点）、**提交**（`executor.record` + 清扫 + 会话提交，再取一次锁）。
   `ContentDraw::record` 绑的是已解析的 pipeline 与变体 id（`plan()` 是解析半），所以录制不碰 layer 也不碰 variant pool；
-  计划钉住 halves 的生产者（`ContentHalves::pin`），另一个驱动者的清扫不会释放这一帧还要用的录制器。
+  计划钉住 halves 的生产者（`ProgramHalves::pin`），另一个驱动者的清扫不会释放这一帧还要用的录制器。
   证据：`test_vsg` **562/562**（+`ARecordingFrameDoesNotStopAnotherDriversContent`：一帧被停在**录制**里时另一驱动者的
   整帧完成且被停帧的像素仍是自己的；变异：三相位改回 S8c-1 的单锁 ⇒ 5 s 超时红）、对拍 13/13、TSan vsg 子集 0 报告、
   ASan 新路径 PASS。`C3` 对 vsg 自这一步起成立。

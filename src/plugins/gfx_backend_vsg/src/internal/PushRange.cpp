@@ -1,4 +1,4 @@
-#include <vine/backend_vsg/internal/ContentPush.hpp>
+#include <vine/backend_vsg/internal/PushRange.hpp>
 
 #include <cstring>
 
@@ -29,33 +29,33 @@ void writeMatrix(const vn::math::Mat4d& matrix, std::byte* out) noexcept
 
 } // namespace
 
-ContentPushMember contentPushMemberOf(std::string_view member_name) noexcept
+PushRangeMember pushRangeMemberOf(std::string_view member_name) noexcept
 {
     // The names are the SDK's, not a choice of this file: the engine's programs write them
     // (`layout(push_constant) uniform PushConstants { mat4 projection; mat4 modelView; } pc;`) and the L1
     // pair's realization is defined in terms of them (see the file note).
     if (member_name == "projection") {
-        return ContentPushMember::Projection;
+        return PushRangeMember::Projection;
     }
     if (member_name == "modelView") {
-        return ContentPushMember::ModelView;
+        return PushRangeMember::ModelView;
     }
-    return ContentPushMember::Unknown;
+    return PushRangeMember::Unknown;
 }
 
-const char* contentPushMemberName(ContentPushMember member) noexcept
+const char* pushRangeMemberName(PushRangeMember member) noexcept
 {
     switch (member) {
-    case ContentPushMember::Projection: return "projection";
-    case ContentPushMember::ModelView: return "modelView";
-    case ContentPushMember::Unknown: break;
+    case PushRangeMember::Projection: return "projection";
+    case PushRangeMember::ModelView: return "modelView";
+    case PushRangeMember::Unknown: break;
     }
     return "?";
 }
 
 bool canFillPushMember(const AbiPushMember& member) noexcept
 {
-    return contentPushMemberOf(member.name) != ContentPushMember::Unknown && member.size == kMatrixBytes;
+    return pushRangeMemberOf(member.name) != PushRangeMember::Unknown && member.size == kMatrixBytes;
 }
 
 std::uint32_t pushStagesOf(std::uint32_t stages) noexcept
@@ -70,7 +70,7 @@ std::uint32_t pushStagesOf(std::uint32_t stages) noexcept
     return static_cast<std::uint32_t>(flags);
 }
 
-bool packContentPush(const AbiPushRange&         range,
+bool packPushRange(const AbiPushRange&         range,
                      const core::CameraSnapshot& camera,
                      const vn::math::Mat4d&      model,
                      std::vector<std::byte>&     out,
@@ -82,8 +82,8 @@ bool packContentPush(const AbiPushRange&         range,
     }
     out.assign(range.size, std::byte{ 0 });
     for (const AbiPushMember& member : range.members) {
-        const ContentPushMember value = contentPushMemberOf(member.name);
-        if (value == ContentPushMember::Unknown || member.size != kMatrixBytes || member.offset > range.size || member.size > range.size - member.offset) {
+        const PushRangeMember value = pushRangeMemberOf(member.name);
+        if (value == PushRangeMember::Unknown || member.size != kMatrixBytes || member.offset > range.size || member.size > range.size - member.offset) {
             unhandled = member.name;
             return false;
         }
@@ -92,7 +92,7 @@ bool packContentPush(const AbiPushRange&         range,
         if (!camera.present) {
             continue;
         }
-        writeMatrix(value == ContentPushMember::Projection ? foldToDeviceClip(camera.projection) : camera.view * model, out.data() + member.offset);
+        writeMatrix(value == PushRangeMember::Projection ? foldToDeviceClip(camera.projection) : camera.view * model, out.data() + member.offset);
     }
     return true;
 }

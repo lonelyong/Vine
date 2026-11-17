@@ -173,7 +173,7 @@ class ResourceTable {
      *
      * @details
      * - THE READ DOOR, for a caller whose whole table needs work rather than one lookup: repointing every cached
-     *   value at a replacement parent (see `ContentSets::repoint`) or adding up a report.
+     *   value at a replacement parent (see `BindingSets::repoint`) or adding up a report.
      * - VALUES ONLY. The key is what the table was ordered by, so a door that handed it out would be a door a caller
      *   could use to change an entry's identity mid-walk - the one edit a map cannot survive. A caller that needs the
      *   identity of what it is looking at is doing a lookup, which this table already answers.
@@ -253,7 +253,7 @@ class ResourceTable {
  *   park and nothing for @ref ResourceTable to hold - a producer remembers the key only so it does not retry a build
  *   that would fail the same way. That memory is the exact mirror of the table's own entries, which is why it leaves
  *   by the exact mirror of the table's rule: once the same pin predicate says the key is no longer wanted.
- * - WHY IT IS HERE AND NOT IN EACH PRODUCER. Two producers (api/ContentHalves, api/ContentSets) keep such a set, and
+ * - WHY IT IS HERE AND NOT IN EACH PRODUCER. Two producers (api/ProgramHalves, api/BindingSets) keep such a set, and
  *   "walk it with the pin predicate" written twice is how one of them ends up forgetting a revision the other keeps.
  *
  * @tparam Key  The key type the producer builds by.

@@ -68,12 +68,12 @@ executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟�
 
 **半片与集合**：`DrawNeeds` 是**唯一的键构造者** —— `drawNeeds(pass, command, facts)`（内容绘制）与
 `drawNeeds(pass, draw, inputs)`（全屏调用）算出一次绘制需要的身份（程序@revision、布局、variant、topology、
-附件形状、采样计数），`DrawNeeds::keyFor(compatibility)` 把它变成 `PipelineKey`。`ContentHalves` 用它建半片、
+附件形状、采样计数），`DrawNeeds::keyFor(compatibility)` 把它变成 `PipelineKey`。`ProgramHalves` 用它建半片、
 `ContentPass` 用它取键，两边不可能各说一套。`ContentPipeline` 负责编译与查找（`VariantPool` 是变体池），
 `ContentDraw` 把解析过的绘制录成命令图（“两个仅当”：管线只在变体变了时绑、动态状态只在值变了时发）。
 
 **程序侧**：`ProgramAbi` 把 program 的**文本**读成事实（set/binding、种类、阶段、std140 尺寸、push 范围），
-`ProgramVariant` 把"哪几个 define 生效"算成一个数（进管线键），`ContentPush` 按名字填 push 成员。
+`ProgramVariant` 把"哪几个 define 生效"算成一个数（进管线键），`PushRange` 按名字填 push 成员。
 
 ## 4. 执行段（`VsgExecutor` + 会话）
 
@@ -93,7 +93,7 @@ executeFrame(value) ──▶  Session.beginFrame（取图、推进槽位时钟�
 | 顶点/索引流 | `StreamUploads::acquireVertex/acquireIndex` → vsg 的 transfer 步（`TRANSFER_BEFORE_RECORD_TRAVERSAL`）——绑定对象自持数据，别名即共享 |
 | 材质贴图 / 立方体 / 白图 | `MaterialImages`（同一路径；**1×1 白**也走上传，不是清屏节点） |
 | 每帧块（视图/draw/材质） | `BlockStorage`（ring + arena）写字节；descriptor 的动态偏移指到当帧的段 |
-| 光照 / 阴影 / push | 每次变化一次：`LightAbi.hpp` 的 `packLightBlock` / `ShadowBlock` / `ContentPush`（push 必须紧贴绘制、放进 `Commands`） |
+| 光照 / 阴影 / push | 每次变化一次：`LightAbi.hpp` 的 `packLightBlock` / `ShadowBlock` / `PushRange`（push 必须紧贴绘制、放进 `Commands`） |
 
 ## 6. L0/L1：名字即绑定
 
