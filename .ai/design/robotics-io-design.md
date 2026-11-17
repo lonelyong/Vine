@@ -276,7 +276,7 @@
 
 ### 9.1 当前状态
 
-阶段一（VFS 基础设施）、阶段二（场景序列化）、阶段三（打包）均已落地；`tests/test_robotics_io` 全通过。
+VFS 基础设施、场景序列化与打包都已实现；`tests/test_robotics_io` 全通过。
 
 ### 9.2 已知缺口 / 待办
 
@@ -286,7 +286,7 @@
 
 ### 9.3 兼容性 / 迁移
 
-旧 `IMemoryVfs`/`ZipMemoryVfs`/`ZipVfs::openZip` 已删除；新代码用 `vn::io::Vfs` + `ZipArchive`。
+没有 `IMemoryVfs`/`ZipMemoryVfs`/`ZipVfs::openZip`；新代码用 `vn::io::Vfs` + `ZipArchive`。
 `XmlIOBase` 无状态，实例可复用。
 
 ## 10. 参考

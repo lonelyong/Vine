@@ -257,8 +257,8 @@ timer 线程上的一个动作先唤醒同伴、后恢复自己；同伴赢得�
 
 ### 9.3 兼容性 / 迁移
 
-`SyncWait.hpp` / `syncWait()` 已删除，调用点改 `x.result()`； <!-- drift-ok -->
-`appfw::async::sleep()` 已删除，改用 `vn::async::sleepFor()`。新代码按 §4 的头文件写。
+没有 `SyncWait.hpp` / `syncWait()`，调用点改 `x.result()`； <!-- drift-ok -->
+没有 `appfw::async::sleep()`，改用 `vn::async::sleepFor()`。新代码按 §4  的头文件写。
 
 ## 10. 参考
 
