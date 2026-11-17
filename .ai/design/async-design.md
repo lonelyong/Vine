@@ -1,280 +1,280 @@
-# async 模块设计（`src/base/async`）
+# the async module (`src/base/async`)
 
-> **状态**：现行
-> **最后核对**：2026-10-23
-> **范围**：纯 header-only 协程运行时的生命周期、组合子、取消与阻塞驱动。
-> **权威来源**：`src/base/async/sdk/vine/async/**`、`tests/test_async`。
-> **待办**：`../backlog/async.md`
+> **Status**: current
+> **Last verified**: 2026-10-23
+> **Scope**: the lifetime, combinators, cancellation and blocking drive of a header-only coroutine runtime.
+> **Sources**: `src/base/async/sdk/vine/async/**`, `tests/test_async`.
+> **Backlog**: `../backlog/async.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-`vn::async` 是纯 header-only 协程运行时（`vn::Async` 是 INTERFACE 目标，只依赖 `vn::Global` + `vn::Core`），
-约 28 个头文件、6.9k 行。它要提供任务、组合子、同步原语和调度器，同时把“一个完成唤醒多个等待者”这类
-生命周期窗口写死成不可违反的规则。
+`vn::async` is a header-only coroutine runtime (`vn::Async` is an INTERFACE target depending only on `vn::Global` + `vn::Core`),
+about 28 headers and 6.9k lines. It provides tasks, combinators, synchronisation primitives and schedulers, while writing the
+lifetime windows such as “one completion wakes several waiters” down as rules that cannot be violated.
 
-### 1.2 目标
+### 1.2 Goals
 
-- `Task<T>`（惰性、单消费者）、`SharedTask<T>`（可复制、结果缓存）、`DetachedTask`（eager、自毁）、`Scope`。
-- 组合子：`whenAll` / `whenAny` / `withTimeout` / `retry` / `transform` / `andThen` / `finally`。
-- 同步原语：`AsyncEvent`、`AsyncLatch`、`AsyncMutex`、`AsyncConditionVariable`、`AsyncSemaphore`、
+- `Task<T>` (lazy, single consumer), `SharedTask<T>` (copyable, result cached), `DetachedTask` (eager, self-destroying), `Scope`.
+- Combinators: `whenAll` / `whenAny` / `withTimeout` / `retry` / `transform` / `andThen` / `finally`.
+- Synchronisation primitives: `AsyncEvent`, `AsyncLatch`, `AsyncMutex`, `AsyncConditionVariable`, `AsyncSemaphore`,
   `AsyncReaderWriterLock`、`AsyncQueue`、`TaskCompletionSource`、`sleepFor`、`yield`。
-- 调度：`InlineScheduler`、`resumeOn`、`scheduleOn`、`ThreadPoolScheduler`。
+- Scheduling: `InlineScheduler`, `resumeOn`, `scheduleOn`, `ThreadPoolScheduler`.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不拥有线程池（`vn::ThreadPool` 在 base/core）、不拥有取消令牌（`vn::CancellationToken` =
-  `std::stop_token`）、不拥有 Qt 事件循环调度（`appfw::async::Scheduler`）。
-- 不提供隐式全局泵；阻塞驱动由调用方传入 pump。
-- 不把 `Task<T&>`、混合 void 的变参 `whenAll` 做成核心形状。
+- It owns no thread pool (`vn::ThreadPool` lives in base/core), no cancellation token (`vn::CancellationToken` =
+  `std::stop_token`) and no Qt event-loop scheduling (`appfw::async::Scheduler`).
+- No implicit global pump; the caller passes the pump to the blocking drive.
+- `Task<T&>` and a variadic `whenAll` that mixes void are not made core shapes.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-协程帧的生命周期只有一条铁律：**一次完成唤醒多个等待者时，每轮锁内只出队一个、锁外 resume**；
-其余设计（对称转移、两道阻塞门、显式取消策略）都是为这条铁律服务的。
+A coroutine frame's lifetime has one iron rule: **when one completion wakes several waiters, take one waiter out of the queue per round under the lock and resume it outside the lock**;
+every other design decision (symmetric transfer, the two blocking gates, the explicit cancellation policy) serves that rule.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 生命周期契约
+### 2.1 The lifetime contract
 
-- 挂起中的协程**不能**在它 awaited 的对象正在完成它的过程中被另一个线程销毁。
-- **放弃等待是支持的**：销毁等待中的协程前，awaiter 在析构里自我注销；库侧保证“已销毁的等待者不会被 resume”。
-- 每个 awaiter 自带注销逻辑（`AsyncEvent::Awaiter::queued_`、`CvWaiter::queued_`、
+- A suspended coroutine **cannot** be destroyed by another thread while the object it awaits is completing it.
+- **Abandoning a wait is supported**: before destroying a waiting coroutine, the awaiter unregisters itself in its destructor; the library guarantees that “a destroyed waiter is never resumed”.
+- Every awaiter carries its own unregister logic (`AsyncEvent::Awaiter::queued_`, `CvWaiter::queued_`,
   `AsyncMutex::LockAwaiter::waiter_`、`TcsAwaiter::handle_`、`SharedTaskAwaiter::handle_`、
-  `SleepAwaiter::scheduled_` 等）。
+  `SleepAwaiter::scheduled_` and so on).
 
-### 2.2 一次完成唤醒多个等待者：每轮锁内只出队一个，锁外 resume
+### 2.2 One completion, several waiters: one out of the queue per round under the lock, resume outside
 
-被 resume 的等待者可能同步销毁它的兄弟（`whenAny` 赢家完成时销毁仍挂起的落败者），也可能重新登记新的等待者。
-因此：
+A resumed waiter may synchronously destroy its siblings (when the `whenAny` winner completes it destroys the still-suspended losers), and it may register a new waiter.
+Therefore:
 
-- 不能跨 `resume()` 持有任何 waiter 指针/handle；
-- 不能“先把整个链表换出来再逐个 resume”——换出去之后兄弟再也无法自我注销，循环会 resume 已释放的帧
-  （`SharedTask` 的缺陷就是这一条）；
-- 边界判定用**世代号**（`AsyncEvent::set_epoch_`），不用“队尾指针”——被销毁的 waiter 可能是边界节点。
+- no waiter pointer / handle may be held across `resume()`;
+- you cannot “swap the whole list out and then resume one by one” — after the swap a sibling can no longer unregister itself, and the loop would resume a freed frame
+  (the `SharedTask` defect was exactly this);
+- the boundary is decided by a **generation number** (`AsyncEvent::set_epoch_`), not by a “tail pointer” — a destroyed waiter can be the boundary node.
 
-遵守这条的：`AsyncEvent::set`、`AsyncConditionVariable::notify_one/notify_all`、`AsyncSemaphore::release`、
+Obeying this: `AsyncEvent::set`, `AsyncConditionVariable::notify_one/notify_all`, `AsyncSemaphore::release`,
 `AsyncReaderWriterLock::resume`、`TaskCompletionSource::resumeWaitersOneByOne`、
 `TimerService::run`、`SharedTask::runShared`。
 
-`AsyncQueue` 更进一步：它的唤醒者自己可能就是被销毁的对象（`pop()` 唤醒的生产者可以赢得 `whenAny`，
-随后的 `Destroy` 会销毁队列协程）。只把唤醒投递给 timer 线程不够——唤醒者仍在自己的线程上执行，
-`Destroy` 会销毁一个正在运行的帧。因此队列的交接是**先挂起自己**（`detail::WakePeerAndContinue`）：
-timer 线程上的一个动作先唤醒同伴、后恢复自己；同伴赢得组合时，被销毁的是已挂起的队列帧。
-被唤醒者醒来后重新检查条件，不满足就重新登记，所以唤醒允许是“虚假”的。
-代价是 `pop()` / `push()` 要等同伴先跑完才返回；`tryPush` / `tryPop` / `close` 无法自我挂起，
-只能投递唤醒。
+`AsyncQueue` goes further: its waker may itself be the object that gets destroyed (a producer woken by `pop()` can win a `whenAny`,
+and the following `Destroy` destroys the queue coroutine). Posting the wake to the timer thread is not enough — the waker still runs on its own thread,
+and `Destroy` would destroy a frame that is running. So the queue's handoff is **suspend yourself first** (`detail::WakePeerAndContinue`):
+an action on the timer thread wakes the peer first and resumes itself afterwards; when the peer wins the combinator, what gets destroyed is the already suspended queue frame.
+The woken side re-checks its condition on waking and registers again when it does not hold, so a wake is allowed to be “spurious”.
+The cost is that `pop()` / `push()` return only after the peer has run; `tryPush` / `tryPop` / `close` cannot suspend themselves
+and can only post a wake.
 
-### 2.3 对称转移
+### 2.3 Symmetric transfer
 
-`Task` 的 awaiter、`TaskFinalAwaiter`、`WhenChild::FinalAwaiter`、`WhenAnyChild::FinalAwaiter`、
-`YieldAwaiter::await_suspend` 都 **return handle** 而不是 `h.resume()`：内联 resume 会让每层 await 在机器栈上
-多留一帧（实测 `yield` 336 B/次 @-O0，20 万次即爆栈）。新增 awaiter 时先问“这里能不能 return handle”。
+The `Task` awaiter, `TaskFinalAwaiter`, `WhenChild::FinalAwaiter`, `WhenAnyChild::FinalAwaiter` and
+`YieldAwaiter::await_suspend` all **return handle** instead of `h.resume()`: an inline resume leaves one more frame on the machine stack for every await level
+  (measured 336 B per `yield` at -O0, so 200k of them overflow the stack). A new awaiter first asks “can this return handle instead?”.
 
-### 2.4 阻塞取结果：两道门
+### 2.4 Blocking for the result: two gates
 
-- `Task::result()`：在调用线程上把 body 驱动完（惰性照旧）；**只阻塞，不派发**。对应 C# `task.Result`，
-  只在“该线程上没有别人需要转循环”时安全（工具、测试、headless）。
-- `runToCompletion(task, pump)`：同一条驱动，每片（默认 200 µs）调一次 `pump()`。appfw 的门传
-  `MainThreadDispatcher::deliverPostedCalls()`；async 不装“全局泵”。
-- 钉子：挂起时 pump 确实被调用且只一次；不挂起的任务 pump 一次都不该发生；`result()` 只能读一次，
-  再读一次 `throw std::logic_error`。
+- `Task::result()`: drives the body to completion on the calling thread (lazy as before); **it blocks, it does not dispatch**. The counterpart of C#'s `task.Result`,
+  safe only when “nobody on that thread needs to turn the loop” (tools, tests, headless).
+- `runToCompletion(task, pump)`: the same drive, calling `pump()` once per slice (200 µs by default). appfw's gate passes
+  `MainThreadDispatcher::deliverPostedCalls()`; async installs no “global pump”.
+- Pinned by tests: the pump is called exactly once when the task suspends; a task that never suspends must not pump at all; `result()` may be read once,
+  and a second read throws `std::logic_error`.
 
-### 2.5 与其它协程库的差异
+### 2.5 Differences from other coroutine libraries
 
-| 主题 | 本模块 | 原因 |
+| Topic | This module | Why |
 | --- | --- | --- |
-| `Task<T&>` | 不支持，`StorableValue` 在模板边界拒绕 | 结果用 `std::optional` 缓存；支持引用要改三处，收益低。 |
-| `Awaitable` 概念 | 额外校验 `await_ready` 可转 bool、`await_suspend` 只能是 `void`/`bool`/handle 值 | 只有“像 co_await 一样查找”的概念才能接受本模块自己的 awaitable。 |
-| `Generator` 的 ranges 契约 | 补齐 `iterator_concept` + 后置 `++` + `operator->` | C++20 ranges 只要求后置 `++`，缺它 `weakly_incrementable` 失败。 |
-| 取消模型 | 显式 `CancellationToken` + `CancelPolicy`（`StopAndWait` / `Destroy`） | P2300 环境 token 与 C# 显式令牌两个阵营都提供；默认值按适用面选。 |
-| 无等待者时的 notify | `AsyncConditionVariable` 用粘性标记保留 | “释放 AsyncMutex + 登记等待”无法原子，丢掉会死锁。 |
+| `Task<T&>` | not supported; `StorableValue` refuses to wrap it at the template boundary | the result is cached in an `std::optional`; supporting a reference would change three places for little gain. |
+| the `Awaitable` concept | additionally checks that `await_ready` converts to bool and that `await_suspend` is only `void`/`bool`/a handle value | only a concept that looks up “like co_await” can accept this module's own awaitables. |
+| `Generator`'s ranges contract | adds `iterator_concept` + postfix `++` + `operator->` | C++20 ranges only requires postfix `++`, and without it `weakly_incrementable` fails. |
+| the cancellation model | an explicit `CancellationToken` + `CancelPolicy` (`StopAndWait` / `Destroy`) | both camps — P2300's environment token and C#'s explicit token — are served; the default follows the wider use. |
+| a notify with no waiter | `AsyncConditionVariable` keeps it with a sticky flag | “release the AsyncMutex + register a wait” cannot be atomic, and dropping it deadlocks. |
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 任务类型 | `Task` / `SharedTask` / `DetachedTask` / `Scope` | 已落地 |
-| F2 | 组合子 | `whenAll` / `whenAny` / `withTimeout` / `retry` / `transform` / `andThen` / `finally` | 已落地 |
-| F3 | 同步原语 | event/latch/mutex/cv/semaphore/rwlock/queue/TCS/sleep/yield | 已落地 |
-| F4 | 调度与生成器 | `InlineScheduler` / `resumeOn` / `scheduleOn` / `ThreadPoolScheduler` / `Generator` | 已落地 |
-| F5 | 取消策略 | `CancelPolicy::StopAndWait` / `Destroy` | 已落地 |
-| F6 | 阻塞驱动 | `Task::result()` / `runToCompletion(task, pump)` | 已落地 |
+| F1 | task types | `Task` / `SharedTask` / `DetachedTask` / `Scope` | landed |
+| F2 | combinators | `whenAll` / `whenAny` / `withTimeout` / `retry` / `transform` / `andThen` / `finally` | landed |
+| F3 | synchronisation primitives | event/latch/mutex/cv/semaphore/rwlock/queue/TCS/sleep/yield | landed |
+| F4 | scheduling and generator | `InlineScheduler` / `resumeOn` / `scheduleOn` / `ThreadPoolScheduler` / `Generator` | landed |
+| F5 | cancellation policy | `CancelPolicy::StopAndWait` / `Destroy` | landed |
+| F6 | blocking drive | `Task::result()` / `runToCompletion(task, pump)` | landed |
 
-### 3.1.1 F1 任务类型
+### 3.1.1 F1 task types
 
-- **行为**：`Task<T>` 惰性、单消费者；`SharedTask<T>` 可复制、结果缓存；`DetachedTask` eager、自毁；
-  `Scope` 管动态子任务。
-- **约束**（C1）：`Task` 必须被 `co_await` 或 `result()` 驱动；`SharedTask` 的结果只能缓存一次。
-- **要求**（R1）：`Task<T&>` 不支持；需要引用时返回指针/`std::reference_wrapper`。
-- **验收**（T1）：`test_async` 的 Task/SharedTask/Scope 用例。
-- **注意**（N1）：`Scope` 析构不等待；未 `detach()` 时只请求孩子停止，仍需 `co_await join()` 才能确认孩子已完成。
+- **Behaviour**: `Task<T>` is lazy and single-consumer; `SharedTask<T>` is copyable with a cached result; `DetachedTask` is eager and self-destroying;
+  `Scope` owns dynamic child tasks.
+- **Constraints** (C1): a `Task` must be driven by `co_await` or `result()`; a `SharedTask` result is cached once only.
+- **Requirements** (R1): `Task<T&>` is not supported; return a pointer / `std::reference_wrapper` when a reference is wanted.
+- **Acceptance** (T1): the Task/SharedTask/Scope cases in `test_async`.
+- **Caveats** (N1): a `Scope` destructor does not wait; without `detach()` it only asks the children to stop, and a `co_await join()` is still needed to confirm they finished.
 
-### 3.1.2 F2 组合子
+### 3.1.2 F2 combinators
 
-- **行为**：`whenAll` 等全部，`whenAny` 等第一个，`withTimeout` 超时取消，`retry`/`transform`/`andThen`/`finally`
-  组合结果。
-- **约束**（C2）：`whenAll` 默认 `StopAndWait`；`whenAny` / `withTimeout` / `Scope::join` 默认 `Destroy`。
-- **要求**（R2）：不读环境令牌的孩子会拖住 `StopAndWait`；要“绝不挂住”显式选 `Destroy`。
-- **验收**（T2）：`TaskTest.WhenAllStopAndWaitIsHeldByAChildThatIgnoresTheToken` 等。
-- **注意**（N2）：`Destroy` 不做“先请求再销毁”；请求只会在几微秒后销毁帧时触发自己的 `stop_callback`。
+- **Behaviour**: `whenAll` waits for all, `whenAny` for the first, `withTimeout` cancels on timeout, and `retry`/`transform`/`andThen`/`finally`
+  compose results.
+- **Constraints** (C2): `whenAll` defaults to `StopAndWait`; `whenAny` / `withTimeout` / `Scope::join` default to `Destroy`.
+- **Requirements** (R2): a child that does not read the environment token holds `StopAndWait` up; pick `Destroy` explicitly when “never hang” matters.
+- **Acceptance** (T2): `TaskTest.WhenAllStopAndWaitIsHeldByAChildThatIgnoresTheToken` and others.
+- **Caveats** (N2): `Destroy` does not “request, then destroy”; a request only fires its own `stop_callback` when the frame is destroyed a few microseconds later.
 
-### 3.1.3 F3 同步原语
+### 3.1.3 F3 synchronisation primitives
 
-- **行为**：event/latch/mutex/cv/semaphore/rwlock/queue/TCS/sleep/yield。
-- **约束**（C3）：一次完成唤醒多个等待者必须按 §2.2；析构里自我注销且 `noexcept`。
-- **要求**（R3）：不在锁内 resume；不在取消者的栈上 resume；跨线程唤醒走 `detail::deferWake()`；
-  `AsyncQueue` 的 `push`/`pop` 交接时先挂起自己（`WakePeerAndContinue`），`tryPush`/`tryPop`/`close`
-  只投递唤醒，因此唤醒是可能虚假的、等待者必须重新检查条件。
-- **验收**（T3）：`test_async` 的各个原语用例 + ASan/TSan。
-- **注意**（N3）：`AsyncConditionVariable` 的粘性标记是刻意偏离，不要“修”回丢失唤醒。
+- **Behaviour**: event/latch/mutex/cv/semaphore/rwlock/queue/TCS/sleep/yield.
+- **Constraints** (C3): one completion waking several waiters must follow §2.2; a destructor unregisters itself and is `noexcept`.
+- **Requirements** (R3): no resume under a lock; no resume on the canceller's stack; a cross-thread wake goes through `detail::deferWake()`;
+  `AsyncQueue`'s `push`/`pop` suspend themselves before handing off (`WakePeerAndContinue`), while `tryPush`/`tryPop`/`close`
+  only post a wake, so a wake may be spurious and a waiter must re-check its condition.
+- **Acceptance** (T3): each primitive's cases in `test_async`, plus ASan/TSan.
+- **Caveats** (N3): `AsyncConditionVariable`'s sticky flag is a deliberate deviation; do not “fix” it back into a lost wake.
 
-### 3.1.4 F4 调度与生成器
+### 3.1.4 F4 scheduling and the generator
 
-- **行为**：`InlineScheduler` / `resumeOn` / `scheduleOn` / `ThreadPoolScheduler`；`Generator<T>` 同步单遍生成器。
-- **约束**（C4）：`Generator` 不是 awaitable；`ThreadPoolScheduler` 的 `run` 对应 C# `Task.Run`。
-- **要求**（R4）：调度器只提供 `schedule()`/`resumeOn`，不替调用方决定线程策略。
-- **验收**（T4）：`test_async` 的 Scheduler/Generator 用例。
-- **注意**（N4）：`sleepFor` 的定时线程恢复与最终检查之间的窗口归调用方契约。
+- **Behaviour**: `InlineScheduler` / `resumeOn` / `scheduleOn` / `ThreadPoolScheduler`; `Generator<T>` is a synchronous single-pass generator.
+- **Constraints** (C4): `Generator` is not awaitable; `ThreadPoolScheduler`'s `run` corresponds to C#'s `Task.Run`.
+- **Requirements** (R4): a scheduler offers only `schedule()`/`resumeOn` and does not decide the thread policy for the caller.
+- **Acceptance** (T4): the Scheduler/Generator cases in `test_async`.
+- **Caveats** (N4): the window between `sleepFor`'s timer-thread resume and the final check is the caller's contract.
 
-### 3.1.5 F5 取消策略
+### 3.1.5 F5 cancellation policy
 
-- **行为**：外部取消触发 `CancelPolicy`；`StopAndWait` 先 `request_stop()` 再等最后一个孩子收尾；
-  `Destroy` 直接销毁。
-- **约束**（C5）：取消是**请求**，由操作上报；`Destroy` 不做“先请求再销毁”。
-- **要求**（R5）：注入的令牌只在被组合的那一层可见；包装层不转发就切断通道。
-- **验收**（T5）：`TaskTest.WhenAllCancellation`、`ScopeTest.JoinCancellation…`。
-- **注意**（N5）：`std::stop_callback` 内不直接 resume；统一走 `TimerService::postWake()` + `deferWake()`。
+- **Behaviour**: an external cancel triggers `CancelPolicy`; `StopAndWait` calls `request_stop()` first and then waits for the last child to finish;
+  `Destroy` destroys directly.
+- **Constraints** (C5): cancellation is a **request** that the operation reports; `Destroy` does not “request, then destroy”.
+- **Requirements** (R5): an injected token is visible only at the layer that was combined; a wrapper that does not forward it cuts the channel.
+- **Acceptance** (T5): `TaskTest.WhenAllCancellation`, `ScopeTest.JoinCancellation…`.
+- **Caveats** (N5): no direct resume inside `std::stop_callback`; everything goes through `TimerService::postWake()` + `deferWake()`.
 
-### 3.1.6 F6 阻塞驱动
+### 3.1.6 F6 blocking drive
 
-- **行为**：`Task::result()` 同步驱动；`runToCompletion(task, pump)` 每片调 pump。
-- **约束**（C6）：`result()` 只阻塞、不派发；`runToCompletion` 的 pump 由调用方给。
-- **要求**（R6）：应用线程上阻塞必须用 `runToCompletion` + `deliverPostedCalls()`，不能用 `result()`。
-- **验收**（T6）：`test_async` 的 `result()`/`runToCompletion` 用例；appfw 的同步插件门。
-- **注意**（N6）：`Task::result()` 只能读一次，再读 `throw std::logic_error`。
+- **Behaviour**: `Task::result()` drives synchronously; `runToCompletion(task, pump)` calls the pump per slice.
+- **Constraints** (C6): `result()` blocks only and does not dispatch; `runToCompletion` takes the pump from the caller.
+- **Requirements** (R6): blocking on an application thread must use `runToCompletion` + `deliverPostedCalls()`, never `result()`.
+- **Acceptance** (T6): the `result()`/`runToCompletion` cases in `test_async`; appfw's synchronous plugin gate.
+- **Caveats** (N6): `Task::result()` may be read once; a second read throws `std::logic_error`.
 
-## 4. 公开接口
+## 4. Public Interface
 
-### 4.1 头文件与模块
+### 4.1 Headers and modules
 
-| 接口/头 | 契约 | 备注 |
+| Interface / header | Contract | Notes |
 | --- | --- | --- |
-| `Task.hpp` / `SharedTask.hpp` / `DetachedTask.hpp` / `Scope.hpp` | 任务类型 | 见 F1 |
-| `When.hpp` / `WithTimeout.hpp` / `Retry.hpp` / `TaskCombinators.hpp` / `Finally.hpp` | 组合子 | 见 F2 |
-| `AsyncEvent.hpp` / `AsyncLatch.hpp` / `AsyncMutex.hpp` / `AsyncConditionVariable.hpp` / `AsyncSemaphore.hpp` / `AsyncReaderWriterLock.hpp` / `AsyncQueue.hpp` / `TaskCompletionSource.hpp` | 同步原语 | 见 F3 |
-| `Scheduler.hpp` / `ThreadPoolScheduler.hpp` / `Generator.hpp` / `Concepts.hpp` | 调度/生成器/概念 | 见 F4 |
-| `StopToken.hpp` / `CancelPolicy` | 取消 | 见 F5 |
+| `Task.hpp` / `SharedTask.hpp` / `DetachedTask.hpp` / `Scope.hpp` | task types | see F1 |
+| `When.hpp` / `WithTimeout.hpp` / `Retry.hpp` / `TaskCombinators.hpp` / `Finally.hpp` | combinators | see F2 |
+| `AsyncEvent.hpp` / `AsyncLatch.hpp` / `AsyncMutex.hpp` / `AsyncConditionVariable.hpp` / `AsyncSemaphore.hpp` / `AsyncReaderWriterLock.hpp` / `AsyncQueue.hpp` / `TaskCompletionSource.hpp` | synchronisation primitives | see F3 |
+| `Scheduler.hpp` / `ThreadPoolScheduler.hpp` / `Generator.hpp` / `Concepts.hpp` | scheduling / generator / concepts | see F4 |
+| `StopToken.hpp` / `CancelPolicy` | cancellation | see F5 |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | `Task` 必须被驱动；`SharedTask` 结果只缓存一次；`Task<T&>` 不支持。 |
-| C2 | `whenAll` 默认 `StopAndWait`；`whenAny`/`withTimeout`/`Scope::join` 默认 `Destroy`。 |
-| C3 | 一次完成唤醒多个等待者：每轮锁内只出队一个，锁外 resume。 |
-| C4 | 不在锁内 resume；不在取消者栈上 resume；跨线程唤醒走 `deferWake()`。 |
-| C5 | 取消是请求；`Destroy` 不做“先请求再销毁”。 |
-| C6 | `result()` 只阻塞不派发；`runToCompletion` 的 pump 由调用方给。 |
+| C1 | a `Task` must be driven; a `SharedTask` result is cached once; `Task<T&>` is not supported. |
+| C2 | `whenAll` defaults to `StopAndWait`; `whenAny`/`withTimeout`/`Scope::join` default to `Destroy`. |
+| C3 | one completion waking several waiters: one out of the queue per round under the lock, resume outside. |
+| C4 | no resume under a lock; no resume on the canceller's stack; a cross-thread wake goes through `deferWake()`. |
+| C5 | cancellation is a request; `Destroy` does not “request, then destroy”. |
+| C6 | `result()` blocks without dispatching; `runToCompletion` takes the pump from the caller. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | 每个 awaiter 自带注销逻辑，析构 noexcept；已销毁的等待者不会被 resume。 |
-| R2 | 能对称转移就 return handle，不内联 resume。 |
-| R3 | 应用的阻塞门用 `runToCompletion` + `deliverPostedCalls()`。 |
-| R4 | 注入的取消令牌只对被组合的那一层可见。 |
-| R5 | `Scope` 析构不等待；未 `detach()` 时请求孩子停止，显式 `join()` 才等待孩子完成。 |
-| R6 | 不给 `Task` 加隐式派发，不装全局泵。 |
+| R1 | every awaiter carries its own unregister logic and its destructor is noexcept; a destroyed waiter is never resumed. |
+| R2 | return handle wherever symmetric transfer is possible, never an inline resume. |
+| R3 | an application's blocking gate uses `runToCompletion` + `deliverPostedCalls()`. |
+| R4 | an injected cancellation token is visible only at the layer that was combined. |
+| R5 | a `Scope` destructor does not wait; without `detach()` it asks the children to stop, and an explicit `join()` is what waits. |
+| R6 | no implicit dispatch on `Task`, no global pump. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | 协程帧不能在完成线程换出等待者链表与逐个 resume 之间被另一线程销毁。 |
-| N2 | `AsyncEvent` 的边界判定用世代号，不用队尾指针。 |
-| N3 | `AsyncConditionVariable` 的粘性标记保留无等待者时的 notify。 |
-| N4 | `TimerService` 故意不析构（进程级单例 + worker 线程）。 |
-| N5 | `SharedTask` 的等待者逐个出队，绝不跨 resume 持有 handle。 |
+| N1 | a coroutine frame is never destroyed by another thread between swapping the waiter list out on the completing thread and resuming it one by one. |
+| N2 | `AsyncEvent` decides its boundary with a generation number, not a tail pointer. |
+| N3 | `AsyncConditionVariable`'s sticky flag keeps a notify that arrived with no waiter. |
+| N4 | `TimerService` deliberately never destructs (a process-wide singleton plus a worker thread). |
+| N5 | `SharedTask` takes its waiters out one at a time and never holds a handle across a resume. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 `std::stop_callback` 内同步 resume
+### 6.1 A synchronous resume inside `std::stop_callback`
 
-- 会怎么错：正持有 callback 的协程帧在 callback 执行期间被析构，`~stop_callback` 触发标准留白（实测 abort）。
-- 怎么判：`whenRace`/`whenAllImpl`/`whenAny`/`Scope::join` 直接 `done.set()` 会红。
-- 怎么防：统一走 `TimerService::postWake()` + `detail::deferWake()`，resume 由定时线程做。
+- How it fails: the coroutine frame holding the callback is destroyed while the callback runs, and `~stop_callback` hits the standard's undefined case (measured: abort).
+- How to detect it: a direct `done.set()` in `whenRace`/`whenAllImpl`/`whenAny`/`Scope::join` turns the case red.
+- How to prevent it: everything goes through `TimerService::postWake()` + `detail::deferWake()`, and the timer thread does the resume.
 
-### 6.2 `TimerService` 的 OOM 暴露面
+### 6.2 `TimerService`'s OOM exposure
 
-- 会怎么错：`postWake` 的 `deque::push_back` 在 `noexcept` 回调里失败。
-- 怎么判：注入分配失败；与 `requestAbort()` 的 `early_.push_back` 同一处。
-- 怎么防：要清零就换侵入式队列；目前挂账。
+- How it fails: `postWake`'s `deque::push_back` fails inside a `noexcept` callback.
+- How to detect it: inject an allocation failure; it is the same spot as `requestAbort()`'s `early_.push_back`.
+- How to prevent it: switch to an intrusive queue when it must be zero-allocation; currently owed to the backlog.
 
-### 6.3 `Scope` 析构不等待
+### 6.3 A `Scope` destructor does not wait
 
-- 会怎么错：不响应停止令牌的孩子可在 `Scope` 析构后继续运行；析构不会等待它们完成。
-- 怎么判：检查 `pendingChildren()`，或在所有需要完成保证的路径上显式 `co_await join()`。
-- 怎么防：在离开作用域前显式 `join()`；`detach()` 明确表示析构时不请求停止。
+- How it fails: a child that ignores the stop token keeps running after the `Scope` is destroyed; the destructor does not wait for it.
+- How to detect it: check `pendingChildren()`, or `co_await join()` explicitly on every path that needs the completion guarantee.
+- How to prevent it: `join()` explicitly before leaving the scope; `detach()` says the destructor does not request a stop.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Why not | ADR |
 | --- | --- | --- | --- |
-| D1 | `Task<T&>` | 结果用 `optional` 缓存；支持引用要改 Task/SharedTask/When 三处，收益低。 | — |
-| D2 | 混合 void 的变参 `whenAll` | 要去掉结果 tuple 里的 void 位，属 API 形状改动，未做。 | — |
-| D3 | 隐式全局泵 / `Task` 自动派发 | 谁该被推进是宿主的策略，不该由 async 猜。 | — |
-| D4 | `SyncWait.hpp` / `syncWait()` | 与 `Task::result()` 重复；机制搬进 `Task.hpp`，只留一个名字。 <!-- drift-ok --> | — |
-| D5 | `appfw::async::sleep()` | 与 `vn::async::sleepFor()` 重复，调用者为 0。 | — |
-| D6 | 把 `try_lock`/`try_acquire` 改成 camelCase | 对齐 `std::mutex`/`std::counting_semaphore`；改名属破坏性改动。 | — |
+| D1 | `Task<T&>` | the result is cached in an `optional`; supporting a reference would change Task/SharedTask/When, three places, for little gain. | — |
+| D2 | a variadic `whenAll` that mixes void | it would drop the void slots from the result tuple, an API shape change, so it was not done. | — |
+| D3 | an implicit global pump / `Task` dispatching itself | who gets advanced is the host's policy and async should not guess it. | — |
+| D4 | `SyncWait.hpp` / `syncWait()` | a duplicate of `Task::result()`; the mechanism moved into `Task.hpp` and one name remains. <!-- drift-ok --> | — |
+| D5 | `appfw::async::sleep()` | a duplicate of `vn::async::sleepFor()` with no caller. | — |
+| D6 | turning `try_lock`/`try_acquire` into camelCase | they mirror `std::mutex`/`std::counting_semaphore`, and the rename would be a breaking change. | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Test case / command |
 | --- | --- | --- |
-| T1 | 任务类型正常/放弃/销毁路径 | `test_async` 的 Task/SharedTask/Scope 用例 |
-| T2 | 组合子取消与超时 | `TaskTest.WhenAllCancellation`、`WhenAllStopAndWaitIsHeldByAChildThatIgnoresTheToken` |
-| T3 | 同步原语无丢失唤醒/无 UAF | `test_async` + ASan/TSan |
-| T4 | 阻塞驱动只泵一次/不泵 | `test_async` 的 `result()`/`runToCompletion` 用例 |
-| T5 | 变异反证：改回旧写法必须红 | `git checkout -- <头文件>` → 重建 → 跑目标用例 |
+| T1 | the normal / abandoned / destroyed paths of the task types | the Task/SharedTask/Scope cases in `test_async` |
+| T2 | combinator cancellation and timeout | `TaskTest.WhenAllCancellation`, `WhenAllStopAndWaitIsHeldByAChildThatIgnoresTheToken` |
+| T3 | no lost wake, no UAF, in the primitives | `test_async` + ASan/TSan |
+| T4 | the blocking drive pumps exactly once, or not at all | the `result()`/`runToCompletion` cases in `test_async` |
+| T5 | a mutation counter-check: reverting to the old spelling must turn it red | `git checkout -- <header>` → rebuild → run the target cases |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current Status
 
-任务/组合子/同步原语/调度器均已落地；取消策略按 `StopAndWait`/`Destroy` 收口；任务环境令牌与
-`Scope` 的停止请求已落地。
+Tasks, combinators, primitives and schedulers are in place; the cancellation policy closes on `StopAndWait`/`Destroy`; the task environment token and
+`Scope`'s stop request are in place.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known Gaps and Backlog
 
-- 帧分配不做，挂账；判据在 backlog §3。
+- frame allocation is not done and is owed to the backlog; the criterion is in backlog §3.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility and Migration
 
-没有 `SyncWait.hpp` / `syncWait()`，调用点改 `x.result()`； <!-- drift-ok -->
-没有 `appfw::async::sleep()`，改用 `vn::async::sleepFor()`。新代码按 §4  的头文件写。
+There is no `SyncWait.hpp` / `syncWait()`; call sites use `x.result()`; <!-- drift-ok -->
+There is no `appfw::async::sleep()`; use `vn::async::sleepFor()`. New code follows the headers in §4.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/base/async/sdk/vine/async/**`
 - `src/base/core/sdk/vine/ThreadPool.hpp`
 - `tests/test_async`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `.ai/memory/async.md`
 - `../backlog/async.md`
 - `../bugs/shared-task-batch-resume-uaf.md`
 
-### 10.3 外部资料
+### 10.3 External Sources
 
-- cppcoro / folly / P2300 的对应语义（见 §2.5）。
-- `std::stop_token` / `std::stop_callback` 的标准留白。
+- the corresponding semantics of cppcoro / folly / P2300 (see §2.5).
+- the standard's undefined cases around `std::stop_token` / `std::stop_callback`.
