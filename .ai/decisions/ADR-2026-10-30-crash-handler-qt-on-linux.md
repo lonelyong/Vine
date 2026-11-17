@@ -5,6 +5,8 @@
 - 日期：2026-10-30
 - 相关：`../design/base-crash.md`（§2.1 边界、§2.9 捕获、§3.4 窗口、§9 状态） · `../backlog/base-crash.md`
 
+> **EN**: Record of a decision since reversed: chose Qt Widgets for the Linux crash window, accepting one deliberate `G2` violation (`CrashHandler` alone links `Qt6::Widgets`, the `vn::Crash` library does not), because a double-click start has no terminal and the window is the handler's whole output. Superseded the same day by `ADR-2026-10-30-crash-handler-x11-on-linux`.
+
 ## 背景
 
 `vn::Crash` 的 handler 是一条写下来的边界：**只链 `vn::Crash` + 系统库，不链 Qt、不链 appfw**

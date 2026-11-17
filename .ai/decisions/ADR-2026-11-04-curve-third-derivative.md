@@ -4,6 +4,8 @@
 > **日期**：2026-11-04
 > **相关**：`../design/geometry-kinds.md` 2.7 / 2.8 / D9；`src/base/geom/sdk/vine/geom/spatial/Curve.hpp`、`OffsetCurve.hpp`；`tests/test_geom_spatial/GeometryKindsTest.cpp` <!-- drift-ok -->
 
+> **EN**: Chose C: `OffsetCurve` re-declares `secondDerivative` pure and stays abstract, because an exact offset second derivative needs the base curve's third derivative, and adding `thirdDerivative()` to `Curve<T>` would charge every concrete curve for one consumer while a central difference would hide a numerical error behind an exact contract. Superseded by `ADR-2026-11-06-space-third-derivative-and-offset`, which adds the capability protocol and makes `OffsetCurve` constructible.
+
 ## 背景
 
 `BezierCurve` / `BSplineCurve` 的求值落地后，`OffsetCurve` 只剩一个纯虚函数：`secondDerivative()`。按定义

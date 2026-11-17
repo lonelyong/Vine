@@ -7,6 +7,8 @@
   `DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast`、
   `ModelViewerTest.TheCommandTargetTravelsWithTheExecution`
 
+> **EN**: Chose C and E: the window-level `MainWindow::primaryRenderControl()` query is deleted rather than deprecated (no caller left, ABI 9 unreleased) and the view accessor is renamed `renderControl() const`, so "which 3D area" has exactly two exits - resolution at dispatch (`gui::resolveCommandTarget()`) and the view's own answer - and "no active document = no target" is the single rule. Supersedes the second half of decision 4 in `ADR-2026-10-24-command-target`.
+
 ## 背景
 
 `ADR-2026-10-24-command-target.md` 决定 4 写的是：`MainWindow::primaryRenderControl()` **降级为派生查询**

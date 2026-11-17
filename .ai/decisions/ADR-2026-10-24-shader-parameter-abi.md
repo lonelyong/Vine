@@ -4,6 +4,8 @@
 - 日期：2026-10-24
 - 相关：`../design/graphics-shader-params.md`
 
+> **EN**: Chose E: the five blocks' GLSL is declared once in a shared fragment that shaders `#include` (inlined at build time), the C++ block definitions are gathered in one place, and the name table sits beside the struct with `offsetof` entries; schema generation is deferred until a second shader language appears. Rejected runtime reflection (a misspelt name is a silent no-op), loose uniforms (not legal GLSL for Vulkan blocks), a material DSL and code generation.
+
 ## 背景
 
 五个参数块（view / draw / material / shadow / lights）撑起引擎与 shader 之间的全部数据。容量与偏移已经

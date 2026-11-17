@@ -4,6 +4,8 @@
 - 日期：2026-10-22
 - 相关：`../design/graphics-rendering.md`
 
+> **EN**: Chose B: the sample count is a target property (`RenderTarget::setSamples`) that flows `TargetShape` -> `RenderPassCompatibility` -> pipeline and images, and a multisampled target owns separate colour and depth resolve images (depth from `sample0`, never averaged). The three values Vulkan requires to be equal cannot drift apart.
+
 ## 背景
 
 样本数决定三件互相绑定的事：图像的样本数、render pass 附件描述的样本数、管线的

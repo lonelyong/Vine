@@ -4,6 +4,8 @@
 > **日期**：2026-11-04
 > **影响范围**：`src/base/geometry/sdk/vine/geometry`（曲线与曲面族按“一个类型一个头”补齐并改名：`Curve` / `LineCurve` / `CircleCurve` / `ConicCurve` / `BoundedCurve` / `OffsetCurve` / `Surface` / `ElementarySurface` / `BoundedSurface` 及各占位类型；既有类型声明归属）、`tests/test_geometry` <!-- drift-ok -->
 
+> **EN**: Chose empty tags to classify the geometry families: `Curve` / `Surface` carry no state and no virtual functions, only `static constexpr int kDimension`, with the curve tree (`LineCurve`, `ConicCurve`, `BoundedCurve`, `OffsetCurve`) and surface tree (`ElementarySurface`, `BoundedSurface`) filled in one type per header, runtime polymorphism via `std::variant` + `std::visit`, and zero cost pinned by `static_assert`. Rejected virtual base classes (a vptr per value type breaks inlining and trivially copyable), concepts only, hoisting `pointAt` into a base class and doing nothing. The curve half is superseded by `ADR-2026-11-04-curve-evaluation-interface`, which turns `Curve<T>` into a virtual interface.
+
 ## 背景
 
 几何类型之间没有分类关系："一条曲线 / 一个曲面 / 一个实体"只在讨论里存在，代码里既不能按族约束，也不能在编译期回答"这是几维的"。运行期分类只有 `ShapeType`，而它只覆盖 `Shape` 子类。

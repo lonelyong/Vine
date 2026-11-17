@@ -4,6 +4,8 @@
 - 日期：2026-11-01
 - 相关：`../design/appfw-translation.md`、`../backlog/appfw-translation.md`、`src/fw/appfw/sdk/vine/appfw/AppConfig.hpp`
 
+> **EN**: Chose A: only appfw and the layers above it (host, plugins) carry translatable UI strings, judged by "is this text UI or a diagnostic", with the directory mechanism being Qt Linguist (`.ts` in git, `.qm` a build product), catalogues loaded at `Application::initialize()` (plugins by the loader before `load()`), the language living in the config item `general.language` rather than `AppConfig`, and no runtime switching in v1. Base-library logs and exceptions stay untranslated so they remain greppable. The "Chinese is the source language" part is superseded by `ADR-2026-11-02-english-source-language`.
+
 ## 背景
 
 界面文案全部硬编码为中文（appfw GUI 约 140 处，app_shell 与插件同样），`AppConfig::language` 一直是“留给 i18n 的占位、还没接线”。要支持第二种语言，需要先定三件事：**哪些层可翻译**、**源语言是哪一种**、**用哪套目录机制**。底层库（base / viz / robotics / loaders）的日志与异常已经是英文，它们是否进入翻译范围，直接决定分层是否被破坏。

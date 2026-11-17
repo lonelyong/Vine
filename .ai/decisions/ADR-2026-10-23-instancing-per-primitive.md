@@ -4,6 +4,8 @@
 - 日期：2026-10-23
 - 相关：`../design/graphics-geometry.md`、`../backlog/graphics.md`
 
+> **EN**: Chose C: instancing is a `Primitive` parameter (`instance_transforms`, `visible_instances`), not a `Geometry` channel and not an `InstanceScope` node, so one draw is one instancing batch and the pick identity is `geometry + primitiveIndex + instanceIndex`. Per-instance material/colour/opacity/layer/sort/culling, GPU indirect and auto-batching are explicitly out, and a second placement is a second `Geometry` node.
+
 ## 背景
 
 “同一几何 N 份”有三种可能形状：实例矩阵作为 `Geometry` 的通道；`InstanceScope` 作用域

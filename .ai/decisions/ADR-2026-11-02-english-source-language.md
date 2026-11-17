@@ -5,6 +5,8 @@
 - 取代：`ADR-2026-11-01-translation-scope.md` 中"源语言是中文、选项 C（英文源）被否决"这一条；该 ADR 的其余决定（可翻译范围、Qt Linguist 机制、目录归属与内嵌、装载时机、语言是配置项、v1 不做运行期切换）继续有效
 - 相关：`../design/appfw-translation.md`、`../backlog/appfw-translation.md`
 
+> **EN**: Chose B, superseding the "Chinese source language" part of `ADR-2026-11-01-translation-scope`: English becomes the source string (`translate("appfw", "Restart required")`), `zh_CN` gains the catalogue, a missing translation falls back to English, and any unknown system language resolves to `en`. The rest of the earlier ADR (scope, Qt Linguist, ownership and embedding, load timing, language as a config item, no runtime switching) still stands.
+
 ## 背景
 
 `ADR-2026-11-01-translation-scope.md` 当时选了"中文当源串、英文当译文"，理由有两条：两百多条现有文案已经是中文，改源等于纯 churn；团队评审 `.ts` 时看中文。今天这两个前提都要重新称一次：

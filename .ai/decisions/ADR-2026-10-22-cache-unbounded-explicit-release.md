@@ -4,6 +4,8 @@
 - 日期：2026-10-22
 - 相关：`../design/graphics-content-lifecycle.md`
 
+> **EN**: Chose C: the material image cache drops its 256-entry cap and its FIFO/LRU eviction, the material arena refuses instead of evicting and grows storage per live material, and `releaseContent()` frees GPU residency. A measured 300-image recirculation rebuilt every texture each round and LRU matched FIFO, so a cap only decides for the host.
+
 ## 背景
 
 纹理缓存有 256 条上限 + FIFO/LRU 淘汰；材质 arena 有 FIFO。300 张同序循环的实测显示：

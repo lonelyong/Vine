@@ -4,6 +4,8 @@
 - 日期：2026-10-22
 - 相关：`../design/graphics-architecture.md`
 
+> **EN**: Chose B: pass scheduling lives only in the engine (`detail::FrameScheduler` inside `EngineCompile.cpp::scheduleRows()` builds the edges, sorts and publishes; `PassStage` is a tie-break only), and the backend materialises `FrameDescription.passes` without reordering or reporting cycles. Rejected keeping the backend `FrameGraph`, which left two schedulers that could disagree.
+
 ## 背景
 
 一轮里有两套排序：引擎按 stage/registration 排，后端 `FrameGraph` 再按输入边排。

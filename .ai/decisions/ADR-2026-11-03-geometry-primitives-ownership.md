@@ -4,6 +4,8 @@
 > **日期**：2026-11-03
 > **影响范围**：`src/base/math`、`src/base/geometry`、`src/viz/graphics`、`tests/test_math`、`tests/test_geometry` <!-- drift-ok -->
 
+> **EN**: Moved `Line`, `Plane` and the axis-aligned box into `vine::geometry` and renamed the box `Aabb`, deleting `Rect3`, the `math::Aabb*` aliases and the forwarding header; `Rect2` stays in `vine::math` and no compatibility alias was kept, because a box had three homes and `Obb` already lived in `geometry` while `math` had no internal consumer. Breaking change, changed in-tree in the same batch.
+
 ## 背景
 
 `Line`、`Plane`、`Rect3`（轴对齐盒）住在 `src/base/math`，而同一概念族的 `Obb` 在新一轮几何工作中落到了 `src/base/geometry`。`Rect3` 同时拥有 `math::Aabb` / `Aabbf` / `Aabbd` 别名、`geometry/Aabb.hpp` 转发 shim 和 `Mesh::Aabb` 第三个拼写：一个轴对齐盒三个家。 <!-- drift-ok -->

@@ -4,6 +4,8 @@
 - 日期：2026-10-30
 - 相关：`../design/base-crash.md`（§2.1 边界、§2.9 捕获、§3.4 窗口、§6.5 降级、§9 状态）
 
+> **EN**: Chose B, superseding `ADR-2026-10-30-crash-handler-qt-on-linux`: the Linux crash window is hand-drawn with Xlib and typed with Xft, so the `base` layer depends on system libraries again and the earlier `G2` violation is withdrawn; build needs `libx11-dev` + `libxft-dev`, no usable display means the report goes to stdout, and CMake skips the `CrashHandler` target with a warning when the headers are missing.
+
 ## 背景
 
 同一天早些时候的 ADR 让 Linux 的崩溃窗口用 Qt Widgets，理由是"窗口是 handler 的全部输出，而 `base` 层不能只靠 C 库画出窗口"。

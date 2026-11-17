@@ -4,6 +4,8 @@
 > **日期**：2026-11-03
 > **影响范围**：`src/base/brep`（新增）、`src/loaders/brepio`、`cmake/VineOpenCASCADE.cmake`（新增）
 
+> **EN**: Added the module `src/base/brep` (target `vn::Brep`, depending only on `vn::Geometry`) for runtime B-rep operations, exposing `vn::brep::tessellate(BrepShape, TessellationOptions)` as a free function returning `intrusive_ptr<TriangleMesh>` and `tessellationSupported()` for the capability, with OpenCASCADE detection moved into `cmake/VineOpenCASCADE.cmake` and linked PRIVATE by `brep` and `brepio`. Rejected a `BrepShape::triangulate()` member (would pull OpenCASCADE into `geometry`), hosting it in `brepio`, a pluggable backend, `Bnd_Box` and borrowing `vn::io::Result`.
+
 ## 背景
 
 B-rep 需要三件互不相同的东西：

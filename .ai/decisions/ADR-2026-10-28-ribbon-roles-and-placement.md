@@ -4,6 +4,8 @@
 - 日期：2026-10-28
 - 相关：`../design/appfw-ribbon.md`、`tests/test_gui/test_gui.cpp`
 
+> **EN**: Chose D: ribbon nodes are placed by id (identity), role (a framework vocabulary entering the plugin ABI) and `placement` of `append` / `before` / `after`, with a `Terminal` policy clamping non-terminal inserts and `PlacedByFallback` when an anchor is missing; v1 adds no `order` field and item identity is the command name. Rejected global numeric priority, id-only and role-only anchors, and a declarative manifest.
+
 ## 背景
 
 功能区只能追加 tab，且 tab 的身份是显示标题。app_shell 在 `load()` 里建“插件/帮助”，model_viewer 在

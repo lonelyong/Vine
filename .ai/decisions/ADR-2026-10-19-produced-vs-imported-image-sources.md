@@ -4,6 +4,8 @@
 - 日期：2026-10-19
 - 相关：`../design/graphics-rendering.md`
 
+> **EN**: Chose C: an `ImageInput` declares one input image that binds either a produced `ImageRef` or an imported `Texture` (plus an optional `Sampler`) and resolves to an `ImageSource`; produced inputs take part in the one-producer-per-frame wiring, imported ones go through the `MaterialImages` upload cache. Rejected two parallel lists (mixed order lost) and a `Texture` overload on `ImageRef` (the producer rule would not hold).
+
 ## 背景
 
 pass 的输入图有两种来源：帧内某条 pass 产出的 `RenderTarget` 附件（`ImageRef`），

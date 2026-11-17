@@ -7,6 +7,8 @@
 - 相关：`../design/appfw-render-view.md` · `../design/appfw-command-manager.md` ·
   `../design/appfw-document-model.md` · `../backlog/graphics.md`（T3）
 
+> **EN**: Chose E: a command's target is the `DocumentView`, with the document and view layers optional and the needed layers declared through `CommandFlags::NeedsDocument` / `NeedsView`, resolved at dispatch from the initiating widget and falling back to the current document's view and its active pane; panes inside a view stay the view's own state, and the change costs one ABI bump (8 -> 9). Rejected document-as-target, `RenderControl`-as-target and the global single slot. The window-level half of decision 4 is superseded by `ADR-2026-10-24-command-target-no-window-query`.
+
 ## 背景
 
 今天命令找"它要改的那一块 3D 区"只有一条路：`MainWindow::current()`（一个全局静态，最近活跃的主窗）+

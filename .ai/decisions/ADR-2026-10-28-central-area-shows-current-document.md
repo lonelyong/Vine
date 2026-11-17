@@ -6,6 +6,8 @@
   `ADR-2026-10-28-document-tabs-and-floating.md`、`ADR-2026-10-24-tabs-not-mdi.md`、
   `ADR-2026-10-24-command-target.md`
 
+> **EN**: Chose B: `DocumentManager::current()` is the single owner and the central area shows either the current document's page or an explanatory placeholder (no current document, floating document, or no view for its type); activating a floating window only calls `setCurrent()`, and closing the current document selects its successor. Rejected keeping the last docked page or deriving `current` from main-window activation, both of which leave two answers.
+
 ## 背景
 
 多文档已经有 tab 条与“浮动到自己的顶层窗口”。原来的宿主在浮动时让中央区保留“最后一块停靠页”，

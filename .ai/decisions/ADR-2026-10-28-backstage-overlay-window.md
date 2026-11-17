@@ -4,6 +4,8 @@
 - 日期：2026-10-28
 - 相关：`../design/appfw-backstage.md`、`../bugs/docking-flyout-under-render.md`、`tests/test_gui/test_gui.cpp`
 
+> **EN**: Chose B: the Backstage is a top-level `Qt::Tool` window parented to the main window and following its client area, not a `SARibbonApplicationWidget` child, because a Qt child can never cover the native 3D surface (`docking-flyout-under-render`); window geometry, Esc handling and the return button are the Backstage's own, and SARibbon only contributes the application button and its click signal.
+
 ## 背景
 
 应用按钮需要一个类似 Office Backstage 的整窗页面。SARibbon 提供两个部件：

@@ -4,6 +4,8 @@
 - 日期：2026-10-24
 - 相关：`../design/graphics-shader-params.md` · `../design/graphics-rendering.md` · `../backlog/graphics.md`
 
+> **EN**: Chose B: `VineLightsBlock` becomes a typed light array (`vec4 ambient` plus five `vec4[8]` parallel arrays, 528 B, `position_kind.w` carrying `LightType`), both the content and the full-screen path bind the same UBO at set 0 binding 5, and `LightPushBlock` / `packLightPushBlock` / the dead `projparms` are deleted. Per-light shadows, per-object light selection and area lights stay out; the 8-slot cap is hard and reported.
+
 ## 背景
 
 旧的 `VineLightsBlock` 是「1 盏环境光 + 3 盏方向光」（112 B）。内容侧的 `LightType` 却有四种，而

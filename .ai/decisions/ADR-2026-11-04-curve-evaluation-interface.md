@@ -4,6 +4,8 @@
 > **日期**：2026-11-04
 > **影响范围**：`src/base/geometry/sdk/vine/geometry/Curve.hpp`、`Continuity.hpp`、`BoundedCurve.hpp`、`TrimmedCurve.hpp`、`LineCurve.hpp`、`CircleCurve.hpp`、`Ray.hpp`、`tests/test_geometry` <!-- drift-ok -->
 
+> **EN**: Chose to make `Curve<T>` an abstract evaluation interface (virtual destructor plus `evaluate`, parameter-domain properties, `derivative`, `secondDerivative`, `continuity`, `reversedParameter`) implemented by `LineCurve`, `CircleCurve` and `TrimmedCurve` (which holds a `std::shared_ptr<const Curve<T>>`), with `BoundedCurve` adding non-virtual `startPoint()` / `endPoint()` and `Ray` leaving the curve family to stay trivially copyable. The surface family stays an empty tag in this ADR - item 6 - which `ADR-2026-11-04-surface-evaluation-interface` supersedes once surfaces gain the same consumer.
+
 ## 背景
 
 同日的 `ADR-2026-11-04-geometry-kinds.md` 把 `Curve` / `Surface` 定为**空标签**，理由是 vptr 会破坏值类型的内联与 trivially copyable。半天后出现新的需求形态：算法需要"不认识的曲线也能求值、问参数域与周期"（B-rep 的边、遍历、采样），这需要一个**抽象接口**；而同一时刻没有任何消费者对曲面提出同样要求。

@@ -4,6 +4,8 @@
 - 日期：2026-11-01
 - 相关：`../design/appfw-translation.md` §2.10、`ADR-2026-11-01-translation-scope.md`（选项 F 由本 ADR 取代）、`cmake/VinePluginHelper.cmake`、`cmake/VineEmbedShaders.cmake`
 
+> **EN**: Chose D: every module (framework, host, each plugin) owns its `<id>.ts` next to the code that writes the strings and embeds `<id>_<locale>.qm` into its own binary under `/i18n`, with a same-named `.qm` beside the module taking precedence over the embedded copy. Rejected loose `.qm` files in the install tree, one central catalogue and embedding-only; only `zh_CN` and `en` exist, and `PluginManager` keeps no translation table - a missing catalogue is not an error. The 2026-11-02 ADR reverses which language is the source.
+
 ## 背景
 
 `ADR-2026-11-01-translation-scope.md` 定了机制（Qt Linguist）与范围（appfw 及以上层），但没定两件后续必然要定的事：**目录文件归谁所有、放在哪里**，以及**是否让它以散文件出现在安装树里**。

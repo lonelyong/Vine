@@ -6,6 +6,8 @@
   `../decisions/ADR-2026-10-24-tabs-not-mdi.md`、`../decisions/ADR-2026-10-24-command-target.md` ·
   `../design/appfw-render-surface.md`（F3/C3 重父化）
 
+> **EN**: Chose A: `CentralDocumentHost` owns its own `QTabBar` plus `QStackedWidget` and a floating document is a top-level widget of that host, so documents are structurally not panes and can never dock anywhere but the central area; `DocumentManager` remains the only owner of tab selection and current, and `saveLayout()` stores tool panels only. Rejected patching DockingPanes, whose tab UI would come with hit-test and layout-save side effects.
+
 ## 背景
 
 多文档要有三件事：**中央客户区里多格 tab**、**视图能浮到自己的窗口**、**只能停回中央区，不能停到任何停靠区**。

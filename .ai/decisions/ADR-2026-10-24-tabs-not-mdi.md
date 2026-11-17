@@ -10,6 +10,8 @@
 > 本文的决定不变：**每个窗口同一时刻仍只有一个可见视图**；浮动窗口是另一个窗口，不是同窗分屏；
 > “文档不进停靠树”见 `ADR-2026-10-28-document-tabs-and-floating.md`。
 
+> **EN**: Chose B with C: the default host shows one view at a time (tabs, no MDI or split view), several 3D areas inside one view are the view's own state and answer `renderControl()`, and `gui::resolveCommandTarget(window)` therefore needs no initiating-widget rule. A supplementary note (2026-10-28) confirms floating documents are a second top-level window, not a split view; side-by-side viewing of two different documents is the trigger to revisit.
+
 ## 背景
 
 命令目标落到视图之后，"哪一块 3D 区算数" 还剩一个问题没定：**同一个窗口里能不能有多个视图同时可见**。

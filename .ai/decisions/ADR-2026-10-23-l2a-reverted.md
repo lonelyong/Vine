@@ -4,6 +4,8 @@
 - 日期：2026-10-23
 - 相关：`../design/graphics-rendering.md`、`../backlog/graphics.md`
 
+> **EN**: Chose B: L2a (array targets, per-layer framebuffers, per-layer readback) was reverted the day it landed, because it had no consumer; N 2D targets plus N passes is the shape until VR or single-pass multi-view arrives, when L2a and L2b are redesigned as one piece. The revert removed ~1150 lines across 40 files and four combination refusals.
+
 ## 背景
 
 L2a（数组目标 + 逐层帧缓冲 + 按层读回）同日落地后又回撤。问题是：没有消费者时，

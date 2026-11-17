@@ -4,6 +4,8 @@
 > **日期**：2026-11-04
 > **相关**：`../design/geometry-axis-surfaces.md` 2.1 / 2.2 / 2.3 / C1 / D1、`../design/geometry-kinds.md` 2.9；`src/base/geometry/sdk/vine/geometry/AxisSurface.hpp`、`Frame.hpp`、`CylindricalSurface.hpp`、`ConicalSurface.hpp`、`ToroidalSurface.hpp`、`ConicCurve.hpp`、`Plane.hpp`；`tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
 
+> **EN**: Chose C: rotationally symmetric surfaces share a new state layer `AxisSurface<T> : ElementarySurface<T>` that owns origin, axis and x-direction and answers `yAxis()` and `continuity() = CN`, and the in-plane axis rule became `Frame.hpp`'s `inPlaneAxis(preferred, normal)` used by `ConicCurve`, `Plane::xAxis()` and `AxisSurface`; `SphericalSurface` does not migrate, on the rule "a placement that changes the point set is stored, one that only changes the parameterisation is derived". Superseded by `ADR-2026-11-04-surface-placement-value-type`, which makes the frame a value type `Placement` instead of a layer.
+
 ## 背景
 
 圆柱、圆锥、圆环三个曲面此前是占位（类型在树里、不可构造、无参数）。要把它们实现，先要回答两个问题：

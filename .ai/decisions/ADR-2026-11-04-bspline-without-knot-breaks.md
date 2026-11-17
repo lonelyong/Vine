@@ -4,6 +4,8 @@
 > **日期**：2026-11-04
 > **相关**：`../design/geometry-kinds.md` 2.8 / C13 / P10；`src/base/geometry/sdk/vine/geometry/BSplineBasis.hpp`（`isClampedKnotVector`、`knotContinuity`）、`BSplineCurve.hpp`、`BSplineSurface.hpp`；`tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
 
+> **EN**: Chose A: `isClampedKnotVector()` requires multiplicity `degree + 1` only at the two ends and at most `degree` inside, so an internal multiplicity of `degree + 1` - which makes the parameter domain a disconnected point set - is rejected instead of being reported as `C0`. Rejected adding a `Discontinuous` bottom step to `Continuity` (no consumer, and every traversal algorithm would have to handle a hole) and documenting the lie; data with such knots must be split into separate curves, which differs from OCCT's accepted range.
+
 ## 背景
 
 `isClampedKnotVector()` 此前只要求每个相异节点的重数在 `[1, degree + 1]`，两端必须恰好是 `degree + 1`。

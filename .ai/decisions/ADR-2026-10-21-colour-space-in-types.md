@@ -4,6 +4,8 @@
 - 日期：2026-10-21
 - 相关：`../design/graphics-rendering.md`
 
+> **EN**: Chose B: `Colorf` is linear-light float, `Color` is sRGB-encoded byte, and `Color::toLinear()` / `Colorf::toColor()` are the only conversions; author colours are `Colorf` only. Rejected comments-only (the next instance of the defect is certain) and a generic `UnitScalar` wrapper (over-design with one consumer).
+
 ## 背景
 
 颜色在 SDK 里同时以线性浮点、sRGB 字节、0–255、0–1 出现，靠注释区分；默认清屏灰

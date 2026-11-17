@@ -4,6 +4,8 @@
 - 日期：2026-10-24
 - 相关：`../design/graphics-material.md`、`../backlog/graphics.md`（T16）
 
+> **EN**: Chose C: one metallic-roughness PBR shading model replacing tiled Phong (the importer converts `PhongMaterial` through a fixed table), asset `Material` plus sparse `MaterialInstance` over a shared `MaterialBase`, five semantic texture slots with one `VN_TEXTURED` variant bit, `AlphaMode` on the material, and a reordered four-attachment G-buffer with view position in A2. Rejected keeping Phong, a dual model, optional parents instead of instances and per-slot variants.
+
 ## 背景
 
 引擎今天的材质是“平铺 Phong + 一张贴图”：`ambient / diffuse / specular / shininess`，材质 alpha

@@ -4,6 +4,8 @@
 - 日期：2026-10-23
 - 相关：`../design/graphics-scene.md`、`../design/graphics-geometry.md`、`../backlog/graphics.md`
 
+> **EN**: Chose C: the scene graph stays a strict tree (`Group::addChild` detaches from the old parent and refuses cycles); "same geometry N times" is `Primitive` instancing and "same subtree N times" duplicates nodes over shared buffers. A multi-parent DAG would leave `worldMatrix()`, `boundingBox()` and pick identity without a unique answer, and USD-style reference nodes are the shape to redesign towards if that demand ever becomes real.
+
 ## 背景
 
 R7 的 DAG 半边：`Group::addChild` 目前自动从旧父脱离，场景图是严格树。问题是要不要在
