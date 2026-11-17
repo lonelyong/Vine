@@ -74,6 +74,31 @@ acceptable — is in `.github/instructions/framework-design.instructions.md`.
   any `.ai/` file run `python3 scripts/check_ai_docs.py --strict` and
   `python3 scripts/check_design_docs.py`.
 
+## Documentation Language
+
+English is the repository's documentation language. This is the end state; the Chinese corpus is being
+converted in batches (`ADR-2026-11-17-documentation-language`, plan in
+`.ai/research/docs-2026-11-17-english-migration.md`).
+
+* **One file, one language.** A file is English or Chinese, never mixed paragraph by paragraph.
+* **New files are English** — every file created from now on, `.ai/**` and `.github/**` included.
+* **A substantial rewrite converts the file.** "Substantial" means it touches chapter titles or more
+  than about a third of the file; convert the whole file in that commit instead of leaving it half
+  translated. A one-line fact fix leaves a Chinese file Chinese and it stays on the migration list —
+  correctness first.
+* **Records are append-only.** An ADR's or a bug postmortem's original text is the record: append a
+  dated correction or an English `> **EN**: …` summary, never translate them in place.
+* **Identifiers are never translated.** Prose uses the code spelling (`FrameGate`, `residency`,
+  `frame driver`); `.ai/memory/glossary.md` is the one mapping between a concept's English spelling
+  and the words the Chinese pages use, and it lists the retired spellings and the false friends.
+* **Translation is not an edit.** A conversion preserves every fact, caveat, `G#` citation and stable
+  ID (`F#` / `C#` / `R#` / `N#` / `P#` / `D#` / `T#`); improving the design while translating is a
+  separate batch.
+* **Design chapters use the English names of the template** (`Overview`, `Design Points`, `Features`,
+  `Public Interface`, `Constraints, Requirements and Invariants`, `Caveats and Traps`,
+  `Rejected Options`, `Tests and Acceptance`, `Status and Evolution`, `References`). The gate accepts
+  the Chinese legacy names until the migration ends, then only the English set.
+
 ## Language Standard
 
 * Use C++20.

@@ -84,11 +84,15 @@
 - `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
 - `window-design.md` —— window 模块的跨平台窗口上下文。
 
-## decisions/ —— 决策记录（ADR）（86）
+## decisions/ —— 决策记录（ADR）（89）
 
 一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
 日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
 
+- `ADR-2026-11-17-documentation-language.md` —— **文档语言改为英文**：代码词汇、提交正文、诊断
+  code 早已是英文，唯一停在中文的是 35k 行设计论证（也是唯一的“为什么”记录）；一个文件一种语言，
+  新文件英文，ADR/bug 只追加英文摘要，术语表在 `memory/glossary.md`；迁移按
+  `research/docs-2026-11-17-english-migration.md` 分批。
 - `ADR-2026-11-16-authoring-view-and-target-vocabulary.md` —— **值承载声明，行为归对象**：一个 `View` 值（`CameraSnapshot` + `Viewport` + 层掩码，`CollectView` 退役）、`RenderArea` → `RenderArea`（surface 留给平台）、一个 pass 的目标收成 `Target` + `Output` 两个值、`PassDesc` 是唯一作者形状（`RenderPass` 的 35 个 setter 收成只读活句柄）、值里零回调（`before_draw` 归对象的 `update()`，`OverlayLayout` 返回 `Viewport`）、删死字段 `tag`、`setRenderTarget` 变真（vk 预建，新增 CAP-86）或退役、`releasePass` 收窄契约、`Capabilities` = `Features` + `Limits`、诊断加 `origin`（CAP-87）、灯集不再每 pass 分配；四条规范文字修订 + 26 处 section comment 清扫。**提议，待批准**；审校与 18 批顺序在 `research/graphics-2026-11-16-redesign-r2.md`。
 - `ADR-2026-11-16-redesign-seam-and-vocabulary.md` —— **重设计的是名字与归属，不是能力**：两后端图形栈的接缝（`backend/` 25 个头只留 6 个共享机制 + 守卫，18 个 vsg 专用头搬进插件）、词汇（设计名词 `Session` 退役，统一 `FrameDriver` / `FrameDriverId` / `WindowSession` / `FrameHead`）、一帧三相位（帧首解析一次锁 / 无锁录制 / 提交一次锁，`prepare` = `Submission::TransferOnly`）、拒绝只有一种形状（`DiagnosticDraft`）、目标表与引擎组合根归位、选择规则收成一份；保留 `RenderBackend` 聚合与 `RenderDevice` 五个职责面（`G8` 无消费者），触发条件写在 ADR 里。**提议，待批准**；施工图在 `research/graphics-2026-11-16-redesign.md`。§2 与批次 3 的“目录即接缝”已被下一条取代。
 - `ADR-2026-11-16-no-backend-half.md` —— **删除“后端半边”**：目录、包含守卫、`VineGraphicsBackendSdk` 安装组件与文件集门禁四处维护同一条边界，代价超过收益（`G7`）；8 个共享机制平铺进 `sdk/vine/graphics/` 并并入 `vn::graphics`（`Keys.hpp` → `DrawState.hpp`，`ReadbackResult` → `ReadbackAnswer`），`gfx_backend_vsg` 自己的类型搬进 `vn::backend_vsg::core`（`G13`）。门禁改成按性质（模块不得 include 渲染 API 或具体后端；导出符号按文件清单）。
@@ -179,9 +183,14 @@
 - `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
 
-## research/ —— 调研与提案（16 文件 / 1 组提案）
+## research/ —— 调研与提案（17 文件 / 1 组提案）
 
 非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
+
+- `docs-2026-11-17-english-migration.md` —— **文档英文化迁移计划**（决策在
+  `../decisions/ADR-2026-11-17-documentation-language.md`）：221 个文件 / 34,842 行的盘点、
+  M0–M10 的批次与顺序、每批的验收（无新主张 / ID 普查 / 链接普查 / 九道门禁）与风险；
+  ADR 与 bug 只追加英文摘要，research 不翻译。
 
 - `graphics-2026-11-17-audit-3.md` —— **第三轮重新建立事实的独立审计**：13 个维度的逐条结论（含「未发现问
   题」）、24 条发现（`A3-01…A3-24`）、根命名空间 / 宏 / 能力三张清单、8 条风险实验、14 个批次、概念与语义再
@@ -254,8 +263,11 @@
 - `geometry.md` —— 空间几何的开放项（实体求交、三角面类型、四阶导数与偏置阶数、样条求值的表算法与临时分配、缺的相交配对）。
 - `loaders.md` —— loaders 层的开放项（点云 I/O 的归属与入口）。
 
-## memory/ —— 模块要点（11）
+## memory/ —— 模块要点（12）
 
+- `glossary.md` —— **一概念一拼写**：英文代码拼写 ↔ 中文页里的说法、退役拼写、"假朋友"；散文一律用
+  代码拼写（文档英文化的映射表，见
+  `../decisions/ADR-2026-11-17-documentation-language.md`）。
 - `graphics.md` —— graphics / vsg 现役要点：机制、判据、坑与“当时为什么这么定”。
 - `core.md` —— core 要点：类型描述符只经 `Type::obtain()` 注册、内联与出实参两种声明形式、接口的导出约定。
 - `crypto.md` —— crypto 要点：后端初始化只一处、wolfSSL 的 `Md5`/`Sha256` 宏与 `::Hmac` 同名坑、增量 GCM 缓冲、测试向量与命令。

@@ -24,7 +24,8 @@ today, so they gate immediately.
 WHAT IS SKIPPED, ON PURPOSE (one convention, shared with `check_doc_symbols.py`):
   * fenced code blocks - a snippet is not a claim about this tree;
   * a section whose HEADING carries a history marker (`历史登记`, `不再更新`, `历史）`, `已废弃`,
-    `历史沿革`) - recording what the code used to be is exactly its job, so deleted names are expected
+    `历史沿革`, or the English `History` / `Historical` / `Superseded` / `Deprecated`) - recording
+    what the code used to be is exactly its job, so deleted names are expected
     there. This is why "document the decision, then mark the section" is the way to retire a note.
   * a line carrying `<!-- drift-ok -->` - the escape hatch for a sentence that must name something
     absent (explaining a rejected design, say).
@@ -43,7 +44,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 AI = ROOT / ".ai"
 INDEX = AI / "README.md"
 
-HISTORY_MARKERS = ("历史登记", "不再更新", "历史）", "已废弃", "历史沿革")
+HISTORY_MARKERS = ("历史登记", "不再更新", "历史）", "已废弃", "历史沿革",
+                   "History", "Historical", "Superseded", "Deprecated")
 DRIFT_OK = "<!-- drift-ok -->"
 FENCE = re.compile(r"^\s*(?:```|~~~)")
 HEADING = re.compile(r"^#{1,6}\s")

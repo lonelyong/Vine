@@ -15,6 +15,25 @@ description: |
 
 # Design Docs: 目录、模板与迁移
 
+## Language (migration in progress)
+
+English is the repository's documentation language. The rule is in
+`.github/copilot-instructions.md` → "Documentation Language"; the decision is
+`ADR-2026-11-17-documentation-language`; execution is batched in
+`.ai/research/docs-2026-11-17-english-migration.md`.
+
+* **One file, one language.** New files (design pages, ADRs, backlog, memory) are English.
+* A Chinese file that needs a substantial change is **converted whole** in that commit; a one-line
+  fact fix leaves it Chinese.
+* ADRs and bug postmortems are **append-only**: keep the original, append a dated correction or an
+  English `> **EN**: …` summary.
+* Prose uses the code spelling; `.ai/memory/glossary.md` is the single mapping.
+* The template below is still Chinese. **M0 of the plan translates this skill**, and from then on the
+  chapter names it states are the English set (`Overview`, `Design Points`, `Features`,
+  `Public Interface`, `Constraints, Requirements and Invariants`, `Caveats and Traps`,
+  `Rejected Options`, `Tests and Acceptance`, `Status and Evolution`, `References`) that
+  `scripts/check_design_docs.py` also accepts.
+
 ## 0. 一句话
 
 **design 写“现在是什么”，decisions 写“为什么、否决了什么”，backlog 写“还没做什么”，
