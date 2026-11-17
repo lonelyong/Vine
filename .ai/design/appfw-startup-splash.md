@@ -1,252 +1,257 @@
-# appfw 启动框与启动进度（`BootSplash` / `StartupProgress`）设计
+# appfw's splash and startup progress (`BootSplash` / `StartupProgress`)
 
-> **状态**：现行
-> **最后核对**：2026-10-23
-> **范围**：启动框、启动进度与呈现；三拍、线程契约、失败/取消路径见 `appfw-startup-phases.md`。
-> **权威来源**：`StartupProgress.hpp`、`gui/BootSplash.hpp`、`AppConfig.hpp`、`tests/test_gui/BootSplashTest`。
-> **待办**：`../backlog/appfw-startup.md`
+> **Status**: current
+> **Last verified**: 2026-10-23
+> **Scope**: the splash, startup progress and its presentation; the three beats, the thread contract and the failure / cancellation paths are in `appfw-startup-phases.md`.
+> **Sources**: `StartupProgress.hpp`, `gui/BootSplash.hpp`, `AppConfig.hpp`, `tests/test_gui/BootSplashTest`.
+> **Backlog**: `../backlog/appfw-startup.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-启动期没有进度可看：`GuiApplication` 构造函数建主窗（Ribbon、停靠面板），插件加载在应用线程上跑，用户面对的是
-一个“还没长齐的窗口”，而且加载快慢完全不可见。启动框要给应用身份和当前阶段，但不能假装知道总量。
+Startup had no progress to look at: `GuiApplication`'s constructor builds the main window (Ribbon, docked panels), plugin loading runs on the application thread, and the user
+faces "a window that is not finished yet", with no way to see how fast loading is going. The splash must show the application's identity and the current phase without
+pretending to know a total.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 应用只配外观（`AppConfig::splash`），不写呈现代码。
-- 启动期只显示启动框；主窗在 `startupEnd()` 第一次上屏，用户看不到“先冒出一个窗口、再变样”。
-- 进度按相位更新，不显示百分比/进度条；状态行 + 18 px 转圈。
-- 上报口是应用级状态，状态栏/控制台/启动框共享同一份。
+- The application configures appearance only (`AppConfig::splash`) and writes no presentation code.
+- During startup only the splash is shown; the main window first appears in `startupEnd()`, so the user never sees "a window pops up and then changes shape".
+- Progress updates per phase, with no percentage and no progress bar; a status line + an 18 px spinner.
+- The reporting door is application-level state, shared by the status bar, the console and the splash.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做整体 ETA、进度条、百分比。
-- 不在相位内做动画/心跳；不切开会话 `init()`，不让启动期回转循环。
-- 不替宿主拥有启动线程；宿主的重活由它自己在 `startup()` 那一拍丢到池上。
+- No overall ETA, progress bar or percentage.
+- No animation or heartbeat inside a phase; the session `init()` is not cut apart and the startup does not turn the loop.
+- The framework does not own a startup thread for the host; the host puts its heavy work on the pool itself, in the `startup()` beat.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-启动框是框架级呈现：`Application::startupSequence()` 建/收上报口，`GuiApplication::startupStart()` 上框并等首帧，
-`startupEnd()` 收框并第一次显示主窗；进度按相位推，框只显示状态行 + 转圈。
+The splash is framework-level presentation: `Application::startupSequence()` opens and closes the reporting door, `GuiApplication::startupStart()` puts the splash up and
+waits for its first frame, and `startupEnd()` takes it down and shows the main window for the first time; progress is pushed per phase, and the splash shows a status line
+and a spinner only.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 组成
+### 2.1 The pieces
 
-| 部件 | 位置 | 职责 |
+| Piece | Location | Responsibility |
 | --- | --- | --- |
-| `SplashConfig` | `AppConfig::splash`（`AppConfig.hpp`） | 开关 + 标题/副标题/logo |
-| `StartupProgress` | `sdk/vine/appfw/StartupProgress.hpp` | 启动期上报口：阶段、状态文字、比例；进程内至多一个 |
-| `gui::BootSplash` | `sdk/vine/appfw/gui/BootSplash.hpp` | 无边框自绘圆角框 + 状态行 + 转圈指示器 |
-| `Application` | `startupSequence()` 驱动三拍；建/收上报口 | 生命周期 |
-| `GuiApplication` | 构造函数建框；`startupStart()` / `startupEnd()` 覆写上屏/收框 | 呈现 |
-| `PluginManager::loadAllAsync()` | 上报“正在查找/加载/收尾插件 x (i/n)” | 启动里最长、最不可预测的一段 |
+| `SplashConfig` | `AppConfig::splash` (`AppConfig.hpp`) | the switch + title / subtitle / logo |
+| `StartupProgress` | `sdk/vine/appfw/StartupProgress.hpp` | the startup reporting door: phase, status text, fraction; at most one per process |
+| `gui::BootSplash` | `sdk/vine/appfw/gui/BootSplash.hpp` | a borderless, self-drawn rounded box + status line + spinner |
+| `Application` | `startupSequence()` drives the three beats; opens / closes the reporting door | lifetime |
+| `GuiApplication` | the constructor builds the splash; `startupStart()` / `startupEnd()` override to show / take it down | presentation |
+| `PluginManager::loadAllAsync()` | reports "finding / loading / finishing plugin x (i/n)" | the longest and least predictable part of startup |
 
-**为什么上报口在 appfw 而不是 base**：它要往 `ProgressHost` 里报（Core 的 `Signal`），而 `ProgressHost` 是应用状态。
-上报口自己持一个前台 `ProgressHost`，所以启动进度天然被状态栏/控制台共享。
+**Why the reporting door is in appfw and not in base**: it reports into a `ProgressHost` (Core's `Signal`), and `ProgressHost` is application state. The door holds a
+foreground `ProgressHost` of its own, so startup progress is naturally shared by the status bar and the console.
 
-### 2.2 两种阶段
+### 2.2 The two kinds of phase
 
-- **可计数阶段** `stage(name, total)`：`setDone()` 按 `done/total` 推进（插件加载就是这样，每个插件回来算一份）。
-- **不确定阶段** `stage(name)`：只知道在做什么。
-- **每个可计数阶段从零开始**（等于该阶段自己的比例），不是整次启动的剩余。上报方不可能知道还没走到的阶段有多长；
-  硬凑全局百分比要么在阶段切换处跳回 0，要么让应用预先声明权重表。
-- 启动框不把可计数阶段变成数字；状态栏呈现者与控制台照旧显示它们。
+- **A countable phase**, `stage(name, total)`: `setDone()` advances by `done/total` (plugin loading works this way, one share per plugin coming back).
+- **An indeterminate phase**, `stage(name)`: only what is being done is known.
+- **Every countable phase starts at zero** (it is that phase's own fraction), not what is left of the whole startup. A reporter cannot know how long phases it has not
+  reached will take; forcing a global percentage either jumps back to 0 at every phase change or makes the application declare a table of weights up front.
+- The splash does not turn a countable phase into a number; the status-bar presenter and the console show them as before.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 启动框呈现 | 应用身份 + 状态行 + 转圈；无进度条/百分比 | 已落地 |
-| F2 | 相位进度 | 每个相位开始报一次，收到上报就同步重绘 | 已落地 |
-| F3 | 首帧门 | 启动框画出首帧后才跑启动工作；300 ms 兜底 | 已落地 |
-| F4 | 主窗上屏 | `startupEnd()` 收框、主窗第一次 `show()`、`raise()`/`activate()` | 已落地 |
-| F5 | 取消 | 启动框 `✕`/`startupStart` 的 token；取消不是失败 | 已落地 |
-| F6 | 上报口生命周期 | 第一拍前建、最后一拍后收；没有上报口时全空操作 | 已落地 |
+| F1 | Splash presentation | application identity + status line + spinner; no progress bar, no percentage | landed |
+| F2 | Phase progress | one report at the start of each phase, repainting on every report | landed |
+| F3 | The first-frame door | startup work runs only after the splash has painted its first frame; a 300 ms fallback | landed |
+| F4 | The main window appears | `startupEnd()` takes the splash down, the main window `show()`s for the first time, `raise()` / `activate()` | landed |
+| F5 | Cancellation | the splash' `✕` / `startupStart`'s token; cancellation is not a failure | landed |
+| F6 | The reporting door's lifetime | opened before the first beat, closed after the last; every call is a no-op without it | landed |
 
-### 3.1.1 F1 启动框呈现
+### 3.1.1 F1 Splash presentation
 
-- **行为**：`SplashConfig` 配开关/标题/副标题/logo；`BootSplash` 自绘圆角面板，状态行 + 18 px 转圈。
-- **约束**（C1）：不显示百分比/进度条；空标题回落到应用名；读不到的 logo 按“没有 logo”处理。
-- **要求**（R1）：深浅主题自动跟随；居中于主屏；不改 appfw 现有控件样式。
-- **验收**（T1）：`BootSplashTest` 的 `statusText()` 断言。
-- **注意**（N1）：状态文字按框宽 `elidedText`，长插件名不能把窗口撑宽。
+- **Behaviour**: `SplashConfig` sets the switch / title / subtitle / logo; `BootSplash` draws a rounded panel itself, with a status line and an 18 px spinner.
+- **Constraints** (C1): no percentage or progress bar; an empty title falls back to the application name; an unreadable logo counts as "no logo".
+- **Requirements** (R1): follow the light and dark themes; centred on the primary screen; no change to appfw's existing widget styles.
+- **Acceptance** (T1): `BootSplashTest`'s `statusText()` assertions.
+- **Caveat** (N1): the status text is `elidedText` to the box's width, so a long plugin name cannot widen the window.
 
-### 3.1.2 F2 相位进度
+### 3.1.2 F2 Phase progress
 
-- **行为**：每个相位开始时报一次（“正在启动” → “正在显示启动画面” → “正在查找/加载/收尾插件” → “正在准备主窗口”）；
-  框每收到一次上报就 `repaint()`。
-- **约束**（C2）：相位内部不动画；不做心跳/按时间插值。
-- **要求**（R2）：相位边界一定看得见；状态栏/控制台与框读同一份 `StartupProgress`。
-- **验收**（T2）：`BootSplashTest` 的 `statusText()` 跟着 `stage()/setLabel()` 变。
-- **注意**（N2）：给相位内加动画只能切开会话 `init()` 或让启动期回转循环，两条都比“相位边界可见”贵。
+- **Behaviour**: each phase reports once at its start ("starting" → "showing the splash" → "finding / loading / finishing plugins" → "preparing the main window");
+  the splash `repaint()`s on every report.
+- **Constraints** (C2): nothing animates inside a phase; no heartbeat and no interpolation over time.
+- **Requirements** (R2): a phase boundary must always be visible; the status bar, the console and the splash read the same `StartupProgress`.
+- **Acceptance** (T2): `BootSplashTest`'s `statusText()` follows `stage()` / `setLabel()`.
+- **Caveat** (N2): animating inside a phase would need cutting the session `init()` apart or turning the loop during startup, and both cost more than "phase boundaries are
+  visible".
 
-### 3.1.3 F3 首帧门
+### 3.1.3 F3 The first-frame door
 
-- **行为**：`startupStart()` 上屏启动框，`co_await` 首帧（`Window::hasPainted()` + 300 ms 兜底）才继续；
-  X11 上只 `repaint()`/`show()` 不派发就是空窗口。
-- **约束**（C3）：启动工作（含插件 `load()`）必须在启动框画出首帧之后；主窗还没 show。
-- **要求**（R3）：没有启动框时立即继续；首帧门不能变成固定 sleep。
-- **验收**（T3）：`test_appfw` 的启动工作用例；`startup work starting N ms ... the startup frame is on screen`。
-- **注意**（N3）：启动期不要替渲染组件 `processEvents()`；只让启动框自己重绘。
+- **Behaviour**: `startupStart()` puts the splash up and `co_await`s its first frame (`Window::hasPainted()` + a 300 ms fallback) before going on; on X11 a
+  `repaint()` / `show()` without dispatching leaves an empty window.
+- **Constraints** (C3): startup work (including a plugin's `load()`) must come after the splash has painted its first frame; the main window has not been shown yet.
+- **Requirements** (R3): without a splash, continue immediately; the first-frame door must not become a fixed sleep.
+- **Acceptance** (T3): `test_appfw`'s startup-work case; `startup work starting N ms ... the startup frame is on screen`.
+- **Caveat** (N3): during startup do not `processEvents()` on the renderer's behalf; only let the splash repaint itself.
 
-### 3.1.4 F4 主窗上屏
+### 3.1.4 F4 The main window appears
 
-- **行为**：`startupEnd()` 收启动框、主窗第一次 `show()`；有框时先 `raise()`/`activate()`。
-- **约束**（C4）：主窗在 `startupEnd()` 之前不 show；启动期屏幕上只有启动框。
-- **要求**（R4）：主窗第一次出现时已经是成品；渲染区在 `Presenting` 之前容器隐藏，露出主窗背景。
-- **验收**（T4）：X11 `scripts/xwinmap.py` 读启动期主窗 `IsUnmapped`、结束后 `IsViewable`。
-- **注意**（N4）：`Qt::SplashScreen` 置顶且不激活进程；Windows 只把前台激活给新进程，必须 `raise()`/`activate()`。
+- **Behaviour**: `startupEnd()` takes the splash down and `show()`s the main window for the first time; with a splash, `raise()` / `activate()` first.
+- **Constraints** (C4): the main window is not shown before `startupEnd()`; during startup the screen holds the splash only.
+- **Requirements** (R4): the main window's first appearance is already finished; the render area's container is hidden until `Presenting`, showing the window background.
+- **Acceptance** (T4): on X11, `scripts/xwinmap.py` reads the main window as `IsUnmapped` during startup and `IsViewable` after it.
+- **Caveat** (N4): `Qt::SplashScreen` stays on top and does not activate the process; Windows only gives foreground activation to a new process, so `raise()` /
+  `activate()` is required.
 
-### 3.1.5 F5 取消
+### 3.1.5 F5 Cancellation
 
-- **行为**：启动框右上角 `✕` 往 `StartupProgress::stopToken()` 上写；框架每拍之后、每个插件之前看一眼。
-- **约束**（C5）：取消不是失败；`cancelStartup()` 卸已装插件 + 收上报口 + `exit(0)`，主窗不上屏。
-- **要求**（R5）：插件从 `PluginLoadContext::stopToken()` 拿同一个 token；不在启动里的插件拿到永不停的 token。
-- **验收**（T5）：`test_appfw` 的取消用例。
-- **注意**（N5）：取消不走 `startupEnd()` 也不走 `failStartup()`。
+- **Behaviour**: the `✕` in the splash' top-right corner writes to `StartupProgress::stopToken()`; the framework looks at it after every beat and before every plugin.
+- **Constraints** (C5): cancellation is not a failure; `cancelStartup()` unloads the loaded plugins + closes the reporting door + `exit(0)`, and the main window never appears.
+- **Requirements** (R5): a plugin takes the same token from `PluginLoadContext::stopToken()`; one outside startup gets a token that never stops.
+- **Acceptance** (T5): `test_appfw`'s cancellation cases.
+- **Caveat** (N5): a cancellation goes through neither `startupEnd()` nor `failStartup()`.
 
-### 3.1.6 F6 上报口生命周期
+### 3.1.6 F6 The reporting door's lifetime
 
-- **行为**：`beginStartupProgress()` 在第一拍前，`endStartupProgress()` 在最后一拍后；`startupEnd()` 那一拍仍能上报。
-- **约束**（C6）：不在构造函数里建；从不跑启动的进程会多一个活着的宿主，`isBusy()` 永远为真，顶层命令全被拒。
-- **要求**（R6）：没有上报口时所有调用都是空操作；销毁是刻意的（不是只 `complete()`）。
-- **验收**（T6）：`test_appfw` 无头启动进度用例。
-- **注意**（N6）：活着的宿主会一直待在前台栈上，挡掉之后所有命令的进度。
+- **Behaviour**: `beginStartupProgress()` before the first beat, `endStartupProgress()` after the last; the `startupEnd()` beat can still report.
+- **Constraints** (C6): not built in the constructor — a process that never runs a startup would keep a live host, `isBusy()` would always be true and every top-level command
+  would be refused.
+- **Requirements** (R6): without the door every call is a no-op; destroying it is deliberate (not just `complete()`).
+- **Acceptance** (T6): `test_appfw`'s headless startup-progress case.
+- **Caveat** (N6): a live host stays on the foreground stack and blocks the progress of every command after it.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `StartupProgress`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `stage(name)` / `stage(name, total)` | 开始一个不确定/可计数阶段 | 每个可计数阶段从零开始 |
-| `setDone(double)` | 推进当前阶段 | 值是绝对值，不是增量 |
-| `setLabel(String)` | 改状态文字 | 逐插件上报用 |
-| `fraction()` | `optional<double>` | 是否可计数只看它 |
-| `stopToken()` / `requestCancel()` | 启动取消 | 取消不是失败 |
+| `stage(name)` / `stage(name, total)` | start an indeterminate / countable phase | every countable phase starts at zero |
+| `setDone(double)` | advance the current phase | the value is absolute, not a delta |
+| `setLabel(String)` | change the status text | used for the per-plugin reports |
+| `fraction()` | `optional<double>` | whether a phase is countable is read from it alone |
+| `stopToken()` / `requestCancel()` | cancel the startup | cancellation is not a failure |
 
 ### 4.2 `gui::BootSplash`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `isBusyIndicatorRunning()` | 转圈是否在动 | 没有百分比/进度条 |
-| `statusText()` | 当前画出来的状态行 | 测试断言用 |
+| `isBusyIndicatorRunning()` | whether the spinner is turning | no percentage, no progress bar |
+| `statusText()` | the status line currently drawn | for test assertions |
 
 ### 4.3 `SplashConfig`
 
-`enabled` / `title` / `subtitle` / `logo`；应用只配外观，不写呈现代码。
+`enabled` / `title` / `subtitle` / `logo`; the application configures appearance only and writes no presentation code.
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | 启动框不显示百分比/进度条；状态行 + 转圈。 |
-| C2 | 相位内部不动画；不做心跳/按时间插值。 |
-| C3 | 启动工作在启动框首帧之后；主窗在 `startupEnd()` 之前不 show。 |
-| C4 | 主窗在 `startupEnd()` 第一次 show；启动期屏幕上只有启动框。 |
-| C5 | 取消不是失败；不走 `startupEnd()`/`failStartup()`。 |
-| C6 | 上报口不在构造函数里建；由 `startupSequence()` 建/收。 |
+| C1 | The splash shows no percentage and no progress bar; a status line + a spinner. |
+| C2 | Nothing animates inside a phase; no heartbeat and no interpolation over time. |
+| C3 | Startup work comes after the splash' first frame; the main window is not shown before `startupEnd()`. |
+| C4 | The main window is first shown in `startupEnd()`; during startup the screen holds the splash only. |
+| C5 | Cancellation is not a failure; it goes through neither `startupEnd()` nor `failStartup()`. |
+| C6 | The reporting door is not built in the constructor; `startupSequence()` opens and closes it. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | 深浅主题自动跟随；logo 读不到不影响启动。 |
-| R2 | 相位边界可见；状态栏/控制台/框共享同一份进度。 |
-| R3 | 首帧门有 300 ms 兜底；没有启动框立即继续。 |
-| R4 | 主窗第一次出现时是成品，不露洞。 |
-| R5 | 插件拿同一个 stop token；不在启动里的插件拿永不停的 token。 |
-| R6 | 没有上报口时所有调用空操作。 |
+| R1 | Follow the light and dark themes; an unreadable logo does not affect startup. |
+| R2 | Phase boundaries are visible; the status bar, the console and the splash share one progress. |
+| R3 | The first-frame door has a 300 ms fallback; without a splash, continue immediately. |
+| R4 | The main window's first appearance is finished, with no hole in it. |
+| R5 | A plugin takes the same stop token; one outside startup gets a token that never stops. |
+| R6 | Without the reporting door every call is a no-op. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | 启动期屏幕上只有启动框。 |
-| N2 | 主窗第一次 `show()` 发生在 `startupEnd()`。 |
-| N3 | 上报口生命周期 = 启动阶段生命周期。 |
-| N4 | 启动框的可计数阶段不变成数字。 |
+| N1 | During startup the screen holds the splash only. |
+| N2 | The main window's first `show()` happens in `startupEnd()`. |
+| N3 | The reporting door's lifetime = the startup phase's lifetime. |
+| N4 | The splash never turns a countable phase into a number. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 相位内动画的代价
+### 6.1 The price of animating inside a phase
 
-- 会怎么错：以为加个定时器就能让转圈更顺；实际要切开会话 `init()` 或让启动期回转循环。
-- 怎么判：应用线程最长连续占用实测 ~184 ms（会话 init）。
-- 怎么防：只做相位边界更新；相位内保持静止。
+- How it fails: the assumption that a timer would make the spinner smoother; in practice it needs cutting the session `init()` apart or turning the loop during startup.
+- How to detect it: the application thread's longest continuous occupancy measures ~184 ms (the session init).
+- How to prevent it: update at phase boundaries only and stay still inside a phase.
 
-### 6.2 启动期 pump 事件
+### 6.2 Pumping events during startup
 
-- 会怎么错：`processEvents()` 把渲染表面的 resize/settle 定时器提前唤醒，拿不到有效句柄。
-- 怎么判：attach 在布局没稳时发生；启动框全透明/空白。
-- 怎么防：启动框只 `repaint()`；首帧门用 `Window::hasPainted()`。
+- How it fails: `processEvents()` wakes the render surface's resize / settle timers early, so no valid handle is available.
+- How to detect it: attach happens before the layout settles; the splash is fully transparent or blank.
+- How to prevent it: the splash only `repaint()`s; the first-frame door uses `Window::hasPainted()`.
 
-### 6.3 Windows 未验
+### 6.3 Windows is unverified
 
-- 会怎么错：主窗未 show 时 `VsgHostWindow` 拿不到有效 HWND，attach 失败。
-- 怎么判：日志 `GetClientRect(..) failed` / `surface -> Failed`。
-- 怎么防：回退“主窗早 show、门等两窗”，并记“Windows 上未采纳”；判据见 backlog。
+- How it fails: with the main window not shown, `VsgHostWindow` cannot get a valid HWND and attach fails.
+- How to detect it: the log says `GetClientRect(..) failed` / `surface -> Failed`.
+- How to prevent it: fall back to "show the main window early and let the door wait for both windows" and record "not adopted on Windows"; the criteria are in the backlog.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 | --- | --- | --- | --- |
-| D1 | 进度条 / 百分比 / 整体 ETA | 启动没有已知总量，条只能骗人。 | — |
-| D2 | 相位内动画 / 心跳 / 按时间插值 | 要切开会话 `init()` 或回转循环，代价高于收益。 | — |
-| D3 | 主窗与启动框一起早 show | 用户会看到“先冒出一个窗口、再变样”。 | — |
-| D4 | 构造函数里建上报口 | 从不跑启动的进程会永远 `isBusy()`，顶层命令全被拒。 | — |
-| D5 | 宿主自己排启动顺序（先结束启动再跑循环） | 顺序漏写就回到老故障；启动步归 `run()` 所有。 | — |
-| D6 | 启动期 `processEvents()` pump | 会把别的组件的定时器/事件一起跑。 | — |
+| D1 | a progress bar / percentage / overall ETA | startup has no known total, so a bar could only lie. | — |
+| D2 | animation / heartbeat / interpolation inside a phase | it needs cutting the session `init()` apart or turning the loop, and the cost outweighs the gain. | — |
+| D3 | showing the main window and the splash together, early | the user would see "a window pops up and then changes shape". | — |
+| D4 | building the reporting door in the constructor | a process that never runs a startup would be `isBusy()` for ever and every top-level command would be refused. | — |
+| D5 | letting the host order the startup itself (finish startup, then run the loop) | one missing step returns to the old failure; the startup step belongs to `run()`. | — |
+| D6 | `processEvents()` pumping during startup | it would run other components' timers and events too. | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 | --- | --- | --- |
-| T1 | 默认关闭；关闭时 `startupEnd()` 幂等 | `BootSplashTest.DisabledByDefaultInTheTestApplication` |
-| T2 | 框画出来的字跟着 `stage()` / `setLabel()` 变 | `BootSplashTest` 的 `statusText()` |
-| T3 | 启动步在循环里、宿主 work 在别的线程、主线程仍在派发 | `test_appfw` 启动工作用例 |
-| T4 | 主窗未 show 时 attach 成功、`startupEnd()` 后 `Presenting` | `scripts/xwinmap.py` + 门禁 app 阶段 |
+| T1 | off by default; `startupEnd()` is idempotent when off | `BootSplashTest.DisabledByDefaultInTheTestApplication` |
+| T2 | the text drawn by the box follows `stage()` / `setLabel()` | `BootSplashTest`'s `statusText()` |
+| T3 | the startup step runs inside the loop, the host's work on another thread, and the main thread keeps dispatching | `test_appfw`'s startup-work cases |
+| T4 | attach succeeds while the main window is unshown, and `Presenting` follows `startupEnd()` | `scripts/xwinmap.py` + the gate's app stage |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-F1–F6 已落地；X11/WSLg 已验证“启动期只有启动框”，Windows 未验。
+F1–F6 are landed; X11 / WSLg verified that "during startup only the splash is on screen"; Windows is unverified.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-- Windows 的 HWND + client rect 探针；见 `../backlog/appfw-startup.md`。
-- 相位内动画/进度条不做；如要做，先解决会话 `init()` 的线程与循环回转。
+- The Windows HWND + client-rect probe; see `../backlog/appfw-startup.md`.
+- Animation / a progress bar inside a phase is not done; doing it would first need the session `init()`'s thread and loop-turning problem solved.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-旧名 `beginStartup` / `finishStartup` / `runStartup` 与已删除的 `run(work)` 重载只出现在 git 历史里；
-当前只按 `startupStart` / `startup` / `startupEnd` 三拍写。
+The old names `beginStartup` / `finishStartup` / `runStartup` and the removed `run(work)` overload appear in git history only; code is written against the three beats
+`startupStart` / `startup` / `startupEnd`.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/fw/appfw/sdk/vine/appfw/StartupProgress.hpp`
 - `src/fw/appfw/sdk/vine/appfw/gui/BootSplash.hpp`
 - `src/fw/appfw/sdk/vine/appfw/AppConfig.hpp`
 - `tests/test_gui/BootSplashTest.cpp`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `appfw-startup-phases.md`
 - `appfw-render-surface.md`
 - `appfw-progress.md`
 - `../backlog/appfw-startup.md`
 
-### 10.3 外部资料
+### 10.3 External material
 
-- Qt `Qt::SplashScreen` / `WA_TranslucentBackground` 语义。
-- X11 `XQueryTree` / `XGetWindowAttributes`（`scripts/xwinmap.py`）。
+- Qt's `Qt::SplashScreen` / `WA_TranslucentBackground` semantics.
+- X11 `XQueryTree` / `XGetWindowAttributes` (`scripts/xwinmap.py`).
