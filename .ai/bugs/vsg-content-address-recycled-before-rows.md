@@ -6,6 +6,8 @@
 - **涉及**：`ContentStore::releaseAbandoned()`、`ContentStore::releaseGeometry/releaseProgram/releaseMaterial`、
   `ContentHalves::Data::Key` / `find` / `answerable`、`ContentFacts::ProgramFacts`、`ContentPass::record()`
 
+> **EN**: Fixed (2026-11-09): fact rows are keyed by object address and outlive the object on purpose (parked until in-flight frames end), but `releaseAbandoned()` dropped the store's reference immediately after parking, so the address could be reused and the old row's park erased rows a new object had just described - after one shading-mode switch the whole pass was refused and the picture froze. The measures hold the object for as long as the key is queryable, and the `generation` field guards against the same address meaning a new identity.
+
 ## 现象与影响
 
 模型查看器里切到某一档着色模式（实测为"法线"），画面**冻结在切换前的样子**：之后拖鼠标每一帧都只报一条

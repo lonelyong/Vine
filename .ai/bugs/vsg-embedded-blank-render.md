@@ -7,6 +7,8 @@
 > **历史代码位置**：`VsgRenderer` / `SceneBridge` 已在后端重写中删除，下面的文件/类名按当时记录保留；
 > 现行结构见 `.ai/design/vsg-backend.md`。
 
+> **EN**: Fixed (historical, 2026-09-02): the embedded path drew only the clear colour because the deserialised phong `ShaderSet` in this vsg build has empty `defaultGraphicsPipelineStates` and the configurator never adds a `ViewportState`, and because the hand-built `VertexIndexDraw` draws nothing in that build. The renderer now completes the shared pipeline states explicitly (including the viewport) and the geometry uses `Commands{BindVertexBuffers, BindIndexBuffer, DrawIndexed}`. The classes named here were removed in the backend rewrite.
+
 ## 现象
 
 嵌入式路径即使初始化成功，视图也只有清屏色、没有任何几何体；而独立窗口路径

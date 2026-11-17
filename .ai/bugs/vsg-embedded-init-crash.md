@@ -7,6 +7,8 @@
 > **历史代码位置**：`VsgRenderer` / `SceneBridge` 已在后端重写中删除，下面的文件/类名按当时记录保留；
 > 现行结构见 `.ai/design/vsg-backend.md`。
 
+> **EN**: Fixed (historical, 2026-09-02): this build allows one vsg device, and `shutdown()` released only the window and viewer, so compiled pipelines and caches still referenced the old device, the device id was never freed, and the next `initialize()` hit "Number of vsg:Device allocated exceeds number supported", which escaped to the Qt event loop and terminated. `initialize()` now catches, logs and shuts down; `shutdown()` clears the graph, scene and caches; failure paths shut down before returning false.
+
 ## 现象
 
 执行 `TestRenderLiveCommand` / 关闭窗口时进程崩溃；崩溃栈落在

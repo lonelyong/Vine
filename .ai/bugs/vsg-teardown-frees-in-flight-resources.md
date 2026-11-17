@@ -8,6 +8,8 @@
 > `Session.cpp`（帧图换代；现名 `WindowSession.cpp`） <!-- drift-ok -->、`include/vine/backend_vsg/internal/GraphLifetime.hpp`（keep-alive）；内存检查器的原始栈在
 > 本文 §2。
 
+> **EN**: Fixed: the vsg backend advances frames as a pipeline and never waits on fences in steady state, but `assignFrameGraphs()` replaced the previous command graph and `shutdown()` released the content world while frames could still be in flight, so teardown freed memory a submission still referenced (about one run in two crashed under Release). Frame graphs are now kept alive with the same slot-reclaim evidence the rest of the backend uses, shutdown idles first, and the lesson recorded is that "a frame returned" and "a counted frame exists" are not proof that nothing is still being read.
+
 ## 1. 症状
 
 - 全套 Release `test_vsg`：约每两次运行一次崩在 `libc` 的堆检查里（`malloc(): unaligned tcache chunk detected`），

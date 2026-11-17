@@ -7,6 +7,8 @@
   `src/plugins/gfx_backend_vk/src/internal/Device.cpp`（把 pass 解析出的 `ShadowSource` 交给 screen 录制）、
   参考行为：`src/plugins/gfx_backend_vsg/src/internal/ContentPass.cpp`（screen 路径按 pass 解析的 map 绑定）
 
+> **EN**: Fixed (2026-11-14): the vk full-screen set bound the white stand-in and a zero shadow block unconditionally, and the pass's resolved `ShadowSource` never reached screen recording, so the deferred lighting program silently shaded without shadows (the vsg path binds the resolved map). Recording now takes the `ShadowSource`, packs binding 8 from it and binds the real map at binding 7 when one was resolved - which moved the two backends from a 1.88% pixel difference to zero.
+
 ## 现象与影响
 
 `Vine --open demo`（默认 deferred）在 vk 上**没有太阳阴影**，同一场景在 vsg 上有。内容路径（前向、G-buffer

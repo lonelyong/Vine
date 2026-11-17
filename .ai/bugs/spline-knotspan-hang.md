@@ -4,6 +4,8 @@
 - **状态**: 已修复
 - **涉及**: `BSplineBasis.hpp`、`tests/test_geom_spatial/BSplineBasisTest.cpp`（当时在 `tests/test_math/`） <!-- drift-ok -->
 
+> **EN**: Fixed: `knotSpan()` initialised `high` to `last_span`, but the binary search depends on `U[low] <= u < U[high + 1]`; in the last two spans `mid == low` and the "u is in the right half" branch never advanced, so evaluation hung. `high` is `last_span + 1` again, restoring the classic NURBS `FindSpan` invariant, with the reason in a comment. The defect had been invisible because no spline with an interior knot had ever been evaluated.
+
 ## 现象
 
 对一段两端夹持、只有一个内部节点的 B 样条（度 1，相异节点 `0 / 1 / 2`，重数 `2 / 1 / 2`），在第二个跨里求值

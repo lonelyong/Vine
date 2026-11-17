@@ -7,6 +7,8 @@
 > **历史代码位置**：`VsgRenderer` / `SceneBridge` 已在后端重写中删除，下面的文件/类名按当时记录保留；
 > 现行结构见 `.ai/design/vsg-backend.md`。
 
+> **EN**: Fixed (historical, 2026-09-17): after maximising, the newly exposed area stayed black for about 250 ms because the window graph's `renderArea` lagged a frame (vsg only resized it during recording), the first frame after a resize was the expensive one (~250 ms rebuilding the offscreen chain), and every full-screen program slot was rebuilt because its identity included the surface size - which it need not, since the rectangle is dynamic state. `resize()` now writes the new extent immediately; presenting an early stretched frame was tried and deliberately reverted.
+
 ## 现象
 
 最大化（或把窗口拉大）后，渲染区**新露出来的那部分先是黑的**，约 250 ms 后才被画面填满。

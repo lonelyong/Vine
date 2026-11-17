@@ -6,6 +6,8 @@
 - **涉及**：`makeDynamicStateDeclaration()`（`internal/ContentPipeline.cpp`、`support/VsgDynamicState.cpp`）、
   `makeDynamicStateCommand()`（`internal/StateCommands.cpp`）、`SetDynamicState::record()`（`support/VsgDynamicState.cpp`）
 
+> **EN**: Open finding from a static review: `setPolygonOffset` writes `vkCmdSetDepthBias`, but the content pipeline's dynamic-state declaration omits `VK_DYNAMIC_STATE_DEPTH_BIAS` (the repository has two drifted copies of that list) and the pipeline's `depthBiasEnable` stays `VK_FALSE`, so the offset is a no-op with no diagnostic at all. Both the declaration and the enable must agree with the write (`G4`, `G6`, `G10`); no pixel regression on a real device exists yet.
+
 ## 现象与影响
 
 `StateNode::setPolygonOffset` / `ResolvedRenderState::polygonOffset` 是对外承诺的能力：深偏移用于贴花、

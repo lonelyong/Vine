@@ -7,6 +7,8 @@
   `include/vine/backend_vk/internal/TargetTable.hpp` 与 `src/internal/TargetTable.cpp`（`peek`）、
   `src/internal/Device.cpp`（读回相位一/相位二、帧体的读写）、`src/internal/TargetObjects.cpp`（构建/重建/销毁）
 
+> **EN**: Fixed (2026-11-17): `readColorBuffer`'s first phase borrowed a target record across the map lock and read `fresh` and shape fields while the lock-free frame body wrote `fresh = false`, so TSan reported a real race on a plain `bool` (the suite was green, the answer stayed legal, which is why only TSan saw it). `fresh` is now `std::atomic<bool>` with relaxed ordering and a new `TargetTable::peek()` returns built, fresh and shape as one value read under the map lock, so phase one never borrows a record.
+
 ## 现象与影响
 
 `VN_TSAN_TARGET=test_vk scripts/tsan_check.sh` 报一条真实竞争：写 `Device.cpp:1733`（帧体

@@ -6,6 +6,8 @@
 - **涉及**：`src/plugins/gfx_backend_vk/src/internal/ContentDraw.cpp`（`Impl::planScreen`）、
   `tests/test_vk/ContentDrawTest.cpp`、参考规则：`.ai/design/vsg-backend.md` §11.16bl（M4b）
 
+> **EN**: Fixed (2026-11-14): `planScreen` resolved full-screen draws with the pass's own depth policy, whose default is `TestAndWrite`, while a full-screen triangle sits at z = 0.0 - the far plane under reverse-Z - so every fragment failed `GREATER` and the window, composite and preview output was discarded after being recorded (98.8% near-black pixels, zero VUIDs). `planScreen` now forces `DepthMode::Disabled`; the test fixture had been setting that explicitly, which is why no test caught it.
+
 ## 现象与影响
 
 `Vine --open demo` 在 vk 上**只有 HUD 的坐标轴与 FPS 数字**，3D 区整片黑；同一份代码在 vsg 上正常。渲染区读数

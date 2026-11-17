@@ -7,6 +7,8 @@
 > **历史代码位置**：`VsgRenderer` / `SceneBridge` 已在后端重写中删除，下面的文件/类名按当时记录保留；
 > 现行结构见 `.ai/design/vsg-backend.md`。
 
+> **EN**: Fixed (historical, 2026-09-02): geometry stretched on resize because the engine updated the camera projection aspect only when a camera manipulator existed, `VsgRenderer::resize()` rebuilt the swapchain without updating the vsg camera's `viewportState`, and no `ResizeEvent` was posted after the first attach. All three are fixed: the engine updates the main camera aspect itself, the control posts one resize event before the first frame, and the renderer keeps the vsg viewport in step with the window.
+
 ## 现象
 
 拖动窗口边缘改变窗口宽高比后，三角形被压扁 / 拉伸，比例失真。

@@ -3,6 +3,8 @@
 **日期**：2026-09-17 ／ **状态**：已修复 ／ **涉及**：`src/base/async/sdk/vine/async/SharedTask.hpp`、
 `tests/test_async/AsyncTest.cpp`
 
+> **EN**: Fixed (historical, 2026-09-17): `detail::runShared()` swapped the whole waiter list out before resuming each handle, so a waiter destroyed inside a sibling's resume could not deregister and the loop resumed a freed coroutine frame (ASan heap-use-after-free, SIGSEGV without sanitizers). It now dequeues one waiter per lock exactly like `resumeWaitersOneByOne` - the module's own stated rule that a completion must never hold handles across a resume.
+
 ## 现象
 
 `SharedTask` 完成时，如果它的等待者多于一个，并且第一个被唤醒的等待者在**它的 resume 过程里**销毁了另一个
