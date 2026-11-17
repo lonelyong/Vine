@@ -5,7 +5,7 @@
 > three is in `../design/appfw-startup-phases.md`
 > (`run(work)` was later deleted: the host rewrites that beat itself and posts it to the thread pool itself).
 
-> The direction the user set on 2026-09-26 (verbatim): "`Application` and `GuiApplication` need a unified
+> The direction the user set on 2026-09-26 (their words, translated): "`Application` and `GuiApplication` need a unified
 > initialisation, is `init()` needed; run `exec()` first, some method pushes an event that calls `beginStartup`, or the
 > startup calls a virtual `beginStartup`/`finishStartup`; the main window `show()`s only after initialisation is done,
 > and for rendering the resources must be initialised before the window is shown."

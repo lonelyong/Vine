@@ -1,338 +1,415 @@
-# async 下一步设计（P2：取消环境 / 结构化作用域 / 帧分配）
+# async next-step design (P2: cancellation environment / structured scope / frame allocation)
 
-> 母文档：`.ai/design/async-design.md`（§8 指向本文）。模块笔记：`.ai/memory/async.md`。
-> 本文只出设计，不改代码；每节都写"为什么值得/不值得"和"怎么证明做对了"。
+> Parent document: `.ai/design/async-design.md` (§8 points here). Module notes: `.ai/memory/async.md`.
+> This page designs only, it changes no code; every section says "why it is worth it / not worth it" and "how to prove it
+> was done right".
 
-## 0. 结论表（依据都在下面各节）
+## 0. Conclusion table (the evidence is in the sections below)
 
-| 项 | 结论 | 依据（实测/全仓 grep） |
+| Item | Conclusion | Evidence (measurement / repository-wide grep) |
 | --- | --- | --- |
-| 取消的**环境**（stop token 随任务走） | **建议排期**，形状已定（§1 A + C） | appfw 已经手搓了环境（`PluginLoadContext::stopToken()`、`CommandExecutionContext::stopToken()`、`StartupProgress::stopToken()`），而 async 看不见它；子任务要拿令牌只能靠作者手写参数 |
-| 取消的**结果通道**（`set_stopped` 取代异常） | **不做**，只补文档 | cppcoro/folly 也用异常；上层已按 `TaskCancelledException` 分类；代价是 `Task` 结果型别 + 全部组合子 + 145 条用例 |
-| 结构化作用域的**强制** | **小改**（析构 = 请求停止 + 断言，等待永远显式；加 `detach()`） | `Scope` 在生产代码 **0 使用者**（全仓 grep）；stdexec 的 `async_scope`/`counting_scope` 也是"析构断言、同步点显式 await" |
-| **帧分配**（promise `operator new` / 分配器） | **不做**，挂账并写清判据 | 协程体只出现在 appfw(15 文件)/app_shell(11)/demo_plugin(3)/test_plugin(6)/vsg 插件(**1 处**)，`src/viz` 渲染路径 **0** 个 ⇒ 帧分配不在任何热路径 |
+| A cancellation **environment** (the stop token travels with the task) | **recommended for scheduling**, the shape is settled (§1 A + C) | appfw already hand-built an environment (`PluginLoadContext::stopToken()`, `CommandExecutionContext::stopToken()`, `StartupProgress::stopToken()`), and async cannot see it; a child task can only get the token by having its author pass it by hand |
+| A cancellation **result channel** (`set_stopped` instead of an exception) | **not doing it**, documentation only | cppcoro/folly use exceptions too; the layers above already classify by `TaskCancelledException`; the price is a `Task` result type + every combinator + 145 cases |
+| **Enforcing** the structured scope | **a small change** (destructor = request stop + assert, waiting stays explicit; add `detach()`) | `Scope` has **0 users** in production code (repository-wide grep); stdexec's `async_scope`/`counting_scope` are also "assert in the destructor, await the synchronisation point explicitly" |
+| **Frame allocation** (promise `operator new` / an allocator) | **not doing it**, booked with the criteria written down | coroutine bodies appear only in appfw (15 files) / app_shell (11) / demo_plugin (3) / test_plugin (6) / the vsg plugin (**1 place**), and the `src/viz` render path has **0** ⇒ frame allocation is on no hot path |
 
 ---
 
-## 1. 取消的环境（建议排期）
+## 1. The cancellation environment (recommended for scheduling)
 
-### 1.1 现状：环境已经有了，只是没人认领
+### 1.1 Today: the environment exists, nobody claims it
 
-`vn::async` 的取消是**显式参数**（`whenAll(tasks, token)`、`sleepFor(d, token)`、`Scope::join(token)`），
-与 cppcoro 一致。但上层早就需要一个"不靠参数传递"的令牌：
+Cancellation in `vn::async` is an **explicit parameter** (`whenAll(tasks, token)`, `sleepFor(d, token)`,
+`Scope::join(token)`), the same as cppcoro. But the layers above have long needed a token that does not travel as a
+parameter:
 
-- `PluginLoadContext::stopToken()`（文档原话：the context carries the same token as `StartupProgress::stopToken()`）；
-- `CommandExecutionContext::stopToken()` / `isCancelled()`；
-- `StartupProgress::stopToken()`。
+- `PluginLoadContext::stopToken()` (the documentation's own words: the context carries the same token as
+  `StartupProgress::stopToken()`);
+- `CommandExecutionContext::stopToken()` / `isCancelled()`;
+- `StartupProgress::stopToken()`.
 
-也就是说 **appfw 已经把令牌装进了"上下文对象"**，而 `vn::async` 的组合子看不见：`Plugin::load()` 里
-`co_await whenAll(...)`、`co_await sleepFor(...)` 都拿不到启动取消，除非作者逐个把 token 传下去。
-P2300 把这件事做成了**环境**（`get_stop_token(env)`），本文建议按同一思路给 async 一个最小的
-"环境式令牌"，而不是引入整个 sender/receiver。
+In other words **appfw has already put the token inside a "context object"**, and `vn::async`'s combinators cannot see it:
+`co_await whenAll(...)` and `co_await sleepFor(...)` inside `Plugin::load()` cannot reach the startup cancellation unless
+the author passes the token down one by one.
+P2300 turned this into an **environment** (`get_stop_token(env)`); this page proposes giving async a minimal
+"environment-style token" along the same lines, rather than importing all of sender/receiver.
 
-### 1.2 形状（A：环境式令牌）
+### 1.2 The shape (A: an environment-style token)
 
 ```cpp
-// 新增（sdk/vine/async/StopToken.hpp）
+// new (sdk/vine/async/StopToken.hpp)
 namespace vn::async {
 
-/// 当前协程的停止令牌：没被注入过就是默认构造的空令牌。
+/// The current coroutine's stop token: a default-constructed empty token when none was injected.
 [[nodiscard]] std::stop_token stopToken() noexcept;
 
-/// 把令牌注入一个孩子（组合子用）：此协程 body 里 stopToken() 读到它。
-[[nodiscard]] Task<void> withStopToken(std::stop_token token, Task<void> body);   // 形状示意
+/// Hand a token to a child (used by combinators): stopToken() inside this coroutine body reads it.
+[[nodiscard]] Task<void> withStopToken(std::stop_token token, Task<void> body);   // shape only
 
 } // namespace vn::async
 ```
 
-实现要点（决定成败的三条）：
+Implementation points (the three that decide success or failure):
 
-1. **令牌存在 promise 里**：`Task` 的 `promise_type` 增加 `std::stop_token token{};`，`stopToken()` 通过
-   *当前协程的 promise* 读它。取"当前协程的 promise"需要一次性把 handle 传进 body——用现成的对称转移
-   awaiter（`await_suspend(handle)` 里把 `handle.promise()` 存到一个线程局部槽，见下）。
-2. **注入点是"启动孩子之前"**：`WhenChild::start(state)` / `Scope::add()` / `runShared()` / `scopeChild` 都已有
-   "贴元数据"的那一行（`handle_.promise().state = std::move(state);`），注入紧随其后 ⇒ **零新机制**。
-3. **继承而不是替换**：组合子拿到显式 token 就用它，没有就沿用当前环境（`stopToken()`）；`withStopToken`
-   显式覆盖。`Task` 的 promise 默认空令牌 ⇒ 与今天的行为完全一致（`stopToken()` 返回空 ⇒ 谁都不会因为
-   "以为是取消状态"而提前返回）。
+1. **The token lives in the promise**: `Task`'s `promise_type` gains `std::stop_token token{};`, and `stopToken()` reads it
+   through *the current coroutine's promise*. Getting "the current coroutine's promise" needs the handle to reach the body
+   once - use the existing symmetric-transfer awaiter (store `handle.promise()` in a thread-local slot from
+   `await_suspend(handle)`, see below).
+2. **The injection point is "before starting the child"**: `WhenChild::start(state)` / `Scope::add()` / `runShared()` /
+   `scopeChild` all already have the "attach metadata" line (`handle_.promise().state = std::move(state);`), and the
+   injection follows it ⇒ **zero new mechanism**.
+3. **Inherit, do not replace**: a combinator uses an explicit token when given one and otherwise keeps the current
+   environment (`stopToken()`); `withStopToken` overrides explicitly. A `Task` promise defaults to an empty token ⇒
+   behaviour is exactly as today (`stopToken()` returns empty ⇒ nothing returns early because it "thinks it is
+   cancelled").
 
-### 1.3 组合子怎么用（建议的默认策略）
+### 1.3 How the combinators use it (the default policy suggested)
 
-| 设施 | 取消策略（A 落地后） |
+| Facility | Cancellation policy (once A lands) |
 | --- | --- |
-| `sleepFor(d, token={})` | **不做环境回退**（见下面的更正）：被调用者读不到调用者的环境 |
-| `whenAll` / `whenAny` | 显式 token 优先；**默认是否注入孩子**属于第二阶（会改行为，需重排用例） |
-| `Scope::add(task)` | 注入 scope 自己的令牌（已落地：`Scope` 持有 `stop_source` ✓） |
-| `withTimeout(task, d, token)` | 现状是"超时即销毁孩子"；要做三段式需单独定（见 §1.5） |
+| `sleepFor(d, token={})` | **no environment fallback** (see the correction below): a callee cannot read its caller's environment |
+| `whenAll` / `whenAny` | an explicit token wins; **whether children are injected by default** is a second stage (it changes behaviour and needs the cases rearranged) |
+| `Scope::add(task)` | injects the scope's own token (already in place: `Scope` holds a `stop_source` ✓) |
+| `withTimeout(task, d, token)` | today "a timeout destroys the child"; a three-stage form has to be decided separately (see §1.5) |
 
-**更正（2026-09-26 实测发现，原设计这一格是错的）**：`sleepFor()` 曾经写成"没有显式 token 就用
-`co_await currentStopToken()`"，但那个读的是**它自己的**环境——而它是**被调用者**，调用者的令牌不可能被它看见。
-`await_transform` 只能让一个协程读**自己** promise 上的令牌，所以：
+**Correction (found by measurement on 2026-09-26; this cell of the original design was wrong)**: `sleepFor()` used to be
+written as "with no explicit token, use `co_await currentStopToken()`", but that reads **its own** environment - and it is
+the **callee**, so its caller's token can never be visible to it.
+`await_transform` only lets a coroutine read the token on **its own** promise, therefore:
 
-- **环境只能由创建者注入**（`withStopToken(token, child())`），**不能由被调用者回查**；
-- P2300 那边能做到"操作看见调用者的环境"，是因为环境随 receiver 一路**往下传**，不是靠环境变量式的回查；
-  C++20 这套形状没有 receiver，就只能由创建者显式交接（一阶即如此，见下）。
+- **the environment can only be injected by the creator** (`withStopToken(token, child())`), **it cannot be looked up by
+  the callee**;
+- P2300 can do "an operation sees its caller's environment" because the environment travels **down** with the receiver
+  rather than being looked up like a variable; the C++20 shape here has no receiver, so the creator has to hand it over
+  explicitly (that is the first stage, see below).
 
-于是正确的用法是两个方向各一句：
+The correct usage is therefore one line in each direction:
 
 ```cpp
-// 创建者（框架/组合子）把令牌交给它创建的任务：
+// the creator (framework/combinator) hands the token to the task it creates:
 co_await withStopToken(context->stopToken(), plugin->load(context));
 
-// 任务体读自己的环境，并把它交给它 await 的东西：
+// the task body reads its own environment and hands it to what it awaits:
 const std::stop_token mine = co_await currentStopToken();
 co_await sleepFor(std::chrono::seconds(2), mine);
 ```
 
-### 1.4 不改的东西（兼容性边界）
+### 1.4 What does not change (the compatibility boundary)
 
-- 所有显式参数入口**保留**（172 处 `x.result()` 与各组合子的 token 参数不动）。
-- 错误通道**不变**：取消仍抛 `TaskCancelledException`（类型化，`vn::Exception::Code::CANCELLED`）。
-- `Task<T>` 的型别、`await_resume` 语义、`result()` 的"只读一次"都不变 ⇒ **不改 ABI、不改 145 条用例**。
+- Every explicit-parameter entry point **stays** (172 `x.result()` calls and the token parameters of every combinator are
+  untouched).
+- The error channel **does not change**: cancellation still throws `TaskCancelledException` (typed,
+  `vn::Exception::Code::CANCELLED`).
+- `Task<T>`'s type, the `await_resume` semantics and `result()`'s "read once" all stay ⇒ **no ABI change, no change to
+  the 145 cases**.
 
-### 1.5 为什么"结果通道（`set_stopped`）"不做
+### 1.5 Why "a result channel (`set_stopped`)" is not done
 
-`set_stopped` 的价值是"取消不是错误"：组合子不必把取消当失败、`whenAll` 不会因为一个孩子被取消而
-整体报错。代价是 `Task<T>` 的结果变成三态（value / error / stopped），`await_resume`、全部组合子、
-`result()`、`unhandled_exception` 路径与全部用例都要改，而**收益在这套代码里很薄**：上层（命令链、插件、
-启动）已经把 `TaskCancelledException` 当作"取消"单独 catch（见 `CommandManager`、`AppLifecycle` 相关用例）。
-若将来要收口 `withTimeout` 的"超时即销毁孩子"（§4.2 的已知风险），届时再评估"先请求停止、等孩子收尾、
-超时才销毁"的三段式——那是**局部**改动，不必先动全局结果通道。
+The value of `set_stopped` is "cancellation is not an error": a combinator need not treat cancellation as failure, and
+`whenAll` does not fail as a whole because one child was cancelled. The price is that `Task<T>`'s result becomes
+three-state (value / error / stopped), and `await_resume`, every combinator, `result()`, the `unhandled_exception` path
+and every case have to change, while **the benefit in this code is thin**: the layers above (command chain, plugins,
+startup) already catch `TaskCancelledException` separately as "cancelled" (see `CommandManager` and the `AppLifecycle`
+cases).
+If the "a timeout destroys the child" behaviour of `withTimeout` has to be tightened one day (§4.2 of the risks), then
+evaluate the three-stage "request stop, wait for the child to wind down, destroy on timeout" - that is a **local**
+change, and the global result channel does not have to move first.
 
-### 1.6 验证配方（做 A 时照此钉）
+### 1.6 The verification recipe (nail it this way when doing A)
 
-- 钉子 1（注入生效）：一个宿主给 `PluginLoadContext` 一个令牌，插件 body 里 `sleepFor(500ms)`；宿主
-  `request_stop()` ⇒ 20 ms 内抛 `TaskCancelledException`（今天必须显式传参才可能）。
-- 钉子 2（默认空）：不注入时 `stopToken().stop_possible() == false`，且 `sleepFor(20ms)` 正常到点。
-- 钉子 3（继承不替换）：`whenAll(withStopToken(t, ...), ...)` 的孩子两两看到同一个令牌（比较 `stop_token` 的
-  `stop_possible()` 与 `can_stop()`，或用一个记录型 task）。
-- 变异：把注入那一行删掉 ⇒ 钉子 1 红（钉 2/3 不动）；把"继承"改成"总是空" ⇒ 钉子 3 红。
-- 线程约定（必须写进头文件）：令牌只在**创建/启动孩子的那次注入**时读取，不参与竞态；`stopToken()` 是
-  "当前协程的环境"，跨线程读的是同一个 `stop_token` 值语义副本（`std::stop_token` 本身线程安全）。
+- Nail 1 (the injection works): a host gives `PluginLoadContext` a token and the plugin body does `sleepFor(500ms)`; the
+  host calls `request_stop()` ⇒ `TaskCancelledException` within 20 ms (today that is only possible by passing the
+  parameter explicitly).
+- Nail 2 (empty by default): without injection `stopToken().stop_possible() == false`, and `sleepFor(20ms)` finishes on
+  time.
+- Nail 3 (inherit, do not replace): the children of `whenAll(withStopToken(t, ...), ...)` both see the same token (compare
+  `stop_possible()` and `can_stop()` of the `stop_token`s, or use a recording task).
+- Mutation: delete the injection line ⇒ nail 1 goes red (nails 2/3 unchanged); change "inherit" to "always empty" ⇒
+  nail 3 goes red.
+- The threading contract (must go into the header): the token is read only at **the injection that creates/starts the
+  child** and takes part in no race; `stopToken()` is "the current coroutine's environment", and reading it across threads
+  reads a value-semantics copy of the same `stop_token` (`std::stop_token` itself is thread-safe).
 
 ---
 
-## 2. 结构化作用域（小改，不重写）
+## 2. The structured scope (a small change, not a rewrite)
 
-### 2.1 现状与证据
+### 2.1 Today and the evidence
 
-- `Scope` 的契约：孩子**自持**（`DetachedTask` + 共享状态），`~Scope` 不等待也不取消；孩子可以活得比
-  作用域长，只有一句散文警告（`../design/async-design.md` §4.4）。
-- **全仓没有生产使用者**：`grep -rn 'async::Scope' src/` 只命中无关的 `PluginScope`/`ChainScope`/`ReadScope`。
-  也就是说今天的"不结构化"还没有伤到任何人——但 API 一旦被用就会踩。
-- 标准形状（stdexec 的 `async_scope`/`counting_scope`）：**析构断言、同步点显式 `co_await`**，不是
-  "析构里等"（析构不是协程，无法挂起；同步等要么阻塞线程、要么泵事件循环，那属于宿主的策略）。
+- `Scope`'s contract: children **own themselves** (`DetachedTask` + shared state), `~Scope` neither waits nor cancels; a
+  child may outlive the scope, and there is one prose warning (`../design/async-design.md` §4.4).
+- **No production user anywhere in the repository**: `grep -rn 'async::Scope' src/` only hits the unrelated
+  `PluginScope`/`ChainScope`/`ReadScope`.
+  In other words today's "not structured" has not hurt anyone yet - but an API that is used will trip over it at once.
+- The standard shape (stdexec's `async_scope`/`counting_scope`): **assert in the destructor, await the synchronisation
+  point explicitly**, not "wait inside the destructor" (a destructor is not a coroutine and cannot suspend; a synchronous
+  wait would either block the thread or pump the event loop, which is the host's policy).
 
-### 2.2 建议的形状
+### 2.2 The shape suggested
 
 ```cpp
 class Scope
 {
   public:
-    /// 请求停止（不等待）：析构与显式调用都只做这一件事。
+    /// Request a stop (without waiting): the destructor and an explicit call both do only this.
     void requestStop() noexcept;
 
-    /// 不再对当前批次请求停止：明说"这批孩子我自己等，别去打断它们"（不影响 join() 仍然等待）。
+    /// Stop requesting a stop for the current batch: say plainly "I wait for this batch myself, do not interrupt them"
+    /// (it does not affect join(), which still waits).
     void detach() noexcept;
 
-    ~Scope();   // debug: pending != 0 且未 detach() ⇒ 断言；release: 一条 warning
+    ~Scope();   // debug: pending != 0 and not detached() ⇒ assert; release: one warning
 };
 ```
 
-- **析构动作 = `request_stop()`**（不等待、也不断言；`pendingChildren()` 交给宿主决定怎么报——async 只依赖
-  `vn::Global`+`vn::Core`，不为一条诊断引入 logging 依赖）。`requestStop()` 需要有 `stop_source`；这正是 §1 的环境
-  令牌的落点：`Scope` 持有 `std::stop_source`，`add()` 把令牌注入孩子（§1.2 第 2 条），于是"析构请求停止"
-  对合作式的孩子真的有效果，而 Assert/Detach 只是把"逃逸"变成显式选择。
-- `join(token)` 的语义要写准：**取消只停等待**（现状），**不取消孩子**；要取消孩子就 `requestStop()`。
-  两者可以并存：`join()` 内部其实可以照 `token` 先 `request_stop`（若 token 是孩子继承的那一个）——这条
-  留待实现时用用例钉住（"取消 join 后孩子收尾、`join()` 返回"）。
+- **The destructor action = `request_stop()`** (no waiting and no assertion; `pendingChildren()` is left to the host to
+  report - async depends only on `vn::Global`+`vn::Core` and does not pull in a logging dependency for one diagnostic).
+  `requestStop()` needs a `stop_source`, which is exactly where §1's environment token lands: `Scope` holds a
+  `std::stop_source`, `add()` injects the token into the child (§1.2 point 2), so "the destructor requests a stop" really
+  has an effect on a cooperative child, while assert/detach merely turn "escaping" into an explicit choice.
+- `join(token)`'s semantics must be stated precisely: **cancellation only stops the wait** (as today), **it does not
+  cancel the children**; cancelling the children means `requestStop()`.
+  Both can coexist: `join()` can actually `request_stop` per `token` first (when the token is the one the children
+  inherited) - that is left to be nailed with a case at implementation time ("after cancelling the join the children wind
+  down and `join()` returns").
 
-### 2.3 验证配方
+### 2.3 The verification recipe
 
-- 钉子：`ScopeDestructorRequestsStop`（孩子 `co_await sleepFor(1s)` + 观察 `TaskCancelledException`）；
-  `ScopeDetachSilencesTheAssert`（`detach()` 后析构不再诊断）；`CancelJoinStillLetsChildrenFinish`（已有，
-  上一轮加的 `ScopeTest.JoinCancellationWakesOffTheCancellersStackAndLeavesTheChildRunning` 里已覆盖）。
-- 变异：析构里删掉 `request_stop()` ⇒ 钉子 1 红（孩子跑满 1 s 而不是立刻结束）；把断言删掉 ⇒ 诊断钉子红。
-- 注意 debug 断言与 release warning 都要能被测试看到（仓库已有 `WarningCapture` 夹具，见 test_appfw 第 29 轮）。
-
----
-
-## 3. 帧分配（建议不做，写清判据）
-
-- 现状：全模块 0 个 `promise_type::operator new/delete`、0 个 `allocator_arg_t` 构造、0 个
-  `get_return_object_on_allocation_failure` ⇒ 每个协程帧走全局 `operator new`。
-- **全仓实测**：协程体只出现在 appfw(15 文件)、app_shell(11)、demo_plugin(3)、model_viewer(3)、test_plugin(6)、
-  `gfx_backend_vsg`(1 处，插件自己的钩子)，`src/viz` 渲染路径 **0 个**。
-  ⇒ **没有任何热路径在分配协程帧**（启动期几十个、命令执行每次几个、渲染每帧 0 个），池化的收益上限就是
-  "启动期少几十次 malloc"，量不出来。
-- 判据（将来出现下列任一条再做）：① 出现"每帧/每事件创建协程"的用法；② profile 里协程帧分配占比可见
-  （`valgrind --tool=massif` 或给 `Task` 的 promise 临时加计数 `operator new`）；③ 引入只读/裸机目标。
-  做的时候第一步是 P2014 形状（`promise_type(std::allocator_arg_t, const Alloc&, ...)` + `operator new`），
-  并保留"分配失败返回空"的口子（`get_return_object_on_allocation_failure`）。
+- Nails: `ScopeDestructorRequestsStop` (a child `co_await sleepFor(1s)` + observe `TaskCancelledException`);
+  `ScopeDetachSilencesTheAssert` (after `detach()` the destructor no longer diagnoses); `CancelJoinStillLetsChildrenFinish`
+  (already covered by `ScopeTest.JoinCancellationWakesOffTheCancellersStackAndLeavesTheChildRunning`, added the previous
+  round).
+- Mutation: delete `request_stop()` from the destructor ⇒ nail 1 goes red (the child runs the full 1 s instead of ending at
+  once); delete the assertion ⇒ the diagnostic nail goes red.
+- Note that both the debug assertion and the release warning have to be visible to a test (the repository already has the
+  `WarningCapture` fixture, see round 29 of test_appfw).
 
 ---
 
-## 4. 建议顺序
+## 3. Frame allocation (recommended not doing; the criteria written down)
 
-1. **§1 A + C**（环境令牌 + `Scope` 持有 `stop_source`）：一项设计、两处小改动，直接让 appfw 那些
-   `*::stopToken()` 上下文"接上"async 的组合子；
-2. **§2**（与 §1 同批做，因为都碰 `Scope`；析构只请求停止 + 断言 + `detach()`）；
-3. **§3 挂账**（有数据再动）；
-4. §1.5 的"先请求停止再等"（`withTimeout` 的三段式）留到有真实需求时单独定；
-5. **第二阶（§6，2026-09-27）**：`CancelPolicy{Destroy, StopAndWait}` —— **已落地**，但默认值按适用面分开：
-   `whenAll`（含 typed tuple/vector 与变参）= `StopAndWait`（先请求停止、再等收尾），
-   `whenAny`/`withTimeout`/`Scope::join` = `Destroy`（不变）。详见 §6.6。
-
----
-
-## 5. 第一阶已落地（2026-09-26）：可选式环境令牌 + Scope 的停止请求
-
-**落地内容**（`src/base/async/sdk/vine/async/`）：
-
-- `Task.hpp`：promise 新增 `std::stop_token token{}`；`await_transform(CurrentStopTokenRequest)` 用已就绪的
-  `detail::ValueAwaiter<std::stop_token>` 作答，另一个 `await_transform(A&&)` 把**其余所有 co_await 原样透传**
-  （promise 一旦定义 await_transform 就会拦截全部 co_await，这条透传是加钩子的前提）。
-  `detail::TaskEnvironment::setToken(task, token)` 写一个**尚未启动**的惰性任务的 promise（`friend` 访问）。
-- `StopToken.hpp`（新）：`co_await currentStopToken()` 读自己的环境；`withStopToken(token, task)` 由创建者注入。
-- `Scope.hpp`：自持 `std::stop_source`；`add()` 在**启动孩子之前**注入令牌；`~Scope()` 只 `request_stop()`；
-  新增 `pendingChildren()` 与 `detach()`（后者 = 本批次不再请求停止，`join()` 照旧等待）。
-- `Sleep.hpp`：**没有**环境回退（原因见 §1.3 的更正）。
-
-**刻意不做**：`whenAll`/`whenAny` 默认把孩子带进环境——那会让"被取消的组合子里的孩子"从"被销毁"变成"自己收尾"，
-是行为变化，要连着用例一起重排（第二阶）。
-
-**钉子（5 条，`test_async` 145 → 150）**：环境默认空（`ATaskNobodyHandedATokenToSeesAnEmptyEnvironment`）、
-注入可见（`WithStopTokenBecomesTheTasksOwnEnvironment`）、被交接的令牌真能取消深层工作
-（`AHandedOverTokenReachesWorkDeepInsideTheBody`，另一线程 request_stop 后 <300 ms 唤醒）、
-Scope 给孩子令牌且离开时请求停止（`ChildrenRunInTheScopesEnvironmentAndLeavingAsksThemToStop`，
-顺带钉 `pendingChildren()`）、`detach()` 后不再打断孩子（`ADetachedScopeLeavesItsChildrenAlone`）。
-
-**变异（实测）**：`TaskEnvironment::setToken` 变空操作 ⇒ 注入那两条红；`~Scope()` 去掉 `request_stop()` ⇒
-Scope 那条红、`detach` 那条仍绿。恢复后 150/150 绿。
-
-**接线已落地（2026-09-26，同轮）**：`PluginManager` 不再裸等钩子，而是把启动令牌当环境交进去 —— 同步门
-（`runToCompletion(async::withStopToken(context.stopToken(), plugin->hook(&context)))`）与启动门
-（`co_await async::withStopToken(context.stopToken(), lp.plugin->hook(&context))`）各三拍，共 6 处。
-于是插件 body 里的 `co_await currentStopToken()` 就是这次启动的取消令牌。
-钉子：夹具插件的 `load()` 在既有的"这一拍请求取消"分支里多记两个键（`saw_environment` / `environment_sees_stop`），
-`HeadlessBootTest.ACancelledBootEndsCleanlyWithoutFinishingTheBoot` 断言两者为真 —— 空令牌的 `stop_possible()`
-是 false，所以"接线断了"与"令牌没被取消"分得开。变异：把 `load()` 那一处的 `withStopToken` 去掉 ⇒ 该用例红
-（两条断言同时失败），恢复 ⇒ 绿。
+- Today: 0 `promise_type::operator new/delete` in the whole module, 0 `allocator_arg_t` constructors, 0
+  `get_return_object_on_allocation_failure` ⇒ every coroutine frame goes through the global `operator new`.
+- **Measured across the repository**: coroutine bodies appear only in appfw (15 files), app_shell (11), demo_plugin (3),
+  model_viewer (3), test_plugin (6) and `gfx_backend_vsg` (1 place, the plugin's own hook), with **0** on the `src/viz`
+  render path.
+  ⇒ **no hot path allocates a coroutine frame** (some dozens during startup, a few per command execution, none per
+  rendered frame), so the upper bound of pooling is "a few dozen fewer mallocs during startup", which cannot be measured.
+- Criteria (do it when any of these appears): 1) a use appears that "creates a coroutine per frame / per event"; 2) the
+  frame allocation share is visible in a profile (`valgrind --tool=massif`, or a temporary counting `operator new` on
+  `Task`'s promise); 3) a read-only or bare-metal target is introduced.
+  The first step then is the P2014 shape (`promise_type(std::allocator_arg_t, const Alloc&, ...)` + `operator new`), and
+  the "allocation failure returns empty" door stays open (`get_return_object_on_allocation_failure`).
 
 ---
 
-## 6. 第二阶：组合子的取消策略（按行业规范定，2026-09-27）
+## 4. Suggested order
 
-### 6.1 五家行业的原文口径
+1. **§1 A + C** (the environment token + `Scope` holding a `stop_source`): one design, two small changes, and appfw's
+   `*::stopToken()` contexts "connect" to async's combinators directly;
+2. **§2** (in the same batch as §1, since both touch `Scope`; the destructor only requests a stop + assertion + `detach()`);
+3. **§3 booked** (move when there is data);
+4. §1.5's "request a stop first, then wait" (the `withTimeout` three-stage form) waits for a real need and gets decided
+   separately;
+5. **The second stage (§6, 2026-09-27)**: `CancelPolicy{Destroy, StopAndWait}` - **landed**, but the default differs by
+   applicability: `whenAll` (including the typed tuple/vector and the variadic form) = `StopAndWait` (request a stop
+   first, then wait for the wind-down), `whenAny`/`withTimeout`/`Scope::join` = `Destroy` (unchanged). See §6.6.
 
-| 体系 | 一个孩子完成/失败时，其余孩子 | 是否等它们 | 取消的性质 |
+---
+
+## 5. First stage landed (2026-09-26): the optional environment token + the scope's stop request
+
+**What landed** (`src/base/async/sdk/vine/async/`):
+
+- `Task.hpp`: the promise gains `std::stop_token token{}`; `await_transform(CurrentStopTokenRequest)` answers through the
+  already-ready `detail::ValueAwaiter<std::stop_token>`, and the other `await_transform(A&&)` passes **every other
+  co_await through unchanged** (once a promise defines await_transform it intercepts every co_await, and that forwarding
+  is the precondition for adding the hook).
+  `detail::TaskEnvironment::setToken(task, token)` writes the promise of a **not yet started** lazy task (`friend` access).
+- `StopToken.hpp` (new): `co_await currentStopToken()` reads its own environment; `withStopToken(token, task)` is injected
+  by the creator.
+- `Scope.hpp`: holds its own `std::stop_source`; `add()` injects the token **before starting the child**; `~Scope()` only
+  calls `request_stop()`; new `pendingChildren()` and `detach()` (the latter = no more stop requests for this batch,
+  `join()` still waits).
+- `Sleep.hpp`: **no** environment fallback (the reason is the correction in §1.3).
+
+**Deliberately not done**: `whenAll`/`whenAny` bringing children into the environment by default - that would turn "a child
+of a cancelled combinator" from "destroyed" into "winds itself down", which is a behaviour change that has to be
+rearranged together with the cases (second stage).
+
+**Nails (5, `test_async` 145 → 150)**: the environment is empty by default
+(`ATaskNobodyHandedATokenToSeesAnEmptyEnvironment`), the injection is visible (`WithStopTokenBecomesTheTasksOwnEnvironment`),
+a handed-over token really cancels deep work (`AHandedOverTokenReachesWorkDeepInsideTheBody`, woken in < 300 ms after
+another thread calls request_stop), a `Scope` gives its children a token and requests a stop on leaving
+(`ChildrenRunInTheScopesEnvironmentAndLeavingAsksThemToStop`, which also pins `pendingChildren()`), and `detach()` leaves
+the children alone afterwards (`ADetachedScopeLeavesItsChildrenAlone`).
+
+**Mutations (measured)**: making `TaskEnvironment::setToken` a no-op ⇒ the two injection nails go red; dropping
+`request_stop()` from `~Scope()` ⇒ the Scope nail goes red while the `detach` one stays green. After restoring, 150/150
+green.
+
+**The wiring landed (2026-09-26, same round)**: `PluginManager` no longer waits on the hook bare; it hands the startup
+token in as the environment - three beats each for the synchronous gate
+(`runToCompletion(async::withStopToken(context.stopToken(), plugin->hook(&context)))`) and the startup gate
+(`co_await async::withStopToken(context.stopToken(), lp.plugin->hook(&context))`), 6 places in all.
+So `co_await currentStopToken()` inside a plugin body is this startup's cancellation token.
+The nail: the fixture plugin's `load()` records two more keys in the existing "request a cancel at this beat" branch
+(`saw_environment` / `environment_sees_stop`), and `HeadlessBootTest.ACancelledBootEndsCleanlyWithoutFinishingTheBoot`
+asserts both are true - an empty token's `stop_possible()` is false, so "the wiring is broken" is distinguishable from
+"the token was not cancelled". Mutation: drop the `withStopToken` at that `load()` ⇒ the case goes red (both assertions
+fail); restore ⇒ green.
+
+---
+
+## 6. Second stage: the combinators' cancellation policy (set by industry practice, 2026-09-27)
+
+### 6.1 What five industry systems state in their own words
+
+| System | When one child completes/fails, the others | Does it wait for them | The nature of cancellation |
 | --- | --- | --- | --- |
-| **Trio**（nursery） | "If any task inside the nursery finishes with an unhandled exception, then the nursery **immediately cancels all the tasks inside the nursery**"；取消是 level-triggered、在 checkpoint 抛出 | **等**（"the block does not exit until *all* tasks have completed"） | 合作式（无法强杀：不响应就一直等）+ `shield=True` 给清理开例外 |
-| **Kotlin** `coroutineScope` | "If block or any child coroutine in this scope fails with an exception, the scope fails, **cancelling all the other children**" | **等**（"completes when both the block and all the coroutines launched in the scope complete"） | 合作式；`supervisorScope` 是"各自失败"的出口 |
-| **Rust** `tokio::select!` | "returning when the first branch completes, **cancelling the remaining branches**" —— 实现就是 **drop** | 不等（丢掉就是丢掉） | **析构即取消**；代价写进文档："cancellation safety：被 drop 必须是 no-op" |
-| **Rust** `tokio::join!` | 不取消，等全部 | 等 | — |
-| **C#** `Task.WhenAll` | **不取消任何兄弟**；有 faulted ⇒ 结果 Faulted 且**聚合全部异常**；无故障但有取消 ⇒ 结果 **Canceled** | 等全部 | 取消是**独立状态**（Canceled ≠ Faulted），由调用者用 CTS 自己发起 |
-| **P2300 / asio** | 组合子**请求停止**其余操作，但要等它们自己上报完成（`set_stopped`）；asio `parallel_group` 把"等全部 / 等第一个 / 等第一个错误"做成**完成条件参数**，配 per-operation cancellation | 等 | 合作式；取消是独立通道 |
+| **Trio** (nursery) | "If any task inside the nursery finishes with an unhandled exception, then the nursery **immediately cancels all the tasks inside the nursery**"; cancellation is level-triggered and raises at a checkpoint | **waits** ("the block does not exit until *all* tasks have completed") | cooperative (no forced kill: a child that does not respond simply keeps it waiting) + `shield=True` carves out an exception for cleanup |
+| **Kotlin** `coroutineScope` | "If block or any child coroutine in this scope fails with an exception, the scope fails, **cancelling all the other children**" | **waits** ("completes when both the block and all the coroutines launched in the scope complete") | cooperative; `supervisorScope` is the exit for "each fails on its own" |
+| **Rust** `tokio::select!` | "returning when the first branch completes, **cancelling the remaining branches**" - the implementation is **drop** | does not wait (dropping is dropping) | **destruction is cancellation**; the price is written down: "cancellation safety: being dropped must be a no-op" |
+| **Rust** `tokio::join!` | cancels nothing, waits for all | waits | - |
+| **C#** `Task.WhenAll` | **cancels no sibling**; a faulted child ⇒ the result is Faulted and **all exceptions are aggregated**; no fault but a cancellation ⇒ the result is **Canceled** | waits for all | cancellation is an **independent state** (Canceled ≠ Faulted), initiated by the caller through its own CTS |
+| **P2300 / asio** | a combinator **requests a stop** of the remaining operations but waits for them to report completion themselves (`set_stopped`); asio's `parallel_group` turns "wait for all / wait for the first / wait for the first error" into a **completion-condition parameter** paired with per-operation cancellation | waits | cooperative; cancellation is an independent channel |
 
-**两个都合法的极端**（不是"谁对谁错"）：
+**Two legitimate extremes** (it is not "who is right"):
 
-- **(a) 请求停止 + 等全部** = Trio / Kotlin / P2300。对孩子的要求是"**响应停止**"，否则组合子被它拖住（Trio/Kotlin 接受这一点，因为它们根本没有"强杀"这条路）。
-- **(b) 立即销毁** = Rust `select!`。对孩子的要求是"**被 drop 是 no-op**"（cancellation-safe）。
+- **(a) request a stop + wait for all** = Trio / Kotlin / P2300. It requires the children to "**respond to the stop**",
+  otherwise the combinator is dragged along by one of them (Trio/Kotlin accept that, since they have no "forced kill"
+  route at all).
+- **(b) destroy immediately** = Rust `select!`. It requires the children to "**be a no-op when dropped**"
+  (cancellation-safe).
 
-两派对孩子的**契约要求不同，但都要求把契约写清**——这正是我们目前缺的那一块（只有一句散文"孩子会被销毁"）。C#/Trio 还额外约定"不要丢失败"（聚合）与"取消是独立状态"。
+The two camps **demand different contracts from the children, but both demand the contract be written down** - which is
+exactly the piece we lack today (there is one prose sentence, "the child gets destroyed"). C#/Trio additionally settle
+"do not drop failures" (aggregation) and "cancellation is an independent state".
 
-### 6.2 决定：把策略放到参数上，默认不变
+### 6.2 The decision: put the policy in a parameter, keep the default unchanged
 
 ```cpp
 enum class CancelPolicy
 {
-    Destroy,      // 触发事件后立刻销毁未完成的孩子（今天的语义；孩子必须 cancellation-safe）
-    StopAndWait,  // 先请求停止，再等它们收尾（Trio/Kotlin/P2300 的语义；孩子必须响应停止）
+    Destroy,      // destroy the unfinished children as soon as the event fires (today's semantics; children must be cancellation-safe)
+    StopAndWait,  // request a stop first, then wait for them to wind down (Trio/Kotlin/P2300 semantics; children must respond to the stop)
 };
 ```
 
-- **触发事件不变**：All = 第一个失败或外部取消；Any = 第一个完成或外部取消。
-- `Destroy`：触发后**先 `request_stop()` 再销毁**（一行成本；合作的孩子若恰在收尾仍能看到）。
-- `StopAndWait`：`request_stop()` 后**等 `remaining == 0` 才完成**；孩子的结果照常丢弃、第一个异常照常重抛（**故意不引入 ExceptionGroup**）。
-- 为什么不做成"换一个语义"：今天有一批用例（`whenAny(never(), sleepFor(...))` 之类）依赖"绝不挂住"，而 StopAndWait 的规范语义**就是**会等一个不响应的孩子 —— 把它变成默认等于改掉本库的确定性承诺。名字分开（Rust 用 `join!`/`select!` 分开、Kotlin 用 `coroutineScope`/`supervisorScope` 分开、asio 用完成条件参数分开）才是行业里"两种都提供"的通行做法。
-- 为什么不学 C# 的聚合与独立 Canceled 状态：那需要 `Task` 结果三态 + 全部组合子重写（见 §1.5），收益在这个仓库里很薄；我们保留"取消 = 类型化异常、首个失败胜出"，并在文档里**写明这是有意的偏离**。
+- **The triggering event does not change**: All = the first failure or an external cancellation; Any = the first
+  completion or an external cancellation.
+- `Destroy`: after the event, **call `request_stop()` first and then destroy** (one line of cost; a cooperative child
+  still sees it if it happens to be winding down).
+- `StopAndWait`: after `request_stop()`, **wait until `remaining == 0` before completing**; the children's results are
+  still discarded and the first exception is still rethrown (**deliberately no ExceptionGroup**).
+- Why not "replace the semantics": a batch of cases today (`whenAny(never(), sleepFor(...))` and the like) relies on
+  "never hang", while `StopAndWait`'s specified semantics **is** to wait for an unresponsive child - making it the default
+  would change the library's determinism promise. Separating the names (Rust separates `join!`/`select!`, Kotlin
+  separates `coroutineScope`/`supervisorScope`, asio separates by a completion-condition parameter) is how the industry
+  offers both.
+- Why not follow C#'s aggregation and the independent Canceled state: that needs a three-state `Task` result plus a
+  rewrite of every combinator (see §1.5), and the benefit in this repository is thin; we keep "cancellation = a typed
+  exception, the first failure wins" and **state in the documentation that this is a deliberate deviation**.
 
-### 6.3 落地形状（实现时照这个做）
+### 6.3 The landing shape (do it this way when implementing)
 
-- `detail::WhenState` 增加 `std::stop_source source`；`WhenChild::start()` / `WhenAnyChild::start()` 用**与 `Scope::add()` 同一套**的 `detail::TaskEnvironment::setToken()` 注入 `source.get_token()`。
-- `whenRace(WhenMode, tasks, token, CancelPolicy)`、`whenAllImpl`、typed `whenAny` 各加一个策略参数（默认 `Destroy`）。
-- `Destroy`：抛/返回之前 `source.request_stop()`。
-- `StopAndWait`：在 `state->done` 醒来后若 `remaining != 0`，**重新 arm 事件继续等**（`AsyncEvent` 是手复位，`Scope::join` 已经是这个写法，照抄）；等完再按原规则抛/返回。
-- 外部取消时同理：`cancelled && policy == StopAndWait` ⇒ 请求停止 → 等收尾 → 抛 `TaskCancelledException`。
-- `Scope::join` 收同一套策略：今天是"取消只停等待"，`StopAndWait` 时改成"先 `requestStop()` 再等"（§2 里那条留待定的语义在此收口）。
+- `detail::WhenState` gains `std::stop_source source`; `WhenChild::start()` / `WhenAnyChild::start()` inject
+  `source.get_token()` through **the same** `detail::TaskEnvironment::setToken()` that `Scope::add()` uses.
+- `whenRace(WhenMode, tasks, token, CancelPolicy)`, `whenAllImpl` and the typed `whenAny` each gain a policy parameter
+  (default `Destroy`).
+- `Destroy`: call `source.request_stop()` before throwing/returning.
+- `StopAndWait`: after waking on `state->done`, if `remaining != 0`, **re-arm the event and keep waiting** (`AsyncEvent` is
+  manually reset, and `Scope::join` already writes it that way - copy it); once done, throw/return by the original rules.
+- The same on an external cancellation: `cancelled && policy == StopAndWait` ⇒ request a stop → wait for the wind-down →
+  throw `TaskCancelledException`.
+- `Scope::join` takes the same policy: today "cancellation only stops the wait", `StopAndWait` changes it to
+  "`requestStop()` first, then wait" (which settles the semantics left open in §2).
 
-### 6.4 验证配方
+### 6.4 The verification recipe
 
-- 钉子 A（`StopAndWait` 等收尾）：孩子 1 立刻抛、孩子 2 睡 50 ms 后**观察到停止并正常返回** ⇒ 组合子必须在孩子 2 结束后才抛，且孩子 2 看到 `stop_requested()`。
-- 钉子 B（`Destroy` 不等待）：同一场景用默认策略 ⇒ 组合子立刻抛。
-- 钉子 C（把该策略的代价也钉住）：孩子永远挂起 + `StopAndWait` ⇒ 组合子在 200 ms 内**没有**返回（这正是契约；Destroy 那条同样场景会立刻返回）。
-- 变异：`StopAndWait` 改成"请求后立刻销毁" ⇒ 钉子 A 红；去掉 `request_stop()` ⇒ 钉子 A 的"看到停止"断言红。
+- Nail A (`StopAndWait` waits for the wind-down): child 1 throws immediately, child 2 sleeps 50 ms and then **observes the
+  stop and returns normally** ⇒ the combinator must throw only after child 2 finishes, and child 2 must have seen
+  `stop_requested()`.
+- Nail B (`Destroy` does not wait): the same scene under the default policy ⇒ the combinator throws at once.
+- Nail C (pin the policy's price as well): a child that never returns + `StopAndWait` ⇒ the combinator has **not** returned
+  within 200 ms (that is the contract; the same scene under `Destroy` returns at once).
+- Mutation: change `StopAndWait` to "destroy right after the request" ⇒ nail A goes red; drop `request_stop()` ⇒ nail A's
+  "saw the stop" assertion goes red.
 
-### 6.5 不做（记录，避免重复讨论）
+### 6.5 Not doing (recorded so the discussion is not repeated)
 
-- `ExceptionGroup` 式聚合（Trio/Kotlin/C#）：要新错误类型 + 改全部组合子；
-- `set_stopped` 独立通道 / `Canceled` 独立状态（P2300/C#）：见 §1.5；
-- **无条件等待**：它会改掉本库"绝不挂住"的承诺 —— Trio/Kotlin 敢这样是因为它们**没有**销毁这条路可选。
+- `ExceptionGroup`-style aggregation (Trio/Kotlin/C#): it needs a new error type + a change to every combinator;
+- a `set_stopped` independent channel / an independent `Canceled` state (P2300/C#): see §1.5;
+- **waiting unconditionally**: it would change this library's "never hangs" promise - Trio/Kotlin dare to because they have
+  **no** destruction route to offer.
 
-### 6.6 状态：已落地（2026-09-27）：`whenAll` 默认改成"请求停止 + 等收尾"
+### 6.6 Status: landed (2026-09-27): `whenAll` now defaults to "request a stop + wait for the wind-down"
 
-**触发本轮的原因**：用户明确要"等"的语义（原话"要等呀，c# 等全部"）。C# 的 `Task.WhenAll` 自己从不取消、
-总是等全部，**把令牌交给任务**——把这两句合起来，就是 Trio/Kotlin/P2300 的"请求停止 + 等收尾"（§6.1）。
+**What triggered this round**: the user asked explicitly for the "wait" semantics (their words, translated: "it has to wait - C# waits for all").
+C#'s `Task.WhenAll` never cancels by itself and always waits for all, **handing the token to the tasks** - putting those
+two sentences together gives Trio/Kotlin/P2300's "request a stop + wait for the wind-down" (§6.1).
 
-**实际落地的形状**（`src/base/async/sdk/vine/async/`）：
+**The shape that actually landed** (`src/base/async/sdk/vine/async/`):
 
-- `Cancellation.hpp`：新增 `enum class CancelPolicy { Destroy, StopAndWait }`（带两派口径的说明）。
-- `When.hpp`：`detail::WhenState`/`WhenAnyState` 各持 `std::stop_source source` 与 `policy`；孩子在启动前
-  经 `detail::TaskEnvironment::setToken()` 拿到 `source.get_token()`（与 `Scope::add()` 同一机制）；
-  `detail::drainChildren(state)` = `request_stop()` + 手复位事件重臂等 `remaining == 0`；四个驱动
-  （`whenRace`/`whenAllImpl`/typed `whenAll`/typed `whenAny`）在唤醒后按策略排空。
-- `WithTimeout.hpp`：`policy` 参数（默认 `Destroy`，转发给 `whenAny`）；`Scope.hpp`：`join(token, policy)`
-  （默认 `Destroy`；`StopAndWait` 时改成"先 `requestStop()` 再等 pending 归零，然后抛 `TaskCancelledException`"）。
-- **默认值**：`whenAll` 全部形式 = `StopAndWait`；`whenAny`/`withTimeout`/`Scope::join` = `Destroy`。
-  变参形式多了"策略在前"的重载（`whenAll(policy, token, tasks...)` 等 8 个），否则包形式的调用者没地方选策略。
+- `Cancellation.hpp`: new `enum class CancelPolicy { Destroy, StopAndWait }` (with the two camps' wording in its comment).
+- `When.hpp`: `detail::WhenState`/`WhenAnyState` each hold a `std::stop_source source` and the `policy`; before starting,
+  a child gets `source.get_token()` through `detail::TaskEnvironment::setToken()` (the same mechanism as `Scope::add()`);
+  `detail::drainChildren(state)` = `request_stop()` + re-arm the manually-reset event and wait for `remaining == 0`; the
+  four drivers (`whenRace`/`whenAllImpl`/the typed `whenAll`/the typed `whenAny`) drain by policy after waking.
+- `WithTimeout.hpp`: a `policy` parameter (default `Destroy`, forwarded to `whenAny`); `Scope.hpp`: `join(token, policy)`
+  (default `Destroy`; under `StopAndWait` it becomes "`requestStop()` first, then wait for pending to reach zero, then
+  throw `TaskCancelledException`").
+- **The defaults**: every form of `whenAll` = `StopAndWait`; `whenAny`/`withTimeout`/`Scope::join` = `Destroy`.
+  The variadic form gains the "policy first" overloads (`whenAll(policy, token, tasks...)` and 7 more), because otherwise
+  a caller of the pack form has nowhere to choose a policy.
 
-**与 §6.3 的两处偏离（诚实记录）**：
+**Two deviations from §6.3 (recorded honestly)**:
 
-1. `Destroy` **不**发停止请求（§6.2 原计划是"先 `request_stop()` 再销毁"）。理由：请求只会在几微秒后销毁帧时
-   触发一批它自己的 `stop_callback`，对已被销毁的孩子没有意义，只把拆解过程和外线程唤醒搅在一起。
-   好处是 `Destroy` 与今天的行为**逐字相同**，"默认不变"这句话可以验证。
-2. **唤醒规则要分模式**：All 模式原先只在最后一个孩子完成时 `done.set()`，所以 StopAndWait 下"第一个失败"
-   根本唤不醒组合子（无从发停止请求）；Any 模式原先**不递减** `remaining` 也只在第一个完成时唤醒。两处都
-   按策略改了：All 在"首个失败 + StopAndWait"时提前唤醒；Any 现在逐孩子递减，并在"最后一个落败者报告 +
-   StopAndWait"时再次唤醒。
+1. `Destroy` does **not** send a stop request (the §6.2 plan was "`request_stop()` first, then destroy"). The reason: the
+   request would only fire a batch of its own `stop_callback`s a few microseconds before the frame is destroyed, which
+   means nothing to a child that is already destroyed, and it stirs the teardown together with the cross-thread wakeups.
+   The benefit is that `Destroy` behaves **word for word** as today, so "the default is unchanged" is verifiable.
+2. **The wake-up rules differ by mode**: All mode used to `done.set()` only when the last child finished, so under
+   `StopAndWait` "the first failure" could not wake the combinator at all (and there was no way to send the stop request);
+   Any mode **did not decrement** `remaining` and woke only on the first completion. Both were changed by policy: All
+   wakes early on "the first failure + StopAndWait"; Any now decrements per child and wakes again on "the last loser
+   reporting + StopAndWait".
 
-**验证配方（已跑）**：`test_async` 150 → **156**；新钉子 = `WhenAllAsksTheSurvivorsToStopAndWaitsForThem`、
-`WhenAllDestroyPolicyNeverAsksTheSurvivorsToStop`、`WhenAllStopAndWaitOnCancellationAsksAndWaits`、
-`WhenAllStopAndWaitIsHeldByAChildThatIgnoresTheToken`、`WhenAnyStopAndWaitIsHeldByALoserItCannotAskToStop`、
-`TypedWhenAnyTest.StopAndWaitWaitsForTheLoserItAskedToStop`、`TypedWhenAnyTest.StopAndWaitIsHeldByALoserItCannotAskToStop`、
-`ScopeTest.JoinStopAndWaitAsksTheChildrenToStopAndWaitsForThem`（旧的取消探针改为显式 `Destroy`，它钉的是唤醒线程，不是策略）。
+**The verification recipe (already run)**: `test_async` 150 → **156**; the new nails are
+`WhenAllAsksTheSurvivorsToStopAndWaitsForThem`, `WhenAllDestroyPolicyNeverAsksTheSurvivorsToStop`,
+`WhenAllStopAndWaitOnCancellationAsksAndWaits`, `WhenAllStopAndWaitIsHeldByAChildThatIgnoresTheToken`,
+`WhenAnyStopAndWaitIsHeldByALoserItCannotAskToStop`,
+`TypedWhenAnyTest.StopAndWaitWaitsForTheLoserItAskedToStop`,
+`TypedWhenAnyTest.StopAndWaitIsHeldByALoserItCannotAskToStop` and
+`ScopeTest.JoinStopAndWaitAsksTheChildrenToStopAndWaitsForThem` (the old cancellation probe now states `Destroy`
+explicitly; it pins the waking thread, not the policy).
 
-**变异（8/8 命中，恢复后 156/156 绿）**：
+**Mutations (8/8 hit, 156/156 green after restoring)**:
 
-| 变异 | 红 |
+| Mutation | Red |
 | --- | --- |
-| `drainChildren` 不发 `request_stop()` | 3 条 |
-| `drainChildren` 直接 `co_return`（不等） | 4 条 |
-| `composeChild` 不注入令牌 | 2 条 |
-| `composeAnyChild` 不注入令牌 | 1 条 |
-| 擦除路径 Any 分支去掉"最后一个落败者"的唤醒 | 1 条 |
-| typed `whenAny` 去掉同一处唤醒 | 2 条 |
-| All 分支去掉"首个失败"的提前唤醒 | 1 条 |
-| `Scope::join` 的 StopAndWait 不发 `requestStop()` | 1 条 |
+| `drainChildren` sends no `request_stop()` | 3 |
+| `drainChildren` just `co_return`s (no waiting) | 4 |
+| `composeChild` injects no token | 2 |
+| `composeAnyChild` injects no token | 1 |
+| the erased path's Any branch drops the "last loser" wake-up | 1 |
+| the typed `whenAny` drops the same wake-up | 2 |
+| the All branch drops the "first failure" early wake-up | 1 |
+| `Scope::join`'s StopAndWait sends no `requestStop()` | 1 |
 
-**开发中撞到的两个坑（写下来省一轮）**：
+**Two traps hit during development (written down to save a round)**:
 
-1. `async::discard(...)` 是**包装协程**（`co_await inner`），令牌注入落在包装层 ⇒ 内层 body 读到空令牌。这不是缺陷，
-   而是"环境不会自动向内传"的直接后果（§1.3 已证伪过"被调用者读调用者环境"）：包装层不转发就切断通道，
-   与 C# 显式传令牌一致。用例因此直接把子任务放进容器，并在注释里写明理由。
-2. typed `whenAny` 与 `WhenAnyChild` 的**缩进不同**：一次"去掉最后一个落败者唤醒"的变异只命中了擦除路径，typed 路径
-   单独跑才红（并暴露擦除 `whenAny` 那条路原本**没有**钉子 —— 已补）。变异必须按路径分开打，不能只看"文件里有一处"。
+1. `async::discard(...)` is a **wrapper coroutine** (`co_await inner`), so the token injection lands on the wrapper ⇒ the
+   inner body reads an empty token. That is not a defect but a direct consequence of "the environment is not passed
+   inwards automatically" (§1.3 already disproved "a callee reads its caller's environment"): a wrapper that does not
+   forward cuts the channel, just as C# passes the token explicitly. The cases therefore put the child straight into the
+   container and state the reason in a comment.
+2. The typed `whenAny` and `WhenAnyChild` are **indented differently**: a mutation that dropped the last-loser wake-up hit
+   only the erased path, and the typed path only went red when run on its own (and exposed that the erased `whenAny` path
+   had **no** nail at all - now added). Mutations have to be aimed per path; "there is one place in the file" is not
+   enough.
 
-**仍然成立的老承诺**：`whenAll` 的默认现在**会等不读令牌的孩子**（C# 也是如此，见 §6.4 钉子 C）；
-`whenAny`/`withTimeout`/`Scope::join` 的默认一个字没变，它们的调用者要改用 `CancelPolicy::StopAndWait` 才进入等待语义。
+**The old promise still holds**: `whenAll`'s default now **waits for a child that does not read the token** (C# does the
+same, see nail C in §6.4); `whenAny`/`withTimeout`/`Scope::join` defaults are unchanged to the letter, and their callers
+have to ask for `CancelPolicy::StopAndWait` to enter the waiting semantics.
 
