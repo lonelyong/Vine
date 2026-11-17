@@ -1,285 +1,285 @@
-# IOBase（vn::io）核心能力设计 —— VFS 与 Stream
+# IOBase (vn::io) core capabilities: VFS and Stream
 
-> **状态**：现行
-> **最后核对**：2026-10-23
-> **范围**：`Vfs` / `Stream` / 错误模型 / 路径 / 后端 / MountVfs；迁移与门禁。
-> **权威来源**：`src/base/iobase/sdk/vine/io/**`、`tests/test_iobase`。
-> **待办**：`../backlog/`
+> **Status**: current
+> **Last verified**: 2026-10-23
+> **Scope**: `Vfs` / `Stream` / the error model / paths / backends / MountVfs; migration and gates.
+> **Sources**: `src/base/iobase/sdk/vine/io/**`, `tests/test_iobase`.
+> **Backlog**: `../backlog/`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-旧 VFS 只有 `bool` 返回、没有 `stat`、不能部分读写、写权限不可预知；打开 zip 全量驻留内存；
-`DirectoryVfs` 的路径校验只按子串拒 `..`，绝对段可能逃出根。需求是：可区分错误、惰性 zip、流式读写、多后端一棵树。
+The old VFS answered only `bool`, had no `stat`, could not read or write partially, and its write permission was unpredictable; opening a zip kept the whole archive in memory;
+`DirectoryVfs` rejected `..` by substring only, so an absolute segment could escape the root. The requirements are: distinguishable errors, a lazy zip, streaming read and write, and several backends under one tree.
 
-### 1.2 目标
+### 1.2 Goals
 
-- `IoError` + `Result<T>`：业务失败走返回值，异常只用于编程错误。
-- 路径校验收敛到 `normalizeVfsPath`：无工作目录、绝对拼写拒绝、`..` 按段抵消。
-- `Vfs` 家族：`DirectoryVfs` / `ZipArchive` / `MountVfs`；zip 惰性索引 + overlay + 原子落盘。
-- 读流 / push sink / 写 source：大块数据不整条驻留。
-- 方法级不线程安全、无内部锁；共享对象由调用方同步。
+- `IoError` + `Result<T>`: a business failure travels in the return value; an exception is only for a programming error.
+- Path validation converges on `normalizeVfsPath`: no working directory, absolute spellings refused, `..` cancelled segment by segment.
+- The `Vfs` family: `DirectoryVfs` / `ZipArchive` / `MountVfs`; a lazy zip index + an overlay + an atomic commit.
+- Read streams / push sinks / write sources: a large payload does not have to sit in memory as one piece.
+- Not thread-safe at the method level and no internal lock; a shared object is synchronised by the caller.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做 `VfsPath` 值类型；不做核心 `IStream` 继承体系。
-- 不建 `MemoryVfs`（`ZipArchive()` 无源树已覆盖）。
-- 不做 TAR/GZIP 区分、缓存、HTTP/ACL/加密/去重。
-- 不做 push 写（libzip source 是 pull）。
+- No `VfsPath` value type; no core `IStream` hierarchy.
+- No `MemoryVfs` (`ZipArchive()` with no source tree already covers it).
+- No TAR/GZIP distinction, no cache, no HTTP/ACL/encryption/deduplication.
+- No push writing (a libzip source is pull).
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-`vn::io` 用 `Result<IoError>` 区分失败、用规范化的虚拟路径做唯一寻址、用 `Vfs` 三后端覆盖目录/zip/挂载；
-大块数据走 `openRead`/`read(sink)`/`addFile(source)`，落介质只在 `commit`/`saveAs`。
+`vn::io` distinguishes failure with `Result<IoError>`, addresses everything through a normalized virtual path, and covers directory / zip / mount with the three `Vfs` backends;
+a large payload travels through `openRead`/`read(sink)`/`addFile(source)`, and the medium is touched only by `commit`/`saveAs`.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 错误模型
+### 2.1 Error model
 
 - `IoError`：`NotFound` / `AlreadyExists` / `PermissionDenied` / `NotADirectory` / `IsADirectory` /
   `InvalidPath` / `ReadOnly` / `IoFailure` / `Unsupported` / `InvalidData` / `Closed` / `OutOfRange` /
   `CapacityExceeded` / `NotEmpty`。
-- `Result<T>`：隐式构造成功值或 `IoError`；`ok()`、`error()`、`value()`、`take()`。
-- 不做 `and_then`/`map` 组合子；`T=void` 直接用 `IoError`。
-- 值而非异常；异常仍用于 `bad_alloc`/误用 `invalid_argument`。
+- `Result<T>`: implicitly constructs from a success value or an `IoError`; `ok()`, `error()`, `value()`, `take()`.
+- No `and_then`/`map` combinators; `T=void` uses `IoError` directly.
+- A value rather than an exception; exceptions are still used for `bad_alloc` and for misuse (`invalid_argument`).
 
-### 2.2 路径校验
+### 2.2 Path validation
 
-`detail::normalizeVfsPath(path, out)` 返回 `IoError`：
+`detail::normalizeVfsPath(path, out)` returns `IoError`:
 
-- 空路径 = 根；空段/重复分隔符/尾部 `/`/`.` 折叠。
-- 前导 `/` 拒绝（虚路径无工作目录）。
-- `\`、嵌入 `\0`、`:` 段拒绝（盘符/UNC/URI）。
-- `..` 按段抵消；抵消到根之外 → `InvalidPath`。
-- ZIP 归档入口兼容将 `\` 写作目录分隔符的旧包；映射为 `/` 虚路径，根外路径拒绝，同名冲突使归档无效，未修改条目重打包时保留原始名称。
-- 非文本条目名按“合法 UTF-8 → 本机代码页 → 逐字节同值码点”解码，归档原字节重打包原样写回。
+- An empty path = the root; empty segments, repeated separators, a trailing `/` and `.` are folded away.
+- A leading `/` is refused (a virtual path has no working directory).
+- `\`, an embedded `\0` and a `:` segment are refused (drive letter / UNC / URI).
+- `..` cancels a segment; cancelling past the root → `InvalidPath`.
+- The ZIP archive entry accepts an old package that writes `\` as the directory separator; it maps to a `/` virtual path, a path outside the root is refused, a duplicate name invalidates the archive, and an unmodified entry keeps its original name when repackaging.
+- A non-text entry name is decoded as “valid UTF-8 → local code page → byte-for-byte same-value code points”, and the archive's original bytes are written back unchanged when repackaging.
 
-### 2.3 后端家族
+### 2.3 Backend family
 
 ```
 Vfs
- ├── DirectoryVfs   真实目录；写即落盘，commit() = Ok
- ├── ZipArchive     ZIP：惰性索引 + 改动 overlay + commit/saveAs/toBytes
- └── MountVfs       多后端一棵树（最长前缀 + 优先级 + 只读）
-Zip                 一次性 compress/decompress/entries/readEntry
+ ├── DirectoryVfs   a real directory; a write lands at once, commit() = Ok
+ ├── ZipArchive     ZIP: a lazy index + a change overlay + commit/saveAs/toBytes
+ └── MountVfs       several backends under one tree (longest prefix + priority + read-only)
+Zip                 one-shot compress/decompress/entries/readEntry
 ```
 
-- `ZipArchive` 三个开口：`open(..., ReadOnly)` / `open(..., ReadWrite)` / 默认构造（无源内存树）。
-- 源 `zip_t` 全程只读；目标 `zip_t` 只在 `commit`/`saveAs` 时打开。
-- `commit()`：临时文件 + 原子替换 + 重建索引；`saveAs(path|ostream)` / `toBytes()` 到别处。
-- 未改动条目由 `zip_source_zip_file` 搬运；峰值内存 = 单条目。
-- 读路径自己算 CRC 对照目录记录；不符 → `IoFailure`。
+- The three ways to open a `ZipArchive`: `open(..., ReadOnly)` / `open(..., ReadWrite)` / the default constructor (an in-memory tree with no source).
+- The source `zip_t` is read-only throughout; the destination `zip_t` is opened only by `commit`/`saveAs`.
+- `commit()`: a temporary file + an atomic replace + an index rebuild; `saveAs(path|ostream)` / `toBytes()` write elsewhere.
+- An unmodified entry is carried over by `zip_source_zip_file`; peak memory = one entry.
+- The read path computes its own CRC against the directory record; a mismatch → `IoFailure`.
 
-### 2.4 流与零拷贝
+### 2.4 Streams and zero copy
 
-- `Stream.hpp`：`Fragment` / `DataSource` / `DataSink` / `kUnknownSize`，不含 Vfs 名字。
-- `Vfs.hpp`：`VfsEntrySource`（`DataSource` 子类）。
+- `Stream.hpp`: `Fragment` / `DataSource` / `DataSink` / `kUnknownSize`, with no Vfs name in it.
+- `Vfs.hpp`: `VfsEntrySource` (a `DataSource` subclass).
 - `Adapters.hpp`：`IstreamSource` / `OstreamSink` / `Conversion<In,Out>`。
-- 读：`openRead(path)` 返回 `VfsEntrySource`；`read(path, DataSink&)` 是 push 变体（基类按 64 KiB 分块）。
-- 写：`addFile(path, span)`（拷贝 1 次）/ `span<Fragment>`（0）/ `shared_ptr<DataSource>`（0，save 时拉）/
-  `real_path`（0，save 时读）。
-- `kUnknownSize` 允许：libzip 走 zip64 + 写完回填 local header；目标必须可 seek。
-- 一个 source 实例只挂一个条目；回调在保存线程调用。
+- Read: `openRead(path)` returns a `VfsEntrySource`; `read(path, DataSink&)` is the push variant (the base class chunks at 64 KiB).
+- Write: `addFile(path, span)` (one copy) / `span<Fragment>` (none) / `shared_ptr<DataSource>` (none; pulled at save) /
+  `real_path` (none; read at save).
+- `kUnknownSize` is allowed: libzip goes zip64 and backfills the local header after writing; the destination must be seekable.
+- One source instance attaches to one entry only; the callback runs on the saving thread.
 
 ### 2.5 MountVfs
 
-- 最长前缀优先；同前缀按 priority 降序；写路由到第一个可写后端。
-- 枚举合并去重，并补出中间目录（挂了 `/data/a`、`/data/b`，列 `/data` 要看到 a/b）。
-- 跨后端 `rename` = 读源 → 写目标 → 删源；失败保留源。
-- 单后端命中直接转发；一个后端挂多处时 `commit()` 只调一次；只读挂载跳过。
+- The longest prefix wins; equal prefixes order by descending priority; a write routes to the first writable backend.
+- Enumeration merges and de-duplicates, and fills in the intermediate directories (with `/data/a` and `/data/b` mounted, listing `/data` shows a and b).
+- A cross-backend `rename` = read the source → write the destination → remove the source; a failure keeps the source.
+- A single-backend hit is forwarded directly; a backend mounted at several points gets one `commit()` call; a read-only mount is skipped.
 
-### 2.6 并发
+### 2.6 Concurrency
 
-- 方法级不线程安全、无内部锁；共享对象/两对象共享存储由调用方同步。
-- 互不共享（缓冲/句柄/存储）的对象可并发。
-- `DirectoryVfs` 无文件锁，最后写者胜；`ZipArchive::commit()` 固定临时名，同一文件并发 commit 不支持。
+- Not thread-safe at the method level and no internal lock; a shared object, or two objects sharing storage, is synchronised by the caller.
+- Objects that share nothing (buffer / handle / storage) may run concurrently.
+- `DirectoryVfs` has no file lock and the last writer wins; `ZipArchive::commit()` uses a fixed temporary name, so a concurrent commit on one file is not supported.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 错误模型 | `IoError` + `Result<T>` | 已落地 |
-| F2 | 路径校验 | `normalizeVfsPath` | 已落地 |
-| F3 | 文件信息 | `stat` / `list` / `VfsEntryInfo` | 已落地 |
-| F4 | 只读声明 | `isReadOnly()`；写操作立即 `ReadOnly` | 已落地 |
-| F5 | 目录/文件操作 | create/rename/remove/removeAll | 已落地 |
-| F6 | 读流/push | `openRead` / `read(sink)` / `copy` | 已落地 |
-| F7 | 写来源 | `addFile(span/fragments/source/real)` | 已落地 |
-| F8 | 后端家族 | Directory/Zip/Mount | 已落地 |
-| F9 | 内存流 | `reserve` + 容量上限 | 已落地 |
+| F1 | error model | `IoError` + `Result<T>` | landed |
+| F2 | path validation | `normalizeVfsPath` | landed |
+| F3 | file information | `stat` / `list` / `VfsEntryInfo` | landed |
+| F4 | read-only declaration | `isReadOnly()`; a write answers `ReadOnly` at once | landed |
+| F5 | directory / file operations | create/rename/remove/removeAll | landed |
+| F6 | read streams / push | `openRead` / `read(sink)` / `copy` | landed |
+| F7 | write sources | `addFile(span/fragments/source/real)` | landed |
+| F8 | backend family | Directory/Zip/Mount | landed |
+| F9 | memory stream | `reserve` + a capacity limit | landed |
 
-### 3.1.1 F1 错误模型
+### 3.1.1 F1 error model
 
-- **行为**：业务失败返回 `IoError`；`Result<T>` 携带值或错误。
-- **引用**：C1、R1、T1、N1。
+- **Behaviour**: a business failure returns `IoError`; `Result<T>` carries a value or an error.
+- **References**: C1, R1, T1, N1.
 
-### 3.1.2 F2 路径校验
+### 3.1.2 F2 path validation
 
-- **行为**：`normalizeVfsPath` 折叠合法段、拒绝非法段。
-- **引用**：C2、R2、T2、P2、P4。
+- **Behaviour**: `normalizeVfsPath` folds legal segments and refuses illegal ones.
+- **References**: C2, R2, T2, P2, P4.
 
-### 3.1.3 F3 文件信息
+### 3.1.3 F3 file information
 
-- **行为**：`stat(path)` 返回 `VfsEntryInfo`（目录 `size=0`、`kind` 只有 File/Directory、`crc` 无记录为 0）；`list(dir)` 返回可直接回喂的完整路径。
-- **引用**：C3、R3、T3、P5。
+- **Behaviour**: `stat(path)` returns a `VfsEntryInfo` (a directory has `size=0`, `kind` is only File/Directory, `crc` is 0 when unrecorded); `list(dir)` returns full paths that can be fed straight back.
+- **References**: C3, R3, T3, P5.
 
-### 3.1.4 F4 只读声明
+### 3.1.4 F4 read-only declaration
 
-- **行为**：`isReadOnly()`；写/改操作第一行检查，命中立即 `ReadOnly`。
-- **引用**：C4、R4、T4。
+- **Behaviour**: `isReadOnly()`; a write or change checks it on the first line and answers `ReadOnly` at once.
+- **References**: C4, R4, T4.
 
-### 3.1.5 F5 目录/文件操作
+### 3.1.5 F5 directory / file operations
 
-- **行为**：`createDirectory(s)` / `rename` / `remove` / `removeAll`。
-- **引用**：C5、R5、T5、P6。
+- **Behaviour**: `createDirectory(s)` / `rename` / `remove` / `removeAll`.
+- **References**: C5, R5, T5, P6.
 
-### 3.1.6 F6 读流/push
+### 3.1.6 F6 read streams / push
 
-- **行为**：`openRead` 返回 `VfsEntrySource`；`read(path, sink)` 分块推送；`copy` 跨树搬运。
-- **引用**：C6、R6、T6、P7。
+- **Behaviour**: `openRead` returns a `VfsEntrySource`; `read(path, sink)` pushes in chunks; `copy` carries across trees.
+- **References**: C6, R6, T6, P7.
 
-### 3.1.7 F7 写来源
+### 3.1.7 F7 write sources
 
-- **行为**：四个 `addFile` 重载；`Fragment` 借用、`DataSource` 拉取、真实文件延迟读。
-- **引用**：C7、R7、T7、P8。
+- **Behaviour**: four `addFile` overloads; a `Fragment` is borrowed, a `DataSource` is pulled, a real file is read late.
+- **References**: C7, R7, T7, P8.
 
-### 3.1.8 F8 后端家族
+### 3.1.8 F8 backend family
 
-- **行为**：`DirectoryVfs` / `ZipArchive` / `MountVfs`。
-- **引用**：C8、R8、T8、P3。
+- **Behaviour**: `DirectoryVfs` / `ZipArchive` / `MountVfs`.
+- **References**: C8, R8, T8, P3.
 
-### 3.1.9 F9 内存流
+### 3.1.9 F9 memory stream
 
-- **行为**：`MemoryStreamBuf` / `ChunkedMemoryStreamBuf` 的 `reserve` + `setCapacityLimit`。
-- **引用**：C9、R9、T9、P9。
+- **Behaviour**: `reserve` + `setCapacityLimit` of `MemoryStreamBuf` / `ChunkedMemoryStreamBuf`.
+- **References**: C9, R9, T9, P9.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `Vfs`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `stat` / `list` / `kindOf` | 文件信息 | `Result` |
-| `isReadOnly` | 只读声明 | 写操作先查 |
-| `createDirectory(s)` / `rename` / `remove` / `removeAll` | 目录/文件操作 | `IoError` |
-| `openRead` / `read(sink)` / `copy` | 读 | 流可活过 VFS |
-| `addFile(span/fragments/source/real)` | 写来源 | 借用/拉取 |
-| `commit` / `saveAs` / `toBytes` | 落介质 | 目标决定 |
+| `stat` / `list` / `kindOf` | file information | `Result` |
+| `isReadOnly` | the read-only declaration | a write checks it first |
+| `createDirectory(s)` / `rename` / `remove` / `removeAll` | directory / file operations | `IoError` |
+| `openRead` / `read(sink)` / `copy` | reading | a stream may outlive the VFS |
+| `addFile(span/fragments/source/real)` | write sources | borrowed / pulled |
+| `commit` / `saveAs` / `toBytes` | reaching the medium | the destination decides |
 
-### 4.2 错误/信息/流
+### 4.2 Errors / information / streams
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `IoError` / `Result<T>` | 值而非异常 | `ioErrorName()` |
-| `VfsEntryInfo` | path/kind/size/crc/name | 目录 size=0 |
-| `DataSource` / `DataSink` / `Fragment` | 字节流词汇 | 不含 Vfs 名字 |
-| `MountVfs` | 多后端一棵树 | 最长前缀/优先级 |
+| `IoError` / `Result<T>` | a value, not an exception | `ioErrorName()` |
+| `VfsEntryInfo` | path/kind/size/crc/name | a directory has size=0 |
+| `DataSource` / `DataSink` / `Fragment` | the byte-stream vocabulary | no Vfs name in it |
+| `MountVfs` | several backends under one tree | longest prefix / priority |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | 业务失败走返回值；异常只用于编程错误。 |
-| C2 | 虚路径无工作目录；前导 `/`/`\`/`:`/根外 `..` 拒绝。 |
-| C3 | `stat`/`list` 只描述存在的条目；存在但非文件/目录返回 `NotFound`，缺失由 `Result` 错误码承担。 |
-| C4 | 只读后端写操作立即 `ReadOnly`，不触碰后端。 |
-| C5 | 目录非空删除返回 `NotEmpty`；跨后端 rename 失败保留源。 |
-| C6 | 读流可活过 VFS；push sink 拒绝原样返回。 |
-| C7 | 借用数据活到落介质；`DataSource::size()` 必须准确。 |
-| C8 | zip 惰性索引 + overlay；落介质只在 `commit`/`saveAs`。 |
-| C9 | 内存流上限只约束增长；`reserve` 失败不改缓冲。 |
-| C10 | ZIP 条目名的反斜杠在归档边界按分隔符解释；外部 VFS 路径仍只接受 `/`。 |
+| C1 | a business failure travels in the return value; an exception is only for a programming error. |
+| C2 | a virtual path has no working directory; a leading `/`/`\`/`:` and a `..` past the root are refused. |
+| C3 | `stat`/`list` describe an existing entry only; an entry that exists but is neither file nor directory answers `NotFound`, and absence is carried by `Result`'s error code. |
+| C4 | a write on a read-only backend answers `ReadOnly` at once and does not touch the backend. |
+| C5 | removing a non-empty directory answers `NotEmpty`; a failed cross-backend rename keeps the source. |
+| C6 | a read stream may outlive the VFS; a push sink that refuses is returned as it is. |
+| C7 | borrowed data lives until the medium is reached; `DataSource::size()` must be accurate. |
+| C8 | a lazy zip index + overlay; the medium is touched only by `commit`/`saveAs`. |
+| C9 | the memory-stream limit constrains growth only; a failed `reserve` leaves the buffer unchanged. |
+| C10 | a backslash in a ZIP entry name is read as a separator at the archive boundary; an external VFS path still accepts `/` only. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | `ioErrorName()` 可读；诊断/测试用它。 |
-| R2 | 后端落地前复验绝对路径。 |
-| R3 | `list` 返回完整路径，可直接回喂。 |
-| R4 | 只读挂载点/后端都参与只读判定。 |
-| R5 | 路径校验先行；失败保留源。 |
-| R6 | 读流允许短读（0 = EOF）；`error()` 说明 0 字节原因。 |
-| R7 | 一个 source 只挂一条目；回调在保存线程。 |
-| R8 | `commit()` 临时文件 + 原子替换 + 重建索引。 |
-| R9 | 单字符写也受容量上限约束。 |
+| R1 | `ioErrorName()` is readable; diagnostics and tests use it. |
+| R2 | a backend re-validates an absolute path before it lands. |
+| R3 | `list` returns full paths that can be fed straight back. |
+| R4 | read-only mount points and read-only backends both take part in the read-only decision. |
+| R5 | path validation comes first; a failure keeps the source. |
+| R6 | a read stream may answer a short read (0 = EOF); `error()` explains the 0 bytes. |
+| R7 | one source attaches to one entry; the callback runs on the saving thread. |
+| R8 | `commit()` uses a temporary file + an atomic replace + an index rebuild. |
+| R9 | even a single-character write obeys the capacity limit. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | `NotFound` 先看 `file_type`，再看 `error_code`。 |
-| N2 | 非文本条目名可按 UTF-8 → 本机代码页 → 字节码点解码；重打包原字节写回。 |
-| N3 | zip 读路径自己算 CRC；不符 → `IoFailure`。 |
-| N4 | 方法级不线程安全；共享对象由调用方同步。 |
-| N5 | 归档名分隔符归一化后的重名或根外路径拒绝打开；原始存储名仅用于未修改条目的无损重打包。 |
+| N1 | `NotFound` looks at `file_type` first and `error_code` second. |
+| N2 | a non-text entry name may be decoded as UTF-8 → local code page → byte code point; repackaging writes the original bytes back. |
+| N3 | the zip read path computes its own CRC; a mismatch → `IoFailure`. |
+| N4 | not thread-safe at the method level; a shared object is synchronised by the caller. |
+| N5 | after separator normalization, a duplicate name or a path outside the root refuses to open the archive; the original stored name is used only to repack an unmodified entry losslessly. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-| # | 坑 | 会怎么错 | 怎么判 / 怎么防 |
+| # | Trap | How it fails | How to detect / prevent it |
 | --- | --- | --- | --- |
-| P1 | `error_code` 判 `NotFound` | MSVC 在路径不存在时也置位 `ec`，把“不存在”误报成 `IoFailure`。 | `stat`/`list` 先看 `file_type::not_found`；按 N1 写，跨平台用例钉住。 |
-| P2 | 绝对段逃逸 | `C:/…` 作为右操作数拼到根上会替换左操作数。 | `normalizeVfsPath` 拒绝 `:` 段/前导 `/`；路径校验只留一个入口。 |
-| P3 | zip CRC | libzip 读路径不校验 CRC，损坏条目静默给错字节。 | 自己算 `crc32()` 对照目录记录；不符 `IoFailure`；`readEntries` 取 `ZIP_STAT_CRC`，流末尾对照。 |
-| P4 | 用子串判 `..` | 按子串拒 `..` 会误杀 `a..b`，真逃逸却可能漏判。 | 只按段抵消；`normalizeVfsPath` 是唯一入口（C2）。 |
-| P5 | 把 `VfsEntryInfo::path` 当名字 | 拿完整路径当名字会拼出双路径。 | 名字走 `name()`（R3）。 |
-| P6 | `rename` 同名覆盖 | 覆盖语义按后端，`DirectoryVfs` 与 zip overlay 结果不同。 | 需要“不覆盖”时先 `stat`；跨后端 rename 失败保留源（C5）。 |
-| P7 | 压缩条目 seek | 每次 seek 都从头解压该条目。 | 顺序读写；反复 seek 先解到内存流。 |
-| P8 | `kUnknownSize` | 目标不可 seek 时 zip64 回填失败。 | 未知长度只写可 seek 目标，否则先缓冲（C7）。 |
-| P9 | `release()` / `clearData()` | 以为清空内容会连上限一起重置。 | 上限独立于内容；移动构造/赋值带上限（C9）。 |
+| P1 | `error_code` decides `NotFound` | MSVC sets `ec` even when the path does not exist, so "not found" is misreported as `IoFailure`. | `stat`/`list` look at `file_type::not_found` first; write per N1 and pin it with a cross-platform case. |
+| P2 | an absolute segment escapes | `C:/…` as the right operand of a join replaces the left one. | `normalizeVfsPath` refuses a `:` segment and a leading `/`; path validation keeps one entry point. |
+| P3 | zip CRC | libzip's read path does not verify the CRC, so a corrupt entry quietly yields wrong bytes. | compute `crc32()` yourself against the directory record; a mismatch is `IoFailure`; `readEntries` takes `ZIP_STAT_CRC` and compares at the end of the stream. |
+| P4 | a substring test for `..` | rejecting `..` by substring kills `a..b` and can still miss a real escape. | cancel segment by segment; `normalizeVfsPath` is the only entry (`C2`). |
+| P5 | `VfsEntryInfo::path` taken for a name | using the full path as a name builds a doubled path. | names go through `name()` (`R3`). |
+| P6 | `rename` overwriting a name | overwrite semantics follow the backend, and `DirectoryVfs` differs from the zip overlay. | `stat` first when "do not overwrite" is wanted; a failed cross-backend rename keeps the source (`C5`). |
+| P7 | seeking in a compressed entry | every seek decompresses that entry from the start. | read and write sequentially; for repeated seeks, decompress into a memory stream first. |
+| P8 | `kUnknownSize` | the zip64 backfill fails when the destination is not seekable. | write an unknown length to a seekable destination only, otherwise buffer first (`C7`). |
+| P9 | `release()` / `clearData()` | assuming clearing the content also resets the limit. | the limit is independent of the content; the move constructor / assignment carry it (`C9`). |
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Why not | ADR |
 | --- | --- | --- | --- |
-| D1 | `VfsPath` 值类型 | 编译期防裸串的收益不抵全 API 改造；校验才是缺口。 | — |
-| D2 | 核心 `IStream` 继承体系 | `Result<VfsStream>` + `intrusive_ptr<Buffer>` 已经够用。 | — |
-| D3 | `MemoryVfs` 类型 | 已被 `ZipArchive()` 无源树 + `toBytes()` 覆盖；它做不到惰性。 | — |
-| D4 | `save(path)` 一个名字 | 写回自己 vs 另存别处目标不同；拆 `commit`/`saveAs`。 | — |
-| D5 | push 写 `openWrite()` | libzip source 是 pull；push 只能缓冲或 spool。 | — |
-| D6 | 大包 `toBytes()`/`saveAs(ostream&)` | 峰值 ≈ 整包 ×2；大包走 `saveAs(path)`/`commit`。 | — |
+| D1 | a `VfsPath` value type | the gain of compile-time protection against a raw string does not pay for changing every API; validation was the gap. | — |
+| D2 | a core `IStream` hierarchy | `Result<VfsStream>` + `intrusive_ptr<Buffer>` is already enough. | — |
+| D3 | a `MemoryVfs` type | `ZipArchive()` with no source tree + `toBytes()` already covers it; it cannot be lazy. | — |
+| D4 | one name `save(path)` | writing back to itself and saving elsewhere are different targets; split into `commit`/`saveAs`. | — |
+| D5 | push writing `openWrite()` | the libzip source is pull; push could only buffer or spool. | — |
+| D6 | `toBytes()`/`saveAs(ostream&)` for a large package | the peak is about 2× the package; a large package goes through `saveAs(path)`/`commit`. | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Test case / command |
 | --- | --- | --- |
-| T1 | 错误模型/`Result` | `test_iobase` |
-| T2 | 路径校验/绝对段/`..` | `test_iobase` |
+| T1 | error model / `Result` | `test_iobase` |
+| T2 | path validation / an absolute segment / `..` | `test_iobase` |
 | T3 | `stat`/`list`/`kindOf` | `test_iobase` |
-| T4 | 只读拒绝 | `ReadOnlyBackendRefusesEveryChange` |
-| T5 | 目录/文件操作 | `test_iobase` |
-| T6 | 惰性 zip/CRC/流 | `ZipArchiveOpensWithoutReadingContent` |
+| T4 | a read-only refusal | `ReadOnlyBackendRefusesEveryChange` |
+| T5 | directory / file operations | `test_iobase` |
+| T6 | lazy zip / CRC / streams | `ZipArchiveOpensWithoutReadingContent` |
 | T7 | `addFile`/`copy`/`kUnknownSize` | `test_iobase` |
-| T8 | MountVfs 合并/跨后端 rename | `MountVfsTest` |
-| T9 | 内存流上限/reserve | `MemoryStreamTest` |
-| T10 | ZIP 反斜杠兼容、路径逃逸与归一化冲突 | `ZipArchiveTest.ReadsWindowsSeparatorsAsArchivePathSeparators`、`RejectsArchiveNamesThatCollideAfterSeparatorNormalization`、`RejectsWindowsSeparatorPathTraversalInArchiveNames` |
+| T8 | MountVfs merging / cross-backend rename | `MountVfsTest` |
+| T9 | the memory-stream limit / reserve | `MemoryStreamTest` |
+| T10 | ZIP backslash compatibility, a path escape and a collision after normalization | `ZipArchiveTest.ReadsWindowsSeparatorsAsArchivePathSeparators`, `RejectsArchiveNamesThatCollideAfterSeparatorNormalization`, `RejectsWindowsSeparatorPathTraversalInArchiveNames` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current Status
 
-错误模型、路径校验、stat/list、只读、目录操作、流/来源、ZipArchive、MountVfs、内存流上限都已实现。
+The error model, path validation, stat/list, read-only, directory operations, streams/sources, ZipArchive, MountVfs and the memory-stream limit are implemented.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known Gaps and Backlog
 
-- TAR/GZIP 区分、缓存、HTTP/ACL/加密/去重不做。
-- `saveAs(ostream&)`/`toBytes()` 大包不可用；`toBytes()` 的 2× 峰值可消除，等真实消费者。
-- 同一文件并发 `commit()` 不支持（固定临时名）。
-- 核心 `IStream` 分层不做；`Stream.hpp` 下沉 core 的触发条件是第一个不依赖 iobase 的消费者。
+- TAR/GZIP distinction, cache, HTTP/ACL/encryption/deduplication: not done.
+- `saveAs(ostream&)`/`toBytes()` are not usable for a large package; the 2× peak of `toBytes()` can be removed when a real consumer appears.
+- a concurrent `commit()` on one file is not supported (a fixed temporary name).
+- the core `IStream` layering is not done; the trigger for moving `Stream.hpp` down to core is the first consumer that does not depend on iobase.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility and Migration
 
-公开面相对旧 VFS 是断代：`IMemoryVfs` → `Vfs`；没有 `ZipMemoryVfs`；`save(path)` → `saveAs`/`toBytes`；
-没有 `bool` 家族。新代码只按 §4 的接口写。
+The public surface breaks with the old VFS: `IMemoryVfs` → `Vfs`; there is no `ZipMemoryVfs`; `save(path)` → `saveAs`/`toBytes`;
+there is no `bool` family. New code uses the §4 interfaces only.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/base/iobase/sdk/vine/io/Vfs.hpp`
 - `src/base/iobase/sdk/vine/io/Stream.hpp`
@@ -288,13 +288,13 @@ Zip                 一次性 compress/decompress/entries/readEntry
 - `src/base/core/sdk/vine/MemoryStream.hpp`
 - `tests/test_iobase`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `robotics-io-design.md`
 - `appfw-document-model.md`
 - `../backlog/`
 
-### 10.3 外部资料
+### 10.3 External Sources
 
-- libzip `zip_source_*` / `zip_file_*` 语义。
-- `std::filesystem` 的 `file_type` / `error_code` 跨平台差异。
+- the semantics of libzip's `zip_source_*` / `zip_file_*`.
+- the cross-platform differences of `std::filesystem`'s `file_type` / `error_code`.
