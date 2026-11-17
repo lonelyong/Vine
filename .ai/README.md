@@ -1,292 +1,341 @@
-# .ai/ —— AI 辅助目录
+# .ai/ — the AI-facing directory
 
-面向 AI 助手与团队的仓库内知识，随 git 版本化。`docs/guides/` 是使用者文档；设计文档与笔记放这里。
-已关闭、已明确不做、已被取代的内容不在树内保留（需要时看 git），只保留现行设计、
-决策记录、开放待办与模块要点。
+Repo-versioned knowledge for AI assistants and the team. `docs/guides/` is user documentation; design
+pages and notes live here. Closed, explicitly-not-doing and superseded material is not kept in the tree
+(look in git when you need it): only the current design, the decision records, open backlog items and
+module notes stay.
 
-**索引由机器钉住**（`scripts/check_ai_docs.py`）：`.ai/` 下每一份 `.md` 必须在这里被点名，点到的名字必须存在。
-**写法**：结论在上、历史在下；现行段落提到已不存在的东西时加 `<!-- drift-ok -->`。
+**The index is machine-checked** (`scripts/check_ai_docs.py`): every `.md` under `.ai/` must be named
+here, and every name here must exist.
+**Writing**: conclusion first, history below; a current section that names something absent carries
+`<!-- drift-ok -->`.
 
-**分层**：`design/` 只写**现在是什么**（现行、无日期）；`decisions/` 写**为什么这么定**
-（ADR，日期不可变）；`backlog/` 只写**还没做、有触发条件**的事；`memory/` 写短要点；`bugs/`
-一 bug 一文件。历史归 git，不放进 `design/`。
+**Layers**: `design/` states **what is** (current, undated); `decisions/` states **why it is** (ADRs,
+immutable dates); `backlog/` holds **what is not done and what would trigger it**; `memory/` holds
+short facts; `bugs/` is one file per incident. History belongs to git; it does not go into `design/`.
 
-**目录分工**：`src/<层>` 放**库**；`src/apps/<产品>` 放**要安装的应用**（`src/apps/vine` → `Vine.exe`）；
-`tools/<名字>` 放**不安装的开发工具**（`tools/urdf2vine`）；`tests/` 放用例。可执行文件不等于产品：
-一个模块自己的进程半边（如 `src/base/crash/handler` 的 `CrashHandler.exe`）留在模块里，不搬进 `src/apps/`。
+**Directory split**: `src/<layer>` holds **libraries**; `src/apps/<product>` holds **installable
+applications** (`src/apps/vine` → `Vine.exe`); `tools/<name>` holds **non-installed developer tools**
+(`tools/urdf2vine`); `tests/` holds the suites. An executable is not automatically a product: a
+module's own process half (e.g. `src/base/crash/handler`'s `CrashHandler.exe`) stays in the module and
+does not move into `src/apps/`.
 
-## design/ —— 现行设计文档（56）
+## design/ — the living design (56)
 
-每份设计文档的统一结构：**一句话 → 设计要点（1.x）→ 功能点（F#）→ 公开接口 → 注意项（N#）→
-否决项（D#，一行 + ADR 链接）→ 判据（T#）→ 相关文档**。
+Every design page has the same shape: **one-line purpose → design points (2.x) → features (F#) →
+public interface → caveats (N#) → rejected options (D#, one line + ADR link) → acceptance (T#) →
+related documents**.
 
-**graphics / vsg（12）**
-- `graphics-architecture.md` —— 分层、设备/窗口/引擎/链/视图、一帧与调度。
-- `graphics-scene.md` —— 节点、状态、收集、层、视图上下文、拾取。
-- `graphics-geometry.md` —— 通道、`Primitive`、实例化、revision、包围盒、存储与共享；网格三角形身份（`triangleCount()` / `triangleCorners()`）与三角形树缓存（F32）。
-- `graphics-rendering.md` —— 目标、MSAA、图源、颜色、着色、阴影。
-- `graphics-content-lifecycle.md` —— 内容释放与缓存策略。
-- `graphics-frame-pipeline.md` —— 帧管线（**草案**）：graphics-next 采纳后的目标形状 —— 内容 → 快照 → 派生 → 执行 四层单向、8 个名词 / 3 个动词、`C1–C12` / `R1–R39` / `I1–I7` / `N1–N10` / `P1–P11` / `D1–D11` / `T1–T34`，逐功能标落地状态，迁移表（步 5 拆成 5a / 5b-1 / 5b-2a / 5b-2b / 5b-2c）在 §9.3。
-- `vsg-backend.md` —— vsg 后端架构 / 类图 / 契约 / 键与状态 / 坑索引 / 否决项 / 门禁。
-- `vsg-pitfalls.md` —— vsg 后端 P1–P82 坑表，按九个风险域分组，每条带症状与判据。
-- `graphics-shader-params.md` —— 着色参数 ABI：五个块每份声明一个 owner，GLSL 去重、名字只在接线期。
-- `graphics-material.md` —— 材质：metallic-roughness PBR、纹理集、资产/实例、两条路径一致（草案）。
-- `graphics-sessions.md` —— 设备/会话的**实施设计**（**草案**）：会话是帧驱动者（不是窗口），帧首快照让记录路径零锁，驻留三态（发布或撤回、竞争即复制），目标 claim，跨会话退休复用 `DeviceClock` + `RetirementQueue`，九步迁移表。`T48` 的实施依据。
-- `graphics-threading.md` —— 线程模型（**现行**）：内容侧 `publish()` 出一份不可变快照，引擎半段只读它；
-- `vk-backend.md` —— **`gfx_backend_vk`（直连 Vulkan）的规范设计**：会话/一帧/目标/内容/内存池/管线缓存，`F1–F15` / `C1–C9` / `R1–R6` / `N1–N7` / `P1–P15` / `D1–D6` / `T1–T9`；§9.2 是它的缺口。
-  两条线程各有一个写者，跨边界的载荷只有「发布的值」与「完成报告」，字节内容靠两个原子 revision 轮询；
-  表面归内容线程、交换链归引擎线程，并行只在派生层的纯值上。
+**graphics / vk / vsg (13)**
+- `graphics-architecture.md` — layering, device/window/engine/chain/view, a frame and scheduling.
+- `graphics-scene.md` — nodes, state, collection, layers, view context, picking.
+- `graphics-geometry.md` — channels, `Primitive`, instancing, revision, bounding boxes, storage and sharing; mesh triangle identity (`triangleCount()` / `triangleCorners()`) and the triangle-tree cache (F32).
+- `graphics-rendering.md` — targets, MSAA, image sources, colour, shading, shadows.
+- `graphics-content-lifecycle.md` — content release and cache policy.
+- `graphics-frame-pipeline.md` — the frame pipeline (**draft**): the target shape once graphics-next is adopted — content → snapshot → derive → execute, four one-way layers, 8 nouns / 3 verbs, `C1–C12` / `R1–R39` / `I1–I7` / `N1–N10` / `P1–P11` / `D1–D11` / `T1–T34`, a landing status per feature, and the migration table (step 5 split into 5a / 5b-1 / 5b-2a / 5b-2b / 5b-2c) in §9.3.
+- `vsg-backend.md` — vsg backend architecture / class diagram / contracts / keys and state / pitfall index / rejected options / gates.
+- `vsg-pitfalls.md` — the vsg backend's P1–P82 pitfall table, grouped by nine risk domains, each with its symptom and criterion.
+- `graphics-shader-params.md` — the shading-parameter ABI: five blocks, one declaring owner each, GLSL deduplicated, names only at wiring time.
+- `graphics-material.md` — material: metallic-roughness PBR, texture sets, asset/instance, both paths agree (draft).
+- `graphics-sessions.md` — the **implementation design** of device and session (**draft**): a session is a frame driver (not a window); the frame-head snapshot keeps the record path lock-free; residency has three states (publish or withdraw, a race copies); targets are claimed per frame; cross-session retirement reuses `DeviceClock` + `RetirementQueue`; a nine-step migration table. The basis for `T48`.
+- `graphics-threading.md` — the threading model (**living**): the content side publishes one immutable snapshot with `publish()` and the engine half only reads it; each of the two threads has one writer, the only payloads that cross the boundary are "the published value" and "the completion report", and the bytes are polled through two atomic revisions; the surface belongs to the content thread and the swapchain to the engine thread, and parallelism lives only in the pure values of the derive layer.
+- `vk-backend.md` — **the normative design of `gfx_backend_vk` (direct Vulkan)**: session / one frame / targets / content / memory pool / pipeline cache, `F1–F15` / `C1–C9` / `R1–R6` / `N1–N7` / `P1–P15` / `D1–D6` / `T1–T9`; §9.2 is its gap list.
 
-**appfw（17）**
-- `appfw-startup-phases.md` —— 启动阶段三拍与启动工作线程。
-- `appfw-startup-splash.md` —— 启动框与启动进度。
-- `appfw-render-surface.md` —— 渲染表面生命周期与平台回退。
-- `appfw-render-view.md` —— 渲染视图设计（四层 API、配方归链、输入路由、着色模式）。
-- `appfw-command-manager.md` —— CommandManager。
-- `appfw-command-arguments.md` —— 命令参数：一份分词、随执行携带、命令自解、历史/事件可回放。
-- `appfw-eventbus.md` —— EventBus。
-- `appfw-plugin-system.md` —— 插件系统（含禁用与反初始化）。
-- `appfw-config.md` —— 配置子系统。
-- `appfw-progress.md` —— 环境进度（`ProgressHost`）。
-- `appfw-userio.md` —— UserIO。
-- `appfw-document-model.md` —— 文档模型（身份 + 生命周期 + 类型注册）。
-- `appfw-ribbon.md` —— Ribbon 身份/角色/放置：id、role、placement、终止区与顺序解析。
-- `appfw-command-binding.md` —— 命令条目的显示状态：enabled/目标要求/描述 tooltip/勾选 provider。
-- `appfw-backstage.md` —— 应用按钮事件、菜单/Backstage 二选一、顶层覆盖窗口与页面导航。
-- `appfw-app-info.md` —— 应用身份与应用信息：`AppInfo`/`AppConfig::info`、`Application::appInfo()`、关于面板与对话框。
-- `appfw-translation.md` —— 文案翻译：只翻 appfw 及以上层的界面文案，源语言英文、译文只有中文，Qt 目录随模块走并内嵌（可被文件覆盖），启动时装载、缺译文回退英文。
+**appfw (17)**
+- `appfw-startup-phases.md` — the three startup beats and the startup worker thread.
+- `appfw-startup-splash.md` — the splash frame and startup progress.
+- `appfw-render-surface.md` — render-surface lifetime and the platform fallback.
+- `appfw-render-view.md` — the render-view design (four-layer API, recipes belong to the chain, input routing, shading modes).
+- `appfw-command-manager.md` — CommandManager.
+- `appfw-command-arguments.md` — command arguments: one tokenizer, carried with the execution, parsed by the command, history/events replayable.
+- `appfw-eventbus.md` — EventBus.
+- `appfw-plugin-system.md` — the plugin system (disable and uninitialise included).
+- `appfw-config.md` — the configuration subsystem.
+- `appfw-progress.md` — ambient progress (`ProgressHost`).
+- `appfw-userio.md` — UserIO.
+- `appfw-document-model.md` — the document model (identity + lifetime + type registration).
+- `appfw-ribbon.md` — Ribbon identity/roles/placement: id, role, placement, the drop zone and order resolution.
+- `appfw-command-binding.md` — a command entry's display state: enabled / target requirements / tooltip description / checked provider.
+- `appfw-backstage.md` — the application-button event, menu versus Backstage, the top-level overlay window and page navigation.
+- `appfw-app-info.md` — app identity and app info: `AppInfo` / `AppConfig::info`, `Application::appInfo()`, the about panel and dialogs.
+- `appfw-translation.md` — UI text translation: only appfw and above, source language English, translations Chinese only, the Qt catalogue ships with the module and is embedded (a file may override it), loaded at startup with an English fallback.
 
-**base 与其他（24）**
-- `async-design.md` —— `src/base/async` 设计（三条必守规则）。
-- `base-crash.md` —— 崩溃报告：`vn::Crash` 装配/报告格式/handler 符号化与崩溃窗口。
-- `brep-operations.md` —— 运行时 B-rep 运算：模块归属（`brep` / `brepio` / `geometry`）、三角化与由基本体造实体的契约、失败表示。
-- `crypto.md` —— crypto 模块：只做算法不做策略、一个对象一个方向、增量与一次性同义、后端初始化只有一处（`detail::ensureLibraryInitialized`）；今天的实现（摘要 / HMAC / HKDF / 口令哈希 / AES-GCM·CBC·CTR / RSA / ECC + DER、PEM 与口令保护的 PKCS#8 密钥文件）与缺口（证书解析）。
-- `geometry-axis-surfaces.md` —— 轴对称解析曲面（圆柱 / 圆锥 / 圆环）的坐标系值 `Placement`、共用的“平面内轴”规则（`Frame.hpp`）、矩形裁剪曲面与样条曲面的现状。
-- `geometry-kinds.md` —— 几何族：`Curve` / `Surface` 都是求值接口（`Curve<T>` 十一项、`Surface<T>` 十四项，含 `isValid()`），曲面多一层 `ElementarySurface` / `BoundedSurface` 分类标签；曲线 / 曲面族已无占位类型。
-- `geometry-planar.md` —— 平面几何：`geom::planar::Curve<T>` 是与 3D 契约同义的第二份契约（不是泛型特化、不继承），今天有直线、圆、椭圆、双曲线、抛物线、圆弧、Bezier、BSpline、偏置；三条非圆圆锥曲线共享 `ConicCurve`（中心 + 起始轴 + `CN`），圆不进这层；圆弧是“圆按值 + 角度区间”；族级算法有最近点、三值求交、两曲线最近距离、弧长与反解、带符号曲率；有界类型各有 `bounds()`（`math::Rect2`，椭圆用支撑函数，样条是极点盒）；模块 header-only 模板、与空间侧同一个库（`vn::Geom`）与同一个 global，名字不带维度标记。
-- `geometry-parametric.md` —— 参数化几何是建模类型（`Primitive` 的五个子类同居 `Primitive.hpp`）；canonical 局部空间与 OCCT 的职责收缩。
-- `geometry-primitives.md` —— geometry 的空间值类型：`Aabb`/`Obb`/`LineCurve`/`Plane` 的归属、命名与契约。
-- `geometry-module.md` —— 几何模块的形态与命名：一个库 `vn::Geom`、一个 global、四类位置（两棵维度树 / `Continuity` / `geom/detail`）、“什么放哪里”的三步判定、五条隔离门禁（含 `detail` 不得命名维度与 include 域）、命名规则（类型不带维度标记）、以及模块级的已否决项。
-- `geometry-ray.md` —— 射线与图元相交：`Ray` 归 `geometry`、相交挂在被交对象上、场景走查留 `graphics`。
-- `geometry-bvh.md` —— 空间包围体层次（BVH）：`Bvh` 是纯结构（包围体、32 字节扁平节点、`parent + 1` 布局、两种零分配遍历、`refit`、`validate`），`BvhBuilder` 是纯构建（两档质量、可注入外来算法），两者之间只有 `detail::BuildJob`；`Obb` 体积经实测否决（叶子表面积约 2 倍、包含性要容差）。
-- `geometry-intersection.md` —— 相交配对与结果形态：动词、结果类型由交集维数决定、`false` 时出参语义、入口配对表与缺口；曲线 × 解析曲面的带符号距离求根（`intersectCurveWithSurface` + `signedValue`）与曲线 × 任意曲面的投影求根（`intersectCurveWithSurfaceByProjection`）。
-- `geometry-surface-queries.md` —— 族级曲面查询：点到曲面的最近点 / 距离（高斯-牛顿）与射线 × 曲面（三元牛顿），参数窗口规则、重合分类与局部解的代价。
-- `geometry-curve-queries.md` —— 曲线的最近点 / 距离（平方距离驻点求根）、两曲线最近距离、弧长与反解、曲率（3D 无符号）、窗口规则与局部极小值的限制。
-- `geometry-curve-discretization.md` —— 曲线折线化：`CurveSampler<T>` 基类 + 参数等分 / 弧长等距 / 弦高偏离三个子类，`curve(c)` / `range()` / `compute()` 无参 / `polyline()` 的结果式对象壳与结果复位规则，`CurvePolyline<T>{points, parameters}`，2D 与 3D 共用的 `detail` 内核，播种与点数预算，折角不需要间断点表，进度钩子只留位。
-- `geometry-solid.md` —— 解析实体的族 `Solid<T>`（五个 kind 是值）：最近点与射线求交，模型只存尺寸并按需构造实体。
-- `geometry-tessellation.md` —— 解析实体的三角化：五个 kind 到 `Triangulation<T>`（位置 / 法向 / 索引）的自由函数重载、质量参数、精确法向与顶点复制、闭合与外向绕序，以及模型侧的 `meshFromTriangulation()` 装配。
-- `imaging-design.md` —— imaging 模块（CPU 像素数据）。
-- `imageio-design.md` —— imageio 的公开面（容器能力表、`Result`/`IoError`、无状态自由函数）。
-- `iobase-vfs-design.md` —— IOBase（`vn::io`）VFS 与 Stream。
-- `math-base-layer.md` —— `math` 是底座层且只有数学词汇：值类型 / 常量 / 概念 / 3×3 特征分解，18 个头无子目录、无过程；求根、积分、Bernstein 求值与样条表示约定都在 `geom`（两条切分判据 + 代价与反转路径）。
-- `meshio-brepio-design.md` —— meshio / brepio 的公开面（草案：格式枚举、`Result`/`IoError`、无单例）。
-- `robotics-io-design.md` —— Robotics IO（XML、VFS 打包、材质库）。
-- `robotics-proximity-design.md` —— Robotics proximity（接口、VMR 对照、FCL 接入点）。
-- `window-design.md` —— window 模块的跨平台窗口上下文。
+**base and the rest (26)**
+- `async-design.md` — the `src/base/async` design (three rules that must hold).
+- `base-crash.md` — crash reporting: `vn::Crash` assembly / report format / handler symbolisation and the crash window.
+- `brep-operations.md` — runtime B-rep operations: module ownership (`brep` / `brepio` / `geometry`), tessellation and primitive-to-solid contracts, failure representation.
+- `crypto.md` — the crypto module: algorithms only, one object one direction, incremental and one-shot are synonyms, backend initialisation in exactly one place (`detail::ensureLibraryInitialized`); today's implementation (digest / HMAC / HKDF / password hashing / AES-GCM·CBC·CTR / RSA / ECC plus DER, PEM and password-protected PKCS#8 key files) and the gaps (certificate parsing).
+- `geometry-axis-surfaces.md` — axisymmetric analytic surfaces (cylinder / cone / torus): the `Placement` value, the shared "in-plane axis" rule (`Frame.hpp`), rectangularly trimmed surfaces, and where spline surfaces stand.
+- `geometry-kinds.md` — the geometry families: `Curve` / `Surface` are evaluation interfaces (`Curve<T>` eleven items, `Surface<T>` fourteen including `isValid()`), surfaces add a classification tag (`ElementarySurface` / `BoundedSurface`); no placeholder types remain in either family.
+- `geometry-planar.md` — planar geometry: `geom::planar::Curve<T>` is a second contract with the same meaning as the 3D one (not a generic specialisation, not an inheritance), today with line, circle, ellipse, hyperbola, parabola, arc, Bezier, BSpline and offset; the three non-circular conics share `ConicCurve` (centre + start axis + `CN`) while the circle stays out of that layer; an arc is "a circle by value + an angle interval"; family-level algorithms are nearest point, three-way intersection, nearest distance between two curves, arc length and its inverse, and signed curvature; bounded types each have `bounds()` (`math::Rect2`, the ellipse via its support function, splines as a pole box); the module is header-only templates in the same library (`vn::Geom`) and the same global as the spatial side, and names carry no dimension marker.
+- `geometry-parametric.md` — parametric geometry is a modelling type (the five `Primitive` subclasses live together in `Primitive.hpp`); the canonical local space and how far OpenCASCADE's responsibilities are pushed back.
+- `geometry-primitives.md` — geometry's spatial value types: ownership, naming and contracts of `Aabb` / `Obb` / `LineCurve` / `Plane`.
+- `geometry-module.md` — the geometry module's shape and naming: one library `vn::Geom`, one global, four kinds of location (the two dimension trees / `Continuity` / `geom/detail`), the three-step "what goes where" test, five isolation gates (including that `detail` names no dimension and includes no domain), naming rules (no dimension markers on types), and the module-level rejected options.
+- `geometry-ray.md` — rays and primitive intersection: `Ray` belongs to `geometry`, intersection hangs off the object being intersected, scene traversal stays in `graphics`.
+- `geometry-bvh.md` — the spatial bounding-volume hierarchy: `Bvh` is pure structure (bounds, 32-byte flat nodes, `parent + 1` layout, two allocation-free traversals, `refit`, `validate`), `BvhBuilder` is pure construction (two quality levels, injectable foreign algorithms), and the only thing between them is `detail::BuildJob`; `Obb` volume was measured and rejected (about 2× leaf surface area, containment needs a tolerance).
+- `geometry-intersection.md` — intersection pairing and result shape: the verb, the result type decided by the intersection's dimension, out-parameter semantics when `false`, the entry-point pairing table and the gaps; signed-distance root finding for curve × analytic surface (`intersectCurveWithSurface` + `signedValue`) and projection root finding for curve × arbitrary surface (`intersectCurveWithSurfaceByProjection`).
+- `geometry-surface-queries.md` — family-level surface queries: nearest point / distance from a point (Gauss-Newton) and ray × surface (three-variable Newton), parameter-window rules, coincidence classification and the cost of local solutions.
+- `geometry-curve-queries.md` — a curve's nearest point / distance (root finding on the squared-distance stationary points), nearest distance between two curves, arc length and its inverse, curvature (unsigned in 3D), window rules and the limits of local minima.
+- `geometry-curve-discretization.md` — curve polyline approximation: the `CurveSampler<T>` base plus three subclasses (equal parameter, equal arc length, chord deviation), the result-object shell (`curve(c)` / `range()` / parameterless `compute()` / `polyline()`) and its reset rules, `CurvePolyline<T>{points, parameters}`, the 2D/3D shared `detail` kernel, seeding and point budgets, why a corner needs no discontinuity table, and progress hooks left as placeholders.
+- `geometry-solid.md` — the analytic-solid family `Solid<T>` (five kinds, by value): nearest point and ray intersection; the model stores dimensions only and builds the solid on demand.
+- `geometry-tessellation.md` — tessellating analytic solids: free-function overloads from the five kinds to `Triangulation<T>` (positions / normals / indices), quality parameters, exact normals and vertex duplication, closed and outward winding, and the model-side `meshFromTriangulation()` assembly.
+- `imaging-design.md` — the imaging module (CPU pixel data).
+- `imageio-design.md` — imageio's public face (container capability table, `Result`/`IoError`, stateless free functions).
+- `iobase-vfs-design.md` — IOBase (`vn::io`) VFS and Stream.
+- `math-base-layer.md` — `math` is the base layer and holds mathematical vocabulary only: value types / constants / concepts / 3×3 eigendecomposition, 18 headers with no subdirectories and no procedures; root finding, integration, Bernstein evaluation and the spline representation conventions live in `geom` (the two split criteria plus the cost and the reversal path).
+- `meshio-brepio-design.md` — meshio / brepio's public face (draft: format enums, `Result`/`IoError`, no singletons).
+- `robotics-io-design.md` — Robotics IO (XML, VFS packaging, material libraries).
+- `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
+- `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ —— 决策记录（ADR）（89）
+## decisions/ — decision records (ADRs) (89)
 
-一份 ADR 只记一个决定：背景、选项、决定、后果、证据。状态为 `已采纳` / `已取代` / `已否决`，
-日期不可变；被取代时在旧文件标 `已取代` 并链接新 ADR。
+One ADR records one decision: background, options, decision, consequences, evidence. Status is
+`accepted` / `superseded` / `rejected`; the date is immutable; when superseded, the old file is marked
+`superseded` and links the new ADR.
 
-- `ADR-2026-11-17-documentation-language.md` —— **文档语言改为英文**：代码词汇、提交正文、诊断
-  code 早已是英文，唯一停在中文的是 35k 行设计论证（也是唯一的“为什么”记录）；一个文件一种语言，
-  新文件英文，ADR/bug 只追加英文摘要，术语表在 `memory/glossary.md`；迁移按
-  `research/docs-2026-11-17-english-migration.md` 分批。
-- `ADR-2026-11-16-authoring-view-and-target-vocabulary.md` —— **值承载声明，行为归对象**：一个 `View` 值（`CameraSnapshot` + `Viewport` + 层掩码，`CollectView` 退役）、`RenderArea` → `RenderArea`（surface 留给平台）、一个 pass 的目标收成 `Target` + `Output` 两个值、`PassDesc` 是唯一作者形状（`RenderPass` 的 35 个 setter 收成只读活句柄）、值里零回调（`before_draw` 归对象的 `update()`，`OverlayLayout` 返回 `Viewport`）、删死字段 `tag`、`setRenderTarget` 变真（vk 预建，新增 CAP-86）或退役、`releasePass` 收窄契约、`Capabilities` = `Features` + `Limits`、诊断加 `origin`（CAP-87）、灯集不再每 pass 分配；四条规范文字修订 + 26 处 section comment 清扫。**提议，待批准**；审校与 18 批顺序在 `research/graphics-2026-11-16-redesign-r2.md`。
-- `ADR-2026-11-16-redesign-seam-and-vocabulary.md` —— **重设计的是名字与归属，不是能力**：两后端图形栈的接缝（`backend/` 25 个头只留 6 个共享机制 + 守卫，18 个 vsg 专用头搬进插件）、词汇（设计名词 `Session` 退役，统一 `FrameDriver` / `FrameDriverId` / `WindowSession` / `FrameHead`）、一帧三相位（帧首解析一次锁 / 无锁录制 / 提交一次锁，`prepare` = `Submission::TransferOnly`）、拒绝只有一种形状（`DiagnosticDraft`）、目标表与引擎组合根归位、选择规则收成一份；保留 `RenderBackend` 聚合与 `RenderDevice` 五个职责面（`G8` 无消费者），触发条件写在 ADR 里。**提议，待批准**；施工图在 `research/graphics-2026-11-16-redesign.md`。§2 与批次 3 的“目录即接缝”已被下一条取代。
-- `ADR-2026-11-16-no-backend-half.md` —— **删除“后端半边”**：目录、包含守卫、`VineGraphicsBackendSdk` 安装组件与文件集门禁四处维护同一条边界，代价超过收益（`G7`）；8 个共享机制平铺进 `sdk/vine/graphics/` 并并入 `vn::graphics`（`Keys.hpp` → `DrawState.hpp`，`ReadbackResult` → `ReadbackAnswer`），`gfx_backend_vsg` 自己的类型搬进 `vn::backend_vsg::core`（`G13`）。门禁改成按性质（模块不得 include 渲染 API 或具体后端；导出符号按文件清单）。
-- `ADR-2026-11-14-sample-count-refused-not-lowered.md` —— **采样数是计数，设备建不了的请求只拒绝一次、不降级**：`Capabilities::max_samples` 是 2 的幂的计数（`vsg` 原来答位掩码 15）；超上限或不是 2 的幂都拒绝（`SamplesUnsupported` / `UnsupportedRequest`，报一次），所以 `RenderTarget::samples()` 永远是画出来的那个数；否决降级、向上取整、给 `Capabilities` 加位集。
-- `ADR-2026-11-14-prepare-may-submit-transfers.md` —— **预热可以提交一批“只有传输”的工作**：`prepareFrame` 仍然不提交帧（不 acquire / 不 present / 不动 `FrameProgress`），但可以记录并提交**一个**只含拷贝与布局转换的命令缓冲，用自己的 fence 等它完成——纹理上传因此在加载期落地，`R23` 不再“除了纹理”；否决第二个入口、后台线程、填充即上传。
+- `ADR-2026-11-17-documentation-language.md` — **English is the documentation language**: the code's vocabulary, commit bodies and diagnostic codes were already English; the only Chinese left is 35k lines of design argument (which is also the only "why" record); one file one language, new files English, ADRs and bug postmortems append-only English summaries, the glossary in `memory/glossary.md`; the migration runs in batches per `research/docs-2026-11-17-english-migration.md`.
+- `ADR-2026-11-16-authoring-view-and-target-vocabulary.md` — **values carry declarations, behaviour belongs to objects**: a `View` value (`CameraSnapshot` + `Viewport` + layer mask, `CollectView` retired), `RenderArea` → `RenderArea` (surface stays with the platform), a pass's target collapsed into the two values `Target` + `Output`, `PassDesc` as the only authoring shape (`RenderPass`'s 35 setters become a read-only live handle), zero callbacks in values (`before_draw` moves to the object's `update()`, `OverlayLayout` returns a `Viewport`), the dead field `tag` deleted, `setRenderTarget` made real (vk pre-builds; CAP-86 added) or retired, the `releasePass` contract narrowed, `Capabilities` = `Features` + `Limits`, diagnostics gain `origin` (CAP-87), the light set no longer allocated per pass; four normative text revisions plus 26 section-comment cleanups. **Proposed, pending approval**; review and the 18-batch order are in `research/graphics-2026-11-16-redesign-r2.md`.
+- `ADR-2026-11-16-redesign-seam-and-vocabulary.md` — **the redesign is names and ownership, not capability**: the two backends' seam (`backend/`'s 25 headers reduced to 6 shared mechanisms + the guard, 18 vsg-only headers moved into the plugin), vocabulary (the design noun `Session` retired in favour of `FrameDriver` / `FrameDriverId` / `WindowSession` / `FrameHead`), a frame in three phases (frame-head resolution under one lock / lock-free recording / one submit lock, `prepare` = `Submission::TransferOnly`), one refusal shape (`DiagnosticDraft`), the target table and the engine composition root put back where they belong, the selection rule collapsed into one; `RenderBackend` the aggregate and `RenderDevice`'s five responsibility faces are kept (`G8`: no consumer), with the trigger conditions written into the ADR. **Proposed, pending approval**; the construction plan is `research/graphics-2026-11-16-redesign.md`. §2 and batch 3's "the directory is the seam" are superseded by the next entry.
+- `ADR-2026-11-16-no-backend-half.md` — **delete the "backend half"**: directory, include guard, the `VineGraphicsBackendSdk` install component and the file-set gate all maintained one boundary from four places, at a cost above the benefit (`G7`); the 8 shared mechanisms are flattened into `sdk/vine/graphics/` and merged into `vn::graphics` (`Keys.hpp` → `DrawState.hpp`, `ReadbackResult` → `ReadbackAnswer`), and `gfx_backend_vsg`'s own types move into `vn::backend_vsg::core` (`G13`). Gates became property-based (the module must not include a render API or a concrete backend; exported symbols are checked by file list).
+- `ADR-2026-11-14-sample-count-refused-not-lowered.md` — **a sample count is a count; a request the device cannot build is refused once, not lowered**: `Capabilities::max_samples` is a power-of-two count (`vsg` used to answer the bit mask 15); above the limit or not a power of two is refused (`SamplesUnsupported` / `UnsupportedRequest`, reported once), so `RenderTarget::samples()` is always the number the images are drawn with; lowering, rounding up and adding a bit set to `Capabilities` are rejected.
+- `ADR-2026-11-14-prepare-may-submit-transfers.md` — **preparation may submit one transfer-only batch**: `prepareFrame` still submits no frame (no acquire / no present / no `FrameProgress` movement), but it may record and submit **one** command buffer containing copies and layout transitions, waiting on its own fence — so texture uploads land during loading and `R23` is no longer "except textures"; a second entry point, a background thread, and "upload while filling" are rejected.
+- `ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` — **vk keeps one frame in flight**: measured, one `renderFrame()` has a median wall clock of 8.63–8.94 ms and 7.95 ms of device time in the same frame ⇒ **the device is ~90%, host work is ~0.9 ms**, so multiple frames in flight could buy at most ~10% while costing the "draw-then-read" contract; multiple slots and "wait only for the previous frame" are rejected, with trigger conditions (device time below half the wall clock, a product shape that needs to overlap the GPU, a second backend wanting the same semantics) written into the ADR. **Also corrects** `design/vk-backend.md` §2.3, which had earlier read "wall clock including the fence wait" as host work.
+- `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` — **the device is a resource pool, sessions own frames**: two engines share geometry / shader / texture (one upload, one compile) but **not frames** — `RenderDevice` is the pool (memory, residency cache, targets, pipeline cache, locked per resource), `RenderFrameExecutor` is the session (command pool / fence / constant ring / descriptor pool, thread-confined); residency has three states `Absent → Uploading(owner, frame) → Resident`, only `Resident` may be drawn, a contending session builds a temporary copy instead of waiting (no cross-session blocking); a target is claimed per frame and a conflict skips only that pass; a release parks until every session's `completed ≥ epoch`; a global device lock, per-entry reader/writer locks and one device per engine are rejected; done in two steps (frame gate + contract, then the split, ~1350–2100 lines).
+- `ADR-2026-11-14-vk-becomes-the-default-target.md` — **`gfx_backend_vk` becomes the production backend and eventually replaces `vsg`**: platforms are Linux/X11 first and Win32 later (one `WindowSystem` per device; adding a platform is an addition); unimplemented capabilities answer `Unsupported` plus one diagnostic instead of degrading silently; the gates that must pass before switching the default (`releaseRenderTarget`, `readDepthBuffer` or a difference table, device-lost diagnostics, ASan/TSan/validation, platform and performance evidence, user documentation) are written into the ADR; switching immediately and long-term coexistence of two backends are rejected.
+- `ADR-2026-11-13-content-seam-stays-in-the-plugin.md` — the content-bookkeeping half (facts table / halves / keys, guarded by `check_vsg_content_seam.cmake`) **stays inside the backend plugin** and is not promoted to an SDK library (`G8`: there is no second backend, so packaging must not precede the consumer); when a second backend appears, move or copy it along the seam.
+- `ADR-2026-11-13-staging-keeps-the-reusable-block.md` — upload staging **keeps the reusable minimum-size block** (`staging->size <= minimumStagingBufferSize`) and frees only the one-off large blocks above it: a steady-state upload frame allocates nothing on the host, while a 1.2 GB model load is still not retained; supersedes ADR-2026-11-10's "retain nothing".
+- `ADR-2026-11-13-one-engine-one-surface.md` — **one engine drives one surface**: rejects graphics-next's F8 (one engine, many surfaces / `Target{SurfaceId}`); multiple windows mean one device serving several engines (one engine / one area / one `Viewer` per window); `FrameResult.present` / `PresentRecord` stay single-valued; trigger conditions (a real-host dual viewport / a second backend) are written into the ADR.
+- `ADR-2026-11-12-adopt-graphics-next.md` — **adopt graphics-next as the next frame-pipeline design** (four one-way layers: content → snapshot → derive → execute); the normative document for the target shape is `design/graphics-frame-pipeline.md` (draft), `K1–K11` turn from "reject the proposal" into "acceptance thresholds and fallbacks per step", and backlog `T32` leaves the trigger-gated table; keeping the status quo, keeping only the landed identity/lifetime layer, and a big-bang rewrite are rejected.
+- `ADR-2026-11-12-snapshot-takes-over-collection.md` — **the snapshot taking over production collection is split into 5a shadow / 5b-1 flip the source / 5b-2a public entry / 5b-2b delete / 5b-2c close the passes**: 5a runs both paths and diffs item by item while the old path stays the rendering truth; 5b-1 binds Published mode to `SnapshotSource`; 5b-2a publishes the three-state `Scene::publish()` and lets `FrameWorker` hold `SnapshotSource` directly; 5b-2b deletes `ContentMirror` / `DeltaChannel` / `RenderWorld` / `PublishOutcome` and 23 LEGACY cases; 5b-2c only then deletes the `addPass` family and the runtime refusal; doing it in one step, in three steps, and keeping the mirror plus a debug-only dual run are rejected.
+- `ADR-2026-11-11-content-identity-is-a-handle.md` — content identity is a **handle** (`Handle` gen24/domain8/index32 + `ContentRef{id,revision}`), not an address: the public `ContentId.hpp`, `Node::id()`, row identity / mirror keys / `RenderCommand::node` / plan rows / the backend geometry table all move to `NodeId`; landed in three stages (public identity → `ContentRef` as the single key → epoch reclamation); partially supersedes `ADR-2026-11-09-address-keys-hold-the-object`.
+- `ADR-2026-11-10-render-world-mirrors-content.md` — the render world **mirrors** the content world: content stays on the UI thread (the editing API is unchanged), the mirror (world matrices / world boxes / folded state / proxies) lives on the engine thread and is updated by deltas (a payload is mandatory, so a missing one does not compile), with bytes polled through an atomic revision; the surface belongs to the content thread and the swapchain to the engine thread; handing content to the engine thread (the first draft), per-frame extract, a double-buffered world, locking, a thread per frame, per-pass parallel recording and vsg's threading path are rejected.
+- `ADR-2026-11-10-upload-staging-is-not-retained.md` — upload staging is **not retained**: a host-visible buffer is the source of **one** `vkCmdCopyBuffer` and is freed as soon as the copy's fence completes (`detail::StagingTask` sweeps at every frame boundary, zero wait, zero idle), and the SDK has **no** matching verb (`RenderDevice::releaseUploadStaging()` and the model viewer's `release_render_memory` are deleted); an explicit entry plus park/drain, a blind per-frame clear, freeing on task change, and the cheap "skip while data is still pending" condition (which would freeze the sweep forever) are rejected.
+- `ADR-2026-11-10-gpu-residency-pinned-by-content.md` — GPU residency is pinned by the **content object (identity + revision)** and reclamation only asks "who is alive right now" (the facts table enumerates the pin set); the time window and the capacity cap are deleted: one criterion replaces today's five (the stream time window, texture/block refcounts, the counterfactual scans of halves and descriptor sets); that the GPU memory is no longer automatically yielded is its stated cost. The first step (`ResidencyLedger` vocabulary + the stream/image/material-block rows) has landed.
+- `ADR-2026-11-10-upload-staging-release-is-explicit.md` — (superseded) upload staging reclamation was an **explicit entry point**, with the timing owned by the host or a user command.
+- `ADR-2026-11-10-curve-sampling-is-an-object.md` — curve discretisation is an object: a base class plus three rule subclasses, setter configuration and a parameterless `compute()`; computing on construction and "three free functions plus a return value" are rejected.
+- `ADR-2026-11-10-bvh-seal-and-coarse-picking-tree.md` — a BVH can be sealed (`seal()` drops the build-time primitive boxes, keeping only nodes / node boxes / order), the picking tree uses coarse leaves of 64 and is sealed as soon as it is built, and vsg and the index upload alias the model buffers (a 14M-triangle picking tree: 1.36 GB → 88 MB, plus 1.18 GB saved in the backend); a separate sealed type, deleting `update`/`refit`, and changing the library's default leaf capacity are rejected.
+- `ADR-2026-11-09-address-keys-hold-the-object.md` — a cache keyed by address must hold the object the key names: an address can be recycled while the row lives, and then the key names a new object.
+- `ADR-2026-11-09-buffer-edit-scope.md` — `Buffer`'s write entry collapses into one scope (shared mutable bytes have exactly one writer).
+- `ADR-2026-11-09-scene-collection-two-halves.md` — scene collection splits into "bake" and "select" halves (the first half has landed; the second is awaiting measurement).
+- `ADR-2026-11-09-box-transform-lives-in-geom.md` — the box transform operator returns to `geom` (`Aabb::transformed()`, affine only, a non-affine transform answers an empty box), deleting `graphics::transformBox()` and the copy in `RayIntersection.cpp`; `Obb` is not offered for now (it cannot represent a general affine transform, and has no consumer).
+- `ADR-2026-11-09-solid-tessellation-in-geom.md` — tessellation returns to `geom`: `tessellateSolid()` returns the precision template `Triangulation<T>` (positions / normals / indices), and `meshFromTriangulation()` assembles it into a `TriangleMesh` on the model side; returning `TriangleMesh` (a back edge) and `Buffer` (one extra copy) are rejected.
+- `ADR-2026-11-09-solid-closed-set-without-variant.md` — delete the `SolidShape` variant and `solidShapeOf()`: the closed set is expressed by five kinds + `visitPrimitive()` + one overload per kind; the `Solid<T>` family interface and the five kind values are unchanged.
+- `ADR-2026-11-09-bvh-shape-is-the-tree-storage.md` — the BVH's shape is its own storage (`BvhTopology`: three arrays plus parallel node volumes) and `BvhTopology.hpp` keeps only vocabulary; restore and move get two entry points (`RestoreTopology`, `Bvh::restoreTopology()`) and one check. Inner classes, AoS transcription and accessor-ising are rejected.
+- `ADR-2026-11-04-curve-evaluation-interface.md` — the curve family becomes an evaluation interface (`Curve<T>` virtuals + `TrimmedCurve`), and `Ray` leaves the family.
+- `ADR-2026-11-04-surface-family-queries.md` — family-level surface queries use free functions + parameter windows + Newton iteration; the `Surface` interface is not extended and no per-type special cases are written.
+- `ADR-2026-11-04-surface-evaluation-interface.md` — the surface family becomes an evaluation interface (`Surface<T>` thirteen virtuals + two classification tags), superseding item 6 of the curve ADR.
+- `ADR-2026-11-04-geometry-precision-and-instantiation.md` — geometry types keep the precision template, with both `float` and `double` explicitly instantiated and exported.
+- `ADR-2026-11-04-geometry-kinds.md` — geometry families are classified with empty tags, not virtual base classes.
+- `ADR-2026-11-04-primitive-is-a-shape.md` — parametric geometry is a modelling type (`Primitive` subclasses) and the algorithms belong to the surfaces; OpenCASCADE shrinks to STEP parsing and tessellation.
+- `ADR-2026-11-05-solid-family-and-variant.md` — an analytic solid is the family interface `Solid<T>` + the closed value set `SolidShape` (the family and the five kinds are current; "the model holds the solid by value" and the `SolidShape` variant were later superseded / deleted respectively).
+- `ADR-2026-11-05-primitive-is-a-modelling-base.md` — `Primitive` is a modelling base: it holds no solid, its five subclasses store dimensions and `solid()` builds on demand; the geometry kinds are renamed `*Solid`.
+- `ADR-2026-11-05-planar-curve-contract.md` — a planar curve is a second contract (same names and meaning as 3D, no inheritance between them) and the shared vocabulary stays in `math`; a generic `Curve<PointT>`, inheriting the 3D contract, and embedding `z = 0` are rejected.
+- `ADR-2026-11-05-planar-arc-is-a-value-type.md` — a planar arc is a value type (`ArcCurve` = a circle by value + an interval) and the generic `TrimmedCurve<T>` does not coexist with it. (Superseded by `ADR-2026-11-05-planar-trimmed-curve.md`.)
+- `ADR-2026-11-05-planar-trimmed-curve.md` — the generic trimmed view `TrimmedCurve<T>` (`shared_ptr` base curve + interval) replaces `ArcCurve`; the tight box of an arc returns to `CircleCurve::bounds(first, last)`.
+- `ADR-2026-11-05-planar-offset-curve.md` — a planar offset is a template over the concrete base-curve type plus non-virtual third derivatives on the concrete type, keeping the contract at eleven items; adding a twelfth item to `Curve<T>` and finite-difference second derivatives are rejected. (Superseded by `ADR-2026-11-05-planar-offset-holds-handle.md`.)
+- `ADR-2026-11-05-planar-offset-holds-handle.md` — a planar offset holds a `shared_ptr<const Curve<T>>` base curve and its order is the base curve's capability minus one (capped at 2); `isValid()` is false when the base cannot supply a third derivative.
+- `ADR-2026-11-05-curve-derivative-capability.md` — derivatives are exposed by capability: `Curve<T>` gains non-pure `maxDerivativeOrder()` / `derivativeAt(u, order)`, answering `std::nullopt` out of range; making one order pure virtual and the OpenCASCADE-style arbitrary order plus exceptions are rejected.
+- `ADR-2026-11-04-curve-third-derivative.md` — the offset curve's second derivative is not implemented and `Curve<T>` gains no third derivative; `OffsetCurve` stays abstract. (Superseded by `ADR-2026-11-06-space-third-derivative-and-offset.md`.)
+- `ADR-2026-11-06-space-third-derivative-and-offset.md` — the spatial curve family gains a non-virtual `thirdDerivative()` and a capability override (reporting 3), `OffsetCurve` answers the second derivative through the base's third and becomes a constructible value type, with order = base capability minus one.
+- `ADR-2026-11-06-shared-numeric-kernels-in-math.md` — dimension-independent numeric kernels (adaptive Simpson, monotone-safe Newton) live in `math`, so 2D and 3D share one implementation of arc length and its inverse.
+- `ADR-2026-11-06-math-is-the-base-layer.md` — `math` is the base layer rather than a pure maths library: mathematical vocabulary enters the root, mathematical procedures go to `numeric`, and the NURBS representation conventions (multiplicity / clamping / continuity ladder) go to `spline`; the trigger for creating `vn::Nurbs` is written down too.
+- `ADR-2026-11-06-merged-geom-module.md` — `geom/planar` and `geom/spatial` merge into `src/base/geom` with a single library `vn::Geom`, and the two SDK trees share one `geom/geom_global.hpp`; 2D/3D isolation moves from a compiler guarantee to `check_geom_layering.py`.
+- `ADR-2026-11-06-geom-detail-subtree.md` — the module gains a `geom/detail/` subtree for the dimension-independent shared implementation (curve scalars, window/tolerance rules, bracket narrowing, arc length and its inverse, two-curve refinement); both trees may include it, it may include neither, and public names do not move.
+- `ADR-2026-11-06-spline-model-moves-to-geom.md` — the B-spline knot model and basis functions move into `geom/detail` and `Continuity` into the `geom` root, the criterion being "does the signature name a data model of ours"; `math` keeps only mathematical vocabulary and numeric procedures (supersedes the representation-convention half of `ADR-2026-11-06-math-is-the-base-layer.md`).
+- `ADR-2026-11-06-math-keeps-only-vocabulary.md` — root finding, integration and Bernstein evaluation also move to `geom/detail` and `math` keeps only vocabulary (supersedes `ADR-2026-11-06-shared-numeric-kernels-in-math.md`); the cost (a non-geometry module must depend on `vn::Geom` for an integral) and the reversal path (promote to its own module when a second consumer appears) are written down.
+- `ADR-2026-11-06-geom-tree-layout-and-naming.md` — the two trees keep their current directory locations and dimension naming: sharing is already solved by `geom/detail` and the gates, so a reshuffle would only look nicer; three alternatives (nest `planar`/`spatial`, flatten with a `2` suffix, suffix both trees) and why each is rejected.
+- `ADR-2026-11-06-geom-contracts-nested-under-module.md` — both contracts sink into the `geom/{planar,spatial}` directories and the `vn::geom::{planar,spatial}` sub-namespaces (superseding the previous entry's "keep sibling directories"); re-exports go to zero, directory and namespace agree; and one expected benefit that did not materialise is recorded (nesting cannot shorten `geom::detail::`, because the contracts have their own `detail`).
+- `ADR-2026-11-07-crypto-api-shape.md` — the crypto API shape: two factories rather than a `mode` flag, incremental GCM buffering and computing at the end (a failure would release unauthenticated data; the cost and the escape hatch are written down), and backend initialisation in one place inside the module.
+- `ADR-2026-11-07-certificates-and-legacy-keys.md` — a certificate yields its public key only and makes no trust decision (the boundary named F15, not a gap), legacy `Proc-Type` PEM is read but never written, and `WOLFSSL_MD5` becomes explicit (an enum with `kMd5` cannot rely on a preset's side effect).
+- `ADR-2026-11-07-encrypted-private-keys.md` — password-protected private keys use PKCS#8 + PBES2 (AES-256-CBC + PBKDF2) rather than a home-made container: the whole value of a private-key file is that other tools can read it; a `toPrivatePem(password)` overload (a name must state a format change), a hard-coded iteration count, and writing PBES1 are rejected.
+- `ADR-2026-11-07-bvh-as-structure-plus-builder.md` — the BVH splits into structure and builder (`BuildJob` is the only contract); `Obb` volume was measured and rejected; supersedes `geometry-ray.md`'s `D5`.
+- `ADR-2026-11-07-digest-vocabulary.md` — digests collapse into one vocabulary: the `Digest` enum + `digest()` + `DigestCalculator`, deleting the three parallel `Hash` / `HashCalculator` / `Hmac::Algorithm` surfaces; "one class per algorithm" is rejected. (The naming half is superseded by the next entry.)
+- `ADR-2026-11-07-mesh-triangle-tree-cache.md` — a mesh carries triangle identity (`triangleCount()` / `triangleCorners()` move up to `Mesh`) and treats the triangle tree as a cache (`Bvh<double>`, one primitive per triangle, id = index).
+- `ADR-2026-11-07-incremental-api-shape.md` — the incremental API's shape and names: one-shot work uses free functions (`digest()` / `hmac()`), incremental work is named after the thing itself (`Hasher` / `Hmac`), methods are `update()` / `finish()`, and the home-made `*Calculator` names are dropped.
+- `ADR-2026-11-07-aesgcm-streaming.md` — AES-GCM becomes truly streaming (buffering removed): wolfSSL 5.9.4's `Init/Update/Final` entry points plus `WARN_UNUSED_RESULT`, at the cost that "decrypted output is untrusted before `finish()`" must be stated explicitly.
+- `ADR-2026-11-04-axis-surface-frame.md` — rotating surfaces' frame moves into a new `AxisSurface` layer and the "in-plane axis" rule becomes one implementation in `Frame.hpp`; the sphere does not migrate. (Superseded by `ADR-2026-11-04-surface-placement-value-type.md`.)
+- `ADR-2026-11-04-surface-placement-value-type.md` — a surface's frame is the value type `Placement` (origin + main axis + X direction), not an inheritance layer; the "in-plane axis" rule still lives only in `Frame.hpp`.
+- `ADR-2026-11-04-isvalid-on-family-interfaces.md` — `isValid()` is a pure virtual on `Curve<T>` / `Surface<T>`, so a `const Curve<T>&` can be asked too; `Plane` therefore gets a zero-normal criterion for the first time.
+- `ADR-2026-11-04-bspline-without-knot-breaks.md` — a spline's internal multiplicity never exceeds the degree: internal multiplicity = degree + 1 is the gap, `isValid()` refuses it, and `C0` therefore always means "the pieces meet at a point".
+- `ADR-2026-11-03-geometry-primitives-ownership.md` — the spatial value types belong to `geometry` and the axis-aligned box is renamed `Aabb`; `Rect2` stays in `math`, with no compatibility alias.
+- `ADR-2026-11-03-brep-operations-module.md` — runtime B-rep operations become their own `brep` module; `geometry` never touches OpenCASCADE, and detection is centralised in `VineOpenCASCADE.cmake`.
+- `ADR-2026-10-24-command-target.md` — a command's target is the view (`DocumentView`), layers may be null, requirements are declared per command, and `RenderControl` is not a target.
+- `ADR-2026-11-01-translation-scope.md` — only the UI layer (appfw and above) is translatable; the source language was Chinese, the catalogue used Qt Linguist, and v1 had no runtime switching (the source-language item is superseded by the next entry).
+- `ADR-2026-11-02-english-source-language.md` — the source language becomes English with Chinese in the catalogue; a missing translation falls back to English and a non-Chinese system lands on `en`.
+- `ADR-2026-11-01-translation-catalog-embedding.md` — the translation catalogue ships with the module and is embedded in it, with a same-named `.qm` beside the module able to override it; the language set is Chinese and English only, so there is one Chinese catalogue.
+- `ADR-2026-10-28-ribbon-roles-and-placement.md` — Ribbon places by role + id + anchor, and the drop zone is a resolver invariant; no global sequence numbers and no item ids.
+- `ADR-2026-10-28-backstage-overlay-window.md` — Backstage uses a top-level Tool window rather than a SARibbon child-control overlay (whose native surface gets occluded).
+- `ADR-2026-10-30-crash-handler-x11-on-linux.md` — the Linux crash window is hand-drawn with Xlib + Xft (system libraries, no UI toolkit linked; supersedes the same day's Qt version).
+- `ADR-2026-10-30-crash-handler-qt-on-linux.md` — (superseded) the Linux crash window used Qt Widgets.
+- `ADR-2026-10-28-document-tabs-and-floating.md` — document tabs live in the central area, and a float is its own top-level window (it does not enter the dock tree).
+- `ADR-2026-10-28-central-area-shows-current-document.md` — the central area shows the current document only, and a floated current document is represented by a placeholder page (one `current`, three places agreeing).
+- `ADR-2026-10-24-command-target-no-window-query.md` — the target takes one path only: no window-level "current 3D area" query, and the view's accessor is `renderControl()` (partially supersedes decision 4 of the previous entry).
+- `ADR-2026-10-24-tabs-not-mdi.md` — a window shows one view at a time (tabs); seeing several 3D areas side by side is expressed by the view's own panes, with no MDI or split-screen.
+- `ADR-2026-10-24-material-model.md` — material becomes a single metallic-roughness PBR model plus sparse instances; the alpha mode enters the material and the G-buffer is re-laid out.
+- `ADR-2026-10-24-light-block-typed-lights.md` — the light block becomes a typed light array (position / range / cone angle), shared as one UBO by both paths.
+- `ADR-2026-10-24-shader-parameter-abi.md` — shading parameters are hand-written and deduplicated; no reflection and no material DSL.
+- `ADR-2026-10-23-no-multi-parent-dag.md` — no multiple parents: a strict tree plus instancing.
+- `ADR-2026-10-23-instancing-per-primitive.md` — instancing hangs off `Primitive` and has no scope.
+- `ADR-2026-10-23-l2a-reverted.md` — L2a is reverted; layered targets wait for L2b.
+- `ADR-2026-10-22-engine-schedules-passes.md` — pass scheduling lives only in the engine.
+- `ADR-2026-10-22-cache-unbounded-explicit-release.md` — caches are not capped; release is explicit.
+- `ADR-2026-10-22-msaa-target-property.md` — MSAA is a target property; colour and depth each resolve one image.
+- `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
+- `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-- `ADR-2026-11-15-vk-keeps-one-frame-in-flight.md` —— **vk 保持一帧在飞**：实测一次 `renderFrame()` 墙钟中位 8.63–8.94 ms、同一帧设备时间 7.95 ms ⇒ **设备占 ~90%，宿主侧的活只有 ~0.9 ms**，多帧在飞的收益上限约 10%，而代价是改掉“画完即读”的契约；否决多槽与“只等上一帧”，触发条件（设备时间 < 墙钟一半、需要与 GPU 重叠的产物形态、第二个后端要同一语义）写在 ADR 里。**同时更正** `design/vk-backend.md` §2.3 早先把“含栅栏等待的墙钟”当成宿主工作量的读法。
-- `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` —— **设备是资源池，会话拥有帧**：两个引擎共享 geometry / shader / 纹理（一次上传、一次编译），但**帧不共享**——`RenderDevice` 是池（内存、驻留缓存、目标、管线缓存，按资源加锁），`RenderFrameExecutor` 是会话（命令池 / 栅栏 / 常量环 / 描述符池，线程限定）；驻留三态 `Absent → Uploading(owner, frame) → Resident`，只有 `Resident` 可画，竞争会话建临时副本而不等待（不引入会话间阻塞）；目标一帧 claim、冲突只跳过那个 pass；释放 park 到所有会话 `completed ≥ epoch`；否决全局设备锁、per-entry 读写锁与每引擎一设备；分两步（第一步帧闸 + 契约，第二步拆分，~1350–2100 行）。
-- `ADR-2026-11-14-vk-becomes-the-default-target.md` —— **`gfx_backend_vk` 转为生产后端、最终替代 `vsg`**：平台先 Linux/X11、Win32 后续（每设备一个 `WindowSystem` 的接缝，加平台是加法）；未实现能力诚实答 `Unsupported` + 一次诊断，不静默降级；切换默认前必须过的门（`releaseRenderTarget`、`readDepthBuffer` 或差异表、device-lost 诊断、ASan/TSan/validation、平台与性能证据、用户文档）写在 ADR 里；否决立刻切默认与双后端长期并存。
-- `ADR-2026-11-13-content-seam-stays-in-the-plugin.md` —— 内容记账半边（事实表/半边/键，被 `check_vsg_content_seam.cmake` 守卫）**继续留在后端插件里**，不提成 SDK 库（`G8`：没有第二个后端，打包不该先于消费者）；第二个后端出现时按 seam 移动/复制。
-- `ADR-2026-11-13-staging-keeps-the-reusable-block.md` —— 上传暂存**保留可复用下限块**（`staging->size <= minimumStagingBufferSize`），只还大于下限的一次性大块：每帧上传的宿主稳态零分配，模型载入的 1.2 GB 常驻仍不回来；取代 ADR-2026-11-10 的“全部不保留”。
-- `ADR-2026-11-13-one-engine-one-surface.md` —— **一个引擎驱动一个表面**：否决 graphics-next 的 F8（一引擎多 Surface / `Target{SurfaceId}`），多窗口 = 一个设备服务多个引擎（每窗一引擎 / 一区 / 一个 `Viewer`）；`FrameResult.present` / `PresentRecord` 保持单值；触发条件（真实-host 双视口 / 第二后端）写在 ADR 里。
-- `ADR-2026-11-12-adopt-graphics-next.md` —— **采纳 graphics-next 作为下一版帧管线设计**（四层单向：内容 → 快照 → 派生 → 执行）；目标形状的规范文档是 `design/graphics-frame-pipeline.md`（草案），`K1–K11` 从“否决提案”改成“每一步的验收阈值与回退条件”，backlog 的 `T32` 从触发条件型移出；否决保持现状、只留已落地的身份/寿命层、以及大爆炸重写。
-- `ADR-2026-11-12-snapshot-takes-over-collection.md` —— **快照接管生产收集拆成 5a 影子 / 5b-1 翻源 / 5b-2a 公开入口 / 5b-2b 删除 / 5b-2c pass 收口**：5a 只跑新旧两路并逐项 diff、旧路径仍是渲染真相；5b-1 把 Published 模式绑到 `SnapshotSource`；5b-2a 公开 `Scene::publish()` 三态并让 `FrameWorker` 直接持有 `SnapshotSource`；5b-2b 删 `ContentMirror` / `DeltaChannel` / `RenderWorld` / `PublishOutcome` 与 23 条 LEGACY 用例；5b-2c 才删 `addPass` 家族与运行时拒绝；否决一步完成、拆三步、保留 mirror 与 debug-only 双跑。
-- `ADR-2026-11-11-content-identity-is-a-handle.md` —— 内容身份是**句柄**（`Handle` gen24/domain8/index32 + `ContentRef{id,revision}`），不是地址：公开 `ContentId.hpp`、`Node::id()`、行身份/镜像键/`RenderCommand::node`/计划行/后端几何表全部改为 `NodeId`；分三段落地（公开身份 → `ContentRef` 唯一键 → epoch 回收）；部分取代 `ADR-2026-11-09-address-keys-hold-the-object`。
-- `ADR-2026-11-10-render-world-mirrors-content.md` —— 渲染世界**镜像**内容世界：内容留在 UI 线程（编辑 API 不变），镜像（世界矩阵/世界盒/折叠状态/代理）在引擎线程，靠 delta 增量更新（payload 必填 ⇒ 漏发编译不过）、字节靠原子 revision 轮询；表面归内容线程、交换链归引擎线程；否决把内容移交给引擎线程（第一稿）、每帧 extract、双缓冲世界、加锁、每帧起线程、按 pass 并行记录、vsg 的 threading path。
-- `ADR-2026-11-10-upload-staging-is-not-retained.md` —— 上传暂存**不保留**：一次上传的 host 可见缓冲是**一个** `vkCmdCopyBuffer` 的源，拷贝的 fence 一完成就清（`detail::StagingTask` 在每个帧边界扫，零等待、零 idle），SDK **没有**对应动词（`RenderDevice::releaseUploadStaging()` 与模型查看器的 `release_render_memory` 一并删除）；否决显式入口 + park/drain、每帧无脑清、换任务释放、以及“还有待拷数据就跳过”的便宜条件（那是会让 sweep 永久冻结的坑）。
-- `ADR-2026-11-10-gpu-residency-pinned-by-content.md` —— GPU 驻留按**内容对象（身份 + revision）**钉住，回收只问“现在谁活着”（事实表枚举 pin 集合），删掉时间窗与容量上限：一套判据替掉现在的五种（流的时间窗、纹理/块的引用计数、半片与描述符集的反事实扫描）；显存不再自动让出是它的明码代价。第一步（`ResidencyLedger` 词汇 + 流/图像/材质块三行接入）已落地。
-- `ADR-2026-11-10-upload-staging-release-is-explicit.md` ——（已取代）上传暂存的回收是**显式入口**，时机归宿主/用户命令。
-- `ADR-2026-11-10-curve-sampling-is-an-object.md` —— 曲线离散化做成对象：基类 + 三个规则子类、setter 配置 + 无参 `compute()`；否决构造即算与“三个自由函数 + 返回值”。
-- `ADR-2026-11-10-bvh-seal-and-coarse-picking-tree.md` —— BVH 可封存（`seal()` 放掉构建期的图元盒，只留节点 / 节点盒 / 顺序）、拾取树粗叶 64 且建成即封存、vsg 与索引上传改成别名模型 buffer（14M 三角形的拾取树 1.36 GB → 88 MB，后端再省 1.18 GB）；否决独立封存类型、删 `update`/`refit`、改库的默认叶容量。
-- `ADR-2026-11-09-address-keys-hold-the-object.md` —— 按地址做键的缓存必须持有键名所指的对象：地址在行仍在时被回收，键就指向了新对象。
-- `ADR-2026-11-09-buffer-edit-scope.md` —— `Buffer` 的写入口收成一个作用域（共享可变字节只有一个写入口）。
-- `ADR-2026-11-09-scene-collection-two-halves.md` —— 场景收集拆成「烘焙」与「选取」两半（第一半已落地，第二半待测量）。
-- `ADR-2026-11-09-box-transform-lives-in-geom.md` —— 盒的变换算子回到 `geom`（`Aabb::transformed()`，只接受仿射，非仿射答空盒），删除 `graphics::transformBox()` 与 `RayIntersection.cpp` 的副本；`Obb` 暂不提供（表示装不下一般仿射，零消费者）。
-- `ADR-2026-11-09-solid-tessellation-in-geom.md` —— 三角化回到 `geom`：`tessellateSolid()` 返回精度模板 `Triangulation<T>`（位置 / 法向 / 索引），`meshFromTriangulation()` 在模型侧装配成 `TriangleMesh`；否决返回 `TriangleMesh`（回边）与 `Buffer`（多一次拷贝）。
-- `ADR-2026-11-09-solid-closed-set-without-variant.md` —— 删掉 `SolidShape` 变体与 `solidShapeOf()`：封闭集合由五个 kind + `visitPrimitive()` + 一 kind 一个重载表达；`Solid<T>` 族接口与五个 kind 值不变。
-- `ADR-2026-11-09-bvh-shape-is-the-tree-storage.md` —— BVH 的形状就是它自己的存储（`BvhTopology` 三条数组 + 平行的节点体积），`BvhTopology.hpp` 只留词汇；恢复有视图（`RestoreTopology`）与移动（`Bvh::restoreTopology()`）两个入口、一份检查。否决内部类、AoS 转录与访问器化。
-- `ADR-2026-11-04-curve-evaluation-interface.md` —— 曲线族改为求值接口（`Curve<T>` 虚函数 + `TrimmedCurve`），`Ray` 退出曲线族。
-- `ADR-2026-11-04-surface-family-queries.md` —— 族级曲面查询用自由函数 + 参数窗口 + 牛顿迭代，不扩 `Surface` 接口、不逐类型写特例。
-- `ADR-2026-11-04-surface-evaluation-interface.md` —— 曲面族改为求值接口（`Surface<T>` 十三项虚函数 + 两个分类标签），取代曲线 ADR 的第 6 条。
-- `ADR-2026-11-04-geometry-precision-and-instantiation.md` —— 几何类型保留精度模板，`float` / `double` 两种精度都显式实例化并导出。
-- `ADR-2026-11-04-geometry-kinds.md` —— 几何族用空标签分类，不用虚基类。
-- `ADR-2026-11-04-primitive-is-a-shape.md` —— 参数化几何是建模类型（`Primitive` 子类），算法属于曲面；OCCT 收缩为 STEP 解析与三角化。
-- `ADR-2026-11-05-solid-family-and-variant.md` —— 解析实体是族接口 `Solid<T>` + 封闭值集 `SolidShape`（族与五个 kind 现行；“模型按值持有”与 `SolidShape` 变体本身已分别被后续 ADR 取代 / 删除）。
-- `ADR-2026-11-05-primitive-is-a-modelling-base.md` —— `Primitive` 是建模基类：不持有实体，五个子类各存尺寸并 `solid()` 按需构造；几何 kind 改名 `*Solid`。
-- `ADR-2026-11-05-planar-curve-contract.md` —— 平面曲线是第二份契约（与 3D 同名同义、互不继承），共享词汇留在 `math`；否决泛型 `Curve<PointT>`、继承 3D 契约与嵌入 `z = 0`。
-- `ADR-2026-11-05-planar-arc-is-a-value-type.md` —— 平面圆弧是值类型（`ArcCurve` = 圆按值 + 区间），通用 `TrimmedCurve<T>` 不与之并存。（已被 `ADR-2026-11-05-planar-trimmed-curve.md` 取代）
-- `ADR-2026-11-05-planar-trimmed-curve.md` —— 通用裁剪视图 `TrimmedCurve<T>`（`shared_ptr` 基曲线 + 区间）取代 `ArcCurve`；一段圆的紧盒回到 `CircleCurve::bounds(first, last)`。
-- `ADR-2026-11-05-planar-offset-curve.md` —— 平面偏置是“具体基曲线类型”的模板 + 具体类型上的非虚三阶导，契约保持十一项；否决给 `Curve<T>` 加第 12 项与差分近似的二阶导。（已被 `ADR-2026-11-05-planar-offset-holds-handle.md` 取代）
-- `ADR-2026-11-05-planar-offset-holds-handle.md` —— 平面偏置持有 `shared_ptr<const Curve<T>>` 基曲线，阶数 = 基曲线能力 − 1（封顶 2）；基曲线给不出三阶导时 `isValid()` 为假。
-- `ADR-2026-11-05-curve-derivative-capability.md` —— 导数按能力暴露：`Curve<T>` 增加非纯虚 `maxDerivativeOrder()` / `derivativeAt(u, order)`，越界答 `std::nullopt`；否决把某一阶写成纯虚与 OCCT 式任意阶 + 异常。
-- `ADR-2026-11-04-curve-third-derivative.md` —— 偏置曲线的二阶导数不实现，也不给 `Curve<T>` 加三阶导数；`OffsetCurve` 保持抽象。（已被 `ADR-2026-11-06-space-third-derivative-and-offset.md` 取代）
-- `ADR-2026-11-06-space-third-derivative-and-offset.md` —— 空间曲线族新增非虚 `thirdDerivative()` 与能力覆写（报 3），`OffsetCurve` 用基曲线三阶导答二阶导并成为可构造值类型，阶数 = 基曲线能力 − 1。
-- `ADR-2026-11-06-shared-numeric-kernels-in-math.md` —— 与维度无关的数值内核（自适应 Simpson、单调安全 Newton）住进 `math`，2D 与 3D 的弧长 / 反解共用一份实现。
-- `ADR-2026-11-06-math-is-the-base-layer.md` —— `math` 是底座层而非纯数学库：数学词汇进根层、数学过程进 `numeric`、NURBS 表示约定（重数 / 夹持 / 连续度阶梯）进 `spline`；建 `vn::Nurbs` 的触发条件一并写下。
-- `ADR-2026-11-06-merged-geom-module.md` —— `geom/planar` 与 `geom/spatial` 合并为 `src/base/geom` + 单库 `vn::Geom`，两棵 SDK 树共用一个 `geom/geom_global.hpp`；2D/3D 隔离从编译器保证改为 `check_geom_layering.py`。
-- `ADR-2026-11-06-geom-detail-subtree.md` —— 模块内新增 `geom/detail/` 子树，收与维度无关的共享实现（曲线标量、窗口/容差规则、括号收窄、弧长与反解、两曲线细化）；两棵树都可 include 它，它不得 include 任一方；公开名字不动。
-- `ADR-2026-11-06-spline-model-moves-to-geom.md` —— B 样条的节点模型与基函数移入 `geom/detail`、`Continuity` 移入 `geom` 根，判据是“签名里有没有我们自己的数据模型”；`math` 只剩数学词汇与数值过程（取代 `ADR-2026-11-06-math-is-the-base-layer.md` 的表示约定那一半）。
-- `ADR-2026-11-06-math-keeps-only-vocabulary.md` —— 求根、积分与 Bernstein 求值也移入 `geom/detail`，`math` 只剩词汇（取代 `ADR-2026-11-06-shared-numeric-kernels-in-math.md`）；代价（非几何模块要用积分得依赖 `vn::Geom`）与反转路径（第二个消费者出现时升独立模块）写明。
-- `ADR-2026-11-06-geom-tree-layout-and-naming.md` —— 两棵树的目录位置与维度命名维持现状：共享已由 `geom/detail` 与门禁解决，重排只剩名字好看；三个方案（嵌套 `planar`/`spatial`、平铺+`2` 后缀、两棵树都加后缀）及否决理由。
-- `ADR-2026-11-06-geom-contracts-nested-under-module.md` —— 两个契约下沉为 `geom/{planar,spatial}` 目录与 `vn::geom::{planar,spatial}` 子命名空间（取代上一条的“维持兄弟目录”）；重导出归零、目录与命名空间一致；并记录一项预期收益的落空（嵌套不能缩短 `geom::detail::`，因为契约自己有同名 `detail`）。
-- `ADR-2026-11-07-crypto-api-shape.md` —— crypto 的 API 形状：加解密用两个工厂而不是 `mode` 标志、增量 GCM 先缓冲后一次算完（失败会放行未认证数据，代价与退路写明）、后端初始化收在模块内一处。
-- `ADR-2026-11-07-certificates-and-legacy-keys.md` —— 证书只取公钥不做信任判断（名为 F15 的边界，不是缺口）、旧式 `Proc-Type` PEM 只读不写、`WOLFSSL_MD5` 改为显式打开（枚举里有 `kMd5` 就不能靠预设的副作用）。
-- `ADR-2026-11-07-encrypted-private-keys.md` —— 口令保护的私钥用 PKCS#8 + PBES2（AES-256-CBC + PBKDF2），不是自造容器：私钥文件的全部价值是别的工具也能读；否决 `toPrivatePem(password)` 重载（名字要说出格式变化）、把迭代数写死、用 PBES1 写出。
-- `ADR-2026-11-07-bvh-as-structure-plus-builder.md` —— BVH 拆成结构与构建器（`BuildJob` 是唯一契约），`Obb` 体积经实测否决，取代 `geometry-ray.md` 的 `D5`。
-- `ADR-2026-11-07-digest-vocabulary.md` —— 摘要收敛成一套词汇：`Digest` 枚举 + `digest()` + `DigestCalculator`，删掉 `Hash` / `HashCalculator` / `Hmac::Algorithm` 三套并行面；否决“每种算法一个类”。（命名部分已被下一条取代）
-- `ADR-2026-11-07-mesh-triangle-tree-cache.md` —— 网格自带三角形身份（`triangleCount()` / `triangleCorners()` 上移到 `Mesh`）并把三角形树当缓存（`Bvh<double>`，一三角形一 primitive，id 即序号）。
-- `ADR-2026-11-07-incremental-api-shape.md` —— 增量 API 的形态与名字：一次性用自由函数（`digest()` / `hmac()`），增量用东西本身命名（`Hasher` / `Hmac`），方法统一 `update()` / `finish()`；取消自造的 `*Calculator`。
-- `ADR-2026-11-07-aesgcm-streaming.md` —— AES-GCM 改为真流式（去缓冲）：wolfSSL 5.9.4 的 `Init/Update/Final` 入口 + `WARN_UNUSED_RESULT`，代价是“解密输出在 `finish()` 前不可信”这一契约必须显式写明。
-- `ADR-2026-11-04-axis-surface-frame.md` —— 旋转面的框架放进新的 `AxisSurface` 层，“平面内轴”的规则抽成 `Frame.hpp` 的一份实现；球面不迁移。（已被 `ADR-2026-11-04-surface-placement-value-type.md` 取代）
-- `ADR-2026-11-04-surface-placement-value-type.md` —— 曲面的框架是值类型 `Placement`（原点 + 主方向 + X 方向），不是继承层；“平面内轴”仍只在 `Frame.hpp` 一处。
-- `ADR-2026-11-04-isvalid-on-family-interfaces.md` —— `isValid()` 是 `Curve<T>` / `Surface<T>` 的纯虚函数：`const Curve<T>&` 也能问；`Plane` 因此第一次有了零法向判据。
-- `ADR-2026-11-04-bspline-without-knot-breaks.md` —— 样条内部重数不超过度数：内部重数 = 度 + 1 是缺口，`isValid()` 拒绝它，`C0` 因此始终是“各段交于一点”。
-- `ADR-2026-11-03-geometry-primitives-ownership.md` —— 空间值类型归 `geometry`，轴对齐盒改名为 `Aabb`；`Rect2` 留在 `math`，不留兼容别名。
-- `ADR-2026-11-03-brep-operations-module.md` —— 运行时 B-rep 运算独立成 `brep` 模块；`geometry` 不碰 OpenCASCADE，探测集中在 `VineOpenCASCADE.cmake`。
-- `ADR-2026-10-24-command-target.md` —— 命令的目标是视图（`DocumentView`），层可空、需求按命令声明；`RenderControl` 不做目标。
-- `ADR-2026-11-01-translation-scope.md` —— 只有界面层（appfw 及以上）可翻译，源语言中文，目录用 Qt Linguist，v1 不做运行期切换（源语言一条已被下一条取代）。
-- `ADR-2026-11-02-english-source-language.md` —— 源语言改为英文、中文进目录；缺译文回退英文，非中文系统落到 `en`。
-- `ADR-2026-11-01-translation-catalog-embedding.md` —— 翻译目录随模块走、内嵌进模块，模块旁的同名 `.qm` 可覆盖；语言集合只有中文与英文，因此只有一本中文目录。
-- `ADR-2026-10-28-ribbon-roles-and-placement.md` —— Ribbon 用 role + id + 锚点放置，终止区是解析器不变量；不做全局序号与 item id。
-- `ADR-2026-10-28-backstage-overlay-window.md` —— Backstage 用顶层 Tool 窗口，不用 SARibbon 的子控件覆盖层（原生表面遮挡）。
-- `ADR-2026-10-30-crash-handler-x11-on-linux.md` —— Linux 的崩溃窗口用 Xlib + Xft 手画（系统库，不链 UI 工具包；取代同日的 Qt 版本）。
-- `ADR-2026-10-30-crash-handler-qt-on-linux.md` ——（已取代）Linux 的崩溃窗口用 Qt Widgets。
-- `ADR-2026-10-28-document-tabs-and-floating.md` —— 文档的 tab 在中央区，浮动是自已的顶层窗口（不进停靠树）。
-- `ADR-2026-10-28-central-area-shows-current-document.md` —— 中央区只显示当前文档，浮动的当前文档用说明页占位（一个 current、三处一致）。
-- `ADR-2026-10-24-command-target-no-window-query.md` —— 目标只走一条路：不留窗口级的"当前 3D 区"查询，视图的访问器叫 `renderControl()`（部分取代上一条的决定 4）。
-- `ADR-2026-10-24-tabs-not-mdi.md` —— 一个窗口同一时刻只显示一个视图（tab）；并排看几块 3D 区由视图自己的窗格表达，不做 MDI/分屏。
-- `ADR-2026-10-24-material-model.md` —— 材质改为单一 metallic-roughness PBR + 稀疏实例；alpha 模式进材质，G-buffer 重排。
-- `ADR-2026-10-24-light-block-typed-lights.md` —— 灯块改为带类型的灯数组（位置/范围/锥角），两条路径共用 UBO。
-- `ADR-2026-10-24-shader-parameter-abi.md` —— 着色参数手写 + 去重，不做反射与材质 DSL。
-- `ADR-2026-10-23-no-multi-parent-dag.md` —— 不引入多父，严格树 + 实例化。
-- `ADR-2026-10-23-instancing-per-primitive.md` —— 实例化挂在 `Primitive`，不做作用域。
-- `ADR-2026-10-23-l2a-reverted.md` —— L2a 回撤，分层目标等 L2b 一起做。
-- `ADR-2026-10-22-engine-schedules-passes.md` —— pass 调度只在引擎。
-- `ADR-2026-10-22-cache-unbounded-explicit-release.md` —— 缓存不设上限，释放显式管理。
-- `ADR-2026-10-22-msaa-target-property.md` —— MSAA 是目标属性，颜色/深度各解析一张图。
-- `ADR-2026-10-21-colour-space-in-types.md` —— 颜色空间与数值域放进类型。
-- `ADR-2026-10-19-produced-vs-imported-image-sources.md` —— produced 与 imported 图源不合并。
+## research/ — research and proposals (17 files / 1 proposal set)
 
-## research/ —— 调研与提案（17 文件 / 1 组提案）
+Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
+here is deleted.
 
-非权威、带日期；落地后并入 `design/` 或 `decisions/`，并删除这里的文件。
+- `docs-2026-11-17-english-migration.md` — **the documentation migration plan** (the decision is
+  `../decisions/ADR-2026-11-17-documentation-language.md`): the inventory of 221 files / 34,842 lines,
+  the M0–M10 batches and their order, the acceptance per batch (no new claims / ID census / link
+  census / nine gates) and the risks; ADRs and bug postmortems only ever gain English summaries and
+  research is not translated.
 
-- `docs-2026-11-17-english-migration.md` —— **文档英文化迁移计划**（决策在
-  `../decisions/ADR-2026-11-17-documentation-language.md`）：221 个文件 / 34,842 行的盘点、
-  M0–M10 的批次与顺序、每批的验收（无新主张 / ID 普查 / 链接普查 / 九道门禁）与风险；
-  ADR 与 bug 只追加英文摘要，research 不翻译。
+- `graphics-2026-11-17-audit-3.md` — **the third independent audit that re-established the facts**: a
+  conclusion per audit dimension (13 of them, "nothing found" included), 24 findings (`A3-01…A3-24`),
+  three inventories (root namespaces / macros / capabilities), 8 risk experiments, 14 batches, a
+  concept-and-semantics review (`C-A3-01…16`, against Filament / UE / O3DE / wgpu / bgfx / Godot / VSG /
+  Qt Quick) and 17 tasks (`T-00…T-16`). The only real race TSan reported at the time was `A3-01`.
 
-- `graphics-2026-11-17-audit-3.md` —— **第三轮重新建立事实的独立审计**：13 个维度的逐条结论（含「未发现问
-  题」）、24 条发现（`A3-01…A3-24`）、根命名空间 / 宏 / 能力三张清单、8 条风险实验、14 个批次、概念与语义再
-  审（`C-A3-01…16`，对照 Filament / UE / O3DE / wgpu / bgfx / Godot / VSG / Qt Quick）、17 条任务
-  （`T-00…T-16`）。TSan 当时唯一的真实竞争就是 `A3-01`。
+- `graphics-2026-11-16-redesign-r2.md` — **round two: concepts / capability semantics / implementation /
+  norms**: `E-01…E-12` (a view has no type, `RenderArea` is the area, seven target fields, two authoring
+  shapes for a pass, callbacks inside values, the dead field `tag`, the `Content*` prefix, the four
+  target roles, …), `A-01…A-08` (`setRenderTarget` is a write-once-read-never store in vk, the
+  `releasePass` contract is over-specified, readback is asymmetric in three places, `Capabilities` splits
+  into `Features`/`Limits`, diagnostics lack an origin, …), `I-01…I-08` (a light vector allocated per
+  pass per frame, vk's zero-allocation claim has no witness, …), `S-01…S-12` (law/habit inconsistencies
+  under nine green gates, 26 section comments, 37 of 94 enums with no underlying type, …), a
+  concept-by-concept comparison with a dozen frameworks (borrow / do not borrow + `G#`), and a line-by-line
+  reconciliation with the 2026-11-11 API audit `P1`–`P32`; plus the 18-batch order after adoption.
+- `graphics-2026-11-16-redesign.md` — **the graphics and two-backend redesign (phase one review + phase
+  two proposal)**: table A with 85 capabilities (one line each + carrier + executable evidence + the
+  promise it comes from + a marker for "one backend only / no evidence"), B item by item (8 groups of SDK
+  contracts / 7 engine units / 5 seam groups / 8 vk units / 8 vsg units), C cross-cutting (including an
+  include census: of the seam's 25 headers vk uses 6 and 18 have only vsg as consumer; driver identity
+  spelled three ways; two frame-head plan shapes in the two backends; 6 design sentences no longer
+  true), D the conclusion table (D-01…D-28) and a ten-batch migration plan (each revertable, with
+  capability ID triples). **No code changes; waiting for approval.**
+- `graphics-2026-11-15-independent-audit.md` — **an independent audit of the render stack (set the
+  standard first, then judge)**: seven groups of 26 criteria (`C1`–`C26`: contract truth / lifetime /
+  synchronisation / cost / failure semantics / evidence / evolvability), a verdict per group and 14
+  findings (`A1`–`A14`): the allocation path **swallows a device loss as "out of memory"** and computes a
+  refusal reason only to discard it, no memory-pressure policy, diagnostics with no code and no
+  structured fields (contrary to `R28`), `FrameDescription`'s class-level "everything is borrowed"
+  sentence refuted by three owning fields, GPU timing with no per-pass attribution, one `Device` with six
+  concerns (16 `ReportOnce`s), 18 seam verbs of which 13 have default bodies, failure paths that cannot
+  be injected, missing TSan evidence, five vocabularies for failure, two implementations of the
+  retirement rule, and no table of extension-point costs; it also lists the eight things **checked and
+  judged correct** (sRGB, the plugin ABI handshake, condition-variable threads, the barrier table, the
+  exposure-boundary gates, byte-for-byte parity, the `ReportOnce` discipline, the preparation contract).
 
-- `graphics-2026-11-16-redesign-r2.md` —— **第二轮：概念 / 能力语义 / 实现 / 规范**：`E-01…E-12`（视图没有类型、
-  `RenderArea` 是区、目标 7 字段、pass 两个作者形状、值里回调、死字段 `tag`、`Content*` 前缀、目标四角色…）、
-  `A-01…A-08`（`setRenderTarget` 在 vk 是 1 写 0 读的死存储、`releasePass` 契约过剩、读回三处不对称、
-  `Capabilities` 拆 `Features`/`Limits`、诊断缺 origin…）、`I-01…I-08`（每 pass 每帧灯向量分配、vk 零分配
-  无证人…）、`S-01…S-12`（九道门禁全绿下的法/习惯不一致、26 处 section comment、37/94 枚举无底层类型…）、
-  十余个框架的逐概念对照（借 / 不借 + `G#`），以及与 2026-11-11 API 审计 `P1`–`P32` 的逐条对账；并入后 18 个批次的顺序。
-- `graphics-2026-11-16-redesign.md` —— **graphics 与两后端的重新设计（阶段一审核 + 阶段二提案）**：A 表 85 条能力
-  （每条一句话 + 承载 + 可执行证据 + 承诺出处 + 只在一个后端/无证据的标记）、B 逐项（SDK 契约 8 组 / 引擎 7 单元 /
-  接缝 5 组 / vk 8 单元 / vsg 8 单元）、C 横切（含一遍 include 计数：接缝 25 个头里 vk 只用 6 个、18 个只有 vsg 一个
-  消费者；驱动身份三种拼写；两后端帧首计划两形状；6 处设计页句子已不成立）、D 结论表（D-01…D-28）与十批迁移计划
-  （每批可回滚、能力 ID 三元组）。**不改代码，等批准。**
-- `graphics-2026-11-15-independent-audit.md` —— **渲染栈独立审计（先定标准，再下判词）**：七组 26 条判据
-  （`C1`–`C26`：契约真实性 / 寿命 / 同步 / 成本 / 失败语义 / 证据 / 可演进），逐组判词与 14 条发现
-  （`A1`–`A14`）：分配路径把**设备丢失吞成“显存不足”**且拒绝理由算出来又被丢掉、无内存压力策略、
-  诊断无 code 与结构化字段（与 `R28` 相反）、`FrameDescription` 的类级“全是借用”句被三个 owning 字段反驳、
-  GPU 计时无 per-pass 归因、`Device` 一个对象六个关注点（16 个 `ReportOnce`）、接缝 18 个动词 13 个有默认体、
-  失败路径不可注入、TSan 证据缺、五套失败词汇表、退休规则两个实现、扩展点成本无表；同时列出**核过并判为正确**
-  的八项（sRGB、插件 ABI 握手、条件变量线程、屏障表、暴露边界门禁、逐字节对拍、`ReportOnce` 纪律、预热契约）。
+- `graphics-2026-11-14-vk-industry-review.md` — **an industry-standard review of `gfx_backend_vk`**
+  (read-only plus two small fixes): spec conformance and diagnosability are industrial grade (validation
+  0 VUID, cross-backend byte-for-byte parity, device-loss classification, the barrier table, the pipeline
+  key), while the resource and performance architecture is prototype grade — a UBO built and destroyed per
+  draw per frame (measured: 28 allocations per frame), a descriptor set allocated per draw per frame, a
+  command buffer allocated per frame, no `VkPipelineCache`, no suballocation, no GPU timing; one frame in
+  flight is a cost of the SDK contract rather than an oversight; includes F1–F13 and T43–T46.
 
-- `graphics-2026-11-14-vk-industry-review.md` —— **`gfx_backend_vk` 的工业标准审查**（只读 + 两处小修）：
-  规范符合性/可诊断性是工业级（validation 0 VUID、跨后端逐字节对拍、设备丢失分类、barrier 表、pipeline key），
-  资源与性能架构是原型级 —— 每 draw 每帧建/毁 UBO（实测每帧 28 次分配）、每 draw 每帧分配描述符集、每帧分配命令
-  缓冲、无 `VkPipelineCache`、无子分配、无 GPU 计时；单帧在飞是 SDK 契约的代价而非疏忽；含 F1–F13 与 T43–T46。
+- `graphics-2026-11-13-vk-exposure-boundary.md` — the argument for **whether a backend may expose
+  Vulkan**: the SDK host face and the SDK backend face have **zero Vk types** today (every hit is a
+  comment), while 18 of the plugin's 57 `internal`+`support` headers name `Vk*` and `shell` names none;
+  against wgpu / Diligent / QRhi / Godot / bgfx / Filament / UE / Dawn, the conclusion is "anything goes
+  inside the plugin; the SDK and the factory entry points may not", and the door a learning backend needs
+  becomes an explicit free function in `support/` (`vn::backend_vk::Handles`), with checkable V1–V4 and
+  the upgrade trigger.
+- `graphics-2026-11-13-gpu-resource-abstraction.md` — **the T30 (GPU resource abstraction) assessment**:
+  0 of the host face's 18 device verbs create a GPU resource; the rule layer (pin / retirement /
+  residency books / frame values / capabilities / target decisions) is complete while the type layer has
+  no consumer; the shape when it really triggers is "an opaque resource description plus a per-backend
+  implementation", not a `GpuResource` base class; it presupposes T15 / T32 and records S4 / S5 and the
+  validation-layer gaps.
 
-- `graphics-2026-11-13-vk-exposure-boundary.md` —— **后端能不能暴露 Vulkan** 的边界论证：SDK 宿主面 / SDK 后端面今天**零 Vk 类型**（命中全是注释），插件 `internal`+`support` 18/57 个头含 `Vk*` 而 `shell` 为 0；对照 wgpu / Diligent / QRhi / Godot / bgfx / Filament / UE / Dawn，结论是“插件内部随便、SDK 与工厂入口不许”，学习后端需要的那扇门做成 `support/` 里的显式自由函数（`vn::backend_vk::Handles`），并给出可检查的 V1–V4 与升级触发。
-- `graphics-2026-11-13-gpu-resource-abstraction.md` —— **T30（GPU 资源抽象）评估**：宿主面 18 个设备动词里 0 个创建 GPU 资源；规则层（pin / 退役 / 驻留账 / 帧值 / 能力 / 目标决策）完备，类型层无消费者；真触发时的形状是“不透明资源描述 + 每后端实现”，不建 `GpuResource` 基类；前置 T15 / T32，另记 S4 / S5 与验证层缺口。
+- `graphics-2026-11-12-audit-3.md` — **the third graphics audit** (read-only): the thread payload
+  contradicts the contract (R3-1), three new public entry points have zero production consumers (R3-2),
+  three concepts share `Scene` (R3-3), `backend/`'s public install and Vulkan spelling (R3-4), the content
+  half calling into the engine half (R3-5), seven result shapes (R3-6), extension axes mutually exclusive
+  with the plan (R3-7), `RenderEngine` as composition root (R3-8); with the repair task table W1–W9 and
+  the trigger conditions for "not doing it now".
+- `graphics-2026-11-12-instances.md` — the `T23` A/B measurement protocol for prototypes and instances
+  (A6): 5000-row prototypes × 10 instances, four edit classes E0–E3, six measures (`snapshot_rows` /
+  `draw_rows` / placement multiplication / publish / select / residency); B's pass line (O(R+N),
+  residency ≤ 2× the 1× prototype, `K11` green) and the fallback "stop at prototype DAG sharing if the
+  numbers are bad". **Not adopted.**
+- `graphics-2026-11-11-next.md` — the redesign of graphics' overall skeleton: **the outline** (where the
+  problems come from, the skeleton in brief, `I1–I7`, the kill conditions `K1–K6`, the validation plan,
+  the rejected options, the `G1–G13` mapping). Corresponds to backlog `T32`; adopting it rewrites
+  `design/`, rejecting it leaves an ADR.
+- `graphics-2026-11-11-next-requirements.md` — the same proposal's **goals and requirements**: `O1–O7` /
+  `R1–R30` / `N1–N10` / `C1–C12` / `T1–T16`, and where today's `C1–C20` go.
+- `graphics-2026-11-11-next-design.md` — the same proposal's **preliminary design**: layering, draft
+  types, the hot/cold block layout, the publish / fold / select / sort / record / reclaim / plan-diff
+  algorithms, the threading and memory model, diagnostics, the backend contract.
+- `graphics-2026-11-11-next-benefits.md` — the same proposal's **benefits and costs**: benefits
+  quantified per dimension with the way each is measured, `P1–P7`, the three migration batches with each
+  batch's kill condition, and the answers to the counter-arguments.
+- `graphics-2026-11-11-next-hot-paths.md` — the same proposal's **performance / animation / post /
+  extensibility**: the measured cost model and the 60 fps budget, the means for select/fold/sort/record,
+  the three rules for a value's hot path, animation through "in-frame poses" (not through publication),
+  post-processing where the plan is the dependency graph, the controlled escape hatch, engineering
+  efficiency, `N11–N18`, and the priority "put thresholds into `Measure*` first".
+- `graphics-2026-11-11-next-api.md` — the same proposal's **audit of the existing API surface**:
+  `P1–P32` (one concept in two representations, callbacks in declarations, four names for a target, four
+  orderings, 49 public methods, seven aliases, …), the missing capabilities `M1–M10`, where each method
+  goes, the naming table, and the A–E batching.
+- `graphics-2026-11-11-next-audit.md` — the same proposal's **second audit**: a review of the evidence
+  standards, cross-document contradictions `X1–X10`, design gaps `A1–A13`, supplementary requirements
+  `R31–R39` and kill conditions `K7–K11`, a cost re-assessment and the revised order.
 
-- `graphics-2026-11-12-audit-3.md` —— graphics 的**第三轮审计**（只读）：线程载荷与契约相反（R3-1）、三条新公共入口零生产消费者（R3-2）、`Scene` 三概念同居（R3-3）、`backend/` 公共安装与 Vulkan 拼写（R3-4）、内容半段调引擎半段（R3-5）、结果形状七套（R3-6）、扩展轴与计划互斥（R3-7）、`RenderEngine` 组合根（R3-8）；含修复任务表 W1–W9 与“现在不做”的触发条件。
-- `graphics-2026-11-12-instances.md` —— 原型与实例（A6）的 `T23` A/B 测量口径：5000 行原型 × 10 实例、E0–E3 四类编辑、`snapshot_rows` / `draw_rows` / 放置乘法 / publish / select / 常驻六项；B 的判定线（O(R+N)、常驻 ≤ 2× 1× 原型、`K11` 绿）与“数字不好就停在原型 DAG 共享”的回退。**未采纳**。
-- `graphics-2026-11-11-next.md` —— graphics 整体骨架的重设计：**总纲**（问题来源、骨架摘要、`I1–I7`、
-  判死条件 `K1–K6`、验证计划、否决项、`G1–G13` 对照）。对应 backlog `T32`；采纳则改写 `design/`，否决则留 ADR。
-- `graphics-2026-11-11-next-requirements.md` —— 同上的**目标与需求**：`O1–O7` / `R1–R30` / `N1–N10` /
-  `C1–C12` / `T1–T16`，并给出现状 `C1–C20` 的去向。
-- `graphics-2026-11-11-next-design.md` —— 同上的**初步设计**：分层、类型草案、hot/cold 分块布局、
-  publish / fold / select / sort / record / reclaim / plan-diff 算法、线程与内存模型、诊断、后端契约。
-- `graphics-2026-11-11-next-benefits.md` —— 同上的**收益与代价**：按维度量化收益与测量方式、`P1–P7`、
-  三批迁移与每批的判死条件、反方论点回应。
-- `graphics-2026-11-11-next-hot-paths.md` —— 同上的**性能/动画/后期/扩展**：实测成本模型与 60 fps 预算、
-  select/fold/sort/record 的手段、值的热路径三条规则、动画走"帧内 pose"（不经发布）、后期＝计划即依赖图、
-  受控逃逸口、工程效率、`N11–N18`，以及"先给 `Measure*` 加阈值"的优先级。
-- `graphics-2026-11-11-next-api.md` —— 同上的**现有 API 集审计**：`P1–P32`（一概念两表示、声明里的回调、
-  目标四种说法、顺序四套、49 个公开方法、七个别名…）、`M1–M10` 缺失能力、逐方法去向、命名对照、A–E 分批。
-- `graphics-2026-11-11-next-audit.md` —— 同上的**第二轮审计**：证据口径复核、跨文档矛盾 `X1–X10`、
-  设计缺口 `A1–A13`、补充要求 `R31–R39` 与判死条件 `K7–K11`、成本再评估与修订后的推进顺序。
+(The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
+`design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
+`design/robotics-io-design.md` F7.)
 
-（此前的三角形树两帧统一与 `.vbtp` 持久化已并入 `design/graphics-geometry.md` 2.10 / F33、
-`design/geometry-bvh.md` 2.13 / F8 与 `design/robotics-io-design.md` F7。）
+## backlog/ — open work (13)
 
-## backlog/ —— 开放待办（13）
+Only items that are **not done and have a trigger**; delete them when done, and delete them when the
+decision is not to do them (the reason goes into an ADR).
 
-只留**还没做、有触发条件**的条目；做完就删，决定不做也删（理由进 ADR）。
+- `graphics.md` — graphics / vsg open items (content, backend resources, platforms, object model).
+- `appfw-startup.md` — what is left of the startup flow (the Windows half).
+- `appfw-ribbon.md` — Ribbon open items (order, item id, custom layouts, contextual tabs, manifest).
+- `appfw-command-arguments.md` — what is left of command arguments (declarative arguments, help/completion, asking for a missing argument, object arguments, length limits).
+- `appfw-app-info.md` — app-info open items (build-time version, manifest and third-party acknowledgements).
+- `appfw-translation.md` — translation open items (runtime switching, the first English catalogue, plugin metadata, the lupdate gate, the deployment rule for the override file).
+- `async.md` — async's next steps (cancellation environment, scope, the go/no-go on frame allocation).
+- `base-crash.md` — crash-report open items (last-crash prompt, terminate, stack guarantees, read-only directories, Linux, the upload trigger).
+- `brep.md` — runtime B-rep open items (OCCT backend verification, booleans and sewing).
+- `crypto.md` — crypto open items (error-code classification, Argon2 threading mode, configurable write-out scheme, a second AEAD, leak detection).
+- `geom-planar.md` — planar-geometry open items (ellipse / arc / the `ConicCurve` layer, planar queries, `CircleCurve::pointAt`).
+- `geometry.md` — spatial-geometry open items (solid intersection, triangle-face types, fourth derivative and offset order, table algorithms and temporary allocation in spline evaluation, the missing intersection pairings).
+- `loaders.md` — loaders open items (ownership and entry point for point-cloud I/O).
 
-- `graphics.md` —— graphics / vsg 的开放待办（内容、后端资源、平台、对象模型）。
-- `appfw-startup.md` —— 启动流程剩余项（Windows 半边）。
-- `appfw-ribbon.md` —— Ribbon 的开放项（order、item id、自定义布局、上下文 tab、manifest）。
-- `appfw-command-arguments.md` —— 命令参数的剩余项（声明式参数、帮助/补全、缺参提问、对象参数、长度上界）。
-- `appfw-app-info.md` —— 应用信息的开放项（构建期版本、清单与第三方致谢）。
-- `appfw-translation.md` —— 翻译的开放项（运行期切换、第一本英文目录、插件元数据、lupdate 门禁、覆盖位部署规则）。
-- `async.md` —— async 下一步（取消环境、作用域、帧分配的 go/no-go）。
-- `base-crash.md` —— 崩溃报告的开放项（上次崩溃提示、terminate、栈保证、只读目录、Linux、上报触发条件）。
-- `brep.md` —— 运行时 B-rep 运算的开放项（OCCT 后端验证、布尔与缝合）。
-- `crypto.md` —— crypto 的开放项（错误码分类、Argon2 线程模式、写出方案可配置、第二个 AEAD、泄漏检测）。
-- `geom-planar.md` —— 平面几何的开放项（椭圆 / 圆弧 / `ConicCurve` 层、平面查询、`CircleCurve::pointAt`）。
-- `geometry.md` —— 空间几何的开放项（实体求交、三角面类型、四阶导数与偏置阶数、样条求值的表算法与临时分配、缺的相交配对）。
-- `loaders.md` —— loaders 层的开放项（点云 I/O 的归属与入口）。
+## memory/ — module notes (12)
 
-## memory/ —— 模块要点（12）
+- `glossary.md` — **one spelling per concept**: the English code spelling ↔ the words the Chinese pages use, the retired spellings and the false friends; prose always uses the code spelling (the mapping table for the documentation migration, see `../decisions/ADR-2026-11-17-documentation-language.md`).
+- `graphics.md` — graphics / vsg live facts: mechanisms, criteria, traps and "why it was decided this way at the time".
+- `core.md` — core facts: a type descriptor registers only through `Type::obtain()`, the two declaration forms (inline and out-of-line), and the export convention for interfaces.
+- `crypto.md` — crypto facts: backend initialisation in one place, wolfSSL's `Md5`/`Sha256` macros colliding with `::Hmac`, incremental GCM buffering, test vectors and the commands.
+- `geometry.md` — geometry facts: the SDK class export convention and the five primitives' local space.
+- `appfw.md` — appfw cross-cutting rules (threading / no user code under a lock / lifetime).
+- `async.md` — `src/base/async` facts.
+- `imaging.md` — imaging facts.
+- `imageio.md` — imageio facts.
+- `loaders.md` — the loaders layer index.
+- `robotics-kinematics.md` — Robotics kinematics facts.
+- `robotics-proximity.md` — Robotics proximity facts.
 
-- `glossary.md` —— **一概念一拼写**：英文代码拼写 ↔ 中文页里的说法、退役拼写、"假朋友"；散文一律用
-  代码拼写（文档英文化的映射表，见
-  `../decisions/ADR-2026-11-17-documentation-language.md`）。
-- `graphics.md` —— graphics / vsg 现役要点：机制、判据、坑与“当时为什么这么定”。
-- `core.md` —— core 要点：类型描述符只经 `Type::obtain()` 注册、内联与出实参两种声明形式、接口的导出约定。
-- `crypto.md` —— crypto 要点：后端初始化只一处、wolfSSL 的 `Md5`/`Sha256` 宏与 `::Hmac` 同名坑、增量 GCM 缓冲、测试向量与命令。
-- `geometry.md` —— geometry 要点：SDK 类导出约定、五个基本体的局部空间。
-- `appfw.md` —— appfw 横切规则（线程 / 锁内不跑用户代码 / 生命周期）。
-- `async.md` —— `src/base/async` 要点。
-- `imaging.md` —— imaging 要点。
-- `imageio.md` —— imageio 要点。
-- `loaders.md` —— loaders 层索引。
-- `robotics-kinematics.md` —— Robotics kinematics 要点。
-- `robotics-proximity.md` —— Robotics proximity 要点。
+## bugs/ — bug records (36)
 
-## bugs/ —— Bug 记录（36）
-
-现象 / 根因 / 状态 / 涉及文件 / 验证，一 bug 一文件；已修复记录保留历史标记，未修复项标明状态。
+Symptom / root cause / status / files involved / verification, one file per bug; a fixed record keeps
+its history marker, an unfixed one states its status.
 
 - `vsg-embedded-init-crash.md`
 - `vsg-content-address-recycled-before-rows.md`
-- `spline-knotspan-hang.md` —— `geom::detail::knotSpan()` 在“最后两跨”括号上不前进，带内部节点的 B 样条求值挂死。
+- `spline-knotspan-hang.md` — `geom::detail::knotSpan()` made no progress on the "last two spans" bracket, so evaluating a B-spline with internal knots hung.
 - `vsg-embedded-blank-render.md`
 - `vsg-resize-distortion.md`
 - `vsg-maximize-black-band.md`
@@ -314,18 +363,11 @@
 - `graphics-renderengine-addpass-null-pass-crash.md`
 - `graphics-scene-memo-key-missing-view-basis.md`
 - `graphics-transparent-sort-uses-origin.md`
-- `demo-chain-never-adopted.md` —— demo 建了 `PassChain` 却从未 `setChain` 采纳：链拥有的透明场景不发布（天空/叠加
-  缺失）、链的尺寸只能由 demo 自己补 resize；修复后视图一处维护。
-- `vk-screen-draw-inherits-pass-depth.md` —— vk 的全屏 draw 继承 pass 的 `TestAndWrite` 深度策略，对带深度/借用
-  深度的目标整块被丢弃（窗口与 deferred composite 全黑、零 VUID）；全屏调用恒 `Disabled` 并补了回归用例。
-- `vk-screen-pass-shaded-without-the-map.md` —— vk 的全屏 set 恒绑阴影的白 stand-in/零块：延迟光照程序拿不到
-  真实 shadow map（前向有阴影、延迟没有、零诊断）；screen 路径改用 pass 解析的 `ShadowSource` 并补了回归用例。
-- `demo-preview-passes-shared-one-name.md` —— demo 的四个 G-buffer 预览共用 `gbuffer_preview` 一个名字，计划按
-- `vsg-teardown-frees-in-flight-resources.md` —— vsg 后端拆机/换代时释放仍在被提交读取的资源（堆破坏的来源）；含 valgrind 证据、已修的两处与仍剩的 prepare-only 路径。
-  `(owner, name)` 认行 ⇒ 只剩最后一个；布局重排也只改对象、不重新声明，矩形从未生效。改为一预览一名 + 布局步
-  重新声明。
-- `vk-target-fresh-data-race.md` —— vk 读回的「不等待的拒绝检查」在锁外借目标记录读字段，与帧体写 `fresh` 形成
-  数据竞争（TSan 1 条）；记录改为在表锁内取值快照（`TargetTable::peek`）+ `fresh` 原子位，相位二与帧体读点同步
-  改原子读。
+- `demo-chain-never-adopted.md` — the demo built a `PassChain` and never adopted it with `setChain`: the transparent scene the chain owns was never published (sky/overlay missing) and the chain's size could only be fixed up by the demo itself; after the fix the view maintains it in one place.
+- `vk-screen-draw-inherits-pass-depth.md` — vk's full-screen draw inherited the pass's `TestAndWrite` depth policy, so against a target with depth / borrowed depth the whole screen pass was discarded (the window and the deferred composite went black with zero VUIDs); a full-screen call now always uses `Disabled`, with a regression case.
+- `vk-screen-pass-shaded-without-the-map.md` — vk's full-screen set always bound the shadow white stand-in / zero block, so a deferred lighting program never saw the real shadow map (forward had shadows, deferred did not, with zero diagnostics); the screen path now uses the pass-resolved `ShadowSource`, with a regression case.
+- `demo-preview-passes-shared-one-name.md` — the demo's four G-buffer previews shared the single name `gbuffer_preview`, and the plan matched rows by `(owner, name)`, so only the last one survived; a layout reshuffle then changed the objects without re-declaring them, so the rectangles never took effect. Fixed as one preview per name plus a re-declaration on the layout step.
+- `vsg-teardown-frees-in-flight-resources.md` — the vsg backend freed resources still being read by a submission at teardown / frame-graph replacement (the source of the heap corruption); includes the valgrind evidence, the two fixed sites and the remaining prepare-only path.
+- `vk-target-fresh-data-race.md` — vk's readback "no-wait refusal check" read the target record's fields outside any lock, racing the frame body's write of `fresh` (one TSan report); the record became a value snapshot taken under the table lock (`TargetTable::peek`) plus an atomic `fresh`, and the phase-two and frame-body read sites became atomic loads.
 
-约定：`memory/` 保持简短要点式；详细设计放 `design/`；bug 一条一文件。
+Note: `memory/` stays terse and fact-shaped; detailed design goes to `design/`; one file per bug.
