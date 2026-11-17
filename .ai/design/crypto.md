@@ -80,7 +80,7 @@ an unknown name throws `std::invalid_argument` instead of silently falling back 
 reason: the DRBG reseeds itself, so more than one context only costs more; the price is serialisation, and the scale
 of this API's use is keys, nonces and salts.
 
-### 2.8 Digests have one vocabulary and two forms
+### 2.7 Digests have one vocabulary and two forms
 
 The `Digest` enum is the only spelling of "which hash": the one-shot `digest(Digest, span)`, the incremental `Hasher`,
 `Hmac`, `RsaKey` and `EccKey` all select the algorithm with it.
@@ -91,7 +91,7 @@ Boundary: **no class per algorithm** (`class Sha256` and friends) - every algori
 splitting adds N identical types plus a layer of run-time selection (G8). The one-shot and incremental forms share one
 backend context through `DigestOps`, so the implementation is written once.
 
-### 2.7 Asymmetric keys: one key per object, operations carry their own context
+### 2.8 Asymmetric keys: one key per object, operations carry their own context
 
 An instance of `RsaKey` IS a key: generating or importing yields an object with the private key, while an object built
 from `n`/`e` alone can only verify and encrypt.
@@ -111,6 +111,7 @@ into "cannot compute, so hand back a wrong result".
 | F4 | AES-GCM, one-shot | `AesGcm::seal` / `AesGcm::open` |
 | F5 | AES-GCM streaming (bounded memory) | `AesGcm::encryptor` / `decryptor` + `update` / `finish` |
 | F6 | Digests: one-shot and incremental (one vocabulary) | `digest()` / `Hasher` |
+| F7 | RSA: key generation and import/export, PSS and PKCS#1 v1.5 signatures, OAEP encryption | `RsaKey` |
 | F8 | ECDSA signatures and ECDH key agreement | `EccKey` |
 | F9 | HKDF extract and expand | `Hkdf::extract` / `expand` / `derive` |
 | F10 | AES-CBC (PKCS#7, interoperability only) | `AesCbc` |
