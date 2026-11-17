@@ -1,217 +1,217 @@
-# window 模块设计（跨平台窗口上下文抽象）
+# the window module: a platform-neutral window context
 
-> **状态**：现行
-> **最后核对**：2026-10-23
-> **范围**：平台无关的窗口事件类型与 `WindowContext` 只读接口；不负责创建/销毁窗口。
-> **权威来源**：`src/base/window/sdk/vine/window/**`、`tests/test_window`。
-> **待办**：`../backlog/`
+> **Status**: current
+> **Last verified**: 2026-10-23
+> **Scope**: the platform-neutral window event types and the read-only `WindowContext` interface; creating and destroying a window is not its job.
+> **Sources**: `src/base/window/sdk/vine/window/**`, `tests/test_window`.
+> **Backlog**: `../backlog/`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-渲染、相机操纵和应用框架都需要窗口的尺寸、可见性、原生句柄与输入事件，但它们不应该各自依赖某个平台
-窗口库，也不应该由 base 层创建窗口。`window` 只提供**平台无关的窗口数据上下文**。
+Rendering, camera manipulation and the application framework all need the window's size, visibility, native handle and input events, but none of them should depend on a platform
+window library, and the base layer should not create the window. `window` provides only a **platform-neutral window data context**.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 定义跨平台事件类型（键码/鼠标/滚轮/窗口事件）。
-- 定义 `WindowContext` 只读抽象接口 + Signal 事件。
-- 派生类包装真实窗口，重写只读查询；宿主把原生事件翻译后注入。
+- Define the cross-platform event types (key / mouse / wheel / window events).
+- Define the read-only `WindowContext` interface plus its Signal events.
+- A derived class wraps the real window and overrides the read-only queries; the host translates native events and injects them.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不创建/销毁/轮询窗口；这些都在外部宿主。
-- 不做平台翻译（Qt/X11/Win32 的映射在各自宿主）。
-- 不存储窗口状态；查询直接读真实窗口。
+- No creating / destroying / polling a window; all of that is in the external host.
+- No platform translation (the Qt / X11 / Win32 mappings live in their own hosts).
+- No stored window state; a query reads the real window.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-`window` 是 base 层的**只读窗口上下文**：`WindowContext` 暴露标题/尺寸/可见性/原生句柄与 Signal，
-宿主通过唯一的 `postEvent()` 注入事件；窗口的创建、销毁和轮询全在外部。
+`window` is the base layer's **read-only window context**: `WindowContext` exposes title / size / visibility / native handle and Signals,
+and the host injects events through the single `postEvent()`; creating, destroying and polling the window all stay outside.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 只读接口，不拥有窗口
+### 2.1 Read-only interface, no window ownership
 
-`WindowContext` 不创建、不销毁、不轮询、不存储；派生类持有实际窗口指针，重写 `title()` / `width()` /
-`height()` / `isVisible()` / `nativeHandle()` 查询实时状态。
+`WindowContext` does not create, destroy, poll or store; a derived class holds the actual window pointer and overrides `title()` / `width()` /
+`height()` / `isVisible()` / `nativeHandle()` to query the live state.
 
-### 2.2 依赖只向上
+### 2.2 Dependencies point only upward
 
-`window` 只依赖 `vn::Core`（Object/RefCounted/intrusive_ptr/Signal）与 `vn::Global`（String/math）。
-渲染层依赖 `window`，`window` 不依赖渲染层。
+`window` depends only on `vn::Core` (Object / RefCounted / intrusive_ptr / Signal) and `vn::Global` (String / math).
+The rendering layer depends on `window`; `window` does not depend on the rendering layer.
 
-### 2.3 事件只有一个入口
+### 2.3 One entry point for events
 
-`postEvent()` 是唯一事件出口；外部注入与测试合成都走它。宿主负责把原生事件翻译成
-`KeyEvent` / `MouseEvent` / `ScrollEvent` / `WindowEvent`。
+`postEvent()` is the only event exit; external injection and test synthesis both use it. The host translates native events into
+`KeyEvent` / `MouseEvent` / `ScrollEvent` / `WindowEvent`.
 
-### 2.4 职责边界
+### 2.4 Responsibility boundary
 
-| 角色 | 职责 |
+| Role | Responsibility |
 | --- | --- |
-| `WindowContext` | 只读查询 + Signal + `postEvent()` |
-| 派生包装器 | 持真实窗口指针，重写查询，翻译原生事件并注入 |
-| 外部宿主 | 创建/销毁/轮询真实窗口 |
-| 渲染层 | 读 `nativeHandle()` 建表面；订阅 Signal 驱动相机 |
+| `WindowContext` | read-only queries + Signals + `postEvent()` |
+| derived wrapper | holds the real window pointer, overrides the queries, translates native events and injects them |
+| external host | creates / destroys / polls the real window |
+| rendering layer | reads `nativeHandle()` to build a surface; subscribes to Signals to drive the camera |
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 平台无关键码/鼠标/修饰键 | `KeyCode` / `MouseButton` / `ModifierKey` 位标志 | 已落地 |
-| F2 | 输入事件 | `KeyEvent` / `MouseEvent` / `ScrollEvent` | 已落地 |
-| F3 | 窗口事件 | `WindowEvent`（Resize/Move/Close/Focus/Minimize/Restore） | 已落地 |
-| F4 | 只读上下文 | `WindowContext` 查询 + Signal + `postEvent()` | 已落地 |
+| F1 | platform-neutral key codes / mouse buttons / modifiers | `KeyCode` / `MouseButton` / `ModifierKey` bit flags | landed |
+| F2 | input events | `KeyEvent` / `MouseEvent` / `ScrollEvent` | landed |
+| F3 | window events | `WindowEvent` (Resize / Move / Close / Focus / Minimize / Restore) | landed |
+| F4 | read-only context | `WindowContext` queries + Signals + `postEvent()` | landed |
 
-### 3.1.1 F1 键码/鼠标/修饰键
+### 3.1.1 F1 key codes / mouse buttons / modifiers
 
-- **行为**：`KeyCode` 覆盖字母/数字/功能键/方向/修饰/编辑/小键盘；`MouseButton` 含 XButton1/2；
-  `ModifierKey` 是位标志（`VN_ENABLE_ENUM_FLAGS`）。
-- **约束**（C1）：枚举值平台无关；宿主负责把原生键码映射进来。
-- **要求**（R1）：新增键码不改 `WindowContext` 接口。
-- **验收**（T1）：`tests/test_window/WindowTest.cpp` 的事件分发用例。
-- **注意**（N1）：`KeyEvent::repeat` 表示自动重复，不是按下次数。
+- **Behaviour**: `KeyCode` covers letters / digits / function keys / arrows / modifiers / editing / keypad; `MouseButton` includes XButton1/2;
+  `ModifierKey` is a bit flag (`VN_ENABLE_ENUM_FLAGS`).
+- **Constraints** (C1): the enum values are platform-neutral; the host maps native key codes into them.
+- **Requirements** (R1): a new key code does not change the `WindowContext` interface.
+- **Acceptance** (T1): the event dispatch cases in `tests/test_window/WindowTest.cpp`.
+- **Caveats** (N1): `KeyEvent::repeat` marks auto-repeat, not a press count.
 
-### 3.1.2 F2 输入事件
+### 3.1.2 F2 input events
 
-- **行为**：`KeyEvent{code, modifiers, pressed, repeat}`；
-  `MouseEvent{button, modifiers, x, y, dx, dy, pressed}`；`ScrollEvent{deltaX, deltaY, modifiers}`。
-- **约束**（C2）：`MouseEvent::button` 在纯移动时为 `None`；坐标是窗口客户区像素。
-- **要求**（R2）：事件类型是值，不持有窗口指针。
-- **验收**（T2）：`postEvent()` 分发到对应 Signal。
-- **注意**（N2）：滚轮增量单位是行/格，由宿主决定。
+- **Behaviour**: `KeyEvent{code, modifiers, pressed, repeat}`;
+  `MouseEvent{button, modifiers, x, y, dx, dy, pressed}`; `ScrollEvent{deltaX, deltaY, modifiers}`.
+- **Constraints** (C2): `MouseEvent::button` is `None` for a pure move; the coordinates are client-area pixels.
+- **Requirements** (R2): the event types are values and hold no window pointer.
+- **Acceptance** (T2): `postEvent()` dispatches to the matching Signal.
+- **Caveats** (N2): the wheel delta is in lines / notches, decided by the host.
 
-### 3.1.3 F3 窗口事件
+### 3.1.3 F3 window events
 
-- **行为**：`WindowEvent{type, width, height, x, y}`；`Resize` 时宽高有效，`Move` 时 x/y 有效。
-- **约束**（C3）：窗口生命周期事件只通知，不替宿主做创建/销毁。
-- **要求**（R3）：`Close` 是通知，不是关闭动作；宿主决定是否真的关。
-- **验收**（T3）：`windowEvent` Signal 分发。
-- **注意**（N3）：`Resize` 的尺寸是客户区，不含边框。
+- **Behaviour**: `WindowEvent{type, width, height, x, y}`; width and height are valid on `Resize`, x/y are valid on `Move`.
+- **Constraints** (C3): a window lifecycle event only notifies; it does not create or destroy on the host's behalf.
+- **Requirements** (R3): `Close` is a notification, not a close action; the host decides whether to really close.
+- **Acceptance** (T3): the `windowEvent` Signal dispatches.
+- **Caveats** (N3): the `Resize` size is the client area, borders excluded.
 
-### 3.1.4 F4 只读上下文
+### 3.1.4 F4 read-only context
 
-- **行为**：`title()` / `width()` / `height()` / `isVisible()` / `nativeHandle()` 纯虚；
-  `resized` / `moved` / `closed` / `focusIn` / `focusOut` / `key` / `mouse` / `scroll` / `windowEvent` Signal；
-  `postEvent()` 模板入口。
-- **约束**（C4）：查询是纯虚，派生类必须读真实窗口；`nativeHandle()` 返回平台句柄。
-- **要求**（R4）：`postEvent()` 是唯一事件出口；外部注入与测试合成同路。
-- **验收**（T4）：`TestWindowContext` 持 `FakeNativeWindow`，重写查询并转发实时状态。
-- **注意**（N4）：空原生窗口时各查询返回默认值。
+- **Behaviour**: `title()` / `width()` / `height()` / `isVisible()` / `nativeHandle()` are pure virtual;
+  `resized` / `moved` / `closed` / `focusIn` / `focusOut` / `key` / `mouse` / `scroll` / `windowEvent` Signals;
+  `postEvent()` is the template entry.
+- **Constraints** (C4): the queries are pure virtual, so a derived class must read the real window; `nativeHandle()` returns the platform handle.
+- **Requirements** (R4): `postEvent()` is the only event exit; external injection and test synthesis share it.
+- **Acceptance** (T4): `TestWindowContext` holds a `FakeNativeWindow`, overrides the queries and forwards the live state.
+- **Caveats** (N4): with an empty native window each query returns its default.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `WindowContext`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `title()` / `width()` / `height()` / `isVisible()` / `nativeHandle()` | 只读查询 | 派生类读真实窗口 |
-| `resized` / `moved` / `closed` / `focusIn` / `focusOut` | 窗口 Signal | `Signal<int,int>` / `Signal<>` |
-| `key` / `mouse` / `scroll` / `windowEvent` | 输入 Signal | 事件引用 |
-| `postEvent(const TEvent&)` | 唯一事件入口 | 模板内联 |
+| `title()` / `width()` / `height()` / `isVisible()` / `nativeHandle()` | read-only queries | a derived class reads the real window |
+| `resized` / `moved` / `closed` / `focusIn` / `focusOut` | window Signals | `Signal<int,int>` / `Signal<>` |
+| `key` / `mouse` / `scroll` / `windowEvent` | input Signals | event by reference |
+| `postEvent(const TEvent&)` | the only event entry | inline template |
 
-### 4.2 事件类型
+### 4.2 Event types
 
-| 类型 | 字段 |
+| Type | Fields |
 | --- | --- |
 | `KeyEvent` | `code` / `modifiers` / `pressed` / `repeat` |
 | `MouseEvent` | `button` / `modifiers` / `x,y` / `dx,dy` / `pressed` |
 | `ScrollEvent` | `deltaX,deltaY` / `modifiers` |
 | `WindowEvent` | `type` / `width,height` / `x,y` |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | 枚举值平台无关；原生键码映射在宿主。 |
-| C2 | `MouseEvent::button` 纯移动为 `None`；坐标是客户区像素。 |
-| C3 | 窗口事件只通知，不替宿主创建/销毁。 |
-| C4 | 查询纯虚，派生类读真实窗口；`nativeHandle()` 返回平台句柄。 |
+| C1 | the enum values are platform-neutral; the native key mapping lives in the host. |
+| C2 | `MouseEvent::button` is `None` for a pure move; the coordinates are client-area pixels. |
+| C3 | a window event only notifies; it does not create / destroy on the host's behalf. |
+| C4 | the queries are pure virtual, a derived class reads the real window; `nativeHandle()` returns the platform handle. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | 新增键码不改 `WindowContext` 接口。 |
-| R2 | 事件类型是值，不持有窗口指针。 |
-| R3 | `Close` 是通知，是否关闭由宿主决定。 |
-| R4 | `postEvent()` 是唯一事件出口。 |
+| R1 | a new key code does not change the `WindowContext` interface. |
+| R2 | the event types are values and hold no window pointer. |
+| R3 | `Close` is a notification; whether to close is the host's decision. |
+| R4 | `postEvent()` is the only event exit. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | `window` 只依赖 `vn::Core` + `vn::Global`。 |
-| N2 | `WindowContext` 不创建/销毁/轮询/存储窗口。 |
-| N3 | 空原生窗口时查询返回默认值。 |
+| N1 | `window` depends only on `vn::Core` + `vn::Global`. |
+| N2 | `WindowContext` does not create / destroy / poll / store a window. |
+| N3 | with an empty native window each query returns its default. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 句柄生命周期
+### 6.1 Handle lifetime
 
-- 会怎么错：宿主销毁真实窗口后，派生包装器仍返回旧句柄，后端拿它建表面。
-- 怎么判：窗口销毁后 `nativeHandle()` 非空，或 attach 失败。
-- 怎么防：宿主在销毁窗口前先断开渲染表面；`WindowContext` 不拥有句柄。
+- How it fails: after the host destroys the real window the derived wrapper still returns the old handle and the backend builds a surface from it.
+- How to detect it: `nativeHandle()` is non-null after the window is destroyed, or the attach fails.
+- How to prevent it: the host detaches the rendering surface before destroying the window; `WindowContext` does not own the handle.
 
-### 6.2 事件翻译在宿主
+### 6.2 Event translation stays in the host
 
-- 会怎么错：把 Qt/X11/Win32 的分支塞进 `window`，base 层被平台污染。
-- 怎么判：`window` 出现平台头文件或 `#ifdef`。
-- 怎么防：平台映射留在宿主；`window` 只收平台无关的事件值。
+- How it fails: a Qt / X11 / Win32 branch is pushed into `window` and the base layer is polluted by the platform.
+- How to detect it: a platform header or an `#ifdef` appears in `window`.
+- How to prevent it: the platform mapping stays in the host; `window` accepts only platform-neutral event values.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Why not | ADR |
 | --- | --- | --- | --- |
-| D1 | `window` 创建/销毁/轮询窗口 | 平台细节应归宿主；base 层只给数据上下文。 | — |
-| D2 | `window` 做平台翻译 | 会让 base 依赖 Qt/X11/Win32。 | — |
-| D3 | 在 `WindowContext` 里存窗口状态 | 派生类读真实窗口即可，存一份会过期。 | — |
-| D4 | 多个事件入口 | 外部注入与测试合成分叉；只留 `postEvent()`。 | — |
+| D1 | `window` creates / destroys / polls a window | platform details belong to the host; the base layer provides the data context only. | — |
+| D2 | `window` translates platform events | it would make base depend on Qt / X11 / Win32. | — |
+| D3 | window state stored in `WindowContext` | a derived class can read the real window; a stored copy goes stale. | — |
+| D4 | several event entries | external injection and test synthesis would fork; keep `postEvent()` only. | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Test case / command |
 | --- | --- | --- |
-| T1 | 派生包装器重写查询并转发实时状态 | `tests/test_window/WindowTest.cpp` |
-| T2 | 空原生窗口返回默认值 | 同上 |
-| T3 | `resized`/`key`/`mouse`/`scroll`/`windowEvent` 经 `postEvent()` 分发 | 同上 |
+| T1 | a derived wrapper overrides the queries and forwards the live state | `tests/test_window/WindowTest.cpp` |
+| T2 | an empty native window returns the defaults | same |
+| T3 | `resized`/`key`/`mouse`/`scroll`/`windowEvent` dispatch through `postEvent()` | same |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current Status
 
-接口层已落地（纯头文件 + `WindowContext.cpp`）；测试覆盖查询与事件分发。
+The interface layer is in place (headers plus `WindowContext.cpp`); the tests cover the queries and event dispatch.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known Gaps and Backlog
 
-1. `graphics` 依赖 `vn::Window`；`RenderEngine` 增加 `setWindowContext(...)`。
-2. `CameraManipulator` 增加输入接口并订阅 `WindowContext` 事件。
-3. vsg 层实现 host（窗口创建 + 事件翻译 + handle 注入）。
+1. `graphics` depends on `vn::Window`; `RenderEngine` gains `setWindowContext(...)`.
+2. `CameraManipulator` gains an input interface and subscribes to `WindowContext` events.
+3. the vsg layer implements a host (window creation + event translation + handle injection).
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility and Migration
 
-新代码只依赖 `WindowContext` 抽象与 Signal；不要直接依赖某个平台包装器。
+New code depends only on the `WindowContext` abstraction and its Signals; do not depend on a particular platform wrapper.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/base/window/sdk/vine/window/**`
 - `src/base/window/src/WindowContext.cpp`
 - `tests/test_window/WindowTest.cpp`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `.ai/design/graphics-architecture.md`
 - `.ai/design/appfw-render-surface.md`
 - `../backlog/`
 
-### 10.3 外部资料
+### 10.3 External Sources
 
-- Qt / X11 / Win32 的原生事件模型（映射在各自宿主）。
+- the native event models of Qt / X11 / Win32 (the mapping lives in each host).
