@@ -291,15 +291,16 @@
     **提交**：解析把 per-draw 的需要（half / set / stream bind / 材质槽 / 纹理视图 / 块偏移 / pipeline 身份）写成
     驱动者 `FrameHead` 的**值**（`S8c-2`），**录制**只读这些值、不取设备锁，收集与计划编译在会话 scratch 上不加锁；
     同一窗口 / 离屏会话的两帧由它的**帧主张**排队，不同窗口互不等待。`C3` 对 vsg 自此成立。
-- **为什么**：内容缓存今天有"正在上传"这个状态（`ResidenceTable` 的三态；设备接线仍未做，见
+- **为什么**：内容缓存今天有"正在上传"这个状态（`ResidenceTable` 的三态；设备接线已于 2026-11-16 落地，见
   `graphics-sessions.md` §9.2）——但缓存锁已把并发上传串行化，所以即使接线前"并发"也有定义：两个引擎同时
   首次构建同一内容会**串行**在缓存锁上，不会得到两份身份。帧机器分家之后，其余共享件都由自己的锁保护。
 - **边界**：appfw 还没用上共享（`SurfaceWindow` 每窗口造一个设备，`docs/guides/render-views.md` §7 记的是
   "以后"）；用例 `OneDeviceServesSeveralAreasWithoutCrossingThem` 证明的是**共享**（两帧先后跑），
   `VkMultiSessionTest` 的两条用例才证明**并发**（两线程各 N 帧；一帧被停住时另一帧整帧完成）。
 - **落地与剩余**：设备 = 池、会话拥有帧已对 vk 落地（S1–S7/S9），vsg 的 S8a / S8b / S8c-1 / S8c-2 也已落地（收集暂存与
-  执行器帧状态归会话/驱动者、帧首快照 + 内容锁 + 设备闸两侧化、`FrameHead` 值计划与记录路径零锁）；剩余 `ResidenceTable`
-  的设备接线。决定与论证在 `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，**实施形状**在
+  执行器帧状态归会话/驱动者、帧首快照 + 内容锁 + 设备闸两侧化、`FrameHead` 值计划与记录路径零锁）；**`ResidenceTable`
+  的设备接线（F4）也已落地（2026-11-16）**——`ContentCaches::ensureGeometry` 先问表，帧作用域的 `FrameBuilds` 在帧
+  栅栏 wait 后发布。决定与论证在 `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，**实施形状**在
   `graphics-sessions.md`（类型、锁表、状态机、九步迁移表）。**本文件只写现在**——ADR 与施工图存在不移动这条边界。
 
 ## 3. 功能点
@@ -559,9 +560,8 @@
 - **派生层并行**（F11）：只有测量给出"选择段占帧时间 > 预算"的证据才做。
 - **公开面没有"这一帧画了哪一份"的回读**：`FrameResult` 的目标形状（`graphics-frame-pipeline.md` F12）会补上
   `snapshot` / `view`；现在的等价物是 `presentRecord().frame` 加宿主自己保存的 `SceneSnapshotRef`。
-- **共享设备的并发帧**（`T47` / `T48`）：**已落地（T48 S1–S7/S9，§2.16）**——设备 = 池、会话拥有帧；帧体真并行；
-  释放不等帧；读回独立；TSan 0 报告。仍开着：`S8`（vsg 的收集暂存）与 `ResidenceTable` 的设备接线
-  （`graphics-sessions.md` §9.2）。
+- **共享设备的并发帧**（`T47` / `T48`）：**已落地（T48 S1–S9 + F4，§2.16）**——设备 = 池、会话拥有帧；帧体真并行；
+  释放不等帧；读回独立；`ResidenceTable` 设备接线完成；TSan 0 报告。
 
 ### 9.3 兼容性 / 迁移
 

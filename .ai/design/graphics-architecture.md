@@ -109,6 +109,26 @@
     （实际被录制的那种对象），两个同名会给每个使用点制造"这是谁的"问题（`G1`）；`PushRange` 说的是本单元拥有
     的事实（一个声明范围与它的具名成员）。
 
+    同角色类型在两个后端的名字（对齐是规则，不对齐要能说出理由）：
+
+| 角色 | vk | vsg |
+|---|---|---|
+| 门面（= `RenderBackend`） | `Device` | `VsgBackend` |
+| 帧驱动者（一帧的机器与暂存） | `Device::FrameDriver`（`createSession` 借出） | `VsgDriver`（`createSession` 借出） |
+| 帧首解析出的值计划 | `FrameHead` | `FrameHead` |
+| 设备的目标表 / 目标对象 | `TargetTable` / `TargetObjects` | `TargetTable` / `TargetObjects` |
+| 窗口目标 | `WindowTarget` | `WindowTarget` |
+| 窗口 / 离屏会话 | 无独立类型（设备自己的帧机器） | `WindowSession` / `OffscreenSession` |
+| 内容事实与行 | `ContentCaches`（含行与命令计划） | `ContentStore` + `ContentFacts` |
+| 编译半片（每 (program, rev, layout, variant)） | 无独立类型（`ContentDraw` 的管线键） | `ProgramHalves` |
+| 声明的 descriptor 集合 | `ContentCaches` 的 set 缓存 | `BindingSets` |
+| 读回 | `ReadbackStaging` | `HostReadback` |
+| 灯 | SDK `LightSet` | SDK `LightSet` |
+
+    `Content*` 名字留在两边的差异（`ContentCaches` / `ContentStore` / `ContentFacts`）不是漂移：它们都属于
+    “内容模型与身份”那一类（2.12 的第一句），而且一个后端把行与命令计划放在一个对象里、另一个分开，
+    名字说得出这件事。
+
 ## 3. 功能点
 
 ### 3.1 设备、窗口、区、视图、引擎

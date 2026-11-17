@@ -200,7 +200,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
    不会拿一个形状的走树结果去回答另一个）。返回的是**视锥剔除后**的列表：
    `isVisible()` 是硬门，包围盒完全在视锥外（p-vertex 测试）的节点**整棵子树**被剪掉，被剔除的几何体
    根本不在列表里；后端的保留节点则从根上摘下但不销毁，回来时直接复用 —— 离开多久都不会被回收
-   （只有宿主自己放手才算删除，细节见 `vsg-backend.md` §5.5）。
+   （只有宿主自己放手才算删除，细节见 [`.ai/design/graphics-content-lifecycle.md`](../../.ai/design/graphics-content-lifecycle.md)）。
    > **一条 pass 每帧只被描述一次**，而且**引擎不会调它的 `execute()`**：想让引擎跑自己的活，就把"发什么"
    > 放进 `RenderPass::describe()`、把"先做什么"放进对象的 `FrameUpdate::update()`（见 §2.4 的 `RenderPass` 段与 §3.6）。
 3. 然后把这个值**整帧交给后端**（`RenderFrameExecutor::executeFrame(frame, present_to)`，`present_to` = 本区那把目标）：后端拿到的就是全部 —— 每条 pass 的身份、
@@ -212,9 +212,8 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 4. 顶点数据是**别名，不是拷贝**：真的 `vsg::vec3Array` 等直接读 geometry 自己的 buffer，于是模型与
    渲染侧每个通道只占一份分配（位置 / 法线 / UV / 作者颜色 / 自定义通道 / 索引都是）。完整来龙去脉
    （包括让这件事成立的 vsg 约束和踩过的坑）见
-   [`docs/guides/vsg-data-flow.md`](vsg-data-flow.md)，
-   后端的运行时总览（生命周期 / 调用次数 / 更新策略）见
-   [`docs/guides/vsg-backend.md`](vsg-backend.md)。
+   [`docs/guides/graphics-backends.md`](graphics-backends.md)（契约与差异）与
+   [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md)（设计、契约与坑）。
 
 ### 2.6 生命周期与变更契约
 
@@ -694,16 +693,16 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | location 覆盖 | shader 只能声明 geometry 真有数据的 location | 声明了没有的 ⇒ 不喂数据：Vulkan 合法、读到未定义值、**无任何诊断** |
 | 分量数 | geometry 的 3 分量 ↔ shader 的 `vec3` | 两边都能接受，只在绘制时表现为“属性读错/缺失” |
 | 反方向 | 数组喂了、但管线不声明那个名字 | 报一条 `ContentSkipped` 的 Warning（`vertex binding '%s' (array %zu, %s) was not matched by the pipeline…`） |
-| 绑定顺序 | **不用管、也改不了**：后端按**几何自己的通道顺序**（location 升序）排 binding；你能控的只有 location | 机制与理由见后端文档（`vsg-data-flow.md` §6） |
+| 绑定顺序 | **不用管、也改不了**：后端按**几何自己的通道顺序**（location 升序）排 binding；你能控的只有 location | 机制与理由见后端设计页（[`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md) §3.4） |
 
 **边角**：
 
 **后端侧的事**（绑定下标怎么算、变体与缓存怎么组织、切路径要不要重建、编译失败怎么答）不在这里重复——
 唯一权威是后端文档：
 
-> [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md) §5.4（ABI 与坑）、
-> [`vsg-data-flow.md`](vsg-data-flow.md) §6（名字即绑定）、
-> [`vsg-backend.md`](vsg-backend.md) §2（服务与拒绝）。
+> [`.ai/design/graphics-shader-params.md`](../../.ai/design/graphics-shader-params.md)（L0/L1 块与打包）、
+> [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md) §3.5（文本即契约：绑定、变体、push 范围）、
+> [`.ai/design/vk-backend.md`](../../.ai/design/vk-backend.md) §3.1.5（vk 侧的服务与拒绝）。
 
 **内建 program 的 GLSL 从哪来**（自己写 shader 时想对照/改写它们）：
 
@@ -726,7 +725,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 `PassChain::build`）而不带前缀：一个 pass 画的是**宿主给它的** program，管它叫"内建"是错的。
 
 **所有 GLSL 都归 SDK**：后端**没有**自己的 shader 目录（曾经有，2026-09-13 收回来了），它只决定怎么编译和绑。
-| 文件怎么进二进制、怎么加一个、有哪些门禁 | [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md) §10 |
+| 文件怎么进二进制、怎么加一个、有哪些门禁 | [`.ai/design/graphics-shader-params.md`](../../.ai/design/graphics-shader-params.md) §3.3；`cmake/VineEmbedShaders.cmake` / `scripts/vn_shader_check.sh` |
 
 > 这些 shader 是**真文件**（不是 C++ 字符串）：改了 `.glsl` 直接重编，`bash scripts/vn_shader_check.sh`
 > 会先把每个 shader（含各 define 变体）过一遍 glslangValidator，再核对嵌入副本与文件是否逐字节一致。
@@ -804,7 +803,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 
 仓库里**第一个按契约改过来的读者是 demo 自己**：`test_data/images` 的六张 JPG 天空面是颜色图，声明从
 `Rgba8Unorm` 改成 `Rgba8Srgb` 后天空回到正确亮度（视口带 mean 122.7 → 80.8，门禁判据一行未动）——
-读数与变异证明见 [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md) §11.16cp。
+读数与变异证明见 [`.ai/memory/graphics.md`](../../.ai/memory/graphics.md)（颜色空间那一条）。
 完整形状、判据与"不做"的四条见 [`.ai/design/graphics-rendering.md`](../../.ai/design/graphics-rendering.md)。
 
 ### 3.10 省事的视图：`PassChain` 是配方，视图只采纳（appfw 的 `ViewerOptions` 是宿主那一层）
@@ -944,11 +943,11 @@ surface->dismiss(surface->presentedView());
 
 ### 3.12 看一眼这一帧：`RenderEngine::frameTable()`
 
-"这个管线到底画了什么、按什么序、清在哪"以前只能靠数 `passCount()` 或者翻日志猜。现在引擎能把它交出来：
+"这个管线到底画了什么、按什么序、清在哪"以前只能靠数 `passCount()` 或者翻日志猜。现在引擎能把它交出来
+（结构与字段的权威是 `FrameTable.hpp` 与 [`.ai/design/graphics-architecture.md`](../../.ai/design/graphics-architecture.md) §4.3；本节只说怎么读）：
 
 ```cpp
-// 结构：按宣布序的一组 PassRow（order / name / content / camera / target / enabled / clear /
-// viewport / inputs / output / record_micros）
+// 结构是 FrameTable::passes（一组 PassRow）
 for (const vn::graphics::PassRow& pass : engine->frameTable().passes) { ... }
 
 // 文本：一行一 pass 的表，直接丢进日志
@@ -1541,8 +1540,8 @@ deferred、离屏、深度共享、overlay —— 并打印 `[selftest]` 证据�
 | 内容 | 位置 |
 | --- | --- |
 | 渲染视图模块说明（架构图 / 类关系图 / 简单 demo） | [`render-views.md`](render-views.md) |
-| 后端数据流、每帧时序、已知坑 | [`vsg-data-flow.md`](vsg-data-flow.md) |
-| 后端运行时总览（生命周期 / 调用次数 / 更新策略） | [`vsg-backend.md`](vsg-backend.md) |
+| 两个后端的契约、差异表、支持矩阵、构建与证据 | [`graphics-backends.md`](graphics-backends.md) |
+| 后端设计、契约、坑与实施记录 | [`.ai/design/vsg-backend.md`](../../.ai/design/vsg-backend.md)、[`.ai/design/vk-backend.md`](../../.ai/design/vk-backend.md)、[`.ai/design/vsg-pitfalls.md`](../../.ai/design/vsg-pitfalls.md) |
 | 设计文档（渲染管线 / 状态 / 阴影 / 延迟 / overlay） | `.ai/design/*.md` |
 | 简明模块笔记（坑清单、实测结论、变异证据） | `.ai/memory/graphics.md` |
 | 可执行的契约 | `tests/test_graphics/`、`tests/test_vsg/` |

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Checks that the vsg backend's docs only name units that exist, and name every unit.
+"""Checks that the backend guide only names units that exist, and names every unit.
 
-The vsg backend keeps three living documents (``vsg-plugin.md``, ``vsg-backend.md``,
-``vsg-data-flow.md``), which the repository's unified docs folder ``docs/guides/`` holds (they sat
-beside the code until the docs were unified there on 2026-10-11), and they rot in one direction: a unit is
+The repository keeps one living document for the render backends
+(``docs/guides/graphics-backends.md``: the contract, the intentional differences, the support matrix
+and the vsg unit map), and it rots in one direction: a unit is
 renamed or deleted and the sentence that named it survives. That is not compile-checked, and it
 is not visible in review, so it accumulates until a reader follows a pointer that leads nowhere
 (``drawScreenTexture`` outlived the function by two weeks; ``renderOffscreenTarget`` and
@@ -15,8 +15,8 @@ Only the two claims a script can decide EXACTLY are gated:
      cannot judge (a sentence may name a symbol that is deliberately absent, or a foreign type),
      so only UNIT files are checked — a renamed or deleted unit is exactly the drift that hurts a
      reader following the module map.
-  2. Every unit under ``src/`` and ``include/vine/backend_vsg/`` must be named somewhere in the three
-     docs. The map is part of what those documents are for; a unit nobody documented is a hole.
+  2. Every unit under ``src/`` and ``include/vine/backend_vsg/`` must be named somewhere in the doc.
+     The map is part of what that document is for; a unit nobody documented is a hole.
 
 What is skipped, on purpose:
   * fenced code blocks (``\\`\\`\\``` ...) — a snippet is not a claim about the module's files;
@@ -40,9 +40,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "src" / "plugins" / "gfx_backend_vsg"
 DOCS = [
-    ROOT / "docs" / "guides" / "vsg-plugin.md",
-    ROOT / "docs" / "guides" / "vsg-backend.md",
-    ROOT / "docs" / "guides" / "vsg-data-flow.md",
+    ROOT / "docs" / "guides" / "graphics-backends.md",
 ]
 # Directories whose units the docs are expected to map. RECURSIVE: the rewrite moved the backend into
 # `src/internal` + `src/core` (and `include/vine/backend_vsg/internal` + `core`), and a walk that stopped at the top level

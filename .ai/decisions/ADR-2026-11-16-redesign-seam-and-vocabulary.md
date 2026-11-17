@@ -1,7 +1,7 @@
 # ADR-2026-11-16：重设计的是名字与归属，不是能力 —— 两后端图形栈的接缝、词汇与相位
 
-- 状态：**已采纳（实施中）**。2026-11-16 批准；阶段三按 `../research/graphics-2026-11-16-redesign-r2.md` §10 的
-  18 个批次位置执行，进度见本文末"实施状态"。
+- 状态：**已采纳**。2026-11-16 批准；阶段三按 `../research/graphics-2026-11-16-redesign-r2.md` §10 的
+  18 个批次位置执行，**2026-11-17 全部落地**（进度见本文末“实施状态”）。
   **部分取代**：本文 §2（接缝归位：`backend/` 只留共享机制）与批次 3 中“目录即接缝”的那一半决定，已由
   [ADR-2026-11-16-no-backend-half](ADR-2026-11-16-no-backend-half.md) 取代（2026-11-16）；本文的词汇、相位、
   拒绝形状与其余批次不变。
@@ -191,7 +191,24 @@ commit(cmd, target)                // 1 次设备锁：提交、present、帧账
   `diagnosticCount()` / `diagnosticsClean()` / `diagnosticCount(category)` 只算引擎 + 设备（**BC-10 落地**），宿主另有
   `diagnosticCount(DiagnosticOrigin::Host)`；见证 `RenderEngineTest.AHostReportIsCountedApartFromTheEnginesOwnFindings`。
   零用例改名：`test_graphics` 613 / `test_vk` 165 / `test_vsg` 571、对拍 13。
-- **阶段三（迁移）**：**实施中**。批次表与顺序以 `../research/graphics-2026-11-16-redesign-r2.md` §10 为准；
-  每批一个可回滚提交，每批结束在提交正文列出"哪些能力 ID 从旧证据切到新证据"——git 是批次进度的档案，
-  本文只记状态。
-- **本 ADR 在最后一批落地时改为"已采纳"**；若某批被放弃，在同一行注明并链接原因。
+- **批次 5–18（S4–S8）已全部落地（2026-11-16 / 11-17）**：
+  - **S4**：B5a `0e9a9b84`（vk `TargetTable`：map + 形状/构建 + 租约 + park，`TargetClaims.{hpp,cpp}` 删除）、
+    B5b `81e0ba0d`（`TargetImages` → `TargetObjects`；vsg `OffscreenTarget` → `TargetObjects`、`HostTargets` →
+    `TargetTable` 并并入 `VsgTargetRegistry`）、B11 `1d57dc77`（SDK `LightSet`：灯一份不可变共享值；
+    `FrameHead::storageGrows()` 作为稳态证人）。
+  - **S5**：B12 `efc01336`（`View` 值：`CameraSnapshot` + `CollectView` + viewport + layer_mask）、
+    B13 `5b22c289`（`RenderSurface` → `RenderArea`）、B14 `001b2b80`（`Target` / `Output` 两个值；vk
+    `setRenderTarget` 真预建；`releasePass` 契约）。
+  - **S6**：B6 `2d47390e`（`RenderEngine` 是组合根：帧泵 / 会话形状 / 表面账三个机制）、B7 `16c55e69`
+    （场景 draw list 只有一条选择规则）。
+  - **S7**：B15 `955f7a94`（`Capabilities` → `Features` / `Limits`；读回 `ImageRef`）、B8 `c200d667`
+    （`DeviceFormat` + `RenderPassKey` 取代接缝里的 Vulkan 拼写）、B16a `5e31e89b` / B16b `82b4ec3f` /
+    B16c `49645332`（一个 pass 作者形状：`tag` 删除、`FrameUpdate`、`PassDesc` 唯一作者）。
+  - **S8**：B17 `7b83a509`（`ContentHalves` → `ProgramHalves`、`ContentSets` → `BindingSets`、
+    `ContentPush` → `PushRange`；命名法写进 `graphics-architecture.md` 2.12）、B9（文档真实性 + 用户文档按
+    能力重组：`.ai/design` 逐页对账、`docs/guides/graphics-backends.md` 取代三个 per-backend 页）。
+  计数（B9 落地时）：`test_graphics` **617** / `test_vk` **167** / `test_vsg` **572** / `BackendParityTest` 13；
+  九道文档/API 门禁全绿；demo `0 [error]`。
+- **阶段三（迁移）**：**完成**（2026-11-17）。批次进度以 git 的提交正文为档案（每批列出能力 ID 三元组），
+  本文只记状态；批次表与顺序仍以 `../research/graphics-2026-11-16-redesign-r2.md` §10 为准。
+- **本 ADR 已于最后一批（S8）落地时改为“已采纳”**；没有批次被放弃。

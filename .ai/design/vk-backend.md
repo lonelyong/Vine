@@ -22,8 +22,8 @@
 - 它消费的是接缝，不是引擎：绘制什么由 `FrameDescription` 说，怎么画由本后端说。这使它可以被 `test_vk` 直接
   驱动（插件是 MODULE，测试编译其源码），**不需要窗口**。
 - 现状：里程碑 M0–M13 全部落地；工业标准审查（`../research/graphics-2026-11-14-vk-industry-review.md`，F1–F13）
-  中资源与成本模型项（审查 F1 / F2 / F4 / F7 / F8 / F12）已落地。行为由 `test_vk` **89 例 / 23 套**钉住，与 vsg 的对拍
-  由 `BackendParityTest`（12 例，含在 `test_vsg` 内）保证。
+  中资源与成本模型项（审查 F1 / F2 / F4 / F7 / F8 / F12）已落地。行为由 `test_vk` **167 例 / 41 套**钉住，与 vsg 的对拍
+  由 `BackendParityTest`（13 例，含在 `test_vsg` 内）保证。
 
 ### 1.2 目标
 
@@ -326,8 +326,10 @@
 - **边界**：表**不销毁任何东西**，也**不排退休**：`forget` 只忘键，Vulkan 对象仍交给 `RetirementQueue`（§2.15）。
   它也不是 SDK 的 `ResourceTable`——那张表回答“这份驻留值现在能不能放”（单线程、按 pin 退休），这张回答“谁可以
   建这个键”（两驱动者、只到发布为止）。
-- **今天的位置**：S4 只交付状态机与它的 8 条单元用例（两个 session id 模拟两会话，含 8 线程抢一键恰一个
-  `Build`）；`ContentCaches::ensureGeometry` 仍走原路径，S6 传入会话 id 时才接上（`D8`：半接比没接更糟）。
+- **今天的位置**：S4 交付了状态机与它的 8 条单元用例（两个 session id 模拟两会话，含 8 线程抢一键恰一个
+  `Build`）；**F4 的接线已于 2026-11-16 落地**——`ContentCaches::ensureGeometry` 先问表（`Use` / `Build` / `Copy`），
+  帧作用域的 `ContentCaches::FrameBuilds` 在帧栅栏 wait 过之后 `publishAll()`（跳过失败的填充），`releaseGeometry`
+  同时 `forget` 键；竞争者拿 `Copy` 建**脱钩**临时条目、帧结束即销毁。见证：`VkResidenceWireTest` 4 例。
 
 ### 2.18 目标表：对象、形状与一帧一个持有者（`G1` / `G6` / `G7`）
 
@@ -348,8 +350,8 @@
 - **边界**：租约不是锁（`C5`）——等待会让两个引擎的帧率互相绑死；冲突不销毁任何东西，目标下一帧再试。
   `Lease` 的析构是**唯一释放点**（`P3`），所以帧的任何一个提前返回都不会把目标钉住。窗口目标不需要 claim：
   `createSurfaceTarget` 已经保证一个窗口只属于一个会话（`WindowOccupied`）。
-- **今天的位置**：两个动词都已接线；单会话不会冲突（零行为变化），测试用一条冒充“另一个驱动者”的租约把冲突
-  路径跑实。真正的两个会话随 S6 的 `createSession()` 到来。
+- **今天的位置**：两个动词都已接线；单驱动者不会冲突（零行为变化）。第二个驱动者由 `RenderDevice::createSession()`
+  借出（S6），冲突路径由一条冒充“另一个驱动者”的租约与 `VkMultiSessionTest` 的并发用例跑实。
 
 ## 3. 功能点
 
@@ -731,7 +733,7 @@
 
 | # | 判据 | 用例 / 命令 |
 |---|---|---|
-| T1 | 全套行为 | `build/bin/test_vk`（89 例 / 23 套）；`ctest -R test_vk` |
+| T1 | 全套行为 | `build/bin/test_vk`（167 例 / 41 套）；`ctest -R test_vk` |
 | T2 | 与 vsg 逐字节一致 | `test_vsg` 的 `BackendParityTest`（12 例） |
 | T3 | 暴露边界与低层免接缝 | `ctest -R vk_exposure`（V2 / V4 / E1 / E2，`scripts/check_vk_exposure.py`） |
 | T4 | 成本模型不回归 | `VkUniformRingTest.*`、`VkMemoryPoolTest.ASteadyFrameAllocatesNothing`（关缓存的变异必须红） |
@@ -771,9 +773,8 @@
   `releaseRenderTarget` 已真正释放附件、`readDepthBuffer` 与设备丢失报告已落地；**仍缺** Win32 实机证据（未过之前
   不支持 Windows 上线）、Wayland 回退实测、`releasePass` 的显式 no-op + 理由、`docs/guides/` 的 vk 用户页。
 - **backlog `T41`**：已关闭（2026-11-15，`PrepareReport.passes` 与 `FrameCounters.passes` 统一为一种口径）。
-- **共享设备的并发帧**（backlog `T47` / `T48`）：T47 与 T48 的 S1–S7 已落地（§2.11、`graphics-sessions.md`）；
-  S8（vsg 的收集暂存）仍未做，F4 的 `ResidenceTable` 设备接线也未做（`graphics-sessions.md` §9.2）。
-  形状与论证见
+- **共享设备的并发帧**（backlog `T47` / `T48`）：T47 与 T48 的 S1–S9 **已全部落地**（§2.11、`graphics-sessions.md`），
+  含 vsg 的 S8（收集暂存）与 `ResidenceTable` 的设备接线（F4，2026-11-16）。形状与论证见
   `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`。
 - **backlog `T12` / `T13`**：Windows 窗口读像素、Wayland 回退实测。
 

@@ -172,6 +172,23 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
   - 真正能到数量级跳跃的只有两件事：**上传**（几何/贴图 revision 抖动，见 F16.2）与**编译**（程序 / 拓扑 / 布局变）。
   对应 `G10`：成本按层结算，且每一层都有判据；不靠“大概很便宜”。
 
+### 2.11 运行事实：一帧的调用次数与更新策略
+
+- **每帧恰好一次**：`executeFrame`（开帧 + 按值走 pass + 编译）、提交与 present（窗口帧在帧尾由执行器调用）。
+- **每 pass 一次**：绑定该 pass 的管线变体（只在变体变了）、动态状态块（只在值变了）、采样输入集（一趟一条）。
+- **每次变化一次，稳态 0 次**：材质块写（逐命令 compare，相同不写）、几何 revision 后的流上传、
+  按声明填的 push、`vkCmdSet*`。稳态为 0 的读数就是判据：`ContentStore::builds()`、`StreamUploads::uploads()`、
+  `VariantPool::created()`、`Session::deviceWaits()`（帧路径）、`AllocationGate`（连续两帧零分配）。
+- **更新策略**：材质 = 每帧逐命令 compare-and-write（64 B，没有引擎侧公告）；几何 = `bumpRevision()` 是唯一公告
+  （新 revision = 新行 + 该几何所有流重传）；状态 = 动态状态、diff 才发命令、跨拓扑**类**才是新管线；
+  程序 = identity（program + revision + variant + 布局 + 兼容性 + 采样计数），新变体编译一次；
+  目标 = 加载操作是“交换半边”（不进键），`written()` / `bootstrap` 决定谁清屏。
+- **`VSG_MAX_DEVICES` = 本仓库显式设为 4**：一份文档视图 = 一块自己的 `vsg::Device`，vsg 1.1.16 的三档实现里
+  只有 `<=4` 的固定数组是正确的（`>4` 的动态分支读越界，实测断言）。两个后果：同时存在的 `vsg::Device`
+  上限是 4；`<=4` 分支的 `operator[]` 不做边界检查，第 5 块面**要由我们拒**——今天没有守卫（§9.2）。
+- **诊断读数**：`FrameReport::locking` 是每帧缓存锁 delta（源 `FrameGate::Counters`），帧首/提交的 acquisition
+  是常数、`waits` 为 0；`diagnosticCount()` 只数引擎 + 设备（宿主经 `reportEngineProblem` 的另算）。
+
 ## 3. 功能点
 
 ### 3.1 平台与设备
@@ -324,7 +341,9 @@ material 值 / 流字节 / cull 全部**不进**。
 
 ### 9.2 已知缺口 / 待办
 
-见 `../backlog/graphics.md`。
+见 `../backlog/graphics.md`。另有一条未进 backlog 的边界事实：`VSG_MAX_DEVICES` 为 4，而 vsg 1.1.16 的
+`<=4` 分支不做边界检查——**第 5 块渲染面今天没有守卫**（§2.11）；要支持更多窗口，先在 `createSurfaceTarget`
+前把这条拒掉，再考虑提升上限。
 
 ### 9.3 兼容性 / 迁移
 

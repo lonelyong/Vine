@@ -714,7 +714,7 @@ vk 插件 12.0k 行、vsg 插件 17.2k 行、接缝实现 3.2k 行、三套测�
 | `vk-backend.md` §1.1 | "`test_vk` 89 例 / 23 套" | 同页 §9.1 写 133/34（今天 `--gtest_list_tests` = 137/35） |
 | `vsg-backend.md` 页首 | "最后核对 2026-11-02" | 该页的 §2.9 架构图未含 `VsgDriver` / `FrameScratch` / `ContentPlan` / `DeviceGate` |
 | `graphics-architecture.md` §2.8 | "1462 行、56 个公共签名" | 头文件今天 1504 行（签名数未复核） |
-| `docs/guides/vsg-backend.md` 等三页 | 把 vsg 当作生产后端描述 | ADR-2026-11-14：vk 是生产后端、最终替代 vsg（切换门未过） |
+| `docs/guides/vsg-backend.md` 等三页 | 把 vsg 当作生产后端描述 <!-- drift-ok --> | ADR-2026-11-14：vk 是生产后端、最终替代 vsg（切换门未过） |
 
 - **处置**：不夹在代码批次里，单独做"文档真实性"一批（第 9 批），逐页与本表对账。
   这些不是"文档写得不好"，而是 `G12` 的失败：设计页说的与代码做的不同，下一轮改动会照着错的写。

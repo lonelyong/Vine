@@ -1487,7 +1487,7 @@
   的用例改成先 `plan()` 再 record（`ContentDrawTest` 的"拒绝在记忆化之前"改为手搓无身份的 Draw）。
 - **证据**：`test_vsg` **562/562**、对拍 13/13、`test_graphics` 587、`test_vk` 133；TSan vsg 子集 0 报告（三次复跑
   全绿；偶发的一次 `initialize()` false 是既有的 `VSG_MAX_DEVICES` 抖动，见 backlog T36/T33，非本步）；ASan
-  新路径 PASS；九个文档/代码门禁 0 发现（`check_doc_symbols` 需在 `docs/guides/vsg-backend.md` §5 点名
+  新路径 PASS；九个文档/代码门禁 0 发现（`check_doc_symbols` 需在 `docs/guides/vsg-backend.md` §5 点名 <!-- drift-ok -->
   `ContentPlan.hpp`）。`C3` 对 vsg 自此成立；`T48` 的迁移表全部落地（backlog 条目已按规则删除）。 <!-- drift-ok -->
 - **测试基建注意**：`build/` 里 plugin `.so` 与 test 二进制必须**同源重建**——`git stash` 前后混编会出现
   `undefined symbol` 与莫名的设备上限失败（本次排查花了时间，教训：stash 后 `ninja test_vsg gfx_backend_vsg` 一起建）。
@@ -1560,7 +1560,7 @@
   **不做共享头**：ADR 已否决“两后端共用 `ResolvedDraw`”（只能类型擦除，`G7` 反面）——统一的是名字与形状，不是类型。
 - **vsg**：`internal/ContentPlan.{hpp,cpp}` → `FrameHead.{hpp,cpp}`；类 `ContentPlan` → `FrameHead`，嵌套 `Call` → `DrawPlan`
   （`Pass` / `Pin` / `kMax*` 随类改前缀）。`FrameScratch::content` 类型跟着变；`tests/test_vsg/CMakeLists.txt` 手工列表同步；
-  `docs/guides/vsg-backend.md` §5 点名 `FrameHead.hpp`（`check_doc_symbols` 要求每个 unit 被点名）。
+  `docs/guides/vsg-backend.md` §5 点名 `FrameHead.hpp`（`check_doc_symbols` 要求每个 unit 被点名）。 <!-- drift-ok -->
 - **vk**：新头 `internal/FrameHead.hpp`（只有头，没有新 `.cpp`）：`FrameHead` 持每 pass 的 `Pass{std::vector<Call> draws}`、
   `Call{std::vector<DrawPlan> plans; ContentRefusal refusal}`、**帧级** `fallback_view` / `fallback_sampler` / `shadow_sampler`；
   `DrawPlan` = `kind`（Content/Screen）+ pipeline/resolved + 内容载荷（material/variant/streams/…）+ 本调用的 `slots`。

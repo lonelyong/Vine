@@ -1,7 +1,8 @@
 # ADR-2026-11-16：作者形状、视图与目标 —— 值承载声明，行为归对象
 
-- 状态：**已采纳（实施中）**。2026-11-16 批准（三条行为变更 BC-08 / BC-09 / BC-10 全批，
-  `setRenderTarget` 走"变真"方案）；批次顺序见 `../research/graphics-2026-11-16-redesign-r2.md` §10。
+- 状态：**已采纳**。2026-11-16 批准（三条行为变更 BC-08 / BC-09 / BC-10 全批，
+  `setRenderTarget` 走"变真"方案）；批次顺序见 `../research/graphics-2026-11-16-redesign-r2.md` §10，
+  **2026-11-17 全部落地**。
 - 日期：2026-11-16
 - 影响范围：`PassDesc.hpp`（`target` / `output` / `tag` / `before_draw`）、`PassChain.hpp`（`OverlayLayout` /
   `update()`）、`CollectView.hpp` → `View`、`RenderSurface` → `RenderArea`、`RenderDevice.hpp` <!-- drift-ok -->
@@ -159,11 +160,14 @@ N 个 pass 共享一份。判据 `G10` / `R24` / `N6`。
 - **批准（2026-11-16）**：与接缝 ADR 一同批准。决定 5 的 `setRenderTarget` 选**变真**（vk 预建，新增 CAP-86），
   不退役；决定 8 的四条规范文字与 26 处 section comment 清扫在第一批（规范清扫）落地。
 - **第二轮审校**：完成（`../research/graphics-2026-11-16-redesign-r2.md`）。
-- **迁移**：**实施中**。合并后的 18 个批次位置见研究文档 §10；批次进度以 git 的提交正文为档案
-  （每批列出能力 ID 三元组），本文只记状态。
+- **迁移**：**完成（2026-11-17）**。合并后的 18 个批次位置见研究文档 §10；批次进度以 git 的提交正文为档案
+  （每批列出能力 ID 三元组），本文只记状态。本批形状的落地提交：B12 `efc01336`（`View`）、B13 `5b22c289`
+  （`RenderArea`）、B14 `001b2b80`（`Target` / `Output` / `releasePass`）、B15 `955f7a94`（`Features` /
+  `Limits`）、B16a–c `5e31e89b` + `82b4ec3f` + `49645332`，以及 S8 的 B17 `7b83a509`（`Content*` 三个改名）与
+  B9（文档真实性 + 用户文档按能力重组）。
 - **B16（2026-11-17，E-04 / E-05 / E-06 + BC-08）已落地**：`PassDesc` 是唯一作者形状，`RenderPass` 公开面只读
   （写门是 `detail::PassNode`）；`before_draw` 由 `FrameUpdate` 对象接口取代（`PassChain::update()` /
   `SceneView::update()`），`OverlayLayout` 返回 `Viewport`；`tag` 删除。**命名偏离**：研究文档写的
   `chain->update(d)` 实现为 `PassChain::restate(desc)`——`update()` 已是"每帧更新 overlay"的动词，同名两义会
   让读者猜参数含义（`G4`）。
-- 本 ADR 在最后一批落地时改为"已采纳"（状态行的"实施中"改为"已采纳"）；若某批放弃，在同一行注明并链接原因。
+- 本 ADR 已于最后一批（S8）落地时改为“已采纳”；没有批次放弃。

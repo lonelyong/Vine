@@ -125,6 +125,10 @@ class VN_GRAPHICS_API RenderBackendRegistry {
      *
      * @details
      * - The registry does not own the factory; it must outlive the registry.
+     * - LAST REGISTRATION WINS, SILENTLY: a name already present is REPLACED in place and nothing is reported -
+     *   loading a backend plugin therefore re-points a built-in entry of the same name at the plugin's own
+     *   factory. Code that must exercise the implementation compiled into its binary (the backend parity
+     *   fixture, for one) constructs that backend directly instead of asking this registry.
      *
      * @param factory Factory to register.
      */

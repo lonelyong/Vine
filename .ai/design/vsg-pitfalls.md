@@ -3,7 +3,7 @@
 > **状态**：现行
 > **最后核对**：2026-10-24
 > **范围**：vsg 后端踩过的坑，按风险域分九组；每条给出症状与判据。
-> **权威来源**：`src/plugins/gfx_backend_vsg/**`、`docs/guides/vsg-backend.md`、`.ai/bugs/`。
+> **权威来源**：`src/plugins/gfx_backend_vsg/**`、`docs/guides/graphics-backends.md`（使用者页）、`.ai/bugs/`。
 > **待办**：`../backlog/graphics.md`
 
 ## 1. 概要设计
@@ -289,6 +289,5 @@ ABI、流、目标寿命、WSI、证据、引擎侧。时间线归 git。
 
 - `vsg-backend.md` —— 架构、类图、契约、键与状态、否决项、门禁。
 - `../bugs/` —— vsg 的四个已修 bug 复盘（嵌窗黑屏、初始化崩溃、resize 变形、最大化黑边）。
-- `docs/guides/vsg-backend.md` —— 面向使用者的后端说明。
-- `docs/guides/vsg-plugin.md` / `docs/guides/vsg-data-flow.md` —— 插件注册与数据流。
+- `docs/guides/graphics-backends.md` —— 面向使用者的后端说明（契约、差异表、支持矩阵、构建与证据）。
 - `scripts/vsg_rewrite_gate.sh` —— 证据门禁（VUID / SYNC-HAZARD / 相位 / 画面）。
