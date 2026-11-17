@@ -22,7 +22,7 @@ below is the backlog of old files, not a design question — the decision is mad
 | `.ai/backlog/**` | 13 | 781 | open, trigger-gated work |
 | `.ai/research/**` | 16 | 6,909 | **not translated**: dated proposals, deleted when converted |
 | `.ai/README.md` | 1 | 319 | the index every note must appear in |
-| `.github/skills/design-docs/SKILL.md` | 1 | 252 | the template authority; still Chinese |
+| `.github/skills/design-docs/SKILL.md` | 1 | 271 | the template authority; still Chinese |
 
 Design pages by area: graphics seam 10 / 4,343 · backends (`vk-backend`, `vsg-*`) 3 / 1,477 ·
 appfw 17 / 4,572 · geometry 14 / 3,381 · everything else 12 / 3,206.
@@ -33,7 +33,7 @@ Order is by "what a reader needs first", not by directory. One batch ≈ 1–1.5
 
 | Phase | Scope | Size | Why here |
 |---|---|---|---|
-| **M0** | `.github/skills/design-docs/SKILL.md` | 252 | the template authority: after M0, the skill itself states the English template it prescribes |
+| **M0** | `.github/skills/design-docs/SKILL.md` | 271 | the template authority: after M0, the skill itself states the English template it prescribes. **Landed 2026-11-17** |
 | **M1** | `.ai/README.md` | 319 | the map; a reader lands here first |
 | **M2** | `.ai/memory/**` | 11 / 2,476 | traps and commands; the second thing a session reads |
 | **M3** | graphics seam pages (`graphics-*`) | 10 / 4,343 (3 batches) | most cited from code and from the audit |
