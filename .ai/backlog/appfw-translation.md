@@ -1,18 +1,18 @@
-# appfw 翻译（i18n）待办
+# appfw translation (i18n) backlog
 
-> 只列开放项；没有触发条件就不做。关闭项直接删除。
+> Open items only; without a trigger condition it is not done. Closed items are deleted.
 
-## 1. 现在可做（无触发条件）
+## 1. Actionable Now (No Trigger)
 
-（无）
+(none)
 
-## 2. 触发条件型
+## 2. Trigger-gated
 
-| # | 项 | 内容 | 触发条件 | 出处 |
+| # | Item | What | Trigger | Source |
 |---|---|---|---|---|
-| T3 | 插件元数据翻译 | `PluginInfo` 的 name/description 走插件目录，显示点按插件上下文查 | 插件中心需要在英文界面下显示英文名 | 同上 D6 |
-| T5 | 文案长度的版式检查 | 用最长的一种译文跑一遍界面截图门禁 | 出现第一次因为译文变长而截断 | 同上 P3 |
-| T6 | 翻译文件的部署规则 | 默认内嵌、无散文件；只在需要热修时把 `<id>_<locale>.qm` 放到模块文件所在目录（与模块二进制同目录，按实现优先于内嵌目录） | 出现第一个“不改程序就要修一个错译”的需求 | 同上 §2.10、`../decisions/ADR-2026-11-01-translation-catalog-embedding.md` |
-| T7 | 崩溃窗口的文案注入 | `crash::Config` 增加可选界面文案，由 appfw 用 `tr()` 的结果填；handler 保留中文默认 | 第一次需要向非中文用户展示崩溃窗口 | 同上 §2.9 |
-| T8 | 崩溃报告字段名改英文 | `报告正文` 的 `崩溃报告/应用/时间/异常/调用栈` 等字段名改为英文（诊断契约） | 第一次把报告拿去跨语言检索或贴进英文 issue | 同上 §9.2 |
-| T9 | 宿主可执行文件目录 | 当 `src/apps/vine` 出现第一条自有可翻译文案时，设计独立 context 与启动期目录入口 | `lupdate` 在宿主模块发现非零文案 | 同上 §2.6、§9.2 |
+| T3 | Plugin metadata translation | `PluginInfo`'s name/description go through the plugin directory, and the display looks them up in the plugin's context | the plugin centre has to show an English name in an English UI | ibid. D6 |
+| T5 | Layout check for text length | run the UI screenshot gate with the longest translation | the first truncation caused by a longer translation | ibid. P3 |
+| T6 | Deployment rule for translation files | embedded by default, no loose files; only when a hot fix is needed, put `<id>_<locale>.qm` next to the module file (the same directory as the module binary, which by implementation takes precedence over the embedded catalogue) | the first "fix a wrong translation without changing the program" request | ibid. §2.10, `../decisions/ADR-2026-11-01-translation-catalog-embedding.md` |
+| T7 | Injecting text into the crash window | `crash::Config` gains optional UI text, filled by appfw from the result of `tr()`; the handler keeps its Chinese default | the first time a crash window has to be shown to a non-Chinese user | ibid. §2.9 |
+| T8 | English field names in the crash report | the field names of `报告正文` - `崩溃报告/应用/时间/异常/调用栈` and friends - become English (a diagnostic contract) | the first time a report is searched across languages or pasted into an English issue | ibid. §9.2 |
+| T9 | The host executable's catalogue | once `src/apps/vine` carries its first translatable string of its own, design an independent context and a startup-time catalogue entry | `lupdate` finds non-zero strings in the host module | ibid. §2.6, §9.2 |
