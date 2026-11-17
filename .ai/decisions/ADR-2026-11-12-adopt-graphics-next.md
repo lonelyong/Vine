@@ -6,6 +6,8 @@
   （迁移期前的线程与两个世界）、`../design/vsg-backend.md`、`../backlog/graphics.md`、
   `../research/graphics-2026-11-11-next*.md`（提案与审计原文）、`scripts/measure_graphics_claims.py`
 
+> **EN**: Adopted the graphics-next proposal as the next frame-pipeline design, with `graphics-frame-pipeline.md` becoming the normative description of the target shape (four layers, eight nouns, three verbs, `C1-C12` / `R1-R39` / `I1-I7`) and `graphics-threading.md` / `graphics-scene.md` continuing to describe the present, distinguished by status. The `K1-K11` thresholds change role from "reject the proposal" to per-step acceptance and rollback conditions, and backlog T32 becomes a concrete step list. Rejected keeping the proposal as a prototype, a big-bang rewrite and adopting only the identity/lifecycle layer.
+
 ## 背景
 
 今天"跨层的那份副本什么时候过期"有五套答案（地址 + 版本、镜像 + delta、memo + epoch、`markUsed` 的

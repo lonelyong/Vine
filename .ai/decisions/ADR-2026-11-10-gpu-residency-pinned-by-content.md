@@ -6,6 +6,8 @@
   `src/viz/graphics/src/Scene.cpp`、`src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp`、
   `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/Streams.hpp`、`src/viz/graphics/sdk/vine/graphics/Residency.hpp`
 
+> **EN**: Chose F: every residency entry records a pin of `(content identity, revision)` and collection asks only "who is alive now" - the fact tables enumerate the live pin set and everything else is retired - so the five previous expiry answers (time windows, reference counts, counterfactual scans) collapse into one rule and one verb, and all timers and capacity caps are deleted. Host-initiated `releaseContent()` becomes "declare these pins dead". Rejected keeping the status quo, larger windows, two-tier eviction, a `GpuResource` base class, a per-object state machine and locking; the recorded cost is that video memory is no longer given back automatically.
+
 ## 背景
 
 同一个问题——"这份 GPU 驻留什么时候可以放掉"——今天有五种答案：

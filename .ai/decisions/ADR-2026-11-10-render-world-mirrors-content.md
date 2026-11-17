@@ -5,6 +5,8 @@
 - 相关：`../design/graphics-threading.md`、`../design/graphics-scene.md`、`../design/vsg-backend.md`、
   `../design/appfw-render-surface.md` §9.2、`../backlog/graphics.md` T24/T31
 
+> **EN**: Chose A: the content world stays on the content (UI) thread and the render world mirrors it, updated by deltas, with three channels - delta (values, payload required so a missing announcement fails to compile), handoff (ownership) and snapshot (immutable published value plus frame number) - and only `Buffer::revision()` / `Geometry::revision()` read across. Rejected moving content to the engine thread, per-frame extract/sync, double-buffered worlds, UI-thread-only rendering and locking the content model; the failure mode to watch is a missed announcement leaving the mirror stale without any error.
+
 ## 背景
 
 今天一帧的每一段都在 Qt 应用线程的一次调用栈里（`SurfaceWindow::renderFrame` → `RenderEngine::frame()`

@@ -5,6 +5,8 @@
 > **影响范围**：`src/base/geom/sdk/vine/geom/spatial/CurveSampling.hpp`、`src/base/geom/sdk/vine/geom/planar/CurveSampling.hpp`、
 > `tests/test_geom_spatial/CurveSamplingTest.cpp`、`tests/test_geom_planar/CurveSamplingTest.cpp`
 
+> **EN**: Made curve discretisation an object (`CurveSampler<T>` plus one subclass per rule) instead of three free functions, because derived attributes have somewhere to live, a wireframe loop configures the window and parameters once, and progress/cancellation has exactly one place. Two contracts contain the cost: `curve()` stores a reference so the sampler must outlive the curve, and any setter or failed `compute()` clears the result; setters return `void` so no chaining convention appears. Rejected free functions, construction-time computation and per-call curve arguments.
+
 ## 背景
 
 曲线离散化第一次落地。仓库对"算法"的默认形态是**自由函数 + `requires` 约束**（`closestPointOnCurve()`、`arcLength()`、

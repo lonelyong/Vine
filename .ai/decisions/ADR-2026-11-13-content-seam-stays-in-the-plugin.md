@@ -4,6 +4,8 @@
 > **日期**：2026-11-13
 > **影响范围**：`.ai/backlog/graphics.md`（删除“内容层提成共享库”条目）、`.ai/design/vsg-backend.md` §2.7
 
+> **EN**: Kept the vsg-independent content bookkeeping half inside `gfx_backend_vsg` instead of promoting it to an SDK library ahead of a consumer, and deleted the backlog entry; `scripts/check_vsg_content_seam.cmake` remains the boundary's evidence. When a second backend actually appears, the step is to move or copy that half, not to add a `target_link_libraries` line. Rejected promoting now, splitting the target without exporting, and dropping the seam guard.
+
 ## 背景
 
 `src/plugins/gfx_backend_vsg` 里有一半内容是**与 vsg 无关的记账**（事实表、半边、键、来源、清扫），由

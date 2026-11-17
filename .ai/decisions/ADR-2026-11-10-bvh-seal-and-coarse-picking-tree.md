@@ -8,6 +8,8 @@
 > `tests/test_geom_spatial/BvhQueryTest.cpp`、`tests/test_graphics/GraphicsTest.cpp`、`tests/test_vsg/StreamUploadsTest.cpp`、
 > `.ai/design/geometry-bvh.md`、`.ai/design/graphics-geometry.md`、`.ai/design/vsg-backend.md`
 
+> **EN**: Three measures against a 14M-triangle model: `Bvh::seal()` releases the per-primitive volumes and keeps the shape (sealed state derived from the data, not a flag; the write verbs throw after sealing), the draw-frame pick tree defaults to leaf capacity 64 via `graphics::kPickTreeLeafSize` while the library default stays 4, and the vsg backend aliases the model's own bytes through `VsgBufferView` instead of copying them. The pick tree dropped from 1.36 GB to 88 MB and the backend copy saved another 1.18 GB; sealed queries receive the leaf box rather than the primitive box.
+
 ## 背景
 
 模型查看器打开 `车身.stl`（704 MB，二进制 STL，14,086,575 个三角形、42,259,725 个角点）时，进程占用到数个 GB。

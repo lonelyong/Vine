@@ -6,6 +6,8 @@
 > `src/base/models/sdk/vine/models/SolidTessellation.hpp`、`src/viz/graphics/src/Geometry.cpp`、
 > `tests/test_geom_spatial/SolidTessellationTest.cpp`
 
+> **EN**: Moved solid tessellation back into `geom` as `vn::geom::spatial::tessellateSolid()` returning the geometry value `Triangulation<T>` (three public vectors plus counts, both precisions instantiated), with `TessellationQuality` moving up too and the model side keeping only assembly in `models::meshFromTriangulation()`. The function had lived in `models` only because its return type was a `TriangleMesh`; rejected keeping it there, returning `TriangleMesh` from `geom`, returning `intrusive_ptr<Buffer>` and three out-parameters.
+
 ## 背景
 
 `tessellateSolid()` 出生在 `src/base/geometry/src/`（提交 `79058532`）。`9be3b6f4`（“modelling leaves geometry”）把它 <!-- drift-ok -->

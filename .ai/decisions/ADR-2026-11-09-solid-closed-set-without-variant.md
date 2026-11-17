@@ -6,6 +6,8 @@
 > `src/base/geom/sdk/vine/geom/spatial/SolidTessellation.hpp`、`src/base/models/sdk/vine/models/PrimitiveDispatch.hpp`、
 > `src/viz/graphics/src/Geometry.cpp`、`tests/test_geom_spatial/SolidTest.cpp`、`GeometryKindsTest.cpp`
 
+> **EN**: Deleted the `SolidShape<T>` variant: by the time tessellation moved into `geom`, the variant no longer stored anything or dispatched anything that `visitPrimitive()` plus per-kind overloads do not, so the geometric entry points became five template overloads of `tessellateSolid()` and `models::solidShapeOf()` was removed. Rejected keeping the variant for one caller, a virtual `kind()` / `tessellate()` on the family interface, and re-exposing a variant from `Primitive`; a storage-only type is added when a format actually needs one.
+
 ## 背景
 
 `ADR-2026-11-05-solid-family-and-variant.md` 引入 `SolidShape<T> = std::variant<五个 kind>`。它当时的用途有两条：

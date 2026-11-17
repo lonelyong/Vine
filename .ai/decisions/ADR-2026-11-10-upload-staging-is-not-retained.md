@@ -10,6 +10,8 @@
 > `tests/test_vsg/{UploadScratchTest.cpp,OffscreenTargetTest.cpp}`、`tests/test_graphics/HeadlessBackendTest.cpp`、
 > `.ai/design/{graphics-content-lifecycle,vsg-backend,vsg-pitfalls}.md`
 
+> **EN**: Chose not to retain upload staging: a staging block is the source of exactly one `vkCmdCopyBuffer` and its own fence is the evidence it has been read, so `VsgBackend::executeFrame()` releases finished blocks at the frame boundary, and `RenderDevice::releaseUploadStaging()` plus the model viewer's release command are deleted because there is no longer a question for the host to answer. Rejected the explicit verb with park/drain, clearing without the fence, keeping only blocks above a size floor, and timers; the measured result is 1,228 MB of staging going to 0 for the 704 MB model. Superseded by `ADR-2026-11-13-staging-keeps-the-reusable-block`, which keeps blocks at or below a reusable floor.
+
 ## 背景
 
 vsg 把一次上传的字节先拷进一块 `HOST_VISIBLE|HOST_COHERENT` 的暂存（`TransferTask::transferData()` 里

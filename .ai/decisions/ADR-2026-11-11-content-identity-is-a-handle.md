@@ -6,6 +6,8 @@
   `../research/graphics-2026-11-11-next-audit.md`（A1 / A12 / 步骤 3a–3b）、
   `ADR-2026-11-09-address-keys-hold-the-object.md`（本篇部分取代它）
 
+> **EN**: Chose B and superseded the identity half of `ADR-2026-11-09-address-keys-hold-the-object`: content identity is a `Handle` (generation/domain/index) plus `ContentRef{id, revision}`, so a stale row or plan can answer "gone" and replay/dump has a stable key, with `RenderCommand::row` becoming `node` (`NodeId`) and material and program tables keyed by `(Id, revision)`. Landed in three compile-and-test stages; the recorded cost is public layout changes and a `ContentRef::revision` widened to 64 bits.
+
 ## 背景
 
 `ADR-2026-11-09` 当时否决了“稳定身份”，选择“按地址做键的缓存必须持有它键名所指的对象”，并写明重开条件：

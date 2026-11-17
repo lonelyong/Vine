@@ -8,6 +8,8 @@
 > `tests/test_graphics/HeadlessBackendTest.cpp`、`tests/test_vsg/UploadScratchTest.cpp`、
 > `.ai/design/graphics-content-lifecycle.md`、`.ai/design/vsg-backend.md`、`docs/guides/graphics.md`
 
+> **EN**: Record of a decision since replaced: made upload-staging release an explicit `RenderDevice::releaseUploadStaging()` the host or a user command calls, with the swap immediate and destruction deferred to evidence (timeline, park queue, or one counted `deviceWaitIdle`), on the ground that only the host knows when the memory is no longer needed. Superseded the same day by `ADR-2026-11-10-upload-staging-is-not-retained`: the most common host never calls it, and the park never matures without a later frame.
+
 ## 背景
 
 vsg 上传静态数组时，先把整次上传的字节拷进一块 `HOST_VISIBLE|HOST_COHERENT` 的暂存（`TransferTask` 的

@@ -5,6 +5,8 @@
 - 相关：`../design/graphics-frame-pipeline.md` §9.3；`../research/graphics-2026-11-12-instances.md`；
   `tests/test_graphics/RenderWorldTest.cpp`（快照 / 烘焙的现役用例）
 
+> **EN**: Chose B: the step that deletes ~2000 lines of live code is split into 5a (shadow switch - both paths run on the same frame and input and are diffed item by item, old path still the truth, diff mode always on in CI), 5b-1 (flip the source, old paths demoted to an optional legacy shadow, `FrameMode::Mirrored` renamed `Published`) and 5b-2 (mechanical deletion, with 5b-2a adding the public `Scene::publish()` and moving the source and 5b-2b deleting mirror, delta and `RenderWorld`), so equivalence and deletion can be attributed separately. An errata records that 5b-2b did not remove the in-frame implicit publish; that is 5b-2c.
+
 ## 背景
 
 §9.3 的第 5 步是唯一“删掉约 2000 行现役形状”的步骤：生产收集从 `ContentMirror` + `DeltaChannel` +
