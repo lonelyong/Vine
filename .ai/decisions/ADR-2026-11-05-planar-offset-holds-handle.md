@@ -5,6 +5,8 @@
 - 取代：`ADR-2026-11-05-planar-offset-curve.md`
 - 相关：`../design/geometry-planar.md` 2.13、`ADR-2026-11-05-curve-derivative-capability.md`、`ADR-2026-11-05-planar-trimmed-curve.md`
 
+> **EN**: Chose B, superseding `ADR-2026-11-05-planar-offset-curve`: `OffsetCurve<T>` holds a `shared_ptr<const Curve<T>>` plus a signed distance (built by the `offsetCurve()` factory), and its order is `min(2, basis.maxDerivativeOrder() - 1)`, so an offset of an offset reports 1 and `isValid()` false instead of inventing a second derivative. This matches `geom::spatial::OffsetCurve` and allows trimming/offset of any runtime basis, at the cost of one allocation.
+
 ## 背景
 
 上一版把平面偏置做成 `OffsetCurve<C>`：模板参数是**具体**基曲线类型、按值持有。那个形状是被当时的契约逼出来的——偏置的二阶导需要基曲线的三阶导，而契约只声明到二阶，三阶导只作为具体类型的非虚成员存在，于是“运行期基曲线”根本问不出三阶导。

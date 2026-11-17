@@ -4,6 +4,8 @@
 > **日期**：2026-11-04
 > **影响范围**：`src/base/geometry`、`src/base/brep`、`src/robotics/io`、`tests/test_brep`、`tests/test_robotics_io`、`tests/test_proximity`、`tests/test_graphics` <!-- drift-ok -->
 
+> **EN**: Kept the five parametric solids as modelling types (`Primitive : Shape` subclasses living together in `Primitive.hpp`, `shape_type_` passed through the constructor chain) and kept geometry algorithms out of `Primitive`: the solids answer only `bounds()` / `isValid()` / `hasVolume()`, while ray-box is `Aabb::intersectWith(Ray)` and ray-cylinder/cone belong to the surfaces. Rejected anonymous value types held by `std::variant` with `as<T>()`, one header per subclass, virtual query members on `Primitive` and letting `geometry` depend on OCCT.
+
 ## 背景
 
 五种参数化几何（`Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`）原本是 `Primitive` 的子类，尺寸是子类私有字段。当日先试过另一条路：把它们变成无身份的值类型，`Primitive` 用 `std::variant` 持有，消费点用 `std::visit` / `as<T>()`。

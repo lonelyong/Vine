@@ -4,6 +4,8 @@
 - 日期：2026-11-05
 - 相关：`../design/geometry-kinds.md` 2.7、`../design/geometry-planar.md` 2.3 / 2.13、`ADR-2026-11-04-curve-third-derivative.md`、`ADR-2026-11-05-planar-offset-curve.md`
 
+> **EN**: Chose C: the derivative order is a queryable capability (`maxDerivativeOrder()` plus `derivativeAt(u, order)`, defaulting to first and second order and overridden to 3 where a closed form exists, answering `std::nullopt` beyond the capability) rather than a further pure virtual step in the contract, because a pure `thirdDerivative()` leaves an offset curve always one order short. Rejected the status quo, a pure `thirdDerivative()` and an OCCT-style `DN(N)`; the follow-up migration to make `derivativeAt` the primitive is recorded but not done here.
+
 ## 背景
 
 偏置曲线 `O = C + d·N` 的二阶导需要基曲线的三阶导。契约此前只声明到二阶，于是运行期拿到 `Curve<T>&` 时**没有**办法取得三阶导；两条既有 ADR 分别选择了“偏置是具体类型的模板”和“空间侧偏置保持抽象”。

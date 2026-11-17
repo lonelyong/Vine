@@ -4,6 +4,8 @@
 - 日期：2026-11-05
 - 相关：`../design/geometry-planar.md`、`../design/geometry-kinds.md`
 
+> **EN**: Chose A: `geom::planar::Curve<T>` is a second contract with the same eleven facts spelled out in 2D terms, not a `Curve<PointT>` shared generic and not an inheritance of the 3D interface with the plane embedded at `z = 0`; what is genuinely shared lives in the vocabulary layer (`math::Continuity`, `math::FP`). The honest cost is that a fact added on one side does not appear on the other, and the documented reopening trigger is an algorithm that must serve both dimensions, which should become a free function template instead.
+
 ## 背景
 
 `geom::spatial::Curve<T>` 已经是十一项求值接口（`geometry-kinds.md` 2.7）：`evaluate` / `derivative` /

@@ -4,6 +4,8 @@
 > **日期**：2026-11-04
 > **相关**：`../design/geometry-kinds.md` 2.7 / 2.10 / C12 / §9；`src/base/geometry/sdk/vine/geometry/Curve.hpp`、`Surface.hpp`、`Plane.hpp`；`tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
 
+> **EN**: Added `[[nodiscard]] virtual bool isValid() const = 0` to `Curve<T>` and `Surface<T>`, so the single validity gate stated in the design doc can be asked through the interface, the same way `Shape::isValid()` already can, instead of only via `dynamic_cast`. Rejected a free function with `dynamic_cast` (a closed set inside an algorithm), a concept-only constraint (runtime polymorphism is the main path) and leaving each type to answer on its own; `Plane` gains a real invalid state (zero normal).
+
 ## 背景
 
 几何族里每个具体类型**早就**有一个 `isValid()`：直线看方向、圆锥曲线看框架、样条看权重与节点、

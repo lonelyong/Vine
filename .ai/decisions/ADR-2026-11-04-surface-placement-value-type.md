@@ -4,6 +4,8 @@
 > **日期**：2026-11-04
 > **相关**：`../design/geometry-axis-surfaces.md` 2.1 / 2.5 / C1 / D1；`src/base/geometry/sdk/vine/geometry/Placement.hpp`、`Frame.hpp`、`CylindricalSurface.hpp`、`ConicalSurface.hpp`、`ToroidalSurface.hpp`；`tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
 
+> **EN**: Chose C, superseding option C of `ADR-2026-11-04-axis-surface-frame`: the frame is the value type `Placement<T>` (`origin`, `axis`, `x_direction`, `yAxis()`, always right-handed) held by each rotational surface as a field, so the type tree matches OCCT and `ElementarySurface` stays an empty tag, at the cost of three copies of `return Continuity::CN`. Rejected keeping the `AxisSurface` inheritance layer and duplicating the three fields per type.
+
 ## 背景
 
 `ADR-2026-11-04-axis-surface-frame.md` 把旋转面的框架（原点 / 主方向 / X 方向 + `yAxis()` + `continuity() = CN`）放进新的中间层 `AxisSurface`，理由是不想让三个曲面各存一份会漂移的规则。

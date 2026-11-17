@@ -4,6 +4,8 @@
 > **日期**：2026-11-04
 > **影响范围**：`src/base/geometry/sdk/vine/geometry/Surface.hpp`、`ElementarySurface.hpp`、`BoundedSurface.hpp`、`Plane.hpp`、`SphericalSurface.hpp`、六个占位曲面头、`tests/test_geometry` <!-- drift-ok -->
 
+> **EN**: Turned `Surface<T>` into the same kind of evaluation interface as `Curve<T>` (virtual destructor plus thirteen pure virtuals: `evaluate`, `derivativeU/V`, four parameter bounds, closure/periodicity per direction, `continuity`), demoted `ElementarySurface<T>` / `BoundedSurface<T>` to empty tags, and implemented it for `Plane<T>` (deriving its in-plane axes) and `SphericalSurface<T>`. Supersedes item 6 of `ADR-2026-11-04-curve-evaluation-interface`; no `normalAt()`, `bounds()` or second derivatives in the interface.
+
 ## 背景
 
 `ADR-2026-11-04-curve-evaluation-interface.md` 第 6 条把曲面族留成空标签，理由是"没有消费者要求未知曲面也能求值"。半天后同一个需求在曲面侧出现：面遍历、采样与求交的前置都需要"求值 + 两个方向的参数域与周期"，而曲线接口已经证明这组契约的形状。

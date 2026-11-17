@@ -4,6 +4,8 @@
 - 日期：2026-11-05
 - 相关：`../design/geometry-planar.md`、`../design/geometry-kinds.md`
 
+> **EN**: Record of a decision since replaced: kept `ArcCurve` (a `CircleCurve` held by value plus two angles) as the only planar trimming shape and did not add `TrimmedCurve<T>` beside it, on `G1` / `G10` / `G8` - the trigger to introduce the generic view and delete `ArcCurve` was the first non-circular basis needing trimming. Superseded by `ADR-2026-11-05-planar-trimmed-curve`.
+
 ## 背景
 
 “曲线的一段”在两个模块里现存的形状不一样：空间侧是 `TrimmedCurve<T>`——`std::shared_ptr<const Curve<T>>`

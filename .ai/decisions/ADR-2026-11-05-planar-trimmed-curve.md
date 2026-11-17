@@ -5,6 +5,8 @@
 - 取代：`ADR-2026-11-05-planar-arc-is-a-value-type.md`
 - 相关：`../design/geometry-planar.md` 2.8 / 2.10 / D6、`ADR-2026-11-05-curve-derivative-capability.md`
 
+> **EN**: Chose B, superseding `ADR-2026-11-05-planar-arc-is-a-value-type`: the generic `TrimmedCurve<T>` (a `shared_ptr<const Curve<T>>` plus two parameter bounds, built by `trimCurve()`) replaces the circle-only `ArcCurve`, which is deleted with its test file; the tight box a trimmed circle loses is returned to its owner as `CircleCurve::bounds(first, last)`, per `G13`. Rejected keeping both shapes and a by-value template basis (a runtime handle would stay unavailable).
+
 ## 背景
 
 `ArcCurve` 是“圆按值 + 角度区间”：零分配、盒是紧盒，但只能裁剪圆。原 ADR 明确写了触发条件——一旦要裁剪非圆基曲线（椭圆弧、样条修剪、导入轮廓截断），就引入通用 `TrimmedCurve` 并**删除** `ArcCurve`，不与之并存。这条触发条件现在由设计本身满足：能力协议（`maxDerivativeOrder()` / `derivativeAt()`）落地后，类型擦除的裁剪视图可以如实转发任意阶导，不再需要“基曲线必须是具体类型”这个前提。

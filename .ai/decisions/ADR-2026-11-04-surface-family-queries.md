@@ -4,6 +4,8 @@
 - 日期：2026-11-04
 - 相关：`../design/geometry-surface-queries.md`、`../design/geometry-kinds.md` 2.10、`../design/geometry-intersection.md` C5；`src/base/geometry/sdk/vine/geometry/SurfaceProjection.hpp`、`RaySurfaceIntersection.hpp`、`SurfaceParameterWindow.hpp`；`tests/test_geometry/SurfaceQueryTest.cpp` <!-- drift-ok -->
 
+> **EN**: Chose C: closest point and ray intersection for an arbitrary `Surface<T>` are stateless free functions that run a damped Gauss-Newton solve seeded from a parameter window and a grid, honouring the capability constraint via `requires std::is_base_of_v<Surface<T>, S>`; analytic surfaces keep their exact entries and curve-versus-surface intersection composes on the same projection. Rejected widening the interface with `inverse` / `normalAt` / `bounds`, and per-type entries; the results are local and can miss tangencies, which the design page states.
+
 ## 背景
 
 `Surface<T>` 是求值接口：`evaluate`、两个一阶导、参数域、闭合 / 周期、`isValid`。它对“点到曲面的最近点”和“射线 × 曲面”都答不出来，而这两件事正是拿着 `const Surface<T>&` 的调用方最常问的。解析面各有精确入口（`Plane::intersectWith(Ray)`、`signedValue()`），样条面与裁剪面没有。

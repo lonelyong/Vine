@@ -4,6 +4,8 @@
 > **日期**：2026-11-04
 > **影响范围**：`src/base/geometry/sdk/vine/geometry`（全部值类型与曲线曲面族的 `T`）、`src/base/geometry/src/Instantiations.cpp`（新增）、`LineCurve.cpp` / `Obb.cpp` / `Plane.cpp` 的显式实例化、`.ai/design/geometry-primitives.md` 2.8 <!-- drift-ok -->
 
+> **EN**: Kept the `T` precision parameter on every geometry value type, shipping both `float` and `double` explicitly instantiated and exported (pure-header types listed in `src/base/geometry/src/Instantiations.cpp`, types with a `.cpp` in their own translation unit), with no `extern template` so inlining stays in the caller. Rejected pinning the family to `double` (closes the door on real-time/GPU consumers), publishing only `double`, instantiating only the three types that happened to need it, and a Bullet-style global precision `#define`.
+
 ## 背景
 
 几何值类型全部以 `math::FP T` 参数化（`Aabb<T>`、`Ray<T>`、`Plane<T>`、`Curve<T>`、`Surface<T>` …）。实际消费者（`graphics`、`meshio`、`robotics`、`brep`）只用 `double`，于是出现两个问题：

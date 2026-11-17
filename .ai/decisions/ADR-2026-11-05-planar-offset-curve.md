@@ -4,6 +4,8 @@
 - 日期：2026-11-05
 - 相关：`../design/geometry-planar.md`、`ADR-2026-11-04-curve-third-derivative.md`
 
+> **EN**: Record of a decision since replaced: the planar offset was `OffsetCurve<C>` templated on the concrete basis type held by value, with the third derivative as a non-virtual member of each concrete type, rather than adding `thirdDerivative()` to the contract or approximating with central differences. Superseded by `ADR-2026-11-05-planar-offset-holds-handle`, which holds a handle once the capability protocol exists.
+
 ## 背景
 
 偏置曲线 `O = C + d * N` 的二阶导里含基曲线的三阶导：`N` 是单位法向，它的二阶导展开后有 `C'''`。
