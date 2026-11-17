@@ -5,6 +5,8 @@
 - **模块**：`src/viz/graphics`
 - **涉及**：`detail::sortCollected` / `detail::makeSortKey`（`src/viz/graphics/src/DrawListBake.{hpp,cpp}`）
 
+> **EN**: Fixed (2026-11-13): the sort key used the node's local origin in world space, which for meshes whose vertices are far from the origin can lie off the object, so transparent objects were blended in the wrong order. `detail::SortKey` now uses the world box centre (falling back to the matrix origin when there is no box), quantised camera-space depth instead of euclidean distance, and a total order ending in row index, so `std::sort` needs no stability; the approximation stays object-level.
+
 ## 现象与影响
 
 不透明批次按"近到远"、透明批次按"远到近"排序，顺序键是 `(model_matrix * (0,0,0) - eye).length2()`

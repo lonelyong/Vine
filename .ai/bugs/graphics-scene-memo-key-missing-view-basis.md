@@ -6,6 +6,8 @@
 - **涉及**：`Scene::collectRenderCommands(const CollectView&, std::uint32_t)` 的 memo 判定（`src/viz/graphics/src/Scene.cpp:700-710`）、
   `CollectView`（`sdk/vine/graphics/CollectView.hpp`）、`AutoTransform::localToWorldForView`（`src/viz/graphics/src/AutoTransform.cpp:278-321`）
 
+> **EN**: Open finding: the collection memo key is built from `projection * view`, `eye` and `layer_mask`, but view-dependent nodes read the decomposed `view` and `up`, so two `CollectView` values with the same product but different factors - or the same view with a different `up` - hit each other's memo and return the other view's billboard transform, with no self-correction. The key must cover every input the result depends on (`G4`, `G11`, `G12`); reachable by constructing `CollectView` directly.
+
 ## 现象与影响
 
 收集结果的 memo 键由 `projection * view`、`eye`、`layer_mask`（必要时加 viewport）组成，但视图相关节点读的是

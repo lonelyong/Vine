@@ -5,6 +5,8 @@
 - **模块**：`src/viz/graphics`
 - **涉及**：`RenderEngine::addPass(intrusive_ptr<RenderPass>, intrusive_ptr<Scene>, int)`、`RenderEngine::insertSlot`
 
+> **EN**: Open finding: `addPass(pass, content, order)` calls `slot.pass->setContent()` before `insertSlot()` gets a chance to reject a null pass, so a null pass with non-null content dereferences null - while the sibling entry point `bindPassContent()` is safe, which shows rejecting the null pass was always the design intent. The check must move ahead of the use (`G4`, `G11`); existing tests cover only null pass with null content.
+
 ## 现象与影响
 
 `addPass(pass, content, order)` 在 `content != nullptr` 时先调用 `slot.pass->setContent(...)`

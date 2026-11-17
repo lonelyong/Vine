@@ -4,6 +4,8 @@
 - **状态**: 已修复
 - **涉及**: `Cancellation.hpp`、`StopToken.hpp`、`tests/test_async/AsyncTest.cpp`
 
+> **EN**: Fixed: `withCancellation()` only called `throwIfCancelled()` and then awaited the task, so the wrapped task could not see the token through `currentStopToken()` and a stop requested mid-run never reached it, although the comment said the token was "passed down". It now injects the token with `detail::TaskEnvironment::setToken()` like `withStopToken()` and the combinators do, and the comment states that mid-run cancellation is cooperative.
+
 ## 现象
 
 `withCancellation(token, task)` 只在包装任务开始时检查 token；被包装任务无法从

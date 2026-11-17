@@ -4,6 +4,8 @@
 - **模块**: third_party/DockingPanes + src/fw/appfw（DockPanel / DockPanelManager）
 - **状态**: 已修复（拖放命中命中类路径无自动化用例，见"验证"）
 
+> **EN**: Fixed (historical, 2026-09-11): a set of floating/docking/tab defects in the vendored DockingPanes - panes shrinkable to a few pixels or thrown off screen, tab drag-outs losing the mouse grab, drop offsets built from magic numbers, `setFloating(false)` restoring the creation-time side because a cached dock area went stale, and double ownership of the wrapper. The fixes are one geometry rule (`DockingPaneGeometry` with a 120x80 floor and a title bar kept on screen), an explicit drag hand-off, `titleHeight()` instead of `10`, and removal of the cached area.
+
 ## 现象
 
 1. 浮动窗格可以拖到只剩几像素，抓不住；快速甩动能把窗口甩出屏幕，之后再也拖不回来。

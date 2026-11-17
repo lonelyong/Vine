@@ -4,6 +4,8 @@
 - **模块**: third_party/DockingPanes（DockingPaneFlyoutWidget）
 - **状态**: 已修复
 
+> **EN**: Fixed (historical, 2026-09-02): the auto-hide flyout was a plain child widget, and on Windows a native child window (the `createWindowContainer`-embedded Vulkan surface) always paints above its parent's own content, so `raise()` could not help. The flyout became a top-level frameless `Qt::Tool` window whose geometry is computed in screen coordinates, and the container raises it after `show()`.
+
 ## 现象
 
 面板 pin（auto-hide）后点击边缘按钮临时展开，flyout 与中央 vsg 渲染区重叠的

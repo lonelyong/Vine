@@ -4,6 +4,8 @@
 - **模块**: third_party/DockingPanes（DockingPaneContainer）
 - **状态**: 已修复
 
+> **EN**: Fixed (historical, 2026-09-02): `DockingPaneContainer` only assigned `m_clientWidget` in its constructor, while the host replaced the placeholder client through `setClientWidget()`, so after the placeholder was deleted `clientWidget()` returned a dangling pointer and grouping the console into a tab crashed (a `QPointer` workaround instead made the console vanish silently). `setClientWidget()` now synchronises the member with the widget actually placed in the layout.
+
 ## 现象
 
 把底部 console 面板拖到左侧「项目」或右侧「属性」上组成 tabbed 时：

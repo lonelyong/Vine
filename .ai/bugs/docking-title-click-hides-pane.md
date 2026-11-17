@@ -4,6 +4,8 @@
 - **模块**: third_party/DockingPanes（DockingPaneGeometry / DockingPaneManager / DockingPaneTitleWidget）
 - **状态**: 已修复
 
+> **EN**: Fixed (2026-10-28): a click without a drag still ran the whole drag-end path, and `keepTitleBarReachable()` applied a screen-rectangle clamp to a docked child pane whose `frameGeometry()` is in parent-local coordinates, so on a secondary screen the pane was moved out of its splitter cell and only a resize brought it back. The clamp now applies to windows only, and a pure click no longer emits `titleBarEndMove`.
+
 ## 现象
 
 - 单击（不拖动）任意停靠面板的标题栏，面板内容（整块面板）看不见了，但停靠区仍给它留着空间；

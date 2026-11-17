@@ -4,6 +4,8 @@
 - **状态**: 已修复
 - **涉及**: `TaskCompletionSource.hpp`、`tests/test_async/AsyncTest.cpp`
 
+> **EN**: Fixed: `TcsState` holds one `std::optional<T>` and every `await_resume()` moved out of it, so a second task from the same `TaskCompletionSource` read an already-moved value (and concurrent completed tasks raced) although the contract promised every waiter the result. Copy-constructible `T` is now copied per waiter (concurrent awaits included) and move-only `T` is documented as single-consumer in the class, `task()` and `setResult()` comments.
+
 ## 现象
 
 从同一个 `TaskCompletionSource<T>` 获取多个 `task()` 并等待时，只有第一个消费者取得完整结果；

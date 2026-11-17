@@ -7,6 +7,8 @@
   `src/viz/graphics/src/PassChain.cpp`（`PassChain::build` 不自我采纳）、`src/viz/graphics/src/SceneView.cpp`
   （`setChain` / `publishContent` / `applySurfaceGeometry`）
 
+> **EN**: Fixed (demo_plugin, 2026-11-14): `PassChain::build()` only builds and registers, adoption is the host's verb (`SceneView::setChain`), and the demo missed it - so `publishContent()` never published the chain-owned transparent scene and every frame warned that `forward_transparent` draws an unpublished scene, drawing nothing, while a second `resize()` in the demo's own layout step duplicated the view's size ownership. The fix is one `view->setChain(pipeline)` right after building the chain.
+
 ## 现象与影响
 
 打开 demo 后日志每帧第一帧报一条

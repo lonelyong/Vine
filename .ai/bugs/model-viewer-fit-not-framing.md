@@ -4,6 +4,8 @@
 - **模块**: plugins/model_viewer + viz/graphics
 - **状态**: 已修复
 
+> **EN**: Fixed (2026-10-26): `ModelPickManipulator` built its inner `OrbitCameraManipulator` without the scene, so `fitToScreen()` failed and fell back to `home()` - the default eye at (0,0,5), which for a millimetre-scale model looked enormous and made the wheel unusable - and `fitToScreen()` in any case changed only the distance, leaving the default `far` plane inside the framed distance. The scene is now passed through, and `fitToScreen()` scales the near and far planes with the framing distance in both projections.
+
 ## 现象
 
 用 `open_model_file` 打开一个毫米级 STL（约 1000×1000×510，原点不在模型中心）后：

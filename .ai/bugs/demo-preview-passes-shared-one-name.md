@@ -6,6 +6,8 @@
 - **涉及**：`src/plugins/demo_plugin/src/DemoScene.cpp`（`addDemoPipeline`）、
   `src/viz/graphics/src/EngineCompile.cpp`（`applyPlanRows`：同 owner 同名 = 一行，原地 `setDesc`）
 
+> **EN**: Fixed (demo_plugin, 2026-11-14): because a plan row is identified by `(owner, name)`, the four G-buffer previews all named `gbuffer_preview` collapsed into one row whose last declaration overwrote the others, so only attachment 3 appeared; the fix gives each preview its own name, and the layout step re-declares the pass after `setViewport()` because engine nodes are built from declarations, not from the objects the host mutates.
+
 ## 现象与影响
 
 deferred demo 顶部的 G-buffer 预览条本应是四块（albedo / shading normal / occlusion / view position），
