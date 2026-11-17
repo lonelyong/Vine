@@ -1,61 +1,97 @@
-# crypto 要点
+# crypto notes
 
-- 后端是 wolfSSL **v5.9.4-stable**（`src/base/crypto/CMakeLists.txt` 固定 tag），静态煮进 `VineCrypto`；
-  `WOLFSSL_USE_OPTIONS_H` 让头文件与库看到同一份 `options.h`。
-- 后端全局初始化只在 `src/base/crypto/src/WolfSsl.cpp` 的 `detail::ensureLibraryInitialized()`（`std::call_once`）。
-  跳过它会崩：`wc_InitRng` 会锁只由 `wolfCrypt_Init()` 初始化的 `drbgStateMutex`。
-- wolfSSL 头文件把 `Md5` / `Sha256` / `Sha384` 等定义成宏 → 自己的枚举值一律 `k` 前缀（`Digest::kSha256`）。
-- `vn::crypto::Hmac` 与 wolfSSL 的 `::Hmac` 同名：PImpl 里的后端上下文必须写 `::Hmac`。
-- 摘要只有一套词汇：`Digest` 枚举 + `digest(Digest, span)` 一次性 + `Hasher` 增量；
-  `Hmac` / `RsaKey` / `EccKey` 都收 `Digest`。`Hash` / `HashCalculator` / `Hmac::Algorithm` 已删除（ADR-2026-11-07-digest-vocabulary）。
-- 对称：`AesGcm`（AEAD，默认）、`AesCbc`（PKCS#7）、`AesCtr`（无填充）——后两者只为互通，都不认证。
-- 口令哈希：`Argon2`（推荐，需 CMake 选项 `WOLFSSL_ARGON2`，会带进 BLAKE2b）与 `Pbkdf2`（互通）。
-  测试向量：PBKDF2 = RFC 6070 四个向量；AES-CBC = NIST SP 800-38A F.2.1；AES-CTR = F.5.1。
-- 口令保护的私钥：`RsaKey` / `EccKey` 的 `toEncryptedPrivateDer/Pem` 与 `fromEncryptedPrivateDer/Pem`，
-  实现只在 `src/Pkcs8.cpp`（`detail::encryptPkcs8Der` / `decryptPkcs8Der`）。
-  wolfSSL 入口：`wc_CreateEncryptedPKCS8Key(..., PKCS5, PBES2, AES256CBCb, salt=nullptr, 0, itt, rng, nullptr)` 写出，
-  `wc_DecryptPKCS8Key` + `wc_GetPkcs8TraditionalOffset` 读回；三者都在 `HAVE_PKCS8` 下（`NO_PKCS8` 未定义即开启，本构建已够）。
-  `AES256CBCb` / `PBES2` / `PKCS5` 来自 `wolfssl/wolfcrypt/asn.h`（经 `types.h` → `oid_sum.h`），不是自造常量。
-- `AesGcm` 的增量形态缓冲全部输入（`P4`）；密文长度 == 明文长度，标签 16 字节另行存放。
-- `AesGcm::finish()` 在解密侧先验标签再返回明文，失败抛 `std::runtime_error` 并丢弃缓冲。
-- `Random` 是进程级 DRBG + 一把互斥锁，按 32 位分块；`size == 0` 是空操作。
-- 测试向量：HMAC = RFC 4231 case 2；AES-GCM = NIST SP 800-38D case 2；HKDF = RFC 5869 test case 1。
-- 升级 wolfSSL 后必查：`HAVE_GETPID` 在 MSVC 上会被误判（不然 `WC_RNG` 里的 `pid_t` 编译不过），
-  CMake 预置 `set(HAVE_GETPID OFF CACHE BOOL "" FORCE)` 必须在 `FetchContent_MakeAvailable` 之前。
-- 恒定时间比较用后端的 `wc_ConstantCompare()`（`wolfssl/wolfcrypt/memory.h`，5.9.4 起公开），不再自己写循环。
-- **options.h 会 `#undef` 它认识的每个宏**，所以命令行/`target_compile_definitions` 给消费者加的宏活不过 settings.h；
-  需要消费者也看到的宏（如 `WOLFSSL_AESGCM_STREAM`）在 `src/WolfSsl.hpp` 里“先 include settings.h，再 `#define`，再 include aes.h”。
-- AES-GCM 是流式（`wc_AesGcm{Encrypt,Decrypt}{Init,Update,Final}`，需 `WOLFSSL_AESGCM_STREAM`）；解密输出在 `finish()` 前不可信。
-- HKDF 在 `wc_HKDF` / `wc_HKDF_Extract` / `wc_HKDF_Expand`（wolfssl/wolfcrypt/hmac.h）；输出上限 `255 × digestSize`。
-- RSA 公钥导出用 `wc_RsaPublicKeyDerSize(key, 1)` + `wc_RsaKeyToPublicDer()`（后者在 `asn_public.h`，不在 `rsa.h`）。
-- PEM：编码用 `wc_DerToPem(der, sz, out, outSz, type)`（type 是 `CertType` 枚举：`PRIVATEKEY_TYPE`/`PUBLICKEY_TYPE`/
-  `ECC_PRIVATEKEY_TYPE`）；解码自己做（`src/Pem.cpp`），因为 `wc_KeyPemToDer` 写死了解私钥、解不了 `PUBLIC KEY`。
-- **wolfSSL 的构建旋钮**：CMake 选项名与宏名不同，写错会静默失效——`WOLFSSL_KEYGEN`（宏 `WOLFSSL_KEY_GEN`）、
-  `WOLFSSL_AESCTR`（宏 `WOLFSSL_AES_COUNTER`/`WOLFSSL_AES_DIRECT`）、`WOLFSSL_SP_MATH_ALL`（大整数后端，RSA/ECC 必需）、
-  `WOLFSSL_SYS_CA_CERTS off`（否则 crypt-only 下缺 `GetCA`）。
-- `WOLFCRYPT_ONLY` 必须 `PUBLIC` 地传给 wolfssl 与所有消费者：它改 `RsaKey` 等结构布局，
-  只给库时症状是“签名成功、验签恒假”。
-- RSA 调用要点：默认 `wc_RsaPublicEncrypt`/`wc_RsaPrivateDecrypt` 是 PKCS#1 v1.5（要 OAEP 用 `_ex`）；
-  `wc_RsaPSS_Verify` 只解密签名，比较要再调 `wc_RsaPSS_CheckPadding`；
-  `WC_RSA_BLINDING` 下私钥操作读 `key->rng`，先 `wc_RsaSetRNG`。
-- ECC 调用要点：`ECC_TIMING_RESISTANT` 下 `wc_ecc_shared_secret` 缺 `key->rng` 就报 `MISSING_RNG_E`（-236），
-  先 `wc_ecc_set_rng`；`wc_ecc_sign_hash` 写的是 **DER** 签名，缓冲区要给 `2×order+16` 余量（否则 `BUFFER_E`）。- **SEC1 的公钥点是可选的**：`wc_EccPrivateKeyDecode` 遇到不带公钥点的文件会把 `key->type` 设成 `ECC_PRIVATEKEY_ONLY`，
-  之后 `wc_ecc_export_x963` / `wc_EccPublicKeyToDer` 直接失败（而 `wc_ecc_verify_hash` 会自己补算，所以症状是“有时能过”）。
-  `EccKey::fromPrivateDer` 因此导入后立即 `wc_ecc_make_pub_ex(&key, nullptr, rng)` 补算。
-  自测时容易漏掉：验签会掩盖这个问题，导出公钥才暴露——测往返时必须调一次 `publicX963()`。
-- `wc_DecryptPKCS8Key` 是**原地**解密（明文写在密文上），必须传自己复制的缓冲区，用完 `wc_ForceZero`。
-- 旧式加密 PEM（`Proc-Type: 4,ENCRYPTED` + `DEK-Info:`）走 `wc_KeyPemToDer`，需要 `WOLFSSL_ENCKEYS`；
-  它的标签仍是 `RSA PRIVATE KEY`，所以不能靠标签认，要看体内有没有 `Proc-Type:` 头。它会要一个 **NUL 结尾**的口令。
-- 证书只取公钥：`wc_GetSubjectPubKeyInfoDerFromCert(certDer, sz, out, &outSz)`（`out` 为 NULL 时返回 0 并写 `outSz`），
-  结果直接喂 `RsaKey::fromPublicDer` / `EccKey::fromPublicDer`——两个导入器本来就收 SPKI。
-- **`WOLFSSL_MD5` 的默认是 disabled**，`Digest::kMd5` 的可用性不能靠预设的副作用；
-  `src/base/crypto/CMakeLists.txt` 里显式 `set(WOLFSSL_MD5 yes ...)`，否则另一个构建树里 `wc_Md5` 会未声明。- 代 RNG 的公共件：`src/base/crypto/src/WolfSsl.hpp` 的 `detail::RandomHandle`（每次操作一个上下文，无锁）。
-- `AesGcm` 用后端的 `wc_AesGcmEncrypt/Decrypt` 一次性入口，缓冲区自己铺；标签固定 16 字节。
-- 命令：`cmake --build build --config Debug --target test_crypto` → `build\bin\Debug\test_crypto.exe`。
-- 内存检查（Windows / MSVC ASAN，已验证 114 例全过无报告）：
+- The backend is wolfSSL **v5.9.4-stable** (a pinned tag in `src/base/crypto/CMakeLists.txt`), compiled
+  statically into `VineCrypto`; `WOLFSSL_USE_OPTIONS_H` makes the headers and the library see the same
+  `options.h`.
+- Backend global initialisation happens only in `detail::ensureLibraryInitialized()` in
+  `src/base/crypto/src/WolfSsl.cpp` (`std::call_once`). Skipping it crashes: `wc_InitRng` locks
+  `drbgStateMutex`, which only `wolfCrypt_Init()` initialises.
+- wolfSSL's headers define `Md5` / `Sha256` / `Sha384` as macros → our own enum values all take a `k`
+  prefix (`Digest::kSha256`).
+- `vn::crypto::Hmac` collides with wolfSSL's `::Hmac`: the backend context inside the PImpl must spell
+  `::Hmac`.
+- Digests have exactly one vocabulary: the `Digest` enum + one-shot `digest(Digest, span)` + the
+  incremental `Hasher`; `Hmac` / `RsaKey` / `EccKey` all take a `Digest`. `Hash` / `HashCalculator` /
+  `Hmac::Algorithm` are deleted (`ADR-2026-11-07-digest-vocabulary`).
+- Symmetric: `AesGcm` (AEAD, the default), `AesCbc` (PKCS#7), `AesCtr` (no padding) - the latter two
+  exist for interoperability only and neither authenticates.
+- Password hashing: `Argon2` (recommended; needs the CMake option `WOLFSSL_ARGON2`, which pulls in
+  BLAKE2b) and `Pbkdf2` (interoperability). Test vectors: PBKDF2 = RFC 6070's four vectors; AES-CBC =
+  NIST SP 800-38A F.2.1; AES-CTR = F.5.1.
+- Password-protected private keys: `RsaKey` / `EccKey`'s `toEncryptedPrivateDer/Pem` and
+  `fromEncryptedPrivateDer/Pem`, implemented only in `src/Pkcs8.cpp` (`detail::encryptPkcs8Der` /
+  `decryptPkcs8Der`). wolfSSL entry points: `wc_CreateEncryptedPKCS8Key(..., PKCS5, PBES2, AES256CBCb,
+  salt=nullptr, 0, itt, rng, nullptr)` to write, `wc_DecryptPKCS8Key` +
+  `wc_GetPkcs8TraditionalOffset` to read back; all three live under `HAVE_PKCS8` (enabled when
+  `NO_PKCS8` is undefined, which this build satisfies). `AES256CBCb` / `PBES2` / `PKCS5` come from
+  `wolfssl/wolfcrypt/asn.h` (via `types.h` → `oid_sum.h`); they are not home-made constants.
+- `AesGcm`'s incremental form buffers all input (`P4`); the ciphertext is as long as the plaintext and
+  the 16-byte tag is stored separately.
+- `AesGcm::finish()` verifies the tag on the decrypt side before returning plaintext; a failure throws
+  `std::runtime_error` and drops the buffer.
+- `Random` is one process-level DRBG plus one mutex, chunked in 32-bit pieces; `size == 0` is a no-op.
+- Test vectors: HMAC = RFC 4231 case 2; AES-GCM = NIST SP 800-38D case 2; HKDF = RFC 5869 test case 1.
+- After a wolfSSL upgrade, check: `HAVE_GETPID` is misdetected on MSVC (otherwise `pid_t` inside
+  `WC_RNG` does not compile), and CMake's preset `set(HAVE_GETPID OFF CACHE BOOL "" FORCE)` must come
+  before `FetchContent_MakeAvailable`.
+- Constant-time comparison uses the backend's `wc_ConstantCompare()` (public since 5.9.4, in
+  `wolfssl/wolfcrypt/memory.h`); we no longer hand-roll the loop.
+- **`options.h` `#undef`s every macro it knows**, so a macro a consumer adds through the command line
+  or `target_compile_definitions` does not survive settings.h; a macro consumers must also see (e.g.
+  `WOLFSSL_AESGCM_STREAM`) is handled in `src/WolfSsl.hpp` by "include settings.h, then `#define`, then
+  include aes.h".
+- AES-GCM is streaming (`wc_AesGcm{Encrypt,Decrypt}{Init,Update,Final}`, needing `WOLFSSL_AESGCM_STREAM`);
+  decrypted output is untrusted before `finish()`.
+- HKDF lives in `wc_HKDF` / `wc_HKDF_Extract` / `wc_HKDF_Expand`
+  (`wolfssl/wolfcrypt/hmac.h`); the output is capped at `255 × digestSize`.
+- RSA public-key export uses `wc_RsaPublicKeyDerSize(key, 1)` + `wc_RsaKeyToPublicDer()` (the latter in
+  `asn_public.h`, not `rsa.h`).
+- PEM: encoding uses `wc_DerToPem(der, sz, out, outSz, type)` (where `type` is a `CertType`:
+  `PRIVATEKEY_TYPE` / `PUBLICKEY_TYPE` / `ECC_PRIVATEKEY_TYPE`); decoding is ours (`src/Pem.cpp`)
+  because `wc_KeyPemToDer` is hard-wired to private keys and cannot read `PUBLIC KEY`.
+- **wolfSSL's build knobs**: the CMake option name differs from the macro name, and a wrong one fails
+  silently - `WOLFSSL_KEYGEN` (macro `WOLFSSL_KEY_GEN`), `WOLFSSL_AESCTR` (macros
+  `WOLFSSL_AES_COUNTER` / `WOLFSSL_AES_DIRECT`), `WOLFSSL_SP_MATH_ALL` (the big-integer backend RSA/ECC
+  require), `WOLFSSL_SYS_CA_CERTS off` (otherwise a crypt-only build misses `GetCA`).
+- `WOLFCRYPT_ONLY` must be passed `PUBLIC` to wolfssl and to every consumer: it changes the layout of
+  `RsaKey` and friends, and giving it only to the library produces "signing works, verification is
+  always false".
+- RSA call notes: `wc_RsaPublicEncrypt` / `wc_RsaPrivateDecrypt` default to PKCS#1 v1.5 (use the `_ex`
+  forms for OAEP); `wc_RsaPSS_Verify` only decrypts the signature, so the comparison needs
+  `wc_RsaPSS_CheckPadding`; under `WC_RSA_BLINDING` private operations read `key->rng`, so call
+  `wc_RsaSetRNG` first.
+- ECC call notes: under `ECC_TIMING_RESISTANT` `wc_ecc_shared_secret` reports `MISSING_RNG_E` (-236)
+  when `key->rng` is missing, so call `wc_ecc_set_rng` first; `wc_ecc_sign_hash` writes a **DER**
+  signature, so the buffer needs `2×order+16` of headroom (else `BUFFER_E`).
+- **SEC1's public point is optional**: on a file without the public point `wc_EccPrivateKeyDecode` sets
+  `key->type` to `ECC_PRIVATEKEY_ONLY`, after which `wc_ecc_export_x963` / `wc_EccPublicKeyToDer` simply
+  fail (while `wc_ecc_verify_hash` computes it itself, so the symptom is "sometimes it works").
+  `EccKey::fromPrivateDer` therefore calls `wc_ecc_make_pub_ex(&key, nullptr, rng)` right after import.
+  Easy to miss when self-testing: verification hides the problem and only exporting the public key
+  exposes it - a round-trip test must call `publicX963()` once.
+- `wc_DecryptPKCS8Key` decrypts **in place** (the plaintext overwrites the ciphertext), so pass a buffer
+  you copied and call `wc_ForceZero` afterwards.
+- Legacy encrypted PEM (`Proc-Type: 4,ENCRYPTED` + `DEK-Info:`) goes through `wc_KeyPemToDer` and needs
+  `WOLFSSL_ENCKEYS`; its label is still `RSA PRIVATE KEY`, so you cannot tell it by the label - look for
+  a `Proc-Type:` header in the body. It wants a **NUL-terminated** password.
+- A certificate yields its public key only: `wc_GetSubjectPubKeyInfoDerFromCert(certDer, sz, out,
+  &outSz)` (`out` NULL returns 0 and writes `outSz`), and the result feeds
+  `RsaKey::fromPublicDer` / `EccKey::fromPublicDer` directly - both importers already take SPKI.
+- **`WOLFSSL_MD5` is disabled by default**, so `Digest::kMd5`'s availability cannot rely on a preset's
+  side effect; `src/base/crypto/CMakeLists.txt` sets `set(WOLFSSL_MD5 yes ...)` explicitly, otherwise
+  `wc_Md5` is undeclared in another build tree.
+- RNG's shared piece: `detail::RandomHandle` in `src/base/crypto/src/WolfSsl.hpp` (one context per
+  operation, no lock).
+- `AesGcm` uses the backend's one-shot `wc_AesGcmEncrypt/Decrypt` entry points and lays the buffer out
+  itself; the tag is always 16 bytes.
+- Commands: `cmake --build build --config Debug --target test_crypto` →
+  `build\bin\Debug\test_crypto.exe`.
+- Memory checking (Windows / MSVC ASAN, verified: 114 cases, no report):
   `cmake -S . -B build-asan -G "Visual Studio 18 2026" -A x64 -DCMAKE_BUILD_TYPE=Debug `
   `-DCMAKE_PREFIX_PATH=D:/Qt/6.8.2/msvc2022_64 -DCMAKE_CXX_FLAGS="/fsanitize=address /Zi" `
   `-DCMAKE_EXE_LINKER_FLAGS=/fsanitize=address -DCMAKE_SHARED_LINKER_FLAGS=/fsanitize=address`
-  加 `-DFETCHCONTENT_SOURCE_DIR_<NAME>=build/_deps/<name>-src` 复用已下载的依赖（wolfssl / googletest / …）。
-  跑之前要把 `VC\Tools\MSVC\<ver>\bin\Hostx64\x64`（放着 `clang_rt.asan_dbg_dynamic-x86_64.dll`）放进 `PATH`，
-  否则进程直接 `0xC0000135`。`ASAN_OPTIONS=detect_leaks=1` 在该平台不支持，设了会直接报错退出。
+  plus `-DFETCHCONTENT_SOURCE_DIR_<NAME>=build/_deps/<name>-src` to reuse already-downloaded
+  dependencies (wolfssl / googletest / …). Before running, put `VC\Tools\MSVC\<ver>\bin\Hostx64\x64`
+  (which holds `clang_rt.asan_dbg_dynamic-x86_64.dll`) on `PATH`, otherwise the process exits with
+  `0xC0000135` immediately. `ASAN_OPTIONS=detect_leaks=1` is unsupported on this platform and makes the
+  process fail outright.

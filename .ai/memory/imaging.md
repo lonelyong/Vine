@@ -1,78 +1,92 @@
-# imaging 模块笔记
+# imaging notes
 
-> 模块定位、设计依据、被否决的方案：见 `.ai/design/imaging-design.md`。
-> 这里只记**结论 + 判据**，方便下次直接接着干。
+> Module positioning, the rationale and the rejected alternatives: `.ai/design/imaging-design.md`.
+> This file records **conclusions + criteria** only, so the next session can pick up directly.
 
-## 事实速查
+## Facts
 
-- 目录 `src/base/imaging/`，短名 **`Imaging`** → 别名 `vn::Imaging`，宏 `VN_IMAGING_API` / `VN_IMAGING_LIB`，
-  命名空间 `vn::imaging`，头 `<vine/imaging/...>`。
-- 依赖 **只有 `vn::Core vn::Global`**（叶子，与 `geometry` 同级）。
-- 注册点：`src/base/CMakeLists.txt` 的 `add_subdirectory(imaging)`（放在 `geometry` 之后）、
-  `tests/CMakeLists.txt` 的 `add_subdirectory(test_imaging)`。
-- **改完新文件必须 `cmake -S . -B build`**：`vn_add_library` 用 `file(GLOB_RECURSE ...)` 且**没有**
-  `CONFIGURE_DEPENDS`。
+- Directory `src/base/imaging/`, short name **`Imaging`** → alias `vn::Imaging`, macros
+  `VN_IMAGING_API` / `VN_IMAGING_LIB`, namespace `vn::imaging`, headers `<vine/imaging/...>`.
+- Depends on **`vn::Core` and `vn::Global` only** (a leaf, the same level as `geometry`).
+- Registration points: `add_subdirectory(imaging)` in `src/base/CMakeLists.txt` (after `geometry`) and
+  `add_subdirectory(test_imaging)` in `tests/CMakeLists.txt`.
+- **A new file needs `cmake -S . -B build`**: `vn_add_library` uses `file(GLOB_RECURSE ...)` **without**
+  `CONFIGURE_DEPENDS`.
 
-## 分工铁律
+## The division that must hold
 
-> **CPU 像素 / 图像数据 → `imaging`；GPU 资源（format / mip / sampler / usage）→ `graphics`。**
-> 自问：*"这东西在 headless、无渲染器、无 Qt 的环境里有意义吗？"* 有 → `imaging`。
+> **CPU pixels / image data → `imaging`; GPU resources (format / mip / sampler / usage) → `graphics`.**
+> Ask yourself: *"does this make sense headless, with no renderer and no Qt?"* If yes → `imaging`.
 
-## 2026-09-12 第一批：模块建立 + `PixelFormat` + `Image`
+## 2026-09-12, first batch: the module, `PixelFormat` and `Image`
 
-**背景**：SDK 里像素数据此前**没有对象** —— 材质贴图只是一个路径字符串
-（`Material::textureFile() -> String`），`loaders/` 零像素解码，全库零读回路径。
-`ImageRef.hpp` 的注释自己承认这个洞（"a material texture is a file PATH"）。
+**Background**: the SDK had **no object** for pixel data - a material texture was just a path string
+(`Material::textureFile() -> String`), `loaders/` decoded no pixels at all, and the whole library had no
+readback path. `ImageRef.hpp`'s own comment admitted the hole ("a material texture is a file PATH").
 
-**拍定的方案**：
-- `Image`（CPU 像素）**不放** `graphics`（会让 `meshio` **依赖渲染器**；`graphics → Geometry` 说明顶点数据在
-  其**下面**，像素数据不该在上面）；**不放** `window`（名字硬凑；改名要同步短名/目录名/宏名/别名四处，漏一处
-  Windows 上 `dllimport` 自炸）；**新建叶子模块** `imaging`。
-- `Texture` 留 `graphics`，**当前只做 2D + Cube**，不做 1D/3D/array。
-- `Image` 也**不能**是 `QImage`（graphics 是 Qt-free；QImage 在 `Qt6::Gui`），Qt 桥留 `appfw`。
+**Decisions taken**:
+- `Image` (CPU pixels) does **not** go into `graphics` (it would make `meshio` **depend on the
+  renderer**; `graphics → Geometry` shows vertex data sits **below** graphics, and pixel data must not
+  sit above it); it does **not** go into `window` (a forced name, and renaming means touching the short
+  name, the directory, the macro and the alias in four places - miss one and `dllimport` blows up on
+  Windows); instead a **new leaf module** `imaging`.
+- `Texture` stays in `graphics` and **covers 2D + Cube only** for now; no 1D/3D/array.
+- `Image` also **cannot** be a `QImage` (graphics is Qt-free; `QImage` lives in `Qt6::Gui`); the Qt bridge
+  stays in `appfw`.
 
-**落地**：
-- `PixelFormat`：18 个真格式 + `Unknown`；查询走**自由函数** `channelCount`/`bytesPerPixel`/
-  `isDepthFormat`/`isSrgbFormat`/`formatName`（加格式只教一处）；
-  实现用 `switch` **覆盖全部枚举值**（不用 `default:`），靠 `-Wswitch` 强制新格式被处理；
-  越界强转统一读作 `Unknown`。
-- `Image`：`Object` + `RefCounted`；一次分配存整条 mip 链（`mip_offsets_` N+1 项，末项是哨兵）；
-  mip 层 N = `max(1, w>>N) x max(1, h>>N)`；像素**零初始化**；
-  访问器**夹取**越界 mip（`noexcept`，尺寸查询不是发现 bug 的地方）；
-  构造函数对非正尺寸 / 像素大小为 0 的格式 / 越界 mip 数**抛 `std::invalid_argument`**。
-- **cube map = 六个 `Image`**，`Image` 不带 face 轴（加 face 轴会让所有普通 2D 图调用方背 `faces = 1` 特例）。
+**Landed**:
+- `PixelFormat`: 18 real formats + `Unknown`; queries are **free functions** (`channelCount` /
+  `bytesPerPixel` / `isDepthFormat` / `isSrgbFormat` / `formatName`), so a new format teaches one place;
+  the implementation is a `switch` **covering every enumerator** (no `default:`), so `-Wswitch` forces a
+  new format to be handled; an out-of-range cast reads as `Unknown`.
+- `Image`: `Object` + `RefCounted`; one allocation holds the whole mip chain (`mip_offsets_` has N+1
+  entries, the last a sentinel); mip level N is `max(1, w>>N) x max(1, h>>N)`; pixels are
+  **zero-initialised**; accessors **clamp** an out-of-range mip (`noexcept`: a size query is not where a
+  bug is discovered); the constructor **throws `std::invalid_argument`** for a non-positive size, a
+  zero-sized pixel format or an out-of-range mip count.
+- **A cube map is six `Image`s**; `Image` carries no face axis (adding one would make every ordinary 2D
+  caller carry the `faces = 1` special case).
 
-**判据**：`test_imaging` **19 tests / 3 suites** 全过（新建）；全量 `ninja` **零 error / 零 warning**；
-`test_graphics`、`test_vsg` **无回归**（纯新增叶子模块，未改既有源文件）。
+**Criteria**: `test_imaging` **19 tests / 3 suites** green (newly created); a full `ninja` with **zero
+errors / zero warnings**; `test_graphics` and `test_vsg` **no regression** (a pure new leaf module, no
+existing source touched).
 
-**未做（明确推迟）**：**后端仍不消费 `Texture`**（face / mip 链不上传、不建 sampler、不进描述符集）；
-图像解码 / 读回路径未有；`RenderTarget` 自己的 `ColorFormat`/`DepthFormat` 与 `imaging::PixelFormat` **重复**，
-应并入后者（改公开 API，需单独一批）。
+**Not done (deliberately postponed)**: **the backend still does not consume `Texture`** (no face / mip
+upload, no sampler, no descriptor set); no image decoding or readback path; `RenderTarget`'s own
+`ColorFormat`/`DepthFormat` **duplicate** `imaging::PixelFormat` and should merge into it (a public API
+change, so its own batch).
 
-## 2026-09-12 第二批：`graphics::Texture`（2D + Cube）+ `Material` 迁移
+## 2026-09-12, second batch: `graphics::Texture` (2D + Cube) and the `Material` migration
 
-**前置事实**：`Material::textureFile()` 那个路径字符串在 `src/` 里**零调用**，只有一个测试引用 —— 是个死 API，
-正是 `ImageRef.hpp` 注释里说的那个洞（*"a material texture is a file PATH"*）。
+**Prerequisite fact**: `Material::textureFile()`'s path string had **zero calls** in `src/` and one test
+reference - a dead API, exactly the hole `ImageRef.hpp`'s comment described (*"a material texture is a
+file PATH"*).
 
-**落地**：
-- 新增 `graphics::Texture`（`Object` + `RefCounted`，与 `Material`/`ImageRef` 同族）：
-  `Shape{D2,Cube}`、`layerCount()`（D2=1 / Cube=6）、`width/height/format/mipCount`、
-  `setLayer(layer, intrusive_ptr<const imaging::Image>)` / `layer(index)` / `hasLayer(layer)` / `isComplete()`。
-- **跟 `RenderTarget` 同一个模式**：SDK 类型是**逻辑描述**，不持 GPU 对象；后端物化它。
-- 源图必须与描述在 **format / size / mipCount 三项都一致**（不一致在**调用处**就拒绝，
-  不让后端到上传时才发现）。
-- 读越界 face 是**查询**（答"没有这个 face"，返回 null）；写越界 face 抛 `std::out_of_range`。
-- mip 上限**复用** `imaging::Image::mipCapacity`，而不是重述规则。
-- `graphics` 现在 **PUBLIC 依赖 `vn::Imaging`**。
-- `Material`：删 `textureFile()`/`setTextureFile()`（死 API），改
-  `texture()`/`setTexture(intrusive_ptr<Texture>)`。
+**Landed**:
+- A new `graphics::Texture` (`Object` + `RefCounted`, the same family as `Material`/`ImageRef`):
+  `Shape{D2,Cube}`, `layerCount()` (D2=1 / Cube=6), `width/height/format/mipCount`,
+  `setLayer(layer, intrusive_ptr<const imaging::Image>)` / `layer(index)` / `hasLayer(layer)` /
+  `isComplete()`.
+- **The same pattern as `RenderTarget`**: the SDK type is a **logical description**, holds no GPU object,
+  and a backend materialises it.
+- A source image must agree with the description on **all of format / size / mipCount** (a mismatch is
+  refused **at the call site**, not left for the backend to discover during upload).
+- Reading an out-of-range face is a **query** (answer "there is no such face", return null); writing one
+  throws `std::out_of_range`.
+- The mip cap **reuses** `imaging::Image::mipCapacity` instead of restating the rule.
+- `graphics` now **depends PUBLICly on `vn::Imaging`**.
+- `Material`: `textureFile()`/`setTextureFile()` deleted (the dead API) and replaced by
+  `texture()`/`setTexture(intrusive_ptr<Texture>)`.
 
-**判据**：`test_graphics` **191 → 200**（+9 = 8 个 `TextureTest` + 1 个 `MaterialTest`）；
-全量 `ninja` 零 error / 零 warning；`vsg_selftest_evidence.sh` → PASS（**45 行逐字节相同**，后端零改动）；
-`gfx_lavapipe_check.sh` → PASS（0 VUID）；`check_diagnostic_formats.py` → 0 suspicious。
+**Criteria**: `test_graphics` **191 → 200** (+9 = 8 `TextureTest` cases + 1 `MaterialTest`);
+a full `ninja` with zero errors / zero warnings; `vsg_selftest_evidence.sh` → PASS (**45 lines
+byte-identical**, the backend untouched); `gfx_lavapipe_check.sh` → PASS (0 VUID);
+`check_diagnostic_formats.py` → 0 suspicious.
 
-> 对账注（2026-09-25）：本文件上面"未做（明确推迟）"里的两条**已过期**——**"后端仍不消费 `Texture`"**
-> （重写版已消费：face 0 / Cube 六层、mip 链、sampler 含各向异性、采样描述符集）与**"读回路径未有"**
-> （后端层已有离屏 `readColorBuffer/readDepthBuffer`，`test_vsg` 像素相位在用）；仍真的是 **mip 生成**
-> （解码只产 1 级）、**`Image` 级包装与窗口读回**、**`PixelFormat` 合并**。现况见
-> `.ai/design/imaging-design.md` §7 的 2026-09-25 对账。
+> Reconciliation note (2026-09-25): two items in this file's "Not done (deliberately postponed)" above are
+> **out of date** - **"the backend still does not consume `Texture`"** (the rewritten backend does: face
+> 0 / six Cube layers, the mip chain, an anisotropic sampler, the sampling descriptor set) and **"no
+> readback path"** (the backend layer has off-screen `readColorBuffer`/`readDepthBuffer`, used by
+> `test_vsg`'s pixel phase); what is still true is **mip generation** (decoding produces one level),
+> **an `Image`-level wrapper and window readback**, and **the `PixelFormat` merge**. For the current
+> state see the 2026-09-25 reconciliation in `.ai/design/imaging-design.md` §7.

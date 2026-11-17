@@ -1,64 +1,84 @@
-# async 模块要点（`src/base/async`）
+# async notes (`src/base/async`)
 
-> **已知 flake（2026-10-13 观测，未修）**：`test_async` 会**间歇挂死** —— 一次 CTest 全量里它跑了 **7 分钟以上、
-> CPU 只累计 0.2 s、20 个线程**（进程活着但不再前进）；同期另一轮它照常通过。“挂”和“过”都不产生新日志，
-> 所以怀疑是等待者/唤醒那条路上的死锁（三条铁律的边界）。触发 = 下次被它挡住门禁时；定位需要堆栈，
-> 别当成新问题重新推一遍。
+> **Known flake (observed 2026-10-13, unfixed)**: `test_async` **sometimes hangs** - in one full CTest
+> run it ran for **over 7 minutes, accumulated 0.2 s of CPU across 20 threads** (the process was alive
+> but stopped progressing), while another run the same day passed. Neither the hang nor the pass produces
+> a new log line, so the suspicion is a deadlock on the waiter/waker path (the boundary of the three
+> iron rules). Trigger = the next time it blocks the gate; finding it needs a stack trace, so do not
+> re-derive it as a new problem.
 
-> 详细设计、与 cppcoro/P2300 的差异、已知风险：`.ai/design/async-design.md`。
+> Detailed design, the differences from cppcoro/P2300 and the known risks: `.ai/design/async-design.md`.
 
-> **已知红（2026-10-19 观测，未修）**：`ctest` 的 `test_async` 在本机**稳定失败**于
-> `AsyncDefectRegressionTest.YieldLoopStackIsConstant`（`depth 319936` vs 期望 `< 65536`；单跑
-> 同样红，不是 flake）。注释写“buggy build ~1.7 MB”，实际 312 KB 仍超阈值 ⇒ 疑似编译器/构建类型
-> 相关的帧尺寸变化。与 graphics 无关，但会让全量 `ctest` 长期停在 23/24 —— 下次碰 async 时先看这里。
-> 下一步（P2）设计与 go/no-go：`.ai/backlog/async.md`。
-> 本文件只放"干活时需要立刻想起的东西"。
+> **Known red (observed 2026-10-19, unfixed)**: `ctest`'s `test_async` **fails reliably** on this machine
+> at `AsyncDefectRegressionTest.YieldLoopStackIsConstant` (`depth 319936` vs the expected `< 65536`; it
+> fails the same way when run alone, so it is not a flake). The comment says "buggy build ~1.7 MB" while
+> the measured 312 KB still exceeds the threshold ⇒ suspected compiler/build-type-dependent frame size.
+> Unrelated to graphics, but it keeps a full `ctest` at 23/24 - look here first when async is next
+> touched. Next step (P2) design and go/no-go: `.ai/backlog/async.md`.
+> This file holds only "what to remember the moment you start working".
 
-## 结构
+## Structure
 
-- 纯 header-only，`vn::Async` 是 INTERFACE 目标（只依赖 `vn::Global` + `vn::Core`）。
-- 26 个头文件；头文件都在 `sdk/vine/async/`，类在 `namespace vn::async`。
-- 任务：`Task<T>`（惰性/单消费者）、`SharedTask<T>`（可复制/缓存结果）、`DetachedTask`（eager/自毁）、`Scope`。
-- 组合：`whenAll` / `whenAny`（vector + 变参，含全 void 变参）、`withTimeout`、`retry`、`transform`、`andThen`。
-- 原语：`AsyncEvent`、`AsyncLatch`、`AsyncMutex`(+`AsyncLockGuard`)、`AsyncConditionVariable`、`AsyncSemaphore`、
-  `AsyncReaderWriterLock`、`AsyncQueue`、`TaskCompletionSource`、`sleepFor`（共享定时服务）、`yield`。
-- 概念：`Awaitable`（像 co_await 一样展开 `operator co_await`）、`Schedulable`、`StorableValue`。
+- Pure header-only; `vn::Async` is an INTERFACE target (depending only on `vn::Global` + `vn::Core`).
+- 26 headers; all under `sdk/vine/async/`, classes in `namespace vn::async`.
+- Tasks: `Task<T>` (lazy, single consumer), `SharedTask<T>` (copyable, caches the result),
+  `DetachedTask` (eager, self-destroying), `Scope`.
+- Combinators: `whenAll` / `whenAny` (vector and variadic, including all-void variadic), `withTimeout`,
+  `retry`, `transform`, `andThen`.
+- Primitives: `AsyncEvent`, `AsyncLatch`, `AsyncMutex` (+`AsyncLockGuard`), `AsyncConditionVariable`,
+  `AsyncSemaphore`, `AsyncReaderWriterLock`, `AsyncQueue`, `TaskCompletionSource`, `sleepFor` (a shared
+  timer service), `yield`.
+- Concepts: `Awaitable` (expands `operator co_await` the way co_await does), `Schedulable`,
+  `StorableValue`.
 
-## 三条铁律
+## The three iron rules
 
-1. **一个完成唤醒 N 个等待者**：每轮锁内只出队一个，锁外 resume；绝不"整体换出再逐个 resume"
-   （`SharedTask` 2026-09-17 的 UAF 就是这么来的）。世代号做边界（`AsyncEvent::set_epoch_`），不用队尾指针。
-2. **能对称转移就 `return handle`**，不要 `h.resume()`（否则每层 await 多一帧，`yield` 循环会爆栈）。
-3. **绝不跨 resume 持有锁、也不在取消者的栈上 resume**（后者见 `Sleep.hpp::requestAbort` 的 `early_` 队列设计；
-   第四轮 `test_gui` 全量回归就是这条踩出来的）。
+1. **One completion wakes N waiters**: dequeue one under the lock per round and resume outside it; never
+   "swap the whole set out and resume them one by one" (that is where `SharedTask`'s 2026-09-17 UAF came
+   from). The generation counter (`AsyncEvent::set_epoch_`) is the boundary, not a tail pointer.
+2. **When a symmetric transfer is possible, `return handle`** rather than `h.resume()` (otherwise every
+   await level adds a frame and a `yield` loop overflows the stack).
+3. **Never hold a lock across a resume, and never resume on the canceller's stack** (the latter is why
+   `Sleep.hpp::requestAbort` has its `early_` queue; the fourth `test_gui` full regression found this).
 
-## 契约与边界
+## Contracts and boundaries
 
-- 挂起中的协程**不能**与"正在完成它的线程"并发销毁（`async_global.hpp`）；**放弃等待**是支持的（awaiter 自我注销）。
-- 取消是显式传 `CancellationToken`（= `std::stop_token`）；组合子在取消/超时时**直接销毁**未完成的孩子，
-  不是 P2300 的"请求停止 + 等它收尾"。
-- `AsyncConditionVariable` 的空等待通知用**粘性标记**保留（偏离 `std::condition_variable`，是刻意设计）。
-- `Task`/`SharedTask`/`Generator` 的值类型受 `StorableValue` 约束：**不支持引用/数组/函数型别**（用指针或 `reference_wrapper`）。
-- `whenAll`/`whenAny` 变参只支持"全 void"或"全非 void"，混合的用 `vector<AnyTask>` + `discard()`。
-- `AsyncMutex::try_lock` / `AsyncSemaphore::try_acquire` 用 snake_case（对齐 std），是仓库 camelCase 规则的**刻意例外**。
-- **阻塞取结果只有两道门**（2026-09-26）：`Task::result()` = 纯阻塞（C# 的 `task.Result`，连死锁坑一样：
-  body 下一步若需要调用线程继续转，就自己把自己锁死）/ `runToCompletion(task, pump)` = 同一条驱动 + 每 200 µs
-  一次 `pump()`（泵由调用者传，async **不装全局泵**）。`SyncWait.hpp` 与 `syncWait()` 已删。<!-- drift-ok -->
+- A suspended coroutine **must not** be destroyed concurrently with the thread that is completing it
+  (`async_global.hpp`); **abandoning the wait** is supported (the awaiter deregisters itself).
+- Cancellation is an explicit `CancellationToken` (= `std::stop_token`); on cancellation/timeout a
+  combinator **destroys** its unfinished children outright, rather than P2300's "request stop, then wait
+  for it to finish".
+- `AsyncConditionVariable` keeps a notification for a zero wait with a **sticky flag** (a deliberate
+  deviation from `std::condition_variable`).
+- `Task` / `SharedTask` / `Generator` value types are constrained by `StorableValue`: **no references,
+  arrays or function types** (use a pointer or `reference_wrapper`).
+- Variadic `whenAll` / `whenAny` support only "all void" or "all non-void"; a mixed set goes through
+  `vector<AnyTask>` + `discard()`.
+- `AsyncMutex::try_lock` / `AsyncSemaphore::try_acquire` use snake_case (matching std) and are a
+  **deliberate exception** to the repository's camelCase rule.
+- **Blocking for a result has exactly two doors** (2026-09-26): `Task::result()` = pure blocking (C#'s
+  `task.Result`, with the same deadlock trap: if the body's next step needs the calling thread to keep
+  pumping, it locks itself up) / `runToCompletion(task, pump)` = the same drive with a `pump()` every
+  200 µs (the pump comes from the caller; async installs **no global pump**). `SyncWait.hpp` and `syncWait()` are deleted. <!-- drift-ok -->
 
-## 重复实现（已处理）
+## Duplicate implementations (resolved)
 
-- `vn::appfw::async::sleep()` **已删除**（2026-09-17）：与 `vn::async::sleepFor()` 重复且已无调用者，
-  连同 `test_asyncqt` 的两个用例一起移除。`appfw::async::Scheduler`（Qt 事件循环调度）不重复，保留。
+- `vn::appfw::async::sleep()` was **deleted** (2026-09-17): it duplicated `vn::async::sleepFor()` and had
+  no callers left; two `test_asyncqt` cases were removed with it. `appfw::async::Scheduler` (Qt event
+  loop scheduling) is not a duplicate and stays.
 
-## 陷阱
+## Traps
 
-- **协程帧的创建线程必须活到协程结束**：在会退出的线程上创建 `DetachedTask` 并让它挂起、再由别的线程恢复
-  ⇒ 帧所在的那段栈随线程退出而消失，恢复即 SIGSEGV（2026-09-17 实测：`gdb` 里崩溃点的 `this` 落在
-  已退出线程的栈区间）。要跨线程恢复，就让创建线程留在事件循环或 `Task::result()` 里：
-  `test_asyncqt` 的 `MainThreadDispatcherResumesOnApplicationThread` 是范式——应用线程创建，
-  先被定时器线程恢复（断言"确实不在应用线程"），再跳回应用线程。
+- **The thread that creates a coroutine frame must outlive the coroutine**: create a `DetachedTask` on a
+  thread that will exit, let it suspend and resume it from another thread ⇒ the stack segment holding
+  the frame disappears with that thread and the resume is a SIGSEGV (measured 2026-09-17: in `gdb` the
+  crash site's `this` pointed into an exited thread's stack). To resume across threads, keep the creating
+  thread in an event loop or in `Task::result()`: `test_asyncqt`'s
+  `MainThreadDispatcherResumesOnApplicationThread` is the pattern - the application thread creates, a
+  timer thread resumes first (asserting "definitely not on the application thread"), then it hops back.
 
-## 命令
+## Commands
 
-- 构建+跑：`cmake --build build --target test_async && ./build/bin/test_async`（当前 140 条）。
-- TSan/ASan 配方、以及"让过期 resume 缺陷变确定"的手法（帧内 padding + `Task::result()` 后 settle）见设计文档 §7。
+- Build and run: `cmake --build build --target test_async && ./build/bin/test_async` (140 cases today).
+- The TSan/ASan recipes, and the trick that makes a stale-resume defect deterministic (padding inside the
+  frame plus settling after `Task::result()`), are in the design doc §7.
