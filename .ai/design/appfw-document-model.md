@@ -1,300 +1,286 @@
-# appfw 文档模型设计
+# appfw's document model
 
-> **状态**：现行
-> **最后核对**：2026-10-28
-> **范围**：文档身份/生命周期、打开与保存、类型元数据、视图层与中央客户区。
-> **权威来源**：`Document.hpp`、`DocumentManager.hpp`、`DocumentView.hpp`、`tests/test_appfw` / `tests/test_gui`。
-> **待办**：无（开放项见 `../backlog/`）
+> **Status**: current
+> **Last verified**: 2026-10-28
+> **Scope**: document identity and lifetime, opening and saving, type metadata, the view layer and the central client area.
+> **Sources**: `Document.hpp`, `DocumentManager.hpp`, `DocumentView.hpp`, `tests/test_appfw` / `tests/test_gui`.
+> **Backlog**: none (open items are in `../backlog/`)
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-`RenderControl` 给一个控件 = 一个原生 surface = 一个 `RenderEngine` = 一个 `SceneView`；外壳拥有控件与会话，
-内容插件往里填 scene。没有身份、没有生命周期、没有“关闭/保存/最近打开” ⇒ 那只是**视图内容**，不是文档。
+A `RenderControl` gives one widget = one native surface = one `RenderEngine` = one `SceneView`; the shell owns the widget and the session, and a content plugin fills in the scene.
+That is **view content**, not a document: it has no identity and no lifetime, and nothing to close, save or reopen — so an app that needs those invents them again.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 框架定义**文档身份 + 生命周期**：`Document` + `DocumentManager`。
-- 文档类型由插件注册；打开按载荷类型路由；保存写回文档来源。
-- 视图层按文档实例；中央区由宿主决定怎么摆。
-- 多文档：每个打开的文档一格 tab（只有一份时不显示条）；视图可以浮到自己的顶层窗口，并且只能停回中央区。
+- The framework defines **document identity and lifetime**: `Document` + `DocumentManager`.
+- Document types are registered by plugins; opening routes by the payload's type; saving writes back to the document's source.
+- The view layer is instantiated per document; how the central area is laid out is the host's decision.
+- Multiple documents: one tab per open document (the bar is hidden when there is only one); a view may float into a top-level window of its own and can only dock back into the central area.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不定义区域数量、标签、布局、单/多文档、展示类型集合。
-- 不让 `core` 认识 `Vfs`/IO；`Document::save()` 无参数。
-- 不做 `closeAll()`、`dirtyChanged`、按插件记 owner。
-- 多窗口（一个文档一个顶层窗口）不在本设计范围。
-- 默认宿主同一时刻只**显示一个**视图（tab 风格）；多个视图并排可见（MDI/分屏）不做，几块 3D 区并排由**视图自己的窗格**表达（见 `../decisions/ADR-2026-10-24-tabs-not-mdi.md`）。
-  **浮动**是另一个顶层窗口（每个窗口仍只有一个可见视图），且**文档不进停靠树**（见 `../decisions/ADR-2026-10-28-document-tabs-and-floating.md`）。
+- Not defining how many areas exist, the tabs, the layout, single vs multiple documents, or the set of display kinds.
+- `core` does not learn about `Vfs` or IO; `Document::save()` takes no arguments.
+- No `closeAll()`, no `dirtyChanged`, no per-plugin owner.
+- Multiple windows (one top-level window per document) are outside this design.
+- The default host **shows one** view at a time (tab style); several views side by side (MDI / split) are not done, and several 3D areas side by side are expressed by **the view's own panes** (see `../decisions/ADR-2026-10-24-tabs-not-mdi.md`).
+  **Floating** is another top-level window (each window still shows one view), and **a document never enters the docking tree** (see `../decisions/ADR-2026-10-28-document-tabs-and-floating.md`).
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-框架只定义“文档”（身份 + 生命周期）与“文档类型”的注册；打开 = `open(payload)` 按载荷的 C++ 类型路由，
-位置是 `Vfs + 虚拟路径`，保存写回 `DocumentSource`；有几个区、怎么摆、什么展示归具体 app。
+The framework defines only "a document" (identity + lifetime) and the registration of "document types"; opening = `open(payload)` routed by the payload's C++ type, the location is `Vfs + virtual path`, saving writes back through `DocumentSource`; how many areas exist, how they are laid out and what is displayed belongs to the concrete app.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 三条不同的轴
+### 2.1 Three different axes
 
-| 轴 | 归谁 |
+| Axis | Owned by |
 | --- | --- |
-| surface + 设备 + attach 时机（会话） | 外壳（一个窗口一个会话，管“画在哪”） |
-| camera + content scene + 操纵器（视图状态） | 文档类型提供的视图 |
-| 身份 + 生命周期 + 数据（文档） | 框架持生命周期，插件提供类型 |
+| surface + device + when to attach (the session) | the shell (one session per window, deciding "where it is drawn") |
+| camera + content scene + manipulators (view state) | the view the document type provides |
+| identity + lifetime + data (the document) | the framework holds the lifetime, the plugin provides the type |
 
-### 2.2 框架的面积
+### 2.2 The framework's surface area
 
-| 层 | 内容 |
+| Layer | Content |
 | --- | --- |
-| core SDK（无 Qt） | `Document` + `DocumentManager`（类型注册、`create`/`open`/`close`/`current`、三个事件） |
+| core SDK (no Qt) | `Document` + `DocumentManager` (type registration, `create`/`open`/`close`/`current`, three events) |
 | gui SDK | `DocumentView` + `DocumentViewRegistry` + `CentralDocumentHost` |
-| 具体 app（外壳插件） | 决定单/多文档、用不用默认宿主、区域怎么摆 |
-| 插件（文档类型） | 注册 typeId + 视图工厂，决定展示形态 |
+| the concrete app (a shell plugin) | decides single vs multiple documents, whether to use the default host, how the areas are laid out |
+| a plugin (a document type) | registers a typeId + a view factory and decides how it is displayed |
 
-一条判据：只开表格文档的 app 不该为 3D 付钱；多文档 app 不该需要 N 个 device；单文档 app 不该写标签条代码。
+One criterion: an app that only opens table documents should not pay for 3D; a multi-document app should not need N devices; a single-document app should not write tab-bar code.
 
-### 2.3 所有权
+### 2.3 Ownership
 
-- `DocumentManager` 进程一份，挂在 `Application::documentManager()`，建在 `initialize()`，早于插件加载。
-- 管理器拥有文档；`current` 是其中一个或 nullptr。
-- 视图层只在 `GuiApplication`；视图按文档实例，`content()` 是放进中央区的东西。
-- 中央区是单槽，`setCentralWidget()` 会重父化（Qt 重建原生窗口）⇒ 放一个容器、只装一次、内部 `QStackedWidget` 切页。
+- `DocumentManager` is one per process, hung on `Application::documentManager()`, created in `initialize()` before plugins load.
+- The manager owns the documents; `current` is one of them or nullptr.
+- The view layer lives in `GuiApplication` only; a view is instantiated per document and `content()` is what goes into the central area.
+- The central area is a single slot, and `setCentralWidget()` reparents (Qt recreates the native window) ⇒ put a container in it, install it once, and switch pages inside it with a `QStackedWidget`.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 文档语义 | `Document` 纯数据 + 生命周期；`DocumentManager` 管集合/当前/事件 | 已落地 |
-| F2 | 类型注册 | `registerType(type_id, display_name, factory)`；重名拒绝 | 已落地 |
-| F3 | 打开 | `open(payload)` 按载荷 C++ 类型路由 | 已落地 |
-| F4 | 保存 | `save()` 无参写回 `DocumentSource`；基类默认拒绝 | 已落地 |
-| F5 | 视图层 | `DocumentView` + 注册表 + 中央宿主（tab 条、浮动窗口） | 已落地 |
-| F6 | 类型元数据/面板 | `DocumentTypeInfo` + `DocumentManagerDialog` | 已落地 |
+| F1 | Document semantics | `Document` is pure data + lifetime; `DocumentManager` holds the set, the current one and the events | landed |
+| F2 | Type registration | `registerType(type_id, display_name, factory)`; a duplicate is refused | landed |
+| F3 | Opening | `open(payload)` routes by the payload's C++ type | landed |
+| F4 | Saving | `save()` writes back through `DocumentSource` with no arguments; the base class refuses by default | landed |
+| F5 | The view layer | `DocumentView` + the registry + the central host (tab bar, floating windows) | landed |
+| F6 | Type metadata / panel | `DocumentTypeInfo` + `DocumentManagerDialog` | landed |
 
-### 3.1.1 F1 文档语义
+### 3.1.1 F1 Document semantics
 
-- **行为**：`Document` 有 `typeId/title/isDirty/canClose` + `source()`/`save()`；`DocumentManager` 有
-  `create`/`open`/`close`/`current`、`findByTitleOrTypeId()`（标题优先，返回全部匹配）与三个事件。
-- **约束**（C1）：`create` 不动 `current`；`setCurrent` 只接受本管理器拥有的文档；值没变不发事件。
-- **要求**（R1）：`close(doc)` 先问 `canClose()`；被拒返回 false，集合与 current 不动。
-- **验收**（T1）：`tests/test_appfw/DocumentTest.cpp`。
-- **注意**（N1）：被关文档先出集合再发事件；事件期间对象仍活着；`currentChanged(null)` 先于 `closed`。
+- **Behaviour**: `Document` has `typeId/title/isDirty/canClose` + `source()` / `save()`; `DocumentManager` has `create`/`open`/`close`/`current`, `findByTitleOrTypeId()` (title first, returning every match) and the three events.
+- **Constraints** (C1): `create` does not touch `current`; `setCurrent` accepts only a document this manager owns; no event when the value does not change.
+- **Requirements** (R1): `close(doc)` asks `canClose()` first; a refusal returns false and leaves the set and `current` alone.
+- **Acceptance** (T1): `tests/test_appfw/DocumentTest.cpp`.
+- **Caveat** (N1): a closing document leaves the set before the event fires; the object is still alive during the event; `currentChanged(null)` comes before `closed`.
 
-### 3.1.2 F2 类型注册
+### 3.1.2 F2 Type registration
 
-- **行为**：`registerType(type_id, display_name, factory)`；一个 id 一个类型。
-- **约束**（C2）：重名拒绝；空 id / 空工厂拒绝。
-- **要求**（R2）：工厂返回的文档 `typeId()` 与注册不符 ⇒ nullptr + warning。
-- **验收**（T2）：`DocumentTest` 的注册/重复注册用例。
-- **注意**（N2）：注册必须在插件 `load()` 里；管理器早于插件加载建好。
+- **Behaviour**: `registerType(type_id, display_name, factory)`; one type per id.
+- **Constraints** (C2): a duplicate is refused; an empty id or an empty factory is refused.
+- **Requirements** (R2): a factory whose document reports a `typeId()` that differs from the registration ⇒ nullptr plus a warning.
+- **Acceptance** (T2): the registration / duplicate-registration cases in `DocumentTest`.
+- **Caveat** (N2): registration must happen in the plugin's `load()`; the manager exists before plugins load.
 
-### 3.1.3 F3 打开
+### 3.1.3 F3 Opening
 
-- **行为**：`open(payload)` 只收 `raw_ptr<const Object>`；键 = `payload->getType()`；按载荷类型找打开器。
-- **约束**（C3）：载荷派生 `Object` 且有自己的 `desc()`；框架不解释/不拷贝/不持有载荷对象。
-- **要求**（R3）：具体者优先 → `refine` 分数 → `priority` → 登记顺序；无人受理返回 nullptr + warning。
-- **验收**（T3）：`AnOpenerBuildsADocumentFromAPayload…`、`TheFrameworkDoesNotCopyAPayload`。
-- **注意**（N3）：临时载荷要先起局部再取地址；`open()` 只考虑开始时已登记的打开器。
+- **Behaviour**: `open(payload)` takes a `raw_ptr<const Object>` only; the key is `payload->getType()`; the opener is found by the payload's type.
+- **Constraints** (C3): the payload derives from `Object` and has its own `desc()`; the framework does not interpret, copy or hold the payload object.
+- **Requirements** (R3): most specific first → `refine` score → `priority` → registration order; with nobody accepting, nullptr plus a warning.
+- **Acceptance** (T3): `AnOpenerBuildsADocumentFromAPayload…`, `TheFrameworkDoesNotCopyAPayload`.
+- **Caveat** (N3): a temporary payload needs a local variable first so its address can be taken; `open()` only considers the openers registered when it starts.
 
-### 3.1.4 F4 保存
+### 3.1.4 F4 Saving
 
-- **行为**：`Document::save()` 无参，写回自己的 `DocumentSource`；基类默认拒绝。
-- **约束**（C4）：`DocumentSource` 是值类型 `{scheme, address}`，不派生；“没有来源”= 空值。
-- **要求**（R4）：core 不认识 `Vfs`；另存为归类型自己的接口。
-- **验收**（T4）：`DocumentTest` 的保存/来源用例。
-- **注意**（N4）：失败不用 bool 丢信息；类型接口可用 `io::Result`/`IoError`。
+- **Behaviour**: `Document::save()` takes no arguments and writes back through its own `DocumentSource`; the base class refuses by default.
+- **Constraints** (C4): `DocumentSource` is a value type `{scheme, address}` and is not derived from; "no source" is an empty value.
+- **Requirements** (R4): `core` knows nothing about `Vfs`; save-as belongs to the type's own interface.
+- **Acceptance** (T4): the save / source cases in `DocumentTest`.
+- **Caveat** (N4): do not throw information away with a bool on failure; a type's interface may use `io::Result` / `IoError`.
 
-### 3.1.5 F5 视图层
+### 3.1.5 F5 The view layer
 
-- **行为**：`gui::DocumentView`（`Control` 薄包装 + `document()` + `content()` + `activate()`/`deactivate()`）；
-  `DocumentViewRegistry`（type_id → 工厂，一类型一个）；`gui::CentralDocumentHost`。
-  宿主给每个打开的文档一格 tab（顺序 = 打开/拖动的顺序，只有一份时隐藏条）；`setFloating()` 把页控件搬进
-  一个自己的顶层窗口，`setFloating(..., false)` 把它收回来。
-  **三处显示只有一个来源**：`DocumentManager::current()` ⇒ tab 选中 / 中央区内容 / `activate()` 的视图，全部在
-  `syncToCurrentDocument()` 一处派生。中央区要么是当前文档的页，要么是说明页（没有当前文档 / 当前文档在独立
-  窗口 / 类型没有视图），绝不显示非当前文档的页。tab 右键菜单提供浮动/停靠/关闭，三者都只是对管理器的请求。
-  关掉当前文档后，宿主在 `closed` 里请求选中接替的那一格（QTabBar 非空时表达不了“无选中”，只能这样保持一致）。
-- **约束**（C5、C7）：视图按文档实例；`content()` 是放进中央区的东西；2D/3D 都返回自己；文档从不进入
-  DockingPanes 的停靠树。
-- **要求**（R5、R7）：宿主拥有视图对象与浮动窗口、容器拥有页控件；tab 选中与 `DocumentManager` 的 current 只由
-  管理器决定（两边都是“请求”，由它反选）。
-- **验收**（T5）：`tests/test_gui/DocumentViewTest.cpp`（16 条，含 tab/浮动/激活/不变量/关闭否决/关闭后接替/主题跟随）。
-- **注意**（N5、N6、N7、N8）：中央区单槽、`setCentralWidget()` 重父化；放容器、只装一次、内部切页；
-  中央区永不显示非当前文档。
+- **Behaviour**: `gui::DocumentView` (a thin `Control` wrapper + `document()` + `content()` + `activate()` / `deactivate()`); `DocumentViewRegistry` (type_id → factory, one per type); `gui::CentralDocumentHost`.
+  The host gives each open document one tab (order = the order of opening or dragging, and the bar is hidden when there is only one); `setFloating()` moves the page widget into a top-level window of its own, and `setFloating(..., false)` takes it back.
+  **The three places that show something have one source**: `DocumentManager::current()` ⇒ the selected tab / the central content / the view that is `activate()`d, all derived in one place, `syncToCurrentDocument()`. The central area is either the current document's page or an explanation page (no current document / the current document is in its own window / the type has no view), and it never shows a non-current document's page. The tab's context menu offers float / dock / close, and all three are only requests to the manager.
+  After the current document closes, the host requests the successor tab in `closed` (a non-empty `QTabBar` cannot express "nothing selected", so this is the only way to keep the two in step).
+- **Constraints** (C5, C7): a view is instantiated per document; `content()` is what goes into the central area; 2D and 3D both return themselves; a document never enters the docking tree of DockingPanes.
+- **Requirements** (R5, R7): the host owns the view objects and the floating windows, the container owns the page widgets; the tab selection and `DocumentManager`'s current are decided by the manager alone (both sides are "requests", and it selects back).
+- **Acceptance** (T5): `tests/test_gui/DocumentViewTest.cpp` (16 cases, including tabs / floating / activation / invariants / a refused close / the successor after a close / theme following).
+- **Caveat** (N5, N6, N7, N8): the central area is a single slot and `setCentralWidget()` reparents; put a container in it, install it once and switch pages inside; the central area never shows a non-current document.
 
-### 3.1.6 F6 类型元数据/面板
+### 3.1.6 F6 Type metadata / panel
 
-- **行为**：`DocumentTypeInfo`（owner/icon/can_create/payload_types/source_schemes）+
-  `gui::DocumentManagerDialog` + `app_shell` 命令：`show_document_types`（只读面板）、`switch_document`
-  （按标题/类型 id 切换，歧义拒绝）、`close_document`（关闭派发目标，走 `close()`，否决报 NotApplicable）。
-- **约束**（C6）：类型没有启用/禁用开关；owner 来自 `Application::registrationOwner()`。
-- **要求**（R6）：面板如实显示“只能打开/可创建”，不假装。
-- **验收**（T6）：`DocumentManagerDialogTest`。
-- **注意**（N6）：面板注册表不存在 ⇒ 面板只能插件自己建自己挂。
+- **Behaviour**: `DocumentTypeInfo` (owner / icon / can_create / payload_types / source_schemes) + `gui::DocumentManagerDialog` + the `app_shell` commands: `show_document_types` (a read-only panel), `switch_document` (switch by title or type id, refusing an ambiguity) and `close_document` (close the dispatch target through `close()`, reporting NotApplicable when it is refused).
+- **Constraints** (C6): a type has no enable / disable switch; the owner comes from `Application::registrationOwner()`.
+- **Requirements** (R6): the panel shows "open only / creatable" truthfully and pretends nothing.
+- **Acceptance** (T6): `DocumentManagerDialogTest`.
+- **Caveat** (N6): with no panel registry, a plugin can only build and mount a panel itself.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 core
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 | --- | --- | --- |
-| `Document` | `typeId/title/isDirty/canClose` + `source()`/`save()` | 纯数据 + 生命周期 |
-| `DocumentManager::registerType` | 一 id 一类型 | 重名/空 id/空工厂拒绝 |
-| `DocumentManager::create/open/close/current` | 集合与当前 | 事件见 §5 |
-| `DocumentManager::findByTitleOrTypeId` | 按标题（优先）或类型 id 查打开集合 | 返回全部匹配；空文本/无人匹配为空 |
-| `DocumentManager::registerOpener<Payload>` | 按载荷类型登记 | `DocumentOpenerRegistration` |
-| `opened/closed/currentChanged` | 事件 | 应用线程 |
+| `Document` | `typeId/title/isDirty/canClose` + `source()` / `save()` | pure data + lifetime |
+| `DocumentManager::registerType` | one type per id | a duplicate / empty id / empty factory is refused |
+| `DocumentManager::create/open/close/current` | the set and the current document | the events are in §5 |
+| `DocumentManager::findByTitleOrTypeId` | look up the open set by title (first) or type id | returns every match; an empty text or no match gives an empty result |
+| `DocumentManager::registerOpener<Payload>` | register by payload type | `DocumentOpenerRegistration` |
+| `opened/closed/currentChanged` | events | application thread |
 
 ### 4.2 gui
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 | --- | --- | --- |
-| `DocumentView` | `document()` / `content()` / `activate()` / `deactivate()` | 按文档实例 |
-| `DocumentViewRegistry` | type_id → 工厂 | 重复/空 id/空工厂拒绝 |
-| `CentralDocumentHost` | 中央区页容器 + tab 条 | 一个 current、三处一致；契约见头文件 |
-| `documentCount()` / `documentAt(i)` | 打开集合的文法投影（一格 tab 一份） | 顺序 = 打开/拖动后的顺序 |
-| `isFloating(doc)` / `setFloating(doc, bool)` | 浮动到自己的顶层窗口 / 停回中央区 | 不是停靠：窗口没有 dock 目标 |
+| `DocumentView` | `document()` / `content()` / `activate()` / `deactivate()` | instantiated per document |
+| `DocumentViewRegistry` | type_id → factory | a duplicate / empty id / empty factory is refused |
+| `CentralDocumentHost` | the central page container + the tab bar | one current, three places agreeing; the contract is in the header |
+| `documentCount()` / `documentAt(i)` | a projection of the open set (one tab per document) | order = the order after opening or dragging |
+| `isFloating(doc)` / `setFloating(doc, bool)` | float into its own top-level window / dock back into the central area | not docking: the window has no dock target |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | `create` 不动 `current`；`setCurrent` 只接受本管理器文档。 |
-| C2 | 类型 id 唯一；空 id / 空工厂拒绝。 |
-| C3 | 载荷派生 `Object` 且有 `desc()`；框架不解释/不拷贝/不持有。 |
-| C4 | `DocumentSource` 是值类型，不派生；没有来源 = 空值。 |
-| C5 | 视图按文档实例；`content()` 是放进中央区的东西。 |
-| C6 | 类型没有启用/禁用开关；owner 来自 `registrationOwner()`。 |
-| C7 | 文档永不进入 DockingPanes 的停靠树：它的位置只有“中央区 tab”与“自己的浮动窗口”两种。 |
+| C1 | `create` does not touch `current`; `setCurrent` accepts only this manager's documents. |
+| C2 | A type id is unique; an empty id or an empty factory is refused. |
+| C3 | The payload derives from `Object` and has a `desc()`; the framework does not interpret, copy or hold it. |
+| C4 | `DocumentSource` is a value type and is not derived from; no source = an empty value. |
+| C5 | A view is instantiated per document; `content()` is what goes into the central area. |
+| C6 | A type has no enable / disable switch; the owner comes from `registrationOwner()`. |
+| C7 | A document never enters the docking tree of DockingPanes: its place is either a central-area tab or its own floating window. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | `close` 先问 `canClose()`；被拒不动集合/current。 |
-| R2 | 工厂返回的 `typeId()` 必须与注册一致。 |
-| R3 | 打开器选择顺序：具体者优先 → refine → priority → 登记顺序。 |
-| R4 | core 不认识 `Vfs`；`save()` 无参。 |
-| R5 | 宿主拥有视图对象、容器拥有页控件；`owns=false`。 |
-| R6 | 面板如实显示可创建/只能打开。 |
-| R7 | tab 选中与 current 只由 `DocumentManager` 决定：两边都只是请求，由它反选另一边（不得两套真相）。 |
+| R1 | `close` asks `canClose()` first; a refusal leaves the set and `current` alone. |
+| R2 | The `typeId()` a factory returns must match the registration. |
+| R3 | Opener selection order: most specific first → refine → priority → registration order. |
+| R4 | `core` knows nothing about `Vfs`; `save()` takes no arguments. |
+| R5 | The host owns the view objects and the container owns the page widgets; `owns=false`. |
+| R6 | The panel shows creatable / open-only truthfully. |
+| R7 | The tab selection and `current` are decided by `DocumentManager` alone: both sides are only requests, and it selects the other back (no two truths). |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | 被关文档先出集合再发事件；事件期间对象仍活着。 |
-| N2 | `Vfs` 借用且比文档活得久；同一实例不可两线程同碰。 |
-| N3 | 载荷只在 `open()` 期间有效；文档不得存指向载荷的指针。 |
-| N4 | 视图按文档实例；切回复用同一个，关闭才销毁。 |
-| N5 | 中央区单槽、重父化；容器只装一次。 |
-| N6 | 浮动窗口不是停靠窗格：它没有 dock 目标，也不能被拖到边缘/自动隐藏条；回来的路只有“停靠”按钮/API/关文档。 |
-| N7 | 页面在 tab（`QStackedWidget`）与浮动窗口之间搬一次家：建两个父窗口而不同时挂，靠 `takePage()` 先脱离。 |
-| N8 | 中央区显示的永远是当前文档的页或说明页；tab 选中、`current()`、中央内容三者不得分歧。浮动窗口激活只是 `setCurrent()` 请求。关掉当前文档后由宿主请求接替的 tab 成为当前（非当前文档被关掉时不动 current）。 |
+| N1 | A closing document leaves the set before the event fires; the object is still alive during it. |
+| N2 | `Vfs` is borrowed and outlives the document; one instance is never touched by two threads at once. |
+| N3 | A payload is valid only during `open()`; a document must not keep a pointer to it. |
+| N4 | A view is instantiated per document; switching back reuses the same one and only closing destroys it. |
+| N5 | The central area is a single slot that reparents; the container is installed once. |
+| N6 | A floating window is not a dock pane: it has no dock target and cannot be dragged to an edge or an auto-hide strip; the only way back is the dock button / API / closing the document. |
+| N7 | A page moves once between the tab (`QStackedWidget`) and the floating window: two parent windows exist, never both attached, and `takePage()` detaches it first. |
+| N8 | The central area always shows the current document's page or the explanation page; the tab selection, `current()` and the central content never disagree. Activating a floating window is only a `setCurrent()` request. After the current document closes, the host requests the successor tab to become current (closing a non-current document leaves `current` alone). |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 载荷生命周期
+### 6.1 Payload lifetime
 
-- 会怎么错：文档存了载荷指针，`open()` 返回后载荷是临时量 → UAF。
-- 怎么判：ASan；文档里出现 `raw_ptr<const Payload>` 成员。
-- 怎么防：打开器把需要的指针/句柄拷进文档或来源；大块数据放进载荷字段并拷 `shared_ptr`。
+- How it fails: the document keeps a payload pointer, the payload is a temporary once `open()` returns → use-after-free.
+- How to detect it: ASan; a `raw_ptr<const Payload>` member inside a document.
+- How to prevent it: the opener copies the pointer or handle it needs into the document or the source; bulk data goes into a payload field and a `shared_ptr` is copied.
 
-### 6.2 关文档的事件次序
+### 6.2 Event order when a document closes
 
-- 会怎么错：`closed` 里挑下一个当前文档，被随后的 `currentChanged` 覆盖。
-- 怎么判：`currentChanged(null)` 必须早于 `closed`。
-- 怎么防：按 §3.1.1 的次序实现；`close()` 返回时才销毁。宿主正是靠这个次序在 `closed` 里请求“接替那一格”成为
-  当前文档，这样 tab 条与中央区不会各说各话（§3.1.5、N8）。
+- How it fails: `closed` picks the next current document and the following `currentChanged` overwrites it.
+- How to detect it: `currentChanged(null)` must come before `closed`.
+- How to prevent it: implement the order of §3.1.1; the object is destroyed only after `close()` returns. This order is exactly what lets the host request the successor tab to become current inside `closed`, so the tab bar and the central area never disagree (§3.1.5, N8).
 
-### 6.3 `Vfs` 寿命与线程
+### 6.3 `Vfs` lifetime and threads
 
-- 会怎么错：关文档就销毁 `Vfs`，文档的 `save()` 还要用它。
-- 怎么判：`Vfs` 借用、无内部锁。
-- 怎么防：宿主按“先关文档、再销毁 Vfs”；同一 `Vfs` 不跨线程。
+- How it fails: the `Vfs` is destroyed when the document closes, and the document's `save()` still needs it.
+- How to detect it: `Vfs` is borrowed and has no internal lock.
+- How to prevent it: the host closes the documents first and destroys the `Vfs` afterwards; one `Vfs` never crosses threads.
 
-### 6.4 浮动 = 重父化
+### 6.4 Floating = reparenting
 
-- 会怎么错：以为把一个 3D 页搬进浮动窗口就等于新建一个渲染会话（于是重新 `init()`），或者反过来以为可以只换 widget 而不触发原生窗口重建。
-- 怎么判：原生窗口重建后 `RenderControl` 会回到 `Pending` 再回到 `Presenting`；会话/设备/管线不换（`appfw-render-surface.md` F3/C3）。
-- 怎么防：浮动只搬页控件，不动会话；不要为浮动新建 `RenderControl`。
+- How it fails: assuming that moving a 3D page into a floating window means a new render session (and so calling `init()` again), or the opposite — that the widget can be moved without the native window being recreated.
+- How to detect it: after the native window is recreated `RenderControl` goes back to `Pending` and then to `Presenting`; the session / device / pipeline do not change (`appfw-render-surface.md` F3/C3).
+- How to prevent it: floating moves the page widget only and leaves the session alone; never create a `RenderControl` for floating.
 
-### 6.5 两套“当前”
+### 6.5 Two "current"s
 
-- 会怎么错：tab 条自己记住选中项、管理器另有 current，切一次就对不上（命令落到别的文档）。
-- 怎么判：`documentAt(strip->currentIndex()) == documents.current()` 必须在任何操作后成立。
-- 怎么防：tab 选中只调 `setCurrent()`，`currentChanged` 反选 tab（`R7`）；装/删 tab 时用 `QSignalBlocker`，不让 Qt 的“自动选中第一个”变成一次选中。
+- How it fails: the tab bar remembers its own selection while the manager has another current, so one switch desynchronises them (and a command lands on the wrong document).
+- How to detect it: `documentAt(strip->currentIndex()) == documents.current()` must hold after every operation.
+- How to prevent it: a tab selection only calls `setCurrent()`, and `currentChanged` selects the tab back (`R7`); installing or removing a tab uses `QSignalBlocker` so Qt's "auto-select the first one" does not become a selection.
 
-### 6.6 浮动的文档不是“还在中央区”
+### 6.6 A floating document is not "still in the central area"
 
-- 会怎么错：以为浮动只是多开一个窗口，中央区继续显示它的页 —— 于是 tab 选中说的是 A、中央区显示的是 B、
-  命令目标又可能是第三个（`resolveCommandTarget()` 取的是当前视图）。
-- 怎么判：当前文档浮动时 `shownContent()` 是说明页，`currentView()` 仍是它；停靠回来后 `shownContent()` 又是它的页。
-- 怎么防：判断“屏幕上是什么”只走 `shownContent()` / `currentView()`，不要从 tab 索引或“上一次显示的页”反推。
+- How it fails: assuming floating only opens an extra window while the central area keeps showing its page — so the selected tab says A, the central area shows B, and the command target may be a third (`resolveCommandTarget()` takes the current view).
+- How to detect it: with the current document floating, `shownContent()` is the explanation page and `currentView()` is still that document; after docking back, `shownContent()` is its page again.
+- How to prevent it: ask `shownContent()` / `currentView()` for "what is on screen"; never infer it from a tab index or from "the page shown last time".
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 | --- | --- | --- | --- |
-| D1 | 用 `path` 而不是 `Vfs + 虚拟路径` | 网络/数据库/私有格式无法表达。 | — |
-| D2 | `DocumentSource` 派生 | 两套种类层次；失去值语义；负担推给每个文档类型。 | — |
-| D3 | 载荷用 `shared_ptr` | 保活的是描述符，不是它指向的 Vfs/缓冲；框架不知道该持有多久。 | — |
-| D4 | 按插件记 owner | 等真实需求再加。 | — |
-| D5 | `dirtyChanged` 事件 | 文档类型自己发变化事件，宿主订阅即可。 | — |
-| D6 | `closeAll()` | 宿主三行循环；“部分失败”策略归宿主。 | — |
-| D7 | 浮动时中央区保留最后一块停靠页 | 出现两套“现在是什么”：tab 选中、中央区内容、命令目标各说各话；改为说明页后三处只有一个答案（N8）。 | `../decisions/ADR-2026-10-28-central-area-shows-current-document.md` |
+| D1 | A `path` instead of `Vfs + virtual path` | Network, database and private formats cannot be expressed that way. | — |
+| D2 | Deriving `DocumentSource` | Two kind hierarchies, lost value semantics, and the burden pushed onto every document type. | — |
+| D3 | A `shared_ptr` for the payload | What is kept alive is the descriptor, not the `Vfs` or buffer it points at, and the framework does not know how long it should live. | — |
+| D4 | A per-plugin owner | Add it when a real need appears. | — |
+| D5 | A `dirtyChanged` event | A document type raises its own change event and the host subscribes to it. | — |
+| D6 | `closeAll()` | Three lines of loop in the host, and the "partial failure" policy belongs to the host. | — |
+| D7 | Keeping the last docked page in the central area while floating | It produces two "what is current"s: the tab selection, the central content and the command target each say something different; with an explanation page there is one answer (N8). | `../decisions/ADR-2026-10-28-central-area-shows-current-document.md` |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 | --- | --- | --- |
-| T1 | 文档语义/事件次序/关闭 | `tests/test_appfw/DocumentTest.cpp` |
-| T2 | 类型注册/重复/空 | 同上 |
-| T3 | 打开器选择/不拷贝 | `AnOpenerBuildsADocumentFromAPayload…`、`TheFrameworkDoesNotCopyAPayload` |
-| T4 | 保存/来源 | `DocumentTest` |
-| T5 | 视图层/中央宿主 | `tests/test_gui/DocumentViewTest.cpp`（16 条） |
-| T6 | 类型元数据面板 | `DocumentManagerDialogTest` |
+| T1 | document semantics / event order / closing | `tests/test_appfw/DocumentTest.cpp` |
+| T2 | type registration / duplicate / empty | same |
+| T3 | opener selection / no copy | `AnOpenerBuildsADocumentFromAPayload…`, `TheFrameworkDoesNotCopyAPayload` |
+| T4 | saving / source | `DocumentTest` |
+| T5 | the view layer / the central host | `tests/test_gui/DocumentViewTest.cpp` (16 cases) |
+| T6 | the type metadata panel | `DocumentManagerDialogTest` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-core 文档模型、打开/保存、类型元数据、视图层与中央宿主均已落地。
+The core document model, opening and saving, the type metadata, the view layer and the central host are all in place.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-- `MeshLoader::load()` / `loadMerged()` 只吃路径与流，没有 `Vfs` 入口 ⇒
-  “`Vfs` + 虚拟路径”的模型文件读不进。
-- 面板注册表不存在 ⇒ 面板只能插件自己建自己挂。
-- 多窗口不在本设计范围。
+- `MeshLoader::load()` / `loadMerged()` take a path or a stream and have no `Vfs` entry ⇒ a model file addressed as `Vfs` + virtual path cannot be read.
+- With no panel registry, a plugin can only build and mount a panel itself.
+- Multiple windows are outside this design.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-`DocumentSource` 是值类型；`Document::save()` 无参；新代码按 §4 的接口写。
+`DocumentSource` is a value type; `Document::save()` takes no arguments; new code uses the interface of §4.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/fw/appfw/sdk/vine/appfw/Document.hpp`
 - `src/fw/appfw/sdk/vine/appfw/DocumentManager.hpp`
 - `src/fw/appfw/sdk/vine/appfw/gui/DocumentView.hpp`
 - `src/fw/appfw/sdk/vine/appfw/gui/CentralDocumentHost.hpp`
-- `tests/test_appfw/DocumentTest.cpp`、`tests/test_gui/DocumentViewTest.cpp`
+- `tests/test_appfw/DocumentTest.cpp`, `tests/test_gui/DocumentViewTest.cpp`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `appfw-render-view.md`
 - `appfw-userio.md`
 - `../backlog/`
 
-### 10.3 外部资料
+### 10.3 External material
 
-- `src/base/iobase` 的 `Vfs` / `Result` / `IoError`。
-- `src/plugins/model_viewer/` 的参考实现。
+- `src/base/iobase`'s `Vfs` / `Result` / `IoError`.
+- The reference implementation in `src/plugins/model_viewer/`.
