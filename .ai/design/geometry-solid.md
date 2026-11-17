@@ -1,239 +1,247 @@
-# geometry 解析实体 Solid
+# geometry analytic solids
 
-> **状态**：现行
-> **最后核对**：2026-11-09
-> **范围**：`Solid<T>` 族（五个解析体：`BoxSolid` / `SphereSolid` / `CylinderSolid` / `ConeSolid` / `EllipsoidSolid`）、它的两个查询（最近点、射线求交），以及模型侧如何给出这份实体（每个建模子类的 `solid()`、`visitPrimitive()`）。
-> 不含三角化（见 `geometry-tessellation.md`），不含实体间运算（布尔、实体间距离，见 `../backlog/geometry.md` G3），不含曲面族查询（见 `geometry-surface-queries.md`）。
-> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/Solid.hpp`、`BoxSolid.hpp` … `EllipsoidSolid.hpp`、`src/base/models/sdk/vine/models/PrimitiveDispatch.hpp`；`tests/test_geom_spatial/SolidTest.cpp`、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`。
-> **待办**：`../backlog/geometry.md`
+> **Status**: current
+> **Last verified**: 2026-11-09
+> **Scope**: the `Solid<T>` family (five analytic bodies: `BoxSolid` / `SphereSolid` / `CylinderSolid` / `ConeSolid` / `EllipsoidSolid`), its two queries (closest point, ray intersection), and how the model side provides that solid (each modelling subclass' `solid()`, `visitPrimitive()`).
+> Not tessellation (see `geometry-tessellation.md`), not operations between solids (booleans, distance between solids, see `../backlog/geometry.md` G3), not the surface-family queries (see `geometry-surface-queries.md`).
+> **Sources**: `src/base/geom/sdk/vine/geom/spatial/Solid.hpp`, `BoxSolid.hpp` … `EllipsoidSolid.hpp`, `src/base/models/sdk/vine/models/PrimitiveDispatch.hpp`; `tests/test_geom_spatial/SolidTest.cpp`, `SolidDistanceTest.cpp`, `SolidIntersectionTest.cpp`.
+> **Backlog**: `../backlog/geometry.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-`Primitive` 是**建模**类型：它带身份、名字与 revision，回答的是“这个连杆的几何是什么”，不是“算一算这个几何”。几何算法最初直接挂在它身上——三角化、射线求交、点到实体距离各是一个以 `shapeType()` 为唯一入口的自由函数。后果有三：同一个形状的公式分散在三个文件里；模型的消费者（序列化、场景树）被迫认识几何入口；每加一个能力就要再写一遍标签分派。
+`Primitive` is a **modelling** type: it carries identity, name and revision, and it answers "what is the geometry of this link", not "compute on this geometry".
+The geometric algorithms were originally hung directly on it - tessellation, ray intersection and point-to-solid distance were each a free function whose only entry was `shapeType()`.
+There are three consequences: the formulas for one shape are spread across three files; consumers of the model (serialization, scene tree) are forced to know a geometry entry; and each new capability means writing the tag dispatch once more.
 
-值类型一侧又缺少“实体”这个词汇：`Aabb` / `Obb` 是盒，五个曲面是无盖、无内部的壳，`closestPointOnSurface()` 答不了实体语义的“点到实体的距离”（内部为 0）。
+The value-type side also lacks the word "solid": `Aabb` / `Obb` are boxes, the five surfaces are unlidded, interior-less shells, and `closestPointOnSurface()` cannot answer the solid semantics of "distance from a point to the solid" (zero inside).
 
-### 1.2 目标
+### 1.2 Goals
 
-- 一个**族**：`const Solid<T>&` 能接受任意一种实体，并对它提问——这是“参数必须是具体类型”的消费者要的东西（一个导出签名、一个后端接口）。
-- 一个**封闭值集**：五个 kind 都是按值的类型，没有指针、没有堆、没有共享所有权；要按 kind 作答的入口一 kind 一个重载。
-- 模型侧只剩一次转换：每个建模子类用自己的尺寸构造自己的 kind（`Box::solid()`），`visitPrimitive()` 把具体子类交给调用方；几何不认识 `ShapeType`。
-- 加一种 kind 时，编译器把“哪些消费者必须处理它”列出来（visitor 里缺分支 / 缺重载）。
+- One **family**: `const Solid<T>&` accepts any one solid and can be asked about it - which is what a consumer whose "parameter must be a concrete type" needs (an export signature, a backend interface).
+- One **closed value set**: the five kinds are all by-value types, with no pointer, no heap and no shared ownership; an entry that must answer per kind gets one overload per kind.
+- The model side keeps a single conversion: each modelling subclass constructs its own kind from its own dimensions (`Box::solid()`), and `visitPrimitive()` hands the concrete subclass to the caller; geometry does not know `ShapeType`.
+- When a kind is added, the compiler lists which consumers must handle it (a missing branch / a missing overload in the visitor).
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做实体间的布尔与实体间最近距离：结果类型在 `geometry` 里装不下，没有消费者（G3，走 `brep` + OCCT）。
-- 不做有表示的实体：NURBS 体、网格体、布尔结果属于 `BrepShape`，永远不是 `Solid`（`G13`）。
-- 不做 `Solid<T>` 的三角化成员：`TriangleMesh` 是 float，成员化会让 `Solid<double>` 隐式降精度（`geometry-tessellation.md` 2.1）。
-- 不做双精度与单精度之间的隐式转换：要 `double` 的调用方显式构造 `BoxSolidd` / `SphereSolidd` / …（2.6）。
+- Not offering booleans between solids and the nearest distance between solids: the result type does not fit in `geometry` and there is no consumer (G3, goes through `brep` + OCCT).
+- Not offering a represented solid: NURBS bodies, mesh bodies and boolean results are `BrepShape`, never `Solid` (`G13`).
+- Not offering a tessellation member on `Solid<T>`: `TriangleMesh` is float, and making it a member would let `Solid<double>` lose precision implicitly (`geometry-tessellation.md` 2.1).
+- Not offering an implicit conversion between double and single precision: a caller that wants `double` constructs `BoxSolidd` / `SphereSolidd` / … explicitly (2.6).
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**`Solid<T>` 是族接口（五个虚查询），五个 kind 是它的值；不认识 kind 的消费者问族接口，必须按 kind 作答的消费者用 `visitPrimitive()` 拿到具体建模类、调对应的几何入口（没有“五个 kind 的 variant”这种类型）。**
+**`Solid<T>` is the family interface (five virtual queries) and the five kinds are its values; a consumer that does not know the kind asks the family interface, while a consumer that must answer per kind uses `visitPrimitive()` to reach the concrete modelling class and call the matching geometry entry (there is no "variant of the five kinds" type).**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 两个层次，两个问题
+### 2.1 Two layers, two questions
 
-- **是什么**：`Solid<T>`（抽象，五个纯虚：`isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith`）回答“这个实体怎么样”；`BoxSolid<T>` … `EllipsoidSolid<T>` 是它的值。
-- **为什么**：`G13`、`G1` —— 有些参数必须是具体类型，而不是模板：一个导出签名、一个后端接口只能写 `const Solid<float>&`。接口层给出的正是这个类型；需要按 kind 作答的消费者拿具体 kind（重载或 `visitPrimitive()`），两层各回答一个真问题。
-- **边界**：模型的入口是子类的 `solid()`（返回具体 kind 的值）与自由函数 `visitPrimitive()`；几何侧不认识 `Primitive`。
+- **What it is**: `Solid<T>` (abstract, five pure virtuals: `isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith`) answers "how is this solid"; `BoxSolid<T>` … `EllipsoidSolid<T>` are its values.
+- **Why**: `G13`, `G1` - some parameters have to be concrete types rather than templates: an export signature or a backend interface can only write `const Solid<float>&`.
+  The interface layer hands out exactly that type; a consumer that must answer per kind takes the concrete kind (an overload or `visitPrimitive()`), and each of the two layers answers one real question.
+- **Boundary**: the model's entry is the subclass' `solid()` (returns the value of a concrete kind) and the free function `visitPrimitive()`; the geometry side does not know `Primitive`.
 
-### 2.2 封闭集合用重载表达，不再有 variant
+### 2.2 A closed set is expressed by overloads, not by a variant
 
-- **是什么**：五个 kind 各是一个值类型；需要按 kind 作答的入口（三角化的 `tessellateSolid()`、`brep` 的 `solidOf()`）各写五个重载，调用方用 `visitPrimitive()` 把具体子类交进来。
-- **为什么**：`G8`、`G1` —— variant 今天没有任何存储消费者（模型在 `ADR-2026-11-05-primitive-is-a-modelling-base` 之后只存尺寸）；留一个“五个 kind 的 variant”只会给调用方第二种写法。重载集合与 `visitPrimitive()` 是同一份封闭集合的两个面，新增 kind 时 visitor 里会缺一个重载，编译错误仍然出现。
-- **边界**：任意实体（网格、NURBS、布尔结果）不是这里的一员，出口是 `BrepShape`；`Solid<T>` 不认识 `Shape` / `Primitive`。
+- **What it is**: each of the five kinds is a value type; an entry that must answer per kind (`tessellateSolid()`, `brep`'s `solidOf()`) writes five overloads, and the caller hands the concrete subclass in with `visitPrimitive()`.
+- **Why**: `G8`, `G1` - the variant has no storage consumer today (after `ADR-2026-11-05-primitive-is-a-modelling-base` the model stores dimensions only); keeping a "variant of the five kinds" would only give the caller a second spelling.
+  The overload set and `visitPrimitive()` are two faces of the same closed set: adding a kind leaves one overload missing in the visitor, and the compile error still appears.
+- **Boundary**: an arbitrary solid (mesh, NURBS, boolean result) is not a member here, and its exit is `BrepShape`; `Solid<T>` does not know `Shape` / `Primitive`.
 
-### 2.3 visit 与虚调用各管一段
+### 2.3 Visit and virtual calls each own one segment
 
-- **是什么**：三角化、B-rep 桥、描述文件写入者按 kind 分派（一 kind 一个重载，或 `visitPrimitive()`）；`Primitive::isValid()`/`hasVolume()`/`bounds()` 与“只问一个问题”的消费者走虚函数。
-- **为什么**：`G9`、`G11` —— 需要“每种 kind 一个答案”的地方（网格、`BRepPrimAPI` 调用、XML 元素）必须穷尽，`std::visit` 漏一个 kind 是编译错误；只需要“一个答案”的地方（包围盒、有效性、射线交点）用接口，调用点不关心 kind。
-- **边界**：`std::visit` 的 visitor 只用一次的地方写 lambda，重复使用的写具名结构（例如三角化的 `TessellateVisitor`）。
+- **What it is**: tessellation, the B-rep bridge and the description-file writer dispatch per kind (one overload per kind, or `visitPrimitive()`); `Primitive::isValid()`/`hasVolume()`/`bounds()` and consumers that ask a single question go through the virtual functions.
+- **Why**: `G9`, `G11` - a place that needs "one answer per kind" (a mesh, a `BRepPrimAPI` call, an XML element) must be exhaustive, and a missing kind in `std::visit` is a compile error; a place that needs only "one answer" (a bounding box, validity, a ray hit) uses the interface, and the call site does not care about the kind.
+- **Boundary**: a visitor used only once is a lambda; one reused is a named struct (for example the tessellation's `TessellateVisitor`).
 
-### 2.4 canonical 局部空间与半量纲
+### 2.4 Canonical local space and half extents
 
-- **是什么**：盒 / 球 / 椭球居中于原点；圆柱 / 圆锥的轴在 +Z、跨 `[-half_height, +half_height]`，圆锥底面在 `-half_height`。`BoxSolid` 存**半**边长，圆柱与圆锥存**半**高。
-- **为什么**：`G4`、`G12` —— 该空间的公式一律用半量纲书写（盒是三次 clamp，圆柱是径向 + 轴向 clamp），字段名 `half_x` / `half_height` 自己说明是哪一半；全量纲只出现在模型描述文件那一侧。
-- **边界**：摆放属于持有形状的节点变换，`Solid` 没有坐标系、没有放置、也没有“旋转过的实体”。
+- **What it is**: box / sphere / ellipsoid are centred on the origin; the cylinder / cone axis is +Z and spans `[-half_height, +half_height]`, with the cone's base at `-half_height`.
+  `BoxSolid` stores **half** the edge length, and the cylinder and the cone store **half** the height.
+- **Why**: `G4`, `G12` - the formulas in that space are written in half extents throughout (the box is a three-axis clamp, the cylinder a radial plus an axial clamp), and the field names `half_x` / `half_height` say which half themselves; full extents appear only on the model description-file side.
+- **Boundary**: placement belongs to the node transform holding the shape; `Solid` has no coordinate system, no placement and no "rotated solid".
 
-### 2.5 两个查询的结果形态与默认容差
+### 2.5 Result shapes of the two queries and the default tolerance
 
-- **是什么**：`closestPoint(query, tolerance = EPS)` 返回 `std::optional<SolidProjection<T>>`；`intersectWith(ray, eps = EPS)` 返回升序去重的 `std::vector<RayHit<T>>`。
-- **为什么**：`G4`、`G6` —— 单值答案用可选值、变长答案用集合，与 `closestPointOnSurface()` / `intersectCurveWithSurface()` 一致；默认容差写在**接口与每个 kind 两处**，因为派生类的声明会遮蔽基类的默认参数（P5）。
-- **边界**：`Aabb::intersectWith(Ray)` 仍是 `bool` + 出参——那是“一个命中”的问题，形态由问题决定。
+- **What it is**: `closestPoint(query, tolerance = EPS)` returns `std::optional<SolidProjection<T>>`; `intersectWith(ray, eps = EPS)` returns an ascending, de-duplicated `std::vector<RayHit<T>>`.
+- **Why**: `G4`, `G6` - a single-valued answer is an optional and a variable-length answer is a collection, consistent with `closestPointOnSurface()` / `intersectCurveWithSurface()`; the default tolerance is written in **two places, the interface and each kind**, because a derived declaration hides the base's default arguments (P5).
+- **Boundary**: `Aabb::intersectWith(Ray)` is still `bool` plus an out parameter - that is the "one hit" question, and the shape follows the question.
 
-### 2.6 尺寸是 float，更高精度是显式选择
+### 2.6 Dimensions are float, higher precision is an explicit choice
 
-- **是什么**：模型存 `float`；`BoxSolidd` / `SphereSolidd` / … 是 `double` 的 kind，需要它们的调用方自己构造。
-- **为什么**：`G4` —— 描述文件读进来的就是 float，网格也是 float（`TriangleMesh`）；没有“隐式把 float 实体当 double 算”的转换，就不会有“以为拿到了 double 尺寸”的误解。
-- **代价**：跨精度要显式写（构造 `BoxSolidd{...}`）；换精度不是一行 cast，而是一次显式的类型选择。
+- **What it is**: the model stores `float`; `BoxSolidd` / `SphereSolidd` / … are the `double` kinds, and a caller that needs them constructs them itself.
+- **Why**: `G4` - what the description file reads is float, and a mesh is float too (`TriangleMesh`); with no "implicitly treat a float solid as double" conversion there is no "thought I had double dimensions" misunderstanding.
+- **Cost**: crossing precision is written explicitly (constructing `BoxSolidd{...}`); changing precision is not a one-line cast but an explicit type choice.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | 族接口与五个 kind | `Solid<T>` 五个纯虚；`BoxSolid` / `SphereSolid` / `CylinderSolid` / `ConeSolid` / `EllipsoidSolid` 各持量与公式 | 已落地（T1、T2） |
-| F2 | 点到实体的最近点 / 距离 | `closestPoint(query, tolerance)`：实体语义，内部为 0 | 已落地（T3–T6） |
-| F3 | 射线 × 实体 | `intersectWith(ray, eps)`：升序、最多两个、法向朝射线 | 已落地（T4、T7） |
-| F4 | 模型给出实体 | 每个建模子类的 `solid()`（值）与 `visitPrimitive()`（交给具体子类） | 已落地（T2、T8） |
-| F5 | 三角化 | `tessellateSolid(具体 kind, quality)` | 见 `geometry-tessellation.md` |
+| F1 | Family interface and five kinds | `Solid<T>` five pure virtuals; `BoxSolid` / `SphereSolid` / `CylinderSolid` / `ConeSolid` / `EllipsoidSolid` each hold extents and formulas | landed (T1, T2) |
+| F2 | Closest point / distance from a point to a solid | `closestPoint(query, tolerance)`: solid semantics, zero inside | landed (T3–T6) |
+| F3 | Ray × solid | `intersectWith(ray, eps)`: ascending, at most two, normal turned toward the ray | landed (T4, T7) |
+| F4 | The model provides the solid | each modelling subclass' `solid()` (value) and `visitPrimitive()` (hands over the concrete subclass) | landed (T2, T8) |
+| F5 | Tessellation | `tessellateSolid(concrete kind, quality)` | see `geometry-tessellation.md` |
 
-### 3.2 F1 接口与 kind
+### 3.2 F1 Interface and kinds
 
-- **行为**：五个 kind 各自 `final`，持有半量纲与自己的公式；每个都可以默认构造（全 0 量纲），由 `isValid()` 拒绝。
-- **约束**（C1、C2）：空间与量纲见 2.4；量纲非正即不可用。
-- **验收**（T1）：`SolidTest.cpp` 的 `theFamilyIsAnInterfaceAndTheKindsAreValues`、`theBoundsAreTheAnalyticExtentOfEachKind`。
+- **Behaviour**: each of the five kinds is `final` and holds half extents plus its own formulas; each can be default-constructed (all-zero extents) and is rejected by `isValid()`.
+- **Constraints** (C1, C2): space and extents are in 2.4; a non-positive extent makes the solid unusable.
+- **Acceptance** (T1): `theFamilyIsAnInterfaceAndTheKindsAreValues` and `theBoundsAreTheAnalyticExtentOfEachKind` in `SolidTest.cpp`.
 
-### 3.3 F2 最近点与距离
+### 3.3 F2 Closest point and distance
 
-- **行为**：盒三次 clamp；球径向缩放；椭球缩放后的 Lagrange 一维求根；圆柱径向 × 轴向 clamp；圆锥在“底面盘”与“母线轮廓线段”两个候选中取较近者。查询在实体内部时返回查询点本身、距离 0。
-- **约束**（C3）：不可用的实体答 `std::nullopt`。
-- **要求**（R1）：除返回值外不分配；椭球是唯一迭代的 kind，上限 256 次二分。
-- **验收**（T3–T6）：四个 kind 各一个用例，外加“不可用输入”与“两种精度一致”。
+- **Behaviour**: the box clamps on three axes; the sphere scales radially; the ellipsoid scales and then runs a one-dimensional Lagrange root find; the cylinder clamps radially × axially; the cone takes the nearer of two candidates, the base disc and the generatrix profile segment.
+  A query inside the solid returns the query point itself with distance 0.
+- **Constraints** (C3): an unusable solid answers `std::nullopt`.
+- **Requirements** (R1): no allocation beyond the return value; the ellipsoid is the only iterative kind, capped at 256 bisections.
+- **Acceptance** (T3–T6): one case per kind of the four, plus "unusable input" and "the two precisions agree".
 
-### 3.4 F3 射线 × 实体
+### 3.4 F3 Ray × solid
 
-- **行为**：盒用 slab；球 / 椭球用二次方程（椭球先缩放到单位空间）；圆柱是侧面二次方程加 `|z| <= half_height` 过滤，再加两个端面圆盘；圆锥是侧面二次方程加轴向过滤，再加底面圆盘。结果按 `t` 升序、在 `eps` 内去重。
-- **约束**（C4、C5）：只报 `t ≥ -eps` 的边界交点；法向是外向法向再转向射线。
-- **注意**（N4）：圆锥顶点命中时法向为零向量。
-- **验收**（T7）：`SolidIntersectionTest.cpp` 的九个用例。
+- **Behaviour**: the box uses slabs; the sphere / ellipsoid a quadratic (the ellipsoid scaled into unit space first); the cylinder is the lateral quadratic filtered by `|z| <= half_height`, plus two end discs; the cone is the lateral quadratic with an axial filter, plus the base disc.
+  Results are ascending in `t` and de-duplicated within `eps`.
+- **Constraints** (C4, C5): only boundary hits with `t ≥ -eps` are reported; the normal is the outward normal turned toward the ray.
+- **Note** (N4): a hit on the cone apex has a zero normal.
+- **Acceptance** (T7): the nine cases in `SolidIntersectionTest.cpp`.
 
-### 3.5 F4 模型拥有自己的尺寸
+### 3.5 F4 The model owns its dimensions
 
-- **行为**：建模子类按当前尺寸构造具体 kind（`Box::solid()`）；`visitPrimitive()` 把具体子类交给 visitor，几何入口按 kind 重载接收。模型侧不存任何几何值。
-- **约束**（C6）：`Solid<T>` 不认识 `Shape` / `Primitive`；模型侧没有按 `ShapeType` 分派几何的代码。
-- **验收**（T2、T8）：`visitPrimitiveReachesTheConcreteSubclass`、`thePrimitiveBaseHoldsNoGeometry`。
+- **Behaviour**: a modelling subclass constructs the concrete kind from the current dimensions (`Box::solid()`); `visitPrimitive()` hands the concrete subclass to the visitor, and the geometry entry receives it through a per-kind overload.
+  The model side stores no geometric value.
+- **Constraints** (C6): `Solid<T>` does not know `Shape` / `Primitive`; the model side has no code that dispatches geometry on `ShapeType`.
+- **Acceptance** (T2, T8): `visitPrimitiveReachesTheConcreteSubclass`, `thePrimitiveBaseHoldsNoGeometry`.
 
-## 4. 公开接口
+## 4. Public Interface
 
-### 4.1 族与 kind
+### 4.1 Family and kinds
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 |---|---|---|
-| `Solid<T>` | 五个纯虚：`isValid()`、`hasVolume(T)`、`bounds()`、`closestPoint(query, tolerance)`、`intersectWith(ray, eps)` | 完整签名见 `Solid.hpp` |
-| `BoxSolid<T>` / `SphereSolid<T>` / `CylinderSolid<T>` / `ConeSolid<T>` / `EllipsoidSolid<T>` | `final` 实现者，持半量纲 | 公开字段 `half_x`、`radius`、`half_height`、`base_radius`、`radius_x/y/z` |
-| `Solidf` / `Solidd`、`BoxSolidf` / `BoxSolidd`、… | 两种精度的别名 | 与 `Aabbf` / `Aabbd` 同一命名法 |
+| `Solid<T>` | five pure virtuals: `isValid()`, `hasVolume(T)`, `bounds()`, `closestPoint(query, tolerance)`, `intersectWith(ray, eps)` | the full signature is in `Solid.hpp` |
+| `BoxSolid<T>` / `SphereSolid<T>` / `CylinderSolid<T>` / `ConeSolid<T>` / `EllipsoidSolid<T>` | `final` implementers holding half extents | public fields `half_x`, `radius`, `half_height`, `base_radius`, `radius_x/y/z` |
+| `Solidf` / `Solidd`, `BoxSolidf` / `BoxSolidd`, … | the two precisions' aliases | the same naming scheme as `Aabbf` / `Aabbd` |
 
-### 4.2 模型侧
+### 4.2 Model side
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 |---|---|---|
-| `Box::solid()` … `Ellipsoid::solid()` | 具体 kind 的值 | 子类用自己的尺寸构造 |
-| `visitPrimitive(primitive, visitor)` | `bool` | 把具体建模类交给 visitor；不是五个之一时 `false` |
-| `Primitive::isValid()` / `hasVolume(double)` / `bounds()` | 子类转发给 `solid()` | 不重算任何公式 |
+| `Box::solid()` … `Ellipsoid::solid()` | the value of the concrete kind | the subclass constructs it from its own dimensions |
+| `visitPrimitive(primitive, visitor)` | `bool` | hands the concrete modelling class to the visitor; `false` when it is not one of the five |
+| `Primitive::isValid()` / `hasVolume(double)` / `bounds()` | the subclass forwards to `solid()` | recomputes no formula |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-- **C1**：所有量纲在 canonical 局部空间；摆放属于节点变换，族没有坐标系。
-- **C2**：`BoxSolid` 存半边长，`CylinderSolid` / `ConeSolid` 存半高。
-- **C3**：不可用的实体（任一半量纲 ≤ 0）答 `std::nullopt` / 空结果，不抛异常、不除零。
-- **C4**：射线结果只含 `t ≥ -eps` 的交点，升序，在 `eps` 内去重。
-- **C5**：法向是外向法向再转向射线（`RayHit` 的规则）；奇异点（圆锥顶点）给零向量。
-- **C6**：`Solid<T>` 不认识 `Shape` / `Primitive`；`Primitive` 是唯一拥有这两侧的类型。
+- **C1**: every extent is in canonical local space; placement belongs to the node transform, and the family has no coordinate system.
+- **C2**: `BoxSolid` stores half edge lengths, `CylinderSolid` / `ConeSolid` store half heights.
+- **C3**: an unusable solid (any half extent ≤ 0) answers `std::nullopt` / an empty result, never throws and never divides by zero.
+- **C4**: ray results contain only hits with `t ≥ -eps`, ascending and de-duplicated within `eps`.
+- **C5**: the normal is the outward normal turned toward the ray (`RayHit`'s rule); a singular point (the cone apex) gets a zero vector.
+- **C6**: `Solid<T>` does not know `Shape` / `Primitive`; `Primitive` is the only type that owns both sides.
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-- **R1**：`isValid()` / `hasVolume()` / `bounds()` / `closestPoint()` 不分配；`intersectWith()` 只分配结果 `vector`。
-- **R2**：不依赖 OCCT，也不依赖 `brep`（`G2`）。
-- **R3**：header-only 模板；两种精度都在 `test_geom_spatial` 里被实例化。
+- **R1**: `isValid()` / `hasVolume()` / `bounds()` / `closestPoint()` do not allocate; `intersectWith()` allocates only the result `vector`.
+- **R2**: no dependency on OCCT and none on `brep` (`G2`).
+- **R3**: header-only templates; both precisions are instantiated in `test_geom_spatial`.
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-- **N1**：没有“空的实体”这种值：`visitPrimitive()` 对五个子类返回 `true`，其它返回 `false`；每个几何入口对不可用实体返回空结果。
-- **N2**：`bounds()` 对退化实体仍返回良构盒（min ≤ max）。
-- **N3**：内部起点时射线最多报一个交点；相切（含双根）报一个。
-- **N4**：`Primitive::shapeType()` 由子类的构造链给出，与 `visitPrimitive()` 的分派一一对应。
+- **N1**: there is no "empty solid" value: `visitPrimitive()` returns `true` for the five subclasses and `false` otherwise; every geometry entry returns an empty result for an unusable solid.
+- **N2**: `bounds()` still returns a well-formed box (min ≤ max) for a degenerate solid.
+- **N3**: a ray starting inside reports at most one hit; a tangency (including a double root) reports one.
+- **N4**: `Primitive::shapeType()` is given by the subclass' construction chain and corresponds one-to-one with `visitPrimitive()`'s dispatch.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 实体语义与面语义
+### 6.1 Solid semantics versus surface semantics
 
-- **会怎么错**：拿 `closestPoint()` 求“点到球面”的距离，得到 0 而不是到球壳的距离。
-- **怎么判**：查询点在实体内部时距离为 0。
-- **怎么防**：要面语义就用 `SphericalSurface` / `closestPointOnSurface()`，两者不是同一个问题（2.2 的判据表）。
+- **How it goes wrong**: using `closestPoint()` for "distance from a point to the sphere surface" gives 0 rather than the distance to the shell.
+- **How to detect**: the distance is 0 when the query point is inside the solid.
+- **How to prevent**: surface semantics means `SphericalSurface` / `closestPointOnSurface()`; the two are not the same question (the criteria table in 2.2).
 
-### 6.2 圆锥顶点的零法向
+### 6.2 The zero normal at the cone apex
 
-- **会怎么错**：射线穿过顶点时 `hit.normal` 是零向量，用它算光照得到全黑。
-- **怎么判**：`t` / `point` 正常而 `normal.length() == 0`。
-- **怎么防**：C5；需要顶点法向时由调用方按侧面极限自己算。
+- **How it goes wrong**: when the ray passes through the apex `hit.normal` is a zero vector, and lighting computed from it comes out completely black.
+- **How to detect**: `t` / `point` look normal while `normal.length() == 0`.
+- **How to prevent**: C5; when an apex normal is needed, the caller computes it itself from the lateral limit.
 
-### 6.3 射线躺在面内
+### 6.3 A ray lying in a face
 
-- **会怎么错**：以为“躺在面上”应报无穷多点或一个重合标记。
-- **怎么判**：结果只有两个端点。
-- **怎么防**：实体的交是一个区间，报告的是它的两个端点（C4）。
+- **How it goes wrong**: expecting "lying on the face" to report infinitely many points or one coincident marker.
+- **How to detect**: the result holds only the two end points.
+- **How to prevent**: a solid's intersection is an interval, and what is reported is its two end points (C4).
 
-### 6.4 尺寸精度
+### 6.4 Dimension precision
 
-- **会怎么错**：以为 `Primitive::solid()` 给的是 `double`。
-- **怎么判**：类型是 `const Solid<float>&`，编译期就能看出来。
-- **怎么防**：2.6；要高精度就显式构造 `BoxSolidd` / `SphereSolidd` / …
+- **How it goes wrong**: expecting `Primitive::solid()` to give `double`.
+- **How to detect**: the type is `const Solid<float>&`, visible at compile time.
+- **How to prevent**: 2.6; construct `BoxSolidd` / `SphereSolidd` / … explicitly for higher precision.
 
-### 6.5 派生类会遮蔽基类的默认参数
+### 6.5 A derived class hides the base's default arguments
 
-- **会怎么错**：只在 `Solid<T>` 上写 `= EPS<T>()`，然后通过 `BoxSolidf` 调用 `closestPoint(query)`，编译报“参数太少”。
-- **怎么判**：通过具体 kind 调用的地方编译不过，通过 `const Solidf&` 调用的地方正常。
-- **怎么防**：默认值在接口与每个 kind 的声明上各写一次（2.5）；调用点不要自己重复传 `EPS`。
+- **How it goes wrong**: writing `= EPS<T>()` only on `Solid<T>` and then calling `closestPoint(query)` through `BoxSolidf` reports "too few arguments".
+- **How to detect**: the call through the concrete kind does not compile while the call through `const Solidf&` is fine.
+- **How to prevent**: write the default once on the interface and once on each kind's declaration (2.5); a call site does not repeat `EPS` itself.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-- **D1** `Solid<T>` 直接就是 `std::variant` 的别名（没有接口层）：失去“参数是具体类型”的能力，每个只问一个问题的消费者都得自己 visit（`G7`）。见 `../decisions/ADR-2026-11-05-solid-family-and-variant.md`。
-- **D2** 族接口 + `Primitive` 用指针持有：每次模型构造一次堆分配、每次 `bounds()` 一次解引用，并引入“模型与几何共享所有权”的路径（`G10`、`G13`）。同一 ADR。
-- **D3** 每个形状一个模型子类（`BoxSolid(Primitive)` …）：`ShapeType` 与类可能漂移、同一个形状的公式散在多处、模型消费者认识算法入口（`G1`、`G12`）。同一 ADR。
-- **D4** 把三角化做成 `Solid<T>` 的成员：`TriangleMesh` 是 float，`Solid<double>::tessellate()` 只能降精度输出（`G4`）。见 `geometry-tessellation.md` D5。
-- **D5** float / double 实体之间隐式转换：会把“尺寸只有 float 分辨率”这件事藏进调用链（`G4`）。见 2.6。
+- **D1** `Solid<T>` is directly an alias of `std::variant` (no interface layer): it loses the "parameter is a concrete type" ability, and every consumer that asks a single question has to visit itself (`G7`). See `../decisions/ADR-2026-11-05-solid-family-and-variant.md`.
+- **D2** family interface + `Primitive` holding it by pointer: one heap allocation per model construction and one dereference per `bounds()`, and it introduces a "model and geometry share ownership" path (`G10`, `G13`). The same ADR.
+- **D3** one model subclass per shape (`BoxSolid(Primitive)` …): `ShapeType` and the class can drift, the formulas of one shape spread over several places, and model consumers know the algorithm entries (`G1`, `G12`). The same ADR.
+- **D4** making tessellation a member of `Solid<T>`: `TriangleMesh` is float, so `Solid<double>::tessellate()` could only output reduced precision (`G4`). See `geometry-tessellation.md` D5.
+- **D5** implicit conversion between float and double solids: it would hide "the dimensions only have float resolution" inside the call chain (`G4`). See 2.6.
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 |---|---|---|
-| T1 | 接口抽象、五个 kind 是值、两种精度的 kind 不互相转换 | `SolidTest.cpp` 的 `theFamilyIsAnInterfaceAndTheKindsAreValues` |
-| T2 | `visitPrimitive()` 交出具体子类；不是五个之一的图元得到 `false` | 同文件 `visitPrimitiveReachesTheConcreteSubclass`、`thePrimitiveBaseHoldsNoGeometry` |
-| T3 | 盒的面 / 角 / 内部 | `SolidDistanceTest.cpp` 的 `aBoxClampsToItsFacesAndCorners` |
-| T4 | 球的内外与两交 / 相切 | `aSphereProjectsAlongItsRadius`、`SolidIntersectionTest.cpp` 的 `aTangentialRayTouchesASphereOnce` |
-| T5 | 椭球三轴 + Lagrange 条件 | `SolidDistanceTest.cpp` 的 `anEllipsoidProjectsOntoItsSurfaceAlongTheNormal` |
-| T6 | 圆柱径向 / 轴向 / 棱，圆锥底面与母线选择 | `aCylinderClampsRadiallyAndAxially`、`aConeChoosesBetweenItsBaseAndItsSide` |
-| T7 | 内部起点只报离开、端面命中、去重 | `SolidIntersectionTest.cpp` 的 `aRayFromInsideASolidReportsOnlyTheExit`、`aCylinderIsHitOnItsSideAndOnItsCaps` |
-| T8 | 不可用实体、退化量纲、每 kind 的体积判据 | `SolidTest.cpp` 的 `anUnusablePrimitiveStillAnswersItsBounds`、`everySubclassReportsItsOwnTag`、`theDefaultSubclassIsTheUnitShape` |
+| T1 | the interface is abstract, the five kinds are values, the two precisions' kinds do not convert into each other | `theFamilyIsAnInterfaceAndTheKindsAreValues` in `SolidTest.cpp` |
+| T2 | `visitPrimitive()` hands over the concrete subclass; a primitive that is not one of the five gets `false` | `visitPrimitiveReachesTheConcreteSubclass`, `thePrimitiveBaseHoldsNoGeometry` in the same file |
+| T3 | the box's faces / corners / interior | `aBoxClampsToItsFacesAndCorners` in `SolidDistanceTest.cpp` |
+| T4 | a sphere's inside and outside, two hits / tangency | `aSphereProjectsAlongItsRadius`, `aTangentialRayTouchesASphereOnce` in `SolidIntersectionTest.cpp` |
+| T5 | the ellipsoid's three axes + the Lagrange condition | `anEllipsoidProjectsOntoItsSurfaceAlongTheNormal` in `SolidDistanceTest.cpp` |
+| T6 | a cylinder's radial / axial / edge cases, the cone's choice between its base and its generatrix | `aCylinderClampsRadiallyAndAxially`, `aConeChoosesBetweenItsBaseAndItsSide` |
+| T7 | a ray from inside reports only the exit, end-cap hits, de-duplication | `aRayFromInsideASolidReportsOnlyTheExit`, `aCylinderIsHitOnItsSideAndOnItsCaps` in `SolidIntersectionTest.cpp` |
+| T8 | unusable solids, degenerate extents, the per-kind volume criterion | `anUnusablePrimitiveStillAnswersItsBounds`, `everySubclassReportsItsOwnTag`, `theDefaultSubclassIsTheUnitShape` in `SolidTest.cpp` |
 
-命令：`cmake --build build --config Debug --target test_geom_spatial`，再运行 `build/bin/Debug/test_geom_spatial.exe`。
+Command: `cmake --build build --config Debug --target test_geom_spatial`, then run `build/bin/Debug/test_geom_spatial.exe`.
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-- 族接口与五个 kind 都在；模型不存几何值（子类只存尺寸，`solid()` 按需构造）；三角化是 geom 的 `tessellateSolid()`，模型侧 `meshFromTriangulation()` 装配成网格（见 `geometry-tessellation.md`）；`brep` 与描述文件写入者都按 kind 分派（`visitPrimitive()` + 重载）。
+- The family interface and the five kinds exist; the model stores no geometric value (a subclass stores dimensions only, `solid()` constructs on demand); tessellation is geom's `tessellateSolid()`, which the model side's `meshFromTriangulation()` assembles into a mesh (see `geometry-tessellation.md`); `brep` and the description-file writer both dispatch per kind (`visitPrimitive()` + overloads).
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-- 实体间运算（布尔、实体间最近距离）没有消费者，见 `../backlog/geometry.md` G3。
-- 新 kind（torus / capsule / 棱柱）：新增一个 `XxxSolid` 头文件 + 一个 `ShapeType` + 一个 `visitPrimitive()` 分支，并补齐三角化与 `brep` 的重载；编译器会在 visitor 的实例化与重载解析处报错。有表示的实体不进这里，走 `BrepShape`。
-- 三角化两种精度都有；只有模型网格是 float，`Triangulationd` 装配成网格时要显式转 float（`geometry-tessellation.md` 9.2）。
+- Operations between solids (booleans, the nearest distance between solids) have no consumer, see `../backlog/geometry.md` G3.
+- A new kind (torus / capsule / prism): add one `XxxSolid` header + one `ShapeType` + one `visitPrimitive()` branch, and fill in the tessellation and `brep` overloads; the compiler reports at the visitor's instantiation and at overload resolution. Represented solids do not come in here; they go through `BrepShape`.
+- Tessellation exists in both precisions; only the model mesh is float, so assembling a `Triangulationd` into a mesh converts to float explicitly (`geometry-tessellation.md` 9.2).
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-- 模型侧：`Primitive` 是唯一类，构造用子类（`Box` / `Sphere` / …），读取用 `solid()`（具体 kind 值）或 `visitPrimitive()`（具体子类）。
-- 没有以模型为参数的三角化 / 射线 / 距离入口；替代分别是 `tessellateSolid(visitPrimitive(...))` 与 `p.solid().closestPoint(...)` / `p.solid().intersectWith(...)`。
+- Model side: `Primitive` is the only class; construct with a subclass (`Box` / `Sphere` / …), read with `solid()` (the concrete kind's value) or `visitPrimitive()` (the concrete subclass).
+- There is no tessellation / ray / distance entry that takes a model as its parameter; the replacements are `tessellateSolid(visitPrimitive(...))` and `p.solid().closestPoint(...)` / `p.solid().intersectWith(...)`.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
-- `src/base/geom/sdk/vine/geom/spatial/Solid.hpp`、`BoxSolid.hpp` … `EllipsoidSolid.hpp`
-- `src/base/models/sdk/vine/models/Primitive.hpp`、`Box.hpp` … `Ellipsoid.hpp`、`PrimitiveDispatch.hpp`
-- `tests/test_geom_spatial/SolidTest.cpp`、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`
+- `src/base/geom/sdk/vine/geom/spatial/Solid.hpp`, `BoxSolid.hpp` … `EllipsoidSolid.hpp`
+- `src/base/models/sdk/vine/models/Primitive.hpp`, `Box.hpp` … `Ellipsoid.hpp`, `PrimitiveDispatch.hpp`
+- `tests/test_geom_spatial/SolidTest.cpp`, `SolidDistanceTest.cpp`, `SolidIntersectionTest.cpp`
 
-### 10.2 文档与 ADR
+### 10.2 Docs and ADRs
 
-- `geometry-parametric.md`（建模类型的契约）
-- `geometry-kinds.md` 2.6（算法放在几何一侧）
-- `geometry-tessellation.md`（同一批实体的网格形式）
+- `geometry-parametric.md` (the modelling type's contract)
+- `geometry-kinds.md` 2.6 (algorithms live on the geometry side)
+- `geometry-tessellation.md` (the mesh form of the same solids)
 - `../decisions/ADR-2026-11-05-solid-family-and-variant.md`

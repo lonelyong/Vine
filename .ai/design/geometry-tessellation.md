@@ -1,173 +1,184 @@
-# geometry 解析实体的三角化
+# geometry tessellation of analytic solids
 
-> **状态**：现行
-> **最后核对**：2026-11-09
-> **范围**：把五个解析体变成顶点数组（`Triangulation`）的入口、质量参数与结果契约，
-> 以及模型侧把它装进 `TriangleMesh` 的那一步。
-> 不含值类型本身与它的解析查询（见 `geometry-solid.md`）、模型的建模契约（见 `geometry-parametric.md`）、B-rep 的三角化（见 `brep-operations.md`）、网格存储与渲染（见 `graphics-geometry.md`）。
-> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/SolidTessellation.hpp`、`src/base/geom/src/SolidTessellation.cpp`、
-> `src/base/models/sdk/vine/models/SolidTessellation.hpp`；`tests/test_geom_spatial/SolidTessellationTest.cpp`。
-> **待办**：`../backlog/geometry.md` G5
+> **Status**: current
+> **Last verified**: 2026-11-09
+> **Scope**: the entry that turns the five analytic solids into vertex arrays (`Triangulation`), its quality parameter and result contract,
+> and the model-side step that assembles it into a `TriangleMesh`.
+> Not the value type itself and its analytic queries (see `geometry-solid.md`), not the model's modelling contract (see `geometry-parametric.md`), not B-rep tessellation (see `brep-operations.md`), not mesh storage and rendering (see `graphics-geometry.md`).
+> **Sources**: `src/base/geom/sdk/vine/geom/spatial/SolidTessellation.hpp`, `src/base/geom/src/SolidTessellation.cpp`,
+> `src/base/models/sdk/vine/models/SolidTessellation.hpp`; `tests/test_geom_spatial/SolidTessellationTest.cpp`.
+> **Backlog**: `../backlog/geometry.md` G5
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-`Primitive` 是建模类型：它带身份、名字、revision 与尺寸，却不含任何顶点数据（`geometry-parametric.md` 2.4）。渲染边界 `graphics::geometryFromShape()` 只接受网格，所以解析实体在今天**画不出来**；B-rep 的 `Tessellation` 能把 `BrepShape` 变成网格，但那条路要求 OCCT 后端，而解析实体的几何是纯数学。
+`Primitive` is a modelling type: it carries identity, name, revision and dimensions, yet contains no vertex data at all (`geometry-parametric.md` 2.4).
+The rendering boundary `graphics::geometryFromShape()` accepts meshes only, so an analytic solid **cannot be drawn** today; B-rep's `Tessellation` can turn a `BrepShape` into a mesh, but that route needs the OCCT backend, while the geometry of an analytic solid is pure mathematics.
 
-三角化需要两样值类型给不了的东西：一次铺网格的遍历，和一组顶点数组。前者放在自由函数里，后者就是一个普通的值类型，精度跟实体走（`float` / `double` 两套）。
+Tessellation needs two things a value type cannot give: a traversal that lays out a mesh, and a set of vertex arrays.
+The former goes into a free function, and the latter is just an ordinary value type whose precision follows the solid (a `float` / `double` pair).
 
-### 1.2 目标
+### 1.2 Goals
 
-- 一个自由函数，把五个解析体变成带位置、法向与索引的 `Triangulation<T>`，不依赖 OCCT，也不依赖建模模块。
-- 结果在实体自己的 canonical 局部空间里、闭合、外向绕序，可直接送渲染或碰撞。
-- 细分程度是显式参数，可预测、可测试。
+- One free function turning the five analytic solids into a `Triangulation<T>` with positions, normals and indices, with no dependency on OCCT and none on the modelling module.
+- The result is in the solid's own canonical local space, closed, with outward winding, and can be sent straight to rendering or collision.
+- The subdivision level is an explicit parameter: predictable and testable.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做自适应细分 / 曲率误差控制：今天没有按误差取网格的消费者（`G8`），固定段数足够且可预测。
-- 不做纹理坐标：解析实体没有“选哪个参数化”的答案，需要的调用方可以从位置推导。
-- 不做双精度网格：`TriangleMesh` 是 float；`Triangulationd` 存在，但装进网格时由调用方显式降精度（9.2）。
-- 不做 B-rep 三角化：那是 `brep` 的职责（`brep-operations.md`）。
-- 不做网格：`TriangleMesh` 是模型侧的 `meshFromTriangulation()`，几何侧只交数组。
+- Not doing adaptive subdivision / curvature error control: there is no consumer that takes a mesh by error today (`G8`), and a fixed segment count is enough and predictable.
+- Not doing texture coordinates: an analytic solid has no answer to "which parameterization", and a caller that needs them can derive them from positions.
+- Not doing a double-precision mesh: `TriangleMesh` is float; `Triangulationd` exists, but the caller reduces precision explicitly when assembling it into a mesh (9.2).
+- Not doing B-rep tessellation: that is `brep`'s job (`brep-operations.md`).
+- Not doing the mesh: `TriangleMesh` comes from the model side's `meshFromTriangulation()`, and the geometry side hands over arrays only.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**一个无状态自由函数在五个解析体上按 kind 解析地铺三角形：盒是六个四边形，球 / 椭球是纬带加两极扇，圆柱是侧带加两盖，圆锥是侧扇加底盖；质量是调用方给的固定段数，精度与实体一致。**
+**One stateless free function lays triangles analytically over the five analytic solids per kind: the box is six quads, the sphere / ellipsoid a latitude band plus two pole fans, the cylinder a side band plus two caps, the cone a side fan plus a base cap; the quality is the caller's fixed segment count, and the precision matches the solid.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 自由函数，不是 `Solid<T>` 的成员
+### 2.1 A free function, not a member of `Solid<T>`
 
-- **是什么**：`tessellateSolid()` 在 `geom` 的 `src/` 里实现，一 kind 一个重载（`BoxSolid<T>` … `EllipsoidSolid<T>`），返回 `Triangulation<T>`。
-- **为什么**：`G2`、`G4`、`G6`、`G10` —— 算法只碰几何值（五个 kind / `Vector3<T>`）与 `std::vector`，而 `TriangleMesh` 是建模类型：把它写进返回类型就是一条 geom → models 的回边。精度与其它几何值一致是模板参数 `T`，不是入口的两套名字；`T` 跟着实体走，就不会有隐式降精度。实现留在 `.cpp`，两种精度在 `Instantiations` 同一 TU 里显式实例化并导出（与 `Aabb` / `Bvh` 同一条规矩）。
-- **边界**：算法挂在**几何一侧**（不是模型上），与 `closestPoint()` / `intersectWith()` 同一侧；模型只通过 `visitPrimitive()` 参与，并用 `meshFromTriangulation()` 做装配。参数是具体 kind 而不是 `const Solid<T>&`：铺每种 kind 需要自己的量纲；调用方用 `visitPrimitive()` 把具体子类交进来，漏掉一个新 kind 就是缺一个重载，编译错误仍在。
+- **What it is**: `tessellateSolid()` is implemented in `geom`'s `src/`, one overload per kind (`BoxSolid<T>` … `EllipsoidSolid<T>`), returning `Triangulation<T>`.
+- **Why**: `G2`, `G4`, `G6`, `G10` - the algorithm touches geometry values only (the five kinds / `Vector3<T>`) and `std::vector`, while `TriangleMesh` is a modelling type: putting it in the return type would be a geom → models back edge.
+  Precision matching the other geometry values is the template parameter `T`, not two sets of entry names; when `T` follows the solid there is no implicit precision loss.
+  The implementation stays in the `.cpp`, and both precisions are instantiated and exported explicitly in `Instantiations`' single TU (the same rule as `Aabb` / `Bvh`).
+- **Boundary**: the algorithm sits on the **geometry side** (not on the model), the same side as `closestPoint()` / `intersectWith()`; the model takes part only through `visitPrimitive()` and assembles with `meshFromTriangulation()`.
+  The parameter is the concrete kind rather than `const Solid<T>&`: laying out each kind needs its own extents; the caller hands the concrete subclass in with `visitPrimitive()`, so missing a new kind is a missing overload and the compile error still appears.
 
-### 2.2 质量是固定段数
+### 2.2 Quality is a fixed segment count
 
-- **是什么**：`TessellationQuality{ around, along }`：`around` 是旋转面的方位角段数，`along` 是球 / 椭球的纬度段数；盒完全忽略两者。`around` 钳到 ≥3、`along` 钳到 ≥2。
-- **为什么**：`G8`、`G4` —— 固定段数没有隐藏的误差判据，调用方知道会得到多少三角形；钳制让“0 段”不是一个退化网格而是一个最小合法形状。
-- **边界**：不做自适应、不做屏幕空间误差——需要时由调用方根据尺寸自己算段数。
+- **What it is**: `TessellationQuality{ around, along }`: `around` is the azimuth segment count of a surface of revolution, `along` the latitude segment count of the sphere / ellipsoid; the box ignores both.
+  `around` is clamped to ≥3 and `along` to ≥2.
+- **Why**: `G8`, `G4` - a fixed segment count has no hidden error criterion, and the caller knows how many triangles it gets; clamping makes "0 segments" a minimum legal shape rather than a degenerate mesh.
+- **Boundary**: no adaptivity and no screen-space error - when one is needed the caller computes the segment count from the dimensions itself.
 
-### 2.3 逐顶点精确法向，顶点因此在必要时复制
+### 2.3 Exact per-vertex normals, so vertices are duplicated where needed
 
-- **是什么**：每个顶点带解析法向——盒是面法向，球 / 椭球是 `(x/a², y/b², z/c²)` 归一化，圆柱是侧面径向与盖面轴向，圆锥是斜侧面法向。位置相同但法向不同的地方（盒棱、圆柱侧与盖之间、圆锥顶点按段）各存一个顶点。
-- **为什么**：`G4`、`G10` —— 共享一个顶点就只能选一个法向，或者平滑掉硬边；法向是这批网格的主要用途（光照），精确法向比最小顶点集更值钱。索引网格仍然省下“每个三角形一套顶点”。
-- **代价**：顶点数不是理论最小；盒是 24 而不是 8，圆柱的盖环与侧环各一份。
+- **What it is**: every vertex carries an analytic normal - the face normal for the box, normalized `(x/a², y/b², z/c²)` for the sphere / ellipsoid, the lateral radial and the cap axial for the cylinder, the slanted lateral normal for the cone.
+  Where the position is the same but the normal differs (box edges, between the cylinder's side and its caps, the cone apex per segment) each gets its own vertex.
+- **Why**: `G4`, `G10` - sharing one vertex would allow only one normal, or would smooth away the hard edges; the normal is this mesh's main use (lighting), and exact normals are worth more than a minimal vertex set.
+  An indexed mesh still saves "one vertex set per triangle".
+- **Cost**: the vertex count is not the theoretical minimum; the box has 24 rather than 8, and the cylinder's cap ring and side ring are separate.
 
-### 2.4 闭合实体与外向绕序
+### 2.4 Closed solids and outward winding
 
-- **是什么**：五个解析体都是实体，网格是闭合的；三角形从外面看是逆时针（右手法则），因此可以直接背面剔除。
-- **为什么**：`G4`、`G12` —— 绕序就是法向的另一个说法；闭合让“内部 / 外部”有定义，也是碰撞与法向校验的前提。
-- **边界**：圆锥顶点按段复制，每个顶点取该段的斜法向；顶点处法向本就不唯一，这是唯一的正确处理。
+- **What it is**: the five analytic bodies are solids, so the mesh is closed; seen from outside the triangles are counter-clockwise (right-hand rule), so back-face culling works directly.
+- **Why**: `G4`, `G12` - winding is another way of stating the normal; closure gives "inside / outside" a meaning, and it is the premise of collision and normal validation.
+- **Boundary**: the cone apex is duplicated per segment, and each vertex takes its segment's slanted normal; the normal at the apex is not unique in the first place, and this is the only correct treatment.
 
-### 2.5 只写位置、法向与索引
+### 2.5 Only positions, normals and indices are written
 
-- **是什么**：`Triangulation` 只填位置 / 法向 / 索引三个数组；纹理坐标与颜色不写。
-- **为什么**：`G8` —— `Mesh` 的通道全部可选，模型侧装配时缺失的通道保持为空，渲染边界对缺失通道有既定行为；解析实体没有纹理参数化的唯一答案，写一个就是替调用方做决定。
+- **What it is**: `Triangulation` fills the position / normal / index arrays only; texture coordinates and colours are not written.
+- **Why**: `G8` - every channel of `Mesh` is optional, the model side leaves missing channels empty when assembling, and the rendering boundary has a defined behaviour for a missing channel; an analytic solid has no unique answer to texture parameterization, and writing one would decide on the caller's behalf.
 
-### 2.6 不依赖 OCCT、不缓存
+### 2.6 No OCCT dependency, no caching
 
-- **是什么**：每次调用返回一个新值；`graphics` 侧的几何不会被共享或记住。
-- **为什么**：`G2`、`G10` —— `geometry` 不 include OCCT；缓存需要失效规则（模型尺寸可被 setter 改、revision 会变），而今天的调用频率不值得先引一套缓存。值类型没有 revision，所以缓存只能由调用方按自己的失效规则做。
+- **What it is**: every call returns a new value; the geometry on the `graphics` side is neither shared nor remembered.
+- **Why**: `G2`, `G10` - `geometry` does not include OCCT; a cache needs an invalidation rule (model dimensions can be changed by setters and the revision changes), and today's call frequency does not justify introducing one.
+  A value type has no revision, so a cache can only be done by the caller under its own invalidation rule.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | 五个解析体的三角化 | `tessellateSolid(具体 kind, quality)`：一 kind 一个重载，返回 `Triangulation`（位置 / 法向 / 索引） | 已落地（T1–T5） |
-| F5 | 模型侧装配 | `meshFromTriangulation(Triangulation)`：把三个数组 move 进 `TriangleMesh` 并算包围盒；空值返回空网格 | 已落地（T7） |
-| F2 | 质量与钳制 | `around ≥ 3`、`along ≥ 2`；盒忽略两者 | 已落地（T5） |
-| F3 | 不可用实体 | `isValid()` 为假返回 `nullptr`，不抛异常 | 已落地（T6） |
-| F4 | 自适应细分 / 纹理坐标 | 误差驱动的段数与 UV 通道 | 未做（`G8`） |
+| F1 | Tessellation of the five analytic solids | `tessellateSolid(concrete kind, quality)`: one overload per kind, returning `Triangulation` (positions / normals / indices) | landed (T1–T5) |
+| F5 | Model-side assembly | `meshFromTriangulation(Triangulation)`: moves the three arrays into `TriangleMesh` and computes the bounding box; an empty value returns an empty mesh | landed (T7) |
+| F2 | Quality and clamping | `around ≥ 3`, `along ≥ 2`; the box ignores both | landed (T5) |
+| F3 | Unusable solids | a false `isValid()` returns `nullptr` and does not throw | landed (T6) |
+| F4 | Adaptive subdivision / texture coordinates | error-driven segment count and a UV channel | not done (`G8`) |
 
-### 3.2 F1 铺网格
+### 3.2 F1 Laying out the mesh
 
-- **行为**：按 kind 分派到盒的六个四边形、球 / 椭球的纬带 + 两极扇、圆柱的侧带 + 两盖扇、圆锥的侧扇 + 底盖扇。
-- **约束**（C1–C3）：空间、闭合与法向见 §5。
-- **验收**（T1–T4）：每个 kind 的顶点数、三角形数、点在解析面上的判据。
+- **Behaviour**: dispatch per kind to the box's six quads, the sphere / ellipsoid's latitude band + two pole fans, the cylinder's side band + two cap fans, the cone's side fan + base cap fan.
+- **Constraints** (C1–C3): space, closure and normals are in §5.
+- **Acceptance** (T1–T4): the vertex count, triangle count and point-on-the-analytic-surface criteria of each kind.
 
-### 3.3 F3 不可用输入
+### 3.3 F3 Unusable input
 
-- **行为**：`isValid()` 为假的实体返回空值；钳制后的最小质量仍产出闭合三角形集。
-- **要求**（R2）。
-- **验收**（T5、T6）。
+- **Behaviour**: a solid whose `isValid()` is false returns an empty value; the clamped minimum quality still produces a closed triangle set.
+- **Requirements** (R2).
+- **Acceptance** (T5, T6).
 
-## 4. 公开接口
+## 4. Public Interface
 
-| 头文件 | 内容 |
+| Header | Contents |
 |---|---|
-| `geom/spatial/SolidTessellation.hpp` | `TessellationQuality`、结果值 `Triangulation<T>`（`Triangulationf` / `Triangulationd`）与五个 `tessellateSolid()` 重载 |
-| `models/SolidTessellation.hpp` | `meshFromTriangulation(Triangulationf)`：模型侧的装配，空值返回空网格 |
+| `geom/spatial/SolidTessellation.hpp` | `TessellationQuality`, the result value `Triangulation<T>` (`Triangulationf` / `Triangulationd`) and the five `tessellateSolid()` overloads |
+| `models/SolidTessellation.hpp` | `meshFromTriangulation(Triangulationf)`: the model-side assembly, an empty value returns an empty mesh |
 
-完整签名与每个参数的语义见头文件；网格通道的存储与共享见 `graphics-geometry.md`。
+The full signatures and the meaning of each parameter are in the headers; mesh channel storage and sharing are in `graphics-geometry.md`.
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-- **C1**：结果在实体的 canonical 局部空间里（盒 / 球 / 椭球居中，圆柱 / 圆锥沿 +Z 跨 `[-half_height, +half_height]`）。
-- **C2**：网格闭合——每条几何边恰属两个三角形（位置相同即同一条边，即使顶点因法向被复制）。
-- **C3**：法向是单位向量，且对凸的解析体指向背离内部一侧；三角形绕序与法向一致。
-- **C4**：`around` / `along` 在入口处钳制，非法值不会产生退化网格或越界索引。
-- **R1**：不依赖 OCCT，也不依赖建模模块；不分配除结果数组以外的持久状态。
-- **R2**：不可用实体返回空值（`Triangulation::empty()`），不抛异常。
-- **N1**：盒的三角形数固定 12；球 / 椭球是 `2 · around · (along − 1)`；圆柱是 `4 · around`；圆锥是 `2 · around`。
-- **N2**：圆锥顶点按方位段复制，每个顶点带该段中点的斜法向。
+- **C1**: the result is in the solid's canonical local space (box / sphere / ellipsoid centred, cylinder / cone along +Z spanning `[-half_height, +half_height]`).
+- **C2**: the mesh is closed - every geometric edge belongs to exactly two triangles (the same position is the same edge, even when a vertex was duplicated for its normal).
+- **C3**: the normal is a unit vector pointing away from the interior of the convex analytic solid; the triangle winding agrees with the normal.
+- **C4**: `around` / `along` are clamped at the entry, so an illegal value produces neither a degenerate mesh nor an out-of-range index.
+- **R1**: no dependency on OCCT and none on the modelling module; no persistent state is allocated beyond the result arrays.
+- **R2**: an unusable solid returns an empty value (`Triangulation::empty()`) and does not throw.
+- **N1**: the box's triangle count is always 12; the sphere / ellipsoid is `2 · around · (along − 1)`; the cylinder is `4 · around`; the cone is `2 · around`.
+- **N2**: the cone apex is duplicated per azimuth segment, and each vertex carries the slanted normal at that segment's midpoint.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-- **P1 顶点重复不是缺陷**。会怎么错：拿“顶点数应等于理论最小”去校验网格，于是认为盒的 24 个顶点错了。怎么判：按位置去重后只剩 8 个角。怎么防：C2 的闭合判据按**位置**数边，不按索引数。
-- **P2 段数不随尺寸自适应**。会怎么错：一个细长的大圆柱用默认段数，侧面出现可见折线。怎么判：把 `around` 加倍后轮廓改善。怎么防：按目标尺寸与段数的比值选 `around`。
-- **P3 圆锥顶点的法向不是单一值**。会怎么错：认为顶点处有一个“真正”的法向，于是把按段复制的顶点合并。怎么判：合并后侧面光照出现一圈错误的高光。怎么防：保留每段的顶点（N2）。
-- **P4 局部空间不是世界空间**。会怎么错：把网格顶点当世界坐标送碰撞，忽略节点变换。怎么判：形状位置与场景不符。怎么防：C1；世界盒要乘节点变换。
-- **P5 双精度三角形装不进网格**。会怎么错：拿 `Triangulationd` 直接要 `TriangleMesh`，于是随手 `static_cast` 量纲。怎么判：`meshFromTriangulation()` 只收 `Triangulationf`，编译不过。怎么防：接受一次显式的 float 转换，别在调用点上散落 cast。
+- **P1 Duplicate vertices are not a defect**. How it goes wrong: validating the mesh against "the vertex count must equal the theoretical minimum", and concluding the box's 24 vertices are wrong. How to detect: de-duplicating by position leaves only 8 corners. How to prevent: C2's closure criterion counts edges **by position**, not by index.
+- **P2 The segment count does not adapt to size**. How it goes wrong: a long thin large cylinder uses the default segment count and its side shows visible creases. How to detect: doubling `around` improves the silhouette. How to prevent: choose `around` from the ratio of the target size to the segment count.
+- **P3 The cone apex normal is not a single value**. How it goes wrong: assuming there is one "true" normal at the apex, and merging the per-segment copies. How to detect: after merging, the side lighting shows a ring of wrong highlights. How to prevent: keep one vertex per segment (N2).
+- **P4 Local space is not world space**. How it goes wrong: sending mesh vertices to collision as world coordinates, ignoring the node transform. How to detect: the shape's position does not match the scene. How to prevent: C1; a world box multiplies by the node transform.
+- **P5 Double-precision triangles do not fit into a mesh**. How it goes wrong: demanding a `TriangleMesh` straight from a `Triangulationd` and casually `static_cast`-ing the extents. How to detect: `meshFromTriangulation()` takes `Triangulationf` only, and it does not compile. How to prevent: accept one explicit float conversion, and do not scatter casts over the call sites.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-- **D1** 把三角化放进 `graphics`：渲染需要网格，但碰撞、包围盒核对与导出也会要；放进渲染层会让 `base` 的消费者反向依赖 `viz`（`G2`）。
-- **D2** 在 `Primitive` 上加虚函数 `tessellate()`：建模类型被拉上算法面，每个子类多一份虚函数，而算法本身与身份 / revision 无关（`G1`、`G8`）。见 `../decisions/ADR-2026-11-05-solid-value-type.md`。
-- **D3** 借 OCCT 的 `BRepPrimAPI` + `Tessellation` 出网格：`geometry` 从此依赖后端，无后端构建失去全部能力；解析实体是纯数学，不需要后端（`G2`、`G10`）。
-- **D4** 自适应细分：没有按误差取网格的消费者，误差判据本身还需要曲率与屏幕尺度（`G8`）。
-- **D5** 把它做成 `Solid<T>` 的成员：`TriangleMesh` 只有 float，成员化的结果是 `Solid<double>` 隐式降精度（`G4`）。见 `geometry-solid.md` D4。
-- **D6** 让几何侧直接返回 `TriangleMesh`，或返回 `intrusive_ptr<Buffer<T>>` 三个通道：前一种在 geom 与 models 之间造一条回边；后一种让模型侧的 `Mesh::setPositions()`（只收 `std::vector`）多一次拷贝，而今天没有第二个消费者需要 Buffer 形式（`G2`、`G8`、`G10`）。见 `../decisions/ADR-2026-11-09-solid-tessellation-in-geom.md`。
+- **D1** Putting tessellation into `graphics`: rendering needs a mesh, but collision, bounding-box checks and export want one too; putting it in the rendering layer would make consumers of `base` depend on `viz` backwards (`G2`).
+- **D2** Adding a virtual `tessellate()` to `Primitive`: the modelling type is dragged onto the algorithm surface, every subclass gets one more virtual, and the algorithm itself has nothing to do with identity / revision (`G1`, `G8`). See `../decisions/ADR-2026-11-05-solid-value-type.md`.
+- **D3** Borrowing OCCT's `BRepPrimAPI` + `Tessellation` to produce the mesh: `geometry` would depend on a backend from then on, and a backend-less build would lose the whole capability; an analytic solid is pure mathematics and needs no backend (`G2`, `G10`).
+- **D4** Adaptive subdivision: no consumer takes a mesh by error, and the error criterion itself needs curvature and a screen scale (`G8`).
+- **D5** Making it a member of `Solid<T>`: `TriangleMesh` is float only, so the memberized result is `Solid<double>` losing precision implicitly (`G4`). See `geometry-solid.md` D4.
+- **D6** Letting the geometry side return `TriangleMesh` directly, or return three channels of `intrusive_ptr<Buffer<T>>`: the former creates a back edge between geom and models; the latter costs the model side's `Mesh::setPositions()` (which takes `std::vector` only) one more copy, while no second consumer needs the Buffer form today (`G2`, `G8`, `G10`). See `../decisions/ADR-2026-11-09-solid-tessellation-in-geom.md`.
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 |---|---|---|
-| T1 | 盒：六面、canonical 包围盒、法向 | `tests/test_geom_spatial/SolidTessellationTest.cpp` 的 `aBoxBecomesSixClosedQuads` |
-| T2 | 球 / 椭球：点集在解析面上、法向 | 同文件 `aSphereBecomesAClosedBandBetweenItsPoles`、`anEllipsoidUsesItsThreeSemiAxes` |
-| T3 | 圆柱：侧带与两盖、法向分类 | 同文件 `aCylinderHasASideBandAndTwoCaps` |
-| T4 | 圆锥：斜法向与底盖 | 同文件 `aConeHasASlantedSideAndABase` |
-| T5 | 质量钳制与闭合 | 同文件 `theQualityIsClampedInsteadOfTrusted` 与各用例里的 `expectClosed`（每条几何边恰属两个三角形） |
-| T6 | 不可用实体 | 同文件 `anUnusableSolidAnswersAnEmptyValue` |
-| T7 | 模型经转换出网格 | 同文件 `aModelReachesTheMeshThroughItsSolid` |
-| T8 | 精度跟实体走 | 同文件 `thePrecisionOfTheSolidIsThePrecisionOfTheTriangles`（`BoxSolidd` → `Triangulationd`） |
+| T1 | the box: six faces, canonical bounding box, normals | `aBoxBecomesSixClosedQuads` in `tests/test_geom_spatial/SolidTessellationTest.cpp` |
+| T2 | the sphere / ellipsoid: the point set lies on the analytic surface, normals | `aSphereBecomesAClosedBandBetweenItsPoles`, `anEllipsoidUsesItsThreeSemiAxes` in the same file |
+| T3 | the cylinder: side band and two caps, normal classification | `aCylinderHasASideBandAndTwoCaps` in the same file |
+| T4 | the cone: slanted normal and base cap | `aConeHasASlantedSideAndABase` in the same file |
+| T5 | quality clamping and closure | `theQualityIsClampedInsteadOfTrusted` in the same file, plus `expectClosed` in each case (every geometric edge belongs to exactly two triangles) |
+| T6 | unusable solids | `anUnusableSolidAnswersAnEmptyValue` in the same file |
+| T7 | the model reaches a mesh through the conversion | `aModelReachesTheMeshThroughItsSolid` in the same file |
+| T8 | precision follows the solid | `thePrecisionOfTheSolidIsThePrecisionOfTheTriangles` in the same file (`BoxSolidd` → `Triangulationd`) |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-- 五个解析体的三角化在 `geom`，不依赖 OCCT，也不依赖建模模块；`brep` 的 B-rep 三角化是另一条路径。
-- 入口是五个重载（`BoxSolid<T>` … `EllipsoidSolid<T>`），返回 `Triangulation<T>`；`float` 与 `double` 都显式实例化并导出。模型侧用 `visitPrimitive()` 把具体子类交进来、用 `meshFromTriangulation()` 装配成 `TriangleMesh`（`geometry-parametric.md` 4）。
-- `graphics::geometryFromShape()` 走这条链（`Geometry.cpp`），中间网格由模型侧装配，渲染侧不自己拼。
+- The tessellation of the five analytic solids lives in `geom`, with no dependency on OCCT and none on the modelling module; `brep`'s B-rep tessellation is a different route.
+- The entry is five overloads (`BoxSolid<T>` … `EllipsoidSolid<T>`) returning `Triangulation<T>`; `float` and `double` are both instantiated and exported explicitly.
+  The model side hands the concrete subclass in with `visitPrimitive()` and assembles it into a `TriangleMesh` with `meshFromTriangulation()` (`geometry-parametric.md` 4).
+- `graphics::geometryFromShape()` goes through this chain (`Geometry.cpp`); the intermediate mesh is assembled on the model side, and the rendering side does not build one itself.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-- 自适应细分与纹理坐标不做（F4，`G8`）。
-- 模型网格只有 float：`Triangulationd` 要装配成 `TriangleMesh` 时由调用方显式降精度（P5）。
+- Adaptive subdivision and texture coordinates are not done (F4, `G8`).
+- The model mesh is float only: the caller reduces precision explicitly when a `Triangulationd` is to be assembled into a `TriangleMesh` (P5).
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-- 迁移：`tessellateSolid()` 从 `vn::models` 移到 `vn::geom::spatial`，返回 `Triangulation<T>` 而不是 `TriangleMesh`；`TessellationQuality` 随之上移，精度变成模板参数。模型侧的替代是 `meshFromTriangulation(tessellateSolid(shape.solid()))`，其中 `shape` 来自 `visitPrimitive()`（见 `../decisions/ADR-2026-11-09-solid-tessellation-in-geom.md`）。
-- 入口按 kind 重载，不再收 variant：封闭集合由“五个 kind + `visitPrimitive()`”表达（`../decisions/ADR-2026-11-09-solid-closed-set-without-variant.md`）。
+- Migration: `tessellateSolid()` moved from `vn::models` to `vn::geom::spatial` and returns `Triangulation<T>` rather than `TriangleMesh`; `TessellationQuality` moved up with it, and precision became a template parameter.
+  The model-side replacement is `meshFromTriangulation(tessellateSolid(shape.solid()))`, where `shape` comes from `visitPrimitive()` (see `../decisions/ADR-2026-11-09-solid-tessellation-in-geom.md`).
+- The entry is overloaded per kind rather than taking a variant: the closed set is expressed by "five kinds + `visitPrimitive()`" (`../decisions/ADR-2026-11-09-solid-closed-set-without-variant.md`).
 
-## 10. 参考
+## 10. References
 
-- `geometry-solid.md`（族接口与五个 kind、canonical 局部空间）
-- `../decisions/ADR-2026-11-09-solid-tessellation-in-geom.md`（为什么入口与结果值在 geom，为什么结果是值而不是网格或 Buffer）
-- `geometry-parametric.md`（建模类型与 canonical 空间的来源）
-- `graphics-geometry.md`（网格通道、`geometryFromShape` 的边界）
-- `brep-operations.md` 1.3（为什么“实体 → 网格”归 `geometry` 不归 `brep`）
+- `geometry-solid.md` (the family interface and the five kinds, canonical local space)
+- `../decisions/ADR-2026-11-09-solid-tessellation-in-geom.md` (why the entry and the result value live in geom, why the result is a value rather than a mesh or a Buffer)
+- `geometry-parametric.md` (the modelling type and where canonical space comes from)
+- `graphics-geometry.md` (mesh channels, the boundary of `geometryFromShape`)
+- `brep-operations.md` 1.3 (why "solid → mesh" belongs to `geometry` and not to `brep`)
 - `../backlog/geometry.md` G5
