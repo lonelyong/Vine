@@ -898,15 +898,16 @@ TEST(ExecutorTest, APlanThatGotOnlyTheFormatsWrongIsRefusedToo)
 
     // (2) The engine's spelling is back; the DEVICE's drifted - and this one the engine cannot even express
     // (both spellings are RGBA8 to it), which is what the plan's copy of the device formats is for.
-    const std::uint32_t other_format         = actual.device_color_formats[0] == VK_FORMAT_R8G8B8A8_UNORM ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
+    const std::uint32_t other_format = actual.device_color_formats[0].code == VK_FORMAT_R8G8B8A8_UNORM ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
     drifted[0].wanted.shape.color_formats[0] = actual.color_formats[0];
-    drifted[0].wanted.shape.device_color_formats = { other_format };
+    drifted[0].wanted.shape.device_color_formats = { vn::graphics::DeviceFormat{ other_format } };
     drifted[0].current.desc                      = drifted[0].wanted;
 
     const CompiledFrame& device_drift = fixture.compiler.compile(fixture.recorder.description(), FrameFacts{ drifted });
     ASSERT_EQ(device_drift.passes.size(), 1U);
     ASSERT_EQ(device_drift.targets[0].shape.device_color_formats.size(), 1U);
-    EXPECT_EQ(device_drift.targets[0].shape.device_color_formats[0], other_format) << "the plan carries the device's spelling it was told";
+    EXPECT_EQ(device_drift.targets[0].shape.device_color_formats[0], vn::graphics::DeviceFormat{ other_format })
+        << "the plan carries the device's spelling it was told";
 
     auto device_graph = ::vsg::CommandGraph::create(fixture.created.device, fixture.created.queue_family);
     EXPECT_FALSE(fixture.executor.record(device_drift, device_graph));

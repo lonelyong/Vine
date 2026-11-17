@@ -251,7 +251,7 @@ void TargetTable::facts(const Entry& entry, core::TargetFacts& out) const
             const core::TargetShape& built        = entry.target->shape();
             out.wanted.shape.device_color_formats = built.device_color_formats;
             out.wanted.shape.device_depth_format  = built.device_depth_format;
-            out.wanted.shape.subpass              = built.subpass;
+            out.wanted.shape.render_pass_key      = built.render_pass_key;
         }
     }
 

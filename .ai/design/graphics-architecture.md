@@ -78,8 +78,11 @@
     （`check_export_annotations.py` 的文件清单）。**接缝的定义仍是“两个后端都用”**：只有 vsg 读的 17 个头与 16 个
     `.cpp` 已在 ADR-2026-11-16 §2 搬进 `gfx_backend_vsg/internal/`，vsg 自己的类型住在 `vn::backend_vsg::core`
     （`G13`）。代价如实说：宿主现在能 include 这些机制头，SDK 的命名空间里也看得见它们（`G7` 的残余）；换来的是
-    一条不需要四处同步的规则。`DrawState` / `TargetPlan` 里仍是 Vulkan 拼写（`VkFormat` / `ImageLayout` / subpass）
-    ——第二个后端落地前不再新增这类拼写，把它改成不透明设备格式码是那一轮的入口（`vsg-backend.md` C6）。
+    一条不需要四处同步的规则。`DrawState` / `TargetPlan` 的设备格式码已是**不透明**的
+    `DeviceFormat`（0 = 设备的 UNDEFINED），渲染通道结构由后端计算的 `RenderPassKey` 承载——自
+    B8（2026-11-17）起 `VkFormat` 值与 subpass 都不在接缝上，第三个后端不必先学 Vulkan 的格式与
+    subpass；`ImageLayout` 仍是 SDK 里的 Vulkan 语义，C6 的“不再新增拼写”照旧适用，收掉它属于
+    同一个门禁的下一次推进。
 2.11 **扩展点的成本是表，不是形容词**（审计 `A12`）：说"易于扩展"而不说"加一个要动哪几处"是无法证伪的。
     所以每个扩展点在这里有一行，列的是**今天的实际文件**——加东西之前先读这张表，改完回来更新它。
     判据：一个扩展点如果开始需要改**核心模型**（`FrameDescription` 的形状、引擎的编译、调度），那它就不是扩展

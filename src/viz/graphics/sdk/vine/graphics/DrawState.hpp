@@ -111,6 +111,53 @@ enum class DrawKind : std::uint8_t
 };
 
 /**
+ * @brief A device's own format code, opaque to this layer.
+ *
+ * @details
+ * - The value means whatever the device layer says it means (the vk backend stores an API format
+ *   enum in it); this layer only compares and orders codes. Keeping it a distinct type is what lets
+ *   the seam carry the device's answer without making its API's format vocabulary part of the seam.
+ * - `kUndefined` (0) is the device's UNDEFINED code. In a field that describes one attachment per
+ *   entry it means "no such attachment"; in a field a plan may leave unstated it means "not known".
+ */
+struct VN_GRAPHICS_API DeviceFormat {
+    /// The device's "undefined" format code - "no such attachment", or "not known" where a plan states it.
+    static constexpr std::uint32_t kUndefined{ 0 };
+
+    std::uint32_t code{ kUndefined }; // The device's own code.
+
+    /** @brief Compares two format codes. */
+    [[nodiscard]] bool operator==(const DeviceFormat& other) const noexcept;
+    /** @brief Orders two format codes (the pipeline cache keeps a stable map). */
+    [[nodiscard]] bool operator<(const DeviceFormat& other) const noexcept;
+};
+
+/**
+ * @brief A backend's opaque identity for the render-pass STRUCTURE a pipeline is compatible with.
+ *
+ * @details
+ * - Formats, depth and sample count are not the whole of render-pass compatibility: the pass
+ *   structure is part of it too, and what a pass structure is belongs to the device's API. The
+ *   backend that builds the render pass therefore states that half as this one value, next to the
+ *   facts this layer can compare.
+ * - Equal keys mean one compatibility class and a pipeline may be shared; a different key means it
+ *   must not be. `kNotStated` (0) means the source did not describe the structure - "not known" must
+ *   not read as "the same as anything stated", the rule the device formats follow too.
+ * - This layer never interprets the value; it hashes and compares it as part of the pipeline key.
+ */
+struct VN_GRAPHICS_API RenderPassKey {
+    /// "The backend has not stated this class": unknown, and different from every stated class.
+    static constexpr std::uint64_t kNotStated{ 0 };
+
+    std::uint64_t bits{ kNotStated }; // The backend's opaque compatibility identity.
+
+    /** @brief Compares two keys. */
+    [[nodiscard]] bool operator==(const RenderPassKey& other) const noexcept;
+    /** @brief Orders two keys (the pipeline cache keeps a stable map). */
+    [[nodiscard]] bool operator<(const RenderPassKey& other) const noexcept;
+};
+
+/**
  * @brief The part of a target's shape that a pipeline is compiled against.
  *
  * @details
@@ -120,31 +167,32 @@ enum class DrawKind : std::uint8_t
  *   several variants of one attachment set share a single compiled pipeline.
  * - WHY THE DEVICE FORMATS ARE IN HERE ON TOP OF THE ENGINE'S SPELLING. The engine classifies
  *   attachments as RGBA8 / RGBA16F / RGBA32F, and that vocabulary is a PROJECTION: a window whose
- *   swapchain format is B8G8R8A8_SRGB and an off-screen target built as R8G8B8A8_UNORM are both
+ *   surface is an sRGB BGR8 format and an off-screen target built as a linear RGBA8 image are both
  *   "RGBA8" to it, while the render passes they are used in are incompatible (channel order and
  *   colour space are part of a render pass' identity). Measured: with only the engine's spelling in
- *   the key, ONE variant served both passes and the off-screen-compiled VkPipeline was bound in the
- *   window's render pass (`VUID-vkCmdDrawIndexed-renderPass-02684`, B8G8R8A8_SRGB versus
- *   R8G8B8A8_UNORM, two subpass dependencies against one). The device formats cannot be recovered
- *   from the engine's vocabulary, so the layer that knows them hands them over instead: a target
- *   reports them in its shape, and `TargetShape::compatibility()` copies them into this key.
- * - They are carried as the DEVICE's own format code (a `VkFormat` value - 0, the device's UNDEFINED,
- *   also means "no such attachment"). This layer compares them and never interprets them: the device
- *   layer is the one place that knows what a format code means. "Not known" is not the same as
- *   "absent": a shape that reports no device formats is a DIFFERENT compatibility from one that
- *   reports them, so an unknown never silently merges two families - what it can do is merge two
- *   shapes that are BOTH unknown, which is the behaviour this key had before the field existed.
+ *   the key, ONE variant served both passes and the off-screen-compiled pipeline was bound in the
+ *   window's render pass (two subpass dependencies against one). The device formats cannot be
+ *   recovered from the engine's vocabulary, so the layer that knows them hands them over instead: a
+ *   target reports them in its shape, and `TargetShape::compatibility()` copies them into this key.
+ * - They are stated as DeviceFormat, an OPAQUE code this layer only compares: `kUndefined` (0) means
+ *   "no such attachment" in the per-attachment fields and "not known" in the ones a plan may leave
+ *   unstated. "Not known" is not the same as "absent": a shape that reports no device formats is a
+ *   DIFFERENT compatibility from one that reports them, so an unknown never silently merges two
+ *   families - what it can do is merge two shapes that are BOTH unknown, which is the behaviour this
+ *   key had before the field existed.
+ * - WHAT THE LAST FIELD ADDS. The pass STRUCTURE is part of compatibility too, and it belongs to the
+ *   device's API - so the backend states it as one opaque RenderPassKey (see RenderPassKey).
  * - What the mismatch LOOKS like on the screen is not evidence: binding a pipeline compiled against
  *   another render pass is undefined behaviour, and the measured run drew the right picture anyway.
  *   The validation layer's report is the evidence (and the fix is a key, not a picture).
  */
 struct VN_GRAPHICS_API RenderPassCompatibility {
-    std::vector<vn::graphics::RenderTarget::ColorFormat>   color_formats;            // One per colour attachment.
-    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;             // Absent for colour-only.
-    std::vector<std::uint32_t>                             device_color_formats;     // The same attachments as the device spells them.
-    std::uint32_t                                          device_depth_format{ 0 }; // The device's depth format; 0 = no depth.
-    std::uint32_t                                          samples{ 1 };             // Sample count.
-    std::uint32_t                                          subpass{ 0 };             // Subpass index.
+    std::vector<vn::graphics::RenderTarget::ColorFormat>   color_formats;        // One per colour attachment.
+    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;         // Absent for colour-only.
+    std::vector<DeviceFormat>                              device_color_formats; // The same attachments, as opaque device codes.
+    DeviceFormat                                           device_depth_format;  // The device's depth code; kUndefined = no depth.
+    std::uint32_t                                          samples{ 1 };         // Sample count.
+    RenderPassKey                                          render_pass_key;      // The backend's compatibility class (pass structure).
 
     /** @brief Compares the whole key. */
     [[nodiscard]] bool operator==(const RenderPassCompatibility& other) const noexcept;

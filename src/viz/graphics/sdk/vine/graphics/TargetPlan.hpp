@@ -15,9 +15,9 @@
  * @details
  * - WHY A FUNCTION AND NOT A CODE PATH. "The target changed" hides three different events whose costs
  *   differ by two orders of magnitude, and only one of them may lose anything:
- *   - the SHAPE changed (attachment count / colour formats / depth format / samples / subpass): render
- *     pass compatibility really changed, so the pass graph, the framebuffer and the pipelines that
- *     were compiled against it must be rebuilt;
+ *   - the SHAPE changed (attachment count / colour formats / depth format / samples / render pass
+ *     structure): render pass compatibility really changed, so the pass graph, the framebuffer and the
+ *     pipelines that were compiled against it must be rebuilt;
  *   - the EXTENT changed: the only thing that actually has to be replaced is the images and the views,
  *     plus whatever names those views (framebuffers, descriptor sets) - the render pass, the pass
  *     graph, the content slots and the full-screen program slots must NOT be rebuilt, because a
@@ -62,20 +62,21 @@ enum class RepairReason : std::uint8_t
  * @details
  * - What a resize may NOT be allowed to hide here is an extent: pixel size is a runtime resource, not
  *   an identity. What it MUST contain is everything a rebuild really depends on: attachment formats,
- *   the depth format (or its absence), the sample count and the subpass structure.
+ *   the depth format (or its absence), the sample count and the render pass' structure.
  * - The device formats are carried next to the engine's spelling because only the device layer can
  *   fill them and only they can tell two render passes apart that the engine's vocabulary calls the
  *   same thing (an sRGB surface and a linear RGBA8 image are both "RGBA8"; see
- *   RenderPassCompatibility). 0, the device's UNDEFINED, means "no such attachment" - and, for a shape
- *   that never learned them, "not known".
+ *   RenderPassCompatibility). They are opaque DeviceFormat codes: `kUndefined` means "no such
+ *   attachment", or "not known" for a shape that never learned them. The pass structure is stated the
+ *   same way, as one opaque RenderPassKey.
  */
 struct VN_GRAPHICS_API TargetShape {
-    std::vector<vn::graphics::RenderTarget::ColorFormat>   color_formats;            // One per colour attachment.
-    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;             // Absent for a colour-only target.
-    std::vector<std::uint32_t>                             device_color_formats;     // The same attachments, as the device spells them.
-    std::uint32_t                                          device_depth_format{ 0 }; // The device's depth format; 0 = no depth.
-    std::uint32_t                                          samples{ 1 };             // Sample count.
-    std::uint32_t                                          subpass{ 0 };             // Subpass the pipeline targets.
+    std::vector<vn::graphics::RenderTarget::ColorFormat>   color_formats;        // One per colour attachment.
+    std::optional<vn::graphics::RenderTarget::DepthFormat> depth_format;         // Absent for a colour-only target.
+    std::vector<DeviceFormat>                              device_color_formats; // The same attachments, as opaque device codes.
+    DeviceFormat                                           device_depth_format;  // The device's depth code; kUndefined = no depth.
+    std::uint32_t                                          samples{ 1 };         // Sample count.
+    RenderPassKey                                          render_pass_key;      // The backend's compatibility class (pass structure).
 
     /** @brief Compares the compatibility-relevant properties. */
     [[nodiscard]] bool operator==(const TargetShape& other) const noexcept;
@@ -89,7 +90,7 @@ struct VN_GRAPHICS_API TargetShape {
      *   formats and silently hand one compiled pipeline to two render passes that are not compatible
      *   (see RenderPassCompatibility).
      *
-     * @return The shape's compatibility, device formats included.
+     * @return The shape's compatibility, device codes and render-pass key included.
      */
     [[nodiscard]] RenderPassCompatibility compatibility() const noexcept;
 };

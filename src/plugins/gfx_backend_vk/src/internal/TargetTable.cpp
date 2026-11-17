@@ -186,11 +186,11 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
     wanted.height = target.height();
     for (int index = 0; index < target.colorCount(); ++index) {
         wanted.shape.color_formats.push_back(target.colorFormat(index));
-        wanted.shape.device_color_formats.push_back(static_cast<std::uint32_t>(colorFormatOf(target.colorFormat(index))));
+        wanted.shape.device_color_formats.push_back(vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(colorFormatOf(target.colorFormat(index))) });
     }
     if (target.hasDepth()) {
         wanted.shape.depth_format        = target.depthFormat();
-        wanted.shape.device_depth_format = static_cast<std::uint32_t>(depthFormatOf(target.depthFormat()));
+        wanted.shape.device_depth_format = vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(depthFormatOf(target.depthFormat())) };
     }
     if (wanted.width > 0 && wanted.height > 0) {
         // A USABLE EXTENT EXISTS: the "unusable extent" episode is over (see ReportOnce). It is a different fact from
@@ -229,8 +229,8 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
         return false;
     }
     samples_report_.rearm(); // a target with a count this device builds: the episode is over
-    wanted.shape.samples = requested_samples;
-    wanted.shape.subpass = 0U;
+    wanted.shape.samples         = requested_samples;
+    wanted.shape.render_pass_key = kSingleSubpassRenderPass;
     // A MULTISAMPLED DEPTH IS RESOLVED, and a device that cannot do that refuses the combination (ADR-2026-11-14).
     // `TargetObjects` builds the single-sample picture the render pass resolves into and every reader uses
     // (`depthPicture`: the shadow path samples it), with `sample0` as the mode - so multisampling cannot change the

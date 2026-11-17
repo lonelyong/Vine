@@ -733,8 +733,8 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
                                                   { 0.0F, 0.0F, 0.0F, 1.0F }
     });
     ASSERT_NE(other_target, nullptr);
-    const std::uint32_t other_format = other_target->shape().device_color_formats.front();
-    ASSERT_NE(other_format, live.device_color_formats.front())
+    const std::uint32_t other_format = other_target->shape().device_color_formats.front().code;
+    ASSERT_NE(other_format, live.device_color_formats.front().code)
         << "the case needs two device formats to tell apart (an off-screen RGBA8 against the surface's own)";
     EXPECT_FALSE(window->refresh()) << "no host path changes the swapchain's shape under a live session";
 
@@ -760,7 +760,7 @@ TEST(SessionTest, AWindowRebuildIsAnsweredByAskingThePlatformNotByBelievingThePl
     // platform - which says it has not changed. Nothing is applied, the claim is not adopted into the target,
     // and the pass that relied on it is refused: an unapplied rebuild is never recorded.
     std::vector<TargetFacts> claimed             = truthful;
-    claimed[0].wanted.shape.device_color_formats = { other_format };
+    claimed[0].wanted.shape.device_color_formats = { vn::graphics::DeviceFormat{ other_format } };
 
     const std::size_t skipped_before = diagnostics.count(vn::graphics::DiagnosticCategory::ContentSkipped);
 

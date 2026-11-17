@@ -8,6 +8,7 @@
 
 #include <volk.h>
 
+#include <vine/backend_vk/internal/TargetObjects.hpp>
 #include <vine/backend_vk/internal/WindowSystem.hpp>
 #include <vine/graphics/RenderTarget.hpp>
 
@@ -682,11 +683,11 @@ vn::graphics::RenderPassCompatibility WindowTarget::compatibility() const noexce
     using vn::graphics::RenderTarget;
     vn::graphics::TargetShape shape;
     shape.color_formats.push_back(RenderTarget::ColorFormat::RGBA8);
-    shape.device_color_formats.push_back(static_cast<std::uint32_t>(impl->format));
+    shape.device_color_formats.push_back(vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(impl->format) });
     shape.depth_format        = RenderTarget::DepthFormat::D24;
-    shape.device_depth_format = static_cast<std::uint32_t>(kDepthFormat);
+    shape.device_depth_format = vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(kDepthFormat) };
     shape.samples             = 1U;
-    shape.subpass             = 0U;
+    shape.render_pass_key     = kSingleSubpassRenderPass;
     return shape.compatibility();
 }
 

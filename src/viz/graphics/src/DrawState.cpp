@@ -20,10 +20,30 @@ std::size_t VertexLayoutKeyHash::operator()(const VertexLayoutKey& key) const no
     return hash;
 }
 
+bool DeviceFormat::operator==(const DeviceFormat& other) const noexcept
+{
+    return code == other.code;
+}
+
+bool DeviceFormat::operator<(const DeviceFormat& other) const noexcept
+{
+    return code < other.code;
+}
+
+bool RenderPassKey::operator==(const RenderPassKey& other) const noexcept
+{
+    return bits == other.bits;
+}
+
+bool RenderPassKey::operator<(const RenderPassKey& other) const noexcept
+{
+    return bits < other.bits;
+}
+
 bool RenderPassCompatibility::operator==(const RenderPassCompatibility& other) const noexcept
 {
     return color_formats == other.color_formats && depth_format == other.depth_format && device_color_formats == other.device_color_formats &&
-           device_depth_format == other.device_depth_format && samples == other.samples && subpass == other.subpass;
+           device_depth_format == other.device_depth_format && samples == other.samples && render_pass_key == other.render_pass_key;
 }
 
 bool LoadOpVariantKey::operator==(const LoadOpVariantKey& other) const noexcept
@@ -77,12 +97,12 @@ std::size_t PipelineKeyHash::operator()(const PipelineKey& key) const noexcept
         mix(static_cast<std::uint64_t>(format));
     }
     mix(key.compatibility.depth_format.has_value() ? static_cast<std::uint64_t>(*key.compatibility.depth_format) + 1U : 0U);
-    for (const std::uint32_t format : key.compatibility.device_color_formats) {
-        mix(format);
+    for (const DeviceFormat format : key.compatibility.device_color_formats) {
+        mix(format.code);
     }
-    mix(key.compatibility.device_depth_format);
+    mix(key.compatibility.device_depth_format.code);
     mix(key.compatibility.samples);
-    mix(key.compatibility.subpass);
+    mix(key.compatibility.render_pass_key.bits);
     mix(key.depth_sampleable ? 1U : 0U);
     mix(key.sampled_color_count);
     mix(key.sampled_depth_count);
@@ -99,8 +119,8 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
         {
          { "VertexLayoutKey", "canonical channel mask + custom channel locations" },
          { "RenderPassCompatibility",
-            "colour formats + depth format (or none) + the same attachments as the DEVICE spells them + samples "
-            "+ subpass" },
+            "colour formats + depth format (or none) + the same attachments as OPAQUE DEVICE format codes + samples "
+            "+ the backend's render-pass key (the pass structure)" },
          { "LoadOpVariantKey",
             "load/store ops + initial/final layouts - one entry for the colour set and one for the depth - NOT "
             "pipeline identity: compatibility excludes them" },
@@ -114,8 +134,8 @@ std::span<const KeyAuditEntry> keyAuditTable() noexcept
             "topology within the class its pipeline was compiled for, see PipelineKey)" },
          { "InstanceSlot", "model matrix + opacity + material identity + revision - per frame data" },
          { "TargetDesc.shape",
-            "attachment formats (the engine's spelling AND the device's) + depth format + samples + subpass - "
-            "NEVER an extent" },
+            "attachment formats (the engine's spelling AND the device's opaque codes) + depth format + samples + "
+            "the backend's render-pass key - NEVER an extent" },
          }
     };
     return kAudit;

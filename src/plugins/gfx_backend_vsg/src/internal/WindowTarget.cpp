@@ -10,6 +10,8 @@
 #include <vsg/maths/vec3.h>
 #include <vsg/nodes/Group.h>
 
+#include <vine/backend_vsg/internal/TargetObjects.hpp>
+
 VN_BACKEND_VSG_NS_BEGIN
 
 namespace
@@ -203,9 +205,10 @@ core::TargetShape WindowTarget::sampledShape() const
     // RenderPassCompatibility: the crossing is measured), so the device's format travels with it.
     core::TargetShape shape;
     shape.color_formats.push_back(toColorFormat(d->window->surfaceFormat().format));
-    shape.device_color_formats.push_back(static_cast<std::uint32_t>(d->window->surfaceFormat().format));
+    shape.device_color_formats.push_back(vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(d->window->surfaceFormat().format) });
     shape.depth_format        = toDepthFormat(d->window->depthFormat());
-    shape.device_depth_format = static_cast<std::uint32_t>(d->window->depthFormat());
+    shape.device_depth_format = vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(d->window->depthFormat()) };
+    shape.render_pass_key     = kSingleSubpassRenderPass;
     return shape;
 }
 

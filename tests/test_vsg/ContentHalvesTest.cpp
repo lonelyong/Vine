@@ -945,7 +945,7 @@ TEST(ContentHalvesTest, TheReportedNeedsAreWhatTheFrameBuilds)
 
     RenderPassCompatibility compatibility;
     compatibility.color_formats.push_back(vn::graphics::RenderTarget::ColorFormat::RGBA8);
-    compatibility.device_color_formats.push_back(VK_FORMAT_R8G8B8A8_UNORM);
+    compatibility.device_color_formats.push_back(vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(VK_FORMAT_R8G8B8A8_UNORM) });
     compatibility.samples = 1U;
 
     // THE IDENTITY SPELLED BY HAND: this is the case's own answer, not the code's.

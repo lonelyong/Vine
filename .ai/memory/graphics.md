@@ -63,6 +63,7 @@
 
 - `RenderTarget` 是**描述**，后端按描述造图；`RenderTarget::setSamples` 是 MSAA 唯一入口，采样数进 `TargetShape` ⇒ 管线键 ⇒ 通道/图像。颜色与深度各解析一张单采样图（深度 `sample0`，不平均）。
 - **pass 的目标与发布各是一个值**（B14）：`PassDesc::target` = `Target{Kind::Window|Explicit|Transient, target, name, extent, shape}`（`Target.hpp`），`PassDesc::output` = `Output{name, whole_target, image}`（`Output.hpp`）；`writes*` / `output_*` 六个字段已删。`Target::isValid` / `Output::isValid` 由 `validatePlan` 检查（`InvalidTarget` / `InvalidOutput`）；compile 解析出的 transient 进 `RenderPass::setResolvedTarget`，**不**改写声明。
+- **接缝不再拼 Vulkan 格式与 subpass**（B8，2026-11-17）：`TargetShape` / `RenderPassCompatibility` 的设备格式是 `DeviceFormat`（不透明码，0 = `kUndefined` = “没有这个附件/未学到”），渲染通道结构是后端计算的 `RenderPassKey`（0 = `kNotStated`，两个后端今天都发 `kSingleSubpassRenderPass`）。两头都只比较不解码；`RenderPassKey` 是**结构半边**，与格式/深度/采样数**并列**参与相等，不是它的哈希。`ImageLayout` 仍是 SDK 的 Vulkan 语义，尚未收。
 - 层：`Node::setLayers` + `PassDesc::layer_mask`；最近声明获胜；`Node::subtreeLayerUnion` 是 layer epoch 驱动的懒缓存，三条 walk 在可见性之后先判 `(union & mask) == 0`。
 - 颜色：`Colorf` 是线性光，`Color` 是 sRGB 编码字节；`toLinear()` / `toColor()` 一对转换；清屏与 pass 颜色用线性值。
 - 图源：`ImageInput` / `ImageSource`；produced（`ImageRef`：target + attachment）与 imported（`Texture`）两种生命周期不合并。`MaterialImages` 上传键 `(Texture*, revision)`，sampler 按值缓存。
@@ -1598,3 +1599,21 @@
   同名符号 → 链接期 multiple definition。改名顺序：先改符号、再 `mv`，最后 `git status` 看“旧名的新文件”并删掉。
 - **计数**：`test_graphics` **614** / `test_vk` **167** / `test_vsg` **571** / `BackendParityTest` 13；TSan 三套 0 报告；
   `Vine --open demo` 0 error。
+
+## 2026-11-17 B8：接缝去 Vulkan 拼写（`DeviceFormat` + `RenderPassKey`）
+
+- **一个类型两个职责**：设备格式码原是裸 `std::uint32_t`（注释说“这是 `VkFormat` 值”），subpass 是另一个
+  Vulkan 名词。现在 **`DeviceFormat`**（`std::uint32_t` 的强类型，`kUndefined` = 0）承载设备自己的格式码，
+  **`RenderPassKey`**（u64，`kNotStated` = 0）承载通道结构——由建 render pass 的后端计算，SDK 只哈希/比较。
+  `TargetShape` / `RenderPassCompatibility` 的字段变成 `std::vector<DeviceFormat>` / `DeviceFormat` / `RenderPassKey`；
+  `subpass` 从两个结构里消失。
+- **“未声明”规则保持**：`kNotStated`/`kUndefined` 在 vsg 的 `statedShapeAgrees` 里**不参与比较**（计划没学到就不争），
+  与旧设备格式的“unknown ≠ absent”同一条；vk 的 `TargetTable::ensure` 每次都把两个半边填满，所以 `planTarget` 两边一致。
+- **映射点**（两后端各一处）：vk `TargetTable::ensure` / `WindowTarget::compatibility`，vsg `TargetObjects::shapeOf` /
+  `WindowTarget::sampledShape`；两者各自发 `kSingleSubpassRenderPass`（“本后端的 render pass 都是单 subpass”），
+  常量住在各自 internal 的 `TargetObjects.hpp`（渲染通道的建造者）。
+- **类型安全的一处体现**：`ContentCaches::PipelineKey::operator<` 的 `lexicographical_compare` 直接吃 `DeviceFormat`
+  的 `operator<`；vk 内部取回 `VkFormat` 的地方统一写 `.code`。
+- **证据**：`test_graphics` **616** / `test_vk` **167** / `test_vsg` **572** 全绿；`content_seam`、`vk_exposure` 全绿；
+  九道文档/代码门禁全绿。零行为变化：像素对拍与既有用例（含 PlanCarries/StatedShape 两条）直接改类型后通过，
+  并加断言“计划里的渲染通道键是自己的副本”。

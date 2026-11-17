@@ -403,11 +403,14 @@ core::TargetShape TargetObjects::shapeOf(const TargetLayout& layout)
     // projection - an sRGB window surface and this linear target are not render-pass compatible (see
     // RenderPassCompatibility).
     for (const vn::graphics::RenderTarget::ColorFormat format : layout.color_formats) {
-        shape.device_color_formats.push_back(static_cast<std::uint32_t>(toColorFormat(format)));
+        shape.device_color_formats.push_back(vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(toColorFormat(format)) });
     }
     if (layout.depth_format.has_value()) {
-        shape.device_depth_format = static_cast<std::uint32_t>(toDepthFormat(layout.depth_format.value()));
+        shape.device_depth_format = vn::graphics::DeviceFormat{ static_cast<std::uint32_t>(toDepthFormat(layout.depth_format.value())) };
     }
+    // The pass structure half: every render pass this backend builds has one subpass, so the whole backend is
+    // one compatibility class (see kSingleSubpassRenderPass).
+    shape.render_pass_key = kSingleSubpassRenderPass;
     return shape;
 }
 

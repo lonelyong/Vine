@@ -36,10 +36,10 @@ CompiledShape copiedShape(FrameArena& arena, const TargetShape& shape)
     CompiledShape copy;
     copy.color_formats        = arena.copy(std::span<const vn::graphics::RenderTarget::ColorFormat>{ shape.color_formats });
     copy.depth_format         = shape.depth_format;
-    copy.device_color_formats = arena.copy(std::span<const std::uint32_t>{ shape.device_color_formats });
+    copy.device_color_formats = arena.copy(std::span<const vn::graphics::DeviceFormat>{ shape.device_color_formats });
     copy.device_depth_format  = shape.device_depth_format;
     copy.samples              = shape.samples;
-    copy.subpass              = shape.subpass;
+    copy.render_pass_key      = shape.render_pass_key;
     return copy;
 }
 
@@ -48,9 +48,11 @@ CompiledShape copiedShape(FrameArena& arena, const TargetShape& shape)
 bool statedShapeAgrees(const CompiledShape& stated, const TargetShape& actual) noexcept
 {
     // The engine's half is stated by every plan (a depth-only target states an empty color_formats), so it
-    // is compared as it stands.
+    // is compared as it stands. The backend's render-pass key is part of the structure half: a plan that
+    // never learned it states nothing, and "not known" must not read as "the same class".
     if (!std::equal(stated.color_formats.begin(), stated.color_formats.end(), actual.color_formats.begin(), actual.color_formats.end()) ||
-        stated.depth_format != actual.depth_format || stated.samples != actual.samples || stated.subpass != actual.subpass)
+        stated.depth_format != actual.depth_format || stated.samples != actual.samples ||
+        (stated.render_pass_key.bits != vn::graphics::RenderPassKey::kNotStated && stated.render_pass_key != actual.render_pass_key))
     {
         return false;
     }
@@ -67,7 +69,8 @@ bool statedShapeAgrees(const CompiledShape& stated, const TargetShape& actual) n
     {
         return false;
     }
-    return stated.device_depth_format == 0U || actual.device_depth_format == 0U || stated.device_depth_format == actual.device_depth_format;
+    return stated.device_depth_format.code == vn::graphics::DeviceFormat::kUndefined ||
+           actual.device_depth_format.code == vn::graphics::DeviceFormat::kUndefined || stated.device_depth_format == actual.device_depth_format;
 }
 
 FrameCompiler::FrameCompiler(FrameArena& arena, Diagnostics& diagnostics, Observe& observe) noexcept

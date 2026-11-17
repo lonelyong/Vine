@@ -66,6 +66,8 @@ using vn::graphics::RepairReason;
 using vn::backend_vsg::core::statedShapeAgrees;
 using vn::graphics::TargetAction;
 using vn::backend_vsg::core::TargetFacts;
+using vn::graphics::DeviceFormat;
+using vn::graphics::RenderPassKey;
 using vn::graphics::TargetShape;
 
 namespace
@@ -952,8 +954,9 @@ TEST(FrameCompilerTest, ThePlanCarriesTheShapeItsFactsStated)
     vn::intrusive_ptr<RenderTarget> target(new RenderTarget());
     r.addTarget(target.get(), 64, 64, true);
     r.facts[0].wanted.shape.depth_format         = RenderTarget::DepthFormat::D32F;
-    r.facts[0].wanted.shape.device_color_formats = { 44U }; // the layer compares these, never interprets them
-    r.facts[0].wanted.shape.device_depth_format  = 37U;
+    r.facts[0].wanted.shape.device_color_formats = { DeviceFormat{ 44U } }; // the layer compares these, never interprets them
+    r.facts[0].wanted.shape.device_depth_format  = DeviceFormat{ 37U };
+    r.facts[0].wanted.shape.render_pass_key      = RenderPassKey{ 7U };
     r.facts[0].current.desc                      = r.facts[0].wanted;
 
     const std::vector<RenderCommand> commands = oneCommand();
@@ -972,20 +975,22 @@ TEST(FrameCompilerTest, ThePlanCarriesTheShapeItsFactsStated)
     ASSERT_TRUE(stated.depth_format.has_value());
     EXPECT_EQ(stated.depth_format.value(), RenderTarget::DepthFormat::D32F);
     ASSERT_EQ(stated.device_color_formats.size(), 1u);
-    EXPECT_EQ(stated.device_color_formats[0], 44U);
-    EXPECT_EQ(stated.device_depth_format, 37U);
+    EXPECT_EQ(stated.device_color_formats[0], DeviceFormat{ 44U });
+    EXPECT_EQ(stated.device_depth_format, DeviceFormat{ 37U });
     EXPECT_EQ(stated.samples, 1U);
-    EXPECT_EQ(stated.subpass, 0U);
+    EXPECT_EQ(stated.render_pass_key, RenderPassKey{ 7U });
 
     // ...and the plan's copy is its OWN, because the facts are the caller's and may be a table it reuses:
     // the same rule the rest of the plan lives under (see CompiledShape). What the copy is FOR is the
     // check the record step makes (see VsgExecutor), which needs the account a frame was compiled with -
     // not whatever the caller's table says later.
     r.facts[0].wanted.shape.color_formats[0]        = RenderTarget::ColorFormat::RGBA16F;
-    r.facts[0].wanted.shape.device_color_formats[0] = 99U;
+    r.facts[0].wanted.shape.device_color_formats[0] = DeviceFormat{ 99U };
     r.facts[0].wanted.shape.depth_format            = std::nullopt;
+    r.facts[0].wanted.shape.render_pass_key         = RenderPassKey{ 8U };
     EXPECT_EQ(stated.color_formats[0], RenderTarget::ColorFormat::RGBA8);
-    EXPECT_EQ(stated.device_color_formats[0], 44U);
+    EXPECT_EQ(stated.device_color_formats[0], DeviceFormat{ 44U });
+    EXPECT_EQ(stated.render_pass_key, RenderPassKey{ 7U });
     ASSERT_TRUE(stated.depth_format.has_value());
     EXPECT_EQ(stated.depth_format.value(), RenderTarget::DepthFormat::D32F);
 }
@@ -995,18 +1000,19 @@ TEST(FrameCompilerTest, AStatedShapeIsComparedOnlyWhereItStatesSomething)
     TargetShape actual; // what a target really reports: the engine's spellings and the device's
     actual.color_formats        = { RenderTarget::ColorFormat::RGBA8 };
     actual.depth_format         = RenderTarget::DepthFormat::D32F;
-    actual.device_color_formats = { 44U, 45U };
-    actual.device_depth_format  = 37U;
+    actual.device_color_formats = { DeviceFormat{ 44U }, DeviceFormat{ 45U } };
+    actual.device_depth_format  = DeviceFormat{ 37U };
     actual.samples              = 1U;
-    actual.subpass              = 0U;
+    actual.render_pass_key      = RenderPassKey{ 5U };
 
     const RenderTarget::ColorFormat colors[]{ RenderTarget::ColorFormat::RGBA8 };
-    const std::uint32_t             devices[]{ 44U, 45U };
+    const DeviceFormat              devices[]{ DeviceFormat{ 44U }, DeviceFormat{ 45U } };
     CompiledShape                   stated;
     stated.color_formats        = colors;
     stated.depth_format         = RenderTarget::DepthFormat::D32F;
     stated.device_color_formats = devices;
-    stated.device_depth_format  = 37U;
+    stated.device_depth_format  = DeviceFormat{ 37U };
+    stated.render_pass_key      = RenderPassKey{ 5U };
     EXPECT_TRUE(statedShapeAgrees(stated, actual));
 
     // A different ENGINE format with the same count: the drift a count-and-sampleability check cannot see,
@@ -1018,27 +1024,32 @@ TEST(FrameCompilerTest, AStatedShapeIsComparedOnlyWhereItStatesSomething)
 
     // A different DEVICE format for the same engine format: the drift the engine's vocabulary cannot even
     // express (its own name for both is RGBA8 - see RenderPassCompatibility).
-    const std::uint32_t other_devices[]{ 46U, 45U };
+    const DeviceFormat other_devices[]{ DeviceFormat{ 46U }, DeviceFormat{ 45U } };
     stated.device_color_formats = other_devices;
     EXPECT_FALSE(statedShapeAgrees(stated, actual));
     stated.device_color_formats = devices;
 
     // ...and the same in the depth, plus the two fields that are numbers rather than spellings.
-    stated.device_depth_format = 38U;
+    stated.device_depth_format = DeviceFormat{ 38U };
     EXPECT_FALSE(statedShapeAgrees(stated, actual));
-    stated.device_depth_format = 37U;
+    stated.device_depth_format = DeviceFormat{ 37U };
     stated.samples             = 2U;
     EXPECT_FALSE(statedShapeAgrees(stated, actual));
     stated.samples = 1U;
-    stated.subpass = 1U;
+
+    // The backend's render-pass class: a stated class that differs is a drift, and a plan that never
+    // learned it states nothing about it (the same "not known is not absent" rule the formats follow).
+    stated.render_pass_key = RenderPassKey{ 6U };
     EXPECT_FALSE(statedShapeAgrees(stated, actual));
-    stated.subpass = 0U;
+    stated.render_pass_key = RenderPassKey{};
+    EXPECT_TRUE(statedShapeAgrees(stated, actual));
+    stated.render_pass_key = RenderPassKey{ 5U };
 
     // A plan whose facts never learned the device's spellings states NOTHING about them, so it does not
     // argue with a target that knows - "not known" is not "absent" (the rule RenderPassCompatibility
     // spells out for the same fields).
     stated.device_color_formats = {};
-    stated.device_depth_format  = 0U;
+    stated.device_depth_format  = DeviceFormat{};
     EXPECT_TRUE(statedShapeAgrees(stated, actual));
 
     // The engine's half is stated by every plan, though: a plan that says "one RGBA8" disagrees with a

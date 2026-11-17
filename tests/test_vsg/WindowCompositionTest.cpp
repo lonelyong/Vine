@@ -553,8 +553,8 @@ TEST(WindowCompositionTest, TheWindowIsClearedOnceAndCarriesASceneAndAFullScreen
     // reader puts a pixel into (red, green, blue) once, here. A check written in the wrong order would compare
     // red against blue, and the colours are chosen so that the mistake cannot hide - which is not a stylistic
     // choice: the triangle is symmetric in red and blue, so a swapped read of IT looks perfectly fine.
-    const bool blue_first = window_shape.device_color_formats.size() == 1U && (window_shape.device_color_formats.front() == VK_FORMAT_B8G8R8A8_UNORM ||
-                                                                               window_shape.device_color_formats.front() == VK_FORMAT_B8G8R8A8_SRGB);
+    const bool blue_first = window_shape.device_color_formats.size() == 1U && (window_shape.device_color_formats.front().code == VK_FORMAT_B8G8R8A8_UNORM ||
+                                                                               window_shape.device_color_formats.front().code == VK_FORMAT_B8G8R8A8_SRGB);
     const auto pixel_at   = [&](int x, int y) {
         const std::array<std::uint8_t, 3> bytes = window.pixel(x, y);
         return blue_first ? std::array<std::uint8_t, 3>{ bytes[2], bytes[1], bytes[0] } : bytes;

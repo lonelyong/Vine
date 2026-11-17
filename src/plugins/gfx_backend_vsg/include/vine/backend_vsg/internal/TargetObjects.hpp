@@ -66,6 +66,16 @@ class Device;
  */
 VN_BACKEND_VSG_NS_BEGIN
 
+/**
+ * @brief The render-pass key every target of this backend states: one subpass, no structure variants.
+ *
+ * @details
+ * - This backend builds render passes with exactly one subpass, so every pair of its passes that agrees
+ *   on formats/depth/samples is compatible - and one non-zero class states that. 0 is RenderPassKey's
+ *   "not stated", which a plan that never learned the shape keeps; the two must not compare equal.
+ */
+inline constexpr vn::graphics::RenderPassKey kSingleSubpassRenderPass{ 1U };
+
 /** @brief An off-screen colour target plus its copy-back path. */
 class TargetObjects {
   public:
@@ -322,9 +332,10 @@ class TargetObjects {
     /** @brief Gets the shape the render pass, the framebuffer and every pipeline were built against.
      *
      * The compatibility half of a pipeline's identity, in the engine's terms: attachment formats, depth
-     * format, sample count and subpass. It is read by whatever builds a pipeline key for a pass, so the key
-     * names the shape the target REALLY has rather than one a plan happened to carry (the plan holds no
-     * vector - see the design's §11.16d - so the shape is answered here, by the object that owns it).
+     * format, sample count and the backend's render-pass key. It is read by whatever builds a pipeline key
+     * for a pass, so the key names the shape the target REALLY has rather than one a plan happened to carry
+     * (the plan holds no vector - see the design's §11.16d - so the shape is answered here, by the object
+     * that owns it).
      *
      * @return The shape (already stored: this is the one the render pass was created from).
      */
@@ -611,7 +622,7 @@ class TargetObjects {
      * a pipeline key two different answers about the same target.
      *
      * @param layout The layout to describe.
-     * @return The shape: attachment formats, depth format, samples and subpass.
+     * @return The shape: attachment formats, depth format, samples and the backend's render-pass key.
      */
     [[nodiscard]] static core::TargetShape shapeOf(const TargetLayout& layout);
 

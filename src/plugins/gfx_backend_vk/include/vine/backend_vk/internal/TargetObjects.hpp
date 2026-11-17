@@ -14,6 +14,16 @@
 VN_BACKEND_VK_NS_BEGIN
 
 /**
+ * @brief The render-pass key every target of this backend states: one subpass, no structure variants.
+ *
+ * @details
+ * - This backend builds render passes with exactly one subpass, so every pair of its passes that agrees
+ *   on formats/depth/samples is compatible - and one non-zero class states that. 0 is RenderPassKey's
+ *   "not stated", which a plan that never learned the shape keeps; the two must not compare equal.
+ */
+inline constexpr vn::graphics::RenderPassKey kSingleSubpassRenderPass{ 1U };
+
+/**
  * @brief One off-screen target's Vulkan objects: the images a pass draws into, the render passes it can run in, and
  *        the framebuffer that binds them.
  *
@@ -144,19 +154,19 @@ struct TargetObjects {
     /** @brief Gets one colour attachment's Vulkan format (`VK_FORMAT_UNDEFINED` for an index out of range). */
     [[nodiscard]] VkFormat colorFormat(std::size_t index) const noexcept
     {
-        return index < desc.shape.device_color_formats.size() ? static_cast<VkFormat>(desc.shape.device_color_formats[index]) : VK_FORMAT_UNDEFINED;
+        return index < desc.shape.device_color_formats.size() ? static_cast<VkFormat>(desc.shape.device_color_formats[index].code) : VK_FORMAT_UNDEFINED;
     }
 
     /** @brief Answers whether the target owns a depth attachment. */
     [[nodiscard]] bool hasDepth() const noexcept
     {
-        return desc.shape.device_depth_format != 0U;
+        return desc.shape.device_depth_format.code != vn::graphics::DeviceFormat::kUndefined;
     }
 
     /** @brief Gets the depth attachment's Vulkan format (`VK_FORMAT_UNDEFINED` when there is none). */
     [[nodiscard]] VkFormat depthFormat() const noexcept
     {
-        return static_cast<VkFormat>(desc.shape.device_depth_format);
+        return static_cast<VkFormat>(desc.shape.device_depth_format.code);
     }
 
     /** @brief Answers whether this target's SHAPE resolves its depth (multisampled AND depth-attached). */

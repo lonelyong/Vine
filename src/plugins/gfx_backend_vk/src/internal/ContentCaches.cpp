@@ -158,8 +158,8 @@ struct ContentCaches::Impl {
             if (compatibility.samples != other.compatibility.samples) {
                 return compatibility.samples < other.compatibility.samples;
             }
-            if (compatibility.subpass != other.compatibility.subpass) {
-                return compatibility.subpass < other.compatibility.subpass;
+            if (compatibility.render_pass_key != other.compatibility.render_pass_key) {
+                return compatibility.render_pass_key < other.compatibility.render_pass_key;
             }
             if (topology != other.topology) {
                 return topology < other.topology;

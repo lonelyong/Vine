@@ -188,7 +188,7 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 
 | # | 功能 | 说明 |
 |---|---|---|
-| F6 | 目标计划 | `TargetShape`：附件数 / 颜色格式 / 深度格式 / samples / subpass。 |
+| F6 | 目标计划 | `TargetShape`：附件数 / 颜色格式 / 深度格式 / samples / render-pass key（设备格式码是不透明的 `DeviceFormat`，通道结构是后端计算的 `RenderPassKey`，B8）。 |
 | F7 | 清屏 | `planClearValues`：bootstrap 清所有附件；深度清 0.0（reverse-Z far）。 |
 | F8 | 深度借出/借入 | 借入方不自建深度；`initialLayout` = attachment layout，LOAD。 |
 | F9 | 依赖 | `VkSubpassDependency` 的 stage/access mask 是兼容性的一部分；借深度取超集。 |
@@ -242,7 +242,7 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 
 | 层 | 当前拼写 | 允许的变化方式 |
 |---|---|---|
-| identity | `PipelineKey`：kind、program + revision、vertex_layout、compatibility（附件/深度格式、samples、subpass）、depth_sampleable、sampled_color_count、sampled_depth_count、variant、topology（类） | 变了 = 重编管线（唯一允许重编的地方） |
+| identity | `PipelineKey`：kind、program + revision、vertex_layout、compatibility（附件/深度格式、samples、后端计算的 render-pass key）、depth_sampleable、sampled_color_count、sampled_depth_count、variant、topology（类） | 变了 = 重编管线（唯一允许重编的地方） |
 | 交换半边 | `LoadOpVariantKey`：color/depth 的 load/store 与 initial/final layout | 同一管线在多个兼容变体上都能用（bootstrap 变体合法） |
 | dynamic | `DynamicState`：depth、cull、polygon、topology（同类内）、blend | 一条 `vkCmdSet*`；永远不许重编 |
 | data | 视图块 288 B、光照块 112 B、`VineDrawBlock` 80 B、材质块 64 B、push ≤128 B | 就地字节写 / 描述符 re-point |
@@ -261,7 +261,7 @@ material 值 / 流字节 / cull 全部**不进**。
 | C3 | 调度只在引擎；后端按 `FrameDescription.passes` 物化。 |
 | C4 | `TargetShape` 决定图像/通道/管线兼容性；bootstrap 清所有附件。 |
 | C5 | `StreamKey` = buffer + buffer revision + 段；稳态零重传。 |
-| C6 | T15 触发前，不再向 SDK `graphics/` 新增 Vulkan 拼写（`VkFormat` / `ImageLayout` / subpass）：新的设备无关表述先在插件 `internal/` 落地，等第二个后端把这条边界推上去。 |
+| C6 | 不再向 SDK `graphics/` 新增 Vulkan 拼写：B8（2026-11-17）起 `VkFormat` 值与 subpass 已从接缝清除（设备格式是 `DeviceFormat`，通道结构是后端计算的 `RenderPassKey`）；`ImageLayout` 仍是 Vulkan 语义，第三个后端落地时用同一手法收掉。新的设备无关表述先在插件 `internal/` 落地。 |
 | C7 | 本插件每条报告带 `vsg.<族>.<原因>` 稳定 code（登记在 `scripts/diagnostic_codes.txt`）；读回的九种拒绝由 `readbackRefusalDiagnostic` 的**一个无 `default` 的 switch** 映射，所以新增一个 `HostReadbackRefusal` 编译期就必须命名它的 code——词汇表跟着枚举走，不靠人记。规则的来由见 `vk-backend.md` §2.13 / §2.14（同一个门禁、同一套值语义）。 |
 
 ### 5.2 要求（R#）
