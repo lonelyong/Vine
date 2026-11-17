@@ -7,6 +7,8 @@
   `src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/WindowSystem.hpp`、
   `src/plugins/gfx_backend_vk/include/vine/backend_vk/internal/Device.hpp`、`src/viz/graphics/sdk/vine/graphics/RenderDevice.hpp`
 
+> **EN**: Repositioned `gfx_backend_vk` from learning backend to production backend and adopted the switch-gate rule: `vsg` stays default until an explicit checklist is green (`releaseRenderTarget`, `readDepthBuffer`, device-lost diagnostics, platform coverage, measured frame and load times, a pipeline cache, `docs/guides/` pages), with Linux/X11 first, Win32 second and other platforms answering `UnsupportedSurface` / `NoPresentation` honestly. The platform seam is one `WindowSystem` per device session, so adding Win32 is a new implementation file rather than a change to `Device` / `WindowTarget`. Rejected staying a learning backend, switching now and running two permanent defaults.
+
 ## 背景
 
 `gfx_backend_vk` 今天的定位写在三处：backlog T35（“学习/研究，**不是默认后端**”）、插件 `CMakeLists.txt`

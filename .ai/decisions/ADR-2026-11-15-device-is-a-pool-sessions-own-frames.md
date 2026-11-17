@@ -9,6 +9,8 @@
 - 相关：`ADR-2026-11-13-one-engine-one-surface.md`（一引擎一表面——本文是它的下一步，不是它的反面）、
   `ADR-2026-11-15-vk-keeps-one-frame-in-flight.md`（一帧在飞；本文与它**共用**退休机制）
 
+> **EN**: Chose C with B as its first step: the device is a pool (GPU, allocator, content residency, targets, pipeline cache) shared by several engines and locked per resource, while a session owns a frame (command pool, command buffer, fence, constant ring, descriptor pool) and is thread-confined, so the frame path takes no locks because shared residency is immutable after upload. A device-level frame mutex lands first to turn today's silent data race between two `executeFrame` calls into correct serialisation. Rejected writing only the specification, per-engine devices, a global lock over device verbs and per-resource read-write locks; the constant ring per session and the first-frame duplicate upload are booked as costs.
+
 ## 背景
 
 需求（2026-11-15，用户原话）：**geometry / shader / 纹理资源共享，帧不共享；共享之后要线程安全；

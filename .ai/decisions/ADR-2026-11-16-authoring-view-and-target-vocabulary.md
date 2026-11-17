@@ -14,6 +14,8 @@
 - 审校与施工图：`../research/graphics-2026-11-16-redesign-r2.md`（`E-01…E-12` / `A-01…A-08` / `I-01…I-08` /
   `S-01…S-12`，框架对照，18 个批次的顺序）。
 
+> **EN**: Round two of the redesign, on concept and API shape: one `View` value (camera, viewport, layer mask) replaces the overlapping `CameraSnapshot` / `CollectView` pair, `RenderSurface` becomes `RenderArea` so "surface" means the platform surface only, a pass target is declared with two values plus a four-role vocabulary instead of seven fields and four identically named verbs, `setRenderTarget` stops being a verb with no effect, and `PassDesc` returns to being a pure value with per-frame updates owned by objects. The adjudication table is `graphics-2026-11-16-redesign-r2.md`; approved 2026-11-16 and landed 2026-11-17.
+
 ## 背景
 
 第一轮把**接缝与词汇**重设计了（FrameDriver / FrameDriverId / FrameHead / DiagnosticDraft / 接缝 6 机制），

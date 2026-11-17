@@ -5,6 +5,8 @@
 > **影响范围**：`.ai/design/graphics-frame-pipeline.md`（F8 / §3.8 / R21 / R27 / R37 / T29 / K10 / §7 / §9.3）、
 > `.ai/design/graphics-architecture.md`（F19 / D2 / §2.8 名词纪律）、`.ai/backlog/graphics.md`。**无代码改动**。
 
+> **EN**: Confirmed one `RenderEngine` drives one `RenderSurface`, and multi-window means one `RenderDevice` serving several engines (each window its own engine, area and `Viewer`); the F8 requirement from graphics-next, `R37`, `T29`, `K10` and its step 4 are deleted and `SurfaceId` leaves the id table. Implementing multi-surface was costed at 900-1400 lines across 14-20 files with no consumer, and existing code already refused a second area, so the document and `createSurface()` now say the same thing.
+
 ## 背景
 
 - graphics-next 的 F8 / `R21` / `R27` / `R37` / `T29` / `K10` 要求"一个 Session 驱动多个 Surface"：

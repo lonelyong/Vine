@@ -6,6 +6,8 @@
   `../research/graphics-2026-11-14-vk-industry-review.md`（F5）、`RenderFrameExecutor::executeFrame`、
   `RenderDevice::readColorBuffer`、`src/plugins/gfx_backend_vk/src/internal/Device.cpp`
 
+> **EN**: Kept the vk backend at one frame in flight and recorded the consequence as a known cost in the design page, because `readColorBuffer` / `readDepthBuffer` promise "read right after the draw" and only a fence wait proves a frame is done; the measured loss on lavapipe is about 10% (8.9 vs 7.95 ms). Moving to 2-3 frame slots changes framework semantics across five modules, so it waits for an observable trigger: device time under half the wall-clock time on a real host, an offline or overlapping workload, or a second backend needing the same "which frame" question.
+
 ## 背景
 
 工业标准审查的 F5 指出：vk 后端每帧 `vkQueueSubmit` 之后立刻 `vkWaitForFences(..., UINT64_MAX)`

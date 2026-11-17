@@ -7,6 +7,8 @@
 > `src/viz/graphics/sdk/vine/graphics/FrameStats.hpp`（同批的 `FrameUploads`）、
 > `tests/test_vsg/UploadScratchTest.cpp`、`.ai/design/{graphics-content-lifecycle,vsg-backend}.md`
 
+> **EN**: Superseded one clause of `ADR-2026-11-10-upload-staging-is-not-retained`: `StagingTask::releaseStaging()` now releases only blocks larger than the task's own `minimumStagingBufferSize` (vsg default 16 MiB) and keeps the smaller ones for reuse, so a host that uploads every frame allocates nothing in steady state while a one-off large upload still gives its block back. The fence evidence rule, the no-waiting rule and the frame-boundary trigger are unchanged; rejected releasing everything, keeping everything, and a host-side knob.
+
 ## 背景
 
 ADR-2026-11-10 的结论是“暂存一完成就全放”：一块 staging 是一个 `vkCmdCopyBuffer` 的源，拷贝的 fence 一

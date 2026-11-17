@@ -7,6 +7,8 @@
   for a Chinese audience — a separate decision, see the plan's open questions).
 - Related: `ADR-2026-11-16-no-backend-half` (the same instinct: one fact, one expression).
 
+> **EN**: This ADR is already English, and it is the rule that produced the summaries on every other decision page: documentation prose in `.ai/**` and `.github/**` is English, one file is one language, new files are English, records (ADRs and bug postmortems) are append-only with an added English summary instead of an in-place translation, dated research is not translated, identifiers are never translated and the glossary is the only mapping, and the design template has one English chapter set. Rejected keeping Chinese with English summaries only, one big commit, machine translation and converting `docs/guides` at the same time.
+
 ## Background
 
 - The code's vocabulary is already English: identifiers, `@brief` comments, test names, diagnostic

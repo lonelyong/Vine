@@ -9,6 +9,8 @@
   `tests/*/CMakeLists.txt`、`graphics_global.hpp`、`gfx_backend_vsg` 的命名空间、`graphics-architecture.md` §2.9。
 - 相关：`ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`、`ADR-2026-11-13-one-engine-one-surface.md`。
 
+> **EN**: Deleted the "backend half" concept and superseded the part of `ADR-2026-11-16-redesign-seam-and-vocabulary` §2 and batch 3 that made a directory the seam: the eight shared mechanisms moved flat into `sdk/vine/graphics/` and `vn::graphics`, the guard header, the separate install component and the CMake parameter are gone, and the gates now test the property (the graphics module includes no rendering API and no concrete backend) instead of a path. `gfx_backend_vsg`'s own types moved to `vn::backend_vsg::core`, and `ReadbackResult` became `ReadbackAnswer` to stop colliding with the public `ReadbackResult` enum.
+
 ## 背景
 
 `ADR-2026-11-16` §2 把 `sdk/vine/graphics/backend/` 定为“后端接缝”，只留两个后端共用的机制，并给这条边界配了四件东西：

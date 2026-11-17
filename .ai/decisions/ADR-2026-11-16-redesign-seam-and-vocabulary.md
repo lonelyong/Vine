@@ -18,6 +18,8 @@
   `ADR-2026-11-10-gpu-residency-pinned-by-content.md`、`ADR-2026-11-14-vk-becomes-the-default-target.md`。
 - 审核与施工图：`../research/graphics-2026-11-16-redesign.md`（A 能力清单、B 逐项、C 横切、D 结论表、批次计划）。
 
+> **EN**: Round one of the graphics redesign: the audit found the capability set complete and the problems nearly all in names and ownership, so the decision is to re-partition what exists (`G13`) without adding capability (`G8`), migrated in ten rollback-sized batches. It fixes the vocabulary - `FrameDriver` and `FrameDriverId` behind the existing `RenderFrameExecutor` type, `WindowSession` for a window's swapchain session, `FrameHead` with its `DrawPlan` merged across backends, and `Submission` naming the submit policy - and states the seam's six mechanisms. Its §2 "directory as seam" half is superseded by `ADR-2026-11-16-no-backend-half`; the vocabulary, phases and rejection shapes stand.
+
 ## 背景
 
 用户要求：**重新设计 graphics 与两个后端（概念 / 抽象 / 框架 / C++ 结构），功能不减。**

@@ -7,6 +7,8 @@
   `src/plugins/gfx_backend_vsg/src/internal/HostTargets.cpp`、`src/plugins/gfx_backend_vk/src/internal/Device.cpp`、 <!-- drift-ok -->
   `tests/test_vsg/MsaaTargetTest.cpp`、`tests/test_vk/MsaaTest.cpp`
 
+> **EN**: Chose B, making the documented contract the only one: `Capabilities::max_samples` is a count (legal counts are powers of two), `RenderTarget::setSamples(n)` means n or nothing, and a request the device cannot build - above the limit or not a power of two - refuses the target once with a named `UnsupportedRequest` diagnostic instead of silently lowering it. Multisampled depth is resolved where the backend can and refused where it cannot (vk today), and borrowed depth with multisampling is always refused. Rejected the vsg bitmask plus vk downgrade, downgrading by contract, a supported-count set on `Capabilities` and rounding up.
+
 ## 背景
 
 同一个公开契约今天有三份互相矛盾的答案：

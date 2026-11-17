@@ -6,6 +6,8 @@
   `../decisions/ADR-2026-11-12-adopt-graphics-next.md`、`RenderFrameExecutor::prepareFrame`、`PrepareReport`、
   `tests/test_vk/ResidencyTest.cpp`、`tests/test_vk/PrepareUploadTest.cpp`
 
+> **EN**: Chose B: `prepare()` may submit exactly one command buffer of its own whose contents are transfers only (the same buffer-to-image and buffer-to-buffer copies the frame would record before its first render pass) and waits for it, so texture bytes land during loading and the frame's upload delta is genuinely zero. The frame contract stays: no swapchain acquire, no render pass, no present, and the `submitted` / `presented` watermarks do not move; `PrepareReport::uploads` now counts both kinds. Rejected the status quo, a second `flushUploads()` verb, asynchronous upload and uploading when a texture is filled.
+
 ## 背景
 
 `prepare()` 存在的理由只有一个可检验的说法（`R23`）：预热之后，同一份声明的帧 `builds` 增量为 0。
