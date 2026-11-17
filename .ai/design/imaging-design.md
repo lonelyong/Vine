@@ -1,244 +1,244 @@
-# imaging 模块设计（CPU 像素数据）
+# the imaging module: CPU pixel data
 
-> **状态**：现行
-> **最后核对**：2026-10-23
-> **范围**：CPU 像素格式、`Image` 与 mip 链；不涉及纹理/采样器/设备。
-> **权威来源**：`src/base/imaging/sdk/vine/imaging/**`、`tests/test_imaging`。
-> **待办**：`../backlog/`
+> **Status**: current
+> **Last verified**: 2026-10-23
+> **Scope**: the CPU pixel formats, `Image` and the mip chain; no textures / samplers / devices.
+> **Sources**: `src/base/imaging/sdk/vine/imaging/**`, `tests/test_imaging`.
+> **Backlog**: `../backlog/`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-SDK 里曾经**像素数据没有对象**：材质贴图只是路径字符串，没有解码，没有读回，`ImageRef` 只是绑定句柄。
-`imaging` 补的是这块**数据侧**：一张图在内存里长什么样。
+The SDK has no object for pixel data: a material texture is only a path string, nothing is decoded, nothing is read back, and `ImageRef` is only a binding handle.
+`imaging` answers that gap on the **data side**: what an image looks like in memory.
 
-### 1.2 目标
+### 1.2 Goals
 
-- `PixelFormat`：每像素字节布局 + 查询函数。
-- `Image`：一张 2D 图 + 可选 mip 链，一次分配、一次拷贝、一次释放。
-- 可被加载器（解码文件）、渲染层（读回结果）、无渲染工具同时使用。
+- `PixelFormat`: the per-pixel byte layout plus the query functions.
+- `Image`: one 2D image plus an optional mip chain, one allocation, one copy, one release.
+- Usable at the same time by a loader (decodes a file), the rendering layer (read-back result) and a renderer-free tool.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不认识纹理、采样器、设备或渲染器。
-- 不做 `QImage` 桥（Qt 侧转换留在 appfw）。
-- 不做 1D / 3D / array；当前只做 2D 与 Cube（Cube = 六个 `Image`）。
-- 不做 mip 生成器（解码只产出第 0 级；生成另议）。
+- It knows nothing about textures, samplers, devices or renderers.
+- No `QImage` bridge (the Qt-side conversion stays in appfw).
+- No 1D / 3D / array; today only 2D and Cube (Cube = six `Image`s).
+- No mip generator (decoding produces level 0 only; generation is a separate decision).
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-`imaging` 是 base 层的 **CPU 像素叶子模块**：`PixelFormat` 是格式事实的唯一映射点，`Image` 是 2D 图 + mip 链；
-GPU 资源（纹理/采样器/设备）留在 `graphics`，两边只靠 `IntrusivePtr<Image>` 交接。
+`imaging` is the base layer's **CPU pixel leaf module**: `PixelFormat` is the single mapping point of the format facts, `Image` is a 2D image plus its mip chain;
+GPU resources (textures / samplers / devices) stay in `graphics`, and the two sides meet only through `IntrusivePtr<Image>`.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 架构定位
+### 2.1 Architectural placement
 
 ```
-                ┌──────────────────────────┐
-                │ imaging（叶子，CPU 像素） │
-                │  PixelFormat / Image     │
-                │  只依赖 Core + Global    │
-                └────────────┬─────────────┘
+                ┌────────────────────────────┐
+                │ imaging (leaf, CPU pixels) │
+                │  PixelFormat / Image       │
+                │  depends on Core + Global   │
+                └─────────────┬──────────────┘
                              │
         ┌────────────────────┼────────────────────┐
         │                    │                    │
 ┌───────▼────────┐  ┌────────▼────────┐  ┌────────▼────────┐
-│ graphics       │  │ meshio         │  │ 离屏工具         │
-│ Texture 由它建  │  │ 解码文件→Image  │  │ urdf2vine 等     │
-│ 读回产出 Image  │  │                 │  │ （不链渲染器）    │
+│ graphics       │  │ meshio          │  │ offscreen tools │
+│ builds Texture │  │ decodes file    │  │ urdf2vine, etc. │
+│ readback→Image │  │   → Image       │  │ (no renderer)   │
 └────────────────┘  └─────────────────┘  └─────────────────┘
 ```
 
-**关键：依赖方向只向上。** `imaging` 在 `geometry` 同级，谁都能依赖它，它不依赖任何人。
+**The key: dependencies point only upward.** `imaging` sits at the same level as `geometry`; anyone may depend on it, it depends on nobody.
 
-### 2.2 与 graphics 的分工铁律
+### 2.2 The division of labour with graphics
 
-> **CPU 像素 / 图像数据 → `imaging`**
-> **GPU 资源（format / mip / sampler / usage）→ `graphics`**
+> **CPU pixels / image data → `imaging`**
+> **GPU resources (format / mip / sampler / usage) → `graphics`**
 
-判定问句：**“这个东西在 headless、没有渲染器、没有 Qt 的环境里有意义吗？”** 有 → `imaging`；没有 → `graphics`。
+The test question: **“does this thing mean anything in a headless environment with no renderer and no Qt?”** Yes → `imaging`; no → `graphics`.
 
-### 2.3 为什么 `Image` 不放 `graphics`
+### 2.3 Why `Image` does not live in `graphics`
 
-把 `Image` 放进 `graphics` 是“今天最省、三个月后最痛”：
+Putting `Image` into `graphics` is “cheapest today, most painful in three months”:
 
-1. **`meshio → graphics` 的层级倒置**：assimp 的 `aiTexture::pcData` 天然产出解码后的像素。
-2. **无渲染工具用不了**：`urdf2vine` 刻意不链 graphics/Qt。
-3. **层级逻辑倒置**：顶点数据 `Geometry` 在 `graphics` 下面，像素数据是同一类东西。
+1. **the `meshio → graphics` layer inversion**: assimp's `aiTexture::pcData` naturally produces decoded pixels.
+2. **renderer-free tools cannot use it**: `urdf2vine` deliberately does not link graphics/Qt.
+3. **the layering logic is inverted**: vertex data `Geometry` sits below `graphics`, and pixel data is the same kind of thing.
 
-补充：`Image` 也**不能**是 `QImage` —— `graphics` 是 Qt-free 的；Qt 侧转换桥留在 appfw。
+In addition: `Image` also **cannot** be `QImage` — `graphics` is Qt-free; the Qt-side conversion bridge stays in appfw.
 
-### 2.4 为什么 `Texture` 留 `graphics`
+### 2.4 Why `Texture` stays in `graphics`
 
-纹理是 GPU 资源：消费者只有 `Material`（采样）、`RenderTarget`（附件）、`ImageRef`（身份）、后端（创建）。
-`graphics` 以下的模块没法有意义地谈论 GPU 纹理。
+A texture is a GPU resource: its only consumers are `Material` (sampling), `RenderTarget` (attachment), `ImageRef` (identity) and the backend (creation).
+A module below `graphics` cannot meaningfully talk about a GPU texture.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | `PixelFormat` | 18 个真格式 + `Unknown`；查询走自由函数 | 已落地 |
-| F2 | `Image` | 2D 图 + mip 链，一次分配 | 已落地 |
-| F3 | mip 布局 | 每层紧凑 2D 网格，偏移表 + 哨兵 | 已落地 |
-| F4 | 格式查询 | `channelCount` / `bytesPerPixel` / `isDepthFormat` / `isSrgbFormat` / `formatName` | 已落地 |
+| F1 | `PixelFormat` | 18 real formats + `Unknown`; the queries go through free functions | landed |
+| F2 | `Image` | a 2D image + mip chain, one allocation | landed |
+| F3 | mip layout | a compact 2D grid per level, an offset table + a sentinel | landed |
+| F4 | format queries | `channelCount` / `bytesPerPixel` / `isDepthFormat` / `isSrgbFormat` / `formatName` | landed |
 
 ### 3.1.1 F1 `PixelFormat`
 
-- **行为**：`enum class PixelFormat : std::uint8_t`，18 个真格式 + `Unknown`；越界强转按 `Unknown` 处理。
-- **约束**（C1）：查询走自由函数，不走枚举分支；`switch` 覆盖全部枚举值，不用 `default:`。
-- **要求**（R1）：`Unknown` 是唯一“不是格式”的值，默认构造可被检测为错，不悄悄退化成第一个真格式。
-- **验收**（T1）：`test_imaging` 的 PixelFormat 用例。
-- **注意**（N1）：`D24UnormS8Uint` 的 `channelCount` 报 2（深度+模板都算通道）。
+- **Behaviour**: `enum class PixelFormat : std::uint8_t`, 18 real formats + `Unknown`; a cast from outside the range is treated as `Unknown`.
+- **Constraints** (C1): the queries go through free functions, not branches over the enum; the `switch` covers every enumerator and uses no `default:`.
+- **Requirements** (R1): `Unknown` is the only value that is “not a format”, a default-constructed one is detectable as wrong and does not silently degrade into the first real format.
+- **Acceptance** (T1): the PixelFormat cases in `test_imaging`.
+- **Caveats** (N1): `D24UnormS8Uint` reports `channelCount` 2 (depth and stencil both count as channels).
 
 ### 3.1.2 F2 `Image`
 
-- **行为**：`Object` + `RefCounted<Image>`；`Image(width, height, format, mip_count = 1)`；
-  `mipCapacity(width, height)`。
-- **约束**（C2）：非正尺寸、像素大小为 0 的格式、mip 数不在 `[1, mipCapacity]` 全部
-  `std::invalid_argument`；像素零初始化。
-- **要求**（R2）：一次分配、一次拷贝、一次释放；mip 访问器越界夹取到最后一层，不失败。
-- **验收**（T2）：`test_imaging` 的 Image/布局用例。
-- **注意**（N2）：越界请求在构造函数里拒绝；尺寸查询不是发现调用方 bug 的地方。
+- **Behaviour**: `Object` + `RefCounted<Image>`; `Image(width, height, format, mip_count = 1)`;
+  `mipCapacity(width, height)`.
+- **Constraints** (C2): a non-positive size, a format whose pixel size is 0 and a mip count outside `[1, mipCapacity]` all raise
+  `std::invalid_argument`; the pixels are zero-initialised.
+- **Requirements** (R2): one allocation, one copy, one release; the mip accessor clamps an out-of-range level to the last one instead of failing.
+- **Acceptance** (T2): the Image / layout cases in `test_imaging`.
+- **Caveats** (N2): an out-of-range request is rejected in the constructor; a size query is not where a caller's bug is found.
 
-### 3.1.3 F3 mip 布局
+### 3.1.3 F3 mip layout
 
-- **行为**：基层 `width x height`；mip N = `max(1, width >> N) x max(1, height >> N)`；
-  `mip_offsets_` 存 N+1 个偏移（最后一个是哨兵 = 总大小）。
-- **约束**（C3）：每层紧凑 2D 网格，行间无 padding；整条链一次分配。
-- **要求**（R3）：某层大小 = 两个偏移相减；不需要额外尺寸表。
-- **验收**（T3）：`test_imaging` 的 mip 用例。
-- **注意**（N3）：上传侧已按级数工作（`makeMipmapLayout`），缺的只是生成第 0 级之外的层。
+- **Behaviour**: the base level is `width x height`; mip N is `max(1, width >> N) x max(1, height >> N)`;
+  `mip_offsets_` holds N+1 offsets (the last one is the sentinel = the total size).
+- **Constraints** (C3): a compact 2D grid per level, no padding between rows; the whole chain is one allocation.
+- **Requirements** (R3): the size of a level = the difference of two offsets; no separate size table.
+- **Acceptance** (T3): the mip cases in `test_imaging`.
+- **Caveats** (N3): the upload side already works per level (`makeMipmapLayout`); what is missing is only generating the levels beyond level 0.
 
-### 3.1.4 F4 格式查询
+### 3.1.4 F4 format queries
 
-- **行为**：`channelCount` / `bytesPerPixel` / `isDepthFormat` / `isSrgbFormat` / `formatName`。
-- **约束**（C4）：`formatName` 返回静态字面量，永不返回 null；打包格式的 `bytesPerPixel` 报整个 texel 大小。
-- **要求**（R4）：加一个格式 = 只教一处（`PixelFormat.cpp`），不是教所有调用点。
-- **验收**（T4）：`test_imaging` 的格式查询用例。
-- **注意**（N4）：`-Wswitch` 会强制新格式被处理，这是查表法没有的保障。
+- **Behaviour**: `channelCount` / `bytesPerPixel` / `isDepthFormat` / `isSrgbFormat` / `formatName`.
+- **Constraints** (C4): `formatName` returns a static literal and never null; `bytesPerPixel` of a packed format reports the whole texel size.
+- **Requirements** (R4): adding a format = teaching one place (`PixelFormat.cpp`), not every call site.
+- **Acceptance** (T4): the format query cases in `test_imaging`.
+- **Caveats** (N4): `-Wswitch` forces a new format to be handled, a guard a lookup table does not give.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `PixelFormat.hpp`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `enum class PixelFormat` | 18 个真格式 + `Unknown` | 越界强转按 `Unknown` |
-| `channelCount(PixelFormat)` | 通道数 | 深度+模板算 2 |
-| `bytesPerPixel(PixelFormat)` | 每像素字节 | 打包格式报 texel 大小 |
-| `isDepthFormat` / `isSrgbFormat` | 格式分类 | `noexcept` |
-| `formatName` | 静态名字 | 永不 null |
+| `enum class PixelFormat` | 18 real formats + `Unknown` | a cast from outside the range is treated as `Unknown` |
+| `channelCount(PixelFormat)` | channel count | depth and stencil count as 2 |
+| `bytesPerPixel(PixelFormat)` | bytes per pixel | a packed format reports the texel size |
+| `isDepthFormat` / `isSrgbFormat` | format classification | `noexcept` |
+| `formatName` | the static name | never null |
 
 ### 4.2 `Image.hpp`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `Image(width, height, format, mip_count)` | 构造并零初始化 | 非法参数抛 `invalid_argument` |
-| `mipCapacity(width, height)` | 最大 mip 数 | 静态 |
-| `width()` / `height()` / `format()` / `mipCount()` | 查询 | — |
-| `mipData(level)` / `mipSize(level)` | 访问 | 越界夹取 |
+| `Image(width, height, format, mip_count)` | constructs and zero-initialises | an illegal argument throws `invalid_argument` |
+| `mipCapacity(width, height)` | the maximum mip count | static |
+| `width()` / `height()` / `format()` / `mipCount()` | queries | — |
+| `mipData(level)` / `mipSize(level)` | access | clamps an out-of-range level |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | 查询走自由函数；`switch` 覆盖全部枚举值，不用 `default:`。 |
-| C2 | 非法尺寸/格式/mip 数在构造函数拒绝；像素零初始化。 |
-| C3 | 每层紧凑 2D 网格，行间无 padding；整条链一次分配。 |
-| C4 | `formatName` 返回静态字面量；`bytesPerPixel` 报 texel 大小。 |
+| C1 | the queries go through free functions; the `switch` covers every enumerator and uses no `default:`. |
+| C2 | an illegal size / format / mip count is rejected in the constructor; the pixels are zero-initialised. |
+| C3 | a compact 2D grid per level, no padding between rows; the whole chain is one allocation. |
+| C4 | `formatName` returns a static literal; `bytesPerPixel` reports the texel size. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | `Unknown` 默认构造可检测，不悄悄退化。 |
-| R2 | mip 访问器越界夹取，不失败；尺寸查询不发现 bug。 |
-| R3 | 层级只向上：`imaging` 不依赖 `graphics`/Qt。 |
-| R4 | 加格式只改 `PixelFormat.cpp` 一处。 |
+| R1 | a default-constructed `Unknown` is detectable and does not silently degrade. |
+| R2 | the mip accessors clamp an out-of-range level instead of failing; a size query does not find a bug. |
+| R3 | the layering points only upward: `imaging` does not depend on `graphics`/Qt. |
+| R4 | adding a format changes `PixelFormat.cpp` in one place only. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | `Image` 是 2D；Cube = 六个 `Image`，不加 face 轴。 |
-| N2 | `mip_offsets_` 的最后一个值是总大小哨兵。 |
-| N3 | 像素数据在构造时全零，未填部分不泄内存。 |
+| N1 | `Image` is 2D; Cube = six `Image`s and adds no face axis. |
+| N2 | the last value of `mip_offsets_` is the total-size sentinel. |
+| N3 | the pixel data is all zero at construction, so an unfilled part leaks no memory. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 `Unknown` 不是第一个真格式
+### 6.1 `Unknown` is not the first real format
 
-- 会怎么错：默认构造的值被当成 `R8G8B8A8`，悄悄画出黑/错色。
-- 怎么判：`formatName(Unknown)` 返回 `"Unknown"`；构造函数拒绝像素大小为 0 的格式。
-- 怎么防：`switch` 覆盖全部枚举值，不用 `default:`。
+- How it fails: the default-constructed value is taken for `R8G8B8A8` and quietly paints black or the wrong colour.
+- How to detect it: `formatName(Unknown)` returns `"Unknown"`; the constructor rejects a format whose pixel size is 0.
+- How to prevent it: the `switch` covers every enumerator and uses no `default:`.
 
-### 6.2 mip 偏移的哨兵
+### 6.2 The mip offset sentinel
 
-- 会怎么错：少存一个偏移，最后一层的 `mipSize()` 越界。
-- 怎么判：`mip_offsets_.size() == mip_count + 1`。
-- 怎么防：只通过两个偏移相减求大小，不另存尺寸表。
+- How it fails: one offset too few is stored and `mipSize()` of the last level reads out of range.
+- How to detect it: `mip_offsets_.size() == mip_count + 1`.
+- How to prevent it: the size is always the difference of two offsets, never a separate size table.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Why not | ADR |
 | --- | --- | --- | --- |
-| D1 | `Image` 放进 `graphics` | `meshio → graphics` 层级倒置；无渲染工具用不了。 | — |
-| D2 | `Image` = `QImage` | `graphics` 是 Qt-free；Qt 桥留 appfw。 | — |
-| D3 | 把 `window` 改名 `display` 收 `Image` | 名字硬凑；改名牵动短名/目录/宏/别名四处。 | — |
-| D4 | 1D / 3D / array | 过度设计；当前只做 2D 与 Cube。 | — |
-| D5 | `Image` 带 face 轴 | 每个 2D 调用方都背 `faces=1` 特例；Cube 编组是渲染器的事。 | — |
+| D1 | put `Image` into `graphics` | it inverts the `meshio → graphics` layering; renderer-free tools cannot use it. | — |
+| D2 | `Image` = `QImage` | `graphics` is Qt-free; the Qt bridge stays in appfw. | — |
+| D3 | rename `window` to `display` and collect `Image` there | the name is forced; the rename drags the short name / directory / macro / alias along. | — |
+| D4 | 1D / 3D / array | over-engineering; today only 2D and Cube exist. | — |
+| D5 | `Image` with a face axis | every 2D caller carries a `faces=1` special case; grouping a Cube is the renderer's job. | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Test case / command |
 | --- | --- | --- |
-| T1 | PixelFormat 查询/Unknown | `test_imaging` |
-| T2 | Image 构造/零初始化/非法参数 | `test_imaging` |
-| T3 | mip 布局/偏移/夹取 | `test_imaging` |
-| T4 | Texture/Material 迁移无回归 | `test_graphics`（200）、`test_vsg` |
+| T1 | PixelFormat queries / Unknown | `test_imaging` |
+| T2 | Image construction / zero-init / illegal arguments | `test_imaging` |
+| T3 | mip layout / offsets / clamping | `test_imaging` |
+| T4 | the Texture / Material migration has no regression | `test_graphics` (200), `test_vsg` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current Status
 
-`PixelFormat` / `Image` 已落地；`graphics::Texture`（2D + Cube）与 `Material::textureFile()` → `Texture*`
-迁移已完成；`ImageIO` 解码已实现（公开面见 `imageio-design.md`）。
+`PixelFormat` / `Image` are in place; `graphics::Texture` (2D + Cube) and `Material::textureFile()` → `Texture*`
+are migrated; `ImageIO` decoding is implemented (public surface in `imageio-design.md`).
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known Gaps and Backlog
 
-- **mip 生成没有**：解码只产出 1 个 mip；上传侧已按级数工作，缺“把第 0 级扩成一条链”的一步。
-- **`imaging::Image` 级读回包装**没有；后端已有 `readColorBuffer()/readDepthBuffer()`，窗口读回走 X11 脚本。
-- `RenderTarget` 的 `ColorFormat`/`DepthFormat` 与 `PixelFormat` 重复，将来应并入后者（改公开 API，单独一批）。
-- `Texture3D`/`2DArray` 不能表达（`Image` 严格二维）。
+- **no mip generation**: decoding produces one mip; the upload side already works per level, what is missing is the step that expands level 0 into a chain.
+- **no `imaging::Image`-level read-back wrapper**: the backends already have `readColorBuffer()/readDepthBuffer()`, and window read-back goes through an X11 script.
+- `RenderTarget`'s `ColorFormat`/`DepthFormat` duplicate `PixelFormat` and should be folded into the latter eventually (a public API change, its own batch).
+- `Texture3D`/`2DArray` cannot be expressed (`Image` is strictly two-dimensional).
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility and Migration
 
-`Material::textureFile()` 已迁移到 `Texture*`；旧路径字符串在 `src/` 里零调用。新代码用
-`IntrusivePtr<Image>` 交接 CPU 像素，GPU 侧只用 `Texture`。
+`Material::textureFile()` has been migrated to `Texture*`; the old path string has no call site left in `src/`. New code hands CPU pixels over through
+`IntrusivePtr<Image>`; the GPU side uses only `Texture`.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/base/imaging/sdk/vine/imaging/PixelFormat.hpp`
 - `src/base/imaging/sdk/vine/imaging/Image.hpp`
 - `src/base/imaging/src/PixelFormat.cpp`
 - `tests/test_imaging`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `.ai/memory/imaging.md`
 - `.ai/design/graphics-rendering.md`
 - `imageio-design.md`
 - `../backlog/`
 
-### 10.3 外部资料
+### 10.3 External Sources
 
-- `loaders/imageio`（`vn::ImageIO`，stb 支持）。
-- `graphics::Texture` / `Material` 的 GPU 侧契约。
+- `loaders/imageio` (`vn::ImageIO`, stb support).
+- the GPU-side contract of `graphics::Texture` / `Material`.
