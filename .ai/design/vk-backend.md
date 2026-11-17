@@ -256,15 +256,15 @@
 - **为什么**：释放要说的是两件事——“这份内容还在不在”与“这个对象现在能不能毁”——合在一处就是
 "
   "“释放只能在帧之间调”这条宿主必须守的时序。拆开之后 vsg 已经在用的同一套机制装上了两个实现（`G6`），
-  而且它是下一步多会话的前提（`.ai/design/graphics-sessions.md` §2.6）。
+  而且它是多会话的前提（`.ai/design/graphics-sessions.md` §2.6）。
 - **代价（写在这里而不是隐藏）**：一个已释放对象活到 `submitted + slots + 1`，即**最多两帧后**
   才销毁（它是“slot 已被回收”这个证据的保守代价）。两帧的内存延迟与一次设备空转相比是廉
   价的，而等待变成了按帧计时的后台事件。
 - **边界**：**拆除不 park**。`shutdown()` 先 `vkDeviceWaitIdle`，再把接缝置空并 `releaseAll()`（它就是“仲裁已经
   出现”的那个动词）；否则 park 的对象会随会话泄漏。**替换路径**（重传时的旧 buffer、ring 重建）仍是
-  立即销毁，因为它发生在记录本帧时、提交之前；多会话之后它们必须一同 park（见设计文档 S6）。
+  立即销毁，因为它发生在记录本帧时、提交之前；多会话之后它们必须一同 park。
 - **观察点**：`Device::retirementNumbers()`（`pending` / `released` / `device_waits`）。`device_waits` 记"宿主把设备停了一下"：
-  无法 park 的破坏性路径，以及**读回的等待**（S7：读回等它要读的帧完成，等一次记一次）。帧的组装路径（记录 / 提交 /
+  无法 park 的破坏性路径，以及**读回的等待**（读回等它要读的帧完成，等一次记一次）。帧的组装路径（记录 / 提交 /
   栅栏等待）永远不抬高它——那才是这条数字要守的不变量。
 
 ### 2.16 设备是池、驱动者是帧：缓存与帧暂存分家（`G1` / `G4` / `G10`）
@@ -275,14 +275,13 @@
   buffer + 切片游标）、描述符池、set 缓存、`draw_set`、`frame_index`、`ring_builds` / `set_builds`。
 - **为什么**：缓存按**宿主身份**（程序 revision / 几何 revision / buffer 地址）键控且重建很贵——第二个驱动者要的是
   **找到**它们，而不是复制一份；而环与 set 缓存按**帧**写入（`beginFrame` 从零发切片、帧内会增长），两个帧交错写同一
-  个环就等于互相覆盖对方已提交帧还在读的常量。把“贵的、按身份共享的”与“每帧被写坏的”按这个界线切开，S6 的
-  `createSession()` 才是“多发一个驱动者”，而不是“多一个能毁掉第一个的东西”（`G5`）。
+  个环就等于互相覆盖对方已提交帧还在读的常量。把“贵的、按身份共享的”与“每帧被写坏的”按这个界线切开，`createSession()` 才是“多发一个驱动者”，而不是“多一个能毁掉第一个的东西”（`G5`）。
 - **边界**：布局归 caches（管线状态要它们），池与环归 scratch（分配发生在帧内）；scratch **借用**布局与设备入口，所以
   拆除顺序是 scratch → caches → allocator → device（`P8` 的同一族规则）。set 缓存的淘汰用 `frame_index` 而不是锁：
   它只属于自己的驱动者。
 - **代价（如实）**：`ContentDraw` 的 `record` 每帧多一次指针间接（两个借用引用），换来的是“谁拥有帧内状态”可以一行
   指向一个对象。
-- **锁与帧首快照（S6c-1 + S2 批 2b，已落地）**：`ContentCaches` 有一把**自己的锁**（`ContentCaches::Lock`，不可重入），帧只在**帧首**取它
+- **锁与帧首快照**：`ContentCaches` 有一把**自己的锁**（`ContentCaches::Lock`，不可重入），帧只在**帧首**取它
   一次：`planDraw`（两个重载）/ `resolveTextures` 把每一调用要画的东西（pipeline、顶点/索引/实例 buffer 句柄、
   材质、纹理 view/sampler、阴影 sampler）**按值**写进 `FrameHead::DrawPlan`（帧级纹理/采样器事实挂 `FrameHead`），纹理上传也在帧首录进帧自己的
   命令缓冲（render pass 之外，唯一合法的地方）。**记录路径此后不取锁、不碰缓存条目**；条目被替换/释放时旧对象**park 到
@@ -294,11 +293,10 @@
   逐 draw 取锁会让它变红（实测 6 → 10）。
 - **观察点（另一半）**：`Device::contentCacheCounters()` 由两半拼成——ring / set 数字来自设备**自己那个驱动者**的
   `FrameScratch`，其余来自 `caches.numbers()`。单会话语义与拆分前逐值相同（`test_vk` 全绿，`BackendParityTest` 12/12）。
-- **帧首存储的复用与证人（B11 / I-02）**：`FrameHead` 的 pass / call 槽位是 `clear()` 而不是重建（`storageGrows()`
+- **帧首存储的复用与证人（I-02）**：`FrameHead` 的 pass / call 槽位是 `clear()` 而不是重建（`storageGrows()`
   只在容量不够时增加）；`Device::frameHeadStorageGrows()` 把它暴露给测试，`VkFrameHeadTest.ASteadyFrameDoesNotGrowTheHeadsStorage`
   用“3 帧预热后 5 帧不变”钉住。**它证明的只是头部的存储复用**，不是整帧零分配（管线键与内容缓存有它们自己的分配，
-  本批不声称也不测量）。同批修掉一个真实缺陷：`planDraw` 原先用 `plan = FrameHead::DrawPlan{}` 清空，等于每命令释放并重建
-  复用向量——现在是 `plan.clear()`。
+  这里不声称也不测量）。`planDraw` 用 `plan.clear()` 清空，而不是每命令释放并重建复用向量。
 
 ### 2.17 驻留三态：一个键只有一个发布者（`G1` / `G4` / `G10`）
 
@@ -454,7 +452,7 @@
 
 ### 3.1.11 F11 读回
 
-- **行为**：`ReadbackStaging` 一次一份，并且**自带命令池与栅栏**（S7：读回不借任何会话的帧机器，C7）；颜色读回要求
+- **行为**：`ReadbackStaging` 一次一份，并且**自带命令池与栅栏**（`C7`：读回不借任何会话的帧机器）；颜色读回要求
   目标附件是 `R8G8B8A8_UNORM`，深度读回把 D32 转成 float 数组；结果是 `ReadbackResult` 四态（`NotReady` /
   `Unsupported` / `Invalid` / `Failed`，由调用方分类）。读回取体闸 EXCLUSIVE（设备的"帧之间"）并**计一次**
   `deviceWaits()`；能在等待前回答的拒绝（未知/未建目标、越界附件、不支持的格式、借用深度）不停止设备；帧体内
@@ -741,8 +739,8 @@
 
 ### 9.1 当前状态
 
-- M0–M13 全部落地；审查项 F1/F2/F4/F7/F8/F12 已落地，审查 F5/F9/F10/F11/F13 按 §1.3 保留。
-  多驱动者（backlog `T47` / `T48`）已全部落地，形状见 §2.11 与 `graphics-sessions.md`；
+- 审查项 F1 / F2 / F4 / F7 / F8 / F12 已落地；F5 / F9 / F10 / F11 / F13 按 §1.3 保留为后续。
+  多驱动者已全部落地，形状见 §2.11 与 `graphics-sessions.md`；
   **今天的三套 TSan 读数见 `graphics-threading.md` R18。**
 - `test_vk` **169 例 / 41 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **572**、`test_graphics` **617**；
   `BackendParityTest` **13/13**。目标 map、形状与租约是同一张 `TargetTable`（`TargetTableTest`）；帧首有一条存储证人，
@@ -750,9 +748,8 @@
 - **一条构建教训**：SDK 的虚表改动后，**动态插件必须一起重建**（旧 `.so` 让 `VsgBackendPluginTest` 段错误）。
 - 实测（lavapipe，真实宿主）：11 pass / 10 draw，稳态中位 **8.24 ms**，GPU **7.15–7.74 ms**；ring + set 缓存改动
   −10%（9.03–9.23 → 8.16–8.30 ms）。
-- 曾经记录为"已知仓库级现象"的 `test_vsg`（Release）偶发堆破坏/段错误已定位并修掉：vsg 有三处释放早于提交完成，
-  证据与修复见 `../bugs/vsg-teardown-frees-in-flight-resources.md`；`T36` 的 `EachAttachmentClearsToItsOwnColour`
-  偶发是另一件事（WSLg 下的窗口/设备创建，见 backlog）。
+- `test_vsg`（Release）在 WSLg 下 `T36` 的 `EachAttachmentClearsToItsOwnColour` 仍偶发（窗口/设备创建，见 backlog）；
+  三处“释放早于提交完成”的缺陷已修，证据见 `../bugs/vsg-teardown-frees-in-flight-resources.md`。
 
 ### 9.2 已知缺口 / 待办
 
@@ -762,8 +759,6 @@
 - **backlog `T35`（成为默认后端）**的门禁（`../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`）：
   `releaseRenderTarget` 已真正释放附件、`readDepthBuffer` 与设备丢失报告已落地；**仍缺** Win32 实机证据（未过之前
   不支持 Windows 上线）、Wayland 回退实测、`releasePass` 的显式 no-op + 理由、`docs/guides/` 的 vk 用户页。
-- **共享设备的并发帧**（backlog `T47` / `T48`）：已全部落地（§2.11、`graphics-sessions.md`）。形状与论证见
-  `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`。
 - **backlog `T12` / `T13`**：Windows 窗口读像素、Wayland 回退实测。
 
 ### 9.3 兼容性 / 迁移

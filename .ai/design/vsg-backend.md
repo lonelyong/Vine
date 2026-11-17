@@ -209,7 +209,7 @@ swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈
 
 | # | 功能 | 说明 |
 |---|---|---|
-| F6 | 目标计划 | `TargetShape`：附件数 / 颜色格式 / 深度格式 / samples / render-pass key（设备格式码是不透明的 `DeviceFormat`，通道结构是后端计算的 `RenderPassKey`，B8）。 |
+| F6 | 目标计划 | `TargetShape`：附件数 / 颜色格式 / 深度格式 / samples / render-pass key（设备格式码是不透明的 `DeviceFormat`，通道结构是后端计算的 `RenderPassKey`）。 |
 | F7 | 清屏 | `planClearValues`：bootstrap 清所有附件；深度清 0.0（reverse-Z far）。 |
 | F8 | 深度借出/借入 | 借入方不自建深度；`initialLayout` = attachment layout，LOAD。 |
 | F9 | 依赖 | `VkSubpassDependency` 的 stage/access mask 是兼容性的一部分；借深度取超集。 |
