@@ -1,300 +1,298 @@
-# Ribbon 身份、角色与放置
+# Ribbon identity, roles and placement
 
-> **状态**：现行
-> **最后核对**：2026-10-28
-> **范围**：Ribbon 的 tab/group 身份（id）、语义角色（role）、放置（placement）、终止区与顺序解析；命令条目的
-> 显示状态见 `appfw-command-binding.md`；不含用户自定义布局与上下文 tab。
-> **权威来源**：`src/fw/appfw/sdk/vine/appfw/gui/RibbonPlacement.hpp`、`RibbonBar.hpp`、`RibbonTab.hpp`、`RibbonGroup.hpp`；用例 `tests/test_gui/test_gui.cpp`。
-> **待办**：`../backlog/appfw-ribbon.md`
+> **Status**: current
+> **Last verified**: 2026-10-28
+> **Scope**: the identity (id), semantic role, placement, terminal zone and order resolution of ribbon tabs and groups; the display state of command items is in `appfw-command-binding.md`; user-defined layout and contextual tabs are not covered.
+> **Sources**: `src/fw/appfw/sdk/vine/appfw/gui/RibbonPlacement.hpp`, `RibbonBar.hpp`, `RibbonTab.hpp`, `RibbonGroup.hpp`; the cases in `tests/test_gui/test_gui.cpp`.
+> **Backlog**: `../backlog/appfw-ribbon.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-功能区现在的身份是**标题字符串**，顺序是**追加**：`RibbonBar::addTab()` 只能排在末尾，`RibbonTab`/`RibbonGroup` 没有 id。
-app_shell 在 `load()` 里建“插件/帮助”，model_viewer 在 `postLoad()` 里追加“模型”，于是“模型”落在“帮助”之后。
-插件无法表达“我在帮助之前”，也无法稳定地找到“帮助”往里加东西；标题一改（翻译、重命名）一切引用都断。
+A tab's identity is a **title string** and its order is **append**: `RibbonBar::addTab()` can only put a tab at the end, and `RibbonTab` / `RibbonGroup` have no id.
+So a plugin cannot say "I go before Help", cannot reliably find "Help" to add something into it, and every reference breaks when the title changes (translation, rename) — app_shell builds "plugins / help" in `load()` and model_viewer appends "model" in `postLoad()`, which is exactly how "model" ends up after "help".
 
-### 1.2 目标
+### 1.2 Goals
 
-- tab 有**稳定 id**（引用、去重、持久化的键），标题只用于显示。
-- 框架定义一份**常用角色词表**（`RibbonTabRole`，Qt `UserRole` 式可扩展），插件可用角色做**宿主无关**的锚点。
-- tab/group 支持 `before/after` 锚点与 `append`；顺序由框架解析，插件不需要算 index。
-- “帮助”这类 tab 用 `Terminal` 策略保证**永远最后**；任何插入都被夹到终止区之前。
-- 插件能按角色/ id 找到标准 tab，并往它里面加 group。
-- 现有 `addTab(tab)` / `addGroup(group)` 调用保持原语义，不破坏插件 ABI。
+- A tab has a **stable id** (the key for references, dedup and persistence); the title is for display only.
+- The framework defines a **vocabulary of common roles** (`RibbonTabRole`, extensible the Qt `UserRole` way), so a plugin can anchor **independently of the host**.
+- Tabs and groups support `before` / `after` anchors and `append`; the framework resolves the order, so a plugin computes no index.
+- A tab such as "help" uses the `Terminal` policy to stay **last forever**; any insertion is clamped in front of the terminal zone.
+- A plugin can find a standard tab by role or id and add groups into it.
+- The existing `addTab(tab)` / `addGroup(group)` calls keep their meaning and break no plugin ABI.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做用户自定义（隐藏/拖动/保存布局）——没有消费者（G8），见 backlog。
-- 不做上下文 tab（按条件显示/隐藏）。
-- 不引入 XML/manifest 声明；插件是进程内 C++，代码 API 足够（G8）。
-- 不给 button/action 强制加第二套 id：它们的身份是命令名（见 F6）。
+- No user customisation (hide / drag / save a layout) — there is no consumer (G8), see the backlog.
+- No contextual tabs (shown or hidden by a condition).
+- No XML or manifest declaration; a plugin is in-process C++ and the code API is enough (G8).
+- No forced second id for a button or action: its identity is the command name (see F6).
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**身份用 id，语义用 role，顺序用 placement；顺序由框架从声明解析出来，终止策略是解析器保证的不变量，而不是约定。**
+**Identity is an id, semantics are a role, order is a placement; the framework resolves the order from the declarations, and the terminal policy is an invariant the resolver guarantees rather than a convention.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 身份、角色、命令三者分开（G1）
+### 2.1 Identity, role and command are three separate things (G1)
 
-- 是什么：`id` 回答“是哪一个”，`role` 回答“这个位置是干什么的”，`command` 回答“点了做什么”。
-- 为什么：一个概念一个定义。把显示标题当身份（现状）会在翻译/改名时失效；给 button 再发一个 id 会与命令名形成第三套身份。
-- 边界：组只有 id（作用域是所属 tab）；item 只有命令名（可选 id 留给无命令控件，未落地）。
+- What: `id` answers "which one", `role` answers "what is this position for", `command` answers "what happens on click".
+- Why: one concept, one definition. Taking the display title as the identity fails on translation or a rename, and giving a button an id of its own would make a third identity beside the command name.
+- Boundary: a group has an id only (scoped to its tab); an item has a command name only (an optional id is reserved for a control without a command and is not implemented).
 
-### 2.2 顺序是解析出来的，物理顺序只是镜像（G1、G11）
+### 2.2 The order is resolved; the physical order is only a mirror (G1, G11)
 
-- 是什么：`RibbonBar` 保存注册项（tab + placement + 注册序），每次结构变化重算逻辑顺序，再把 SARibbon 的 category 顺序 `moveCategory()` 对齐。
-- 为什么：`tabAt(i)`、`currentIndex()`、SARibbon 的物理顺序必须只有一个真相；直接 `insertCategoryPage(index)` 加一份私有 vector 很容易漂移。
-- 边界：重排后恢复原来的当前 tab；SARibbon 之外不要直接动 category 顺序。
+- What: `RibbonBar` keeps the registrations (tab + placement + registration order), recomputes the logical order on every structural change and then aligns SARibbon's category order with `moveCategory()`.
+- Why: `tabAt(i)`, `currentIndex()` and SARibbon's physical order must have one truth; `insertCategoryPage(index)` plus a private vector drifts easily.
+- Boundary: the current tab is restored after a reorder; nothing outside SARibbon touches the category order directly.
 
-### 2.3 锚点只向已注册的节点解析（G3、G8、G11）
+### 2.3 An anchor resolves only against registered nodes (G3, G8, G11)
 
-- 是什么：注册序（`next_seq`）决定解析方向：新项只能以**已经注册**的 tab/group 为锚点；找不到就回退。
-- 为什么：单向解析天然无环，不需要依赖图与环检测；宿主先建标准 tab、插件后注册，正好满足这个方向。
-- 代价：锚到“后加载插件”的 tab 会回退（`PlacedByFallback` + 日志）。这是有意的：不让顺序依赖插件扫描顺序之外的未知信息。
+- What: the registration sequence (`next_seq`) fixes the resolution direction: a new item can only anchor to a tab or group that is **already registered**, and falls back when it cannot find one.
+- Why: one-directional resolution is acyclic by construction and needs no dependency graph or cycle detection; the host builds its standard tabs first and plugins register later, which is exactly this direction.
+- Cost: anchoring to a tab of a plugin that loads later falls back (`PlacedByFallback` plus a log line). That is deliberate: the order must not depend on unknown information beyond the plugin scan order.
 
-### 2.4 终止区是不变量，不是约定（G4）
+### 2.4 The terminal zone is an invariant, not a convention (G4)
 
-- 是什么：`RibbonTabPolicy::Terminal` 的 tab 形成后缀；非终止 tab 的插入位置一律 `min(index, firstTerminal)`。
-- 为什么：`after(Help)` 这类请求必须“可解释地失败”：tab 仍然出现（不丢 UI），状态为 `ClampedBeforeTerminal`，并记日志。
-- 边界：`Terminal` 由宿主在目录里显式声明，**不由 role==Help 隐式推导**——隐式约定正是要消灭的东西。
+- What: tabs with `RibbonTabPolicy::Terminal` form a suffix; every insertion of a non-terminal tab is `min(index, firstTerminal)`.
+- Why: a request such as `after(Help)` has to fail **explainably**: the tab still appears (no UI is lost), the status is `ClampedBeforeTerminal`, and the log says so.
+- Boundary: `Terminal` is declared explicitly by the host in its catalogue, **never inferred from role == Help** — an implicit convention is exactly what is being removed.
 
-### 2.5 失败有状态、有日志（G4、G11）
+### 2.5 A failure has a status and a log line (G4, G11)
 
-- 是什么：`RibbonPlaceResult{status,index}` 返回 `Placed / PlacedByFallback / ClampedBeforeTerminal / DuplicateId / AlreadyAdded / InvalidAnchor`。
-- 为什么：Blender 的字符串类别、Eclipse 的 locationURI 都会静默落到错误位置；可定位性必须是 API 的一部分。
-- 边界：日志只记一次一件事，不抛异常（UI 构建不应因布局请求失败而崩溃）。
+- What: `RibbonPlaceResult{status,index}` returns `Placed / PlacedByFallback / ClampedBeforeTerminal / DuplicateId / AlreadyAdded / InvalidAnchor`.
+- Why: Blender's string categories and Eclipse's locationURI both land silently in the wrong place; being locatable has to be part of the API.
+- Boundary: the log records one fact once, and nothing throws (building a UI must not crash because a layout request failed).
 
-### 2.6 机制归框架，目录归宿主（G2）
+### 2.6 The mechanism belongs to the framework, the catalogue to the host (G2)
 
-- 是什么：appfw 只提供 id/role/placement/policy 与解析器；`插件/帮助` 这些 tab 的 id、标题、role、policy 由 app_shell 声明。
-- 为什么：appfw 是宿主框架，不应该知道某个应用有哪些 tab；插件只依赖 appfw，用 role 指向标准槽位，不依赖 app_shell 的头文件。
-- 边界：`RibbonTabRole` 是框架词表（值稳定，只增不改）；具体 tab 的 id 是宿主命名空间。
+- What: appfw provides the id / role / placement / policy and the resolver; the ids, titles, roles and policies of tabs such as "plugins / help" are declared by app_shell.
+- Why: appfw is the host framework and must not know which tabs an application has; a plugin depends on appfw only and points at a standard slot by role, never at app_shell's headers.
+- Boundary: `RibbonTabRole` is the framework's vocabulary (stable values, only ever added to); a concrete tab's id lives in the host's namespace.
 
-### 2.7 只为有消费者的层引入扩展点（G8）
+### 2.7 Extension points only for the layer that has a consumer (G8)
 
-- 是什么：v1 只做 tab 级 role + tab/group 级 id/placement；`order`、item id、用户自定义、上下文 tab 都不进代码。
-- 为什么：没有消费者的字段会变成要维护的契约；顺序的并列项今天用注册序就够（插件加载序是确定的）。
-- 边界：新需求出现时按 §9.2 的触发条件重开，不预先占位。命令条目的显示状态是另一个话题，见
-  `appfw-command-binding.md`。
+- What: v1 has a tab-level role plus tab- and group-level id / placement; `order`, item ids, user customisation and contextual tabs are not in the code.
+- Why: a field with no consumer becomes a contract to maintain, and the registration order already settles today's ties (the plugin load order is deterministic).
+- Boundary: a new need reopens the topic on the triggers in §9.2 and nothing is reserved in advance.
+  The display state of a command item is a different subject, see `appfw-command-binding.md`.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | tab 身份与策略 | id、role、policy 三个属性；set 在 add 之前 | 已落地 |
-| F2 | tab 放置 | append / before / after（id 或 role）；终止区夹取 | 已落地 |
-| F3 | tab 查找 | 按 id 或 role 找 tab | 已落地 |
-| F4 | group 身份与放置 | group id + before/after/append；往标准 tab 加组 | 已落地 |
-| F5 | 旧接口兼容 | `addTab(tab)` / `addGroup(g)` 仍为追加 | 已落地 |
-| F6 | item 身份 | button/action 的身份 = 命令名，不新增 id | 已落地（契约） |
-| F7 | 用户自定义布局持久化 | 按 id 隐藏/移动/保存 | 未做，见 backlog |
-| F8 | 上下文 tab | 按条件显示/隐藏 | 未做，见 backlog |
+| F1 | Tab identity and policy | the three attributes id, role and policy; set before the add | landed |
+| F2 | Tab placement | append / before / after (by id or role); terminal-zone clamping | landed |
+| F3 | Tab lookup | find a tab by id or by role | landed |
+| F4 | Group identity and placement | group id + before / after / append; adding a group to a standard tab | landed |
+| F5 | Legacy interface compatibility | `addTab(tab)` / `addGroup(g)` still append | landed |
+| F6 | Item identity | a button's or action's identity is the command name; no new id | landed (contract) |
+| F7 | Persisting a user-defined layout | hide / move / save by id | not done, see backlog |
+| F8 | Contextual tabs | shown or hidden by a condition | not done, see backlog |
 
-### 3.1.1 F1 tab 身份与策略
+### 3.1.1 F1 Tab identity and policy
 
-- **行为**：`RibbonTab::setId/setRole/setPolicy`；空 id 表示“只能追加、不能被锚点引用”；`RibbonTabRole::None` 表示无语义角色。
-- **约束**（C1、C2、C4）：属性在 add 之前设置，add 之后的修改不影响本次解析；role 值进 ABI，只增不改。
-- **要求**（R1）：`Terminal` tab 必须在终止区。
-- **验收**（T1）：`RibbonBar_RolesAndPlacement`。
-- **注意**（N1）：同 id 重复注册被拒绝。
+- **Behaviour**: `RibbonTab::setId/setRole/setPolicy`; an empty id means "append only, never an anchor target"; `RibbonTabRole::None` means no semantic role.
+- **Constraints** (C1, C2, C4): the attributes are set before the add, and a change afterwards does not affect this resolution; role values enter the ABI and are only ever added to.
+- **Requirements** (R1): a `Terminal` tab is in the terminal zone.
+- **Acceptance** (T1): `RibbonBar_RolesAndPlacement`.
+- **Caveat** (N1): a second registration with the same id is refused.
 
-### 3.1.2 F2 tab 放置与终止区
+### 3.1.2 F2 Tab placement and the terminal zone
 
-- **行为**：`addTab(tab, placement)`；`Append` 排在非终止区末尾；`Before/After` 按 id 或 role 找锚点；终止区之后的请求被夹回。
-- **约束**（C3）：锚点必须是已注册的 tab；找不到回退并返回 `PlacedByFallback`。
-- **要求**（R2、R3）：任何非终止 tab 都在终止区之前；失败返回状态并记日志。
-- **验收**（T2、T3、T4）：`RibbonBar_TerminalTabStaysLast`、`RibbonBar_UnknownAnchorFallsBack`、`RibbonBar_AfterHelpIsClamped`。
-- **注意**（P1）：宿主忘记给“帮助”标 `Terminal`，终止区就不存在。
+- **Behaviour**: `addTab(tab, placement)`; `Append` puts the tab at the end of the non-terminal zone; `Before/After` find the anchor by id or by role; a request past the terminal zone is clamped back.
+- **Constraints** (C3): the anchor must be a registered tab; otherwise it falls back and returns `PlacedByFallback`.
+- **Requirements** (R2, R3): every non-terminal tab is in front of the terminal zone; a failure returns a status and is logged.
+- **Acceptance** (T2, T3, T4): `RibbonBar_TerminalTabStaysLast`, `RibbonBar_UnknownAnchorFallsBack`, `RibbonBar_AfterHelpIsClamped`.
+- **Caveat** (P1): if the host forgets to mark "help" `Terminal`, there is no terminal zone.
 
-### 3.1.3 F3 tab 查找
+### 3.1.3 F3 Tab lookup
 
-- **行为**：`findTab(id)` 精确查找；`findTab(role)` 返回该角色在逻辑顺序中的第一个 tab；`role == None` 与空 id 一律返回 `nullptr`。
-- **约束**（C4）：id 在 bar 内唯一。
-- **要求**（R4）：查找走逻辑顺序，不受 SARibbon 物理索引影响。
-- **验收**（T5）：`RibbonBar_FindByRoleAndId`。
+- **Behaviour**: `findTab(id)` looks up exactly; `findTab(role)` returns the first tab with that role in logical order; `role == None` and an empty id always return `nullptr`.
+- **Constraints** (C4): an id is unique within the bar.
+- **Requirements** (R4): lookup follows the logical order and ignores SARibbon's physical index.
+- **Acceptance** (T5): `RibbonBar_FindByRoleAndId`.
 
-### 3.1.4 F4 group 身份与放置
+### 3.1.4 F4 Group identity and placement
 
-- **行为**：`RibbonGroup::setId`；`RibbonTab::addGroup(g, placement)`、`findGroup(id)`；锚点是 group id（角色锚点在 group 级返回 `InvalidAnchor`）。
-- **约束**（C5）：group id 在所属 tab 内唯一；空 id 允许重复。
-- **要求**（R5）：插件可以 `findTab(RibbonTabRole::Help)->addGroup(...)` 往标准 tab 贡献内容。
-- **验收**（T6）：`RibbonTab_GroupPlacementAndContribution`。
-- **注意**（P2）：group 级 placement 不要传 role。
+- **Behaviour**: `RibbonGroup::setId`; `RibbonTab::addGroup(g, placement)`, `findGroup(id)`; the anchor is a group id (a role anchor returns `InvalidAnchor` at group level).
+- **Constraints** (C5): a group id is unique within its tab; an empty id may repeat.
+- **Requirements** (R5): a plugin can contribute to a standard tab with `findTab(RibbonTabRole::Help)->addGroup(...)`.
+- **Acceptance** (T6): `RibbonTab_GroupPlacementAndContribution`.
+- **Caveat** (P2): do not pass a role to a group-level placement.
 
-### 3.1.5 F5 旧接口兼容
+### 3.1.5 F5 Legacy interface compatibility
 
-- **行为**：`addTab(RibbonTab*)` 等价于 `addTab(tab, RibbonPlacement::append())`；`addGroup(RibbonGroup*)` 等价于追加。
-- **约束**（C6）：不改既有函数签名/返回类型；新能力只通过重载 + 新方法进入。
-- **要求**（R6）：现有 app_shell / model_viewer / 测试不改也能编译并保持追加语义。
-- **验收**（T7）：`RibbonBar_LegacyAddStillAppends` + 现有 Ribbon 用例全绿。
+- **Behaviour**: `addTab(RibbonTab*)` is equivalent to `addTab(tab, RibbonPlacement::append())`; `addGroup(RibbonGroup*)` is equivalent to appending.
+- **Constraints** (C6): no existing signature or return type changes; the new capability arrives only as overloads and new methods.
+- **Requirements** (R6): app_shell, model_viewer and the tests compile unchanged and keep their append semantics.
+- **Acceptance** (T7): `RibbonBar_LegacyAddStillAppends` plus the existing ribbon cases.
 
-### 3.1.6 F6 item 身份
+### 3.1.6 F6 Item identity
 
-- **行为**：`RibbonButton::command()` / `RibbonAction::command()` 就是 item 的身份；没有命令的控件暂不提供放置 API。
-- **约束**（C7）：不给 item 另造 id/role（G1、G8）。
-- **要求**（R7）：将来要做自定义布局时，以命令名为键；无命令控件才补显式 id。
-- **验收**（T8）：设计评审 + backlog 触发条件。
-- **注意**（P3）：同一命令放在两个组是允许的（命令是动作，按钮是视图）。
+- **Behaviour**: `RibbonButton::command()` / `RibbonAction::command()` is the item's identity; a control without a command has no placement API yet.
+- **Constraints** (C7): no separate id or role is invented for an item (G1, G8).
+- **Requirements** (R7): when customisation is built, it keys on the command name, and only a control without a command gets an explicit id.
+- **Acceptance** (T8): a design review plus the backlog trigger.
+- **Caveat** (P3): the same command may appear in two groups (the command is the action, the button is a view).
 
-## 4. 公开接口
+## 4. Public Interface
 
-### 4.1 RibbonPlacement（`RibbonPlacement.hpp`）
+### 4.1 RibbonPlacement (`RibbonPlacement.hpp`)
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 |---|---|---|
-| `RibbonPlacement::append()` | 追加到非终止区末尾 | 完整签名见头文件 |
-| `before/after(id)` | 锚到同作用域的兄弟 id | 找不到回退 |
-| `before/after(role)` | 仅 tab 级 | group 级返回 `InvalidAnchor` |
-| `RibbonPlaceResult` | `status` + 最终逻辑 index | `index == -1` 表示未放入 |
+| `RibbonPlacement::append()` | append at the end of the non-terminal zone | the full signature is in the header |
+| `before/after(id)` | anchor to a sibling id in the same scope | falls back when not found |
+| `before/after(role)` | tab level only | returns `InvalidAnchor` at group level |
+| `RibbonPlaceResult` | `status` + the final logical index | `index == -1` means it was not placed |
 
 ### 4.2 RibbonBar
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 |---|---|---|
-| `addTab(tab)` | 旧的追加入口 | 保持原签名 |
-| `addTab(tab, placement)` | 解析放置并重排 | 返回状态与 index |
-| `findTab(id)` / `findTab(role)` | 逻辑顺序查找 | 空 id / None 返回 nullptr |
-| `numTabs()/tabAt(i)` | 逻辑顺序 | 与物理顺序一致（N2） |
+| `addTab(tab)` | the legacy append entry | the original signature is kept |
+| `addTab(tab, placement)` | resolves the placement and reorders | returns the status and the index |
+| `findTab(id)` / `findTab(role)` | lookup in logical order | an empty id / None returns nullptr |
+| `numTabs()/tabAt(i)` | logical order | agrees with the physical order (N2) |
 
 ### 4.3 RibbonTab
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 |---|---|---|
-| `setId/id` | 稳定身份 | add 之前设置 |
-| `setRole/role` | 语义角色 | 框架词表 + UserRole |
-| `setPolicy/policy` | `Terminal` 等 | 宿主目录用 |
-| `addGroup(g)` | 旧的追加入口 | 保持原签名 |
-| `addGroup(g, placement)` | 组级放置 | 锚点仅 id |
-| `findGroup(id)` | 组查找 | 空 id 返回 nullptr |
+| `setId/id` | the stable identity | set before the add |
+| `setRole/role` | the semantic role | the framework vocabulary + UserRole |
+| `setPolicy/policy` | `Terminal` and friends | used by the host's catalogue |
+| `addGroup(g)` | the legacy append entry | the original signature is kept |
+| `addGroup(g, placement)` | group-level placement | the anchor is an id only |
+| `findGroup(id)` | group lookup | an empty id returns nullptr |
 
 ### 4.4 RibbonGroup
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 |---|---|---|
-| `setId/id` | tab 内唯一 | 空 id 允许重复 |
+| `setId/id` | unique within the tab | an empty id may repeat |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-- C1：id/role/policy 在 `addTab` 之前设置；解析器读取的是加入时的值。
-- C2：`RibbonTabRole` 的数值是插件 ABI 的一部分，只增不改、留间隔。
-- C3：锚点只向已注册（注册序更早）的兄弟解析。
-- C4：tab id 在 bar 内唯一；id 是 ASCII、不翻译。
-- C5：group id 在所属 tab 内唯一；group 级锚点只用 id。
-- C6：既有公开签名与返回类型不变。
-- C7：item 的身份是命令名。
+- C1: id / role / policy are set before `addTab`; the resolver reads the values as they were when the tab joined.
+- C2: the numeric values of `RibbonTabRole` are part of the plugin ABI: only added to, with gaps left.
+- C3: an anchor resolves only against an already registered (earlier in registration order) sibling.
+- C4: a tab id is unique within the bar; ids are ASCII and never translated.
+- C5: a group id is unique within its tab; a group-level anchor is an id only.
+- C6: the existing public signatures and return types are unchanged.
+- C7: an item's identity is the command name.
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-- R1：`Terminal` tab 永远处于终止区。
-- R2：任何非终止 tab 不得出现在终止区之后。
-- R3：失败必须返回状态并记日志，不抛异常、不静默。
-- R4：重排后必须保持原来的当前 tab（若它还在）。
-- R5：插件能按 role 找到标准 tab 并贡献 group。
-- R6：旧调用点行为不变。
-- R7：item 不引入第二身份。
+- R1: a `Terminal` tab is always in the terminal zone.
+- R2: no non-terminal tab may appear after the terminal zone.
+- R3: a failure returns a status and is logged; nothing throws and nothing is silent.
+- R4: after a reorder the previous current tab is kept (when it is still there).
+- R5: a plugin can find a standard tab by role and contribute a group to it.
+- R6: existing call sites behave as before.
+- R7: an item gets no second identity.
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-- N1：`RibbonBar` 的 entry 列表就是逻辑顺序；SARibbon 的 category 顺序在每次结构变化后与之一致。
-- N2：终止 tab 构成逻辑顺序的后缀；终止 tab 自身的相对 placement 被忽略，按注册序排在终止区。
-- N3：同一个 tab 指针只登记一次；同一个组指针只登记一次。
-- N4：空 id 不参与唯一性/锚点匹配。
+- N1: `RibbonBar`'s entry list *is* the logical order; SARibbon's category order agrees with it after every structural change.
+- N2: the terminal tabs form a suffix of the logical order; a terminal tab's own relative placement is ignored and it is ordered by registration sequence within the terminal zone.
+- N3: one tab pointer is registered once and one group pointer is registered once.
+- N4: an empty id takes no part in uniqueness or anchor matching.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 忘记声明终止策略
-- 会怎么错：`after(Help)` 真的落到帮助之后。
-- 怎么判：`RibbonBar_TerminalTabStaysLast` 用例；检查目录里 `setPolicy(Terminal)`。
-- 怎么防：宿主目录模板；代码审查看 policy。
+### 6.1 Forgetting to declare the terminal policy
+- How it fails: `after(Help)` really lands after help.
+- How to detect it: the `RibbonBar_TerminalTabStaysLast` case; check for `setPolicy(Terminal)` in the catalogue.
+- How to prevent it: a catalogue template in the host, and a code review of the policies.
 
-### 6.2 add 之后改 id/role
-- 会怎么错：`findTab` 找不到、后续锚点解析用新值而先前 entry 用旧值。
-- 怎么判：查找返回 nullptr、`PlacedByFallback` 日志。
-- 怎么防：文档要求先设置再 add；v1 不在 wrapper 里加“变更通知”机制（G8）。
+### 6.2 Changing id or role after the add
+- How it fails: `findTab` does not find it, and later anchor resolution uses the new value while earlier entries hold the old one.
+- How to detect it: the lookup returns nullptr, and `PlacedByFallback` appears in the log.
+- How to prevent it: the documentation requires setting the attributes before the add; v1 adds no "changed" notification inside the wrapper (G8).
 
-### 6.3 锚到后注册的 tab
-- 会怎么错：`PlacedByFallback`，tab 落在非终止区末尾而不是目标旁边。
-- 怎么判：返回状态 + 日志。
-- 怎么防：宿主先建标准 tab；插件之间不要互相锚定，除非加载序明确。
+### 6.3 Anchoring to a tab that registers later
+- How it fails: `PlacedByFallback`, so the tab lands at the end of the non-terminal zone instead of next to its target.
+- How to detect it: the returned status plus the log line.
+- How to prevent it: the host builds its standard tabs first; plugins do not anchor to each other unless the load order is stated.
 
-### 6.4 重复 id
-- 会怎么错：两个 tab 抢同一个 id，查找与持久化歧义。
-- 怎么判：`DuplicateId`，第二次注册被拒。
-- 怎么防：id 命名用 `<vendor>.<plugin>.<name>`；空 id 只用于一次性 tab。
+### 6.4 A duplicate id
+- How it fails: two tabs fight over one id, and lookup and persistence become ambiguous.
+- How to detect it: `DuplicateId`, and the second registration is refused.
+- How to prevent it: name ids `<vendor>.<plugin>.<name>`; use an empty id only for a one-off tab.
 
-### 6.5 物理顺序被外部改动
-- 会怎么错：`tabAt(i)` 与实际显示不一致。
-- 怎么判：现有用例断言 `tabAt(currentIndex())`。
-- 怎么防：不要在 SARibbon 层直接 move/remove；走 `RibbonBar`。
+### 6.5 The physical order changed from outside
+- How it fails: `tabAt(i)` disagrees with what is displayed.
+- How to detect it: the existing cases assert `tabAt(currentIndex())`.
+- How to prevent it: never move or remove at the SARibbon level; go through `RibbonBar`.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 |---|---|---|---|
-| D1 | 只用全局数字优先级/序号 | 表达不了“帮助之前”；插入标准 tab 要重排所有数字（G4、G9） | `../decisions/ADR-2026-10-28-ribbon-roles-and-placement.md` |
-| D2 | 只支持 id 锚点（IntelliJ 式） | 宿主没有该 id 时静默跑偏；插件跨宿主不成立（G4、G11） | 同上 |
-| D3 | 只支持 role 锚点 | 无法精确指向某个自定义 tab/group（G4） | 同上 |
-| D4 | 每个 item 也强制 id | 与命令名形成第三套身份（G1、G8） | 同上 |
-| D5 | 声明式 manifest/XML | 没有进程外插件消费者（G8） | 同上 |
-| D6 | 完整依赖图 + 环检测 | 注册序单向解析已足够；多出的机制没有消费者（G8、G11） | 同上 |
-| D7 | `role == Help` 自动终止 | 隐式约定；终止应是显式策略（G4） | 同上 |
+| D1 | A global numeric priority or sequence only | It cannot express "before help", and inserting a standard tab renumbers everything (G4, G9) | `../decisions/ADR-2026-10-28-ribbon-roles-and-placement.md` |
+| D2 | Id anchors only (the IntelliJ way) | With the id absent in a host the placement silently drifts, and a plugin is not portable across hosts (G4, G11) | same |
+| D3 | Role anchors only | It cannot point at one specific custom tab or group (G4) | same |
+| D4 | A forced id on every item too | It makes a third identity beside the command name (G1, G8) | same |
+| D5 | A declarative manifest or XML | There is no out-of-process plugin consumer (G8) | same |
+| D6 | A full dependency graph with cycle detection | One-directional resolution by registration order is enough, and the extra mechanism has no consumer (G8, G11) | same |
+| D7 | Automatic termination when `role == Help` | An implicit convention, whereas termination has to be an explicit policy (G4) | same |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 |---|---|---|
-| T1 | role/id/policy 生效，顺序符合放置 | `GuiTest.RibbonBar_RolesAndPlacement` |
-| T2 | 终止 tab 永远最后 | `GuiTest.RibbonBar_TerminalTabStaysLast` |
-| T3 | 未知锚点回退且仍在终止区之前 | `GuiTest.RibbonBar_UnknownAnchorFallsBack` |
-| T4 | `after(Help)` 被夹回并报告 | `GuiTest.RibbonBar_AfterHelpIsClamped` |
-| T5 | 按 id/role 查找 | `GuiTest.RibbonBar_FindByRoleAndId` |
-| T6 | group 放置与向标准 tab 贡献 | `GuiTest.RibbonTab_GroupPlacementAndContribution` |
-| T7 | 旧追加语义不变 | `GuiTest.RibbonBar_LegacyAddStillAppends` + 现有 Ribbon 用例 |
-| T8 | item 身份是命令名 | 设计评审（F6） |
+| T1 | role / id / policy take effect and the order matches the placement | `GuiTest.RibbonBar_RolesAndPlacement` |
+| T2 | a terminal tab stays last | `GuiTest.RibbonBar_TerminalTabStaysLast` |
+| T3 | an unknown anchor falls back and still lands before the terminal zone | `GuiTest.RibbonBar_UnknownAnchorFallsBack` |
+| T4 | `after(Help)` is clamped back and reported | `GuiTest.RibbonBar_AfterHelpIsClamped` |
+| T5 | lookup by id and by role | `GuiTest.RibbonBar_FindByRoleAndId` |
+| T6 | group placement and contributing to a standard tab | `GuiTest.RibbonTab_GroupPlacementAndContribution` |
+| T7 | the legacy append semantics are unchanged | `GuiTest.RibbonBar_LegacyAddStillAppends` plus the existing ribbon cases |
+| T8 | an item's identity is its command name | a design review (F6) |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-F1–F6 落地；`test_gui` 用例覆盖放置与终止区；SARibbon 顺序镜像由 `RibbonBar` 负责。命令条目的显示状态见
-`appfw-command-binding.md`。
+F1–F6 are in place; the `test_gui` cases cover placement and the terminal zone; `RibbonBar` owns the SARibbon order mirror.
+The display state of a command item is in `appfw-command-binding.md`.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-见 `../backlog/appfw-ribbon.md`：显式 order、item id、用户自定义持久化、上下文 tab、manifest 贡献。
+See `../backlog/appfw-ribbon.md`: an explicit order, item ids, persisting a user layout, contextual tabs and manifest contributions.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-- `addTab(tab)` / `addGroup(g)` 保持原行为；新能力全部是重载/新方法。
-- `setCommand()` 的点击语义不变（条目状态见 `appfw-command-binding.md`）。
-- 无虚函数变化，`RibbonTab`/`RibbonGroup`/`RibbonBar` 的新状态都在 `Impl` 里，不改变类布局。
-- 迁移建议：标准 tab 设 id/role/policy；插件 tab 用 `before(RibbonTabRole::Help)` 或 `append()`。
+- `addTab(tab)` / `addGroup(g)` behave as before; every new capability is an overload or a new method.
+- The click semantics of `setCommand()` are unchanged (the item state is in `appfw-command-binding.md`).
+- No virtual function changes: the new state of `RibbonTab` / `RibbonGroup` / `RibbonBar` lives in `Impl` and changes no class layout.
+- Migration advice: give a standard tab an id, role and policy; a plugin tab uses `before(RibbonTabRole::Help)` or `append()`.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/fw/appfw/sdk/vine/appfw/gui/RibbonPlacement.hpp`
-- `src/fw/appfw/sdk/vine/appfw/gui/Gui.hpp`（`RibbonTabRole`、`RibbonTabPolicy`）
-- `src/fw/appfw/src/gui/RibbonBar.cpp`（解析器与物理镜像）
-- `src/plugins/app_shell/src/AppShellUi.cpp`（标准目录）
-- `src/plugins/model_viewer/src/ModelViewerPlugin.cpp`（`before(Help)`、五档着色按钮的勾选 provider）
+- `src/fw/appfw/sdk/vine/appfw/gui/Gui.hpp` (`RibbonTabRole`, `RibbonTabPolicy`)
+- `src/fw/appfw/src/gui/RibbonBar.cpp` (the resolver and the physical mirror)
+- `src/plugins/app_shell/src/AppShellUi.cpp` (the standard catalogue)
+- `src/plugins/model_viewer/src/ModelViewerPlugin.cpp` (`before(Help)`, the checked-state provider of the five shading buttons)
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
-- `appfw-command-binding.md`（命令条目的显示状态）
+- `appfw-command-binding.md` (the display state of a command item)
 - `../decisions/ADR-2026-10-28-ribbon-roles-and-placement.md`
 
-### 10.3 外部资料
+### 10.3 External material
 
-- Qt `Qt::ItemDataRole` / `Qt::UserRole`：预定义角色 + 自定义角色区间的做法。
-- Office 自定义 UI XML：`insertBeforeMso` / `insertAfterMso` 的相对定位。
-- Visual Studio VSCT：稳定命令 id + `priority`。
-- IntelliJ Platform：`group-id` + `anchor` + `order`。
+- Qt's `Qt::ItemDataRole` / `Qt::UserRole`: the pattern of predefined roles plus a custom range.
+- Office's custom UI XML: relative positioning through `insertBeforeMso` / `insertAfterMso`.
+- Visual Studio VSCT: stable command ids plus `priority`.
+- The IntelliJ Platform: `group-id` + `anchor` + `order`.
