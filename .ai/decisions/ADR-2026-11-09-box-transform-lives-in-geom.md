@@ -6,6 +6,8 @@
 > `src/viz/graphics/src/{Node,Geometry,Scene,RayIntersection}.cpp`、`tests/test_geom_spatial/AabbTest.cpp`、
 > `tests/test_graphics/GraphicsTest.cpp`
 
+> **EN**: Moved the box transform operator into the geometry side as `Aabb<T>::transformed(const math::Matrix4x4<T>&)` (transform the eight corners and refit; empty box for an empty or non-affine input) and deleted both `graphics::transformBox()` and `RayIntersection.cpp`'s private copy together with the six call sites, leaving no forwarding alias. Rejected keeping an alias, returning `Obb<T>`, an `optional`, adding `Obb::transformed` (no consumer, semantics undefined off rigid transforms) and a free function.
+
 ## 背景
 
 “把一个局部空间的轴对齐盒放进累积矩阵的坐标系”在 `graphics` 里有两份实现：

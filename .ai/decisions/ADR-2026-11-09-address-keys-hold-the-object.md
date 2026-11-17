@@ -7,6 +7,8 @@
 - 相关：`../design/graphics-content-lifecycle.md`（2.5 / 2.6）、`../bugs/vsg-content-address-recycled-before-rows.md`、
   backlog `graphics.md` T19（本条决定落地时已关闭，条目已删除，证据留在下面）
 
+> **EN**: Chose A: an entry keyed by an object's address must hold that object for as long as the key is queryable, so the plan holds `intrusive_ptr<const Buffer<float>>`, fact rows and stream entries hold their owners, and a row that cannot park keeps its entry to the next frame; `generation` stays as insurance rather than a second identity. Rejected global stable ids (a 30+ file key vocabulary change with no consumer today) and per-key generation counters. Its identity half is superseded by `ADR-2026-11-11-content-identity-is-a-handle`; the holding rule still governs the tables not yet moved to handles.
+
 ## 背景
 
 后端的每一张缓存表都用宿主对象的**地址**做键：事实表（`ContentStore` 的几何/程序/材质行）、编译半边

@@ -5,6 +5,8 @@
 - 日期：2026-11-07
 - 相关：`.ai/design/crypto.md`、`ADR-2026-11-07-crypto-api-shape.md`
 
+> **EN**: Chose one vocabulary for digests - `enum class Digest` as the only algorithm identity, `digest()` for the one-shot form and one incremental object - with the enum values independent of wolfSSL's `WC_HASH_TYPE_*`, one shared backend dispatch table, `std::vector<std::byte>` results sized by `digestSize()`, and failures as exceptions rather than the old all-zero array that no caller could tell from a real digest. The naming part is superseded by `ADR-2026-11-07-incremental-api-shape` (`DigestCalculator` became `Hasher`); the one-vocabulary decision stands.
+
 ## 背景
 
 `vn::crypto` 里“选一个哈希”有三种拼法：`Hash::sha256(data, size)` 这类按算法写的静态函数（10 个算法 × 2 个重载），

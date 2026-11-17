@@ -4,6 +4,8 @@
 - 日期：2026-11-07
 - 相关：`.ai/design/crypto.md`、`.ai/backlog/crypto.md`
 
+> **EN**: Chose one class with two factories for direction (`encryptor()` / `decryptor()`, direction fixed at construction), buffering for the incremental form (wolfSSL's incremental GCM entry points differ between versions and a mis-call admits unauthenticated data, so both forms share one code path; the memory cost is recorded as a known defect with a backlog item), and one module-level `detail::ensureLibraryInitialized()` behind `std::call_once`. Rejected a `mode` flag, two classes, two encryption classes and per-caller initialisation.
+
 ## 背景
 
 `vn::crypto` 只有摘要（`Hash` / `HashCalculator`）和指纹。要继续做 HMAC、AES-GCM、随机字节，

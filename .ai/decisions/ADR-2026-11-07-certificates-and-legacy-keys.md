@@ -4,6 +4,8 @@
 - 日期：2026-11-07
 - 范围：`vn::Crypto` 的证书入口、旧式加密 PEM、以及 wolfSSL 的 MD5 构建开关
 
+> **EN**: Drew three lines: certificate entry points only extract the subject public key (`fromCertificateDer` / `fromCertificatePem`, first certificate only, no validity, issuer, SAN or chain - that is policy, not arithmetic); legacy encrypted PEM is readable (body `Proc-Type` header recognised, `WOLFSSL_ENCKEYS`) but never written, writing stays PKCS#8; and the MD5 build switch is documented because `Digest::kMd5` was only working by accident of a preset. Rejected an `X509Certificate` class, a hand-written DER walk, a variant return, and legacy PEM output.
+
 ## 背景
 
 crypto 模块收口时剩下三件事，它们看起来都是"再加一点功能"，但决定的分量不同：

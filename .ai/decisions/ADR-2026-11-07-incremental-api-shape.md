@@ -4,6 +4,8 @@
 - 日期：2026-11-07
 - 相关：`.ai/design/crypto.md`、`ADR-2026-11-07-digest-vocabulary.md`（摘要词汇部分仍现行，命名部分由本文取代）
 
+> **EN**: Chose option 3 and superseded the naming part of `ADR-2026-11-07-digest-vocabulary`: one-shot work is a free function (`digest()`, `hmac()`), the incremental object is named for the thing (`Hasher`, `Hmac`, `AesGcm::encryptor()` / `decryptor()`), inputs are `update()` and the end is `finish()`, matching OpenSSL, libsodium, RustCrypto, Go and Qt. Rejected the invented `*Calculator` suffix, one class per algorithm, and static-class handles; `macEquals()` is a free function because `Hmac` is now an object.
+
 ## 背景
 
 摘要与 MAC 都有两种形态：数据已在内存，或数据一块块到来。仓库原先用 `Hash`（每算法一个静态函数）

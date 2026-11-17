@@ -5,6 +5,8 @@
 > **影响范围**：`src/base/models/sdk/vine/models`（`Mesh.hpp`、`TriangleMesh.hpp`、`QuadMesh.hpp`、`MixedMesh.hpp`）、
 > `tests/test_geom_spatial/MeshBvhTest.cpp`、`.ai/design/graphics-geometry.md`、`.ai/design/geometry-bvh.md`
 
+> **EN**: Gave `Mesh` triangle identity (`triangleCount()` and `triangleCorners()`, each subclass following its own `toTriangleMesh()` rule) and a cached `Bvh<double>` with the same shape as the existing `aabb_` cache (`bvh()` / `buildBvh()` / `clearBvh()`), where primitive id equals triangle index, `double` is used even though vertices are `float` so narrow-phase rays do not miss far from the origin, and the tree is never built implicitly. Rejected caching only on `TriangleMesh`, a materialised triangle table, lazy `unique_ptr` storage, implicit first-query builds and hosting the tree on the scene side.
+
 ## 背景
 
 `geometry` 现在有能力建一棵静态包围体层次（`Bvh` + `BvhBuilder`，见 `ADR-2026-11-07-bvh-as-structure-plus-builder.md`）。

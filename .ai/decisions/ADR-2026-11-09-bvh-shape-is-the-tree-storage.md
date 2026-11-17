@@ -7,6 +7,8 @@
 > `src/base/models/sdk/vine/models/Mesh.hpp`、`src/robotics/io/src/BvhCache.hpp`、
 > `tests/test_geom_spatial`、`.ai/design/geometry-bvh.md`
 
+> **EN**: Made the serialisable shape the tree's own storage: `Bvh` holds a `BvhTopology shape_` (`nodes` + `order` + `depth`) with a parallel bounds array, `detail::BvhNode` is gone, `BvhTopology.hpp` keeps only vocabulary, and saving encodes the tree's arrays through `topologyView()` at zero copy. The two restore entries share one check and one refit; the measured waste that forced this was about 1 GB of copying for a 38M-triangle model. Query-path layout changes must be judged with `scripts/callgrind_diff.py`.
+
 ## 背景
 
 评审中问了两个问题：`BvhTopology` 为什么要独立成文件、能不能做成 `Bvh` 的内部类；以及有没有比现状

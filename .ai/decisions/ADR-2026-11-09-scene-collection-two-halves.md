@@ -4,6 +4,8 @@
 - 日期：2026-11-09
 - 相关：`../design/graphics-scene.md`、`../backlog/graphics.md` T24、`../../src/viz/graphics/src/Scene.cpp`
 
+> **EN**: Split `Scene::collectRenderCommands` into a bake keyed on `root_->contentEpoch()` (world matrices plus the opacity / layer / draw-order folds and the resolved leaf state) and a selection keyed on the view (layer union pruning, frustum test, command push, sorting), with `Node::viewDependence()` handing view-dependent subtrees back to the original walk. Rejected per-subtree dirty tracking (the result has no subtree locality) and global object ids; the first attempt to bake world boxes was reverted because a box is keyed on a stream's revision, not the node epoch, and the measured gain was 19% rather than the expected larger one.
+
 ## 背景
 
 `Scene::collectRenderCommands` 用一次遍历回答两件事：**图**（谁被画、世界矩阵、opacity/layers/drawOrder/state 的

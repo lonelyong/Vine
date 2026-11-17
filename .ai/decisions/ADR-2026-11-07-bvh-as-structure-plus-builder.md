@@ -6,6 +6,8 @@
 > `src/base/geom/src/Instantiations.cpp`、`scripts/check_geom_layering.py`、`tests/test_geom_spatial`、
 > `.ai/design/geometry-bvh.md`
 
+> **EN**: Split the BVH into the structure `Bvh<T, Volume = Aabb>` (primitive bounds, flat node array, primitive order, traversal, `refit`, `validate`) and the builder `BvhBuilder` (chained `leafSize` / `maxDepth` / `quality` plus `build()` / `buildWith()`), joined only by `detail::BuildJob` and kept one-way by a layering-gate rule, so a new heuristic does not edit the core type. `Obb` volumes were measured and rejected: the PCA merge produced roughly twice the leaf surface area and broke strict containment; `VolumeTraits` stays, the `Obb` adapter does not.
+
 ## 背景
 
 `geometry-ray.md` 的 `D5` 曾把“射线–网格与 BVH”列为不做：当时没有性能证据，且担心引入第二种数据组织。

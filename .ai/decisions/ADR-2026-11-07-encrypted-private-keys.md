@@ -4,6 +4,8 @@
 - 日期：2026-11-07
 - 范围：`vn::Crypto` 的 `RsaKey` / `EccKey` 私钥落盘格式
 
+> **EN**: Chose PKCS#8 with PBES2 for password-protected private keys (PBKDF2, random 8-byte salt, caller-supplied iteration count defaulting to 200000, AES-256-CBC with a random 16-byte IV, `ENCRYPTED PRIVATE KEY` PEM label), reading also accepts the older PBES1 and PKCS#12 schemes for compatibility. Rejected a self-invented container (no other tool could open it), PBES1 as an output format, a fixed iteration count and an overload named `toPrivatePem(password)`, which would hide that the format changed.
+
 ## 背景
 
 在此之前，私钥只能导出成未加密的 PKCS#1 `RSA PRIVATE KEY` 或 SEC1 `EC PRIVATE KEY`。传统 DER 里没有任何放口令的位置：

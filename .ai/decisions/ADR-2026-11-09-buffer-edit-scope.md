@@ -4,6 +4,8 @@
 - 日期：2026-11-09
 - 相关：`../design/graphics-geometry.md`（F18 / F25）、`../../src/base/core/sdk/vine/Buffer.hpp`、`../../docs/guides/graphics.md`
 
+> **EN**: Chose C: `Buffer::Edit` is the only handle that can mutate elements, the `Buffer` itself keeps only const accessors, and the revision advances once when the scope ends (a second concurrent writer asserts); `setRevision()` / `bumpRevision()` remain for writes made outside the object. Rejected the silent-entry status quo and per-write auto-bump, which is the same half-true announcement by another route; in practice no production code needed changing, only 15 test write sites.
+
 ## 背景
 
 `core::Buffer<T>` 是引擎里唯一"共享可变字节"的类型：模型侧要按 `T` 读，渲染侧要按字节上传。整条 GPU 侧的缓存链
