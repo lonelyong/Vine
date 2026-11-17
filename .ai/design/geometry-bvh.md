@@ -1,522 +1,520 @@
-# geometry 包围体层次（BVH）
+# geometry bounding volume hierarchy (BVH)
 
-> **状态**：现行（结构与构建器已落地，`Bvh<T, Aabb<T>>` 两个精度均导出；树有“可变 / 封存”两态，见 2.16；`Obb` 体积经实测否决，见 `D2` / §9.2）
-> **最后核对**：2026-11-10
-> **范围**：`src/base/geom/sdk/vine/geom/spatial` 的 `Bvh.hpp`、`BvhBuilder.hpp`、`BvhTopology.hpp`、`TriangleBvh.hpp`
-> 与 `spatial/detail/` 下的构建内核；记录一棵静态包围体层次的归属、结构 / 构建边界、查询契约、失效规则、拓扑存储
-> 与“三角形集 → 树”的编号规则。
-> 不含场景遍历与拾取身份（见 `graphics-scene.md`）、不含射线–图元相交本身（见 `geometry-ray.md`）。
-> **权威来源**：`Bvh.hpp`、`BvhBuilder.hpp`、`BvhTopology.hpp`、`TriangleBvh.hpp`、`detail/VolumeTraits.hpp`、
-> `detail/BvhBuildJob.hpp`、`detail/BvhBuilders.hpp`、`tests/test_geom_spatial/Bvh*Test.cpp`、`TriangleBvhTest.cpp`。
-> **待办**：`../backlog/geometry.md`（动态插入删除、并行构建等开放项）
+> **Status**: current (the structure and the builder are landed, and `Bvh<T, Aabb<T>>` is exported in both precisions; the tree has a "mutable / sealed" pair of states, see 2.16; an `Obb` volume was rejected by measurement, see `D2` / §9.2)
+> **Last verified**: 2026-11-10
+> **Scope**: `Bvh.hpp`, `BvhBuilder.hpp`, `BvhTopology.hpp` and `TriangleBvh.hpp` of `src/base/geom/sdk/vine/geom/spatial`,
+> and the build kernel under `spatial/detail/`; it records the ownership of a static bounding volume hierarchy, the structure / build boundary, the query contract, the staleness rule, the topology storage
+> and the numbering rule from "a set of triangles" to "a tree".
+> Not scene traversal and picking identity (see `graphics-scene.md`), not ray–primitive intersection itself (see `geometry-ray.md`).
+> **Sources**: `Bvh.hpp`, `BvhBuilder.hpp`, `BvhTopology.hpp`, `TriangleBvh.hpp`, `detail/VolumeTraits.hpp`,
+> `detail/BvhBuildJob.hpp`, `detail/BvhBuilders.hpp`, `tests/test_geom_spatial/Bvh*Test.cpp`, `TriangleBvhTest.cpp`.
+> **Backlog**: `../backlog/geometry.md` (open items such as dynamic insertion and removal, and parallel building)
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-射线–图元相交已经在 `geometry-ray.md` 落地，但一次查询要对全部图元逐个求交：图元数上千后，每帧的拾取与
-LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结构要能被**任何**“有包围体、能求交”的消费者复用，
-而不是长在渲染侧的场景图里。
+Ray–primitive intersection landed in `geometry-ray.md` already, but one query intersects every primitive one by one: past a few thousand primitives, each frame's picking and
+LiDAR simulation degrade into a full scan. An acceleration structure is needed, and it has to be reusable by **any** consumer that "has a bounding volume and can intersect",
+rather than growing inside the rendering side's scene graph.
 
-要解决的问题不止“写一个 BVH”，而是四条问题：
+The problem is not only "write a BVH" but four questions:
 
-- **结构放哪**：`brep`（`base`）与 `graphics`（`viz`）都要用；放进任一侧都是回边（`G2`）。
-- **构建策略怎么加**：中位数切分、SAH、以后可能的上千种启发式；如果写进树里，每加一种就改一次核心类型（`G9`）。
-- **不同体积怎么支持**：`Aabb` 与 `Obb` 的合并、相交、射线测试都不同，但不能因此让树知道具体类型。
-- **buffer 怎么复用**：构建一次要几 MB，重建（模型改动）不能每次都从零分配（`G10`）。
+- **Where the structure lives**: both `brep` (`base`) and `graphics` (`viz`) need it; putting it on either side is a back edge (`G2`).
+- **How to add build strategies**: median split, SAH, and possibly thousands of heuristics later; written into the tree, each new one would change the core type (`G9`).
+- **How to support different volumes**: `Aabb` and `Obb` merge, intersect and ray-test differently, but that must not make the tree know the concrete type.
+- **How to reuse buffers**: one build costs several MB, and a rebuild (after a model change) must not allocate from scratch every time (`G10`).
 
-### 1.2 目标
+### 1.2 Goals
 
-- 一个**结构**：持有图元的包围体、一颗扁平节点树、一次查询遍历；不知道图元是什么、不知道树是怎么建出来的。
-- 一个**构建器**：以可组合的算法把结构建出来，可配置质量与叶子规模，**不碰**查询、不碰失效规则。
-- 体积类型可替换：树只通过 `detail::VolumeTraits<V>` 取得它需要的九个操作。
-- 构建期零临时分配增长：节点数组与图元顺序数组复用容量，重建只写不申请。
+- One **structure**: it holds the primitives' bounding volumes, one flat node tree and one query traversal; it does not know what a primitive is, nor how the tree was built.
+- One **builder**: it builds the structure with composable algorithms, configurable in quality and leaf size, and **touches** neither the queries nor the staleness rule.
+- The volume type is replaceable: the tree obtains the nine operations it needs only through `detail::VolumeTraits<V>`.
+- Zero temporary allocation growth during a build: the node array and the primitive-order array reuse their capacity, so a rebuild writes without allocating.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做动态插入 / 删除：树是**静态**的，建成后只允许 `update()` 改包围体 + `refit()` 收拢，或显式重建（`D3`）。
-- 不做场景图遍历、实例化、世界矩阵与拾取身份：那是 `graphics-*` 的事。
-- 不做 GPU 端结构（LBVH、光线包遍历）。
-- 不提供“自动选算法”：质量档位只有两档，额外启发式由调用方经 `buildWith()` 注入（`G8`）。
+- Not doing dynamic insertion / removal: the tree is **static**, and once built it only allows `update()` to change a bounding volume plus `refit()` to tighten, or an explicit rebuild (`D3`).
+- Not doing scene-graph traversal, instancing, world matrices or picking identity: that is `graphics-*`'s business.
+- Not doing a GPU-side structure (LBVH, ray packets).
+- Not offering "pick the algorithm automatically": there are only two quality levels, and extra heuristics are injected by the caller through `buildWith()` (`G8`).
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**`Bvh` 是一棵静态包围体层次：它持有图元的包围体、维护三个不变量、提供重叠与射线两种遍历；
-构建是独立类型 `BvhBuilder`，通过 `detail::BuildJob` 这唯一接口写树；体积类型由 `VolumeTraits` 适配；
-建成后可以 `seal()`——放掉构建期的图元盒，只留节点、节点盒与图元顺序。**
+**`Bvh` is a static bounding volume hierarchy: it holds the primitives' bounding volumes, maintains three invariants, and offers two traversals, overlap and ray;
+building is the separate type `BvhBuilder`, which writes the tree through the single interface `detail::BuildJob`; the volume type is adapted by `VolumeTraits`;
+once built the tree can `seal()` - release the build-time primitive boxes and keep only the nodes, the node boxes and the primitive order.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 两个类型，一条单向边
+### 2.1 Two types, one directed edge
 
-`Bvh<T, Volume>`（`spatial/Bvh.hpp`）是**结构**：图元包围体数组、图元顺序、节点数组、质量统计、查询遍历、`refit`、
-`validate`。它唯一暴露的构建入口是给 `BvhBuilder` 的私有 `friend` 接口。
+`Bvh<T, Volume>` (`spatial/Bvh.hpp`) is the **structure**: the primitive bounding-volume array, the primitive order, the node array, the quality statistics, the query traversals, `refit`
+and `validate`. Its only exposed build entry is the private `friend` interface for `BvhBuilder`.
 
-`BvhBuilder`（`spatial/BvhBuilder.hpp`）是**构建者**：`leafSize` / `maxDepth` / `quality` 三个可链式配置，
-`build(bvh)` 按档位分派，`buildWith(bvh, algorithm)` 接受任意外来算法。
+`BvhBuilder` (`spatial/BvhBuilder.hpp`) is the **builder**: three chainable settings, `leafSize` / `maxDepth` / `quality`,
+`build(bvh)` dispatching by quality level, and `buildWith(bvh, algorithm)` accepting any external algorithm.
 
-边只有一条：`BvhBuilder.hpp` → `Bvh.hpp`。反向依赖由 `scripts/check_geom_layering.py` 规则 6 拒绝
-（`spatial/Bvh.hpp` 不得 include `spatial/BvhBuilder.hpp`）。理由（`G1`、`G2`、`G12`）：
+There is one edge only: `BvhBuilder.hpp` → `Bvh.hpp`. The reverse dependency is rejected by rule 6 of `scripts/check_geom_layering.py`
+(`spatial/Bvh.hpp` must not include `spatial/BvhBuilder.hpp`). The reasons (`G1`, `G2`, `G12`):
 
-- 树能回答的问题只有“有哪些图元、它们的盒子在哪、怎么遍历”，这些问题与“谁把它排成这样”无关；
-- 反过来一旦树知道构建器，加一种算法就要改树，且树的两个使用者被迫一起重编；
-- 判据是**可执行的**：删掉 `BvhBuilders.hpp` 与 `BvhBuilder.hpp`，`Bvh.hpp` 单独编译必须仍然通过。
+- the questions the tree can answer are only "which primitives are there, where are their boxes, how do I traverse them", and they have nothing to do with "who arranged them this way";
+- conversely, once the tree knows the builder, adding an algorithm changes the tree, and the tree's two users are forced to recompile together;
+- the criterion is **executable**: delete `BvhBuilders.hpp` and `BvhBuilder.hpp`, and `Bvh.hpp` must still compile on its own.
 
-### 2.2 构建算法看到的唯一接口：`BuildJob`
+### 2.2 The only interface a build algorithm sees: `BuildJob`
 
-`detail::BuildJob<T, Volume>` 是两个头文件之间的**唯一**契约：
+`detail::BuildJob<T, Volume>` is the **only** contract between the two headers:
 
-| 成员 | 语义 |
+| Member | Meaning |
 |---|---|
-| `prim_bounds` | 只读的图元包围体视图 |
-| `order` | 可写的图元顺序（算法只做 `swap` / 分区 / `nth_element`） |
-| `nodes` | 节点**组合学**数组的引用（`BvhNodeTopology`），算法用 `appendNode()` 追加 |
-| `node_bounds` | 与 `nodes` **平行**的节点体积数组，`appendNode()` 让它一起增长 |
-| `leaf_size` / `max_depth` / `depth` | 本次构建的规模参数 |
-| `rangeBounds` / `writeLeaf` / `appendNode` | 三个原语：算一组的合并包围盒、写叶子、追加内部节点 |
+| `prim_bounds` | the read-only view of the primitive bounding volumes |
+| `order` | the writable primitive order (an algorithm only does `swap` / partition / `nth_element`) |
+| `nodes` | a reference to the node **topology** array (`BvhNodeTopology`); an algorithm appends with `appendNode()` |
+| `node_bounds` | the node volume array **parallel** to `nodes`, grown together by `appendNode()` |
+| `leaf_size` / `max_depth` / `depth` | the size parameters of this build |
+| `rangeBounds` / `writeLeaf` / `appendNode` | three primitives: the merged bounding box of a group, write a leaf, append an internal node |
 
-两条节点数组由 `appendNode()` 一起追加，所以“节点数与节点盒数相等”是接口形状保证的，不是一句约定（`C12`）。
+The two node arrays are appended together by `appendNode()`, so "the node count equals the node box count" is guaranteed by the interface's shape rather than by a convention (`C12`).
 
-算法只拿到“能读盒子、能重排顺序、能追加节点”这三件事，因此它无法破坏不变量，也无法触碰查询状态。
-`nodes` 是 `std::vector<Node>&` 而不是预分配窗口：叶子数与切分方式相关，预先按 `2·⌈n/leaf⌉+1` 算容量会在
-叶子规模 5、切出 2+3 时越界；容量由 `prepareForBuild()` 清空但保留，追加时自然增长，重建因此不再分配。
+An algorithm gets only "read boxes, reorder, append nodes", so it can break no invariant and touch no query state.
+`nodes` is a `std::vector<Node>&` rather than a pre-allocated window: the leaf count depends on the split, and pre-computing the capacity as `2·⌈n/leaf⌉+1` would overflow when the leaf size is 5 and the split comes out 2+3; `prepareForBuild()` empties the arrays but keeps their capacity, and appending grows them, so a rebuild allocates nothing.
 
-### 2.3 `Volume` 契约：traits 适配，不改已有类型
+### 2.3 The `Volume` contract: adapted by traits, without changing existing types
 
-`detail::VolumeTraits<V>` 声明树需要的九个操作：`merged`、`center`、`halfArea`、`overlaps`、`contains`、
-`corners`、`isFinite`、`hitByRay`，外加类型别名 `Scalar` / `VolumeType`。`Aabb<T>` 的适配是精确的：
-`merged` 走 `expandBy`，`overlaps` 六次比较，`hitByRay` 复用 `detail::RaySlab.hpp` 的 `preparedRayBoxInterval`
-（盒查询走同一份实现，见 `geometry-ray.md`）。
+`detail::VolumeTraits<V>` declares the nine operations the tree needs: `merged`, `center`, `halfArea`, `overlaps`, `contains`,
+`corners`, `isFinite`, `hitByRay`, plus the type aliases `Scalar` / `VolumeType`. The `Aabb<T>` adaptation is exact:
+`merged` goes through `expandBy`, `overlaps` is six comparisons, and `hitByRay` reuses `preparedRayBoxInterval` from `detail/RaySlab.hpp`
+(the box queries share that one implementation, see `geometry-ray.md`).
 
-`merged` 允许**保守**（包含两者即可，不必等于并集），但不允许**不包含**：包含性是树正确性的唯一前提，`validate()` 会检查。
-`halfArea` 而不是体积：SAH 按表面积计费，退化成矩形的盒子体积为 0 但表面积有意义。
+`merged` may be **conservative** (containing both is enough; it need not equal the union) but must not **fail to contain**: containment is the tree's only correctness premise, and `validate()` checks it.
+`halfArea` rather than volume: SAH charges by surface area, and a box that degenerates into a rectangle has zero volume but a meaningful surface area.
 
-### 2.4 节点布局与遍历顺序
+### 2.4 Node layout and traversal order
 
-节点的**组合学**是 `BvhNodeTopology` 两个字段、8 字节；它的包围体在**平行的** `node_bounds_` 数组里（`Aabb<double>` 下 48 字节——六个 `double`；`Aabb<float>` 才是 24）：
+A node's **topology** is the two fields of `BvhNodeTopology`, 8 bytes; its bounding volume lives in the **parallel** `node_bounds_` array (48 bytes under `Aabb<double>` - six `double`s; `Aabb<float>` is 24):
 
-- `offset`：内部节点是**右孩子的下标**，叶子是**图元顺序数组中的起始槽位**；
-- `count`：叶子为该组图元数，内部节点为 0；
-- `node_bounds_[index]`：该子树（叶子：该组图元）的合并包围体——同一棵树里同一位置的另一条数组。
+- `offset`: for an internal node, the **index of the right child**; for a leaf, the **starting slot in the primitive order array**;
+- `count`: for a leaf, the number of primitives in the group; for an internal node, 0;
+- `node_bounds_[index]`: the merged bounding volume of that subtree (for a leaf, of that group of primitives) - the other array at the same position in the same tree.
 
-两条数组分开而不是一个 AoS 结构，理由是**存储**：组合学那条同时就是 `BvhTopology::nodes`，所以
-`topologyView()` 不需要拷贝、`restoreTopology()` 可以把整组数组移动进来（2.13、2.15）。代价是遍历每个节点
-多一次载入（`node_bounds_[i]` 与 `nodes[i]`）；而 `refit()` 只扫体积那条，反而比 AoS 更集中。
+The two arrays are separate rather than one AoS struct, for **storage** reasons: the topology array is at the same time `BvhTopology::nodes`, so
+`topologyView()` needs no copy and `restoreTopology()` can move the whole array in (2.13, 2.15). The cost is one more load per node
+during traversal (`node_bounds_[i]` and `nodes[i]`); and `refit()` touches the volume array only, so it is more concentrated than AoS.
 
-**左孩子恒为 `parent + 1`**，右孩子由 `offset` 给出。这条规则让内部节点少存一个下标（省 4 字节/节点），
-代价是遍历时必须写 `nodes_[index + 1]` 而不是 `nodes_[node.offset - 1]`——后者是真实踩到过的 bug（`P1`）。
+**The left child is always `parent + 1`**, and the right child is given by `offset`. That rule saves one index per internal node (4 bytes per node), at the
+cost of writing `nodes_[index + 1]` rather than `nodes_[node.offset - 1]` during traversal - the latter is a bug that was really hit (`P1`).
 
-### 2.5 三个不变量
+### 2.5 The three invariants
 
-- **I1 包含性**：任意节点的 `node_bounds_[i]` 包含其子节点的所有角点（叶子：包含组内每个图元包围体的八个角点）。
-- **I2 排列**：`shape_.order` 是 `[0, primCount)` 的一个排列，叶子的槽位区间互不重叠且覆盖全区间。
-- **I3 节点上界**：`shape_.nodes.size() <= 2 · primCount`。
+- **I1 containment**: any node's `node_bounds_[i]` contains all corner points of its children (for a leaf, the eight corners of every primitive bounding volume in the group).
+- **I2 permutation**: `shape_.order` is a permutation of `[0, primCount)`, and the leaves' slot ranges are disjoint and cover the whole range.
+- **I3 node upper bound**: `shape_.nodes.size() <= 2 · primCount`.
 
-三者由 `validate()` 全量检查（`O(n)`，一次 `std::vector<bool>` 分配，只在测试与断言里调用，不进入查询路径）。
-不变量被破坏时 `validate()` 返回 `false` 而不是抛异常：查询是 `noexcept` 逻辑的一部分，校验是可选的开发期工具。
+All three are checked exhaustively by `validate()` (`O(n)`, one `std::vector<bool>` allocation, called only from tests and assertions, never on the query path).
+When an invariant is broken `validate()` returns `false` rather than throwing: queries are part of the `noexcept` logic, and validation is an optional development-time tool.
 
-### 2.6 构建：两级质量
+### 2.6 Building: two quality levels
 
-- `BvhBuildQuality::kSah`（默认）：12 桶的 binned SAH。三个轴 × 12 桶双向扫描算代价，取最优划分再 `std::partition`。
-  划分退化（全落一侧或代价非有限）时退回中位数切分，保证**任何输入都能建成**。
-- `BvhBuildQuality::kFast`：沿最长轴按中心中位数切分（`nth_element`）。
+- `BvhBuildQuality::kSah` (the default): a 12-bucket binned SAH. A two-way sweep over three axes × 12 buckets computes the cost, takes the best split and runs `std::partition`.
+  When the split degenerates (everything on one side, or a non-finite cost) it falls back to a median split, guaranteeing that **any input can be built**.
+- `BvhBuildQuality::kFast`: split at the centre median along the longest axis (`nth_element`).
 
-两者都由 `detail::buildTopDown<T, Volume, Split>` 这一个递归模板驱动，差别只在“选哪个切分点”，
-递归在 `count <= leaf_size` 或 `depth + 1 >= max_depth` 时写叶子。
+Both are driven by the single recursive template `detail::buildTopDown<T, Volume, Split>`, differing only in "which split point is chosen";
+the recursion writes a leaf when `count <= leaf_size` or `depth + 1 >= max_depth`.
 
-递归深度由 `max_depth` 保证（`kBvhMaxDepth = 64`），因此构建不需要显式栈；`83 KB` 级别的递归栈在这个上界下是安全的，
-而 `83 KB` 的显式栈需要堆分配，反而引入 `G10` 的成本。
+The recursion depth is bounded by `max_depth` (`kBvhMaxDepth = 64`), so building needs no explicit stack; a recursion stack of `83 KB` is safe under that bound,
+while an explicit `83 KB` stack would need a heap allocation, which would introduce exactly the cost `G10` is about.
 
-### 2.7 `refit` 属于结构，质量由调用方裁决
+### 2.7 `refit` belongs to the structure; the caller judges the quality
 
-图元移动时 `update(id, bounds)` 只改 `prim_bounds_[id]` 并把树标记为“需要 refit”；`refit()` 一次反向扫描
-（孩子恒在父亲之后，所以一次 `for (index = size; index-- > 0;)` 就是合法后序）重算所有节点盒。
-它不改变拓扑，因此反复 update + refit 会让叶子变松；`qualityReport()` 给出叶子表面积之和与深度，由调用方决定何时重建。
+When a primitive moves, `update(id, bounds)` only writes `prim_bounds_[id]` and marks the tree as "needs refit"; `refit()` makes one reverse scan
+(a child is always after its parent, so a single `for (index = size; index-- > 0;)` is a legal post-order) and recomputes every node box.
+It does not change the topology, so repeated update + refit loosens the leaves; `qualityReport()` gives the sum of the leaf surface areas and the depth, and the caller decides when to rebuild.
 
-### 2.8 射线查询：一次预处理，最近优先
+### 2.8 Ray query: one preprocessing pass, nearest first
 
-`forEachRay(ray, visit, max_t)` 先构造 `detail::PreparedRay`（倒数与符号位，节点测试因此没有除法），
-再深度优先、**近孩子先入栈**，并用当前 `limit` 剪掉入口距离已超限的分支。
+`forEachRay(ray, visit, max_t)` first builds a `detail::PreparedRay` (reciprocals and sign bits, so node tests need no division),
+then goes depth first, **pushing the near child first**, and prunes branches whose entry distance already exceeds the current `limit`.
 
-`visit(id, bounds, max_t&)` 可以写回更小的 `max_t`——这就是最近命中查询的剪枝方式：命中图元后把距离写回，
-后续节点自动被剪掉。回调返回 `false` 立即终止遍历，返回值不参与语义。
+`visit(id, bounds, max_t&)` may write back a smaller `max_t` - that is how a nearest-hit query prunes: after a primitive hit the distance is written back, and
+later nodes are pruned automatically. The callback returning `false` terminates the traversal immediately; the return value takes no part in the semantics.
 
-### 2.9 查询接口的选择：回调，而不是返回容器
+### 2.9 The choice of query interface: a callback, not a returned container
 
-`forEachOverlap` / `forEachRay` 都是回调 + `const` + 调用栈上的 `std::array<PrimId, kMaxDepth + 2>` 栈，
-**零分配**。返回 `std::vector<PrimId>` 会让“最近命中”这种只要一个结果的查询也分配一次数组，
-而“收集全部候选”只是回调十行的事（`G7`：复杂度吸收在遍历里，不推给调用方去管理容器）。
+`forEachOverlap` / `forEachRay` are both a callback + `const` + a `std::array<PrimId, kMaxDepth + 2>` stack on the call stack,
+with **zero allocation**. Returning a `std::vector<PrimId>` would make a single-result query such as "nearest hit" allocate an array too,
+while "collect all candidates" is ten lines in a callback (`G7`: the complexity is absorbed in the traversal, not pushed onto the caller to manage a container).
 
-### 2.10 buffer 复用
+### 2.10 Buffer reuse
 
-`prepareForBuild()` 清空节点数组与顺序数组但**保留容量**，`reserve(prim_count)` 供调用方按图元数预留。
-一次构建后的重建（同一规模的模型改动）不产生新的分配；`clear()` 同理会保留容量。
+`prepareForBuild()` empties the node array and the order array but **keeps their capacity**; `reserve(prim_count)` lets the caller reserve by primitive count.
+A rebuild after a build (a model change of the same size) produces no new allocation; `clear()` likewise keeps the capacity.
 
-### 2.11 线程与重入
+### 2.11 Threads and re-entrancy
 
-结构不是线程安全的：`add` / `update` / `build` 都写状态。**建成后并发查询是安全的**（查询全部 `const` 且不分配），
-这是刻意的设计点：构建是偶发的、单线程的；查询是频繁的、可以多线程的。
+The structure is not thread-safe: `add` / `update` / `build` all write state. **Concurrent queries after the build are safe** (queries are all `const` and allocate nothing),
+and that is a deliberate design point: building is occasional and single-threaded; querying is frequent and may be multi-threaded.
 
-### 2.12 错误契约
+### 2.12 Failure contract
 
-- `add()` 在数组已满（`PrimId` 上限）时返回 `kInvalidPrim`，不抛异常；
-- 用空结构查询立即返回（`shape_.nodes.empty()` 早退），不崩；
-- 非法参数（`leaf_size == 0`、`max_depth == 0`）由 `prepareForBuild()` 拒绝并返回 `false`，`BvhBuilder::build` 于是什么都不做；
-- 构建不会因为输入退化（全重合、NaN）而崩溃：退化时退回中位数切分，NaN 由 `isFinite` 可观测。
+- `add()` returns `kInvalidPrim` when the array is full (the `PrimId` limit) and does not throw;
+- querying an empty structure returns immediately (`shape_.nodes.empty()` returns early) instead of crashing;
+- illegal parameters (`leaf_size == 0`, `max_depth == 0`) are rejected by `prepareForBuild()` with `false`, so `BvhBuilder::build` does nothing;
+- a build does not crash on degenerate input (all coincident, NaN): a degeneracy falls back to a median split, and NaN stays observable through `isFinite`.
 
-### 2.13 拓扑可存储、可恢复：盒子不存
+### 2.13 The topology can be stored and restored: boxes are not
 
-树里只有一半是构建不可廉价重算的：**分组与顺序**。每个节点的包围盒是图元位置的函数，所以存储只带一个值
-`BvhTopology{nodes, order, depth}`（每节点一个 `BvhNodeTopology{offset, count}`），恢复时用 `detail::refitNodes()`
-一次反向扫描按当前图元重算全部盒子。这条决定了四件事（`G13`、`G10`、`G1`）：
+Only half of the tree is expensive to recompute after a build: the **grouping and the order**. Every node's bounding box is a function of the primitive positions, so the storage carries one value only,
+`BvhTopology{nodes, order, depth}` (one `BvhNodeTopology{offset, count}` per node), and restoring runs one reverse scan of `detail::refitNodes()`
+that recomputes every box from the current primitives. That decides four things (`G13`, `G10`, `G1`):
 
-- 文件里没有浮点，也不存在“文件里的盒与文件里的顶点各自演化”这种只能靠容差掩盖的不一致；
-- 陈旧或来自另一个模型的拓扑只能是**变差的树**，不会是错答案，因此不需要内容指纹；
-- 恢复不是 `Bvh::load()`，而是**两个入口、同一份检查**：手里的只有视图时走 `BvhBuilder::buildWith()`
-  的又一个算法（`RestoreTopology`），与中位数 / SAH 走同一条 `finishBuild` 收尾；自己持有那个值时走
-  `Bvh::restoreTopology(BvhTopology)`，把数组移动进来。两条路都读 `detail::installableHeight()`，
-  所以“什么形状能装进这棵树”只有一处定义；
-- **形状是一个值**：节点的 `offset` 指向 `order`，`depth` 说的是这组节点的实际高度，三者离开彼此就没有意义，
-  所以它们进一个类型而不是三个平行数组（`G1`：一个概念一处定义；`G4`：调用方不可能把甲树的节点配上乙树的顺序）。
+- there is no floating point in the file, and no inconsistency of the "boxes in the file and vertices in the file evolve separately" kind that only a tolerance can hide;
+- a stale topology, or one from another model, can only be a **worse tree**, never a wrong answer, so no content fingerprint is needed;
+- restoring is not `Bvh::load()` but **two entries, one check**: when all you hold is a view, go through another algorithm of `BvhBuilder::buildWith()`
+  (`RestoreTopology`), which shares the `finishBuild` tail with median / SAH; when you own that value, go through
+  `Bvh::restoreTopology(BvhTopology)`, which moves the arrays in. Both read `detail::installableHeight()`,
+  so "what shape fits in this tree" has exactly one definition;
+- **the shape is one value**: a node's `offset` points into `order`, and `depth` states the actual height of this set of nodes; apart from each other the three mean nothing,
+  so they go into one type rather than three parallel arrays (`G1`: one concept, one definition; `G4`: the caller cannot pair one tree's nodes with another tree's order).
 
-`detail::refitNodes()` 因此是“由孩子重算父亲、叶子由图元重算”的唯一实现，`refit()` 与两条恢复路径都调它。
+`detail::refitNodes()` is therefore the only implementation of "recompute the father from its children, a leaf from its primitives", and both `refit()` and the two restore paths call it.
 
-**形状就是树的存储，不是它的转录。** 树的节点组合学直接按 `BvhTopology` 的形状存放（`shape_.nodes` /
-`shape_.order` / `shape_.depth`），体积放在平行的 `node_bounds_` 里。三件事因此成立（`G10`、`G1`）：
+**The shape is the tree's storage, not a transcription of it.** The tree's node topology is stored directly in the shape of `BvhTopology` (`shape_.nodes` /
+`shape_.order` / `shape_.depth`), and the volumes live in the parallel `node_bounds_`. Three things follow (`G10`, `G1`):
 
-- `topologyView()` 零拷贝；`.vbtp` 写入直接编码树自己的数组；
-- 恢复可以**移动**而不是逐节点抄：解码得到的 `BvhTopology` 交给 `restoreTopology()` 就完事；
-- 旧实现里 `BvhNode` 与 `BvhNodeTopology` 是同一约定的两份转录，一次 `topology()` 在 38M 三角形上要复制
-  ≈ `1 GB`（`≤2n` 个节点 × 8 B + 113M `order` × 4 B），现在这个拷贝不存在了。
+- `topologyView()` is zero-copy; writing `.vbtp` encodes the tree's own arrays directly;
+- restoring can **move** rather than copy node by node: the decoded `BvhTopology` is simply handed to `restoreTopology()`;
+- in the older implementation `BvhNode` and `BvhNodeTopology` were two transcriptions of one convention, and one `topology()` over 38M triangles copied
+  about `1 GB` (`≤2n` nodes × 8 B + 113M `order` × 4 B); that copy no longer exists.
 
-代价与边界：同一约定只有 `BvhNodeTopology` 一份，树与文件都存它；节点体积不进文件（2.13 第一条理由），
-所以“树里有什么”与“文件里有什么”差一条平行数组，而不是差一个结构体。
+Cost and boundary: the convention exists once, as `BvhNodeTopology`, and both the tree and the file store it; the node volumes do not go into the file (the first reason in 2.13),
+so what the tree holds and what the file holds differ by one parallel array, not by one struct.
 
-### 2.14 三角形树只有一个编号规则：`TriangleSource` + `registerTriangles()`
+### 2.14 A triangle tree has one numbering rule: `TriangleSource` + `registerTriangles()`
 
-`Bvh` 不认识三角形：它收的是包围体。于是“一个三角形一棵 primitive、primitive id == 三角形序号”这条规则必须住在
-`Bvh` 之外、`Mesh` 与 `Geometry` 之下的**公共层**，而这条规则需要的输入只有三件事——“有哪些顶点、有多少三角形、
-第 `t` 个三角形的三个角点是谁”。三者拼成一个概念（`G1`）：
+`Bvh` does not know triangles: it receives bounding volumes. So the rule "one primitive per triangle, primitive id == triangle index" has to live
+outside `Bvh`, on the **common layer** below `Mesh` and `Geometry`, and the inputs that rule needs are only three things - "which vertices are there, how many triangles are there,
+who are the three corners of triangle `t`". The three form one concept (`G1`):
 
-- `TriangleSource`（`spatial/TriangleBvh.hpp`）是那个概念的 C++20 `concept`：`positions()`、`triangleCount()`、
-  `triangleCorners()`。它用 Qt 风格取值器书写，和库里其它值类型一样。
-- `registerTriangles(tree, source)` 是**唯一**的编号与盒规则：一三角形一 primitive、顺序即序号、盒子是三角角点的
-  `double` 包围盒（宽化精确，因此叶子在小尺寸远离原点时仍然准）。角点解不出或坐标非有限时返回 `false`——
-  “没有树”是一个返回值，不是从拾取栈里飞出去的异常。调用方仍可以拒绝登记（例如 `isValid()` 不成立的 mesh），
-  但那段循环只有一份。
-- `buildTriangleBvh()` / `restoreTriangleBvh()` 把“先登记、再建树”与“先登记、再装存储的形状”合成一次调用，
-  于是模型帧与绘制帧各写一行，而不是各写一次循环。
-- 两侧各自用 `static_assert(TriangleSource<T>)` 钉住：`Mesh` 与 `TriangleStream` 都必须是三角形源，否则这两个帧
-  的编号可以悄悄分叉（`G6`、`G11`）。
+- `TriangleSource` (`spatial/TriangleBvh.hpp`) is the C++20 `concept` of that concept: `positions()`, `triangleCount()`,
+  `triangleCorners()`. It is written with Qt-style accessors, like the library's other value types.
+- `registerTriangles(tree, source)` is the **only** numbering and box rule: one primitive per triangle, order equals index, and the box is the `double` bounding box of the triangle's
+  corners (the widening is exact, so leaves stay accurate when they are small and far from the origin). It returns `false` when a corner cannot be resolved or a coordinate is not finite -
+  "no tree" is a return value, not an exception flying out of the picking stack. A caller may still decline to register (a mesh whose `isValid()` fails, for example),
+  but that loop exists once.
+- `buildTriangleBvh()` / `restoreTriangleBvh()` combine "register, then build" and "register, then install the stored shape" into one call,
+  so the model frame and the draw frame each write one line instead of each writing a loop.
+- Both sides pin it down with `static_assert(TriangleSource<T>)`: `Mesh` and `TriangleStream` must both be triangle sources, or the numbering of those two frames
+  could quietly diverge (`G6`, `G11`).
 
-### 2.15 形状的借用形式：`BvhTopologyView`
+### 2.15 The borrowed form of the shape: `BvhTopologyView`
 
-`BvhTopology` 拥有一组数组，而读一个形状的人（编解码、恢复、写入器）只需要看它。所以形状有两种形态（`G4`）：
+`BvhTopology` owns a set of arrays, while a reader of a shape (codec, restore, writer) only needs to look at it. So the shape has two forms (`G4`):
 
-- `BvhTopology`：拥有的值——一次解码的结果、树自己持有的那一份、一个可以比较的值、`Bvh::topology()`
-  的返回（那是一次拷贝，所以只需要读或编码时用 `topologyView()`）；
-- `BvhTopologyView`：三个 `std::span` 加一个高度，**显式**借用（“我借用它”是类型而不是注释）；
-  拥有形可直接隐式转换到借用形（更强承诺到更弱承诺，丢掉的只有所有权，同 Qt 的 `QByteArray` → `QByteArrayView`）。
+- `BvhTopology`: the owned value - the result of one decode, the copy the tree itself holds, a value that can be compared, the return of `Bvh::topology()`
+  (that one is a copy, so use `topologyView()` when you only need to read or encode);
+- `BvhTopologyView`: three `std::span`s plus a height, an **explicit** borrow ("I borrow it" is a type, not a comment);
+  the owned form converts implicitly to the borrowed one (a stronger promise to a weaker one; only ownership is dropped, as with Qt's `QByteArray` → `QByteArrayView`).
 
-`RestoreTopology` 因此只持有一个 `BvhTopologyView` 成员：它不再需要三条平行跨度，也不再需要用 `@warning` 提醒调用方
-“别把拓扑移走”——参数类型已经说了。两个方向因此都不经过中间拷贝：写 `.vbtp` 时编码的是
-`Bvh::topologyView()`（树自己的数组）；读入时解码出一个拥有的 `BvhTopology`，再由 `Mesh::restoreBvh(BvhTopology)`
-**移动**进树。只有“借用”和“移动”，没有“复制”。
+`RestoreTopology` therefore holds only one `BvhTopologyView` member: it no longer needs three parallel spans, and it no longer needs a `@warning` telling the caller
+"do not move the topology away" - the parameter type already says it. Neither direction goes through an intermediate copy: writing `.vbtp` encodes
+`Bvh::topologyView()` (the tree's own arrays); reading decodes an owned `BvhTopology`, which `Mesh::restoreBvh(BvhTopology)`
+**moves** into the tree. There is borrowing and moving, no copying.
 
-### 2.16 封存：建成后只留结果
+### 2.16 Sealing: keep only the result once built
 
-`prim_bounds_` 是**构建期数据**，不是结果。查询只读 `node_bounds_`（叶盒剔除）；真正读图元盒的只有三处：
-增量修改（`update` / `refit`）、拓扑恢复（`restoreTopology` → `refitNodes`），以及查询回调的第二个参数。
-所以 `seal()` 把图元盒**释放**（`vector().swap()`，不是 `clear()`），树于是只剩结果：
+`prim_bounds_` is **build-time data**, not the result. Queries read `node_bounds_` only (leaf-box culling); the primitive boxes are read in exactly three places:
+incremental modification (`update` / `refit`), topology restore (`restoreTopology` → `refitNodes`), and the query callback's second argument.
+So `seal()` **releases** the primitive boxes (`vector().swap()`, not `clear()`), and the tree is left with the result only:
 
-| 保留 | 大小（每图元 P、每节点 N） | 释放 |
+| Kept | Size (P per primitive, N per node) | Released |
 |---|---|---|
-| `shape_.nodes` + `shape_.order` | `8 B/节点` + `4 B/图元` | `prim_bounds_` |
-| `node_bounds_` | `48 B/节点`（`Aabb<double>`） | `48 B/图元` |
+| `shape_.nodes` + `shape_.order` | `8 B/node` + `4 B/primitive` | `prim_bounds_` |
+| `node_bounds_` | `48 B/node` (`Aabb<double>`) | `48 B/primitive` |
 
-“一个盒子装几百个三角形”只有合上这一条才成立：叶粒度（`BvhBuilder::leafSize`）只改**节点数**，图元盒是
-`48 B × 图元数`，与粒度无关。以一个 1409 万三角形的 STL 为例（叶容量 4 → 64 → 粗叶再封存）：
-`1.36 GB`（图元盒 676 MB + 节点层 632 MB + 顺序 56 MB）→ `764 MB`（粒度只砍节点层）→ `88 MB`（封存后只剩
-节点层 32 MB + 顺序 56 MB）。
+"One box holding hundreds of triangles" only holds once this is closed: leaf granularity (`BvhBuilder::leafSize`) changes the **node count** only, while the primitive boxes are
+`48 B × primitive count`, independent of granularity. Take a 14.09M-triangle STL (leaf capacity 4 → 64 → coarse leaves, then sealed again):
+`1.36 GB` (primitive boxes 676 MB + node layer 632 MB + order 56 MB) → `764 MB` (granularity only cuts the node layer) → `88 MB` (after sealing only
+node layer 32 MB + order 56 MB remain).
 
-为什么是一个状态而不是另一种树：两态的差别只有“还留不留图元盒”。做成两个类型就要把唯一的最近优先剪枝
-遍历复制一遍或模板化（`D20`、`G7`）。状态由事实推出来（建成了 **且** 图元盒为空）而不是一个标志位，
-所以不存在“标志与数据互相矛盾”的那种对象；`primCount()` 从 `shape_.order.size()` 回答，`validate()` 本来就
-只需要一个图元**个数**。
+Why one state rather than another kind of tree: the two states differ only in "whether the primitive boxes are kept". Two types would mean duplicating the only nearest-first pruning
+traversal or turning it into a template (`D20`, `G7`). The state is derived from facts (built **and** primitive boxes empty) rather than kept in a flag,
+so no object can have a flag that contradicts its data; `primCount()` answers from `shape_.order.size()`, and `validate()` only ever
+needed a primitive **count**.
 
-为什么默认**不**封存：`Mesh::buildBvh()` 的消费者（`.vbtp` 恢复后可能继续 `update`/`refit`、导出前建树）需要
-可变路径。**谁要可变谁付那 48 B**。
+Why the default is **not** to seal: the consumers of `Mesh::buildBvh()` (a `.vbtp` restore may keep calling `update`/`refit`, and a tree is built before export) need
+the mutable path. **Whoever wants mutability pays those 48 B**.
 
-今天没有生产代码调 `update()` / `refit()`（只有 `BvhBuildTest` 的两条用例，`F2`），而封存把“只读消费者”与
-“可能很可变的消费者”从同一个代价里解耦出来——这是一条能力没有消费者时**不删也不拖累别人**的做法（`G8`）。
+No production code calls `update()` / `refit()` today (only the two cases in `BvhBuildTest`, `F2`), and sealing decouples "the read-only consumer" from
+"the possibly-mutable consumer" out of the same cost - the way a capability with no consumer is **neither deleted nor allowed to drag others down** (`G8`).
 
-## 3. 功能点
+## 3. Features
 
-| 编号 | 功能 | 章节 |
+| # | Feature | Section |
 |---|---|---|
-| F1 | 图元登记与批量登记 | 3.1 |
-| F2 | 包围体更新与 `refit` | 3.2 |
-| F3 | 构建（两档质量 + 外来算法） | 3.3 |
-| F4 | 重叠查询 | 3.4 |
-| F5 | 射线查询与最近命中剪枝 | 3.5 |
-| F6 | 不变量校验与质量报告 | 3.6 |
-| F7 | buffer 复用与释放 | 3.7 |
-| F8 | 拓扑视图与恢复（`BvhTopologyView` / `RestoreTopology`） | 3.8 |
-| F9 | 三角形集 → 三角形树（`TriangleSource`） | 3.9 |
-| F10 | 封存：建成后只留结果 | 3.10 |
+| F1 | Primitive registration and batch registration | 3.1 |
+| F2 | Bounding-volume update and `refit` | 3.2 |
+| F3 | Building (two quality levels + external algorithms) | 3.3 |
+| F4 | Overlap query | 3.4 |
+| F5 | Ray query and nearest-hit pruning | 3.5 |
+| F6 | Invariant validation and quality report | 3.6 |
+| F7 | Buffer reuse and release | 3.7 |
+| F8 | Topology view and restore (`BvhTopologyView` / `RestoreTopology`) | 3.8 |
+| F9 | Triangle set → triangle tree (`TriangleSource`) | 3.9 |
+| F10 | Sealing: keep only the result once built | 3.10 |
 
-### 3.1 F1 图元登记
+### 3.1 F1 Primitive registration
 
-- **行为**：`add(bounds)` 追加一个图元，返回 `PrimId`，并把结构标记为未构建；`addRange(count, bounds_of)` 批量追加，
-  一次预留容量。
-- **约束**（C1）：登记不建树；登记后必须 `build` 才能查询（未建成的树查询返回空）。
-- **要求**（R1）：批量登记一次 `reserve`，逐个 `add` 不应被用来循环一万次。
-- **验收**（T1）：`BvhBuildTest` 比对逐个 `add` 与 `addRange` 的 `primCount` 与查询结果一致。
+- **Behaviour**: `add(bounds)` appends one primitive, returns a `PrimId` and marks the structure as not built; `addRange(count, bounds_of)` appends in bulk,
+  reserving the capacity once.
+- **Constraints** (C1): registration does not build the tree; after registration a `build` is required before querying (a query on an unbuilt tree returns empty).
+- **Requirements** (R1): bulk registration reserves once; adding one at a time must not be used for a loop over ten thousand primitives.
+- **Acceptance** (T1): `BvhBuildTest` compares one-at-a-time `add` against `addRange` for identical `primCount` and query results.
 
-### 3.2 F2 更新与 `refit`
+### 3.2 F2 Update and `refit`
 
-- **行为**：`update(id, bounds)` 改写单个图元的包围体，`refit()` 重建全部节点盒而不动拓扑。
-- **约束**（C5）：`refit` 之后叶子盒是**精确**的合并（没有变形的图元时），内部盒是保守合并。
-- **注意**（N2）：反复 update 后叶子会变松，树质量退化但结果仍然正确。
-- **注意**（N3）：封存的树不能 `update` / `refit`；要改就先 `clear()` 重新登记（3.10）。
-- **状态**：本仓库今天**没有生产调用方**（只有 `BvhBuildTest` 的两条用例）。“盒子变了”的两类真实场景都不走它：
-  刚体变换是节点矩阵的事（树在局部空间，变换在查询时折算），顶点变化走 `Mesh` 的丢树重建与
-  `Geometry::prepareBvh()` 的新钥匙新树。保留它是因为“图元集合不变、盒子逐次变化”确实是一类消费者，而封存
-  让这类消费者与只读消费者不再互相收费（2.16）。
-- **验收**（T2）：`BvhBuildTest` 平移全部图元后 `refit` + `validate` 通过，查询结果与重建后的树一致。
+- **Behaviour**: `update(id, bounds)` rewrites one primitive's bounding volume, and `refit()` recomputes every node box without touching the topology.
+- **Constraints** (C5): after `refit` the leaf boxes are an **exact** merge (when no primitive was deformed) and the internal boxes are a conservative merge.
+- **Note** (N2): repeated update loosens the leaves; the tree's quality degrades but the answers stay correct.
+- **Note** (N3): a sealed tree cannot `update` / `refit`; to change it, `clear()` and register again (3.10).
+- **Status**: this repository has **no production caller** today (only the two cases in `BvhBuildTest`). Neither real "the box changed" scenario goes through it:
+  a rigid transform is the node matrix' business (the tree is in local space and the transform is folded in at query time), and a vertex change goes through `Mesh`'s
+  drop-the-tree-and-rebuild and through `Geometry::prepareBvh()`'s new key and new tree. It is kept because "the primitive set stays, the boxes change one by one" really is a
+  consumer class, and sealing stops that class and the read-only class from paying for each other (2.16).
+- **Acceptance** (T2): in `BvhBuildTest`, after translating every primitive, `refit` + `validate` pass and the queries match a rebuilt tree.
 
-### 3.3 F3 构建
+### 3.3 F3 Building
 
-- **行为**：`BvhBuilder{}.leafSize(8).quality(kFast).build(bvh)`；`buildWith(bvh, algorithm)` 接受满足
-  `BvhBuildAlgorithm<T, Volume>` 概念（C++20 `concept`：可调用、以 `BuildJob&` 为参、返回节点数）的外来算法，
-  由调用方自己保证它也维护三个不变量。
-- **约束**（C2）：构建是幂等的：同一输入同一配置产生**相同**的树（`nth_element` 的等价元素顺序不保证，
-  但划分结果保证；测试因此只断言结构与质量，不断言具体下标）。
-- **要求**（R2）：任何配置与任何输入（含全部重合、退化、NaN 盒子）都必须产出一棵 `validate()` 通过的树或干脆不建。
-- **验收**（T3）：`BvhBuildTest` 覆盖 SAH / 中位数两档、叶子规模 1 / 4 / 64、`max_depth` 截断、
-  1000 个随机盒子的 `validate` 与质量对比。
+- **Behaviour**: `BvhBuilder{}.leafSize(8).quality(kFast).build(bvh)`; `buildWith(bvh, algorithm)` accepts an external algorithm satisfying the
+  `BvhBuildAlgorithm<T, Volume>` concept (a C++20 `concept`: callable, taking `BuildJob&`, returning the node count), and the caller then guarantees that it maintains
+  the three invariants too.
+- **Constraints** (C2): building is idempotent: the same input and configuration produce the **same** tree (the order of equivalent elements under `nth_element` is not guaranteed,
+  but the partition result is; the tests therefore assert structure and quality, not concrete indices).
+- **Requirements** (R2): any configuration and any input (including all-coincident, degenerate and NaN boxes) must produce a tree that passes `validate()` or build nothing at all.
+- **Acceptance** (T3): `BvhBuildTest` covers the two levels SAH / median, leaf sizes 1 / 4 / 64, `max_depth` truncation, and a `validate` plus quality comparison over
+  1000 random boxes.
 
-### 3.4 F4 重叠查询
+### 3.4 F4 Overlap query
 
-- **行为**：`forEachOverlap(query, visit)` 访问每个**叶子盒与 `query` 相交**的图元。
-- **约束**（C3）：结果是**超集**：叶子盒是保守合并，被访问的图元仍可能在精确测试下不相交（`N1`）。
-- **验收**（T4）：`BvhQueryTest` 用暴力全扫的结果作为**子集**比对（`expectCoversExactAnswer`）。
+- **Behaviour**: `forEachOverlap(query, visit)` visits every primitive whose **leaf box intersects `query`**.
+- **Constraints** (C3): the result is a **superset**: leaf boxes are conservative merges, so a visited primitive may still not intersect under the exact test (`N1`).
+- **Acceptance** (T4): `BvhQueryTest` compares against a brute-force full scan as a **subset** (`expectCoversExactAnswer`).
 
-### 3.5 F5 射线查询
+### 3.5 F5 Ray query
 
-- **行为**：`forEachRay(ray, visit, max_t)` 访问每个叶子盒被射线在 `[0, max_t]` 内进入的图元；
-  `visit` 可写回 `max_t` 收紧，`return false` 立即终止。
-- **约束**（C4）：零方向射线（`direction_length2 <= eps²`）不访问任何图元，也不产生 NaN（沿用 `geometry-ray.md` C3）。
-- **注意**（N3）：近孩子优先只是**访问顺序**，不保证“第一个回调就是最近命中”——图元本身还要按 `t` 比较。
-- **验收**（T5）：`BvhQueryTest` 比对射线查询结果与暴力全扫、`max_t` 剪枝、最近命中只回调一次（写回后剪掉其余）。
+- **Behaviour**: `forEachRay(ray, visit, max_t)` visits every primitive whose leaf box the ray enters within `[0, max_t]`;
+  `visit` may write back a tighter `max_t`, and `return false` terminates immediately.
+- **Constraints** (C4): a zero-direction ray (`direction_length2 <= eps²`) visits no primitive and produces no NaN (following `geometry-ray.md` C3).
+- **Note** (N3): near-child-first is only a **visit order** and does not guarantee that "the first callback is the nearest hit" - the primitives themselves still have to be compared by `t`.
+- **Acceptance** (T5): `BvhQueryTest` compares ray query results against a brute-force full scan, exercises `max_t` pruning, and checks that a nearest-hit query calls back once (the write-back prunes the rest).
 
-### 3.6 F6 校验与质量
+### 3.6 F6 Validation and quality
 
-- **行为**：`validate()` 全量检查 I1–I3；`qualityReport()` 返回 `{prim_count, leaf_count, leaf_half_area_sum, depth}`。
-- **约束**（C6）：`validate()` 会分配（`std::vector<bool>` 标记已用的顺序槽位），不进查询路径。
-- **验收**（T6）：`BvhBuilderContractTest` 断言构建后 `validate()` 为真，并断言破坏不变量时能被检出（测试内手动破坏一棵树的节点盒）。
+- **Behaviour**: `validate()` checks I1–I3 exhaustively; `qualityReport()` returns `{ prim_count, leaf_count, leaf_half_area_sum, depth}`.
+- **Constraints** (C6): `validate()` allocates (a `std::vector<bool>` marking used order slots) and is not on the query path.
+- **Acceptance** (T6): `BvhBuilderContractTest` asserts that `validate()` is true after a build, and that a broken invariant is detected (the test breaks a tree's node boxes by hand).
 
-### 3.7 F7 buffer 复用
+### 3.7 F7 Buffer reuse
 
-- **行为**：`reserve(prim_count)` 预留图元容量；`prepareForBuild` 清空但保留节点与顺序容量；`clear()` 清空一切但保留容量。
-- **约束**（C7）：重建不产生新分配（容量足够时）。
-- **验收**（T7）：`BvhBuilderContractTest` 记录首次构建后的 `capacity`，重建后断言容量未变。
+- **Behaviour**: `reserve(prim_count)` reserves the primitive capacity; `prepareForBuild` empties but keeps the node and order capacity; `clear()` empties everything but keeps the capacity.
+- **Constraints** (C7): a rebuild allocates nothing new (when the capacity is sufficient).
+- **Acceptance** (T7): `BvhBuilderContractTest` records the `capacity` after the first build and asserts it is unchanged after a rebuild.
 
-### 3.8 F8 拓扑视图与恢复
+### 3.8 F8 Topology view and restore
 
-- **行为**：树的形状就是它自己的三条数组，所以有两条读法和两条写入方式：
-  - `topologyView()` **借用**树自己的数组（零拷贝），`.vbtp` 写入直接用；`topology()` 返回拥有的那份（一次拷贝，
-    给需要值或要改的调用方）；
-  - 自己拥有形状时 `Bvh::restoreTopology(BvhTopology)` 把数组**移动**进来、重算全部盒子；手里的只是视图时
-    `RestoreTopology{shape}` 作为构建算法交给 `BvhBuilder::buildWith()`，按存储的分组重建节点、写入顺序，
-    再用 `detail::refitNodes()` 按当前图元重算盒子。
-  - 节点深度优先，`offset` 的含义见 2.4；`order` 就是 `primOrder()` 的那份排列，`depth` 是树自己的高度，
-    `primitiveCount()` 就是 `order` 的长度。
-- **约束**（C8）：恢复只有一份接受检查（`detail::installableHeight()`，两个入口都读它）：图元数与形状都非空 →
-  `order` 长度等于图元数 → `order` 是图元的一个排列 → 每个节点的 `offset + count` 不越过图元数 → 每个节点都从
-  根可达且实测高度等于声明的 `depth` → 高度不超过 `max_depth`。任一条不满足就不建树，不做部分恢复。
-- **要求**（R5）：两条路径恢复出的树都与重建出的树对同一查询逐条相同；盒子只有一份定义——`detail::refitNodes()`
-  只写节点体积那条数组，碰不到组合学。
-- **验收**（T10）：`BvhBuildTest.ARestoredTopologyAnswersTheSameQueries`、
-  `ARestoredTopologyThatDoesNotDescribeTheTreeIsRefused`、`AnOwnedTopologyIsAdoptedByTheTreeItself`、
-  `ATopologyViewBorrowsTheTreesOwnArrays`；`TriangleBvhTest.AMovedShapeIsAdoptedInsteadOfCopied`。
+- **Behaviour**: the tree's shape is its own three arrays, so there are two ways to read it and two ways to write it:
+  - `topologyView()` **borrows** the tree's own arrays (zero copy), and the `.vbtp` writer uses it directly; `topology()` returns the owned copy (one copy,
+    for a caller that needs a value or wants to modify it);
+  - when you own a shape, `Bvh::restoreTopology(BvhTopology)` **moves** the arrays in and recomputes every box; when all you hold is a view,
+    `RestoreTopology{shape}` is handed to `BvhBuilder::buildWith()` as a build algorithm, which rebuilds the nodes from the stored grouping, writes the order,
+    and then recomputes the boxes from the current primitives with `detail::refitNodes()`.
+  - the node order is depth first, and the meaning of `offset` is in 2.4; `order` is the very permutation of `primOrder()`, `depth` is the tree's own height,
+    and `primitiveCount()` is the length of `order`.
+- **Constraints** (C8): restoring has a single acceptance check (`detail::installableHeight()`, read by both entries): the primitive count and the shape are non-empty →
+  the length of `order` equals the primitive count → `order` is a permutation of the primitives → no node's `offset + count` runs past the primitive count → every node is
+  reachable from the root and its measured height equals the declared `depth` → the height does not exceed `max_depth`. If any of them fails, no tree is built; there is no partial restore.
+- **Requirements** (R5): the trees restored by both paths answer the same query item by item as a rebuilt tree; the boxes have one definition only - `detail::refitNodes()`
+  writes the node volume array only and cannot reach the topology.
+- **Acceptance** (T10): `BvhBuildTest.ARestoredTopologyAnswersTheSameQueries`,
+  `ARestoredTopologyThatDoesNotDescribeTheTreeIsRefused`, `AnOwnedTopologyIsAdoptedByTheTreeItself`,
+  `ATopologyViewBorrowsTheTreesOwnArrays`; `TriangleBvhTest.AMovedShapeIsAdoptedInsteadOfCopied`.
 
-### 3.9 F9 三角形集 → 三角形树
+### 3.9 F9 Triangle set → triangle tree
 
-- **行为**：`TriangleSource` 是一个 `concept`（`positions()` + `triangleCount()` + `triangleCorners()`）；
-  `registerTriangles(tree, source)` 按三角形序号登记一个 primitive 一个；`buildTriangleBvh(tree, source, builder)` 与
-  `restoreTriangleBvh(tree, source, shape)` 各自把“登记 + 建树 / 登记 + 恢复”合成一次调用。
-- **约束**（C10）：三角形树的图元编号只有一个定义（`registerTriangles()`）：primitive id == 三角形序号，两侧一致。
-- **约束**（C11）：角点解不出、坐标非有限、树非空、源没有三角形时返回 `false`，**不抛异常**（`Bvh::add()` 的
-  `invalid_argument` 在拾取路径上是不可接受的失败形态）；拒绝时可以已登记了前缀，调用方丢弃那棵树即可。
-- **要求**（R6）：`Mesh` 与绘制帧的 `TriangleStream` 都必须静态满足 `TriangleSource`（两侧各一个 `static_assert`）。
-- **验收**（T11）：`TriangleBvhTest`：primitive id == 序号、一条调用建树、坏角点与非有限坐标被拒、恢复与重建
-  逐条相同、外来形状被拒、非空树不被重编号。
+- **Behaviour**: `TriangleSource` is a `concept` (`positions()` + `triangleCount()` + `triangleCorners()`);
+  `registerTriangles(tree, source)` registers one primitive per triangle index; `buildTriangleBvh(tree, source, builder)` and
+  `restoreTriangleBvh(tree, source, shape)` each combine "register + build" and "register + restore" into one call.
+- **Constraints** (C10): a triangle tree's primitive numbering has one definition only (`registerTriangles()`): primitive id == triangle index, on both sides.
+- **Constraints** (C11): when a corner cannot be resolved, a coordinate is not finite, the tree is not empty, or the source has no triangles, it returns `false` and
+  **does not throw** (`Bvh::add()`'s `invalid_argument` is an unacceptable failure shape on the picking path); on refusal a prefix may already be registered, and the caller simply discards that tree.
+- **Requirements** (R6): `Mesh` and the draw frame's `TriangleStream` must both satisfy `TriangleSource` statically (one `static_assert` on each side).
+- **Acceptance** (T11): `TriangleBvhTest`: primitive id == index, building in one call, bad corners and non-finite coordinates rejected, restore and rebuild
+  item-by-item identical, a foreign shape refused, a non-empty tree not renumbered.
 
-### 3.10 F10 封存
+### 3.10 F10 Sealing
 
-- **行为**：`seal()` 释放逐图元包围体，保留 `shape_`（节点 + 顺序 + 高度）与 `node_bounds_`；`isSealed()` 回答状态。
-  封存后 `add` / `addRange` / `update` / `refit` / `reserve` / `restoreTopology` / 构建全部抛 `std::logic_error`，
-  `primCount()` / `primOrder()` / `topology()` / `validate()` / `qualityReport()` / 两种查询照常。
-- **约束**（C13）：封存是**终态**：变回来只有 `clear()` 一条路（它连树一起清，所以“封存”随被描述的树一起消失）。
-- **要求**（R7）：查询回调在封存树上收到的是**叶盒**（`N3`），它包含叶内每个图元——答案仍是超集（`C3`）。
-- **注意**（N4）：对未建成的树调用 `seal()` 是无操作（没有结果可留，图元必须保持可变）。
-- **验收**（T12）：`BvhQueryTest` 的五条 `*Sealed*` 用例——重叠与射线在封存前后报告**同一批图元**、`primCount`
-  不变、`validate` 仍为真、六个写接口都抛、`clear()` 后恢复可变、未建成时封存无操作。
+- **Behaviour**: `seal()` releases the per-primitive bounding volumes and keeps `shape_` (nodes + order + height) and `node_bounds_`; `isSealed()` answers the state.
+  After sealing, `add` / `addRange` / `update` / `refit` / `reserve` / `restoreTopology` and building all throw `std::logic_error`,
+  while `primCount()` / `primOrder()` / `topology()` / `validate()` / `qualityReport()` / both queries work as before.
+- **Constraints** (C13): sealing is a **final state**: the only way back is `clear()` (it clears the tree along with everything else, so "sealed" disappears with the tree it described).
+- **Requirements** (R7): a query callback on a sealed tree receives the **leaf box** (`N3`), which contains every primitive in the leaf - the answer is still a superset (`C3`).
+- **Note** (N4): calling `seal()` on an unbuilt tree is a no-op (there is no result to keep, and the primitives must stay mutable).
+- **Acceptance** (T12): the five `*Sealed*` cases in `BvhQueryTest` - overlap and ray report **the same primitives** before and after sealing, `primCount`
+  is unchanged, `validate` still holds, all six write interfaces throw, `clear()` restores mutability, and sealing an unbuilt tree is a no-op.
 
-## 4. 公开接口
+## 4. Public Interface
 
-| 类型 / 文件 | 内容 |
+| Type / file | Contents |
 |---|---|
-| `spatial/Bvh.hpp` | `Bvh<T, Volume = Aabb>`：`add` / `addRange` / `update` / `reserve` / `clear`、`primCount` / `empty` / `isBuilt`、`seal` / `isSealed`、`forEachOverlap` / `forEachRay`、`refit`、`validate`、`qualityReport`、`primOrder`、`topology` / `topologyView` / `restoreTopology`；`kBvhMaxDepth = 64` |
-| `spatial/BvhTopology.hpp` | 纯词汇，**只依赖标准库**：`BvhNodeTopology{offset, count}`（一个节点的组合学，值类型带 `==`，`static_assert` 平凡可拷贝）；`BvhTopology{nodes, order, depth}`（整棵树的形状，`primitiveCount()` / `view()` / `==`）；`BvhTopologyView{nodes, order, depth}`（同一形状的借用形式，`primitiveCount()` / `empty()`，2.15） |
-| `spatial/TriangleBvh.hpp` | `TriangleSource`（三角形源的 `concept`）；`registerTriangles` / `buildTriangleBvh` / `restoreTriangleBvh`（视图与移动两个重载，2.14） |
-| `spatial/BvhBuilder.hpp` | `BvhBuildQuality{kFast, kSah}`；`BvhBuildAlgorithm`（构建算法的 `concept`）；`BvhBuilder`：`leafSize` / `maxDepth` / `quality`、`build(bvh)`、`buildWith(bvh, algorithm)`；`RestoreTopology{shape}`（把存储的分组当构建算法装进去） |
-| `spatial/detail/BvhBuildJob.hpp` | `BuildJob<T, Volume>`（`prim_bounds` / `order` / `nodes` / `node_bounds` + 三个原语）——**内部契约**，不属于公开 API |
-| `spatial/detail/BvhBuilders.hpp` | `MedianSplit`、`SahSplit`、`buildTopDown`、`SahBuild`、`MedianBuild`——内部 |
-| `spatial/detail/BvhRefit.hpp` | `refitNodes(nodes, node_bounds, order, prim_bounds)`：由图元重算叶子、由孩子重算父亲——内部 |
-| `spatial/detail/BvhTopologyCheck.hpp` | `orderIsPermutation`、`nodesFitPrimitives`、`measuredHeight`、`installableHeight`（恢复的唯一接受检查）——内部 |
-| `spatial/detail/VolumeTraits.hpp` | `VolumeTraits<V>` 与 `VolumeTraits<Aabb<T>>`——内部 |
+| `spatial/Bvh.hpp` | `Bvh<T, Volume = Aabb>`: `add` / `addRange` / `update` / `reserve` / `clear`, `primCount` / `empty` / `isBuilt`, `seal` / `isSealed`, `forEachOverlap` / `forEachRay`, `refit`, `validate`, `qualityReport`, `primOrder`, `topology` / `topologyView` / `restoreTopology`; `kBvhMaxDepth = 64` |
+| `spatial/BvhTopology.hpp` | pure vocabulary, **standard library only**: `BvhNodeTopology{offset, count}` (one node's topology, a value type with `==` and a `static_assert` of trivial copyability); `BvhTopology{nodes, order, depth}` (a whole tree's shape, `primitiveCount()` / `view()` / `==`); `BvhTopologyView{nodes, order, depth}` (the borrowed form of the same shape, `primitiveCount()` / `empty()`, 2.15) |
+| `spatial/TriangleBvh.hpp` | `TriangleSource` (the `concept` of a triangle source); `registerTriangles` / `buildTriangleBvh` / `restoreTriangleBvh` (a view overload and a move overload, 2.14) |
+| `spatial/BvhBuilder.hpp` | `BvhBuildQuality{kFast, kSah}`; `BvhBuildAlgorithm` (the `concept` of a build algorithm); `BvhBuilder`: `leafSize` / `maxDepth` / `quality`, `build(bvh)`, `buildWith(bvh, algorithm)`; `RestoreTopology{shape}` (installs a stored grouping as a build algorithm) |
+| `spatial/detail/BvhBuildJob.hpp` | `BuildJob<T, Volume>` (`prim_bounds` / `order` / `nodes` / `node_bounds` + the three primitives) - an **internal contract**, not public API |
+| `spatial/detail/BvhBuilders.hpp` | `MedianSplit`, `SahSplit`, `buildTopDown`, `SahBuild`, `MedianBuild` - internal |
+| `spatial/detail/BvhRefit.hpp` | `refitNodes(nodes, node_bounds, order, prim_bounds)`: recompute a leaf from its primitives and a father from its children - internal |
+| `spatial/detail/BvhTopologyCheck.hpp` | `orderIsPermutation`, `nodesFitPrimitives`, `measuredHeight`, `installableHeight` (the single acceptance check for restoring) - internal |
+| `spatial/detail/VolumeTraits.hpp` | `VolumeTraits<V>` and `VolumeTraits<Aabb<T>>` - internal |
 
-完整签名与注释在头文件；本文件只记录归属、边界与理由。
+The full signatures and comments are in the headers; this page records only ownership, boundaries and reasons.
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-- **C1**：登记不建树；未构建的树查询返回空。
-- **C2**：构建对同一输入与配置产生同构的树；不保证等价元素的相对顺序。
-- **C3**：重叠查询结果是超集；精确判定由调用方对图元自己做。
-- **C4**：零方向射线不产生访问，不产生 NaN。
-- **C5**：`refit` 不改拓扑，只重算盒子；叶子因此可能变松。
-- **C6**：`validate()` 允许分配且只用于开发期；查询路径不分配。
-- **C7**：容量足够时重建不产生新分配。
-- **C8**：恢复只接受自洽的拓扑（见 F8）；视图与拥有值两个入口读同一份检查（`detail::installableHeight()`）；不自洽 = 不建树，不是部分恢复。
-- **C9**：`refit()` 与两条恢复路径共用 `detail::refitNodes()`——盒子的定义只有一处，且它写不到组合学。
-- **C10**：三角形树的图元编号只有一处定义：`registerTriangles()`（primitive id == 三角形序号），`Mesh` 与 `Geometry` 都走它。
-- **C11**：`registerTriangles()` / `buildTriangleBvh()` / `restoreTriangleBvh()` 不抛异常：不可用的输入是 `false`（可已登记前缀，调用方丢弃那棵树）。
-- **C12**：`shape_.nodes` 与 `node_bounds_` 恒同长：只有 `appendNode()` 能增长二者，`refitNodes()` 只写后者。
-- **C13**：封存是终态：`seal()` 之后写接口全部抛 `logic_error`，唯一变回来的是 `clear()`（3.10）。
-- **I1 / I2 / I3**：见 2.5。
-- **R1**：批量登记一次预留；逐条 `add` 只用于少量图元。
-- **R2**：任何输入都必须产出 `validate()` 通过的树，或明确不建，不得崩溃。
-- **R3**：查询 `const` 且无分配，可并发调用；写入接口不可并发。
-- **R4**：`Bvh.hpp` 不依赖 `BvhBuilder.hpp`；`check_geom_layering.py` 规则 6 强制。
-- **R5**：两条路径恢复出的树与重建出的树对同一查询逐条相同；恢复不引入第二条构建内核（视图走 `buildWith`，拥有值走 `restoreTopology`，两者都用 `refitNodes()` 长肉）。
-- **R6**：`Mesh` 与 `TriangleStream` 各有一个 `static_assert(TriangleSource<...>)`：两侧的三角形契约不许分叉。
-- **R7**：封存树上的查询回调收到叶盒而不是图元盒；它仍然**包含**图元，所以超集语义（`C3`）不变。
-- **N1**：查询回调拿到的盒子是保守的：可变树上它是图元自己的盒，封存树上它是叶盒（`R7`）；两种都不是精确相交的结论。
-- **N2**：反复 `update` + `refit` 会让叶子变松（`C5`）：质量退化，答案仍然正确。
-- **N3**：封存树拒绝 `add` / `addRange` / `update` / `refit` / `reserve` / `restoreTopology` / 构建（`C13`）。
-## 6. 注意事项与陷阱
+- **C1**: registration does not build the tree; a query on an unbuilt tree returns empty.
+- **C2**: building produces an isomorphic tree for the same input and configuration; the relative order of equivalent elements is not guaranteed.
+- **C3**: an overlap query's result is a superset; the exact test is the caller's own business on the primitive.
+- **C4**: a zero-direction ray produces no visits and no NaN.
+- **C5**: `refit` does not change the topology and only recomputes boxes; the leaves may therefore loosen.
+- **C6**: `validate()` may allocate and is for development time only; the query path allocates nothing.
+- **C7**: a rebuild allocates nothing new when the capacity is sufficient.
+- **C8**: restoring accepts only a self-consistent topology (see F8); the view entry and the owned-value entry read the same check (`detail::installableHeight()`); inconsistent means no tree, not a partial restore.
+- **C9**: `refit()` and the two restore paths share `detail::refitNodes()` - the box has one definition, and it cannot write the topology.
+- **C10**: a triangle tree's primitive numbering has one definition only: `registerTriangles()` (primitive id == triangle index), which both `Mesh` and `Geometry` go through.
+- **C11**: `registerTriangles()` / `buildTriangleBvh()` / `restoreTriangleBvh()` do not throw: unusable input is `false` (a prefix may already be registered, and the caller discards that tree).
+- **C12**: `shape_.nodes` and `node_bounds_` are always the same length: only `appendNode()` can grow both, and `refitNodes()` writes only the latter.
+- **C13**: sealing is final: after `seal()` every write interface throws `logic_error`, and the only way back is `clear()` (3.10).
+- **I1 / I2 / I3**: see 2.5.
+- **R1**: bulk registration reserves once; one-at-a-time `add` is for few primitives.
+- **R2**: any input must produce a tree that passes `validate()`, or an explicit refusal to build; it must not crash.
+- **R3**: queries are `const` and allocate nothing, so they may be called concurrently; the write interfaces may not.
+- **R4**: `Bvh.hpp` does not depend on `BvhBuilder.hpp`; rule 6 of `check_geom_layering.py` enforces it.
+- **R5**: the trees restored by both paths answer the same query item by item as a rebuilt tree; restoring introduces no second build kernel (the view goes through `buildWith`, the owned value through `restoreTopology`, and both flesh out the boxes with `refitNodes()`).
+- **R6**: `Mesh` and `TriangleStream` each carry a `static_assert(TriangleSource<...>)`: the two sides' triangle contract may not diverge.
+- **R7**: a query callback on a sealed tree receives the leaf box rather than the primitive box; it still **contains** the primitive, so the superset semantics (`C3`) are unchanged.
+- **N1**: the box handed to a query callback is conservative: on a mutable tree it is the primitive's own box, on a sealed tree it is the leaf box (`R7`); neither is a statement of exact intersection.
+- **N2**: repeated `update` + `refit` loosens the leaves (`C5`): quality degrades and the answers stay correct.
+- **N3**: a sealed tree refuses `add` / `addRange` / `update` / `refit` / `reserve` / `restoreTopology` and building (`C13`).
+## 6. Caveats and Traps
 
-- **P1**：叶子盒是保守合并，查询结果是**超集**。怎么错：把回调里的命中当成最终答案，选中了其实没相交的图元。
-  怎么判：用暴力全扫做对照，断言“全扫结果 ⊆ BVH 结果”。怎么防：回调里对图元做精确相交。
-- **P2**：左孩子下标是 `parent + 1`，右孩子是 `node.offset`。怎么错：照抄线性 BVH 的 `node.offset - 1` 当左孩子，
-  遍历到自己的父亲或越界。怎么判：小规模手算节点数组下标，或 `validate()` 报 I1 失败。怎么防：只用 `index + 1` 与
-  `node.offset` 两种写法。
-- **P3**：`PrimId` 是 32 位。怎么错：超过 40 亿图元时溢出（实际不可能，但 `add` 会返回 `kInvalidPrim`，调用方要检查）。
-- **P4**：SAH 退化成“全在一侧”时不处理会无限递归。怎么错：栈溢出。怎么判：`SahSplit` 返回 0。怎么防：`buildTopDown`
-  检测到退化划分立即改走中位数切分，中位数切分至少把区间分成两段。
-- **P5**：`leaf_size` 与 `max_depth` 相互作用。怎么错：`max_depth` 太小会让叶子远超 `leaf_size`（树被截断，叶子变成大块）。
-  怎么判：`qualityReport().depth` 与 `leaf_count`。怎么防：`kBvhMaxDepth = 64` 远大于正常树的深度，只在极端输入时才触发。
-- **P6**：`update` 之后不 `refit` 就查询。怎么错：叶子盒还是旧的，漏掉移动后的图元。怎么判：`isBuilt()` 只反映“建过”，
-  不反映“脏”。怎么防：`update` 后必须 `refit()`，或者重建。
-- **P7**：浮点 NaN 盒子。怎么错：`merged` 传播 NaN，整条祖先链失效。怎么判：`VolumeTraits::isFinite`。怎么防：登记前检查，
-  或接受“这棵树的查询会漏掉该图元”。
-- **P8**：把 `BvhNodeTopology::offset` 当成“两个子下标”存或读。怎么错：内部节点的 `offset` 是**右孩子**下标（左孩子恒为
-  `parent + 1`），按线性 BVH 的两下标写文件，恢复后的遍历会跳到父亲的兄弟。怎么判：`validate()` 的包含性检查失败，
-  或恢复直接返回 0（右孩子必须严格在左孩子之后）。怎么防：只以一个字段的语义（2.4）编解码，文件里也只出现这一个口径。
-- **P9**：忘了 `primOrder()`。怎么错：叶子区间指向顺序数组，而顺序数组成了恒等排列——每个叶子的图元集合全错，
-  查询结果**错但看起来正常**。怎么判：`validate()` 的排列检查。怎么防：拓扑、顺序与高度是同一个值（`BvhTopology`），
-  编解码与恢复都只碰这一个值，没有“只带了一半”的调用形态。
-- **P10**：对封存的树调 `update` / `refit`，或把回调里的叶盒当成图元盒。怎么错：前者抛 `logic_error`（响亮，好办）；
-  后者**不报错**——叶盒比图元盒大，拿它当“这个图元在哪”会给出一块包含邻居盒的区域，例如高亮框、包围体报告。
-  怎么判：需要精确盒时回调里自己做图元盒，或看 `isSealed()`。怎么防：封存的理由必须是“这棵树只回答有哪些图元”，
-  需要逐图元几何的消费者不要封存。
+- **P1**: leaf boxes are conservative merges, so the query result is a **superset**. How it goes wrong: taking the hits in the callback as the final answer and selecting a primitive that does not intersect.
+  How to detect: compare against a brute-force full scan and assert "full scan ⊆ BVH result". How to prevent: run the exact intersection on the primitive inside the callback.
+- **P2**: the left child index is `parent + 1`, the right child is `node.offset`. How it goes wrong: copying a linear BVH's `node.offset - 1` as the left child and
+  traversing into your own parent or out of bounds. How to detect: work out the node indices by hand on a small case, or `validate()` reporting an I1 failure. How to prevent: use only the two spellings `index + 1` and
+  `node.offset`.
+- **P3**: `PrimId` is 32-bit. How it goes wrong: it overflows past 4 billion primitives (practically impossible, but `add` returns `kInvalidPrim`, and the caller has to check).
+- **P4**: an SAH split that degenerates into "everything on one side" recurses forever if unhandled. How it goes wrong: stack overflow. How to detect: `SahSplit` returns 0. How to prevent: `buildTopDown`
+  switches to a median split as soon as it sees a degenerate partition, and a median split always cuts the range into two.
+- **P5**: `leaf_size` and `max_depth` interact. How it goes wrong: too small a `max_depth` leaves the leaves far above `leaf_size` (the tree is truncated and the leaves become large blocks).
+  How to detect: `qualityReport().depth` and `leaf_count`. How to prevent: `kBvhMaxDepth = 64` is far above a normal tree's depth and is reached only on extreme input.
+- **P6**: querying after `update` without `refit`. How it goes wrong: the leaf boxes are still the old ones and a moved primitive is missed. How to detect: `isBuilt()` reflects "has been built",
+  not "is dirty". How to prevent: `refit()` after `update`, or rebuild.
+- **P7**: a floating-point NaN box. How it goes wrong: `merged` propagates the NaN and the whole ancestor chain becomes unusable. How to detect: `VolumeTraits::isFinite`. How to prevent: check before registering,
+  or accept that "this tree's queries will miss that primitive".
+- **P8**: storing or reading `BvhNodeTopology::offset` as "two child indices". How it goes wrong: an internal node's `offset` is the **right child** index (the left child is always
+  `parent + 1`), so writing the file the way a linear BVH does and restoring makes the traversal jump to the parent's sibling. How to detect: `validate()`'s containment check fails,
+  or restoring returns 0 outright (the right child must come strictly after the left one). How to prevent: encode and decode with the one field meaning of 2.4, and let only that one convention appear in the file.
+- **P9**: forgetting `primOrder()`. How it goes wrong: a leaf range points into the order array while the order array is the identity permutation - every leaf's primitive set is wrong, and
+  the query results are **wrong but look normal**. How to detect: `validate()`'s permutation check. How to prevent: topology, order and height are one value (`BvhTopology`),
+  and encoding, decoding and restoring only touch that one value; there is no "only half of it" call shape.
+- **P10**: calling `update` / `refit` on a sealed tree, or taking the leaf box in a callback for the primitive box. How it goes wrong: the former throws `logic_error` (loud, easy);
+  the latter **reports nothing** - the leaf box is larger than the primitive box, so using it as "where this primitive is" gives a region containing the neighbours' boxes, in a highlight box or a bounding-volume report, for example.
+  How to detect: compute the primitive box in the callback when an exact box is needed, or look at `isSealed()`. How to prevent: the reason to seal must be "this tree answers only which primitives are there" - a consumer that needs per-primitive geometry must not seal.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 否决 | 理由 |
+| # | Rejected | Reason |
 |---|---|---|
-| D1 | 把 BVH 放 `graphics` 或 `brep` | 两侧都要用；放任一侧都是回边（`G2`）。放在 `geometry` 与 `Aabb` / `Ray` 同层（`G1`）。 |
-| D2 | `Obb` 作为第二个 `Volume` 一起交付 | 实测否决：两两合并没有精确解，PCA 拟合十六个角点在细长零件场景下叶子表面积约为 `Aabb` 树的 **2 倍**，且拟合出的盒子容不下刚拟合的角点（差一个舍入步），包含性要加容差。见 `ADR-2026-11-07-bvh-as-structure-plus-builder.md`。 |
-| D3 | 支持动态插入 / 删除 | 消费者（拾取、LiDAR）都是“模型改完重建”，动态平衡树的复杂度没有对应收益（`G8`）。 |
-| D4 | 把构建算法写进 `Bvh`（`build(kSah)` 一个枚举切完） | 加一种算法就改核心类型；外来算法无法注入；树的编译单元被迫带上全部构建内核（`G9`、`G5`）。 |
-| D5 | 构建器继承 `BvhBuilder` 做多态 | 构建是偶发的一次性动作，虚函数与堆分配换来的是“运行时可换算法”这种没人需要的灵活性（`G8`）。 |
-| D6 | `buildWith` 用 `std::function<void(BuildJob&)>` | 每次构建一次类型擦除；模板参数零成本，且构建本来就在头文件里（`G10`）。 |
-| D7 | 预分配 `2·⌈n/leaf⌉+1` 的节点窗口 | 叶子数取决于切分结果（`5` 个图元会切成 `2+3` 两个叶子），这个上界会越界；改由 `appendNode()` 自然增长 + 保留容量。 |
-| D8 | 内部节点存两个子下标 | 多 4 字节/节点；`parent + 1` 规则同样清晰，代价只是一处下标写法（`G10`）。 |
-| D9 | 查询返回 `std::vector<PrimId>` | 最近命中这类单结果查询也要分配；回调 + 可提前终止覆盖全部用法（`G7`）。 |
-| D10 | 构建用显式堆栈 | `max_depth` 已给出递归深度上界，显式栈只是把一个上界换成一次堆分配（`G10`）。 |
-| D11 | 叶子存图元副本 | 图元（网格、三角形）可能很大；树只存包围体与 id，几何留在原处（`G13`）。 |
-| D12 | 把 BVH 放进 `math` | 有拓扑、有构建流程的结构不是数值词汇（`geometry-primitives.md` 2.1、`G1`）。 |
-| D13 | 存储/恢复包围盒 | 盒是位置的函数，存了就有“文件里的盒与文件里的顶点各自演化”的不一致（`28 B/三角形`，还要处理字节序与容差）；存拓扑只有约 `8 B/三角形`，恢复时按当前图元重算（2.13，`G10`、`G13`）。 |
-| D14 | 给 `Bvh` 加 `save()` / `load()` | 文件格式归 `robotics/io`（`G2`）；而 `load()` 会把字节读成树，绕过恢复路径上唯一的那份检查。恢复只有两个入口：视图走 `RestoreTopology`（构建算法），拥有值走 `restoreTopology()`（移动），两者读同一份 `installableHeight()`。 |
-| D15 | 给缓存算内容指纹 | 陈旧缓存只会让树变差（2.13），指纹只能提升质量、不能提升正确性，却要在保存与加载各扫一遍全量数据（`G8`）。 |
-| D16 | 一个 `TriangleBvh` 类包住 `Bvh` 与三角形源 | 会挡住已有的共享：`Mesh::sharedBvh()`、`Geometry::adoptBvh()` 与拾取都按 `Bvh<double>` 共享（一个引用计数）。缺的从来不是“又一个树类型”，而是“三角形 → 包围体”的登记规则；规则做成自由函数，树仍是 `Bvh`（`G8`、`G7`）。 |
-| D17 | 把登记规则做成 `BvhBuildAlgorithm`（交给 `buildWith`） | 算法接口面向 `BuildJob` 的内部契约，而登记是“数据第一步”不是“决定形状”；`RestoreTopology` 又要求“图元已登记”这个前提，两者不在同一层，混在一起会让两者互相猜测（`G1`、`G4`）。 |
-| D18 | `BvhTopology` 作为 `Bvh` 的内部类 | 形状与精度无关，而 `Bvh<float>` / `Bvh<double>` 都显式实例化，嵌套会给同一个布局造两个互不可赋值的类型，`.vbtp` 的编解码器还得为一个 POD 拉进整棵树的头；而且层序是反的——`Bvh.hpp` 依赖形状头，不是相反（`G2`、`G10`）。形状是**可以没有树而存在**的值。 |
-| D19 | 形状是树的**转录**（前一版：`detail::BvhNode` + `BvhNodeTopology` 两份） | 同一约定两份结构体，每次 `topology()` 都付整份拷贝（38M 三角形≈`1 GB`），恢复再逐个 `appendNode()` 拄两遍。改为“形状是树的存储”后，视图零拷贝、恢复是移动；代价只是遍历每节点多一次载入，而 `refit()` 只扫体积那条反而更集中（`G1`、`G10`）。 |
-| D20 | 封存做成另一个类型（`SealedBvh` / `BvhView`） | 两态的差别只有“还留不留图元盒”，把它做成一个类型就要把唯一的最近优先剪枝遍历复制一份，或把遍历写成对两种存储的模板——前者两份真值（`G7`），后者只是把一个状态换成一个编译期参数、外层签名照旧。代价放在“一个状态字段都没有”上：状态由“建成了、且图元盒为空”推出来（`isSealed()`），所以没有互相矛盾的标志位。见 `ADR-2026-11-10-bvh-seal-and-coarse-picking-tree.md`。 |
+| D1 | put the BVH in `graphics` or `brep` | both sides need it; either side is a back edge (`G2`). It lives in `geometry`, on the same layer as `Aabb` / `Ray` (`G1`). |
+| D2 | ship `Obb` as a second `Volume` | rejected by measurement: pairwise merging has no exact solution, and PCA fitting of the sixteen corners gives leaf surface areas about **twice** those of an `Aabb` tree in elongated-part scenes, while the fitted box does not even contain the corners it was fitted to (off by one rounding step), so containment would need a tolerance. See `ADR-2026-11-07-bvh-as-structure-plus-builder.md`. |
+| D3 | support dynamic insertion / removal | the consumers (picking, LiDAR) are all "rebuild after the model changes", and a dynamically balanced tree's complexity buys nothing corresponding (`G8`). |
+| D4 | build the algorithm into `Bvh` (one `build(kSah)` enum switch) | adding an algorithm changes the core type; an external algorithm cannot be injected; the tree's translation unit is forced to carry every build kernel (`G9`, `G5`). |
+| D5 | builders inherit from `BvhBuilder` for polymorphism | building is an occasional one-off action, and virtual functions plus heap allocation buy "swappable at run time" flexibility nobody needs (`G8`). |
+| D6 | `buildWith` takes a `std::function<void(BuildJob&)>` | one type erasure per build; a template parameter is free, and building already lives in the header (`G10`). |
+| D7 | pre-allocate a node window of `2·⌈n/leaf⌉+1` | the leaf count depends on the split (`5` primitives split into `2+3`), so that bound overflows; instead `appendNode()` grows naturally and the capacity is kept. |
+| D8 | internal nodes store two child indices | 4 more bytes per node; the `parent + 1` rule is just as clear, and the cost is one place where the index is written (`G10`). |
+| D9 | queries return `std::vector<PrimId>` | a single-result query such as the nearest hit would allocate too; a callback with early termination covers every use (`G7`). |
+| D10 | build with an explicit stack | `max_depth` already gives a bound on the recursion depth, and an explicit stack merely trades that bound for a heap allocation (`G10`). |
+| D11 | leaves store copies of the primitives | a primitive (mesh, triangle) can be large; the tree stores only bounding volumes and ids, and the geometry stays where it is (`G13`). |
+| D12 | put the BVH into `math` | a structure with a topology and a build flow is not numeric vocabulary (`geometry-primitives.md` 2.1, `G1`). |
+| D13 | store / restore the bounding boxes | a box is a function of the position, so storing it creates the inconsistency of "boxes in the file and vertices in the file evolving separately" (`28 B/triangle`, plus byte order and tolerances); storing the topology costs about `8 B/triangle`, and the boxes are recomputed from the current primitives on restore (2.13, `G10`, `G13`). |
+| D14 | give `Bvh` a `save()` / `load()` | file formats belong to `robotics/io` (`G2`); and `load()` would read bytes into a tree, bypassing the single check on the restore path. Restoring has exactly two entries: a view goes through `RestoreTopology` (a build algorithm), an owned value through `restoreTopology()` (a move), and both read the same `installableHeight()`. |
+| D15 | compute a content fingerprint for the cache | a stale cache only makes the tree worse (2.13), so a fingerprint can raise quality but not correctness, while it would have to scan all the data on both save and load (`G8`). |
+| D16 | a `TriangleBvh` class wrapping `Bvh` and a triangle source | it would block sharing that already exists: `Mesh::sharedBvh()`, `Geometry::adoptBvh()` and picking all share by `Bvh<double>` (one reference count). What was missing was never "yet another tree type" but the "triangles → bounding volumes" registration rule; the rule becomes free functions and the tree stays `Bvh` (`G8`, `G7`). |
+| D17 | make the registration rule a `BvhBuildAlgorithm` (handed to `buildWith`) | the algorithm interface faces `BuildJob`'s internal contract, while registration is "the first step over the data" rather than "deciding the shape"; `RestoreTopology` in turn presupposes "the primitives are already registered", so the two are not on the same layer and mixing them would make each guess about the other (`G1`, `G4`). |
+| D18 | make `BvhTopology` a nested type of `Bvh` | the shape has nothing to do with precision, while `Bvh<float>` / `Bvh<double>` are both explicitly instantiated, so nesting would create two mutually unassignable types for one layout, and a `.vbtp` codec would have to pull the whole tree's header in for one POD; and the layering would be backwards - `Bvh.hpp` depends on the shape header, not the other way round (`G2`, `G10`). The shape is a value that **can exist without a tree**. |
+| D19 | the shape as a **transcription** of the tree (the previous version: `detail::BvhNode` plus `BvhNodeTopology`, two copies) | one convention in two structs, so every `topology()` paid for a full copy (38M triangles ≈ `1 GB`), and restoring appended node by node twice. With "the shape is the tree's storage", the view is zero-copy and restoring is a move; the only cost is one more load per node during traversal, while `refit()` touches the volume array only and is more concentrated (`G1`, `G10`). |
+| D20 | sealing as another type (`SealedBvh` / `BvhView`) | the two states differ only in "whether the primitive boxes are kept", and making that a type would mean duplicating the single nearest-first pruning traversal, or writing the traversal as a template over the two storages - the former gives two sources of truth (`G7`), the latter merely trades a state for a compile-time parameter while the outer signature stays. The cost is paid on "no state field at all": the state is derived from "built, and the primitive boxes are empty" (`isSealed()`), so no flag can contradict the data. See `ADR-2026-11-10-bvh-seal-and-coarse-picking-tree.md`. |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 |
+| # | Criterion | Case |
 |---|---|---|
-| T1 | 逐个 `add` 与 `addRange` 结果一致 | `tests/test_geom_spatial/BvhBuildTest.cpp` |
-| T2 | `update` + `refit` 后 `validate` 通过且查询与重建一致 | `BvhBuildTest.cpp` |
-| T3 | 两档质量 × 三种叶子规模 × 深度截断 × 随机 1000 盒 | `BvhBuildTest.cpp` |
-| T4 | 重叠查询覆盖暴力全扫结果（超集语义） | `BvhQueryTest.cpp` |
-| T5 | 射线查询：命中、未命中、`max_t` 剪枝、最近命中只回调一次 | `BvhQueryTest.cpp` |
-| T6 | 构建后 `validate()` 为真；破坏 I1 能被检出 | `BvhBuilderContractTest.cpp` |
-| T7 | 重建后 `capacity` 不增长 | `BvhBuilderContractTest.cpp` |
-| T8 | 空树查询不崩、未构建的树查询返回空 | `BvhBuilderContractTest.cpp` |
-| T9 | SAH 树的重叠查询节点访问数不高于中位数树（随机场景） | `BvhBuildTest.cpp`（节点访问计数经 `qualityReport` 的叶子表面积间接断言） |
-| T10 | 拓扑 → 恢复 → 查询逐条相同；不自洽的拓扑被拒；两条恢复路径同答 | `BvhBuildTest.ARestoredTopologyAnswersTheSameQueries`、`ARestoredTopologyThatDoesNotDescribeTheTreeIsRefused`、`AnOwnedTopologyIsAdoptedByTheTreeItself`、`ATopologyViewBorrowsTheTreesOwnArrays`、`TriangleBvhTest.AMovedShapeIsAdoptedInsteadOfCopied` |
-| T11 | primitive id == 三角形序号；一条调用建树；坏角点与 NaN 被拒；恢复与重建同答；外来形状被拒；非空树不被重编号 | `tests/test_geom_spatial/TriangleBvhTest.cpp` |
-| T12 | 封存前后重叠与射线查询报告同一批图元；`primCount` 不变；`validate` 仍为真；六个写接口都抛 `logic_error`；`clear()` 后可变；未建成时封存无操作 | `tests/test_geom_spatial/BvhQueryTest.cpp`（`*Sealed*`、`ClearingASealedTreeMakesItMutableAgain`） |
+| T1 | one-at-a-time `add` and `addRange` agree | `tests/test_geom_spatial/BvhBuildTest.cpp` |
+| T2 | after `update` + `refit`, `validate` holds and the queries match a rebuild | `BvhBuildTest.cpp` |
+| T3 | two quality levels × three leaf sizes × depth truncation × 1000 random boxes | `BvhBuildTest.cpp` |
+| T4 | an overlap query covers a brute-force full scan (superset semantics) | `BvhQueryTest.cpp` |
+| T5 | ray query: hit, miss, `max_t` pruning, nearest hit calls back once | `BvhQueryTest.cpp` |
+| T6 | `validate()` is true after a build; breaking I1 is detected | `BvhBuilderContractTest.cpp` |
+| T7 | `capacity` does not grow after a rebuild | `BvhBuilderContractTest.cpp` |
+| T8 | querying an empty tree does not crash; querying an unbuilt tree returns empty | `BvhBuilderContractTest.cpp` |
+| T9 | an SAH tree's overlap query visits no more nodes than a median tree (random scenes) | `BvhBuildTest.cpp` (node visits asserted indirectly through `qualityReport`'s leaf surface area) |
+| T10 | topology → restore → identical queries; an inconsistent topology is refused; both restore paths answer alike | `BvhBuildTest.ARestoredTopologyAnswersTheSameQueries`, `ARestoredTopologyThatDoesNotDescribeTheTreeIsRefused`, `AnOwnedTopologyIsAdoptedByTheTreeItself`, `ATopologyViewBorrowsTheTreesOwnArrays`, `TriangleBvhTest.AMovedShapeIsAdoptedInsteadOfCopied` |
+| T11 | primitive id == triangle index; one call builds; bad corners and NaN are refused; restore and rebuild answer alike; a foreign shape is refused; a non-empty tree is not renumbered | `tests/test_geom_spatial/TriangleBvhTest.cpp` |
+| T12 | overlap and ray queries report the same primitives before and after sealing; `primCount` is unchanged; `validate` still holds; all six write interfaces throw `logic_error`; `clear()` restores mutability; sealing an unbuilt tree is a no-op | `tests/test_geom_spatial/BvhQueryTest.cpp` (`*Sealed*`, `ClearingASealedTreeMakesItMutableAgain`) |
 
-现有 28 个 BVH 用例与既有 geometry 用例同批运行：`build/bin/test_geom_spatial`（256 个全绿，2026-11-09）。
+The 28 existing BVH cases run in the same batch as the existing geometry cases: `build/bin/test_geom_spatial` (256 green, 2026-11-09).
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-代码在 `spatial/Bvh.hpp`、`spatial/BvhBuilder.hpp`、`spatial/BvhTopology.hpp`、`spatial/TriangleBvh.hpp`、
-`spatial/detail/{RaySlab,VolumeTraits,BvhBuildJob,BvhBuilders,BvhRefit,BvhTopologyCheck}.hpp`；
-`Aabb::intersectWith()` 与盒实体的射线查询直接调用 `preparedRayBoxInterval()`（`geometry-ray.md` 的唯一 slab 实现）；
-`src/base/geom/src/Instantiations.cpp` 导出 `Bvh<float>` / `Bvh<double>`。
-拓扑存储与恢复是 F8；消费它的载入侧见 `robotics-io-design.md`（`.vbtp`）。
-封存是 F10：`Geometry::prepareBvh()` 建完就封存（绘制帧的树永远是只读结果），其余消费者不受影响。
+The code is in `spatial/Bvh.hpp`, `spatial/BvhBuilder.hpp`, `spatial/BvhTopology.hpp`, `spatial/TriangleBvh.hpp` and
+`spatial/detail/{RaySlab,VolumeTraits,BvhBuildJob,BvhBuilders,BvhRefit,BvhTopologyCheck}.hpp`;
+`Aabb::intersectWith()` and the box solids' ray queries call `preparedRayBoxInterval()` directly (the single slab implementation of `geometry-ray.md`);
+`src/base/geom/src/Instantiations.cpp` exports `Bvh<float>` / `Bvh<double>`.
+Topology storage and restore are F8; the loading side that consumes them is in `robotics-io-design.md` (`.vbtp`).
+Sealing is F10: `Geometry::prepareBvh()` seals as soon as it is built (the draw frame's tree is always a read-only result), and the other consumers are unaffected.
 
-### 9.2 已知缺口
+### 9.2 Known gaps
 
-- `Obb` 体积（`D2`）：需要一个“保留两个孩子朝向”的合并，而不是每次合并拟合一个新盒子；在此之前不提供。
-- 并行构建、SIMD 遍历、射线包（packet）遍历：没有消费者（`G8`）。
-- 消费者：`Mesh::buildBvh()` / `Mesh::restoreBvh()`（`graphics-geometry.md` 2.9 / F32）、
-  `Geometry::prepareBvh()`（F33）、`robotics/io` 的 `.vbtp` 缓存；两者都经 `buildTriangleBvh()` /
-  `restoreTriangleBvh()`，因此编号规则只有一份（F9）。
-- 缺少“访问节点数”的直接计数器；目前用 `qualityReport()` 的叶子表面积间接比较质量（T9）。
-- **遍历的两条数组布局还没有 bench 基线**：仓库里没有 BVH 基准目标，所以“每节点多一次载入”的代价尚未用
-  `scripts/callgrind_diff.py` 与 AoS 版本对比过。在建立基准前，`topologyView()` / `restoreTopology()` 的
-  零拷贝是**结构可证**的（指针相等的用例钉着），而遍历吞吐只有定性判断。
+- The `Obb` volume (`D2`): it needs a merge that "keeps both children's orientation" rather than fitting a new box on every merge; it is not offered until then.
+- Parallel building, SIMD traversal, ray packet traversal: no consumer (`G8`).
+- Consumers: `Mesh::buildBvh()` / `Mesh::restoreBvh()` (`graphics-geometry.md` 2.9 / F32),
+  `Geometry::prepareBvh()` (F33), and `robotics/io`'s `.vbtp` cache; both go through `buildTriangleBvh()` /
+  `restoreTriangleBvh()`, so the numbering rule exists once (F9).
+- There is no direct counter for "visited nodes"; quality is compared today indirectly through `qualityReport()`'s leaf surface area (T9).
+- **The two-array traversal layout has no bench baseline yet**: the repository has no BVH benchmark target, so the cost of "one more load per node" has not yet been compared
+  against an AoS version with `scripts/callgrind_diff.py`. Until a baseline exists, the zero-copy of `topologyView()` / `restoreTopology()`
+  is **structurally provable** (the pointer-equality cases pin it), while traversal throughput is only a qualitative judgement.
 
-### 9.3 兼容性与迁移
+### 9.3 Compatibility and migration
 
-`Bvh<T>` 的布局是两条 AoS 数组（节点组合学与节点体积分开），它是显式实例化的 DLL 类，所以与一条 AoS 数组的版本
-**ABI 不兼容**：消费者需要重新编译，源码级接口保持（`add` / 查询 / `refit` / `validate` / `primOrder` 不变）。
-`topology()` 返回拥有的值；`topologyView()`、`restoreTopology()`、`Mesh::restoreBvh(BvhTopology)`
-与 `restoreTriangleBvh(..., BvhTopology)`。`RestoreTopology` 住在 `BvhBuilder.hpp`——
-它本来就是以“交给 `buildWith`”的方式使用的，包含 `BvhBuilder.hpp` 的调用方不需要改。
+`Bvh<T>`'s layout is two AoS arrays (node topology and node volumes apart), and it is an explicitly instantiated DLL class, so it is
+**ABI-incompatible** with a one-AoS-array version: consumers must recompile, and the source-level interface stays (`add` / queries / `refit` / `validate` / `primOrder` unchanged).
+`topology()` returns an owned value; `topologyView()`, `restoreTopology()`, `Mesh::restoreBvh(BvhTopology)`
+and `restoreTriangleBvh(..., BvhTopology)` are the borrow/move entries. `RestoreTopology` lives in `BvhBuilder.hpp` -
+it was always used by "handing it to `buildWith`", so a caller that includes `BvhBuilder.hpp` needs no change.
 
-封存是**纯增量**：类布局不变（没有新成员）、全是头文件内联函数，所以不破 ABI；唯一的语义变化
-是封存树上六个写接口会抛 `logic_error`——而它们今天只有测试在调。`primCount()` / `empty()` 在封存树上改从
-`shape_.order.size()` 回答，对可变树逐位不变。
+Sealing is a **pure addition**: the class layout is unchanged (no new member) and everything is a header-inline function, so the ABI is not broken; the only semantic change
+is that the six write interfaces throw `logic_error` on a sealed tree - and only tests call them today. `primCount()` / `empty()` answer from
+`shape_.order.size()` on a sealed tree, identical bit for bit on a mutable one.
 
-## 10. 参考
+## 10. References
 
-- 代码：`src/base/geom/sdk/vine/geom/spatial/Bvh.hpp`、`BvhBuilder.hpp`、`BvhTopology.hpp`、`TriangleBvh.hpp`、
-  `src/base/geom/sdk/vine/geom/spatial/detail/VolumeTraits.hpp`、`BvhBuildJob.hpp`、`BvhBuilders.hpp`、`RaySlab.hpp`。
-- 相关设计：`geometry-ray.md`（射线与 slab 实现）、`geometry-primitives.md`（值类型归属）。
-- 决策：`../decisions/ADR-2026-11-07-bvh-as-structure-plus-builder.md`。
-- 外部：Wald, *On fast Construction of SAH-based Bounding Volume Hierarchies*（binned SAH）；Aila & Laine,
-  *Understanding the Efficiency of Ray Traversal on GPUs*（`parent + 1` 左孩子布局）。
+- Code: `src/base/geom/sdk/vine/geom/spatial/Bvh.hpp`, `BvhBuilder.hpp`, `BvhTopology.hpp`, `TriangleBvh.hpp`,
+  `src/base/geom/sdk/vine/geom/spatial/detail/VolumeTraits.hpp`, `BvhBuildJob.hpp`, `BvhBuilders.hpp`, `RaySlab.hpp`.
+- Related design: `geometry-ray.md` (rays and the slab implementation), `geometry-primitives.md` (where the value types belong).
+- Decision: `../decisions/ADR-2026-11-07-bvh-as-structure-plus-builder.md`.
+- External: Wald, *On fast Construction of SAH-based Bounding Volume Hierarchies* (binned SAH); Aila & Laine,
+  *Understanding the Efficiency of Ray Traversal on GPUs* (the `parent + 1` left-child layout).
