@@ -1,402 +1,401 @@
-# graphics 几何：通道、图元、实例、revision
+# graphics geometry: channels, primitives, instances, revision
 
-> **状态**：现行
-> **最后核对**：2026-11-07
-> **范围**：`Geometry` 通道集、`Primitive` 一次 draw、实例流、revision 与存储共享。
-> **权威来源**：`Geometry.hpp` / `Primitive.hpp` / `Buffer.hpp` / `ShaderAbi.hpp` / `Mesh.hpp`。
-> **待办**：`../backlog/graphics.md`
+> **Status**: current
+> **Last verified**: 2026-11-07
+> **Scope**: the `Geometry` channel set, one `Primitive` draw, instance streams, revision and storage sharing.
+> **Sources**: `Geometry.hpp` / `Primitive.hpp` / `Buffer.hpp` / `ShaderAbi.hpp` / `Mesh.hpp`.
+> **Backlog**: `../backlog/graphics.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-本文件定义 graphics 几何：通道、图元、实例、revision 的现行设计：先给对象与边界，再给功能、接口、约束与验收。
+This file defines the current design of graphics geometry: channels, primitives, instances, revision: first the objects and their boundaries, then features, interfaces, constraints and acceptance.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 把 §2 的设计要点落成 §3 的功能点、§4 的接口与 §8 的验收。
-- 让“现在是什么”与“为什么这么定”分开：理由在 §2/§7，历史看 git。
+- Turn §2's design points into §3's features, §4's interfaces and §8's acceptance.
+- Keep "what it is now" separate from "why it was decided that way": the reasons are in §2/§7, history is in git.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不在本文件重复头文件里的完整签名；接口只给契约与指针。
-- 不在本文件保存已关闭的历史或逐轮审查记录。
+- This file does not repeat the full signatures from the headers; an interface gives the contract and a pointer only.
+- This file keeps no closed history or per-round review records.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-> `Geometry` 是通道集，`Primitive` 是一次 draw；实例流是这条 draw 的参数； 形状归几何、字节归 buffer。
+> `Geometry` is a channel set, `Primitive` is one draw; the instance stream is this draw's parameter; shape belongs to geometry, bytes belong to buffers.
 
-## 2. 设计要点
+## 2. Design Points
 
-2.1 **一个对象一个职责**：`Geometry` 只装通道；`Primitive` 只描述一次 draw；材质/程序是几何级默认。
-2.2 **数据即绘制**：装位置通道时自动有一个默认三角形 primitive，避免“有数据却不知道该怎么画”。
-2.3 **通道 = 段 + 步长**：`BufferSlice<float>` + components；切片规则只有一处（`BufferSlice`）。
-2.4 **实例是 draw 的参数**：挂在 `Primitive` 上，不是场景图作用域；没有 `InstanceScope`。
-2.5 **两级 revision**：`Geometry::revision()` 描述形状，`Buffer::revision()` 描述字节。
-2.6 **包围盒按数据缓存**：局部盒键 = positions buffer + 其 revision + 段 + 几何 revision。
-2.7 **几何数据统一 float**：网格与参数化 primitive 只有一套 float 实现，不设精度模板、不设 `Meshf` / `Meshd` 之类别名；
-    索引为 `uint32_t`。几何数据都是局部坐标系下的形状描述，float 覆盖全部现有消费者（机器人 IO、渲染、碰撞），
-    double 没有下游需求，而模板会把精度选择推给每个调用点。`Shape` 是运行时多态边界，一个 `Mesh` 就是全部网格的基类。
-    满足 `G1` / `G4` / `G8`，并以 double 场景下须在调用方自行转换支付 `G10` 成本（今天无此消费者）。
-2.8 **面拓扑由网格类型表达，三角形身份只有一处定义**：`Mesh` 只持有顶点属性与索引存储，不承诺面是三角形、四边形还是
-    多边形（那是子类的）；但“这个网格由哪些三角形组成”只由 `Mesh::triangleCount()` / `Mesh::triangleCorners()` 回答，
-    每个具体网格按自己 `toTriangleMesh()` 的同一条规则实现。三角形序号因此能跨转换稳定：它既是树的 primitive id，
-    也是拾取结果的身份。`MixedMesh` 以 `face_offsets` 描述各面的 corner 范围。满足 `G1` / `G4` / `G6`，并以
-    Quad/Mixed 每次查询按规则现算（不建三角形数组）支付 `G10` 成本。
+2.1 **One object, one responsibility**: `Geometry` holds channels only; `Primitive` describes one draw only; material/program are geometry-level defaults.
+2.2 **Data is the draw**: adding a position channel automatically provides one default triangle primitive, so there is never "data but no idea how to draw it".
+2.3 **Channel = segment + stride**: `BufferSlice<float>` + components; the slicing rule exists in one place (`BufferSlice`).
+2.4 **Instances are a draw parameter**: attached to `Primitive`, not a scene-graph scope; there is no `InstanceScope`.
+2.5 **Two-level revision**: `Geometry::revision()` describes the shape, `Buffer::revision()` describes the bytes.
+2.6 **The bounding box is cached from the data**: local box key = positions buffer + its revision + segment + geometry revision.
+2.7 **Geometry data is uniformly float**: meshes and parametric primitives have one float implementation, with no precision template and no aliases such as `Meshf` / `Meshd`;
+    indices are `uint32_t`. Geometry data is shape description in a local frame, and float covers every existing consumer (robot IO, rendering, collision),
+    while double has no downstream demand and a template would push the precision choice onto every call site. `Shape` is the runtime polymorphism boundary, and one `Mesh` is the base class of all meshes.
+    Satisfies `G1` / `G4` / `G8`, and pays the `G10` cost as caller-side conversion in the double scenario (there is no such consumer today).
+2.8 **Face topology is expressed by the mesh type, and triangle identity has one definition**: `Mesh` holds only vertex attributes and index storage, and promises nothing about whether a face is a triangle, a quad or a
+    polygon (that is the subclass's); but "which triangles make up this mesh" is answered only by `Mesh::triangleCount()` / `Mesh::triangleCorners()`,
+    and each concrete mesh implements it by the same rule as its own `toTriangleMesh()`. A triangle index is therefore stable across conversion: it is both the tree's primitive id
+    and the identity a pick result reports. `MixedMesh` describes each face's corner range with `face_offsets`. Satisfies `G1` / `G4` / `G6`, and pays the `G10` cost as
+    Quad/Mixed computing it by rule on every query (building no triangle array).
 
-2.9 **三角形树是缓存，不是内容**：`Mesh` 缓存一棵 `Bvh<double>`（`bvh()` / `hasBvh()` / `setBvh()` / `buildBvh()` /
-    `clearBvh()`），与 `aabb_` 同一约定——它描述已存的三角形、不持有身份、被任何改变三角形的 setter 丢掉。
-    树用 `double` 而顶点是 `float`：树不是几何数据，是查询用的导引结构（`G13`），而查询射线在所有消费者里都是
-    `Rayd`；把射线窄化成 float 做盒测试会在远离原点处丢掉小叶子盒所需的精度，反过来把 float 顶点加宽进盒是精确的。
-    满足 `G1` / `G13` / `G4`，并以每个网格多一个空 `Bvh` 的存储支付 `G10` 成本。
-    绘制帧是同一条规则的另一份实例：每个 draw 按需派生一棵带钥匙的树（F33），网格源几何在
-    `geometryFromMesh()` 处直接共享网格那棵。
+2.9 **The triangle tree is a cache, not content**: `Mesh` caches a `Bvh<double>` (`bvh()` / `hasBvh()` / `setBvh()` / `buildBvh()` /
+    `clearBvh()`), under the same convention as `aabb_` — it describes the triangles already stored, holds no identity, and is dropped by any setter that changes triangles.
+    The tree is `double` while the vertices are `float`: the tree is not geometry data but a guide structure for queries (`G13`), and query rays are `Rayd` in every consumer;
+    narrowing a ray to float for box tests would lose the precision a small leaf box needs far from the origin, whereas widening float vertices into a box is exact.
+    Satisfies `G1` / `G13` / `G4`, and pays the `G10` cost as one more empty `Bvh` per mesh.
+    The draw frame is another instance of the same rule: each draw derives a keyed tree on demand (F33), and mesh source geometry shares the mesh's own tree directly at
+    `geometryFromMesh()`.
 
-2.10 **一条三角形流，一棵树，两帧**：树的归属单位不是几何也不是网格，而是**一条三角形流**。
-    - 网格帧：一条流是整张网格（序号跨 `toTriangleMesh()` 稳定）；绘制帧：一条流是一个 `Primitive` 的索引段 +
-      几何的位置段 + 拓扑（序号是“这次 draw 的第 n 个三角形”，含 strip / fan）。
-    - 两帧相同的是全部实现（`Bvh<double>`、`BvhBuilder`、`forEachRay` / `forEachOverlap`、钥匙纪律），不同的只有
-      所有者与序号含义——因为它们真的是两条流。
-    - 序号只有一个来源：`graphics` 内部的 `TriangleStream`（`triangleCount()` / `triangleCorners()`），线性扫、建树
-      与精确交都问它，树里的 primitive id 与拾取报出的 `triangleIndex` 因此不可能错位。
-    - 没有树时拾取就是线性扫，所以“有树”是纯增益：结果逐条相同，代价不同。准备时机归消费者（阈值由界面定）。
-    - 满足 `G1`（一个概念一处定义）、`G5`（改动留在自己那一帧）、`G13`（树只描述流，不持有身份）。
+2.10 **One triangle stream, one tree, two frames**: the unit a tree belongs to is neither geometry nor mesh but **one triangle stream**.
+    - Mesh frame: one stream is the whole mesh (indices stay stable across `toTriangleMesh()`); draw frame: one stream is one `Primitive`'s index segment +
+      the geometry's position segment + topology (the index is "the nth triangle of this draw", strip / fan included).
+    - What the two frames share is the whole implementation (`Bvh<double>`, `BvhBuilder`, `forEachRay` / `forEachOverlap`, the key discipline); what differs is
+      only the owner and the meaning of the index — because they really are two streams.
+    - The index has one source: `graphics`' internal `TriangleStream` (`triangleCount()` / `triangleCorners()`), and linear scanning, building and exact intersection all ask it,
+      so the tree's primitive id and the `triangleIndex` a pick reports cannot get out of step.
+    - Without a tree, picking is a linear scan, so "having a tree" is pure gain: the same results one by one, at a different cost. When to prepare it belongs to the consumer (the threshold is set by the UI).
+    - Satisfies `G1` (one concept, one definition), `G5` (a change stays in its own frame), `G13` (the tree only describes a stream and holds no identity).
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 通道
+### 3.1 Channels
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F1 | 规范通道 | positions / normals / texcoords / colour；location 由 `ShaderAbi` 定义。 |
-| F2 | 自定义通道 | location 3 起，`addBuffer(location, AttributeChannel)`。 |
-| F3 | 共享 buffer | `setPositions` / `setNormals` / `setTexcoords2/3` / `setColors` 接收 `intrusive_ptr<const Buffer<float>>`。 |
-| F4 | Arena 切片 | `first_vertex` / `vertex_count`；一个 buffer 装多个几何的顶点。 |
-| F5 | 视图访问 | `scalars()` / `xyz()` / `vec3View()` / `vertexCount()` / `stride()`。 |
+| F1 | Canonical channels | positions / normals / texcoords / colour; locations are defined by `ShaderAbi`. |
+| F2 | Custom channels | From location 3 up, `addBuffer(location, AttributeChannel)`. |
+| F3 | Shared buffers | `setPositions` / `setNormals` / `setTexcoords2/3` / `setColors` take an `intrusive_ptr<const Buffer<float>>`. |
+| F4 | Arena slices | `first_vertex` / `vertex_count`; one buffer holds the vertices of several geometries. |
+| F5 | View access | `scalars()` / `xyz()` / `vec3View()` / `vertexCount()` / `stride()`. |
 
-### 3.2 图元
+### 3.2 Primitives
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F6 | 一次 draw | `Primitive{topology, indices, material, program}`。 |
-| F7 | 多 part | 一个 `Geometry` 多条 `Primitive`，共享顶点通道。 |
-| F8 | 索引段 | `BufferSlice<uint32_t>`；空 = 非索引；同一 arena 可共享上传。 |
-| F9 | 材质/程序默认 | 图元自己的值 > 几何默认 > 最近 `StateNode` > pass。 |
-| F10 | 拓扑 | `Triangles` / `TriangleStrip` / `TriangleFan` / `Lines` / `LineStrip` / `Points`；是管线身份，不是动态状态（每种值一条 pipeline，尽管 Vulkan 允许同拓扑类内动态切换）。`isTriangleTopology()` 是“这是表面吗”的唯一判据（拾取用）。 |
+| F6 | One draw | `Primitive{topology, indices, material, program}`. |
+| F7 | Multiple parts | One `Geometry` with several `Primitive`s sharing the vertex channels. |
+| F8 | Index segment | `BufferSlice<uint32_t>`; empty = non-indexed; one arena can share the upload. |
+| F9 | Material/program defaults | The primitive's own value > geometry default > nearest `StateNode` > pass. |
+| F10 | Topology | `Triangles` / `TriangleStrip` / `TriangleFan` / `Lines` / `LineStrip` / `Points`; it is pipeline identity, not dynamic state (one pipeline per value, although Vulkan allows dynamic switching within a topology class). `isTriangleTopology()` is the single criterion for "is this a surface" (used by picking). |
 
-### 3.3 实例
+### 3.3 Instances
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F11 | 实例流 | `BufferSlice<float> instance_transforms`，每实例 16 float 列主序 mat4。 |
-| F12 | 可见前缀 | `std::optional<size_t> visible_instances`；只改 draw 参数，不重传。 |
-| F13 | 收集 | 每个 primitive 一条命令；可见数为 0 只跳过该 primitive。 |
-| F14 | 后端 | binding 4 的逐实例流 + `VN_INSTANCED`（bit 8）+ `Draw.instances` / `firstInstance`。 |
-| F15 | 包围盒 | 每条 primitive 的可见实例矩阵变换局部盒后的并集。 |
-| F16 | 拾取 | 逐 primitive、逐可见实例；结果 `geometry + primitiveIndex + instanceIndex`。 |
+| F11 | Instance stream | `BufferSlice<float> instance_transforms`, 16 floats per instance, a column-major mat4. |
+| F12 | Visible prefix | `std::optional<size_t> visible_instances`; changes the draw parameter only, and retransmits nothing. |
+| F13 | Collection | One command per primitive; a visible count of 0 only skips that primitive. |
+| F14 | Backend | Binding 4's per-instance stream + `VN_INSTANCED` (bit 8) + `Draw.instances` / `firstInstance`. |
+| F15 | Bounding box | The union of the local box transformed by each primitive's visible instance matrices. |
+| F16 | Picking | Per primitive, per visible instance; the result is `geometry + primitiveIndex + instanceIndex`. |
 
-### 3.4 revision 与包围盒
+### 3.4 Revision and bounding boxes
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F17 | 几何 revision | `setRevision()` / `bumpRevision()`；只表示形状变化。 |
-| F18 | buffer revision | `Buffer::edit()` 作用域结束即公告（唯一的写入口）；`setRevision()` 只给“对象之外的写”。上传缓存只认 revision；revision 是 `std::atomic`（写者 release、读者 acquire），所以跨线程轮询有定义顺序。 |
-| F19 | 事实行重建 | 几何 revision 变化 ⇒ 重建 layout / 通道集 / counts。 |
-| F20 | 局部盒缓存 | `localBounds()` + `localBoundsComputationCount()` 见证。 |
-| F21 | 世界盒 | 局部盒乘父链；`subtreeBounds` 在节点自身坐标系。 |
+| F17 | Geometry revision | `setRevision()` / `bumpRevision()`; it means a shape change only. |
+| F18 | Buffer revision | Announced when the `Buffer::edit()` scope ends (the only write entry point); `setRevision()` is only for "writes from outside the object". The upload cache only looks at the revision; the revision is a `std::atomic` (writers release, readers acquire), so polling across threads has a defined order. |
+| F19 | Fact-row rebuild | A geometry revision change ⇒ rebuild the layout / channel set / counts. |
+| F20 | Local box cache | `localBounds()` + `localBoundsComputationCount()` as the witness. |
+| F21 | World box | The local box times the parent chain; `subtreeBounds` is in the node's own frame. |
 
-### 3.5 存储与共享（geometry 模块）
+### 3.5 Storage and sharing (geometry module)
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F22 | `core::Buffer<T>` | `RefCounted`，内部组合 `std::vector<T>`；不是 `Object`，没有 vptr。 |
-| F23 | 统一 float | `Mesh` 属性存 `Buffer<float>`，索引为 `Buffer<std::uint32_t>`；没有精度模板，也没有 `Meshf` / `Meshd` 别名。 |
-| F24 | 渲染边界 | `geometryFromShape()` 只把 `TriangleMesh` 交给转换器，属性 buffer 原样共享；`QuadMesh` / `MixedMesh` 在这个边界先转成 `TriangleMesh`，非法网格返回空几何而不抛异常。 |
-| F25 | 手动公告 | `Shape` / `Geometry` 没人自动 bump：写者完成一次编辑后自己推进 `Shape::revision()`；`Buffer` 的写在 `edit()` 作用域里（自动公告一次）；只有对象之外改的字节才用 `Buffer::setRevision()`；draw 布局由 `Geometry::setRevision()` 负责。 |
-| F26 | vsg 别名 | 后端用真 `vsg::vec3Array` 别名持有 Vine buffer 的 `Data`；stride = 数组元素大小，不是 buffer 元素大小。 |
-| F27 | 指针身份判据 | 渲染证据对“拷贝 vs 共享”无感；只有 `dataPointer()` 同一性断言能区分。 |
+| F22 | `core::Buffer<T>` | `RefCounted`, internally holding a `std::vector<T>`; not an `Object`, no vptr. |
+| F23 | Uniform float | `Mesh` attributes are stored in `Buffer<float>`, indices in `Buffer<std::uint32_t>`; no precision template and no `Meshf` / `Meshd` aliases. |
+| F24 | The rendering boundary | `geometryFromShape()` hands only `TriangleMesh` to the converter and shares the attribute buffers as they are; `QuadMesh` / `MixedMesh` are converted to `TriangleMesh` at this boundary first, and an invalid mesh yields empty geometry rather than throwing. |
+| F25 | Manual announcement | Nobody bumps `Shape` / `Geometry` automatically: a writer advances `Shape::revision()` itself after finishing an edit; `Buffer` writes happen inside the `edit()` scope (announced once automatically); only bytes changed from outside the object use `Buffer::setRevision()`; the draw layout is `Geometry::setRevision()`'s job. |
+| F26 | vsg aliasing | The backend holds Vine buffer `Data` through a real `vsg::vec3Array` alias; the stride is the array element size, not the buffer element size. |
+| F27 | The pointer-identity criterion | Rendering evidence is indifferent to "copy vs share"; only a `dataPointer()` identity assertion can tell them apart. |
 
-### 3.6 网格面拓扑
+### 3.6 Mesh face topology
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F28 | 统一三角网格 | `TriangleMesh` 由 `hasIndices()` 区分索引面与顺序三角形。 | 已落地 |
-| F29 | 四边形网格 | `QuadMesh` 按固定对角线显式转换为 `TriangleMesh`。 | 已落地 |
-| F30 | 混合多边形网格 | `MixedMesh` 以 offsets 分面，索引与 offsets 一起整体给出，并通过显式转换生成 `TriangleMesh`。 | 已落地 |
-| F31 | 点云 | `PointCloud`：`setPositions()` 整体替换点集，`normals()` / `colors()` 可选，`computeAabb()` 缓存盒；约束 C8、R7，验收 T10。 | 已落地 |
-| F32 | 三角形树缓存 | `Mesh` 缓存 `Bvh<double>`：`buildBvh()` 每个三角形一个 primitive（id 即三角形序号，规则在 `vn::geom::spatial::buildTriangleBvh()`），`bvh()` 供射线查询；任何改变三角形或面拓扑的 setter 丢树；`setBvh()` 只接收已建且覆盖本网格三角形数的树。 | 已落地 |
-| F33 | 绘制帧的三角形树 | 每个 draw 一棵按需派生、按流钥匙失效的 `Bvh<double>`：`prepareBvh()` 建或共享（建出的树已封存，叶容量默认 64），`bvh()` 只读查询（`hasBvh()` 是它的布尔形式），`adoptBvh()` 接收已有树，`clearBvh()` 全部丢弃；拾取有树走树、无树退回线性扫描。 | 已落地 |
+| F28 | Unified triangle mesh | `TriangleMesh` distinguishes indexed faces from sequential triangles by `hasIndices()`. | Landed |
+| F29 | Quad mesh | `QuadMesh` is explicitly converted to `TriangleMesh` along a fixed diagonal. | Landed |
+| F30 | Mixed polygon mesh | `MixedMesh` splits faces by offsets, gives indices and offsets together as a whole, and produces a `TriangleMesh` through an explicit conversion. | Landed |
+| F31 | Point cloud | `PointCloud`: `setPositions()` replaces the point set as a whole, `normals()` / `colors()` are optional, `computeAabb()` caches the box; constraint C8, requirement R7, acceptance T10. | Landed |
+| F32 | Triangle tree cache | `Mesh` caches a `Bvh<double>`: `buildBvh()` adds one primitive per triangle (the id is the triangle index, the rule lives in `vn::geom::spatial::buildTriangleBvh()`), and `bvh()` serves ray queries; any setter that changes triangles or face topology drops the tree; `setBvh()` only accepts a tree that is already built and covers this mesh's triangle count. | Landed |
+| F33 | The draw frame's triangle tree | One `Bvh<double>` per draw, derived on demand and invalidated by the stream key: `prepareBvh()` builds or shares one (a built tree is sealed, default leaf capacity 64), `bvh()` is read-only query (`hasBvh()` is its boolean form), `adoptBvh()` accepts an existing tree, `clearBvh()` drops them all; picking uses the tree when there is one and falls back to a linear scan when there is not. | Landed |
 
-#### 3.6.1 F28 统一三角网格
+#### 3.6.1 F28 Unified triangle mesh
 
-- **行为**：带索引时按三项一面；无索引时每三个顺序顶点一面；`triangleCount()` / `triangleCorners()` 由 `Mesh` 声明并规定序号（见 2.8），此类型按三项一面实现。
-- **约束**（C5）：索引数量与顶点数量均须组成完整三角形，索引必须落在顶点范围内。
-- **要求**（R4）：机器人 IO 只接受 `TriangleMesh`；基本体也是 float。
-- **验收**（T6）：`MeshShapeTest` 覆盖两种存储形式及完整三角面约束。
-- **注意**（N8）：indexed/soup 是同一类型的存储状态，不由 `ShapeType` 区分。
+- **Behaviour**: with indices, one face per three; without, one face per three sequential vertices; `triangleCount()` / `triangleCorners()` are declared by `Mesh` and fix the index (see 2.8), and this type implements it as one face per three.
+- **Constraint** (C5): the index count and the vertex count must both form whole triangles, and every index must fall within the vertex range.
+- **Requirement** (R4): robot IO accepts `TriangleMesh` only; primitives are float too.
+- **Acceptance** (T6): `MeshShapeTest` covers both storage forms and the whole-triangle constraint.
+- **Caveat** (N8): indexed/soup is a storage state of the same type and is not distinguished by `ShapeType`.
 
-#### 3.6.2 F29 四边形网格
+#### 3.6.2 F29 Quad mesh
 
-- **行为**：`QuadMesh` 直接继承 `Mesh`；索引或顺序 corner 每四项构成一面；`toTriangleMesh()` 返回带转换索引及顶点属性副本的三角网格。
-- **约束**（C6）：corner 数必须为四的倍数；索引不得越界。
-- **要求**（R5）：graphics 与 meshio 消费前验证网格，并复用该转换接口。
-- **验收**（T7）：`MeshShapeTest.QuadMeshUsesFourCornersAndTriangulates` 验证转换结果。
-- **注意**（N9）：转换结果是独立的 `TriangleMesh`，修改结果不回写来源 QuadMesh。
+- **Behaviour**: `QuadMesh` inherits `Mesh` directly; indexed or sequential corners make one face per four; `toTriangleMesh()` returns a triangle mesh with converted indices and copies of the vertex attributes.
+- **Constraint** (C6): the corner count must be a multiple of four; indices must not go out of range.
+- **Requirement** (R5): graphics and meshio validate the mesh before consuming it and reuse that conversion interface.
+- **Acceptance** (T7): `MeshShapeTest.QuadMeshUsesFourCornersAndTriangulates` verifies the conversion result.
+- **Caveat** (N9): the conversion result is an independent `TriangleMesh`; changing the result does not write back to the source QuadMesh.
 
-#### 3.6.3 F30 混合多边形网格
+#### 3.6.3 F30 Mixed polygon mesh
 
-- **行为**：`face_offsets` 以 0 起始、以 corner 数结束，逐面给出边界；索引与 offsets 一起由 `setIndices()` / `setFaceOffsets()` 整体给出；`toTriangleMesh()` 按三角扇生成独立三角网格并复制顶点属性及名称。
-- **约束**（C7）：offsets 单调不减且每面至少三个 corner；indexed corner 必须落在顶点范围内。
-- **要求**（R6）：graphics、meshio 和模型查看器统计复用显式转换；offsets 不合法时转换不得访问其面数据。
-- **验收**（T8）：`MeshShapeTest.MixedMeshValidatesOffsetsAndConvertsToTriangleMesh` 与 `MeshShapeTest.MixedMeshWithSeveralFacesConvertsEveryFace`。
+- **Behaviour**: `face_offsets` start at 0 and end at the corner count, giving each face's boundary; indices and offsets are given together as a whole by `setIndices()` / `setFaceOffsets()`; `toTriangleMesh()` generates an independent triangle mesh as a triangle fan and copies the vertex attributes and the name.
+- **Constraint** (C7): offsets are monotonically non-decreasing with at least three corners per face; indexed corners must fall within the vertex range.
+- **Requirement** (R6): graphics, meshio and the model viewer's statistics reuse the explicit conversion; when the offsets are invalid the conversion must not access their face data.
+- **Acceptance** (T8): `MeshShapeTest.MixedMeshValidatesOffsetsAndConvertsToTriangleMesh` and `MeshShapeTest.MixedMeshWithSeveralFacesConvertsEveryFace`.
 
-**契约**：
-- 网格只有一个填充入口：整组 `setPositions()` / `setNormals()` / `setTexcoords()` / `setColors()` / `setIndices()`（Mixed 再加 `setFaceOffsets()`），没有增量追加。
-- `Mesh` 的 `span` 是借用；任何增长都会使既有 view 失效。
-- 通道持的是 buffer 而不是快照：源 buffer 增长后通道不悬空，长度与地址现取。
-- 段的身份进两层缓存 key：共享绑定缓存 = 缓冲地址 + revision + offset + 长度；派生法线缓存另加索引 first/count。
-- 推导量（零填充 texcoords、白色 opacity 载体、推导法线）仍自己分配真数组；vec4 位置有意不进别名。
+**Contract**:
+- A mesh has one fill entry point: the whole group `setPositions()` / `setNormals()` / `setTexcoords()` / `setColors()` / `setIndices()` (plus `setFaceOffsets()` for Mixed), with no incremental append.
+- `Mesh`'s `span` is borrowed; any growth invalidates existing views.
+- A channel holds a buffer, not a snapshot: after the source buffer grows the channel does not dangle, and the length and address are taken fresh.
+- A segment's identity enters two layers of cache key: the shared binding cache = buffer address + revision + offset + length; the derived normal cache adds the index first/count.
+- Derived quantities (zero-filled texcoords, a white opacity carrier, derived normals) still allocate real arrays of their own; vec4 positions deliberately do not enter the alias.
 
-#### 3.6.4 F32 三角形树缓存
+#### 3.6.4 F32 Triangle tree cache
 
-- **行为**：`buildBvh(builder)` 为每个三角形加一个 primitive，primitive 的盒是三个角点在 `double` 下的包围盒；建成后
-  `bvh().forEachRay(ray, visit)` 给出候选三角形序号，`bvh().forEachOverlap(box, visit)` 给出候选盒相交的三角形。
-  登记与编号不是 `Mesh` 自己写的循环，而是 `vn::geom::spatial::buildTriangleBvh()`（`geometry-bvh.md` 2.14 / F9）：
-  同一份规则也建绘制帧的树。
-  `setBvh()` 接收调用方自己配好构建器建出的树，并校验它已建且覆盖本网格的三角形数（不覆盖则拒绝，与
-  `Geometry::adoptBvh()` 同一条准入规则）。`hasBvh()` 报告树是否已建。
-  树建成即以共享指针发布（`sharedBvh()`）且此后不再修改：重建**发布新对象**，旧持有者继续读到一棵仍然有效的树，
-  所以另一帧可以零成本共享同一棵（见 §2.10 与 F33）。
-- **约束**（C9）：primitive id == `triangleCount()` 的三角形序号；`triangleCount()` / `triangleCorners()` 与
-  `toTriangleMesh()` 同序；非法网格不建树。
-- **要求**（R8）：只有改变三角形或面拓扑的 setter 丢树（`setPositions()` / `setIndices()` /
-  `MixedMesh::setFaceOffsets()`）；法线、贴图坐标与颜色不丢。
-- **验收**（T11）：`tests/test_geom_spatial/MeshBvhTest.cpp` 七项：三角形序号、与转换同序、建树与射线剪枝、
-  失效规则、非法网格不建、接收外来树、外来/未建的树被 `setBvh()` 拒绝。
-- **注意**（N15）：候选是超集——叶子盒是三点的包围盒，精确交仍由调用方用 `intersectTriangle()` 做（同 N10
-  的三角扇限制）。
+- **Behaviour**: `buildBvh(builder)` adds one primitive per triangle, whose box is the bounding box of the three corners in `double`; once built,
+  `bvh().forEachRay(ray, visit)` yields candidate triangle indices and `bvh().forEachOverlap(box, visit)` yields the triangles whose boxes overlap.
+  Registration and numbering are not a loop `Mesh` writes itself but `vn::geom::spatial::buildTriangleBvh()` (`geometry-bvh.md` 2.14 / F9):
+  the same rule also builds the draw frame's tree.
+  `setBvh()` accepts a tree the caller built with its own builder, and verifies that it is built and covers this mesh's triangle count (otherwise it refuses, the same admission rule as
+  `Geometry::adoptBvh()`). `hasBvh()` reports whether the tree is built.
+  A tree is published by shared pointer as soon as it is built (`sharedBvh()`) and is never modified afterwards: a rebuild **publishes a new object**, so old holders keep reading a tree that is still valid,
+  and another frame can share the same one at zero cost (see §2.10 and F33).
+- **Constraint** (C9): primitive id == the triangle index of `triangleCount()`; `triangleCount()` / `triangleCorners()` are in the same order as
+  `toTriangleMesh()`; an invalid mesh builds no tree.
+- **Requirement** (R8): only setters that change triangles or face topology drop the tree (`setPositions()` / `setIndices()` /
+  `MixedMesh::setFaceOffsets()`); normals, texture coordinates and colours do not.
+- **Acceptance** (T11): `tests/test_geom_spatial/MeshBvhTest.cpp`, seven items: triangle index, same order as the conversion, tree building and ray pruning,
+  invalidation rules, no tree for an invalid mesh, accepting a foreign tree, foreign/unbuilt trees refused by `setBvh()`.
+- **Caveat** (N15): a candidate is a superset — the leaf box is the three points' bounding box, and the exact intersection is still the caller's `intersectTriangle()` (the same triangle-fan
+  restriction as N10).
 
-#### 3.6.5 F33 绘制帧的三角形树
+#### 3.6.5 F33 The draw frame's triangle tree
 
-- **行为**：一个 draw 的三角形流（位置段 + 索引切片 + 拓扑）可以按需派生出自己的树：`prepareBvh(draw)` 建树或
-  接住同钥匙的另一棵，`bvh(draw)` 只读地返回当前钥匙下的树（没有就是 `nullptr`，`hasBvh(draw)` 是它的布尔形式），
-  `adoptBvh(draw, tree)` 接收一棵
-  已经建好的树（`geometryFromMesh()` 采纳网格那棵），`clearBvh()` 丢弃全部槽。拾取按 draw 取树：有树时用
-  `forEachRay` 拿候选再精确交，无树时走原来的线性循环——两条路径共用同一个三角形序号实现。
-- **行为**：建树走 `vn::geom::spatial::buildTriangleBvh()`——`TriangleStream` 满足 `TriangleSource`（`TriangleStream.hpp`
-  里有一个 `static_assert` 钉住），所以 draw 的树与网格的树取同一份“primitive id == 三角形序号”规则，
-  网格那棵可以被 draw 直接采纳而不需要任何换算（`geometry-bvh.md` F9）。
-- **约束**（C10）：槽与 `primitives_` 同序同长；钥匙 = 位置 buffer + 其 revision + 段 + 索引 buffer + 其 revision +
-  切片 + 拓扑 + 几何 revision，不符即“没有树”（重建，而不是错答案）。
-- **约束**（C11）：只有三角形拓扑的 draw 能有树；线/点 draw 的 `prepareBvh()` 返回 false 且不占树。
-- **约束**（C12）：引擎建的树是**封存**的（`Bvh::seal()`）且默认叶容量为 `kPickTreeLeafSize = 64`：前者因为是
-  缓存（换钥匙就是新树，永不可能被 `update`/`refit`），后者因为一棵树按**节点**存盒——叶容量 4 时每三角形摊
-  半个节点，64 时摊三十二分之一，而代价只是一次点击多测几十个三角形。调用方可传自己的 `BvhBuilder` 改粒度
-  （`prepareBvh(draw, builder)`），封存则不是可选项。
-- **要求**（R9）：同一把钥匙的第二个 draw 共享同一棵不可变树，不重建；采纳只发生在 `geometryFromMesh()`。
-- **验收**（T12）：`GeometryTest.AHandBuiltDrawPreparesItsOwnTree` / `MovingTheStreamDropsThePreparedTree` /
+- **Behaviour**: a draw's triangle stream (position segment + index slice + topology) can derive its own tree on demand: `prepareBvh(draw)` builds a tree or
+  takes over another one under the same key, `bvh(draw)` returns the tree under the current key read-only (`nullptr` when there is none, `hasBvh(draw)` is its boolean form),
+  `adoptBvh(draw, tree)` accepts a tree
+  that is already built (`geometryFromMesh()` adopts the mesh's), and `clearBvh()` drops every slot. Picking takes the tree per draw: with a tree it uses
+  `forEachRay` to get candidates and then intersects exactly, without one it runs the original linear loop — both paths share the same triangle-index implementation.
+- **Behaviour**: building goes through `vn::geom::spatial::buildTriangleBvh()` — `TriangleStream` satisfies `TriangleSource` (there is a `static_assert` in `TriangleStream.hpp`
+  pinning it), so a draw's tree and a mesh's tree take the same "primitive id == triangle index" rule, and the mesh's tree can be adopted by a draw with no conversion at all (`geometry-bvh.md` F9).
+- **Constraint** (C10): the slots are in the same order and of the same length as `primitives_`; the key = position buffer + its revision + segment + index buffer + its revision +
+  slice + topology + geometry revision, and any mismatch means "no tree" (a rebuild, rather than a wrong answer).
+- **Constraint** (C11): only a triangle-topology draw can have a tree; `prepareBvh()` on a line/point draw returns false and takes no tree.
+- **Constraint** (C12): a tree the engine builds is **sealed** (`Bvh::seal()`) with a default leaf capacity of `kPickTreeLeafSize = 64`: the former because it is a
+  cache (a new key is a new tree, and it can never be `update`/`refit`ed), the latter because a tree stores boxes per **node** — with a leaf capacity of 4 each triangle amortises
+  half a node, with 64 a thirty-second, and the price is only a few dozen more triangle tests per click. A caller may pass its own `BvhBuilder` to change the granularity
+  (`prepareBvh(draw, builder)`), but sealing is not optional.
+- **Requirement** (R9): a second draw under the same key shares the same immutable tree and does not rebuild; adoption only happens at `geometryFromMesh()`.
+- **Acceptance** (T12): `GeometryTest.AHandBuiltDrawPreparesItsOwnTree` / `MovingTheStreamDropsThePreparedTree` /
   `TwoDrawsOverOneIndexStreamShareOneTree` / `MeshSourceGeometryAdoptsTheMeshesTree` /
   `ATriangulatedQuadMeshAdoptsNothing` / `ThePreparedTreeIsSealedAndKeepsTheEnginesCoarseLeaf` /
-  `TheCallerChoosesTheLeafSizeOfItsPickTree`，`RayIntersectionTest.APreparedTreeChangesTheCostAndNotTheAnswer` /
-  `APreparedTreeStillReportsEveryHit`。
-- **注意**（N17）：树的有无不改变语义，只改变代价；见证是 `triangleTestCount()`。
-- **注意**（N18）：封存后的回调第二个参数是**叶盒**而不是图元盒（`geometry-bvh.md` `R7`）。拾取忽略该参数，所以不受影响；
-  新写一个靠它拿“这个三角形在哪”的消费者要么自己做图元盒，要么不封存。
+  `TheCallerChoosesTheLeafSizeOfItsPickTree`, `RayIntersectionTest.APreparedTreeChangesTheCostAndNotTheAnswer` /
+  `APreparedTreeStillReportsEveryHit`.
+- **Caveat** (N17): the presence of a tree changes no semantics, only the cost; the witness is `triangleTestCount()`.
+- **Caveat** (N18): the sealed callback's second parameter is the **leaf box** rather than the primitive box (`geometry-bvh.md` `R7`). Picking ignores that parameter, so it is unaffected;
+  a new consumer that relies on it for "where is this triangle" must either build the primitive box itself or not seal.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `Geometry`
 
-| 接口 | 作用 |
+| Interface | Purpose |
 |---|---|
-| `addBuffer()` / `removeBuffer()` / `buffer()` / `bufferCount()` / `bufferLocations()` | 通道 |
-| `setPositions()` / `setNormals()` / `setTexcoords2/3()` / `setColors()` / `has*()` / `*Count()` | 规范通道 |
-| `addPrimitive()` / `setPrimitive()` / `clearPrimitives()` / `primitive()` / `primitives()` | 图元 |
-| `material()` / `setMaterial()` / `program()` / `setProgram()` | 几何级默认 |
-| `revision()` / `setRevision()` / `bumpRevision()` | 形状公告 |
-| `vertexCount()` / `localBounds()` / `boundingBox()` / `subtreeBounds()` | 数据与盒 |
-| `prepareBvh()` / `bvh()` / `hasBvh()` / `adoptBvh()` / `clearBvh()` / `triangleTestCount()` | 逐 draw 的三角形树缓存与它的只读见证（F33）；`prepareBvh(draw, builder)` 的 builder 是粒度选择，默认 `pickTreeBuilder()`（`kPickTreeLeafSize = 64`），建出的树总是已封存 |
-| `triangleCount(draw)` | 一条 draw 的三角形数；只是数，不建也不缓存，供消费者的阈值策略用 |
-| `setInstanceTransforms()` / `setVisibleInstanceCount()` / `clear*()` | 默认 primitive 0 的实例便捷 |
-| `geometryFromShape()` / `packAttribute()` / `packIndices()` | 桥与打包 |
+| `addBuffer()` / `removeBuffer()` / `buffer()` / `bufferCount()` / `bufferLocations()` | Channels |
+| `setPositions()` / `setNormals()` / `setTexcoords2/3()` / `setColors()` / `has*()` / `*Count()` | Canonical channels |
+| `addPrimitive()` / `setPrimitive()` / `clearPrimitives()` / `primitive()` / `primitives()` | Primitives |
+| `material()` / `setMaterial()` / `program()` / `setProgram()` | Geometry-level defaults |
+| `revision()` / `setRevision()` / `bumpRevision()` | Shape announcement |
+| `vertexCount()` / `localBounds()` / `boundingBox()` / `subtreeBounds()` | Data and boxes |
+| `prepareBvh()` / `bvh()` / `hasBvh()` / `adoptBvh()` / `clearBvh()` / `triangleTestCount()` | The per-draw triangle tree cache and its read-only witness (F33); `prepareBvh(draw, builder)`'s builder chooses the granularity, defaulting to `pickTreeBuilder()` (`kPickTreeLeafSize = 64`), and a built tree is always sealed |
+| `triangleCount(draw)` | One draw's triangle count; a count only, building and caching nothing, for a consumer's threshold policy |
+| `setInstanceTransforms()` / `setVisibleInstanceCount()` / `clear*()` | Instance convenience for default primitive 0 |
+| `geometryFromShape()` / `packAttribute()` / `packIndices()` | The bridge and packing |
 
 ### 4.2 `Primitive`
 
-| 接口 | 作用 |
+| Interface | Purpose |
 |---|---|
-| `topology` / `indices` | 拓扑与索引段 |
-| `material` / `program` | 这次 draw 的覆盖 |
-| `hasInstances()` / `instanceCount()` / `firstInstance()` / `visibleInstanceCount()` | 实例 |
-| `setInstanceTransforms()` / `setVisibleInstanceCount()` | 实例编辑 |
+| `topology` / `indices` | Topology and index segment |
+| `material` / `program` | This draw's overrides |
+| `hasInstances()` / `instanceCount()` / `firstInstance()` / `visibleInstanceCount()` | Instances |
+| `setInstanceTransforms()` / `setVisibleInstanceCount()` | Instance editing |
 
 ### 4.3 `AttributeChannel`
 
-| 接口 | 作用 |
+| Interface | Purpose |
 |---|---|
-| `packed()` / `shared()` / `slice()` / `fromSlice()` | 构造 |
-| `scalars()` / `scalarSlice()` / `floatCount()` / `vertexCount()` / `stride()` | 读取 |
-| `xyz()` / `vec3View()` | 顶点级视图 |
+| `packed()` / `shared()` / `slice()` / `fromSlice()` | Construction |
+| `scalars()` / `scalarSlice()` / `floatCount()` / `vertexCount()` / `stride()` | Reading |
+| `xyz()` / `vec3View()` | Vertex-level views |
 
-### 4.4 存储与共享
+### 4.4 Storage and sharing
 
-| 接口 | 作用 |
+| Interface | Purpose |
 |---|---|
-| `Buffer<T>::view()` / `size()` / `setRevision()` / `revision()` | 字节存储与公告 |
-| `Shape::revision()` / `setRevision()` / `bumpRevision()` | 形状内容代际：持有者建完或改完后自己推进 |
-| `Mesh::vertexCount()` / `hasIndices()` | 顶点数与索引状态，不定义面拓扑 |
-| `Mesh::setPositions()` / `setIndices()` / `indices()` | 共用顶点与 corner 索引存储（整体设置） |
-| `Mesh::positions()` / `normals()` / `texcoords()` / `positionsBuffer()` 等 | float 视图与存储句柄；数组别名在 `Array.hpp` |
-| `Mesh::triangleCount()` / `triangleCorners()` | 三角形身份：个数与三个顶点索引；具体网格各自实现（2.8） |
-| `Mesh::bvh()` / `hasBvh()` / `setBvh()` / `buildBvh()` / `clearBvh()` | 三角形树缓存：建、接收、查、丢（F32） |
-| `Mesh::restoreBvh()` | 从存下来的形状（`BvhTopology`：节点 + 顺序 + 高度）恢复树，盒子按当前顶点重算；`.vbtp` 缓存走这条路 |
-| `Mesh::sharedBvh()` | 把已发布的不可变树交给另一帧共享（不复制） |
-| `TriangleMesh::isValid()` | 顺序或索引三角网格的完整性 |
-| `QuadMesh::quadCount()` / `toTriangleMesh()` | 四边形面与显式三角网格转换 |
-| `MixedMesh::faceOffsets()` / `faceOffsetsBuffer()` / `setFaceOffsets()` / `toTriangleMesh()` | 可共享的多边形边界与显式三角网格转换 |
-| `Model::Entry::mesh` | `Mesh` 句柄；模型导入写入 `TriangleMesh`，绘制前在 `geometryFromShape()` 三角化；同一份网格可被多个节点引用 |
-| `geometryFromShape()` | `Shape` → `Geometry`，共享 buffer |
-| `packAttribute()` / `packIndices()` | 类型化输入打包 |
+| `Buffer<T>::view()` / `size()` / `setRevision()` / `revision()` | Byte storage and announcement |
+| `Shape::revision()` / `setRevision()` / `bumpRevision()` | Shape content generation: the holder advances it after building or editing |
+| `Mesh::vertexCount()` / `hasIndices()` | Vertex count and index state; does not define face topology |
+| `Mesh::setPositions()` / `setIndices()` / `indices()` | Shared vertex and corner index storage (set as a whole) |
+| `Mesh::positions()` / `normals()` / `texcoords()` / `positionsBuffer()` etc. | float views and storage handles; the array alias is in `Array.hpp` |
+| `Mesh::triangleCount()` / `triangleCorners()` | Triangle identity: the count and the three vertex indices; each concrete mesh implements it (2.8) |
+| `Mesh::bvh()` / `hasBvh()` / `setBvh()` / `buildBvh()` / `clearBvh()` | The triangle tree cache: build, accept, query, drop (F32) |
+| `Mesh::restoreBvh()` | Restores the tree from a stored shape (`BvhTopology`: nodes + order + height), recomputing the boxes from the current vertices; the `.vbtp` cache goes this way |
+| `Mesh::sharedBvh()` | Hands the published immutable tree to another frame to share (no copy) |
+| `TriangleMesh::isValid()` | Completeness of a sequential or indexed triangle mesh |
+| `QuadMesh::quadCount()` / `toTriangleMesh()` | Quad faces and the explicit triangle-mesh conversion |
+| `MixedMesh::faceOffsets()` / `faceOffsetsBuffer()` / `setFaceOffsets()` / `toTriangleMesh()` | Shareable polygon boundaries and the explicit triangle-mesh conversion |
+| `Model::Entry::mesh` | The `Mesh` handle; model import writes a `TriangleMesh`, which is triangulated before drawing at `geometryFromShape()`; one mesh can be referenced by several nodes |
+| `geometryFromShape()` | `Shape` → `Geometry`, sharing buffers |
+| `packAttribute()` / `packIndices()` | Typed input packing |
 
-### 4.5 形状类型与模块边界
+### 4.5 Shape types and module boundaries
 
-| 接口 | 作用 |
+| Interface | Purpose |
 |---|---|
-| `Box` / `Sphere` / `Cone` / `Cylinder` / `Ellipsoid` | 参数化基本体，尺寸均为 `float`，局部坐标系下描述；机器人 IO 直接读写它们 |
-| `Mesh` / `TriangleMesh` / `QuadMesh` / `MixedMesh` | 网格类型层次；graphics 与 meshio 只接收这一套 float 网格 |
-| `PointCloud` | 点云：位置 + 可选法线/颜色，无面拓扑；与网格共用 `Buffer<float>` 通道 |
-| `Primitive` / `BrepShape` / `Shape` | 基本体与 B-rep 的共同基类；`revision` 三件套住在 `Shape` |
+| `Box` / `Sphere` / `Cone` / `Cylinder` / `Ellipsoid` | Parametric primitives, all dimensions `float`, described in a local frame; robot IO reads and writes them directly |
+| `Mesh` / `TriangleMesh` / `QuadMesh` / `MixedMesh` | The mesh type hierarchy; graphics and meshio accept this float mesh set only |
+| `PointCloud` | Point cloud: positions + optional normals/colours, no face topology; shares the `Buffer<float>` channels with meshes |
+| `Primitive` / `BrepShape` / `Shape` | The common base of primitives and B-rep; the `revision` trio lives in `Shape` |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 |---|---|
-| C1 | 形状归 `Geometry`，字节归 `Buffer`；一个通道一种布局。 |
-| C2 | 实例流是 `Primitive` 的参数，不是 `Geometry` 的通道。 |
-| C3 | revision 只在内容真正变化时推进；可见实例数是前缀。 |
-| C4 | 几何数值只用 `float`：网格顶点属性、基本体尺寸、索引（`std::uint32_t`）均无精度变体。 |
-| C5 | 三角网格索引为空表示顺序顶点；非空索引必须按三项分组且全部有效。 |
-| C6 | Quad face corner 数须为 4 的倍数，索引不得越界。 |
-| C7 | Mixed offsets 从 0 开始、单调不减、末项等于 corner 数，且每面至少 3 个 corner。 |
-| C8 | 点云通道布局：位置与法线每点 3 个 float、颜色每点 4 个 float，均存在 `Buffer<float>` 里。 |
-| C9 | 三角形树只描述已存三角形：primitive id == 三角形序号，任何改变三角形或面拓扑的 setter 都丢树；未构建的树不回答候选。 |
-| C10 | 绘制帧的树按 draw 缓存且按钥匙失效：位置/索引 buffer、它们的 revision、段、切片、拓扑、几何 revision 任一项不符 = 没有树。 |
+| C1 | Shape belongs to `Geometry`, bytes belong to `Buffer`; one channel, one layout. |
+| C2 | The instance stream is a `Primitive` parameter, not a `Geometry` channel. |
+| C3 | Revision only advances when the content really changes; the visible instance count is a prefix. |
+| C4 | Geometry values use `float` only: mesh vertex attributes, primitive dimensions and indices (`std::uint32_t`) have no precision variants. |
+| C5 | An empty triangle-mesh index means sequential vertices; a non-empty index must be grouped in threes and be entirely valid. |
+| C6 | A Quad face's corner count must be a multiple of 4, and indices must not go out of range. |
+| C7 | Mixed offsets start at 0, are monotonically non-decreasing, end at the corner count, and give every face at least 3 corners. |
+| C8 | Point cloud channel layout: 3 floats per point for positions and normals, 4 floats per point for colours, all in `Buffer<float>`. |
+| C9 | The triangle tree only describes the triangles already stored: primitive id == triangle index, any setter that changes triangles or face topology drops the tree, and an unbuilt tree answers no candidates. |
+| C10 | The draw frame's tree is cached per draw and invalidated by the key: any mismatch in the position/index buffers, their revisions, the segment, the slice, the topology or the geometry revision = no tree. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 |---|---|
-| R1 | 实例共享材质/层/排序；逐实例属性等真实需求再加。 |
-| R2 | 多个放置 = 多个 `Geometry` 节点（可共享 buffer）。 |
-| R3 | 包围盒/拾取身份 = `geometry + primitiveIndex + instanceIndex`。 |
-| R4 | 机器人 IO 只接受 `TriangleMesh` 与 float 基本体，不留 double 变体。 |
-| R5 | graphics 与 meshio 消费前验证网格，并复用 `toTriangleMesh()` 转换接口。 |
-| R6 | 模型查看器统计与导出复用显式转换；offsets 不合法时转换不得访问其面数据。 |
-| R7 | 点云的法线/颜色通道只在长度等于 `pointCount()` 时被消费，否则丢弃而不重新索引（与 N11 同一规则）。 |
-| R8 | 需要批量射线时先用 `Mesh::buildBvh()` 建一次树再查，不在拾取循环里线性扫三角形。 |
-| R9 | 绘制帧的树在交互开始前显式 `prepareBvh()`；同一个索引段的多条 draw 共享一棵树；`geometryFromMesh()` 采纳网格的树，三角化出来的 Quad/Mixed 不采纳。第一个消费者是模型查看器：建场景时对 ≥512 三角形的 draw 调一次（阈值是它的策略，`kPickTreeTriangleCount`）。 |
+| R1 | Instances share material/layer/order; per-instance attributes wait for a real need. |
+| R2 | Several placements = several `Geometry` nodes (which may share buffers). |
+| R3 | Bounding-box / pick identity = `geometry + primitiveIndex + instanceIndex`. |
+| R4 | Robot IO accepts `TriangleMesh` and float primitives only, with no double variant left behind. |
+| R5 | graphics and meshio validate the mesh before consuming it and reuse the `toTriangleMesh()` conversion interface. |
+| R6 | The model viewer's statistics and export reuse the explicit conversion; when the offsets are invalid the conversion must not access their face data. |
+| R7 | A point cloud's normal/colour channels are consumed only when their length equals `pointCount()`, and are otherwise dropped rather than re-indexed (the same rule as N11). |
+| R8 | When bulk rays are needed, build the tree once with `Mesh::buildBvh()` and then query, rather than scanning triangles linearly inside the picking loop. |
+| R9 | The draw frame's tree is explicitly `prepareBvh()`ed before interaction starts; several draws over one index segment share one tree; `geometryFromMesh()` adopts the mesh's tree, and a triangulated Quad/Mixed adopts nothing. The first consumer is the model viewer: it calls it once per draw with ≥512 triangles when building the scene (the threshold is its policy, `kPickTreeTriangleCount`). |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 注意项 |
+| # | Caveat |
 |---|---|
-| N1 | 改字节必须 `Buffer::setRevision()`；只改几何 revision 会继续画旧字节。 |
-| N2 | 一组编辑只公告一次几何 revision；setter 自己不会推进它。 |
-| N3 | 实例流上传键是整段 buffer（offset 0 / count 0）；可见前缀不换 buffer。 |
-| N4 | 实例矩阵在**该 draw 的几何局部空间**里乘；一个 Geometry 的所有 primitive 共享节点世界矩阵。 |
-| N5 | 一个 Geometry 只能有一个父；多个放置用多个 Geometry 节点（可共享 buffer）。 |
-| N6 | 自定义通道不能占用规范 location。 |
-| N7 | `POINT_LIST` 要求顶点阶段静态写 `gl_PointSize`。 |
-| N8 | `TriangleMesh` 的 `ShapeType` 不表达 indexed/soup；使用 `hasIndices()` 判断。 |
-| N9 | Quad 与 Mixed 的三角化结果只用于消费端，不改写原网格数据。 |
-| N10 | 三角扇不适合凹多边形；需要凹面正确剖分时应先采用能保留正确三角化结果的输入。 |
-| N11 | 通道只在“每顶点一项”时被消费：法线/UV/颜色长度与位置不一致时消费端丢弃该通道，`isValid()` 不因此为假。 |
-| N12 | `Mesh::aabb()` 是缓存：位置变化（`setPositions()`）清空它，未计算前为空盒。 |
-| N13 | geometry 不自行推进任何 revision：`set*` 换的是 buffer 对象（地址变即缓存 key 变），原地写字节的写者用 `Buffer::setRevision()`，形状整体变化由持有者 `Shape::bumpRevision()` 报告；三者不可互替（N2）。 |
-| N14 | `PointCloud::isValid()` 只问“有没有点”，`hasVolume()` 恒为 false；`geometryFromShape()` 还不接点云，不要用没有索引的 `Mesh` 冒充它。 |
-| N15 | `Mesh::bvh()` 是缓存：`setPositions()` / `setIndices()` / `MixedMesh::setFaceOffsets()` 清空它，法线/UV/颜色不清；未构建的树返回空候选，不退化成全扫。 |
-| N16 | 已发布的树不可变：`buildBvh()` 重建时发布新对象，`clearBvh()` 只停止发布、不动已发出的对象，所以持有 `sharedBvh()` 的一方永远读不到半成品。 |
-| N17 | `Geometry::bvh(draw)` 只回答“钥匙仍然成立”的树；数据动过而没重新 `prepareBvh()` 时返回 `nullptr`（拾取退回线性扫描），不会给旧树。 |
+| N1 | Changing bytes requires `Buffer::setRevision()`; bumping only the geometry revision keeps drawing the old bytes. |
+| N2 | A group of edits announces the geometry revision once; a setter does not advance it itself. |
+| N3 | The instance stream's upload key is the whole buffer (offset 0 / count 0); the visible prefix does not change the buffer. |
+| N4 | Instance matrices multiply in **the draw's geometry local space**; all of one Geometry's primitives share the node's world matrix. |
+| N5 | A Geometry can have only one parent; several placements use several Geometry nodes (which may share buffers). |
+| N6 | A custom channel must not take a canonical location. |
+| N7 | `POINT_LIST` requires the vertex stage to write `gl_PointSize` statically. |
+| N8 | `TriangleMesh`'s `ShapeType` does not express indexed/soup; use `hasIndices()` to decide. |
+| N9 | The triangulation result of Quad and Mixed is for consumers only and does not rewrite the original mesh data. |
+| N10 | A triangle fan is unsuitable for concave polygons; when a concave face needs correct triangulation, take an input that preserves a correct triangulation in the first place. |
+| N11 | A channel is consumed only when it has one item per vertex: when a normal/UV/colour length disagrees with the positions the consumer drops that channel, and `isValid()` does not become false because of it. |
+| N12 | `Mesh::aabb()` is a cache: a position change (`setPositions()`) clears it, and before it is computed it is the empty box. |
+| N13 | geometry advances no revision on its own: `set*` swaps the buffer object (a new address is a new cache key), a writer changing bytes in place uses `Buffer::setRevision()`, and a whole-shape change is reported by the holder through `Shape::bumpRevision()`; the three are not interchangeable (N2). |
+| N14 | `PointCloud::isValid()` only asks "are there points", and `hasVolume()` is always false; `geometryFromShape()` does not take point clouds yet, so do not pass off a `Mesh` with no indices as one. |
+| N15 | `Mesh::bvh()` is a cache: `setPositions()` / `setIndices()` / `MixedMesh::setFaceOffsets()` clear it, normals/UV/colour do not; an unbuilt tree returns no candidates and does not degrade into a full scan. |
+| N16 | A published tree is immutable: `buildBvh()` publishes a new object when it rebuilds, and `clearBvh()` only stops publishing without touching the objects already handed out, so whoever holds `sharedBvh()` can never read a half-built tree. |
+| N17 | `Geometry::bvh(draw)` only answers a tree whose "key still holds"; when the data moved without a new `prepareBvh()` it returns `nullptr` (picking falls back to the linear scan) rather than the old tree. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 多边形转换
+### 6.1 Polygon conversion
 
-- 会怎么错：直接按 offsets 或索引读 faces，非法输入可能访问越界。
-- 怎么判：`isValid()` 为 false，或 offsets 末项与 corner 数不符。
-- 怎么防：转换入口先检查有效性；凹多边形不能假定三角扇保持其形状。
-### 6.2 三角形树
+- How it fails: reading faces straight from the offsets or indices, where invalid input may access out of range.
+- How to detect it: `isValid()` is false, or the last offset disagrees with the corner count.
+- How to prevent it: the conversion entry point checks validity first; a concave polygon cannot be assumed to keep its shape under a triangle fan.
+### 6.2 The triangle tree
 
-- 会怎么错：拿没建过的树查询，得到“没有命中”，看起来像射线没打中网格。
-  怎么判：`hasBvh()` 为 false。
-  怎么防：查询前建一次，并把 `hasBvh()` 当成前置条件。
-- 会怎么错：树建成后绕过 `setPositions()` 原地改 positions buffer 的字节，树还在描述旧位置。
-  怎么判：命中位置与显示位置错位。
-  怎么防：原地写字节后自己调 `clearBvh()`（与 `Buffer::setRevision()` 同一类手工公告，N13）。
-- 会怎么错：把候选当成最终命中。
-  怎么判：选中了实际上没相交的三角形。
-  怎么防：候选只用于跳过，判定仍用 `intersectTriangle()`（N15）。
-- 会怎么错：给 `Mode::AllHits` 的查询也用最近命中剪枝。
-  怎么判：同一个几何建树后 `intersectSceneAll(..., AllHits)` 的结果比不建树时少；最近命中查询却仍然正确。
-  怎么防：剪枝只属于“只要最近”的走法；要全部命中的走法把距离上限保持为无穷（F33）。
-- 会怎么错：几何的流换了（换 buffer、原地改字节并 `setRevision()`、`bumpRevision()`）却没重新 `prepareBvh()`。
-  怎么判：`bvh(draw)` 返回 `nullptr`，`triangleTestCount()` 回到三角形数量级。
-  怎么防：把 `prepareBvh()` 放在数据编辑之后、交互之前；钥匙不符只丢树，不影响答案（C10）。
-## 7. 已否决选项
+- How it fails: querying a tree that was never built yields "no hit", which looks as if the ray missed the mesh.
+  How to detect it: `hasBvh()` is false.
+  How to prevent it: build once before querying, and treat `hasBvh()` as a precondition.
+- How it fails: after the tree is built, changing the positions buffer's bytes in place around `setPositions()`, so the tree still describes the old positions.
+  How to detect it: the hit position and the displayed position disagree.
+  How to prevent it: call `clearBvh()` yourself after writing bytes in place (the same kind of manual announcement as `Buffer::setRevision()`, N13).
+- How it fails: taking a candidate as the final hit.
+  How to detect it: a triangle that did not actually intersect gets selected.
+  How to prevent it: candidates are only used to skip; the decision still uses `intersectTriangle()` (N15).
+- How it fails: pruning a `Mode::AllHits` query by nearest hit as well.
+  How to detect it: after building the tree, `intersectSceneAll(..., AllHits)` on the same geometry returns fewer results than without a tree, while the nearest-hit query is still correct.
+  How to prevent it: pruning belongs to the "nearest only" path alone; an all-hits path keeps the distance limit at infinity (F33).
+- How it fails: the geometry's stream changed (buffer swapped, bytes changed in place with `setRevision()`, `bumpRevision()`) without a new `prepareBvh()`.
+  How to detect it: `bvh(draw)` returns `nullptr` and `triangleTestCount()` is back to the order of the triangle count.
+  How to prevent it: call `prepareBvh()` after editing the data and before interacting; a key mismatch only drops the tree and does not affect the answer (C10).
+## 7. Rejected Options
 
-| # | 否决 | 理由 |
+| # | Rejected | Reason |
 |---|---|---|
-| D1 | `InstanceScope` 作用域 | 选择单位、射线递归、嵌套与包围盒语义复杂；改为 `Primitive` 参数。详见 [ADR](../decisions/ADR-2026-10-23-instancing-per-primitive.md)。 |
-| D2 | 实例矩阵作为 `Geometry` 保留通道 | 一个几何只能一套实例；可见数量要改切片；没有引擎把实例挂在网格资产上。详见 [ADR](../decisions/ADR-2026-10-23-instancing-per-primitive.md)。 |
-| D3 | 多父 / DAG | 渲染路径可 DAG，但公开世界查询与拾取身份不成立；复制节点即可。详见 [ADR](../decisions/ADR-2026-10-23-no-multi-parent-dag.md)。 |
-| D4 | 逐实例材质 / 颜色 / 层 / 排序 / 剔除 | 一条 draw 的实例共享这些；等真实需求再加。 |
-| D5 | GPU indirect / 自动合批 | 没有消费者；实例化只解决“同一几何 N 份”。 |
-| D6 | 把点云做成 `Mesh` 的子类 | `geometryFromShape()` 与导出器会看到一个没有面的网格，名字与行为都对不上（`G1`、`G4`）；点云是独立的 `Shape`（F31）。 |
-| D7 | 只在 `TriangleMesh` 上建树 | `QuadMesh` / `MixedMesh` 是独立的消费者（模型查看器、meshio），只能先 `toTriangleMesh()` 复制一份才能查询（`G1`、`G10`）；三角形身份因此上移到 `Mesh`（2.8）。 |
-| D8 | 树用 `float` 与顶点同精度 | 查询射线在所有消费者里都是 `Rayd`，窄化成 float 做盒测试会在远离原点处丢掉小叶子盒所需的精度而漏命中（`G4`、`G10`）；把 float 顶点加宽进盒是精确的，所以只有树是 double。 |
-| D9 | 每个三角形物化成数值类型再建树 | 建树本来就要扫一遍，物化只会多一份需与网格同步失效的副本；`triangleCorners()` 按规则现算即可（`G10`、`G13`）。 |
-| D10 | 给 `Geometry` 加 `Role` / `GeometryRole` 枚举声明“这个 draw 是表面” | 那个概念已经叫 `Topology`（`isTriangleTopology()` 是唯一判据，`G1`）；声明与派生的不一致不可观察，而 `prepareBvh()` 的返回值与 `bvh()` 的 `nullptr` 不会说谎（`G11`）；用途还会在运行时变化（选择模式打开后才需要树）。 |
-| D11 | `Geometry` 反向持有 `Shape`，拾取时借网格的树 | 需要四条“编号同构”条件在每次拾取时反复判定，且手搭几何永远没有树；改成几何为自己每条流按需派生（F33）。 |
-| D12 | 把网格的树复制进几何 / 让树可变、几何持有网格的引用 | 同一批三角形两棵同样大的树（`G10`）；可变树会让重建改动另一个持有者正在读的对象。改成共享不可变对象、重建发布新对象（N16）。 |
+| D1 | An `InstanceScope` scope | Choosing the unit, recursive rays, nesting and bounding-box semantics are complex; it became a `Primitive` parameter. See [ADR](../decisions/ADR-2026-10-23-instancing-per-primitive.md). |
+| D2 | Instance matrices as a reserved `Geometry` channel | One geometry would get one instance set; the visible count would have to change the slice; no engine attaches instances to a mesh asset. See [ADR](../decisions/ADR-2026-10-23-instancing-per-primitive.md). |
+| D3 | Multiple parents / a DAG | The rendering path could be a DAG, but the public world query and the pick identity do not hold; copying the node suffices. See [ADR](../decisions/ADR-2026-10-23-no-multi-parent-dag.md). |
+| D4 | Per-instance material / colour / layer / order / culling | One draw's instances share these; wait for a real need. |
+| D5 | GPU indirect / automatic batching | No consumer; instancing only solves "N copies of one geometry". |
+| D6 | Making the point cloud a `Mesh` subclass | `geometryFromShape()` and the exporters would see a mesh with no faces, and neither the name nor the behaviour would match (`G1`, `G4`); a point cloud is an independent `Shape` (F31). |
+| D7 | Building a tree on `TriangleMesh` only | `QuadMesh` / `MixedMesh` are independent consumers (the model viewer, meshio) and could only query after `toTriangleMesh()` copied one (`G1`, `G10`); triangle identity therefore moved up to `Mesh` (2.8). |
+| D8 | A tree in `float`, the same precision as the vertices | Query rays are `Rayd` in every consumer, and narrowing to float for box tests loses the precision a small leaf box needs far from the origin and misses hits (`G4`, `G10`); widening float vertices into a box is exact, so only the tree is double. |
+| D9 | Materialising each triangle into a numeric type before building | Building has to sweep anyway, and materialising only adds a copy that must be invalidated in step with the mesh; `triangleCorners()` can compute it by rule (`G10`, `G13`). |
+| D10 | Adding a `Role` / `GeometryRole` enum to `Geometry` to declare "this draw is a surface" | That concept is already called `Topology` (`isTriangleTopology()` is the single criterion, `G1`); a declaration disagreeing with the derivation is unobservable, whereas `prepareBvh()`'s return value and `bvh()`'s `nullptr` do not lie (`G11`); and the use changes at run time (a tree is only needed once selection mode is on). |
+| D11 | `Geometry` holding a `Shape` back, borrowing the mesh's tree when picking | It would need four "the numbering is isomorphic" conditions re-checked on every pick, and a hand-built geometry would never have a tree; instead the geometry derives one per stream on demand (F33). |
+| D12 | Copying the mesh's tree into the geometry / making the tree mutable and having the geometry hold a reference to the mesh | The same triangles would get two equally large trees (`G10`); a mutable tree would let a rebuild change an object another holder is reading. Instead they share an immutable object and a rebuild publishes a new one (N16). |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 |
+| # | Criterion |
 |---|---|
-| T1 | `GeometryTest` / `PrimitiveTest` / `PrimitiveInstancingTest`。 |
-| T2 | `StreamRevisionTest`：单通道编辑只重传该流；几何编辑重建事实行。 |
-| T3 | `GeometryFactsTest` / `PrimitiveDrawTest`。 |
-| T4 | 设备级 `ContentPassTest.AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce`。 |
-| T5 | `MeshShapeTest` 验证网格存储与运行时类型，包括一份 positions buffer 被两个 `Geometry` 共享。 |
-| T6 | 三角网格索引与顺序顶点均验证完整三角面；`MeshShapeTest`。 |
-| T7 | Quad 按固定对角线拆为两个三角形；`MeshShapeTest.QuadMeshUsesFourCornersAndTriangulates`。 |
-| T8 | Mixed offsets 验证及三角扇输出；`MeshShapeTest.MixedMeshValidatesOffsetsAndConvertsToTriangleMesh`、`MeshShapeTest.MixedMeshWithSeveralFacesConvertsEveryFace`。 |
-| T9 | 盒缓存与 revision 契约；`MeshShapeTest.TheCachedBoxFollowsTheVertices`、`MeshShapeTest.TheRevisionIsReportedByTheHolderNotByASetter`、`PkgIOTest.EditedMeshIsRefusedWhenThePackageIsFinallyWritten`。 |
-| T10 | 点云：空云不可用、三标量打包与 buffer 同一性、通道独立、位置变化清空盒缓存；`PointCloudTest`。 |
-| T11 | 三角形序号与 `toTriangleMesh()` 同序、一三角形一 primitive、射线拾取剪枝、失效规则、非法网格不建、接收外来树；`MeshBvhTest.cpp`（在 `tests/test_geom_spatial`）。 |
-| T12 | 绘制帧的树：手搭几何可建树并用于拾取、有树/无树命中与 `triangleIndex` 相同、三角形测试数下降、同钥匙共享、网格源几何采纳、Quad 三角化不采纳；`tests/test_graphics/GraphicsTest.cpp` 的 `GeometryTest.*Tree*` / `RayIntersectionTest.APreparedTree*`。模型查看器建场景时备好大 draw 的树：`ModelViewerTest.ALargeMeshGetsItsPickTreePreparedWhenTheSceneIsBuilt`。 |
+| T1 | `GeometryTest` / `PrimitiveTest` / `PrimitiveInstancingTest`. |
+| T2 | `StreamRevisionTest`: editing one channel retransmits only that stream; a geometry edit rebuilds the fact row. |
+| T3 | `GeometryFactsTest` / `PrimitiveDrawTest`. |
+| T4 | The device-level `ContentPassTest.AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce`. |
+| T5 | `MeshShapeTest` verifies mesh storage and runtime types, including one positions buffer shared by two `Geometry`s. |
+| T6 | Both indexed and sequential triangle-mesh vertices verify whole triangles; `MeshShapeTest`. |
+| T7 | A Quad is split into two triangles along a fixed diagonal; `MeshShapeTest.QuadMeshUsesFourCornersAndTriangulates`. |
+| T8 | Mixed offset validation and the triangle-fan output; `MeshShapeTest.MixedMeshValidatesOffsetsAndConvertsToTriangleMesh`, `MeshShapeTest.MixedMeshWithSeveralFacesConvertsEveryFace`. |
+| T9 | The box cache and the revision contract; `MeshShapeTest.TheCachedBoxFollowsTheVertices`, `MeshShapeTest.TheRevisionIsReportedByTheHolderNotByASetter`, `PkgIOTest.EditedMeshIsRefusedWhenThePackageIsFinallyWritten`. |
+| T10 | Point cloud: an empty cloud is unusable, three-scalar packing and buffer identity, independent channels, a position change clears the box cache; `PointCloudTest`. |
+| T11 | Triangle indices in the same order as `toTriangleMesh()`, one primitive per triangle, ray-picking pruning, invalidation rules, no tree for an invalid mesh, accepting a foreign tree; `MeshBvhTest.cpp` (in `tests/test_geom_spatial`). |
+| T12 | The draw frame's tree: a hand-built geometry can build one and use it for picking, hits and `triangleIndex` are the same with and without a tree, the triangle test count drops, the same key shares, mesh source geometry adopts, a triangulated Quad adopts nothing; `tests/test_graphics/GraphicsTest.cpp`'s `GeometryTest.*Tree*` / `RayIntersectionTest.APreparedTree*`. The model viewer prepares the trees of large draws when it builds the scene: `ModelViewerTest.ALargeMeshGetsItsPickTreePreparedWhenTheSceneIsBuilt`. |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-现行设计；功能点与接口以上表为准。
+Current design; features and interfaces are as the tables above.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-见 `../backlog/graphics.md`；开放项按触发条件保留。
+See `../backlog/graphics.md`; open items are kept by trigger condition.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-索引与顺序三角形统一为 `TriangleMesh`，不再提供 `IndexedTriangleMesh` 类型；
-网格与基本体不再提供精度模板，`Meshf` / `Boxd` 这类别名已删除，
-新代码按 §4 的接口写。旧名只在 git 历史里出现。
+Indexed and sequential triangles are unified as `TriangleMesh`, and an `IndexedTriangleMesh` type is no longer offered;
+meshes and primitives no longer offer a precision template, aliases such as `Meshf` / `Boxd` are deleted,
+and new code is written against §4's interfaces. Old names appear only in git history.
 
-2026-11-07：`Mesh` 新增两个虚函数的三角形身份（`triangleCount()` / `triangleCorners()`，基类默认 0 / false）与三角形树
-缓存；`TriangleMesh::triangleCount()` 顺带成为其覆写，签名与语义不变（只是原先“仅此类型定义”变成基类声明）。
+2026-11-07: `Mesh` gained the two virtual functions of triangle identity (`triangleCount()` / `triangleCorners()`, base-class defaults 0 / false) and the triangle tree
+cache; `TriangleMesh::triangleCount()` incidentally became its override, with an unchanged signature and meaning (only that "defined by this type alone" became a base-class declaration).
 
-## 10. 参考
+## 10. References
 
 `Mesh.hpp` · `TriangleMesh.hpp` · `QuadMesh.hpp` · `MixedMesh.hpp` · `PointCloud.hpp` · `MeshShapeTest.cpp` · `PointCloudTest.cpp` ·
 `MeshBvhTest.cpp` · `geometry-bvh.md` · `graphics-scene.md` · `graphics-rendering.md` · `graphics-architecture.md` · `../backlog/graphics.md`

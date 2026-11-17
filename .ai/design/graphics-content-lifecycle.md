@@ -1,330 +1,330 @@
-# graphics 内容生命周期：释放与缓存
+# graphics content lifecycle: release and caching
 
-> **状态**：现行
-> **最后核对**：2026-11-16
-> **范围**：内容对象的宿主所有权、GPU 驻留释放与缓存策略，以及上传暂存的回收。
-> **权威来源**：`RenderDevice.hpp` / `RenderEngine.hpp` / `MaterialImages.hpp` /
-> `vine/backend_vsg/internal/MaterialArena.hpp` / `.../Streams.hpp` / `.../ResourceTable.hpp` / `BlockStorage.hpp`。
-> **待办**：`../backlog/graphics.md`
+> **Status**: current
+> **Last verified**: 2026-11-16
+> **Scope**: host ownership of content objects, GPU residency release and caching policy, and the reclamation of upload staging.
+> **Sources**: `RenderDevice.hpp` / `RenderEngine.hpp` / `MaterialImages.hpp` /
+> `vine/backend_vsg/internal/MaterialArena.hpp` / `.../Streams.hpp` / `.../ResourceTable.hpp` / `BlockStorage.hpp`.
+> **Backlog**: `../backlog/graphics.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-本文件定义 graphics 内容生命周期：释放与缓存 的现行设计：先给对象与边界，再给功能、接口、约束与验收。
+This file defines the current design of graphics content lifecycle: release and caching: first the objects and their boundaries, then features, interfaces, constraints and acceptance.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 把 §2 的设计要点落成 §3 的功能点、§4 的接口与 §8 的验收。
-- 让“现在是什么”与“为什么这么定”分开：理由在 §2/§7，历史看 git。
+- Turn §2's design points into §3's features, §4's interfaces and §8's acceptance.
+- Keep "what it is now" separate from "why it was decided that way": the reasons are in §2/§7, history is in git.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不在本文件重复头文件里的完整签名；接口只给契约与指针。
-- 不在本文件保存已关闭的历史或逐轮审查记录。
+- This file does not repeat the full signatures from the headers; an interface gives the contract and a pointer only.
+- This file keeps no closed history or per-round review records.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-> 内容对象归宿主，GPU 驻留归后端；释放走显式入口；缓存不设容量上限，用多少拿多少。
+> Content objects belong to the host, GPU residency belongs to the backend; release goes through an explicit entry point; the cache has no capacity cap and takes as much as the host uses.
 
-## 2. 设计要点
+## 2. Design Points
 
-2.1 **两层寿命**：`Geometry` / `Material` / `ShaderProgram` / `Texture` 是宿主对象；上传、块、描述符、
-    编译变体是后端驻留。
-2.2 **释放 GPU 驻留，不释放对象**：`releaseContent()` 之后对象仍可用，下一次使用重建驻留。
-2.3 **显式管理**：没有 LRU、没有字节上限、没有压力淘汰；释放由宿主说。
-2.4 **不 idle 设备**：释放是宿主的一句话（标记），行的回收按 epoch（2.10）；只有破坏路径用计数 device idle。
-2.5 **流按 buffer 身份共享，寿命按“谁还声明这些字节”**：`StreamKey` = buffer + revision + 段；稳态零重传。
-    条目持有它键名的那个 `Buffer`，地址与条目同寿。驻留寿命**不看时间**，由两个 O(1) 事实决定：
-    内容层发布的声明索引（`ContentFacts::declarations`，由 `ContentStore` 在行变更时同步维护的
-    地址→声明计数）说“还有没有活内容声明这块 buffer”；条目自己的句柄说“revision 是不是它上传时的那个”。
-    没有声明、或 revision 已经走了的条目停车离场（`vine/backend_vsg/internal/ResourceTable.hpp`）。每帧成本 O(#驻留条目)，
-    不随内容规模走（裁剪不删行，所以扫行会把“什么都没画”的帧变成最贵的帧）。
-2.6 **按身份做键的表，键还活着时条目必须活着；只有上传仍按地址**：几何 / 材质 / 程序的事实行按内容句柄
-    `(id, revision)` 做键（`ContentId.hpp`），编译半边与描述符集按同一个 `ContentRef`（再加 layout / variant /
-    kind）做键 —— “同一地址上的另一次描述”这一整类错误对它们不再存在，因为句柄在释放时移动 generation，陈旧引用
-    直接答 gone。**仍然按地址做键的只有上传表**（`StreamUploads` 的 `StreamKey` = `Buffer` 地址 + revision + 段，
-    `Buffer` 不在内容对象体系里）：它的条目**持有它键名的那个 `Buffer`**，停靠排不上时**保留条目**、下一帧再试，
-    绝不提前把地址还给分配器；计划读的实例流也由计划持有（见 ADR-2026-11-09-address-keys-hold-the-object）。
-    显式释放用同一个地址命名：`releaseContent(const Buffer<float>& / const Buffer<uint32_t>&)` 按地址把这条流的条目
-    停靠，不需要给 `Buffer` 造身份（G1：在这一层，地址就是它唯一的身份）。
-2.7 **三个词，三个意思**（读代码前先看这张表，否则“identity”会指三个东西）：
-    - **name**：`Node::name()`，只用于查找与调试，**不**是身份。
-    - **key（id + revision）**：缓存表的键。`id` 是内容对象的 `Handle`（见 `ContentId.hpp`），`revision` 说的是
-      “这一次的值”；仍然按地址做键的只有上传表（见 2.6）。
-    - **variant id**：`core::VariantPool` 发的不重复句柄，只用于认“这一份编译结果”，可以跨帧失效。
+2.1 **Two lifetimes**: `Geometry` / `Material` / `ShaderProgram` / `Texture` are host objects; uploads, blocks, descriptors and
+    compiled variants are backend residency.
+2.2 **Release GPU residency, not the object**: after `releaseContent()` the object is still usable, and the next use rebuilds residency.
+2.3 **Explicit management**: no LRU, no byte cap, no pressure eviction; the host says when to release.
+2.4 **Never idle the device**: release is one word from the host (a mark), rows are reclaimed per epoch (2.10); only the destruction path uses a counted device idle.
+2.5 **Streams are shared by buffer identity, and lifetime is "who still declares these bytes"**: `StreamKey` = buffer + revision + segment; the steady state retransmits nothing.
+    An entry holds the `Buffer` its key names, so the address lives as long as the entry. Residency lifetime **does not look at time**; two O(1) facts decide it:
+    the declaration index published by the content layer (`ContentFacts::declarations`, an
+    address→declaration count `ContentStore` maintains synchronously on row changes) says "is there still live content declaring this buffer"; the entry's own handle says "is the revision still the one it uploaded".
+    An entry with no declaration, or whose revision has moved on, parks and leaves (`vine/backend_vsg/internal/ResourceTable.hpp`). The per-frame cost is O(#resident entries),
+    not a function of content size (culling does not delete rows, so scanning rows would turn the frame that draws nothing into the most expensive frame).
+2.6 **Tables keyed by identity, and an entry must live while its key lives; only uploads are still keyed by address**: the geometry / material / program fact rows are keyed by the content handle
+    `(id, revision)` (`ContentId.hpp`), and the compiled halves and descriptor sets are keyed by the same `ContentRef` (plus layout / variant /
+    kind) — the whole class of error "another description at the same address" no longer exists for them, because the handle moves its generation on release and a stale reference
+    answers gone outright. **The only table still keyed by address is the upload table** (`StreamUploads`' `StreamKey` = `Buffer` address + revision + segment,
+    and `Buffer` is not part of the content object system): its entries **hold the `Buffer` their key names**, keep the entry when parking cannot be scheduled and retry next frame,
+    and never hand the address back to the allocator early; the instance stream a plan reads is likewise held by the plan (see ADR-2026-11-09-address-keys-hold-the-object).
+    Explicit release names it the same way: `releaseContent(const Buffer<float>& / const Buffer<uint32_t>&)` parks this stream's entry
+    by address, with no need to invent an identity for `Buffer` (G1: at this layer the address is its only identity).
+2.7 **Three words, three meanings** (read this table before the code, or "identity" will mean three things):
+    - **name**: `Node::name()`, used only for lookup and debugging, **not** an identity.
+    - **key (id + revision)**: the key of the cache tables. `id` is the content object's `Handle` (see `ContentId.hpp`), and `revision` says
+      "this value"; the only table still keyed by address is the upload table (see 2.6).
+    - **variant id**: a unique handle issued by `core::VariantPool`, used only to recognise "this one compiled result", and it may be invalidated across frames.
 
-2.8 **一次上传的中转暂存，寿命是“一次上传”，不是驻留**：`releaseContent()` 回答的是“宿主还想不想为这个对象保留一份 GPU 副本”，
-而一次上传用来中转的 host 暂存（vsg 是 `TransferTask` 的 `staging`：整次上传一个 `HOST_VISIBLE` 缓冲，只增不减）在拷贝落地后
-**没有第二个读者**——它既不是宿主对象的驻留，也不是可复用的缓存，只是没还给系统的临时内存。为什么：先把它归类，才谈得上谁决定“何时还”。它不能进 `releaseContent` 的口径（那会替宿主决定驻留），
-也不该变成容量上限/预算（`G8`：没有消费者）。
-边界：**这块暂存不再常驻，但可复用的下限大小保留**（2026-11-13，`../decisions/ADR-2026-11-13-staging-keeps-the-reusable-block.md`）。它是**一个** `vkCmdCopyBuffer` 的源，没有第二个读者；拷贝的 fence 一完成它就是死重。
-所以“何时还”不是一道需要谁决定的题：证据（那块的 fence）到了就还，触发点是**帧边界**，宿主不参与、也不需要知道（F16–F21）。
-满足 `G1` / `G7` / `G10`：一条规则、零等待；同一件事也不再有第二个名字（`RenderDevice` 上不再有“清一次上传”的动词）。
-代价写在 D14：依赖 vsg 的 protected 块状态（派生任务读/清）。
+2.8 **The staging one upload relays through lives for "one upload", not for residency**: `releaseContent()` answers "does the host still want a GPU copy of this object kept",
+while the host staging one upload relays through (in vsg, `TransferTask`'s `staging`: one `HOST_VISIBLE` buffer for the whole upload, only ever grown) has
+**no second reader** once the copy has landed — it is neither the host object's residency nor a reusable cache, just temporary memory not yet given back to the system. Why: only once it is classified can anyone decide "when to give it back". It cannot enter `releaseContent`'s scope (that would decide residency on the host's behalf),
+nor should it become a capacity cap / budget (`G8`: no consumer).
+Boundary: **this staging is no longer retained, but the reusable minimum size stays** (2026-11-13, `../decisions/ADR-2026-11-13-staging-keeps-the-reusable-block.md`). It is the source of **one** `vkCmdCopyBuffer`, with no second reader; the moment the copy's fence completes it is dead weight.
+So "when to give it back" is not a question anyone has to decide: give it back when the evidence (that block's fence) arrives, and the trigger is the **frame boundary**, with the host neither participating nor needing to know (F16–F21).
+Satisfies `G1` / `G7` / `G10`: one rule, zero waiting; and the same thing no longer has a second name (there is no longer a "clear one upload" verb on `RenderDevice`).
+The cost is written in D14: it relies on vsg's protected block state (the derived task reads/clears it).
 
-2.9 **“不再被画”的三个开关，后果也不同**：显式 `releaseContent()`（宿主说“我不要驻留了”；对象，或一条流所读的
-    `Buffer`）、
-   宿主丢掉最后一个引用（对象离树，行与驻留才会被扫尾）、以及**只是这一帧没被画**（隐藏、被视锥裁掉）。
-   前两个由**持有量**决定；第三个不改变持有量，所以**什么都不释放**：
-   - 表行（`ContentStore` 的 geometry / program / material）只看持有量：对象还在（场景图把着），行就留着，
-     所以隐藏/裁剪不会造成建行-丢行的抖动（`ContentStore.cpp` 的 `releaseAbandoned` 以 `useCount() <= 1` 为条件）。
-   - 上传（`StreamUploads`）也只看**持有量**，看的是**声明**：内容层发布的声明索引
-     （`ContentFacts::declarations`）说“还有活行声明这块 buffer 吗”，条目自己的句柄说“revision 还是不是它
-     上传时那个”。隐藏或裁剪不删行 ⇒ 地址仍被声明 ⇒ 上传留着，回来**零重传**；
-     对象离树 ⇒ 行过了 epoch 窗口删掉 ⇒ 声明消失 ⇒ 上传随之离场。buffer 换代（`Buffer::edit()`）
-     也让旧条目自己失去 revision 那一半，不需要几何说话。
-   - 纹理（`MaterialImages`）走**同一条规则**：声明是材质行的 slot（`declaresTexture`）或该帧某个 pass 的导入
-     输入（`ImageInput`，没有事实行也照样算），另一半是条目自己的 `Texture::revision()`；离场不 park（描述符集
-     自己持有 view / sampler），所以它在 `ContentAssembly::beginFrame` 里和流一起问。
-   - 编译半片 / 描述符集是**会话级**的，不随 pass 走：半片的 pin 是 **program@rev ∧ `declaresLayout`**
-     （几何表维护的“layout → 活行计数”，O(1)），描述符集另加**它采样的贴图**（材质行的 `declaresTexture` +
-     键里自己的 texture revision）。两者都走 `ResourceTable::retireUnpinned`，不再有“还有没有 geometry 问这个
-     layout”的每帧扫描（手建 `ContentFacts` 未发布索引时按可选索引规则退回扫描，生产永远发布）；“最后一条
-     使用该 layout 的几何离树 ⇒ 半片 park”由声明索引直接回答。
-     **扫描是帧的，不是 pass 的**：两张表的 park 都在 `ContentAssembly` 的帧首做一次（`ProgramHalves::sweep` /
-     `BindingSets::sweep`），所以零 draw 的帧照样回收，N 个 pass 也不会把表扫 N 次。
-     **已知残余**：pin 只覆盖键里“内容有没有变”的那两半（program@rev、layout / 贴图），
-     而 topology、附件形状、variant 也进键 —— 它们变化留下的旧半片 / 旧集合**不会**因为 pin 而离场，
-     要等 program 或 layout 也消失。每个这样的对象是一条编译过的管线（几十 KB），数量上界是
-     program × layout × 该 program 的变体/拓扑组合，随编辑形态增长而不是随帧增长；要彻底收掉得让 pin 覆盖
-     整条键，那会与 `I4`（O(#驻留条目) 的判据）冲突，留作测量驱动。
-   - 材质块（arena 槽）也走**同一条规则**：槽按**身份**保留，每帧问一次声明索引
-     （`ContentDeclarations::declaresMaterial`：材质表的 per-identity 行计数）“还有活行吗”；没有就
-     **当帧立即放槽**（`MaterialArena::retireUnpinned`）。不是 park——arena 的副本轮转就是那个窗口，
-     放掉的是“可以复用这个槽”的权利，不是在飞帧要读的字节。
-   为什么这么分：把“对象没了”和“这一帧没画”合成一个开关，就必然要么为裁剪抖动付重建代价，要么把已离树的
-   驻留永久留（`G1`：两个问题，两个答案）。流这一步已经从“时间窗猜第三个开关”改成“只问谁还声明”（见 ADR）。
+2.9 **The three switches behind "no longer drawn" have different consequences**: explicit `releaseContent()` (the host says "I do not want residency any more"; an object, or a
+    `Buffer` one stream reads),
+   the host dropping the last reference (the object leaves the tree, and only then are rows and residency swept), and **merely not being drawn this frame** (hidden, culled by the frustum).
+   The first two are decided by **holdings**; the third does not change holdings, so it releases **nothing**:
+   - Table rows (`ContentStore`'s geometry / program / material) look only at holdings: while the object is there (the scene graph holds it) the row stays,
+     so hiding/culling causes no build-row-drop-row churn (`ContentStore.cpp`'s `releaseAbandoned` requires `useCount() <= 1`).
+   - Uploads (`StreamUploads`) also look only at **holdings**, and what they look at is the **declaration**: the declaration index published by the content layer
+     (`ContentFacts::declarations`) says "is there still a live row declaring this buffer", and the entry's own handle says "is the revision still the one it
+     uploaded". Hiding or culling does not delete the row ⇒ the address is still declared ⇒ the upload stays, and coming back **retransmits nothing**;
+     the object leaving the tree ⇒ the row is deleted after the epoch window ⇒ the declaration disappears ⇒ the upload leaves with it. A buffer generation change (`Buffer::edit()`)
+     also makes the old entry lose the revision half on its own, with no word from the geometry.
+   - Textures (`MaterialImages`) follow **the same rule**: the declaration is a material row's slot (`declaresTexture`) or a pass's imported input for that frame
+     (`ImageInput`, which counts even without a fact row), and the other half is the entry's own `Texture::revision()`; leaving does not park (the descriptor set
+     holds the view / sampler itself), so it is asked in `ContentAssembly::beginFrame` together with the streams.
+   - Compiled halves / descriptor sets are **session-level** and do not follow a pass: a half is pinned by **program@rev ∧ `declaresLayout`**
+     (the "layout → live row count" the geometry table maintains, O(1)), and a descriptor set additionally by **the textures it samples** (a material row's `declaresTexture` +
+     the texture revision in its own key). Both go through `ResourceTable::retireUnpinned`, and there is no longer a per-frame scan asking "is there still any geometry asking for this
+     layout" (when a hand-built `ContentFacts` has not published the index it falls back to the scan under the optional-index rule, and production always publishes); "the last
+     geometry using that layout leaves the tree ⇒ the half parks" is answered directly by the declaration index.
+     **The scan belongs to the frame, not the pass**: both tables park once at the head of `ContentAssembly`'s frame (`ProgramHalves::sweep` /
+     `BindingSets::sweep`), so a frame with zero draws still reclaims, and N passes do not scan the table N times.
+     **Known residue**: the pin only covers the two halves of the key that say "did the content change" (program@rev, layout / texture),
+     while topology, attachment shape and variant are in the key too — the old halves / old sets a change in those leaves behind do **not** leave because of the pin,
+     but wait until the program or the layout disappears as well. Each such object is one compiled pipeline (tens of KB), and the count is bounded by
+     program × layout × that program's variant/topology combinations, growing with the shape of the edit rather than with frames; closing it completely would need the pin to cover
+     the whole key, which conflicts with `I4` (the O(#resident entries) criterion), and it is left as measurement-driven.
+   - Material blocks (arena slots) follow **the same rule**: a slot is kept by **identity**, and every frame the declaration index is asked once
+     (`ContentDeclarations::declaresMaterial`: the material table's per-identity row count) "is there still a live row"; if not, the slot is
+     **freed that frame, immediately** (`MaterialArena::retireUnpinned`). It is not a park — the arena's copy rotation is that window,
+     and what is given up is the right to reuse the slot, not bytes an in-flight frame will read.
+   Why split it this way: merging "the object is gone" and "this frame did not draw it" into one switch must either pay the rebuild cost for culling churn or keep residency
+   that has left the tree forever (`G1`: two questions, two answers). The stream step has already moved from "guess a third switch from a time window" to "ask only who still declares" (see the ADR).
 
-2.10 **内容行的寿命是算出来的，不是停靠的**：每条几何 / 程序 / 材质行记它最后一次被计划命中的帧
-    （epoch），帧边界回收满足两条的行：`last_epoch < completedFrame() + 1`，且**不再是条目当前答案**。
-    两个后果：
-    - 被取代的 revision（条目已给出新行）与已释放条目（宿主说了 release，或没人再持有）的行，过了窗口就离开；
-    - **被裁剪 / 隐藏的内容不会丢行**：它仍是条目的当前答案，所以也仍是上传声明的来源（F27 / F28）。
-    条目本身在“宿主不要了”与“没有行还答得出”同时成立时离开（`ContentStore` 的 `retireOwner`：标记与丢弃一遍完成）；
-    材质 arena 槽不看这个条目，只看**行**：帧首问声明索引，最后一行离开后就放槽。
-    `markUsed` / 释放 token / park / `kept` 都不再存在（`ResidencyTable` 的规则落到行上，见 ADR-2026-11-11 第 3 段）。
+2.10 **Content rows' lifetime is computed, not parked**: every geometry / program / material row records the frame it was last hit by a plan
+    (epoch), and the frame boundary reclaims rows that meet two conditions: `last_epoch < completedFrame() + 1`, and **no longer the entry's current answer**.
+    Two consequences:
+    - A superseded revision (the entry already answers a new row) and a released entry (the host said release, or nobody holds it any more) leave after the window;
+    - **Culled / hidden content does not lose its row**: it is still the entry's current answer, so it is still the source of the upload declaration (F27 / F28).
+    An entry itself leaves when "the host does not want it" and "no row still answers" hold at the same time (`ContentStore`'s `retireOwner`: mark and discard in one pass);
+    material arena slots do not look at this entry, only at **rows**: the frame head asks the declaration index, and the slot is freed after the last row leaves.
+    `markUsed` / release tokens / park / `kept` no longer exist (the rules of `ResidencyTable` moved onto rows, see ADR-2026-11-11 paragraph 3).
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 显式释放
+### 3.1 Explicit release
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F1 | `releaseContent(...)` | 释放 Geometry / Material（asset 或 `MaterialInstance`）/ ShaderProgram / Texture，以及单条流的 `Buffer<float>` / `Buffer<uint32_t>` 的 GPU 驻留（buffer 按地址命名，读它的 geometry 不动）。 |
-| F2 | 释放标记 | 释放只是标记；行按 epoch 回收（2.10）。下次使用（`track` / `ensure*`）清掉标记，所以不误删。 |
-| F3 | 纹理立即删 | 纹理 cache 立即删条目；行按 epoch 回收，材质的 arena 槽按行（pin）回收。 |
-| F4 | 重建 | 下一次使用重建驻留；不是泄漏。 |
-| F5 | 弃用扫尾 | 宿主丢掉引用后由 `ContentStore::releaseAbandoned` 标记（帧内一次，录完内容、提交之前），行与条目按 epoch 回收；上传、纹理与材质块由帧自己的声明扫描离场。 |
+| F1 | `releaseContent(...)` | Releases the GPU residency of Geometry / Material (asset or `MaterialInstance`) / ShaderProgram / Texture, and of a single stream's `Buffer<float>` / `Buffer<uint32_t>` (a buffer is named by address; the geometry reading it is untouched). |
+| F2 | Release mark | Release is only a mark; rows are reclaimed per epoch (2.10). The next use (`track` / `ensure*`) clears the mark, so nothing is deleted by mistake. |
+| F3 | Textures deleted immediately | The texture cache deletes the entry immediately; rows are reclaimed per epoch, and the material arena slots per row (pin). |
+| F4 | Rebuild | The next use rebuilds residency; it is not a leak. |
+| F5 | Abandoned sweep | After the host drops its reference, `ContentStore::releaseAbandoned` marks it (once per frame, after content is recorded and before submission), and rows and entries are reclaimed per epoch; uploads, textures and material blocks leave through the frame's own declaration scan. |
 
-### 3.2 缓存
+### 3.2 Caching
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F6 | 纹理缓存 | `MaterialImages` 条目由**活内容**钉住：材质行的 slot 声明（`ContentDeclarations::declaresTexture`）+ 该帧各 pass 导入的贴图，另加条目自己的 `revision()`；无 LRU / 上限。 |
-| F7 | 材质 arena | 每槽 `copies` 份（对应在飞帧）；槽满 `Refused`，不淘汰活材质；槽的寿命是 pin（活材质行声明这个身份），帧首 `retireUnpinned` 放槽。 |
-| F8 | 按需扩容 | 记录前按 `ContentStore::materialCount()` 换更大 storage；无硬上限。 |
-| F9 | 流共享 | `StreamUploads` 按 `StreamKey` 共享；稳态帧 0 上传；条目由活几何行钉住（`ResourceTable`）。 |
-| F10 | 每帧块 | `BlockStorage` 每帧 ring，slab 数 = 在飞帧 + 1；稳态帧不写。 |
-| F11 | 对齐 | 块偏移必须是设备 `minUniformBufferOffsetAlignment` 的倍数。 |
-| F12 | 预算 | oversized / overflow / material refusal 在消耗预算前拒绝并计数。 |
+| F6 | Texture cache | `MaterialImages` entries are pinned by **live content**: the material row's slot declaration (`ContentDeclarations::declaresTexture`) + the textures each pass imports that frame, plus the entry's own `revision()`; no LRU / cap. |
+| F7 | Material arena | `copies` per slot (matching in-flight frames); a full slot answers `Refused` and evicts no live material; a slot's lifetime is the pin (a live material row declares this identity), and the frame head's `retireUnpinned` frees it. |
+| F8 | Grow on demand | Before recording, swap in larger storage according to `ContentStore::materialCount()`; no hard cap. |
+| F9 | Stream sharing | `StreamUploads` are shared by `StreamKey`; a steady-state frame uploads 0; entries are pinned by live geometry rows (`ResourceTable`). |
+| F10 | Per-frame blocks | `BlockStorage` is a per-frame ring, slabs = in-flight frames + 1; a steady-state frame does not write. |
+| F11 | Alignment | A block offset must be a multiple of the device's `minUniformBufferOffsetAlignment`. |
+| F12 | Budget | Oversized / overflow / material refusal are refused and counted before any budget is spent. |
 
-### 3.3 观测
+### 3.3 Observation
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F13 | 计数器 | `writes` / `bytesWritten` / `materialWrites` / `uploads` / `aliases` / `refusals` / `retired`。 |
-| F14 | 诊断 episode | 被拒绝的块 / 材质各报一次；缓存压力不再发 `ResourcePressure`。 |
-| F15 | 释放后可观测 | 释放 → 下一帧重建；用例断言驻留消失再出现。 |
+| F13 | Counters | `writes` / `bytesWritten` / `materialWrites` / `uploads` / `aliases` / `refusals` / `retired`. |
+| F14 | Diagnostic episode | Each refused block / material is reported once; cache pressure no longer emits `ResourcePressure`. |
+| F15 | Observable after release | Release → the next frame rebuilds; the case asserts residency disappears and then appears again. |
 
-### 3.4 上传暂存
+### 3.4 Upload staging
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F16 | 不保留 | 一次上传的 host 可见缓冲在拷贝完成后就被释放：`staging` 与 `buffer_data` 置空（vsg 自己“不够大就重建”时处理的状态），下一次上传到那个块时重新分配。 |
-| F17 | 证据是那块自己的 fence | `block->fence->status() == VK_SUCCESS` 就是“读过它的拷贝已完成”。不用时间线窗口、不用退役队列、不 `deviceWaitIdle`（见 N8）。 |
-| F18 | 触发点是帧边界 | `VsgBackend::executeFrame()` 最开头跑一次 `releaseFinishedUploadStaging()`，逐个会话问自己的上传任务。宿主不调、不需要知道（F18 曾要求宿主在生命周期点调——已撤销，见 ADR-2026-11-10-upload-staging-is-not-retained）。 |
-| F19 | 帧边界不许阻塞 | fence 没完成的块留给下一帧；`DataToCopy` 里还有待拷数据的块也跳过（下一次上传会重新分配，早清只白亏一次分配）。 |
-| F20 | 每块独立 | `TransferTask` 有 `2 × numBuffers` 个块（early/late × 3），上传按 `frameIndex` 轮转，所以两块都可能压着一个模型（实测 704 MB 车身 → `SharedUsage` 1,228 MB = `2 × 614 MB`）；清也按块清。 |
-| F21 | 可观测 | `VsgBackend::uploadStagingBytes()` / `api::OffscreenSession::stagedBytes()` 报当前占用；稳态恒 0（待释放时才是上传那一刻到下一个帧边界之间）。 |
-| F22 | 由派生任务回答 | “手里有没有块”由会话自己的上传任务回答：它是 `detail::StagingTask`（派生自 `vsg::TransferTask`，能看能清 `staging` / `buffer_data` / `fence`），会话起来时由 `installStagingTask()` 装好。不用设备级上传计数（那是设备的计量，不是被问的会话的）。 |
+| F16 | Not retained | The host-visible buffer of one upload is released once the copy completes: `staging` and `buffer_data` are cleared (the state vsg itself handles when "not big enough, rebuild"), and the next upload into that block allocates again. |
+| F17 | The evidence is that block's own fence | `block->fence->status() == VK_SUCCESS` means "the copy that read it has completed". No timeline window, no retirement queue, no `deviceWaitIdle` (see N8). |
+| F18 | The trigger is the frame boundary | `VsgBackend::executeFrame()` runs `releaseFinishedUploadStaging()` once at its very start, asking each session about its own upload tasks. The host does not call it and does not need to know (F18 used to require the host to call it at a lifecycle point — withdrawn, see ADR-2026-11-10-upload-staging-is-not-retained). |
+| F19 | The frame boundary must not block | A block whose fence has not completed is left to the next frame; a block that still has data to copy in `DataToCopy` is skipped too (the next upload reallocates anyway, so clearing early only wastes one allocation). |
+| F20 | Per block, independently | `TransferTask` has `2 × numBuffers` blocks (early/late × 3) and uploads rotate by `frameIndex`, so both blocks can hold one model (measured: a 704 MB body → `SharedUsage` 1,228 MB = `2 × 614 MB`); clearing is per block too. |
+| F21 | Observable | `VsgBackend::uploadStagingBytes()` / `api::OffscreenSession::stagedBytes()` report the current occupancy; the steady state is always 0 (while pending, it is the span between the upload instant and the next frame boundary). |
+| F22 | Answered by the derived task | "Do I hold a block" is answered by the session's own upload task: it is a `detail::StagingTask` (derived from `vsg::TransferTask`, able to see and clear `staging` / `buffer_data` / `fence`), installed by `installStagingTask()` when the session starts. No device-level upload count (that is the device's metering, not the asked session's). |
 
-### 3.5 “不再被画”的六种情形
+### 3.5 The six "no longer drawn" situations
 
-| # | 情形 | 行（表） | 上传（stream） | 半片 / 描述符集 | 材质槽 | 触发处 |
+| # | Situation | Rows (tables) | Uploads (stream) | Halves / descriptor sets | Material slots | Triggered at |
 |---|---|---|---|---|---|---|
-| F23 | **材质离树** | 宿主丢引用后下个帧边界标记；行过了 epoch 窗口才走 | — | 无（set 键不含材质） | 行走后由帧首的 pin 扫描 `BlockStorage::retireUnpinnedMaterials` 放槽 | `ContentStore::releaseAbandoned` / `releaseContent` |
-| F24 | **program 离树** | 同上 | — | 半片在 program@rev 不再被表回答时 park（它驱动的 vsg 管线随之走；池里的 variant 只按 FIFO 65 淘汰） | — | 同上 |
-| F25 | **pass 脱离** | 后端只有身份：`releasePass` 忘掉 id（永不重发） | — | **不释放**（会话级；随 program 或 layout 消失才走）；输入集一帧后退回 | — | `RenderEngine::removePass` → `device()->releasePass()` + 拥有目标 `releaseRenderTarget()` |
-| F26 | **geom 离树** | 宿主丢引用后扫尾标记；行过了 epoch 窗口 ⇒ pin 消失，上传按自己的窗口离场 | — | layout 的最后一条几何行离树 ⇒ `declaresLayout` 消失 ⇒ 半片 park（program 离树同样 park） | `releaseAbandoned` |
-| F27 | **geom 隐藏**（`setVisible(false)`） | **留着**（宿主仍持有） | **留着**：行还在 ⇒ pin 还在；恢复可见零重传 | 留着 | — | 只影响收集，不触发释放 |
-| F28 | **geom 被裁剪**（视锥外，逐视图） | 留着 | 同 F27——裁剪是逐视图的，但它不改变“谁声明了这些字节” | 留着 | — | 同上 |
+| F23 | **material leaves the tree** | Marked at the next frame boundary after the host drops the reference; rows leave only after the epoch window | — | None (the set key does not include material) | After the row leaves, the frame head's pin scan `BlockStorage::retireUnpinnedMaterials` frees the slot | `ContentStore::releaseAbandoned` / `releaseContent` |
+| F24 | **program leaves the tree** | Same as above | — | The half parks when program@rev is no longer answered by the table (the vsg pipeline it drives goes with it; pooled variants are only evicted FIFO 65) | — | Same as above |
+| F25 | **pass detaches** | The backend only has the identity: `releasePass` forgets the id (never reissues it) | — | **Not released** (session-level; it leaves only with the program or the layout); the input set falls back after one frame | — | `RenderEngine::removePass` → `device()->releasePass()` + the owned target's `releaseRenderTarget()` |
+| F26 | **geom leaves the tree** | Sweep-marked after the host drops the reference; rows leave after the epoch window ⇒ the pin disappears and the upload leaves through its own window | — | The last geometry row for the layout leaves the tree ⇒ `declaresLayout` disappears ⇒ the half parks (a program leaving the tree parks too) | `releaseAbandoned` |
+| F27 | **geom hidden** (`setVisible(false)`) | **Kept** (the host still holds it) | **Kept**: the row is still there ⇒ the pin is still there; becoming visible again retransmits nothing | Kept | — | Affects collection only, triggers no release |
+| F28 | **geom culled** (outside the frustum, per view) | Kept | Same as F27 — culling is per view, but it does not change "who declared these bytes" | Kept | — | Same as above |
 
-纹理（`MaterialImages`）在“上传”那一列：它的 pin 同样是声明（材质行的 slot）+ 该帧导入的贴图 + 条目自己的
-revision，所以隐藏 / 裁剪的材质不丢贴图，材质行过了 epoch 窗口才让贴图离场（F26 的机制，另一张表）。
+Textures (`MaterialImages`) belong in the "uploads" column: their pin is likewise a declaration (a material row's slot) + the textures imported that frame + the entry's own
+revision, so a hidden / culled material does not lose its textures, and only once the material row passes the epoch window do the textures leave (F26's mechanism, another table).
 
-## 4. 公开接口
+## 4. Public Interface
 
-### 4.1 释放
+### 4.1 Release
 
-| 接口 | 作用 |
+| Interface | Purpose |
 |---|---|
-| `RenderDevice::releaseContent(raw_ptr<const Object>)` | 释放 GPU 驻留 |
-| `RenderEngine::releaseContent(...)` | 引擎转发 |
+| `RenderDevice::releaseContent(raw_ptr<const Object>)` | Releases GPU residency |
+| `RenderEngine::releaseContent(...)` | The engine forwards it |
 
-上传暂存**没有入口**：它在帧边界自己回收（F16–F19）；后端侧的现面是 `VsgBackend::uploadStagingBytes()` 与
-每帧的观测值 `FrameReport::uploads`（`FrameUploads`，2026-11-13）。
-`api::OffscreenSession::stagedBytes()`（只读观测）。
+Upload staging **has no entry point**: it reclaims itself at the frame boundary (F16–F19); the backend-side surface is `VsgBackend::uploadStagingBytes()` and
+the per-frame observation `FrameReport::uploads` (`FrameUploads`, 2026-11-13).
+`api::OffscreenSession::stagedBytes()` (read-only observation).
 
-### 4.2 缓存与存储
+### 4.2 Caching and storage
 
-| 接口 | 作用 |
+| Interface | Purpose |
 |---|---|
-| `MaterialImages::acquire()` / `releaseTexture()` / `beginFrame()` / `released()` / `bytes()` | 纹理 cache（寿命读 `ContentDeclarations::declaresTexture` + 该帧导入的贴图 + 条目自己的 revision） |
-| `core::MaterialArena::write()` / `capacityNeed()` / `live()` | 材质块 |
-| `BlockStorage::beginFrame()` / `writeView()` / `writeDraw()` / `writeMaterial()` / `retireUnpinnedMaterials()` | 每帧块 |
-| `BlockStorage::strides()` / `regions()` / `bytes()` | 布局与观测 |
-| `StreamUploads::acquireVertex()` / `acquireIndex()` / `beginFrame()` / `retired()` / `uploads()` | 流上传（条目由 `core::ResourceTable` 持有；寿命读 `ContentFacts::declarations` + 条目自己的 revision） |
+| `MaterialImages::acquire()` / `releaseTexture()` / `beginFrame()` / `released()` / `bytes()` | Texture cache (lifetime reads `ContentDeclarations::declaresTexture` + the textures imported that frame + the entry's own revision) |
+| `core::MaterialArena::write()` / `capacityNeed()` / `live()` | Material blocks |
+| `BlockStorage::beginFrame()` / `writeView()` / `writeDraw()` / `writeMaterial()` / `retireUnpinnedMaterials()` | Per-frame blocks |
+| `BlockStorage::strides()` / `regions()` / `bytes()` | Layout and observation |
+| `StreamUploads::acquireVertex()` / `acquireIndex()` / `beginFrame()` / `retired()` / `uploads()` | Stream uploads (entries held by `core::ResourceTable`; lifetime reads `ContentFacts::declarations` + the entry's own revision) |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 |---|---|
-| C1 | 内容对象归宿主，GPU 驻留归后端；释放走显式入口。 |
-| C2 | 缓存不设容量上限；宿主用多少拿多少。 |
-| C3 | 材质槽满时拒绝，不淘汰活材质。 |
-| C4 | 上传暂存不是驻留也不是缓存：回收它不改任何宿主对象、不改 revision，下一次上传自己重新分配。 |
+| C1 | Content objects belong to the host, GPU residency to the backend; release goes through an explicit entry point. |
+| C2 | The cache has no capacity cap; the host takes as much as it uses. |
+| C3 | A full material slot refuses; live materials are never evicted. |
+| C4 | Upload staging is neither residency nor a cache: reclaiming it changes no host object and no revision, and the next upload allocates for itself. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 |---|---|
-| R1 | `releaseContent()` 释放 GPU 驻留；不替宿主决定寿命。 |
-| R2 | 不 idle 设备；释放只是标记，行的回收按 epoch（2.10）。暂存回收更轻：fence 证据（F17），零等待、零 idle、不进退役队列。 |
-| R3 | 不引入全局预算/trim/收缩。 |
-| R4 | 暂存回收不需要宿主参与：它不是一条策略，而是“用完就放”（F18）。宿主侧不再有调用点，也没有开关。 |
+| R1 | `releaseContent()` releases GPU residency; it does not decide lifetime for the host. |
+| R2 | Never idle the device; release is only a mark, and rows are reclaimed per epoch (2.10). Staging reclamation is lighter still: fence evidence (F17), zero waiting, zero idle, no retirement queue. |
+| R3 | No global budget / trim / shrink is introduced. |
+| R4 | Staging reclamation needs no host participation: it is not a policy but "give it back once used" (F18). There is no call site on the host side any more, and no switch. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 注意项 |
+| # | Caveat |
 |---|---|
-| N1 | 不要为了“省内存”重新引入 LRU / 字节上限；方向已裁决为显式释放。 |
-| N2 | 槽立即复用安全：每槽 `copies` 份，新材质写当前 copy。 |
-| N3 | 拒绝不淘汰活材质：同帧复用已记录的槽可能画错。 |
-| N4 | 释放路径不 idle 设备；破坏路径才用计数 idle。暂存回收就是这类破坏路径（见 R2 的例外）。 |
-| N5 | 块存储增长只加 chunk，不搬旧块（旧 span 必须保持有效）。 |
-| N6 | 对齐用设备限制，不要硬写 16 / 256。 |
-| N7 | 没有计时，也没有“安静几帧才收”：判据是那块自己的 fence（F17），帧边界只是“什么时候去看一眼”。 |
-| N8 | 销毁暂存的证据不是时间线窗口，也不是设备空闲：时间线要帧（宿主停下来就永远不到期），`deviceWaitIdle` 停的是整个设备。 |
-| N9 | 暂存回收**不做内部同步**：它读写的是帧路径在读的状态（任务的块、块的 `staging` / `buffer_data` / `fence`）。它只在帧边界跑（一帧一次、一个线程）；另一条线程上调不可检。 |
-| N10 | 清**只清 `staging`**（连同指向它的 `buffer_data`），块本身、fence、command buffer / pool 都留着：删元素不行（`*(frames[frameIndex])` 直接解引用），换整个任务代价大得多。 |
-| N11 | 派生任务读的是 vsg 的 protected 成员（`_earlyDataToCopy` / `_lateDataToCopy` / `TransferBlock::staging`）。判据只认“`staging != nullptr` ⇒ 手里有一块 host 内存”，与“这块内存还在”是同一句话；上游改名 = 编译错（响的），上游改语义才是危险的那种，靠 T8 里对字节数的断言兜住。 |
-## 6. 注意事项与陷阱
+| N1 | Do not reintroduce LRU / a byte cap "to save memory"; the direction has been decided as explicit release. |
+| N2 | Reusing a slot immediately is safe: `copies` per slot, and a new material writes the current copy. |
+| N3 | A refusal does not evict live material: reusing a slot recorded in the same frame may draw wrong. |
+| N4 | The release path does not idle the device; only the destruction path uses a counted idle. Staging reclamation is such a destruction path (see R2's exception). |
+| N5 | Block storage growth only adds chunks and never moves old blocks (old spans must stay valid). |
+| N6 | Alignment comes from device limits; do not hardcode 16 / 256. |
+| N7 | There is no timer and no "collect after a few quiet frames": the criterion is that block's own fence (F17), and the frame boundary is only "when to look". |
+| N8 | The evidence for destroying staging is neither a timeline window nor device idleness: a timeline needs frames (if the host stops it never expires), and `deviceWaitIdle` stops the whole device. |
+| N9 | Staging reclamation **does no internal synchronisation**: what it reads and writes is state the frame path is reading (the task's blocks, the blocks' `staging` / `buffer_data` / `fence`). It only runs at the frame boundary (once per frame, one thread); calling it on another thread is undetectable. |
+| N10 | Clear **only `staging`** (together with the `buffer_data` pointing at it); the block itself, the fence and the command buffer / pool all stay: deleting the element does not work (`*(frames[frameIndex])` is dereferenced directly), and replacing the whole task costs much more. |
+| N11 | The derived task reads vsg's protected members (`_earlyDataToCopy` / `_lateDataToCopy` / `TransferBlock::staging`). The criterion only recognises "`staging != nullptr` ⇒ a piece of host memory is held", which is the same sentence as "this memory is still there"; an upstream rename = a compile error (loud), an upstream semantic change is the dangerous kind and is caught by the byte-count assertions in T8. |
+## 6. Caveats and Traps
 
-### 6.1 一事实一家
+### 6.1 One fact, one home
 
-- 会怎么错：同一份状态被两处保存，改一处另一处过期。
-- 怎么判：出现两份可写的值/两个可写的注册表。
-- 怎么防：回到 §5 的 N#；只留一个 owner，其余只读。
+- How it fails: the same state is stored in two places; change one and the other goes stale.
+- How to detect it: two writable values / two writable registries appear.
+- How to prevent it: go back to §5's N#; keep one owner and make the rest read-only.
 
-### 6.2 后端/平台的边界
+### 6.2 The backend/platform boundary
 
-- 会怎么错：把平台差异写进引擎/应用层，换平台时到处分叉。
-- 怎么判：出现“如果 Windows/X11 就……”的分支。
-- 怎么防：平台事实留在后端，引擎只消费编译好的帧值。
+- How it fails: platform differences are written into the engine/application layer, and switching platform forks everywhere.
+- How to detect it: an "if Windows/X11 then…" branch appears.
+- How to prevent it: platform facts stay in the backend; the engine only consumes the compiled frame values.
 
-### 6.3 上传暂存：什么时候还
+### 6.3 Upload staging: when to give it back
 
-- 会怎么错（A）：拿“时间线窗口”当证据。窗口是帧的，拷贝的完成是设备的事实：一个 park 要 `2 × slots + 1` 帧才到期，
-  宿主停下来就永远不到期（实测：大模型加载后 1.2 GB 宿住数分钟，进程 1% 单核 / 0% GPU）。
-- 会怎么错（B）：拿“设备空闲”当证据。`deviceWaitIdle()` 停的是整个设备，而正确性只需要“这一次拷贝完了”。
-- 会怎么错（C）：把“还有没有东西可还”做成一个需要宿主回答的问题（显式动词）。产品里最常见的宿主（载入后不动）
-  根本不会调，于是要再补一条“再问一次 = 现在”—— 一个功能两套语义。
-- 会怎么错（D）：用设备级的“上传了多少次”代替“这个会话手里还有没有暂存”。一个会话成功就会盖住另一个的答案。
-- 会怎么错（E）：在 sweep 里加一条“这个 DataToCopy 还有待拷数据就先不清”的便宜判断。那种表可以长期非空而毫无待拷
-  （`_transferData()` 提前返回、不清理它），于是 sweep 永久跳过，整份暂存又常驻回去。
-- 怎么判：`VsgBackend::uploadStagingBytes()` / `stagedBytes()` 在静下来之后不是 0；`RetentionStats::device_waits` 在
-  这条线上涨了。
-- 怎么防：只认那块自己的 `fence->status()`（F17），在帧边界扫一遗（F18），并且**不加任何额外条件**（E）。
+- How it fails (A): taking a "timeline window" as evidence. The window counts frames, while the copy's completion is a fact of the device: a park needs `2 × slots + 1` frames to expire,
+  and if the host stops it never expires (measured: after loading a large model 1.2 GB stayed resident for minutes, the process at 1% of one core / 0% GPU).
+- How it fails (B): taking "device idle" as evidence. `deviceWaitIdle()` stops the whole device, while correctness only needs "this one copy is done".
+- How it fails (C): making "is there anything to give back" a question the host must answer (an explicit verb). The most common host in the product (load, then do nothing)
+  never calls it, so another "ask again = now" has to be added — one feature with two semantics.
+- How it fails (D): using the device-level "how many uploads happened" in place of "does this session still hold staging". One session succeeding masks the other's answer.
+- How it fails (E): adding a cheap "this DataToCopy still has data to copy, so do not clear it yet" check to the sweep. Such a table can stay non-empty for a long time with nothing pending
+  (`_transferData()` returns early and does not clear it), so the sweep skips forever and the whole staging becomes resident again.
+- How to detect it: `VsgBackend::uploadStagingBytes()` / `stagedBytes()` is not 0 after things go quiet; `RetentionStats::device_waits`
+  rises on this line.
+- How to prevent it: only recognise that block's own `fence->status()` (F17), sweep once at the frame boundary (F18), and **add no extra condition** (E).
 
-### 6.4 隐藏 / 裁剪**不**丢上传（离树才丢）
+### 6.4 Hidden / culled content does **not** lose its uploads (only leaving the tree does)
 
-- 会怎么错：把“这一帧没画”当成“对象没了”，于是要么在离树路径上补一套释放（裁剪抖动 ⇒ 每帧重传），
-  要么反过来以为隐藏的内容会忘掉上传，再给它加一条时间窗。
-- 会怎么判：`VsgBackend::releasedStreams()` 只在**行消失之后**增长；同一片几何“看不见→又看见”后
-  `StreamUploads::uploads()` **不变**。行数（`ContentStore` 的活对象）也不变。
-- 怎么防：寿命只问一条——“还有活几何行声明这些字节吗？”（pin = buffer 地址 + 它此刻的 revision，
-  由 `ContentStore::tablesFor` 发布的几何行枚举）。要提前还驻留就用显式 `releaseContent()`，
-  不要再加时间窗 / 容量上限（`G8`：那是替宿主猜）。
+- How it fails: treating "not drawn this frame" as "the object is gone", and so either adding a release to the leave-the-tree path (culling churn ⇒ retransmit every frame),
+  or, conversely, believing hidden content forgets its uploads and adding a time window to it.
+- How to detect it: `VsgBackend::releasedStreams()` only grows **after the row disappears**; for the same piece of geometry, "invisible → visible again" leaves
+  `StreamUploads::uploads()` **unchanged**. The row count (`ContentStore`'s live objects) is unchanged too.
+- How to prevent it: lifetime asks one question only — "is there still a live geometry row declaring these bytes?" (pin = buffer address + its current revision,
+  enumerated from the geometry rows published by `ContentStore::tablesFor`). To give residency back early, use explicit `releaseContent()`;
+  do not add a time window / capacity cap (`G8`: that guesses on the host's behalf).
 
-### 6.5 换实例流是**描述**变更，几何要自己报 revision
+### 6.5 Swapping the instance stream is a **description** change, and the geometry must report the revision itself
 
-- 会怎么错：宿主给某个 primitive 换了实例切片（`Geometry::setInstanceTransforms`），
-  却没接着报 `Geometry::bumpRevision()`。那个 setter 只推进内容纪元（`Node::invalidateBounds`），
-  **不动** `revision()`；而后端的几何行只在 revision 移动时重建（`ContentStore.cpp` 的
-  `findGeometry(..., contentRefOf(identity, live.shape->revision()))`）。于是计划每帧从 primitive 现读新 buffer、
-  事实行声明的仍是旧 buffer，上传条目**每帧建-退**：画面对，代价静默。
-- 会怎么判：什么都没改、只是每帧重画的稳态里，`StreamUploads::uploads()` 与 `retired()` **同时**按帧上涨，
-  而 `live()` 不涨（这三条一起看才排得掉“真的每帧换内容”）；被替换的那块 buffer 从不出现在声明索引里。
-- 怎么防：换切片属于“这份描述变了”，改完立刻 `bumpRevision()`。隐藏/裁剪**不**触发这条
-  （行还在 ⇒ 声明还在，见 6.4），所以它只在**真的换了 buffer** 时才有后果——
-  “裁剪 100 帧零重传”那条用例钉不住它，钉住它的是 T10（报告前只声明旧流、报告后两代都声明、旧行离场后只剩新流）。
+- How it fails: the host swaps the instance slice of a primitive (`Geometry::setInstanceTransforms`)
+  without then reporting `Geometry::bumpRevision()`. That setter only advances the content epoch (`Node::invalidateBounds`) and
+  does **not** touch `revision()`; the backend's geometry row, however, is only rebuilt when the revision moves (`ContentStore.cpp`'s
+  `findGeometry(..., contentRefOf(identity, live.shape->revision()))`). So the plan reads the new buffer from the primitive every frame while
+  the fact row still declares the old buffer, and the upload entry is **built and retired every frame**: the picture is right and the cost is silent.
+- How to detect it: in a steady state where nothing changed and only the frame is redrawn, `StreamUploads::uploads()` and `retired()` both rise per frame,
+  while `live()` does not (only all three together rule out "the content really changes every frame"); the replaced buffer never appears in the declaration index.
+- How to prevent it: swapping the slice is "this description changed", so call `bumpRevision()` right after. Hiding/culling does **not** trigger this
+  (the row is still there ⇒ the declaration is still there, see 6.4), so it only has consequences when the buffer **really is** swapped —
+  the "cull 100 frames, zero retransmission" case does not pin it down; T10 does (before the report only the old stream is declared, after it both generations are, and once the old row leaves only the new stream is).
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 否决 | 理由 |
+| # | Rejected | Reason |
 |---|---|---|
-| D1 | LRU / 容量上限 / 压力淘汰 | 300 张同序循环下 LRU 与 FIFO 一样差；上限是替宿主做决定。详见 [ADR](../decisions/ADR-2026-10-22-cache-unbounded-explicit-release.md)。 |
-| D2 | 材质 FIFO 淘汰 | 淘汰活材质会画错；拒绝只兜底。 |
-| D3 | 释放时 idle 设备 | 破坏路径才需要；释放只是标记，行的回收按 epoch。 |
-| D4 | 全局预算 / trim / 收缩 | 没有消费者；宿主显式管理。 |
-| D5 | 旧帧读回接缝 | F−N 是观测缺口，不是生产竞态；不做。 |
-| D6 | 把回收做成显式入口（宿主或用户命令调） | 最常见的宿主（载入完不动）不会调；park 到期又要 `2 × slots + 1` 帧，于是要再补一条“再问一次 = 一次计数 idle”。详见 [ADR](../decisions/ADR-2026-11-10-upload-staging-is-not-retained.md)。 |
-| D7 | 用时间线 park（或 `deviceWaitIdle`）当证据 | 证据是那块自己的 fence，比窗口强也比设备空闲便宜：零等待、零 idle。 |
-| D8 | 引擎每帧“好心”调一次回收 | 引擎不该有资源政策，而且它看不到“这次拷贝完了没有”。帧边界上由后端自己看 fence 才是同一件事的正确位置。 |
-| D9 | 环境变量当开关 | 它等价于“用完就放”，不是可选政策；开关只会多一条要解释的线。 |
-| D10 | 给 `FrameCounters` 加每帧上传数，让引擎据此触发 | 没人读的 SDK 字段（`G8`）。**观测面已于 2026-11-13 落地为 `FrameReport::uploads`**（`FrameUploads`：本帧 stream/texture 的上传、字节与释放）；引擎仍不据此触发。 |
-| D11 | 给引擎加一个转发入口 | 引擎已经有 `device()`；多一个只做一跳的入口等于同一件事两个名字（`G4`）。 |
-| D12 | 只登记一个“待清理”标记，真正清理留到下一帧 | 登记不等于还了；帧边界就是那个“下一帧”，不需要一个额外状态。 |
-| D13 | 清块之前先问一句“这个 DataToCopy 还有待拷数据吗” | 看起来便宜，实际上那种表可以长期非空而无任何待拷，于是 sweep 永久跳过（见 6.3 E）。 |
-| D14 | 用设备级上传计数（`uploads()` / `count()`）判断“手里有没有块” | 计数答的是设备，不是被问的会话（见 6.3 D）。改成问会话自己的任务（F22）。 |
-| D15 | 换掉整个 `TransferTask` 来释放 | 会把每块的 command pool / command buffer / fence 一起丢掉，还要把三处交接再正确一遍（`vsg-pitfalls.md` P42.1）；清 `staging` 只丢那块缓冲。 |
-| D16 | 只清比 `minimumStagingBufferSize` 大的块（留可复用的小块） | ~~否决~~ **已采纳（2026-11-13，T26）**：每帧上传的宿主稳态零分配，一次性大块仍还掉；见 `../decisions/ADR-2026-11-13-staging-keeps-the-reusable-block.md`。 |
+| D1 | LRU / capacity cap / pressure eviction | Under 300 textures cycled in the same order, LRU is as bad as FIFO; a cap decides for the host. See [ADR](../decisions/ADR-2026-10-22-cache-unbounded-explicit-release.md). |
+| D2 | Material FIFO eviction | Evicting live material draws wrong; a refusal is only the fallback. |
+| D3 | Idling the device on release | Only the destruction path needs it; release is only a mark, and rows are reclaimed per epoch. |
+| D4 | Global budget / trim / shrink | No consumer; the host manages explicitly. |
+| D5 | A seam that reads back old frames | F−N is an observation gap, not a production race; not done. |
+| D6 | Making reclamation an explicit entry point (called by the host or a user command) | The most common host (load, then nothing) never calls it; and a park expiry needs `2 × slots + 1` frames, so another "ask again = one counted idle" has to be added. See [ADR](../decisions/ADR-2026-11-10-upload-staging-is-not-retained.md). |
+| D7 | A timeline park (or `deviceWaitIdle`) as evidence | The evidence is that block's own fence, which is stronger than a window and cheaper than device idleness: zero waiting, zero idle. |
+| D8 | The engine "kindly" calling reclamation once per frame | The engine should have no resource policy, and it cannot see "has this copy completed". Looking at the fence at the frame boundary, in the backend itself, is the right place for the same thing. |
+| D9 | An environment variable as a switch | It is equivalent to "give it back once used", not an optional policy; a switch would only add one more line to explain. |
+| D10 | Adding a per-frame upload count to `FrameCounters` for the engine to trigger on | An SDK field nobody reads (`G8`). **The observation surface landed on 2026-11-13 as `FrameReport::uploads`** (`FrameUploads`: this frame's stream/texture uploads, bytes and releases); the engine still does not trigger on it. |
+| D11 | Adding a forwarding entry point to the engine | The engine already has `device()`; one more entry point that only hops once is the same thing under two names (`G4`). |
+| D12 | Registering only a "to be cleaned" mark and leaving the real cleaning to the next frame | Registering is not giving back; the frame boundary is that "next frame", and no extra state is needed. |
+| D13 | Asking "does this DataToCopy still have data to copy" before clearing a block | It looks cheap, but such a table can stay non-empty for a long time with nothing pending, so the sweep skips forever (see 6.3 E). |
+| D14 | Using the device-level upload count (`uploads()` / `count()`) to decide "do I hold a block" | The count answers for the device, not for the session being asked (see 6.3 D). Ask the session's own task instead (F22). |
+| D15 | Replacing the whole `TransferTask` to release | It throws away each block's command pool / command buffer / fence, and the three hand-overs have to be got right again (`vsg-pitfalls.md` P42.1); clearing `staging` loses only that buffer. |
+| D16 | Clearing only blocks larger than `minimumStagingBufferSize` (keeping a reusable small block) | ~~Rejected~~ **Adopted (2026-11-13, T26)**: a host that uploads every frame reaches a steady state with zero allocations, and a one-off large block is still given back; see `../decisions/ADR-2026-11-13-staging-keeps-the-reusable-block.md`. |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 |
+| # | Criterion |
 |---|---|
-| T1 | `ContentStoreTest.*Release*` / `MaterialImagesTest.Release*`。 |
-| T2 | `VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt`。 |
-| T3 | `HeadlessBackendTest.TheEngineForwardsAContentReleaseToItsDevice`。 |
-| T4 | `BlockStorageTest.*` / `MaterialArenaTest.*` / `StreamUploadsTest.*`。 |
-| T5 | `UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack`：上传后帧不涨 idle；上传的暂存**没人调**就被后续帧收回（存活块都是可复用尺寸的倍数；大于下限的一次性大块被还掉）；同一内容重画零上传；新流再上传、再回落到下限。 |
-| T6 | `OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting`：会话起来就装好了可问的任务（`stagedBytes()` 有值且为 0），出帧不涨 idle，之后仍能提交。 |
-| T7 | `OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands`：机制层（256 MB 工作集回落 + 后续上传逐字节读回；vsg 自建的任务答不出 → 装过之后报 0 → 再上传后报 ≥ 4096 字节）。 |
-| T8 | `HeadlessBackendTest`：设备双不再有暂存入口（动词已从 SDK 删除，`RenderDevice` 少一个虚函数）。 |
-| T9 | 六种“不再被画”（§2.9 / F23–F28）：`ContentStoreTest.*Release*`（离树与显式释放）、`ContentStoreTest.ACulledGeometryKeepsItsUploadsForAHundredFrames`（裁剪 100 帧零重传）、`ContentStoreTest.AStreamLeavesWithinTheParkingWindowAfterItsGeometryIsDropped`（离树 `slots + 1` 帧内 `live()` 下降）、`StreamUploadsTest.TwoGeometriesOfOneBufferShareOneUploadUntilBothLeave`（共享 buffer 的 pin 合并）、`VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt`（释放后重建）、`VsgBackendTest` 的 pass 身份用例（`releasePass` 只忘 id）。隐藏 / 裁剪的“行不变、上传也留着”由 `StreamUploadsTest` 与 `ContentStoreTest` 各钉一半，不合并成一条——那是两件不同的事实。 |
-| T10 | 实例流也是**声明**（§2.5 / §6.5）：`ContentStoreTest.AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRevision` —— 行带着 primitive 的实例句柄并据此声明它；换了切片但**没**报新描述时只声明旧流；`bumpRevision()` 后活行声明新流、停车中的旧行仍声明旧流；旧行离场后只剩新流。 |
-| T11 | 每帧上传/释放在报告里是**增量**（T25/T29）：`FrameUploadsTest.TheReportAnswersWhatThisFrameUploadedAndReleased` —— 帧前无答案；首帧 `stream_uploads`/`stream_bytes` > 0；稳态全 0；`Buffer::bumpRevision()` 后重新上传一次；换内容时报 `stream_releases` > 0。 |
+| T1 | `ContentStoreTest.*Release*` / `MaterialImagesTest.Release*`. |
+| T2 | `VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt`. |
+| T3 | `HeadlessBackendTest.TheEngineForwardsAContentReleaseToItsDevice`. |
+| T4 | `BlockStorageTest.*` / `MaterialArenaTest.*` / `StreamUploadsTest.*`. |
+| T5 | `UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack`: frames after an upload do not raise idle; the upload's staging is reclaimed by later frames with **nobody calling** (every live block is a multiple of the reusable size; a one-off block larger than the minimum is given back); redrawing the same content uploads nothing; a new stream uploads again and falls back to the minimum again. |
+| T6 | `OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting`: the session has an askable task installed as soon as it starts (`stagedBytes()` has a value and is 0), emitting frames does not raise idle, and it can still submit afterwards. |
+| T7 | `OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands`: the mechanism layer (a 256 MB working set falls back + a later upload is read back byte for byte; a task vsg built itself cannot answer → reports 0 after being installed → reports ≥ 4096 bytes after another upload). |
+| T8 | `HeadlessBackendTest`: the device side no longer has a staging entry point (the verb is gone from the SDK, and `RenderDevice` has one virtual function fewer). |
+| T9 | The six "no longer drawn" situations (§2.9 / F23–F28): `ContentStoreTest.*Release*` (leaving the tree and explicit release), `ContentStoreTest.ACulledGeometryKeepsItsUploadsForAHundredFrames` (cull 100 frames, zero retransmission), `ContentStoreTest.AStreamLeavesWithinTheParkingWindowAfterItsGeometryIsDropped` (`live()` drops within `slots + 1` frames of leaving the tree), `StreamUploadsTest.TwoGeometriesOfOneBufferShareOneUploadUntilBothLeave` (the pins of a shared buffer merge), `VsgBackendTest.ReleasingContentDropsItsResidencyAndTheNextFrameRebuildsIt` (rebuild after release), and `VsgBackendTest`'s pass-identity case (`releasePass` only forgets the id). Hidden / culled "the row is unchanged and the upload stays too" is pinned half by `StreamUploadsTest` and half by `ContentStoreTest`, not merged into one — those are two different facts. |
+| T10 | The instance stream is a **declaration** too (§2.5 / §6.5): `ContentStoreTest.AnInstanceStreamIsDeclaredThroughItsPrimitiveAtTheRowsRevision` — the row carries the primitive's instance handle and declares it from that; after the slice is swapped but no new description is **not** reported, only the old stream is declared; after `bumpRevision()` the live row declares the new stream while the parked old row still declares the old one; once the old row leaves only the new stream remains. |
+| T11 | Per-frame uploads/releases are an **increment** in the report (T25/T29): `FrameUploadsTest.TheReportAnswersWhatThisFrameUploadedAndReleased` — no answer before the frame; the first frame has `stream_uploads`/`stream_bytes` > 0; the steady state is all 0; `Buffer::bumpRevision()` uploads once more; swapping content reports `stream_releases` > 0. |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-现行设计；功能点与接口以上表为准。F16–F22（上传暂存）已落地：`gfx_backend_vsg` 在每个帧边界扫一遍
-“fence 已完成”的块并释放其 `staging`（零等待、零 idle），SDK 侧**没有**对应动词，模型查看器也不需要调任何东西
-（`release_render_memory` 命令随之删除）。
+Current design; features and interfaces are as the tables above. F16–F22 (upload staging) have landed: `gfx_backend_vsg` sweeps
+"fence completed" blocks at every frame boundary and releases their `staging` (zero waiting, zero idle), the SDK side has **no** corresponding verb, and the model viewer needs to call nothing either
+(the `release_render_memory` command was deleted with it).
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-见 `../backlog/graphics.md`；开放项按触发条件保留。
+See `../backlog/graphics.md`; open items are kept by trigger condition.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-旧名/旧路径只在 §7 已否决选项或 git 历史里出现；新代码按 §4 的接口写。
+Old names / old paths appear only in §7's rejected options or in git history; new code is written against §4's interfaces.
 
-## 10. 参考
+## 10. References
 
 `graphics-architecture.md` · `graphics-geometry.md` · `vsg-backend.md` · `../backlog/graphics.md`
