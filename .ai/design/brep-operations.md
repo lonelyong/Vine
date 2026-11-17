@@ -1,7 +1,7 @@
 # brep - runtime B-rep operations
 
-> **Status**: current (both interfaces and the no-backend branch are in place; the OpenCASCADE bodies await a build with
-> the backend)
+> **Status**: current (both interfaces, both branches and the OpenCASCADE bodies are in place; the backend branch is
+> verified in a build with OpenCASCADE 8.0.0, see 9.1)
 > **Last verified**: 2026-11-03
 > **Scope**: `src/base/brep`: where the runtime operations on a B-rep live (tessellation, building a solid from a
 > primitive, and booleans later) and what their contract is.
@@ -45,7 +45,7 @@ solid from a primitive, booleans later). Fitting it into either existing half do
 - No `Primitive` → mesh conversion: that is pure mathematics with zero dependencies and belongs to `geometry` (see
   `geometry-tessellation.md`), not here.
 - Construction covers only the five primitives `geometry` defines: no solid from a mesh or a wireframe, and no booleans
-  or sewing; this stage ships no OpenCASCADE function body (`../backlog/brep.md`).
+  or sewing (`../backlog/brep.md`).
 
 ### 1.4 Conclusion in one sentence
 
@@ -148,7 +148,7 @@ flowchart LR
 - **Why**: `G4`, `G12` - a primitive given a size yields a solid of that size; the type name and the coordinate
   convention must be readable from each other.
 - **Boundary**: placement belongs to the consumer (a `graphics::Node` transform, an assembly's pose), and `makeBrep`
-  accepts no pose parameter (`D7`).
+  accepts no pose parameter (`D9`).
 
 | Primitive | Local space | Backend construction | Exactness |
 |---|---|---|---|
@@ -195,8 +195,8 @@ flowchart LR
 
 | # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | Tessellation | `tessellate(shape, options) → TriangleMesh` (empty = failure): triangulates per face, indices wound by the face's own orientation | interface in place, backend stubbed |
-| F2 | Solid from a primitive | `makeBrep(primitive) → BrepShape` (empty = failure): for exporting and booleans | interface in place, backend stubbed |
+| F1 | Tessellation | `tessellate(shape, options) → TriangleMesh` (empty = failure): triangulates per face, indices wound by the face's own orientation | in place |
+| F2 | Solid from a primitive | `makeBrep(primitive) → BrepShape` (empty = failure): for exporting and booleans | in place |
 
 ### 3.1 F1 Tessellation
 
@@ -317,12 +317,12 @@ The complete contract is in the header comments; this page records ownership and
   (`G2`).
 - **D8**: Putting it in `loaders` / `viz` / `robotics`, or opening a new layer for it - the first three sit above it in
   the dependency chain and are consumers, not a home (`G2`); a new layer would have one member today (`G8`).
-- **D7**: `makeBrep(primitive, placement)` accepting a transform - a primitive has no transform channel, and placement
+- **D9**: `makeBrep(primitive, placement)` accepting a transform - a primitive has no transform channel, and placement
   belongs to the consumer; adding it would give `BrepShape` a placement semantics `geometry` does not define (`G4`,
   `G8`).
-- **D8**: Running `BRepCheck_Analyzer` after construction - a primitive with legal dimensions cannot produce a bad solid,
-  so the cost of a full topology check buys no information (`G10`).
-- **D9**: One public overload per primitive - no consumer needs to bypass RTTI today, so the documentation and test cost
+- **D10**: Running `BRepCheck_Analyzer` after construction - a primitive with legal dimensions cannot produce a bad
+  solid, so the cost of a full topology check buys no information (`G10`).
+- **D11**: One public overload per primitive - no consumer needs to bypass RTTI today, so the documentation and test cost
   of five entry points is not paid yet (`G8`); the implementation is already split by type, so adding a public overload
   later changes no implementation.
 
@@ -331,8 +331,8 @@ The complete contract is in the header comments; this page records ownership and
 | # | Criterion | Case |
 |---|---|---|
 | T1 | build without the backend: the capability query is false and the call returns an empty mesh | `tests/test_brep/TessellationTest.cpp` |
-| T2 | once the backend lands: a box tessellates into 12 triangles, normals have unit length, the vertices lie on the box faces | to be added (see backlog) |
-| T3 | once the backend lands: a build without the backend still answers an empty mesh and a false capability | to be added |
+| T2 | a box tessellates into 12 triangles, normals have unit length, the vertices lie on the box faces | not covered yet |
+| T3 | a build without the backend answers an empty mesh and a false capability | `tests/test_brep/TessellationTest.cpp`, `tests/test_brep/ConstructionTest.cpp` |
 | T4 | build without the backend: `hasBackend()` is false and `makeBrep()` returns an empty handle | `tests/test_brep/ConstructionTest.cpp` |
 | T5 | for each of the five primitives, "build → tessellate → the bounding box equals the analytic size" (the ellipsoid within a tolerance) | `tests/test_brep/ConstructionTest.cpp` |
 | T6 | an invalid size or an unknown type → an empty handle; `name()` is inherited | `tests/test_brep/ConstructionTest.cpp` |
