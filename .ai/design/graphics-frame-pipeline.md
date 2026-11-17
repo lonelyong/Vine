@@ -1,667 +1,663 @@
-# graphics 帧管线（下一版）
+# graphics frame pipeline
 
-> **状态**：草案 —— `graphics-next` 已采纳（ADR-2026-11-12），按 §9.3 分步替换现役形状；每步的状态见 §3.1。
-> **最后核对**：2026-11-16
-> **范围**：内容 → 快照 → 派生 → 执行 这四层的形状、身份、寿命与计划语义。不含几何/拾取算法、材质模型、
-> 后端实现细节（`vsg-backend.md`）、线程契约的迁移期现状（`graphics-threading.md`）。
-> **权威来源**：`src/viz/graphics/sdk/vine/graphics/ContentId.hpp`、`src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ResourceTable.hpp`、
-> `src/viz/graphics/src/SceneSnapshot.hpp`（原型）、`Scene.hpp` / `RenderEngine.hpp`（现役入口）。
-> **待办**：`../backlog/graphics.md`
+> **Status**: current — the takeover is complete (§9.3), and the shapes below are the ones in use.
+> **Last verified**: 2026-11-16
+> **Scope**: the shape, identity, lifetime and plan semantics of the four layers content → snapshot → derivation → execution. It excludes the geometry / picking
+> algorithms, the material model, backend implementation details (`vsg-backend.md`) and the threading contract's migration-era state (`graphics-threading.md`).
+> **Sources**: `src/viz/graphics/sdk/vine/graphics/ContentId.hpp`, `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ResourceTable.hpp`,
+> `src/viz/graphics/src/SceneSnapshot.hpp` (the prototype), `Scene.hpp` / `RenderEngine.hpp` (the live entry points).
+> **Backlog**: `../backlog/graphics.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-今天"跨层的那份副本什么时候过期"有五套答案：地址 + 版本（引擎表）、镜像 + delta（`ContentMirror` /
-`DeltaChannel`）、memo + epoch（`DrawListMemo` / `Version`）、引用计数（`markUsed`）、停车窗口
-（`RetirementQueue` / `kept`）。桥与寿命层合计 2519 行，其中约 60% 在回答同一个问题；两次真实事故
-（镜像在帧内出生没有帧令牌、`refreshMaterials` 只改 publish 会滞后）与一次 UAF
-（`.ai/bugs/vsg-content-address-recycled-before-rows.md`）都发生在这一层。
+"when does the copy that crosses a layer expire" had five answers at once: address + version (the engine table), mirror + delta (`ContentMirror` /
+`DeltaChannel`), memo + epoch (`DrawListMemo` / `Version`), reference counting (`markUsed`), and a parking window
+(`RetirementQueue` / `kept`). The bridge and lifetime layers together were 2519 lines, about 60% of which answered the same question; two real incidents
+(a mirror born inside a frame without a frame token, `refreshMaterials` lagging because it only touched publish) and one UAF
+(`.ai/bugs/vsg-content-address-recycled-before-rows.md`) all happened in this layer.
 
-### 1.2 目标
+### 1.2 Goals
 
-1. 跨层只有**不可变值**；可变对象只活在内容侧（`C1`）。
-2. 发布是**一次原子指针交换**；版本、镜像、delta、memo 不再是概念（`R9`）。
-3. 身份稳定且死后可判定；驻留由"谁还引用"**算**出来（`I2` / `I4`）。
-4. 计划是**声明**，误用不可表达（`R21` / `R38`）。
-5. 派生是**纯函数**：可并行、可复现、可 dump、可 replay（`R14` / `R30`）。
+1. Only **immutable values** cross a layer; mutable objects live on the content side only (`C1`).
+2. Publication is **one atomic pointer swap**; version, mirror, delta and memo are not concepts (`R9`).
+3. Identity is stable and decidable after death; residency is **computed** from "who still references it" (`I2` / `I4`).
+4. A plan is a **declaration**, and misuse cannot be expressed (`R21` / `R38`).
+5. Derivation is a **pure function**: parallel, reproducible, dumpable, replayable (`R14` / `R30`).
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做内容侧多线程写（`C2`）；不做 GPU-driven / bindless（没有第二个后端、没有实测瓶颈）。
-- 不做本层的自动 barrier / render graph（同步归后端）。
-- 不承诺 ABI 稳定；不改 vsg 内部，只改它与本层的接口形状。
-- 不承诺本轮就把 `-design` 的全部算法（pose、后期依赖图）落地：它们按 `../backlog/graphics.md` 的触发条件进行。
+- No multi-threaded writing on the content side (`C2`); no GPU-driven / bindless (no second backend, no measured bottleneck).
+- No automatic barrier / render graph in this layer (synchronisation belongs to the backend).
+- No ABI stability promise; vsg's internals are not changed, only the shape of its interface with this layer.
+- No promise that every `-design` algorithm (poses, the post-processing dependency graph) lands now: they follow the triggers in `../backlog/graphics.md`.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-> 内容侧 publish 出一次不可变快照，派生层把 `(快照, 视图)` 算成值，执行层只消费值并回一个值；
-> 四层之间只有一条边，每条边的载荷都不是活对象。
+> The content side publishes one immutable snapshot, the derivation layer turns `(snapshot, view)` into a value, the execution layer consumes values only and answers one;
+> the four layers have one edge between each pair, and no edge's payload is a live object.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 四层，一条单向边
+### 2.1 Four layers, one one-way edge
 
-- 是什么：① AUTHORING（可变，唯一写者）→ `publish` → ② SNAPSHOT（不可变值）→ `derive` → ③ DERIVATION
-  （纯值）→ `execute` → ④ EXECUTION（设备状态）→ `FrameResult`（值）回到 ①。
-- 为什么：四条边各只有一个动词，每层只能看见上一层交给它的值 ⇒ "谁在读谁的写"可枚举（`G2`）。
-  唯一的回边也是值，理由是查询必须瞄准"用户看到的那一帧"（`I7`）。
-- 边界：`execute` 是本层唯一可以碰到设备的动词；后端内部的同步、分配、提交不进本层的概念（`G5`）。
+- What it is: ① AUTHORING (mutable, one writer) → `publish` → ② SNAPSHOT (immutable value) → `derive` → ③ DERIVATION
+  (pure values) → `execute` → ④ EXECUTION (device state) → `FrameResult` (a value) back to ①.
+- Why: each of the four edges has one verb, and a layer sees only the value the layer above handed it ⇒ "who reads whose write" is enumerable (`G2`).
+  The one back edge is a value too, because a query must aim at "the frame the user saw" (`I7`).
+- Boundary: `execute` is the only verb in this layer that may touch the device; the backend's synchronisation, allocation and submission are not concepts of this layer (`G5`).
 
-### 2.2 八个名词
+### 2.2 Eight nouns
 
-| 名词 | 一个定义 | 归属 | 寿命 |
+| Noun | One definition | Owner | Lifetime |
 |---|---|---|---|
-| **Scene** | 作者树 + 灯集 + 写者角色与发布点 | 内容侧 | 宿主持有 |
-| **Node** | 树里的**位置**：放置 + 子 + 状态贡献 + 载荷 | 内容侧 | 原型可外部构造；位置由 `Instance` 表达 |
-| **Geometry / Material / Program / Texture** | 可复用的内容值，各有 `XxxId` + `revision` | 内容侧 | 引用计数 |
-| **Snapshot** | 场景的**这一次发布** | 发布层（值） | 被在飞帧与 Session 引用 |
-| **View** | 相机值 + 视口 + 层掩码（投影种类是取值） | 派生层（值） | 一次派生内 |
-| **DrawList** | `(Snapshot, View)` 的有序绘制项，一切已解析成值 | 派生层（值） | 一次帧内 |
-| **Session** | 设备 + 后端 + 句柄表 + 管线缓存 + arena + 唯一引擎线程（SDK 里**没有**同名类型：指一个引擎的执行侧） | 执行层 | 宿主持有 |
-| **FrameResult** | present、耗时、诊断、呈现了哪个 Snapshot / View | 值 | 宿主读 |
+| **Scene** | author tree + light set + writer role and publication point | content side | held by the host |
+| **Node** | a **position** in the tree: placement + children + state contribution + payload | content side | a prototype may be built externally; the position is expressed by `Instance` |
+| **Geometry / Material / Program / Texture** | reusable content values, each with an `XxxId` + `revision` | content side | reference counted |
+| **Snapshot** | **this one publication** of the scene | publication layer (value) | referenced by in-flight frames and Sessions |
+| **View** | camera value + viewport + layer mask (the projection kind is a value) | derivation layer (value) | within one derivation |
+| **DrawList** | the ordered draw items of `(Snapshot, View)`, everything already resolved to values | derivation layer (value) | within one frame |
+| **Session** | device + backend + handle tables + pipeline cache + arena + the single engine thread (the SDK has **no** type of that name: it means one engine's execution side) | execution layer | held by the host |
+| **FrameResult** | present, timings, diagnostics, which Snapshot / View was presented | a value | read by the host |
 
-- 为什么：一个概念一个定义、一个归属（`G1`）。**统一的三件套**——句柄（身份）· revision（值变了）·
-  值快照（跨层）——只写一次，八处同构（`G6`）。
-- 边界：骨架里**没有** render world 对象、镜像、delta 通道、memo + 版本、`addPass`/`removePass`（已删）、
-  模式枚举、manager、control。这是设计的一部分，不是遗漏。
+- Why: one concept, one definition, one owner (`G1`). The **uniform trio** — handle (identity) · revision (the value changed) ·
+  value snapshot (crosses layers) — is written once and is isomorphic in all eight places (`G6`).
+- Boundary: the skeleton has **no** render world object, mirror, delta channel, memo + version, `addPass`/`removePass`,
+  mode enum, manager or control. That is part of the design, not an omission.
 
-### 2.3 三个动词
+### 2.3 Three verbs
 
-| 动词 | 语义 | 谁调 | 约束 |
+| Verb | Meaning | Called by | Constraint |
 |---|---|---|---|
-| `publish` | 把可变内容变成新 Snapshot 并原子换指针 | 内容线程 | 唯一的一次可变 → 不可变（`I3`） |
-| `derive` | `(Snapshot, View) → DrawList → FrameValue`，纯函数 | 任意线程 | 同输入必同输出（`I5`） |
-| `execute` | `FrameValue → 设备动作 → FrameResult` | 引擎线程 | 唯一碰设备的地方（`I6`） |
+| `publish` | turns mutable content into a new Snapshot and swaps the pointer atomically | the content thread | the one mutable → immutable transition (`I3`) |
+| `derive` | `(Snapshot, View) → DrawList → FrameValue`, a pure function | any thread | same input, same output (`I5`) |
+| `execute` | `FrameValue → device actions → FrameResult` | the engine thread | the only place that touches the device (`I6`) |
 
-### 2.4 节点只贡献四类事实
+### 2.4 A node contributes four kinds of fact only
 
-- 是什么：`Node` 是**位置**不是种类，只贡献 放置 / 子节点 / 状态贡献 / 载荷；折叠规则一条：
-  子 = 父 + 自己（放置相乘、状态按文档化规则合并、层取并、可覆盖顺序）。
-- 为什么：折叠是值运算 ⇒ 线程安全、可单测、可 fuzz（`G11`）；新节点行为 = 加一个放置值，不动折叠核心（`G9`）。
-- 边界：`StateNode` / `MatrixTransform` / `ScreenPass` 在**快照**里不是"种类"而是同一概念的不同取值；
-  作者层糖类保留。隐藏是**快照表示**（不产生行），`Node::setVisible` 保留，由发布编译成结构（`R5`）。
+- What it is: `Node` is a **position**, not a kind, and contributes placement / children / state contribution / payload only; there is one folding rule:
+  child = parent + self (placements multiply, state merges by documented rules, layers union, overrides in order).
+- Why: folding is a value operation ⇒ thread-safe, unit-testable, fuzzable (`G11`); new node behaviour = one more placement value, without touching the folding core (`G9`).
+- Boundary: `StateNode` / `MatrixTransform` / `ScreenPass` are not "kinds" in the **snapshot** but different values of one concept; the authoring-layer sugar
+  stays. Hiding is a **snapshot representation** (it produces no rows); `Node::setVisible` stays and publication compiles it into structure (`R5`).
 
-### 2.5 身份：注册表与四种 id
+### 2.5 Identity: the registry and four kinds of id
 
-| id | 是什么 | 何时产生 | 唯一范围 |
+| id | What it is | Created when | Unique within |
 |---|---|---|---|
-| `NodeId` | **原型**的身份 | 构造时 | 内容域 |
-| `InstanceId` | 树里的**一个位置**（引用原型 + 本地放置/覆盖） | 插入时 | 内容域 |
-| `RowIndex` | 快照内的稠密序号（SoA 下标） | 发布时 | 一份 Snapshot |
-| `PassId` / `TargetId` | 会话内部句柄 | 计划对齐时 | 一次引擎（一引擎一表面，见 `../decisions/ADR-2026-11-13-one-engine-one-surface.md`） |
+| `NodeId` | the identity of a **prototype** | construction | the content domain |
+| `InstanceId` | **one position** in the tree (a prototype reference + local placement / overrides) | insertion | the content domain |
+| `RowIndex` | a dense index inside a snapshot (the SoA subscript) | publication | one Snapshot |
+| `PassId` / `TargetId` | a handle internal to a session | plan alignment | one engine (one engine, one surface, see `../decisions/ADR-2026-11-13-one-engine-one-surface.md`) |
 
-- 是什么：内容域一个 `ContentRegistry`（槽分配 + generation）；64 位 = `generation:24 | domain:8 | index:32`；
-  释放即换 generation，回绕即退休该槽；**只有注册表能造 id**（`C4` / `C5`）。
-- 为什么：外部构建时还没有 Session，跨窗口共享必须是同一个 id ⇒ 内容域唯一（`G1`）；陈旧 id 答 gone，
-  永不悬垂（`I2`）。
-- 边界：id 是**值**，注册表是内容侧的账本；引擎侧**从不解析 id**，只按 index 查表并用 revision 校验。
+- What it is: one `ContentRegistry` per content domain (slot allocation + generation); 64 bits = `generation:24 | domain:8 | index:32`;
+  releasing changes the generation and a wrap retires the slot; **only the registry can mint an id** (`C4` / `C5`).
+- Why: there is no Session yet when content is built externally, and sharing across windows must be the same id ⇒ the content domain is the scope (`G1`);
+  a stale id answers gone and never dangles (`I2`).
+- Boundary: an id is a **value** and the registry is the content side's ledger; the engine side **never resolves an id** — it looks a table up by index and
+  validates with the revision.
 
-### 2.6 原型与实例：折叠一次
+### 2.6 Prototypes and instances: fold once
 
-- 是什么：树里存 `Instance`（`NodeId` + 本地放置/覆盖）；`rows(instance) = Placement(实例链) ∘
-  PrototypeLocalRows(原型, revision)`；原型内部折叠算一次，v1 物化的放置成本是 N × 原型行数。
-- 为什么：一个原型被任意多个位置引用（含跨 Scene）（`R2`），改原型所有实例一起变；共享 local rows
-  （B 方案）能把静态实例压到 `O(rows + N)`，但要等测量（`G8`）。
-- 边界：原型包含必须无环（插入时检测，`R7`）；行预算可观测（实例数 × 原型行数，超阈值报一条 episode，`R8`）；
-  折叠缓存 v1 挂在 Snapshot 内。
+- What it is: the tree stores an `Instance` (`NodeId` + local placement / overrides); `rows(instance) = Placement(the instance chain) ∘
+  PrototypeLocalRows(the prototype, revision)`; folding inside a prototype is computed once, and v1's materialised placement cost is N × the prototype's row count.
+- Why: one prototype is referenced from any number of positions, across Scenes too (`R2`), and editing the prototype changes every instance; sharing local rows
+  (option B) could compress static instances to `O(rows + N)`, but that waits for a measurement (`G8`).
+- Boundary: prototype containment must be acyclic (checked at insertion, `R7`); the row budget is observable (instance count × prototype row count, one episode above
+  the threshold, `R8`); the folding cache lives inside the Snapshot in v1.
 
-### 2.7 驻留、管线与上传
+### 2.7 Residency, pipelines and uploads
 
-| 决定 | 为什么 | 替掉什么 |
+| Decision | Why | What it replaces |
 |---|---|---|
-| 引擎表按**句柄 index** 索引，用 generation + revision 校验 | 数组、无哈希；旧帧读到旧版 | 地址 + `markUsed` 的寿命协商 |
-| 引擎表只存**共享资源**，从不存每实例状态 | 表大小 = 原型数 × 版本数，不是实例数 | 每命令 touch 活体 |
-| 驻留 ⟺ 被 Session 已接受或在飞的 Snapshot 引用它的 `(id, revision)`；宿主自持快照不钉住 | 精确规则，不看时间窗（`I4` / `R22`） | `parking` / `kept` 兜底 |
-| 管线缓存键是**值**（program@rev, layout@rev, state, formats, samples） | 可复现、可共享、可单测 | 指针 + variant bits |
-| 行/命令的载荷是**值**：`GeometryDescription` / `MaterialDescription` / `ShaderProgramDescription` + `ContentRef`；灯是 `LightValue` | 记录侧不读活对象，帧 N 画它描述时的那份值（`G1` / `G10`）；每命令省 3 次 `intrusive_ptr` 原子增减 | 活对象读（程序文本 / 材质 α 模式 / `Light` 字段） |
-| 预热是一等入口：`prepare()` 答"需要什么" | 编译卡顿可预算，加载期可全预编译（`R23`）；它自己那批只含传输的工作也在这里落地（ADR-2026-11-14） | 录制时才发现要编译、才发现要上传 |
-| 每帧 arena，帧内 arena 外零分配 | 分配上限从"规则"变常数（`R24`） | per-frame `vector` / `shared_ptr` |
+| The engine table is indexed by **handle index** and validated with generation + revision | an array, no hashing; an old frame reads the old version | the lifetime negotiation of address + `markUsed` |
+| The engine table holds **shared resources** only, never per-instance state | the table's size is prototypes × versions, not instances | touching a live object per command |
+| Residency ⟺ an accepted or in-flight Snapshot references its `(id, revision)`; a snapshot the host holds itself pins nothing | an exact rule that does not look at a time window (`I4` / `R22`) | the `parking` / `kept` safety net |
+| The pipeline cache key is a **value** (program@rev, layout@rev, state, formats, samples) | reproducible, shareable, unit-testable | a pointer + variant bits |
+| A row's / command's payload is **values**: `GeometryDescription` / `MaterialDescription` / `ShaderProgramDescription` + `ContentRef`; lights are `LightValue` | the recording side reads no live object, and frame N draws the value it described with (`G1` / `G10`); each command saves 3 `intrusive_ptr` atomic increments / decrements | reading live objects (program text / material alpha mode / `Light` fields) |
+| Preparation is a first-class entry point: `prepare()` answers "what is needed" | compile stalls become budgetable, and loading can precompile everything (`R23`); the batch of transfer-only work it may do itself lands here too (ADR-2026-11-14) | discovering at record time that something must compile, or must upload |
+| A per-frame arena, zero allocation outside it during a frame | the allocation ceiling turns from a "rule" into a constant (`R24`) | a per-frame `vector` / `shared_ptr` |
 
-### 2.8 计划是声明
+### 2.8 A plan is a declaration
 
-- 是什么：`Pass = (name, View, Target, 状态覆盖, order, inputs)`；`Target = Transient{name, shape} |
-  Explicit{RenderTarget} | Window`（不写 target = 画进这块区的默认 framebuffer）；`inputs` 用稳定名字。
-  一个引擎驱动一个表面（多窗口 = 多引擎共享设备，见 `../decisions/ADR-2026-11-13-one-engine-one-surface.md`）。
-- 为什么：宿主发布"我要的帧图"，Session 在帧边界按名字差分对齐 ⇒ 增删 pass 不需要任何 add/remove 调用，
-  "帧在飞时改会话形状"**不可表达**（`R21`；`G12`）。
-- 边界：`PassId` 只在 Session 内部；差分按**名字**不按指针（`C7`）；临时目标的生命周期由计划声明。
-  计划只表达 `PassKind` 能表达的形状（`Scene` / `Screen`）：子类 pass 不再是可注册的形状，自定义在**数据**里
-  （程序覆盖、视口、深度带）；kind 变更按内置节点重建。不建 `PassKind::Custom` 或工厂注册表（`G8`）。
+- What it is: `Pass = (name, View, Target, state overrides, order, inputs)`; `Target = Transient{name, shape} |
+  Explicit{RenderTarget} | Window` (no target = draw into this area's default framebuffer); `inputs` refer by stable names.
+  One engine drives one surface (several windows = several engines sharing one device, see `../decisions/ADR-2026-11-13-one-engine-one-surface.md`).
+- Why: the host publishes "the frame graph I want" and the Session aligns it by name at a frame boundary ⇒ adding or removing a pass needs no add/remove call, and
+  "changing the session's shape while a frame is in flight" **cannot be expressed** (`R21`; `G12`).
+- Boundary: `PassId` exists only inside a Session; the difference is taken by **name**, not by pointer (`C7`); a transient target's lifetime is declared by the plan.
+  A plan expresses only the shapes `PassKind` can express (`Scene` / `Screen`): a pass subclass is no longer a registrable shape, and customisation lives in the
+  **data** (program override, viewport, depth range); a kind change rebuilds the built-in node. There is no `PassKind::Custom` and no factory registry (`G8`).
 
-### 2.9 派生是纯函数
+### 2.9 Derivation is a pure function
 
-- 是什么：`select(snapshot, view) → DrawList` 是纯函数；`record` 发生在后端 `execute` 内部；排序键是一个
-  文档化的全序值（`draw_order, layer, opaque/transparent, 量化深度`）。
-- 为什么：多视图并行、可 dump、可 replay、可跨后端比对（`R14` / `R30`）；"为什么这两帧不同"变成可重放的问题。
-- 边界：视图相关行（billboard / 屏幕空间）逐视图重算，但不影响视图无关行的结果（`R16`）；后端若并行
-  record，合并结果的确定性由后端自己证明（`R20`）。
+- What it is: `select(snapshot, view) → DrawList` is a pure function; `record` happens inside the backend's `execute`; the sort key is a
+  documented total-order value (`draw_order, layer, opaque/transparent, quantised depth`).
+- Why: several views in parallel, dumpable, replayable, comparable across backends (`R14` / `R30`); "why do these two frames differ" becomes a question that can be replayed.
+- Boundary: view-dependent rows (billboard / screen space) are recomputed per view without changing the result of the view-independent rows (`R16`); if a backend records
+  in parallel, the determinism of the merged result is that backend's own to prove (`R20`).
 
-### 2.10 五套过期答案的去向
+### 2.10 Where the five expiry answers went
 
-| 今天 | 去向 | 由谁替代 |
+| Before | Destination | Replaced by |
 |---|---|---|
-| 地址 + 版本（引擎表） | 删 | 句柄 + generation + revision（2.5 / 2.7） |
-| 镜像 + delta（`ContentMirror` / `DeltaChannel`） | 删 | 一次 `publish` 换指针（`R9`） |
-| memo + epoch（`DrawListMemo` / `Version`） | 删 | Snapshot 是值，派生是纯函数（`R14`） |
-| 引用计数（`markUsed`） | 已删 | 行级 epoch 回收（`F5`） |
-| 停车窗口（`parked` / `kept`） | 留一半 | 仍有 GPU 对象替换（管线/描述符集/缓冲），但**驻留判定**不再靠它（`I4`） |
+| address + version (the engine table) | deleted | handle + generation + revision (2.5 / 2.7) |
+| mirror + delta (`ContentMirror` / `DeltaChannel`) | deleted | one `publish` swapping the pointer (`R9`) |
+| memo + epoch (`DrawListMemo` / `Version`) | deleted | a Snapshot is a value and derivation is pure (`R14`) |
+| reference counting (`markUsed`) | deleted | row-level epoch reclamation (`F5`) |
+| parking window (`parked` / `kept`) | half kept | GPU objects are still replaced (pipelines / descriptor sets / buffers), but **residency** no longer depends on it (`I4`) |
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | 快照发布 | 分块写时复制的行表 + 素材值 + 空间索引 + 灯集，一次指针交换 | 已落地：`ScenePublisher::publish` 编出 `detail::SceneSnapshot`，帧编译经 `PublicationStore::sourceFor` 让 `SnapshotSource` 回答每个 draw（`EngineCompile.cpp`）；未发布的场景按 `engine.compile.unpublished_scene` 拒绝，不回读活动树 |
-| F2 | 纯派生 `select` | `selectSnapshot(snapshot, view)` 逐项等于现役收集 | 已落地：每个视图的 draw list 就是 `SnapshotSource` 跑的那一次 `selectSnapshot`（`ScenePublisher.cpp`：没有第二次遍历活动行）；`T8` 已证明纯（串行/并发/内容清空后同一结果） |
-| F3 | 内容身份与世代 | `Handle` + typed id + `ContentRef`，陈旧句柄答 gone | 已落地 |
-| F4 | 引擎表按 `(id, revision)` 驻留 | 事实表按 ref 建行；旧帧读旧版 | 已落地 |
-| F5 | 行级 epoch 回收 | 行按"最后一次被计划命中的帧"回收；条目在"宿主不要了 ∧ 没有行"时离开 | 已落地 |
-| F6 | 计划是值 | 帧边界按名字差分 + 计划校验稳定 code | 已落地：`Plan` + `validatePlan` + `applyPlan`（会话 / 作用域两种，`PlanResult` 三态）+ `plan()` / `planFor(owner)`；`Target` 仍是显式 `RenderTarget` 句柄 |
-| F7 | 预热入口 | `prepare()` 答需要什么；预热后录制 `builds` 增量 0 | 已落地：3a（`drawNeeds` 是唯一的键构造者）+ 3b（`RenderEngine::prepare()` → `prepareFrame(value)`，按同一份答案预建半片 / 集合 / 上传 / 管线身份） |
-| F9 | `publish` 返回结果 | 批内显式“未发布”，无 null | 已落地（5b-2a）：公开 `Scene::publish()` 三态（`Posted`/`Unchanged`/`InsideBatch`）；旧四态 `PublishOutcome` 已随 5b-2b 删除 |
-| F10 | 原型与实例 | `Instance` 引用原型；折叠一次；无环与行预算 | 未做 |
-| F11 | 全序排序键 | 文档化的全序值（含 layer），透明两段 | 已落地：`detail::SortKey`（drawOrder → 层 → 不透明段/透明段 → 量化相机深度 → 行/图元索引）；代表点是世界盒中心 |
-| F12 | 帧结果与查询 | `FrameResult` 带 snapshot / view / poses / 诊断 / present | 部分：`FrameResult` + `FrameQuery`（snapshot / view / passes / draws / diagnostics / present）已落地；`poses` 随 F10 未做 |
+| F1 | Snapshot publication | a copy-on-write row table in chunks + material values + a spatial index + the light set, swapped in one pointer exchange | landed: `ScenePublisher::publish` compiles a `detail::SceneSnapshot`, and frame compilation makes `SnapshotSource` answer each draw through `PublicationStore::sourceFor` (`EngineCompile.cpp`); an unpublished scene is refused with `engine.compile.unpublished_scene` and the live tree is not read back |
+| F2 | Pure derivation `select` | `selectSnapshot(snapshot, view)` equals the live collection item by item | landed: each view's draw list is the one `selectSnapshot` run `SnapshotSource` performs (`ScenePublisher.cpp`: there is no second walk over live rows); `T8` proves it pure (serial / concurrent / after the content is cleared, the same result) |
+| F3 | Content identity and generation | `Handle` + typed id + `ContentRef`; a stale handle answers gone | landed |
+| F4 | The engine table keeps residency by `(id, revision)` | the fact tables get a row per ref; an old frame reads the old version | landed |
+| F5 | Row-level epoch reclamation | a row is reclaimed at "the last frame a plan hit it"; an entry leaves when "the host does not want it ∧ no row names it" | landed |
+| F6 | A plan is a value | a by-name difference at a frame boundary + plan validation with stable codes | landed: `Plan` + `validatePlan` + `applyPlan` (session and scope forms, `PlanResult` three states) + `plan()` / `planFor(owner)`; `Target` is still an explicit `RenderTarget` handle |
+| F7 | Preparation entry point | `prepare()` answers what is needed; after it, recording's `builds` delta is 0 | landed: `drawNeeds` is the only key builder; `RenderEngine::prepare()` → `prepareFrame(value)` pre-builds halves / sets / uploads / pipeline identity from the same answer |
+| F9 | `publish` returns a result | an explicit "not published" inside a batch, no null | landed: the public `Scene::publish()` has three states (`Posted`/`Unchanged`/`InsideBatch`); the old four-state `PublishOutcome` is gone |
+| F10 | Prototypes and instances | `Instance` references a prototype; fold once; acyclicity and the row budget | not done |
+| F11 | Total-order sort key | a documented total-order value (layer included), two transparent segments | landed: `detail::SortKey` (drawOrder → layer → opaque/transparent segment → quantised camera depth → row/primitive index); the representative point is the world box centre |
+| F12 | Frame result and query | `FrameResult` carries snapshot / view / poses / diagnostics / present | partial: `FrameResult` + `FrameQuery` (snapshot / view / passes / draws / diagnostics / present) have landed; `poses` waits on F10 |
 
-### 3.2 F1 快照发布
+### 3.2 F1 Snapshot publication
 
-- **行为**：`publish` 把可变场景变成一份不可变 Snapshot：行表按 32 行分块写时复制（只碰变了的块），
-  素材值按 `(id, revision)` 取，空间索引与灯集随行一起发布。
-- **约束**（`C1` / `C2`）：发布之后内容侧再改任何东西都不影响在飞的帧。
-- **要求**（`R9` / `R10` / `R13`）：一次原子指针交换；成本 O(变了的块 + 变了的素材值)；快照可导出文本摘要。
-- **验收**（`T1` / `T2` / `T3`）：`SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect`（≤ 250 µs，RelWithDebInfo）；
-  在飞帧逐项不变。
-- **注意**（`P2`）：元数据表（`id → revision`）不变时必须共享，否则 `K11` 会暴露整体拷贝。
+- **Behaviour**: `publish` turns the mutable scene into one immutable Snapshot: the row table is copied on write in 32-row chunks (only changed chunks are touched),
+  material values are taken by `(id, revision)`, and the spatial index and light set are published together with the rows.
+- **Constraints** (`C1` / `C2`): anything the content side changes after publication leaves in-flight frames untouched.
+- **Requirements** (`R9` / `R10` / `R13`): one atomic pointer swap; cost O(changed chunks + changed material values); the snapshot can be exported as a text summary.
+- **Acceptance** (`T1` / `T2` / `T3`): `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` (≤ 250 µs, RelWithDebInfo);
+  the in-flight frame is unchanged item by item.
+- **Caveat** (`P2`): the metadata table (`id → revision`) must be shared while it is unchanged, or `K11` exposes a whole-table copy.
 
-### 3.3 F2 纯派生
+### 3.3 F2 Pure derivation
 
-- **行为**：`select(snapshot, view) → DrawList`，视图无关的折叠一帧一次，逐视图只付裁剪与排序。
-- **约束**（`C8`）：跨层的值类型不带虚函数/继承。
-- **要求**（`R14` / `R15` / `R16`）：同输入逐项相同；折叠计数 = 1；视图相关行逐视图重算。
-- **验收**（`T8` / `T9` / `T24`）：`SelectTest.SameInputSameList`（同快照重复、换视图穿插、场景清空后、8 线程并发逐项等于串行）、`SelectTest.TheSortKeyIsATotalOrder`、`SelectTest.OneChunkCullsEachRowOnItsOwnBox`（块是共享单位，不是剔除单位）。
-- **注意**（`P5`）：纯函数不等于免费——并行只在纯值上做（`I6`），设备侧仍是一条线程。
+- **Behaviour**: `select(snapshot, view) → DrawList`; the view-independent fold is computed once per frame, and each view pays only culling and sorting.
+- **Constraints** (`C8`): value types that cross a layer carry no virtual functions or inheritance.
+- **Requirements** (`R14` / `R15` / `R16`): the same input gives the same items; the fold count is 1; view-dependent rows are recomputed per view.
+- **Acceptance** (`T8` / `T9` / `T24`): `SelectTest.SameInputSameList` (the same snapshot repeated, other views interleaved, after the scene is cleared, and 8 threads concurrently — item by item equal to serial), `SelectTest.TheSortKeyIsATotalOrder`, `SelectTest.OneChunkCullsEachRowOnItsOwnBox` (a chunk is the unit of sharing, not the unit of culling).
+- **Caveat** (`P5`): a pure function is not free — parallelism happens on pure values only (`I6`), and the device side is still one thread.
 
-### 3.4 F3 内容身份
+### 3.4 F3 Content identity
 
-- **行为**：`Node` 构造即得 `NodeId`；`Material` / `Program` / `Texture` 各有 typed id；`ContentRef{id, revision}` 是跨层键。
-- **约束**（`C4` / `C5`）：只有注册表能造 id；generation 回绕退休该槽。
-- **要求**（`R1` / `R31` / `R32`）：身份与是否在树里无关；引用带 revision；查询返回位置身份。
-- **验收**（`T5` / `T17`）：`ContentRegistryTest.AStaleHandleAnswersGone`（已实现）；旧帧逐项 diff。
-- **注意**（`P1`）：**只带 id 的引用不是不可变值**——它把版本问题推给引擎表，直接破坏 `R9`。
+- **Behaviour**: a `Node` has its `NodeId` at construction; `Material` / `Program` / `Texture` each have a typed id; `ContentRef{id, revision}` is the cross-layer key.
+- **Constraints** (`C4` / `C5`): only the registry can mint an id; a generation wrap retires the slot.
+- **Requirements** (`R1` / `R31` / `R32`): identity is independent of being in a tree; a reference carries a revision; a query returns a position identity.
+- **Acceptance** (`T5` / `T17`): `ContentRegistryTest.AStaleHandleAnswersGone` (implemented); an item-by-item diff of the old frame.
+- **Caveat** (`P1`): **a reference that carries only an id is not an immutable value** — it pushes the version question to the engine table and breaks `R9` outright.
 
-### 3.5 F4 引擎表与 F5 行级回收
+### 3.5 F4 The engine table and F5 row-level reclamation
 
-- **行为**：事实表（几何 / 材质 / 程序）按 `(id, revision)` 建行；行按"最后一次被计划命中的帧"回收，
-  条目的 arena / 上传 / 纹理驻留由声明索引回答。
-- **约束**（`C3`）：只有引擎线程建表与回收。
-- **要求**（`R22` / `R23`）：驻留 ⟺ 活快照引用；预热后可预测。
-- **验收**（`T6` / `T25`）：`ResidencyTableTest.TheCollectableSetIsEnumerable`；
-  Session 外持旧快照再提交不 UAF。
-- **注意**（`P6`）：行与 GPU 资源的寿命不是一个数——行可能比资源晚走一帧（在飞计划还会读它）。
+- **Behaviour**: the fact tables (geometry / material / program) get a row per `(id, revision)`; a row is reclaimed at "the last frame a plan hit it", and an
+  entry's arena / upload / texture residency is answered by the declaration index.
+- **Constraints** (`C3`): only the engine thread builds and reclaims tables.
+- **Requirements** (`R22` / `R23`): residency ⟺ a live snapshot reference; predictable after preparation.
+- **Acceptance** (`T6` / `T25`): `ResidencyTableTest.TheCollectableSetIsEnumerable`;
+  holding an old snapshot outside the Session and submitting again does not UAF.
+- **Caveat** (`P6`): a row's lifetime and a GPU resource's lifetime are not the same number — a row may leave a frame later than the resource (an in-flight plan still reads it).
 
-### 3.6 F6 计划是值
+### 3.6 F6 A plan is a value
 
-- **行为**：`Plan` 是一个值（有序的 `PassDesc` 列表，pass 的**名字**是它在计划里的身份）；
-  `applyPlan(plan)` 按名字差分：新名字新增、同名更新**原地**（节点与后端状态存活）、消失的名字移除；
-  `plan()` 把当前形状读回成同一类型（`applyPlan(plan())` 是幂等的）。校验给出 `PlanProblemCode` 稳定 code
-  （`EmptyPassName` / `DuplicatePassName` / `UnknownInput` / `DependencyCycle` / `TooManyPasses`），
-  并整份接受或整份拒绝。返回值是 `PlanResult` 三态：`Applied` / `Invalid` + 问题表 / `Refused` + `PlanRefusal`
-  （`Busy` = 引擎里有帧在录，`EngineGone` = `PassRegistry` 的引擎已亡）。kind 变更按内置节点重建；计划只表达
-  `PassKind`，子类 pass 不再是可表达的形状（W9d）。
-- **约束**（`C7`）：按名字不按指针（作用域形态下是 `(owner, name)`）。
-- **要求**（`R21` / `R38`）：增删 pass 不调用任何 add/remove；每条校验一个 code；帧在录时在**校验之前**答
-  `Refused{Busy}`（不读形状相关状态），不做事后补救。`SessionBusy` 不再是 plan problem code——它是运行时前置
-  条件，不是形状缺陷。
-- **验收**（`T7` / `T30`）：`PlanTest.APassIsAddedWithoutAnyAddCall`、`PlanTest.AChangedTargetUpdatesTheSameNodeInPlace`（P7）、
-  `PlanTest.*IsRefusedWithItsCode`（四类 code）、`PlanTest.TheCodeSpellingsAreStable`、
-  `PlanTest.ABusyEngineRefusesThePlanInsteadOfBlamingItsShape`。
-- **注意**（`P7`）：差分必须对**同名不同内容**也成立（改一个 pass 的 target 不是“删一个加一个”）。
-  计划不命名的 pass 会被移除（整会话形态；作用域形态只做 upsert）——这是“计划即形状”的直接后果。
-  子类 pass 不再是可表达的形状：自定义在**数据**里（程序覆盖、视口、深度带），没有 custom-kind 注册表。
-### 3.7 F7 预热入口
+- **Behaviour**: `Plan` is a value (an ordered `PassDesc` list; a pass' **name** is its identity inside the plan);
+  `applyPlan(plan)` takes the difference by name: a new name is added, a same-named one is updated **in place** (the node and the backend state survive), a name that
+  disappeared is removed; `plan()` reads the current shape back into the same type (`applyPlan(plan())` is idempotent). Validation yields stable `PlanProblemCode`s
+  (`EmptyPassName` / `DuplicatePassName` / `UnknownInput` / `DependencyCycle` / `TooManyPasses`) and accepts the whole plan or rejects the whole plan. The return value is
+  the three-state `PlanResult`: `Applied` / `Invalid` + a problem list / `Refused` + `PlanRefusal` (`Busy` = a frame is recording in the engine, `EngineGone` = the
+  `PassRegistry`'s engine is gone). A kind change rebuilds the built-in node; a plan expresses `PassKind` only, and a pass subclass is no longer an expressible shape.
+- **Constraints** (`C7`): by name, not by pointer (in the scope form it is `(owner, name)`).
+- **Requirements** (`R21` / `R38`): adding or removing a pass calls no add/remove; each validation has one code; while a frame is recording the answer is
+  `Refused{Busy}` **before validation** (shape-related state is not read), not a repair afterwards. `SessionBusy` is not a plan problem code — it is a runtime
+  precondition, not a shape defect.
+- **Acceptance** (`T7` / `T30`): `PlanTest.APassIsAddedWithoutAnyAddCall`, `PlanTest.AChangedTargetUpdatesTheSameNodeInPlace` (`P7`),
+  `PlanTest.*IsRefusedWithItsCode` (the four kinds of code), `PlanTest.TheCodeSpellingsAreStable`,
+  `PlanTest.ABusyEngineRefusesThePlanInsteadOfBlamingItsShape`.
+- **Caveat** (`P7`): the difference must also hold for **same name, different content** (changing a pass' target is not "remove one, add one").
+  A pass the plan does not name is removed (whole-session form; the scope form only upserts) — that is the direct consequence of "the plan is the shape".
+  A pass subclass is no longer an expressible shape: customisation lives in the **data** (program override, viewport, depth range), and there is no custom-kind registry.
 
-- **行为**：`prepare()` 回答“这一帧需要哪些半片 / 描述符集 / 上传”，并**把它们全部建好**，不提交帧。
-  公开入口是 `RenderEngine::prepare()`（引擎先编成 `FrameDescription`，与 `frame()` 同一份编译），后端入口是
-  `RenderFrameExecutor::prepareFrame(value, present_to)`——一条线、两个动词，不引入新名词；答案是一个值
-  （`PrepareReport`：outcome + 走了几 pass / 几个 draw + 这次调用建了几个半片 / 集合 / 上传 / 管线身份）。
-  快照进这个输入是 5b-1 的事（已落地）。
-- **约束**（`C3`）：预热在引擎线程；它不提交**帧**，也不 acquire 交换链图像（见 `P11`）。
-  它可以为自己那批**只含传输**的工作（纹理拷贝、1×1 stand-in）记录并提交**一个**命令缓冲，在返回前等它完成——
-  这一批没有帧、没有 render pass、没有 draw、没有 present，`FrameProgress` 的 `submitted` / `presented` 不动
-  （`D13` / `../decisions/ADR-2026-11-14-prepare-may-submit-transfers.md`）。
-- **要求**（`R23` / `R36`）：预热后录制的帧 `builds` 增量 0（含 `FrameUploads` 的流与纹理两类）；缺可选能力要出现在报告里。
-- **验收**（`T7` / `T10` / `T32` / `T33` / `T35`）：`builds` 增量断言；`prepare()` 报的键集 = 这一帧实际构建的键集；
-  报的 `uploads` 覆盖流与纹理两类。
-- **注意**（`P8` / `P11`）：预热是**查询**不是“编译一切”；也**不能**用“跑一帧不提交”实现（见 `P11`）。
-  传输批不是那个被否决形状的变体：它必须是“帧本来会在第一个 render pass 之前记录的那些拷贝”，
-  没有拷贝就没有提交（第二次预热同一帧产生零次提交）。
-  **缝**：`drawNeeds(compiled pass, draw)` 是唯一的键构造者——`prepare` 用它建、`ContentPass::record` 用它取，
-  两边不可能漂移（`G1`）。
-  **位置**：`src/plugins/gfx_backend_vsg/{include/vine/backend_vsg/internal,src/internal}/DrawNeeds.{hpp,cpp}`
-  （`drawNeeds` 两个重载 + `DrawNeeds::keyFor`）；`ProgramHalves::halvesFor`、`ContentPass::recordCommand` /
-  `recordScreenDraw` 与 `describeMissingContentHalf` 都只读它，录制路径不再自己拼键。
-  **位置**：`sdk/vine/graphics/PrepareReport.hpp`、`RenderFrameExecutor::prepareFrame`、
-  `RenderEngine::prepare()`、`VsgBackend::prepareFrame`。后端复用帧自己的两半——`collectFrame`（值 → 采集）与
-  `recordContent(..., /*prepare_only*/)`（采集 → 半片 / 集合 / 采样输入集 / 上传）——两个动词在 `ContentPass` 里
-  只有一个分支点（`Mode::Prepare` 停在“身份已确保”处：不建命令图、不写块）。**预热不写块，也不开渲染环**：
-  `FrameRing` 的 slab 轮转是帧的，预热多吃一格会让下一帧写到最老在飞帧仍在读的 slab（`core::FrameRing` 的
-  多一格正是为此）——`T33` 用 `BlockStorage::writes()` / `frames()` 钉住这条。
-  它不调用 `Session::beginFrame()`（窗口会 acquire 图像），只从 `WindowTarget::facts()` 读形状；
-  `growBlockStorageIfNeeded` / `growMaterialArenaIfNeeded` 在预热里先跑，免得太帧第一次就换存储、把刚建好的集合全部重指。
+### 3.7 F7 Preparation entry point
 
-### 3.8 多窗口：一个引擎驱动一个表面
+- **Behaviour**: `prepare()` answers "which halves / descriptor sets / uploads this frame needs" and **builds them all**, without submitting a frame.
+  The public entry point is `RenderEngine::prepare()` (the engine compiles a `FrameDescription` first, the same compilation `frame()` uses); the backend entry point is
+  `RenderFrameExecutor::prepareFrame(value, present_to)` — one line, two verbs, no new nouns; the answer is a value (`PrepareReport`: the outcome + how many passes /
+  draws it walked + how many halves / sets / uploads / pipeline identities this call built). The snapshot entering that input is the one §3.2 publishes.
+- **Constraints** (`C3`): preparation runs on the engine thread; it submits no **frame** and acquires no swap-chain image (see `P11`).
+  It may record and submit **one** command buffer for its own **transfer-only** work (texture copies, the 1×1 stand-in) and wait for it before returning —
+  that batch has no frame, no render pass, no draw and no present, so `FrameProgress`'s `submitted` / `presented` do not move
+  (`D13` / `../decisions/ADR-2026-11-14-prepare-may-submit-transfers.md`).
+- **Requirements** (`R23` / `R36`): a frame recorded after preparation shows a `builds` delta of 0 (both of `FrameUploads`' kinds, streams and textures); a missing optional capability must appear in the report.
+- **Acceptance** (`T7` / `T10` / `T32` / `T33` / `T35`): the `builds` delta assertions; the key set `prepare()` reports equals the key set this frame actually builds;
+  the reported `uploads` cover both streams and textures.
+- **Caveat** (`P8` / `P11`): preparation is a **query**, not "compile everything"; and it **cannot** be implemented as "run a frame without submitting" (see `P11`).
+  The transfer batch is not a variant of that rejected shape: it must be "the copies the frame would have recorded before its first render pass",
+  and no copies means no submission (preparing the same frame a second time submits nothing).
+  **The seam**: `drawNeeds(compiled pass, draw)` is the only key builder — `prepare` builds with it and `ContentPass::record` looks up with it, so the two cannot drift (`G1`).
+  **Where it lives**: `src/plugins/gfx_backend_vsg/{include/vine/backend_vsg/internal,src/internal}/DrawNeeds.{hpp,cpp}`
+  (`drawNeeds`' two overloads + `DrawNeeds::keyFor`); `ProgramHalves::halvesFor`, `ContentPass::recordCommand` /
+  `recordScreenDraw` and `describeMissingContentHalf` read it and nothing else, so the recording path no longer assembles its own key.
+  **Where it lives**: `sdk/vine/graphics/PrepareReport.hpp`, `RenderFrameExecutor::prepareFrame`,
+  `RenderEngine::prepare()`, `VsgBackend::prepareFrame`. The backend reuses the frame's own two halves — `collectFrame` (value → collection) and
+  `recordContent(..., /*prepare_only*/)` (collection → halves / sets / sampled input sets / uploads) — and the two verbs have one branch point inside `ContentPass`
+  (`Mode::Prepare` stops at "identity ensured": it builds no command graph and writes no block). **Preparation writes no block and opens no frame ring**:
+  `FrameRing`'s slab rotation belongs to frames, and letting preparation take one extra slot would make the next frame write into the slab the oldest in-flight frame still reads
+  (that extra slot in `core::FrameRing` exists for exactly this) — `T33` pins this with `BlockStorage::writes()` / `frames()`.
+  It does not call `Session::beginFrame()` (a window would acquire an image); it reads the shape from `WindowTarget::facts()` instead.
+  `growBlockStorageIfNeeded` / `growMaterialArenaIfNeeded` run inside preparation, so the first frame does not have to swap storage and repoint every set it just built.
 
-- **行为**：`RenderEngine::createArea()` 造出它**唯一**的区；帧的默认 framebuffer 就是这个区的目标
-  （无区时是设备自建的目标，见 `initialize`）。多窗口 = **一个 `RenderDevice` 服务多个引擎**，每窗口一个引擎 /
-  一个区 / 一个 `Viewer`。
-- **约束**（`I6` / `R27`）：只有一条引擎线程碰设备，所以一个设备没有两条引擎线程——它服务的是多个**引擎**，
-  不是一个引擎的多个区。
-- **要求**（`R21` / `R27`）：增删 pass 不调用 add/remove；一帧一个表面，`FrameResult.present` /
-  `PresentRecord` 是单值。
-- **验收**：`RenderAreaTest.ASecondAreaIsAConstructionFailureNotASecondObject`（第二区被拒）、
-  `HeadlessBackendTest.OneDeviceServesSeveralAreasWithoutCrossingThem`（一个设备两个引擎）。
-- **注意**（`P4`）：表面事件只在帧首应用；交换链只在自己的引擎帧里重建。
-- **已否决**："一个引擎驱动多个 Surface"（graphics-next F8 / `R37` / `T29` / `K10`）——没有消费者、会把 `FrameResult`
-  再改一次、且需重写 appfw 所有权；见 §7 D12 与 `../decisions/ADR-2026-11-13-one-engine-one-surface.md`。
+### 3.8 Several windows: one engine drives one surface
 
-### 3.9 F9 `publish` 返回结果
+- **Behaviour**: `RenderEngine::createArea()` creates its **one and only** area; the frame's default framebuffer is that area's target (with no area it is the
+  device's own target, see `initialize`). Several windows = **one `RenderDevice` serving several engines**, one engine / one area / one `Viewer` per window.
+- **Constraints** (`I6` / `R27`): only one engine thread touches the device, so one device does not have two engine threads — it serves several **engines**,
+  not several areas of one engine.
+- **Requirements** (`R21` / `R27`): adding or removing a pass calls no add/remove; one frame has one surface, so `FrameResult.present` /
+  `PresentRecord` is a single value.
+- **Acceptance**: `RenderAreaTest.ASecondAreaIsAConstructionFailureNotASecondObject` (a second area is refused),
+  `HeadlessBackendTest.OneDeviceServesSeveralAreasWithoutCrossingThem` (one device, two engines).
+- **Caveat** (`P4`): a surface event is applied at the frame head only; the swap chain is rebuilt only inside its own engine's frame.
+- **Rejected**: "one engine driving several Surfaces" (graphics-next F8 / `R37` / `T29` / `K10`) — no consumer, `FrameResult` would change shape a second time, and appfw ownership would have to be rewritten; see §7 D12 and `../decisions/ADR-2026-11-13-one-engine-one-surface.md`.
 
-- **行为**：一次发布回答三种状态之一（`Posted` / `Unchanged` / `InsideBatch`），并带着"这次调用之后作为答案的
-  那一份"（`ScenePublishResult::snapshot`）；`InsideBatch` 是批内显式"未发布"，答案仍是批开始时的那份。
-  外层 `endEdit` 之后的那一帧才发布整批，`publishCount` 只 +1。没有 `Refused`：发布无处可拒——它不排队。
-- **约束**（`C2`）：一个 Scene 同时只有一个写者。
-- **要求**（`R11` / `R39`）：`publishCount` 只 +1；没有 null，也没有一个 `bool` 同时表示"没变"和"批内"。
-- **验收**（`T3` / `T31`）：`PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch`（三态 + 句柄的
-  revision 走向）、`SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture`。
-- **注意**（`P9`）：批不是事务——它只界定"一帧能看见什么"。公开 `Scene::publish()` 随快照（5b-2a，已落地）出现：
-  在那之前，公开面没有一个能承载“上一份快照”的类型，先公开它只会多一个没人能用的版本号。
+### 3.9 F9 `publish` returns a result
 
-### 3.10 F10 原型与实例
+- **Behaviour**: one publication answers one of three states (`Posted` / `Unchanged` / `InsideBatch`) together with "the one that is the answer after this call"
+  (`ScenePublishResult::snapshot`); `InsideBatch` is an explicit "not published" inside a batch, and the answer is still the one from the batch's start.
+  The frame after the outermost `endEdit` publishes the whole batch, and `publishCount` advances by 1 only. There is no `Refused`: publication has nowhere to be
+  refused — it does not queue.
+- **Constraints** (`C2`): one Scene has one writer at a time.
+- **Requirements** (`R11` / `R39`): `publishCount` advances by 1 only; there is no null, and no single `bool` that means both "unchanged" and "inside a batch".
+- **Acceptance** (`T3` / `T31`): `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch` (the three states + the handle's revision walk),
+  `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture`.
+- **Caveat** (`P9`): a batch is not a transaction — it only delimits "what one frame can see". The public `Scene::publish()` arrived with the snapshot: before that, the public face
+  had no type able to carry "the previous snapshot", and publishing it early would only have added a version number nobody could use.
 
-- **行为**：`Instance` 引用原型；组装的 DAG 在发布时展平成行树；原型内部折叠算一次。
-- **约束**（`C6`）：原型包含必须无环。
-- **要求**（`R2` / `R3` / `R4` / `R7` / `R8` / `R33` / `R34`）：多位置引用、折叠一次、寿命明确、无环、行预算、
-  同一写者域、不允许悬垂 `NodeId` 进入发布。
-- **验收**（`T4` / `T21` / `T22` / `T23`）：折叠计数用例；共享原型发布；原型析构后仍有实例；实例化成本与 `K11`。
-- **注意**（`P3`）：v1 的放置成本是 N × 原型行数，不是 N——不要把它写成"实例化免费"。
-  A/B 的测量口径见 `../research/graphics-2026-11-12-instances.md`（`T23`）；B 只在数字满足判定线后成为默认。
+### 3.10 F10 Prototypes and instances
 
-### 3.11 F11 / F12 排序键与帧结果
+- **Behaviour**: an `Instance` references a prototype; the assembled DAG is flattened into the row tree at publication; folding inside a prototype is computed once.
+- **Constraints** (`C6`): prototype containment must be acyclic.
+- **Requirements** (`R2` / `R3` / `R4` / `R7` / `R8` / `R33` / `R34`): many positions referencing one prototype, fold once, a stated lifetime, acyclicity, the row budget,
+  one writer domain, and no dangling `NodeId` entering a publication.
+- **Acceptance** (`T4` / `T21` / `T22` / `T23`): the fold-count case; publishing a shared prototype; instances surviving the prototype's destruction; the instantiation cost and `K11`.
+- **Caveat** (`P3`): v1's placement cost is N × the prototype's row count, not N — do not write it up as "instancing is free".
+  The A/B measurement procedure is in `../research/graphics-2026-11-12-instances.md` (`T23`); B becomes the default only once the numbers meet the line.
 
-- **行为**：排序键是 `detail::SortKey`（`DrawListBake.hpp`）——一个文档化的全序值：`draw_order` → 层（最小层号）→
-  不透明/透明 → 量化相机空间深度 → 行/图元索引（`tie`）。不透明与透明两段；代表点是**世界盒中心**（无盒退回矩阵
-  原点），深度由 `view` 变换后的 -z 量化（1/4096 世界单位）。
-  `FrameResult`（`FrameResult.hpp`）带呈现了哪个 Snapshot / 相机值、pass / draw 计数、诊断增量与 present；
-  `RenderEngine::frameResult()` 在帧被回答时一次写入，`query` 是拾取 / 锚点 / fit 该瞄的那一份。
-- **约束**（`C8`）：键与结果都是值，可比较、可拷贝，不带活对象。
-- **要求**（`R17` / `R18` / `R19` / `R30`）：跨机器顺序一致（量化 + 全序 tie）；查询吃 `FrameResult.query`；返回位置身份。
-- **验收**（`T9` / `T36`）：`SelectTest.TheSortKeyIsATotalOrder`（任意置换同结果）与 `SelectTest.TheKey*`；
-  `RenderEngineTest.TheFrameResultIsThePictureThatWasAnswered`。`T18`–`T20`（多实例 / pose / 帧相机拾取）随 F10 未做。
-- **注意**（`P10`）：`query` 里的 View 是**当时那一帧**的值；拿活相机去查是"瞄错"，不是"更新一下"。
+### 3.11 F11 / F12 The sort key and the frame result
 
-## 4. 公开接口
+- **Behaviour**: the sort key is `detail::SortKey` (`DrawListBake.hpp`) — a documented total-order value: `draw_order` → layer (the smallest layer number) →
+  opaque/transparent → quantised camera-space depth → row/primitive index (the `tie`). Two segments, opaque and transparent; the representative point is the **world box
+  centre** (no box falls back to the matrix origin), and the depth is the `view`-transformed -z quantised to 1/4096 world units.
+  `FrameResult` (`FrameResult.hpp`) carries which Snapshot / camera value was presented, the pass / draw counts, the diagnostics delta and the present;
+  `RenderEngine::frameResult()` is written once when the frame is answered, and `query` is the value picking / anchors / fit must aim at.
+- **Constraints** (`C8`): the key and the result are values, comparable and copyable, carrying no live object.
+- **Requirements** (`R17` / `R18` / `R19` / `R30`): the order is identical across machines (quantisation + the total-order tie); a query takes `FrameResult.query`; it returns a position identity.
+- **Acceptance** (`T9` / `T36`): `SelectTest.TheSortKeyIsATotalOrder` (any permutation gives the same result) and `SelectTest.TheKey*`;
+  `RenderEngineTest.TheFrameResultIsThePictureThatWasAnswered`. `T18`–`T20` (several instances / poses / picking with the frame camera) wait on F10.
+- **Caveat** (`P10`): the View inside `query` is **that frame's** value; querying with the live camera aims at the wrong frame — it is not "refreshing".
 
-> 目标是目标签名；每一条以落地后的头文件为准。
+## 4. Public Interface
+
+> Each signature is the contract; once it lands, the header is the authority.
 >
-> **迁移 API 已收口**：`applyPlan` / `plan` / `bindSnapshot` / `prepare` 是宿主契约；
-> `Plan` 是唯一的 pass 形状，`FrameTable` 是编译后的帧表，`frame()` 只答 Ran / Submitted，`applyPlan` 三态。
-> `bindSnapshot` 仍是**覆盖**（帧默认取 `Scene::publishedSnapshot()`），生产路径是
-> `SceneView::publishContent` + `applyPlan`。
+> **The migration APIs are closed**: `applyPlan` / `plan` / `bindSnapshot` / `prepare` are host contracts;
+> `Plan` is the only pass shape, `FrameTable` is the compiled frame table, `frame()` answers Ran / Submitted only, and `applyPlan` has three states.
+> `bindSnapshot` is still an **override** (a frame takes `Scene::publishedSnapshot()` by default), and the production path is
+> `SceneView::publishContent` + `applyPlan`.
 
-### 4.1 内容侧
+### 4.1 The content side
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 |---|---|---|
-| `Scene::publish() → Result<SnapshotRef>` | 发布一次快照；批内返回显式"未发布" | 目标签名，见 `Scene.hpp` |
-| `Scene::beginEdit()` / `endEdit()` | 批的边界；只有最外层释放版本 | 已存在 |
-| `Node::id() → NodeId` | 构造即有效 | 已存在 |
-| `Node::setVisible(bool)` | 隐藏由发布编译成"不产生行" | 已存在 |
-| `ContentRegistry::allocate<Tag>() / release(handle) / alive(handle)` | 唯一 id 来源；陈旧句柄答 gone | 已存在（`ContentId.hpp`） |
-| `ContentRef{Handle id, uint64 revision}` | 跨层键；`contentRefOf()` 是唯一构造 | 已存在 |
-| `Geometry::description()` / `MaterialBase::description()` | 按 revision 缓存的不可变值 | 已存在 |
-| `ShaderProgram::description() → ShaderProgramDescriptionPtr` | 程序文本 + id + revision；按 revision 缓存 | 已落地（W1） |
-| `Light::value() → LightValue` | 灯的值半边；`Scene::lightSet()` 把它们组成**一份不可变集合**（`LightSet`），pass 描述自己时共享给 `DrawDescription::light_values`（B11；之前每 pass 一份 `vector`） | 已落地（W1 / B11） |
+| `Scene::publish() → Result<SnapshotRef>` | publishes one snapshot; inside a batch it answers an explicit "not published" | the contract signature, see `Scene.hpp` |
+| `Scene::beginEdit()` / `endEdit()` | the batch boundaries; only the outermost releases a publication | exists |
+| `Node::id() → NodeId` | valid from construction | exists |
+| `Node::setVisible(bool)` | hiding is compiled by publication into "no rows" | exists |
+| `ContentRegistry::allocate<Tag>() / release(handle) / alive(handle)` | the only source of ids; a stale handle answers gone | exists (`ContentId.hpp`) |
+| `ContentRef{Handle id, uint64 revision}` | the cross-layer key; `contentRefOf()` is the only construction | exists |
+| `Geometry::description()` / `MaterialBase::description()` | immutable values cached by revision | exists |
+| `ShaderProgram::description() → ShaderProgramDescriptionPtr` | program text + id + revision; cached by revision | landed |
+| `Light::value() → LightValue` | the light's value half; `Scene::lightSet()` assembles them into **one immutable set** (`LightSet`) and shares it into `DrawDescription::light_values` when a pass describes itself (one set per frame, not one `vector` per pass) | landed |
 
-### 4.2 派生层
+### 4.2 The derivation side
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 |---|---|---|
-| `detail::selectSnapshot(const SceneSnapshot&, const View&, ...)` | 纯函数；内部原型 | 已存在（`SceneSnapshot.hpp`） |
-| 排序键 | 全序值 + 两段；比较规则文档化 | 目标，见 §3.11 |
+| `detail::selectSnapshot(const SceneSnapshot&, const View&, ...)` | a pure function; the internal prototype | exists (`SceneSnapshot.hpp`) |
+| the sort key | a total-order value + two segments; the comparison rules are documented | the target, see §3.11 |
 
-### 4.3 会话侧
+### 4.3 The session side
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 |---|---|---|
-| `RenderEngine::prepare()` → `PrepareReport` | 只建不提交；答所需半片/集合/上传（`NotReady` + `EngineNotReady`） | 已落地（后端拿到的是与 `executeFrame()` 同一个 `FrameDescription`；快照进这个输入是 5b-1） |
-| `RenderEngine::applyPlan() → PlanResult` / `plan()` | 三态：`Applied` / `Invalid` + `problems` / `Refused` + `PlanRefusal` | 已落地 |
-| `RenderEngine::frame() → FrameOutcome` | `Ran` / `Submitted`；`NotReady` + `EngineNotReady` | 已落地 |
-| `RenderEngine::frameResult() → FrameResult` | 上一帧被回答时的全部事实：`query`（snapshot / view）+ passes / draws / diagnostics / present | 已落地（`poses` 待 F10） |
-| `RenderEngine::pass(name)` / `passFor(name, owner)` | 按名字回读已注册的 pass 节点（`owner` 是作用域的贡献者） | 已落地 |
-| `Session::frame(FrameRequest) → FrameResult` | 提交一帧；`FrameRequest` 带 `View`（一帧一个表面） | 目标（今天 `executeFrame` + `presentWindow`） |
-| `FrameResult{ frame, present, query, passes, draws, diagnostics }` | 宿主读的值（`query` = snapshot + view） | 已落地（F12，`poses` 待 F10） |
-| `Plan` / `Pass` / `Target` | 帧图声明（唯一的形状；`FrameTable` 是编译后的帧表） | 已落地 |
+| `RenderEngine::prepare()` → `PrepareReport` | builds without submitting; answers the halves/sets/uploads needed (`NotReady` + `EngineNotReady`) | landed (the backend gets the same `FrameDescription` `executeFrame()` gets) |
+| `RenderEngine::applyPlan() → PlanResult` / `plan()` | three states: `Applied` / `Invalid` + `problems` / `Refused` + `PlanRefusal` | landed |
+| `RenderEngine::frame() → FrameOutcome` | `Ran` / `Submitted`; `NotReady` + `EngineNotReady` | landed |
+| `RenderEngine::frameResult() → FrameResult` | every fact of the previous frame when it was answered: `query` (snapshot / view) + passes / draws / diagnostics / present | landed (`poses` waits on F10) |
+| `RenderEngine::pass(name)` / `passFor(name, owner)` | reads a registered pass node back by name (`owner` is the scope's contributor) | landed |
+| `Session::frame(FrameRequest) → FrameResult` | submits one frame; `FrameRequest` carries a `View` (one surface per frame) | the target (`executeFrame` + `presentWindow` today) |
+| `FrameResult{ frame, present, query, passes, draws, diagnostics }` | the value the host reads (`query` = snapshot + view) | landed (F12; `poses` waits on F10) |
+| `Plan` / `Pass` / `Target` | the frame graph declaration (the only shape; `FrameTable` is the compiled frame table) | landed |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 |---|---|
-| C1 | 跨层的一切类型不可变；可变对象只活在内容侧。 |
-| C2 | 一个 Scene 同时只有一个写者；写者交接必须有 happens-before。 |
-| C2b | 一个原型和所有引用它的 Scene 属于同一写者域；跨线程共享可变原型不支持。 |
-| C3 | 只有一条引擎线程碰设备；并行只发生在派生层。 |
-| C4 | 身份只由注册表生成，没有第二个入口。 |
-| C5 | `generation` 回绕时退休该槽，不复用。 |
-| C6 | 原型包含无环。 |
-| C7 | 计划按稳定名字差分，不按指针。 |
-| C8 | 跨层的值类型不得带虚函数/继承。 |
-| C9 | 诊断走单一路由，带 episode。 |
-| C10 | 不新增第三方依赖。 |
-| C11 | 迁移期公开 API 只增不改。 |
-| C12 | 每一步都必须能独立判死（阈值见 §8 与 ADR-2026-11-12）。 |
+| C1 | Everything that crosses a layer is immutable; mutable objects live on the content side only. |
+| C2 | One Scene has one writer at a time; handing the writer role over needs a happens-before. |
+| C2b | A prototype and every Scene referencing it belong to one writer domain; sharing a mutable prototype across threads is not supported. |
+| C3 | One engine thread touches the device; parallelism happens in the derivation layer only. |
+| C4 | Identity is minted by the registry only, with no second entry point. |
+| C5 | When `generation` wraps, the slot is retired, not reused. |
+| C6 | Prototype containment is acyclic. |
+| C7 | A plan is diffed by stable names, not by pointers. |
+| C8 | A value type that crosses a layer must carry no virtual functions or inheritance. |
+| C9 | Diagnostics go through one route, with episodes. |
+| C10 | No new third-party dependency. |
+| C11 | The public API only grows during migration; it does not change. |
+| C12 | Every step must be killable on its own (thresholds in §8 and ADR-2026-11-12). |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 | 判据 |
+| # | Requirement | Criterion |
 |---|---|---|
-| R1 | `Node` 的身份构造时存在 | 构造后即可取 `NodeId`，插入前后相同 |
-| R2 | 原型可被任意多个位置引用 | 同一 `NodeId` 两处，改原型两处同时变 |
-| R3 | 原型内部折叠算一次；v1 放置成本 N × 原型行数 | `T4` 分开计 |
-| R4 | 树里存位置不存节点本体；换父不改身份 | `T22` |
-| R5 | 隐藏 = 不产生行 | 隐藏子树无行；作者 API 不变 |
-| R6 | 四类事实是值；折叠是值运算 | 折叠函数无副作用 |
-| R7 | 原型包含无环 | 自包含被拒并报诊断 |
-| R8 | 行预算可观测 | 超预算一条 episode |
-| R9 | 发布是一次原子指针交换；旧帧读旧值 | `T2` / `T17` |
-| R10 | 发布成本 O(变了的块 + 素材值) | `T1` / `N2` / `K11` |
-| R11 | 批内不发布；一次批 = 一次发布 | `T3` / `T31` |
-| R12 | 素材改动不需要调用方通知 | 发布时按 `id → revision` 比对 |
-| R13 | 快照可导出文本摘要 | 一条命令可打印并被断言 |
-| R14 | `select` 是纯函数 | `T8` |
-| R15 | 视图无关折叠一帧一次 | `T8` 计数 |
-| R16 | 视图相关行逐视图重算 | 混合用例 |
-| R17 | 排序键是全序值并文档化 | `T9` |
-| R18 | 查询吃 `FrameResult.query` | `T19` / `T20` |
-| R19 | 拾取返回位置身份，不含指针 | `T18` |
-| R20 | 后端并行 record 时合并结果确定 | 并行 = 串行逐项 |
-| R21 | 会话形状是声明，按名字差分；一引擎一表面（多窗口 = 多引擎共享设备） | `T7` |
-| R22 | 驻留 ⟺ 活快照引用；宿主自持快照不钉住 | `T25` |
-| R23 | 管线键是值；预热是一等入口 | 预热后 `builds` 增量 0 |
-| R24 | 帧内 arena 外零分配 | 分配计数 |
-| R25 | 能力分必选/可选，创建时协商并说明 | `T10` |
-| R26 | 关闭有显式相位，可重入 | `T11` |
-| R27 | 只有一条引擎线程碰设备；一个设备服务多个引擎，一个引擎驱动一个表面 | 第二区被拒 + `OneDeviceServesSeveralAreasWithoutCrossingThem` |
-| R28 | 诊断带稳定 code 与结构化字段 | 按 code 断言 |
-| R29 | 单位与颜色空间是类型/值 | 传错编译失败 |
-| R30 | 帧值可 replay 出同一命令序列 | `T12` |
-| R31 | 内容引用带 revision | `T17` / `K7` |
-| R32 | 拾取/诊断的身份是位置 | `T18` |
-| R33 | 共享原型属于一个写者域；发布能发现原型 revision 变化 | `T21` / `K8` |
-| R34 | `Instance` 对原型有存活责任；不允许悬垂 `NodeId` | `T22` |
-| R35 | `PoseSet` = 实例 local 覆盖 + 子树传播 | `T26–T28` / `K9` |
-| R36 | 预热是会话一等入口；缺可选能力出现在报告里 | `T7` / `T10` |
-| R38 | 计划校验有稳定 code | `T30` |
-| R39 | `publish` 在批内不返回 null | `T31` |
+| R1 | a `Node`'s identity exists at construction | a `NodeId` is available right after construction, the same before and after insertion |
+| R2 | a prototype can be referenced from any number of positions | the same `NodeId` in two places; editing the prototype changes both |
+| R3 | folding inside a prototype is computed once; v1's placement cost is N × the prototype's row count | `T4` counts them separately |
+| R4 | the tree stores positions, not node bodies; changing the parent does not change identity | `T22` |
+| R5 | hiding = no rows | a hidden subtree has no rows; the authoring API is unchanged |
+| R6 | the four kinds of fact are values; folding is a value operation | the folding function has no side effects |
+| R7 | prototype containment is acyclic | self-containment is refused and reported |
+| R8 | the row budget is observable | one episode above the budget |
+| R9 | publication is one atomic pointer swap; an old frame reads old values | `T2` / `T17` |
+| R10 | publication costs O(changed chunks + material values) | `T1` / `N2` / `K11` |
+| R11 | nothing is published inside a batch; one batch = one publication | `T3` / `T31` |
+| R12 | a material change needs no notification from the caller | compared by `id → revision` at publication |
+| R13 | a snapshot can be exported as a text summary | one command prints it and can be asserted on |
+| R14 | `select` is a pure function | `T8` |
+| R15 | the view-independent fold runs once per frame | the `T8` count |
+| R16 | view-dependent rows are recomputed per view | the mixed case |
+| R17 | the sort key is a documented total-order value | `T9` |
+| R18 | a query takes `FrameResult.query` | `T19` / `T20` |
+| R19 | picking returns a position identity, no pointers | `T18` |
+| R20 | a backend recording in parallel yields a deterministic merged result | parallel = serial item by item |
+| R21 | the session shape is a declaration diffed by name; one engine, one surface (several windows = several engines sharing a device) | `T7` |
+| R22 | residency ⟺ a live snapshot reference; a snapshot the host holds itself pins nothing | `T25` |
+| R23 | the pipeline key is a value; preparation is a first-class entry point | after preparation the `builds` delta is 0 |
+| R24 | zero allocation outside the frame arena during a frame | allocation counts |
+| R25 | capabilities are required or optional, negotiated at creation and reported | `T10` |
+| R26 | shutdown has an explicit phase and is reentrant | `T11` |
+| R27 | only one engine thread touches the device; one device serves several engines and one engine drives one surface | a second area is refused + `OneDeviceServesSeveralAreasWithoutCrossingThem` |
+| R28 | diagnostics carry stable codes and structured fields | asserted by code |
+| R29 | units and colour space are types / values | passing the wrong one does not compile |
+| R30 | a frame value replays into the same command sequence | `T12` |
+| R31 | a content reference carries a revision | `T17` / `K7` |
+| R32 | the identity picking / diagnostics report is a position | `T18` |
+| R33 | a shared prototype belongs to one writer domain; publication notices a prototype revision change | `T21` / `K8` |
+| R34 | an `Instance` is responsible for its prototype's liveness; no dangling `NodeId` | `T22` |
+| R35 | `PoseSet` = an instance's local overrides + subtree propagation | `T26–T28` / `K9` |
+| R36 | preparation is a first-class session entry point; a missing optional capability appears in the report | `T7` / `T10` |
+| R38 | plan validation has stable codes | `T30` |
+| R39 | `publish` returns no null inside a batch | `T31` |
 
-### 5.3 不变量（I#）与可测阈值（N#）
+### 5.3 Invariants (I#) and measurable thresholds (N#)
 
-| # | 不变量 | 它杀哪类 bug |
+| # | Invariant | Which class of bug it kills |
 |---|---|---|
-| I1 | 跨层一切都是不可变值；可变对象只活在内容侧 | 活对象过帧 |
-| I2 | 每个句柄带 generation；陈旧句柄答"已消失" | UAF / 地址复用 |
-| I3 | 一个 Scene 同时只有一个写者；发布是一次指针交换 | 批中泄漏、并发写 |
-| I4 | GPU 资源存活 ⟺ 被 Session 已接受或在飞的 Snapshot 引用 | 驻留猜、`kept` 兜底 |
-| I5 | 派生是纯的：同输入 ⇒ DrawList 逐项相同 | "为什么这两帧不同" |
-| I6 | 只有一条引擎线程碰设备 | 设备层竞争 |
-| I7 | 屏幕性查询吃 `FrameResult` 里的 View 值 | 瞄准错 |
+| I1 | everything that crosses a layer is an immutable value; mutable objects live on the content side only | a live object crossing a frame |
+| I2 | every handle carries a generation; a stale handle answers "gone" | UAF / address reuse |
+| I3 | one Scene has one writer at a time; publication is one pointer swap | a leak mid-batch, concurrent writes |
+| I4 | a GPU resource lives ⟺ an accepted or in-flight Snapshot references it | guessing residency, the `kept` safety net |
+| I5 | derivation is pure: same input ⇒ the same DrawList item by item | "why do these two frames differ" |
+| I6 | only one engine thread touches the device | races at the device layer |
+| I7 | a screen-space query takes the View value inside `FrameResult` | aiming at the wrong frame |
 
-| # | 阈值 | 怎么测 |
+| # | Threshold | How it is measured |
 |---|---|---|
-| N1 | 相机移动的 collect ≤ 今天 2160 µs × 1.2 | `SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera` |
-| N2 | 改一行的发布 ≤ 250 µs @ 2000 行 | `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` |
-| N3 | 快照常驻 ≤ 2× 行表字节数 | `alloc_trace.c` / RSS |
-| N4 | TSan 0 条警告 | `scripts/tsan_check.sh` |
-| N5 | 既有用例语义断言改动 ≤ 5% | 直接数 |
-| N6 | 帧内 arena 外 0 次分配 | 分配计数；B11 先钉住帧首存储的复用：`Scene::lightSet` 一份共享灯集（`ValueChannelTest.EveryPassOfOneFrameHoldsTheSameLightSetUntilALightMoves`）+ vk `VkFrameHeadTest.ASteadyFrameDoesNotGrowTheHeadsStorage`（只证明头部存储，不声称整帧零分配） |
-| N7 | 头文件依赖不增 | `check_include_hygiene.py` |
-| N8 | Windows / Linux 同一套代码 | CI |
-| N9 | 不引入第三方依赖 | review + `_vcpkg.json` |
-| N10 | 每帧可打印摘要，成本 < 0.1% | 计时 |
+| N1 | collect with a moving camera ≤ today's 2160 µs × 1.2 | `SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera` |
+| N2 | publishing a one-row edit ≤ 250 µs @ 2000 rows | `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` |
+| N3 | a resident snapshot ≤ 2× the row table's bytes | `alloc_trace.c` / RSS |
+| N4 | TSan reports 0 warnings | `scripts/tsan_check.sh` |
+| N5 | semantic-assertion changes in existing cases ≤ 5% | counted directly |
+| N6 | 0 allocations outside the frame arena during a frame | allocation counts; the frame-head storage reuse is pinned first: one shared light set per `Scene::lightSet` (`ValueChannelTest.EveryPassOfOneFrameHoldsTheSameLightSetUntilALightMoves`) + vk's `VkFrameHeadTest.ASteadyFrameDoesNotGrowTheHeadsStorage` (proves the head's storage only, and does not claim a whole frame allocates nothing) |
+| N7 | header dependencies do not grow | `check_include_hygiene.py` |
+| N8 | one code base for Windows and Linux | CI |
+| N9 | no third-party dependency | review + `_vcpkg.json` |
+| N10 | a per-frame printable summary costing < 0.1% | timing |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 P1 只带 id 的引用
+### 6.1 P1 A reference that carries only an id
 
-- 会怎么错：旧帧按 id 解析到新值，画面里一半旧一半新，且没有任何拒绝。
-- 怎么判：`T17` 逐项 diff 在飞帧命令。
-- 怎么防：键里必须有 revision（`R31`）；`ContentRef` 是唯一构造入口。
+- How it fails: an old frame resolves the id to a new value, the picture is half old and half new, and nothing refuses it.
+- How to detect it: `T17` diffs an in-flight frame's commands item by item.
+- How to prevent it: the key must carry a revision (`R31`); `ContentRef` is the only construction.
 
-### 6.2 P2 元数据表被整体拷贝
+### 6.2 P2 The metadata table is copied whole
 
-- 会怎么错：行 CoW 很漂亮，发布成本却随行数线性上升，`K11` 失败。
-- 怎么判：5000 原型 1 次编辑的 publish 时间与字节。
-- 怎么防：表未变时共享 `shared_ptr<const Table>`；变时只替换受影响的表（`R10`）。
+- How it fails: the row CoW is pretty, but publication cost grows linearly with the row count and `K11` fails.
+- How to detect it: the publish time and bytes of one edit over 5000 prototypes.
+- How to prevent it: share `shared_ptr<const Table>` while the table is unchanged, and replace only the affected tables when it changes (`R10`).
 
-### 6.3 P3 把实例化当免费
+### 6.3 P3 Treating instancing as free
 
-- 会怎么错：5000 行原型插 10 次，被写成 10 次折叠，实际是 5 万次放置乘法。
-- 怎么判：`T4` 把"折叠次数"与"放置乘法次数"分开计。
-- 怎么防：v1 明确声明 N × 原型行数；B 方案（共享 local rows）要等 `T23` 测量后再选。
+- How it fails: a 5000-row prototype inserted 10 times is written up as 10 folds, but it is 50000 placement multiplications.
+- How to detect it: `T4` counts "fold count" and "placement multiplications" separately.
+- How to prevent it: v1 states N × the prototype's row count explicitly; option B (sharing local rows) waits for `T23`'s measurement.
 
-### 6.4 P4 表面事件进帧中
+### 6.4 P4 A surface event inside a frame
 
-- 会怎么错：交换链在录制中途重建，在飞命令引用已销毁的视图。
-- 怎么判：多表面 + resize 用例；TSan。
-- 怎么防：表面事件只在帧首应用（既有规则，升格为设计的一部分）。
+- How it fails: the swap chain is rebuilt mid-recording and in-flight commands reference destroyed views.
+- How to detect it: the several-surfaces + resize cases; TSan.
+- How to prevent it: a surface event is applied at the frame head only (an existing rule, promoted to part of the design).
 
-### 6.5 P5 把"纯函数"读成"可以随便并行"
+### 6.5 P5 Reading "pure function" as "parallelise at will"
 
-- 会怎么错：把 record 也并行，两个线程同时碰 `vsg::Context`。
-- 怎么判：`I6` 的代码审查 + TSan。
-- 怎么防：并行只在派生层；后端并行自己的 record 时必须自证确定性（`R20`）。
+- How it fails: record is parallelised too, and two threads touch `vsg::Context` at once.
+- How to detect it: the `I6` code review + TSan.
+- How to prevent it: parallelism lives in the derivation layer only; a backend that records in parallel must prove its own determinism (`R20`).
 
-### 6.6 P6 行与资源的寿命混为一谈
+### 6.6 P6 Conflating a row's lifetime with a resource's
 
-- 会怎么错：行还在答（在飞计划要读），资源先被放掉。
-- 怎么判：`T25`（Session 外持旧快照再提交）。
-- 怎么防：驻留判据只看"活快照引用"（`I4`），行只决定"事实还在不在"。
+- How it fails: a row still answers (an in-flight plan reads it) while the resource has already been released.
+- How to detect it: `T25` (hold an old snapshot outside the Session and submit).
+- How to prevent it: the residency rule looks only at "live snapshot references" (`I4`); a row only decides "is the fact still here".
 
-### 6.7 P7 计划差分对"同名不同内容"失效
+### 6.7 P7 The plan difference fails on "same name, different content"
 
-- 会怎么错：改一个 pass 的 target 被当成"删一个加一个"，管线与目标每帧重建。
-- 怎么判：`T7` 的 `builds` 增量断言。
-- 怎么防：差分比较整条 `Pass` 值（含 `Target` / `inputs` / 状态覆盖），名字只是身份。
+- How it fails: changing a pass' target is taken as "remove one, add one", and the pipeline and target are rebuilt every frame.
+- How to detect it: `T7`'s `builds` delta assertion.
+- How to prevent it: the difference compares the whole `Pass` value (including `Target` / `inputs` / state overrides); the name is only identity.
 
-### 6.8 P8 预热被做成"编译一切"
+### 6.8 P8 Preparation becomes "compile everything"
 
-- 会怎么错：加载期把全部变体都编一遍，冷启动炸掉。
-- 怎么判：预热后 `builds` 增量与预热耗时。
-- 怎么防：`prepare()` 只答这一份输入要的（`R23`）。
+- How it fails: every variant is compiled during loading and cold start explodes.
+- How to detect it: the `builds` delta after preparation and the preparation's own duration.
+- How to prevent it: `prepare()` answers only what this input needs (`R23`).
 
-### 6.9 P9 批被当成事务
+### 6.9 P9 Treating a batch as a transaction
 
-- 会怎么错：调用方期望批内失败回滚，而批只界定可见性。
-- 怎么判：`T31` 的语义。
-- 怎么防：文档写清"批不是事务"（`Scene::beginEdit` 的既有注释）。
+- How it fails: the caller expects a failed batch to roll back, but a batch only delimits visibility.
+- How to detect it: the semantics of `T31`.
+- How to prevent it: the documentation says "a batch is not a transaction" (the existing comment on `Scene::beginEdit`).
 
-### 6.10 P10 拿活相机查询
+### 6.10 P10 Querying with the live camera
 
-- 会怎么错：相机在帧间移动，查询用新相机回答上一帧的画面。
-- 怎么判：`T20`。
-- 怎么防：查询吃 `FrameResult.query` 的 View 值（`I7`）。
+- How it fails: the camera moves between frames and the query answers the previous frame's picture with the new camera.
+- How to detect it: `T20`.
+- How to prevent it: the query takes the View value of `FrameResult.query` (`I7`).
 
-### 6.11 P11 用“跑一帧但不提交”实现预热
+### 6.11 P11 Implementing preparation as "run a frame without submitting"
 
-- 会怎么错：窗口帧的 `Session::beginFrame()` 里 `viewer->advanceToNextFrame()` **acquire** 一张交换链图像；
-  不提交就再也不会有图像可 acquire（下一帧饿死），提交则已经不是预热。而画到窗口的 pass 只能画进那张图像，
-  所以“跑一遍录制再丢掉”连它都覆盖不到 —— 预热会在看起来通过的像素用例下留下一条 acquire 饥饿。
-- 怎么判：`builds` 增量断言不成立，或第二帧 `beginFrame()` 回空 token / 出现 acquire 超时的 VUID。
-- 怎么防：预热只做**值**这一侧（半片 / 集合 / 上传），键由 `drawNeeds` 算；窗口目标的格式由
-  `WindowTarget::facts()` 回答（const，不需要 acquire）。3b 的实现在 `VsgBackend::prepareFrame`：它走 `collectFrame`
-  + `recordContent`，**从不**调用 `Session::beginFrame()` / `PresentTarget::present()`，帧进度水位（`submitted` /
-  `presented`）因此不动——`T33` 断言的正是这两条。
-- **边界**（ADR-2026-11-14）：`P11` 说的是**帧**——`beginFrame` 的 acquire、提交、画进交换链图像、present。
-  预热自己的**只含传输**的一批不走这条规则：它没有帧、没有交换链图像、没有 present，帧进度不动；
-  它与“跑一帧但不提交”的区别是可观测的（`T35` 的 `submitted` / `presented` 断言）。
+- How it fails: `Session::beginFrame()` for a window frame calls `viewer->advanceToNextFrame()`, which **acquires** a swap-chain image; without a submission there is
+  never an image to acquire again (the next frame starves), and with a submission it is no longer preparation. And a pass that draws into a window can only draw into
+  that image, so "record once and throw it away" does not even cover it — preparation would leave an acquire starvation behind under pixel cases that look green.
+- How to detect it: the `builds` delta assertion does not hold, or the second frame's `beginFrame()` answers an empty token / an acquire-timeout VUID appears.
+- How to prevent it: preparation does the **value** side only (halves / sets / uploads) and the keys come from `drawNeeds`; the window target's format is answered by
+  `WindowTarget::facts()` (const, no acquire needed). The implementation lives in `VsgBackend::prepareFrame`: it goes through `collectFrame` + `recordContent`, and
+  **never** calls `Session::beginFrame()` / `PresentTarget::present()`, so the frame progress watermark (`submitted` / `presented`) does not move — which is exactly what `T33` asserts.
+- **Boundary** (ADR-2026-11-14): `P11` is about a **frame** — `beginFrame`'s acquire, submission, drawing into the swap-chain image, present. Preparation's own
+  **transfer-only** batch does not follow that rule: it has no frame, no swap-chain image and no present, and the frame progress does not move; its difference from
+  "run a frame without submitting" is observable (`T35`'s `submitted` / `presented` assertions).
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 |---|---|---|---|
-| D1 | 让内容模型本身不可变（全持久化场景图） | 作者要可变；把复杂度推给每个使用者（`G7`） | ADR-2026-11-12 |
-| D2 | 内容侧多线程写（给场景图加锁） | 收益为零、错误成本极高；改为单写者 + happens-before | 同上 |
-| D3 | 允许 `Node` 多父（OSG 式 DAG） | 状态沿多路径累积、遍历按实例指数扩张、行身份只能靠路径 | 同上 |
-| D4 | 保留"地址即身份" | 省一张注册表，卖掉的是一整类 UAF | 同上 |
-| D5 | id 由 Session 分配 | 外部构建时还没有 Session；跨窗口共享必须是同一个 id | 同上 |
-| D6 | 默认 bindless / GPU-driven | 没有第二个后端、没有实测瓶颈（`G8`） | 同上 |
-| D7 | 本层做自动 barrier 的 render graph | 同步归后端（`G2`） | 同上 |
-| D8 | 保留 `addPass` 家族 + 运行时拒绝 | 计划是值之后误用不可表达；拒绝路径本身是复杂度 | 同上 |
-| D9 | 内容引用只带 id、不带 revision | 旧帧会解析到新值，破坏 `R9`/`I1` | 同上 |
-| D10 | 只做已落地的身份/寿命层，其余留作提案 | "发布 = 一次指针交换"不成立，镜像/delta/memo 继续在轨 | ADR-2026-11-12 §选项 D |
-| D11 | 用“跑一帧但不提交”实现预热 | 窗口帧的 `beginFrame` acquire 图像：不提交则饥饿，提交则不是预热；画到窗口的 pass 连覆盖都做不到（`P11`） | ADR-2026-11-12 |
-| D12 | 一个引擎驱动多个 Surface（graphics-next F8） | 无消费者（`G8`）；`FrameResult` / `PresentRecord` 刚落地又变 per-surface（`G10`）；appfw 所有权要重写；与架构 D2 一致 | [ADR-2026-11-13](ADR-2026-11-13-one-engine-one-surface.md) |
-| D13 | 给预热加第二个入口（`flushUploads()` / `uploadNow()`） | 两个入口回答同一个问题（“把这一帧要的东西建好”），调用方还得自己知道何时调：复杂度转移到调用方（`G1` / `G7`），今天没有消费者要求把建与传分开（`G8`） | [ADR-2026-11-14](ADR-2026-11-14-prepare-may-submit-transfers.md) |
+| D1 | making the content model itself immutable (a fully persistent scene graph) | authors need mutability; it pushes the complexity onto every user (`G7`) | ADR-2026-11-12 |
+| D2 | multi-threaded writing on the content side (locking the scene graph) | zero benefit, very high error cost; one writer + happens-before instead | ibid. |
+| D3 | allowing a `Node` several parents (an OSG-style DAG) | state accumulates along several paths, traversal grows exponentially per instance, and row identity could only be a path | ibid. |
+| D4 | keeping "the address is the identity" | saves one registry and sells a whole class of UAF | ibid. |
+| D5 | ids allocated by the Session | there is no Session when content is built externally; sharing across windows must be the same id | ibid. |
+| D6 | bindless / GPU-driven by default | no second backend, no measured bottleneck (`G8`) | ibid. |
+| D7 | an automatic-barrier render graph in this layer | synchronisation belongs to the backend (`G2`) | ibid. |
+| D8 | keeping the `addPass` family + a runtime refusal | once a plan is a value, misuse cannot be expressed; the refusal path is itself complexity | ibid. |
+| D9 | content references carrying an id without a revision | an old frame would resolve to a new value, breaking `R9` / `I1` | ibid. |
+| D10 | building only the landed identity / lifetime layer and leaving the rest as a proposal | "publication = one pointer swap" would not hold and mirror / delta / memo would stay on the track | ADR-2026-11-12 §option D |
+| D11 | implementing preparation as "run a frame without submitting" | a window frame's `beginFrame` acquires an image: without a submission it starves, with one it is not preparation; and a pass drawing into a window cannot even be covered (`P11`) | ADR-2026-11-12 |
+| D12 | one engine driving several Surfaces (graphics-next F8) | no consumer (`G8`); `FrameResult` / `PresentRecord` would change to per-surface right after landing (`G10`); appfw ownership would have to be rewritten; consistent with architecture D2 | [ADR-2026-11-13](ADR-2026-11-13-one-engine-one-surface.md) |
+| D13 | adding a second entry point to preparation (`flushUploads()` / `uploadNow()`) | two entry points answer the same question ("build what this frame needs") and the caller still has to know when to call them: complexity moved to the caller (`G1` / `G7`), and no consumer today asks to split building from transferring (`G8`) | [ADR-2026-11-14](ADR-2026-11-14-prepare-may-submit-transfers.md) |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 | 状态 |
+| # | Criterion | Case / command | Status |
 |---|---|---|---|
-| T1 | 发布是 O(变更) | `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` | 已实现 |
-| T2 | 在飞帧不受内容改动影响 | `RenderEngineTest.AMaterialEditLandsOnTheNextFrame...` + 场景版 | 已实现 |
-| T3 | 批 = 一次发布 | `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` + `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch` | 已实现 |
-| T4 | 原型折叠一次、放置成本单计 | `SnapshotTest.APrototypeFoldsOnceAndIsPlacedNTimes` | 未做 |
-| T5 | 陈旧句柄答 gone | `ContentRegistryTest.AStaleHandleAnswersGone` | 已实现 |
-| T6 | 驻留 = 活快照引用 | `ResidencyTableTest.TheCollectableSetIsEnumerable` | 已实现 |
-| T7 | 计划差分 | `PlanTest.APassIsAddedWithoutAnyAddCall` | 已实现 |
-| T8 | 派生纯 | `SelectTest.SameInputSameList`（同快照重复、换视图穿插、场景清空后、8 线程 × 32 轮并发逐项等于串行）；`R15` 的折叠计数由 `GraphicsTest` 的 `contentCollect*` 用例钉住 | 已实现 |
-| T9 | 排序全序 | `SelectTest.TheSortKeyIsATotalOrder` + `SelectTest.TheKeyReadsDrawOrderThenLayerThenSegmentThenDepth` + `SelectTest.TheKeySortsByTheBoxCentreNotTheNodeOrigin` | 已实现 |
-| T10 | 能力协商 | `SessionTest.AMissingRequiredCapabilityIsRefusedWithACode` | 未做 |
-| T11 | 关闭相位 | `SessionTest.ShutdownIsIdempotentInEveryPhase` | 未做 |
-| T12 | replay | `ReplayTest.ARecordedFrameReplaysToTheSameCommands` | 未做 |
-| T13 | 并发 | `scripts/tsan_check.sh` | 每步收尾跑 |
-| T14 | 既有行为不变 | `ctest`（30 套） | 30/30 |
-| T15 | 文档门禁 | 八个 `scripts/check_*.py` + `check_vsg_content_seam.cmake` | 全清 |
-| T16 | 量化"过/不过" | `../research/graphics-2026-11-11-next-benefits.md` 收益表 | 逐步记录 |
-| T17 | 旧帧读旧 revision | 两帧在飞时改材质/几何/程序，逐项 diff | 已实现（`SnapshotSourceTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith`） |
-| T18 | 多实例拾取 | 同一原型两处实例 | 未做 |
-| T19 | pose 后拾取 | 父关节 pose 点其子 | 未做 |
-| T20 | 帧相机拾取 | 相机移动后按下 | 未做 |
-| T21 | 共享原型发布 | 两 Scene 共享原型 | 未做 |
-| T22 | 原型寿命 | 原型析构后仍有实例 | 未做 |
-| T23 | 实例化成本（A/B 对照） | 5000 行原型 × 10 实例；报 `snapshot_rows` / `draw_rows` / `placement_multiplications` / publish / select / 常驻；口径见 `../research/graphics-2026-11-12-instances.md` | 未做（research） |
-| T24 | 剔除按行、不按块 | 一块（同 chunk）两段不同父变换、首段视外：`SelectTest.OneChunkCullsEachRowOnItsOwnBox`（两盒一内一外；相机换边后互换，剔除仍开） | 已实现 |
-| T25 | 回收后旧快照 | Session 外持旧快照再提交 | 未做 |
-| T26 | pose 子树传播 | 父关节 pose | 未做 |
-| T27 | pose 拾取 | pose 后拾取子节点 | 未做 |
-| T28 | pose 剔除 | pose 子树部分出视 | 未做 |
-| T30 | 计划校验 | `PlanTest.*IsRefusedWithItsCode`（四类）+ `PlanTest.TheCodeSpellingsAreStable` + `PlanTest.AKindChangeOnACustomPassIsRefusedWithItsCode` | 已实现 |
-| T31 | 批内 publish | `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch`（`Posted` → `Unchanged` → `InsideBatch` → `Posted`）+ `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` | 已实现 |
-| T32 | 预热的答案 = 帧的构建 | `ProgramHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds`（键集相等，设备无关）+ `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` 的键集断言（录制侧） | 已实现 |
-| T33 | 预热后录制 `builds` 增量 0，且预热不提交 / 不呈现 | `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing`（`halves().builds` / `sets().builds` / `uploads().uploads` / `inputSetBuilds` / `pool.created` 全 0，`progress->submitted` 不动，像素仍画出）+ `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing`（引擎侧：同一个 value、不执行、不取帧号） | 已实现 |
-| T34 | 快照源与直接收集逐项相等 | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`（600 帧，transform / opacity / material / placement 编辑，逐项 diff）+ `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould`（绑定后的帧级接缝） | 已实现 |
-| T36 | 帧结果是那一帧的值 | `RenderEngineTest.TheFrameResultIsThePictureThatWasAnswered`（快照 / 相机 / 计数 / 诊断 / present；发布落在帧间不改已答的帧） | 已实现 |
-| T35 | 预热的上传批是真上传，而且不是帧 | `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns`（预热报流 2 + 纹理 1；随后 `executeFrame` 的 `stream_uploads` / `texture_uploads` 均 0，像素为纹理色）+ `VkPrepareUploadTest.ASecondPrepareSubmitsNothing`（`uploads == 0`，`progress->submitted` / `presented` 不动）+ `PrepareUploadTest.APreparedTexturedFrameCopiesItsTextureAndUploadsNothingWhenItRuns` / `ASecondPrepareCopiesNothing`（`vsg`：同一口径，`MaterialImages::staged() == 0` 证明 host 字节已随拷贝放掉） | 已实现 |
+| T1 | publication is O(changed) | `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` | implemented |
+| T2 | an in-flight frame is untouched by content edits | `RenderEngineTest.AMaterialEditLandsOnTheNextFrame...` + the scene version | implemented |
+| T3 | a batch = one publication | `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` + `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch` | implemented |
+| T4 | a prototype folds once and placement is counted separately | `SnapshotTest.APrototypeFoldsOnceAndIsPlacedNTimes` | not done |
+| T5 | a stale handle answers gone | `ContentRegistryTest.AStaleHandleAnswersGone` | implemented |
+| T6 | residency = live snapshot references | `ResidencyTableTest.TheCollectableSetIsEnumerable` | implemented |
+| T7 | the plan difference | `PlanTest.APassIsAddedWithoutAnyAddCall` | implemented |
+| T8 | derivation is pure | `SelectTest.SameInputSameList` (the same snapshot repeated, other views interleaved, after the scene is cleared, and 8 threads × 32 rounds concurrently item by item equal to serial); `R15`'s fold count is pinned by `GraphicsTest`'s `contentCollect*` cases | implemented |
+| T9 | the sort is a total order | `SelectTest.TheSortKeyIsATotalOrder` + `SelectTest.TheKeyReadsDrawOrderThenLayerThenSegmentThenDepth` + `SelectTest.TheKeySortsByTheBoxCentreNotTheNodeOrigin` | implemented |
+| T10 | capability negotiation | `SessionTest.AMissingRequiredCapabilityIsRefusedWithACode` | not done |
+| T11 | the shutdown phase | `SessionTest.ShutdownIsIdempotentInEveryPhase` | not done |
+| T12 | replay | `ReplayTest.ARecordedFrameReplaysToTheSameCommands` | not done |
+| T13 | concurrency | `scripts/tsan_check.sh` | run at the end of every step |
+| T14 | existing behaviour unchanged | `ctest` (30 suites) | 30/30 |
+| T15 | documentation gates | the eight `scripts/check_*.py` + `check_vsg_content_seam.cmake` | all clear |
+| T16 | quantify "pass / fail" | the benefit table in `../research/graphics-2026-11-11-next-benefits.md` | recorded step by step |
+| T17 | an old frame reads the old revision | change material / geometry / program with two frames in flight and diff item by item | implemented (`SnapshotSourceTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith`) |
+| T18 | picking several instances | two instances of one prototype | not done |
+| T19 | picking after a pose | a parent joint poses and its child is picked | not done |
+| T20 | picking with the frame camera | press after the camera moved | not done |
+| T21 | publishing a shared prototype | two Scenes sharing a prototype | not done |
+| T22 | prototype lifetime | instances survive the prototype's destruction | not done |
+| T23 | the instancing cost (A/B) | a 5000-row prototype × 10 instances; report `snapshot_rows` / `draw_rows` / `placement_multiplications` / publish / select / residency; procedure in `../research/graphics-2026-11-12-instances.md` | not done (research) |
+| T24 | culling per row, not per chunk | one chunk with two segments under different parent transforms, the first out of view: `SelectTest.OneChunkCullsEachRowOnItsOwnBox` (two boxes, one in and one out; they swap when the camera crosses, and culling stays on) | implemented |
+| T25 | an old snapshot after reclamation | hold an old snapshot outside the Session and submit | not done |
+| T26 | pose subtree propagation | a parent joint poses | not done |
+| T27 | pose picking | pick a child after a pose | not done |
+| T28 | pose culling | part of a posed subtree leaves the view | not done |
+| T30 | plan validation | `PlanTest.*IsRefusedWithItsCode` (the four kinds) + `PlanTest.TheCodeSpellingsAreStable` + `PlanTest.AKindChangeOnACustomPassIsRefusedWithItsCode` | implemented |
+| T31 | publish inside a batch | `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch` (`Posted` → `Unchanged` → `InsideBatch` → `Posted`) + `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` | implemented |
+| T32 | preparation's answer = the frame's builds | `ProgramHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds` (the key sets are equal, device independent) + the key-set assertion in `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` (the recording side) | implemented |
+| T33 | after preparation the recording's `builds` delta is 0, and preparation neither submits nor presents | `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing` (`halves().builds` / `sets().builds` / `uploads().uploads` / `inputSetBuilds` / `pool.created` all 0, `progress->submitted` does not move, and the pixels are still drawn) + `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing` (the engine side: the same value, nothing executed, no frame number taken) | implemented |
+| T34 | the snapshot source equals a direct collection item by item | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` (600 frames, transform / opacity / material / placement edits, diffed item by item) + `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould` (the frame-level seam after binding) | implemented |
+| T36 | the frame result is that frame's value | `RenderEngineTest.TheFrameResultIsThePictureThatWasAnswered` (snapshot / camera / counts / diagnostics / present; a publication landing between frames does not change the answered frame) | implemented |
+| T35 | preparation's upload batch is a real upload and is not a frame | `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns` (preparation reports 2 streams + 1 texture; the following `executeFrame`'s `stream_uploads` / `texture_uploads` are both 0 and the pixel is the texture's colour) + `VkPrepareUploadTest.ASecondPrepareSubmitsNothing` (`uploads == 0`, `progress->submitted` / `presented` do not move) + `PrepareUploadTest.APreparedTexturedFrameCopiesItsTextureAndUploadsNothingWhenItRuns` / `ASecondPrepareCopiesNothing` (`vsg`: the same procedure, `MaterialImages::staged() == 0` proves the host bytes were released with the copy) | implemented |
 
-### 8.1 判死阈值（`K#`）
+### 8.1 Kill thresholds (`K#`)
 
-每一步的**验收阈值与回退条件**（ADR-2026-11-12 决定 `K1–K11` 的身份从此是这一条，而不是"否决提案"）。
-某一步击穿它自己的 `K` ⇒ 回退该步并把结论写回 ADR，**不重开"是否采纳"**。
+Each step's **acceptance threshold and rollback condition** (ADR-2026-11-12 decided that `K1–K11` mean this from then on, not "reject the proposal").
+A step that breaks its own `K` ⇒ that step is rolled back and the conclusion is written back into the ADR, **without reopening "should we adopt this"**.
 
-| # | 阈值（击穿 = 回退该步） | 怎么测 |
+| # | Threshold (breaking it = roll the step back) | How it is measured |
 |---|---|---|
-| K1 | 2000 行场景改 1 行，`publish` > 500 µs（CoW 退化成整表） | `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` |
-| K2 | 快照常驻内存 > 3× 行表字节数 | `alloc_trace.c` / RSS |
-| K3 | 相机移动的 collect > 2160 µs 的 1.2 倍 | `SceneTest.MeasureWhatOneCollectionCosts*` |
-| K4 | 该子步开始时的用例里，> 5% 需要改**语义断言**才通过（纯改名/机械迁移不计；口径见下） | 直接数 |
-| K5 | 代码量不降反升（桥 + 寿命层 > 今天的 100%，与 2519 行同口径） | `wc -l` |
-| K6 | TSan 出现任何**新的**数据竞争报告 | `scripts/tsan_check.sh` |
-| K7 | 在飞帧的旧内容被新发布改变（材质/几何/程序任一） | `T17` 逐项 diff |
-| K8 | 两个 Scene 共享原型时数据竞争，或跨线程用例无法被拒绝 | `T21` + TSan |
-| K9 | pose 后的拾取/剔除与画面不一致 | `T19` / `T27` / `T28` |
-| K11 | 5000 原型、1 次编辑的 publish 超过预算（元数据整体拷贝暴露） | `N19` ≤ 50 µs 或字节上限 |
+| K1 | a 2000-row scene with 1 row edited, `publish` > 500 µs (CoW degenerating into a whole-table copy) | `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` |
+| K2 | a resident snapshot > 3× the row table's bytes | `alloc_trace.c` / RSS |
+| K3 | collect with a moving camera > 1.2 × 2160 µs | `SceneTest.MeasureWhatOneCollectionCosts*` |
+| K4 | more than 5% of the cases present when the substep started need a **semantic assertion** changed to pass (pure renames / mechanical migrations do not count; the procedure is below) | counted directly |
+| K5 | the line count grows instead of falling (bridge + lifetime layer > 100% of today's, by the same 2519-line measure) | `wc -l` |
+| K6 | TSan reports any **new** data race | `scripts/tsan_check.sh` |
+| K7 | an in-flight frame's old content is changed by a new publication (material / geometry / program) | `T17`'s item-by-item diff |
+| K8 | a data race when two Scenes share a prototype, or a cross-thread case cannot be refused | `T21` + TSan |
+| K9 | picking / culling after a pose disagrees with the picture | `T19` / `T27` / `T28` |
+| K11 | a 5000-prototype, one-edit publish over budget (a whole metadata copy showing through) | `N19` ≤ 50 µs or the byte ceiling |
 
-**`K4` 的计数口径**（5a / 5b-1 / 5b-2a / 5b-2b / 5b-2c 各自适用）：
+**`K4`'s counting procedure** (5a / 5b-1 / 5b-2a / 5b-2b / 5b-2c each apply it on their own):
 
-- **分母**：该子步开始时 `test_graphics` + `test_vsg` 的 `--gtest_list_tests` 用例并集；`DISABLED_` 不计，
-  运行时 SKIP 计；不数源码里的 `TEST` 宏（今天 `test_vsg` 源码宏 544、可执行 542）。
-- **分子**：必须改期望值 / 可观察行为才通过的用例；改名、别名、签名/类型机械迁移、文件搬移不计。
-- 只钉被删机制、没有后继语义的用例随机制删除，但每条要写明由哪条新用例承接同一可观察行为；
-  写不出承接的，算 1 条。
-- **5a** 的既有语义断言改动必须为 **0**（影子路径；出现 1 条就回退 5a，不进 5b-1）；
-  **5b-1 / 5b-2a / 5b-2b / 5b-2c** 的分母各自在开始时重取，不沿用上一步。
-- 今天（3b 收尾）实测 572 + 542 = **1114**，5% 线为 **55 条**（第 56 条越线）；这个数字只作初判，不写死。
+- **The denominator**: the union of the cases `--gtest_list_tests` lists for `test_graphics` + `test_vsg` when the substep starts; `DISABLED_` is not counted, a runtime
+  SKIP is; the `TEST` macros in the sources are not counted (`test_vsg` has 544 source macros and 542 in the executable).
+- **The numerator**: cases that only pass after an expected value / observable behaviour is changed; renames, aliases, mechanical signature / type migrations and file moves do not count.
+- A case that only pinned a deleted mechanism and has no successor semantics is deleted with the mechanism, but each must name the new case carrying the same observable
+  behaviour; one that cannot name a successor counts as 1.
+- **5a**'s changes to existing semantic assertions must be **0** (a shadow path; one single change rolls 5a back and 5b-1 is not entered);
+  **5b-1 / 5b-2a / 5b-2b / 5b-2c** each re-take their denominator when they start and do not carry the previous one over.
+- The last measurement was 572 + 542 = **1114**, so the 5% line is **55 cases** (the 56th crosses it); that number is an initial reading, not a hard-coded one.
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-- **已落地**：F1（快照发布）、F2（纯派生）、F3（身份）、F4（引擎表按 ref）、F5（行级 epoch 回收）、
-  F6（计划是值）、F7（预热入口：答案 + 预建）、F9（发布的三态答案 + 快照句柄）、F11（全序排序键）。
-  `SnapshotSource` 回答 Published 模式的每个 draw，`Scene::collectRenderCommands` 是 Direct 模式的直接路径；
-  计划在 `Plan.hpp` / `Plan.cpp` / `EngineCompile.cpp`（`applyPlan`）；预热在 `DrawNeeds.*` 与
-  `RenderEngine::prepare()` → `RenderFrameExecutor::prepareFrame` → `VsgBackend::prepareFrame`。
-- **计划的值形状**：`PassDesc::target` 是 `Target` 值（`Window | Explicit | Transient`，§2.8），`PassDesc::output`
-  是 `Output` 值（name + whole_target + image）；格式不一致的值由 `validatePlan` 拒绝（`InvalidTarget` /
-  `InvalidOutput`）。`View` 与 `RenderArea` 同样是值。
-- **未做**：F10（原型与实例层）与 F12 的 `poses` 半边（它要等 F10）；`FrameResult` / `query` 本身已在。
-- **帧内没有隐式发布**：发布是内容写者的动词，帧在 build 时取 `Scene::publishedSnapshot()`；`bindSnapshot`
-  只剩覆盖一个含义（`graphics-threading.md` §2.13）。
-- **与线程契约的关系**：`graphics-threading.md` 是当前的线程契约（`C1–C15` / `N1–N14` 作为历史编号退役不复用）；
-  `graphics-scene.md` 的收集描述仍带镜像时代的措辞，等它下一次重写时对齐。
+- **Landed**: F1 (snapshot publication), F2 (pure derivation), F3 (identity), F4 (the engine table by ref), F5 (row-level epoch reclamation),
+  F6 (a plan is a value), F7 (the preparation entry point: the answer + the pre-build), F9 (publication's three-state answer + the snapshot handle), F11 (the total-order sort key).
+  `SnapshotSource` answers every draw of Published mode, and `Scene::collectRenderCommands` is Direct mode's direct path;
+  the plan lives in `Plan.hpp` / `Plan.cpp` / `EngineCompile.cpp` (`applyPlan`); preparation lives in `DrawNeeds.*` and
+  `RenderEngine::prepare()` → `RenderFrameExecutor::prepareFrame` → `VsgBackend::prepareFrame`.
+- **The plan's value shapes**: `PassDesc::target` is a `Target` value (`Window | Explicit | Transient`, §2.8) and `PassDesc::output`
+  is an `Output` value (name + whole_target + image); a value whose formats disagree is refused by `validatePlan` (`InvalidTarget` /
+  `InvalidOutput`). `View` and `RenderArea` are values as well.
+- **Not done**: F10 (the prototype and instance layer) and F12's `poses` half (which waits on F10); `FrameResult` / `query` themselves are in.
+- **Nothing is published implicitly inside a frame**: publication is the content writer's verb, and a frame takes `Scene::publishedSnapshot()` at build time; `bindSnapshot`
+  has only the meaning "override" (`graphics-threading.md` §2.13).
+- **Relation to the threading contract**: `graphics-threading.md` is the current threading contract (`C1–C15` / `N1–N14` are retired numbers, not reused);
+  `graphics-scene.md`'s description of collection still carries mirror-era wording and will be aligned when it is next rewritten.
 
-### 9.2 已知缺口
+### 9.2 Known gaps
 
-- `N2` 的 50 µs 不在本轮：它需要内容侧 dirty 通知，与"Node 无 Scene 反向指针"（`C2`）直接冲突。
-  当前门是 ≤ 250 µs（原型实测 203 µs）；50 µs 见 `../backlog/graphics.md`（触发条件型）。
-- `-design` 的 pose（`PoseSet`）、后期依赖图、replay 后端的算法细节仍只在
-  `../research/graphics-2026-11-11-next-hot-paths.md` / `../research/graphics-2026-11-11-next-design.md`，
-  按步吸收，不预先建体系（`G8`）。
+- `N2`'s 50 µs is not in this round: it needs a dirty notification from the content side, which directly conflicts with "a Node has no back pointer to its Scene" (`C2`).
+  The current gate is ≤ 250 µs (203 µs measured on the prototype); the 50 µs target is in `../backlog/graphics.md` (trigger-gated).
+- `-design`'s poses (`PoseSet`), the post-processing dependency graph and the replay backend's algorithm details still live only in
+  `../research/graphics-2026-11-11-next-hot-paths.md` / `../research/graphics-2026-11-11-next-design.md`, absorbed step by step rather than built up front (`G8`).
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-接管已经完成：镜像 / delta 那一代形状已删除，发布接管收集，计划是唯一的形状；`addPass` 家族已删，
-`applyPlan` 是唯一入口。步骤的划分、每一步的判据与回退条件属于决策记录，见
-`../decisions/ADR-2026-11-12-adopt-graphics-next.md` 与 `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`。
-未落地的只有 F10（原型与实例，单独实验）：它是新增能力，按 §9.2 的缺口挂在测量之后，不预先建体系。
-**pass 声明的形状**：`PassChain` 只收集声明、一次 `apply()` 提交（整计划校验），宿主可以点名作用域
-（`PassChain::build(engine, desc, owner)`）以便**重建原地更新**；`DemoScene` / 链预设 / 测试都走 `applyPlan`。
+The takeover is complete: the mirror / delta generation of shapes is gone, publication took over collection, and the plan is the only shape; the `addPass` family is gone
+and `applyPlan` is the only entry point. The division into steps, and each step's criteria and rollback conditions, belong to the decision record — see
+`../decisions/ADR-2026-11-12-adopt-graphics-next.md` and `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`.
+Only F10 (prototypes and instances, a separate experiment) is unlanded: it is a new capability, gated on measurement as §9.2's gap says, and not built up front.
+**The shape of a pass declaration**: `PassChain` collects declarations only and submits them in one `apply()` (validating the whole plan), and the host may name the
+scope (`PassChain::build(engine, desc, owner)`) so that a rebuild updates in place; `DemoScene`, the chain presets and the tests all go through `applyPlan`.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
-- `src/viz/graphics/sdk/vine/graphics/Plan.hpp` / `src/viz/graphics/src/Plan.cpp`（计划的契约、校验、`describe`）
-- `src/viz/graphics/src/EngineCompile.cpp`（`applyPlan` / `applyPlanRows` / `plan` / `makePassNode`）
-- `src/viz/graphics/sdk/vine/graphics/PrepareReport.hpp`（预热入口的答案）+
-  `src/viz/graphics/src/RenderEngine.cpp`（`RenderEngine::prepare()`：编译 + 展开，再交给 `prepareFrame`）
-- `tests/test_graphics/PlanTest.cpp`（`T7` / `T30` 的全部用例）
-- `tests/test_graphics/SnapshotShadowTest.cpp`（`SnapshotSourceTest`：600 帧、批内旧图、T17 旧快照与空快照变异）
-- `src/viz/graphics/sdk/vine/graphics/ContentId.hpp`（身份、`ContentRef`、注册表）
-- `src/viz/graphics/src/SceneSnapshot.hpp` / `SceneSnapshot.cpp`（快照原型、`selectSnapshot`）
-- `src/viz/graphics/src/SnapshotSource.hpp` / `SnapshotSource.cpp`（快照的 `DrawListSource` 面：5b-1 生产源；5a 时是影子）
-- `src/viz/graphics/src/DrawListDiff.hpp` / `DrawListDiff.cpp`（5a 的字段级比较）
-- `src/viz/graphics/src/SceneRows.cpp`（发布的缓存侧）
-- `src/viz/graphics/src/DrawListBake.cpp`（现役收集与排序）
-- `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ResourceTable.hpp`（按键驻留）
-- `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/DrawNeeds.hpp` / `src/internal/DrawNeeds.cpp`（`drawNeeds`：预热与录制共用的唯一键构造者）
-- `src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp`（事实行与 epoch 回收）
+- `src/viz/graphics/sdk/vine/graphics/Plan.hpp` / `src/viz/graphics/src/Plan.cpp` (the plan's contract, validation, `describe`)
+- `src/viz/graphics/src/EngineCompile.cpp` (`applyPlan` / `applyPlanRows` / `plan` / `makePassNode`)
+- `src/viz/graphics/sdk/vine/graphics/PrepareReport.hpp` (the preparation entry point's answer) +
+  `src/viz/graphics/src/RenderEngine.cpp` (`RenderEngine::prepare()`: compile + expand, then hand over to `prepareFrame`)
+- `tests/test_graphics/PlanTest.cpp` (all of `T7` / `T30`'s cases)
+- `tests/test_graphics/SnapshotShadowTest.cpp` (`SnapshotSourceTest`: 600 frames, the old picture inside a batch, T17's old snapshot and the empty-snapshot mutation)
+- `src/viz/graphics/sdk/vine/graphics/ContentId.hpp` (identity, `ContentRef`, the registry)
+- `src/viz/graphics/src/SceneSnapshot.hpp` / `SceneSnapshot.cpp` (the snapshot prototype, `selectSnapshot`)
+- `src/viz/graphics/src/SnapshotSource.hpp` / `SnapshotSource.cpp` (the snapshot's `DrawListSource` face: the production source)
+- `src/viz/graphics/src/DrawListDiff.hpp` / `DrawListDiff.cpp` (the shadow path's field-level comparison)
+- `src/viz/graphics/src/SceneRows.cpp` (the publication's cache side)
+- `src/viz/graphics/src/DrawListBake.cpp` (the live collection and sorting)
+- `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ResourceTable.hpp` (residency by key)
+- `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/DrawNeeds.hpp` / `src/internal/DrawNeeds.cpp` (`drawNeeds`: the only key builder preparation and recording share)
+- `src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp` (fact rows and epoch reclamation)
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
-- `../decisions/ADR-2026-11-12-adopt-graphics-next.md`（采纳决定、被否决的选项）
-- `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md`（5a 影子 / 5b-1 翻源 / 5b-2a 公开入口 / 5b-2b 删除的拆分与先后）
-- `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md`（`I4` 的来源）
-- `../decisions/ADR-2026-11-11-content-identity-is-a-handle.md`（`I2` / `R31` 的来源）
-- `../design/graphics-threading.md`（迁移期前的线程契约）、`../design/graphics-scene.md`（现役场景与收集）
-- `../research/graphics-2026-11-12-instances.md`（`T23` 的 A/B 测量口径；未采纳前只作研究）
-- `../research/graphics-2026-11-11-next*.md`（提案原文与 `-design` / `-api` / `-hot-paths` / `-requirements` / `-benefits`；
-  按 §9.3 逐份吸收后删除。`-audit` 的两轮审计是 `R31–R39` 与 `K7–K11` 的出处，也被两份 ADR 引为证据，
-  所以它留到那些引用被历史取代为止）
+- `../decisions/ADR-2026-11-12-adopt-graphics-next.md` (the adoption decision, the rejected options)
+- `../decisions/ADR-2026-11-12-snapshot-takes-over-collection.md` (the split into a shadow path, a source flip, the public entry point and the deletion, and their order)
+- `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` (where `I4` comes from)
+- `../decisions/ADR-2026-11-11-content-identity-is-a-handle.md` (where `I2` / `R31` come from)
+- `../design/graphics-threading.md` (the threading contract), `../design/graphics-scene.md` (the scene and collection in use)
+- `../research/graphics-2026-11-12-instances.md` (`T23`'s A/B measurement procedure; research only until adopted)
+- `../research/graphics-2026-11-11-next*.md` (the original proposals: `-design` / `-api` / `-hot-paths` / `-requirements` / `-benefits`;
+  absorbed one by one and deleted, as §9.3 says. `-audit`'s two rounds are where `R31–R39` and `K7–K11` come from, and both ADRs cite it as
+  evidence, so it stays until those references are replaced by history)
 
-### 10.3 外部资料
+### 10.3 External material
 
-- 无（不引入第三方；结论全部由本仓库的测量与用例支撑）。
+- None (no third party is introduced; every conclusion is backed by this repository's measurements and cases).
