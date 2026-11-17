@@ -1,41 +1,40 @@
-# appfw 启动阶段三拍与启动工作线程
+# appfw's three startup beats and the startup work thread
 
-> **状态**：现行
-> **最后核对**：2026-10-23
-> **范围**：三拍、线程契约、失败/取消/退出；启动框呈现见 `appfw-startup-splash.md`。
-> **权威来源**：`Application.hpp`、`PluginManager.hpp`、`tests/test_appfw`。
-> **待办**：`../backlog/appfw-startup.md`
+> **Status**: current
+> **Last verified**: 2026-10-23
+> **Scope**: the three beats, the thread contract, failure / cancellation / exit; the splash is in `appfw-startup-splash.md`.
+> **Sources**: `Application.hpp`, `PluginManager.hpp`, `tests/test_appfw`.
+> **Backlog**: `../backlog/appfw-startup.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-启动期主线程被一段长工作占住时：UI 不刷新、窗口不响应、取消点不到。实测把“冷启动到主窗可画”劈开：
-启动框上屏 → 首帧 7 ms；插件库加载/实例化 1 ms；demo 内容加载 1693 ms；`render_control->init()`
-（attach + warm-up）413 ms。约八成是内容加载（I/O + 解码），不是渲染的一次性开销。
+While one long piece of work holds the main thread during startup, the UI does not repaint, the window does not answer, and the cancel button cannot be reached.
+Measured, "cold start to a drawable main window" splits into: splash on screen → first frame 7 ms; plugin libraries loaded / instantiated 1 ms; demo content loaded
+1693 ms; `render_control->init()` (attach + warm-up) 413 ms. About 80% is content loading (I/O + decoding), not a one-off cost of rendering.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 启动阶段拆成三拍，顺序只写在一处。
-- 可等待的拍用协程表达；宿主的重活由宿主自己丢到池上。
-- 启动异常致命、取消不是失败；进度按相位更新。
-- 应用线程最长连续占用有门禁（默认 150 ms）。
+- Startup splits into three beats, with the order written in one place.
+- A beat that can be awaited is expressed as a coroutine; the host's heavy work is the host's to put on the pool.
+- A startup exception is fatal and a cancellation is not a failure; progress updates per phase.
+- The application thread's longest continuous occupancy has a gate (150 ms by default).
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 框架不替宿主拥有线程；没有 `run(work)` 重载。
-- 不把启动驱动搬到新线程；不做启动期动画/进度条。
-- 不把 `render_control->init()` 搬到池上；它是同步 attach。
+- The framework does not own threads for the host; there is no `run(work)` overload.
+- The startup driver does not move to a new thread; there is no startup animation or progress bar.
+- `render_control->init()` does not move to the pool; it is a synchronous attach.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-`run()` 先 `exec()`，再推一个启动步；`startupSequence()` 平铺 `startupStart()` → `startup()` →
-`startupEnd()`，每拍之后垫一次 `resumeOnMainThread()`；异常走 `failStartup()`，取消走 `cancelStartup()`，
-两者都不走 `startupEnd()`。
+`run()` calls `exec()` first and then pushes one startup step; `startupSequence()` lays out `startupStart()` → `startup()` → `startupEnd()` flat, with one
+`resumeOnMainThread()` after each beat; an exception goes through `failStartup()`, a cancellation through `cancelStartup()`, and neither goes through `startupEnd()`.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 三拍
+### 2.1 The three beats
 
 ```cpp
 class Application {
@@ -43,13 +42,13 @@ class Application {
     virtual int run();
 
   protected:
-    virtual vn::async::Task<void> startupStart();   // 拍 1（要挂起：等它摆的东西真的上屏）
-    virtual vn::async::Task<void> startup();        // 拍 2（框架：插件加载；宿主重写它加自己的活）
-    virtual vn::async::Task<void> startupEnd();     // 拍 3（收尾，全同步）
+    virtual vn::async::Task<void> startupStart();   // beat 1 (must suspend: wait until what it put up is really on screen)
+    virtual vn::async::Task<void> startup();        // beat 2 (framework: plugin loading; the host overrides it to add its own work)
+    virtual vn::async::Task<void> startupEnd();     // beat 3 (the wrap-up, fully synchronous)
 };
 ```
 
-`startupSequence()` 是成员协程（`DetachedTask`，eager），三拍平铺：
+`startupSequence()` is a member coroutine (`DetachedTask`, eager) that lays the three beats out flat:
 
 ```cpp
 beginStartupProgress()->stage("正在启动");
@@ -66,205 +65,204 @@ if (!ok) { co_await MainThreadDispatcher::resumeOnMainThread(); failStartup(); c
 endStartupProgress();
 ```
 
-### 2.2 线程契约
+### 2.2 The thread contract
 
-- 每拍都在主线程结束：框架在 `startup()` 里替宿主保证；叶子自己 `resumeOnMainThread()`。
-- 插件 `preLoad/load/postLoad` 在应用线程（`load()` 建控件、视图、原生窗口）。
-- 宿主的纯计算/IO/解码可以丢到池上；通过 `StartupProgress` 上报是跨线程安全的。
-- 主线程永不阻塞等 worker；否则循环停了，本设计就白做了。
+- Every beat ends on the main thread: the framework guarantees it for the host inside `startup()`, and a leaf calls `resumeOnMainThread()` itself.
+- A plugin's `preLoad/load/postLoad` run on the application thread (`load()` builds controls, views and native windows).
+- The host's pure computation / I/O / decoding may go to the pool; reporting through `StartupProgress` is safe across threads.
+- The main thread never blocks waiting for a worker; if it did, the loop would stop and this design would be pointless.
 
-### 2.3 生命周期与退出
+### 2.3 Lifetime and exit
 
-- 异常：任一拍抛异常 → 记日志 → `failStartup()`（收上报口 + `exit(1)`），不走 `startupEnd()`。
-- 插件 `loadAll()` 返回 false 只是“某个插件没装上”，记告警，应用照常启动。
-- 取消：`StartupProgress::stopToken()` / `requestCancel()`；`cancelStartup()` 卸已装插件 + 收上报口 +
-  `exit(0)`，不是失败。
-- 框架没有启动收尾等待；`shutdown()` 不管宿主自己的后台活。
+- An exception: any beat throwing → log it → `failStartup()` (closes the reporting door + `exit(1)`), without `startupEnd()`.
+- A plugin `loadAll()` returning false only means "one plugin did not load": log a warning and start normally.
+- Cancellation: `StartupProgress::stopToken()` / `requestCancel()`; `cancelStartup()` unloads the loaded plugins + closes the reporting door + `exit(0)`, and is not a failure.
+- The framework has no startup wrap-up wait; `shutdown()` does not manage the host's own background work.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 三拍驱动 | `startupSequence()` 平铺三拍，每拍后回主线程 | 已落地 |
-| F2 | 宿主启动工作 | 宿主重写 `startup()`，重活 `co_await vn::async::run(...)` | 已落地 |
-| F3 | 插件加载 | `loadAllAsync()` 启动门；`loadAll()` 同步门 | 已落地 |
-| F4 | 取消 | stop token；`cancelStartup()` 走 `exit(0)` | 已落地 |
-| F5 | 占用门禁 | `VN_GATE_BOOT_OCCUPANCY_MS` 默认 150 ms | 已落地 |
-| F6 | 同步 init | `RenderControl::init()` 在应用线程一次付掉 | 已落地 |
+| F1 | Driving the three beats | `startupSequence()` lays out the three beats, back to the main thread after each | landed |
+| F2 | The host's startup work | the host overrides `startup()` and puts heavy work in `co_await vn::async::run(...)` | landed |
+| F3 | Plugin loading | `loadAllAsync()` is the startup door; `loadAll()` the synchronous one | landed |
+| F4 | Cancellation | a stop token; `cancelStartup()` goes through `exit(0)` | landed |
+| F5 | The occupancy gate | `VN_GATE_BOOT_OCCUPANCY_MS`, 150 ms by default | landed |
+| F6 | Synchronous init | `RenderControl::init()` is paid once on the application thread | landed |
 
-### 3.1.1 F1 三拍驱动
+### 3.1.1 F1 Driving the three beats
 
-- **行为**：`run()` 先 `exec()`，再推启动步；`startupSequence()` 依次 `co_await` 三拍。
-- **约束**（C1）：每拍之后必须 `resumeOnMainThread()`；下一拍与收尾都在应用线程。
-- **要求**（R1）：三拍声明为类末尾一组；`startupStart`/`startup`/`startupEnd` 都是 protected。
-- **验收**（T1）：`test_appfw` 的启动步/主线程断言。
-- **注意**（N1）：`co_await` 不能写在 catch 块里，所以失败路径单独垫一次 `resumeOnMainThread()`。
+- **Behaviour**: `run()` calls `exec()` first and then pushes the startup step; `startupSequence()` `co_await`s the three beats in order.
+- **Constraints** (C1): `resumeOnMainThread()` after every beat; the next beat and the wrap-up run on the application thread.
+- **Requirements** (R1): the three beats are declared as one group at the end of the class; `startupStart` / `startup` / `startupEnd` are all protected.
+- **Acceptance** (T1): `test_appfw`'s startup-step / main-thread assertions.
+- **Caveat** (N1): `co_await` cannot appear inside a catch block, so the failure path gets its own `resumeOnMainThread()`.
 
-### 3.1.2 F2 宿主启动工作
+### 3.1.2 F2 The host's startup work
 
-- **行为**：宿主重写 `startup()`，先 `co_await Application::startup()`（插件先加载），
-  重活再 `co_await vn::async::run(...)` 丢到池上。
-- **约束**（C2）：框架不替宿主拥有线程；没有 `std::thread`/join/detach/握手/旗子。
-- **要求**（R2）：宿主在工作线程碰 UI 前必须 `resumeOnMainThread()`。
-- **验收**（T2）：`test_appfw` 的线程 id/主线程定时器断言。
-- **注意**（N2）：宿主丢出去的后台活活得比循环久，是宿主自己的契约。
+- **Behaviour**: the host overrides `startup()`, first `co_await Application::startup()` (plugins load first), then puts the heavy work on the pool with
+  `co_await vn::async::run(...)`.
+- **Constraints** (C2): the framework does not own threads for the host; there is no `std::thread` / join / detach / handshake / flag.
+- **Requirements** (R2): the host must `resumeOnMainThread()` before touching the UI from a worker thread.
+- **Acceptance** (T2): `test_appfw`'s thread-id / main-thread-timer assertions.
+- **Caveat** (N2): background work the host launches and lets outlive the loop is the host's own contract.
 
-### 3.1.3 F3 插件加载
+### 3.1.3 F3 Plugin loading
 
-- **行为**：`loadAllAsync()` 是启动门（协程；管理器不转循环）；`loadAll()` 是同步门
-  （`runToCompletion(task, pump)`，pump 只派发 `deliverPostedCalls()`）。
-- **约束**（C3）：同步门不能用 `Task::result()`，它只阻塞不派发，钩子回主线程会死锁。
-- **要求**（R3）：插件钩子每条出口都写 `co_return;`；ABI 当前 8u。
-- **验收**（T3）：`TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicationThread`。
-- **注意**（N3）：管理器自己不抽队列/不放 0 ms 定时器，否则会带跑别人的定时器。
+- **Behaviour**: `loadAllAsync()` is the startup door (a coroutine; the manager does not turn the loop); `loadAll()` is the synchronous door
+  (`runToCompletion(task, pump)`, where the pump only dispatches `deliverPostedCalls()`).
+- **Constraints** (C3): the synchronous door must not use `Task::result()` — it blocks without dispatching, so a hook coming back to the main thread deadlocks.
+- **Requirements** (R3): every exit of a plugin hook writes `co_return;`; the ABI is currently 8u.
+- **Acceptance** (T3): `TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicationThread`.
+- **Caveat** (N3): the manager does not pump the queue or post a 0 ms timer itself, or it would run other people's timers.
 
-### 3.1.4 F4 取消
+### 3.1.4 F4 Cancellation
 
-- **行为**：`StartupProgress::stopToken()` / `requestCancel()`；框架每拍之后、每个插件之前看一眼。
-- **约束**（C4）：取消不是失败；`cancelStartup()` 走 `exit(0)`，主窗不上屏。
-- **要求**（R4）：插件从 `PluginLoadContext::stopToken()` 拿同一个 token。
-- **验收**（T4）：`test_appfw` 的取消用例。
-- **注意**（N4）：不在启动里的插件拿到永不停的 token。
+- **Behaviour**: `StartupProgress::stopToken()` / `requestCancel()`; the framework looks at it after every beat and before every plugin.
+- **Constraints** (C4): cancellation is not a failure; `cancelStartup()` goes through `exit(0)` and the main window never appears.
+- **Requirements** (R4): a plugin takes the same token from `PluginLoadContext::stopToken()`.
+- **Acceptance** (T4): `test_appfw`'s cancellation cases.
+- **Caveat** (N4): a plugin outside startup gets a token that never stops.
 
-### 3.1.5 F5 占用门禁
+### 3.1.5 F5 The occupancy gate
 
-- **行为**：应用线程最长一次连续占用打到 stderr（10 ms 定时器量间隔）；
-  `scripts/vsg_rewrite_gate.sh` 的应用阶段要求 `<= VN_GATE_BOOT_OCCUPANCY_MS`（默认 150 ms）。
-- **约束**（C5）：把某段搬回应用线程 ⇒ 门禁直接红；日志里没有这一行也算红。
-- **要求**（R5）：反证用 `VN_GATE_BOOT_OCCUPANCY_MS=1` 跑同一道门。
-- **验收**（T5）：`[FAIL] app ... the boot held the application thread for N ms`。
-- **注意**（N5）：默认值是实测的两倍，免得机器一忙就假红。
+- **Behaviour**: the application thread's longest continuous occupancy is written to stderr (measured by a 10 ms timer);
+  `scripts/vsg_rewrite_gate.sh`'s application stage requires `<= VN_GATE_BOOT_OCCUPANCY_MS` (150 ms by default).
+- **Constraints** (C5): moving a piece back onto the application thread makes the gate red outright; a missing log line also counts as red.
+- **Requirements** (R5): prove it with `VN_GATE_BOOT_OCCUPANCY_MS=1` on the same gate.
+- **Acceptance** (T5): `[FAIL] app ... the boot held the application thread for N ms`.
+- **Caveat** (N5): the default is twice the measured value, so a busy machine does not go red for nothing.
 
-### 3.1.6 F6 同步 init
+### 3.1.6 F6 Synchronous init
 
-- **行为**：`RenderControl::init()` 同步 attach：设备/会话/管线 + warm-up 帧都在应用线程一次付掉。
-- **约束**（C6）：`initAsync()` 只是 `co_return init()`，不挂起、不下池。
-- **要求**（R6）：构造只组装；宿主在自己的顺序里调 `init()`/`initAsync()`。
-- **验收**（T6）：`RenderControlTest.InitAsyncCompletesWithoutSuspending`。
-- **注意**（N6）：attach 读场景图，宿主不要在 attach 进行中从别的线程改场景。
+- **Behaviour**: `RenderControl::init()` attaches synchronously: device / session / pipelines + the warm-up frame are all paid once on the application thread.
+- **Constraints** (C6): `initAsync()` is only `co_return init()`; it neither suspends nor goes to the pool.
+- **Requirements** (R6): the constructor only assembles; the host calls `init()` / `initAsync()` in its own order.
+- **Acceptance** (T6): `RenderControlTest.InitAsyncCompletesWithoutSuspending`.
+- **Caveat** (N6): attach reads the scene graph, so the host must not change the scene from another thread while attach is running.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `Application`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `run()` | 启动循环 + 三拍 | 阻塞到退出 |
-| `startupStart()` / `startup()` / `startupEnd()` | protected 异步钩子 | 声明在类末尾 |
-| `beginStartupProgress()` / `endStartupProgress()` | 上报口建/收 | 驱动调用 |
-| `failStartup()` / `cancelStartup()` | 失败/取消 | `exit(1)` / `exit(0)` |
+| `run()` | the startup loop + the three beats | blocks until exit |
+| `startupStart()` / `startup()` / `startupEnd()` | protected asynchronous hooks | declared at the end of the class |
+| `beginStartupProgress()` / `endStartupProgress()` | open / close the reporting door | called by the driver |
+| `failStartup()` / `cancelStartup()` | failure / cancellation | `exit(1)` / `exit(0)` |
 
 ### 4.2 `MainThreadDispatcher`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `isMainThread()` / `hasEventLoop()` | 查询 | 应用线程判定 |
-| `postToMainThread()` / `invokeOnMainThread()` | 投递/同步借用 | 循环停了返回 false |
-| `resumeOnMainThread()` | 协程恢复 | 空操作 if 已在主线程 |
-| `deliverPostedCalls()` | 同步门 pump | 只派发 `QEvent::MetaCall` |
+| `isMainThread()` / `hasEventLoop()` | queries | application-thread tests |
+| `postToMainThread()` / `invokeOnMainThread()` | post / borrow synchronously | returns false once the loop has stopped |
+| `resumeOnMainThread()` | resume a coroutine | a no-op when already on the main thread |
+| `deliverPostedCalls()` | the synchronous door's pump | dispatches `QEvent::MetaCall` only |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | 每拍之后 `resumeOnMainThread()`；下一拍与收尾在应用线程。 |
-| C2 | 框架不拥有线程；宿主自己把重活丢到池上。 |
-| C3 | 同步门不能用 `Task::result()`；pump 只派发已投递调用。 |
-| C4 | 取消不是失败；`cancelStartup()` 走 `exit(0)`。 |
-| C5 | 占用门禁默认 150 ms；搬回应用线程直接红。 |
-| C6 | `initAsync()` 不挂起、不下池。 |
+| C1 | `resumeOnMainThread()` after every beat; the next beat and the wrap-up run on the application thread. |
+| C2 | The framework owns no threads; the host puts its heavy work on the pool itself. |
+| C3 | The synchronous door must not use `Task::result()`; the pump dispatches posted calls only. |
+| C4 | Cancellation is not a failure; `cancelStartup()` goes through `exit(0)`. |
+| C5 | The occupancy gate defaults to 150 ms; moving work back onto the application thread goes red outright. |
+| C6 | `initAsync()` neither suspends nor goes to the pool. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | 三拍 protected、声明在类末尾。 |
-| R2 | 宿主在工作线程碰 UI 前 `resumeOnMainThread()`。 |
-| R3 | 插件钩子每条出口 `co_return;`；ABI 8u。 |
-| R4 | 插件拿同一个 stop token；不在启动里的拿永不停 token。 |
-| R5 | 门禁日志缺失也算红。 |
-| R6 | attach 期间宿主不得从别的线程改场景。 |
+| R1 | The three beats are protected and declared at the end of the class. |
+| R2 | The host calls `resumeOnMainThread()` before touching the UI from a worker thread. |
+| R3 | Every exit of a plugin hook writes `co_return;`; the ABI is 8u. |
+| R4 | A plugin takes the same stop token; one outside startup gets a token that never stops. |
+| R5 | A missing gate log line counts as red too. |
+| R6 | During attach the host must not change the scene from another thread. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | 启动阶段整个跑在循环里。 |
-| N2 | 上报口建在第一拍前、收在最后一拍后。 |
-| N3 | 启动异常/取消都不走 `startupEnd()`。 |
-| N4 | 主线程永不阻塞等 worker。 |
+| N1 | Startup runs entirely inside the loop. |
+| N2 | The reporting door opens before the first beat and closes after the last. |
+| N3 | Neither a startup exception nor a cancellation goes through `startupEnd()`. |
+| N4 | The main thread never blocks waiting for a worker. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 把宿主工作内联回主线程
+### 6.1 Inlining the host's work back onto the main thread
 
-- 会怎么错：主线程被占住，窗口不刷新、取消点不到；占用门禁红。
-- 怎么判：`VN_GATE_BOOT_OCCUPANCY_MS` 超限；10 ms 定时器不跳。
-- 怎么防：宿主重写 `startup()`，`co_await vn::async::run(work)`。
+- How it fails: the main thread is held, the window does not repaint, the cancel point cannot be reached, and the occupancy gate goes red.
+- How to detect it: `VN_GATE_BOOT_OCCUPANCY_MS` is exceeded; the 10 ms timer does not tick.
+- How to prevent it: the host overrides `startup()` and does `co_await vn::async::run(work)`.
 
-### 6.2 同步门用 `Task::result()`
+### 6.2 Using `Task::result()` on the synchronous door
 
-- 会怎么错：钩子“回到应用线程”那一步等不到派发 → 死锁。
-- 怎么判：`loadAll()` 挂死。
-- 怎么防：用 `MainThreadDispatcher::runToCompletion()`（pump = `deliverPostedCalls()`）。
+- How it fails: the step where a hook "comes back to the application thread" never gets dispatched → deadlock.
+- How to detect it: `loadAll()` hangs.
+- How to prevent it: use `MainThreadDispatcher::runToCompletion()` (the pump being `deliverPostedCalls()`).
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 | --- | --- | --- | --- |
-| D1 | 框架提供 `run(work)` 重载 | 只有测试在用；“旗子 + 有界等待”比便利门贵。 | — |
-| D2 | 启动驱动搬到新线程 + 动画 | 应用线程占用里大部分是必须在应用线程的插件块；买不到动画。 | — |
-| D3 | 把 `render_control->init()` 搬到池上 | attach 要句柄/会话，且与内容装配并发复杂；暂不做。 | — |
-| D4 | 同步门用 `Task::result()` | 只阻塞不派发，钩子回主线程死锁。 | — |
+| D1 | a framework `run(work)` overload | only the tests would use it; "a flag + a bounded wait" costs more than the convenience door. | — |
+| D2 | moving the startup driver to a new thread + animation | most of the application thread's occupancy is the plugin block, which must be on the application thread; no animation can be bought that way. | — |
+| D3 | putting `render_control->init()` on the pool | attach needs handles and sessions, and running it concurrently with content assembly is complicated; not now. | — |
+| D4 | `Task::result()` on the synchronous door | it blocks without dispatching, so a hook coming back to the main thread deadlocks. | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 | --- | --- | --- |
-| T1 | 启动步在循环里、每拍回主线程 | `test_appfw` 启动断言 |
-| T2 | 宿主 work 在别的线程、主线程仍派发 | `test_appfw` 线程 id/定时器断言 |
-| T3 | 同步门能加载“回主线程”的插件 | `TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicationThread` |
-| T4 | 取消/失败路径 | `test_appfw` 取消/失败用例 |
-| T5 | 占用门禁 | `scripts/vsg_rewrite_gate.sh` app 阶段 |
-| T6 | `initAsync()` 不挂起 | `RenderControlTest.InitAsyncCompletesWithoutSuspending` |
+| T1 | the startup step runs inside the loop and every beat returns to the main thread | `test_appfw` startup assertions |
+| T2 | the host's work runs on another thread while the main thread keeps dispatching | `test_appfw` thread-id / timer assertions |
+| T3 | the synchronous door loads a plugin that comes back to the main thread | `TheSynchronousDoorLoadsAPluginThatComesBackToTheApplicationThread` |
+| T4 | the cancellation / failure paths | `test_appfw` cancellation / failure cases |
+| T5 | the occupancy gate | `scripts/vsg_rewrite_gate.sh`'s app stage |
+| T6 | `initAsync()` does not suspend | `RenderControlTest.InitAsyncCompletesWithoutSuspending` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-三拍、异步插件门、取消、占用门禁、同步 init 均已落地。
+The three beats, the asynchronous plugin door, cancellation, the occupancy gate and the synchronous init are all landed.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-- 启动驱动搬线程/动画不做（见 D2）。
-- `render_control->init()` 搬池不做（见 D3）。
-- Windows 的未显示窗口 attach 仍未实测；见 `../backlog/appfw-startup.md`。
+- Moving the startup driver to a thread / animation is not done (see D2).
+- Moving `render_control->init()` to the pool is not done (see D3).
+- Attaching an unmapped window on Windows is still unmeasured; see `../backlog/appfw-startup.md`.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-旧名 `beginStartup` / `finishStartup` / `runStartup` 与 `run(work)` 重载只在 git 历史里；
-新代码按 `startupStart` / `startup` / `startupEnd` 三拍写。
+The old names `beginStartup` / `finishStartup` / `runStartup` and the `run(work)` overload exist only in git history; new code is written against the three beats
+`startupStart` / `startup` / `startupEnd`.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/fw/appfw/sdk/vine/appfw/Application.hpp`
 - `src/fw/appfw/sdk/vine/appfw/PluginManager.hpp`
 - `src/fw/appfw/sdk/vine/appfw/MainThreadDispatcher.hpp`
 - `tests/test_appfw`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `appfw-startup-splash.md`
 - `appfw-plugin-system.md`
 - `appfw-render-surface.md`
 - `../backlog/appfw-startup.md`
 
-### 10.3 外部资料
+### 10.3 External material
 
-- Qt 事件循环与 `QEvent::MetaCall` 语义。
+- Qt's event loop and the semantics of `QEvent::MetaCall`.

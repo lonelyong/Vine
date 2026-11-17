@@ -1,176 +1,190 @@
-# 应用身份与应用信息（AppConfig / AppInfo）
+# application identity and application info (AppConfig / AppInfo)
 
-> **状态**：现行
-> **最后核对**：2026-10-30
-> **范围**：应用名/版本/描述/版权/许可/链接/致谢归谁所有、怎么读；窗口标题与「关于」的取值路径。不含版本号由构建系统生成、不含清单文件（见 §9.2）。
-> **权威来源**：`src/fw/appfw/sdk/vine/appfw/AppInfo.hpp`、`AppConfig.hpp`、`Application.hpp`、`src/fw/appfw/sdk/vine/appfw/gui/AboutPanel.hpp`；用例 `tests/test_gui/test_gui.cpp`。
-> **待办**：`../backlog/appfw-app-info.md`
+> **Status**: current
+> **Last verified**: 2026-10-30
+> **Scope**: who owns the application name / version / description / copyright / licence / links / credits, and how they are read; where the window title and the "about" page get their values.
+> It excludes generating the version from the build system and the manifest file (see §9.2).
+> **Sources**: `src/fw/appfw/sdk/vine/appfw/AppInfo.hpp`, `AppConfig.hpp`, `Application.hpp`, `src/fw/appfw/sdk/vine/appfw/gui/AboutPanel.hpp`; cases in `tests/test_gui/test_gui.cpp`.
+> **Backlog**: `../backlog/appfw-app-info.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-关于信息此前散落在三处：`AboutCommand` 里四个字符串、`AppShellUi` 里关于页再写一遍、`MainWindow` 标题写死 `"Vine"`；而构建系统早在 `project(VERSION ...)` 里声明过版本。`AboutDialog` 与 `AboutPanel` 还各有一套 `setName/setVersion/...`——同一件事两个来源。
+About information used to be scattered over three places: four strings in `AboutCommand`, written out again in `AppShellUi`'s about page, and the `MainWindow` title
+hard-coded to `"Vine"`; while the build system had already declared the version in `project(VERSION ...)`. `AboutDialog` and `AboutPanel` each had their own
+`setName/setVersion/...` — one thing with two sources.
 
-### 1.2 目标
+### 1.2 Goals
 
-一处声明、一个持有者、多个消费者只读。应用身份（进程名）与关于内容不能各说各话。
+One declaration, one owner, and several consumers that only read. The application identity (the process name) and the about content must not disagree.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不让版本号从构建系统生成（`project()` → 生成头），不含清单文件读取 —— 见 §9.2 与 backlog。
-- 不做许可合规流程、安装器、更新检查。
+- Not generating the version from the build system (`project()` → a generated header), and not reading a manifest file — see §9.2 and the backlog.
+- Not doing licence compliance, an installer or update checks.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**应用信息是应用级的只读值对象 `AppInfo`：宿主在 `AppConfig::info` 里声明一次，`Application::appInfo()` 持有，`AboutPanel`/`AboutDialog`/窗口标题只渲染它。**
+**Application information is one read-only application-level value, `AppInfo`: the host declares it once in `AppConfig::info`, `Application::appInfo()` holds it, and
+`AboutPanel` / `AboutDialog` / the window title only render it.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 `AppInfo` 是值对象，由 `Application` 持有（G1、G4）
+### 2.1 `AppInfo` is a value held by `Application` (G1, G4)
 
-- 是什么：纯数据（无 Qt、无 I/O），随 `AppConfig` 交给构造函数，`Application::appInfo()` 返回 `const AppInfo&`。
-- 为什么：它描述的是这个进程代表的应用，生命周期与 `Application` 相同；做成值对象就没有单例，"一个进程跑两个应用"的测试仍然成立（G11）。
-- 边界：图标是路径（读者解析），`AppInfo` 不认识 `Icon`/`QIcon`。
+- What it is: pure data (no Qt, no I/O), handed to the constructor with `AppConfig`, and `Application::appInfo()` returns a `const AppInfo&`.
+- Why: it describes the application this process stands for, and its lifetime is `Application`'s; as a value there is no singleton, so the test "one process runs two
+  applications" still holds (G11).
+- Boundary: the icon is a path (the reader resolves it), and `AppInfo` knows nothing about `Icon` / `QIcon`.
 
-### 2.2 空的 `name` 回落到 `AppConfig::name`（G4）
+### 2.2 An empty `name` falls back to `AppConfig::name` (G4)
 
-- 是什么：`AppConfig::info.name` 为空时，`Application` 用 `AppConfig::name` 填上；两者都空才用框架兜底名。
-- 为什么：进程身份（`QCoreApplication::applicationName`、数据/配置目录）与关于内容必须同源，否则改一处忘一处就漂移。
-- 边界：显式给出 `info.name` 时以它为准（OEM 变体）。
+- What it is: when `AppConfig::info.name` is empty, `Application` fills it from `AppConfig::name`; only when both are empty does the framework's fallback name apply.
+- Why: the process identity (`QCoreApplication::applicationName`, the data / config directories) and the about content must come from one source, or changing one and
+  forgetting the other makes them drift.
+- Boundary: an explicit `info.name` wins (an OEM variant).
 
-### 2.3 面板是渲染器，不是存储（G7）
+### 2.3 The panel renders, it does not store (G7)
 
-- 是什么：`AboutPanel` 只有一个 `setAppInfo()`（外加 `appInfo()` 读回），默认在构造时读 `Application::appInfo()`；`AboutDialog` 是它的薄壳。
-- 为什么：分成"面板字段"和"应用字段"两套，等于让每个宿主把同一批字符串再搬一遍——这正是重构前发生的事。
-- 边界：`setAppInfo()` 仍然存在，必要时（第二身份）可以覆盖，但不是常规路径；再次设置会整份替换（旧的事实/链接/致谢不会残留）。
+- What it is: `AboutPanel` has one `setAppInfo()` (plus `appInfo()` to read back) and reads `Application::appInfo()` in its constructor by default; `AboutDialog` is a
+  thin shell around it.
+- Why: two sets of fields, "the panel's" and "the application's", make every host carry the same strings a second time — which is exactly what happened before the
+  refactor.
+- Boundary: `setAppInfo()` still exists and may override (a second identity), but it is not the normal path; setting it again replaces the whole thing (no fact, link or
+  credit from the previous one survives).
 
-### 2.4 标题与关于读同一份（G6）
+### 2.4 The title and the about page read the same thing (G6)
 
-- 是什么：`MainWindow` 的标题取 `Application::appInfo().name`（没有应用时回落到框架名）。
-- 为什么：标题栏和关于页各写一个名字是最常见的不一致来源；同一份数据让它们不可能分叉。
+- What it is: `MainWindow`'s title comes from `Application::appInfo().name` (falling back to the framework name when there is no application).
+- Why: the title bar and the about page each writing their own name is the commonest source of inconsistency; one value makes them impossible to diverge.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | 应用信息 | `AppInfo` + `AppConfig::info` + `Application::appInfo()` | 已落地 |
-| F2 | 关于面板 | `AboutPanel::setAppInfo()`；默认读应用信息 | 已落地 |
-| F3 | 关于对话框 | `AboutDialog` 薄壳，同一块面板 | 已落地 |
-| F4 | 窗口标题 | 取 `appInfo().name` | 已落地 |
-| F5 | 版本号来自构建系统 | `project()` → 生成头 | 未做，见 backlog |
-| F6 | 清单文件 / 第三方致谢生成 | `appinfo.json` → 构建期生成 | 未做，见 backlog |
+| F1 | Application information | `AppInfo` + `AppConfig::info` + `Application::appInfo()` | landed |
+| F2 | The about panel | `AboutPanel::setAppInfo()`; reads the application info by default | landed |
+| F3 | The about dialog | `AboutDialog`, a thin shell around the same panel | landed |
+| F4 | The window title | takes `appInfo().name` | landed |
+| F5 | The version comes from the build system | `project()` → a generated header | not done, see the backlog |
+| F6 | The manifest file / generated third-party credits | `appinfo.json` → generated at build time | not done, see the backlog |
 
-### 3.1.1 F1 应用信息
+### 3.1.1 F1 Application information
 
-- **行为**：`AppInfo` 携带 name/version/description/copyright/license/homepage/issues_url/credits/logo/build_facts/links；`Application` 构造时复制 `AppConfig::info` 并补全空名字。
-- **约束**（C1）：值对象，不持有 Qt 类型、不做 I/O。
-- **验收**（T1）：`AboutDialog_ShowsTheApplicationInfo`（默认取应用信息、名字回落到 `AppConfig::name`）。
+- **Behaviour**: `AppInfo` carries name / version / description / copyright / license / homepage / issues_url / credits / logo / build_facts / links; `Application`
+  copies `AppConfig::info` at construction and fills in an empty name.
+- **Constraints** (C1): a value, holding no Qt type and doing no I/O.
+- **Acceptance** (T1): `AboutDialog_ShowsTheApplicationInfo` (it takes the application info by default and the name falls back to `AppConfig::name`).
 
-### 3.1.2 F2/F3 面板与对话框
+### 3.1.2 F2/F3 The panel and the dialog
 
-- **行为**：面板把信息排成"身份行（logo/名称/版本/描述）+ 分隔线 + 事实行 + 链接 + 致谢块 + 版权行"；对话框把面板放进 `QDialog`，默认展示同一份。
-- **约束**（C2）：颜色一律 `palette(...)` 角色；事实行/链接/致谢为空时对应区域隐藏，分隔线随之隐藏。
-- **验收**（T2）：`AboutPanel_ShowsTheApplicationInfo`（含"换一份 info 不残留旧细节"）。
+- **Behaviour**: the panel lays the information out as "an identity row (logo / name / version / description) + a separator + the fact rows + the links + the credits
+  block + the copyright line"; the dialog puts the panel in a `QDialog` and shows the same by default.
+- **Constraints** (C2): colours are always `palette(...)` roles; when the fact rows / links / credits are empty their region is hidden and the separator with it.
+- **Acceptance** (T2): `AboutPanel_ShowsTheApplicationInfo` (including "swapping in another info leaves no old detail behind").
 
-### 3.1.3 F4 窗口标题
+### 3.1.3 F4 The window title
 
-- **行为**：`MainWindow` 标题 = `appInfo().name`；无应用时 `"Vine"`。
-- **约束**（C3）：标题只读应用信息，不从插件或窗口自己拿。
+- **Behaviour**: `MainWindow`'s title = `appInfo().name`; `"Vine"` when there is no application.
+- **Constraints** (C3): the title reads the application info only, never a plugin or the window itself.
 
-## 4. 公开接口
+## 4. Public Interface
 
-### 4.1 `AppInfo`（appfw，无 Qt）
+### 4.1 `AppInfo` (appfw, no Qt)
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 |---|---|---|
-| `AppInfo` / `AppInfoRow` / `AppInfoLink` | 应用元数据值对象 | 完整字段见头文件 |
-| `AppConfig::info` | 声明入口 | 空 name 回落到 `AppConfig::name` |
-| `Application::appInfo()` | 读取入口 | 生命周期同 Application |
+| `AppInfo` / `AppInfoRow` / `AppInfoLink` | the application metadata values | the full fields are in the header |
+| `AppConfig::info` | the declaration entry point | an empty name falls back to `AppConfig::name` |
+| `Application::appInfo()` | the read entry point | lives as long as the Application |
 
 ### 4.2 `gui::AboutPanel` / `gui::AboutDialog`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 |---|---|---|
-| `AboutPanel::setAppInfo(const AppInfo&)` | 渲染这份信息 | 整份替换 |
-| `AboutPanel::appInfo()` | 读回当前渲染的信息 | 含已解析的名字 |
-| `AboutDialog::setAppInfo/appInfo` | 同上，转发给内部面板 | 默认展示进程信息 |
+| `AboutPanel::setAppInfo(const AppInfo&)` | renders this information | a whole replacement |
+| `AboutPanel::appInfo()` | reads back what is rendered | including the resolved name |
+| `AboutDialog::setAppInfo/appInfo` | the same, forwarded to the inner panel | shows the process' information by default |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-- C1：`AppInfo` 是纯数据，不含 Qt 类型、不做 I/O。
-- C2：关于内容只用 `palette(...)` 角色着色，随明暗主题变化。
-- C3：窗口标题只读 `Application::appInfo()`，不从插件或窗口自身取值。
+- C1: `AppInfo` is pure data, with no Qt type and no I/O.
+- C2: about content is coloured only through `palette(...)` roles, so it follows the light and dark themes.
+- C3: the window title reads `Application::appInfo()` only, never a plugin or the window itself.
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-- R1：应用身份（进程名）与关于内容同源，不得各自硬编码。
-- R2：一份信息在对话框与 Backstage 页面里显示一致。
-- R3：没有应用时（无头测试）构造面板不得崩溃，显示为空或由 `setAppInfo()` 填充。
+- R1: the application identity (the process name) and the about content come from one source and are never hard-coded separately.
+- R2: one piece of information shows the same in the dialog and on the Backstage page.
+- R3: building a panel with no application (a headless test) must not crash; it shows nothing or is filled by `setAppInfo()`.
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-- N1：`appInfo().name` 非空（构造时必被填好）。
-- N2：`setAppInfo()` 之后屏幕上只剩这份信息的内容，不含上一份的残留。
+- N1: `appInfo().name` is non-empty (it is always filled at construction).
+- N2: after `setAppInfo()` the screen holds this information only, with nothing left of the previous one.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 面板与宿主的生命周期
-- 会怎么错：面板的 `Control` 包装在页面 widget 之前释放，`setBody()` 之后宿主仍留着旧的指针。
-- 怎么判：关于页打开即崩溃/空白。
-- 怎么防：包装比页面 widget 活得久（`app_shell` 交给进程生命期），或让创建者持有它。
+### 6.1 The panel's and the host's lifetimes
+- How it fails: the panel's `Control` wrapper is released before the page widget, and the host still holds the old pointer after `setBody()`.
+- How to detect it: the about page crashes or is blank as soon as it opens.
+- How to prevent it: the wrapper outlives the page widget (in `app_shell` it belongs to the process' lifetime), or its creator holds it.
 
-### 6.2 图标路径的可用性
-- 会怎么错：`AppInfo::logo` 指向某插件的 Qt 资源，但面板在资源注册前解析。
-- 怎么判：关于页没有图标（不崩，只是空）。
-- 怎么防：把它当"可选装饰"；需要时用 `QApplication::windowIcon()` 兜底（面板已实现）。
+### 6.2 Whether the icon path resolves
+- How it fails: `AppInfo::logo` points at some plugin's Qt resource, but the panel resolves it before the resource is registered.
+- How to detect it: the about page has no icon (no crash, just nothing).
+- How to prevent it: treat it as optional decoration; fall back to `QApplication::windowIcon()` when needed (the panel already does).
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 |---|---|---|---|
-| D1 | 运行期读 `appinfo.json` | 新增失败方式，而构建期读能把同样的错误变成 configure 失败（G11） | — |
-| D2 | `AppInfo::instance()` 全局单例 | 与"一个进程跑两个应用"冲突；`Application` 持有已足够（G1） | — |
-| D3 | 面板/对话框各留一套字段 setter | 两个事实源，宿主每次都要搬字符串（G7） | — |
-| D4 | 关于信息塞进 `PluginInfo` | 它是**应用**的属性；复用会随插件加载状态变化（G8） | — |
-| D5 | 版本号写死在源码 | 与 `project()` 声明必然漂移，漂移的版本号是最贵的错误（G10） | — |
+| D1 | reading `appinfo.json` at run time | a new failure mode, while reading it at build time turns the same error into a configure failure (G11) | — |
+| D2 | a global `AppInfo::instance()` singleton | conflicts with "one process runs two applications"; `Application` holding it is enough (G1) | — |
+| D3 | a field setter set on both the panel and the dialog | two sources of truth, and the host carries the strings every time (G7) | — |
+| D4 | putting the about information into `PluginInfo` | it is a property of the **application**; reusing it would make it follow plugin loading (G8) | — |
+| D5 | hard-coding the version in the sources | it necessarily drifts from `project()`'s declaration, and a drifting version number is the most expensive kind of error (G10) | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 |---|---|---|
-| T1 | 对话框默认取应用信息，名字回落到 `AppConfig::name` | `GuiTest.AboutDialog_ShowsTheApplicationInfo` |
-| T2 | 面板渲染身份/事实/链接/致谢，换 info 不残留 | `GuiTest.AboutPanel_ShowsTheApplicationInfo` |
+| T1 | the dialog takes the application info by default and the name falls back to `AppConfig::name` | `GuiTest.AboutDialog_ShowsTheApplicationInfo` |
+| T2 | the panel renders identity / facts / links / credits and leaves nothing behind when the info changes | `GuiTest.AboutPanel_ShowsTheApplicationInfo` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-F1–F4 落地：`app_shell` 的「关于」页是 `setBody(AboutPanel)`，`about` 命令打开该页（无 Backstage 时退回对话框），`MainWindow` 标题取 `appInfo().name`。
+F1–F4 are landed: `app_shell`'s "about" page is `setBody(AboutPanel)`, the `about` command opens that page (falling back to the dialog when there is no Backstage),
+and `MainWindow`'s title takes `appInfo().name`.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-见 `../backlog/appfw-app-info.md`：版本与构建事实从 `project()` 生成（F5）、`appinfo.json` + 第三方致谢生成（F6）。
+See `../backlog/appfw-app-info.md`: the version and build facts generated from `project()` (F5), and `appinfo.json` + generated third-party credits (F6).
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-- `AppConfig` 只加成员 `info`；`Application` 只加 `appInfo()`。
-- `AboutDialog` 的 `setAppName/setVersion/setDescription/setCopyright` 已移除，改为 `setAppInfo()`；`AboutPanel` 的这一批 setter 从未发布。
+- `AppConfig` only gains the `info` member; `Application` only gains `appInfo()`.
+- `AboutDialog`'s `setAppName/setVersion/setDescription/setCopyright` are removed in favour of `setAppInfo()`; `AboutPanel`'s batch of setters was never published.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
-- `src/fw/appfw/sdk/vine/appfw/AppInfo.hpp`、`src/fw/appfw/sdk/vine/appfw/gui/AboutPanel.hpp`、`src/fw/appfw/src/gui/AboutDialog.cpp`、`src/apps/vine/src/main.cpp`（应用声明处）。
+- `src/fw/appfw/sdk/vine/appfw/AppInfo.hpp`, `src/fw/appfw/sdk/vine/appfw/gui/AboutPanel.hpp`, `src/fw/appfw/src/gui/AboutDialog.cpp`, `src/apps/vine/src/main.cpp`
+  (where the application is declared).
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
-- `appfw-backstage.md`（页面主体）、`appfw-startup-splash.md`（副标题）、`../backlog/appfw-app-info.md`。
+- `appfw-backstage.md` (the page body), `appfw-startup-splash.md` (the subtitle), `../backlog/appfw-app-info.md`.
 
-### 10.3 外部资料
+### 10.3 External material
 
-- Windows `VERSIONINFO` 资源、macOS `Info.plist`、Qt `QCoreApplication::setApplicationVersion`、VS Code `package.json` 元数据、.NET `AssemblyInformationalVersion`。
+- Windows `VERSIONINFO` resources, macOS `Info.plist`, Qt's `QCoreApplication::setApplicationVersion`, VS Code's `package.json` metadata, .NET's
+  `AssemblyInformationalVersion`.
