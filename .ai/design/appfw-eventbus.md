@@ -1,254 +1,243 @@
-# appfw EventBus 设计
+# appfw's EventBus
 
-> **状态**：现行
-> **最后核对**：2026-10-23
-> **范围**：事件总线、订阅/取消、投递与关停；不覆盖 `Signal` 本体的实现细节。
-> **权威来源**：`EventBus.hpp`、`tests/test_gui/EventBusTest.cpp`。
-> **待办**：无（开放项见 `../backlog/`）
+> **Status**: current
+> **Last verified**: 2026-10-23
+> **Scope**: the event bus, subscription and cancellation, delivery and shutdown; not the internals of `Signal` itself.
+> **Sources**: `EventBus.hpp`, `tests/test_gui/EventBusTest.cpp`.
+> **Backlog**: none (open items are in `../backlog/`)
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-appfw 需要一条进程级事件总线：订阅者可以活到 bus 之后，投递可以跨线程/排队，关停要能证明“没有线程还在总线内”。
-过去 `stopped` 检查与 `active_calls++` 分开、排队投递持有 bus 指针，导致 UAF 与“关停结果说谎”。
+appfw needs a process-level event bus: a subscriber may outlive the bus, a delivery may cross a thread or wait in a queue, and shutdown has to be able to prove that no thread is still inside the bus.
+That last requirement is what shapes the design — admission counting and the close state machine have to agree on the same moment, and everything the bus hands out has to stay valid after the bus is gone; otherwise a graceful shutdown reports work it never drained.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 出圈对象（`Subscription`、排队任务）不持有指向 bus 的指针或强引用。
-- 取消语义一致：`unsubscribe()`/句柄析构/`shutdown()`/bus 析构都取消“尚未开始调用”的 handler。
-- `shutdown()`/析构立即释放排队事件；异常不穿出 `publish()`/队列回调/Qt 事件循环。
-- 锁内不跑用户代码。
+- An object that has left the bus (`Subscription`, a queued task) holds no pointer to, and no strong reference to, the bus.
+- Cancellation means the same thing everywhere: `unsubscribe()`, a handle's destructor, `shutdown()` and the bus destructor all cancel the handlers that have **not started**.
+- `shutdown()` and the destructor release queued events immediately; an exception never escapes `publish()`, a queue callback or the Qt event loop.
+- No user code runs under a lock.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做“关停时杀掉正在跑的 handler”；已开始的调用跑完。
-- 不保证 `shutdown()` 等待在飞调用（只有 `shutdownGracefully()` 与析构等待）。
-- 不把事件循环的定时器/绘制/输入一起泵（只派发 `QEvent::MetaCall`）。
+- Not killing a handler that is already running at shutdown; a call that has started runs to its end.
+- `shutdown()` does not wait for in-flight calls (only `shutdownGracefully()` and the destructor wait).
+- Not pumping the event loop's timers, painting or input (only `QEvent::MetaCall` is dispatched).
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-`EventBus` 的每一条出圈路径都只持 `shared_ptr` 状态/投递，不持 bus 指针；准入计数、关闭状态机和投递注册表
-一起保证“graceful 返回 true ⇒ 没有线程还在总线内”。
+Every path out of `EventBus` holds `shared_ptr` state or delivery objects, never a pointer to the bus; admission counting, the close state machine and the delivery registry together make "graceful returned true ⇒ no thread is still inside the bus" true.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 结构
+### 2.1 Structure
 
 ```
 EventBus ── Impl ─┬─ map<TypeId, EventChannel>   (channels, std::shared_mutex)
-                  ├─ shared_ptr<DeliveryRegistry>  (排队的投递，与 bus 解耦)
+                  ├─ shared_ptr<DeliveryRegistry>  (queued deliveries, decoupled from the bus)
                   └─ atomic<bool> stopped
 EventChannel ──── vector<SubscriptionEntry{mode, shared_ptr<SubscriptionState>}> + std::mutex
 SubscriptionState  const id / const Handler / atomic<bool> active
-Subscription     ── shared_ptr<Control>  (Control 持 SubscriptionState，析构即 deactivate)
+Subscription     ── shared_ptr<Control>  (Control holds SubscriptionState; its destructor deactivates)
 Payload          ── weak_ptr<SubscriptionState> + shared_ptr<const Object> event
-Delivery         ── shared_ptr<DeliveryRegistry> + weak_ptr<Payload>；析构时从注册表注销
-队列 λ            ── 只捕获 shared_ptr<Delivery>（不捕获 bus/channel/this）
+Delivery         ── shared_ptr<DeliveryRegistry> + weak_ptr<Payload>; unregisters from the registry when destroyed
+queue lambda     ── captures only shared_ptr<Delivery> (no bus / channel / this)
 ```
 
-`MainThreadDispatcher` 由 `Application` 创建并注入 `EventBus`；`ApplicationData` 中 `main_dispatcher`
-先于 `event_bus` 声明，析构时后销毁。
+`MainThreadDispatcher` is created by `Application` and injected into `EventBus`; in `ApplicationData` the `main_dispatcher` member is declared before `event_bus` and is therefore destroyed after it.
 
-### 2.2 准入与关闭状态机
+### 2.2 Admission and the close state machine
 
-- `publish()`/`subscribe()` 先通过 `Impl::CallGuard` 进入总线；`state` 与 `active_calls` 在同一把
-  `call_mutex` 下，所以“总线已开始停止”与“有调用者进来了”不会交叉。
-- `Running → Stopping → Stopped`；进入 `Stopping` 时同时置锁外可见的 `stopped`。
-- 并发 `shutdown()`/`shutdownGracefully()` 的非持有者等到 `Stopped` 并拿到同一次关闭的结果。
-- 状态机只在 `Impl` 一处实现：`beginStop()` / `finishStop(clean)` / `stoppingOnThisThread()` /
-  `awaitStopped()` / `awaitStoppedUntil()`。
+- `publish()` / `subscribe()` enter the bus through `Impl::CallGuard`; `state` and `active_calls` live under the same `call_mutex`, so "the bus has begun stopping" and "a caller got in" cannot interleave.
+- `Running → Stopping → Stopped`; entering `Stopping` also sets the `stopped` flag that is visible outside the lock.
+- A concurrent `shutdown()` / `shutdownGracefully()` that does not hold the stop waits for `Stopped` and receives the result of that same shutdown.
+- The state machine is implemented in exactly one place, `Impl`: `beginStop()` / `finishStop(clean)` / `stoppingOnThisThread()` / `awaitStopped()` / `awaitStoppedUntil()`.
 
-### 2.3 投递规则
+### 2.3 Dispatch rules
 
-- 一个订阅恰好收到那些 `obj_cast<TEvent>(event)` 会成功的类型：事件本身、派生类、实现的接口。
-- 计划顺序：最派生类 → 该类声明的接口（递归、声明序）→ 基类及其接口；同一类型只计划一次。
-- 接口遍历用显式栈 DFS，`visited` 在遍历层维护；消除递归深度与菱形重复遍历。
-- `publish()` 在 map 共享锁内收集订阅快照，释放锁后派发；派发中的 subscribe/unsubscribe 只影响后续 publish。
+- A subscription receives exactly the types for which `obj_cast<TEvent>(event)` succeeds: the event's own type, its derived classes and the interfaces it implements.
+- Planned order: the most-derived class → the interfaces that class declares (recursively, in declaration order) → the base classes and their interfaces; a type is planned once.
+- The interface walk is an explicit-stack DFS with `visited` maintained at the walk level, which removes the recursion depth and the repeated visits of a diamond.
+- `publish()` collects a subscription snapshot under the map's shared lock and dispatches after releasing it; a subscribe or unsubscribe performed during dispatch affects later `publish()` calls only.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 订阅/取消 | `subscribe()` 返回 RAII 句柄；析构/`unsubscribe()` 取消未开始调用 | 已落地 |
-| F2 | 派发/多态 | `publish()` 按 `obj_cast` 规则派发；接口订阅 | 已落地 |
-| F3 | 排队投递 | Main/Auto 模式；`DeliveryRegistry` 与 bus 解耦 | 已落地 |
-| F4 | 关停 | `shutdown()` / `shutdownGracefully(timeout)` / 析构 | 已落地 |
-| F5 | 异常观测 | `setErrorHandler()`；handler 异常不穿出 | 已落地 |
+| F1 | Subscribe / unsubscribe | `subscribe()` returns an RAII handle; the destructor / `unsubscribe()` cancels calls that have not started | landed |
+| F2 | Dispatch / polymorphism | `publish()` dispatches by the `obj_cast` rules; interface subscriptions | landed |
+| F3 | Queued delivery | Main / Auto modes; `DeliveryRegistry` is decoupled from the bus | landed |
+| F4 | Shutdown | `shutdown()` / `shutdownGracefully(timeout)` / the destructor | landed |
+| F5 | Exception observation | `setErrorHandler()`; a handler exception does not escape | landed |
 
-### 3.1.1 F1 订阅/取消
+### 3.1.1 F1 Subscribe / unsubscribe
 
-- **行为**：`subscribe(handler, mode, tag)` 返回 `Subscription`；析构/`unsubscribe()` 把 `active` 置 false。
-- **约束**（C1）：每个 handler 调用前检查 `active`；这是取消线性化点。
-- **要求**（R1）：未通过检查的调用不再开始；已开始的跑完；`unsubscribe()` 不等待在飞调用。
-- **验收**（T1）：`SubscriptionUnsubscribesOnDestruction`、`UnsubscribeInsideHandlerCancelsNotYetVisited`。
-- **注意**（N1）：一个 `Subscription` 只由一个线程持有/销毁。
+- **Behaviour**: `subscribe(handler, mode, tag)` returns a `Subscription`; the destructor / `unsubscribe()` sets `active` to false.
+- **Constraints** (C1): `active` is checked before every handler call; that check is the cancellation linearisation point.
+- **Requirements** (R1): a call that fails the check never starts; a call that has started runs to its end; `unsubscribe()` does not wait for in-flight calls.
+- **Acceptance** (T1): `SubscriptionUnsubscribesOnDestruction`, `UnsubscribeInsideHandlerCancelsNotYetVisited`.
+- **Caveat** (N1): a `Subscription` is held and destroyed by one thread only.
 
-### 3.1.2 F2 派发/多态
+### 3.1.2 F2 Dispatch / polymorphism
 
-- **行为**：按 `obj_cast` 规则派发；接口订阅要求事件元数据声明该接口。
-- **约束**（C2）：计划顺序固定；同一类型只计划一次。
-- **要求**（R2）：`publish()` 空事件/已停止是 no-op。
-- **验收**（T2）：`PolymorphicDispatch`、`InterfaceSubscriptionReceivesImplementingEvents`、
-  `MultiInterfaceVisitOrderAndDedup`。
-- **注意**（N2）：声明了接口却不真继承会让 `obj_cast/dynamic_cast` 失败（记日志）。
+- **Behaviour**: dispatch follows the `obj_cast` rules; an interface subscription requires the event's metadata to declare that interface.
+- **Constraints** (C2): the planned order is fixed; a type is planned once.
+- **Requirements** (R2): `publish()` with a null event, or on a stopped bus, is a no-op.
+- **Acceptance** (T2): `PolymorphicDispatch`, `InterfaceSubscriptionReceivesImplementingEvents`, `MultiInterfaceVisitOrderAndDedup`.
+- **Caveat** (N2): declaring an interface without really inheriting it makes `obj_cast` / `dynamic_cast` fail (and is logged).
 
-### 3.1.3 F3 排队投递
+### 3.1.3 F3 Queued delivery
 
-- **行为**：Main/Auto 模式；`Payload` 由 `DeliveryRegistry` 强持有，队列任务只持弱引用。
-- **约束**（C3）：`shutdown()` 清空注册表 → event 立即释放；队列回调退化为 no-op。
-- **要求**（R3）：任务运行/取消/被丢弃都由 `~Delivery` 注销。
-- **验收**（T3）：`MainModeQueuesDelivery`、`ShutdownReleasesPendingEvent`、
-  `BusDestroyedBeforeQueuedDeliveryIsDropped`。
-- **注意**（N3）：无 dispatcher 或 QCoreApplication 不存在时，Main/Auto 在发布线程内联执行（文档化）。
+- **Behaviour**: Main / Auto modes; the `DeliveryRegistry` holds the `Payload` strongly and the queued task holds a weak reference.
+- **Constraints** (C3): `shutdown()` clears the registry → the event is released immediately and the queued callback degenerates to a no-op.
+- **Requirements** (R3): whether a task runs, is cancelled or is dropped, `~Delivery` is what unregisters it.
+- **Acceptance** (T3): `MainModeQueuesDelivery`, `ShutdownReleasesPendingEvent`, `BusDestroyedBeforeQueuedDeliveryIsDropped`.
+- **Caveat** (N3): with no dispatcher, or no `QCoreApplication`, Main / Auto run inline on the publishing thread (documented).
 
-### 3.1.4 F4 关停
+### 3.1.4 F4 Shutdown
 
-- **行为**：`shutdown()` 停止接纳、取消订阅/丢弃投递、不等待；`shutdownGracefully(timeout)` 等待在飞调用 +
-  泵队列；析构先拒绝准入再无限期等待已准入调用退出。
-- **约束**（C4）：`shutdown_result` 默认 false；只有真正完成等待 + 泵队列的优雅关停才写 true。
-- **要求**（R4）：停止线程上的重入不等自己；非应用线程的 `shutdownGracefully()` 返回 false。
-- **验收**（T4）：`GracefulShutdownWaitsForPublishingThread`、
-  `GracefulResultAfterPlainShutdownDoesNotClaimDrainedWork`、
-  `ReentrantShutdownFromReleasedHandlerDoesNotWaitForItself`。
-- **注意**（N4）：拿到 `true` 的唯一含义是“这一次关停等了在飞调用、也把排队投递跑完”。
+- **Behaviour**: `shutdown()` stops admission, cancels subscriptions, drops deliveries and does not wait; `shutdownGracefully(timeout)` waits for in-flight calls and pumps the queue; the destructor refuses admission and then waits indefinitely for admitted calls to leave.
+- **Constraints** (C4): `shutdown_result` defaults to false; only a graceful shutdown that really waited and really pumped the queue writes true.
+- **Requirements** (R4): a re-entrant call on the stopping thread does not wait for itself; `shutdownGracefully()` from a non-application thread returns false.
+- **Acceptance** (T4): `GracefulShutdownWaitsForPublishingThread`, `GracefulResultAfterPlainShutdownDoesNotClaimDrainedWork`, `ReentrantShutdownFromReleasedHandlerDoesNotWaitForItself`.
+- **Caveat** (N4): `true` means exactly one thing — this shutdown waited for the in-flight calls and also ran the queued deliveries to their end.
 
-### 3.1.5 F5 异常观测
+### 3.1.5 F5 Exception observation
 
-- **行为**：`setErrorHandler(EventBusErrorHandler)` 可选；上下文含事件类型、订阅 id、标签、`exception_ptr`、
-  线程模式与 `deferred`。
-- **约束**（C5）：钩子在所有锁外调用；钩子自身抛异常被丢弃（noexcept）。
-- **要求**（R5）：排队投递在 post 时快照钩子 + 标签，之后更换/移除不影响已排队投递。
-- **验收**（T5）：`SubscriberExceptionIsContained`、`ErrorHandlerReceivesDeferredFailure`、
-  `ErrorHandlerReportsSubscriptionTag`。
-- **注意**（N5）：未安装钩子时只在错误路径多一次 `has_error_handler` 加载。
+- **Behaviour**: `setErrorHandler(EventBusErrorHandler)` is optional; the context carries the event type, the subscription id, the tag, the `exception_ptr`, the thread mode and `deferred`.
+- **Constraints** (C5): the hook is always called outside every lock; an exception thrown by the hook itself is discarded (`noexcept`).
+- **Requirements** (R5): a queued delivery snapshots the hook and the tag when it is posted, so replacing or removing the hook later does not affect deliveries already queued.
+- **Acceptance** (T5): `SubscriberExceptionIsContained`, `ErrorHandlerReceivesDeferredFailure`, `ErrorHandlerReportsSubscriptionTag`.
+- **Caveat** (N5): with no hook installed the only cost is one extra `has_error_handler` load on the error path.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `EventBus`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 | --- | --- | --- |
-| `subscribe<TEvent>(handler, mode, tag)` | 返回 RAII `Subscription` | `TEvent` 需 `TypeDescribed` |
-| `publish(event)` | 按 `obj_cast` 规则派发 | 空事件 no-op |
-| `unsubscribe(subscription)` | 取消未开始调用 | 不等待在飞 |
-| `shutdown()` | 停止接纳、丢弃排队投递 | 不等待 |
-| `shutdownGracefully(timeout)` | 等待在飞 + 泵队列 | 返回是否 drain 完成 |
-| `isShutDown()` / `pendingDeliveryCount()` | 查询 | — |
-| `setErrorHandler(...)` | 异常观测 | 锁外调用 |
+| `subscribe<TEvent>(handler, mode, tag)` | returns an RAII `Subscription` | `TEvent` must be `TypeDescribed` |
+| `publish(event)` | dispatches by the `obj_cast` rules | a null event is a no-op |
+| `unsubscribe(subscription)` | cancels calls that have not started | does not wait for in-flight calls |
+| `shutdown()` | stops admission, drops queued deliveries | does not wait |
+| `shutdownGracefully(timeout)` | waits for in-flight calls + pumps the queue | returns whether draining completed |
+| `isShutDown()` / `pendingDeliveryCount()` | queries | — |
+| `setErrorHandler(...)` | exception observation | called outside locks |
 
 ### 4.2 `Subscription` / `EventBusError`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 | --- | --- | --- |
-| `Subscription::~Subscription()` | 取消订阅 | 移动语义 |
-| `EventBusError` | 事件类型/id/标签/异常/线程模式/deferred | 值拷贝 |
+| `Subscription::~Subscription()` | unsubscribes | movable |
+| `EventBusError` | event type / id / tag / exception / thread mode / deferred | a value copy |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | 每个 handler 调用前检查 `active`；这是取消线性化点。 |
-| C2 | 计划顺序固定；同一类型只计划一次。 |
-| C3 | `shutdown()` 清空注册表 → event 立即释放。 |
-| C4 | `shutdown_result` 默认 false；只有真正 drain 的优雅关停写 true。 |
-| C5 | 异常钩子在锁外调用；钩子异常被丢弃。 |
+| C1 | `active` is checked before every handler call; that check is the cancellation linearisation point. |
+| C2 | The planned order is fixed; a type is planned once. |
+| C3 | `shutdown()` clears the registry → the event is released immediately. |
+| C4 | `shutdown_result` defaults to false; only a graceful shutdown that really drained writes true. |
+| C5 | The exception hook is called outside locks; an exception from the hook is discarded. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | 未通过取消点的调用不再开始；已开始的跑完。 |
-| R2 | `publish()` 空事件/已停止是 no-op；`subscribe()` 停止后返回惰性句柄。 |
-| R3 | 排队任务无论运行/取消/丢弃都由 `~Delivery` 注销。 |
-| R4 | 停止线程上的重入不等自己；非应用线程 graceful 返回 false。 |
-| R5 | 排队投递在 post 时快照异常钩子 + 标签。 |
+| R1 | A call that fails the cancellation point never starts; a call that has started runs to its end. |
+| R2 | `publish()` with a null event, or on a stopped bus, is a no-op; `subscribe()` after the stop returns an inert handle. |
+| R3 | Whether a queued task runs, is cancelled or is dropped, `~Delivery` unregisters it. |
+| R4 | A re-entrant call on the stopping thread does not wait for itself; graceful from a non-application thread returns false. |
+| R5 | A queued delivery snapshots the exception hook and the tag when it is posted. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | 出圈对象不持有 bus 指针/强引用。 |
-| N2 | 锁内不跑用户代码；handler 闭包/事件析构都在锁外。 |
-| N3 | `shutdownGracefully()` 返回 true ⇒ 没有线程还在总线内。 |
-| N4 | 析构时无并发调用；违约从 UAF 变成延迟。 |
+| N1 | An object that has left the bus holds no pointer or strong reference to it. |
+| N2 | No user code runs under a lock; handler closures and event destruction happen outside it. |
+| N3 | `shutdownGracefully()` returning true ⇒ no thread is still inside the bus. |
+| N4 | No concurrent call during destruction; a violation turns from a use-after-free into a delay. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 在 handler 内销毁 bus
+### 6.1 Destroying the bus inside a handler
 
-- 会怎么错：`~EventBus()` 等已准入调用退出，而当前 handler 正是其中之一 → 死锁/延迟。
-- 怎么判：handler 内调 `delete bus` / 析构。
-- 怎么防：禁止在 handler 内销毁 bus；要停进程用 `Application::exit()`。
+- How it fails: `~EventBus()` waits for admitted calls to leave, and the current handler is one of them → deadlock or a delay.
+- How to detect it: `delete bus` or a destruction call inside a handler.
+- How to prevent it: never destroy the bus inside a handler; to stop the process use `Application::exit()`.
 
-### 6.2 非应用线程 graceful
+### 6.2 Graceful shutdown from a non-application thread
 
-- 会怎么错：以为 `shutdownGracefully()` 在任何线程都能 drain。
-- 怎么判：返回 false 且 `deliverPostedCalls()` 未执行。
-- 怎么防：只在应用线程调用；其它线程用 `shutdown()` 或让应用线程收尾。
+- How it fails: assuming `shutdownGracefully()` drains from any thread.
+- How to detect it: it returns false and `deliverPostedCalls()` never ran.
+- How to prevent it: call it on the application thread only; other threads use `shutdown()` or let the application thread finish.
 
-### 6.3 订阅闭包析构里重入关停
+### 6.3 A shutdown re-entered from a subscription closure's destructor
 
-- 会怎么错：停止线程上的重入等自己 → 死锁。
-- 怎么判：`shutdown()`/`shutdownGracefully()` 在 `Stopping` 且 `stopper == this_thread`。
-- 怎么防：`Impl::stopper` 守卫直接返回（`shutdown()` no-op / graceful false）。
+- How it fails: the re-entrant call on the stopping thread waits for itself → deadlock.
+- How to detect it: `shutdown()` / `shutdownGracefully()` while `Stopping` with `stopper == this_thread`.
+- How to prevent it: the `Impl::stopper` guard returns directly (`shutdown()` no-op / graceful false).
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 | --- | --- | --- | --- |
-| D1 | `DeliveryRegistry` 换 `unordered_map` + `extract` | 待处理投递通常 0–2，`push_back` 已是 O(1)，向量对缓存友好。 | — |
-| D2 | `visited` 用 `unordered_set` | 尺寸小、指针比较快、无分配。 | — |
-| D3 | `thread_local` 深度覆盖 detached async task | 异步任务调 `publish()` 是独立准入调用，不依赖逃离线程的深度。 | — |
-| D4 | 让 `shutdown()` 等待在飞调用 | 语义是“停止接纳”，等待交给 `shutdownGracefully()`/析构。 | — |
+| D1 | `DeliveryRegistry` as an `unordered_map` + `extract` | Pending deliveries are usually 0–2, `push_back` is already O(1), and a vector is cache-friendly. | — |
+| D2 | `visited` as an `unordered_set` | The set is small, pointer comparison is faster and it allocates nothing. | — |
+| D3 | A `thread_local` depth covering detached async tasks | An async task calling `publish()` is its own admission call and does not rely on a depth escaping the thread. | — |
+| D4 | Making `shutdown()` wait for in-flight calls | Its meaning is "stop admitting"; waiting belongs to `shutdownGracefully()` / the destructor. | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 | --- | --- | --- |
-| T1 | 订阅/取消/RAII/移动 | `SubscriptionUnsubscribesOnDestruction`、`MoveTransfersOwnership` 等 |
-| T2 | 多态/接口计划顺序 | `PolymorphicDispatch`、`MultiInterfaceVisitOrderAndDedup` |
-| T3 | 排队/事件生命周期 | `MainModeQueuesDelivery`、`ShutdownReleasesPendingEvent` |
-| T4 | 关停/准入 | `GracefulShutdownWaitsForPublishingThread`、`GracefulResultAfterPlainShutdownDoesNotClaimDrainedWork` |
-| T5 | 异常观测 | `SubscriberExceptionIsContained`、`ErrorHandlerReportsSubscriptionTag` |
-| T6 | ASan 门 | `scripts/asan_check.sh`（`EventBusTest.*`） |
+| T1 | subscribe / cancel / RAII / move | `SubscriptionUnsubscribesOnDestruction`, `MoveTransfersOwnership` and friends |
+| T2 | polymorphism / interface planned order | `PolymorphicDispatch`, `MultiInterfaceVisitOrderAndDedup` |
+| T3 | queueing / event lifetime | `MainModeQueuesDelivery`, `ShutdownReleasesPendingEvent` |
+| T4 | shutdown / admission | `GracefulShutdownWaitsForPublishingThread`, `GracefulResultAfterPlainShutdownDoesNotClaimDrainedWork` |
+| T5 | exception observation | `SubscriberExceptionIsContained`, `ErrorHandlerReportsSubscriptionTag` |
+| T6 | the ASan gate | `scripts/asan_check.sh` (`EventBusTest.*`) |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-订阅/派发/排队/关停/异常观测均已落地；ASan 门禁通过。
+Subscription, dispatch, queueing, shutdown and exception observation are all in place; the ASan gate passes.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-- 若事件循环长时间停顿、上万条 Main 投递同时待处理，drain 路径的 `remove` 是 O(N²)；
-  需要时改注册表（见 D1）。
-- LeakSanitizer 报的 15 处 / 5864 字节全部经过 `GuiTest::SetUp`，是测试夹具/QApplication 保留，与 bus 无关。
+- If the event loop stalls for a long time with tens of thousands of Main deliveries pending at once, `remove` on the drain path is O(N²); the registry changes if that happens (see D1).
+- LeakSanitizer's 15 reports / 5864 bytes all pass through `GuiTest::SetUp`; they are held by the test fixture / `QApplication`, not by the bus.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-新代码只按 §4 的接口写；`shutdown_result` 默认 false 是行为修正，不要读回旧默认值。
+New code uses the interface of §4 only.
+`shutdown_result` defaults to false, so a caller must not read it as "drained" without a graceful shutdown having run.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/fw/appfw/sdk/vine/appfw/EventBus.hpp`
 - `src/fw/appfw/src/EventBus.cpp`
 - `src/fw/appfw/sdk/vine/appfw/MainThreadDispatcher.hpp`
 - `src/base/core/sdk/vine/Type.hpp`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `appfw-command-manager.md`
 - `appfw-progress.md`
 - `../backlog/`
 
-### 10.3 外部资料
+### 10.3 External material
 
-- Qt `QMetaObject::invokeMethod` / `QEvent::MetaCall` 语义。
-- `scripts/asan_check.sh` 的 ASan 构建约定。
+- Qt's `QMetaObject::invokeMethod` / `QEvent::MetaCall` semantics.
+- The ASan build conventions of `scripts/asan_check.sh`.

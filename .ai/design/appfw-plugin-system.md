@@ -1,285 +1,280 @@
-# appfw 插件系统设计
+# appfw's plugin system
 
-> **状态**：现行
-> **最后核对**：2026-10-23
-> **范围**：插件发现/加载/卸载、依赖、配置持久化、元数据与 ABI 握手。
-> **权威来源**：`Plugin.hpp`、`PluginManager.hpp`、`tests/test_appfw`。
-> **待办**：无（开放项见 `../backlog/`）
+> **Status**: current
+> **Last verified**: 2026-10-23
+> **Scope**: plugin discovery / loading / unloading, dependencies, configuration persistence, metadata and the ABI handshake.
+> **Sources**: `Plugin.hpp`, `PluginManager.hpp`, `tests/test_appfw`.
+> **Backlog**: none (open items are in `../backlog/`)
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-`Plugin::unload()` 声明存在却没有调用点；`PluginManager` 只有 `load()`/`loadAll()`，没有禁用/卸载；
-关闭路径只停了 EventBus，插件的窗口/订阅没有反初始化。插件元数据也缺少联系方式与图标。
+A plugin system has to answer four separate questions — which libraries exist, which of them become live instances, which are switched off by a user preference, and which are switched off by the host for this one process — and every answer has to be readable without instantiating code.
+Shutdown is the other half: the windows, views and subscriptions a plugin owns must be torn down before the bus and the command manager it registered into stop, and in dependency order.
+The metadata also has to be enough for a manager dialog: a contact address, a repository and an icon.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 发现与加载分离：扫描/读元数据不实例化。
-- 禁用/跳过/卸载三条轴语义清楚，依赖反序卸载。
-- 配置持久化、插件数据目录、安装注册文件。
-- `PluginInfo` 带 email/repo/icon；ABI 握手。
+- Discovery separate from loading: scanning and reading metadata instantiates nothing.
+- Three axes with clear semantics — disable, skip, unload — and unloading in reverse dependency order.
+- Configuration persistence, a per-plugin data directory, an installation registration file.
+- `PluginInfo` carries email / repo / icon; an ABI handshake.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做运行时热卸载；禁用要重启生效。
-- 不 `dlclose` 插件库；卸载是反初始化。
-- 不做宿主侧注册回滚（关停后管理器随即析构）。
-- 不做每插件库子目录/安装时复制文件（见 §9）。
+- No run-time hot unload; disabling takes effect on the next start.
+- No `dlclose` of a plugin library; unloading is de-initialisation.
+- No host-side registration rollback (the manager is destroyed right after shutdown).
+- No per-plugin library subdirectory and no file copying at install time (see §9).
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-发现只读元数据，加载才实例化；跳过 > BuiltIn > 注册策略 > 用户偏好；卸载按依赖反序、不 `dlclose`；
-禁用只写偏好，下次启动生效。
+Discovery only reads metadata, loading is what instantiates; the decision order is skip > BuiltIn > registration policy > user preference; unloading walks the dependency graph in reverse and never calls `dlclose`; disabling only writes a preference and takes effect on the next start.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 四条轴
+### 2.1 Four axes
 
-| 概念 | 行为 |
+| Concept | Behaviour |
 | --- | --- |
-| 发现 | 扫描目录、加载动态库、`vinePluginQuery()` 取元数据。**不创建实例**。 |
-| 加载 | `vinePluginCreate()`、跑 `preLoad/load/postLoad`、注册命令。 |
-| 禁用 | 持久化用户偏好；仍被发现/列出，但永不实例化/跑生命周期/注册命令。 |
-| 跳过 | 宿主进程内硬开关（`setSkipList()`，不持久化）；优先级最高，仍被列出。 |
-| 卸载 | 关停时按依赖反序调 `unload()`；不改 DLL 映射。 |
+| Discovery | Scan the directories, load the dynamic library, ask `vinePluginQuery()` for the metadata. **No instance is created.** |
+| Loading | `vinePluginCreate()`, run `preLoad` / `load` / `postLoad`, register commands. |
+| Disabling | Persist a user preference; the plugin is still discovered and listed, but is never instantiated, never run through its lifecycle and never registers commands. |
+| Skipping | A hard switch inside the host process (`setSkipList()`, not persisted); it wins over everything and the plugin is still listed. |
+| Unloading | Call `unload()` in reverse dependency order at shutdown; the DLL mapping is left alone. |
 
-判定顺序：**跳过 ⇒ BuiltIn ⇒ 注册策略 ⇒ 用户偏好**。跳过/禁用都不是可满足的依赖，
-日志分别区分 `skipped by the host` / `disabled dependency` / `missing dependency`。
+Decision order: **skip ⇒ BuiltIn ⇒ registration policy ⇒ user preference**.
+Neither a skipped nor a disabled plugin is a satisfiable dependency, and the log distinguishes `skipped by the host` / `disabled dependency` / `missing dependency`.
 
-### 2.2 依赖与卸载顺序
+### 2.2 Dependencies and unload order
 
-- `unloadOrder(entries)` 是纯函数：只有 `loaded` 条目参与，认 `PluginInfo::dependencies` 的传递闭包；
-  每轮取“剩下的插件里没有任何剩余插件依赖它”的那个。
-- 不能靠列表倒序：显式 `load("child")` 后再 `loadAll()` 加载 `parent`，列表是 `[child, parent]`，
-  倒序会先卸 `parent`。
-- 声明成环（只有显式 `load()` 造得出来）时回退传入顺序，保证不死循环且全部卸载。
-- 先出列表再调 `unload()`；单个插件抛异常只记日志，返回 false 表示“有插件抛了”。
-- `DynamicLibraryLoader` 有意 `d.release()`，插件代码保持映射 ⇒ 卸载是反初始化，不是卸载代码。
+- `unloadOrder(entries)` is a pure function: only `loaded` entries take part, the transitive closure of `PluginInfo::dependencies` is honoured, and each round picks the plugin that no remaining plugin depends on.
+- The load list cannot be walked backwards: after an explicit `load("child")` followed by `loadAll()` picking up `parent`, the list is `[child, parent]`, and reverse order would unload `parent` first.
+- A declared cycle (only an explicit `load()` can build one) falls back to the caller's order, so the walk terminates and every plugin is still unloaded.
+- The list is taken before `unload()` is called; one plugin throwing is logged only, and a `false` return means "some plugin threw".
+- `DynamicLibraryLoader` deliberately `d.release()`s the handle, so the plugin code stays mapped ⇒ unloading is de-initialisation, not code removal.
 
-### 2.3 关闭顺序
+### 2.3 Shutdown order
 
-`Application::shutdown()`（protected，只有 `run()` 收尾路径调；宿主/命令/插件停进程用 `exit()`）：
+`Application::shutdown()` (protected, reached only from the tail of `run()`; a host, command or plugin that wants to stop the process calls `exit()`):
 
-1. `PluginManager::unloadAll()`：依赖反序；此时总线/CommandManager/ConfigManager/窗口都还活着。
-2. `EventBus::shutdownGracefully(...)`：有界投递后停总线。
-3. 配置落盘（`setConfigFile()` 设过路径时）。
+1. `PluginManager::unloadAll()`: reverse dependency order; the bus, the `CommandManager`, the `ConfigManager` and the windows are all still alive at this point.
+2. `EventBus::shutdownGracefully(...)`: bounded delivery, then the bus stops.
+3. The configuration is written to disk (when `setConfigFile()` has been given a path).
 
-循环还在跑时调、或从非应用线程调：各留一条只警告不拒绝的日志。
+Called while the loop is still running, or from a non-application thread: each leaves one warning-only log line and refuses nothing.
 
-**插件够得着应用的唯一入口是 `Application::current()`**（进程级、原子读、构造时设、析构时清）：插件入口点
-和静态注册器手里没有引用，只能这样拿 `commandManager()` / `configRegistry()` / `eventBus()`。它**不是**服务
-定位器——被**交给**应用的代码（命令的 `CommandExecutionContext::application()`、插件钩子参数、Qt 父链）必须
-用交到手里的那个；否则依赖被隐藏，同一进程里跑两个应用的测试也无法成立。调用点一律判空（"还没有应用"和
-"应用正在析构"都合法），见 `Application::current()` 的头注释。
+**The only door through which a plugin can reach the application is `Application::current()`** (process-wide, atomic read, set by the constructor and cleared by the destructor): a plugin entry point and a static registrar hold no reference, so this is the only way to reach `commandManager()` / `configRegistry()` / `eventBus()`.
+It is **not** a service locator — code that is **handed** to the application (a command's `CommandExecutionContext::application()`, a plugin hook's parameter, a Qt parent chain) must use the reference it was handed; otherwise the dependency is hidden, and a test that runs two applications in one process cannot work.
+Every call site checks for null ("there is no application yet" and "the application is being destroyed" are both legal), see the header comment on `Application::current()`.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 发现 | 扫描 + 读元数据，不实例化 | 已落地 |
-| F2 | 加载 | 创建实例、跑三阶段、注册命令 | 已落地 |
-| F3 | 禁用/跳过 | 持久化偏好/进程内硬开关；仍列出 | 已落地 |
-| F4 | 卸载 | 依赖反序 `unload()`；不 `dlclose` | 已落地 |
-| F5 | 配置/数据目录 | `<data>/<org>/<app>/...`；每插件一目录 | 已落地 |
-| F6 | 安装/注册 | `installed.d/<id>.plugin`；BuiltIn/User/AllUsers | 已落地 |
-| F7 | 元数据/图标 | email/repo/icon（内联 SVG） | 已落地 |
-| F8 | 管理器对话框 | 列表/详情/禁用/安装 | 已落地 |
+| F1 | Discovery | scan + read metadata, no instantiation | landed |
+| F2 | Loading | create the instance, run the three stages, register commands | landed |
+| F3 | Disable / skip | persisted preference / in-process hard switch; still listed | landed |
+| F4 | Unloading | `unload()` in reverse dependency order; no `dlclose` | landed |
+| F5 | Config / data directory | `<data>/<org>/<app>/...`; one directory per plugin | landed |
+| F6 | Install / registration | `installed.d/<id>.plugin`; BuiltIn / User / AllUsers | landed |
+| F7 | Metadata / icon | email / repo / icon (inline SVG) | landed |
+| F8 | Manager dialog | list / details / disable / install | landed |
 
-### 3.1.1 F1 发现
+### 3.1.1 F1 Discovery
 
-- **行为**：扫描 BuiltIn/User/AllUsers 目录，加载库，`vinePluginQuery()` 取 `PluginInfo`。
-- **约束**（C1）：发现不实例化；ABI 不匹配的库不进发现列表（无法安全读元数据）。
-- **要求**（R1）：同名只发现一次，BuiltIn > User > AllUsers。
-- **验收**（T1）：`PluginLifecycleTest` 的发现/去重用例。
-- **注意**（N1）：被 ABI 拒绝的库只能靠日志定位。
+- **Behaviour**: scan the BuiltIn / User / AllUsers directories, load the library, take `PluginInfo` from `vinePluginQuery()`.
+- **Constraints** (C1): discovery instantiates nothing; a library whose ABI does not match never enters the discovery list (its metadata cannot be read safely).
+- **Requirements** (R1): a name is discovered once, BuiltIn > User > AllUsers.
+- **Acceptance** (T1): `PluginLifecycleTest`'s discovery / dedup cases.
+- **Caveat** (N1): a library rejected by the ABI check is locatable only through the log.
 
-### 3.1.2 F2 加载
+### 3.1.2 F2 Loading
 
-- **行为**：`loadAll()` 做依赖解析；`load(name)` 显式加载不拦依赖但记 warning。
-- **约束**（C2）：钩子是 `Task<void>`，每条出口 `co_return;`；`load()` 建控件/视图/原生窗口，必须在应用线程。
-- **要求**（R2）：被禁用/跳过的插件不实例化；加载失败按 `disabled dependency`/`skipped by the host`/
-  `missing dependency` 分类。
-- **验收**（T2）：`PluginLifecycleTest.DisabledDependencyBlocksDependents` 等。
-- **注意**（N2）：`loadAll()` 拒绝环；显式 `load()` 可造环，卸载回退传入顺序。
+- **Behaviour**: `loadAll()` resolves dependencies; `load(name)` loads explicitly, does not hold a dependency back and logs a warning.
+- **Constraints** (C2): the hooks are `Task<void>` and every exit says `co_return;`; `load()` creates widgets, views and native windows and must run on the application thread.
+- **Requirements** (R2): a disabled or skipped plugin is never instantiated; a load failure is classified as `disabled dependency` / `skipped by the host` / `missing dependency`.
+- **Acceptance** (T2): `PluginLifecycleTest.DisabledDependencyBlocksDependents` and friends.
+- **Caveat** (N2): `loadAll()` refuses a cycle; an explicit `load()` can build one, and unloading then falls back to the caller's order.
 
-### 3.1.3 F3 禁用/跳过
+### 3.1.3 F3 Disable / skip
 
-- **行为**：`setPluginEnabled()` 只写 `plugins.disabled` 偏好；`setSkipList()` 是进程内硬开关。
-- **约束**（C3）：禁用要重启生效；跳过不落盘、进程退出即消失。
-- **要求**（R3）：跳过/禁用仍出现在 `pluginEntries()`，带 `enabled`/`loaded`/`skipped`。
-- **验收**（T3）：`DisableIsPersistedInConfig`、`SkippedPluginStaysVisibleAndIsNeverInstantiated`。
-- **注意**（N3）：BuiltIn 不可禁用/卸载；对话框改不了就不显示按钮。
+- **Behaviour**: `setPluginEnabled()` only writes the `plugins.disabled` preference; `setSkipList()` is the in-process hard switch.
+- **Constraints** (C3): disabling takes effect on the next start; skipping is not persisted and disappears with the process.
+- **Requirements** (R3): a skipped or disabled plugin still appears in `pluginEntries()`, carrying `enabled` / `loaded` / `skipped`.
+- **Acceptance** (T3): `DisableIsPersistedInConfig`, `SkippedPluginStaysVisibleAndIsNeverInstantiated`.
+- **Caveat** (N3): a BuiltIn plugin cannot be disabled or uninstalled; the dialog does not show a button it cannot honour.
 
-### 3.1.4 F4 卸载
+### 3.1.4 F4 Unloading
 
-- **行为**：`unloadAll()` 按依赖反序调 `unload()`；幂等。
-- **约束**（C4）：先出列表再调 `unload()`；单个异常不影响其余。
-- **要求**（R4）：`unload()` 只释放插件自己的资源，不撤销宿主注册。
-- **验收**（T4）：`UnloadOrderIsReverseDependencyOrder`、`UnloadOrderTerminatesOnACycle`。
-- **注意**（N4）：不 `dlclose`；插件代码保持映射。
+- **Behaviour**: `unloadAll()` calls `unload()` in reverse dependency order; idempotent.
+- **Constraints** (C4): the list is taken before `unload()` is called; one exception does not affect the rest.
+- **Requirements** (R4): `unload()` releases the plugin's own resources only and never undoes host registrations.
+- **Acceptance** (T4): `UnloadOrderIsReverseDependencyOrder`, `UnloadOrderTerminatesOnACycle`.
+- **Caveat** (N4): no `dlclose`; the plugin code stays mapped.
 
-### 3.1.5 F5 配置/数据目录
+### 3.1.5 F5 Config / data directory
 
-- **行为**：`Application` 推导 `<用户数据>/<org>/<app>/{config,logs,plugins,installed.d}`。
-- **约束**（C5）：平台差异全由 Qt 处理；没有中间的 `appdata` 一级。
-- **要求**（R5）：持久化默认打开；`persist_config = false` 则不读不写；显式 `config_file` 优先。
-- **验收**（T5）：`DefaultDataDirectoryLayout`、`ConfigFileRoundTripPersistsDisabledPlugins`。
-- **注意**（N5）：`ensureDataDirectory()` 惰性创建 `<data>/plugins/<name>`；卸载/禁用不删。
+- **Behaviour**: `Application` derives `<user data>/<org>/<app>/{config,logs,plugins,installed.d}`.
+- **Constraints** (C5): platform differences are all handled by Qt; there is no intermediate `appdata` level.
+- **Requirements** (R5): persistence is on by default; `persist_config = false` reads and writes nothing; an explicit `config_file` wins.
+- **Acceptance** (T5): `DefaultDataDirectoryLayout`, `ConfigFileRoundTripPersistsDisabledPlugins`.
+- **Caveat** (N5): `ensureDataDirectory()` creates `<data>/plugins/<name>` lazily; unloading or disabling never deletes it.
 
-### 3.1.6 F6 安装/注册
+### 3.1.6 F6 Install / registration
 
-- **行为**：安装 = 写 `installed.d/<id>.plugin`；卸载 = 删文件；`path` 必需，`name/uuid/enabled` 可选。
-- **约束**（C6）：身份以库里的 `PluginInfo` 为准；文件写入 tmp + rename。
-- **要求**（R6）：同名不同 uuid（第一个胜）、不同名同 uuid（都留）、注册文件与库不符（库为准）都只 warning。
-- **验收**（T6）：`InstallWritesRegistrationFile`、`HandWrittenRegistrationCanDisableForAllUsers`。
-- **注意**（N6）：AllUsers 需要系统目录可写；普通用户失败时提示改用“仅当前用户”。
+- **Behaviour**: install = write `installed.d/<id>.plugin`; uninstall = delete the file; `path` is required, `name` / `uuid` / `enabled` are optional.
+- **Constraints** (C6): identity is whatever the library's `PluginInfo` says; the file is written to a temporary name and renamed.
+- **Requirements** (R6): same name with a different uuid (the first one wins), different names with the same uuid (both stay) and a registration file that disagrees with the library (the library wins) all produce a warning only.
+- **Acceptance** (T6): `InstallWritesRegistrationFile`, `HandWrittenRegistrationCanDisableForAllUsers`.
+- **Caveat** (N6): AllUsers needs a writable system directory; for an ordinary user the failure is reported with "current user only" as the suggested alternative.
 
-### 3.1.7 F7 元数据/图标
+### 3.1.7 F7 Metadata / icon
 
-- **行为**：`PluginInfo` 带 `email`/`repo`/`icon`；icon 是内联 SVG 源码。
-- **约束**（C7）：`PluginInfo` 必须 Qt 无关；SVG 不能内嵌到宏参数里（逗号会切参数）。
-- **要求**（R7）：非法 SVG 回退默认图标；`QSvgRenderer::isValid()` 判。
-- **验收**（T7）：`ManagerDialogShowsMetadataAndIcons`。
-- **注意**（N7）：`VN_DECLARE_PLUGIN` 参数个数变了，所有插件必须重编。
+- **Behaviour**: `PluginInfo` carries `email` / `repo` / `icon`; the icon is inline SVG source.
+- **Constraints** (C7): `PluginInfo` must stay Qt-free; an SVG cannot be inlined into a macro argument (its commas would split the arguments).
+- **Requirements** (R7): an invalid SVG falls back to the default icon, decided by `QSvgRenderer::isValid()`.
+- **Acceptance** (T7): `ManagerDialogShowsMetadataAndIcons`.
+- **Caveat** (N7): the argument count of `VN_DECLARE_PLUGIN` changed, so every plugin must be recompiled.
 
-### 3.1.8 F8 管理器对话框
+### 3.1.8 F8 Manager dialog
 
-- **行为**：左栏筛选/列表/加载/安装；右栏详情（QScrollArea）。
-- **约束**（C8）：BuiltIn/跳过不显示禁用按钮；不可用行灰显。
-- **要求**（R8）：详情显示 icon/email/repo/依赖/状态。
-- **验收**（T8）：`ManagerDialogListsDisabledPlugins`、`ManagerDialogHidesToggleWhenItCannotTakeEffect`。
-- **注意**（N8）：对话框只读/操作元数据，不加载插件代码本身。
+- **Behaviour**: the left column filters / lists / loads / installs; the right column shows the details (a `QScrollArea`).
+- **Constraints** (C8): no disable button for a BuiltIn or skipped plugin; an unavailable row is greyed out.
+- **Requirements** (R8): the details show icon / email / repo / dependencies / state.
+- **Acceptance** (T8): `ManagerDialogListsDisabledPlugins`, `ManagerDialogHidesToggleWhenItCannotTakeEffect`.
+- **Caveat** (N8): the dialog reads and manipulates metadata only; it never loads plugin code itself.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `Plugin` / `PluginInfo`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 | --- | --- | --- |
-| `preLoad()` / `load()` / `postLoad()` / `unload()` | `Task<void>` 生命周期钩子 | 每条出口 `co_return;` |
-| `PluginInfo` | uuid/name/display_name/version/description/vendor/email/repo/icon/dependencies | Qt 无关 |
-| `VN_DECLARE_PLUGIN` | 声明元数据 | 参数个数变更需重编 |
+| `preLoad()` / `load()` / `postLoad()` / `unload()` | `Task<void>` lifecycle hooks | every exit says `co_return;` |
+| `PluginInfo` | uuid / name / display_name / version / description / vendor / email / repo / icon / dependencies | Qt-free |
+| `VN_DECLARE_PLUGIN` | declares the metadata | an argument-count change needs a recompile |
 
 ### 4.2 `PluginManager`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 | --- | --- | --- |
-| `discover()` / `pluginEntries()` | 发现/列出 | 不实例化 |
-| `load(name)` / `loadAll()` / `loadAllAsync()` | 加载 | 依赖解析/分类 |
-| `unloadAll()` | 依赖反序卸载 | 幂等 |
-| `setPluginEnabled()` / `isPluginEnabled()` | 用户偏好 | 重启生效 |
-| `setSkipList()` / `isSkipped()` | 进程内硬开关 | 优先级最高 |
-| `installPlugin()` / `uninstallPlugin()` | 注册文件 | BuiltIn 拒绝 |
+| `discover()` / `pluginEntries()` | discover / list | instantiates nothing |
+| `load(name)` / `loadAll()` / `loadAllAsync()` | loading | dependency resolution / classification |
+| `unloadAll()` | unload in reverse dependency order | idempotent |
+| `setPluginEnabled()` / `isPluginEnabled()` | user preference | takes effect on the next start |
+| `setSkipList()` / `isSkipped()` | in-process hard switch | wins over everything |
+| `installPlugin()` / `uninstallPlugin()` | registration file | BuiltIn is refused |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | 发现不实例化；ABI 不匹配的库不进列表。 |
-| C2 | 钩子 `Task<void>`；每条出口 `co_return;`；加载在应用线程。 |
-| C3 | 禁用重启生效；跳过不落盘。 |
-| C4 | 先出列表再 `unload()`；单个异常不影响其余。 |
-| C5 | 平台路径由 Qt 收口；无 `appdata` 中间层。 |
-| C6 | 身份以库 `PluginInfo` 为准；注册文件 tmp + rename。 |
-| C7 | `PluginInfo` Qt 无关；SVG 先放常量再传宏。 |
-| C8 | BuiltIn/跳过不显示禁用按钮。 |
+| C1 | Discovery instantiates nothing; a library with a mismatched ABI never enters the list. |
+| C2 | The hooks are `Task<void>`; every exit says `co_return;`; loading happens on the application thread. |
+| C3 | Disabling takes effect on the next start; skipping is not persisted. |
+| C4 | The list is taken before `unload()`; one exception does not affect the rest. |
+| C5 | Platform paths are settled by Qt; no `appdata` level in between. |
+| C6 | Identity is whatever the library's `PluginInfo` says; the registration file is written to a temporary name and renamed. |
+| C7 | `PluginInfo` is Qt-free; an SVG goes into a constant before it is passed to the macro. |
+| C8 | No disable button for a BuiltIn or skipped plugin. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | 同名只发现一次，BuiltIn > User > AllUsers。 |
-| R2 | 禁用/跳过不实例化；依赖失败分类清楚。 |
-| R3 | 跳过/禁用仍出现在 `pluginEntries()`。 |
-| R4 | `unload()` 只释放插件自己的资源。 |
-| R5 | 持久化默认打开；`persist_config=false` 不读不写。 |
-| R6 | 身份冲突只 warning，库为准。 |
-| R7 | 非法 SVG 回退默认图标。 |
-| R8 | 详情显示 icon/email/repo/依赖/状态。 |
+| R1 | A name is discovered once, BuiltIn > User > AllUsers. |
+| R2 | A disabled or skipped plugin is never instantiated; a dependency failure is classified. |
+| R3 | A skipped or disabled plugin still appears in `pluginEntries()`. |
+| R4 | `unload()` releases the plugin's own resources only. |
+| R5 | Persistence is on by default; `persist_config=false` reads and writes nothing. |
+| R6 | An identity conflict is a warning only; the library wins. |
+| R7 | An invalid SVG falls back to the default icon. |
+| R8 | The details show icon / email / repo / dependencies / state. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | 卸载是反初始化，不 `dlclose`。 |
-| N2 | 禁用不是可满足的依赖；跳过也不是。 |
-| N3 | `loadAll()` 拒绝环；显式 `load()` 可造环，卸载回退传入顺序。 |
-| N4 | 插件数据目录键是插件名，不是库路径。 |
+| N1 | Unloading is de-initialisation; no `dlclose`. |
+| N2 | A disabled plugin is not a satisfiable dependency; neither is a skipped one. |
+| N3 | `loadAll()` refuses a cycle; an explicit `load()` can build one, and unloading then falls back to the caller's order. |
+| N4 | A plugin's data directory is keyed by plugin name, not by library path. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 SVG 图标里的逗号
+### 6.1 A comma inside an SVG icon
 
-- 会怎么错：`VN_DECLARE_PLUGIN` 宏参数被 SVG 里的逗号切开。
-- 怎么判：编译错误/图标错乱。
-- 怎么防：先把 SVG 放进 `constexpr const char8_t*` 常量再传。
+- How it fails: the commas inside the SVG split the arguments of `VN_DECLARE_PLUGIN`.
+- How to detect it: a compile error, or a garbled icon.
+- How to prevent it: put the SVG in a `constexpr const char8_t*` constant first, then pass the constant.
 
-### 6.2 依赖卸载顺序
+### 6.2 Unload order
 
-- 会怎么错：按加载列表倒序卸，先卸被依赖的 `parent`。
-- 怎么判：`UnloadOrderIsReverseDependencyOrder` 的合成集合。
-- 怎么防：用 `unloadOrder()` 纯函数，不看列表位置。
+- How it fails: walking the load list backwards unloads the depended-on `parent` first.
+- How to detect it: the synthetic set in `UnloadOrderIsReverseDependencyOrder`.
+- How to prevent it: use the pure `unloadOrder()` function and never look at a position in the list.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 | --- | --- | --- | --- |
-| D1 | 运行时热卸载 | 禁用/跳过/依赖/命令注册的复杂度远超收益。 | — |
-| D2 | `dlclose` 插件库 | 静态工厂/元对象/vtable 被宿主长期引用。 | — |
-| D3 | 宿主侧注册回滚 | 关停后管理器随即析构，回滚无意义。 | — |
-| D4 | 用 `QIcon`/文件路径做插件图标 | 会把 Qt 版本耦合进 ABI。 | — |
-| D5 | 安装时复制插件文件 | 现在是就地注册路径；路径失效下次启动 warning。 | — |
+| D1 | Run-time hot unload | Disable / skip / dependency / command-registration complexity far outweighs the benefit. | — |
+| D2 | `dlclose` the plugin library | Static factories, meta-objects and vtables are referenced by the host for the rest of the process. | — |
+| D3 | Host-side registration rollback | The manager is destroyed right after shutdown, so a rollback protects nothing. | — |
+| D4 | `QIcon` or a file path as the plugin icon | It would couple a Qt version into the ABI. | — |
+| D5 | Copy plugin files at install time | Registration is by path; a path that no longer resolves is a warning on the next start. | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 | --- | --- | --- |
-| T1 | 发现/去重/来源优先级 | `PluginLifecycleTest` |
-| T2 | 依赖/禁用/跳过加载分类 | `DisabledDependencyBlocksDependents` 等 |
-| T3 | 禁用持久化/跳过可见 | `DisableIsPersistedInConfig`、`SkippedPluginStaysVisibleAndIsNeverInstantiated` |
-| T4 | 卸载顺序/成环 | `UnloadOrderIsReverseDependencyOrder`、`UnloadOrderTerminatesOnACycle` |
-| T5 | 目录布局/配置往返 | `DefaultDataDirectoryLayout`、`ConfigFileRoundTripPersistsDisabledPlugins` |
-| T6 | 安装/注册 | `InstallWritesRegistrationFile`、`HandWrittenRegistrationCanDisableForAllUsers` |
-| T7 | 元数据/图标/对话框 | `ManagerDialogShowsMetadataAndIcons` |
+| T1 | discovery / dedup / source priority | `PluginLifecycleTest` |
+| T2 | dependency / disabled / skipped load classification | `DisabledDependencyBlocksDependents` and friends |
+| T3 | disable persistence / skip visibility | `DisableIsPersistedInConfig`, `SkippedPluginStaysVisibleAndIsNeverInstantiated` |
+| T4 | unload order / cycle | `UnloadOrderIsReverseDependencyOrder`, `UnloadOrderTerminatesOnACycle` |
+| T5 | directory layout / config round trip | `DefaultDataDirectoryLayout`, `ConfigFileRoundTripPersistsDisabledPlugins` |
+| T6 | install / registration | `InstallWritesRegistrationFile`, `HandWrittenRegistrationCanDisableForAllUsers` |
+| T7 | metadata / icon / dialog | `ManagerDialogShowsMetadataAndIcons` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-发现/加载/禁用/跳过/卸载、配置/数据目录、安装注册、元数据/图标、管理器对话框均已落地。
+Discovery, loading, disabling, skipping and unloading, the configuration and data directories, installation registration, metadata and icons, and the manager dialog are all in place.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-- 每插件库子目录（带私有依赖）未做；install RPATH 已预留。
-- 安装时复制插件文件未做（就地注册路径）。
-- 被 ABI 拒绝的库不进发现列表（只能靠日志）。
+- No per-plugin library subdirectory (with private dependencies); the install RPATH is already reserved for it.
+- No file copying at install time (registration is by path).
+- A library rejected by the ABI check does not enter the discovery list, so only the log identifies it.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-`VN_APPFW_PLUGIN_ABI_VERSION` 当前 **10u**；`VN_DECLARE_PLUGIN` 参数个数变更后所有插件必须重编。
+`VN_APPFW_PLUGIN_ABI_VERSION` is **10u**; after an argument-count change in `VN_DECLARE_PLUGIN` every plugin must be recompiled.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/fw/appfw/sdk/vine/appfw/Plugin.hpp`
 - `src/fw/appfw/sdk/vine/appfw/PluginManager.hpp`
 - `src/fw/appfw/src/PluginManager.cpp`
 - `src/fw/appfw/src/gui/PluginManagerDialog.cpp`
-- `tests/test_appfw`、`tests/test_gui`
+- `tests/test_appfw`, `tests/test_gui`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `appfw-startup-phases.md`
 - `appfw-config.md`
 - `../backlog/`
 
-### 10.3 外部资料
+### 10.3 External material
 
-- `QStandardPaths` 的目录布局。
-- `QSvgRenderer` 的 SVG 校验。
+- `QStandardPaths`'s directory layout.
+- `QSvgRenderer`'s SVG validation.

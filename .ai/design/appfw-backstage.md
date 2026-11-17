@@ -1,300 +1,304 @@
-# Backstage 与 ApplicationButton
+# Backstage and the application button
 
-> **状态**：现行
-> **最后核对**：2026-10-29
-> **范围**：应用按钮的点击事件、菜单/Backstage 二选一、Backstage 顶层覆盖窗口与页面导航；不含最近文件、导入导出等具体页面内容。
-> **权威来源**：`src/fw/appfw/sdk/vine/appfw/gui/Backstage.hpp`、`RibbonBar.hpp`、`MainWindow.hpp`；用例 `tests/test_gui/test_gui.cpp`。
-> **待办**：`../backlog/appfw-ribbon.md`
+> **Status**: current
+> **Last verified**: 2026-10-29
+> **Scope**: the application button's click event, the menu / Backstage either-or, the Backstage top-level overlay window and its page navigation; not the content of individual pages such as recent files or import / export.
+> **Sources**: `src/fw/appfw/sdk/vine/appfw/gui/Backstage.hpp`, `RibbonBar.hpp`, `MainWindow.hpp`; the cases in `tests/test_gui/test_gui.cpp`.
+> **Backlog**: `../backlog/appfw-ribbon.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-Ribbon 左上角的应用按钮（“File”）现在只挂一个扁平 `QMenu`：没有点击事件、没有页面模型，也没有类似 Office Backstage 的整窗入口。
-SARibbon 的 `SARibbonApplicationWidget` 只是个跟随父窗口、Esc 隐藏的 `QFrame` 壳——没有页面/导航/内容，且作为**子控件**会被中央 3D 原生窗口盖住（`.ai/bugs/docking-flyout-under-render.md`）。
+The application button in the ribbon's top-left corner ("File") is a flat `QMenu` with no click event, no page model and no whole-window entry like the Office Backstage.
+SARibbon's `SARibbonApplicationWidget` is only a `QFrame` shell that follows its parent window and hides on Esc — no pages, no navigation, no content — and as a **child widget** it is covered by the central native 3D window (`.ai/bugs/docking-flyout-under-render.md`).
 
-### 1.2 目标
+### 1.2 Goals
 
-- 暴露应用按钮点击事件（`RibbonBar::applicationButtonClicked()`），让宿主/插件可响应。
-- 提供 Backstage 组件：页面（id/标题/图标）、左侧导航、命令条目、打开/关闭/Esc、跟随主窗口几何。
-- 应用按钮在“菜单”与“Backstage”之间二选一，不出现两者同时弹出的状态。
-- 复用现有命令：Backstage 条目就是 `RibbonAction`（命令名即身份），不引入新的命令体系。
-- 新组件不影响既有 ABI：只加新类、新方法，事件放 `Impl`。
+- Expose the application button's click as an event (`RibbonBar::applicationButtonClicked()`) so a host or plugin can react to it.
+- Provide a Backstage component: pages (id / title / icon), left navigation, command items, open / close / Esc, and geometry that follows the main window.
+- The application button chooses between the menu and the Backstage; the two never pop up at once.
+- Reuse the existing commands: a Backstage item *is* a `RibbonAction` (the command name is its identity), so no second command vocabulary is introduced.
+- The new component leaves the existing ABI alone: only new classes and new methods, with the event held in `Impl`.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做最近文件（MRU）、导入导出、账户等页面内容（没有存储/需求，见 §9.2）。
-- 不做页面的多段布局（一页只有一块主体：命令列或一个控件，见 F7）。
-- 不改 `SARibbonApplicationWidget` 上游代码。
+- No page content such as recent files (MRU), import / export or accounts (there is no storage and no requirement; see §9.2).
+- No multi-section page layout (a page has one body: a command column or one widget, see F7).
+- No change to the upstream `SARibbonApplicationWidget` code.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**应用按钮是触发器，Backstage 是独立组件；覆盖层必须是顶层 Tool 窗口，页面/条目沿用 id 与命令词汇。**
+**The application button is the trigger, the Backstage is a separate component; the overlay has to be a top-level Tool window, and pages and items reuse the id and command vocabulary.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 应用按钮只负责“触发”，Backstage 是独立组件（G1）
+### 2.1 The application button only triggers; the Backstage is a separate component (G1)
 
-- 是什么：`RibbonBar` 暴露点击事件，并负责菜单/Backstage 的模式切换；`Backstage` 独立负责覆盖窗口与页面。
-- 为什么：按钮输入、窗口层级、页面模型是三个职责，混在一个类里会重演“一个类什么都知道”的问题。
-- 边界：`MainWindow` 拥有 Backstage 的生命周期；`RibbonBar` 只借用指针。
+- What: `RibbonBar` exposes the click and owns the menu / Backstage mode switch; `Backstage` owns the overlay window and the pages.
+- Why: button input, window stacking and the page model are three responsibilities; folding them into one class repeats the "one class knows everything" problem.
+- Boundary: `MainWindow` owns the Backstage's lifetime; `RibbonBar` only borrows the pointer.
 
-### 2.2 覆盖层是顶层 Tool 窗口，不是子控件（G10）
+### 2.2 The overlay is a top-level Tool window, not a child widget (G10)
 
-- 是什么：`Backstage` 的 native widget 是 `Qt::Tool | FramelessWindowHint` 的顶层窗口，**父窗口设为主窗口**（保证叠在主窗口与其原生子窗口之上，但不是全局 topmost），几何跟随主窗口客户区。
-- 为什么：中央 3D 是 `createWindowContainer` 的原生子窗口，Windows 上永远画在 Qt 子控件之上；子控件覆盖层在文档区会缺失一块。飞窗的修复已经证明“顶层 Tool 窗口”是可行方向。
-- 代价与手势：需要自己同步 move/resize/minimize/restore、激活与 Esc；覆盖层没有自己的标题栏，所以按住它的空白处（页眉、标题文字、导航轨边缘）拖动的是**主窗口**——单独移动覆盖层只会让“等于客户区”失真，下一次同步又跳回去。拖动时覆盖层在**同一次事件**里跟上（不等主窗口的 `Move` 事件），否则快速拖动会看到两个窗口错开一帧。
+- What: `Backstage`'s native widget is a top-level window with `Qt::Tool | FramelessWindowHint`, its **parent window set to the main window** (so it stacks above the main window and its native children without being globally topmost), and its geometry follows the main window's client area.
+- Why: the central 3D view is a native child created by `createWindowContainer`, and on Windows it is always painted above Qt child widgets; a child-widget overlay would leave a hole in the document area. The fly-out fix already showed that a top-level Tool window is the workable direction.
+- Cost and gesture: move / resize / minimize / restore, activation and Esc have to be synchronised by hand; the overlay has no title bar of its own, so dragging its empty space (header, title text, the edge of the navigation rail) drags the **main window** — moving the overlay alone would break the "equals the client area" promise and the next sync would jump it back. While dragging, the overlay follows in the **same event** (it does not wait for the main window's `Move` event), or a fast drag shows the two windows a frame apart.
 
-### 2.3 页面是 id 平铺列表，条目复用命令（G1、G8）
+### 2.3 A page is a flat list of ids; an item reuses a command (G1, G8)
 
-- 是什么：`Backstage` 按添加顺序持有一组 `BackstagePage`；页面 id 唯一，空 id 不参与查找；页面条目是 `RibbonAction`。
-- 为什么：命令名已经是动作身份，Backstage 不再发明一套 item id/role；页面顺序今天没有排序需求，append 足够（`G8`）。
-- 边界：页面 id 只用于查找/去重；页面标题/图标在 add 之前设置。
+- What: `Backstage` holds a set of `BackstagePage`s in the order they were added; a page id is unique and an empty id takes no part in lookups; a page item is a `RibbonAction`.
+- Why: the command name is already the action's identity, so the Backstage does not invent an item id or role; page order has no sorting requirement today, so append is enough (`G8`).
+- Boundary: a page id is used for lookup and dedup only; a page's title and icon are set before it is added.
 
-### 2.4 所有权：窗口拥有 Backstage，栈拥有页面 widget（G10）
+### 2.4 Ownership: the window owns the Backstage, the stack owns the page widgets (G10)
 
-- 是什么：`MainWindow::setBackstage()` 接管 Backstage 指针；`Backstage::addPage()` 把页面 widget 交给内部 `QStackedWidget`，并把页面包装对象设为不拥有 impl。
-- 为什么：避免“包装对象与 Qt 父对象都删除同一个 widget”；与 Ribbon 的 tab/group 所有权约定一致。
-- 边界：页面内的 `RibbonAction` 由调用方持有，页面只创建按钮并 `setDefaultAction()`。
+- What: `MainWindow::setBackstage()` takes over the Backstage pointer; `Backstage::addPage()` hands the page widget to the internal `QStackedWidget` and marks the page wrapper as not owning its impl.
+- Why: to avoid the wrapper object and the Qt parent both deleting the same widget; it matches the ownership convention of ribbon tabs and groups.
+- Boundary: the `RibbonAction`s inside a page are held by the caller; the page only creates the buttons and calls `setDefaultAction()`.
 
-### 2.5 只封装 SARibbon 的应用按钮（G2、G12）
+### 2.5 Wrapping only SARibbon's application button (G2, G12)
 
-- 是什么：使用 `SARibbonApplicationButton` 与 `SARibbonBar::applicationButtonClicked`；Backstage 的窗口与页面模型自建。
-- 为什么：SARibbon 的 Backstage 壳不能满足原生表面叠放要求；强行使用会把上游控件的父窗口语义带进来（它要求 `SARibbonMainWindow*` 父窗口）。
-- 边界：`SARibbonApplicationWidget` 不作为依赖；其 resize/Esc 行为由 Backstage 自己实现。
+- What: use `SARibbonApplicationButton` and `SARibbonBar::applicationButtonClicked`; the Backstage's window and page model are our own.
+- Why: SARibbon's Backstage shell cannot satisfy the native-surface stacking requirement, and forcing it would drag the upstream widget's parent-window semantics in (it requires a `SARibbonMainWindow*` parent).
+- Boundary: `SARibbonApplicationWidget` is not a dependency; its resize and Esc behaviour is implemented by the Backstage itself.
 
-### 2.6 菜单与 Backstage 二选一（G4）
+### 2.6 Menu or Backstage, never both (G4)
 
-- 是什么：`RibbonBar::setBackstage(bs)` 时把应用按钮的 `QMenu` 摘掉；`setBackstage(nullptr)` 恢复菜单。
-- 为什么：按钮同时弹菜单和打开页面是两种相互矛盾的行为；模式必须显式。
-- 边界：`clearApplicationMenu()` 只清空菜单项，不删除 `RibbonAction`。
+- What: `RibbonBar::setBackstage(bs)` detaches the application button's `QMenu`; `setBackstage(nullptr)` restores it.
+- Why: a button that pops a menu and opens a page at the same time is two contradictory behaviours; the mode has to be explicit.
+- Boundary: `clearApplicationMenu()` empties the menu items only; it never deletes a `RibbonAction`.
 
-### 2.7 外观：导航轨 + 内容面（G4、G12、G6）
+### 2.7 Appearance: a navigation rail and a content surface (G4, G12, G6)
 
-- 是什么：240 px 导航轨（顶部返回按钮 + 页面行）与 `palette(base)` 内容面（大号标题、1 px 分隔线、封顶 760 px 的条目列）；颜色一律用 `palette(...)` 角色，跟随明/暗主题（同 `detail::blendIntoSurface()`）。返回箭头按 `palette(window-text)` 现画：平台 `SP_ArrowBack` 是拟物位图，文本字形在带边框的样式表按钮里不居中。
-- 为什么：默认控件平铺读起来像一个空的安全对话框，而 Office Backstage / VS Code 设置页都靠“一列导航 + 一块内容面”和两级字号建立层次；返回箭头属于“退出这一层”而非“这一页”，所以放导航轨顶部；条目列封顶是因为一行拉满 4K 后不再是一条条目。
-- 边界（C15）：版式按 8 px 网格——导航行与条目行同为 40 px、2 px 间距、12 px 内边距、20 px 图标位，标题与条目列共用 32 px 左缩进，页眉上下 24 / 16 px，条目列距分隔线 24 px，行间一条 1 px 半透明细线；悬停/按下用中性半透明灰，不依赖某个调色板角色恰好不是白色；图标位属于行布局，无图标的行也用透明图标占位，否则该行文字比相邻行左移。条目列放在封顶 760 px 的滚动区里（细滚动条，纵向），滚动条就落在列表末尾而不是窗口边缘；body 页不套滚动区，滚动归 body 自己。
+- What: a 240 px navigation rail (a back button at the top, then the page rows) and a `palette(base)` content surface (a large title, a 1 px separator, an item column capped at 760 px); every colour comes from a `palette(...)` role so it follows the light / dark theme (same as `detail::blendIntoSurface()`). The back arrow is drawn from `palette(window-text)`: the platform's `SP_ArrowBack` is a skeuomorphic bitmap, and a text glyph is not centred inside a bordered stylesheet button.
+- Why: the default widgets laid out flat read like an empty security dialog, while Office Backstage and the VS Code settings page both build hierarchy from "a column of navigation + one content surface" and two type sizes; the back arrow means "leave this level", not "this page", so it belongs at the top of the rail; the item column is capped because a row stretched across 4K is no longer a row.
+- Boundary (C15): the layout is on an 8 px grid — a navigation row and an item row are both 40 px high, 2 px apart, with 12 px padding and a 20 px icon slot; the title and the item column share a 32 px left indent; the header has 24 / 16 px above and below; the item column sits 24 px from the separator, with a 1 px translucent hairline between rows; hover and press use a neutral translucent grey rather than relying on some palette role happening not to be white; the icon slot belongs to the row layout, and a row without an icon uses a transparent placeholder, otherwise its text shifts left of its neighbours. The item column lives in a scroll area capped at 760 px (a thin vertical scrollbar), so the scrollbar lands at the end of the list rather than at the window edge; a body page is not wrapped in a scroll area — scrolling belongs to the body.
 
-### 2.8 入口只有一个开关：应用按钮的可见性（G1、G8）
+### 2.8 One switch for the entry: the application button's visibility (G1, G8)
 
-- 是什么：`RibbonBar::setApplicationButtonVisible(bool)` 是“提不提供 Backstage/应用菜单入口”的唯一控制；`Backstage` 本身没有 enabled 状态，`open()` 对任何持有者都有效。入口的默认文字是“文件”（`setApplicationText()` / `applicationText()` 可改，语言归宿主）。
-- 为什么：应用按钮是进入菜单与 Backstage 的唯一入口，再给 Backstage 一个“禁用”就是同一件事的第二个表示：宿主得配对维护两处状态，而 `applicationButtonVisible()` 会同时被两种原因置假，读的人分不清是“宿主不要”还是“功能被禁用”（`G1` 一个事实一个所有者）。
-- 边界：隐藏入口是呈现层选择，不是权限边界——命令/快捷键仍可调 `open()`，是否拒绝由宿主自己决定；想彻底拿掉 Backstage 用 `MainWindow::setBackstage(nullptr)`（见 D6）。
+- What: `RibbonBar::setApplicationButtonVisible(bool)` is the single control over "is the Backstage / application-menu entry offered"; `Backstage` itself has no enabled state and `open()` works for any holder. The entry's default text is "File" (changeable through `setApplicationText()` / `applicationText()`; the wording belongs to the host).
+- Why: the application button is the only entry into both the menu and the Backstage, so giving the Backstage a "disabled" state would be a second representation of the same fact: the host would have to keep two states in step, and `applicationButtonVisible()` would be set false by two different causes, leaving a reader unable to tell "the host does not want it" from "the feature is switched off" (`G1`, one fact one owner).
+- Boundary: hiding the entry is a presentation choice, not a permission boundary — a command or shortcut can still call `open()`, and whether to refuse is the host's decision; to remove the Backstage entirely use `MainWindow::setBackstage(nullptr)` (see D6).
 
-### 2.9 页面与 tab 同构：id 是身份，role 是语义锚，placement 是意图（G1、G6、G9）
+### 2.9 Pages and tabs are isomorphic: id is identity, role is the semantic anchor, placement is intent (G1, G6, G9)
 
-- 是什么：`BackstagePageRole`（Home/New/Open/Info/Print/Export/Plugins/Help/Account/Options/Close/UserRole）+ `BackstagePlacement`（append/before/after，锚点是 id 或 role）+ `BackstagePlaceResult`，与 `RibbonTabRole`/`RibbonPlacement`/`RibbonPlaceResult` 同形同义；`addPage(page)` 仍是 append。
-- 为什么：页序此前等于添加顺序（也就是加载顺序），插件无法表达“放在 Info 后面”。与 tab 共用一套词汇，插件学一次用在两处；解析规则也是同一张表——终止区（`BackstagePagePolicy::Terminal`，`Close` 用它）+ role 序 + 单一锚 + 越界夹回。
-- 代价与边界：解析器在 `Backstage.cpp` 与 `RibbonBar.cpp` 各有一份（判定同一张表，两边用例同构，分叉即 bug）；不抽模板，是因为一个被两个枚举实例化的模板比两份同形代码更难读（G11）。
+- What: `BackstagePageRole` (Home / New / Open / Info / Print / Export / Plugins / Help / Account / Options / Close / UserRole) + `BackstagePlacement` (append / before / after, anchored by id or by role) + `BackstagePlaceResult`, the same shape and meaning as `RibbonTabRole` / `RibbonPlacement` / `RibbonPlaceResult`; `addPage(page)` is still the append form.
+- Why: page order used to equal the order of addition (that is, of loading), so a plugin could not say "put mine after Info". Sharing one vocabulary with tabs means a plugin learns it once and uses it in two places, and the resolution rules are the same table too — the terminal zone (`BackstagePagePolicy::Terminal`, used by `Close`) + role order + a single anchor + clamping back into range.
+- Cost and boundary: the resolver exists once in `Backstage.cpp` and once in `RibbonBar.cpp` (same decision table, isomorphic cases on both sides, a fork is a bug); it is not extracted into a template because a template instantiated by two enums is harder to read than two isomorphic copies (G11).
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | 应用按钮点击事件 | `RibbonBar::applicationButtonClicked()` | 已落地 |
-| F2 | 菜单/Backstage 模式 | `setBackstage()` / `clearApplicationMenu()` / `backstage()` | 已落地 |
-| F3 | Backstage 页面 | `addPage/findPage/currentPage/pageAt/numPages` | 已落地 |
-| F4 | 命令条目 | `BackstagePage::addItem(RibbonAction*)` | 已落地 |
-| F5 | 打开/关闭/几何 | `open/close/isOpen`、Esc、跟随主窗口 | 已落地 |
-| F6 | 生命周期 | `MainWindow::setBackstage()` 接管所有权 | 已落地 |
-| F7 | 页面主体 | `setBody(Control*)`；主体唯一（命令列或一个控件） | 已落地 |
-| F8 | 最近文件 / MRU | 最近文件页 | 未做，见 backlog |
-| F9 | 页面显隐 | `setPageVisible/isPageVisible`；导航行隐藏、序号不变 | 已落地 |
-| F10 | 条目显隐 | `setItemVisible/isItemVisible`；按钮不参与布局 | 已落地 |
-| F12 | 页面放置 | `BackstagePlacement` / `addPage(page, placement)` / `findPage(role)`；终止区与角色序 | 已落地 |
-| F13 | 贡献者身份与成组撤销 | `setProvider` / `removePages(provider)`；插件卸载/重载时撤自己的页 | 已落地 |
-| F14 | 条目列滚动 | 条目超过一页时页面列可滚动（细滚动条）；body 页不套滚动区 | 已落地 |
+| F1 | Application button click | `RibbonBar::applicationButtonClicked()` | landed |
+| F2 | Menu / Backstage mode | `setBackstage()` / `clearApplicationMenu()` / `backstage()` | landed |
+| F3 | Backstage pages | `addPage/findPage/currentPage/pageAt/numPages` | landed |
+| F4 | Command items | `BackstagePage::addItem(RibbonAction*)` | landed |
+| F5 | Open / close / geometry | `open/close/isOpen`, Esc, follows the main window | landed |
+| F6 | Lifetime | `MainWindow::setBackstage()` takes ownership | landed |
+| F7 | Page body | `setBody(Control*)`; one body only (a command column or one widget) | landed |
+| F8 | Recent files / MRU | the recent-files page | not done, see backlog |
+| F9 | Page visibility | `setPageVisible/isPageVisible`; the navigation row hides, the index does not change | landed |
+| F10 | Item visibility | `setItemVisible/isItemVisible`; the button leaves the layout | landed |
+| F12 | Page placement | `BackstagePlacement` / `addPage(page, placement)` / `findPage(role)`; terminal zone and role order | landed |
+| F13 | Contributor identity and group removal | `setProvider` / `removePages(provider)`; a plugin withdraws its own pages on unload / reload | landed |
+| F14 | Item-column scrolling | the page column scrolls when the items exceed one page (thin scrollbar); a body page is not wrapped in a scroll area | landed |
 
-### 3.1.1 F1–F6 基础能力（行为细节以头文件为准，约束见 §5.1 的 C1–C6）
+### 3.1.1 F1–F6 base capabilities (behaviour details are in the headers, constraints in C1–C6 of §5.1)
 
-| # | 行为 | 验收 |
+| # | Behaviour | Acceptance |
 |---|---|---|
-| F1 | 按钮 `clicked` 转发为 `Event<RibbonBar, EventArgs>`（P1：事件与菜单并行，用 Backstage 时先 `setBackstage()` 摘菜单） | T1 `Backstage_ApplicationButtonOpensThePage` |
-| F2 | `setBackstage(bs)` 摘掉按钮菜单并订阅事件打开 `bs`；`nullptr` 断开订阅并恢复菜单（P2：`clearApplicationMenu()` 不删动作） | T1、T2 |
-| F3 | 页面按添加顺序进入左侧导航与 `QStackedWidget`；非空 id 唯一；第一张可见页成为当前页（P3：空 id 页可存在，但 `findPage("")` 找不到） | T2 `Backstage_PagesAndNavigation` |
-| F4 | `addItem(RibbonAction*)` 建一个 `QToolButton` 并 `setDefaultAction()`，点击走命令执行（P4：条目先于页面销毁会让按钮的 action 悬空） | T3 `Backstage_PageItemsAreCommandBound` |
-| F5 | `open()` 同步几何、显示、置顶、激活；Esc 或返回按钮 `close()`；主窗口 move/resize/minimize 时跟随/隐藏（P5：多屏/分数缩放的 1 px 偏差属平台取整） | T4 `Backstage_FollowsMainWindowSize`、`Backstage_ClosesOnEscapeOrClose` |
-| F6 | `MainWindow::setBackstage()` 接管所有权，替换时先解除 Ribbon 的订阅再删除旧对象（析构不崩溃、指针清空） | T5 `Backstage_IsOwnedByMainWindow` |
+| F1 | The button's `clicked` is forwarded as `Event<RibbonBar, EventArgs>` (P1: the event and the menu coexist, so a host using the Backstage calls `setBackstage()` first to detach the menu) | T1 `Backstage_ApplicationButtonOpensThePage` |
+| F2 | `setBackstage(bs)` detaches the button's menu and subscribes to the event that opens `bs`; `nullptr` disconnects and restores the menu (P2: `clearApplicationMenu()` deletes no action) | T1, T2 |
+| F3 | Pages enter the left navigation and the `QStackedWidget` in the order they were added; a non-empty id is unique; the first visible page becomes the current one (P3: a page with an empty id may exist, but `findPage("")` never finds it) | T2 `Backstage_PagesAndNavigation` |
+| F4 | `addItem(RibbonAction*)` creates a `QToolButton` and calls `setDefaultAction()`; a click runs the command (P4: an item destroyed before its page leaves the button's action dangling) | T3 `Backstage_PageItemsAreCommandBound` |
+| F5 | `open()` synchronises geometry, shows, raises and activates; Esc or the back button calls `close()`; the overlay follows or hides on the main window's move / resize / minimize (P5: a 1 px offset on multi-monitor or fractional scaling is the platform's rounding) | T4 `Backstage_FollowsMainWindowSize`, `Backstage_ClosesOnEscapeOrClose` |
+| F6 | `MainWindow::setBackstage()` takes ownership; a replacement first disconnects the ribbon's subscription and then deletes the old object (no crash in the destructor, the pointer is cleared) | T5 `Backstage_IsOwnedByMainWindow` |
 
-### 3.1.2 F9、F10、F12、F13 页面的显隐、放置与贡献者
+### 3.1.2 F9, F10, F12, F13 — page visibility, placement, body and contributors
 
-| # | 行为 | 验收 |
+| # | Behaviour | Acceptance |
 |---|---|---|
-| F9 | `setPageVisible` 隐藏/恢复导航行；隐藏当前页时选下一可见页，全隐藏则无当前页且 `open()` 拒绝（R7） | T6 `Backstage_PagesCanBeHidden` |
-| F10 | `setItemVisible` 隐藏/恢复条目按钮，序号与动作不变（C9） | T7 `BackstagePage_ItemsCanBeHidden` |
-| F12 | `addPage(page, placement)` 按放置意图插入；终止区 + 角色序 + 单锚 + 越界夹回，导航与栈随之镜像（C12） | T9 `Backstage_PageRolesAndPlacement`、`Backstage_PagePlacementEdgeCases` |
-| F13 | `setProvider` + `removePages(provider)` 整组撤除；被撤的当前页由后一张接替，撤掉的页可重新加入（C13） | T10 `Backstage_PagesAreRemovedByProvider` |
-| F7 | `setBody(Control*)` 把命令列换成一块控件；已有条目时拒装、有 body 时拒收条目，换 body 时旧的交回调用方（C14） | T12 `BackstagePage_BodyReplacesTheCommandColumn` |
+| F9 | `setPageVisible` hides or restores the navigation row; hiding the current page selects the next visible one, and with all pages hidden there is no current page and `open()` refuses (R7) | T6 `Backstage_PagesCanBeHidden` |
+| F10 | `setItemVisible` hides or restores the item button; the index and the action do not change (C9) | T7 `BackstagePage_ItemsCanBeHidden` |
+| F12 | `addPage(page, placement)` inserts by placement intent; terminal zone + role order + a single anchor + clamping back into range, with the navigation and the stack mirroring it (C12) | T9 `Backstage_PageRolesAndPlacement`, `Backstage_PagePlacementEdgeCases` |
+| F13 | `setProvider` + `removePages(provider)` withdraw a whole group; the following page takes over as current and a removed page may be added again (C13) | T10 `Backstage_PagesAreRemovedByProvider` |
+| F7 | `setBody(Control*)` replaces the command column with one widget; a page that already has items refuses a body and a page with a body refuses items, and replacing the body hands the old one back to the caller (C14) | T12 `BackstagePage_BodyReplacesTheCommandColumn` |
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 RibbonBar
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 |---|---|---|
-| `applicationButtonClicked()` | 应用按钮点击事件 | 完整签名见头文件 |
-| `clearApplicationMenu()` | 清空菜单项 | 不删除动作 |
-| `setBackstage(Backstage*)` | 菜单/Backstage 二选一 | 借用指针 |
-| `backstage()` | 当前 Backstage | 可为 nullptr |
-| `setApplicationButtonVisible(bool)` | File 入口显隐（也决定应用菜单入口） | 呈现层选择，不是权限 |
-| `applicationButtonVisible()` | 入口当前是否显示 | 报告控件状态 |
+| `applicationButtonClicked()` | the application button's click event | the full signature is in the header |
+| `clearApplicationMenu()` | empties the menu items | deletes no action |
+| `setBackstage(Backstage*)` | menu or Backstage, never both | borrows the pointer |
+| `backstage()` | the current Backstage | may be nullptr |
+| `setApplicationButtonVisible(bool)` | shows or hides the File entry (and with it the application-menu entry) | a presentation choice, not a permission |
+| `applicationButtonVisible()` | whether the entry is currently shown | reports the widget's state |
 
 ### 4.2 Backstage
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 |---|---|---|
-| `Backstage(MainWindow*)` | 建顶层覆盖窗口并跟随主窗口 | 不接管页面 |
-| `addPage(BackstagePage*)` | 追加页面 | 重复非空 id 返回 false |
-| `addPage(BackstagePage*, const BackstagePlacement&)` | 按放置意图加页 | 返回状态 + 逻辑索引 |
-| `findPage(const String&)` / `findPage(BackstagePageRole)` | 按 id / 按角色查找 | 逻辑顺序中的第一个 |
-| `removePages(const String& provider)` | 整组撤除某贡献者的页 | 返回撤掉的页数；空 provider 不匹配 |
-| `findPage/pageAt/numPages` | 页面查找 | 逻辑顺序 |
-| `setCurrentPage/currentPage` | 切换页面 | 同步导航与内容栈 |
-| `setPageVisible/isPageVisible` | 页面显隐 | 隐藏不删除，序号不变 |
-| `open/close/isOpen` | 显隐 | Esc/返回按钮关闭；无可见页时 open 拒绝 |
+| `Backstage(MainWindow*)` | creates the top-level overlay window and follows the main window | takes over no page |
+| `addPage(BackstagePage*)` | appends a page | a duplicate non-empty id returns false |
+| `addPage(BackstagePage*, const BackstagePlacement&)` | adds a page by placement intent | returns the status and the logical index |
+| `findPage(const String&)` / `findPage(BackstagePageRole)` | look up by id / by role | the first match in logical order |
+| `removePages(const String& provider)` | withdraws one contributor's pages as a group | returns how many were removed; an empty provider matches nothing |
+| `findPage/pageAt/numPages` | page lookup | logical order |
+| `setCurrentPage/currentPage` | switches the page | keeps the navigation and the content stack in step |
+| `setPageVisible/isPageVisible` | page visibility | hiding does not delete, and the index does not change |
+| `open/close/isOpen` | show / hide | Esc or the back button closes; `open()` refuses when no page is visible |
 
 ### 4.3 BackstagePage
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 |---|---|---|
-| `setId/id` | 页面身份 | add 前设置 |
-| `setTitle/title`、`setIcon/icon` | 导航标题与图标 | add 前设置 |
-| `setRole/role`、`setPolicy/policy` | 语义锚与终止区 | add 前设置；Close 标 Terminal |
-| `setProvider/provider` | 贡献者身份 | add 前设置；供 `removePages` 整组撤除 |
-| `setBody/body` | 页面主体（一块控件） | 与 `addItem` 互斥；widget 由页面持有 |
-| `addItem(RibbonAction*)` | 命令条目；一个动作一个条目 | 调用方持有动作 |
-| `numItems/itemAt` | 条目查询 | 逻辑顺序；含隐藏条目 |
-| `setItemVisible/isItemVisible` | 条目显隐 | 动作作身份，序号不变 |
+| `setId/id` | the page's identity | set before the page is added |
+| `setTitle/title`, `setIcon/icon` | the navigation title and icon | set before the page is added |
+| `setRole/role`, `setPolicy/policy` | the semantic anchor and the terminal zone | set before the page is added; `Close` is marked Terminal |
+| `setProvider/provider` | the contributor's identity | set before the page is added; what `removePages` matches |
+| `setBody/body` | the page body (one widget) | mutually exclusive with `addItem`; the page holds the widget |
+| `addItem(RibbonAction*)` | a command item; one item per action | the caller holds the action |
+| `numItems/itemAt` | item lookup | logical order; includes hidden items |
+| `setItemVisible/isItemVisible` | item visibility | the action is the identity, and the index does not change |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-- C1：应用按钮事件在 UI 线程触发。
-- C2：`RibbonBar` 不拥有 Backstage；`MainWindow` 拥有。
-- C3：页面 id/标题/图标在 add 前设置。
-- C4：Backstage 不删除页面条目（`RibbonAction`）。
-- C5：覆盖主窗口客户区，不覆盖系统标题栏。
-- C6：一个 MainWindow 只有一个 Backstage。
-- C7：隐藏页面/条目不删除、不改序号；隐藏当前页时必须有可见页接替，一个都没有则没有当前页并拒绝 open。
-- C9：条目的隐藏以动作为键（一个动作一个条目）；隐藏不是禁用命令。
-- C10：页面里只有 `addItem()` 建的条目按钮，不添加装饰性按钮（用例按 `findChildren<QToolButton*>()` 断言条目，多一个即失败）。
-- C12：页面顺序由 placement 解析，不等于添加/加载顺序；终止页始终在末尾，导航行与内容栈索引随逻辑顺序同步。
-- C13：`removePages(provider)` 只撤匹配的页；被撤页的 widget 从栈里摘下并交回页面（可重新加入），空 provider 不匹配。
-- C14：一页只有一块主体——命令列或 `setBody()` 装的控件；两者不共存，换 body 时旧 body 交回它的主人。
-- C15：版式是网格——导航行与条目行同为 40 px 高、2 px 间距、20 px 图标位；页面标题与条目列共用 32 px 左缩进。改任何一个尺寸都要同时看另一列，否则两列节奏对不上。
+- C1: the application button's event fires on the UI thread.
+- C2: `RibbonBar` does not own the Backstage; `MainWindow` does.
+- C3: a page's id, title and icon are set before it is added.
+- C4: the Backstage never deletes a page item (a `RibbonAction`).
+- C5: the overlay covers the main window's client area, not the system title bar.
+- C6: a `MainWindow` has exactly one Backstage.
+- C7: hiding a page or an item deletes nothing and changes no index; hiding the current page requires a visible page to take over, and with none there is no current page and `open()` is refused.
+- C9: an item is keyed by its action (one item per action); hiding is not disabling the command.
+- C10: a page holds only the item buttons created by `addItem()` and no decorative buttons (the cases assert the items with `findChildren<QToolButton*>()`, so one extra button fails them).
+- C12: page order comes from the placement resolution, not from the order of addition or loading; a terminal page is always last, and the navigation row and the content stack indices follow the logical order.
+- C13: `removePages(provider)` withdraws the matching pages only; a withdrawn page's widget is taken out of the stack and handed back to the page (so it can be added again), and an empty provider matches nothing.
+- C14: a page has exactly one body — the command column or the widget installed by `setBody()`; the two never coexist, and replacing the body hands the old one back to its owner.
+- C15: the layout is a grid — a navigation row and an item row are both 40 px high, 2 px apart, with a 20 px icon slot; the page title and the item column share a 32 px left indent. Changing one dimension means looking at the other column, or the two columns stop keeping time.
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-- R1：应用按钮点击必须可观测（事件）。
-- R2：菜单与 Backstage 不能同时弹出。
-- R3：Backstage 不能被原生 3D 表面遮挡。
-- R4：页面 id 非空时唯一；重复添加被拒绝并记日志。
-- R5：关闭/隐藏后主窗口恢复可用。
-- R6：替换/销毁 MainWindow 时不得留下悬空订阅。
-- R7：隐藏页仍可查找，恢复后能重新成为当前页；隐藏条目的序号与动作不变，可用同一动作恢复。
+- R1: an application-button click must be observable (the event).
+- R2: the menu and the Backstage must not pop up at the same time.
+- R3: the Backstage must not be covered by a native 3D surface.
+- R4: a non-empty page id is unique; a duplicate addition is refused and logged.
+- R5: after closing or hiding, the main window is usable again.
+- R6: replacing or destroying the `MainWindow` must leave no dangling subscription.
+- R7: a hidden page is still findable and can become current again once restored; a hidden item keeps its index and action, and the same action restores it.
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-- N1：Backstage 是顶层窗口，不是主窗口的子控件。
-- N2：导航行与内容栈索引始终一致。
-- N3：页面包装对象在 add 后不拥有其 widget（栈拥有）。
-- N4：菜单项清空后 `RibbonAction` 仍归调用方。
-- N5：导航行索引与页面索引一致（隐藏行仍占位）；隐藏页不可被 `setCurrentPage()` 选中。
-- N7：`pages`（逻辑顺序）是唯一真相，导航行与栈索引只是镜像；当前页按对象保持，不跟行号。
+- N1: the Backstage is a top-level window, not a child widget of the main window.
+- N2: the navigation row and the content-stack index always agree.
+- N3: after the add, the page wrapper does not own its widget (the stack does).
+- N4: after the menu items are cleared, the `RibbonAction`s still belong to the caller.
+- N5: the navigation-row index and the page index agree (a hidden row still occupies its place); a hidden page cannot be selected by `setCurrentPage()`.
+- N7: `pages` (the logical order) is the single truth; the navigation rows and the stack index are only mirrors, and the current page is kept by object, not by row number.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 用 SARibbonApplicationWidget 当子控件
-- 会怎么错：文档区（原生 3D）盖住 Backstage，看起来“只显示了一部分”。
-- 怎么判：打开 Backstage 后中央区被渲染面覆盖。
-- 怎么防：顶层 Tool 窗口；见 `../bugs/docking-flyout-under-render.md`。
+### 6.1 Using SARibbonApplicationWidget as a child widget
+- How it fails: the document area (the native 3D view) covers the Backstage, which looks like "only part of it is drawn".
+- How to detect it: the central area covers the overlay after the Backstage opens.
+- How to prevent it: use a top-level Tool window; see `../bugs/docking-flyout-under-render.md`.
 
-### 6.2 删除顺序
-- 会怎么错：页面包装对象先于 Backstage 栈销毁，widget 双删；或条目动作先删导致按钮悬空。
-- 怎么判：ASan / 关闭窗口崩溃。
-- 怎么防：add 时 `setOwnsImpl(false)`；条目由调用方持有。
+### 6.2 Deletion order
+- How it fails: a page wrapper is destroyed before the Backstage stack, so the widget is deleted twice; or an item's action is deleted first and leaves the button dangling.
+- How to detect it: ASan, or a crash when the window closes.
+- How to prevent it: `setOwnsImpl(false)` when the page is added; the caller holds the items.
 
-### 6.3 Esc 不生效
-- 会怎么错：导航列表有焦点，Esc 被列表吞掉。
-- 怎么判：打开后按 Esc 不关闭。
-- 怎么防：用 `QShortcut(QKeySequence::Cancel)` + `WidgetWithChildrenShortcut`，不依赖 `keyPressEvent`。
+### 6.3 Esc does not work
+- How it fails: the navigation list holds focus and swallows the Esc key.
+- How to detect it: pressing Esc after opening does not close it.
+- How to prevent it: use `QShortcut(QKeySequence::Cancel)` with `WidgetWithChildrenShortcut` instead of relying on `keyPressEvent`.
 
-### 6.4 几何不同步
-- 会怎么错：主窗口最大化/移动后 Backstage 仍在旧位置。
-- 怎么判：最大化后覆盖不全。
-- 怎么防：主窗口事件过滤器同步 `Move/Resize/WindowStateChange/Show/Hide`。
+### 6.4 Geometry out of sync
+- How it fails: the Backstage stays where it was after the main window is maximised or moved.
+- How to detect it: after maximising, the overlay does not cover everything.
+- How to prevent it: an event filter on the main window synchronises `Move/Resize/WindowStateChange/Show/Hide`.
 
-### 6.5 隐藏后的计数
-- 会怎么错：宿主把 `numPages()`/`numItems()` 当“可见数量”，把隐藏项也算进布局。
-- 怎么判：用例断言隐藏后计数不变、`itemAt/pageAt` 仍返回原对象。
-- 怎么防：需要可见数量时自己数 `isPageVisible()/isItemVisible()`。
+### 6.5 Counting after hiding
+- How it fails: a host reads `numPages()` / `numItems()` as "how many are visible" and lays out the hidden ones too.
+- How to detect it: the cases assert that the count does not change after hiding and that `itemAt/pageAt` still return the original object.
+- How to prevent it: count `isPageVisible()` / `isItemVisible()` yourself when a visible count is what is needed.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 |---|---|---|---|
-| D1 | `SARibbonApplicationWidget` 作为主窗口子控件 | 被原生 3D 表面遮挡（G10） | `../decisions/ADR-2026-10-28-backstage-overlay-window.md` |
-| D2 | 打开 Backstage 时隐藏/重建 `RenderControl` | 表面生命周期代价、闪烁（G10） | 同上 |
-| D3 | `WA_NativeWindow` 子窗口 + raise | 飞窗已证明会扰乱渲染表面（G10） | 同上 |
-| D4 | Backstage 拥有页面包装对象 | 与 Qt 父对象双重所有权，双删风险（G10） | 同上 |
-| D5 | 页面支持任意内容布局（v1） | 没有消费者；条目已覆盖当前需求（G8） | — |
-| D6 | 给 `Backstage` 加 `enabled`（禁用而不删除，入口自动隐藏） | 入口就是应用按钮，`setApplicationButtonVisible(false)` 已经表达同一事实；两个开关要配对维护，且 `applicationButtonVisible()` 会被两种原因置假（G8）。要“留着页面但不要入口”：隐藏按钮；要彻底拿掉：`setBackstage(nullptr)` | — |
+| D1 | `SARibbonApplicationWidget` as a child widget of the main window | covered by the native 3D surface (G10) | `../decisions/ADR-2026-10-28-backstage-overlay-window.md` |
+| D2 | Hiding / rebuilding `RenderControl` while the Backstage is open | surface-lifetime cost and flicker (G10) | same |
+| D3 | A `WA_NativeWindow` child window plus raise | the fly-out already showed that this disturbs the render surface (G10) | same |
+| D4 | The Backstage owning the page wrappers | double ownership with the Qt parent, and the risk of a double delete (G10) | same |
+| D5 | Arbitrary content layouts per page (v1) | no consumer; items already cover today's needs (G8) | — |
+| D6 | Adding `enabled` to `Backstage` (disable instead of remove, with the entry hiding itself) | the entry *is* the application button, and `setApplicationButtonVisible(false)` already states the same fact; two switches would have to be kept in step, and `applicationButtonVisible()` would be set false by two different causes (G8). To keep the pages but drop the entry: hide the button; to remove the Backstage entirely: `setBackstage(nullptr)` | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 |---|---|---|
-| T1 | 应用按钮事件打开 Backstage | `GuiTest.Backstage_ApplicationButtonOpensThePage` |
-| T2 | 页面增删/查找/当前页 | `GuiTest.Backstage_PagesAndNavigation` |
-| T3 | 条目是命令绑定的动作 | `GuiTest.Backstage_PageItemsAreCommandBound` |
-| T4 | 跟随主窗口尺寸、关闭 | `GuiTest.Backstage_FollowsMainWindowSize`、`GuiTest.Backstage_ClosesOnEscapeOrClose` |
-| T5 | MainWindow 所有权替换不崩溃 | `GuiTest.Backstage_IsOwnedByMainWindow` |
-| T6 | 页面隐藏/恢复/无可见页 | `GuiTest.Backstage_PagesCanBeHidden` |
-| T7 | 条目隐藏/恢复 | `GuiTest.BackstagePage_ItemsCanBeHidden` |
-| T8 | File 入口隐藏/恢复落到控件上 | `GuiTest.RibbonBar_ApplicationButtonHidesTheEntry` |
-| T9 | 页面放置：角色序/锚点/终止区/回退/夹回/角色查找 | `GuiTest.Backstage_PageRolesAndPlacement`、`GuiTest.Backstage_PagePlacementEdgeCases` |
-| T10 | 按 provider 整组撤除、当前页接替、撤掉的页可重新加入 | `GuiTest.Backstage_PagesAreRemovedByProvider` |
-| T11 | 标准目录：插件页按 role 锚定到终止的帮助页之前 | `GuiTest.Backstage_StandardRoleCatalog` |
-| T12 | 页面主体：与条目互斥、换 body 交回旧的、null 不算 | `GuiTest.BackstagePage_BodyReplacesTheCommandColumn` |
-| T13 | 版式：导航行留图标位、条目列与标题同左缩进、条目行 40 px | `GuiTest.Backstage_NavRowsReserveTheIconColumn`、`GuiTest.Backstage_PageRowsAlignWithTheTitle` |
-| T15 | 条目超过一屏时可滚动；body 页不套滚动区 | `GuiTest.Backstage_ManyItemsScroll` |
-| T16 | 拖覆盖层空白处带动主窗口（松开即停） | `GuiTest.Backstage_DraggingItsBackgroundMovesTheMainWindow` |
+| T1 | the application-button event opens the Backstage | `GuiTest.Backstage_ApplicationButtonOpensThePage` |
+| T2 | adding / removing / looking up pages, the current page | `GuiTest.Backstage_PagesAndNavigation` |
+| T3 | an item is an action bound to a command | `GuiTest.Backstage_PageItemsAreCommandBound` |
+| T4 | follows the main window's size, closes | `GuiTest.Backstage_FollowsMainWindowSize`, `GuiTest.Backstage_ClosesOnEscapeOrClose` |
+| T5 | replacing the owner does not crash | `GuiTest.Backstage_IsOwnedByMainWindow` |
+| T6 | page hiding / restoring / no visible page | `GuiTest.Backstage_PagesCanBeHidden` |
+| T7 | item hiding / restoring | `GuiTest.BackstagePage_ItemsCanBeHidden` |
+| T8 | hiding / restoring the File entry reaches the widget | `GuiTest.RibbonBar_ApplicationButtonHidesTheEntry` |
+| T9 | page placement: role order / anchor / terminal zone / fallback / clamping / lookup by role | `GuiTest.Backstage_PageRolesAndPlacement`, `GuiTest.Backstage_PagePlacementEdgeCases` |
+| T10 | group removal by provider, the next page taking over, a removed page being added again | `GuiTest.Backstage_PagesAreRemovedByProvider` |
+| T11 | the standard catalogue: a plugin page anchored by role in front of the terminal help page | `GuiTest.Backstage_StandardRoleCatalog` |
+| T12 | page body: exclusive with items, replacing the body returns the old one, null does not count | `GuiTest.BackstagePage_BodyReplacesTheCommandColumn` |
+| T13 | layout: navigation rows reserve the icon slot, the item column shares the title's left indent, an item row is 40 px | `GuiTest.Backstage_NavRowsReserveTheIconColumn`, `GuiTest.Backstage_PageRowsAlignWithTheTitle` |
+| T15 | items scroll when they exceed one screen; a body page is not wrapped in a scroll area | `GuiTest.Backstage_ManyItemsScroll` |
+| T16 | dragging the overlay's background drags the main window (and stops on release) | `GuiTest.Backstage_DraggingItsBackgroundMovesTheMainWindow` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-F1–F6 落地；F9/F10（页面与条目的显隐）随之落地；app_shell 用两个页面（插件、帮助）演示命令条目，两页标了 role（Plugins/Help，帮助页 `Terminal`）与 provider（`app_shell`），插件可按 role 锚定到它们前面；F7 第一个真实消费者是同一外壳的「关于」页（`setBody(AboutPanel)`，见 `appfw-app-info.md`）；条目是 `RibbonAction`，所以启用态/tooltip/勾选态跟着命令走（见 `appfw-command-binding.md`），页面本身不再写一份。
+F1–F6 are the base layer; F9/F10 add page and item visibility.
+`app_shell` demonstrates command items with two pages (plugins, help), both tagged with a role (Plugins / Help, the help page `Terminal`) and a provider (`app_shell`), so a plugin can anchor its own pages in front of them by role.
+The first real consumer of F7 is the same shell's About page (`setBody(AboutPanel)`, see `appfw-app-info.md`).
+An item is a `RibbonAction`, so the enabled state, the tooltip and the check state follow the command (see `appfw-command-binding.md`) and the page does not write a second copy.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-见 `../backlog/appfw-ribbon.md`：最近文件/MRU（T8）、声明式清单（T5）。
+See `../backlog/appfw-ribbon.md`: recent files / MRU (T8), a declarative manifest (T5).
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-- 新类 `Backstage`/`BackstagePage`；`RibbonBar` 只加方法与 `Impl` 事件，无类布局变化。
-- F12 只加新类型 `BackstagePlacement`/`BackstagePlaceResult` 与页面上的 `setRole/setPolicy`、`Backstage::addPage(page, placement)`/`findPage(role)`；`addPage(page)` 保留为 append，null 页仍返回 false（放置重载才抛，同 `RibbonTab::addGroup`）。
-- F13 加 `setProvider/provider` 与 `removePages(provider)`；`app_shell` 的两页标了 `u8"app_shell"` 并在 `unload()` 里撤除。
-- `RibbonPlacement::Where` 变为 `PlacementWhere` 的别名（源兼容，枚举值不变）；两套放置共用这个枚举。
-- 旧 `appendApplicationMenu()` 保持；不使用 `setBackstage()` 的宿主行为不变。
-- 迁移：把 `appendApplicationMenu` 的条目改成 `BackstagePage::addItem`，调用 `MainWindow::setBackstage()`。
+- `Backstage` / `BackstagePage` are new classes; `RibbonBar` only gains methods and an `Impl` event, so its class layout is unchanged.
+- Page placement (F12) is `BackstagePlacement` / `BackstagePlaceResult`, `setRole` / `setPolicy` on a page and `Backstage::addPage(page, placement)` / `findPage(role)`.
+  `addPage(page)` remains the append form, and a null page still returns false; only the placement overload throws, as `RibbonTab::addGroup` does.
+- Contributor identity (F13) is `setProvider` / `provider` and `removePages(provider)`; `app_shell` tags its two pages with `u8"app_shell"` and removes them in `unload()`.
+- `RibbonPlacement::Where` is an alias of `PlacementWhere` (source compatible, the enumerators are unchanged); both placement families share that enum.
+- `appendApplicationMenu()` stays; a host that does not call `setBackstage()` behaves as before.
+- Migration: turn the `appendApplicationMenu` entries into `BackstagePage::addItem` calls and call `MainWindow::setBackstage()`.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
-- `src/fw/appfw/sdk/vine/appfw/gui/Backstage.hpp`、`src/fw/appfw/src/gui/Backstage.cpp`（组件本体）
-- `src/fw/appfw/src/gui/RibbonBar.cpp`（事件与模式切换）、`src/fw/appfw/src/gui/MainWindow.cpp`（所有权）
-- `src/plugins/app_shell/src/AppShellUi.cpp`（页面装配）
+- `src/fw/appfw/sdk/vine/appfw/gui/Backstage.hpp`, `src/fw/appfw/src/gui/Backstage.cpp` (the component itself)
+- `src/fw/appfw/src/gui/RibbonBar.cpp` (the event and the mode switch), `src/fw/appfw/src/gui/MainWindow.cpp` (ownership)
+- `src/plugins/app_shell/src/AppShellUi.cpp` (page assembly)
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `../decisions/ADR-2026-10-28-backstage-overlay-window.md`
 - `../bugs/docking-flyout-under-render.md`
 
-### 10.3 外部资料
+### 10.3 External material
 
-- SARibbon：`SARibbonApplicationButton`、`SARibbonBar::applicationButtonClicked`、`SARibbonApplicationWidget`；Office Backstage：整窗文件页 + 左侧导航。
+- SARibbon: `SARibbonApplicationButton`, `SARibbonBar::applicationButtonClicked`, `SARibbonApplicationWidget`; Office Backstage: a whole-window file page with navigation on the left.
