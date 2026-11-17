@@ -1,297 +1,297 @@
-# Robotics IO 模块设计（XML 序列化）
+# the Robotics IO module: XML serialization
 
-> **状态**：现行
-> **最后核对**：2026-10-23
-> **范围**：设备/工作单元的 XML 序列化、VFS 打包与场景序列化前置。
-> **权威来源**：`src/robotics/io/**`、`tests/test_robotics_io`。
-> **待办**：`../backlog/`
+> **Status**: current
+> **Last verified**: 2026-10-23
+> **Scope**: the XML serialization of devices and workcells, VFS packaging, and what scene serialization relies on.
+> **Sources**: `src/robotics/io/**`, `tests/test_robotics_io`.
+> **Backlog**: `../backlog/`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-`vn::robotics::workcell` 的 `Device` / `MotionDevice` / `Scanner` / `Workcell` 需要 XML 序列化与反序列化，
-还要能把整棵场景（含设备、网格）打成单个包，不落临时目录。URDF 的 `<robot>` 语义不够（多 DoF、扫描仪、
-材质库、包中包），所以采用自研 `<device>` / `<workcell>` 格式。
+The `Device` / `MotionDevice` / `Scanner` / `Workcell` of `vn::robotics::workcell` need XML serialization and deserialization,
+and a whole scene (devices, meshes) has to be packed into a single package without a temporary directory. URDF's `<robot>` semantics are not enough (multiple DoF, scanners,
+material libraries, packages inside packages), so the format is the in-house `<device>` / `<workcell>`.
 
-### 1.2 目标
+### 1.2 Goals
 
-- `RoboticsIO` 独立模块：`XmlIOBase` / `DeviceIO` / `WorkcellIO`。
-- XML 覆盖设备、工作站、材质、形状、关节/DoF、扫描仪相机/投影仪。
-- 位置是 `vn::io::Vfs + 虚拟路径`；打包为 `.vdevpkg` / `.vwspkg`（zip）。
-- mesh 用原生 bin + XML 描述；共享 mesh 去重。
+- `RoboticsIO` as its own module: `XmlIOBase` / `DeviceIO` / `WorkcellIO`.
+- XML covers devices, workcells, materials, shapes, joints/DoF, and a scanner's cameras / projectors.
+- A location is `vn::io::Vfs + a virtual path`; a package is `.vdevpkg` / `.vwspkg` (zip).
+- A mesh is a native bin plus an XML description; a shared mesh is de-duplicated.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不用 URDF 格式；不实现 BRep/STEP（只预留 `<brep>`）。
-- 不做 HDF5/CBOR/Zarr 等替代格式。
-- 不落临时目录；包直接在内存/VFS 上读写。
-- 不把材质就地写进 visual（禁止 `exportMaterial` 就地材质）。
+- Not the URDF format; no BRep/STEP (only the reserved `<brep>`).
+- No alternative format such as HDF5/CBOR/Zarr.
+- No temporary directory; a package is read and written in memory / on a VFS.
+- A material is not written inline in a visual (no `exportMaterial` for an inline material).
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-`RoboticsIO` 是无状态 XML 序列化层：`XmlIOBase` 提供解析/导出原语，`DeviceIO`/`WorkcellIO` 组合它们；
-位置是 `Vfs + path`，包是 zip，mesh 是原生 bin，设备定义可复用、包可嵌套。
+`RoboticsIO` is a stateless XML serialization layer: `XmlIOBase` provides the parse / export primitives and `DeviceIO`/`WorkcellIO` compose them;
+a location is `Vfs + path`, a package is a zip, a mesh is a native bin, a device definition is reusable and a package can nest.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 无状态 `XmlIOBase`
+### 2.1 A stateless `XmlIOBase`
 
-- `XmlIOBase` / `DeviceIO` / `WorkcellIO` 都没有类级可变状态；每次操作的 `ParseContext`/`ExportContext`
-  携带单位缩放、活动 `Vfs`、`vfs_dir`、工作站指针与警告缓冲。
-- 实例可重入、可安全复用（含多线程，每次操作自带 context）。
-- 加载失败抛 `std::runtime_error`；非致命问题进 `ctx.msgs`。
+- `XmlIOBase` / `DeviceIO` / `WorkcellIO` have no class-level mutable state; a per-operation `ParseContext`/`ExportContext`
+  carries the unit scale, the active `Vfs`, `vfs_dir`, the workcell pointer and the warning buffer.
+- An instance is re-entrant and safe to reuse (threads included, since each operation brings its own context).
+- A load failure throws `std::runtime_error`; a non-fatal problem goes into `ctx.msgs`.
 
-### 2.2 XML 格式
+### 2.2 The XML format
 
-- 设备根 `<device name kind version>`；工作站根 `<workcell name version>`。
-- 姿态统一四元数 `quat="x y z w"`（`Isometry3d` 原生四元数，无损往返；不做 RPY）。
-- 长度单位写 metadata `length_unit`，加载/导出按 `LoadOptions`/`SaveOptions` 缩放。
-- 关节 `type` = `fixed/revolute/prismatic/planar`；每个 DoF 一个 `<dof>`（planar = 3 个）。
-- 形状：box/sphere/cylinder/cone/ellipsoid/triangle_mesh/indexed_triangle_mesh；`<brep>` 预留。
-- 工作站 `<obj type="device|rigid_object">`；设备引用 `file` 可以是 `.vdev` 或 `.vdevpkg`。
+- The device root is `<device name kind version>`; the workcell root is `<workcell name version>`.
+- A pose is a quaternion `quat="x y z w"` (`Isometry3d`'s native quaternion, a lossless round trip; no RPY).
+- A length unit is written as the metadata `length_unit`, and load / export scale by `LoadOptions`/`SaveOptions`.
+- A joint `type` = `fixed/revolute/prismatic/planar`; one `<dof>` per DoF (planar = 3).
+- Shapes: box/sphere/cylinder/cone/ellipsoid/triangle_mesh/indexed_triangle_mesh; `<brep>` is reserved.
+- A workcell holds `<obj type="device|rigid_object">`; a device reference `file` may be `.vdev` or `.vdevpkg`.
 
-### 2.3 VFS 与包
+### 2.3 VFS and packages
 
-- 位置不是裸 path，而是 `vn::io::Vfs + 虚拟路径`；`DirectoryVfs` 调试、`ZipArchive` 包。
-- `loadPkg(path)` 用 `open(..., ReadOnly)` 惰性读；`savePkg(cell, Vfs&, options)` 无源树 + `saveAs`。
-- 包中包：场景包里的 `.vdevpkg` 条目读出字节，再开成嵌套 `ZipArchive` 解析。
-- mesh 存储：`geoms/*.bin`（positions/normals/indices）+ XML `indexed_triangle_mesh` 引用；
-  共享 mesh 只写一次（`mesh_paths` 去重）。
-- 三角形树缓存：与 mesh 文件同名的 `.vbtp`（`geoms/mesh3.vmesh` → `geoms/mesh3.vbtp`），只存拓扑与图元顺序，
-  盒子按当前顶点重算；缺失/陈旧/损坏一律当“没有缓存”，XML 与清单一个字都不提它。
+- A location is not a bare path but `vn::io::Vfs + a virtual path`; `DirectoryVfs` for debugging, `ZipArchive` for a package.
+- `loadPkg(path)` reads lazily through `open(..., ReadOnly)`; `savePkg(cell, Vfs&, options)` writes with no source tree + `saveAs`.
+- A package inside a package: the `.vdevpkg` entry of a scene package is read into bytes and opened as a nested `ZipArchive`.
+- Mesh storage: `geoms/*.bin` (positions/normals/indices) plus an XML `indexed_triangle_mesh` reference;
+  a shared mesh is written once (`mesh_paths` de-duplication).
+- Triangle-tree cache: a `.vbtp` next to the mesh file (`geoms/mesh3.vmesh` → `geoms/mesh3.vbtp`), storing the topology and the primitive order only,
+  with the boxes recomputed from the current vertices; a missing, stale or damaged file counts as “no cache”, and neither the XML nor the manifest mentions it.
 
-### 2.4 数据映射
+### 2.4 Data mapping
 
-| Vine 模型 | XML |
+| Vine model | XML |
 | --- | --- |
-| `DeviceMetadata` | `<metadata>`（含 create/modified time、length_unit、iksolver） |
-| `DeviceData.materials` | `<material name>` 命名材质库 |
+| `DeviceMetadata` | `<metadata>` (with create/modified time, length_unit, iksolver) |
+| `DeviceData.materials` | a named material library under `<material name>` |
 | `DeviceData.links` | `<link>`（visual + collision） |
-| `Joint` / `DofInfo` | `<joint>` + 多个 `<dof>` |
-| `DeviceKind` | `<device kind>`（Scanner → Scanner，其余 → MotionDevice） |
+| `Joint` / `DofInfo` | `<joint>` + several `<dof>` |
+| `DeviceKind` | `<device kind>` (Scanner → Scanner, everything else → MotionDevice) |
 | `Scanner::Camera/Projector` | `<camera>` / `<projector>` |
 | `SceneObject` / `RigidObject` | `<obj type>` |
 | `Workcell::name` | `<workcell name>` |
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 设备 XML | `DeviceIO::loadXml/saveXml`，含 link/joint/DoF/材质/形状 | 已落地 |
-| F2 | 工作站 XML | `WorkcellIO::loadXml/saveXml`，含 obj/children/parent_frame | 已落地 |
-| F3 | 数据映射 | 模型 ↔ XML 字段一一对应 | 已落地 |
-| F4 | VFS/打包 | `loadPkg/savePkg`，`.vdevpkg`/`.vwspkg`，包中包 | 已落地 |
-| F5 | mesh 存储 | 原生 bin + XML 引用；共享去重 | 已落地 |
-| F6 | BRep/STEP | `<brep>` 预留，本期不实现 | 未做 |
-| F7 | 三角形树缓存 | `.vbtp` 随包读写：导出时有树就写，加载时透明恢复；坏文件当没有 | 已落地 |
+| F1 | device XML | `DeviceIO::loadXml/saveXml`, with link/joint/DoF/material/shape | landed |
+| F2 | workcell XML | `WorkcellIO::loadXml/saveXml`, with obj/children/parent_frame | landed |
+| F3 | data mapping | the model ↔ XML fields correspond one to one | landed |
+| F4 | VFS / packaging | `loadPkg/savePkg`, `.vdevpkg`/`.vwspkg`, a package inside a package | landed |
+| F5 | mesh storage | a native bin + an XML reference; shared meshes de-duplicated | landed |
+| F6 | BRep/STEP | `<brep>` is reserved, not implemented here | not done |
+| F7 | triangle-tree cache | a `.vbtp` travels with the package: written when a tree exists at export, restored transparently at load; a bad file counts as none | landed |
 
-### 3.1.1 F1 设备 XML
+### 3.1.1 F1 device XML
 
-- **行为**：`DeviceIO::loadXml(path|string|Vfs, dir)` / `saveXml(...)`；解析 metadata、materials、links、
+- **Behaviour**: `DeviceIO::loadXml(path|string|Vfs, dir)` / `saveXml(...)`; parses metadata, materials, links,
   joints、DoF、camera/projector、parameters。
-- **约束**（C1）：根 `<device>`；姿态四元数；长度按 metadata `length_unit` 缩放。
-- **要求**（R1）：`DeviceKind` 决定工厂（Scanner/MotionDevice）；材质按名引用，不在 visual 里就地写。
-- **验收**（T1）：`tests/test_robotics_io` 的设备 XML 用例。
-- **注意**（N1）：关节/DoF 的 origin 是 `Frame::fixedTransform` / `DofInfo.origin`，不是同一个东西。
+- **Constraints** (C1): the root is `<device>`; a pose is a quaternion; a length is scaled by the metadata `length_unit`.
+- **Requirements** (R1): `DeviceKind` picks the factory (Scanner/MotionDevice); a material is referenced by name and never written inline in a visual.
+- **Acceptance** (T1): the device XML cases in `tests/test_robotics_io`.
+- **Caveats** (N1): the origin of a joint and of a DoF are `Frame::fixedTransform` and `DofInfo.origin` — not the same thing.
 
-### 3.1.2 F2 工作站 XML
+### 3.1.2 F2 workcell XML
 
-- **行为**：`WorkcellIO::loadXml/saveXml`；`<obj>` 可嵌套 `<children>`，`parent_frame` 挂到设备帧。
-- **约束**（C2）：设备引用 `file` 可以是 `.vdev` 或 `.vdevpkg`；同一 `file` 可多实例，定义只写一次。
-- **要求**（R2）：`home`/`q`/`resolutions` 是实例属性，不进设备定义。
-- **验收**（T2）：`tests/test_robotics_io` 的工作站/套件用例。
-- **注意**（N2）：`.vdevpkg` 是包中包，按扩展名分发。
+- **Behaviour**: `WorkcellIO::loadXml/saveXml`; an `<obj>` may nest `<children>`, and `parent_frame` attaches to a device frame.
+- **Constraints** (C2): a device reference `file` may be `.vdev` or `.vdevpkg`; one `file` may have several instances while the definition is written once.
+- **Requirements** (R2): `home`/`q`/`resolutions` are instance attributes and do not enter the device definition.
+- **Acceptance** (T2): the workcell / suite cases in `tests/test_robotics_io`.
+- **Caveats** (N2): a `.vdevpkg` is a package inside a package, dispatched by extension.
 
-### 3.1.3 F3 数据映射
+### 3.1.3 F3 data mapping
 
-- **行为**：`DeviceMetadata`、`DeviceData`、`Link`、`Joint`、`DofInfo`、`DeviceKind`、`Scanner`、
-  `SceneObject`、`RigidObject`、`Workcell` 与 XML 字段一一对应。
-- **约束**（C3）：映射表是契约；新增字段要有默认值/版本兼容。
-- **要求**（R3）：四元数无损往返；`Q2Str` 用空格分隔。
-- **验收**（T3）：往返用例逐字段比对。
-- **注意**（N3）：`iksolver` 用 metadata 字符串（None/Pieper/Jacobian）。
+- **Behaviour**: `DeviceMetadata`, `DeviceData`, `Link`, `Joint`, `DofInfo`, `DeviceKind`, `Scanner`,
+  `SceneObject`, `RigidObject` and `Workcell` correspond field by field to XML.
+- **Constraints** (C3): the mapping table is the contract; a new field needs a default or a version rule.
+- **Requirements** (R3): a quaternion round-trips losslessly; `Q2Str` separates with spaces.
+- **Acceptance** (T3): a round trip compared field by field.
+- **Caveats** (N3): `iksolver` is a metadata string (None/Pieper/Jacobian).
 
-### 3.1.4 F4 VFS/打包
+### 3.1.4 F4 VFS / packaging
 
-- **行为**：`loadPkg(path)` / `savePkg(cell, Vfs&, options)`；包是 zip，mesh 是 bin。
-- **约束**（C4）：不落临时目录；`ZipArchive` 惰性读、无源树 `saveAs`。
-- **要求**（R4）：包中包从场景包读出字节再开 `ZipArchive`；共享 mesh 只写一次。
-- **验收**（T4）：`PkgIOTest`（8 例）。
-- **注意**（N4）：大包避免 `toBytes()`/`saveAs(ostream&)`（峰值整包 ×2）。
+- **Behaviour**: `loadPkg(path)` / `savePkg(cell, Vfs&, options)`; a package is a zip and a mesh is a bin.
+- **Constraints** (C4): no temporary directory; `ZipArchive` reads lazily and `saveAs` needs no source tree.
+- **Requirements** (R4): a nested package is read out of the scene package into bytes and opened as a `ZipArchive`; a shared mesh is written once.
+- **Acceptance** (T4): `PkgIOTest` (8 cases).
+- **Caveats** (N4): a large package avoids `toBytes()`/`saveAs(ostream&)` (peak = the whole package twice).
 
-### 3.1.5 F5 mesh 存储
+### 3.1.5 F5 mesh storage
 
-- **行为**：`indexed_triangle_mesh` 引用 `geoms/*.bin`（positions/normals/indices）；纯 XML 时为相对路径。
-- **约束**（C5）：bin 是原生二进制（不是 base64）；`vertex_count`/`triangle_count` 与 bin 一致。
-- **要求**（R5）：共享 mesh 去重；设备实例复用不重复写定义。
-- **验收**（T5）：包内 mesh 往返用例。
-- **注意**（N5）：bin 路径在包内是虚拟路径，不是磁盘路径。
+- **Behaviour**: `indexed_triangle_mesh` references `geoms/*.bin` (positions/normals/indices); in plain XML it is a relative path.
+- **Constraints** (C5): the bin is native binary (not base64); `vertex_count`/`triangle_count` match the bin.
+- **Requirements** (R5): a shared mesh is de-duplicated; reusing a device instance does not rewrite its definition.
+- **Acceptance** (T5): the mesh round-trip cases inside a package.
+- **Caveats** (N5): a bin path inside a package is a virtual path, not a disk path.
 
 ### 3.1.6 F6 BRep/STEP
 
-- **行为**：`<brep>` 预留；本期不实现。
-- **约束**（C6）：出现 `<brep>` 时明确报不支持，不静默当空形状。
-- **要求**（R6）：将来接入时保持 XML 形状兼容。
-- **验收**（T6）：无（未实现）。
-- **注意**（N6）：BRep 依赖 OCCT，属于后续阶段。
+- **Behaviour**: `<brep>` is reserved; not implemented here.
+- **Constraints** (C6): a `<brep>` in the file is reported as unsupported, never silently taken for an empty shape.
+- **Requirements** (R6): a future backend keeps the XML shape compatible.
+- **Acceptance** (T6): none (not implemented).
+- **Caveats** (N6): BRep depends on OCCT and belongs to a later stage.
 
-### 3.1.7 F7 三角形树缓存
+### 3.1.7 F7 triangle-tree cache
 
-- **行为**：`writeMeshFile()` 在写 mesh 文件之后，若 `mesh->hasBvh()` 就把 `Bvh::topology()`（一个值：节点 +
-  图元顺序 + 高度）写成同名的 `.vbtp`；`parseGeometry()` 在读出 mesh 后读同名的 `.vbtp` 并调
+- **Behaviour**: after writing the mesh file, `writeMeshFile()` writes `Bvh::topology()` (one value: the nodes, the
+  primitive order and the height) into a same-named `.vbtp` when `mesh->hasBvh()`; `parseGeometry()` reads a same-named `.vbtp` after reading the mesh and calls
   `Mesh::restoreBvh(topology.view())`。
-- **分层**：实现分成两层，只因为它们是两个不同的契约：
-  - `BvhCacheFormat.hpp`：**字节**。头结构、`encodeBvhCache(BvhTopologyView, bytes)`、
-    `decodeBvhCache(bytes, BvhTopology&)`、`bvhCacheByteCount()`。不认识 `Vfs`，也不认识 `Mesh`——它只关于一个
-    形状怎么变成字节。
-  - `BvhCache.hpp`：**策略**。`bvhCachePath()` 命名规则、`writeBvhCache` / `readBvhCache` / `restoreBvhCache`
-    三个 VFS 操作。
-  - 两层之间只传一个值：`vn::geom::spatial::BvhTopology`（拥有）与它的借用形 `BvhTopologyView`（`geometry-bvh.md`
-    2.15），所以编码、解码、恢复之间没有一次额外的数组拷贝。
-- **格式**：24 字节头（魔法 `VBTP`、`u16` 版本、`u16` flags、`u32` 三角形数、`u32` 节点数、`u32` 深度、`u32` 保留）+
-  每节点 `{u32 offset, u32 count}` + 每三角形一个 `u32` 顺序，全部小端。
-- **约束**（C7）：文件的每一项都校验：magic/版本/flags、字节数 = 头 + 节点 + 顺序、三角形数 = 网格的三角形数、
-  节点数 ≤ `2 × 三角形数`、高度 ≤ `kBvhMaxDepth`；`RestoreTopology` 再校排列与叶区间。任一项不符都当“没有缓存”，
-  不报错、不影响网格加载。
-- **要求**（R7）：缓存可随时删除，删除只损失一次建树；不写缓存的包与写缓存的包双向都能读。
-- **验收**（T7）：`PkgIOTest.APreparedTriangleTreeTravelsWithThePackage`、`PkgIOTest.AMeshWithNoPreparedTreeWritesNoCache`、
+- **Layering**: the implementation has two layers only because they are two different contracts:
+  - `BvhCacheFormat.hpp`: **bytes**. The header layout, `encodeBvhCache(BvhTopologyView, bytes)`,
+    `decodeBvhCache(bytes, BvhTopology&)`, `bvhCacheByteCount()`. It knows neither `Vfs` nor `Mesh` — it is only about how
+    one shape becomes bytes.
+  - `BvhCache.hpp`: **policy**. The `bvhCachePath()` naming rule and the three VFS operations
+    `writeBvhCache` / `readBvhCache` / `restoreBvhCache`.
+  - One value crosses between the two: `vn::geom::spatial::BvhTopology` (owning) and its borrowed
+    form `BvhTopologyView` (`geometry-bvh.md` 2.15), so no extra array copy sits between encode, decode and restore.
+- **Format**: a 24-byte header (magic `VBTP`, `u16` version, `u16` flags, `u32` triangle count, `u32` node count, `u32` depth, `u32` reserved) plus
+  `{u32 offset, u32 count}` per node plus one `u32` order per triangle, all little-endian.
+- **Constraints** (C7): every item in the file is validated: magic/version/flags, byte count = header + nodes + order, triangle count = the mesh's triangle count,
+  node count ≤ `2 × triangle count`, height ≤ `kBvhMaxDepth`; `RestoreTopology` then checks the permutation and the leaf ranges. Any mismatch counts as “no cache”:
+  no error, no effect on loading the mesh.
+- **Requirements** (R7): the cache may be deleted at any time and deleting it costs one tree build; a package with a cache and one without are readable both ways.
+- **Acceptance** (T7): `PkgIOTest.APreparedTriangleTreeTravelsWithThePackage`, `PkgIOTest.AMeshWithNoPreparedTreeWritesNoCache`,
   `DeviceIOTest.ADamagedTreeCacheIsIgnoredAndAValidOneIsRestored`。
-- **注意**（N7）：只存拓扑不存盒子（见 `geometry-bvh.md` 2.13）；导出时**不**为了写缓存而建树——那需要改动
-  `const` 的导出路径，目前留给调用方在导出前自己 `buildBvh()`。
-- **注意**（N8）：格式与缓存策略分文件不是为了多一个头文件，而是为了“字节布局”能单独只靠一个 `BvhTopology` 测、
-  也只靠它演进（`G5`：改布局不碰 VFS 与模型层；`G2`：格式不向 `robotics/io` 之外倒依赖）。
+- **Caveats** (N7): only the topology is stored, not the boxes (see `geometry-bvh.md` 2.13); export does **not** build a tree in order to write the cache — that would change
+  the `const` export path, so a caller that wants a tree calls `buildBvh()` before exporting.
+- **Caveats** (N8): the format and the cache policy are separate files not to add a header, but so that “byte layout” can be tested against a `BvhTopology` alone and
+  evolve with it alone (`G5`: a layout change never touches the VFS or the model layer; `G2`: the format never depends back out of `robotics/io`).
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `DeviceIO`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `loadXml(path, LoadOptions)` | 从文件加载设备 | 失败抛 `runtime_error` |
-| `loadXml(string, ...)` / `loadXml(Vfs&, dir, ...)` | 从字符串/VFS 加载 | 位置是 VFS + path |
-| `saveXml(...)` | 导出设备 | 单位按 `SaveOptions` |
-| `LoadOptions` / `SaveOptions` | `source_len_unit` / `target_len_unit` | 默认 mm ↔ m |
+| `loadXml(path, LoadOptions)` | loads a device from a file | a failure throws `runtime_error` |
+| `loadXml(string, ...)` / `loadXml(Vfs&, dir, ...)` | loads from a string / a VFS | a location is a VFS + path |
+| `saveXml(...)` | exports a device | units follow `SaveOptions` |
+| `LoadOptions` / `SaveOptions` | `source_len_unit` / `target_len_unit` |  default mm ↔ m |
 
 ### 4.2 `WorkcellIO`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `loadXml(path|Vfs, ...)` | 加载工作站 | 设备引用 `.vdev`/`.vdevpkg` |
-| `saveXml(...)` | 导出工作站 | 设备定义只写一次 |
-| `loadPkg(path)` / `savePkg(cell, Vfs&, options)` | 打包 | zip，无临时目录 |
+| `loadXml(path|Vfs, ...)` | loads a workcell | a device reference is `.vdev`/`.vdevpkg` |
+| `saveXml(...)` | exports a workcell | a device definition is written once |
+| `loadPkg(path)` / `savePkg(cell, Vfs&, options)` | packaging | zip, no temporary directory |
 
 ### 4.3 `XmlIOBase`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `parsePose/exportPose` | 四元数姿态 | 无损 |
-| `parseGeometry/exportGeometry` | 形状 | box/sphere/.../mesh |
-| `parseMaterial` | 材质库条目 | 按名引用 |
-| `parseLink/exportLink`、`parseJoint/exportJoint` | 连杆/关节 | 设备与工作站共用 |
+| `parsePose/exportPose` | a quaternion pose | lossless |
+| `parseGeometry/exportGeometry` | shapes | box/sphere/.../mesh |
+| `parseMaterial` | a material-library entry | referenced by name |
+| `parseLink/exportLink`, `parseJoint/exportJoint` | link / joint | shared by device and workcell |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | 根 `<device>` / `<workcell>`；姿态四元数；长度按 metadata 缩放。 |
-| C2 | 设备引用 `.vdev`/`.vdevpkg`；同一文件可多实例，定义只写一次。 |
-| C3 | 数据映射表是契约；新增字段有默认值/版本兼容。 |
-| C4 | 不落临时目录；包用 zip 惰性读/无源树 saveAs。 |
-| C5 | mesh bin 是原生二进制；计数与 bin 一致。 |
-| C6 | `<brep>` 未实现时明确报不支持。 |
-| C7 | `.vbtp` 的每一项都校验；任何不符都退化为“没有缓存”，不影响网格加载。 |
+| C1 | the root is `<device>` / `<workcell>`; a pose is a quaternion; a length is scaled by the metadata. |
+| C2 | a device reference is `.vdev`/`.vdevpkg`; one file may have several instances while its definition is written once. |
+| C3 | the data mapping table is the contract; a new field has a default or a version rule. |
+| C4 | no temporary directory; a package reads lazily and `saveAs` needs no source tree. |
+| C5 | a mesh bin is native binary; the counts match the bin. |
+| C6 | an unimplemented `<brep>` is reported as unsupported. |
+| C7 | every item of a `.vbtp` is validated; any mismatch degrades to “no cache” without affecting the mesh load. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | `DeviceKind` 决定工厂；材质按名引用。 |
-| R2 | 实例属性不进设备定义。 |
-| R3 | 四元数无损；`Q2Str` 空格分隔。 |
-| R4 | 包中包按扩展名分发；共享 mesh 只写一次。 |
-| R5 | 共享 mesh 去重；设备实例复用不重复写定义。 |
-| R6 | 将来接 BRep 保持 XML 兼容。 |
-| R7 | 树缓存可随时删除；写缓存与不写缓存的包双向可读，网格文件本身不因缓存改变。 |
+| R1 | `DeviceKind` picks the factory; a material is referenced by name. |
+| R2 | instance attributes do not enter the device definition. |
+| R3 | a quaternion is lossless; `Q2Str` separates with spaces. |
+| R4 | a nested package is dispatched by extension; a shared mesh is written once. |
+| R5 | a shared mesh is de-duplicated; a reused device instance does not rewrite its definition. |
+| R6 | a future BRep backend keeps the XML compatible. |
+| R7 | the tree cache may be deleted at any time; a package with and without a cache are readable both ways, and the mesh file itself never changes because of the cache. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | `XmlIOBase`/`DeviceIO`/`WorkcellIO` 无类级可变状态，可重入。 |
-| N2 | 位置是 `Vfs + 虚拟路径`，不是裸 path。 |
-| N3 | 设备定义只写一次；实例差异在 `<obj>` 属性。 |
-| N4 | 加载失败抛 `runtime_error`；非致命问题进 `msgs`。 |
+| N1 | `XmlIOBase`/`DeviceIO`/`WorkcellIO` have no class-level mutable state and are re-entrant. |
+| N2 | a location is `Vfs + a virtual path`, not a bare path. |
+| N3 | a device definition is written once; instance differences live in `<obj>` attributes. |
+| N4 | a load failure throws `runtime_error`; a non-fatal problem goes into `msgs`. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 关节 vs DoF 的 origin
+### 6.1 The origin of a joint vs of a DoF
 
-- 会怎么错：把 `<joint><origin>` 当成 DoF 的 origin。
-- 怎么判：joint origin = `Frame::fixedTransform`；dof origin = `DofInfo.origin`。
-- 怎么防：XML 里两个 `<origin>` 分属不同层级。
+- How it fails: `<joint><origin>` is taken for the DoF's origin.
+- How to detect it: a joint origin is `Frame::fixedTransform`; a dof origin is `DofInfo.origin`.
+- How to prevent it: the two `<origin>` elements in the XML sit at different levels.
 
-### 6.2 单位缩放
+### 6.2 Unit scaling
 
-- 会怎么错：文件 mm、内存 m 混用，模型大 1000 倍。
-- 怎么判：metadata `length_unit` 与 `LoadOptions`/`SaveOptions` 不一致。
-- 怎么防：加载/导出都显式给 source/target 单位；默认 mm ↔ m。
+- How it fails: a file in mm and memory in m are mixed and the model is 1000× too big.
+- How to detect it: the metadata `length_unit` disagrees with `LoadOptions`/`SaveOptions`.
+- How to prevent it: load and export both state the source / target unit; the default is mm ↔ m.
 
-### 6.3 包中包
+### 6.3 A package inside a package
 
-- 会怎么错：把 `.vdevpkg` 当普通 XML 解析。
-- 怎么判：扩展名分发；场景包里读出字节再开嵌套 `ZipArchive`。
-- 怎么防：按扩展名分发，不猜内容。
+- How it fails: a `.vdevpkg` is parsed as ordinary XML.
+- How to detect it: dispatch by extension; the scene package's bytes are read out and opened as a nested `ZipArchive`.
+- How to prevent it: dispatch by extension, never guess from the content.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Why not | ADR |
 | --- | --- | --- | --- |
-| D1 | 用 URDF 格式 | `<robot>` 语义不够（多 DoF、扫描仪、材质库）。 | — |
-| D2 | `IMemoryVfs` / `ZipMemoryVfs` 两套 VFS | 已由 `vn::io::Vfs` / `ZipArchive` 统一。 | — |
-| D3 | HDF5/CBOR/Zarr | 生态/依赖/工具链不匹配；zip+XML 足够。 | — |
-| D4 | 落临时目录再打包 | 慢、脏、并发问题；内存/VFS 直接打包。 | — |
-| D5 | 就地材质（`exportMaterial`） | 材质应进命名库，visual 按名引用。 | — |
-| D6 | base64 内嵌 mesh | 包内 bin 更小、可流式、可去重。 | — |
-| D7 | 把三角形树缓存塞进 `MeshBin` 的 flags | 未知 flags 位会被旧读者拒绝整份文件，`byteCount()` 也要跟着变——一个可丢的缓存不该有这种权力；改成网格文件旁的独立 `.vbtp`（F7）。 | — |
-| D8 | 导出时为写缓存而建树 | 导出路径拿的是 `const Shape&`，建树是写操作；默认只写“已经有的树”，需要树的调用方在导出前自己 `buildBvh()`。 | — |
+| D1 | use the URDF format | `<robot>` semantics are not enough (multiple DoF, scanners, material libraries). | — |
+| D2 | the `IMemoryVfs` / `ZipMemoryVfs` pair of VFS types | `vn::io::Vfs` / `ZipArchive` already covers both. | — |
+| D3 | HDF5/CBOR/Zarr | the ecosystem, dependencies and toolchain do not match; zip+XML is enough. | — |
+| D4 | pack via a temporary directory | slow, dirty, concurrency problems; memory / VFS packs directly. | — |
+| D5 | an inline material (`exportMaterial`) | a material belongs in the named library and a visual references it by name. | — |
+| D6 | a base64-embedded mesh | a bin inside the package is smaller, streamable and de-duplicable. | — |
+| D7 | put the triangle-tree cache into `MeshBin`'s flags | an unknown flag bit makes an older reader reject the whole file, and `byteCount()` would have to change too — a cache that may be dropped should not have that power; it became a separate `.vbtp` beside the mesh file (F7). | — |
+| D8 | build the tree during export just to write the cache | the export path holds a `const Shape&` and building a tree is a write; by default only a tree that already exists is written, so a caller that wants one calls `buildBvh()` before exporting. | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Test case / command |
 | --- | --- | --- |
-| T1 | 设备 XML 往返 | `tests/test_robotics_io` |
-| T2 | 工作站/嵌套 obj | 同上 |
-| T3 | 字段映射/四元数 | 同上 |
-| T4 | 包/包中包/mesh | `PkgIOTest`（8 例） |
-| T5 | 共享 mesh 去重 | 同上 |
-| T6 | BRep 未实现 | 报不支持 |
-| T7 | 三角形树缓存：带缓存的包往返后网格带树；无树不写缓存；截断/异形/三角形数不符/顺序非排列都被忽略 | `PkgIOTest`、`DeviceIOTest.ADamagedTreeCacheIsIgnoredAndAValidOneIsRestored` |
+| T1 | a device XML round trip | `tests/test_robotics_io` |
+| T2 | a workcell / nested obj | same |
+| T3 | field mapping / quaternion | same |
+| T4 | a package / a package inside a package / a mesh | `PkgIOTest` (8 cases) |
+| T5 | shared-mesh de-duplication | same |
+| T6 | BRep not implemented | reported as unsupported |
+| T7 | the triangle-tree cache: a package with a cache round-trips with the tree; no tree writes no cache; a truncated, malformed, wrong-count or non-permutation order is ignored | `PkgIOTest`, `DeviceIOTest.ADamagedTreeCacheIsIgnoredAndAValidOneIsRestored` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current Status
 
-VFS 基础设施、场景序列化与打包都已实现；`tests/test_robotics_io` 全通过。
+The VFS infrastructure, scene serialization and packaging are implemented; `tests/test_robotics_io` passes.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known Gaps and Backlog
 
-- BRep/STEP 未实现（`<brep>` 预留）。
-- mesh 只有三角网格 + 法线/索引；BRep 要等 OCCT 接入。
-- 场景序列化前置的模型改动见 §6；WORKCELL 指针/帧查找仍在上下文中。
+- BRep/STEP is not implemented (`<brep>` is reserved).
+- a mesh is a triangle mesh with normals / indices only; BRep waits for OCCT.
+- the model changes scene serialization relies on are in §6; the WORKCELL pointer / frame lookup is still in the context.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility and Migration
 
-没有 `IMemoryVfs`/`ZipMemoryVfs`/`ZipVfs::openZip`；新代码用 `vn::io::Vfs` + `ZipArchive`。
-`XmlIOBase` 无状态，实例可复用。
+There is no `IMemoryVfs`/`ZipMemoryVfs`/`ZipVfs::openZip`; new code uses `vn::io::Vfs` + `ZipArchive`.
+`XmlIOBase` is stateless and an instance is reusable.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/robotics/io/sdk/vine/robotics/io/XmlIOBase.hpp`
 - `src/robotics/io/sdk/vine/robotics/io/DeviceIO.hpp`
@@ -299,13 +299,13 @@ VFS 基础设施、场景序列化与打包都已实现；`tests/test_robotics_i
 - `src/robotics/io/src/IoUtils.hpp`
 - `tests/test_robotics_io`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `iobase-vfs-design.md`
 - `robotics-proximity-design.md`
 - `../backlog/`
 
-### 10.3 外部资料
+### 10.3 External Sources
 
-- VMR（外部仓库）的 `VDeviceIO` / `VWorkcellIO` / `VUrdfIOBase`。
+- `VDeviceIO` / `VWorkcellIO` / `VUrdfIOBase` of VMR (external repository).
 - tinyxml2 10.0.0。
