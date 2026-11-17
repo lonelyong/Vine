@@ -1,265 +1,250 @@
-# appfw 渲染表面生命周期
+# appfw's render-surface lifetime
 
-> **状态**：现行
-> **最后核对**：2026-10-23
-> **范围**：`RenderControl` / `SurfaceWindow` 的原生表面、attach、状态与平台回退；图形层的表面/目标/设备契约见
-> `graphics-architecture.md`。
-> **权威来源**：`RenderControl.hpp`、`src/gui/SurfaceWindow.{hpp,cpp}`、`tests/test_gui/RenderControlTest.cpp`。
-> **待办**：`../backlog/appfw-startup.md`
+> **Status**: current
+> **Last verified**: 2026-10-23
+> **Scope**: the native surface, attach, state and platform fallback of `RenderControl` / `SurfaceWindow`; the graphics layer's surface / target / device contracts are in `graphics-architecture.md`.
+> **Sources**: `RenderControl.hpp`, `src/gui/SurfaceWindow.{hpp,cpp}`, `tests/test_gui/RenderControlTest.cpp`.
+> **Backlog**: `../backlog/appfw-startup.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-一块 3D 区要同时回答“原生窗口什么时候有句柄”“什么时候能 attach”“什么时候能显示”“窗口重建后怎么办”。
-过去把这些时机交给定时器/重试梯子，结果是空窗、黑洞和猜时机。
+A 3D area has to answer four questions at once: when does the native window have a handle, when can it be attached, when can it be shown, and what happens after the window is recreated.
+Each of them needs a stated rule rather than a timer — a moment guessed by a retry ladder shows up as an empty window, a hole in the layout, or a first frame that never arrives.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 构造只组装，attach 有明确入口；宿主能在自己的顺序里决定什么时候 attach。
-- attach 不要求表面可见；首帧由 attach 自己渲出来，区域在首帧之前保持隐藏。
-- 原生窗口重建后会话保留，宿主不需要自己做任何事。
-- 失败有状态和原因，宿主可重试；控件不排定时器。
+- Construction only assembles; attaching has an explicit entry, so the host can place it in its own order.
+- Attaching does not require the surface to be visible; the attach renders the first frame itself, and the area stays hidden until then.
+- After the native window is recreated the session survives and the host does nothing.
+- A failure has a state and a reason and the host may retry; the control arms no timers.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不在控件里做布局策略；尺寸由容器/resize 事件给。
-- 不替宿主重试；没有 100 ms × N 的 attach 梯子。
-- 不保证所有平台都能在未显示窗口上 attach（Wayland 回退为“先显示再 attach”）。
+- No layout policy inside the control; the size comes from the container or a resize event.
+- No retrying on the host's behalf; there is no 100 ms × N attach ladder.
+- No promise that every platform can attach to an unshown window (Wayland falls back to "show first, then attach").
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-`RenderControl` 构造只组装；`init()` / `initAsync()` / 第一拍兜底做一次同步 attach；状态只有
-`Pending → Presenting`（失败是 `Failed`），容器在首帧前隐藏，窗口重建由控件自己跟。
+`RenderControl`'s constructor only assembles; `init()` / `initAsync()` / the first-turn fallback performs one synchronous attach; the state is only `Pending → Presenting` (a failure is `Failed`), the container is hidden until the first frame, and the control follows a recreated window itself.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 文件划分
+### 2.1 File split
 
-| 文件 | 职责 |
+| File | Responsibility |
 | --- | --- |
-| `sdk/vine/appfw/gui/RenderControl.hpp` / `src/gui/RenderControl.cpp` | 公开控件：转发 `init()/initAsync()`、`state()`、`failureReason()`、尺寸/比例、`viewer()`、`view()`、`engine()`、`renderFrame()`、`fitToScreen()`、`setContinuousRendering()` |
-| `src/gui/SurfaceWindow.{hpp,cpp}` | 私有实现：原生 `QWindow`、`RenderEngine`、`SceneView`、`Viewer`、attach 规则、延迟 resize、Qt 事件 → 视图输入 |
-| `SurfaceWindow` 的容器 | `QWidget::createWindowContainer` 包住原生 `QWindow`；容器在首帧前隐藏 |
+| `sdk/vine/appfw/gui/RenderControl.hpp` / `src/gui/RenderControl.cpp` | the public control: forwards `init()/initAsync()`, `state()`, `failureReason()`, size / ratio, `viewer()`, `view()`, `engine()`, `renderFrame()`, `fitToScreen()`, `setContinuousRendering()` |
+| `src/gui/SurfaceWindow.{hpp,cpp}` | the private implementation: the native `QWindow`, the `RenderEngine`, the `SceneView`, the `Viewer`, the attach rules, deferred resize, Qt events → view input |
+| the container of `SurfaceWindow` | `QWidget::createWindowContainer` wraps the native `QWindow`; the container is hidden until the first frame |
 
-### 2.2 构造只组装
+### 2.2 Construction only assembles
 
-`new RenderControl()` 返回时：建好引擎、视图、查看器、诊断路由；**不选后端、不 attach**；
-`state()==Pending`、`engine()->device()==nullptr`、没有 pass/链。这样 `engine()->setDevice()`、
-`viewer()->setViewerOptions()`（或宿主自己的 `view()->setChain()`）和内容装配都在第一次 attach 之前同步跑完，
-**零重建**。
+When `new RenderControl()` returns: the engine, view, viewer and diagnostic routing exist; **no backend is chosen and nothing is attached**; `state()==Pending`, `engine()->device()==nullptr`, and there is no pass or chain.
+That way `engine()->setDevice()`, `viewer()->setViewerOptions()` (or the host's own `view()->setChain()`) and the content assembly all run synchronously before the first attach, with **zero rebuilds**.
 
-### 2.3 两个 attach 入口
+### 2.3 The two attach entries
 
-- `init()`：同步、幂等；会话已绑在当前句柄上就直接 `true`，否则走完整 attach。
-- `initAsync()`：`co_return init()`，**不挂起**，也不把任何一段丢到池上；只是给协程调用方的拼法。
-  判据：`RenderControlTest.InitAsyncCompletesWithoutSuspending`。
+- `init()`: synchronous and idempotent; if the session is already bound to the current handle it returns `true`, otherwise it performs the full attach.
+- `initAsync()`: `co_return init()`, which **does not suspend** and pushes no part onto a pool; it is only a shape for coroutine callers.
+  Criterion: `RenderControlTest.InitAsyncCompletesWithoutSuspending`.
 
-没有调时，第一拍事件循环的 `QTimer::singleShot(0)` 兜底会 attach；兜底用宿主刚装上的后端，不是注册表默认值。
+When neither is called, the first-turn `QTimer::singleShot(0)` fallback attaches; the fallback uses the backend the host just installed, not the registry default.
 
-### 2.4 attach 的次序
+### 2.4 The attach sequence
 
-1. **先保证这块表面有呈现**：视图没有链就按 `ViewerOptions` 建一条默认链并采纳，然后在 `RenderArea` 上声明；
-   宿主已用自己的 pass 声明过 ⇒ 这一步不动。
-2. **补默认后端**：`useDefaultBackend()` 只在引擎没有后端时取注册表第一个；晚注册的后端仍会被下一次 attach 捡起。
-3. **没有后端** ⇒ `failAttach("no render backend is registered")`，状态 `Failed`。
-4. **句柄空 / 尺寸退化** ⇒ 记一行日志、保持 `Pending`，等 show/resize/下一次 `activate()`；控件不排定时器。
-5. **先等帧**：`engine->waitForFrame()` —— 下面那几个动词改的是**引擎线程正在记录的会话**（target、交换链、
-   设备），所以 attach 必须发生在帧与帧之间（`.ai/design/graphics-threading.md` §2.12）。inline 模式下这是
-   no-op；线程化时它等的通常是自己上一帧，代价是一次"已经做完"的检查。
-6. **attach**：`setWindowHandle` / `createSurfaceTarget` → 设备/会话/管线 `initialize()` → `resize(w,h)` + 把尺寸
-   交给表面 → `renderFrame()`（这一帧付掉 pass 图 / program slot / 编译，状态进 `Presenting`）。
+1. **Make sure the surface has something to present first**: if the view has no chain, build a default chain from `ViewerOptions` and adopt it, then declare it on the `RenderArea`; if the host already declared its own pass, this step does nothing.
+2. **Fill in the default backend**: `useDefaultBackend()` takes the registry's first entry only when the engine has no backend, so a backend registered later is still picked up by the next attach.
+3. **No backend** ⇒ `failAttach("no render backend is registered")` and the state becomes `Failed`.
+4. **Empty handle or degenerate size** ⇒ one log line, stay `Pending`, and wait for show / resize / the next `activate()`; the control arms no timer.
+5. **Wait for a frame first**: `engine->waitForFrame()` — the verbs below change the session the engine thread is recording into (target, swapchain, device), so the attach has to happen between frames (`.ai/design/graphics-threading.md` §2.12). In inline mode this is a no-op; when threaded it usually waits for the engine's own previous frame, at the cost of one "already done" check.
+6. **Attach**: `setWindowHandle` / `createSurfaceTarget` → device / session / pipeline `initialize()` → `resize(w,h)` plus handing the size to the surface → `renderFrame()` (this frame pays for the pass graph, program slots and compilation, and the state becomes `Presenting`).
 
-attach 不要求表面可见；只有 present 才要求窗口在屏上。平台不同意时 attach 失败，控件回退到“先显示表面再 attach”。
+Attaching does not require the surface to be visible; only presenting requires the window to be on screen.
+When the platform disagrees, the attach fails and the control falls back to "show the surface, then attach".
 
-**帧中丢面（`Lost`）不拆会话，也不藏区域**：一张没到表面的图是"这块表面请求重建"，不是"会话要换"。修的一侧是
-引擎 —— 它忘掉已告知的尺寸，下一帧重报同一个尺寸，后端据此重建交换链（计一次 device wait）；宿主这一侧只做两件事：
-把答案记一次并说一句（`presentRecord()` 的帧号保证一条答案只处置一次），以及在**句柄真的变了/为空**时走 attach（
-`renderFrame()` 头部本来就这么做）。
-不去改 `state()` 是刻意的：`Presenting` 说的是"表面里有帧"，而**最后那张图仍在屏幕上**；把它藏起来还会连带停掉
-修它的那些帧（隐藏的窗口不请求帧），把一个可恢复的交换链变成死的。线程化时答案晚一帧到，所以它读的是"上一条
-被答完的帧"。
+**Losing the surface mid-frame (`Lost`) neither tears down the session nor hides the area**: a frame that did not reach the surface means "this surface wants a rebuild", not "the session is being replaced".
+The fixing side is the engine — it forgets the size it announced, re-announces the same size on the next frame, and the backend rebuilds the swapchain from it (counting one device wait); the host side only does two things: record the answer once and say it once (the frame number in `presentRecord()` guarantees one answer is handled once), and go through attach when **the handle really changed or became null** (`renderFrame()` already does that at its head).
+Leaving `state()` alone is deliberate: `Presenting` means "there is a frame in the surface", and **the last image is still on screen**; hiding it would also stop the very frames that fix it (a hidden window requests no frames), turning a recoverable swapchain into a dead one.
+When threaded, the answer arrives one frame late, so it reads "the last frame that was answered".
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 构造只组装，attach 有入口 | `init()` / `initAsync()` / 第一拍兜底 | 已落地 |
-| F2 | 状态与可见性 | `Pending` / `Presenting` / `Failed`；首帧前容器隐藏 | 已落地 |
-| F3 | 原生窗口重建 | 新句柄重新公告，会话保留 | 已落地 |
-| F4 | 失败与重试 | 拒绝 ⇒ false + `Pending`；无后端 ⇒ `Failed`；宿主可重试 | 已落地 |
-| F5 | 平台回退 | X11/WSLg 未显示可 attach；Wayland 先显示再 attach | 已落地（Windows 未验） |
+| F1 | Construction only assembles; attaching has an entry | `init()` / `initAsync()` / the first-turn fallback | landed |
+| F2 | State and visibility | `Pending` / `Presenting` / `Failed`; the container is hidden until the first frame | landed |
+| F3 | Native window recreation | the new handle is re-announced and the session survives | landed |
+| F4 | Failure and retry | a refusal ⇒ false + `Pending`; no backend ⇒ `Failed`; the host may retry | landed |
+| F5 | Platform fallback | X11/WSLg attach while unshown; Wayland shows first, then attaches | landed (unverified on Windows) |
 
-### 3.1.1 F1 构造只组装，attach 有入口
+### 3.1.1 F1 Construction only assembles; attaching has an entry
 
-- **行为**：构造建面 + 引擎 + 视图 + 容器；`init()` 同步 attach，`initAsync()` 是协程拼法；没有显式调用时第一拍兜底。
-- **约束**（C1）：attach 必须有句柄和尺寸；句柄空/尺寸退化时保持 `Pending`，不猜延时。
-- **要求**（R1）：配置写在 attach 之前 = 零重建；控件不排重试定时器。
-- **验收**（T1）：`ConstructionOnlyComposesAndTheFirstTurnAttaches`。
-- **注意**（N1）：`initAsync()` 不下池；设备/会话/管线/warm-up 都在应用线程。
+- **Behaviour**: the constructor builds the widget + engine + view + container; `init()` attaches synchronously, `initAsync()` is the coroutine shape; with no explicit call the first turn attaches.
+- **Constraints** (C1): attaching needs a handle and a size; with an empty handle or a degenerate size the state stays `Pending` and no delay is guessed.
+- **Requirements** (R1): configuration done before the attach means zero rebuilds; the control arms no retry timer.
+- **Acceptance** (T1): `ConstructionOnlyComposesAndTheFirstTurnAttaches`.
+- **Caveat** (N1): `initAsync()` does not go to a pool; the device, session, pipeline and warm-up all run on the application thread.
 
-### 3.1.2 F2 状态与可见性
+### 3.1.2 F2 State and visibility
 
-- **行为**：`Pending`（没有可用表面或还没渲过）/ `Presenting`（帧在表面里）/ `Failed`（后端起不来）。
-  容器在 `state_changed` 报到 `Presenting` 之前一直隐藏。
-  **`Presenting` 说的是"帧真的进了表面"**：inline 下排帧即答完，所以提交那一刻成立；线程化时第一次会
-  `waitForFrame()` 等这张首帧（区域能不能露出来靠它），之后每一拍只看上一帧的 `presentRecord()`，不再等。
-  一张 `Lost` 的帧**不改状态**（见 §2.4）：修它的是引擎重报尺寸，藏区域反而会停掉修复。
-- **约束**（C2）：没有会话就没有帧；`failureReason()` 非空 ⟺ `Failed`；`Presenting` 只在有 `Presented` 的答案之后。
-- **要求**（R2）：`Presenting` 之前露出的是主窗背景，不是洞；`renderFrame()` / `fitToScreen()` 在 attach 前不得推状态。
-- **验收**（T2）：`TheFrameTheAttachRendersPutsTheSurfaceOnScreen`、
-  `AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScreen`。
-- **注意**（N2）：未呈现的原生窗口在 Qt 里是一个洞（window container 把自己的矩形挖透明），所以“藏着”是正确性。
+- **Behaviour**: `Pending` (no usable surface, or nothing rendered yet) / `Presenting` (a frame is in the surface) / `Failed` (the backend will not start).
+  The container stays hidden until `state_changed` reports `Presenting`.
+  **`Presenting` means "a frame really reached the surface"**: inline, a queued frame is answered at once, so it holds at the moment of submission; when threaded, the first one `waitForFrame()`s for that first frame (whether the area may be revealed depends on it), and every later turn only reads the previous frame's `presentRecord()` without waiting.
+  A `Lost` frame **does not change the state** (see §2.4): what fixes it is the engine re-announcing the size, and hiding the area would stop the repair.
+- **Constraints** (C2): no session means no frame; `failureReason()` is non-empty ⟺ `Failed`; `Presenting` only after an answer that says `Presented`.
+- **Requirements** (R2): what shows before `Presenting` is the main window's background, not a hole; `renderFrame()` / `fitToScreen()` must not push the state before the attach.
+- **Acceptance** (T2): `TheFrameTheAttachRendersPutsTheSurfaceOnScreen`, `AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScreen`.
+- **Caveat** (N2): an unshown native window is a hole in Qt (the window container punches its own rectangle transparent), so hiding it is correctness.
 
-### 3.1.3 F3 原生窗口重建
+### 3.1.3 F3 Native window recreation
 
-- **行为**：Qt 销毁并重建平台窗口（dock 拖拽、换屏、`setCentralWidget()` 重父化）时，新句柄被捡起并重新公告给后端；
-  会话、设备、缓存与已编译管线都留，状态重走 `Pending → Presenting`。
-- **约束**（C3）：重建只换表面，不换会话；宿主不需要自己重新 `init()`。
-- **要求**（R3）：重建期间状态退回 `Pending`，区域隐藏；首帧回来后再显示。
-- **验收**（T3）：`FollowsARecreatedSurfaceWithoutTheHost`。
-- **注意**（N3）：重父化会重建原生窗口，所以中央区不要每页一个控件，容器内切页。
+- **Behaviour**: when Qt destroys and recreates the platform window (a dock drag, a screen change, a `setCentralWidget()` reparent), the new handle is picked up and re-announced to the backend; the session, device, caches and compiled pipelines stay, and the state goes through `Pending → Presenting` again.
+- **Constraints** (C3): a rebuild replaces the surface, not the session; the host does not call `init()` again.
+- **Requirements** (R3): during the rebuild the state drops to `Pending` and the area is hidden; it is shown again once the first frame returns.
+- **Acceptance** (T3): `FollowsARecreatedSurfaceWithoutTheHost`.
+- **Caveat** (N3): reparenting recreates the native window, so the central area holds one container installed once and switches pages inside it.
 
-### 3.1.4 F4 失败与重试
+### 3.1.4 F4 Failure and retry
 
-- **行为**：后端拒绝 ⇒ `init()` 返回 false，状态停在 `Pending`；没有注册后端 ⇒ `Failed` + 原因；
-  宿主再调 `init()` 就是重试。
-- **约束**（C4）：控件没有任何后台重试；失败原因只在 `Failed` 时有效，attach 成功后清掉旧判决。
-- **要求**（R4）：拒绝与失败都必须可观察（返回值/状态/原因），不能静默。
-- **验收**（T4）：`RefusedAttachReportsFalseAndWaitsForTheHost`、`HostCanRetryAfterTheBackendRefused`、
-  `ReportsFailedWhenNoRenderBackendIsRegistered`。
-- **注意**（N4）：晚注册的后端会被下一次 attach 捡起，不要在构造时就判死。
+- **Behaviour**: the backend refuses ⇒ `init()` returns false and the state stays `Pending`; no backend is registered ⇒ `Failed` plus a reason; the host calling `init()` again is the retry.
+- **Constraints** (C4): the control retries nothing in the background; the failure reason is only valid in `Failed`, and a successful attach clears the old verdict.
+- **Requirements** (R4): both a refusal and a failure must be observable (return value / state / reason) and never silent.
+- **Acceptance** (T4): `RefusedAttachReportsFalseAndWaitsForTheHost`, `HostCanRetryAfterTheBackendRefused`, `ReportsFailedWhenNoRenderBackendIsRegistered`.
+- **Caveat** (N4): a backend registered later is picked up by the next attach, so do not declare it dead in the constructor.
 
-### 3.1.5 F5 平台回退
+### 3.1.5 F5 Platform fallback
 
-- **行为**：X11/WSLg 上主窗未 show 时容器里的独立 `QWindow` 已有有效句柄，attach 成功；Wayland 未映射 surface
-  拿不到 extent，`init()` 返回 false，控件显示表面后宿主再调一次。
-- **约束**（C5）：attach 只需要句柄 + 尺寸；present 需要窗口在屏上。
-- **要求**（R5）：平台不同意时回退为“先显示再 attach”，不能更差。
-- **验收**（T5）：`scripts/xwinmap.py` 读启动期 map_state；Windows 判据见 backlog。
-- **注意**（N5）：`map_state` 字段偏移是 92，不是 100；Windows 的 HWND + client rect 仍未实测。
+- **Behaviour**: on X11/WSLg the standalone `QWindow` inside the container already has a valid handle while the main window is unshown, so the attach succeeds; on Wayland an unmapped surface has no extent, so `init()` returns false and the host calls it again after showing the surface.
+- **Constraints** (C5): attaching needs only a handle and a size; presenting needs the window on screen.
+- **Requirements** (R5): when the platform disagrees the fallback is "show first, then attach", which is never worse.
+- **Acceptance** (T5): `scripts/xwinmap.py` reads `map_state` at startup; the Windows criterion is in the backlog.
+- **Caveat** (N5): the `map_state` field offset is 92, not 100; the Windows HWND + client rect has still not been measured.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `RenderControl`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 | --- | --- | --- |
-| `init()` | 同步、幂等 attach | 会话已绑当前句柄 ⇒ 直接 true |
-| `initAsync()` | `co_return init()`，不挂起 | 协程调用方的拼法 |
-| `state()` | `Pending` / `Presenting` / `Failed` | 见 F2 |
-| `failureReason()` | 非空 ⟺ `Failed` | attach 成功后清掉 |
-| `engine()` / `view()` / `viewer()` / `surface()` | 借用，控件拥有 | `view()` 在 `release` 后为 null |
-| `renderFrame()` / `fitToScreen()` | 同步出一帧 / 对准内容 | attach 前不推 `Presenting` |
-| `requestFrame()` | 请求一帧：显示同步那一拍画，合并，未上屏不画 | 改完状态后的默认拼法 |
-| `setContinuousRendering(on, interval_ms)` | 连续出帧 | 默认按需 |
+| `init()` | synchronous, idempotent attach | session already bound to the current handle ⇒ true at once |
+| `initAsync()` | `co_return init()`, never suspends | the coroutine caller's shape |
+| `state()` | `Pending` / `Presenting` / `Failed` | see F2 |
+| `failureReason()` | non-empty ⟺ `Failed` | cleared by a successful attach |
+| `engine()` / `view()` / `viewer()` / `surface()` | borrowed, the control owns them | `view()` is null after `release` |
+| `renderFrame()` / `fitToScreen()` | renders one frame synchronously / frames the content | pushes no `Presenting` before the attach |
+| `requestFrame()` | requests a frame: draws in the same turn when shown, coalesced, nothing when not on screen | the default shape after a state change |
+| `setContinuousRendering(on, interval_ms)` | continuous frames | on demand by default |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | attach 必须有句柄和尺寸；否则保持 `Pending`。 |
-| C2 | 没有会话就没有帧；`failureReason()` 非空 ⟺ `Failed`。 |
-| C3 | 重建只换表面，不换会话；宿主不需要重新 `init()`。 |
-| C4 | 控件不排重试定时器；失败可观察。 |
-| C5 | attach 不要求可见；present 要求窗口在屏上。 |
+| C1 | Attaching needs a handle and a size; otherwise the state stays `Pending`. |
+| C2 | No session means no frame; `failureReason()` is non-empty ⟺ `Failed`. |
+| C3 | A rebuild replaces the surface, not the session; the host does not call `init()` again. |
+| C4 | The control arms no retry timer; a failure is observable. |
+| C5 | Attaching does not require visibility; presenting requires the window to be on screen. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | attach 之前配置 = 零重建。 |
-| R2 | `Presenting` 之前区域保持隐藏，露出主窗背景。 |
-| R3 | 重建期间状态退回 `Pending`，首帧后恢复 `Presenting`。 |
-| R4 | 拒绝/失败必须可观察；晚注册后端可被下一次 attach 捡起。 |
-| R5 | 平台不同意时回退为“先显示再 attach”。 |
+| R1 | Configured before the attach = zero rebuilds. |
+| R2 | The area stays hidden before `Presenting`, showing the main window's background. |
+| R3 | During a rebuild the state drops to `Pending` and returns to `Presenting` after the first frame. |
+| R4 | A refusal or failure must be observable; a backend registered later is picked up by the next attach. |
+| R5 | When the platform disagrees, fall back to "show first, then attach". |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | 构造返回时 `state()==Pending`、`device()==nullptr`、没有链。 |
-| N2 | `Presenting` ⟺ 帧已经在表面里。 |
-| N3 | 原生窗口重建不销毁会话/设备/已编译管线。 |
-| N4 | 控件不拥有窗口容器的可见性策略之外的东西；尺寸由 resize 事件给。 |
+| N1 | When the constructor returns, `state()==Pending`, `device()==nullptr` and there is no chain. |
+| N2 | `Presenting` ⟺ a frame is already in the surface. |
+| N3 | Recreating the native window destroys no session, device or compiled pipeline. |
+| N4 | The control owns nothing beyond the window container's visibility policy; the size comes from a resize event. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 未呈现的原生窗口是洞
+### 6.1 An unpresented native window is a hole
 
-- 会怎么错：容器可见但还没有帧，桌面透出来。
-- 怎么判：`state()!=Presenting` 时容器必须隐藏。
-- 怎么防：`state_changed` 到 `Presenting` 才 `setVisible(true)`。
+- How it fails: the container is visible with no frame yet, and the desktop shows through.
+- How to detect it: while `state()!=Presenting` the container must be hidden.
+- How to prevent it: `setVisible(true)` only once `state_changed` reports `Presenting`.
 
-### 6.2 不要在启动期替渲染组件 pump 事件
+### 6.2 Do not pump events for the render component during startup
 
-- 会怎么错：`processEvents()` 把别的组件的定时器/事件一起跑，嵌入式表面被提前唤醒。
-- 怎么判：attach 在布局没稳时发生，拿不到有效尺寸/句柄。
-- 怎么防：启动框只 `repaint()`；首帧门用 `Window::hasPainted()` + 300 ms 兜底。
+- How it fails: `processEvents()` also runs other components' timers and events, and the embedded surface is woken early.
+- How to detect it: the attach happens before the layout settles, so no valid size or handle is available.
+- How to prevent it: the startup box only calls `repaint()`; the first-frame door uses `Window::hasPainted()` plus a 300 ms fallback.
 
-### 6.3 重父化会重建原生窗口
+### 6.3 Reparenting recreates the native window
 
-- 会怎么错：每个文档一个中央控件，切页/拖拽就重建会话，画面闪。
-- 怎么判：状态反复 `Pending → Presenting`，设备数上涨。
-- 怎么防：中央区放一个容器、只装一次、内部 `QStackedWidget` 切页。
+- How it fails: one central widget per document, so switching pages or dragging rebuilds the session and the image flickers.
+- How to detect it: the state repeatedly goes `Pending → Presenting` and the device count climbs.
+- How to prevent it: the central area holds one container installed once and switches pages inside it with a `QStackedWidget`.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 | --- | --- | --- | --- |
-| D1 | 延后创建/插入 `RenderControl` 直到“就绪” | 自锁：控件不在已显示窗口的布局里就没有可用表面。 | — |
-| D2 | 先给尺寸再 attach、最后嵌入 | 退化尺寸（1x1）本来就够 attach；先嵌入再 `init()` 更简单。 | — |
-| D3 | 延后 show `QWindow` 到引擎就绪之后 | 因果反了：引擎就绪需要窗口存在，present 又要求窗口已映射。 | — |
-| D4 | 在 `QWindow` 背后画背景当占位 | 未呈现的原生窗口露出什么取决于平台/合成器。 | — |
-| D5 | 100 ms × N 次 attach 重试梯子 / settle 帧 | 首次 attach 是宿主的 `init()`，之后由窗口事件驱动。 | — |
-| D6 | 单独的 `Attached` 状态 | 同步 attach 里它永不驻留，没有读者区分它和 `Pending`。 | — |
+| D1 | Creating or inserting the `RenderControl` later, once "ready" | Self-locking: a control that is not in a shown window's layout has no usable surface. | — |
+| D2 | Setting the size first, then attaching, then embedding | A degenerate size (1x1) is already enough to attach, and embedding first then calling `init()` is simpler. | — |
+| D3 | Showing the `QWindow` later, once the engine is ready | The causality is reversed: a ready engine needs the window to exist, and presenting needs it mapped. | — |
+| D4 | Painting a background behind the `QWindow` as a placeholder | What an unpresented native window reveals depends on the platform and the compositor. | — |
+| D5 | A 100 ms × N attach retry ladder, or settle frames | The first attach is the host's `init()`; after that, window events drive it. | — |
+| D6 | A separate `Attached` state | It never persists through a synchronous attach, and no reader distinguishes it from `Pending`. | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 | --- | --- | --- |
-| T1 | 构造只组装；第一拍 attach 到宿主刚装的后端 | `ConstructionOnlyComposesAndTheFirstTurnAttaches` |
-| T2 | attach 那一帧就进 `Presenting`；attach 前不推状态 | `TheFrameTheAttachRendersPutsTheSurfaceOnScreen`、`AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScreen` |
-| T3 | 原生窗口重建后会话保留 | `FollowsARecreatedSurfaceWithoutTheHost` |
-| T4 | 拒绝 ⇒ false + `Pending`；无后端 ⇒ `Failed`；可重试 | `RefusedAttachReportsFalseAndWaitsForTheHost`、`HostCanRetryAfterTheBackendRefused`、`ReportsFailedWhenNoRenderBackendIsRegistered` |
-| T5 | 嵌入后立刻 `init()`，不等布局 | `HostCanAttachRightAfterEmbeddingBeforeTheLayoutSettles` |
+| T1 | construction only assembles; the first turn attaches to the backend the host just installed | `ConstructionOnlyComposesAndTheFirstTurnAttaches` |
+| T2 | the frame the attach renders reaches `Presenting`; no state push before the attach | `TheFrameTheAttachRendersPutsTheSurfaceOnScreen`, `AFrameAskedForBeforeAnySessionDoesNotPutTheSurfaceOnScreen` |
+| T3 | the session survives a native window rebuild | `FollowsARecreatedSurfaceWithoutTheHost` |
+| T4 | a refusal ⇒ false + `Pending`; no backend ⇒ `Failed`; retryable | `RefusedAttachReportsFalseAndWaitsForTheHost`, `HostCanRetryAfterTheBackendRefused`, `ReportsFailedWhenNoRenderBackendIsRegistered` |
+| T5 | `init()` right after embedding, without waiting for the layout | `HostCanAttachRightAfterEmbeddingBeforeTheLayoutSettles` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-F1–F5 已落地（Windows 的未显示窗口 attach 仍未实测）。同步 attach，三态状态机，容器隐藏到首帧。
+F1–F5 are in place (attaching to an unshown window on Windows is still unmeasured).
+The attach is synchronous, the state machine has three states, and the container is hidden until the first frame.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-- Windows：主窗未 show 时 `VsgHostWindow` 是否拿到有效 HWND；见 `../backlog/appfw-startup.md`。
-- 会话 init 仍在应用线程（~184 ms）；搬到池上需要重新设计 attach 与内容装配的并发，暂不做。
+- Windows: whether `VsgHostWindow` gets a valid HWND while the main window is unshown; see `../backlog/appfw-startup.md`.
+- The session init still runs on the application thread (~184 ms); moving it to a pool needs the concurrency of attach and content assembly redesigned, which is not being done now.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-`SurfaceState::Attached` 已删除；旧代码只看 `Pending` / `Presenting` / `Failed`。`isAttaching()`、
-`AttachScope`、settle 帧均已删除。
+There is no `SurfaceState::Attached`: a caller looks at `Pending` / `Presenting` / `Failed` only.
+There is no `isAttaching()`, no `AttachScope` and no settle frame.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/fw/appfw/sdk/vine/appfw/gui/RenderControl.hpp`
 - `src/fw/appfw/src/gui/SurfaceWindow.{hpp,cpp}`
 - `tests/test_gui/RenderControlTest.cpp`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `appfw-render-view.md`
 - `appfw-startup-splash.md`
 - `graphics-architecture.md`
 - `../backlog/appfw-startup.md`
 
-### 10.3 外部资料
+### 10.3 External material
 
-- Qt `QWidget::createWindowContainer` 的原生窗口语义。
-- X11 `XQueryTree` / `XGetWindowAttributes`（`scripts/xwinmap.py`）。
+- The native-window semantics of Qt's `QWidget::createWindowContainer`.
+- X11 `XQueryTree` / `XGetWindowAttributes` (`scripts/xwinmap.py`).

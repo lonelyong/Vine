@@ -1,287 +1,277 @@
-# appfw 渲染视图
+# appfw's render view
 
-> **状态**：现行
-> **最后核对**：2026-10-23
-> **范围**：`RenderControl` / `Viewer` / `SceneView` / `PassChain` 的宿主面；表面生命周期见
-> `appfw-render-surface.md`，图形层配方与 pass 调度见 `graphics-architecture.md`。
-> **权威来源**：`RenderControl.hpp`、`Viewer.hpp`、`ViewerOptions.hpp`、`SceneView.hpp`、`PassChain.hpp`。
-> **待办**：`../backlog/graphics.md`
+> **Status**: current
+> **Last verified**: 2026-10-23
+> **Scope**: the host-facing side of `RenderControl` / `Viewer` / `SceneView` / `PassChain`; the surface lifetime is in `appfw-render-surface.md`, and the graphics layer's recipes and pass scheduling are in `graphics-architecture.md`.
+> **Sources**: `RenderControl.hpp`, `Viewer.hpp`, `ViewerOptions.hpp`, `SceneView.hpp`, `PassChain.hpp`.
+> **Backlog**: `../backlog/graphics.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-宿主想要一块 3D 区，过去要自己重复“建管线 + 跟窗口 resize + 填 DPR + 处理输入”的记账；图形 SDK 又把
-“配方”（走哪条链、有哪些 overlay）和“几何”（相机、内容、视口）混在视图上。两边都需要一条清楚的分层。
+A host that wants a 3D area otherwise repeats the same bookkeeping — build a pipeline, follow the window's resize, fill in the DPR, route the input — and the graphics SDK mixes the **recipe** (which chain, which overlays) with the **geometry** (camera, content, viewport) on the view.
+Both sides need one clear division.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 宿主用一行配置拿到一块能画、能缩放、能交互的 3D 区。
-- 想要更深时能自己建链、自己声明主 pass，不被高层挡住。
-- 配方变化只付一次建链；运行期开关（着色模式、overlay 显隐）零重建。
-- 一块区只有一幅画，清屏/顺序/呈现没有第二种答案。
+- A host gets a 3D area that draws, zooms and reacts with one line of configuration.
+- A host that wants to go deeper builds its own chain and declares its own main pass without the higher layer standing in the way.
+- A recipe change pays for one chain build; a run-time switch (shading mode, overlay visibility) rebuilds nothing.
+- One area shows one picture, and there is no second answer for clearing, order or presenting.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 多格/分屏/PiP 进框架：由应用自己算矩形、给 pass 子视口。
-- 一个文档一个顶层窗口：今天一个控件一块区。
-- 框架内置选择/高亮/框选：拾取在 SDK，选择是业务。
-- 超过 4 份同时存在的 3D 文档：`VSG_MAX_DEVICES=4`，更多要给 vsg 打补丁。
+- Multi-pane / split / PiP in the framework: the app computes the rectangles and hands the pass its sub-viewports.
+- One top-level window per document: one control is one area today.
+- Selection / highlight / rubber-band in the framework: picking is in the SDK and selection is business logic.
+- More than four simultaneous 3D documents: `VSG_MAX_DEVICES=4`, and more needs a patch to vsg.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-`RenderControl` 给宿主一块 3D 区；`Viewer` 把宿主请求（`ViewerOptions`）变成一条 `PassChain` 并采纳到
-`SceneView`；宿主想要更深就自己 `PassChain::build()` + `view()->setChain()`，低层出现时高层让位。
+`RenderControl` gives the host a 3D area; `Viewer` turns the host's request (`ViewerOptions`) into one `PassChain` and adopts it on the `SceneView`; a host that wants to go deeper calls `PassChain::build()` + `view()->setChain()` itself, and the higher layer stands down once the lower one appears.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 对象与所有权
+### 2.1 Objects and ownership
 
-| 对象 | 拥有 | 不拥有 |
+| Object | Owns | Does not own |
 | --- | --- | --- |
-| `RenderControl`（公开控件） | 私有 `SurfaceWindow`；转发 `engine()` / `view()` / `viewer()` / `surface()` / `init()` / `state()` | 不自己建链、不自己解释配方 |
-| `SurfaceWindow`（私有实现） | 原生 `QWindow`、`RenderEngine`、`SceneView`、`Viewer`；attach 规则、延迟 resize、Qt 事件 → 视图输入 | 不存第二份表面/尺寸事实 |
-| `RenderArea`（图形层） | 一块区的呈现声明、尺寸、目标；只**解析**声明 | 不建链、不建视图、不猜默认 pass |
-| `SceneView`（图形层） | 相机、内容场景、操纵器、二维组与输入、**采纳的那条链**（强引用） | 不拥有配方、不拥有表面 |
-| `PassChain`（图形层） | 一条链的 pass、离屏目标、overlay、`ChainDesc` 的构建结果；析构时把 pass 还给引擎 | 不拥有引擎（租约）、不拥有视图 |
-| `Viewer`（appfw） | **一块区的请求**（`ViewerOptions`）+ 建链/采纳/声明/重建搬运行期选择 | 不拥有呈现（`isActive()` 读区）、不拥有视图 |
-| `RenderEngine`（图形层） | 设备、pass 槽、帧调度 | 不认识视图，也不认识链 |
+| `RenderControl` (the public control) | the private `SurfaceWindow`; forwards `engine()` / `view()` / `viewer()` / `surface()` / `init()` / `state()` | builds no chain and interprets no recipe |
+| `SurfaceWindow` (the private implementation) | the native `QWindow`, the `RenderEngine`, the `SceneView`, the `Viewer`; the attach rules, deferred resize, Qt events → view input | keeps no second copy of the surface or size facts |
+| `RenderArea` (graphics layer) | one area's presentation declaration, size and target; it only **resolves** the declaration | builds no chain, creates no view, guesses no default pass |
+| `SceneView` (graphics layer) | camera, content scene, manipulators, 2D groups and input, **the chain it adopted** (a strong reference) | owns no recipe and no surface |
+| `PassChain` (graphics layer) | one chain's passes, offscreen targets, overlays and the built `ChainDesc`; it hands the passes back to the engine when destroyed | owns no engine (a lease) and no view |
+| `Viewer` (appfw) | **one area's request** (`ViewerOptions`) plus building, adopting, declaring and carrying run-time choices across a rebuild | owns no presentation (`isActive()` reads the area) and no view |
+| `RenderEngine` (graphics layer) | the device, the pass slots, the frame scheduling | knows neither views nor chains |
 
-**一条硬边**：`SceneView` → `PassChain` 是强引用；`PassChain` → `RenderEngine` 是借用租约；
-`RenderEngine` → `SceneView` / `PassChain` 没有边（引擎只认识 pass）。
+**One hard edge**: `SceneView` → `PassChain` is a strong reference; `PassChain` → `RenderEngine` is a borrowed lease; `RenderEngine` → `SceneView` / `PassChain` has no edge (the engine knows only passes).
 
-### 2.2 两层 API
+### 2.2 The two API layers
 
-**快速层**（`RenderControl` / `Viewer`）：`viewerOptions()` / `setViewerOptions()` / `setShadingMode()` /
-`release(view)` / `view()` / `isActive()` / `takeArea()`。`ViewerOptions` 是值：`path`、`mode`、
-`gizmo` / `stats`、`offscreen_width/height`、`layer_mask`。
+**The fast layer** (`RenderControl` / `Viewer`): `viewerOptions()` / `setViewerOptions()` / `setShadingMode()` / `release(view)` / `view()` / `isActive()` / `takeArea()`.
+`ViewerOptions` is a value: `path`, `mode`, `gizmo` / `stats`, `offscreen_width/height`, `layer_mask`.
 
-**底层**（图形 SDK）：`PassChain::build(engine, desc)`、`view()->setChain(chain)`、
-`surface()->present(pass)`、`view()->setManipulator(...)`。
+**The low level** (the graphics SDK): `PassChain::build(engine, desc)`, `view()->setChain(chain)`, `surface()->present(pass)`, `view()->setManipulator(...)`.
 
-**让位规则**：宿主在区上声明了自己的主 pass ⇒ `Viewer::isActive()` 为 false，`takeArea()` 不再建默认链；
-要把视图还给宿主就 `release(view)`。低层一旦出现，高层不再替它做决定。
+**The standing-down rule**: once the host declares its own main pass on the area, `Viewer::isActive()` is false and `takeArea()` builds no default chain; `release(view)` hands the view back to the host.
+Once the lower level appears, the higher one stops deciding for it.
 
-### 2.3 一块区只画一幅画
+### 2.3 One area draws one picture
 
-`RenderArea` 一条呈现，第二次呈现被拒并报一次。多幅画面由应用自己算矩形、给 pass 子视口、自己决定清屏。
-宿主接管时 `surface()->present(pass)` 声明自己的主 pass，默认链让位。
+`RenderArea` has one presentation; a second one is refused and reported once.
+Several pictures are the app's business: it computes the rectangles, gives the pass its sub-viewports and decides the clearing itself.
+When the host takes over, `surface()->present(pass)` declares its main pass and the default chain stands down.
 
-### 2.4 输入只有操纵器一条通道
+### 2.4 Input has one channel: the manipulator
 
-`SceneView` 把窗口事件推给它的操纵器（`CameraManipulator`）；宿主/插件要做交互就换操纵器，没有
-`setInputRouter` / `focusedView` 第二条路。拾取在 SDK（`Camera::screenToWorldRay` +
-`RayIntersection::intersectScene`），选择/高亮/框选是业务。
+`SceneView` pushes window events to its manipulator (`CameraManipulator`); a host or plugin that wants interaction swaps the manipulator, and there is no second route through `setInputRouter` / `focusedView`.
+Picking is in the SDK (`Camera::screenToWorldRay` + `RayIntersection::intersectScene`); selection, highlighting and rubber-banding are business logic.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 构造只组装，attach 有明确入口 | `new RenderControl()` 不选后端、不 attach；`init()` / `initAsync()` / 第一拍兜底才 attach | 已落地 |
-| F2 | `Viewer` 把请求变成链 | `setViewerOptions()` 建链 + 采纳 + 在区上声明 | 已落地 |
-| F3 | 配方变化才重建 | 改 `ViewerOptions` = 一次建链；着色模式/overlay 显隐零重建 | 已落地 |
-| F4 | 一块区一幅画与宿主接管 | 第二次呈现被拒；宿主主 pass 让默认链让位 | 已落地 |
-| F5 | 输入与拾取 | 事件只进操纵器；拾取在 SDK，选择在业务 | 已落地 |
-| F6 | 多个 3D 文档各自设备 | 每个文档一块 `RenderControl`；上限 4，第 5 块给理由失败 | 已落地 |
+| F1 | Construction only assembles; attaching has an explicit entry | `new RenderControl()` chooses no backend and attaches nothing; `init()` / `initAsync()` / the first-turn fallback attach | landed |
+| F2 | `Viewer` turns a request into a chain | `setViewerOptions()` builds, adopts and declares on the area | landed |
+| F3 | Rebuild only when the recipe changes | changing `ViewerOptions` = one chain build; shading mode / overlay visibility rebuild nothing | landed |
+| F4 | One area, one picture, and host takeover | a second presentation is refused; a host main pass makes the default chain stand down | landed |
+| F5 | Input and picking | events go to the manipulator only; picking is in the SDK, selection in business code | landed |
+| F6 | Several 3D documents, each with its own device | one `RenderControl` per document; the cap is 4 and the fifth fails with a reason | landed |
 
-### 3.1.1 F1 构造只组装，attach 有明确入口
+### 3.1.1 F1 Construction only assembles; attaching has an explicit entry
 
-- **行为**：构造建引擎、视图、查看器、诊断路由；不选后端、不 attach。第一次 attach 由第一拍事件循环兜底，
-  或宿主显式 `init()` / `initAsync()`。
-- **约束**（C1）：`engine()->setDevice()`、`viewer()->setViewerOptions()`、`view()->setChain()`、内容装配
-  都必须能在构造之后、第一次 attach 之前同步跑完。
-- **要求**（R1）：attach 之前不得建链、不得编译管线；attach 之前配置 = 零重建。
-- **验收**（T1）：`RenderControlTest.ConstructionOnlyComposesAndTheFirstTurnAttaches`。
-- **注意**（N1）：`initAsync()` 是 `co_return init()`，不挂起、不下池；设备/会话/管线与 warm-up 都在应用线程。
+- **Behaviour**: the constructor builds the engine, view, viewer and diagnostic routing and chooses no backend; the first attach comes from the first-turn event-loop fallback, or from the host's explicit `init()` / `initAsync()`.
+- **Constraints** (C1): `engine()->setDevice()`, `viewer()->setViewerOptions()`, `view()->setChain()` and the content assembly must all be able to run synchronously after construction and before the first attach.
+- **Requirements** (R1): no chain is built and no pipeline compiled before the attach; configured before the attach = zero rebuilds.
+- **Acceptance** (T1): `RenderControlTest.ConstructionOnlyComposesAndTheFirstTurnAttaches`.
+- **Caveat** (N1): `initAsync()` is `co_return init()` — it does not suspend and goes to no pool; the device, session, pipeline and warm-up all run on the application thread.
 
-### 3.1.2 F2 `Viewer` 把请求变成链
+### 3.1.2 F2 `Viewer` turns a request into a chain
 
-- **行为**：`setViewerOptions(options)` 按 `ViewerOptions` 建 `PassChain`，采纳到 `view()`，并在 `RenderArea`
-  上声明呈现。没有请求时 `takeArea()` 用默认 `ViewerOptions` 建一条。
-- **约束**（C2）：链必须为这个视图的相机/内容建；`setChain` 不检查，引擎在形状不一致时报告。
-- **要求**（R2）：同一份请求重复设置不得重建（幂等）；区上已有宿主声明时不得建默认链。
-- **验收**（T2）：`TheControlsSurfacePresentsItsOwnViewByDefault`、
-  `ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt`。
-- **注意**（N2）：`Viewer` 只拥有请求；`isActive()` 读区，不读记忆。
+- **Behaviour**: `setViewerOptions(options)` builds a `PassChain` from the `ViewerOptions`, adopts it on `view()` and declares the presentation on the `RenderArea`. With no request, `takeArea()` builds one from the default `ViewerOptions`.
+- **Constraints** (C2): the chain must be built for this view's camera and content; `setChain` does not check, and the engine reports a shape mismatch.
+- **Requirements** (R2): setting the same request again must rebuild nothing (idempotent); with a host declaration already on the area no default chain may be built.
+- **Acceptance** (T2): `TheControlsSurfacePresentsItsOwnViewByDefault`, `ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt`.
+- **Caveat** (N2): `Viewer` owns the request only; `isActive()` reads the area, not a memory.
 
-### 3.1.3 F3 配方变化才重建
+### 3.1.3 F3 Rebuild only when the recipe changes
 
-- **行为**：`ViewerOptions` 是构建请求；改一次 = 一次建链。链已经能表达的 `ShadingMode` 只是
-  `PassChain::setShadingMode()` 的一次 override；overlay 显隐是 `setGizmoVisible()` / `setStatsVisible()`。
-  换档/开关**只改链上的状态、本身不产生帧**：区是按需出帧的（attach、resize、输入、`requestFrame()`），改状态
-  的一方负责请求一帧 —— 模型的着色命令（`ShadingModeCommand`）改完就 `requestFrame()`（请求，不是同步
-  `renderFrame()`：绘制落在显示同步那一拍，同一拍内合并，未上屏不画）。
-- **约束**（C3）：`PassChain::effectivePath(desc)` 是“请求会建成哪条链”的唯一规则：Deferred 请求带非 Lit 模式时
-  建 Forward，但 `desc.path` 保留，切回 Lit 会再建 Deferred。
-- **要求**（R3）：运行期开关零重建；重建必须搬运行期选择（用户隐藏的 overlay 仍隐藏）。
-- **验收**（T3）：`ARebuildCarriesTheLiveChainsRuntimeChoices`。
-- **注意**（N3）：`setViewerOptions()` 重建后区上已有声明不动，声明会重新解析到新链的 presenting pass。
+- **Behaviour**: `ViewerOptions` is a build request; one change = one chain build.
+  A `ShadingMode` the chain can already express is just one override through `PassChain::setShadingMode()`; overlay visibility is `setGizmoVisible()` / `setStatsVisible()`.
+  Switching a mode or a toggle **only changes state on the chain and produces no frame by itself**: the area renders on demand (attach, resize, input, `requestFrame()`), so whoever changes the state requests the frame — the model's shading command (`ShadingModeCommand`) calls `requestFrame()` after it changes (a request, not a synchronous `renderFrame()`: the draw lands in the display-sync turn, coalesced within it, and nothing is drawn while off screen).
+- **Constraints** (C3): `PassChain::effectivePath(desc)` is the single rule for "which chain will this request build": a Deferred request with a non-Lit mode builds Forward, but `desc.path` is kept, so switching back to Lit builds Deferred again.
+- **Requirements** (R3): a run-time switch rebuilds nothing; a rebuild must carry the run-time choices (an overlay the user hid stays hidden).
+- **Acceptance** (T3): `ARebuildCarriesTheLiveChainsRuntimeChoices`.
+- **Caveat** (N3): after `setViewerOptions()` rebuilds, an existing declaration on the area is left alone and re-resolves to the new chain's presenting pass.
 
-### 3.1.4 F4 一块区一幅画与宿主接管
+### 3.1.4 F4 One area, one picture, and host takeover
 
-- **行为**：`RenderArea` 一条呈现；第二次呈现被拒并报一次。宿主 `surface()->present(pass)` 声明自己的主 pass 后，
-  `Viewer::isActive()` 为 false，`takeArea()` 不动；`release(view)` 把视图还给宿主。
-- **约束**（C4）：一块区不能同时有宿主 pass 和默认链；一个区两幅画没有正确的清屏/顺序答案。
-- **要求**（R4）：宿主接管时 `Viewer` 不得建链、不得声明；`release(view)` 后链仍采纳在视图上，由宿主替换。
-- **验收**（T4）：`AHostPassTakesTheAreaAndTheViewerStandsDown`、`ReleasingTheViewTakesItOutOfTheArea`。
-- **注意**（N4）：多格/分屏不在框架；应用自己算矩形、给 pass 子视口。
+- **Behaviour**: `RenderArea` has one presentation; a second is refused and reported once. After the host declares its own main pass with `surface()->present(pass)`, `Viewer::isActive()` is false and `takeArea()` does nothing; `release(view)` hands the view back to the host.
+- **Constraints** (C4): one area cannot carry both a host pass and the default chain; two pictures in one area have no correct answer for clearing or order.
+- **Requirements** (R4): while the host has taken over, `Viewer` builds no chain and declares nothing; after `release(view)` the chain stays adopted on the view and the host replaces it.
+- **Acceptance** (T4): `AHostPassTakesTheAreaAndTheViewerStandsDown`, `ReleasingTheViewTakesItOutOfTheArea`.
+- **Caveat** (N4): multi-pane / split is not in the framework; the app computes the rectangles and gives the pass its sub-viewports.
 
-### 3.1.5 F5 输入与拾取
+### 3.1.5 F5 Input and picking
 
-- **行为**：`RenderControl` 的容器把 Qt 事件翻成视图输入；`SceneView` 推给操纵器。拾取用
-  `Camera::screenToWorldRay` + `RayIntersection::intersectScene`，选择/高亮/框选在业务。
-- **约束**（C5）：输入不能绕过操纵器；按下时路由，松开前捕获；拖拽结束不算点击（松弛量在操纵器里）。
-- **要求**（R5）：导航行为在换操纵器时保持不变（拾取型操纵器原样转发给内层）。
-- **验收**（T5）：`TheViewReceivesInputAndADragKeepsSteeringIt`、
-  `ModelViewerTest.AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt`。
-- **注意**（N5）：点空白是合法的取消选择；要把选中前那份材质原指针还回去。
+- **Behaviour**: the `RenderControl` container translates Qt events into view input, and `SceneView` pushes them to the manipulator. Picking uses `Camera::screenToWorldRay` + `RayIntersection::intersectScene`; selection, highlighting and rubber-banding are business logic.
+- **Constraints** (C5): input cannot bypass the manipulator; the route is chosen on press and captured until release; a drag end is not a click (the slop lives in the manipulator).
+- **Requirements** (R5): navigation behaviour does not change when the manipulator is swapped (a picking manipulator forwards to the inner one unchanged).
+- **Acceptance** (T5): `TheViewReceivesInputAndADragKeepsSteeringIt`, `ModelViewerTest.AClickSelectsTheGeometryUnderTheCursorAndHighlightsIt`.
+- **Caveat** (N5): clicking empty space is a legitimate deselection, and the original material pointers captured before the selection must be handed back.
 
-### 3.1.6 F6 多个 3D 文档各自设备
+### 3.1.6 F6 Several 3D documents, each with its own device
 
-- **行为**：每个 3D 文档一块 `RenderControl`（自己的面/会话/设备/管线）；应用级共享的只有 DockPanel/Ribbon 外壳。
-- **约束**（C6）：`VSG_MAX_DEVICES=4`；第 5 块由 `vsg::Device` 构造抛异常拒绝，`deviceFailureMessage()` 转成原因。
-- **要求**（R6）：第 5 块失败必须带“at most 4 simultaneous render devices”的理由，不能抛到事件循环。
-- **验收**（T6）：`ModelViewerTest.EachDocumentViewOwnsItsOwnRenderArea`、
-  `VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException`。
-- **注意**（N6）：`<=4` 的固定数组分支不做边界检查，不能让第 5 块写下去。
+- **Behaviour**: each 3D document has its own `RenderControl` (its own surface / session / device / pipeline); only the DockPanel and ribbon shell are shared at application level.
+- **Constraints** (C6): `VSG_MAX_DEVICES=4`; the fifth is refused by a `vsg::Device` constructor throwing, and `deviceFailureMessage()` turns that into a reason.
+- **Requirements** (R6): the fifth failure must carry the reason "at most 4 simultaneous render devices" and must not escape to the event loop.
+- **Acceptance** (T6): `ModelViewerTest.EachDocumentViewOwnsItsOwnRenderArea`, `VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException`.
+- **Caveat** (N6): the fixed array branch for `<=4` does no bounds check, so the fifth must never be written into it.
 
-## 4. 公开接口
+## 4. Public Interface
 
-### 4.1 `RenderControl`（appfw）
+### 4.1 `RenderControl` (appfw)
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 | --- | --- | --- |
-| `engine()` / `view()` / `viewer()` / `surface()` | 借用，控件拥有 | `view()` 在 `release` 后为 null |
-| `viewerOptions()` / `setViewerOptions()` / `setShadingMode()` | 转发到 `Viewer` | 见 F2/F3 |
-| `init()` / `initAsync()` | 同步、幂等 attach | `initAsync()` 不挂起 |
-| `state()` / `failureReason()` | `Pending` / `Presenting` / `Failed` | `failureReason` 非空 ⟺ `Failed` |
-| `renderFrame()` / `fitToScreen()` | 按需出帧 / 对准内容 | attach 前不得把状态推到 `Presenting` |
+| `engine()` / `view()` / `viewer()` / `surface()` | borrowed, the control owns them | `view()` is null after `release` |
+| `viewerOptions()` / `setViewerOptions()` / `setShadingMode()` | forwarded to `Viewer` | see F2/F3 |
+| `init()` / `initAsync()` | synchronous, idempotent attach | `initAsync()` never suspends |
+| `state()` / `failureReason()` | `Pending` / `Presenting` / `Failed` | `failureReason` non-empty ⟺ `Failed` |
+| `renderFrame()` / `fitToScreen()` | render on demand / frame the content | must not push the state to `Presenting` before the attach |
 
-### 4.2 `Viewer`（appfw）
+### 4.2 `Viewer` (appfw)
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 | --- | --- | --- |
-| `setViewerOptions(options)` | 建链 + 采纳 + 声明 | 失败保留旧链与旧请求 |
-| `setShadingMode(mode)` | 先试活链开关，表达不了才重建 | 零重建优先 |
-| `release(view)` | 撤声明、忘视图、放引用 | 链仍采纳在视图上 |
-| `view()` / `isActive()` | 读区/读视图 | 不存第二份答案 |
-| `takeArea()` | 无链就建默认链并声明；有宿主 pass 就让位 | attach 时调用 |
+| `setViewerOptions(options)` | build + adopt + declare | a failure keeps the old chain and the old request |
+| `setShadingMode(mode)` | try the live chain's switch first, rebuild only if it cannot express it | zero rebuilds first |
+| `release(view)` | withdraw the declaration, forget the view, drop the reference | the chain stays adopted on the view |
+| `view()` / `isActive()` | read the area / read the view | keeps no second answer |
+| `takeArea()` | build and declare a default chain when there is none; stand down when a host pass exists | called on attach |
 
-### 4.3 图形 SDK
+### 4.3 The graphics SDK
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Note |
 | --- | --- | --- |
-| `PassChain::build(engine, desc)` | 唯一的建链入口；失败返回 null 并报一次 | 见 `PassChain.hpp` |
-| `SceneView::setChain(chain)` | 采纳/替换/丢弃链 | 链必须为这个视图的相机/内容建 |
-| `RenderArea::present(view/pass)` | 声明呈现 | 一块区一条呈现 |
-| `SceneView::setManipulator(...)` | 换输入处理 | 唯一输入通道 |
+| `PassChain::build(engine, desc)` | the only chain-building entry; a failure returns null and reports once | see `PassChain.hpp` |
+| `SceneView::setChain(chain)` | adopt / replace / drop a chain | the chain must be built for this view's camera and content |
+| `RenderArea::present(view/pass)` | declares the presentation | one presentation per area |
+| `SceneView::setManipulator(...)` | swaps the input handler | the only input channel |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | 配置必须在第一次 attach 之前完成；attach 之前不得建链/编译管线。 |
-| C2 | 链必须为这个视图的相机/内容建；`setChain` 不检查，引擎报形状不一致。 |
-| C3 | `effectivePath(desc)` 是请求→链的唯一规则；`desc.path` 保留。 |
-| C4 | 一块区只能有一条呈现；宿主 pass 与默认链不能并存。 |
-| C5 | 输入只能走操纵器；没有第二条路由。 |
-| C6 | `VSG_MAX_DEVICES=4`；第 5 块必须由后端拒并给理由。 |
+| C1 | Configuration completes before the first attach; no chain is built and no pipeline compiled before it. |
+| C2 | A chain must be built for this view's camera and content; `setChain` does not check and the engine reports a shape mismatch. |
+| C3 | `effectivePath(desc)` is the only request→chain rule; `desc.path` is kept. |
+| C4 | One area has exactly one presentation; a host pass and the default chain never coexist. |
+| C5 | Input goes through the manipulator only; there is no second route. |
+| C6 | `VSG_MAX_DEVICES=4`; the backend must refuse the fifth with a reason. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | attach 之前配置 = 零重建；attach 之后配方变化 = 一次建链。 |
-| R2 | 同一份 `ViewerOptions` 重复设置幂等；宿主已声明主 pass 时不得建默认链。 |
-| R3 | 运行期开关（模式、overlay 显隐）零重建；重建搬运行期选择。 |
-| R4 | 宿主接管时 `Viewer` 不建链、不声明；`release(view)` 把视图还给宿主。 |
-| R5 | 换操纵器不得改变导航行为；拾取型操纵器原样转发。 |
-| R6 | 设备上限失败必须带原因，不能抛到事件循环。 |
+| R1 | Configured before the attach = zero rebuilds; a recipe change after it = one chain build. |
+| R2 | Setting the same `ViewerOptions` again is idempotent; no default chain while the host has declared a main pass. |
+| R3 | Run-time switches (mode, overlay visibility) rebuild nothing; a rebuild carries the run-time choices. |
+| R4 | While the host has taken over, `Viewer` builds and declares nothing; `release(view)` hands the view back. |
+| R5 | Swapping the manipulator must not change navigation; a picking manipulator forwards unchanged. |
+| R6 | A device-cap failure must carry a reason and must not escape to the event loop. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | 一块区只画一幅画；第二条呈现被拒 + 报一次。 |
-| N2 | 一个视图最多采纳一条链；`setChain(nullptr)` 把视图移出帧。 |
-| N3 | `Viewer` 只拥有请求，不拥有呈现；`isActive()` 读区，不读记忆。 |
-| N4 | 引擎不认识视图/链；链只借引擎，不延长它的寿命。 |
-| N5 | `Presenting` ⟺ 帧已经在表面里；之前区域保持隐藏。 |
-| N6 | 公开面只有一层配置入口：`ViewerOptions` / `PassChain` 二选一。 |
-| N7 | 宿主没有请求时，默认链由 `Viewer::takeArea()` 建；宿主声明了主 pass 就不建。 |
+| N1 | One area draws one picture; a second presentation is refused and reported once. |
+| N2 | A view adopts at most one chain; `setChain(nullptr)` takes the view out of the frame. |
+| N3 | `Viewer` owns the request, not the presentation; `isActive()` reads the area, not a memory. |
+| N4 | The engine knows neither views nor chains; a chain only borrows the engine and never extends its life. |
+| N5 | `Presenting` ⟺ a frame is already in the surface; before that the area stays hidden. |
+| N6 | The public surface has one configuration entry: `ViewerOptions` or `PassChain`, not both. |
+| N7 | With no host request the default chain comes from `Viewer::takeArea()`; with a host main pass it is not built. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 链与视图的形状必须匹配
+### 6.1 A chain and its view must have the same shape
 
-- 会怎么错：链按另一个相机/内容建，画面是别人的；每个 pass 单独看都合法，下游看不出。
-- 怎么判：引擎报告 shape mismatch；`PassChain::draws(scene)` 可查链是否画这个场景。
-- 怎么防：链在采纳前就为这个视图建；不要把链跨视图复用。
-### 6.2 `initAsync()` 不是后台初始化
+- How it fails: the chain was built for another camera or content, so the picture belongs to something else; each pass looks legal on its own and nothing downstream notices.
+- How to detect it: the engine reports a shape mismatch; `PassChain::draws(scene)` says whether the chain draws this scene.
+- How to prevent it: build the chain for this view before adopting it; never reuse a chain across views.
 
-- 会怎么错：以为它把设备/会话/管线丢到池上，于是并发改场景或等错时机。
-- 怎么判：它 `co_return init()`，不挂起；`InitAsyncCompletesWithoutSuspending`。
-- 怎么防：把 `initAsync()` 当同步 attach 的协程拼法；内容装配在它返回之后。
+### 6.2 `initAsync()` is not background initialisation
 
-### 6.3 宿主 pass 与默认链并存
+- How it fails: assuming it pushes the device, session and pipeline onto a pool, and therefore changing the scene concurrently or waiting at the wrong moment.
+- How to detect it: it is `co_return init()` and never suspends; `InitAsyncCompletesWithoutSuspending`.
+- How to prevent it: treat `initAsync()` as the coroutine shape of a synchronous attach; assemble content after it returns.
 
-- 会怎么错：一个区两幅画，清屏/顺序没有正确答案。
-- 怎么判：`Viewer::isActive()` 为 false；`takeArea()` 不动。
-- 怎么防：宿主先 `surface()->present(pass)` 声明主 pass，或先 `release(view)`。
+### 6.3 A host pass and the default chain coexisting
 
-### 6.4 多格/分屏的复杂度外溢
+- How it fails: one area with two pictures, and no correct answer for clearing or order.
+- How to detect it: `Viewer::isActive()` is false and `takeArea()` does nothing.
+- How to prevent it: the host declares its main pass with `surface()->present(pass)` first, or calls `release(view)` first.
 
-- 会怎么错：把分屏、PiP、焦点路由塞回框架，表面/输入/清屏各多一套答案。判据：出现 `addView` / `setPaneRect` / `focusedView` 这类 API 就是在回退；怎么防：应用自己算矩形、给 pass 子视口、自己决定清屏 —— 框架只保证一块区一幅画。
+### 6.4 The complexity of multi-pane / split spilling over
 
-## 7. 已否决选项
+- How it fails: split views, PiP and focus routing pushed back into the framework, each adding a second answer for surface, input and clearing.
+  Detection: an API such as `addView` / `setPaneRect` / `focusedView` appearing is the regression.
+  Prevention: the app computes the rectangles, gives the pass its sub-viewports and decides the clearing — the framework only guarantees one picture per area.
 
-| # | 否决 | 理由 | ADR |
+## 7. Rejected Options
+
+| # | Rejected | Reason | ADR |
 | --- | --- | --- | --- |
-| D1 | 多格/分屏进框架 | 复杂度应由需要它的业务层说清；框架只保证一块区一幅画。 | — |
-| D2 | 全进程共享一个会话 + 每个文档一个 `SceneView` | 现行是每个 3D 文档自带 `RenderControl`/设备；共享会话那套 API 已删。 | — |
-| D3 | 每个视图一个独立 widget | 中央区重父化会重建原生窗口；一块区一幅画、容器内切页更简单。 | — |
-| D4 | 宿主 pass 与默认链并存 | 一个区两幅画没有正确的清屏/顺序答案。 | — |
-| D5 | `setInputRouter` / `focusedView` 多路输入 | 输入只有操纵器一条通道；多格下线后没有第二个去处。 | — |
-| D6 | 把配方塞回 `SceneView::Options` | 配方属于链，视图只采纳；两套配置面会分叉。 | — |
-| D7 | 自动把 Deferred 请求降成 Forward | 请求与结果分开：`effectivePath()` 说清建了哪条，`desc.path` 不改。 | — |
+| D1 | Multi-pane / split in the framework | The complexity belongs to the business layer that needs it; the framework only guarantees one picture per area. | — |
+| D2 | One process-wide session + one `SceneView` per document | Each 3D document carries its own `RenderControl` / device; the shared-session API no longer exists. | — |
+| D3 | An independent widget per view | Reparenting the central area recreates the native window; one picture per area with page switching inside a container is simpler. | — |
+| D4 | A host pass coexisting with the default chain | Two pictures in one area have no correct answer for clearing or order. | — |
+| D5 | `setInputRouter` / `focusedView` multi-route input | Input has one channel, the manipulator, and after multi-pane went away there is no second destination. | — |
+| D6 | Putting the recipe back into `SceneView::Options` | The recipe belongs to the chain and the view only adopts it; two configuration surfaces would fork. | — |
+| D7 | Silently downgrading a Deferred request to Forward | Request and result stay apart: `effectivePath()` says which chain was built and `desc.path` is left alone. | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 | --- | --- | --- |
-| T1 | 构造只组装、第一拍 attach | `RenderControlTest.ConstructionOnlyComposesAndTheFirstTurnAttaches` |
-| T2 | 控件默认画自己的视图；请求变化才重建 | `TheControlsSurfacePresentsItsOwnViewByDefault`、`ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt` |
-| T3 | 重建搬运行期选择 | `ARebuildCarriesTheLiveChainsRuntimeChoices` |
-| T4 | 宿主主 pass 接管、释放视图 | `AHostPassTakesTheAreaAndTheViewerStandsDown`、`ReleasingTheViewTakesItOutOfTheArea` |
-| T5 | 输入到视图、拖拽仍转向机 | `TheViewReceivesInputAndADragKeepsSteeringIt` |
-| T6 | 每个文档视图自带渲染面；第 5 块给理由 | `ModelViewerTest.EachDocumentViewOwnsItsOwnRenderArea`、`VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException` |
-| T7 | 一视图两窗格：目标带视图，哪块算数由视图答 | `DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast` |
+| T1 | construction only assembles, the first turn attaches | `RenderControlTest.ConstructionOnlyComposesAndTheFirstTurnAttaches` |
+| T2 | the control draws its own view by default; only a change of request rebuilds | `TheControlsSurfacePresentsItsOwnViewByDefault`, `ADeferredViewerSwitchesChainOnlyWhenTheRequestNeedsIt` |
+| T3 | a rebuild carries the run-time choices | `ARebuildCarriesTheLiveChainsRuntimeChoices` |
+| T4 | a host main pass takes over, releasing the view | `AHostPassTakesTheAreaAndTheViewerStandsDown`, `ReleasingTheViewTakesItOutOfTheArea` |
+| T5 | input reaches the view, a drag keeps steering | `TheViewReceivesInputAndADragKeepsSteeringIt` |
+| T6 | each document view has its own render area; the fifth gives a reason | `ModelViewerTest.EachDocumentViewOwnsItsOwnRenderArea`, `VsgBackendTest.ADeviceCapThatIsReachedIsAReasonAndNotAnException` |
+| T7 | one view with two panes: the target carries the view and the view answers which pane counts | `DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-F1–F6 均已落地；多格/共享会话已删除。`Viewer` 是一块区的请求半边，`SceneView` 采纳一条 `PassChain`。
+F1–F6 are in place, and there is no multi-pane or shared-session mode.
+`Viewer` is the request half of one area, and `SceneView` adopts one `PassChain`.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-- 超过 4 份 3D 文档需要给 vsg 打补丁；本树保持原版 + 门禁。
-- 多窗口（一个文档一个顶层窗口）不在本设计范围。
-- **命令找视图**：派发时解析目标（`gui::resolveCommandTarget()`：当前文档视图 → 它的文档）并随执行走；窗口级 `primaryRenderControl()` 与发布槽均已删除。一个窗口同时只显示一个视图（tab），几块 3D 区并排由视图的窗格表达。
-- 逐实例属性 / GPU indirect 不在渲染视图层，见 `../backlog/graphics.md`。
+- More than four 3D documents needs a patch to vsg; this tree stays on the unpatched version plus the gate.
+- Multiple windows (one top-level window per document) are outside this design.
+- **A command finding its view**: dispatch resolves the target (`gui::resolveCommandTarget()`: the current document's view → its document) and carries it with the execution; there is no window-level `primaryRenderControl()` and no publish slot.
+  A window shows one view at a time (tabs), and several 3D areas side by side are expressed by the view's panes.
+- Per-instance attributes and GPU indirect are not in the render-view layer, see `../backlog/graphics.md`.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-旧名 `Pipeline` / `PipelineOptions` 已改为 `PassChain` / `ChainDesc`；旧 API `RenderControl::present()`、
-`SceneView::removeWindowPass()` 公开、`setInputRouter` / `focusedView` 均已删除。新代码只按 §4 的接口写。
+The names are `PassChain` / `ChainDesc`, not `Pipeline` / `PipelineOptions`.
+There is no `RenderControl::present()`, no public `SceneView::removeWindowPass()`, no `setInputRouter` and no `focusedView`.
+New code uses the interface of §4 only.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/fw/appfw/sdk/vine/appfw/gui/RenderControl.hpp`
 - `src/fw/appfw/sdk/vine/appfw/gui/Viewer.hpp`
@@ -290,14 +280,14 @@ F1–F6 均已落地；多格/共享会话已删除。`Viewer` 是一块区的�
 - `src/viz/graphics/sdk/vine/graphics/PassChain.hpp`
 - `src/viz/graphics/sdk/vine/graphics/RenderArea.hpp`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `appfw-render-surface.md`
 - `appfw-startup-splash.md`
 - `graphics-architecture.md`
 - `../backlog/graphics.md`
 
-### 10.3 外部资料
+### 10.3 External material
 
-- 宿主用法：`docs/guides/render-views.md`
-- 拾取参考实现：`src/plugins/model_viewer/src/ModelRenderView.hpp`
+- Host usage: `docs/guides/render-views.md`
+- The reference picking implementation: `src/plugins/model_viewer/src/ModelRenderView.hpp`
