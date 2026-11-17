@@ -148,56 +148,45 @@
 - **为什么**：G11（模块可被单独测试、失败可被定位）。没有窗口的测试让 CI 与桌面走同一条路径。
 - **边界**：`test_vk` 的设备用例在无 Vulkan 设备的机器上 **skip** 而不是失败（环境不是契约）。
 
-### 2.11 一个 `Device` 对象 = 一个会话（`G1` / `G8`）
+### 2.11 一个 `Device` 对象 = 一个会话池（`G1` / `G8`）
 
-- **是什么**：本插件的 `Device` 同时是**设备**与**会话**：一个 `VkInstance` / `VkPhysicalDevice` / `VkDevice` / 图形队列，
-  加**一份**帧机器（`command_pool` + `completion` 栅栏 + `ContentDraw` 里的常量环与描述符池）。`RenderDevice::executor()`
-  答的就是它自己。
-- **2026-11-15（T48 S2a）后的形状**：帧机器已经不在 `Device::Impl` 里了，而在 `Device::FrameDriver`
-  （命令池 / 栅欄 / 时间戳池 / 帧账 / `FrameGate` / clock window），设备拥有它并在 `shutdown()` 里销毁它的对象；
-  `RenderDevice::executor()` 现在答的是它带的那个驱动者：帧体（`executeFrame` / `prepareFrame` / `frameReport`）
-  也已经搬进 `FrameDriver`，`Device` 只剩三个一行转发。
-- **2026-11-15（T48 S6a）后的形状**：SDK 的会话接缝已在树上（`createSession()` / `releaseSession()` 默认答
-  `&executor()` / no-op；默认内容程序归 `RenderFrameExecutor`，本设备的每个 `FrameDriver` 各持一份，`Device` 覆写转发给
-  自带的驱动者）。
-- **2026-11-16（T48 S6c-2a）后的形状**：**帧体真并行**。设备的大锁换成 `graphics::FrameGate body_gate`：帧体（非窗口）
+- **是什么**：本插件的 `Device` 同时是**设备池**与**它自己的那个会话**：一个 `VkInstance` / `VkPhysicalDevice` / `VkDevice` / 图形队列，
+  一份设备级内容缓存与目标表、一份 `DeviceClock` + `RetirementQueue`；`createSession()` 另外借出 `FrameDriver`。
+  `RenderDevice::executor()` 答的是设备自带的那个驱动者。
+- **帧机器**：在驱动者里——命令池 / 栅栏 / 时间戳池 / 帧账 / `FrameGate` / clock window；设备拥有它，并在 `shutdown()` 里销毁；
+  帧体（`executeFrame` / `prepareFrame` / `frameReport`）也在驱动者里，`Device` 只剩三个一行转发。
+- **会话接缝**：`createSession()` 造一个 `FrameDriver`（可早于 `initialize()`，由它统一拉起；已起的设备上当场建），
+  `releaseSession()` 销毁并遗忘（设备自己的驱动者不可归还）。默认内容程序归 `RenderFrameExecutor`：本设备的每个
+  `FrameDriver` 各持一份，`Device` 覆写转发给自带的驱动者。
+- **并发**：设备的大锁是 `graphics::FrameGate body_gate`：帧体（非窗口）
   取 SHARED，两个驱动者在两条线程上同时记录/提交；出窗口的帧与所有宿主动词（读回 / 释放 / 默认程序 / 释放目标 /
   建窗口 / 诊断读取）取 EXCLUSIVE（可等帧，不竞争）；`shutdown` 也取 EXCLUSIVE。**从帧体线程调用的宿主动词得到空租约**：
   它回答自己的拒绝值（读回答 `Failed`、建目标答 `UnsupportedSurface`、计数器答 0）并报**一条** `vk.device.reentry`
-  （`G4`：拒绝要能被听见，而不是静默继续）——在这之前那条路径是**死锁**。报告 sink 的锁是**递归**的，因为 sink 本身
+  （`G4`：拒绝要能被听见，而不是静默继续）。报告 sink 的锁是**递归**的，因为 sink 本身
   可能回调（同一线程再报就是那条 `vk.device.reentry`）。支撑它的是一组小锁：`clock_mutex`
   （`DeviceClock` + `RetirementQueue`，两个 SDK 值类型仍标非线程安全，多线程设备自己提供锁，`P4`）、分配器一把、
   目标 map 一把、报告 sink 一把、每会话默认程序一把、表面列表一把。`FrameTimeline` 支持多开帧（开帧时铸造号）。
   纹理 staging 与被替换图像按 `ContentImages::BatchId` 归驱动者，替换图像 park 到水位。采样目标（screen 源 / pass
-  输入）也取目标 lease。**证据**：`VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`（一个帧体被诊断 sink
-  停住时，另一驱动者的帧必须整帧完成；变异回独占闸 ⇒ 红）、
-  `VkConcurrentFrameTest.AHostVerbCalledFromInsideAFrameIsRefusedInsteadOfHanging`（sink 里的 `contentPipelines()` 答 0 +
-  一条 `vk.device.reentry`，帧照常结束）。
-- **2026-11-16（T48 S6c-2b）后的形状**：**释放不再等帧（R6）**。`releaseContent`（三种重载）与 `releaseRenderTarget` 脱离体闸：
-  它们只等一次缓存操作（帧首解析持有的锁），安全由缓存锁 + park + 水位的开帧规则共同给出。为此 `targets` 的条目变成
-  `shared_ptr<TargetObjects>`（释放把引用交给 park，已经解析它的帧仍持有有效指针），`released_nodes` 改原子，队列的读者
-  （`retirementNumbers` / `frameReport`）也取 `clock_mutex`。**证据**：`VkMultiSessionTest.AReleaseDoesNotWaitForTheFrameInFlightAndDoesNotDestroyWhatItUses`。
-- **2026-11-15（T48 S6b）后的形状**：`createSession()` 真的造一个 `FrameDriver`（可早于 `initialize()`，由它统一拉起；已起的
-  设备上当场建），`releaseSession()` 销毁并遗忘（设备自己的驱动者不可归还）。**设备持一把 `frame_mutex` 串行化帧体**：
-  每个驱动者有自己的命令池 / 栅栏 / 时间戳池 / 帧闸 / scratch / 默认程序，但缓存、分配器与队列尚未在两条运行中的帧之间
-  成立，所以两个引擎可以**同时调用**、不能**同时运行**（`C10` 的"先写串行"）。**碰共享状态的宿主动词（读回 / 释放 /
-  默认程序 / 释放目标 / 建设备窗口 / 诊断读取）取同一把锁**：它们可能等待在飞的帧体，但不再与它竞争。真并行（帧首快照 +
-  条目活到水位 + R6 的非阻塞释放）是 S6c。
-- **2026-11-15（T48 S3）后的形状**：`ContentDraw` 不再是一个“什么都有”的对象，而是三件：
+  输入）也取目标 lease。**用例**：`VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`、
+  `VkConcurrentFrameTest.AHostVerbCalledFromInsideAFrameIsRefusedInsteadOfHanging`。
+- **释放**：`releaseContent`（三种重载）与 `releaseRenderTarget` 不取体闸：它们只等一次缓存操作（帧首解析持有的锁），
+  安全由缓存锁 + park + 水位的开帧规则共同给出。`targets` 的条目是 `shared_ptr<TargetObjects>`（释放把引用交给 park，
+  已经解析它的帧仍持有有效指针），`released_nodes` 是原子，队列的读者（`retirementNumbers` / `frameReport`）也取
+  `clock_mutex`。
+- **帧暂存三件**：`ContentDraw` 不是一个“什么都有”的对象，而是三件：
   `ContentCaches`（**设备**：programs / geometries / instance streams / pipelines / 布局 / 图像 / 管线缓存）、
   `FrameScratch`（**驱动者**：常量环 + 描述符池 + set 表 + `frame_index`）、以及 `ContentDraw` 本身
   （**记录器**：借用前两者，只有 `prepare` / `prepareScreen` / `record` / `recordScreen`）。`Device::FrameDriver` 拥有自己的
   `scratch` 与 `recorder`；`Device::Impl` 只留 `caches`；`createScratch()` 在布局建好之后由 `initialize()` 调，拆除时
   scratch 先于 caches（set 的 layout 是借的）。
-- **为什么今天是这个形状**：一帧在飞（§2.3）让"帧之间"成为一个**时刻**，于是释放、读回、缓存填充都能共用一份机器；
+- **为什么是这个形状**：每个驱动者一帧在飞（§2.3）让"帧之间"成为一个**时刻**，于是释放、读回、缓存填充都能共用一份机器；
   `ContentDraw` 的 `beginFrame` / `endFrame` 重置的是设备级状态，正是这条的直接后果。在那个前提下把它拆成两个对象
   只会多一层转发（`G8`）。
-- **边界**：**两个驱动者的帧体可以同时跑**（S6c-2a）；同一个驱动者的两帧仍由它的 `FrameGate` 串行（另一条线程**等待**，
+- **边界**：两个驱动者的帧体可以同时跑；同一个驱动者的两帧仍由它的 `FrameGate` 串行（另一条线程**等待**，
   同一线程重入**拒绝**，`vk.session.frame_reentry` / `PresentOutcome::Refused`）。窗口帧独占体闸（交换链是一份设备资源）。
   每帧自己报告它在缓存锁上花了什么（`FrameReport::locking`：帧首一次 hold + 帧尾一次采样，稳态是常数、`waits` 为 0，
-  见 `VkFrameHeadTest.AFrameReportsWhatItSpentOnTheCacheLock`）。`releaseContent` / `releaseRenderTarget` / 读回仍取体闸
-  EXCLUSIVE，因此**会等**在飞帧——R6（释放不等帧）是 S6c-2b。
-  形状与落地在 `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`，步骤记在 backlog `T47` / `T48`。
+  见 `VkFrameHeadTest.AFrameReportsWhatItSpentOnTheCacheLock`）。读回仍取体闸 EXCLUSIVE，因此**会等**在飞帧；释放不等帧（R6）。
+  形状与论证在 `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`。
 - **拆分时哪些东西会动**（清单是起点，不是拆分本身）：`ContentDraw` 的 `Impl` 一半是**缓存**（模块 / 流 / 管线 /
   布局，归设备）、一半是**帧状态**（常量环 / 描述符池 / 逐 draw UBO，归会话）；`command_pool` 与 `completion` 归会话；
   `allocator`、`targets`、`surfaces`、管线缓存、`default_program` 归设备。
@@ -327,16 +316,15 @@
 - **边界**：表**不销毁任何东西**，也**不排退休**：`forget` 只忘键，Vulkan 对象仍交给 `RetirementQueue`（§2.15）。
   它也不是 SDK 的 `ResourceTable`——那张表回答“这份驻留值现在能不能放”（单线程、按 pin 退休），这张回答“谁可以
   建这个键”（两驱动者、只到发布为止）。
-- **今天的位置**：S4 交付了状态机与它的 8 条单元用例（两个 session id 模拟两会话，含 8 线程抢一键恰一个
-  `Build`）；**F4 的接线已于 2026-11-16 落地**——`ContentCaches::ensureGeometry` 先问表（`Use` / `Build` / `Copy`），
+- **接线**：`ContentCaches::ensureGeometry` 先问表（`Use` / `Build` / `Copy`），
   帧作用域的 `ContentCaches::FrameBuilds` 在帧栅栏 wait 过之后 `publishAll()`（跳过失败的填充），`releaseGeometry`
-  同时 `forget` 键；竞争者拿 `Copy` 建**脱钩**临时条目、帧结束即销毁。见证：`VkResidenceWireTest` 4 例。
+  同时 `forget` 键；竞争者拿 `Copy` 建**脱钩**临时条目、帧结束即销毁。
 
 ### 2.18 目标表：对象、形状与一帧一个持有者（`G1` / `G6` / `G7`）
 
 - **是什么**：设备持一张 `TargetTable`——从宿主的 `RenderTarget*` 到它成的 `TargetObjects`（map + 形状缓存 +
-  构建/重建/修复）、六条目标拒绝情节，以及每帧的租约（`RenderTarget* → FrameDriverId`）**是同一张表的三个问题**
-  （B5a；之前 map / `TargetClaims` / `TargetImages` 三个对象各管一段寿命）。`lease(driver)` 发一个帧作用域的
+  构建/重建/修复）、六条目标拒绝情节，以及每帧的租约（`RenderTarget* → FrameDriverId`）**是同一张表的三个问题**；
+  `lease(driver)` 发一个帧作用域的
   `Lease`；`executeFrame` 与 `prepareFrame` 在每个 pass 的 **`ensure` 之前** `claim` 它的目标。冲突时那个
   pass **被跳过**（帧里其它 pass 照跑），并报 `vk.target.claim_conflict`——**每个（目标, 情节）一条**，情节在无冲突
   的一帧/一次预热后结束。
@@ -351,8 +339,8 @@
 - **边界**：租约不是锁（`C5`）——等待会让两个引擎的帧率互相绑死；冲突不销毁任何东西，目标下一帧再试。
   `Lease` 的析构是**唯一释放点**（`P3`），所以帧的任何一个提前返回都不会把目标钉住。窗口目标不需要 claim：
   `createSurfaceTarget` 已经保证一个窗口只属于一个会话（`WindowOccupied`）。
-- **今天的位置**：两个动词都已接线；单驱动者不会冲突（零行为变化）。第二个驱动者由 `RenderDevice::createSession()`
-  借出（S6），冲突路径由一条冒充“另一个驱动者”的租约与 `VkMultiSessionTest` 的并发用例跑实。
+- **冲突何时发生**：两个驱动者由 `RenderDevice::createSession()` 借出之后，冲突由一条冒充“另一个驱动者”的租约与
+  `VkMultiSessionTest` 的并发用例跑实；单驱动者不会冲突。
 
 ## 3. 功能点
 
@@ -370,7 +358,7 @@
 | F8 | 常量 ring | 每帧一个持久映射 buffer，切片 + dynamic offsets | 已落地 |
 | F9 | 描述符集缓存 | 按（视图集合、阴影图）缓存；逐条释放，定期清扫 | 已落地 |
 | F10 | 设备内存池 | 块 + 切片、usage/kind、granularity、整块映射 | 已落地 |
-| F11 | 读回 | 颜色（RGBA8）与深度（D32）；自有池与栅栏（S7）；一次读回一次计数等待 | 已落地 |
+| F11 | 读回 | 颜色（RGBA8）与深度（D32）；自有池与栅栏；一次读回一次计数等待 | 已落地 |
 | F12 | 管线缓存 | 会话内 `VkPipelineCache` + 跨会话设备键控文件 | 已落地 |
 | F13 | 设备时钟 | `FrameTiming`（每 30 帧采样一次） | 已落地 |
 | F14 | 报告与诊断 | `FrameReport`、`PrepareReport`、驱动消息、`ReportOnce` | 已落地 |
@@ -754,17 +742,11 @@
 ### 9.1 当前状态
 
 - M0–M13 全部落地；审查项 F1/F2/F4/F7/F8/F12 已落地，审查 F5/F9/F10/F11/F13 按 §1.3 保留。
-- **T48 进度**：S1（释放走队列）、S2a/S2b（帧机器与帧体进 `Device::FrameDriver`）、S3（`ContentCaches` + `FrameScratch`
-  分家，§2.16）、S4（`ResidenceTable` 三态状态机，§2.17）、S5（`TargetTable` 租约 + 帧/预热接线，§2.18）、
-  S6a（SDK 会话接缝 + 引擎持有驱动者 + 默认程序归会话）、S6b（多驱动者 + 设备串行帧体）、
-  S6c-1（帧首快照：记录路径零锁、计划按值、条目 park 到水位）、S6c-2a（帧体真并行：体闸 shared/exclusive + 多开帧 +
-  各小锁 + 每驱动者批量）、S6c-2b（R6：释放不等帧）、S7（读回独立化：自带命令池/栅栏 + 计数等待 + 帧体内拒绝，
-  并补上 ADR 早就写明的 `vkQueueSubmit` / `vkDeviceWaitIdle` 提交锁）、S9（契约收口 + TSan：S9 当天
-  （2026-11-16）`test_vk` 133/133 **0 race report**）已落地；S8 的落地记录见 ADR 的「实施状态」。
+  多驱动者（backlog `T47` / `T48`）已全部落地，形状见 §2.11 与 `graphics-sessions.md`；
   **今天的三套 TSan 读数见 `graphics-threading.md` R18。**
 - `test_vk` **169 例 / 41 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **572**、`test_graphics` **617**；
-  `BackendParityTest` **13/13**。S4（B5a）把目标 map、形状与租约归一为 `TargetTable`（`TargetClaims.{hpp,cpp}` 删除，
-  用例迁到 `TargetTableTest`，+1 例）；B11 加了一条帧首存储证人、删掉每 pass 一份灯向量（`LightSet`）。
+  `BackendParityTest` **13/13**。目标 map、形状与租约是同一张 `TargetTable`（`TargetTableTest`）；帧首有一条存储证人，
+  灯向量不每 pass 一份。
 - **一条构建教训**：SDK 的虚表改动后，**动态插件必须一起重建**（旧 `.so` 让 `VsgBackendPluginTest` 段错误）。
 - 实测（lavapipe，真实宿主）：11 pass / 10 draw，稳态中位 **8.24 ms**，GPU **7.15–7.74 ms**；ring + set 缓存改动
   −10%（9.03–9.23 → 8.16–8.30 ms）。
@@ -780,9 +762,7 @@
 - **backlog `T35`（成为默认后端）**的门禁（`../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`）：
   `releaseRenderTarget` 已真正释放附件、`readDepthBuffer` 与设备丢失报告已落地；**仍缺** Win32 实机证据（未过之前
   不支持 Windows 上线）、Wayland 回退实测、`releasePass` 的显式 no-op + 理由、`docs/guides/` 的 vk 用户页。
-- **backlog `T41`**：已关闭（2026-11-15，`PrepareReport.passes` 与 `FrameCounters.passes` 统一为一种口径）。
-- **共享设备的并发帧**（backlog `T47` / `T48`）：T47 与 T48 的 S1–S9 **已全部落地**（§2.11、`graphics-sessions.md`），
-  含 vsg 的 S8（收集暂存）与 `ResidenceTable` 的设备接线（F4，2026-11-16）。形状与论证见
+- **共享设备的并发帧**（backlog `T47` / `T48`）：已全部落地（§2.11、`graphics-sessions.md`）。形状与论证见
   `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`。
 - **backlog `T12` / `T13`**：Windows 窗口读像素、Wayland 回退实测。
 
