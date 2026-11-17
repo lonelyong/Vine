@@ -599,169 +599,169 @@
 - **Next**: 3a — locate the key-construction point in `ContentPass::record` (around line 1235, with the comments on `PipelineKey::variant`
   and topology), extract it into a pure function, and let `prepare` go through the same function.
 
-## 2026-11-12 —— graphics-next 第 3a 步落地：`drawNeeds` 是唯一的键构造者
+## 2026-11-12 — graphics-next step 3a landed: `drawNeeds` is the only key builder
 
-- **新文件**：`src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/DrawNeeds.hpp` + `src/internal/DrawNeeds.cpp`。
-  `DrawNeeds` 值 + `Miss{None,Geometry,Material,Program}` + `keyFor(compatibility)`；两个 `drawNeeds` 重载：
-  `(pass, CompiledCommand, facts)` = 内容绘制，`(pass, CompiledDraw, inputs)` = 全屏调用（**不需要 facts**：
-  它的身份全在计划 + 调用方 offer 里）。`sampledColorCount` / `sampledDepthCount` 从 `ContentPass.cpp` 的
-  匿名命名空间搬到头文件（`record` 的 set 构建与 `serveHalf` 也用同一拼写）。
-- **两组计数，一条规则**：`set_colors/set_depths` = 这一帧的输入集绑多少（pass 的事实）；`key_colors/key_depths`
-  = 管线键写多少（program 不在 set 1 采样 ⇒ 0，`programSamplesInputSet` 留在 .cpp 匿名命名空间）。两对名字
-  写在同一处，不会各算各的。
-- **删掉的重复**：`ContentHalves::halvesFor` 的 variant/layout/program/Key 构造；`recordCommand` 的
-  geometry/material/variant/findProgram/半片四路匹配（→ `halfFor(needs)`）；`recordScreenDraw` 的 source
-  搜索与六个月手填的 key 字段；`describeMissingContentHalf` 的第三次 lookup。`recordCommand` 少了两个参数
-  （`sampled_color_count/depth_count`），改读 `needs.set_*`。
-- **T32（设备无关）**：`ContentHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds` —— 身份由用例**手写**
-  （不用 `drawNeeds` 喂期望），再比 (a) 答案、(b) `halvesFor` 的半片、(c) 录制后 pool 的键集（`keyOf(1..N)`，
-  id 从 1 单调且不复用）。另在 `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` 加了同一个
-  键集断言（录制侧）。
-- **变异验证 3/3 红**：`keyFor` 丢 topology / 丢 variant、`recordCommand` 里把 `record.key.compatibility`
-  再覆盖掉。
-- **陷阱**：`ContentPassTest.cpp` / `ContentHalvesTest.cpp` 这类大文件**不要**整体 clang-format（会重排既有 <!-- drift-ok -->
-  `Scope::Entry{...}` 与 `using` 顺序）；只格式化新文件与 `ContentPass.*` / `ContentHalves.cpp`。 <!-- drift-ok -->
-- `test_vsg` = 541 cases / 78 suites 全绿。下一步 = 3b：`RenderEngine::prepare()` 入口 +
-  按答案预建（判据：预热后录制 `builds` 增量 0）。
+- **New files**: `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/DrawNeeds.hpp` + `src/internal/DrawNeeds.cpp`.
+  The `DrawNeeds` value + `Miss{None,Geometry,Material,Program}` + `keyFor(compatibility)`; two `drawNeeds` overloads:
+  `(pass, CompiledCommand, facts)` = a content draw, `(pass, CompiledDraw, inputs)` = a full-screen call (**no facts needed**:
+  its identity is all in the plan + the caller's offer). `sampledColorCount` / `sampledDepthCount` moved from `ContentPass.cpp`'s
+  anonymous namespace into the header (`record`'s set construction and `serveHalf` use the same spelling).
+- **Two pairs of counts, one rule**: `set_colors/set_depths` = how many the frame's input set binds (a pass fact); `key_colors/key_depths`
+  = how many the pipeline key writes (a program that does not sample set 1 ⇒ 0, with `programSamplesInputSet` left in the .cpp anonymous namespace). Both pairs
+  are written in one place, so they cannot diverge.
+- **Duplication deleted**: the variant/layout/program/Key construction in `ContentHalves::halvesFor`; `recordCommand`'s
+  four-way geometry/material/variant/findProgram/half match (→ `halfFor(needs)`); `recordScreenDraw`'s source
+  search and six hand-filled key fields; the third lookup in `describeMissingContentHalf`. `recordCommand` lost two parameters
+  (`sampled_color_count/depth_count`) and reads `needs.set_*` instead.
+- **T32 (device-independent)**: `ContentHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds` — the identity is **hand-written** by the case
+  (expectations are not fed from `drawNeeds`), then compares (a) the answer, (b) `halvesFor`'s half, (c) the pool's key set after recording (`keyOf(1..N)`,
+  ids monotonic from 1 and never reused). `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` got the same
+  key-set assertion (on the recording side).
+- **Mutations 3/3 red**: `keyFor` dropping topology / dropping variant, and `recordCommand` overwriting
+  `record.key.compatibility` again.
+- **Trap**: do **not** clang-format large files like `ContentPassTest.cpp` / `ContentHalvesTest.cpp` wholesale (it reorders existing <!-- drift-ok -->
+  `Scope::Entry{...}` and `using` order); format only the new files and `ContentPass.*` / `ContentHalves.cpp`. <!-- drift-ok -->
+- `test_vsg` = 541 cases / 78 suites all green. Next = 3b: the `RenderEngine::prepare()` entry +
+  pre-building from the answer (criterion: `builds` delta 0 after warm-up).
 
-## 2026-11-12 —— graphics-next 5a：影子快照接缝（`T34`）
+## 2026-11-12 — graphics-next 5a: the shadow snapshot seam (`T34`)
 
-- **新文件**：`SnapshotSource`（`SceneSnapshot` → `DrawListSource`，按 `SceneSnapshot::revision` 记忆化）、
-  `DrawListDiff`（字段级比较）。
-- **开关**：`ContentMirror::setSnapshotShadow` / `FrameWorker::setSnapshotShadow`，默认关闭；影子只比较、不替换。
-  `publish` 在**成功 post 之后**用 `SceneRows::snapshot(scene)` 取影子；帧协议保证 content half 完成后 engine half
-  才开始，所以不会出现“行新影子旧”。
-- **坑**：不要从 `SceneRows::publish` 的拷贝建快照——它清掉 `nodes` / `node_epochs`，`makeSceneSnapshot` 会失去
-  chunk 共享；用 live `SceneBake` 的 `snapshot_cache`。
-- **比较口径**：`DrawListDiff` 比 row 身份 / geometry + description / material + program / world / opacity / order /
-  authored_state / instance slice；顺序即 `sortCollected` 的发出顺序（命令没有存 sort key）。
-- **测试**：`SnapshotShadowTest` 600 帧（transform / opacity / material / placement 编辑）+ 批内旧图 + 旧快照
-  材质/几何/程序 + 空快照变异；`FrameWorkerTest.TheSnapshotShadow...` 帧级接缝。`test_graphics` 577 / `test_vsg` 542 /
-  ctest 30/30 / TSan 0。
+- **New files**: `SnapshotSource` (`SceneSnapshot` → `DrawListSource`, memoised by `SceneSnapshot::revision`),
+  `DrawListDiff` (field-level comparison).
+- **Switch**: `ContentMirror::setSnapshotShadow` / `FrameWorker::setSnapshotShadow`, off by default; the shadow only compares, never replaces.
+  `publish` takes the shadow with `SceneRows::snapshot(scene)` **after a successful post**; the frame protocol guarantees the engine half starts only after the content half
+  completes, so “new rows, old shadow” cannot happen.
+- **Trap**: do not build a snapshot from the copy in `SceneRows::publish` — it clears `nodes` / `node_epochs`, so `makeSceneSnapshot` loses
+  chunk sharing; use the live `SceneBake`'s `snapshot_cache`.
+- **What the diff compares**: `DrawListDiff` compares row identity / geometry + description / material + program / world / opacity / order /
+  authored_state / instance slice; the order is `sortCollected`'s emission order (commands do not store a sort key).
+- **Tests**: `SnapshotShadowTest` 600 frames (transform / opacity / material / placement edits) + an old picture inside a batch + an old snapshot's
+  material/geometry/program + the empty-snapshot mutation; `FrameWorkerTest.TheSnapshotShadow...` for the frame-level seam. `test_graphics` 577 / `test_vsg` 542 /
+  ctest 30/30 / TSan 0.
 
-## 2026-11-12 —— graphics-next 5b-1：Published 模式绑定快照
+## 2026-11-12 — graphics-next 5b-1: Published mode binds the snapshot
 
-- **翻源**：`FrameWorker::runPass(Published)` 现在把每个 draw 绑到 `ContentMirror::snapshotSource()`；旧
-  `RenderWorldSource` 只经 `legacySource()` 作为影子，`setLegacyShadow` 默认关闭。`FrameMode::Mirrored` 改名
-  `Published`。
-- **发布**：`ContentMirror::publish` 总是取 `SceneRows::snapshot`；只有 LEGACY 开启时才 `SceneRows::publish` + post。
-  snapshot 先建、legacy 后 post；legacy 被拒时两者都不前进（旧测试的 Refused 语义）。
-- **坑（test 抓到）**：`SnapshotSource::beginFrame` 必须像 `RenderWorldSource`/`Scene` 一样用**上一帧**的 token
-  调 `DrawListMemo::beginFrame`，否则每帧都把上一帧的 memo 全删；`PassesSharingSceneAndCameraCollectOnce...` 当场红。
-- **测试**：`test_graphics` 577 / `test_vsg` 542 / ctest 30/30 / TSan 0。
+- **Source flipped**: `FrameWorker::runPass(Published)` now binds every draw to `ContentMirror::snapshotSource()`; the old
+  `RenderWorldSource` is only reachable through `legacySource()` as a shadow, and `setLegacyShadow` is off by default. `FrameMode::Mirrored` was renamed
+  `Published`.
+- **Publication**: `ContentMirror::publish` always takes `SceneRows::snapshot`; it calls `SceneRows::publish` + post only when LEGACY is on.
+  The snapshot is built first and legacy posts after; when legacy is refused neither advances (the old tests' Refused semantics).
+- **Trap (a test caught it)**: `SnapshotSource::beginFrame` must call `DrawListMemo::beginFrame` with the **previous frame's** token
+  like `RenderWorldSource`/`Scene` do, or every frame deletes the previous frame's memo entirely; `PassesSharingSceneAndCameraCollectOnce...` went red on the spot.
+- **Tests**: `test_graphics` 577 / `test_vsg` 542 / ctest 30/30 / TSan 0.
 
-## 2026-11-12 —— graphics-next 5b-2a：公开 `Scene::publish()`，`FrameWorker` 直接持有 `SnapshotSource`
+## 2026-11-12 — graphics-next 5b-2a: public `Scene::publish()`, `FrameWorker` holds `SnapshotSource` directly
 
-- **公开入口**：`ScenePublishStatus` / `ScenePublishResult`（`Posted` / `Unchanged` / `InsideBatch`，不再有
-  `Refused`）；`Scene::publish()` 用 `SceneRows::snapshot` + `published_snapshot_revision_` 判 `Unchanged`，批内
-  不前进。`ScenePublishResult` 有 `posted()` 与 explicit `operator bool`。
-- **源归位**：`FrameWorker` 不再经过 `ContentMirror`；每个内容一个 `{content, unique_ptr<SnapshotSource>}`，
-  `publish(Scene&)` 调 `scene.publish()` 后把快照交给源；`drain`/`applied`/LEGACY shadow 全部删除；`run` 改 void。
-- **坑**：第二个 `FrameWorker` 对同一 scene 调 `publish` 得到 `Unchanged`（不是 `Posted`），旧测试的
-  `ASSERT_TRUE(publish(...))` 要改成接受 `Posted|Unchanged`。
-- **测试**：`FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch`；`test_graphics` 577 / `test_vsg` 542 /
-  ctest 30/30 / TSan 0。
+- **Public entry**: `ScenePublishStatus` / `ScenePublishResult` (`Posted` / `Unchanged` / `InsideBatch`, no
+  `Refused` any more); `Scene::publish()` uses `SceneRows::snapshot` + `published_snapshot_revision_` to decide `Unchanged`, and does not advance inside a batch.
+  `ScenePublishResult` has `posted()` and an explicit `operator bool`.
+- **Source ownership settled**: `FrameWorker` no longer goes through `ContentMirror`; each content has a `{content, unique_ptr<SnapshotSource>}`,
+  `publish(Scene&)` calls `scene.publish()` and then hands the snapshot to the source; `drain`/`applied`/the LEGACY shadow are all deleted; `run` became void.
+- **Trap**: a second `FrameWorker` calling `publish` on the same scene gets `Unchanged` (not `Posted`), so the old tests'
+  `ASSERT_TRUE(publish(...))` had to accept `Posted|Unchanged`.
+- **Tests**: `FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch`; `test_graphics` 577 / `test_vsg` 542 /
+  ctest 30/30 / TSan 0.
 
-## 2026-11-12 —— graphics-next 5b-2b：删除旧镜像 / delta / 版本
+## 2026-11-12 — graphics-next 5b-2b: delete the old mirror / delta / version
 
-- **删除**：`ContentMirror` / `DeltaChannel` / `RenderWorld` / `RenderWorldSource` / `PublishOutcome` 全部删；
-  `SceneRows` 只剩 `snapshot`（`version` / `editing` / `publish` 一并删）。`DrawListMemo` 保留为 `SnapshotSource`
-  的纯 per-view 缓存；`Scene::refreshBoxes/refreshMaterials` 保留（快照输入）。
-- **测试**：`ContentMirrorTest` 11 + `RenderWorldTest` 7 + `DeltaChannelTest` 5 = 23 条 LEGACY 用例删除；
-  `RenderWorldTest.cpp` 只留 `SnapshotTest` 与 `DrawListBakeTest`；`SnapshotShadowTest.cpp` 改成
-  `SnapshotSourceTest`（发布源 vs Scene 直接收集，600 帧 + 批内 + T17 + 空快照变异）。
-- **计数**：`test_graphics` 554 / `test_vsg` 542 / ctest 30/30 / TSan 0。5b-2c（`addPass` 家族 /
-  `PassRegistry` 运行时拒绝）未做。
-- **坑**：`RenderEngine` 的 contentCollectCount/ReuseCount 读 `FrameWorker::memoStores/Hits`；删掉 LEGACY 后
-  只剩 `SnapshotSource` 的 memo，`PassesSharingSceneAndCameraCollectOnce...` 仍应绿（`beginFrame` 的上一帧
-  grace 是前提）。
+- **Deleted**: `ContentMirror` / `DeltaChannel` / `RenderWorld` / `RenderWorldSource` / `PublishOutcome` are all gone;
+  `SceneRows` keeps only `snapshot` (`version` / `editing` / `publish` deleted with them). `DrawListMemo` stays as `SnapshotSource`'s
+  pure per-view cache; `Scene::refreshBoxes/refreshMaterials` stay (snapshot inputs).
+- **Tests**: `ContentMirrorTest` 11 + `RenderWorldTest` 7 + `DeltaChannelTest` 5 = 23 LEGACY cases deleted;
+  `RenderWorldTest.cpp` keeps only `SnapshotTest` and `DrawListBakeTest`; `SnapshotShadowTest.cpp` became
+  `SnapshotSourceTest` (published source vs Scene collecting directly, 600 frames + inside a batch + T17 + the empty-snapshot mutation).
+- **Counts**: `test_graphics` 554 / `test_vsg` 542 / ctest 30/30 / TSan 0. 5b-2c (the `addPass` family /
+  `PassRegistry` runtime refusal) was not done.
+- **Trap**: `RenderEngine`'s contentCollectCount/ReuseCount read `FrameWorker::memoStores/Hits`; with LEGACY deleted
+  only `SnapshotSource`'s memo is left, and `PassesSharingSceneAndCameraCollectOnce...` should still be green (`beginFrame`'s previous-frame
+  grace is the premise).
 
-## 2026-11-12 —— GPU 驻留 pin 迁移第 5 步：半片 / 描述符集
+## 2026-11-12 — GPU residency pin migration step 5: halves / descriptor sets
 
-- **同一张表**：`ContentHalves` 与 `ContentSets` 改走 `core::ResourceTable`；`answerable` 与 `ContentSets`
-  的 sweep 删除，换成一个 `retireUnpinned` 谓词。查找从线性扫描变哈希；清扫从 O(entries × geometries)
-  变 O(entries)。
-- **半片 pin**：`(program identity, revision, variant, kind)`。layout 不参与——问它要扫全部 geometry facts，
-  正是本步删掉的成本；代价是 layout / 变体更替会累积几十 KB 的管线，由 backlog `T28` 观察，未命中不加回。
-- **描述符集 pin**：program@rev + 键里每个非空 slot 的 `declaresTexture` + 自己的 `texture.revision()`
-  比较。空 source（全是 pass 级采样器）只由 program 钉住。
-- **被拒的构建**：没有 GPU 对象，不进表；单独 `unordered_set<Key>` 记“别重试”，随 program revision 遗忘。
-  所以 `halves()` / `sets()` 的计数与旧语义一致（被拒不算活）。
-- **`ResourceTable::forEach`**：`ContentSets::repoint` 需要遍历所有驻留值；visitor 不得 acquire/retire/clear
-  （会移动 `entries_`），但可以改 value 的 body。
-- **坑**：sets 的 texture pin 必须先 `declaresTexture` 再解引用——地址可能被回收，只有“还有活行声明”才
-  保证那个指针现在是 `Texture`；顺序反了就是 use-after-free。
-- **测试**：`ContentHalvesTest.AHalfStaysPinnedByItsProgramWhenNoGeometryFeedsItsLayout`、
-  `ContentPassTest.TheProducedSetsGiveEachTexturedDrawableItsOwnMap` 尾部的 pin 断言、
-  `ResourceTableTest.TheVisitSeesEveryResidentValueAndCanChangeItsBody`。`test_vsg` 544 / `test_graphics` 554。
+- **One table**: `ContentHalves` and `ContentSets` moved onto `core::ResourceTable`; `answerable` and `ContentSets`'
+  sweep were deleted and replaced by one `retireUnpinned` predicate. Lookup went from a linear scan to a hash; the sweep went from O(entries × geometries)
+  to O(entries).
+- **Half pin**: `(program identity, revision, variant, kind)`. Layout does not take part — asking it would scan every geometry fact,
+  exactly the cost this step deletes; the price is that layout / variant churn accumulates tens of KB of pipelines, watched by backlog `T28`, with misses not added back.
+- **Descriptor-set pin**: program@rev + `declaresTexture` for every non-empty slot in the key + its own `texture.revision()`
+  comparison. An empty source (all pass-level samplers) is pinned by the program alone.
+- **Refused builds**: no GPU object, so they do not enter the table; a separate `unordered_set<Key>` records “do not retry”, forgotten with the program revision.
+  So `halves()` / `sets()` counts match the old semantics (refused does not count as live).
+- **`ResourceTable::forEach`**: `ContentSets::repoint` needs to walk every resident value; a visitor must not acquire/retire/clear
+  (that moves `entries_`) but may change a value's body.
+- **Trap**: a set's texture pin must call `declaresTexture` before dereferencing — the address may have been reclaimed, and only “a live row still declares it”
+  guarantees that pointer is a `Texture` now; the reverse order is a use-after-free.
+- **Tests**: `ContentHalvesTest.AHalfStaysPinnedByItsProgramWhenNoGeometryFeedsItsLayout`,
+  the pin assertion at the end of `ContentPassTest.TheProducedSetsGiveEachTexturedDrawableItsOwnMap`,
+  `ResourceTableTest.TheVisitSeesEveryResidentValueAndCanChangeItsBody`. `test_vsg` 544 / `test_graphics` 554.
 
-## 2026-11-12 —— 同日收口：半片 pin 加 layout 声明索引（取代上一条的 layout 部分）
+## 2026-11-12 — same-day close-out: the half pin gains a layout declaration index (replacing the layout half above)
 
-- **新增第 4 个声明索引**：`ContentDeclarations` 多了 `layouts_`（`declaresLayout` / `hasLayoutIndex`）；
-  `GeometryTable` 在 append / eraseIf / reclaimBefore / clear 的同一个方法里维护 `layout → 活行计数`
-  （`Declarations<Key, Hash>` 现在按 key 泛化，buffers / layouts / textures / materials 共用一条规则）。
-- **半片 pin**：`program@rev ∧ declaresLayout(layout)`；screen 半片只按 program。这样“最后一条使用该 layout
-  的几何行离树 ⇒ 半片 park”是 O(1)，不再有 layout 累积，也不再需要每帧扫 geometry facts。
-- **可选索引**：手建的 `ContentFacts` 没发布 layout 索引时，`ContentHalves` 退回扫描它的 `geometries`
-  （与 `program_order` 空则扫描的规则一致）；生产 `ContentStore` 永远发布，帧路径不走回退。
-- **公开头**：`VertexLayoutKeyHash`（`backend/Keys.hpp`，与 `operator==` 同字段）；`ContentDeclarations`
-  构造参数把 layouts 放最后，旧的 2/3 参数调用不变。
-- **测试**：`ContentStoreTest.TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWindow` 增加了 layout
-  的 refcount / 最后一行离树断言；`ContentHalvesTest.AHalfIsPinnedByTheLayoutDeclarationAndLeavesWithIt`
-  钉“索引说有就留、索引说没有就 park”。backlog `T28` 已删（收口项，不再是触发项）。
-- **计数**：`test_vsg` 544 / `test_graphics` 554 / ctest 30/30 / TSan 554 用例 0 warning。
+- **A fourth declaration index**: `ContentDeclarations` gained `layouts_` (`declaresLayout` / `hasLayoutIndex`);
+  `GeometryTable` maintains `layout → live row count` in the same methods as append / eraseIf / reclaimBefore / clear
+  (`Declarations<Key, Hash>` is now generic over the key; buffers / layouts / textures / materials share one rule).
+- **Half pin**: `program@rev ∧ declaresLayout(layout)`; a screen half is pinned by the program alone. That makes “the last geometry row using this layout
+  leaves the tree ⇒ the half is parked” O(1): no layout accumulation and no per-frame scan of geometry facts.
+- **Optional index**: when a hand-built `ContentFacts` publishes no layout index, `ContentHalves` falls back to scanning its `geometries`
+  (the same rule as scanning when `program_order` is empty); the production `ContentStore` always publishes, so the frame path never takes the fallback.
+- **Public header**: `VertexLayoutKeyHash` (`backend/Keys.hpp`, the same fields as `operator==`); the `ContentDeclarations`
+  constructor puts layouts last, so old 2/3-argument calls are unchanged.
+- **Tests**: `ContentStoreTest.TheDeclarationsFollowTheRowsAndOutliveThemForTheParkingWindow` gained the layout's
+  refcount / last-row-leaves assertions; `ContentHalvesTest.AHalfIsPinnedByTheLayoutDeclarationAndLeavesWithIt`
+  pins “the index says it is there ⇒ keep it, the index says not ⇒ park it”. Backlog `T28` was deleted (a close-out item, no longer a trigger).
+- **Counts**: `test_vsg` 544 / `test_graphics` 554 / ctest 30/30 / TSan 554 cases with 0 warnings.
 
-## 2026-11-15 —— F5 裁决：一帧在飞（并更正“CPU 是瓶颈”的误读）
+## 2026-11-15 — F5 ruling: one frame in flight (and correcting the “CPU is the bottleneck” misreading)
 
-- **关键教训（会重复犯）**：**“一帧的墙钟” ≠ “宿主的活”**。`executeFrame` 内部就 `vkWaitForFences`，所以基准里的
-  墙钟（中位 8.63–8.94 ms）**包含设备执行**；宿主侧工作量 = 墙钟 − `FrameReport::timing`（7.95 ms）≈ **0.9 ms**。
-  早先把 8.2–9.0 当成 CPU 时间 ⇒ 得出“CPU 是瓶颈”的相反结论，已更正 `design/vk-backend.md` §2.3 与审查 F5。
-  **规则**：凡引用“CPU/GPU 时间”的数字，先说清它是墙钟、宿主工作量还是设备时间戳。
-- **裁决**：保持一帧在飞（`../decisions/ADR-2026-11-15-vk-keeps-one-frame-in-flight.md`）。多帧在飞的收益上限
-  `max(宿主, 设备) ≈ 7.95 ms`（约 10%），代价是改“画完即读”的契约；触发条件 = 设备时间 < 墙钟一半（宿主成为瓶颈）、
-  需要与 GPU 重叠的产物形态、或第二个后端要同一语义。
-- **量法**（可复用）：`VN_BENCH_WARMUP=1 VN_BENCH_FRAMES=N` 跑 demo；设备时间只在**采样帧**（每 30 帧一次）出现，
-  所以挑 N 让最后一帧落在采样上（本机 **N=29** 命中，N=28/30/58 都答 `gpu not measured`）。
+- **Key lesson (easy to repeat)**: **“a frame's wall clock” ≠ “the host's work”**. `executeFrame` calls `vkWaitForFences` internally, so the benchmark's
+  wall clock (median 8.63–8.94 ms) **includes device execution**; host-side work = wall clock − `FrameReport::timing` (7.95 ms) ≈ **0.9 ms**.
+  The earlier reading treated 8.2–9.0 as CPU time ⇒ the opposite conclusion “the CPU is the bottleneck”, corrected in `design/vk-backend.md` §2.3 and audit F5.
+  **Rule**: any number quoted as “CPU/GPU time” must first say whether it is a wall clock, host work or a device timestamp.
+- **Ruling**: keep one frame in flight (`../decisions/ADR-2026-11-15-vk-keeps-one-frame-in-flight.md`). The upper bound on the gain from more frames in flight is
+  `max(host, device) ≈ 7.95 ms` (about 10%), at the cost of changing the “draw then read” contract; the trigger condition = device time < half the wall clock (the host becomes the bottleneck),
+  a product shape that needs overlap with the GPU, or a second backend wanting the same semantics.
+- **How to measure** (reusable): run the demo with `VN_BENCH_WARMUP=1 VN_BENCH_FRAMES=N`; the device time appears only on **sampled frames** (every 30 frames),
+  so pick N so the last frame lands on a sample (on this machine **N=29** hits; N=28/30/58 all answer `gpu not measured`).
 
-## 2026-11-15 —— `test_vsg` Release 堆破坏定位（vsg 后端资源寿命）+ 内存检查器配方
+## 2026-11-15 — locating the `test_vsg` Release heap corruption (vsg backend resource lifetime) + the memory-checker recipe
 
-- **症状**：Release 全套 `test_vsg` 约 50% 崩（`malloc(): unaligned tcache chunk` / SIGSEGV，落点漂移：
-  `FrameUploadsTest`、`PrepareUploadTest`）；Debug 很少；**旧提交同样**（A/B 过）。
-- **武器顺序（重要）**：ASan（Debug 树）连跑 3 次全绿 ⇒ 不是普通越界；`valgrind --tool=memcheck` 跑**会崩的
-  Release 二进制**一次抓到 5 处 `Invalid read`：读方全是 `libvulkan_lvp.so` 的工作线程，释放栈全在本进程 ⇒
-  **宿主提前释放了驱动内存**。validation 看不见这种（Vulkan 对象之间的关系是合法的，被 free 的是驱动的簿记块）。
-- **两处根因（已修）**：①`OffscreenSession/Session::assignFrameGraphs()` 直接替换 `task->commandGraphs`，上一帧的
-  `vsg::CommandGraph` 失去最后引用 → `~Buffer` 释放驱动内存；②`VsgBackend::shutdown()` 直接
-  `releaseContentWorld()`，而会话仍是流水线（`FrameTimeline` + slot 环），`MaterialImages` 的图被销毁时驱动线程还在读。
-- **修法**：①拆机在任何销毁前让**每个会话** `waitDeviceIdle()`（计入 `RetirementQueue::noteDeviceWait()`）；
-  ②新增 `detail::GraphLifetime`（`GraphLifetime.hpp`）：被替换的帧图进 keep-alive 列表，按
-  **`FrameTimeline::completedFrame()`**（slot 回收给的完成证据，和内容退休同一套）逐帧丢弃——稳态不牺牲流水线。
-- **第三处（同日修完）**：`OffscreenSession::waitDeviceIdle()` 用 **`timeline().submittedFrame() == 0` 早退**，
-  把“没记到帧”当成“没在跑”——而 prepare 会建管线、会提交上传批。判据换成**“该会话创建过工作”**
-  （`beginFrame` 置位 + 后端在 prepare 时调 `notePreparedWork()`），既修 prepare-only 拆机、又保住
-  “没创建过工作的会话不假装等过”的诚实计数（`OffscreenSessionTest.TheDestructiveWaitIsCountedOnce`）。结果：
-  `PrepareUploadTest.*` 的 valgrind 从 **4 处 `Invalid read` → 0**；
-  `*FrameUploads*:*PrepareUploadTest*:*BlockStorageTest*:*ContentPassTest*` 44 例 0 错误。
-- **量**：Release 全套 **4/4 全绿**（修前约每 2 次崩 1 次）。
-- **配方**：内存/生命周期缺陷先在 ASan 树跑 3 次（排除越界），再用 valgrind 跑 Release 二进制（`--gtest_filter`
-  可收窄），`--num-callers=16` 才看得到「Block was free'd at」的释放栈。
+- **Symptom**: the full Release `test_vsg` crashed about 50% of the time (`malloc(): unaligned tcache chunk` / SIGSEGV, with a drifting landing point:
+  `FrameUploadsTest`, `PrepareUploadTest`); Debug rarely; **the old commit did the same** (A/B checked).
+- **Weapon order (important)**: ASan (Debug tree) ran 3 times all green ⇒ not an ordinary out-of-bounds; `valgrind --tool=memcheck` on the **Release binary that crashes**
+  caught 5 `Invalid read`s in one run: every reader was a `libvulkan_lvp.so` worker thread, every free stack was in this process ⇒ **the host freed driver memory early**.
+  Validation cannot see this (the Vulkan objects' relationship is legal; what got freed was the driver's bookkeeping block).
+- **Two root causes (fixed)**: ① `OffscreenSession/Session::assignFrameGraphs()` replaced `task->commandGraphs` outright, so the previous frame's
+  `vsg::CommandGraph` lost its last reference → `~Buffer` freed driver memory; ② `VsgBackend::shutdown()` called
+  `releaseContentWorld()` directly while the session was still pipelined (`FrameTimeline` + slot ring), so `MaterialImages`' images were destroyed while the driver thread was still reading them.
+- **Fixes**: ① teardown calls `waitDeviceIdle()` on **every session** before anything is destroyed (counted in `RetirementQueue::noteDeviceWait()`);
+  ② new `detail::GraphLifetime` (`GraphLifetime.hpp`): a replaced frame graph goes into a keep-alive list and is dropped frame by frame by
+  **`FrameTimeline::completedFrame()`** (the completion evidence the slot reclaim also uses) — steady state does not sacrifice the pipeline.
+- **A third one (fixed the same day)**: `OffscreenSession::waitDeviceIdle()` used **`timeline().submittedFrame() == 0` as an early return**,
+  treating “no frame recorded” as “not running” — yet prepare builds pipelines and submits upload batches. The criterion became **“this session has ever created work”**
+  (`beginFrame` sets it + the backend calls `notePreparedWork()` during prepare), which fixes prepare-only teardown and keeps
+  “a session that never created work does not pretend to have waited” honest (`OffscreenSessionTest.TheDestructiveWaitIsCountedOnce`). Result:
+  `PrepareUploadTest.*`'s valgrind went from **4 `Invalid read`s → 0**;
+  `*FrameUploads*:*PrepareUploadTest*:*BlockStorageTest*:*ContentPassTest*` 44 cases with 0 errors.
+- **Measure**: full Release **4/4 green** (before the fix it crashed about once every two runs).
+- **Recipe**: for a memory/lifetime defect run ASan three times first (to rule out out-of-bounds), then valgrind on the Release binary (`--gtest_filter`
+  narrows it), and only `--num-callers=16` shows the “Block was free'd at” free stack.
 
-## 2026-11-15 —— `PrepareReport.passes` 一种口径（T41 关闭）+ 一个真 VUID：变体之间“依赖也进兼容性”
+## 2026-11-15 — one definition for `PrepareReport.passes` (T41 closed) + a real VUID: “dependencies are part of compatibility too” between variants
 
-- **口径定了（SDK 一处）**：`FrameShape` / `frameShapeOf` / `isDrawingCall` / `passHasEffect` 进了
-  `FrameDescription.hpp`（inline，不新增导出符号）。规则 = **有作用域的 pass**：至少一个 drawing call，**或**声明了
-  clear（“只清屏”的 pass 是真 pass）；`draw == nullopt` 的条目不进（它连 target 都没声明）。两个后端此前各算各的：
-  vk 数“有 draws 的条目”（把没有相机的调用也当 draw，+1），vsg 数“编译后 draws 非空的 pass”（漏掉只清屏的 pass，
-  −1），而 `FrameCounters` 是第三种。现在两边都调 `frameShapeOf(frame)`，与录制计数按构造一致。
-- **真 VUID（新用例顺带抓到，已修）**：`TargetImages` 的三个 render-pass 变体里，`depth_load == LOAD` 的变体把
-  `srcStage/srcAccess` 加宽（覆盖“读上一个 pass 写的深度”），CLEAR 变体不加 ⇒ **dependency 不同 ⇒ 变体不兼容**；同一
-  framebuffer 只与 CLEAR 变体兼容，于是“一帧两个 pass 写同一个带深度的目标”在 `vkCmdBeginRenderPass` 报
-  `VUID-VkRenderPassBeginInfo-renderPass-00904`。修法：依赖**不随 load op 变**（CLEAR 变体覆盖同样的源作用域不花
-  钱）。既有跨后端用例都是“每 pass 各自一个目标”，所以一直没暴露。
-- **用例**：`BackendParityTest.APrepareReportsTheShapeBothBackendsThenRecord`——一帧三 pass（只清屏 / 有调用但无相机 /
-  真画），断言两个后端的 `PrepareReport` 都是 `passes=2, draws=1`、录制计数与之一致，并在跑帧期间**断言 vk 零
-  warning/error**。变异：把依赖加宽改回“只对 LOAD”，该用例立刻红（“the direct backend reported a problem”）。
-- **计数**：`test_vk` 89；`BackendParityTest` **13**（原 12 + 1）；Debug 全量 ctest 32/32；Release `test_vk` 89/89。
+- **The definition is settled (one place in the SDK)**: `FrameShape` / `frameShapeOf` / `isDrawingCall` / `passHasEffect` went into
+  `FrameDescription.hpp` (inline, no new exported symbol). The rule = **a pass with an effect**: at least one drawing call, **or** a declared
+  clear (a “clear only” pass is a real pass); an entry with `draw == nullopt` does not count (it does not even declare a target). The two backends used to compute it differently:
+  vk counted “entries with draws” (treating a call with no camera as a draw, +1), vsg counted “passes whose compiled draws are non-empty” (missing clear-only passes,
+  −1), and `FrameCounters` was a third. Both now call `frameShapeOf(frame)`, matching the recording count by construction.
+- **A real VUID (caught by the new cases, fixed)**: among `TargetImages`' three render-pass variants, the one with `depth_load == LOAD` widened
+  `srcStage/srcAccess` (to cover “reading depth written by the previous pass”) while the CLEAR variant did not ⇒ **different dependency ⇒ the variants are incompatible**; the same
+  framebuffer was compatible only with the CLEAR variant, so “two passes in one frame writing the same target with depth” reported
+  `VUID-VkRenderPassBeginInfo-renderPass-00904` at `vkCmdBeginRenderPass`. Fix: dependencies **do not change with the load op** (the CLEAR variant covering the same source scope costs
+  nothing). Every existing cross-backend case used “one target per pass”, so it had never shown up.
+- **Cases**: `BackendParityTest.APrepareReportsTheShapeBothBackendsThenRecord` — one frame with three passes (clear only / a call with no camera /
+  a real draw), asserting both backends' `PrepareReport` is `passes=2, draws=1`, the recording count agrees, and **asserting vk has zero
+  warning/error** while the frame runs. Mutation: widening the dependency back to “LOAD only” makes the case red at once (“the direct backend reported a problem”).
+- **Counts**: `test_vk` 89; `BackendParityTest` **13** (12 + 1); full Debug ctest 32/32; Release `test_vk` 89/89.
 
 ## 2026-11-15 —— `gfx_backend_vk` 跨会话管线缓存（F4/T44 落地）：位置归宿主、键归设备、证人要诚实
 
