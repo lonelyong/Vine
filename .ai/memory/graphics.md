@@ -1,325 +1,325 @@
-# graphics / vsg 后端 —— 现役要点
+# graphics / vsg backend — current-state notes
 
-> 只记**现役**：机制、判据、坑，以及“当时为什么这么定”。逐片历史与重写前那一代在 git；
-> 设计文档在 `.ai/design/`，**唯一待办清单**是 `.ai/backlog/graphics.md`。
-> 更细的后端契约见 `.ai/design/vsg-backend.md`，坑表见 `.ai/design/vsg-pitfalls.md`。
+> **Current state only**: mechanisms, criteria and traps, plus “why it was decided that way”. Per-slice history and the generation before the rewrite are in git;
+> the design docs are in `.ai/design/`, and **the only to-do list** is `.ai/backlog/graphics.md`.
+> The finer backend contract is `.ai/design/vsg-backend.md`; the trap table is `.ai/design/vsg-pitfalls.md`.
 
-## 1. 分层与一帧
+## 1. Layering and one frame
 
-- SDK：`src/viz/graphics/sdk/vine/graphics`；vsg 后端：`src/plugins/gfx_backend_vsg`（`core/` 纯策略 + `api/` vsg 适配 + `support/`）。
-- `RenderEngine`：生命周期 / `frame()` / 设备借用 / 尺寸 / 能力与报告；三个门面是 `PassRegistry`、`OutputRegistry`、`DiagnosticsRoute`。
-- `frame()` 返回 `FrameOutcome`（`Ran` / `Submitted`；`NotReady` + `EngineNotReady`），`applyPlan` 返回 `PlanResult` 三态；pass 的内容住在 `PassDesc::content`，`bindPassContent` 返回是否命中。
-- **排序键是 `detail::SortKey`**（`DrawListBake.hpp`）：drawOrder → 层（最小层号）→ 不透明/透明 → 量化相机空间深度（1/4096 单位）→ 行/图元索引。代表点是**世界盒中心**（无盒退回矩阵原点），`sortCollected` 用 `std::sort`（`tie` 保证无相等键）。
-- **帧结果是值**：`RenderEngine::frameResult()` → `FrameResult{frame, present, query{snapshot, view}, passes, draws, diagnostics}`，在帧被回答时一次写入（`frame_result_mutex_`）；`query.view` 是 `View` 值（相机快照 + 设备像素区域 + 层掩码），`presentedCamera()` 是它的相机半边。`poses` 半边等 F10。
-- **排序键是 `detail::SortKey`**（`DrawListBake.hpp`）：drawOrder → 层（最小层号）→ 不透明/透明 → 量化相机空间深度（1/4096 单位）→ 行/图元索引。代表点是**世界盒中心**（无盒退回矩阵原点），`sortCollected` 用 `std::sort`（`tie` 保证无相等键）。
-- **帧结果是值**：`RenderEngine::frameResult()` → `FrameResult{frame, present, query{snapshot, view}, passes, draws, diagnostics}`，在帧被回答时一次写入（`frame_result_mutex_`）；`query.view` 是 `View` 值（相机快照 + 设备像素区域 + 层掩码），`presentedCamera()` 是它的相机半边。`pose` 半边等 F10。
-- 节点 / pass / 几何的 `Object` 派生类型判断用 `obj_cast<T>`（core 元类型链），不要用 `dynamic_cast`；`CameraManipulator` 与第三方 vsg 类型例外。
-- `PassChain`：一张画面的配方 + 注册归属。`PassChain::build(engine, ChainDesc)` 建链并注册 pass；析构把手里的 pass 交还引擎；`SceneView::setChain` 采纳它。
-- 一帧：`beginFrame` → 每个 pass（`beginPass` / `setPassOrder` / `setPassInputs` / `execute` / `endPass`）→ `endFrame` → present。
-- 调度只在引擎（`detail::FrameScheduler`：迭代 Tarjan + 堆就绪队列，稳态零分配）；后端按交来的 `FrameDescription.passes` 物化，不再重排、不报环。
-- 后端契约：`RenderBackend.hpp` + `ShaderAbi.hpp`（四个零依赖 L1 块）+ `LightAbi.hpp`（灯块与打包）；`backend/` 半的类型在 `core/`、`api/`。
-- **一帧两个半段**：内容半段（钩子 / publish / describe）在调用线程，引擎半段（drain / bind / expand / execute /
-  present）在引擎线程；两块帧值轮换、帧号随帧走（`detail::EngineFrame`）。**宿主默认线程化**
-  （`SurfaceWindow` 开局就 `setFrameThreading(EngineThread)`），`RenderControl::setFrameThreading(Inline)` 是回退口。
-- 线程化后的可感知代价（别当 bug 报）：画面比内容**晚一帧**（N15）；`frame()` 每次最多等**一个引擎半段**（含
-  acquire/present），所以 UI 被渲染节拍节流——"不阻塞"指的是不付展开与整帧，不是不被节流。
-- **编辑批次**：`Scene::beginEdit()` / `endEdit()`（或 `Scene::Edit` 作用域）把镜像比较的版本按住 —— 批内帧不发布、
-  画批次开始时的状态，整批在之后那一帧一次落地（C18/R17，机器人关节状态的硬要求）。查询（拾取、`boundingBox`、
-  直接采集）在批内仍看当前内容；`version()` 返回的是 `published_epoch_/published_boxes_`，不是 `bake_epoch_`。
-- **指针查询按"用户看到的那一帧"算**（N17）：`RenderEngine::presentedCamera()` 发布被答完那一帧的相机快照，
-  `SceneView::setPresentedCamera` 交给 manipulator，`OrbitCameraManipulator::makeScreenRay` 优先用它；没有发布值就退回
-  当前相机（静止画面 / inline）。一个像素 → 世界射线是 `CameraSnapshot::screenRay`（两端反投影，透视正交同一套）。
-- 呈现结局是值：`PresentOutcome{Presented, Skipped, Lost, Refused}` + `RenderEngine::presentRecord()`（帧号+结局，一个原子字）。
-  `Refused` 是“设备根本没录这一帧”：调用线程已经在一个帧里（见下一条）；它不是 `Skipped`（没东西可呈现）也不是 `Lost`（有表面但画面没到）。
-  `Lost` 由**引擎**修（忘掉已告知的尺寸 → 下一帧重报 → 后端重建交换链），宿主只记一条日志、不拆会话、不藏区域
-  （藏区域会停掉修复帧）。设备动词（`createSurfaceTarget` / `setWindowHandle` / `initialize`）是**帧间**操作。
-- **一帧一次是“检查过的事实”，不是注释（2026-11-15，T47）**：`backend/FrameGate.hpp` —— `executeFrame` /
-  `prepareFrame` 进去取一个 **lease**：另一条线程**等待**，同一线程重入**拒绝**（`PresentOutcome::Refused` /
-  `PrepareReport::Outcome::Refused`，一条 `*.session.frame_reentry` 诊断）。两个后端共用同一实现，所以宿主的同一个
-  错误在两边得到同一个答案。lease 而不是 `enter/leave` 的原因：帧有多个提前返回，忘记 `leave` 会把下一帧卡死，
-  而 lease 让“忘记”无法表达。它只护**帧机器**（命令池 / 栅栏 / 环 / 描述符池）；宿主词（`setRenderTarget` /
-  `releaseContent`）仍是帧间调用。
-- 采集备忘录：`detail::DrawListMemo` 被 `Scene` 与 `RenderWorldSource` 共用（键 = 视图投影/眼点/视口/层掩码，状态 =
-  表 revision，令牌 = 帧号，一帧宽限；令牌 0 = 不记）。见证在引擎侧：`RenderEngine::contentCollectCount/ReuseCount`。
-- 竞争/寿命门禁：`scripts/tsan_check.sh`（`build-tsan`，`-fsanitize=thread`，**0 条警告**才算过）。它顺手抓到过
-  `removePass` 的 use-after-free 与"`*collectRenderCommands(...)` 直接进 range-for"（临时 `shared_ptr` 在 range
-  初始化结束就销毁）。
+- SDK: `src/viz/graphics/sdk/vine/graphics`; vsg backend: `src/plugins/gfx_backend_vsg` (`core/` pure policy + `api/` vsg adaptation + `support/`).
+- `RenderEngine`: lifetime / `frame()` / device borrowing / size / capabilities and reports; the three facades are `PassRegistry`, `OutputRegistry`, `DiagnosticsRoute`.
+- `frame()` returns `FrameOutcome` (`Ran` / `Submitted`; `NotReady` + `EngineNotReady`), `applyPlan` returns the three-state `PlanResult`; a pass's content lives in `PassDesc::content`, and `bindPassContent` returns whether it was hit.
+- **The sort key is `detail::SortKey`** (`DrawListBake.hpp`): drawOrder → layer (smallest layer number) → opaque/transparent → quantised camera-space depth (1/4096 units) → row/primitive index. The representative point is the **world box centre** (no box falls back to the matrix origin), and `sortCollected` uses `std::sort` (`tie` guarantees no equal keys).
+- **The frame result is a value**: `RenderEngine::frameResult()` → `FrameResult{frame, present, query{snapshot, view}, passes, draws, diagnostics}`, written once when the frame is answered (`frame_result_mutex_`); `query.view` is a `View` value (camera snapshot + device pixel area + layer mask), and `presentedCamera()` is its camera half. The `poses` half waits for F10.
+- **The sort key is `detail::SortKey`** (`DrawListBake.hpp`): drawOrder → layer (smallest layer number) → opaque/transparent → quantised camera-space depth (1/4096 units) → row/primitive index. The representative point is the **world box centre** (no box falls back to the matrix origin), and `sortCollected` uses `std::sort` (`tie` guarantees no equal keys).
+- **The frame result is a value**: `RenderEngine::frameResult()` → `FrameResult{frame, present, query{snapshot, view}, passes, draws, diagnostics}`, written once when the frame is answered (`frame_result_mutex_`); `query.view` is a `View` value (camera snapshot + device pixel area + layer mask), and `presentedCamera()` is its camera half. The `pose` half waits for F10.
+- Type tests on the `Object`-derived nodes / passes / geometry use `obj_cast<T>` (core's meta-type chain), never `dynamic_cast`; `CameraManipulator` and third-party vsg types are the exceptions.
+- `PassChain`: one picture's recipe + registration ownership. `PassChain::build(engine, ChainDesc)` builds the chain and registers the passes; the destructor hands its passes back to the engine; `SceneView::setChain` adopts it.
+- One frame: `beginFrame` → every pass (`beginPass` / `setPassOrder` / `setPassInputs` / `execute` / `endPass`) → `endFrame` → present.
+- Scheduling happens only in the engine (`detail::FrameScheduler`: iterative Tarjan + a heap ready queue, zero allocation in steady state); the backend materialises the `FrameDescription.passes` it is handed and never reorders or reports a cycle.
+- Backend contract: `RenderBackend.hpp` + `ShaderAbi.hpp` (four zero-dependency L1 blocks) + `LightAbi.hpp` (the light block and packing); the types of the `backend/` half live in `core/`, `api/`.
+- **One frame has two halves**: the content half (hooks / publish / describe) on the calling thread and the engine half (drain / bind / expand / execute /
+  present) on the engine thread; two frame values rotate and the frame number travels with the frame (`detail::EngineFrame`). **The host is threaded by default**
+  (`SurfaceWindow` starts with `setFrameThreading(EngineThread)`); `RenderControl::setFrameThreading(Inline)` is the fallback.
+- The perceptible cost of threading (do not report it as a bug): the picture is **one frame behind** the content (N15); `frame()` waits for at most **one engine half** (including
+  acquire/present), so the UI is throttled by the render cadence — "does not block" means it does not pay the expansion and the whole frame, not that it is not throttled.
+- **Edit batches**: `Scene::beginEdit()` / `endEdit()` (or a `Scene::Edit` scope) hold back the mirror-compared version — frames inside the batch do not publish and
+  draw the state from when the batch began, and the whole batch lands at once in the frame after it (C18/R17, a hard requirement of robot joint state). Queries (picking, `boundingBox`,
+  direct collection) still see the current content inside the batch; `version()` returns `published_epoch_/published_boxes_`, not `bake_epoch_`.
+- **Pointer queries are answered against "the frame the user saw"** (N17): `RenderEngine::presentedCamera()` publishes the camera snapshot of the frame that was answered,
+  `SceneView::setPresentedCamera` hands it to the manipulator, and `OrbitCameraManipulator::makeScreenRay` prefers it; with no published value it falls back to
+  the current camera (static picture / inline). One pixel → a world ray is `CameraSnapshot::screenRay` (back-project both ends; perspective and orthographic use the same path).
+- The present outcome is a value: `PresentOutcome{Presented, Skipped, Lost, Refused}` + `RenderEngine::presentRecord()` (frame number + outcome, one atomic word).
+  `Refused` means “the device did not record this frame at all”: the calling thread is already inside a frame (next bullet); it is neither `Skipped` (nothing to present) nor `Lost` (there is a surface but the picture did not arrive).
+  `Lost` is repaired by the **engine** (forget the announced size → report it again next frame → the backend rebuilds the swap chain); the host only logs one line, does not tear down the session and does not hide the area
+  (hiding the area would stop the repair frame). Device verbs (`createSurfaceTarget` / `setWindowHandle` / `initialize`) are **between-frame** operations.
+- **One frame at a time is a “checked fact”, not a comment (2026-11-15, T47)**: `backend/FrameGate.hpp` — `executeFrame` /
+  `prepareFrame` takes a **lease** on entry: another thread **waits**, the same thread re-entering is **refused** (`PresentOutcome::Refused` /
+  `PrepareReport::Outcome::Refused`, one `*.session.frame_reentry` diagnostic). Both backends share one implementation, so the host's same
+  mistake gets the same answer on either side. Why a lease rather than `enter/leave`: a frame has several early returns, and forgetting `leave` wedges the next frame,
+  while a lease makes “forgetting” inexpressible. It guards only the **frame machine** (command pool / fence / ring / descriptor pool); host verbs (`setRenderTarget` /
+  `releaseContent`) are still between-frame calls.
+- Collection memo: `detail::DrawListMemo` is shared by `Scene` and `RenderWorldSource` (key = view projection / eye point / viewport / layer mask, state =
+  table revision, token = frame number, one frame of grace; token 0 = do not record). The witness is on the engine side: `RenderEngine::contentCollectCount/ReuseCount`.
+- Race / lifetime gate: `scripts/tsan_check.sh` (`build-tsan`, `-fsanitize=thread`; only **0 warnings** passes). It has caught
+  the use-after-free in `removePass` and "`*collectRenderCommands(...)` straight into a range-for" (the temporary `shared_ptr` dies when the range
+  initialisation ends).
 
-## 2. 内容模型
+## 2. Content model
 
-- `Geometry` = 通道集；`Primitive` = 一次 draw（topology + index span + material / program + instance stream）。
-- 索引与实例流只写在 `Primitive`；`Geometry::material` / `program` 是**几何级默认**（图元自己的值优先，再否则最近 `StateNode`）。
-- 通道 = `BufferSlice<float>` + components。`setPositions` / `setNormals` / `setTexcoords2` / `setTexcoords3` 共享 buffer；arena 用 slice。
-- 实例流：每实例 16 个 float（列主序 mat4）；`visible_instances` 是 draw 参数，不重传；`VN_INSTANCED` 决定 binding 4 与顶点布局。
-- revision：**形状归几何**（`Geometry::setRevision` / `bumpRevision`），**字节归 buffer**（`Buffer::setRevision`）。上传缓存只认 buffer revision；几何 revision 只驱动事实行重建。
-- 身份：`vn::graphics::Handle`（gen24/domain8/index32）+ `ContentRef{id, revision}`，公开头是 `sdk/vine/graphics/ContentId.hpp`。`Node::id()` / `MaterialBase::id()` 在构造时分配、析构时释放；`Row::identity`、`RenderWorld::RowId`、delta、`RenderCommand::node`、`CompiledCommand::geometry`、`GeometryFacts::geometry`、材质表都按它键。**表按 `(id, revision)` 建行**，旧 revision 的行在停靠窗口内继续作答。地址不再是身份（`ADR-2026-11-11-content-identity-is-a-handle`）；`Buffer`/流上传仍是地址 + `ADR-2026-11-09` 的“持有即身份”（内容对象、计划、编译半边都已改 `ContentRef`）。
-- 拾取树：`Geometry::prepareBvh(draw, builder)` 默认 `pickTreeBuilder()`（`kPickTreeLeafSize = 64`），建出的树**已封存**（`Bvh::seal()`）——一把自叶容量 4 的 14M 三角形树从 1.36 GB 降到 88 MB。封存树的查询回调第二参数是叶盒，拾取本来就不用它。
-- 收集：`Scene::collectRenderCommands` 对每个 primitive 发一条命令，快照 world / state / material / program / instance；按 `drawOrder` 后不透明前向、透明后向排序。
-- 包围盒：`Geometry::localBounds` 缓存键 = positions buffer + 其 revision + 段 + 几何 revision；`subtreeBounds` 在节点自身坐标系；`Scene::boundingBox` 只算可见且命中层掩码的内容。
-- 盒/线/面的类型在 `vn::geometry`：`Aabb<T>`（`Aabbf/Aabbd/Aabbi`）、`Obb<T>`、`Line<T>`、`Plane<T>`；`math` 只有数值与变换，没有 `Rect3`，也没有 `math::Aabb*`。见 `.ai/design/geometry-primitives.md`。
-- OBB 拟合：`Obb::computePca` / `computeFixedOrientation`；特征分解是 `math::symmetricEigen`（升序谱、只读上三角），矩阵→四元数是 `math::toQuaternion`。最小体积 OBB 与 `merge` 没有做。
+- `Geometry` = a set of channels; `Primitive` = one draw (topology + index span + material / program + instance stream).
+- Indices and the instance stream are written only on `Primitive`; `Geometry::material` / `program` are **geometry-level defaults** (the primitive's own value wins, otherwise the nearest `StateNode`).
+- A channel = `BufferSlice<float>` + components. `setPositions` / `setNormals` / `setTexcoords2` / `setTexcoords3` share a buffer; an arena uses slices.
+- Instance stream: 16 floats per instance (column-major mat4); `visible_instances` is a draw parameter and is not re-uploaded; `VN_INSTANCED` decides binding 4 and the vertex layout.
+- revision: **shape belongs to geometry** (`Geometry::setRevision` / `bumpRevision`), **bytes belong to the buffer** (`Buffer::setRevision`). The upload cache keys on the buffer revision only; the geometry revision only drives fact-row rebuilds.
+- Identity: `vn::graphics::Handle` (gen24/domain8/index32) + `ContentRef{id, revision}`, public header `sdk/vine/graphics/ContentId.hpp`. `Node::id()` / `MaterialBase::id()` are allocated at construction and released at destruction; `Row::identity`, `RenderWorld::RowId`, delta, `RenderCommand::node`, `CompiledCommand::geometry`, `GeometryFacts::geometry` and the material table all key on it. **A table builds rows by `(id, revision)`**, and a row of an old revision keeps answering inside the parking window. An address is no longer an identity (`ADR-2026-11-11-content-identity-is-a-handle`); `Buffer`/stream upload still is an address + `ADR-2026-11-09`'s “holding is identity” (content objects, plans and compiled halves have all moved to `ContentRef`).
+- Picking tree: `Geometry::prepareBvh(draw, builder)` defaults to `pickTreeBuilder()` (`kPickTreeLeafSize = 64`), and the built tree is **sealed** (`Bvh::seal()`) — a 14M-triangle tree with a self-chosen leaf capacity of 4 went from 1.36 GB down to 88 MB. A sealed tree's query callback gets the leaf box as its second argument, which picking never uses anyway.
+- Collection: `Scene::collectRenderCommands` emits one command per primitive, snapshotting world / state / material / program / instance; sorted by `drawOrder`, opaque front-to-back and transparent back-to-front.
+- Bounding boxes: the `Geometry::localBounds` cache key = positions buffer + its revision + segment + geometry revision; `subtreeBounds` in the node's own space; `Scene::boundingBox` counts only content that is visible and matches the layer mask.
+- Box/line/plane types live in `vn::geometry`: `Aabb<T>` (`Aabbf/Aabbd/Aabbi`), `Obb<T>`, `Line<T>`, `Plane<T>`; `math` has numbers and transforms only — no `Rect3`, no `math::Aabb*`. See `.ai/design/geometry-primitives.md`.
+- OBB fitting: `Obb::computePca` / `computeFixedOrientation`; the eigendecomposition is `math::symmetricEigen` (ascending spectrum, upper triangle only), and matrix → quaternion is `math::toQuaternion`. The minimum-volume OBB and `merge` are not done.
 
-## 3. 目标、层、颜色、图源
+## 3. Targets, layers, colour, image sources
 
-- `RenderTarget` 是**描述**，后端按描述造图；`RenderTarget::setSamples` 是 MSAA 唯一入口，采样数进 `TargetShape` ⇒ 管线键 ⇒ 通道/图像。颜色与深度各解析一张单采样图（深度 `sample0`，不平均）。
-- **pass 的目标与发布各是一个值**（B14）：`PassDesc::target` = `Target{Kind::Window|Explicit|Transient, target, name, extent, shape}`（`Target.hpp`），`PassDesc::output` = `Output{name, whole_target, image}`（`Output.hpp`）；`writes*` / `output_*` 六个字段已删。`Target::isValid` / `Output::isValid` 由 `validatePlan` 检查（`InvalidTarget` / `InvalidOutput`）；compile 解析出的 transient 进 `RenderPass::setResolvedTarget`，**不**改写声明。
-- **接缝不再拼 Vulkan 格式与 subpass**（B8，2026-11-17）：`TargetShape` / `RenderPassCompatibility` 的设备格式是 `DeviceFormat`（不透明码，0 = `kUndefined` = “没有这个附件/未学到”），渲染通道结构是后端计算的 `RenderPassKey`（0 = `kNotStated`，两个后端今天都发 `kSingleSubpassRenderPass`）。两头都只比较不解码；`RenderPassKey` 是**结构半边**，与格式/深度/采样数**并列**参与相等，不是它的哈希。`ImageLayout` 仍是 SDK 的 Vulkan 语义，尚未收。
-- 层：`Node::setLayers` + `PassDesc::layer_mask`；最近声明获胜；`Node::subtreeLayerUnion` 是 layer epoch 驱动的懒缓存，三条 walk 在可见性之后先判 `(union & mask) == 0`。
-- 颜色：`Colorf` 是线性光，`Color` 是 sRGB 编码字节；`toLinear()` / `toColor()` 一对转换；清屏与 pass 颜色用线性值。
-- 图源：`ImageInput` / `ImageSource`；produced（`ImageRef`：target + attachment）与 imported（`Texture`）两种生命周期不合并。`MaterialImages` 上传键 `(Texture*, revision)`，sampler 按值缓存。
+- `RenderTarget` is a **description**; the backend creates images from it. `RenderTarget::setSamples` is the only MSAA entry, and the sample count goes into `TargetShape` ⇒ pipeline key ⇒ attachment/image. Colour and depth each resolve to one single-sample image (depth `sample0`, no averaging).
+- **A pass's target and its publication are each a value** (B14): `PassDesc::target` = `Target{Kind::Window|Explicit|Transient, target, name, extent, shape}` (`Target.hpp`), `PassDesc::output` = `Output{name, whole_target, image}` (`Output.hpp`); the six `writes*` / `output_*` fields are deleted. `Target::isValid` / `Output::isValid` are checked by `validatePlan` (`InvalidTarget` / `InvalidOutput`); a transient resolved by compile goes into `RenderPass::setResolvedTarget` and **does not** rewrite the declaration.
+- **The seam no longer spells Vulkan formats and subpasses** (B8, 2026-11-17): the device format of `TargetShape` / `RenderPassCompatibility` is `DeviceFormat` (an opaque code, 0 = `kUndefined` = “no such attachment / not learned”), and the render-pass structure is a backend-computed `RenderPassKey` (0 = `kNotStated`; both backends emit `kSingleSubpassRenderPass` today). Both ends only compare, never decode; `RenderPassKey` is the **structure half** and takes part in equality **beside** format/depth/sample count, not as their hash. `ImageLayout` is still the SDK's Vulkan semantics and has not been folded in yet.
+- Layers: `Node::setLayers` + `PassDesc::layer_mask`; the nearest declaration wins; `Node::subtreeLayerUnion` is a lazy cache driven by the layer epoch, and the three walks test `(union & mask) == 0` right after visibility.
+- Colour: `Colorf` is linear light, `Color` is sRGB-encoded bytes; `toLinear()` / `toColor()` are the pair of conversions; clear colour and pass colour use linear values.
+- Image sources: `ImageInput` / `ImageSource`; produced (`ImageRef`: target + attachment) and imported (`Texture`) lifetimes are not merged. `MaterialImages` uploads by key `(Texture*, revision)`, and samplers are cached by value.
 
-## 4. vsg 平台事实（硬约束）
+## 4. vsg platform facts (hard constraints)
 
-- Vulkan 1.4 地板；EDS2 / EDS3 + 3 个 fn-pointer 入口；**没有 dynamic rendering** ⇒ render pass + load-op variants。
-- vsg 按 viewID 编管线 ⇒ 每 pass 的状态注册表必须私有。
-- push constant 128 B；reverse-Z（far = 0）；世界 CCW vs framebuffer CW ⇒ `frontFace = CLOCKWISE`。
-- X11 / Win32；**无 Wayland**。
-- 在飞槽数是 vsg `Viewer` 的硬编码 3：启动期逐帧学习（`probeSlotCount` / `SlotTracker`），学会前不 park。
-- 退役窗口 = `slots + 1`；`RetirementQueue::setSlots()` 原地更新，不要重新赋值（会清零计数）。
+- Vulkan 1.4 floor; EDS2 / EDS3 + 3 fn-pointer entries; **no dynamic rendering** ⇒ render pass + load-op variants.
+- vsg compiles pipelines per viewID ⇒ every pass's state registry must be private.
+- push constant 128 B; reverse-Z (far = 0); world CCW vs framebuffer CW ⇒ `frontFace = CLOCKWISE`.
+- X11 / Win32; **no Wayland**.
+- The in-flight slot count is vsg `Viewer`'s hard-coded 3: learned frame by frame during startup (`probeSlotCount` / `SlotTracker`), and nothing is parked before it is learned.
+- Retirement window = `slots + 1`; `RetirementQueue::setSlots()` updates in place — do not assign a new queue (that zeroes the counters).
 
-## 5. 坑（不可再踩）
+## 5. Traps (do not step in again)
 
-- `vn::String` 包的是 `std::u8string`；字面量写 `u8"..."`，printf/gtest 用 `reinterpret_cast<const char*>(s.data()), s.size()`。
-- `PassDesc::camera` 是**拥有式** `intrusive_ptr<Camera>`；传栈相机地址会 double-free。
-- `vsg::Viewer` 没有 `device` 成员；停设备用 `viewer->deviceWaitIdle()`。
-- `vsg::Instance::create` **抛异常**（不返回 null）；版本回落循环要 catch。
-- `vsg::RenderGraph` 默认 `renderArea` 是零面积；必须显式设置，否则 pass 记录了但什么都不清。
-- `vsg::DescriptorBuffer::create` 参数顺序是 `(bufferInfoList, DESTINATION BINDING, array element, type)`。
-- 动态状态块槽位必须是 `detail::kDynamicStateSlot`（15），否则会替换 pipeline bind。
-- `VkSubpassDependency` 的 stage/access mask 是 render-pass 兼容性的一部分；借深度时 dependency 必须按形状取超集。
-- 设备扩展必须真正 enable（EDS3 的 polygon mode / color blend）；只开 feature bit 不够，validation layer 才看得见。
-- Vulkan NDC z 就是 depth（没有 OpenGL 的 `z*0.5+0.5`）；reverse-Z far = 0.0，清深度不能清 1.0。
-- 动态 `vkCmdSetPrimitiveTopology` 只能在 pipeline 的 topology class 内；`Topology` 进 `PipelineKey`。
-- `POINT_LIST` 要求顶点阶段静态写 `gl_PointSize`；内置程序写 1.0。
-- 顶点/索引上传是**别名，不是复制**：`StreamUploads` 用 `VsgBufferView` + 真 `vsg::floatArray` / `vsg::uintArray` 读模型字节
-  （顶点通道别名它的段、索引别名**整段 buffer**——跨度由 draw 说）。模型先死也没事：数组→视图→buffer 是一条持有链。
-  把 `vsg::Data` 子类**直接**当数组绑上去**不会生效**（验证层干净但画不出），必须先套成真数组。
-  没有 buffer 句柄或 span 不属于该 buffer 时才退回复制（拷贝路径仍要保留，测试就是这么调用的）。
-- vsg 上传后**进程里会多一份与数据同尺寸的 host 显存分配**（14M 三角形的模型：模型 1.16 GB 之外还有 1.23 GB
-  `SharedUsage`，另有同尺寸 `DedicatedUsage`）。**归属已定**：`TransferTask::transferData()` 里
+- `vn::String` wraps `std::u8string`; write literals as `u8"..."`, and printf/gtest use `reinterpret_cast<const char*>(s.data()), s.size()`.
+- `PassDesc::camera` is an **owning** `intrusive_ptr<Camera>`; passing a stack camera's address double-frees.
+- `vsg::Viewer` has no `device` member; stop the device with `viewer->deviceWaitIdle()`.
+- `vsg::Instance::create` **throws** (it does not return null); a version-fallback loop must catch.
+- `vsg::RenderGraph`'s default `renderArea` is zero-sized; it must be set explicitly, or the pass records but clears nothing.
+- `vsg::DescriptorBuffer::create` takes its arguments as `(bufferInfoList, DESTINATION BINDING, array element, type)`.
+- The dynamic-state block slot must be `detail::kDynamicStateSlot` (15), or it replaces the pipeline bind.
+- `VkSubpassDependency`'s stage/access masks are part of render-pass compatibility; when borrowing depth the dependency must be a superset of the shape.
+- Device extensions must be truly enabled (EDS3's polygon mode / color blend); setting the feature bit alone is not enough, and only the validation layer sees it.
+- Vulkan NDC z is the depth (there is no OpenGL `z*0.5+0.5`); reverse-Z far = 0.0, so a depth clear must not clear to 1.0.
+- Dynamic `vkCmdSetPrimitiveTopology` may only stay inside the pipeline's topology class; `Topology` goes into `PipelineKey`.
+- `POINT_LIST` requires the vertex stage to write `gl_PointSize` statically; the built-in programs write 1.0.
+- Vertex/index upload is an **alias, not a copy**: `StreamUploads` uses `VsgBufferView` + a real `vsg::floatArray` / `vsg::uintArray` to read the model bytes
+  (a vertex channel aliases its segment, the indices alias the **whole buffer** — the span is stated by the draw). The model may die first: array → view → buffer is one owning chain.
+  Binding a `vsg::Data` subclass **directly** as the array **does not work** (the validation layer is clean but nothing draws); it must be wrapped in a real array first.
+  Only with no buffer handle, or a span that does not belong to that buffer, does it fall back to a copy (the copy path must stay — the tests call it that way).
+- After a vsg upload **the process carries an extra host-memory allocation the size of the data** (for a 14M-triangle model: 1.23 GB
+  `SharedUsage` beyond the model's 1.16 GB, plus a same-sized `DedicatedUsage`). **The ownership is settled**: in `TransferTask::transferData()`,
   `staging = vsg::createBufferAndMemory(device, totalSize, TRANSFER_SRC, EXCLUSIVE, HOST_VISIBLE|HOST_COHERENT)`
-  —— 整份传输一个 host-visible 缓冲，存在 `TransferBlock::staging` 里，`staging->size < totalSize` 时只增不减、
-  传完不还，**不经过** `stagingMemoryBufferPools`，所以 `releaseUnusedPools()` 碰不到它（应用实测数值一字不变）。
-  它随会话（viewport/文档）销毁而释放；vsg 没有任何 getenv/配置能把这条路关掉（源码里只有 FileSystem 读 getenv）。
-  **已解决（F16.2，2026-11-10 改定）**：**暂存不保留**。`detail::StagingTask`（派生自 `vsg::TransferTask`，会话起来时由
-  `installStagingTask()` 装好）在**每个帧边界**（`VsgBackend::executeFrame()` 开头）把 `fence->status() == VK_SUCCESS`
-  的块的 `staging` + `buffer_data` 置空 —— 正是 vsg 自己“不够大就重建”的起点，下一次上传到那块时重新分配。
-  证据是那块自己的 fence，所以**零等待、零 park、零 `deviceWaitIdle`**；没完成的拷贝留给下一帧。
-  **不要加额外条件**：曾经在 sweep 里先问 `to_copy->containsDataToTransfer()`（“还有待拷数据就跳过”），
-  而 vsg 的 `_transferData()` 在 `requiresCopy()` 为假时提前返回、**不清理** `dataMap` → 那个条件可以永久为真，sweep 永久跳过，
-  1.2 GB 又常驻回去（用例抓到的就是这个偶发）。
-  **每块独立**：`TransferTask` 有 `2 × numBuffers` 个块，上传按 `frameIndex` 轮转，所以两块可能各压一个模型
-  （实测 704 MB 车身 → `SharedUsage` 1,228 MB = `2 × 614 MB`）。
-  **可观测**：`VsgBackend::uploadStagingBytes()` / `api::Session::stagedBytes()` / `api::OffscreenSession::stagedBytes()`；
-  稳态恒 0，`RetentionStats::device_waits` 在这条线上永远不涨。
-  **代价**：每帧都上传的宿主会每帧重新分配一块（最小 16 MB）—— 当前仓库无此宿主，触发条件在 backlog。
-  **换任务**（`installStagingTask`）现在只用于“安装可清块的任务”，四个交接仍缺一不可（见 P42.1）。
-  **判读方法**：`Win32_PerfFormattedData_GPUPerformanceCounters_GPUProcessMemory` 的实例名是 `pid_<id>_luid_...`
-  （按 `*Vine*` 过滤会得到 0 行）；`DedicatedUsage` = 显存（计入 private、**不计入 ws**）、`SharedUsage` = 系统内存
-  （计入 ws）。要降它只能减少上传字节数（减面 / 换带索引格式）或让暂存被回收。
-- Shader 命名：文件保持 `builtin_*` / `vine_*` 前缀；函数是 `vnXxx`，变量、块实例、stage 输出、采样器一律 `vn_` 前缀。
-- 采样器名**就是** ABI 键（`ContentImages::imageOriginOf` / `MaterialSlotCheck`）：改 shader 里的名字必须同步改表，
-  改一边不报错、只把 drawable 的图换成 pass 输入（`vn_shadow_map`、材质五槽、`vn_skyMap`）。
-- 透明度：引擎唯一透明通道是 `Node::opacity`；材质不贡献 alpha；blend 恒开，`enabled` 只选因子。
-- 设备读回像素是 BGR 字节序；单通道断言用 `isRed()` 等，不要读 `pixel[0]`。
-- 改公开签名或改名后必须全量构建；旧插件 `.so` 会 `undefined symbol`。
-- **隐藏 / 被裁剪的上传不丢，离树才丢**：寿命是两个 O(1) 事实——内容层发布的声明索引
-  （`ContentFacts::declarations`，由 `ContentStore` 的几何行变更同步维护的地址→声明计数）说“还有没有活行
-  声明这块 buffer”；条目自己的句柄说“revision 还是不是它上传时的那个”。所以裁剪 100 帧也不重传，
-  buffer `edit()` 换代也自己离场；对象离树 ⇒ 行在 `slots + 1` 帧后删掉 ⇒ 声明消失 ⇒ 上传随之离场。
-  每帧只遍历驻留条目，不扫内容行（扫行会让“什么都没画”的帧最贵）。见 `.ai/design/graphics-content-lifecycle.md` §2.5 / §2.9。
-- **非 Debug 配置的两个构建坑（2026-11-10 实测）**：
-  - vcpkg 的 glslang 只导出 `DEBUG` / `RELEASE` 两个配置，RelWithDebInfo / MinSizeRel 没有精确匹配，CMake 会回落到**第一个**（DEBUG）
-    ⇒ 插件把 `/MDd` 的 glslang 目标链进 `/MD` 的 DLL：`LNK2038`（`_ITERATOR_DEBUG_LEVEL`、`RuntimeLibrary`）+ 未解析的 `__imp__CrtDbgReport`。
-    `gfx_backend_vsg/CMakeLists.txt` 对 `glslang::glslang` / `::SPIRV` / `::glslang-default-resource-limits` 设了
-    `MAP_IMPORTED_CONFIG_RELWITHDEBINFO|MINSIZEREL = RELEASE`；以后新增只在两个配置出库的 vcpkg 包，消费方要同样映射。
-  - `tests/test_graphics/GraphicsTest.cpp` 约 650 KB，优化配置下段数超 65535（`C1128`）⇒ `tests/CMakeLists.txt` 的 MSVC 选项统一带 `/bigobj`。
+  — one host-visible buffer for the whole transfer, kept in `TransferBlock::staging`, which grows but never shrinks while `staging->size < totalSize`
+  and is not returned after the transfer; it does **not** go through `stagingMemoryBufferPools`, so `releaseUnusedPools()` cannot reach it (the measured application numbers did not change by a digit).
+  It is freed when the session (viewport/document) is destroyed; vsg has no getenv/config that turns this path off (the source only reads getenv in FileSystem).
+  **Solved (F16.2, settled 2026-11-10)**: **staging is not retained**. `detail::StagingTask` (derived from `vsg::TransferTask`, installed by
+  `installStagingTask()` when the session comes up) clears `staging` + `buffer_data` of every block whose `fence->status() == VK_SUCCESS` at **every frame boundary**
+  (the top of `VsgBackend::executeFrame()`) — exactly vsg's own “rebuild when too small” starting point, so the next upload into that block reallocates.
+  The evidence is that block's own fence, so there is **zero wait, zero park, zero `deviceWaitIdle`**; an unfinished copy is left to the next frame.
+  **Do not add extra conditions**: the sweep once asked `to_copy->containsDataToTransfer()` first (“skip while data is still to be copied”),
+  while vsg's `_transferData()` returns early when `requiresCopy()` is false and **does not clean up** `dataMap` → that condition can stay true forever, the sweep skips forever,
+  and the 1.2 GB comes back resident (the flaky case caught exactly this).
+  **Each block is independent**: `TransferTask` has `2 × numBuffers` blocks and uploads rotate by `frameIndex`, so two blocks may each hold one model
+  (measured: a 704 MB body → `SharedUsage` 1,228 MB = `2 × 614 MB`).
+  **Observable**: `VsgBackend::uploadStagingBytes()` / `api::Session::stagedBytes()` / `api::OffscreenSession::stagedBytes()`;
+  steady state is constantly 0, and `RetentionStats::device_waits` never rises on this path.
+  **The cost**: a host that uploads every frame reallocates a block every frame (16 MB minimum) — no such host exists in the repository today; the trigger condition is in the backlog.
+  **Swapping the task** (`installStagingTask`) is now only for “install a task that can clear blocks”; the four hand-offs are still all required (see P42.1).
+  **How to read the numbers**: `Win32_PerfFormattedData_GPUPerformanceCounters_GPUProcessMemory` instance names are `pid_<id>_luid_...`
+  (filtering by `*Vine*` yields 0 rows); `DedicatedUsage` = video memory (counts as private, **not** in ws), `SharedUsage` = system memory
+  (in ws). Lowering it means uploading fewer bytes (fewer faces / an indexed format) or letting the staging be reclaimed.
+- Shader naming: files keep the `builtin_*` / `vine_*` prefixes; functions are `vnXxx`, and variables, block instances, stage outputs and samplers all carry the `vn_` prefix.
+- A sampler name **is** an ABI key (`ContentImages::imageOriginOf` / `MaterialSlotCheck`): renaming it in the shader must change the table in the same commit;
+  changing one side does not error, it just swaps the drawable's image for a pass input (`vn_shadow_map`, the five material slots, `vn_skyMap`).
+- Transparency: the engine's only transparency channel is `Node::opacity`; materials do not contribute alpha; blend is always on and `enabled` only selects the factors.
+- Device readback pixels are in BGR byte order; assert a single channel with `isRed()` and friends, never by reading `pixel[0]`.
+- Changing a public signature or a name requires a full build; an old plugin `.so` reports `undefined symbol`.
+- **A hidden / culled upload is not dropped — leaving the tree drops it**: the lifetime is two O(1) facts — the declaration index published by the content layer
+  (`ContentFacts::declarations`, an address → declaration count maintained in step with the `ContentStore`'s geometry-row changes) says “is a live row
+  still declaring this buffer”; the entry's own handle says “is the revision still the one it uploaded”. So culling for 100 frames re-uploads nothing,
+  and an `edit()` generation change leaves on its own; when the object leaves the tree ⇒ the row is deleted `slots + 1` frames later ⇒ the declaration disappears ⇒ the upload leaves with it.
+  Each frame walks only the resident entries, never the content rows (walking rows makes a “nothing drawn” frame the most expensive one). See `.ai/design/graphics-content-lifecycle.md` §2.5 / §2.9.
+- **Two build traps in non-Debug configurations (measured 2026-11-10)**:
+  - vcpkg's glslang exports only the `DEBUG` / `RELEASE` configurations; RelWithDebInfo / MinSizeRel have no exact match, so CMake falls back to the **first** (DEBUG)
+    ⇒ the plugin links the `/MDd` glslang targets into the `/MD` DLL: `LNK2038` (`_ITERATOR_DEBUG_LEVEL`, `RuntimeLibrary`) + unresolved `__imp__CrtDbgReport`.
+    `gfx_backend_vsg/CMakeLists.txt` sets `MAP_IMPORTED_CONFIG_RELWITHDEBINFO|MINSIZEREL = RELEASE` on `glslang::glslang` / `::SPIRV` / `::glslang-default-resource-limits`;
+    a future vcpkg package that ships only two configurations needs the same mapping on the consumer side.
+  - `tests/test_graphics/GraphicsTest.cpp` is about 650 KB, and in optimised configurations its section count exceeds 65535 (`C1128`) ⇒ the MSVC options in `tests/CMakeLists.txt` all carry `/bigobj`.
 
-- **材质改动的三条落地点（2026-11-11 实测，别再踩）**：材质是"以值过帧"的最后一个内容事实（C19）。改
-  `Material::setXxx` 之后值要落地，靠的是**两处取值点**：`SceneRows::publish`（发布边界，镜像/引擎侧看到的
-  版本）和 `Scene::collectRenderCommands` 开头的 `detail::refreshMaterials`（版本动了才清 memo、抬
-  `Version::materials`）。**只改一处就有画面滞后**：只改 publish ⇒ 直连/镜像采集命中旧 memo；只改 collect ⇒
-  镜像永不重发布。批内（`edit_depth_ != 0`）两处都不取，这才是 C18 对材质生效的方式。
-  另：`RenderCommand::materialDescription()` 对手搓命令退回 `material->description()`（与
-  `geometryDescription()` 同一形态），所以手搓命令仍"下一帧生效"，但那条路是宿主的（别在录制中改它）。
+- **The three landing points of a material change (measured 2026-11-11, do not step in again)**: a material is the last content fact that “crosses a frame by value” (C19). After
+  `Material::setXxx` the value must land through **two read points**: `SceneRows::publish` (the publication boundary, the version the mirror/engine side sees)
+  and `detail::refreshMaterials` at the top of `Scene::collectRenderCommands` (clears the memo and raises `Version::materials` only when the version moved).
+  **Changing only one lags the picture**: publish only ⇒ direct/mirror collection hits the old memo; collect only ⇒ the mirror never republishes. Inside a batch (`edit_depth_ != 0`)
+  neither reads, and that is how C18 takes effect for materials.
+  Also: `RenderCommand::materialDescription()` falls back to `material->description()` for hand-built commands (the same shape as
+  `geometryDescription()`), so a hand-built command still “lands next frame”, but that path belongs to the host (do not change it while recording).
 
-- **分配失败的分类只在 `Device` 一处（2026-11-15，审计 A1/A8）**：`MemoryAllocator` 只报事实
-  （`MemoryRefusal` + 驱动原始 `VkResult` + 请求字节/类型/池数字，装进 `MemoryRefusalReport`），**每次分配
-  含成功**都交给 `Device` 在 `initialize()` 装的 sink；`Device::noteMemoryRefusal` 是唯一分类点（`DeviceLost`
-  → `noteDeviceLost`，会话结束）。别再让调用点自己归因：六个分配点里五个只看"成不成"，把理由交给它们等于
-  让它被丢掉——**设备丢失曾被一路读成"显存不足"**。失败路径靠 `Device::setMemoryBlockCreator` 注入
-  （`vkAllocateMemory` 是唯一的块创建点，健康机器上不会失败）；三条变异各自被
+- **Allocation-failure classification lives in `Device` alone (2026-11-15, audit A1/A8)**: `MemoryAllocator` only reports facts
+  (`MemoryRefusal` + the driver's raw `VkResult` + requested bytes/type/pool numbers, packed into `MemoryRefusalReport`), and **every allocation
+  including successful ones** goes to the sink `Device` installed in `initialize()`; `Device::noteMemoryRefusal` is the only classification point (`DeviceLost`
+  → `noteDeviceLost`, the session ends). Stop letting call sites attribute it themselves: five of the six allocation sites only look at “did it work”, and handing them the reason means
+  it gets dropped — **device loss was once read all the way down as “out of video memory”**. The failure path is injected through `Device::setMemoryBlockCreator`
+  (`vkAllocateMemory` is the only block-creation point, and it does not fail on a healthy machine); the three mutations are each killed by
   `VkMemoryAllocatorTest.ARefusedBlockSaysWhichKindOfFailureItIs` /
   `VkMemoryFailureTest.ALostDeviceDuringAnAllocationEndsTheSession` /
-  `VkMemoryFailureTest.AnExhaustedHeapIsOneReportWithItsNumbersAndTheSessionSurvives` 杀掉。
-  写这类用例要先问"请求会不会真的建一个新块"：集成设备上 device-local 与 host-visible 可能是**同一个**
-  memory type，小目标会切进已有的块，注入点根本不会触发（用例里用 4096×4096 RGBA8 = 64 MiB 才越过它）。
+  `VkMemoryFailureTest.AnExhaustedHeapIsOneReportWithItsNumbersAndTheSessionSurvives`.
+  When writing such a case, first ask “will the request really create a new block”: on an integrated device device-local and host-visible may be the **same**
+  memory type, so a small target slices into an existing block and the injection point never triggers (the case uses 4096×4096 RGBA8 = 64 MiB to get past it).
 
-## 6. 证据与门禁
+## 6. Evidence and gates
 
-- **帧报告能回答"哪个 pass 贵"（2026-11-15，A5）**：`FrameReport::timing` 里 `FrameTiming::passes` 是执行序的
-  `{pass 名, gpu_micros}`，每个 pass 一条边界（写在它的上传之前，所以它要求的转换/拷贝算在它头上），各段之和
-  ≤ 整帧；query 池按"见过的最大 pass 数"在**帧间**增长。每 30 帧采样一次，未采样帧 `timing` **缺席**。
-  别把整帧记到每个 pass 上——那正是 `VkPassTimingTest` 钉住的错法。
-- **S6c-2b 已落地（2026-11-16，R6/T6：释放不再等帧）**：`releaseContent`（三种重载）与 `releaseRenderTarget` 脱离体闸——只等
-  **一次缓存操作**（帧首解析持有的锁），不等一整帧。安全性来自已有机制：缓存锁（帧首解析与释放互斥）+ park（帧已解析的句柄活到
-  水位）+ 开着的帧按住水位。为此 `targets` 的条目改成 `shared_ptr<TargetImages>`：**旧的 `releaseRenderTarget` 把值从 map 节点里
-  move 出来再 erase，帧手里的 `TargetImages*` 当场悬垂**；共享所有权让“已经解析它的帧”在释放后仍有一个有效对象，park 的引用
-  把它压到水位。`released_nodes` 改成原子（两个宿主线程可同时释放）；队列的读者（`retirementNumbers()`、`frameReport()` 里的
-  `deviceWaits()`）也取 `clock_mutex`——释放不再取体闸后，它们与 park 会并发。证据：`VkMultiSessionTest.AReleaseDoesNotWait…`
-  （帧被 sink 停住时宿主释放该帧已解析的内容 + 一个已建目标，必须在 2 s 内返回；帧随后仍画完、`device_waits` 不涨、park 未放行）；
-  变异（把体闸加回 `releaseContent`）⇒ 2 s 超时红。教训：**R6 的用例必须用“另一线程 + 截止时间”写**——直接调用会在回归时挂死整套，
-  而超时把回归变成一条红断言；失败路径也必须先解锁、再 join 两条线程。
-- **环境事实（2026-11-16 再次确认）**：`HostWindowReadTest.AReadOfWhatTheWindowShowsComesBackAndReportsNoError` 在**全量**
-  `test_vsg` 里会失败（服务端 10 s 都没报 viewable、`readError=8 BadMatch`），**单独跑 1 ms 通过**；用 `git stash` 在上一提交上做
-  A/B，**同样失败** ⇒ 与本次改动无关，是 X 服务的时序/环境（本文件早先记过同一类）。别为它改代码，先单跑 + A/B。
-- **S6c-2a 已落地（2026-11-16，帧体真并行）**：设备的大锁变成 `std::shared_mutex body_gate`——**帧体 SHARED**（两驱动者
-  同时记录/提交）、**出窗口的帧与宿主动词 EXCLUSIVE**（可等帧、不竞争），`shutdown` 也 EXCLUSIVE。为此补齐：`FrameTimeline`
-  **多开帧**（`begin()` 每次铸造新号，`submitted`/`abandoned` 按 token 关闭——旧的单槽让第二个驱动者拿到第一个的 token，
-  两帧在水位比较里塌成一帧）；`DeviceClock`/`RetirementQueue` 由设备的 `clock_mutex` 串行（**锁放设备、不放 SDK 值类型**：
-  vsg 单线程没有消费者，`G8`；但两者仍必须注明“调用方负责串行”）；分配器 / 目标 map / 报告 sink / 每会话默认程序 /
-  表面列表各一把小锁；采样目标（screen 源、pass 输入）也取 lease；纹理 staging 与被替换图像按 `ContentImages::BatchId`
-  归驱动者，**替换图像 park 到水位**（另一个驱动者的在飞帧可能还拿着旧 view）。确定性证据：
-  `VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame`——用诊断 sink 把一个帧体停住，另一驱动者的帧必须整帧
-  完成；变异回独占闸 ⇒ 5 s 后红。三条教训：①**加锁后自查自调用**：`MemoryAllocator::allocate` 里调 `opened()`/`stats()`
-  （都取同一把非递归锁）当场自锁，修法是“锁内实现 + 公开动词只包锁”；②**别用“曾经进过”当重叠证据**：第一版 witness 在
-  第二帧返回后读 `sink_entered`，而被序列化的设备 5 s 后也会让它为真——判据必须由**停住的那一帧在临界区里**设置
-  （“另一帧在我还没出来时完成了”）；③**多开帧先改时间线**：只改体闸不改 token，两个驱动者共用帧号，水位与 park 全部
-  失去意义。
-- **S8b 已落地（2026-11-16，T48 第八步·中：vsg 的执行器帧状态 + 驱动者接缝）**：目标注册表从执行器里分出来成
-  `VsgTargetRegistry`（设备唯一一张，借用条目），每个驱动者的执行器借用它；`createSession()` 交出 `VsgDriver`
-  （`RenderFrameExecutor` 实现，自己拥有一个 `VsgExecutor` 与自己的默认内容程序），设备拥有、`releaseSession` 销毁、
-  `shutdown` 带走。`VsgBackend::executeFrame` / `prepareFrame` 变成两行转发，真相在 `executeFrameFor(executor, ...)` /
-  `prepareFrameFor(executor, ...)`；`Data::driving_executor` 像 `Data::scratch` 一样开帧时设、每个出口清，
-  `presentWindow` 从它取回本次帧的驱动者。**默认程序归驱动（C8）**：值在 `VsgExecutor`，开帧时交给驱动会话的 recorder；
-  设备级 `setDefaultContentProgram` 只设设备自己的驱动者，store 登记仍是设备的。**证据**：
-  `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram`——两个默认互不覆盖、同一目标 A 红 B 绿、释放 A 后 B 照常；
-  `test_vsg` 558/558、对拍 13/13。**剩余 S8c**：设备缓存锁/帧首快照 + 解禁帧闸（帧体真并行）；在那之前帧闸仍串行。
-- **S8a 已落地（2026-11-16，T48 第八步·上半：vsg 的收集暂存搬进会话）**：新 `internal/FrameScratch.hpp` 收拢 vsg 的
-  arena / recorder / compiler / `facts` / `light_scratch` / `input_*` / `packets` / `frame`；**窗口会话与离屏会话各持一份**
-  （`SessionOptions` / `OffscreenSessionOptions` 新增 `observe`，null = 会话自备，独立建会话的测试照旧）。设备只剩
-  `Data::scratch` 这个"驱动会话的句柄"：开帧时设、`ScratchCloser` 每个出口清；`commitFrameThrough` 从会话参数取回同一份。
-  设备级设置（`setDefaultContentProgram` / `releaseRenderTarget`）对**每个**会话的 scratch 生效，开帧时再补一次默认程序。
-  **抓到的坑**：默认程序原先只写进设备唯一的 recorder——会话在设定之后才起来（或又一次 initialize）时它的 recorder 没听过，
-  画面报 "the content layer was never told about this identity"。修法 = 开帧选 scratch 时补一次指针拷贝
-  （`Data::default_program_text` 缓存文本，避免逐帧重建 description）。`VsgExecutor.hpp` 不再 include `Session.hpp` <!-- drift-ok -->
-  （执行器只要按引用；断掉 FrameScratch→Executor→Session 的环）。验证：`test_vsg` 557/557、`BackendParityTest` 13/13、
-  `test_graphics` 587、`test_vk` 133；TSan 子集 0 报告；ASan 全量的 736 B/10 处泄漏 **A/B 证明旧提交同样存在**（测试自己
-  `Buffer` 的泄漏，与本次无关）。**剩余 S8b**：`VsgExecutor` 的帧状态（`window_` / `window_recorded_` / `recorded_` /
-  `profile_entries_` / `skipped_`）与 `driving` 的去处、设备缓存锁/帧首快照、开帧句柄解禁（帧体真并行）。
-- **S9 已落地（2026-11-16，T48 收口：F10 + TSan + 文档）**：三处契约文本按**代码现在的保证**改写——`C21` / `R18` / `N18` 从
-  "帧不并发 / 设备级单槽 / 记录路径锁"改成"**帧按会话并发**（同会话仍由 `FrameGate` 串行）/ 默认程序归会话 / 记录路径零锁"，
-  `RenderDevice.hpp` 与 `RenderFrameExecutor.hpp` 的线程段同步（vk `Device.hpp` 的 `@warning` 在 S7 已写）。ADR 追加「实施状态」，
-  审计 A6（部分：`Targets`/`Report` 单元仍未搬）、A7（不触发，等第二个 API 家族）、A9（TSan，已落地）、A11（退休点上移，已落地）
-  逐条标状态。**TSan 证据（三套 0 报告）**：`test_vk` 133/133、`test_graphics` 587/587、`test_vsg`（窗口/probe/插件套件排除，
-  见 `tsan_check.sh` 用法）各 0 race report。**工具抓到一处真竞争**：`Geometry::description()` 的惰性缓存无保护——两个引擎的
-  content 线程同时描述同一几何（T10 用例正是如此）会同时读 `description_` 并各自构建。修法是**读者共享锁 + 单构建者独占锁**
-  （`description_mutex_`，命中路径一次 shared_lock），形状编辑仍是内容线程的动作。另外两处 TSan 树兼容：分配计数用例
-  `ADeliberateAllocationIsCaught` 在 `!countsAvailable()` 时也要 `GTEST_SKIP`（漏了一条，TSan 下必红）；`VsgBackendPluginTest`
-  不进 TSan 树（没有部署的插件 .so，过滤器写进脚本注释）。backlog `T34` 因此关闭（已从 backlog 删除）。**教训**：sanitizer
-  门禁的价值在"跑没有跑过的那条路径"——这次它只抓到一个缺陷，但那个缺陷恰好是 ADR 的核心承诺（两个引擎共享内容）。
-- **S7 已落地（2026-11-16，T48 第七步：读回独立化）**：`ReadbackStaging` 现在拥有**自己的命令池与栅栏**（一次拷贝一套；对着
-  一次 GPU 往返，创建/销毁是噪声），读回不再借 `Session` 的命令池/栅栏（C7）。等待仍是设备的"帧之间"（体闸 EXCLUSIVE），
-  但**每次读回计一次** `deviceWaits()`（与参考后端的 `waitDeviceIdle` 同一个读数，G6）；**能在等待前回答的拒绝**（未知/未建
-  目标、越界附件、不支持格式、借用深度）在相位一回答、不停止设备；相位二在闸内重新解析（等闸期间帧可能重建目标）。
-  帧体内（sink/hook）调用读回答 `Failed`：`s_frame_depth`（`thread_local` 帧体深度，`FrameBodyDepth` RAII）把"等自己"
-  变成可回答的拒绝。**顺带修掉 S6c-2a 的外部同步缺口**：`vkQueueSubmit` 与 `vkDeviceWaitIdle` 现在过 `Impl::queue_submit`
-  （ADR 的硬约束表早写了提交锁，代码里却没有——两个驱动者同时提交是 Vulkan 外部同步违规；读回是第三个提交者，必须先补）。
-  证据：`VkMultiSessionTest` 新增 3 例（两驱动者交错画、穿插读回各得自己的最后一帧；读回在帧被 sink 停住时必须等待、
-  结束后读到该帧像素、计数 +1；帧体内读 `Failed` 且不碰宿主 vector）；变异 2/2 红（体闸改 SHARED ⇒ 等待用例红；去掉
-  `noteDeviceWait` ⇒ 计数断言红）。`test_vk` **133/133**（Debug）。三条教训：①**`retirementNumbers()` 本身是宿主动词**
-  （取体闸 EXCLUSIVE）——测试若在被停住的帧后面读计数，会先等到帧结束；快照要在停帧之前取；②**相位一的字段读是安全的**，
-  因为 `ensureTarget` 的整段体都持 `targets_mutex`（`built()`/`colorCount()`/格式只在 build/resize 时变），先确认这点再
-  在闸外读 `TargetImages`；③**加一个提交者先补提交锁**：`vkQueueSubmit` 的对象级外部同步不因"各自不同栅栏"而消失。
-- **S6c-1 已落地（2026-11-15，T48 第六步 c 的上半，帧首快照）**：设备缓存有了**唯一一把锁**（`ContentCaches::Lock`，
-  不可重入；`Lock&` 参数把"我持锁"变成编译期证据），帧只在**帧首**取一次：`planCommand`/`planScreen`/`resolveTextures`
-  把 pipeline、顶点/索引/实例 buffer 句柄、材质、纹理 view/sampler **按值**写进 `CommandPlan`/`ResolvedTextures`，
-  纹理上传也在帧首录进帧命令缓冲；`record`/`recordScreen` 只读这些值。观察点：`contentCacheCounters().cache_lock_acquisitions`
-  ——整帧固定 **4**（帧首 1 + 数簿 2 + `endFrame` 1），**不随 draw 数增长**；`VkFrameHeadTest` 1 条 vs 6 条命令同数，
-  变异（记录路径逐 draw 取锁）⇒ 6 → 10 红。三条教训：①**计划必须是值**——计划里存缓存条目指针，一旦"释放可以在帧中
-  插进来"就是寿命缺陷；②**纹理上传只能在帧首**（render pass 里录 copy/barrier 非法），所以 `preparePass` 只留给预热；
-  ③**不可重入锁**要求"要么收 `Lock&`、要么自己取"二分清楚——`progress()` 与 `imageProgress()` 各自取锁，所以帧里的
-  数簿改用一次读两半的 `numbers()`，否则在持锁路径上调它们就是死锁。
-- **S6b 补齐（2026-11-15）：宿主动词也上同一把设备锁**。多驱动者之后"帧之间"不再是宿主能命名的时刻，所以
+- **The frame report can answer "which pass is expensive" (2026-11-15, A5)**: in `FrameReport::timing`, `FrameTiming::passes` is `{pass name, gpu_micros}` in execution order,
+  one boundary per pass (written before its uploads, so the transitions/copies it demands count against it), and the segments sum to
+  ≤ the whole frame; the query pool grows **between frames** to "the largest pass count seen". Sampling happens every 30 frames, and an unsampled frame's `timing` **is absent**.
+  Do not charge the whole frame to every pass — that is exactly the wrong method `VkPassTimingTest` pins down.
+- **S6c-2b landed (2026-11-16, R6/T6: release no longer waits for a frame)**: `releaseContent` (three overloads) and `releaseRenderTarget` left the body gate — they wait for
+  **one cache operation** (the lock frame-head resolution holds), not a whole frame. Safety comes from existing mechanisms: the cache lock (frame-head resolution and release exclude each other) + park (a handle a frame resolved lives to
+  the watermark) + an open frame holding the watermark. For this, the `targets` entries became `shared_ptr<TargetImages>`: **the old `releaseRenderTarget` moved the value out of the map node
+  and then erased it, so the `TargetImages*` a frame held dangled on the spot**; shared ownership gives “a frame that already resolved it” a valid object after the release, and the park reference
+  presses it down to the watermark. `released_nodes` became atomic (two host threads may release at once); the queue's readers (`retirementNumbers()`, `deviceWaits()` in
+  `frameReport()`) also take `clock_mutex` — now that release no longer takes the body gate, they run concurrently with park. Evidence: `VkMultiSessionTest.AReleaseDoesNotWait…`
+  (with a frame stopped by the sink, the host releases content that frame resolved + one built target and must return within 2 s; the frame then still finishes, `device_waits` does not rise and park is not released);
+  mutation (adding the body gate back to `releaseContent`) ⇒ a 2 s timeout goes red. Lesson: **an R6 case must be written with “another thread + a deadline”** — a direct call would wedge the whole suite on a regression,
+  while a timeout turns the regression into one red assertion; the failure path must also unlock first and then join both threads.
+- **An environment fact (re-confirmed 2026-11-16)**: `HostWindowReadTest.AReadOfWhatTheWindowShowsComesBackAndReportsNoError` fails in the **full**
+  `test_vsg` (the server does not report viewable for 10 s, `readError=8 BadMatch`) and **passes in 1 ms when run alone**; an A/B with `git stash` on the previous commit
+  **fails the same way** ⇒ unrelated to this change, it is X-server timing/environment (the same class was recorded earlier in this file). Do not change code for it; run it alone + A/B first.
+- **S6c-2a landed (2026-11-16, frame bodies truly parallel)**: the device's big lock became a `std::shared_mutex body_gate` — **frame bodies SHARED** (two drivers
+  recording/submitting at once), **a frame leaving the window and host verbs EXCLUSIVE** (may wait for frames, does not compete), and `shutdown` EXCLUSIVE too. To make that work: `FrameTimeline`
+  **opens frames multiply** (`begin()` mints a new number each time, `submitted`/`abandoned` close by token — the old single slot let the second driver take the first one's token,
+  collapsing two frames into one in the watermark comparison); `DeviceClock`/`RetirementQueue` are serialised by the device's `clock_mutex` (**the lock lives on the device, not on the SDK value types**:
+  vsg is single-threaded and has no consumer, `G8`; but both must still state "the caller serialises"); the allocator / target map / report sink / per-session default program /
+  surface list each got a small lock; sampled targets (screen sources, pass inputs) also take a lease; texture staging and replaced images are owned per driver by `ContentImages::BatchId`,
+  and a **replaced image is parked to the watermark** (another driver's in-flight frame may still hold the old view). Deterministic evidence:
+  `VkMultiSessionTest.AFrameBodyDoesNotWaitForAnotherDriversFrame` — a diagnostic sink stops one frame body, and another driver's frame must complete as a whole;
+  mutation back to an exclusive gate ⇒ red after 5 s. Three lessons: ① **after adding a lock, check for self-calls**: `MemoryAllocator::allocate` called `opened()`/`stats()`
+  (both taking the same non-recursive lock) and self-deadlocked; the fix is "implementation inside the lock + public verbs only wrap the lock"; ② **do not use "was entered at some point" as overlap evidence**: the first witness read
+  `sink_entered` after the second frame returned, but a serialised device would also make it true after 5 s — the criterion must be set by **the stopped frame inside its critical section**
+  ("another frame finished while I had not left yet"); ③ **open frames multiply only after the timeline is changed**: changing the body gate without the token let two drivers share a frame number, and the watermark and park all
+  lost their meaning.
+- **S8b landed (2026-11-16, T48 step eight, middle: vsg's executor frame state + driver seam)**: the target registry was split out of the executor into
+  `VsgTargetRegistry` (one per device, borrowed entries), and each driver's executor borrows it; `createSession()` hands out `VsgDriver`
+  (a `RenderFrameExecutor` implementation owning one `VsgExecutor` and its own default content program), owned by the device, destroyed by `releaseSession` and
+  taken away by `shutdown`. `VsgBackend::executeFrame` / `prepareFrame` became two forwarding lines, with the truth in `executeFrameFor(executor, ...)` /
+  `prepareFrameFor(executor, ...)`; `Data::driving_executor` is set when a frame opens and cleared at every exit like `Data::scratch`, and
+  `presentWindow` gets this frame's driver back from it. **The default program belongs to the driver (C8)**: the value lives in `VsgExecutor` and is handed to the driving session's recorder when a frame opens;
+  device-level `setDefaultContentProgram` only sets the device's own driver, while store registration stays the device's. **Evidence**:
+  `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram` — the two defaults do not overwrite each other, the same target is red for A and green for B, and B carries on after A is released;
+  `test_vsg` 558/558, parity 13/13. **Remaining S8c**: the device cache lock / frame-head snapshot + unblocking the frame gate (truly parallel frame bodies); until then the frame gate stays serial.
+- **S8a landed (2026-11-16, T48 step eight, first half: vsg's collection scratch moves into the session)**: the new `internal/FrameScratch.hpp` gathers vsg's
+  arena / recorder / compiler / `facts` / `light_scratch` / `input_*` / `packets` / `frame`; **the window session and the offscreen session each hold one**
+  (`SessionOptions` / `OffscreenSessionOptions` gained `observe`, null = the session makes its own, and tests that create sessions themselves behave as before). The device keeps only
+  `Data::scratch`, the "handle of the driving session": set when a frame opens, cleared at every exit by `ScratchCloser`; `commitFrameThrough` gets the same one back from the session arguments.
+  Device-level settings (`setDefaultContentProgram` / `releaseRenderTarget`) apply to **every** session's scratch, and the default program is re-applied when a frame opens.
+  **The trap it caught**: the default program used to be written only into the device's single recorder — when a session came up after the setting (or after another initialize), its recorder had never heard of it and
+  the picture reported "the content layer was never told about this identity". The fix = one pointer copy when the frame picks its scratch
+  (`Data::default_program_text` caches the text, avoiding a description rebuild every frame). `VsgExecutor.hpp` no longer includes `Session.hpp` <!-- drift-ok -->
+  (the executor needs a reference only; this breaks the FrameScratch→Executor→Session cycle). Verification: `test_vsg` 557/557, `BackendParityTest` 13/13,
+  `test_graphics` 587, `test_vk` 133; TSan subset 0 reports; the ASan full run's 736 B / 10 leaks **A/B-proven to exist on the old commit too** (the tests' own
+  `Buffer` leak, unrelated to this change). **Remaining S8b**: where `VsgExecutor`'s frame state (`window_` / `window_recorded_` / `recorded_` /
+  `profile_entries_` / `skipped_`) and `driving` go, the device cache lock / frame-head snapshot, and unblocking the open-frame handle (truly parallel frame bodies).
+- **S9 landed (2026-11-16, T48 close-out: F10 + TSan + docs)**: three contract texts were rewritten to **what the code guarantees now** — `C21` / `R18` / `N18` went from
+  "frames do not run concurrently / one device-level slot / the record path locks" to "**frames run concurrently per session** (the same session is still serialised by `FrameGate`) / the default program belongs to the session / the record path takes no lock",
+  and the threading sections of `RenderDevice.hpp` and `RenderFrameExecutor.hpp` were brought in step (vk `Device.hpp`'s `@warning` was written in S7). The ADR gained an “implementation status”, and
+  audit items A6 (partial: the `Targets`/`Report` units are still not moved), A7 (not triggered, waiting for a second API family), A9 (TSan, landed), A11 (retirement points moved up, landed)
+  were each marked. **TSan evidence (three runs, 0 reports)**: `test_vk` 133/133, `test_graphics` 587/587, `test_vsg` (window/probe/plugin suites excluded,
+  see `tsan_check.sh` usage) each with 0 race reports. **The tool caught one real race**: `Geometry::description()`'s lazy cache was unprotected — two engines'
+  content threads describing the same geometry at once (exactly what the T10 case does) would read `description_` concurrently and each build it. The fix is **a shared lock for readers + an exclusive lock for the single builder**
+  (`description_mutex_`, one shared_lock on the hit path); shape edits remain a content-thread action. Two more TSan-tree compatibility fixes: the allocation-count case
+  `ADeliberateAllocationIsCaught` also needs `GTEST_SKIP` when `!countsAvailable()` (one was missed, and it goes red under TSan); `VsgBackendPluginTest`
+  does not enter the TSan tree (no deployed plugin .so; the filter is written into the script's comments). Backlog `T34` therefore closed (deleted from the backlog). **Lesson**: the value of a sanitizer
+  gate is "running the path nobody ran" — this time it caught only one defect, but that defect was exactly the ADR's core promise (two engines sharing content).
+- **S7 landed (2026-11-16, T48 step seven: readback becomes independent)**: `ReadbackStaging` now owns **its own command pool and fence** (one set per copy; against
+  one GPU round trip, creation/destruction is noise), and readback no longer borrows `Session`'s command pool/fence (C7). The wait is still the device's "between frames" (body gate EXCLUSIVE),
+  but **every readback counts once** in `deviceWaits()` (the same reading as the reference backend's `waitDeviceIdle`, G6); **a refusal answerable before the wait** (unknown/unbuilt
+  target, out-of-range attachment, unsupported format, borrowed depth) is answered in phase one and does not stop the device; phase two re-resolves inside the gate (a frame may rebuild a target while waiting).
+  A read called inside a frame body (sink/hook) answers `Failed`: `s_frame_depth` (`thread_local` frame-body depth, `FrameBodyDepth` RAII) turns "waiting for myself"
+  into an answerable refusal. **It also fixed S6c-2a's external-synchronisation gap**: `vkQueueSubmit` and `vkDeviceWaitIdle` now go through `Impl::queue_submit`
+  (the ADR's hard-constraint table had stated the submit lock all along, but the code lacked it — two drivers submitting at once is a Vulkan external-synchronisation violation; readback is the third submitter, so it had to be fixed first).
+  Evidence: `VkMultiSessionTest` gained 3 cases (two drivers draw interleaved with readbacks and each gets its own last frame; a readback must wait while a frame is stopped by the sink,
+  then reads that frame's pixels and the count goes +1; a read inside a frame body answers `Failed` and does not touch the host vector); mutations 2/2 red (body gate to SHARED ⇒ the wait case goes red; removing
+  `noteDeviceWait` ⇒ the count assertion goes red). `test_vk` **133/133** (Debug). Three lessons: ① **`retirementNumbers()` is itself a host verb**
+  (takes the body gate EXCLUSIVE) — a test that reads the counters after a stopped frame waits for the frame to end first; take the snapshot before stopping the frame; ② **phase one's field reads are safe**
+  because the whole `ensureTarget` body holds `targets_mutex` (`built()`/`colorCount()`/format change only on build/resize); confirm that before
+  reading `TargetImages` outside the gate; ③ **adding a submitter means adding the submit lock first**: `vkQueueSubmit`'s object-level external synchronisation does not vanish because "each has its own fence".
+- **S6c-1 landed (2026-11-15, T48 step six c, first half: the frame-head snapshot)**: the device cache got **one single lock** (`ContentCaches::Lock`,
+  non-reentrant; a `Lock&` parameter turns "I hold the lock" into compile-time evidence), and a frame takes it once at the **frame head**: `planCommand`/`planScreen`/`resolveTextures`
+  write pipeline, vertex/index/instance buffer handles, material, texture view/sampler **by value** into `CommandPlan`/`ResolvedTextures`,
+  and texture uploads are recorded into the frame command buffer at the frame head too; `record`/`recordScreen` only read those values. Observation point: `contentCacheCounters().cache_lock_acquisitions`
+  — a fixed **4** for the whole frame (frame head 1 + books 2 + `endFrame` 1), **not growing with the draw count**; `VkFrameHeadTest` gives the same number for 1 and 6 commands,
+  and the mutation (taking the lock per draw on the record path) ⇒ 6 → 10 red. Three lessons: ① **the plan must be a value** — storing cache-entry pointers in the plan is a lifetime defect the moment "a release can
+  slip into the frame"; ② **texture uploads can only happen at the frame head** (recording copy/barrier inside a render pass is illegal), so `preparePass` is left to warm-up only;
+  ③ **a non-reentrant lock demands a clear split between "take a `Lock&`" and "take it yourself"** — `progress()` and `imageProgress()` each take the lock, so the frame's
+  books use a `numbers()` that reads both halves in one go; otherwise calling them on a path that holds the lock is a deadlock.
+- **S6b follow-up (2026-11-15): host verbs take the same device lock too**. With several drivers, "between frames" is no longer a moment the host can name, so
   `readColorBuffer` / `readDepthBuffer` / `releaseContent` ×3 / `releaseRenderTarget` / `setDefaultContentProgram` /
-  `setRenderTarget` / `createSurfaceTarget` / `setMemoryBlockCreator` / 诊断读取全部取 `Impl::frame_mutex`：可能等待
-  在飞的帧体，但不与它竞争。`device_lost` 改为 `std::atomic<bool>`（一条线程写、另一条读）。契约文本同步：vk 头写"一个
-  设备体一次、宿主动词串行"，SDK 写"宿主动词是设备的承诺（可等待或明确写 between-frame），不是宿主猜的义务"。
-  判据：`VkMultiSessionTest` 6 例（新增：另一驱动者连跑 30 帧时主线程做 10 次读回 + 5 次释放不失败、画面仍对；
-  另一驱动者跑帧时切换本驱动者默认程序，下一帧生效），`test_vk` 127/127、ASan 门禁 PASS。**诚实说明**：锁的正确性靠
-  结构与 ASan，变异会因时序不确定（不是确定性红），这类守卫属于"纵深"，在报告里说明而不是假装有红变异。
-- **S6b 已落地（2026-11-15，T48 第六步 b，串行版）**：vk 真的多发驱动者——`Device::createSession()` 造 `Session`
-  （早于 `initialize()` 的由它统一拉起；已起的设备上当场建并建好 scratch）；`releaseSession()` 销毁并遗忘，设备自己的
-  驱动者不可归还。设备持一把 `frame_mutex`：会话各有命令池/栅栏/时间戳池/帧闸/scratch/默认程序，但缓存/分配器/队列还没在
-  两条运行帧之间成立 ⇒ **帧体串行**（C10：先写串行）。`VkMultiSessionTest` 4 例（T8 两驱动者不同默认程序各画各的、
-  T10 两线程各 6 帧两图各自正确、R1 早借晚用、释放与再借），变异 2/2 红；`test_vk` 125/125、ASan 门禁 PASS。
-  **坑**：`createSession()` 在设备已 initialize 后调用必须**当场建好**机器（否则 `vkAllocateCommandBuffers` 用空池段错误，
-  第一版就是这样炸的）。**仍未做（S6c）**：帧首快照、驻留条目活到水位、R6 非阻塞释放、`ensureGeometry` 接 `ResidenceTable`。
-- **S6a 已落地（2026-11-15，T48 第六步 a）**：SDK 的会话接缝——`RenderDevice::createSession()` 默认 `&executor()`、
-  `releaseSession()` 默认 no-op；`setDefaultContentProgram` 从 `RenderDevice` **移到** `RenderFrameExecutor`（默认 no-op；
-  `RenderBackend` 不再二义）。`RenderEngine` 持 `session_`：`setDevice` 借、换设备/析构还，帧与默认程序都走它。vk 的默认
-  程序从 `Impl` 移到 `Session`（每个驱动者各一份，`Device` 覆写转发给自带的那个）。判据：`test_graphics` 587（+1 借/还）、
-  `test_vk` 121（+1 默认形状）、`test_vsg` 556，变异 1/1 红（析构不还）。**坑（必记）**：改了 SDK 的**虚表**之后，
-  **动态插件必须重建**——旧 `gfx_backend_vsgd.so` 对 `VsgBackendPluginTest` 会段错误（vtable 布局不匹配），
-  `ninja -C build gfx_backend_vsg gfx_backend_vk` 后全绿。**仍未做（S6b）**：vk 仍答默认单驱动者；第二驱动者要等
-  缓存/分配/提交的锁（或帧首快照）、`ensureGeometry` 接 `ResidenceTable`、替换路径改 park。
-- **S5 已落地（2026-11-15，T48 第五步）**：`internal/TargetClaims.hpp`——设备持 `RenderTarget* → SessionId`；
-  `begin(session)` 发帧作用域 `Lease`（析构是唯一释放点，`P3`），`executeFrame` / `prepareFrame` 在 **`ensure_target`
-  之前** claim（重建只归持有者，`R5`），冲突只跳那个 pass 并报 `vk.target.claim_conflict`（每（目标, 情节）一条：
-  情节在无冲突的一帧/一次预热后结束）。设备级观察点 `Device::targetClaims()`。判据：`TargetClaimsTest` 7 例 +
-  `TargetClaimFrameTest` 2 例（冒充“另一个驱动者”的租约让 pass 被跳过、两次只报一条、干净帧后新冲突再报），变异
-  **2/2 红**（租约不释放 / 情节不结束），`test_vk` 120/120。**坑**：`Session` 里 claim 必须早于 `ensure_target`；
-  晚一步两个会话就能交错重建同一目标的附件。
-- **S4 已落地（2026-11-15，T48 第四步）**：`internal/ResidenceTable.hpp` 是“谁可以建这个键”的状态机（无 Vulkan 类型）：
-  `admit(key, session)` → `Use` / `Build`（move-only `Claim`）/ `Copy(owner)`；`Claim::publish()` 是 owner 的完成声明，
-  析构未决议 ⇒ 条目退回 `Absent`（规则 3 由类型强制）；token 单调不复用，`forget` 之后老 claim 的 `publish` 必败并计入
-  `Numbers::stale`。观察点：`numbers()` 的 `claims` / `published` / `withdrawn` / `copies` / `stale` / `uploading`
-  （后者必须恒 0）。判据：`ResidenceTableTest` **8 例**（含 8 线程抢一键恰一个 `Build`），变异 **2/2 红**（去掉析构撤回 /
-  去掉 token 比较），`test_vk` 111/111。**未接线**：`ensureGeometry` 仍走原路径，S6 传入会话 id 时才接（半接比没接更糟）。
-  它**不是** SDK 的 `ResourceTable`：那张按 pin 回答“这个驻留值能不能放”，这张回答“谁可以建”。
-- **S3 已落地（2026-11-15，T48 第三步）**：内容路径拆成三件——`ContentCaches`（**设备**：programs /
-  geometries / instance streams / pipelines / 布局 / `ContentImages` / 管线缓存 / `Progress` / `release*`）、
-  `FrameScratch`（**驱动者**：常量环 + 描述符池 + set 表 + `frame_index` + `ring_builds` / `set_builds`）、
-  `ContentDraw`（**记录器**：持两者的借用引用，只剩 `prepare` / `prepareScreen` / `record` / `recordScreen`）。
-  `Session` 拥有 `scratch` + `recorder`，`Impl` 只留 `caches`；`createScratch()` 在布局建好之后调，拆除时
-  **scratch 先于 caches**（set 的 layout 是借的）。判据：`test_vk` 103/103（Debug + ASan），强制重编 0 warning；
-  变异（`FrameScratch::create` 不建环）⇒ `ATriangleIsDrawnIntoTheTargetAndProbed` 红，恢复后绿。
-  **坑**：`Session` 里 `owner` 是**设备**——`owner.scratch` / `owner.recorder` 是错的，环/记录器是 `Session` 自己的成员；
-  只有 `owner.caches` 跨越这条线。**T3 的锁计数**没做：单会话无第二读者，加锁是死机制（`G8`），随 S4 的 owner/competitor 落地。
-- **S2b 已落地（2026-11-15）**：`executor()` 答 `Device::Session`，帧体也在它里，`Device` 只剩三个转发。
-  帧体不直接调 `Device` 的成员：报告（protected，内嵌类沿不到）/ 建目标 / 认定丢失走 `Impl` 上的
-  `report` / `ensure_target` / `note_device_lost` 三个面（设备析构时装配）。帧体里的 `initialized()` 换成
-  `owner.device != VK_NULL_HANDLE && !owner.device_lost`。
-- **S2a 已落地（2026-11-15）**：帧机器在 `Device::Session`（命令池 / 栅欄 / 时间戳池 / `FrameBooks` /
-  `FrameGate` / clock window），设备拥有它并在 `shutdown()` 里 `destroy()`（**不重置指针**：停机后读报告要答
-  “什么都没量”而不是崩）。帧体（`executeFrame` / `prepareFrame` / `frameReport`）仍在 `Device`——S2b；
-  它的两个阻碍已定位：帧体里 ~25 处 `reportDiagnostic` 是 `RenderDevice` 的 protected 成员（内嵌类拿不到，
-  需要 `Impl` 上一个装配好的 sink），以及 `initialized()` 要换成 `owner.device != VK_NULL_HANDLE`。
-- **S1 已落地（2026-11-15，T48 第一步）**：vk 采用 `backend/DeviceClock.hpp` + `RetirementQueue`（会话 = clock window，
-  `slots = 1`）。`releaseContent` / `releaseRenderTarget` 是**两件事**：缓存条目**当场忘掉**（驻留数立刻降、下帧重传），
-  Vulkan 对象**交给队列**等水位（一个 slot ⇒ `submitted + 2`，最多两帧后才销毁）。观察点 `Device::retirementNumbers()`
-  （`pending` / `released` / `device_waits`，后者必须恒 0）。`shutdown()` 先 idle 再把接缝置空并 `releaseAll()`
-  （SDK 新增的拆除动词）——漏了它 park 的对象就跟着会话泄漏（变异已验）。
-  **仍未做**：替换路径（重传时的旧 buffer、ring 重建）还是立即销毁，S6 必须一起 park。
-- **T48 的实施设计在 `.ai/design/graphics-sessions.md`（状态：实施中，S1–S3 已落地，2026-11-15）**：会话 = **帧驱动者**（不是窗口）；帧首快照让记录路径零锁；驻留三态「发布或撤回」；
-  目标 claim 冲突只跳那个 pass；退休**复用** `DeviceClock` + `RetirementQueue`（vsg 已在用）。
-  一处更正：vsg 的 `api::Session` 是**窗口会话**，收集/编译暂存（`recorder` / `compiler` / `arena` /
-  `facts` / `packets` / `frame` / `driving`）仍是 `VsgBackend::Data` 里的**设备级单例** —— ADR 「vsg 更接近」只对了一半。
-- **诊断带稳定 code（2026-11-15，审计 A3）**：`RenderDiagnostic` 的 `code`（`vk.<class>.<cause>`）是宿主与用例
-  匹配的东西，`message` 可以改措辞、code 不行；`subject` 说"这个报告是关于哪个目标"，`limit` 是
-  `requested` / `supported` 一对。词汇表登记在 `scripts/diagnostic_codes.txt`（双向检查：用到的必须登记、
-  登记的必须被用到），`check_diagnostic_formats.py` 用 `scripts/diagnostic_code_baseline.txt` 给尚未转换的
-  调用点设**上限**——新写的报告不带 code 会红。**判据**：**构造**诊断（≥3 实参）必须写 code，**转发**一个 `RenderDiagnostic`（`reportDiagnostic(diagnostic)`）不算——值里带着 code。
-  2026-11-15 **vk 七族 61 个 + vsg 四族 22 个 + 引擎 13 个 = 96 个 code**，两个后端已全部转换；剩下 22 处是引擎自己的报告（`RenderEngine` 13 / `RenderArea` 5 / 四个小文件各 1）。
-  **原因在知道它的那一层命名**：vk 的内容拒绝是 `ContentRefusal`（category + code + 句子，先到者胜），设备只转发；vsg 的读回拒绝由 `readbackRefusalDiagnostic` 一个无 `default` 的 switch 映射，枚举新增就必须命名 code。
+  `setRenderTarget` / `createSurfaceTarget` / `setMemoryBlockCreator` / diagnostic reads all take `Impl::frame_mutex`: they may wait for
+  an in-flight frame body but do not compete with it. `device_lost` became `std::atomic<bool>` (one thread writes, another reads). The contract text was brought in step: the vk header says "one
+  device body at a time, host verbs serialise", and the SDK says "a host verb is the device's promise (it may wait, or explicitly says between-frame), not something the host has to guess".
+  Criteria: `VkMultiSessionTest` 6 cases (new: while another driver runs 30 frames the main thread does 10 readbacks + 5 releases without failing and the picture stays right;
+  switching this driver's default program while another driver runs frames takes effect on the next frame), `test_vk` 127/127, ASan gate PASS. **Stated honestly**: the lock's correctness rests on
+  structure and ASan; a mutation would be timing-dependent (not a deterministic red), and this class of guard is "defence in depth" — say so in the report instead of pretending there is a red mutation.
+- **S6b landed (2026-11-15, T48 step six b, serial version)**: vk really supports multiple drivers — `Device::createSession()` creates a `Session`
+  (one created before `initialize()` is brought up by it; on an already initialised device it is created on the spot with its scratch); `releaseSession()` destroys and forgets it, and the device's own
+  driver cannot be returned. The device holds one `frame_mutex`: sessions each have their command pool/fence/timestamp pool/frame gate/scratch/default program, but the cache/allocator/queue do not yet hold
+  between two running frames ⇒ **frame bodies are serial** (C10: write it serial first). `VkMultiSessionTest` 4 cases (T8 two drivers with different default programs each draw their own,
+  T10 two threads with 6 frames each get their own correct picture, R1 borrow early use late, release and re-borrow), mutations 2/2 red; `test_vk` 125/125, ASan gate PASS.
+  **Trap**: calling `createSession()` after the device is initialised must **build the machine on the spot** (otherwise `vkAllocateCommandBuffers` uses an empty pool and segfaults;
+  the first version blew up exactly that way). **Still not done (S6c)**: the frame-head snapshot, resident entries living to the watermark, R6 non-blocking release, and `ensureGeometry` wired to `ResidenceTable`.
+- **S6a landed (2026-11-15, T48 step six a)**: the SDK's session seam — `RenderDevice::createSession()` defaults to `&executor()`,
+  `releaseSession()` defaults to a no-op; `setDefaultContentProgram` **moved** from `RenderDevice` to `RenderFrameExecutor` (default no-op;
+  `RenderBackend` is no longer ambiguous). `RenderEngine` holds `session_`: `setDevice` borrows it, changing device / destruction returns it, and frames and the default program both go through it. vk's default
+  program moved from `Impl` to `Session` (one per driver, and `Device` overrides it to forward to its own). Criteria: `test_graphics` 587 (+1 borrow/return),
+  `test_vk` 121 (+1 default shape), `test_vsg` 556, mutation 1/1 red (destructor does not return). **Trap (must remember)**: after changing the SDK's **vtable**,
+  **the dynamic plugin must be rebuilt** — the old `gfx_backend_vsgd.so` segfaults in `VsgBackendPluginTest` (vtable layout mismatch);
+  `ninja -C build gfx_backend_vsg gfx_backend_vk` makes it all green again. **Still not done (S6b)**: vk still answers a single default driver; a second driver waits for
+  the cache/allocation/submit locks (or the frame-head snapshot), `ensureGeometry` wired to `ResidenceTable`, and the replacement path moving to park.
+- **S5 landed (2026-11-15, T48 step five)**: `internal/TargetClaims.hpp` — the device holds `RenderTarget* → SessionId`;
+  `begin(session)` issues a frame-scoped `Lease` (its destructor is the only release point, `P3`), and `executeFrame` / `prepareFrame` claim **before `ensure_target`**
+  (a rebuild belongs to the holder only, `R5`); a conflict skips just that pass and reports `vk.target.claim_conflict` (one per (target, episode):
+  the episode ends after a conflict-free frame or warm-up). Device-level observation point `Device::targetClaims()`. Criteria: `TargetClaimsTest` 7 cases +
+  `TargetClaimFrameTest` 2 cases (a lease posing as “another driver” makes the pass be skipped, two attempts report one line, a new conflict reports again after a clean frame), mutations
+  **2/2 red** (lease not released / episode not ended), `test_vk` 120/120. **Trap**: the claim in `Session` must come before `ensure_target`;
+  one step later and two sessions can rebuild the same target's attachments interleaved.
+- **S4 landed (2026-11-15, T48 step four)**: `internal/ResidenceTable.hpp` is the state machine for “who may build this key” (no Vulkan types):
+  `admit(key, session)` → `Use` / `Build` (a move-only `Claim`) / `Copy(owner)`; `Claim::publish()` is the owner's completion statement, and a destructor without a decision
+  ⇒ the entry falls back to `Absent` (rule 3 is enforced by the type); tokens are monotonic and never reused, so after `forget` an old claim's `publish` must fail and counts as
+  `Numbers::stale`. Observation points: `numbers()`'s `claims` / `published` / `withdrawn` / `copies` / `stale` / `uploading`
+  (the last must be constantly 0). Criteria: `ResidenceTableTest` **8 cases** (including 8 threads racing one key and exactly one `Build`), mutations **2/2 red** (removing the destructor withdrawal /
+  removing the token comparison), `test_vk` 111/111. **Not wired up**: `ensureGeometry` still takes the old path; it is wired only when S6 passes the session id (half-wired is worse than unwired).
+  It is **not** the SDK's `ResourceTable`: that one answers “may this resident value be placed” per pin, this one answers “who may build it”.
+- **S3 landed (2026-11-15, T48 step three)**: the content path was split into three — `ContentCaches` (**device**: programs /
+  geometries / instance streams / pipelines / layouts / `ContentImages` / the pipeline cache / `Progress` / `release*`),
+  `FrameScratch` (**driver**: constant ring + descriptor pool + set table + `frame_index` + `ring_builds` / `set_builds`),
+  `ContentDraw` (**recorder**: holds borrowed references to both, keeping only `prepare` / `prepareScreen` / `record` / `recordScreen`).
+  `Session` owns `scratch` + `recorder`, and `Impl` keeps only `caches`; `createScratch()` is called after the layout is built, and on teardown
+  **scratch goes before caches** (a set's layout is borrowed). Criteria: `test_vk` 103/103 (Debug + ASan), forced rebuild 0 warnings;
+  mutation (`FrameScratch::create` not building the ring) ⇒ `ATriangleIsDrawnIntoTheTargetAndProbed` red, green again once restored.
+  **Trap**: inside `Session`, `owner` is the **device** — `owner.scratch` / `owner.recorder` are wrong; the ring/recorder are `Session`'s own members;
+  only `owner.caches` crosses that line. **T3's lock counting** was not done: a single session has no second reader, so locking would be a dead mechanism (`G8`); it lands with S4's owner/competitor.
+- **S2b landed (2026-11-15)**: `executor()` answers `Device::Session`, the frame body lives in it too, and `Device` keeps only three forwards.
+  The frame body does not call `Device` members directly: reporting (protected, which the nested class cannot reach) / building a target / declaring loss go through the three faces
+  `report` / `ensure_target` / `note_device_lost` on `Impl` (assembled when the device is destroyed). `initialized()` inside the frame body became
+  `owner.device != VK_NULL_HANDLE && !owner.device_lost`.
+- **S2a landed (2026-11-15)**: the frame machine lives in `Device::Session` (command pool / fence / timestamp pool / `FrameBooks` /
+  `FrameGate` / clock window); the device owns it and `destroy()`s it in `shutdown()` (**without resetting the pointer**: after shutdown a report must answer
+  “nothing was measured” rather than crash). The frame body (`executeFrame` / `prepareFrame` / `frameReport`) is still in `Device` — S2b;
+  its two obstacles were located: the ~25 `reportDiagnostic` calls in the frame body are protected members of `RenderDevice` (the nested class cannot reach them,
+  so an assembled sink on `Impl` is needed), and `initialized()` must become `owner.device != VK_NULL_HANDLE`.
+- **S1 landed (2026-11-15, T48 step one)**: vk adopted `backend/DeviceClock.hpp` + `RetirementQueue` (a session = a clock window,
+  `slots = 1`). `releaseContent` / `releaseRenderTarget` are **two things**: the cache entry is **forgotten on the spot** (the resident count drops at once, re-upload next frame),
+  and the Vulkan object **goes to the queue** to wait for the watermark (one slot ⇒ `submitted + 2`, destroyed at most two frames later). Observation point `Device::retirementNumbers()`
+  (`pending` / `released` / `device_waits`, the last of which must be constantly 0). `shutdown()` idles first, then clears the seam and calls `releaseAll()`
+  (the teardown verb added to the SDK) — skip it and parked objects leak with the session (verified by mutation).
+  **Still not done**: the replacement path (the old buffer on re-upload, ring rebuilds) still destroys immediately; S6 must park it too.
+- **T48's implementation design is in `.ai/design/graphics-sessions.md` (status: in progress, S1–S3 landed, 2026-11-15)**: a session = a **frame driver** (not a window); the frame-head snapshot makes the record path lock-free; residency is three-state “publish or withdraw”;
+  a target claim conflict skips only that pass; retirement **reuses** `DeviceClock` + `RetirementQueue` (vsg already uses them).
+  One correction: vsg's `api::Session` is a **window session**, and the collection/compile scratch (`recorder` / `compiler` / `arena` /
+  `facts` / `packets` / `frame` / `driving`) is still a **device-level singleton** in `VsgBackend::Data` — the ADR's “vsg is closer” was only half right.
+- **Diagnostics carry a stable code (2026-11-15, audit A3)**: `RenderDiagnostic`'s `code` (`vk.<class>.<cause>`) is what the host and the tests
+  match on; `message` may be reworded, the code may not; `subject` says “which target this report is about”, and `limit` is the
+  `requested` / `supported` pair. The vocabulary is registered in `scripts/diagnostic_codes.txt` (checked both ways: what is used must be registered,
+  what is registered must be used), and `check_diagnostic_formats.py` uses `scripts/diagnostic_code_baseline.txt` to set a **cap** on call sites not yet converted
+  — a newly written report without a code goes red. **Criterion**: **constructing** a diagnostic (≥3 arguments) must write a code; **forwarding** a `RenderDiagnostic` (`reportDiagnostic(diagnostic)`) does not count — the value already carries the code.
+  On 2026-11-15 there were **61 codes in seven vk families + 22 in four vsg families + 13 engine codes = 96**, and both backends are fully converted; the remaining 22 are the engine's own reports (`RenderEngine` 13 / `RenderArea` 5 / four small files with 1 each).
+  **The reason is named at the layer that knows it**: vk's content refusal is `ContentRefusal` (category + code + sentence, first one wins) and the device only forwards it; vsg's readback refusal is mapped by `readbackRefusalDiagnostic`, a switch with no `default`, so a new enum value must name a code.
 
-- `test_graphics`（模型无关）、`test_vsg`（后端，含真实设备用例）、`test_gui`、`test_core`。
-- `scripts/vsg_rewrite_gate.sh`：suite 两跑 0 VUID / 0 SYNC-HAZARD、相位行闭合、应用画面百分比。
-- 静态门禁：`check_ai_docs.py`、`check_doc_symbols.py`、`check_include_hygiene.py`、`check_export_annotations.py`、`check_diagnostic_formats.py`、`check_public_docs.py`、
-  `check_api_style.py`（API 风格：值里不许有 setter/回调、禁 `getXxx` 访问器、`bool`+出参不并存、`XxxBuilder` 必须有 `build()`；
-  4 条既有发现登记在脚本的 `BASELINE` 里，修完即删）。
-- `scripts/asan_check.sh` / `VN_ASAN_*`；`skipped == 0` 才算跑过设备电池。
-- 量后端每帧成本：`test_vsg --gtest_filter='*MeasureWhatEachKind*'`（打印 µs/帧 + `builds`/`uploads`/`created`，需真实窗口，headless 会 skip）；成本模型与分配上限见 `.ai/design/vsg-backend.md` §2.10 / N4 / T5。
+- `test_graphics` (model-independent), `test_vsg` (the backend, including real-device cases), `test_gui`, `test_core`.
+- `scripts/vsg_rewrite_gate.sh`: the suite run twice with 0 VUID / 0 SYNC-HAZARD, closed phase lines, and the application picture percentage.
+- Static gates: `check_ai_docs.py`, `check_doc_symbols.py`, `check_include_hygiene.py`, `check_export_annotations.py`, `check_diagnostic_formats.py`, `check_public_docs.py`,
+  `check_api_style.py` (API style: no setters/callbacks in values, no `getXxx` accessors, `bool` + out-parameter may not coexist, an `XxxBuilder` must have `build()`;
+  4 existing findings are registered in the script's `BASELINE` and are deleted as they are fixed).
+- `scripts/asan_check.sh` / `VN_ASAN_*`; only `skipped == 0` counts as having run the device battery.
+- Measuring a backend's per-frame cost: `test_vsg --gtest_filter='*MeasureWhatEachKind*'` (prints µs/frame + `builds`/`uploads`/`created`; needs a real window and is skipped headless); the cost model and allocation caps are in `.ai/design/vsg-backend.md` §2.10 / N4 / T5.
 
 ## 2026-11-11 —— graphics-next 提案组（未采纳；下次从这里继续）
 
