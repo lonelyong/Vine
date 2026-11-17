@@ -238,7 +238,7 @@ Zip                 一次性 compress/decompress/entries/readEntry
 | # | 选项 | 理由 | ADR |
 | --- | --- | --- | --- |
 | D1 | `VfsPath` 值类型 | 编译期防裸串的收益不抵全 API 改造；校验才是缺口。 | — |
-| D2 | 核心 `IStream` 继承体系 | 阶段 1 用 `Result<VfsStream>` + `intrusive_ptr<Buffer>` 够用。 | — |
+| D2 | 核心 `IStream` 继承体系 | `Result<VfsStream>` + `intrusive_ptr<Buffer>` 已经够用。 | — |
 | D3 | `MemoryVfs` 类型 | 已被 `ZipArchive()` 无源树 + `toBytes()` 覆盖；它做不到惰性。 | — |
 | D4 | `save(path)` 一个名字 | 写回自己 vs 另存别处目标不同；拆 `commit`/`saveAs`。 | — |
 | D5 | push 写 `openWrite()` | libzip source 是 pull；push 只能缓冲或 spool。 | — |
@@ -263,19 +263,19 @@ Zip                 一次性 compress/decompress/entries/readEntry
 
 ### 9.1 当前状态
 
-S1/S2/S2.5 已落地：错误模型、路径校验、stat/list、只读、目录操作、流/来源、ZipArchive、MountVfs、内存流上限。
+错误模型、路径校验、stat/list、只读、目录操作、流/来源、ZipArchive、MountVfs、内存流上限都已实现。
 
 ### 9.2 已知缺口 / 待办
 
 - TAR/GZIP 区分、缓存、HTTP/ACL/加密/去重不做。
 - `saveAs(ostream&)`/`toBytes()` 大包不可用；`toBytes()` 的 2× 峰值可消除，等真实消费者。
 - 同一文件并发 `commit()` 不支持（固定临时名）。
-- 核心 `IStream` 分层推迟；`Stream.hpp` 下沉 core 的触发条件是第一个不依赖 iobase 的消费者。
+- 核心 `IStream` 分层不做；`Stream.hpp` 下沉 core 的触发条件是第一个不依赖 iobase 的消费者。
 
 ### 9.3 兼容性 / 迁移
 
-S2.5 一次断代：`IMemoryVfs` → `Vfs`；`ZipMemoryVfs` 删除；`save(path)` → `saveAs`/`toBytes`；
-`bool` 家族删除。新代码只按 §4 的接口写。
+公开面相对旧 VFS 是断代：`IMemoryVfs` → `Vfs`；没有 `ZipMemoryVfs`；`save(path)` → `saveAs`/`toBytes`；
+没有 `bool` 家族。新代码只按 §4 的接口写。
 
 ## 10. 参考
 

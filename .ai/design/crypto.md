@@ -131,7 +131,7 @@ wolfSSL 的全局状态（随机数状态互斥量、ASN.1 与 DRBG 表）要求
 行为：`digest(Digest, span<const std::byte>)` 一次性算出摘要；`Hasher` 按 `update` / `finish` 增量算出同样字节；
 `digestSize` / `digestName` / `digestFromName` 提供长度与名字（大小写、`-`、`_` 均忽略）。
 约束：`C6`；要求：`R4`；验收：`T5`。
-说明：`ByteSequenceFingerprint` 是建在其上的值类型指纹（11 种 9 算法不重复）；旧 `Hash` / `HashCalculator`已删除。
+说明：`ByteSequenceFingerprint` 是建在其上的值类型指纹（11 种 9 算法不重复 ）。
 注意：`N4` —— 摘要不得当作 MAC 用（`Hmac` 才是），两回事。
 
 ### 3.5 F7 RSA
@@ -326,7 +326,7 @@ wolfSSL 的全局状态（随机数状态互斥量、ASN.1 与 DRBG 表）要求
 - `D3`：标签比较用 `std::equal` / `memcmp`。否决：提前返回会泄漏差异位置。
 - `D4`：`Random` 每次调用新建一个上下文。否决：多付初始化与播种代价，且没有换来任何隔离收益。
 - `D5`：把 HMAC 的算法枚举改成 `Hmac::Algorithm` 之外的公共 `Digest` 词汇。**已采纳**：`Digest` 现在是全模块唯一的摘要词汇，
-  `Hash` / `HashCalculator` / `Hmac::Algorithm` 三套并行词汇已删除，见 `ADR-2026-11-07-digest-vocabulary.md`。
+  不保留 `Hash` / `HashCalculator` / `Hmac::Algorithm` 三套并行词汇，见 `ADR-2026-11-07-digest-vocabulary.md`。
 - `D7`：保留 `*Calculator` 这种命名（自造词，业界无此叫法）。否决：改为“一次性用自由函数、增量用东西本身命名”的形态——
   `digest()` / `Hasher`、`hmac()` / `Hmac`，与 OpenSSL、libsodium、RustCrypto、Qt 一致；见 `ADR-2026-11-07-incremental-api-shape.md`。
 - `D6`：每种摘要一个类（`class Sha256` …）或用继承抽公共基类。否决：各算法形状完全相同，拆开只多 N 个同形类型，

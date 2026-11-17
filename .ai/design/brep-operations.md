@@ -31,7 +31,7 @@ B-rep 在仓库里原本只有两半：
 ### 1.3 非目标
 
 - 不做多后端与插件注册：今天只有 OpenCASCADE 一个后端（`G8`）。
-- 不做 `Primitive` → 网格：那是纯数学、零依赖，归 `geometry`（已落地，见 `geometry-tessellation.md`），不归这里。
+- 不做 `Primitive` → 网格：那是纯数学、零依赖，归 `geometry`（见 `geometry-tessellation.md`），不归这里。
 - 构造只覆盖 `geometry` 定义的五个基本体：不做由网格/线框造实体，也不做布尔与缝合；本期不实现任何 OpenCASCADE 函数体（`../backlog/brep.md`）。
 
 ### 1.4 一句话结论
@@ -228,9 +228,9 @@ flowchart LR
 
 ### 9.1 现状
 
-模块、头文件契约、CMake 探测、OpenCASCADE 分支与无后端分支都已落地。**后端分支已在带 OpenCASCADE 8.0.0（vcpkg `x64-windows`）的构建里编译并验证**：`test_brep` 与 `test_brepio` 全部通过（含五个基本体的往返与包围盒、网格往返）。
+模块、头文件契约、CMake 探测、OpenCASCADE 分支与无后端分支。**后端 分支已在带 OpenCASCADE 8.0.0（vcpkg `x64-windows`）的构建里编译并验证**：`test_brep` 与 `test_brepio` 全部通过（含五个基本体的往返与包围盒、网格往返）。
 
-由基本体造实体（F2）已落地（`2.7`–`2.11`、`3.2`），与三角化共用同一条探测与 PRIVATE 链接，两侧都已在同一台机器上跑通。
+由基本体造实体（F2）（`2.7`–`2.11`、`3.2`）与三角化共用同一条探测与 PRIVATE 链接，两侧都在同一台机器上验证过。
 
 ### 9.2 已知缺口
 

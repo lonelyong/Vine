@@ -242,7 +242,7 @@ CrashHandler --report <报告文件> [--dump <dump>] [--app <名字>] [--mailto 
 | D9 | handler 解析 minidump 走栈 | 要在 dump 上重实现 StackWalk；报告里的 `模块+偏移` 已经足够，dump 留给真正的调试器（G7）。 |
 | D10 | `Config::symbol_path` | handler 继承崩溃进程的环境，`_NT_SYMBOL_PATH` 已经够用；多一个字段就是多一个没人设的旋钮（G8）。 |
 | D11 | Linux 用 `dl_iterate_phdr` 取镜像表 | 要拿加载器锁，而崩溃可能正发生在 `dlopen` 里；`/proc/self/maps` 无锁（G10）。 |
-| D12 | Linux 用 Qt Widgets 做窗口 | 窗口只需要文本、滚动、按钮与剪贴板，Xlib + Xft 已经够用；工具包会让 `base` 层多出一条 UI 依赖（G2）。曾实现过一次，已撤回，见 `ADR-2026-10-30-crash-handler-x11-on-linux.md`。 |
+| D12 | Linux 用 Qt Widgets 做窗口 | 窗口只需要文本、滚动、按钮与剪贴板，Xlib + Xft 已经够用；工具包会让 `base` 层多出一条 UI 依赖（G2）。见 `ADR-2026-10-30-crash-handler-x11-on-linux.md`。 |
 | D13 | Linux 把符号化放进崩溃进程 | 要读 DWARF、要分配，违背 C6/N1；外部 `addr2line` 在 handler 里更安全（G7/G10）。 |
 
 ## 8. 测试与验收

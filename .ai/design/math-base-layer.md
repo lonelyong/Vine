@@ -12,7 +12,7 @@
 
 `math` 是仓库里**唯一被所有模块依赖**的层：图形要 `Vec3d` / `Mat4d` / `Point3d`，机器人要 `Vec3d` / `Quatd`，几何要 `Point2` / `Rect2`，模型与加载器要 `Vec3f`，核心要 `Vec3f` 当顶点元素类型。
 
-这个模块一度还装着求根、积分、B 样条节点模型与光滑度阶梯。2026-11-06 一天之内它们全部移入几何模块（`geom/detail/` 与 `geom/Continuity.hpp`）：**`math` 现在只有数学词汇，没有一个子目录。** 移动的两条理由不同——节点模型与 `Continuity` 是因为“签名里带着我们自己的数据模型”，求根/积分/`deCasteljau` 是因为“今天唯一的消费者是几何”，后果与反转条件写在 `ADR-2026-11-06-math-keeps-only-vocabulary.md`。
+求根、积分、B 样条节点模型与光滑度阶梯都在几何模块（`geom/detail/` 与 `geom/Continuity.hpp`）：**`math` 只有数学词汇，没有一个子目录。** 分开的两条理由不同——节点模型与 `Continuity` 是因为“签名里带着我们自己的数据模型”，求根/积分/`deCasteljau` 是因为“今天唯一的消费者是几何”，后果与反转条件写在 `ADR-2026-11-06-math-keeps-only-vocabulary.md`。
 
 ### 1.2 目标
 
@@ -164,7 +164,7 @@
 ## 9. 状态与演进
 
 - **现状**：F1–F4 全部落地；`test_math` 36 例全绿。依赖它的模块：图形、几何、机器人、模型、加载器、核心（`Vec3f` 作为顶点元素类型）。
-- **2026-11-06 的三次收缩**：① `Continuity` 与 B 样条节点模型移入 `geom`；② 求根 / 积分 / Bernstein 求值移入 `geom/detail`，`math` 至此只剩词汇；③ 删掉只有 BOM 的占位头 `EulerAngles.hpp`（零内容、零引用）。 <!-- drift-ok -->
+- **边界**：`Continuity` 与 B 样条节点模型在 `geom`；求根 / 积分 / Bernstein 求值在 `geom/detail`；`math` 只剩词汇，也没有只有 BOM 的占位头。 <!-- drift-ok -->
 - **已知偏差**：根层的数学常量沿用 `PI` / `PI_TWO` / `EPSF` 这类全大写名，与仓库“常量用 `k` 前缀”的约定不一致（历史遗留，未改名：它们出现在大量调用点，改名收益低于风险）。新增常量按 `k` 规则写。
 - **待办**：无。若将来出现非几何的求根/积分/Bernstein 消费者，按 `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md` 的反转路径升独立模块。
 

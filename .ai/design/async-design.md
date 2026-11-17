@@ -51,7 +51,7 @@
 
 - 不能跨 `resume()` 持有任何 waiter 指针/handle；
 - 不能“先把整个链表换出来再逐个 resume”——换出去之后兄弟再也无法自我注销，循环会 resume 已释放的帧
-  （2026-09-17 的 `SharedTask` 缺陷就是这一条）；
+  （`SharedTask` 的缺陷就是这一条）；
 - 边界判定用**世代号**（`AsyncEvent::set_epoch_`），不用“队尾指针”——被销毁的 waiter 可能是边界节点。
 
 遵守这条的：`AsyncEvent::set`、`AsyncConditionVariable::notify_one/notify_all`、`AsyncSemaphore::release`、
@@ -254,9 +254,6 @@ timer 线程上的一个动作先唤醒同伴、后恢复自己；同伴赢得�
 ### 9.2 已知缺口 / 待办
 
 - 帧分配不做，挂账；判据在 backlog §3。
-- 2026-11-02 修复的 8 个缺陷（CV guard 等待、队列 noexcept 与默认构造约束、队列唤醒重入 UAF、
-  `runOn` move-only 参数、`Scope` 批次 stop source、TCS 多消费者值语义、`withCancellation` token 传播）
-  各自的结论与验证记录在 `../bugs/`，已全部关闭。
 
 ### 9.3 兼容性 / 迁移
 
