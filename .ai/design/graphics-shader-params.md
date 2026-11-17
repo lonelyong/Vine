@@ -1,126 +1,126 @@
-# graphics 着色参数 ABI：块定义、去重与名字
+# graphics shader parameter ABI: block definitions, dedup and names
 
-> **状态**：现行（P0 已实现：GLSL 声明去重 + 构建期 inline；P1 未做，见 §9.2）
-> **最后核对**：2026-11-16
-> **范围**：view / draw / material / shadow / lights 五个参数块的声明归属、名字解析、后端写值契约。
-> **权威来源**：`ShaderAbi.hpp` / `LightAbi.hpp` / `shaders/vine_params.glsl`（现行块布局）。
-> **待办**：`../backlog/graphics.md`
+> **Status**: current (P0 implemented: GLSL declaration dedup + build-time inline; P1 not done, see §9.2)
+> **Last verified**: 2026-11-16
+> **Scope**: the declaration home, name resolution and the backend's byte-writing contract for the five parameter blocks view / draw / material / shadow / lights.
+> **Sources**: `ShaderAbi.hpp` / `LightAbi.hpp` / `shaders/vine_params.glsl` (the current block layout).
+> **Backlog**: `../backlog/graphics.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-五个参数块撑起引擎与 shader 之间的全部数据，容量已经确定（`VineViewBlock` 288 B、`VineDrawBlock` 80 B、
-`VineMaterialBlock` 64 B、`VineShadowBlock` 80 B、`VineLightsBlock` 528 B：一盏环境光 + 8 个带类型的灯
-槽，见 [ADR](../decisions/ADR-2026-10-24-light-block-typed-lights.md)），C++ 侧偏移由 `static_assert`
-钉死。问题不是“布局对不对”，而是“每份声明有几个 owner”：
+The five parameter blocks carry all the data between the engine and the shaders, and their sizes are settled (`VineViewBlock` 288 B, `VineDrawBlock` 80 B,
+`VineMaterialBlock` 64 B, `VineShadowBlock` 80 B, `VineLightsBlock` 528 B: one ambient light + 8 typed light
+slots, see [ADR](../decisions/ADR-2026-10-24-light-block-typed-lights.md)), and the C++ offsets are pinned by `static_assert`.
+The question is not "is the layout right" but "how many owners does each declaration have":
 
-- **GLSL 侧只能有一份声明**：参数块写在 `src/viz/graphics/shaders/vine_params.glsl` 一处，shader 用
-  `#include` 引入、构建期展开。抄成两份时，改一处忘另一处，只有一半画面读错字节，而画面照样有东西；
-- **影子块按 program 定 binding**：全屏 program 的低 binding 已被自己的 source 占用，所以 `VineShadowBlock`
-  的唯一声明是 `BuiltinShaders::shadowBindings()`（它写调用方要的编号），不在片段里；
-- **C++ 侧跨了两个模块**：四个零依赖块在 SDK 的 `ShaderAbi.hpp`，`VineLightsBlock` 与它的打包在
-  `LightAbi.hpp`——灯块要按 `LightValue` / `CameraSnapshot` 填字节，所以它和打包同住一个头，而
-  `ShaderAbi.hpp` 保持叶子（只有 std 依赖）；
-- **名字只存在于散文**（P1）：`VineDrawBlock::params.x` 是 opacity，这条约定写在注释里，代码里没有名字；
-- **后端直接写自己的存储**（P1）：没有“写字节”的契约，第二个后端要把打包逻辑重写一遍。
+- **The GLSL side can have only one declaration**: the parameter blocks are written in one place, `src/viz/graphics/shaders/vine_params.glsl`, and shaders pull them in with
+  `#include`, expanded at build time. With two copies, one change misses the other and only half the picture reads the wrong bytes — while the picture still shows something;
+- **The shadow block's binding depends on the program**: a full-screen program's low bindings are taken by its own sources, so the single declaration of `VineShadowBlock`
+  is `BuiltinShaders::shadowBindings()` (it writes the numbers the caller asks for), not in the fragment;
+- **The C++ side spans two modules**: the four dependency-free blocks are in the SDK's `ShaderAbi.hpp`, `VineLightsBlock` and its packing in
+  `LightAbi.hpp` — the light block needs `LightValue` / `CameraSnapshot` to fill bytes, so it shares a header with the packing, while
+  `ShaderAbi.hpp` stays a leaf (std dependencies only);
+- **Names exist only in prose** (P1): `VineDrawBlock::params.x` is opacity, a convention written in a comment with no name in the code;
+- **Backends write their own storage directly** (P1): there is no "write bytes" contract, so a second backend would rewrite the packing logic.
 
-一个后端、一个人维护时都能忍；第二个后端到来时，这些会被各复制一遍。
+All of this is bearable with one backend and one maintainer; when the second backend arrives, each gets copied once.
 
-### 1.2 目标
+### 1.2 Goals
 
-- **每份声明只有一个 owner**：GLSL 一份共享片段，C++ 一处定义。
-- 名字只在接线期存在，一次解析成 `{buffer, offset, type}`；热路径只有偏移。
-- 后端只回答“怎么写字节”。
-- 未知名字报错，而不是静默填零。
+- **Each declaration has one owner**: one shared GLSL fragment, one C++ definition.
+- Names exist only at wiring time, resolved once into `{buffer, offset, type}`; the hot path has offsets only.
+- The backend answers only "how to write bytes".
+- An unknown name is an error, not a silent zero.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不引入 Schema 生成器：内部 ABI、一个模块、一年改几次，生成的成本大于收益；等第二种 shader 语言再议。
-- 不做材质 DSL（自有语言 + 编译器）。
-- 不做运行时反射 / 按名自动填充。
-- 不做松散 uniform（Vulkan 不允许，见 P1）。
-- 不做逐 draw 参数惰性上传、specialization constant 优化。
+- No schema generator: an internal ABI, one module, a few changes a year — generation costs more than it returns; revisit with a second shader language.
+- No material DSL (own language + compiler).
+- No runtime reflection / automatic fill by name.
+- No loose uniforms (Vulkan forbids them, see P1).
+- No lazy per-draw parameter upload, no specialization-constant optimisation.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-> 一份声明只写一次；名字只在接线期存在；后端只写字节。
+> One declaration, written once; names exist only at wiring time; the backend writes bytes only.
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 一份声明，一处
+### 2.1 One declaration, one place
 
-- **GLSL**：五个块的声明在 `shaders/vine_params.glsl`；shader 用 `#define VN_PARAM_<块>` 声明自己要哪些，
-  再 `#include "vine_params.glsl"`，构建期把片段 inline 进嵌入字符串。影子块是唯一例外：它的 set/binding
-  属于声明它的 program，唯一声明在 `BuiltinShaders::shadowBindings()`。
-- **C++**：四个零依赖块的**形状**在 `ShaderAbi.hpp` 一处；需要模型/数学值才填得出字节的面各自成头：
-  `LightAbi.hpp`（`kMaxLights` + `kLightKindEmpty` + `VineLightsBlock` + `packLightBlock` / `packedSlotOf`）、
-  `MaterialAbi.hpp`（`packMaterialBlock`）、`DrawAbi.hpp`（`packDrawBlock`）。依赖方向只有一个：
-  `ShaderAbi.hpp` <- 三个填充面 <- 后端（见 §5.1 C7 / C8）。
-- **名字表**（P1）：手写在结构体旁边，条目用 `offsetof` 而不是手填数字，编译器保证与 C++ 一致。
+- **GLSL**: the five blocks are declared in `shaders/vine_params.glsl`; a shader declares which it wants with `#define VN_PARAM_<block>`,
+  then `#include "vine_params.glsl"`, and the build inlines the fragment into the embedded string. The shadow block is the only exception: its set/binding
+  belongs to the program that declares it, the single declaration is `BuiltinShaders::shadowBindings()`.
+- **C++**: the **shape** of the four dependency-free blocks is in one place, `ShaderAbi.hpp`; the faces that need model/math values to fill bytes get their own headers:
+  `LightAbi.hpp` (`kMaxLights` + `kLightKindEmpty` + `VineLightsBlock` + `packLightBlock` / `packedSlotOf`),
+  `MaterialAbi.hpp` (`packMaterialBlock`), `DrawAbi.hpp` (`packDrawBlock`). There is one dependency direction:
+  `ShaderAbi.hpp` <- the three fill faces <- backends (see §5.1 C7 / C8).
+- **The name table** (P1): written by hand next to the struct, entries use `offsetof` instead of hand-typed numbers, so the compiler guarantees agreement with C++.
 
-去重不是纪律问题：重复的声明不在维护者眼前，改一处忘一处是**结构**造成的，只能用结构的办法解决。
+Dedup is not a discipline problem: a duplicated declaration is not in front of the maintainer, and "change one, forget the other" is caused by the **structure** — only a structural fix works.
 
-### 2.2 频率定缓冲
+### 2.2 Frequency decides the buffer
 
-| 缓冲 | 内容 | 上传时机 |
+| Buffer | Contents | Upload timing |
 |---|---|---|
-| view | 相机矩阵、视口尺寸、时间 | 每 view |
-| draw | 模型矩阵、不透明度、点大小、用户槽 | 每 draw（ring + dynamic offset） |
-| material | base colour / emissive / metallic·roughness·occlusion·alpha cutoff / flags | 每材质（去重后） |
-| shadow | 光空间矩阵、阴影参数 | 每 pass |
-| lights | 一盏环境光 + `kMaxLights` 个带类型的灯（方向光 / 点光 / 聚光；位置与方向都在视图空间） | 每 view |
+| view | camera matrices, viewport size, time | per view |
+| draw | model matrix, opacity, point size, user slots | per draw (ring + dynamic offset) |
+| material | base colour / emissive / metallic·roughness·occlusion·alpha cutoff / flags | per material (after dedup) |
+| shadow | light-space matrix, shadow parameters | per pass |
+| lights | one ambient light + `kMaxLights` typed lights (directional / point / spot; position and direction in view space) | per view |
 
-表里两处要点：`params` 的 `x` 是有效不透明度（唯一透明通道）、`y` 是点大小（framebuffer 像素，顶点阶段写进 `gl_PointSize`；由 `StateNode::setPointSize` 或 pass 覆盖决定、解析后**进 draw 块而不是 `PipelineKey`**，所以两个尺寸共用一条 pipeline）、`z`/`w` 是用户槽。`kMaxLights`（`ShaderAbi.hpp`）是灯容量的唯一定义（GLSL 数组长度、后端结构体尺寸、掉落文案都由它派生，`EmbeddedShadersTest` 读回数组长度），它**不是**内容上限（`Scene::addLight` 不设限，见 `graphics-scene.md` §2.7）。
+Two points in the table: `params`'s `x` is the effective opacity (the only transparency channel), `y` is the point size (framebuffer pixels, written into `gl_PointSize` in the vertex stage; decided by `StateNode::setPointSize` or a pass override and after resolution **goes into the draw block, not `PipelineKey`**, so two sizes share one pipeline), `z`/`w` are the user slots. `kMaxLights` (`ShaderAbi.hpp`) is the single definition of light capacity (the GLSL array length, the backend struct size and the drop wording all derive from it, `EmbeddedShadersTest` reads the array length back), it is **not** a content limit (`Scene::addLight` has none, see `graphics-scene.md` §2.7).
 
-逐顶点与逐实例数据**不是参数**：位置 / 法线 / 颜色 / UV 走 canonical attribute，自定义通道保留源
-location（≥ 3，避开 8 与 12–15，见 `ShaderAbi.hpp`）。
+Per-vertex and per-instance data **are not parameters**: position / normal / colour / UV go through the canonical attributes, custom channels keep their source
+location (≥ 3, avoiding 8 and 12–15, see `ShaderAbi.hpp`).
 
-### 2.3 名字只在接线期
+### 2.3 Names exist only at wiring time
 
-`find("Draw.Opacity")` 返回 `{Buffer::Draw, 64, Type::Float}`；`Material` 与 `StateNode` 缓存解析结果，
-之后的每次写入都是按偏移写字节。名字是 `块.字段`，跨块唯一。
+`find("Draw.Opacity")` returns `{Buffer::Draw, 64, Type::Float}`; `Material` and `StateNode` cache the resolution result,
+every later write is a byte write at an offset. A name is `block.field`, unique across blocks.
 
-### 2.4 GLSL 只有一份
+### 2.4 GLSL has one copy
 
-片段在构建期并入每个 embedded shader 的字符串（`cmake/VineEmbedShaders.cmake`），运行时不需要文件、不需要
-include 解析，也不需要编译器扩展；用户 shader 想用同一套块时，把同一个片段交给他们（P1 决定是安装文件
-还是编译前拼接）。
+The fragment is merged into each embedded shader's string at build time (`cmake/VineEmbedShaders.cmake`); at runtime no file is needed, no
+include resolution, no compiler extension; a user shader that wants the same blocks is given the same fragment (P1 decides whether that is an installed file
+or a pre-compile splice).
 
-### 2.5 后端只写字节
+### 2.5 The backend writes bytes only
 
-后端契约只有两个动作：按缓冲写一段字节、按缓冲刷一段范围。值怎么算、什么时候算不在后端，
-在 `packDrawBlock` 这类引擎侧函数里。
+The backend contract has two actions: write a range of bytes for a buffer, flush a range for a buffer. How values are computed and when is not the backend's,
+it is in engine-side functions such as `packDrawBlock`.
 
-### 2.6 P0 不改字节
+### 2.6 P0 changes no bytes
 
-第一阶段验收：尺寸、对齐、成员偏移、公开接口、既有测试全部不变。**先证明等价，再谈新能力。**
+The first stage's acceptance: sizes, alignment, member offsets, the public interface and the existing tests all unchanged. **Prove equivalence first, then talk about new capabilities.**
 
-### 2.7 散文约定变成具名成员
+### 2.7 Prose conventions become named members
 
-`params.x` / `cam_pos.w` / `frame.w` 这类“vec4 里第几个分量是什么”的约定，在 GLSL 侧变成具名成员
-（`vn_opacity` / `vn_pointSize`）；C++ 侧字节布局不变。
+Conventions such as `params.x` / `cam_pos.w` / `frame.w` ("which component of the vec4 is what") become named members on the GLSL side
+(`vn_opacity` / `vn_pointSize`); the C++ byte layout is unchanged.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | 共享 GLSL 片段 | 五个块声明一处；shader 用守卫 + `#include` 选块 | 已实现 |
-| F2 | C++ 定义收敛 | 五个 L1 块与它们的打包都在 SDK：形状在 `ShaderAbi.hpp`；灯 / 材质 / draw 的填充面在 `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp`；后端只决定字节放哪 | 已实现 |
-| F3 | 构建期 inline | 片段并入嵌入字符串，运行时不落盘 | 已实现 |
-| F4 | 名字解析（P1） | 手写表 + `offsetof`；一次解析、缓存 | 未做 |
-| F5 | 后端契约 | `ParameterSink` 的写与刷 | 未做 |
-| F6 | `Material` 按名设值（P1） | 类型化重载 + 既有字段糖保留 | 未做 |
-| F7 | 用户扩展点 | draw 块的具名用户槽 + 保留 binding 段 | 未做 |
-| F8 | 门禁 | 片段清单、展开一致（未知 `vn_` 名字可选） | 部分实现 |
-| F9 | P0 等价性 | 字节、接口、测试全不变 | 已实现 |
+| F1 | Shared GLSL fragment | Five block declarations in one place; a shader selects blocks with guards + `#include` | implemented |
+| F2 | C++ definition convergence | The five L1 blocks and their packing are all in the SDK: the shapes in `ShaderAbi.hpp`; the fill faces of lights / material / draw in `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp`; the backend only decides where the bytes go | implemented |
+| F3 | Build-time inline | The fragment is merged into the embedded string, nothing on disk at runtime | implemented |
+| F4 | Name resolution (P1) | Hand-written table + `offsetof`; resolve once, cache | not done |
+| F5 | Backend contract | `ParameterSink`'s write and flush | not done |
+| F6 | `Material` set by name (P1) | Typed overloads + the existing field sugar kept | not done |
+| F7 | User extension points | The draw block's named user slots + a reserved binding range | not done |
+| F8 | Gates | Fragment list, expansion agreement (unknown `vn_` names optional) | partly implemented |
+| F9 | P0 equivalence | Bytes, interfaces, tests all unchanged | implemented |
 
-### 3.2 F1 共享片段
+### 3.2 F1 shared fragment
 
-参数块只写在 `src/viz/graphics/shaders/vine_params.glsl`；一个 shader 只声明它真正读的块，因为程序文本就是
-它（variant 的）descriptor 接口——后端按声明服务绑定，一个没人读的块仍然是一个有人要填的 binding：
+The parameter blocks are written only in `src/viz/graphics/shaders/vine_params.glsl`; a shader declares only the blocks it really reads, because the program text is
+its (variant's) descriptor interface — the backend serves bindings by declaration, and a block nobody reads is still a binding somebody must fill:
 
 ```glsl
 #define VN_PARAM_MATERIAL
@@ -129,31 +129,31 @@ include 解析，也不需要编译器扩展；用户 shader 想用同一套块�
 #include "vine_params.glsl"
 ```
 
-守卫是 `VN_PARAM_MATERIAL` / `VN_PARAM_DRAW` / `VN_PARAM_LIGHTS`；`#include` 必须独占一行行首（P5）。
-影子块（§1.1）与 view 块不在片段里：view 块没有内置 shader 声明它——content 路径把视图实现成 128 B push
-range（见 `PushRange.hpp`），想要这个块的 program 按自己的布局声明它。
+The guards are `VN_PARAM_MATERIAL` / `VN_PARAM_DRAW` / `VN_PARAM_LIGHTS`; `#include` must stand alone at the start of a line (P5).
+The shadow block (§1.1) and the view block are not in the fragment: no built-in shader declares the view block — the content path implements the view as a 128 B push
+range (see `PushRange.hpp`), a program that wants this block declares it with its own layout.
 
-灯块的 set/binding 是两条路径**共用**的 set 0 / binding 6（content 集：material 0、槽 1–5、lights 6、shadow 7/8，见 `graphics-material.md` §3.3）。
-2 因此空出；全屏集：source 颜色 0..N-1、深度 4、灯 5、shadow 对 6/7），所以片段里写的是同一个数字，不需要
-可参数化的 binding（ABI 扫描器也不做宏求值）。
+The light block's set/binding is set 0 / binding 6 **shared** by both paths (content set: material 0, slots 1–5, lights 6, shadow 7/8, see `graphics-material.md` §3.3).
+2 is therefore free; the full-screen set: source colours 0..N-1, depth 4, lights 5, the shadow pair 6/7), so the fragment writes the same number, no
+parameterisable binding needed (the ABI scanner does no macro evaluation either).
 
-### 3.3 F2–F3 C++ 收敛与构建期 inline
+### 3.3 F2–F3 C++ convergence and build-time inline
 
-C++ 侧保持手写与 `static_assert`。**形状**（`ShaderAbi.hpp`）与**填字节的面**分两层：四个零依赖块在
-`ShaderAbi.hpp`；灯（容量 `kMaxLights`、标签 `kLightKindEmpty`、形状 `VineLightsBlock`、`packLightBlock` /
-`packedSlotOf`）、材质（`packMaterialBlock`）、draw（`packDrawBlock`）各自成头。理由：填充要吃模型/数学值，
-把它们拉进形状头就是一条回边（G2），而且每个只读形状的消费者都会付那部分 include 扇出（G10）；依赖方向固定为
-`ShaderAbi.hpp` <- `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp` <- 后端。场影块是例外：它的输入
-`ShadowFacts` 在 vsg 的可移植半边（`vine/backend_vsg/internal/FrameCompiler.hpp`，D1 不开放）；两个后端各自打包
-自己的阴影值，但槽位推导必须调用
-`packedSlotOf`。
-片段与结构体仍是两份手写，靠相邻 review 与 `ProgramAbiTest` 的绑定数/块大小断言守住。
+The C++ side stays hand-written with `static_assert`. **Shape** (`ShaderAbi.hpp`) and **the face that fills bytes** are two layers: the four dependency-free blocks are in
+`ShaderAbi.hpp`; lights (capacity `kMaxLights`, label `kLightKindEmpty`, shape `VineLightsBlock`, `packLightBlock` /
+`packedSlotOf`), material (`packMaterialBlock`) and draw (`packDrawBlock`) each get their own header. Reason: filling needs model/math values,
+pulling them into the shape header is a back edge (G2), and every consumer that only reads the shape would pay that include fan-out (G10); the dependency direction is fixed as
+`ShaderAbi.hpp` <- `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp` <- backends. The shadow block is the exception: its input
+`ShadowFacts` is in vsg's portable half (`vine/backend_vsg/internal/FrameCompiler.hpp`, D1 not open); each backend packs
+its own shadow values, but slot derivation must call
+`packedSlotOf`.
+The fragment and the structs are still two hand-written copies, guarded by adjacent review and `ProgramAbiTest`'s binding-count/block-size assertions.
 
-嵌入前由 `cmake/VineEmbedShaders.cmake` 把片段展开进每个 shader 的字符串：运行时不解析 include、不落盘，
-打包形态不变。片段文件在 `cmake/VineShaders.cmake` 的 `INCLUDES` 里声明，否则改片段不会重跑生成（P7）。
-离线门禁 `vn_shader_check.sh` 用同一个展开脚本编译并校验每个变体，所以“门禁过” = “嵌入的就是编译的”。
+Before embedding, `cmake/VineEmbedShaders.cmake` expands the fragment into each shader's string: no include parsing at runtime, nothing on disk,
+the packaged form unchanged. The fragment file must be declared in `cmake/VineShaders.cmake`'s `INCLUDES`, otherwise changing the fragment does not rerun generation (P7).
+The offline gate `vn_shader_check.sh` compiles and validates every variant with the same expansion script, so "the gate passes" = "what is embedded is what is compiled".
 
-### 3.4 F4 名字解析（P1）
+### 3.4 F4 name resolution (P1)
 
 ```cpp
 struct ParameterDesc { const char* name; Buffer buffer; std::size_t offset; Type type; };
@@ -162,9 +162,9 @@ inline constexpr ParameterDesc kParameters[]{
 };
 ```
 
-表与结构体同在 C++ 头里，`offsetof` 让编译器保证两者一致；`find()` 在接线期查一次，结果缓存。
+The table and the struct live in the same C++ header, `offsetof` makes the compiler guarantee they agree; `find()` looks up once at wiring time and the result is cached.
 
-### 3.5 F5 后端契约
+### 3.5 F5 backend contract
 
 ```cpp
 class ParameterSink
@@ -175,145 +175,144 @@ class ParameterSink
 };
 ```
 
-Vulkan 后端实现为映射 ring + dynamic offset；别的后端实现成 cbuffer / `glUniform*`。框架层不出现任何
-后端词汇。
+The Vulkan backend implements it as a mapped ring + dynamic offset; another backend as cbuffer / `glUniform*`. No backend vocabulary appears at the framework level.
 
-### 3.6 F6–F7 `Material` 与用户扩展点
+### 3.6 F6–F7 `Material` and user extension points
 
-`Material::set("Material.BaseColor", color)` 走名字表，既有 `setBaseColor()` 等字段糖保留、内部走同一入口；
-未知名字与类型不符都在 `set()` 返回错误。用户扩展点是 draw 块的两个具名槽（`Draw.UserSlot0/1`）与一段
-保留 set/binding；用户自定义块只能落在保留段之外，占用即错误。
+`Material::set("Material.BaseColor", color)` goes through the name table, the existing `setBaseColor()` field sugar stays and internally goes through the same entry;
+an unknown name and a type mismatch both return an error from `set()`. The user extension points are the draw block's two named slots (`Draw.UserSlot0/1`) and a
+reserved set/binding range; a user-defined block may only land outside the reserved range, taking it is an error.
 
-### 3.7 F8–F9 门禁与等价性
+### 3.7 F8–F9 gates and equivalence
 
-- 嵌入副本与源文件一致：`vn_shader_check.sh` 的 SHA 校验已覆盖；
-- 未知 `vn_` 名字：按需加（可选，不是 P0 的前置）；
-- 等价性：P0 不改任何字节与接口，`BlockStorageTest` / `StateNodeTest` 不改。
+- The embedded copy matches the source file: `vn_shader_check.sh`'s SHA check already covers it;
+- Unknown `vn_` names: added as needed (optional, not a P0 precondition);
+- Equivalence: P0 changes no byte and no interface, `BlockStorageTest` / `StateNodeTest` unchanged.
 
-## 4. 公开接口
+## 4. Public Interface
 
-### 4.1 共享片段的契约
+### 4.1 The shared fragment's contract
 
-片段决定：块名、set/binding、成员名、类型与顺序；`#ifdef VN_PARAM_<块>` 决定一个 shader 声明哪些块。它是
-C++ 结构体之外**唯一**的 shader 侧声明；任何 shader 再抄一份就是新的 owner。唯一的例外是影子块：它声明在
-`BuiltinShaders::shadowBindings()`，因为它的 set/binding 由声明它的 program 决定（§1.1）。
+The fragment decides: block names, set/binding, member names, types and order; `#ifdef VN_PARAM_<block>` decides which blocks a shader declares. It is
+the **only** shader-side declaration besides the C++ structs; any shader copying it again is a new owner. The single exception is the shadow block: it is declared in
+`BuiltinShaders::shadowBindings()`, because its set/binding is decided by the program that declares it (§1.1).
 
-### 4.2 C++ 类型
+### 4.2 C++ types
 
-五个块结构体（保持原名；四个在 `ShaderAbi.hpp`，`VineLightsBlock` 在 `LightAbi.hpp`，见 §3.3）、
-`ParameterBuffer` 枚举、`ParameterRef{buffer, offset, type}`、`find()`。
+The five block structs (keeping their names; four in `ShaderAbi.hpp`, `VineLightsBlock` in `LightAbi.hpp`, see §3.3),
+the `ParameterBuffer` enum, `ParameterRef{buffer, offset, type}`, `find()`.
 
-### 4.3 运行时 API
+### 4.3 Runtime API
 
-| 接口 | 契约 |
+| Interface | Contract |
 |---|---|
-| `ParameterTable::find(name)` | 名字 → 引用；未知返回空 |
-| `Material::set(name, value)` | 类型校验后写入；未知名字返回错误 |
-| `ParameterSink::write / flush` | 后端实现；框架不解释值 |
-| `packLightBlock(lights, camera, out)` | 把一次绘制调用声明的灯按唯一规则填进 `VineLightsBlock`（视图空间）；返回块代表的灯数（不含环境光兜底） |
-| `packedSlotOf(lights, identity)` | 同一规则下某盏灯占的槽位；阴影块的 `params.w` 用它命名，避免第二份槽位推导 |
-| `packMaterialBlock(values, present_slots, out)` | 把解析后的材质值按字段填进 `VineMaterialBlock`；不钳制不改写，槽位掩码由调用方给（否则上传失败的槽位会让 shader 采样到占位图） |
-| `packDrawBlock(model, opacity, point_size, out)` | 把模型矩阵（列主序）、有效不透明度与点大小填进 `VineDrawBlock`；保留字 `params.z/w` 恒写 0 |
+| `ParameterTable::find(name)` | Name → reference; unknown returns empty |
+| `Material::set(name, value)` | Validates the type then writes; an unknown name returns an error |
+| `ParameterSink::write / flush` | Backend-implemented; the framework does not interpret values |
+| `packLightBlock(lights, camera, out)` | Fills the lights one draw call declared into `VineLightsBlock` by the one rule (view space); returns the number of lights the block represents (not counting the ambient fallback) |
+| `packedSlotOf(lights, identity)` | The slot a light takes under the same rule; the shadow block's `params.w` names it with this, avoiding a second slot derivation |
+| `packMaterialBlock(values, present_slots, out)` | Fills resolved material values into `VineMaterialBlock` field by field; no clamping or rewriting, the slot mask is given by the caller (otherwise a slot that failed to upload would make the shader sample the stand-in) |
+| `packDrawBlock(model, opacity, point_size, out)` | Fills the model matrix (column-major), the effective opacity and the point size into `VineDrawBlock`; the reserved words `params.z/w` are always written 0 |
 
-### 4.4 用户 shader 怎么用
+### 4.4 How a user shader uses it
 
-内置与用户 shader 共用同一份片段：拼错 → 未声明标识符（编译失败），重复声明同名块 → 重定义
-（编译失败）。两个失败都可见。
+Built-in and user shaders share the same fragment: a typo → undeclared identifier (compile failure), a duplicate declaration of a block → redefinition
+(compile failure). Both failures are visible.
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 |---|---|
-| C1 | 每个块在 GLSL 侧只能声明一次：参数块在 `vine_params.glsl`，影子块在 `shadowBindings()`。 |
-| C2 | 名字是 `块.字段` 形式，跨块唯一。 |
-| C3 | 未知名字与类型不符都必须报错：`set()` 时、编译时。 |
-| C4 | 框架占用一段 set/binding；用户块必须在保留段之外。 |
-| C5 | 逐顶点 / 逐实例数据走 attribute，不进参数块。 |
-| C6 | 片段只能用行首独占一行的 `#include` 引入，由构建期展开；嵌入字符串里不出现 include。 |
-| C7 | SDK 的 ABI 头分两层：**形状**（零依赖，`ShaderAbi.hpp`，只含 std）与**填字节的面**（`LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp`，可以依赖模型与数学）。依赖方向只能是 形状 ← 填充面 ← 后端；形状头不得 include 模型/数学头（回边），新增块的形状进 `ShaderAbi.hpp`、需要值的填充面单独成头。 |
-| C8 | 每个 L1 块只有一个打包函数，住在 SDK 的填充面；后端只决定字节放哪（buffer / offset / descriptor），不得重写字段映射或重推槽位。例外必须有理由且写在 §3.3：目前只有场影块（输入 `ShadowFacts` 在后端半），它的槽位推导也必须调用 `packedSlotOf`。 |
+| C1 | Every block is declared once on the GLSL side: the parameter blocks in `vine_params.glsl`, the shadow block in `shadowBindings()`. |
+| C2 | A name is `block.field` and unique across blocks. |
+| C3 | An unknown name and a type mismatch must both be errors: at `set()` time and at compile time. |
+| C4 | The framework takes a range of set/binding; a user block must live outside the reserved range. |
+| C5 | Per-vertex / per-instance data goes through attributes, not into a parameter block. |
+| C6 | A fragment may only be pulled in by an `#include` alone at the start of a line, expanded at build time; no include appears in the embedded string. |
+| C7 | The SDK's ABI headers have two layers: **shape** (dependency-free, `ShaderAbi.hpp`, std only) and **the face that fills bytes** (`LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp`, which may depend on the model and math). The dependency direction can only be shape ← fill face ← backend; a shape header must not include a model/math header (back edge), a new block's shape goes into `ShaderAbi.hpp` and a fill face that needs values gets its own header. |
+| C8 | Each L1 block has one packing function, in the SDK's fill face; the backend only decides where the bytes go (buffer / offset / descriptor) and must not rewrite the field mapping or re-derive slots. An exception must state its reason and be written in §3.3: today only the shadow block (its input `ShadowFacts` is in the backend half), and its slot derivation must still call `packedSlotOf`. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 |---|---|
-| R1 | P0 不改字节、不改接口、不改测试。 |
-| R2 | 嵌入副本与展开后的源一致由 `vn_shader_check.sh` 保证。 |
-| R3 | 后端只写字节，不解释值、不解析名字。 |
+| R1 | P0 changes no byte, no interface and no test. |
+| R2 | The embedded copy agrees with the expanded source, guaranteed by `vn_shader_check.sh`. |
+| R3 | The backend writes bytes only, it does not interpret values or resolve names. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 |---|---|
-| N1 | 名字只在接线期存在；每帧循环里没有字符串。 |
-| N2 | 每个块 16 字节对齐、按 std140 排列，D3D cbuffer 与 push constant 都能复用同一份布局。 |
-| N3 | 同一字节只能有一个名字；一个名字只能指向一个字节。 |
+| N1 | Names exist only at wiring time; there is no string in the per-frame loop. |
+| N2 | Every block is 16-byte aligned and laid out per std140, so D3D cbuffers and push constants can reuse the same layout. |
+| N3 | One byte has one name only; one name points to one byte only. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-| # | 坑 | 症状 / 判据 |
+| # | Trap | Symptom / criterion |
 |---|---|---|
-| P1 | 松散 uniform 在 Vulkan 不合法 | `glslangValidator -V` 直接报 `non-opaque uniforms outside a block`；不要为“像 osg 一样”去包装它 |
-| P2 | `vec3` 后面接 `float` 会跨 16 字节边界 | 只用 mat4/vec4/标量组合；结构体的 `static_assert` 钉住偏移 |
-| P3 | GLSL 声明抄了第二份 | 只有一半画面读错字节，最难查；判据是 T2 的搜索，修法是删掉副本改用片段 |
-| P4 | 片段与 C++ 结构体漂移 | 现在只剩这一对；靠相邻 review，`ProgramAbiTest` 的块大小断言钉住字节总数 |
-| P5 | 片段没进嵌入字符串 | 只有始于行首的 `#include` 会被展开；缩进的会原样留下，运行时 glslang 报“include 需要扩展”——可见，不静默 |
-| P6 | 用户重复声明同名块 | 重定义 → 编译失败；这是特性，不是限制 |
-| P7 | 片段改了而嵌入没重跑 | 片段必须在 `VineShaders.cmake` 的 `INCLUDES` 里：否则生成规则不依赖它，嵌入副本静默变旧；T3 用展开后的哈希兜底 |
-| P8 | 守卫写错（多声明或漏声明块） | 多声明 → program 多一个必须填的 binding；漏声明 → 未声明标识符。两者都在 `ProgramAbiTest` 的绑定数断言或编译时暴露 |
-| P9 | 把点大小（或任何顶点阶段要读的值）当成 pipeline 状态 | Vulkan 里点大小是 `gl_PointSize` 输出，不是光栅状态；放进 `PipelineKey` = 一个尺寸一个 pipeline，而且动它还要重编。它的终点是 draw 块的 `params.y`（下限 1.0，`largePoints` 是设备要求），`PrimitiveDrawTest` 用像素数钉住整条路 |
+| P1 | Loose uniforms are illegal in Vulkan | `glslangValidator -V` reports `non-opaque uniforms outside a block` outright; do not wrap it "to look like osg" |
+| P2 | A `vec3` followed by a `float` crosses a 16-byte boundary | Use only mat4/vec4/scalar combinations; the struct's `static_assert` pins the offsets |
+| P3 | The GLSL declaration copied a second time | Only half the picture reads the wrong bytes, the hardest to find; the criterion is T2's search, the fix is deleting the copy and using the fragment |
+| P4 | The fragment and the C++ struct drift | Only this pair is left; guarded by adjacent review, `ProgramAbiTest`'s block-size assertion pins the byte total |
+| P5 | The fragment never made it into the embedded string | Only an `#include` starting at the beginning of a line is expanded; an indented one stays as written and glslang reports "include needs an extension" at runtime — visible, not silent |
+| P6 | A user declares a block with the same name | Redefinition → compile failure; this is a feature, not a limitation |
+| P7 | The fragment changed but embedding did not rerun | The fragment must be in `VineShaders.cmake`'s `INCLUDES`: otherwise the generation rule does not depend on it and the embedded copy silently goes stale; T3's expanded hash is the fallback |
+| P8 | A wrong guard (a block declared twice or not at all) | Declared twice → the program gains a binding that must be filled; not declared → undeclared identifier. Both surface in `ProgramAbiTest`'s binding-count assertion or at compile time |
+| P9 | Treating the point size (or any value the vertex stage reads) as pipeline state | In Vulkan the point size is the `gl_PointSize` output, not raster state; putting it into `PipelineKey` = one pipeline per size, and changing it would need a rebuild. Its destination is the draw block's `params.y` (floor 1.0, `largePoints` is a device requirement), `PrimitiveDrawTest` pins the whole path by pixel count |
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 否决 | 理由 |
+| # | Rejected | Reason |
 |---|---|---|
-| D1 | 运行时按名反射自动填充 | 名字成为协议：拼错、类型错、布局错全部静默；多后端要写多个匹配器。详见 [ADR](../decisions/ADR-2026-10-24-shader-parameter-abi.md)。 |
-| D2 | 松散 uniform（osg `StateSet` 风格） | Vulkan GLSL 不允许（P1）；osg 的 Vulkan 后继 vsg 也已没有 `Uniform` 类。 |
-| D3 | 材质 DSL（自有语言 + 编译器） | 收益是自动变体与跨后端源码，成本是一个编译器；当前没有需求。 |
-| D4 | 现在引入 Schema 生成器 | 内部 ABI、一个模块、一年改几次；去重后只剩“片段 ↔ C++”一对，生成的成本大于收益。第二种 shader 语言出现时重开。详见 ADR。 |
-| D5 | 逐 draw 参数惰性上传 / specialization constant | 块已经一次写多帧，省不出东西。 |
+| D1 | Runtime reflection filling by name | Names become a protocol: typos, wrong types and wrong layouts all go silent; multiple backends need multiple matchers. See [ADR](../decisions/ADR-2026-10-24-shader-parameter-abi.md). |
+| D2 | Loose uniforms (osg `StateSet` style) | Vulkan GLSL forbids them (P1); osg's Vulkan successor vsg has no `Uniform` class either. |
+| D3 | A material DSL (own language + compiler) | The gain is automatic variants and cross-backend source, the cost is a compiler; no need today. |
+| D4 | A schema generator now | An internal ABI, one module, a few changes a year; after dedup only the "fragment ↔ C++" pair is left and generation costs more than it returns. Reopen when a second shader language appears. See the ADR. |
+| D5 | Lazy per-draw parameter upload / specialization constants | The block is written once for many frames, there is nothing to save. |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 |---|---|---|
-| T1 | 字节与接口不变 | `test_graphics` / `test_vsg` 全绿，`vsg_rewrite_gate.sh` 0 VUID |
-| T2 | 每个块只有一处声明 | `grep -rn 'uniform Vine\w*Block' src/`：只命中 `shaders/vine_params.glsl` 与 `BuiltinShaders.cpp` 的 `shadowBindings()` |
-| T3 | 嵌入副本与展开后的源一致 | `scripts/vn_shader_check.sh`（展开后的哈希与字节数） |
-| T4 | 未知名字被拒（P1） | `Material::set("Nope", 1.0F)` 返回错误 |
-| T5 | 片段真的进了程序文本 | 删掉声明 → 未声明标识符，构建期门禁失败（与 T3 同一条命令） |
-| T6 | 每个 program 只声明自己的块 | `ProgramAbiTest`：forward 5 个绑定、gbuffer 1 个 |
+| T1 | Bytes and interfaces unchanged | `test_graphics` / `test_vsg` all green, `vsg_rewrite_gate.sh` 0 VUID |
+| T2 | Each block has one declaration | `grep -rn 'uniform Vine\w*Block' src/`: hits only `shaders/vine_params.glsl` and `shadowBindings()` in `BuiltinShaders.cpp` |
+| T3 | The embedded copy agrees with the expanded source | `scripts/vn_shader_check.sh` (expanded hash and byte count) |
+| T4 | Unknown names are refused (P1) | `Material::set("Nope", 1.0F)` returns an error |
+| T5 | The fragment really made it into the program text | Delete the declaration → undeclared identifier, the build-time gate fails (the same command as T3) |
+| T6 | Each program declares only its own blocks | `ProgramAbiTest`: forward 5 bindings, gbuffer 1 |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-P0 已实现：参数块只有一处 GLSL 声明（`shaders/vine_params.glsl`，构建期展开），四个零依赖块的 C++ 形状在
-`ShaderAbi.hpp`，灯 / 材质 / draw 的打包面在 `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp`，两个后端用的
-是同一份。字节与既有测试未变。
+P0 is implemented: the parameter blocks have one GLSL declaration (`shaders/vine_params.glsl`, expanded at build time), the C++ shapes of the four dependency-free blocks are in
+`ShaderAbi.hpp`, the packing faces of lights / material / draw in `LightAbi.hpp` / `MaterialAbi.hpp` / `DrawAbi.hpp`, and both backends use
+the same copy. Bytes and the existing tests are unchanged.
 
-灯块自 2026-10-24 起是「带类型的灯数组」（位置 / 方向 / 范围 / 锥角，两条路径共用 UBO），
-见 [ADR](../decisions/ADR-2026-10-24-light-block-typed-lights.md)。
+Since 2026-10-24 the light block is a "typed light array" (position / direction / range / cone angle, one UBO shared by both paths),
+see [ADR](../decisions/ADR-2026-10-24-light-block-typed-lights.md).
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-P1（名字表与 `Material::set`、用户扩展点、`ParameterSink`）是触发条件型，见
-`../backlog/graphics.md` §2.5。材质块已是 PBR（见 `graphics-material.md` F4），纹理集 / BRDF / 实例按该文 §9.2 的 M2–M4 推进。
+P1 (the name table and `Material::set`, user extension points, `ParameterSink`) is trigger-gated, see
+`../backlog/graphics.md` §2.5. The material block is already PBR (see `graphics-material.md` F4), and the texture set / BRDF / instances advance per that file's §9.2 M2–M4.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-P0 不改任何字节与接口，可独立合入；P1 只加接口，既有字段糖保持；生成器只在第二种 shader 语言出现时评估。
+P0 changes no byte and no interface and can land on its own; P1 only adds interfaces, the existing field sugar stays; the generator is evaluated only when a second shader language appears.
 
-## 10. 参考
+## 10. References
 
-- `shaders/vine_params.glsl` —— 参数块的唯一 GLSL 声明（material / draw / lights，按守卫选块）。
-- `cmake/VineEmbedShaders.cmake` —— 构建期展开与嵌入；`cmake/VineShaders.cmake` 的 `INCLUDES` 声明依赖。
-- `ShaderAbi.hpp` —— 四个零依赖 L1 块的 C++ 布局与 `static_assert`（叶子：只依赖 std）。
-- `LightAbi.hpp` —— 灯块的容量、形状与唯一打包规则（`packLightBlock` / `packedSlotOf`）。
-- `MaterialAbi.hpp` —— `packMaterialBlock`：材质值 → `VineMaterialBlock`（槽位掩码是调用方的声明）。
-- `DrawAbi.hpp` —— `packDrawBlock`：模型矩阵 / 不透明度 / 点大小 → `VineDrawBlock`（列主序、保留槽恒 0）。
-- 三个填充面为什么不放在 `ShaderAbi.hpp`：见 §3.3 与 §5.1 C7。
-- `../decisions/ADR-2026-10-24-shader-parameter-abi.md` —— 为什么手写、为什么不反射、为什么暂不生成。
-- glslang `-V` 的 `non-opaque uniforms outside a block` 实测（P1）。
+- `shaders/vine_params.glsl` — the only GLSL declaration of the parameter blocks (material / draw / lights, selected by guards).
+- `cmake/VineEmbedShaders.cmake` — build-time expansion and embedding; `cmake/VineShaders.cmake`'s `INCLUDES` declares the dependency.
+- `ShaderAbi.hpp` — the C++ layout and `static_assert`s of the four dependency-free L1 blocks (a leaf: std only).
+- `LightAbi.hpp` — the light block's capacity, shape and only packing rule (`packLightBlock` / `packedSlotOf`).
+- `MaterialAbi.hpp` — `packMaterialBlock`: material values → `VineMaterialBlock` (the slot mask is the caller's declaration).
+- `DrawAbi.hpp` — `packDrawBlock`: model matrix / opacity / point size → `VineDrawBlock` (column-major, reserved slots always 0).
+- Why the three fill faces are not in `ShaderAbi.hpp`: see §3.3 and §5.1 C7.
+- `../decisions/ADR-2026-10-24-shader-parameter-abi.md` — why hand-written, why no reflection, why no generator yet.
+- glslang `-V`'s `non-opaque uniforms outside a block` as measured (P1).

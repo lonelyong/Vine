@@ -1,301 +1,300 @@
-# graphics 材质：一个 PBR 模型、纹理集、实例
+# graphics material: one PBR model, a texture set, instances
 
-> **状态**：现行（M1–M3 已落地，M4 未做，见 §9.1/§9.2）
-> **最后核对**：2026-10-24
-> **范围**：材质的数据模型、纹理集与采样、实例覆盖、上传去重、forward 与 deferred 的一致性；
-> 不含材质 DSL、运行时名字反射、bindless 与 IBL。
-> **权威来源**：`Material.hpp` / `ShaderAbi.hpp` / `shaders/vine_params.glsl`（材质块），`vine_material.glsl`
-> （槽 → 表面）、`vine_brdf.glsl`（BSDF）、`vine_gbuffer.glsl`（G-buffer 打包）；实例类型随 M4 落地。
-> **待办**：`../backlog/graphics.md`（M4）
+> **Status**: current (M1–M3 landed, M4 not done, see §9.1/§9.2)
+> **Last verified**: 2026-10-24
+> **Scope**: the material data model, the texture set and sampling, instance overrides, upload dedup, forward/deferred consistency;
+> not the material DSL, runtime name reflection, bindless or IBL.
+> **Sources**: `Material.hpp` / `ShaderAbi.hpp` / `shaders/vine_params.glsl` (the material block), `vine_material.glsl`
+> (slot → surface), `vine_brdf.glsl` (BSDF), `vine_gbuffer.glsl` (G-buffer packing); the instance types land with M4.
+> **Backlog**: `../backlog/graphics.md` (M4)
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-- 本设计之前 `vn::graphics::Material` 是“平铺 Phong + 一张贴图”：ambient / diffuse / specular / shininess，
-  材质 alpha 只运输不被读；导入的 PBR 资源在 `materialFrom` 里被近似成 Phong。
-- 没有实例：逐对象高亮 / tint 只能把整个材质换掉（`ModelRenderView::selectAt` 克隆一份），
-  共享材质上的改动会同时改掉所有使用者。
-- backlog T16 的两个触发条件都已出现：真实 PBR 需求（导入资源带 metallic/roughness），
-  逐对象参数出现第二个调用点（model_viewer 的高亮、test_plugin 的动画色）。
+- Before this design `vn::graphics::Material` was "flat Phong + one texture": ambient / diffuse / specular / shininess,
+  material alpha was only carried and never read; imported PBR assets were approximated as Phong in `materialFrom`.
+- No instances: per-object highlighting / tint could only replace the whole material (`ModelRenderView::selectAt` clones one),
+  and a change on a shared material changed every user at once.
+- Both of backlog T16's triggers have appeared: a real PBR need (imported assets carrying metallic/roughness),
+  and a second call site for per-object parameters (model_viewer's highlight, test_plugin's animated colour).
 
-### 1.2 目标
+### 1.2 Goals
 
-- 一个着色模型：metallic-roughness PBR；Phong 只存在于导入边界。
-- 资产 / 实例两级：纹理与因子只有一份，实例只覆盖它改的那几项。
-- 纹理集：五个语义槽，每槽带采样状态与色彩空间契约。
-- forward 与 deferred 读同一份材质字节、跑同一份 BRDF。
-- 透明度只有一个模型：模式在材质、幅度在 drawable，排序与着色读同一对输入。
+- One shading model: metallic-roughness PBR; Phong exists only at the import boundary.
+- Two levels, asset / instance: textures and factors exist once, an instance overrides only the items it changes.
+- A texture set: five semantic slots, each with sampling state and a colour-space contract.
+- forward and deferred read the same material bytes and run the same BRDF.
+- Transparency has one model: the mode on the material, the magnitude on the drawable; sorting and shading read the same pair of inputs.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做材质 DSL、运行时名字反射（`graphics-shader-params.md` 的 S2/S3 仍是独立触发项）。
-- 不做 bindless / 纹理数组 / 描述符索引。
-- 不做逐材质 program：程序解析仍是“图元 > 几何默认 > 最近 StateNode > pass”。
-- 不做第二套 UV，不做切线顶点通道（法线贴图用屏幕空间导数建切线基）。
-- 不做 IBL / 环境探针：输出仍是解析光 + ambient。
+- No material DSL, no runtime name reflection (`graphics-shader-params.md`'s S2/S3 stay separate triggers).
+- No bindless / texture arrays / descriptor indexing.
+- No per-material program: program resolution stays "primitive > geometry default > nearest StateNode > pass".
+- No second UV set, no tangent vertex channel (normal mapping builds the tangent basis from screen-space derivatives).
+- No IBL / environment probes: the output is still analytic lights + ambient.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-> 材质是一份 PBR 因子 + 一个纹理集；实例是它上面的稀疏覆盖；两条路径读同一份字节、跑同一份 BRDF。
+> A material is a set of PBR factors + a texture set; an instance is a sparse override on top of it; both paths read the same bytes and run the same BRDF.
 
-## 2. 设计要点
+## 2. Design Points
 
-2.1 **一个着色模型**（`G1` `G6`）：metallic-roughness（glTF 2.0 核心词汇：base color / metallic / roughness /
-emissive / occlusion / normal）。Phong 不再是引擎模型；`vn::geom::spatial::PhongMaterial` 在导入边界按固定表转成
-PBR，引擎内部只有一个语义。两条路径、导入器与测试只需对齐一套定义，代价是旧 setter 消失（见 §9.3）。
+2.1 **One shading model** (`G1` `G6`): metallic-roughness (glTF 2.0's core vocabulary: base color / metallic / roughness /
+emissive / occlusion / normal). Phong is no longer the engine model; `vn::geom::spatial::PhongMaterial` is converted to
+PBR at the import boundary by a fixed table, and the engine has one semantics inside. Both paths, the importers and the tests only need to agree on one definition; the price is that the old setters disappear (see §9.3).
 
-2.2 **资产与实例是两种类型**（`G1` `G4`）：`Material` 是资产——可共享、可编辑，改动传播给所有未覆盖它的
-实例；`MaterialInstance` 引用一个资产并只覆盖自己改的项。二者共同基类 `MaterialBase`，
-`RenderCommand` / `Geometry` / `Primitive` / `StateNode` 持有 `MaterialBasePtr`，所以“一次 draw 能被什么
-着色”只有一个类型。否决“单类 + 可选父”（D2）：那让“改资产会/不会影响谁”成为运行期数据而不是类型。
+2.2 **Asset and instance are two types** (`G1` `G4`): `Material` is the asset — shareable, editable, a change propagates to every instance
+that does not override it; `MaterialInstance` references an asset and overrides only the items it changes. They share the base class `MaterialBase`,
+and `RenderCommand` / `Geometry` / `Primitive` / `StateNode` hold a `MaterialBasePtr`, so "what can shade one draw" is one type. "One class + an optional parent" (D2) is rejected: it makes "does changing the asset affect whom" runtime data instead of a type.
 
-2.3 **覆盖是稀疏且显式的**（`G4` `G8`）：实例的每一项是 optional，`clearOverride(x)` 恢复继承；解析结果
-缓存在实例里，键是（父 revision，自身 revision）。一次解析、多次读取，未覆盖的项不复制存储。
+2.3 **Overrides are sparse and explicit** (`G4` `G8`): every item of an instance is optional, `clearOverride(x)` restores inheritance; the resolution result
+is cached in the instance, keyed by (parent revision, own revision). Resolve once, read many times, an overridden item is not copied.
 
-2.4 **纹理集是五个语义槽**（`G1` `G9`）：base_color / metallic_roughness / normal / occlusion / emissive，
-每槽 =（`Texture` + `Sampler` + 是否存在）。槽的身份决定绑定与色彩空间，不允许宿主自定义名字。只有
-base_color 允许 Cube（沿用“采样器种类跟几何 texcoord 宽度”的规则）；其余四槽只收 D2。UV 集固定为 0，
-第二个 UV 是几何格式变更，不是材质变更。
+2.4 **The texture set is five semantic slots** (`G1` `G9`): base_color / metallic_roughness / normal / occlusion / emissive,
+each slot = (`Texture` + `Sampler` + present or not). The slot's identity decides binding and colour space; the host may not invent names. Only
+base_color may be Cube (following "the sampler kind follows the geometry texcoord width"); the other four take D2 only. The UV set is fixed at 0,
+a second UV is a geometry-format change, not a material change.
 
-2.5 **变体是“有没有纹理集”，不是“有哪几个槽”**（`G10`）：`VN_TEXTURED` 一个布尔位。有任意一槽时程序
-声明全部五个采样器，**槽是否存在由块里的 flags 逐槽短路**：缺的槽不采样，按槽给常量（base / MR / AO 乘 1、
-normal 平直、emissive 黑）。绑定的 stand-in 只为“描述符合法 + 种类正确”存在，它的**值**不参与画面。逐槽位会得到
-2^5 组合 × 两条路径 × 阴影变体，撑爆管线缓存与 `vn_shader_check.sh` 的组合门禁；二元位保住“无纹理内容零采样器”。
+2.5 **The variant is "is there a texture set", not "which slots are there"** (`G10`): one boolean bit `VN_TEXTURED`. With any slot present the program
+declares all five samplers, **whether a slot exists is short-circuited per slot by the flags in the block**: a missing slot is not sampled, a constant is used per slot (base / MR / AO multiply 1,
+normal flat, emissive black). The bound stand-in exists only for "the descriptor is legal + the kind is right"; its **value** takes no part in the picture. A per-slot bit would give
+2^5 combinations × two paths × shadow variants, blowing up the pipeline cache and `vn_shader_check.sh`'s combination gate; the binary bit keeps "textureless content has zero samplers".
 
-2.6 **一个 BRDF，两条路径**（`G1` `G5`）：`shaders/vine_brdf.glsl` 是 GGX / Smith / Schlick 的唯一实现：
-forward 直接调用；deferred 先把 G-buffer 还原成同样的输入再调用。`vnEvaluateLight` 继续是灯的唯一实现。
-槽到表面输入的翻译（通道打包、缺槽常量、法线切线基）同属一个契约，它的一个家是 `vine_material.glsl`，
-两个写表面的 stage（forward / G-buffer）都 include 它。
+2.6 **One BRDF, two paths** (`G1` `G5`): `shaders/vine_brdf.glsl` is the only implementation of GGX / Smith / Schlick:
+forward calls it directly; deferred first reconstructs the same inputs from the G-buffer and then calls it. `vnEvaluateLight` stays the only light implementation.
+The translation from slots to surface inputs (channel packing, missing-slot constants, normal tangent basis) is one contract too, its one home is `vine_material.glsl`,
+and both surface-writing stages (forward / G-buffer) include it.
 
-2.7 **透明度：模式在材质，幅度在 drawable**（`G1` `G4`）：`AlphaMode::Opaque | Mask | Blend`；有效 alpha =
-`vn_draw.params.x`（drawable opacity）× `vn_material.base_color.a` × 可选 base 贴图 alpha。
-`RenderCommand::isTransparent()` 改为“opacity < 1 **或** 材质是 Blend”；Mask 在着色阶段按 cutoff discard，
-不参与排序，留在不透明 pass。这取代旧的“材质不贡献 alpha”规则，让排序与着色读同一对输入（见 N5）。
-Blend 内容走 forward overlay，deferred 的 G-buffer 只收不透明与 Mask。
+2.7 **Transparency: the mode on the material, the magnitude on the drawable** (`G1` `G4`): `AlphaMode::Opaque | Mask | Blend`; effective alpha =
+`vn_draw.params.x` (drawable opacity) × `vn_material.base_color.a` × the optional base texture alpha.
+`RenderCommand::isTransparent()` becomes "opacity < 1 **or** the material is Blend"; Mask discards by cutoff in the shading stage,
+takes no part in sorting and stays in the opaque pass. This replaces the old "materials contribute no alpha" rule, so sorting and shading read the same pair of inputs (see N5).
+Blend content goes through the forward overlay; the deferred G-buffer takes opaque and Mask only.
 
-2.8 **G-buffer 是材质的投影**（`G10`）：四张附件恰好装下逐像素量——A0 base colour.rgb（a 写 1）、
-A1 八面体 normal.rg + roughness + metallic、A2 emissive.rgb + occlusion、A3 view position.xyz + 写入掩码。
-八面体把 3 分量法线压进 2 个通道，空出的两格正好装两个因子；f0 **不存**，两条路径都从 base 与 metallic 推。
-打包契约的唯一一家是 `shaders/vine_gbuffer.glsl`（写侧 encode、读侧 decode 在同一文件）。A2 是 RGBA16F，
-因为 emissive 是 HDR。ambient 只被 occlusion 缩放（直接光不受），emissive 在灯和之后加一次、不受阴影。
+2.8 **The G-buffer is a projection of the material** (`G10`): the four attachments hold exactly the per-pixel quantities — A0 base colour.rgb (a writes 1),
+A1 octahedral normal.rg + roughness + metallic, A2 emissive.rgb + occlusion, A3 view position.xyz + write mask.
+Octahedral encoding squeezes a 3-component normal into 2 channels, and the two freed slots hold exactly the two factors; f0 is **not stored**, both paths derive it from base and metallic.
+The single home of the packing contract is `shaders/vine_gbuffer.glsl` (the write side encodes and the read side decodes in the same file). A2 is RGBA16F,
+because emissive is HDR. Ambient is scaled only by occlusion (direct light is not), emissive is added once after the lights and is not shadowed.
 
-2.9 **色彩空间在槽上**（`G4`）：base_color / emissive 必须是 sRGB 格式（硬件解码），
-metallic_roughness / normal / occlusion 必须是线性格式；槽与格式不符按 episode 报一次，不做隐式 gamma。
-沿用 `Colorf` 线性光的全局约定。
+2.9 **Colour space on the slot** (`G4`): base_color / emissive must be sRGB formats (hardware decode),
+metallic_roughness / normal / occlusion must be linear formats; a slot with the wrong format is reported once per episode, no implicit gamma.
+This follows `Colorf`'s global linear-light convention.
 
-2.10 **材质不带程序**（`G5`）：程序解析保持现状；材质只给参数与纹理集。用户程序读同一份
-`VineMaterialBlock`，不引入第二套材质接口。
+2.10 **A material carries no program** (`G5`): program resolution stays as it is; a material only provides parameters and a texture set. A user program reads the same
+`VineMaterialBlock`, no second material interface is introduced.
 
-2.11 **上传按身份 + 复合 revision**（`G10`）：材质 arena 仍按对象地址 + revision 去重（`block_bytes` 仍是
-64 B，见 F4）；实例的 revision = 父 revision 与自身 revision 的组合，父资产改动自动让所有实例重写一次。
-实例不复制纹理，也不复制块以外的字节。
+2.11 **Upload by identity + composite revision** (`G10`): the material arena still deduplicates by object address + revision (`block_bytes` is still
+64 B, see F4); an instance's revision = the parent revision combined with its own revision, so a parent asset change automatically rewrites every instance once.
+An instance copies neither textures nor bytes beyond the block.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | `Material` 资产 | PBR 因子 + 纹理集 + alpha 模式；setter 只移动 revision | 已做 |
-| F2 | `MaterialInstance` | 引用一个资产，稀疏覆盖因子 / 纹理 / alpha | 已做 |
-| F3 | 纹理集 | 五个语义槽 + 每槽 `Sampler` + kind/格式校验 | 已做（格式校验随 F11） |
-| F4 | 材质块 v2 | 仍 64 B：base_color / emissive / params / flags | 已做 |
-| F5 | forward PBR | GGX 直接光 + ambient，含 normal/ORM/emissive 槽 | 已做 |
-| F6 | deferred PBR | G-buffer 还原 + 同一 BRDF + emissive/occlusion | 已做 |
-| F7 | alpha 模式 | Opaque / Mask / Blend 的排序、discard 与输出 alpha | 已做 |
-| F8 | 导入转换 | asset `Color/Phong/Pbr` → 引擎 PBR，去掉近似 | 已做 |
-| F9 | 变体 | `VN_TEXTURED` 二元位 + 常量回退 | 已做 |
-| F10 | 上传去重 | 实例复合 revision；改资产使实例重写 | 已做 |
-| F11 | 诊断 | 缺槽 / 格式不符 / Cube 进非 base 槽 / 无效覆盖 | 已做（缺槽计数；其余逐材质一次） |
+| F1 | `Material` asset | PBR factors + texture set + alpha mode; setters only move the revision | done |
+| F2 | `MaterialInstance` | References one asset, sparsely overrides factors / textures / alpha | done |
+| F3 | Texture set | Five semantic slots + a `Sampler` per slot + kind/format validation | done (format checks with F11) |
+| F4 | Material block v2 | Still 64 B: base_color / emissive / params / flags | done |
+| F5 | forward PBR | GGX direct light + ambient, including normal/ORM/emissive slots | done |
+| F6 | deferred PBR | G-buffer reconstruction + the same BRDF + emissive/occlusion | done |
+| F7 | alpha modes | Sorting, discard and output alpha for Opaque / Mask / Blend | done |
+| F8 | import conversion | asset `Color/Phong/Pbr` → engine PBR, approximations removed | done |
+| F9 | variant | `VN_TEXTURED` binary bit + constant fallbacks | done |
+| F10 | upload dedup | composite instance revision; changing the asset rewrites instances | done |
+| F11 | diagnostics | missing slot / wrong format / Cube in a non-base slot / invalid override | done (missing-slot count; the rest once per material) |
 
-### 3.2 F1–F2 资产与实例
+### 3.2 F1–F2 asset and instance
 
-- **行为**：`Material` 的字段 = base_color（线性 RGBA）、emissive（RGB + 强度）、metallic、roughness、
-  occlusion、alpha_mode、alpha_cutoff、五个纹理槽；`MaterialInstance` = 一个 `Material` 父 + 同样字段的
-  optional 版（`MaterialItem` 一位一项，纹理槽每槽一位）。两者都通过 `MaterialBase::resolved()` 回答。
-- **约束**（C1）：实例只有一个父，父不能是实例（父的类型就是 `Material`）；`G1` 一个定义。
-- **要求**（R1）：解析结果 = 父值逐项被覆盖替换，得到一份 `MaterialParameters`；解析缓存以
-  （父 revision，自身 revision）为键，命中时只比两个数。
-- **验收**（T1）：父改基色、实例覆盖粗糙度——实例只剩两者的组合，未覆盖项跟随父。
-- **注意**（N1）：覆盖项不能持有第二份纹理引用而不进 revision；`setTexture(slot, ...)` 与
-  `clearOverride` 都动 revision。
+- **Behaviour**: `Material`'s fields = base_color (linear RGBA), emissive (RGB + intensity), metallic, roughness,
+  occlusion, alpha_mode, alpha_cutoff, five texture slots; `MaterialInstance` = one `Material` parent + optional versions of the same fields
+  (`MaterialItem` one bit per item, one bit per texture slot). Both answer through `MaterialBase::resolved()`.
+- **Constraint** (C1): an instance has one parent, and the parent cannot be an instance (the parent's type is `Material`); `G1` one definition.
+- **Requirement** (R1): the resolution result = the parent's values replaced item by item, giving one `MaterialParameters`; the resolution cache is keyed by
+  (parent revision, own revision), a hit compares two numbers only.
+- **Acceptance** (T1): the parent changes the base colour and the instance overrides roughness — the instance is the combination of the two, the non-overridden items follow the parent.
+- **Caveat** (N1): an override must not hold a second texture reference without entering the revision; `setTexture(slot, ...)` and
+  `clearOverride` both move the revision.
 
-### 3.3 F3 纹理集
+### 3.3 F3 texture set
 
-- **行为**：`enum class TextureSlot`（五槽）+ `TextureSlotBinding { TexturePtr texture; Sampler sampler{}; }`；绑定固定
-  （content set 0：material 0，五槽 1–5，lights 6，shadow 7/8）；`metallic_roughness` 按 glTF 打包（G = roughness，
-  B = metallic），`occlusion` 取 R。
-- **约束**（C2）：槽的 kind 与格式按 §2.9；不合法时按 F11 报一次并**不**静默替换成回退图（回退只用于
-  “槽不存在”，不用于“槽错了”）。
-- **要求**（R2）：每个槽的 `Sampler` 进 `MaterialImages::acquire(texture, sampler, why)` 的按值缓存，相同状态共享
-  采样器对象；`Sampler` 含 NaN 会每帧 miss（材质不做数值清洗，`Sampler.hpp`）。
+- **Behaviour**: `enum class TextureSlot` (five slots) + `TextureSlotBinding { TexturePtr texture; Sampler sampler{}; }`; bindings fixed
+  (content set 0: material 0, five slots 1–5, lights 6, shadow 7/8); `metallic_roughness` packed per glTF (G = roughness,
+  B = metallic), `occlusion` takes R.
+- **Constraint** (C2): a slot's kind and format follow §2.9; when illegal, report once per F11 and **do not** silently substitute a fallback image (the fallback is only for
+  "the slot is absent", never for "the slot is wrong").
+- **Requirement** (R2): each slot's `Sampler` enters `MaterialImages::acquire(texture, sampler, why)`'s by-value cache, equal state shares the
+  sampler object; a `Sampler` containing NaN misses every frame (materials do no numeric cleaning, `Sampler.hpp`).
 
-### 3.4 F4–F6 块与两条路径
+### 3.4 F4–F6 block and the two paths
 
-- **行为**：块仍是 64 B，`static_assert` 钉偏移：
+- **Behaviour**: the block is still 64 B, pinned by `static_assert` on offsets:
 
-  | 偏移 | 成员 | 内容 |
+  | Offset | Member | Contents |
   |---|---|---|
-  | 0 | `base_color` | rgb 线性 + a = 材质 alpha |
-  | 16 | `emissive` | rgb + a = 强度 |
+  | 0 | `base_color` | rgb linear + a = material alpha |
+  | 16 | `emissive` | rgb + a = intensity |
   | 32 | `params` | x metallic, y roughness, z occlusion, w alpha_cutoff |
-  | 48 | `flags` | `uvec4`：bit0–4 = 槽存在；bit8–9 = alpha 模式 |
+  | 48 | `flags` | `uvec4`: bit0–4 = slot present; bit8–9 = alpha mode |
 
-- **约束**（C3）：块由 `blockOfMaterial` 一处打包；实例在打包前解析（R1）。
-- **要求**（R3）：forward 与 deferred 对同一份块得出同一画面；BRDF 与灯求值各只有一份 GLSL。
-- **验收**（T3）：同材质、同灯、同相机下 forward 与 deferred 的同像素差 ≤ 量化误差（读回比较）。
-- **行为**（F5/F6）：漫反射项不带 1/π——灯强度是引擎自己的单位，换 BRDF 不应把现有场景整体压暗 π 倍（`G6`）。
-  roughness 是**感知值**，alpha = roughness²；法线槽在 UV 通道下用屏幕空间导数建切线基、采样后翻 green（glTF 是
-  OpenGL 朝向，本引擎 v 向下）；Cube 材质没有 UV，只采 base 槽；ambient 只被 occlusion 缩放，emissive 不受阴影。
+- **Constraint** (C3): the block is packed by `blockOfMaterial` in one place; an instance resolves before packing (R1).
+- **Requirement** (R3): forward and deferred get the same picture from the same block; there is one GLSL each for the BRDF and for light evaluation.
+- **Acceptance** (T3): with the same material, lights and camera, forward and deferred differ by ≤ quantisation error at the same pixel (read-back comparison).
+- **Behaviour** (F5/F6): the diffuse term carries no 1/π — light intensity is the engine's own unit, and swapping the BRDF should not darken existing scenes by a factor of π (`G6`).
+  roughness is a **perceptual value**, alpha = roughness²; the normal slot builds its tangent basis from screen-space derivatives in the UV channel and flips green after sampling (glTF is
+  OpenGL-oriented, this engine's v points down); a Cube material has no UV and samples the base slot only; ambient is scaled only by occlusion, emissive is not shadowed.
 
-### 3.5 F7 alpha 模式
+### 3.5 F7 alpha modes
 
-- **行为**：Opaque 忽略 alpha；Mask 在 base 采样后 `discard`；Blend 输出 a 并进透明队列。排序键
-  = opacity < 1 或模式为 Blend（§2.7）。
-- **约束**（C4）：Mask 不能进透明队列（否则排序把本该不透明的写进 overlay，失去自遮挡）。
-- **要求**（R4）：`vn_draw.params.x` 仍是唯一逐 drawable 幅度；材质不复制它。
-- **验收**（T4）：Mask 叶子在 cutoff 两侧正确 discard；Blend 叶子按 opacity × material alpha 混合。
-- **注意**（N4）：deferred 的 G-buffer 不写 Blend 内容；它只能出现在 forward overlay。
+- **Behaviour**: Opaque ignores alpha; Mask `discard`s after the base sample; Blend outputs a and enters the transparent queue. The sort key
+  = opacity < 1 or the mode is Blend (§2.7).
+- **Constraint** (C4): Mask cannot enter the transparent queue (otherwise sorting writes into the overlay what should be opaque, losing self-occlusion).
+- **Requirement** (R4): `vn_draw.params.x` is still the only per-drawable magnitude; the material does not copy it.
+- **Acceptance** (T4): a Mask leaf discards correctly on both sides of the cutoff; a Blend leaf blends by opacity × material alpha.
+- **Caveat** (N4): the deferred G-buffer does not write Blend content; it can only appear in the forward overlay.
 
-### 3.6 F8 导入转换
+### 3.6 F8 import conversion
 
-- **行为**：`ColorMaterial` → base=color、metallic 0、roughness 1；`PhongMaterial` → base=diffuse、
-  `roughness = sqrt(2 / (shininess + 2))`（Blinn-Phong 到 GGX 的标准映射）、specular 折算进 metallic；
-  `PbrMaterial` → 逐字段，不再近似。
-- **规格**：`metallic = clamp(max(specular.rgb) × clamp(specular.a, 0, 1), 0, 1)`——metallic-roughness 没有单独反射率旋钮，强或带色的 specular 正是“金属”含义（最强通道 = 反射峰值，alpha = 强度）；代价见 D7。
-- **注意**（N5）：这条映射假设 Phong 的 specular 是**作者写的**。导入器为“文件没写材质”而虚构的默认材质（assimp 的 `AI_DEFAULT_MATERIAL_NAME`，白色 specular）在加载侧就被当成“没有材质”（`meshio-brepio-design.md` F2），所以不会走到这里；否则白 specular 会折成 metallic 1，而 `builtin_forward.frag` 把环境项乘 `(1 - metallic)`，模型在无环境贴图的场景里只剩高光、看起来是黑的。
-- **约束**（C5）：转换只发生在 `ModelScene.cpp` 一处；引擎侧不出现“源是 Phong”的分支。
-- **验收**（T5）：导入一个 glTF PBR 资产，base/metallic/roughness/emissive 与源文件逐字段一致。
+- **Behaviour**: `ColorMaterial` → base=color, metallic 0, roughness 1; `PhongMaterial` → base=diffuse,
+  `roughness = sqrt(2 / (shininess + 2))` (the standard Blinn-Phong to GGX mapping), specular folded into metallic;
+  `PbrMaterial` → field by field, no approximation any more.
+- **Specification**: `metallic = clamp(max(specular.rgb) × clamp(specular.a, 0, 1), 0, 1)` — metallic-roughness has no separate reflectance knob, a strong or coloured specular is exactly what "metal" means (the strongest channel = the reflection peak, alpha = intensity); the price is in D7.
+- **Caveat** (N5): this mapping assumes Phong's specular is **authored**. The default material an importer fabricates for "the file has no material" (assimp's `AI_DEFAULT_MATERIAL_NAME`, white specular) is treated as "no material" on the loading side (`meshio-brepio-design.md` F2), so it never reaches here; otherwise white specular would fold to metallic 1, and `builtin_forward.frag` multiplies the ambient term by `(1 - metallic)`, leaving the model with specular only and looking black in a scene without an environment map.
+- **Constraint** (C5): the conversion happens in one place, `ModelScene.cpp`; the engine side has no "the source was Phong" branch.
+- **Acceptance** (T5): import a glTF PBR asset, base/metallic/roughness/emissive match the source file field by field.
 
-### 3.7 F9–F11 变体、上传与诊断
+### 3.7 F9–F11 variants, upload and diagnostics
 
-- **行为**：`ProgramVariant` 增加 `textured`（任一槽存在）；`diffuse_map` 位被 `textured` 取代。
-  实例的复合 revision 让 arena 重写；诊断走 `DiagnosticsRoute` 的 episode 规则。
-- **约束**（C6）：`vn_shader_check.sh` 的组合数 = 现有位 × 1，不随槽数增长；
-  `ProgramAbi` 扫描到的五个采样器声明随 `VN_TEXTURED` 出现。
-- **验收**（T6）：`EmbeddedShadersTest` 的变体矩阵与 `ProgramAbiTest` 的绑定计数同步更新。
+- **Behaviour**: `ProgramVariant` gains `textured` (any slot present); the `diffuse_map` bit is replaced by `textured`.
+  An instance's composite revision makes the arena rewrite; diagnostics follow `DiagnosticsRoute`'s episode rule.
+- **Constraint** (C6): `vn_shader_check.sh`'s combination count = existing bits × 1, it does not grow with the slot count;
+  the five sampler declarations `ProgramAbi` scans appear with `VN_TEXTURED`.
+- **Acceptance** (T6): `EmbeddedShadersTest`'s variant matrix and `ProgramAbiTest`'s binding counts are updated together.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `MaterialBase` / `Material` / `MaterialInstance`
 
-| 接口 | 契约 |
+| Interface | Contract |
 |---|---|
-| `Material::setBaseColor` / `setEmissive` / `setMetallic` / `setRoughness` / `setOcclusion` | 写入并移动 revision；值相等不动 |
-| `Material::setAlphaMode` / `setAlphaCutoff` | 模式与 cutoff；只影响 Mask/Blend |
-| `Material::setTexture(slot, texture, sampler)` / `clearTexture(slot)` / `texture(slot)` | 纹理集 |
-| `MaterialInstance::parent()` / `overrideMask()` / `clearOverride(item)` | 稀疏覆盖 |
-| `MaterialBase::revision()` / `name()` / `resolved()` | 资产的自身 revision；实例的复合 revision 与解析值 |
-| `MaterialBasePtr` | `RenderCommand` / `Geometry` / `Primitive` / `StateNode` 持有的统一类型 |
+| `Material::setBaseColor` / `setEmissive` / `setMetallic` / `setRoughness` / `setOcclusion` | Writes and moves the revision; equal values do not move it |
+| `Material::setAlphaMode` / `setAlphaCutoff` | Mode and cutoff; affects Mask/Blend only |
+| `Material::setTexture(slot, texture, sampler)` / `clearTexture(slot)` / `texture(slot)` | Texture set |
+| `MaterialInstance::parent()` / `overrideMask()` / `clearOverride(item)` | Sparse override |
+| `MaterialBase::revision()` / `name()` / `resolved()` | The asset's own revision; an instance's composite revision and resolved values |
+| `MaterialBasePtr` | The unified type held by `RenderCommand` / `Geometry` / `Primitive` / `StateNode` |
 
-### 4.2 着色侧
+### 4.2 Shading side
 
-| 接口 | 契约 |
+| Interface | Contract |
 |---|---|
-| `VineMaterialBlock`（64 B） | 见 F4 的偏移表；`operator==` 保持默认 |
-| `vine_material.glsl` | `VineSurface vnSampleMaterial(vn_n, vn_position, vn_uv)`：五槽 → 表面；缺槽按 flags 短路 |
-| `vine_brdf.glsl` | `vnEvaluateBRDF(vn_base_color, vn_metallic, vn_roughness, vn_n, vn_v, vn_l)`：不含 radiance 与余弦（调用方乘） |
-| `vine_gbuffer.glsl` | `vnOctahedralEncode` / `vnOctahedralDecode` 与四张附件的打包注释；`VN_TEXTURED` 声明五槽采样器 |
+| `VineMaterialBlock` (64 B) | See F4's offset table; `operator==` stays default |
+| `vine_material.glsl` | `VineSurface vnSampleMaterial(vn_n, vn_position, vn_uv)`: five slots → surface; a missing slot short-circuits by flags |
+| `vine_brdf.glsl` | `vnEvaluateBRDF(vn_base_color, vn_metallic, vn_roughness, vn_n, vn_v, vn_l)`: no radiance and no cosine (the caller multiplies) |
+| `vine_gbuffer.glsl` | `vnOctahedralEncode` / `vnOctahedralDecode` and the four attachments' packing comments; `VN_TEXTURED` declares the five slot samplers |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 |---|---|
-| C1 | 实例只有一个父且父不能是实例；解析是一份 `MaterialParameters`。 |
-| C2 | 纹理槽的 kind / 格式契约（§2.9）由材质校验，错误不回落成回退图。 |
-| C3 | 块只由 `blockOfMaterial` 打包，实例先解析。 |
-| C4 | Mask 不进透明队列；Blend 只走 forward。 |
-| C5 | 导入转换只在 `ModelScene.cpp` 一处。 |
-| C6 | 变体数量不随纹理槽数量增长。 |
+| C1 | An instance has one parent and the parent cannot be an instance; resolution is one `MaterialParameters`. |
+| C2 | The texture slot's kind / format contract (§2.9) is checked by the material, an error does not fall back to a fallback image. |
+| C3 | The block is packed only by `blockOfMaterial`, an instance resolves first. |
+| C4 | Mask does not enter the transparent queue; Blend goes through forward only. |
+| C5 | The import conversion happens in one place, `ModelScene.cpp`. |
+| C6 | The variant count does not grow with the texture-slot count. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 |---|---|
-| R1 | 实例解析缓存以（父 revision，自身 revision）为键，父改动自动失效。 |
-| R2 | 采样器按 `Sampler` 值缓存；同状态共享一个 sampler 对象。 |
-| R3 | forward 与 deferred 共用一份 BRDF 与一份灯求值。 |
-| R4 | 逐 drawable 的透明度幅度只有 `vn_draw.params.x` 一个来源；排序与混合开关读**同一个**分类结果。 |
+| R1 | The instance resolution cache is keyed by (parent revision, own revision); a parent change invalidates it automatically. |
+| R2 | Samplers are cached by `Sampler` value; equal state shares one sampler object. |
+| R3 | forward and deferred share one BRDF and one light evaluation. |
+| R4 | The per-drawable transparency magnitude has one source, `vn_draw.params.x`; sorting and the blend switch read **the same** classification result. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 注意项 |
+| # | Invariant |
 |---|---|
-| N1 | 覆盖项与纹理槽都必须进 revision，否则实例改动不上传。 |
-| N2 | `Sampler` 含 NaN 会破坏按值缓存；材质不做数值清洗。 |
-| N3 | G-buffer 的颜色附件是 HDR；8-bit 会截断 emissive。 |
-| N4 | deferred 只收 Opaque / Mask；Blend 只能出现在 forward overlay。 |
-| N5 | 材质 alpha 与 drawable opacity 的分工是“模式 / 幅度”，不要互相替代。 |
-| N6 | base_color 可以是 Cube，其余四槽只能是 D2；这是 kind 契约，不是可选项。 |
+| N1 | Override items and texture slots must enter the revision, otherwise an instance change is not uploaded. |
+| N2 | A `Sampler` containing NaN breaks the by-value cache; materials do no numeric cleaning. |
+| N3 | The G-buffer's colour attachments are HDR; 8-bit would clip emissive. |
+| N4 | deferred takes Opaque / Mask only; Blend can appear only in the forward overlay. |
+| N5 | The split between material alpha and drawable opacity is "mode / magnitude", do not substitute one for the other. |
+| N6 | base_color may be Cube, the other four slots may be D2 only; this is a kind contract, not an option. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-| # | 陷阱 | 会怎么错 | 怎么判 | 怎么防 |
+| # | Trap | How it fails | How to detect it | How to prevent it |
 |---|---|---|---|---|
-| P1 | 材质 alpha 与 drawable opacity 双写 | 宿主把材质 alpha 当不透明度，排序与着色各读一个 | forward 里透、deferred 里不透，或透明队列里出现 alpha = 1 的对象 | §2.7 的公式是唯一入口，`isTransparent()` 同时读两个输入 |
-| P3 | 实例 revision 不跟随父 | 改资产后实例仍画旧值，且没有日志 | `resolved()` 的缓存键漏掉父 revision | R1；测试钉住“父改 → 实例重写一次” |
-| P4 | 法线贴图没有切线 | 切线基错，法线贴图方向整体旋转，光照看起来“歪” | 平面法线贴图应当不改变外观；改变即基错 | 屏幕空间导数构基（位置与 UV 的 dFdx/dFdy），GLSL 一处实现 |
+| P1 | Material alpha and drawable opacity written twice | The host treats material alpha as opacity, sorting and shading each read one | Transparent in forward, opaque in deferred, or an object with alpha = 1 in the transparent queue | §2.7's formula is the only entry, `isTransparent()` reads both inputs |
+| P3 | Instance revision not following the parent | After an asset change the instance still draws the old values, with no log | `resolved()`'s cache key misses the parent revision | R1; a test pins "parent changes → instance rewrites once" |
+| P4 | Normal map without a tangent | The tangent basis is wrong, the normal map's direction rotates as a whole and the lighting looks "off" | A flat normal map should not change the appearance; a change means a wrong basis | Build the basis from screen-space derivatives (dFdx/dFdy of position and UV), one GLSL implementation |
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 否决 | 理由 |
+| # | Rejected | Reason |
 |---|---|---|
-| D1 | 保留 Phong、只加实例 | 真实 PBR 需求已经出现，Phong 无法表达 metallic/roughness；见 [ADR](../decisions/ADR-2026-10-24-material-model.md)。 |
-| D2 | 单类 + 可选父节点（不做 `MaterialInstance` 类型） | 覆盖语义成为运行期数据，宿主无法回答“我改了哪几项”；`G1` `G4`。 |
-| D3 | 逐槽变体位 | 2^5 组合 × 路径 × 阴影；`G10`。 |
-| D4 | 只用 draw block 的用户槽做 tint，不做实例 | 没有纹理/alpha 覆盖能力，第二个调用点之后仍会克隆材质；`G8` 反向证据。 |
-| D5 | bindless / 纹理数组 / 描述符索引 | 今天没有消费者；`G8`。 |
-| D6 | 名字表作为材质核心（`set("BaseColor", ...)`） | 运行期查找、无类型安全；S2/S3 保持独立；`G4` `G8`。 || D7 | 把 Phong 的 specular 当 F0 保留（Blender / Godot 的做法） | 需要给材质与块再加一个反射率输入，而引擎今天只有一条反射路径；折进 metallic 的代价（典型 `Ks 0.5` 会变半金属）由 F8 的固定表承担；`G8`。 |
+| D1 | Keep Phong and only add instances | The real PBR need has appeared and Phong cannot express metallic/roughness; see [ADR](../decisions/ADR-2026-10-24-material-model.md). |
+| D2 | One class + an optional parent node (no `MaterialInstance` type) | Override semantics become runtime data and the host cannot answer "which items did I change"; `G1` `G4`. |
+| D3 | Per-slot variant bits | 2^5 combinations × paths × shadows; `G10`. |
+| D4 | Tint through the draw block's user slot only, no instances | No texture/alpha override, so after the second call site the material still gets cloned; `G8` counter-evidence. |
+| D5 | bindless / texture arrays / descriptor indexing | No consumer today; `G8`. |
+| D6 | A name table as the material core (`set("BaseColor", ...)`) | Runtime lookup, no type safety; S2/S3 stay separate; `G4` `G8`. || D7 | Keep Phong's specular as F0 (Blender / Godot's approach) | It needs one more reflectance input on the material and in the block, while the engine has one reflection path today; the cost of folding into metallic (a typical `Ks 0.5` becomes half metal) is carried by F8's fixed table; `G8`. |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 |---|---|---|
-| T1 | 实例解析：覆盖项与继承项正确组合 | `MaterialInstanceTest.*` |
-| T2 | 采样器按值共享、贴图只上传一次 | `MaterialImagesTest.SamplerByValue*` |
-| T3 | forward 与 deferred 同像素一致 | `ContentPassTest.TheMaterialShadesTheSameValueOnBothPaths` |
-| T4 | Mask discard 与 Blend 排序 | `SdkPixelTest.TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends` |
-| T5 | 导入逐字段一致 | `ModelSceneTest.PbrMaterialIsNotApproximated` |
-| T6 | 变体矩阵与绑定计数同步 | `EmbeddedShadersTest` / `ProgramAbiTest` |
-| T7 | 槽契约的判定与回话节奏 | `MaterialSlotCheckTest.*` / `ContentStoreTest.AWrongMaterialSlotIsReportedOncePerEpisode` |
+| T1 | Instance resolution: overridden and inherited items combine correctly | `MaterialInstanceTest.*` |
+| T2 | Samplers shared by value, a texture uploaded once | `MaterialImagesTest.SamplerByValue*` |
+| T3 | forward and deferred agree at the same pixel | `ContentPassTest.TheMaterialShadesTheSameValueOnBothPaths` |
+| T4 | Mask discard and Blend sorting | `SdkPixelTest.TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends` |
+| T5 | Import matches field by field | `ModelSceneTest.PbrMaterialIsNotApproximated` |
+| T6 | Variant matrix and binding counts in step | `EmbeddedShadersTest` / `ProgramAbiTest` |
+| T7 | The slot contract's decisions and reporting rhythm | `MaterialSlotCheckTest.*` / `ContentStoreTest.AWrongMaterialSlotIsReportedOncePerEpisode` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-**M1–M4 已全部落地**（2026-10-24，M4 = 实例 + alpha 模式），只剩 F11 的逐材质诊断：`Material` /`MaterialInstance`
-共享 `MaterialBase` 与 `MaterialParameters`，持有处一律 `MaterialBasePtr`；块与内容集绑定自 M1–M3 未变（material 0 /
-槽 1–5 / lights 6 / shadow 7–8，`VN_TEXTURED` 一个位），着色是 GGX / Smith / Schlick（`vine_brdf.glsl`），
-forward 与 deferred 从各自的输入还原同一组表面再调用同一函数。alpha 三支已进着色：Opaque 忽略材质 alpha、Mask 按
-`opacity × 材质 α × 贴图 α` 裁剪后视作不透明、Blend 用该乘积作输出 alpha，排序与混合开关读同一个分类结果。
+**M1–M4 have all landed** (2026-10-24, M4 = instances + alpha modes), only F11's per-material diagnostics are left: `Material` /`MaterialInstance`
+share `MaterialBase` and `MaterialParameters`, every holder uses `MaterialBasePtr`; the block and the content-set bindings are unchanged since M1–M3 (material 0 /
+slots 1–5 / lights 6 / shadow 7–8, `VN_TEXTURED` one bit), shading is GGX / Smith / Schlick (`vine_brdf.glsl`),
+forward and deferred reconstruct the same set of surfaces from their own inputs and then call the same function. All three alpha branches are in the shading: Opaque ignores material alpha, Mask clips by
+`opacity × material α × texture α` and is then treated as opaque, Blend uses that product as output alpha, and sorting and the blend switch read the same classification result.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-- 落地分四步：M1–M4 已全部落地（F1/F3–F10）；F11 的逐材质诊断也已接上（判定在 `MaterialSlotCheck`，
-  episode 记在 `ContentStore` 的每材料一条记录里，变化后重新武装）。
-- 镜像 UV 下的导数切线基是已知近似，不是 bug；需要时再引入切线通道。
-- IBL、SSAO、透射（KHR_materials_transmission）不在本设计内。
+- The landing took four steps: M1–M4 have all landed (F1/F3–F10); F11's per-material diagnostics are wired too (the decision is in `MaterialSlotCheck`,
+  the episode is one record per material in `ContentStore`, re-armed after a change).
+- The derivative tangent basis under mirrored UVs is a known approximation, not a bug; introduce a tangent channel when needed.
+- IBL, SSAO and transmission (KHR_materials_transmission) are outside this design.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-- `setDiffuse` → `setBaseColor`，`setAmbient` / `setSpecular` / `setShininess` 删除；`setTexture(t)` → `setTexture(TextureSlot::BaseColor, t, {})`，`texture()` → `texture(slot)`。
-- `MaterialPtr` 在持有处改为 `MaterialBasePtr`（已落地：`RenderCommand` / `Geometry` / `Primitive` / `StateNode`
-  与 `effectiveMaterial`）；`vn::geometry` 侧不变。实例用 `MaterialInstance(parent)` + `setX` / `clearOverride`。
+- `setDiffuse` → `setBaseColor`, `setAmbient` / `setSpecular` / `setShininess` deleted; `setTexture(t)` → `setTexture(TextureSlot::BaseColor, t, {})`, `texture()` → `texture(slot)`.
+- `MaterialPtr` becomes `MaterialBasePtr` at every holder (already landed: `RenderCommand` / `Geometry` / `Primitive` / `StateNode`
+  and `effectiveMaterial`); the `vn::geometry` side is unchanged. An instance uses `MaterialInstance(parent)` + `setX` / `clearOverride`.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/viz/graphics/sdk/vine/graphics/MaterialBase.hpp` · `Material.hpp` · `MaterialInstance.hpp` · `ShaderAbi.hpp`
 - `shaders/vine_params.glsl` · `vine_material.glsl` · `vine_brdf.glsl` · `vine_gbuffer.glsl`
 - `shaders/builtin_forward.frag` · `builtin_gbuffer.frag` · `builtin_deferred_lighting.frag`
-- `ContentSources.cpp`（`blockOfMaterial`）· `MaterialSlotCheck.hpp`（F11 的判定）· `ProgramVariant.hpp` · `MaterialImages.hpp` · `ModelScene.cpp`（`materialFrom`）
+- `ContentSources.cpp` (`blockOfMaterial`) · `MaterialSlotCheck.hpp` (F11's decision) · `ProgramVariant.hpp` · `MaterialImages.hpp` · `ModelScene.cpp` (`materialFrom`)
 
-### 10.2 文档、ADR 与外部资料
+### 10.2 Documents, ADRs and external sources
 
 - `graphics-shader-params.md` · `graphics-rendering.md` · `graphics-scene.md` · `graphics-content-lifecycle.md`
 - [ADR-2026-10-24-material-model](../decisions/ADR-2026-10-24-material-model.md)
-- glTF 2.0 的 material（metallic-roughness、textureInfo 的 texCoord/sampler）；Filament 的材质/实例分层、采样器参数与 Cook-Torrance GGX 的 Smith/Schlick 形式。
+- glTF 2.0's material (metallic-roughness, textureInfo's texCoord/sampler); Filament's material/instance split, sampler parameters and the Smith/Schlick form of Cook-Torrance GGX.

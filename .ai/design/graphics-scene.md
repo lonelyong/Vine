@@ -1,268 +1,267 @@
-# graphics 场景图：节点、状态、收集、层、拾取
+# graphics scene graph: nodes, state, collection, layers, picking
 
-> **状态**：现行（收集与快照的关系见 `graphics-threading.md` §2.2；镜像 / delta / memo 一代已于 2026-11-12
-> 删除，本文件里涉及它们的措辞待下一次重写时对齐）
-> **最后核对**：2026-11-16
-> **范围**：严格树、状态折叠、收集 memo、层与拾取。
-> **权威来源**：`Node.hpp` / `Group.hpp` / `StateNode.hpp` / `RenderState.hpp` / `StateResolution.hpp` /
-> `Scene.hpp` / `Camera.hpp` / `RayIntersection.hpp`；派生半段在 `src/viz/graphics/src/ScenePublisher.hpp`。
-> **待办**：`../backlog/graphics.md`
+> **Status**: current (the relation between collection and snapshots is in `graphics-threading.md` §2.2; the mirror / delta / memo
+> generation was deleted on 2026-11-12, the wording about them in this file waits for the next rewrite to be aligned)
+> **Last verified**: 2026-11-16
+> **Scope**: strict tree, state folding, collection memo, layers and picking.
+> **Sources**: `Node.hpp` / `Group.hpp` / `StateNode.hpp` / `RenderState.hpp` / `StateResolution.hpp` /
+> `Scene.hpp` / `Camera.hpp` / `RayIntersection.hpp`; the derived half lives in `src/viz/graphics/src/ScenePublisher.hpp`.
+> **Backlog**: `../backlog/graphics.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-本文件定义 graphics 场景图：节点、状态、收集、层、拾取 的现行设计：先给对象与边界，再给功能、接口、约束与验收。
+This file defines the current design of the graphics scene graph: nodes, state, collection, layers and picking: first the objects and their boundaries, then features, interfaces, constraints and acceptance.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 把 §2 的设计要点落成 §3 的功能点、§4 的接口与 §8 的验收。
-- 让“现在是什么”与“为什么这么定”分开：理由在 §2/§7，历史看 git。
+- Turn §2's design points into §3's features, §4's interfaces and §8's acceptance.
+- Keep "what it is now" separate from "why it was decided that way": the reasons are in §2/§7, history is in git.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不在本文件重复头文件里的完整签名；接口只给契约与指针。
-- 不在本文件保存已关闭的历史或逐轮审查记录。
+- This file does not repeat the full signatures from the headers; an interface gives the contract and a pointer only.
+- This file keeps no closed history or per-round review records.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-> 严格树 + 最近声明获胜的折叠；收集是纯函数，memo 由根子树 epoch 驱动； 拾取是机制，选择是业务。
+> A strict tree + folding where the nearest declaration wins; collection is a pure function, the memo is driven by the root subtree epoch;  picking is a mechanism, selection is business.
 
-## 2. 设计要点
+## 2. Design Points
 
-2.1 **严格树**：`Group::addChild` 自动从旧父脱离，拒绝成环；一次遍历里一个节点只有一个世界矩阵。
-2.2 **折叠规则固定**：可见性硬门、透明度相乘、层与 drawOrder 最近声明获胜、状态按项覆盖。
-2.3 **状态只有一个解析点**：`resolveRenderState(authored, pass, data_topology)` 给出每项的来源。
-2.3.1 **深度带属于 pass，不属于节点**：声明里的 `PassDesc::depth_range` 把一条 pass 的 draw 映射进深度缓冲的一段；
-节点不能携带它，因为两棵子树映射同一个 framebuffer 会让一个像素的深度值失去唯一含义（没有 per-pixel tag
-就无法反解，拾取也没有唯一答案）。映射保序，但重映射后的深度**不再是距离**：一张 target 的写者若用不同区间，
-它的深度就不能再被当作几何距离读回。
-2.3.2 **解析出来的每一项有一个终点**：pipeline 变体（`topology`）/ 动态状态（depth、cull、blend、`polygonMode`、`lineWidth`）/ **数据块**（`pointSize` → draw 块的 `params.y`，因为点大小是顶点着色器输出而不是 API 状态）。终点决定"改它要不要重编"：三类都不重编（本引擎的 cull/polygon/线宽都是动态状态），只有 `topology` 进变体键 —— 但 `pointSize` 的终点是**数据**，所以它连动态状态都不是。这一点必须写在 `StateResolution.hpp` 的 item 注释里，否则下一项很容易被顺手塞进 `PipelineKey`。
-2.4 **收集只从发布值选择，且只有一份规则**：相机 + 场景发布（`SceneSnapshot`）+ 层掩码 → 共享不可变命令表；内容查询与帧的来源都走 `detail::selectSnapshot`，不存在第二份直接行走。memo 的键是**发布的 revision + view-projection + eye + layer_mask（必要时 + viewport）**：发布的 revision 恰好在图、盒或值变化时前进，所以“什么让列表失效”由发布本身的版本回答，而不是第二份 epoch 记账。编辑批内查询给出批开始时的图（与 `publish` 同一口径）。
-2.5 **视图上下文显式**：`View` 携带相机值（`CameraSnapshot`）、设备像素 `viewport` 与 `layer_mask`；billboard 只在这里生效。
-2.6 **拾取是机制**：射线 + 场景走查；选择/描边/框选不在框架里。
-2.7 **灯是场景的环境量**：灯挂在 `Scene` 上而不是节点上（一个场景一份光照，每个 pass 拿到同一份，所以主/离屏/阴影 pass 的灯永远一致），位置与方向都是世界坐标。节点灯（灯跟着子树动）与逐 draw 选灯是触发条件型（backlog T7 / S7），不是今天的模型。
+2.1 **Strict tree**: `Group::addChild` detaches from the old parent automatically and refuses cycles; in one traversal a node has exactly one world matrix.
+2.2 **Folding rules fixed**: visibility is a hard gate, opacity multiplies, layer and drawOrder follow nearest declaration wins, state overrides per item.
+2.3 **State has one resolution point**: `resolveRenderState(authored, pass, data_topology)` reports the origin of every item.
+2.3.1 **A depth band belongs to the pass, not to the node**: `PassDesc::depth_range` in a declaration maps one pass's draws into a segment of the depth buffer;
+a node cannot carry it, because two subtrees mapping the same framebuffer would take the unique meaning away from a pixel's depth value (without a per-pixel tag
+there is no inverse, and picking has no unique answer). The mapping is order-preserving, but a remapped depth **is no longer a distance**: if the writers of one target use different ranges,
+its depth can no longer be read back as a geometric distance.
+2.3.2 **Every resolved item has one destination**: a pipeline variant (`topology`) / dynamic state (depth, cull, blend, `polygonMode`, `lineWidth`) / a **data block** (`pointSize` → the draw block's `params.y`, because point size is a vertex-shader output rather than API state). The destination decides "does changing it need a rebuild": none of the three rebuilds (this engine's cull/polygon/line width are all dynamic state), only `topology` enters the variant key — but `pointSize`'s destination is **data**, so it is not even dynamic state. This must be written in `StateResolution.hpp`'s item comment, otherwise the next item is easily slipped into `PipelineKey` by accident.
+2.4 **Collection selects only from published values, and there is one rule set**: camera + scene publication (`SceneSnapshot`) + layer mask → a shared immutable command table; the content query and the frame's source both go through `detail::selectSnapshot`, there is no second direct walk. The memo key is **published revision + view-projection + eye + layer_mask (+ viewport when needed)**: the published revision advances exactly when the picture, a box or a value changes, so "what invalidates the list" is answered by the publication's own version rather than a second epoch bookkeeping. A query inside an edit batch gives the picture at batch start (the same account as `publish`).
+2.5 **The view context is explicit**: `View` carries the camera values (`CameraSnapshot`), the device-pixel `viewport` and the `layer_mask`; billboarding takes effect only here.
+2.6 **Picking is a mechanism**: a ray + a scene walk; selection/outline/box selection are not in the framework.
+2.7 **Lights are the scene's ambient quantity**: lights hang off `Scene`, not off nodes (one scene, one lighting; every pass gets the same one, so the main/offscreen/shadow passes always agree), positions and directions are world coordinates. Node lights (a light moving with a subtree) and per-draw light selection are trigger-gated (backlog T7 / S7), not today's model.
 
-**场景不设灯数上限**：`addLight` / `setLighting` 有多少收多少，因为容量是光照程序的属性而不是内容的语义 —— 同一个 Scene 今天被 forward 与 deferred 两条路径画，将来可能被容量不同的宿主程序画。上限在 `kMaxLights`（`ShaderAbi.hpp`），超出的灯在打包时不被表示，按 episode 报一次 `ChannelIgnored` 警告（见 `graphics-shader-params.md` §2.2）。要限制灯数的是选灯策略（backlog S7），不是 `Scene` 的一道上限。
-2.8 **根必须是根**：场景从一个无父节点进入。`setRoot` 先把已在别的 Group 下的节点摘下来（与 `Group::addChild` 自动脱离旧父同一条规则）；根在之后被别的树收养，就不再是这个场景的根——收集与包围盒一律为空，且检查在 memo 查询之前，所以不会返回移动前的列表。两个场景可以共用同一棵仍是根的子树（各自的场景级状态、memo 独立），接缝只在“它还是不是根”。
+**The scene has no light-count limit**: `addLight` / `setLighting` take as many as they are given, because capacity is a property of the lighting program, not content semantics — the same Scene is drawn today by the forward and the deferred path, and may later be drawn by host programs with different capacities. The limit is `kMaxLights` (`ShaderAbi.hpp`); excess lights are not represented when packing and one `ChannelIgnored` warning per episode is reported (see `graphics-shader-params.md` §2.2). What should limit the light count is the light-selection policy (backlog S7), not a `Scene` cap.
+2.8 **The root must be a root**: a scene is entered from a parentless node. `setRoot` first detaches a node that is already under another Group (the same rule as `Group::addChild`'s automatic detach from the old parent); if the root is adopted by another tree afterwards, it is no longer this scene's root — collection and the bounding box are empty, and the check runs before the memo query, so a list from before the move is never returned. Two scenes may share the same still-root subtree (each keeps its own scene-level state and memo), the seam is only "is it still a root".
 
-2.9 **透明顺序是对象级近似**：同一 `drawOrder` 内不透明前→后、透明后→前；顺序键是一个**文档化的全序值**
-（`detail::SortKey`：drawOrder → 层（最小层号）→ 不透明/透明 → 量化相机空间深度 → 行/图元索引），代表点是
-**世界盒中心**（无盒时退回命令自己的矩阵原点），深度是**相机空间深度**的量化值而不是欧氏距离。它保证“看着分得开的两
-个物体”顺序正确，不保证自相交、非凸、同中心多层的顺序。需要更强顺序的内容走 `Node::setDrawOrder`（已支持）、拆分几何，
-或另开一个排序独立透明的 pass（触发条件见 backlog）。口径与修复记录见 `../bugs/graphics-transparent-sort-uses-origin.md`。
+2.9 **Transparent order is an object-level approximation**: within one `drawOrder` opaque goes front→back and transparent back→front; the order key is a **documented total-order value**
+(`detail::SortKey`: drawOrder → layer (smallest layer index) → opaque/transparent → quantised camera-space depth → row/primitive index), the representative point is
+**the world box centre** (without a box it falls back to the command's own matrix origin), and depth is a quantised **camera-space depth** rather than a Euclidean distance. It guarantees the order of "two objects that look separated", it does not guarantee self-intersection, non-convex shapes or several layers at one centre. Content that needs a stronger order goes through `Node::setDrawOrder` (already supported), split geometry,
+or a separate pass with an independently sorted transparent pass (trigger in the backlog). The account and the fix record are in `../bugs/graphics-transparent-sort-uses-origin.md`.
 
-2.10 **节点类型分派走元类型**：场景走查对 `Node` 派生类型的判断用 `obj_cast<T>`（`vine/Object.hpp` 的元类型父链 + `static_cast`），
-不用 `dynamic_cast`。为什么：每节点有若干次判断，实测 `obj_cast` 在命中 / 未命中都约为 `dynamic_cast` 的 2–2.6 倍（Debug / MSVC，
-20k 节点）；它也统一了项目已有的写法（`PassChain` / vsg 后端）。边界：这是**契约**——`T` 必须有正确的 `VN_OBJECT_META_DECL/IMPL`，
-且 meta 父链必须与 C++ 继承一致；错链会让 `static_cast` 静默落到错误地址。不是 `Object` 派生的类型（`CameraManipulator`、第三方 vsg 类型）
-继续用 `dynamic_cast`。满足 `G6` / `G10`，代价是元类型链必须维护正确。
+2.10 **Node type dispatch goes through the metatype**: the scene walk decides `Node` derived types with `obj_cast<T>` (`vine/Object.hpp`'s metatype parent chain + `static_cast`),
+not `dynamic_cast`. Why: there are several checks per node, and measured `obj_cast` is about 2–2.6× `dynamic_cast` on both hit and miss (Debug / MSVC,
+20k nodes); it also unifies the spelling the project already uses (`PassChain` / the vsg backend). Boundary: this is a **contract** — `T` must carry a correct `VN_OBJECT_META_DECL/IMPL`,
+and the meta parent chain must match C++ inheritance; a wrong chain makes `static_cast` land silently at the wrong address. Types not derived from `Object` (`CameraManipulator`, third-party vsg types)
+keep using `dynamic_cast`. It satisfies `G6` / `G10`, the price is that the metatype chain must be kept correct.
 
-2.11 **派生状态单独一个对象**：`Scene` 只持有作者树、灯与查询；烘焙行（`SceneBake`）、per-view memo、编辑批
-深度与发布值住在 `detail::ScenePublisher`（`src/viz/graphics/src/ScenePublisher.hpp`），`Scene` 的 `collectRenderCommands` /
-`publish` / `beginEdit` / `endEdit` / `setContentFrame` / `invalidateContent` 与三个计数全部委托。为什么：三者住在一个类里时，
-改缓存或改发布都要动作者的类（`G1` / `G5`），作者 API 也要背它们不拥有的寿命规则；拆开后依赖只有 Scene → publisher 一条
-（publisher 读作者的树，反向不成立）。边界：`Scene` **不是**帧的来源（W9a 删掉了它的 `DrawListSource` 继承）——
-一帧画的是发布（`SnapshotSource`），`Scene::collectRenderCommands` 答的是“当前发布对这张视图画什么”（与帧的来源同一条
-`selectSnapshot` 规则，只是在自己线程上读）；公开 API 与测试语义不变；
-`detail::SceneRows::snapshot` 仍是模块唯一的一行门，背后转给 publisher。
+2.11 **Derived state gets its own object**: `Scene` holds only the author tree, lights and queries; the baked rows (`SceneBake`), the per-view memo, the edit batch
+depth and the published values live in `detail::ScenePublisher` (`src/viz/graphics/src/ScenePublisher.hpp`), and `Scene`'s `collectRenderCommands` /
+`publish` / `beginEdit` / `endEdit` / `setContentFrame` / `invalidateContent` and three counters all delegate. Why: with the three in one class,
+changing the cache or the publication meant touching the author's class (`G1` / `G5`), and the author API had to carry lifetime rules it did not own; split apart, the dependency is only Scene → publisher
+(the publisher reads the author's tree, the reverse does not hold). Boundary: `Scene` is **not** the frame's source (W9a deleted its `DrawListSource` base) —
+a frame draws a publication (`SnapshotSource`), `Scene::collectRenderCommands` answers "what does the current publication draw for this view" (the same
+`selectSnapshot` rule as the frame's source, only read on its own thread); the public API and test semantics are unchanged;
+`detail::SceneRows::snapshot` is still the module's one-line gate, forwarding to the publisher.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 节点与树
+### 3.1 Nodes and tree
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F1 | `Node` | 名字、可见性、透明度、层、drawOrder、父链、世界矩阵、包围盒。 |
-| F2 | `Group` | 子节点容器；`addChild` / `removeChild` / `children()`。 |
-| F3 | 变换节点 | `MatrixTransform`、`PositionAttitudeTransform`（TRS + pivot）、`AutoTransform`（billboard）。 |
-| F4 | `StateNode` | 子树渲染状态（depth / cull / blend / polygon / polygonOffset / pointSize / lineWidth）；可嵌套、深层覆盖。 |
-| F4a | `DepthRange` | pass 级深度带：把一条 pass 的 draw 映射进 `[min,max]`（默认整段 = 不重映射），用于语义分层；保序但不再是距离。 |
-| F5 | `Geometry` | 叶子：顶点通道 + `Primitive` 列表（见 `graphics-geometry.md`）。 |
+| F1 | `Node` | Name, visibility, opacity, layer, drawOrder, parent chain, world matrix, bounding box. |
+| F2 | `Group` | Child container; `addChild` / `removeChild` / `children()`. |
+| F3 | Transform nodes | `MatrixTransform`, `PositionAttitudeTransform` (TRS + pivot), `AutoTransform` (billboard). |
+| F4 | `StateNode` | Subtree render state (depth / cull / blend / polygon / polygonOffset / pointSize / lineWidth); nestable, deeper overrides. |
+| F4a | `DepthRange` | Pass-level depth band: maps one pass's draws into `[min,max]` (default the whole range = no remapping), for semantic layering; order-preserving but no longer a distance. |
+| F5 | `Geometry` | Leaf: vertex channels + a `Primitive` list (see `graphics-geometry.md`). |
 
-### 3.2 折叠规则
+### 3.2 Folding rules
 
-| # | 事实 | 规则 |
+| # | Fact | Rule |
 |---|---|---|
-| F6 | 可见性 | `isVisible` 是硬门：不可见子树退出收集、拾取、场景盒。 |
-| F7 | 透明度 | scene × 每个祖先 × 自身，叶子夹到 [0,1]；材质不贡献 alpha。 |
-| F8 | 层 | 最近声明获胜；`clearLayers()` 恢复继承；默认 `kDefaultLayer`。 |
-| F9 | drawOrder | 最近声明获胜；pass 内排序外键（高 = 后画）。 |
-| F10 | material / program | 图元 > 几何级默认 > 最近 `StateNode` > pass。 |
-| F11 | 状态 | 每项 optional；`StateOrigin::Content / Pass / Data` 记录来源。 |
+| F6 | Visibility | `isVisible` is a hard gate: an invisible subtree leaves collection, picking and the scene box. |
+| F7 | Opacity | scene × every ancestor × itself, clamped to [0,1] at the leaf; materials contribute no alpha. |
+| F8 | Layers | Nearest declaration wins; `clearLayers()` restores inheritance; default `kDefaultLayer`. |
+| F9 | drawOrder | Nearest declaration wins; the outer sort key within a pass (higher = drawn later). |
+| F10 | material / program | Primitive > geometry-level default > nearest `StateNode` > pass. |
+| F11 | State | Every item optional; `StateOrigin::Content / Pass / Data` records the origin. |
 
-### 3.3 收集
+### 3.3 Collection
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F12 | 命令表 | `Scene::collectRenderCommands(camera, layer_mask, viewport?)` / `(View)`。 |
-| F13 | 命令快照 | geometry、primitive、model matrix、opacity、draw_order、state、material、program、instance。 |
-| F14 | memo | 键 = 发布 revision + view-projection + eye + layer_mask（必要时 + viewport）；发布因图/盒/值变化而新建时自动失效。 |
-| F15 | 视锥剔除 | 子树盒 `subtreeBounds` 在节点自身坐标系持久缓存；移动相机不重算。 |
-| F16 | 排序 | `detail::SortKey` 全序：drawOrder → 层 → 不透明段/透明段 → 量化相机深度 → 行/图元索引；代表点是世界盒中心。分类在收集时求值、顺序冻结在表里（见 §6.3）；内容查询与帧的来源使用同一个 `selectSnapshot`。 |
-| F17 | 场景盒 | `Scene::boundingBox(mask)` 只算可见且命中层掩码的内容。 |
+| F12 | Command table | `Scene::collectRenderCommands(camera, layer_mask, viewport?)` / `(View)`. |
+| F13 | Command snapshot | geometry, primitive, model matrix, opacity, draw_order, state, material, program, instance. |
+| F14 | memo | Key = published revision + view-projection + eye + layer_mask (+ viewport when needed); invalidated automatically when a new publication is created because the picture/box/value changed. |
+| F15 | Frustum culling | The subtree box `subtreeBounds` is cached persistently in the node's own frame; moving the camera does not recompute. |
+| F16 | Sorting | `detail::SortKey` total order: drawOrder → layer → opaque/transparent segment → quantised camera depth → row/primitive index; the representative point is the world box centre. Classification is evaluated at collection and the order is frozen in the table (see §6.3); the content query and the frame's source use the same `selectSnapshot`. |
+| F17 | Scene box | `Scene::boundingBox(mask)` counts only visible content that hits the layer mask. |
 
-### 3.4 层与视图上下文
+### 3.4 Layers and view context
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F18 | L1 内容掩码 | `Node::setLayers` + `PassDesc::layer_mask`；判定在可绘制节点上。 |
-| F19 | 子树层并集 | `subtreeLayerUnion` 懒缓存；`(union & mask) == 0` 整棵跳过（缓存按进程级层 epoch 失效，见 N11）。 |
-| F20 | `View` | 相机值 / 设备像素 viewport / 层掩码；收集与描述共用同一个值。 |
-| F21 | ViewDependence | `None` / `View` / `ViewAndViewport`；只有后者把 viewport 进 memo 键。 |
-| F22 | AutoTransform | `RotateToScreen` / `RotateToCamera` / `RotateToAxis`；`setAutoScaleToScreen` 恒像素。 |
-| F23 | 保守包围盒 | AutoTransform 以 position 为球心的球盒；场景盒不随最后相机变化。 |
+| F18 | L1 content mask | `Node::setLayers` + `PassDesc::layer_mask`; decided on drawable nodes. |
+| F19 | Subtree layer union | `subtreeLayerUnion` lazily cached; `(union & mask) == 0` skips the whole subtree (the cache is invalidated by a process-level layer epoch, see N11). |
+| F20 | `View` | Camera values / device-pixel viewport / layer mask; collection and description share the same value. |
+| F21 | ViewDependence | `None` / `View` / `ViewAndViewport`; only the last puts the viewport into the memo key. |
+| F22 | AutoTransform | `RotateToScreen` / `RotateToCamera` / `RotateToAxis`; `setAutoScaleToScreen` is constant pixels. |
+| F23 | Conservative bounds | AutoTransform uses a sphere box centred on position; the scene box does not follow the last camera. |
 
-### 3.5 拾取
+### 3.5 Picking
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F24 | 射线 | `Camera::screenToWorldRay` 收归一化屏幕坐标。 |
-| F25 | 场景查询 | `RayIntersection::intersectScene` / `intersectSceneAll`。 |
-| F26 | 命中身份 | `geometry + primitiveIndex + instanceIndex`；只打三角形拓扑（list / strip / fan，`isTriangleTopology`）。 |
-| F27 | 掩码 | 与收集同一层规则；容器不因掩码被剪。 |
+| F24 | Ray | `Camera::screenToWorldRay` takes normalised screen coordinates. |
+| F25 | Scene query | `RayIntersection::intersectScene` / `intersectSceneAll`. |
+| F26 | Hit identity | `geometry + primitiveIndex + instanceIndex`; triangle topologies only (list / strip / fan, `isTriangleTopology`). |
+| F27 | Mask | The same layer rule as collection; containers are not culled by the mask. |
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `Node` / `Group`
 
-| 接口 | 作用 |
+| Interface | Purpose |
 |---|---|
-| `name()` / `setName()` | 调试与查找 |
-| `isVisible()` / `setVisible()` | 子树硬门 |
-| `opacity()` / `setOpacity()` | 子树乘法 |
-| `layers()` / `setLayers()` / `clearLayers()` | L1 内容掩码 |
-| `drawOrder()` / `setDrawOrder()` / `clearDrawOrder()` | pass 内排序 |
-| `parent()` / `worldMatrix()` / `boundingBox()` | 父链查询 |
-| `cacheStats()` | 两个缓存的只读见证（`bounds_recomputes` / `layer_union_recomputes`），按值返回；观测口，不参与任何判定 |
-| `contentEpoch()` | 子树内容公告时钟；`Scene` memo 的失效键，也是宿主自建子树缓存的失效键（契约，不是观测口） |
-| `Group::addChild()` / `removeChild()` / `children()` | 结构 |
+| `name()` / `setName()` | Debugging and lookup |
+| `isVisible()` / `setVisible()` | Subtree hard gate |
+| `opacity()` / `setOpacity()` | Subtree multiplication |
+| `layers()` / `setLayers()` / `clearLayers()` | L1 content mask |
+| `drawOrder()` / `setDrawOrder()` / `clearDrawOrder()` | Order within a pass |
+| `parent()` / `worldMatrix()` / `boundingBox()` | Parent-chain queries |
+| `cacheStats()` | Read-only witness of the two caches (`bounds_recomputes` / `layer_union_recomputes`), returned by value; an observation port, it takes part in no decision |
+| `contentEpoch()` | The subtree content announcement clock; the invalidation key of `Scene`'s memo, and the invalidation key a host-built subtree cache should use (a contract, not an observation port) |
+| `Group::addChild()` / `removeChild()` / `children()` | Structure |
 
-### 4.2 变换与状态
+### 4.2 Transforms and state
 
-| 接口 | 作用 |
+| Interface | Purpose |
 |---|---|
-| `MatrixTransform::setMatrix()` / `matrix()` | 局部矩阵 |
+| `MatrixTransform::setMatrix()` / `matrix()` | Local matrix |
 | `PositionAttitudeTransform::setPosition()` / `setAttitude()` / `setScale()` / `setPivot()` | TRS |
 | `AutoTransform::setAutoRotateMode()` / `setAutoScaleToScreen()` / `setAxis()` / `setNormal()` | billboard |
-| `StateNode::setDepth()` / `setCullMode()` / `setBlend()` / `setPolygonMode()` / `setPolygonOffset()` / `setPointSize()` / `setLineWidth()` / `clearState()` / `renderState()` | 子树状态 |
-| `StateNode::setMaterial()` / `setProgram()` | 子树 material / program |
-| `PassDesc::depth_range` / `RenderPass::depthRange()` | 整条 pass 的深度带（`DepthRange`；unset 即整段） |
-| `resolveRenderState(authored, pass, topology)` | 唯一解析点（`StateResolution.hpp`） |
+| `StateNode::setDepth()` / `setCullMode()` / `setBlend()` / `setPolygonMode()` / `setPolygonOffset()` / `setPointSize()` / `setLineWidth()` / `clearState()` / `renderState()` | Subtree state |
+| `StateNode::setMaterial()` / `setProgram()` | Subtree material / program |
+| `PassDesc::depth_range` / `RenderPass::depthRange()` | The whole pass's depth band (`DepthRange`; unset = the whole range) |
+| `resolveRenderState(authored, pass, topology)` | The only resolution point (`StateResolution.hpp`) |
 
-### 4.3 场景与收集
+### 4.3 Scene and collection
 
-| 接口 | 作用 |
+| Interface | Purpose |
 |---|---|
-| `Scene::setRoot()` / `root()` / `clear()` | 内容根（已在别处的节点先被摘下） |
-| `Scene::setVisible()` / `setOpacity()` | 场景级折叠 |
-| `Scene::addLight()` / `lights()` / `setLighting()` | 灯 |
-| `Scene::lightSet()` | 灯的一份**不可变共享值**（`LightSet`）：按每个灯的 `revision()` 缓存，描述 pass 时零拷贝（B11） |
-| `Scene::collectRenderCommands()` | 收集 |
-| `Scene::boundingBox(mask)` | 可见内容盒 |
-| `Scene::setContentFrame()` | memo 帧令牌 |
-| `Scene::findNode(name)` | 按名字查找 |
+| `Scene::setRoot()` / `root()` / `clear()` | Content root (a node that is already elsewhere is detached first) |
+| `Scene::setVisible()` / `setOpacity()` | Scene-level folding |
+| `Scene::addLight()` / `lights()` / `setLighting()` | Lights |
+| `Scene::lightSet()` | One **immutable shared value** of the lights (`LightSet`): cached by each light's `revision()`, zero copies when describing a pass (B11) |
+| `Scene::collectRenderCommands()` | Collection |
+| `Scene::boundingBox(mask)` | Visible content box |
+| `Scene::setContentFrame()` | memo frame token |
+| `Scene::findNode(name)` | Lookup by name |
 
-### 4.4 拾取
+### 4.4 Picking
 
-| 接口 | 作用 |
+| Interface | Purpose |
 |---|---|
-| `Camera::screenToWorldRay()` | 屏幕 → 世界射线 |
-| `RayIntersection::intersect()` | 单几何 |
-| `RayIntersection::intersectScene()` / `intersectSceneAll()` | 场景 |
+| `Camera::screenToWorldRay()` | Screen → world ray |
+| `RayIntersection::intersect()` | One geometry |
+| `RayIntersection::intersectScene()` / `intersectSceneAll()` | Scene |
 | `RayIntersectionResult` | hit / point / normal / distance / geometry / primitiveIndex / instanceIndex |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 |---|---|
-| C1 | 场景图是严格树；`addChild` 自动脱离旧父并拒绝成环。 |
-| C2 | 状态折叠是最近声明获胜；容器不做层掩码剪枝。 |
-| C3 | 收集是纯函数；memo 由根子树 epoch 驱动。 |
-| C4 | 灯在场景上：`Scene::lights()` 是唯一列表，没有节点灯，也没有逐 draw 的灯子集；灯值是世界坐标。 |
+| C1 | The scene graph is a strict tree; `addChild` detaches from the old parent automatically and refuses cycles. |
+| C2 | State folding is nearest declaration wins; containers do no layer-mask pruning. |
+| C3 | Collection is a pure function; the memo is driven by the root subtree epoch. |
+| C4 | Lights live on the scene: `Scene::lights()` is the only list, there are no node lights and no per-draw light subset; light values are world coordinates. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 |---|---|
-| R1 | 选择/高亮/框选是业务，不放进框架。 |
-| R2 | 拾取是机制：`Camera` 射线 + `RayIntersection`，不引入选中态。 |
-| R3 | 包围盒/世界矩阵只有单父链上的一个答案。 |
+| R1 | Selection/highlighting/box selection are business, not the framework. |
+| R2 | Picking is a mechanism: a `Camera` ray + `RayIntersection`, no selected state introduced. |
+| R3 | A bounding box / world matrix has one answer, on the single parent chain. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 注意项 |
+| # | Invariant |
 |---|---|
-| N1 | 一个节点只有一个父；需要“同一子树多个放置”时复制节点，不要放宽树（见 D1）。 |
-| N2 | `Node::worldMatrix()` 会走父链；遍历里用 top-down 累积，不要逐叶调用。 |
-| N3 | memo 的失效靠公告：编辑必须走 setter 或 `invalidateBounds()`；直接改字节只公告 buffer revision。 |
-| N4 | 编辑一个场景不应作废另一个场景的 memo（内容 epoch 是根子树级）。 |
-| N5 | 层判定在可绘制节点上；容器不因掩码被剪，否则后代的重新声明会不可达。 |
-| N6 | AutoTransform 的自动旋转在节点自身坐标系里算；父缩放进入最终大小。 |
-| N7 | 拾取只打三角形图元；线/点不是表面。 |
-| N8 | `Camera` 自带 aspect；pass 矩形与相机形状不一致会在编译期报出来。 |
-| N9 | 根必须仍是根：`setRoot` 会摘下已在别的 Group 下的节点；根被 `Group::addChild` 收养后，该场景的收集与包围盒为空，且不复用收养前的 memo。 |
-| N10 | 透明顺序是对象级近似：顺序键取**世界盒中心**的量化相机空间深度（无盒退回矩阵原点），不处理逐片元 / 自相交 / 同中心多层；依赖它之前先确认内容不重叠，否则用 `drawOrder` 或拆分几何。 |
-| N11 | 层并集缓存用**进程级** epoch（`detail::g_layer_epoch`）：任一场景的层 / 结构编辑，会让所有场景下一次走查各自重算一次层并集。层编辑是作者期操作，重算只发生在下一次走查，陈旧缓存不会被用来误剪；若多文档同时编辑时走查耗时可见，改为每根子树 epoch（先记录测量再动，`G10`）。 |
+| N1 | A node has one parent; when "one subtree placed several times" is needed, copy the nodes, do not loosen the tree (see D1). |
+| N2 | `Node::worldMatrix()` walks the parent chain; inside a traversal accumulate top-down instead of calling it per leaf. |
+| N3 | The memo is invalidated by announcement: edits must go through a setter or `invalidateBounds()`; changing bytes directly only announces a buffer revision. |
+| N4 | Editing one scene must not invalidate another scene's memo (the content epoch is root-subtree level). |
+| N5 | The layer decision is on drawable nodes; containers are not culled by the mask, otherwise a descendant's redeclaration would be unreachable. |
+| N6 | AutoTransform's auto-rotation is computed in the node's own frame; parent scaling enters the final size. |
+| N7 | Picking hits triangle primitives only; lines/points are not surfaces. |
+| N8 | `Camera` carries its own aspect; a pass rectangle inconsistent with the camera shape is reported at compile time. |
+| N9 | The root must still be a root: `setRoot` detaches a node that is already under another Group; once the root is adopted by `Group::addChild`, that scene's collection and bounding box are empty, and the memo from before the adoption is not reused. |
+| N10 | Transparent order is an object-level approximation: the order key takes the quantised camera-space depth of the **world box centre** (without a box it falls back to the matrix origin), and does not handle per-fragment / self-intersection / several layers at one centre; before relying on it confirm the content does not overlap, otherwise use `drawOrder` or split geometry. |
+| N11 | The layer-union cache uses a **process-level** epoch (`detail::g_layer_epoch`): a layer / structure edit in any scene makes every scene recompute its own layer union once at its next walk. Layer edits are authoring-time operations, the recompute happens only at the next walk, and a stale cache is never used to cull wrongly; if the walk cost becomes visible while several documents are edited at once, switch to a per-root-subtree epoch (record the measurement first, `G10`). |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 一事实一家
+### 6.1 One fact, one home
 
-- 会怎么错：同一份状态被两处保存，改一处另一处过期。
-- 怎么判：出现两份可写的值/两个可写的注册表。
-- 怎么防：回到 §5 的 N#；只留一个 owner，其余只读。
+- How it fails: the same state is kept in two places, change one and the other goes stale.
+- How to detect it: two writable values / two writable registries appear.
+- How to prevent it: go back to §5's N#; keep one owner, everything else read-only.
 
-### 6.2 后端/平台的边界
+### 6.2 Backend/platform boundary
 
-- 会怎么错：把平台差异写进引擎/应用层，换平台时到处分叉。
-- 怎么判：出现“如果 Windows/X11 就……”的分支。
-- 怎么防：平台事实留在后端，引擎只消费编译好的帧值。
+- How it fails: platform differences are written into the engine/application layer, and every platform change forks everywhere.
+- How to detect it: an "if Windows/X11 then …" branch appears.
+- How to prevent it: platform facts stay in the backend, the engine consumes only compiled frame values.
 
-### 6.3 透明分类的“顺序”冻结在命令表里
+### 6.3 Transparent classification's "order" is frozen in the command table
 
-- 会怎么错：`RenderCommand::isTransparent()` 在**收集时**参与排序（F16），而 F14 的 memo 键里没有材质 revision——材质的 setter 只推进 `Material::revision()`，没有通往场景的公告通道（N3 讲的是节点侧）。所以运行时改 `Material::setAlphaMode()`（Opaque ↔ Blend/Mask）后，被 memo 命中的那张命令表**不会重新分批**：这条命令还留在原来的批次与位置，直到下一次图编辑（改位姿、增删节点、`Scene::invalidateContent()`）。
-- 冻结的只有**顺序**。计划里的透明标志是每帧从活材质重新读出来的（`src/plugins/gfx_backend_vsg/src/internal/FrameRecorder.cpp` 的 `target.transparent = source.isTransparent()`），混合当帧就跟上；着色端的 alpha 模式随材质块 `flags`（位 8-9）在 revision 前进时重新打包。过期的是“它在不透明批还是透明批、排第几”。
-- 怎么判：改 alphaMode 后 `Scene::contentCollectCount()` 不涨（说明走的 memo 命中），而重叠物体的前后遮挡关系仍按旧分类排列——典型表现是“刚变成透明的那个被画在了不透明批的位置”（先画、后被盖），或者半透明物体压在了它后面才该盖住的东西上。
-- 怎么防：运行时切 alphaMode 之后调一次 `Scene::invalidateContent()`；或者把“先画/后画”表达在会公告的入口上（`Node::setOpacity`、`Node::setDrawOrder`、层）。只有一个 drawable 时无影响——没有别的命令可与它排错。
+- How it fails: `RenderCommand::isTransparent()` takes part in sorting **at collection time** (F16), while F14's memo key has no material revision — a material setter only bumps `Material::revision()`, there is no announcement channel to the scene (N3 is about the node side). So after changing `Material::setAlphaMode()` (Opaque ↔ Blend/Mask) at runtime, the command table a memo hit returns **is not re-batched**: the command stays in its old batch and position until the next picture edit (pose change, node add/remove, `Scene::invalidateContent()`).
+- Only the **order** is frozen. The plan's transparent flag is re-read from the live material every frame (`target.transparent = source.isTransparent()` in `src/plugins/gfx_backend_vsg/src/internal/FrameRecorder.cpp`), and blending follows on that frame; the shading side re-packs the alpha mode with the material block `flags` (bits 8-9) as the revision advances. What goes stale is "is it in the opaque batch or the transparent batch, and at which position".
+- How to detect it: after changing alphaMode, `Scene::contentCollectCount()` does not grow (which means a memo hit), while the front/back occlusion of overlapping objects still follows the old classification — the typical symptom is "the one that just became transparent is drawn at the opaque batch's position" (drawn first, covered later), or a translucent object sits on top of something it should cover.
+- How to prevent it: call `Scene::invalidateContent()` once after switching alphaMode at runtime; or express "draw first/later" through an entry that announces (`Node::setOpacity`, `Node::setDrawOrder`, layers). With a single drawable there is no effect — there is no other command to order it wrongly against.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 否决 | 理由 |
+| # | Rejected | Reason |
 |---|---|---|
-| D1 | 多父 / DAG 场景图 | `worldMatrix()` / `boundingBox()` / 拾取身份失去唯一答案；重复子树复制节点即可。详见 [ADR](../decisions/ADR-2026-10-23-no-multi-parent-dag.md)。 |
-| D2 | 选择态（选中集 / 描边 / 框选 / 多选）进框架 | 拾取是机制、选择是业务；行业里 picker 也是库。 |
-| D3 | 在框架里内置 LOD / 空间划分 | 等“每帧收集本身成为瓶颈”的真实负载；见待办。 |
-| D4 | 层掩码在容器上剪枝 | 最近声明获胜会让后代重声明变得不可达。 |
-| D5 | 把状态折叠做成每叶上行查询 | O(depth) 且分配；自顶向下 `InheritedState` 是唯一实现。 |
+| D1 | Multi-parent / DAG scene graph | `worldMatrix()` / `boundingBox()` / picking identity lose their unique answer; duplicating a subtree means copying nodes. See [ADR](../decisions/ADR-2026-10-23-no-multi-parent-dag.md). |
+| D2 | Selection state (selection set / outline / box selection / multi-select) in the framework | Picking is a mechanism, selection is business; the industry's pickers are libraries too. |
+| D3 | Built-in LOD / spatial partitioning in the framework | Wait for a real load where "collection itself per frame" is the bottleneck; see the backlog. |
+| D4 | Layer-mask pruning on containers | Nearest declaration wins would make a descendant's redeclaration unreachable. |
+| D5 | State folding as a per-leaf upward query | O(depth) and allocating; top-down `InheritedState` is the only implementation. |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 |
+| # | Criterion |
 |---|---|
-| T1 | `SceneTest` / `NodeTest` / `GroupTest` / `StateNodeTest` / `RayIntersectionTest`。 |
-| T2 | `SceneContentCacheTest`：编辑一个场景不丢另一个场景的 memo。 |
-| T3 | `SceneLayersTest` / `AutoTransformTest` / `PositionAttitudeTransformTest`。 |
-| T4 | 移动子树移入视锥不被陈旧盒藏掉；层冲突只报一次。 |
-| T5 | `SceneTest.SettingAParentedNodeAsRootDetachesIt` / `SceneTest.ARootAttachedElsewhereTakesTheSceneOutOfThePicture`。 |
-| T6 | 透明顺序：局部坐标远离原点的两个透明物体，命令顺序与其包围盒远近一致（当前缺口见 `../bugs/graphics-transparent-sort-uses-origin.md`）。 |
+| T1 | `SceneTest` / `NodeTest` / `GroupTest` / `StateNodeTest` / `RayIntersectionTest`. |
+| T2 | `SceneContentCacheTest`: editing one scene does not lose another scene's memo. |
+| T3 | `SceneLayersTest` / `AutoTransformTest` / `PositionAttitudeTransformTest`. |
+| T4 | Moving a subtree into the frustum is not hidden by a stale box; a layer conflict is reported once. |
+| T5 | `SceneTest.SettingAParentedNodeAsRootDetachesIt` / `SceneTest.ARootAttachedElsewhereTakesTheSceneOutOfThePicture`. |
+| T6 | Transparent order: two transparent objects whose local coordinates are far from the origin have a command order consistent with their bounding boxes' distance (the current gap is `../bugs/graphics-transparent-sort-uses-origin.md`). |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-现行设计；功能点与接口以上表为准。
+Current design; the feature points and interfaces are the tables above.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-见 `../backlog/graphics.md`；开放项按触发条件保留。
+See `../backlog/graphics.md`; open items stay by trigger condition.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-旧名/旧路径只在 §7 已否决选项或 git 历史里出现；新代码按 §4 的接口写。
+Old names/paths appear only in §7's rejected options or in git history; new code follows §4's interfaces.
 
-## 10. 参考
+## 10. References
 
 `graphics-architecture.md` · `graphics-geometry.md` · `graphics-rendering.md` · `../backlog/graphics.md`
