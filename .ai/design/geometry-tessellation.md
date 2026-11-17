@@ -149,9 +149,9 @@
 
 ### 9.1 当前状态
 
-- 五个解析体的三角化已落地在 `geom`，仍不依赖 OCCT，也不依赖建模模块；`brep` 的 B-rep 三角化没有变化。
+- 五个解析体的三角化在 `geom`，不依赖 OCCT，也不依赖建模模块；`brep` 的 B-rep 三角化是另一条路径。
 - 入口是五个重载（`BoxSolid<T>` … `EllipsoidSolid<T>`），返回 `Triangulation<T>`；`float` 与 `double` 都显式实例化并导出。模型侧用 `visitPrimitive()` 把具体子类交进来、用 `meshFromTriangulation()` 装配成 `TriangleMesh`（`geometry-parametric.md` 4）。
-- `graphics::geometryFromShape()` 已接上这条链（`Geometry.cpp`），中间网格由模型侧装配，渲染侧不再自己拼。
+- `graphics::geometryFromShape()` 走这条链（`Geometry.cpp`），中间网格由模型侧装配，渲染侧不自己拼。
 
 ### 9.2 已知缺口 / 待办
 

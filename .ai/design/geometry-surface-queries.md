@@ -138,7 +138,7 @@
 
 ## 9. 状态与演进
 
-- `closestPointOnSurface()` 与 `intersectRayWithSurface()` 已落地，覆盖五个解析面、两个样条面与裁剪视图（都只经接口）。
+- `closestPointOnSurface()` 与 `intersectRayWithSurface()` 覆盖五个解析面、两个样条面与裁剪视图（都只经接口）。
 - 最近点还被曲线 × 曲面用作隐式化：`intersectCurveWithSurfaceByProjection()` 把投影出的带符号距离沿曲线求根（`geometry-intersection.md` 2.9 / F9）；那个带符号距离是 `detail`，因为它的极性属于参数化。
 - 曲线侧的同一问题（点到曲线的最近点 / 距离）见 `geometry-curve-queries.md`：同一套“有限窗口 + 采样播种 + 括号安全收窄”的约束。
 - 已知缺口：点到曲线的距离、实体求交（`../backlog/geometry.md` G3）；最近点的全局性、相切命中、奇异点法向按 §6 的规则不提供（P2–P4）。

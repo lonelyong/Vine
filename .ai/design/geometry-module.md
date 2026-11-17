@@ -10,7 +10,7 @@
 
 ### 1.1 问题与背景
 
-几何层有过三种形态：两个独立目标（`vn::Geom3D` 是 SHARED、`vn::Geom2D` 是 INTERFACE）；合并成一个模块后两棵树仍各存一份 `narrowCrossing`、窗口规则与弧长实现；共享件下沉到 `geom/detail` 之后，两个契约目录还是模块目录的**兄弟**，于是 `Continuity` 要靠两句 `using` 重导出、共享件要靠 `geom::detail::` 全限定。2026-11-06 收敛成现在这一形态：一个库、模块目录拥有全部子树、一个 global。
+几何层要同时服务平面与空间两个契约，而两者共享与维度无关的实现；三种形态都不成立：两个独立目标（`vn::Geom3D` 是 SHARED、`vn::Geom2D` 是 INTERFACE）让每次共享都要靠复制，合并成一个模块后两棵树仍各存一份 `narrowCrossing`、窗口规则与弧长实现；共享件下沉到 `geom/detail` 之后，两个契约目录若是模块目录的**兄弟**，于是 `Continuity` 要靠两句 `using` 重导出、共享件要靠 `geom::detail::` 全限定。现在的形态是：一个库、模块目录拥有全部子树、一个 global。
 
 ### 1.2 目标
 

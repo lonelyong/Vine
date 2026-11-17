@@ -11,7 +11,7 @@
 
 ### 1.1 问题与背景
 
-圆柱、圆锥、圆环三个类型此前只是占位。它们的共同点不是“无界”，而是**都绕一根任意轴旋转**：落地前必须先回答两件事——放置存在哪里，“把一个首选方向投到与法向正交的平面里”这条规则放在哪里。仓库里已经有两份这条规则的拷贝（`ConicCurve::inPlaneAxis` 与 `Plane::xAxis`）。
+圆柱、圆锥、圆环三个类型的共同点不是“无界”，而是**都绕一根任意轴旋转**：设计要先回答两件事——放置存在哪里，“把一个首选方向投到与法向正交的平面里”这条规则放在哪里。曲线侧与平面侧已经各有一条这样的规则（`ConicCurve::inPlaneAxis` 与 `Plane::xAxis`）。
 
 ### 1.2 目标
 
@@ -46,7 +46,7 @@
 ### 2.3 “平面内轴”只有一份实现
 
 - `Frame.hpp` 的 `inPlaneAxis(preferred, normal)`：把首选方向投影到与法向正交的平面并归一化；投影为零时取与法向最不平行的世界轴，规则确定、不需要存状态。
-- 此前有两份拷贝（`ConicCurve::inPlaneAxis`、`Plane::xAxis`），现在圆锥曲线、平面、旋转面三处共用一份（`G1`）；`ConicCurve` 的 protected static 已删除，是源码级破坏（仓库内无调用者）。
+- 圆锥曲线、平面、旋转面三处共用这一份实现（`G1`）；`ConicCurve` 没有自己的 `inPlaneAxis`，那是一次源码级破坏（仓库内无调用者）。
 
 ### 2.4 裁剪曲面是视图
 
@@ -131,7 +131,7 @@
 
 ## 7. 已否决选项
 
-- **D1** 把框架做成继承层（`AxisSurface`，本仓库曾经如此）或塞进 `ElementarySurface` 标签：前者为一组字段和一个 `return CN` 加一层继承，后者违反 `C9`；也不让 `SphericalSurface` 迁移——球的轴只改参数化（2.2）。见 `../decisions/ADR-2026-11-04-surface-placement-value-type.md`（已取代 `ADR-2026-11-04-axis-surface-frame.md`）。
+- **D1** 把框架做成继承层（`AxisSurface`）或塞进 `ElementarySurface` 标签：前者为一组字段和一个 `return CN` 加一层继承，后者违反 `C9`；也不让 `SphericalSurface` 迁移——球的轴只改参数化（2.2）。见 `../decisions/ADR-2026-11-04-surface-placement-value-type.md`（已取代 `ADR-2026-11-04-axis-surface-frame.md`）。
 - **D2** 用 `vector<vector<Point>>` 存样条曲面的控制网：一层指针换不来表达能力，行列索引要么多一次间接、要么隐含长度约定（`G10`、`G12`）；定为行优先的扁平网（C4）。
 - **D3** 用“求值比较两条边界曲线”判 `BSplineSurface` 的闭合：夹持形式下 `v = v_min` 的边界曲线就是首行极点的曲线，而夹持基线性无关，所以齐次极点相等与曲线相等等价（2.5）；求值比较只会更慢、还会引入相等的容差问题（`G10`）。
 
@@ -146,14 +146,14 @@
 
 ## 9. 状态与演进
 
-- 三个旋转面、矩形裁剪曲面与两个样条曲面已落地；框架是值类型 `Placement`，三个曲面各持一个。
+- 三个旋转面、矩形裁剪曲面与两个样条曲面都在；框架是值类型 `Placement`，三个曲面各持一个。
 - 共享基础设施：`BSplineBasis.hpp` 现在还提供 `knotContinuity()`，重数 → `Continuity` 的阶梯只有一份，曲线与曲面都调它（C3 的延伸）。
-- 已知缺口：样条曲面求值会分配临时数组（R2，触发条件见 `../backlog/geometry.md` G10）、只支持夹持节点向量、无 `bounds()`；样条曲面自身没有待办项（G6 已关闭）。
-- 兼容性：`AxisSurface` 层已删除（曾短暂存在）；`ConicCurve::inPlaneAxis` 被删除（源码级破坏，仓库内无调用者）；`BSplineCurve` 的私有 `basisValue` / `findSpan` / 扁平索引扫描已移到 `BSplineBasis.hpp`（私有接口，不破坏）；`GeometryKindsTest.cpp` 的占位断言改成“已实现 + 不可默认构造”，并新增 `aPlacementCompletesAndNormalisesItsFrame` 与三个样条曲面用例。
+- 已知缺口：样条曲面求值会分配临时数组（R2，触发条件见 `../backlog/geometry.md` G10）、只支持夹持节点向量、无 `bounds()`。
+- 兼容性：没有 `AxisSurface` 层，框架就是 `Placement` 值类型；没有 `ConicCurve::inPlaneAxis`（源码级破坏，仓库内无调用者）；`BSplineCurve` 的私有 `basisValue` / `findSpan` / 扁平索引扫描住在 `BSplineBasis.hpp`（私有接口，不破坏）。
 
 ## 10. 参考
 
 - `geometry-kinds.md` 2.3（族的归属）、2.10（`Surface<T>` 接口）、2.9（`ConicCurve` 的同构做法）
 - `../decisions/ADR-2026-11-04-surface-placement-value-type.md`（框架是值类型）
-- `../decisions/ADR-2026-11-04-axis-surface-frame.md`（已取代：曾把框架做成继承层）
+- `../decisions/ADR-2026-11-04-axis-surface-frame.md`（已取代）
 - OCCT `Geom_CylindricalSurface` / `Geom_ConicalSurface` / `Geom_ToroidalSurface` / `Geom_RectangularTrimmedSurface` / `Geom_BezierSurface` / `Geom_BSplineSurface` 与 `ElSLib::CylinderValue` / `ConeValue` / `TorusValue`（参数化约定来源）

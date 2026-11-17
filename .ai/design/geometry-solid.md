@@ -210,7 +210,7 @@
 
 ### 9.1 当前状态
 
-- 族接口与五个 kind 已落地；模型不存几何值（子类只存尺寸，`solid()` 按需构造）；三角化是 geom 的 `tessellateSolid()`，模型侧 `meshFromTriangulation()` 装配成网格（见 `geometry-tessellation.md`）；`brep` 与描述文件写入者都按 kind 分派（`visitPrimitive()` + 重载）。
+- 族接口与五个 kind 都在；模型不存几何值（子类只存尺寸，`solid()` 按需构造）；三角化是 geom 的 `tessellateSolid()`，模型侧 `meshFromTriangulation()` 装配成网格（见 `geometry-tessellation.md`）；`brep` 与描述文件写入者都按 kind 分派（`visitPrimitive()` + 重载）。
 
 ### 9.2 已知缺口 / 待办
 
@@ -221,7 +221,7 @@
 ### 9.3 兼容性 / 迁移
 
 - 模型侧：`Primitive` 是唯一类，构造用子类（`Box` / `Sphere` / …），读取用 `solid()`（具体 kind 值）或 `visitPrimitive()`（具体子类）。
-- 以模型为参数的三个算法入口（三角化、射线、距离）已删除；替代分别是 `tessellateSolid(visitPrimitive(...))` 与 `p.solid().closestPoint(...)` / `p.solid().intersectWith(...)`。
+- 没有以模型为参数的三角化 / 射线 / 距离入口；替代分别是 `tessellateSolid(visitPrimitive(...))` 与 `p.solid().closestPoint(...)` / `p.solid().intersectWith(...)`。
 
 ## 10. 参考
 

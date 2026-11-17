@@ -1,6 +1,6 @@
 # geometry 射线与图元相交
 
-> **状态**：现行（值类型与四个图元相交已落地；`graphics` 已改用它）
+> **状态**：现行（值类型与四个图元相交；`graphics` 的拾取走它）
 > **最后核对**：2026-11-04
 > **范围**：`src/base/geom/sdk/vine/geom/spatial` 的射线值类型与射线–AABB / OBB / 平面 / 三角形查询的归属与契约。
 > 不含场景走查、拾取身份与选择态（见 `graphics-scene.md`），不含射线–网格遍历与加速结构（见 §9.2）。
@@ -166,7 +166,7 @@
 | D2 | 留在 `graphics`，其它层各复制一份 | 一个概念两三个实现，必然漂移（`G1`）；`brep` 依赖 `viz` 是回边（`G2`）。 |
 | D3 | `Ray` 复用 `LineCurve`（加布尔或约定方向长度） | 两种量纲塞进一个类型，`t` 的含义要靠读文档推（`G4`）。 |
 | D4 | 相交写成自由函数 `intersect(ray, target)` 的单一重载集 | 与被交类型分离，`Obb` 复用 `Aabb`、平面特例都要在外部重写；成员形式与既有 `Plane::intersectWith` 一致（`G6`）。 |
-| D5 | 本期就做射线–网格与 BVH（2026-11-04 的判断） | 当时没有性能证据，加速结构会引入新的数据组织与失效规则（`G8`、`G10`）。**已取代**：批量射线消费者出现后已落地，见
+| D5 | 提前做射线–网格与 BVH | 没有性能证据时，加速结构会引入新的数据组织与失效规则（`G8`、`G10`）。**已取代**：批量射线消费者出现后已提供，见
   `ADR-2026-11-07-bvh-as-structure-plus-builder.md` 与 `geometry-bvh.md`。 |
 | D6 | 保留 `graphics::Ray` 兼容别名 | 与 `geometry-primitives.md` D2 同一立场；一个类型两个名字必然漂移（`G4`）。 |
 
@@ -184,17 +184,17 @@
 
 ### 9.1 当前状态
 
-已落地：`geom::spatial::Ray` / `RayHit`、`Aabb` / `Obb` / `Plane` 的射线重载与 `intersectTriangle`；`graphics` 的 `Ray` 已删除，`Camera::screenToWorldRay()` 返回 `geom::spatial::Rayd`，`RayIntersection` 只剩场景走查、世界→局部与拾取身份。
+几何侧有 `geom::spatial::Ray` / `RayHit`、`Aabb` / `Obb` / `Plane` 的射线重载与 `intersectTriangle`；`graphics` 没有自己的 `Ray`，`Camera::screenToWorldRay()` 返回 `geom::spatial::Rayd`，`RayIntersection` 只剩场景走查、世界→局部与拾取身份。
 
 ### 9.2 已知缺口
 
-- 射线–网格遍历与加速结构（BVH / 八叉树）：**已落地**，归属、结构与构建边界见 `geometry-bvh.md`；
+- 射线–网格遍历与加速结构（BVH）：归属、结构与构建边界见 `geometry-bvh.md`；
   射线查询入口是 `Bvh::forEachRay()`，它复用本文件的 `PreparedRay` 与 slab 实现。
-- `tests/test_graphics` 里几个走 `geometryFromShape()` 的用例（`GeometryTest.MeshCounts`、`RayIntersectionTest.HitsTriangle` / `MissesTriangle`、`SceneTest.BoundingBoxAggregates`）在本机上崩溃，且在本轮改动之前就已如此；已记入 `../backlog/graphics.md`。
+- `tests/test_graphics` 里几个走 `geometryFromShape()` 的用例（`GeometryTest.MeshCounts`、`RayIntersectionTest.HitsTriangle` / `MissesTriangle`、`SceneTest.BoundingBoxAggregates`）在本机上崩溃，且与几何侧的改动无关；已记入 `../backlog/graphics.md`。
 
 ### 9.3 兼容性与迁移
 
-`graphics::Ray` 直接删除，不留别名；迁移点：`Camera.cpp`、`RayIntersection.cpp`、`OrbitCameraManipulator.cpp`、`model_viewer`、`RayIntersectionTest`。
+没有 `graphics::Ray`，也没有兼容别名；迁移点是：`Camera.cpp`、`RayIntersection.cpp`、`OrbitCameraManipulator.cpp`、`model_viewer`、`RayIntersectionTest`。
 
 ## 10. 参考
 

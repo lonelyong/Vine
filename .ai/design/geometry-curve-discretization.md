@@ -313,7 +313,7 @@ flowchart TD
 
 ### 9.1 当前状态
 
-已落地，两个契约同形（`Point3` / `Point2`）：
+两个契约同形（`Point3` / `Point2`）：
 
 - `src/base/geom/sdk/vine/geom/spatial/CurveSampling.hpp`、`src/base/geom/sdk/vine/geom/planar/CurveSampling.hpp` —— `CurvePolyline<T>` 与 `CurveSampler<T>` 基类 + 三个子类。
 - `src/base/geom/sdk/vine/geom/detail/CurveSubdivision.hpp` —— `sampleByParameter()` / `sampleByLength()` / `subdivideByDeflection()`，`detail` 不导出。
@@ -329,7 +329,6 @@ flowchart TD
 ### 9.3 兼容性 / 迁移
 
 纯增量：两个新头文件（每份契约一个）、一个结果类型、一个基类与三个子类（2D / 3D 各一套）；`Curve<T>` 与所有现有值类型签名不变。
-落地时同步更新 `geometry-module.md` 2.1（`geom` 的依赖声明，若接进度）与 2.2（新增一棵算法对象树与头文件计数）、`.ai/README.md` 的索引，以及 backlog `G12` / `G13` / `G14` 的触发条件描述。
 
 ## 10. 参考
 

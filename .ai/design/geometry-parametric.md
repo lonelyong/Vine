@@ -36,10 +36,10 @@
 
 ## 2. 设计要点
 
-### 2.0 为什么不是值类型（本日先做过，后撤回）
+### 2.0 为什么不是值类型
 
-- **曾经的做法**：把五个尺寸做成无身份的值类型，`Primitive` 用 `std::variant` 持有，消费点用 `std::visit` / `as<T>()`。
-- **撤回的原因**：`Box` / `Cone` 这类形状不提供自己的算法（射线–盒是 `Aabb` 的 slab，射线–球面属于曲面），把它们放进"算法值"的一侧会让 `Solid` 含义落空、让半径/边长在实体与曲面之间出现两个家；而建模侧需要的是身份、名字与 revision。
+- **被否决的做法**：把五个尺寸做成无身份的值类型，`Primitive` 用 `std::variant` 持有，消费点用 `std::visit` / `as<T>()`。
+- **否决的原因**：`Box` / `Cone` 这类形状不提供自己的算法（射线–盒是 `Aabb` 的 slab，射线–球面属于曲面），把它们放进"算法值"的一侧会让 `Solid` 含义落空、让半径/边长在实体与曲面之间出现两个家；而建模侧需要的是身份、名字与 revision。
 - **代价（已接受）**：`Box` 等带 vptr 与引用计数，复制不是 memcpy；加一种形状要动 `ShapeType`、`Shape.cpp` 的两个 switch、`brep` 的构造与 `robotics::io` 的读写。记录在此，避免重复论证。
 
 ### 2.1 `Primitive` 是抽象基类，每个子类一个头文件
@@ -151,9 +151,9 @@
 
 ## 9. 状态与演进
 
-- 五个子类、受保护构造与单头文件组织已落地；`brep` 与 `robotics::io` 按任务书分派。
+- 五个子类、受保护构造与单头文件组织都在；`brep` 与 `robotics::io` 按任务书分派。
 - 本机构建含 OCCT 后端（`VN_HAS_OCCT=TRUE`，vcpkg 的 `opencascade`），`test_brep` 可构建并通过，F3 的实体构造分支因此是真跑过的；无后端的构建仍走 `hasBackend()` 为假的路径。
-- 下一步：曲线 / 曲面族已无占位类型，见 `geometry-kinds.md` 2.10 与 `geometry-axis-surfaces.md`；三角化、射线求交与最近点 / 距离已全部落在族 `Solid<T>` 上（`geometry-solid.md`、`geometry-tessellation.md`，F5–F7），本主题没有开放项。
+- 关联：曲线 / 曲面族没有占位类型，见 `geometry-kinds.md` 2.10 与 `geometry-axis-surfaces.md`；三角化、射线求交与最近点 / 距离都落在族 `Solid<T>` 上（`geometry-solid.md`、`geometry-tessellation.md`，F5–F7），本主题没有开放项。
 
 ## 10. 参考
 

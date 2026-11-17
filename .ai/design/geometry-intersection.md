@@ -199,11 +199,11 @@
 | T10 | 曲线 × 非解析曲面（样条面、裁剪面、曲线在面上、不可用输入、两种精度） | `tests/test_geom_spatial/CurveSurfaceTest.cpp` 的 `CurveSurfaceProjection.*` |
 ## 9. 状态与演进
 
-- 九个点/盒/射线入口与“曲线 × 解析曲面”的求根入口均已落地；本轮的曲线 × 曲面是把 `../research/geometry-curve-surface-intersection-2026-11-04.md` 并入本文的结果。
-- 族级射线 × 曲面（F13）已落地，算法、窗口规则与代价归 `geometry-surface-queries.md`；本文只登记它在配对表里的位置。
-- 曲线 × **任意**曲面（F9）已落地：投影出的带符号距离沿曲线求根，与解析入口共用扫描；backlog G12 关闭。
+- 九个点/盒/射线入口与“曲线 × 解析曲面”的求根入口；曲线 × 曲面的求根规则见 2.9。
+- 族级射线 × 曲面是 F13，算法、窗口规则与代价归 `geometry-surface-queries.md`；本文只登记它在配对表里的位置。
+- 曲线 × **任意**曲面是 F9：投影出的带符号距离沿曲线求根，与解析入口共用扫描。
 - 已知缺口：§3 标“缺”的盒/射线配对（G11）；切触交点未做（P4）。
-- 兼容性：只新增自由函数与头文件模板，不改任何现有签名；`signedValue()` 与 `CurveSurfaceIntersection.hpp` 是纯增量。
+- 兼容性：纯增量——只有自由函数与头文件模板，没有改动任何现有签名；`signedValue()` 与 `CurveSurfaceIntersection.hpp` 是纯增量。
 
 ## 10. 参考
 

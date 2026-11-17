@@ -48,7 +48,7 @@
 - **是什么**：类型是 `vn::geom::spatial::Aabb<T>`；别名只有 `Aabbf` / `Aabbd` / `Aabbi`。`Rect3`、`math::Aabb*`、`geometry` 的空转发头全部清退。
 - **为什么**：`G1`、`G4`、`G12` —— 名字说明形状；`Aabb` 与 `Obb` 成对，`Rect` 在 3D 里是误名。
 - **边界**：`Mesh::Aabb` 作为 `Mesh` 的类作用域 float 拼写保留（`= Aabbf`），它是别名不是类型，不构成第二个概念。
-- **模板参数有意不受 `vn::math::FP` 约束**：`Aabb<T>` / `Obb<T>` 是**空间值类型**，`Aabbi = Aabb<int32_t>` 是合法的整数索引盒（像素 / 网格索引），所以这里用 `typename T`；几何族（`Curve<T>` / `Surface<T>` 及其成员）则一律约束成浮点，因此 `Plane<T>` 在 2026-11-04 从 `typename T` 改成 `vn::math::FP T`，与族内其余类型一致（`G6`）。两处不一致是刻意的，不是遗漏。
+- **模板参数有意不受 `vn::math::FP` 约束**：`Aabb<T>` / `Obb<T>` 是**空间值类型**，`Aabbi = Aabb<int32_t>` 是合法的整数索引盒（像素 / 网格索引），所以这里用 `typename T`；几何族（`Curve<T>` / `Surface<T>` 及其成员）则一律约束成浮点，因此 `Plane<T>` 用 `vn::math::FP T`，与族内其余类型一致（`G6`）。两处不一致是刻意的，不是遗漏。
 - **只有 `Aabb` 有 `isValid()`**：`Aabb` 允许一个**空哨兵**状态（`min > max`，供 `expandBy` 从零开始生长），所以它需要一个判据（`isValid() == !isNeg()`，与 `isEmpty()` 同一事实的两个问法）；`Obb` 把非法状态在构造时就消除了（半轴取绝对值、零长四元数归一化回单位旋转），不可能构造出一个不可用的盒子，所以它没有也不需要 `isValid()`（`G4`：接口只写可能出错的问法）。
 
 ### 2.3 解析原语同住一个模块
@@ -193,8 +193,8 @@
 
 ### 9.1 现状
 
-四个类型已在 `vn::geometry` 落地，`math` 下不再有对应头文件与源文件；`Mesh`、`graphics::Node`、`ChainPresets`、`ChainBuilder` 与测试已改到新名字。
-`Obb` 的 PCA 与固定轴向拟合已落地；特征分解与矩阵→四元数在 `math`（`Matrix3x3.hpp` / `Transform3.cpp`），两个头文件只声明契约。
+四个类型在 `vn::geometry`，`math` 下没有对应头文件与源文件；`Mesh`、`graphics::Node`、`ChainPresets`、`ChainBuilder` 与测试都用新名字。
+`Obb` 自带 PCA 与固定轴向拟合；特征分解与矩阵→四元数在 `math`（`Matrix3x3.hpp` / `Transform3.cpp`），两个头文件只声明契约。
 
 ### 9.2 已知缺口
 

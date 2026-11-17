@@ -12,7 +12,7 @@
 
 ### 1.1 问题与背景
 
-几何类型之间此前没有任何分类关系：`Line`（今 `LineCurve`）、`Ray`、`Plane`、`Box` 都是互不相关的类，"这是一条曲线 / 一个曲面 / 一个实体"这句话只存在于讨论里。想按族写一个约束、想把一族类型放进同一个容器、想回答"这个类型是几维的"，都只能靠命名猜测；运行期分类只有 `ShapeType`，而它只覆盖 `Shape` 子类，值类型根本不在其中。
+几何类型之间没有分类关系：`LineCurve`、`Ray`、`Plane`、`Box` 都是互不相关的类，"这是一条曲线 / 一个曲面 / 一个实体"这句话只存在于讨论里。想按族写一个约束、想把一族类型放进同一个容器、想回答"这个类型是几维的"，都只能靠命名猜测；运行期分类只有 `ShapeType`，而它只覆盖 `Shape` 子类，值类型根本不在其中。
 
 ### 1.2 目标
 
@@ -70,7 +70,7 @@
 
 - **是什么**：`CircleCurve` 提供 `isValid()`、`pointAt(angle)`、`circumference()`、`bounds()`；椭圆/双曲线/抛物线提供 `isValid()`、`pointAt(u)`、`bounds()`（仅椭圆，闭合且有界）；`SphericalSurface` 提供 `pointAt(azimuth, polar)` / `normalAt` / `bounds()`；`LineCurve` 提供 `pointAt(t)` / `closestPoint` / `intersectWith`。
 - **单个三角形、四边形不做类型**：`intersectTriangle(ray, a, b, c, hit)` 直接吃三个角点，不需要类型；名字 `TriangleSurface` / `QuadSurface` 作为保留名登记在 backlog（`../backlog/geometry.md` G7），等它们长出自己的查询（射线–面求交、点到面距离）时再引入，且届时带 `Surface` 后缀——仓库里已有 `TriangleMesh` / `QuadMesh`，裸名会被读成网格元素（`G4`）。
-- **为什么**：`G8` —— 没有消费者的能力不写：射线求交、点到曲线的距离、曲面求交都在 backlog，等触发条件。今天已落地的那些（族级曲面查询、点到曲线、解析实体）都已按本条判据补上了消费者侧的证据。
+- **为什么**：`G8` —— 没有消费者的能力不写：射线求交、点到曲线的距离、曲面求交都在 backlog，等触发条件。有消费者的那些（族级曲面查询、点到曲线、解析实体）都按本条判据补上了消费者侧的证据。
 - **边界**：`PointCloud` 仍是 `Shape`，不是曲线也不是曲面：它是离散点集，没有参数化取点；`Box` 等解析体是建模类型（`Primitive` 子类）或值类型（`Solid<T>`），也不在任何一族里。
 
 ### 2.6 算法放在值类型上，不另设算法类
@@ -120,7 +120,7 @@
 ### 2.9 圆锥曲线共有的框架与光滑度住在 `ConicCurve`
 
 - **是什么**：`ConicCurve` 持有框架 `center` / `normal` / `x_direction`（构造时归一化），并提供派生的 `yAxis()` / `planeNormal()`，同时把 `continuity()` 定为 `CN`；四个圆锥曲线只声明自己的标量（半径 / 两个半轴 / 焦距）与数值回答。
-- **为什么**：`G1`、`G6` —— 框架此前在 `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` 各有一份（`yAxis()` / `planeNormal()` / `continuity()` 各四份拷贝），改一处要改四处，四处 的归一化规则也可以悄悄分叉。OCCT 的 `Geom_Conic` 同样用 `gp_Ax2` 持有框架、把 `Continuity()` 定为 Cn，这里只是把同一件事写进我们的类型。
+- **为什么**：`G1`、`G6` —— 框架若在 `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` 各存一份（`yAxis()` / `planeNormal()` / `continuity()` 各四份拷贝），改一处要改四处，四处的归一化规则也可以悄悄分叉。OCCT 的 `Geom_Conic` 同样用 `gp_Ax2` 持有框架、把 `Continuity()` 定为 Cn，这里只是把同一件事写进我们的类型。
 - **代价**：`CircleCurve` 不再每次由 `normal` 推导起始轴，而是构造时存一次 `x_direction`，因此多 24 字节（2.2 的大小断言跟着变）；同时框架字段构造后不可再改写——这从“写了会悄悄改变参数化起点”变成“写了会让三个向量互相矛盾”，后者更该被禁止，已写进每个圆锥曲线的 `@warning`。
 - **抛物线的原点就是顶点**：`ParabolaCurve` 不再单独存 `vertex`，用继承的 `center`（OCCT 的 `Geom_Conic::Location()` 对抛物线同样返回顶点）。
 - **退化框架的答案写在 `ConicCurve`**：`normal` 为零时 `yAxis()` 为零，参数化塌成沿 `x_direction` 的线段（圆、椭圆）或射线（双曲线、抛物线）；四个 `pointAt()` 的 `@return` 都指向这条规则，`isValid()` 是唯一判据（C12）。`CircleCurve::bounds()` 与 `EllipseCurve::bounds()` 用同一个支撑函数 `sqrt((a·X_i)² + (b·Y_i)²)` 造盒，所以退化时给出线段盒，而不是半径立方（`G1`）。
@@ -249,7 +249,7 @@
 - **P7**：直线的“退化”只有一条阈值——`isValid()` 的 `|direction| > EPS`。会怎么错：另写一个 `|direction|² < EPS` 的判据（它等价于 `|direction| < 1e-4`），会把合法短方向当成零方向、把投影悄悄换成原点；怎么判：方向长度在 `EPS` 与 `sqrt(EPS)` 之间时两种答案不同；怎么防：判据只从 `isValid()` 来。
 - **P8**：裁剪视图不是基曲线 / 基曲面。会怎么错：拿 `TrimmedCurve::period()` 当基圆的 2π 去归一化参数，或以为 `isClosed()` 跟基曲线一致，于是四分之一圆被当成整圈做接缝判断；怎么判：裁剪的 `isPeriodic()` / `isClosed()` / `period()` 为假或 0，而基曲线的答案为真；怎么防：闭合、周期、周期值一律问裁剪自己（2.7 的周期规则、C12），要基曲线的数字就问 `basis_curve` / `basis`。
 - **P9**：`isValid()` 为假的组合类型仍能被查询。会怎么错：空基的裁剪 / 偏置答原点、零向量、`C0`，看起来像“退化成一条点的曲线”，被当成合法结果参与后续计算；怎么判：`isValid()` 为假；怎么防：拿到 `TrimmedCurve` / `OffsetCurve` / `RectangularTrimmedSurface` 先查 `isValid()`——退化答案只为避免解引用空指针而存在（C12）。
-- **P10**：把一段被切开的数据当成一条样条。会怎么错：内部重数写成了 `度 + 1`，曲线在节点处跳；求值仍能跑、参数区间也连续，于是采样出一串跨越缝的点。怎么判：`isValid()` 为假（2026-11-04 起），或直接算 `continuity()`——重数等于度数时它确实答 `C0`（各段交于一点），两者不再混淆。怎么防：重建时按断点拆成多条曲线（C13）。
+- **P10**：把一段被切开的数据当成一条样条。会怎么错：内部重数写成了 `度 + 1`，曲线在节点处跳；求值仍能跑、参数区间也连续，于是采样出一串跨越缝的点。怎么判：`isValid()` 为假，或直接算 `continuity()`——重数等于度数时它确实答 `C0`（各段交于一点），两者不再混淆。怎么防：重建时按断点拆成多条曲线（C13）。
 
 ## 7. 已否决选项
 
@@ -278,14 +278,14 @@
 | T9 族级契约扫查 | 同文件 `everyCurveKeepsTheInterfacePromises` / `everySurfaceKeepsTheInterfacePromises` 与它们的 `…InFloat` 版本（**两种精度各跑一遍**：库对 float / double 都显式实例化导出）：对全部实现逐条问：域有序、`isValid()` 为真、闭合 / 周期与周期值一致、`isCN` 与 `continuity()` 一致、`reversedParameter` 自反、有限域内导数有限；裁剪的两条契约另有 `aTrimOfAPeriodicBasisReportsAPeriodOnlyWhenItRepeats`、`aTrimWithoutABasisAnswersInsteadOfDereferencingIt`、`anOffsetCurveWithoutABasisAnswersInsteadOfDereferencingIt`；默认构造的准入规则由顶部 `static_assert` 与 `anEmptyPatchIsRecognisablyEmpty` 盯住，接口上的有效性由 `validityIsAskableThroughTheInterface` 与两行 `static_assert` 盯住 |
 ## 9. 状态与演进
 
-- 两个族、曲面分 `ElementarySurface` / `BoundedSurface`、四种新值类型、归属与大小断言均已落地。
-- 曲线接口的十一项属性已落地（2.7）；`TrimmedCurve` 是组合曲线，`BezierCurve` / `BSplineCurve` 是两种可构造的样条（F7，2.8）。
-- 曲面接口的十四项已落地（F8，2.10），`Plane` 与 `SphericalSurface` 实现；两个分类标签仍无状态、无虚函数，但**曲面现在与曲线一样付 vptr**。
-- 四种圆锥曲线已全部实现（F6）；`BezierCurve` / `BSplineCurve` 的求值与一二三阶导数已实现（F7，2.8）。**空间曲线族到此全部答三阶导**，`OffsetCurve` 用基曲线三阶导答二阶导并成为可构造值类型，阶数规则与平面侧一致（D9、`../decisions/ADR-2026-11-06-space-third-derivative-and-offset.md`）。
-- 三个轴对称解析曲面、矩形裁剪曲面与两个样条曲面已实现，见 `geometry-axis-surfaces.md`；曲面族至此没有占位类型。
+- 两个族、曲面分 `ElementarySurface` / `BoundedSurface`、四种值类型、归属与大小断言都在。
+- 曲线接口有十一项属性（2.7）；`TrimmedCurve` 是组合曲线，`BezierCurve` / `BSplineCurve` 是两种可构造的样条（F7，2.8）。
+- 曲面接口有十四项（F8，2.10），`Plane` 与 `SphericalSurface` 实现；两个分类标签无状态、无虚函数，但**曲面与曲线一样付 vptr**。
+- 四种圆锥曲线（F6）与 `BezierCurve` / `BSplineCurve` 的求值、一二三阶导数（F7，2.8）都在。**空间曲线族到此全部答三阶导**，`OffsetCurve` 用基曲线三阶导答二阶导并成为可构造值类型，阶数规则与平面侧一致（D9、`../decisions/ADR-2026-11-06-space-third-derivative-and-offset.md`）。
+- 三个轴对称解析曲面、矩形裁剪曲面与两个样条曲面见 `geometry-axis-surfaces.md`；曲面族没有占位类型。
 - 族级算法已存在两侧：曲面（最近点 / 距离、射线 × 曲面，见 `geometry-surface-queries.md`）与曲线（最近点 / 距离，见 `geometry-curve-queries.md`）；都用自由函数 + `requires std::is_base_of_v<…>` 约束，不给接口加虚函数。已知缺口：实体求交（backlog G3）、曲线 × 曲线的最近距离。
 - 兼容性：曲面接口是从非模板的 `Surface` 标签改为模板接口，是**破坏性变更**（`Surface` / `ElementarySurface` / `BoundedSurface` 现在都要带 `<T>`）；仓库内唯一消费点是 `tests`。
-- 兼容性（本轮的语义修正）：`TrimmedCurve::period()` 与 `RectangularTrimmedSurface::uPeriod()` / `vPeriod()` 以前转发基曲线 / 基曲面的周期，现在按接口契约在 `isPeriodic()` 为假时返回 0——行为变化，签名不变（仓库内无调用者）；两种裁剪视图的空基查询也不再解引用空句柄（C12、P9）。两类事实由族级契约扫查 `everyCurveKeepsTheInterfacePromises` / `everySurfaceKeepsTheInterfacePromises` 盯住（T9）。
+- 兼容性：`TrimmedCurve::period()` 与 `RectangularTrimmedSurface::uPeriod()` / `vPeriod()` 在 `isPeriodic()` 为假时返回 0，而不是转发基曲线 / 基曲面的周期——行为变化，签名不变（仓库内无调用者）；两种裁剪视图的空基查询也不解引用空句柄（C12、P9）。两类事实由族级契约扫查 `everyCurveKeepsTheInterfacePromises` / `everySurfaceKeepsTheInterfacePromises` 盯住（T9）。
 - 兼容性（接口扩充）：`isValid()` 现在是 `Curve<T>` / `Surface<T>` 的纯虚函数（十项→十一项、十三项→十四项），所有实现原本就有这个方法，只是加上了 `override`；`Plane` 因此第一次有了真正的有效性判据（零法向为假，以前一律可用）。自定义实现者必须实现它——仓库内没有其他实现者。见 `../decisions/ADR-2026-11-04-isvalid-on-family-interfaces.md`。
 
 ## 10. 参考

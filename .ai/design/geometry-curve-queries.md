@@ -151,7 +151,7 @@
 
 ## 9. 状态与演进
 
-- `closestPointOnCurve()`、`curveToCurveDistance()`、`arcLength()`、`parameterAtLength()` 与 `curvature()` 已落地，覆盖直线、圆锥曲线、样条与裁剪视图（都只经接口）。
+- `closestPointOnCurve()`、`curveToCurveDistance()`、`arcLength()`、`parameterAtLength()` 与 `curvature()` 覆盖直线、圆锥曲线、样条与裁剪视图（都只经接口）。
 - 与平面侧同名同形：弧长与反解相同，曲率在 3D 无符号（平面侧是 `signedCurvature()`），两曲线距离的结果只把点换成 `Point3`。
 - 已知缺口：最近点与最近距离都是**局部**搜索，多谷曲线需要足够密的采样（P2、P7）；平坦极小值按 §6（P3）。
 - 兼容性：纯增量——四个新头文件、两个新类型与四个新自由函数；`Curve<T>` 与所有值类型的签名不变。

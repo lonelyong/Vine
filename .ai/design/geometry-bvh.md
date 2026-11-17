@@ -18,7 +18,7 @@
 LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结构要能被**任何**“有包围体、能求交”的消费者复用，
 而不是长在渲染侧的场景图里。
 
-要解决的问题不止“写一个 BVH”，而是四条当时没有答案的问题：
+要解决的问题不止“写一个 BVH”，而是四条问题：
 
 - **结构放哪**：`brep`（`base`）与 `graphics`（`viz`）都要用；放进任一侧都是回边（`G2`）。
 - **构建策略怎么加**：中位数切分、SAH、以后可能的上千种启发式；如果写进树里，每加一种就改一次核心类型（`G9`）。
@@ -104,7 +104,7 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 多一次载入（`node_bounds_[i]` 与 `nodes[i]`）；而 `refit()` 只扫体积那条，反而比 AoS 更集中。
 
 **左孩子恒为 `parent + 1`**，右孩子由 `offset` 给出。这条规则让内部节点少存一个下标（省 4 字节/节点），
-代价是遍历时必须写 `nodes_[index + 1]` 而不是 `nodes_[node.offset - 1]`——后者是本轮实现里真实踩到的一次 bug（`P1`）。
+代价是遍历时必须写 `nodes_[index + 1]` 而不是 `nodes_[node.offset - 1]`——后者是真实踩到过的 bug（`P1`）。
 
 ### 2.5 三个不变量
 
@@ -269,7 +269,7 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 
 - **行为**：`add(bounds)` 追加一个图元，返回 `PrimId`，并把结构标记为未构建；`addRange(count, bounds_of)` 批量追加，
   一次预留容量。
-- **约束**（C1）：登记不建树；登记后必须 `build` 才能查询（此前查询返回空）。
+- **约束**（C1）：登记不建树；登记后必须 `build` 才能查询（未建成的树查询返回空）。
 - **要求**（R1）：批量登记一次 `reserve`，逐个 `add` 不应被用来循环一万次。
 - **验收**（T1）：`BvhBuildTest` 比对逐个 `add` 与 `addRange` 的 `primCount` 与查询结果一致。
 
@@ -481,12 +481,12 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 
 ### 9.1 当前状态
 
-已落地：`spatial/Bvh.hpp`、`spatial/BvhBuilder.hpp`、`spatial/BvhTopology.hpp`、`spatial/TriangleBvh.hpp`、
+代码在 `spatial/Bvh.hpp`、`spatial/BvhBuilder.hpp`、`spatial/BvhTopology.hpp`、`spatial/TriangleBvh.hpp`、
 `spatial/detail/{RaySlab,VolumeTraits,BvhBuildJob,BvhBuilders,BvhRefit,BvhTopologyCheck}.hpp`；
 `Aabb::intersectWith()` 与盒实体的射线查询直接调用 `preparedRayBoxInterval()`（`geometry-ray.md` 的唯一 slab 实现）；
 `src/base/geom/src/Instantiations.cpp` 导出 `Bvh<float>` / `Bvh<double>`。
-拓扑存储与恢复（F8）已落地；消费它的载入侧见 `robotics-io-design.md`（`.vbtp`）。
-封存（F10）已落地：`Geometry::prepareBvh()` 建完就封存（绘制帧的树永远是只读结果），其余消费者不受影响。
+拓扑存储与恢复是 F8；消费它的载入侧见 `robotics-io-design.md`（`.vbtp`）。
+封存是 F10：`Geometry::prepareBvh()` 建完就封存（绘制帧的树永远是只读结果），其余消费者不受影响。
 
 ### 9.2 已知缺口
 
@@ -502,13 +502,13 @@ LiDAR 仿真都会退化成全扫。需要一层加速结构，并且这层结�
 
 ### 9.3 兼容性与迁移
 
-`Bvh<T>` 的布局变了（节点组合学与节点体积从一条 AoS 数组拆成两条），它是显式实例化的 DLL 类，所以这是一次
-**ABI 破坏**：消费者需要重新编译，源码级接口保持（`add` / 查询 / `refit` / `validate` / `primOrder` 不变）。
-`topology()` 保留（返回拥有的值）；新增 `topologyView()`、`restoreTopology()`、`Mesh::restoreBvh(BvhTopology)`
-与 `restoreTriangleBvh(..., BvhTopology)`。`RestoreTopology` 从 `BvhTopology.hpp` 搬到 `BvhBuilder.hpp`——
+`Bvh<T>` 的布局是两条 AoS 数组（节点组合学与节点体积分开），它是显式实例化的 DLL 类，所以与一条 AoS 数组的版本
+**ABI 不兼容**：消费者需要重新编译，源码级接口保持（`add` / 查询 / `refit` / `validate` / `primOrder` 不变）。
+`topology()` 返回拥有的值；`topologyView()`、`restoreTopology()`、`Mesh::restoreBvh(BvhTopology)`
+与 `restoreTriangleBvh(..., BvhTopology)`。`RestoreTopology` 住在 `BvhBuilder.hpp`——
 它本来就是以“交给 `buildWith`”的方式使用的，包含 `BvhBuilder.hpp` 的调用方不需要改。
 
-封存（2026-11-10）是**纯增量**：类布局不变（没有新成员）、全是头文件内联函数，所以不破 ABI；唯一的语义变化
+封存是**纯增量**：类布局不变（没有新成员）、全是头文件内联函数，所以不破 ABI；唯一的语义变化
 是封存树上六个写接口会抛 `logic_error`——而它们今天只有测试在调。`primCount()` / `empty()` 在封存树上改从
 `shape_.order.size()` 回答，对可变树逐位不变。
 
