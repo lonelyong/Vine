@@ -1,210 +1,210 @@
-# geometry 值类型：Aabb、Obb、Line、Plane
+# geometry value types: Aabb, Obb, Line, Plane
 
-> **状态**：现行
-> **最后核对**：2026-11-04
-> **范围**：`src/base/geom/sdk/vine/geom/spatial` 的空间值类型（`Aabb` / `Obb` / `LineCurve` / `Plane`）：归属、命名与契约。
-> 不含 `Shape` / `Mesh` / `Material` / `Model` 的存储与 revision（见 `graphics-geometry.md` §3.5），也不含 2D 区间 `Rect2`（仍在 `math`）。
-> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/Aabb.hpp`、`Obb.hpp`、`LineCurve.hpp`、`Plane.hpp`；`tests/test_geom_spatial`。
-> **待办**：`../backlog/graphics.md`
+> **Status**: current
+> **Last verified**: 2026-11-04
+> **Scope**: the spatial value types of `src/base/geom/sdk/vine/geom/spatial` (`Aabb` / `Obb` / `LineCurve` / `Plane`): membership, naming and contract.
+> Not the storage and revision of `Shape` / `Mesh` / `Material` / `Model` (see `graphics-geometry.md` §3.5), and not the 2D rectangle `Rect2` (still in `math`).
+> **Sources**: `src/base/geom/sdk/vine/geom/spatial/Aabb.hpp`, `Obb.hpp`, `LineCurve.hpp`, `Plane.hpp`; `tests/test_geom_spatial`.
+> **Backlog**: `../backlog/graphics.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-四个空间形状原先住在 `src/base/math`：`Rect3`（轴对齐盒）、`Line`（今 `LineCurve`）、`Plane`；同期引入 geometry 的 `Obb` 却是 geometry 的。同一概念族被模块边界切开。
+Four spatial shapes sat in `src/base/math`: `Rect3` (an axis-aligned box), `Line` (today `LineCurve`) and `Plane`; the `Obb` introduced at the same time, however, was geometry's. One concept family was cut in two by a module boundary.
 
-`Rect3` 更乱：`math::Aabb` / `Aabbf` / `Aabbd` 是它的别名，`geometry/Aabb.hpp` 是转发 shim，`Mesh::Aabb` 是第三个拼写。一个轴对齐盒有四个名字、三个家。
+`Rect3` was the worse case: `math::Aabb` / `Aabbf` / `Aabbd` were aliases of it, `geometry/Aabb.hpp` was a forwarding shim, and `Mesh::Aabb` was a third spelling. One axis-aligned box had four names and three homes.
 
-消费者全部在 geometry 之上：`Mesh`、`graphics::Node`、`ChainBuilder`、`ChainPresets`、`Obb::toAabb()`。`math` 内部没有任何一处使用 `Rect3` / `Line` / `Plane`（`Plane` 用 `Line`，两者一起走；`Line` 现名 `LineCurve`，见 `geometry-kinds.md`）。
+Every consumer lives above geometry: `Mesh`, `graphics::Node`, `ChainBuilder`, `ChainPresets`, `Obb::toAabb()`. Nothing inside `math` used `Rect3` / `Line` / `Plane` (`Plane` uses `Line`, so the two move together; `Line` is now `LineCurve`, see `geometry-kinds.md`).
 
-### 1.2 目标
+### 1.2 Goals
 
-- 一个轴对齐盒只有一个名字 `Aabb`，一个家 `geometry`。
-- 盒、线、面与 `Obb` 同居：解析原语在同一模块，`Plane` 的返回值不必跨模块。
-- `math` 只留数值与变换，不再持有形状。
-- `Rect2` 的消费者（GUI 矩形）不受影响。
+- An axis-aligned box has one name, `Aabb`, and one home, `geometry`.
+- Box, line and plane live with `Obb`: the analytic primitives share one module, and a `Plane` return value need not cross a module boundary.
+- `math` keeps numbers and transforms only and holds no shape.
+- `Rect2`'s consumer (a GUI rectangle) is unaffected.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不搬 `Rect2`：其唯一消费者是 `appfw::Gui` 的布局矩形，不是形状（2.6）。
-- 不提供 `math::Rect3` 兼容别名：`math` 不能 include `geometry`，那会形成回边（2.5、`D2`）。
-- 不在本次引入相交/距离查询（ray–AABB、OBB–OBB、AABB–OBB）；类型先归位，查询等真实消费者（`G8`）。
+- Do not move `Rect2`: its only consumer is a layout rectangle in `appfw::Gui`, not a shape (2.6).
+- Provide no `math::Rect3` compatibility alias: `math` may not include `geometry`, which would be a back edge (2.5, `D2`).
+- Do not introduce intersection / distance queries here (ray–AABB, OBB–OBB, AABB–OBB); the types are put in place first and the queries wait for a real consumer (`G8`).
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**数值与变换归 `math`，空间实体归 `geometry`；轴对齐盒叫 `Aabb`，没有别名，也没有回边。**
+**Numbers and transforms belong to `math`, spatial entities to `geometry`; the axis-aligned box is called `Aabb`, with no alias and no back edge.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 边界判据：数值 vs 空间实体
+### 2.1 The boundary test: numbers vs spatial entities
 
-- **是什么**：`math` = 标量、向量、点、矩阵、四元数、等距变换；`geometry` = 有空间含义的实体与形状算子（盒、线、面、网格、参数化形状）。
-- **为什么**：`G1`、`G5` —— 判据一句话可判断新增类型放哪，不必逐个讨论；`Rect3` 的消费者本来就在 `geometry` 一侧。
-- **边界**：判据只管**类型的归属**，不表示 `geometry` 可以反向依赖 `math` 之外的东西；`math` 依旧只链 `vn::Global`。
-- **代价**：只要一个盒子的人现在要链 `vn::Geometry`（+ `vn::Core`）。今天的 `Aabb` 消费者（`geometry`、`graphics`、两者的测试）都已链它，实际没有新增依赖边（`G10`）。
+- **What**: `math` = scalars, vectors, points, matrices, quaternions, isometries; `geometry` = entities with spatial meaning and the shape operators (box, line, plane, mesh, parametric shape).
+- **Why**: `G1`, `G5` — the test decides in one sentence where a new type goes, with no case-by-case discussion; `Rect3`'s consumers were already on the `geometry` side.
+- **Boundary**: the test decides **type membership** only, and does not mean `geometry` may depend on anything besides `math`; `math` still links only `vn::Global`.
+- **Cost**: someone who wants only a box now links `vn::Geometry` (+ `vn::Core`). Today's `Aabb` consumers (`geometry`, `graphics`, the tests of both) all link it already, so no dependency edge is actually added (`G10`).
 
-### 2.2 一个盒子一个名字
+### 2.2 One box, one name
 
-- **是什么**：类型是 `vn::geom::spatial::Aabb<T>`；别名只有 `Aabbf` / `Aabbd` / `Aabbi`。`Rect3`、`math::Aabb*`、`geometry` 的空转发头全部清退。
-- **为什么**：`G1`、`G4`、`G12` —— 名字说明形状；`Aabb` 与 `Obb` 成对，`Rect` 在 3D 里是误名。
-- **边界**：`Mesh::Aabb` 作为 `Mesh` 的类作用域 float 拼写保留（`= Aabbf`），它是别名不是类型，不构成第二个概念。
-- **模板参数有意不受 `vn::math::FP` 约束**：`Aabb<T>` / `Obb<T>` 是**空间值类型**，`Aabbi = Aabb<int32_t>` 是合法的整数索引盒（像素 / 网格索引），所以这里用 `typename T`；几何族（`Curve<T>` / `Surface<T>` 及其成员）则一律约束成浮点，因此 `Plane<T>` 用 `vn::math::FP T`，与族内其余类型一致（`G6`）。两处不一致是刻意的，不是遗漏。
-- **只有 `Aabb` 有 `isValid()`**：`Aabb` 允许一个**空哨兵**状态（`min > max`，供 `expandBy` 从零开始生长），所以它需要一个判据（`isValid() == !isNeg()`，与 `isEmpty()` 同一事实的两个问法）；`Obb` 把非法状态在构造时就消除了（半轴取绝对值、零长四元数归一化回单位旋转），不可能构造出一个不可用的盒子，所以它没有也不需要 `isValid()`（`G4`：接口只写可能出错的问法）。
+- **What**: the type is `vn::geom::spatial::Aabb<T>`; the only aliases are `Aabbf` / `Aabbd` / `Aabbi`. `Rect3`, `math::Aabb*` and geometry's empty forwarding header are all gone.
+- **Why**: `G1`, `G4`, `G12` — the name states the shape; `Aabb` pairs with `Obb`, and `Rect` is a wrong name in 3D.
+- **Boundary**: `Mesh::Aabb` stays as the class-scoped float spelling of `Mesh` (`= Aabbf`); it is an alias, not a type, and does not form a second concept.
+- **The template parameter is deliberately not constrained to `vn::math::FP`**: `Aabb<T>` / `Obb<T>` are **spatial value types**, and `Aabbi = Aabb<int32_t>` is a legal integer index box (pixel / grid indices), so `typename T` is used here; the geometry families (`Curve<T>` / `Surface<T>` and their members) are always constrained to floating point, which is why `Plane<T>` uses `vn::math::FP T`, consistent with the rest of the family (`G6`). The two differ on purpose, not by omission.
+- **Only `Aabb` has `isValid()`**: `Aabb` allows an **empty sentinel** state (`min > max`, so `expandBy` can grow from nothing), so it needs a test (`isValid() == !isNeg()`, two questions about one fact, the same as `isEmpty()`); `Obb` eliminates the invalid state at construction (absolute half extents, a zero-length quaternion normalised back to the identity rotation) and cannot be constructed unusable, so it has no `isValid()` and needs none (`G4`: an interface carries only the questions that can fail).
 
-### 2.3 解析原语同住一个模块
+### 2.3 The analytic primitives share one module
 
-- **是什么**：`LineCurve`、`Plane`、`Aabb`、`Obb` 都在 `vine/geom/spatial`；`Plane::intersectWith(Plane, LineCurve&)` 的返回值同模块。
-- **为什么**：`G1`、`G6` —— 同一层的形状不跨模块分裂；`LineCurve` 的唯一使用者就是 `Plane`，同批移动不留中间态。
-- **边界**：它们是**值类型**，不进入 `Shape` 层级（2.4）；这不表示 `geometry` 的语义变成“纯数学”，`Shape` / `Mesh` 仍是主内容。射线同样是空间实体：`Ray` 与图元相交已在 `geometry`，契约见 `geometry-ray.md`；参数化几何（`Box` / `Sphere` / …）与模型持有者 `Primitive` 的分工见 `geometry-parametric.md`。
+- **What**: `LineCurve`, `Plane`, `Aabb` and `Obb` are all in `vine/geom/spatial`; the return value of `Plane::intersectWith(Plane, LineCurve&)` is in the same module.
+- **Why**: `G1`, `G6` — shapes of one layer are not split across modules; `LineCurve`'s only user is `Plane`, so they move in one batch with no intermediate state.
+- **Boundary**: they are **value types** and do not enter the `Shape` hierarchy (2.4); this does not turn `geometry` into "pure maths" — `Shape` / `Mesh` remain the main content. A ray is a spatial entity too: `Ray` and its intersections with primitives are already in `geometry`, with the contract in `geometry-ray.md`; the division of labour between parametric geometry (`Box` / `Sphere` / …) and the model holder `Primitive` is in `geometry-parametric.md`.
 
-### 2.4 值类型不进 Shape 层级
+### 2.4 Value types stay out of the Shape hierarchy
 
-- **是什么**：`Aabb` / `Obb` / `LineCurve` / `Plane` 是模板值类型：无 vptr、无 `Object` 元类型、无 revision。
-- **为什么**：`G1`、`G10` —— 包围盒按值拷贝、按值返回；`Shape` 的运行时多态与 revision 是给可编辑内容用的，不是给几何量用的。
-- **边界**：需要多态分发的形状走 `Shape`；需要便宜拷贝的空间量走这四个值类型。
+- **What**: `Aabb` / `Obb` / `LineCurve` / `Plane` are template value types: no vptr, no `Object` meta type, no revision.
+- **Why**: `G1`, `G10` — a bounding box is copied and returned by value; `Shape`'s run-time polymorphism and revision exist for editable content, not for geometric quantities.
+- **Boundary**: a shape that needs polymorphic dispatch goes through `Shape`; a spatial quantity that needs cheap copies uses these four value types.
 
-### 2.5 没有回边
+### 2.5 No back edge
 
-- **是什么**：`math` 的 CMake 依赖仍只有 `vn::Global`；`math` 不 include 任何 `vine/geom/spatial/*`。
-- **为什么**：`G2` —— 依赖单向，`geometry → math` 不允许反向。
-- **代价**：已有代码里的 `math::Rect3` 必须一次性改到 `geom::spatial::Aabb`，没有“兼容一个版本”的缓冲（`D2`）。
+- **What**: the CMake dependency of `math` is still `vn::Global` only; `math` includes no `vine/geom/spatial/*`.
+- **Why**: `G2` — dependencies are one-way, and `geometry → math` may not be reversed.
+- **Cost**: existing code using `math::Rect3` must move to `geom::spatial::Aabb` in one go, with no "compatible for one version" buffer (`D2`).
 
-### 2.6 `Rect2` 留在 `math`
+### 2.6 `Rect2` stays in `math`
 
-- **是什么**：`vn::math::Rect2<T>` 不动；`appfw::Gui` 的 `using Rect = math::Rect2i` 不动。
-- **为什么**：`G1`、`G5`、`G8` —— 它表达的是布局/命中矩形，不是空间形状；`geometry` 今天全是 3D 实体，把它拉进来只为对称会引入一个无关职责。
-- **边界**：将来出现真正的 2D 几何消费者（投影包围、2D 碰撞）再单独评估，不预先搬。
+- **What**: `vn::math::Rect2<T>` is untouched; `using Rect = math::Rect2i` in `appfw::Gui` is untouched.
+- **Why**: `G1`, `G5`, `G8` — it expresses a layout / hit rectangle, not a spatial shape; `geometry` is all 3D entities today, and pulling it in for symmetry would add an unrelated responsibility.
+- **Boundary**: a real 2D geometry consumer (projected bounds, 2D collision) is evaluated separately when it appears, not moved in advance.
 
-### 2.7 拟合在 `Obb`，分解在 `math`
+### 2.7 Fitting lives in `Obb`, decomposition in `math`
 
-- **是什么**：`Obb::computePca` / `Obb::computeFixedOrientation` 只做“求轴向 → 投影取 min/max → 组装四元数”；它们依赖 `math::symmetricEigen`（3×3 对称矩阵 Jacobi 分解，见 `EigenDecomposition.hpp`）与 `math::toQuaternion`（旋转矩阵 → 四元数）。
-- **为什么**：`G1`、`G2` —— 特征分解是对矩阵的数值运算，不是空间实体；放进 `geometry` 会让 `math` 反向依赖它才能复用。拟合本身是形状操作，留在 `Obb`。
-- **边界**：`symmetricEigen` 只承诺对称矩阵、升序谱、列正交、每列最大分量取正；handedness 不保证，需要旋转矩阵的调用方自己用叉积补第三轴（`Obb` 就是这么做的）。
-- **为什么单独一个头文件**：`Matrix3x3.hpp` 只留矩阵本身，算法在 `EigenDecomposition.hpp`；只用到矩阵的翻译单元不付算法与 `<cmath>` 的编译成本，矩阵类型和求解器也各自演进（`G5`、`G10`）。
-- **轴序**：PCA 按方差**降序**排列（局部 X 最大、Z 最小）。理由：主轴的惯例读法是从大到小，消费方读 `halfExtents()` 时 X 即最长边（`G4`、`G12`）；旧实现取升序的前两列（X = 最小方差）既没有声明支撑，也与“主轴”直觉相反。
-- **不做**：最小体积 OBB（依赖第三方凸包旋转卡壳实现，今天没有消费者，`G8`）；`merge` 因同原因暂不提供。
+- **What**: `Obb::computePca` / `Obb::computeFixedOrientation` only do "find the axes → project and take min/max → assemble the quaternion"; they depend on `math::symmetricEigen` (the Jacobi decomposition of a 3×3 symmetric matrix, see `EigenDecomposition.hpp`) and `math::toQuaternion` (rotation matrix → quaternion).
+- **Why**: `G1`, `G2` — eigen decomposition is a numeric operation on a matrix, not a spatial entity; putting it in `geometry` would force `math` to depend on it in order to be reused. The fit itself is a shape operation and stays in `Obb`.
+- **Boundary**: `symmetricEigen` promises only a symmetric matrix, an ascending spectrum, orthonormal columns and a positive largest component per column; handedness is not guaranteed, and a caller needing a rotation matrix completes the third axis with a cross product (which is what `Obb` does).
+- **Why a separate header**: `Matrix3x3.hpp` keeps only the matrix itself and the algorithms are in `EigenDecomposition.hpp`; a translation unit that only uses the matrix does not pay for the algorithms and `<cmath>`, and the matrix type and the solver evolve separately (`G5`, `G10`).
+- **Axis order**: PCA orders by **descending** variance (local X largest, Z smallest). The reason: the conventional reading of a principal axis is largest to smallest, so a consumer reading `halfExtents()` sees X as the longest edge (`G4`, `G12`); the old implementation took the first two columns in ascending order (X = smallest variance), which had no stated support and contradicted the intuition of "principal axis".
+- **Not done**: the minimum-volume OBB (it depends on a third-party convex-hull rotating-calipers implementation and has no consumer today, `G8`); `merge` is not provided for the same reason.
 
-### 2.8 值类型的短查询定义在头文件
+### 2.8 The short queries of the value types are defined in the header
 
-- **是什么**：`Aabb` / `Obb` / `LineCurve` / `Plane` / `Ray` 的短查询与访问器（`contains`、`expandBy`、`intersectWith`、`transformed`、`closestPoint`、`pointAt`、`distanceToPoint`、`corners`、`toAabb`、`intersects`、`intersectTriangle`）定义在 `sdk` 头文件里；只有长算法留在 `src/`，并保留 `template class VN_GEOMETRY_API` 显式实例化。
-- **布局**：每个类型的类体内只留声明与平凡访问器，定义集中在该类之后、别名之前。一个类型的公开形状因此可以一次读完（`G4`、`G12`）。
-- **为什么**：`G7`、`G10` —— `geometry` 是 DLL，跨模块调用不可能内联；`graphics` 的逐三角形拾取实测命中断 7.09 → 5.99 ns、平行剔除 3.96 → 2.71 ns（独立基准，约 15–30%）。把调用点留在调用方模块里，比让调用方为一次点测试过一道库边界便宜。
-- **边界**：判据是“短且纯算术”——不依赖 `EigenDecomposition.hpp`、OCCT 或匿名命名空间辅助。不是“凡是能内联的都内联”：拟合（`Obb::computePca` / `computeFixedOrientation`）、`LineCurve::intersectWith(LineCurve)`、`Plane::intersectWith(Plane, LineCurve&)` 留在 `src/`，否则公共头要拖进特征分解与 60 行推导注释，成本付给每一个 consumer（`G11`、`G10`）。
-- **代价**：类上没有 `VN_GEOMETRY_API`，导出只来自显式实例化；而**库为每一个几何类型、两种精度都提供显式实例化**：有 `src/` 实现的类型在自己的 `.cpp` 里（`LineCurve` / `Obb` / `Plane`——那些 `.cpp` 是唯一能看见其非内联成员的地方），纯头文件的类型集中在 `src/Instantiations.cpp`（一份可审查的清单，同时是“每个类型都能实例化”的编译期检查）。不写 `extern template`：内联仍然在调用方发生，导出的符号是“不能内联时的兵底”，不是唯一实现。精度与实例化的策略见 `../decisions/ADR-2026-11-04-geometry-precision-and-instantiation.md`。
-- **不做**：不把平行判定的 `eps * length(a) * length(b)` 改成平方比较——实测 2.71 → 2.68 ns 在噪声内（`G8`）；不为“更彻底的 header-only”引入 BVH 或批处理入口，那是 `../backlog/graphics.md` 的射线–网格遍历项，按证据另议。
+- **What**: the short queries and accessors of `Aabb` / `Obb` / `LineCurve` / `Plane` / `Ray` (`contains`, `expandBy`, `intersectWith`, `transformed`, `closestPoint`, `pointAt`, `distanceToPoint`, `corners`, `toAabb`, `intersects`, `intersectTriangle`) are defined in the `sdk` headers; only the long algorithms stay in `src/`, keeping the `template class VN_GEOMETRY_API` explicit instantiation.
+- **Layout**: the class body of each type keeps only declarations and trivial accessors, and the definitions sit together after the class and before the aliases. The public shape of one type can therefore be read in one pass (`G4`, `G12`).
+- **Why**: `G7`, `G10` — `geometry` is a DLL, so a cross-module call cannot inline; the per-triangle picking measured 7.09 → 5.99 ns on hit and 3.96 → 2.71 ns on the parallel rejection (an independent benchmark, about 15–30%). Keeping the call site in the caller's module is cheaper than making the caller cross a library boundary for one point test.
+- **Boundary**: the test is "short and purely arithmetic" — it depends on no `EigenDecomposition.hpp`, no OCCT and no anonymous-namespace helper. It is not "inline everything that can inline": the fits (`Obb::computePca` / `computeFixedOrientation`), `LineCurve::intersectWith(LineCurve)` and `Plane::intersectWith(Plane, LineCurve&)` stay in `src/`, or a public header would drag in eigen decomposition and 60 lines of derivation comments and charge every consumer (`G11`, `G10`).
+- **Cost**: the class carries no `VN_GEOMETRY_API`, and the export comes only from explicit instantiation; and **the library provides an explicit instantiation for every geometry type in both precisions**: a type with a `src/` implementation does it in its own `.cpp` (`LineCurve` / `Obb` / `Plane` — those `.cpp` files are the only place that can see its non-inline members), and header-only types are collected in `src/Instantiations.cpp` (one reviewable list that is also the compile-time check that "every type can be instantiated"). No `extern template` is written: inlining still happens at the call site, and the exported symbol is the fallback when inlining is impossible, not the only implementation. The policy for precision and instantiation is in `../decisions/ADR-2026-11-04-geometry-precision-and-instantiation.md`.
+- **Not done**: no change of the parallel test's `eps * length(a) * length(b)` to a squared comparison — the measured 2.71 → 2.68 ns is inside the noise (`G8`); no BVH or batched entry point introduced for "more thorough header-only", that is the ray–mesh traversal item of `../backlog/graphics.md`, argued separately with evidence.
 
-### 2.9 盒的变换算子跟着盒走
+### 2.9 The box transform operator travels with the box
 
-- **是什么**：`Aabb<T>::transformed(const math::Matrix4x4<T>&)` 返回把盒放进另一坐标系之后**包含它**的轴对齐盒（八个角点变换后重拟合）；只对仿射矩阵有定义，空盒或非仿射输入答空盒。`Obb` 暂不提供同名算子。
-- **为什么**：`G1`、`G7`、`G13` —— 这是值类型自己的几何事实，不是渲染词汇。把它留在消费者一侧，就意味着每个消费者（世界盒、子树并集、边界缓存、拾取拒绝盒）各写一遍同样的八角重拟合；那正是搬迁前的样子（见 `../decisions/ADR-2026-11-09-box-transform-lives-in-geom.md`）。
-- **边界**：盒的像一般不再是轴对齐盒，所以这个算子给的是**界**而不是像；需要精确像的调用方要用 `Obb`（今天没有消费者，见 9.2）。`T` 必须是浮点类型：整数盒乘矩阵没有定义好的舍入。
-- **成本**：`Aabb.hpp` 从此 include `math/Transform3.hpp`（矩阵 × 点算子的唯一定义）。`Aabb` 已经 include `Ray.hpp`，所以这层“值类型依赖 math 值类型”的耦合不是新性质。
+- **What**: `Aabb<T>::transformed(const math::Matrix4x4<T>&)` returns the axis-aligned box that **contains** the box after placing it in another coordinate system (transform the eight corners and refit); it is defined for affine matrices only, and an empty box or a non-affine input answers an empty box. `Obb` does not offer an operator of the same name yet.
+- **Why**: `G1`, `G7`, `G13` — this is the value type's own geometric fact, not rendering vocabulary. Leaving it on the consumer side means every consumer (world box, subtree union, bounds cache, picking rejection box) writes the same eight-corner refit; that is exactly how it was before the move (see `../decisions/ADR-2026-11-09-box-transform-lives-in-geom.md`).
+- **Boundary**: the image of a box is generally not axis-aligned any more, so this operator gives a **bound** and not the image; a caller needing the exact image must use `Obb` (no consumer today, see 9.2). `T` must be a floating-point type: an integer box multiplied by a matrix has no well-defined rounding.
+- **Cost**: `Aabb.hpp` now includes `math/Transform3.hpp` (the one definition of the matrix × point operator). `Aabb` already includes `Ray.hpp`, so this "value type depends on a math value type" coupling is not new.
 
-## 3. 功能点
+## 3. Features
 
-| # | 功能 | 说明 |
+| # | Feature | Description |
 |---|---|---|
-| F1 | 轴对齐盒 | `Aabb<T>`：min/max 角点、`empty()` 哨兵、`expandBy` / `intersectWith` / `compute(span)` / `transformed(affine)`。 |
-| F2 | 有向盒 | `Obb<T>`：center + half-extents + 四元数朝向；`toAabb()` 返回 `Aabb<T>`。 |
-| F3 | 直线 | `LineCurve<T>`：点–方向参数式；`intersectWith` 给最近点对与平行/共线标志；`closestPoint` 投影。 |
-| F4 | 平面 | `Plane<T>`：点 + 法向；与 `LineCurve` 交于一点、与 `Plane` 交于 `LineCurve`。 |
-| F5 | 单一名字 | `Rect3` 与 `math::Aabb*` 不存在；`geom::spatial::Aabbf/Aabbd/Aabbi` 可用。 |
-| F6 | 2D 不迁 | `math::Rect2` 与 `Rect2i` 保持原位。 |
-| F7 | PCA 拟合 | `Obb::computePca(span)`：协方差特征轴，最大方差方向为局部 X。 |
-| F8 | 固定轴向拟合 | `Obb::computeFixedOrientation(span, x_dir, y_dir)`：调用方给 X/Y，Y 先对 X 正交化。 |
+| F1 | Axis-aligned box | `Aabb<T>`: min/max corners, the `empty()` sentinel, `expandBy` / `intersectWith` / `compute(span)` / `transformed(affine)`. |
+| F2 | Oriented box | `Obb<T>`: centre + half extents + quaternion orientation; `toAabb()` returns an `Aabb<T>`. |
+| F3 | Line | `LineCurve<T>`: point–direction parametric form; `intersectWith` gives the nearest pair and the parallel / collinear flags; `closestPoint` projects. |
+| F4 | Plane | `Plane<T>`: point + normal; meets a `LineCurve` at a point and a `Plane` in a `LineCurve`. |
+| F5 | One name | `Rect3` and `math::Aabb*` do not exist; `geom::spatial::Aabbf/Aabbd/Aabbi` are available. |
+| F6 | 2D stays put | `math::Rect2` and `Rect2i` keep their place. |
+| F7 | PCA fit | `Obb::computePca(span)`: the covariance eigen-axes, with the largest-variance direction as local X. |
+| F8 | Fixed-orientation fit | `Obb::computeFixedOrientation(span, x_dir, y_dir)`: the caller supplies X/Y, and Y is first orthogonalised against X. |
 
-### 3.1 F1 轴对齐盒
+### 3.1 F1 the axis-aligned box
 
-- **行为**：默认构造是原点处的零尺寸盒（`isValid()` 为真）；`empty()` 是反向哨兵，只有 `expandBy` 之后才有效。
-- **约束**（C1）：字段只按方向单调变化，`min()/max()` 原样返回存储值；`intersectWith` 的输出始终归一化。
-- **要求**（R1）：`compute()` 接受任意轴序的顶点 span，空输入返回默认零盒。
-- **验收**（T1）：`AabbTest.cpp` 覆盖 expandBy、相交（含不相交的缝隙盒）、`compute`、空哨兵合并，以及 `transformed` 的恒等 / 平移 / 非均匀缩放 / 旋转后重拟合 / 镜像 / 空盒与非仿射输入。
-- **注意**（N1）：`isNeg()` / `isEmpty()` / `isValid()` 是同一判定的三种问法，不要给它们不同的语义。
+- **Behaviour**: default construction is a zero-size box at the origin (`isValid()` true); `empty()` is the reversed sentinel, valid only after an `expandBy`.
+- **Constraint** (C1): the fields change monotonically in their direction only, and `min()` / `max()` return the stored value as is; the output of `intersectWith` is always normalised.
+- **Requirement** (R1): `compute()` accepts a vertex span in any axis order, and an empty input returns the default zero box.
+- **Acceptance** (T1): `AabbTest.cpp` covers expandBy, intersection (including the gap box of a non-intersection), `compute`, merging with the empty sentinel, and `transformed` under identity / translation / non-uniform scale / rotation with refit / mirror / empty box and non-affine input.
+- **Caveat** (N1): `isNeg()` / `isEmpty()` / `isValid()` are three questions about one decision and must not be given different meanings.
 
-### 3.2 F4 平面
+### 3.2 F4 the plane
 
-- **行为**：`intersectWith(LineCurve, Point3&)` 在 `|n·d| <= eps` 时返回 false（线平行于面）；`intersectWith(Plane, LineCurve&)` 在法向共线时返回 false。
-- **约束**（C2）：输出线由调用方提供——`LineCurve` 没有默认构造函数（`P1`）。
-- **要求**（R2）：求交的中间解在最大分量轴上做 2×2 主元选择，避免病态子矩阵。
-- **验收**（T3）：`LinePlaneTest.cpp` 覆盖点交、平行无交、面面交线的方向与位置。
+- **Behaviour**: `intersectWith(LineCurve, Point3&)` returns false when `|n·d| <= eps` (the line is parallel to the plane); `intersectWith(Plane, LineCurve&)` returns false when the normals are collinear.
+- **Constraint** (C2): the output line is supplied by the caller — `LineCurve` has no default constructor (`P1`).
+- **Requirement** (R2): the intermediate solution of the intersection pivots on the largest component axis to avoid an ill-conditioned submatrix.
+- **Acceptance** (T3): `LinePlaneTest.cpp` covers the point intersection, the parallel no-intersection, and the direction and position of the plane–plane line.
 
-### 3.3 F7/F8 拟合
+### 3.3 F7/F8 the fits
 
-- **行为**：两者都返回“包围全部输入点”的盒子；轴向只决定紧致度，不决定是否包围（`C4`）。
-- **PCA**：质心 → 协方差 → `symmetricEigen` → 按方差**降序**取轴：局部 X 是最大方差方向、局部 Z 最小，第三轴取叉积。半尺寸按这个次序量取，**不排序**（`N4`）。
-- **固定轴向**：`x_dir` 归一化；`y_dir` 减去其在 X 上的投影后再归一化；Z 取叉积。
-- **退化**（`N3`）：`x_dir` 为零 → 世界 X；`y` 与 `x` 平行 → 取与 X 最不平行的世界轴（保留调用方的 X）；所有点共享同一坐标 → 该点处零尺寸盒 + 单位朝向；空输入 → 默认盒（`R4`）。
-- **验收**（T6/T7）：`ObbFitTest.cpp` 覆盖旋转盒的谱/轴向恢复、共线点集、单点与重合点、空输入、非法方向对与“全点被包围”不变量。
+- **Behaviour**: both return a box that encloses every input point; the axis directions affect tightness only, never whether the points are enclosed (`C4`).
+- **PCA**: centroid → covariance → `symmetricEigen` → take the axes by **descending** variance: local X is the largest-variance direction, local Z the smallest, and the third axis is the cross product. The half extents are measured in this order and **not sorted** (`N4`).
+- **Fixed orientation**: `x_dir` is normalised; `y_dir` loses its projection on X and is then normalised; Z is the cross product.
+- **Degenerate cases** (`N3`): a zero `x_dir` → world X; `y` parallel to `x` → the world axis least parallel to X (the caller's X is kept); all points sharing one coordinate → a zero-size box at that point with the identity orientation; an empty input → the default box (`R4`).
+- **Acceptance** (T6/T7): `ObbFitTest.cpp` covers spectrum / axis recovery of a rotated box, a collinear point set, a single point and coincident points, an empty input, an illegal direction pair and the invariant "every point is enclosed".
 
-## 4. 公开接口
+## 4. Public Interface
 
-| 头文件 | 内容 |
+| Header | Content |
 |---|---|
-| `src/base/geom/sdk/vine/geom/spatial/Aabb.hpp` | `Aabb<T>`、`Aabbf` / `Aabbd` / `Aabbi` |
-| `src/base/geom/sdk/vine/geom/spatial/Obb.hpp` | `Obb<T>`、`Obbf` / `Obbd` |
-| `src/base/geom/sdk/vine/geom/spatial/LineCurve.hpp` | `LineCurve<T>`、`LineCurvef` / `LineCurved` |
-| `src/base/geom/sdk/vine/geom/spatial/Plane.hpp` | `Plane<T>`、`Planef` / `Planed` |
-| `src/base/geom/src/Instantiations.cpp` | 纯头文件几何类型的显式实例化清单（`float` + `double`） |
+| `src/base/geom/sdk/vine/geom/spatial/Aabb.hpp` | `Aabb<T>`, `Aabbf` / `Aabbd` / `Aabbi` |
+| `src/base/geom/sdk/vine/geom/spatial/Obb.hpp` | `Obb<T>`, `Obbf` / `Obbd` |
+| `src/base/geom/sdk/vine/geom/spatial/LineCurve.hpp` | `LineCurve<T>`, `LineCurvef` / `LineCurved` |
+| `src/base/geom/sdk/vine/geom/spatial/Plane.hpp` | `Plane<T>`, `Planef` / `Planed` |
+| `src/base/geom/src/Instantiations.cpp` | the explicit-instantiation list of the header-only geometry types (`float` + `double`) |
 
-短查询定义在头文件（2.8）；只有长算法留在 `src/` 并保留 `VN_GEOMETRY_API` 显式实例化：`LineCurve::intersectWith(const LineCurve&)`、`Plane::intersectWith(const Plane&, LineCurve&)`、`Obb::computeFixedOrientation` / `computePca`。
+The short queries are defined in the headers (2.8); only the long algorithms stay in `src/` with the `VN_GEOMETRY_API` explicit instantiation: `LineCurve::intersectWith(const LineCurve&)`, `Plane::intersectWith(const Plane&, LineCurve&)`, `Obb::computeFixedOrientation` / `computePca`.
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-- **C1**：`Aabb` 的字段方向不变式——min 只减、max 只增；`intersectWith` 的输出归一化。
-- **C2**：输出参数由调用方构造，函数不分配、不返回引用。
-- **C3**：这四个类型不参与 `Shape` 的类型判定（`obj_cast` / `ShapeType`）。
-- **C4**：拟合结果永远是包围盒：轴向只影响紧致度，任何输入下 `contains()` 对每个输入点都为真（在容差内）。
-- **C5**：`Aabb::transformed()` 只接受仿射矩阵（`Matrix4x4::isAffine()`）；空盒或非仿射输入答空盒，结果总是归一化（min ≤ max）。
-- **R1**：`Aabb::compute()` 对空 span 返回默认零盒，不抛异常。
-- **R2**：`Plane` 求交在退化输入上返回 `false`，不产生 NaN。
-- **R3**：`math` 不 include `geometry`；`geometry` 可以 include `math`。
-- **R4**：两个拟合入口对空 span 返回默认 `Obb`（原点、零尺寸、单位朝向）。
-- **N1**：`empty()` 不是“空集合”，是一个反向 min/max 哨兵，只能作为累加起点。
-- **N2**：`LineCurve` 的方向不必单位化，参数 `t` 的尺度和 `|direction|` 绑定。
-- **N3**：PCA 在共线点集上次轴任意但确定；重复特征值只保证正交，不保证唯一；所有点重合时返回单位朝向的零尺寸盒。
-- **N4**：PCA 的轴序是**方差序**而非**尺寸序**：`halfExtents()` 不保证 X ≥ Y ≥ Z（盒状点云两者一致，非均匀点云可能不一致）；要按长度选择，请调用方自行排序。旧 VObb 取 col(0)/col(1)（X = 最小方差），本仓库反过来，理由写在 2.7。
+- **C1**: the field-direction invariant of `Aabb` — min only decreases and max only increases; the output of `intersectWith` is normalised.
+- **C2**: an output parameter is constructed by the caller; a function allocates nothing and returns no reference.
+- **C3**: these four types take no part in `Shape`'s type decisions (`obj_cast` / `ShapeType`).
+- **C4**: a fit result is always a bounding box: the axes affect tightness only, and under any input `contains()` is true for every input point (within tolerance).
+- **C5**: `Aabb::transformed()` accepts affine matrices only (`Matrix4x4::isAffine()`); an empty box or a non-affine input answers an empty box, and the result is always normalised (min ≤ max).
+- **R1**: `Aabb::compute()` returns the default zero box for an empty span and throws nothing.
+- **R2**: `Plane` intersection returns `false` on degenerate input and produces no NaN.
+- **R3**: `math` does not include `geometry`; `geometry` may include `math`.
+- **R4**: both fit entry points return the default `Obb` (origin, zero size, identity orientation) for an empty span.
+- **N1**: `empty()` is not "the empty set" but a reversed min/max sentinel, usable only as the start of an accumulation.
+- **N2**: a `LineCurve` direction need not be unit length, and the scale of the parameter `t` is tied to `|direction|`.
+- **N3**: on a collinear point set PCA's secondary axis is arbitrary but deterministic; repeated eigenvalues guarantee orthogonality only, not uniqueness; when all points coincide it returns a zero-size box with the identity orientation.
+- **N4**: PCA's axis order is **variance order**, not **size order**: `halfExtents()` does not guarantee X ≥ Y ≥ Z (a box-shaped cloud agrees, a non-uniform cloud may not); a caller selecting by length sorts itself. The old VObb took col(0)/col(1) (X = smallest variance); this repository does the reverse, for the reason in 2.7.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-- **P1**：`LineCurve` 没有默认构造函数——`Plane::intersectWith(Plane, LineCurve&)` 的输出参数必须是一个已构造的线（用任意合法值占位，函数内部整体覆写）。失败方式是编译错误，不是运行期错误。
-- **P2**：`Aabb` 默认构造是**零盒**而非空盒；把它当累加器起点会把原点算进包围盒。要累加请用 `Aabb::empty()`（`N1`）。
-- **P3**：`Aabb::compute()` 与 `expandBy()` 不 normalize；`intersectWith()` 的输出则总是归一化。混用两种状态会让 `isNeg()` 读数与预期相反。
-- **P4**：`math::toQuaternion()` 要求输入是纯旋转（正交、det = +1）；它不检查、不修复，缩放或退化矩阵会得到任意四元数。`rotate3x3()` 是它的逆，两者用同一分支约定。
+- **P1**: `LineCurve` has no default constructor — the output parameter of `Plane::intersectWith(Plane, LineCurve&)` must be an already constructed line (any legal value will do; the function overwrites it entirely). The failure mode is a compile error, not a run-time error.
+- **P2**: a default-constructed `Aabb` is the **zero box**, not an empty one; using it as the start of an accumulation pulls the origin into the bounding box. Use `Aabb::empty()` for accumulation (`N1`).
+- **P3**: `Aabb::compute()` and `expandBy()` do not normalise; the output of `intersectWith()` always does. Mixing the two states makes `isNeg()` read the opposite of what you expect.
+- **P4**: `math::toQuaternion()` requires a pure rotation (orthonormal, det = +1); it neither checks nor repairs, so a scaling or degenerate matrix yields an arbitrary quaternion. `rotate3x3()` is its inverse and the two share the same branch convention.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-- **D1**：保留 `Rect3` 作为类型名 —— 3D “Rect” 是误名，且与 `Obb` 不成对（`G1`/`G4`）。见 `../decisions/ADR-2026-11-03-geometry-primitives-ownership.md`。
-- **D2**：在 `math/Rect3.hpp` 里留 `using Rect3 = geom::spatial::Aabb` 兼容别名 —— 会让 `math` 反向依赖 `geometry`（`G2`），一个版本后再删的过渡期不值得一条回边。
-- **D3**：把 `Rect2` 一起搬进 `geometry` —— 唯一消费者是 GUI 布局矩形，会迫使 `appfw` 的公共头依赖 `geometry`（`G1`/`G5`）。
+- **D1**: keeping `Rect3` as the type name — a 3D "Rect" is a wrong name and does not pair with `Obb` (`G1`/`G4`). See `../decisions/ADR-2026-11-03-geometry-primitives-ownership.md`.
+- **D2**: keeping `using Rect3 = geom::spatial::Aabb` as a compatibility alias in `math/Rect3.hpp` — it would make `math` depend on `geometry` in reverse (`G2`), and a transition period removed one version later is not worth a back edge.
+- **D3**: moving `Rect2` into `geometry` as well — its only consumer is a GUI layout rectangle, and it would force the public headers of `appfw` to depend on `geometry` (`G1`/`G5`).
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 |
+| # | Criterion | Case |
 |---|---|---|
-| T1 | 盒的扩展、相交、`compute`、空哨兵 | `tests/test_geom_spatial/AabbTest.cpp`（`Aabb.*`） |
-| T2 | 有向盒的规范化、包含、`toAabb` 包围 | `tests/test_geom_spatial/ObbTest.cpp` |
-| T3 | 线–线最近点与平行/共线标志 | `LinePlaneTest.cpp`（`Line.*`） |
-| T4 | 面–线、面–面求交与退化分支 | `LinePlaneTest.cpp`（`Plane.*`） |
-| T5 | 2D 矩形不受影响 | `tests/test_math/Rect2Test.cpp` |
-| T6 | 谱、正交基、重构与升序 | `tests/test_math/EigenDecompositionTest.cpp`（`EigenDecomposition.*`） |
-| T7 | 轴角 → 矩阵 → 四元数往返 | `tests/test_math/Transform3Test.cpp`（`Transform3.*`） |
+| T1 | box expansion, intersection, `compute`, the empty sentinel | `tests/test_geom_spatial/AabbTest.cpp` (`Aabb.*`) |
+| T2 | normalisation, containment and `toAabb` enclosure of the oriented box | `tests/test_geom_spatial/ObbTest.cpp` |
+| T3 | line–line nearest points and the parallel / collinear flags | `LinePlaneTest.cpp` (`Line.*`) |
+| T4 | plane–line and plane–plane intersection and the degenerate branches | `LinePlaneTest.cpp` (`Plane.*`) |
+| T5 | the 2D rectangle is unaffected | `tests/test_math/Rect2Test.cpp` |
+| T6 | spectrum, orthonormal basis, reconstruction and ordering | `tests/test_math/EigenDecompositionTest.cpp` (`EigenDecomposition.*`) |
+| T7 | axis-angle → matrix → quaternion round trip | `tests/test_math/Transform3Test.cpp` (`Transform3.*`) |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 现状
+### 9.1 Current state
 
-四个类型在 `vn::geometry`，`math` 下没有对应头文件与源文件；`Mesh`、`graphics::Node`、`ChainPresets`、`ChainBuilder` 与测试都用新名字。
-`Obb` 自带 PCA 与固定轴向拟合；特征分解与矩阵→四元数在 `math`（`Matrix3x3.hpp` / `Transform3.cpp`），两个头文件只声明契约。
+The four types are in `vn::geometry`, and `math` holds no matching header or source; `Mesh`, `graphics::Node`, `ChainPresets`, `ChainBuilder` and the tests all use the new names.
+`Obb` carries the PCA and fixed-orientation fits itself; eigen decomposition and matrix → quaternion are in `math` (`Matrix3x3.hpp` / `Transform3.cpp`), and the two headers declare the contract only.
 
-### 9.2 已知缺口
+### 9.2 Known gaps
 
-- `Obb` 的变换算子未提供：它存 center + 半长 + 四元数，只对刚体（及均匀缩放）精确——一般仿射的像是平行六面体，这个表示装不下。触发条件：出现需要“精确像”的消费者；届时先定非刚体变换的语义（拒绝 / 重拟合 / 改存储为三根半轴向量）。
-- `LineCurve` / `Plane` 只有基础分支的用例；退化容差、近共线情形未覆盖。
-- 最小体积 OBB 与 `merge` 未提供（2.7）。
+- No transform operator on `Obb`: it stores centre + half extents + quaternion, which is exact only for rigid bodies (and uniform scaling) — the image under a general affine map is a parallelepiped this representation cannot hold. Trigger: a consumer needing the exact image; settle the semantics of a non-rigid transform first (reject / refit / store three half-axis vectors).
+- `LineCurve` / `Plane` have cases for the basic branches only; degenerate tolerances and near-collinear cases are not covered.
+- The minimum-volume OBB and `merge` are not provided (2.7).
 
-## 10. 参考
+## 10. References
 
-- 代码：`src/base/geom/sdk/vine/geom/spatial/{Aabb,Obb,Line,Plane}.hpp`、`src/base/geom/src/{Aabb,Obb,Line,Plane}.cpp`。
-- 数学设施：`src/base/math/sdk/vine/math/EigenDecomposition.hpp`（`symmetricEigen`）、`Transform3.hpp`（`toQuaternion`）、`src/base/math/src/Transform3.cpp`。
-- 设计：`graphics-geometry.md`（`Shape` / `Mesh` / revision 的现行设计）、`../decisions/ADR-2026-11-03-geometry-primitives-ownership.md`。
-- 测试：`tests/test_geom_spatial/AabbTest.cpp`、`ObbTest.cpp`、`ObbFitTest.cpp`、`LinePlaneTest.cpp`；`tests/test_math/Rect2Test.cpp`、`EigenDecompositionTest.cpp`、`Transform3Test.cpp`。
+- Code: `src/base/geom/sdk/vine/geom/spatial/{Aabb,Obb,Line,Plane}.hpp`, `src/base/geom/src/{Aabb,Obb,Line,Plane}.cpp`.
+- Mathematical facilities: `src/base/math/sdk/vine/math/EigenDecomposition.hpp` (`symmetricEigen`), `Transform3.hpp` (`toQuaternion`), `src/base/math/src/Transform3.cpp`.
+- Design: `graphics-geometry.md` (the current design of `Shape` / `Mesh` / revision), `../decisions/ADR-2026-11-03-geometry-primitives-ownership.md`.
+- Tests: `tests/test_geom_spatial/AabbTest.cpp`, `ObbTest.cpp`, `ObbFitTest.cpp`, `LinePlaneTest.cpp`; `tests/test_math/Rect2Test.cpp`, `EigenDecompositionTest.cpp`, `Transform3Test.cpp`.
