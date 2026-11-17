@@ -1,154 +1,154 @@
-# geometry 族级曲面查询：最近点与射线求交
+# geometry family-level surface queries: nearest point and ray intersection
 
-> **状态**：现行
-> **最后核对**：2026-11-04
-> **范围**：`src/base/geom/sdk/vine/geom/spatial` 里对**任意** `Surface<T>` 的两项算法——点到曲面的最近点 / 距离、射线 × 曲面。
-> 不含具体类型的解析入口（`Plane::intersectWith(Ray)`、`signedValue()` 等，见 `geometry-ray.md` 与 `geometry-intersection.md`），不含参数化几何（见 `geometry-parametric.md`），不含点到曲线的距离与实体运算（`../backlog/geometry.md` G3）。
-> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/SurfaceParameterWindow.hpp`、`SurfaceProjection.hpp`、`RaySurfaceIntersection.hpp`；`tests/test_geom_spatial/SurfaceQueryTest.cpp`。
-> **待办**：`../backlog/geometry.md` G3
+> **Status**: current
+> **Last verified**: 2026-11-04
+> **Scope**: the two algorithms in `src/base/geom/sdk/vine/geom/spatial` that work on **any** `Surface<T>` — nearest point / distance from a point to a surface, and ray × surface.
+> Not the analytic entry of a concrete type (`Plane::intersectWith(Ray)`, `signedValue()` and so on, see `geometry-ray.md` and `geometry-intersection.md`), not parametric geometry (see `geometry-parametric.md`), not the distance from a point to a curve and not solid operations (`../backlog/geometry.md` G3).
+> **Sources**: `src/base/geom/sdk/vine/geom/spatial/SurfaceParameterWindow.hpp`, `SurfaceProjection.hpp`, `RaySurfaceIntersection.hpp`; `tests/test_geom_spatial/SurfaceQueryTest.cpp`.
+> **Backlog**: `../backlog/geometry.md` G3
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-`Surface<T>` 是求值接口（`geometry-kinds.md` 2.10）：调用方拿着 `const Surface<T>&` 能取点、取两个一阶导、问参数域，但**不能问任何几何问题**。具体类型各有精确入口——`Plane` 有射线相交，五个解析面有 `signedValue()` 供曲线求根——而“一个未知类型的曲面”只能被求值。
+`Surface<T>` is an evaluation interface (`geometry-kinds.md` 2.10): holding a `const Surface<T>&` a caller can take a point, take the two first derivatives and ask for the parameter domain, but **cannot ask any geometric question**. Each concrete type has an exact entry of its own — `Plane` has a ray intersection, the five analytic surfaces have `signedValue()` for curve root finding — while "a surface of unknown type" can only be evaluated.
 
-两个后果：
+Two consequences:
 
-- **裁剪面与样条面没有射线入口**。射线 × `BezierSurface` / `RectangularTrimmedSurface` 今天没有答案，`intersectCurveWithSurface()` 也只接受有隐式方程的解析面。
-- **最近点是空白**。点到平面的投影、点到球面的距离、点到样条面的最近点，各自都没有入口；而它们恰好是“未知曲面”最常见的两个问题。
+- **A trimmed or spline surface has no ray entry**. Ray × `BezierSurface` / `RectangularTrimmedSurface` has no answer today, and `intersectCurveWithSurface()` accepts only analytic surfaces with an implicit equation.
+- **Nearest point is a blank**. The projection of a point onto a plane, the distance from a point to a sphere, the nearest point on a spline patch — none has an entry; and these are exactly the two most common questions about "an unknown surface".
 
-逐类型补入口是 13 种曲面 × 2 个问题，还要为每个新曲面重复一遍（`G9` 的反例）。
+Adding an entry per type is 13 surface types × 2 questions, and it would be repeated for every new surface (the counter-example to `G9`).
 
-### 1.2 目标
+### 1.2 Goals
 
-- 两个问题各有一个自由函数入口，参数是**接口**，不要求隐式方程、不要求具体类型。
-- 参数域无界时由调用方给窗口，函数绝不自己编一个范围。
-- 结果沿用既有词汇：距离 / 最近点 / 参数、`RayHit` 的 `t` / 点 / 朝向射线的法向。
-- 不扩 `Surface<T>` 接口：不加 `inverse()`、`normalAt()`、`bounds()`。
+- One free-function entry per question, parameterised on the **interface**, requiring neither an implicit equation nor a concrete type.
+- When the parameter domain is unbounded the caller supplies a window, and the function never invents a range.
+- The results reuse the existing vocabulary: distance / nearest point / parameters, and the `t` / point / ray-facing normal of `RayHit`.
+- No extension of the `Surface<T>` interface: no `inverse()`, no `normalAt()`, no `bounds()`.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做点到**曲线**的距离、实体求交：今天没有消费者（`G8`），留在 backlog G3。
-- 不保证全局最优或精确：这是数值算法，性质与失败形态写在 §5 / §6。
-- 不做逐类型特例分派：已知类型继续用自己的解析入口，族级入口是兜底而不是替代。
+- No distance from a point to a **curve** and no solid intersection: no consumer today (`G8`), left in backlog G3.
+- No guarantee of a global optimum or of exactness: this is a numeric algorithm, and its properties and failure modes are in §5 / §6.
+- No per-type special-case dispatch: a known type keeps using its analytic entry, and the family entry is the fallback, not a replacement.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**在参数窗口上采样播种、用牛顿迭代求解——最近点是二维最小化，射线交点是三元方程组；接口因此保持只回答“求值”，代价与局部性写在注意事项里。**
+**Seed by sampling the parameter window and solve by Newton iteration — nearest point is a two-dimensional minimisation and a ray crossing is a three-variable system; the interface therefore keeps answering only "evaluation", with the cost and the locality written in the caveats.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 自由函数 + “派生自 `Surface<T>`”的约束
+### 2.1 A free function with a "derived from `Surface<T>`" constraint
 
-- **是什么**：`closestPointOnSurface(surface, query, ...)` 与 `intersectRayWithSurface(ray, surface, ...)` 都是头文件模板，`S` 由 `requires std::is_base_of_v<Surface<T>, S>` 约束。
-- **为什么**：`G1`、`G9` —— 算法只依赖接口的五个成员（`evaluate`、两个一阶导、域、`isValid`），任何实现都覆盖；写成自由函数而不是虚函数，是因为“两个对象的关系”放不进一元接口，且热路径（`Plane` 的射线入口）不该为族级算法付 vptr。
-- **为什么不是 `const Surface<T>&` 参数**：`Plane` 经 `ElementarySurface<T>` 间接派生，模板推导**看不穿**间接基类；概念写成 `SurfaceOf<T>` 时 MSVC 又拒绝概念体里的受约束模板 `Surface<T>`（C7605）。约束放在函数的 `requires` 子句里，两件事都成立。
-- **边界**：已知具体类型时继续用解析入口（`Plane::intersectWith(Ray)`）；族级入口不转发、不改写它（`G8`）。
+- **What**: `closestPointOnSurface(surface, query, ...)` and `intersectRayWithSurface(ray, surface, ...)` are header templates with `S` constrained by `requires std::is_base_of_v<Surface<T>, S>`.
+- **Why**: `G1`, `G9` — the algorithm depends only on five interface members (`evaluate`, the two first derivatives, the domain, `isValid`), which every implementation covers; it is a free function rather than a virtual because "the relation between two objects" does not fit a one-argument interface, and a hot path (`Plane`'s ray entry) should not pay a vptr for a family algorithm.
+- **Why not a `const Surface<T>&` parameter**: `Plane` derives from `Surface<T>` indirectly through `ElementarySurface<T>`, and template deduction **does not see through** an indirect base; and when the concept is written as `SurfaceOf<T>`, MSVC rejects the constrained template `Surface<T>` inside the concept body (C7605). Putting the constraint in the function's `requires` clause satisfies both.
+- **Boundary**: with a known concrete type the analytic entry stays (`Plane::intersectWith(Ray)`); the family entry neither forwards to it nor rewrites it (`G8`).
 
-### 2.2 参数窗口是调用方的，且只解析一次
+### 2.2 The parameter window belongs to the caller and is resolved once
 
-- **是什么**：`SurfaceParameterWindow<T>{ first_u, last_u, first_v, last_v }` 是**参数**矩形，不是空间盒；`finiteParameterWindow(surface, window)` 一处回答“这次搜索用哪个矩形”——**无限的一端取曲面自己的界**，其余按调用方写的，然后要求四个端点有限且区间有序。默认窗口 `naturalSurfaceWindow<T>()` 四个端点都是无限，所以默认就是自然域。
-- **为什么**：`G4`、`G6` —— 与曲线 × 曲面的窗口规则是同一条（`geometry-intersection.md` C5）：无界方向由调用方或曲面自身收窄，函数不发明范围。用“四个零”当默认值不行——那是零宽窗口，含义恰好相反；无限端是显式、可读的“用自然域”。用 `Rect2` 会借来 `xmin/ymin` 的字段名，把参数说成坐标。
-- **代价**：平面、圆柱、圆锥的自然域本身无界，调用方必须至少给那个方向的窗口；解析入口不受影响（`Plane` 的射线入口不要窗口）。
+- **What**: `SurfaceParameterWindow<T>{ first_u, last_u, first_v, last_v }` is a rectangle of **parameters**, not a spatial box; `finiteParameterWindow(surface, window)` answers "which rectangle does this search use" in one place — **an infinite end takes the surface's own bound**, the rest stays as the caller wrote it, and the four endpoints must then be finite with ordered intervals. The default window `naturalSurfaceWindow<T>()` has four infinite endpoints, so the default is the natural domain.
+- **Why**: `G4`, `G6` — the same rule as the curve × surface window (`geometry-intersection.md` C5): an unbounded direction is narrowed by the caller or by the surface itself, and the function invents no range. Four zeros will not do as the default — that is a zero-width window, exactly the opposite meaning; an infinite end is an explicit, readable "use the natural domain". A `Rect2` would borrow the field names `xmin/ymin` and describe parameters as coordinates.
+- **Cost**: the natural domain of a plane, a cylinder and a cone is itself unbounded, so a caller must give a window in that direction at least; the analytic entries are unaffected (the ray entry of `Plane` needs no window).
 
-### 2.3 两项算法共用窗口与播种，不共用迭代
+### 2.3 The two algorithms share the window and the seeding, not the iteration
 
-- **是什么**：最近点对 `|S(u,v) - P|²` 做**带阻尼的高斯-牛顿**（`JᵀJ`，只用两个一阶导）；射线交点在 `(u, v, t)` 上解 `S(u,v) = O + t·D`，雅可比是 `[dS/du dS/dv -D]`，用三阶线性方程直接解。
-- **为什么**：`G10`、`G1` —— 两个问题的未知量维数不同（2 对 3），把射线化成“沿射线逐点投影再找根”会把一次迭代变成每步一次内层最小化；把投影塞进三元方程则要额外约束。共用的只有“窗口 + 网格播种 + 步长限制 + 线搜索”，共用的是骨架不是算法。
-- **边界**：都只调 `evaluate()` 与两个一阶导；都不假设隐式方程、法向朝向或参数含义。
+- **What**: the nearest point does a **damped Gauss-Newton** on `|S(u,v) - P|²` (`JᵀJ`, using the two first derivatives only); a ray crossing solves `S(u,v) = O + t·D` in `(u, v, t)`, with the Jacobian `[dS/du dS/dv -D]` and a direct solve of the 3×3 linear system.
+- **Why**: `G10`, `G1` — the two problems have different unknown dimensions (2 against 3); turning the ray into "project along the ray and find a root" makes one iteration an inner minimisation per step, while forcing the projection into a three-variable system needs an extra constraint. Only "window + grid seeding + step limiting + line search" is shared: the skeleton, not the algorithm.
+- **Boundary**: both call only `evaluate()` and the two first derivatives; neither assumes an implicit equation, a normal orientation or a parameter meaning.
 
-### 2.4 结果词汇：一个投影结果、一个 `RayHit` + 参数
+### 2.4 The result vocabulary: one projection result, one `RayHit` + parameters
 
-- **是什么**：`SurfaceProjection<T>{ point, u, v, distance }` 同时回答“最近点在哪”和“距离多少”；`RaySurfaceHit<T>{ hit, u, v }` 内嵌 `RayHit<T>`，`RaySurfaceIntersection<T>{ coincident, hits }` 是射线侧的全部答案。
-- **为什么**：`G4`、`G6` —— 距离与最近点是同一个极小值的两半，拆成两个入口等于让调用方算两遍；射线命中必须沿用 `RayHit` 的朝向规则（法向点积射线方向 ≤ 0），否则同一场景里出现两套法向约定。
-- **边界**：`coincident` 是 `bool` 而不是三值枚举——射线的答案只有“无交 / 有限个交点 / 整条射线在面上”，前两者由 `hits` 是否为空区分，多一个 `None` 值只是重复。
+- **What**: `SurfaceProjection<T>{ point, u, v, distance }` answers both "where is the nearest point" and "how far is it"; `RaySurfaceHit<T>{ hit, u, v }` embeds a `RayHit<T>`, and `RaySurfaceIntersection<T>{ coincident, hits }` is the whole answer on the ray side.
+- **Why**: `G4`, `G6` — the distance and the nearest point are two halves of one minimum, and splitting them into two entries would make a caller compute twice; a ray hit must follow the orientation rule of `RayHit` (the normal dotted with the ray direction ≤ 0), or one scene would carry two normal conventions.
+- **Boundary**: `coincident` is a `bool` and not a three-valued enum — a ray's answer is only "no crossing / finitely many crossings / the whole ray on the surface", the first two separated by whether `hits` is empty, and one more `None` value would only repeat that.
 
-### 2.5 数值性质：局部、可收敛、有代价
+### 2.5 Numeric properties: local, convergent, with a cost
 
-- **是什么**：种子是窗口上的 `(seed_count + 1)²` 网格；最近点只精修其中最便宜的 3 个，射线每个种子都试一次；每次迭代至多 64 步，步长限制到窗口的 1/4，线搜索最多 8 次折半。
-- **为什么**：`G10`、`G11` —— 高斯-牛顿不需要二阶导；阻尼 + 线搜索保证代价单调不升，失败时停在“没有更好的种子”。复杂度是 `(seed_count+1)²` 次求值 + 每个种子的迭代次数。
-- **代价**：最近点是**局部**最小；射线求交漏掉相切（雅可比奇异）与网格分辨不了的折叠；奇异参数点（球极）上的命中法向为零。全部写在 §6。
+- **What**: the seed is a `(seed_count + 1)²` grid over the window; the nearest point refines only the 3 cheapest of them, while a ray tries every seed; each iteration runs at most 64 steps, the step is limited to 1/4 of the window, and the line search halves at most 8 times.
+- **Why**: `G10`, `G11` — Gauss-Newton needs no second derivative; damping plus a line search guarantees the cost does not increase, and on failure it stops at "no better seed". The complexity is `(seed_count+1)²` evaluations plus the iterations per seed.
+- **Cost**: the nearest point is a **local** minimum; ray intersection misses tangency (a singular Jacobian) and folds the grid cannot resolve; the hit normal at a singular parameter point (a pole) is zero. All of this is in §6.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | 点到曲面的最近点 / 距离 | `closestPointOnSurface(surface, query, ...)`：网格播种 + 高斯-牛顿，返回点、`(u, v)`、距离 | 已落地（T1–T4） |
-| F2 | 射线 × 曲面 | `intersectRayWithSurface(ray, surface, ...)`：网格播种 + 三元牛顿，返回升序的 `RaySurfaceHit` | 已落地（T5–T9） |
-| F3 | 窗口解析与拒绝 | `finiteParameterWindow()`：无界方向、反向区间、`isValid()` 为假一律拒绝 | 已落地（T1、T8） |
-| F4 | 射线在面上 | 三个跨射程的探针都投影到面上 → `coincident`，不列点 | 已落地（T9） |
-| F5 | 点到曲线距离、实体求交 | 族级算法的另一半 | 未做（G3） |
+| F1 | Nearest point / distance from a point to a surface | `closestPointOnSurface(surface, query, ...)`: grid seeding + Gauss-Newton, returning the point, `(u, v)` and the distance | landed (T1–T4) |
+| F2 | Ray × surface | `intersectRayWithSurface(ray, surface, ...)`: grid seeding + a three-variable Newton, returning ascending `RaySurfaceHit` | landed (T5–T9) |
+| F3 | Window resolution and rejection | `finiteParameterWindow()`: an unbounded direction, a reversed interval or `isValid()` false are all rejected | landed (T1, T8) |
+| F4 | A ray on the surface | three probes across the span all project onto the surface → `coincident`, no points listed | landed (T9) |
+| F5 | Point-to-curve distance, solid intersection | the other half of the family algorithms | not done (G3) |
 
-## 4. 公开接口
+## 4. Public Interface
 
-| 头文件 | 内容 |
+| Header | Content |
 |---|---|
-| `SurfaceParameterWindow.hpp` | `SurfaceParameterWindow<T>`、`naturalSurfaceWindow()` 与 `finiteParameterWindow()`；两个算法共用的唯一窗口解析点 |
-| `SurfaceProjection.hpp` | `SurfaceProjection<T>` 与 `closestPointOnSurface()` |
-| `RaySurfaceIntersection.hpp` | `RaySurfaceHit<T>`、`RaySurfaceIntersection<T>` 与 `intersectRayWithSurface()` |
+| `SurfaceParameterWindow.hpp` | `SurfaceParameterWindow<T>`, `naturalSurfaceWindow()` and `finiteParameterWindow()`; the single window-resolution point both algorithms share |
+| `SurfaceProjection.hpp` | `SurfaceProjection<T>` and `closestPointOnSurface()` |
+| `RaySurfaceIntersection.hpp` | `RaySurfaceHit<T>`, `RaySurfaceIntersection<T>` and `intersectRayWithSurface()` |
 
-完整签名与每个参数的语义见头文件；`RaySurfaceHit::hit` 的 `t`、`point`、`normal` 契约由 `RayHit` 定义，本文不重复。
+The full signatures and the meaning of every parameter are in the headers; the `t`, `point` and `normal` contract of `RaySurfaceHit::hit` is defined by `RayHit` and is not repeated here.
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-- **C1**：搜索矩形必须有限。窗口里无限的一端由曲面自己的界补全；补完仍无限、或调用方给了反向 / 零宽区间，就返回 `std::nullopt` / 空结果，不自选范围。
-- **C2**：只使用 `Surface<T>` 的 `evaluate` / `derivativeU` / `derivativeV` / 四个域端点 / `isValid`；不要求隐式方程、法向或任何具体类型。
-- **C3**：容差是**几何**量（距离 / 点移动量），不是参数差；参数差只有在窗口尺度上才有意义。
-- **C4**：射线命中只报告 `t ≥ -tolerance`；`t` 是射线距离，因为 `Ray` 的方向恒为单位。
-- **C5**：`coincident` 为真时 `hits` 必须为空——无穷多个点不是一个点集。
-- **R1**：不抛异常；输入不可用时返回空答案。
-- **R2**：除射线结果的 `std::vector` 外不分配；播种网格与迭代都在栈上。
-- **R3**：同一 `T` 的参数与结果，不做混精度。
-- **N1**：`SurfaceProjection::point == surface.evaluate(u, v)`；`distance == |point - query|`。
-- **N2**：射线命中按 `hit.t` 升序，同一交点只出现一次。
-- **N3**：`RaySurfaceHit::hit.normal` 与射线方向点积 ≤ 0（`RayHit` 的规则）；奇异参数点上可以为零向量。
+- **C1**: the search rectangle must be finite. An infinite end of the window is completed from the surface's own bound; if it is still infinite afterwards, or the caller gave a reversed / zero-width interval, the answer is `std::nullopt` / an empty result, with no range chosen by the function.
+- **C2**: only `evaluate` / `derivativeU` / `derivativeV` / the four domain endpoints / `isValid` of `Surface<T>` are used; no implicit equation, normal or concrete type is required.
+- **C3**: a tolerance is a **geometric** quantity (a distance, a point displacement), not a parameter difference; a parameter difference is meaningful only on the scale of the window.
+- **C4**: a ray hit is reported only for `t ≥ -tolerance`; `t` is a ray distance, because a `Ray` direction is always unit.
+- **C5**: when `coincident` is true, `hits` must be empty — infinitely many points are not a point set.
+- **R1**: nothing throws; unusable input returns an empty answer.
+- **R2**: nothing is allocated except the `std::vector` of the ray result; the seeding grid and the iterations live on the stack.
+- **R3**: parameters and results of the same `T`, with no mixed precision.
+- **N1**: `SurfaceProjection::point == surface.evaluate(u, v)`; `distance == |point - query|`.
+- **N2**: ray hits are ordered by `hit.t` and one crossing appears once.
+- **N3**: `RaySurfaceHit::hit.normal` dotted with the ray direction is ≤ 0 (the rule of `RayHit`); at a singular parameter point it may be the zero vector.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-- **P1 重合检测依赖探针**。会怎么错：射线**擦过**曲面但不在面上，三个探针恰好都落在面上（构造出来的情况）会被报成 `coincident`；反过来窗口只覆盖一小段时，探针可能落在窗口外的空间范围。怎么判：`coincident` 为真但相邻射线的命中是有限点。怎么防：探针取的是网格点在射线上的射程 `span_low / mid / span_high`，跨越整块曲面，不是任意三点。
-- **P2 最近点是局部最小**。会怎么错：圆环、折叠样条面上有多个局部极小，网格没落在全局那一侧，`distance` 偏大。怎么判：把 `seed_count` 加倍后距离变小。怎么防：按曲面起伏尺度提高 `seed_count`；需要全局保证时用解析入口。
-- **P3 球极的法向为零**。会怎么错：射线正好打在球的极点上，`hit.normal` 是零向量，`normal.dot(direction)` 失去意义。怎么判：`normal.length() == 0` 而 `t` / `point` 正常。怎么防：检查法向长度；需要极点法向时用具体类型自己的参数化算。
-- **P4 相切漏检**。会怎么错：射线与球面 / 圆柱相切，雅可比奇异，返回空结果而目视相切。怎么判：最近距离 ≈ 0 但没有 hit。怎么防：与曲线 × 曲面的求根同一立场（`geometry-intersection.md` P4），需要切触时另做极值搜索。
-- **P5 网格分辨不了的折叠**。会怎么错：样条面在一个网格单元内折回两次，两次穿越落在同一个种子的收敛域里，只回来一个。怎么判：`seed_count` 加倍后多出一个命中。怎么防：按控制网尺度调 `seed_count`。
-- **P6 窗口当提示用**。会怎么错：调用方给一个只覆盖一半曲面的窗口，期待“窗外也算”，于是漏命中并以为算法有问题。怎么判：窗口放大后出现新命中。怎么防：窗口是硬约束（C1），不是 hint；要整张面就给整张面的域。
+- **P1 Coincidence detection depends on the probes.** How it fails: a ray that only **grazes** the surface without lying on it, with all three probes happening to land on it (a constructed case), is reported as `coincident`; conversely, when the window covers only a small stretch the probes may land outside its spatial extent. How to detect: `coincident` is true while a neighbouring ray gets finite hits. How to prevent: the probes are the grid points' range along the ray (`span_low / mid / span_high`), spanning the whole surface rather than any three points.
+- **P2 The nearest point is a local minimum.** How it fails: a torus or a folded spline patch has several local minima, the grid does not land on the global side, and `distance` is too large. How to detect: doubling `seed_count` makes the distance smaller. How to prevent: raise `seed_count` to the scale of the surface's undulation; when a global guarantee is needed, use the analytic entry.
+- **P3 The normal at a pole is zero.** How it fails: a ray hitting a sphere exactly at a pole leaves `hit.normal` as the zero vector and `normal.dot(direction)` meaningless. How to detect: `normal.length() == 0` while `t` / `point` are normal. How to prevent: check the normal length; a pole normal is computed from the concrete type's own parameterisation.
+- **P4 Missed tangency.** How it fails: a ray tangent to a sphere or a cylinder has a singular Jacobian, returns an empty result while the picture shows tangency. How to detect: the nearest distance is ≈ 0 but there is no hit. How to prevent: the same position as the curve × surface root finding (`geometry-intersection.md` P4) — when tangency matters, search for the extremum separately.
+- **P5 A fold the grid cannot resolve.** How it fails: a spline patch folding back twice inside one grid cell puts both crossings in the same seed's basin and only one comes back. How to detect: doubling `seed_count` produces one more hit. How to prevent: set `seed_count` to the scale of the control net.
+- **P6 Treating the window as a hint.** How it fails: a caller gives a window covering half the surface, expects "outside counts too", misses hits and blames the algorithm. How to detect: enlarging the window produces new hits. How to prevent: the window is a hard constraint (C1), not a hint; give the whole domain when the whole surface is wanted.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-- **D1** 给 `Surface<T>` 加 `inverse(point, u, v)` / `normalAt()` / `bounds()`：每个实现都要写一套迭代，接口把“数值算法”变成每个曲面作者的义务，且 `GeometryKindsTest` 的族级扫查要多验三项（`G7`、`G8`）；算法留在自由函数里，实现者只回答求值。
-- **D2** 逐类型写最近点与射线特例：13 种曲面 × 2 个问题，新曲面还要再写一遍（`G9`）；已有解析入口的四个类型保持现状，族级入口是兜底。
-- **D3** 把最近点做成 `optional<T>` 距离入口、另加一个 `project()`：同一个极小值算两遍，调用方还要学两个名字（`G1`、`G4`）。
-- **D4** 射线结果复用 `CurveSurfaceContact` 三值枚举：`Ray` 故意不在曲线族里（`geometry-ray.md` 2.1），借用会把这个事实写错；`bool coincident` + 空 `hits` 已能表达三种答案。
+- **D1** Adding `inverse(point, u, v)` / `normalAt()` / `bounds()` to `Surface<T>`: every implementation would have to write an iteration of its own, turning "a numeric algorithm" into an obligation for each surface author, and the family sweep in `GeometryKindsTest` would have three more items to verify (`G7`, `G8`); with the algorithm left in a free function an implementer answers evaluation only.
+- **D2** Writing nearest point and ray special cases per type: 13 surface types × 2 questions, written again for every new surface (`G9`); the four types that already have an analytic entry keep it, and the family entry is the fallback.
+- **D3** Making the nearest point an `optional<T>` distance entry plus a separate `project()`: one minimum computed twice, and a caller learns two names (`G1`, `G4`).
+- **D4** Reusing the three-valued `CurveSurfaceContact` for the ray result: `Ray` is deliberately outside the curve family (`geometry-ray.md` 2.1) and borrowing it would write that fact wrongly; `bool coincident` plus an empty `hits` already expresses the three answers.
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 |---|---|---|
-| T1 | 平面投影与窗口规则 | `tests/test_geom_spatial/SurfaceQueryTest.cpp` 的 `aPointProjectsOntoAPlaneAtItsFoot`、`anUnboundedDirectionNeedsAWindow`、`anInfiniteEndTakesTheSurfacesOwnBound` |
-| T2 | 球面 / 圆柱 / 圆环的最近点 | 同文件 `aPointProjectsOntoASphereAlongItsRadius`、`aPointProjectsOntoACylinderThroughItsAxis`、`theNearestPointOnATorusIsTheBestLocalMinimum` |
-| T3 | 双精度一致 | 同文件 `bothPrecisionsFindTheSameNearestPoint` |
-| T4 | 未使用输入 | 同文件 `anUnboundedDirectionNeedsAWindow` 的反向 / 零宽窗口分支 |
-| T5 | 射线 × 平面与解析入口一致 | 同文件 `aRayCrossesAPlaneLikeTheAnalyticEntry` |
-| T6 | 射线 × 球面（两次命中、法向朝向、参数自洽） | 同文件 `aRayThroughASphereIsHitTwice`、`aRayFromInsideASphereLeavesOnceWithAnInwardNormal` |
-| T7 | 射线 × 圆环四次命中 | 同文件 `aRayThroughATorusIsHitFourTimes`（与 `CurveSurfaceTest` 的同一几何对照） |
-| T8 | 窗口是约束、背后命中不算、不可用输入 | 同文件 `theWindowIsAConstraintNotAHint`、`aHitBehindTheOriginIsNotACrossing`、`unusableInputsAnswerNothing`、`anUnboundedDirectionNeedsAWindow` |
-| T9 | 样条面命中与重合分类 | 同文件 `aSplinePatchIsHitThroughItsOwnParameters`、`aRayLyingInAPlaneIsCoincidentNotAListOfPoints`、`aCoincidentRayIsAlsoSeenInFloat`（与 `bothPrecisionsAgreeOnASphere` 覆盖 float / double） |
+| T1 | plane projection and the window rules | `aPointProjectsOntoAPlaneAtItsFoot`, `anUnboundedDirectionNeedsAWindow`, `anInfiniteEndTakesTheSurfacesOwnBound` in `tests/test_geom_spatial/SurfaceQueryTest.cpp` |
+| T2 | nearest point on a sphere / cylinder / torus | `aPointProjectsOntoASphereAlongItsRadius`, `aPointProjectsOntoACylinderThroughItsAxis`, `theNearestPointOnATorusIsTheBestLocalMinimum` in the same file |
+| T3 | both precisions agree | `bothPrecisionsFindTheSameNearestPoint` in the same file |
+| T4 | unusable input | the reversed / zero-width branches of `anUnboundedDirectionNeedsAWindow` in the same file |
+| T5 | ray × plane agrees with the analytic entry | `aRayCrossesAPlaneLikeTheAnalyticEntry` in the same file |
+| T6 | ray × sphere (two hits, normal orientation, self-consistent parameters) | `aRayThroughASphereIsHitTwice`, `aRayFromInsideASphereLeavesOnceWithAnInwardNormal` in the same file |
+| T7 | ray × torus, four hits | `aRayThroughATorusIsHitFourTimes` in the same file (the same geometry cross-checked with `CurveSurfaceTest`) |
+| T8 | the window is a constraint, a hit behind the origin does not count, unusable input | `theWindowIsAConstraintNotAHint`, `aHitBehindTheOriginIsNotACrossing`, `unusableInputsAnswerNothing`, `anUnboundedDirectionNeedsAWindow` in the same file |
+| T9 | spline patch hits and coincidence classification | `aSplinePatchIsHitThroughItsOwnParameters`, `aRayLyingInAPlaneIsCoincidentNotAListOfPoints`, `aCoincidentRayIsAlsoSeenInFloat` in the same file (covering float / double together with `bothPrecisionsAgreeOnASphere`) |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-- `closestPointOnSurface()` 与 `intersectRayWithSurface()` 覆盖五个解析面、两个样条面与裁剪视图（都只经接口）。
-- 最近点还被曲线 × 曲面用作隐式化：`intersectCurveWithSurfaceByProjection()` 把投影出的带符号距离沿曲线求根（`geometry-intersection.md` 2.9 / F9）；那个带符号距离是 `detail`，因为它的极性属于参数化。
-- 曲线侧的同一问题（点到曲线的最近点 / 距离）见 `geometry-curve-queries.md`：同一套“有限窗口 + 采样播种 + 括号安全收窄”的约束。
-- 已知缺口：点到曲线的距离、实体求交（`../backlog/geometry.md` G3）；最近点的全局性、相切命中、奇异点法向按 §6 的规则不提供（P2–P4）。
-- 兼容性：纯增量——三个新头文件、新类型、新自由函数；`Surface<T>` 与所有值类型的签名不变。
-- 代价没有变好也没有变坏：解析入口仍是热路径，族级入口是未知类型的兜底。
+- `closestPointOnSurface()` and `intersectRayWithSurface()` cover the five analytic surfaces, the two spline surfaces and the trimmed view (all through the interface only).
+- The nearest point is also used by curve × surface as the implicitisation: `intersectCurveWithSurfaceByProjection()` roots the projected signed distance along the curve (`geometry-intersection.md` 2.9 / F9); that signed distance is `detail`, because its polarity belongs to the parameterisation.
+- The same question on the curve side (nearest point / distance from a point to a curve) is in `geometry-curve-queries.md`: the same set of constraints — "finite window + sampled seeding + bracket-safe narrowing".
+- Known gaps: the distance from a point to a curve and solid intersection (`../backlog/geometry.md` G3); the globality of the nearest point, tangent hits and the normal at a singular point are not provided, per the rules of §6 (P2–P4).
+- Compatibility: purely additive — three new headers, new types, new free functions; `Surface<T>` and every value-type signature are unchanged.
+- The cost is neither better nor worse: the analytic entry is still the hot path, and the family entry is the fallback for an unknown type.
 
-## 10. 参考
+## 10. References
 
-- `geometry-kinds.md` 2.7 / 2.10（`Curve<T>` / `Surface<T>` 的接口与 `isValid()`）
-- `geometry-intersection.md` 2.7 / C5（曲线 × 曲面的窗口规则与求根器）
-- `geometry-ray.md` 2.3（`RayHit` 的朝向规则）
+- `geometry-kinds.md` 2.7 / 2.10 (the `Curve<T>` / `Surface<T>` interfaces and `isValid()`)
+- `geometry-intersection.md` 2.7 / C5 (the window rule and root finder of curve × surface)
+- `geometry-ray.md` 2.3 (the orientation rule of `RayHit`)
 - `../decisions/ADR-2026-11-04-surface-family-queries.md`
-- OCCT `GeomAPI_ProjectPointOnSurf` / `GeomAPI_IntCS`（参考实现的形态：有状态的算法类；本仓库用无状态自由函数）
+- OCCT `GeomAPI_ProjectPointOnSurf` / `GeomAPI_IntCS` (the shape of the reference implementation: stateful algorithm classes; this repository uses stateless free functions)
