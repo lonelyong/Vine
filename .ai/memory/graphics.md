@@ -321,283 +321,283 @@
 - `scripts/asan_check.sh` / `VN_ASAN_*`; only `skipped == 0` counts as having run the device battery.
 - Measuring a backend's per-frame cost: `test_vsg --gtest_filter='*MeasureWhatEachKind*'` (prints µs/frame + `builds`/`uploads`/`created`; needs a real window and is skipped headless); the cost model and allocation caps are in `.ai/design/vsg-backend.md` §2.10 / N4 / T5.
 
-## 2026-11-11 —— graphics-next 提案组（未采纳；下次从这里继续）
+## 2026-11-11 — graphics-next proposal set (not adopted; continue here next time)
 
-- 六份文档，入口 `.ai/research/graphics-2026-11-11-next.md`（总纲），展开：`-requirements`（`R1–R30`、
-  `N1–N18`、`C1–C12`、`T1–T16`）、`-design`（类型草案 + hot/cold 分块 + 七个算法 + 7 条 open question）、
-  `-benefits`（收益/代价 `P1–P7`/三批迁移）、`-api`（`P1–P32` + `M1–M10` + 风格三档 + 49 方法去向）、
-  `-hot-paths`（性能预算、动画 pose、后期依赖图、扩展、`N11–N18`）。对应 backlog `T32`；**现行设计不变**。
-- 讨论中定下、且值得下次直接沿用的三条判断：
-  1. **三档风格**：跨线程/进计划/被比较 ⇒ 值（无 setter，`withXxx`）；有身份/单线程/增量编辑 ⇒ 对象（Qt 访问器）；
-     只在创建时存在 ⇒ 构建器（`build()` 产出值）。`RenderPass` / `PassChain` / `ShaderProgram` / `RenderControl`
-     今天**越档**（分别是值语义、构建器、值、适配器）。
-  2. **动画不走发布**：`Instance::setMatrix` 是编辑（hot 块 CoW + 发布）；每帧动画走帧内 `PoseSet`
-     （快照不动、每行一次矩阵乘）。这样"半个配置上屏"在动画路径上不会出现，也顺带消掉 backlog `T6`。
-  3. **hot/cold 分块**是"折叠留在快照"与"发布 O(变更)"能同时成立的前提：动画只复制 hot 块（~10 KB/块），
-     cold 块（身份/状态/引用）共享零拷贝。
-- 新门禁：`scripts/check_api_style.py`（四条规则，今天 0 新增 / 4 基线）。
-- 本 session 唯一的**生产代码**改动：`af2de738` 把 `sessionChangeAllowed` 收回 private（原为我误放 public）。
-- 下次的第一条命令：`-hot-paths` §8 第 1 步 —— 把 `Measure*` 用例从打印改成阈值断言（不改架构、让性能回归可见）。
+- Six documents, entry `.ai/research/graphics-2026-11-11-next.md` (the outline), expanded as: `-requirements` (`R1–R30`,
+  `N1–N18`, `C1–C12`, `T1–T16`), `-design` (type drafts + hot/cold partitioning + seven algorithms + 7 open questions),
+  `-benefits` (benefits/costs `P1–P7` / three migration batches), `-api` (`P1–P32` + `M1–M10` + the three style tiers + where 49 methods go),
+  `-hot-paths` (performance budget, animation pose, post-processing dependency graph, extensions, `N11–N18`). Backlog `T32`; **the current design is unchanged**.
+- Three judgements settled in the discussion and worth reusing directly next time:
+  1. **Three style tiers**: cross-thread / enters a plan / compared ⇒ value (no setters, `withXxx`); has identity / single-threaded / incrementally edited ⇒ object (Qt accessors);
+     exists only at creation ⇒ builder (`build()` produces a value). `RenderPass` / `PassChain` / `ShaderProgram` / `RenderControl`
+     **cross tiers** today (value semantics, builder, value, adapter respectively).
+  2. **Animation does not go through publication**: `Instance::setMatrix` is an edit (hot block CoW + publish); per-frame animation goes through the in-frame `PoseSet`
+     (snapshot untouched, one matrix multiply per row). This keeps “half a configuration on screen” out of the animation path and removes backlog `T6` along the way.
+  3. **hot/cold partitioning** is the premise that lets “folding stays in the snapshot” and “publish O(change)” hold at once: animation copies only the hot block (~10 KB per block),
+     while cold blocks (identity/state/references) are shared zero-copy.
+- New gate: `scripts/check_api_style.py` (four rules; 0 new / 4 baseline today).
+- The only **production-code** change this session: `af2de738` pulled `sessionChangeAllowed` back to private (I had made it public by mistake).
+- The first command next time: `-hot-paths` §8 step 1 — turn the `Measure*` cases from printing into threshold assertions (no architecture change, make performance regressions visible).
 
-## 2026-11-11 —— graphics-next 第二轮审计（新增 `graphics-2026-11-11-next-audit.md`；动作顺序被改写）
+## 2026-11-11 — graphics-next second-round audit (new `graphics-2026-11-11-next-audit.md`; action order rewritten)
 
-- 新增 `.ai/research/graphics-2026-11-11-next-audit.md`：`X1–X10` 跨文档矛盾、`A1–A13` 设计缺口、
-  `R31–R39` / `T17–T31` / `K7–K11` 补充。**提案仍是“未采纳”；现行设计不变。**
-- 最关键的 A1：新设计的 `DrawItem` 只带 `id`，丢了 revision；内容一改，在飞旧帧会按 id 查到新值，
-  直接违反 `R9`/`I1`。今天的 `RenderCommand` 反而带 `GeometryDescriptionPtr`/`MaterialDescriptionPtr`
-  （`ContentStore` 也为旧 revision 保留行到帧走完）。修法：`ContentRef{id,rev}` 或冷块存值指针；
-  引擎表按 `(id, generation, revision)`。**先修这条再谈快照原型。**
-- 其余必须先修的：A2 拾取身份是 `InstanceId` + `FrameResult` 缺 View/pose；A3 共享原型要“一个写者域 +
-  发布时比对原型 revision”；A4 `Instance` 要持有原型存活；A5 原型实例化“10 次矩阵乘”不成立（5000×10 是 5 万次，
-  内存按实例倍增）；A6 `DrawItem ≤64 B` 按字段已超且 `sort_key` 少 32 位；A7 发布元数据整体拷贝不是 O(变更)；
-  A8 `chain[0]` 块剔除不成立且 `local_box_union` 字段不存在。
-- 证据口径：2519 = 提案基线（8 个文件 .hpp+.cpp，仅 cpp 1212；当前原型新增 select/facts 后 2702，K5 仍用 2519 分母）；ContentStore 1016 行、寿命 token 75（六 token）/100（含 parked）；
-  RenderEngine 1309 行；test_graphics 548（提案时；当前 559）/ test_vsg 537 / ctest 30 套；2000 drawable 重测约 2074–2128 µs（200 为 204 µs）；
-  “47 处 include”当前只有 23 个文件，“126 个 bool”按 scope 是 110/152——数字要带命令，否则会漂。
-- 动作顺序（取代上面“下次第一条命令”）：① 修 X/A1–A4 文档 + 补 K7–K11；② `-hot-paths` §8 第 1 步（Measure 阈值）
-  + 证据脚本；③ `detail::` 快照 + 纯 select（**不带原型实例化**，内容引用带 revision）；④ 寿命/注册表；⑤ 计划值 +
-  `prepare` + 单 Session 多 Surface；⑥ 原型实例化单独实验（先定 A5 的共享 local rows + per-instance transform）。
-- 结论一句话：跨层不可变值必须落到引用上——**只带 id 的引用不是不可变值**，只是把版本问题推到引擎表里。
+- Added `.ai/research/graphics-2026-11-11-next-audit.md`: `X1–X10` cross-document contradictions, `A1–A13` design gaps,
+  `R31–R39` / `T17–T31` / `K7–K11` additions. **The proposal is still “not adopted”; the current design is unchanged.**
+- The most critical one, A1: the new design's `DrawItem` carries only `id` and loses the revision; when content changes, an in-flight old frame looks up the new value by id,
+  directly violating `R9`/`I1`. Today's `RenderCommand` instead carries `GeometryDescriptionPtr`/`MaterialDescriptionPtr`
+  (`ContentStore` also keeps rows for old revisions until the frame completes). Fix: `ContentRef{id,rev}` or store value pointers in the cold block;
+  the engine table keys on `(id, generation, revision)`. **Fix this before talking about a snapshot prototype.**
+- The rest that must be fixed first: A2 picking identity is `InstanceId` + `FrameResult` lacks View/pose; A3 the shared prototype needs “one writer domain +
+  comparing the prototype revision at publish”; A4 `Instance` must keep its prototype alive; A5 prototype instantiation's “10 matrix multiplies” does not hold (5000×10 is 50,000,
+  and memory multiplies per instance); A6 `DrawItem ≤64 B` is already exceeded by its fields and `sort_key` is 32 bits short; A7 copying the publication metadata wholesale is not O(change);
+  A8 culling `chain[0]` blocks does not hold and the `local_box_union` field does not exist.
+- Evidence discipline: 2519 = the proposal baseline (8 files .hpp+.cpp, cpp only 1212; the current prototype is 2702 after adding select/facts, K5 still uses 2519 as the denominator); ContentStore 1016 lines, lifetime tokens 75 (six tokens) / 100 (with parked);
+  RenderEngine 1309 lines; test_graphics 548 (at proposal time; 559 now) / test_vsg 537 / ctest 30 suites; 2000 drawables re-measured about 2074–2128 µs (204 µs for 200);
+  “47 includes” is only 23 files today, “126 bools” is 110/152 by scope — numbers must carry their command, or they drift.
+- Action order (replacing “the first command next time” above): ① fix the X/A1–A4 documents + add K7–K11; ② `-hot-paths` §8 step 1 (Measure thresholds)
+  + the evidence script; ③ `detail::` snapshot + pure select (**without prototype instantiation**, content references carry a revision); ④ lifetime/registry; ⑤ plan values +
+  `prepare` + one Session with several Surfaces; ⑥ prototype instantiation as a separate experiment (first settle A5's shared local rows + per-instance transform).
+- One-sentence conclusion: an immutable value that crosses layers must land on a reference — **a reference carrying only an id is not an immutable value**, it just pushes the version problem into the engine table.
 
-### 落地（同一 session，2026-11-11）
+### Landing (same session, 2026-11-11)
 
-- **步骤 0 已完成**：六份提案里的 `X1–X10` / `A1–A13` 已按 audit 修订——`ContentRef{id,rev}`、
-  `DrawItem` 24 B + 64 位 `sort_key`、`world_bound` 块剔除、`PoseEntry` 子树传播、`FrameQuery`/`PickResult`、
-  `prepare`、单 Session 多 Surface、`Result<void>` 特化、`C2b` 写者域、`R31–R39`/`T17–T31`/`K7–K11`。
-  提案仍是“未采纳”；`.ai/design` 未动。
-- **步骤 1 已完成**：`SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera` 现在有阈值
-  `drawables*3+1000` µs（sanitizer 只打印）；实测 200→204 µs / 2000→2128 µs，均通过。新增
-  `scripts/measure_graphics_claims.py`：桥 2519（提案时；当前 2700）、ContentStore 1016/75/100、
-  RenderEngine 1309/50 public/22 include、SDK 75/99、bool 110/152、tests 548/537/30（提案时；当前 559/537/30）。
-- 下次从步骤 2 开始：`detail::Snapshot` + 纯 `select`，**内容引用带 revision、暂不做原型实例化**；
-  先跑 `K1–K3` + `K7`。不要跳过 `ContentRef`——那是本轮审计的核心修正。
+- **Step 0 done**: `X1–X10` / `A1–A13` in the six proposals were revised per the audit — `ContentRef{id,rev}`,
+  `DrawItem` 24 B + a 64-bit `sort_key`, `world_bound` block culling, `PoseEntry` subtree propagation, `FrameQuery`/`PickResult`,
+  `prepare`, one Session with several Surfaces, the `Result<void>` specialisation, `C2b` writer domain, `R31–R39`/`T17–T31`/`K7–K11`.
+  The proposal is still “not adopted”; `.ai/design` was not touched.
+- **Step 1 done**: `SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera` now has a threshold
+  `drawables*3+1000` µs (sanitizers only print); measured 200→204 µs / 2000→2128 µs, both pass. Added
+  `scripts/measure_graphics_claims.py`: bridge 2519 (at proposal time; 2700 now), ContentStore 1016/75/100,
+  RenderEngine 1309/50 public/22 includes, SDK 75/99, bools 110/152, tests 548/537/30 (at proposal time; 559/537/30 now).
+- Next time start at step 2: `detail::Snapshot` + a pure `select`, **content references carry a revision, no prototype instantiation yet**;
+  run `K1–K3` + `K7` first. Do not skip `ContentRef` — that was the core correction of this audit round.
 
-### 步骤 2：chunked snapshot + 增量发布（2026-11-11，Debug 结果）
+### Step 2: chunked snapshot + incremental publication (2026-11-11, Debug results)
 
-- `SceneSnapshot` 现在是 32 行 chunk 的不可变快照：`makeSceneSnapshot` 复用上一版未变 chunk；
-  `SceneRows::snapshot` 的缓存挂在内部 `SceneBake` 上（整表重建时把上一版缓存搬过去），`Scene` 的公开布局不变。
-- `Scene::ensureRows` 增加增量路径：按每行 `Node::contentEpoch` 找编辑行；结构/可见性/父子顺序
-  全检；只允许 local / opacity / layers / draw order / view placement 这些热字段原地刷新，
-  其余（state / geometry / material / primitive / box）回退整表 `buildRows`。
-- `SnapshotTest` 五条通过：纯 select 等价、旧 revision、transform 增量、2000 行计时、常驻内存；`test_graphics` 559 条通过（另加 `ContentRegistryTest` / `ResidencyTableTest` 6 条）。
-- **2000 行改 1 行**：Debug publish ≈ 2.2 ms / select ≈ 1.3 ms；**RelWithDebInfo publish ≈ 154–203 µs /
-  select ≈ 293–307 µs**，K1（≤500 µs）与 K3（≤×1.2）都通过；shared 62/63 chunks。
-- **K2/N3 通过**：`MeasureWhatASnapshotKeepsResident` 测得 snapshot 常驻约 **1.03× 行表**（K2 ≤3×，N3 ≤2×）。
-- **N2 已调整为 ≤250 µs**（2026-11-11）：50 µs 需要内容侧 dirty notification，与“Node 无 Scene 反向指针”
-  冲突；203 µs 在 250 µs 内，RelWithDebInfo 的计时测试已加 N2 断言。下一步进步骤 3
-  （`ContentRegistry` + `ContentRef{id,rev}` 的引擎表）。不要拿 Debug 的 2.2 ms 当最终数字。
+- `SceneSnapshot` is now an immutable snapshot of 32-row chunks: `makeSceneSnapshot` reuses unchanged chunks from the previous version;
+  the `SceneRows::snapshot` cache hangs off the internal `SceneBake` (moved over on a full rebuild), and `Scene`'s public layout is unchanged.
+- `Scene::ensureRows` gained an incremental path: find edited rows by each row's `Node::contentEpoch`; check structure/visibility/parent order
+  fully; only the hot fields local / opacity / layers / draw order / view placement may refresh in place,
+  everything else (state / geometry / material / primitive / box) falls back to a full `buildRows`.
+- Five `SnapshotTest` cases pass: pure-select equivalence, old revision, transform increment, 2000-row timing, resident memory; `test_graphics` 559 pass (plus 6 in `ContentRegistryTest` / `ResidencyTableTest`).
+- **1 changed row out of 2000**: Debug publish ≈ 2.2 ms / select ≈ 1.3 ms; **RelWithDebInfo publish ≈ 154–203 µs /
+  select ≈ 293–307 µs**, both K1 (≤500 µs) and K3 (≤×1.2) pass; shared 62/63 chunks.
+- **K2/N3 pass**: `MeasureWhatASnapshotKeepsResident` measures the snapshot resident at about **1.03× the row table** (K2 ≤3×, N3 ≤2×).
+- **N2 was adjusted to ≤250 µs** (2026-11-11): 50 µs needs content-side dirty notification, which conflicts with “Node has no back pointer to Scene”;
+  203 µs is inside 250 µs, and the RelWithDebInfo timing test now asserts N2. Next: step 3
+  (the engine table of `ContentRegistry` + `ContentRef{id,rev}`). Do not take Debug's 2.2 ms as the final number.
 
-### 步骤 3a（身份/驻留原型；2026-11-11）
+### Step 3a (identity/residency prototype; 2026-11-11)
 
-- 新增内部 `ContentRegistry.{hpp,cpp}`：`Handle`（gen24|domain8|index32）、typed `Id<Tag>`、
-  `allocate<Tag>()`、generation/domain 校验、24 位回绕退休槽；`ContentRef{id,rev}`；
-  `ResidencyTable`（`last_epoch < oldest_live` 的 collectable/reclaim，revision 是 key 的一部分）。
-- 新增 `ContentRegistryTest` / `ResidencyTableTest` 6 条（stale handle、跨 domain、重复 release、
-  collectable 可枚举、revision 键、touch 延长寿命）；`test_graphics` 559 条通过。
-- **3b 已按设计拍板走 B（公开身份 = `Handle`），第一段落地**（2026-11-11）：新增公开
-  `sdk/vine/graphics/ContentId.hpp`（`Handle`/`Id<Tag>`/`ContentRef`/`ContentRegistry::instance()` + `std::hash`），
-  `Node` 持 `NodeId`（ctor 分配 / dtor 释放，`Node::id()`）。行身份全面改 `NodeId`：`Row::identity`、
-  `RenderWorld::RowId`、`Delta`、镜像 delta、`SceneSnapshot::identities`；公开 `RenderCommand::row`
-  （`const void*`）→ `RenderCommand::node`（`NodeId`），`Collected/CompiledCommand`、`GeometryFacts`、
-  `ContentStore` 几何表随之按 `NodeId` 键。手写命令无 node 时用 `geometry->id()`。
-  证据：`test_graphics` 559 / `test_vsg` 537 / ctest 30/30。改动后**清旧对象再编**（`Node`/`RenderCommand` 布局变）。
-  仍未做：①`Geometry`/`MaterialBase`/`ShaderProgram` 自己的 id，让 `ContentRef` 成为唯一键（几何表现在是
-  `(NodeId, rev)`、材质表仍按地址单键 = A1 在后端的残余）；②计划行合并成 `ContentRef geometry`；
-  ③`markUsed`/parking/`kept` 换 `ResidencyTable` epoch 回收。三步之间不要半迁移 `ContentStore`。
+- New internal `ContentRegistry.{hpp,cpp}`: `Handle` (gen24|domain8|index32), typed `Id<Tag>`,
+  `allocate<Tag>()`, generation/domain checks, 24-bit wraparound retirement slots; `ContentRef{id,rev}`;
+  `ResidencyTable` (collectable/reclaim when `last_epoch < oldest_live`, revision is part of the key).
+- Added 6 cases in `ContentRegistryTest` / `ResidencyTableTest` (stale handle, cross domain, duplicate release,
+  collectable enumerable, revision key, touch extends life); `test_graphics` 559 pass.
+- **3b settled on B by design (public identity = `Handle`), first segment landed** (2026-11-11): new public
+  `sdk/vine/graphics/ContentId.hpp` (`Handle`/`Id<Tag>`/`ContentRef`/`ContentRegistry::instance()` + `std::hash`),
+  and `Node` holds a `NodeId` (allocated in the ctor / released in the dtor, `Node::id()`). Row identity moved to `NodeId` everywhere: `Row::identity`,
+  `RenderWorld::RowId`, `Delta`, the mirror delta, `SceneSnapshot::identities`; public `RenderCommand::row`
+  (`const void*`) → `RenderCommand::node` (`NodeId`), and `Collected/CompiledCommand`, `GeometryFacts`,
+  `ContentStore`'s geometry table key on `NodeId` accordingly. A hand-written command with no node uses `geometry->id()`.
+  Evidence: `test_graphics` 559 / `test_vsg` 537 / ctest 30/30. After the change **clean the old objects before building** (the `Node`/`RenderCommand` layout changed).
+  Still not done: ① `Geometry`/`MaterialBase`/`ShaderProgram`'s own ids, so `ContentRef` becomes the only key (the geometry table is
+  `(NodeId, rev)` and the material table still keys on the address = A1's residue in the backend); ② merging the plan row's geometry into `ContentRef geometry`;
+  ③ replacing `markUsed`/parking/`kept` with `ResidencyTable` epoch reclaim. Do not half-migrate `ContentStore` between those three steps.
 
-### 步骤 4（材质身份；2026-11-11）
+### Step 4 (material identity; 2026-11-11)
 
-- `MaterialBase::id()`（ctor 分配 / dtor 释放）。`MaterialFacts::material` 改成 `ContentRef`（revision 进键，
-  独立 `revision` 字段删掉）；`CompiledCommand`/`CollectedCommand::material` 也是 `ContentRef`。
-- `ContentStore::ensureMaterial` 现在**每 revision 追加一行**、旧行停靠后删（不再就地替换 + `RetiredMaterial`/`kept`）；
-  `materialEntries()` 是“每 revision 一行”。`MaterialArena`/`BlockStorage`/`ContentSweep`/`released_materials` 按 `MaterialId`。
-- `FrameRecorder::snapshotCommands` 的材质 revision 规则：已发布的值取值 revision，否则取对象当前 revision ——
-  必须与 `ensureMaterial` 取值规则一致，否则手写命令与表永远错过（实测踩过）。
-- **`ContentRef::revision` 是 `std::uint64_t`**（原设计稿写 uint32）：SDK 每个 `revision()` 都是 64 位。
-- 测试 helper：`tests/test_vsg/TestMaterialFacts.hpp`（`materialId()`/`materialRef()`/对象→`ContentRef`）。
-- 下一步：`ShaderProgram::id()` + `ProgramRef` → `ContentRef`（程序表也按 `(id,rev,variant,kind)`）；
-  计划行 `geometry`+`geometry_revision` 合并为 `ContentRef geometry`；然后 epoch 回收。
-- 这一步只改了内部 `SceneBake` / `SceneSnapshot` / `Scene::ensureRows` / `DrawListBake`；公开 API 未变。
-  `Scene` 的缓存/epochs 全放在内部 `SceneBake`，避免改公开类布局（曾因临时加字段导致 test_vsg ABI 崩溃，已改回）。
+- `MaterialBase::id()` (allocated in the ctor / released in the dtor). `MaterialFacts::material` became a `ContentRef` (revision in the key,
+  the separate `revision` field deleted); `CompiledCommand`/`CollectedCommand::material` are `ContentRef` too.
+- `ContentStore::ensureMaterial` now **appends a row per revision** and deletes old rows after parking (no more in-place replacement + `RetiredMaterial`/`kept`);
+  `materialEntries()` is “one row per revision”. `MaterialArena`/`BlockStorage`/`ContentSweep`/`released_materials` key on `MaterialId`.
+- The material revision rule in `FrameRecorder::snapshotCommands`: a published value uses its value revision, otherwise the object's current revision —
+  it must agree with `ensureMaterial`'s rule, or hand-written commands and the table miss each other forever (measured).
+- **`ContentRef::revision` is `std::uint64_t`** (the design draft said uint32): every `revision()` in the SDK is 64-bit.
+- Test helper: `tests/test_vsg/TestMaterialFacts.hpp` (`materialId()`/`materialRef()`/object → `ContentRef`).
+- Next: `ShaderProgram::id()` + `ProgramRef` → `ContentRef` (the program table also keys on `(id,rev,variant,kind)`);
+  merge the plan row's `geometry`+`geometry_revision` into `ContentRef geometry`; then epoch reclaim.
+- This step changed only the internal `SceneBake` / `SceneSnapshot` / `Scene::ensureRows` / `DrawListBake`; the public API is unchanged.
+  All of `Scene`'s caches/epochs live in the internal `SceneBake`, to avoid changing the public class layout (temporarily adding a field once crashed test_vsg's ABI; reverted).
 
-### 步骤 5（程序身份；2026-11-12）
+### Step 5 (program identity; 2026-11-12)
 
-- `ShaderProgram::id()`（ctor 分配 / dtor 释放）。`ProgramRef` 类型删除：计划/记录（`CollectedCommand`、
-  `CollectedDraw`、`CollectedFrame::default_program`、`CompiledCommand`、`CompiledDraw`、`CompiledFrame`）、
-  `PipelineKey::program`、`Scope::Entry::program`、`ContentHalves::Key::program`、`ContentSets::Key::program`
-  全部是 `ContentRef`。
-- `ProgramFacts::program` 是 `ContentRef`（独立的 `revision` 与 `generation` 两个字段删除）；程序表按
-  `(ProgramId, revision, variant, kind)` 建行。`ContentStore` 的 live 表按 `ProgramId` 键；`ensureProgram`
-  从被 track 的对象取 revision（计划里的 revision 不参与建行，规则仍是“建行描述对象现在是什么”）。
-- 诊断：`ContentFacts::program_names`（每 identity 一条 `ProgramNameFacts`）+ `programName()`。原因：计划只带
-  句柄，而“文本被拒绝”的程序没有 `ProgramFacts` 行，`describeMissingContentHalf` 仍要能说出是哪个程序。
-- 测试：`test_graphics` 559 / `test_vsg` 538 全绿；`ContentHalvesTest.AnotherProgramIdentityIsAnotherHalf`
-  钉住“同文本、同 revision 的两个程序对象不共半边”（原来靠 `generation`，现在靠句柄）。
-- 下一步：计划行 `geometry` + `geometry_revision` 合并为 `ContentRef geometry`；然后 `markUsed`/parking 换
-  `ResidencyTable` epoch 回收。`ProgramFacts::generation` 删除后，`ADR-2026-11-09` 的“持有即身份”只剩上传表
-  （`Buffer`）一条。
+- `ShaderProgram::id()` (allocated in the ctor / released in the dtor). The `ProgramRef` type is deleted: plans/records (`CollectedCommand`,
+  `CollectedDraw`, `CollectedFrame::default_program`, `CompiledCommand`, `CompiledDraw`, `CompiledFrame`),
+  `PipelineKey::program`, `Scope::Entry::program`, `ContentHalves::Key::program`, `ContentSets::Key::program`
+  are all `ContentRef`.
+- `ProgramFacts::program` is a `ContentRef` (the separate `revision` and `generation` fields are deleted); the program table builds rows by
+  `(ProgramId, revision, variant, kind)`. `ContentStore`'s live table keys on `ProgramId`; `ensureProgram`
+  takes the revision from the tracked object (the plan's revision does not take part in building a row; the rule is still “a row describes what the object is now”).
+- Diagnostics: `ContentFacts::program_names` (one `ProgramNameFacts` per identity) + `programName()`. Reason: a plan carries only
+  a handle, and a program whose “text was rejected” has no `ProgramFacts` row, yet `describeMissingContentHalf` must still say which program it was.
+- Tests: `test_graphics` 559 / `test_vsg` 538 all green; `ContentHalvesTest.AnotherProgramIdentityIsAnotherHalf`
+  pins “two program objects with the same text and the same revision do not share a half” (it used `generation` before, the handle now).
+- Next: merge the plan row's `geometry` + `geometry_revision` into `ContentRef geometry`; then replace `markUsed`/parking with
+  `ResidencyTable` epoch reclaim. After `ProgramFacts::generation` is deleted, `ADR-2026-11-09`'s “holding is identity” is left only in the upload table
+  (`Buffer`).
 
-### 几何行合并为 `ContentRef`（2026-11-12 已落地）
+### Geometry rows merged into `ContentRef` (landed 2026-11-12)
 
-- 计划行：`CollectedCommand` / `CompiledCommand` 的 `geometry`（`NodeId`）+ `geometry_revision` 合成一个
-  `vn::graphics::ContentRef geometry`。产生点仍只有 `FrameRecorder::snapshotCommands`（identity 取
-  `RenderCommand::node`，无 node 时退回 `geometry->id()`；revision 取 `description->revision()`），
-  `FrameCompiler::resolveCommands` 只复制。
-- 事实与表：`GeometryFacts` 的 `geometry` + `revision` 合并成同一个 ref；`GeometryKey` / `compareGeometry` /
-  `orderGeometryRows` 与 `findGeometry(facts, ContentRef)` 按一个键；`ContentStore` 的 `eraseGeometryRows`、
-  `liveGeometry`、`ensureGeometry` 与几何表都按一个 ref。`ensureGeometry` 仍从 `live.shape->revision()` 建行
-  （计划里的 revision 不参与建行，规则与程序/材质相同）。
-- **类型**：几何的身份就是 `Geometry` 继承自 `Node` 的 `NodeId`（`Geometry::id()` = `Node::id()`），
-  `ContentRef::revision` 才是几何 revision。**不要为此造 `GeometryId`**（`ContentId.hpp` 有这个 tag，但今天
-  没有分配者）；要 typed 视图用 `ref.as<vn::graphics::NodeTag>()`。
-- 消费点只改了参数：`ContentHalves::halvesFor`、`ContentPass`（两处 `findGeometry`）、`ContentSets::setsFor`。
-  `ContentHalves::Key` / `ContentSets::Key` 里没有几何身份（只有 layout / set / source），键没动；
-  `RenderWorld` / `SceneSnapshot` / `Scene` 的行身份也没动（它们本来就是 `NodeId` 键）。
-- 测试 helper（`TestGeometryFacts.hpp`、`ContentStoreTest` / `ContentSweepTest` / `ContentHalvesTest` 的手搓
-  计划）保留“对象 + revision”入口，但内部只造一个 ref —— 计划行的 API 只有一个 ref。
-- 验证：`test_graphics` / `test_vsg` / ctest 30/30 全绿。
-- 下一步（已落地，见下节）：`ResidencyTable` 的 epoch 回收替换 `ContentStore` 的 `markUsed`/parking/`kept`。
+- Plan row: `CollectedCommand` / `CompiledCommand`'s `geometry` (`NodeId`) + `geometry_revision` merged into one
+  `vn::graphics::ContentRef geometry`. The only producer is still `FrameRecorder::snapshotCommands` (identity from
+  `RenderCommand::node`, falling back to `geometry->id()`; revision from `description->revision()`),
+  and `FrameCompiler::resolveCommands` only copies.
+- Facts and tables: `GeometryFacts`'s `geometry` + `revision` merged into the same ref; `GeometryKey` / `compareGeometry` /
+  `orderGeometryRows` and `findGeometry(facts, ContentRef)` use one key; `ContentStore`'s `eraseGeometryRows`,
+  `liveGeometry`, `ensureGeometry` and the geometry table all use one ref. `ensureGeometry` still builds rows from `live.shape->revision()`
+  (the plan's revision does not take part; the rule matches program/material).
+- **Types**: geometry's identity is the `NodeId` that `Geometry` inherits from `Node` (`Geometry::id()` = `Node::id()`),
+  and `ContentRef::revision` is the geometry revision. **Do not invent a `GeometryId` for this** (`ContentId.hpp` has the tag, but nothing
+  allocates it today); for a typed view use `ref.as<vn::graphics::NodeTag>()`.
+- Consumers only changed their parameters: `ContentHalves::halvesFor`, `ContentPass` (two `findGeometry` calls), `ContentSets::setsFor`.
+  `ContentHalves::Key` / `ContentSets::Key` carry no geometry identity (only layout / set / source), so those keys did not move;
+  `RenderWorld` / `SceneSnapshot` / `Scene` row identity did not move either (they were already `NodeId` keys).
+- Test helpers (`TestGeometryFacts.hpp`, the hand-built plans in `ContentStoreTest` / `ContentSweepTest` / `ContentHalvesTest`) keep the “object + revision” entry
+  but build one ref internally — the plan-row API has one ref only.
+- Verification: `test_graphics` / `test_vsg` / ctest 30/30 all green.
+- Next (landed, see the next section): `ResidencyTable`'s epoch reclaim replaces `ContentStore`'s `markUsed`/parking/`kept`.
 
-### 行寿命改为 epoch 回收（2026-11-12 已落地）
+### Row lifetime moved to epoch reclaim (landed 2026-11-12)
 
-- `ContentStore` 的 `markUsed` / `release_token` / `release_requested` / `retained` / park 全部删除。每条
-  几何 / 程序 / 材质行带 `last_epoch`（最后一次被计划命中的帧，`tablesFor` 逐条 stamp）；
-  `Data::reclaim()` 在每帧 `tablesFor` 开头跑一次：`last_epoch < completedFrame() + 1` **且不再是条目的
-  当前答案**（`isCurrent`）的行离开。`RetirementQueue` 仍然只给 GPU 对象用（上传、半片、描述符集）。
-- **“当前答案”那一半不能省**：裁剪 / 隐藏的内容本帧不被计划命中，但它仍是活条目的当前答案，所以行（和它
-  声明的上传）留着；否则 `ACulledGeometryKeepsItsUploadsForAHundredFrames` 与 design F27/F28 都会破。
-  已释放条目与 superseded revision 不再是当前答案，按 epoch 走（无时间窗）。
-- 条目（`Live*`）多活一步：`released` 标记（`release*` / `releaseAbandoned`）+ 无行 ⇒ `dropReleased()`
-  丢条目；“没有行”由表的 per-identity 行计数回答（`Table::rowsOf`）。材质 arena 槽在条目丢时进
-  `material_slots_pending`，由下一次 `releaseAbandoned` 交给 `BlockStorage::releaseMaterial`（比旧 park 晚一帧）。
-- `Table<Row, Storage, MakeOrder, KeyOf>`：`append(row, storage, epoch)` / `stamp(row, epoch)` /
-  `reclaimBefore(oldest_live, keep, onErase)` / `rowsOf(key)`；`epochs_` 与 `rows_`/`storage_` 同步移动。
-- API：`tablesFor(frame, timeline)`、`releaseGeometry/Program/Material` 不再收 timeline/retirement，
-  `releaseAbandoned(released_materials)`，`releaseAbandonedContent(store, images, released_materials)`；
-  `ContentStore::retained()` 删除。
-- 测试：`Frames` helper（`ContentStoreTest`）驱动 begin/submit/`completeUpTo(frame - slots)`；旧 park 用例改名
-  为 “...OnceNoPlanNamesThem”，`AReleaseThatCannotBeParked...` 删除，新增
-  `AReleaseWithoutCompletionEvidenceKeepsTheRows` 与 `AnAbandonedEntryKeepsItsObjectUntilItsRowsLeave`。
-- 证据：`measure_graphics_claims.py` 的寿命 token 75 → **1**；`test_vsg` 537 / `test_graphics` 559 / ctest 30/30。
-- 陷阱：`tablesFor` 返回 store 的 `d->facts` 引用，多次 record 会改写它；断言要在每次 record 后立刻读。
+- `ContentStore`'s `markUsed` / `release_token` / `release_requested` / `retained` / park are all deleted. Every
+  geometry / program / material row carries `last_epoch` (the last frame a plan hit it, stamped per row by `tablesFor`);
+  `Data::reclaim()` runs once at the top of each frame's `tablesFor`: rows with `last_epoch < completedFrame() + 1` **and no longer the entry's
+  current answer** (`isCurrent`) leave. `RetirementQueue` is still only for GPU objects (uploads, halves, descriptor sets).
+- **The “current answer” half cannot be omitted**: culled / hidden content is not hit by the plan this frame, but it is still the live entry's current answer, so the row (and the upload
+  it declares) stays; otherwise `ACulledGeometryKeepsItsUploadsForAHundredFrames` and design F27/F28 would break.
+  Released entries and superseded revisions are no longer the current answer and go by epoch (no time window).
+- Entries (`Live*`) outlive one more step: a `released` mark (`release*` / `releaseAbandoned`) + no rows ⇒ `dropReleased()`
+  drops the entry; “no rows” is answered by the table's per-identity row count (`Table::rowsOf`). A material arena slot goes into
+  `material_slots_pending` when its entry is dropped, and the next `releaseAbandoned` hands it to `BlockStorage::releaseMaterial` (one frame later than the old park).
+- `Table<Row, Storage, MakeOrder, KeyOf>`: `append(row, storage, epoch)` / `stamp(row, epoch)` /
+  `reclaimBefore(oldest_live, keep, onErase)` / `rowsOf(key)`; `epochs_` moves together with `rows_`/`storage_`.
+- API: `tablesFor(frame, timeline)`, `releaseGeometry/Program/Material` no longer take a timeline/retirement,
+  `releaseAbandoned(released_materials)`, `releaseAbandonedContent(store, images, released_materials)`;
+  `ContentStore::retained()` is deleted.
+- Tests: the `Frames` helper (`ContentStoreTest`) drives begin/submit/`completeUpTo(frame - slots)`; old park cases were renamed
+  to "...OnceNoPlanNamesThem", `AReleaseThatCannotBeParked...` was deleted, and
+  `AReleaseWithoutCompletionEvidenceKeepsTheRows` and `AnAbandonedEntryKeepsItsObjectUntilItsRowsLeave` were added.
+- Evidence: `measure_graphics_claims.py`'s lifetime tokens 75 → **1**; `test_vsg` 537 / `test_graphics` 559 / ctest 30/30.
+- Trap: `tablesFor` returns a reference to the store's `d->facts`, which several records rewrite; read assertions immediately after each record.
 
-## 2026-11-12 —— `releaseContent` 入口补齐（MaterialBase + 一条流）
+## 2026-11-12 — `releaseContent` entries completed (MaterialBase + one stream)
 
-- **`Material` → `MaterialBase`**：`RenderCommand::material` 是 `MaterialBasePtr`，`MaterialInstance : MaterialBase`
-  且**不是** `Material`，旧的具体类 `obj_cast` 让每个 instance 落到分派末尾、返回 false（行与 arena 槽永不释放）。
-  `VsgBackendTest.ReleasingAMaterialInstanceDropsItsResidency` 反向验证：改回 `Material` 即红。
-- **buffer 分派**：`Buffer<T>` 不是 `Object`（design 2.6 故意把它留在内容对象体系之外），所以
-  `releaseContent(raw_ptr<const Object>)` 根本收不到它——补的是**两个引用参数重载**
-  （`const vn::Buffer<float>&` / `const vn::Buffer<std::uint32_t>&`），`RenderDevice` → `RenderEngine` →
-  `VsgBackend` 各一层。用**引用**而不是指针：`releaseContent(nullptr)` 仍解析到 Object 那条（三个指针重载会让
-  `HeadlessBackendTest` 里那句 null 断言直接 ambiguous），而且“不存在的 buffer 没有驻留可放”本来就不是一种入参。
-- 实现：`backend/ResourceTable::retireIf(drop, timeline, retirement)`（`retireUnpinned` 现在只是它的取反）+
-  `StreamUploads::releaseBuffer(address, timeline, retirement)`（两张表各按 `key.buffer` 找，停靠不销毁；
-  停车窗口没学到就保留并计入 retained）。`VsgBackend::releaseStreamBuffer` 用**设备**的 clock/queue，不是某个窗口的。
-- 语义：只放这一条流的 GPU 副本，geometry 的行与表不动；下一帧画到它重传。想放一个 geometry 的全部流 → 放 geometry。
-- 证据：`VsgBackendTest.ReleasingAStreamBufferDropsTheUploadButNotTheGeometry`（`uploads().live()` 2 → 1 →
-  2、`geometryEntries()` 保持 1、`uploads()` 回涨）；`test_vsg` 539 全绿，`test_graphics` / 各项门禁 0。
+- **`Material` → `MaterialBase`**: `RenderCommand::material` is a `MaterialBasePtr`, and `MaterialInstance : MaterialBase`
+  is **not** a `Material`; the old concrete-class `obj_cast` made every instance fall through to the end of the dispatch and return false (rows and arena slots never released).
+  `VsgBackendTest.ReleasingAMaterialInstanceDropsItsResidency` verifies it the other way: changing it back to `Material` goes red.
+- **buffer dispatch**: `Buffer<T>` is not an `Object` (design 2.6 deliberately keeps it outside the content-object system), so
+  `releaseContent(raw_ptr<const Object>)` cannot receive it at all — what was added is **two reference-parameter overloads**
+  (`const vn::Buffer<float>&` / `const vn::Buffer<std::uint32_t>&`), one layer each through `RenderDevice` → `RenderEngine` →
+  `VsgBackend`. **References**, not pointers: `releaseContent(nullptr)` still resolves to the Object overload (three pointer overloads would make
+  that null assertion in `HeadlessBackendTest` ambiguous outright), and “a buffer that does not exist has no residency to drop” is not an input in the first place.
+- Implementation: `backend/ResourceTable::retireIf(drop, timeline, retirement)` (`retireUnpinned` is now just its negation) +
+  `StreamUploads::releaseBuffer(address, timeline, retirement)` (both tables look up by `key.buffer`, parking rather than destroying;
+  before the parking window is learned it is kept and counted as retained). `VsgBackend::releaseStreamBuffer` uses the **device's** clock/queue, not a window's.
+- Semantics: only this one stream's GPU copy is dropped; the geometry's rows and tables stay, and the next frame that draws it re-uploads. To drop all streams of a geometry → drop the geometry.
+- Evidence: `VsgBackendTest.ReleasingAStreamBufferDropsTheUploadButNotTheGeometry` (`uploads().live()` 2 → 1 →
+  2, `geometryEntries()` stays 1, `uploads()` rises again); `test_vsg` 539 all green, `test_graphics` / the gates 0.
 
-## 2026-11-12 —— ADR-2026-11-10 步骤 3：纹理迁入 pin 模型
+## 2026-11-12 — ADR-2026-11-10 step 3: textures move into the pin model
 
-- **声明索引有两个了**：`ContentDeclarations` 同时借 buffers / textures 两张表（`declaresBuffer` /
-  `declaresTexture`）；`ContentStore` 里两者共用同一个 `Declarations` 类（地址 → 引用计数，append 加、erase 减、
-  归零删），`GeometryTable` 与新的 `MaterialTable` 各持一个。材质行在 append / reclaim 时声明 / 撤回
-  `slots[].texture`。
-- **`MaterialImages::beginFrame(declarations, imported)`**：声明 = 材质行 slot **或该帧 pass 的导入输入**
-  （`CompiledPass::inputs` 里 `ImportedTexture` 的地址；`ContentAssembly::beginFrame` 收集到一个复用 vector），
-  另一半是条目自己的 `owner->revision()`。**不 park**：条目只持有查找份额，描述符集自己持有 view / sampler。
-  `releaseAbandoned()` 删除，新增累计计数 `released()`；`VsgBackend::releasedTextures()` 读它。
-- **`ContentSweep.{hpp,cpp}` 与 `ContentSweepTest.cpp` 删除**：只剩 store 一半的包装，名字与行为不符。 <!-- drift-ok -->
-  `VsgBackend::sweepAbandonedContent()` 直接调 `store->releaseAbandoned(...)`，文档搬进那里的注释；
-  默认材质的断言搬成 `ContentStoreTest.TheDefaultMaterialIsNeverAbandoned`。
-- **陷阱（真实缺陷，用例发现）**：`passes` 为空的帧走 `commitFrameThrough` 的早退分支，原来不跑
-  `recordContent` ⇒ 图像扫描不跑 ⇒ “宿主不再画任何东西”时贴图永不释放。早退分支现在也调
-  `assembly->beginFrame(...)`。
-- **陷阱**：`std::span<const Texture*>` 不能从 `const std::vector<const Texture*>` 构造（libstdc++ 的 range
-  约束），局部 vector 必须可写。
-- **语义变化（ADR 的代价，T27）**：贴图只由活内容钉住——宿主手里但没有材质/导入引用的贴图会在下一帧离场。
-  `VsgBackendTest.AWorkingSetLargerThanTheOldTextureBoundStaysResident` 的前提正是旧的持有量规则，删除；
-  “无容量上限”由 `MaterialImagesTest.EveryLiveTextureKeepsItsImages`（300 条、不跑帧）继续钉住。
-- 变异验证：把 `declared` 改成恒真 ⇒ 3 个新用例全红。`test_vsg` / 全 ctest 30/30，门禁 0。
+- **There are two declaration indices now**: `ContentDeclarations` borrows the buffers / textures tables at once (`declaresBuffer` /
+  `declaresTexture`); in `ContentStore` both share one `Declarations` class (address → reference count: append adds, erase subtracts,
+  zero deletes), and `GeometryTable` and the new `MaterialTable` each hold one. A material row declares / withdraws
+  `slots[].texture` on append / reclaim.
+- **`MaterialImages::beginFrame(declarations, imported)`**: the declaration = a material row slot **or the frame's pass-imported input**
+  (the address of an `ImportedTexture` in `CompiledPass::inputs`; `ContentAssembly::beginFrame` collects them into a reused vector),
+  and the other half is the entry's own `owner->revision()`. **No parking**: the entry holds only a lookup share, and the descriptor set holds the view / sampler itself.
+  `releaseAbandoned()` is deleted and a cumulative `released()` count added; `VsgBackend::releasedTextures()` reads it.
+- **`ContentSweep.{hpp,cpp}` and `ContentSweepTest.cpp` are deleted**: what was left was a wrapper over half of the store, and the name did not match the behaviour. <!-- drift-ok -->
+  `VsgBackend::sweepAbandonedContent()` calls `store->releaseAbandoned(...)` directly and the documentation moved into the comments there;
+  the default-material assertion moved to `ContentStoreTest.TheDefaultMaterialIsNeverAbandoned`.
+- **Trap (a real defect the tests found)**: a frame with empty `passes` takes `commitFrameThrough`'s early-return branch, which did not run
+  `recordContent` ⇒ the image sweep did not run ⇒ when "the host stops drawing anything" a texture was never released. The early-return branch now calls
+  `assembly->beginFrame(...)` too.
+- **Trap**: `std::span<const Texture*>` cannot be constructed from a `const std::vector<const Texture*>` (libstdc++'s range
+  constraints), so a local vector must be writable.
+- **Semantic change (the ADR's cost, T27)**: a texture is pinned only by live content — a texture the host holds but no material/import references leaves on the next frame.
+  `VsgBackendTest.AWorkingSetLargerThanTheOldTextureBoundStaysResident` assumed exactly the old holding rule and was deleted;
+  “no capacity cap” is still pinned by `MaterialImagesTest.EveryLiveTextureKeepsItsImages` (300 entries, no frames run).
+- Mutation check: making `declared` constantly true ⇒ 3 new cases all red. `test_vsg` / full ctest 30/30, gates 0.
 
-## 2026-11-12 —— ADR-2026-11-10 步骤 4：材质块迁入 pin 模型
+## 2026-11-12 — ADR-2026-11-10 step 4: material blocks move into the pin model
 
-- **pin = 材质身份**（不是 `(身份, revision)`）：arena 一个身份一个槽，而“还活着”这一半就是材质表的
-  per-identity 行计数——所以 `ContentDeclarations` 直接借用 `Table::rows_of_`
-  （`declaresMaterial(id)` = `find(bits)`），**没有第二份记账**。行还答得出（包括被取代的 revision）就钉着槽。
-- **builder / destroyer**：写还是 `MaterialArena::note`（记录时照旧 memo：稳态 0 写、一次编辑一块、同帧第二次
-  `Unchanged`）；放槽变成 `MaterialArena::retireUnpinned(is_live)`，由 `BlockStorage::retireUnpinnedMaterials(
-  declarations)` 在 `ContentAssembly::beginFrame`（表出版之后）每帧问一次：O(槽数)，不随内容走。
-- **不 park，立即放**：arena 的副本轮转就是那个窗口——“放掉可以复用槽的权利”，不是在飞帧读的字节。
-  停靠反而有洞：窗口内内容回来重建了条目，停靠到期仍会把槽还掉，条目里的偏移随后会被别的材质写脏。
-- **`ContentStore` 三个释放循环 → 一个 `retireOwner`**：标记（`Live::isAbandoned()`：geometry 问 object 或
-  shape，program/material 问 object）与丢弃（`released && rowsOf == 0`）同一遍完成；`dropReleased()` 只是
-  `retire(false)`。`material_slots_pending`、`releaseAbandoned(released_materials)` 的出口、
-  `BlockStorage::releaseMaterial`（生产侧最后一个调用点）、`VsgBackend::abandoned_materials` 全部删除。
-- **头文件坑**：`BlockStorage.hpp` 不能 include `ContentFacts.hpp`——`ContentFacts.hpp` 又 include
-  `ContentPipeline.hpp`，后者要求 `BlockDescriptors` 先被包含，而 `BlockDescriptors.hpp` 正是 include
-  本文件 ⇒ 环。用前置声明 `class ContentDeclarations;`（只收引用），实现放 `.cpp`。
-- **计数器**：`ResidencyKind::MaterialBlocks` 的 `retired` 从“缺席”变成 arena 的 `retired()`（a3 以前那行
-  “no release path - eviction only” 的残余现在实测为 0）；`BlockStorage::materialResidency()` 一并填上。
-- 用例：`CoreMaterialArenaTest.ThePinSweepReturnsTheSlotsNoLiveContentNames`、
-  `BlockStorageTest.AMaterialSlotIsReturnedOnceNoLiveRowDeclaresIt`（真设备）、
-  `ContentStoreTest.AMaterialDeclaresItsIdentityForAsLongAsARowAnswersIt`；a3 的残差断言改成
-  `liveMaterials() <= base_slots`（实测每周期回 0）。`test_vsg` 全绿。
+- **A pin is a material identity** (not `(identity, revision)`): the arena has one slot per identity, and the “still alive” half is the material table's
+  per-identity row count — so `ContentDeclarations` borrows `Table::rows_of_` directly
+  (`declaresMaterial(id)` = `find(bits)`), with **no second bookkeeping**. As long as a row still answers (including a superseded revision), the slot stays pinned.
+- **builder / destroyer**: writes are still `MaterialArena::note` (the same memo as before while recording: 0 writes in steady state, one block per edit, a second write in the same frame is
+  `Unchanged`); releasing a slot became `MaterialArena::retireUnpinned(is_live)`, asked once per frame by `BlockStorage::retireUnpinnedMaterials(
+  declarations)` in `ContentAssembly::beginFrame` (after the tables are published): O(slots), not following the content.
+- **No parking, release at once**: the arena's copy rotation is that window — “dropping the right to reuse the slot”, not bytes an in-flight frame reads.
+  Parking would even have a hole: if content came back and rebuilt the entry inside the window, the parked slot would still be returned on expiry, and the entry's offset would then be written dirty by another material.
+- **`ContentStore`'s three release loops → one `retireOwner`**: marking (`Live::isAbandoned()`: geometry asks the object or the
+  shape, program/material ask the object) and dropping (`released && rowsOf == 0`) happen in one pass; `dropReleased()` is just
+  `retire(false)`. `material_slots_pending`, the exit of `releaseAbandoned(released_materials)`,
+  `BlockStorage::releaseMaterial` (the last production call site) and `VsgBackend::abandoned_materials` are all deleted.
+- **Header trap**: `BlockStorage.hpp` cannot include `ContentFacts.hpp` — `ContentFacts.hpp` includes
+  `ContentPipeline.hpp`, which requires `BlockDescriptors` to be included first, and `BlockDescriptors.hpp` is exactly what includes
+  this file ⇒ a cycle. Use the forward declaration `class ContentDeclarations;` (references only) and put the implementation in the `.cpp`.
+- **Counters**: `ResidencyKind::MaterialBlocks`'s `retired` went from “absent” to the arena's `retired()` (the residue of a3's old line
+  “no release path - eviction only” is now measured at 0); `BlockStorage::materialResidency()` is filled in too.
+- Cases: `CoreMaterialArenaTest.ThePinSweepReturnsTheSlotsNoLiveContentNames`,
+  `BlockStorageTest.AMaterialSlotIsReturnedOnceNoLiveRowDeclaresIt` (real device),
+  `ContentStoreTest.AMaterialDeclaresItsIdentityForAsLongAsARowAnswersIt`; a3's residual assertion became
+  `liveMaterials() <= base_slots` (measured back to 0 every cycle). `test_vsg` all green.
 
-## 2026-11-12 —— graphics-next 第 1 步：计划是值（`Plan` + 按名字差分 + 稳定 code）
+## 2026-11-12 — graphics-next step 1: the plan is a value (`Plan` + diff by name + stable codes)
 
-- **新公开值**：`Plan`（有序 `PassDesc` 列表，pass 的**名字**是身份）、`PlanProblem { code, pass, detail }`、
-  `PlanProblemCode`（`EmptyPassName` / `DuplicatePassName` / `UnknownInput` / `DependencyCycle` /
-  `TooManyPasses` / `SessionBusy`）、`kMaxPlanPasses = 64`、纯函数 `validatePlan(plan, external_outputs)`、
-  `planCodeText(code)`。头文件 `Plan.hpp`，实现 `src/Plan.cpp`。
-- **引擎入口**：`RenderEngine::applyPlan(plan) -> vector<PlanProblem>`（空 = 已应用）与 `RenderEngine::plan()`。
-  差分按名字：新名字 `makePassNode` + `insertSlot`；同名同 kind ⇒ `setDesc` **原地**（节点与后端状态存活，
-  P7）；同名但 kind 变了 ⇒ 删后重建（保留 owner/role）；计划没命名的 pass ⇒ `removePass`。整份校验通过
-  才应用，**全有或全无**。
-- **`plan()` 会把有效 order 写进 `desc.order`**，所以 `applyPlan(engine.plan())` 是幂等的（只声明 stage
-  的 pass 不会因为读回而被重排）。
-- **命名**：`RenderEngine` 原来的私有 `PlanProblem`（句子身份）改名 `CompileProblem`——公开的 `PlanProblem`
-  是“形状缺陷 + 稳定 code”，两者不是一回事；`FramePlan` 仍是**编译后**的视图，`Plan` 是声明。
-- **坑**：`validatePlan` 必须用**两个** map——pass 名字（差分身份，要唯一）与 `output.name`（消费者解析的
-  生产者）。第一版混成一个 map，环与 feedback 两个用例当场红。
-- **测试**：`PlanTest`（12 个）——T7（无 add 调用即有 pass 并真的跑）、读回幂等、改名、原地更新、四类 code +
-  feedback 不是环、拒绝后形状不变、code 拼写、`describe`。`test_graphics` 571 / `test_vsg` 540（一个
-  既有窗口用例首跑红、单跑绿：宿主窗口报 `4294967295x4294967295` 的已知偶发）/ 全 ctest 30/30。
-- **文档**：`graphics-frame-pipeline.md` §3.1/§3.6/§8/§9.1/§9.3/§10 更新；`K1–K11` 落进 §8.1 作为仓库内
-  权威副本（`K4` 分母改成“该步开始时的用例数”）；§9.3 修正为“`addPass` 家族在第 5 步删”（原表与 `C11`
-  自相矛盾）。`-audit` **未删**：它是 `R31–R39` / `K7–K11` 的出处，且被两份 ADR 引为证据。
+- **New public values**: `Plan` (an ordered `PassDesc` list; a pass's **name** is its identity), `PlanProblem { code, pass, detail }`,
+  `PlanProblemCode` (`EmptyPassName` / `DuplicatePassName` / `UnknownInput` / `DependencyCycle` /
+  `TooManyPasses` / `SessionBusy`), `kMaxPlanPasses = 64`, the pure function `validatePlan(plan, external_outputs)` and
+  `planCodeText(code)`. Header `Plan.hpp`, implementation `src/Plan.cpp`.
+- **Engine entry**: `RenderEngine::applyPlan(plan) -> vector<PlanProblem>` (empty = applied) and `RenderEngine::plan()`.
+  Diff by name: a new name `makePassNode` + `insertSlot`; same name and same kind ⇒ `setDesc` **in place** (the node and backend state survive,
+  P7); same name but the kind changed ⇒ delete and rebuild (keeping owner/role); a pass the plan does not name ⇒ `removePass`. The whole plan must validate
+  before anything is applied, **all or nothing**.
+- **`plan()` writes the effective order into `desc.order`**, so `applyPlan(engine.plan())` is idempotent (a pass that only declares a stage
+  is not reordered by reading it back).
+- **Naming**: `RenderEngine`'s old private `PlanProblem` (sentence identity) was renamed `CompileProblem` — the public `PlanProblem`
+  is “a shape defect + a stable code”, and the two are not the same thing; `FramePlan` is still the **compiled** view and `Plan` is the declaration.
+- **Trap**: `validatePlan` must use **two** maps — pass names (the diff identity, which must be unique) and `output.name` (the producer a consumer
+  resolves). The first version merged them into one map and the cycle and feedback cases went red on the spot.
+- **Tests**: `PlanTest` (12) — T7 (a pass exists and really runs with no add call), read-back idempotence, rename, in-place update, the four code classes +
+  feedback is not a cycle, shape unchanged after a refusal, code spelling, `describe`. `test_graphics` 571 / `test_vsg` 540 (one
+  existing window case red on the first run, green alone: the host window reports the known occasional `4294967295x4294967295`) / full ctest 30/30.
+- **Docs**: `graphics-frame-pipeline.md` §3.1/§3.6/§8/§9.1/§9.3/§10 updated; `K1–K11` land in §8.1 as the in-repository
+  authoritative copy (`K4`'s denominator became “the case count when that step started”); §9.3 corrected to “the `addPass` family is deleted in step 5” (the old table contradicted `C11`).
+  `-audit` was **not deleted**: it is the source of `R31–R39` / `K7–K11` and is cited as evidence by two ADRs.
 
-## 2026-11-12 —— graphics-next 第 2 步：`publish` 返回四态（内部半边）
+## 2026-11-12 — graphics-next step 2: `publish` returns four states (internal half)
 
-- **为什么**：`ContentMirror::publish` / `FrameWorker::publish` 返回 `bool`，而同一个 `false` 表示三件不同的事
-  ——“没变”“批内被冻住”“通道满、下次重试”。调用方无法据此决定重试还是报告，`T31` 的“批内显式未发布”也无处表达。
-- **新值**：`src/viz/graphics/src/PublishOutcome.hpp`（5b-2b 已删）<!-- drift-ok --> —— `PublishStatus{Posted, Unchanged, InsideBatch, Refused}`
-  + `PublishOutcome{status, held}`（`held` = 调用之后镜像持有的那一版，首次发布前为空）+ `explicit operator bool`
-  （保留旧的“是否发布了”读法，所以既有 `EXPECT_TRUE(publish(...))` 一处未改）+ `posted()`。
-- **怎么分辨批内**：`SceneRows::editing(scene)`（friend，读 `edit_depth_ > 0`）。**先问它**再比版本：批内版本是被
-  故意冻住的，比较不出来；先问还让一个长批次不再每帧付一次行构建。
-- **没做的**：公开 `Scene::publish()`。今天没有公开的快照类型承载“上一份快照”，先公开只能答一个没人能用的
-  版本号，还会和镜像的记账形成两个真相。它与“帧内隐式发布消失”一起属于第 5 步（§9.3 第 2 行已改写）。
-- **断言**：三处既有用例把 `EXPECT_FALSE/TRUE` 升级为状态断言（`Unchanged` / `InsideBatch` / `Refused` / `Posted`），
-  没有新增重复用例。`test_graphics` 571。
+- **Why**: `ContentMirror::publish` / `FrameWorker::publish` returned `bool`, and the same `false` meant three different things
+  — “nothing changed”, “frozen inside a batch”, “the channel is full, retry later”. A caller could not decide between retrying and reporting, and `T31`'s “explicitly unpublished inside a batch” had nowhere to be expressed.
+- **New values**: `src/viz/graphics/src/PublishOutcome.hpp` (deleted in 5b-2b)<!-- drift-ok --> — `PublishStatus{Posted, Unchanged, InsideBatch, Refused}`
+  + `PublishOutcome{status, held}` (`held` = the version the mirror holds after the call, empty before the first publish) + `explicit operator bool`
+  (keeping the old “was it published” reading, so not one existing `EXPECT_TRUE(publish(...))` changed) + `posted()`.
+- **How “inside a batch” is told apart**: `SceneRows::editing(scene)` (a friend, reads `edit_depth_ > 0`). **Ask it first**, then compare versions: a batch's version is
+  deliberately frozen and cannot be compared; asking first also stops a long batch from paying one row build every frame.
+- **Not done**: a public `Scene::publish()`. No public snapshot type carries “the previous snapshot” today, so publishing it now could only answer a version number nobody can use
+  and would create two truths with the mirror's bookkeeping. It belongs with “implicit publishing inside a frame disappears” in step 5 (§9.3 row 2 was rewritten).
+- **Assertions**: three existing cases were upgraded from `EXPECT_FALSE/TRUE` to state assertions (`Unchanged` / `InsideBatch` / `Refused` / `Posted`),
+  with no duplicated new cases. `test_graphics` 571.
 
-## 2026-11-12 —— graphics-next 第 3 步先定缝：预热不能是"跑一帧不提交"
+## 2026-11-12 — graphics-next step 3, settling the seam first: warm-up cannot be “run a frame without submitting”
 
-- **查代码否掉的那个显而易见的实现**：`VsgBackend::executeFrame` 的循环
-  （`openFrameBooks` → 每 pass → `closeFrameBooks` → 提交）看起来可以"跑完不提交"，但
-  `Session::beginFrame()` 里 `viewer->advanceToNextFrame()` **acquire** 一张交换链图像：
-  不提交 ⇒ 下一帧没图像可 acquire（饥饿）；提交 ⇒ 已经不是预热。而画到窗口的 pass 只能画进那张图像，
-  所以这个做法连它都覆盖不到。**已记入 §7 否决项 D11 / §6.11 P11。**
-- **选定的缝**：预热只做**值**这一侧 —— 半片 / 描述符集 / 上传。键由
-  `drawNeeds(compiled pass, draw)` 算，`prepare` 用它建、`ContentPass::record` 用它取（一个构造者两个消费者，
-  `G1`）。窗口目标的格式由 `WindowTarget::facts()` 回答（const，不 acquire）。
-- **入口**：`RenderEngine::prepare()` 先编成 `FrameDescription`，后端拿到的是与 `executeFrame()` **同一个值**
-  （一条线、两个动词，不引入新名词）；快照进这个输入是第 5 步。
-- **§9.3 第 3 步因此拆成 3a / 3b**：3a = 答案（`T32`：报告的键集 = 这一帧实际构建的键集），
-  3b = 预建（`T7`/`T10`：预热后 `builds` 增量 0）。每行一个可回退提交。
-- **下一步**：3a —— 在 `ContentPass::record` 里定位键构造点（约 1235 行附近，含 `PipelineKey::variant`
-  与 topology 的注释），抽成纯函数，再让 `prepare` 走同一函数。
+- **The obvious implementation the code ruled out**: `VsgBackend::executeFrame`'s loop
+  (`openFrameBooks` → each pass → `closeFrameBooks` → submit) looks like it could “run to the end without submitting”, but
+  `Session::beginFrame()` calls `viewer->advanceToNextFrame()`, which **acquires** a swap-chain image:
+  no submit ⇒ the next frame has no image to acquire (starvation); submit ⇒ it is no longer warm-up. And a pass that draws to the window can only draw into that image,
+  so that approach cannot even cover it. **Recorded in §7 rejected option D11 / §6.11 P11.**
+- **The chosen seam**: warm-up only does the **value** side — halves / descriptor sets / uploads. The key is computed by
+  `drawNeeds(compiled pass, draw)`, built by `prepare` and read by `ContentPass::record` (one builder, two consumers,
+  `G1`). The window target's format is answered by `WindowTarget::facts()` (const, no acquire).
+- **Entry**: `RenderEngine::prepare()` compiles to a `FrameDescription` first, and the backend receives **the same value** as `executeFrame()`
+  (one line, two verbs, no new noun); the snapshot entering that input is step 5.
+- **§9.3 step 3 therefore splits into 3a / 3b**: 3a = the answer (`T32`: the reported key set = the key set this frame actually builds),
+  3b = pre-building (`T7`/`T10`: `builds` delta 0 after warm-up). One revertible commit per row.
+- **Next**: 3a — locate the key-construction point in `ContentPass::record` (around line 1235, with the comments on `PipelineKey::variant`
+  and topology), extract it into a pure function, and let `prepare` go through the same function.
 
 ## 2026-11-12 —— graphics-next 第 3a 步落地：`drawNeeds` 是唯一的键构造者
 
