@@ -1,124 +1,182 @@
-# appfw 模块要点（`src/fw/appfw`）
+# appfw notes (`src/fw/appfw`)
 
-> **最后核对**：2026-10-28。
-> 现役设计按模块拆在 `.ai/design/` 下的 appfw 文档里；本文件只放跨模块、干活时必须立刻想起的规则。
-> 历史、已否决的方案与逐轮审查记录看 git；开放项看 `.ai/backlog/appfw-startup.md`。
+> **Last verified**: 2026-10-28.
+> The current design is split by module across the appfw pages under `.ai/design/`; this file holds only
+> the cross-module rules a working session must recall immediately.
+> History, rejected options and round-by-round review records are in git; open items are in
+> `.ai/backlog/appfw-startup.md`.
 
-## 启动
+## Startup
 
-- 三拍：`startupStart()` → `startup()` → `startupEnd()`，都是 `vn::async::Task<void>`，protected，声明在类末尾。
-- `run()` 先 `exec()`，再推一个启动步；`startupSequence()` 把三拍平铺，每拍之后垫一次
-  `MainThreadDispatcher::resumeOnMainThread()`（`co_await` 之后跑在唤醒线程上）。
-- 上报口由驱动建/收：`beginStartupProgress()` 在第一拍前，`endStartupProgress()` 在最后一拍后；
-  `startupEnd()` 那一拍仍能上报。
-- 启动异常致命：`failStartup()` = 记日志 + 收上报口 + `exit(1)`，**不走** `startupEnd()`。
-  插件 `loadAll()` 返回 false 只是“某个插件没装上”，记告警，应用照常启动。
-- 框架不替宿主拥有线程：宿主重写 `startup()`，先 `co_await Application::startup()`（插件先加载），
-  重活再 `co_await vn::async::run(...)` 丢到池上；异常从那一拍抛出，同样致命。
-- 启动可取消：`StartupProgress::stopToken()` / `requestCancel()`；`cancelStartup()` 卸已装插件 + 收上报口 +
-  `exit(0)`，取消不是失败，主窗不上屏。
-- 进度按相位更新，不做连续动画/心跳；启动框只有状态行 + 转圈，不显示百分比或进度条。
-- 启动期屏幕上只有启动框；主窗在 `startupEnd()` 第一次 `show()`，启动框同时收掉并 `raise()`/`activate()`。
-- Windows 的“主窗未 show 时内嵌表面已有有效 HWND”仍未实测，见 `.ai/backlog/appfw-startup.md`。
+- Three steps: `startupStart()` → `startup()` → `startupEnd()`, all `vn::async::Task<void>`, protected,
+  declared at the end of the class.
+- `run()` calls `exec()` first, then posts one startup step; `startupSequence()` flattens the three steps and
+  pads each one with a `MainThreadDispatcher::resumeOnMainThread()` (after a `co_await` the code runs on the
+  waking thread).
+- The progress reporter is created and closed by the driver: `beginStartupProgress()` before the first step,
+  `endStartupProgress()` after the last one; the `startupEnd()` step can still report.
+- A startup exception is fatal: `failStartup()` = log + close the progress reporter + `exit(1)`, and **does
+  not** run `startupEnd()`. A plugin `loadAll()` returning false only means "one plugin did not load"; it
+  logs a warning and the application starts as usual.
+- The framework does not own threads for the host: the host overrides `startup()`, first
+  `co_await Application::startup()` (plugins load first), then `co_await vn::async::run(...)` to put the
+  heavy work on the pool; an exception thrown from that step is equally fatal.
+- Startup is cancellable: `StartupProgress::stopToken()` / `requestCancel()`; `cancelStartup()` unloads the
+  installed plugins + closes the progress reporter + `exit(0)`; a cancel is not a failure and the main window
+  never goes on screen.
+- Progress updates per phase; there is no continuous animation or heartbeat. The splash has only a status
+  line and a spinner, never a percentage or a progress bar.
+- During startup the splash is the only thing on screen; the main window `show()`s for the first time in
+  `startupEnd()`, and the splash is closed at the same time with `raise()`/`activate()`.
+- The Windows question "an embedded surface already has a valid HWND before the main window is shown" is
+  still unmeasured; see `.ai/backlog/appfw-startup.md`.
 
-## 插件
+## Plugins
 
-- 生命周期三趟：`preLoad()` 全员 → `load()` 全员 → `postLoad()` 全员；声明依赖只决定 `load` 趟内先后。
-- `loadAllAsync()` 是启动门（协程；管理器自己不转循环）；`loadAll()` 是同步门，给不跑循环的工具/测试/自驱宿主。
-- 同步门 = `MainThreadDispatcher::runToCompletion()`（pump 只派发 `deliverPostedCalls()`）；
-  **不能用 `Task::result()`**，它只阻塞不派发，钩子“回到应用线程”那一步会死锁。
-- 钩子返回 `Task<void>`，**每条出口都要 `co_return;`**；缺了它函数不是协程，返回空 `Task`，`co_await` 必 `ud2`。
-- `VN_APPFW_PLUGIN_ABI_VERSION` = **10u**。
-- `uuid` 是身份：同名不同 uuid（第一个位置胜）、不同名同 uuid（都留下）、注册文件与库不符（库为准）都只 warning。
-- `Application::shutdown()` 是 protected：只有 `run()` 的收尾路径调它；宿主/命令/插件停进程用 `exit()`。
-  循环还在跑或从非应用线程调 `shutdown()`，只警告不拒绝。
+- Three lifecycle passes: `preLoad()` for everyone → `load()` for everyone → `postLoad()` for everyone; a
+  declared dependency only orders the `load` pass.
+- `loadAllAsync()` is the startup gate (a coroutine; the manager does not pump the loop itself); `loadAll()`
+  is the synchronous gate for tools, tests and self-driven hosts that do not run a loop.
+- The synchronous gate = `MainThreadDispatcher::runToCompletion()` (the pump only dispatches
+  `deliverPostedCalls()`); **do not use `Task::result()`**, which blocks without dispatching, so the hook's
+  "back to the application thread" step deadlocks.
+- A hook returns `Task<void>` and **every exit needs `co_return;`**; without it the function is not a
+  coroutine, returns an empty `Task`, and `co_await` hits `ud2`.
+- `VN_APPFW_PLUGIN_ABI_VERSION` = **10u**.
+- `uuid` is the identity: same name with a different uuid (first position wins), different names with the
+  same uuid (both stay), and a registration file that disagrees with the library (the library wins) are all
+  only warnings.
+- `Application::shutdown()` is protected: only `run()`'s teardown path calls it; the host, commands and
+  plugins stop the process with `exit()`. Calling `shutdown()` while the loop still runs or from a
+  non-application thread only warns; it is not refused.
 
-## 文档模型
+## Document model
 
-- 框架只定义**文档身份与生命周期**：`Document` + `DocumentManager`；进程一份挂在 `Application::documentManager()`，
-  建在 `initialize()` 里，早于插件加载，所以插件能在 `load()` 里注册类型。
-- 打开 = `open(payload)`：按载荷的 C++ 类型注册打开器；框架不解释载荷、不拷贝、不持有载荷对象。
-  刷新是类型的 `reload()` 动作位，不是“重放 `open(payload)`”。
-- 位置是 **`Vfs` + 虚拟路径**，不是裸 `path`；core 不认识 `Vfs`（appfw 不链 iobase）。
-- `DocumentSource` 是值类型、不派生；“没有来源”= 空值；`save()` 无参写回来源，基类默认拒绝。
-- 三条契约：`Vfs` 借用且必须比文档活得久；`Vfs` 无锁（同一实例不可两线程同碰）；载荷只在 `open()` 期间有效。
-- 视图层只在 `GuiApplication`：`DocumentView` + `DocumentViewRegistry` + `CentralDocumentHost`。
-- 视图按**文档实例**；`content()` 是“放进中央区的东西”。2D 视图返回自己，3D 视图也返回自己
-  ⇒ 宿主只有“一实例一页”一条规则。
-- 中央区是单槽，`setCentralWidget()` 会重父化（Qt 重建原生窗口）⇒ 放一个容器、只装一次、内部用
-  `QStackedWidget` 切页。
-- 三处显示只有一个来源（2026-10-28）：`DocumentManager::current()` ⇒ tab 选中 / 中央区内容 / `activate()` 的视图，
-  全在 `CentralDocumentHost::syncToCurrentDocument()` 一处派生。浮动窗口激活只是 `setCurrent()` 请求。
-- 当前文档浮动时中央区显示说明页（`shownContent()`），`currentView()` 仍是它；tab 右键菜单提供浮动/停靠/关闭。
-- 关掉当前文档：管理器先发 `currentChanged(nullptr)` 再发 `closed`；宿主在 `closed` 里请求“接替那一格”成为当前，
-  因为 tab 条表达不了“无选中”（Qt 6.10 实测：有 tab 时 `setCurrentIndex(-1)` 是空操作）。只剩一份/零份时条隐藏。
-- 3D 文档各自一块 `RenderControl`（自己的面/会话/设备/管线）；应用级共享的只有 DockPanel/Ribbon 外壳。
-- `VSG_MAX_DEVICES` = **4**（`gfx_backend_vsg/CMakeLists.txt` 显式设）。第 5 块由后端拒：
-  `vsg::Device` 构造抛异常，`deviceFailureMessage()` 转成带“at most 4 simultaneous render devices”的理由，
-  `RenderControl::init()` 返回 false 并进 `Failed`。
-- 多格/共享会话那套已删：`RenderControl::present()`、`SceneView::removeWindowPass()` 公开、宿主“借页”都不存在。
-- 输入进到视图只有一条通道：`SceneView` 的操纵器。拾取在 SDK，选择/高亮/框选是业务，框架没有选中态。
+- The framework defines **document identity and lifetime only**: `Document` + `DocumentManager`; one per
+  process, reachable as `Application::documentManager()`, created in `initialize()` before plugins load, so a
+  plugin can register types in `load()`.
+- Open = `open(payload)`: the opener is registered by the payload's C++ type; the framework does not
+  interpret the payload, does not copy it and does not hold it. Refresh is the type's `reload()` action
+  slot, not "replay `open(payload)`".
+- A location is **`Vfs` + a virtual path**, not a bare `path`; core does not know `Vfs` (appfw does not link
+  iobase).
+- `DocumentSource` is a value type and is not derived; "no source" = an empty value; parameterless `save()`
+  writes back to the source and the base class refuses by default.
+- Three contracts: the `Vfs` is borrowed and must outlive the document; the `Vfs` is lock-free (one instance
+  must not be touched by two threads); the payload is valid only during `open()`.
+- The view layer exists only in `GuiApplication`: `DocumentView` + `DocumentViewRegistry` +
+  `CentralDocumentHost`.
+- A view is per **document instance**; `content()` is "the thing placed into the central area". A 2D view
+  returns itself and a 3D view returns itself too ⇒ the host has one rule only: one page per instance.
+- The central area is a single slot, and `setCentralWidget()` reparents (Qt recreates the native window) ⇒
+  put one container there, set it once, and switch pages inside it with a `QStackedWidget`.
+- Three displays have one source only (2026-10-28): `DocumentManager::current()` ⇒ the tab selection, the
+  central-area content and the view `activate()` is called on, all derived in one place,
+  `CentralDocumentHost::syncToCurrentDocument()`. Activating a floating window is only a `setCurrent()`
+  request.
+- While the current document floats, the central area shows an explanation page (`shownContent()`) and
+  `currentView()` is still that document; the tab's context menu offers float / dock / close.
+- Closing the current document: the manager emits `currentChanged(nullptr)` and then `closed`; in `closed`
+  the host asks "the document that took over that slot" to become current, because the tab bar cannot
+  express "nothing selected" (measured on Qt 6.10: `setCurrentIndex(-1)` is a no-op while tabs exist). With
+  one or zero documents the bar is hidden.
+- Each 3D document has its own `RenderControl` (its own surface / session / device / pipeline); only the
+  DockPanel/Ribbon shell is shared at application level.
+- `VSG_MAX_DEVICES` = **4** (set explicitly in `gfx_backend_vsg/CMakeLists.txt`). A fifth block is refused
+  by the backend: the `vsg::Device` constructor throws, `deviceFailureMessage()` turns that into a reason
+  containing "at most 4 simultaneous render devices", and `RenderControl::init()` returns false and enters
+  `Failed`.
+- The multi-pane / shared-session machinery is gone: `RenderControl::present()`, a public
+  `SceneView::removeWindowPass()` and the host "borrowing a page" no longer exist.
+- Input reaches a view through one channel only: `SceneView`'s manipulator. Picking lives in the SDK;
+  selection / highlight / rubber-band selection is business logic, and the framework has no selection state.
 
-## 渲染控件与查看器
+## Render control and viewer
 
-- 构造只组装；attach 由 `init()` / `initAsync()` 或第一拍兜底。`init()` 同步、幂等；表面还没布局好时返回 false，
-  宿主再调一次就是重试。
-- `initAsync()` 只是 `co_return init()` 的协程拼法，**不挂起、不下池**；设备/会话/管线与 warm-up 帧都在应用线程上
-  一次付掉（实测最长一段 ~184 ms）。
-- attach 读场景图（管线由 pass 建、warm-up 要 record）⇒ 宿主不要在 attach 进行中从别的线程改场景；
-  当前没有 `isAttaching()` 旗子，attach 与应用线程上的内容装配天然串行。
-- `Viewer` 是一块渲染区的**请求半边**：`setViewerOptions()` / `setShadingMode()` / `release(view)` / `view()` /
-  `isActive()` / `takeArea()`。一块区只画一幅画，多格已删。
-- 宿主在区上声明自己的主 pass ⇒ `isActive()` 为 false，`takeArea()` 不动；要接管就先声明或先 `release(view)`。
-- 中央区 `setCentralWidget()` 重父化会重建原生窗口 ⇒ `RenderControl` 走一遍 `Pending -> Presenting`。
+- Construction only assembles; attach happens through `init()` / `initAsync()` or as a fallback on the first
+  step. `init()` is synchronous and idempotent; it returns false while the surface is not laid out yet, and
+  calling it again is the retry.
+- `initAsync()` is just the coroutine spelling of `co_return init()`; it **does not suspend and does not go
+  to the pool**. Device / session / pipeline and the warm-up frame are all paid once on the application
+  thread (the longest measured stretch ~184 ms).
+- Attach reads the scene graph (pipelines are built by passes and the warm-up has to record) ⇒ the host must
+  not modify the scene from another thread while attach runs; there is no `isAttaching()` flag today, attach
+  and content assembly on the application thread are naturally serial.
+- `Viewer` is the **requesting half** of one render area: `setViewerOptions()` / `setShadingMode()` /
+  `release(view)` / `view()` / `isActive()` / `takeArea()`. One area draws one picture; multi-pane is gone.
+- If the host declares its own main pass on the area ⇒ `isActive()` is false and `takeArea()` does nothing;
+  to take over, declare first or `release(view)` first.
+- A central-area `setCentralWidget()` reparent recreates the native window ⇒ the `RenderControl` goes
+  through `Pending -> Presenting` once.
 
-## 功能区
+## Ribbon
 
-- tab/group 的身份、角色与顺序见 `.ai/design/appfw-ribbon.md`；标准目录在 app_shell，插件 tab 用 role 锚点。
-- `setCommand()` 的条目（按钮、菜单项、Backstage）状态是**派生**的：enabled 跟 `isCommandEnabled()` 加
-  `NeedsDocument`/`NeedsView` 对派发目标的要求，tooltip 跟描述，勾选态用 `setCheckedProvider()`；
-  实现只有一处 `src/gui/CommandBinding.hpp`。`setEnabled()` 对绑定条目只是暂时效果。
-- `CommandManager::commandFlags()` / `commandDescription()` 读注册时缓存，别名照执行入口解析。
-- 行高别交给样式表：`min-height` 只约束内容盒，加 1 px 下边线会把行变高（Backstage 条目行 44 px ≠
-  导航行 40 px）；尺寸用 `setFixedHeight()`，样式表只管颜色与内边距。
-- `border-*-color: palette(...)` 不一定解析成想要的灰度（`palette(midlight)` 在本机是白色，线画了看不见）；
-  分隔线用中性半透明灰 `rgba(127,127,127,90)`，明/暗底都成立。
-- `palette(midlight)` 在默认浅色调色板里就是 `#ffffff`（与 `Base` 同色），拿它当 hover 底色等于没有反馈；
-  hover/按下用 `rgba(127,127,127,40)` / `rgba(127,127,127,70)`。
-- `QScrollArea::setWidget()` 会给被滚动的控件打开 `autoFillBackground`（画成 `Window` 色的一块）；要在
-  setWidget 之后再 `setAutoFillBackground(false)`，否则透明页面上会出现一块灰底。
-- 顶层覆盖窗（Backstage）跟随主窗口：拖动时要在**同一调用里**同步覆盖层几何；只靠主窗口的 `Move`
-  事件会依赖平台是否同步派发，排队时两窗口会差一帧。
+- Tab/group identity, roles and order: see `.ai/design/appfw-ribbon.md`; the standard catalogue lives in
+  app_shell and a plugin tab anchors with a role.
+- The state of a `setCommand()` item (button, menu item, Backstage) is **derived**: enabled follows
+  `isCommandEnabled()` plus the `NeedsDocument` / `NeedsView` requirement on the dispatch target, the tooltip
+  follows the description and the checked state comes from `setCheckedProvider()`; the implementation exists
+  in one place, `src/gui/CommandBinding.hpp`. `setEnabled()` on a bound item is only a temporary effect.
+- `CommandManager::commandFlags()` / `commandDescription()` read the cache made at registration; aliases
+  resolve the same way as the execution entry.
+- Do not leave row height to the style sheet: `min-height` constrains the content box only, so a 1 px bottom
+  border makes the row taller (a Backstage item row 44 px ≠ a navigation row 40 px); use `setFixedHeight()`
+  for the size and let the style sheet own colour and padding only.
+- `border-*-color: palette(...)` does not necessarily resolve to the grey you want (`palette(midlight)` is
+  white on this machine, so the line is drawn but invisible); use a neutral translucent grey
+  `rgba(127,127,127,90)` for separators, which works on both light and dark backgrounds.
+- In the default light palette `palette(midlight)` is `#ffffff` (the same colour as `Base`), so using it as a
+  hover background gives no feedback; use `rgba(127,127,127,40)` / `rgba(127,127,127,70)` for hover / pressed.
+- `QScrollArea::setWidget()` turns on `autoFillBackground` for the scrolled widget (it paints a block in the
+  `Window` colour); call `setAutoFillBackground(false)` after setWidget, or a grey block appears on a
+  transparent page.
+- The top-level overlay window (Backstage) follows the main window: while dragging, synchronise the overlay
+  geometry in the **same call**; relying on the main window's `Move` event depends on whether the platform
+  dispatches it synchronously, and when queued the two windows are one frame apart.
 
-## 命令
+## Commands
 
-- 参数只被**携带**：`executeCommandLineAsync(line)` 切词（`tokenizeCommandLine`，Windows C 运行库引号规则），
-  其余 token 进 `CommandArguments`，命令从 `context.arguments()` 读；含义（位置、`--name`、缺参、类型）归命令。
-- 参数**不写进命令对象**：实例由工厂默认构造、跑完即销毁；例外写法是在 `execute()` 开头绑成局部结构。
-- 历史与 `executing`/`executed` 记 `args_record = toString()`，与 `tokenizeCommandLine` 往返恒等 ⇒ 可回放。
-- 实例入口 `executeCommandAsync(Command*, target)` 不接参数（字段就是参数）；空行在派发前被拒。
-- 参数变体用**显式模式 token**（`size` / `corners`，加唯一无歧义简写），不按参数个数推断；模式先进 `args_record`，回放不漂。
+- Arguments are only **carried**: `executeCommandLineAsync(line)` tokenises (`tokenizeCommandLine`, Windows C
+  runtime quoting rules), the remaining tokens go into `CommandArguments` and the command reads them from
+  `context.arguments()`; the meaning (positional, `--name`, missing, type) belongs to the command.
+- Arguments are **not written into the command object**: the instance is default-constructed by the factory
+  and destroyed after the run; the exception is binding them into a local struct at the top of `execute()`.
+- History and `executing` / `executed` record `args_record = toString()`, which round-trips identically with
+  `tokenizeCommandLine` ⇒ replayable.
+- The instance entry `executeCommandAsync(Command*, target)` takes no arguments (the fields are the
+  arguments); a blank line is rejected before dispatch.
+- Argument variants use an **explicit mode token** (`size` / `corners`, plus a unique unambiguous
+  abbreviation), never inference from the argument count; the mode goes into `args_record` first, so replay
+  does not drift.
 
-## 公共面
+## Public surface
 
-- SDK 文本一律 `vn::String`（字面量写 `u8"…"`）；base 的 progress 模块用 `std::string`，在 appfw 边界
-  `as_std_str()` 转换一次。
-- 阶段推进叫 `setDone(double)`；是否可计数只由 `std::optional<double> fraction()` 回答。
-- 跨线程助手在 `MainThreadDispatcher` 的静态面上：`isMainThread` / `hasEventLoop` / `postToMainThread` /
-  `invokeOnMainThread` / `resumeOnMainThread`；实例上只剩 `deliverPostedCalls()`。
-- `Application::d` 已私有，叶子走 `dptr()`；`argv()` 返回 `char* const*`。
+- SDK text is always `vn::String` (literals are written `u8"…"`); base's progress module uses `std::string`
+  and the appfw boundary converts once with `as_std_str()`.
+- Advancing a phase is called `setDone(double)`; whether it is countable is answered only by
+  `std::optional<double> fraction()`.
+- The cross-thread helpers live on `MainThreadDispatcher`'s static surface: `isMainThread` / `hasEventLoop` /
+  `postToMainThread` / `invokeOnMainThread` / `resumeOnMainThread`; the instance carries only
+  `deliverPostedCalls()`.
+- `Application::d` is private now; leaves go through `dptr()`; `argv()` returns `char* const*`.
 
-## 已知缺口
+## Known gaps
 
-- `MeshLoader::load()` / `loadMerged()` 只吃路径与流，没有 `Vfs` 入口 ⇒ 文档模型说的
-  “`Vfs` + 虚拟路径”今天读不进模型文件。
-- 面板注册表不存在 ⇒ 面板只能插件自己建、自己挂；视图那一半已经落地。
-- 同时最多 4 份 3D 文档；要更多得给 vsg 打补丁（本树保持 vsg 原版 + 门禁）。
+- `MeshLoader::load()` / `loadMerged()` take only a path or a stream and have no `Vfs` entry ⇒ the document
+  model's "`Vfs` + virtual path" cannot read a model file today.
+- There is no panel registry ⇒ a panel can only be built and attached by the plugin itself; the view half
+  has landed.
+- At most 4 3D documents at once; more requires patching vsg (this tree keeps vsg upstream + gates).
 
-## 翻译
+## Translation
 
-- 源码里的源串是**英文**，中文在 `<module>/res/translations/<id>_zh_CN.ts`；`en` 没有目录，缺译文回退英文。
-- 带参数的整句用 `formatQt(translate("appfw", "… %1 …"), 值…)`（`src/Format.hpp`，与 `QString::arg` 同语义），不要拼片段；标准方言是 core 的 `vn::format`（`vine/Format.hpp`，`{}`，另有 String 列表重载）。
-- `system` = 系统语言：Windows 取 OS UI 语言（不信 `LANG`，MSYS/Git Bash/VS Code 终端会带一个），Unix 取 `QLocale::system()`。
-- 改文案 ⇒ 同一个提交里跑 `lupdate -locations none -no-obsolete <module>/src <module>/sdk -ts <file>` 并补中文。
+- Source strings in the code are **English**; Chinese lives in `<module>/res/translations/<id>_zh_CN.ts`;
+  there is no `en` directory, and a missing translation falls back to English.
+- A whole sentence with parameters uses `formatQt(translate("appfw", "… %1 …"), value…)`
+  (`src/Format.hpp`, the same semantics as `QString::arg`); never concatenate fragments. The standard
+  dialect is core's `vn::format` (`vine/Format.hpp`, `{}`, plus a String-list overload).
+- `system` = the system language: on Windows it is the OS UI language (do not trust `LANG`, MSYS / Git Bash /
+  a VS Code terminal carries one), on Unix it is `QLocale::system()`.
+- Changing a string ⇒ run `lupdate -locations none -no-obsolete <module>/src <module>/sdk -ts <file>` in the
+  same commit and add the Chinese.
 

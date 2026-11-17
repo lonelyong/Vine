@@ -1,95 +1,128 @@
-# loaders/ 层模块索引
+# loaders/ layer module index
 
-> meshio / brepio 见本文；`imageio` 见 `.ai/memory/imageio.md`。
-> 现行设计：`../design/meshio-brepio-design.md`。
+> meshio / brepio are covered here; `imageio` is in `.ai/memory/imageio.md`.
+> Current design: `../design/meshio-brepio-design.md`.
 
-## 三层结构与不变量
+## Three-layer structure and invariants
 
 ```
-base/*        ← 数据/算法（geometry 装 Mesh/BrepShape，imaging 装 Image）
-loaders/*     ← 用三方库把数据从文件里读出来/写回去
+base/*        ← data/algorithms (geometry holds Mesh/BrepShape, imaging holds Image)
+loaders/*     ← third-party libraries read data out of files and write it back
 ```
 
-**不变量**：数据模块（`geometry` / `imaging`）**不依赖任何三方库**；三方库只在 `loaders/` 里、
-以 `PRIVATE` 链接、静态烘进各自 DLL。所以消费者看不到它们，也不会被迫构建它们。
+**Invariant**: the data modules (`geometry` / `imaging`) **depend on no third-party library**; third-party
+libraries live only under `loaders/`, linked `PRIVATE` and statically baked into each DLL. Consumers
+therefore never see them and are never forced to build them.
 
-## 公开面（2026-10-27 重新设计）
+## Public surface (redesigned 2026-10-27)
 
-- 两个模块同形：`MeshFormat` / `BrepFormat` 枚举 + `formatFromPath()` / `formatName()`
-  （meshio 另有 `formatInfo()`）；读返回 `vn::io::Result<T>`，写返回 `vn::io::IoError`；类只有
-  `Loader`（options + cache）与 `Exporter`（options）。
-- **格式表是唯一词汇**：`supportedExtensions()` 由枚举生成；表外扩展名 `load()` 直接回 `Unsupported`
-  （不再透传 assimp 的注册表，`.3ds`/`.x`/`.x3d` 需在表里加一行）。`exportAs` 不再吃写入器名
-  （`objnomtl`/`collada`/`gltf2` 都收进枚举里）。
-- **无单例**：`defaultInstance()` 已删；options 构造时给、只读，缓存属于实例且**不线程安全**。
-- meshio 六个导出入口：`exportAs(mesh|model, format, path|stream)` + `createSource(mesh|model, format)`。
-  - Model → STL/PLY 的烘平由 **assimp 的导出器注册**完成（`stl`/`ply` 强制 `aiProcess_PreTransformVertices`，
-    并先复制场景）；OBJ 导出器自己按节点累积矩阵写顶点。我们只建忠实的 aiScene，**不要再自己烘一遍**。
-  - `streamable == false` 的格式（`.gltf` 要 `.bin`、`.3mf` 走路径）在 stream/source 目标上回 `Unsupported`；
-    Model → stream 的 OBJ 丢 `.mtl`，几何与名字保留。
-- `MeshSource` 与 `BinStlSource` / `AsciiStlSource` / `ObjSource` 已删：`createSource()` 是唯一懒入口，
-  内容由 `exportAs(stream)` 产出（**整份进内存**，首次拉取时生成，`rewind()` 重放）。
-- brepio：`find_package(OpenCASCADE CONFIG QUIET)` 可选链接（PRIVATE：`TKDESTEP` `TKDEIGES` `TKXSBase` `TKBRep`
-  `TKTopAlgo` `TKernel` `TKMath`），找到才定义 `VN_BREPIO_HAS_OCCT`；找不到的构建里 `supportedExtensions()` 为空、
-  读写回 `Unsupported`，`formatFromPath()` 照常回答。OCCT 8 的流读取是 `ReadStream(fileName, stream)`（没有单参数版），
-  path 入口走 `ReadFile`；`BRepTools` 的 Read/Write 返回 `void`；`BRepBuilderAPI_*::Shape()` 是**非 const**，构造器不能声明成 const。
-- **`vn_link_opencascade` 的两个坑（2026-11-04 修）**：vcpkg 的 `OpenCASCADEConfig.cmake` 只设变量（`OpenCASCADE_INCLUDE_DIR` /
-  `OpenCASCADE_LIBRARY_DIR` / `OpenCASCADE_BINARY_DIR`），目录范围的效果与 imported targets 只属于**跑过 find_package 的那个目录**，
-  而 `VineOpenCASCADE.cmake` 有 `include_guard(GLOBAL)` 只跑一次 ⇒ 第二个 module（`brepio`）拿不到头文件路径，报 `BRepTools.hxx` 找不到。
-  现在三个目录都提升成 cache 变量并由 `vn_link_opencascade` 挂到 target 上；同时把 `TK*.dll` POST_BUILD 拷到输出目录
-  （vcpkg 的 applocal 只在用它的 toolchain 配置时才跑）。`check_translations` 失败只是本机没有 `lupdate`，与代码无关。
-- `BrepShape` 持有 `std::shared_ptr<const TopoDS_Shape>`：`setShape()` 接管所有权，`shape()` 借用。
-- imageio（`src/loaders/imageio`）：**无状态自由函数**（`decodeImage` / `loadImage` / `encodeImage` / `saveImage`），
-  读 `Result`、写 `IoError`，与上面两个模块同一套词汇；能力来自一张 `ImageFormatInfo` 表（`formatInfo()` /
-  `supportedExtensions()` 都从它取，JPEG 只读 = `can_write == false`）。**没有 Loader/Exporter 类**：没有 options
-  也没有缓存，照搬形状只是多一层生命周期（`../design/imageio-design.md` 的 `D1`）。stb 仍 PRIVATE，公开面只多一个
-  `IOBase`（`Result` / `IoError`）。
+- The two modules have the same shape: a `MeshFormat` / `BrepFormat` enum + `formatFromPath()` /
+  `formatName()` (meshio also has `formatInfo()`); reads return `vn::io::Result<T>`, writes return
+  `vn::io::IoError`; the classes are only `Loader` (options + cache) and `Exporter` (options).
+- **The format table is the only vocabulary**: `supportedExtensions()` is generated from the enum; an
+  extension outside the table makes `load()` return `Unsupported` directly (assimp's registry is no longer
+  passed through; `.3ds`/`.x`/`.x3d` need a row in the table). `exportAs` no longer takes a writer name
+  (`objnomtl`/`collada`/`gltf2` are all folded into the enum).
+- **No singleton**: `defaultInstance()` is gone; options are given at construction and read-only, the cache
+  belongs to the instance and is **not thread-safe**.
+- meshio has six export entries: `exportAs(mesh|model, format, path|stream)` + `createSource(mesh|model, format)`.
+  - Flattening Model → STL/PLY is done by **assimp's exporter registration** (`stl`/`ply` force
+    `aiProcess_PreTransformVertices` and copy the scene first); the OBJ exporter accumulates the node
+    matrices itself while writing vertices. We only build a faithful aiScene; **do not flatten again on our
+    side**.
+  - A format with `streamable == false` (`.gltf` needs its `.bin`, `.3mf` goes through a path) returns
+    `Unsupported` for a stream/source target; OBJ Model → stream drops the `.mtl` and keeps geometry and names.
+- `MeshSource` and `BinStlSource` / `AsciiStlSource` / `ObjSource` are gone: `createSource()` is the only lazy
+  entry, its content is produced by `exportAs(stream)` (**the whole thing in memory**, generated on first
+  pull, `rewind()` replays it).
+- brepio: `find_package(OpenCASCADE CONFIG QUIET)` links optionally (PRIVATE: `TKDESTEP` `TKDEIGES` `TKXSBase` `TKBRep`
+  `TKTopAlgo` `TKernel` `TKMath`) and defines `VN_BREPIO_HAS_OCCT` only when found; in a build without it
+  `supportedExtensions()` is empty, reads and writes return `Unsupported`, and `formatFromPath()` still answers.
+  OCCT 8's stream read is `ReadStream(fileName, stream)` (no single-argument form); the path entry goes through
+  `ReadFile`; `BRepTools`' Read/Write return `void`; `BRepBuilderAPI_*::Shape()` is **non-const**, so a constructor
+  cannot be declared const.
+- **Two `vn_link_opencascade` traps (fixed 2026-11-04)**: vcpkg's `OpenCASCADEConfig.cmake` only sets variables
+  (`OpenCASCADE_INCLUDE_DIR` / `OpenCASCADE_LIBRARY_DIR` / `OpenCASCADE_BINARY_DIR`), and the directory-scoped
+  effect and imported targets belong only to **the directory that ran find_package**, while
+  `VineOpenCASCADE.cmake` has `include_guard(GLOBAL)` and runs once ⇒ the second module (`brepio`) got no
+  include path and reported `BRepTools.hxx` not found. All three directories are now promoted to cache
+  variables and attached to the target by `vn_link_opencascade`; `TK*.dll` is also copied to the output
+  directory POST_BUILD (vcpkg's applocal only runs when configuring with its toolchain). A `check_translations`
+  failure only means this machine has no `lupdate`; it is unrelated to the code.
+- `BrepShape` holds a `std::shared_ptr<const TopoDS_Shape>`: `setShape()` takes ownership and `shape()` borrows.
+- imageio (`src/loaders/imageio`): **stateless free functions** (`decodeImage` / `loadImage` / `encodeImage` /
+  `saveImage`), reads as `Result` and writes as `IoError`, the same vocabulary as the two modules above;
+  capabilities come from one `ImageFormatInfo` table (`formatInfo()` / `supportedExtensions()` both read it;
+  JPEG is read-only = `can_write == false`). **There are no Loader/Exporter classes**: no options and no cache,
+  so copying the shape would only add a lifetime layer (`D1` in `../design/imageio-design.md`). stb stays
+  PRIVATE and the public surface gains only `IOBase` (`Result` / `IoError`).
 
-## 现状与坑
+## Current state and traps
 
-- **新增 `src/**/*.cpp` 要 `cmake -S . -B build`**（`vn_add_library` 的 glob 无 `CONFIGURE_DEPENDS`）；
-  新增测试 `.cpp` 用的是 `CONFIGURE_DEPENDS`，会自动生效。
-- 路径入口读两遍文件（一遍算指纹、一遍解析）；流入口先把流 `drain` 成字节，所以与 path 入口命中同一条缓存。
-- 失败分类就是那四类：`Unsupported`（表外扩展名 / 无后端 / 非流式目标）、`NotFound`、`IoFailure`、`InvalidData`；
-  `Result` 的 `*` / `->` 在失败时是 UB，先判 `ok()`。
-- 两条 assimp 后处理表：`loadMerged()` 带 `aiProcess_PreTransformVertices`，`load()` **绝不能**带（会删节点图）。
-- **不做顶点焊接**：`aiProcess_JoinIdenticalVertices` 不在这两套后处理里，也不提供开关。CAD 导出的零件每个面有
-  自己的顶点（逐面颜色 + 逐面法线），重合的角点永远不相等，焊接根本合并不了 —— 只剩“每角点一条哈希表项”的代价：
-  1.8 GB / 37.7M 三角形的 STL（113M 个角点）开着时 31 GB 被 OOM 杀掉，不做焊接 12.5 GiB / 77 s 读完。代价是三角面片汤
-  保持每三角形 3 个角点，读法不变。法线仍由 `aiProcess_GenNormals` 补齐（见下一条）。
-- 法线：两份列表都带 `aiProcess_GenNormals`（只补缺失的通道，不覆盖文件给的），代价是逐面法线导致顶点拆分
-  （`JoinIdenticalVertices` 因此少合并）；换来"文件没给法线"时不会交出一份无法线的网格。
-- **不改写文件写明的法线**：`aiProcess_FixInfacingNormals` 与焊接一样不在两套后处理里，也不提供开关 —— 它靠
-  启发式判断"这堆法线朝内"然后翻转，等于拿猜测替换文件的事实；文件朝内就交朝内，需要的一方自己检测。两处被排除的
-  pass 都以注释形式留在列表末尾（`MeshLoader.cpp` 的 `kLoadFlags` / `kModelFlags`），读列表就看到为什么。
-- 矩阵：assimp 的 `aiMatrix4x4` 与 `vn::math::Matrix4x4` 都是列向量约定、平移在第 4 列，16 个元素直接对应，**不转置**。
-- 材质类型按 assimp 通用键选择：`$mat.metallicFactor|roughnessFactor` → `PbrMaterial`；`$mat.opacity < 1` 也 → Pbr
-  （只有它装得下透明度）；`$clr.specular`/`$mat.shininess` → `PhongMaterial`；只有 `$clr.diffuse` → `ColorMaterial`。
-- **导入器自己造的默认材质不算材质**：`AI_DEFAULT_MATERIAL_NAME`（assimp STL 用，白 diffuse + **白 specular**）
-  在 `makeMaterial()` 里答空 —— 否则 specular 会折成 metallic 1，而 `builtin_forward.frag` 用
-  `base * (1 - metallic)` 乘环境项，模型在没有环境贴图的场景里全黑（选中换高亮材质才看得到）。文件真写了
-  `Kd 0 0 0` 的仍然是黑模型，那是作者的意思。
-- robotics/io 有自己的 `StlMeshSource`（不链 assimp，见 `MeshBin.hpp`），与 meshio 的写出刻意重复：合并会让
-  robotics 为一份 STL 写出器背上 assimp。
-- iobase 的坑（真缺陷，已修）：libzip 不支持 seek **压缩**条目，且一次被拒的 seek 会毒化 reader —— `zip_file_is_seekable()`
-  分流，不可 seek 就重新 `zip_fopen_index`（见 `../design/iobase-vfs-design.md`）。
-- **OCCT 运行时不要进 `build/bin`**：不拷 DLL，让 `F:/vcpkg/installed/x64-windows/bin` 在 `PATH` 上即可；
-  vcpkg 工具链构建由 applocal 拷，手工 glob 拷贝是错的做法（曾把 50 个 `TK*.dll` 倒进 bin）。
-- **清单模式与全局安装不能共用**：清单已改名 `_vcpkg.json`（CMake / vcpkg 只认 `vcpkg.json`，改名即关掉清单模式），
-  依赖声明仍留在里面给 CI 用；本机的 `CMAKE_TOOLCHAIN_FILE=F:/vcpkg/scripts/buildsystems/vcpkg.cmake` 写在
-  `.vscode/settings.json` 的 `cmake.configureSettings` 里 → 经典模式，直接用 `VCPKG_INSTALLED_DIR`（默认
-  `F:/vcpkg/installed`）里的全局安装，并由 applocal 把 DLL 拷到输出目录，不需要手工拷。
-  为什么不能再叫 `vcpkg.json`：它会按 `builtin-baseline`（opencascade 解析成 8.0.1#0）重解析，全局装的是 8.0.0#0；
-  `overrides` 能钉回 8.0.0，但依赖链（`freetype` `libpng` `zlib` `brotli` `bzip2` `opengl*` `egl-registry`
-  `vcpkg-cmake*`）在当前 baseline 里都更新 → 仍要重建，重建还要 vcpkg 自己下 CMake 4.4.3（本机 SSL 不通）；
-  且清单模式会把 `VCPKG_INSTALLED_DIR` 里**未声明的包全删**（实测列出 boost/opencv/pcl 数百条 "will be removed"）。
-- **待办**：`.3ds`/`.x`/`.x3d` 不在表内；PLY 没有原生逐记录写出（都走 assimp 的整份映像）。
+- **A new `src/**/*.cpp` needs `cmake -S . -B build`** (`vn_add_library`'s glob has no `CONFIGURE_DEPENDS`);
+  a new test `.cpp` uses `CONFIGURE_DEPENDS` and takes effect automatically.
+- The path entry reads the file twice (once for the fingerprint, once to parse); the stream entry first
+  `drain`s the stream into bytes, so it hits the same cache as the path entry.
+- Failure classification is exactly those four: `Unsupported` (extension outside the table / no backend /
+  non-streamable target), `NotFound`, `IoFailure`, `InvalidData`; `Result`'s `*` / `->` are UB on failure, so
+  check `ok()` first.
+- Two assimp post-process lists: `loadMerged()` carries `aiProcess_PreTransformVertices`, `load()` **must
+  never** carry it (it deletes the node graph).
+- **No vertex welding**: `aiProcess_JoinIdenticalVertices` is in neither post-process list and has no switch.
+  A CAD-exported part has its own vertices per face (per-face colour + per-face normal), so coincident corners
+  are never equal and welding cannot merge anything anyway — all that is left is the cost of "one hash-table
+  entry per corner": a 1.8 GB / 37.7M-triangle STL (113M corners) with it on was OOM-killed at 31 GB, while
+  without welding it read in 12.5 GiB / 77 s. The cost is that the triangle soup keeps 3 corners per triangle;
+  the reading stays the same. Normals are still filled in by `aiProcess_GenNormals` (next bullet).
+- Normals: both lists carry `aiProcess_GenNormals` (it fills only a missing channel and never overwrites what
+  the file gives); the cost is that per-face normals split vertices (`JoinIdenticalVertices` therefore merges
+  less), and the gain is that "the file gave no normals" never yields a mesh without normals.
+- **Normals the file states are not rewritten**: `aiProcess_FixInfacingNormals`, like welding, is in neither
+  list and has no switch — it heuristically decides "this bunch of normals points inward" and flips it, which
+  replaces the file's fact with a guess; if the file points inward, hand it over pointing inward and let
+  whoever needs otherwise detect it. Both excluded passes stay as comments at the end of the lists
+  (`MeshLoader.cpp`'s `kLoadFlags` / `kModelFlags`), so reading the list shows why.
+- Matrices: assimp's `aiMatrix4x4` and `vn::math::Matrix4x4` both use the column-vector convention with the
+  translation in the 4th column, so the 16 elements correspond directly and are **not transposed**.
+- The material type is chosen by assimp's generic keys: `$mat.metallicFactor|roughnessFactor` → `PbrMaterial`;
+  `$mat.opacity < 1` also → Pbr (only it can hold transparency); `$clr.specular`/`$mat.shininess` →
+  `PhongMaterial`; only `$clr.diffuse` → `ColorMaterial`.
+- **A default material the importer invented is not a material**: `AI_DEFAULT_MATERIAL_NAME` (used by assimp
+  for STL; white diffuse + **white specular**) answers empty in `makeMaterial()` — otherwise the specular folds
+  into metallic 1, and `builtin_forward.frag` multiplies the ambient term by `base * (1 - metallic)`, so the
+  model is all black in a scene without an environment map (visible only when selected, which swaps in the
+  highlight material). A file that really wrote `Kd 0 0 0` still yields a black model; that is the author's
+  intent.
+- robotics/io has its own `StlMeshSource` (it does not link assimp; see `MeshBin.hpp`), deliberately
+  duplicating meshio's write: merging would put assimp on robotics for one STL writer.
+- An iobase trap (a real defect, fixed): libzip does not support seeking in **compressed** entries, and one
+  refused seek poisons the reader — `zip_file_is_seekable()` branches, and an unseekable entry is reopened
+  with `zip_fopen_index` (see `../design/iobase-vfs-design.md`).
+- **OCCT runtime must not go into `build/bin`**: do not copy the DLLs; just have
+  `F:/vcpkg/installed/x64-windows/bin` on `PATH`. A vcpkg-toolchain build copies them via applocal; a
+  hand-written glob copy is the wrong approach (it once dumped 50 `TK*.dll` into bin).
+- **Manifest mode and the global install cannot be combined**: the manifest was renamed `_vcpkg.json` (CMake /
+  vcpkg only recognise `vcpkg.json`, so renaming it turns manifest mode off), and the dependency declarations
+  stay inside for CI; this machine's `CMAKE_TOOLCHAIN_FILE=F:/vcpkg/scripts/buildsystems/vcpkg.cmake` is written
+  in `.vscode/settings.json`'s `cmake.configureSettings` → classic mode, using the global install under
+  `VCPKG_INSTALLED_DIR` (default `F:/vcpkg/installed`), and applocal copies the DLLs to the output directory,
+  so no manual copy is needed.
+  Why it cannot be called `vcpkg.json` again: it would re-resolve against `builtin-baseline` (opencascade
+  resolves to 8.0.1#0) while the global install is 8.0.0#0; `overrides` can pin 8.0.0 back, but the dependency
+  chain (`freetype` `libpng` `zlib` `brotli` `bzip2` `opengl*` `egl-registry` `vcpkg-cmake*`) is all newer in
+  the current baseline → still a rebuild, and the rebuild also needs vcpkg to download CMake 4.4.3 itself (SSL
+  does not work on this machine); and manifest mode **deletes every undeclared package** in
+  `VCPKG_INSTALLED_DIR` (measured: it listed hundreds of "will be removed" for boost/opencv/pcl).
+- **To do**: `.3ds`/`.x`/`.x3d` are not in the table; PLY has no native per-record write (both go through
+  assimp's whole-image write).
 
-## 历史登记 —— 2026-09-12 modelio 拆分 / 2026-09-28 三个内容源
+## Historical record — 2026-09-12 modelio split / 2026-09-28 three content sources
 
-- `modelio` 拆成 `meshio`（绑 assimp）与 `brepio`（当时零三方依赖）。体积证据：`libviMeshIOd.so` 87.8 MB vs
-  `libviBrepIOd.so` 708 KB。
-- 2026-09-28 的 `MeshSource` / `BinStlSource` / `AsciiStlSource` / `ObjSource` 家族（`sdk/vine/meshio/MeshSource.hpp`）
-  让包内写出不落临时文件；2026-10-27 收进 `MeshExporter::createSource()`，那几个类退出 SDK。
-- 它们当时的选择仍然成立：所有源都是"拉时生成"，用 `DataSource` 而不是自定义 `streambuf`；固定布局能报长度，
-  文本布局报 `kUnknownSize`；改过的 mesh 会被拒（revision 比对）。
+- `modelio` was split into `meshio` (bound to assimp) and `brepio` (zero third-party dependencies at the time).
+  Size evidence: `libviMeshIOd.so` 87.8 MB vs `libviBrepIOd.so` 708 KB.
+- The 2026-09-28 `MeshSource` / `BinStlSource` / `AsciiStlSource` / `ObjSource` family
+  (`sdk/vine/meshio/MeshSource.hpp`) let an in-package write avoid a temporary file; on 2026-10-27 it was
+  folded into `MeshExporter::createSource()` and those classes left the SDK.
+- Their choices still hold: every source is "generated on pull" and uses `DataSource` rather than a custom
+  `streambuf`; a fixed layout can report its length and a text layout reports `kUnknownSize`; a modified mesh
+  is refused (revision comparison).

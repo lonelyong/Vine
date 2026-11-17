@@ -1,200 +1,412 @@
-# geometry 要点
+# geometry notes
 
-- **数组别名必须带元素类型**（`models/Array.hpp`）：`Vec2fArray` / `Vec3dArray` / `Vec3ui32Array`，没有默认 float 的
-  `Vec2Array`；标量侧 `Int8Array` … `UInt64Array` 与 `FloatArray` / `DoubleArray`；命名照抄 math 的 `Vec2f` / `Vec2i8` / `Vec2ui32`。
+- **An array alias must carry the element type** (`models/Array.hpp`): `Vec2fArray` / `Vec3dArray` / `Vec3ui32Array`;
+  there is no `Vec2Array` defaulting to float; on the scalar side `Int8Array` … `UInt64Array` and `FloatArray` /
+  `DoubleArray`; the names copy math's `Vec2f` / `Vec2i8` / `Vec2ui32`.
 
-- **纯内联的 SDK 类必须由本模块某个 TU include**：建模子类（`Box` / `Sphere` / …）与几何 kind（`BoxSolid` / `SphereSolid` / …）的成员定义都在头文件里，
-  DLL 只有在带对应 `_LIB` 宏的 TU 里看到这个类时才会实例化并导出它们。现在每个建模类型都有自己的 `.cpp`（如 `models/src/Box.cpp`）。
-- **建模类型是一个独立模块 `src/base/models`**（`sdk/vine/models/`，namespace `vn::models`，库 `vn::Models`）：`Shape` / `Primitive` / `Model` / `Mesh` 族 /
-  `BrepShape` / `PointCloud` / `Material` 族都在这里，单向依赖 `vn::Geometry`；include 写 `<vine/models/Xxx.hpp>`。
-  几何值类型（曲线 / 曲面 / `Solid` / `Aabb` / `Obb` / `Ray`）留在 `src/base/geom/sdk/vine/geom/spatial`。
-- **参数化几何是建模类型，基类不持几何**：`Primitive : Shape` 只有受保护构造 `Primitive(ShapeType)` 与纯虚 `bounds()`，**不认识 `Solid`**；
-  `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`（`final`，各自 `models/Box.hpp` … `models/Ellipsoid.hpp`）各存**全量纲**字段，并用 `solid()` 按当前尺寸
-  构造自己的具体 kind（`BoxSolidf` …，返回**值**，不存不缓存）。`isValid()` / `hasVolume()` / `bounds()` 由子类转发给 `solid()`。
-  唯一入口在 `models/PrimitiveDispatch.hpp`：`visitPrimitive(primitive, visitor)`（closed set，不属五个时 `false`）；visitor 里拿具体子类、调 `solid()` 交给几何入口。
-  **没有** `Primitive::shape()` / `setSolid()`；`ShapeType` 仍由子类构造传给基类。理由见 `decisions/ADR-2026-11-05-primitive-is-a-modelling-base.md`。
-- **值类型（`Aabb` / `Obb` / `LineCurve` / `Plane` / `Ray` 及全部曲线曲面）上有 `math::FP T`，但类上没有 `VN_GEOMETRY_API`**：
-  短查询定义在头文件（内联发生在调用方，**不要**加 `extern template`，会打死拾取循环的实测收益）。
-  导出只来自显式实例化，而**每个类型、`float` 与 `double` 两种精度都要实例化**：
-  - 有 `src/` 实现的类型在自己的 `.cpp` 里（`LineCurve.cpp` / `Obb.cpp` / `Plane.cpp`）——显式实例化只能实例化该 TU 看得见的成员定义；
-  - 纯头文件的类型集中在 `src/Instantiations.cpp`，每个类型两行（float、double）；新增类型别忘了加，否则库里没有它的符号。
-  - **新增 .cpp 要重跑 `cmake -S . -B build`**（`vn_add_library` 用 glob，无 `CONFIGURE_DEPENDS`）。
-  - 导出的 `std::vector` / `std::shared_ptr` 成员会报 C4251，已在 `Instantiations.cpp` 里局部屏蔽。
-  理由与实测见 `design/geometry-primitives.md` 2.8、`decisions/ADR-2026-11-04-geometry-precision-and-instantiation.md`。
-- 新增同类的纯内联形状时，同样要在本模块的某个 `.cpp` 里 include 它，或者把成员改成出实参（out-of-line）实现。
-- **族级曲面查询**：`closestPointOnSurface()`（高斯-牛顿，返回点 / `(u,v)` / 距离）与 `intersectRayWithSurface()`（三元牛顿，结果内嵌 `RayHit` + `u/v`）都是头文件模板。
-  **参数约束写成函数上的 `requires std::is_base_of_v<Surface<T>, S>`**：`Plane` 经 `ElementarySurface<T>` 间接派生，`const Surface<T>&` 形参推导不到 `T`；写成命名 concept 又会触发 MSVC C7605（概念体里出现受约束模板 `Surface<T>`）。
-  窗口是 `SurfaceParameterWindow<T>`（参数矩形，不是 `Rect2`）；无限的一端取曲面自己的界，默认值 `naturalSurfaceWindow()` 就是自然域。`finiteParameterWindow()` 是唯一解析点。
-  已知性质：最近点是局部最小；射线相切漏检（雅可比奇异）、网格分辨不了的折叠会漏命中；球极命中法向为零；射线在面上用三个跨射程探针判 `coincident`。
-- **曲线 × 非解析曲面**：`intersectCurveWithSurfaceByProjection()` 与解析入口共用 `detail::scanCurveAgainstSurface`，只把取值换成 `detail::signedDistanceToSurface`（投影距离 + `dS/du × dS/dv` 的符号）。
-  **这个带符号距离故意留在 `detail`**：极性属于参数化（球面的叉积朝内，符号与 `signedValue()` 相反），求根只用变号。奇异参数线（球极）返回 NaN = “无信息”。
-  扫描收窄根后会再验一次 `|f| ≤ tolerance`，滤掉最近点分支跳变造成的伪变号（`geometry-intersection.md` P8）。
-  设计见 `design/geometry-surface-queries.md`，测试在 `tests/test_geom_spatial/SurfaceQueryTest.cpp`。
-- **点到曲线的最近点 / 距离**：`closestPointOnCurve()`（`CurveProjection.hpp`）把平方距离的驻点 `f(u) = (C(u) - P)·C'(u)` 当零点扫，`rootInBracket()` 收窄，**窗口端点也是候选**（足点在窗口外时最小值在边界上）。只调 `evaluate` / `derivative`。
-  窗口是 `optional<pair>`：有界曲线可省，无界曲线（直线 / 双曲线 / 抛物线）必须给。局部最小与“平坦极小值（f 不变号）”靠 `sample_count`，见 `design/geometry-curve-queries.md`。
-- **解析实体 `Solid<T>` 是族接口，五个 kind 是值**：`Solid.hpp` 里 `Solid<T>` 是抽象基类（`isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith` 五个纯虚），五种实体各一个头文件（`BoxSolid.hpp` … `EllipsoidSolid.hpp`）。**没有 variant**（`SolidShape` 变体已删除）：需要按 kind 作答就写一 kind 一个重载，调用方用 `visitPrimitive()` 拿具体子类；建模子类用 `solid()` 按当前尺寸构造具体 kind 的值。**默认容差要同时写在基类与每个 kind 上**（派生声明会遮蔽基类默认参数）。设计见 `design/geometry-solid.md`，测试在 `tests/test_geom_spatial/SolidTest.cpp`。
-- **解析实体的三角化**：`tessellateSolid()`（`src/base/geom/sdk/vine/geom/spatial/SolidTessellation.hpp` + `src/base/geom/src/SolidTessellation.cpp`）一 kind 一个重载（`BoxSolid<T>` … `EllipsoidSolid<T>`），返回**值** `Triangulation<T>`（public 字段 `positions` / `normals` / `indices`，别名 `Triangulationf` / `Triangulationd`）；三角形数：盒 12，球 / 椭球 `2·around·(along−1)`，圆柱 `4·around`（侧 2·around + 两盖各 around），圆锥 `2·around`（侧扇 + 底盖）。
-  **两种精度都显式实例化并导出**（声明不带宏，`template VN_GEOM_API ...` 在 .cpp 里）；新增 .cpp 要重跑 `cmake -S . -B build`。
-  **模型侧装配**是 `vn::models::meshFromTriangulation(Triangulationf)`（`models/SolidTessellation.hpp`）：三个数组 move 进 `TriangleMesh` 并算 AABB；网格只有 float，`Triangulationd` 要装配时由调用方显式降精度。几何侧**不**返回 `TriangleMesh`（geom → models 回边），也**不**返回 `Buffer`（`Mesh::setPositions` 只收 `std::vector`，那样多一次拷贝）。
-  **顶点在法向不连续处复制**（盒棱、柱盖、锥顶按段），所以顶点数不是最小集；闭合性要按**位置**数边，不能按索引。结果只写位置 / 法向 / 索引，不写 UV。
-  设计见 `design/geometry-tessellation.md`，测试在 `tests/test_geom_spatial/SolidTessellationTest.cpp`。
-- **射线 × 解析实体**：`Solid<T>::intersectWith(ray, eps)` 走每个 kind 自己的解析式：盒 slab、球 / 椭球二次、圆柱侧面+两盖、圆锥侧面+底面。结果最多两个（相切一个），只报 `t ≥ -eps`，**内部起点只报离开**；法向按 `RayHit` 转向射线，圆锥顶点命中法向为零。`Solid<T>` 里的 `T` 是计算精度，实体量纲本身是 float。
-- **点到解析实体的最近点 / 距离**：`Solid<T>::closestPoint(query, tolerance)` 是**实体**语义——内部（含边界）返回查询点本身、距离 0；外部返回边界最近点。盒钳制、球径向、椭球 Lagrange 一维二分、圆柱径向×轴向钳制、圆锥「底面盘 vs 母线轮廓」取较近。`tolerance` 只控制椭球求根，内 / 外判定是精确比较。
-- **`Mesh` / `TriangleMesh` / `QuadMesh` / `MixedMesh` 是纯头文件类**（不导出）：成员和 `desc()` 都在头里，消费者各自编译；
-  它们的描述符用内联 `VN_OBJECT_META`，靠 `Type::obtain()` 保证全进程只有一个，见 `core.md`。
-- 五个基本体的局部空间：`BoxSolid` / `SphereSolid` / `EllipsoidSolid` 原点居中；`CylinderSolid` / `ConeSolid` 沿 Z 跨 `[-h/2, +h/2]`，锥底在 `-h/2`。
-- **曲面同理**：`Surface<T>` 是**模板接口**（十三项：`evaluate(u,v)`、`derivativeU/V`、四个参数界、两个方向的闭合/周期、`continuity()`），`ElementarySurface<T>` /
-  `BoundedSurface<T>` 只是分类标签（无状态、无虚函数）。`Surface` / `ElementarySurface` / `BoundedSurface` **现在都要带 `<T>`**（旧的非模板写成 `Surface<double>`）。
-  `Plane` 不存面内框架（两轴由 `normal` 每次推导，因为它被复制）；`SphericalSurface` 的 `u`（方位角）闭合周期、`v`（极角）不闭合。接口里**没有** `normalAt` / `bounds` / 二阶导数。
-- **三个旋转面已实现**（`CylindricalSurface` / `ConicalSurface` / `ToroidalSurface`）：每个持一个 `Placement<T>` 值（`origin` / `axis` / `x_direction` + `yAxis()`，恒右手），
-  `continuity()` 各自 `return CN`；平面内轴的规则只有一份，在 `Frame.hpp` 的 `inPlaneAxis()`（`ConicCurve` / `Plane::xAxis` / `Placement` 都用它）。
-  放置判据：**改变点集就存**（圆柱/圆锥/圆环），**只改参数化就推导**（球面仍是世界 Z 轴）。
-  参数约定照 OCCT：圆柱 `v` 是轴向距离、圆锥 `v` 是**母线弧长**（`dP/dv` 为单位向量）、圆环 `v` 是**赤道面角**。
-  `RectangularTrimmedSurface` 是视图（基曲面 `shared_ptr` + 四个参数界），闭合/周期要“基曲面 + 矩形”同时成立。
-  `BezierSurface` / `BSplineSurface` **已可求值**：行优先扁平控制网（索引 `iu + u_pole_count * iv`，读网只用 `poleAt(iu, iv)`）+ 可选等长权重（空 = 多项式）；
-  张量积求值是“先沿 u 混合每行、再沿 v 混合”，有理形式在四维齐次坐标上做后除权重。两者共用曲线侧的基础设施：
-  `BezierBlend.hpp`（`deCasteljau` / `differences`）与 `BSplineBasis.hpp`（`knotSpan<T>` / `basisValue<T>` / `isClampedKnotVector` / `knotContinuity`，
-  **注意调用点必须显式写 `<T>`**，`std::span` 推不出）。`BSplineSurface` 只接受夹持形式；闭合用齐次极点相等判定（夹持基线性无关，等效于求值比较）。
-  代价：求值每次分配临时数组（`backlog/geometry.md` G10）。曲面侧的完整设计在 `design/geometry-axis-surfaces.md`。
-- **裁剪视图（`TrimmedCurve` / `RectangularTrimmedSurface`）的契约**：① `period()` / `uPeriod()` / `vPeriod()` 只在自身 `isPeriodic()` 为真时
-  回答基曲线 / 基曲面的周期，否则 0（以前转发基的周期，四分之一圆会答 2π）；要基的数字直接读 public 的 `basis_curve` / `basis`。
-  ② 空基不再解引用：查询退化为 `Point()`、零向量、`C0`、`false`（`isValid()` 是唯一判据）。`OffsetCurve` 同样处理（它的
-  `isValid()` 还要求参考方向非零）。③ 曲线裁剪的 `isClosed()` 还要两端点重合：`[0, 2π + 0.3]` 覆盖了整段却多走一角，必须答
-  false（2D 的 `TrimmedCurve` 与 3D 同一规则）；起点不在 0 的整圈两端重合但不覆盖自然域，也答 false。
-  矩形裁剪同理：周期基面上跨度必须是整数个周期（`[0, 2π+0.3]` 的 `isUClosed()` 为假）；非周期闭合基面（样条面片）必须正好用
-  它的两个自然端，外推的矩形也答 false。这类跨类型契约由 `everyCurveKeepsTheInterfacePromises` / `everySurfaceKeepsTheInterfacePromises` 扫查，改接口时先跑它们。
-- **样条重数规则**：两端 `度 + 1`（夹持），**内部 ≤ 度**；内部重数 = 度 + 1 是缺口，`isValid()` 直接拒绝——
-  所以 `continuity()` 的 `C0` 永远真的是“交于一点”。内部重数 = 度 → `C0`（有拐点但仍连通）。见
-  `decisions/ADR-2026-11-04-bspline-without-knot-breaks.md`。
-- **`isValid()` 是 `Curve<T>` / `Surface<T>` 的纯虚函数**（曲线 11 项、曲面 14 项）：新增一种曲线/曲面**必须**实现它，
-  否则编不过。`Plane::isValid()` 是 `normal.length() > EPS`（零法向已不再"永远可用"）。见
-  `decisions/ADR-2026-11-04-isvalid-on-family-interfaces.md`。
-- **`math` 只剩数学词汇**（`decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`，现行设计见 `design/math-base-layer.md`）：18 个头、无子目录、无过程。求根 / 积分（`adaptiveSimpson` / `rootInBracket` / `parameterReaching`）、Bernstein 求值（`deCasteljau` / `differences`）、节点模型与 `Continuity` **全部在 `geom`**：前三者在 `geom/detail/{Quadrature,RootFinding,BezierBlend}.hpp`，节点模型在 `geom/detail/BSplineBasis.hpp`，`Continuity` 在 `geom/Continuity.hpp`（模块根，两命名空间重导出）。
-  两条切分依据：① 签名里有没有我们自己的数据模型；② 今天有没有非几何的消费者。代价：非几何模块要用积分得快就得依赖 `vn::Geom`，出现第二个消费者时升独立模块（ADR 的反转路径）。`symmetricEigen` 仍留在 `math` 根层——它的预算是内部的，调用方不给精度目标。
-- **目录与命名（现行，`decisions/ADR-2026-11-06-geom-contracts-nested-under-module.md`，设计见 `design/geometry-module.md`）**：`src/base/geom/sdk/vine/geom/{planar,spatial,detail}` + 横块根上的 `geom_global.hpp` / `Continuity.hpp`；命名空间 `vn::geom::{planar,spatial,detail}`。
-  **类型名不带维度标记**（`LineCurve`，不是 `Curve2`/`CurveCurved`），精度后缀仍 `f` / `d`。
-  两个要点：① `Continuity` 不用重导出（封闭命名空间能找到）；② **共享件必须写全 `geom::detail::`**——六个契约头声明了同名的 `planar::detail`/`spatial::detail`，裸 `detail::` 会解到那一层（实测 C2039）。
-  别再提“平铺 + `2` 后缀”或“只标 2D”：4 对同名公开函数（两对不能重载）+ 精度后缀冲突（`ADR-2026-11-06-geom-tree-layout-and-naming.md` 仍有效的部分）。
-- **模板参数约束**：几何族一律 `template <vn::math::FP T>`（含 `Plane`，它曾例外）；`Aabb` / `Obb` 有意保留 `typename T`
-  以允许 `Aabbi = Aabb<int32_t>`。新增族内类型时用 `FP`，别抄值类型那条。
-- **测试精度**：`GeometryKindsTest` 的族级扫查 `expect*Invariants` / `sweepCurves` / `sweepSurfaces` 是 **模板化的**，
-  double 与 float 各跑一遍（`…InFloat`）；新增曲线/曲面把它加进 `sweep*()` 就能同时拿到两种精度。旧测试（Ray/Plane/曲线系列）
-  多数仍是 double-only，`Aabb` / `Obb` 单测用的是 float。
-- **`Curve<T>` 是纯虚接口（十一项）**：新增一种曲线要一次实现 `evaluate` / `derivative` / `secondDerivative` /
-  `firstParameter` / `lastParameter` / `isClosed` / `isPeriodic` / `period` / `continuity` / `reversedParameter`。
-  陷阱：`derivative` 是**速度向量**（圆的长度 = 半径），不是单位切向；`TrimmedCurve` 的 `reversedParameter` 在自己区间内
-  反射（`first + last - u`），不要转发给基曲线。`Ray` 故意不派生 `Curve`（热路径按值拷贝）。见 `design/geometry-kinds.md` 2.7。
-- **导数按能力暴露**：`Curve<T>`（2D 与 3D 同形）除十一项纯虚外还有两个非纯虚成员——`maxDerivativeOrder()`（默认 2）
-  与 `derivativeAt(u, order)`（1/2 转 `derivative` / `secondDerivative`，0、负数或越界答 `std::nullopt`）。三阶闭式解的
-  类型（直线/圆/圆锥曲线/两种样条）覆写为 3；`OffsetCurve` 报 `min(2, 基曲线能力−1)`（基曲线都答 3 ⇒ 报 2；
-  偏置套偏置 ⇒ 报 1 且 `isValid()` 为假）。裁剪视图把能力原样转发给基曲线。空间与平面**两族完全同形**。新增曲线只到二阶时
-  **什么都不用写**。见 `decisions/ADR-2026-11-05-curve-derivative-capability.md`。
-- **曲线 × 解析曲面求交已可用**：`intersectCurveWithSurface(curve, surface, window, tolerance, interval_count)`（`CurveSurfaceIntersection.hpp`）
-  把曲面的带符号距离 `signedValue(surface, point)` 沿曲线求根（`geom::detail::rootInBracket`，假位法 + 二分回退）。五个解析面各有一个 `signedValue` 重载；
-  **无界曲线必须给窗口**（`LineCurve` / 双曲线 / 抛物线），相切默认漏检（P4），一段落在面上报 `Coincident` 不列点。
-  样条面/裁剪面需要参数反演，未做（backlog G12）。
-- **圆锥曲线四个都已实现**（`CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve`）；**框架与 `continuity()`
-  = `CN` 住在 `ConicCurve`**（`center` / `normal` / `x_direction` + `yAxis()`），四个子类型只留自己的标量（抛物线用继承的
-  `center` 当顶点，没有单独的 `vertex` 字段）。改 `ConicCurve` 的框架 = 改四个类型的大小（`CircleCurved` 现在是 3 向量 + double）。
-  `BezierCurve` / `BSplineCurve` **已可求值**（de Casteljau 三次复用 / Cox–de Boor 基函数 + 商法则），两者可构造，也能经 `Curve<T>&` 分派；
-  **全部空间曲线类型报 `maxDerivativeOrder() == 3`**，各带非虚 `thirdDerivative(u)`（直线/抛物线是零、圆与椭圆是 `-P'`、
-  双曲线是 `P'`、样条是三阶差分 / 基函数第三层 + 商法则）；`OffsetCurve` 也因此**可构造**，`secondDerivative` 用基曲线三阶导精确求值。
-  注意：`OffsetCurve` 的 `secondDerivative` 靠 `basis->derivativeAt(u, 3)`，偏置套偏置时基曲线只答 2 —— 那时 `maxDerivativeOrder()` 报 1、
-  `isValid()` 为假、二阶导答零向量（`decisions/ADR-2026-11-06-space-third-derivative-and-offset.md`）。
-  `BSplineCurve::isValid()` 要求**夹持形式**（首末重数 = `degree + 1`、相异节点递增）；两种样条的权重必须全为正。
-  退化输入只有一个判据——`isValid()`：直线（零方向，`closestPoint()` 回原点、`intersectWith()` 回无标志、不除零）、
-  裁剪（空基曲线 / 反向区间）、圆锥曲线（`normal` 为零 ⇒ 塌成沿 `x_direction` 的线段或射线，不是“半径 0 的圆”）。
-  `CircleCurve::bounds()` 与 `EllipseCurve::bounds()` 用同一支撑函数 `sqrt((a·X_i)² + (b·Y_i)²)`，退化时给线段盒。
-  写派生类时注意：**依赖基类的成员一律要限定** —— 基类的 static 函数写 `ConicCurve<T>::inPlaneAxis(...)`，继承的数据成员/函数
-  加 `using ConicCurve<T>::center;` 之类的声明，否则 MSVC 报 C3861/C2065。`inPlaneAxis` 现在是 `Frame.hpp` 的自由函数
-  （`vn::geom::spatial::inPlaneAxis`），`ConicCurve` 不再有同名 protected static。
-- **`geom/planar` 是第二份契约，不是 3D 的泛型特化**：`geom::planar::Curve<T>` 与 `geom::spatial::Curve<T>` 同名同义、互不继承
-  （`decisions/ADR-2026-11-05-planar-curve-contract.md`）；平面圆是 `center` + `radius`，不共享 `ConicCurve` 框架（它的起点由平面定死）。
-  模块 header-only 模板，但**与空间侧同一个库**（`vn::Geom`，`VN_GEOM_LIB`）、同一个 global（`vine/geom/geom_global.hpp`），
-  所以 2D 不再有独立的 INTERFACE 目标；2D/3D 隔离改由 `scripts/check_geom_layering.py` 保证（同 target 内编译器拦不住），共五条：
-  `geom/planar` 不得 include `geom/spatial`、反之亦然、`geom/detail` 不得 include 任一方、`geom/detail` 不得**命名** `Point2`/`Point3`/`Vector2`/`Vector3`、
-  几何头带路径的角括号只能指向 `vine/geom/` 或 `vine/math/`（引号只能同目录）。加了规则要用临时违规头文件反向验证一次。
-  与维度无关的共享实现住 `sdk/vine/geom/detail/`（8 个头：traits / 交叉搜索 / 弧长 / 两曲线细化 / 节点模型 / Bernstein / 求根 / 积分），
-  以 `geom::detail::` 访问（树私有 `detail` 在 6 个文件里，非限定名会解到那边）；它不是公开接口，公开名字仍是 `geom::planar::arcLength` / `geom::spatial::arcLength`。
-  名字不带维度标记，精度后缀仍是 `d` / `f`。设计见 `design/geometry-module.md`（形态与命名）与 `design/geometry-planar.md`（平面契约）。
-- **平面几何（`geom/planar`）现有九型**：`LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` / `BezierCurve` / `BSplineCurve` / `TrimmedCurve` / `OffsetCurve`。椭圆自带 `x_direction`（主轴，`yAxis()` 由 +90° 旋转导出），圆没有——圆的起点由平面定死，所以**没有**平面 `ConicCurve` 层。
-  **`TrimmedCurve<T>` 是唯一的裁剪表达**（`ArcCurve` 已删除）：`shared_ptr<const Curve<T>>` 基曲线 + 两参数界，`trimCurve(basis, a, b)` 工厂造句柄；闭合要区间盖满基曲线域**且两端重合**、周期要至少一个周期，否则 `period() == 0`；
-  因此 `[0, 2π+0.3]` 覆盖了整段却不闭合；裁剪不重参数化，导数就是基曲线在同参数上的速度。
-  **`reversedParameter` 不返回同一个点**：它给的是反向曲线（原曲线关于域中点轴 / 起始轴的镜像）上的同一点，只保证 involution 与两端互换；
-  `evaluate(reversedParameter(u)) != evaluate(u)`（圆是 y 反号、弧是 x↔y 交换）。契约由 `tests/test_geom_planar/CurveContractTest.cpp` 的 float / double 扫查盯着。
-- **平面圆锥曲线共享 `ConicCurve<T>`**（`geom/planar`）：层里只有 `center` + `x_direction`（构造时归一化）+ `yAxis()`（+90° 旋转）+ `continuity() == CN`，不放求值与参数域。
-  `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` 派生自它；**圆不派生**（它的起点由平面定死，存一根永远 (1,0) 的轴是死字段）。
-  参数含义各不相同：椭圆是偏心角、双曲线是双曲角（只走 `+x_direction` 一支，另一支是取反方向）、抛物线是垂直轴上的偏移（`P = vertex + u²/(4f)·X + u·Y`）。
-  零方向存零向量 ⇒ 点查询答 `center`，`isValid()` 是唯一判据；三条曲线都无界非周期，`reversedParameter` 都是 `-u`。
-- **平面最近点 `closestPointOnCurve()`**（`geom/planar/CurveProjection.hpp`）：与 3D 同名函数同一骨架——平方距离驻点 `f(u) = (C(u)-Q)·C'(u)` 求根 + 采样点/window 端点比较；
-  无界曲线（直线/双曲线/抛物线）**必须**给窗口，不给就 `nullopt`。注意两点：等距多解（圆心）报的是“其中一个”，不要断言参数是 0；
-  双曲线对轴上点的最近点通常**不在顶点**（如 (3,0) 到 `x=2cosh, y=sinh` 的最小点在 `5cosh u = 6`，距离 √0.8），写测试先解一遍驻点方程。
-- **平面包围盒**：`bounds()` 只在有界类型上（`CircleCurve` / `EllipseCurve`，返回 `math::Rect2<T>`），接口不声明它——无界曲线只能返回假盒。
-  圆还有 `bounds(first_parameter, last_parameter)`：一段圆弧的**紧盒**住在这里（区间方向不改变点集，反向区间同盒）——
-  `TrimmedCurve` 擦除了基曲线，问不出支撑函数，所以片段盒不能放在裁剪视图上。
-  椭圆取世界轴上的支撑函数 `sqrt((a·X_i)² + (b·Y_i)²)`，**不要**用 `±major_radius`（旋转后会松一圈）；圆用 `|radius|`。
-- **无效状态必须答有限值**：抛物线焦距为零原先会除零（`u²/(4·0)` → NaN / inf），现在 `pointAt` 答顶点、两条导数答零向量（`hasFocalLength()`）；
-  其余退化形态：零半径圆→圆心、零半轴椭圆→线段、零半轴双曲线→过中心的直线、零方向圆锥曲线→center。
-- **平面曲线求交 `intersectCurveWithCurve()`**（`geom/planar/CurveCurveIntersection.hpp`）：三值结果 `CurveCurveContact{None, Isolated, Coincident}` + `hits`（点与两边参数，按第一条曲线参数升序），照 3D 的 `CurveSurfaceContact` 形状。
-  算法是对偶的：沿第一条曲线采样，每点用 `closestPointOnCurve()` 取到第二条的垂距。**这个垂距同时给两件事**——连续 ≥3 个样本垂距 ≤ 容差 = 重合段；垂距 ≤ 一步长度 (`step·|C1'|`) = 候选，再用二维 Newton 收敛 `C1(u)=C2(v)`。
-  第一版把“样本垂距 ≤ 容差”当成候选，结果几乎所有交叉都漏了（采样点几乎不会正好落在另一条曲线上）。
-  已知边界：相切默认漏检（雅可比奇异时只有当残差已在容差内才接受）；两交点间距小于三步会被读成重合。
-- **几何模板里的 T 推导**：族级算法的 T 只出现在默认参数里，`template <FP T, ...>` 推不出来——一律 `template <typename C...>` + `geom::detail::CurveScalar<C>`（= `C::value_type`，住在 `sdk/vine/geom/detail/CurveTraits.hpp`）与 `geom::detail::CurveWindow<C>`，窗口用 `geom::detail::resolveCurveWindow()`、容差用 `geom::detail::resolveTolerance()`。
-  这些别名**不再**在 `CurveProjection.hpp` 里，所以曲率 / 弧长 / 两曲线距离不必为了一个别名拉进投影器。
-- **平面 `BezierCurve`**：数据模型即接口——`poles` + 可空 `weights`，`degree() = poles.size()-1`，`isRational()` 就是“权重非空”。求值/一二阶导都是 `geom::detail::deCasteljau` 同一遍（极点、一阶差商、二阶差商 → 缩放 1 / n / n(n-1)）；有理形式在齐次坐标上算再除以权重。
-  这是模块里**第一个持有内存**的曲线（R2 的书面例外：深拷贝、非 trivially copyable、每次求值分配一份临时数组）。`bounds()` 是**极点盒**（凸包性质，保包含但不紧），紧盒要解导数的根，今天不做。
-  族级算法（最近点、求交、契约扫查）不需要任何修改就能接受它 —— 这正是十一项契约要证明的事。
-- **平面 `BSplineCurve`**：相异节点 + 重数（不展开）、极点、可选权重；域是 `[first knot, last knot]`，**域外参数夹到端点**（不像 Bezier 外推）；`continuity()` 来自 `knotContinuity(degree, multiplicities)`（内部重数决定 `C(度-重数)`）；求值是所在跨的 `p+1` 个 `basisValue` 加权和。
-  `bounds()` 同 Bezier 为极点盒。`isValid()` = `isClampedKnotVector`（首末重数 = 度+1、内部重数 ≤ 度、极点计数对得上）+ 权重全正。
-- **`geom::detail::knotSpan()` 曾有死循环**（2026-11-05 修）：`high` 初始化成 `last_span` 而不是 `last_span+1`，当括号只剩一格时 `mid` 不再前进——带内部节点的样条在第二个跨里求值会挂死。回归用例 `tests/test_geom_spatial/BSplineBasisTest.cpp`（当时在 `test_math`），复盘 `.ai/bugs/spline-knotspan-hang.md`。
-- **平面偏置 `OffsetCurve<T>`**：持 `std::shared_ptr<const Curve<T>>` 基曲线 + 有符号距离（`offsetCurve(basis, d)` 工厂），与 3D 同形；
-  **阶数 = `min(2, 基曲线能力 − 1)`**：基曲线答 3 ⇒ 偏置答 2；基曲线答 2（另一个偏置）⇒ 偏置答 1、`derivativeAt(u,2)` 答空、`isValid()` 为假。
-  符号约定：正距离在**行进方向左侧**（`-C'.y, C'.x` 归一化），逆时针圆的偏移半径是 `r - d`。反向基曲线要追同一条几何曲线必须用**取反**的距离。
-  尖点（速度为零）处法向为零向量，查询退回基曲线自身值；`continuity()` 转发基曲线并不保证尖点处可导；没有 `bounds()`。
-- **平面族级测度**：`arcLength()` / `parameterAtLength()`（`CurveLength.hpp`：自适应 Simpson + 带二分保护的 Newton，`tolerance` 是**长度**误差）、
-  数值内核在 `geom::detail`（`adaptiveSimpson()` / `parameterReaching()`；同目录还有 `rootInBracket()`），**两棵树共用一份**（弧长对 ×2、最近点 ×2、3D 曲线×曲面），所以共享是事实而不是预建；
-  “几何容差 → 参数容差”的换算（`value_tolerance / |dP/du|`）留在几何侧，全模块**一份** `geom::detail::narrowCrossing()`
-  （`sdk/vine/geom/detail/CrossingSearch.hpp`），三处调用点不再各自逐行重复那段前置；弧长与反解的实现同样只有一份
-  （`geom/detail/CurveMeasure.hpp` 的 `arcLengthBetween` / `parameterCovering`），两棵树的公开入口只解析窗口与容差后转发
-  （`decisions/ADR-2026-11-06-shared-numeric-kernels-in-math.md`、`decisions/ADR-2026-11-06-geom-detail-subtree.md`；内核自己的测试在 `tests/test_math/`）。
-  `signedCurvature()`（`CurveCurvature.hpp`：`(C'×C'')/|C'|³`，左转为正，速度为零答 `nullopt`）、`curveToCurveDistance()`
-  （`CurveCurveDistance.hpp`：采样 + 最近点投影 + 二维 Gauss-Newton，结果给两点 / 两参数 / 距离）。三者都遵守 C5 窗口规则；
-  曲率符号与偏置共用同一个左法向约定。3D 侧同名落地在 `geom/spatial/CurveLength.hpp` 与 `CurveCurvature.hpp`，
-  算法与窗口规则相同，但曲率无符号（`curvature()`，3D 没有自然左右）。3D 的两曲线最近距离同样已落地（`geom/spatial/CurveCurveDistance.hpp`，
-  结果点是 `Point3`）；backlog G3 现在只剩“实体求交”。投影与两曲线距离的采样 / Gauss-Newton **仍是两份**（胶水比例高，按 ADR 的触发条件再评估）。
+- **A header-only SDK class must be included by some TU in its module**: the member definitions of the modelling
+  subclasses (`Box` / `Sphere` / …) and the geometry kinds (`BoxSolid` / `SphereSolid` / …) all live in headers,
+  and the DLL instantiates and exports them only when a TU with the matching `_LIB` macro sees the class. Every
+  modelling type now has its own `.cpp` (e.g. `models/src/Box.cpp`).
+- **Modelling types are a separate module, `src/base/models`** (`sdk/vine/models/`, namespace `vn::models`,
+  library `vn::Models`): `Shape` / `Primitive` / `Model` / the `Mesh` family / `BrepShape` / `PointCloud` / the
+  `Material` family all live here, depending on `vn::Geometry` one way; includes are written
+  `<vine/models/Xxx.hpp>`. The geometric value types (curves / surfaces / `Solid` / `Aabb` / `Obb` / `Ray`) stay
+  in `src/base/geom/sdk/vine/geom/spatial`.
+- **Parametric geometry is a modelling type and the base class holds no geometry**: `Primitive : Shape` has only
+  the protected constructor `Primitive(ShapeType)` and the pure virtual `bounds()`, and **does not know
+  `Solid`**; `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid` (`final`, each in `models/Box.hpp` …
+  `models/Ellipsoid.hpp`) each store **full-dimension** fields and use `solid()` to construct their concrete
+  kind at the current size (`BoxSolidf` …, returned **by value**, not stored or cached). `isValid()` /
+  `hasVolume()` / `bounds()` forward to `solid()` in the subclass. The only entry is
+  `models/PrimitiveDispatch.hpp`: `visitPrimitive(primitive, visitor)` (a closed set; `false` when it is not one
+  of the five); the visitor receives the concrete subclass and calls `solid()` to hand it to a geometry entry.
+  There is **no** `Primitive::shape()` / `setSolid()`; `ShapeType` is still passed by the subclass constructor
+  to the base. Rationale: `decisions/ADR-2026-11-05-primitive-is-a-modelling-base.md`.
+- **The value types (`Aabb` / `Obb` / `LineCurve` / `Plane` / `Ray` and every curve and surface) carry `math::FP T`
+  but the class carries no `VN_GEOMETRY_API`**: short queries are defined in the header (inlining happens in the
+  caller; **do not** add `extern template`, it kills the measured gain in the picking loop).
+  Exports come only from explicit instantiation, and **every type must be instantiated at both `float` and
+  `double`**:
+  - a type with a `src/` implementation does it in its own `.cpp` (`LineCurve.cpp` / `Obb.cpp` / `Plane.cpp`) —
+    an explicit instantiation can only instantiate the member definitions that TU sees;
+  - header-only types are collected in `src/Instantiations.cpp`, two lines per type (float, double); a new type
+    that is forgotten has no symbols in the library.
+  - **A new .cpp needs `cmake -S . -B build` again** (`vn_add_library` uses a glob without `CONFIGURE_DEPENDS`).
+  - Exported `std::vector` / `std::shared_ptr` members report C4251, locally suppressed in `Instantiations.cpp`.
+  Rationale and measurements: `design/geometry-primitives.md` 2.8,
+  `decisions/ADR-2026-11-04-geometry-precision-and-instantiation.md`.
+- A new header-only shape of the same kind must likewise be included by some `.cpp` in the module, or its
+  members changed to out-of-line implementations.
+- **Family-level surface queries**: `closestPointOnSurface()` (Gauss-Newton, returns the point / `(u,v)` /
+  distance) and `intersectRayWithSurface()` (three-variable Newton, the result embeds `RayHit` + `u/v`) are both
+  header templates.
+  **Write the parameter constraint as `requires std::is_base_of_v<Surface<T>, S>` on the function**: `Plane`
+  derives from `Surface<T>` indirectly through `ElementarySurface<T>`, and a `const Surface<T>&` parameter
+  cannot deduce `T`; writing a named concept instead triggers MSVC C7605 (a constrained template `Surface<T>`
+  inside a concept body).
+  The window is `SurfaceParameterWindow<T>` (a parameter rectangle, not `Rect2`); an infinite side takes the
+  surface's own bound, and the default `naturalSurfaceWindow()` is the natural domain.
+  `finiteParameterWindow()` is the only place that resolves it.
+  Known properties: the closest point is a local minimum; a tangent ray is missed (singular Jacobian); a fold
+  the grid cannot resolve is missed; the normal at a sphere pole is zero; a ray lying on the surface is judged
+  `coincident` with three probes spanning the range.
+- **Curve × non-analytic surface**: `intersectCurveWithSurfaceByProjection()` shares
+  `detail::scanCurveAgainstSurface` with the analytic entry and only swaps the value for
+  `detail::signedDistanceToSurface` (projection distance + the sign of `dS/du × dS/dv`).
+  **That signed distance deliberately stays in `detail`**: polarity belongs to the parametrisation (the sphere's
+  cross product points inward, the sign opposite to `signedValue()`), and root finding only needs the sign
+  change. A singular parameter line (sphere pole) returns NaN = “no information”.
+  After narrowing a root the scan verifies `|f| ≤ tolerance` once more, filtering spurious sign changes caused by
+  a closest-point branch jump (`geometry-intersection.md` P8).
+  Design: `design/geometry-surface-queries.md`; tests: `tests/test_geom_spatial/SurfaceQueryTest.cpp`.
+- **Closest point / distance from a point to a curve**: `closestPointOnCurve()` (`CurveProjection.hpp`) scans
+  the stationary points of the squared distance, `f(u) = (C(u) - P)·C'(u)`, as zeros, narrows with
+  `rootInBracket()`, and **treats the window ends as candidates too** (when the foot point lies outside the
+  window the minimum is on the boundary). It calls only `evaluate` / `derivative`.
+  The window is an `optional<pair>`: a bounded curve may omit it, an unbounded curve (line / hyperbola /
+  parabola) must give it. Local minima and “flat minima (f does not change sign)” are separated by
+  `sample_count`, see `design/geometry-curve-queries.md`.
+- **The analytic solid `Solid<T>` is a family interface and the five kinds are values**: in `Solid.hpp`, `Solid<T>`
+  is an abstract base class (`isValid` / `hasVolume` / `bounds` / `closestPoint` / `intersectWith`, five pure
+  virtuals) and each of the five solids has its own header (`BoxSolid.hpp` … `EllipsoidSolid.hpp`). **There is no
+  variant** (the `SolidShape` variant was deleted): to answer per kind, write one overload per kind and let the
+  caller obtain the concrete subclass through `visitPrimitive()`; a modelling subclass constructs its concrete
+  kind by value with `solid()` at the current size. **The default tolerance must be written on both the base class
+  and every kind** (a derived declaration shadows the base's default argument). Design: `design/geometry-solid.md`;
+  tests: `tests/test_geom_spatial/SolidTest.cpp`.
+- **Tessellating an analytic solid**: `tessellateSolid()` (`src/base/geom/sdk/vine/geom/spatial/SolidTessellation.hpp`
+  + `src/base/geom/src/SolidTessellation.cpp`) has one overload per kind (`BoxSolid<T>` … `EllipsoidSolid<T>`) and
+  returns a **value** `Triangulation<T>` (public fields `positions` / `normals` / `indices`, aliases `Triangulationf`
+  / `Triangulationd`); triangle counts: box 12, sphere / ellipsoid `2·around·(along−1)`, cylinder `4·around`
+  (side 2·around + one around per cap), cone `2·around` (side fan + bottom cap).
+  **Both precisions are explicitly instantiated and exported** (the declaration carries no macro;
+  `template VN_GEOM_API ...` lives in the .cpp); a new .cpp needs `cmake -S . -B build` again.
+  **Model-side assembly** is `vn::models::meshFromTriangulation(Triangulationf)` (`models/SolidTessellation.hpp`):
+  it moves the three arrays into a `TriangleMesh` and computes the AABB; meshes are float only, so a caller that
+  must assemble a `Triangulationd` narrows it explicitly. The geometry side **does not** return a `TriangleMesh`
+  (a geom → models back edge) and **does not** return a `Buffer` (`Mesh::setPositions` takes only `std::vector`,
+  which would add a copy).
+  **Vertices are duplicated where the normal is discontinuous** (box edges, cylinder caps, cone apex per segment),
+  so the vertex count is not minimal; closedness must be counted by **position**, not by index. The result writes
+  positions / normals / indices only, no UVs.
+  Design: `design/geometry-tessellation.md`; tests: `tests/test_geom_spatial/SolidTessellationTest.cpp`.
+- **Ray × analytic solid**: `Solid<T>::intersectWith(ray, eps)` goes through each kind's own analytic formula: box
+  slab, sphere / ellipsoid quadratic, cylinder side + both caps, cone side + base. The result holds at most two
+  hits (one when tangent), reports only `t ≥ -eps`, and **from an interior origin reports the exit only**; the
+  normal is turned toward the ray as `RayHit` expects, and a hit at the cone apex has a zero normal. `T` in
+  `Solid<T>` is the computation precision; the solid's dimensions themselves are float.
+- **Closest point / distance from a point to an analytic solid**: `Solid<T>::closestPoint(query, tolerance)` uses
+  **solid** semantics — inside (boundary included) it returns the query point itself with distance 0; outside it
+  returns the closest point on the boundary. Box clamps, sphere is radial, ellipsoid is a one-dimensional
+  bisection on the Lagrange condition, cylinder clamps radially × axially, cone takes the nearer of “base disc vs
+  generatrix profile”. `tolerance` only controls the ellipsoid root finding; the inside / outside test is an exact
+  comparison.
+- **`Mesh` / `TriangleMesh` / `QuadMesh` / `MixedMesh` are header-only classes** (not exported): the members and
+  `desc()` are in the header and every consumer compiles them;
+  their descriptors use the inline `VN_OBJECT_META`, and `Type::obtain()` guarantees one per process, see `core.md`.
+- Local space of the five primitives: `BoxSolid` / `SphereSolid` / `EllipsoidSolid` are centred on the origin;
+  `CylinderSolid` / `ConeSolid` span `[-h/2, +h/2]` along Z, with the cone's base at `-h/2`.
+- **Surfaces are the same**: `Surface<T>` is a **template interface** (thirteen items: `evaluate(u,v)`,
+  `derivativeU/V`, four parameter bounds, closed/periodic in both directions, `continuity()`), and
+  `ElementarySurface<T>` / `BoundedSurface<T>` are only classification tags (stateless, no virtual functions).
+  `Surface` / `ElementarySurface` / `BoundedSurface` **all take `<T>` now** (the old non-template spellings become
+  `Surface<double>`).
+  `Plane` stores no in-plane frame (both axes are derived from `normal` each time, because it is copied);
+  `SphericalSurface`'s `u` (azimuth) is closed and periodic, `v` (polar angle) is not closed. The interface has
+  **no** `normalAt` / `bounds` / second derivative.
+- **The three surfaces of revolution are implemented** (`CylindricalSurface` / `ConicalSurface` /
+  `ToroidalSurface`): each holds a `Placement<T>` value (`origin` / `axis` / `x_direction` + `yAxis()`, always
+  right-handed) and `continuity()` returns `CN` in each; the rule for an in-plane axis exists once, in
+  `Frame.hpp`'s `inPlaneAxis()` (`ConicCurve` / `Plane::xAxis` / `Placement` all use it).
+  Placement criterion: **store it if it changes the point set** (cylinder / cone / torus), **derive it if it only
+  changes the parametrisation** (the sphere still uses the world Z axis).
+  Parameter conventions follow OCCT: cylinder `v` is the axial distance, cone `v` is the **generatrix arc length**
+  (`dP/dv` is a unit vector), torus `v` is the **equatorial angle**.
+  `RectangularTrimmedSurface` is a view (basis surface `shared_ptr` + four parameter bounds), and closed/periodic
+  needs both “basis surface and rectangle”.
+  `BezierSurface` / `BSplineSurface` **are evaluable now**: a row-major flat control net (index
+  `iu + u_pole_count * iv`; reading the net uses only `poleAt(iu, iv)`) + optional equal-length weights (empty =
+  polynomial); tensor-product evaluation is “blend each row along u, then blend along v”, and the rational form
+  divides by the weight in four-dimensional homogeneous coordinates. Both share the curve-side infrastructure:
+  `BezierBlend.hpp` (`deCasteljau` / `differences`) and `BSplineBasis.hpp` (`knotSpan<T>` / `basisValue<T>` /
+  `isClampedKnotVector` / `knotContinuity`, **note that a call site must spell `<T>` explicitly**, `std::span`
+  cannot deduce it). `BSplineSurface` accepts clamped form only; closedness is decided by comparing homogeneous
+  poles (the clamped basis is linearly independent, which is equivalent to comparing evaluations).
+  Cost: evaluation allocates a temporary array each time (`backlog/geometry.md` G10). The full surface-side design
+  is in `design/geometry-axis-surfaces.md`.
+- **The contract of the trimmed views (`TrimmedCurve` / `RectangularTrimmedSurface`)**: ① `period()` / `uPeriod()`
+  / `vPeriod()` answer the basis curve's / surface's period only when their own `isPeriodic()` is true, and 0
+  otherwise (they used to forward the basis period, so a quarter circle answered 2π); for the basis numbers read
+  the public `basis_curve` / `basis` directly.
+  ② An empty basis is no longer dereferenced: queries degrade to `Point()`, a zero vector, `C0`, `false`
+  (`isValid()` is the only test). `OffsetCurve` is handled the same way (its `isValid()` also requires a non-zero
+  reference direction). ③ A trimmed curve's `isClosed()` also needs the two ends to coincide: `[0, 2π + 0.3]`
+  covers the whole span but walks one extra corner, so it must answer false (2D `TrimmedCurve` follows the same
+  rule as 3D); a full turn whose start is not 0 has coincident ends but does not cover the natural domain, and
+  also answers false.
+  Rectangle trimming is the same: on a periodic basis the span must be an integer number of periods
+  (`isUClosed()` is false for `[0, 2π+0.3]`); a non-periodic closed basis (a spline patch) must use exactly its
+  two natural ends, and an extrapolated rectangle also answers false. Such cross-type contracts are swept by
+  `everyCurveKeepsTheInterfacePromises` / `everySurfaceKeepsTheInterfacePromises`; run them first when changing
+  the interface.
+- **Spline multiplicity rules**: `degree + 1` at both ends (clamped), **at most `degree` inside**; an interior
+  multiplicity of `degree + 1` is a gap, which `isValid()` rejects outright —
+  so `continuity()`'s `C0` really always means “meets at one point”. An interior multiplicity of `degree` → `C0`
+  (a kink, but still connected). See `decisions/ADR-2026-11-04-bspline-without-knot-breaks.md`.
+- **`isValid()` is a pure virtual of `Curve<T>` / `Surface<T>`** (11 items for a curve, 14 for a surface): a new
+  curve or surface **must** implement it, or it does not compile. `Plane::isValid()` is `normal.length() > EPS` (a
+  zero normal is no longer "always usable"). See
+  `decisions/ADR-2026-11-04-isvalid-on-family-interfaces.md`.
+- **`math` keeps only mathematical vocabulary** (`decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`; current
+  design in `design/math-base-layer.md`): 18 headers, no subdirectories, no procedures. Root finding / integration
+  (`adaptiveSimpson` / `rootInBracket` / `parameterReaching`), Bernstein evaluation (`deCasteljau` /
+  `differences`), the knot model and `Continuity` are **all in `geom`**: the first three in
+  `geom/detail/{Quadrature,RootFinding,BezierBlend}.hpp`, the knot model in `geom/detail/BSplineBasis.hpp`, and
+  `Continuity` in `geom/Continuity.hpp` (the module root, re-exported by both namespaces).
+  Two dividing criteria: ① does the signature mention our own data model; ② is there a non-geometric consumer
+  today. The cost: a non-geometric module that wants fast integration must depend on `vn::Geom`; when a second
+  consumer appears, promote it to its own module (the ADR's reversal path). `symmetricEigen` stays at the `math`
+  root — its budget is internal and the caller gives no precision target.
+- **Directories and naming (current, `decisions/ADR-2026-11-06-geom-contracts-nested-under-module.md`, design in
+  `design/geometry-module.md`)**: `src/base/geom/sdk/vine/geom/{planar,spatial,detail}` + `geom_global.hpp` /
+  `Continuity.hpp` at the cross-cutting block root; namespaces `vn::geom::{planar,spatial,detail}`.
+  **Type names carry no dimension marker** (`LineCurve`, not `Curve2`/`CurveCurved`), and the precision suffix stays
+  `f` / `d`.
+  Two points: ① `Continuity` needs no re-export (the closed namespace finds it); ② **a shared piece must be spelled
+  `geom::detail::` in full** — six contract headers declare a same-named `planar::detail`/`spatial::detail`, and a
+  bare `detail::` resolves to that level (measured C2039).
+  Do not propose “flat + `2` suffix” or “mark 2D only” again: 4 pairs of same-named public functions (two pairs
+  cannot overload) + precision-suffix collisions (the still-valid part of
+  `ADR-2026-11-06-geom-tree-layout-and-naming.md`).
+- **Template parameter constraints**: geometry families are always `template <vn::math::FP T>` (including `Plane`,
+  which used to be an exception); `Aabb` / `Obb` deliberately keep `typename T`
+  so that `Aabbi = Aabb<int32_t>` is allowed. A new type inside a family uses `FP`; do not copy the value-type rule.
+- **Test precision**: `GeometryKindsTest`'s family-level sweeps `expect*Invariants` / `sweepCurves` / `sweepSurfaces`
+  are **templated**, and run once for double and once for float (`…InFloat`); adding a curve or surface to `sweep*()`
+  gets both precisions at once. Older tests (Ray/Plane/curve series)
+  are mostly still double-only; the `Aabb` / `Obb` unit tests use float.
+- **`Curve<T>` is a pure virtual interface (eleven items)**: a new curve must implement `evaluate` / `derivative` /
+  `secondDerivative` / `firstParameter` / `lastParameter` / `isClosed` / `isPeriodic` / `period` / `continuity` /
+  `reversedParameter` in one go.
+  Traps: `derivative` is the **velocity vector** (a circle's length is the radius), not a unit tangent;
+  `TrimmedCurve`'s `reversedParameter` reflects inside its own interval (`first + last - u`) and must not forward to
+  the basis curve. `Ray` deliberately does not derive from `Curve` (hot paths copy it by value). See
+  `design/geometry-kinds.md` 2.7.
+- **Derivatives are exposed by capability**: besides the eleven pure virtuals, `Curve<T>` (2D and 3D have the same
+  shape) has two non-pure members — `maxDerivativeOrder()` (default 2)
+  and `derivativeAt(u, order)` (1/2 forwards to `derivative` / `secondDerivative`; 0, negative or out of range
+  answers `std::nullopt`). Types with a closed-form third derivative
+  (line / circle / conic / both splines) override it to 3; `OffsetCurve` reports `min(2, basis capability − 1)` (a
+  basis that answers 3 ⇒ reports 2;
+  an offset of an offset ⇒ reports 1 and `isValid()` is false). A trimmed view forwards the capability to its basis
+  unchanged. The spatial and planar **families have exactly the same shape**. A new curve that only goes to the
+  second derivative **needs to write nothing**. See `decisions/ADR-2026-11-05-curve-derivative-capability.md`.
+- **Curve × analytic surface intersection works now**: `intersectCurveWithSurface(curve, surface, window, tolerance,
+  interval_count)` (`CurveSurfaceIntersection.hpp`)
+  finds the zeros of the surface's signed distance `signedValue(surface, point)` along the curve
+  (`geom::detail::rootInBracket`, false position with a bisection fallback). The five analytic surfaces each have a
+  `signedValue` overload;
+  **an unbounded curve must be given a window** (`LineCurve` / hyperbola / parabola); tangency is missed by default
+  (P4); a stretch lying on the surface reports `Coincident` and lists no points.
+  Spline and trimmed surfaces need parameter inversion and are not done (backlog G12).
+- **All four conics are implemented** (`CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve`); **the
+  frame and `continuity()`
+  = `CN` live in `ConicCurve`** (`center` / `normal` / `x_direction` + `yAxis()`), and the four subtypes keep only
+  their own scalars (the parabola uses the inherited
+  `center` as its vertex; there is no separate `vertex` field). Changing `ConicCurve`'s frame = changing the size of
+  four types (`CircleCurved` is now 3 vectors + double).
+  `BezierCurve` / `BSplineCurve` **are evaluable now** (de Casteljau reused for three orders / Cox–de Boor basis +
+  quotient rule), both constructible and dispatchable through `Curve<T>&`;
+  **every spatial curve type reports `maxDerivativeOrder() == 3`**, each with a non-virtual `thirdDerivative(u)`
+  (zero for line/parabola, `-P'` for circle and ellipse,
+  `P'` for hyperbola, third-order differences / a third basis layer + quotient rule for splines); `OffsetCurve` is
+  therefore **constructible** too, and `secondDerivative` is evaluated exactly from the basis curve's third
+  derivative.
+  Note: `OffsetCurve`'s `secondDerivative` relies on `basis->derivativeAt(u, 3)`; for an offset of an offset the
+  basis answers only 2 — then `maxDerivativeOrder()` reports 1,
+  `isValid()` is false and the second derivative answers a zero vector
+  (`decisions/ADR-2026-11-06-space-third-derivative-and-offset.md`).
+  `BSplineCurve::isValid()` requires **clamped form** (first and last multiplicity = `degree + 1`, distinct knots
+  increasing); both splines require all weights positive.
+  Degenerate input has exactly one test — `isValid()`: a line (zero direction, `closestPoint()` returns the origin,
+  `intersectWith()` returns no flags, no division by zero),
+  a trim (empty basis curve / reversed interval), a conic (`normal` zero ⇒ it collapses to a segment or ray along
+  `x_direction`, not “a circle of radius 0”).
+  `CircleCurve::bounds()` and `EllipseCurve::bounds()` use the same support function `sqrt((a·X_i)² + (b·Y_i)²)`,
+  giving a segment box when degenerate.
+  When writing a derived class: **anything that depends on the base class must be qualified** — write a base static
+  function as `ConicCurve<T>::inPlaneAxis(...)`, and declare inherited data members / functions
+  with `using ConicCurve<T>::center;` or similar, otherwise MSVC reports C3861/C2065. `inPlaneAxis` is now a free
+  function in `Frame.hpp`
+  (`vn::geom::spatial::inPlaneAxis`), and `ConicCurve` no longer has a protected static of that name.
+- **`geom/planar` is a second contract, not a generic specialisation of 3D**: `geom::planar::Curve<T>` and
+  `geom::spatial::Curve<T>` have the same name and meaning and neither derives from the other
+  (`decisions/ADR-2026-11-05-planar-curve-contract.md`); a planar circle is `center` + `radius` and does not share
+  the `ConicCurve` frame (its start point is fixed by the plane).
+  The module is header-only templates but lives in **the same library as the spatial side** (`vn::Geom`,
+  `VN_GEOM_LIB`) with the same global (`vine/geom/geom_global.hpp`),
+  so 2D no longer has a separate INTERFACE target; 2D/3D isolation is enforced by `scripts/check_geom_layering.py`
+  instead (the compiler cannot stop it inside one target), five rules:
+  `geom/planar` must not include `geom/spatial`, and vice versa, `geom/detail` must not include either,
+  `geom/detail` must not **name** `Point2`/`Point3`/`Vector2`/`Vector3`,
+  an angle-bracket include in a geometry header may only point at `vine/geom/` or `vine/math/` (quotes only at the
+  same directory). After adding a rule, verify it once with a temporary violating header.
+  Dimension-independent shared implementation lives in `sdk/vine/geom/detail/` (8 headers: traits / crossing search /
+  arc length / two-curve refinement / knot model / Bernstein / root finding / integration),
+  reached as `geom::detail::` (the tree-private `detail` exists in 6 files, and an unqualified name resolves there);
+  it is not public interface, and the public names stay `geom::planar::arcLength` / `geom::spatial::arcLength`.
+  Names carry no dimension marker and the precision suffix stays `d` / `f`. Design: `design/geometry-module.md`
+  (shape and naming) and `design/geometry-planar.md` (the planar contract).
+- **Planar geometry (`geom/planar`) has nine types**: `LineCurve` / `CircleCurve` / `EllipseCurve` /
+  `HyperbolaCurve` / `ParabolaCurve` / `BezierCurve` / `BSplineCurve` / `TrimmedCurve` / `OffsetCurve`. The ellipse
+  carries its own `x_direction` (major axis, `yAxis()` derived by a +90° rotation), the circle does not — its start
+  point is fixed by the plane, so there is **no** planar `ConicCurve` layer.
+  **`TrimmedCurve<T>` is the only trim expression** (`ArcCurve` is deleted): a `shared_ptr<const Curve<T>>` basis
+  curve + two parameter bounds, with the factory `trimCurve(basis, a, b)`; closed needs the interval to cover the
+  whole basis domain **and the ends to coincide**, periodic needs at least one period, otherwise `period() == 0`;
+  hence `[0, 2π+0.3]` covers the whole span but is not closed; a trim does not reparametrise, and its derivative is
+  the basis curve's velocity at the same parameter.
+  **`reversedParameter` does not return the same point**: it gives the same point on the reversed curve (the
+  original mirrored about the domain-midpoint axis / the start axis), guaranteeing only involution and swapped ends;
+  `evaluate(reversedParameter(u)) != evaluate(u)` (for a circle y flips sign; for an arc x and y swap). The contract
+  is watched by the float / double sweep in `tests/test_geom_planar/CurveContractTest.cpp`.
+- **Planar conics share `ConicCurve<T>`** (`geom/planar`): the layer holds only `center` + `x_direction`
+  (normalised at construction) + `yAxis()` (+90° rotation) + `continuity() == CN`, with no evaluation or parameter
+  domain.
+  `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` derive from it; **the circle does not** (its start point is
+  fixed by the plane, and storing an axis that is always (1,0) would be a dead field).
+  The parameters mean different things: ellipse = eccentric angle, hyperbola = hyperbolic angle (only the
+  `+x_direction` branch; the other branch is the reversed direction), parabola = the offset along the transverse
+  axis (`P = vertex + u²/(4f)·X + u·Y`).
+  A zero direction stores a zero vector ⇒ a point query answers `center`, and `isValid()` is the only test; all
+  three curves are unbounded and non-periodic, and `reversedParameter` is `-u` for all.
+- **Planar closest point `closestPointOnCurve()`** (`geom/planar/CurveProjection.hpp`): the same skeleton as the 3D
+  function of the same name — root finding on the stationary points of the squared distance
+  `f(u) = (C(u)-Q)·C'(u)` plus a comparison of sample points / window ends;
+  an unbounded curve (line / hyperbola / parabola) **must** be given a window, otherwise `nullopt`. Two things to
+  note: with several equidistant solutions (the centre of a circle) the answer is “one of them”, so do not assert
+  the parameter is 0;
+  the closest point of a hyperbola to a point on its axis is usually **not at the vertex** (e.g. from (3,0) to
+  `x=2cosh, y=sinh` the minimum is at `5cosh u = 6`, distance √0.8), so solve the stationary-point equation first
+  when writing a test.
+- **Planar bounding boxes**: `bounds()` exists only on bounded types (`CircleCurve` / `EllipseCurve`, returning
+  `math::Rect2<T>`), and the interface does not declare it — an unbounded curve could only return a fake box.
+  A circle also has `bounds(first_parameter, last_parameter)`: the **tight box** of an arc lives here (the interval
+  direction does not change the point set; a reversed interval gives the same box) —
+  `TrimmedCurve` erases the basis curve, so the support function cannot be asked and a segment's box cannot live on
+  the trimmed view.
+  The ellipse uses the support function on the world axes, `sqrt((a·X_i)² + (b·Y_i)²)`, **not** `±major_radius`
+  (which is loose once rotated); the circle uses `|radius|`.
+- **An invalid state must answer finite values**: a parabola with zero focal length used to divide by zero
+  (`u²/(4·0)` → NaN / inf); now `pointAt` answers the vertex and both derivatives a zero vector
+  (`hasFocalLength()`);
+  the other degenerate forms: a zero-radius circle → its centre, a zero-semi-axis ellipse → a segment, a
+  zero-semi-axis hyperbola → the line through the centre, a zero-direction conic → center.
+- **Planar curve × curve intersection `intersectCurveWithCurve()`** (`geom/planar/CurveCurveIntersection.hpp`): a
+  three-valued result `CurveCurveContact{None, Isolated, Coincident}` + `hits` (point and both parameters, ordered by
+  the first curve's parameter), mirroring the shape of 3D's `CurveSurfaceContact`.
+  The algorithm is dual: sample along the first curve and take each point's perpendicular distance to the second
+  with `closestPointOnCurve()`. **That distance answers two things at once** — three or more consecutive samples
+  within tolerance = a coincident stretch; a distance ≤ one step length (`step·|C1'|`) = a candidate, then a 2D
+  Newton converges `C1(u)=C2(v)`.
+  The first version took “sample distance ≤ tolerance” as the candidate test, and almost every crossing was missed
+  (a sample almost never lands exactly on the other curve).
+  Known boundaries: tangency is missed by default (with a singular Jacobian a hit is accepted only when the residual
+  is already within tolerance); two intersections closer than three steps are read as coincident.
+- **Deducing `T` in geometry templates**: a family-level algorithm's `T` appears only in default arguments, so
+  `template <FP T, ...>` cannot deduce it — always use `template <typename C...>` + `geom::detail::CurveScalar<C>`
+  (= `C::value_type`, in `sdk/vine/geom/detail/CurveTraits.hpp`) and `geom::detail::CurveWindow<C>`, with
+  `geom::detail::resolveCurveWindow()` for the window and `geom::detail::resolveTolerance()` for the tolerance.
+  Those aliases are **no longer** in `CurveProjection.hpp`, so curvature / arc length / two-curve distance do not
+  have to pull in the projector for one alias.
+- **Planar `BezierCurve`**: the data model is the interface — `poles` + a nullable `weights`,
+  `degree() = poles.size()-1`, `isRational()` is “weights non-empty”. Evaluation and the first two derivatives come
+  from one pass of `geom::detail::deCasteljau` (poles, first differences, second differences → scaled by 1 / n /
+  n(n-1)); the rational form is computed in homogeneous coordinates and divided by the weight.
+  This is the module's **first curve that owns memory** (R2's written exception: deep copy, not trivially copyable,
+  one temporary array allocated per evaluation). `bounds()` is the **pole box** (convex-hull property: contains,
+  not tight); a tight box needs the roots of the derivative and is not done today.
+  Family-level algorithms (closest point, intersection, contract sweeps) accept it without any change — which is
+  exactly what the eleven-item contract is there to prove.
+- **Planar `BSplineCurve`**: distinct knots + multiplicities (not expanded), poles, optional weights; the domain is
+  `[first knot, last knot]`, and a parameter **outside the domain is clamped to the end** (unlike Bezier
+  extrapolation); `continuity()` comes from `knotContinuity(degree, multiplicities)` (an interior multiplicity
+  decides `C(degree − multiplicity)`); evaluation is the weighted sum of the `p+1` `basisValue`s of the containing
+  span.
+  `bounds()` is the pole box like Bezier. `isValid()` = `isClampedKnotVector` (first/last multiplicity = degree + 1,
+  interior multiplicity ≤ degree, pole count consistent) + all weights positive.
+- **`geom::detail::knotSpan()` once had an infinite loop** (fixed 2026-11-05): `high` was initialised to `last_span`
+  instead of `last_span+1`, so when the bracket was down to one cell `mid` stopped advancing — a spline with
+  interior knots hung when evaluated in the second span. Regression case
+  `tests/test_geom_spatial/BSplineBasisTest.cpp` (then in `test_math`); postmortem
+  `.ai/bugs/spline-knotspan-hang.md`.
+- **Planar offset `OffsetCurve<T>`**: holds a `std::shared_ptr<const Curve<T>>` basis curve + a signed distance
+  (factory `offsetCurve(basis, d)`), the same shape as 3D;
+  **order = `min(2, basis capability − 1)`**: a basis that answers 3 ⇒ the offset answers 2; a basis that answers 2
+  (another offset) ⇒ the offset answers 1, `derivativeAt(u,2)` answers empty and `isValid()` is false.
+  Sign convention: a positive distance is on the **left of the direction of travel** (`-C'.y, C'.x` normalised), so
+  a counter-clockwise circle's offset radius is `r - d`. To follow the same geometric curve from a reversed basis,
+  the distance must be **negated**.
+  At a cusp (zero velocity) the normal is the zero vector and a query falls back to the basis curve's own value;
+  `continuity()` forwards the basis curve and does not promise differentiability at a cusp; there is no `bounds()`.
+- **Planar family-level measures**: `arcLength()` / `parameterAtLength()` (`CurveLength.hpp`: adaptive Simpson +
+  Newton with a bisection guard; `tolerance` is a **length** error),
+  with the numeric kernels in `geom::detail` (`adaptiveSimpson()` / `parameterReaching()`; `rootInBracket()` lives
+  in the same directory), and **one copy shared by both trees** (arc length ×2, closest point ×2, 3D curve ×
+  surface), so the sharing is a fact rather than a pre-built abstraction;
+  the “geometric tolerance → parameter tolerance” conversion (`value_tolerance / |dP/du|`) stays on the geometry
+  side, and the whole module has **one** `geom::detail::narrowCrossing()`
+  (`sdk/vine/geom/detail/CrossingSearch.hpp`), so the three call sites no longer repeat that preamble line by line;
+  arc length and its inverse also exist once
+  (`arcLengthBetween` / `parameterCovering` in `geom/detail/CurveMeasure.hpp`), and the public entries of both trees
+  only resolve window and tolerance and forward
+  (`decisions/ADR-2026-11-06-shared-numeric-kernels-in-math.md`,
+  `decisions/ADR-2026-11-06-geom-detail-subtree.md`; the kernels' own tests are in `tests/test_math/`).
+  `signedCurvature()` (`CurveCurvature.hpp`: `(C'×C'')/|C'|³`, positive for a left turn, `nullopt` at zero
+  velocity), `curveToCurveDistance()`
+  (`CurveCurveDistance.hpp`: sampling + closest-point projection + 2D Gauss-Newton, returning two points / two
+  parameters / the distance). All three obey the C5 window rule;
+  the curvature sign and the offset share the same left-normal convention. The 3D side has the same names in
+  `geom/spatial/CurveLength.hpp` and `CurveCurvature.hpp`,
+  with the same algorithm and window rules but an unsigned curvature (`curvature()`; 3D has no natural left/right).
+  The 3D two-curve closest distance has also landed (`geom/spatial/CurveCurveDistance.hpp`,
+  result points as `Point3`); backlog G3 now only holds “solid intersection”. The sampling / Gauss-Newton of
+  projection and two-curve distance **are still two copies** (the glue ratio is high; re-evaluate under the ADR's
+  trigger condition).
 
-- **BVH 是「结构 + 构建器」两个类型**（`spatial/Bvh.hpp`、`spatial/BvhBuilder.hpp`）：`Bvh<T, Volume = Aabb>` 只持有图元
-  包围体与扁平节点树，`BvhBuilder` 负责构建，两者之间只有 `detail::BuildJob` 这一个契约。`check_geom_layering.py` 规则 6
-  禁止 `Bvh.hpp` include `BvhBuilder.hpp`——删掉构建器后 `Bvh.hpp` 必须仍能单独编译，这是「职责分离」的可执行判据。
-  内部节点的 `offset` 是**右**孩子下标，左孩子恒为 `parent + 1`（写成 `node.offset - 1` 会遍历到自己或越界）。
-  节点数组由 `appendNode()` 追加增长——不要预分配 `2·⌈n/leaf⌉+1`，叶子数取决于切分结果（5 个图元会切成 2+3）。
-  查询回调拿到的是叶子的**保守合并盒**，结果是超集，精确判定要调用方自己做。`Obb` 体积已实测否决
-  （PCA 拟合角点合并：叶子表面积约为 `Aabb` 树的 2 倍，且角点会落在拟合盒外一个舍入步），别照这个思路重做一遍。
-  设计与理由见 `design/geometry-bvh.md`、`decisions/ADR-2026-11-07-bvh-as-structure-plus-builder.md`。
+- **The BVH is two types, “structure + builder”** (`spatial/Bvh.hpp`, `spatial/BvhBuilder.hpp`): `Bvh<T, Volume = Aabb>` holds only the primitive
+  bounds and the flat node tree, `BvhBuilder` does the building, and between them there is exactly one contract, `detail::BuildJob`. `check_geom_layering.py` rule 6
+  forbids `Bvh.hpp` from including `BvhBuilder.hpp` — with the builder deleted, `Bvh.hpp` must still compile on its own, which is the executable test of “separated responsibility”.
+  An internal node's `offset` is the **right** child index; the left child is always `parent + 1` (writing `node.offset - 1` walks into itself or out of bounds).
+  The node array grows by appending through `appendNode()` — do not pre-allocate `2·⌈n/leaf⌉+1`, since the leaf count depends on the split (5 primitives split into 2+3).
+  A query callback receives the leaf's **conservative merged box**, so the result is a superset and exact testing is the caller's job. An `Obb` volume was measured and rejected
+  (PCA-fitted corner merging: a leaf's surface area is about 2× an `Aabb` tree's, and a corner falls one rounding step outside the fitted box); do not rebuild it that way.
+  Design and rationale: `design/geometry-bvh.md`, `decisions/ADR-2026-11-07-bvh-as-structure-plus-builder.md`.
 
-- **三角形树只有一个编号规则**：`spatial/TriangleBvh.hpp` 的 `TriangleSource`（`positions()` + `triangleCount()` +
-  `triangleCorners()`）加 `registerTriangles()` / `buildTriangleBvh()` / `restoreTriangleBvh()`。`Mesh` 与绘制帧的
-  `TriangleStream` 各有一个 `static_assert` 钉住它们满足这个概念——不要在任何一侧再手写一遍“遍历三角形 → 算盒 → add”。
-  规则不抛异常：坏角点或非有限坐标返回 `false`（可以已登记前缀，调用方丢弃那棵树）。
-  形状有两种形态：`BvhTopology`（拥有）与 `BvhTopologyView`（借用，`view()` 或隐式转换），`RestoreTopology` 只持有
-  后者。见 `design/geometry-bvh.md` 2.14 / 2.15 与 F9。
+- **The triangle tree has exactly one numbering rule**: `spatial/TriangleBvh.hpp`'s `TriangleSource` (`positions()` + `triangleCount()` +
+  `triangleCorners()`) plus `registerTriangles()` / `buildTriangleBvh()` / `restoreTriangleBvh()`. `Mesh` and the draw frame's
+  `TriangleStream` each carry a `static_assert` pinning that they satisfy the concept — do not hand-write “walk triangles → compute box → add” on either side again.
+  The rule does not throw: a bad corner or a non-finite coordinate returns `false` (the already-registered prefix may stand; the caller discards that tree).
+  The shape has two forms: `BvhTopology` (owning) and `BvhTopologyView` (borrowed, from `view()` or an implicit conversion), and `RestoreTopology` holds only
+  the latter. See `design/geometry-bvh.md` 2.14 / 2.15 and F9.
 
-- **网格自带三角形身份与树**：`Mesh::triangleCount()` / `Mesh::triangleCorners(i, corners[3])` 是虚函数，每个具体网格
-  按自己 `toTriangleMesh()` 的同一规则实现（三角三项一面 / 四边形沿 1→3 对角 / 多边形三角扇），所以三角形序号跨转换
-  稳定——它既是树的 primitive id 也是拾取身份。`Mesh` 缓存 `Bvh<double>`（`buildBvh(builder)` / `bvh()` / `hasBvh()` /
-  `setBvh()` / `clearBvh()` / `sharedBvh()`）：一三角形一 primitive，`setPositions` / `setIndices` /
-  `MixedMesh::setFaceOffsets` 丢树，法线/UV/颜色不丢。`setBvh()` 返回 `bool`：只接已建且 `primCount() == triangleCount()`
-  的树（和 `Geometry::adoptBvh()` 同一条准入规则）。树故意用 double：查询射线都是 `Rayd`，窄化成 float 会在远离
-  原点处漏命中。树以 `std::shared_ptr<const Bvh>` 发布且**发布后不可变**（重建换新对象、`clearBvh()` 只停止发布），
-  所以另一帧可以共享同一棵而不复制。未构建的树不回答候选，**不**退化成线性扫描。
-  见 `design/graphics-geometry.md` 2.9 / F32 与 `decisions/ADR-2026-11-07-mesh-triangle-tree-cache.md`。
+- **A mesh carries its own triangle identity and tree**: `Mesh::triangleCount()` / `Mesh::triangleCorners(i, corners[3])` are virtual and every concrete mesh
+  implements them by the same rule as its own `toTriangleMesh()` (three indices per triangle / a quad along the 1→3 diagonal / a polygon as a triangle fan), so triangle numbering is stable across conversions
+  — it is both the tree's primitive id and the picking identity. `Mesh` caches a `Bvh<double>` (`buildBvh(builder)` / `bvh()` / `hasBvh()` /
+  `setBvh()` / `clearBvh()` / `sharedBvh()`): one primitive per triangle; `setPositions` / `setIndices` /
+  `MixedMesh::setFaceOffsets` drop the tree, normals/UVs/colours do not. `setBvh()` returns `bool`: it accepts only a built tree with `primCount() == triangleCount()`
+  (the same admission rule as `Geometry::adoptBvh()`). The tree is deliberately double: query rays are `Rayd`, and narrowing to float misses hits far from
+  the origin. The tree is published as `std::shared_ptr<const Bvh>` and is **immutable once published** (a rebuild swaps in a new object; `clearBvh()` only stops publishing),
+  so another frame can share the same tree without copying. An unbuilt tree answers no candidates and does **not** degrade to a linear scan.
+  See `design/graphics-geometry.md` 2.9 / F32 and `decisions/ADR-2026-11-07-mesh-triangle-tree-cache.md`.
 
-- **两种智能指针不要混**：`Buffer<T>` 是 `RefCounted` → 用 `intrusive_ptr`（计数在对象里；`Mesh` 的五个通道句柄是 `intrusive_ptr<const Buffer<T>>`，Mesh 只替换通道、从不原地写字节）；`Bvh` 是值类型 → 共享它只能用 `shared_ptr<const Bvh>`（构建时还要能放栈上）。判据：**计数在对象里 → intrusive_ptr；值类型要共享 → shared_ptr**。两者共享契约也不同：一个是“共享可变字节，写走 `Buffer::edit()` 作用域（结束即公告）”，一个是“发布后不可变”。
+- **Do not mix the two smart pointers**: `Buffer<T>` is `RefCounted` → use `intrusive_ptr` (the count lives in the object; `Mesh`'s five channel handles are `intrusive_ptr<const Buffer<T>>`, and a mesh only replaces a channel, never writes bytes in place); `Bvh` is a value type → sharing it can only use `shared_ptr<const Bvh>` (and building it must still be able to sit on the stack). Criterion: **count in the object → intrusive_ptr; value type to share → shared_ptr**. Their sharing contracts differ too: one is “shared mutable bytes, writes go through a `Buffer::edit()` scope (announced at the end)”, the other is “immutable after publication”.
 
-- **树建成后可以封存**：`Bvh::seal()` 释放逐图元盒（`Aabb<double>` 是 **48 B/图元**），只留 `shape_` + `node_bounds_`；
-  `isSealed()` 由“建成了且图元盒为空”推出，没有标志位。封存后 `add`/`addRange`/`update`/`refit`/`reserve`/
-  `restoreTopology`/构建抛 `logic_error`，`primCount()` 从 `shape_.order.size()` 回答，查询回调的第二参数变成**叶盒**。
-  叶粒度（`BvhBuilder::leafSize`）只改**节点数**，与图元盒无关——要降内存必须两者一起做。
-  `update`/`refit` 今天**无生产调用方**（只有测试）：刚体变换不碰树（树在局部空间，钥匙里没有世界矩阵），
-  顶点变化走丢树重建。见 `design/geometry-bvh.md` 2.16 / F10 / P10 与
-  `decisions/ADR-2026-11-10-bvh-seal-and-coarse-picking-tree.md`。
+- **A tree can be sealed once built**: `Bvh::seal()` releases the per-primitive boxes (`Aabb<double>` is **48 B/primitive**), and keeps only `shape_` + `node_bounds_`;
+  `isSealed()` is derived from “built and the primitive boxes are empty”, with no flag. After sealing, `add`/`addRange`/`update`/`refit`/`reserve`/
+  `restoreTopology`/building throw `logic_error`, `primCount()` answers from `shape_.order.size()`, and the query callback's second argument becomes the **leaf box**.
+  Leaf granularity (`BvhBuilder::leafSize`) changes only the **node count**, not the primitive boxes — lowering memory needs both.
+  `update`/`refit` have **no production caller today** (tests only): a rigid transform does not touch the tree (the tree is in local space and the key holds no world matrix),
+  and a vertex change drops the tree and rebuilds. See `design/geometry-bvh.md` 2.16 / F10 / P10 and
+  `decisions/ADR-2026-11-10-bvh-seal-and-coarse-picking-tree.md`.
