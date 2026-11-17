@@ -10,6 +10,7 @@
 #include <vine/math/Vector3.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "FrameUpdate.hpp"
 #include "Geometry.hpp"
 #include "Viewport.hpp"
 
@@ -26,7 +27,8 @@ class Scene;
  *   digits), the static framing camera, the BOX (a device-pixel rectangle anchored to the bottom-right
  *   corner of the area it belongs to) and the measurement. It is deliberately NOT a pass - whoever
  *   shows it declares one (see PassDesc): `content` = content(), `camera` = camera(), `viewport` =
- *   boxViewport(), `before_draw` = update().
+ *   boxViewport(), and registers this object with the chain as the overlay whose update() repaints it
+ *   (see FrameUpdate).
  * - update() feeds the wall-clock frame delta between calls to the @ref Sampler, which counts FRAMES
  *   over a window of wall time (default 0.5 s) and publishes a figure about twice a second; a new
  *   figure rewrites the row of bars. No source camera is needed: the digits stay pinned to their
@@ -72,11 +74,10 @@ class Scene;
  * hud.camera = intrusive_ptr<Camera>(fps->camera());
  * hud.content = intrusive_ptr<Scene>(fps->content());
  * hud.viewport = fps->boxViewport(); hud.clear_enabled = false; hud.depth_mode = DepthMode::Disabled;
- * hud.before_draw = [fps] { fps->update(); };
- * engine->applyPlan(vn::graphics::Plan{ { hud } });
+ * chain->addOverlay(u8"stats", fps.get(), hud);    // the chain updates it before each frame
  * \endcode
  */
-class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay> {
+class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay>, public FrameUpdate {
     VN_OBJECT_META_DECL;
 
   public:
@@ -202,10 +203,10 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay> 
      *
      * @details
      * - Measures the wall clock since the previous call and feeds it to the sampler (see the class note),
-     *   then writes the figures that changed. It touches no backend, which is what lets the pipeline
-     *   state it as the `before_draw` hook of a declaration (PassDesc).
+     *   then writes the figures that changed. It touches no backend, which is why it is a FrameUpdate the
+     *   chain (or a host driving the engine) calls before each frame.
      */
-    void update();
+    void update() override;
 
   private:
     /** @brief Rebuilds the seven-segment content scene. */

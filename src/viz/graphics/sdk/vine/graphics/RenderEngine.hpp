@@ -440,11 +440,8 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   cameras and sizes that moved in between reach it as usual; what was prepared is a key, not a frozen picture.
      *
      * @warning
-     * - Never inside a `before_draw` hook or while a frame is being answered: like every entry of this class it
-     *   compiles the declarations, and it waits for a frame in flight on the engine thread first (between frames).
-     * - A pass' `before_draw` hook RUNS, because describing a pass is what a frame does and the hook is part of it:
-     *   a warm-up is therefore not free of side effects, and a hook that counts its calls sees one more. A hook that
-     *   animates off its own wall clock (the intended shape) is unaffected.
+     * - Never while a frame is being answered: like every entry of this class it compiles the declarations, and
+     *   it waits for a frame in flight on the engine thread first (between frames).
      * - A prepared identity only helps while it stays the same one: an edit between the call and the frame is a new
      *   identity, and that frame compiles it (correct, and the price of the edit).
      *
@@ -464,8 +461,9 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   puts it where the compile looks - see RenderPass::execute.
      *
      * - The frame is what the declarations ARE: there is no clock and no per-frame context to pass in. Content that
-     *   animates measures its own time (a pass' `before_draw` hook, an overlay's own wall clock), which is what the
-     *   one `dt` a host had to hand over used to be - a number nothing in the frame read.
+     *   animates measures its own time (an overlay's own wall clock, or a host that calls FrameUpdate::update()
+     *   before frame()), which is what the one `dt` a host had to hand over used to be - a number nothing in the
+     *   frame read.
      *
      * @return What the call did (see FrameOutcome): `status.ran()` when this engine has no frame thread and the frame
      *         was answered before returning, `status.submitted()` when it was handed to one; `NotReady` with
@@ -478,7 +476,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @details
      * - A LIFETIME DECISION, made once: switching to EngineThread starts this engine's frame thread, switching back to
      *   Inline stops and joins it. Both wait for a frame in flight first, so a host may switch between frames (not
-     *   from inside a `before_draw` hook).
+     *   from inside a FrameUpdate::update() call).
      * - The thread is told nothing about the content: `frame()` still builds the content half on the caller's thread,
      *   and only the publications, the surface's window half and the device are touched on the other side.
      *

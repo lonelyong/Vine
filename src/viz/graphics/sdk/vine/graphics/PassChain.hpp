@@ -10,6 +10,7 @@
 #include <vine/raw_ptr.hpp>
 
 #include "DiagnosticsRoute.hpp"
+#include "FrameUpdate.hpp"
 #include "Node.hpp"
 #include "PassRegistry.hpp"
 #include "PassStage.hpp"
@@ -18,6 +19,7 @@
 #include "ShaderProgram.hpp"
 #include "ShadingMode.hpp"
 #include "ShadingPath.hpp"
+#include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
 
@@ -388,10 +390,12 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     /** @brief How an overlay lays itself out for a surface size (see addOverlay).
      *
      * @details
-     * - The pass is handed over so one layout can restate both halves: the content's own box (a gizmo's framing
-     *   camera) and the rectangle the pass draws into.
+     * - A VALUE IN, A VALUE OUT: the callback restates whatever the overlay's own object needs (a gizmo's framing
+     *   camera and box) and ANSWERS the rectangle the pass draws into. It is never handed the pass, so a layout
+     *   cannot write pass state outside the one rectangle it is about - the chain states that rectangle itself
+     *   (see PassChain::resize).
      */
-    using OverlayLayout = std::function<void(RenderPass& pass, int width, int height, double pixel_ratio)>;
+    using OverlayLayout = std::function<Viewport(int width, int height, double pixel_ratio)>;
 
     /** @brief Adds a HUD overlay: a pass registered under @p role, plus the content that lays itself out.
      *
@@ -401,9 +405,11 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      *   framing camera and box, a readout's digits), and how it is laid out. A THIRD overlay is therefore a call to
      *   this method, not a field on this class; the two the recipe builds are gizmo() and fpsOverlay().
      * - Ownership stays where it already is: whoever registers an overlay keeps its content alive (through
-     *   @p layout's capture and through the pass' before-draw hook), so this class holds a non-owning @p content.
-     * - @p layout runs from resize() with the surface size and the ratio; empty means the pass states its own
-     *   rectangle and nothing has to be re-laid-out.
+     *   @p layout's capture), so this class holds a non-owning @p content.
+     * - @p layout runs from resize() with the surface size and the ratio and ANSWERS the rectangle the pass draws
+     *   into; empty means the pass states its own rectangle and nothing has to be re-laid-out.
+     * - A @p content that implements FrameUpdate is updated once per frame by update() - that is how an overlay's
+     *   per-frame work happens (see FrameUpdate), not through a field of its declaration.
      *
      * @param role    Name the overlay's pass is registered under - also the key overlayPass/overlayContent look up
      *                (not enforced unique: the first match answers).
@@ -413,6 +419,20 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      * @return The registered pass, or null when the engine is gone or that pass was already registered.
      */
     raw_ptr<RenderPass> addOverlay(const String& role, raw_ptr<Object> content, const PassDesc& desc, OverlayLayout layout = {});
+
+    /** @brief Does the per-frame work of this chain's overlays, in registration order.
+     *
+     * @details
+     * - The overlays' CONTENT objects do their own work (see FrameUpdate): a gizmo mirrors its source camera, a
+     *   readout repaints its digits, and what they publish is what the next frame draws. The chain only says WHEN
+     *   (once, before the frame) and in what ORDER (the order the overlays were registered).
+     * - `SceneView::update()` forwards to this, and `SurfaceWindow::renderFrame` calls the view's update once per
+     *   frame before publishing and building the frame - so a host on the standard path writes nothing. A host
+     *   driving the engine from its own loop calls this (or the view's) before RenderEngine::frame().
+     * - A content object that does not implement FrameUpdate is skipped: an overlay may be static (a logo), and
+     *   "nothing to update" is not a defect to report.
+     */
+    void update();
 
     /** @brief Gets an overlay's pass (see addOverlay).
      *
@@ -615,9 +635,10 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
 
     /** @brief One HUD overlay: the role its pass is registered under, its content, and how it lays itself out. */
     struct Overlay {
-        String          role;
-        raw_ptr<Object> content{ nullptr };
-        OverlayLayout   layout;
+        String            role;
+        raw_ptr<Object>   content{ nullptr };
+        raw_ptr<FrameUpdate> update{ nullptr }; // the content as a per-frame updater, when it implements one
+        OverlayLayout     layout;
     };
 
     /** @brief Sets the extra scene this chain draws (see ChainDesc::transparent); the builder's call. */

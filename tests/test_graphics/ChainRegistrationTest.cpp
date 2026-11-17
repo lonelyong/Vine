@@ -165,13 +165,13 @@ TEST(ChainRegistrationTest, AHostRegistersAThirdOverlayWithoutTouchingTheChain)
         chain->addOverlay(String(u8"corner"),
                           corner.get(),
                           hud,
-                          [corner, &laid_out_width, &laid_out_height, &laid_out_ratio](RenderPass& pass, int width, int height, double ratio) {
+                          [corner, &laid_out_width, &laid_out_height, &laid_out_ratio](int width, int height, double ratio) {
                               laid_out_width  = width;
                               laid_out_height = height;
                               laid_out_ratio  = ratio;
                               corner->setPixelRatio(ratio);
                               corner->onSurfaceResized(width, height);
-                              pass.setViewport(corner->boxViewport());
+                              return corner->boxViewport();
                           });
     ASSERT_NE(hud_pass, nullptr) << "a host-owned overlay registers through the same entry the recipe uses";
     EXPECT_EQ(engine->passCount(), recipe_passes + 1) << "one more pass in the SAME table, under its own role";
@@ -186,11 +186,14 @@ TEST(ChainRegistrationTest, AHostRegistersAThirdOverlayWithoutTouchingTheChain)
     EXPECT_FALSE(chain->setOverlayVisible(String(u8"no_such_role"), true))
         << "a switch over a role nobody registered says so instead of silently doing nothing";
 
-    // resize() runs every overlay's own layout: the third one is laid out without being named in the chain.
+    // resize() runs every overlay's own layout: the third one is laid out without being named in the chain, and the
+    // rectangle the layout ANSWERS is what the pass draws into (the callback never sees the pass).
     chain->resize(800, 600, 2.0);
     EXPECT_EQ(laid_out_width, 800);
     EXPECT_EQ(laid_out_height, 600);
     EXPECT_DOUBLE_EQ(laid_out_ratio, 2.0);
+    EXPECT_EQ(hud_pass->viewport().width, corner->boxViewport().width) << "the layout's answer is the pass' rectangle";
+    EXPECT_EQ(hud_pass->viewport().height, corner->boxViewport().height) << "the layout's answer is the pass' rectangle";
 
     chain = nullptr;
     EXPECT_EQ(engine->passCount(), 0u) << "the host's overlay left with the same chain";

@@ -142,9 +142,9 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
     拾取 / 锚点 / fit 一律用 `frameResult().query`，不要用活相机或活场景。
 - `RenderPass` —— 相机 + 渲染目标 + 渲染状态 + 清屏/深度策略。**没有 renderTarget 的 pass 画进窗口**，
   order 决定先后。
-  - **扩展点只有一个：`describe(scene, out)`**（另加声明侧的 `before_draw` 钩子）。这一条 pass 要"发什么"
-    写在 `describe`（引擎编译这一帧时调它一次，填 target / viewport / 清屏 / 状态 / 绘制调用）、要"先做什么"
-    （写内容，比如 HUD 自更新）写在 `before_draw` 里。**`execute()` 不是扩展点**（2026-10-19 起它不再是
+  - **扩展点只有一个：`describe(scene, out)`**。这一条 pass 要"发什么"
+    写在 `describe`（引擎编译这一帧时调它一次，填 target / viewport / 清屏 / 状态 / 绘制调用）；要"先做什么"
+    （写内容，比如 HUD 自更新）是对象自己的 `FrameUpdate::update()`（链/宿主在帧之前调用，见 §3.6）。**`execute()` 不是扩展点**（2026-10-19 起它不再是
     `virtual`）：它是"宿主自己驱动一条 pass"（或测试）时的拼写，内部就是"描述 → 把只含这一条 pass 的帧值交给
     后端"（`singlePassFrame`），与引擎整帧交出去的是**同一个形状**。子类想改变画什么，覆写 `describe()`。
 - `ScreenPass` —— `RenderPass` 子类，全屏 / 画中画。**必须命名 program**（没有隐式着色，也没有
@@ -190,7 +190,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 2. **先编译这一帧**（`compileFrame`）：按声明算出"谁先谁后、每条 pass 声明的输入解析到什么、这一组声明有什么问题"，
    并**顺手产出这一帧的值**（`FrameDescription`：每条启用的 pass 的身份 / order / 解析后的输入 + 它自己描述出来的
    绘制），`RenderEngine::frameDescription()` 可以读它。**帧跑的是这个值**，不是"逐条 pass 再问一遍"。
-   编译期跑每条 pass 的 `before_draw` 钩子（HUD 自更新那类"先写内容"的活），再请它描述自己 ——
+   编译**只描述每条 pass**（HUD 自更新那类"先写内容"的活是对象自己的 `FrameUpdate::update()`，由链/宿主在帧之前跑完）——
    于是**内容收集**发生在编译里，`Scene::collectRenderCommands(camera)` 对 **(scene, camera, mask)** 只走一次树，
    结果被记忆下来并**跨帧复用**——只有图里真的改了东西才会重走（每个节点改动都通过
    `Node::announceContentChange()` 公告，规则见 §2.2；公告沿父链走到根，所以只作废**这个场景**的记忆体，
@@ -202,7 +202,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
    根本不在列表里；后端的保留节点则从根上摘下但不销毁，回来时直接复用 —— 离开多久都不会被回收
    （只有宿主自己放手才算删除，细节见 `vsg-backend.md` §5.5）。
    > **一条 pass 每帧只被描述一次**，而且**引擎不会调它的 `execute()`**：想让引擎跑自己的活，就把"发什么"
-   > 放进 `RenderPass::describe()`、把"先做什么"放进声明的 `before_draw` 钩子（见 §2.4 的 `RenderPass` 段）。
+   > 放进 `RenderPass::describe()`、把"先做什么"放进对象的 `FrameUpdate::update()`（见 §2.4 的 `RenderPass` 段与 §3.6）。
 3. 然后把这个值**整帧交给后端**（`RenderFrameExecutor::executeFrame(frame, present_to)`，`present_to` = 本区那把目标）：后端拿到的就是全部 —— 每条 pass 的身份、
    order、解析好的输入，以及它发出的 target / viewport / 清屏 / 状态与每一条绘制调用。**没有 per-call 的平坦入口、
    也没有"没开 scope 时设置是惰性"这套顺序规则**：值的形状就是帧的形状，宣告不出岔子。
@@ -544,12 +544,12 @@ auto gizmo = make_intrusive<AxisGizmo>();
 gizmo->setSourceCamera(camera.get());
 gizmo->onSurfaceResized(surface_w, surface_h);
 PassDesc hud;
-hud.name = u8"axis_gizmo"; hud.tag = u8"Hud"; hud.stage = PassStage::Overlay; hud.order = 10;
+hud.name = u8"axis_gizmo"; hud.stage = PassStage::Overlay; hud.order = 10;
 hud.camera = intrusive_ptr<Camera>(gizmo->camera());
 hud.content = intrusive_ptr<Scene>(gizmo->content());
 hud.viewport = gizmo->boxViewport(); hud.clear_enabled = false; hud.depth_mode = DepthMode::Disabled;
-hud.before_draw = [gizmo] { gizmo->update(); };   // 每帧镜像源相机朝向
-engine->applyPlan(vn::graphics::Plan{ { hud } });
+// 叠层自己更新（FrameUpdate）：注册给链，链在每帧之前调 gizmo->update() 镜像源相机朝向。
+chain->addOverlay(u8"gizmo", gizmo.get(), hud);
 ```
 
 **手动 vs builder 对照**
@@ -566,8 +566,8 @@ engine->applyPlan(vn::graphics::Plan{ { hud } });
 ### 3.6 例：HUD 叠加与"叠加场景"
 
 - **HUD**：`AxisGizmo` / `FpsOverlay` 是**内容对象**（自带 scene、取景相机与盒子），画它们的是一条 HUD 档的
-  pass 声明（`tag = "Hud"`、`stage = Overlay`、不洗屏、`depth_mode = Disabled`、`before_draw` 调对象的
-  `update()`）—— 配方自己就这么声明（`ChainDesc::gizmo` / `fps`）。句柄分两个：`PassChain::gizmo()` /
+  pass 声明（`stage = Overlay`、不洗屏、`depth_mode = Disabled`），而"每帧自己更新"是对象实现 `FrameUpdate`
+  ——配方自己就这么声明（`ChainDesc::gizmo` / `fps`）。句柄分两个：`PassChain::gizmo()` /
   `fpsOverlay()` 拿对象（摆位、尺寸、内容），`PassChain::gizmoPass()` / `fpsOverlayPass()` 拿 pass（可见性开关
   读的就是它的 `enabled`）；`resize()` 会顺带通知它们窗口尺寸并重述盒子。
 - **半透明叠加场景**：`builder.setTransparentContent(overlay_scene)`。forward 下它是在主 pass 之后、
@@ -978,20 +978,19 @@ frame table: 11 pass(es)
 ```cpp
 vn::graphics::PassDesc desc;
 desc.name          = u8"compose";              // 诊断与计划表里的名字
-desc.tag           = u8"Compositing";          // 给人看的标签（"这条 pass 是干什么的"）
 desc.stage         = PassStage::Transparent;    // 位置由意图决定：passStageOrder() 变成 order
 desc.kind          = PassKind::Screen;         // 怎么执行：Scene（画一个内容场景）/ Screen（全屏三角形 + program）
 desc.camera        = camera.get();
 desc.program       = vn::graphics::screenCopyProgram();
 desc.input_names   = { vn::String(u8"Composite") };   // 声明的输入（名字／ImageRef／target 三种写法与 RenderPass 相同）
 desc.output.name   = u8"Presented";
-desc.before_draw   = [&hud] { hud.update(); };  // 每帧跑一次的内容更新钩子（不需要钩子就留空）
 engine->applyPlan(vn::graphics::Plan{ { desc } });   // 注册 = 把声明交给计划（W9d 起唯一的路）
 ```
 
 - **位置**由 `stage` 决定；要精确插到某个数就用 `desc.order`（逃生口，见 `PassStage` 的刻度）。
-- **`before_draw`** 是"内容每帧自己更新"的唯一钩子（FPS 读数、镜像的坐标轴）：它写**内容**，所以在 pass 记录任何状态之前跑，
-  禁用的 pass 不跑。
+- **`FrameUpdate::update()`** 是"内容每帧自己更新"的唯一入口（FPS 读数、镜像的坐标轴）：它写**内容**，
+  由链/宿主在帧之前调一次（`SceneView::update`；`SurfaceWindow::renderFrame` 每帧已经这样做）。
+  跳过它，那一帧就画上一份发布——引擎不会替对象更新（BC-08）。
 - **transient 目标**：不写 `desc.target` 而是声明你需要哪张图、什么形状，帧的编译就替你分配、复用、并在没人再声明时释放：
 
 ```cpp
@@ -1007,7 +1006,7 @@ desc.target = vn::graphics::Target::transient(u8"gbuffer", shape);
   —— 它回答**此刻活着**的那一张；形状一变实例就被替换，所以跨 resize 留着的句柄是作废的，要重新问。
   这就是"机制在底层、组合在应用层"的分界：SDK 给声明、按身份取回、`RenderTarget::shareDepth`、
   `RenderPass` 的输入解析这些**机制**；像"composite 借 G-buffer 的深度"这种**组合**由你自己的配方搭
-  （在自己那口 `before_draw` 里把借用重述到当前实例，或干脆自己持有那些 target）。
+  （在自己的 `FrameUpdate::update()` 里把借用重述到当前实例，或干脆自己持有那些 target）。
 - **clear 三件套不写就跟随 kind**：`clear_enabled` / `clear_color` / `clear_depth` 都是 `optional` —— 不写时用那种 kind 自己的策略
   （`Screen` 是叠在已有内容上的全屏档，从不洗、也不洗深度；`Scene` 档洗，默认洗到 `51,51,51,255`）。要覆盖就在声明里写出来。
 - **MRT 每个附件自己的清屏色**：`clear_color` 只管 attachment 0；其余附件用 `clear_extra_colors`（按附件 1..N-1 的顺序），

@@ -168,6 +168,15 @@ void SceneView::applySurfaceGeometry()
     });
 }
 
+void SceneView::update()
+{
+    // The chain owns its overlays' per-frame work (see FrameUpdate / PassChain::update): the view only says which
+    // chain it adopted, exactly as it does for publishing.
+    if (pipeline_ != nullptr) {
+        pipeline_->update();
+    }
+}
+
 void SceneView::publishContent()
 {
     // THE VIEW'S OWN CONTENT FIRST, then what its chain contributes: after this call the next frame built by the engine

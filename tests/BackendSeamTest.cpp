@@ -518,8 +518,8 @@ TEST(CoreDeviceClockTest, TheWatermarkIsWhatEveryWindowProved)
 
 TEST(FrameGateTest, TheOwningThreadIsRefusedInsteadOfWaitingForItself)
 {
-    // A RE-ENTRY IS THE ONE CASE A MUTEX CANNOT ANSWER: a `before_draw` hook (or a diagnostic sink) driving another
-    // engine runs on the thread that already holds the gate, so waiting would be the caller waiting for itself. The
+    // A RE-ENTRY IS THE ONE CASE A MUTEX CANNOT ANSWER: a `FrameUpdate::update()` call (or a diagnostic sink)
+    // driving another engine runs on the thread that already holds the gate, so waiting would be the caller waiting for itself. The
     // gate answers an EMPTY lease at once, which the backend turns into one report and `Refused`.
     FrameGate gate;
 

@@ -314,33 +314,14 @@ void SessionShape::buildFrameValue()
     const int    device_width  = static_cast<int>(std::lround(static_cast<double>(frame_->width) * pixel_ratio));
     const int    device_height = static_cast<int>(std::lround(static_cast<double>(frame_->height) * pixel_ratio));
     // Rows and slots are one per index (see compileFrame): the row is the frame's answer about a pass, the slot
-    // is the declaration itself - and the hook the declaration carries belongs to the DECLARATION.
+    // is the declaration itself.
     //
-    // THE HOOKS RUN FIRST, ALL OF THEM: a hook WRITES content, and a hook that owns what it writes PUBLISHES it there
-    // (see AxisGizmo / FpsOverlay: update, then publish). Running every hook before any description is what makes that
-    // work - a hook of a later pass would otherwise publish after an earlier pass had already taken its publication,
-    // and the frame would draw two different moments. Their cost is the pass' share of the content half; the
-    // description below adds its own.
-    for (const std::uint32_t index : frame_order_) {
-        const PlanRow&    row  = plan_rows_[index];
-        RenderPass* const pass = row.pass;
-        if (pass == nullptr || !pass->isEnabled()) {
-            continue; // the scheduler never puts a pass that does not run into the order
-        }
-        const auto hook_started = std::chrono::steady_clock::now();
-        // Content that updates itself per frame (an FPS readout, a mirrored gizmo) does it through the hook its
-        // declaration carried, and it is what the pass is ABOUT TO describe: it writes content, so it happens
-        // here - before the passes are described - and in run order.
-        if (index < slots_.size() && slots_[index].pass != nullptr && slots_[index].pass->declaration().before_draw) {
-            slots_[index].pass->declaration().before_draw();
-        }
-        if (index < slots_.size()) {
-            slots_[index].record_micros =
-                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - hook_started).count());
-        }
-    }
+    // PER-FRAME CONTENT WORK BELONGS TO THE OBJECT THAT DOES IT (see FrameUpdate): an overlay that repaints itself,
+    // a gizmo that mirrors a camera, runs its own update() - the host/chain calls it before this frame is built
+    // (SceneView::update), and what it publishes is the value below describes. The frame itself only describes and
+    // expands, which is what `record_micros` measures.
 
-    // THEN THE DESCRIPTIONS, each bound to the publication that stands NOW. Nothing here publishes: publishing is the
+    // THE DESCRIPTIONS, each bound to the publication that stands NOW. Nothing here publishes: publishing is the
     // content writer's verb (`Scene::publish`), and the frame takes the value it finds - so a host controls the picture
     // by publishing, and a publication that lands after this frame was built cannot change what it draws.
     for (const std::uint32_t index : frame_order_) {

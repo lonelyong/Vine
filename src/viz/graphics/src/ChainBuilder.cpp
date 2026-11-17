@@ -83,8 +83,9 @@ bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
         gizmo->setThickness(options.gizmo.thickness);
 
         // The gizmo is CONTENT (its scene, its framing camera, its box); the pass that draws it is a
-        // declaration like every other one - which is why the name, the HUD placement and the per-frame work
-        // are stated here instead of being inherited from a pass subclass (see PassDesc).
+        // declaration like every other one - which is why the name and the HUD placement are stated here instead
+        // of being inherited from a pass subclass (see PassDesc). The per-frame work is the object's own
+        // (FrameUpdate: it mirrors the source camera when the chain updates its overlays).
         PassDesc desc;
         desc.name          = u8"axis_gizmo";
         desc.stage         = PassStage::Overlay;
@@ -95,16 +96,13 @@ bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
         // A HUD draws over the main content each frame: never clears, and no depth occlusion (always on top).
         desc.clear_enabled = false;
         desc.depth_mode    = DepthMode::Disabled;
-        // The one thing that must happen before it draws: mirror the source camera's orientation onto the
-        // framing one.
-        desc.before_draw   = [gizmo] { gizmo->update(); };
         // Registered through the same public entry a host uses (see PassChain::addOverlay): the recipe states the
         // overlay's CONTENT, the label its pass carries, and how it re-anchors itself - a third overlay is another
-        // call, not a change to PassChain.
-        pipeline.addOverlay(String(PassChain::kGizmoRole), gizmo.get(), desc, [gizmo](RenderPass& hud, int width, int height, double ratio) {
+        // call, not a change to PassChain. The layout ANSWERS the rectangle the pass draws into.
+        pipeline.addOverlay(String(PassChain::kGizmoRole), gizmo.get(), desc, [gizmo](int width, int height, double ratio) {
             gizmo->setPixelRatio(ratio);
             gizmo->onSurfaceResized(width, height);
-            hud.setViewport(gizmo->boxViewport());
+            return gizmo->boxViewport();
         });
     }
 
@@ -125,12 +123,11 @@ bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
         desc.viewport      = fps->boxViewport();
         desc.clear_enabled = false;
         desc.depth_mode    = DepthMode::Disabled;
-        // Measure the frame rate and repaint the digits (see FpsOverlay::update).
-        desc.before_draw   = [fps] { fps->update(); };
-        pipeline.addOverlay(String(PassChain::kStatsRole), fps.get(), desc, [fps](RenderPass& hud, int width, int height, double ratio) {
+        // The readout measures and repaints itself when the chain updates its overlays (FrameUpdate).
+        pipeline.addOverlay(String(PassChain::kStatsRole), fps.get(), desc, [fps](int width, int height, double ratio) {
             fps->setPixelRatio(ratio);
             fps->onSurfaceResized(width, height);
-            hud.setViewport(fps->boxViewport());
+            return fps->boxViewport();
         });
     }
     return true;

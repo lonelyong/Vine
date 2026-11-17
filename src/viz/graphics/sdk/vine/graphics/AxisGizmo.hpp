@@ -6,6 +6,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include "FrameUpdate.hpp"
 #include "Viewport.hpp"
 
 VN_GRAPHICS_NS_BEGIN
@@ -21,9 +22,9 @@ class Scene;
  *   +Z blue), the framing camera they are drawn with, and the BOX (a device-pixel rectangle in the
  *   bottom-left corner of the area it belongs to) they are projected into. It is deliberately NOT a
  *   pass: a pass is a DECLARATION now (see PassDesc), so whoever shows this gizmo declares one -
- *   `content` = this object's scene, `camera` = this object's camera, `viewport` = boxViewport(),
- *   `before_draw` = update(), which mirrors the source camera's orientation (MirrorMode::Orientation)
- *   onto the framing one and keeps its own framing distance.
+ *   `content` = this object's scene, `camera` = this object's camera, `viewport` = boxViewport() -
+ *   and registers this object with the chain as the overlay whose update() mirrors the source camera's
+ *   orientation (MirrorMode::Orientation) onto the framing one (see FrameUpdate).
  * - Surface layout is creator-managed: the object's owner reports the surface size on every resize
  *   (onSurfaceResized) and points it at the corner of the area it lays out in (setAreaOrigin). The
  *   chain does both for the standard case (PassChain::resize), and a view states the area origin
@@ -36,17 +37,15 @@ class Scene;
  * PassDesc hud;
  * hud.name            = u8"axis_gizmo";
  * hud.stage           = PassStage::Overlay;         // a HUD pass declared like any other
- * hud.stage           = PassStage::Overlay;
  * hud.camera          = intrusive_ptr<Camera>(gizmo->camera());
  * hud.content         = intrusive_ptr<Scene>(gizmo->content());
  * hud.viewport        = gizmo->boxViewport();
  * hud.clear_enabled   = false;
  * hud.depth_mode      = DepthMode::Disabled;
- * hud.before_draw     = [gizmo] { gizmo->update(); };
- * engine->applyPlan(vn::graphics::Plan{ { hud } });
+ * chain->addOverlay(u8"gizmo", gizmo.get(), hud);   // the chain updates it before each frame
  * \endcode
  */
-class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo> {
+class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo>, public FrameUpdate {
     VN_OBJECT_META_DECL;
 
   public:
@@ -150,11 +149,11 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo> {
     /** @brief Does the gizmo's per-frame work: mirror the source camera's orientation.
      *
      * @details
-     * - The one thing that must happen before the gizmo is drawn, and the reason the declaration that
-     *   shows it has a `before_draw` hook at all (PassDesc). It writes this object's framing camera
-     *   and touches no backend.
+     * - The one thing that must happen before the gizmo is drawn, and the reason it implements FrameUpdate: a
+     *   chain (or a host driving the engine) calls it once per frame before the frame is built. It writes this
+     *   object's framing camera and touches no backend.
      */
-    void update();
+    void update() override;
 
   private:
     /** @brief Applies the orientation mirror onto the framing camera. */

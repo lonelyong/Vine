@@ -170,13 +170,25 @@ bool PassChain::isStatsVisible() const noexcept
 raw_ptr<RenderPass> PassChain::addOverlay(const String& role, raw_ptr<Object> content, const PassDesc& desc, OverlayLayout layout)
 {
     // The registration and the value are one step: a pass registered under a role nobody recorded, or a value pointing
-    // at a pass nothing draws, are both states this method makes unreachable.
+    // at a pass nothing draws, are both states this method makes unreachable. The content is asked ONCE whether it
+    // updates itself per frame (FrameUpdate), so the per-frame walk is a pointer call, not a cast per frame.
     (void)addPass(desc, role);
-    overlays_.push_back(Overlay{ role, content, std::move(layout) });
+    overlays_.push_back(Overlay{ role, content, dynamic_cast<FrameUpdate*>(content), std::move(layout) });
     if (!apply()) {
         return nullptr; // the engine is gone, or the plan was refused (reported once)
     }
     return overlayPass(role);
+}
+
+void PassChain::update()
+{
+    // REGISTRATION ORDER, once per frame (see FrameUpdate): an overlay's own work happens before the frame that draws
+    // it, and what it publishes is the value that frame describes. A static overlay (no FrameUpdate) is skipped.
+    for (const Overlay& overlay : overlays_) {
+        if (overlay.update != nullptr) {
+            overlay.update->update();
+        }
+    }
 }
 
 raw_ptr<RenderPass> PassChain::overlayPass(const String& role) const noexcept
@@ -238,15 +250,22 @@ void PassChain::resize(int width, int height, double pixel_ratio)
     if (composite_target_ != nullptr) {
         composite_target_->setSize(device.width, device.height);
     }
-    // Each overlay lays ITSELF out (see addOverlay): the pipeline hands over the surface size, the ratio and the pass
-    // the overlay's role names, and the overlay restates its own content's box and the pass' rectangle. A third
-    // overlay therefore needs no change here.
+    // Each overlay lays ITSELF out (see addOverlay): the pipeline hands over the surface size and the ratio, and the
+    // overlay restates its own content's box and ANSWERS the rectangle its pass draws into - the chain states that
+    // rectangle, so a layout callback never writes pass state outside it. A third overlay therefore needs no change
+    // here.
     for (const Overlay& overlay : overlays_) {
         if (!overlay.layout) {
             continue;
         }
         if (raw_ptr<RenderPass> pass = overlayPass(overlay.role)) {
-            overlay.layout(*pass, width, height, ratio.value);
+            const Viewport box = overlay.layout(width, height, ratio.value);
+            if (box.isValid()) {
+                pass->setViewport(box);
+            }
+            else {
+                pass->clearViewport();
+            }
         }
     }
 }

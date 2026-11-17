@@ -127,7 +127,7 @@
   "帧在飞时改会话形状"**不可表达**（`R21`；`G12`）。
 - 边界：`PassId` 只在 Session 内部；差分按**名字**不按指针（`C7`）；临时目标的生命周期由计划声明。
   计划只表达 `PassKind` 能表达的形状（`Scene` / `Screen`）：子类 pass 不再是可注册的形状，自定义在**数据**里
-  （程序覆盖、视口、深度带、钩子）；kind 变更按内置节点重建。不建 `PassKind::Custom` 或工厂注册表（`G8`）。
+  （程序覆盖、视口、深度带）；kind 变更按内置节点重建。不建 `PassKind::Custom` 或工厂注册表（`G8`）。
 
 ### 2.9 派生是纯函数
 
@@ -219,7 +219,7 @@
   `PlanTest.ABusyEngineRefusesThePlanInsteadOfBlamingItsShape`。
 - **注意**（`P7`）：差分必须对**同名不同内容**也成立（改一个 pass 的 target 不是“删一个加一个”）。
   计划不命名的 pass 会被移除（整会话形态；作用域形态只做 upsert）——这是“计划即形状”的直接后果。
-  子类 pass 不再是可表达的形状：自定义在**数据**里（程序覆盖、视口、深度带、钩子），没有 custom-kind 注册表。
+  子类 pass 不再是可表达的形状：自定义在**数据**里（程序覆盖、视口、深度带），没有 custom-kind 注册表。
 ### 3.7 F7 预热入口
 
 - **行为**：`prepare()` 回答“这一帧需要哪些半片 / 描述符集 / 上传”，并**把它们全部建好**，不提交帧。
@@ -665,7 +665,7 @@
 **W9b（隐式发布）已落地 2026-11-13**：`RenderEngine` 不再发布任何场景。`Scene::publishedSnapshot()` 是帧默认取的
 那一份；`PublicationStore` 按 `(content, revision)` 一个源，所以在飞帧不会被新发布扰动；`bindSnapshot` 降为覆盖。
 宿主侧：`SceneView::publishContent()`（视图 + 链拥有的场景）、`PassChain::publishContent()`，`SurfaceWindow::renderFrame`
-每帧调用前者；overlay 的 `before_draw` 钩子在 `update()` 里自行发布。没发布的场景不画并报一次 `ContentSkipped`。
+每帧调用前者；overlay 的 `FrameUpdate::update()` 由链在帧之前调用（`SceneView::update`），它写的内容自己发布。没发布的场景不画并报一次 `ContentSkipped`。
 `PublicationStore::publish` / `hasExplicitSnapshot` 删除。
 **W9c（活指针门）已落地 2026-11-13**：灯的活指针通道删除——`DrawDescription::lights` 与 `FrameRecorder` 的对象形
 `setLights` 一并消失，`light_values` 是唯一通道（`MockBackend` / `OwnedFrame` / 像素测试都改读值）。`RenderCommand`

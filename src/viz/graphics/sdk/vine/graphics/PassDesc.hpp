@@ -162,10 +162,6 @@ struct VN_GRAPHICS_API PassDesc {
     /// Whether this pass runs at all (a disabled pass keeps its declaration, costs nothing, and still counts
     /// as a declaration for the wiring checks).
     bool enabled{ true };
-
-    /// Called once per frame, before this pass runs: content that changes per frame (an FPS readout, a
-    /// mirrored gizmo) updates itself here instead of owning an execution (see PassKind).
-    std::function<void()> before_draw;
 };
 
 VN_GRAPHICS_NS_END

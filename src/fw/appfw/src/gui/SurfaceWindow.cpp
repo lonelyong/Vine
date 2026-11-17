@@ -879,7 +879,11 @@ void SurfaceWindow::renderFrame()
     // immutable publications, and the frame that follows draws exactly those values (see SceneView::publishContent).
     // No wait and no bind is needed - a frame takes the publication that stood when it was BUILT, so one landing while
     // an earlier frame is being answered cannot change that frame's picture.
+    //
+    // THE OVERLAYS' OWN WORK RUNS FIRST (see FrameUpdate): a gizmo mirrors, a readout repaints, and what they publish
+    // is what this frame draws - so update, then publish, then build.
     if (vn::graphics::SceneView* const primary = view(); primary != nullptr) {
+        primary->update();
         primary->publishContent();
     }
 

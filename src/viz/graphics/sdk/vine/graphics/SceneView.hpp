@@ -93,6 +93,19 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
     void setScene(intrusive_ptr<Scene> scene);
 
     /**
+     * @brief Does the per-frame work of what this view adopted: its chain's overlays (see FrameUpdate).
+     *
+     * @details
+     * - THE PER-FRAME VERB BEFORE THE FRAME: an overlay (the axis gizmo, the FPS readout) updates its own content
+     *   here, and the publication it posts is what the next frame draws. Call it before `publishContent()` and
+     *   before the frame that should show the result.
+     * - `SurfaceWindow::renderFrame` already does this once per frame; a host driving the engine from its own loop
+     *   calls this (or `PassChain::update()` for a chain it drives directly) itself. Skipping it means the overlays
+     *   do not update that frame (BC-08) - nothing updates them behind the host's back.
+     */
+    void update();
+
+    /**
      * @brief Publishes the content this view draws: its scene, and the extra scene its chain owns.
      *
      * @details

@@ -15,6 +15,7 @@
 #include <vine/graphics/ChainPresets.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/FrameTable.hpp>
+#include <vine/graphics/FrameUpdate.hpp>
 #include <vine/graphics/Group.hpp>
 #include <vine/graphics/ImageRef.hpp>
 #include <vine/graphics/InputRouter.hpp>
@@ -4226,35 +4227,36 @@ TEST(RenderEngineTest, TheFrameTableCarriesWhatEachPassLastCost)
     // work on that pass took. A pass that did not run last frame reports none.
     //
     // WHERE THAT WORK IS: the frame runs from the value the compile built (see RenderEngine::buildFrameValue), so
-    // what a pass costs the frame is the hook + the inputs + the pass describing itself - collecting and culling
-    // its content - and NOT the wire announcements that follow (those are the backend's cost). A pass is slow by
-    // doing slow work in its HOOK, which is the per-frame work its shape can state (a custom describe() is not a
-    // shape the plan expresses - see PassDesc), and that is what this pins: the number still names the same thing it
-    // always did (this pass' share of the frame's record), it just measures it where the record now happens.
-
+    // what a pass costs the frame is the pass describing itself plus the frame expanding its view - collecting and
+    // culling its content - and NOT the wire announcements that follow (those are the backend's cost). A per-frame
+    // update an overlay does in its own object is not here either: it runs before the frame is built (see
+    // FrameUpdate), so this number stays "this pass' share of the frame's record" and nothing else.
+    //
+    // A pass is slow by drawing a lot of content, which is what this pins: a scene big enough that describing and
+    // expanding it is measurable, and a pass that did not run at all.
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     engine->setDevice(backend);
     ASSERT_TRUE(engine->initialize());
 
-    // The per-frame work a pass can state is its HOOK (PassDesc::before_draw): a pass whose shape says "do this before
-    // I describe myself" is slow because of what it stated, which is the shape the plan can express.
-    PassDesc slow_desc;
-    slow_desc.name        = u8"slow";
-    slow_desc.before_draw = [] { std::this_thread::sleep_for(std::chrono::milliseconds(2)); };
-    auto skipped          = intrusive_ptr<RenderPass>(new RenderPass());
+    // A scene, so the pass really has something to describe and collect - and enough of it that the measurement is
+    // above the microsecond clock's resolution.
+    auto scene = intrusive_ptr<Scene>(new Scene());
+    auto root  = setIdentityRoot(*scene);
+    for (int index = 0; index < 2000; ++index) {
+        root->addChild(makeTriangleNode(Vec3d(0.0, 0.0, -3.0), nullptr));
+    }
+    (void)scene->publish();
+    PassDesc busy_desc;
+    busy_desc.name    = u8"busy";
+    busy_desc.camera  = intrusive_ptr<Camera>(new Camera());
+    setupLookAtCamera(*busy_desc.camera);
+    busy_desc.content = scene;
+    auto skipped      = intrusive_ptr<RenderPass>(new RenderPass());
     skipped->setName(u8"skipped");
     skipped->setEnabled(false);
-    // A scene, so the pass really has something to describe (a pass with nothing to describe costs nothing even
-    // when it is slow at saying so - and that is not what this case is about).
-    auto scene = intrusive_ptr<Scene>(new Scene());
-    setIdentityRoot(*scene)->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
-    auto camera = intrusive_ptr<Camera>(new Camera());
-    setupLookAtCamera(*camera);
-    slow_desc.camera  = camera;
-    slow_desc.content = scene;
 
-    vn::test::registerPassForTest(*engine, slow_desc);
+    vn::test::registerPassForTest(*engine, busy_desc);
     vn::test::registerPassForTest(*engine, skipped, 10);
 
     const FrameTable before = engine->frameTable();
@@ -4265,7 +4267,7 @@ TEST(RenderEngineTest, TheFrameTableCarriesWhatEachPassLastCost)
 
     const FrameTable after = engine->frameTable();
     ASSERT_EQ(after.passes.size(), 2u);
-    EXPECT_GE(after.passes[0].record_micros, 1000u) << "the slow pass really did take about 2 ms";
+    EXPECT_GT(after.passes[0].record_micros, 0u) << "describing and expanding a 2000-node scene is measurable work";
     EXPECT_EQ(after.passes[1].record_micros, 0u) << "a pass that did not run has no cost this frame";
 }
 
@@ -7792,9 +7794,9 @@ TEST(PassChainTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
  * @brief The HUD overlays are DECLARATIONS too: what SHOWS them is a pass, what they ARE is content.
  *
  * The axis gizmo and the frame-rate readout used to be RenderPass subclasses whose execute() drew their own scene
- * and ignored the one the engine handed them. They are the two motivating users of PassDesc::before_draw, so this
- * pins the whole shape: the pass carries the overlay's own camera and content, the HUD stage's order
- * and no clear; the per-frame work is the declaration's hook, and it runs when the FRAME runs.
+ * and ignored the one the engine handed them. They are the two implementations of FrameUpdate, so this pins the
+ * whole shape: the pass carries the overlay's own camera and content, the HUD stage's order and no clear; the
+ * per-frame work is the object's own update(), and the CHAIN runs it before the frame.
  */
 TEST(PassChainTest, TheHudOverlaysAreDeclarationsToo)
 {
@@ -7852,9 +7854,10 @@ TEST(PassChainTest, TheHudOverlaysAreDeclarationsToo)
     EXPECT_EQ(readout_row->content, readout->content());
     EXPECT_EQ(gizmo_pass->depthMode(), DepthMode::Disabled) << "a HUD is always on top";
 
-    // And the per-frame hook is LIVE: the mirror happens because the FRAME runs (PassDesc::before_draw), not
-    // because somebody remembered to call update().
+    // And the per-frame work is LIVE: the mirror happens because the CHAIN updates its overlays before the frame
+    // (FrameUpdate / PassChain::update), which is what SurfaceWindow::renderFrame does once per frame.
     cam->lookAt(vn::math::Vec3d(2.0, 3.0, 6.0), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
+    pipeline->update();
     engine->frame();
 
     const Vec3d source_forward = (cam->target() - cam->eye()).normalized();
@@ -7862,6 +7865,49 @@ TEST(PassChainTest, TheHudOverlaysAreDeclarationsToo)
     EXPECT_NEAR(shown_forward.x, source_forward.x, 1.0e-6);
     EXPECT_NEAR(shown_forward.y, source_forward.y, 1.0e-6);
     EXPECT_NEAR(shown_forward.z, source_forward.z, 1.0e-6);
+}
+
+/**
+ * @brief An overlay's per-frame work runs when the CHAIN updates, and never inside a frame (BC-08).
+ *
+ * The update used to be a `std::function` inside the pass' declaration and the frame ran it (PassDesc::before_draw);
+ * now the object owns it (FrameUpdate) and the chain calls it once per update() - so a host that skips the call gets
+ * a frame drawing the state it already had, which is the behaviour change BC-08 approved.
+ */
+TEST(PassChainTest, AnOverlaysUpdateRunsWhenTheChainUpdatesAndNeverInsideAFrame)
+{
+    class CountingOverlay : public vn::Object, public vn::RefCounted<CountingOverlay>, public FrameUpdate {
+      public:
+        void update() override
+        {
+            ++updates;
+        }
+
+        int updates = 0;
+    };
+
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto backend = intrusive_ptr<MockBackend>(new MockBackend());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto chain   = intrusive_ptr<PassChain>(new PassChain(engine->passes(), engine->diagnostics()));
+    auto overlay = vn::make_intrusive<CountingOverlay>();
+    PassDesc hud;
+    hud.name          = u8"counted_overlay";
+    hud.stage         = PassStage::Overlay;
+    hud.kind          = PassKind::Scene;
+    hud.clear_enabled = false;
+    ASSERT_NE(chain->addOverlay(String(u8"counted"), overlay.get(), hud), nullptr);
+
+    chain->update();
+    EXPECT_EQ(overlay->updates, 1) << "the chain runs its overlays' own per-frame work";
+
+    engine->frame();
+    EXPECT_EQ(overlay->updates, 1) << "a frame does not run an object's per-frame work (BC-08)";
+
+    chain->update();
+    EXPECT_EQ(overlay->updates, 2) << "one call, one update - the host decides when";
 }
 
 TEST(PassChainTest, ForwardPresetWithTransparentContentStacksDepthOnPass)
@@ -11977,28 +12023,16 @@ TEST(RenderEngineTest, OneCameraCullsWithItsOwnShapeInEveryRectangle)
 }
 
 /**
- * @brief The frame's value is built from the state the frame is ABOUT to draw, per-frame hooks included.
- *
- * A pass that updates its own content every frame does it through the hook its declaration carries
- * (PassDesc::before_draw - the FPS readout, the mirrored gizmo), and the compile runs it before it asks the pass
- * to describe itself: the value must carry the CONTENT OF THIS FRAME, not the previous one's. That is the
- * ordering a host cannot see on the wire (both orders announce the same calls, one frame apart), which is why it
- * is pinned here: the value is rebuilt from scratch every frame (the engine's own value is per frame), so "the
- * compile describes after the hook" is the only thing keeping a readout from being a frame behind.
- */
-/**
- * @brief A frame answers ONE state: what a hook wrote is visible to every pass of that frame, not only the later ones.
+ * @brief A frame answers ONE state: every pass of it reads the publication that stood when it was built.
  *
  * @details
- * - The expansion happens after EVERY pass has been described (see RenderEngine::expandFrameValue), and a mirrored
- *   frame drains once per frame - so a frame's draws all read one mirror state (design N16). That is the rule the
- *   direct and the mirrored mode share now: a `before_draw` hook that writes content is a statement about the frame it
- *   ran in, not about the passes that happen to be described after it.
+ * - A publication is taken once per frame (see RenderEngine::buildFrameValue), so two passes drawing one scene draw
+ *   the same content: a write and its publish that land BEFORE the frame are seen by both, and a write that lands
+ *   while the frame is answered changes neither (that half is pinned by ValueChannelTest's frame-in-flight case).
  * - Pinned because the two orders produce the same wire (both draw a triangle), one of them at a position the frame
- *   never agreed on: a mirrored pass that reads a movE made by a LATER pass' hook is what "one state" buys, and a
- *   regression to per-pass expansion shows up here as the first pass drawing the triangle where it used to be.
+ *   never agreed on: a pass reading a move another pass made would be two states in one frame.
  */
-TEST(RenderEngineTest, AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote)
+TEST(RenderEngineTest, AFrameAnswersOneStateSoEveryPassSeesTheSamePublication)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -12024,22 +12058,16 @@ TEST(RenderEngineTest, AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote)
     first.content = scene;
     ASSERT_NE(vn::test::applyPassForTest(*engine, first), nullptr);
 
-    bool moved = false;
     PassDesc second;
     second.name    = u8"second";
     second.camera  = camera_b;
     second.content = scene;
-    second.before_draw = [&] {
-        if (!moved) {
-            moved = true;
-            // The SECOND pass' hook writes content the FIRST pass has already been described against - and PUBLISHES it
-            // (a hook that writes content posts it: the frame takes the scene's latest publication, see
-            // Scene::publish), which is what makes the write this frame's state rather than the next one's.
-            node->setMatrix(vn::math::translate(Vec3d(1.5, 0, -3)));
-            (void)scene->publish();
-        }
-    };
     ASSERT_NE(vn::test::applyPassForTest(*engine, second), nullptr);
+
+    // The write and its publication land BEFORE the frame is built: both passes must draw it (the frame takes the
+    // publication that stood when it was built - see Scene::publish).
+    node->setMatrix(vn::math::translate(Vec3d(1.5, 0, -3)));
+    (void)scene->publish();
 
     engine->frame();
 
@@ -12054,11 +12082,18 @@ TEST(RenderEngineTest, AFrameAnswersOneStateSoEveryPassSeesWhatAnyHookWrote)
 
     const Point3d from_first = (*frame.passes[0].draw->draws[0].commands)[0].model_matrix * Point3d(0, 0, 0);
     const Point3d from_second = (*frame.passes[1].draw->draws[0].commands)[0].model_matrix * Point3d(0, 0, 0);
-    EXPECT_NEAR(from_first.x, 1.5, 1e-9) << "the first pass answered after the whole frame was described";
+    EXPECT_NEAR(from_first.x, 1.5, 1e-9) << "the first pass answered the publication that stood when the frame was built";
     EXPECT_NEAR(from_second.x, 1.5, 1e-9);
 }
 
-TEST(RenderEngineTest, TheFramesValueIsBuiltAfterThePerFrameHooks)
+/**
+ * @brief A frame is rebuilt from the publication that stood when it was built, never edited in place.
+ *
+ * @details
+ * - The value is per frame (see RenderEngine::buildFrameValue): frame N+1 describes the content as it stands after
+ *   the host published, so content that changed between frames is drawn as it is now, not as the frame before saw it.
+ */
+TEST(RenderEngineTest, AFrameIsRebuiltFromThePublicationThatStood)
 {
     auto backend = intrusive_ptr<MockBackend>(new MockBackend());
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
@@ -12070,42 +12105,27 @@ TEST(RenderEngineTest, TheFramesValueIsBuiltAfterThePerFrameHooks)
     root->addChild(makeTriangleNode(Vec3d(0, 0, -3), nullptr, u8"tri"));
     auto camera = intrusive_ptr<Camera>(new Camera());
     setupLookAtCamera(*camera);
-    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
-    pass->setName(u8"hud");
-    pass->setCamera(camera);
-
-    int      hook_runs        = 0;
-    bool     content_replaced = false;
+    (void)scene->publish();
     PassDesc desc;
-    desc.name        = u8"hud";
-    desc.camera      = camera;
-    desc.content     = scene;
-    desc.before_draw = [&] {
-        ++hook_runs;
-        if (!content_replaced) {
-            // Once, the way an overlay rewrites what it shows: the frame's value has to describe the version the
-            // hook left behind, so the hook PUBLISHES it (see Scene::publish - a hook that writes content posts it).
-            content_replaced = true;
-            root->addChild(makeTriangleNode(Vec3d(0, 0, -6), nullptr, u8"readout"));
-            (void)scene->publish();
-        }
-    };
+    desc.name    = u8"hud";
+    desc.camera  = camera;
+    desc.content = scene;
     ASSERT_NE(vn::test::applyPassForTest(*engine, desc), nullptr);
 
     engine->frame();
-    EXPECT_EQ(hook_runs, 1) << "the hook runs once per frame, exactly where the frame used to run it";
     const FrameDescription& first = engine->frameDescription();
     ASSERT_EQ(first.passes.size(), 1u);
     ASSERT_TRUE(first.passes[0].draw.has_value());
     ASSERT_EQ(first.passes[0].draw->draws.size(), 1u);
-    EXPECT_EQ(first.passes[0].draw->draws[0].commands->size(), 2u) << "the value carries what the pass draws after the hook ran this frame, not before";
+    EXPECT_EQ(first.passes[0].draw->draws[0].commands->size(), 1u);
 
-    // A frame where the hook changes nothing describes the same content: the value is rebuilt per frame, never
-    // edited in place.
+    // The content changes between frames and the host publishes it: the next frame draws what stands now.
+    root->addChild(makeTriangleNode(Vec3d(0, 0, -6), nullptr, u8"readout"));
+    (void)scene->publish();
     engine->frame();
-    EXPECT_EQ(hook_runs, 2);
     ASSERT_TRUE(engine->frameDescription().passes[0].draw.has_value());
-    EXPECT_EQ(engine->frameDescription().passes[0].draw->draws[0].commands->size(), 2u);
+    EXPECT_EQ(engine->frameDescription().passes[0].draw->draws[0].commands->size(), 2u)
+        << "the value is rebuilt per frame, never edited in place";
 }
 
 /**
@@ -12232,7 +12252,7 @@ TEST(RenderEngineTest, TheFrameValueIsEveryPassAndEveryDrawTheFrameRan)
  * THE CONTRACT OF A VALUE-DRIVEN FRAME, named. The compile describes every enabled pass once
  * (RenderEngine::buildFrameValue), the run announces what came out, and the backend sees exactly ONE frame per call -
  * `RenderPass::execute` is no longer virtual, so a pass cannot offer a second drawing path the compile would not
- * see; a subclass customises describe() (and PassDesc::before_draw for work that must happen first). Pinned here
+ * see; a subclass customises describe(). Pinned here
  * because the other half of it - "described once" - is what keeps the content walk memo honest (one walk per view
  * per frame, see PassesSharingSceneAndCameraCollectOncePerCameraPerFrame).
  */
@@ -12660,8 +12680,6 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     auto scene  = intrusive_ptr<Scene>(new Scene());
     auto target = RenderTargetPtr(new RenderTarget());
 
-    int      enabled_calls  = 0;
-    int      disabled_calls = 0;
     PassDesc desc;
     desc.name          = u8"declared_pass";
     desc.stage         = PassStage::Shading;
@@ -12671,11 +12689,9 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     desc.target        = vn::graphics::Target::explicitTarget(target);
     desc.output.name   = u8"SceneColor";
     desc.clear_enabled = true;
-    desc.before_draw   = [&enabled_calls] { ++enabled_calls; };
     vn::test::registerPassForTest(*engine, desc);
 
     engine->frame();
-    EXPECT_EQ(enabled_calls, 1) << "the hook the declaration carried runs before the pass does";
 
     const FrameTable plan = engine->frameTable();
     ASSERT_EQ(plan.passes.size(), 1u);
@@ -12685,21 +12701,19 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     EXPECT_TRUE(plan.passes[0].clears);
     EXPECT_EQ(engine->resolve(u8"SceneColor"), target.get()) << "and it published the name it declared";
 
-    // A DISABLED declaration keeps its row and costs nothing - the hook included.
+    // A DISABLED declaration keeps its row and costs nothing.
     PassDesc disabled;
-    disabled.name        = u8"declared_pass_disabled";
-    disabled.kind        = PassKind::Scene;
-    disabled.camera      = camera;
-    disabled.content     = scene;
-    disabled.enabled     = false;
-    disabled.before_draw = [&disabled_calls] { ++disabled_calls; };
+    disabled.name    = u8"declared_pass_disabled";
+    disabled.kind    = PassKind::Scene;
+    disabled.camera  = camera;
+    disabled.content = scene;
+    disabled.enabled = false;
     vn::test::registerPassForTest(*engine, disabled);
     engine->frame();
-    EXPECT_EQ(disabled_calls, 0) << "a pass that does not run does not update its content either";
-    EXPECT_EQ(enabled_calls, 2) << "while the one that runs keeps updating its own";
     const FrameTable with_disabled = engine->frameTable();
     ASSERT_EQ(with_disabled.passes.size(), 2u);
     EXPECT_FALSE(with_disabled.passes[1].enabled);
+    EXPECT_EQ(with_disabled.passes[1].record_micros, 0u) << "a pass that does not run has no cost";
 }
 
 /**

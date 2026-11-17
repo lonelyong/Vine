@@ -113,7 +113,7 @@
   批内发布答 `InsideBatch`，批外第一次发布把整批作为**一次**发布落地。
 - **为什么**：批不是事务（没有回滚），它只界定"一帧能看见什么"（P4）；把发布做成一次交换，才让"在飞帧读旧值"
   不需要任何寿命协商。
-- **边界**：`before_draw` 钩子在内容半段跑，它写的内容在下一次发布里可见；同一个帧的所有 pass 看到**同一份**发布
+- **边界**：overlay 自己的 `update()`（`FrameUpdate`，由宿主/链在帧之前调用）写的内容在下一次发布里可见；同一个帧的所有 pass 看到**同一份**发布
   （N16），因为绑定发生在帧首而不是每个 pass 里。
 
 ### 2.6 表面归内容侧（UI），交换链归引擎侧
@@ -181,7 +181,7 @@
 | `RenderArea`（面积） | 引擎（`createArea` 给的 share） | 引擎线程 | — |
 | `WindowPresentTarget` + 交换链 | 引擎（设备造，`createSurfaceTarget`） | 引擎线程 | — |
 | `RenderDevice` / 会话 / 帧值 / 退休队列 | 引擎 | 引擎线程 | — |
-| 帧的**内容半段**：帧号、`compileFrame`、`before_draw` 钩子、发布（每帧每场景一次）、`describe` | 内容线程 | 内容线程 | 帧值交出去 |
+| 帧的**内容半段**：帧号、`compileFrame`、发布（每帧每场景一次）、`describe`（overlay 的 `FrameUpdate::update()` 在帧之前、由宿主/链调用） | 内容线程 | 内容线程 | 帧值交出去 |
 | 帧的**引擎半段**：表面事件、`expandFrame`（展开已绑定的视图）、`executeFrame`、present | 引擎线程 | 引擎线程 | — |
 
 - **一帧两个半段，每侧一帧在飞**（已落地）：内容线程构建帧 N+1 时，引擎线程正在跑帧 N，**所以画面比内容晚一帧**
@@ -216,7 +216,7 @@
 
 ### 2.13 发布是内容写者的动词，绑定是覆盖
 
-- **是什么**：写内容的一方（宿主、`SceneView::publishContent`、`before_draw` 钩子）调用 `Scene::publish()`；
+- **是什么**：写内容的一方（宿主、`SceneView::publishContent`、overlay 的 `FrameUpdate::update()`）调用 `Scene::publish()`；
   帧在 build 时取 `Scene::publishedSnapshot()`（绑定过则取绑定值）。`RenderEngine::bindSnapshot(scene, ref)` 是
   **覆盖**：宿主想画更旧或另一份时用它，一直有效到下一次绑定（空句柄 = 画空）。
 - **为什么**：发布是内容侧的动词、绑定是引擎侧的动词（`G2`）；把"帧画哪一份"做成帧开始那一刻取的值，宿主才能说
@@ -262,8 +262,8 @@
   展开值，帧值跨线程时不装任何活内容（`G2`）；`Scene` 也不再是 `DrawListSource`（`G12`：作者树不是帧的来源）。
 - **边界**：拆的是对象，不是线程。`FrameRunner` 仍只把引擎半段的展开递给引擎线程；`bindSnapshot` 仍必须发生在
   帧与帧之间（`PublicationStore` 的类注释钉住这条不变量），所以"发布创建"进握手之前不允许帧重叠。
-- **发布粒度**：`buildFrameValue` 先跑完本帧所有 `before_draw`，再按"每帧每场景一次"发布，最后才 describe。同一
-  场景 N 个 pass 因此只发布一次；而"先发布、再跑后面的钩子"会把后面钩子写的内容漏出本帧，所以钩子必须全部先跑完
+- **发布粒度**：宿主/链在帧**之前**跑完 overlay 的 `update()`（`FrameUpdate`），`buildFrameValue` 只按"每帧每场景一次"取发布、再 describe。同一
+  场景 N 个 pass 因此只发布一次；而"先描述、后发布"会让一帧里出现两个时刻，所以更新与发布必须在帧之前完成
   （N16 的"所有 pass 看到同一份"由此成立）。
 - **没发布的场景**：帧不替它发布，也不读它的活内容——draw 拿不到源，展开时什么也不收集（后端记录空），
   这是"你没有交出图"的诚实答案。
@@ -337,8 +337,8 @@
 
 ### 3.1.2 F8 每帧
 
-- **行为**：宿主先 `publish()`（`SceneView::publishContent` 把视图与链拥有的场景都发一遍）；内容半段
-  （`RenderEngine::buildContentHalf`）按 run order 跑每个声明的 `before_draw`（钩子写的内容由钩子自己发布），
+- **行为**：宿主先 `update()`（`SceneView::update` 让链的 overlay 各自更新，`FrameUpdate`）再 `publish()`（`SceneView::publishContent` 把视图与链拥有的场景都发一遍）；内容半段
+  （`RenderEngine::buildContentHalf`）只按 run order 描述每个 pass，
   把 pass 描述成 `FrameDescription` 并把每个 scene draw 绑定到帧开始那一刻的发布；引擎半段（`runEngineHalf`）
   展开命令、交给 executor 执行并呈现。
 - **约束**（C16）：两个半段各归一条线程；一条引擎线程碰设备。
@@ -490,11 +490,11 @@
 - 怎么判：T20（`graphics-frame-pipeline.md`）。
 - 怎么防：查询吃 `presentedCamera()`（N17）。
 
-### 6.6 P6 在 `before_draw` 里请求帧
+### 6.6 P6 在 `FrameUpdate::update()` 里请求帧
 
-- 会怎么错：内容半段在一个帧的构建里再要一帧，重入编译。
+- 会怎么错：帧之前的那次更新再要一帧，重入编译。
 - 怎么判：帧号不连续 / 崩溃。
-- 怎么防：钩子只写内容，不驱动引擎（F8）。
+- 怎么防：update 只写内容，不驱动引擎（F8）。
 
 ### 6.7 P7 把并行放进引擎半段
 
