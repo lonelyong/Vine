@@ -1,20 +1,23 @@
-# geom-planar 待办
+# geom-planar backlog
 
-> **状态**：开放项
-> **范围**：`src/base/geom/sdk/vine/geom/planar` 的后续类型与查询。现行设计见 `../design/geometry-planar.md`。
+> **Status**: open items
+> **Scope**: the follow-up types and queries of `src/base/geom/sdk/vine/geom/planar`. Current design:
+> `../design/geometry-planar.md`.
 
-## 1. 现在可做（无触发条件）
+## 1. Actionable Now (No Trigger)
 
-空。
+Empty.
 
-## 2. 触发条件型
+## 2. Trigger-gated
 
-| # | 项 | 内容 | 触发条件 | 出处 |
+| # | Item | What | Trigger | Source |
 |---|---|---|---|---|
-| P3 | 非圆基曲线的片段紧盒 | `TrimmedCurve` 擦除了基曲线，问不出支撑函数；今天只有 `CircleCurve::bounds(first, last)` 能答紧盒 | 出现按片段裁剪 / 拾取、且松盒不可接受的消费者 | `../design/geometry-planar.md` 2.10、9.2 |
+| P3 | The tight box of a segment over a non-circular base curve | `TrimmedCurve` erases the base curve, so there is no support function to ask; today only `CircleCurve::bounds(first, last)` can answer a tight box | a consumer that trims or picks per segment and cannot accept a loose box | `../design/geometry-planar.md` 2.10, 9.2 |
 
-## 判据提醒
+## Criterion reminders
 
-- 每项的触发条件都必须是一个**可观察的事实**（某个消费者、某个调用点），不是“以后可能有用”（`G8`）。
-- 平面类型是值类型，任何新能力都要先回答“为什么不能是自由函数”（`G7`、`G12`）。
-- 新增类型时同步回答：`isValid()` 的判据是什么、退化状态答什么、`derivative` 的量纲是什么，三条缺一不可。
+- Every item's trigger must be an **observable fact** (a consumer, a call site), not "it might be useful later" (`G8`).
+- The planar types are value types, so any new capability first answers "why can it not be a free function" (`G7`,
+  `G12`).
+- A new type answers three questions at the same time - what the criterion of `isValid()` is, what a degenerate state
+  answers, and what the dimension of `derivative` is - all three, none optional.

@@ -1,19 +1,19 @@
-# appfw Ribbon 待办
+# appfw Ribbon backlog
 
-> 只列开放项；没有触发条件就不做。关闭项直接删除。
+> Open items only; without a trigger condition it is not done. Closed items are deleted.
 
-## 1. 现在可做（无触发条件）
+## 1. Actionable Now (No Trigger)
 
-（无）
+(none)
 
-## 2. 触发条件型
+## 2. Trigger-gated
 
-| # | 项 | 内容 | 触发条件 | 出处 |
+| # | Item | What | Trigger | Source |
 |---|---|---|---|---|
-| T1 | 显式 `order` / 并列排序 | 同一锚点上按业务顺序而不是注册序排列 | 两个插件都锚定同一位置，且需要稳定的业务次序（不是加载序） | `../design/appfw-ribbon.md` §9.2 |
-| T2 | item id 与无命令控件 | `RibbonButton`/`RibbonAction` 的显式 id、`addControl` 的 id | 用户自定义布局落地，或同一个组里出现两个无命令控件需要区分 | `../design/appfw-ribbon.md` F6 |
-| T3 | 用户自定义布局持久化 | 按 id 隐藏/移动 tab/group/item 并保存 | 产品要求“用户可自定义功能区” | `../design/appfw-ribbon.md` F7 |
-| T4 | 上下文 tab | 按条件显示/隐藏 tab | 出现“选中某类对象才显示”的真实功能 | `../design/appfw-ribbon.md` F8 |
-| T5 | 声明式贡献（manifest） | 插件在清单里声明 tab/group，宿主解析 | 出现进程外/第三方二进制之外的插件分发方式 | `../design/appfw-ribbon.md` D5 |
-| T6 | group 级 role | 组也能按语义锚定 | 标准 tab 内出现多个可扩展的语义组，且 id 不足以表达 | `../design/appfw-ribbon.md` §2.7 |
-| T8 | 最近文件 / MRU | Backstage 的“最近”页与文件入口 | 产品要求最近打开列表，且已有持久化位置 | `../design/appfw-backstage.md` F8 |
+| T1 | Explicit `order` / side-by-side ordering | ordering on one anchor by business order instead of registration order | two plugins anchor at the same place and need a stable business order (not the load order) | `../design/appfw-ribbon.md` §9.2 |
+| T2 | item id and command-less controls | explicit ids on `RibbonButton`/`RibbonAction`, ids on `addControl` | user-defined layouts land, or one group holds two command-less controls that must be told apart | `../design/appfw-ribbon.md` F6 |
+| T3 | Persisting a user-defined layout | hiding/moving a tab/group/item by id and saving it | the product asks for a "user-customisable ribbon" | `../design/appfw-ribbon.md` F7 |
+| T4 | Contextual tabs | showing/hiding a tab by a condition | a real feature appears that shows only for a selected kind of object | `../design/appfw-ribbon.md` F8 |
+| T5 | Declarative contribution (a manifest) | a plugin declares tab/group in a manifest and the host parses it | a plugin distribution route appears beyond out-of-process/third-party binaries | `../design/appfw-ribbon.md` D5 |
+| T6 | group-level role | a group can be anchored semantically too | a standard tab holds several extensible semantic groups and the id cannot express them | `../design/appfw-ribbon.md` §2.7 |
+| T8 | Recent files / MRU | the Backstage "Recent" page and the file entry | the product asks for a recently-opened list and a persistence location already exists | `../design/appfw-backstage.md` F8 |
