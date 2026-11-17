@@ -434,6 +434,23 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      */
     void update();
 
+    /** @brief Restates ONE of this chain's declarations (the explicit diff a live edit is).
+     *
+     * @details
+     * - The ONLY way a pass this chain registered changes: read the declaration it IS
+     *   (`PassDesc d = pass->declaration();`), change the fields the edit is about, hand it back. The chain applies its
+     *   whole shape again, so the engine validates the diff as one plan and the node keeps its identity (and every
+     *   backend state keyed by it).
+     * - A name this chain did not state answers false and changes nothing: a host that owns its own rows edits them
+     *   with `RenderEngine::applyPlan` (the scoped form) instead.
+     * - The chain uses it for its own live switches (overlay visibility, shading mode, overlay layout), which is why a
+     *   host and the chain change a pass the same way (see E-04).
+     *
+     * @param desc The declaration to state (its name is the row it replaces).
+     * @return true when the shape was applied; false when the row is not this chain's or the plan was refused.
+     */
+    bool restate(const PassDesc& desc);
+
     /** @brief Gets an overlay's pass (see addOverlay).
      *
      * @param role Role the overlay was registered under.
@@ -488,7 +505,8 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
 
     /** @brief Gets the pass that draws the axis gizmo (see gizmo()).
      *
-     * @return The HUD pass (its state is the gizmo's visible/hidden - RenderPass::setEnabled), or null when no
+     * @return The HUD pass (its declaration's enabled flag is the gizmo's visible/hidden - see
+     *         setOverlayVisible), or null when no
      *         gizmo was configured.
      */
     raw_ptr<RenderPass> gizmoPass() const;
@@ -618,8 +636,8 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      * @details
      * - THE CHAIN'S COMMIT VERB: `addPass` only collects declarations (a recipe names its passes and their boards, and
      *   some of those boards read names another pass of the same chain publishes - so the plan is validated as a
-     *   whole). This applies it once, refreshing every row from the node it became (resize / visibility / shading mode
-     *   are declaration setters, and a re-apply must not undo them).
+     *   whole). This applies the pending shape once; every live edit is a `restate()` of one declaration, so there is
+     *   nothing to refresh from the nodes (see E-04).
      * - Idempotent: applying twice is the same shape.
      *
      * @return true when the plan was applied; false when the engine is gone or the plan was refused (the reason is
@@ -679,9 +697,6 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     bool                scope_owned_{ true };
     /// The declarations this chain states (one per entry, same order): what `apply()` hands over.
     Plan                pending_;
-    /// How many of them this chain has already committed: those are refreshed from their nodes on a re-apply (a
-    /// resize / visibility / shading-mode edit), while a first-time declaration IS the new shape.
-    std::size_t         applied_{ 0 };
     /// The pass that presents the picture, by name (resolved by apply(): a plan identifies a pass by name).
     String              window_name_;
 

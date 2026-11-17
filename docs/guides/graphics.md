@@ -347,9 +347,9 @@ geometry->setRevision(geometry->revision() + 1);        // 公告：重建数据
 
 ### 3.3 例：纯手动 2 pass —— 离屏渲染 + 全屏合成到窗口
 
-> **注册拼写（W9d，2026-11-13）**：本节的 `RenderPass` 结点配置展示的是“一条 pass 有哪些事实”；注册它
-> **不再**用 `addPass`。把同样的字段填进 `PassDesc`，然后一次 `engine->applyPlan(vn::graphics::Plan{ { desc } })`
-> 即可（`PassDesc` 的字段与下面的 setter 一一对应，见 §3.13）。
+> **注册拼写（W9d，2026-11-13）**：一条 pass 的**唯一作者形状**是 `PassDesc` 值——`RenderPass` 结点是只读的
+> （`declaration()` / `name()` 与各项读取器），没有 setter。把字段填进 `PassDesc`，一次
+> `engine->applyPlan(vn::graphics::Plan{ { desc } })` 注册；改一个字段也是同一条路（一次显式差分，见 §3.13）。
 
 不写任何 shader：`ScreenPass` 配 `BuiltinShaders::screenCopyProgram()` 就是"把一张彩色图拷到目标
 子视口"——**要显式命名**它（没有隐式拷贝），并且这条 pass 需要有相机。
@@ -578,10 +578,10 @@ chain->addOverlay(u8"gizmo", gizmo.get(), hud);
 
 pass 之间传图有两种写法，**可以并用**（两层在地址上汇合）：
 
-- **名字**：生产者 `setOutputName("X")`，消费者 `addInputName("X")`。每帧把 `X → 该 pass 的
+- **名字**：生产者 `output.name = "X"`，消费者 `input_names = { "X" }`。每帧把 `X → 该 pass 的
   renderTarget()` 注册进名字表。
-- **对象**（`ImageRef`）：生产者 `setOutput(image)` / `setOutputTarget(target)`，消费者
-  `addInput(image)` / `addInputTarget(target)`。粒度可到**某一张附件**（`ImageRef` 带颜色/深度与附件号），
+- **对象**（`ImageRef`）：生产者 `output.image` / `output.whole_target`，消费者
+  `inputs`（`ImageInput`）/ `input_targets`。粒度可到**某一张附件**（`ImageRef` 带颜色/深度与附件号），
   也可粗到**整捆**（整张 target）—— 带 program 的 `ScreenPass` 读的是整捆。
 - **导入贴图**（`Texture`）：`addInput(texture)` / `addInput(texture, sampler)`。采样状态属于**这次声明**，
   所以同一张纹理在不同 pass（或同一 pass 的两次声明）可以用不同的 wrap/filter/mip 设置；不写 sampler
@@ -607,7 +607,7 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 ### 3.8 自己写 shader：location 契约与绑定顺序
 
 **单 pass 还是多 pass 与这件事无关**：只看这个 pass 有没有 program —— 场景 pass 用
-`RenderPass::setProgramOverride()`，全屏 / 后处理用 `ScreenPass::setProgram()`。
+`PassDesc::program_override`，全屏 / 后处理用 `PassDesc::program`。
 
 **先分清三个数字**（后文只用这三个词）：
 
@@ -621,7 +621,7 @@ pass 之间传图有两种写法，**可以并用**（两层在地址上汇合�
 
 | | 内建路径 | 自定义 program 路径 |
 | --- | --- | --- |
-| 触发条件 | 该 draw 的 program 为空 | `RenderPass::setProgramOverride()` / `ScreenPass::setProgram()` 给了 program |
+| 触发条件 | 该 draw 的 program 为空 | `PassDesc::program_override` / `PassDesc::program` 给了 program |
 | ShaderSet 谁提供 | 内容的**默认 program**（`RenderEngine::setDefaultContentProgram`，默认 `forwardProgram()`；后端把它编译成 set） | 后端按**这个 geometry 的通道布局**现建（`assembleProgramShaderSet`） |
 | shader location 从哪来 | **vsg 自己的编号** | **通道 location 一一对应**（canonical 的 0/1/2/8 也是常量） |
 | 顶点数据从哪取 | 固定 `buffer(0)` / `buffer(1)` / `buffer(2)` / `buffer(8)` + 自定义通道 | **完全相同**（两条路径取的是同一批数据） |
@@ -758,7 +758,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | `Color(51, 51, 51)`（sRGB 字节，#333333） | 线性光 | `Color(51, 51, 51).toLinear()` ≈ (0.0331, …) |
 | `Colorf(0.5F, …)`（线性光） | 8 位 sRGB | `Colorf(...).toColor()` = **188**，不是 128 |
 
-* **清屏色也是线性值**：`PassDesc::clear_color` / `RenderPass::setClearColor` / `ClearPolicy::color` 都取
+* **清屏色也是线性值**：`PassDesc::clear_color` / `PassDesc::clear_extra_colors` / `ClearPolicy::color` 都取
   `Colorf`，后端不再 `/255`。默认清屏色是"#333333 在屏幕上看起来的样子"解一次（`kDefaultClearColor`），
   所以窗口背景就是设计师写下的那个灰。
 * **alpha 不参与编码**：它是覆盖率，两个方向都只是 `/255` 与 `×255`。编码 alpha 会让每一次混合与透明读回全错。
@@ -834,7 +834,7 @@ view->setChain(vn::graphics::PassChain::build(engine, options));
 
 // 运行期：都是**那条链**上的开关/覆盖，零重建、零重新注册
 vn::graphics::PassChain* chain = view->chain();
-chain->setStatsVisible(false);           // pass->setEnabled(false) —— 没有这一档时如实拒绝 + 报一次
+chain->setStatsVisible(false);           // 就是那条 pass 声明的 enabled，经链的一次重述生效——没有这一档时如实拒绝 + 报一次
 chain->setGizmoVisible(true);
 chain->setShadingMode(vn::graphics::ShadingMode::Wireframe);  // 见下
 
@@ -848,8 +848,8 @@ view->resize(w, h, dpr);                  // 只喂**表面**尺寸 + 比例；"
   `setStatsVisible()` / `setShadingMode()` 回答"现在画成什么样"（永不重建）。**"有没有"与"看不看得见"是两件事**：
   一条链没有读数档时 `setStatsVisible(true)` 返回 false 并报出来（静默的开关最坏）。
 - **档（`ShadingMode`）是 pass 属性，不是重建**：`Lit` 用内容自己的 program，`Flat/Unlit/Normals` 是同一段
-  fragment 文本的另一个 `#define`（`setProgramOverride`），`Wireframe` 再加
-  `RenderPass::setPolygonModeOverride(PolygonMode::Line)`。**档作用在几何阶段**：延迟的请求配非 Lit 档时，
+  fragment 文本的另一个 `#define`（声明的 `program_override`），`Wireframe` 再加
+  `PassDesc::polygon_mode = PolygonMode::Line`。链自己用 `restate()` 把这一条差分交回计划（见 E-04）。**档作用在几何阶段**：延迟的请求配非 Lit 档时，
   `PassChain::effectivePath()` 把链建成**前向**（选项字段不动，`PassChain::shadingPath()` 记的是**实际建成**的那条），
   于是四档在两条请求上都能画出来；同一条链上换档零重建，而"延迟请求 + 非 Lit 档"期间选回 `Lit` 是一次建链
   （回到延迟链 —— 这就是那句 `effectivePath()` 公开成静态的用途）。
@@ -918,13 +918,13 @@ surface->dismiss(surface->presentedView());
   现在它是宿主的一句话，写在唯一有资格回答的对象上。
 - **一块区只画一幅画**：一帧里两条都画默认帧缓冲的 pass 会互相擦，而"谁第一、谁清屏"只有**静默**的默认行为
   （后端只认每个附件的第一条清屏公告）。所以第二条呈现被拒 + 报一次；**要多幅画面**（分屏 / PiP / 叠加）由应用
-  自己说清接线：自己算矩形、给 pass 子视口（`pass->setViewport(Viewport{...})`，设备像素）、自己决定哪条清屏
-  （`setClearEnabled(false)` 关掉其余）。见 `render-views.md` §6。
+  自己说清接线：自己算矩形、在声明里给子视口（`desc.viewport = Viewport{...}`，设备像素）、自己决定哪条清屏
+  （`clear_enabled = false` 关掉其余）。见 `render-views.md` §6。
 - **顺序的真相在引擎**：`RenderEngine::passOrder(pass)` 返回某条已注册 pass 的执行序（同时回答了"它还在不在"）。
 - **尺寸与窗口也归它**：一块区只有一个尺寸，报一次就够，其余是扇出（`SceneView::resize` 只是转发）。
   挂上之前视图用自己的公告，摘下来时区把尺寸**交还**给视图（`setSurface(nullptr)` 快照）。设备像素那一层仍是视图
   算的（按区的尺寸 × 比例），而**形状**是视图相机的（`SceneView::applySurfaceGeometry` 把区的形状 push 给相机）。
-  宿主自建的 pass **没有**视图可喂：它自己给 `pass->setViewport()` 设备像素（它本来就知道尺寸）。
+  宿主自建的 pass **没有**视图可喂：它在自己的声明里给 `viewport` 设备像素（它本来就知道尺寸）。
 - **两个协作对象，视图只当门面**：输入路由在 `SceneView::inputRouter()`（`InputRouter`：无按钮=移动、
   有按钮=按下/松开、按键=down/up，直接交给操纵器）；布局参与在 `SceneView::layoutParticipant()`
   （`LayoutParticipant`：记住“不呈现时”的尺寸/比例、保存宿主注册的步骤，并按“视图自己的步骤 → 两步步骤 →
@@ -933,7 +933,7 @@ surface->dismiss(surface->presentedView());
   时 input 什么也不做。按下**总是**捕获（拖出控件不断线），松手之前那次拖拽一直是同一个视图 —— 见
   `RenderControlTest.TheViewReceivesInputAndADragKeepsSteeringIt`。
 - **清屏不归它管**：区不碰呈现者的清屏策略（一条呈现没有"谁第一"的歧义）。清成什么颜色、要不要清深度由那条 pass
-  说；换背景色改 `pass->setClearColor()` 就行。
+  的声明说；换背景色就把 `PassDesc::clear_color` 改掉、把声明重述一次。
 - **生命周期**：视图与区互相**借用**（都不是对方的所有者）—— 视图先死就自己从区上退出去（区回到"还没有呈现"），
   区先死就把视图那一侧指回清掉（并把尺寸交回视图）。所以扔掉视图 = 撤掉它的呈现，`dismiss()` 是显式写法。
 - **谁让引擎活着**：视图与管线**借**引擎（`Lease<RenderEngine>`，`RenderEngine::lease()`），都不持有它 —— 引擎活
@@ -1009,19 +1009,18 @@ desc.target = vn::graphics::Target::transient(u8"gbuffer", shape);
   （在自己的 `FrameUpdate::update()` 里把借用重述到当前实例，或干脆自己持有那些 target）。
 - **clear 三件套不写就跟随 kind**：`clear_enabled` / `clear_color` / `clear_depth` 都是 `optional` —— 不写时用那种 kind 自己的策略
   （`Screen` 是叠在已有内容上的全屏档，从不洗、也不洗深度；`Scene` 档洗，默认洗到 `51,51,51,255`）。要覆盖就在声明里写出来。
-- **MRT 每个附件自己的清屏色**：`clear_color` 只管 attachment 0；其余附件用 `clear_extra_colors`（按附件 1..N-1 的顺序），
-  pass 侧对应 `setClearColor(attachment, colour)`。没写的附件仍清成**透明黑**（那是“没画”的值），所以 G-buffer 想让
+- **MRT 每个附件自己的清屏色**：`clear_color` 只管 attachment 0；其余附件用 `clear_extra_colors`（按附件 1..N-1 的顺序）。没写的附件仍清成**透明黑**（那是“没画”的值），所以 G-buffer 想让
   法线附件清成 `(0,0,1,0)` 就只写那一格，不必把所有附件涂成同一种颜色。
 - **返回的是结点**：`applyPlan` 是唯一的注册入口；要拿已注册的执行结点按名字回读（`engine->pass(desc.name)`），
   于是"我声明了什么"与"我接下来要调什么"是同一个对象。builder 内部正是这样写的 ——
   它的普通 pass（shadow / gbuffer / lighting / transparent / present / preview）全是描述符，order 一律由 `stage` 决定。
 - 计划只表达 `PassKind`（`Scene` / `Screen`）：手搭的**子类** pass 不再是可注册的形状，自定义写成 `PassDesc` 的**数据**
-  （program / viewport / depth band / hook）。
+  （program / viewport / depth band）。
 
 
 ### 3.14 分层：让一条 pass 只画它要的内容
 
-**两个值，一条 AND**：内容声明自己在哪一层（`Node::setLayers`），pass 说它要哪几层（`RenderPass::setLayerMask`）。
+**两个值，一条 AND**：内容声明自己在哪一层（`Node::setLayers`），pass 说它要哪几层（`PassDesc::layer_mask`）。
 一条命令被收集的条件是 `节点可见 && (层集合 & 掩码) != 0`。
 
 ```cpp
@@ -1030,7 +1029,8 @@ caster->setLayers(1u << 1);        // 这根子树归 layer 1
 group->clearLayers();              // 撤掉声明，改回继承祖先
 
 // pass 侧：这条 pass 只要 layer 1
-shadow_pass->setLayerMask(1u << 1);
+vn::graphics::PassDesc shadow_pass;
+shadow_pass.layer_mask = 1u << 1;
 
 // 配方侧：整条链一次给（builder 会盖在这条链的每个内容 pass 上；HUD / 全屏灯照不盖）
 vn::graphics::ChainDesc options;
@@ -1142,10 +1142,10 @@ if (converted.root != nullptr) {
         vn::String(u8"corner"),                        // role：也是那条 pass 登记用的名字
         corner_readout.get(),                          // 内容（非拥有，见 §3.19）
         desc,                                          // HUD pass 的声明（同 §3.13）
-        [corner_readout](vn::graphics::RenderPass& pass, int w, int h, double ratio) {
+        [corner_readout](int w, int h, double ratio) { // 布局**回答**矩形（不碰 pass）
             corner_readout->setPixelRatio(ratio);
             corner_readout->onSurfaceResized(w, h);
-            pass.setViewport(corner_readout->boxViewport());
+            return corner_readout->boxViewport();
         });
     engine->passCount();                               // 链活着，这些 pass 就在帧里
 }                                                      // 链走完作用域 → 它注册的 pass 全部撤下
@@ -1176,10 +1176,10 @@ auto hud = pipeline->addOverlay(
     vn::String(u8"corner"),                           // role：也是那条 pass 登记用的名字
     corner_readout.get(),                             // 内容（非拥有，见下）
     desc,                                             // HUD pass 的声明（同 §3.13）
-    [corner_readout](vn::graphics::RenderPass& pass, int w, int h, double ratio) {
+    [corner_readout](int w, int h, double ratio) {     // 布局**回答**矩形（不碰 pass）
         corner_readout->setPixelRatio(ratio);
         corner_readout->onSurfaceResized(w, h);
-        pass.setViewport(corner_readout->boxViewport());
+        return corner_readout->boxViewport();
     });
 
 pipeline->overlayPass(vn::String(u8"corner"));              // 画它的那条 pass

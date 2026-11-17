@@ -1044,7 +1044,7 @@ TEST(RenderControlTest, TheViewerOptionsLayerMaskReachesTheContentPassesAndNotTh
     std::size_t content_passes = 0;
     std::size_t hud_passes     = 0;
     for (const vn::graphics::PassRow& pass : engine->frameTable().passes) {
-        if (pass.tag == u8"Hud") {
+        if (pass.name == u8"axis_gizmo" || pass.name == u8"fps_overlay") {
             EXPECT_EQ(pass.layer_mask, vn::graphics::kAllLayers) << "HUD 是 UI，不受内容选择影响";
             ++hud_passes;
             continue;

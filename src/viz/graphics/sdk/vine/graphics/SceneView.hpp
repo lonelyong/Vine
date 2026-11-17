@@ -49,7 +49,7 @@ class Scene;
  *   PRESENTATION.
  * - Several views may share one engine, but each area draws ONE of them (one area, one picture). A host wanting
  *   several pictures at once owns the layout that produces them - its own passes with their own sub-viewports
- *   (RenderPass::setViewport) and clear policy; the engine never manages layout.
+ *   (PassDesc::viewport) and clear policy; the engine never manages layout.
  *
  * @note
  * - Whether a pass presents the surface is the SURFACE's declaration (RenderArea::present), never a guess: a
@@ -188,7 +188,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *
      * @details
      * - The callback receives the new surface size on every surface change and updates whatever its creator owns
-     *   (an off-screen target's size, a pass's viewport - pass->setViewport(Viewport{...})); this keeps each
+     *   (an off-screen target's size, a pass's viewport - restate the declaration with `viewport` set); this keeps each
      *   pipeline's resize policy with its creator (deferred chains at native / fractional resolution, fixed
      *   shadow maps doing nothing, corner-anchored previews re-anchoring) while the engine stays a pure
      *   scheduler.
@@ -205,7 +205,7 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *
      * @details
      * - Same as the two-argument overload plus the ratio: the consumer that needs it lays out in DEVICE pixels
-     *   (`pass->setViewport(Viewport{...})`, an off-screen target at native resolution), and multiplying here
+     *   (`desc.viewport = Viewport{...}`, an off-screen target at native resolution), and multiplying here
      *   is what keeps a layer-1 host from reaching back into appfw for RenderControl::devicePixelRatio().
      * - The size is again the AREA's size (one area draws one picture), in the host's logical space.
      *

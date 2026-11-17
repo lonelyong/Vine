@@ -53,24 +53,6 @@ class VN_GRAPHICS_API ScreenPass : public RenderPass {
      */
     raw_ptr<ShaderProgram> program() const;
 
-    /** @brief Names the fragment program the pass draws through - the ONE way its picture is chosen.
-     *
-     * @details
-     * - The fragment stage compiles against the full-screen ABI (see BuiltinShaders::fullscreenVertexProgram):
-     *   `vn_uv` arrives at location 0 spanning [0, 1] top row first, the stage writes its own
-     *   `layout(location = 0) out vec4`, and the resolved source's colour attachments bind as sampled
-     *   textures at binding 0..N-1 - binding i reads attachment i (BuiltinShaders::screenCopyProgram(n) does
-     *   exactly this). The content scene's lights (setCamera / the pass camera) arrive as push constants.
-     * - A CAMERA IS REQUIRED: the backend builds the pass' view from it, so a camera-less pass draws nothing
-     *   (reported once at wiring time).
-     * - A program that cannot be prepared (no fragment stage, a failed compile, a binding the source cannot
-     *   provide) is reported and draws NOTHING - nothing substitutes a shading the host did not name.
-     *   Passing null takes the picture away instead of choosing one.
-     *
-     * @param program Fragment-stage program to draw with, or null for none (the pass draws nothing).
-     */
-    void setProgram(intrusive_ptr<ShaderProgram> program);
-
     /** @brief Receives the engine-resolved input sources.
      *
      * Stores the first resolved PRODUCED target (an ImageSource::ProducedImage or ProducedTarget) as the source

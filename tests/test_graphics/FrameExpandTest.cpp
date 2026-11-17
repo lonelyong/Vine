@@ -31,6 +31,7 @@ using vn::graphics::GeometryPtr;
 using vn::graphics::Group;
 using vn::graphics::MatrixTransform;
 using vn::graphics::PassDraw;
+using vn::graphics::PassDesc;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderPass;
 using vn::graphics::Scene;
@@ -331,11 +332,14 @@ TEST(FrameExpandTest, AViewValueDrivesSelectAndDescribeTheSameWay)
     camera->setPerspective(60.0, 0.1, 100.0);
     camera->lookAt(Vec3d(0.0, 0.0, 10.0), Vec3d(0.0, 0.0, 0.0), Vec3d(0.0, 1.0, 0.0));
 
+    // THE DECLARATION IS THE AUTHORING SHAPE (see E-04): the node below is what the engine builds from this value.
+    PassDesc desc;
+    desc.camera     = camera;
+    desc.content    = scene;
+    desc.viewport   = vn::graphics::Viewport{ 0, 0, 800, 600 };
+    desc.layer_mask = vn::graphics::kAllLayers;
     RenderPass pass;
-    pass.setCamera(camera);
-    pass.setContent(scene);
-    pass.setViewport(0, 0, 800, 600);
-    pass.setLayerMask(vn::graphics::kAllLayers);
+    vn::graphics::detail::PassNode::adopt(pass, std::move(desc));
 
     PassDraw described;
     ASSERT_TRUE(pass.describe(scene.get(), described));

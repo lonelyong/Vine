@@ -13,9 +13,11 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
+#include <vine/graphics/PassChain.hpp>
 #include <vine/graphics/Plan.hpp>
 #include <vine/graphics/RenderEngine.hpp>
 #include <vine/graphics/RenderPass.hpp>
+#include <vine/graphics/ScreenPass.hpp>
 #include <vine/graphics/Scene.hpp>
 
 /**
@@ -96,100 +98,92 @@ inline vn::intrusive_ptr<vn::graphics::RenderPass> applyPassForTest(vn::graphics
     return vn::intrusive_ptr<vn::graphics::RenderPass>(engine.passFor(name, &engine));
 }
 
-/** @brief States @p pass (its declared content) at @p order and answers the registered node. */
-inline vn::intrusive_ptr<vn::graphics::RenderPass>
-applyPassForTest(vn::graphics::RenderEngine& engine, const vn::intrusive_ptr<vn::graphics::RenderPass>& pass, int order)
+/** @brief States @p desc at @p order and answers the registered node. */
+inline vn::intrusive_ptr<vn::graphics::RenderPass> applyPassForTest(vn::graphics::RenderEngine& engine, vn::graphics::PassDesc desc, int order)
 {
-    vn::graphics::PassDesc desc = pass->declaration();
-    desc.order                  = order;
+    desc.order = order;
     return applyPassForTest(engine, std::move(desc));
 }
 
-/** @brief States @p pass drawing @p content at @p order and answers the registered node. */
-inline vn::intrusive_ptr<vn::graphics::RenderPass>
-applyPassForTest(vn::graphics::RenderEngine&                        engine,
-                 const vn::intrusive_ptr<vn::graphics::RenderPass>& pass,
-                 vn::intrusive_ptr<vn::graphics::Scene>             content,
-                 int                                                order)
+/** @brief States @p desc at @p order and keeps no node (the `addPass(desc)` spelling). */
+inline void registerPassForTest(vn::graphics::RenderEngine& engine, vn::graphics::PassDesc desc, int order)
 {
-    vn::graphics::PassDesc desc = pass->declaration();
-    desc.content                = std::move(content);
-    desc.order                  = order;
-    return applyPassForTest(engine, std::move(desc));
+    (void)applyPassForTest(engine, std::move(desc), order);
 }
 
-/** @brief States @p pass at @p order, replacing @p pass with the engine's node. */
-inline void registerPassForTest(vn::graphics::RenderEngine& engine, vn::intrusive_ptr<vn::graphics::RenderPass>& pass, int order)
-{
-    pass = applyPassForTest(engine, pass, order);
-}
-
-/**
- * @brief The TYPED-handle spelling (`intrusive_ptr<ScreenPass>`): the node the engine builds is that kind.
- *
- * @details
- * - A plan states a `PassKind`, and the node the engine builds for it is the built-in of that kind; a handle typed to
- *   `ScreenPass` is therefore handed the `ScreenPass` the engine built (not the template it configured).
- *
- * @param engine Engine to state the pass on.
- * @param pass   Configured pass whose declaration is stated; receives the engine's node.
- * @param order  Execution order.
- */
-template <typename PassT>
-    requires std::derived_from<PassT, vn::graphics::RenderPass>
-inline void registerPassForTest(vn::graphics::RenderEngine& engine, vn::intrusive_ptr<PassT>& pass, int order)
-{
-    vn::graphics::PassDesc desc = pass->declaration();
-    desc.order                  = order;
-    pass = vn::intrusive_ptr<PassT>(static_cast<PassT*>(applyPassForTest(engine, std::move(desc)).get()));
-}
-
-/** @brief States @p pass drawing @p content at @p order, replacing @p pass with the engine's node. */
-inline void registerPassForTest(vn::graphics::RenderEngine&                  engine,
-                                vn::intrusive_ptr<vn::graphics::RenderPass>& pass,
-                                vn::intrusive_ptr<vn::graphics::Scene>       content,
-                                int                                          order)
-{
-    pass = applyPassForTest(engine, pass, std::move(content), order);
-}
-
-/** @brief The `addPass(pass, nullptr, order)` spelling: a pass that names no content. */
-inline void registerPassForTest(vn::graphics::RenderEngine&                  engine,
-                                vn::intrusive_ptr<vn::graphics::RenderPass>& pass,
-                                std::nullptr_t,
-                                int                                          order)
-{
-    registerPassForTest(engine, pass, vn::intrusive_ptr<vn::graphics::Scene>{}, order);
-}
-
-/** @brief The const-handle spelling: states @p pass and hands no node back. */
-inline void registerPassForTest(vn::graphics::RenderEngine& engine, const vn::intrusive_ptr<vn::graphics::RenderPass>& pass, int order)
-{
-    (void)applyPassForTest(engine, pass, order);
-}
-
-/** @brief The const-handle spelling with explicit content (see above). */
-inline void registerPassForTest(vn::graphics::RenderEngine&                        engine,
-                                const vn::intrusive_ptr<vn::graphics::RenderPass>& pass,
-                                vn::intrusive_ptr<vn::graphics::Scene>             content,
-                                int                                                order)
-{
-    (void)applyPassForTest(engine, pass, std::move(content), order);
-}
-
-/** @brief The const-handle spelling for a pass that names no content (see above). */
-inline void registerPassForTest(vn::graphics::RenderEngine&                        engine,
-                                const vn::intrusive_ptr<vn::graphics::RenderPass>& pass,
-                                std::nullptr_t,
-                                int                                                order)
-{
-    registerPassForTest(engine, pass, vn::intrusive_ptr<vn::graphics::Scene>{}, order);
-}
-
-/** @brief States one declaration and keeps no node (the `addPass(desc)` spelling). */
+/** @brief States @p desc and keeps no node (the declaration carries its own order). */
 inline void registerPassForTest(vn::graphics::RenderEngine& engine, vn::graphics::PassDesc desc)
 {
     (void)applyPassForTest(engine, std::move(desc));
+}
+
+/**
+ * @brief Edits the declaration @p pass IS and states it again (the one explicit diff a live edit is).
+ *
+ * @details
+ * - A pass is READ-ONLY to its holder (see E-04): a test that changes one field copies the declaration, changes it and
+ *   hands it back - exactly what a host does (`PassChain::restate` or `applyPlan`). The node survives (the plan updates
+ *   it in place), so identity comparisons keep working.
+ *
+ * @param engine Engine whose table changes.
+ * @param pass   Pass to edit (null answers null).
+ * @param edit   Receives the declaration to change.
+ * @return The same node (its declaration now states the edit), or null when the plan was refused.
+ */
+template <typename Edit>
+inline vn::intrusive_ptr<vn::graphics::RenderPass> updatePassForTest(vn::graphics::RenderEngine& engine, vn::raw_ptr<vn::graphics::RenderPass> pass, Edit&& edit)
+{
+    if (pass == nullptr) {
+        return nullptr;
+    }
+    vn::graphics::PassDesc desc = pass->declaration();
+    std::forward<Edit>(edit)(desc);
+    return applyPassForTest(engine, std::move(desc));
+}
+
+/** @brief The handle spelling of updatePassForTest (a test's `intrusive_ptr` handle). */
+template <typename Edit>
+inline vn::intrusive_ptr<vn::graphics::RenderPass> updatePassForTest(vn::graphics::RenderEngine& engine, const vn::intrusive_ptr<vn::graphics::RenderPass>& pass, Edit&& edit)
+{
+    return updatePassForTest(engine, pass.get(), std::forward<Edit>(edit));
+}
+
+/**
+ * @brief Restates one of a chain's declarations THROUGH the chain (see PassChain::restate).
+ *
+ * @details
+ * - The chain-owned spelling of a live edit: the chain is the scope that owns the row, so it is the one that hands the
+ *   changed declaration back to the engine's plan (a host never edits a chain's pass any other way - see E-04).
+ *
+ * @param chain Chain that owns the row.
+ * @param pass  The pass to edit (null answers false).
+ * @param edit  Receives the declaration to change.
+ * @return true when the shape was applied; false when the row is not the chain's or the plan was refused.
+ */
+template <typename Edit>
+inline bool restatePassForTest(vn::graphics::PassChain& chain, vn::raw_ptr<vn::graphics::RenderPass> pass, Edit&& edit)
+{
+    if (pass == nullptr) {
+        return false;
+    }
+    vn::graphics::PassDesc desc = pass->declaration();
+    std::forward<Edit>(edit)(desc);
+    return chain.restate(desc);
+}
+
+/**
+ * @brief The TYPED handle spelling of a Screen declaration (`intrusive_ptr<ScreenPass>`).
+ *
+ * @details
+ * - A plan states a `PassKind`, and the node the engine builds for it is the built-in of that kind; a handle typed to
+ *   `ScreenPass` is therefore the node the engine built, not a template the test configured.
+ *
+ * @param pass The registered node (a Screen declaration, or null).
+ * @return The same node as a ScreenPass handle (null when @p pass is null).
+ */
+inline vn::intrusive_ptr<vn::graphics::ScreenPass> asScreenPassForTest(const vn::intrusive_ptr<vn::graphics::RenderPass>& pass)
+{
+    return vn::intrusive_ptr<vn::graphics::ScreenPass>(static_cast<vn::graphics::ScreenPass*>(pass.get()));
 }
 
 /**

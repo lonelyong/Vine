@@ -129,10 +129,12 @@ TEST(SdkPixelTest, AWireframeModeDrawsTheEdgesOfTheSameGeometry)
     // object, with the SDK's own mode applied to it, so the ONE thing this case turns on is the polygon mode.
     RenderPass* const picture = view->chain()->presentingPass();
     ASSERT_NE(picture, nullptr);
-    picture->setRenderTarget(fixture.target);
-    picture->setClearEnabled(true);
-    picture->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    picture->setShouldClearDepth(true);
+    ASSERT_TRUE(vn::test::restatePassForTest(*view->chain(), picture, [&fixture](vn::graphics::PassDesc& desc) {
+        desc.target        = vn::graphics::Target::explicitTarget(fixture.target);
+        desc.clear_enabled = true;
+        desc.clear_color   = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        desc.clear_depth   = true;
+    }));
     ASSERT_TRUE(view->fitToScreen()) << "默认操纵器按内容把相机摆好";
 
     const PixelProbe filled = fixture.read();
@@ -225,13 +227,15 @@ TEST(SdkPixelTest, EveryShadingModeKeepsDrawingAfterTheSwitch)
 
     RenderPass* const picture = view->chain()->presentingPass();
     ASSERT_NE(picture, nullptr);
-    picture->setRenderTarget(fixture.target);
-    picture->setClearEnabled(true);
-    picture->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    picture->setShouldClearDepth(true);
+    ASSERT_TRUE(vn::test::restatePassForTest(*view->chain(), picture, [&fixture](vn::graphics::PassDesc& desc) {
+        desc.target        = vn::graphics::Target::explicitTarget(fixture.target);
+        desc.clear_enabled = true;
+        desc.clear_color   = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        desc.clear_depth   = true;
+    }));
     // 帧率读数那条 pass 在应用里画进同一个窗口：离屏夹具没有默认帧缓冲，所以也指向同一张目标。
     if (RenderPass* const stats = view->chain()->fpsOverlayPass(); stats != nullptr) {
-        stats->setRenderTarget(fixture.target);
+        ASSERT_TRUE(vn::test::restatePassForTest(*view->chain(), stats, [&fixture](vn::graphics::PassDesc& desc) { desc.target = vn::graphics::Target::explicitTarget(fixture.target); }));
     }
     ASSERT_TRUE(view->fitToScreen()) << "默认操纵器按内容把相机摆好";
 
@@ -262,16 +266,17 @@ TEST(SdkPixelTest, TheFixtureAlsoDrawsContentWithNoViewAtAll)
 {
     VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
-    vn::intrusive_ptr<RenderPass> pass(new RenderPass());
-    pass->setName(vn::String(u8"hand_wired_picture"));
-    pass->setCamera(fixture.camera);
-    pass->setRenderTarget(fixture.target);
-    pass->setClearEnabled(true);
-    pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    pass->setShouldClearDepth(true);
+    vn::graphics::PassDesc pass;
+    pass.name             = vn::String(u8"hand_wired_picture");
+    pass.camera           = fixture.camera;
+    pass.content          = fixture.scene;
+    pass.target           = vn::graphics::Target::explicitTarget(fixture.target);
+    pass.clear_enabled    = true;
+    pass.clear_color      = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.clear_depth      = true;
     // 无光照档的程序：没有光的环境里跑默认的前向程序，得到的是"被算黑了的画面"，而这一条要判的是覆盖，不是光照。
-    pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-    vn::test::registerPassForTest(*fixture.engine, pass, fixture.scene, 0);
+    pass.program_override = vn::graphics::unlitForwardProgram();
+    vn::test::registerPassForTest(*fixture.engine, std::move(pass), 0);
 
     const PixelProbe picture = fixture.read();
     ASSERT_TRUE(picture.valid());
@@ -311,10 +316,12 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
     // 夹具的"窗口"是后端自己开的，读不回来：把画面那条 pass 指到夹具的目标上，预览才有东西可叠。
     RenderPass* const picture = pipeline->presentingPass();
     ASSERT_NE(picture, nullptr);
-    picture->setRenderTarget(fixture.target);
-    picture->setClearEnabled(true);
-    picture->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    picture->setShouldClearDepth(true);
+    ASSERT_TRUE(vn::test::restatePassForTest(*pipeline, picture, [&fixture](vn::graphics::PassDesc& desc) {
+        desc.target        = vn::graphics::Target::explicitTarget(fixture.target);
+        desc.clear_enabled = true;
+        desc.clear_color   = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        desc.clear_depth   = true;
+    }));
 
     RenderTarget* const gbuffer = pipeline->offscreenTarget();
     ASSERT_NE(gbuffer, nullptr);
@@ -327,21 +334,21 @@ TEST(SdkPixelTest, TheDeferredPresetFillsEveryGbufferAttachment)
     constexpr int kSlotStep = 15;
     constexpr int kSlotSide = 12;
     for (int attachment = 0; attachment < 4; ++attachment) {
-        vn::intrusive_ptr<ScreenPass> preview(new ScreenPass());
+        vn::graphics::PassDesc preview;
         // One row per preview (a plan's identity is the name): the four differ by attachment, and the helper names each
         // one uniquely - a shared name would leave ONE pass reading attachment 3.
-        preview->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(fixture.camera));
-        preview->setProgram(
-            vn::graphics::screenCopyProgram(attachment, attachment == 2 ? vn::graphics::ScreenCopyChannels::Alpha : vn::graphics::ScreenCopyChannels::All));
-        preview->addInputName(u8"GBuffer");
+        preview.kind    = vn::graphics::PassKind::Screen;
+        preview.camera  = vn::intrusive_ptr<vn::graphics::Camera>(fixture.camera);
+        preview.program = vn::graphics::screenCopyProgram(attachment, attachment == 2 ? vn::graphics::ScreenCopyChannels::Alpha : vn::graphics::ScreenCopyChannels::All);
+        preview.input_names = { u8"GBuffer" };
         vn::intrusive_ptr<vn::graphics::ImageRef> image(new vn::graphics::ImageRef(u8"GBuffer.preview"));
         image->bind(vn::intrusive_ptr<RenderTarget>(gbuffer), attachment);
-        preview->addInput(image);
-        preview->setRenderTarget(fixture.target);
-        preview->setClearEnabled(false);
-        preview->setShouldClearDepth(false);
-        preview->setViewport(kSlot + attachment * kSlotStep, kSlot, kSlotSide, kSlotSide);
-        vn::test::registerPassForTest(*fixture.engine, preview, 120 + attachment);
+        preview.inputs.emplace_back(image);
+        preview.target        = vn::graphics::Target::explicitTarget(fixture.target);
+        preview.clear_enabled = false;
+        preview.clear_depth   = false;
+        preview.viewport      = vn::graphics::Viewport{ kSlot + attachment * kSlotStep, kSlot, kSlotSide, kSlotSide };
+        vn::test::registerPassForTest(*fixture.engine, std::move(preview), 120 + attachment);
     }
 
     const PixelProbe read_back = fixture.read();
@@ -438,19 +445,20 @@ TEST(SdkPixelTest, ADrawOrderDecidesWhichOfTwoCoplanarQuadsIsOnTop)
     const vn::intrusive_ptr<vn::graphics::Scene> scene(new vn::graphics::Scene());
     scene->setRoot(root);
 
-    vn::intrusive_ptr<RenderPass> pass(new RenderPass());
-    pass->setName(vn::String(u8"draw_order_picture"));
-    pass->setCamera(fixture.camera);
-    pass->setRenderTarget(fixture.target);
-    pass->setClearEnabled(true);
-    pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    pass->setShouldClearDepth(true);
+    vn::graphics::PassDesc pass;
+    pass.name          = vn::String(u8"draw_order_picture");
+    pass.camera        = fixture.camera;
+    pass.content       = scene;
+    pass.target        = vn::graphics::Target::explicitTarget(fixture.target);
+    pass.clear_enabled = true;
+    pass.clear_color   = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.clear_depth   = true;
     // 共面 ⇒ 深度测试会让"后画的"被拒（同深度 LESS 不成立），而这条要量的正是**顺序**，所以把深度关掉：
     // pass 里只剩顺序这一个决定谁留下的因素。
-    pass->setDepthMode(vn::graphics::DepthMode::Disabled);
+    pass.depth_mode = vn::graphics::DepthMode::Disabled;
     // 无光照档：没有灯的环境里跑默认前向程序会得到"被算黑"的画面，而这条判的是覆盖顺序，不是光照。
-    pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-    vn::test::registerPassForTest(*fixture.engine, pass, scene, 0);
+    pass.program_override = vn::graphics::unlitForwardProgram();
+    vn::test::registerPassForTest(*fixture.engine, std::move(pass), 0);
 
     (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe first = fixture.read();
@@ -486,16 +494,17 @@ TEST(SdkPixelTest, TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends)
     const vn::intrusive_ptr<vn::graphics::Scene> scene(new vn::graphics::Scene());
     scene->setRoot(root);
 
-    vn::intrusive_ptr<RenderPass> pass(new RenderPass());
-    pass->setName(vn::String(u8"alpha_mode_picture"));
-    pass->setCamera(fixture.camera);
-    pass->setRenderTarget(fixture.target);
-    pass->setClearEnabled(true);
-    pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    pass->setShouldClearDepth(true);
+    vn::graphics::PassDesc pass;
+    pass.name             = vn::String(u8"alpha_mode_picture");
+    pass.camera           = fixture.camera;
+    pass.content          = scene;
+    pass.target           = vn::graphics::Target::explicitTarget(fixture.target);
+    pass.clear_enabled    = true;
+    pass.clear_color      = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.clear_depth      = true;
     // 无光照档：这条量的是"模式"，不是光照算术。
-    pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-    vn::test::registerPassForTest(*fixture.engine, pass, scene, 0);
+    pass.program_override = vn::graphics::unlitForwardProgram();
+    vn::test::registerPassForTest(*fixture.engine, std::move(pass), 0);
 
     (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const auto centre = [&]() {
@@ -545,14 +554,15 @@ TEST(SdkPixelTest, AReadbackNamesItsImageLikeAPassInputDoes)
     SdkPixelFixture fixture;
     ASSERT_TRUE(fixture.up());
 
-    auto pass = vn::intrusive_ptr<RenderPass>(new RenderPass());
-    pass->setCamera(fixture.camera);
-    pass->setRenderTarget(fixture.target);
-    pass->setClearEnabled(true);
-    pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    pass->setShouldClearDepth(true);
-    pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-    vn::test::registerPassForTest(*fixture.engine, pass, fixture.scene, 0);
+    vn::graphics::PassDesc pass;
+    pass.camera           = fixture.camera;
+    pass.content          = fixture.scene;
+    pass.target           = vn::graphics::Target::explicitTarget(fixture.target);
+    pass.clear_enabled    = true;
+    pass.clear_color      = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.clear_depth      = true;
+    pass.program_override = vn::graphics::unlitForwardProgram();
+    vn::test::registerPassForTest(*fixture.engine, std::move(pass), 0);
 
     const PixelProbe by_target = fixture.read();
     ASSERT_EQ(by_target.width(), SdkPixelFixture::kSide);

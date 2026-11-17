@@ -1617,3 +1617,28 @@
 - **证据**：`test_graphics` **616** / `test_vk` **167** / `test_vsg` **572** 全绿；`content_seam`、`vk_exposure` 全绿；
   九道文档/代码门禁全绿。零行为变化：像素对拍与既有用例（含 PlanCarries/StatedShape 两条）直接改类型后通过，
   并加断言“计划里的渲染通道键是自己的副本”。
+
+## 2026-11-17 B16：一个 pass 作者形状（E-04 / E-05 / E-06，BC-08）
+
+- **B16a（`tag` 删除）**：`PassDesc::tag` / `PassRow::tag` 删除——12 处写、0 处读（E-06）。帧表用 `name`。
+- **B16b（回调归对象）**：SDK 新 `FrameUpdate`（`update()`，AxisGizmo / FpsOverlay 实现）；
+  `PassDesc::before_draw` 删除，`buildFrameValue` 不再跑钩子（`record_micros` 只剩 describe + expand）。
+  `PassChain::update()` 按注册顺序调 overlay 的 `update()`；`SceneView::update()` 转发；
+  `SurfaceWindow::renderFrame` 每帧 update → publishContent → frame。`OverlayLayout` 改为**返回** `Viewport`
+  （`std::function<Viewport(int,int,double)>`），`resize()` 由链重述矩形——回调不再拿到可变 pass。
+  证人 `PassChainTest.AnOverlaysUpdateRunsWhenTheChainUpdatesAndNeverInsideAFrame`。BC-08：宿主自己驱动引擎时
+  必须自己调 `SceneView::update()` / `PassChain::update()`。
+- **B16c（PassDesc 唯一作者形状）**：`RenderPass` 公开面只读（`declaration()`/`name()` + 各项读取器）；
+  35 个 setter 与 `ScreenPass::setProgram` 删除。引擎的写门是 `detail::PassNode`
+  （`adopt` / `resolveTarget` / `setDrawSize`，friend）。`PassChain::restate(desc)` 是链上"一次显式差分"
+  （命名偏离研究文档的 `chain->update(d)`：`update()` 已是每帧动词，避免同名两义）。`PassChain::apply()` 不再
+  从节点刷新——`pending_` 就是当前形状。`RenderEngine::bindPassContent` 改成 adopt 一份改过 content 的声明。
+  一个**语义保持点**：`adoptDesc` 里"engaged 的无效 `DepthView`"= 显式清除借用深度；`nullopt` = 不表态。
+  空输入名在计划校验与解析里被跳过（原 setter 的"空名忽略"）。
+- **迁移面**：demo（`addDemoPass` 收 `PassDesc`、PiP 重锚走 `applyPlan`、预览布局持声明值）、
+  `tests/PlanTestSupport.hpp`（`applyPassForTest(desc,order)`、`updatePassForTest`、`restatePassForTest`、
+  `asScreenPassForTest`）、test_graphics / test_vsg / test_vk / test_gui 全量。
+- **计数**：`test_graphics` **617** / `test_vk` **167** / `test_vsg` **572** 全绿；九道门禁全绿；
+  `Vine --open demo` 0 error（session up + Pending -> Presenting）。
+- **坑**：批量改测试时 `multi_replace` 的 oldString 要逐字核对（几条"成功"实际是命中了另一处）；
+  新建 `.cpp`（`FrameUpdate.cpp`）要重配 `build/`。`clang++-23` 偶发一次 parser bus error，重跑即过。

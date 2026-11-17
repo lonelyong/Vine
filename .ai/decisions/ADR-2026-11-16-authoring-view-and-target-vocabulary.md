@@ -161,4 +161,9 @@ N 个 pass 共享一份。判据 `G10` / `R24` / `N6`。
 - **第二轮审校**：完成（`../research/graphics-2026-11-16-redesign-r2.md`）。
 - **迁移**：**实施中**。合并后的 18 个批次位置见研究文档 §10；批次进度以 git 的提交正文为档案
   （每批列出能力 ID 三元组），本文只记状态。
+- **B16（2026-11-17，E-04 / E-05 / E-06 + BC-08）已落地**：`PassDesc` 是唯一作者形状，`RenderPass` 公开面只读
+  （写门是 `detail::PassNode`）；`before_draw` 由 `FrameUpdate` 对象接口取代（`PassChain::update()` /
+  `SceneView::update()`），`OverlayLayout` 返回 `Viewport`；`tag` 删除。**命名偏离**：研究文档写的
+  `chain->update(d)` 实现为 `PassChain::restate(desc)`——`update()` 已是"每帧更新 overlay"的动词，同名两义会
+  让读者猜参数含义（`G4`）。
 - 本 ADR 在最后一批落地时改为"已采纳"（状态行的"实施中"改为"已采纳"）；若某批放弃，在同一行注明并链接原因。

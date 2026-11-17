@@ -379,10 +379,11 @@ TEST(HeadlessBackendTest, AFrameIsCompleteWithoutATarget)
     auto scene  = intrusive_ptr<Scene>(new Scene());
     auto camera = intrusive_ptr<Camera>(new Camera());
     camera->setAspect(320.0 / 240.0); // shaped for the rectangle it draws into: nothing to report about the picture
-    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
-    pass->setCamera(camera);
-    pass->setRenderTarget(target);
-    vn::test::registerPassForTest(*engine, pass, scene, 0);
+    vn::graphics::PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.target  = vn::graphics::Target::explicitTarget(target);
+    pass_desc.content = scene;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
 
     (void)scene->publish(); // the host's verb (see Scene::publish)
     engine->frame();
@@ -423,10 +424,11 @@ TEST(HeadlessBackendTest, PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNot
     auto scene  = intrusive_ptr<Scene>(new Scene());
     auto camera = intrusive_ptr<Camera>(new Camera());
     camera->setAspect(320.0 / 240.0);
-    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
-    pass->setCamera(camera);
-    pass->setRenderTarget(target);
-    vn::test::registerPassForTest(*engine, pass, scene, 0);
+    vn::graphics::PassDesc pass_desc;
+    pass_desc.camera  = camera;
+    pass_desc.target  = vn::graphics::Target::explicitTarget(target);
+    pass_desc.content = scene;
+    (void)vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
     (void)scene->publish(); // the host's verb (see Scene::publish): a warm-up compiles what a frame would draw
 
     // THE WARM-UP: the value the next frame would build, compiled and collected - and nothing else.
@@ -490,11 +492,13 @@ TEST(HeadlessBackendTest, APresenterThatIsNotAWindowIsNamedByTheFrameItsHostDriv
     auto scene   = intrusive_ptr<Scene>(new Scene());
     auto camera  = intrusive_ptr<Camera>(new Camera());
     camera->setAspect(16.0 / 9.0);
-    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
-    pass->setCamera(camera);
+    vn::graphics::PassDesc pass_desc;
+    pass_desc.camera = camera;
+    RenderPass pass;
+    vn::graphics::detail::PassNode::adopt(pass, std::move(pass_desc));
 
     RecordingSink sink;
-    pass->execute(scene.get(), backend.get(), &sink);
+    pass.execute(scene.get(), backend.get(), &sink);
 
     EXPECT_EQ(backend->frames, 1) << "the pass handed the device the frame its host built";
     ASSERT_EQ(backend->present_targets.size(), 1u);
@@ -675,8 +679,7 @@ TEST(HeadlessBackendTest, AReAnnouncedWindowMovesTheTargetAndTheDeviceStays)
     auto area = engine->createArea();
     area->resize(320, 240);
 
-    auto pass = intrusive_ptr<RenderPass>(new RenderPass());
-    vn::test::registerPassForTest(*engine, pass, 42);
+    const auto pass = vn::test::applyPassForTest(*engine, vn::graphics::PassDesc{}, 42);
 
     int first  = 0;
     int second = 0;

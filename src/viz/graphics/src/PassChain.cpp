@@ -120,28 +120,32 @@ bool PassChain::setShadingMode(ShadingMode mode)
     // Lit is the per-geometry program the content came with - which is exactly what a null override means.
     // Wireframe is the same idea one layer down: the pass RASTERISES the triangles as their edges (unlit, so
     // the structure reads instead of the shading), and clearing that override is how every other mode goes
-    // back to surfaces. Both are pass properties: nothing here rebuilds anything.
+    // back to surfaces. The edit is ONE DECLARATION DIFF (see PassChain::restate): nothing here rebuilds anything.
+    PassDesc desc = picture->declaration();
     switch (mode) {
     case ShadingMode::Lit:
-        picture->setProgramOverride(nullptr);
-        picture->clearPolygonModeOverride();
+        desc.program_override = nullptr;
+        desc.polygon_mode.reset();
         break;
     case ShadingMode::Flat:
-        picture->setProgramOverride(vn::graphics::flatForwardProgram());
-        picture->clearPolygonModeOverride();
+        desc.program_override = vn::graphics::flatForwardProgram();
+        desc.polygon_mode.reset();
         break;
     case ShadingMode::Unlit:
-        picture->setProgramOverride(vn::graphics::unlitForwardProgram());
-        picture->clearPolygonModeOverride();
+        desc.program_override = vn::graphics::unlitForwardProgram();
+        desc.polygon_mode.reset();
         break;
     case ShadingMode::Normals:
-        picture->setProgramOverride(vn::graphics::normalsForwardProgram());
-        picture->clearPolygonModeOverride();
+        desc.program_override = vn::graphics::normalsForwardProgram();
+        desc.polygon_mode.reset();
         break;
     case ShadingMode::Wireframe:
-        picture->setProgramOverride(vn::graphics::unlitForwardProgram());
-        picture->setPolygonModeOverride(PolygonMode::Line);
+        desc.program_override = vn::graphics::unlitForwardProgram();
+        desc.polygon_mode    = PolygonMode::Line;
         break;
+    }
+    if (!restate(desc)) {
+        return false;
     }
     mode_ = mode;
     return true;
@@ -219,8 +223,9 @@ bool PassChain::setOverlayVisible(const String& role, bool on)
         return false;
     }
     overlay_refused_.rearm();
-    pass->setEnabled(on);
-    return true;
+    PassDesc desc = pass->declaration();
+    desc.enabled   = on;
+    return restate(desc);
 }
 
 bool PassChain::isOverlayVisible(const String& role) const noexcept
@@ -239,11 +244,6 @@ void PassChain::resize(int width, int height, double pixel_ratio)
     // the logical surface they were written against (they apply their own ratio).
     const detail::PixelRatio ratio{ pixel_ratio };
     const detail::DeviceSize device = detail::toDeviceSize(detail::LogicalSize{ width, height }, ratio);
-    // A window pass has no target to read a size from; state the device-pixel size here so collection can
-    // compute screen-space scaling (AutoTransform). It does not change the backend's viewport.
-    if (window_pass_ != nullptr) {
-        window_pass_->setDrawSize(device.width, device.height);
-    }
     if (offscreen_target_ != nullptr) {
         offscreen_target_->setSize(device.width, device.height);
     }
@@ -260,12 +260,14 @@ void PassChain::resize(int width, int height, double pixel_ratio)
         }
         if (raw_ptr<RenderPass> pass = overlayPass(overlay.role)) {
             const Viewport box = overlay.layout(width, height, ratio.value);
+            PassDesc desc     = pass->declaration();
             if (box.isValid()) {
-                pass->setViewport(box);
+                desc.viewport = box;
             }
             else {
-                pass->clearViewport();
+                desc.viewport.reset();
             }
+            (void)restate(desc);
         }
     }
 }
@@ -289,18 +291,10 @@ bool PassChain::apply()
     if (!registry_.isValid()) {
         return false;
     }
-    // THE NODES ARE THE CURRENT SHAPE: resize / visibility / shading mode are declaration setters on the node, so a
-    // re-apply takes each row's declaration as it stands (and restates the order this chain asked for).
+    // THE PENDING SHAPE IS THE CURRENT SHAPE: every live edit is a restate() of one declaration (see E-04), so there is
+    // nothing to refresh from the nodes - the nodes ARE what this chain last applied, and the plan diff makes an
+    // unchanged row an in-place update.
     Plan plan = pending_;
-    for (std::size_t index = 0; index < plan.passes.size() && index < applied_; ++index) {
-        const raw_ptr<RenderPass> node = registry_.findFor(plan.passes[index].name, scope_);
-        if (node == nullptr) {
-            continue;
-        }
-        PassDesc refreshed = node->declaration();
-        refreshed.order    = pending_.passes[index].order;
-        plan.passes[index] = std::move(refreshed);
-    }
     const PlanResult result = registry_.apply(plan, scope_);
     if (!result.applied()) {
         for (const PlanProblem& problem : result.problems) {
@@ -311,9 +305,18 @@ bool PassChain::apply()
         return false;
     }
     pending_     = std::move(plan);
-    applied_     = pending_.passes.size();
     window_pass_ = registry_.findFor(window_name_, scope_);
     return true;
+}
+
+bool PassChain::restate(const PassDesc& desc)
+{
+    const auto found = std::find_if(pending_.passes.begin(), pending_.passes.end(), [&desc](const PassDesc& row) { return row.name == desc.name; });
+    if (found == pending_.passes.end()) {
+        return false; // not this chain's row (a host's own rows are edited through applyPlan's scoped form)
+    }
+    *found = desc;
+    return apply();
 }
 
 void PassChain::setTransparentContent(intrusive_ptr<Scene> scene)

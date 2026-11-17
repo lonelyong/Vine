@@ -163,10 +163,14 @@ TEST(ShadowPixelTest, ACastingSunDarkensTheGroundWhereItsShadowFalls)
 
     vn::graphics::RenderPass* const picture = pipeline->presentingPass();
     ASSERT_NE(picture, nullptr);
-    picture->setRenderTarget(fixture.target);
-    picture->setClearEnabled(true);
-    picture->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    picture->setShouldClearDepth(true);
+    {
+        vn::graphics::PassDesc desc = picture->declaration();
+        desc.target                 = vn::graphics::Target::explicitTarget(fixture.target);
+        desc.clear_enabled          = true;
+        desc.clear_color            = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        desc.clear_depth            = true;
+        ASSERT_TRUE(pipeline->restate(desc));
+    }
 
     // 计划里必须真的有一条 shadow pass：没有它，"地面很亮"和"地面亮且被影子切过"是同一张图。
     const vn::graphics::FrameTable plan            = fixture.engine->frameTable();
@@ -208,10 +212,14 @@ TEST(ShadowPixelTest, TheSameShadowFallsWhenTheFrameCompositesAnOverlay)
 
     vn::graphics::RenderPass* const picture = pipeline->presentingPass();
     ASSERT_NE(picture, nullptr);
-    picture->setRenderTarget(fixture.target);
-    picture->setClearEnabled(true);
-    picture->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    picture->setShouldClearDepth(true);
+    {
+        vn::graphics::PassDesc desc = picture->declaration();
+        desc.target                 = vn::graphics::Target::explicitTarget(fixture.target);
+        desc.clear_enabled          = true;
+        desc.clear_color            = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        desc.clear_depth            = true;
+        ASSERT_TRUE(pipeline->restate(desc));
+    }
 
     const vn::backend_vsg::core::PixelProbe read_back = fixture.read();
     expectTheShadowFalls(read_back);
@@ -239,10 +247,14 @@ TEST(ShadowPixelTest, TheSameShadowFallsOnTheForwardPath)
 
     vn::graphics::RenderPass* const picture = pipeline->presentingPass();
     ASSERT_NE(picture, nullptr);
-    picture->setRenderTarget(fixture.target);
-    picture->setClearEnabled(true);
-    picture->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    picture->setShouldClearDepth(true);
+    {
+        vn::graphics::PassDesc desc = picture->declaration();
+        desc.target                 = vn::graphics::Target::explicitTarget(fixture.target);
+        desc.clear_enabled          = true;
+        desc.clear_color            = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        desc.clear_depth            = true;
+        ASSERT_TRUE(pipeline->restate(desc));
+    }
 
     const vn::backend_vsg::core::PixelProbe read_back = fixture.read();
     printAscii(read_back);

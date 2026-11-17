@@ -107,14 +107,15 @@ bool SdkPixelFixture::available()
         // own entry points and a read-back, which is the "off-screen pixels are really served" half of the
         // question. The pass is the minimal one - the fixture's own scene through its own camera - so what this
         // measures is the path, not a case's scaffolding.
-        const vn::intrusive_ptr<vn::graphics::RenderPass> pass(new vn::graphics::RenderPass());
-        pass->setCamera(probe.camera);
-        pass->setRenderTarget(probe.target);
-        pass->setClearEnabled(true);
-        pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-        pass->setShouldClearDepth(true);
-        pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-        vn::test::registerPassForTest(*probe.engine, pass, probe.scene, 0);
+        vn::graphics::PassDesc pass;
+        pass.camera            = probe.camera;
+        pass.content           = probe.scene;
+        pass.target            = vn::graphics::Target::explicitTarget(probe.target);
+        pass.clear_enabled     = true;
+        pass.clear_color       = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        pass.clear_depth       = true;
+        pass.program_override  = vn::graphics::unlitForwardProgram();
+        vn::test::registerPassForTest(*probe.engine, std::move(pass), 0);
         return probe.read().valid();
     }();
     return usable;

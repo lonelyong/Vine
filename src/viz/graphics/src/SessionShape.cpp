@@ -222,7 +222,7 @@ void SessionShape::applyPlanRows(const Plan& plan, const void* owner, RenderBack
         if (existing != nullptr && existing->pass->declaration().kind == desc.kind) {
             // IN PLACE: the node survives, so everything the backend keyed by it survives too - and a declaration
             // that only changed its target is an update, not a remove plus an add (see P7).
-            existing->pass->setDesc(desc);
+            detail::PassNode::adopt(*existing->pass, desc);
             existing->order = order;
             continue;
         }
@@ -250,8 +250,11 @@ bool SessionShape::bindPassContent(raw_ptr<RenderPass> pass, intrusive_ptr<Scene
     for (auto& slot : slots_) {
         if (slot.pass.get() == pass) {
             // The declaration owns it (PassDesc::content), so there is one storage and the compile reads the same
-            // scene this call bound.
-            slot.pass->setContent(std::move(content));
+            // scene this call bound. A CONTENT BINDING IS ONE DECLARATION DIFF, not a setter: the node adopts the
+            // declaration it already stated with the content field replaced.
+            PassDesc desc  = slot.pass->declaration();
+            desc.content   = std::move(content);
+            detail::PassNode::adopt(*slot.pass, std::move(desc));
             return true;
         }
     }
@@ -375,7 +378,7 @@ intrusive_ptr<RenderPass> SessionShape::makePassNode(const PassDesc& desc)
             }
         }
     }
-    node->setDesc(std::move(adopted));
+    detail::PassNode::adopt(*node, std::move(adopted));
     return node;
 }
 

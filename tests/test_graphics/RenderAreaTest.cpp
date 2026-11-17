@@ -106,9 +106,9 @@ TEST(RenderAreaTest, APassRegisteredOnTheEngineIsNotAPresentation)
     // a null-target pass that is not the picture.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto surface = engine->createArea();
-    auto hud     = intrusive_ptr<RenderPass>(new RenderPass());
-    hud->setName(vn::String(u8"fps_overlay"));
-    vn::test::registerPassForTest(*engine, hud, 30);
+    vn::graphics::PassDesc hud_desc;
+    hud_desc.name = vn::String(u8"fps_overlay");
+    const auto hud = vn::test::applyPassForTest(*engine, std::move(hud_desc), 30);
 
     EXPECT_EQ(engine->passCount(), 1u);
     EXPECT_FALSE(surface->hasPresentation()) << "a pass is not a presentation by existing";
@@ -121,9 +121,9 @@ TEST(RenderAreaTest, AHostDeclaredPassIsTheSurfacesPresentation)
     // the pass presents the area, and there is no view to name.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto surface = engine->createArea();
-    auto main    = intrusive_ptr<RenderPass>(new RenderPass());
-    main->setName(vn::String(u8"deferred_lighting"));
-    vn::test::registerPassForTest(*engine, main, 0);
+    vn::graphics::PassDesc main_desc;
+    main_desc.name = vn::String(u8"deferred_lighting");
+    const auto main = vn::test::applyPassForTest(*engine, std::move(main_desc), 0);
 
     EXPECT_TRUE(surface->present(main.get()));
     EXPECT_TRUE(surface->hasPresentation());
@@ -240,8 +240,12 @@ TEST(RenderAreaTest, APassThatIsNotInTheFrameCannotPresentTheArea)
     // (RenderEngine::addPass, which a pipeline does itself when it is built).
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto surface = engine->createArea();
-    auto pass    = intrusive_ptr<RenderPass>(new RenderPass());
-    pass->setName(vn::String(u8"deferred_lighting"));
+    // The pass exists but is not registered: a node is a declaration, and the area resolves a picture through
+    // the engine's table (see RenderArea::present).
+    vn::graphics::PassDesc pass_desc;
+    pass_desc.name = vn::String(u8"deferred_lighting");
+    auto pass      = intrusive_ptr<RenderPass>(new RenderPass());
+    vn::graphics::detail::PassNode::adopt(*pass, pass_desc);
 
     EXPECT_FALSE(surface->present(pass.get())) << "a pass the engine never registered draws nothing here";
     EXPECT_FALSE(surface->hasPresentation());
@@ -250,10 +254,11 @@ TEST(RenderAreaTest, APassThatIsNotInTheFrameCannotPresentTheArea)
     EXPECT_FALSE(surface->present(pass.get())) << "and trying again is not a second report";
     EXPECT_EQ(engine->diagnosticCount(), 1u);
 
-    vn::test::registerPassForTest(*engine, pass, 0);
-    EXPECT_TRUE(surface->present(pass.get())) << "registered first, declared second - the host order";
+    // Registering the declaration builds the engine's node: THAT is the pass a picture is declared on.
+    const auto registered = vn::test::applyPassForTest(*engine, std::move(pass_desc), 0);
+    EXPECT_TRUE(surface->present(registered.get())) << "registered first, declared second - the host order";
     EXPECT_TRUE(surface->hasPresentation());
-    EXPECT_EQ(surface->presentingPass(), pass.get());
+    EXPECT_EQ(surface->presentingPass(), registered.get());
 }
 
 TEST(RenderAreaTest, APresentationWhosePassLeavesTheFrameStopsPresenting)
@@ -263,8 +268,7 @@ TEST(RenderAreaTest, APresentationWhosePassLeavesTheFrameStopsPresenting)
     // a default path from building its own picture (Viewer::takeArea) while the window stayed empty.
     auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
     auto surface = engine->createArea();
-    auto pass    = intrusive_ptr<RenderPass>(new RenderPass());
-    vn::test::registerPassForTest(*engine, pass, 0);
+    const auto pass = vn::test::applyPassForTest(*engine, vn::graphics::PassDesc{}, 0);
     ASSERT_TRUE(surface->present(pass.get()));
     EXPECT_TRUE(surface->hasPresentation());
 
@@ -288,8 +292,7 @@ TEST(RenderAreaTest, OneAreaDrawsOnePicture)
     EXPECT_EQ(surface->presentedView(), first.get());
     EXPECT_EQ(surface->presentingPass(), first->chain()->presentingPass());
 
-    auto host_pass = intrusive_ptr<RenderPass>(new RenderPass());
-    vn::test::registerPassForTest(*engine, host_pass, 40);
+    const auto host_pass = vn::test::applyPassForTest(*engine, vn::graphics::PassDesc{}, 40);
     EXPECT_FALSE(surface->present(host_pass.get()));
     EXPECT_EQ(surface->presentedView(), first.get());
     EXPECT_EQ(engine->diagnosticCount(DiagnosticCategory::PassProtocolViolation), 1u) << "one condition, one report - not one per attempt";
@@ -347,7 +350,13 @@ TEST(RenderAreaTest, TheAreaDoesNotTouchTheClearPolicyOfItsPicture)
     EXPECT_TRUE(window->isClearEnabled()) << "the presentation's own ask is untouched";
     EXPECT_EQ(window->clearColor(), Color(51, 51, 51, 255).toLinear()) << "the window's grey is the linear light that displays as #333333";
 
-    window->setClearEnabled(false);
+    // A LIVE EDIT IS ONE DECLARATION DIFF (see E-04): the chain that owns the row restates it, and the area still
+    // invents nothing.
+    {
+        vn::graphics::PassDesc desc = window->declaration();
+        desc.clear_enabled          = false;
+        ASSERT_TRUE(view->chain()->restate(desc));
+    }
     ChainDesc with_gizmo;
     with_gizmo.gizmo.source_camera = view->camera();
     ASSERT_NE(buildFor(view, engine.get(), with_gizmo), nullptr);

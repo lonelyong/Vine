@@ -242,20 +242,21 @@ TEST(PrimitiveDrawTest, OneGeometryWithThreePrimitivesDrawsThreePartsFromOneUplo
 {
     VN_SKIP_WITHOUT_SDK_DEVICE(fixture);
 
-    const vn::intrusive_ptr<Scene>      scene = makeThreePartScene();
-    const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
-    pass->setName(vn::String(u8"three_parts"));
-    pass->setCamera(fixture.camera);
-    pass->setRenderTarget(fixture.target);
-    pass->setClearEnabled(true);
-    pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    pass->setShouldClearDepth(true);
+    const vn::intrusive_ptr<Scene> scene = makeThreePartScene();
+    vn::graphics::PassDesc         pass;
+    pass.name          = vn::String(u8"three_parts");
+    pass.camera        = fixture.camera;
+    pass.content       = scene;
+    pass.target        = vn::graphics::Target::explicitTarget(fixture.target);
+    pass.clear_enabled = true;
+    pass.clear_color   = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.clear_depth   = true;
     // 三段共面：深度 LESS 会让后画的两段在自己的深度上被拒，而这一条量的是"三条都到了光栅器"，
     // 不是遮挡关系 —— 关掉深度，两个变量只剩拓扑与颜色。
-    pass->setDepthMode(DepthMode::Disabled);
+    pass.depth_mode = DepthMode::Disabled;
     // 无光照档：没有灯的环境里跑默认前向程序会得到一张被算黑的画面，而这一条判的是"哪一段画的"。
-    pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-    vn::test::registerPassForTest(*fixture.engine, pass, scene, 0);
+    pass.program_override = vn::graphics::unlitForwardProgram();
+    vn::test::registerPassForTest(*fixture.engine, std::move(pass), 0);
 
     (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe picture = fixture.read();
@@ -343,16 +344,17 @@ TEST(PrimitiveDrawTest, APointSizeTheContentAuthoredIsWhatTheRasteriserCovers)
     const vn::intrusive_ptr<Scene> scene(new Scene());
     scene->setRoot(state);
 
-    const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
-    pass->setName(vn::String(u8"points"));
-    pass->setCamera(fixture.camera);
-    pass->setRenderTarget(fixture.target);
-    pass->setClearEnabled(true);
-    pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    pass->setShouldClearDepth(true);
-    pass->setDepthMode(DepthMode::Disabled);
-    pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-    vn::test::registerPassForTest(*fixture.engine, pass, scene, 0);
+    vn::graphics::PassDesc pass;
+    pass.name             = vn::String(u8"points");
+    pass.camera           = fixture.camera;
+    pass.content          = scene;
+    pass.target           = vn::graphics::Target::explicitTarget(fixture.target);
+    pass.clear_enabled    = true;
+    pass.clear_color      = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.clear_depth      = true;
+    pass.depth_mode       = DepthMode::Disabled;
+    pass.program_override = vn::graphics::unlitForwardProgram();
+    vn::test::registerPassForTest(*fixture.engine, std::move(pass), 0);
 
     (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe one = fixture.read();
@@ -410,21 +412,20 @@ TEST(PrimitiveDrawTest, AStripAndAFanCoverTheSameQuadAListDoes)
         scene->setRoot(geometry);
 
         // One pass per shape: the frame draws exactly one scene, and the scene IS the quad here.
-        const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
-        pass->setName(vn::String(u8"quad"));
-        pass->setCamera(fixture.camera);
-        pass->setRenderTarget(fixture.target);
-        pass->setClearEnabled(true);
-        pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-        pass->setShouldClearDepth(true);
-        pass->setDepthMode(DepthMode::Disabled);
-        pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-        vn::test::registerPassForTest(*fixture.engine, pass, scene, 0);
+        vn::graphics::PassDesc pass;
+        pass.name             = vn::String(u8"quad");
+        pass.camera           = fixture.camera;
+        pass.content          = scene;
+        pass.target           = vn::graphics::Target::explicitTarget(fixture.target);
+        pass.clear_enabled    = true;
+        pass.clear_color      = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+        pass.clear_depth      = true;
+        pass.depth_mode       = DepthMode::Disabled;
+        pass.program_override = vn::graphics::unlitForwardProgram();
+        const auto node       = vn::test::applyPassForTest(*fixture.engine, std::move(pass), 0);
         (void)scene->publish(); // the scene this pass draws, published by its owner (see Scene::publish)
-
-    (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
         const PixelProbe picture = fixture.read();
-        vn::test::removePassForTest(*fixture.engine, pass.get());
+        vn::test::removePassForTest(*fixture.engine, node.get());
         EXPECT_TRUE(picture.valid()) << "画出来的这一帧必须读得回来";
         return countParts(picture).red;
     };
@@ -466,16 +467,17 @@ TEST(PrimitiveDrawTest, ALineWidthTheContentAuthoredIsWhatTheRasteriserCovers)
     const vn::intrusive_ptr<Scene> scene(new Scene());
     scene->setRoot(state);
 
-    const vn::intrusive_ptr<RenderPass> pass(new RenderPass());
-    pass->setName(vn::String(u8"lines"));
-    pass->setCamera(fixture.camera);
-    pass->setRenderTarget(fixture.target);
-    pass->setClearEnabled(true);
-    pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
-    pass->setShouldClearDepth(true);
-    pass->setDepthMode(DepthMode::Disabled);
-    pass->setProgramOverride(vn::graphics::unlitForwardProgram());
-    vn::test::registerPassForTest(*fixture.engine, pass, scene, 0);
+    vn::graphics::PassDesc pass;
+    pass.name             = vn::String(u8"lines");
+    pass.camera           = fixture.camera;
+    pass.content          = scene;
+    pass.target           = vn::graphics::Target::explicitTarget(fixture.target);
+    pass.clear_enabled    = true;
+    pass.clear_color      = vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F);
+    pass.clear_depth      = true;
+    pass.depth_mode       = DepthMode::Disabled;
+    pass.program_override = vn::graphics::unlitForwardProgram();
+    vn::test::registerPassForTest(*fixture.engine, std::move(pass), 0);
 
     (void)scene->publish(); // the test's own content, published before the frame (see Scene::publish)
     const PixelProbe thin = fixture.read();

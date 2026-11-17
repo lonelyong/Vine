@@ -33,6 +33,13 @@ class ShaderProgram;
 
 using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
 
+namespace detail
+{
+
+struct PassNode;
+
+} // namespace detail
+
 /**
  * @brief One rendering stage: its declaration (a PassDesc, stored once) plus the execution facts a frame resolved.
  *
@@ -68,28 +75,12 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      * - The single storage of everything the pass states: kind, camera, content, target, inputs, clear policy, state,
      *   layer mask and the per-frame hook.
      *
-     * @return The declaration (valid until the next setDesc or mutating setter).
+     * @return The declaration (valid until the next adoption of a declaration).
      */
     [[nodiscard]] const PassDesc& declaration() const noexcept
     {
         return desc_;
     }
-
-    /**
-     * @brief Adopts @p desc as this pass' whole declaration.
-     *
-     * @details
-     * - Everything the pass stated before is replaced - this is "I am this descriptor", not a merge - which is what
-     *   makes a descriptor-declared pass and a hand-built one the same object (see RenderEngine::applyPlan).
-     * - A stated depth view is applied to the declared target again (see setDepthView), so a re-stated declaration
-     *   keeps its depth edge.
-     *
-     * @warning A layered depth view is kept as a declaration and applied to nothing: layered targets do not exist yet,
-     *          and the engine is what reports the refusal before adopting.
-     *
-     * @param desc Declaration to adopt (moved in).
-     */
-    void setDesc(PassDesc desc);
 
     /**
      * @brief Gets the pass name.
@@ -102,16 +93,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     }
 
     /**
-     * @brief Sets the pass name.
-     *
-     * @param name Name used by diagnostics and the frame plan.
-     */
-    void setName(const String& name)
-    {
-        desc_.name = name;
-    }
-
-    /**
      * @brief Gets the content scene this pass draws.
      *
      * @return The scene (null draws nothing, which is how a content-less pass states itself).
@@ -119,20 +100,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     [[nodiscard]] raw_ptr<Scene> content() const noexcept
     {
         return desc_.content.get();
-    }
-
-    /**
-     * @brief Binds the content scene this pass draws (see RenderEngine::bindPassContent).
-     *
-     * @details
-     * - The pass keeps the scene alive. An overlay pass (a gizmo, an FPS readout) owns the scene it draws, so this is
-     *   also how such a pass is built.
-     *
-     * @param scene Scene to draw, or null to draw no content.
-     */
-    void setContent(intrusive_ptr<Scene> scene)
-    {
-        desc_.content = std::move(scene);
     }
 
     /**
@@ -150,36 +117,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     }
 
     /**
-     * @brief Sets the target this pass draws into.
-     *
-     * @details
-     * - The pass keeps the target alive: it draws into it every frame, so it must not be able to outlive it.
-     * - The compile also calls this with the transient target it resolved for a pass that declared
-     *   `PassDesc::target.name`, which is why the effective target is the one this returns.
-     * - A stated depth view is applied to the new target (see setDepthView); a pass that stated none does not un-say
-     *   what another pass set.
-     *
-     * @param target Target to draw into, or null for the window.
-     */
-    void setRenderTarget(intrusive_ptr<RenderTarget> target);
-
-    /**
-     * @brief Takes the target the frame compile resolved for this pass' transient declaration.
-     *
-     * @details
-     * - EXECUTION STATE, not a declaration: the declaration keeps saying "I asked for this identity" (see
-     *   Target), while the target that answered it belongs to the frame that resolved it - so a compile can
-     *   replace it without rewriting what the host stated (which is what the old `setRenderTarget` did).
-     * - Called by the engine's compile (see compileFrame) and by nobody else; a null value drops the resolution.
-     *
-     * @param target The target a transient declaration resolved to, or null to drop the resolution.
-     */
-    void setResolvedTarget(intrusive_ptr<RenderTarget> target) noexcept
-    {
-        resolved_target_ = std::move(target);
-    }
-
-    /**
      * @brief Gets the depth image this pass draws against.
      *
      * @return The view stated by setDepthView, or an invalid view when the pass uses its target's own depth.
@@ -190,24 +127,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     }
 
     /**
-     * @brief States the depth image this pass draws against, when it is another pass' image (see DepthView).
-     *
-     * @details
-     * - THE PASS DECLARES THE EDGE; the target stores the mechanism. The view is applied to the pass' current target
-     *   (RenderTarget::shareDepth) and re-applied when a target is set later, so a pass moved to another target keeps
-     *   drawing against the same depth.
-     * - Constraints are the target's (both off-screen and equally sized, the lender renders earlier, its depth is not
-     *   promoted); the backend reports a plan that breaks them rather than guessing.
-     * - An invalid view clears the declaration: the pass goes back to its target's own depth.
-     *
-     * @warning A view whose layer is not 0 is kept as a declaration but applied to nothing: layered targets are not
-     *          built yet (the engine reports the refusal).
-     *
-     * @param view The depth image this pass draws against.
-     */
-    void setDepthView(DepthView view);
-
-    /**
      * @brief Gets the camera this pass draws through.
      *
      * @return The camera (null draws nothing).
@@ -215,22 +134,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     [[nodiscard]] raw_ptr<Camera> camera() const noexcept
     {
         return desc_.camera.get();
-    }
-
-    /**
-     * @brief Sets the camera this pass draws through.
-     *
-     * @details
-     * - The pass KEEPS the camera alive: it draws through it every frame, and a caller that derives one for the pass
-     *   (the pipeline builder derives the shadow pass' light camera) must not be able to leave it drawing through
-     *   freed memory. The owning parameter says so at the signature; pass a borrowed one explicitly as
-     *   `intrusive_ptr<Camera>(borrowed)`.
-     *
-     * @param camera Camera to draw through and keep alive (may be null).
-     */
-    void setCamera(intrusive_ptr<Camera> camera)
-    {
-        desc_.camera = std::move(camera);
     }
 
     /**
@@ -249,21 +152,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     [[nodiscard]] Colorf clearColor(int attachment = 0) const;
 
     /**
-     * @brief Sets one attachment's clear colour (attachment 0 unless one is named).
-     *
-     * @details
-     * - Attachment 0 and the extras are ONE fact with one authority: the pass' clear policy, i.e. two fields of the
-     *   declaration. Stating nothing for an attachment keeps transparent black - the value that means "nothing here".
-     * - A negative index is ignored; indices above 0 grow the stated list with transparent-black entries so the index
-     *   the caller names is the index the backend clears.
-     *
-     * @param color      Colour that attachment is cleared to, in LINEAR light (a host holding an encoded colour - a
-     *                   palette, a PNG, a `QColor` - states it as `Color(...).toLinear()`).
-     * @param attachment Colour attachment index (0 = the first, the default).
-     */
-    void setClearColor(const Colorf& color, int attachment = 0);
-
-    /**
      * @brief Returns whether the depth buffer is cleared.
      *
      * @details
@@ -276,36 +164,12 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     [[nodiscard]] bool shouldClearDepth() const noexcept;
 
     /**
-     * @brief Sets whether the depth buffer is cleared before this pass.
-     *
-     * @details
-     * - Off-screen targets honour a false value (their depth survives through a depth-LOAD pass); the window always
-     *   gets a cleared depth buffer, so the flag is ignored there.
-     *
-     * @param clear True to clear the depth buffer.
-     */
-    void setShouldClearDepth(bool clear)
-    {
-        desc_.clear_depth = clear;
-    }
-
-    /**
      * @brief Returns whether the colour/depth buffer is cleared before this pass.
      *
      * @return True when the pass clears (the default for a Scene pass, never for a Screen pass: a composite draws over
      *         what is already there).
      */
     [[nodiscard]] bool isClearEnabled() const noexcept;
-
-    /**
-     * @brief Sets whether the colour/depth buffer is cleared before this pass.
-     *
-     * @param enabled True to clear the buffers.
-     */
-    void setClearEnabled(bool enabled)
-    {
-        desc_.clear_enabled = enabled;
-    }
 
     /**
      * @brief Returns how this pass's content handles depth (the pass' own policy).
@@ -316,21 +180,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     [[nodiscard]] DepthMode depthMode() const noexcept
     {
         return desc_.depth_mode;
-    }
-
-    /**
-     * @brief Sets how this pass's content handles depth.
-     *
-     * @details
-     * - TestAndWrite draws depth-occluded opaque content; TestOnly tests but does not write (translucent content over
-     *   already-written depth); Disabled draws on top with no depth test (HUD / overlay).
-     * - A POLICY, not an override: a command that authored its own depth state keeps it.
-     *
-     * @param mode The depth mode.
-     */
-    void setDepthMode(DepthMode mode) noexcept
-    {
-        desc_.depth_mode = mode;
     }
 
     /**
@@ -355,52 +204,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     }
 
     /**
-     * @brief Sets whether this pass is drawn by the engine.
-     *
-     * @details
-     * - A disabled pass keeps its declaration, costs nothing, and still counts as a declaration for the wiring checks,
-     *   which is what lets a registered pass (a HUD overlay) be toggled without removing it.
-     *
-     * @param enabled True to draw the pass.
-     */
-    void setEnabled(bool enabled) noexcept
-    {
-        desc_.enabled = enabled;
-    }
-
-    /**
-     * @brief Restricts this pass to a sub-rectangle of its target.
-     *
-     * @details
-     * - Used for an axis gizmo in a corner, a picture-in-picture preview, or a second view drawn into part of the
-     *   target. The rectangle is in DEVICE pixels with a top-left origin, and every draw the pass issues is placed
-     *   inside it.
-     * - What the pass CLEARS is a different question: a clear covers the whole target, a draw stays inside this
-     *   rectangle, which is what makes a corner preview work.
-     * - The rectangle does NOT decide the shape the picture is projected with: that is the camera's (see Camera). The
-     *   engine reports a pass whose rectangle and camera shape disagree, because the result is a stretched picture.
-     *
-     * @param viewport Draw rectangle in device pixels (top-left origin).
-     */
-    void setViewport(const Viewport& viewport)
-    {
-        desc_.viewport = viewport;
-    }
-
-    /**
-     * @brief Restricts this pass to a sub-rectangle of its target (see setViewport(const Viewport&)).
-     *
-     * @param x      Viewport origin x in device pixels.
-     * @param y      Viewport origin y in device pixels (top-left origin).
-     * @param width  Viewport width in device pixels.
-     * @param height Viewport height in device pixels.
-     */
-    void setViewport(int x, int y, int width, int height)
-    {
-        setViewport(Viewport{ x, y, width, height });
-    }
-
-    /**
      * @brief Returns whether a sub-viewport is configured for this pass.
      *
      * @return True when the pass draws into a stated rectangle.
@@ -420,31 +223,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
         return desc_.viewport.value_or(Viewport{});
     }
 
-    /// @brief Clears any configured sub-viewport: the pass draws the whole target again.
-    void clearViewport() noexcept
-    {
-        desc_.viewport.reset();
-    }
-
-    /**
-     * @brief Maps this pass' draws into a band of the depth buffer instead of the whole of it.
-     *
-     * @details
-     * - The band is what makes a semantic layer sit where the view wants it rather than where the geometry is:
-     *   annotations over solids, an overlay over a scene, one layer of a stacked picture in front of another.
-     * - The mapping is order-preserving, so near/far inside the band and against default-mapped content are
-     *   unchanged - but a remapped depth is NO LONGER A DISTANCE. A pass that states a band is declaring its
-     *   target's depth to be a layer value, so nothing may read that depth back as geometry afterwards.
-     * - A pass cannot compose a band with an enclosing one: there is no enclosing pass, and two passes writing
-     *   one target with different bands leave a pixel's value with no single meaning (see DepthRange).
-     *
-     * @param range Depth-buffer interval the pass' draws are mapped into; {0, 1} is the whole buffer.
-     */
-    void setDepthRange(const DepthRange& range)
-    {
-        desc_.depth_range = range;
-    }
-
     /**
      * @brief Gets the depth band this pass maps its draws into.
      *
@@ -455,29 +233,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
         return desc_.depth_range;
     }
 
-    /// @brief Clears any configured depth band: the pass maps into the whole depth buffer again.
-    void clearDepthRange() noexcept
-    {
-        desc_.depth_range.reset();
-    }
-
-    /** @brief States the device-pixel size of the surface this pass draws into when it has no target.
-     *
-     * @details
-     * - A pass that writes an explicit RenderTarget already knows its size; a WINDOW pass does not. The engine
-     *   (or PassChain, which already converts the surface size with the pixel ratio) states it here, and
-     *   collection uses it as the viewport for view-dependent features (AutoTransform screen-space scaling).
-     * - It does NOT change the backend's viewport: a pass without setViewport() still draws the full target.
-     *
-     * @param width  Draw width in DEVICE pixels (<= 0 clears the size).
-     * @param height Draw height in DEVICE pixels (<= 0 clears the size).
-     */
-    void setDrawSize(int width, int height) noexcept
-    {
-        draw_size_ = (width > 0 && height > 0) ? Viewport{ 0, 0, width, height } : Viewport{};
-    }
-
-    /** @brief Gets the draw size stated by setDrawSize(). */
+    /** @brief Gets the device-pixel size of the surface this pass draws into when it has no target. */
     [[nodiscard]] Viewport drawSize() const noexcept
     {
         return draw_size_;
@@ -494,37 +250,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     }
 
     /**
-     * @brief Sets which layers of the content this pass draws.
-     *
-     * @details
-     * - The content selection of one pass: nodes whose resolved layers do not intersect the mask are left out of the
-     *   collection, so one scene can feed several passes that each draw a different part of it - and the mask is part
-     *   of the collected list's key, so no second walk is needed (see Scene::collectRenderCommands).
-     * - A mask of 0 selects nothing - legal, and reported once as a frame-plan problem, because a content pass that
-     *   draws nothing is nearly always a mistake.
-     *
-     * @param mask Layer mask (kAllLayers draws every layer; 0 draws no content at all).
-     */
-    void setLayerMask(std::uint32_t mask) noexcept
-    {
-        desc_.layer_mask = mask;
-    }
-
-    /**
-     * @brief Sets the name this pass publishes its output under.
-     *
-     * @details
-     * - Later passes can then consume it by name without holding a pointer to the producer. The engine clears the
-     *   registry at the start of every frame, so the producer must run earlier in the same frame.
-     *
-     * @param name Output slot name, or empty to publish nothing.
-     */
-    void setOutputName(const String& name)
-    {
-        desc_.output.name = name;
-    }
-
-    /**
      * @brief Gets the output slot name this pass publishes under.
      *
      * @return The output name (empty when publishing is disabled).
@@ -532,22 +257,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     [[nodiscard]] String outputName() const
     {
         return desc_.output.name;
-    }
-
-    /**
-     * @brief Declares the image this pass produces (the fine-grained output declaration).
-     *
-     * @details
-     * - The object-typed counterpart of setOutputName: producer and consumers point at the SAME ImageRef, so a hand-off
-     *   cannot be mistyped and the engine can see the wiring (it reports an image two passes declare).
-     * - The image has to be BOUND to a target (ImageRef::bind); an unbound identity is reported instead of passing
-     *   unnoticed, and a promise about a target this pass does not draw into is reported too.
-     *
-     * @param image Image this pass produces (null clears it).
-     */
-    void setOutput(intrusive_ptr<ImageRef> image)
-    {
-        desc_.output.image = std::move(image);
     }
 
     /**
@@ -561,25 +270,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     }
 
     /**
-     * @brief Declares a WHOLE target this pass hands to consumers (the coarse counterpart of setOutput).
-     *
-     * @details
-     * - "Any image of this target is mine to hand out": a pass rendering into an MRT target fills all of its
-     *   attachments in one render scope, so promising them one by one would mean repeating the attachment count at
-     *   every producer.
-     * - Shape-agnostic on purpose: the promise covers whatever the target has when the engine validates it.
-     * - The claim has NO target of its own (see Output::whole_target): it always names the target the pass DRAWS
-     *   INTO, so @p target only states or clears the claim - naming another target cannot make the promise about
-     *   it, because the value cannot express that.
-     *
-     * @param target Target whose images this pass produces (null clears the declaration).
-     */
-    void setOutputTarget(intrusive_ptr<RenderTarget> target)
-    {
-        desc_.output.whole_target = target != nullptr;
-    }
-
-    /**
      * @brief Gets the whole target this pass promises to consumers.
      *
      * @return The target the pass draws into when the whole-target claim is stated, or null.
@@ -587,25 +277,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     [[nodiscard]] raw_ptr<RenderTarget> outputTarget() const noexcept
     {
         return desc_.output.whole_target ? renderTarget() : nullptr;
-    }
-
-    /**
-     * @brief Adds an input slot this pass consumes BY NAME.
-     *
-     * @details
-     * - Sugar over the object-typed declarations: the engine resolves each name against its named-output registry
-     *   before the pass runs, and names are only consulted when the pass declared no object-typed input at all - one
-     *   wire stated twice must not be resolved twice.
-     * - Several names may be declared as alternatives: the first that resolves is used, and when none resolves the
-     *   pass draws nothing and the engine reports it.
-     *
-     * @param name Name of a published output to consume (empty is ignored).
-     */
-    void addInputName(const String& name)
-    {
-        if (!name.empty()) {
-            desc_.input_names.push_back(name);
-        }
     }
 
     /**
@@ -619,47 +290,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     }
 
     /**
-     * @brief Declares one produced image this pass consumes.
-     *
-     * @details
-     * - A consumer samples one ATTACHMENT of the image's target (ImageRef::attachment), which is what an MRT pass
-     *   hands out. The image has to be bound to a target, or nothing can fill it and the engine reports that.
-     *
-     * @param image Image this pass consumes (null is ignored).
-     */
-    void addInput(intrusive_ptr<ImageRef> image);
-
-    /**
-     * @brief Declares one imported texture this pass consumes.
-     *
-     * @details
-     * - A static image has no producer in the frame, so it takes no part in the one-producer wiring rules; it is
-     *   sampled where the pass' program declares a sampler for it.
-     *
-     * @param texture Texture this pass consumes (null is ignored).
-     */
-    void addInput(intrusive_ptr<Texture> texture);
-
-    /**
-     * @brief Declares one imported texture read with an explicit sampler state.
-     *
-     * @details
-     * - The state belongs to THIS input, not to the texture: the same texture declared by another pass may be read
-     *   with different filter/wrap settings.
-     *
-     * @param texture Texture this pass consumes (null is ignored).
-     * @param sampler How this pass reads the texture (see Sampler).
-     */
-    void addInput(intrusive_ptr<Texture> texture, const Sampler& sampler);
-
-    /**
-     * @brief Declares one input from the declaration value (one of the two forms above).
-     *
-     * @param input Input declaration; an empty declaration is ignored.
-     */
-    void addInput(ImageInput input);
-
-    /**
      * @brief Gets the images this pass consumes, in declaration order.
      *
      * @return The input declarations (produced images or imported textures), as added.
@@ -667,22 +297,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     [[nodiscard]] const std::vector<ImageInput>& inputs() const noexcept
     {
         return desc_.inputs;
-    }
-
-    /**
-     * @brief Declares a WHOLE target this pass consumes (the coarse counterpart of addInput).
-     *
-     * @details
-     * - "I read this target's images": a full-screen program receives every colour attachment of its source (plus its
-     *   depth while that one is sampleable) and its shader picks by binding, so the unit it consumes is the target.
-     *
-     * @param target Target whose images this pass consumes (null is ignored).
-     */
-    void addInputTarget(intrusive_ptr<RenderTarget> target)
-    {
-        if (target != nullptr) {
-            desc_.input_targets.push_back(std::move(target));
-        }
     }
 
     /**
@@ -694,15 +308,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     {
         return desc_.input_targets;
     }
-
-    /**
-     * @brief Clears every declared input: images, targets and names.
-     *
-     * @details
-     * - One call, because "this pass now consumes nothing" is one statement. Clearing only part of the list would
-     *   leave the resolve order (images, then targets, then names) reading a stale half.
-     */
-    void clearInputs();
 
     /**
      * @brief Receives the engine-resolved inputs.
@@ -732,25 +337,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     }
 
     /**
-     * @brief Forces every command this pass renders to use one program.
-     *
-     * @details
-     * - A pass-level OVERRIDE, applied to every command whatever the content declared, so the same scene can be
-     *   re-rendered with another shader (an unlit or normals view).
-     * - IT TRAVELS AS PASS STATE, not as a rewrite of the commands: the pass states it once
-     *   (`PassDraw::program_override`) and the backend resolves it per command exactly like the pass' state
-     *   (`PassDraw::state`). The collected command list stays the shared, immutable list - rewriting it cost a whole
-     *   extra command list per frame per overriding pass.
-     * - The pass keeps a reference.
-     *
-     * @param program Program applied to all content, or null for per-geometry programs (the default).
-     */
-    void setProgramOverride(intrusive_ptr<ShaderProgram> program)
-    {
-        desc_.program_override = std::move(program);
-    }
-
-    /**
      * @brief Gets the pass-level polygon-mode override.
      *
      * @return The mode, or nullopt when each command keeps its own.
@@ -758,29 +344,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     [[nodiscard]] std::optional<PolygonMode> polygonModeOverride() const noexcept
     {
         return desc_.polygon_mode;
-    }
-
-    /**
-     * @brief Draws everything this pass renders as filled, outlined or point primitives.
-     *
-     * @details
-     * - The RASTERISATION counterpart of setProgramOverride: a pass-level override that beats the content, named
-     *   "Override" for exactly that reason.
-     * - Unset is NOT the same as Fill: unset leaves every command's own effective mode alone.
-     * - It is state, not wiring: the backend reads it per frame from stateOverrides(), where the pass states its
-     *   state once for every command it draws.
-     *
-     * @param mode Rasterisation mode applied to all content of this pass.
-     */
-    void setPolygonModeOverride(PolygonMode mode) noexcept
-    {
-        desc_.polygon_mode = mode;
-    }
-
-    /// @brief Removes the polygon-mode override, leaving each command's own state in effect.
-    void clearPolygonModeOverride() noexcept
-    {
-        desc_.polygon_mode.reset();
     }
 
     /**
@@ -794,31 +357,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     }
 
     /**
-     * @brief Draws every point this pass renders at @p size pixels.
-     *
-     * @details
-     * - The companion of setPolygonModeOverride for the "show me this scene as points" view: a point cloud at
-     *   one pixel cannot be read, and the size is a VIEWING choice exactly like the rasterisation mode.
-     * - It beats what the content authored (a StateNode's `setPointSize`), and unset leaves the content's own
-     *   value alone.
-     * - Unlike the polygon mode it is not API state: it reaches the shading as the draw block's `params.y`,
-     *   so overriding it costs one per-draw value and never a pipeline recompile. Values below 1.0 are raised
-     *   to 1.0, and it only affects POINT rasterisation.
-     *
-     * @param size Point size in framebuffer pixels.
-     */
-    void setPointSizeOverride(float size) noexcept
-    {
-        desc_.point_size = size;
-    }
-
-    /// @brief Removes the point-size override, leaving each command's own size in effect.
-    void clearPointSizeOverride() noexcept
-    {
-        desc_.point_size.reset();
-    }
-
-    /**
      * @brief Gets the pass-level line-width override.
      *
      * @return The width in framebuffer pixels, or nullopt when each command keeps its own.
@@ -826,31 +364,6 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     [[nodiscard]] std::optional<float> lineWidthOverride() const noexcept
     {
         return desc_.line_width;
-    }
-
-    /**
-     * @brief Draws every LINE primitive this pass renders @p width pixels wide.
-     *
-     * @details
-     * - The "draw me the structure, thicker" switch of a CAD view: widths that differ per layer are the
-     *   CONTENT's word (StateNode::setLineWidth), and a view that wants every line readable overrides them
-     *   here - same rule as the polygon-mode override, and equally cheap: the width is dynamic state, so
-     *   nothing is rebuilt.
-     * - It affects line primitives only; `PolygonMode::Line` edges are rasterised by the polygon stage and do
-     *   not take their width from here. Values below 1.0 are raised to 1.0, and the device's lineWidthRange is
-     *   the ceiling (see Capabilities::limits.max_line_width).
-     *
-     * @param width Line width in framebuffer pixels.
-     */
-    void setLineWidthOverride(float width) noexcept
-    {
-        desc_.line_width = width;
-    }
-
-    /// @brief Removes the line-width override, leaving each command's own width in effect.
-    void clearLineWidthOverride() noexcept
-    {
-        desc_.line_width.reset();
     }
 
     /**
@@ -915,6 +428,8 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
     PassDesc desc_;
 
   private:
+    friend struct detail::PassNode;
+
     /**
      * @brief The clear this pass announces, or nothing when it clears nothing (the ONE rule).
      *
@@ -922,16 +437,99 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      */
     [[nodiscard]] std::optional<ClearPolicy> clearPolicy() const;
 
+    /**
+     * @brief Adopts @p desc as this pass' whole declaration (see detail::PassNode).
+     *
+     * @details
+     * - Everything the pass stated before is replaced - this is "I am this descriptor", not a merge.
+     * - A resolved transient belonged to the declaration that asked for it, so it is dropped.
+     * - A STATED depth view is applied to the declared target; an absent (or invalid) one is not a statement about
+     *   the target, so re-stating a declaration never un-says another pass' edge.
+     *
+     * @param desc Declaration to adopt (moved in).
+     */
+    void adoptDesc(PassDesc desc);
+
+    /**
+     * @brief Takes the target the frame compile resolved for this pass' transient declaration (execution state).
+     *
+     * @param target The target a transient declaration resolved to, or null to drop the resolution.
+     */
+    void resolveTarget(intrusive_ptr<RenderTarget> target) noexcept
+    {
+        resolved_target_ = std::move(target);
+    }
+
+    /**
+     * @brief States the device-pixel size of the surface this pass draws into when it has no target (execution state).
+     *
+     * @details
+     * - A pass that writes an explicit RenderTarget already knows its size; a WINDOW pass does not. The engine
+     *   states it once per frame, and collection uses it as the viewport for view-dependent features (AutoTransform
+     *   screen-space scaling).
+     * - It does NOT change the backend's viewport: a pass without a stated viewport still draws the full target.
+     *
+     * @param width  Draw width in DEVICE pixels (<= 0 clears the size).
+     * @param height Draw height in DEVICE pixels (<= 0 clears the size).
+     */
+    void setDrawSize(int width, int height) noexcept
+    {
+        draw_size_ = (width > 0 && height > 0) ? Viewport{ 0, 0, width, height } : Viewport{};
+    }
+
     /// Device-pixel size of the surface for a pass that has no target (see setDrawSize).
     Viewport draw_size_{};
 
     /// The target a transient declaration resolved to this frame, or null when the declaration is not transient.
     ///
-    /// EXECUTION STATE beside the declaration: set by the frame compile (see setResolvedTarget), cleared when the
+    /// EXECUTION STATE beside the declaration: set by the frame compile (see resolveTarget), cleared when the
     /// declaration changes, so renderTarget() answers the effect while declaration().target keeps the request.
     intrusive_ptr<RenderTarget> resolved_target_{};
 };
 
 using RenderPassPtr = intrusive_ptr<RenderPass>;
+
+namespace detail
+{
+
+/**
+ * @brief The engine's write door onto a pass node: adoption and execution facts, not authoring.
+ *
+ * @details
+ * - TWO CALLERS, ONE SHAPE: the frame compile adopts the declarations it was handed (`RenderEngine::applyPlan` and a
+ *   transient resolution), and nothing else may write a node. A host's edit is a declaration it hands to the plan -
+ *   there is no setter on `RenderPass` for it to reach (see E-04).
+ * - These are NOT authoring entries: `adopt` replaces the whole declaration (what the plan diff decided), it does not
+ *   merge a field; `resolveTarget` and `setDrawSize` state facts of the FRAME (which target a transient resolved to,
+ *   how big the surface is), which no declaration carries.
+ */
+struct VN_GRAPHICS_API PassNode {
+    /**
+     * @brief Makes @p desc the pass' whole declaration.
+     *
+     * @param pass Pass to adopt it (a node the engine owns).
+     * @param desc Declaration to adopt (moved in).
+     */
+    static void adopt(RenderPass& pass, PassDesc desc);
+
+    /**
+     * @brief States the target a transient declaration resolved to this frame.
+     *
+     * @param pass   Pass whose transient was resolved.
+     * @param target The resolved target, or null to drop the resolution.
+     */
+    static void resolveTarget(RenderPass& pass, intrusive_ptr<RenderTarget> target) noexcept;
+
+    /**
+     * @brief States the device-pixel surface size a window pass draws into.
+     *
+     * @param pass   Pass to state it on.
+     * @param width  Width in device pixels (<= 0 clears it).
+     * @param height Height in device pixels (<= 0 clears it).
+     */
+    static void setDrawSize(RenderPass& pass, int width, int height) noexcept;
+};
+
+} // namespace detail
 
 VN_GRAPHICS_NS_END

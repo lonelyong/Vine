@@ -52,8 +52,10 @@ constexpr int kTargetSize = 32;
 
 [[nodiscard]] intrusive_ptr<RenderPass> makePass(const char8_t* name)
 {
+    vn::graphics::PassDesc desc;
+    desc.name = String(name);
     auto pass = intrusive_ptr<RenderPass>(new RenderPass());
-    pass->setName(String(name));
+    vn::graphics::detail::PassNode::adopt(*pass, std::move(desc));
     return pass;
 }
 

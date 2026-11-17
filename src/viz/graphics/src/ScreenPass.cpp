@@ -30,13 +30,6 @@ raw_ptr<ShaderProgram> ScreenPass::program() const
     return desc_.program.get();
 }
 
-void ScreenPass::setProgram(intrusive_ptr<ShaderProgram> program)
-{
-    // The declaration owns the program (PassDesc::program), so there is no second copy to keep in step and a
-    // descriptor-declared screen pass and a hand-built one are the same pass.
-    desc_.program = std::move(program);
-}
-
 void ScreenPass::resolveInputTextures(std::span<const ImageSource> inputs)
 {
     source_ = nullptr;

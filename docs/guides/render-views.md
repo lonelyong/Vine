@@ -242,14 +242,14 @@ vn::raw_ptr<vn::graphics::RenderPass> which = control->surface()->presentingPass
 
 **自己说清接线**，SDK 不替你猜：
 
-- **一条 pass 只画一部分内容**：内容分层（`Node::setLayers`）＋ pass 的掩码（`RenderPass::setLayerMask`，或用配方
+- **一条 pass 只画一部分内容**：内容分层（`Node::setLayers`）＋ pass 声明的掩码（`PassDesc::layer_mask`，或用配方
   `ChainDesc::layer_mask` / `ViewerOptions::layer_mask` 一次给整条链）。一条命令是否被收集 = `isVisible()`
   且它的层与掩码按位与非 0；没声明层的节点在 `kDefaultLayer`，掩码默认 `kAllLayers`（⇒ 不说就一切照旧）。例：
   阴影 caster 标 `caster->setLayers(1u << 1)`，阴影 pass 掩码 `1u << 1`，其余内容一个字都不用改。细节见
   `docs/guides/graphics.md` §3.14。
-- **PiP / 画中画**：给那条 pass 一个子矩形（`pass->setViewport(Viewport{...})`，设备像素）、并让它的输入是另一张**离屏目标**
+- **PiP / 画中画**：给那条 pass 一个子矩形（`desc.viewport = Viewport{...}`，设备像素）、并让它的输入是另一张**离屏目标**
   （`RenderTarget`，作为 pass 的输入声明）。`VN_VSG_*` 那几个 demo 开关走的就是这条路。
-- **两块并排**：两支 pass，各自一个子矩形、各自读自己的离屏目标；**清屏只有一条**（`setClearEnabled(false)` 关掉其余的，
+- **两块并排**：两支 pass，各自一个子矩形、各自读自己的离屏目标；**清屏只有一条**（`clear_enabled = false` 关掉其余的，
   或者只让第一条清）—— 否则第二条会把第一条画的擦掉。位置与尺寸由你的布局算（`resize` 的一次公告 + 你的矩形）。
 - **叠加 HUD**：在默认画面那条 pass 之后加一条不做深度、不清屏的 pass（`PassStage::Overlay` 就是给它的档位）。
 - **要第二个"相机 + 内容"**：那就是第二个视图，得配第二个窗口（第二个 `RenderControl`）——一个区只画一幅画。

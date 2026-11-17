@@ -33,7 +33,7 @@
 2.1 **严格树**：`Group::addChild` 自动从旧父脱离，拒绝成环；一次遍历里一个节点只有一个世界矩阵。
 2.2 **折叠规则固定**：可见性硬门、透明度相乘、层与 drawOrder 最近声明获胜、状态按项覆盖。
 2.3 **状态只有一个解析点**：`resolveRenderState(authored, pass, data_topology)` 给出每项的来源。
-2.3.1 **深度带属于 pass，不属于节点**：`RenderPass::setDepthRange` 把一条 pass 的 draw 映射进深度缓冲的一段；
+2.3.1 **深度带属于 pass，不属于节点**：声明里的 `PassDesc::depth_range` 把一条 pass 的 draw 映射进深度缓冲的一段；
 节点不能携带它，因为两棵子树映射同一个 framebuffer 会让一个像素的深度值失去唯一含义（没有 per-pixel tag
 就无法反解，拾取也没有唯一答案）。映射保序，但重映射后的深度**不再是距离**：一张 target 的写者若用不同区间，
 它的深度就不能再被当作几何距离读回。
@@ -147,7 +147,7 @@
 | `AutoTransform::setAutoRotateMode()` / `setAutoScaleToScreen()` / `setAxis()` / `setNormal()` | billboard |
 | `StateNode::setDepth()` / `setCullMode()` / `setBlend()` / `setPolygonMode()` / `setPolygonOffset()` / `setPointSize()` / `setLineWidth()` / `clearState()` / `renderState()` | 子树状态 |
 | `StateNode::setMaterial()` / `setProgram()` | 子树 material / program |
-| `RenderPass::setDepthRange()` / `depthRange()` / `clearDepthRange()` | 整条 pass 的深度带（`DepthRange`） |
+| `PassDesc::depth_range` / `RenderPass::depthRange()` | 整条 pass 的深度带（`DepthRange`；unset 即整段） |
 | `resolveRenderState(authored, pass, topology)` | 唯一解析点（`StateResolution.hpp`） |
 
 ### 4.3 场景与收集

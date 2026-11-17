@@ -50,6 +50,7 @@ using vn::graphics::Geometry;
 using vn::graphics::Light;
 using vn::graphics::Material;
 using vn::graphics::PassDraw;
+using vn::graphics::PassDesc;
 using vn::graphics::RenderCommand;
 using vn::graphics::RenderPass;
 using vn::graphics::Scene;
@@ -133,10 +134,13 @@ TEST(ValueChannelTest, AFrameInFlightKeepsItsValuesWhileTheContentIsEdited)
     scene->addLight(light);
 
     auto camera = intrusive_ptr<Camera>(new Camera());
+    // THE DECLARATION IS THE AUTHORING SHAPE (see E-04): the node below is what a frame's compile builds from it.
+    PassDesc desc;
+    desc.content    = scene;
+    desc.camera     = camera;
+    desc.layer_mask = vn::graphics::kAllLayers;
     RenderPass pass;
-    pass.setContent(scene);
-    pass.setCamera(camera);
-    pass.setLayerMask(vn::graphics::kAllLayers);
+    vn::graphics::detail::PassNode::adopt(pass, std::move(desc));
 
     // FRAME N: published and described on the content side, exactly as a frame's content half does it.
     PublicationStore store;
@@ -229,12 +233,16 @@ TEST(ValueChannelTest, EveryPassOfOneFrameHoldsTheSameLightSetUntilALightMoves)
     scene->addLight(light);
 
     auto camera = intrusive_ptr<Camera>(new Camera());
+    PassDesc first_desc;
+    first_desc.content = scene;
+    first_desc.camera  = camera;
     RenderPass first;
-    first.setContent(scene);
-    first.setCamera(camera);
+    vn::graphics::detail::PassNode::adopt(first, std::move(first_desc));
+    PassDesc second_desc;
+    second_desc.content = scene;
+    second_desc.camera  = camera;
     RenderPass second;
-    second.setContent(scene);
-    second.setCamera(camera);
+    vn::graphics::detail::PassNode::adopt(second, std::move(second_desc));
 
     PublicationStore store;
     ASSERT_EQ(scene->publish().status, ScenePublishStatus::Posted);

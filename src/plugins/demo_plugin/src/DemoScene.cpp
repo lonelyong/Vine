@@ -909,12 +909,12 @@ void addBlendedPair(vn::graphics::Group* root, const BlendedPlacement& at)
  * - THE DEMO OWNS THESE ROWS, the viewer owns the chain: applying them as a SCOPED plan
  *   (`RenderEngine::applyPlan(plan, owner)`) upserts exactly the named pass and leaves everything the chain registered
  *   alone, which is what lets one engine carry both.
- * - The node the demo configured becomes the plan's declaration; the engine's node is the one that runs (a plan
- *   identifies a pass by NAME), so the demo keeps no handle it would then mutate.
+ * - The declaration IS the pass (see PassDesc): the demo states it as a value, so a re-statement is the same call with
+ *   one field changed (a layout step restating a viewport, for instance).
  *
  * @param engine  Engine to state the pass on.
  * @param owner   The demo's identity in that engine (its render control: rows belong to it, not to the chain).
- * @param pass    Configured pass whose declaration is stated.
+ * @param desc    Declaration of the pass to state.
  * @param content Scene the pass draws (null for a content-agnostic pass).
  * @param order   Execution order.
  * @return true when the engine adopted the row; false when it refused the plan (a frame being recorded, or a
@@ -922,16 +922,15 @@ void addBlendedPair(vn::graphics::Group* root, const BlendedPlacement& at)
  */
 bool addDemoPass(vn::graphics::RenderEngine& engine,
                  vn::raw_ptr<vn::Object>     owner,
-                 const vn::intrusive_ptr<vn::graphics::RenderPass>& pass,
-                 vn::intrusive_ptr<vn::graphics::Scene>            content,
-                 int                                               order)
+                 vn::graphics::PassDesc      desc,
+                 vn::intrusive_ptr<vn::graphics::Scene> content,
+                 int                                    order)
 {
-    vn::graphics::PassDesc desc = pass->declaration();
-    desc.content                = std::move(content);
-    desc.order                  = order;
+    desc.content = std::move(content);
+    desc.order   = order;
     // Problems are reported by the engine's one route (the plan's refusals included); nothing here substitutes a
     // different pass for a refused one.
-    return engine.applyPlan(vn::graphics::Plan{ { desc } }, owner).applied();
+    return engine.applyPlan(vn::graphics::Plan{ { std::move(desc) } }, owner).applied();
 }
 
 /**
@@ -1145,7 +1144,11 @@ void addOffscreenValidationPass(vn::appfw::gui::RenderControl* render_control)
             h = sh / 2;
             w = static_cast<int>(h * 16 / 9);
         }
-        screen->setViewport(sw - w - margin, sh - h - margin, w, h);
+        // A PASS IS ITS DECLARATION: re-anchoring is one field of one value handed back to the plan (the preset
+        // stated the row under the engine's own identity - see addOffscreenToScreen).
+        vn::graphics::PassDesc desc = screen->declaration();
+        desc.viewport               = vn::graphics::Viewport{ sw - w - margin, sh - h - margin, w, h };
+        (void)engine_ptr->applyPlan(vn::graphics::Plan{ { std::move(desc) } }, engine_ptr);
     });
 }
 
@@ -1195,11 +1198,11 @@ void addSlotOverlayDemo(vn::appfw::gui::RenderControl* render_control)
         add_overlay_box(vn::Colorf(1.0f, 0.30f, 0.10f, 1.0f), vn::math::Vec3d(-2.9, -2.4, 0.8), 0.35);
         add_overlay_box(vn::Colorf(1.0f, 0.95f, 0.10f, 1.0f), vn::math::Vec3d(2.6, 1.9, 1.2), 0.28);
 
-        auto pass = vn::make_intrusive<vn::graphics::RenderPass>();
-        pass->setName(u8"slot_overlay");
-        pass->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
-        pass->setClearEnabled(false); // overlay: no clear + no depth -> on-top
-        pass->setDepthMode(vn::graphics::DepthMode::Disabled);
+        vn::graphics::PassDesc pass;
+        pass.name          = u8"slot_overlay";
+        pass.camera        = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
+        pass.clear_enabled = false; // overlay: no clear + no depth -> on-top
+        pass.depth_mode    = vn::graphics::DepthMode::Disabled;
         addDemoPass(*engine, render_control, pass, overlay, 20); // its own (master camera, order 20) slot
     });
 }
@@ -1240,11 +1243,11 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     target->attachDepth(vn::graphics::RenderTarget::DepthFormat::D24);
 
     // Slot 0: the main engine scene, cleared (depth-on).
-    auto pass_main = vn::make_intrusive<vn::graphics::RenderPass>();
-    pass_main->setName(u8"multislot_main");
-    pass_main->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
-    pass_main->setRenderTarget(target);
-    pass_main->setOutputName(u8"MultiColor");
+    vn::graphics::PassDesc pass_main;
+    pass_main.name        = u8"multislot_main";
+    pass_main.camera      = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
+    pass_main.target      = vn::graphics::Target::explicitTarget(target);
+    pass_main.output.name = u8"MultiColor";
     addDemoPass(*engine, render_control, pass_main, render_control->view()->scene(), -2); // content = view scene
 
     // Slot 1: an extra scene drawn on top (no clear -> on-top, depth-off).
@@ -1259,13 +1262,13 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
     add_overlay_box(vn::Colorf(1.0f, 0.30f, 0.10f, 1.0f), vn::math::Vec3d(-2.4, -1.8, 0.9), vn::math::Vec3d(0.55, 0.55, 0.55));
     add_overlay_box(vn::Colorf(0.30f, 0.90f, 0.30f, 1.0f), vn::math::Vec3d(2.2, 1.6, 1.3), vn::math::Vec3d(0.45, 0.45, 0.45));
 
-    auto pass_top = vn::make_intrusive<vn::graphics::RenderPass>();
-    pass_top->setName(u8"multislot_top");
-    pass_top->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
-    pass_top->setRenderTarget(target);
-    pass_top->setOutputName(u8"MultiColor"); // publishes the same baked target
-    pass_top->setClearEnabled(false);        // no clear + no depth -> on-top slot
-    pass_top->setDepthMode(vn::graphics::DepthMode::Disabled);
+    vn::graphics::PassDesc pass_top;
+    pass_top.name          = u8"multislot_top";
+    pass_top.camera        = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
+    pass_top.target        = vn::graphics::Target::explicitTarget(target);
+    pass_top.output.name   = u8"MultiColor"; // publishes the same baked target
+    pass_top.clear_enabled = false;          // no clear + no depth -> on-top slot
+    pass_top.depth_mode    = vn::graphics::DepthMode::Disabled;
     addDemoPass(*engine, render_control, pass_top, overlay, -1); // slot = (master, -1)
 
     // PiP screen pass sampling the baked texture into the window.
@@ -1285,18 +1288,19 @@ void addOffscreenMultiSlotDemo(vn::appfw::gui::RenderControl* render_control)
         sx               = sw - pip_w - margin;
         sy               = sh - pip_h - margin;
     }
-    auto screen = vn::make_intrusive<vn::graphics::ScreenPass>();
-    screen->setName(u8"multislot_pip");
-    // A ScreenPass names its program and carries the view camera: there is no implicit copy, and a
+    vn::graphics::PassDesc screen;
+    screen.name  = u8"multislot_pip";
+    screen.kind  = vn::graphics::PassKind::Screen;
+    // A Screen pass names its program and carries the view camera: there is no implicit copy, and a
     // fullscreen program is drawn through the pass' view (SDK copy program for the plain copy).
-    screen->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
-    screen->setProgram(vn::graphics::screenCopyProgram());
-    screen->addInputName(u8"MultiColor");
+    screen.camera        = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
+    screen.program       = vn::graphics::screenCopyProgram();
+    screen.input_names   = { u8"MultiColor" };
     // The two bake passes above accumulate into one target, so neither of them owns the hand-off
     // (a promise is a claim about WHOSE content a consumer gets): the consumer reads the whole baked
     // target, and the engine answers it from "a pass draws into it", not from a promise.
-    screen->addInputTarget(target);
-    screen->setViewport(sx, sy, pip_w, pip_h);
+    screen.input_targets = { target };
+    screen.viewport      = vn::graphics::Viewport{ sx, sy, pip_w, pip_h };
     addDemoPass(*engine, render_control, screen, nullptr, 100);
 }
 
@@ -1331,13 +1335,13 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
     // program into the shared MRT target (single source with the Deferred
     // preset), published as "GBuffer".
     auto target = makeGbufferTarget();
-    auto gbuf   = vn::make_intrusive<vn::graphics::RenderPass>();
-    gbuf->setName(u8"gbuffer_pass");
-    gbuf->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
-    gbuf->setRenderTarget(target);
-    gbuf->setProgramOverride(vn::graphics::defaultGbufferGeometryProgram());
-    gbuf->setOutputName(u8"GBuffer");
-    gbuf->setOutputTarget(target); // the G-buffer's only writer owns the hand-off (design §14)
+    vn::graphics::PassDesc gbuf;
+    gbuf.name              = u8"gbuffer_pass";
+    gbuf.camera            = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
+    gbuf.target            = vn::graphics::Target::explicitTarget(target);
+    gbuf.program_override  = vn::graphics::defaultGbufferGeometryProgram();
+    gbuf.output.name       = u8"GBuffer";
+    gbuf.output.whole_target = true; // the G-buffer's only writer owns the hand-off (design §14)
     addDemoPass(*engine, render_control, gbuf, render_control->view()->scene(), -3);
 
     // Preview each colour attachment of the same published target: each preview declares the SAME wire
@@ -1354,19 +1358,20 @@ void addGbufferDemo(vn::appfw::gui::RenderControl* render_control)
     const int               pip_w            = static_cast<int>(108.0 * dpr);
     const int               pip_h            = static_cast<int>(61.0 * dpr);
     for (int attachment = 0; attachment < 4; ++attachment) {
-        auto screen = vn::make_intrusive<vn::graphics::ScreenPass>();
-        screen->setName(u8"gbuffer_preview");
-        screen->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
+        vn::graphics::PassDesc screen;
+        screen.name   = u8"gbuffer_preview";
+        screen.kind   = vn::graphics::PassKind::Screen;
+        screen.camera = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
         // One copy program PER attachment: which attachment a fullscreen program reads is its
         // sampler binding (screenCopyProgram(n) writes binding n), and the declared image below says
         // which target it is that binding of.
-        screen->setProgram(vn::graphics::screenCopyProgram(attachment, previewChannelsOf(attachment)));
-        screen->addInputName(u8"GBuffer");
+        screen.program     = vn::graphics::screenCopyProgram(attachment, previewChannelsOf(attachment));
+        screen.input_names = { u8"GBuffer" };
         auto image = vn::make_intrusive<vn::graphics::ImageRef>(preview_labels[attachment]);
         image->bind(target, attachment);
-        screen->addInput(image);
-        const int x = 8 + attachment * (pip_w + 8);
-        screen->setViewport(x, 8, pip_w, pip_h);
+        screen.inputs.emplace_back(image);
+        const int x     = 8 + attachment * (pip_w + 8);
+        screen.viewport = vn::graphics::Viewport{ x, 8, pip_w, pip_h };
         addDemoPass(*engine, render_control, screen, nullptr, 120 + attachment);
     }
 }
@@ -1397,26 +1402,27 @@ void addDeferredDemo(vn::appfw::gui::RenderControl* render_control)
 
     // Shared G-buffer: engine scene through the multi-output program.
     auto target = makeGbufferTarget();
-    auto gbuf   = vn::make_intrusive<vn::graphics::RenderPass>();
-    gbuf->setName(u8"deferred_gbuffer");
-    gbuf->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
-    gbuf->setRenderTarget(target);
-    gbuf->setProgramOverride(vn::graphics::defaultGbufferGeometryProgram());
-    gbuf->setOutputName(u8"GBuffer");
-    gbuf->setOutputTarget(target); // the G-buffer's only writer owns the hand-off (design §14)
+    vn::graphics::PassDesc gbuf;
+    gbuf.name                = u8"deferred_gbuffer";
+    gbuf.camera              = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
+    gbuf.target              = vn::graphics::Target::explicitTarget(target);
+    gbuf.program_override    = vn::graphics::defaultGbufferGeometryProgram();
+    gbuf.output.name         = u8"GBuffer";
+    gbuf.output.whole_target = true; // the G-buffer's only writer owns the hand-off (design §14)
     addDemoPass(*engine, render_control, gbuf, render_control->view()->scene(), -3);
 
     // Deferred-lighting preview: a fullscreen program sampling the G-buffer.
     const double dpr   = render_control->devicePixelRatio();
     const int    pw    = static_cast<int>(340.0 * dpr);
     const int    ph    = static_cast<int>(191.0 * dpr);
-    auto         light = vn::make_intrusive<vn::graphics::ScreenPass>();
-    light->setName(u8"deferred_lighting");
-    light->addInputName(u8"GBuffer");
-    light->addInputTarget(target); // a fullscreen program reads the whole source target
-    light->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
-    light->setProgram(vn::graphics::defaultDeferredLightProgram());
-    light->setViewport(8, 8, pw, ph);
+    vn::graphics::PassDesc light;
+    light.name          = u8"deferred_lighting";
+    light.kind          = vn::graphics::PassKind::Screen;
+    light.input_names   = { u8"GBuffer" };
+    light.input_targets = { target }; // a fullscreen program reads the whole source target
+    light.camera        = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
+    light.program       = vn::graphics::defaultDeferredLightProgram();
+    light.viewport      = vn::graphics::Viewport{ 8, 8, pw, ph };
     // The content scene must be bound to THIS pass too: ScreenPass forwards a scene's lights to the
     // fullscreen program, and a program pass with no scene is handed the backend's default ambient
     // only (no directional term) - a flat image contradicting this function's own documentation.
@@ -1576,7 +1582,7 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     // The four previews and the one layout step below keep them in step with the
     // window: a preview copies the WHOLE attachment, so its rectangle takes the
     // source's aspect (see fitPreviewRect) instead of squeezing it into the slot.
-    std::vector<vn::intrusive_ptr<vn::graphics::ScreenPass>> previews;
+    std::vector<vn::graphics::PassDesc>                      previews;
     vn::intrusive_ptr<vn::graphics::RenderTarget>            preview_source;
     int                                                      pip_w = 0;
     int                                                      pip_h = 0;
@@ -1599,21 +1605,22 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
             u8"gbuffer_preview_view_position",
         };
         for (int attachment = 0; attachment < 4; ++attachment) {
-            auto preview = vn::make_intrusive<vn::graphics::ScreenPass>();
-            preview->setName(kPreviewNames[attachment]);
-            preview->setCamera(vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera()));
+            vn::graphics::PassDesc preview;
+            preview.name   = kPreviewNames[attachment];
+            preview.kind   = vn::graphics::PassKind::Screen;
+            preview.camera = vn::intrusive_ptr<vn::graphics::Camera>(render_control->view()->camera());
             // One copy program per attachment: the sampler binding IS the attachment (see
             // BuiltinShaders::screenCopyProgram), which is what the declared image below is that of, and the
             // CHANNELS it shows are the strip's (see previewChannelsOf).
-            preview->setProgram(vn::graphics::screenCopyProgram(attachment, previewChannelsOf(attachment)));
-            preview->addInputName(u8"GBuffer");
+            preview.program     = vn::graphics::screenCopyProgram(attachment, previewChannelsOf(attachment));
+            preview.input_names = { u8"GBuffer" };
             if (gbuffer != nullptr) {
                 auto image = vn::make_intrusive<vn::graphics::ImageRef>(u8"GBuffer.preview");
                 image->bind(vn::intrusive_ptr<vn::graphics::RenderTarget>(gbuffer), attachment);
-                preview->addInput(image);
+                preview.inputs.emplace_back(image);
             }
-            const int x = 8 + attachment * (pip_w + 8);
-            preview->setViewport(x, 8, pip_w, pip_h); // the layout step re-fits it to the source's aspect
+            const int x      = 8 + attachment * (pip_w + 8);
+            preview.viewport = vn::graphics::Viewport{ x, 8, pip_w, pip_h }; // the layout step re-fits it to the source's aspect
             previews.push_back(preview);
             addDemoPass(*engine, render_control, preview, nullptr, 120 + attachment);
         }
@@ -1632,7 +1639,9 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     // again after the in-flight frame has been waited for, which is the remedy that rule names ("a resize settled"
     // is what this lambda is). Without it a strip resized during a recording keeps the rectangle of the last
     // accepted plan until some later layout event.
-    view->addSurfaceLayout([engine, render_control, previews = std::move(previews), preview_source, pip_w, pip_h](int, int) {
+    // The lambda OWNS the declarations (a copy per layout step): mutable, because the step updates the rectangle of
+    // each row before restating it.
+    view->addSurfaceLayout([engine, render_control, previews = std::move(previews), preview_source, pip_w, pip_h](int, int) mutable {
         if (preview_source == nullptr || previews.empty()) {
             return;
         }
@@ -1643,7 +1652,8 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
             for (std::size_t index = 0; index < previews.size(); ++index) {
                 const int                    slot_x = 8 + static_cast<int>(index) * (pip_w + 8);
                 const vn::graphics::Viewport rect   = fitPreviewRect(source_width, source_height, slot_x, 8, pip_w, pip_h);
-                previews[index]->setViewport(rect.x, rect.y, rect.width, rect.height);
+                // ONE FIELD OF ONE DECLARATION: the row the demo stated is re-stated with the fitted rectangle.
+                previews[index].viewport            = rect;
                 applied = addDemoPass(*engine, render_control, previews[index], nullptr, 120 + static_cast<int>(index)) && applied;
             }
             return applied;

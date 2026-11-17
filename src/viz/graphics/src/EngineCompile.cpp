@@ -353,7 +353,7 @@ void SessionShape::buildFrameValue()
         if (!entry.draw.has_value()) {
             entry.draw.emplace();
         }
-        pass->setDrawSize(device_width, device_height);
+        detail::PassNode::setDrawSize(*pass, device_width, device_height);
         if (!pass->describe(row.content, *entry.draw)) {
             // "This pass issued nothing" must not leave the previous frame's picture behind: the draw goes away and
             // the entry keeps the fact that the pass ran (see the note at the top).
@@ -499,8 +499,8 @@ void SessionShape::resolveTransientTarget(Slot& slot)
 
     slot.transient = resources_.resolveTransient(declared.name, shape, width, height, device_);
     // THE RESOLUTION IS EXECUTION STATE, not a rewrite of the declaration: the pass keeps saying "I asked for this
-    // identity" while the frame that resolved it answers `renderTarget()` (see RenderPass::setResolvedTarget).
-    slot.pass->setResolvedTarget(slot.transient);
+    // identity" while the frame that resolved it answers `renderTarget()` (see detail::PassNode::resolveTarget).
+    detail::PassNode::resolveTarget(*slot.pass, slot.transient);
 }
 
 void SessionShape::resolveRowInputs(raw_ptr<RenderPass> pass, std::vector<ImageSource>& out)

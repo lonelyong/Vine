@@ -40,47 +40,22 @@ RenderPass::RenderPass(PassKind kind)
 
 RenderPass::~RenderPass() = default;
 
-void RenderPass::setDesc(PassDesc desc)
+void RenderPass::adoptDesc(PassDesc desc)
 {
-    // The whole declaration, not a merge: whatever this pass stated before is gone, which is what makes "adopt this
-    // descriptor" and "build the pass by hand" the same object (see RenderEngine::addPass).
+    // The whole declaration, not a merge: whatever this pass stated before is gone, which is what makes "the plan
+    // decided this shape" one assignment (see detail::PassNode::adopt).
     desc_ = std::move(desc);
     // A resolved transient belonged to the declaration that asked for it; a new declaration needs a new resolution.
     resolved_target_.reset();
-    // A STATED view is applied to the declared target; an absent (or invalid) one is not a statement about the
-    // target - the same rule setRenderTarget follows - so re-stating a declaration never un-says another pass' edge
-    // (which is what the engine relies on when it refuses a conflicting view and adopts the rest).
-    const DepthView view = depthView();
-    if (desc_.target.target != nullptr && view.isValid() && view.layer() == 0) {
-        desc_.target.target->shareDepth(view);
-    }
-}
-
-void RenderPass::setRenderTarget(intrusive_ptr<RenderTarget> target)
-{
-    // THE AUTHORING SETTER states an EXPLICIT target (see Target): "draw into this object". A transient is
-    // declared through the declaration instead, and its resolution comes from the compile (setResolvedTarget).
-    desc_.target = target != nullptr ? Target::explicitTarget(std::move(target)) : Target{};
-    resolved_target_.reset();
-    // The edge follows the target: a pass that stated a depth view keeps drawing against it when it is moved. A pass
-    // that stated NONE does not un-say what another pass set (attaching a pass to a target is not a statement about
-    // the target's depth) - hence the isValid() gate.
-    const DepthView view = depthView();
-    if (desc_.target.target != nullptr && view.isValid() && view.layer() == 0) {
-        desc_.target.target->shareDepth(view);
-    }
-}
-
-void RenderPass::setDepthView(DepthView view)
-{
-    desc_.depth_view       = std::move(view);
-    // A layered view has no mechanism until layered targets land (see DepthView): it stays a declaration and is
-    // applied to nothing, so a frame never silently draws against the whole image instead of the layer.
-    // An INVALID view is a statement of its own ("no borrowed depth") and clears what an earlier declaration set,
-    // which is why there is no isValid() gate here.
-    const DepthView stated = depthView();
-    if (desc_.target.target != nullptr && stated.layer() == 0) {
-        desc_.target.target->shareDepth(stated);
+    // A STATED view is applied to the declared target; an absent one is not a statement about the target, so
+    // re-stating a declaration never un-says another pass' edge (which is what the engine relies on when it
+    // refuses a conflicting view and adopts the rest). An INVALID view is the stated form of "no borrowed depth"
+    // and clears the mechanism it set (the old setDepthView(DepthView{}) contract).
+    if (desc_.target.target != nullptr && desc_.depth_view.has_value()) {
+        const DepthView view = depthView();
+        if (view.layer() == 0) {
+            desc_.target.target->shareDepth(view);
+        }
     }
 }
 
@@ -91,24 +66,6 @@ Colorf RenderPass::clearColor(int attachment) const
     }
     const auto index = static_cast<std::size_t>(attachment - 1);
     return index < desc_.clear_extra_colors.size() ? desc_.clear_extra_colors[index] : kUnstatedClearColor;
-}
-
-void RenderPass::setClearColor(const Colorf& color, int attachment)
-{
-    if (attachment < 0) {
-        return;
-    }
-    if (attachment == 0) {
-        desc_.clear_color = color;
-        return;
-    }
-    const auto index = static_cast<std::size_t>(attachment - 1);
-    if (desc_.clear_extra_colors.size() <= index) {
-        // Grow with transparent black, so the index the caller names is the index the backend clears (an unstated
-        // attachment keeps meaning "nothing here").
-        desc_.clear_extra_colors.resize(index + 1, kUnstatedClearColor);
-    }
-    desc_.clear_extra_colors[index] = color;
 }
 
 bool RenderPass::shouldClearDepth() const noexcept
@@ -130,43 +87,6 @@ PassRenderState RenderPass::stateOverrides() const noexcept
     state.pointSize   = desc_.point_size;
     state.lineWidth   = desc_.line_width;
     return state;
-}
-
-void RenderPass::addInput(intrusive_ptr<ImageRef> image)
-{
-    if (image != nullptr) {
-        desc_.inputs.emplace_back(std::move(image));
-    }
-}
-
-void RenderPass::addInput(intrusive_ptr<Texture> texture)
-{
-    if (texture != nullptr) {
-        desc_.inputs.emplace_back(std::move(texture));
-    }
-}
-
-void RenderPass::addInput(intrusive_ptr<Texture> texture, const Sampler& sampler)
-{
-    if (texture != nullptr) {
-        desc_.inputs.emplace_back(std::move(texture), sampler);
-    }
-}
-
-void RenderPass::addInput(ImageInput input)
-{
-    if (input) {
-        desc_.inputs.push_back(std::move(input));
-    }
-}
-
-void RenderPass::clearInputs()
-{
-    // One statement, all three lists: the resolve order is images, then targets, then names, so clearing two of them
-    // would leave the pass reading a stale third (see resolveRowInputs).
-    desc_.inputs.clear();
-    desc_.input_targets.clear();
-    desc_.input_names.clear();
 }
 
 std::optional<ClearPolicy> RenderPass::clearPolicy() const
@@ -248,5 +168,25 @@ bool RenderPass::describe(raw_ptr<Scene> scene, PassDraw& out)
     out.draws.push_back(std::move(draw));
     return true;
 }
+
+namespace detail
+{
+
+void PassNode::adopt(RenderPass& pass, PassDesc desc)
+{
+    pass.adoptDesc(std::move(desc));
+}
+
+void PassNode::resolveTarget(RenderPass& pass, intrusive_ptr<RenderTarget> target) noexcept
+{
+    pass.resolveTarget(std::move(target));
+}
+
+void PassNode::setDrawSize(RenderPass& pass, int width, int height) noexcept
+{
+    pass.setDrawSize(width, height);
+}
+
+} // namespace detail
 
 VN_GRAPHICS_NS_END
