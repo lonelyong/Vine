@@ -105,6 +105,32 @@ class VN_BACKEND_VK_API TargetTable final {
     using Park = std::function<void(std::shared_ptr<TargetObjects>)>;
 
     /**
+     * @brief What the table has for a target, as a VALUE: the shape its attachments were built for, and whether a
+     *        pass has drawn into them.
+     *
+     * @details
+     * - WHY A VALUE AND NOT THE RECORD (`G10` / `G11`; audit A3-01). A reader that wants a target's facts without
+     *   waiting for the frames in flight (a readback's no-wait refusals) used to borrow the record from `lookup` and
+     *   read its fields. That borrow cannot be made safe by documentation: `ensure` MUTATES the record in place (a
+     *   resize rewrites `desc`, a rebuild destroys and recreates the attachments), `release` / `drain` hand it to the
+     *   park, and the park destroys it outside the table - so a field load may overlap a rebuild or a destroy.
+     *   `peek` reads those fields ONCE, under the lock every writer takes, and hands out a copy: the caller never
+     *   holds a piece of another thread's record.
+     * - THE FORMATS ARE THE ENGINE'S SPELLING, because the policies that read them are engine questions - "is this
+     *   attachment RGBA8?", "may this depth format be read?" (see Readback.hpp) - and one spelling for one fact is
+     *   what keeps the answer from depending on which side of the seam it was asked on.
+     * - STALENESS POINTS ONE WAY: the frame body writes that bit on the record path, so @ref fresh can be one pass
+     *   old - a stale `true` turns a readable target into "not ready yet" (a retry), never the other way round. A
+     *   reader that turns this value into a refusal is answering a hint; the authoritative answer is re-derived
+     *   under the frame gate, where no body runs.
+     */
+    struct Peek {
+        bool                      built{ false }; ///< The attachments exist (see TargetObjects::built).
+        bool                      fresh{ true };  ///< No pass had drawn into that set when this value was taken.
+        vn::graphics::TargetShape shape{};        ///< The shape they were built for; empty when @ref built is false.
+    };
+
+    /**
      * @brief One frame's claims: `claim` takes a target, the destructor gives every one of them back.
      *
      * @details
@@ -209,6 +235,20 @@ class VN_BACKEND_VK_API TargetTable final {
      * @return The record (shared, so a concurrent release's park keeps it alive), or null when it is not held.
      */
     [[nodiscard]] std::shared_ptr<TargetObjects> lookup(Target target) const noexcept;
+
+    /**
+     * @brief Gets what the table has for @p target as a value taken under the map lock (see Peek).
+     *
+     * @details
+     * - ONE SNAPSHOT, AND NO WAIT FOR FRAMES: the only wait this call can take is a BUILD in progress (a frame body
+     *   holding the map lock inside `ensure`) - never for a frame to finish. A caller that needs the record itself
+     *   may still borrow it with `lookup`; what it may not do is read that record's fields off the record path.
+     * - A TARGET THE TABLE DOES NOT HOLD answers an unbuilt, fresh, empty value; the call never inserts an entry.
+     *
+     * @param target The target's identity.
+     * @return The facts as of now (see Peek).
+     */
+    [[nodiscard]] Peek peek(Target target) const;
 
     /**
      * @brief Removes @p target's entry and hands its record to the park.

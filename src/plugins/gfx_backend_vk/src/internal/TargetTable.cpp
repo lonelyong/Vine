@@ -410,6 +410,25 @@ std::shared_ptr<TargetObjects> TargetTable::lookup(const Target target) const no
     return found->second;
 }
 
+TargetTable::Peek TargetTable::peek(const Target target) const
+{
+    // THE LOCK EVERY WRITER TAKES: `ensure` holds it across a whole build or resize, and `release` / `drain` erase
+    // under it - so what is read here is ONE state, never a half-rebuilt record, and never a record the table has
+    // already handed to the park (the map is how a record is found at all). `fresh` is the one field a frame body
+    // writes without this lock; it is atomic, and a value one pass old is a legal answer (see Peek).
+    const std::lock_guard<std::mutex> map_held(map_mutex_);
+    const auto                        found = targets_.find(target);
+    if (found == targets_.end() || found->second == nullptr || !found->second->built()) {
+        return Peek{};
+    }
+    const TargetObjects& images = *found->second;
+    Peek                 peek;
+    peek.built = true;
+    peek.fresh = images.fresh.load(std::memory_order_relaxed);
+    peek.shape = images.desc.shape;
+    return peek;
+}
+
 bool TargetTable::release(const Target target)
 {
     std::shared_ptr<TargetObjects> doomed;

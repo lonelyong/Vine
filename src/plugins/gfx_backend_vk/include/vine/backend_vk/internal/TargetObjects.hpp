@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <vector>
 
@@ -55,6 +56,13 @@ inline constexpr vn::graphics::RenderPassKey kSingleSubpassRenderPass{ 1U };
  *   once per image: `maxMemoryAllocationCount` is a per-device limit (the spec's floor is 4096) and the failure it
  *   produces reads like "out of memory" while the device may be nearly empty. This record owns the SLICES, not the
  *   memory - `destroyTarget` gives them back to the pool.
+ * - WHO MAY TOUCH IT, AND UNDER WHAT (audit A3-01). `buildTarget` / `resizeTarget` / `destroyTarget` all run inside
+ *   `TargetTable::ensure` (or the session-end drain) with the table's map lock held, so every field except @ref fresh
+ *   is written under that one lock - and a reader that wants them takes the same lock (`TargetTable::peek`) instead
+ *   of borrowing this record for a field read: the record outlives its map entry (`release` parks it, the park
+ *   destroys it), so a borrow has no synchronisation to point at. @ref fresh is the exception because the FRAME BODY
+ *   writes it on the record path, where no lock may be taken (`C3` / `C5`): it is atomic, and the claim hand-off
+ *   (writer to next claimer) and the frame gate (writer to host verb) are what make its value current.
  * - IT IS A VALUE-LIKE RECORD with explicit build/destroy calls, because Vulkan has no destructors: `destroyTarget()`
  *   is idempotent so an error path may call it unconditionally.
  */
@@ -111,7 +119,9 @@ struct TargetObjects {
     VkFramebuffer framebuffer{ VK_NULL_HANDLE };
     /// True until a pass has drawn into this attachment set: fresh images are UNDEFINED, so a pass that asked to LOAD
     /// the depth is given the CLEAR variant instead (loading an image nobody wrote is meaningless and invalid).
-    bool fresh{ true };
+    /// ATOMIC because the frame body is its only writer and takes no lock (see the class note); relaxed is enough -
+    /// every decision a reader outside the gate takes from it is a hint that the gate re-checks.
+    std::atomic<bool> fresh{ true };
     /// True after a screen draw sampled this target: its colour images (the PICTURE - the resolve images on a
     /// multisampled target) are then in `SHADER_READ_ONLY_OPTIMAL`, and the device transitions them back before the
     /// next pass writes them (or before a readback reads them).

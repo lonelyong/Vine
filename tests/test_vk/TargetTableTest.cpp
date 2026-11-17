@@ -183,3 +183,21 @@ TEST(TargetTableTest, TakingTheTablesRecordsAwayAlsoFreesTheirClaims)
     auto next = table.lease(kSecond);
     EXPECT_TRUE(next.claim(&target));
 }
+
+TEST(TargetTableTest, APeekAnswersAnUnbuiltTargetAndInsertsNothing)
+{
+    // THE VALUE HALF OF THE TABLE (see TargetTable::Peek): a reader that must not wait for frames asks what the table
+    // has for a target and gets a COPY. Over a target the table never saw, that copy has to say "nothing is built"
+    // and must not create an entry - a peek is a question, and a question that inserts would make the next
+    // `readColorBuffer` see a target nobody asked to build.
+    TargetTable table;
+    int         target = 0;
+
+    const TargetTable::Peek peek = table.peek(&target);
+    EXPECT_FALSE(peek.built);
+    EXPECT_TRUE(peek.fresh) << "an unbuilt target answered as drawn into";
+    EXPECT_TRUE(peek.shape.color_formats.empty());
+    EXPECT_FALSE(peek.shape.depth_format.has_value());
+
+    EXPECT_TRUE(table.drain().empty()) << "a peek inserted an entry into the target map";
+}

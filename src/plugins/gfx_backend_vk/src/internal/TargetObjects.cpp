@@ -630,7 +630,7 @@ bool buildTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAllo
         destroyTarget(table, device, allocator, images);
         return false;
     }
-    images.fresh         = true;
+    images.fresh.store(true, std::memory_order_relaxed);
     images.color_sampled = false;
     images.depth_sampled = false;
     return true;
@@ -648,7 +648,7 @@ bool resizeTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAll
         destroyTarget(table, device, allocator, images);
         return false;
     }
-    images.fresh         = true;
+    images.fresh.store(true, std::memory_order_relaxed);
     images.color_sampled = false;
     images.depth_sampled = false;
     return true;
@@ -674,7 +674,7 @@ void destroyTarget(const VolkDeviceTable& table, const VkDevice device, MemoryAl
     images.framebuffer            = VK_NULL_HANDLE;
     images.depth_borrowed         = false;
     images.borrowed_depth_view    = VK_NULL_HANDLE;
-    images.fresh                  = true;
+    images.fresh.store(true, std::memory_order_relaxed);
     images.color_sampled          = false;
     images.depth_sampled          = false;
     images.desc                   = vn::graphics::TargetDesc{};

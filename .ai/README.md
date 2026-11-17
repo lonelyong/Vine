@@ -268,7 +268,7 @@
 - `robotics-kinematics.md` —— Robotics kinematics 要点。
 - `robotics-proximity.md` —— Robotics proximity 要点。
 
-## bugs/ —— Bug 记录（35）
+## bugs/ —— Bug 记录（36）
 
 现象 / 根因 / 状态 / 涉及文件 / 验证，一 bug 一文件；已修复记录保留历史标记，未修复项标明状态。
 
@@ -312,5 +312,8 @@
 - `vsg-teardown-frees-in-flight-resources.md` —— vsg 后端拆机/换代时释放仍在被提交读取的资源（堆破坏的来源）；含 valgrind 证据、已修的两处与仍剩的 prepare-only 路径。
   `(owner, name)` 认行 ⇒ 只剩最后一个；布局重排也只改对象、不重新声明，矩形从未生效。改为一预览一名 + 布局步
   重新声明。
+- `vk-target-fresh-data-race.md` —— vk 读回的「不等待的拒绝检查」在锁外借目标记录读字段，与帧体写 `fresh` 形成
+  数据竞争（TSan 1 条）；记录改为在表锁内取值快照（`TargetTable::peek`）+ `fresh` 原子位，相位二与帧体读点同步
+  改原子读。
 
 约定：`memory/` 保持简短要点式；详细设计放 `design/`；bug 一条一文件。

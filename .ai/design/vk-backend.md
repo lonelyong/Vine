@@ -471,6 +471,11 @@
   `deviceWaits()`；能在等待前回答的拒绝（未知/未建目标、越界附件、不支持的格式、借用深度）不停止设备；帧体内
   回调读回答 `Failed`（`FrameBodyDepth`，不等待自己）。
 - **约束**：`C1`、`R3`、`R28`。
+- **相位一读的是值，不是记录**（A3-01）：能在等待前回答的拒绝由 `TargetTable::peek` 在 map 锁内取一份快照
+  （`built` / `fresh` / 引擎形状）；记录本身会被 `ensure` 原地重建、被 `release` 交 park 在表外销毁，借
+  `lookup` 再读它的字段没有可指的同步（TSan 曾在此报真实竞争）。答案允许**旧一个 pass**：
+  `TargetObjects::fresh` 由帧体在记录路径上写（`C3`/`C5` 不许取锁），所以它是原子位；相位一拿它当提示，
+  相位二在闸内重查。
 - **验收**：`VkMemoryPoolTest.AReadbackGivesItsStagingBytesBack`、`OffscreenClearTest`、`ContentTargetTest`，
   `VkMultiSessionTest` 的三例（交错读回各自最后一帧 / 等待且计数 / 帧体内拒绝）。
 - **注意**：`P9`、`P7`（读回不在帧预算里）。
@@ -547,7 +552,7 @@
 | `Device` | 会话、帧、窗口表、报告（目标表见 `TargetTable`） | 本节 4.1 |
 | `ContentDraw` | 内容/全屏录制、程序与管线、ring、set 缓存、管线缓存对象 | F5 / F6 / F8 / F9 / F12 |
 | `ContentImages` | 纹理 revision、sampler、stand-in | F7 |
-| `TargetTable` | 宿主目标 → 对象（map + 形状 + 构建/重建/修复）+ 每帧租约 + 释放/park | F4 / §2.18 |
+| `TargetTable` | 宿主目标 → 对象（map + 形状 + 构建/重建/修复）+ 每帧租约 + 释放/park + 无等待读的值快照（`peek`） | F4 / §2.18 |
 | `TargetObjects` | 离屏目标的对象与 pass 变体 | F4 |
 | `WindowTarget` / `WindowSystem` | swapchain 与 surface | F3 |
 | `MemoryAllocator` | 设备内存池（块/切片/映射） | F10 |

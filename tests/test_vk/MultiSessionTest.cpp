@@ -229,6 +229,25 @@ void main()
     return frame;
 }
 
+/// @brief One frame with ONE pass that clears @p target to @p colour and draws nothing.
+[[nodiscard]] FrameDescription clearingFrame(RenderTarget* target, const Colorf& colour)
+{
+    FrameDescription frame;
+
+    FrameDescription::Pass entry;
+    entry.pass  = vn::test::framePassForTest();
+    entry.order = 0;
+
+    PassDraw pass;
+    pass.target       = target;
+    pass.clear        = ClearPolicy{};
+    pass.clear->color = colour;
+    entry.draw        = std::move(pass);
+
+    frame.passes.push_back(std::move(entry));
+    return frame;
+}
+
 /// @brief One scene draw that NAMES its program (so the frame records it without a default program).
 [[nodiscard]] DrawDescription programDraw(const intrusive_ptr<Geometry>& geometry, const intrusive_ptr<ShaderProgram>& program)
 {
@@ -907,5 +926,79 @@ TEST(VkMultiSessionTest, AReadbackWaitsForTheFrameInFlightAndCountsTheWait)
         << "the readback's wait is one counted device stop";
 
     backend->setDiagnosticSink({});
+    backend->shutdown();
+}
+
+TEST(VkMultiSessionTest, AReadbackRacingARebuiltTargetAnswersAValueItCanStandBehind)
+{
+    // THE NO-WAIT REFUSALS RUN OUTSIDE THE FRAME GATE (see Device::readColorBuffer, phase one), so they read the
+    // target while another thread's frame body may be rebuilding it. That is where audit A3-01's race lived:
+    // `TargetObjects::fresh` was a plain bool written by the frame body and read by this thread. The device now
+    // answers from a VALUE (`TargetTable::peek`, taken under the map lock every writer takes) and the record's one
+    // record-path bit is atomic, so every answer below is one the contract allows: "not ready yet", or the picture
+    // the last completed frame left. TSan is the witness for the race itself (`VN_TSAN_TARGET=test_vk
+    // scripts/tsan_check.sh`); this case is the behavioural half, and the frame loop RESIZES every frame - the path
+    // that rewrites the record's own shape in place.
+    auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
+    ASSERT_NE(backend, nullptr);
+    if (!backend->initialize()) {
+        GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
+    }
+    auto* const device = dynamic_cast<vn::backend_vk::Device*>(backend.get());
+    ASSERT_NE(device, nullptr);
+
+    RenderFrameExecutor* const second = device->createSession();
+    ASSERT_NE(second, nullptr);
+
+    const intrusive_ptr<RenderTarget> target = makeTarget(u8"readback_rebuilt");
+    const Colorf                      colour(0.25F, 0.5F, 0.75F, 1.0F);
+
+    constexpr int     kFrames = 12;
+    std::atomic<bool> done{ false };
+    std::thread       driver([second, &target, &done, colour]() {
+        for (int frame = 0; frame < kFrames; ++frame) {
+            // TWO EXTENTS, ONE SHAPE: a resize keeps the render pass and replaces every attachment, so the record
+            // is rewritten while the reader below is asking about it.
+            const int side = (frame % 2 == 0) ? kTargetSize : kTargetSize + 8;
+            target->setSize(side, side);
+            (void)second->executeFrame(clearingFrame(target.get(), colour), nullptr);
+        }
+        done.store(true, std::memory_order_release);
+    });
+
+    const std::size_t small_bytes = static_cast<std::size_t>(kTargetSize) * kTargetSize * 4U;
+    const std::size_t large_bytes = static_cast<std::size_t>(kTargetSize + 8) * (kTargetSize + 8) * 4U;
+    std::size_t       reads       = 0;
+    std::size_t       successes   = 0;
+    while (!done.load(std::memory_order_acquire)) {
+        std::vector<std::uint8_t>    pixels;
+        vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Ok;
+        const bool                   got = backend->readColorBuffer(target.get(), 0, pixels, &why);
+        ++reads;
+        // "Not ready yet" is always a legal answer (a frame may have rebuilt the target a moment ago); every other
+        // failure would be a claim about a target that exists, so none may appear here.
+        EXPECT_TRUE(got || why == vn::graphics::ReadbackResult::NotReady)
+            << "a readback racing a rebuild answered " << static_cast<int>(why);
+        if (!got) {
+            continue;
+        }
+        ++successes;
+        EXPECT_TRUE(pixels.size() == small_bytes || pixels.size() == large_bytes)
+            << "a readback answered with an extent no frame ever drew (" << pixels.size() << " bytes)";
+        if (pixels.size() < 4U) {
+            continue;
+        }
+        // THE PICTURE IS THE ONE A FINISHED FRAME LEFT: the clear colour, never a half-built or half-copied image.
+        EXPECT_NEAR(pixels[0], 64, 2);
+        EXPECT_NEAR(pixels[1], 128, 2);
+        EXPECT_NEAR(pixels[2], 191, 2);
+        EXPECT_EQ(pixels[3], 255);
+    }
+    driver.join();
+
+    EXPECT_GT(reads, 0U) << "the readback loop never ran";
+    EXPECT_GT(successes, 0U) << "no readback saw a finished frame, so the loop proved nothing";
+
+    device->releaseSession(*second);
     backend->shutdown();
 }

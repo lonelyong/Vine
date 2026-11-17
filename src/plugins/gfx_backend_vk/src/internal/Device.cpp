@@ -902,7 +902,8 @@ struct Device::Impl {
             // multisampled map that is the resolved depth image, which is also the only one a shader may sample.
             TargetObjects& sampled = *map_images;
             if (!sampled.depth_sampled) {
-                const ImageState from = stateOf(sampled.fresh ? ImageLayout::Undefined : ImageLayout::DepthAttachment);
+                const ImageState from =
+                    stateOf(sampled.fresh.load(std::memory_order_relaxed) ? ImageLayout::Undefined : ImageLayout::DepthAttachment);
                 const VkImageMemoryBarrier barrier =
                     barrierBetween(sampled.depthPicture(), from, stateOf(ImageLayout::ShaderReadOnly), depthAspectMask(sampled.depthFormat()));
                 device_table.vkCmdPipelineBarrier(commands,
@@ -1530,7 +1531,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             }
             TargetObjects& sampled = *source_entry;
             for (const VkImage image : sampled.colors) {
-                const ImageState from = sampled.fresh ? stateOf(ImageLayout::Undefined) : stateOf(ImageLayout::ColorAttachment);
+                const ImageState from = sampled.fresh.load(std::memory_order_relaxed) ? stateOf(ImageLayout::Undefined) : stateOf(ImageLayout::ColorAttachment);
                 const ImageState to   = stateOf(ImageLayout::ShaderReadOnly);
                 const VkImageMemoryBarrier barrier = barrierBetween(image, from, to, VK_IMAGE_ASPECT_COLOR_BIT);
                 owner.device_table.vkCmdPipelineBarrier(commands,
@@ -1621,8 +1622,9 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
             // its first frame (there is nothing to load yet). A pass that announces NO clear loads both attachments;
             // a fresh target falls back to CLEAR, the honest reading of "load an image nobody wrote".
             const bool has_clear  = draw.clear.has_value();
-            const bool load_color = !has_clear && !images->fresh;
-            const bool load_depth = has_clear ? (!draw.clear->depth && !images->fresh) : !images->fresh;
+            const bool drawn_into = !images->fresh.load(std::memory_order_relaxed);
+            const bool load_color = !has_clear && drawn_into;
+            const bool load_depth = has_clear ? (!draw.clear->depth && drawn_into) : drawn_into;
             render_pass           = images->renderPassFor(load_depth, load_color);
             framebuffer           = images->framebuffer;
             extent                = VkExtent2D{ static_cast<std::uint32_t>(images->width()), static_cast<std::uint32_t>(images->height()) };
@@ -1730,7 +1732,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         }
         owner.device_table.vkCmdEndRenderPass(commands);
         if (images != nullptr) {
-            images->fresh = false;
+            images->fresh.store(false, std::memory_order_relaxed);
         }
     }
     if (!content_refused) {
@@ -3474,20 +3476,25 @@ bool Device::readColorBuffer(const vn::graphics::ImageRef& image, std::vector<st
     // rebuild the target while this verb waits below, so every answer is checked AGAIN under the gate - this pass only
     // spares the device the stop.
     {
-        const std::shared_ptr<TargetObjects> peek = impl->target_table.lookup(target);
-        if (peek == nullptr || !peek->built()) {
+        // A VALUE, NOT THE RECORD (see TargetTable::peek): the record is rebuilt in place and destroyed outside the
+        // table, so a field read through a borrowed pointer has no synchronisation to point at (audit A3-01). One
+        // snapshot under the table's own lock answers every refusal below, and nothing here keeps a piece of the
+        // record across the wait that follows.
+        const TargetTable::Peek peek = impl->target_table.peek(target);
+        if (!peek.built) {
             return fail(ReadbackResult::NotReady);
         }
-        if (attachment < 0 || static_cast<std::size_t>(attachment) >= peek->colorCount()) {
+        if (attachment < 0 || static_cast<std::size_t>(attachment) >= peek.shape.color_formats.size()) {
             return fail(ReadbackResult::Invalid);
         }
-        if (peek->fresh) {
+        if (peek.fresh) {
             // BUILT IS NOT DRAWN: the images exist now that `setRenderTarget` builds the announce, but their
             // contents are UNDEFINED until a pass writes them, and "undefined" is not a picture. Asked after the
             // range check, so an index the target does not have is Invalid whether or not anything drew.
             return fail(ReadbackResult::NotReady);
         }
-        if (peek->colorFormat(static_cast<std::size_t>(attachment)) != VK_FORMAT_R8G8B8A8_UNORM) {
+        if (peek.shape.color_formats[static_cast<std::size_t>(attachment)] !=
+            vn::graphics::RenderTarget::ColorFormat::RGBA8) {
             return fail(ReadbackResult::Unsupported);
         }
     }
@@ -3519,7 +3526,7 @@ bool Device::readColorBuffer(const vn::graphics::ImageRef& image, std::vector<st
     if (attachment < 0 || static_cast<std::size_t>(attachment) >= images.colorCount()) {
         return fail(ReadbackResult::Invalid);
     }
-    if (images.fresh) {
+    if (images.fresh.load(std::memory_order_relaxed)) {
         return fail(ReadbackResult::NotReady); // built but never drawn (see the pre-gate check's note)
     }
     const std::size_t   attachment_index = static_cast<std::size_t>(attachment);
@@ -3654,20 +3661,23 @@ bool Device::readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<fl
     // copy, so it is refused rather than decoded into numbers that look like depths and are not (the same table the
     // copy and the decoder use is the SDK's `depthReadbackOf`).
     {
-        const std::shared_ptr<TargetObjects> peek = impl->target_table.lookup(target);
-        if (peek == nullptr || !peek->built()) {
+        // THE SAME VALUE-OF-RECORD RULE as readColorBuffer's phase one (see TargetTable::peek), and the depth format
+        // is the one the ATTACHMENTS were built with rather than whatever the host object declares now: the hint has
+        // to describe the image a copy would read.
+        const TargetTable::Peek peek = impl->target_table.peek(target);
+        if (!peek.built) {
             return fail(ReadbackResult::NotReady);
         }
         if (target->depthSource() != nullptr) {
             return fail(ReadbackResult::Unsupported);
         }
-        if (!peek->hasDepth()) {
+        if (!peek.shape.depth_format.has_value()) {
             return fail(ReadbackResult::Invalid);
         }
-        if (peek->fresh) {
+        if (peek.fresh) {
             return fail(ReadbackResult::NotReady); // built but never drawn: the depth is UNDEFINED
         }
-        if (!depthReadbackOf(target->depthFormat()).readable) {
+        if (!depthReadbackOf(*peek.shape.depth_format).readable) {
             return fail(ReadbackResult::Unsupported);
         }
     }
@@ -3698,7 +3708,7 @@ bool Device::readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<fl
     if (!images.hasDepth()) {
         return fail(ReadbackResult::Invalid); // no depth attachment at all: the request names nothing
     }
-    if (images.fresh) {
+    if (images.fresh.load(std::memory_order_relaxed)) {
         return fail(ReadbackResult::NotReady); // built but never drawn (see the pre-gate check's note)
     }
 
