@@ -34,7 +34,6 @@ PassDesc overlayDeclaration(const char8_t* name)
 {
     PassDesc declaration;
     declaration.name          = name;
-    declaration.tag           = u8"Test";
     declaration.stage         = PassStage::Overlay;
     declaration.kind          = PassKind::Scene;
     declaration.clear_enabled = false;
@@ -151,7 +150,6 @@ TEST(ChainRegistrationTest, AHostRegistersAThirdOverlayWithoutTouchingTheChain)
 
     PassDesc hud;
     hud.name          = u8"corner_readout";
-    hud.tag           = u8"Hud";
     hud.stage         = PassStage::Overlay;
     hud.order         = passStageOrder(PassStage::Overlay) + 50;
     hud.kind          = PassKind::Scene;

@@ -156,7 +156,6 @@ raw_ptr<ScreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
     // the NAME - so the source and the PiP get names of their own (the published slot name stays the output's).
     PassDesc preview_desc;
     preview_desc.name          = String(output_slot) + String(u8"_source");
-    preview_desc.tag           = u8"Preview";
     preview_desc.stage         = PassStage::Geometry;
     preview_desc.camera        = intrusive_ptr<Camera>(camera);
     preview_desc.content       = std::move(content);
@@ -168,7 +167,6 @@ raw_ptr<ScreenPass> addOffscreenToScreen(raw_ptr<RenderEngine>     engine,
     // and it carries the view camera because a fullscreen program is drawn through the pass' view.
     PassDesc pip_desc;
     pip_desc.name                          = String(output_slot) + String(u8"_pip");
-    pip_desc.tag                           = u8"Preview";
     pip_desc.stage                         = PassStage::Preview;
     pip_desc.kind                          = PassKind::Screen;
     pip_desc.camera                        = intrusive_ptr<Camera>(camera);

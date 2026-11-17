@@ -68,7 +68,7 @@ class Scene;
  * auto fps = make_intrusive<FpsOverlay>();
  * fps->setPixelRatio(view->devicePixelRatio());
  * PassDesc hud;
- * hud.name = u8"fps_overlay"; hud.tag = u8"Hud"; hud.stage = PassStage::Overlay;
+ * hud.name = u8"fps_overlay"; hud.stage = PassStage::Overlay;
  * hud.camera = intrusive_ptr<Camera>(fps->camera());
  * hud.content = intrusive_ptr<Scene>(fps->content());
  * hud.viewport = fps->boxViewport(); hud.clear_enabled = false; hud.depth_mode = DepthMode::Disabled;

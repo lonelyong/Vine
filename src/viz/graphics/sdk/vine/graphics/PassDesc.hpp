@@ -68,8 +68,6 @@ enum class PassKind : std::uint8_t
 struct VN_GRAPHICS_API PassDesc {
     /// Diagnostics and the frame-table dump (see RenderEngine::frameTable).
     String name;
-    /// A label for the plan and for a human reading it ("GBuffer", "Lighting", "Hud"). No behaviour.
-    String tag;
     /// Where this pass belongs in the frame's order (see passStageOrder). Equal stages keep plan order.
     PassStage stage{ PassStage::Shading };
     /// An explicit order, overriding the stage's (the escape hatch a host-built pass may need).

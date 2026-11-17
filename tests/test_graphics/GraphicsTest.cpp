@@ -7752,7 +7752,7 @@ TEST(PassChainTest, DeferredPresetWithTransparentContentBuildsComposite)
  * @brief What a recipe writes down is what the plan says: the tags, and the stages that place the passes.
  *
  * The builder's ordinary passes are DECLARATIONS now (see PassDesc), so this pins the part a reader of a plan
- * depends on: every row is labelled by the tag the recipe gave it, and the order of the rows is the order the
+ * depends on: every row is labelled by the pass' name, and the order of the rows is the order the
  * declared STAGES imply rather than a number the builder picked out of the air.
  */
 TEST(PassChainTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
@@ -7775,10 +7775,6 @@ TEST(PassChainTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
 
     const FrameTable plan = engine->frameTable();
     ASSERT_EQ(plan.passes.size(), 4u);
-    EXPECT_EQ(plan.passes[0].tag, vn::String(u8"GBuffer"));
-    EXPECT_EQ(plan.passes[1].tag, vn::String(u8"Lighting"));
-    EXPECT_EQ(plan.passes[2].tag, vn::String(u8"Transparent"));
-    EXPECT_EQ(plan.passes[3].tag, vn::String(u8"Present"));
     // The stage is what ordered them: the numbers below are the stage orders, not choices of the recipe's.
     EXPECT_EQ(plan.passes[0].order, passStageOrder(PassStage::Geometry));
     EXPECT_EQ(plan.passes[1].order, passStageOrder(PassStage::Shading));
@@ -7797,7 +7793,7 @@ TEST(PassChainTest, TheRecipeIsAWrittenDeclarationAndThePlanSaysSo)
  *
  * The axis gizmo and the frame-rate readout used to be RenderPass subclasses whose execute() drew their own scene
  * and ignored the one the engine handed them. They are the two motivating users of PassDesc::before_draw, so this
- * pins the whole shape: the pass carries the overlay's own camera and content, a HUD tag, the HUD stage's order
+ * pins the whole shape: the pass carries the overlay's own camera and content, the HUD stage's order
  * and no clear; the per-frame work is the declaration's hook, and it runs when the FRAME runs.
  */
 TEST(PassChainTest, TheHudOverlaysAreDeclarationsToo)
@@ -7846,9 +7842,7 @@ TEST(PassChainTest, TheHudOverlaysAreDeclarationsToo)
     ASSERT_NE(readout_row, nullptr);
 
     // The declaration says what the pass IS: the overlay's own camera and scene (it used to draw them behind the
-    // engine's back), a HUD tag, the HUD stage's order, and no clear.
-    EXPECT_EQ(gizmo_row->tag, vn::String(u8"Hud"));
-    EXPECT_EQ(readout_row->tag, vn::String(u8"Hud"));
+    // engine's back), the HUD stage's order, and no clear.
     EXPECT_EQ(gizmo_row->order, passStageOrder(PassStage::Overlay) + opts.gizmo.order);
     EXPECT_EQ(readout_row->order, passStageOrder(PassStage::Overlay) + opts.fps.order);
     EXPECT_FALSE(gizmo_row->clears) << "a HUD draws over the picture it is on, it never washes it out";
@@ -12652,8 +12646,7 @@ TEST(RenderEngineTest, ADeclarationChangeLandsInTheFrameThatFollowsIt)
  *
  * The point of the descriptor entry (M7's "adding a pass is adding a descriptor"): a caller that wants a pass
  * writes one, and the engine decides how to execute it. What the plan reports is the declaration as the frame
- * saw it - including the STAGE it asked for, which is the order it runs at, and the TAG, which is the label a
- * human reads (a name says which pass it is, a tag says what it is for).
+ * saw it - including the STAGE it asked for, which is the order it runs at, and the name a human reads.
  */
 TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
 {
@@ -12671,7 +12664,6 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     int      disabled_calls = 0;
     PassDesc desc;
     desc.name          = u8"declared_pass";
-    desc.tag           = u8"Lighting";
     desc.stage         = PassStage::Shading;
     desc.kind          = PassKind::Scene;
     desc.camera        = camera;
@@ -12688,7 +12680,6 @@ TEST(RenderEngineTest, APassCanBeDeclaredAsAValueAndRunsLikeAnyOther)
     const FrameTable plan = engine->frameTable();
     ASSERT_EQ(plan.passes.size(), 1u);
     EXPECT_EQ(plan.passes[0].name, vn::String(u8"declared_pass"));
-    EXPECT_EQ(plan.passes[0].tag, vn::String(u8"Lighting")) << "the tag is what the plan carries for a human";
     EXPECT_EQ(plan.passes[0].order, passStageOrder(PassStage::Shading)) << "the stage is the order: nobody picks an order number for a declared pass";
     EXPECT_EQ(plan.passes[0].target, target.get());
     EXPECT_TRUE(plan.passes[0].clears);
@@ -12744,7 +12735,6 @@ TEST(RenderEngineTest, AScreenPassCanBeDeclaredAsAValueToo)
     // The consumer: a screen pass that samples the published name through a program.
     PassDesc compose;
     compose.name        = u8"compose";
-    compose.tag         = u8"Compositing";
     compose.stage       = PassStage::Transparent;
     compose.kind        = PassKind::Screen;
     compose.camera      = camera;

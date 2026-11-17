@@ -35,7 +35,7 @@ class Scene;
  * gizmo->setSourceCamera(view->camera());          // the camera it mirrors
  * PassDesc hud;
  * hud.name            = u8"axis_gizmo";
- * hud.tag             = u8"Hud";                   // a HUD pass declared like any other
+ * hud.stage           = PassStage::Overlay;         // a HUD pass declared like any other
  * hud.stage           = PassStage::Overlay;
  * hud.camera          = intrusive_ptr<Camera>(gizmo->camera());
  * hud.content         = intrusive_ptr<Scene>(gizmo->content());

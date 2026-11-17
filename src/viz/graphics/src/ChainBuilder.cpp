@@ -87,7 +87,6 @@ bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
         // are stated here instead of being inherited from a pass subclass (see PassDesc).
         PassDesc desc;
         desc.name          = u8"axis_gizmo";
-        desc.tag           = u8"Hud";
         desc.stage         = PassStage::Overlay;
         desc.order         = overlay_base + options.gizmo.order;
         desc.camera        = intrusive_ptr<Camera>(gizmo->camera());
@@ -119,7 +118,6 @@ bool ChainBuilder::applyOverlays(PassChain& pipeline, const ChainDesc& options)
 
         PassDesc desc;
         desc.name          = u8"fps_overlay";
-        desc.tag           = u8"Hud";
         desc.stage         = PassStage::Overlay;
         desc.order         = overlay_base + options.fps.order;
         desc.camera        = intrusive_ptr<Camera>(fps->camera());
@@ -260,7 +258,6 @@ intrusive_ptr<RenderTarget> ChainBuilder::buildShadowPass(PassChain& pipeline, c
 
     PassDesc desc;
     desc.name          = u8"shadow";
-    desc.tag           = u8"Shadow";
     desc.stage         = PassStage::Depth;
     desc.camera        = light_camera;
     desc.content       = content_;
@@ -296,7 +293,6 @@ bool ChainBuilder::buildForwardPath(PassChain& pipeline)
     // stage; there is no separate geometry pass to place.
     PassDesc main_desc;
     main_desc.name       = u8"main";
-    main_desc.tag        = u8"Opaque";
     main_desc.stage      = PassStage::Shading;
     main_desc.camera     = intrusive_ptr<Camera>(camera_);
     main_desc.content    = content_;
@@ -311,7 +307,6 @@ bool ChainBuilder::buildForwardPath(PassChain& pipeline)
     if (transparent_ != nullptr) {
         PassDesc transparent_desc;
         transparent_desc.name          = u8"forward_transparent";
-        transparent_desc.tag           = u8"Transparent";
         transparent_desc.stage         = PassStage::Transparent;
         transparent_desc.camera        = camera_;
         transparent_desc.content       = transparent_;
@@ -388,7 +383,6 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     // G-buffer geometry pass (order < 0), publishing the target as "GBuffer".
     PassDesc gbuf_desc;
     gbuf_desc.name             = u8"gbuffer";
-    gbuf_desc.tag              = u8"GBuffer";
     gbuf_desc.stage            = PassStage::Geometry;
     gbuf_desc.camera           = camera_;
     gbuf_desc.content          = content_;
@@ -415,7 +409,6 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     if (transparent_ == nullptr) {
         PassDesc light_desc;
         light_desc.name          = u8"deferred_lighting";
-        light_desc.tag           = u8"Lighting";
         light_desc.stage         = PassStage::Shading;
         light_desc.kind          = PassKind::Screen;
         light_desc.camera        = intrusive_ptr<Camera>(camera_);
@@ -458,7 +451,6 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     // program that overwrites every pixel with the lit opaque result.
     PassDesc light_desc;
     light_desc.name          = u8"deferred_lighting";
-    light_desc.tag           = u8"Lighting";
     light_desc.stage         = PassStage::Shading;
     light_desc.kind          = PassKind::Screen;
     light_desc.camera        = intrusive_ptr<Camera>(camera_);
@@ -482,7 +474,6 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     // the target as "Composite".
     PassDesc transparent_desc;
     transparent_desc.name          = u8"forward_transparent";
-    transparent_desc.tag           = u8"Transparent";
     transparent_desc.stage         = PassStage::Transparent;
     transparent_desc.camera        = intrusive_ptr<Camera>(camera_);
     transparent_desc.content       = transparent_;
@@ -506,7 +497,6 @@ bool ChainBuilder::buildDeferredPath(PassChain& pipeline, const ChainDesc& optio
     // being added beside it. The HUD overlays (orders 10 / 30) stack above it.
     PassDesc present_desc;
     present_desc.name                       = u8"present";
-    present_desc.tag                        = u8"Present";
     present_desc.stage                      = PassStage::Present;
     present_desc.kind                       = PassKind::Screen;
     present_desc.camera                     = intrusive_ptr<Camera>(camera_);

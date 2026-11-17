@@ -122,7 +122,6 @@ FrameTable SessionShape::frameTable() const
         row.pass          = pass;
         row.order         = slot.order;
         row.name          = pass->name();
-        row.tag           = pass->declaration().tag;
         row.content       = pass->content();
         row.camera        = pass->camera();
         row.layer_mask    = pass->layerMask();

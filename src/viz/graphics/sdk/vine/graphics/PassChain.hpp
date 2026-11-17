@@ -577,7 +577,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     /** @brief Registers a DECLARED pass on the engine under this chain's ownership.
      *
      * @details
-     * - The declaration says what each pass IS (its kind, stage, tag, target, inputs), the engine makes the node, and
+     * - The declaration says what each pass IS (its kind, stage, target, inputs), the engine makes the node, and
      *   the row records this chain as its owner - so the recipe reads as declarations while the unregistration stays
      *   one owner's job (see the destructor).
      *

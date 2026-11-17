@@ -35,14 +35,8 @@ struct VN_GRAPHICS_API PassRow {
     raw_ptr<const RenderPass> pass = nullptr;
     /// The order the engine runs it at (see PassDesc::order / PassStage): what decides where it sits in the frame.
     int order                      = 0;
-    /// The pass' name (empty when it has none - a name is what makes a row greppable, see RenderPass::setName).
+    /// The pass' name (empty when it has none - a name is what makes a row grepable, see RenderPass::name).
     String name;
-    /// The label its DECLARATION gave it, or empty (see PassDesc::tag).
-    ///
-    /// Where a name says which pass this is, a tag says what it is FOR ("GBuffer", "Lighting", "Hud") - the
-    /// answer a host reading a frame table usually wants, and the one a viewer's own naming cannot be trusted to give
-    /// (a viewer names passes after its slots, not after what they mean).
-    String tag;
     /// The content it draws, or null (a content-agnostic pass: a screen pass, a HUD).
     raw_ptr<const Scene> content       = nullptr;
     /// The camera it draws through, or null (a fullscreen / screen-space pass).
@@ -94,7 +88,7 @@ struct VN_GRAPHICS_API PassRow {
  *   `passCount()` and pointer comparisons (or read out of a log after the fact). Every pass appears exactly
  *   once, in the engine's announcement order, with the facts about it - a test asserts on the SHAPE of a frame
  *   instead of on a count, and a host can print one line per pass without reaching into the engine's slots.
- * - This is the HOST-FACING snapshot (names, tags, last frame's record cost), not the backend-facing value it
+ * - This is the HOST-FACING snapshot (names, last frame's record cost), not the backend-facing value it
  *   is compiled from: executeFrame takes a FrameDescription, whose pointers are borrowed and whose order is
  *   the announced priority. Both come from the same compile, so they cannot disagree about which pass ran;
  *   they differ in what each audience needs. A dependency-resolving executor may still reorder the entries

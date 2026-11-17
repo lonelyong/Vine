@@ -86,7 +86,6 @@ PassDesc writingPass(const char8_t* name, intrusive_ptr<RenderTarget> target, in
 {
     PassDesc desc;
     desc.name          = name;
-    desc.tag           = u8"Test";
     desc.stage         = PassStage::Shading;
     desc.order         = order;
     desc.kind          = PassKind::Scene;
