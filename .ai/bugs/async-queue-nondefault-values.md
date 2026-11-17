@@ -4,6 +4,8 @@
 - **状态**: 已修复
 - **涉及**: `AsyncQueue.hpp`、`tests/test_async/AsyncTest.cpp`
 
+> **EN**: Fixed: `pop()` implicitly required `T` to be default-constructible and move-assignable because `popOne()` default-built a local and move-assigned the front into it. It now returns `std::optional<T>` emplaced from the front, so the contract is move-constructible only, while `tryPop(T&)` still needs move assignment because it writes into the caller's sink.
+
 ## 现象
 
 对合法的非默认构造、可移动类型使用 `AsyncQueue<T>::pop()` 会编译失败，即使队列中只需移动出一个已入队元素。

@@ -4,6 +4,8 @@
 - **状态**: 已修复
 - **涉及**: `AsyncQueue.hpp`、`tests/test_async/AsyncTest.cpp`
 
+> **EN**: Fixed: three `noexcept` declarations were not true - the queue constructor's `std::make_shared`, the push awaiter's by-value move, and bounded `await_suspend`'s enqueue - so a `bad_alloc` or a throwing move terminated the process. The two constructors dropped `noexcept`; `await_suspend` keeps it and captures the failure for `await_resume()` to rethrow on the coroutine's own stack.
+
 ## 现象
 
 AsyncQueue 创建共享状态或入队时若分配失败，或者元素移动构造抛异常，异常可能越过 `noexcept` 边界并终止进程，

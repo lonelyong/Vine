@@ -5,6 +5,8 @@
 - **模块**：`src/fw/appfw`
 - **涉及**：`CommandManager::setCommandEnabled()`、`Impl::setDisabledPreference()`、`ConfigManager`
 
+> **EN**: Open finding: `setCommandEnabled()` updates the disabled list as a read, modify and write-back over separate config calls, so two concurrent calls can each drop the other's preference even though each single read and write is protected. The API neither declares single-thread use nor offers an atomic update (`G4`, `G6`, `G10`).
+
 ## 现象与影响
 
 两个并发的 `setCommandEnabled()` 调用可以同时读取同一份禁用命令列表，各自修改后再写回。后写入的一方可能覆盖先写入的另一项偏好，导致用户设置丢失。

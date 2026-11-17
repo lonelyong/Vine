@@ -5,6 +5,8 @@
 - **模块**：`src/fw/appfw`
 - **涉及**：`CommandManager::currentCommand()`、`Chain::innermost()`
 
+> **EN**: Open finding from a concurrency review: `currentCommand()` reads the stack top under the chain lock and releases the lock before returning, so another thread can end the command and destroy it while the caller still holds the pointer. The mutex protects the read, not the object's lifetime (`G4`, `G10`).
+
 ## 现象与影响
 
 `currentCommand()` 在链锁保护下读取栈顶 `Command*`，返回前锁即释放。另一个线程此后可以结束命令并销毁实例；调用方若继续调用该指针的成员函数，就可能访问已销毁对象。

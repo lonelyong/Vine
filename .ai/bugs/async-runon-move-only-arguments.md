@@ -4,6 +4,8 @@
 - **状态**: 已修复
 - **涉及**: `ThreadPoolScheduler.hpp`、`tests/test_async/AsyncTest.cpp`
 
+> **EN**: Fixed: `runOn()` stored the callable and arguments by value but invoked the named locals as lvalues, so a move-only argument did not compile even though the return type was deduced from by-value `std::invoke_result_t<F, Args...>`. The call now moves the frame's copies into the callable, and `run()` shares the same implementation, so the default-pool overload is fixed too.
+
 ## 现象
 
 将 move-only 值参数（例如 `std::unique_ptr`）传给 `runOn()` 时，调用无法编译，即使 callable 能按值接收该参数。

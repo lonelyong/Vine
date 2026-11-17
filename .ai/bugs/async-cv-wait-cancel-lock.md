@@ -4,6 +4,8 @@
 - **状态**: 已修复
 - **涉及**: `AsyncConditionVariable.hpp`、`AsyncMutex.hpp`、`tests/test_async/AsyncTest.cpp`
 
+> **EN**: Fixed: destroying a waiter parked in `AsyncConditionVariable::wait(mutex)` left the caller's `AsyncLockGuard` believing it owned the lock, so its destructor unlocked a second time and tripped the debug assertion. The fix adds `wait(AsyncLockGuard&)`, which clears the guard while waiting and re-arms it with the same mutex before returning, adds `AsyncLockGuard::mutex()`, and documents that `wait(AsyncMutex&)` must not be used while a guard is held.
+
 ## 现象
 
 持有 `AsyncLockGuard` 的协程调用 `AsyncConditionVariable::wait(mutex)` 后，在通知前被组合子

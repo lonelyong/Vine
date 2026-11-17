@@ -5,6 +5,8 @@
 - **模块**：`src/fw/appfw`
 - **涉及**：`CommandManager::Impl::takeOverForeground()`、`admit()`、`exclusive_busy`
 
+> **EN**: Open finding: Exclusive raises `exclusive_busy` only after cancelling and waiting for the registered live chains, and the ordinary top-level admission branch never checks the flag, so ordinary commands can start while Exclusive runs. The takeover is a snapshot of chains rather than an admission barrier covering its whole lifetime (`G3`, `G10`).
+
 ## 现象与影响
 
 顶层 Exclusive 命令取消并等待已登记的活链后才设置 `exclusive_busy`。等待期间及 Exclusive 命令执行期间，普通顶层命令的准入分支不检查该状态，因此仍可能启动并与 Exclusive 命令并发。

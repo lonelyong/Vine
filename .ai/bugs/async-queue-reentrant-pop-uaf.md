@@ -4,6 +4,8 @@
 - **状态**: 已修复
 - **涉及**: `AsyncQueue.hpp`、`When.hpp`、`tests/test_async/AsyncTest.cpp`
 
+> **EN**: Fixed: `pop()` woke the waiting producer before it returned, and that wake could re-enter through a `whenAny` completion and destroy the still-running `pop()` frame (ASan use-after-free). The hand-off rule now suspends the handing-off operation first (`detail::WakePeerAndContinue`) and only then wakes the peer, so a winning `whenAny` destroys a suspended frame; waiters re-check and re-register, and `tryPush` / `tryPop` / `close` can only post the wake.
+
 ## 现象
 
 有界队列已满时，一个生产者等待 `push()`；另一个任务从队列 `pop()` 后，等待的生产者被同步恢复。

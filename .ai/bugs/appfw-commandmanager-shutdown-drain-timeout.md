@@ -5,6 +5,8 @@
 - **模块**：`src/fw/appfw`
 - **涉及**：`Application::shutdown()`、`CommandManager::cancelAllAndWait()`、`PluginManager::unloadAll()`
 
+> **EN**: Open finding from a static review: when `cancelAllAndWait()` times out it only writes a warning, and shutdown still unloads plugins and destroys the manager, so unfinished command frames can reach unloaded plugin code or a dangling manager pointer - a use-after-free risk during shutdown, not a reproduced crash (`G10`, `G11`).
+
 ## 现象与影响
 
 命令链未能在排空期限内结束时，`cancelAllAndWait()` 返回 `false`，但应用关停仍继续卸载插件和其他服务。

@@ -5,6 +5,8 @@
 - **模块**：`src/fw/appfw`
 - **涉及**：`CommandManager::executeCommandAsync(Command*)`
 
+> **EN**: Open finding from an API lifetime review: `executeCommandAsync(Command*)` documents only that the pointer must not be null, not that the instance must outlive the returned lazy task, so a caller that destroys the command before the task is driven leaves the coroutine with a dangling pointer. The contract has to connect the two lifetimes (`G4`, `G10`).
+
 ## 现象与影响
 
 按实例调用返回的是惰性 Task，命令会在 Task 被驱动后访问传入的裸指针。若调用者在 Task 完成前销毁实例，执行过程可能解引用悬空指针。

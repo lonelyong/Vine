@@ -5,6 +5,8 @@
 - **模块**：`src/fw/appfw`
 - **涉及**：`CommandManager::Impl::admit()`、`executeCommandAsyncImpl()`、`ChainGuard`
 
+> **EN**: Open finding from a control-flow review: chain admission sets `exclusive_busy` before the chain is registered, and `ChainGuard` is constructed before `chain->enter()` succeeds, so an allocation failure can leave Exclusive latched forever or make `leaveChain()` underflow the run count. The fix is one commit point for the flag and the registrations, with RAII covering only established state (`G10`, `G11`); no allocation-failure injection test exists yet.
+
 ## 现象与影响
 
 链准入和命令激活过程中若分配或容器操作抛出异常，可能遗留忙碌状态或破坏链的运行计数：

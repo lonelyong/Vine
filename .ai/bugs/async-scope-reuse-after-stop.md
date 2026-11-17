@@ -4,6 +4,8 @@
 - **状态**: 已修复
 - **涉及**: `Scope.hpp`、`tests/test_async/AsyncTest.cpp`
 
+> **EN**: Fixed: `Scope::add()` began a new batch by resetting the done event and the exception state but not the stop source, so children added after a stop inherited an already-stopped token. `add()` now rebuilds `source_` together with the batch, which is what `requestStop()` documents: a stop request applies to the batch it was raised in.
+
 ## 现象
 
 `Scope` 的当前批次停止后，后续 `add()` 开始的新批次仍收到已请求停止的 stop token。
