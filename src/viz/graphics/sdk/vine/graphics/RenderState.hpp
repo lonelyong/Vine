@@ -200,7 +200,7 @@ struct VN_GRAPHICS_API RenderState {
      *   OpenGL states). A thick WIREFRAME is a different technique (expanded quads or a shader), not this value.
      * - Unlike the point size it IS API state, delivered as dynamic state: one pipeline serves every width, so
      *   changing it recompiles nothing. The device's `lineWidthRange` is the ceiling (see
-     *   Capabilities::max_line_width) and values below 1.0 are raised to 1.0.
+     *   Capabilities::limits.max_line_width) and values below 1.0 are raised to 1.0.
      */
     std::optional<float> lineWidth;
 

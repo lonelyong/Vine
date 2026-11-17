@@ -178,7 +178,7 @@ class VN_GRAPHICS_API RenderTarget : public Object, public RefCounted<RenderTarg
      *     target, then present it with the full-screen pass.
      *
      * @note
-     * - Read the device's limit before choosing a count: `Capabilities::max_samples` is the largest count the
+     * - Read the device's limit before choosing a count: `Capabilities::limits.max_samples` is the largest count the
      *   backend can build, and the counts are powers of two. A count the device cannot build is refused (reported
      *   once) rather than silently lowered, so `samples()` is always the count the target was drawn with.
      * - 0 is not "automatic": a sample count below 1 means 1.

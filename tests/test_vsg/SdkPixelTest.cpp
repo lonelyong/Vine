@@ -529,3 +529,56 @@ TEST(SdkPixelTest, TheAlphaModeDecidesWhatALeafCutsAndWhatItBlends)
     EXPECT_GT(blended.r, 100U) << "Blend 必须混合（半个底色）——0 意味着模式没让这条 drawable 打开混合";
     EXPECT_LT(blended.r, 200U) << "也不该是整块底色 ——那是不透明的那个值";
 }
+
+/*
+ * @brief The two readback spellings name the same image: (target, attachment) and the ImageRef a pass input uses.
+ *
+ * "Which image" has one vocabulary (see ImageRef): a producer declares it, a consumer resolves it, and a readback is
+ * the third reader of the same pair. The old spelling stays for one version and forwards through the image, so the
+ * same picture must come back byte for byte - and the wrong verb for the image is a caller bug, not a device answer.
+ */
+TEST(SdkPixelTest, AReadbackNamesItsImageLikeAPassInputDoes)
+{
+    if (!SdkPixelFixture::available()) {
+        GTEST_SKIP() << "no device that serves off-screen pixels on this machine";
+    }
+    SdkPixelFixture fixture;
+    ASSERT_TRUE(fixture.up());
+
+    auto pass = vn::intrusive_ptr<RenderPass>(new RenderPass());
+    pass->setCamera(fixture.camera);
+    pass->setRenderTarget(fixture.target);
+    pass->setClearEnabled(true);
+    pass->setClearColor(vn::Colorf(0.0F, 0.0F, 0.0F, 1.0F));
+    pass->setShouldClearDepth(true);
+    pass->setProgramOverride(vn::graphics::unlitForwardProgram());
+    vn::test::registerPassForTest(*fixture.engine, pass, fixture.scene, 0);
+
+    const PixelProbe by_target = fixture.read();
+    ASSERT_EQ(by_target.width(), SdkPixelFixture::kSide);
+
+    vn::intrusive_ptr<vn::graphics::ImageRef> image(new vn::graphics::ImageRef(u8"sdk_pixels", vn::graphics::ImageRef::Kind::Color));
+    image->bind(fixture.target, 0);
+
+    std::vector<std::uint8_t>    pixels;
+    vn::graphics::ReadbackResult why = vn::graphics::ReadbackResult::Ok;
+    ASSERT_TRUE(fixture.backend->readColorBuffer(*image, pixels, &why)) << "why=" << static_cast<int>(why);
+    ASSERT_EQ(pixels.size(), static_cast<std::size_t>(SdkPixelFixture::kSide) * SdkPixelFixture::kSide * 4U);
+
+    const PixelProbe by_image(SdkPixelFixture::kSide, SdkPixelFixture::kSide, std::move(pixels));
+    for (int y = 0; y < SdkPixelFixture::kSide; ++y) {
+        for (int x = 0; x < SdkPixelFixture::kSide; ++x) {
+            const Rgba8 expected = by_target.pixel(x, y);
+            const Rgba8 actual   = by_image.pixel(x, y);
+            ASSERT_EQ(actual.r, expected.r) << x << "," << y;
+            ASSERT_EQ(actual.g, expected.g) << x << "," << y;
+            ASSERT_EQ(actual.b, expected.b) << x << "," << y;
+            ASSERT_EQ(actual.a, expected.a) << x << "," << y;
+        }
+    }
+
+    // The verb checks the image's kind: a colour image asked for depths is Invalid, not a silent copy.
+    std::vector<float> depths;
+    EXPECT_FALSE(fixture.backend->readDepthBuffer(*image, depths, &why));
+    EXPECT_EQ(why, vn::graphics::ReadbackResult::Invalid);
+}

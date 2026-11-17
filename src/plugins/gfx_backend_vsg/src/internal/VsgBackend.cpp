@@ -2105,26 +2105,26 @@ vn::graphics::Capabilities VsgBackend::capabilities() const noexcept
         const VkPhysicalDeviceProperties& properties = physical->getProperties();
         // The LIMITS travel beside the feature bits: "anisotropy exists" and "how much of it" are different
         // answers, and the number is clamped the one way the sampler path clamps it (anisotropyFor).
-        answer.max_anisotropy                        = vn::backend_vsg::detail::anisotropyFor(properties.limits.maxSamplerAnisotropy);
-        answer.max_color_attachments                 = properties.limits.maxColorAttachments;
+        answer.limits.max_anisotropy                        = vn::backend_vsg::detail::anisotropyFor(properties.limits.maxSamplerAnisotropy);
+        answer.limits.max_color_attachments                 = properties.limits.maxColorAttachments;
         // ONE target has ONE sample count, and its colour and depth attachments must both support it, so the
         // limit reported is what BOTH can do (a device whose depth tops out lower is the binding side). The device
         // states a BIT SET and the contract states a COUNT, so the set is collapsed to its largest count here - the
         // very number setMaxSamples received, which is what makes "the limit" one fact rather than two.
-        answer.max_samples                           = vn::backend_vsg::largestSampleCount(
+        answer.limits.max_samples                           = vn::backend_vsg::largestSampleCount(
             std::min(properties.limits.framebufferColorSampleCounts, properties.limits.framebufferDepthSampleCounts));
         // How WIDE a rasterised LINE may be is the device's answer, not the feature bit's: `wideLines` says
         // "widths above 1.0 are allowed", and this is how far the implementation goes (some stop at 1.0 even
         // with the feature on). The recorder clamps to it (see ContentPass::Scope::max_line_width).
-        answer.max_line_width                        = properties.limits.lineWidthRange[1];
+        answer.limits.max_line_width                        = properties.limits.lineWidthRange[1];
         if (properties.limits.timestampComputeAndGraphics != VK_FALSE) {
-            answer.features |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::GpuTimings);
+            answer.features.bits |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::GpuTimings);
         }
         if (physical->getFeatures().fillModeNonSolid == VK_TRUE) {
-            answer.features |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::Wireframe);
+            answer.features.bits |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::Wireframe);
         }
         if (physical->getFeatures().samplerAnisotropy == VK_TRUE) {
-            answer.features |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::AnisotropicFiltering);
+            answer.features.bits |= vn::graphics::Capabilities::bit(vn::graphics::Capabilities::Feature::AnisotropicFiltering);
         }
     }
     return answer;
@@ -2261,7 +2261,7 @@ void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget>
         // The reasons a sample count is refused, said as the difference they are: a count above what the device
         // offers, a number that is not a sample count at all, and a multisampled target asking for what a
         // multisampled depth cannot do (be shared with another pass). The first two are the DESCRIPTION's, so the
-        // host can fix it - and both name the limit it should read, because `Capabilities::max_samples` plus "the
+        // host can fix it - and both name the limit it should read, because `Capabilities::limits.max_samples` plus "the
         // counts are powers of two" is the whole set the device offers.
         const std::uint32_t samples       = target->samples() == 0U ? 1U : target->samples();
         const bool          too_many      = samples > max_samples;
@@ -2270,12 +2270,12 @@ void VsgBackend::reportUnbuildableTarget(vn::raw_ptr<vn::graphics::RenderTarget>
         if (too_many) {
             code = u8"vsg.target.samples_above_limit";
             message += "above what this device offers (up to " + std::to_string(max_samples) +
-                       "): the passes that draw into it are skipped (see Capabilities::max_samples)";
+                       "): the passes that draw into it are skipped (see Capabilities::limits.max_samples)";
         }
         else if (above_a_count) {
             code = u8"vsg.target.samples_not_a_count";
             message += "that is not a sample count the device offers (the counts are powers of two, up to " +
-                       std::to_string(max_samples) + "): the passes that draw into it are skipped (see Capabilities::max_samples)";
+                       std::to_string(max_samples) + "): the passes that draw into it are skipped (see Capabilities::limits.max_samples)";
         }
         else {
             code = u8"vsg.target.borrow_multisampled";
@@ -2570,10 +2570,7 @@ bool VsgBackend::releaseStreamBuffer(const void* buffer)
     return true;
 }
 
-bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target,
-                                 int                               attachment,
-                                 std::vector<std::uint8_t>&        outPixels,
-                                 vn::graphics::ReadbackResult*     why)
+bool VsgBackend::readColorBuffer(const vn::graphics::ImageRef& image, std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why)
 {
     // A refusal says WHY on both channels: the machine answer in @p why and one sentence on the diagnostics
     // route - once per episode, because this call is synchronous and a caller polling a target that is not
@@ -2589,6 +2586,16 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target,
         }
         return false;
     };
+
+    if (image.kind() != vn::graphics::ImageRef::Kind::Color) {
+        // The wrong verb for this image: a caller bug, answered without a device stop.
+        if (why != nullptr) {
+            *why = vn::graphics::ReadbackResult::Invalid;
+        }
+        return false;
+    }
+    const vn::graphics::RenderTarget* target     = image.target();
+    const int                         attachment = image.attachment();
 
     // A HOST VERB: the copy below waits the device's frames, so this owns the gate. From inside a frame body the
     // request answers InsideFrame at once - a readback that waited there would be the frame waiting for itself (the
@@ -2653,7 +2660,7 @@ bool VsgBackend::readColorBuffer(const vn::graphics::RenderTarget* target,
     return true;
 }
 
-bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::vector<float>& outDepths, vn::graphics::ReadbackResult* why)
+bool VsgBackend::readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<float>& outDepths, vn::graphics::ReadbackResult* why)
 {
     const auto refuse = [&](HostReadbackRefusal refusal, vn::graphics::ReportOnce& episode) {
         if (why != nullptr) {
@@ -2665,6 +2672,15 @@ bool VsgBackend::readDepthBuffer(const vn::graphics::RenderTarget* target, std::
         }
         return false;
     };
+
+    if (image.kind() != vn::graphics::ImageRef::Kind::Depth) {
+        // The wrong verb for this image: a caller bug, answered without a device stop.
+        if (why != nullptr) {
+            *why = vn::graphics::ReadbackResult::Invalid;
+        }
+        return false;
+    }
+    const vn::graphics::RenderTarget* target = image.target();
 
     // A HOST VERB, for the same reason the colour readback is one (see its note).
     const vn::graphics::FrameGate::Exclusive host = d->gate.enterExclusive();

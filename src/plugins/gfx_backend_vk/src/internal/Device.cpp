@@ -2713,36 +2713,36 @@ bool Device::initialize()
     impl->caps                         = Capabilities{};
     impl->caps.render_targets          = true;
     impl->caps.presentation            = impl->presentation_wanted;
-    impl->caps.features                = 0U;
+    impl->caps.features.bits           = 0U;
     // THE FEATURE BITS ARE WHAT WAS ENABLED, not what the device might do: each one is set from the SAME value
     // `pEnabledFeatures` carried, so a switch a host sees advertised is a switch the driver will accept.
     // Anisotropy additionally requires a limit above 1: a bit saying "anisotropy is available" beside a factor of 1
     // would advertise a quality setting that cannot do anything.
     if (wanted_features.fillModeNonSolid == VK_TRUE) {
-        impl->caps.features |= Capabilities::bit(Capabilities::Feature::Wireframe);
+        impl->caps.features.bits |= Capabilities::bit(Capabilities::Feature::Wireframe);
     }
     if (wanted_features.samplerAnisotropy == VK_TRUE && properties.limits.maxSamplerAnisotropy > 1.0F) {
-        impl->caps.features |= Capabilities::bit(Capabilities::Feature::AnisotropicFiltering);
+        impl->caps.features.bits |= Capabilities::bit(Capabilities::Feature::AnisotropicFiltering);
     }
     // GPU TIMINGS IS A DEVICE FACT, not a promise this backend measures anything yet (see Feature::GpuTimings): the
     // device can write timestamps for graphics and compute work.
     if (properties.limits.timestampComputeAndGraphics != VK_FALSE) {
-        impl->caps.features |= Capabilities::bit(Capabilities::Feature::GpuTimings);
+        impl->caps.features.bits |= Capabilities::bit(Capabilities::Feature::GpuTimings);
     }
     // ONE target has ONE sample count, and its colour and depth attachments must both support it, so the set this
     // device offers is the INTERSECTION of the two (a device whose depth tops out lower is the binding side). That
-    // intersection is a `VkSampleCountFlags` BIT SET, while `Capabilities::max_samples` states the largest COUNT a
+    // intersection is a `VkSampleCountFlags` BIT SET, while `Capabilities::limits.max_samples` states the largest COUNT a
     // target may ask for - the number a host hands to `RenderTarget::setSamples` - so the limit is read OUT of the
     // set rather than being the set. The same set is what `TargetTable::ensure` clamps a request against.
     impl->supported_sample_counts      = static_cast<std::uint32_t>(properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts);
-    impl->caps.max_samples             = largestSampleCount(impl->supported_sample_counts);
+    impl->caps.limits.max_samples             = largestSampleCount(impl->supported_sample_counts);
     // THE LIMITS TRAVEL BESIDE THE BITS, and each is the device's own answer: "anisotropy exists" and "how much of
     // it" are different facts, and so are "wide lines are allowed" and "how wide".
-    impl->caps.max_anisotropy          = impl->caps.supports(Capabilities::Feature::AnisotropicFiltering) ? properties.limits.maxSamplerAnisotropy : 1.0F;
-    impl->caps.max_line_width          = properties.limits.lineWidthRange[1] > 0.0F ? properties.limits.lineWidthRange[1] : 1.0F;
+    impl->caps.limits.max_anisotropy          = impl->caps.supports(Capabilities::Feature::AnisotropicFiltering) ? properties.limits.maxSamplerAnisotropy : 1.0F;
+    impl->caps.limits.max_line_width          = properties.limits.lineWidthRange[1] > 0.0F ? properties.limits.lineWidthRange[1] : 1.0F;
     // THE DEVICE'S OWN COUNT: an off-screen pass here can reference as many colour attachments as the render pass
     // takes, and capping that below what the device offers would be an amputation nothing in this backend needs.
-    impl->caps.max_color_attachments   = properties.limits.maxColorAttachments;
+    impl->caps.limits.max_color_attachments   = properties.limits.maxColorAttachments;
 
     // THE PIPELINE CACHE FILE (see PipelineCacheFile): a cache is valid for ONE device and driver identity, so the key
     // is read here and the file is refused unless it states the same one. A refused file is a slower start, never a
@@ -2776,8 +2776,8 @@ bool Device::initialize()
     // command, and an anisotropy factor past the device's maximum is an invalid sampler - both are clamped to the
     // numbers the capabilities just reported, so a host asking for more gets the device's best answer instead of a
     // validation error.
-    impl->caches.setLineWidthLimit(impl->caps.max_line_width);
-    impl->caches.setMaxAnisotropy(impl->caps.max_anisotropy);
+    impl->caches.setLineWidthLimit(impl->caps.limits.max_line_width);
+    impl->caches.setMaxAnisotropy(impl->caps.limits.max_anisotropy);
     impl->caches.setCreationFeedback(impl->creation_feedback);
 
     // EVERY DRIVER COMES UP WITH THE DEVICE, not only the device's own: a session borrowed before initialize()
@@ -3437,7 +3437,7 @@ vn::graphics::FrameReport Device::frameReport() const noexcept
     return impl->session->frameReport();
 }
 
-bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels, ReadbackResult* why)
+bool Device::readColorBuffer(const vn::graphics::ImageRef& image, std::vector<std::uint8_t>& outPixels, ReadbackResult* why)
 {
     const auto fail = [why](const ReadbackResult reason) {
         if (why != nullptr) {
@@ -3449,6 +3449,12 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     if (why != nullptr) {
         *why = ReadbackResult::Ok;
     }
+
+    if (image.kind() != vn::graphics::ImageRef::Kind::Color) {
+        return fail(ReadbackResult::Invalid); // the wrong verb for this image
+    }
+    const vn::graphics::RenderTarget* target     = image.target();
+    const int                         attachment = image.attachment();
 
     // A READBACK ASKED FROM INSIDE A FRAME WOULD WAIT FOR THAT SAME FRAME (see Impl::body_gate): it is refused, not
     // hung. `Failed` says the verb did not run; a hook or a sink calling back into the device is a host protocol
@@ -3611,7 +3617,7 @@ bool Device::readColorBuffer(const RenderTarget* target, int attachment, std::ve
     return true;
 }
 
-bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& outDepths, ReadbackResult* why)
+bool Device::readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<float>& outDepths, ReadbackResult* why)
 {
     const auto fail = [why](const ReadbackResult reason) {
         if (why != nullptr) {
@@ -3623,6 +3629,11 @@ bool Device::readDepthBuffer(const RenderTarget* target, std::vector<float>& out
     if (why != nullptr) {
         *why = ReadbackResult::Ok;
     }
+
+    if (image.kind() != vn::graphics::ImageRef::Kind::Depth) {
+        return fail(ReadbackResult::Invalid); // the wrong verb for this image
+    }
+    const vn::graphics::RenderTarget* target = image.target();
 
     // A READBACK ASKED FROM INSIDE A FRAME WOULD WAIT FOR THAT SAME FRAME (see Impl::body_gate): refused, not hung (the
     // colour readback says the same; `Failed` means the verb did not run).

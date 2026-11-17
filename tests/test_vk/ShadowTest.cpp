@@ -526,7 +526,7 @@ TEST(VkShadowTest, AMultisampledMapCastsTheSameShadow)
         GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
     }
     const vn::graphics::Capabilities capabilities = backend->capabilities();
-    if (capabilities.max_samples <= 1U) {
+    if (capabilities.limits.max_samples <= 1U) {
         GTEST_SKIP() << "this device genuinely reports no multisampling (Capabilities::max_samples is 1)";
     }
 
@@ -542,7 +542,7 @@ TEST(VkShadowTest, AMultisampledMapCastsTheSameShadow)
     ASSERT_NE(smooth.program, nullptr);
     // The SDK default already lets a shader sample the map's depth; the sample count is the one thing that changes.
     ASSERT_TRUE(smooth.map->isDepthPromoted());
-    smooth.map->setSamples(std::min<std::uint32_t>(4U, capabilities.max_samples));
+    smooth.map->setSamples(std::min<std::uint32_t>(4U, capabilities.limits.max_samples));
     const std::vector<std::uint8_t> multisampled_map = runAndRead(*backend, shadowFrame(smooth, /*declare*/ true, /*casting*/ true), smooth.target.get());
 
     EXPECT_EQ(backend->diagnosticCount(vn::graphics::DiagnosticCategory::UnsupportedRequest), reported_before)

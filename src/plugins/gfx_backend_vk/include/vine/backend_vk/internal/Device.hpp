@@ -270,16 +270,15 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *   answers `Failed` instead of waiting for the frame it is itself inside; read from the host's own thread, after
      *   the frame.
      *
-     * @param target     Target to read (borrowed, may not be null).
-     * @param attachment Colour attachment index; M1 serves 0.
+     * @param image      Image to read: a bound `Kind::Color` image (borrowed, may not be null); a depth image is
+     *                   refused as Invalid.
      * @param outPixels  Receives `width * height * 4` bytes on success (untouched on every refusal).
      * @param why        Receives why the read did not happen (Ok when it did), or null to ignore.
      * @return true when the pixels were read.
      */
-    bool readColorBuffer(const vn::graphics::RenderTarget* target,
-                         int                               attachment,
-                         std::vector<std::uint8_t>&        outPixels,
-                         vn::graphics::ReadbackResult*     why = nullptr) override;
+    bool readColorBuffer(const vn::graphics::ImageRef& image, std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why = nullptr) override;
+
+    using vn::graphics::RenderDevice::readColorBuffer;
 
     /**
      * @brief Reads back the depth attachment of an off-screen target this device drew into.
@@ -299,14 +298,14 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * - Only a successful read changes @p outDepths; every refusal (Invalid / NotReady / Unsupported / Failed) leaves
      *   it untouched and costs no submission.
      *
-     * @param target    Target to read (borrowed; null is refused as Invalid).
+     * @param image     Image to read: a bound `Kind::Depth` image (borrowed; null or a colour image is refused as Invalid).
      * @param outDepths Receives `width * height` depths on success.
      * @param why       Receives why the read did not happen (Ok when it did), or null to ignore.
      * @return true when the depths were read.
      */
-    bool readDepthBuffer(const vn::graphics::RenderTarget* target,
-                         std::vector<float>&               outDepths,
-                         vn::graphics::ReadbackResult*     why = nullptr) override;
+    bool readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<float>& outDepths, vn::graphics::ReadbackResult* why = nullptr) override;
+
+    using vn::graphics::RenderDevice::readDepthBuffer;
 
     /**
      * @brief Runs the frame's passes and presents the window's picture when a window is named: each pass clears or

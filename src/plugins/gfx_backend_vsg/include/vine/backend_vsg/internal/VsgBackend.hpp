@@ -316,14 +316,14 @@ class VN_BACKEND_VSG_API VsgBackend : public vn::graphics::RenderBackend {
      */
     bool releaseContent(const vn::Buffer<std::uint32_t>& buffer) override;
 
-    /** @brief Reads a colour attachment back: the device is stopped (counted), the copy is fenced, bytes out. */
-    bool readColorBuffer(const vn::graphics::RenderTarget* target,
-                         int                               attachment,
-                         std::vector<std::uint8_t>&        outPixels,
-                         vn::graphics::ReadbackResult*     why = nullptr) override;
+    /** @brief Reads a colour image back: the device is stopped (counted), the copy is fenced, bytes out. */
+    bool readColorBuffer(const vn::graphics::ImageRef& image, std::vector<std::uint8_t>& outPixels, vn::graphics::ReadbackResult* why = nullptr) override;
 
-    /** @brief Reads a depth attachment back as normalised values (a borrowed depth is the source's to read). */
-    bool readDepthBuffer(const vn::graphics::RenderTarget* target, std::vector<float>& outDepths, vn::graphics::ReadbackResult* why = nullptr) override;
+    /** @brief Reads a depth image back as normalised values (a borrowed depth is the source's to read). */
+    bool readDepthBuffer(const vn::graphics::ImageRef& image, std::vector<float>& outDepths, vn::graphics::ReadbackResult* why = nullptr) override;
+
+    using vn::graphics::RenderDevice::readColorBuffer;
+    using vn::graphics::RenderDevice::readDepthBuffer;
 
   public:
     /** @brief Gets whether the session is up: the device contract's own answer (see RenderDevice::initialized).

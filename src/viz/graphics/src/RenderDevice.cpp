@@ -4,6 +4,17 @@
 
 VN_GRAPHICS_NS_BEGIN
 
+intrusive_ptr<ImageRef> RenderDevice::readbackImage(const RenderTarget* target, int attachment, ImageRef::Kind kind)
+{
+    // A ONE-VERSION BRIDGE (BC-16): the legacy (target, index) spelling names the same image a pass input does. A
+    // null target stays unbound, which the backend answers as Invalid - the answer the old spelling gave.
+    auto image = make_intrusive<ImageRef>(String(u8"(readback)"), kind);
+    if (target != nullptr) {
+        image->bind(intrusive_ptr<RenderTarget>(const_cast<RenderTarget*>(target)), attachment);
+    }
+    return image;
+}
+
 void RenderDevice::setDiagnosticsRoute(Diagnostics& route)
 {
     // A BORROWED ROUTE, NOT AN OWNED ONE: a device may be driven by several engines (they borrow it, see the class

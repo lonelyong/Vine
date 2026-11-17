@@ -83,7 +83,7 @@ struct ViewportRect {
  * @details
  * - WHY THIS EXISTS: the device answers with a SET of bits (`framebufferColorSampleCounts` intersected with
  *   `framebufferDepthSampleCounts`, because one target has one sample count), while every contract in the SDK -
- *   `Capabilities::max_samples`, `RenderTarget::setSamples`, the host's target description - states a COUNT. Passing
+ *   `Capabilities::limits.max_samples`, `RenderTarget::setSamples`, the host's target description - states a COUNT. Passing
  *   the bit set straight through said "15" for a device that offers 1/2/4/8, which is not a count anything can be
  *   built with (see ADR-2026-11-14-sample-count-refused-not-lowered).
  * - The counts are read largest first, so the first flag the set contains is the largest one it offers.

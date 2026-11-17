@@ -332,7 +332,7 @@ TEST(VkContentTargetTest, EveryColourAttachmentIsClearedAndWrittenOnItsOwn)
     if (!backend->initialize()) {
         GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
     }
-    ASSERT_GE(backend->capabilities().max_color_attachments, 3U) << "M3 serves MRT up to four attachments";
+    ASSERT_GE(backend->capabilities().limits.max_color_attachments, 3U) << "M3 serves MRT up to four attachments";
 
     const intrusive_ptr<RenderTarget>  target   = makeTarget(3);
     const intrusive_ptr<ShaderProgram> program  = makeProgram(kMrFragment);
@@ -534,7 +534,7 @@ TEST(VkContentTargetTest, AMultisampledTargetsDepthReadsItsResolvePicture)
         GTEST_SKIP() << "this machine has no Vulkan device the backend can come up on";
     }
 
-    const std::uint32_t samples = std::min<std::uint32_t>(4U, backend->capabilities().max_samples);
+    const std::uint32_t samples = std::min<std::uint32_t>(4U, backend->capabilities().limits.max_samples);
     if (samples <= 1U) {
         GTEST_SKIP() << "this device offers no multisampling (Capabilities::max_samples is 1)";
     }

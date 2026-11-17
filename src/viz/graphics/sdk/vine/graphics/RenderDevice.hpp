@@ -13,6 +13,7 @@
 
 #include "Capabilities.hpp"
 #include "Diagnostics.hpp"
+#include "ImageRef.hpp"
 #include "RenderDiagnostic.hpp"
 #include "RenderPass.hpp"
 #include "ShaderProgram.hpp"
@@ -425,34 +426,34 @@ class VN_GRAPHICS_API RenderDevice {
         return false;
     }
 
-    /** @brief Reads back a colour attachment of an off-screen render target.
+    /** @brief Reads back ONE image of an off-screen target (the one vocabulary a pass input uses).
      *
      * @details
-     * - Synchronously copies colour attachment @p attachment of @p target (a target this device rendered into) into
-     *   @p outPixels as tightly packed RGBA8 — width * height * 4 bytes, row-major. This is the controlled readback
-     *   entry point: a logical RenderTarget holds no GPU pixels, so the transfer belongs to the device that owns the
-     *   attachments.
+     * - @p image names the target AND which image of it, exactly as a declared pass input does (see ImageRef):
+     *   `Kind::Color` with an attachment index, or `Kind::Depth`. Reading pixels changes nothing about the target, and
+     *   the image may be borrowed/const - a host reading a target it did not create can still ask for its pixels.
+     * - Synchronously copies the colour attachment into @p outPixels as tightly packed RGBA8 - width * height * 4
+     *   bytes, row-major. A logical RenderTarget holds no GPU pixels, so the transfer belongs to the device that owns
+     *   the attachments.
      * - The default implementation reports the operation as unsupported; a device that implements readback overrides
      *   it (staging buffer, image-to-buffer copy, queue/fence synchronisation and format conversion).
-     * - A false return is one of several causes — the device does not support readback, the target was never rendered
-     *   into / built, the target cannot answer, or the transfer failed. Pass @p why to tell them apart
-     *   programmatically (ReadbackResult); the device also reports the reason on its diagnostics channel (see the
-     *   class contract), and @p outPixels is left untouched either way.
+     * - A false return is one of several causes - the device does not support readback, the target was never rendered
+     *   into / built, the image is the wrong kind for this verb (a depth image here is `Invalid`), the target cannot
+     *   answer, or the transfer failed. Pass @p why to tell them apart programmatically (ReadbackResult); the device
+     *   also reports the reason on its diagnostics channel (see the class contract), and @p outPixels is left
+     *   untouched either way.
      *
-     * @param target     Off-screen target whose colour attachment to read. Borrowed, and CONST: reading pixels
-     *                   changes nothing about the target, and a host holding one as const (a reader of a target it
-     *                   did not create) can still ask for its pixels.
-     * @param attachment Colour attachment index in [0, target->colorCount()).
-     * @param outPixels  Receives the packed RGBA8 pixels on success.
-     * @param why        Receives why the read did not happen (Ok when it did), or null to ignore. A device that does
-     *                   not implement readback leaves it at Unsupported.
+     * @param image     Image to read: a bound `Kind::Color` image whose attachment is in [0, target->colorCount())
+     *                  (borrowed, and const - reading changes nothing about it).
+     * @param outPixels Receives the packed RGBA8 pixels on success.
+     * @param why       Receives why the read did not happen (Ok when it did), or null to ignore. A device that does
+     *                  not implement readback leaves it at Unsupported.
      * @return true when the pixels were read; false when the read could not be performed (see @p why and the
      *         diagnostics channel).
      */
-    virtual bool readColorBuffer(const vn::graphics::RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels, ReadbackResult* why = nullptr)
+    virtual bool readColorBuffer(const ImageRef& image, std::vector<std::uint8_t>& outPixels, ReadbackResult* why = nullptr)
     {
-        (void)target;
-        (void)attachment;
+        (void)image;
         (void)outPixels;
         if (why != nullptr) {
             *why = ReadbackResult::Unsupported;
@@ -460,31 +461,62 @@ class VN_GRAPHICS_API RenderDevice {
         return false;
     }
 
-    /** @brief Reads back the depth attachment of an off-screen render target.
+    /** @brief Reads back the depth image of an off-screen target (the one vocabulary a pass input uses).
      *
      * @details
-     * - Synchronously copies @p target's depth buffer into @p outDepths as width * height floats in [0, 1],
-     *   row-major.
+     * - Synchronously copies the target's depth buffer into @p outDepths as width * height floats in [0, 1],
+     *   row-major. @p image must be a bound `Kind::Depth` image; anything else is `Invalid`.
      * - Ownership and support model match readColorBuffer(): the default implementation reports the operation as
      *   unsupported.
      * - A target whose depth is borrowed (RenderTarget::shareDepth) is read through the SOURCE target, not the
      *   borrower, which reports the request as unsupported.
      *
-     * @param target    Off-screen target whose depth buffer to read (borrowed, and const like readColorBuffer's).
+     * @param image     Image to read: a bound `Kind::Depth` image (borrowed, and const like readColorBuffer's).
      * @param outDepths Receives the depth values on success.
      * @param why       Receives why the read did not happen (Ok when it did), or null to ignore; see
      *                  readColorBuffer().
      * @return true when the depth values were read; false when the read could not be performed (see @p why and the
      *         diagnostics channel).
      */
-    virtual bool readDepthBuffer(const RenderTarget* target, std::vector<float>& outDepths, ReadbackResult* why = nullptr)
+    virtual bool readDepthBuffer(const ImageRef& image, std::vector<float>& outDepths, ReadbackResult* why = nullptr)
     {
-        (void)target;
+        (void)image;
         (void)outDepths;
         if (why != nullptr) {
             *why = ReadbackResult::Unsupported;
         }
         return false;
+    }
+
+    /** @brief Reads one colour attachment by (target, index): the OLD spelling, forwarded through the image vocabulary.
+     *
+     * @details
+     * - Kept for one version so existing callers compile (BC-16): it builds a `Kind::Color` image for
+     *   (@p target, @p attachment) and calls the virtual above. New code should name the image directly.
+     *
+     * @param target     Off-screen target whose colour attachment to read (borrowed; null answers Invalid).
+     * @param attachment Colour attachment index in [0, target->colorCount()).
+     * @param outPixels  Receives the packed RGBA8 pixels on success.
+     * @param why        Receives why the read did not happen, or null to ignore.
+     * @return true when the pixels were read.
+     */
+    bool readColorBuffer(const RenderTarget* target, int attachment, std::vector<std::uint8_t>& outPixels, ReadbackResult* why = nullptr)
+    {
+        const intrusive_ptr<ImageRef> image = readbackImage(target, attachment, ImageRef::Kind::Color);
+        return readColorBuffer(*image, outPixels, why);
+    }
+
+    /** @brief Reads the depth buffer by target: the OLD spelling, forwarded through the image vocabulary (see above).
+     *
+     * @param target    Off-screen target whose depth buffer to read (borrowed; null answers Invalid).
+     * @param outDepths Receives the depth values on success.
+     * @param why       Receives why the read did not happen, or null to ignore.
+     * @return true when the depth values were read.
+     */
+    bool readDepthBuffer(const RenderTarget* target, std::vector<float>& outDepths, ReadbackResult* why = nullptr)
+    {
+        const intrusive_ptr<ImageRef> image = readbackImage(target, 0, ImageRef::Kind::Depth);
+        return readDepthBuffer(*image, outDepths, why);
     }
 
     /** @brief Gets what this device can do (see Capabilities).
@@ -618,6 +650,21 @@ class VN_GRAPHICS_API RenderDevice {
      * @param message  Human-readable detail, with the numbers involved.
      */
     void reportDiagnostic(DiagnosticSeverity severity, DiagnosticCategory category, const String& message);
+
+    /**
+     * @brief Builds the image a legacy readback spelling names (target + attachment + kind).
+     *
+     * @details
+     * - The old overloads (see readColorBuffer / readDepthBuffer) are one-version forwarders, so the image they
+     *   describe exists only for the length of the call. A null target stays UNBOUND, which the backend answers as
+     *   Invalid - the same answer the old spelling gave.
+     *
+     * @param target     Target to name (borrowed; null builds an unbound image).
+     * @param attachment Attachment index inside @p target.
+     * @param kind       Which image of the target this is.
+     * @return The image, bound when @p target is not null.
+     */
+    [[nodiscard]] static intrusive_ptr<ImageRef> readbackImage(const RenderTarget* target, int attachment, ImageRef::Kind kind);
 
     RenderDevice() = default;
 

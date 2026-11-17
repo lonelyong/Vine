@@ -31,7 +31,7 @@ struct VN_GRAPHICS_API ResolvedRenderState {
     float pointSize   = 1.0F;
     /// Width of rasterised LINE primitives in framebuffer pixels (default: 1). Its destination is the
     /// backend's DYNAMIC STATE (it never enters a pipeline key either), capped by the device's lineWidthRange
-    /// (see Capabilities::max_line_width). It does not widen `PolygonMode::Line`.
+    /// (see Capabilities::limits.max_line_width). It does not widen `PolygonMode::Line`.
     float lineWidth   = 1.0F;
     /// The EFFECTIVE primitive topology of the draw: the PRIMITIVE's own value (see Primitive.hpp), or the
     /// pass' override of it for the whole view. It has no "content" layer and no default here - a command

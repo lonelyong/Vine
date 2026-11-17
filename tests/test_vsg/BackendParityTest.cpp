@@ -1136,12 +1136,12 @@ TEST_F(BackendParityTest, TheSampleLimitsAgreeBetweenTheBackends)
 {
     const vn::graphics::Capabilities reference = vsg->capabilities();
     const vn::graphics::Capabilities candidate = vk->capabilities();
-    std::printf("[parity] max_samples: vsg=%u vk=%u\n", reference.max_samples, candidate.max_samples);
+    std::printf("[parity] max_samples: vsg=%u vk=%u\n", reference.limits.max_samples, candidate.limits.max_samples);
 
-    ASSERT_GT(reference.max_samples, 0U) << "a device always offers one sample";
-    EXPECT_EQ(reference.max_samples & (reference.max_samples - 1U), 0U)
-        << "Capabilities::max_samples is a sample COUNT, and " << reference.max_samples << " is not a power of two";
-    EXPECT_EQ(candidate.max_samples, reference.max_samples)
+    ASSERT_GT(reference.limits.max_samples, 0U) << "a device always offers one sample";
+    EXPECT_EQ(reference.limits.max_samples & (reference.limits.max_samples - 1U), 0U)
+        << "Capabilities::limits.max_samples is a sample COUNT, and " << reference.limits.max_samples << " is not a power of two";
+    EXPECT_EQ(candidate.limits.max_samples, reference.limits.max_samples)
         << "the two backends describe one GPU with two different sample limits";
 }
 

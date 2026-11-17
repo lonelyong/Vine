@@ -237,17 +237,17 @@ TEST(VkMsaaTest, TheDeviceReportsTheSampleCountItCanBuild)
     }
 
     const vn::graphics::Capabilities capabilities = backend->capabilities();
-    std::printf("[vk-msaa] capabilities().max_samples = %u\n", capabilities.max_samples);
+    std::printf("[vk-msaa] capabilities().limits.max_samples = %u\n", capabilities.limits.max_samples);
 
-    if (capabilities.max_samples <= 1U) {
+    if (capabilities.limits.max_samples <= 1U) {
         GTEST_SKIP() << "this device genuinely reports no multisampling (Capabilities::max_samples is 1)";
     }
 
     // A COUNT, not a set of bits: Capabilities::max_samples is the largest count a target may ask for, so the value a
     // host hands to RenderTarget::setSamples has to be one of the counts Vulkan offers (a power of two).
-    EXPECT_GT(capabilities.max_samples, 1U) << "this device reports no multisampling";
-    EXPECT_EQ(capabilities.max_samples & (capabilities.max_samples - 1U), 0U)
-        << "Capabilities::max_samples is documented as a sample COUNT, and " << capabilities.max_samples << " is not one";
+    EXPECT_GT(capabilities.limits.max_samples, 1U) << "this device reports no multisampling";
+    EXPECT_EQ(capabilities.limits.max_samples & (capabilities.limits.max_samples - 1U), 0U)
+        << "Capabilities::limits.max_samples is documented as a sample COUNT, and " << capabilities.limits.max_samples << " is not one";
 
     backend->shutdown();
 }
@@ -261,11 +261,11 @@ TEST(VkMsaaTest, AMultisampledTargetResolvesTheSamePicture)
     }
 
     const vn::graphics::Capabilities capabilities = backend->capabilities();
-    const std::uint32_t              samples      = pictureSamples(capabilities.max_samples);
+    const std::uint32_t              samples      = pictureSamples(capabilities.limits.max_samples);
     if (samples <= 1U) {
-        GTEST_SKIP() << "this device genuinely reports no multisampling (Capabilities::max_samples is 1)";
+        GTEST_SKIP() << "this device genuinely reports no multisampling (Capabilities::limits.max_samples is 1)";
     }
-    std::printf("[vk-msaa] drawing the picture with %u samples (device limit %u)\n", samples, capabilities.max_samples);
+    std::printf("[vk-msaa] drawing the picture with %u samples (device limit %u)\n", samples, capabilities.limits.max_samples);
 
     // WHAT THE DRIVER SAYS WHILE THE FRAME RUNS: a resolve, a multisampled framebuffer and a pipeline whose
     // rasterisation sample count must match the render pass are legal-or-not facts, and this is the only instrument
@@ -343,8 +343,8 @@ TEST(VkMsaaTest, AnOverLimitRequestIsRefusedNotLowered)
     // ABOVE THE LIMIT ON PURPOSE: twice the largest count the device offers. Nothing is built at another count (see
     // ADR-2026-11-14-sample-count-refused-not-lowered) - `RenderTarget::samples()` must never say a number the images
     // are not drawn with - so the target stays unbuilt and the passes that name it are skipped.
-    const std::uint32_t requested = capabilities.max_samples * 2U;
-    std::printf("[vk-msaa] asking for %u samples where the device's limit is %u\n", requested, capabilities.max_samples);
+    const std::uint32_t requested = capabilities.limits.max_samples * 2U;
+    std::printf("[vk-msaa] asking for %u samples where the device's limit is %u\n", requested, capabilities.limits.max_samples);
 
     std::vector<RenderDiagnostic> driver_messages;
     backend->setDiagnosticSink([&driver_messages](const RenderDiagnostic& diagnostic) { driver_messages.push_back(diagnostic); });
@@ -441,15 +441,15 @@ TEST(VkMsaaTest, ASampleableDepthResolvesWithTheColour)
     }
 
     const vn::graphics::Capabilities capabilities = backend->capabilities();
-    const std::uint32_t              samples      = pictureSamples(capabilities.max_samples);
+    const std::uint32_t              samples      = pictureSamples(capabilities.limits.max_samples);
     if (samples <= 1U) {
-        GTEST_SKIP() << "this device genuinely reports no multisampling (Capabilities::max_samples is 1)";
+        GTEST_SKIP() << "this device genuinely reports no multisampling (Capabilities::limits.max_samples is 1)";
     }
 
     // A DEPTH A SHADER SAMPLES PLUS MULTISAMPLING (backlog T40): the target BUILDS, the pass runs and the colour is
     // the fragment stage's - the depth half of the same shape is proved by `VkShadowTest.AMultisampledMapCastsThe-
     // SameShadow`, which samples the resolved picture and compares it against a single-sampled map's.
-    std::printf("[vk-msaa] asking for %u samples with a sampleable depth (limit %u)\n", samples, capabilities.max_samples);
+    std::printf("[vk-msaa] asking for %u samples with a sampleable depth (limit %u)\n", samples, capabilities.limits.max_samples);
     std::vector<RenderDiagnostic> driver_messages;
     backend->setDiagnosticSink([&driver_messages](const RenderDiagnostic& diagnostic) { driver_messages.push_back(diagnostic); });
     const std::size_t reported_before = backend->diagnosticCount(DiagnosticCategory::UnsupportedRequest);

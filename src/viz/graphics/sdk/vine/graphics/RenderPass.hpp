@@ -838,7 +838,7 @@ class VN_GRAPHICS_API RenderPass : public Object, public RefCounted<RenderPass> 
      *   nothing is rebuilt.
      * - It affects line primitives only; `PolygonMode::Line` edges are rasterised by the polygon stage and do
      *   not take their width from here. Values below 1.0 are raised to 1.0, and the device's lineWidthRange is
-     *   the ceiling (see Capabilities::max_line_width).
+     *   the ceiling (see Capabilities::limits.max_line_width).
      *
      * @param width Line width in framebuffer pixels.
      */

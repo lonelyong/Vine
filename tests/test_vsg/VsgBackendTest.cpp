@@ -1534,10 +1534,10 @@ TEST(VsgBackendTest, TheCapabilitiesAnswerTheFeaturesTheDeviceActuallyHas)
     EXPECT_TRUE(caps.presentation);
     EXPECT_TRUE(caps.supports(vn::graphics::Capabilities::Feature::Wireframe)) << "the device floor requires fillModeNonSolid";
     EXPECT_TRUE(caps.supports(vn::graphics::Capabilities::Feature::AnisotropicFiltering)) << "the device floor requires samplerAnisotropy";
-    EXPECT_GE(caps.max_anisotropy, 1.0F);
-    EXPECT_EQ(caps.supports(vn::graphics::Capabilities::Feature::AnisotropicFiltering), caps.max_anisotropy > 1.0F)
+    EXPECT_GE(caps.limits.max_anisotropy, 1.0F);
+    EXPECT_EQ(caps.supports(vn::graphics::Capabilities::Feature::AnisotropicFiltering), caps.limits.max_anisotropy > 1.0F)
         << "the feature bit and the limit are the same device fact";
-    EXPECT_GE(caps.max_color_attachments, 4U) << "the G-buffer carries four colour attachments";
+    EXPECT_GE(caps.limits.max_color_attachments, 4U) << "the G-buffer carries four colour attachments";
     EXPECT_EQ(caps.supports(vn::graphics::Capabilities::Feature::GpuTimings), backend->capabilities().supports(vn::graphics::Capabilities::Feature::GpuTimings))
         << "the answer is the device's, and asking again does not change it";
 }

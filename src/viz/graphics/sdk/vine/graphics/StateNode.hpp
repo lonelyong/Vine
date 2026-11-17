@@ -152,7 +152,7 @@ class VN_GRAPHICS_API StateNode : public Group {
      *   (expanded quads or a shader), not this value.
      * - Delivered as dynamic state (`vkCmdSetLineWidth`), so one pipeline serves every width and changing it
      *   recompiles nothing. It replaces the LAYOUT value the pipeline was created with.
-     * - The device's `lineWidthRange` is the ceiling (see Capabilities::max_line_width) and values below 1.0
+     * - The device's `lineWidthRange` is the ceiling (see Capabilities::limits.max_line_width) and values below 1.0
      *   are raised to 1.0.
      *
      * @param width Line width in framebuffer pixels.

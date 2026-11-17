@@ -214,9 +214,9 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
             const bool       above   = requested_samples > largest_samples;
             const vn::String why     = above
                                            ? request + u8", above what this device offers (up to " + numberText(largest_samples) +
-                                                 u8"; see Capabilities::max_samples)"
+                                                 u8"; see Capabilities::limits.max_samples)"
                                            : request + u8", which is not a sample count this device offers (the counts are powers of two, up to " +
-                                                 numberText(largest_samples) + u8"; see Capabilities::max_samples)";
+                                                 numberText(largest_samples) + u8"; see Capabilities::limits.max_samples)";
             if (report_) {
                 report_(targetDiagnostic(target,
                                          vn::graphics::DiagnosticSeverity::Warning,
@@ -246,7 +246,7 @@ bool TargetTable::ensure(const vn::graphics::RenderTarget& target)
                                          u8"vk.target.multisampled_depth_unsupported",
                                          vn::String(u8"vk: a target asks for ") + numberText(requested_samples) +
                                              u8" samples per pixel and a depth attachment; this device cannot resolve a multisampled depth "
-                                             u8"(it needs Vulkan 1.2's depth/stencil resolve), so the target is refused (see Capabilities::max_samples)",
+                                             u8"(it needs Vulkan 1.2's depth/stencil resolve), so the target is refused (see Capabilities::limits.max_samples)",
                                          vn::graphics::DiagnosticLimit{ requested_samples, 1U }));
             }
         }

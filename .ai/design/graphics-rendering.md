@@ -48,6 +48,12 @@
 的烘焙值——命令写的那一半被静默丢弃，画面错而不报错。这一条也管 create-info 里的**开关**：动态状态只能改值，不能改
 `depthBiasEnable` 这类 enable，所以 enable 必须随清单一起定。已知违背：`../bugs/vsg-depth-bias-not-declared-dynamic.md`。
 
+2.9 **能力是两个问题，读回只有一种“哪张图”**：`Capabilities` 由 `Features`（是否支持）与 `Limits`（上限多少）两个值
+组成；位集合的旧拼写（`Capabilities::Feature` / `supports` / `bit`）保留为内联转发，limit 字段改为 `Capabilities::limits.*`
+（源码级，BC-11）。读回的两个动词 `readColorBuffer` / `readDepthBuffer` 都收一个 `ImageRef`——它与 pass 输入的“哪张图”
+是同一个词汇；旧的 `(target, attachment)` 拼写保留一版并转发（BC-16）。为什么：`G4`（“支持什么”与“最大多少”是两个
+答案）与 `G6`（同一个“哪张图”不出现两套拼写）。
+
 ## 3. 功能点
 
 ### 3.1 目标
@@ -58,7 +64,7 @@
 | F2 | 深度附件 | `attachDepth(D16/D24/D32/D32F)`。 |
 | F3 | 共享深度 | `setDepthPromotion(false)` + `shareDepth(DepthView)`；借出方先画，借入方 LOAD。 |
 | F4 | 有效性 | 至少一个自己的附件 + 正尺寸；借来的深度不算自己的。 |
-| F5 | 读回 | `readColorBuffer` / `readDepthBuffer`；读解析后的画面。 |
+| F5 | 读回 | `readColorBuffer` / `readDepthBuffer`，两者都收一个 `ImageRef`（它命名“哪张图”）；旧的 `(target, index)` 拼写保留一版并转发。 |
 
 ### 3.2 MSAA
 
@@ -68,7 +74,7 @@
 | F7 | 颜色解析 | MS 图只作 attachment；resolve 图单采样、可采样、可拷贝。 |
 | F8 | 深度解析 | MS 图只作 depth attachment；resolve 图单采样，`sample0` 不平均；不能 resolve 深度的后端拒绝“多采样 + 可被采样深度”，**借来的深度 + 多采样**任何后端都拒绝。 |
 | F9 | 画面定义 | `picture()` / `depthPicture()`：读回、采样、借出、提升都走它。 |
-| F10 | 上限 | `Capabilities::max_samples` 是**计数**（合法计数是 2 的幂）；设备建不了的计数被**拒绝**（`SamplesUnsupported`，报一次），永不降级。 |
+| F10 | 上限 | `Capabilities::limits.max_samples` 是**计数**（合法计数是 2 的幂）；设备建不了的计数被**拒绝**（`SamplesUnsupported`，报一次），永不降级。 |
 
 ### 3.3 图源
 
@@ -98,7 +104,7 @@
 | F22 | ABI | 顶点 location、`VineViewBlock` / `VineDrawBlock` / `VineMaterialBlock` / `VineShadowBlock`、128 B push。 |
 | F23 | 透明度 | 唯一通道是 `Node::opacity`；材质不贡献 alpha；blend 恒开。 |
 | F24 | 阴影 | `Light::setCastShadow` + `ShadowSettings{resolution, bias}`；光相机由 `directionalShadowMatrix`（正交）/ `spotShadowMatrix`（透视）推导。**每链一张图、一盏灯（第一个可建的方向光或聚光）**，点光不支持（见 2.7）。 |
-| F26 | 线宽 | `StateNode::setLineWidth` / `RenderPass::setLineWidthOverride`：**线图元**（`Topology::Lines`）的宽度，framebuffer 像素，动态状态（`vkCmdSetLineWidth`）所以不重编；`wideLines` 是设备必需特性，上限是设备 `lineWidthRange`（`Capabilities::max_line_width`），下限 1.0。它**不加宽** `PolygonMode::Line` 的线框边。 |
+| F26 | 线宽 | `StateNode::setLineWidth` / `RenderPass::setLineWidthOverride`：**线图元**（`Topology::Lines`）的宽度，framebuffer 像素，动态状态（`vkCmdSetLineWidth`）所以不重编；`wideLines` 是设备必需特性，上限是设备 `lineWidthRange`（`Capabilities::limits.max_line_width`），下限 1.0。它**不加宽** `PolygonMode::Line` 的线框边。 |
 
 
 ## 4. 公开接口

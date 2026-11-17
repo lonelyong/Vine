@@ -165,7 +165,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   `setDepthPromotion(bool)`（深度是否变成可采样）。借来的深度也可以由**画它的那条 pass** 声明：
   `RenderPass::setDepthView(depthViewOf(other))`（`depthViewOf()` 是由 raw pointer 构造 view 的简写）。
   **样本数也是目标的属性**：`setSamples(n)`（默认 1，0 当 1）—— 离屏目标会自建多重采样图并把**颜色**
-  解析成一张单采样图，那张图就是它的彩色内容；上限问 `capabilities().max_samples`，用法与三条限制见 §3.20。
+  解析成一张单采样图，那张图就是它的彩色内容；上限问 `capabilities().limits.max_samples`，用法与三条限制见 §3.20。
 - `PassChain::build(engine, const ChainDesc&)` —— 配方层（结构选择只有一个：
   `ShadingPath::Forward | Deferred`，其余是效果与选项，见 `.ai/design/graphics-architecture.md`）、
   `addOffscreenToScreen(...)`（离屏 + PiP），并暴露延迟所需的公有件（`defaultGbufferTarget()`、
@@ -1217,7 +1217,7 @@ scene_rt->setSamples(4);              // 默认 1；0 也当 1（不存在“零
 // 那张解析图就是 target 的彩色内容 —— 后面的 pass 采它、readColorBuffer() 读它，拿到的都是它。
 ```
 
-- **先问设备**：`capabilities().max_samples` 是上限（彩色与深度两个上限的**较小值**：一张 target 只有一个样本
+- **先问设备**：`capabilities().limits.max_samples` 是上限（彩色与深度两个上限的**较小值**：一张 target 只有一个样本
   数，两种附件都得支持）。超过它的描述会被后端**拒绝并报一次**，不会悄悄降级 —— `initialize()` 之后读
   `capabilities()` 再选值。
 - **窗口仍是单采样**：交换链的样本数归平台。要让窗口抗锯齿，就把场景画进多重采样离屏目标，再用 `ScreenPass`

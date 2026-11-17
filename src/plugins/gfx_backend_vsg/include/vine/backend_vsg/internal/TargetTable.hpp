@@ -77,7 +77,7 @@ class VN_BACKEND_VSG_API TargetTable {
         vn::math::Mat4d                                      view_projection{};            // The producer's projection * view, when stated.
     };
 
-    /** @brief Sets the device's sample-count limit (see Capabilities::max_samples); 0 and 1 mean none. */
+    /** @brief Sets the device's sample-count limit (see Capabilities::limits.max_samples); 0 and 1 mean none. */
     void setMaxSamples(std::uint32_t samples) noexcept
     {
         max_samples_ = samples == 0U ? 1U : samples;

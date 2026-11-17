@@ -3633,10 +3633,10 @@ class MockBackend : public RenderBackend {
 
     [[nodiscard]] Capabilities capabilities() const noexcept override
     {
-        return Capabilities{ .render_targets        = supports_targets,
-                             .features              = capability_features,
-                             .max_anisotropy        = capability_max_anisotropy,
-                             .max_color_attachments = capability_max_color_attachments };
+        return Capabilities{ .render_targets = supports_targets,
+                             .features       = Features{ .bits = capability_features },
+                             .limits         = Limits{ .max_anisotropy        = capability_max_anisotropy,
+                                                       .max_color_attachments = capability_max_color_attachments } };
     }
 
     /// The pass identities the frame named, in RUN ORDER (see FrameDescription::Pass::pass): what the engine's
@@ -3873,7 +3873,7 @@ TEST(CapabilitiesTest, OneFeatureIsOneBitAndAnUnansweredFeatureIsFalse)
     EXPECT_FALSE(nothing.supports(Capabilities::Feature::AnisotropicFiltering));
 
     Capabilities answered;
-    answered.features = Capabilities::bit(Capabilities::Feature::Wireframe);
+    answered.features.bits = Capabilities::bit(Capabilities::Feature::Wireframe);
     EXPECT_TRUE(answered.supports(Capabilities::Feature::Wireframe));
     EXPECT_FALSE(answered.supports(Capabilities::Feature::GpuTimings)) << "one bit per feature";
     EXPECT_FALSE(answered.supports(Capabilities::Feature::AnisotropicFiltering)) << "one bit per feature";
@@ -3896,11 +3896,12 @@ TEST(CapabilitiesTest, OneFeatureIsOneBitAndAnUnansweredFeatureIsFalse)
  * A host that shows a quality setting needs both; a backend that answers nothing promises one attachment and no
  * anisotropy, which is the honest floor rather than a claim.
  */
-TEST(CapabilitiesTest, TheLimitsTravelBesideTheFeatureBits)
+TEST(CapabilitiesTest, TheLimitsAreOneValueAndTheFeaturesAnother)
 {
     const Capabilities defaults;
-    EXPECT_FLOAT_EQ(defaults.max_anisotropy, 1.0F) << "an unanswered limit promises no anisotropy";
-    EXPECT_EQ(defaults.max_color_attachments, 1U) << "and one attachment";
+    EXPECT_FLOAT_EQ(defaults.limits.max_anisotropy, 1.0F) << "an unanswered limit promises no anisotropy";
+    EXPECT_EQ(defaults.limits.max_color_attachments, 1U) << "and one attachment";
+    EXPECT_FALSE(defaults.features.supports(Capabilities::Feature::Wireframe)) << "the two values answer separately";
 
     auto backend                              = intrusive_ptr<MockBackend>(new MockBackend());
     backend->capability_features              = Capabilities::bit(Capabilities::Feature::AnisotropicFiltering);
@@ -3910,9 +3911,11 @@ TEST(CapabilitiesTest, TheLimitsTravelBesideTheFeatureBits)
     engine->setDevice(backend);
 
     const Capabilities caps = engine->capabilities();
+    EXPECT_TRUE(caps.features.supports(Capabilities::Feature::AnisotropicFiltering));
+    EXPECT_FLOAT_EQ(caps.limits.max_anisotropy, 16.0F);
+    EXPECT_EQ(caps.limits.max_color_attachments, 8U);
+    // The old spellings read the same values (one fact, one storage).
     EXPECT_TRUE(caps.supports(Capabilities::Feature::AnisotropicFiltering));
-    EXPECT_FLOAT_EQ(caps.max_anisotropy, 16.0F);
-    EXPECT_EQ(caps.max_color_attachments, 8U);
 }
 
 TEST(RenderEngineTest, EveryExecutedPassReachesTheBackendOnceAndADisabledOneDoesNot)
