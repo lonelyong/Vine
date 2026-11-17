@@ -267,7 +267,7 @@
 - **为什么**：释放要说的是两件事——“这份内容还在不在”与“这个对象现在能不能毁”——合在一处就是
 "
   "“释放只能在帧之间调”这条宿主必须守的时序。拆开之后 vsg 已经在用的同一套机制装上了两个实现（`G6`），
-  而且它是下一步多会话的前提（`.ai/design/graphics-sessions.md` §9.3）。
+  而且它是下一步多会话的前提（`.ai/design/graphics-sessions.md` §2.6）。
 - **代价（写在这里而不是隐藏）**：一个已释放对象活到 `submitted + slots + 1`，即**最多两帧后**
   才销毁（它是“slot 已被回收”这个证据的保守代价）。两帧的内存延迟与一次设备空转相比是廉
   价的，而等待变成了按帧计时的后台事件。
@@ -760,7 +760,7 @@
   S6c-1（帧首快照：记录路径零锁、计划按值、条目 park 到水位）、S6c-2a（帧体真并行：体闸 shared/exclusive + 多开帧 +
   各小锁 + 每驱动者批量）、S6c-2b（R6：释放不等帧）、S7（读回独立化：自带命令池/栅栏 + 计数等待 + 帧体内拒绝，
   并补上 ADR 早就写明的 `vkQueueSubmit` / `vkDeviceWaitIdle` 提交锁）、S9（契约收口 + TSan：S9 当天
-  （2026-11-16）`test_vk` 133/133 **0 race report**）已落地；S8 见 `.ai/design/graphics-sessions.md` §9.3。
+  （2026-11-16）`test_vk` 133/133 **0 race report**）已落地；S8 的落地记录见 ADR 的「实施状态」。
   **今天的三套 TSan 读数见 `graphics-threading.md` R18。**
 - `test_vk` **169 例 / 41 套**（Debug 全绿，ASan 门禁 vk 范围 0 报告）；`test_vsg` **572**、`test_graphics` **617**；
   `BackendParityTest` **13/13**。S4（B5a）把目标 map、形状与租约归一为 `TargetTable`（`TargetClaims.{hpp,cpp}` 删除，

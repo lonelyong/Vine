@@ -304,3 +304,7 @@ Absent ──第一个需要的会话 claim──▶ Uploading(owner, frame)
   套件）各 **0 race report**。工具发现并修掉一处**真缺陷**：`Geometry::description()` 的惰性缓存无保护（两个引擎
   的 content 线程同时描述同一几何即竞争）——现在读者持共享锁、单个构建者持独占锁。
 - **平台**：Linux/X11；Win32 / Wayland 的实机证据仍按切换门（`T35`）未过。
+- **追加（2026-11-17）**：上一条的「仍未做」已过时——S8a / S8b / S8c-1 / S8c-2 与 `ResidenceTable`
+  的设备接线（`F4`）均已于 2026-11-16 落地，本 ADR 的九步迁移全部完成。今天的形状见
+  `graphics-sessions.md` §2.9 / §3.1.9，线程契约见 `graphics-threading.md` `C21`；每一步的用例与变异证据
+  留在 git 历史里（原记录不改）。
