@@ -1,74 +1,74 @@
-# vsg 后端：架构、契约、坑
+# the vsg backend: architecture, contract, traps
 
-> **状态**：现行
-> **最后核对**：2026-11-16
-> **范围**：vsg 后端如何把编译好的帧值物化成 Vulkan 命令；平台事实与已踩过的坑。
-> **权威来源**：`RenderBackend.hpp` / `ShaderAbi.hpp` / `src/viz/graphics/sdk/vine/graphics/`（7 个共享机制）/
-> `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/**`。
-> **待办**：`../backlog/graphics.md`
+> **Status**: current
+> **Last verified**: 2026-11-16
+> **Scope**: how the vsg backend materialises a compiled frame value into Vulkan commands; the platform facts and the traps already hit.
+> **Sources**: `RenderBackend.hpp` / `ShaderAbi.hpp` / `src/viz/graphics/sdk/vine/graphics/` (the 7 shared mechanisms) /
+> `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/**`.
+> **Backlog**: `../backlog/graphics.md`
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-引擎把一帧编译成值；后端只把这些值物化成 Vulkan 命令。平台事实（1.4 地板、无 dynamic rendering、
-每 pass 私有状态表、reverse-Z）不可协商，踩过的坑必须留在这份文件里。
+The engine compiles a frame into values; the backend only materialises those values into Vulkan commands. The platform facts (the 1.4 floor, no dynamic rendering,
+a private state table per pass, Reverse-Z) are not negotiable, and the traps already hit must stay in this file.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 三段式：收集 → 编译 → 执行；执行器只做机械落地。
-- 调度只在引擎，后端按 `FrameDescription.passes` 的顺序物化。
-- 每个 pass 的状态私有；流按 buffer 身份共享；证据三重（验证层/计数器/像素）。
+- Three stages: collect → compile → execute; the executor only lands things mechanically.
+- Scheduling lives in the engine only; the backend materialises in `FrameDescription.passes` order.
+- Every pass' state is private; streams are shared by buffer identity; evidence is threefold (validation layer / counters / pixels).
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不在后端重排 pass、自建依赖图或报环。
-- 不让 SDK `graphics/` include vsg；只有插 件 `internal/` 才 include both。
-- 不把平台差异写进引擎/应用层。
+- The backend does not reorder passes, build its own dependency graph or report cycles.
+- The SDK's `graphics/` does not include vsg; only the plugin's `internal/` includes both.
+- Platform differences are not written into the engine or the application layer.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-> 后端只把引擎编译好的帧值物化成 Vulkan 命令；平台事实不可协商，坑都踩过，别重踩。
+> The backend only materialises the frame value the engine compiled into Vulkan commands; the platform facts are not negotiable, and every trap has been hit once — do not hit it again.
 
-## 2. 设计要点
+## 2. Design Points
 
-2.1 **三段式**：收集（`FrameRecorder`）→ 编译（`FrameCompiler`）→ 执行（`VsgExecutor`）；执行器只做机械落地，不决定排序、重建或缓存。
-2.2 **调度在引擎**：`detail::FrameScheduler` 是唯一排序点；后端按 `FrameDescription.passes` 的顺序物化。
-2.3 **每 pass 状态私有**：vsg 按 viewID 编管线；状态注册表跨 pass 共享会拿到不兼容 render pass 的 pipeline。
-2.4 **目标形状驱动**：`TargetShape` 决定图像、通道、管线兼容性；bootstrap 清所有附件。
-2.5 **流按 buffer 身份共享**：`StreamKey` = buffer + 该 buffer 自己的 revision + 段；稳态零重传。
-2.6 **反向 Z + CW 正面**：Vulkan NDC z 就是 depth；世界 CCW 到 framebuffer 是 CW。
-2.7 **证据三重**：验证层 / 计数器 / 像素；三者缺一都不算“通过”。
-2.8 **物理边界**：SDK `graphics/` 不 include vsg；插件 `internal/` 才 include both。
-**插件内部还有一条更窄的缝**：内容记账的半边（`ContentFacts` / `ContentStore` / `ProgramHalves` / `ContentSources` /
-`PushRange`）不许出现 `::vsg::`；设备一律经适配层（`StreamUploads` / `StateCommands` /
-`ContentPipeline` / `ContentDraw`）触达。为什么：插件 23.5k 行里 59% 是内容记账，而这半边实测已经是 0 处 vsg
-引用——它干净，第二个后端才能直接复用；等它被 vsg 类型渗进去就只剩重写。可检查：
-`scripts/check_vsg_content_seam.cmake`，由 CTest 的 `content_seam` 用例执行（不靠记性）。满足 `G2` / `G9`；
-代价是适配层要多包一层纯值（已经是现在的形状）。
+2.1 **Three stages**: collect (`FrameRecorder`) → compile (`FrameCompiler`) → execute (`VsgExecutor`); the executor only lands things mechanically and decides no order, rebuild or
+cache.
+2.2 **Scheduling is in the engine**: `detail::FrameScheduler` is the only ordering point; the backend materialises in `FrameDescription.passes` order.
+2.3 **Every pass' state is private**: vsg compiles pipelines by viewID; a state registry shared across passes gets a pipeline for an incompatible render pass.
+2.4 **The target shape drives**: `TargetShape` decides image, pass and pipeline compatibility; bootstrap clears every attachment.
+2.5 **Streams are shared by buffer identity**: `StreamKey` = buffer + that buffer's own revision + segment; zero re-upload in the steady state.
+2.6 **Reverse-Z + CW front faces**: Vulkan's NDC z is depth as it is; a world CCW triangle is CW in the framebuffer.
+2.7 **Threefold evidence**: validation layer / counters / pixels; without all three it is not "passing".
+2.8 **A physical boundary**: the SDK's `graphics/` does not include vsg; only the plugin's `internal/` includes both.
+**Inside the plugin there is a narrower seam**: the content-bookkeeping half (`ContentFacts` / `ContentStore` / `ProgramHalves` / `ContentSources` / `PushRange`) may
+not name `::vsg::`; the device is reached only through the adapter layer (`StreamUploads` / `StateCommands` / `ContentPipeline` / `ContentDraw`). Why: 59% of the
+plugin's 23.5k lines are content bookkeeping, and that half measures 0 vsg references — it is clean, so a second backend could reuse it directly; once vsg types leak into
+it, nothing is left but a rewrite. Checkable: `scripts/check_vsg_content_seam.cmake`, run by CTest's `content_seam` case (not by memory). It satisfies `G2` / `G9`; the
+cost is one more layer of pure values in the adapter (which is the shape it already has).
 
-### 2.9 后端架构
+### 2.9 The backend's architecture
 
-#### 2.9.1 分层
+#### 2.9.1 The layers
 
-| 层 | 位置 | 内容 |
+| Layer | Location | Contents |
 |---|---|---|
-| SDK 共享机制（两个后端都用） | `src/viz/graphics/sdk/vine/graphics/` | `FrameGate` / `DeviceClock` / `FrameTimeline` / `RetirementQueue` / `Readback` / `DrawState` / `TargetPlan` / `DiagnosticDraft` |
-| 本后端的可移植半边（ADR-2026-11-16 §2 从 SDK 搬入，现居 `vn::backend_vsg::core`） | `include/vine/backend_vsg/internal/` + `src/internal/` | `FrameRecorder` / `FrameCompiler` / `FrameArena` / `FrameRing` / `ClearPlan` / `VariantPool` / `StateRegistry` / `MaterialArena` / `Streams` / `SlotProbe` / `Observe` / `PhaseTable` / `PixelProbe` / `DepthProbe` / `SessionMove` / `AllocationGate` / `ResourceTable` |
-| 插件内部 | `src/plugins/gfx_backend_vsg/src/internal/` | `VsgBackend`（门面）/ `VsgExecutor` / `api::WindowSession` / `api::OffscreenSession` / `WindowTarget` / `TargetObjects` / `TargetTable` / `ContentStore` / `StreamUploads` / `ContentPipeline` / `ContentDraw` / `BlockStorage` / `BlockDescriptors` / `StateCommands` / `MaterialImages` |
-| 插件支撑 | `src/plugins/gfx_backend_vsg/src/support/` | `VsgHostWindow` / `RenderStateMapper` / `VsgDynamicState` / `VsgSceneRules` / 入口点 |
-| 插件外壳 | `src/plugins/gfx_backend_vsg/src/shell/` | 插件注册、`RenderBackendFactory` |
+| SDK shared mechanisms (both backends use them) | `src/viz/graphics/sdk/vine/graphics/` | `FrameGate` / `DeviceClock` / `FrameTimeline` / `RetirementQueue` / `Readback` / `DrawState` / `TargetPlan` / `DiagnosticDraft` |
+| This backend's portable half (moved out of the SDK by ADR-2026-11-16 §2, now in `vn::backend_vsg::core`) | `include/vine/backend_vsg/internal/` + `src/internal/` | `FrameRecorder` / `FrameCompiler` / `FrameArena` / `FrameRing` / `ClearPlan` / `VariantPool` / `StateRegistry` / `MaterialArena` / `Streams` / `SlotProbe` / `Observe` / `PhaseTable` / `PixelProbe` / `DepthProbe` / `SessionMove` / `AllocationGate` / `ResourceTable` |
+| Plugin internals | `src/plugins/gfx_backend_vsg/src/internal/` | `VsgBackend` (the facade) / `VsgExecutor` / `api::WindowSession` / `api::OffscreenSession` / `WindowTarget` / `TargetObjects` / `TargetTable` / `ContentStore` / `StreamUploads` / `ContentPipeline` / `ContentDraw` / `BlockStorage` / `BlockDescriptors` / `StateCommands` / `MaterialImages` |
+| Plugin support | `src/plugins/gfx_backend_vsg/src/support/` | `VsgHostWindow` / `RenderStateMapper` / `VsgDynamicState` / `VsgSceneRules` / the entry points |
+| Plugin shell | `src/plugins/gfx_backend_vsg/src/shell/` | the plugin registration, `RenderBackendFactory` |
 
-内部类型只有**两个**命名空间，**目录不是命名空间**：`core::` 是本后端自己的可移植半边（外加经 using-directive 可见的
-SDK 共享词汇），`api::` 是设备枚举与两个会话（`WindowSession` / `OffscreenSession` 与它们的 Options、
-`ProbedDevice` / `ProbeResult`，加两个设备探针函数）；其余——`VsgBackend` 门面、`VsgExecutor`、`TargetObjects` /
-`TargetTable`、内容录制——住在 `vn::backend_vsg` 根，`include/.../support/` 与 `src/support/` 的适配代码在 `detail::`。
-都不是公开接口；公开契约只有 §4.1 的五个 SDK 类型。
+The internal types use **two** namespaces, and **a directory is not a namespace**: `core::` is this backend's own portable half (plus the SDK's shared vocabulary made
+visible by a using-directive), `api::` is the device enumeration and the two sessions (`WindowSession` / `OffscreenSession` and their Options, `ProbedDevice` /
+`ProbeResult`, plus two device probe functions); everything else — the `VsgBackend` facade, `VsgExecutor`, `TargetObjects` / `TargetTable`, content recording — lives at
+the root of `vn::backend_vsg`, and the adapter code under `include/.../support/` and `src/support/` is in `detail::`. None of it is public; the public contract is only
+the five SDK types in §4.1.
 
-#### 2.9.2 类图
+#### 2.9.2 Class diagram
 
-`VsgBackendImpl` 就是 `VsgBackend::Impl`（私有实现）；`Sdk*` 是随 ADR-2026-11-16 §2 搬进本插件的可移植类型，带
-`<<SDK>>` 标记。
+`VsgBackendImpl` is `VsgBackend::Impl` (the private implementation); `Sdk*` are the portable types that moved into this plugin with ADR-2026-11-16 §2 and carry an
+`<<SDK>>` marker.
 
 ```mermaid
 classDiagram
@@ -126,233 +126,231 @@ classDiagram
     TargetTable --> OffscreenSession
 ```
 
-#### 2.9.3 一帧的生命周期
+#### 2.9.3 One frame's lifecycle
 
 ```
-beginFrame()      取交换链图像（槽位逐帧学习）
-  render/beginPass/endPass ×N   → FrameRecorder 只记录事实（快照借用参数）
-endFrame()        描述定稿
-swapBuffers()     FrameCompiler 编译 → VsgExecutor 录制 → 提交 → 呈现（关帧的是这一步）
+beginFrame()      acquire the swap-chain image (the slot count is learned per frame)
+  render/beginPass/endPass ×N   → FrameRecorder only records facts (the snapshot borrows the arguments)
+endFrame()        the description is final
+swapBuffers()     FrameCompiler compiles → VsgExecutor records → submit → present (this step closes the frame)
 ```
 
-- 收集侧允许重复 / 后设覆盖；编译侧必须每 pass/draw 一个终态、缺省全部解析（viewport / 清屏 / 默认程序）。
-- 环（cycle）在引擎调度器处理；后端不再自建依赖图。分量外的 pass 照跑，帧照旧提交。
-- 空帧也是帧：照样编译、录制、呈递；空 **pass** 不是 pass。
+- The collection side allows repeats and later overrides; the compile side must reach one final state per pass/draw and resolve every default (viewport / clear / default
+  program).
+- A cycle is handled by the engine's scheduler; the backend builds no dependency graph. A pass outside a component still runs, and the frame is still submitted.
+- An empty frame is a frame: it is compiled, recorded and presented as usual; an empty **pass** is not a pass.
 
-#### 2.9.4 对象职责
+#### 2.9.4 What each object answers
 
-| 对象 | 回答的问题 |
+| Object | The question it answers |
 |---|---|
-| `VsgBackend` | `RenderBackend` / `RenderDevice` / `RenderFrameExecutor` 的门面；持有 Impl |
-| `api::WindowSession` / `WindowTarget` | 窗口、交换链、槽位、present |
-| `api::OffscreenSession` | 无窗口的帧源；headless 设备的 device-wide work |
-| `TargetTable` | 宿主声明的离屏目标（描述拷贝、对象懒建、resize/借深度的拒绝）**与**身份解析（身份 → 对象、标签、"没应用"情节）：一张表回答三个问题（B5b；之前 `HostTargets` + `VsgTargetRegistry` 两张表靠手工保持同步） |
-| `VsgExecutor` | 按 `CompiledFrame` 的顺序把 pass 录进 render graph |
-| `ContentStore` | 内容世界：身份、驻留、流、管线、块、材质 |
-| `ContentPass` | 一个 pass 的内容录制（命令 → GPU 工作） |
-| `SdkFrameRecorder` | 把每次 API 调用变成自包含记录，快照借用参数 |
-| `SdkFrameCompiler` | 解析缺省、计划目标/深度、给出执行顺序 |
-| `SdkTargetPlan` / `SdkFrameRing` / `SdkMaterialArena` | 目标计划 / 每帧块 / 持久材质块 |
+| `VsgBackend` | the facade of `RenderBackend` / `RenderDevice` / `RenderFrameExecutor`; holds the Impl |
+| `api::WindowSession` / `WindowTarget` | the window, the swap chain, the slots, present |
+| `api::OffscreenSession` | a windowless frame source; the headless device's device-wide work |
+| `TargetTable` | the offscreen targets the host declares (a description copy, lazy objects, the resize / borrowed-depth refusals) **and** identity resolution (identity → object, tag, the "not applied" episode): one table answers three questions |
+| `VsgExecutor` | records the passes into the render graph in `CompiledFrame` order |
+| `ContentStore` | the content world: identity, residency, streams, pipelines, blocks, materials |
+| `ContentPass` | one pass' content recording (commands → GPU work) |
+| `SdkFrameRecorder` | turns each API call into a self-contained record; the snapshot borrows the arguments |
+| `SdkFrameCompiler` | resolves defaults, plans targets / depth, and gives the execution order |
+| `SdkTargetPlan` / `SdkFrameRing` / `SdkMaterialArena` | the target plan / the per-frame blocks / the persistent material block |
 
-### 2.10 成本模型：每帧只比较键，不做内容 diff
+### 2.10 The cost model: every frame compares keys and diffs no content
 
-- 是什么：后端每帧把这一帧画到的对象**触碰**（`track` + `updateMaterial`）一遍，用（身份指针, revision）查表；
-  命中就是几次哈希/二分 + 整数比较，只有**键变了**才付“描述 / 上传 / 编译”的钱。三类状态的划分是
-  `graphics/DrawState.hpp` 的 IDENTITY（进管线键）/ DYNAMIC STATE（每 draw 一条 set 命令）/ DATA（写进 buffer +
-  材质引用），带审计表并由测试钉住。
-- 为什么：它让“改一个材质值”“改 cull”“改顶点字节”都不必编译管线，而这三种“把 DATA 漏进 IDENTITY”的错误
-  在本后端历史上各出现过一次（见 `vsg-pitfalls.md`）。正确性也在此：材质编辑没有引擎侧公告，只能靠每帧
-  触碰时的 revision 比较落地。
-- 边界（性能往哪里长）：
-  - **随资源数量**：每 command 的常数项（3 次 `track`、1 次 `updateMaterial`、3 次二分、每通道一次 `StreamKey`
-    哈希、每贴图槽一次 `(Texture*, revision)` 哈希、一次 `VariantPool` 查询），全部 O(1)/O(log n)。
-  - **随资源种类数**：半片与描述符集各自是一张 `ResourceTable` —— 查找是哈希、清扫是每个驻留条目一次 pin 询问
-    （`findProgram` 的二分 + `declaresLayout` / `declaresTexture` 的哈希），不再有“每 pass 对每个 half 扫一遍
-    geometry facts”的反事实扫描（ADR-2026-11-10 第五步）。`ContentStore` 总是发布 layout 声明
-    索引；手建 facts 不发布时按可选索引规则退回扫描。几十种组合与上百种组合是同一个数量级；真正变重的仍是
-    下面两项。
-  - **每 draw 的绝对大头不是簿记，而是 vsg 每帧新建的命令节点**：记录路径基线是 12 次分配/pass、约 33 次分配/
-    一个被录制的三角，而计划半（`FrameRecorder` + `FrameCompiler`）是**零分配**并有门禁。
-  - 真正能到数量级跳跃的只有两件事：**上传**（几何/贴图 revision 抖动，见 F16.2）与**编译**（程序 / 拓扑 / 布局变）。
-  对应 `G10`：成本按层结算，且每一层都有判据；不靠“大概很便宜”。
+- What it is: every frame the backend **touches** the objects this frame draws (`track` + `updateMaterial`) and looks them up by (identity pointer, revision); a hit is a
+  few hashes / bisections plus integer comparisons, and only a **changed key** pays for "describe / upload / compile". The three kinds of state are `graphics/DrawState.hpp`'s
+  IDENTITY (enters the pipeline key) / DYNAMIC STATE (one set command per draw) / DATA (written into a buffer + a material reference), with an audit table pinned by tests.
+- Why: it lets "change one material value", "change cull" and "change the vertex bytes" all avoid compiling a pipeline, and each of those three "leak DATA into IDENTITY"
+  mistakes happened once in this backend's history (see `vsg-pitfalls.md`). Correctness lives here too: a material edit is announced by nothing on the engine side, so only
+  the revision comparison at the per-frame touch can land it.
+- Boundary (where the cost grows):
+  - **With the number of resources**: the per-command constants (3 `track`s, 1 `updateMaterial`, 3 bisections, one `StreamKey` hash per pass, one
+    `(Texture*, revision)` hash per texture slot, one `VariantPool` query), all O(1) / O(log n).
+  - **With the number of resource kinds**: the halves and the descriptor sets are each a `ResourceTable` — a lookup is a hash and a sweep is one pin question per resident
+    entry (`findProgram`'s bisection + `declaresLayout` / `declaresTexture` hashes), and the counterfactual "walk the geometry facts per half, per pass" scan is gone
+    (ADR-2026-11-10 step 5). `ContentStore` always publishes the layout declaration index; hand-built facts that publish nothing fall back to the scan under the optional-index
+    rule. Dozens of combinations and hundreds are the same order of magnitude; what really gets heavier is still the two items below.
+  - **The bulk of a draw is not bookkeeping but the command nodes vsg creates every frame**: the recording path's baseline is 12 allocations per pass and about 33 per
+    recorded triangle, while the plan half (`FrameRecorder` + `FrameCompiler`) is **zero-allocation** and has a gate.
+  - Only two things can jump an order of magnitude: **uploads** (geometry / texture revision churn, see F16.2) and **compilation** (program / topology / layout change).
+  This is `G10`: cost is settled per layer, each layer has a criterion, and nothing rests on "probably cheap".
 
-### 2.11 运行事实：一帧的调用次数与更新策略
+### 2.11 Runtime facts: how often a frame calls what, and how updates land
 
-- **每帧恰好一次**：`executeFrame`（开帧 + 按值走 pass + 编译）、提交与 present（窗口帧在帧尾由执行器调用）。
-- **每 pass 一次**：绑定该 pass 的管线变体（只在变体变了）、动态状态块（只在值变了）、采样输入集（一趟一条）。
-- **每次变化一次，稳态 0 次**：材质块写（逐命令 compare，相同不写）、几何 revision 后的流上传、
-  按声明填的 push、`vkCmdSet*`。稳态为 0 的读数就是判据：`ContentStore::builds()`、`StreamUploads::uploads()`、
-  `VariantPool::created()`、`Session::deviceWaits()`（帧路径）、`AllocationGate`（连续两帧零分配）。
-- **更新策略**：材质 = 每帧逐命令 compare-and-write（64 B，没有引擎侧公告）；几何 = `bumpRevision()` 是唯一公告
-  （新 revision = 新行 + 该几何所有流重传）；状态 = 动态状态、diff 才发命令、跨拓扑**类**才是新管线；
-  程序 = identity（program + revision + variant + 布局 + 兼容性 + 采样计数），新变体编译一次；
-  目标 = 加载操作是“交换半边”（不进键），`written()` / `bootstrap` 决定谁清屏。
-- **`VSG_MAX_DEVICES` = 本仓库显式设为 4**：一份文档视图 = 一块自己的 `vsg::Device`，vsg 1.1.16 的三档实现里
-  只有 `<=4` 的固定数组是正确的（`>4` 的动态分支读越界，实测断言）。两个后果：同时存在的 `vsg::Device`
-  上限是 4；`<=4` 分支的 `operator[]` 不做边界检查，第 5 块面**要由我们拒**——今天没有守卫（§9.2）。
-- **诊断读数**：`FrameReport::locking` 是每帧缓存锁 delta（源 `FrameGate::Counters`），帧首/提交的 acquisition
-  是常数、`waits` 为 0；`diagnosticCount()` 只数引擎 + 设备（宿主经 `reportEngineProblem` 的另算）。
+- **Exactly once per frame**: `executeFrame` (open the frame + walk the passes by value + compile), the submission and the present (the executor calls them at the frame tail
+  for a window frame).
+- **Once per pass**: binding that pass' pipeline variant (only when the variant changed), its dynamic-state block (only when the value changed), its sampled input set (one
+  pass, one entry).
+- **Once per change, zero in the steady state**: material-block writes (compared per command, skipped when equal), stream uploads after a geometry revision, the push filled
+  from the declaration, `vkCmdSet*`. The zero readings are themselves the criterion: `ContentStore::builds()`, `StreamUploads::uploads()`, `VariantPool::created()`,
+  `Session::deviceWaits()` (the frame path), `AllocationGate` (two consecutive frames allocate nothing).
+- **How updates land**: material = per-frame compare-and-write per command (64 B, with no engine-side announcement); geometry = `bumpRevision()` is the only announcement
+  (a new revision = a new row + every stream of that geometry re-uploaded); state = dynamic state, a command only when the diff is non-empty, a new pipeline only across a
+  topology **class**; program = identity (program + revision + variant + layout + compatibility + sample count), a new variant compiles once; target = a load operation is
+  "swap the half" (not part of the key), and `written()` / `bootstrap` decide who clears.
+- **`VSG_MAX_DEVICES` = 4, set explicitly by this repository**: one document view = its own `vsg::Device`, and of vsg 1.1.16's three implementations only the fixed array
+  for `<=4` is correct (the dynamic branch above 4 reads out of bounds; measured as an assertion). Two consequences: at most 4 `vsg::Device`s exist at once; and the `<=4`
+  branch's `operator[]` does not bounds-check, so a fifth device **must be refused by us** — today there is no guard (§9.2).
+- **Diagnostic readings**: `FrameReport::locking` is the per-frame cache-lock delta (from `FrameGate::Counters`); the frame head's and the submission's acquisitions are
+  constants and `waits` is 0; `diagnosticCount()` counts the engine + the device only (a host's `reportEngineProblem` is counted separately).
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 平台与设备
+### 3.1 Platform and device
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F1 | 设备地板 | Vulkan 1.4；7 个必需 feature；EDS2 / EDS3 + 3 个 fn-pointer 入口。 |
-| F2 | 设备探测 | `DeviceProbe` + `DeviceRequirements`；探测与策略同一份事实。 |
-| F3 | 会话 | 自有窗口或采纳宿主窗口；窗口 ⇒ 交换链 ⇒ `beginFrame` / `commitFrame`。 |
-| F4 | 槽数学习 | `probeSlotCount` / `SlotTracker`；学会前不 park。 |
-| F5 | 退役 | `RetirementQueue` 窗口 = `slots + 1`；`setSlots()` 原地更新。 |
+| F1 | Device floor | Vulkan 1.4; 7 required features; EDS2 / EDS3 + 3 fn-pointer entry points. |
+| F2 | Device probing | `DeviceProbe` + `DeviceRequirements`; probing and policy are one set of facts. |
+| F3 | Sessions | an owned window or an adopted host window; a window ⇒ a swap chain ⇒ `beginFrame` / `commitFrame`. |
+| F4 | Learning the slot count | `probeSlotCount` / `SlotTracker`; nothing is parked before it is learned. |
+| F5 | Retirement | `RetirementQueue`'s window = `slots + 1`; `setSlots()` updates in place. |
 
-### 3.2 目标与通道
+### 3.2 Targets and passes
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F6 | 目标计划 | `TargetShape`：附件数 / 颜色格式 / 深度格式 / samples / render-pass key（设备格式码是不透明的 `DeviceFormat`，通道结构是后端计算的 `RenderPassKey`）。 |
-| F7 | 清屏 | `planClearValues`：bootstrap 清所有附件；深度清 0.0（reverse-Z far）。 |
-| F8 | 深度借出/借入 | 借入方不自建深度；`initialLayout` = attachment layout，LOAD。 |
-| F9 | 依赖 | `VkSubpassDependency` 的 stage/access mask 是兼容性的一部分；借深度取超集。 |
-| F10 | 读回 | 颜色按 attachment；深度 D32 / D16（D24S8 拒绝）；barrier 回 attachment layout。 |
+| F6 | Target planning | `TargetShape`: attachment count / colour format / depth format / samples / render-pass key (the device format code is the opaque `DeviceFormat`, the pass structure is the backend-computed `RenderPassKey`). |
+| F7 | Clearing | `planClearValues`: bootstrap clears every attachment; depth clears to 0.0 (Reverse-Z far). |
+| F8 | Lending / borrowing depth | the borrower builds no depth; `initialLayout` = the attachment layout, LOAD. |
+| F9 | Dependencies | `VkSubpassDependency`'s stage / access masks are part of compatibility; borrowing depth takes the superset. |
+| F10 | Readback | colour per attachment; depth D32 / D16 (D24S8 refused); the barrier returns to the attachment layout. |
 
-### 3.3 管线与状态
+### 3.3 Pipelines and state
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F11 | 管线键 | program + revision + layout + topology + render-pass 兼容性 + samples + variant。 |
-| F12 | 变体池 | `VariantPool` 按 key 缓存；FIFO 上限 65；id 不复用。 |
-| F13 | 状态注册 | 每 pass 私有；`variant_switched` / `dynamic_issued` 分开计数。 |
-| F14 | 动态状态 | 块槽位 `detail::kDynamicStateSlot`（15）；viewport / scissor 动态。 |
-| F15 | 管线状态 | reverse-Z GREATER；frontFace CLOCKWISE；blend 恒开（单颜色附件内容）。 |
+| F11 | Pipeline key | program + revision + layout + topology + render-pass compatibility + samples + variant. |
+| F12 | The variant pool | `VariantPool` caches by key; FIFO capped at 65; ids are never reused. |
+| F13 | State registration | private per pass; `variant_switched` / `dynamic_issued` are counted separately. |
+| F14 | Dynamic state | the block slot is `detail::kDynamicStateSlot` (15); viewport / scissor are dynamic. |
+| F15 | Pipeline state | Reverse-Z GREATER; frontFace CLOCKWISE; blend always on (single colour attachment content). |
 
-### 3.4 流、块、描述符
+### 3.4 Streams, blocks, descriptors
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F16 | 流共享 | `StreamKey` = buffer + 该 buffer 的 revision + 段；index 归一到整段 buffer。 |
-| F16.1 | 零拷贝上传 | 绑定的数组是**真 vsg 数组 + `VsgBufferView`**（`vsg::floatArray` / `vsg::uintArray` 套在模型 buffer 的视图上），所以模型与场景图读同一份字节；模型先死也没关系，数组持有视图、视图持有 buffer。只给了一个 buffer 句柄或一个别人的 span 时才退回复制。注意映射：顶点通道别名它的**段**（从 `key.offset` 起），索引别名**整个 buffer**（bind 盖全集，跨度由 draw 说）；见 `VsgBufferView.hpp` 与被测量的那条限制：把 `vsg::Data` 子类**直接**绑上去**不会生效**。 |
-| F16.2 | 上传暂存保留可复用块，一次性大块不保留 | vsg 把一次上传的字节先拷进 `TransferBlock::staging`（`HOST_VISIBLE\|HOST_COHERENT`，尺寸=max(整次上传量, `minimumStagingBufferSize`)，**只增不减**，且不属于任何 pool，`releaseUnusedPools()` 拿不到），传完不还 → 704 MB 车身额外常驻 1,228 MB（正好 `2 × 614 MB`：上传按 `frameIndex` 轮转，两块各涨一次）。实现：`detail::StagingTask`（派生自 `vsg::TransferTask`，会话起来时由 `installStagingTask()` 装好）在每个帧边界（`VsgBackend::executeFrame()` 开头）把 **fence 已完成**且 **`staging->size > minimumStagingBufferSize`** 的块的 `staging` + `buffer_data` 置空 —— 那正是 vsg 自己“不够大就重建”时处理的状态；**等于下限的块留着**，每帧上传的宿主因此稳态零分配（ADR-2026-11-13）。证据是那块自己的 `fence->status()`（一个 `vkGetFenceStatus`），所以**零等待、零 park、零 `deviceWaitIdle`**；没完成的拷贝留给下一帧。宿主侧没有入口、没有开关、没有环境变量。 |
-| F17 | 自定义属性 | location 3 起，转发 `vn_Attribute{location}`。 |
-| F18 | 块存储 | 一个 mapped buffer：view / draw / material 三区；每帧 ring；稳态零写。 |
-| F19 | 描述符 | 一个 set，3 个 dynamic uniform binding（0 view / 1 draw / 2 material）。 |
-| F20 | 材质 arena | 每槽 `copies` 份；槽满 `Refused`；扩容只换 material 区。槽的寿命是 pin：活材质行声明这个身份就留着，最后一行走后帧首 `retireUnpinned` 立刻放槽（`BlockStorage::retireUnpinnedMaterials`）——不 park，副本轮转就是窗口；`retired` 计数在 `ResidencyKind::MaterialBlocks` 那一行。 |
+| F16 | Stream sharing | `StreamKey` = buffer + that buffer's revision + segment; the index is normalised to the whole buffer. |
+| F16.1 | Zero-copy upload | a bound array is a **real vsg array + a `VsgBufferView`** (`vsg::floatArray` / `vsg::uintArray` wrapped around a view of the model's buffer), so the model and the scene graph read the same bytes; the model may die first, because the array holds the view and the view holds the buffer. Only when all that is given is a buffer handle or someone else's span does it fall back to a copy. Note the mapping: a vertex channel aliases its **segment** (from `key.offset`), an index aliases **the whole buffer** (the bind covers everything and the draw states the span); see `VsgBufferView.hpp` and the limit that was measured: binding a `vsg::Data` subclass **directly** does **not** take effect. |
+| F16.2 | Upload staging keeps a reusable block and drops a one-off large one | vsg first copies an upload's bytes into `TransferBlock::staging` (`HOST_VISIBLE\|HOST_COHERENT`, sized max(the whole upload, `minimumStagingBufferSize`), **grow-only**, belonging to no pool and unreachable from `releaseUnusedPools()`), and never gives it back — a 704 MB model left 1,228 MB extra resident (exactly `2 × 614 MB`: uploads rotate by `frameIndex`, so each of the two blocks grew once). Implementation: `detail::StagingTask` (derived from `vsg::TransferTask`, installed by `installStagingTask()` when a session starts) empties the `staging` + `buffer_data` of every block whose **fence completed** and whose **`staging->size > minimumStagingBufferSize`** at each frame boundary (the start of `VsgBackend::executeFrame()`) — exactly the state vsg itself handles when it rebuilds a block that is too small; **a block at the minimum is kept**, so a host that uploads every frame reaches zero allocations in the steady state (ADR-2026-11-13). The evidence is that block's own `fence->status()` (one `vkGetFenceStatus`), so **zero waiting, zero park, zero `deviceWaitIdle`**; a copy that has not completed is left for the next frame. There is no entry point, no switch and no environment variable on the host side. |
+| F17 | Custom attributes | from location 3 on, forwarded as `vn_Attribute{location}`. |
+| F18 | Block storage | one mapped buffer: the view / draw / material regions; a ring per frame; zero writes in the steady state. |
+| F19 | Descriptors | one set, 3 dynamic uniform bindings (0 view / 1 draw / 2 material). |
+| F20 | The material arena | `copies` slots per material; a full arena answers `Refused`; growing replaces the material region only. A slot's lifetime is a pin: it stays while a live material row declares that identity, and after the last row leaves the frame head's `retireUnpinned` frees it at once (`BlockStorage::retireUnpinnedMaterials`) — no park, because the copy rotation is the window; the `retired` count sits on the `ResidencyKind::MaterialBlocks` row. |
 
-### 3.5 纹理、着色器、证据
+### 3.5 Textures, shaders, evidence
 
-| # | 功能 | 说明 |
+| # | Feature | Notes |
 |---|---|---|
-| F21 | 纹理上传 | `MaterialImages` 键 `(Texture*, revision)`；D2 / Cube 视图；白 cube 兜底。 |
-| F22 | sampler | 按值缓存；`InputSetCache` 键 `(view, sampler)`。 |
-| F23 | 着色器文件 | `builtin_<角色>.<阶段>`；构建期嵌入；`vn_` 前缀。 |
-| F24 | 变体文本 | `#pragma import_defines` 决定文本；漏写会静默丢弃。 |
-| F25 | 证据 | 相位表 + 计数器 + 像素；`vsg_rewrite_gate.sh` 读 VUID / SYNC-HAZARD / 画面。 |
+| F21 | Texture upload | `MaterialImages` keyed by `(Texture*, revision)`; D2 / Cube views; a white cube as the fallback. |
+| F22 | Samplers | cached by value; `InputSetCache` keyed by `(view, sampler)`. |
+| F23 | Shader files | `builtin_<role>.<stage>`; embedded at build time; the `vn_` prefix. |
+| F24 | Variant text | `#pragma import_defines` decides the text; a missing line is dropped silently. |
+| F25 | Evidence | the phase table + counters + pixels; `vsg_rewrite_gate.sh` reads VUIDs / SYNC-HAZARD / the picture. |
 
-## 4. 公开接口
+## 4. Public Interface
 
-### 4.1 后端契约
+### 4.1 The backend contract
 
-| 接口 | 作用 |
+| Interface | Purpose |
 |---|---|
-| `RenderBackend` | 设备 / 帧 / 呈现三面聚合 |
-| `RenderBackendFactory` | 创建后端 |
-| `RenderDevice` | 设备、目标、内容释放、读回 |
-| `RenderFrameExecutor` | 执行一帧 |
-| `PresentTarget` / `WindowPresentTarget` | 呈递契约 / 窗口面 |
+| `RenderBackend` | the device / frame / present faces together |
+| `RenderBackendFactory` | creates a backend |
+| `RenderDevice` | device, targets, content release, readback |
+| `RenderFrameExecutor` | executes one frame |
+| `PresentTarget` / `WindowPresentTarget` | the present contract / the window face |
 
-### 4.2 键与状态
+### 4.2 Keys and state
 
-| 层 | 当前拼写 | 允许的变化方式 |
+| Layer | Current spelling | How it may change |
 |---|---|---|
-| identity | `PipelineKey`：kind、program + revision、vertex_layout、compatibility（附件/深度格式、samples、后端计算的 render-pass key）、depth_sampleable、sampled_color_count、sampled_depth_count、variant、topology（类） | 变了 = 重编管线（唯一允许重编的地方） |
-| 交换半边 | `LoadOpVariantKey`：color/depth 的 load/store 与 initial/final layout | 同一管线在多个兼容变体上都能用（bootstrap 变体合法） |
-| dynamic | `DynamicState`：depth、cull、polygon、topology（同类内）、blend | 一条 `vkCmdSet*`；永远不许重编 |
-| data | 视图块 288 B、光照块 112 B、`VineDrawBlock` 80 B、材质块 64 B、push ≤128 B | 就地字节写 / 描述符 re-point |
+| identity | `PipelineKey`: kind, program + revision, vertex_layout, compatibility (attachment / depth formats, samples, the backend-computed render-pass key), depth_sampleable, sampled_color_count, sampled_depth_count, variant, topology (class) | a change = recompile the pipeline (the only place recompiling is allowed) |
+| the swapped half | `LoadOpVariantKey`: the colour / depth load and store and the initial / final layouts | one pipeline serves several compatible variants (a bootstrap variant is legitimate) |
+| dynamic | `DynamicState`: depth, cull, polygon, topology (within a class), blend | one `vkCmdSet*`; a recompile is never allowed |
+| data | the view block 288 B, the light block 112 B, `VineDrawBlock` 80 B, the material block 64 B, push ≤128 B | write bytes in place / re-point a descriptor |
 
-**“计数是身份不是状态”**：绑在描述符布局上的东西（采样彩色数、深度数）必须进键；extent / load-op / 布局 /
-material 值 / 流字节 / cull 全部**不进**。
+**"A count is identity, not state"**: anything bound to the descriptor layout (the sampled colour count, the sampled depth count) must enter the key; extent / load-op / layout / material values / stream bytes / cull all stay **out** of it.
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 |---|---|
-| C1 | SDK `graphics/` 不 include vsg；插 件 `internal/` 才 include both。 |
-| C2 | 每 pass 状态私有；状态注册表不跨 pass 共享。 |
-| C3 | 调度只在引擎；后端按 `FrameDescription.passes` 物化。 |
-| C4 | `TargetShape` 决定图像/通道/管线兼容性；bootstrap 清所有附件。 |
-| C5 | `StreamKey` = buffer + buffer revision + 段；稳态零重传。 |
-| C6 | 不再向 SDK `graphics/` 新增 Vulkan 拼写：`VkFormat` 值与 subpass 已从接缝清除（设备格式是 `DeviceFormat`，通道结构是后端计算的 `RenderPassKey`）；`ImageLayout` 仍是 Vulkan 语义，第三个后端落地时用同一手法收掉。新的设备无关表述先在插件 `internal/` 落地。 |
-| C7 | 本插件每条报告带 `vsg.<族>.<原因>` 稳定 code（登记在 `scripts/diagnostic_codes.txt`）；读回的九种拒绝由 `readbackRefusalDiagnostic` 的**一个无 `default` 的 switch** 映射，所以新增一个 `HostReadbackRefusal` 编译期就必须命名它的 code——词汇表跟着枚举走，不靠人记。规则的来由见 `vk-backend.md` §2.13 / §2.14（同一个门禁、同一套值语义）。 |
+| C1 | The SDK's `graphics/` does not include vsg; only the plugin's `internal/` includes both. |
+| C2 | Every pass' state is private; a state registry is not shared across passes. |
+| C3 | Scheduling lives in the engine only; the backend materialises in `FrameDescription.passes` order. |
+| C4 | `TargetShape` decides image / pass / pipeline compatibility; bootstrap clears every attachment. |
+| C5 | `StreamKey` = buffer + buffer revision + segment; zero re-upload in the steady state. |
+| C6 | No new Vulkan spelling enters the SDK's `graphics/`: `VkFormat` values and subpass are gone from the seam (the device format is `DeviceFormat`, the pass structure is the backend-computed `RenderPassKey`); `ImageLayout` is still Vulkan semantics, and the same move retires it when a third backend lands. New device-neutral spellings land in the plugin's `internal/` first. |
+| C7 | Every report from this plugin carries a stable `vsg.<family>.<reason>` code (registered in `scripts/diagnostic_codes.txt`); readback's nine refusals are mapped by **one `switch` with no `default`** in `readbackRefusalDiagnostic`, so adding a `HostReadbackRefusal` makes naming its code a compile error — the vocabulary follows the enum instead of memory. Where the rule comes from is in `vk-backend.md` §2.13 / §2.14 (the same gate, the same value semantics). |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 |---|---|
-| R1 | 执行器只做机械落地，不决定排序/重建/缓存。 |
-| R2 | 反向 Z + CW 正面：世界 CCW 到 framebuffer 是 CW。 |
-| R3 | 证据三重：验证层 / 计数器 / 像素，缺一不算通过。 |
-| R4 | 平台事实留在后端，不上推到引擎/应用层。 |
+| R1 | The executor only lands things mechanically; it decides no order, rebuild or cache. |
+| R2 | Reverse-Z + CW front faces: a world CCW triangle is CW in the framebuffer. |
+| R3 | Threefold evidence: validation layer / counters / pixels; without all three it is not passing. |
+| R4 | Platform facts stay in the backend and are not pushed up into the engine or the application layer. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 |---|---|
-| N1 | 后端不重排 pass、不自建依赖图、不报环。 |
-| N2 | 物理边界：SDK 的共享机制不 include vsg。 |
-| N3 | 平台事实（1.4、无 dynamic rendering、reverse-Z）不可协商。 |
-| N4 | 每帧的变化检测只比较（身份, revision）键，**不比较内容字节或值**；材质值、流字节、动态状态永远走 DATA / DYNAMIC 通道。键里出现矩阵、viewport、opacity、材质值、cull、blend 或 extent 就是错的（`DrawState.hpp` 的审计表 + 测试）。 |
+| N1 | The backend does not reorder passes, build its own dependency graph or report cycles. |
+| N2 | The physical boundary: the SDK's shared mechanisms do not include vsg. |
+| N3 | The platform facts (1.4, no dynamic rendering, Reverse-Z) are not negotiable. |
+| N4 | A frame's change detection compares only the (identity, revision) key and **never content bytes or values**; material values, stream bytes and dynamic state always travel on the DATA / DYNAMIC channels. A matrix, viewport, opacity, material value, cull, blend or extent appearing in a key is a defect (`DrawState.hpp`'s audit table + tests). |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-坑按风险域分成九组，P1–P82 连同症状与判据在 [`vsg-pitfalls.md`](vsg-pitfalls.md)；改哪块读哪组。
+The traps are grouped by risk area into nine groups; P1–P82 with their symptoms and criteria are in [`vsg-pitfalls.md`](vsg-pitfalls.md) — read the group you are changing.
 
-| 域 | 坑号 | 域 | 坑号 |
+| Area | Traps | Area | Traps |
 |---|---|---|---|
-| 协议与帧 | P1–P6 | 目标、寿命与设备空闲 | P43–P53 |
-| 键与管线 | P7–P12 | WSI 与窗口 | P54–P60 |
-| 朝向、裁剪与深度 | P13–P22 | 证据、门禁与构建 | P61–P75 |
-| 块与描述符（ABI） | P23–P35 | 引擎侧（场景桥与着色约定） | P76–P82 |
-| 流、几何与别名 | P36–P42 | | |
+| protocol and frames | P1–P6 | targets, lifetime and device idleness | P43–P53 |
+| keys and pipelines | P7–P12 | WSI and windows | P54–P60 |
+| orientation, clipping and depth | P13–P22 | evidence, gates and the build | P61–P75 |
+| blocks and descriptors (ABI) | P23–P35 | the engine side (the scene bridge and shading conventions) | P76–P82 |
+| streams, geometry and aliasing | P36–P42 | | |
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 否决 | 理由 |
+| # | Rejected | Reason |
 |---|---|---|
-| D1 | dynamic rendering 合并每 pass begin | vsg 记录路径没有 `vkCmdBeginRendering`；被上游阻塞。 |
-| D2 | 跨 pass 共享管线状态注册表 | vsg 按 viewID 编管线；共享会拿到不兼容 render pass 的 pipeline。 |
-| D3 | 自建管线绕开 vsg | 会与 vsg 的 state 装配 / 记录路径分叉；收益只在冷启动。 |
-| D4 | Wayland | 只按 WSI 契约实现；没有真机验证。 |
-| D5 | 后端自己再排一次 pass | 调度上移引擎；两套排序 = 两套帧词汇。详见 [ADR](../decisions/ADR-2026-10-22-engine-schedules-passes.md)。 |
-| D6 | 超过灯块槽数的灯不做 | 灯块 `kMaxLights`（`ShaderAbi.hpp`）个带类型的槽（位置/方向/范围/锥角），超出的按 episode 报掉落；不做逐对象选灯（见 `graphics-shader-params.md`）。 |
-| D7 | 绕开 vsg 自己上传 / 重写 `TransferTask` | 两条都会与 vsg 的传递路径分叉（staging 分配、屏障、信号量、frameIndex 轮转全在那边），而**换任务对象**已经能达到同一效果、且不复制不重写：收益只在“少一次 16 MB 重分配”，代价是一份永远要跟着上游改的拷贝。见 F16.2。 |
+| D1 | dynamic rendering to merge the per-pass begin | vsg's recording path has no `vkCmdBeginRendering`; blocked upstream. |
+| D2 | a pipeline state registry shared across passes | vsg compiles pipelines by viewID; sharing gets a pipeline for an incompatible render pass. |
+| D3 | building pipelines ourselves, around vsg | it would fork vsg's state assembly and recording path; the gain is at cold start only. |
+| D4 | Wayland | only the WSI contract is implemented; there is no hardware verification. |
+| D5 | ordering passes a second time in the backend | scheduling moved up to the engine; two orderings = two frame vocabularies. See [ADR](../decisions/ADR-2026-10-22-engine-schedules-passes.md). |
+| D6 | dropping lights beyond the light block's slot count | the light block has `kMaxLights` (`ShaderAbi.hpp`) typed slots (position / direction / range / cone angle) and the excess is reported as dropped per episode; there is no per-object light selection (see `graphics-shader-params.md`). |
+| D7 | uploading around vsg or rewriting `TransferTask` | both would fork vsg's transfer path (the staging allocation, the barriers, the semaphores and the frameIndex rotation all live there), while **replacing the task object** already achieves the same effect without copying or rewriting: the gain is only "one 16 MB reallocation fewer", the cost a copy that must follow upstream for ever. See F16.2. |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 |
+| # | Criterion |
 |---|---|
-| T1 | `test_vsg`：设备无关 + 真实设备电池；`skipped == 0` 才算跑过。 |
-| T2 | `scripts/vsg_rewrite_gate.sh`：0 VUID / 0 SYNC-HAZARD、相位行闭合、应用画面百分比。 |
-| T3 | `check_ai_docs.py --strict` / `check_doc_symbols.py` / `check_include_hygiene.py` / `check_export_annotations.py` / `check_diagnostic_formats.py` / `check_public_docs.py`。 |
-| T4 | 上传暂存保留可复用块（F16.2）：`UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack` —— 帧不 idle；存活块都是 `minimumStagingBufferSize` 的倍数（可复用块被保留），大于下限的一次性块被还掉；同一内容重画零上传；新流再上传、再回落到下限。`FrameUploadsTest.TheReportAnswersWhatThisFrameUploadedAndReleased` —— `FrameReport::uploads` 是本帧增量（首帧上传 >0、稳态全 0、buffer revision 一动重新上传一次、内容离开报释放）。`OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands`、`OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting` 不变。 |
-| T5 | 编辑成本与稳态（§2.10）：`VsgBackendTest.MeasureWhatEachKindOfEditCostsPerFrame` —— 打印 µs/帧与 `builds` / `uploads` / `created` 增量；断言稳态全 0、材质值 0 上传 0 编译、几何 revision ≥1 上传 0 编译、程序与拓扑变各 1 次编译。配套稳态钉：`ContentStoreTest.ASteadyFrameBuildsNothing`、`CoreMaterialArenaTest.ASteadyFrameWritesNothing`、`ProgramHalves` / `BindingSets` 的 pin 用例。分配上限：`CoreAllocationGateTest.TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPass`（12 次/pass、约 33 次/一个被录制的三角）。这几个配方需要真实窗口，headless 机器上 `GTEST_SKIP`。 |
+| T1 | `test_vsg`: the device-independent plus the real-device battery; `skipped == 0` is what counts as having run. |
+| T2 | `scripts/vsg_rewrite_gate.sh`: 0 VUID / 0 SYNC-HAZARD, the phase lines closed, and the application's pixel percentage. |
+| T3 | `check_ai_docs.py --strict` / `check_doc_symbols.py` / `check_include_hygiene.py` / `check_export_annotations.py` / `check_diagnostic_formats.py` / `check_public_docs.py`. |
+| T4 | upload staging keeps a reusable block (F16.2): `UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack` — the frame does not idle; every surviving block is a multiple of `minimumStagingBufferSize` (the reusable blocks are kept) and a one-off block above the minimum is given back; redrawing the same content uploads nothing; a new stream uploads again and falls back to the minimum. `FrameUploadsTest.TheReportAnswersWhatThisFrameUploadedAndReleased` — `FrameReport::uploads` is this frame's delta (the first frame uploads > 0, the steady state is all 0, a buffer revision change re-uploads once, and content leaving reports a release). `OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands` and `OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting` are unchanged. |
+| T5 | the cost of an edit and the steady state (§2.10): `VsgBackendTest.MeasureWhatEachKindOfEditCostsPerFrame` — prints µs per frame and the `builds` / `uploads` / `created` deltas; asserts that the steady state is all 0, a material value change is 0 uploads and 0 compiles, a geometry revision is ≥1 upload and 0 compiles, and a program or topology change is one compile each. The steady-state pins alongside it: `ContentStoreTest.ASteadyFrameBuildsNothing`, `CoreMaterialArenaTest.ASteadyFrameWritesNothing`, and the `ProgramHalves` / `BindingSets` pin cases. The allocation ceiling: `CoreAllocationGateTest.TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPass` (12 per pass, about 33 per recorded triangle). These recipes need a real window and `GTEST_SKIP` on a headless machine. |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-现行；F1–F6 已落地。
+Current; F1–F6 are landed.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-见 `../backlog/graphics.md`。另有一条未进 backlog 的边界事实：`VSG_MAX_DEVICES` 为 4，而 vsg 1.1.16 的
-`<=4` 分支不做边界检查——**第 5 块渲染面今天没有守卫**（§2.11）；要支持更多窗口，先在 `createSurfaceTarget`
-前把这条拒掉，再考虑提升上限。
+See `../backlog/graphics.md`. One boundary fact is not in the backlog: `VSG_MAX_DEVICES` is 4, and vsg 1.1.16's `<=4` branch does no bounds check — **a fifth rendering surface has no guard today** (§2.11); to support more windows, refuse it before `createSurfaceTarget` first, and only then consider raising the ceiling.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-新代码按 §4 的接口写；旧名只在 §7 或 git 历史里出现。
+New code is written against §4's interfaces; old names appear only in §7 or in git history.
 
-## 10. 参考
+## 10. References
 
 `graphics-architecture.md` · `graphics-rendering.md` · `graphics-content-lifecycle.md` · `../backlog/graphics.md`
