@@ -1,179 +1,239 @@
-# 启动流程下一步：启动事件 / 主窗后显示 / 渲染先就绪（待办，2026-09-26）
+# Startup, next steps: startup event / showing the main window late / rendering ready first (backlog, 2026-09-26)
 
-> **命名演变（同日稍后）**：本文里的 `beginStartup` / `finishStartup` / `runStartup(work)` 即后来的
-> `startupStart(next)` / `startupEnd()` / `run(work)`；待办 1–4 已落地，三者实际形状见 `../design/appfw-startup-phases.md`
-> （`run(work)` 后来删了：宿主的重活由它自己重写那一拍、自己丢到线程池上）。
+> **Naming evolution (later the same day)**: `beginStartup` / `finishStartup` / `runStartup(work)` in this page are what
+> later became `startupStart(next)` / `startupEnd()` / `run(work)`; items 1-4 have landed, and the actual shape of all
+> three is in `../design/appfw-startup-phases.md`
+> (`run(work)` was later deleted: the host rewrites that beat itself and posts it to the thread pool itself).
 
-> 用户 2026-09-26 定的方向（原话）："`Application` 与 `GuiApplication` 要统一初始化，`init()` 是否需要；
-> 先跑 `exec()`，某个方法 push 一个 event 用于调用 `beginStartup`，或者 startup 内调用虚的 `beginStartup`/`finishStartup` 等；
-> 主窗口在初始化完成后再 `show()`，渲染的话也要在窗口显示前把资源初始化好。"
+> The direction the user set on 2026-09-26 (verbatim): "`Application` and `GuiApplication` need a unified
+> initialisation, is `init()` needed; run `exec()` first, some method pushes an event that calls `beginStartup`, or the
+> startup calls a virtual `beginStartup`/`finishStartup`; the main window `show()`s only after initialisation is done,
+> and for rendering the resources must be initialised before the window is shown."
 >
-> 上一轮（`0ad0a10` + `e39373d`）落地的是"**创建与上屏分家**（`init()` 只建不 show）+ 框架排顺序 + 宿主只交 work"，
-> 见 `../design/appfw-startup-splash.md` 的"统一启动流程"一节。
-> 本轮落地了待办 1（`init()` 折进构造，见下），剩下三条是在它之上再往前一步。
+> The previous round (`0ad0a10` + `e39373d`) landed "**creation and on-screen split apart** (`init()` only creates, never
+> shows)" + the framework ordering + the host handing over work only, see the "unified startup flow" section of
+> `../design/appfw-startup-splash.md`.
+> This round landed item 1 (`init()` folded into the constructor, below); the remaining three go one step further on top
+> of it.
 
-## 目标形状（①②③④一起满足时的样子）
+## The target shape (what it looks like when 1-4 all hold)
 
 ```
-main: app->run()                         宿主只声明配置，其余全归框架（日志由 main 自己 initDefault）
-run():  exec()                           先把循环跑起来（此前屏幕上什么都没有）
-        └─(启动步，posted) 框架：建上报口 + stage("正在启动") + beginStartup()
-                     (首帧门)           GUI 等启动窗口画出首帧，然后才允许跑工作
-                     loadAll()          插件由框架加载（AppConfig::load_plugins 默认开）
-                     work()              宿主自己的阶段（有的话；跑在插件之后）
-                     finishStartup()     关框 + 结束上报口（todo 3 后：主窗在这里第一次 show）
+main: app->run()                         the host declares configuration only, the rest is the framework's (logging is main's own initDefault)
+run():  exec()                           get the loop running first (nothing is on screen before that)
+        └─(startup step, posted) framework: create the report sink + stage("正在启动") + beginStartup()
+                     (first-frame gate)  GUI waits for the startup frame to paint its first frame, only then may work run
+                     loadAll()           plugins are loaded by the framework (AppConfig::load_plugins is on by default)
+                     work()              the host's own phase (if any; runs after the plugins)
+                     finishStartup()     close the frame + end the report sink (after 3: the main window shows here for the first time)
 ```
 
-- **启动期屏幕上只有启动框**（todo 3 后）；主窗在 `finishStartup()` 里第一次上屏 ⇒ 用户永远看不到"先冒出一个窗口、再变样"。
-- **没有启动框时**：启动期屏幕上什么都没有（主窗也还没 show），主窗在 `finishStartup()` 才出现。
-- **首帧门只剩一个作用**：启动框画过第一帧之前不许跑 work（X11 上只 `repaint()` 不派发就是空白）。
-  今天那道门还是"两个窗口都画过"（启动框 + 主窗）；主窗晚 show 之后它退化成"启动框画过" ⇒
-  `bootWindows()` / `allPainted()` 的两窗逻辑可以删掉。
+- **During startup the only thing on screen is the startup frame** (after 3); the main window first appears in
+  `finishStartup()` ⇒ the user never sees "a window pops up, then changes shape".
+- **Without a startup frame**: nothing is on screen during startup (the main window has not shown either), and the main
+  window appears only in `finishStartup()`.
+- **The first-frame gate keeps exactly one job**: work may not run before the startup frame has painted its first frame
+  (on X11, calling only `repaint()` without dispatching just leaves it blank).
+  Today that gate still means "both windows have painted" (startup frame + main window); once the main window shows
+  late it degrades to "the startup frame has painted" ⇒ the two-window logic of `bootWindows()` / `allPainted()` can be
+  deleted.
 
-顺序建议：**待办 1（已完成）→ 2（启动事件已落地，虚函数部分待做）→ 4 → 3**（4 卡着 3）。
+Order suggested: **item 1 (done) → 2 (the startup event has landed, the virtual-function part is left) → 4 → 3** (4
+blocks 3).
 
-## 待办 1：`init()` 是否还需要 → 折进构造函数 —— **已落地（2026-09-26）**
+## Item 1: is `init()` still needed → fold it into the constructor - **landed (2026-09-26)**
 
-今天已无 `init()`：`Application` / `GuiApplication` 的**构造函数做完全部初始化**，
-`setSplashConfig()` 删除，两个 builder 各剩一句 `make_unique<...>(config, argc, argv)`。
+There is no `init()` any more: the **constructors of `Application` / `GuiApplication` do the whole initialisation**,
+`setSplashConfig()` is deleted, and each builder is left with one line `make_unique<...>(config, argc, argv)`.
 
-形状：
+The shape:
 
-- `Application(const AppConfig&, int, char**)`：设身份（`config.name` / `config.organization`，缺省组织回落）→ 建 managers
-  → 建 Qt 应用对象（无头 `QCoreApplication`）→ `initialize(config)`（建 UserIO + 装配置文件）。
-  `Application(int, char**)` 转调它，缺省 `AppConfig`（无头工具的入口）。
-- `GuiApplication(const AppConfig&, int, char**)`：先走 base（身份 + managers），然后自己建 `QApplication`
-  （WSLg 的 `selectX11UnderWslg()` 在这里跑）→ `initialize(config)` → `createWindows(config.splash)`
-  （主题、启动框、主窗口；**仍然不 show**）。`GuiApplication(int, char**)` 同样转调。
-- **为什么分成两半**：进程只能有一个 Qt 应用对象，而 base 构造时还不知道叶子要 `QCoreApplication` 还是
-  `QApplication`（虚调用在 base 构造里不会派发到叶子）⇒ 叶子建好、存进数据，再调 `initialize()` 收尾。
-- **Qt 类型不进 SDK**：`initialize(const AppConfig&)` 不带 Qt 参数，Qt 对象由叶子写进私有 `ApplicationData::app`
-  （`dptr()->app = std::make_unique<QCoreApplication/QApplication>(dptr()->argc, dptr()->argv)`）。
-  中间版本曾把 `QCoreApplication*` 放进受保护的 SDK 签名（并在 `Application.hpp` 里前置声明 Qt 类型）——**已撤回**：
-  core SDK（`Application.hpp`/`AppConfig.hpp`/`AppBuilder.hpp`）里不出现任何 Qt 类型，只有文档提到 Qt。
-- **Qt 应用对象归 `Application` 所有（2026-09-26 补）**：`ApplicationData::app` 曾是裸指针（只赋值、不释放），
-  于是“一个进程跑完一个宿主再建下一个”在**带断言的 Qt** 上直接死在 `Q_ASSERT_X(!self, "QCoreApplication", ...)`.  Qt 只允许同时存在**一个**应用对象，而 `test_appfw` 每个用例建一个宿主 ⇒ 只有第一个用例跑得起来（release Qt 把断言编掉，所以作者的机器上看不见）。
-  现在它是 `std::unique_ptr`，而且**声明在 `ApplicationData` 最前** ⇒ **最后**析构：UserIO 的窗口与各 manager 都先走，
-  应用对象最后走；它的析构里 Qt 自己摘掉那个单例，下一个 `Application` 才建得起来。
-  **随之而来的代价（2026-09-26 同日补）**：宿主**不能有静态存储期**。`test_vsg` 把宿主放在 static `unique_ptr` 里
-  （`SetUpTestSuite()` 建、从不释放），于是 Qt 应用对象在**静态析构**里才被销毁——那时 Qt 自己的全局与插件加载器
-  已经走了，`~QCoreApplication()` 会调到一个**已不再映射**的地址：`ctest` 报 `test_vsg (SEGFAULT)`，而二进制自己
-  打印的是 "452 tests ... [ PASSED ] 452"（崩在最后一个用例之后）；3/3 复现（exit 139），栈是
-  `__run_exit_handlers → unique_ptr<Application>(s_app) → ~Application → ~ApplicationData → ~QCoreApplication`。
-  修法是给该套件加 `TearDownTestSuite()` 显式释放宿主（在 `main()` 里死，Qt 还完整），契约同时写进 `Application`
-  公开构造函数的文档；`test_appfw` 不受影响（它在用例体里建宿主，宿主死在 `main()` 里）。
-- **ABI（坑 1 的结论）**：`init()` 是公开虚函数且位于 vtable 中间 ⇒ 删除让后面所有槽位整体前移 ⇒
-  `VN_APPFW_PLUGIN_ABI_VERSION` **3u → 4u**（不留 deprecated 空槽）。
-  `beginStartup()` 已声明在所有其它虚函数之后，之后的追加不必再动版本。
-- **`setSplashConfig()` 与那条标题补丁一起删**：空标题由 `BootSplash` 自己解析成应用名，而身份在**建窗口之前**
-  已经应用（构造函数顺序），所以 builder 不需要再补 `splash.title = config.name`。
-- **顺带修掉的潜伏缺陷**：`GuiApplicationData` 曾用 `QApplication* app` **遮蔽** `ApplicationData::app`，
-  于是 `Application::run()` 里 `d->app->exec()` 走的一直是空指针（没炸只因为 `QCoreApplication::exec()` 是静态成员）。
-  两份合成一份（base 的 `QCoreApplication* app`）后，GUI 路径也真的存上了。
-- `AppConfig`/`SplashConfig` 搬到 `sdk/vine/appfw/AppConfig.hpp`（`AppBuilder.hpp` 转 include，旧包含路径仍可用）；
-  `AppBuilderSupport.hpp` 与 `applyAppConfig()` 删除，逻辑进 `Application::initialize()`。 <!-- drift-ok -->
-- 钉子（会红）：`test_gui` 的 `GuiApplicationConstructionTest.TheBuilderReturnsAFinishedApplication`
-  与 `BootSplashTest.AnEmptyTitleShowsTheApplicationName`、`test_vsg` 的
-  `VsgBackendPluginTest.TheConstructorBuildsTheApplicationFromItsConfig`（`persist_config=false` ⇒ `configFile()` 为空）。
-- 本轮验证：Debug + Release 两棵树 `ninja` 全绿；`test_gui` 219（217+2）、`test_vsg` 452（451+1）、`test_asyncqt` 2 全绿；
-  真机 `bin/Vine` 启动日志与改动前一致（`startup work starting 10 ms …`、`Pending -> Attached -> Presenting`）。
+- `Application(const AppConfig&, int, char**)`: set the identity (`config.name` / `config.organization`, with a fallback
+  organisation) → create the managers → create the Qt application object (headless `QCoreApplication`) →
+  `initialize(config)` (create the UserIO + install the config file).
+  `Application(int, char**)` delegates to it with a default `AppConfig` (the entry for headless tools).
+- `GuiApplication(const AppConfig&, int, char**)`: go through the base first (identity + managers), then create its own
+  `QApplication` (`selectX11UnderWslg()` for WSLg runs here) → `initialize(config)` → `createWindows(config.splash)`
+  (theme, startup frame, main window; **still no show**). `GuiApplication(int, char**)` delegates in the same way.
+- **Why it is split in two**: a process can have only one Qt application object, and while the base constructor runs it
+  does not yet know whether the leaf wants a `QCoreApplication` or a `QApplication` (a virtual call during base
+  construction does not dispatch to the leaf) ⇒ the leaf creates it, stores it in the data, and then calls
+  `initialize()` to finish.
+- **No Qt type in the SDK**: `initialize(const AppConfig&)` takes no Qt parameter; the leaf writes the Qt object into the
+  private `ApplicationData::app` (`dptr()->app = std::make_unique<QCoreApplication/QApplication>(dptr()->argc,
+  dptr()->argv)`).
+  An intermediate version did put `QCoreApplication*` into a protected SDK signature (and forward-declared Qt types in
+  `Application.hpp`) - **withdrawn**: the core SDK (`Application.hpp`/`AppConfig.hpp`/`AppBuilder.hpp`) contains no Qt
+  type at all, only the documentation mentions Qt.
+- **`Application` owns the Qt application object (added 2026-09-26)**: `ApplicationData::app` used to be a raw pointer
+  (assigned, never released), so "one process finishes one host and builds the next" died outright on an **asserting
+  Qt** in `Q_ASSERT_X(!self, "QCoreApplication", ...)`. Qt allows **one** application object at a time, and `test_appfw`
+  builds one host per case ⇒ only the first case could run (a release Qt compiles the assertion out, so the author's
+  machine never showed it).
+  It is a `std::unique_ptr` now, and **declared first** in `ApplicationData` ⇒ destroyed **last**: the UserIO's windows
+  and the managers go first, the application object last; its destructor lets Qt drop the singleton, and the next
+  `Application` can be built.
+  **The price that comes with it (added the same day, 2026-09-26)**: the host **must not have static storage duration**.
+  `test_vsg` kept the host in a static `unique_ptr` (created in `SetUpTestSuite()`, never released), so the Qt
+  application object was destroyed during **static destruction** - by then Qt's own globals and plugin loader have gone,
+  and `~QCoreApplication()` calls an address that is **no longer mapped**: `ctest` reports `test_vsg (SEGFAULT)` while
+  the binary itself prints "452 tests ... [ PASSED ] 452" (it crashes after the last case); reproduced 3/3 (exit 139),
+  with the stack `__run_exit_handlers → unique_ptr<Application>(s_app) → ~Application → ~ApplicationData →
+  ~QCoreApplication`.
+  The fix is to give that suite a `TearDownTestSuite()` that releases the host explicitly (it dies inside `main()`, while
+  Qt is still whole), and the contract is written into the documentation of `Application`'s public constructor;
+  `test_appfw` is unaffected (it builds the host inside the case body, so the host dies inside `main()`).
+- **ABI (the conclusion of trap 1)**: `init()` was a public virtual function in the middle of the vtable ⇒ deleting it
+  shifts every later slot ⇒ `VN_APPFW_PLUGIN_ABI_VERSION` **3u → 4u** (no deprecated empty slot kept).
+  `beginStartup()` is declared after every other virtual function, so later additions do not need another version bump.
+- **`setSplashConfig()` is deleted together with that title patch**: `BootSplash` resolves an empty title to the
+  application name itself, and the identity is applied **before the windows are created** (the constructor order), so the
+  builder no longer has to fill in `splash.title = config.name`.
+- **A latent defect fixed on the way**: `GuiApplicationData` used to **shadow** `ApplicationData::app` with
+  `QApplication* app`, so `d->app->exec()` in `Application::run()` always went through a null pointer (it only failed to
+  crash because `QCoreApplication::exec()` is a static member).
+  With the two merged into one (the base's `QCoreApplication* app`), the GUI path really stores it too.
+- `AppConfig`/`SplashConfig` move to `sdk/vine/appfw/AppConfig.hpp` (`AppBuilder.hpp` includes it instead, the old include
+  path still works); `AppBuilderSupport.hpp` and `applyAppConfig()` are deleted, their logic goes into `Application::initialize()`. <!-- drift-ok -->
+- The nails (they go red): `GuiApplicationConstructionTest.TheBuilderReturnsAFinishedApplication` and
+  `BootSplashTest.AnEmptyTitleShowsTheApplicationName` in `test_gui`, and
+  `VsgBackendPluginTest.TheConstructorBuildsTheApplicationFromItsConfig` in `test_vsg` (`persist_config=false` ⇒
+  `configFile()` is empty).
+- Verified this round: `ninja` green in both the Debug and Release trees; `test_gui` 219 (217+2), `test_vsg` 452 (451+1)
+  and `test_asyncqt` 2 all green; the startup log of the real `bin/Vine` identical to before the change
+  (`startup work starting 10 ms …`, `Pending -> Attached -> Presenting`).
 
-## 待办 2：启动阶段由“启动事件 + 虚函数”推进 —— **已落地（2026-09-26）**
+## Item 2: startup phases advanced by "a startup event + virtual functions" - **landed (2026-09-26)**
 
-形状（见 `../design/appfw-startup-splash.md` 的“生命周期”）：`run()` 先 `exec()`，再用 `Qt::QueuedConnection` 推一个
-启动步（就是 `run()` 里那两行：建上报口 + `stage("正在启动")`，然后把画面交给 `beginStartup(work)` 的回调），
-所以无头与有窗口的启动阶段都在循环里跑（以前无头的启动工作在 `exec()` 之前）。插件加载也进来了：
-`AppConfig::load_plugins`（默认开）⇒ 宿主的 `main` 不再写 `loadAll()`，而且它跑在宿主的 work 之前。
-钉子：`test_appfw` 里“启动前 post 的一帧回调，工作里快照它已经到过” ⇒ 变异（启动步改回 `exec()` 之前直接调）即红。
+The shape (see "lifecycle" in `../design/appfw-startup-splash.md`): `run()` calls `exec()` first and then pushes a
+startup step over `Qt::QueuedConnection` (the two lines in `run()`: create the report sink + `stage("正在启动")`, then hand
+the screen to `beginStartup(work)`'s callback), so the startup phases of both the headless and the windowed application
+run inside the loop (headless startup work used to run before `exec()`). Plugin loading came in as well:
+`AppConfig::load_plugins` (on by default) ⇒ the host's `main` no longer writes `loadAll()`, and it runs before the host's
+work.
+The nail: in `test_appfw`, "a frame callback posted before startup, and work takes a snapshot showing it has already
+happened" ⇒ the mutation (calling the startup step directly before `exec()`) goes red.
 
-**两个扩展点的名字改了，但仍然两个**（原计划是“一个 `beginStartup()`”）：`showUserInterface()` →
-`beginStartup()`（它只上屏启动框，而“用户界面”——主窗——归 `finishStartup()`：旧名字会骗人）、
-`whenUserInterfaceIsUp()` → `beginStartup()`（它等的是启动框首帧，不是“界面就绪”）。
-为什么不能合成一个 `beginStartup()`：**“它真的在屏上了吗”这个问题只有带窗口的那一层答得出**——
-base `Application` 在 core SDK 里，命名不了 `gui::Window`（`Application.hpp` 里连 Qt 类型都不许出现），
-所以“等首帧”必须是 gui 层实现的虚函数。分工因此是：`beginStartup()` 摆画面（无头：空实现）、
-`beginStartup(then)` 报告它到底上没上屏（无头：立刻 `then()`），框架只管顺序与 `finishStartup()`。
-（移除/改名这两个 protected 虚函数**不需要**动 `VN_APPFW_PLUGIN_ABI_VERSION`：它们在 vtable **末尾**、
-且插件拿不到（protected），插件能碰的 `finishStartup()`/`run()` 槽位没动。）
+**The two extension points were renamed and there are still two** (the original plan was one `beginStartup()`):
+`showUserInterface()` → `beginStartup()` (it only puts the startup frame on screen, while "the user interface" - the main
+window - belongs to `finishStartup()`: the old name lied), and `whenUserInterfaceIsUp()` → `beginStartup()` (it waits for
+the startup frame's first frame, not for "the interface is ready").
+Why they cannot merge into one `beginStartup()`: **only the windowed layer can answer "is it really on screen"** - the
+base `Application` lives in the core SDK and cannot name `gui::Window` (not even a Qt type may appear in
+`Application.hpp`), so "wait for the first frame" has to be a virtual function implemented by the gui layer. The division
+is therefore: `beginStartup()` lays out the screen (headless: empty), `beginStartup(then)` reports whether it really made
+it on screen (headless: `then()` right away), and the framework only owns the order and `finishStartup()`.
+(Removing or renaming these two protected virtual functions does **not** need a bump of
+`VN_APPFW_PLUGIN_ABI_VERSION`: they sit at the **end** of the vtable and are unreachable for a plugin (protected), while
+the slots a plugin can touch, `finishStartup()`/`run()`, are unchanged.)
 
-- 触发机制三选一，都不引新依赖：`QTimer::singleShot(0, d->app, …)`（今天 GUI 在用，最省事）/
-  `QMetaObject::invokeMethod(d->app, …, Qt::QueuedConnection)` / 自定义 `QEvent`（要一个私有 QObject 来接，
-  换来"命名事件 + 可用 `removePostedEvents` 撤销"）。
-- ⚠️ **关键坑**：post 出去的用户事件与 Qt 自己 post 的绘制请求（`QEvent::UpdateRequest`）在**同一趟里按 FIFO 派发**
-  ⇒ 事件早于绘制 ⇒ "先推启动"**不能**替代"等首帧"。那道门必须在**推事件之前**满足（GUI 侧：从首帧信号 / 上限里推启动事件）。
-- 虚函数：`finishStartup()` 已经是虚的 ✓。新增 `virtual void beginStartup()`（默认空；GUI = 显示启动框）。
-  **不要为了对称硬加** `startup()`：宿主的工作继续走 `runStartup(work)` 回调更贴合现状（`main.cpp` 不是 `Application` 子类）。
-  将来若真要 OO 化（`class VineApp : public GuiApplication { void onStartup() override; }`），让 `beginStartup()` 的默认实现
-  变成"调用登记的回调"即可，不必现在做。
-- 位置提醒（2026-09-26 已变）：**启动上报口现在是 `Application::run()` 建的**（`stage("正在启动")`，见
-  `../design/appfw-startup-splash.md` 的"上报口属于启动阶段"），`GuiApplication` 构造里那句"建上报口 + 报'正在初始化界面'"
-  已经删掉。所以 `beginStartup()` 落地时，"建上报口 + 报框架的第一阶段"这两行就是从 `run()` 搬进 `beginStartup()`
-  （GUI 同时在那里显示启动框），不需要再动 `GuiApplication` 的窗口创建。
+- Three ways to trigger it, none adding a dependency: `QTimer::singleShot(0, d->app, …)` (what the GUI uses today, the
+  least fuss) / `QMetaObject::invokeMethod(d->app, …, Qt::QueuedConnection)` / a custom `QEvent` (which needs a private
+  QObject to receive it, in exchange for "a named event that `removePostedEvents` can revoke").
+- ⚠️ **The key trap**: a posted user event and the repaint request Qt posts itself (`QEvent::UpdateRequest`) are
+  **dispatched FIFO in the same pass** ⇒ the event precedes the paint ⇒ "push the startup step first" **cannot** replace
+  "wait for the first frame". That gate must be satisfied **before the event is posted** (on the GUI side: post the
+  startup event from the first-frame signal or from a deadline).
+- Virtual functions: `finishStartup()` is already virtual ✓. Add `virtual void beginStartup()` (empty by default; GUI =
+  show the startup frame).
+  **Do not add** `startup()` just for symmetry: the host's work is better served by the existing `runStartup(work)`
+  callback (`main.cpp` is not an `Application` subclass).
+  If it ever really has to become OO (`class VineApp : public GuiApplication { void onStartup() override; }`), make the
+  default implementation of `beginStartup()` "call the registered callback"; there is no need to do that now.
+- Where it lives (changed on 2026-09-26): **the startup report sink is created by `Application::run()`** (`stage("正在启动")`,
+  see "the report sink belongs to the startup phase" in `../design/appfw-startup-splash.md`), and the "create the report
+  sink + report 'initialising the interface'" lines in the `GuiApplication` constructor are gone. So when
+  `beginStartup()` lands, those two lines ("create the report sink + report the framework's first phase") move from
+  `run()` into `beginStartup()` (the GUI also shows the startup frame there), and `GuiApplication`'s window creation
+  needs no further change.
 
-## 待办 3：主窗在初始化完成后再 `show()` —— **已落地（2026-09-26，X11 已验）**
+## Item 3: the main window `show()`s after initialisation completes - **landed (2026-09-26, verified on X11)**
 
-形状：`beginStartup()` **只上屏启动框**（没框就什么都不上屏）；首帧门只等启动框
-（`bootWindows()`/`allPainted()` 的两窗逻辑已删，没框 ⇒ 直接继续）；主窗由 `finishStartup()` 第一次 `show()`
-（有框时先 `raise()`/`activate()`）。
+The shape: `beginStartup()` **only puts the startup frame on screen** (with no frame nothing is put on screen); the
+first-frame gate waits for the startup frame only (the two-window logic of `bootWindows()`/`allPainted()` is deleted, and
+with no frame it simply continues); `finishStartup()` `show()`s the main window for the first time (with a frame, after
+`raise()`/`activate()` first).
 
-- 前提是**待办 4 的 X11 半边成立了**（见下）：“未 show 的内嵌表面窗口有可用句柄”已在 WSLg/X11 实测。
-- 硬证据（X 服务端读回，`map_state`）：启动期只有启动框 `IsViewable`、主窗 `800x600` 仍是 **IsUnmapped**；
-  `finishStartup()` 后启动框消失、主窗（框 `864x664`）`IsViewable`。日志侧：`surface Pending -> Attached`
-  发生在主窗未 show 时，`Attached -> Presenting` 紧随主窗上屏之后。细节与完整日志见 `../design/appfw-startup-splash.md`
-  的“启动期只有启动框”一节。
-- ⚠️ **Windows 未验**（待办 4 的另一半）：若那边 `VsgHostWindow` 拿不到有效 HWND ⇒ `GetClientRect(..) failed` +
-  `surface -> Failed`，就得回退今天的形状（主窗早 show、门等两窗）并记“Windows 上未采纳”。
-  即使早期 attach 失败，主窗上屏会触发 layout/resize，控件自己会重试 attach（`handleUpdate()`）。
+- The precondition is that **the X11 half of item 4 holds** (below): "a hidden embedded-surface window has a usable
+  handle" has been measured on WSLg/X11.
+- Hard evidence (read back from the X server, `map_state`): during startup only the startup frame is `IsViewable` while
+  the main window's `800x600` is still **IsUnmapped**; after `finishStartup()` the startup frame disappears and the main
+  window (frame `864x664`) is `IsViewable`. On the log side: `surface Pending -> Attached` happens while the main window
+  is not shown, and `Attached -> Presenting` immediately follows the main window appearing. The details and the full log
+  are in the "only the startup frame during startup" section of `../design/appfw-startup-splash.md`.
+- ⚠️ **Windows is unverified** (the other half of item 4): if `VsgHostWindow` cannot get a valid HWND there ⇒
+  `GetClientRect(..) failed` + `surface -> Failed`, then today's shape has to come back (show the main window early,
+  gate on both windows) and "not adopted on Windows" gets written down.
+  Even if the early attach fails, showing the main window triggers a layout/resize and the control retries the attach
+  itself (`handleUpdate()`).
 
-## 待办 4（前置，卡着 3）：渲染资源先就绪，窗口后显示 —— **X11 半边已完成（2026-09-26）**
+## Item 4 (a prerequisite, blocks 3): rendering resources ready first, the window shown later - **the X11 half is done (2026-09-26)**
 
-现状（`.ai/design/appfw-render-surface.md`）：
+The current state (`.ai/design/appfw-render-surface.md`):
 
-- **attach 只需要“句柄 + 尺寸”**（不要求表面可见）；**present** 才要求窗口在屏上。
-- **容器控件的可见性就是“露出开关”**：`RenderControl` 把窗口容器藏着，直到 `state_changed` 报到 `Presenting` 才 `setVisible(true)`
-  ⇒ “主窗晚 show”也不会露出洞（那一格是主窗自己的背景）。
+- **attach needs only "a handle + a size"** (the surface does not have to be visible); **present** is what requires the
+  window to be on screen.
+- **The visibility of the container control IS the "reveal switch"**: `RenderControl` keeps the window container hidden
+  until `state_changed` reports `Presenting` and only then calls `setVisible(true)` ⇒ "showing the main window late" does
+  not expose a hole either (that cell is the main window's own background).
 
-探针结论（WSLg/X11）：**“已创建但没 show 的顶层窗口”不影响 attach**，因为 `SurfaceWindow::nativeHandle()` 用的是
-**容器里那个独立 `QWindow` 自己的 `winId()`**，不是顶层的句柄；顶层没 show 时它照样有有效句柄
-（实测 `[VsgHostWindow] attached to the host window 0x60002a (160x160, mapped=true)`）。历史失败来自旧渲染器拿顶层句柄 +
-没人建原生窗口两件事叠加，不是当前形状的性质。
+Probe result (WSLg/X11): **"a top-level window that has been created but not shown" does not affect attach**, because
+`SurfaceWindow::nativeHandle()` uses the **`winId()` of the separate `QWindow` inside the container**, not the
+top-level's handle; while the top level is not shown it still has a valid handle
+(measured `[VsgHostWindow] attached to the host window 0x60002a (160x160, mapped=true)`). The historical failures came
+from the old renderer taking the top-level handle plus nobody creating a native window, two things stacking up; they are
+not a property of the current shape.
 
-仍待做：**Windows 一侧同一探针**（HWND + client rect）。判据：启动期日志里出现 `attached to the host window 0x…`
-与 `surface Pending -> Attached`（而不是 `GetClientRect(..) failed` / `-> Failed`）。
-- ~~Release 树 `VSG_MAX_DEVICES=1` 是有意的绊线（仓库里任何地方都不设它）⇒ 两棵树都要跑。~~
-  **2026-09-27 作废**：现在由 `gfx_backend_vsg/CMakeLists.txt` 显式设为 4（一份文档视图一块渲染面），两棵树的这个
-  差别没有了；"两棵树都跑门禁"这条做法本身保留。
+Still to do: **the same probe on the Windows side** (HWND + client rect). The criterion: `attached to the host window
+0x…` and `surface Pending -> Attached` appear in the startup log (rather than `GetClientRect(..) failed` / `-> Failed`).
+- ~~`VSG_MAX_DEVICES=1` in the Release tree is a deliberate tripwire (nothing in the repository sets it) ⇒ both trees
+  have to run.~~
+  **Void as of 2026-09-27**: `gfx_backend_vsg/CMakeLists.txt` now sets it to 4 explicitly (one render surface per
+  document view), so that difference between the two trees is gone; the practice of "run the gate in both trees" stays.
 
-交付物：
+Deliverables:
 
-1. 一个用例钉住"主窗未 show 时 `RenderControl::init()` 能把设备/管线建起来（返回 true，或明确可重试的 false），
-   首帧在 show 之后到"；
-2. `SurfaceWindow` 的 attach 前置条件从"宿主控件可见"改成"句柄 + 尺寸 > 0"（若其实已经如此，就补用例 + 把文档口径统一）；
-3. 真机（Windows 桌面）视觉确认：启动期**屏幕上只有启动框**，结束后主窗带画面出现。
+1. a case that pins "with the main window not shown, `RenderControl::init()` can create the device/pipeline (returning
+   true, or a clearly retryable false), and the first frame arrives after the show";
+2. change the attach precondition of `SurfaceWindow` from "the host control is visible" to "a handle + a size > 0" (if
+   that is already the case, add the case and align the documentation);
+3. a visual confirmation on real hardware (a Windows desktop): during startup **only the startup frame is on screen**, and
+   the main window appears with its content when it ends.
 
-## 不能忘的实测/硬约束
+## Measurements and hard constraints not to forget
 
-1. 窗口 show 之后必须**派发到首帧**才算"上屏"（X11 只 `repaint()` 是空转）⇒ 启动期唯一在屏的窗口（启动框）仍要过首帧门。
-2. ~~"上屏早于启动工作"不是顺序偏好：**渲染表面 attach 需要窗口的句柄**，而今天只有 show 过才有~~
-   **已推翻（2026-09-26，X11）**：句柄来自容器里那个独立 `QWindow` 自己的 `winId()`，顶层不必 show。
-   仍然成立的是：**插件加载与宿主的活要等在“启动框已画出首帧”之后**（X11 上只 show 不派发就是空窗口）。
-3. 用户事件与绘制请求同趟 FIFO ⇒ "先推启动" ≠ "等首帧"。
-4. ~~`init()` 在 vtable 中间 ⇒ 删它要么保留槽位，要么 ABI +1~~ **已决**：删掉并 ABI **3u → 4u**（待办 1）。
-5. 测试应用（从不跑循环）的窗口靠幂等的 `finishStartup()` 上屏；`finishStartup()` 语义改成"关框 + 主窗第一次 show"后，
-   这条路径要一起复核（`test_gui` 的 `BootSplashTest.DisabledByDefaultInTheTestApplication`）。
-6. 探针：**`scripts/xwinmap.py`（已入库）**——列出根顶层窗口的名字/尺寸/`map_state`，
-   “启动期只有启动框在屏”就靠它读（启动期读一次、结束后再读一次）。它替代了早先放在 /tmp 的
-   `xstack.py`/`xfirst.py`（会被清理）。⚠️ 手写 `XWindowAttributes` 偏移时 `map_state` 在 **92**，
-   不是 100（读错会让所有窗口都长得像 IsUnmapped）。
+1. A window only counts as "on screen" after it has been **dispatched to its first frame** (on X11 a bare `repaint()` is
+   a no-op) ⇒ the only window on screen during startup (the startup frame) still has to pass the first-frame gate.
+2. ~~"on screen before the startup work" is not an ordering preference: **a render surface's attach needs the window's
+   handle**, and today that exists only after a show~~
+   **Overturned (2026-09-26, X11)**: the handle comes from the `winId()` of the separate `QWindow` inside the container,
+   and the top level need not be shown.
+   What still holds is: **plugin loading and the host's work must wait until "the startup frame has painted its first
+   frame"** (on X11, showing without dispatching leaves an empty window).
+3. User events and repaint requests share one FIFO pass ⇒ "push the startup step first" ≠ "wait for the first frame".
+4. ~~`init()` sits in the middle of the vtable ⇒ deleting it either keeps the slot or bumps the ABI~~ **Decided**: delete
+   it and bump the ABI **3u → 4u** (item 1).
+5. The test application's windows (which never run the loop) get on screen through the idempotent `finishStartup()`; once
+   `finishStartup()` means "close the frame + show the main window for the first time", that path has to be re-checked
+   with it (`BootSplashTest.DisabledByDefaultInTheTestApplication` in `test_gui`).
+6. The probe: **`scripts/xwinmap.py` (committed)** - lists the name/size/`map_state` of the root's top-level windows, and
+   "only the startup frame is on screen during startup" is read with it (once during startup, once after it ends). It
+   replaces the earlier `/tmp` copies of `xstack.py`/`xfirst.py` (which get cleaned up). ⚠️ In a hand-written
+   `XWindowAttributes` layout `map_state` sits at offset **92**, not 100 (getting it wrong makes every window look like
+   IsUnmapped).
 
-## 验收（这四条做完时的判据）
+## Acceptance (the criteria once all four are done)
 
-- **行为**：启动期独立 X 读回**只有启动框**（主窗不在 `XQueryTree` 里，或 `isVisible()==false`）；
-  日志 `startup work starting … : the startup frame is on screen`；启动结束后主窗出现且 `painted ≈ 83.5%`。
-- **"先黑后画"彻底消失**：主窗第一次出现在屏幕上时就已经有内容（渲染区至少是容器隐藏后的窗口底色，不是洞）。
-- `test_gui`（现 219，待办 1 加了 2 例）/ `test_vsg`（现 452，待办 1 加了 1 例）全绿；
-  两棵树 `vsg_rewrite_gate.sh` → `cases=452 failed=0 vuid=0 hazard=0`
-  + 应用阶段像素与基线一致；`check_doc_symbols.py` / `check_diagnostic_formats.py` / `check_include_hygiene.py` 全绿；
-  `cmake --install build --prefix dist` 后跑一遍真机。
-- **反证**：把新加的门/事件拿掉，要能重现"启动期主窗可见但 `painted=0.0%`"这类故障
-  （证明新机制承重，而不是巧合；本轮就靠这条证明了统一后的门仍然承重）。
+- **Behaviour**: an independent X read-back during startup shows **only the startup frame** (the main window is not in
+  `XQueryTree`, or `isVisible()==false`); the log shows `startup work starting … : the startup frame is on screen`; after
+  startup the main window appears with `painted ≈ 83.5%`.
+- **"Black first, then painted" is gone for good**: the first time the main window appears on screen it already has
+  content (the render area at least shows the window background left by the hidden container, not a hole).
+- `test_gui` (now 219, item 1 added 2 cases) / `test_vsg` (now 452, item 1 added 1) green;
+  `vsg_rewrite_gate.sh` in both trees → `cases=452 failed=0 vuid=0 hazard=0`
+  + the application-phase pixels matching the baseline; `check_doc_symbols.py` / `check_diagnostic_formats.py` /
+  `check_include_hygiene.py` green; one real-hardware run after `cmake --install build --prefix dist`.
+- **The counter-proof**: removing the new gate/event has to reproduce a failure such as "the main window is visible
+  during startup but `painted=0.0%`"
+  (proving the new mechanism carries the load rather than coincidence; this round proved the unified gate still does
+  exactly that way).
