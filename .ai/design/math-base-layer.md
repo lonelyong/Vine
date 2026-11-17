@@ -1,176 +1,176 @@
-# math 模块：底座层与数学词汇
+# the math module: the base layer and its mathematical vocabulary
 
-> **状态**：现行
-> **最后核对**：2026-11-06
-> **范围**：`src/base/math` —— 值类型（向量、点、矩阵、四元数、等距、矩形）、数学常量与谓词、概念与标记、3×3 对称特征分解。**不含任何过程**（求根、积分、样条求值都在 `geom/detail`），不含任何几何词汇或表示约定。
-> **权威来源**：`src/base/math/sdk/vine/math/` 下的 18 个头文件；`src/base/math/src/` 的 14 个显式实例化单元；`tests/test_math/`（7 个用例文件，36 例）。决策见 `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`。
-> **待办**：无
+> **Status**: current
+> **Last verified**: 2026-11-06
+> **Scope**: `src/base/math` — the value types (vector, point, matrix, quaternion, isometry, rectangle), the mathematical constants and predicates, the concepts and tags, and the 3×3 symmetric eigen-decomposition. **No procedure at all** (root finding, integration and spline evaluation live in `geom/detail`), and no geometric vocabulary or representation convention.
+> **Sources**: the 18 headers under `src/base/math/sdk/vine/math/`; the 14 explicit-instantiation units in `src/base/math/src/`; `tests/test_math/` (7 case files, 36 cases). The decision is `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`.
+> **Backlog**: none
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-`math` 是仓库里**唯一被所有模块依赖**的层：图形要 `Vec3d` / `Mat4d` / `Point3d`，机器人要 `Vec3d` / `Quatd`，几何要 `Point2` / `Rect2`，模型与加载器要 `Vec3f`，核心要 `Vec3f` 当顶点元素类型。
+`math` is the only layer in the repository that **every module depends on**: graphics needs `Vec3d` / `Mat4d` / `Point3d`, robotics needs `Vec3d` / `Quatd`, geometry needs `Point2` / `Rect2`, the model and loaders need `Vec3f`, and core needs `Vec3f` as the vertex element type.
 
-求根、积分、B 样条节点模型与光滑度阶梯都在几何模块（`geom/detail/` 与 `geom/Continuity.hpp`）：**`math` 只有数学词汇，没有一个子目录。** 分开的两条理由不同——节点模型与 `Continuity` 是因为“签名里带着我们自己的数据模型”，求根/积分/`deCasteljau` 是因为“今天唯一的消费者是几何”，后果与反转条件写在 `ADR-2026-11-06-math-keeps-only-vocabulary.md`。
+Root finding, integration, the B-spline knot model and the continuity ladder live in the geometry module (`geom/detail/` and `geom/Continuity.hpp`): **`math` holds mathematical vocabulary only and has no subdirectory at all.** The two reasons differ — the knot model and `Continuity` because “the signature carries our own data model”, root finding / integration / `deCasteljau` because “today's only consumer is geometry”, and the consequences plus the reversal condition are written in `ADR-2026-11-06-math-keeps-only-vocabulary.md`.
 
-### 1.2 目标
+### 1.2 Goals
 
-1. 让任何模块都能用同一套值类型，且**只向下依赖**（`G2`）。
-2. 让“数学词汇”与“数值过程”分属两层，判据可执行，新名字放错地方能被一眼看出（`G1`）。
-3. 让精度（`float` / `double`）与存储顺序（列优先 / 行优先）是类型参数而不是运行时标志，代价为零（`G10`）。
+1. Any module can use the same value types, and **only depends downward** (`G2`).
+2. “Mathematical vocabulary” and “numeric procedure” are two layers, the criterion is executable, and a new name put in the wrong place is visible at a glance (`G1`).
+3. Precision (`float` / `double`) and storage order (column-major / row-major) are type parameters rather than runtime flags, at zero cost (`G10`).
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做通用数值库：不提供线性方程组求解、稀疏矩阵、复数域、优化器、积分器、求根器。后两者在 `geom/detail`。
-- 不做几何：曲线、曲面、包围盒、表示的约定都不在这里。
-- 不做单位制、不做区间算术、不做任意精度。
+- Not a general numeric library: no linear solver, sparse matrix, complex field, optimiser, integrator or root finder. The last two live in `geom/detail`.
+- Not geometry: curves, surfaces, bounding boxes and representation conventions are not here.
+- No unit system, no interval arithmetic, no arbitrary precision.
 
-### 1.4 结论
+### 1.4 Conclusion
 
-**`math` 是底座层，内容只有“数学词汇”：值类型、常量与谓词、概念与标记，外加一个预算内部固定的特征分解。判据是“有没有调用方给的精度目标”——有，那它就不是词汇，归 `geom/detail`。**
+**`math` is the base layer and its content is “mathematical vocabulary” only: value types, constants and predicates, concepts and tags, plus one eigen-decomposition with an internally fixed budget. The criterion is “does it take a caller-supplied precision target” — if it does, it is not vocabulary and belongs in `geom/detail`.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 底座层：只依赖 `global` 与 `core`，任何模块都可依赖它
+### 2.1 The base layer: it depends on `global` and `core` only, and any module may depend on it
 
-- **是什么**：`vn::Math` 是 SHARED 库（`src/` 有实例化单元 → 定义 `VN_MATH_LIB`，实体标 `VN_MATH_API`），只 `PUBLIC` 链 `vn::Global`。Release 开 LTO；Clang 下额外打开内联优化提示。
-- **为什么**：`G2` —— 上层模块（图形、几何、机器人、模型、加载器）都要它，它不能反向依赖任何一个；一条回边就会让“谁都能用”变成“谁都被拖进来”。
-- **边界**：`math` 不认识曲线、不认识渲染、不认识 IO，也不认识 CAD 的表示约定。需要曲线速度才能做的换算（几何容差 → 参数容差）因此留在几何侧。
+- **What it is**: `vn::Math` is a SHARED library (`src/` holds the instantiation units → defines `VN_MATH_LIB`, entities marked `VN_MATH_API`) that links `vn::Global` `PUBLIC` only. Release turns LTO on; under Clang the inline-hint optimisations are switched on as well.
+- **Why**: `G2` — every upper module (graphics, geometry, robotics, models, loaders) needs it, so it cannot depend back on any of them; one back edge would turn “anyone can use it” into “everyone drags it in”.
+- **Boundary**: `math` knows nothing about curves, rendering, IO or a CAD representation convention. A conversion that needs curve speed (geometric tolerance → parameter tolerance) therefore stays on the geometry side.
 
-### 2.2 只有词汇，没有过程
+### 2.2 Vocabulary only, no procedure
 
-| 类别 | 判据 | 内容 |
+| Category | Criterion | Content |
 |---|---|---|
-| 数学**词汇** | 给定数就算出数，没有“收敛到某个精度”的说法 | `Vector2/3/4`、`VectorN`、`Point2/3`、`Matrix3x3/4x4`、`Quaternion`、`Isometry2/3`、`Rect2`、`Math.hpp` 的常量与谓词、`Types.hpp` 的概念与标记、`EigenDecomposition.hpp` |
+| mathematical **vocabulary** | a number in, a number out; no notion of “converge to some precision” | `Vector2/3/4` , `VectorN`, `Point2/3`, `Matrix3x3/4x4`, `Quaternion`, `Isometry2/3`, `Rect2`, the constants and predicates of `Math.hpp`, the concepts and tags of `Types.hpp`, `EigenDecomposition.hpp` |
 
-`math` 里没有第二个类别。数值过程（`adaptiveSimpson` / `rootInBracket` / `parameterReaching`）与样条求值（`deCasteljau` / `differences`）在 `geom/detail`，公开入口是 `geom::planar::arcLength` / `geom::spatial::arcLength` 等几何名字。
+There is no second category in `math`. The numeric procedures (`adaptiveSimpson` / `rootInBracket` / `parameterReaching`) and spline evaluation (`deCasteljau` / `differences`) live in `geom/detail`, and their public entries are geometric names such as `geom::planar::arcLength` / `geom::spatial::arcLength`.
 
-- **判据要能拒绝**：签名里有 `tolerance` 不等于它是过程——`Vector3::isEqual(b, eps)` 的 `eps` 是**比较容差**，答案立刻给出；过程指的是“我尽力逼近你给的目标，可能没做到”。
-- **为什么不留一层“通用数值”**：三个函数不构成模块（`G8`），而它们的消费者今天只有几何。代价明确：任何非几何模块要用积分或求根，只能依赖 `vn::Geom`、复制一份、或把内核升成独立模块——后者是记账的反转路径（`../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`）。
+- **The criterion has to be able to say no**: a `tolerance` in a signature does not make a procedure — `Vector3::isEqual(b, eps)`'s `eps` is a **comparison tolerance** and the answer is immediate; a procedure means “I try to approach the target you gave and may fail”.
+- **Why not keep a “general numeric” layer**: three functions are not a module (`G8`), and their only consumer today is geometry. The cost is explicit: a non-geometric module needing integration or root finding must depend on `vn::Geom`, copy it, or promote the kernel into its own module — the last is the reversal path in `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`.
 
-### 2.3 为什么 `math` 里没有几何词汇，也没有 `detail`
+### 2.3 Why `math` holds no geometric vocabulary and no `detail`
 
-- **几何词汇归几何**：B 样条的节点模型（`knotSpan` / `isClampedKnotVector` / `knotContinuity` / `basisValue`）的签名里带着我们自己的数据模型；`Continuity` 出现在 `Curve<T>` / `Surface<T>` 的纯虚签名里，唯一消费者是几何。它们现在住在 `geom/detail/BSplineBasis.hpp` 与 `geom/Continuity.hpp`（`G1`、`G2`）。判据是**“签名里有没有我们自己的数据模型”**。
-- **`math` 没有 `detail`**：`detail` 回答“这是不是公开接口”，而 `math` 里每个头都是公开词汇，既没有“非公开的共享实现”，也没有第二个内容类别需要区分。要建 `math/detail` 的触发条件是“两个以上 `math` 头需要同一段不该外露的实现”，现在没有（`G8`）。
-- **子命名空间也一个都不剩**：`numeric` 与 `spline` 随内容一起走了，`math_global.hpp` 只提供根层命名空间宏。
+- **Geometric vocabulary belongs to geometry**: the B-spline knot model (`knotSpan` / `isClampedKnotVector` / `knotContinuity` / `basisValue`) carries our own data model in its signatures, and `Continuity` appears in the pure-virtual signatures of `Curve<T>` / `Surface<T>`, whose only consumer is geometry. They live in `geom/detail/BSplineBasis.hpp` and `geom/Continuity.hpp` (`G1`, `G2`). The criterion is **“does the signature carry our own data model”**.
+- **`math` has no `detail`**: `detail` answers “is this a public interface”, and every header in `math` is public vocabulary — there is neither a “non-public shared implementation” nor a second content category to tell apart. The trigger for creating `math/detail` is “two or more `math` headers need the same implementation that must not be exposed”, and there is none (`G8`).
+- **No sub-namespace is left either**: `numeric` and `spline` left with their content, and `math_global.hpp` provides the root-level namespace macro only.
 
-### 2.4 精度策略：模板 + 显式实例化 + 别名
+### 2.4 The precision strategy: a template + explicit instantiation + aliases
 
-- **是什么**：每个值类型是 `template <typename T>`（浮点型另受 `vn::math::FP` 约束）；`src/*.cpp` 用 `template class VN_MATH_API X<float>;` 的形式显式实例化，`Vector2/3/4`、`Point2/3` 还对整数类型实例化（整数向量是索引/像素坐标的真实需求，`Aabbi` 就是它）。
-- **为什么**：`G10` —— 头里定义 + 出 DLL 处显式实例化，让算术能内联、又只有一个符号副本；精度是类型参数意味着没有运行时分支，也不存在“float 版本忘了同步”。
-- **边界**：`T` 不是任意类型。整数实例只给向量/点，不给矩阵与四元数（它们的除法与开方在整数上无意义）；`VectorN` 接受浮点与整数（含 `bool`）。
-- **别名规则**：`<Noun><dim><scalar>`——`Vec2f` / `Vec3d` / `Vec3ui32` / `Point3d` / `Point2ui16` / `Mat3f` / `Mat4d` / `Quatf` / `Quatd` / `Isometry3d` / `Rect2i` / `Rect2d`。注意 `Vector2` 的别名是 `Vec2*`，**没有** `Vector2d` 这种写法。
+- **What it is**: every value type is `template <typename T>` (a floating-point one is further constrained by `vn::math::FP`); `src/*.cpp` instantiates explicitly as `template class VN_MATH_API X<float>;`, and `Vector2/3/4`, `Point2/3` are instantiated for integer types too (an integer vector is a real need for indices / pixel coordinates — `Aabbi` is one).
+- **Why**: `G10` — defining in the header and instantiating explicitly where it leaves the DLL lets the arithmetic inline while keeping one copy of each symbol; precision as a type parameter means no runtime branch and no “the float version was not kept in step”.
+- **Boundary**: `T` is not arbitrary. Integer instances exist for vectors and points only, not for matrices and quaternions (their division and square root are meaningless on integers); `VectorN` accepts floating-point and integer types (including `bool`).
+- **Alias rule**: `<Noun><dim><scalar>` — `Vec2f` / `Vec3d` / `Vec3ui32` / `Point3d` / `Point2ui16` / `Mat3f` / `Mat4d` / `Quatf` / `Quatd` / `Isometry3d` / `Rect2i` / `Rect2d`. Note `Vector2`'s alias is `Vec2*`, and there is **no** spelling such as `Vector2d`.
 
-### 2.5 存储顺序是类型参数，不是运行时开关
+### 2.5 Storage order is a type parameter, not a runtime switch
 
-- **是什么**：`Matrix3x3<T, Order>` / `Matrix4x4<T, Order>` 的 `Order` 默认为 `ColMajor`，另一个是 `RowMajor`；`Types.hpp` 里的两个空结构体就是这两个标记。矩阵按**列向量**约定作用于向量（`y = M * x`），平移在第 4 列；几何变换（平移、旋转、缩放）是 `Transform3.hpp` 的**自由函数**，不是成员。
-- **为什么**：`G4`、`G10` —— 布局决定 `rawData()` 怎么解释，把它做成运行时标志会让每个乘法都多一次分支；做成类型参数则两种布局都能被内联、且不能悄悄互传（同一个 `T` 的 `ColMajor` 矩阵与 `RowMajor` 矩阵是不同类型）。
-- **边界**：`Order` 只影响存储与原始数据构造的解释，不改变数学语义；与第三方库交换数据时必须在调用点确认对方的顺序（`loaders` 侧把 assimp 的列优先矩阵直接对应，不转置）。
+- **What it is**: `Matrix3x3<T, Order>` / `Matrix4x4<T, Order>` default `Order` to `ColMajor`, the other choice being `RowMajor`; the two empty structs in `Types.hpp` are those tags. A matrix acts on a vector under the **column-vector** convention (`y = M * x`) with the translation in column 4; the geometric transforms (translation, rotation, scale) are **free functions** in `Transform3.hpp`, not members.
+- **Why**: `G4`, `G10` — the layout decides how `rawData()` is read, and making it a runtime flag would add a branch to every multiplication; as a type parameter both layouts inline, and they cannot be silently interchanged (a `ColMajor` and a `RowMajor` matrix of the same `T` are different types).
+- **Boundary**: `Order` affects storage and how a raw-data construction is read, never the mathematical meaning; when exchanging data with a third-party library the caller must check that library's order at the call site (`loaders` maps assimp's column-major matrix directly, without transposing).
 
-### 2.6 `symmetricEigen` 是词汇里唯一的迭代，而它仍算词汇
+### 2.6 `symmetricEigen` is the only iteration in the vocabulary, and it still counts as vocabulary
 
-- **是什么**：`symmetricEigen(matrix, eigenvalues, eigenvectors?)` 用循环 Jacobi 求 3×3 实对称矩阵的特征分解：特征值升序、特征向量列对应、每个特征向量的最大分量取正以消除符号任意性、只读上三角；sweep 预算固定，返回 `bool` 表示是否收敛。
-- **为什么留在这里**：判据是**谁给精度目标**。这里调用方不给：预算内部固定，相对容差是 `4 * EPS<T>()`。所以它不是“我尽力逼近你给的目标”，而是“我按固定代价算到底并告诉你结果如何”（`G4`）。它**能**答“没达到”（`false`），但那只说明判据的前半句才是决定性的。
-- **边界**：不保证特征基的定向（要旋转矩阵时由调用方叉乘重建第三轴）；重特征值时基不唯一。
+- **What it is**: `symmetricEigen(matrix, eigenvalues, eigenvectors?)` computes the eigen-decomposition of a 3×3 real symmetric matrix with cyclic Jacobi: eigenvalues ascending, eigenvectors in the matching columns, each eigenvector's largest component made positive to remove the sign ambiguity, only the upper triangle read; the sweep budget is fixed and a `bool` reports whether it converged.
+- **Why it stays here**: the criterion is **who supplies the precision target**. Here the caller supplies none: the budget is fixed internally and the relative tolerance is `4 * EPS<T>()`. So it is not “I try to approach the target you gave” but “I compute to a fixed cost and tell you how it went” (`G4`). It **can** answer “it did not reach it” (`false`), but that only shows that the first half of the criterion is the decisive one.
+- **Boundary**: it does not fix the orientation of the eigenbasis (a caller building a rotation matrix crosses them for the third axis); with a repeated eigenvalue the basis is not unique.
 
-### 2.7 退化输入给可检查的值，不抛异常
+### 2.7 Degenerate input gives a checkable value, never an exception
 
-- **是什么**：`isZero` / `isEqual` 显式处理 `NaN` 与 `inf`（`EPS` 为 `inf` 时任何有限值都算“零/相等”，为 `NaN` 时退化为精确比较）；`EPS<T>()` 对 `float` / `double` 有特化，其它 `T` 答 `0`。
-- **为什么**：`G11`、`G4` —— `math` 在最底层，抛异常会把“一个谓词”变成控制流；返回 `NaN` 则让错误无声扩散到调用方最后才被发现。`isZero(NaN, eps) == false` 是刻意的：一个 `NaN` 不是零。
-- **边界**：`EPS<T>()` 对整数答 0 意味着整数上的“零”是精确比较——这是对的，整数没有舍入。
+- **What it is**: `isZero` / `isEqual` handle `NaN` and `inf` explicitly (with `EPS` = `inf` every finite value counts as “zero / equal”, with `NaN` they degrade to an exact comparison); `EPS<T>()` is specialised for `float` / `double` and answers `0` for any other `T`.
+- **Why**: `G11`, `G4` — `math` sits at the very bottom, and throwing would turn “a predicate” into control flow; returning `NaN` would let an error spread silently until the caller's far end notices it. `isZero(NaN, eps) == false` is deliberate: a `NaN` is not zero.
+- **Boundary**: `EPS<T>()` answering 0 for an integer means integer “zero” is an exact comparison — which is right, because integers do not round.
 
-## 3. 功能点
+## 3. Features
 
-| 编号 | 功能点 | 内容 | 状态 |
+| # | Feature | Content | Status |
 |---|---|---|---|
-| F1 | 值类型 | 向量、点、矩阵、四元数、等距、矩形、N 维向量 | 已落地 |
-| F2 | 常量与谓词 | π 与自然对数常量、`EPS<T>()`、角度归一化、容差比较、整数安全的乘加与开方 | 已落地 |
-| F3 | 概念与标记 | `FP` / `Real` / `Arithmetic` / `Integer` / `Integral` / `TypeF`、`ColMajor` / `RowMajor` | 已落地 |
-| F4 | 特征分解 | 3×3 实对称循环 Jacobi | 已落地 |
+| F1 | value types | vector, point, matrix, quaternion, isometry, rectangle, N-dimensional vector | landed |
+| F2 | constants and predicates | π and the natural-logarithm constants, `EPS<T>()`, angle normalisation, tolerance comparison, integer-safe multiply-add and square root | landed |
+| F3 | concepts and tags | `FP` / `Real` / `Arithmetic` / `Integer` / `Integral` / `TypeF`, `ColMajor` / `RowMajor` | landed |
+| F4 | eigen-decomposition | 3×3 real symmetric cyclic Jacobi | landed |
 
-### 3.1 F1 值类型
+### 3.1 F1 value types
 
-- **行为**：`Vector2/3/4`、`Point2/3`、`Matrix3x3/4x4`、`Quaternion`、`Isometry2/3`、`Rect2`、`VectorN` 为 `constexpr` 友好的值类型；`Isometry3` 是平移 + 四元数旋转的刚体变换，`Transform3.hpp` 提供 `translate` / 旋转 / 缩放等返回矩阵的自由函数。
-- **约束**（C2、C3）：浮点类型受 `FP` 约束；矩阵的存储顺序是类型参数、列向量约定；几何变换是自由函数而不是成员（`G1`：矩阵不知道“变换”这个用途）。
-- **验收**（T1）：`VectorTest`、`Matrix3x3Test`、`Matrix4x4Test`、`QuaternionTest`、`Rect2Test`、`Transform3Test`。
+- **Behaviour**: `Vector2/3/4`, `Point2/3`, `Matrix3x3/4x4`, `Quaternion`, `Isometry2/3`, `Rect2`, `VectorN` are `constexpr`-friendly value types; `Isometry3` is a rigid transform of a translation plus a quaternion rotation, and `Transform3.hpp` provides `translate` / rotation / scale free functions that return a matrix.
+- **Constraints** (C2, C3): a floating-point type is constrained by `FP`; a matrix's storage order is a type parameter with the column-vector convention; a geometric transform is a free function rather than a member (`G1`: a matrix does not know the purpose “transform”).
+- **Acceptance** (T1): `VectorTest`, `Matrix3x3Test`, `Matrix4x4Test`, `QuaternionTest`, `Rect2Test`, `Transform3Test`.
 
-### 3.2 F2 常量与谓词
+### 3.2 F2 constants and predicates
 
-- **行为**：`PI` / `PI_TWO` / `PI_HALF` / `PI_QUARTER`、`E` / `LOG2E` / `LOG10E` / `LN2` / `LN10`、`RAD_TO_DEG` / `DEG_TO_RAD`、`EPS<T>()`、`isZero` / `isEqual`、`normalizeAngle`（`[-π, π]`）/ `normalizeAnglePositive`（`[0, 2π)`）、`safeMultiply` / `safeLength` / `safeLengthSquared`（整数先提升到 `double`）、`arithmeticAdd/Sub/Multiply/Division/Nagate`（`bool` 按逻辑运算解释）。
-- **约束**（C4）：`isZero` / `isEqual` 必须显式处理 `NaN` / `inf`，不得让它们静默通过。
-- **验收**（T2）：由 `VectorTest` / `Rect2Test` 的谓词用例与几何侧的 `isValid()` 用例共同覆盖。
+- **Behaviour**: `PI` / `PI_TWO` / `PI_HALF` / `PI_QUARTER`, `E` / `LOG2E` / `LOG10E` / `LN2` / `LN10`, `RAD_TO_DEG` / `DEG_TO_RAD`, `EPS<T>()`, `isZero` / `isEqual`, `normalizeAngle` (`[-π, π]`) / `normalizeAnglePositive` (`[0, 2π)`), `safeMultiply` / `safeLength` / `safeLengthSquared` (integers promoted to `double` first), and `arithmeticAdd/Sub/Multiply/Division/Nagate` (`bool` interpreted as a logical operation).
+- **Constraints** (C4): `isZero` / `isEqual` must handle `NaN` / `inf` explicitly and must never let them pass silently.
+- **Acceptance** (T2): covered together by the predicate cases in `VectorTest` / `Rect2Test` and the `isValid()` cases on the geometry side.
 
-### 3.3 F4 特征分解
+### 3.3 F4 eigen-decomposition
 
-- **行为**：见 2.6。
-- **验收**（T4）：`EigenDecompositionTest`。
+- **Behaviour**: see 2.6.
+- **Acceptance** (T4): `EigenDecompositionTest`.
 
-## 4. 公开接口
+## 4. Public Interface
 
-| 头文件 | 公开内容 |
+| Header | Public content |
 |---|---|
-| `Vector2.hpp` / `Vector3.hpp` / `Vector4.hpp` / `VectorN.hpp` | `Vector2/3/4<T>`、`VectorN<T, N>`、`Vec2f` / `Vec3d` / `Vec3ui32` 等别名 |
-| `Point2.hpp` / `Point3.hpp` | `Point2/3<T>`、`Point2d` / `Point3f` / `Point2ui16` 等别名 |
+| `Vector2.hpp` / `Vector3.hpp` / `Vector4.hpp` / `VectorN.hpp` | `Vector2/3/4<T>`, `VectorN<T, N>`, the `Vec2f` / `Vec3d` / `Vec3ui32` aliases |
+| `Point2.hpp` / `Point3.hpp` | `Point2/3<T>`, the `Point2d` / `Point3f` / `Point2ui16` aliases |
 | `Matrix3x3.hpp` / `Matrix4x4.hpp` | `Matrix3x3<T, Order>` / `Matrix4x4<T, Order>`、`Mat3f` / `Mat4d` |
 | `Quaternion.hpp` / `Isometry2.hpp` / `Isometry3.hpp` | `Quaternion<T>`、`Isometry2/3<T>`、`Quatf` / `Quatd` / `Isometry3d` |
-| `Rect2.hpp` / `Transform2.hpp` / `Transform3.hpp` | `Rect2<T>`（`Rect2i/f/d`）与变换构造函数（返回矩阵） |
-| `Math.hpp` | 常量、`EPS<T>()`、谓词、整数安全算术、角度归一化 |
-| `Types.hpp` | 概念（`FP` / `Real` / `Arithmetic` / …）、`TypeF<T>`、`ColMajor` / `RowMajor` |
+| `Rect2.hpp` / `Transform2.hpp` / `Transform3.hpp` | `Rect2<T>` (`Rect2i/f/d`) and the transform constructors (returning a matrix) |
+| `Math.hpp` | constants, `EPS<T>()`, predicates, integer-safe arithmetic, angle normalisation |
+| `Types.hpp` | concepts (`FP` / `Real` / `Arithmetic` / …), `TypeF<T>`, `ColMajor` / `RowMajor` |
 | `EigenDecomposition.hpp` | `symmetricEigen()` |
 | `math_global.hpp` | `VN_MATH_API`、`VN_MATH_NS_BEGIN` / `VN_MATH_NS_END` |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-- **C1**：依赖方向只有“上层 → `math`”。`math` 的公开头只 include 本模块头与标准库，不 include 任何其它 `vine` 模块。
-- **C2**：精度是模板参数；浮点类型受 `FP` 约束；整数实例只覆盖向量与点。
-- **C3**：矩阵存储顺序是类型参数、默认 `ColMajor`，按列向量约定 `y = M * x`；几何变换是自由函数。
-- **C4**：退化/非有限输入给可检查的值（`NaN` 感知的谓词、`bool`），不抛异常、不静默产生 `NaN`。
-- **C5**：`math` 只装词汇。带调用方精度目标的函数、以及任何带我们自己的数据模型的函数，都不在这里。
-- **C6**：`math_global.hpp` 只提供根层命名空间的宏；模块内没有子命名空间。
-- **C7**：公开别名是 `<Noun><dim><scalar>`；`Vector2` 的别名是 `Vec2*`。
-- **R1**：值类型默认不分配内存（`VectorN` 是定长数组）。
-- **N1**：`EPS<T>()` 只对 `float` / `double` 有特化，其它 `T` 答 `0`。
-- **N2**：`normalizeAngle` 落在 `[-π, π]`，`normalizeAnglePositive` 落在 `[0, 2π)`。
-- **N3**：`symmetricEigen` 特征值升序、只用上三角、特征向量符号规范化；`false` 表示“未在固定预算内收敛”，返回的基是近似值。
+- **C1**: the dependency direction is “upper layer → `math`” only. A public `math` header includes this module's headers and the standard library, and no other `vine` module.
+- **C2**: precision is a template parameter; a floating-point type is constrained by `FP`; integer instances cover vectors and points only.
+- **C3**: a matrix's storage order is a type parameter defaulting to `ColMajor`, with the column-vector convention `y = M * x`; a geometric transform is a free function.
+- **C4**: a degenerate or non-finite input gets a checkable value (`NaN`-aware predicates, `bool`) — no exception and no silent `NaN`.
+- **C5**: `math` holds vocabulary only. A function with a caller-supplied precision target, or any function carrying our own data model, is not here.
+- **C6**: `math_global.hpp` provides the root-level namespace macro only; the module has no sub-namespace.
+- **C7**: a public alias is `<Noun><dim><scalar>`; `Vector2`'s alias is `Vec2*`.
+- **R1**: a value type allocates no memory by default (`VectorN` is a fixed-size array).
+- **N1**: `EPS<T>()` is specialised for `float` / `double` only and answers `0` for any other `T`.
+- **N2**: `normalizeAngle` lands in `[-π, π]` and `normalizeAnglePositive` in `[0, 2π)`.
+- **N3**: `symmetricEigen` orders eigenvalues ascending, reads the upper triangle only and normalises eigenvector signs; `false` means “did not converge within the fixed budget” and the returned basis is an approximation.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-- **P1 谓词对 `NaN` 的答案不是直觉**：`isZero(NaN, eps)` 是 `false`；`eps` 为 `inf` 时任何有限值都算零/相等。调用方要“`NaN` 算作无效”，就用 `isValid()` 这类显式判据，不要指望谓词。
-- **P2 别名别猜**：`Vector2` 的浮点别名是 `Vec2f` / `Vec2d`，**没有** `Vector2d`；`Vector3` 同理。写错会在编译期报“未声明的标识符”，但在跨模块 review 里不容易发现。
-- **P3 `Point3::length()` 不存在**：两点距离写 `(a - b).length()`，单点没有“长度”这个语义。
-- **P4 `Isometry2` / `Isometry3` 的 `T` 只接受 `float` / `double`**：刚体变换用整数没有意义，模板约束在类定义里就挡住了；向量/点则接受整数。
-- **P5 需要积分、求根或样条求值时不要来 `math` 找**：它们在 `geom/detail`（第三个非几何消费者出现时才升独立模块，见 `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`）。
+- **P1 a predicate's answer for `NaN` is not the intuitive one**: `isZero(NaN, eps)` is `false`; with `eps` = `inf` every finite value counts as zero / equal. A caller that wants “`NaN` counts as invalid” uses an explicit criterion such as `isValid()` and does not expect it from a predicate.
+- **P2 do not guess an alias**: `Vector2`'s floating-point aliases are `Vec2f` / `Vec2d`, and there is **no** `Vector2d`; the same holds for `Vector3`. A wrong spelling is a compile error, but easy to miss in a cross-module review.
+- **P3 `Point3::length()` does not exist**: a distance between two points is `(a - b).length()`, and a single point has no such thing as a “length”.
+- **P4 `Isometry2` / `Isometry3` take `float` / `double` only** for `T`: an integer rigid transform is meaningless, and the template constraint blocks it in the class definition; vectors and points do accept integers.
+- **P5 do not look in `math` for integration, root finding or spline evaluation**: they are in `geom/detail` (they become their own module only when a third non-geometric consumer appears — see `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`).
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-- **D1** 保留一层通用数值（`math/numeric` 或独立 `vn::Numeric` 模块）：`G8`、`G5`——今天唯一的消费者是几何，为三个函数开一层是空壳；独立模块的触发条件写在 ADR 里（第二个消费者出现），到那时再拆比现在预建便宜。
-- **D2** 把 `spline/` 升成独立模块 `vn::Nurbs`：`G8`——只有一个“表示约定”家族时它是空壳；且该家族已随 `geom/detail` 落到几何侧。
-- **D3** 让 `math` 继续当几何词汇与表示约定的家：`G1`、`G2`——`math` 会被迫用一篇文档为名字辩护（`ADR-2026-11-06-math-is-the-base-layer.md` 当时就是这么做的），而它的消费者只有几何。已推翻，见 `../decisions/ADR-2026-11-06-spline-model-moves-to-geom.md` 与 `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`。
-- **D4** 往 `math` 里加 `detail` 子树：`G8`——没有“非公开的共享实现”可放，见 2.3。
-- **D5** 按类型族再分子目录（`vector/`、`matrix/`、`transform/`）：`G8`、`G4`——根层 18 个头按名字已经能找，再分一层会让 `Point3` / `Vector3` / `Matrix3x3` 这类必须一起用的类型散在三个路径里。
+- **D1** keep a general numeric layer (`math/numeric` or a standalone `vn::Numeric` module): `G8`, `G5` — the only consumer today is geometry, so a layer for three functions is an empty shell; the trigger for a standalone module is written in the ADR (a second consumer), and splitting then is cheaper than pre-building now.
+- **D2** promote `spline/` into a standalone `vn::Nurbs` module: `G8` — with one “representation convention” family it would be an empty shell, and that family has gone to the geometry side with `geom/detail`.
+- **D3** let `math` go on hosting the geometric vocabulary and the representation conventions: `G1`, `G2` — `math` would have to defend its name with a document (`ADR-2026-11-06-math-is-the-base-layer.md` did exactly that), while its consumers are geometry only. Overturned; see `../decisions/ADR-2026-11-06-spline-model-moves-to-geom.md` and `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`.
+- **D4** add a `detail` sub-tree to `math`: `G8` — there is no “non-public shared implementation” to put in it, see 2.3.
+- **D5** split further by type family (`vector/`, `matrix/`, `transform/`): `G8`, `G4` — the 18 root-level headers can already be found by name, and one more level would scatter types that must be used together (`Point3` / `Vector3` / `Matrix3x3`) across three paths.
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| 编号 | 判据 | 用例 / 命令 |
+| # | Criterion | Test case / command |
 |---|---|---|
-| T1 | 值类型的算术、比较、变换语义 | `test_math`：`VectorTest`、`Matrix3x3Test`、`Matrix4x4Test`、`QuaternionTest`、`Rect2Test`、`Transform3Test` |
-| T2 | 常量与谓词的边界（`NaN` / `inf` / 方向） | 同上，加几何侧 `isValid()` 用例 |
-| T4 | 特征值升序、特征向量正交与符号规范化、重特征值 | `test_math`：`EigenDecompositionTest` |
-| T5 | 全量 | `build\bin\Debug\test_math.exe --gtest_brief=1`（7 套 36 例） |
+| T1 | the arithmetic, comparison and transform semantics of the value types | `test_math`: `VectorTest`, `Matrix3x3Test`, `Matrix4x4Test`, `QuaternionTest`, `Rect2Test`, `Transform3Test` |
+| T2 | the edges of the constants and predicates (`NaN` / `inf` / a direction) | same, plus the `isValid()` cases on the geometry side |
+| T4 | eigenvalues ascending, eigenvectors orthogonal with normalised signs, a repeated eigenvalue | `test_math`: `EigenDecompositionTest` |
+| T5 | the full suite | `build\bin\Debug\test_math.exe --gtest_brief=1` (7 suites, 36 cases) |
 
-积分、求根与样条求值的用例随实现迁到了 `test_geom_spatial`（`QuadratureTest`、`RootFindingTest`、`BSplineBasisTest`）。
+The integration, root-finding and spline-evaluation cases live in `test_geom_spatial` (`QuadratureTest`, `RootFindingTest`, `BSplineBasisTest`) together with their implementation.
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-- **现状**：F1–F4 全部落地；`test_math` 36 例全绿。依赖它的模块：图形、几何、机器人、模型、加载器、核心（`Vec3f` 作为顶点元素类型）。
-- **边界**：`Continuity` 与 B 样条节点模型在 `geom`；求根 / 积分 / Bernstein 求值在 `geom/detail`；`math` 只剩词汇，也没有只有 BOM 的占位头。 <!-- drift-ok -->
-- **已知偏差**：根层的数学常量沿用 `PI` / `PI_TWO` / `EPSF` 这类全大写名，与仓库“常量用 `k` 前缀”的约定不一致（历史遗留，未改名：它们出现在大量调用点，改名收益低于风险）。新增常量按 `k` 规则写。
-- **待办**：无。若将来出现非几何的求根/积分/Bernstein 消费者，按 `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md` 的反转路径升独立模块。
+- **Current state**: F1–F4 are all in place; all 36 cases in `test_math` are green. Modules that depend on it: graphics, geometry, robotics, models, loaders, core (`Vec3f` as the vertex element type).
+- **Boundary**: `Continuity` and the B-spline knot model are in `geom`; root finding / integration / Bernstein evaluation are in `geom/detail`; `math` holds vocabulary only and no BOM-only placeholder header. <!-- drift-ok -->
+- **Known deviation**: the root-level mathematical constants keep all-capital names such as `PI` / `PI_TWO` / `EPSF`, which does not match the repository's “a constant uses the `k` prefix” rule (a legacy, not renamed: they appear at a great many call sites and the rename buys less than it risks). New constants follow the `k` rule.
+- **Backlog**: none. If a non-geometric consumer of root finding / integration / Bernstein evaluation appears, promote it into its own module along the reversal path of `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`.
 
-## 10. 参考
+## 10. References
 
-- 代码：`src/base/math/sdk/vine/math/`（18 个头，无子目录）、`src/base/math/src/`（14 个实例化单元）、`tests/test_math/`（7 个用例文件，36 例）。
-- 决策：`../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`、`../decisions/ADR-2026-11-06-spline-model-moves-to-geom.md`、`../decisions/ADR-2026-11-06-math-is-the-base-layer.md`（已取代）、`../decisions/ADR-2026-11-06-shared-numeric-kernels-in-math.md`（已取代）。
-- 相关设计：`geometry-module.md`（几何侧的目录、命名与共享子树）、`geometry-intersection.md` 2.7（求根器为何在几何侧）、`geometry-primitives.md` 2.7（`symmetricEigen` 为何不进几何）。
-- 陷阱复盘：`../bugs/spline-knotspan-hang.md`（`knotSpan` 死循环，现已随头文件移入几何）。
+- Code: `src/base/math/sdk/vine/math/` (18 headers, no subdirectory), `src/base/math/src/` (14 instantiation units), `tests/test_math/` (7 case files, 36 cases).
+- Decisions: `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`, `../decisions/ADR-2026-11-06-spline-model-moves-to-geom.md`, `../decisions/ADR-2026-11-06-math-is-the-base-layer.md` (superseded), `../decisions/ADR-2026-11-06-shared-numeric-kernels-in-math.md` (superseded).
+- Related design: `geometry-module.md` (the geometry side's directories, naming and shared sub-tree), `geometry-intersection.md` 2.7 (why the root finder sits on the geometry side), `geometry-primitives.md` 2.7 (why `symmetricEigen` does not go into geometry).
+- Postmortem: `../bugs/spline-knotspan-hang.md` (`knotSpan` looping forever; the header lives in geometry now).
