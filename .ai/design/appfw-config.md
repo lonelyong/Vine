@@ -1,285 +1,306 @@
-# appfw 配置子系统设计
+# appfw's configuration subsystem
 
-> **状态**：现行
-> **最后核对**：2026-11-02
-> **范围**：`ConfigManager` / `ConfigRegistry` / `gui::ConfigWindow` 的三层分工与契约。
-> **权威来源**：`ConfigManager.hpp`、`ConfigRegistry.hpp`、`gui/ConfigWindow.hpp`、`tests/test_gui`。
-> **待办**：无（开放项见 `../backlog/`）
+> **Status**: current
+> **Last verified**: 2026-11-02
+> **Scope**: the three-layer division of work and the contracts of `ConfigManager` / `ConfigRegistry` / `gui::ConfigWindow`.
+> **Sources**: `ConfigManager.hpp`, `ConfigRegistry.hpp`, `gui/ConfigWindow.hpp`, `tests/test_gui`.
+> **Backlog**: none (open items are in `../backlog/`)
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-配置有三件不同的事：值（运行期读写）、描述（显示树/类型/默认值/range/owner）、视图（编辑器）。
-把它们混在一层会让插件注册、宿主读写和 UI 刷新互相污染。
+Configuration is three different things: values (read and written at run time), descriptions (the display tree / type / default / range / owner) and the view (an editor).
+Mixing them in one layer lets plugin registration, host reads and writes, and UI refreshes contaminate each other.
 
-### 1.2 目标
+### 1.2 Goals
 
-- 值层 `ConfigManager`：key → 值，线程安全，变化通知。
-- 描述层 `ConfigRegistry`：`ConfigCategory → ConfigGroup → ConfigItem`，key 全树唯一。
-- 视图层 `gui::ConfigWindow`：由描述树生成编辑器，值来自 `ConfigManager`。
-- 需要重启的策略随 `ConfigItem` 走（`restartRequired()`），“现在是否有改动待生效”随本次运行走（`Application::pendingRestartKeys()`）。
+- The value layer, `ConfigManager`: key → value, thread-safe, with change notification.
+- The description layer, `ConfigRegistry`: `ConfigCategory → ConfigGroup → ConfigItem`, with keys unique across the tree.
+- The view layer, `gui::ConfigWindow`: builds editors from the description tree, with values from `ConfigManager`.
+- The policy that needs a restart travels with the `ConfigItem` (`restartRequired()`); "is there a change waiting to take effect now" belongs to this run
+  (`Application::pendingRestartKeys()`).
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不给 `ConfigManager` 加“存储类型查询”API；不为一个 GUI 细节扩公共面。
-- 不做 fsync；只保证“要么旧内容要么新内容”。
-- 不在 `ConfigWindow` 里监听注册表变化自动重建；窗口是快照。
-- 不在配置层重启应用：框架只回答“是否待重启”，重启得走宿主自己的关停流程（未保存的文档、插件卸载顺序都归宿主）。
+- No "what storage type is this" API on `ConfigManager`; no public surface grown for one GUI detail.
+- No fsync; only "either the old content or the new content".
+- `ConfigWindow` does not watch the registry and rebuild itself; the window is a snapshot.
+- The configuration layer does not restart the application: the framework only answers "is a restart pending", and restarting goes through the host's own shutdown flow
+  (unsaved documents and plugin unload order are the host's).
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-配置分三层：**值**归 `ConfigManager`、**描述**归 `ConfigRegistry`、**编辑器**归 `ConfigWindow`；
-`changed` 只在值真的变化时发，空 key 表示“整体变化”。
+Configuration has three layers: **values** belong to `ConfigManager`, **descriptions** to `ConfigRegistry`, and **the editor** to `ConfigWindow`; `changed` fires only
+when a value really changes, and an empty key means "the whole configuration changed".
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 值层：`ConfigManager`
+### 2.1 The value layer: `ConfigManager`
 
-- **存储与事件**：类型就是 API 能表达的类型（String/bool/int/double 及数组）；无变化的写入不发 `changed`，空 key 只表示整份配置变化。
-- **读取与默认值边界**（G4、G7；接受 G2 的实现层反向依赖）：标量 getter 依次取存储值、当前应用 Registry 的同类型默认值、显式 fallback；无参无值返回 `optional`。仅当前应用自己的 manager 查 Registry，独立 manager 不受影响；依赖藏在 `.cpp`，头文件不依赖描述/UI 类型。内部 `shared_mutex`，事件在锁外触发。
-- **输入边界**：JSON 项值必须符合声明类型，不匹配项 warning 后跳过；`ConfigItem` 校验数值约束和 String 编辑约束，值层不校验这些约束。
+- **Storage and events**: the types are exactly the types the API can express (String / bool / int / double and their arrays); a write that changes nothing fires no
+  `changed`, and an empty key only means the whole configuration changed.
+- **Read and the default-value boundary** (G4, G7; accepting a G2 back-dependency in the implementation): a scalar getter takes the stored value, then the same-typed
+  default from the current application's Registry, then an explicit fallback; without an argument and without a value it returns an `optional`. Only the current
+  application's own manager consults the Registry, and a standalone manager is unaffected; the dependency is hidden in the `.cpp`, so the header depends on no description
+  or UI type. Internally a `shared_mutex`, and events fire outside the lock.
+- **Input boundary**: a JSON item's value must match its declared type, and a mismatching item is warned about and skipped; `ConfigItem` validates numeric constraints
+  and String editing constraints, and the value layer validates none of them.
 
-### 2.2 描述层：`ConfigRegistry`
+### 2.2 The description layer: `ConfigRegistry`
 
-- **key 全树唯一**：`ConfigGroup::addItem` 通过 `ConfigRegistry::item()` 查重。
-- **owner 是缓存**：`addItem` 记录；空 owner 清除；删除路径清理；查询跳过已不在树上的项，结果按 key 升序。
-- **框架自己也注册项**：`Application::initialize()` 用空 owner 注册 `general.language`，因此不会被插件卸载带走。
-- **生命周期/线程**：查询返回树内节点裸指针，节点被删即失效；注册在启动/插件装载期完成，之后只读。
+- **Keys are unique across the tree**: `ConfigGroup::addItem` checks with `ConfigRegistry::item()`.
+- **The owner is a cache**: `addItem` records it, an empty owner clears it, the delete paths clean it up, a query skips items no longer on the tree, and results are in
+  ascending key order.
+- **The framework registers items too**: `Application::initialize()` registers `general.language` with an empty owner, so no plugin unload takes it away.
+- **Lifetime / threads**: a query returns a raw pointer to a node in the tree, and the node's deletion invalidates it; registration happens during startup / plugin loading,
+  and afterwards the tree is read only.
 
-### 2.3 视图层：`gui::ConfigWindow`
+### 2.3 The view layer: `gui::ConfigWindow`
 
-- **值是否设置**（G1、G3、G4）：以 `ConfigManager::contains/remove` 表示；读取可返回描述默认值，但不写存储。编辑器仍显示未设置状态，只有显式设置或 `reset()` 才写入。
-- **编辑行为**：`required` 适用于所有编辑器；数值未设置时进入空白编辑，首个有效输入才写入，清除操作回到未设置。显式 `reset()` 才应用默认值。
-- **生命周期**：构造时对描述树取快照；编辑器与 key 成对保存，`refresh()`/`reset()` 按 key 查找。
-- **数值与线程**：未声明 range 不夹取；配置变更回调切回 GUI 线程后再更新控件。
+- **Whether a value is set** (G1, G3, G4): expressed by `ConfigManager::contains/remove`; a read may return the description's default, but that writes no storage. The
+  editor still shows the unset state, and only an explicit set or `reset()` writes.
+- **Editing**: `required` applies to every editor; an unset number enters a blank edit, only the first valid input writes, and clearing returns to unset. Only an explicit
+  `reset()` applies the default.
+- **Lifetime**: the constructor snapshots the description tree; an editor is stored with its key, and `refresh()` / `reset()` look it up by key.
+- **Numbers and threads**: no declared range means no clamping; a configuration change callback switches back to the GUI thread before updating a widget.
 
-### 2.4 需要重启的配置：策略在描述层，状态在运行层（G1、G4、G7、G11）
+### 2.4 Configuration that needs a restart: the policy is in the description layer, the state in the run layer (G1, G4, G7, G11)
 
-- **策略与状态**：`restartRequired()` 声明 key 只在启动时读取，登记模块必须兑现；`pendingRestartKeys()` 比较启动快照与当前存储值。
-- **边界与取舍**（G1、G4、G7）：策略不是运行状态；编辑立即写新值，效果仍是旧值直到重启，窗口用提示表达，不引入草稿层。
-- **比较与提醒**：缺键与存默认值视为不同（N6）；窗口显示状态，宿主也可查询并自行提示。
+- **Policy and state**: `restartRequired()` declares that a key is read only at startup, and the module that registers it must honour that; `pendingRestartKeys()` compares
+  the startup snapshot with the current stored values.
+- **Boundary and trade-off** (G1, G4, G7): a policy is not run-time state; an edit writes the new value at once, the effect stays the old one until the restart, the window
+  says so in its hints, and no draft layer is introduced.
+- **Comparison and reminder**: a missing key and a stored default count as different (N6); the window shows the state, and the host may query it and warn on its own.
 
-## 3. 功能点
+## 3. Features
 
-### 3.1 功能索引
+### 3.1 Feature index
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 | --- | --- | --- | --- |
-| F1 | 值存储 | `ConfigManager` 读写 String/bool/int/double 及数组 | 已落地 |
-| F2 | 变化通知 | `changed` 只在值变化/整体替换时发 | 已落地 |
-| F3 | 保存/加载 | `QSaveFile` 原子写；JSON 装载整体替换 | 已落地 |
-| F4 | 描述树 | `ConfigRegistry` 树、key 唯一、owner 缓存 | 已落地 |
-| F5 | 配置窗口 | 快照 + key 配对 + 通用未设置/必填 + 未声明 range 不夹取 | 已落地 |
-| F6 | 需要重启的配置 | `restartRequired()` 声明策略；`pendingRestartKeys()` 给状态；窗口逐行提示 + 顶部条 | 已落地 |
-| F7 | 字符串约束 | String 项可声明整串正则与 grapheme 长度范围；配置窗口仅写入有效编辑值 | 已落地 |
+| F1 | Value storage | `ConfigManager` reads and writes String / bool / int / double and their arrays | landed |
+| F2 | Change notification | `changed` fires only on a real change or a whole replacement | landed |
+| F3 | Save / load | `QSaveFile` atomic write; loading JSON replaces everything | landed |
+| F4 | The description tree | the `ConfigRegistry` tree, unique keys, the owner cache | landed |
+| F5 | The configuration window | a snapshot + key pairing + the generic unset / required handling + no clamping without a declared range | landed |
+| F6 | Configuration that needs a restart | `restartRequired()` declares the policy; `pendingRestartKeys()` gives the state; a per-row hint + a top bar in the window | landed |
+| F7 | String constraints | a String item may declare a whole-string regular expression and a grapheme length range; the window writes valid edits only | landed |
 
-### 3.1.1 F1 值存储
+### 3.1.1 F1 Value storage
 
-- **行为**：`ConfigManager` 存 String/bool/int/double 及 vector 版本；标量 `get*` 返回存储值、注册默认值或调用方 fallback，`set*` 写入。
-- **约束**（C1）：存储类型就是 API 能表达的类型；int 就是 `int`。
-- **要求**（R1）：无参标量读取返回 `optional`；显式 fallback 重载必传 fallback；数组读取保持空数组 fallback。
-- **验收**（T1）：`ConfigManager_Basic`、`ConfigManager_JsonRoundTripKeepsTypes`。
-- **注意**（N1）：JSON 超范围整数夹取 + warning，不失败整份配置。
+- **Behaviour**: `ConfigManager` stores String / bool / int / double and their vector forms; a scalar `get*` returns the stored value, the registered default or the caller's
+  fallback, and `set*` writes.
+- **Constraints** (C1): the storage type is exactly what the API can express; an int is an `int`.
+- **Requirements** (R1): an argument-less scalar read returns an `optional`; a fallback overload must be passed a fallback; an array read keeps the empty-array fallback.
+- **Acceptance** (T1): `ConfigManager_Basic`, `ConfigManager_JsonRoundTripKeepsTypes`.
+- **Caveat** (N1): an out-of-range JSON integer is clamped with a warning, and does not fail the whole configuration.
 
-### 3.1.2 F2 变化通知
+### 3.1.2 F2 Change notification
 
-- **行为**：`changed` 在值真的变化时发；空 key 表示整体变化。
-- **约束**（C2）：`changed` 在释放锁之后触发；处理函数可安全回调管理器。
-- **要求**（R2）：同值写入/删除不存在键/clear 空配置/loadJson 内容相同都不发。
-- **验收**（T2）：`ConfigManager_NotifiesOnlyOnRealChanges`、`ConfigManager_ChangedEvent`。
-- **注意**（N2）：订阅/退订本身无锁，启动期接线。
+- **Behaviour**: `changed` fires when a value really changes; an empty key means the whole configuration.
+- **Constraints** (C2): `changed` fires after the lock is released, so a handler may safely call back into the manager.
+- **Requirements** (R2): writing the same value, removing a missing key, clearing an empty configuration and loading identical JSON all fire nothing.
+- **Acceptance** (T2): `ConfigManager_NotifiesOnlyOnRealChanges`, `ConfigManager_ChangedEvent`.
+- **Caveat** (N2): subscribing and unsubscribing take no lock themselves; the wiring happens at startup.
 
-### 3.1.3 F3 保存/加载
+### 3.1.3 F3 Save / load
 
-- **行为**：`save()` 用 `QSaveFile` 原子写；`loadJson()`/`load()` 解析在锁外完成，成功后整体替换。
-- **约束**（C3）：`open`/`write`/`commit` 每步检查；失败时旧文件不变。
-- **要求**（R3）：父目录必须存在（宿主负责创建）；文本不是 JSON 对象才返回 false。
-- **验收**（T3）：`ConfigManager_SaveReportsFailureAndKeepsTheOldFile`、
-  `ConfigManager_BadEntriesAreIgnoredNotFatal`。
-- **注意**（N3）：不符合 `{"type":...,"value":...}` 形状的条目跳过并 warning。
+- **Behaviour**: `save()` writes atomically through `QSaveFile`; `loadJson()` / `load()` parse outside the lock and replace everything once they succeed.
+- **Constraints** (C3): `open` / `write` / `commit` are each checked; on failure the old file is untouched.
+- **Requirements** (R3): the parent directory must exist (the host creates it); only text that is not a JSON object returns false.
+- **Acceptance** (T3): `ConfigManager_SaveReportsFailureAndKeepsTheOldFile`, `ConfigManager_BadEntriesAreIgnoredNotFatal`.
+- **Caveat** (N3): an entry that does not have the `{"type":...,"value":...}` shape is skipped with a warning.
 
-### 3.1.4 F4 描述树
+### 3.1.4 F4 The description tree
 
-- **行为**：`ConfigRegistry` 管 `ConfigCategory → ConfigGroup → ConfigItem`；key 全树唯一；标准节点创建时把当前语言的标签写进 `label()`。
-- **约束**（C4）：owner 是缓存；空 owner 清除；删除路径清理。
-- **要求**（R4）：`itemsForPlugin(p)` 的每一项都真实存在且 owner 是 p；顺序 key 升序。
-- **验收**（T4）：`ConfigRegistry_Register` / `MetaAndOrder` / `StandardCategories` / `Ownership`。
-- **注意**（N4）：查询返回裸指针，节点被删即失效；注册后只读。
+- **Behaviour**: `ConfigRegistry` manages `ConfigCategory → ConfigGroup → ConfigItem`; keys are unique across the tree; a standard node writes the label in the current
+  language into `label()` when it is created.
+- **Constraints** (C4): the owner is a cache; an empty owner clears it; the delete paths clean it up.
+- **Requirements** (R4): every item from `itemsForPlugin(p)` really exists and has `p` as its owner; the order is ascending by key.
+- **Acceptance** (T4): `ConfigRegistry_Register` / `MetaAndOrder` / `StandardCategories` / `Ownership`.
+- **Caveat** (N4): a query returns a raw pointer, which the node's deletion invalidates; after registration the tree is read only.
 
-### 3.1.5 F5 配置窗口
+### 3.1.5 F5 The configuration window
 
-- **行为**：构造时对描述树取快照；编辑器按 key 显示存储值。数值未设置时，点击“设置”只打开空白 spinbox；有效数字才写入，`reset()` 显式写默认值。
-- **约束**（C5）：未设置与默认值不同；所有类型按 `required` 展示可设置/不可取消状态；Choice 无匹配时不伪造选择。
-- **要求**（R5）：编辑按类型写入或移除 key；`refresh()` 屏蔽信号；未声明数值 range 不夹取。
-- **验收**（T5）：`RefreshKeepsEachValueWithItsKey`、`ChoiceWithoutMatchShowsNoSelection`、
-  `UnboundedNumbersAreNotClamped`、`OptionalValuesCanBeUnsetAcrossTypes`、
-  `RequiredValuesAreNotUnsetByTheEditor`。
-- **注意**（N5）：窗口是快照，构造后注册的项要重建窗口才出现。
+- **Behaviour**: the constructor snapshots the description tree, and an editor shows the stored value by key. With an unset number, clicking "set" opens an empty spinbox
+  only; a valid number writes, and `reset()` writes the default explicitly.
+- **Constraints** (C5): unset differs from default; every type shows the settable / not-cleatable state according to `required`; a Choice with no match fakes no selection.
+- **Requirements** (R5): an edit writes or removes the key by type; `refresh()` blocks signals; no declared numeric range means no clamping.
+- **Acceptance** (T5): `RefreshKeepsEachValueWithItsKey`, `ChoiceWithoutMatchShowsNoSelection`, `UnboundedNumbersAreNotClamped`,
+  `OptionalValuesCanBeUnsetAcrossTypes`, `RequiredValuesAreNotUnsetByTheEditor`.
+- **Caveat** (N5): the window is a snapshot, so an item registered after construction appears only in a rebuilt window.
 
-### 3.1.6 F6 需要重启的配置
+### 3.1.6 F6 Configuration that needs a restart
 
-- **行为**：带 `restartRequired()` 的项在行标签后加“（重启后生效）”；当 `pendingRestartKeys()` 非空时，窗口顶部显示一条“有改动需要重启才能生效”。
-- **约束**（C6）：状态只在 `Application` 上，窗口每次问它——两个窗口给同一个答案，后开的窗口也知道先前改过什么。
-- **要求**（R6）：改回启动值后不再待生效；不需要重启的 key 永远不进列表；列表为空时提示条隐藏。
-- **验收**（T8）：`ConfigTest.OnlyRestartRequiredItemsCanBePending`、`ConfigTest.TheBaselineIsThisRunNotTheProcess`、`GuiTest.ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange`。
-- **注意**（N6）：比较的是存储值，不是效果；`system` 与 key 缺失算不同。
+- **Behaviour**: an item with `restartRequired()` gets a "(takes effect after a restart)" hint after its row label; when `pendingRestartKeys()` is non-empty the window shows
+  a "some changes need a restart to take effect" bar at the top.
+- **Constraints** (C6): the state lives on `Application` only and the window asks it every time — two windows give the same answer, and a window opened later still knows
+  what was changed earlier.
+- **Requirements** (R6): changing a value back to its startup value stops it being pending; a key that needs no restart never enters the list; the bar is hidden while the
+  list is empty.
+- **Acceptance** (T8): `ConfigTest.OnlyRestartRequiredItemsCanBePending`, `ConfigTest.TheBaselineIsThisRunNotTheProcess`,
+  `GuiTest.ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange`.
+- **Caveat** (N6): what is compared is the stored value, not the effect; `system` and a missing key count as different.
 
-### 3.1.7 F7 字符串约束
+### 3.1.7 F7 String constraints
 
-- **行为**：String 项可配置整串正则与 Unicode grapheme 长度范围；非必填空值有效。
-- **约束**（C9）：正则整串匹配；只由 `ConfigWindow` 执行，直接值层写入不校验。
-- **要求**（R9）：空值仅在非必填时有效；非法约束或不满足约束的默认值抛 `std::invalid_argument`。
-- **验收**（T13）：`ConfigItem_ValidatesStringPatternAndGraphemeLength`、`ConfigWindowTest.StringConstraintsPreventInvalidValuesFromBeingWritten`、`ConfigWindowTest.RequiredStringCannotBeCleared`。
-- **注意**（N7）：`required` 适用于所有类型；非必填 String 的空输入表示未设置并绕过文本约束，空格仍是非空输入。
+- **Behaviour**: a String item may configure a whole-string regular expression and a Unicode grapheme length range; an empty value is valid when the item is not required.
+- **Constraints** (C9): the expression matches the whole string; only `ConfigWindow` enforces it, and a direct write through the value layer is not validated.
+- **Requirements** (R9): an empty value is valid only when the item is not required; an invalid constraint, or a default that does not satisfy it, throws
+  `std::invalid_argument`.
+- **Acceptance** (T13): `ConfigItem_ValidatesStringPatternAndGraphemeLength`, `ConfigWindowTest.StringConstraintsPreventInvalidValuesFromBeingWritten`,
+  `ConfigWindowTest.RequiredStringCannotBeCleared`.
+- **Caveat** (N7): `required` applies to every type; an empty input for a non-required String means unset and bypasses the text constraints, while a space is still
+  non-empty input.
 
-## 4. 公开接口
+## 4. Public Interface
 
 ### 4.1 `ConfigManager`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `getString/getBool/getInt/getDouble` 及数组版 | 读取；永不抛 | 类型不符返回默认值 |
-| `set*` | 写入；值变化才发 `changed` | 同值静默 |
-| `clear()` / `remove(key)` | 整体/单键删除 | 空配置 clear 不发 |
-| `save()` / `loadJson()` / `load()` | 原子写/整体替换 | 父目录由宿主创建 |
-| `changed` | `Signal<ConfigChangedEventArgs>` | 空 key = 整体变化 |
-| `snapshot()` | 拷贝当前值，与后续写入无关 | 值层；`ConfigSnapshot` 自己不知道 item |
+| `getString/getBool/getInt/getDouble` and the array forms | reads; never throws | a type mismatch returns the default |
+| `set*` | writes; fires `changed` only on a real change | the same value is silent |
+| `clear()` / `remove(key)` | whole / single-key deletion | clearing an empty configuration fires nothing |
+| `save()` / `loadJson()` / `load()` | atomic write / whole replacement | the host creates the parent directory |
+| `changed` | `Signal<ConfigChangedEventArgs>` | an empty key = the whole configuration changed |
+| `snapshot()` | copies the current values, independent of later writes | the value layer; a `ConfigSnapshot` knows no item |
 
 ### 4.2 `ConfigRegistry`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| `addCategory/addGroup/addItem` | 建树；key 全树唯一 | owner 缓存 |
-| `item(key)` / `itemsForPlugin(p)` | 查询 | 裸指针；key 升序 |
-| `restartRequiredKeys()` | 带重启策略的 key，按名排序 | 只答策略，不答状态 |
-| `removeItem/removeCategory/clear` | 删除并清理 owner | 节点失效 |
+| `addCategory/addGroup/addItem` | builds the tree; keys unique across it | the owner cache |
+| `item(key)` / `itemsForPlugin(p)` | queries | raw pointers; ascending by key |
+| `restartRequiredKeys()` | the keys carrying a restart policy, sorted by name | answers the policy only, never the state |
+| `removeItem/removeCategory/clear` | delete and clean the owner | nodes become invalid |
 
 ### 4.3 `ConfigItem` / `ConfigWindow`
 
-| 接口 | 契约 | 备注 |
+| Interface | Contract | Notes |
 | --- | --- | --- |
-| fluent builder / `required()` / `isRequired()` / typed validators | 配置项描述与约束；required 对所有类型有效 | 完整契约见 `ConfigItem.hpp` |
-| `regularExpression()` / `lengthRange()` / `isValidString()` | 声明与校验 String 编辑约束 | 长度按 Unicode grapheme cluster；不扩展到值层 |
-| `restartRequired()` / `restartRequired(bool)` | 声明/读取重启策略 | 与 `readOnly()` 同形 |
-| `gui::ConfigWindow` | 由描述树生成编辑器 | 快照 + key 配对 |
-| `Application::pendingRestartKeys()` | 与启动快照不同的、带策略的 key | 状态随本次运行 |
-| `ConfigSnapshot::divergedKeys()` | 两组值在给定 key 上的差异 | 比较两个快照 |
+| fluent builder / `required()` / `isRequired()` / typed validators | the item's description and constraints; required holds for every type | the full contract is in `ConfigItem.hpp` |
+| `regularExpression()` / `lengthRange()` / `isValidString()` | declare and validate String editing constraints | length in Unicode grapheme clusters; not extended into the value layer |
+| `restartRequired()` / `restartRequired(bool)` | declare / read the restart policy | the same shape as `readOnly()` |
+| `gui::ConfigWindow` | builds editors from the description tree | a snapshot + key pairing |
+| `Application::pendingRestartKeys()` | the keys with a policy whose value differs from the startup snapshot | the state belongs to this run |
+| `ConfigSnapshot::divergedKeys()` | how two sets of values differ over given keys | compares two snapshots |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-### 5.1 约束（C#）
+### 5.1 Constraints (C#)
 
-| # | 约束 |
+| # | Constraint |
 | --- | --- |
-| C1 | 存储类型就是 API 能表达的类型；int 就是 `int`。 |
-| C2 | `changed` 在锁外触发；订阅/退订无锁。 |
-| C3 | `save()` 每步检查；失败时旧文件不变。 |
-| C4 | key 全树唯一；owner 是缓存，删除路径清理。 |
-| C5 | Choice 不匹配显示未选中；未声明 range 不夹取。 |
-| C6 | 重启策略在描述层（`ConfigItem`），待重启状态在运行层（`Application`）；任一单方不能代替另一方。 |
-| C7 | 空 key 保留给整份配置变化事件，不能存成普通配置项。 |
-| C8 | JSON 声明类型与值类型必须匹配；数值描述的范围、默认值、步长必须有效；double 值必须有限。 |
-| C9 | String 正则整串匹配；长度按 Unicode grapheme cluster；校验仅约束 `ConfigWindow` 编辑器。 |
-| C10 | `required` 是所有类型的编辑器元数据；键缺失表示未设置，可选 String 空输入与数值空白编辑均保持未设置。 |
-| C11 | 只有当前应用持有的 Manager 读取其 Registry 默认值；独立 Manager 不关联描述树。默认读取不改变 `contains()`、快照或序列化结果。 |
+| C1 | The storage type is exactly what the API can express; an int is an `int`. |
+| C2 | `changed` fires outside the lock; subscribing and unsubscribing take no lock. |
+| C3 | `save()` checks every step; on failure the old file is untouched. |
+| C4 | Keys are unique across the tree; the owner is a cache, cleaned by the delete paths. |
+| C5 | A Choice without a match shows no selection; no declared range means no clamping. |
+| C6 | The restart policy lives in the description layer (`ConfigItem`) and the pending state in the run layer (`Application`); neither substitutes for the other. |
+| C7 | The empty key is reserved for the whole-configuration change event and cannot be stored as an ordinary item. |
+| C8 | A JSON declared type and its value type must match; a numeric description's range, default and step must be valid; a double value must be finite. |
+| C9 | A String expression matches the whole string; the length is in Unicode grapheme clusters; validation constrains `ConfigWindow` editors only. |
+| C10 | `required` is editor metadata for every type; a missing key means unset, and both an empty optional String input and a blank numeric edit stay unset. |
+| C11 | Only the manager the current application holds reads its Registry's defaults; a standalone manager is tied to no description tree. Reading a default changes neither `contains()` nor a snapshot nor the serialised output. |
 
-### 5.2 要求（R#）
+### 5.2 Requirements (R#)
 
-| # | 要求 |
+| # | Requirement |
 | --- | --- |
-| R1 | 无参标量读取返回存储值或匹配的 Registry 默认值，均不存在/类型不符时返回空；带 fallback 的标量读取最后返回调用方 fallback。 |
-| R2 | 同值/删除不存在键/clear 空配置/loadJson 内容相同都不发通知。 |
-| R3 | 父目录由宿主创建；非 JSON 对象才返回 false。 |
-| R4 | `itemsForPlugin(p)` 每项真实存在且 owner 是 p。 |
-| R5 | 编辑立即写回；`refresh()` 屏蔽编辑器信号。 |
-| R6 | 改回启动值就不待重启；无策略的 key 永不出现在 `pendingRestartKeys()`；无待生效项时窗口不显示提示条。 |
-| R7 | `changed` 在触发写入的线程同步调用；Qt 控件更新通过 GUI 对象的线程亲和性调度。 |
-| R8 | 无效 JSON 项按项 warning 并跳过；空 key 与非有限 double 写入 warning 后拒绝；无效 `ConfigItem` 数值约束抛 `std::invalid_argument`。 |
-| R9 | 不满足 String 约束的编辑值不写入；非法表达式、长度范围或不匹配默认值抛 `std::invalid_argument`。 |
-| R10 | `required` 默认 false；必填项不能清除；无默认值必填项 reset 不改动。数值未设置态不显示/写入范围下限、0 或默认值。 |
+| R1 | An argument-less scalar read returns the stored value or the matching Registry default, and empty when neither exists or the type mismatches; a scalar read with a fallback returns the caller's fallback last. |
+| R2 | The same value, removing a missing key, clearing an empty configuration and loading identical JSON all notify nothing. |
+| R3 | The host creates the parent directory; only non-object JSON returns false. |
+| R4 | Every item from `itemsForPlugin(p)` really exists and has `p` as its owner. |
+| R5 | An edit writes back at once; `refresh()` blocks the editors' signals. |
+| R6 | Changing a value back to its startup value stops it being pending; a key without a policy never appears in `pendingRestartKeys()`; with nothing pending the window shows no bar. |
+| R7 | `changed` is called synchronously on the thread that triggered the write; Qt widget updates are scheduled through the GUI object's thread affinity. |
+| R8 | An invalid JSON item is warned about per item and skipped; an empty key and a non-finite double are refused with a warning; an invalid `ConfigItem` numeric constraint throws `std::invalid_argument`. |
+| R9 | An edit that does not satisfy the String constraints is not written; an invalid expression, length range or non-matching default throws `std::invalid_argument`. |
+| R10 | `required` defaults to false; a required item cannot be cleared; resetting a required item with no default changes nothing. An unset number shows and writes neither the range's lower bound, nor 0, nor the default. |
 
-### 5.3 不变量（N#）
+### 5.3 Invariants (N#)
 
-| # | 不变量 |
+| # | Invariant |
 | --- | --- |
-| N1 | 事件触发时值已经落定；处理函数回调管理器不会死锁。 |
-| N2 | `save()` true ⇒ 文件完整；false ⇒ 旧文件没被破坏。 |
-| N3 | `loadJson()` true ⇒ 存储已整体替换（内容相同则不通知）。 |
-| N4 | 编辑器根据显式存储状态显示值；未设置时显示未设置状态，不把可读默认值或范围下限伪装成已设置值。 |
-| N5 | 窗口是快照：构造后注册的项不会凭空出现。 |
-| N6 | 待重启比较的是存储值而非效果：同一意图的两种写法（`system` / key 缺失）算不同。 |
+| N1 | When the event fires the value is already settled; a handler calling back into the manager does not deadlock. |
+| N2 | `save()` true ⇒ the file is complete; false ⇒ the old file was not damaged. |
+| N3 | `loadJson()` true ⇒ the storage was replaced wholesale (identical content notifies nothing). |
+| N4 | An editor shows a value according to the explicit storage state; when unset it shows the unset state and does not disguise a readable default or a range's lower bound as a set value. |
+| N5 | The window is a snapshot: an item registered after construction does not appear out of nowhere. |
+| N6 | The pending comparison is over stored values, not effects: two spellings of the same intent (`system` vs a missing key) count as different. |
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-### 6.1 空 key 的语义
+### 6.1 What an empty key means
 
-- 会怎么错：把空 key 当合法键，和“整体变化”混淆。
-- 怎么判：`ConfigChangedEventArgs` 的 key 为空。
-- 怎么防：空 key 只表示整体变化；单键事件始终带 key。
+- How it fails: treating an empty key as a legal key and confusing it with "the whole configuration changed".
+- How to detect it: `ConfigChangedEventArgs`' key is empty.
+- How to prevent it: an empty key only means the whole configuration changed; a single-key event always carries its key.
 
-### 6.2 未声明 range 的数值
+### 6.2 A number with no declared range
 
-- 会怎么错：旧实现对无 range 的项用 0..1000000，负值被悄悄改成 0。
-- 怎么判：`ConfigWindowTest.UnboundedNumbersAreNotClamped`。
-- 怎么防：int 用整个 `int` 范围，double 用 ±1e15；声明了 range 才夹取。
+- How it fails: an old implementation used 0..1000000 for an item with no range, silently turning negative values into 0.
+- How to detect it: `ConfigWindowTest.UnboundedNumbersAreNotClamped`.
+- How to prevent it: int uses the whole `int` range and double ±1e15; clamping happens only with a declared range.
 
-### 6.3 把存储值当运行值（P3）
+### 6.3 Treating the stored value as the running value (P3)
 
-- 会怎么错：误以为改存储值立即改变行为，或用运行值刷新编辑器。
-- 怎么判：窗口显示新存储值而行为仍旧；或刚修改策略项但无待重启状态。
-- 怎么防：编辑器显示存储值（N4），后果只用提示表达（F6）；运行值留在 `Application` 内部。
+- How it fails: assuming that changing the stored value changes behaviour at once, or refreshing the editor from the running value.
+- How to detect it: the window shows the new stored value while behaviour stays the same; or a policy item was just edited with no pending-restart state.
+- How to prevent it: the editor shows the stored value (N4) and the consequence is expressed in a hint only (F6); the running value stays inside `Application`.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 选项 | 理由 | ADR |
+| # | Option | Reason | ADR |
 | --- | --- | --- | --- |
-| D1 | `ConfigManager::type(key)` | 为一个 GUI 细节扩公共 API 不划算。 | — |
-| D2 | fsync | `QSaveFile` 已保证旧/新二选一；写入原子性才是要紧的。 | — |
-| D3 | 给 `getStringArray` 补默认值参数 | 数组语义下“默认值”意义不大。 | — |
-| D4 | 超范围整数报错 | 会让整份配置装载失败；夹取 + warning 更可控。 | — |
-| D5 | `ConfigItem` 的 `std::any` 换 `optional` | 会改掉已公开的 `bad_any_cast` 契约。 | — |
-| D6 | `ConfigWindow` 监听注册表自动重建 | 窗口是快照，重建由宿主决定。 | — |
-| D7 | 把“需重启”写进每个 item 的 `description()` | 每个当事人各写一遍，漏一个就静默失效；tooltip 要悬停才看得到（G7）。 | — |
-| D8 | 延迟写入（重启前一直存旧值） | 窗口会显示旧值，用户以为没改成；需要草稿层与崩溃时的取舍（G7）。 | — |
-| D9 | 框架自己重启进程 | 未保存的文档与插件卸载顺序是宿主的责任（G10）。 | — |
+| D1 | `ConfigManager::type(key)` | growing the public API for one GUI detail does not pay off. | — |
+| D2 | fsync | `QSaveFile` already guarantees old-or-new; atomicity of the write is what matters. | — |
+| D3 | a default-value parameter for `getStringArray` | "a default" means little under array semantics. | — |
+| D4 | erroring on an out-of-range integer | it would fail the whole configuration load; clamping + a warning is more controllable. | — |
+| D5 | replacing `ConfigItem`'s `std::any` with `optional` | it would change the published `bad_any_cast` contract. | — |
+| D6 | letting `ConfigWindow` watch the registry and rebuild itself | the window is a snapshot, and rebuilding is the host's decision. | — |
+| D7 | writing "needs a restart" into every item's `description()` | every party writes it once more and one omission fails silently; a tooltip is only seen on hover (G7). | — |
+| D8 | a deferred write (keep the old value until the restart) | the window would show the old value and the user would think the edit failed; it needs a draft layer and a crash-time trade-off (G7). | — |
+| D9 | the framework restarting the process itself | unsaved documents and the plugin unload order are the host's responsibility (G10). | — |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 | --- | --- | --- |
-| T1 | 值/数组/层级 key/JSON 往返/注册默认值读取 | `ConfigManager_Basic`、`ConfigManager_UsesRegisteredItemDefaultsWithoutStoringThem` |
-| T2 | 保存失败保留旧文件 | `ConfigManager_SaveReportsFailureAndKeepsTheOldFile` |
-| T3 | 通知只在真变化时发 | `ConfigManager_NotifiesOnlyOnRealChanges` |
-| T4 | 类型无损/旧格式/超范围夹取 | `ConfigManager_JsonRoundTripKeepsTypes` |
-| T5 | 坏条目忽略 | `ConfigManager_BadEntriesAreIgnoredNotFatal` |
-| T6 | 描述树/owner/排序/标准标签随语言 | `ConfigRegistry_*`、`TranslationTest.StandardConfigLabelsFollowTheInstalledLanguage` |
-| T7 | 编辑器按下标配对/Choice/无 range | `ConfigWindowTest.*` |
-| T8 | 待重启只在策略项上、基于本次运行、可回退 | `ConfigTest.OnlyRestartRequiredItemsCanBePending`、`ConfigTest.TheBaselineIsThisRunNotTheProcess` |
-| T9 | 窗口逐行提示 + 顶部条随值出现/消失 | `GuiTest.ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange` |
-| T10 | 空 key 不成为配置项；类型错误 JSON 项跳过；正确格式仍装载；非有限 double 写入被拒绝 | `GuiTest.ConfigManager_NotifiesOnlyOnRealChanges`、`GuiTest.ConfigManager_BadEntriesAreIgnoredNotFatal`、`GuiTest.ConfigManager_RejectsEmptyKeysAndNonFiniteDoubles` |
-| T11 | 数值范围、默认值、步长拒绝无效组合；typed validator 检查类型、有限性和范围 | `GuiTest.ConfigItem_RejectsInvalidNumericConstraints`、`GuiTest.ConfigItem_RangeAny` |
-| T12 | 后台线程变更配置时，重启提示在 GUI 线程更新 | `GuiTest.ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange` |
-| T13 | 字符串正则全匹配、grapheme 长度、非法约束及编辑器拒写 | `ConfigItem_ValidatesStringPatternAndGraphemeLength`、`ConfigWindowTest.StringConstraintsPreventInvalidValuesFromBeingWritten` |
-| T14 | 所有类型的 unset、必填保护与显式默认值重置 | `ConfigWindowTest.OptionalValuesCanBeUnsetAcrossTypes`、`ConfigWindowTest.RequiredValuesAreNotUnsetByTheEditor` |
+| T1 | values / arrays / hierarchical keys / JSON round trip / reading registered defaults | `ConfigManager_Basic`, `ConfigManager_UsesRegisteredItemDefaultsWithoutStoringThem` |
+| T2 | a failed save keeps the old file | `ConfigManager_SaveReportsFailureAndKeepsTheOldFile` |
+| T3 | notification only on a real change | `ConfigManager_NotifiesOnlyOnRealChanges` |
+| T4 | type losslessness / the old format / out-of-range clamping | `ConfigManager_JsonRoundTripKeepsTypes` |
+| T5 | a bad entry is ignored | `ConfigManager_BadEntriesAreIgnoredNotFatal` |
+| T6 | the description tree / owner / ordering / standard labels following the language | `ConfigRegistry_*`, `TranslationTest.StandardConfigLabelsFollowTheInstalledLanguage` |
+| T7 | editor pairing by key / Choice / no range | `ConfigWindowTest.*` |
+| T8 | pending only on policy items, based on this run, revertible | `ConfigTest.OnlyRestartRequiredItemsCanBePending`, `ConfigTest.TheBaselineIsThisRunNotTheProcess` |
+| T9 | the per-row hint + the top bar appear and disappear with the values | `GuiTest.ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange` |
+| T10 | an empty key never becomes an item; a wrongly typed JSON item is skipped; correct entries still load; a non-finite double write is refused | `GuiTest.ConfigManager_NotifiesOnlyOnRealChanges`, `GuiTest.ConfigManager_BadEntriesAreIgnoredNotFatal`, `GuiTest.ConfigManager_RejectsEmptyKeysAndNonFiniteDoubles` |
+| T11 | range, default and step reject invalid combinations; a typed validator checks type, finiteness and range | `GuiTest.ConfigItem_RejectsInvalidNumericConstraints`, `GuiTest.ConfigItem_RangeAny` |
+| T12 | when a background thread changes configuration, the restart hint updates on the GUI thread | `GuiTest.ConfigWindowMarksRestartRequiredItemsAndReportsThePendingChange` |
+| T13 | whole-string matching, grapheme length, invalid constraints and the editor refusing to write | `ConfigItem_ValidatesStringPatternAndGraphemeLength`, `ConfigWindowTest.StringConstraintsPreventInvalidValuesFromBeingWritten` |
+| T14 | unset for every type, the required guard and an explicit reset to the default | `ConfigWindowTest.OptionalValuesCanBeUnsetAcrossTypes`, `ConfigWindowTest.RequiredValuesAreNotUnsetByTheEditor` |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current status
 
-三层已落地；值层线程安全、原子保存、描述树与配置窗口均已测试。
+The three layers are landed; the value layer's thread safety, the atomic save, the description tree and the configuration window all have tests.
 
-### 9.2 已知缺口 / 待办
+### 9.2 Known gaps / backlog
 
-无；`RenderTarget` 枚举与 `PixelFormat` 的重复不属于本模块。
+None; the duplication of the `RenderTarget` enum and `PixelFormat` is not this module's.
 
-### 9.3 兼容性 / 迁移
+### 9.3 Compatibility / migration
 
-`ConfigItem` 的 `std::any` 与 `bad_any_cast` 契约保留；其它模块迁移不在本文范围。
+`ConfigItem`'s `std::any` and `bad_any_cast` contract are kept; other modules' migrations are out of this page's scope.
 
-## 10. 参考
+## 10. References
 
-### 10.1 代码
+### 10.1 Code
 
 - `src/fw/appfw/sdk/vine/appfw/ConfigManager.hpp`
 - `src/fw/appfw/sdk/vine/appfw/ConfigRegistry.hpp`
@@ -289,12 +310,12 @@
 - `tests/test_gui/test_gui.cpp`
 - `tests/test_appfw/ConfigTest.cpp`
 
-### 10.2 文档与 ADR
+### 10.2 Documents and ADRs
 
 - `appfw-plugin-system.md`
 - `appfw-progress.md`
 - `../backlog/`
 
-### 10.3 外部资料
+### 10.3 External material
 
-- Qt `QSaveFile` 的原子写语义。
+- Qt `QSaveFile`'s atomic-write semantics.
