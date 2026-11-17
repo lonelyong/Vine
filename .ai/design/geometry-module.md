@@ -1,175 +1,175 @@
-# geometry 模块：一个模块、两个契约、一份共享实现
+# geometry module: one module, two contracts, one shared implementation
 
-> **状态**：现行
-> **最后核对**：2026-11-10
-> **范围**：`src/base/geom` 的物理形态与命名规则——目录与命名空间、`vn::Geom` 目标、`geom/planar` 与 `geom/spatial` 两个契约子树、共享实现子树 `geom/detail`、模块级词汇、隔离门禁、以及"什么放哪里"的判据。不含任何具体曲线/曲面/实体的契约与算法（见 `geometry-planar.md`、`geometry-kinds.md`、`geometry-primitives.md` 等）。
-> **权威来源**：`src/base/geom/CMakeLists.txt`、`src/base/geom/sdk/vine/geom/geom_global.hpp`、`src/base/geom/sdk/vine/geom/Continuity.hpp`、`src/base/geom/sdk/vine/geom/{planar,spatial,detail}/`、`scripts/check_geom_layering.py`、`tests/test_geom_planar/ModuleContractTest.cpp`。
-> **待办**：无
+> **Status**: current
+> **Last verified**: 2026-11-10
+> **Scope**: the physical shape and naming rules of `src/base/geom` — directories and namespaces, the `vn::Geom` target, the two contract subtrees `geom/planar` and `geom/spatial`, the shared implementation subtree `geom/detail`, the module-level vocabulary, the isolation gates, and the test for "what goes where". It contains no contract or algorithm of a specific curve / surface / solid (see `geometry-planar.md`, `geometry-kinds.md`, `geometry-primitives.md`).
+> **Sources**: `src/base/geom/CMakeLists.txt`, `src/base/geom/sdk/vine/geom/geom_global.hpp`, `src/base/geom/sdk/vine/geom/Continuity.hpp`, `src/base/geom/sdk/vine/geom/{planar,spatial,detail}/`, `scripts/check_geom_layering.py`, `tests/test_geom_planar/ModuleContractTest.cpp`.
+> **Backlog**: none
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-几何层要同时服务平面与空间两个契约，而两者共享与维度无关的实现；三种形态都不成立：两个独立目标（`vn::Geom3D` 是 SHARED、`vn::Geom2D` 是 INTERFACE）让每次共享都要靠复制，合并成一个模块后两棵树仍各存一份 `narrowCrossing`、窗口规则与弧长实现；共享件下沉到 `geom/detail` 之后，两个契约目录若是模块目录的**兄弟**，于是 `Continuity` 要靠两句 `using` 重导出、共享件要靠 `geom::detail::` 全限定。现在的形态是：一个库、模块目录拥有全部子树、一个 global。
+The geometry layer serves two contracts, planar and spatial, and both need the implementation that has no dimension. Three shapes fail: two independent targets (`vn::Geom3D` SHARED, `vn::Geom2D` INTERFACE) turn every sharing into a copy; merged into one module, the two trees still each hold a copy of `narrowCrossing`, the window rules and arc length; with the shared pieces moved down into `geom/detail`, two contract directories that stay **siblings** of the module directory force `Continuity` to be re-exported by two `using` lines and the shared pieces to be spelled `geom::detail::` in full. The current shape is one library, a module directory that owns every subtree, and one global.
 
-### 1.2 目标
+### 1.2 Goals
 
-1. 平面与空间是同一领域的两个契约，消费者只链一个库（`G6`）。
-2. 与维度无关的实现只有一份，住在能同时看见两个契约的地方（`G1`）。
-3. 契约之间的隔离**可执行**，不是口头约定（`G11`）。
-4. 目录、命名空间、类型名三者一致：`geom/planar` ↔ `vn::geom::planar`（`G4`、`G12`）。
+1. Planar and spatial are two contracts of one domain; a consumer links one library (`G6`).
+2. The implementation that has no dimension exists once, where both contracts are visible (`G1`).
+3. The isolation between the contracts is **executable**, not a spoken agreement (`G11`).
+4. Directory, namespace and type name agree: `geom/planar` ↔ `vn::geom::planar` (`G4`, `G12`).
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做"2D 与 3D 的统一泛型"：两个契约并列、零继承、不可互换（`R1`）。
-- 不给类型加维度标记：维度已经在命名空间里（`G4`）。
-- 不为目录整齐再重排：重排必须能消除税，否则不做（`G8`）。
+- No "unified generic for 2D and 3D": the two contracts sit side by side, with zero inheritance and no interchangeability (`R1`).
+- No dimension marker on a type: the namespace already carries the dimension (`G4`).
+- No re-shuffle for tidiness: a re-shuffle must remove a tax, or it is not done (`G8`).
 
-### 1.4 结论
+### 1.4 Conclusion
 
-**`src/base/geom` 是一个模块、一个库 `vn::Geom`、一个 global；`vn::geom` 之下并列三棵子树——`planar`（平面曲线契约）、`spatial`（空间几何）、`detail`（与维度无关的共享实现）——外加模块根上的词汇 `Continuity`。契约可以 include `detail`，不得互相 include，`detail` 不得命名维度；五条规则由脚本门禁保证。**
+**`src/base/geom` is one module, one library `vn::Geom` and one global; under `vn::geom` three subtrees sit side by side — `planar` (the planar curve contract), `spatial` (spatial geometry) and `detail` (the dimension-free shared implementation) — plus the vocabulary `Continuity` at the module root. A contract may include `detail`, the two contracts may not include each other, and `detail` may not name a dimension; five rules are held by script gates.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 一个模块、一个库、一个 global
+### 2.1 One module, one library, one global
 
-- **是什么**：`src/base/geom` 是一个 CMake 单元，产出 `vn::Geom`（编译定义 `VN_GEOM_LIB`，实体标 `VN_GEOM_API`）；SDK 根是 `sdk/`，include 路径是 `<vine/geom/planar/...>`、`<vine/geom/spatial/...>`、`<vine/geom/detail/...>`。目标为 SHARED，因为空间侧有显式实例化与三个非模板实现（`src/Instantiations.cpp`、`LineCurve.cpp`、`Obb.cpp`、`Plane.cpp`）；平面侧是 header-only 模板，随同一个库发布、不导出符号。
-- **为什么**：`G6`、`G10` —— 两个契约共用一个编译定义、一个 API 宏、一份符号；分成两个目标时任何一次共享都要靠"第三个模块"或复制。
-- **边界**：`geom` 只依赖 `vn::Math` 与 `vn::Core`；`math` 不认识几何（`math-base-layer.md`）。
+- **What**: `src/base/geom` is one CMake unit producing `vn::Geom` (compile definition `VN_GEOM_LIB`, entities marked `VN_GEOM_API`); the SDK root is `sdk/`, and the include paths are `<vine/geom/planar/...>`, `<vine/geom/spatial/...>`, `<vine/geom/detail/...>`. The target is SHARED because the spatial side has explicit instantiations and three non-template implementations (`src/Instantiations.cpp`, `LineCurve.cpp`, `Obb.cpp`, `Plane.cpp`); the planar side is header-only templates, shipped with the same library and exporting no symbol.
+- **Why**: `G6`, `G10` — both contracts share one compile definition, one API macro and one set of symbols; split into two targets, every sharing needs a "third module" or a copy.
+- **Boundary**: `geom` depends only on `vn::Math` and `vn::Core`; `math` does not know geometry (`math-base-layer.md`).
 
-### 2.2 目录与命名空间一一对应
+### 2.2 Directory and namespace correspond one to one
 
-| 目录 | 命名空间 | 内容 | 是不是 API |
+| Directory | Namespace | Content | API? |
 |---|---|---|---|
-| `sdk/vine/geom/` | `vn::geom` | `geom_global.hpp`（宏）、`Continuity.hpp`（光滑度阶梯） | 是 |
-| `sdk/vine/geom/planar/` | `vn::geom::planar` | 平面曲线契约 `Curve<T>`、九个类型、七个族级算法（17 个头） | 是 |
-| `sdk/vine/geom/spatial/` | `vn::geom::spatial` | 曲线、曲面、实体、射线、`Obb` / `Aabb`（50 个头，另有属本契约 `spatial/detail/` 7 个） | 是 |
-| `sdk/vine/geom/detail/` | `vn::geom::detail` | 与维度无关的共享实现（9 个头） | **不是** |
+| `sdk/vine/geom/` | `vn::geom` | `geom_global.hpp` (macros), `Continuity.hpp` (the smoothness ladder) | yes |
+| `sdk/vine/geom/planar/` | `vn::geom::planar` | the planar curve contract `Curve<T>`, nine types, seven family algorithms (17 headers) | yes |
+| `sdk/vine/geom/spatial/` | `vn::geom::spatial` | curves, surfaces, solids, rays, `Obb` / `Aabb` (50 headers, plus 7 under this contract's `spatial/detail/`) | yes |
+| `sdk/vine/geom/detail/` | `vn::geom::detail` | the dimension-free shared implementation (9 headers) | **no** |
 
-`geom_global.hpp` 提供 `VN_GEOM_API` 与三个命名空间宏（`VN_GEOM_NS_BEGIN`、`VN_GEOM_PLANAR_NS_BEGIN`、`VN_GEOM_SPATIAL_NS_BEGIN`、`VN_GEOM_DETAIL_NS_BEGIN` 及对应 `_END`）。
+`geom_global.hpp` provides `VN_GEOM_API` and three namespace macros (`VN_GEOM_NS_BEGIN`, `VN_GEOM_PLANAR_NS_BEGIN`, `VN_GEOM_SPATIAL_NS_BEGIN`, `VN_GEOM_DETAIL_NS_BEGIN` and the matching `_END`).
 
-**嵌套带来的两个直接结果**：
+**Nesting has two direct consequences**:
 
-- **模块根的词汇不需要重导出**。`Continuity` 在 `vn::geom`，两个契约是它的子命名空间，非限定名靠封闭命名空间查找找到——`geom_global.hpp` 里没有一句 `using`。
-- **共享件必须写全 `geom::detail::`**。C++ 的近邻规则让不带限定的 `detail::` 在两个契约里解析到**各自的** `planar::detail` / `spatial::detail`（六个头文件声明了它们），所以共享件的限定不是风格，是正确性（见 P1）。
+- **The vocabulary at the module root needs no re-export**. `Continuity` lives in `vn::geom`, the two contracts are its child namespaces, and an unqualified name is found by enclosing-namespace lookup — `geom_global.hpp` contains no `using`.
+- **A shared piece must be spelled `geom::detail::` in full**. C++'s nearest-name rule makes an unqualified `detail::` inside either contract resolve to its **own** `planar::detail` / `spatial::detail` (six headers declare them), so qualifying the shared piece is not style but correctness (see P1).
 
-### 2.3 什么放哪里：三步判定
+### 2.3 What goes where: three-step test
 
-1. **是不是公开契约的一部分？** 是 → 对应契约子树，进 `vn::geom::planar` / `vn::geom::spatial`。
-2. **两个契约是不是都需要它？** 否 → 留在本契约（必要时放进本契约的 `detail`）。
-3. **需要，而且与维度无关？** 是 → `geom/detail/`（`vn::geom::detail`）。判据：只依赖 `C::value_type` 与 `evaluate` / `derivative`，签名里不出现 `Point2` / `Point3`。
+1. **Is it part of a public contract?** Yes → the matching contract subtree, `vn::geom::planar` / `vn::geom::spatial`.
+2. **Do both contracts need it?** No → keep it in its own contract (in that contract's `detail` when necessary).
+3. **Both need it, and it is dimension-free?** Yes → `geom/detail/` (`vn::geom::detail`). The test: it depends only on `C::value_type` and `evaluate` / `derivative`, and `Point2` / `Point3` never appear in a signature.
 
-**判定要能拒绝**：并排看两份拷贝，差异只有类型名与一句文档 → 下沉；差异在数学上 → 各留一份（`signedCurvature` 有符号 vs `curvature` 模长；`closestPointOnCurve` 的结果类型带 `Point2` / `Point3`）。
+**The test has to be able to refuse**: put the two copies side by side; if the only difference is a type name and one line of documentation → move it down; if the difference is mathematical → keep one each (`signedCurvature` signed vs `curvature` magnitude; `closestPointOnCurve`'s result type carries `Point2` / `Point3`).
 
-### 2.4 命名规则
+### 2.4 Naming rules
 
-- **类型名不带维度标记**：`LineCurve` / `Curve`，不是 `LineCurve2d` / `Curve2`；维度由命名空间承载。精度后缀仍是 `f` / `d`（`LineCurved`、`CircleCurvef`）。
-- **`detail` 不是 API**：不承诺稳定与 ABI；要公开一个共享能力，先在两个契约命名空间各起一个公开入口。`planar::arcLength` / `spatial::arcLength` 就是这样一层薄壳（解析窗口与容差后转发）。这条不再是口头约定：门禁第 7 条只允许本模块与它自己的两个测试目录 include `detail`。
-- **同名的公开入口按契约分属两个命名空间**：`arcLength`、`parameterAtLength`、`closestPointOnCurve`、`curveToCurveDistance` 两个契约各一份（见 P2）。
+- **A type name carries no dimension marker**: `LineCurve` / `Curve`, not `LineCurve2d` / `Curve2`; the namespace carries the dimension. The precision suffix stays `f` / `d` (`LineCurved`, `CircleCurvef`).
+- **`detail` is not API**: no stability and no ABI promise; to publish a shared capability, first add one public entry in each contract namespace. `planar::arcLength` / `spatial::arcLength` are exactly such a thin shell (resolve the window and tolerance, then forward). This is no longer a spoken agreement: gate 7 lets only this module and its own two test directories include `detail`.
+- **A same-named public entry belongs to two namespaces by contract**: `arcLength`, `parameterAtLength`, `closestPointOnCurve` and `curveToCurveDistance` exist once per contract (see P2).
 
-### 2.5 依赖方向与门禁
+### 2.5 Dependency direction and gates
 
-- **方向**：`planar` / `spatial` → `detail` → `math`；两个契约之间没有边。
-- **门禁七条**（`scripts/check_geom_layering.py`，当前 83 个文件 0 处违规）：
-  1. `planar` 不得 include `spatial`；
-  2. `spatial` 不得 include `planar`；
-  3. `detail` 不得 include 任一个契约；
-  4. `detail` 不得**命名** `Point2` / `Point3` / `Vector2` / `Vector3`——按 include 查不住的维度泄漏，按名字查住；
-  5. 几何头的 include 域：带路径的角括号只能是 `vine/geom/` 或 `vine/math/`，引号只能是同目录——即"唯一的边是几何 → 几何、几何 → 数学"；
-  6. `spatial/Bvh.hpp` 不得 include `spatial/BvhBuilder.hpp`——树持有图元，不知道也不应当知道构建策略；
-  7. 只有 `src/base/geom` 与 `tests/test_geom_planar` / `tests/test_geom_spatial` 可以 include `detail`；其它模块一旦 include 就钉死在无稳定承诺的头上。
-- **为什么用脚本而不是链接**：三个子树上在同一个 target 内，编译器拦不住；两个 target 的老办法会让"一个模块"这个事实消失（`ADR-2026-11-06-merged-geom-module.md`）。
-- **门禁必须能失败**：新增规则后要用一条临时违规头文件反向验证，再删掉它确认回到 0。
+- **Direction**: `planar` / `spatial` → `detail` → `math`; there is no edge between the two contracts.
+- **Seven gates** (`scripts/check_geom_layering.py`, currently 83 files with 0 violations):
+  1. `planar` may not include `spatial`;
+  2. `spatial` may not include `planar`;
+  3. `detail` may not include either contract;
+  4. `detail` may not **name** `Point2` / `Point3` / `Vector2` / `Vector3` — a dimension leak that an include check cannot see is caught by name;
+  5. the include domain of a geometry header: a bracketed include with a path may only be `vine/geom/` or `vine/math/`, a quoted include only the same directory — that is, "the only edges are geometry → geometry and geometry → math";
+  6. `spatial/Bvh.hpp` may not include `spatial/BvhBuilder.hpp` — the tree holds primitives and does not know, and must not know, how it was built;
+  7. only `src/base/geom` and `tests/test_geom_planar` / `tests/test_geom_spatial` may include `detail`; any other module that includes it is pinned to a surface with no stability promise.
+- **Why a script and not the linker**: the three subtrees sit inside one target, so the compiler cannot stop a violation; the old two-target arrangement would make the "one module" fact disappear (`ADR-2026-11-06-merged-geom-module.md`).
+- **A gate must be able to fail**: after adding a rule, verify it in reverse with a temporary violating header, then delete that header and confirm the count is back to 0.
 
-### 2.6 与 `math` 的关系
+### 2.6 Relation to `math`
 
-- `math` 只提供数学词汇（值类型、常量、谓词、概念），不认识几何；几何侧的数值链（求根 → 容差换算 → 积分/反解、样条求值与节点模型）全在 `geom/detail`。
-- 代价明确接受：任何非几何模块要用积分或求根，只能依赖 `vn::Geom`、复制一份、或把内核升成独立模块；后者是记账的反转路径（`ADR-2026-11-06-math-keeps-only-vocabulary.md`）。
+- `math` provides mathematical vocabulary only (value types, constants, predicates, concepts) and does not know geometry; the numeric chain on the geometry side (root finding → tolerance conversion → integration / inverse, spline evaluation and the knot model) all lives in `geom/detail`.
+- The cost is accepted explicitly: any non-geometry module that needs integration or root finding must depend on `vn::Geom`, copy a piece, or promote the kernel to a module of its own; the last is the booked reversal path (`ADR-2026-11-06-math-keeps-only-vocabulary.md`).
 
-### 2.7 共享实现为什么住在头里（量过，不再重议）
+### 2.7 Why the shared implementation lives in headers (measured, not re-argued)
 
-- **判据**：看**实例化集合的大小**，不看代码长短。集合随调用方类型无限增长（靠 lambda / 容器泛化的 `Quadrature`、`RootFinding`、`CrossingSearch`、`CurvePairSearch`、`BSplineBasis`、`BezierBlend`）⇒ 只能 header；集合有限且已知 ⇒ 可以下沉成 `src/*.cpp` + 显式实例化（`SolidTessellation.cpp` 是 5 个 kind × 2 精度，`Instantiations.cpp` 是值类型）。
-- **量过**：把 `CurveSubdivision.hpp` 的三个内核拆进 `src/CurveSubdivision.cpp`（2 个契约 × 2 精度 × 3 内核 = 12 条导出实例化）之后，包含 `CurveSampling.hpp` 的 TU 编译时间 **2.16 s → 2.16 s**（MSBuild `ClCompile` 单文件强制重编，三次取最小；同目录 `CurveLengthTest.cpp` 作对照为 1.96 s）。本规模下无可测收益，因此保持 header-only，不拆，那次拆分已撤回。<!-- drift-ok -->
-- **边界**：结论不是永久的。重开条件：出现只想要声明的 TU 且编译时间被 `detail` 包成瓶颈，或消费者数量到两位数。届时照 `SolidTessellation.cpp` 的形态拆（声明在头、定义 + 显式实例化在 `.cpp`），不发明第三种写法。
+- **The test**: look at the **size of the instantiation set**, not at the length of the code. A set that grows without bound with the caller's types (a `Quadrature`, `RootFinding`, `CrossingSearch`, `CurvePairSearch`, `BSplineBasis` or `BezierBlend` generalised over a lambda or a container) ⇒ header only; a set that is finite and known ⇒ may move down into `src/*.cpp` with explicit instantiation (`SolidTessellation.cpp` is 5 kinds × 2 precisions, `Instantiations.cpp` is the value types).
+- **Measured**: after splitting the three kernels of `CurveSubdivision.hpp` into `src/CurveSubdivision.cpp` (2 contracts × 2 precisions × 3 kernels = 12 exported instantiations), the compile time of a TU including `CurveSampling.hpp` was **2.16 s → 2.16 s** (MSBuild `ClCompile` forced single-file rebuild, minimum of three; `CurveLengthTest.cpp` in the same directory as a control, 1.96 s). At this size there is no measurable gain, so the kernels stay header-only and the split is reverted. <!-- drift-ok -->
+- **Boundary**: the conclusion is not permanent. Reopen when a TU that only wants the declarations has `detail` as its compile-time bottleneck, or when the number of consumers reaches double digits. Then split in the shape of `SolidTessellation.cpp` (declarations in the header, definitions plus explicit instantiation in a `.cpp`) rather than inventing a third spelling.
 
-## 3. 功能点
+## 3. Features
 
-| 编号 | 功能点 | 内容 | 状态 |
+| # | Feature | Content | Status |
 |---|---|---|---|
-| F1 | 单库布局 | `vn::Geom` 承载两个契约与共享实现，include 路径三段分工 | 已落地 |
-| F2 | 一个 global | `vn::Geom` 的 API 宏、四个命名空间宏（根 + 两个契约 + `detail`） | 已落地 |
-| F3 | 共享实现子树 | 9 个 `geom/detail/*.hpp`，两个契约都可 include | 已落地 |
-| F4 | 隔离门禁 | `check_geom_layering.py` 五条规则 | 已落地 |
-| F5 | 命名规则 | 类型不带维度、精度后缀 `f`/`d`、`detail` 非 API | 已落地 |
+| F1 | Single-library layout | `vn::Geom` carries both contracts and the shared implementation; the include path is split in three | landed |
+| F2 | One global | the API macro of `vn::Geom`, four namespace macros (root + two contracts + `detail`) | landed |
+| F3 | Shared implementation subtree | 9 `geom/detail/*.hpp`, includable from both contracts | landed |
+| F4 | Isolation gates | the five rules of `check_geom_layering.py` | landed |
+| F5 | Naming rules | no dimension in a type name, precision suffix `f`/`d`, `detail` is not API | landed |
 
-### 3.1 F3 共享实现子树（当前清单）
+### 3.1 F3 the shared implementation subtree (current list)
 
-`CurveTraits.hpp`（`CurveScalar` / `CurveWindow` / `resolveTolerance` / `resolveCurveWindow`）、`CrossingSearch.hpp`（`narrowCrossing`）、`CurveMeasure.hpp`（`arcLengthBetween` / `parameterCovering`）、`CurvePairSearch.hpp`（`refineCurvePair`）、`CurveSubdivision.hpp`（`sampleByParameter` / `sampleByLength` / `subdivideByDeflection`，只碰 `C::Point`）、`BSplineBasis.hpp`（相异节点 + 重数的节点模型与 Cox–de Boor 基函数）、`BezierBlend.hpp`（de Casteljau 与差商）、`Quadrature.hpp`（自适应 Simpson）、`RootFinding.hpp`（括号内求根、单调量反解）。
+`CurveTraits.hpp` (`CurveScalar` / `CurveWindow` / `resolveTolerance` / `resolveCurveWindow`), `CrossingSearch.hpp` (`narrowCrossing`), `CurveMeasure.hpp` (`arcLengthBetween` / `parameterCovering`), `CurvePairSearch.hpp` (`refineCurvePair`), `CurveSubdivision.hpp` (`sampleByParameter` / `sampleByLength` / `subdivideByDeflection`, touching only `C::Point`), `BSplineBasis.hpp` (the distinct-knot + multiplicity knot model and the Cox–de Boor basis), `BezierBlend.hpp` (de Casteljau and divided differences), `Quadrature.hpp` (adaptive Simpson), `RootFinding.hpp` (root finding in a bracket, inverting a monotone quantity).
 
-**验收**（T1、T3）：两套几何测试全绿；门禁 0 违规；契约内的引用点无一指向另一个契约。
+**Acceptance** (T1, T3): both geometry test targets are green; the gate reports 0 violations; no reference inside one contract points at the other contract.
 
-## 4. 公开接口
+## 4. Public Interface
 
-| 头 | 公开内容 |
+| Header | Public content |
 |---|---|
-| `geom_global.hpp` | `VN_GEOM_API`、`VN_GEOM_NS_BEGIN` / `VN_GEOM_PLANAR_NS_BEGIN` / `VN_GEOM_SPATIAL_NS_BEGIN` / `VN_GEOM_DETAIL_NS_BEGIN`（及对应 `_END`） |
-| `Continuity.hpp` | `vn::geom::Continuity`（有序枚举）；两个契约靠封闭命名空间查找直接使用它 |
-| `planar/*.hpp` | `vn::geom::planar`：`Curve<T>` 与九个类型、六个族级算法 |
-| `spatial/*.hpp` | `vn::geom::spatial`：曲线/曲面/实体/射线/`Obb`/`Aabb` 与其族级算法 |
-| `detail/*.hpp` | `vn::geom::detail`：**不是** API |
+| `geom_global.hpp` | `VN_GEOM_API`, `VN_GEOM_NS_BEGIN` / `VN_GEOM_PLANAR_NS_BEGIN` / `VN_GEOM_SPATIAL_NS_BEGIN` / `VN_GEOM_DETAIL_NS_BEGIN` (and the matching `_END`) |
+| `Continuity.hpp` | `vn::geom::Continuity` (an ordered enum); both contracts use it directly through enclosing-namespace lookup |
+| `planar/*.hpp` | `vn::geom::planar`: `Curve<T>`, nine types, six family algorithms |
+| `spatial/*.hpp` | `vn::geom::spatial`: curves / surfaces / solids / rays / `Obb` / `Aabb` and their family algorithms |
+| `detail/*.hpp` | `vn::geom::detail`: **not** API |
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-- **C1**：一个模块、一个 CMake 单元、一个目标 `vn::Geom`、一个编译定义 `VN_GEOM_LIB`、一个 global 头。
-- **C2**：目录与命名空间一一对应：`planar/`↔`vn::geom::planar`、`spatial/`↔`vn::geom::spatial`、`detail/`↔`vn::geom::detail`、模块根↔`vn::geom`。
-- **C3**：与维度无关的共享实现只在 `geom/detail/`；只对本契约有意义的 helper 留在本契约的 `detail`。
-- **C4**：类型名不带维度标记；精度后缀 `f` / `d`；`detail` 里的名字不是 API。
-- **C5**：依赖方向 `契约 → detail → math`，没有回边，两个契约之间没有边。
-- **C6**：五条门禁必须全绿；`geom/detail` 里不得出现 `Point2` / `Point3` / `Vector2` / `Vector3`（名字与 include 都算）。
-- **C7**：模块根上的名字**不得**在两个契约里重导出——嵌套命名空间已经提供可见性，多一句 `using` 就是第二个事实来源。
-- **C8**：新增一棵子树（第三类几何）时，先按 2.3 判定，再决定它是目录、命名空间还是新模块。
-- **R1**：两个契约并列、零继承、不可互换；`planar::Curve<T>` 不是 `spatial::Curve<T>` 的特化。
-- **R2**：几何头只 include `vine/geom*`、`vine/math*` 与标准库。
-- **N1**：两个契约的 `continuity()` 都返回 `vn::geom::Continuity` 这一个类型（`ModuleContractTest` 用 `static_assert` 盯着）。
-- **N2**：同名的公开入口（`arcLength` 等）按契约分属两个命名空间，签名可以相同。
+- **C1**: one module, one CMake unit, one target `vn::Geom`, one compile definition `VN_GEOM_LIB`, one global header.
+- **C2**: directory and namespace correspond one to one: `planar/`↔`vn::geom::planar`, `spatial/`↔`vn::geom::spatial`, `detail/`↔`vn::geom::detail`, module root↔`vn::geom`.
+- **C3**: a dimension-free shared implementation lives only in `geom/detail/`; a helper meaningful to one contract only stays in that contract's `detail`.
+- **C4**: a type name carries no dimension marker; the precision suffix is `f` / `d`; a name in `detail` is not API.
+- **C5**: the dependency direction is `contract → detail → math`, with no back edge and no edge between the two contracts.
+- **C6**: the five gates must all be green; `Point2` / `Point3` / `Vector2` / `Vector3` may not appear in `geom/detail` (by name or by include).
+- **C7**: a name at the module root **may not** be re-exported inside either contract — the nested namespace already provides visibility, and one extra `using` is a second source of truth.
+- **C8**: a new subtree (a third kind of geometry) is first tested by 2.3, then decided to be a directory, a namespace or a new module.
+- **R1**: the two contracts sit side by side, with zero inheritance and no interchangeability; `planar::Curve<T>` is not a specialisation of `spatial::Curve<T>`.
+- **R2**: a geometry header includes only `vine/geom*`, `vine/math*` and the standard library.
+- **N1**: `continuity()` in both contracts returns the one type `vn::geom::Continuity` (`ModuleContractTest` pins it with `static_assert`).
+- **N2**: a same-named public entry (`arcLength` and friends) belongs to two namespaces by contract; the signatures may be identical.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-- **P1 不带限定的 `detail::` 会解析到契约自己的那个**：`planar/CurveCurveIntersection.hpp`、`spatial/{Aabb,CurveSurfaceIntersection,RaySurfaceIntersection,SolidDetail,SurfaceProjection}.hpp` 声明了同名的树私有 `detail`；只要其中任何一个进了同一个 TU，契约里的 `detail::X` 就解析到那一层而不是 `geom::detail`。**共享件一律写全 `geom::detail::`**（实测：写成裸 `detail::` 立刻 C2039）。
-- **P2 同名公开函数不能并进一个命名空间**：`closestPointOnCurve` 与 `curveToCurveDistance` 两个契约**参数表相同、返回类型不同**，C++ 不能按返回类型重载；`arcLength` / `parameterAtLength` 虽然返回类型相同，但并起来只能靠互斥的 requires 子句区分调用——那是隐式机制（`G11`）。这就是维度不能塞进类型名、把两个契约并成一个命名空间的原因。
-- **P3 精度后缀与维度后缀抢位置**：我们已有 `d` / `f` 作为标量后缀（`Vec2d`、`Rect2d`、`LineCurved`），行业里给维度用的两种拼写（CGAL 的 `_2`、OCCT 的 `2d`）在这里都会与精度撞车；尾缀 `2` 又会与 `BezierCurve::degree()` 的"二次"语义混。因此维度只进命名空间。
-- **P4 改库内布局前先看数字**：一次目录与命名重排要动 850 处代码引用 + 265 处文档引用（本次实测）。要么它消除一项长期的税（例如本次消掉两句重导出与一处兄弟命名空间陷阱），要么别做。
+- **P1 An unqualified `detail::` resolves to the contract's own one**: `planar/CurveCurveIntersection.hpp` and `spatial/{Aabb,CurveSurfaceIntersection,RaySurfaceIntersection,SolidDetail,SurfaceProjection}.hpp` declare a tree-private `detail` of the same name; as soon as any of them enters the same TU, `detail::X` inside the contract resolves to that layer and not to `geom::detail`. **Always spell a shared piece `geom::detail::`** (measured: a bare `detail::` fails immediately with C2039).
+- **P2 Same-named public functions cannot share one namespace**: `closestPointOnCurve` and `curveToCurveDistance` have **identical parameter lists and different return types** in the two contracts, and C++ cannot overload on the return type; `arcLength` / `parameterAtLength` do have the same return type, but merging them would distinguish calls only through mutually exclusive `requires` clauses — an implicit mechanism (`G11`). That is why the dimension cannot go into the type name and the two contracts cannot merge into one namespace.
+- **P3 The precision suffix and a dimension suffix compete for the same place**: we already use `d` / `f` as the scalar suffix (`Vec2d`, `Rect2d`, `LineCurved`), and both spellings the industry uses for a dimension (CGAL's `_2`, OCCT's `2d`) collide with precision here; a trailing `2` would also blur into the "quadratic" meaning of `BezierCurve::degree()`. So the dimension goes into the namespace only.
+- **P4 Look at the numbers before re-laying-out the library**: one directory and naming re-shuffle touched 850 code references + 265 documentation references (measured). Either it removes a long-standing tax (as this one removed two re-exports and one sibling-namespace trap) or it is not done.
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-- **D1** 两个目标（`vn::Geom2D` INTERFACE + `vn::Geom3D` SHARED）：`G1`、`G6`——任何共享都要靠第三个模块或复制。见 `../decisions/ADR-2026-11-06-merged-geom-module.md`。
-- **D2** 两个契约各自复制共享件：`G1`、`G5`——差异只在类型名时，两份拷贝就是两次维护。见 `../decisions/ADR-2026-11-06-geom-detail-subtree.md`。
-- **D3** 保持"`geom2d` / `geom3d` 是 `geom` 的兄弟目录"的旧形态（重导出 + 全限定）：`G11`、`G4`——模块目录不包含模块内容、`Continuity` 要靠两句 `using`、`detail` 要靠前缀区分，且目录与命名空间两套话。见 `../decisions/ADR-2026-11-06-geom-contracts-nested-under-module.md`。
-- **D4** 平铺到 `geom/` 并只给平面契约加标记（`Curve2` / `CircleCurve2`）：`G4`、`G11`——4 对同名公开函数（其中两对不能重载）、`LineCurved` 与 `LineCurve2d` 的 `d` 冲突、无标记的类型变成"默认是空间"的不成文约定。
-- **D5** 平铺并把两个契约都标上（`Curve2` / `Curve3`）：`G4`、`G1`——15 + 47 个类型与 4 个函数同时改名，且名字谎称"同一个族的两个维度"。
-- **D6** 让 `math` 继续承载求根/积分与样条表示约定：`G1`、`G4`——`math` 会一直有两个只被几何使用的子目录。见 `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`。
-- D4–D5 的完整对照与行业证据（OCCT / CGAL / Eigen / GLM）见 `../decisions/ADR-2026-11-06-geom-contracts-nested-under-module.md`。
+- **D1** Two targets (`vn::Geom2D` INTERFACE + `vn::Geom3D` SHARED): `G1`, `G6` — every sharing needs a third module or a copy. See `../decisions/ADR-2026-11-06-merged-geom-module.md`.
+- **D2** Each contract copies the shared pieces: `G1`, `G5` — when the only difference is a type name, two copies are two maintenance sites. See `../decisions/ADR-2026-11-06-geom-detail-subtree.md`.
+- **D3** Keep the old shape where `geom2d` / `geom3d` are siblings of `geom` (re-export plus full qualification): `G11`, `G4` — the module directory does not contain the module's content, `Continuity` needs two `using` lines, `detail` needs a prefix to tell apart, and there are two vocabularies for directory and namespace. See `../decisions/ADR-2026-11-06-geom-contracts-nested-under-module.md`.
+- **D4** Flatten into `geom/` and mark only the planar contract (`Curve2` / `CircleCurve2`): `G4`, `G11` — four pairs of same-named public functions (two pairs of which cannot be overloaded), a `d` collision between `LineCurved` and `LineCurve2d`, and unmarked types silently meaning "spatial by default".
+- **D5** Flatten and mark both contracts (`Curve2` / `Curve3`): `G4`, `G1` — 15 + 47 types and 4 functions renamed at once, and the names would claim "two dimensions of one family".
+- **D6** Let `math` keep carrying root finding / integration and the spline representation conventions: `G1`, `G4` — `math` would keep two subdirectories used only by geometry. See `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`.
+- The full comparison of D4–D5 with the industry evidence (OCCT / CGAL / Eigen / GLM) is in `../decisions/ADR-2026-11-06-geom-contracts-nested-under-module.md`.
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| 编号 | 判据 | 用例 / 命令 |
+| # | Criterion | Case / command |
 |---|---|---|
-| T1 | 两个契约在同一库内正常工作 | `test_geom_planar`（140 例）、`test_geom_spatial`（213 例）全绿 |
-| T2 | 隔离：无跨契约 include、`detail` 不命名维度、include 域 | `python scripts/check_geom_layering.py` → `0 finding(s) in 70 file(s)`，且临时违规头文件能让它报错 |
-| T2b | 模块级不变量：两个契约的 `continuity()` 返回同一个 `vn::geom::Continuity`，且阶梯有序 | `tests/test_geom_planar/ModuleContractTest.cpp` 的三条 `static_assert` 与 `TheLadderIsOrderedBySmoothness` |
-| T3 | 共享件真的只有一份 | 两个契约上同名实现的差异只剩文档（逐行 diff 实测：`CurveLength` / `CurveCurveDistance` / `CurveProjection` 的实现体已无差异） |
-| T4 | 头文件卫生与公开面文档 | `check_include_hygiene.py`、`check_public_docs.py` 均 0 发现 |
-| T5 | 文档结构 | `check_ai_docs.py --strict`、`check_design_docs.py` 均 0 发现 |
+| T1 | Both contracts work inside one library | `test_geom_planar` (140 cases), `test_geom_spatial` (213 cases) green |
+| T2 | Isolation: no cross-contract include, `detail` names no dimension, include domain | `python scripts/check_geom_layering.py` → `0 finding(s) in 70 file(s)`, and a temporary violating header makes it fail |
+| T2b | Module-level invariant: `continuity()` in both contracts returns the same `vn::geom::Continuity`, and the ladder is ordered | the three `static_assert`s and `TheLadderIsOrderedBySmoothness` in `tests/test_geom_planar/ModuleContractTest.cpp` |
+| T3 | The shared pieces really exist once | the same-named implementations on the two contracts differ only in documentation (line-by-line diff: the bodies of `CurveLength` / `CurveCurveDistance` / `CurveProjection` have no difference left) |
+| T4 | Header hygiene and public-surface documentation | `check_include_hygiene.py`, `check_public_docs.py` both 0 findings |
+| T5 | Document structure | `check_ai_docs.py --strict`, `check_design_docs.py` both 0 findings |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-- **现状**：F1–F5 全部落地；`vn::Geom` 单一目标；`geom/{planar,spatial}` 共 65 个头、`geom/detail` 8 个；五条门禁 0 违规；两套几何测试共 353 例全绿。
-- **反转条件**：① 出现**第三棵子树**（多边形、网格几何等）——按 2.3 判定它属于目录、命名空间还是新模块；② 出现非几何的求根/积分/Bernstein 消费者——把内核升成独立模块，几何侧只换 include（见 `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`）。
-- **不做**：类型名带维度标记（D4–D5）；除非出现第二条能证明它能消除的税。
+- **Current state**: F1–F5 are all in place; `vn::Geom` is a single target; `geom/{planar,spatial}` hold 65 headers and `geom/detail` 8; the five gates report 0 violations; the two geometry test targets run 353 cases, all green.
+- **Reversal conditions**: (1) a **third subtree** appears (polygons, mesh geometry, …) — test it by 2.3 to decide whether it is a directory, a namespace or a new module; (2) a non-geometry consumer of root finding / integration / Bernstein appears — promote the kernel to a module of its own and let the geometry side change only its includes (see `../decisions/ADR-2026-11-06-math-keeps-only-vocabulary.md`).
+- **Not done**: a dimension marker in a type name (D4–D5); unless a second tax shows up that proves it removes one.
 
-## 10. 参考
+## 10. References
 
-- 代码：`src/base/geom/CMakeLists.txt`、`sdk/vine/geom/geom_global.hpp`、`sdk/vine/geom/Continuity.hpp`、`sdk/vine/geom/detail/`（8 个头）、`sdk/vine/geom/planar/`（16）、`sdk/vine/geom/spatial/`（49，另有 `detail/` 7）。
-- 门禁：`scripts/check_geom_layering.py`。
-- 决策：`ADR-2026-11-06-merged-geom-module.md`、`ADR-2026-11-06-geom-detail-subtree.md`、`ADR-2026-11-06-geom-contracts-nested-under-module.md`、`ADR-2026-11-05-planar-curve-contract.md`、`ADR-2026-11-06-spline-model-moves-to-geom.md`、`ADR-2026-11-06-math-keeps-only-vocabulary.md`。
-- 相关设计：`geometry-planar.md`（平面曲线的契约与九个类型）、`geometry-kinds.md`（空间曲线/曲面族）、`geometry-primitives.md`（空间值类型）、`math-base-layer.md`（下层只有词汇）。
+- Code: `src/base/geom/CMakeLists.txt`, `sdk/vine/geom/geom_global.hpp`, `sdk/vine/geom/Continuity.hpp`, `sdk/vine/geom/detail/` (8 headers), `sdk/vine/geom/planar/` (16), `sdk/vine/geom/spatial/` (49, plus 7 under `detail/`).
+- Gates: `scripts/check_geom_layering.py`.
+- Decisions: `ADR-2026-11-06-merged-geom-module.md`, `ADR-2026-11-06-geom-detail-subtree.md`, `ADR-2026-11-06-geom-contracts-nested-under-module.md`, `ADR-2026-11-05-planar-curve-contract.md`, `ADR-2026-11-06-spline-model-moves-to-geom.md`, `ADR-2026-11-06-math-keeps-only-vocabulary.md`.
+- Related design: `geometry-planar.md` (the planar curve contract and its nine types), `geometry-kinds.md` (the spatial curve / surface families), `geometry-primitives.md` (spatial value types), `math-base-layer.md` (the layer below holds vocabulary only).
