@@ -1,204 +1,204 @@
-# geometry 射线与图元相交
+# geometry rays and primitive intersection
 
-> **状态**：现行（值类型与四个图元相交；`graphics` 的拾取走它）
-> **最后核对**：2026-11-04
-> **范围**：`src/base/geom/sdk/vine/geom/spatial` 的射线值类型与射线–AABB / OBB / 平面 / 三角形查询的归属与契约。
-> 不含场景走查、拾取身份与选择态（见 `graphics-scene.md`），不含射线–网格遍历与加速结构（见 §9.2）。
-> **权威来源**：`src/base/geom/sdk/vine/geom/spatial/Ray.hpp`、`RayHit.hpp`、`Aabb.hpp` / `Obb.hpp` / `Plane.hpp` 的 `intersectWith(Ray, RayHit&)`、`tests/test_geom_spatial`。
-> **待办**：`../backlog/graphics.md`（射线–网格遍历等开放项）
+> **Status**: current (the value type and the four primitive intersections; `graphics` picking goes through it)
+> **Last verified**: 2026-11-04
+> **Scope**: the ray value type of `src/base/geom/sdk/vine/geom/spatial` and the membership and contract of the ray–AABB / OBB / plane / triangle queries.
+> Not scene traversal, picking identity and selection state (see `graphics-scene.md`), not ray–mesh traversal and acceleration structures (see §9.2).
+> **Sources**: `src/base/geom/sdk/vine/geom/spatial/Ray.hpp`, `RayHit.hpp`, `intersectWith(Ray, RayHit&)` of `Aabb.hpp` / `Obb.hpp` / `Plane.hpp`, `tests/test_geom_spatial`.
+> **Backlog**: `../backlog/graphics.md` (open items such as ray–mesh traversal)
 
-## 1. 概要设计
+## 1. Overview
 
-### 1.1 问题与背景
+### 1.1 Problem and background
 
-射线今天住在 `viz`：`vn::graphics::Ray`（`Vec3d` 原点 + 单位方向）与 `vn::graphics::RayIntersection` 同模块，而后者把两件事混在一起：
+The ray lives in `viz`: `vn::graphics::Ray` (`Vec3d` origin + unit direction) shares its module with `vn::graphics::RayIntersection`, and the latter mixes two things:
 
-- **图元相交**——slab（盒）、Möller–Trumbore（三角形）：只依赖几何数据；
-- **场景走查**——节点树、世界矩阵、实例流、拾取身份：只属于渲染侧。
+- **primitive intersection** — the slab (box), Möller–Trumbore (triangle): depends on geometric data only;
+- **scene traversal** — node tree, world matrices, instance stream, picking identity: belongs to the rendering side only.
 
-后果有三条：
+There are three consequences:
 
-- 非渲染的射线消费者（`brep` 的选中面、机器人 LiDAR 仿真、碰撞查询）要么依赖 `viz`，要么自己复制一份 `Ray`；`brep` 在 `base`，依赖 `viz` 是一条明确的回边。
-- 同一份 slab / 三角形相交只能在 graphics 里实现一次，别的层拿不到。
-- `geometry` 的 `Aabb` / `Obb` / `Plane` 没有射线入口，射线查询与这些类型的契约分裂在两个模块。
+- A non-rendering ray consumer (the selected face in `brep`, robot LiDAR simulation, collision queries) must either depend on `viz` or copy a `Ray` of its own; `brep` is in `base`, and depending on `viz` is a clear back edge.
+- One slab / triangle intersection can only be implemented inside graphics, and no other layer can reach it.
+- The `Aabb` / `Obb` / `Plane` of `geometry` have no ray entry, so ray queries and the contract of these types are split across two modules.
 
-### 1.2 目标
+### 1.2 Goals
 
-- `Ray` 只有一个定义，放在 `base` 一侧，与 `Aabb` / `Obb` / `LineCurve` / `Plane` 同层。
-- 四个图元相交与被交类型同模块，命名沿用 `Plane::intersectWith(LineCurve, Point3&)` 的既有约定。
-- `graphics` 只留场景语义：屏幕→世界、世界→局部、最近命中与拾取身份。
+- `Ray` has one definition, on the `base` side, on the same layer as `Aabb` / `Obb` / `LineCurve` / `Plane`.
+- The four primitive intersections share a module with the intersected types, named after the existing convention of `Plane::intersectWith(LineCurve, Point3&)`.
+- `graphics` keeps scene semantics only: screen → world, world → local, nearest hit and picking identity.
 
-### 1.3 非目标
+### 1.3 Non-goals
 
-- 不做射线–网格遍历与加速结构（BVH / 八叉树）：本文件只定义“射线 × 单个图元”的契约；加速结构的归属与契约见
-  `geometry-bvh.md`（`D5` 已由 `ADR-2026-11-07-bvh-as-structure-plus-builder.md` 取代）。
-- 不做场景查询与选中态：拾取是机制、选择是业务（`graphics-scene.md`）。
-- 不给 `SphericalSurface` / 胶囊 / 圆锥面这类**值类型**补射线入口：没有消费者；等出现再按同一约定加。解析实体（`Solid<T>`）的射线求交已经存在，见 `geometry-solid.md`。
+- No ray–mesh traversal and no acceleration structure (BVH / octree): this page defines "ray × a single primitive" only; the membership and contract of the acceleration structure are in
+  `geometry-bvh.md` (`D5` is superseded by `ADR-2026-11-07-bvh-as-structure-plus-builder.md`).
+- No scene query and no selection state: picking is a mechanism, selection is business (`graphics-scene.md`).
+- No ray entry on **value types** such as `SphericalSurface` / capsule / conical surface: no consumer; add one under the same convention when one appears. Ray intersection of the analytic solids (`Solid<T>`) exists already, see `geometry-solid.md`.
 
-### 1.4 一句话结论
+### 1.4 One-paragraph conclusion
 
-**射线是空间实体，归 `geometry`；相交挂在被交对象上；场景走查与拾取身份留在 `graphics`；`math` 不碰。**
+**A ray is a spatial entity and belongs to `geometry`; an intersection hangs on the intersected object; scene traversal and picking identity stay in `graphics`; `math` is not touched.**
 
-## 2. 设计要点
+## 2. Design Points
 
-### 2.1 `Ray` 与 `LineCurve` 是两种语义，不合并
+### 2.1 `Ray` and `LineCurve` are two semantics, not merged
 
-- **是什么**：`Ray<T>{ origin, direction }`，方向**单位化**，`t` 是模型单位的距离；`LineCurve<T>` 是无限直线，方向不必单位，`t` 与 `|direction|` 绑定。
-- **为什么**：`G4`、`G12` —— 用一个 `bool is_half_line` 或“约定方向长度”把两者合成一个类型，会让每个读代码的人重新推一遍 `t` 的量纲。
-- **边界**：`Ray` 不进入 `Shape` 层级（与 2.4 的四值类型同一立场）；`LineCurve` 原有契约不动。
+- **What**: `Ray<T>{ origin, direction }` with a **unit** direction, where `t` is a distance in model units; `LineCurve<T>` is an infinite line, the direction need not be unit, and `t` is tied to `|direction|`.
+- **Why**: `G4`, `G12` — merging the two into one type with a `bool is_half_line` or "the direction length is a convention" makes every reader re-derive the dimension of `t`.
+- **Boundary**: `Ray` does not enter the `Shape` hierarchy (the same position as the four value types of 2.4); the existing contract of `LineCurve` is untouched.
 
-### 2.2 相交挂在被交对象上
+### 2.2 The intersection hangs on the intersected object
 
-- **是什么**：`Aabb<T>::intersectWith(const Ray<T>&, RayHit<T>&)`、`Obb<T>` 同签名、`Plane<T>` 同签名；三角形因为没有值类型，做成自由函数 `intersectTriangle(ray, a, b, c, hit)`。
-- **为什么**：`G1`、`G6` —— 与 `Plane::intersectWith(LineCurve, Point3&)` 同一形状：被交的东西拥有算法，调用方不必知道 slab 或 Möller–Trumbore。
-- **边界**：`Obb` 的实现把射线逆变换到局部空间再复用 `Aabb`，不写第二套 slab（`G1`、`G10`）。
-- **边界**：`Aabb` / `Obb` 只报**最近命中**（边界语义）；`Solid<T>::intersectWith()` 报穿过实体的全部交点（进入 / 离开，体积语义）。两者共用 `detail/RaySlab.hpp` 的 `preparedRayBoxInterval()`（盒查询先 `PreparedRay::from(ray)` 准备一次），不各写一套 slab。
+- **What**: `Aabb<T>::intersectWith(const Ray<T>&, RayHit<T>&)`, the same signature on `Obb<T>` and on `Plane<T>`; a triangle has no value type and therefore becomes the free function `intersectTriangle(ray, a, b, c, hit)`.
+- **Why**: `G1`, `G6` — the same shape as `Plane::intersectWith(LineCurve, Point3&)`: the intersected object owns the algorithm, and the caller need not know the slab or Möller–Trumbore.
+- **Boundary**: `Obb` transforms the ray into local space and reuses `Aabb`, writing no second slab (`G1`, `G10`).
+- **Boundary**: `Aabb` / `Obb` report the **nearest hit** only (boundary semantics); `Solid<T>::intersectWith()` reports every crossing of the solid (entry / exit, volume semantics). Both share `preparedRayBoxInterval()` in `detail/RaySlab.hpp` (a box query first prepares once with `PreparedRay::from(ray)`), writing no second slab.
 
-### 2.3 结果是 `RayHit`，不是 `optional`
+### 2.3 The result is a `RayHit`, not an `optional`
 
-- **是什么**：`RayHit<T>{ t, point, normal }`；查询返回 `bool`，`false` 时 `hit` 不被写。
-- **为什么**：`G4` —— 拾取要的正是这三样；“命中/未命中”是一个值，不是异常也不是 `optional` 包装（仓库既有相交入口都是 `bool` + 出参）。
-- **边界**：`point == ray.pointAt(t)` 是契约不变量；`normal` 一律**朝向射线来向**（与 `direction` 点积 ≤ 0），盒、OBB、平面、三角形同一规则——包括从盒内出发的射线（它看到的是出射面的反面）。
+- **What**: `RayHit<T>{ t, point, normal }`; a query returns `bool`, and on `false` `hit` is not written.
+- **Why**: `G4` — picking needs exactly these three; "hit / miss" is a value, neither an exception nor an `optional` wrapper (every existing intersection entry in the repository is `bool` + output parameter).
+- **Boundary**: `point == ray.pointAt(t)` is a contract invariant; `normal` always **faces the ray's origin** (dot product with `direction` ≤ 0), the same rule for box, OBB, plane and triangle — including a ray starting inside a box (it sees the back of the exit face).
 
-### 2.4 精度跟随类型，相机路径用 `Rayd`
+### 2.4 Precision follows the type, and the camera path uses `Rayd`
 
-- **是什么**：`Ray<T>` 模板 + `Rayf` / `Rayd` 别名，与 `Aabb` / `Obb` / `LineCurve` / `Plane` 一致；`Camera::screenToWorldRay()` 返回 `Rayd`。
-- **为什么**：`G10` —— 屏幕像素反解的世界坐标用 float 会丢精度；网格顶点仍是 float，相交时按 `Rayd` 逐三角形取值计算，只有一条代码路径。
-- **边界**：不提供 `Rayd` 到 `Rayf` 的隐式转换；需要 float 版本时显式构造。
+- **What**: the `Ray<T>` template with the `Rayf` / `Rayd` aliases, consistent with `Aabb` / `Obb` / `LineCurve` / `Plane`; `Camera::screenToWorldRay()` returns a `Rayd`.
+- **Why**: `G10` — recovering world coordinates from screen pixels in float loses precision; mesh vertices are still float, and the intersection evaluates per triangle in `Rayd`, so there is one code path only.
+- **Boundary**: no implicit conversion from `Rayd` to `Rayf`; a float version is constructed explicitly.
 
-### 2.5 场景语义留在 `graphics`
+### 2.5 Scene semantics stay in `graphics`
 
-- **是什么**：`RayIntersection` 保留 `intersect()` / `intersectScene()` / `intersectSceneAll()` 与 `RayIntersectionResult{ hit, point, normal, distance, geometry, primitiveIndex, instanceIndex }`，内部换成 `geom::spatial::RayHit<double>` 加自己的身份字段。
-- **为什么**：`G2` —— 节点树、世界矩阵、实例流、可见性是 graphics 的词汇；几何侧一旦认识它们，`brep`/机器人就得反向依赖 `viz`。
-- **边界**：`graphics::Ray` **删除**，不留别名（与 `D2`「不留 `math::Rect3` 兼容别名」同一立场）；调用点一次性改完。
+- **What**: `RayIntersection` keeps `intersect()` / `intersectScene()` / `intersectSceneAll()` and `RayIntersectionResult{ hit, point, normal, distance, geometry, primitiveIndex, instanceIndex }`, and internally uses `geom::spatial::RayHit<double>` plus its own identity fields.
+- **Why**: `G2` — the node tree, world matrices, instance stream and visibility are graphics vocabulary; once the geometry side knew them, `brep` and robotics would depend on `viz` in reverse.
+- **Boundary**: there is no `graphics::Ray` and no alias (the same position as `D2`, "no `math::Rect3` compatibility alias"); every call site is changed in one pass.
 
-### 2.6 不开新模块，也不进 `math`
+### 2.6 No new module, and not into `math`
 
-- **是什么**：射线与四个相交入口都放进 `geometry`。
-- **为什么**：`G8` —— 一个值类型加四个查询不成一层；`math` 只放数值与变换，把空间实体放进去正是 `geometry-primitives.md` 2.1 那条判据要消灭的事。
-- **边界**：`math` 只提供它已有的点/向量/变换；射线不引入任何 `math` 新类型。
+- **What**: the ray and the four intersection entries all go into `geometry`.
+- **Why**: `G8` — one value type plus four queries is not a layer; `math` holds numbers and transforms only, and putting a spatial entity there is exactly what the test in `geometry-primitives.md` 2.1 exists to prevent.
+- **Boundary**: `math` provides only the points / vectors / transforms it already has; the ray introduces no new `math` type.
 
-### 2.7 射线与三角形求交定义在头文件
+### 2.7 Ray–triangle intersection is defined in the header
 
-- **是什么**：`Ray<T>` 的成员与 `intersectTriangle` 全部在 `Ray.hpp` 中定义，该类不再有独立实现文件，`VN_GEOMETRY_API` 显式实例化一并去掉。
-- **为什么**：`G7`、`G10` —— `graphics` 的 `RayIntersection::traverseMesh` 逐三角形调用，跨 DLL 调用不可能内联；实测命中断 7.09 → 5.99 ns、平行剔除 3.96 → 2.71 ns。
-- **整类搬而不是单函数**：只把 `intersectTriangle` 放进头文件、而把 `pointAt()` 留在 `.cpp`，收益从 1.10 降到 0.39 ns/tri —— 函数体里的 `hit.point = ray.pointAt(t)` 仍是一次外部调用。
-- **边界**：与其它值类型同一规则（`geometry-primitives.md` 2.8）；调用点仍只有 `graphics` 一处，`C1`–`C3` 与 §4 的签名不变。
+- **What**: the members of `Ray<T>` and `intersectTriangle` are all defined in `Ray.hpp`, the class no longer has a separate implementation file, and the `VN_GEOMETRY_API` explicit instantiation goes with it.
+- **Why**: `G7`, `G10` — `RayIntersection::traverseMesh` in `graphics` calls this per triangle, and a cross-DLL call cannot inline; measured 7.09 → 5.99 ns on hit and 3.96 → 2.71 ns on the parallel rejection.
+- **The whole class moved, not one function**: putting only `intersectTriangle` in the header and leaving `pointAt()` in the `.cpp` drops the gain from 1.10 to 0.39 ns/tri — `hit.point = ray.pointAt(t)` inside the body would still be an external call.
+- **Boundary**: the same rule as the other value types (`geometry-primitives.md` 2.8); the only call site is still `graphics`, and `C1`–`C3` and the signatures of §4 are unchanged.
 
-## 3. 功能点
+## 3. Features
 
-| # | 功能 | 行为 | 状态 |
+| # | Feature | Behaviour | Status |
 |---|---|---|---|
-| F1 | 射线值类型 | `Ray<T>`：原点 + 单位方向；`pointAt()` / `distanceToPoint()` | 已落地 |
-| F2 | 射线–AABB | slab 法，返回首个正向命中与出射面法线 | 已落地 |
-| F3 | 射线–OBB | 逆变换到局部后复用 AABB，`t` 仍是世界距离 | 已落地 |
-| F4 | 射线–平面 / 三角形 | 平面：`n·d` 平行判定；三角形：Möller–Trumbore，双面 | 已落地 |
-| F5 | graphics 迁移 | `Camera` 返回 `geom::spatial::Rayd`；`RayIntersection` 只剩场景走查与身份 | 已落地 |
+| F1 | Ray value type | `Ray<T>`: origin + unit direction; `pointAt()` / `distanceToPoint()` | landed |
+| F2 | Ray–AABB | slab method, returning the first forward hit and the exit-face normal | landed |
+| F3 | Ray–OBB | transform into local space and reuse AABB, with `t` still a world distance | landed |
+| F4 | Ray–plane / triangle | plane: the `n·d` parallel test; triangle: Möller–Trumbore, two-sided | landed |
+| F5 | graphics migration | `Camera` returns `geom::spatial::Rayd`; `RayIntersection` keeps only scene traversal and identity | landed |
 
-### 3.1 F1 射线值类型
+### 3.1 F1 the ray value type
 
-- **行为**：构造时归一化方向；`direction` 为零向量时构造合法但**所有查询返回 false**（不产生 NaN）。
-- **约束**（C1）：`t` 是模型单位距离；`pointAt(t) == origin + direction * t`。
-- **验收**（T1）：`RayTest` 覆盖归一化、`pointAt`、零方向、`distanceToPoint`。
+- **Behaviour**: the direction is normalised at construction; a zero-vector `direction` constructs legally but **every query returns false** (no NaN).
+- **Constraint** (C1): `t` is a distance in model units; `pointAt(t) == origin + direction * t`.
+- **Acceptance** (T1): `RayTest` covers normalisation, `pointAt`, the zero direction and `distanceToPoint`.
 
-### 3.2 F2 射线–AABB
+### 3.2 F2 ray–AABB
 
-- **行为**：slab 法；起点在盒外时取进入面法线；起点在盒内时 `t = 0`，法线取它看到的那个面（出射面的反面，保持与 `direction` 点积 ≤ 0）。
-- **约束**（C2）：`t >= 0`；`normal` 朝向射线来向。
-- **注意**（N1）：盒子退化（零尺寸）仍按同一公式处理，命中面可为任意一对平行面。
-- **验收**（T2）：命中、未命中、起点在内部、平行于面、擦边五类。
+- **Behaviour**: the slab method; with the origin outside the box the entry-face normal is taken; with the origin inside the box `t = 0` and the normal is the face it sees (the back of the exit face, keeping the dot product with `direction` ≤ 0).
+- **Constraint** (C2): `t >= 0`; `normal` faces the ray's origin.
+- **Caveat** (N1): a degenerate box (zero size) still goes through the same formula, and the hit face may be any pair of parallel faces.
+- **Acceptance** (T2): five cases — hit, miss, origin inside, parallel to a face, grazing the edge.
 
-### 3.3 F3 射线–OBB
+### 3.3 F3 ray–OBB
 
-- **行为**：用 `Obb` 的朝向与半尺寸把射线变换到局部空间，调用 AABB 查询，再变换法线回世界。
-- **约束**（C3）：`Obb` 的变换是正交的，所以 `t` 在变换下不变，直接就是世界距离。
-- **验收**（T3）：旋转盒的命中与 `Aabb` 版本一致（同一形状、同一射线）。
+- **Behaviour**: transform the ray into local space with the `Obb` orientation and half extents, call the AABB query, then transform the normal back to world.
+- **Constraint** (C3): the `Obb` transform is orthonormal, so `t` is unchanged by it and is directly the world distance.
+- **Acceptance** (T3): a rotated box hits exactly as the `Aabb` version does (same shape, same ray).
 
-### 3.4 F4 射线–平面 / 三角形
+### 3.4 F4 ray–plane / triangle
 
-- **行为**：平面在 `|n·d| <= eps` 时返回 false（平行）；三角形双面命中，法线按绕序与射线朝向调整。
-- **约束**（C4）：顶点共线/退化三角形的命中结果由实现决定，但不得返回 NaN。
-- **验收**（T4）：背面命中、平行、退化三角形、命中点在三角形外。
+- **Behaviour**: the plane returns false when `|n·d| <= eps` (parallel); the triangle hits on both sides, with the normal adjusted by the winding and the ray direction.
+- **Constraint** (C4): the hit result on collinear vertices / a degenerate triangle is up to the implementation, but may never return NaN.
+- **Acceptance** (T4): a back-face hit, a parallel case, a degenerate triangle, and a hit point outside the triangle.
 
-### 3.5 F5 graphics 迁移
+### 3.5 F5 the graphics migration
 
-- **行为**：`graphics::Ray` 删除；`Camera::screenToWorldRay()` 返回 `geom::spatial::Rayd`；`RayIntersection` 用 `RayHit` 组装原有结果。
-- **要求**（R4）：`model_viewer`、`OrbitCameraManipulator`、`RayIntersectionTest` 同步改完，仓库内不再出现 `graphics::Ray`。
-- **验收**（T5）：`RayIntersectionTest` 全绿且不依赖 `graphics::Ray`。
+- **Behaviour**: there is no `graphics::Ray`; `Camera::screenToWorldRay()` returns `geom::spatial::Rayd`; `RayIntersection` assembles its existing result from a `RayHit`.
+- **Requirement** (R4): `model_viewer`, `OrbitCameraManipulator` and `RayIntersectionTest` are changed together, and `graphics::Ray` no longer appears anywhere in the repository.
+- **Acceptance** (T5): `RayIntersectionTest` is green and does not depend on `graphics::Ray`.
 
-## 4. 公开接口
+## 4. Public Interface
 
-| 类型 / 文件 | 内容 |
+| Type / file | Content |
 |---|---|
-| `Ray.hpp` | `Ray<T>`、`Rayf` / `Rayd`；`pointAt()` / `distanceToPoint()` |
+| `Ray.hpp` | `Ray<T>`, `Rayf` / `Rayd`; `pointAt()` / `distanceToPoint()` |
 | `RayHit.hpp` | `RayHit<T>{ t, point, normal }` |
-| `Aabb.hpp` / `Obb.hpp` / `Plane.hpp` | 各自的 `intersectWith(const Ray<T>&, RayHit<T>&)` |
-| 自由函数 | `intersectTriangle(const Ray<T>&, a, b, c, RayHit<T>&)` |
+| `Aabb.hpp` / `Obb.hpp` / `Plane.hpp` | each one's `intersectWith(const Ray<T>&, RayHit<T>&)` |
+| free function | `intersectTriangle(const Ray<T>&, a, b, c, RayHit<T>&)` |
 
-完整签名与注释在头文件；本文件只记录归属与理由。
+The full signatures and comments are in the headers; this page records membership and the reasons only.
 
-## 5. 约束、要求与不变量
+## 5. Constraints, Requirements and Invariants
 
-- **C1**：`t` 是模型单位距离；方向恒为单位向量（零方向除外，见 C3）。
-- **C2**：只接受 `t >= 0` 的命中；`normal` 朝向射线来向。
-- **C3**：零方向射线不产生命中，也不产生 NaN。
-- **C4**：退化输入（共线三角形、平行平面）返回 false，不抛异常。
-- **R1**：相交是纯函数：不修改被交对象，不分配。
-- **R2**：`Obb` 复用 `Aabb` 的实现，不写第二套 slab。
-- **R3**：查询对被交类型的精度如实：`Rayd` × `Aabbd` 用 double，`Rayf` × `Aabbf` 用 float，不隐式混用。
-- **R4**：`graphics` 不再定义射线类型；只消费 `geometry` 的。
-- **N1**：`point == ray.pointAt(t)` 恒成立；调用方不必自己再算一遍。
-- **N2**：起点恰在表面上时算命中（`t = 0`），拾取方要区分“从内部开始”时自己看 `t`。
-- **N3**：`eps` 只是“方向视为零”的容差；slab 的平行判定用**精确零**，否则近轴射线会被当成平行而误判为未命中；三角形的行列式容差是**相对**的（按两条边长约去），否则小三角形会因面积小而永远打不中。
+- **C1**: `t` is a distance in model units; the direction is always a unit vector (except the zero direction, see C3).
+- **C2**: only hits with `t >= 0` are accepted; `normal` faces the ray's origin.
+- **C3**: a zero-direction ray produces no hit and no NaN.
+- **C4**: degenerate input (collinear triangle, parallel plane) returns false and throws nothing.
+- **R1**: an intersection is a pure function: it modifies neither object and allocates nothing.
+- **R2**: `Obb` reuses the `Aabb` implementation and writes no second slab.
+- **R3**: a query is as precise as the types being intersected: `Rayd` × `Aabbd` in double, `Rayf` × `Aabbf` in float, never mixed implicitly.
+- **R4**: `graphics` defines no ray type of its own; it consumes geometry's only.
+- **N1**: `point == ray.pointAt(t)` always holds; a caller need not recompute it.
+- **N2**: an origin exactly on the surface counts as a hit (`t = 0`), and a picker that must distinguish "starting inside" reads `t` itself.
+- **N3**: `eps` is only the tolerance for "direction counts as zero"; the slab's parallel test uses **exact zero**, or a near-axis ray is taken as parallel and misreported as a miss; the triangle's determinant tolerance is **relative** (divided by the two edge lengths), or a small triangle is never hit because its area is small.
 
-## 6. 注意事项与陷阱
+## 6. Caveats and Traps
 
-- **P1**：把 `Ray` 当成 `LineCurve` 用会得到错误量纲——`LineCurve` 的 `t` 依赖 `|direction|`，`Ray` 的 `t` 是距离。会怎么错：命中距离与显示的距离差一个方向长度；怎么判：`pointAt(t)` 与预期点不符；怎么防：只通过 `intersectWith` 取 `t`。
-- **P2**：起点在盒内的拾取会得到 `t = 0` 与出射面的反面法线，看起来像“贴着面命中”。怎么判：`t` 为 0；怎么防：需要内部最近面时用 `intersectSceneAll()` 或先做包含判定。
-- **P3**：擦边（射线穿过棱或顶点）在浮点下可能命中相邻两个面。怎么判：两个距离几乎相等；怎么防：不要依赖“唯一命中”，选择逻辑按距离排序后取首个。
-- **P4**：把 float 网格的顶点直接与 `Rayd` 相乘会丢一次精度。怎么判：远处物体的命中点抖动；怎么防：三角形顶点先升到 double 再算（F5 的实现约定）。
+- **P1**: using a `Ray` as a `LineCurve` gives the wrong dimension — a `LineCurve`'s `t` depends on `|direction|`, a `Ray`'s `t` is a distance. How it fails: the hit distance differs from the displayed one by the direction length. How to detect: `pointAt(t)` does not match the expected point. How to prevent: take `t` through `intersectWith` only.
+- **P2**: a pick whose origin is inside the box gets `t = 0` and the reverse normal of the exit face, looking like a hit "flush against the face". How to detect: `t` is 0. How to prevent: use `intersectSceneAll()` or test containment first when the inner nearest face is wanted.
+- **P3**: grazing (a ray through an edge or a vertex) may hit two adjacent faces in floating point. How to detect: two distances are almost equal. How to prevent: do not rely on "the unique hit"; sort by distance and take the first.
+- **P4**: multiplying float mesh vertices by a `Rayd` loses precision once. How to detect: the hit point on a distant object jitters. How to prevent: promote the triangle vertices to double first (the implementation rule of F5).
 
-## 7. 已否决选项
+## 7. Rejected Options
 
-| # | 否决 | 理由 |
+| # | Rejected | Reason |
 |---|---|---|
-| D1 | 把 `Ray` 放进 `math` | `math` 只放数值与变换，空间实体归 `geometry`（`geometry-primitives.md` 2.1、`G1`）。 |
-| D2 | 留在 `graphics`，其它层各复制一份 | 一个概念两三个实现，必然漂移（`G1`）；`brep` 依赖 `viz` 是回边（`G2`）。 |
-| D3 | `Ray` 复用 `LineCurve`（加布尔或约定方向长度） | 两种量纲塞进一个类型，`t` 的含义要靠读文档推（`G4`）。 |
-| D4 | 相交写成自由函数 `intersect(ray, target)` 的单一重载集 | 与被交类型分离，`Obb` 复用 `Aabb`、平面特例都要在外部重写；成员形式与既有 `Plane::intersectWith` 一致（`G6`）。 |
-| D5 | 提前做射线–网格与 BVH | 没有性能证据时，加速结构会引入新的数据组织与失效规则（`G8`、`G10`）。**已取代**：批量射线消费者出现后已提供，见
-  `ADR-2026-11-07-bvh-as-structure-plus-builder.md` 与 `geometry-bvh.md`。 |
-| D6 | 保留 `graphics::Ray` 兼容别名 | 与 `geometry-primitives.md` D2 同一立场；一个类型两个名字必然漂移（`G4`）。 |
+| D1 | Putting `Ray` into `math` | `math` holds numbers and transforms only; a spatial entity belongs to `geometry` (`geometry-primitives.md` 2.1, `G1`). |
+| D2 | Leaving it in `graphics` with every other layer copying it | one concept with two or three implementations inevitably drifts (`G1`); `brep` depending on `viz` is a back edge (`G2`). |
+| D3 | `Ray` reusing `LineCurve` (with a boolean or a direction-length convention) | two dimensions in one type make the meaning of `t` something to derive from the documentation (`G4`). |
+| D4 | Writing intersection as a single overload set of the free function `intersect(ray, target)` | separated from the intersected type, `Obb` reusing `Aabb` and the plane special case would all be rewritten outside; the member form matches the existing `Plane::intersectWith` (`G6`). |
+| D5 | Doing ray–mesh and BVH ahead of time | without performance evidence, an acceleration structure introduces new data organisation and invalidation rules (`G8`, `G10`). **Superseded**: provided once batch ray consumers appeared, see
+  `ADR-2026-11-07-bvh-as-structure-plus-builder.md` and `geometry-bvh.md`. |
+| D6 | Keeping a `graphics::Ray` compatibility alias | the same position as `geometry-primitives.md` D2; one type with two names inevitably drifts (`G4`). |
 
-## 8. 测试与验收
+## 8. Tests and Acceptance
 
-| # | 判据 | 用例 |
+| # | Criterion | Case |
 |---|---|---|
-| T1 | 归一化、`pointAt`、零方向不产生 NaN、`distanceToPoint` | `tests/test_geom_spatial/RayTest.cpp` |
-| T2 | 盒：命中、未命中、起点在内、平行、擦边 | `RayTest.cpp` |
-| T3 | OBB：旋转盒与等价 AABB 结果一致 | `RayTest.cpp` |
-| T4 | 平面与三角形：背面、平行、退化、命中点在三角形外 | `RayTest.cpp` |
-| T5 | 迁移后 `RayIntersectionTest` 全绿且不依赖 `graphics::Ray` | `tests/test_graphics`（`HitsTriangle` / `MissesTriangle` 目前被一个既有崩溃挡住，见 backlog） |
+| T1 | normalisation, `pointAt`, a zero direction producing no NaN, `distanceToPoint` | `tests/test_geom_spatial/RayTest.cpp` |
+| T2 | box: hit, miss, origin inside, parallel, grazing | `RayTest.cpp` |
+| T3 | OBB: a rotated box and the equivalent AABB answer alike | `RayTest.cpp` |
+| T4 | plane and triangle: back face, parallel, degenerate, hit point outside the triangle | `RayTest.cpp` |
+| T5 | after the migration `RayIntersectionTest` is green and does not depend on `graphics::Ray` | `tests/test_graphics` (`HitsTriangle` / `MissesTriangle` are currently blocked by an existing crash, see backlog) |
 
-## 9. 状态与演进
+## 9. Status and Evolution
 
-### 9.1 当前状态
+### 9.1 Current state
 
-几何侧有 `geom::spatial::Ray` / `RayHit`、`Aabb` / `Obb` / `Plane` 的射线重载与 `intersectTriangle`；`graphics` 没有自己的 `Ray`，`Camera::screenToWorldRay()` 返回 `geom::spatial::Rayd`，`RayIntersection` 只剩场景走查、世界→局部与拾取身份。
+Geometry holds `geom::spatial::Ray` / `RayHit`, the ray overloads of `Aabb` / `Obb` / `Plane` and `intersectTriangle`; `graphics` has no `Ray` of its own, `Camera::screenToWorldRay()` returns `geom::spatial::Rayd`, and `RayIntersection` keeps only scene traversal, world → local and picking identity.
 
-### 9.2 已知缺口
+### 9.2 Known gaps
 
-- 射线–网格遍历与加速结构（BVH）：归属、结构与构建边界见 `geometry-bvh.md`；
-  射线查询入口是 `Bvh::forEachRay()`，它复用本文件的 `PreparedRay` 与 slab 实现。
-- `tests/test_graphics` 里几个走 `geometryFromShape()` 的用例（`GeometryTest.MeshCounts`、`RayIntersectionTest.HitsTriangle` / `MissesTriangle`、`SceneTest.BoundingBoxAggregates`）在本机上崩溃，且与几何侧的改动无关；已记入 `../backlog/graphics.md`。
+- Ray–mesh traversal and an acceleration structure (BVH): membership, structure and build boundary are in `geometry-bvh.md`;
+  the ray query entry is `Bvh::forEachRay()`, which reuses this page's `PreparedRay` and slab implementation.
+- A few cases in `tests/test_graphics` that go through `geometryFromShape()` (`GeometryTest.MeshCounts`, `RayIntersectionTest.HitsTriangle` / `MissesTriangle`, `SceneTest.BoundingBoxAggregates`) crash on this machine and did so before this work too; recorded in `../backlog/graphics.md`.
 
-### 9.3 兼容性与迁移
+### 9.3 Compatibility / migration
 
-没有 `graphics::Ray`，也没有兼容别名；迁移点是：`Camera.cpp`、`RayIntersection.cpp`、`OrbitCameraManipulator.cpp`、`model_viewer`、`RayIntersectionTest`。
+There is no `graphics::Ray` and no alias; the migration points were `Camera.cpp`, `RayIntersection.cpp`, `OrbitCameraManipulator.cpp`, `model_viewer` and `RayIntersectionTest`.
 
-## 10. 参考
+## 10. References
 
-- 代码：`src/base/geom/sdk/vine/geom/spatial/Ray.hpp`、`RayHit.hpp`、`Aabb.hpp`、`Obb.hpp`、`Plane.hpp`；`src/viz/graphics/sdk/vine/graphics/Camera.hpp`、`RayIntersection.hpp`。
-- 设计：`geometry-primitives.md`（空间值类型的边界判据）、`graphics-scene.md`（拾取是机制）、`geometry-intersection.md`（所有配对与结果形态的总表）。
-- 测试：`tests/test_geom_spatial/RayTest.cpp`、`tests/test_graphics`（相机与拾取）。
-- 外部资料：Möller–Trumbore 射线–三角形求交；Kay–Kajiya slab 法。
+- Code: `src/base/geom/sdk/vine/geom/spatial/Ray.hpp`, `RayHit.hpp`, `Aabb.hpp`, `Obb.hpp`, `Plane.hpp`; `src/viz/graphics/sdk/vine/graphics/Camera.hpp`, `RayIntersection.hpp`.
+- Design: `geometry-primitives.md` (the boundary test for spatial value types), `graphics-scene.md` (picking is a mechanism), `geometry-intersection.md` (the table of every pairing and result shape).
+- Tests: `tests/test_geom_spatial/RayTest.cpp`, `tests/test_graphics` (camera and picking).
+- External material: Möller–Trumbore ray–triangle intersection; the Kay–Kajiya slab method.
