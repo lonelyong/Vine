@@ -1,21 +1,22 @@
-# 命令参数 待办
+# Command arguments backlog
 
-> 只列开放项；没有触发条件就不做。关闭项直接删除。
+> Open items only; without a trigger condition it is not done. Closed items are deleted.
 
-参数**携带机制**已落地（见 `../design/appfw-command-arguments.md`）：一行文本切成 token、随执行帧送到
-`CommandExecutionContext::arguments()`、历史与事件记录可回放的规范形。下面是还没有做的部分。
+The parameter **carrying mechanism** is in place (see `../design/appfw-command-arguments.md`): one line of text split
+into tokens, delivered with the execution frame to `CommandExecutionContext::arguments()`, and a canonical form the
+history and the event log can replay. What follows is the part that is not done.
 
-## 1. 现在可做（无触发条件）
+## 1. Actionable Now (No Trigger)
 
-（无）
+(none)
 
-## 2. 触发条件型
+## 2. Trigger-gated
 
-| # | 项 | 内容 | 触发条件 | 出处 |
+| # | Item | What | Trigger | Source |
 |---|---|---|---|---|
-| T1 | 声明式参数 | `Command::parameters()` 返回 `CommandParameter{name, short_name, kind, position, required, default, description}`；注册时校验唯一性并在派发前按声明解析、填默认、报未知/重复/缺参。类型来自声明，不来自 token | 出现 3 条以上命令各自手写同样的 `-x value` 解析，或需要框架生成用法/补全 | `../design/appfw-command-arguments.md` §9 |
-| T2 | 帮助与补全 | `help <command>` 与 `--help` 由声明生成参数表；控制台第二段起补参数名 | T1 落地后（没有声明就无可补全的东西） | 同上 |
-| T3 | 缺参提问 | 框架在必选参数缺失时按 `description` 提问；编程入口直接 `Failed` + 用法。今天由命令自己用 `UserIO` 问（`test_createbox` 已是“给全就直跑、缺的才问”） | T1 落地后 | `../design/appfw-command-arguments.md` F5 |
-| T4 | 对象参数 | 声明 `object_kind` 的参数以稳定 id 传递，派发时解析、命令按需再解析；`document`/`view` 折叠进 `CommandTarget` | 出现“按名字/编号指定文档、视图、插件”的真实命令 | `.ai/decisions/ADR-2026-10-24-command-target.md` |
-| T5 | 参数长度上界 | 单条 `args_record` 与单次 token 总量的上界，防止超长输入占住历史 | 历史条目数上限之外需要守内存时（N6 从“条数有界”扩到“字节有界”） | `../design/appfw-command-manager.md` F5 |
-| T6 | 参数集（变体） | 声明里支持 `parameter set`：判别符 + 每个集合的参数表；派发按集合校验与提问，帮助/补全按集合分组 | 第二条命令也需要多写法，或 `test_createbox` 的模式解析要被复制 | `../design/appfw-command-arguments.md` F6 |
+| T1 | Declarative parameters | `Command::parameters()` returns `CommandParameter{name, short_name, kind, position, required, default, description}`; registration checks uniqueness, and dispatch parses by the declaration, fills defaults and reports unknown/duplicate/missing parameters. Types come from the declaration, not from the tokens | three or more commands each hand-writing the same `-x value` parsing, or the framework having to generate usage/completion | `../design/appfw-command-arguments.md` §9 |
+| T2 | Help and completion | `help <command>` and `--help` generate the parameter table from the declaration; the console completes parameter names from the second word on | after T1 lands (with no declaration there is nothing to complete) | ibid. |
+| T3 | Asking for a missing parameter | the framework asks, using `description`, when a required parameter is missing; the programmatic entry just answers `Failed` plus the usage. Today a command asks through `UserIO` itself (`test_createbox` already follows "run straight through when everything is given, ask only for what is missing") | after T1 lands | `../design/appfw-command-arguments.md` F5 |
+| T4 | Object parameters | a parameter declared with `object_kind` travels as a stable id, is resolved at dispatch and re-resolved by the command as needed; `document`/`view` fold into `CommandTarget` | a real command that names a document, view or plugin by name/number | `.ai/decisions/ADR-2026-10-24-command-target.md` |
+| T5 | Parameter length bounds | bounds on one `args_record` and on the total tokens of one call, so an over-long input cannot hold on to the history | when memory has to be defended beyond the entry-count cap (N6 grows from "bounded count" to "bounded bytes") | `../design/appfw-command-manager.md` F5 |
+| T6 | Parameter sets (variants) | the declaration supports `parameter set`: a discriminant plus one parameter table per set; dispatch validates and asks per set, and help/completion group by set | a second command needs several spellings, or the `test_createbox` pattern parsing would have to be copied | `../design/appfw-command-arguments.md` F6 |
