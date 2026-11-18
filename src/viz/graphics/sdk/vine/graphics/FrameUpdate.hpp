@@ -50,7 +50,7 @@ class VN_GRAPHICS_API FrameUpdate {
      *
      * @param context This frame's context (see FrameContext); borrowed for the call.
      */
-    virtual void update(const FrameContext& context) = 0;
+    virtual void onFrame(const FrameContext& context) = 0;
 };
 
 VN_GRAPHICS_NS_END

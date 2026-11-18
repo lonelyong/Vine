@@ -209,7 +209,7 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay>,
      * @param context This frame's context (see FrameContext); its first frame carries no interval and repaints
      *                nothing.
      */
-    void update(const FrameContext& context) override;
+    void onFrame(const FrameContext& context) override;
 
   private:
     /** @brief Rebuilds the seven-segment content scene. */

@@ -462,7 +462,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *   puts it where the compile looks - see RenderPass::execute.
      *
      * - The frame is what the declarations ARE: there is no clock and no per-frame context to pass in. Content that
-     *   animates measures its own time (an overlay's own wall clock, or a host that calls FrameUpdate::update()
+     *   animates measures its own time (an overlay's own wall clock, or a host that calls FrameUpdate::onFrame()
      *   before frame()), which is what the one `dt` a host had to hand over used to be - a number nothing in the
      *   frame read.
      *
@@ -477,7 +477,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @details
      * - A LIFETIME DECISION, made once: switching to EngineThread starts this engine's frame thread, switching back to
      *   Inline stops and joins it. Both wait for a frame in flight first, so a host may switch between frames (not
-     *   from inside a FrameUpdate::update() call).
+     *   from inside a FrameUpdate::onFrame() call).
      * - The thread is told nothing about the content: `frame()` still builds the content half on the caller's thread,
      *   and only the publications, the surface's window half and the device are touched on the other side.
      *
@@ -599,7 +599,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      * @details
      * - THE ONE VALUE THE PER-FRAME WORK SHARES: the host composes nothing, it asks once and hands the answer to
      *   `SceneView::update` / `PassChain::update`, which pass the same value to every object of that frame
-     *   (`FrameUpdate::update`).
+     *   (`FrameUpdate::onFrame`).
      * - A PURE READ, AND THE SAME ANSWER ALL FRAME: the frame id, the announced size and the ratio are read live, so
      *   a host that asks twice gets the same context; only `elapsed_seconds` advances, once per `frame()`.
      * - THE TIME IS ONE FRAME BEHIND: it is the interval between the two most recent frames, measured at the head of

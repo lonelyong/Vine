@@ -80,3 +80,13 @@ Three constraints shaped it.
 - **The low-pass warning stands**: this batch landed before its trigger. If a second consumer of the fields never
   appears, the value still earned its place by deleting a per-object clock; if a replay requirement appears, the
   host-supplied clock remains the additive step and this ADR's rejected option is the entry to revisit.
+
+## Correction (2026-11-18, same day)
+
+The hook's method is **`onFrame(const FrameContext&)`**, not `update(...)` as the Decision above says. The rename
+landed hours later in the same session, when the naming was reviewed: "update" was doing three jobs - the interface
+(`FrameUpdate`), its method (`.update()`) and the two drivers (`PassChain::update` / `SceneView::update`) - and the
+class/method pair read as a stutter (`FrameUpdate::update`). The repository already had the rule the rename follows:
+a **reaction** is spelled `on<Event>` (`onSurfaceResized`, `onResize`, `onKeyDown`, `onScroll`) and a **driver** keeps
+`update` because its job is to walk and call. So the class name stands ("the object's per-frame update") and only the
+method moved; `BC-25` covers both halves of the migration.

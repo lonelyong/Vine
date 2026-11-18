@@ -227,7 +227,7 @@ void FpsOverlay::setAreaOrigin(int x, int y)
     onSurfaceResized(surface_w_, surface_h_);
 }
 
-void FpsOverlay::update(const FrameContext& context)
+void FpsOverlay::onFrame(const FrameContext& context)
 {
     // The readout's edits land as ONE publication at the end of this hook: the frame takes the scene's latest
     // publication (see detail::PublicationStore), so a hook that wrote content has to post it (see AxisGizmo::update).

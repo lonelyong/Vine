@@ -157,6 +157,12 @@ removing an unregistered pass and removing an already removed pass are the same 
     Boundary: this is a vocabulary batch, not a behaviour one - no signature changed shape, no default changed, and the in-tree call sites
     are the whole migration.
 
+    The same rule covers **verbs**, because two spellings were doing one job: a **driver** is spelled `update`
+    (`PassChain::update` / `SceneView::update` - its job is to walk its objects and call them), while a **reaction** is
+    spelled `on<Event>` (`onSurfaceResized`, `onResize`, `onKeyDown`, `onScroll`, and - since 2026-11-18 - `FrameUpdate::onFrame`).
+    The former `FrameUpdate::update()` was the reaction side wearing the driver's verb, and the pair read as a stutter;
+    it is the one rename of that batch that changes no type (`BC-25`).
+
 ## 3. Features
 
 ### 3.1 Device, window, area, view, engine

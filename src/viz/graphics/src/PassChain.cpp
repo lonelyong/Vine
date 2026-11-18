@@ -191,7 +191,7 @@ void PassChain::update(const FrameContext& context)
     // ONE context for the whole call: an overlay cannot see a different frame than the one next to it.
     for (const Overlay& overlay : overlays_) {
         if (overlay.update != nullptr) {
-            overlay.update->update(context);
+            overlay.update->onFrame(context);
         }
     }
 }

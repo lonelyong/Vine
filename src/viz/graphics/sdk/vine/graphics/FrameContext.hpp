@@ -13,7 +13,7 @@ VN_GRAPHICS_NS_BEGIN
  * - THE ONE VALUE THE PER-FRAME WORK SHARES (see FrameUpdate): every object doing its own per-frame work gets the
  *   same `FrameContext` for the same frame, so a gizmo and a readout cannot disagree about which frame they are in or
  *   how big the surface is.
- * - IT IS A VALUE, NOT A HANDLE: a copy is what a `FrameUpdate::update()` call receives, and it says nothing about
+ * - IT IS A VALUE, NOT A HANDLE: a copy is what a `FrameUpdate::onFrame()` call receives, and it says nothing about
  *   the engine - an object that needs more asks the object that owns it.
  * - THE SIZE IS THE HOST'S ANNOUNCEMENT (`RenderArea::resize`), in LOGICAL pixels, with the ratio beside it, so
  *   `renderWidth()` / `renderHeight()` answer device pixels the same way the engine lays a frame out

@@ -97,7 +97,7 @@ keeps the old argument.
 
 - `ADR-2026-11-18-the-frame-carries-its-context.md` — **the frame carries its context, and one clock measures it**:
   `FrameContext` (frame id, interval, area size, ratio) is composed by `RenderEngine::frameContext()` and handed to
-  `FrameUpdate::update(const FrameContext&)`; the clock is read once per frame at the head of `frame()`, so the value
+  `FrameUpdate::onFrame(const FrameContext&)`; the clock is read once per frame at the head of `frame()`, so the value
   is a pure read one frame behind; `FpsOverlay` stops reading `steady_clock` (`BC-25`). Landed on an explicit go
   ahead of its trigger, which the ADR records as not hit.
 - `ADR-2026-11-18-names-state-what-is-handed-over.md` — **a public name says what the caller is handed**: `DiagnosticsRoute` → `DiagnosticsHandle` (the route is `Diagnostics`; the handle is what the engine lends), the duplicate `MaterialPtr` alias deleted from `Geometry.hpp`, and the one-argument `resolveRenderState` → `applyStateDefaults`; migration notes `BC-22`…`BC-24` in `graphics-architecture.md` 2.14, no deprecated aliases.

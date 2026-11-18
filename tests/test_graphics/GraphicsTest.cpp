@@ -7956,7 +7956,7 @@ TEST(PassChainTest, AnOverlaysUpdateRunsWhenTheChainUpdatesAndNeverInsideAFrame)
 {
     class CountingOverlay : public vn::Object, public vn::RefCounted<CountingOverlay>, public FrameUpdate {
       public:
-        void update(const FrameContext&) override
+        void onFrame(const FrameContext&) override
         {
             ++updates;
         }
@@ -7999,7 +7999,7 @@ TEST(PassChainTest, OneUpdateHandsEveryOverlayTheSameFrameContext)
 {
     class RecordingOverlay : public vn::Object, public vn::RefCounted<RecordingOverlay>, public FrameUpdate {
       public:
-        void update(const FrameContext& context) override
+        void onFrame(const FrameContext& context) override
         {
             seen = context;
             ++count;
@@ -8316,10 +8316,10 @@ TEST(FpsOverlayTest, TheReadoutIsASingleCommandAndBlankUntilItHasAValue)
     // no longer measures a wall clock - only that a value was published.
     auto backend                      = intrusive_ptr<MockBackend>(new MockBackend());
     overlay->sampler().window_seconds = 0.05;
-    overlay->update(FrameContext{});
+    overlay->onFrame(FrameContext{});
     FrameContext tick;
     tick.elapsed_seconds = 0.06;
-    overlay->update(tick);
+    overlay->onFrame(tick);
 
     const auto commands = commandsOf(overlay->content()->root(), camera);
     ASSERT_EQ(commands.size(), 1u);
@@ -8569,7 +8569,7 @@ TEST(AxisGizmoTest, OrientationMirrorTracksSource)
     gizmo->setSourceCamera(src.get());
     // The mirror is applied by update() (the hook the declaration that shows the gizmo calls); no backend is
     // needed to observe the framing camera update.
-    gizmo->update(FrameContext{});
+    gizmo->onFrame(FrameContext{});
 
     Camera*     cam = gizmo->camera();
     const Vec3d sf  = (src->target() - src->eye()).normalized();

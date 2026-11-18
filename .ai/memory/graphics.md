@@ -1931,3 +1931,22 @@
   `test_vk` 174, `test_vsg` 572, `test_gui` 332; `content_seam` + `vk_exposure` green; ten gates green (199 notes /
   80 ADRs / 1353 include-checked files / 974 public docs / 138 units); demo `Vine --open demo` on vk: 0
   `[error]` / 0 `[warning]`, session up 47 ms, `Pending -> Presenting` 225 ms.
+
+## 2026-11-18 the hook's verb: `FrameUpdate::update()` -> `onFrame()`
+
+- **What**: one method rename, no type renamed. `FrameUpdate::onFrame(const FrameContext&)`; `AxisGizmo`, `FpsOverlay`
+  and the two test doubles follow; `PassChain::update` / `SceneView::update` keep their names. Rule now stated in
+  `graphics-architecture.md` 2.14: a **driver** is `update` (its job is to walk and call), a **reaction** is
+  `on<Event>` (`onSurfaceResized`, `onResize`, `onKeyDown`, `onScroll` - the repo already spoke this way). BC-25 covers
+  both halves of the T40 migration. ADR-2026-11-18-the-frame-carries-its-context carries a dated correction rather
+  than a rewrite.
+- **Why it was worth a public-API batch**: "update" was doing three jobs at once (the interface, its method, and the
+  two drivers) and `FrameUpdate::update` read as a stutter; the call site now says what happens
+  (`overlay.update->onFrame(context)`).
+- **Rejected**: `FrameUpdateCallback` - in this SDK "callback" means the `std::function` a host passes in (prose only:
+  `DiagnosticSink`, `OverlayLayout`, `Step`, `StepWithRatio` are named by ROLE, never `XxxCallback`), while the hook is a
+  facet of a content object discovered by cast. `FrameStep` would be right only if the work became a function object.
+- **Doc drift fixed on the way**: backlog T6 said "`FrameContext` has no consumer" - it has two now; what has none is a
+  walk of the SCENE graph. T6 restated accordingly.
+- **Evidence**: `test_graphics` 621, `test_vk` 174, `test_vsg` 572, `test_gui` 332; `content_seam` + `vk_exposure`
+  green; ten gates green. No behaviour changed and no case renamed.

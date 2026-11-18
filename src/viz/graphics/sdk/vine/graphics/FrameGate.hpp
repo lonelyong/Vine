@@ -29,7 +29,7 @@ VN_GRAPHICS_NS_BEGIN
  *   own claim and the device's content lock, not the gate.
  * - WHAT IT REFUSES. A caller asking for THIS gate from a thread that already holds it, in either side, gets an EMPTY
  *   lease at once: waiting there would be the caller waiting for itself, and a frame started from inside a frame (a
- *   `FrameUpdate::update()` call or a diagnostic sink driving another engine) is a protocol error the backend reports rather
+ *   `FrameUpdate::onFrame()` call or a diagnostic sink driving another engine) is a protocol error the backend reports rather
  *   than a deadlock. The refusal is the whole answer - a caller that gets an empty lease answers a refusal value and
  *   must not fall through to an unlocked path.
  * - WHY A LEASE AND NOT enter()/leave(). A frame has many early returns, and a forgotten `leave()` would deadlock the

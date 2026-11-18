@@ -148,7 +148,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
   order 决定先后。
   - **扩展点只有一个：`describe(scene, out)`**。这一条 pass 要"发什么"
     写在 `describe`（引擎编译这一帧时调它一次，填 target / viewport / 清屏 / 状态 / 绘制调用）；要"先做什么"
-    （写内容，比如 HUD 自更新）是对象自己的 `FrameUpdate::update()`（链/宿主在帧之前调用，见 §3.6）。**`execute()` 不是扩展点**（2026-10-19 起它不再是
+    （写内容，比如 HUD 自更新）是对象自己的 `FrameUpdate::onFrame()`（链/宿主在帧之前调用，见 §3.6）。**`execute()` 不是扩展点**（2026-10-19 起它不再是
     `virtual`）：它是"宿主自己驱动一条 pass"（或测试）时的拼写，内部就是"描述 → 把只含这一条 pass 的帧值交给
     后端"（`singlePassFrame`），与引擎整帧交出去的是**同一个形状**。子类想改变画什么，覆写 `describe()`。
 - `ScreenPass` —— `RenderPass` 子类，全屏 / 画中画。**必须命名 program**（没有隐式着色，也没有
@@ -194,7 +194,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 2. **先编译这一帧**（`compileFrame`）：按声明算出"谁先谁后、每条 pass 声明的输入解析到什么、这一组声明有什么问题"，
    并**顺手产出这一帧的值**（`FrameDescription`：每条启用的 pass 的身份 / order / 解析后的输入 + 它自己描述出来的
    绘制），`RenderEngine::frameDescription()` 可以读它。**帧跑的是这个值**，不是"逐条 pass 再问一遍"。
-   编译**只描述每条 pass**（HUD 自更新那类"先写内容"的活是对象自己的 `FrameUpdate::update()`，由链/宿主在帧之前跑完）——
+   编译**只描述每条 pass**（HUD 自更新那类"先写内容"的活是对象自己的 `FrameUpdate::onFrame()`，由链/宿主在帧之前跑完）——
    于是**内容收集**发生在编译里，`Scene::collectDrawItems(camera)` 对 **(scene, camera, mask)** 只走一次树，
    结果被记忆下来并**跨帧复用**——只有图里真的改了东西才会重走（每个节点改动都通过
    `Node::announceContentChange()` 公告，规则见 §2.2；公告沿父链走到根，所以只作废**这个场景**的记忆体，
@@ -206,7 +206,7 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
    根本不在列表里；后端的保留节点则从根上摘下但不销毁，回来时直接复用 —— 离开多久都不会被回收
    （只有宿主自己放手才算删除，细节见 [`.ai/design/graphics-content-lifecycle.md`](../../.ai/design/graphics-content-lifecycle.md)）。
    > **一条 pass 每帧只被描述一次**，而且**引擎不会调它的 `execute()`**：想让引擎跑自己的活，就把"发什么"
-   > 放进 `RenderPass::describe()`、把"先做什么"放进对象的 `FrameUpdate::update()`（见 §2.4 的 `RenderPass` 段与 §3.6）。
+   > 放进 `RenderPass::describe()`、把"先做什么"放进对象的 `FrameUpdate::onFrame()`（见 §2.4 的 `RenderPass` 段与 §3.6）。
 3. 然后把这个值**整帧交给后端**（`RenderFrameExecutor::executeFrame(frame, present_to)`，`present_to` = 本区那把目标）：后端拿到的就是全部 —— 每条 pass 的身份、
    order、解析好的输入，以及它发出的 target / viewport / 清屏 / 状态与每一条绘制调用。**没有 per-call 的平坦入口、
    也没有"没开 scope 时设置是惰性"这套顺序规则**：值的形状就是帧的形状，宣告不出岔子。
@@ -1027,7 +1027,7 @@ engine->applyPlan(vn::graphics::Plan{ { desc } });   // 注册 = 把声明交给
 ```
 
 - **位置**由 `stage` 决定；要精确插到某个数就用 `desc.order`（逃生口，见 `PassStage` 的刻度）。
-- **`FrameUpdate::update(const FrameContext&)`** 是"内容每帧自己更新"的唯一入口（FPS 读数、镜像的坐标轴）：它写**内容**，
+- **`FrameUpdate::onFrame(const FrameContext&)`** 是"内容每帧自己更新"的唯一入口（FPS 读数、镜像的坐标轴）：它写**内容**，
   由链/宿主在帧之前调一次（`SceneView::update(engine->frameContext())`；`SurfaceWindow::renderFrame` 每帧已经这样做）。
   入参是这一帧的**上下文**：帧号、上一帧的间隔、表面尺寸与像素比（FPS 读数就用它，**不再自己读时钟**）。
   跳过它，那一帧就画上一份发布——引擎不会替对象更新（BC-08）。
@@ -1046,7 +1046,7 @@ desc.target = vn::graphics::Target::transient(u8"gbuffer", shape);
   —— 它回答**此刻活着**的那一张；形状一变实例就被替换，所以跨 resize 留着的句柄是作废的，要重新问。
   这就是"机制在底层、组合在应用层"的分界：SDK 给声明、按身份取回、`RenderTarget::shareDepth`、
   `RenderPass` 的输入解析这些**机制**；像"composite 借 G-buffer 的深度"这种**组合**由你自己的配方搭
-  （在自己的 `FrameUpdate::update()` 里把借用重述到当前实例，或干脆自己持有那些 target）。
+  （在自己的 `FrameUpdate::onFrame()` 里把借用重述到当前实例，或干脆自己持有那些 target）。
 - **clear 三件套不写就跟随 kind**：`clear_enabled` / `clear_color` / `clear_depth` 都是 `optional` —— 不写时用那种 kind 自己的策略
   （`Screen` 是叠在已有内容上的全屏档，从不洗、也不洗深度；`Scene` 档洗，默认洗到 `51,51,51,255`）。要覆盖就在声明里写出来。
 - **MRT 每个附件自己的清屏色**：`clear_color` 只管 attachment 0；其余附件用 `clear_extra_colors`（按附件 1..N-1 的顺序）。没写的附件仍清成**透明黑**（那是“没画”的值），所以 G-buffer 想让

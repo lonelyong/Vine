@@ -162,7 +162,7 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo>, p
      *
      * @param context This frame's context (see FrameContext); not used here.
      */
-    void update(const FrameContext& context) override;
+    void onFrame(const FrameContext& context) override;
 
   private:
     /** @brief Applies the orientation mirror onto the framing camera. */

@@ -152,7 +152,7 @@ class VN_APPFW_API RenderControl : public Control {
      *   touches the device or the surface (the device's verbs need it quiet), and a picture the window refused is
      *   acted on at the head of the next frame (the surface goes back to Pending and re-attaches).
      * - A lifetime decision, made once: switching starts or joins the engine's thread, so call it between frames (an
-     *   event handler is fine; a FrameUpdate::update() call is not).
+     *   event handler is fine; a FrameUpdate::onFrame() call is not).
      *
      * @param mode Where to run the engine half of each frame.
      */

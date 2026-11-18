@@ -179,7 +179,7 @@ There is exactly one answer to "when does this copy expire": the publication val
 | `RenderArea` (the area) | engine (the share `createArea` returns) | engine thread | — |
 | `WindowPresentTarget` + swap chain | engine (made by the device, `createSurfaceTarget`) | engine thread | — |
 | `RenderDevice` / session / frame values / retirement queue | engine | engine thread | — |
-| the frame's **content half**: frame number, `compileFrame`, publication (once per frame per scene), `describe` (an overlay's `FrameUpdate::update()`, before the frame, called by the host/chain) | content thread | content thread | the frame value is handed over |
+| the frame's **content half**: frame number, `compileFrame`, publication (once per frame per scene), `describe` (an overlay's `FrameUpdate::onFrame()`, before the frame, called by the host/chain) | content thread | content thread | the frame value is handed over |
 | the frame's **engine half**: surface events, `expandFrame` (expanding the bound views), `executeFrame`, present | engine thread | engine thread | — |
 
 - **One frame, two halves, one frame in flight on each side**: while the content thread builds frame N+1 the engine thread is running frame N, **so the picture is one frame behind the content**
@@ -214,7 +214,7 @@ There is exactly one answer to "when does this copy expire": the publication val
 
 ### 2.13 Publication is the content writer's verb, binding is an override
 
-- **What it is**: whoever writes content (the host, `SceneView::publishContent`, an overlay's `FrameUpdate::update()`) calls `Scene::publish()`;
+- **What it is**: whoever writes content (the host, `SceneView::publishContent`, an overlay's `FrameUpdate::onFrame()`) calls `Scene::publish()`;
   when a frame is built it takes `Scene::publishedSnapshot()` (or the bound value if one was bound). `RenderEngine::bindSnapshot(scene, ref)` is an
   **override**: the host uses it to draw an older or another publication, and it stays in effect until the next bind (a null handle = draw nothing).
 - **Why**: publication is the content side's verb and binding is the engine side's verb (`G2`); making "which publication a frame draws" a value taken at the moment the frame starts is what lets the host say
@@ -495,7 +495,7 @@ VN_TSAN_TARGET=test_vsg VN_TSAN_FILTER='-*Window*:*Probe*:*Plugin*' scripts/tsan
 - How to detect it: T20 (`graphics-frame-pipeline.md`).
 - How to prevent it: the query takes `presentedCamera()` (N17).
 
-### 6.6 P6 Requesting a frame inside `FrameUpdate::update()`
+### 6.6 P6 Requesting a frame inside `FrameUpdate::onFrame()`
 
 - How it fails: the update before a frame asks for one more frame, reentering compilation.
 - How to detect it: non-consecutive frame numbers / a crash.
