@@ -1,57 +1,54 @@
-# ADR-2026-10-28：Backstage 用顶层 Tool 窗口，不用 SARibbon 的子控件覆盖层
+# ADR-2026-10-28: the Backstage is a top-level tool window, not a SARibbon child overlay
 
-- 状态：已采纳
-- 日期：2026-10-28
-- 相关：`../design/appfw-backstage.md`、`../bugs/docking-flyout-under-render.md`、`tests/test_gui/test_gui.cpp`
+- Status: Accepted
+- Date: 2026-10-28
+- Related: `../design/appfw-backstage.md`, `../bugs/docking-flyout-under-render.md`, `tests/test_gui/test_gui.cpp`
 
-> **EN**: Chose B: the Backstage is a top-level `Qt::Tool` window parented to the main window and following its client area, not a `SARibbonApplicationWidget` child, because a Qt child can never cover the native 3D surface (`docking-flyout-under-render`); window geometry, Esc handling and the return button are the Backstage's own, and SARibbon only contributes the application button and its click signal.
+## Background
 
-## 背景
+The application button needs a whole-window page like the Office Backstage. SARibbon provides two parts:
 
-应用按钮需要一个类似 Office Backstage 的整窗页面。SARibbon 提供两个部件：
+- `SARibbonApplicationButton`: the button itself;
+- `SARibbonApplicationWidget`: a `QFrame` shell that follows the size of the `SARibbonMainWindow` and hides on Esc, with no page, navigation or content.
 
-- `SARibbonApplicationButton`：按钮本身；
-- `SARibbonApplicationWidget`：一个跟随 `SARibbonMainWindow` 大小、Esc 隐藏的 `QFrame` 壳，没有页面/导航/内容。
+Vine's main window has a native 3D surface from `createWindowContainer` in the centre. The flyout fix already proved that **a Qt child widget can never cover a native child window**, and that `WA_NativeWindow` plus raise disturbs the render surface (see `../bugs/docking-flyout-under-render.md`).
 
-Vine 的主窗口中央是 `createWindowContainer` 的原生 3D 表面。飞窗修复已经证明：**Qt 子控件永远盖不住原生子窗口**，
-`WA_NativeWindow` + raise 会扰乱渲染表面（见 `../bugs/docking-flyout-under-render.md`）。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 直接用 `SARibbonApplicationWidget` 作为主窗口子控件 | 代码最少，Esc/resize 现成 | 文档区被原生 3D 表面遮挡；要么接受缺一块，要么打开时隐藏/重建渲染表面 |
-| B. 顶层 `Qt::Tool | FramelessWindowHint` 窗口（父窗口 = 主窗口），几何跟随主窗口客户区（选定） | 不被原生表面遮挡；与飞窗修复同一路线；不引入全局 topmost | 需要自己同步 move/resize/minimize/restore、激活与 Esc |
-| C. `WA_NativeWindow` 子窗口 + raise | 看似重叠正确 | 飞窗实测会扰乱渲染表面，关闭后中央区不可见；禁止再走 |
-| D. 打开时隐藏 `RenderControl` 容器，关闭再显示 | 子控件方案可行 | 表面隐藏/重建有闪烁与会话代价；Backstage 不该影响渲染生命周期 |
+| A. Use `SARibbonApplicationWidget` directly as a child of the main window | The least code; Esc and resize come for free | The document area is covered by the native 3D surface; either accept a missing piece or hide and rebuild the render surface while it is open |
+| B. A top-level `Qt::Tool | FramelessWindowHint` window (parent = the main window) whose geometry follows the main window's client area (chosen) | Not covered by the native surface; the same route as the flyout fix; no global topmost | The window has to synchronise move/resize/minimize/restore, activation and Esc itself |
+| C. A `WA_NativeWindow` child window plus raise | Looks like correct overlap | The flyout measurement showed it disturbs the render surface, leaving the central area invisible afterwards; do not go this way again |
+| D. Hide the `RenderControl` container while open and show it again on close | The child-widget option becomes workable | Hiding and rebuilding the surface costs a flicker and a session; the Backstage should not touch the render lifetime |
 
-## 决定
+## Decision
 
-采用 B：
+Chose B:
 
-- `Backstage` 的 native widget 是**父窗口为主窗口的顶层 Tool 窗口**（不是主窗口的子控件）；`Qt::Tool` 的 transient 关系让它始终在主窗口之上，又不会像 `WindowStaysOnTopHint` 那样压住其它应用；
-- SARibbon 只提供应用按钮与点击信号；Backstage 自己实现几何跟随、Esc、返回按钮；
-- 页面/条目模型由 appfw 提供，条目复用 `RibbonAction`（命令名即身份）。
+- the `Backstage`'s native widget is a **top-level tool window whose parent is the main window** (not a child of it); `Qt::Tool`'s transient relation keeps it above the main window without pressing down other applications the way `WindowStaysOnTopHint` would;
+- SARibbon provides only the application button and its click signal; the Backstage implements geometry following, Esc and the back button itself;
+- the page and item model comes from appfw, and items reuse `RibbonAction` (the command name is the identity).
 
-## 后果
+## Consequences
 
-- 好的：
-  - Backstage 不会被 3D/原生子窗口遮挡；
-  - 不触碰渲染表面生命周期；
-  - SARibbon 只被“浅封装”，不依赖其 Backstage 壳的隐含父子语义。
-- 坏的 / 代价：
-  - 自己维护窗口几何与激活；
-  - 覆盖的是客户区，不覆盖系统标题栏（与真正 Office Backstage 的视觉略有差异）；
-  - 多屏/分数缩放时可能出现平台取整的 1px 偏差。
-- 触发条件（什么时候重开）：
-  - 需要覆盖系统标题栏且与主窗口完全一体化（此时应考虑上游 `SARibbonApplicationWidget` 的改造，而不是再叠一层）；
-  - 出现多窗口（每窗口一个 Backstage）需求。
+- Good:
+  - the Backstage is never covered by the 3D or native child windows;
+  - the render surface lifetime is not touched;
+  - SARibbon is wrapped only thinly, and the implicit parent-child semantics of its Backstage shell are not relied on.
+- Bad / cost:
+  - the window geometry and activation are maintained here;
+  - it covers the client area and not the system title bar (a small visual difference from the real Office Backstage);
+  - multi-monitor or fractional scaling can show a 1 px rounding difference from the platform.
+- Trigger (when to reopen):
+  - the system title bar must be covered and the page fully integrated with the main window (then change the upstream `SARibbonApplicationWidget` instead of stacking another layer);
+  - several windows are needed, each with its own Backstage.
 
-## 证据
+## Evidence
 
-- 飞窗修复：`.ai/bugs/docking-flyout-under-render.md`（原生子窗口永远在上；顶层 Tool 窗口是可行方向）。
-- 用例：`GuiTest.Backstage_ApplicationButtonOpensThePage`、`Backstage_PagesAndNavigation`、
-  `Backstage_PageItemsAreCommandBound`、`Backstage_FollowsMainWindowSize`、`Backstage_ClosesOnEscapeOrClose`、
-  `Backstage_IsOwnedByMainWindow`。
-- 代码：`src/fw/appfw/src/gui/Backstage.cpp`（顶层窗口 + 事件过滤器）、
-  `src/fw/appfw/src/gui/RibbonBar.cpp`（事件与菜单/Backstage 二选一）。
+- The flyout fix: `.ai/bugs/docking-flyout-under-render.md` (a native child window is always on top; a top-level tool window is the workable direction).
+- Cases: `GuiTest.Backstage_ApplicationButtonOpensThePage`, `Backstage_PagesAndNavigation`,
+  `Backstage_PageItemsAreCommandBound`, `Backstage_FollowsMainWindowSize`, `Backstage_ClosesOnEscapeOrClose`,
+  `Backstage_IsOwnedByMainWindow`.
+- Code: `src/fw/appfw/src/gui/Backstage.cpp` (top-level window plus event filter),
+  `src/fw/appfw/src/gui/RibbonBar.cpp` (events and the menu/Backstage either-or).

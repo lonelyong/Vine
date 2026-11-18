@@ -1,59 +1,49 @@
-# ADR-2026-10-24：着色参数手写声明 + 去重，不做反射与材质 DSL
+# ADR-2026-10-24: shader parameters are declared by hand and de-duplicated, with no reflection and no material DSL
 
-- 状态：已采纳
-- 日期：2026-10-24
-- 相关：`../design/graphics-shader-params.md`
+- Status: Accepted
+- Date: 2026-10-24
+- Related: `../design/graphics-shader-params.md`
 
-> **EN**: Chose E: the five blocks' GLSL is declared once in a shared fragment that shaders `#include` (inlined at build time), the C++ block definitions are gathered in one place, and the name table sits beside the struct with `offsetof` entries; schema generation is deferred until a second shader language appears. Rejected runtime reflection (a misspelt name is a silent no-op), loose uniforms (not legal GLSL for Vulkan blocks), a material DSL and code generation.
+## Background
 
-## 背景
+Five parameter blocks (view / draw / material / shadow / lights) carry all the data between the engine and the shaders. Their capacities and offsets are settled and pinned by `static_assert`, but "how many owners does each declaration have" had no answer: `VineMaterialBlock` was declared twice inside the built-in shaders, `VineLightsBlock` was defined in the backend, and the names were still prose in comments (`params.x` is opacity).
 
-五个参数块（view / draw / material / shadow / lights）撑起引擎与 shader 之间的全部数据。容量与偏移已经
-确定并被 `static_assert` 钉死，但“每份声明有几个 owner”没有答案：`VineMaterialBlock` 在内置 shader 里
-有两份，`VineLightsBlock` 的定义在后端，名字仍然只是注释里的散文（`params.x` 是 opacity）。
+The question to decide was: **how many places hold the declaration, and by what mechanism the parameters reach the shader.**
 
-需要决定的是：**声明放几处，以及参数用什么机制送到 shader。**
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 运行时反射，按名字自动填充 | 用户只声明自己用到的；新增参数不动既有 shader | 名字成为协议：拼错 / 类型错 / 布局错全部静默；每个后端一个匹配器 |
-| B. 松散 uniform（osg `StateSet` 风格） | 最接近 osg 的写法，单值即可生效 | Vulkan GLSL 不允许；要支持必须自己做源码包装或另建默认块 |
-| C. 材质 DSL（自有语言 + 编译器） | 自动变体、跨后端源码、参数清单可静态校验 | 一个编译器 + 一套工具链；当前没有需求 |
-| D. Schema 生成（C++ / GLSL / 名字表由一份清单产出） | 三者由构造保证一致 | 生成器 + 构建步骤 + 门禁；内部 ABI 一年改几次，成本大于收益 |
-| E. 手写 + 去重（选定） | 每份声明一个 owner；无生成器；改动面最小 | 共享片段与 C++ 结构体仍是两份，靠相邻 review |
+| A. Runtime reflection, filled in by name | A user declares only what it uses; a new parameter leaves existing shaders alone | The name becomes a protocol: a typo, a wrong type or a wrong layout are all silent; one matcher per backend |
+| B. Loose uniforms (the osg `StateSet` shape) | Closest to osg; a single value takes effect | Not legal in Vulkan GLSL; supporting it means wrapping the source or building a default block |
+| C. A material DSL (its own language plus a compiler) | Automatic variants, cross-backend source, a statically checkable parameter list | A compiler and a toolchain; there is no requirement today |
+| D. Schema generation (C++, GLSL and the name table produced from one list) | Consistency by construction | A generator, a build step and a gate; the internal ABI changes a few times a year, so the cost outweighs the benefit |
+| E. Hand-written plus de-duplication (chosen) | One owner per declaration; no generator; the smallest surface | The shared fragment and the C++ struct remain two copies, held together by adjacent review |
 
-## 决定
+## Decision
 
-选 **E**：
+Chose **E**:
 
-- 五个块的 GLSL 声明收拢成一个共享片段，内置 shader `#include`，构建期 inline 进嵌入字符串；
-- C++ 块定义收拢到一处（`VineLightsBlock` 是否上移单独判断）；
-- 名字表（P1）写在结构体旁边，条目用 `offsetof`，由编译器保证与 C++ 一致；
-- Schema 生成（D）推迟到第二种 shader 语言出现时再评估。
+- the GLSL declarations of the five blocks are gathered into one shared fragment that the built-in shaders `#include`, inlined into the embedded strings at build time;
+- the C++ block definitions are gathered in one place (whether `VineLightsBlock` moves up is decided separately);
+- the name table (P1) sits next to the struct, with `offsetof` entries, so the compiler keeps it in step with C++;
+- schema generation (D) is deferred until a second shader language appears.
 
-理由：
+Reasons:
 
-- **A 的失败模式是这个仓库最贵的一类**：未声明的绑定是静默 no-op、`#ifdef` 分支条件决定事实、
-  写死 binding 读到未定义数据——三次都是“名字对不上，然后什么都不说”。
-- **B 在 Vulkan 里不合法**：`glslangValidator -V` 对块外非不透明 uniform 直接报错；osg 的 Vulkan 后继
-  vsg 也已没有 `Uniform` 类。
-- **C 是超前设计**：没有自动变体与跨后端源码的需求。
-- **D 的成本落在一个只有开发者维护的内部 ABI 上**：真正的缺陷不是“没人检查”，而是“声明有两份”。
-  去掉第二份之后，剩下的两处（片段 ↔ 结构体）相邻、可并排读，一个人能负责。
+- **A's failure mode is the most expensive kind in this repository**: an undeclared binding is a silent no-op, an `#ifdef` condition decides a fact, a hard-coded binding reads undefined data - three times the story was "the name did not match, and then nothing was said".
+- **B is illegal in Vulkan**: `glslangValidator -V` rejects a non-opaque uniform outside a block; osg's Vulkan successor vsg no longer has an `Uniform` class either.
+- **C is ahead of its time**: there is no need for automatic variants or cross-backend source.
+- **D's cost lands on an internal ABI only developers maintain**: the real defect was not "nobody checks" but "the declaration exists twice". With the second copy gone, the remaining two places (fragment and struct) are adjacent and can be read side by side by one person.
 
-## 后果
+## Consequences
 
-- 好：重复的 GLSL 声明消失（`VineMaterialBlock` 只剩一处）；C++ 定义收拢；新后端只写一个
-  `ParameterSink` 与一份片段。
-- 代价：共享片段与 C++ 结构体仍是两份手写；靠相邻 review，必要时加一条布局测试。
-- 重开条件：出现第二种 shader 语言（HLSL / Metal），或参数项超过约 20 个且“只想要其中两个”成为真实负担。
+- Good: the duplicated GLSL declarations disappear (`VineMaterialBlock` is declared once); the C++ definitions are gathered; a new backend writes one `ParameterSink` and one fragment.
+- Cost: the shared fragment and the C++ struct are still two hand-written copies, held by adjacent review and, where needed, a layout test.
+- Reopening condition: a second shader language appears (HLSL / Metal), or the parameter list exceeds about 20 items and "I only want two of them" becomes a real burden.
 
-## 证据
+## Evidence
 
-- `glslangValidator -V` 对一个块外 `uniform float` 的实测：`'non-opaque uniforms outside a block' : not
-  allowed when using GLSL for Vulkan`；同一声明放进 `std140` 块内即通过。
-- `build/_deps/vsg-src` 中不存在 `Uniform` 类，`state/` 目录只有描述符与 push constant。
-- 现状：`VineMaterialBlock` 在 `builtin_forward.frag` 与 `builtin_gbuffer.frag` 各声明一次；
-  `VineLightsBlock` 定义在 `LightBlock.hpp`，不在 SDK 的 `ShaderAbi.hpp`。 <!-- drift-ok -->
+- Measured with `glslangValidator -V` on a `uniform float` outside a block: `'non-opaque uniforms outside a block' : not allowed when using GLSL for Vulkan`; the same declaration inside a `std140` block passes.
+- No `Uniform` class exists in `build/_deps/vsg-src`, and `state/` holds only descriptors and push constants.
+- Today: `VineMaterialBlock` is declared once in `builtin_forward.frag` and once in `builtin_gbuffer.frag`; `VineLightsBlock` is defined in `LightBlock.hpp`, not in the SDK's `ShaderAbi.hpp`. <!-- drift-ok -->

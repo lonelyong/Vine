@@ -1,54 +1,45 @@
-# ADR-2026-10-24：一个窗口同一时刻只显示一个视图（tab，不做 MDI / 分屏）
+# ADR-2026-10-24: one window shows one view at a time (tabs, no MDI and no split view)
 
-- 状态：已采纳（**仍是现行结论**；2026-10-28 补充：文档可浮到**另一个顶层窗口**，那是浮动不是分屏）
-- 日期：2026-10-24
-- 相关：`../design/appfw-document-model.md`（§1.3） · `../design/appfw-render-view.md`（§9.2） ·
-  `../decisions/ADR-2026-10-24-command-target.md`、`../decisions/ADR-2026-10-24-command-target-no-window-query.md` ·
+- Status: Accepted (**still the current conclusion**; supplemented 2026-10-28: a document may float into **another top-level window**, which is floating, not splitting)
+- Date: 2026-10-24
+- Related: `../design/appfw-document-model.md` (section 1.3) · `../design/appfw-render-view.md` (section 9.2) ·
+  `../decisions/ADR-2026-10-24-command-target.md`, `../decisions/ADR-2026-10-24-command-target-no-window-query.md` ·
   `../decisions/ADR-2026-10-28-document-tabs-and-floating.md`
 
-> **补充（2026-10-28）**：多文档的 tab 条已经落地（`CentralDocumentHost`），文档还能浮到自己的顶层窗口。
-> 本文的决定不变：**每个窗口同一时刻仍只有一个可见视图**；浮动窗口是另一个窗口，不是同窗分屏；
-> “文档不进停靠树”见 `ADR-2026-10-28-document-tabs-and-floating.md`。
+> **Supplement (2026-10-28)**: the multi-document tab strip has landed (`CentralDocumentHost`), and a document can float into its own top-level window.
+> The decision of this ADR is unchanged: **each window still shows one view at a time**; a floating window is another window, not a split of this one;
+> "documents do not enter the dock tree" is in `ADR-2026-10-28-document-tabs-and-floating.md`.
 
-> **EN**: Chose B with C: the default host shows one view at a time (tabs, no MDI or split view), several 3D areas inside one view are the view's own state and answer `renderControl()`, and `gui::resolveCommandTarget(window)` therefore needs no initiating-widget rule. A supplementary note (2026-10-28) confirms floating documents are a second top-level window, not a split view; side-by-side viewing of two different documents is the trigger to revisit.
+## Background
 
-## 背景
+Once the command target was the view, one question about "which 3D area counts" was still open: **may several views be visible in one window at the same time**.
+The previous ADR recorded this as a known gap, `backlog/appfw-gui.md` V1 (MDI / split view: a multi-page host plus initiating-control-first resolution), with the trigger "an MDI / split-view requirement appears".
 
-命令目标落到视图之后，"哪一块 3D 区算数" 还剩一个问题没定：**同一个窗口里能不能有多个视图同时可见**。
-上一版 ADR 把这当成已知缺口记成 `backlog/appfw-gui.md` V1（MDI / 分屏：多页宿主 + 发起控件优先的解析），
-触发条件是"出现 MDI / 分屏需求"。
+The requirement itself never appeared. The document model has said from day one that **the framework does not define the number of areas, their labels, the layout, or single versus multiple documents** (`appfw-document-model.md` section 1.3): how many areas there are and how they are arranged is the application's business. So this was not "the framework lacks a capability" but "should the default host become multi-page now".
 
-需求本身没出现。文档模型从第一天起就写明**框架不定义区域数量、标签、布局、单/多文档**（`appfw-document-model.md`
-§1.3）：有几个区、怎么摆是应用的事。所以这不是"框架缺一项能力"，而是"要不要现在把默认宿主做成多页"。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. MDI / 分屏：一个窗口里多块视图同时可见 | 并排比较两份模型很自然 | 默认宿主变多页；解析必须加"发起控件优先"（父链找 `DocumentView`），否则命令改错窗格；焦点、布局、拖拽、关闭全部要新规则 |
-| B. 只用 tab（选定） | 与今天的 `CentralDocumentHost` 一致（一次 show 一个视图）；解析只需要"宿主当前的视图"，不需要发起者信息 | 不能在同一个窗口里并排看两份文档 |
-| C. tab + 视图内部窗格（选定组合的一部分） | "同一块区里并排看两个视角"这个真实需求由**视图自己**表达：视图持有几块 3D 区，并回答"用户最后在哪块里干活" | 一个视图要自己写布局与焦点切换（不是框架的事，也有用例钉住：`DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast`） |
+| A. MDI / split view: several views visible in one window | Comparing two models side by side is natural | The default host becomes multi-page; resolution must add "initiating control first" (walk the parent chain to the `DocumentView`), otherwise a command edits the wrong pane; focus, layout, dragging and closing all need new rules |
+| B. Tabs only (chosen) | Matches today's `CentralDocumentHost` (one view shown at a time); resolution only needs "the host's current view", not the initiator | Two documents cannot be seen side by side in one window |
+| C. Tabs plus panes inside a view (part of the chosen combination) | The real need "two viewpoints side by side in one area" is expressed by the **view itself**: the view holds several 3D areas and answers "which one the user last worked in" | A view writes its own layout and focus switching (not the framework's job, and pinned by a case: `DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast`) |
 
-## 决定
+## Decision
 
-1. **默认宿主按 tab**：同一时刻只有一个视图在屏上。不做 MDI / 分屏。
-2. **多块 3D 区归视图**：一个视图内部可以并排几块区，由视图自己回答命令该作用在哪一块
-   （`DocumentView::renderControl()`）。这就是"并排看两个视角"的落地方式，框架不建窗格注册表。
-3. **解析不再需要"发起控件优先"**：`gui::resolveCommandTarget(window)` 读"宿主当前的视图"就是完整答案。
-4. 备忘（不是现在的活）：应用若自己搭一个多视图同时可见的宿主，命令解析就必须加"发起控件优先"，
-   那一天的形状记在 V1 被删掉之前的历史里（git）。
+1. **The default host is tabbed**: one view on screen at a time. No MDI and no split view.
+2. **Several 3D areas belong to the view**: a view may hold several areas side by side and answers itself which one a command should act on (`DocumentView::renderControl()`). That is how "two viewpoints side by side" lands, and the framework builds no pane registry.
+3. **Resolution no longer needs "initiating control first"**: `gui::resolveCommandTarget(window)` reading "the host's current view" is the complete answer.
+4. Memo (not work for now): if an application builds its own host with several visible views, command resolution must add "initiating control first"; the shape of that day is recorded in the history of the deleted V1 entry (git).
 
-## 后果
+## Consequences
 
-- 好的：默认宿主保持简单；解析只有一条路且对 tab 恒等；"并排"这个需求没有被拒绝，只是搬到视图这一层，
-  而且那一层已经有测试。
-- 坏的 / 代价：同一窗口里并排看**两份不同文档**做不到（要并排就得是同一个视图里的多个窗格）。
-- 触发条件（什么时候重开）：出现"同一窗口并排看两份不同文档"的真实需求 —— 那时两件事一起做：多页宿主 +
-  发起控件优先的解析，缺一件都没有可观测效果。
+- Good: the default host stays simple; resolution has one road and is identical to the tab semantics; the "side by side" need is not rejected, only moved to the view layer, where a test already exists.
+- Bad / cost: two **different** documents cannot be seen side by side in one window (side by side means several panes inside one view).
+- Trigger (when to reopen): a real need to see two different documents side by side in one window - then do both things together: a multi-page host and initiating-control-first resolution, since either alone has no observable effect.
 
-## 证据
+## Evidence
 
-- 现状：`CentralDocumentHost` 一次只 show 一个视图（`d->shown`）；`DocumentViewTest` 钉住单页语义与
-  "一文档一视图"。
-- 窗格路线：`DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast`（目标带视图、视图答窗格）。
-- 文档模型早已如此声明：`appfw-document-model.md` §1.3 第一条（框架不定义区域数量/标签/布局）。
+- Today: `CentralDocumentHost` shows one view at a time (`d->shown`); `DocumentViewTest` pins the single-page semantics and "one document, one view".
+- The pane route: `DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast` (the target carries the view, the view answers the pane).
+- The document model already said so: the first item of section 1.3 in `appfw-document-model.md` (the framework does not define the number of areas, labels or layout).

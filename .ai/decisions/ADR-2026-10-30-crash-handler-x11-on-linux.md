@@ -1,44 +1,37 @@
-# ADR-2026-10-30：Linux 的崩溃窗口用 Xlib + Xft，不用 UI 工具包
+# ADR-2026-10-30: the Linux crash window uses Xlib + Xft, not a UI toolkit
 
-- 状态：已采纳（**取代** `ADR-2026-10-30-crash-handler-qt-on-linux.md`）
-- 日期：2026-10-30
-- 相关：`../design/base-crash.md`（§2.1 边界、§2.9 捕获、§3.4 窗口、§6.5 降级、§9 状态）
+- Status: Accepted (**supersedes** `ADR-2026-10-30-crash-handler-qt-on-linux.md`)
+- Date: 2026-10-30
+- Related: `../design/base-crash.md` (section 2.1 boundary, 2.9 capture, 3.4 window, 6.5 degradation, 9 status)
 
-> **EN**: Chose B, superseding `ADR-2026-10-30-crash-handler-qt-on-linux`: the Linux crash window is hand-drawn with Xlib and typed with Xft, so the `base` layer depends on system libraries again and the earlier `G2` violation is withdrawn; build needs `libx11-dev` + `libxft-dev`, no usable display means the report goes to stdout, and CMake skips the `CrashHandler` target with a warning when the headers are missing.
+## Background
 
-## 背景
+The earlier ADR that same day had the Linux crash window use Qt Widgets, arguing that "the window is the handler's whole output, and the `base` layer cannot draw a window with the C library alone".
+It did run, but it replaced a boundary that had been clean: the `base` layer where `vn::Crash` lives gained a UI toolkit dependency for the first time.
 
-同一天早些时候的 ADR 让 Linux 的崩溃窗口用 Qt Widgets，理由是"窗口是 handler 的全部输出，而 `base` 层不能只靠 C 库画出窗口"。
-它确实能跑，但把一条原本干净的边界换掉了：`vn::Crash` 所在的 `base` 层，第一次出现了 UI 工具包依赖。
+Ask again what the window actually needs: a run of text with line breaks, a scrollable area, four buttons, one clipboard write and two `xdg-open` calls.
+None of that needs a toolkit - it needs **font rendering** and an **event loop**, and the X11 platform brings both.
 
-再问一次"窗口到底需要什么"：一段带换行的文本、一个能滚动的区域、四个按钮、一次剪贴板写入、两次 `xdg-open`。
-这些都不需要工具包——需要的是**字体渲染**与**事件循环**，而 X11 平台自带这两样。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. Qt Widgets（原决定） | 一次写完、渲染完善、中日韩字体自动回退 | `base` 层出现 UI 工具包依赖（G2）；handler 的依赖面从此不再是"系统库" |
-| B. Xlib + Xft（选定） | 只用系统库：Xlib 画窗口与事件，Xft 做文字与字体匹配（fontconfig 找 CJK 字体）；剪贴板走 X selection，打开目录/邮件走 `xdg-open` | 布局、滚动、命中测试、剪贴板服务都要自己写（约 500 行）；没有主题化、没有富文本；构建需要 `libx11-dev` + `libxft-dev` |
-| C. Xlib + X core font | 连 Xft 都不用 | core font 只有 `-misc-fixed-*-iso8859-1` 一类，**画不出中文**；窗口文案只能英文 |
-| D. GTK3 | 不碰 Qt，中文没问题 | 给仓库引进一个没有任何其它使用者的依赖（G8） |
-| E. 终端界面 | 零依赖 | 双击启动时没有终端，用户什么都看不到（G4） |
+| A. Qt Widgets (the earlier decision) | Written once, mature rendering, automatic CJK font fallback | A UI toolkit dependency on the `base` layer (G2); the handler's dependency surface stops being "system libraries" |
+| B. Xlib + Xft (chosen) | System libraries only: Xlib draws the window and handles events, Xft does the text and font matching (fontconfig finds a CJK font); the clipboard uses X selections, opening a directory or a mail client uses `xdg-open` | Layout, scrolling, hit testing and the clipboard service have to be written here (about 500 lines); no theming and no rich text; the build needs `libx11-dev` + `libxft-dev` |
+| C. Xlib + X core font | Not even Xft | Core fonts are only things like `-misc-fixed-*-iso8859-1` and **cannot draw Chinese**; the window text would have to be English |
+| D. GTK3 | Does not touch Qt and has no trouble with Chinese | Brings a dependency into the repository that has no other user (G8) |
+| E. A terminal interface | Zero dependencies | A double-click start has no terminal and the user sees nothing (G4) |
 
-## 决定
+## Decision
 
-1. **Linux 的窗口用 Xlib 画、用 Xft 出字**：窗口、滚动区、按钮、剪贴板都由 handler 自己实现，不链任何 UI 工具包。
-   `base` 层的依赖回到"`vn::Crash` + 系统库"（§2.1 的原边界），G2 的那次违反随本 ADR 撤回。
-2. **构建需要 `libx11-dev` + `libxft-dev`**（都是开发期包）；运行时只需要 `libXft.so.2` 与一个 fontconfig 能匹配到的字体
-   （界面先请求 `:lang=zh-cn` 的族，取不到再退回普通族）。
-3. **没有可用窗口时印文本**：没有 `DISPLAY`、`XOpenDisplay` 失败、或字体/绘制上下文建不起来时，`showWindow` 返回 false，
-   入口把报告全文打到 stdout；`.txt` 在此之前已经写好，任何一条路径都不丢报告。
-4. CMake 在缺少 X11/Xft 开发包时**不构建** `CrashHandler` 并给出警告：库仍然捕获、写报告、写 `.txt`，只是没有对话框。
+1. **The Linux window is drawn with Xlib and typed with Xft**: the window, the scroll area, the buttons and the clipboard are all implemented by the handler, which links no UI toolkit. The `base` layer's dependency returns to "`vn::Crash` plus system libraries" (the original boundary of section 2.1), and this ADR withdraws the G2 violation.
+2. **The build needs `libx11-dev` + `libxft-dev`** (both development packages); at runtime it needs only `libXft.so.2` and one font fontconfig can match (the interface first asks for a family with `:lang=zh-cn` and falls back to a plain family).
+3. **With no usable window the text is printed**: with no `DISPLAY`, when `XOpenDisplay` fails, or when the font or drawing context cannot be created, `showWindow` returns false and the entry point prints the whole report to stdout; the `.txt` is written before that, so no path loses the report.
+4. CMake **does not build** `CrashHandler` when the X11/Xft development packages are missing, and warns: the library still captures, writes the report and writes the `.txt`, there is just no dialog.
 
-## 后果
+## Consequences
 
-- 好的：handler 只用系统库，和 Windows 上"TaskDialog 是系统库"对称；不再有"`base` 层链了 Qt"这种需要读 ADR 才懂的依赖。
-- 坏的 / 代价：窗口是手写的——滚动、命中测试、剪贴板协议（`TARGETS`/`UTF8_STRING`/`STRING`）都由本模块维护；
-  没有主题化，看不出桌面风格；纯 Wayland 且没有 XWayland 的会话拿不到窗口（退化为 stdout）。
-- 坏的 / 代价：中文能否显示取决于机器上有没有 CJK 字体（本机是 Noto CJK）；没有时字会变成缺字形方框——但报告文本与 `.txt` 不受影响。
-- 触发条件（什么时候重开）：① 需要可选文本/富文本/中日韩整段排版（Xft 无逐字形回退）；② 目标会话是纯 Wayland 且不带 XWayland；
-  ③ 手写窗口的维护成本超过一个工具包的价值。
+- Good: the handler uses system libraries only, symmetric with "TaskDialog is a system library" on Windows; there is no longer a dependency that only a read ADR explains ("the `base` layer links Qt").
+- Bad / cost: the window is hand-written - scrolling, hit testing and the clipboard protocol (`TARGETS`/`UTF8_STRING`/`STRING`) are maintained by this module; there is no theming and no trace of the desktop's style; a pure Wayland session without XWayland gets no window (it degrades to stdout).
+- Bad / cost: whether Chinese appears depends on a CJK font being installed (Noto CJK on this machine); without one the glyphs become missing-glyph boxes - but the report text and the `.txt` are unaffected.
+- Trigger (when to reopen): (1) selectable text, rich text or full CJK paragraph shaping is needed (Xft has no per-glyph fallback); (2) the target session is pure Wayland without XWayland; (3) maintaining the hand-written window costs more than a toolkit is worth.

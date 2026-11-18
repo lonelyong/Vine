@@ -1,65 +1,57 @@
-# ADR-2026-10-28：Ribbon 用角色 + id + 锚点放置，不用全局序号
+# ADR-2026-10-28: ribbon placement uses role, id and anchors, not a global ordinal
 
-- 状态：已采纳
-- 日期：2026-10-28
-- 相关：`../design/appfw-ribbon.md`、`tests/test_gui/test_gui.cpp`
+- Status: Accepted
+- Date: 2026-10-28
+- Related: `../design/appfw-ribbon.md`, `tests/test_gui/test_gui.cpp`
 
-> **EN**: Chose D: ribbon nodes are placed by id (identity), role (a framework vocabulary entering the plugin ABI) and `placement` of `append` / `before` / `after`, with a `Terminal` policy clamping non-terminal inserts and `PlacedByFallback` when an anchor is missing; v1 adds no `order` field and item identity is the command name. Rejected global numeric priority, id-only and role-only anchors, and a declarative manifest.
+## Background
 
-## 背景
+The ribbon could only append tabs, and a tab's identity was its display title. app_shell created "Plugins/Help" in `load()`, model_viewer appended "Model" in `postLoad()`, and "Model" therefore ended up after "Help". A plugin could not express "before Help", nor reliably find a standard tab to add a group to; and renaming a title (translation, rename) broke every reference.
 
-功能区只能追加 tab，且 tab 的身份是显示标题。app_shell 在 `load()` 里建“插件/帮助”，model_viewer 在
-`postLoad()` 里追加“模型”，结果“模型”排在“帮助”之后。插件无法表达“在帮助之前”，也无法稳定地找到
-标准 tab 往里加 group；标题一改（翻译/重命名）引用全断。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 全局数字优先级（`order` / `priority`） | 实现最简单，排序是总序 | 表达不了“帮助之前”；插入标准 tab 要重排所有数字；插件之间只能靠猜 |
-| B. 只支持 id 锚点（IntelliJ 式） | 精确、相对定位 | 宿主没有该 id 时静默跑偏；插件与宿主 id 强耦合 |
-| C. 只支持 role 锚点 | 插件跨宿主/版本 | 无法精确指向某个自定义 tab/group |
-| D. role + id + placement（本决定） | 语义默认 + 精确指向；锚点缺失有回退；终止区可保证 | 多一个词表与一个解析器；role 数值进 ABI |
-| E. 声明式 manifest / XML | 外部插件可声明 UI | 今天只有进程内 C++ 插件（G8 违反）；解析/校验成本大 |
+| A. A global numeric priority (`order` / `priority`) | The simplest implementation, and sorting is a total order | Cannot express "before Help"; inserting a standard tab means renumbering everything; plugins can only guess relative to each other |
+| B. Id anchors only (the IntelliJ shape) | Precise, relative placement | Silently wrong when the host has no such id; strong coupling between plugin and host ids |
+| C. Role anchors only | A plugin works across hosts and versions | Cannot point precisely at one custom tab or group |
+| D. Role plus id plus placement (this decision) | A semantic default plus precise targeting; a fallback when an anchor is missing; a guaranteed terminal zone | One more vocabulary and one resolver; role values enter the ABI |
+| E. A declarative manifest or XML | Out-of-process plugins could declare UI | Only in-process C++ plugins exist today (violates G8); parsing and validation cost a lot |
 
-## 决定
+## Decision
 
-采用 D：
+Chose D:
 
-- **id** 是节点身份（tab 在 bar 内唯一，group 在 tab 内唯一）；标题只显示。
-- **role** 是框架定义的语义词表（`Home/View/Tools/Plugins/Help`，自定义从 `UserRole + n` 起），
-  用作宿主无关的锚点与查找；role 数值只增不改，进插件 ABI。
-- **placement** 是 `append / before / after`，锚点可以是兄弟 id 或（tab 级的）role。
-- **终止策略显式声明**：`RibbonTabPolicy::Terminal` 形成后缀；非终止插入被夹到第一个终止 tab 之前，
-  返回 `ClampedBeforeTerminal` 并记日志（不丢 UI、不静默）。
-- **锚点只向已注册的兄弟解析**（注册序更早）；找不到就回退到非终止区末尾并返回 `PlacedByFallback`。
-  单向解析天然无环，不需要依赖图/环检测。
-- **v1 不引入 `order` 字段**：并列用注册序（插件加载序是确定的：目录排序 + 依赖序）。
-- **item 身份 = 命令名**：不给 button/action 强制第二套 id；无命令控件与自定义布局等有消费者时再加。
+- **id** is the node's identity (a tab is unique within the bar, a group within its tab); the title is display only.
+- **role** is a semantic vocabulary the framework defines (`Home/View/Tools/Plugins/Help`, custom roles from `UserRole + n`), used as a host-independent anchor and lookup key; role values only grow and enter the plugin ABI.
+- **placement** is `append / before / after`, and the anchor is a sibling id or, at tab level, a role.
+- **The terminal policy is declared explicitly**: `RibbonTabPolicy::Terminal` forms a suffix; a non-terminal insert is clamped in front of the first terminal tab, returning `ClampedBeforeTerminal` and logging (no lost UI, nothing silent).
+- **An anchor resolves only against already registered siblings** (earlier in registration order); if it is not found, the node falls back to the end of the non-terminal zone and returns `PlacedByFallback`. One-way resolution has no cycles by construction, so no dependency graph or cycle check is needed.
+- **v1 introduces no `order` field**: ties use registration order (the plugin load order is deterministic: directory sort plus dependency order).
+- **Item identity is the command name**: no second id is imposed on buttons or actions; it is added when there is a consumer for command-less controls or custom layouts.
 
-## 后果
+## Consequences
 
-- 好的：
-  - 插件不依赖宿主版本/语言即可说“在帮助之前/往帮助里加东西”。
-  - 顺序是声明式的，删除锚点后依赖项可以通过重算回流。
-  - 失败可定位：状态 + 日志，测试可以断言“被夹回/回退”。
-  - 旧 `addTab(tab)` / `addGroup(g)` 语义不变；无虚函数变化，不 bump 插件 ABI。
-- 坏的 / 代价：
-  - 多一份 role 词表与解析器（约 150 行）。
-  - 锚到后注册的 tab 会回退——插件之间的相互锚定需要明确的注册序。
-  - 宿主必须记得给“帮助”标 `Terminal`；否则终止区不存在（用例与目录模板缓解）。
-  - 同一锚点的并列顺序依赖插件加载序；需要业务排序时再加 `order`（见 backlog 触发条件）。
-- 触发条件（什么时候重开）：
-  - 两个插件在同一锚点上要求稳定业务顺序，而不是加载序；
-  - 出现用户自定义布局（需要 item id 与持久化）；
-  - 出现进程外插件（需要声明式 manifest）。
+- Good:
+  - A plugin can say "before Help" or "add into Help" without knowing the host's version or language.
+  - The order is declarative, and after an anchor is removed its dependents flow back by re-resolution.
+  - Failures are locatable: a status plus a log line, so a test can assert "clamped back" or "fell back".
+  - The old `addTab(tab)` / `addGroup(g)` semantics are unchanged; no virtual function changes, so the plugin ABI is not bumped.
+- Bad / cost:
+  - One more role vocabulary and resolver (about 150 lines).
+  - Anchoring to a tab registered later falls back - plugins that anchor to each other need an explicit registration order.
+  - The host must remember to mark "Help" as `Terminal`, or the terminal zone does not exist (mitigated by the case and the directory template).
+  - The order of ties on one anchor depends on plugin load order; business ordering waits for `order` (see the backlog trigger).
+- Trigger (when to reopen):
+  - two plugins need a stable business order on the same anchor rather than load order;
+  - user-defined layouts appear (which need item ids and persistence);
+  - out-of-process plugins appear (which need a declarative manifest).
 
-## 证据
+## Evidence
 
-- 用例：`GuiTest.RibbonBar_RolesAndPlacement`、`RibbonBar_TerminalTabStaysLast`、
-  `RibbonBar_UnknownAnchorFallsBack`、`RibbonBar_AfterHelpIsClamped`、`RibbonBar_FindByRoleAndId`、
-  `RibbonTab_GroupPlacementAndContribution`、`RibbonBar_LegacyAddStillAppends`。
-- 代码：`src/fw/appfw/src/gui/RibbonBar.cpp`（解析与 SARibbon 镜像）、
-  `src/fw/appfw/sdk/vine/appfw/gui/RibbonPlacement.hpp`。
-- 门禁：`test_gui`、`check_public_docs.py`、`check_include_hygiene.py`、`check_ai_docs.py --strict`、
-  `check_design_docs.py`。
+- Cases: `GuiTest.RibbonBar_RolesAndPlacement`, `RibbonBar_TerminalTabStaysLast`,
+  `RibbonBar_UnknownAnchorFallsBack`, `RibbonBar_AfterHelpIsClamped`, `RibbonBar_FindByRoleAndId`,
+  `RibbonTab_GroupPlacementAndContribution`, `RibbonBar_LegacyAddStillAppends`.
+- Code: `src/fw/appfw/src/gui/RibbonBar.cpp` (the resolution and the SARibbon mirror),
+  `src/fw/appfw/sdk/vine/appfw/gui/RibbonPlacement.hpp`.
+- Gates: `test_gui`, `check_public_docs.py`, `check_include_hygiene.py`, `check_ai_docs.py --strict`, `check_design_docs.py`.
