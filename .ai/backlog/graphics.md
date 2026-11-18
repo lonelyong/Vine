@@ -83,13 +83,7 @@ same day.
 
 | # | Item | What | Trigger | Source |
 |---|---|---|---|---|
-| T42 | The per-frame worker must BE the content object | `PassChain::addOverlay(role, content, desc)` discovers
-`FrameUpdate` on the content by cast, so only a content object can repaint itself: a host that wants a CONTROLLER to
-refill content it does not own has to subclass the scene and inherit the hook. Additive fix when wanted:
-`setOverlayUpdater(role, raw_ptr<FrameUpdate>)`, which states the worker instead of discovering it | a host appears with a
-controller separated from the content it repaints. **Not built at 2026-11-18**: both in-tree consumers (`AxisGizmo`,
-`FpsOverlay`) repaint themselves, so the separation has no witness (`G8`) | `../research/graphics-2026-11-18-review-5.md`
-§2.1, `FrameUpdate.hpp`, `PassChain::addOverlay` |
+| T42 | The per-frame worker must BE the content object | `PassChain::addOverlay(role, content, desc)` discovers `FrameUpdate` on the content by cast, so only a content object can repaint itself: a host that wants a CONTROLLER to refill content it does not own has to subclass the scene and inherit the hook. Additive fix when wanted: `setOverlayUpdater(role, raw_ptr<FrameUpdate>)`, which states the worker instead of discovering it | a host appears with a controller separated from the content it repaints. **Not built at 2026-11-18**: both in-tree consumers (`AxisGizmo`, `FpsOverlay`) repaint themselves, so the separation has no witness (`G8`) | `../research/graphics-2026-11-18-review-5.md` §2.1, `FrameUpdate.hpp`, `PassChain::addOverlay` |
 
 ## 3. The first command of the next session
 
