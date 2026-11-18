@@ -1,37 +1,33 @@
-# ADR-2026-10-22：缓存不设上限，释放显式管理
+# ADR-2026-10-22: caches are unbounded and released explicitly
 
-- 状态：已采纳
-- 日期：2026-10-22
-- 相关：`../design/graphics-content-lifecycle.md`
+- Status: Accepted
+- Date: 2026-10-22
+- Related: `../design/graphics-content-lifecycle.md`
 
-> **EN**: Chose C: the material image cache drops its 256-entry cap and its FIFO/LRU eviction, the material arena refuses instead of evicting and grows storage per live material, and `releaseContent()` frees GPU residency. A measured 300-image recirculation rebuilt every texture each round and LRU matched FIFO, so a cap only decides for the host.
+## Background
 
-## 背景
+The texture cache had a 256-entry cap plus FIFO/LRU eviction, and the material arena had FIFO. A measured recirculation of 300 textures in one order showed that with a working set larger than the capacity every round rebuilt everything, and that LRU behaved exactly like FIFO; the cap only made the host's decision for it.
 
-纹理缓存有 256 条上限 + FIFO/LRU 淘汰；材质 arena 有 FIFO。300 张同序循环的实测显示：
-工作集 > 容量时每轮全重建，LRU 与 FIFO 表现相同；上限是替宿主做决定。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. LRU | 常见局部性下命中率高 | 300 张同序循环下与 FIFO 一样；仍要上限 |
-| B. 字节上限 + 压力淘汰 | 内存可控 | 替宿主决定；压力信号不准 |
-| C. 不设上限 + 显式释放 | 有多少用多少；宿主控制寿命 | 宿主必须调用释放 |
+| A. LRU | A high hit rate under common locality | The same as FIFO in the 300-image recirculation; still needs a cap |
+| B. A byte cap plus pressure eviction | Memory is controllable | Decides for the host; the pressure signal is inaccurate |
+| C. No cap plus explicit release | Use as much as is needed; the host controls lifetime | The host must call release |
 
-## 决定
+## Decision
 
-选 **C**：`MaterialImages` 删上限与淘汰；`MaterialArena` 删 FIFO，槽满 `Refused`（不淘汰
-活材质），录制前按活材质数扩 storage（无硬上限）；`releaseContent()` 释放 GPU 驻留。
+Chose **C**: `MaterialImages` drops its cap and its eviction; `MaterialArena` drops FIFO and answers `Refused` when a slot is full (it never evicts a live material), growing storage per live material before recording (no hard cap); `releaseContent()` releases GPU residency.
 
-## 后果
+## Consequences
 
-- 好：没有“旧贴图被莫名重建”；释放路径清晰；材质数量不再受硬上限。
-- 代价：宿主负责内存；忘了释放就驻留。
-- 重开条件：宿主报告内存压力且显式释放不够（目前没有）。
+- Good: no more "an old texture was rebuilt for no reason"; the release path is explicit; the number of materials is no longer bounded by a hard cap.
+- Cost: the host owns the memory; forgetting to release means it stays resident.
+- Reopening condition: a host reports memory pressure and explicit release is not enough (none today).
 
-## 证据
+## Evidence
 
-- 300 张纹理超过旧上限后第二轮 0 缺失。
-- 200 / 300 / 2000 个材质扩容后 `write/f=0`、`refus/f=0`。
-- `ThreeHundredLiveMaterialsDrawTheirOwnColours`；`test_vsg` 498、`test_graphics` 441。
+- After 300 textures exceeded the old cap, the second round had 0 misses.
+- With 200 / 300 / 2000 materials the grown storage kept `write/f=0` and `refus/f=0`.
+- `ThreeHundredLiveMaterialsDrawTheirOwnColours`; `test_vsg` 498, `test_graphics` 441.

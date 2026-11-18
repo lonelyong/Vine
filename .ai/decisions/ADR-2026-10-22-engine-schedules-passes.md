@@ -1,37 +1,33 @@
-# ADR-2026-10-22：pass 调度只在引擎
+# ADR-2026-10-22: pass scheduling lives only in the engine
 
-- 状态：已采纳
-- 日期：2026-10-22
-- 相关：`../design/graphics-architecture.md`
+- Status: Accepted
+- Date: 2026-10-22
+- Related: `../design/graphics-architecture.md`
 
-> **EN**: Chose B: pass scheduling lives only in the engine (`detail::FrameScheduler` inside `EngineCompile.cpp::scheduleRows()` builds the edges, sorts and publishes; `PassStage` is a tie-break only), and the backend materialises `FrameDescription.passes` without reordering or reporting cycles. Rejected keeping the backend `FrameGraph`, which left two schedulers that could disagree.
+## Background
 
-## 背景
+One round had two orderings: the engine ordered by stage and registration, and the backend `FrameGraph` ordered again by input edges.
+Two frame vocabularies, two "compilations", and two orders that could contradict each other.
 
-一轮里有两套排序：引擎按 stage/registration 排，后端 `FrameGraph` 再按输入边排。
-两套帧词汇、两套“编译”、两个可能互相矛盾的顺序。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 保留后端 FrameGraph | 后端自足 | 两套调度；引擎与后端可能不一致 |
-| B. 调度上移引擎 | 一个实现；后端只物化 | 后端不再能独立排序 |
-| C. 只允许显式 order + 依赖边 | 最简单 | 需要宿主手写顺序；失去稳定排序 |
+| A. Keep the backend `FrameGraph` | The backend is self-sufficient | Two schedulers; engine and backend can disagree |
+| B. Move scheduling up into the engine | One implementation; the backend only materialises | The backend can no longer order on its own |
+| C. Allow only an explicit order plus dependency edges | Simplest | The host has to write the order; a stable order is lost |
 
-## 决定
+## Decision
 
-选 **B**：`detail::FrameScheduler`（迭代 Tarjan + 堆就绪队列，稳态零分配）在引擎
-`EngineCompile.cpp::scheduleRows()` 里建边、排序、按序发布；`PassStage` 只做同优先级
-tie-break；环组件整块跳过并由引擎报一次。
+Chose **B**: `detail::FrameScheduler` (iterative Tarjan plus a heap ready queue, zero allocation in steady state) builds the edges, sorts and publishes in order inside `EngineCompile.cpp::scheduleRows()`; `PassStage` is only a tie-break within one priority; a cyclic component is skipped as a whole and reported once by the engine.
 
-## 后果
+## Consequences
 
-- 好：一套顺序、一套帧词汇；后端按 `FrameDescription.passes` 物化，不重排、不报环。
-- 代价：后端不能自行调度；任何调度语义变化都改引擎。
-- 重开条件：第二个后端需要不同的调度语义（目前没有）。
+- Good: one order and one frame vocabulary; the backend materialises `FrameDescription.passes` without reordering and without reporting cycles.
+- Cost: the backend cannot schedule on its own; any change in scheduling semantics edits the engine.
+- Reopening condition: a second backend needs different scheduling semantics (none today).
 
-## 证据
+## Evidence
 
-- `backend::FrameGraph`、`FrameCompiler::graph()`、`FrameGraphTest` 已删除。
-- `FrameScheduleTest` 覆盖调度；`vsg_rewrite_gate.sh` 两跑 0 VUID / 0 SYNC-HAZARD。
+- `backend::FrameGraph`, `FrameCompiler::graph()` and `FrameGraphTest` are deleted.
+- `FrameScheduleTest` covers scheduling; `vsg_rewrite_gate.sh` reports 0 VUID / 0 SYNC-HAZARD over two runs.

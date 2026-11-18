@@ -1,40 +1,33 @@
-# ADR-2026-10-23：实例化挂在 `Primitive`，不做场景图作用域
+# ADR-2026-10-23: instancing hangs off `Primitive`, not off a scene-graph scope
 
-- 状态：已采纳
-- 日期：2026-10-23
-- 相关：`../design/graphics-geometry.md`、`../backlog/graphics.md`
+- Status: Accepted
+- Date: 2026-10-23
+- Related: `../design/graphics-geometry.md`, `../backlog/graphics.md`
 
-> **EN**: Chose C: instancing is a `Primitive` parameter (`instance_transforms`, `visible_instances`), not a `Geometry` channel and not an `InstanceScope` node, so one draw is one instancing batch and the pick identity is `geometry + primitiveIndex + instanceIndex`. Per-instance material/colour/opacity/layer/sort/culling, GPU indirect and auto-batching are explicitly out, and a second placement is a second `Geometry` node.
+## Background
 
-## 背景
+"the same geometry N times" had three possible shapes: the instance matrix as a channel of `Geometry`; an `InstanceScope` node; or a parameter of one draw.
 
-“同一几何 N 份”有三种可能形状：实例矩阵作为 `Geometry` 的通道；`InstanceScope` 作用域
-节点；或者一条 draw 的参数。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. `Geometry` 通道 | 与顶点流统一 | 一个几何只能一套实例；可见数要改切片；没有引擎把实例挂在网格资产上 |
-| B. `InstanceScope` 作用域 | 与 vsg `InstanceNode` 同形；多 part 共享 | 选择单位、射线递归、嵌套、包围盒语义复杂 |
-| C. `Primitive` 参数 | 一条 draw 就是一次实例化；与 topology/index/material 同层 | 多个放置 = 多个 Geometry 节点 |
+| A. A `Geometry` channel | Unified with the vertex streams | One geometry gets only one set of instances; the visible count needs a different slice; no engine mounts instances on a mesh asset |
+| B. An `InstanceScope` scope | The same shape as vsg's `InstanceNode`; several parts share it | Pick unit, ray recursion, nesting and bounding-box semantics all become complicated |
+| C. A `Primitive` parameter | One draw is one instancing batch; the same layer as topology/index/material | Several placements mean several `Geometry` nodes |
 
-## 决定
+## Decision
 
-选 **C**：`Primitive` 增加 `instance_transforms`（16 float/实例，列主序 mat4）+
-`visible_instances`；收集按 primitive 出行；后端 binding 4 + `VN_INSTANCED`；
-没有 `InstanceScope`。
+Chose **C**: `Primitive` gains `instance_transforms` (16 floats per instance, column-major mat4) plus `visible_instances`; collection emits rows per primitive; the backend uses binding 4 and `VN_INSTANCED`; there is no `InstanceScope`.
 
-## 后果
+## Consequences
 
-- 好：选择身份唯一为 `geometry + primitiveIndex + instanceIndex`；一条 draw 的实例共享
-  材质/层/排序；可见前缀不重传。
-- 代价：逐实例材质/颜色/opacity/层/排序/剔除、GPU indirect、自动合批都不做；多个放置
-  要多个 `Geometry` 节点（可共享 buffer）。
-- 重开条件：逐实例属性或 GPU indirect 有真实消费者。
+- Good: the pick identity is uniquely `geometry + primitiveIndex + instanceIndex`; the instances of one draw share material, layers and sort key; the visible prefix is not re-uploaded.
+- Cost: per-instance material, colour, opacity, layer, sorting and culling, GPU indirect and automatic batching are all out of scope; several placements need several `Geometry` nodes (which may share buffers).
+- Reopening condition: per-instance attributes or GPU indirect gain a real consumer.
 
-## 证据
+## Evidence
 
-- `PrimitiveInstancingTest`（单/多 primitive、可见前缀、包围盒、剔除、拾取）。
-- 设备级 `ContentPassTest.AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce`。
-- 早期 `graphics-instancing-channel` / `graphics-instancing-scope` 方案已作废；历史在 git。
+- `PrimitiveInstancingTest` (single and multiple primitives, the visible prefix, the bounding box, culling, picking).
+- The device-level `ContentPassTest.AnInstanceStreamDrawsEveryPlacementAndUploadsItOnce`.
+- The earlier `graphics-instancing-channel` / `graphics-instancing-scope` proposals are dropped; their history is in git.

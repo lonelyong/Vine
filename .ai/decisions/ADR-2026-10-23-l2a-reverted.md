@@ -1,38 +1,33 @@
-# ADR-2026-10-23：L2a 回撤，分层目标等 L2b 一起做
+# ADR-2026-10-23: L2a is reverted, layered targets wait for L2b and land as one piece
 
-- 状态：已采纳
-- 日期：2026-10-23
-- 相关：`../design/graphics-rendering.md`、`../backlog/graphics.md`
+- Status: Accepted
+- Date: 2026-10-23
+- Related: `../design/graphics-rendering.md`, `../backlog/graphics.md`
 
-> **EN**: Chose B: L2a (array targets, per-layer framebuffers, per-layer readback) was reverted the day it landed, because it had no consumer; N 2D targets plus N passes is the shape until VR or single-pass multi-view arrives, when L2a and L2b are redesigned as one piece. The revert removed ~1150 lines across 40 files and four combination refusals.
+## Background
 
-## 背景
+L2a (array targets, per-layer framebuffers, per-layer readback) landed and was reverted the same day. The question was whether, with no consumer, the shape "one pass per layer" was worth keeping.
 
-L2a（数组目标 + 逐层帧缓冲 + 按层读回）同日落地后又回撤。问题是：没有消费者时，
-是否值得保留“每层一条 pass”的形状。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 保留 L2a | 立方体阴影 / CSM / 双目可逐层写 | 公开面与组合拒绝；无消费者 |
-| B. 回撤 L2a，只留 L2b 触发设计 | 代码回到简单形状 | 分层能力暂时没有 |
-| C. 直接做 L2b | 一次写多层，省收集/提交 | 需要数组层 + 着色器写层号；前置未做 |
+| A. Keep L2a | Cube shadows, CSM and stereo could write per layer | Public surface plus combination refusals; no consumer |
+| B. Revert L2a and keep only the L2b trigger design | The code returns to a simple shape | No layered capability for now |
+| C. Do L2b straight away | Several layers in one pass, less collection and submission | Needs array layers plus a shader writing the layer index; the prerequisite is not done |
 
-## 决定
+## Decision
 
-选 **B**：回撤 L2a；N 张 2D 目标 + N 条 pass 是当前形状。将来 VR / 单 pass 多视图真正
-落地时，L2a + L2b 作为**一个整体**重新设计。
+Chose **B**: L2a is reverted; N 2D targets plus N passes is the current shape. When VR or single-pass multi-view actually lands, L2a and L2b are redesigned **as one piece**.
 
-## 后果
+## Consequences
 
-- 好：删除约 1150 行 / 40 个文件与四组组合拒绝；L1 内容掩码、实例化、既有 2D 目标/读回
-  路径保留。
-- 代价：没有数组层 / 逐层读回；需要时重做。
-- 重开条件：VR / 单 pass 多视图，或实测 N-pass 开销成为瓶颈。
+- Good: about 1150 lines across 40 files and four combination refusals are deleted; the L1 content mask, instancing and the existing 2D target and readback paths stay.
+- Cost: no array layers and no per-layer readback; it has to be redone when needed.
+- Reopening condition: VR or single-pass multi-view, or a measured N-pass cost becomes the bottleneck.
 
-## 证据
+## Evidence
 
-- 回撤后 `test_graphics` 448、`test_vsg` 503。
-- 没有生产代码调用 `setLayerCount > 1`；只有新增测试与文档。
-- 记录：`../backlog/graphics.md` T4。
+- After the revert `test_graphics` 448, `test_vsg` 503.
+- No production code calls `setLayerCount > 1`; only new tests and documentation did.
+- Recorded in `../backlog/graphics.md` T4.

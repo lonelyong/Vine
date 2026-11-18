@@ -1,41 +1,33 @@
-# ADR-2026-10-23：不引入多父（DAG）
+# ADR-2026-10-23: no multiple parents (no DAG)
 
-- 状态：已采纳
-- 日期：2026-10-23
-- 相关：`../design/graphics-scene.md`、`../design/graphics-geometry.md`、`../backlog/graphics.md`
+- Status: Accepted
+- Date: 2026-10-23
+- Related: `../design/graphics-scene.md`, `../design/graphics-geometry.md`, `../backlog/graphics.md`
 
-> **EN**: Chose C: the scene graph stays a strict tree (`Group::addChild` detaches from the old parent and refuses cycles); "same geometry N times" is `Primitive` instancing and "same subtree N times" duplicates nodes over shared buffers. A multi-parent DAG would leave `worldMatrix()`, `boundingBox()` and pick identity without a unique answer, and USD-style reference nodes are the shape to redesign towards if that demand ever becomes real.
+## Background
 
-## 背景
+The DAG half of R7: `Group::addChild` currently detaches a child from its old parent, so the scene graph is a strict tree. The question was whether a `Node` should be allowed several parents, sharing a whole subtree rather than a geometry buffer.
 
-R7 的 DAG 半边：`Group::addChild` 目前自动从旧父脱离，场景图是严格树。问题是要不要在
-`Node` 上允许多个父，从而共享整棵子树（而不是共享几何 buffer）。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 全 DAG（OSG/vsg 式） | 任意共享；编辑一次所有放置生效 | `worldMatrix()` / `boundingBox()` / 拾取身份失去唯一答案；需要 `NodePath`；缓存/失效/生命周期全改 |
-| B. 显式引用节点（USD 式） | 保留普通节点的单父语义；放置身份显式 | 新类型 + 四条 walk 的展开；holder 失效链 |
-| C. 严格树 + 实例化 | 零风险；同一几何 N 份已覆盖 | 重复子树要复制节点；编辑不联动 |
+| A. A full DAG (the OSG/vsg shape) | Anything can be shared; editing once affects every placement | `worldMatrix()`, `boundingBox()` and the pick identity lose a unique answer; a `NodePath` is needed; caches, invalidation and lifetimes all change |
+| B. Explicit reference nodes (the USD shape) | Ordinary nodes keep single-parent semantics; placement identity is explicit | A new type plus the expansion of four walks; a holder invalidation chain |
+| C. A strict tree plus instancing | No risk; "the same geometry N times" is already covered | A repeated subtree has to duplicate nodes; an edit does not propagate |
 
-## 决定
+## Decision
 
-选 **C**：`Group::addChild` 继续“自动脱离旧父 + 拒绝成环”。同一几何 N 份用
-`Primitive` 实例流；同一子树 N 份复制节点（`Buffer` 仍共享）。将来若出现“同一子树 N 份且
-编辑一次全生效”的真实需求，按 B 重新设计，不放开 `Group`。
+Chose **C**: `Group::addChild` keeps "detach from the old parent and refuse a cycle". "The same geometry N times" uses `Primitive` instancing; "the same subtree N times" duplicates nodes (the `Buffer` is still shared). If a real need for "the same subtree N times, with one edit reaching every placement" appears, redesign along B instead of loosening `Group`.
 
-## 后果
+## Consequences
 
-- 好：`parent()` / `worldMatrix()` / `boundingBox()` / 拾取结果保持唯一；包围盒缓存与
-  内容 epoch 继续按单父链成立。
-- 代价：重复子树没有“编辑一次全生效”；复制节点。
-- 重开条件：真实的共享子树编辑需求（不是“同一几何多放置”）。
+- Good: `parent()`, `worldMatrix()`, `boundingBox()` and the pick result stay unique; the bounding-box cache and the content epoch keep holding along a single-parent chain.
+- Cost: a repeated subtree has no "edit once, applies everywhere"; nodes are duplicated.
+- Reopening condition: a real need to edit a shared subtree (not "the same geometry placed several times").
 
-## 证据
+## Evidence
 
-- OSG/vsg 的 DAG 都配 `NodePath`（拾取/选择身份）；vendored vsg 1.1.16 的 `Node` 甚至
-  不存父指针，路径只活在遍历里。
-- 代码里的单父假设：`Node::worldMatrix()`、`invalidateBounds()`、`BoundsCache`、
-  `RayIntersectionResult`。
-- 记录：`../backlog/graphics.md` T1–T2；R7 在 2026-10-23 关闭。
+- The DAG of both OSG and vsg comes with a `NodePath` (the pick and selection identity); the vendored vsg 1.1.16 `Node` does not even store a parent pointer, and the path lives only inside a traversal.
+- The single-parent assumptions in the code: `Node::worldMatrix()`, `invalidateBounds()`, `BoundsCache`, `RayIntersectionResult`.
+- Recorded in `../backlog/graphics.md` T1-T2; R7 was closed on 2026-10-23.

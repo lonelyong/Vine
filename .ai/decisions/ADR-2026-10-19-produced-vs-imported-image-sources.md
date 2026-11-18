@@ -1,38 +1,34 @@
-# ADR-2026-10-19：produced 与 imported 图源不合并
+# ADR-2026-10-19: produced and imported image sources are not merged
 
-- 状态：已采纳
-- 日期：2026-10-19
-- 相关：`../design/graphics-rendering.md`
+- Status: Accepted
+- Date: 2026-10-19
+- Related: `../design/graphics-rendering.md`
 
-> **EN**: Chose C: an `ImageInput` declares one input image that binds either a produced `ImageRef` or an imported `Texture` (plus an optional `Sampler`) and resolves to an `ImageSource`; produced inputs take part in the one-producer-per-frame wiring, imported ones go through the `MaterialImages` upload cache. Rejected two parallel lists (mixed order lost) and a `Texture` overload on `ImageRef` (the producer rule would not hold).
+## Background
 
-## 背景
+A pass input image has two possible sources: a `RenderTarget` attachment produced by some pass within the frame (`ImageRef`), and a `Texture` the host holds.
+Their lifetimes, producer rules and ways of going stale all differ.
 
-pass 的输入图有两种来源：帧内某条 pass 产出的 `RenderTarget` 附件（`ImageRef`），
-以及宿主持有的 `Texture`。两者的生命周期、producer 规则、失效方式都不同。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 两个平行列表 | 类型清晰 | 混排顺序丢失；消费方遍历两次 |
-| B. `ImageRef` 增加 `bind(Texture)` | 一个列表 | 联合体；大量 `if (texture)`；producer 规则不成立 |
-| C. `ImageInput` 声明 + `ImageSource` 解析值 | 统一“输入图”的形状，保留两种生命周期 | 多一个值类型 |
+| A. Two parallel lists | Clear types | The interleaved order is lost; the consumer walks twice |
+| B. Add `bind(Texture)` to `ImageRef` | One list | A union; many `if (texture)`; the producer rule does not hold |
+| C. `ImageInput` declaration plus an `ImageSource` resolved value | One shape for "input image" that keeps both lifetimes | One more value type |
 
-## 决定
+## Decision
 
-选 **C**：`ImageInput` 持有 `ImageRef` 或 `Texture`（+ 可选 `Sampler`）；`ImageSource`
-是解析后的 produced / imported 值；produced 参与一帧一个 producer 的 wiring，imported
-走 `MaterialImages` 上传缓存。
+Chose **C**: `ImageInput` holds either an `ImageRef` or a `Texture` (plus an optional `Sampler`); `ImageSource` is the resolved produced / imported value; produced inputs take part in the one-producer-per-frame wiring, imported ones go through the `MaterialImages` upload cache.
 
-## 后果
+## Consequences
 
-- 好：content 与 full-screen 两条绑定路径共享同一套输入声明；sampler 随输入携带。
-- 代价：全屏 ABI 的 “binding N = attachment N” 作为显式兼容路径保留。
-- 重开条件：需要数组 / 3D 纹理输入（目前不做）。
+- Good: the content and full-screen binding paths share one set of input declarations; the sampler travels with the input.
+- Cost: the full-screen ABI's "binding N = attachment N" is kept as an explicit compatibility path.
+- Reopening condition: array or 3D texture inputs are needed (not done today).
 
-## 证据
+## Evidence
 
-- `FrameCompilerTest.AnImportedTextureInputIsAFirstClassInputWithNoProducerEdge`。
-- `VsgBackendTest` imported texture / cube / sampler state 用例。
-- `ScreenDrawTest` 全屏绑定顺序不回归。
+- `FrameCompilerTest.AnImportedTextureInputIsAFirstClassInputWithNoProducerEdge`.
+- `VsgBackendTest` imported texture / cube / sampler state cases.
+- `ScreenDrawTest` full-screen binding order does not regress.

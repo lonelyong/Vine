@@ -1,68 +1,50 @@
-# ADR-2026-10-24：目标只走一条路 —— 不留窗口级的"当前 3D 区"查询
+# ADR-2026-10-24: the target has exactly one road - no window-level "current 3D area" query
 
-- 状态：已采纳（部分取代 `ADR-2026-10-24-command-target.md` 决定 4 的后半）
-- 日期：2026-10-24
-- 相关：`../design/appfw-render-view.md`（§9.2） · `../design/appfw-command-manager.md`（§2.0） ·
-  测试 `DocumentViewTest.NoActiveDocumentMeansNoCommandTarget`、
-  `DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast`、
+- Status: Accepted (partly supersedes the second half of decision 4 in `ADR-2026-10-24-command-target.md`)
+- Date: 2026-10-24
+- Related: `../design/appfw-render-view.md` (section 9.2) · `../design/appfw-command-manager.md` (section 2.0) ·
+  tests `DocumentViewTest.NoActiveDocumentMeansNoCommandTarget`,
+  `DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast`,
   `ModelViewerTest.TheCommandTargetTravelsWithTheExecution`
 
-> **EN**: Chose C and E: the window-level `MainWindow::primaryRenderControl()` query is deleted rather than deprecated (no caller left, ABI 9 unreleased) and the view accessor is renamed `renderControl() const`, so "which 3D area" has exactly two exits - resolution at dispatch (`gui::resolveCommandTarget()`) and the view's own answer - and "no active document = no target" is the single rule. Supersedes the second half of decision 4 in `ADR-2026-10-24-command-target`.
+## Background
 
-## 背景
+Decision 4 of `ADR-2026-10-24-command-target.md` said `MainWindow::primaryRenderControl()` would be **demoted to a derived query** (current view -> active pane -> control) instead of remaining a publication slot the plugins write into. By step 3 of the implementation that compromise no longer held:
 
-`ADR-2026-10-24-command-target.md` 决定 4 写的是：`MainWindow::primaryRenderControl()` **降级为派生查询**
-（当前视图 → 活动窗格 → 控件），不再是插件往里写的发布槽。实现走到第 3 步时这个折中不成立了：
+1. after the two real consumers were migrated (`ShadingModeCommand`, `TestRenderLiveCommand`), there were **zero callers** in `src/`;
+2. it was a **second implementation** of the same traversal as `gui::resolveCommandTarget()` (central area -> document host -> current view -> control), differing only in whether the answer belongs to the window or to this execution;
+3. and "the answer belongs to the window" is exactly the half that had been rejected: when a window shows a second 3D area, a window-level single answer is necessarily wrong for one of them, while an execution-level target naturally answers for each.
 
-1. 迁移完两个真正的消费者（`ShadingModeCommand`、`TestRenderLiveCommand`）之后，`src/` 里**零调用者**；
-2. 它和 `gui::resolveCommandTarget()` 是同一条遍历（中央区 → 文档宿主 → 当前视图 → 控件）的**第二份实现**，
-   差别只在"答案归窗口"还是"答案归这次执行"；
-3. 而"答案归窗口"恰恰是被否决的那一半：一个窗口出现第二个 3D 区时，窗口级的单值回答必然错一个，而执行级的目标
-   天然各答各的。
+The same period had a naming problem: the accessor answering "which 3D area does this view show" was first called `activeRenderControl()`, which uses the same word at a different layer than `activate()` / `deactivate()` (**on screen / off screen**) in the same class - and "active" is already the document layer's word in this repository (`DocumentManager::current()`).
 
-同一时期还有一个命名问题：那个"视图回答哪块 3D 区"的访问器最初叫 `activeRenderControl()`，与同一个类里的
-`activate()` / `deactivate()`（**上屏/下屏**）同词不同层，而"活跃"在仓库里已经是文档层的词
-（`DocumentManager::current()`）。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 保留 `primaryRenderControl()` 作派生查询 | 非命令代码（面板、状态栏）少写三行 | 同一个问题两条路：命令可以绕过目标去问窗口，窗口级回答在第二个 3D 区出现时就是错的；今天没有任何调用者 |
-| B. 保留但标 `[[deprecated]]` 并保留一个 ABI 符号 | 形式上前向兼容 | ABI 9 尚未发布，没有"已发布的插件"需要兼容；留一个只为兼容而存在的符号是纯负债 |
-| **C. 整个删除，只留执行目标（选定）** | 一个问题一条路；"没激活文档 = 没有目标"成为唯一且可推导的答案 | 非命令代码要自己解析（`gui::resolveCommandTarget(window)`）；多窗口时解析输入仍不完整 |
-| D. 访问器继续叫 `activeRenderControl()` | 名字里带"多窗格里选哪块" | 一个类里第三个"active"含义；两个插件本来就有同签名的 `renderControl() const`，多出来的是重复品 |
-| E. 访问器叫 `renderControl() const`（选定） | 与两个插件已有的 getter 同名同义，多出来的访问器连同名字一起消失；"active"只属于文档层 | 名字不再暗示"多窗格里哪一块"，改由契约文字说明 |
+| A. Keep `primaryRenderControl()` as a derived query | Non-command code (panels, status bar) writes three lines fewer | Two roads to one question: a command can bypass the target and ask the window, and the window-level answer is wrong as soon as a second 3D area exists; there is no caller today |
+| B. Keep it but mark it `[[deprecated]]` and keep one ABI symbol | Formally forward compatible | ABI 9 is not released, so no "published plugin" needs compatibility; a symbol kept only for compatibility is pure debt |
+| **C. Delete it entirely and keep only the execution target (chosen)** | One road per question; "no active document = no target" becomes the only, derivable answer | Non-command code has to resolve for itself (`gui::resolveCommandTarget(window)`); with several windows the resolution input is still incomplete |
+| D. Keep the accessor called `activeRenderControl()` | The name says "which of several panes" | A third meaning of "active" in one class; both plugins already have a `renderControl() const` with the same signature, so the extra one is a duplicate |
+| E. Name the accessor `renderControl() const` (chosen) | The same name and meaning as the getter both plugins already have, so the extra accessor disappears together with its name; "active" stays with the document layer | The name no longer hints at "which of several panes"; the contract text says it instead |
 
-## 决定
+## Decision
 
-1. **不留窗口级查询**：`MainWindow::setPrimaryRenderControl()` 与 `primaryRenderControl()` 都删除。
-   "哪块 3D 区"只有两个出口：**派发时的解析**（`gui::resolveCommandTarget()`，结果随执行走）与
-   **视图自己的回答**（`DocumentView::renderControl()`）。
-2. **视图的访问器是 `renderControl() const`**，默认返回 null（2D 视图 = 没有 3D 区）；覆盖它只是把"哪一块"
-   说出来，不引入新状态。多窗格时由视图自己回答"用户最后在哪块里干活"。
-3. **"没激活文档 = 没有目标"** 是唯一规则：没有当前文档、中央区不是文档宿主、或视图没有 3D 区，解析结果都是空目标，
-   `CommandFlags::NeedsDocument` / `NeedsView` 据此统一拒绝。
+1. **No window-level query**: both `MainWindow::setPrimaryRenderControl()` and `primaryRenderControl()` are deleted.
+   "Which 3D area" has exactly two exits: **resolution at dispatch** (`gui::resolveCommandTarget()`, whose result travels with the execution) and **the view's own answer** (`DocumentView::renderControl()`).
+2. **The view's accessor is `renderControl() const`**, returning null by default (a 2D view has no 3D area); overriding it only states "which one" and introduces no state. With several panes the view answers "the one the user last worked in" itself.
+3. **"No active document = no target"** is the single rule: with no current document, with the central area not being the document host, or with a view that has no 3D area, the resolution result is an empty target, and `CommandFlags::NeedsDocument` / `NeedsView` refuse uniformly on that basis.
 
-## 后果
+## Consequences
 
-- 好的：命令不可能"绕过目标去问窗口"——那条路不存在；`renderControl()` 与两个插件已有的 getter 合一，虚表条目
-  没有增加新的概念；删除后 ABI 表面更小（`MainWindow` 少一个方法）。
-- 坏的 / 代价：命令以外的代码要自己说清楚"给谁解析的"（`gui::resolveCommandTarget(window)`）。更短的路存在 ——
-  `GuiApplication::centralDocumentHost()->currentView()->renderControl()` 三行就拿到"当前那块区"，而且不需要窗口、
-  不需要 cast；命令不该走它，因为它是**运行时的"当前"**：命令一旦 `co_await`（进度、IO、后台），用户可以在它跑的
-  时候切标签页（或点进另一块 MDI 窗格）；而且"当前"只可能有一个 —— 同一窗口里两块同时可见时，它答不出命令是从哪一块
-  发出的。目标的整个前提是"答案是给某次派发的，不是给整个窗口的"。
-- 已知缺口：无。解析输入就是"宿主当前的视图" —— 与 tab 语义恒等（一个窗口同时只可见一个视图，见
-  `ADR-2026-10-24-tabs-not-mdi.md`）；同一视图内多块 3D 区由视图自己回答（`DocumentView::renderControl()`）。
-- 触发条件（什么时候重开）：出现第一个**非命令**的消费者（例如状态栏要显示"当前 3D 区信息"），或出现"同一窗口
-  并排看两份不同文档"的需求（那时要同时做多页宿主与发起控件优先的解析）。
+- Good: a command cannot "bypass the target and ask the window" - that road does not exist; `renderControl()` merges with the getter both plugins already had, and the vtable gains no new concept; deleting it makes the ABI surface smaller (`MainWindow` has one method fewer).
+- Bad / cost: code outside commands has to say for whom it resolves (`gui::resolveCommandTarget(window)`). A shorter road exists - `GuiApplication::centralDocumentHost()->currentView()->renderControl()`, three lines to "the current area", needing neither window nor cast; a command should not take it, because it is the **runtime "current"**: once a command `co_await`s (progress, IO, background work) the user can switch tabs (or click into another MDI pane) while it runs; and there can only be one "current" - when two areas are visible in one window at the same time it cannot say which one issued the command. The whole premise of the target is "the answer is for one dispatch, not for the whole window".
+- Known gaps: none. The resolution input is "the host's current view", identical to the tab semantics (one window shows one view at a time, see `ADR-2026-10-24-tabs-not-mdi.md`); several 3D areas inside one view are answered by the view itself (`DocumentView::renderControl()`).
+- Trigger (when to reopen): the first **non-command** consumer appears (for example a status bar showing "current 3D area info"), or a need to see two different documents side by side in one window (which means doing the multi-page host and the initiating-control-first resolution together).
 
-## 证据
+## Evidence
 
-- 代码：`src/fw/appfw/sdk/vine/appfw/gui/CommandTarget.hpp`（解析与唯一那次 cast）；
-  `src/fw/appfw/sdk/vine/appfw/gui/DocumentView.hpp`（`renderControl() const` 的契约）；
-  `src/fw/appfw/src/CommandManager.cpp`（拒绝在接管与串行门之前）。
-- 测试：`DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast`（目标带视图、视图答窗格）、
-  `ModelViewerTest.TheCommandTargetTravelsWithTheExecution`（目标经真实派发到达命令体，缺目标时拒绝先于命令体）。
-- 门禁：`python3 scripts/check_ai_docs.py --strict`、`python3 scripts/check_design_docs.py --strict` 均为 0。
+- Code: `src/fw/appfw/sdk/vine/appfw/gui/CommandTarget.hpp` (the resolution and its single cast);
+  `src/fw/appfw/sdk/vine/appfw/gui/DocumentView.hpp` (the contract of `renderControl() const`);
+  `src/fw/appfw/src/CommandManager.cpp` (the refusal before the takeover and the serial gate).
+- Tests: `DocumentViewTest.AViewWithTwoPanesAnswersForTheOneTheUserWorkedInLast` (the target carries the view, the view answers the pane), `ModelViewerTest.TheCommandTargetTravelsWithTheExecution` (the target reaches the command body through a real dispatch, and a missing target is refused before the body).
+- Gates: `python3 scripts/check_ai_docs.py --strict` and `python3 scripts/check_design_docs.py --strict` both report 0.
