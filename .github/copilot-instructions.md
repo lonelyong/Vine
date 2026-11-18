@@ -42,8 +42,10 @@ acceptable — is in `.github/instructions/framework-design.instructions.md`.
     `<area>-<topic>.md` names, **no date suffix**, no closed or historical items, one topic
     per file. Length is not capped: a complete, navigable topic beats a short partial one.
   * `.ai/decisions/` — **ADR** (`ADR-YYYY-MM-DD-<slug>.md`): why a decision was made, the
-    options rejected and their consequences. Dated, immutable; mark `已取代` and link the
-    successor. This is the only history kept in-tree.
+    options rejected and their consequences. Dated and immutable; when a later ADR replaces
+    it, the superseded one is **deleted** once the successor states the current fact, and git
+    keeps it (`ADR-2026-11-18-superseded-adrs-are-deleted`). The in-tree set is the current
+    decisions plus the arguments a design page cannot carry.
   * `.ai/backlog/` — **open, trigger-gated** work only (`<area>.md`, no date suffix).
     Closed or explicitly not-doing items are deleted, not marked.
   * `.ai/memory/` — concise current facts, traps and commands; no chronology.

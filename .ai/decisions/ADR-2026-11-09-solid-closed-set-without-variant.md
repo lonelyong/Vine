@@ -8,7 +8,7 @@
 
 ## Background
 
-`ADR-2026-11-05-solid-family-and-variant.md` introduced `SolidShape<T> = std::variant<the five kinds>`. It had two uses at the time:
+An earlier ADR introduced `SolidShape<T> = std::variant<the five kinds>` (git holds that record). It had two uses at the time:
 `Primitive` held it by value (withdrawn by `ADR-2026-11-05-primitive-is-a-modelling-base.md`), and it was the argument for "answer by kind".
 
 Before this round, only three readers were left: the argument of `tessellateSolid()`, the return value of `solidShapeOf()`, and `solidOf()`'s family view

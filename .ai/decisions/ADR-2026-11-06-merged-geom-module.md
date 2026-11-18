@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-06
-- Related: `../design/geometry-planar.md` 2.5, `ADR-2026-11-05-planar-curve-contract.md`, `ADR-2026-11-06-math-is-the-base-layer.md`, `ADR-2026-11-06-shared-numeric-kernels-in-math.md`
+- Related: `../design/geometry-planar.md` 2.5, `ADR-2026-11-05-planar-curve-contract.md`
 
 ## Background
 

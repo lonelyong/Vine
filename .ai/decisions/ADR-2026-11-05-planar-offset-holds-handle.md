@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-05
-- Supersedes: `ADR-2026-11-05-planar-offset-curve.md`
+- Supersedes: the template-offset decision taken the same day (git holds that record)
 - Related: `../design/geometry-planar.md` 2.13, `ADR-2026-11-05-curve-derivative-capability.md`, `ADR-2026-11-05-planar-trimmed-curve.md`
 
 ## Background

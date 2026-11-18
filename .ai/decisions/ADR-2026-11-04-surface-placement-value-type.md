@@ -1,12 +1,12 @@
 # ADR-2026-11-04: a surface's frame is the value type `Placement`, not an inheritance layer
 
-> **Status**: Accepted (supersedes option C of `ADR-2026-11-04-axis-surface-frame.md`)
+> **Status**: Accepted (supersedes option C of the earlier frame design; git holds that record)
 > **Date**: 2026-11-04
 > **Related**: `../design/geometry-axis-surfaces.md` 2.1 / 2.5 / C1 / D1; `src/base/geometry/sdk/vine/geometry/Placement.hpp`, `Frame.hpp`, `CylindricalSurface.hpp`, `ConicalSurface.hpp`, `ToroidalSurface.hpp`; `tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
 
 ## Background
 
-`ADR-2026-11-04-axis-surface-frame.md` put the frame of the rotational surfaces (origin, main axis, X direction, plus `yAxis()` and `continuity() = CN`) into a new intermediate layer, `AxisSurface`, so that the three surfaces would not each store a rule that could drift.
+An earlier ADR put the frame of the rotational surfaces (origin, main axis, X direction, plus `yAxis()` and `continuity() = CN`) into a new intermediate layer, `AxisSurface`, so that the three surfaces would not each store a rule that could drift.
 
 Reviewing it after it landed showed that only three small things are actually shared: the initialisation of three fields (normalisation plus `inPlaneAxis`), the one-line cross product in `yAxis()`, and `return Continuity::CN`. To share them, a "state layer" was added to the type tree, readers had to tell "a tag (`ElementarySurface`)" from "a state layer (`AxisSurface`)", and the type tree no longer matched OCCT's shape (OCCT has `Geom_ElementarySurface` -> five concrete classes, with `gp_Ax3` in the tag).
 

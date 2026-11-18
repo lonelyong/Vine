@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-05
-- Related: `../design/geometry-kinds.md` 2.7, `../design/geometry-planar.md` 2.3 / 2.13, `ADR-2026-11-04-curve-third-derivative.md`, `ADR-2026-11-05-planar-offset-curve.md`
+- Related: `../design/geometry-kinds.md` 2.7, `../design/geometry-planar.md` 2.3 / 2.13
 
 ## Background
 

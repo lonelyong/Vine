@@ -177,8 +177,7 @@
   `geom::detail::` in full** — six contract headers declare a same-named `planar::detail`/`spatial::detail`, and a
   bare `detail::` resolves to that level (measured C2039).
   Do not propose “flat + `2` suffix” or “mark 2D only” again: 4 pairs of same-named public functions (two pairs
-  cannot overload) + precision-suffix collisions (the still-valid part of
-  `ADR-2026-11-06-geom-tree-layout-and-naming.md`).
+  cannot overload) + precision-suffix collisions (the still-valid part of the earlier layout decision, whose record is in git).
 - **Template parameter constraints**: geometry families are always `template <vn::math::FP T>` (including `Plane`,
   which used to be an exception); `Aabb` / `Obb` deliberately keep `typename T`
   so that `Aabbi = Aabb<int32_t>` is allowed. A new type inside a family uses `FP`; do not copy the value-type rule.

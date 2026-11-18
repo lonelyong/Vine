@@ -1,6 +1,6 @@
 # ADR-2026-11-06: the two contracts sink into sub-namespaces of the module
 
-- Status: Accepted (supersedes the "keep sibling directories" decision of `ADR-2026-11-06-geom-tree-layout-and-naming.md`)
+- Status: Accepted (supersedes the "keep sibling directories" decision; git holds that record)
 - Date: 2026-11-06
 - Related: `../design/geometry-module.md` 2.2 / 2.5 / 6, `ADR-2026-11-06-merged-geom-module.md`, `ADR-2026-11-06-geom-detail-subtree.md`
 

@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-06
-- Related: `../design/geometry-module.md` 2.2-2.3 / 3.1, `../design/geometry-planar.md` C10 / D3, `ADR-2026-11-06-merged-geom-module.md`, `ADR-2026-11-06-math-is-the-base-layer.md`, `ADR-2026-11-06-shared-numeric-kernels-in-math.md`
+- Related: `../design/geometry-module.md` 2.2-2.3 / 3.1, `../design/geometry-planar.md` C10 / D3, `ADR-2026-11-06-merged-geom-module.md`
 
 ## Background
 

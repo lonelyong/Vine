@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-05
-- Supersedes: `ADR-2026-11-05-solid-family-and-variant.md` (the part where "the model holds a `SolidShapef` by value"; the `Solid<T>` family itself is unchanged)
+- Supersedes: the part where "the model holds a `SolidShapef` by value" (git holds that record; the `Solid<T>` family itself is unchanged)
 - Related: `../design/geometry-parametric.md`, `../design/geometry-solid.md`, `../../src/base/geometry/sdk/vine/geometry/Primitive.hpp`, `../../tests/test_geometry/SolidTest.cpp`
 
 ## Background

@@ -163,15 +163,16 @@ Rules:
 - A small document may merge 1.1–1.3 into one paragraph, but the §1/§2/§3/§5/§7/§8/§9/§10 headings
   stay.
 - A diagram must match the current code; update "Last verified" when the code changes.
-- Status is part of the document: `living` / `draft` / `superseded`, with a link to the successor
-  when superseded.
+- Status is part of the document: `living` / `draft` / `superseded` - and for an ADR,
+  `superseded` means the file is deleted once its successor states the current fact (`git`
+  keeps it), so a superseded ADR never stays in the tree as a marker.
 
 ## 3. The ADR Template
 
 ```md
 # ADR-YYYY-MM-DD: <decision>
 
-- Status: accepted / superseded (by ADR-...)
+- Status: accepted / superseded (by an ADR that is still in the tree)
 - Date: YYYY-MM-DD
 - Related: `../design/<doc>.md`, tests / measurements
 

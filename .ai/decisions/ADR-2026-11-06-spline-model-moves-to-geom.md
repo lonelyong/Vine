@@ -6,7 +6,7 @@
 
 ## Background
 
-`math/spline/` had held two things since it was created: `BezierBlend.hpp` (`deCasteljau` / `differences`, Bernstein evaluation) and `BSplineBasis.hpp` (the knot model of distinct knots plus multiplicities, with the Cox-de Boor basis functions). Their only reason for being in `math` was "there was no other place at the time", and `ADR-2026-11-06-math-is-the-base-layer.md` redefined `math` as "the base layer, not only a maths library" to that end - **a page that has to defend a name is itself a signal of misplacement** (`G4`).
+`math/spline/` had held two things since it was created: `BezierBlend.hpp` (`deCasteljau` / `differences`, Bernstein evaluation) and `BSplineBasis.hpp` (the knot model of distinct knots plus multiplicities, with the Cox-de Boor basis functions). Their only reason for being in `math` was "there was no other place at the time", and an earlier ADR redefined `math` as "the base layer, not only a maths library" to that end (git holds that record) - **a page that has to defend a name is itself a signal of misplacement** (`G4`).
 
 The criterion then changed: `geom/planar` / `geom/spatial` merged into one module with a `geom/detail` subtree, so "where does shared geometry code go" had an answer, while "shared mathematics" still had only `math`. Once separated, the question became clear:
 
@@ -42,7 +42,7 @@ Criteria: `G1` (one owner per concept: the knot representation belongs to geomet
 
 - Good: `math` holds no geometry concept any more; `geom` brings all its own geometry vocabulary (`Continuity`) and representation conventions (the knot model), so the module's self-sufficiency for spline representation no longer depends on "a coincidence of the base layer"; `knotContinuity` and the `continuity()` that uses it are in one module.
 - Cost / migration: `<vine/math/spline/BSplineBasis.hpp>` -> `<vine/geom/detail/BSplineBasis.hpp>`, `math::spline::` -> `geom::detail::` (3 headers, 26 call sites); `<vine/math/Continuity.hpp>` -> `<vine/geom/Continuity.hpp>` (3 headers include it directly, the rest through `geom_global.hpp`); `vn::math::Continuity` -> `vn::geom::Continuity` (6 tests, 13 occurrences); `tests/test_math/BSplineBasisTest.cpp` -> `tests/test_geom_spatial/` (`test_math` links only `vn::Math` and no longer knows this header). <!-- drift-ok -->
-- Reversal condition: a **non-geometric** consumer of the knot model appears (robot trajectory interpolation constructing a B-spline directly, for example) - then either give it another shared place, or promote it together with `vn::Nurbs`; when a second family of representation conventions appears, the `vn::Nurbs` trigger written in `ADR-2026-11-06-math-is-the-base-layer.md` still applies.
+- Reversal condition: a **non-geometric** consumer of the knot model appears (robot trajectory interpolation constructing a B-spline directly, for example) - then either give it another shared place, or promote it together with `vn::Nurbs`; when a second family of representation conventions appears, the `vn::Nurbs` trigger written in that earlier record still applies.
 
 ## Evidence
 

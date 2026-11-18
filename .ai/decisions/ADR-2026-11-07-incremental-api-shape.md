@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-07
-- Related: `.ai/design/crypto.md`, `ADR-2026-11-07-digest-vocabulary.md` (whose digest-vocabulary part still stands; its naming part is superseded by this document)
+- Related: `.ai/design/crypto.md`
 
 ## Background
 

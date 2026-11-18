@@ -131,7 +131,7 @@ The cylinder, the cone and the torus have in common not "unbounded" but that the
 
 ## 7. Rejected Options
 
-- **D1** Making the frame an inheritance layer (`AxisSurface`) or stuffing it into the `ElementarySurface` tag: the first adds an inheritance layer for one group of fields and one `return CN`, the second violates `C9`; nor does `SphericalSurface` migrate — the sphere's axis only changes the parameterisation (2.2). See `../decisions/ADR-2026-11-04-surface-placement-value-type.md` (supersedes `ADR-2026-11-04-axis-surface-frame.md`).
+- **D1** Making the frame an inheritance layer (`AxisSurface`) or stuffing it into the `ElementarySurface` tag: the first adds an inheritance layer for one group of fields and one `return CN`, the second violates `C9`; nor does `SphericalSurface` migrate — the sphere's axis only changes the parameterisation (2.2). See `../decisions/ADR-2026-11-04-surface-placement-value-type.md` (it supersedes the inheritance-layer option; git holds that record).
 - **D2** Storing a spline surface's control net as `vector<vector<Point>>`: one layer of pointers buys no expressiveness, and the row / column index either costs an extra indirection or implies a length convention (`G10`, `G12`); the net is row-major and flat (C4).
 - **D3** Deciding `BSplineSurface` closedness by "evaluate and compare the two boundary curves": in the clamped form the boundary curve at `v = v_min` is the curve of the first pole row, and the clamped basis is linearly independent, so equal homogeneous poles and equal curves are equivalent (2.5); comparing by evaluation is only slower and brings a tolerance question into equality (`G10`).
 

@@ -25,7 +25,7 @@ Chose A.
 
 - `Curve<T>` / `Surface<T>` each gain one pure virtual `[[nodiscard]] virtual bool isValid() const = 0;`, next to `isCN()`, with a comment stating two things: it is the answer about **state** (independent of the parameters), and a false answer makes queries return degenerate values in order to "keep the error an error instead of undefined behaviour".
 - The fifteen implementations already had the method and only gained `override`; `Plane` was the only one without it, because a plane had been considered to have no invalid state. It has one now: a zero normal has no perpendicular direction and no in-plane axis, so the parameterisation would quietly fall back to the world axes - `Plane::isValid()` is therefore `normal.length() > EPS`, consistent with the conic curves' rule about a degenerate frame (P6).
-- `OffsetCurve` already has the implementation, and `secondDerivative` is still pure, so the type stays abstract (`ADR-2026-11-04-curve-third-derivative.md` is unaffected).
+- `OffsetCurve` already has the implementation, and `secondDerivative` is still pure, so the type stays abstract (the earlier decision against a third derivative is unaffected; git holds it).
 
 ## Consequences
 

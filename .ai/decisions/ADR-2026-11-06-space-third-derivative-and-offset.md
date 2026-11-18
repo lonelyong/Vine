@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-06
-- Supersedes: `ADR-2026-11-04-curve-third-derivative.md`
+- Supersedes: the earlier decision against a third derivative (git holds that record)
 - Related: `../design/geometry-kinds.md` 2.7 / 2.8 / D9, `ADR-2026-11-05-curve-derivative-capability.md`, `../design/geometry-planar.md` 2.13
 
 ## Background

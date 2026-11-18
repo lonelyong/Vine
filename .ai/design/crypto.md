@@ -444,7 +444,7 @@ page does not repeat them.
   isolation in return.
 - `D5`: Give HMAC its own algorithm enum instead of the shared `Digest` vocabulary. ~~Rejected~~ **Adopted**: `Digest`
   is now the module's only digest vocabulary, and the three parallel vocabularies `Hash` / `HashCalculator` /
-  `Hmac::Algorithm` are gone; see `ADR-2026-11-07-digest-vocabulary.md`.
+  `Hmac::Algorithm` are gone; see `../decisions/ADR-2026-11-07-incremental-api-shape.md`.
 - `D7`: Keep the `*Calculator` naming (a coined word no one else uses). Rejected: replaced by "a free function for the
   one-shot form, the object's own name for the incremental form" - `digest()` / `Hasher`, `hmac()` / `Hmac`, the same
   shape as OpenSSL, libsodium, RustCrypto and Qt; see `ADR-2026-11-07-incremental-api-shape.md`.

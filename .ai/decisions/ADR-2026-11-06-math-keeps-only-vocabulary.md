@@ -1,6 +1,6 @@
 # ADR-2026-11-06: `math` keeps only mathematical vocabulary; root finding, integration and Bernstein evaluation move to `geom/detail`
 
-- Status: Accepted (supersedes `ADR-2026-11-06-shared-numeric-kernels-in-math.md`; the "Bernstein stays in `math`" half of `ADR-2026-11-06-spline-model-moves-to-geom.md` is superseded by this ADR as well)
+- Status: Accepted (supersedes the decision that the numeric kernels live in `math`; git holds that record. The "Bernstein stays in `math`" half of `ADR-2026-11-06-spline-model-moves-to-geom.md` is superseded by this ADR as well)
 - Date: 2026-11-06
 - Related: `../design/math-base-layer.md`, `../design/geometry-module.md` 2.6 / 7, `ADR-2026-11-06-geom-detail-subtree.md`, `ADR-2026-11-06-spline-model-moves-to-geom.md`
 
@@ -32,7 +32,7 @@ Chose **B**:
 - All three are treated as `detail`: their consumers are the geometry curves and surfaces plus `geom/detail`'s own helpers (`narrowCrossing` uses `rootInBracket`, `arcLengthBetween` / `parameterCovering` use `adaptiveSimpson` / `parameterReaching`, Bezier curves and surfaces use `deCasteljau` / `differences`).
 - Migration: `tests/test_math/{QuadratureTest,RootFindingTest}.cpp` -> `tests/test_geom_spatial/` (`test_math` links only `vn::Math` and no longer knows these headers).
 
-Criteria: `G1` (one home per capability), `G5` (changes to the geometry numeric chain land inside the geometry module), `G6` (`math` and `geom` each hold one kind of content: vocabulary / geometry), `G4` (the names no longer need a documentation defence). The tension with `G2` is **recorded honestly and written below as a cost**: this moves a general capability up out of the base layer, reversing the judgement of `ADR-2026-11-06-shared-numeric-kernels-in-math.md` from earlier the same day. B was chosen because "there is no second consumer today, and two homes cost more than one", not because "generality does not matter".
+Criteria: `G1` (one home per capability), `G5` (changes to the geometry numeric chain land inside the geometry module), `G6` (`math` and `geom` each hold one kind of content: vocabulary / geometry), `G4` (the names no longer need a documentation defence). The tension with `G2` is **recorded honestly and written below as a cost**: this moves a general capability up out of the base layer, reversing a judgement taken earlier the same day. B was chosen because "there is no second consumer today, and two homes cost more than one", not because "generality does not matter".
 
 ## Consequences
 

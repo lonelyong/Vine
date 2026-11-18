@@ -1,6 +1,6 @@
 # ADR-2026-10-30: the Linux crash window uses Xlib + Xft, not a UI toolkit
 
-- Status: Accepted (**supersedes** `ADR-2026-10-30-crash-handler-qt-on-linux.md`)
+- Status: Accepted (it **superseded** the Qt-based crash window the same day; git holds that record)
 - Date: 2026-10-30
 - Related: `../design/base-crash.md` (section 2.1 boundary, 2.9 capture, 3.4 window, 6.5 degradation, 9 status)
 

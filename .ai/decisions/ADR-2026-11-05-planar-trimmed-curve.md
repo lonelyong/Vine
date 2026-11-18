@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-05
-- Supersedes: `ADR-2026-11-05-planar-arc-is-a-value-type.md`
+- Supersedes: the arc-as-value-type decision (git holds that record)
 - Related: `../design/geometry-planar.md` 2.8 / 2.10 / D6, `ADR-2026-11-05-curve-derivative-capability.md`
 
 ## Background
