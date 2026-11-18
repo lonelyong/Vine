@@ -901,7 +901,9 @@ void SurfaceWindow::renderFrame()
     // THE OVERLAYS' OWN WORK RUNS FIRST (see FrameUpdate): a gizmo mirrors, a readout repaints, and what they publish
     // is what this frame draws - so update, then publish, then build.
     if (vn::graphics::SceneView* const primary = view(); primary != nullptr) {
-        primary->update();
+        // ONE CONTEXT FOR THE WHOLE FRAME (see FrameContext): the engine states the frame id, the interval and the
+        // surface, and every overlay of this frame is handed that same value.
+        primary->update(d->engine->frameContext());
         primary->publishContent();
     }
 

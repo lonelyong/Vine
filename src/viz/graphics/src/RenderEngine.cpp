@@ -318,6 +318,10 @@ FrameOutcome RenderEngine::frame()
         return FrameOutcome{ FrameOutcome::Status::NotReady, EngineNotReadyReason::NotInitialized };
     }
 
+    // The frame will really run, so this is where the frame clock takes its one reading (see frameContext): a
+    // NotReady frame is not a frame's interval, and counting it would report a stalled engine as one slow frame.
+    advanceFrameClock();
+
     // ONE FRAME IN FLIGHT: with a frame thread, the previous frame's engine half is finished before this frame touches
     // the mirrors or a slot. That is the whole pipeline (1 + 1), and it is why a caller never queues frames: the wait
     // is for the frame BEFORE the one it is about to build, which is normally already done (design 2.12, D12).
@@ -351,6 +355,33 @@ FrameThreading RenderEngine::frameThreading() const noexcept
 std::uint64_t RenderEngine::frameNumber() const noexcept
 {
     return pump_->lastNumber();
+}
+
+void RenderEngine::advanceFrameClock() noexcept
+{
+    // ONE READING PER FRAME, KEPT HERE (see frameContext): the interval between two frames is what "how fast is this
+    // loop running" means, and measuring it once is what stops two overlays from windowing the same frame
+    // differently. A frame that never ran (NotReady) takes no reading, so a stalled engine does not report a
+    // spurious interval on its first frame afterwards.
+    const auto now = std::chrono::steady_clock::now();
+    if (frame_tick_taken_) {
+        frame_context_.elapsed_seconds = std::chrono::duration<double>(now - last_frame_tick_).count();
+    }
+    last_frame_tick_ = now;
+    frame_tick_taken_ = true;
+}
+
+FrameContext RenderEngine::frameContext() const noexcept
+{
+    // THE FACTS ARE READ LIVE, the time is the head of the last frame: a host that asks twice gets the same answer,
+    // and the size it sees is the one the passes are laid out on right now rather than the one the previous frame
+    // used.
+    FrameContext context = frame_context_;
+    context.frame_number = frameNumber() + 1;
+    context.area_width   = areaWidth();
+    context.area_height  = areaHeight();
+    context.pixel_ratio  = surface_ != nullptr ? surface_->pixelRatio() : 1.0;
+    return context;
 }
 
 bool RenderEngine::waitForFrame(std::uint64_t number, std::chrono::milliseconds timeout)

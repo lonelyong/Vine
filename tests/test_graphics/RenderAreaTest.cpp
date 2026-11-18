@@ -99,6 +99,50 @@ TEST(RenderAreaTest, PresentingAViewDeclaresWhatItDraws)
     EXPECT_EQ(engine->passCount(), 1u);
 }
 
+/**
+ * @brief The frame context carries the area's size and ratio, and the engine states the frame id (BC-25).
+ *
+ * The area owns the announcement (RenderArea::resize); the context is how the per-frame work reads it without asking a
+ * view or a camera - and the device-pixel answer here is the same rounding the engine lays a frame out with.
+ */
+TEST(RenderAreaTest, TheFrameContextCarriesTheAreasSizeAndRatio)
+{
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto surface = engine->createArea();
+    ASSERT_NE(surface, nullptr);
+
+    // Nothing announced yet: the context says so instead of inventing a size.
+    const FrameContext empty = engine->frameContext();
+    EXPECT_FALSE(empty.hasArea());
+    EXPECT_EQ(empty.area_width, 0);
+    EXPECT_EQ(empty.renderWidth(), 0);
+    EXPECT_EQ(empty.elapsed_seconds, 0.0) << "no frame has run, so nothing was measured";
+    EXPECT_EQ(empty.frame_number, engine->frameNumber() + 1) << "the frame the caller is helping to build";
+
+    surface->resize(800, 600, 2.0);
+
+    const FrameContext context = engine->frameContext();
+    EXPECT_TRUE(context.hasArea());
+    EXPECT_EQ(context.area_width, 800);
+    EXPECT_EQ(context.area_height, 600);
+    EXPECT_EQ(context.pixel_ratio, 2.0);
+    EXPECT_EQ(context.renderWidth(), 1600) << "device pixels use the engine's one rounding rule";
+    EXPECT_EQ(context.renderHeight(), 1200);
+
+    // A pure read: a host that asks twice for the same frame gets the same answer.
+    const FrameContext again = engine->frameContext();
+    EXPECT_EQ(again.frame_number, context.frame_number);
+    EXPECT_EQ(again.area_width, context.area_width);
+    EXPECT_EQ(again.elapsed_seconds, context.elapsed_seconds);
+
+    // The ratio belongs to the area: an announcement without one keeps the last, and the context follows.
+    surface->resize(640, 480);
+    const FrameContext smaller = engine->frameContext();
+    EXPECT_EQ(smaller.area_width, 640);
+    EXPECT_EQ(smaller.pixel_ratio, 2.0) << "an announcement without a ratio keeps the one the area last saw";
+    EXPECT_EQ(smaller.renderHeight(), 960);
+}
+
 TEST(RenderAreaTest, APassRegisteredOnTheEngineIsNotAPresentation)
 {
     // Merely existing is not a presentation (that inference is what S7 removed): a pass carrying this very camera and

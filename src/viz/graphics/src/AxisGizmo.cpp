@@ -190,7 +190,7 @@ void AxisGizmo::setAreaOrigin(int x, int y)
     onSurfaceResized(surface_w_, surface_h_);
 }
 
-void AxisGizmo::update()
+void AxisGizmo::update(const FrameContext&)
 {
     applyMirror();
     // WHAT THIS HOOK WROTE IS WHAT THE FRAME DRAWS: a frame takes the scene's latest publication (see

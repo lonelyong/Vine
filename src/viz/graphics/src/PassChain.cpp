@@ -184,13 +184,14 @@ raw_ptr<RenderPass> PassChain::addOverlay(const String& role, raw_ptr<Object> co
     return overlayPass(role);
 }
 
-void PassChain::update()
+void PassChain::update(const FrameContext& context)
 {
     // REGISTRATION ORDER, once per frame (see FrameUpdate): an overlay's own work happens before the frame that draws
     // it, and what it publishes is the value that frame describes. A static overlay (no FrameUpdate) is skipped.
+    // ONE context for the whole call: an overlay cannot see a different frame than the one next to it.
     for (const Overlay& overlay : overlays_) {
         if (overlay.update != nullptr) {
-            overlay.update->update();
+            overlay.update->update(context);
         }
     }
 }

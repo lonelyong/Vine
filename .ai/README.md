@@ -88,13 +88,18 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (79)
+## decisions/ — decision records (ADRs) (80)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-18-the-frame-carries-its-context.md` — **the frame carries its context, and one clock measures it**:
+  `FrameContext` (frame id, interval, area size, ratio) is composed by `RenderEngine::frameContext()` and handed to
+  `FrameUpdate::update(const FrameContext&)`; the clock is read once per frame at the head of `frame()`, so the value
+  is a pure read one frame behind; `FpsOverlay` stops reading `steady_clock` (`BC-25`). Landed on an explicit go
+  ahead of its trigger, which the ADR records as not hit.
 - `ADR-2026-11-18-names-state-what-is-handed-over.md` — **a public name says what the caller is handed**: `DiagnosticsRoute` → `DiagnosticsHandle` (the route is `Diagnostics`; the handle is what the engine lends), the duplicate `MaterialPtr` alias deleted from `Geometry.hpp`, and the one-argument `resolveRenderState` → `applyStateDefaults`; migration notes `BC-22`…`BC-24` in `graphics-architecture.md` 2.14, no deprecated aliases.
 - `ADR-2026-11-18-public-vocabulary-unification.md` — **the public vocabulary is unified on what each thing is**: `RenderCommand` → `DrawItem`, `DrawDescription` → `DrawCall`, `MaterialBase` → `MaterialValues`, `EngineNotReady` → `EngineNotReadyReason`, `createSession` / `releaseSession` → `createFrameDriver` / `releaseFrameDriver`; five migration notes (`BC-17`…`BC-21`) in `graphics-rendering.md` 2.10 and **no deprecated aliases** - an alias would restore the double spelling the batch removes.
 - `ADR-2026-11-18-seam-identity-is-a-property-not-a-namespace.md` — **the seam is a property and a checked list, not a namespace**: the third-round audit's `vn::graphics::backend` alias group is rejected (one class would get two names; it would cover the 8 mechanisms while 25 SDK headers are shared, so the name would understate the seam), and the seam's identity becomes a measured property ("both backends reach it") recorded once in `check_include_hygiene.py`'s `SEAM_HEADERS`, with the two pages that state it (the design page 2.9 and the backend guide 5) required to name every mechanism the list holds.

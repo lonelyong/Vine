@@ -1,7 +1,6 @@
 ﻿#pragma once
 #include "graphics_global.hpp"
 
-#include <chrono>
 #include <cstdint>
 #include <vector>
 
@@ -29,7 +28,7 @@ class Scene;
  *   shows it declares one (see PassDesc): `content` = content(), `camera` = camera(), `viewport` =
  *   boxViewport(), and registers this object with the chain as the overlay whose update() repaints it
  *   (see FrameUpdate).
- * - update() feeds the wall-clock frame delta between calls to the @ref Sampler, which counts FRAMES
+ * - update() feeds the frame delta the ENGINE measured (see FrameContext) to the @ref Sampler, which counts FRAMES
  *   over a window of wall time (default 0.5 s) and publishes a figure about twice a second; a new
  *   figure rewrites the row of bars. No source camera is needed: the digits stay pinned to their
  *   corner while the scene camera orbits.
@@ -202,11 +201,15 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay>,
     /** @brief Does the overlay's per-frame work: measure the frame rate and repaint the digits.
      *
      * @details
-     * - Measures the wall clock since the previous call and feeds it to the sampler (see the class note),
-     *   then writes the figures that changed. It touches no backend, which is why it is a FrameUpdate the
-     *   chain (or a host driving the engine) calls before each frame.
+     * - Feeds @p context's `elapsed_seconds` (the engine's interval between the two most recent frames) to the
+     *   sampler, then writes the figures that changed. It reads no clock of its own: one clock in the system is what
+     *   makes this readout agree with anything else that reports a frame rate (BC-25). It touches no backend, which
+     *   is why it is a FrameUpdate the chain (or a host driving the engine) calls before each frame.
+     *
+     * @param context This frame's context (see FrameContext); its first frame carries no interval and repaints
+     *                nothing.
      */
-    void update() override;
+    void update(const FrameContext& context) override;
 
   private:
     /** @brief Rebuilds the seven-segment content scene. */
@@ -257,9 +260,9 @@ class VN_GRAPHICS_API FpsOverlay : public Object, public RefCounted<FpsOverlay>,
     int    area_x_        = 0;
     int    area_y_        = 0;
 
-    // The frame clock the sampler is fed from, the sampler itself, and the value the row currently shows.
-    std::chrono::steady_clock::time_point last_tick_{};
-    Sampler                               sampler_{};
+    // The sampler and the value the row currently shows. The interval it is fed is the engine's (see FrameContext):
+    // this object keeps no clock of its own, so it agrees with every other frame-rate report.
+    Sampler sampler_{};
     int                                   shown_value_ = -1;
 };
 

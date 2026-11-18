@@ -153,7 +153,16 @@ class VN_GRAPHICS_API AxisGizmo : public Object, public RefCounted<AxisGizmo>, p
      *   chain (or a host driving the engine) calls it once per frame before the frame is built. It writes this
      *   object's framing camera and touches no backend.
      */
-    void update() override;
+    /** @brief Mirrors the source camera's orientation into this overlay's own camera and posts the result.
+     *
+     * @details
+     * - The gizmo needs nothing from @p context: what it mirrors is the source CAMERA, which it reads through
+     *   `setSourceCamera`. The argument is part of the hook's one shape (see FrameUpdate), not a value this object
+     *   uses - the FPS readout next door is the one that wants the interval.
+     *
+     * @param context This frame's context (see FrameContext); not used here.
+     */
+    void update(const FrameContext& context) override;
 
   private:
     /** @brief Applies the orientation mirror onto the framing camera. */

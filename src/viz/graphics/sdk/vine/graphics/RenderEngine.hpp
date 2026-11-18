@@ -21,6 +21,7 @@
 #include "Diagnostics.hpp"
 #include "DiagnosticsHandle.hpp"
 #include "EngineNotReadyReason.hpp"
+#include "FrameContext.hpp"
 #include "FrameDescription.hpp"
 #include "FrameResult.hpp"
 #include "FrameStats.hpp"
@@ -593,6 +594,23 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     [[nodiscard]] int areaHeight() const noexcept;
 
+    /** @brief Gets the context of the frame the engine is about to build (see FrameContext).
+     *
+     * @details
+     * - THE ONE VALUE THE PER-FRAME WORK SHARES: the host composes nothing, it asks once and hands the answer to
+     *   `SceneView::update` / `PassChain::update`, which pass the same value to every object of that frame
+     *   (`FrameUpdate::update`).
+     * - A PURE READ, AND THE SAME ANSWER ALL FRAME: the frame id, the announced size and the ratio are read live, so
+     *   a host that asks twice gets the same context; only `elapsed_seconds` advances, once per `frame()`.
+     * - THE TIME IS ONE FRAME BEHIND: it is the interval between the two most recent frames, measured at the head of
+     *   `frame()` - the value a consumer of "how fast is the loop running" wants, and the price of keeping this call
+     *   free of side effects. It is wall-clock; a host that needs a fixed step keeps its own clock.
+     *
+     * @return The frame's context; `frame_number` is 0 before any frame ran, and the fields are empty when no host
+     *         announced a surface yet.
+     */
+    [[nodiscard]] FrameContext frameContext() const noexcept;
+
     /** @brief Gets what the device can do, as one value (see RenderDevice::capabilities).
      *
      * @details
@@ -1077,6 +1095,14 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
     // that never renders sees (no memoising at all).
     std::uint64_t content_frame_       = 0;
     bool          initialized_         = false;
+    // The frame clock (see frameContext): the head of frame() takes one reading and keeps the interval between the two
+    // most recent frames in `frame_context_`, which is what a consumer asking "how fast is this loop running" wants.
+    // Measured here and nowhere else, so two overlays cannot window the same frame differently (BC-25).
+    FrameContext                           frame_context_{};
+    std::chrono::steady_clock::time_point   last_frame_tick_{};
+    bool                                    frame_tick_taken_ = false;
+    /// Takes the frame clock's one reading and records the interval since the previous one (see frameContext).
+    void advanceFrameClock() noexcept;
     // The one area this engine drives, its announced size and the target a frame presents through: OWNED by the
     // surface ledger, because a 1:1 relation needs one of its two ends to own it. The engine reads a target from it -
     // the engine owns no window and no handle (see the class contract).

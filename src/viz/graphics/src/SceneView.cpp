@@ -179,12 +179,13 @@ void SceneView::applySurfaceGeometry()
     });
 }
 
-void SceneView::update()
+void SceneView::update(const FrameContext& context)
 {
     // The chain owns its overlays' per-frame work (see FrameUpdate / PassChain::update): the view only says which
-    // chain it adopted, exactly as it does for publishing.
+    // chain it adopted, exactly as it does for publishing. The context is forwarded unchanged - one value per frame,
+    // so the gizmo and the readout cannot window the same frame differently.
     if (pipeline_ != nullptr) {
-        pipeline_->update();
+        pipeline_->update(context);
     }
 }
 

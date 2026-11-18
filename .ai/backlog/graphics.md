@@ -75,9 +75,9 @@ Everything else is in §2, each waiting for its own trigger.
 
 ### 2.6 API shape and naming
 
-| # | Item | What | Trigger | Source |
-|---|---|---|---|---|
-| T40 | A `FrameContext` argument for the per-frame hook | `RenderEngine::frame()` takes no arguments and `FrameUpdate::update()` takes none, so the engine has no time input and every time-dependent object reads a clock itself (`FpsOverlay.cpp` is the only such consumer today). The shape to build when it is wanted: one value carrying frame number, elapsed time, area size in logical and device pixels and the pixel ratio, passed to `update(const FrameContext&)` - Filament's `FrameInfo`, Godot's `_process(delta)`, Bevy's `Time` resource. It makes a frame a function of `(declarations, context)` rather than `(declarations, wall clock)`, which is what a bake, a replay or a deterministic test needs | the first feature that needs two of those fields (a frame-rate-independent animation, or a deterministic replay). **Deferred on purpose at 2026-11-18**: one consumer, and it answers itself correctly (`G8`) | `../research/graphics-2026-11-18-review-5.md` §2.1, `../design/graphics-scene.md` 2.2 |
+Nothing open: `T40` (a `FrameContext` for the per-frame hook) landed 2026-11-18 ahead of its trigger
+(`../decisions/ADR-2026-11-18-the-frame-carries-its-context.md`) and `T41` (the diagnostics handle's name) landed the
+same day. The section stays as the home of the next API-shape item.
 
 ## 3. The first command of the next session
 

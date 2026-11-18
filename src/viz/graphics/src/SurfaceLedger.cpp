@@ -143,6 +143,13 @@ int SurfaceLedger::height() const noexcept
     return height_;
 }
 
+double SurfaceLedger::pixelRatio() const noexcept
+{
+    // The area owns the announcement (RenderArea::resize); this asks it rather than keeping a second copy, so a
+    // working area and the value the frame context reports cannot disagree.
+    return area_ != nullptr ? area_->pixelRatio() : 1.0;
+}
+
 } // namespace detail
 
 VN_GRAPHICS_NS_END

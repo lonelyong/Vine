@@ -340,8 +340,8 @@ options.camera  = camera.get();
 auto pipeline = PassChain::build(engine.get(), options);   // 或 options.path = ShadingPath::Deferred
 if (pipeline == nullptr) { return false; }
 
-// ⑤ 帧循环。引擎**不收时间**：`frame()` 没有 dt —— 时间归宿主（要动画就按自己的时钟改变换，见
-// `PositionAttitudeTransform`），引擎只把这一帧编译、录制、提交、呈现。
+// ⑤ 帧循环。引擎**不收时间输入**：`frame()` 没有 dt —— 它自己读一次时钟，把两帧之间的间隔放进
+// `FrameContext`（`update()` 的入参）；宿主不需要交时钟，要动画就按自己的时钟改变换（见 `PositionAttitudeTransform`）。
 pipeline->resize(width, height, dpr);   // 离屏/合成 target 按 device 像素，HUD 叠加按逻辑像素（ratio 一次说清）
 engine->frame();                        // 收集 → 录制 → 提交 → present
 
@@ -1027,8 +1027,9 @@ engine->applyPlan(vn::graphics::Plan{ { desc } });   // 注册 = 把声明交给
 ```
 
 - **位置**由 `stage` 决定；要精确插到某个数就用 `desc.order`（逃生口，见 `PassStage` 的刻度）。
-- **`FrameUpdate::update()`** 是"内容每帧自己更新"的唯一入口（FPS 读数、镜像的坐标轴）：它写**内容**，
-  由链/宿主在帧之前调一次（`SceneView::update`；`SurfaceWindow::renderFrame` 每帧已经这样做）。
+- **`FrameUpdate::update(const FrameContext&)`** 是"内容每帧自己更新"的唯一入口（FPS 读数、镜像的坐标轴）：它写**内容**，
+  由链/宿主在帧之前调一次（`SceneView::update(engine->frameContext())`；`SurfaceWindow::renderFrame` 每帧已经这样做）。
+  入参是这一帧的**上下文**：帧号、上一帧的间隔、表面尺寸与像素比（FPS 读数就用它，**不再自己读时钟**）。
   跳过它，那一帧就画上一份发布——引擎不会替对象更新（BC-08）。
 - **transient 目标**：不写 `desc.target` 而是声明你需要哪张图、什么形状，帧的编译就替你分配、复用、并在没人再声明时释放：
 

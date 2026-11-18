@@ -10,6 +10,7 @@
 #include <vine/raw_ptr.hpp>
 
 #include "DiagnosticsHandle.hpp"
+#include "FrameContext.hpp"
 #include "FrameUpdate.hpp"
 #include "Node.hpp"
 #include "PassRegistry.hpp"
@@ -431,8 +432,10 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      *   driving the engine from its own loop calls this (or the view's) before RenderEngine::frame().
      * - A content object that does not implement FrameUpdate is skipped: an overlay may be static (a logo), and
      *   "nothing to update" is not a defect to report.
+     *
+     * @param context This frame's context (see FrameContext); the SAME value reaches every overlay of this call.
      */
-    void update();
+    void update(const FrameContext& context);
 
     /** @brief Restates ONE of this chain's declarations (the explicit diff a live edit is).
      *

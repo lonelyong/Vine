@@ -7935,7 +7935,7 @@ TEST(PassChainTest, TheHudOverlaysAreDeclarationsToo)
     // And the per-frame work is LIVE: the mirror happens because the CHAIN updates its overlays before the frame
     // (FrameUpdate / PassChain::update), which is what SurfaceWindow::renderFrame does once per frame.
     cam->lookAt(vn::math::Vec3d(2.0, 3.0, 6.0), vn::math::Vec3d(0.0, 0.0, 0.0), vn::math::Vec3d(0.0, 1.0, 0.0));
-    pipeline->update();
+    pipeline->update(engine->frameContext());
     engine->frame();
 
     const Vec3d source_forward = (cam->target() - cam->eye()).normalized();
@@ -7956,7 +7956,7 @@ TEST(PassChainTest, AnOverlaysUpdateRunsWhenTheChainUpdatesAndNeverInsideAFrame)
 {
     class CountingOverlay : public vn::Object, public vn::RefCounted<CountingOverlay>, public FrameUpdate {
       public:
-        void update() override
+        void update(const FrameContext&) override
         {
             ++updates;
         }
@@ -7978,14 +7978,65 @@ TEST(PassChainTest, AnOverlaysUpdateRunsWhenTheChainUpdatesAndNeverInsideAFrame)
     hud.clear_enabled = false;
     ASSERT_NE(chain->addOverlay(String(u8"counted"), overlay.get(), hud), nullptr);
 
-    chain->update();
+    chain->update(engine->frameContext());
     EXPECT_EQ(overlay->updates, 1) << "the chain runs its overlays' own per-frame work";
 
     engine->frame();
     EXPECT_EQ(overlay->updates, 1) << "a frame does not run an object's per-frame work (BC-08)";
 
-    chain->update();
+    chain->update(engine->frameContext());
     EXPECT_EQ(overlay->updates, 2) << "one call, one update - the host decides when";
+}
+
+/**
+ * @brief One update call hands EVERY overlay the same FrameContext (BC-25).
+ *
+ * The value exists so two objects doing their own per-frame work inside one frame cannot disagree about which frame
+ * they are in or how big the surface is - the axis gizmo and the FPS readout used to derive both from whatever they
+ * could reach, and the readout ran its own clock.
+ */
+TEST(PassChainTest, OneUpdateHandsEveryOverlayTheSameFrameContext)
+{
+    class RecordingOverlay : public vn::Object, public vn::RefCounted<RecordingOverlay>, public FrameUpdate {
+      public:
+        void update(const FrameContext& context) override
+        {
+            seen = context;
+            ++count;
+        }
+
+        FrameContext seen;
+        int          count = 0;
+    };
+
+    auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
+    auto chain  = intrusive_ptr<PassChain>(new PassChain(engine->passes(), engine->diagnostics()));
+    auto first  = vn::make_intrusive<RecordingOverlay>();
+    auto second = vn::make_intrusive<RecordingOverlay>();
+
+    PassDesc hud;
+    hud.name          = u8"first_overlay";
+    hud.stage         = PassStage::Overlay;
+    hud.kind          = PassKind::Scene;
+    hud.clear_enabled = false;
+    ASSERT_NE(chain->addOverlay(String(u8"first"), first.get(), hud), nullptr);
+    hud.name = u8"second_overlay";
+    ASSERT_NE(chain->addOverlay(String(u8"second"), second.get(), hud), nullptr);
+
+    FrameContext stated;
+    stated.frame_number    = 42;
+    stated.elapsed_seconds = 0.25;
+    stated.area_width      = 1280;
+    stated.area_height     = 720;
+    stated.pixel_ratio     = 1.5;
+    chain->update(stated);
+
+    EXPECT_EQ(first->count, 1);
+    EXPECT_EQ(second->count, 1);
+    EXPECT_EQ(first->seen.frame_number, 42u);
+    EXPECT_EQ(second->seen.frame_number, 42u) << "the second overlay sees the frame the first one saw";
+    EXPECT_DOUBLE_EQ(second->seen.elapsed_seconds, 0.25) << "one interval for the whole update";
+    EXPECT_EQ(second->seen.renderWidth(), 1920) << "one context, so one device-pixel answer";
 }
 
 TEST(PassChainTest, ForwardPresetWithTransparentContentStacksDepthOnPass)
@@ -8260,15 +8311,15 @@ TEST(FpsOverlayTest, TheReadoutIsASingleCommandAndBlankUntilItHasAValue)
     // dark three-eights behind the number).
     EXPECT_TRUE(commandsOf(overlay->content()->root(), camera).empty());
 
-    // Two executes: the first only arms the clock (a frame rate needs two samples), the second feeds the
-    // delta to the sampler. A figure is published only when a sampling WINDOW closes (0.5 s by default), so
-    // the test shortens the window instead of sleeping half a second; which value comes out of a wall-clock
-    // measurement is not what this asks -- only that a value did.
+    // Two updates: the first carries no interval (a frame rate needs two samples), the second one closes a
+    // sampling WINDOW. The interval is STATED rather than slept: the overlay reads the frame context, so this case
+    // no longer measures a wall clock - only that a value was published.
     auto backend                      = intrusive_ptr<MockBackend>(new MockBackend());
     overlay->sampler().window_seconds = 0.05;
-    overlay->update();
-    std::this_thread::sleep_for(std::chrono::milliseconds(80));
-    overlay->update();
+    overlay->update(FrameContext{});
+    FrameContext tick;
+    tick.elapsed_seconds = 0.06;
+    overlay->update(tick);
 
     const auto commands = commandsOf(overlay->content()->root(), camera);
     ASSERT_EQ(commands.size(), 1u);
@@ -8518,7 +8569,7 @@ TEST(AxisGizmoTest, OrientationMirrorTracksSource)
     gizmo->setSourceCamera(src.get());
     // The mirror is applied by update() (the hook the declaration that shows the gizmo calls); no backend is
     // needed to observe the framing camera update.
-    gizmo->update();
+    gizmo->update(FrameContext{});
 
     Camera*     cam = gizmo->camera();
     const Vec3d sf  = (src->target() - src->eye()).normalized();

@@ -70,6 +70,13 @@ recommendation. Nothing here is adopted by this round; two are registered with t
   feature that needs two of the fields (an animation that must be frame-rate independent, or a
   deterministic replay). The shape to build then is `FrameContext`, not a bare `dt`.
 
+- **Landed 2026-11-18, ahead of that trigger, on an explicit go**: `FrameContext` (frame id, interval, area size,
+  ratio) is composed by `RenderEngine::frameContext()` and handed to `FrameUpdate::update(const FrameContext&)`;
+  `FpsOverlay` stopped reading `steady_clock`, so the system has one clock again. The trigger is recorded as NOT
+  hit rather than declared met, and the rejected shapes (`update(double dt)`, a host-supplied clock, a fourth
+  lease) are in `../decisions/ADR-2026-11-18-the-frame-carries-its-context.md`; the review's determinism argument
+  therefore stays open - a host that needs a fixed step keeps its own clock.
+
 ### 2.2 `Diagnostics` / `DiagnosticsRoute` as one concept (registered, T41)
 
 - **Today**: `Diagnostics` is the route object the engine owns; `DiagnosticsRoute` is a borrowed
@@ -165,10 +172,10 @@ and refuted with evidence rather than argument:
 
 | Item | Trigger |
 |---|---|
-| T40 `FrameContext` for the per-frame hook | the first feature needing two of (frame number, time, size, ratio) |
 
-**T41 landed the same day** (explicit go): `DiagnosticsRoute` → `DiagnosticsHandle`, with `BC-23` / `BC-24` riding on
-it - see the correction in §2.2 and `../decisions/ADR-2026-11-18-names-state-what-is-handed-over.md`.
+**T40 and T41 landed the same day** (explicit go): `DiagnosticsRoute` → `DiagnosticsHandle`, with `BC-23` / `BC-24` riding on
+it - see the correction in §2.2 and `../decisions/ADR-2026-11-18-names-state-what-is-handed-over.md`;
+`T40` (`FrameContext`) landed too, see the correction in §2.1.
 
 ### P2 — Landed this round
 

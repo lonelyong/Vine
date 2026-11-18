@@ -227,19 +227,17 @@ void FpsOverlay::setAreaOrigin(int x, int y)
     onSurfaceResized(surface_w_, surface_h_);
 }
 
-void FpsOverlay::update()
+void FpsOverlay::update(const FrameContext& context)
 {
     // The readout's edits land as ONE publication at the end of this hook: the frame takes the scene's latest
     // publication (see detail::PublicationStore), so a hook that wrote content has to post it (see AxisGizmo::update).
 
-    // Measure the actual render-loop frame rate from the wall clock between
-    // calls and (throttled) refresh the readout before it is drawn.
-    const auto now = std::chrono::steady_clock::now();
-    if (last_tick_.time_since_epoch().count() != 0) {
-        const double dt = std::chrono::duration<double>(now - last_tick_).count();
-        updateReadout(dt);
+    // The interval is the ENGINE's, measured once per frame (see FrameContext): this overlay used to read the clock
+    // itself, which meant two overlays could window the same frame differently. 0 is the first frame - nothing was
+    // measured yet, and a rate cannot be derived from one sample.
+    if (context.elapsed_seconds > 0.0) {
+        updateReadout(context.elapsed_seconds);
     }
-    last_tick_ = now;
     if (content_ != nullptr) {
         (void)content_->publish();
     }

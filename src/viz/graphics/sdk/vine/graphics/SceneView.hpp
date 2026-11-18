@@ -11,6 +11,7 @@
 #include <vine/window/window_global.hpp>
 
 #include "CameraSnapshot.hpp"
+#include "FrameContext.hpp"
 #include "InputRouter.hpp"
 #include "LayoutParticipant.hpp"
 #include "PassChain.hpp"
@@ -100,10 +101,13 @@ class VN_GRAPHICS_API SceneView : public RefCounted<SceneView> {
      *   here, and the publication it posts is what the next frame draws. Call it before `publishContent()` and
      *   before the frame that should show the result.
      * - `SurfaceWindow::renderFrame` already does this once per frame; a host driving the engine from its own loop
-     *   calls this (or `PassChain::update()` for a chain it drives directly) itself. Skipping it means the overlays
-     *   do not update that frame (BC-08) - nothing updates them behind the host's back.
+     *   calls this (or `PassChain::update()` for a chain it drives directly) itself, handing it
+     *   `RenderEngine::frameContext()`. Skipping it means the overlays do not update that frame (BC-08) - nothing
+     *   updates them behind the host's back.
+     *
+     * @param context This frame's context (see FrameContext); forwarded unchanged to every overlay.
      */
-    void update();
+    void update(const FrameContext& context);
 
     /**
      * @brief Publishes the content this view draws: its scene, and the extra scene its chain owns.

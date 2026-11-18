@@ -169,6 +169,13 @@
 - Boundary: `Transient` borrows a render graph WORD, not its semantics: it names "the shape of canvas this pass needs", the compile shares it by name + shape, and no read/write edge is expressed. Wiring is exactly the input-name system (2.8 / F6). "Pass", "target" and "transient" therefore mean less here than in UE's RDG, Frostbite's FrameGraph or O3DE's pass tree - deliberately.
 - Revisit when a real consumer needs resource lifetimes DERIVED rather than declared (a pass count at which hand-stated order and sharing stop being readable). The reader-facing version of this boundary is `docs/guides/graphics.md` §5.5.
 
+### 2.13 The frame carries its context, and one clock measures it
+
+- What it is: `FrameContext` - the frame's id, the interval since the previous frame, the announced surface size in logical pixels and the ratio - is composed by the ENGINE (`RenderEngine::frameContext()`), handed to the per-frame work (`FrameUpdate::update(const FrameContext&)`), and forwarded unchanged by `SceneView::update` / `PassChain::update`. One value per frame, so every object doing per-frame work in that frame sees the same frame.
+- Why: each object used to derive what it needed on its own, and the only time-dependent one (`FpsOverlay`) read `steady_clock` itself. That is N clocks for one frame, and a gizmo and a readout could window the same frame differently (`G1` / `G11`). A frame also stops being a function of "the declarations plus whatever the wall clock said to each object" - the host does not have to know anything to ask for its context, and two consecutive reads answer the same value.
+- Boundary: the value is a **read**, and the clock advances exactly once per frame, at the head of `frame()` after the readiness checks - so `elapsed_seconds` is one frame BEHIND the frame being prepared, which is what "how fast is this loop running" means and the price of keeping `frameContext()` free of side effects (an accessor that mutated would violate the accessor/command rule). The interval is WALL-CLOCK: a host that needs a fixed step or a replay keeps its own clock and reads the other fields, which are exact. Sizes stay in the units the host announced, and the device-pixel answer uses the engine's one rounding rule (`std::lround(logical * ratio)`, the same call `EngineCompile` lays a frame out with).
+- Added 2026-11-18 on an explicit go, ahead of its trigger (the backlog's criterion was "the first feature needing two of the fields"): the argument and the rejected shapes (`update(double dt)`, a host-supplied clock, a fourth narrow lease on the engine) are `../decisions/ADR-2026-11-18-the-frame-carries-its-context.md`; the migration note is `BC-25`.
+
 ## 3. Features
 
 ### 3.1 Feature index

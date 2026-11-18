@@ -132,6 +132,16 @@ class SurfaceLedger {
     /** @brief Gets the height the host announced (logical pixels; 0 until the first resize). */
     [[nodiscard]] int height() const noexcept;
 
+    /** @brief Gets the device pixel ratio the host announced (see RenderArea::pixelRatio).
+     *
+     * @details
+     * - The ratio belongs to the AREA, which owns the announcement; the ledger reads it from the area it owns rather
+     *   than keeping a second copy (one fact, one home).
+     *
+     * @return Device pixels per logical pixel; 1.0 when no area exists.
+     */
+    [[nodiscard]] double pixelRatio() const noexcept;
+
   private:
     /// The engine's one diagnostic route (borrowed; outlives every ledger).
     Diagnostics& diagnostics_;

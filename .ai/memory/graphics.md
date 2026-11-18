@@ -1904,3 +1904,30 @@
 - **Evidence**: `test_graphics` 619, `test_vk` 174, `test_vsg` 572, `BackendParityTest` 13; `content_seam`
   + `vk_exposure` green; ten gates green (198 notes / 79 ADRs / 56 design / 974 public docs / 138 units).
   SDK + both plugins rebuilt (a class rename in a header reaches the plugins).
+
+## 2026-11-18 T40: the frame carries its context (explicit go, ahead of its trigger)
+
+- **What**: new `FrameContext.hpp` (frame id, `elapsed_seconds`, area size in logical pixels, pixel ratio,
+  `renderWidth`/`renderHeight`/`hasArea`); `RenderEngine::frameContext()` composes it; `FrameUpdate::update(const
+  FrameContext&)` takes it; `PassChain::update(context)` / `SceneView::update(context)` forward ONE value per call;
+  appfw's `SurfaceWindow` passes `engine->frameContext()`. `FpsOverlay` **stops reading `steady_clock`** - the system
+  is back to one clock. Design: `graphics-frame-pipeline.md` 2.13; note BC-25; ADR-2026-11-18-the-frame-carries-its-
+  context; T40 closed and deleted from the backlog.
+- **Shape decided** (and why): the value is a PURE READ (facts live, time stored), so two reads of one frame agree; the
+  clock is read once at the head of `frame()` **after** the readiness checks (a NotReady frame is not an interval), so
+  `elapsed_seconds` is one frame behind. `update(double dt)` rejected (names one field, invites re-derivation); a
+  host-supplied clock rejected for now (`G8`; the replay/determinism argument therefore stays OPEN and the docs say
+  so); a `FrameClock` lease rejected (a third narrow boundary so hosts could keep a zero-arg call).
+- **Wins beyond the contract**: the FPS readout's test lost its `sleep_for(80ms)` - it now states the interval and
+  asserts the published figure, so a timing-dependent case became deterministic. `AxisGizmo` ignores the argument and
+  says so (it mirrors the source camera, not the frame).
+- **Trap**: `RenderContext` is in `vn`, not `vn::graphics` - but `FrameContext` is the SDK's, so a host TU reaches it
+  through `<vine/graphics/FrameContext.hpp>`. Also: `SceneView.cpp`'s out-of-line definition must change with the
+  header, or clang reports "out-of-line definition does not match any declaration" (the body edit alone is not enough).
+- **Flake seen**: `SceneTest.MeasureWhatOneCollectionCostsWithAMovingCamera` failed inside the parallel ctest run and
+  passed alone (2850 µs against its 7000 µs budget) - the recorded load-sensitive measurement case, not a regression.
+- **Evidence**: SDK + both plugins + appfw + `Vine` rebuilt; `test_graphics` **621** (+2: `PassChainTest.
+  OneUpdateHandsEveryOverlayTheSameFrameContext`, `RenderAreaTest.TheFrameContextCarriesTheAreasSizeAndRatio`),
+  `test_vk` 174, `test_vsg` 572, `test_gui` 332; `content_seam` + `vk_exposure` green; ten gates green (199 notes /
+  80 ADRs / 1353 include-checked files / 974 public docs / 138 units); demo `Vine --open demo` on vk: 0
+  `[error]` / 0 `[warning]`, session up 47 ms, `Pending -> Presenting` 225 ms.
