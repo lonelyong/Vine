@@ -19,8 +19,8 @@ VN_BACKEND_VK_NS_BEGIN
  *   is how a backend ends up with two answers for one pass; one function per direction keeps the answer single.
  * - IT IS THE SEAM'S VULKAN HALF, and deliberately no more: a second API family (D3D12 states, Metal stages) replaces
  *   THIS TABLE, not its input. That is why the input is the SDK enum and the output is Vulkan - and why nothing here
- *   invents a "generic barrier type" for the SDK (see
- *   `.ai/research/graphics-2026-11-13-gpu-resource-abstraction.md` §9.3).
+ *   invents a "generic barrier type" for the SDK (`.ai/design/vk-backend.md` 2.7; the same question one level up is
+ *   backlog T15).
  * - LEGACY BARRIERS, NOT SYNCHRONIZATION2. The first render pass of this backend needs one transition and a clear; the
  *   Vulkan-1.0 form (`VkImageMemoryBarrier` + `vkCmdPipelineBarrier`) needs no device feature and no extension, so M1
  *   uses it and the table stays honest about what it emits.

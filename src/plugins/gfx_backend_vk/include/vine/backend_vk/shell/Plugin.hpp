@@ -15,7 +15,7 @@ VN_BACKEND_VK_NS_BEGIN
  * @details
  * - On `load()` it registers the "vk" factory into `RenderBackendRegistry`, so a host can create the backend by name
  *   without a compile-time dependency on this plugin. That is the same seam "vsg" uses; the difference is the
- *   implementation behind it (see `.ai/research/graphics-2026-11-13-gpu-resource-abstraction.md` §8).
+ *   implementation behind it (`.ai/design/vk-backend.md` 2.1).
  * - `unload()` tears nothing down: the registry does not own the factory and the module stays mapped for the process
  *   lifetime, which is the contract the "vsg" plugin states the same way.
  */

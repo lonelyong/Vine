@@ -1,7 +1,7 @@
 /**
  * @brief M0 of the direct-Vulkan backend: the seam works before anything is drawn.
  *
- * What M0 claims (see `.ai/research/graphics-2026-11-13-gpu-resource-abstraction.md` §8.3): the factory registers
+ * What M0 claims (`.ai/design/vk-backend.md` 2.1 for the two halves, 2.10 for the test contract): the factory registers
  * under its own name, the device comes up and goes down cleanly and idempotently, and its answers describe what it can
  * really serve rather than what the GPU could do. Two of those are device-free (registration, the closed escape door);
  * the lifecycle case skips on a machine with no Vulkan device, which is how every device case in this repository
@@ -45,9 +45,8 @@ TEST(VkBackendTest, TheFactoryRegistersItselfByName)
 
 TEST(VkBackendTest, TheEscapeDoorIsClosedBeforeInitialize)
 {
-    // The handles are the one place Vulkan may leave this plugin (see
-    // .ai/research/graphics-2026-11-13-vk-exposure-boundary.md): they answer the truth - nothing exists before the
-    // device is brought up - instead of dangling.
+    // The handles are the one place Vulkan may leave this plugin (`.ai/design/vk-backend.md` 2.1): they answer the
+    // truth - nothing exists before the device is brought up - instead of dangling.
     auto backend = RenderBackendRegistry::instance().create(u8"vk", DeviceDesc{ DevicePresentation::None, nullptr });
     ASSERT_NE(backend, nullptr);
     auto* device = dynamic_cast<Device*>(backend.get());

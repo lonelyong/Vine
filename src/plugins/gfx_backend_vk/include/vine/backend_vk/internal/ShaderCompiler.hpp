@@ -63,8 +63,8 @@ struct SpirvModule {
  *
  * @details
  * - THE DIRECT PATH. The vsg backend reaches glslang through `vsg::ShaderCompiler`; this backend calls glslang itself,
- *   because it is the second implementation that exists to prove the seam does not need VulkanSceneGraph (see
- *   `.ai/research/graphics-2026-11-13-gpu-resource-abstraction.md` §8).
+ *   because it is the second implementation that exists to prove the seam does not need VulkanSceneGraph
+ *   (`.ai/design/vk-backend.md` 2.1).
  * - WHAT THE TEXT MUST BE. GLSL for Vulkan: the stage is parsed with `EShMsgVulkanRules | EShMsgSpvRules` and the
  *   SPIR-V target `1.0`, which is what `glslangValidator -V` does. The engine's programs are written for exactly that
  *   ("GLSL, compiled at run time"), and the stage's OWN text is compiled unchanged - the only addition is the

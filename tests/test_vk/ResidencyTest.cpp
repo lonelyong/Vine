@@ -1,8 +1,8 @@
 /**
  * @brief M6's acceptance: residency is an ANSWERED question, and it follows the content that leaves.
  *
- * What this pins, and why each half matters (see `.ai/research/graphics-2026-11-13-gpu-resource-abstraction.md` §8.3,
- * M6):
+ * What this pins, and why each half matters (`.ai/design/vk-backend.md` 2.17 for the three residency states, and
+ * `.ai/decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` for why a pin, not a time window, ends one):
  *   - the STEADY STATE IS FREE: a second frame of the same declarations uploads no stream, copies no texture and
  *     compiles no pipeline - which is what makes a long-running session's cost bounded;
  *   - PREPARE BUILDS THE FRAME WITHOUT RUNNING IT: `prepareFrame` answers the same passes/draws the frame would, and

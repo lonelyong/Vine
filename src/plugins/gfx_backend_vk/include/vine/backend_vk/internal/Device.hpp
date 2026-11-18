@@ -388,8 +388,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      * @details
      * - THE INTERNAL HALF OF THE ESCAPE DOOR. The value is `support/Handles.hpp`'s `Handles`, which is what
      *   `vkHandles()` hands a test or a tool; this accessor is how the plugin reaches the same facts without a
-     *   `dynamic_cast`, and it is the only reason this header names that type (see
-     *   `.ai/research/graphics-2026-11-13-vk-exposure-boundary.md` §4.5, §5.2).
+     *   `dynamic_cast`, and it is the only reason this header names that type (`.ai/design/vk-backend.md` 2.1).
      * - It is a value whose name says what it is, never a verb on `RenderDevice`, and it is not a promise any other
      *   backend makes.
      * - THE FRAME PATH DOES NOT USE IT: no source under `src/internal/` includes `support/Handles.hpp`, so the plugin

@@ -1,7 +1,7 @@
 /**
  * @brief The one escape door: `vkHandles()` answers a `vk` device's real Vulkan objects and nothing else.
  *
- * What this pins (see `.ai/research/graphics-2026-11-13-vk-exposure-boundary.md` §4.5, §5.2 and §8): the door is a FREE
+ * What this pins (`.ai/design/vk-backend.md` 2.1): the door is a FREE
  * function named after the backend - not a verb on `RenderDevice` - and its answer follows the device's lifecycle: the
  * empty struct before `initialize()`, real handles while the device runs, the empty struct again after `shutdown()`.
  *

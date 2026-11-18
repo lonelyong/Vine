@@ -15,7 +15,7 @@
  * readback, the device clock and the frame timeline the clock is built on - are pinned in
  * `tests/BackendSeamTest.cpp`, which every test binary that links
  * the seam compiles: a seam fact belongs in a binary that carries both backends (see
- * `.ai/research/graphics-2026-11-16-redesign.md` §3.2.1).
+ * (`.ai/decisions/ADR-2026-11-16-no-backend-half.md` states the boundary this follows).
  *
  * Every case here is device-free by construction: the types under test never dereference a GPU object
  * and never include anything from `vsg::`. The suites are named `Core*` after the layer they pin.

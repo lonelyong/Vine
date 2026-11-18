@@ -1,8 +1,8 @@
 /**
  * @brief The vk backend's COST MODEL: one uniform ring bound through dynamic offsets, and a descriptor-set cache.
  *
- * WHY THIS FILE EXISTS. The review of 2026-11-14 (.ai/research/graphics-2026-11-14-vk-industry-review.md F1/F2) found
- * the backend creating and destroying a buffer AND its memory per draw, and allocating a descriptor set per draw per
+ * WHY THIS FILE EXISTS. The before/after is recorded in `.ai/design/vk-backend.md` 2.4: the backend was creating and
+ * destroying a buffer AND its memory per draw, and allocating a descriptor set per draw per
  * frame. The fix is an architectural one - a draw's constants are a SLICE of one persistent buffer (bound as dynamic
  * offsets), and a set is a BINDING OF RESOURCES (cached by the images it names) - and a change of that shape is only
  * worth anything if it is pinned: a later edit that goes back to "one buffer per draw" must fail here, not merely

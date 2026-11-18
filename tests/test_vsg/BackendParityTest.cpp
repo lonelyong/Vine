@@ -3,7 +3,7 @@
  *
  * WHY THIS FILE LIVES IN THE REFERENCE BACKEND'S SUITE. The parity claim is "the seam is enough": a frame value
  * that the reference backend draws must be drawn by a second, independently written backend with the same record
- * and the same pixels (`.ai/research/graphics-2026-11-13-gpu-resource-abstraction.md` §8.3 M7, §9 D4). The
+ * and the same pixels (`.ai/design/vk-backend.md` 2.10 states the claim and names this suite as its evidence). The
  * reference half is the vsg device this suite already brings up for its pixel cases; the vk half is the same
  * backend `test_vk` exercises, compiled into this binary. Two backends in ONE PROCESS is the point - a diff
  * between two processes would compare files, not answers.

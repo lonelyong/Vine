@@ -32,7 +32,7 @@ struct FrameScratch::Impl {
      * @details
      * - THE COST MODEL OF THIS PATH: a draw's constants are WRITTEN into a slice and bound with a DYNAMIC offset, so
      *   a steady frame creates no buffer and no memory. It used to create and destroy one of each per draw (28 of
-     *   each in the demo's frame - see .ai/research/graphics-2026-11-14-vk-industry-review.md F1).
+     *   each in the demo's frame - `.ai/design/vk-backend.md` 2.4 records the measured before/after).
      * - THE RING IS REWRITTEN EVERY FRAME: the driver submits and waits inside executeFrame, so when beginFrame runs
      *   nothing the previous frame recorded is still reading it.
      * - A FRAME THAT DOES NOT FIT IS SKIPPED, NOT GROWN IN PLACE: growing would destroy a buffer the command buffer

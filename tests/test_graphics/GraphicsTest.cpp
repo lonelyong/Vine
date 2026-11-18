@@ -14830,8 +14830,8 @@ TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
 
 #if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
         EXPECT_LE(static_cast<long long>(moving_us), budget_us)
-            << "a moved camera's collection crossed the structural ceiling; see .ai/research/"
-               "graphics-2026-11-11-next-hot-paths.md §8";
+            << "a moved camera's collection crossed the structural ceiling; the budget and the measured numbers are "
+               ".ai/backlog/graphics.md T24";
 #endif
     }
 }

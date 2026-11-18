@@ -18,7 +18,7 @@
  *
  * The vsg-only core (the frame arena, the phase table, the observe cross-check, the depth probe and the device
  * requirements) stays in `tests/test_vsg/BackendCoreTest.cpp`: those headers are that backend's portable half, not
- * the seam (see `.ai/research/graphics-2026-11-16-redesign.md` §3.2.1, and ADR-2026-11-16 §2 for the relocation
+ * the seam (`.ai/decisions/ADR-2026-11-16-no-backend-half.md` records the relocation
  * that gave the vsg-only frame machinery its own home).
  */
 

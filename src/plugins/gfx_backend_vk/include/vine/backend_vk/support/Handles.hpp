@@ -13,9 +13,9 @@ VN_BACKEND_VK_NS_BEGIN
  * @brief Answers the Vulkan handles behind a `vk` device, or an empty `Handles` for anything else.
  *
  * @details
- * - THE ONLY PLACE VULKAN MAY LEAVE THIS PLUGIN, and the shape the boundary document fixes for it
- *   (`.ai/research/graphics-2026-11-13-vk-exposure-boundary.md` §4.5): a VALUE whose name says which backend answered
- *   it, never a verb on `RenderDevice`, and never a member of either SDK face.
+ * - THE ONLY PLACE VULKAN MAY LEAVE THIS PLUGIN, and the shape the seam fixes for it
+ *   (`.ai/design/vk-backend.md` 2.1): a VALUE whose name says which backend answered it, never a verb on
+ *   `RenderDevice`, and never a member of either SDK face.
  * - THE SUPPORT HALF, NOT THE SHELL: a test or a tool includes this header, the plugin's frame path does not - it
  *   reaches the same handles through `internal/Device.hpp` - and this header is not installed. The value itself is
  *   declared in `internal/Handles.hpp`, so the dependency points from this door to the internals and never back.

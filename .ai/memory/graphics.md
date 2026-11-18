@@ -1971,3 +1971,19 @@
   green; eleven gates green (incl. `check_translations`). New assertions: `VkResidencyTest` fresh-device expects
   `rows().size() == kResidencyKindCount` and a zero `Materials` row; `VsgBackendTest`'s frame-report case expects the
   same count.
+
+## 2026-11-18 dead research-page citations in source comments (trap)
+
+- **Fact**: `.ai/research/` holds only the two current pages; a conversion deletes its source page, so a code comment
+  citing `../research/*.md` is usually dead - 16 of them were, in 6 headers/sources and 8 test files, and none showed
+  up in a gate because `check_cross_refs.py` scans `.ai/**` and `docs/guides/**` only.
+- **Trap**: the gate's section rule cannot see that class either - a page that does not exist reads as PROSE
+  (`candidates is None -> continue`), so "the citation resolves" and "the page was deleted" look the same.
+- **Why the gate was NOT extended**: an existence rule would also flag the ADR pointers the archive policy deletes on
+  purpose (a superseded ADR is removed, git keeps it), so it needs to tell a current claim from a dated record first.
+  Registered as backlog T44 together with the 35 section-number drifts the same scan found in `src/` + `tests/`.
+- **Where the claims went**: `vk-backend.md` 2.1 (the two halves / the escape door) / 2.4 (the cost model) / 2.7
+  (barriers) / 2.10 (the test is half the contract) / 2.17 (residency's three states), plus
+  `ADR-2026-11-16-no-backend-half.md` for the seam relocation. **Also corrected**: `BackendFactory.hpp` claimed
+  "`vsg` remains the production backend ... nothing selects `vk` implicitly", while `AppShellUi.cpp`'s
+  `chooseRenderBackend()` names `vk` and honours `VN_RENDER_BACKEND` - the header now states that split.
