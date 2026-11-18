@@ -121,24 +121,6 @@ struct VisualUserIO::Impl {
         }
     };
 
-    /// Prompt bookkeeping of the read that is waiting for input.
-    ///
-    /// Read and written on the application thread only: the write happens inside
-    /// the marshalled UI call that shows the prompt, and the read inside
-    /// reprompt(). It is shared rather than a plain member so a posted UI call
-    /// can write it without capturing this object, which may be gone by the time
-    /// the call runs (every other posted call in this file is written the same
-    /// way).
-    ///
-    /// The accepted requirements live here too, and for the same reason: the read is started from whatever thread the
-    /// command resumed on, while the answer is parsed on the application thread, so the options may only travel
-    /// through this shared state (a plain member would make the two threads race on it).
-    struct PromptState {
-        String          current;
-        FileReadOptions file_options;
-        DirReadOptions  dir_options;
-    };
-
     explicit Impl(VisualUserIO* owner)
       : owner(owner)
     {}
@@ -285,8 +267,13 @@ struct VisualUserIO::Impl {
     {};
     std::shared_ptr<Lifetime> lifetime{ std::make_shared<Lifetime>() };
 
-    /// Prompt bookkeeping of the current read; see PromptState.
-    std::shared_ptr<PromptState> prompt_state{ std::make_shared<PromptState>() };
+    /// The request the read that is waiting is answering: what its prompt says and what the answer must satisfy.
+    ///
+    /// Shared rather than a plain member so a posted UI call can write it without capturing this object, which may be
+    /// gone by the time the call runs (every other posted call in this file is written the same way). It is also the
+    /// only way the options can travel: the read starts on the thread the command resumed on, while the answer is
+    /// parsed on the application thread.
+    std::shared_ptr<ReadUi> prompt_state{ std::make_shared<ReadUi>() };
 };
 
 VisualUserIO::VisualUserIO()
@@ -509,9 +496,7 @@ void VisualUserIO::Impl::showPrompt(const ReadUi& ui)
     auto* panel = console;
     auto  state = prompt_state;
     onConsolePanel(panel, [state, ui](ConsolePanel* target) {
-        state->current      = ui.prompt;
-        state->file_options = ui.file_options;
-        state->dir_options  = ui.dir_options;
+        *state = ui;
         target->setInputAction(ui.action);
         target->beginInput(ui.prompt, ui.initial_text);
     });
@@ -558,30 +543,22 @@ void VisualUserIO::Impl::close()
 
 vn::async::Task<std::optional<String>> VisualUserIO::getStringAsync(const String& prompt)
 {
-    Impl::ReadUi ui;
-    ui.prompt = prompt;
-    return d->read(Impl::PendingRead::String, std::move(ui), &Impl::string_result);
+    return d->read(Impl::PendingRead::String, Impl::ReadUi{ .prompt = prompt }, &Impl::string_result);
 }
 
 vn::async::Task<std::optional<int>> VisualUserIO::getIntAsync(const String& prompt)
 {
-    Impl::ReadUi ui;
-    ui.prompt = prompt;
-    return d->read(Impl::PendingRead::Int, std::move(ui), &Impl::int_result);
+    return d->read(Impl::PendingRead::Int, Impl::ReadUi{ .prompt = prompt }, &Impl::int_result);
 }
 
 vn::async::Task<std::optional<double>> VisualUserIO::getDoubleAsync(const String& prompt)
 {
-    Impl::ReadUi ui;
-    ui.prompt = prompt;
-    return d->read(Impl::PendingRead::Double, std::move(ui), &Impl::double_result);
+    return d->read(Impl::PendingRead::Double, Impl::ReadUi{ .prompt = prompt }, &Impl::double_result);
 }
 
 vn::async::Task<std::optional<math::Point3d>> VisualUserIO::getPoint3dAsync(const String& prompt)
 {
-    Impl::ReadUi ui;
-    ui.prompt = prompt;
-    return d->read(Impl::PendingRead::Point, std::move(ui), &Impl::point_result);
+    return d->read(Impl::PendingRead::Point, Impl::ReadUi{ .prompt = prompt }, &Impl::point_result);
 }
 
 namespace
@@ -614,11 +591,13 @@ String pickerFilter(const std::vector<String>& patterns)
 
 vn::async::Task<std::optional<std::filesystem::path>> VisualUserIO::getFileAsync(const String& prompt, const FileReadOptions& options)
 {
+    const String requirements = requirementSummary(options.extensions, /*multiple=*/false);
+
     Impl::ReadUi ui;
     ui.action.kind    = ConsoleInputKind::File;
     ui.action.filter  = pickerFilter(filterPatterns(options));
-    ui.action.tooltip = vn::appfw::translate("appfw", "Choose a file…") + requirementSummary(options.extensions, /*multiple=*/false);
-    ui.prompt         = promptWithRequirements(prompt, requirementSummary(options.extensions, /*multiple=*/false));
+    ui.action.tooltip = vn::appfw::translate("appfw", "Choose a file…") + requirements;
+    ui.prompt         = promptWithRequirements(prompt, requirements);
     ui.initial_text   = String(options.suggested_path.u8string());
     ui.file_options   = options;
 
@@ -627,11 +606,13 @@ vn::async::Task<std::optional<std::filesystem::path>> VisualUserIO::getFileAsync
 
 vn::async::Task<std::optional<UserIO::PathList>> VisualUserIO::getFilesAsync(const String& prompt, const FileReadOptions& options)
 {
+    const String requirements = requirementSummary(options.extensions, /*multiple=*/true);
+
     Impl::ReadUi ui;
     ui.action.kind    = ConsoleInputKind::Files;
     ui.action.filter  = pickerFilter(filterPatterns(options));
-    ui.action.tooltip = vn::appfw::translate("appfw", "Choose a file…") + requirementSummary(options.extensions, /*multiple=*/true);
-    ui.prompt         = promptWithRequirements(prompt, requirementSummary(options.extensions, /*multiple=*/true));
+    ui.action.tooltip = vn::appfw::translate("appfw", "Choose a file…") + requirements;
+    ui.prompt         = promptWithRequirements(prompt, requirements);
     ui.initial_text   = String(options.suggested_path.u8string());
     ui.file_options   = options;
 
@@ -640,10 +621,12 @@ vn::async::Task<std::optional<UserIO::PathList>> VisualUserIO::getFilesAsync(con
 
 vn::async::Task<std::optional<std::filesystem::path>> VisualUserIO::getDirAsync(const String& prompt, const DirReadOptions& options)
 {
+    const String requirements = requirementSummary({}, /*multiple=*/false);
+
     Impl::ReadUi ui;
     ui.action.kind    = ConsoleInputKind::Directory;
-    ui.action.tooltip = vn::appfw::translate("appfw", "Choose a directory…") + requirementSummary({}, /*multiple=*/false);
-    ui.prompt         = promptWithRequirements(prompt, requirementSummary({}, /*multiple=*/false));
+    ui.action.tooltip = vn::appfw::translate("appfw", "Choose a directory…") + requirements;
+    ui.prompt         = promptWithRequirements(prompt, requirements);
     ui.initial_text   = String(options.suggested_path.u8string());
     ui.dir_options    = options;
 
@@ -652,10 +635,12 @@ vn::async::Task<std::optional<std::filesystem::path>> VisualUserIO::getDirAsync(
 
 vn::async::Task<std::optional<UserIO::PathList>> VisualUserIO::getDirsAsync(const String& prompt, const DirReadOptions& options)
 {
+    const String requirements = requirementSummary({}, /*multiple=*/true);
+
     Impl::ReadUi ui;
     ui.action.kind    = ConsoleInputKind::Directories;
-    ui.action.tooltip = vn::appfw::translate("appfw", "Choose a directory…") + requirementSummary({}, /*multiple=*/true);
-    ui.prompt         = promptWithRequirements(prompt, requirementSummary({}, /*multiple=*/true));
+    ui.action.tooltip = vn::appfw::translate("appfw", "Choose a directory…") + requirements;
+    ui.prompt         = promptWithRequirements(prompt, requirements);
     ui.initial_text   = String(options.suggested_path.u8string());
     ui.dir_options    = options;
 
@@ -851,7 +836,7 @@ void VisualUserIO::Impl::reprompt(const String& message, const String& text)
     }
 
     auto*        panel  = console;
-    const String prompt = prompt_state->current;
+    const String prompt = prompt_state->prompt;
     onConsolePanel(panel, [message, prompt, text](ConsolePanel* target) {
         target->append(ConsoleMessageType::Error, message);
         target->beginInput(prompt, text);

@@ -98,8 +98,14 @@ struct RegisteredCommand {
     bool enabled{ true };
 };
 
+/// What the listing reports about a command, probed once when it is registered.
+struct ListingMetadata {
+    String       group;
+    String       description;
+    CommandFlags flags{ CommandFlags::None };
+};
+
 /// Views a String's UTF-8 bytes without allocating.
-///
 /// Several log calls sit inside catch blocks and inside detached coroutines, where
 /// an allocation or a logger failure would turn a handled error into a
 /// std::terminate(). Logging guarantees the second half (see Logger: no level
@@ -108,6 +114,37 @@ struct RegisteredCommand {
 std::string_view toUtf8View(const String& s) noexcept
 {
     return { reinterpret_cast<const char*>(s.data()), s.size() };
+}
+
+/// Instantiates a command once to read what the listing needs from it.
+///
+/// The probe runs outside every lock, and a factory that returns nothing or throws still registers the command - just
+/// without metadata - because its constructor may need services that are not up yet at load time.
+///
+/// @param name    Registered name; used by the diagnostics only.
+/// @param factory Factory to probe.
+/// @return The metadata the listing caches; empty when the probe produced no instance.
+ListingMetadata listingMetadata(const String& name, const std::function<Command*()>& factory)
+{
+    ListingMetadata metadata;
+    try {
+        std::unique_ptr<Command> probe(factory());
+        if (probe) {
+            metadata.group       = probe->group();
+            metadata.description = probe->description();
+            metadata.flags       = probe->flags();
+        }
+        else {
+            VN_LOGW("Command factory returned no instance; listing metadata stays empty: {}", toUtf8View(name));
+        }
+    }
+    catch (const std::exception& e) {
+        VN_LOGW("Command factory threw during the metadata probe: {}: {}", toUtf8View(name), e.what());
+    }
+    catch (...) {
+        VN_LOGW("Command factory threw during the metadata probe: {}", toUtf8View(name));
+    }
+    return metadata;
 }
 
 /// Builds the failure message of a command that cannot be started by name.
@@ -1471,45 +1508,20 @@ bool CommandManager::registerCommand(TypeId command_class, String name, std::fun
         }
     }
 
-    // The listing metadata is cached once, here: commandInfos() must not
-    // instantiate commands (a factory can be expensive, and the caller may not
-    // expect its side effects on every query). The probe runs outside every lock
-    // and only logs on failure: a factory that returns nullptr or throws (its
-    // constructor may need services that are not up yet at load time) still gets
-    // the command registered, just without cached metadata.
-    String       group;
-    String       description;
-    CommandFlags flags{ CommandFlags::None };
-    try {
-        std::unique_ptr<Command> probe(factory());
-        if (probe) {
-            group       = probe->group();
-            description = probe->description();
-            flags       = probe->flags();
-        }
-        else {
-            VN_LOGW("Command factory returned no instance; listing metadata stays empty: {}", toUtf8View(name));
-        }
-    }
-    catch (const std::exception& e) {
-        VN_LOGW("Command factory threw during the metadata probe: {}: {}", toUtf8View(name), e.what());
-    }
-    catch (...) {
-        VN_LOGW("Command factory threw during the metadata probe: {}", toUtf8View(name));
-    }
+    // The listing metadata is cached once, here: commandInfos() must not instantiate commands (a factory can be
+    // expensive, and the caller may not expect its side effects on every query).
+    ListingMetadata metadata = listingMetadata(name, factory);
 
-    // Applied here, outside every lock: a command the user disabled comes back
-    // disabled when its plugin registers it again at the next start.
-    const bool enabled = !d->isDisabled(name);
-
-    // The tag has one home, the application (see setRegistrationOwner): read before the registry lock, so this
-    // manager's leaf lock stays a leaf and no second copy has to be kept in step with it.
-    const String owner = d->app != nullptr ? d->app->registrationOwner() : String{};
+    // Both read outside the registry lock: the disabled preference comes from the config manager, and the owner tag
+    // has one home on the application (see setRegistrationOwner) - taking its lock inside this one would stop the leaf
+    // lock from being a leaf.
+    const bool   enabled = !d->isDisabled(name);
+    const String owner   = d->app != nullptr ? d->app->registrationOwner() : String{};
 
     {
         std::lock_guard<std::mutex> lock(d->registry_mutex);
-        RegisteredCommand           entry{ command_class, std::move(factory), owner, std::move(group), std::move(description) };
-        entry.flags   = flags;
+        RegisteredCommand           entry{ command_class, std::move(factory), owner, std::move(metadata.group), std::move(metadata.description) };
+        entry.flags   = metadata.flags;
         entry.enabled = enabled;
         if (!d->registry.emplace(std::move(name), std::move(entry)).second) {
             return false;

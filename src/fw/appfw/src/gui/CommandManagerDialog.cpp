@@ -292,9 +292,8 @@ void CommandManagerDialog::updateActions()
         return;
     }
 
-    data->toggle_btn->setText(item != nullptr && data->manager != nullptr && data->manager->isCommandEnabled(nameOfItem(item))
-                               ? translate("appfw", "Disable command")
-                               : translate("appfw", "Enable command"));
+    const bool enabled = data->manager != nullptr && data->manager->isCommandEnabled(nameOfItem(item));
+    data->toggle_btn->setText(enabled ? translate("appfw", "Disable command") : translate("appfw", "Enable command"));
 }
 
 inline auto CommandManagerDialog::dptr() -> Impl*

@@ -194,12 +194,15 @@ struct ConsolePanel::Impl : public ControlData {
     void appendFormatted(ConsoleMessageType type, const String& text);
     void onTextChanged();
     void updateSuggest();
+    /// Drops the matches and hides the popup: the two are one state, and a stale match list behind a hidden popup would
+    /// re-open on the next keystroke.
+    void clearSuggestions();
     void onEscape();
     void onReturnPressed();
     void onHistoryUp();
     void onHistoryDown();
     void onTab();
-    /// Applies the stored ConsoleInputAction to the input line (button, highlight, shortcut).
+    /// Applies the stored ConsoleInputAction to the input line (button and its keyboard shortcut).
     void applyInputAction();
     /// Shows the accent while the line answers a read and hides it otherwise.
     void updateAccent();
@@ -302,8 +305,7 @@ void ConsolePanel::beginInput(const String& prompt, const String& initial_text)
     data->updateAccent();
 
     // The matches and the popup belong to command entry, and the line is about to hold an answer.
-    data->matches.clear();
-    data->suggest->hide();
+    data->clearSuggestions();
 
     data->appendFormatted(ConsoleMessageType::Prompt, prompt);
     data->input->setText(Convert::toQString(initial_text));
@@ -336,8 +338,7 @@ void ConsolePanel::setCommandEntries(const std::vector<ConsoleCommandEntry>& ent
 {
     auto* data = dptr();
     data->completer.setEntries(entries);
-    data->matches.clear();
-    data->suggest->hide();
+    data->clearSuggestions();
 }
 
 void ConsolePanel::setTheme(const ConsoleTheme& theme)
@@ -530,12 +531,17 @@ void ConsolePanel::Impl::appendFormatted(ConsoleMessageType type, const String& 
     output->ensureCursorVisible();
 }
 
+void ConsolePanel::Impl::clearSuggestions()
+{
+    matches.clear();
+    suggest->hide();
+}
+
 void ConsolePanel::Impl::onTextChanged()
 {
     if (answering) {
         // What is typed here is an answer, so no command can start with it.
-        matches.clear();
-        suggest->hide();
+        clearSuggestions();
         return;
     }
 
@@ -543,8 +549,7 @@ void ConsolePanel::Impl::onTextChanged()
     if (current.empty()) {
         // An empty prompt hides the popup; otherwise clearing the input after
         // running a command would match every command and re-show the popup.
-        matches.clear();
-        suggest->hide();
+        clearSuggestions();
         return;
     }
 
@@ -553,8 +558,7 @@ void ConsolePanel::Impl::onTextChanged()
     for (std::size_t i = 0; i < current.size(); ++i) {
         const char8_t ch = current.data()[i];
         if (ch == u8' ' || ch == u8'\t') {
-            matches.clear();
-            suggest->hide();
+            clearSuggestions();
             return;
         }
     }
