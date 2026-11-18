@@ -1,55 +1,59 @@
-# vk 的全屏 set 只绑阴影的 stand-in：延迟光照没有阴影
+# The vk full-screen set binds only the shadow stand-in, so deferred lighting has no shadows
 
-- **状态**：已修复（2026-11-14，`gfx_backend_vk`；回归用例 `VkShadowTest.AScreenPassShadesWithTheMapItResolved`）
-- **发现日期**：2026-11-14
-- **模块**：`src/plugins/gfx_backend_vk`
-- **涉及**：`src/plugins/gfx_backend_vk/src/internal/ContentDraw.cpp`（`Impl::makeScreenSet` / `recordScreen`）、
-  `src/plugins/gfx_backend_vk/src/internal/Device.cpp`（把 pass 解析出的 `ShadowSource` 交给 screen 录制）、
-  参考行为：`src/plugins/gfx_backend_vsg/src/internal/ContentPass.cpp`（screen 路径按 pass 解析的 map 绑定）
+- **Status**: Fixed (2026-11-14, `gfx_backend_vk`; regression case `VkShadowTest.AScreenPassShadesWithTheMapItResolved`)
+- **Found**: 2026-11-14
+- **Module**: `src/plugins/gfx_backend_vk`
+- **Files**: `src/plugins/gfx_backend_vk/src/internal/ContentDraw.cpp` (`Impl::makeScreenSet` / `recordScreen`),
+  `src/plugins/gfx_backend_vk/src/internal/Device.cpp` (handing the pass's resolved `ShadowSource` to screen recording),
+  reference behaviour: `src/plugins/gfx_backend_vsg/src/internal/ContentPass.cpp` (the screen path binds the map the pass resolved)
 
-> **EN**: Fixed (2026-11-14): the vk full-screen set bound the white stand-in and a zero shadow block unconditionally, and the pass's resolved `ShadowSource` never reached screen recording, so the deferred lighting program silently shaded without shadows (the vsg path binds the resolved map). Recording now takes the `ShadowSource`, packs binding 8 from it and binds the real map at binding 7 when one was resolved - which moved the two backends from a 1.88% pixel difference to zero.
+## Symptom and impact
 
-## 现象与影响
+`Vine --open demo` (deferred by default) had **no sun shadows** on vk, while the same scene had them on vsg. Shadows on the
+content path (forward, G-buffer stage) were fine - only the **full-screen** deferred lighting program could not get the
+shadow map. Before the fix the same-size render area of the two backends differed by 1.88% of pixels; after it the
+difference is **0 pixels** (byte-identical).
 
-`Vine --open demo`（默认 deferred）在 vk 上**没有太阳阴影**，同一场景在 vsg 上有。内容路径（前向、G-buffer
-阶段）的阴影正常——只有**全屏**的延迟光照程序拿不到阴影贴图。修复前两后端同尺寸渲染区逐像素差 1.88%，修复后
-**0 像素差**（逐字节相同）。
+## Root cause
 
-## 根因
+The engine's deferred lighting program has a **shadowed variant** (`BuiltinShaders::deferredLightProgram(shadowed)`, which
+inserts `VN_SHADOW_BINDINGS` into the text: the map at binding 7 plus `VineShadowBlock` at binding 8). Vulkan's full-screen
+set gained those two binding slots earlier on 2026-11-14 (the shadowed pipeline could not be created without them,
+VUID-07988), but `makeScreenSet` **always** wrote a white stand-in sampler/view and a zero `VineShadowBlock`:
 
-引擎的延迟光照程序有**带阴影的变体**（`BuiltinShaders::deferredLightProgram(shadowed)`，在文本里插入
-`VN_SHADOW_BINDINGS`：binding 7 的 map + binding 8 的 `VineShadowBlock`）。vulkan 的全屏 set 在 2026-11-14
-早些时候补上了这两个绑定位（否则带阴影的管线建不出来，VUID-07988），但 `makeScreenSet` **恒定**写白 stand-in
-采样器/视图与零 `VineShadowBlock`：
+- `recordScreen` did not receive the map the pass had resolved (`Device::executeFrame` already called `resolveShadow` for
+  **every** pass, it just never passed the result into screen recording);
+- so the shadowed lighting program on vk always read "white image, zero block" => `shadow term = 1` => no shadows, with
+  **no diagnostic at all** (bindings legal, pipeline legal, pixels produced).
 
-- `recordScreen` 拿不到 pass 解析出的 map（`Device::executeFrame` 已经为**每个** pass 调了 `resolveShadow`，
-  只是没把它传进 screen 录制）；
-- 于是带阴影的光照程序在 vk 上永远读“白图 + 零块” ⇒ `shadow term = 1` ⇒ 没有阴影，而且**没有任何诊断**
-  （绑定合法、管线合法、像素有输出）。
+The same path on vsg binds the real depth image the pass resolved, and **refuses** the call when the program declares a map
+but the pass cannot resolve a readable one.
 
-vsg 的同一条路径按 pass 解析的 map 绑定真实深度图，并在程序声明了 map 而 pass 解析不出可读图时**拒绝**该调用。
+## Fix
 
-## 修复
+- `ContentDraw::recordScreen` takes a `ShadowSource` (the same resolution result the content path uses);
+- `recordScreen` packs binding 8 with `buildShadowBlock(shadow, draw)` (an empty source means `params.x = 0`, the engine's
+  "no shadow reaches this pass") and binds binding 7 to the **real map** with the shadow sampler when
+  `shadow.view != VK_NULL_HANDLE`, and otherwise to the white stand-in as before;
+- `Device::executeFrame` passes the pass's already-resolved `shadow` in.
 
-- `ContentDraw::recordScreen` 收一个 `ShadowSource`（与内容路径同一个解析结果）；
-- `recordScreen` 用它 `buildShadowBlock(shadow, draw)` 打包 binding 8 的块（空 source ⇒ `params.x = 0`，
-  即引擎的“无阴影到达本 pass”），binding 7 在 `shadow.view != VK_NULL_HANDLE` 时绑**真实 map** + 阴影采样器，
-  否则仍是白 stand-in；
-- `Device::executeFrame` 把该 pass 已解析的 `shadow` 传进去。
+## Verification
 
-## 验证
+- New case `VkShadowTest.AScreenPassShadesWithTheMapItResolved`: a screen program samples binding 7 directly and writes
+  depth. The left strip is 0.25 in the map (the content stage folds clip z = 0.5 into device depth) and the right side is
+  the clear value 0; a white stand-in would read 255 in both. **Mutation proof**: changing binding 7 in the screen set back
+  to the constant white stand-in turns the case red; restoring it turns it green.
+- `test_vk` **72/72** (lavapipe, validation silent); `BackendParityTest` in `test_vsg` **12/12**.
+- Application: the 332x247 render area is **byte-identical** between vk and vsg on the same scene (0 pixels differ, against
+  1.88% before the fix).
 
-- 新用例 `VkShadowTest.AScreenPassShadesWithTheMapItResolved`：一个屏幕程序直接采样 binding 7 并写深度。左边
-  条带在 map 里是 0.25（内容阶段把 clip z = 0.5 折成设备深度），右侧是清屏 0；白 stand-in 会在两处都读 255。
-  **突变验证**：把 screen set 的 7 改回恒白 stand-in ⇒ 用例红；恢复 ⇒ 绿。
-- `test_vk` **72/72**（lavapipe，validation 静默）；`test_vsg` 的 `BackendParityTest` **12/12**。
-- 应用：vk 与 vsg 同场景 332×247 渲染区 **逐字节相同**（0 像素差，修复前 1.88%）。
+## Design constraints
 
-## 设计约束
-
-- **G4**（接口语义）：`makeScreenSet` 的绑定位存在 ≠ 绑对了图；“这个 pass 解析到的 map”只有一个来源
-  （`Device::resolveShadow`），screen 路径必须取同一份答案。
-- **G6**（统一而一致）：同一个 `FrameDescription` 在两个后端必须画同一张图；本次是“内容路径有阴影、全屏路径
-  没有”的形状差。
-- **G11**（可调试性）：症状是“前向有阴影、延迟没有、零诊断”。判据应当能直接问“binding 7 绑的是哪张图”，
-  用例用“采样 map 并写深度”把这个问题变成一个数字。
+- **G4** (interface semantics): having the binding slot in `makeScreenSet` is not the same as binding the right image;
+  "the map this pass resolved" has exactly one source (`Device::resolveShadow`) and the screen path must take the same
+  answer.
+- **G6** (uniform and consistent): one `FrameDescription` must draw the same picture on both backends; this was the shape
+  difference "content path shadowed, full-screen path not".
+- **G11** (debuggable): the symptom was "forward has shadows, deferred does not, zero diagnostics". The criterion should be
+  able to ask "which image is bound at binding 7" directly, and the case turns that question into a number by sampling the
+  map and writing depth.

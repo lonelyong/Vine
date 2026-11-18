@@ -1,72 +1,83 @@
-# vk 目标记录的 `fresh` 与「不等待的拒绝检查」数据竞争
+# A data race between the vk target record's `fresh` and a refusal check that does not wait
 
-- **状态**：已修复（2026-11-17，`gfx_backend_vk`；`test_vk` 169 全绿、TSan 0 报告）
-- **发现日期**：2026-11-17
-- **模块**：`src/plugins/gfx_backend_vk`（插件内部；没有公开 API 变化）
-- **涉及**：`include/vine/backend_vk/internal/TargetObjects.hpp`（`fresh`）、
-  `include/vine/backend_vk/internal/TargetTable.hpp` 与 `src/internal/TargetTable.cpp`（`peek`）、
-  `src/internal/Device.cpp`（读回相位一/相位二、帧体的读写）、`src/internal/TargetObjects.cpp`（构建/重建/销毁）
+- **Status**: Fixed (2026-11-17, `gfx_backend_vk`; `test_vk` 169 green, TSan clean)
+- **Found**: 2026-11-17
+- **Module**: `src/plugins/gfx_backend_vk` (inside the plugin; no public API change)
+- **Files**: `include/vine/backend_vk/internal/TargetObjects.hpp` (`fresh`),
+  `include/vine/backend_vk/internal/TargetTable.hpp` and `src/internal/TargetTable.cpp` (`peek`),
+  `src/internal/Device.cpp` (readback phase one and two, the frame body's reads and writes),
+  `src/internal/TargetObjects.cpp` (build / rebuild / destroy)
 
-> **EN**: Fixed (2026-11-17): `readColorBuffer`'s first phase borrowed a target record across the map lock and read `fresh` and shape fields while the lock-free frame body wrote `fresh = false`, so TSan reported a real race on a plain `bool` (the suite was green, the answer stayed legal, which is why only TSan saw it). `fresh` is now `std::atomic<bool>` with relaxed ordering and a new `TargetTable::peek()` returns built, fresh and shape as one value read under the map lock, so phase one never borrows a record.
+## Symptom and impact
 
-## 现象与影响
+`VN_TSAN_TARGET=test_vk scripts/tsan_check.sh` reported a real race: a write at `Device.cpp:1733` (the frame body's
+`images->fresh = false`) against a read at `Device.cpp:3484` (`peek->fresh` in `readColorBuffer`'s first phase), on two
+different threads with no synchronisation. The suite itself was 167/167 green - a plain assertion never sees this.
 
-`VN_TSAN_TARGET=test_vk scripts/tsan_check.sh` 报一条真实竞争：写 `Device.cpp:1733`（帧体
-`images->fresh = false`）对读 `Device.cpp:3484`（`readColorBuffer` 相位一的 `peek->fresh`），两个不同线程、无同步。
-套件本身 167/167 全绿——普通断言的测试看不见它。
+The consequence is undefined behaviour in the textbook sense (a plain `bool` shared by two threads without a lock). The
+visible consequence is absorbed by the semantics of the answer: a stale read still lands on the `NotReady` or Ok the SDK
+allows, so "the result was right" cannot be used as evidence; the only evidence is TSan (or one day a compiler
+optimisation).
 
-后果是标准意义上的 UB（普通 `bool` 被两线程无锁共享）。实际可见后果被答答案的语义吸收：读到旧值最终仍落在 SDK
-允许的 `NotReady` / Ok 里，所以「结果是对的」不能当证据用；证据只能是 TSan（或某天一次编译器优化）。
+The same phase one also read `built()` / `colorCount()` / `colorFormat()` through `lookup`'s `shared_ptr`. `ensure` rebuilds
+**in place** (a resize rewrites `desc`, a rebuild calls `destroyTarget` and then builds), while `release` / `drain` hand the
+record to the park and destroy it **outside the table** - so this is not one missing field but the whole shape "read fields
+through a borrowed record" failing in phase one.
 
-同一段相位一还借 `lookup` 的 `shared_ptr` 读 `built()` / `colorCount()` / `colorFormat()`。`ensure` 是**原地**
-重建（resize 直接改写 `desc`、rebuild 先 `destroyTarget` 再建），`release`/`drain` 则把记录交给 park 在**表外**
-销毁——所以这不是某一个字段的疏漏，而是「借记录读字段」这一形状在相位一里整体不成立。
+## Root cause
 
-## 根因
+Three kinds of writer, two kinds of synchronisation:
 
-三类写入者，两种同步方式：
+1. `ensure` (holds the map lock): build / resize / destroy rewrite the record in place;
+2. `release` / `drain` (erase under the map lock, with the park deciding outside the table when it is destroyed);
+3. the **frame body** (takes no lock - the recording path must not lock, `C3` / `C5`): writes `fresh = false` when each pass
+   ends.
 
-1. `ensure`（持 map 锁）：build / resize / destroy 原地改写记录；
-2. `release` / `drain`（持 map 锁 erase，表外由 park 决定销毁时刻）；
-3. **帧体**（不取任何锁——记录路径不许取锁，`C3` / `C5`）：每个 pass 结束时写 `fresh = false`。
+Phase one read fields through `lookup`'s pointer outside the lock: it held neither the lock of 1 and 2 nor an atomic for 3.
+Phase two (inside the body gate's EXCLUSIVE section) was always safe, because the gate drains the frame body - so "look
+again a little later" preserved the **result** without preserving the **read** itself. That is exactly why the defect is
+easy to miss: it only lives in the stretch between the two checks.
 
-相位一在锁外借 `lookup` 的指针读字段：对 1 / 2 没有那把锁，对 3 也没有原子。相位二（体闸 EXCLUSIVE 之内）本来
-就是安全的——闸把帧体排空——所以「等一会儿再查一遍」保住了**结果**，却没有保住**读取**本身。这正是缺陷容易被漏掉
-的原因：它只活在两处检查之间的那一段。
+## Fix
 
-## 修复
+1. `TargetObjects::fresh` became `std::atomic<bool>` (relaxed). Reason: it is the only field the frame body writes on the
+   recording path, and that side cannot take a lock; relaxed is enough because phase one's conclusion is re-checked inside
+   the gate, and the two real happens-before edges come from the existing hand-offs - the claim lock (this frame's write to
+   the next holder's read) and the body gate (the frame body's write to the host verb's read).
+2. New `TargetTable::peek()`: reads `built` / `fresh` and the **shape** into one value (`TargetTable::Peek`) under the map
+   lock, and phase one reads only that value. The lock is the one every writer takes, so the snapshot is always a complete
+   state (either before or after a rebuild) and no record is borrowed across the table.
+3. Phase one's depth format uses the format of the **built shape** rather than the host object's current declaration - the
+   hint has to describe the image that will really be copied; otherwise, when the host changes the declaration before the
+   frame arrives, phase one can answer a permanent `Unsupported`.
+4. Every read in phase two and in the frame body is an explicit `load(std::memory_order_relaxed)`: one object must not be
+   half atomic and half not.
 
-1. `TargetObjects::fresh` 改成 `std::atomic<bool>`（relaxed）。理由：它是唯一由帧体在记录路径上写的字段，那一侧
-   不能取锁；relaxed 够用，因为相位一的结论在闸内重查，而两处真正的 happens-before 由既有的交接给出——claim 锁
-   （本帧写 → 下一持有者读）与体闸（帧体写 → 宿主动词读）。
-2. 新增 `TargetTable::peek()`：在 map 锁内把 `built` / `fresh` / **形状**读成一份值（`TargetTable::Peek`），
-   相位一只读这份值。锁是每个写入者都取的那把，所以快照永远是一个完整状态（要么重建前、要么重建后），记录不再
-   跨表借用。
-3. 相位一的深度格式改用**已建成形状**的格式，而不是宿主对象当下的声明——提示必须描述真会被拷贝的那张图；否则
-   「宿主改了声明、帧还没来」时相位一可能给出永久的 `Unsupported`。
-4. 相位二与帧体的每个读取点都显式 `load(std::memory_order_relaxed)`：同一个对象不能一半原子、一半非原子。
+## Verification
 
-## 验证
+- `VN_TSAN_TARGET=test_vk scripts/tsan_check.sh` -> **169/169, 0 ThreadSanitizer warnings** (the same command reported one
+  real race before the fix).
+- `test_vk` **169** (167 plus 2 new cases), `test_graphics` **617**, `test_vsg` **572**, `BackendParityTest` **13**.
+- New case `VkMultiSessionTest.AReadbackRacingARebuiltTargetAnswersAValueItCanStandBehind`: a readback thread races a driver
+  thread that resizes once per frame; the answer may only be `Ok` or `NotReady`, and an `Ok` must be a whole frame (its size
+  one of the two that were drawn, its pixels the clear colour). New case
+  `TargetTableTest.APeekAnswersAnUnbuiltTargetAndInsertsNothing`: `peek` answers "not built" for an unknown target and
+  **inserts no entry**.
+- All nine gates green (`check_ai_docs --strict` / `check_design_docs` / `check_doc_symbols` / `check_include_hygiene` /
+  `check_api_style` / `check_diagnostic_formats` / `check_public_docs` / `check_export_annotations` / `check_vk_exposure`).
 
-- `VN_TSAN_TARGET=test_vk scripts/tsan_check.sh` → **169/169、0 ThreadSanitizer warning**（修复前同一命令
-  1 条真实竞争）。
-- `test_vk` **169**（167 + 2 新例）、`test_graphics` **617**、`test_vsg` **572**、`BackendParityTest` **13**。
-- 新用例 `VkMultiSessionTest.AReadbackRacingARebuiltTargetAnswersAValueItCanStandBehind`：读回线程与「每帧
-  resize 一次」的驱动线程并发，答案只能是 `Ok` 或 `NotReady`，`Ok` 时必须是一帧画完的整幅图（尺寸属于两个被画过的
-  尺寸之一、像素是 clear 色）。新用例 `TargetTableTest.APeekAnswersAnUnbuiltTargetAndInsertsNothing`：`peek`
-  对未知目标答「未建」且**不插条目**。
-- 九道门禁全绿（`check_ai_docs --strict` / `check_design_docs` / `check_doc_symbols` /
-  `check_include_hygiene` / `check_api_style` / `check_diagnostic_formats` / `check_public_docs` /
-  `check_export_annotations` / `check_vk_exposure`）。
+## Design constraints
 
-## 设计约束
+- **G10**: shared mutable state has to be costed with ownership and synchronisation; the price of one `bool` is one
+  undefined behaviour.
+- **G11**: a failure has to be locatable - phase one now has one entry and one lock, and which state it read can be said at
+  a glance.
+- **G4**: `lookup` (borrows a record, has a lifetime) and `peek` (takes a value, has none) are two spellings for two things,
+  and the caller does not have to guess.
 
-- **G10**：共享可变状态要算清所有权与同步；一个 `bool` 的代价就是一次 UB。
-- **G11**：失败要可定位——相位一现在只有一个入口、一把锁，读的是哪份状态可以一眼说出。
-- **G4**：`lookup`（借记录，有寿命）与 `peek`（取值，无寿命）用两个拼写区分两件事，调用方不必猜。
+## Neighbouring problem (not fixed here, recorded in the backlog)
 
-## 相邻问题（本次未修，已记入 backlog）
-
-`executeFrame` / `prepareFrame` 在 `ensure` 之后立刻 `*target_table.lookup(target)`（`Device.cpp:1343`、
-`Device.cpp:2056`）。`releaseRenderTarget` 按 R6 **不等在飞的帧**，可以在这两步之间 erase 条目，第二次 `lookup`
-返回 null ⇒ 解引用空指针。修法：让 `ensure` 交出记录本身，或给第二次 `lookup` 判空并按 claim 冲突跳过该 pass。
+`executeFrame` / `prepareFrame` immediately call `*target_table.lookup(target)` after `ensure` (`Device.cpp:1343`,
+`Device.cpp:2056`). `releaseRenderTarget` **does not wait for in-flight frames** (R6), so it can erase the entry between
+those two steps and the second `lookup` returns null, which is a null dereference. The fix is to let `ensure` hand out the
+record itself, or to null-check the second `lookup` and skip that pass as a claim conflict.
