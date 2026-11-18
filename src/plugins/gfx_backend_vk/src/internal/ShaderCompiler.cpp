@@ -1,9 +1,11 @@
 #include <vine/backend_vk/internal/ShaderCompiler.hpp>
 
+#include <map>
 #include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/Public/ShaderLang.h>
@@ -45,6 +47,125 @@ std::once_flag s_glslangInit;
         return vn::String(u8"glslang refused the stage without a message");
     }
     return vn::String(reinterpret_cast<const char8_t*>(log));
+}
+
+/**
+ * @brief Reads back from the compiled words WHICH vertex-input locations the stage declares.
+ *
+ * @details
+ * - WHY THE BACKEND READS ITS OWN OUTPUT. A pipeline may declare fewer vertex attributes than the geometry carries,
+ *   and the honest set is the one the VERTEX STAGE reads: declaring the others costs a validation warning ("attribute
+ *   at location N not consumed by vertex shader") and describes a pipeline nobody wrote. The compiled module is the
+ *   only authority on what the stage reads - the source is conditional, so it cannot be asked directly.
+ * - WHAT IT READS: every `OpVariable` in the Input storage class, its `Location` decoration, and its TYPE - the
+ *   decoration answers the FIRST location and the type answers how far the value reaches (a matrix owns one location
+ *   per column, the instance stream being the case that matters). Where a type cannot be resolved the answer is left
+ *   UNKNOWN, which callers treat as "declares everything" (`G10`: narrowing on a guess would drop real data).
+ *
+ * @param module The compiled stage; its words are read, its input_locations answered (known when they could be).
+ */
+void describeInputLocations(SpirvModule& module)
+{
+    module.input_locations.clear();
+    module.input_locations_known = false;
+
+    // SPIR-V's first five words are the header (magic, version, generator, bound, reserved).
+    constexpr std::uint32_t kHeaderWords = 5U;
+    constexpr std::uint32_t kMagicNumber = 0x07230203U;
+    constexpr std::uint32_t kOpTypeBool   = 20U;
+    constexpr std::uint32_t kOpTypeInt    = 21U;
+    constexpr std::uint32_t kOpTypeFloat  = 22U;
+    constexpr std::uint32_t kOpTypeVector = 23U;
+    constexpr std::uint32_t kOpTypeMatrix = 24U;
+    constexpr std::uint32_t kOpTypePointer = 32U;
+    constexpr std::uint32_t kOpVariable  = 59U;
+    constexpr std::uint32_t kOpDecorate  = 71U;
+    constexpr std::uint32_t kDecorationLocation = 30U;
+    constexpr std::uint32_t kStorageClassInput  = 1U;
+
+    const std::vector<std::uint32_t>& words = module.words;
+    if (words.size() <= kHeaderWords || words[0] != kMagicNumber) {
+        return;
+    }
+
+    // The declarations of one module, collected first and joined afterwards: a decoration is not required to sit next
+    // to the variable it decorates, and a variable names a POINTER to its type rather than the type itself.
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> decorated; // (id, first location)
+    std::vector<std::uint32_t>                          inputs;    // the Input-class variables' ids
+    std::map<std::uint32_t, std::uint32_t>              pointee;   // pointer type id -> pointee type id
+    std::map<std::uint32_t, std::uint32_t>              locations; // type id -> locations it occupies
+    std::map<std::uint32_t, std::uint32_t>              input_type; // variable id -> its pointer type id
+
+    for (std::size_t offset = kHeaderWords; offset < words.size();) {
+        const std::uint32_t instruction = words[offset];
+        const std::uint32_t count       = instruction >> 16U;
+        const std::uint32_t opcode      = instruction & 0xffffU;
+        if (count == 0U || offset + count > words.size()) {
+            module.input_locations.clear(); // truncated module: the answer stays unknown rather than half-read
+            return;
+        }
+        switch (opcode) {
+        case kOpDecorate:
+            if (count >= 4U && words[offset + 2U] == kDecorationLocation) {
+                decorated.emplace_back(words[offset + 1U], words[offset + 3U]);
+            }
+            break;
+        case kOpVariable:
+            if (count >= 4U && words[offset + 3U] == kStorageClassInput) {
+                inputs.push_back(words[offset + 2U]);
+                input_type[words[offset + 2U]] = words[offset + 1U];
+            }
+            break;
+        case kOpTypePointer:
+            // [result id, storage class, type id]
+            pointee[words[offset + 1U]] = words[offset + 3U];
+            break;
+        case kOpTypeFloat:
+        case kOpTypeInt:
+        case kOpTypeBool:
+        case kOpTypeVector:
+            // A scalar and a vector each occupy exactly one location.
+            locations[words[offset + 1U]] = 1U;
+            break;
+        case kOpTypeMatrix:
+            // [result id, column type, column count]: one location PER COLUMN, which is what the instance stream is.
+            locations[words[offset + 1U]] = words[offset + 3U];
+            break;
+        default:
+            break;
+        }
+        offset += count;
+    }
+
+    for (const std::uint32_t id : inputs) {
+        std::uint32_t first_location = 0U;
+        bool          has_location   = false;
+        for (const auto& [decorated_id, location] : decorated) {
+            if (decorated_id == id) {
+                first_location = location;
+                has_location   = true;
+                break;
+            }
+        }
+        if (!has_location) {
+            continue; // a built-in input (gl_VertexIndex and friends): not a vertex attribute, nothing to declare
+        }
+
+        const auto  pointer = input_type.find(id);
+        const auto  target  = pointer != input_type.end() ? pointee.find(pointer->second) : pointee.end();
+        const auto  width   = pointee.end() != target ? locations.find(target->second) : locations.end();
+        if (width == locations.end()) {
+            module.input_locations.clear(); // an input whose type this function does not size: leave every channel declared
+            return;
+        }
+        for (std::uint32_t step = 0U; step < width->second; ++step) {
+            module.input_locations.push_back(first_location + step);
+        }
+    }
+
+    std::sort(module.input_locations.begin(), module.input_locations.end());
+    module.input_locations.erase(std::unique(module.input_locations.begin(), module.input_locations.end()), module.input_locations.end());
+    module.input_locations_known = true;
 }
 
 } // namespace
@@ -137,6 +258,7 @@ namespace
         why = vn::String(u8"glslang produced no SPIR-V for the stage");
         return false;
     }
+    describeInputLocations(out);
     return true;
 }
 

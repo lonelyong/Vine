@@ -2565,7 +2565,7 @@ bool VsgBackend::releaseStreamBuffer(const void* buffer)
     std::lock_guard<std::mutex> guard(d->content);
     // THE DEVICE'S clock and queue, not a window's: a stream is read by every window's frames, so "may this bind be
     // freed" is a question about the whole device (see core::DeviceClock). The release is PARKED, never destroyed -
-    // a submitted command buffer may still name the bind (see ResourceTable / StreamUploads).
+    // a submitted command buffer may still name the bind (see PinnedResources / StreamUploads).
     (void)d->assembly->uploads().releaseBuffer(buffer, d->clock.timeline(), d->retirement);
     return true;
 }

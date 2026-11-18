@@ -65,6 +65,7 @@
 | 渲染通道 | 自建 `VkRenderPass` 变体（全 CLEAR / 深度 LOAD / 全 LOAD）+ MRT/MSAA resolve | vsg 的 render pass 机制 | 同一种 `RenderPassCompatibility` 进入两边管线键 |
 | 窗口 | `createSurfaceTarget` 一格一次（第二次答 `WindowOccupied` 并**报一次**具名诊断），`nullptr` 请求设备自己的窗口 | 同一契约；窗口尺寸与格式的答案问平台 | 窗口目标由设备发放，设备/引擎不是任何一块窗口 |
 | 深度读回 | 纯深度格式（D16/D32/D32F，MSAA 读 resolve 图）；D24 与借用深度答 `Unsupported` | 同分类 | 格式表在 SDK（`core::depthReadbackOf`），两边共用 |
+| 顶点输入声明 | 只声明**顶点段真正读的** location（从编译出的 SPIR-V 读回；矩阵段按列算，实例流 12–15 全保留） | 声明几何的全部通道：未读的通道不会被取数，驱动也不报错 | 只是声明面，不影响取数；vk 这样声明是为了 pipeline 说真话（否则验证层报 "attribute at location N not consumed"） |
 | 目标拒绝的精度 | 构建时给出 `vk.target.size_unknown` / `vk.target.borrow_extent_mismatch` | 同一条件在构建时只答 `vsg.target.build_failed`；尺寸不匹配到 resize 阶段才拒绝 | 契约只要求"拒绝 + 一个 code"，粒度不是契约；要统一就给 vsg 补两条 code |
 
 ## 4. 支持矩阵（唯一一份）
@@ -97,9 +98,14 @@
 
 * 接缝的定义是**"两个后端都用"**；只有某一个后端读的类型住在该插件的
   `include/vine/backend_vsg/internal/`（`vn::backend_vsg::core`）与 vk 的 `internal/` 里。
+* **接缝没有自己的命名空间**：它是一条性质（"两个后端都用到"）加一份被门禁钉住的清单（`scripts/check_include_hygiene.py`
+  的 `SEAM_HEADERS`），而不是 `vn::graphics::backend` 这类别名组——别名会让一个类有两个名字，而两边都直接 include 的 SDK 头有
+  25 个、机制只有 8 个，别名反而会把清单说小（[ADR-2026-11-18](../../.ai/decisions/ADR-2026-11-18-seam-identity-is-a-property-not-a-namespace.md)）。
+  本节与 [`graphics-architecture.md`](../../.ai/design/graphics-architecture.md) §2.9 也被同一道门禁检查：`SEAM_HEADERS`
+  里的每个机制，两页都必须点名。
 * 门禁钉住的是**边界的方向**，不是接缝的清单：图形模块不得 include 任何具体后端（`check_vk_exposure.py` V2）、
   插件 `shell/` 零 `Vk*`（V4）、帧路径不 include `support/`（E1）；vsg 的内容记账半边（`ContentFacts` /
-  `ProgramHalves` / `PushRange` / `ContentSources` / `ContentStore`）不出现 `::vsg::`，由
+  `CompiledPrograms` / `PushRange` / `ContentSources` / `ContentStore`）不出现 `::vsg::`，由
   `scripts/check_vsg_content_seam.cmake` 在 ctest `content_seam` 里断言。
 * **接缝的清单由 `scripts/check_include_hygiene.py` 按性质钉住**：`SEAM_HEADERS` 的八个机制头必须两边都
   能到达（`FrameTimeline` 经 vk 的 `DeviceClock` 到达），而"两个后端都直接 include 的 SDK 头"这一集合
@@ -125,16 +131,16 @@
 | --- | --- |
 | 外壳 | `GfxBackendVsgPlugin` `VsgRenderBackendFactory` |
 | 门面与会话 | `VsgBackend` `VsgDriver` `WindowSession` `OffscreenSession` `GraphLifetime` `SessionDrive` `SessionContent` `SessionMove` `TransferStaging` `WindowTarget` `Device` `DeviceFeatures` `DeviceRequirements` `DeviceProbe` `VsgExecutor` `FrameHead` |
-| 内容层 | `ContentAssembly` `ContentPass` `ProgramHalves` `BindingSets` `ContentDraw` `ContentFacts` `ContentSources` `ContentStore` `ContentImages` `PushRange` `ContentPipeline` `DrawNeeds` `MaterialImages` `MaterialSlotCheck` `GeometryFacts` `ShadowBlock` `ViewBlock` `ProgramAbi` `ProgramVariant` |
+| 内容层 | `ContentAssembly` `ContentPass` `CompiledPrograms` `BindingSets` `ContentDraw` `ContentFacts` `ContentSources` `ContentStore` `ContentImages` `PushRange` `ContentPipeline` `DrawNeeds` `MaterialImages` `MaterialSlotCheck` `GeometryFacts` `ShadowBlock` `ViewBlock` `ProgramAbi` `ProgramVariant` |
 | 流、块、表 | `StreamUploads` `Streams` `BlockStorage` `BlockDescriptors` `VariantPool` `PassRegistry` `StateCommands` `FactResult` |
-| 可移植半边（ADR-2026-11-16 §2 从 SDK 搬入，`vn::backend_vsg::core`） | `FrameRecorder` `FrameCompiler` `FrameArena` `FrameRing` `FrameScratch` `ClearPlan` `StateRegistry` `MaterialArena` `SlotProbe` `Observe` `PhaseTable` `PixelProbe` `DepthProbe` `AllocationGate` `ResourceTable` |
+| 可移植半边（ADR-2026-11-16 §2 从 SDK 搬入，`vn::backend_vsg::core`） | `FrameRecorder` `FrameCompiler` `FrameArena` `FrameRing` `FrameScratch` `ClearPlan` `StateRegistry` `MaterialArena` `SlotProbe` `Observe` `PhaseTable` `PixelProbe` `DepthProbe` `AllocationGate` `PinnedResources` |
 | 目标与读回 | `TargetObjects` `TargetTable` `HostReadback` `WhiteImage` `OneShot` |
 | 支撑 | `VsgHostWindow` `VsgSceneRules` `VsgDynamicState` `VsgVulkanEntryPoints` `VsgBackendUtility` `VsgUtils` `VsgFwd` `VsgBufferView` `RenderStateMapper` |
 | 全局与测试视图 | `backend_vsg_global` `BackendContent` |
 
 **分层纪律**：`shell → internal → support` 单向；插件头不安装；`Vk*` 与 `::vsg::` 只出现在 `internal/`
 （Vulkan 类型只在 vk 的 `internal/`）。VSG 后端的 `internal/` 里还有一条更窄的缝：内容记账半边
-（`ContentFacts` / `ContentStore` / `ProgramHalves` / `ContentSources` / `PushRange`）不许出现 `::vsg::`，
+（`ContentFacts` / `ContentStore` / `CompiledPrograms` / `ContentSources` / `PushRange`）不许出现 `::vsg::`，
 由 `content_seam` 用例在 ctest 里执行。
 
 ## 7. 构建、跑法与证据

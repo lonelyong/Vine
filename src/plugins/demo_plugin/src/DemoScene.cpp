@@ -928,9 +928,21 @@ bool addDemoPass(vn::graphics::RenderEngine& engine,
 {
     desc.content = std::move(content);
     desc.order   = order;
-    // Problems are reported by the engine's one route (the plan's refusals included); nothing here substitutes a
-    // different pass for a refused one.
-    return engine.applyPlan(vn::graphics::Plan{ { std::move(desc) } }, owner).applied();
+    // A PLAN CANNOT BE APPLIED WHILE A FRAME IS BEING RECORDED (see RenderEngine::applyPlan), and the remedy that rule
+    // names is the wait below - taken HERE because every caller states rows at a moment a frame may be in flight:
+    // install() can run after the first attach (measured: a 208/358 ms start), a layout step runs on a resize, and the
+    // content assembly runs on a pool. The wait is bounded because the application thread is one of those callers: a
+    // frame that never answers must not freeze it for the engine's default five seconds.
+    const vn::graphics::Plan plan{ { desc } };
+    (void)engine.waitForFrame(std::chrono::milliseconds(250));
+    vn::graphics::PlanResult result = engine.applyPlan(plan, owner);
+    if (result.refusal == vn::graphics::PlanRefusal::Busy) {
+        // A frame started between the wait and the call: the same remedy once more, and the second answer is the one
+        // the caller reads (a still-busy engine keeps refusing, which is what the caller must see).
+        (void)engine.waitForFrame(std::chrono::milliseconds(250));
+        result = engine.applyPlan(plan, owner);
+    }
+    return result.applied();
 }
 
 /**
@@ -1552,6 +1564,9 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
     // demo; set options.fps.enabled = false to turn it off.
     options.fps.enabled         = true;
     options.fps.pixel_ratio     = render_control->devicePixelRatio();
+    // THE BUILD APPLIES ITS ROWS (see PassChain::build -> apply), so it obeys the rule a single row obeys: wait for the
+    // frame in flight first. A build that lands mid-frame is refused and answers null - the whole chain, not one row.
+    (void)engine->waitForFrame(std::chrono::milliseconds(250));
     auto pipeline               = vn::graphics::PassChain::build(engine, options);
     if (pipeline == nullptr) {
         return;
@@ -1645,25 +1660,24 @@ void addDemoPipeline(vn::appfw::gui::RenderControl* render_control, vn::intrusiv
         if (preview_source == nullptr || previews.empty()) {
             return;
         }
+        // THE TILES BELONG TO THE CHAIN'S G-BUFFER. These rows read "GBuffer", which the adopted chain publishes, and
+        // a view runs its layout steps when it ADOPTS a chain and when it DROPS one (see SceneView::setChain ->
+        // applySurfaceGeometry). A step that arrives after the chain is gone would therefore re-state rows whose
+        // producer no longer exists - refused four times over (unknown-input) in the middle of tearing the view down.
+        // No chain, no G-buffer, nothing to place.
+        if (render_control->view() == nullptr || render_control->view()->chain() == nullptr) {
+            return;
+        }
         const int source_width  = preview_source->width();
         const int source_height = preview_source->height();
-        const auto restate      = [&]() {
-            bool applied = true;
-            for (std::size_t index = 0; index < previews.size(); ++index) {
-                const int                    slot_x = 8 + static_cast<int>(index) * (pip_w + 8);
-                const vn::graphics::Viewport rect   = fitPreviewRect(source_width, source_height, slot_x, 8, pip_w, pip_h);
-                // ONE FIELD OF ONE DECLARATION: the row the demo stated is re-stated with the fitted rectangle.
-                previews[index].viewport            = rect;
-                applied = addDemoPass(*engine, render_control, previews[index], nullptr, 120 + static_cast<int>(index)) && applied;
-            }
-            return applied;
-        };
-        if (!restate()) {
-            // A BOUNDED WAIT, not the default: this runs in a layout step on the application thread, so a frame that
-            // never answers must not freeze the UI for the default five seconds - one frame's recording is what the
-            // retry is waiting for.
-            (void)engine->waitForFrame(std::chrono::milliseconds(250));
-            (void)restate();
+        // ONE STATEMENT PER TILE, each one waiting out the frame in flight when there is one (see addDemoPass): a
+        // refusal here would leave the strip at the last accepted rectangle until some later layout event.
+        for (std::size_t index = 0; index < previews.size(); ++index) {
+            const int                    slot_x = 8 + static_cast<int>(index) * (pip_w + 8);
+            const vn::graphics::Viewport rect   = fitPreviewRect(source_width, source_height, slot_x, 8, pip_w, pip_h);
+            // ONE FIELD OF ONE DECLARATION: the row the demo stated is re-stated with the fitted rectangle.
+            previews[index].viewport = rect;
+            (void)addDemoPass(*engine, render_control, previews[index], nullptr, 120 + static_cast<int>(index));
         }
     });
 }

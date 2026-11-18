@@ -12017,8 +12017,53 @@ TEST(RenderEngineTest, ASessionsShapeIsEditedBetweenFramesNotDuringOne)
     engine->shutdown();
 }
 
-TEST(RenderEngineTest, AMaterialEditLandsOnTheNextFrameEvenWhileTheEngineThreadRecords)
+TEST(RenderEngineTest, AViewResizeWaitsForTheFrameBeforeItRestatesItsChain)
 {
+    // THE VIEW'S SIZE IS A SESSION CHANGE TOO. Resizing a chain restates the passes it re-lays out (PassChain::resize
+    // -> restate -> apply), so the view obeys the rule a host obeys (see the case above): it waits for the frame in
+    // flight instead of being refused. Two facts come out of it - the HUD keeps up with the window, and the log has no
+    // refusal in it, because a resize is not a mistake. (Found by a demo run that resized while a frame was being
+    // recorded: the surface went Pending at shutdown and the layout step was refused.)
+    auto backend = intrusive_ptr<GatedBackend>(new GatedBackend());
+    auto engine  = intrusive_ptr<RenderEngine>(new RenderEngine());
+    engine->setDevice(backend);
+    ASSERT_TRUE(engine->initialize());
+
+    auto view = intrusive_ptr<SceneView>(new SceneView());
+    view->setEngine(engine.get());
+    ChainDesc request;
+    request.camera              = view->camera();
+    request.content             = view->scene();
+    request.gizmo.source_camera = view->camera(); // the overlay whose box the resize re-lays out
+    intrusive_ptr<PassChain> pipeline = PassChain::build(engine.get(), request, view.get());
+    ASSERT_NE(pipeline, nullptr);
+    view->setChain(pipeline);
+    view->resize(320, 240, 1.0); // the first layout: nothing is in flight, so nothing to wait for
+
+    engine->setFrameThreading(FrameThreading::EngineThread);
+    backend->arm();
+    ASSERT_TRUE(engine->frame().submitted());
+    backend->waitEntered(); // the engine thread is inside a frame from here on
+
+    const std::size_t diagnostics_before = engine->diagnosticCount();
+    const auto        started            = std::chrono::steady_clock::now();
+    std::thread       release([backend] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        backend->release(); // the frame the resize is waiting for
+    });
+    view->resize(640, 480, 1.0);
+    release.join();
+    const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+
+    EXPECT_EQ(engine->diagnosticCount(), diagnostics_before) << "a resize between frames is nothing to report";
+    EXPECT_GE(waited, 40) << "the step waited for the frame it would have changed (the gate held it for 60 ms)";
+
+    ASSERT_TRUE(engine->waitForFrame());
+    engine->setFrameThreading(FrameThreading::Inline);
+    engine->shutdown();
+}
+
+TEST(RenderEngineTest, AMaterialEditLandsOnTheNextFrameEvenWhileTheEngineThreadRecords){
     // THE VALUE PATH UNDER REAL CONCURRENCY (design C19): the content side moves a material's values while the engine
     // thread is INSIDE a frame. Two facts have to hold at once - the frame in flight draws the values it was published
     // with (a mid-frame edit must not be half-drawn), and the next frame draws the new ones (an edit is never lost).

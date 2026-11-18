@@ -263,7 +263,7 @@ resolves them into session-local values; the only difference is where the comple
 - **Acceptance** (T4): two sessions first-drawing the same geometry ⇒ no crash, both pictures right, uploads ≤ 2; a mutation (removing the withdrawal) ⇒ the case goes red.
 - **Caveat** (P1): an entry stuck in `Uploading` is a **device-wide** scar, not one draw's failure.
 
-**The implementation shape**: the state machine is `internal/ResidenceTable.hpp` (no Vulkan type), one entry per key: `admit(key, session)` answers `Use` / `Build` (with a
+**The implementation shape**: the state machine is `internal/ResidencyClaims.hpp` (no Vulkan type), one entry per key: `admit(key, session)` answers `Use` / `Build` (with a
 move-only `Claim`) / `Copy(owner)`; `Claim::publish()` is the owner's declaration that "the fill is complete", and an unresolved entry falls back to `Absent` when the `Claim` is
 destroyed (rule 3 is enforced by the type, not by call sites remembering it); tokens increase monotonically and are never reused, so an old claim cannot resurrect an entry
 after `forget` (`releaseContent`).
@@ -412,7 +412,7 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 - **`internal/FrameHead`: one frame's resolved values**. One `DrawPlan` per draw call: the recorder of the half it hit (`ContentDraw*`), the resolved `ContentDraw::Draw` /
   `ScreenDraw` (identity + pipeline + variant id + dynamic state + geometry span count), the block bindings, the push blocks, the vertex / index bindings; one slot per pass,
   carrying its own `core::StateRegistry` (the state memory that spans the resolution and recording phases). It is the vsg counterpart of vk's `FrameHead::DrawPlan`:
-  **a value that owns the objects it names** (all `ref_ptr`s), with one extra lifetime pin: `ProgramHalves::pin()` lends the halves' producers to the plan, so another
+  **a value that owns the objects it names** (all `ref_ptr`s), with one extra lifetime pin: `CompiledPrograms::pin()` lends the halves' producers to the plan, so another
   driver's frame-head sweep cannot release a recorder this frame still needs (the retirement park knows nothing about "an unsubmitted frame has not handed it over yet").
 - **Two APIs, resolution half and recording half**: `ContentDraw::plan(key)` (resolution, taking the layer and the variant pool, under the content lock) and
   `ContentDraw::record` / `recordScreen` (recording, binding only the resolved pipeline, touching neither the layer nor the pool); `core::StateRegistry` therefore gained a
@@ -459,7 +459,7 @@ must **wait**, then read that frame's pixels and count +1; a read from inside a 
 | `FrameDriver` | frame machinery + frame scratch + frame gate + frame books + the claim set | its identity is a `graphics::FrameDriverId` (issued by `DeviceClock`) |
 | `ContentCaches` | programs / geometries / pipelines / layouts / images / allocator + one exclusive lock | split out of `ContentDraw` |
 | `FrameScratch` | ring / descriptor pools / set tables / `FrameSnapshot` | split out of `ContentDraw` |
-| `ResidenceTable` | the three states + publish / withdraw / retire | reuses `RetirementQueue`'s epoch semantics |
+| `ResidencyClaims` | the three states + publish / withdraw / retire | reuses `RetirementQueue`'s epoch semantics |
 | `ContentCaches::FrameBuilds` | one frame's admissions: the `Use` hits, the `Build` claims, the `Copy` temporaries | a frame-scoped value; `publishAll` is called once the frame completes and the destructor collects the rest |
 | `TargetTable` | target → session; try-claim / release | a conflict reports once, deduplicated by (target, episode) |
 

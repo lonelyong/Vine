@@ -93,7 +93,7 @@ class BindingSets {
     /**
      * @brief Ensures the declared sets @p pass' drawables need, and returns them as candidates.
      *
-     * The walk is the one api/ProgramHalves and api/ContentPass make: each command's geometry (at the
+     * The walk is the one api/CompiledPrograms and api/ContentPass make: each command's geometry (at the
      * revision the plan names), its material, the variant both imply, and the half that serves it - so a set
      * exists for exactly the (set index, image source) pairs a pass will ask for. A command the tables or
      * the halves cannot answer contributes nothing (the recorder refuses it first, and says why).
@@ -103,7 +103,7 @@ class BindingSets {
      *
      * @param pass       The compiled pass whose draws the sets are for.
      * @param facts      The tables the identities are answered from.
-     * @param halves     The halves the pass was given (api/ProgramHalves' answer: their layers carry the
+     * @param halves     The halves the pass was given (api/CompiledPrograms' answer: their layers carry the
      *                   declared shapes and the input/depth samplers).
      * @param inputs     The images the pass' inputs offer (see ContentPass::record - nothing when it has
      *                   none).

@@ -270,7 +270,7 @@
   `TargetClaimFrameTest` 2 cases (a lease posing as “another driver” makes the pass be skipped, two attempts report one line, a new conflict reports again after a clean frame), mutations
   **2/2 red** (lease not released / episode not ended), `test_vk` 120/120. **Trap**: the claim in `Session` must come before `ensure_target`;
   one step later and two sessions can rebuild the same target's attachments interleaved.
-- **S4 landed (2026-11-15, T48 step four)**: `internal/ResidenceTable.hpp` is the state machine for “who may build this key” (no Vulkan types):
+- **S4 landed (2026-11-15, T48 step four)**: `internal/ResidenceTable.hpp` is the state machine for “who may build this key” (no Vulkan types): <!-- drift-ok -->
   `admit(key, session)` → `Use` / `Build` (a move-only `Claim`) / `Copy(owner)`; `Claim::publish()` is the owner's completion statement, and a destructor without a decision
   ⇒ the entry falls back to `Absent` (rule 3 is enforced by the type); tokens are monotonic and never reused, so after `forget` an old claim's `publish` must fail and counts as
   `Numbers::stale`. Observation points: `numbers()`'s `claims` / `published` / `withdrawn` / `copies` / `stale` / `uploading`
@@ -1519,7 +1519,7 @@
 - **Evidence**: `test_vk` **137/137**, `test_vsg` (including parity) all green, `test_graphics` 587; TSan `test_vk` 0 reports
   (132/132, windows/probes/plugin excluded by the existing rules, suppression only lavapipe); ASan focused
   (`VkResidenceWireTest`+`VkResidencyTest`+`VkMultiSessionTest`+`VkFrameHeadTest`) PASS.
-- **Build note**: `tests/test_vsg` compiles the vk backend sources too, the new `ResidenceTable.cpp` must go into
+- **Build note**: `tests/test_vsg` compiles the vk backend sources too, the new `ResidenceTable.cpp` must go into <!-- drift-ok -->
   `tests/test_vk/CMakeLists.txt` **and** `tests/test_vsg/CMakeLists.txt`, otherwise `all` reports a run of
   `ResidenceTable::Claim` undefined at the test_vsg link.
 - **Still a boundary**: the two drivers' frame-head resolution still sits on one cache lock (`C3` governs the recording path); a fill is a host memcpy, so `fillStreams`
@@ -1670,3 +1670,131 @@
   pure function for exactly that reason; the end-to-end case names an UNREGISTERED backend instead.
 - **Docs**: `docs/guides/graphics-backends.md` §1 (which rule decides), `docs/guides/render-views.md` §2 comment,
   `.ai/design/appfw-render-surface.md` F6 / C6 / R6 / T6 / D7-D8, backlog T39 retired (B3 had already landed it).
+
+## 2026-11-18 B8: the demo's validation log is empty
+
+- **Two warnings, two different causes** (both vk-only, both were "known and owned by B8"):
+  1. *`fragment writes Location 0 ... no pColorAttachments[0]`* (twice): the shadow pass has no program, so every
+     drawable drew with its own - the content program, whose fragment writes colour - into a depth-only target.
+  2. *`Vertex attribute at location 1 not consumed by vertex shader`*: the sky box is a `makeDirectionBox` (position +
+     normal + direction) drawn by `skyboxProgram()`, whose vertex stage reads only position and the direction.
+- **Fix 1 (engine)**: `BuiltinShaders::depthOnlyProgram()` = the CONTENT vertex stage (`builtin_forward.vert`) + a new
+  `builtin_depth.frag` whose `main` is empty; `ChainBuilder::buildShadowPass` sets `desc.program_override` to it. Not a
+  position-only vertex stage on purpose: that would declare inputs the geometry need not carry (an *error*, not a
+  warning, for a normal-less geometry), and it would duplicate the instancing/push-constant math. Variants still apply.
+  Bonus: the shadow pass no longer shades per fragment (demo `session up` 86 -> 42 ms, `Pending -> Presenting` 300 -> 190 ms).
+- **Fix 2 (vk)**: a content pipeline declares only the vertex-input locations its **vertex stage reads**, read back from
+  the compiled module (`SpirvModule::input_locations`, `describeInputLocations` in `ShaderCompiler.cpp`: `OpVariable`
+  in the Input storage class + its `Location` decoration + the TYPE's width, so a matrix input owns one location per
+  column and the instance stream keeps 12-15). `ProgramEntry::vertexStageReads`; the binding NUMBER stays the geometry
+  channel's index, so `ContentDraw`'s `vkCmdBindVertexBuffers` is untouched. Unknown (unreadable module) means
+  "declares everything", so narrowing never happens on a guess.
+- **Deliberately not done**: removing the sky box's normal channel (a demo-content fix that would break again under a
+  pass program override) and a vsg equivalent (vsg's `ContentPipeline` builds from the geometry and has no reflection
+  path; the difference is only in the declaration, never in what is fetched - recorded in the backend guide's §3 table).
+- **Evidence**: demo 0 `[error]` / **0 `[warning]`**; `test_vk` **174** (169 + `VkVertexInputTest`'s 5), `test_vsg` 572,
+  `test_graphics` green; `scripts/vn_shader_check.sh` PASS (10 stages, `builtin_depth.frag` embedded byte-for-byte).
+- **Trap**: the SPIR-V width matters - `layout(location = 12) in mat4` produces ONE `Location` decoration, so a reader
+  that keys on the decoration alone drops columns 13-15 and instanced draws read the wrong rows. `VertexInputTest` pins it.
+
+## 2026-11-18 B8b: a resize is a session change too (found after B8)
+
+- **Symptom** (user's run): `applyPlan was refused` (a frame being recorded) right after `open_demo`; my repeated runs
+  also showed four `plan refused [unknown-input]` for the G-buffer tiles, at shutdown.
+- **Cause 1 (SDK)**: `SceneView::applySurfaceGeometry` hands the surface size to the adopted chain, and
+  `PassChain::resize` RESTATES the passes it re-lays out (gizmo + FPS HUD) - i.e. it applies a plan - without waiting for
+  the frame, which `RenderEngine::applyPlan` requires. Every host's resize could therefore be refused mid-frame.
+- **Cause 2 (demo)**: `install()` states rows (and `PassChain::build` applies the whole chain) at whatever moment it
+  runs - measured: a 208/358 ms start puts it *after* the first attach - with no wait.
+- **Cause 3 (demo)**: the G-buffer tile step re-states four rows after the chain that publishes `GBuffer` is gone (a view
+  runs its layout steps when it DROPS a chain, see `SceneView::setChain` -> `applySurfaceGeometry`).
+- **Fix**: `applySurfaceGeometry` waits (bounded 250 ms) before touching the chain; the demo's `addDemoPass` and the
+  `PassChain::build` call wait the same way; the tile step returns when `view->chain() == nullptr`.
+- **Evidence**: 18 demo runs (incl. kills at 2 s / 5 s) 0 `[warning]`; `test_graphics` **618** (new
+  `RenderEngineTest.AViewResizeWaitsForTheFrameBeforeItRestatesItsChain`, mutation-checked: removing the wait reddens it),
+  `test_vk` 174, `test_vsg` 572, `test_gui` 332 green.
+- **Trap**: `waitForFrame(timeout)` returns FALSE immediately when no frame was ever handed out (`number == 0`), so a
+  "wait then apply" that ignores the answer is a no-op on a fresh engine - harmless there, but do not read the return as
+  "a frame is in flight".
+
+## 2026-11-18 B9: a frame's host allocations, counted once
+
+- **What was wrong with the old number**: "the whole frame still makes about 97 allocations/frame" (2026-11-16, above)
+  describes the **backend's recording window**, not the frame. Quoted as "the frame" it is off by a factor of ~20.
+- **Measurement 1 (backend window, exact window, stable)**: vk's `executeFrame`, 64x64 RGBA8+D24, `unlitForwardProgram`,
+  16 steady frames after 8 warm-ups: **85 allocations / 10,612 B** for ONE drawing call, **133 / 12,424 B** for FOUR -
+  the same number on every frame, so churn, not growth. That is ~16 per further drawing call and 69 fixed; bands 66/10/8/1
+  (<64 B / <256 B / <1K / <4K). Recipe: temporarily add a counting `operator new` to a `test_vk` TU and count around
+  `executeFrame` (the probe is NOT committed: an `operator new` replacement in `test_vk` would break its TSan build, the
+  trap test_vsg already carries).
+- **Measurement 2 (whole chain frame)**: the demo's deferred path (10 passes / 10 draws, shadows + sky + HUD), counting
+  every C allocation of the process through a throwaway `LD_PRELOAD` counter and dividing the difference between
+  `VN_BENCH_FRAMES=8` and `=120` by 112 frames: **≈1966 allocations and ≈2.6 MB per frame** (one pair: 315,712 ->
+  535,872 calls, 711.7 MB -> 1,007.1 MB). Two 8-vs-40 pairs gave 2,127 and 1,911, so treat the figure as ~1.9-2.1 k.
+- **Consequence**: the design pages now state both numbers with their scopes (`vk-backend.md` 9.1 says they are not
+  interchangeable; `graphics-threading.md` 1.1 names which backend its 33-per-triangle baseline belongs to). No allocator
+  was written, and none is owed: the number is churn in short-lived vectors, and the frame still measures 8.2-8.6 ms
+  median on lavapipe. If it ever becomes the reason a frame is slow, the measurement above is the baseline to beat.
+
+## 2026-11-18 B11: the concept tables (docs only)
+
+- **Delivered**: `docs/guides/graphics.md` gained chapter §5 (`延伸阅读` is §6 now) - 5.1 translation against
+  Filament / O3DE / UE, 5.2 false friends, 5.3 the five `Frame*` values, 5.4 the six target roles, 5.5 "the engine is
+  a frame compiler, not a render graph", 5.6 `SceneView` as the per-window controller. §3.12 points at 5.3.
+- **Normative halves** (one fact one home - the guide translates, the design page states): `graphics-frame-pipeline.md`
+  2.11 (five values, one question each; `FrameQuery` is `FrameResult::query`'s TYPE, not a sixth answer, and
+  `FrameOutcome`'s `NotReady` is a precondition) and 2.12 (no render graph; `Transient` borrows the WORD, not the
+  read/write edges; `G8`); `graphics-architecture.md` 2.13 (`SceneView`; the `View` VALUE is camera snapshot +
+  device-pixel area + layer mask, one derivation long).
+- **Wording fix** (C-A3-05): `vk-backend.md` 2.6 called the ANSWER "the SDK's `TargetPlan`"; the answer is
+  `TargetDecision`, `TargetPlan.hpp` is the unit and `planTarget` is the verb.
+- **No duplication**: `.ai/memory/glossary.md` §3 keeps the code-spelling ↔ Chinese table and now points at the guide
+  chapter instead of copying it; §1 gained the five frame values (帧描述 / 帧表 / 帧结果 / 调用结果 / 帧所见).
+- **Trap for the next editor**: the guide is under `check_doc_symbols.py` - a backticked unit file name has to exist in
+  the tree, so a concept table may name types freely but must not invent a unit name (the gate said so while this entry
+  was written).
+- **Gates**: `check_ai_docs` 194 notes, `check_design_docs` 56, `check_doc_symbols` 2 docs / 138 units,
+  `check_public_docs` 974 baseline / 0 new / 0 stale - all green. Docs-only batch: no build, no test run.
+
+## 2026-11-18 B13: three plug-in-internal names, one role each
+
+- **Why**: three near-names (`Residency*` report / `ResourceTable` / `ResidenceTable`) plus one opaque one
+  (`ProgramHalves`, "half of what?"). Now `PinnedResources` (vsg, the pin-driven template), `ResidencyClaims` (vk,
+  who may build a key), `CompiledPrograms` (vsg, one pipeline layer + recorder per key).
+- **Method**: `git mv` eight files (3 headers, 2 `.cpp`, 3 test units), then ONE sed over `src tests docs .ai/design
+  .ai/research`, explicitly excluding `.ai/memory` (dated history) and `.ai/decisions` (records).
+- **The guard bit**: `ctest -R content_seam` FAILED first with "ProgramHalves.hpp is gone - update this list with it
+  (a rename must not silence the guard)" - which is exactly what `scripts/check_vsg_content_seam.cmake` is for. Update
+  that list in the same batch, plus `tests/test_vk/CMakeLists.txt` AND `tests/test_vsg/CMakeLists.txt` (the latter
+  compiles vk's ResidencyClaims.cpp too - the trap already recorded above for the old vk table's `.cpp`).
+- **What stayed, and why**: the member spelling (`halvesFor` / `halves()`) and the word *half* in prose and test names.
+  Renaming them item by item is churn and the case names quote the word (`G8`); instead each class doc says once that
+  one *half* IS one compiled program, so the type name answers the question at the call site.
+- **Records**: the three ADRs that named the old classes got a dated
+  `- **Correction (2026-11-18, audit-4 B13)**` line; two lines of this page and one ADR heading that name the file as
+  it was keep `<!-- drift-ok -->` - history is not rewritten, and `check_ai_docs --strict` is what asks for the marker.
+- **Evidence**: `test_vsg` 572, `test_vk` 174, `BackendParityTest` 13, `content_seam` + `vk_exposure` green; demo on
+  vk 79 ms / 286 ms and on vsg 113 ms / 406 ms with 0 `[error]` / 0 `[warning]`; nine gates green.
+  One WSLg flake on the first run: `VsgBackendTest.ARefilledImportedTextureIsReuploadedForTheNextFrame` failed with
+  `initialize()` false after 10.4 s (window reported 4294967295x4294967295); it passed alone and on the suite rerun -
+  the backlog T33 family, not the rename.
+
+## 2026-11-18 B14: the seam is a property, not a namespace
+
+- **Question** (third round `C-A3-10` / audit-4 `T-14`): the 8 mechanisms both backends use live in `vn::graphics`
+  beside the host's model types, so no spelling says "this is the seam". The two options were a namespace alias group
+  `vn::graphics::backend`, or the file-set gate (B3) alone.
+- **Decided: no alias group** (`ADR-2026-11-18-seam-identity-is-a-property-not-a-namespace.md`), for two measured
+  reasons: the shared surface is 25 SDK headers both backends include directly (`SEAM_SHARED_HEADERS`), so an alias
+  over the 8 mechanisms would claim a boundary at 8 of 25; and an alias gives one class two names, with
+  `graphics::backend::X` reading as a plugin namespace beside `vn::backend_vk` / `vn::backend_vsg`.
+- **What the batch actually added** is the mechanical half that was missing: `check_include_hygiene.py` now requires
+  each page that states the seam (`.ai/design/graphics-architecture.md` 2.9 and `docs/guides/graphics-backends.md` 5)
+  to name EVERY mechanism `SEAM_HEADERS` holds (`SEAM_DOCS`), so the decided list and the prose cannot drift apart.
+  Coverage only - staleness cannot be decided from prose, because both pages name mechanisms in other sections too.
+- **Mutation evidence**: un-backticking `DiagnosticDraft` in the guide reddens the gate ("the seam list holds
+  `DiagnosticDraft`, and this page no longer names it"); restoring it is green. Steady state: 0 findings / 1350 files.
+- **Trap for the next editor**: the ADR index in `.ai/README.md` is itself checked (`check_ai_docs` R2) - a backticked
+  `*.md` token there must be a note name, so an ADR bullet says "the backend guide 5", not the guide's file name.
+- **Gates**: nine green (195 notes / 56 design / 138 units / 974 entries). No C++ changed, so the build and the suites
+  were not re-run (B13's green build still describes the tree).

@@ -109,7 +109,7 @@ and every cache has a witness a test can read.**
 ### 2.6 Shape vs extent: a resize does not recompile a pipeline
 
 - **What it is**: the render pass is decided by the **shape** (colour / depth formats, sample count); images, views and framebuffers by the **extent**. `planTarget`
-  therefore answers Rebuild / ResizeInPlace / Repair (the SDK's `TargetPlan`).
+  therefore answers Rebuild / ResizeInPlace / Repair (the SDK's `TargetDecision`; `TargetPlan.hpp` is the unit, `planTarget` the verb).
 - **Why**: `G1` (shape and size are two concepts) + `G9` (a new format or sample count only extends the shape table) + `G10` (a resize pays no recompile).
 - **Boundary**: `ResizeInPlace` keeps the render pass (pipeline compatibility) and only `Rebuild` changes the shape; `TargetObjects`' three load-op variants share one
   framebuffer (the load op is not part of compatibility).
@@ -294,7 +294,7 @@ and every cache has a witness a test can read.**
 
 ### 2.17 Residency's three states: one key has one publisher (`G1` / `G4` / `G10`)
 
-- **What it is**: `internal/ResidenceTable.hpp` is a state machine with one entry per key: `Absent → Uploading(owner, token) → Resident`. `admit(key, session)` answers one of
+- **What it is**: `internal/ResidencyClaims.hpp` is a state machine with one entry per key: `Absent → Uploading(owner, token) → Resident`. `admit(key, session)` answers one of
   three things — `Use` (already published, use it), `Build` (I won the compare-and-set and hold a move-only `Claim`), `Copy(owner)` (someone else is filling it, build an
   unpublished temporary copy). `Resident` may only be declared by the token-holding owner through `Claim::publish()` ("the fill is complete and the evidence is mine"); an
   unresolved `Claim` returns the key to `Absent` when it is destroyed.
@@ -305,7 +305,7 @@ and every cache has a witness a test can read.**
   (`releaseContent`) happening mid-fill, the claim already withdrawn, and the key taken by a new claim after a release — an old token's `publish` always fails and counts in
   `Numbers::stale` ("the caller believed it owned it").
 - **Boundary**: the table **destroys nothing** and **retires nothing**: `forget` only forgets the key, and the Vulkan object still goes to `RetirementQueue` (§2.15). It is not
-  the SDK's `ResourceTable` either — that table answers "may this resident value be released now" (single-threaded, retired by pin), this one answers "who may build this key"
+  vsg's `PinnedResources` either (`vn::backend_vsg::core`) — that table answers "may this resident value be released now" (single-threaded, retired by pin), this one answers "who may build this key"
   (two drivers, up to publication only).
 - **Wiring**: `ContentCaches::ensureGeometry` asks the table first (`Use` / `Build` / `Copy`), the frame-scoped `ContentCaches::FrameBuilds` `publishAll()`s after the frame
   fence was waited on (skipping failed fills), and `releaseGeometry` also `forget`s the key; a competitor takes `Copy`, builds a **detached** temporary entry and destroys it
@@ -390,8 +390,12 @@ and every cache has a witness a test can read.**
 
 - **Behaviour**: `ShaderProgramDescription` → glslang → SPIR-V → `VkShaderModule`; the pipeline key = render-pass compatibility + state (polygon / cull / depth
   test / write / compare / blend) + variant bits; one `RenderCommand` = one `vkCmdDrawIndexed`. Instance streams are cached by buffer address + revision.
+- **The declared vertex input is the vertex stage's own set**: the geometry contributes channels, but the pipeline declares only the locations the compiled vertex
+  stage reads (read back from the module's `OpVariable`/`Location` interface, one location per matrix column, so the instance stream keeps 12-15). A geometry channel the
+  stage does not read is neither declared nor fetched - it would otherwise be a validation warning ("attribute at location N not consumed by vertex shader") and a
+  pipeline nobody wrote. When the module cannot be read the answer is "declares everything", so narrowing only ever happens on proof (`G10`).
 - **Constraints**: `C4`, `C7`, `N3`.
-- **Acceptance**: `ContentDrawTest`, `VariantTest`, `BuiltinProgramTest`, `BarrierPlanTest`.
+- **Acceptance**: `ContentDrawTest`, `VariantTest`, `VertexInputTest`, `BuiltinProgramTest`, `BarrierPlanTest`.
 - **Caveat**: `P6` (the ring only grows between frames).
 
 ### 3.1.6 F6 Fullscreen drawing
@@ -736,6 +740,13 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - **One build lesson**: after a change to an SDK vtable the **dynamic plugin must be rebuilt too** (an old `.so` makes `VsgBackendPluginTest` segfault).
 - Measured (lavapipe, a real host): 11 passes / 10 draws, steady-state median **8.24 ms**, GPU **7.15–7.74 ms**; the ring + set cache change is −10% (9.03–9.23 →
   8.16–8.30 ms).
+- **Host allocations, measured once and kept apart** (2026-11-18, Debug + lavapipe, `operator new` counted for one measurement): the backend's
+  `executeFrame` asks for **85 allocations / 10.6 KB per steady frame with one drawing call** and **133 / 12.4 KB with four** - stable frame to frame, so it is churn,
+  not growth; that is ≈**16 per further drawing call** and **69 fixed** (mostly small vectors: the pipeline key's channel/binding/attribute lists and the plan's
+  per-draw scratch). The **whole chain frame** (engine + backend, the demo's deferred path: 10 passes / 10 draws with shadows, sky and HUD) is ≈**1966 allocations /
+  ≈2.6 MB per frame** (`VN_BENCH_FRAMES` 8 vs 120 on one build, 2026-11-18). The two numbers answer different questions and are not interchangeable: the smaller one is
+  the backend's own recording window, the larger one is what a host's frame costs. GPU-side builds and uploads are **0** in steady state (`VkResidencyTest`), so none
+  of this is device memory.
 - `test_vsg` (Release) still shows `T36`'s `EachAttachmentClearsToItsOwnColour` occasionally under WSLg (window / device creation, see the backlog); the three
   "released before submission completed" defects are fixed, evidence in `../bugs/vsg-teardown-frees-in-flight-resources.md`.
 

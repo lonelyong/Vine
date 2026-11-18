@@ -1,19 +1,19 @@
-#include <vine/backend_vk/internal/ResidenceTable.hpp>
+#include <vine/backend_vk/internal/ResidencyClaims.hpp>
 
 #include <utility>
 
 VN_BACKEND_VK_NS_BEGIN
 
-ResidenceTable::Claim::Claim() noexcept = default;
+ResidencyClaims::Claim::Claim() noexcept = default;
 
-ResidenceTable::Claim::Claim(ResidenceTable& table, const Key key, const std::uint64_t token) noexcept
+ResidencyClaims::Claim::Claim(ResidencyClaims& table, const Key key, const std::uint64_t token) noexcept
   : table_(&table)
   , key_(key)
   , token_(token)
 {
 }
 
-ResidenceTable::Claim::Claim(Claim&& other) noexcept
+ResidencyClaims::Claim::Claim(Claim&& other) noexcept
   : table_(other.table_)
   , key_(other.key_)
   , token_(other.token_)
@@ -23,7 +23,7 @@ ResidenceTable::Claim::Claim(Claim&& other) noexcept
     other.token_ = 0;
 }
 
-ResidenceTable::Claim& ResidenceTable::Claim::operator=(Claim&& other) noexcept
+ResidencyClaims::Claim& ResidencyClaims::Claim::operator=(Claim&& other) noexcept
 {
     if (this != &other) {
         withdraw();
@@ -37,46 +37,46 @@ ResidenceTable::Claim& ResidenceTable::Claim::operator=(Claim&& other) noexcept
     return *this;
 }
 
-ResidenceTable::Claim::~Claim()
+ResidencyClaims::Claim::~Claim()
 {
     // PUBLISH OR WITHDRAW, AND NO THIRD PATH: an unresolved claim puts its key back to Absent, so the next driver may
     // try again instead of missing it forever (see the class note and `P1`).
     withdraw();
 }
 
-ResidenceTable::Claim::operator bool() const noexcept
+ResidencyClaims::Claim::operator bool() const noexcept
 {
     return table_ != nullptr;
 }
 
-bool ResidenceTable::Claim::publish()
+bool ResidencyClaims::Claim::publish()
 {
     if (table_ == nullptr) {
         return false;
     }
-    ResidenceTable* const table = std::exchange(table_, nullptr);
+    ResidencyClaims* const table = std::exchange(table_, nullptr);
     const Key             key   = std::exchange(key_, nullptr);
     const std::uint64_t   token = std::exchange(token_, 0);
     return table->publish(key, token);
 }
 
-void ResidenceTable::Claim::withdraw() noexcept
+void ResidencyClaims::Claim::withdraw() noexcept
 {
     if (table_ == nullptr) {
         return;
     }
-    ResidenceTable* const table = std::exchange(table_, nullptr);
+    ResidencyClaims* const table = std::exchange(table_, nullptr);
     const Key             key   = std::exchange(key_, nullptr);
     const std::uint64_t   token = std::exchange(token_, 0);
     (void)table->withdraw(key, token);
 }
 
-ResidenceTable::~ResidenceTable()
+ResidencyClaims::~ResidencyClaims()
 {
     clear();
 }
 
-ResidenceTable::Decision ResidenceTable::admit(const Key key, const FrameDriverId session)
+ResidencyClaims::Decision ResidencyClaims::admit(const Key key, const FrameDriverId session)
 {
     const std::lock_guard<std::mutex> guard(lock_);
 
@@ -104,14 +104,14 @@ ResidenceTable::Decision ResidenceTable::admit(const Key key, const FrameDriverI
     return Decision{ Decision::Kind::Build, session, Claim{ *this, key, token } };
 }
 
-ResidenceTable::State ResidenceTable::stateOf(const Key key) const
+ResidencyClaims::State ResidencyClaims::stateOf(const Key key) const
 {
     const std::lock_guard<std::mutex> guard(lock_);
     const auto                        found = entries_.find(key);
     return found != entries_.end() ? found->second.state : State::Absent;
 }
 
-bool ResidenceTable::forget(const Key key) noexcept
+bool ResidencyClaims::forget(const Key key) noexcept
 {
     const std::lock_guard<std::mutex> guard(lock_);
     const auto                        found = entries_.find(key);
@@ -126,13 +126,13 @@ bool ResidenceTable::forget(const Key key) noexcept
     return true;
 }
 
-void ResidenceTable::clear() noexcept
+void ResidencyClaims::clear() noexcept
 {
     const std::lock_guard<std::mutex> guard(lock_);
     entries_.clear();
 }
 
-ResidenceTable::Numbers ResidenceTable::numbers() const noexcept
+ResidencyClaims::Numbers ResidencyClaims::numbers() const noexcept
 {
     const std::lock_guard<std::mutex> guard(lock_);
     Numbers                           out = numbers_;
@@ -147,7 +147,7 @@ ResidenceTable::Numbers ResidenceTable::numbers() const noexcept
     return out;
 }
 
-bool ResidenceTable::publish(const Key key, const std::uint64_t token) noexcept
+bool ResidencyClaims::publish(const Key key, const std::uint64_t token) noexcept
 {
     const std::lock_guard<std::mutex> guard(lock_);
     const auto                        found = entries_.find(key);
@@ -164,7 +164,7 @@ bool ResidenceTable::publish(const Key key, const std::uint64_t token) noexcept
     return true;
 }
 
-bool ResidenceTable::withdraw(const Key key, const std::uint64_t token) noexcept
+bool ResidencyClaims::withdraw(const Key key, const std::uint64_t token) noexcept
 {
     const std::lock_guard<std::mutex> guard(lock_);
     const auto                        found = entries_.find(key);

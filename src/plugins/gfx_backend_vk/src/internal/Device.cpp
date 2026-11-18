@@ -1844,7 +1844,7 @@ PresentOutcome Device::FrameDriver::executeFrame(const FrameDescription& frame, 
         }
     }
     (void)owner.device_table.vkResetFences(owner.device, 1U, &completion);
-    // THE FILL IS PROVABLY COMPLETE (ResidenceTable rule 2): every geometry this frame uploaded becomes usable by
+    // THE FILL IS PROVABLY COMPLETE (ResidencyClaims rule 2): every geometry this frame uploaded becomes usable by
     // every driver. A frame the fence did not complete publishes nothing - its claim is withdrawn when `frame_builds`
     // dies at the end of this call, so no key is left Uploading (`P1`).
     if (completed) {
@@ -1959,7 +1959,7 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
     }
     FrameTokenCloser                        warmup_close{ owner.clock, owner.retirement, owner.clock_mutex, warmup_token };
     // THE WARM-UP'S ADMISSIONS (F4): a warm-up may BUILD a geometry too, and it publishes on its own evidence - the
-    // return of its transfer-only submit (see `ResidenceTable` rule 2 and `ContentCaches::FrameBuilds`).
+    // return of its transfer-only submit (see `ResidencyClaims` rule 2 and `ContentCaches::FrameBuilds`).
     ContentCaches::FrameBuilds warmup_builds(owner.caches, clock_window);
     const ContentTotals before = owner.contentNumbers();
     PrepareReport             report;
@@ -2176,7 +2176,7 @@ vn::graphics::PrepareReport Device::FrameDriver::prepareFrame(const FrameDescrip
         }
     }
 
-    // THE WARM-UP'S FILL IS PROVABLY COMPLETE (ResidenceTable rule 2): publish every geometry it built. A batch with
+    // THE WARM-UP'S FILL IS PROVABLY COMPLETE (ResidencyClaims rule 2): publish every geometry it built. A batch with
     // zero work submits nothing, and nothing was pending - the fills were host copies - so that path publishes too.
     if (transfers_completed) {
         warmup_builds.publishAll();
@@ -3863,12 +3863,12 @@ const TargetTable& Device::targetTable() const noexcept
     return impl->target_table;
 }
 
-ResidenceTable& Device::residence() noexcept
+ResidencyClaims& Device::residence() noexcept
 {
     return impl->caches.residence();
 }
 
-const ResidenceTable& Device::residence() const noexcept
+const ResidencyClaims& Device::residence() const noexcept
 {
     return impl->caches.residence();
 }

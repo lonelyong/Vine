@@ -83,6 +83,12 @@ removing an unregistered pass and removing an already removed pass are the same 
     `VkFormat` values nor subpass are on the seam, so a third backend need not learn Vulkan's formats and
     subpass first; `ImageLayout` is still Vulkan semantics inside the SDK, C6's "no new spellings" still applies, and retiring it belongs to
     the same gate's next step.
+    **The seam has no namespace of its own**
+    ([ADR-2026-11-18](ADR-2026-11-18-seam-identity-is-a-property-not-a-namespace.md)): it is the property "both backends
+    reach it", recorded once in `check_include_hygiene.py`'s `SEAM_HEADERS`, and the two pages that state it (this point and
+    `docs/guides/graphics-backends.md` 5) are checked against that list, so a mechanism cannot join or leave it without them
+    changing too. An alias group (`vn::graphics::backend`) was rejected: it gives one class two names, and the shared surface
+    is 25 headers, not the 8 mechanisms - a name covering 8 of 25 claims a boundary that is not there (`G1`, `G4`).
 2.11 **An extension point's cost is a table, not an adjective** (audit `A12`): saying "easy to extend" without saying "which places a new one touches" cannot be falsified.
     So every extension point has a row here, listing **today's actual files** — read this table before adding something, update it afterwards.
     Criterion: if an extension point starts needing changes to the **core model** (`FrameDescription`'s shape, the engine's compilation, scheduling), it is not an extension
@@ -97,7 +103,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | A **backend** | a new plugin (`Plugin.cpp` + `BackendFactory.cpp`), the two halves of `RenderBackend`, its own `test_*`, a `check_*_exposure` gate, `RenderBackendRegistry` self-registration | about 6 kinds of file |
 
 2.12 **`Content*` names only the content model and identity** (naming, `G12`): the `Content*` prefix belongs to **content objects themselves** — `ContentId` /
-    `ContentRef` / `ContentRegistry` / `ContentDeclarations` / `ContentStore` (the device's "identity + row" table). GPU objects compiled or cached from content are named by **what they are**, without the `Content` prefix: `ProgramHalves` (the compiled half of each
+    `ContentRef` / `ContentRegistry` / `ContentDeclarations` / `ContentStore` (the device's "identity + row" table). GPU objects compiled or cached from content are named by **what they are**, without the `Content` prefix: `CompiledPrograms` (the compiled half of each
     (program, revision, layout, variant)), `BindingSets` (the descriptor sets built from declarations),
     `PushRange` (fills the members of one declared push range by name).
     Why: a prefix used on "descriptor set", "push constants" and "compiled half" stops saying anything (`G12`), and `ContentPush` reads
@@ -119,7 +125,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | Window target | `WindowTarget` | `WindowTarget` |
 | Window / offscreen session | no separate type (the device's own frame machinery) | `WindowSession` / `OffscreenSession` |
 | Content facts and rows | `ContentCaches` (rows and command plans included) | `ContentStore` + `ContentFacts` |
-| Compiled half (per (program, rev, layout, variant)) | no separate type (the pipeline key in `ContentDraw`) | `ProgramHalves` |
+| Compiled half (per (program, rev, layout, variant)) | no separate type (the pipeline key in `ContentDraw`) | `CompiledPrograms` |
 | Declared descriptor sets | `ContentCaches`'s set cache | `BindingSets` |
 | Readback | `ReadbackStaging` | `HostReadback` |
 | Lights | SDK `LightSet` | SDK `LightSet` |
@@ -127,6 +133,14 @@ removing an unregistered pass and removing an already removed pass are the same 
     The `Content*` names that stay differ between the two sides (`ContentCaches` / `ContentStore` / `ContentFacts`) and that is not drift: they all belong to
     "the content model and identity" (2.12's first sentence), and one backend keeps rows and command plans in one object while the other separates them —
     the name says that.
+
+2.13 **`SceneView` is a per-window controller, not a `View` value** (naming, `G12`): the class owns one window's view state - camera, content scene,
+    manipulator, input, the surface size it follows and the `PassChain` it ADOPTS - and answers "which pass draws me" for the area that presents it.
+    Why: the name states half of what the object is (it is also the chain's adopter and the surface layout's host), and a reader arriving from Filament
+    reads `View` as the per-frame camera + viewport value. Boundary: the `View` VALUE in a frame description is the camera snapshot + device-pixel area +
+    layer mask and lives for one derivation; `SceneView` lives as long as its window, owns no passes (the chain does), and does not decide presentation -
+    that is the AREA's declaration (`RenderArea::present`), never the view's guess. Renaming it is a public-API batch, not a doc edit (the reader-facing
+    table is `docs/guides/graphics.md` §5.6).
 
 ## 3. Features
 

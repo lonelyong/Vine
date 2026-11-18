@@ -1,6 +1,6 @@
 # Vine graphics 模块：架构与使用
 
-> **状态**：现行 ｜ **最后核对**：2026-11-17
+> **状态**：现行 ｜ **最后核对**：2026-11-18
 
 graphics 模块是 Vine 的**场景图 + 渲染资源 + 渲染引擎**。它自己**不碰 GPU**：它驱动一个
 `RenderBackend`，具体后端是插件。今天有两个：`gfx_backend_vk`（名字 `"vk"`，直连 Vulkan，
@@ -716,6 +716,7 @@ layout(push_constant) uniform PC { /* 顶点阶段 128 字节 */ };
 | 内建前向着色（引擎默认内容程序，`forwardProgram()`；同一段文本 + 一个 `#define` 出 `flatForwardProgram()` / `unlitForwardProgram()` / `normalsForwardProgram()` 三种查看模式，见 `vn::graphics::ShadingMode`，线框 = 无光照 + `RenderPass::setPolygonModeOverride(Line)`） | `src/viz/graphics/shaders/builtin_forward.*` |
 | 延迟管线的 G-buffer 几何 / 全屏光照 | `src/viz/graphics/shaders/builtin_gbuffer.*` / `builtin_deferred_lighting.frag` |
 | 天空盒（`skyboxProgram()`，无光照 cube map 方向采样） | `src/viz/graphics/shaders/builtin_skybox.*` |
+| 纯深度（`depthOnlyProgram()`：内容自己的顶点段 + 一个**不写任何输出**的片元段；阴影 pass 用它，深度图没有颜色附件） | `src/viz/graphics/shaders/builtin_depth.frag` |
 | 全屏三角形顶点段 / 纯拷贝（`fullscreenVertexProgram()` / `screenCopyProgram()`） | `src/viz/graphics/shaders/builtin_fullscreen.vert` / `builtin_screen_copy.frag` |
 
 **命名规则**：`builtin_<角色>.<阶段>`，例如 `builtin_deferred_lighting.frag`。`builtin_` 前缀是"这段文本归引擎"
@@ -973,6 +974,7 @@ frame table: 11 pass(es)
   没跑的 pass 是 0。
 - 自 M7 起这张表是**编译出来的那一帧**（`RenderEngine::compileFrame`）：帧循环执行的就是它，所以"表里写的"与"这一帧画的"
   是同一个答案，而不是事后的观察。
+- 五个 `Frame*` 值各自回答什么问题（这张表 / 喂后端的值 / 调用结果 / 帧结果 / 帧所见），见 §5.3。
 - demo 有现成开关：`VN_FRAME_PLAN=1` 会在 attach 那一帧之后把它打进日志（见 §4.2）。
 
 ### 3.13 一条描述符声明一个 pass：`PassDesc`（含 transient 目标）
@@ -1543,7 +1545,100 @@ ctest --test-dir build                # CTest 视角（32 个套件；见下面�
 脚本拿不到 `QFileDialog`）按约定加
 `--gtest_filter=-UserIOTest.PickingFilesFillsTheLineWithoutSubmitting`：`test_gui` 259 条全绿。
 
-## 5. 延伸阅读
+## 5. 词汇：同一个东西，各家怎么叫
+
+这一章只为一件事故：读代码时**词对不上**。Vine 有几个词与 Filament / O3DE / UE 同形却指向别的东西，也有几个
+词是对的、只是名字比业界少说了一半。表里"没有对应"就写没有——不硬凑一个近似词，那样只是把对不上的地方藏起来。
+英文拼写与旧中文页的对照在 [`.ai/memory/glossary.md`](../../.ai/memory/glossary.md)。
+
+### 5.1 译名表
+
+| 概念 | Vine | Filament | O3DE（Atom / RPI） | UE |
+| --- | --- | --- | --- | --- |
+| GPU 设备、队列的所有者 | `RenderDevice`（后端实现的设备接口） | `Engine` | `RHI::Device` | `FDynamicRHI` 及其 RHI 模块 |
+| 一扇窗口的帧循环 | `RenderEngine` | `Renderer` | `RPI::Scene` 的帧（`OnFrameUpdate` / `Render`） | `FSceneViewport` 的宿主，没有单一名词 |
+| 作者树 | `Scene` | `Scene`（实体部分） | `RPI::Scene` 的实体部分 | `UWorld` |
+| 相机 + 画面区域 | `View`（一帧内的值）/ `SceneView`（窗口控制器，见 §5.6） | `View` | `RPI::View` | `FSceneView` |
+| 一条 pass 的声明 | `PassDesc`（注册后的对象是 `RenderPass`） | 没有（`Renderer` 自己决定 pass） | `RPI::Pass` | RDG 的 pass |
+| 一个可画项 | `RenderCommand` | `Renderable` / `RenderableManager` | `RPI::DrawItem` | `FMeshBatch` |
+| 一次绘制调用 | `DrawDescription` | 没有同名的值 | `RPI::DrawPacket` | `FMeshDrawCommand` |
+| 编译后的整帧 | `FrameDescription`（喂后端）/ `FrameTable`（给人看，见 §5.3） | 没有 | pass 树 + `RPI::FrameGraph` | `FRDGBuilder` 建出来的图 |
+| 帧结束的答案 | `FrameResult` | 没有一一对应 | 没有一一对应 | 没有一一对应 |
+
+最后一行本来是"帧结束的答案"，它**没有对应**——而这正是信息：业界把这一层切成了更多块，Vine 只有一扇窗口一份
+（一区一引擎，见 [`.ai/decisions/ADR-2026-11-13-one-engine-one-surface.md`](../../.ai/decisions/ADR-2026-11-13-one-engine-one-surface.md)）。
+
+### 5.2 假朋友：不是那个
+
+| 词 | 在这里是 | 不是 |
+| --- | --- | --- |
+| `RenderEngine` | 一扇窗口的帧循环 + 编译 | Filament / UE 的 `Engine`（那是设备所有者——在这里叫 `RenderDevice`） |
+| `RenderPass` | 引擎层的一个渲染**阶段**（OSG render stage / VSG view + target + clear policy 那一类；`RenderPass.hpp` 的类注就写了这句） | 不是 `VkRenderPass`；同一个 framebuffer 上的几条 pass 录进后端的**一个** render pass |
+| `RenderPassKey` / `RenderPassCompatibility` | 才是"Vulkan 形状"的那两个词：兼容性 = 管道 key 的 render-pass 那一半 | 不是引擎的 pass |
+| `RenderCommand` | 场景里**一个可画的项**（一个 drawable） | 不是 command buffer，也不是"一次绘制调用" |
+| `DrawDescription` | **一次绘制调用** | 不是一条 GPU 命令；真正把命令记下去的是后端的录制 |
+| command buffer | 后端内部的录制对象 | 前端（SDK）没有这个名字 |
+| `target` | 画到哪：`RenderTarget` = 宿主的画布，`Target` = pass 的声明，`TargetDecision` = 该做什么（见 §5.4） | 不是 `GPUTexture`，也不是 `VkFramebuffer`（那两个在 `TargetObjects` 里） |
+| `residency` | GPU 对象存不存在（`Use` / `Build` / `Copy` 三态） | 不是内存压力或驱逐策略 |
+| `content` | 引擎持有的场景 / 材质 / 几何 / 程序 / 光源 | 不是 GPU 上的字节 |
+
+`RenderCommand` 与 `DrawDescription` 这对名字**正好与业界相反**（业界按"项 / 调用"的顺序命名 DrawItem / DrawPacket）：
+这是已知的读者成本，改名属于一次公开 API 批次，不在这一章里动。
+
+### 5.3 五个帧值：一句问题，一个答案
+
+| 值 | 回答的问题 | 生命周期 | 谁读 |
+| --- | --- | --- | --- |
+| `FrameDescription` | **这一帧是什么**：每条启用 pass 的身份 / order / 解析后的输入，加上 pass 自己描述的绘制 | 每帧重建；后端用完即弃 | `RenderFrameExecutor::executeFrame`（整帧传参）；宿主可读 `frameDescription()` |
+| `FrameTable` | **这一帧由哪些 pass 组成**，成行 | 每帧重建，是值 | `frameTable()`、日志、HUD（§3.12） |
+| `FrameOutcome` | **这一次 `frame()` 做了什么** | 一次调用 | 调用点 |
+| `FrameResult` | **上一帧回答了什么**：图、它看到的世界、花了多少 | 每答完一帧换一次 | `frameResult()` |
+| `FrameQuery` | **那张图看到的是哪个世界**：画的是哪份快照、用哪个 `View` | `FrameResult::query` 这个字段 | 拾取 / 锚点 / 对准（`FrameResult::query`） |
+
+`FrameQuery` 不是第六个答案：它是 `FrameResult::query` 的类型，因为"哪份快照 + 哪个视图"永远一起被问，
+分开放就会有一半过期。`FrameOutcome` 的 `NotReady` 也不是第三种结局——它是"这次调用什么都没驱动"，
+理由在 `EngineNotReady`（和 `prepare()` 共用同一个原因枚举）。
+
+### 5.4 目标：六个角色，另加后端内部三个
+
+| 角色 | 类型 | 谁拥有 | 一句话 |
+| --- | --- | --- | --- |
+| 宿主的画布 | `RenderTarget` | 宿主 | 一块离屏画布（颜色 / 深度附件），跨帧存在；"画到哪里"的身份就是它的地址 |
+| 窗口的出口 | `WindowPresentTarget`（`PresentTarget` 的一种） | 设备发、`RenderArea` 持有 | swapchain + present；**不是画布**。平台重建窗口时它是被"移动"而不是重建，所以管道都还在 |
+| pass 要画到哪 | `Target`（`Window` / `Explicit` / `Transient`） | pass 的声明（`PassDesc::target`） | 一份值，三种形状互斥；`Transient` 只说要什么，不说谁来建 |
+| 兼容性与想要的尺寸 | `TargetShape` / `TargetDesc` | 值 | 重建**管道**看形状（格式 / 采样 / 通道结构），重建**图像**看尺寸 |
+| 后端手上有什么 | `TargetInstance` | 后端 | 现在这组附件是按哪个 `TargetDesc` 建的、还能用么 |
+| 该做什么 | `TargetDecision`（`planTarget()` 的返回） | 后端 | `None` / `Repair`（+ 理由）/ `ResizeInPlace` / `Rebuild` |
+
+名字的三处别混：`TargetPlan.hpp` 是这块机制的**家**，`planTarget()` 是**动词**，`TargetDecision` 才是**结论**——
+别用"`TargetPlan`"当"结论"说。宿主看不到的还有三个同族词：`TargetObjects`（图像 / 视图 / framebuffer，也就是
+上一节说的"GPU 对象"）、`TargetTable`（一张表答 map / 形状 / 认领），以及各后端自己的 `WindowTarget`
+（`WindowPresentTarget` 的实现）。
+
+### 5.5 引擎是 frame compiler，不是 render graph
+
+- **它做什么**：pass 声明 `(目标, 状态, 输入名)`；编译解析输入名、排序、按名字 + 形状分配 transient，产出一个
+  `FrameDescription`；后端照着这个值录。**没有**那一层"从资源依赖推出 pass 顺序、自动插屏障、别名内存"的东西。
+- **为什么不做**：今天的消费者不需要它——一条链就那么几条 pass，顺序由配方写明（§3.10），transient 靠声明共享
+  （§3.13），屏障是后端自己的一张表。render graph 的机制（隐式资源生命周期、自动屏障、别名分配）会成为**第二个**
+  决定"这帧长什么样"的地方，而没有任何证人要求它；同步本来就归后端。
+- **借词不借语义**：`Transient` 用了 render graph 的词，但它只说"这条 pass 要一块什么形状的画布"，编译按
+  名字 + 形状共享，**不表达读写依赖**；接线就是输入名系统本身（§3.7 / §3.13）。所以这里的 "pass" / "target" /
+  "transient" 比 UE 的 RDG、Frostbite 的 FrameGraph、O3DE 的 pass 树**少做很多事**——这是有意的。
+- **什么时候重开**：真的出现"资源生命周期需要推导而不是声明"的消费者（pass 多到手写顺序与共享不再可读）时，
+  先写 ADR，再动手。
+
+### 5.6 `SceneView` 是什么：每窗口的控制器
+
+- **它是什么**：一扇窗口的那份视图状态 + 它采纳的配方——相机、内容场景、导航器、输入、跟随的表面尺寸，
+  以及它 `setChain()` 采纳的 `PassChain`；它回答"哪条 pass 画我"（转发表面的问题）。
+- **它不是什么**：不是帧描述里的 `View` **值**（那个是相机快照 + 设备像素区域 + 层掩码，一帧内有效）；
+  不是引擎（引擎不认识相机与内容）；不是 pass 的拥有者（pass 归链）；也不决定"谁上屏"——那是表面
+  （`RenderArea::present`）的声明，不是视图的猜测。
+- **几个视图可以借同一个引擎，但一个区域只画一个视图**（一区一图）。要一个窗口里并排两幅画面，是宿主自己的布局：
+  自己的 pass + 自己的 `PassDesc::viewport` + 清屏策略，引擎不管布局。
+
+## 6. 延伸阅读
 
 | 内容 | 位置 |
 | --- | --- |

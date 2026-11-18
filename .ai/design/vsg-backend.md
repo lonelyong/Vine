@@ -41,7 +41,7 @@ cache.
 2.6 **Reverse-Z + CW front faces**: Vulkan's NDC z is depth as it is; a world CCW triangle is CW in the framebuffer.
 2.7 **Threefold evidence**: validation layer / counters / pixels; without all three it is not "passing".
 2.8 **A physical boundary**: the SDK's `graphics/` does not include vsg; only the plugin's `internal/` includes both.
-**Inside the plugin there is a narrower seam**: the content-bookkeeping half (`ContentFacts` / `ContentStore` / `ProgramHalves` / `ContentSources` / `PushRange`) may
+**Inside the plugin there is a narrower seam**: the content-bookkeeping half (`ContentFacts` / `ContentStore` / `CompiledPrograms` / `ContentSources` / `PushRange`) may
 not name `::vsg::`; the device is reached only through the adapter layer (`StreamUploads` / `StateCommands` / `ContentPipeline` / `ContentDraw`). Why: 59% of the
 plugin's 23.5k lines are content bookkeeping, and that half measures 0 vsg references — it is clean, so a second backend could reuse it directly; once vsg types leak into
 it, nothing is left but a rewrite. Checkable: `scripts/check_vsg_content_seam.cmake`, run by CTest's `content_seam` case (not by memory). It satisfies `G2` / `G9`; the
@@ -54,7 +54,7 @@ cost is one more layer of pure values in the adapter (which is the shape it alre
 | Layer | Location | Contents |
 |---|---|---|
 | SDK shared mechanisms (both backends use them) | `src/viz/graphics/sdk/vine/graphics/` | `FrameGate` / `DeviceClock` / `FrameTimeline` / `RetirementQueue` / `Readback` / `DrawState` / `TargetPlan` / `DiagnosticDraft` |
-| This backend's portable half (moved out of the SDK by ADR-2026-11-16 §2, now in `vn::backend_vsg::core`) | `include/vine/backend_vsg/internal/` + `src/internal/` | `FrameRecorder` / `FrameCompiler` / `FrameArena` / `FrameRing` / `ClearPlan` / `VariantPool` / `StateRegistry` / `MaterialArena` / `Streams` / `SlotProbe` / `Observe` / `PhaseTable` / `PixelProbe` / `DepthProbe` / `SessionMove` / `AllocationGate` / `ResourceTable` |
+| This backend's portable half (moved out of the SDK by ADR-2026-11-16 §2, now in `vn::backend_vsg::core`) | `include/vine/backend_vsg/internal/` + `src/internal/` | `FrameRecorder` / `FrameCompiler` / `FrameArena` / `FrameRing` / `ClearPlan` / `VariantPool` / `StateRegistry` / `MaterialArena` / `Streams` / `SlotProbe` / `Observe` / `PhaseTable` / `PixelProbe` / `DepthProbe` / `SessionMove` / `AllocationGate` / `PinnedResources` |
 | Plugin internals | `src/plugins/gfx_backend_vsg/src/internal/` | `VsgBackend` (the facade) / `VsgExecutor` / `api::WindowSession` / `api::OffscreenSession` / `WindowTarget` / `TargetObjects` / `TargetTable` / `ContentStore` / `StreamUploads` / `ContentPipeline` / `ContentDraw` / `BlockStorage` / `BlockDescriptors` / `StateCommands` / `MaterialImages` |
 | Plugin support | `src/plugins/gfx_backend_vsg/src/support/` | `VsgHostWindow` / `RenderStateMapper` / `VsgDynamicState` / `VsgSceneRules` / the entry points |
 | Plugin shell | `src/plugins/gfx_backend_vsg/src/shell/` | the plugin registration, `RenderBackendFactory` |
@@ -165,7 +165,7 @@ swapBuffers()     FrameCompiler compiles → VsgExecutor records → submit → 
 - Boundary (where the cost grows):
   - **With the number of resources**: the per-command constants (3 `track`s, 1 `updateMaterial`, 3 bisections, one `StreamKey` hash per pass, one
     `(Texture*, revision)` hash per texture slot, one `VariantPool` query), all O(1) / O(log n).
-  - **With the number of resource kinds**: the halves and the descriptor sets are each a `ResourceTable` — a lookup is a hash and a sweep is one pin question per resident
+  - **With the number of resource kinds**: the halves and the descriptor sets are each a `PinnedResources` — a lookup is a hash and a sweep is one pin question per resident
     entry (`findProgram`'s bisection + `declaresLayout` / `declaresTexture` hashes), and the counterfactual "walk the geometry facts per half, per pass" scan is gone
     (ADR-2026-11-10 step 5). `ContentStore` always publishes the layout declaration index; hand-built facts that publish nothing fall back to the scan under the optional-index
     rule. Dozens of combinations and hundreds are the same order of magnitude; what really gets heavier is still the two items below.
@@ -334,7 +334,7 @@ The traps are grouped by risk area into nine groups; P1–P82 with their symptom
 | T2 | `scripts/vsg_rewrite_gate.sh`: 0 VUID / 0 SYNC-HAZARD, the phase lines closed, and the application's pixel percentage. |
 | T3 | `check_ai_docs.py --strict` / `check_doc_symbols.py` / `check_include_hygiene.py` / `check_export_annotations.py` / `check_diagnostic_formats.py` / `check_public_docs.py`. |
 | T4 | upload staging keeps a reusable block (F16.2): `UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack` — the frame does not idle; every surviving block is a multiple of `minimumStagingBufferSize` (the reusable blocks are kept) and a one-off block above the minimum is given back; redrawing the same content uploads nothing; a new stream uploads again and falls back to the minimum. `FrameUploadsTest.TheReportAnswersWhatThisFrameUploadedAndReleased` — `FrameReport::uploads` is this frame's delta (the first frame uploads > 0, the steady state is all 0, a buffer revision change re-uploads once, and content leaving reports a release). `OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands` and `OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting` are unchanged. |
-| T5 | the cost of an edit and the steady state (§2.10): `VsgBackendTest.MeasureWhatEachKindOfEditCostsPerFrame` — prints µs per frame and the `builds` / `uploads` / `created` deltas; asserts that the steady state is all 0, a material value change is 0 uploads and 0 compiles, a geometry revision is ≥1 upload and 0 compiles, and a program or topology change is one compile each. The steady-state pins alongside it: `ContentStoreTest.ASteadyFrameBuildsNothing`, `CoreMaterialArenaTest.ASteadyFrameWritesNothing`, and the `ProgramHalves` / `BindingSets` pin cases. The allocation ceiling: `CoreAllocationGateTest.TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPass` (12 per pass, about 33 per recorded triangle). These recipes need a real window and `GTEST_SKIP` on a headless machine. |
+| T5 | the cost of an edit and the steady state (§2.10): `VsgBackendTest.MeasureWhatEachKindOfEditCostsPerFrame` — prints µs per frame and the `builds` / `uploads` / `created` deltas; asserts that the steady state is all 0, a material value change is 0 uploads and 0 compiles, a geometry revision is ≥1 upload and 0 compiles, and a program or topology change is one compile each. The steady-state pins alongside it: `ContentStoreTest.ASteadyFrameBuildsNothing`, `CoreMaterialArenaTest.ASteadyFrameWritesNothing`, and the `CompiledPrograms` / `BindingSets` pin cases. The allocation ceiling: `CoreAllocationGateTest.TheRecordPathsBookkeepingCostsAFewSmallVectorsPerPass` (12 per pass, about 33 per recorded triangle). These recipes need a real window and `GTEST_SKIP` on a headless machine. |
 
 ## 9. Status and Evolution
 

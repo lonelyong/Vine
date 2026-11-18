@@ -8,7 +8,7 @@ set(SRC_FILE_LIST
 	BackendCoreTest.cpp
 	BackendEvidenceTest.cpp
 	ContentCoreTest.cpp
-	ResourceTableTest.cpp
+	PinnedResourcesTest.cpp
 	ClearPlanTest.cpp
 	FrameRecorderTest.cpp
 	FrameCompilerTest.cpp
@@ -39,7 +39,7 @@ set(SRC_FILE_LIST
 	ProgramVariantTest.cpp
 	ContentStoreTest.cpp
 	ExecutorSubmissionTest.cpp
-	ProgramHalvesTest.cpp
+	CompiledProgramsTest.cpp
 	ContentDrawTest.cpp
 	StreamRevisionTest.cpp
 	DevicePhaseTest.cpp
@@ -132,7 +132,7 @@ target_sources(${TEST_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/PipelineCacheFile.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ProgramVariant.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ReadbackStaging.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ResidenceTable.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ResidencyClaims.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ShaderCompiler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/TargetObjects.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/TargetTable.cpp
@@ -219,7 +219,7 @@ target_sources(${TEST_NAME} PRIVATE
 
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/BindingSets.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ContentAssembly.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ProgramHalves.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/CompiledPrograms.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/DrawNeeds.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ContentImages.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vsg/src/internal/ContentPass.cpp

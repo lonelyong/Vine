@@ -53,7 +53,7 @@
 #include <vine/backend_vsg/internal/ContentAssembly.hpp>
 #include <vine/backend_vsg/internal/ContentDraw.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
-#include <vine/backend_vsg/internal/ProgramHalves.hpp>
+#include <vine/backend_vsg/internal/CompiledPrograms.hpp>
 #include <vine/backend_vsg/internal/ContentImages.hpp>
 #include <vine/backend_vsg/internal/ContentPass.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
@@ -109,7 +109,7 @@ using vn::backend_vsg::ChannelFacts;
 using vn::backend_vsg::ContentAssembly;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentFacts;
-using vn::backend_vsg::ProgramHalves;
+using vn::backend_vsg::CompiledPrograms;
 using vn::backend_vsg::ContentPass;
 using vn::backend_vsg::ContentPipeline;
 using vn::backend_vsg::BindingSets;
@@ -3231,7 +3231,7 @@ TEST(ContentPassTest, TheDeclaredShadowMapBindingCarriesTheMapThePassResolved)
                                   shadow_layer.get(),
                                   &shadow_draws }
     };
-    // The episode state belongs to the CALLER here, exactly as api/ProgramHalves' entries carry it: it must
+    // The episode state belongs to the CALLER here, exactly as api/CompiledPrograms' entries carry it: it must
     // survive the recorder, which the frame path builds per frame.
     ReportOnce                      plain_shadow_episode;
     const ContentPass::Scope::Entry unshadowed_halves[]{
@@ -5491,11 +5491,11 @@ TEST(ContentPassTest, TheStoresTablesDrawTheFrameThePlanDescribes)
     textured_variant.textured = true;
     const vn::backend_vsg::ProgramVariant plain_variant;
     // THE HALVES ARE PRODUCED the way a host produces them: the pass' tuples come from the store's tables
-    // and the layers are compiled from the entries they name (see api/ProgramHalves) - no host loop, no
+    // and the layers are compiled from the entries they name (see api/CompiledPrograms) - no host loop, no
     // layer built by hand. The entries are in first-seen order, so the plain command (collected first) is
     // served first.
     VariantPool   pool;
-    ProgramHalves halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    CompiledPrograms halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
     const auto    entries = halves.halvesFor(frame.passes[0], facts, timeline, retirement);
     ASSERT_EQ(entries.size(), 2U) << "one program, two texts: the pass is served two halves";
     ASSERT_EQ(halves.halves(), 2U);
@@ -5712,7 +5712,7 @@ TEST(ContentPassTest, TwoTexturedDrawablesOfOneVariantSampleTheirOwnMaps)
     const ContentFacts&                    facts = store.tablesFor(frame, timeline);
 
     VariantPool   pool;
-    ProgramHalves halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    CompiledPrograms halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
     const auto    entries = halves.halvesFor(frame.passes[0], facts, timeline, retirement);
     ASSERT_EQ(entries.size(), 1U) << "both drawables are the same variant: ONE half serves both";
     ASSERT_EQ(store.programEntries(), 1U) << "one text, one entry";
@@ -5939,7 +5939,7 @@ TEST(ContentPassTest, TheProducedSetsGiveEachTexturedDrawableItsOwnMap)
     const ContentFacts&                    facts = store.tablesFor(frame, timeline);
 
     VariantPool   pool;
-    ProgramHalves halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
+    CompiledPrograms halves(pool, vn::backend_vsg::detail::fetchDynamicStateEntryPoints(created.device->vk(), created.instance->vk()));
     const auto    entries = halves.halvesFor(frame.passes[0], facts, timeline, retirement);
     ASSERT_EQ(entries.size(), 1U) << "both drawables are the same variant: ONE half serves both";
     ASSERT_EQ(store.programEntries(), 1U) << "one text, one entry";

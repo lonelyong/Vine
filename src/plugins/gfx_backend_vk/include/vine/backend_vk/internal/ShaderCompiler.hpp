@@ -2,6 +2,7 @@
 
 #include <vine/backend_vk/backend_vk_global.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -24,6 +25,27 @@ VN_BACKEND_VK_NS_BEGIN
 struct SpirvModule {
     /// The SPIR-V words, as `vkCreateShaderModule` consumes them (empty when nothing was compiled).
     std::vector<std::uint32_t> words;
+
+    /// Every vertex-input location the module DECLARES, sorted and unique (empty for a stage with no inputs).
+    std::vector<std::uint32_t> input_locations;
+
+    /// Whether @c input_locations is the module's own answer; false when the words could not be read as SPIR-V.
+    bool input_locations_known{ false };
+
+    /**
+     * @brief Answers whether the stage declares @p location as a vertex input.
+     *
+     * @details
+     * - UNKNOWN MEANS YES: a module that could not be read is treated as declaring everything, so a caller that
+     *   narrows a pipeline by this answer narrows only when narrowing is proven safe.
+     *
+     * @param location The location to ask about.
+     * @return true when the stage reads that location, or when the answer is unknown.
+     */
+    [[nodiscard]] bool declaresInput(std::uint32_t location) const
+    {
+        return !input_locations_known || std::binary_search(input_locations.begin(), input_locations.end(), location);
+    }
 
     /**
      * @brief Answers whether the module holds no code.

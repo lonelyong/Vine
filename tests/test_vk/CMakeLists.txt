@@ -21,7 +21,7 @@ add_executable(${TEST_NAME}
         PrepareUploadTest.cpp
         ProbeTest.cpp
         ResidencyTest.cpp
-        ResidenceTableTest.cpp
+        ResidencyClaimsTest.cpp
         ResidenceWireTest.cpp
         RingTest.cpp
         SessionShapeTest.cpp
@@ -30,6 +30,7 @@ add_executable(${TEST_NAME}
         TargetClaimFrameTest.cpp
         TargetTableTest.cpp
         VariantTest.cpp
+        VertexInputTest.cpp
         WindowPresentTest.cpp
 
         # The SDK backend seam's device-free facts (the frame gate among them): ONE source compiled into every
@@ -47,7 +48,7 @@ add_executable(${TEST_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/PipelineCacheFile.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ProgramVariant.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ReadbackStaging.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ResidenceTable.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ResidencyClaims.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/ShaderCompiler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/TargetObjects.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/plugins/gfx_backend_vk/src/internal/TargetTable.cpp

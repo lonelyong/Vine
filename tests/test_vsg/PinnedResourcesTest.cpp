@@ -1,7 +1,7 @@
 /**
  * @brief The residency table's own contract: build on miss, keep while pinned, park on departure.
  *
- * `ResourceTable` is the one shape every residency kind migrates to (see the ADR's migration section). Its
+ * `PinnedResources` is the one shape every residency kind migrates to (see the ADR's migration section). Its
  * contract is small enough to be pinned without a device, and it has three facts a caller depends on:
  *
  *   * a HIT builds nothing and returns the same value - the steady frame pays one lookup;
@@ -22,12 +22,12 @@
 #include <utility>
 
 #include <vine/graphics/FrameTimeline.hpp>
-#include <vine/backend_vsg/internal/ResourceTable.hpp>
+#include <vine/backend_vsg/internal/PinnedResources.hpp>
 #include <vine/graphics/RetirementQueue.hpp>
 
 using vn::backend_vsg::core::forgetUnpinned;
 using vn::graphics::FrameTimeline;
-using vn::backend_vsg::core::ResourceTable;
+using vn::backend_vsg::core::PinnedResources;
 using vn::graphics::RetirementQueue;
 
 namespace
@@ -80,9 +80,9 @@ void letParksComeDue(FrameTimeline& timeline, RetirementQueue& retirement)
 
 } // namespace
 
-TEST(ResourceTableTest, ASecondAcquireOfOneKeyBuildsNothing)
+TEST(PinnedResourcesTest, ASecondAcquireOfOneKeyBuildsNothing)
 {
-    ResourceTable<int, Counted> table;
+    PinnedResources<int, Counted> table;
 
     const auto first  = table.acquire(7, []() -> std::optional<Counted> { return Counted{ 7 }; });
     const auto second = table.acquire(7, []() -> std::optional<Counted> { return Counted{ 70 }; });
@@ -97,9 +97,9 @@ TEST(ResourceTableTest, ASecondAcquireOfOneKeyBuildsNothing)
     EXPECT_EQ(table.live(), 1U);
 }
 
-TEST(ResourceTableTest, ARefusedBuildChangesNothing)
+TEST(PinnedResourcesTest, ARefusedBuildChangesNothing)
 {
-    ResourceTable<int, Counted> table;
+    PinnedResources<int, Counted> table;
 
     const auto refused = table.acquire(1, []() -> std::optional<Counted> { return std::nullopt; });
 
@@ -110,9 +110,9 @@ TEST(ResourceTableTest, ARefusedBuildChangesNothing)
     EXPECT_EQ(table.retired(), 0U) << "and it is not a departure either";
 }
 
-TEST(ResourceTableTest, ADepartureIsParkedAndOnlyTheParkDestroysIt)
+TEST(PinnedResourcesTest, ADepartureIsParkedAndOnlyTheParkDestroysIt)
 {
-    ResourceTable<int, Counted> table;
+    PinnedResources<int, Counted> table;
     (void)table.acquire(3, []() -> std::optional<Counted> { return Counted{ 3 }; });
     const int alive_before = Counted::alive;
 
@@ -128,9 +128,9 @@ TEST(ResourceTableTest, ADepartureIsParkedAndOnlyTheParkDestroysIt)
     EXPECT_EQ(Counted::alive, alive_before - 1) << "the park came due and the value died then";
 }
 
-TEST(ResourceTableTest, AnEntryThatCannotBeParkedIsRetainedAndRetried)
+TEST(PinnedResourcesTest, AnEntryThatCannotBeParkedIsRetainedAndRetried)
 {
-    ResourceTable<int, Counted> table;
+    PinnedResources<int, Counted> table;
     (void)table.acquire(4, []() -> std::optional<Counted> { return Counted{ 4 }; });
 
     FrameTimeline   timeline;
@@ -146,9 +146,9 @@ TEST(ResourceTableTest, AnEntryThatCannotBeParkedIsRetainedAndRetried)
     EXPECT_EQ(table.retired(), 1U);
 }
 
-TEST(ResourceTableTest, AKeyBuiltAgainWhileItsOldValueIsParkedGetsANewGeneration)
+TEST(PinnedResourcesTest, AKeyBuiltAgainWhileItsOldValueIsParkedGetsANewGeneration)
 {
-    ResourceTable<int, Counted> table;
+    PinnedResources<int, Counted> table;
 
     const auto first = table.acquire(9, []() -> std::optional<Counted> { return Counted{ 9 }; });
     ASSERT_TRUE(first.built);
@@ -170,9 +170,9 @@ TEST(ResourceTableTest, AKeyBuiltAgainWhileItsOldValueIsParkedGetsANewGeneration
     EXPECT_EQ(table.live(), 1U) << "the current one is untouched";
 }
 
-TEST(ResourceTableTest, TheVisitSeesEveryResidentValueAndCanChangeItsBody)
+TEST(PinnedResourcesTest, TheVisitSeesEveryResidentValueAndCanChangeItsBody)
 {
-    ResourceTable<int, Counted> table;
+    PinnedResources<int, Counted> table;
     (void)table.acquire(1, []() -> std::optional<Counted> { return Counted{ 1 }; });
     (void)table.acquire(2, []() -> std::optional<Counted> { return Counted{ 2 }; });
 
@@ -187,13 +187,13 @@ TEST(ResourceTableTest, TheVisitSeesEveryResidentValueAndCanChangeItsBody)
     EXPECT_EQ(seen, 2) << "one visit per resident value";
     EXPECT_EQ(sum, 11 + 12) << "the visitor saw the values the table held, and its change stuck";
 
-    const ResourceTable<int, Counted>& const_table = table;
+    const PinnedResources<int, Counted>& const_table = table;
     int                               const_sum   = 0;
     const_table.visitValues([&](const Counted& value) { const_sum += value.id; });
     EXPECT_EQ(const_sum, sum) << "the const door sees the same values";
 }
 
-TEST(ResourceTableTest, ARefusedKeyIsForgottenByTheSamePinRuleAsAResidentValue)
+TEST(PinnedResourcesTest, ARefusedKeyIsForgottenByTheSamePinRuleAsAResidentValue)
 {
     // The refused half of a residency rule (see forgetUnpinned): a remembered key has nothing built behind it, so it
     // leaves by the mirror of the table's rule - and the producers that keep such a set share this one implementation.
@@ -206,9 +206,9 @@ TEST(ResourceTableTest, ARefusedKeyIsForgottenByTheSamePinRuleAsAResidentValue)
     EXPECT_EQ(refused.size(), 2U);
 }
 
-TEST(ResourceTableTest, ClearDropsWithoutParkingBecauseNothingIsInFlight)
+TEST(PinnedResourcesTest, ClearDropsWithoutParkingBecauseNothingIsInFlight)
 {
-    ResourceTable<int, Counted> table;
+    PinnedResources<int, Counted> table;
     (void)table.acquire(5, []() -> std::optional<Counted> { return Counted{ 5 }; });
     const int alive_before = Counted::alive;
 

@@ -55,7 +55,7 @@ VN_BACKEND_VSG_CORE_NS_BEGIN
  * @tparam Hash  Hasher for @p Key.
  */
 template <class Key, class Value, class Hash = std::hash<Key>>
-class ResourceTable {
+class PinnedResources {
   public:
     /** @brief What one @ref acquire did. */
     struct Acquired {
@@ -250,10 +250,10 @@ class ResourceTable {
  *
  * @details
  * - A REFUSED BUILD IS NOT A RESIDENT VALUE. Nothing was built (no half, no descriptor set), so there is nothing to
- *   park and nothing for @ref ResourceTable to hold - a producer remembers the key only so it does not retry a build
+ *   park and nothing for @ref PinnedResources to hold - a producer remembers the key only so it does not retry a build
  *   that would fail the same way. That memory is the exact mirror of the table's own entries, which is why it leaves
  *   by the exact mirror of the table's rule: once the same pin predicate says the key is no longer wanted.
- * - WHY IT IS HERE AND NOT IN EACH PRODUCER. Two producers (api/ProgramHalves, api/BindingSets) keep such a set, and
+ * - WHY IT IS HERE AND NOT IN EACH PRODUCER. Two producers (api/CompiledPrograms, api/BindingSets) keep such a set, and
  *   "walk it with the pin predicate" written twice is how one of them ends up forgetting a revision the other keeps.
  *
  * @tparam Key  The key type the producer builds by.

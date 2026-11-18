@@ -23,7 +23,7 @@
 #include <vine/backend_vk/internal/FrameHead.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
 #include <vine/backend_vk/internal/ProgramVariant.hpp>
-#include <vine/backend_vk/internal/ResidenceTable.hpp>
+#include <vine/backend_vk/internal/ResidencyClaims.hpp>
 #include <vine/graphics/FrameDescription.hpp>
 #include <vine/graphics/MaterialBase.hpp>
 #include <vine/graphics/ShaderProgram.hpp>
@@ -58,7 +58,7 @@ VN_BACKEND_VK_NS_BEGIN
  *   question they are asked and the next frame uploads again) while the Vulkan objects park on the device's
  *   completion watermark (`setRetirement`) until no submitted frame can still name them. Without a queue they are
  *   destroyed immediately, which is correct before `initialize()` and during `shutdown` (both sit on an idle queue).
- * - WHO MAY BUILD A GEOMETRY IS THE DEVICE'S TABLE (F4). `ensureGeometry` asks `ResidenceTable::admit` before it
+ * - WHO MAY BUILD A GEOMETRY IS THE DEVICE'S TABLE (F4). `ensureGeometry` asks `ResidencyClaims::admit` before it
  *   uploads a stream: a key this driver may build is uploaded into the cache's entry and PUBLISHED when the frame is
  *   proven complete (`FrameBuilds::publishAll`), a key another driver is building is COPIED for this frame and thrown
  *   away with it (`FrameBuilds`), and a resident key is used. So a driver never waits for another driver's FRAME over
@@ -77,7 +77,7 @@ VN_BACKEND_VK_NS_BEGIN
  *       the table's, and its destructor takes this cache's without holding the table's, so the order is a property of
  *       the code and not of a comment a later edit may contradict.
  *
- * @see `ContentDraw` (the recorder that consumes the plans), `FrameScratch` (the frame's own half), `ResidenceTable`
+ * @see `ContentDraw` (the recorder that consumes the plans), `FrameScratch` (the frame's own half), `ResidencyClaims`
  *      (who may build a key), `FrameBuilds` (one frame's admissions and the copies it owns).
  */
 class VN_BACKEND_VK_API ContentCaches final {
@@ -89,7 +89,26 @@ class VN_BACKEND_VK_API ContentCaches final {
         VkShaderModule                            fragment{ VK_NULL_HANDLE };
         std::string                               vertex_entry{ "main" };
         std::string                               fragment_entry{ "main" };
-        bool                                      failed{ false };
+        /// The vertex-input locations the compiled vertex stage declares (see SpirvModule::input_locations).
+        std::vector<std::uint32_t> vertex_locations;
+        /// Whether @c vertex_locations is the module's own answer; false keeps every geometry channel declared.
+        bool vertex_locations_known{ false };
+        bool failed{ false };
+
+        /**
+         * @brief Answers whether the vertex stage reads @p location.
+         *
+         * @details
+         * - UNKNOWN MEANS YES (see SpirvModule::declaresInput): a pipeline narrows its vertex input only when the
+         *   stage's own answer says it may.
+         *
+         * @param location The geometry channel's location.
+         * @return true when the stage reads it, or when that is unknown.
+         */
+        [[nodiscard]] bool vertexStageReads(std::uint32_t location) const
+        {
+            return !vertex_locations_known || std::binary_search(vertex_locations.begin(), vertex_locations.end(), location);
+        }
     };
 
     /// @brief One uploaded vertex channel.
@@ -190,7 +209,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      *   with it. Keeping both here is what lets the recording path work from values and still hand everything back on
      *   every exit path (`G3`): the destructor WITHDRAWS what was not published and DISPOSES the copies, so an
      *   abandoned frame leaves no key `Uploading` (`P1`) and no bytes behind.
-     * - THREE ANSWERS, THREE LIFETIMES (see `ResidenceTable::admit`). `Use` is remembered so the frame's later
+     * - THREE ANSWERS, THREE LIFETIMES (see `ResidencyClaims::admit`). `Use` is remembered so the frame's later
      *   commands do not ask the table twice. `Build` is remembered AND its claim kept: `publishAll` publishes it when
      *   the frame completed, and a fill that FAILED never gets here - `ensureGeometry` lets the claim's own destructor
      *   return the key to `Absent`, so a refused fill can never publish itself. `Copy` is a detached entry this object
@@ -226,9 +245,9 @@ class VN_BACKEND_VK_API ContentCaches final {
          * @brief Builds the admissions of one frame of @p owner, asked in the name of @p session.
          *
          * @param owner   The caches this frame resolves against (borrowed; it outlives the frame).
-         * @param session The frame driver's id (see `ResidenceTable::FrameDriverId`).
+         * @param session The frame driver's id (see `ResidencyClaims::FrameDriverId`).
          */
-        FrameBuilds(ContentCaches& owner, ResidenceTable::FrameDriverId session) noexcept;
+        FrameBuilds(ContentCaches& owner, ResidencyClaims::FrameDriverId session) noexcept;
 
         /** @brief Withdraws every unresolved claim and disposes every copy (see the class note). */
         ~FrameBuilds();
@@ -243,8 +262,8 @@ class VN_BACKEND_VK_API ContentCaches final {
         FrameBuilds& operator=(const FrameBuilds&) = delete;
 
       public:
-        /** @brief Gets the id this frame asks the residence table in (see `ResidenceTable::FrameDriverId`). */
-        [[nodiscard]] ResidenceTable::FrameDriverId session() const noexcept;
+        /** @brief Gets the id this frame asks the residence table in (see `ResidencyClaims::FrameDriverId`). */
+        [[nodiscard]] ResidencyClaims::FrameDriverId session() const noexcept;
 
         /** @brief Gets what this frame already resolved for @p description, or null (no second table ask). */
         [[nodiscard]] GeometryEntry* entryOf(const vn::graphics::GeometryDescription* description) const noexcept;
@@ -257,7 +276,7 @@ class VN_BACKEND_VK_API ContentCaches final {
          *
          * @param claim The table's ticket (moved in).
          */
-        void noteClaim(ResidenceTable::Claim claim);
+        void noteClaim(ResidencyClaims::Claim claim);
 
         /**
          * @brief Remembers a `Copy` answer: takes ownership of @p copy and answers the entry this frame uses.
@@ -275,7 +294,7 @@ class VN_BACKEND_VK_API ContentCaches final {
          * - EVERY CLAIM HERE NAMES A USABLE FILL: a build that failed never records one (its ticket returns the key to
          *   `Absent` where the failure happened), so publishing them all cannot make a broken entry `Resident`.
          * - A CLAIM WHOSE KEY A HOST RELEASED in the meantime answers `stale` instead - the documented, counted
-         *   outcome, not an error (see `ResidenceTable::Numbers::stale`).
+         *   outcome, not an error (see `ResidencyClaims::Numbers::stale`).
          * - Idempotent: a published claim is empty, and the destructor's withdrawal of an empty claim does nothing.
          */
         void publishAll();
@@ -284,9 +303,9 @@ class VN_BACKEND_VK_API ContentCaches final {
         void reset() noexcept;
 
         ContentCaches*                                              owner_{ nullptr };
-        ResidenceTable::FrameDriverId                               session_{ 0 };
+        ResidencyClaims::FrameDriverId                               session_{ 0 };
         std::unordered_map<const vn::graphics::GeometryDescription*, GeometryEntry*> resolved_{};
-        std::vector<ResidenceTable::Claim>                          claimed_{};
+        std::vector<ResidencyClaims::Claim>                          claimed_{};
         std::vector<std::unique_ptr<GeometryEntry>>                 copies_{};
     };
 
@@ -504,9 +523,9 @@ class VN_BACKEND_VK_API ContentCaches final {
      *
      * @return The table (empty before `create`, cleared by `destroy`).
      */
-    [[nodiscard]] ResidenceTable& residence() noexcept;
+    [[nodiscard]] ResidencyClaims& residence() noexcept;
     /** @brief Gets the residence table for a reader that only reports on it (see the mutable overload). */
-    [[nodiscard]] const ResidenceTable& residence() const noexcept;
+    [[nodiscard]] const ResidencyClaims& residence() const noexcept;
 
     /**
      * @brief Takes the cache's one lock (see @ref Lock): the frame head holds it while it resolves its content.
@@ -522,7 +541,7 @@ class VN_BACKEND_VK_API ContentCaches final {
      * - The pipelines stay: they are keyed by the program, the target's compatibility and the vertex LAYOUT - never
      *   by the geometry's identity - so a geometry coming back uploads its streams and reuses what it compiled.
      * - THE RESIDENCE KEY IS FORGOTTEN TOO (F4): the next frame may claim and build the key again, and a claim still
-     *   in flight over it becomes stale and cannot resurrect what the host let go (see `ResidenceTable::forget`).
+     *   in flight over it becomes stale and cannot resurrect what the host let go (see `ResidencyClaims::forget`).
      *
      * @param description The geometry's shape as the frame named it (the same value a released `Geometry` answers).
      * @return Entries dropped: 1 when a cache entry left, 0 when nothing was resident (already released).

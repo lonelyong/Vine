@@ -111,7 +111,7 @@ Streams, textures, material blocks, halves and descriptor sets want **the same r
 with only the key and the value differing (`G1`, `G6`). Written as one table, `StreamUploads` keeps only "what counts as a stream, and which objects one upload has to build";
 the four later steps no longer rewrite "table + parking + generation" each, nor grow a lifetime criterion each (`G5`: the change stays inside the module).
 
-#### Interface (`src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ResourceTable.hpp`, Vulkan-free)
+#### Interface (`src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ResourceTable.hpp`, Vulkan-free) <!-- drift-ok -->
 
 ```cpp
 template <class Key, class Value, class Hash = std::hash<Key>>
@@ -228,3 +228,6 @@ After every step, run: `check_ai_docs.py --strict`, `check_design_docs.py`, `che
 - `G10`: the per-pass counterfactual scans are deleted; the cost is video memory, written down and measured.
 - `G13`: content types gain no GPU concepts; the backend derives the pin from identity.
 - Superseded: `Streams.hpp`'s reader counts and time windows all retire (the whole `SharedStreams` class is deleted); `StreamKey` as an identity is unchanged.
+- **Correction (2026-11-18, audit-4 B13)**: the class this ADR calls `ResourceTable` is `PinnedResources` today
+  (`vn::backend_vsg::core`), renamed so the two residency tables stop sharing a near-name (`ResidenceTable`
+  became `ResidencyClaims`). No rule in this ADR changed.

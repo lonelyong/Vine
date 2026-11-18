@@ -33,7 +33,7 @@
  *
  * THE HEAD IS A VALUE, AND IT OWNS WHAT IT NAMES (`G4` / `G10`). Every vsg object a call names - the pipeline, the
  * descriptor binds, the vertex binds, the push blocks - is held by a `ref_ptr` here, and `halves` is a lease on
- * the producer whose recorders the calls run through (see ProgramHalves::pin): another driver's head may sweep a
+ * the producer whose recorders the calls run through (see CompiledPrograms::pin): another driver's head may sweep a
  * half or a declared set between this frame's resolution and its recording, and the objects this plan resolved
  * must stay alive for the recording that names them. A retirement park is NOT that guarantee - it is dated
  * against the frames that were in flight when it was made, and the frame holding a plan may not have been
@@ -175,7 +175,7 @@ class FrameHead {
 
     /** @brief Pins @p producer for as long as this plan holds the answers it gave (see the file note).
      *
-     * @param producer The producer's own lifetime handle (see ProgramHalves::pin / BindingSets::pin).
+     * @param producer The producer's own lifetime handle (see CompiledPrograms::pin / BindingSets::pin).
      */
     void pin(Pin producer) noexcept;
 

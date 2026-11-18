@@ -70,7 +70,7 @@
  *
  * WHAT DROPPING AN ENTRY DOES NOT DO. An entry holds the bind, and the bind holds the arrays the upload was
  * built from - so an entry leaving the map never frees bytes a frame may still be reading. Departures are
- * parked through the retirement queue anyway (`ResourceTable::retireUnpinned`), so the bind a submitted frame
+ * parked through the retirement queue anyway (`PinnedResources::retireUnpinned`), so the bind a submitted frame
  * named stays alive for exactly the window that frame is in flight; this store is a LOOKUP, not the owner of
  * last resort.
  *
@@ -172,7 +172,7 @@ class StreamUploads {
      *   second walk of the scene or the plan.
      * - Every entry whose buffer is no longer declared, or whose bytes are no longer the buffer's current ones
      *   (`owner->revision()`), is PARKED through @p retirement; one the queue cannot park yet is retained, never
-     *   freed early (see ResourceTable::retireUnpinned).
+     *   freed early (see PinnedResources::retireUnpinned).
      * - Calling it with empty facts means "nothing is declared" and retires every entry.
      *
      * @param facts      The frame's facts (its declaration index is what this reads).

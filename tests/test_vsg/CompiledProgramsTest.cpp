@@ -20,7 +20,7 @@
 #include <vine/backend_vsg/internal/StateRegistry.hpp>
 #include <vine/backend_vsg/internal/ContentDraw.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
-#include <vine/backend_vsg/internal/ProgramHalves.hpp>
+#include <vine/backend_vsg/internal/CompiledPrograms.hpp>
 #include <vine/backend_vsg/internal/ContentSources.hpp>
 #include <vine/backend_vsg/internal/DrawNeeds.hpp>
 #include <vine/backend_vsg/internal/FactResult.hpp>
@@ -59,7 +59,7 @@ using vn::backend_vsg::ContentDeclarationIndexes;
 using vn::backend_vsg::ContentDeclarations;
 using vn::backend_vsg::ContentDraw;
 using vn::backend_vsg::ContentFacts;
-using vn::backend_vsg::ProgramHalves;
+using vn::backend_vsg::CompiledPrograms;
 using vn::backend_vsg::ContentPass;
 using vn::backend_vsg::DrawNeeds;
 using vn::backend_vsg::drawNeeds;
@@ -231,7 +231,7 @@ CompiledCommand commandOf(const vn::graphics::Geometry* geometry, std::uint64_t 
 
 } // namespace
 
-TEST(ProgramHalvesTest, OneHalfPerTupleThePassNames)
+TEST(CompiledProgramsTest, OneHalfPerTupleThePassNames)
 {
     const auto program  = contentProgram();
     const auto geometry = quad();
@@ -253,7 +253,7 @@ TEST(ProgramHalvesTest, OneHalfPerTupleThePassNames)
     tables.facts.materials  = tables.materials;
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
@@ -280,7 +280,7 @@ TEST(ProgramHalvesTest, OneHalfPerTupleThePassNames)
     EXPECT_EQ(entries[0].pipelines->kind(), DrawKind::Content);
 }
 
-TEST(ProgramHalvesTest, ASteadyPassBuildsNothing)
+TEST(CompiledProgramsTest, ASteadyPassBuildsNothing)
 {
     const auto program  = contentProgram();
     const auto geometry = quad();
@@ -301,7 +301,7 @@ TEST(ProgramHalvesTest, ASteadyPassBuildsNothing)
     tables.facts.materials  = tables.materials;
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
@@ -325,7 +325,7 @@ TEST(ProgramHalvesTest, ASteadyPassBuildsNothing)
     EXPECT_EQ(retirement.pending(), 0U);
 }
 
-TEST(ProgramHalvesTest, TheHalvesEpisodeStateIsTheHalvesOwn)
+TEST(CompiledProgramsTest, TheHalvesEpisodeStateIsTheHalvesOwn)
 {
     // THE REPORT OF A HALF SPANS FRAMES (and passes): the frame path builds a ContentPass - and its episode
     // state - per FRAME, so a sentence about a half that repeats while the condition holds would be said
@@ -350,7 +350,7 @@ TEST(ProgramHalvesTest, TheHalvesEpisodeStateIsTheHalvesOwn)
     tables.facts.materials  = tables.materials;
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
@@ -395,7 +395,7 @@ TEST(ProgramHalvesTest, TheHalvesEpisodeStateIsTheHalvesOwn)
     EXPECT_FALSE(frame_three[0].shadow_reported->shouldReport()) << "... and it, too, is said once";
 }
 
-TEST(ProgramHalvesTest, TwoTextsOfOneProgramAreTwoHalves)
+TEST(CompiledProgramsTest, TwoTextsOfOneProgramAreTwoHalves)
 {
     const auto program  = contentProgram();
     const auto geometry = quad(true);
@@ -427,7 +427,7 @@ TEST(ProgramHalvesTest, TwoTextsOfOneProgramAreTwoHalves)
     tables.facts.materials  = tables.materials;
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
@@ -452,7 +452,7 @@ TEST(ProgramHalvesTest, TwoTextsOfOneProgramAreTwoHalves)
     EXPECT_EQ(halves.halves(), 2U);
 }
 
-TEST(ProgramHalvesTest, ThePassAttachmentCountIsPartOfTheHalf)
+TEST(CompiledProgramsTest, ThePassAttachmentCountIsPartOfTheHalf)
 {
     const auto program  = contentProgram();
     const auto geometry = quad();
@@ -473,7 +473,7 @@ TEST(ProgramHalvesTest, ThePassAttachmentCountIsPartOfTheHalf)
     tables.facts.materials  = tables.materials;
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
@@ -491,7 +491,7 @@ TEST(ProgramHalvesTest, ThePassAttachmentCountIsPartOfTheHalf)
     EXPECT_EQ(halves.halves(), 2U);
 }
 
-TEST(ProgramHalvesTest, ALayoutIsPartOfTheHalf)
+TEST(CompiledProgramsTest, ALayoutIsPartOfTheHalf)
 {
     const auto program        = contentProgram();
     const auto plain_geometry = quad(false);
@@ -521,7 +521,7 @@ TEST(ProgramHalvesTest, ALayoutIsPartOfTheHalf)
     tables.facts.materials  = tables.materials;
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
@@ -540,7 +540,7 @@ TEST(ProgramHalvesTest, ALayoutIsPartOfTheHalf)
     EXPECT_EQ(entries[1].layout, plain_geometry_facts.layout);
 }
 
-TEST(ProgramHalvesTest, AHalfIsPinnedByTheLayoutDeclarationAndLeavesWithIt)
+TEST(CompiledProgramsTest, AHalfIsPinnedByTheLayoutDeclarationAndLeavesWithIt)
 {
     const auto program  = contentProgram();
     const auto geometry = quad(true);
@@ -559,7 +559,7 @@ TEST(ProgramHalvesTest, AHalfIsPinnedByTheLayoutDeclarationAndLeavesWithIt)
     tables.publish();
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
@@ -601,9 +601,9 @@ TEST(ProgramHalvesTest, AHalfIsPinnedByTheLayoutDeclarationAndLeavesWithIt)
     EXPECT_EQ(retirement.pending(), 1U) << "the departed half is parked, not freed in place";
 }
 
-TEST(ProgramHalvesTest, AFrameThatDrawsNothingStillRetiresWhatContentLeft)
+TEST(CompiledProgramsTest, AFrameThatDrawsNothingStillRetiresWhatContentLeft)
 {
-    // RETIREMENT IS THE FRAME'S STEP, not a pass' (see ProgramHalves::sweep): a frame whose passes issue nothing
+    // RETIREMENT IS THE FRAME'S STEP, not a pass' (see CompiledPrograms::sweep): a frame whose passes issue nothing
     // never calls halvesFor, and the halves whose content left must still depart - otherwise a scene that is emptied
     // and then sits still would hold its pipelines until the session ends.
     const auto program  = contentProgram();
@@ -623,7 +623,7 @@ TEST(ProgramHalvesTest, AFrameThatDrawsNothingStillRetiresWhatContentLeft)
     tables.publish();
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
@@ -643,7 +643,7 @@ TEST(ProgramHalvesTest, AFrameThatDrawsNothingStillRetiresWhatContentLeft)
     EXPECT_EQ(retirement.pending(), 1U) << "and it parks it, exactly as a drawing frame would";
 }
 
-TEST(ProgramHalvesTest, AScreenDrawGetsAFullScreenHalf)
+TEST(CompiledProgramsTest, AScreenDrawGetsAFullScreenHalf)
 {
     const auto program = screenProgram();
 
@@ -655,7 +655,7 @@ TEST(ProgramHalvesTest, AScreenDrawGetsAFullScreenHalf)
     tables.facts.programs = tables.programs;
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
@@ -671,14 +671,14 @@ TEST(ProgramHalvesTest, AScreenDrawGetsAFullScreenHalf)
     EXPECT_EQ(entries[0].pipelines->kind(), DrawKind::Screen);
 }
 
-TEST(ProgramHalvesTest, AKeyTheTablesCannotAnswerProducesNoHalf)
+TEST(CompiledProgramsTest, AKeyTheTablesCannotAnswerProducesNoHalf)
 {
     const auto program  = contentProgram();
     const auto geometry = quad();
     const auto shaded   = ::material(vn::Colorf(0.25F, 0.5F, 0.75F, 1.0F));
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
@@ -693,7 +693,7 @@ TEST(ProgramHalvesTest, AKeyTheTablesCannotAnswerProducesNoHalf)
     EXPECT_EQ(halves.builds(), 0U);
 }
 
-TEST(ProgramHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
+TEST(CompiledProgramsTest, AHalfWhoseKeyLeftTheTablesIsParked)
 {
     const auto program  = contentProgram();
     const auto geometry = quad();
@@ -716,7 +716,7 @@ TEST(ProgramHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
     tables.facts.materials  = tables.materials;
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
@@ -764,7 +764,7 @@ TEST(ProgramHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
     const CompiledPass new_pass = passWith(new_draws);
 
     ASSERT_EQ(halves.halvesFor(new_pass, fresh.facts, timeline, retirement).size(), 1U);
-    halves.sweep(fresh.facts, timeline, retirement); // the FRAME's step (see ProgramHalves::sweep)
+    halves.sweep(fresh.facts, timeline, retirement); // the FRAME's step (see CompiledPrograms::sweep)
     EXPECT_EQ(halves.halves(), 1U) << "the live list holds the revision the tables answer";
     EXPECT_EQ(retirement.pending(), 1U) << "the half whose key left the tables was PARKED, not dropped: a"
                                            " recorded frame may still name it";
@@ -777,7 +777,7 @@ TEST(ProgramHalvesTest, AHalfWhoseKeyLeftTheTablesIsParked)
     EXPECT_EQ(halves.builds(), builds) << "the sweep never rebuilds what it parks";
 }
 
-TEST(ProgramHalvesTest, ARefusedLayerIsNotRetriedEveryFrame)
+TEST(CompiledProgramsTest, ARefusedLayerIsNotRetriedEveryFrame)
 {
     // A program whose GLSL does not compile (a symbol nobody defines) still has FACTS - the ABI scan reads
     // declarations, not semantics - so the producer is asked for its half and the LAYER is refused. That
@@ -807,7 +807,7 @@ TEST(ProgramHalvesTest, ARefusedLayerIsNotRetriedEveryFrame)
     tables.facts.materials  = tables.materials;
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
@@ -831,7 +831,7 @@ TEST(ProgramHalvesTest, ARefusedLayerIsNotRetriedEveryFrame)
 // 两个程序即使文本与 revision 完全相同，也必须是两个半边：身份是句柄（ShaderProgram::id()），不是地址，也不是
 // revision。旧键是“地址 + revision”，因此需要一个 ProgramFacts::generation 来区分“同一地址上的另一次描述”；
 // 句柄在释放时移动 generation，这个补丁因此消失。
-TEST(ProgramHalvesTest, AnotherProgramIdentityIsAnotherHalf)
+TEST(CompiledProgramsTest, AnotherProgramIdentityIsAnotherHalf)
 {
     const auto first_program  = contentProgram();
     const auto second_program = contentProgram(); // same text, same revision, a DIFFERENT identity
@@ -856,7 +856,7 @@ TEST(ProgramHalvesTest, AnotherProgramIdentityIsAnotherHalf)
     tables.facts.materials  = tables.materials;
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 
@@ -899,7 +899,7 @@ TEST(ProgramHalvesTest, AnotherProgramIdentityIsAnotherHalf)
     EXPECT_EQ(halves.builds(), 2U);
 }
 
-TEST(ProgramHalvesTest, TheReportedNeedsAreWhatTheFrameBuilds)
+TEST(CompiledProgramsTest, TheReportedNeedsAreWhatTheFrameBuilds)
 {
     // T32: what the warm-up path REPORTS and what the frame BUILDS are one value. The case spells the identities
     // BY HAND (no drawNeeds call feeds the expectation), then checks that the answer spells them and that the
@@ -969,7 +969,7 @@ TEST(ProgramHalvesTest, TheReportedNeedsAreWhatTheFrameBuilds)
     };
 
     VariantPool     pool;
-    ProgramHalves   halves(pool);
+    CompiledPrograms   halves(pool);
     FrameTimeline   timeline;
     RetirementQueue retirement(1U);
 

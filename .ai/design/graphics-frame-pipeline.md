@@ -4,7 +4,7 @@
 > **Last verified**: 2026-11-16
 > **Scope**: the shape, identity, lifetime and plan semantics of the four layers content → snapshot → derivation → execution. It excludes the geometry / picking
 > algorithms, the material model, backend implementation details (`vsg-backend.md`) and the threading contract's migration-era state (`graphics-threading.md`).
-> **Sources**: `src/viz/graphics/sdk/vine/graphics/ContentId.hpp`, `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ResourceTable.hpp`,
+> **Sources**: `src/viz/graphics/sdk/vine/graphics/ContentId.hpp`, `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/PinnedResources.hpp`,
 > `src/viz/graphics/src/SceneSnapshot.hpp` (the prototype), `Scene.hpp` / `RenderEngine.hpp` (the live entry points).
 > **Backlog**: `../backlog/graphics.md`
 
@@ -148,6 +148,27 @@
 | reference counting (`markUsed`) | deleted | row-level epoch reclamation (`F5`) |
 | parking window (`parked` / `kept`) | half kept | GPU objects are still replaced (pipelines / descriptor sets / buffers), but **residency** no longer depends on it (`I4`) |
 
+### 2.11 Five `Frame*` values, five questions
+
+| Value | The one question it answers | Lifetime | Who reads it |
+|---|---|---|---|
+| `FrameDescription` | What THIS frame is: every enabled pass' identity, order, resolved inputs and what the pass described | rebuilt every frame; the backend consumes it and keeps nothing | `RenderFrameExecutor::executeFrame`, `RenderEngine::frameDescription()` |
+| `FrameTable` | What this frame consists of, as rows a host may read | rebuilt every frame from what the slots hold | `RenderEngine::frameTable()`, a log line, a HUD |
+| `FrameOutcome` | What ONE `frame()` call did | one call | the call site |
+| `FrameResult` | What the last ANSWERED frame was: its picture, the world it saw, what it cost | replaced when the next frame is answered | `RenderEngine::frameResult()` |
+| `FrameQuery` | Which world that picture saw: the publication it drew and the view it was taken with | the `query` field of one `FrameResult` | a pick / anchor / fit aimed at what the viewer sees |
+
+- What it is: four values and one field type. `FrameQuery` is not a sixth answer - it is `FrameResult::query`'s type, split out because the two facts it carries (publication, view) are always asked for together.
+- Why: a value that answers two questions goes stale in one half, and "which publication did the picture come from" used to be a separate question with a separate lifetime (`G1` / `I7`).
+- Boundary: `FrameOutcome`'s `NotReady` is a precondition answer, not a third frame ending (`RenderEngine.hpp` says so at the enum); a host that needs the answered frame reads `FrameResult`, never `FrameOutcome`.
+
+### 2.12 The engine is a frame compiler, not a render graph
+
+- What it is: a pass declares `(target, state, inputs)`; compilation resolves the input names, sorts, allocates transients and emits `FrameDescription`; the backend records that value. No layer derives resource dependencies, inserts barriers, aliases memory, or reorders passes to that effect.
+- Why: today's consumers do not need one - a chain is a handful of passes whose order its recipe states, transient sharing is by declared identity + shape (2.8), and barriers are the backend's own table (`vk-backend.md` 2.7). A render graph's mechanism (implicit resource lifetimes, automatic barriers, aliasing) would be a second place deciding what the picture is, with no witness asking for it (`G8`); synchronisation stays where it belongs - behind the seam (`G2`).
+- Boundary: `Transient` borrows a render graph WORD, not its semantics: it names "the shape of canvas this pass needs", the compile shares it by name + shape, and no read/write edge is expressed. Wiring is exactly the input-name system (2.8 / F6). "Pass", "target" and "transient" therefore mean less here than in UE's RDG, Frostbite's FrameGraph or O3DE's pass tree - deliberately.
+- Revisit when a real consumer needs resource lifetimes DERIVED rather than declared (a pass count at which hand-stated order and sharing stop being readable). The reader-facing version of this boundary is `docs/guides/graphics.md` §5.5.
+
 ## 3. Features
 
 ### 3.1 Feature index
@@ -218,6 +239,7 @@
   `PlanTest.*IsRefusedWithItsCode` (the four kinds of code), `PlanTest.TheCodeSpellingsAreStable`,
   `PlanTest.ABusyEngineRefusesThePlanInsteadOfBlamingItsShape`.
 - **Caveat** (`P7`): the difference must also hold for **same name, different content** (changing a pass' target is not "remove one, add one").
+- **Who waits, and where**: the refusal is the engine's, so the party that changes a shape between frames does the waiting. `RenderControl`/`SurfaceWindow` do it before an attach, `SceneView::applySurfaceGeometry` does it before it hands a surface size to the chain (a chain RESIZE restates the passes it re-lays out, so a resize is a session change like any other), and a host that states its own rows does it before `applyPlan`. The wait is bounded (250 ms) on the application thread: a frame that never answers must not freeze the UI, and the engine's own default is five seconds. Pinned by `RenderEngineTest.AViewResizeWaitsForTheFrameBeforeItRestatesItsChain`.
   A pass the plan does not name is removed (whole-session form; the scope form only upserts) — that is the direct consequence of "the plan is the shape".
   A pass subclass is no longer an expressible shape: customisation lives in the **data** (program override, viewport, depth range), and there is no custom-kind registry.
 
@@ -239,7 +261,7 @@
   and no copies means no submission (preparing the same frame a second time submits nothing).
   **The seam**: `drawNeeds(compiled pass, draw)` is the only key builder — `prepare` builds with it and `ContentPass::record` looks up with it, so the two cannot drift (`G1`).
   **Where it lives**: `src/plugins/gfx_backend_vsg/{include/vine/backend_vsg/internal,src/internal}/DrawNeeds.{hpp,cpp}`
-  (`drawNeeds`' two overloads + `DrawNeeds::keyFor`); `ProgramHalves::halvesFor`, `ContentPass::recordCommand` /
+  (`drawNeeds`' two overloads + `DrawNeeds::keyFor`); `CompiledPrograms::halvesFor`, `ContentPass::recordCommand` /
   `recordScreenDraw` and `describeMissingContentHalf` read it and nothing else, so the recording path no longer assembles its own key.
   **Where it lives**: `sdk/vine/graphics/PrepareReport.hpp`, `RenderFrameExecutor::prepareFrame`,
   `RenderEngine::prepare()`, `VsgBackend::prepareFrame`. The backend reuses the frame's own two halves — `collectFrame` (value → collection) and
@@ -557,7 +579,7 @@
 | T28 | pose culling | part of a posed subtree leaves the view | not done |
 | T30 | plan validation | `PlanTest.*IsRefusedWithItsCode` (the four kinds) + `PlanTest.TheCodeSpellingsAreStable` + `PlanTest.AKindChangeOnACustomPassIsRefusedWithItsCode` | implemented |
 | T31 | publish inside a batch | `PublicationStoreTest.PublishAnswersPostedUnchangedAndInsideBatch` (`Posted` → `Unchanged` → `InsideBatch` → `Posted`) + `SnapshotSourceTest.AnEditBatchKeepsTheSourceOnTheOldPicture` | implemented |
-| T32 | preparation's answer = the frame's builds | `ProgramHalvesTest.TheReportedNeedsAreWhatTheFrameBuilds` (the key sets are equal, device independent) + the key-set assertion in `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` (the recording side) | implemented |
+| T32 | preparation's answer = the frame's builds | `CompiledProgramsTest.TheReportedNeedsAreWhatTheFrameBuilds` (the key sets are equal, device independent) + the key-set assertion in `ContentPassTest.AMultiLayoutScopeServesEveryHalfItWasBuiltFor` (the recording side) | implemented |
 | T33 | after preparation the recording's `builds` delta is 0, and preparation neither submits nor presents | `VsgBackendTest.PrepareBuildsEveryIdentityAndTheNextFrameThenBuildsNothing` (`halves().builds` / `sets().builds` / `uploads().uploads` / `inputSetBuilds` / `pool.created` all 0, `progress->submitted` does not move, and the pixels are still drawn) + `HeadlessBackendTest.PrepareHandsOverTheSameFrameTheNextFrameRunsAndRunsNothing` (the engine side: the same value, nothing executed, no frame number taken) | implemented |
 | T34 | the snapshot source equals a direct collection item by item | `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` (600 frames, transform / opacity / material / placement edits, diffed item by item) + `FrameExpandTest.AFrameExpandsTheSamePictureTheSceneWould` (the frame-level seam after binding) | implemented |
 | T36 | the frame result is that frame's value | `RenderEngineTest.TheFrameResultIsThePictureThatWasAnswered` (snapshot / camera / counts / diagnostics / present; a publication landing between frames does not change the answered frame) | implemented |
@@ -642,7 +664,7 @@ scope (`PassChain::build(engine, desc, owner)`) so that a rebuild updates in pla
 - `src/viz/graphics/src/DrawListDiff.hpp` / `DrawListDiff.cpp` (the shadow path's field-level comparison)
 - `src/viz/graphics/src/SceneRows.cpp` (the publication's cache side)
 - `src/viz/graphics/src/DrawListBake.cpp` (the live collection and sorting)
-- `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ResourceTable.hpp` (residency by key)
+- `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/PinnedResources.hpp` (residency by key)
 - `src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/DrawNeeds.hpp` / `src/internal/DrawNeeds.cpp` (`drawNeeds`: the only key builder preparation and recording share)
 - `src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp` (fact rows and epoch reclamation)
 

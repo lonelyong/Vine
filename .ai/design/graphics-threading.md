@@ -22,7 +22,7 @@
 
 Content (scene graph, geometry, material, camera) is edited synchronously by the host on the UI thread — that is the document editor's core feel and cannot become asynchronous;
 while a frame's GPU-side work (compiling, uploading, recording, submitting, presenting, residency accounting) must be able to run in parallel with interaction, or the UI and rendering lock each other out.
-Measured (Release): 2000 drawables with a moving camera, the frame's select 337–340 µs, production miss (`SnapshotSource::collectRenderCommands`) 435–443 µs, and 10000 drawables 2.3–3.1 ms / 3.4–3.6 ms (`tests/test_graphics/SelectTest.cpp`'s `MeasureWhatOneSelectCostsWithAMovingCamera`, 2026-11-13; the old 1597 µs/frame timed the direct collector that is no longer on the frame path), the backend recording baseline 33 allocations / one recorded triangle.
+Measured (Release): 2000 drawables with a moving camera, the frame's select 337–340 µs, production miss (`SnapshotSource::collectRenderCommands`) 435–443 µs, and 10000 drawables 2.3–3.1 ms / 3.4–3.6 ms (`tests/test_graphics/SelectTest.cpp`'s `MeasureWhatOneSelectCostsWithAMovingCamera`, 2026-11-13; the old 1597 µs/frame timed the direct collector that is no longer on the frame path), the backend recording baseline 33 allocations / one recorded triangle (vsg's own fixture; vk's recording window - 85 per steady frame with one drawing call - and the whole chain frame - ≈1966 - are measured apart in `vk-backend.md` 9.1).
 
 The hard part is not "starting a thread" but **who writes the content**: the backend's "fact rows" read from live content (`Geometry::revision()`, a primitive's instance handle),
 and collection walks the scene graph. As soon as rendering is on another thread, the two sides must have some relationship: share (locks), copy (a per-frame snapshot), or hand over (one writer).
@@ -58,7 +58,7 @@ There is exactly one answer to "when does this copy expire": the publication val
 
 - **What it is**: the **content world** = `Scene` / `Node` / `Geometry` / `Buffer` / `Program` / `Material` / `Texture` / `Camera`,
   written only by the content thread; the **engine world** = the snapshot's `SnapshotSource`, the fact tables (`ContentStore`), the residency tables (`StreamUploads` /
-  `ProgramHalves` / `BindingSets` / `MaterialImages`), the vsg command graph and the swap chain, written only by the engine thread.
+  `CompiledPrograms` / `BindingSets` / `MaterialImages`), the vsg command graph and the swap chain, written only by the engine thread.
 - **Why**: two writers sharing one mutable graph can only rely on locks — locks enter every read path and conflict directly with "zero allocation in the steady state" (`G1` / `G10`).
   One writer each plus a value channel is the only shape that keeps both sides lock-free.
 - **Boundary**: the only cross-seam reads are "the published immutable value" (§2.2) and the values snapshotted with the pass (§2.14). The engine side **does not read** any mutable field of a content object.
@@ -143,7 +143,7 @@ There is exactly one answer to "when does this copy expire": the publication val
 | Qt Quick | the GUI thread owns `QSGNode` | the render thread `sync()`s its own copy every frame | **O(n) sync per frame**; this design avoids it with publication |
 | Godot | main-thread nodes | `RenderingServer` through `CommandQueueMT` + RID | likewise a command queue + stable handles; RID ≈ this design's `NodeId` |
 | Unity | `Transform` is only a handle, the native layer is authoritative | the render side processes transform changes in batches | likewise "batch the changes", which confirms that "publish per batch" is necessary |
-| wgpu / Dawn | the application thread submits commands | internally tracks resource lifetimes | borrows "internal references and user references kept apart"; this repository uses `ResourceTable` + a retirement queue |
+| wgpu / Dawn | the application thread submits commands | internally tracks resource lifetimes | borrows "internal references and user references kept apart"; this repository uses `PinnedResources` + a retirement queue |
 
 - **Why not a per-frame extract**: the extract/`sync()` shape is an O(drawables) copy every frame, whereas this design's goal is precisely to take the **per-frame**
   cost off the UI thread; one publication pays O(the changed part) only when **editing**.
@@ -288,14 +288,14 @@ There is exactly one answer to "when does this copy expire": the publication val
     **submission** are serialised: resolution writes the per-draw needs (half / set / stream bind / material slot / texture view / block offset / pipeline identity) as
     the driver `FrameHead`'s **values**, **recording** only reads those values and takes no device lock, and collection and plan compilation are unlocked on the session scratch;
     two frames of the same window / offscreen session queue on its **frame claim**, and different windows do not wait for each other. `C3` holds for vsg from here on.
-- **Why**: the content cache has an "uploading" state (`ResidenceTable`'s three states; see `graphics-sessions.md` §9.2), and the cache lock already serialises
+- **Why**: the content cache has an "uploading" state (`ResidencyClaims`'s three states; see `graphics-sessions.md` §9.2), and the cache lock already serialises
   concurrent uploads, so "concurrency" has a definition: two engines building the same content for the first time at once **serialise** on the cache lock and do not
   get two identities. The remaining shared pieces are each protected by their own lock.
 - **Boundary**: appfw does not use sharing yet (`SurfaceWindow` builds one device per window, and `docs/guides/render-views.md` §7 records
   "later"); the case `OneDeviceServesSeveralAreasWithoutCrossingThem` proves **sharing** (two frames run one after the other), and
   `VkMultiSessionTest`'s two cases are what prove **concurrency** (two threads with N frames each; with one frame stopped the other completes whole).
 - **Both backends**: vk and vsg keep the frame machinery on the session/driver (collection staging, frame-head snapshot, the device gate's two sides, `FrameHead` value plans,
-  a lock-free recording path), and both wire `ResidenceTable` into the frame (F4) — `ContentCaches::ensureGeometry` asks the table first, and the frame-scoped `FrameBuilds`
+  a lock-free recording path), and both wire `ResidencyClaims` into the frame (F4) — `ContentCaches::ensureGeometry` asks the table first, and the frame-scoped `FrameBuilds`
   publishes after the frame fence waits. The decision and its argument are in `../decisions/ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`, and the shape of the
   implementation is in `graphics-sessions.md` (types, lock table, state machines).
 

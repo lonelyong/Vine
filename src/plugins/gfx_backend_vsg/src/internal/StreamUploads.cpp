@@ -5,7 +5,7 @@
 #include <optional>
 
 #include <vine/graphics/ShaderAbi.hpp>
-#include <vine/backend_vsg/internal/ResourceTable.hpp>
+#include <vine/backend_vsg/internal/PinnedResources.hpp>
 #include <vine/backend_vsg/support/VsgSceneRules.hpp>
 
 VN_BACKEND_VSG_NS_BEGIN
@@ -92,8 +92,8 @@ struct StreamUploads::Data {
         vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> owner;
     };
 
-    core::ResourceTable<core::StreamKey, VertexEntry, core::StreamKeyHash> vertex;
-    core::ResourceTable<core::StreamKey, IndexEntry, core::StreamKeyHash>  index;
+    core::PinnedResources<core::StreamKey, VertexEntry, core::StreamKeyHash> vertex;
+    core::PinnedResources<core::StreamKey, IndexEntry, core::StreamKeyHash>  index;
 
     std::uint64_t refusals{ 0 };
     std::uint64_t aliases{ 0 };

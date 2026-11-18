@@ -1,10 +1,10 @@
-#include <vine/backend_vsg/internal/ProgramHalves.hpp>
+#include <vine/backend_vsg/internal/CompiledPrograms.hpp>
 
 #include <optional>
 #include <unordered_set>
 #include <utility>
 
-#include <vine/backend_vsg/internal/ResourceTable.hpp>
+#include <vine/backend_vsg/internal/PinnedResources.hpp>
 #include <vine/backend_vsg/internal/ContentDraw.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
 #include <vine/backend_vsg/internal/DrawNeeds.hpp>
@@ -12,7 +12,7 @@
 
 VN_BACKEND_VSG_NS_BEGIN
 
-struct ProgramHalves::Data {
+struct CompiledPrograms::Data {
     /** @brief What a compiled half is: everything the layer depends on (see the file note). */
     struct Key {
         core::DrawKind           kind{ core::DrawKind::Content };
@@ -61,7 +61,7 @@ struct ProgramHalves::Data {
 
     core::VariantPool*                                      pool{ nullptr };
     detail::DynamicStateEntryPoints                         entry_points{};
-    core::ResourceTable<Key, std::shared_ptr<Half>, KeyHash> halves;
+    core::PinnedResources<Key, std::shared_ptr<Half>, KeyHash> halves;
     std::vector<ContentPass::Scope::Entry>                  entries;
     /// Keys whose build was REFUSED. They have no resident value (no GPU object exists), so they are not in the
     /// table: the set is only the "do not retry" memory, and it leaves when its program revision does.
@@ -146,17 +146,17 @@ struct ProgramHalves::Data {
     }
 };
 
-ProgramHalves::ProgramHalves(core::VariantPool& pool, detail::DynamicStateEntryPoints entry_points)
+CompiledPrograms::CompiledPrograms(core::VariantPool& pool, detail::DynamicStateEntryPoints entry_points)
   : d(std::make_shared<Data>())
 {
     d->pool         = &pool;
     d->entry_points = entry_points;
 }
 
-ProgramHalves::~ProgramHalves() = default;
+CompiledPrograms::~CompiledPrograms() = default;
 
 std::span<const ContentPass::Scope::Entry>
-ProgramHalves::halvesFor(const core::CompiledPass& pass, const ContentFacts& facts, core::FrameTimeline& /*timeline*/, core::RetirementQueue& /*retirement*/)
+CompiledPrograms::halvesFor(const core::CompiledPass& pass, const ContentFacts& facts, core::FrameTimeline& /*timeline*/, core::RetirementQueue& /*retirement*/)
 {
     d->entries.clear();
 
@@ -189,7 +189,7 @@ ProgramHalves::halvesFor(const core::CompiledPass& pass, const ContentFacts& fac
     return d->entries;
 }
 
-void ProgramHalves::sweep(const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
+void CompiledPrograms::sweep(const ContentFacts& facts, core::FrameTimeline& timeline, core::RetirementQueue& retirement)
 {
     // A half is PINNED BY ITS PROGRAM REVISION AND ITS LAYOUT. While the tables still answer the
     // (identity, revision, variant, kind) it was compiled from AND some live geometry row still feeds its layout,
@@ -222,29 +222,29 @@ void ProgramHalves::sweep(const ContentFacts& facts, core::FrameTimeline& timeli
     (void)core::forgetUnpinned(d->refused_keys, pinned);
 }
 
-std::size_t ProgramHalves::halves() const noexcept
+std::size_t CompiledPrograms::halves() const noexcept
 {
     return d->halves.live();
 }
 
-std::shared_ptr<const void> ProgramHalves::pin() const noexcept
+std::shared_ptr<const void> CompiledPrograms::pin() const noexcept
 {
     // THE PRODUCER'S OWN HANDLE: a plan that holds it keeps every half this producer answered alive (see the
     // header's note on why the lease is the producer's and not a per-half reference).
     return d;
 }
 
-std::uint64_t ProgramHalves::builds() const noexcept
+std::uint64_t CompiledPrograms::builds() const noexcept
 {
     return d->builds;
 }
 
-std::size_t ProgramHalves::refused() const noexcept
+std::size_t CompiledPrograms::refused() const noexcept
 {
     return d->refused;
 }
 
-void ProgramHalves::clear()
+void CompiledPrograms::clear()
 {
     d->halves.clear();
     d->refused_keys.clear();

@@ -1,9 +1,9 @@
 /**
  * @brief The residence table WIRED INTO THE DEVICE: a key another driver is building is copied for this frame and
  *        thrown away, a key this driver won is published when its frame's fence proves the fill, and a released key
- *        leaves the table with its entry (see ResidenceTable and `.ai/design/graphics-sessions.md` §2.4, §3.1.4).
+ *        leaves the table with its entry (see ResidencyClaims and `.ai/design/graphics-sessions.md` §2.4, §3.1.4).
  *
- * WHY THIS FILE EXISTS. `ResidenceTableTest` pins the state machine with two invented drivers. This file pins what the
+ * WHY THIS FILE EXISTS. `ResidencyClaimsTest` pins the state machine with two invented drivers. This file pins what the
  * DEVICE does with it (T4): a frame that meets an `Uploading` key still draws its picture from a temporary copy, pays
  * exactly the geometry's two streams for it, and leaves nothing behind; two real sessions first drawing one geometry
  * upload it at most twice (one shared build plus at most one copy) and then draw it from ONE entry; a build the pool
@@ -42,7 +42,7 @@
 
 #include <vine/backend_vk/internal/Device.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
-#include <vine/backend_vk/internal/ResidenceTable.hpp>
+#include <vine/backend_vk/internal/ResidencyClaims.hpp>
 
 #include "PlanTestSupport.hpp"
 namespace
@@ -68,7 +68,7 @@ using vn::graphics::ShaderStageType;
 using vn::graphics::Topology;
 
 using vn::backend_vk::MemoryStats;
-using vn::backend_vk::ResidenceTable;
+using vn::backend_vk::ResidencyClaims;
 
 constexpr int kTargetSize = 32;
 
@@ -243,8 +243,8 @@ TEST(VkResidenceWireTest, AKeyAnotherDriverIsFillingIsCopiedForThisFrameAndDisca
     const vn::graphics::GeometryDescriptionPtr description = geometry->description();
 
     // THE OTHER DRIVER, PLAYED HERE (see the file note): it claimed the key and is still filling it.
-    ResidenceTable::Decision other = device->residence().admit(description.get(), 9999U);
-    ASSERT_EQ(other.kind, ResidenceTable::Decision::Kind::Build) << "the key was not absent: this case would prove nothing";
+    ResidencyClaims::Decision other = device->residence().admit(description.get(), 9999U);
+    ASSERT_EQ(other.kind, ResidencyClaims::Decision::Kind::Build) << "the key was not absent: this case would prove nothing";
 
     // FRAME ONE: the picture must be right although the cache holds no entry for the key - the frame was given a
     // temporary copy, not the other driver's half fill and not a wait for its frame.
@@ -253,12 +253,12 @@ TEST(VkResidenceWireTest, AKeyAnotherDriverIsFillingIsCopiedForThisFrameAndDisca
     ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
     expectRed(pixels, "the frame that met an Uploading key");
 
-    ResidenceTable::Numbers numbers = device->residence().numbers();
+    ResidencyClaims::Numbers numbers = device->residence().numbers();
     EXPECT_EQ(numbers.copies, 1U) << "the frame did not take the Copy answer";
     EXPECT_EQ(numbers.claims, 2U) << "the frame claimed a key another driver is building (only the warm-up and the test may)";
     EXPECT_EQ(numbers.uploading, 1U) << "the other driver's claim is gone";
     EXPECT_EQ(numbers.resident, 1U) << "the copy was published as if it were the shared entry (only the warm-up's is)";
-    EXPECT_EQ(device->residence().stateOf(description.get()), ResidenceTable::State::Uploading);
+    EXPECT_EQ(device->residence().stateOf(description.get()), ResidencyClaims::State::Uploading);
 
     // FRAME TWO, MEASURED: the copy is exactly the geometry's two streams, and NOTHING of it survives the frame.
     const MemoryStats before = device->memoryStats();
@@ -270,7 +270,7 @@ TEST(VkResidenceWireTest, AKeyAnotherDriverIsFillingIsCopiedForThisFrameAndDisca
 
     // THE OTHER DRIVER ABANDONS ITS FILL: the key returns to Absent (P1's prevention), so the next frame may build it.
     other.claim.withdraw();
-    EXPECT_EQ(device->residence().stateOf(description.get()), ResidenceTable::State::Absent);
+    EXPECT_EQ(device->residence().stateOf(description.get()), ResidencyClaims::State::Absent);
 
     // FRAME THREE: this driver now wins the key and publishes it - the claim survives the frame and becomes Resident
     // when the fence proves the fill complete (not when the head returns).
@@ -280,7 +280,7 @@ TEST(VkResidenceWireTest, AKeyAnotherDriverIsFillingIsCopiedForThisFrameAndDisca
     EXPECT_EQ(numbers.published, 2U) << "the frame that won the key did not publish it";
     EXPECT_EQ(numbers.resident, 2U) << "the published key is not resident beside the warm-up's";
     EXPECT_EQ(numbers.uploading, 0U) << "a published key was left Uploading";
-    EXPECT_EQ(device->residence().stateOf(description.get()), ResidenceTable::State::Resident);
+    EXPECT_EQ(device->residence().stateOf(description.get()), ResidencyClaims::State::Resident);
     EXPECT_GT(device->memoryStats().used_bytes, before.used_bytes) << "a published entry's streams must be resident";
     ASSERT_TRUE(backend->readColorBuffer(target.get(), 0, pixels));
     expectRed(pixels, "the frame that built the shared entry");
@@ -356,7 +356,7 @@ TEST(VkResidenceWireTest, TwoDriversFirstDrawingOneGeometryShareOneEntryAndAtMos
 
     // THE BOUND, WHATEVER THE INTERLEAVING: one claim won, one fill published, at most one copy built - so the same
     // geometry was uploaded at most twice, which is T4's acceptance criterion at the device level.
-    const ResidenceTable::Numbers numbers = device->residence().numbers();
+    const ResidencyClaims::Numbers numbers = device->residence().numbers();
     EXPECT_EQ(numbers.claims, 1U) << "two drivers both won the same key";
     EXPECT_EQ(numbers.published, 1U) << "the winning driver did not publish";
     EXPECT_EQ(numbers.resident, 1U);
@@ -413,7 +413,7 @@ TEST(VkResidenceWireTest, ARefusedBuildIsWithdrawnInsteadOfPublished)
     (void)backend->executeFrame(drawingFrame(target.get(), programDraw(big_geometry, program)), nullptr);
     EXPECT_GT(refusals, 0) << "the injection was never reached: the case proved nothing";
 
-    EXPECT_EQ(device->residence().stateOf(description.get()), ResidenceTable::State::Absent)
+    EXPECT_EQ(device->residence().stateOf(description.get()), ResidencyClaims::State::Absent)
         << "a refused build was left Uploading or published as usable";
     EXPECT_EQ(device->residence().numbers().uploading, 0U) << "a refused build left its key Uploading (P1)";
     EXPECT_EQ(device->residence().numbers().resident, 1U) << "a refused build was published (only the warm-up's key is)";
@@ -423,10 +423,10 @@ TEST(VkResidenceWireTest, ARefusedBuildIsWithdrawnInsteadOfPublished)
     // THE HOST LETS GO AND THE POOL RECOVERS: the release forgets the failed entry, and the next frame builds it.
     device->setMemoryBlockCreator({});
     ASSERT_TRUE(backend->releaseContent(big_geometry.get()));
-    EXPECT_EQ(device->residence().stateOf(description.get()), ResidenceTable::State::Absent);
+    EXPECT_EQ(device->residence().stateOf(description.get()), ResidencyClaims::State::Absent);
     (void)backend->executeFrame(drawingFrame(target.get(), programDraw(big_geometry, program)), nullptr);
     EXPECT_EQ(device->residence().numbers().published, 2U) << "the rebuilt key was not published beside the warm-up's";
-    EXPECT_EQ(device->residence().stateOf(description.get()), ResidenceTable::State::Resident);
+    EXPECT_EQ(device->residence().stateOf(description.get()), ResidencyClaims::State::Resident);
     EXPECT_EQ(device->residence().numbers().uploading, 0U);
 
     backend->shutdown();
@@ -450,17 +450,17 @@ TEST(VkResidenceWireTest, AReleasedGeometryIsForgottenSoTheNextFrameMayBuildItAg
     const vn::graphics::GeometryDescriptionPtr description = geometry->description();
 
     (void)backend->executeFrame(drawingFrame(target.get(), programDraw(geometry, program)), nullptr);
-    ASSERT_EQ(device->residence().stateOf(description.get()), ResidenceTable::State::Resident);
+    ASSERT_EQ(device->residence().stateOf(description.get()), ResidencyClaims::State::Resident);
     ASSERT_EQ(device->residence().numbers().published, 1U);
 
     ASSERT_TRUE(backend->releaseContent(geometry.get()));
-    EXPECT_EQ(device->residence().stateOf(description.get()), ResidenceTable::State::Absent)
+    EXPECT_EQ(device->residence().stateOf(description.get()), ResidencyClaims::State::Absent)
         << "the released key stayed in the table";
     EXPECT_EQ(device->residence().numbers().resident, 0U);
 
     // THE NEXT FRAME CLAIMS AND BUILDS IT AGAIN: the release forgot the key, so the driver may and does win it.
     (void)backend->executeFrame(drawingFrame(target.get(), programDraw(geometry, program)), nullptr);
-    const ResidenceTable::Numbers numbers = device->residence().numbers();
+    const ResidencyClaims::Numbers numbers = device->residence().numbers();
     EXPECT_EQ(numbers.claims, 2U) << "the released key was not claimable again";
     EXPECT_EQ(numbers.published, 2U) << "the rebuilt key was not published";
     EXPECT_EQ(numbers.resident, 1U);

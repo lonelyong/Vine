@@ -68,6 +68,7 @@ vn_declare_embedded_shaders(
         "${VN_SDK_SHADER_DIR}/builtin_deferred_lighting.frag"
         "${VN_SDK_SHADER_DIR}/builtin_forward.vert"
         "${VN_SDK_SHADER_DIR}/builtin_forward.frag"
+        "${VN_SDK_SHADER_DIR}/builtin_depth.frag"
         "${VN_SDK_SHADER_DIR}/builtin_skybox.vert"
         "${VN_SDK_SHADER_DIR}/builtin_skybox.frag"
     INCLUDES

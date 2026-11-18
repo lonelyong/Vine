@@ -253,6 +253,15 @@ intrusive_ptr<ShaderProgram> skyboxProgram()
     return makeProgram(u8"builtin_skybox", shaders::kBuiltinSkyboxVert, shaders::kBuiltinSkyboxFrag);
 }
 
+intrusive_ptr<ShaderProgram> depthOnlyProgram()
+{
+    // A pass with no colour attachment still needs a fragment stage to rasterise, and the only one that tells the truth
+    // about such a pass declares no output (see the shipped fragment). The vertex stage is the content's, so this
+    // program places geometry exactly where every colour pass of the same drawable places it - the reason it is not a
+    // position-only stage is in the header: that one would declare inputs the geometry need not carry.
+    return makeProgram(u8"builtin_depth", shaders::kBuiltinForwardVert, shaders::kBuiltinDepthFrag);
+}
+
 intrusive_ptr<ShaderProgram> fullscreenVertexProgram()
 {
     auto program = make_intrusive<ShaderProgram>();

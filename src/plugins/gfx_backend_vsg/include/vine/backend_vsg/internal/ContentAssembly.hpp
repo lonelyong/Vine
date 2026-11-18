@@ -14,7 +14,7 @@
 #include <vine/backend_vsg/internal/VariantPool.hpp>
 #include <vine/backend_vsg/internal/BlockStorage.hpp>
 #include <vine/backend_vsg/internal/ContentFacts.hpp>
-#include <vine/backend_vsg/internal/ProgramHalves.hpp>
+#include <vine/backend_vsg/internal/CompiledPrograms.hpp>
 #include <vine/backend_vsg/internal/ContentImages.hpp>
 #include <vine/backend_vsg/internal/ContentPass.hpp>
 #include <vine/backend_vsg/internal/BindingSets.hpp>
@@ -28,7 +28,7 @@
  * recorder behind TWO calls.
  *
  * WHY IT EXISTS. The pieces each have an owner now - api/ContentStore answers what a plan names out of the
- * live objects, api/ProgramHalves compiles the tuples a pass asks for, api/BindingSets builds the declared
+ * live objects, api/CompiledPrograms compiles the tuples a pass asks for, api/BindingSets builds the declared
  * sets their images imply, api/ContentPass records - and the loop that strings them together (walk the pass,
  * hand each piece the previous one's answer, open the frame's block budget, keep one registry per pass) is
  * the same in every caller. That loop is this class: `beginFrame` and `record`.
@@ -178,7 +178,7 @@ class ContentAssembly {
     /** @brief Gets the tables the last beginFrame() answered with (empty before one). */
     [[nodiscard]] const ContentFacts& facts() const noexcept;
     /** @brief Gets the halves the assembly produced for this frame (its counters are evidence). */
-    [[nodiscard]] ProgramHalves& halves() noexcept;
+    [[nodiscard]] CompiledPrograms& halves() noexcept;
 
     /** @brief Gets the declared sets the assembly produced for this frame (its counters are evidence). */
     [[nodiscard]] BindingSets& sets() noexcept;

@@ -1,6 +1,6 @@
 # Glossary: one spelling per concept
 
-> **Status**: living ｜ **Last verified**: 2026-11-17
+> **Status**: living ｜ **Last verified**: 2026-11-18
 > **Scope**: the vocabulary a design page, an ADR or a commit body uses about the render seam, the two
 > backends and the frame model. It is the single mapping between a concept's **code spelling** and the
 > words the Chinese pages use, so prose can be searched and translated without guessing.
@@ -8,6 +8,10 @@
 > (the prose that uses them).
 > **Rule**: prose uses the code spelling. When a concept is renamed, rename it here in the same batch
 > (see `.github/copilot-instructions.md` → "Documentation Language").
+> **Reader-facing counterpart**: `docs/guides/graphics.md` §5 maps the same words to what Filament, O3DE
+> and UE call them, and states the target roles and the five frame values. This page is the
+> translator's table (code spelling ↔ the Chinese the legacy pages used); that chapter is the reader's.
+> Do not copy one into the other - state the fact once and point at it.
 
 ## 1. Terms
 
@@ -18,6 +22,11 @@
 | backend | 后端 | A plugin implementing the seam: `vk` (direct Vulkan) and `vsg` (VulkanSceneGraph). |
 | seam | 接缝 | The `sdk/vine/graphics/` mechanisms **both** backends use (`FrameGate`, `DeviceClock`, `FrameTimeline`, `RetirementQueue`, `Readback`, `DrawState`, `TargetPlan`, `DiagnosticDraft`). |
 | frame | 帧 | One `FrameDescription` value: one submit and one wait. |
+| `FrameDescription` | 帧描述 | The compiled frame the engine hands the backend: every enabled pass' identity, order and resolved inputs plus what the pass described. |
+| `FrameTable` | 帧表 | The same frame as rows a host may read (`PassRow`); not the plan, not a handle. |
+| `FrameResult` | 帧结果 | What the last ANSWERED frame was: its picture, the world it saw (`FrameQuery`), its counts. |
+| `FrameOutcome` | 调用结果 | What one `frame()` call did (Ran / Submitted); `NotReady` is a precondition, not a frame ending. |
+| `FrameQuery` | 帧所见 | The publication and the view the picture was taken from (`FrameResult::query`). |
 | pass | pass (not translated) | One `PassDesc`; the only authoring shape. |
 | draw call | 绘制调用 | One `DrawDescription`, not one recorded GPU command. |
 | content | 内容 | Scene, material, geometry, program and light as engine-owned objects. |
@@ -37,7 +46,8 @@
 | refusal | 拒绝 | A named diagnostic instead of silent degradation. |
 | readback | 读回 | Copying colour or depth into host memory. |
 | staging | 暂存 | The buffer `ReadbackStaging` copies through; it owns its pool and fence. |
-| residency, `ResidenceTable` | 驻留 | Whether content's GPU objects exist; the three-state `Use` / `Build` / `Copy`. |
+| residency claims, `ResidencyClaims` | 驻留 | Who may build a key and whether its fill is published; the vk table two frame drivers share (was `ResidenceTable`). |
+| pinned resources, `PinnedResources` | 固定资源 | Keyed residency with build-on-miss, pin-driven retirement and parked destruction; the vsg template every resource kind uses (was `ResourceTable`). |
 | snapshot, `SceneSnapshot` | 快照 | The published scene rows a frame's views select from. |
 | publication, `Scene::publish` | 发布 | Making a snapshot current; a frame reads only what is published. |
 | pipeline | 管线 | A `VkPipeline` / vsg pipeline built for one compatibility key. |
@@ -45,7 +55,7 @@
 | render pass key, `RenderPassKey` | 渲染通道键 | The opaque class two render passes must share to be compatible. |
 | push range, `PushRange` | 推送区 | The per-draw push constants (was `ContentPush`). |
 | binding set, `BindingSets` | 绑定集 | The descriptor sets a content draw binds (was `ContentSets`). |
-| program halves, `ProgramHalves` | 程序两半 | The vertex/fragment halves a program compiles from (was `ContentHalves`). |
+| compiled program, `CompiledPrograms` | 编译程序 | One pipeline layer plus its recorder per (program, revision, layout, variant, attachment count, topology); the vsg producer (was `ProgramHalves` - its prose and members still say *half*). |
 | diagnostic code | 诊断 code | The `vk.*` / `vsg.*` / `engine.*` string a report carries. |
 | origin, `DiagnosticOrigin` | 来源 | Who reported: `Engine` / `Device` / `Host`. |
 | validation layer | 验证层 | Vulkan's validation layer; its messages are VUIDs. |
@@ -57,7 +67,8 @@
 |---|---|---|
 | `Session` / 会话 (as the design noun) | frame driver / `FrameDriver` | Renamed in S2; `createSession()` is still the API verb, but the concept is the driver. |
 | backend half / 后端半边 | seam | The directory and the concept were deleted (`ADR-2026-11-16-no-backend-half`). |
-| `ContentHalves` / `ContentSets` / `ContentPush` | `ProgramHalves` / `BindingSets` / `PushRange` | B17 (S8). |
+| `ContentHalves` / `ContentSets` / `ContentPush` | `CompiledPrograms` / `BindingSets` / `PushRange` | B17 (S8), then B13 for the first (via `ProgramHalves`). |
+| `ProgramHalves` / `ResourceTable` / `ResidenceTable` | `CompiledPrograms` / `PinnedResources` / `ResidencyClaims` | B13: three near-names, one per role (compiled programs / pinned values / build claims). |
 | `TargetImages` / `OffscreenTarget` / `HostTargets` | `TargetObjects` / `TargetTable` | S4 (B5a/B5b). |
 | `TargetClaims` | the target table's lease | S4: one table answers map, shape and claims. |
 | `SceneBake` as "the production collector" | `DrawListBake::buildRows` + `selectSnapshot` | The frame compiles draws from the published snapshot. |
@@ -66,7 +77,7 @@
 
 | Word | Means here | Does **not** mean |
 |---|---|---|
-| engine | one render area's frame loop | the device owner (Filament/UE call that owner Engine/Device) |
+| engine | one render area's frame loop (`RenderEngine`) | the device owner (`RenderDevice`) — Filament/UE call that owner Engine/Device |
 | session | a borrowed frame driver (legacy spelling) | an OS, window or GPU session |
 | render pass | the engine's `PassDesc` | `VkRenderPass` — the backend's own object is a render pass key plus `TargetObjects` |
 | driver | frame driver (`FrameDriver`) | a GPU device driver |

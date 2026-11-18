@@ -30,6 +30,13 @@ a seam (both backends need it), not by a path set: the eight mechanism headers m
 from both backends, and the set of SDK headers both backends include directly is recorded, so a header
 entering or leaving that set is a decision this check asks for. See SEAM_HEADERS.
 
+The same fact is stated twice more for two audiences - the argument in `.ai/design/graphics-architecture.md`
+2.9 and the reader's table in `docs/guides/graphics-backends.md` 5 - so the check also requires each of
+those pages to NAME every mechanism the list holds (SEAM_DOCS). The list is the decision; a page that
+stops naming one of its mechanisms is drift, and a mechanism added to the list without a page naming it
+is an undocumented decision. Coverage is checked, staleness is not: both pages name mechanisms in other
+sections too, so "a page says a mechanism the list does not hold" cannot be decided from prose.
+
 In a .cpp the FIRST include is the file's own header (the rule says so), so it is
 not part of the group order — but the group ORDER is only checked in headers:
 
@@ -172,6 +179,14 @@ SEAM_HEADERS = frozenset((
     "RetirementQueue.hpp",
     "TargetPlan.hpp",
 ))
+# The two pages that describe the seam. Each must name every mechanism SEAM_HEADERS holds: the list is the
+# decision (see ADR-2026-11-18-seam-identity-is-a-property-not-a-namespace.md), and a page that silently stops
+# naming one of them would be the drift this rule exists to catch. Names are looked for in their backticked
+# spelling, which is how both pages list them.
+SEAM_DOCS = (
+    ".ai/design/graphics-architecture.md",  # 2.9, the argument
+    "docs/guides/graphics-backends.md",     # 5, the reader's table
+)
 # Measured 2026-11-18: the 25 SDK headers a vk TU and a vsg TU both include directly. A change here is
 # not automatically wrong - it is a decision about the seam or about the model surface.
 SEAM_SHARED_HEADERS = frozenset((
@@ -268,6 +283,26 @@ def seam_findings():
         findings.append(
             f"{name}: SEAM_SHARED_HEADERS says both backends include it directly, but that is no longer"
             " true - update the list (and SEAM_HEADERS if it was a mechanism)")
+    findings.extend(seam_doc_findings(root))
+    return findings
+
+
+def seam_doc_findings(root):
+    """Return the findings that keep the pages describing the seam in step with SEAM_HEADERS."""
+    findings = []
+    for relative in SEAM_DOCS:
+        page = root / relative
+        if not page.is_file():
+            findings.append(f"{relative}: the page that states the seam is gone - the doc rule would silently"
+                            " cover nothing")
+            continue
+        text = page.read_text(encoding="utf-8", errors="replace")
+        for name in sorted(SEAM_HEADERS):
+            mechanism = name[: -len(".hpp")]
+            if f"`{mechanism}`" not in text:
+                findings.append(
+                    f"{relative}: the seam list holds `{mechanism}`, and this page no longer names it -"
+                    " the list is the decision (SEAM_HEADERS), so state it or change the list")
     return findings
 
 

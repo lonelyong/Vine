@@ -4,7 +4,7 @@
 > **Last verified**: 2026-11-16
 > **Scope**: host ownership of content objects, GPU residency release and caching policy, and the reclamation of upload staging.
 > **Sources**: `RenderDevice.hpp` / `RenderEngine.hpp` / `MaterialImages.hpp` /
-> `vine/backend_vsg/internal/MaterialArena.hpp` / `.../Streams.hpp` / `.../ResourceTable.hpp` / `BlockStorage.hpp`.
+> `vine/backend_vsg/internal/MaterialArena.hpp` / `.../Streams.hpp` / `.../PinnedResources.hpp` / `BlockStorage.hpp`.
 > **Backlog**: `../backlog/graphics.md`
 
 ## 1. Overview
@@ -38,7 +38,7 @@ This file defines the current design of graphics content lifecycle: release and 
     An entry holds the `Buffer` its key names, so the address lives as long as the entry. Residency lifetime **does not look at time**; two O(1) facts decide it:
     the declaration index published by the content layer (`ContentFacts::declarations`, an
     address→declaration count `ContentStore` maintains synchronously on row changes) says "is there still live content declaring this buffer"; the entry's own handle says "is the revision still the one it uploaded".
-    An entry with no declaration, or whose revision has moved on, parks and leaves (`vine/backend_vsg/internal/ResourceTable.hpp`). The per-frame cost is O(#resident entries),
+    An entry with no declaration, or whose revision has moved on, parks and leaves (`vine/backend_vsg/internal/PinnedResources.hpp`). The per-frame cost is O(#resident entries),
     not a function of content size (culling does not delete rows, so scanning rows would turn the frame that draws nothing into the most expensive frame).
 2.6 **Tables keyed by identity, and an entry must live while its key lives; only uploads are still keyed by address**: the geometry / material / program fact rows are keyed by the content handle
     `(id, revision)` (`ContentId.hpp`), and the compiled halves and descriptor sets are keyed by the same `ContentRef` (plus layout / variant /
@@ -79,10 +79,10 @@ The cost is written in D14: it relies on vsg's protected block state (the derive
      holds the view / sampler itself), so it is asked in `ContentAssembly::beginFrame` together with the streams.
    - Compiled halves / descriptor sets are **session-level** and do not follow a pass: a half is pinned by **program@rev ∧ `declaresLayout`**
      (the "layout → live row count" the geometry table maintains, O(1)), and a descriptor set additionally by **the textures it samples** (a material row's `declaresTexture` +
-     the texture revision in its own key). Both go through `ResourceTable::retireUnpinned`, and there is no longer a per-frame scan asking "is there still any geometry asking for this
+     the texture revision in its own key). Both go through `PinnedResources::retireUnpinned`, and there is no longer a per-frame scan asking "is there still any geometry asking for this
      layout" (when a hand-built `ContentFacts` has not published the index it falls back to the scan under the optional-index rule, and production always publishes); "the last
      geometry using that layout leaves the tree ⇒ the half parks" is answered directly by the declaration index.
-     **The scan belongs to the frame, not the pass**: both tables park once at the head of `ContentAssembly`'s frame (`ProgramHalves::sweep` /
+     **The scan belongs to the frame, not the pass**: both tables park once at the head of `ContentAssembly`'s frame (`CompiledPrograms::sweep` /
      `BindingSets::sweep`), so a frame with zero draws still reclaims, and N passes do not scan the table N times.
      **Known residue**: the pin only covers the two halves of the key that say "did the content change" (program@rev, layout / texture),
      while topology, attachment shape and variant are in the key too — the old halves / old sets a change in those leaves behind do **not** leave because of the pin,
@@ -124,7 +124,7 @@ The cost is written in D14: it relies on vsg's protected block state (the derive
 | F6 | Texture cache | `MaterialImages` entries are pinned by **live content**: the material row's slot declaration (`ContentDeclarations::declaresTexture`) + the textures each pass imports that frame, plus the entry's own `revision()`; no LRU / cap. |
 | F7 | Material arena | `copies` per slot (matching in-flight frames); a full slot answers `Refused` and evicts no live material; a slot's lifetime is the pin (a live material row declares this identity), and the frame head's `retireUnpinned` frees it. |
 | F8 | Grow on demand | Before recording, swap in larger storage according to `ContentStore::materialCount()`; no hard cap. |
-| F9 | Stream sharing | `StreamUploads` are shared by `StreamKey`; a steady-state frame uploads 0; entries are pinned by live geometry rows (`ResourceTable`). |
+| F9 | Stream sharing | `StreamUploads` are shared by `StreamKey`; a steady-state frame uploads 0; entries are pinned by live geometry rows (`PinnedResources`). |
 | F10 | Per-frame blocks | `BlockStorage` is a per-frame ring, slabs = in-flight frames + 1; a steady-state frame does not write. |
 | F11 | Alignment | A block offset must be a multiple of the device's `minUniformBufferOffsetAlignment`. |
 | F12 | Budget | Oversized / overflow / material refusal are refused and counted before any budget is spent. |
@@ -184,7 +184,7 @@ the per-frame observation `FrameReport::uploads` (`FrameUploads`).
 | `core::MaterialArena::write()` / `capacityNeed()` / `live()` | Material blocks |
 | `BlockStorage::beginFrame()` / `writeView()` / `writeDraw()` / `writeMaterial()` / `retireUnpinnedMaterials()` | Per-frame blocks |
 | `BlockStorage::strides()` / `regions()` / `bytes()` | Layout and observation |
-| `StreamUploads::acquireVertex()` / `acquireIndex()` / `beginFrame()` / `retired()` / `uploads()` | Stream uploads (entries held by `core::ResourceTable`; lifetime reads `ContentFacts::declarations` + the entry's own revision) |
+| `StreamUploads::acquireVertex()` / `acquireIndex()` / `beginFrame()` / `retired()` / `uploads()` | Stream uploads (entries held by `core::PinnedResources`; lifetime reads `ContentFacts::declarations` + the entry's own revision) |
 
 ## 5. Constraints, Requirements and Invariants
 

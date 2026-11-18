@@ -213,3 +213,6 @@ the engine side's 20 reports gain codes, and `diagnostic_code_baseline.txt` goes
 - **Stage three (migration)**: **done** (2026-11-17). Batch progress is archived in the git commit bodies (each batch lists its capability ID triples),
   and this document only records status; the batch table and order are in the commit bodies.
 - **This ADR was changed to "Accepted" when the last batch (S8) landed**; no batch was abandoned.
+- **Correction (2026-11-18, audit-4 B13)**: `ProgramHalves` is `CompiledPrograms`, `ResourceTable` is
+  `PinnedResources` and `ResidenceTable` is `ResidencyClaims` (the S8 rename stops here). The "do not merge
+  the two tables" rejection above stands for the same reason; only the names moved.

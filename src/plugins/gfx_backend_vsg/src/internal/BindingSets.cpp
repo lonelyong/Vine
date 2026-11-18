@@ -7,7 +7,7 @@
 #include <vsg/state/Sampler.h>
 
 #include <vine/graphics/Texture.hpp>
-#include <vine/backend_vsg/internal/ResourceTable.hpp>
+#include <vine/backend_vsg/internal/PinnedResources.hpp>
 #include <vine/backend_vsg/internal/ContentPipeline.hpp>
 #include <vine/backend_vsg/internal/ProgramVariant.hpp>
 
@@ -146,7 +146,7 @@ struct BindingSets::Data {
     const BlockStorage*           storage{ nullptr };
     MaterialImages*               images{ nullptr };
 
-    core::ResourceTable<Key, std::shared_ptr<Set>, KeyHash> sets;
+    core::PinnedResources<Key, std::shared_ptr<Set>, KeyHash> sets;
     std::vector<BlockDescriptors*>                         candidates;
     /// Keys whose build was REFUSED. They have no resident value (no descriptor set exists), so they are not in
     /// the table: the set is only the "do not retry" memory, and it leaves when its program revision does.

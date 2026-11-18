@@ -263,6 +263,12 @@ intrusive_ptr<RenderTarget> ChainBuilder::buildShadowPass(PassChain& pipeline, c
     // through several passes.
     desc.layer_mask    = content_layers_;
     desc.target        = Target::explicitTarget(shadow_map);
+    // A DEPTH MAP HAS NO COLOUR ATTACHMENT, so the pass draws with the depth-only program instead of whatever each
+    // drawable's own program is: the content program writes location 0, and a fragment output nobody can see is a
+    // validation warning plus per-fragment shading work no one reads. The override is the pass's statement "everything
+    // here writes depth and nothing else" (see BuiltinShaders::depthOnlyProgram), and it leaves the drawables - their
+    // geometry, their variants, their matrices - untouched.
+    desc.program_override = depthOnlyProgram();
     // Its only writer owns the hand-off: the pass that samples it declares this target as an input,
     // and the engine answers that from the passes that DREW into it.
     desc.output.whole_target = true;

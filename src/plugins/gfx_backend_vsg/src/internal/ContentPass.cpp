@@ -94,7 +94,7 @@ std::string describeMissingContentHalf(const core::CompiledPass& pass, const Con
             return text;
         }
         // The identity IS answerable, so the half itself was refused while it was being built - the one reason
-        // the tables cannot explain (see ProgramHalves::refused).
+        // the tables cannot explain (see CompiledPrograms::refused).
         return "the half for the first command's identity was REFUSED while it was built (its GLSL did not compile, or its "
                "vertex layout is one this backend cannot declare): program '" +
                (named.empty() ? std::string("<none>") : std::string(named)) + "'";
@@ -161,7 +161,7 @@ bool ContentPass::serveHalf(const Scope::Entry& entry, std::uint32_t input_count
     const auto refuse = [&](const char* why) {
         const std::size_t index           = static_cast<std::size_t>(&entry - scope_.entries.data());
         // The caller's episode when it keeps one (a half's state spans passes and frames - see
-        // api/ProgramHalves); the recorder's own otherwise, whose episode is this one ContentPass.
+        // api/CompiledPrograms); the recorder's own otherwise, whose episode is this one ContentPass.
         vn::graphics::ReportOnce* episode = entry.reported;
         if (episode == nullptr && index < half_reported_.size()) {
             episode = &half_reported_[index];

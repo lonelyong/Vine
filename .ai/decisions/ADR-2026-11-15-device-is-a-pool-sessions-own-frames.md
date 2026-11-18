@@ -312,3 +312,6 @@ disappears with the second step (`G4`: state which version a cost belongs to).
   device wiring (`F4`) all landed on 2026-11-16, so this ADR's nine migration steps are complete. Today's shape is in
   `graphics-sessions.md` §2.9 / §3.1.9 and the threading contract is in `graphics-threading.md` `C21`; each step's cases and mutation evidence
   stay in the git history (the original record is not rewritten).
+- **Correction (2026-11-18, audit-4 B13)**: the three-state machine this ADR calls `ResidenceTable` is
+  `ResidencyClaims` today (`vn::backend_vk`); the states (`Absent` / `Uploading` / `Resident`) and every
+  argument above are unchanged.

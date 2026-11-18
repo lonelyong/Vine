@@ -5,7 +5,7 @@
 #include <vine/backend_vk/backend_vk_global.hpp>
 #include <vine/backend_vk/internal/Handles.hpp>
 #include <vine/backend_vk/internal/MemoryAllocator.hpp>
-#include <vine/backend_vk/internal/ResidenceTable.hpp>
+#include <vine/backend_vk/internal/ResidencyClaims.hpp>
 #include <vine/backend_vk/internal/TargetTable.hpp>
 
 VN_BACKEND_VK_NS_BEGIN
@@ -507,7 +507,7 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
     [[nodiscard]] const TargetTable& targetTable() const noexcept;
 
     /**
-     * @brief Gets the device's RESIDENCE TABLE: who may build a geometry and who has to copy it (see ResidenceTable).
+     * @brief Gets the device's RESIDENCE TABLE: who may build a geometry and who has to copy it (see ResidencyClaims).
      *
      * @details
      * - EXPOSED FOR THE SAME REASON `targetTable()` IS: residency is a fact about the DEVICE, not about one frame,
@@ -517,9 +517,9 @@ class VN_BACKEND_VK_API Device final : public vn::graphics::RenderBackend {
      *
      * @return The table (empty before `initialize()`, cleared by `shutdown()`).
      */
-    [[nodiscard]] ResidenceTable& residence() noexcept;
+    [[nodiscard]] ResidencyClaims& residence() noexcept;
     /** @brief Gets the residence table for a reader that only reports on it (see the mutable overload). */
-    [[nodiscard]] const ResidenceTable& residence() const noexcept;
+    [[nodiscard]] const ResidencyClaims& residence() const noexcept;
 
     /**
      * @brief What the persisted pipeline cache did for this session (see PipelineCacheFile).

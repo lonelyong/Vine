@@ -13,12 +13,12 @@ endif()
 
 set(_guarded
     src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ContentFacts.hpp
-    src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ProgramHalves.hpp
+    src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/CompiledPrograms.hpp
     src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/PushRange.hpp
     src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ContentSources.hpp
     src/plugins/gfx_backend_vsg/include/vine/backend_vsg/internal/ContentStore.hpp
     src/plugins/gfx_backend_vsg/src/internal/ContentFacts.cpp
-    src/plugins/gfx_backend_vsg/src/internal/ProgramHalves.cpp
+    src/plugins/gfx_backend_vsg/src/internal/CompiledPrograms.cpp
     src/plugins/gfx_backend_vsg/src/internal/PushRange.cpp
     src/plugins/gfx_backend_vsg/src/internal/ContentSources.cpp
     src/plugins/gfx_backend_vsg/src/internal/ContentStore.cpp)

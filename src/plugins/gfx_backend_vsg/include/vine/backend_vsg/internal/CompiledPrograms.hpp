@@ -15,7 +15,13 @@
 #include <vine/backend_vsg/backend_vsg_global.hpp>
 
 /**
- * @brief The compiled HALVES a pass needs, produced from the tables (see api/ContentPass for what a half is).
+ * @brief The compiled PROGRAMS a pass needs, produced from the tables (see api/ContentPass for what one is).
+ *
+ * ONE ENTRY IS A COMPILED PROGRAM - what this unit's prose, its members and its test names still call a *half*
+ * (the class was named `ProgramHalves`): one pipeline layer plus its recorder, keyed by everything in the next
+ * paragraph. The class was renamed so that a call site answers "half of what"; the member spelling
+ * (`halvesFor` / `halves()`) stayed, because renaming it item by item is churn and the test names that quote
+ * the word are the evidence (`G8`), not a second concept.
  *
  * WHY IT EXISTS. A scope's entries are one per (program, revision, layout, VARIANT), and every one of them is
  * backed by a compiled pipeline layer and its recorder. Until this class a host built those itself, per pass,
@@ -51,8 +57,8 @@
  */
 VN_BACKEND_VSG_NS_BEGIN
 
-/** @brief Produces the compiled halves a pass' draws need (see the file note). */
-class ProgramHalves {
+/** @brief Produces the compiled programs a pass' draws need (see the file note for what a *half* is). */
+class CompiledPrograms {
   public:
     /**
      * @brief Creates the producer.
@@ -62,7 +68,7 @@ class ProgramHalves {
      *                     (see api/ContentDraw - the halves can then be produced and looked at, but not
      *                     recorded).
      */
-    explicit ProgramHalves(core::VariantPool& pool, detail::DynamicStateEntryPoints entry_points = {});
+    explicit CompiledPrograms(core::VariantPool& pool, detail::DynamicStateEntryPoints entry_points = {});
 
     /**
      * @brief Ensures the halves @p pass' draws need, from @p facts, and returns them.
@@ -129,10 +135,10 @@ class ProgramHalves {
     /** @brief Releases every half. The session-teardown path: nothing is parked. */
     void clear();
 
-    ~ProgramHalves();
+    ~CompiledPrograms();
 
-    ProgramHalves(const ProgramHalves&)            = delete;
-    ProgramHalves& operator=(const ProgramHalves&) = delete;
+    CompiledPrograms(const CompiledPrograms&)            = delete;
+    CompiledPrograms& operator=(const CompiledPrograms&) = delete;
 
   private:
     struct Data;

@@ -11,8 +11,8 @@
 VN_BACKEND_VK_NS_BEGIN
 
 /**
- * @brief WHO MAY BUILD a piece of content, and when everybody else may use it: the three-state residency table two
- *        frame drivers share.
+ * @brief The residency CLAIMS two frame drivers share: WHO MAY BUILD a piece of content, and when everybody else
+ *        may use it.
  *
  * @details
  * - THE QUESTION THIS ANSWERS. A compiled program or an uploaded stream is expensive, so the device keeps it and a
@@ -37,7 +37,7 @@ VN_BACKEND_VK_NS_BEGIN
  *   died after the host released the content (`forget`), a claim that was already withdrawn, and a newer claim made
  *   after either. Stale attempts are COUNTED instead of ignored (`Numbers::stale`), because they mean a caller
  *   believes it owns something it does not.
- * - WHAT IT IS NOT. It is not `vn::graphics::ResourceTable`: that table answers "may this resident value go
+ * - WHAT IT IS NOT. It is not vsg's `PinnedResources` (`vn::backend_vsg::core`): that table answers "may this resident value go
  *   now?" for ONE thread and retires by pins; this one answers "who may build this key?" for TWO drivers and never
  *   decides destruction. It also does not destroy anything, and it is not a retirement schedule: the caller forgets
  *   the entry (`forget`) and hands the Vulkan objects to `RetirementQueue`, exactly as `releaseContent` does today
@@ -51,7 +51,7 @@ VN_BACKEND_VK_NS_BEGIN
  *
  * @see `.ai/design/graphics-sessions.md` §2.4 (the three rules), §3.1.4 (F4), §9.3 step S4.
  */
-class VN_BACKEND_VK_API ResidenceTable final {
+class VN_BACKEND_VK_API ResidencyClaims final {
   public:
     /// @brief Identity of one resident thing: the address of a description (which carries its own revision).
     using Key = const void*;
@@ -109,11 +109,11 @@ class VN_BACKEND_VK_API ResidenceTable final {
         void withdraw() noexcept;
 
       private:
-        friend class ResidenceTable;
+        friend class ResidencyClaims;
 
-        Claim(ResidenceTable& table, Key key, std::uint64_t token) noexcept;
+        Claim(ResidencyClaims& table, Key key, std::uint64_t token) noexcept;
 
-        ResidenceTable* table_{ nullptr };
+        ResidencyClaims* table_{ nullptr };
         Key             key_{ nullptr };
         std::uint64_t   token_{ 0 };
     };
@@ -155,13 +155,13 @@ class VN_BACKEND_VK_API ResidenceTable final {
 
   public:
     /** @brief Builds an empty table. */
-    ResidenceTable() = default;
+    ResidencyClaims() = default;
 
     /** @brief Drops every entry (a table destroyed with live claims is a caller defect: see the class warning). */
-    ~ResidenceTable();
+    ~ResidencyClaims();
 
-    ResidenceTable(const ResidenceTable&)            = delete;
-    ResidenceTable& operator=(const ResidenceTable&) = delete;
+    ResidencyClaims(const ResidencyClaims&)            = delete;
+    ResidencyClaims& operator=(const ResidencyClaims&) = delete;
 
   public:
     /**

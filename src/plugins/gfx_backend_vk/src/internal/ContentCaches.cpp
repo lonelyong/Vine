@@ -225,7 +225,7 @@ struct ContentCaches::Impl {
     std::unordered_map<const vn::Buffer<float>*, InstanceStream>                    instance_streams;
     std::map<PipelineKey, VkPipeline>                                               pipelines;
     /**
-     * @brief WHO MAY BUILD a geometry: the device table two frame drivers share (F4, see `ResidenceTable`).
+     * @brief WHO MAY BUILD a geometry: the device table two frame drivers share (F4, see `ResidencyClaims`).
      *
      * @details
      * - IT AGREES WITH @c geometries AT ALL TIMES: an entry exists there while its key is `Resident` (published), and
@@ -234,7 +234,7 @@ struct ContentCaches::Impl {
      * - ITS OWN LOCK, SO THE ADMISSION DOES NOT NEED THIS CACHE'S: a competitor asks before it needs the tables. The
      *   order is always cache-lock-then-table-lock (see the class note).
      */
-    ResidenceTable                                                                 residence;
+    ResidencyClaims                                                                 residence;
     /// How many pipelines were CREATED (a resize must leave this unmoved; see pipelinesCreated).
     std::uint64_t created_{ 0 };
 
@@ -457,6 +457,10 @@ struct ContentCaches::Impl {
             if (stage.type == vn::graphics::ShaderStageType::Vertex) {
                 entry.vertex       = module;
                 entry.vertex_entry = stage.entryPoint.as_std_str();
+                // WHAT THE STAGE READS, kept for the pipeline builder: a vertex input may declare fewer attributes than
+                // the geometry carries, and the set that belongs in the pipeline is the one the stage declares.
+                entry.vertex_locations       = std::move(spirv.input_locations);
+                entry.vertex_locations_known = spirv.input_locations_known;
             }
             else {
                 entry.fragment       = module;
@@ -483,7 +487,7 @@ struct ContentCaches::Impl {
      * @brief Gets (or uploads) one geometry revision's streams, ASKING THE RESIDENCE TABLE WHO MAY BUILD IT (F4).
      *
      * @details
-     * - THREE ANSWERS, THREE FILLS (see `ResidenceTable::admit`). `Use` returns the resident entry. `Build` fills the
+     * - THREE ANSWERS, THREE FILLS (see `ResidencyClaims::admit`). `Use` returns the resident entry. `Build` fills the
      *   cache's entry and keeps the claim for the frame to publish. `Copy` fills a DETACHED entry the caller's frame
      *   owns and throws away - another driver is building this key, and waiting is the one shape in which two drivers
      *   can deadlock each other (`P2`).
@@ -509,8 +513,8 @@ struct ContentCaches::Impl {
             return known;
         }
 
-        ResidenceTable::Decision decision = residence.admit(&description, builds.session());
-        if (decision.kind == ResidenceTable::Decision::Kind::Use) {
+        ResidencyClaims::Decision decision = residence.admit(&description, builds.session());
+        if (decision.kind == ResidencyClaims::Decision::Kind::Use) {
             const auto found = geometries.find(&description);
             if (found != geometries.end() && !found->second.failed) {
                 // A RELEASED STREAM LEAVES A HOLE IN A RESIDENT ENTRY, and filling it is this path's job: the release
@@ -530,7 +534,7 @@ struct ContentCaches::Impl {
             return ensureGeometry(description, builds, why);
         }
 
-        if (decision.kind == ResidenceTable::Decision::Kind::Build) {
+        if (decision.kind == ResidencyClaims::Decision::Kind::Build) {
             const auto found = geometries.find(&description);
             if (found != geometries.end() && found->second.failed) {
                 // THE REFUSAL WAS REPORTED WHEN IT HAPPENED: the claim is left to `decision`, whose destructor returns
@@ -950,6 +954,14 @@ struct ContentCaches::Impl {
         bindings.reserve(geometry_channels + 1U);
         attributes.reserve(key.channels.size());
         for (std::size_t index = 0; index < geometry_channels; ++index) {
+            // ONLY WHAT THE VERTEX STAGE READS. A geometry carries the channels its data has; a program reads the ones
+            // it declares, and a pipeline that names the rest describes a vertex input nobody wrote (validation says
+            // so: "attribute at location N not consumed by vertex shader") and makes a draw fetch what it never uses.
+            // The binding NUMBER stays the geometry channel's index - that is the slot the draw binds the stream to -
+            // so narrowing leaves the binding side alone (see ContentDraw's vkCmdBindVertexBuffers).
+            if (!program.vertexStageReads(key.channels[index].first)) {
+                continue;
+            }
             const std::uint32_t binding    = static_cast<std::uint32_t>(index);
             const std::uint32_t location   = key.channels[index].first;
             const std::uint32_t components = key.channels[index].second;
@@ -966,7 +978,10 @@ struct ContentCaches::Impl {
             attribute.offset   = 0U;
             attributes.push_back(attribute);
         }
-        if (instanced) {
+        // The instance stream is declared only when the stage reads it (a depth-only or unlit program may not); its
+        // binding keeps the LAST slot because that is where the draw binds the matrix (see ContentDraw). Asking about
+        // the FIRST column is enough: the four are one matrix input, so they are either all declared or none is.
+        if (instanced && program.vertexStageReads(key.channels[geometry_channels].first)) {
             VkVertexInputBindingDescription binding_description{};
             binding_description.binding   = static_cast<std::uint32_t>(geometry_channels);
             binding_description.stride    = vn::graphics::kInstanceMatrixColumns * 4U * static_cast<std::uint32_t>(sizeof(float));
@@ -1400,7 +1415,7 @@ struct ContentCaches::Impl {
 
 ContentCaches::FrameBuilds::FrameBuilds() noexcept = default;
 
-ContentCaches::FrameBuilds::FrameBuilds(ContentCaches& owner, const ResidenceTable::FrameDriverId session) noexcept
+ContentCaches::FrameBuilds::FrameBuilds(ContentCaches& owner, const ResidencyClaims::FrameDriverId session) noexcept
   : owner_(&owner)
   , session_(session)
 {
@@ -1433,7 +1448,7 @@ ContentCaches::FrameBuilds& ContentCaches::FrameBuilds::operator=(FrameBuilds&& 
     return *this;
 }
 
-ResidenceTable::FrameDriverId ContentCaches::FrameBuilds::session() const noexcept
+ResidencyClaims::FrameDriverId ContentCaches::FrameBuilds::session() const noexcept
 {
     return session_;
 }
@@ -1449,7 +1464,7 @@ void ContentCaches::FrameBuilds::noteUsed(const vn::graphics::GeometryDescriptio
     resolved_.emplace(&description, &entry);
 }
 
-void ContentCaches::FrameBuilds::noteClaim(ResidenceTable::Claim claim)
+void ContentCaches::FrameBuilds::noteClaim(ResidencyClaims::Claim claim)
 {
     claimed_.push_back(std::move(claim));
 }
@@ -1468,7 +1483,7 @@ void ContentCaches::FrameBuilds::publishAll()
 {
     // EVERY CLAIM HERE NAMES A USABLE FILL: a failed build never records one (its ticket withdraws where the failure
     // happened). A claim whose key a host released in the meantime answers `stale` - counted, not an error.
-    for (ResidenceTable::Claim& claim : claimed_) {
+    for (ResidencyClaims::Claim& claim : claimed_) {
         (void)claim.publish();
     }
 }
@@ -1884,7 +1899,7 @@ std::size_t ContentCaches::releaseGeometry(const vn::graphics::GeometryDescripti
     }
     // THE KEY IS FORGOTTEN EVEN WHEN NOTHING WAS RESIDENT (F4): after an announcement the table must agree with the
     // cache, or the next frame would find a key it may not claim. A claim still in flight over it becomes stale and
-    // cannot resurrect what the host let go (see ResidenceTable::forget).
+    // cannot resurrect what the host let go (see ResidencyClaims::forget).
     (void)impl->residence.forget(description);
     const auto found = impl->geometries.find(description);
     if (found == impl->geometries.end()) {
@@ -2116,12 +2131,12 @@ void ContentCaches::endFrame(const ContentImages::BatchId batch) noexcept
     }
 }
 
-ResidenceTable& ContentCaches::residence() noexcept
+ResidencyClaims& ContentCaches::residence() noexcept
 {
     return impl->residence;
 }
 
-const ResidenceTable& ContentCaches::residence() const noexcept
+const ResidencyClaims& ContentCaches::residence() const noexcept
 {
     return impl->residence;
 }

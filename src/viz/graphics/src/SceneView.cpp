@@ -1,6 +1,7 @@
 #include <vine/graphics/SceneView.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <utility>
 
@@ -142,6 +143,16 @@ void SceneView::applySurfaceGeometry()
     const int surface_h = areaHeight();
     if (surface_w <= 0 || surface_h <= 0) {
         return;
+    }
+
+    // A SURFACE CHANGE IS A SESSION CHANGE, so the frame in flight is waited out FIRST: resizing the chain restates the
+    // passes whose boxes it re-lays out (see PassChain::resize), and a plan cannot be applied while a frame is being
+    // recorded (see RenderEngine::applyPlan) - the rule's own remedy, taken here because every resize arrives this way
+    // and a host that had to remember it would forget it once. Bounded, because this runs on the application thread:
+    // a frame that never answers must not freeze it for the engine's default five seconds, and the wait is normally
+    // already done (an inline engine, or a threaded one between frames).
+    if (raw_ptr<RenderEngine> engine = engine_.get(); engine != nullptr) {
+        (void)engine->waitForFrame(std::chrono::milliseconds(250));
     }
 
     // The view's own step runs first and in one place: the camera's shape, the manipulator's aspect, then the
