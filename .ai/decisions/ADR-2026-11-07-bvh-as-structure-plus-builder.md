@@ -1,73 +1,69 @@
-# ADR-2026-11-07：BVH 拆成「结构 + 构建器」，`Obb` 体积实测否决
+# ADR-2026-11-07: the BVH splits into a structure plus a builder, and `Obb` volumes are rejected after measurement
 
-> **状态**：已采纳
-> **日期**：2026-11-07
-> **影响范围**：`src/base/geom/sdk/vine/geom/spatial`（新增 `Bvh.hpp`、`BvhBuilder.hpp`、`detail/`）、
-> `src/base/geom/src/Instantiations.cpp`、`scripts/check_geom_layering.py`、`tests/test_geom_spatial`、
+> **Status**: Accepted
+> **Date**: 2026-11-07
+> **Scope**: `src/base/geom/sdk/vine/geom/spatial` (new `Bvh.hpp`, `BvhBuilder.hpp`, `detail/`),
+> `src/base/geom/src/Instantiations.cpp`, `scripts/check_geom_layering.py`, `tests/test_geom_spatial`,
 > `.ai/design/geometry-bvh.md`
 
-> **EN**: Split the BVH into the structure `Bvh<T, Volume = Aabb>` (primitive bounds, flat node array, primitive order, traversal, `refit`, `validate`) and the builder `BvhBuilder` (chained `leafSize` / `maxDepth` / `quality` plus `build()` / `buildWith()`), joined only by `detail::BuildJob` and kept one-way by a layering-gate rule, so a new heuristic does not edit the core type. `Obb` volumes were measured and rejected: the PCA merge produced roughly twice the leaf surface area and broke strict containment; `VolumeTraits` stays, the `Obb` adapter does not.
+## Background
 
-## 背景
+`D5` of `geometry-ray.md` had listed "ray-mesh and the BVH" as not done: at the time there was no performance evidence, and there was a worry about introducing a second data organisation.
+The consumers have appeared since (picking, and batch rays for LiDAR simulation), and a reusable acceleration structure is needed. Three things were settled during the design:
 
-`geometry-ray.md` 的 `D5` 曾把“射线–网格与 BVH”列为不做：当时没有性能证据，且担心引入第二种数据组织。
-现在消费者出现（拾取与 LiDAR 仿真的批量射线），需要一棵可复用的加速结构。设计过程中定了三件事：
+1. The structure goes into `geometry` (the same layer as `Aabb` / `Ray`), not into `graphics` or `brep` - both sides need it, and leaving it on either side is a back edge (`G2`);
+2. Structure and build algorithm must be separated: adding one heuristic must not edit the core type (`G9`);
+3. The plan was to support both `Aabb` and `Obb` volumes (a `VolumeTraits` adaptation).
 
-1. 结构放 `geometry`（`Aabb` / `Ray` 同层），不放 `graphics` 或 `brep`——两侧都要用，放任一侧都是回边（`G2`）；
-2. 结构与构建算法必须分离：加一种启发式不应修改核心类型（`G9`）；
-3. 设想同时支持 `Aabb` 与 `Obb` 两种体积（`VolumeTraits` 适配）。
+## Decision
 
-## 决定
+1. `Bvh<T, Volume = Aabb>` is the **structure**: primitive bounds, a flat node array, primitive order, two traversals, `refit`, `validate`, quality statistics.
+   It does not know what a primitive is, nor how the tree was built.
+2. `BvhBuilder` is the **builder**: chained `leafSize` / `maxDepth` / `quality` configuration plus `build()` / `buildWith()`.
+   A little state, no inheritance, no virtual functions.
+3. Between them there is exactly one contract, `detail::BuildJob<T, Volume>` (can read a box, can reorder, can append a node).
+   `Bvh.hpp` must not include `BvhBuilder.hpp`, enforced by rule 6 of `check_geom_layering.py`.
+4. `VolumeTraits<V>` provides the nine operations the tree needs; this round implements only `VolumeTraits<Aabb<T>>`.
+   **`Obb` volumes are not delivered**, for the reason below.
+5. `D5` of `geometry-ray.md` is recorded as superseded by this ADR: the condition (a batch-ray consumer appears) has been met and the acceleration structure landed.
 
-1. `Bvh<T, Volume = Aabb>` 是**结构**：图元包围体、扁平节点数组、图元顺序、两种遍历、`refit`、`validate`、质量统计。
-   它不知道图元是什么，也不知道树怎么建出来。
-2. `BvhBuilder` 是**构建者**：`leafSize` / `maxDepth` / `quality` 链式配置 + `build()` / `buildWith()`。
-   少量状态、无继承、无虚函数。
-3. 两者之间只有 `detail::BuildJob<T, Volume>` 一个契约（能读盒子、能重排顺序、能追加节点）。
-   `Bvh.hpp` 不得 include `BvhBuilder.hpp`，由 `check_geom_layering.py` 规则 6 强制。
-4. `VolumeTraits<V>` 提供树需要的九个操作；本轮只实现 `VolumeTraits<Aabb<T>>`。
-   **`Obb` 体积不交付**，理由见下。
-5. `geometry-ray.md` 的 `D5` 记为本 ADR 取代：条件（出现批量射线消费者）已满足，加速结构落地。
+## Rationale
 
-## 理由
+- The structure / builder separation has an executable criterion: with `BvhBuilder.hpp` and `BvhBuilders.hpp` deleted, `Bvh.hpp` must still compile on its own.
+  That criterion can be written as a gate, whereas "clear responsibility" cannot (`G1`, `G2`, `G12`).
+- Building is occasional, single-threaded and may be slow; querying is frequent, may be concurrent and must not allocate. Putting both rhythms into one type forces the query path
+  to carry build state (`G5`, `G10`).
+- Adapt through traits instead of changing `Aabb` / `Obb`: the tree's requirement list is written on the tree's side, and an existing type does not grow members for "might be used by the tree" (`G13`).
+- Node layout: `parent + 1` as the left child, `offset` holding the right child: 32 bytes per node (`float` + `Aabb`), one index fewer for an interior node (`G10`).
+- Querying uses a callback instead of returning a container: a nearest hit needs one result, and allocating an array is pure loss (`G7`).
 
-- 结构 / 构建分离的判据是可执行的：删掉 `BvhBuilder.hpp` 与 `BvhBuilders.hpp` 后 `Bvh.hpp` 必须仍能单独编译。
-  这个判据可以写成 gate，而“职责清晰”不能（`G1`、`G2`、`G12`）。
-- 构建是偶发的、单线程的、可以慢；查询是频繁的、可并发的、必须无分配。两种节奏放进一个类型会让查询路径
-  被迫携带构建状态（`G5`、`G10`）。
-- traits 适配而不是改 `Aabb` / `Obb`：树的需求清单写在树这一侧，已有类型不为“可能被树用到”增加成员（`G13`）。
-- 节点布局 `parent + 1` 作左孩子、`offset` 存右孩子：32 字节/节点（`float` + `Aabb`），内部节点少一个下标（`G10`）。
-- 查询用回调而不是返回容器：最近命中只要一个结果，分配一次数组是纯损失（`G7`）。
+## Why `Obb` volumes were rejected
 
-## `Obb` 体积为什么被否决
+`VolumeTraits<Obb<T>>` was implemented as a conservative merge that fits one PCA box over the sixteen corners of the two boxes, and tests were written; two things were measured:
 
-按“两个盒子的十六个角点拟合一个 PCA 盒子”的保守合并实现了 `VolumeTraits<Obb<T>>` 并写了测试，实测两件事：
+1. **Worse quality**: in a scene of long thin parts, the sum of leaf surface areas of the `Obb` tree is roughly **2x** that of the `Aabb` tree (22977 vs 11293, over the same set of 200 long thin boxes). The reason is that one fitted orientation cannot explain the orientation of both children, so every merge inflates the box.
+2. **Containment does not hold strictly**: a corner of the fitted box lands one rounding step outside the box just fitted, so I1 of `validate()` fails and a tolerance has to be added.
 
-1. **质量更差**：细长零件场景下，`Obb` 树的叶子表面积之和约为 `Aabb` 树的 **2 倍**（22977 vs 11293，同一组 200 个
-   细长盒子）。原因是一个拟合出的朝向解释不了两个孩子各自的朝向，每次合并都把盒子撑大。
-2. **包含性不严格成立**：拟合盒的角点会落在刚拟合出的盒子外一个舍入步，`validate()` 的 I1 因此失败，要加容差才对。
+A volume that is "slower, looser and still needs a tolerance" is not worth delivering. What is needed is a merge that **keeps both children's orientations** (a two-orientation node, say, or a multi-box representation of the union), which is another design and outside this round (`G8`). The template parameter of `VolumeTraits` stays,
+and the `Obb` adapter, together with its rejection reason, is recorded as `D2` of `geometry-bvh.md`.
 
-一个“更慢、更松、还要容差”的体积不值得交付。需要的是**保留两个孩子朝向**的合并（例如双朝向节点或
-两盒并集的多盒子表示），那是另一次设计，不在本轮范围内（`G8`）。`VolumeTraits` 的模板参数保留，
-`Obb` 的适配连同否决理由记在 `geometry-bvh.md` 的 `D2`。
+## Rejected options
 
-## 已否决选项
-
-| 选项 | 否决理由 |
+| Option | Rejection reason |
 |---|---|
-| 把构建算法做成 `Bvh::build(BvhBuildQuality)` 里的一个 switch | 加一种算法改核心类型；外来算法无法注入；`Bvh.hpp` 被迫带上全部构建内核（`G9`、`G5`）。 |
-| 构建器多态（`IBvhBuilder` + 虚函数） | 构建是偶发一次性动作；运行时可换算法没有消费者（`G8`）。 |
-| `buildWith` 收 `std::function` | 每次构建一次类型擦除；模板参数零成本（`G10`）。 |
-| 预分配 `2·⌈n/leaf⌉+1` 的节点窗口 | 叶子数取决于切分结果（5 个图元会切成 2+3），该上界越界。改为 `appendNode()` 增长 + 构建后保留容量。 |
-| 查询返回 `std::vector<PrimId>` | 单结果查询也要分配；回调可提前终止（`G7`）。 |
-| 构建用堆上的显式栈 | `max_depth = 64` 已给出递归深度上界，显式栈只是把上界换成一次堆分配（`G10`）。 |
-| 支持动态插入 / 删除 | 消费者是“模型改完重建”，动态平衡树的复杂度没有对应收益（`G8`）；`update` + `refit` 覆盖移动。 |
+| Make the build algorithm a `switch` inside `Bvh::build(BvhBuildQuality)` | Adding an algorithm edits the core type; a foreign algorithm cannot be injected; `Bvh.hpp` is forced to carry every build kernel (`G9`, `G5`). |
+| Polymorphic builder (`IBvhBuilder` + virtual functions) | Building is an occasional one-shot action; swapping the algorithm at run time has no consumer (`G8`). |
+| `buildWith` takes a `std::function` | One type erasure per build; a template parameter costs nothing (`G10`). |
+| Pre-allocate a node window of `2·⌈n/leaf⌉+1` | The leaf count depends on how the split falls (5 primitives become 2+3), so that bound is out of range. Changed to `appendNode()` growth plus keeping the capacity after the build. |
+| The query returns `std::vector<PrimId>` | A single-result query would allocate too; a callback can stop early (`G7`). |
+| Build with an explicit stack on the heap | `max_depth = 64` already gives a recursion-depth bound; an explicit stack only trades that bound for one heap allocation (`G10`). |
+| Support dynamic insert / remove | The consumer is "rebuild after the model changed"; a dynamically balanced tree has no matching benefit (`G8`); `update` + `refit` cover movement. |
 
-## 后果
+## Consequences
 
-- `geometry` 新增两个公开头（`spatial/Bvh.hpp`、`spatial/BvhBuilder.hpp`）与四个 `detail` 头；纯新增，无兼容性影响。
-- `Instantiations.cpp` 增加 `Bvh<float>` / `Bvh<double>` 两行显式实例化。
-- `check_geom_layering.py` 增加规则 6：结构不得依赖构建器。
-- `Aabb::rayBoxInterval` 的实现搬进 `detail/RaySlab.hpp`，`Aabb` 改为委托——slab 只有一份实现（`geometry-ray.md` R2）。
-- `geometry-ray.md` 的 `D5` 与 §9.2 缺口项改为指向 `geometry-bvh.md`。
-- 现行设计记录在 `.ai/design/geometry-bvh.md`。
+- `geometry` gains two public headers (`spatial/Bvh.hpp`, `spatial/BvhBuilder.hpp`) and four `detail` headers; purely additive, no compatibility impact.
+- `Instantiations.cpp` gains two explicit instantiations, `Bvh<float>` / `Bvh<double>`.
+- `check_geom_layering.py` gains rule 6: the structure must not depend on the builder.
+- The implementation of `Aabb::rayBoxInterval` moves into `detail/RaySlab.hpp` and `Aabb` delegates to it - the slab exists once (`geometry-ray.md` R2).
+- `D5` and the §9.2 gap item of `geometry-ray.md` now point at `geometry-bvh.md`.
+- The current design is recorded in `.ai/design/geometry-bvh.md`.

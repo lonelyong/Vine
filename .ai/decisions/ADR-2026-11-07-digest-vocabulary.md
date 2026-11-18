@@ -1,50 +1,48 @@
 # ADR-2026-11-07 digest vocabulary
 
-- 状态：已取代（摘要只有一套词汇的决定仍现行；类名“Calculator”与调用手法由
-  `ADR-2026-11-07-incremental-api-shape.md` 取代，`DigestCalculator` 现名 `Hasher`）
-- 日期：2026-11-07
-- 相关：`.ai/design/crypto.md`、`ADR-2026-11-07-crypto-api-shape.md`
+- Status: Superseded (the decision that digests have one vocabulary still stands; the class name "Calculator" and the calling convention are superseded by
+  `ADR-2026-11-07-incremental-api-shape.md`, and `DigestCalculator` is now called `Hasher`)
+- Date: 2026-11-07
+- Related: `.ai/design/crypto.md`, `ADR-2026-11-07-crypto-api-shape.md`
 
-> **EN**: Chose one vocabulary for digests - `enum class Digest` as the only algorithm identity, `digest()` for the one-shot form and one incremental object - with the enum values independent of wolfSSL's `WC_HASH_TYPE_*`, one shared backend dispatch table, `std::vector<std::byte>` results sized by `digestSize()`, and failures as exceptions rather than the old all-zero array that no caller could tell from a real digest. The naming part is superseded by `ADR-2026-11-07-incremental-api-shape` (`DigestCalculator` became `Hasher`); the one-vocabulary decision stands.
+## Background
 
-## 背景
+"Pick a hash" had three spellings inside `vn::crypto`: static functions written per algorithm such as `Hash::sha256(data, size)` (10 algorithms × 2 overloads),
+the run-time enum `HashCalculator::Algorithm::ALG_SHA256`, and the later `Hmac::Algorithm::kSha256`.
+At the same time `Hash`'s return type was fixed per algorithm (`array<uint8_t,16>` … `array<uint8_t,64>`), so a caller could not write code independent of the algorithm:
+HMAC, RSA and ECC each had SHA-256 written into their own implementation. `Hash::sha256(std::ostream&)` also dragged I/O into an algorithm header,
+and each one-shot call internally wrapped `(ptr, size)` into a `MemoryStream` and read it back.
 
-`vn::crypto` 里“选一个哈希”有三种拼法：`Hash::sha256(data, size)` 这类按算法写的静态函数（10 个算法 × 2 个重载），
-`HashCalculator::Algorithm::ALG_SHA256` 这个运行期枚举，以及后加的 `Hmac::Algorithm::kSha256`。
-同时 `Hash` 的返回类型按算法写死（`array<uint8_t,16>` … `array<uint8_t,64>`），调用方无法写与算法无关的代码：
-HMAC、RSA、ECC 只能各自把 SHA-256 写进实现里。`Hash::sha256(std::ostream&)` 还把 I/O 带进了算法头文件，
-并且一次性接口内部每次都把 `(ptr, size)` 包成一个 `MemoryStream` 再读回来。
+## Options
 
-## 选项
+1. **Keep the status quo**: one static function per algorithm. The benefit is that there is no risk; the costs are three vocabularies, no generic code, and the I/O dependency.
+2. **One class per algorithm** (`class Sha256 { update(); final(); }`, .NET / Java style).
+   The cost is that every class has exactly the same shape, so N identical types appear; choosing at run time then needs a base class or a variant, adding a layer of virtual calls.
+3. **One vocabulary plus two forms**: `enum class Digest` (the only algorithm identity) plus the free function `digest()` (one-shot) plus
+   `DigestCalculator` (incremental); size, name and name resolution are one set of functions.
 
-1. **保持现状**：每个算法一个静态函数。优点是无风险；缺点是三套词汇、写不出通用代码、I/O 依赖。
-2. **每种算法一个类**（`class Sha256 { update(); final(); }`，.NET / Java 风格）。
-   缺点是所有类形状完全相同，多出 N 个同形类型；运行期选择还得再加基类或 variant，多一层虚调用。
-3. **一套词汇 + 两种形态**：`enum class Digest`（唯一算法身份）+ 自由函数 `digest()`（一次性）+
-   `DigestCalculator`（增量）；长度、名字、名字解析都是同一套函数。
+## Decision
 
-## 决定
+Chose **3**.
 
-选 **3**。
+- `Digest`'s enumerators are this module's own consecutive numbers, unrelated to wolfSSL's `WC_HASH_TYPE_*`; the mapping lives in one function.
+- The one-shot and incremental forms share one backend context and dispatch table in `src/DigestOps.cpp`, so the implementation is written once.
+- `digest()` returns `std::vector<std::byte>`: the length is decided by the algorithm, and the caller asks `digestSize()`.
+- Every failure throws (`std::runtime_error` / `std::invalid_argument`), including the old "return an all-zero array on failure":
+  an all-zero digest cannot be told apart from a real one, and that is exactly the implicit failure G11 asks to avoid.
+- `Hash` / `HashCalculator` / `Hmac::Algorithm` are removed. The only consumers in the repository are `ByteSequenceFingerprint` and the tests, both migrated in the same change;
+  `ByteSequenceFingerprint`'s public interface is unchanged.
 
-- `Digest` 的枚举值是本模块自己的连续序号，与 wolfSSL 的 `WC_HASH_TYPE_*` 无关；映射只在一个函数里。
-- 一次性与增量共用 `src/DigestOps.cpp` 里的一份后端上下文与分发表，实现只写一遍。
-- `digest()` 返回 `std::vector<std::byte>`：长度由算法决定，调用方用 `digestSize()` 判断。
-- 失败一律抛异常（`std::runtime_error` / `std::invalid_argument`），连旧的“失败返回全零数组”也改掉：
-  一个全零摘要与真实摘要无法区分，这正是 G11 要避免的隐式失败。
-- 删除 `Hash` / `HashCalculator` / `Hmac::Algorithm`。仓库内唯一的消费者是 `ByteSequenceFingerprint` 与测试，已同步迁移；
-  `ByteSequenceFingerprint` 的公开接口不变。
+## Consequences
 
-## 后果
+- A caller writes `digest(Digest::kSha256, bytes)`, and when it has a `Digest` from a name or a configuration it only needs `digestFromName`.
+- Adding an algorithm edits the `Digest` enum plus the four switches in `DigestOps`, with no new type and no caller change.
+- The public API has one breaking change (`Hash` disappears). There is no consumer outside the repository, and the call sites inside it were changed in the same commit.
+- The stream usage of `Hash::*(std::ostream&)` no longer has a dedicated entry point; where it is needed, feed blocks into `DigestCalculator`,
+  which keeps the I/O dependency apart from the algorithm implementation.
 
-- 调用方写 `digest(Digest::kSha256, bytes)`，从名字或配置得到 `Digest` 时只需 `digestFromName`。
-- 新增算法只改 `Digest` 枚举 + `DigestOps` 的四个 switch，不新增类型、不改调用方。
-- 公开 API 有一次破坏性变更（`Hash` 消失）。仓库外无消费者；仓库内调用点在同一个提交里改完。
-- `Hash::*（std::ostream&）` 的流式用法不再有专门入口；需要时用 `DigestCalculator` 分块喂入，
-  这样 I/O 依赖与算法实现分离。
+## Evidence
 
-## 证据
-
-- `tests/test_crypto` 54 例全绿（含 9 种摘要的已知向量、增量与一次性一致、名字归一化、空输入）。
-- gate 结果：`check_public_docs`（baseline 已更新）、`check_include_hygiene`、`check_export_annotations` 0 报告。
-- 移植时踩到的两件事已写入设计文档：SHA-3 只有按变体的入口（`P14`）、SDK 自由函数必须标 `VN_CRYPTO_API`（`P15`）。
+- `tests/test_crypto`: 54 cases all green (known vectors for 9 digests, incremental equal to one-shot, name normalisation, empty input).
+- Gates: `check_public_docs` (baseline updated), `check_include_hygiene` and `check_export_annotations` report nothing.
+- Two things hit during the port are written into the design page: SHA-3 has only per-variant entry points (`P14`), and a free function in the SDK must be marked `VN_CRYPTO_API` (`P15`).
