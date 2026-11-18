@@ -59,9 +59,27 @@ ConsoleUserIO::ConsoleUserIO()
 
 ConsoleUserIO::~ConsoleUserIO()
 {
-    // Nothing to join: the thread may sit in a blocking read until the process ends.
-    // It stops after the next line - at once when it is between lines - and it never
-    // touches this object, only the state it shares with us.
+    // A read parked on the shared state keeps its awaiter in a coroutine frame, so the wait state has
+    // to be released before it dies (see UserIO::cancelPendingInput). Closing first makes a read that
+    // the cancellation resumes come back empty instead of parking again, and the cancellation itself
+    // releases the one that is waiting.
+    {
+        std::lock_guard state_lock(state_mutex_);
+        closed_ = true;
+    }
+
+    cancelPendingInput();
+
+    {
+        std::lock_guard state_lock(state_mutex_);
+        if (slot_busy_) {
+            VN_LOGW("ConsoleUserIO destroyed while a user-input read was still pending: drain the command first");
+        }
+    }
+
+    // Nothing to join: the thread may sit in a blocking read until the process ends. It stops after the
+    // next line - at once when it is between lines - and it never touches this object, only the state it
+    // shares with us.
     std::lock_guard lock(reader_->mutex);
     reader_->stopping = true;
 }
@@ -108,6 +126,10 @@ void ConsoleUserIO::cancelPendingInput()
 bool ConsoleUserIO::beginRead()
 {
     std::lock_guard state_lock(state_mutex_);
+    if (closed_) {
+        VN_LOGW("A user-input read was started while the headless I/O is shutting down; refusing it");
+        return false;
+    }
     if (slot_busy_) {
         VN_LOGW("A user-input read is already waiting; refusing the new one");
         return false;

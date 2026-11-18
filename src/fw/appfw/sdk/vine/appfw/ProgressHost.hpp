@@ -2,7 +2,10 @@
 
 #include "appfw_global.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <mutex>
+#include <optional>
 #include <stop_token>
 #include <vector>
 
@@ -35,7 +38,7 @@ VN_APPFW_NS_BEGIN
  * LongRunning commands with setForeground(true).
  *
  * The host performs no presentation; a presenter subscribes to changed() and
- * renders current()/activeHosts() when it is called, so nothing has to poll.
+ * renders currentSnapshot()/foregroundSnapshots() when it is called, so nothing has to poll.
  * Position updates are thread-safe, so the operation may report progress from a
  * worker thread while the presenter renders on the main thread.
  *
@@ -48,6 +51,29 @@ VN_APPFW_NS_BEGIN
  *     }
  */
 class VN_APPFW_API ProgressHost {
+  public:
+    /**
+     * @brief Value snapshot of one host: what a presenter draws, with nothing borrowed.
+     *
+     * @details
+     * - An observer may run on the application thread while the operation - and with it its host - is
+     *   destroyed on a worker thread. A pointer into the registry cannot survive that, so a presenter takes
+     *   a snapshot under the registry lock and draws from the copy.
+     *
+     * @note `id` names the host instance without pointing at it: a presenter uses it to tell "a new
+     *       operation owns the bar" from "the same one reported again".
+     */
+    struct Snapshot {
+        /// Identity of the host instance, unique in the process and stable for its lifetime.
+        std::uint64_t id{ 0 };
+        /// Overall progress of that host in [0, 1].
+        double position{ 0.0 };
+        /// Stage label at the time of the snapshot; empty when unset.
+        String label;
+        /// Shared cancellation state: it stays valid (and request_stop() stays meaningful) after the host is gone.
+        std::stop_source cancelSource;
+    };
+
   public:
     /**
      * @brief Constructs a background host owning its own cancellation source.
@@ -74,8 +100,12 @@ class VN_APPFW_API ProgressHost {
     /**
      * @brief Returns the top of the foreground stack, or nullptr when empty.
      *
-     * This is the innermost running LongRunning operation - the one whose
-     * progress drives the main bar. Safe to call from any thread.
+     * This is the innermost running LongRunning operation - the one whose progress drives the main bar. Safe to
+     * call from any thread.
+     *
+     * @note The pointer is BORROWED: it is alive only while its operation runs, which is why this is the
+     *       operation's own entry point ("my host, while I report"). An observer, which outlives the operation
+     *       it draws, takes currentSnapshot() / foregroundSnapshots() instead.
      *
      * @return The current foreground host, or nullptr.
      */
@@ -91,6 +121,38 @@ class VN_APPFW_API ProgressHost {
     static bool isActive();
 
     /**
+     * @brief Returns a value snapshot of the foreground host, or nothing when the stack is empty.
+     *
+     * This is how an OBSERVER reads the foreground state: the copy is taken under the registry lock, so it is
+     * safe while the operation destroys its host on another thread. current() stays the operation's own entry
+     * point (its host is alive exactly while it runs) and the identity a test asserts on.
+     *
+     * @return The foreground snapshot, or std::nullopt when nothing is on the stack.
+     */
+    static std::optional<Snapshot> currentSnapshot();
+
+    /**
+     * @brief Returns a value snapshot of the whole foreground stack, outermost first.
+     *
+     * The stack is the chain of nested LongRunning commands; a presenter uses the labels to render the chain
+     * breadcrumb. Like currentSnapshot(), the copy is what makes the read safe across a concurrent host
+     * destruction.
+     *
+     * @return One snapshot per foreground host, outermost first; empty when nothing is on the stack.
+     */
+    static std::vector<Snapshot> foregroundSnapshots();
+
+    /**
+     * @brief Returns how many hosts are registered, foreground and background together.
+     *
+     * A presenter derives "operations running beside the foreground chain" from this count and the size of
+     * foregroundSnapshots().
+     *
+     * @return The number of active hosts.
+     */
+    static std::size_t activeHostCount();
+
+    /**
      * @brief Returns the signal fired whenever the observable state changes.
      *
      * Fired when a host registers or unregisters, when a host is pushed on or
@@ -102,9 +164,9 @@ class VN_APPFW_API ProgressHost {
      *
      * The signal carries no payload on purpose: the unregister notification is
      * fired while that host is still being destroyed, so naming it would hand
-     * observers a dying object. A handler re-samples current() / activeHosts()
-     * instead, which costs no more than a look at the registry it was about to read
-     * anyway.
+     * observers a dying object. A handler re-samples currentSnapshot() /
+     * foregroundSnapshots() instead - a value copy taken under the registry lock,
+     * which costs no more than a look at the registry it was about to read anyway.
      *
      * Fired on the thread that changed the state, which is not necessarily the
      * application thread, so a presentation handler marshals itself. It is fired
@@ -120,6 +182,9 @@ class VN_APPFW_API ProgressHost {
      * Order is unspecified but stable for the duration of the snapshot; hosts
      * in the foreground stack and background hosts are all included.
      *
+     * @note Borrowed like current(): an observer uses activeHostCount() or
+     *       foregroundSnapshots() instead of dereferencing these pointers later.
+     *
      * @return All active hosts.
      */
     static std::vector<ProgressHost*> activeHosts();
@@ -131,6 +196,8 @@ class VN_APPFW_API ProgressHost {
      * are part of one operation, not parallel background work. The UI uses it
      * to tell in-chain hosts apart from genuine background hosts and to render
      * a chain breadcrumb.
+     *
+     * @note Borrowed like current(): a presenter renders foregroundSnapshots().
      *
      * @return The foreground stack, outermost first.
      */
@@ -236,9 +303,20 @@ class VN_APPFW_API ProgressHost {
     String label() const;
 
   private:
+    /// Builds the value a presenter reads; the caller holds the registry lock.
+    ///
+    /// Taking the label mutex here is the one nesting this class has (registry -> label), which is safe
+    /// because nothing takes the label mutex before the registry one.
+    ///
+    /// @return This host as a value snapshot.
+    Snapshot snapshotLocked() const;
+
     // stop_source_ is declared first so the indicator can bind to its token.
     std::stop_source            stop_source_;
     progress::ProgressIndicator indicator_;
+
+    /// Identity of this host instance; a snapshot names the host by it without pointing at it.
+    const std::uint64_t id_;
 
     /// Guards label_, which the operation writes and observers read.
     mutable std::mutex label_mutex_;

@@ -340,10 +340,10 @@ struct CommandManager::Chain {
 
     /// Commands of this chain that have not finished yet (guarded by mutex).
     ///
-    /// Never smaller than commands.size(): the stack entry is popped first and
-    /// the run is accounted for only after the frame's progress host is gone, so
-    /// zero here means the whole frame has been torn down and an Exclusive command
-    /// waiting for the chain to unwind never observes a half-dead chain.
+    /// Never smaller than commands.size(): the stack entry is popped and the run
+    /// is accounted for only after the frame's progress host is gone, so zero here
+    /// means the whole frame has been torn down and an Exclusive command waiting
+    /// for the chain to unwind never observes a half-dead chain.
     int runs{ 0 };
 
     /// Cancellation source of the whole chain; stopped, never replaced.
@@ -781,18 +781,26 @@ bool CommandManager::Impl::admit(CommandFlags flags, bool exclusive, ChainScope 
         if (exclusive_busy) {
             return false;
         }
-        exclusive_busy = true;
     }
     else if (foreground_busy || ambient_host_busy) {
         return false;
     }
 
-    chain      = std::make_shared<Chain>();
-    foreground = chain;
-    rememberChain(chain);
+    // Allocate and publish before claiming anything: make_shared and the live-chain push_back can both
+    // throw, and a gate claimed before them would stay claimed forever (every later command refused), while
+    // a foreground pointer published before the push_back would name a chain cancelAll() does not know.
+    // Everything below the last fallible step is noexcept, so the commit either happens whole or not at all.
+    std::shared_ptr<Chain> admitted = std::make_shared<Chain>();
+    rememberChain(admitted);
+
+    if (exclusive) {
+        exclusive_busy = true;
+    }
     if (testFlag(flags, CommandFlags::LongRunning)) {
         foreground_busy = true;
     }
+    chain      = std::move(admitted);
+    foreground = chain;
     return true;
 }
 
@@ -1191,21 +1199,32 @@ CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain>
     const bool holds_gate      = top_level && testFlag(flags, CommandFlags::LongRunning);
     const bool holds_exclusive = top_level && exclusive;
 
-    // Declared before the progress host and the stack guard below, so it is
-    // destroyed after both: the chain is reported drained only once this
-    // frame's host and stack entry are gone, which keeps an Exclusive command
-    // that waited for the drain from resuming into a half-torn-down state. The
-    // gate is released before the drain signal, so a command woken by it also
-    // sees a cleared gate.
+    // Declared before the progress host below, so it is destroyed after it: the
+    // chain is reported drained only once this frame's host and stack entry are
+    // gone, which keeps an Exclusive command that waited for the drain from
+    // resuming into a half-torn-down state. The gate is released before the drain
+    // signal, so a command woken by it also sees a cleared gate.
+    //
+    // The guard owns all three facts of "this frame is part of the chain" - the
+    // gate claim admit() made, the stack entry and the run count - so they are
+    // released together and only if they were taken. Entering happens right after
+    // the declaration, because admit() has already claimed the gate and a
+    // constructor that throws would leave that claim set (the destructor of an
+    // object that never finished constructing does not run); `entered` is stored
+    // immediately after the call returns, so no exception can fall between the two.
     struct ChainGuard {
-        Impl*  impl;
-        Chain* chain;
-        bool   holds_gate;
-        bool   holds_exclusive;
+        Impl*    impl;
+        Chain*   chain;
+        Command* command;
+        bool     holds_gate;
+        bool     holds_exclusive;
+
+        /// True once the command is on the chain; the stack entry and the run are released only then.
+        bool entered{ false };
 
         ~ChainGuard()
         {
-            if (holds_gate || holds_exclusive) {
+            if (holds_gate || holds_exclusive || !entered) {
                 std::lock_guard<std::mutex> lock(impl->mutex);
                 if (holds_gate) {
                     impl->foreground_busy = false;
@@ -1213,10 +1232,18 @@ CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain>
                 if (holds_exclusive) {
                     impl->exclusive_busy = false;
                 }
+                if (!entered && impl->foreground.get() == chain) {
+                    // The command never joined: the foreground must not keep naming its idle chain.
+                    impl->foreground.reset();
+                }
             }
+            if (!entered) {
+                return;
+            }
+            chain->leaveStack(command);
             chain->leaveChain();
         }
-    } chain_guard{ d.get(), chain.get(), holds_gate, holds_exclusive };
+    } chain_guard{ d.get(), chain.get(), command, holds_gate, holds_exclusive };
 
     // Every LongRunning command — top-level or nested — owns its own progress
     // host, pushed onto the foreground stack so a nested child takes over the
@@ -1230,22 +1257,14 @@ CommandManager::executeCommandAsyncImpl(Command* command, std::shared_ptr<Chain>
         progress_host->setForeground(true);
     }
 
+    // Joining the chain is the one step the guard cannot do in its constructor; see
+    // ChainGuard above for why the flag is set here and not inside it. A throw from
+    // enter() (the stack's push_back) leaves the guard reporting "not entered", which is
+    // exactly the state the chain is in.
     chain->enter(command);
+    chain_guard.entered = true;
 
     VN_LOGI("Executing command: {}", toUtf8View(command->name()));
-
-    // Leaves the chain's stack when the command completes, keeping the manager
-    // usable. The chain outlives this frame — the shared_ptr parameter is
-    // destroyed after the frame's locals — so a raw pointer is enough.
-    struct StackGuard {
-        Chain*   chain;
-        Command* command;
-
-        ~StackGuard()
-        {
-            chain->leaveStack(command);
-        }
-    } guard{ chain.get(), command };
 
     // The chain exists from here on (admit() above created it), so the context can hold it.
     Context context(this, chain, target, args);

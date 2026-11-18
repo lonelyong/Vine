@@ -52,7 +52,14 @@ class VN_APPFW_API ConsoleProgressReporter {
     /// Tuning of the printed lines; see ConsoleProgressOptions.
     using Options = ConsoleProgressOptions;
 
-    /** @brief Receives one formatted line. */
+    /**
+     * @brief Receives one formatted line.
+     *
+     * @note Called on the thread that reported progress (the shared timer thread for a delayed line),
+     *       outside the reporter's state lock, so a slow sink only delays its own operation.
+     *       It must not call back into the reporter (poll() / stop()): the write gate it runs under is the
+     *       barrier stop() waits on.
+     */
     using Sink = std::function<void(const String&)>;
 
     /**

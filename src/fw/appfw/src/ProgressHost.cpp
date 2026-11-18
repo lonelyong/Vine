@@ -1,6 +1,9 @@
 #include <vine/appfw/ProgressHost.hpp>
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <utility>
 
 #include <vine/progress/ProgressRange.hpp>
 #include <vine/progress/ProgressScope.hpp>
@@ -31,6 +34,20 @@ bool removeFromForegroundStack(ProgressHost* host)
     return true;
 }
 
+/// Hands every host a distinct identity.
+///
+/// A presenter has to tell "a new operation owns the bar" from "the same one reported again", and it may not
+/// do that by pointer: the host can be destroyed on another thread. The number is relayed in Snapshot::id.
+std::atomic<std::uint64_t> s_next_host_id{ 1 };
+
+/// Returns the next host identity.
+///
+/// @return A number no other host of this process has.
+std::uint64_t nextHostId() noexcept
+{
+    return s_next_host_id.fetch_add(1, std::memory_order_relaxed);
+}
+
 } // namespace
 
 Signal<>& ProgressHost::changed()
@@ -43,21 +60,13 @@ Signal<>& ProgressHost::changed()
 }
 
 ProgressHost::ProgressHost()
-  : indicator_(stop_source_.get_token())
-{
-    indicator_.setPositionCallback([this] { changed().trigger(); });
-
-    {
-        std::lock_guard lock(s_mutex);
-        s_active.push_back(this);
-    }
-
-    changed().trigger();
-}
+  : ProgressHost(std::stop_source{})
+{}
 
 ProgressHost::ProgressHost(std::stop_source source)
   : stop_source_(std::move(source))
   , indicator_(stop_source_.get_token())
+  , id_(nextHostId())
 {
     indicator_.setPositionCallback([this] { changed().trigger(); });
 
@@ -81,11 +90,19 @@ ProgressHost::~ProgressHost()
         removeFromForegroundStack(this);
     }
 
-    // Signalled while this host's members are still alive, so an observer that
-    // re-samples the registry sees the restored foreground rather than this host,
-    // and one still holding this host from an older sample of the label reads live
-    // state instead of freed state.
+    // Signalled after the host left the registry, so an observer that samples it in its handler sees the
+    // restored foreground instead of this host. The signal carries no payload for the same reason.
     changed().trigger();
+}
+
+ProgressHost::Snapshot ProgressHost::snapshotLocked() const
+{
+    Snapshot snapshot;
+    snapshot.id           = id_;
+    snapshot.position     = indicator_.position();
+    snapshot.label        = label();
+    snapshot.cancelSource = stop_source_;
+    return snapshot;
 }
 
 ProgressHost* ProgressHost::current()
@@ -98,6 +115,32 @@ bool ProgressHost::isActive()
 {
     std::lock_guard lock(s_mutex);
     return !s_active.empty();
+}
+
+std::optional<ProgressHost::Snapshot> ProgressHost::currentSnapshot()
+{
+    std::lock_guard lock(s_mutex);
+    if (s_foreground_stack.empty()) {
+        return std::nullopt;
+    }
+    return s_foreground_stack.back()->snapshotLocked();
+}
+
+std::vector<ProgressHost::Snapshot> ProgressHost::foregroundSnapshots()
+{
+    std::lock_guard lock(s_mutex);
+    std::vector<Snapshot> result;
+    result.reserve(s_foreground_stack.size());
+    for (const ProgressHost* host : s_foreground_stack) {
+        result.push_back(host->snapshotLocked());
+    }
+    return result;
+}
+
+std::size_t ProgressHost::activeHostCount()
+{
+    std::lock_guard lock(s_mutex);
+    return s_active.size();
 }
 
 std::vector<ProgressHost*> ProgressHost::activeHosts()

@@ -47,7 +47,10 @@ The dependency direction: appfw → `vn::Progress`; `ProgressHost.hpp` returns r
 - `ProgressHost::changed()` returns a process-level `Signal<>` that fires when a host registers or unregisters, when the foreground stack is pushed or popped, when a label
   changes (setting the same value does not fire), and when an indicator's position crosses a whole percentage point (including reaching the end and being reset).
 - The signal **carries no payload**: the unregister notification is emitted from the host's destructor, and carrying a pointer would hand the observer an object that is
-  dying; observers re-sample `current()` / `activeHosts()`.
+  dying. An observer **takes a value snapshot** (`currentSnapshot()` / `foregroundSnapshots()`), copied under the registry lock: re-sampling a pointer is not enough,
+  because the operation destroys its host on whichever thread it ran on, so the pointer can die between the sample and the read.
+- A snapshot names its host by `Snapshot::id` (a process-unique number, never reused) instead of a pointer - that is how a presenter tells "a new operation owns the bar"
+  from "the same one reported again" - and it carries the shared `std::stop_source`, so the cancel button stays valid after the host is gone.
 - The firing thread is the thread that changed the state (possibly a worker): the presentation layer marshals on its own; firing happens outside the lock and never nests
   with the registry lock.
 
@@ -82,7 +85,7 @@ notifications.
 
 - **Behaviour**: `changed()` fires on register / unregister, push / pop, a label change, a whole percentage point / the end / a reset.
 - **Constraints** (C2): the signal carries no payload; firing happens outside the lock; the unregister notification is emitted inside the host's destructor.
-- **Requirements** (R2): setting the same label does not fire; observers re-sample `current()` / `activeHosts()`.
+- **Requirements** (R2): setting the same label does not fire; observers take `currentSnapshot()` / `foregroundSnapshots()` and never dereference a sampled pointer.
 - **Acceptance** (T2): `ProgressHostTest`'s `changed()` merging case (about 100 fires for 10,000 items).
 - **Caveat** (N2): the firing thread may be a worker; the presentation layer marshals with its own `QMetaObject::invokeMethod`.
 
@@ -117,7 +120,8 @@ notifications.
 
 | Interface | Contract | Notes |
 | --- | --- | --- |
-| `current()` / `activeHosts()` | the process-level foreground stack / registry | for observers to re-sample |
+| `current()` / `activeHosts()` / `foregroundStack()` | borrowed views of the foreground stack / registry | the operation's own entry point (`current()`) and the identity a test asserts on; an observer uses the snapshots |
+| `currentSnapshot()` / `foregroundSnapshots()` / `activeHostCount()` | value snapshots taken under the registry lock | what a presenter draws: `id` / `position` / `label` / `cancelSource` |
 | `changed()` | `Signal<>` | no payload |
 | `setForeground(bool)` / `isForeground()` | foreground promotion | nested push / restore |
 | `label()` / `setLabel()` | returns by value / writes | an unchanged value fires nothing |
@@ -141,6 +145,7 @@ notifications.
 | C3 | A cross-thread notification is posted to the native widget; the presenter dies with the widget. |
 | C4 | A wake-up coming due after `stop()` is a no-op; only one is outstanding at a time. |
 | C5 | A cancellation is a request; the host does not decide for the consumer. |
+| C6 | An observer reads a snapshot, never a host pointer: the host may be destroyed on another thread at any point after the sample. |
 
 ### 5.2 Requirements (R#)
 
@@ -157,16 +162,17 @@ notifications.
 | # | Invariant |
 | --- | --- |
 | N1 | Firing the signal holds no registry lock. |
-| N2 | During the unregister notification the host object is still alive, so an observer can re-sample safely. |
+| N2 | A snapshot is a value: it stays readable after its host is destroyed, and its `cancelSource` stays usable. |
 | N3 | The startup phase shares the same foreground-stack semantics as an ordinary command. |
 
 ## 6. Caveats and Traps
 
-### 6.1 A pointer inside the unregister notification
+### 6.1 A pointer taken from the registry
 
-- How it fails: the signal carries a host pointer and an observer dereferences it inside the host's destructor.
-- How to detect it: ASan / UAF; `changed()` with a parameter.
-- How to prevent it: the signal carries no payload and observers re-sample `current()` / `activeHosts()`.
+- How it fails: a presenter samples `current()` and dereferences it later; the operation destroys its host on the thread that ran it, so the pointer dies between the sample
+  and the read (`label()` / `indicator()` on freed memory).
+- How to detect it: ASan/TSAN with a LongRunning command finishing while the presenter draws; or a review of every `current()` call outside an operation.
+- How to prevent it: take `currentSnapshot()` / `foregroundSnapshots()`; they copy under the registry lock, and the copy carries the identity and the cancel source.
 
 ### 6.2 A presenter's timers
 
@@ -188,7 +194,7 @@ notifications.
 | # | Criterion | Case / command |
 | --- | --- | --- |
 | T1 | position arithmetic / range / scope / callback merging | `tests/test_progress/ProgressIndicatorTest.cpp` (9 cases) |
-| T2 | registry / foreground stack / label / cancellation / `changed()` | `tests/test_gui/ProgressHostTest.cpp` (15 cases) |
+| T2 | registry / foreground stack / label / cancellation / `changed()` / snapshot lifetime | `tests/test_gui/ProgressHostTest.cpp` (16 cases) |
 | T3 | console throttling / silence / end to end | `ConsoleProgressReporterTest.*` (3 cases) |
 | T4 | status-bar cancellation / `isBusy()` | `ProgressPresenterTest.*` |
 

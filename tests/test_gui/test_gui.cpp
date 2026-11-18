@@ -9049,6 +9049,41 @@ TEST(UserIOTest, OutputFromAWorkerThreadIsMarshalledToTheApplicationThread)
     bindConsole(app, nullptr);
 }
 
+// 析构必须释放挂起的读：等待者住在协程帧里，完成事件先死就是 UB（AsyncEvent 断言）。
+// 这条钉住"销毁 IO ⇒ 挂起的读以 nullopt 收尾"，而不是让协程帧留在已销毁的事件上。
+TEST(UserIOTest, DestroyingTheIoWithAPendingReadReleasesIt)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+
+    guifw::ConsolePanel panel;
+    auto*               output = panel.impl<QWidget>()->findChild<QPlainTextEdit*>();
+    ASSERT_NE(output, nullptr);
+
+    auto io = std::make_unique<guifw::VisualUserIO>();
+    io->setConsolePanel(&panel);
+
+    const auto deadline   = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    const auto pump_until = [&](const std::function<bool()>& done) {
+        while (!done()) {
+            EXPECT_TRUE(app->mainThreadDispatcher()->deliverPostedCalls());
+            EXPECT_LT(std::chrono::steady_clock::now(), deadline) << "等待控制台超时";
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
+    std::optional<vn::String> answer;
+    std::thread               runner([&] { answer = io->getStringAsync(u8"name> ").result(); });
+
+    // 等提示上屏：此刻 beginRead() 已经完成，读要么已挂上、要么即将挂上，两种都由析构的取消覆盖。
+    pump_until([&] { return output->toPlainText().contains(QStringLiteral("name> ")); });
+
+    io.reset();
+    runner.join();
+
+    EXPECT_FALSE(answer.has_value()) << "析构取消的读必须以 nullopt 收尾";
+}
+
 // 同一时刻只允许一个交互等待：第二个读立即以 nullopt 收尾，而不是和第一个共享
 // 同一个完成事件与结果字段（旧实现里两次读会互相覆盖）。
 TEST(UserIOTest, SecondReadIsRefusedWhileOneIsPending)

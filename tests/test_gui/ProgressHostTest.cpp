@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <thread>
 
 #include <vine/appfw/ProgressHost.hpp>
@@ -36,6 +37,41 @@ TEST(ProgressHostTest, HostBecomesActiveAndClears)
     }
     EXPECT_EQ(ProgressHost::current(), nullptr);
     EXPECT_FALSE(ProgressHost::isActive());
+}
+
+// 观察者拿到的是值：宿主在别的线程销毁后，快照仍然可读，其中的取消状态也仍然可用。
+TEST(ProgressHostTest, SnapshotIsAValueThatOutlivesItsHost)
+{
+    ProgressHost::Snapshot kept;
+    std::uint64_t          first_id = 0;
+    {
+        ProgressHost host;
+        host.setForeground(true);
+        host.setLabel(u8"导出");
+
+        const auto current = ProgressHost::currentSnapshot();
+        ASSERT_TRUE(current.has_value());
+        kept     = *current;
+        first_id = kept.id;
+
+        EXPECT_EQ(kept.label, vn::String(u8"导出"));
+        EXPECT_EQ(ProgressHost::foregroundSnapshots().size(), 1u);
+        EXPECT_EQ(ProgressHost::activeHostCount(), 1u);
+    }
+
+    // 宿主已销毁：快照仍是快照，前台空了，而快照里的取消状态依然有效（取消按钮按下的正是它）。
+    EXPECT_EQ(kept.label, vn::String(u8"导出"));
+    EXPECT_FALSE(ProgressHost::currentSnapshot().has_value());
+    EXPECT_EQ(ProgressHost::activeHostCount(), 0u);
+    kept.cancelSource.request_stop();
+    EXPECT_TRUE(kept.cancelSource.stop_requested());
+
+    // 标识不重复：两次操作的快照不会被当成同一个宿主。
+    ProgressHost second;
+    second.setForeground(true);
+    const auto other = ProgressHost::currentSnapshot();
+    ASSERT_TRUE(other.has_value());
+    EXPECT_NE(other->id, first_id);
 }
 
 TEST(ProgressHostTest, ReportsProgressThroughScope)

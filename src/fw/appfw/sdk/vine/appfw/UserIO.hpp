@@ -56,6 +56,22 @@ struct VN_APPFW_API DirReadOptions {
 
 } // namespace detail
 
+/**
+ * @brief Interaction surface of a running command: output, questions and path reads.
+ *
+ * @details
+ * - Every entry may be called from any thread; an implementation marshals what has to reach its own
+ *   thread, so a command that resumed on a worker writes and asks safely.
+ * - At most one read waits for the user at a time; a second one answers std::nullopt immediately.
+ * - The headless and the visual backend share the path validation and the prompt wording, so the same
+ *   answer is refused with the same words in both.
+ *
+ * @warning
+ * - A command parked on a read holds no cancellation token, so a host that is going down unblocks it with
+ *   cancelPendingInput() before it drains the command chains (Application::shutdown() does).
+ * - An implementation's destructor must release the read it is still waiting for: the waiter lives in a
+ *   coroutine frame, and destroying the event under it is undefined.
+ */
 class VN_APPFW_API UserIO : public Object {
     VN_OBJECT_META_DECL;
 
@@ -177,7 +193,8 @@ class VN_APPFW_API UserIO : public Object {
      * answers; cancelling the command chain cannot reach it, because the read owns no
      * cancellation token. Hosts that are going down therefore have to unblock the
      * interaction explicitly (Application::shutdown() does, right before it drains
-     * the command chains), and the pending read completes with std::nullopt.
+     * the command chains); the pending read is then released, and it answers std::nullopt
+     * unless an answer had already arrived.
      *
      * May be called from any thread, including one whose event loop has already
      * stopped: an implementation must make the waiting read return without touching

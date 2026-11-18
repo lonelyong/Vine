@@ -1,7 +1,9 @@
 ﻿#include <vine/appfw/gui/ProgressPresenter.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <optional>
+#include <stop_token>
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -45,8 +47,13 @@ struct ProgressPresenter::Impl : public ControlData {
     /// Connection to ProgressHost::changed(); held so it is cancelled with the presenter.
     vn::Connection hosts_changed{};
 
-    /// The tracked foreground host (drives the main bar), or nullptr.
-    vn::appfw::ProgressHost*              foreground = nullptr;
+    /// Identity of the tracked foreground host (drives the main bar), 0 when none.
+    ///
+    /// The host may be destroyed on the thread that ran the command while this presenter keeps drawing on
+    /// the application thread, so the presenter keeps the identity a snapshot reported and never a pointer.
+    std::uint64_t    foreground_id = 0;
+    /// Cancellation state of that host: standard shared stop state, valid after the host is gone.
+    std::stop_source foreground_cancel{};
     std::chrono::steady_clock::time_point host_seen_at{};
     std::chrono::steady_clock::time_point hide_at{};
     bool                                  bar_visible   = false;
@@ -112,8 +119,8 @@ ProgressPresenter::ProgressPresenter(QWidget* parent)
     // The wrapper is not a QObject, so signal contexts use the native widget.
     // The cancel button stops the foreground operation only.
     QObject::connect(data->cancel, &QPushButton::clicked, root, [data] {
-        if (data->foreground) {
-            data->foreground->cancelSource().request_stop();
+        if (data->foreground_id != 0) {
+            data->foreground_cancel.request_stop();
         }
     });
 
@@ -145,31 +152,34 @@ void ProgressPresenter::refresh()
 {
     using namespace std::chrono;
 
-    auto* const data           = dptr();
-    const auto  now            = steady_clock::now();
-    auto* const fg             = vn::appfw::ProgressHost::current();
-    const auto  hosts          = vn::appfw::ProgressHost::activeHosts();
-    const auto  chain          = vn::appfw::ProgressHost::foregroundStack();
+    auto* const data  = dptr();
+    const auto  now   = steady_clock::now();
+    const auto  chain = vn::appfw::ProgressHost::foregroundSnapshots();
     // 后台宿主 = 活跃宿主中不在前台栈里的（真正并行的任务）。
-    const std::size_t bg_count = hosts.size() >= chain.size() ? hosts.size() - chain.size() : 0;
+    const auto        active   = vn::appfw::ProgressHost::activeHostCount();
+    const std::size_t bg_count = active >= chain.size() ? active - chain.size() : 0;
 
-    // Track the current foreground (top of stack); reset per-host state on
-    // change. When a nested child takes over the bar, keep it visible instead
-    // of flickering.
-    if (fg != data->foreground) {
-        data->foreground = fg;
-        if (fg != nullptr) {
-            data->host_seen_at  = now;
-            data->progress_seen = false;
+    // Track the current foreground (top of stack) by identity; reset per-host state on change. When a
+    // nested child takes over the bar, keep it visible instead of flickering. The identity, not a pointer,
+    // is what survives the operation destroying its host on another thread.
+    const std::uint64_t foreground_id = chain.empty() ? 0 : chain.back().id;
+    if (foreground_id != data->foreground_id) {
+        data->foreground_id = foreground_id;
+        if (foreground_id != 0) {
+            data->foreground_cancel = chain.back().cancelSource;
+            data->host_seen_at      = now;
+            data->progress_seen     = false;
         }
         else {
-            data->bar_visible = false;
+            data->foreground_cancel = std::stop_source{};
+            data->bar_visible       = false;
         }
     }
 
     // Foreground main bar (innermost LongRunning command).
-    if (fg != nullptr) {
-        if (fg->indicator().position() > 0.0) {
+    if (!chain.empty()) {
+        const auto& fg = chain.back();
+        if (fg.position > 0.0) {
             data->progress_seen = true;
         }
         if (!data->bar_visible) {
@@ -180,15 +190,14 @@ void ProgressPresenter::refresh()
         }
         if (data->bar_visible) {
             if (data->progress_seen) {
-                const double pos = fg->indicator().position();
                 data->bar->setRange(0, 1000);
-                data->bar->setValue(static_cast<int>(pos * 1000));
+                data->bar->setValue(static_cast<int>(fg.position * 1000));
                 data->bar->setTextVisible(true);
-                if (fg->label().empty()) {
+                if (fg.label.empty()) {
                     data->bar->setFormat(QStringLiteral("%p%"));
                 }
                 else {
-                    data->bar->setFormat(Convert::toQString(fg->label()) + QStringLiteral(" %p%"));
+                    data->bar->setFormat(Convert::toQString(fg.label) + QStringLiteral(" %p%"));
                 }
             }
             else {
@@ -204,11 +213,11 @@ void ProgressPresenter::refresh()
     data->chain_label->setVisible(has_chain);
     if (has_chain) {
         QString text;
-        for (auto* h : chain) {
+        for (const auto& host : chain) {
             if (!text.isEmpty()) {
                 text += QStringLiteral(" \u25B8 ");
             }
-            QString name = Convert::toQString(h->label());
+            QString name = Convert::toQString(host.label);
             text += name.isEmpty() ? QStringLiteral("\u2026") : name;
         }
         data->chain_label->setText(text);
@@ -247,7 +256,7 @@ void ProgressPresenter::refresh()
     // Arm the one timer this presenter ever holds, for the deadline that is actually pending:
     // the bar appearing, or the bar hiding. With none pending there is no timer at all.
     std::optional<steady_clock::time_point> next_due;
-    if (fg != nullptr && !data->bar_visible) {
+    if (!chain.empty() && !data->bar_visible) {
         next_due = data->host_seen_at + milliseconds(kShowDelayMs);
     }
     if (data->hide_pending && (!next_due || data->hide_at < *next_due)) {

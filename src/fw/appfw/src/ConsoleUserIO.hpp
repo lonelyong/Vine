@@ -67,8 +67,8 @@ class VN_APPFW_API ConsoleUserIO : public UserIO {
         }
     };
 
-    /// Claims the interaction slot, starting the reader thread on first use; false
-    /// when another read is already waiting.
+    /// Claims the interaction slot, starting the reader thread on first use; false when another read is
+    /// already waiting or when the destructor already closed the I/O.
     bool beginRead();
     /// Releases the interaction slot.
     void endRead() noexcept;
@@ -90,11 +90,14 @@ class VN_APPFW_API ConsoleUserIO : public UserIO {
 
   private:
     std::shared_ptr<StdinReader> reader_;
-    /// Guards the interaction slot (the reader's own start flag lives under
+    /// Guards the interaction slot and closed_ (the reader's own start flag lives under
     /// StdinReader::mutex).
     std::mutex state_mutex_;
     /// True while a read waits or unwinds; guarded by state_mutex_.
     bool slot_busy_{ false };
+    /// True once the destructor started; a read that its cancellation resumes must not park again.
+    /// Guarded by state_mutex_.
+    bool closed_{ false };
     /// Guards stdout so concurrent writers cannot interleave half a line.
     std::mutex output_mutex_;
     /// Prints the progress of a LongRunning command as throttled console lines:

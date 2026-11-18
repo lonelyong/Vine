@@ -68,7 +68,11 @@ Chain ── vector<Command*> commands (the stack, innermost at the tail)
 
 - One chain = one stack + one cancellation source; chains cannot clear, pop or cancel each other.
 - The cancellation source only ever `request_stop()`s and is never replaced ⇒ a `stop_token` handed out through a `Context` stays valid.
-- A chain's `runs` reaches zero only after its own frame has completely wound down (pop the stack, destroy the `ProgressHost`, and only then `leaveChain()`).
+- A chain's `runs` reaches zero only after its own frame has completely wound down (destroy the `ProgressHost`, pop the stack, and only then `leaveChain()`); the entry, the
+  stack entry, the run and the two gate claims are one RAII object (`ChainGuard`), which records whether the entry happened, so an exception in between cannot decrement a
+  run that was never added.
+- Admission is a transaction: `admit()` commits the gate flags and the foreground pointer only after its two fallible steps (chain allocation, live-registry push), so a
+  throw leaves no gate claimed and no foreground naming a chain the registry does not know.
 
 ### 2.3 The serialisation gate and exclusion
 
@@ -195,7 +199,7 @@ The name entry carries no caller data and the instance entry carries it in field
 | C1 | The top-level entries turn an escaping exception into `Failed`. |
 | C2 | Nesting depth ≤64; the instance overload refuses `nullptr` and a disabled instance. |
 | C3 | `NotApplicable` is not a failure; `succeeded()` is still `Success`. |
-| C4 | A chain's `runs` reaches zero only after the stack is popped and the host destroyed; the wait polls. |
+| C4 | A chain's `runs` reaches zero only after the stack is popped and the host destroyed; the wait polls. The entry and every release are one RAII object, and an admission that throws leaves neither a run nor a gate behind. |
 | C5 | History keeps value snapshots only, never a result payload. |
 | C6 | Disabling is a flag; both the by-name and the by-instance entries are gated. |
 | C7 | The dialog greys a disabled row out and never hides it. |

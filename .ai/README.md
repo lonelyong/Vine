@@ -232,7 +232,7 @@ decision is not to do them (the reason goes into an ADR).
 - `robotics-kinematics.md` — Robotics kinematics facts.
 - `robotics-proximity.md` — Robotics proximity facts.
 
-## bugs/ — bug records (36)
+## bugs/ — bug records (39)
 
 Symptom / root cause / status / files involved / verification, one file per bug; a fixed record keeps
 its history marker, an unfixed one states its status.
@@ -263,6 +263,9 @@ its history marker, an unfixed one states its status.
 - `appfw-commandmanager-current-command-pointer-lifetime.md`
 - `appfw-commandmanager-async-instance-lifetime.md`
 - `appfw-commandmanager-disabled-preference-lost-update.md`
+- `appfw-userio-destructor-pending-read.md`
+- `appfw-progress-host-pointer-across-threads.md`
+- `appfw-console-progress-reporter-sink-under-lock.md`
 - `vsg-depth-bias-not-declared-dynamic.md`
 - `graphics-renderengine-addpass-null-pass-crash.md`
 - `graphics-scene-memo-key-missing-view-basis.md`

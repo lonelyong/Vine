@@ -1,9 +1,8 @@
 ﻿#include <vine/appfw/gui/VisualUserIO.hpp>
 
-#include <atomic>
-#include <cassert>
 #include <cmath>
 #include <memory>
+#include <mutex>
 #include <utility>
 
 #include <QPointer>
@@ -150,18 +149,29 @@ struct VisualUserIO::Impl {
     void clear();
     void cancelPendingInput();
 
-    /// Claims the single interaction slot and shows the prompt; false when another
-    /// read is already waiting.
-    bool beginRead(PendingRead kind, const String& prompt);
+    /// Claims the single interaction slot; false when another read is already waiting.
+    ///
+    /// The prompt itself is recorded where it is shown (waitForInput()'s marshalled UI call), so this
+    /// never touches application-thread state: it may run on the thread the reading command resumed on.
+    bool beginRead(PendingRead kind);
     /// Releases the interaction slot.
     void endRead() noexcept;
     /// Waits for the user to answer the prompt; true when a value arrived, false
     /// when the interaction was cancelled.
     vn::async::Task<bool> waitForInput(PendingRead kind, const ReadUi& ui);
 
+    /// Returns whether the read that just ended produced an answer rather than a cancellation.
+    bool answeredAfterWakeup();
+
+    /// Returns the kind of read that is waiting, or None when the line is a command line.
+    PendingRead pendingRead() const;
+
+    /// Refuses every later read and releases the one that is waiting; called by the destructor.
+    void close();
+
     void onLineEntered(const String& text);
     void onEscape();
-    void parseAndComplete(const String& text);
+    void parseAndComplete(PendingRead kind, const String& text);
     void repromptError(const String& message);
     /// Re-shows the current prompt with the text the user typed still in the input line, so a refusal does not make them
     /// type the whole thing again.
@@ -179,6 +189,21 @@ struct VisualUserIO::Impl {
      */
     void appendOnApplicationThread(const String& message, ConsoleMessageType type);
 
+    /**
+     * @brief Records what the read produced and releases it.
+     *
+     * @details
+     * - The store and the answered flag happen under read_mutex, so a cancellation that races with the
+     *   answer either sees the answer and leaves it alone, or is seen by the read as a cancellation -
+     *   one never silently drops the other.
+     * - An answer whose read already ended is dropped: it belongs to nobody, and waking the next read
+     *   with it would hand that read a value it never asked for.
+     *
+     * @param store Writes the typed value into the result field of the read.
+     */
+    template <typename TStore>
+    void completeWith(TStore&& store);
+
     void completeString(const String& value);
     void completeInt(int value);
     void completeDouble(double value);
@@ -190,14 +215,31 @@ struct VisualUserIO::Impl {
     /// The I/O this state belongs to: the command manager and the number parser are its API.
     VisualUserIO* owner{ nullptr };
 
+    /// Releases the read that is waiting: set by an answer or by a cancellation.
     vn::async::AsyncEvent done;
-    std::atomic<bool>     cancelled{ false };
 
-    /// The interaction slot: only one read may wait for the user at a time, because
-    /// the console shows a single prompt and two waiting reads would share done
-    /// and each other's result fields. Claimed and released with compare/exchange,
-    /// so a second read can never slip in.
-    std::atomic<PendingRead> pending{ PendingRead::None };
+    /// Guards the transition into and out of one read: claiming `pending`, arming `done` and deciding
+    /// whether an answer or a cancellation ends the wait. Readers on the console's own thread ask
+    /// pendingRead(); only the transitions take the lock, and none of them calls out while holding it.
+    mutable std::mutex read_mutex;
+
+    /// The read that is waiting, or None; guarded by read_mutex.
+    ///
+    /// Only one may wait for the user at a time, because the console shows a single prompt and two
+    /// waiting reads would share done and each other's result fields.
+    PendingRead pending{ PendingRead::None };
+
+    /// True once an answer was recorded for the waiting read; guarded by read_mutex.
+    ///
+    /// Kept apart from "the read was cancelled" on purpose: a cancel that races with an answer must not
+    /// discard what the user typed, so an answer that arrived first wins.
+    bool answered{ false };
+
+    /// True once the owner is being destroyed; guarded by read_mutex.
+    ///
+    /// A read started by a command that the destructor's cancellation just resumed is refused instead of
+    /// parking on an event that is about to die.
+    bool closed{ false };
 
     String                string_result;
     int                   int_result{ 0 };
@@ -221,7 +263,15 @@ VisualUserIO::VisualUserIO()
   : d(std::make_unique<Impl>(this))
 {}
 
-VisualUserIO::~VisualUserIO() = default;
+VisualUserIO::~VisualUserIO()
+{
+    // A read parked on done keeps its awaiter in a coroutine frame, so destroying the event under it is
+    // undefined (AsyncEvent asserts). Closing refuses reads that the cancellation below resumes, and the
+    // cancellation releases the one that is waiting, so the event is destroyed with nobody parked on it.
+    // Draining the command that was waiting stays the host's job (Application::shutdown() does it before
+    // it destroys the IO); this only makes the destruction itself well-defined.
+    d->close();
+}
 
 void VisualUserIO::setConsolePanel(ConsolePanel* console)
 {
@@ -339,35 +389,50 @@ void VisualUserIO::cancelPendingInput()
 
 void VisualUserIO::Impl::cancelPendingInput()
 {
-    // Same path as Escape: the awaiting read resumes with std::nullopt, so a command
-    // parked on user input unwinds instead of holding the shutdown drain for its
-    // whole bound. Application::shutdown() calls this while the event loop is already
-    // stopped, and it may be called from another thread, so nothing here may end up
-    // touching the panel.
-    if (pending.load() != PendingRead::None) {
+    // Same path as Escape: the awaiting read is released, so a command parked on user
+    // input unwinds (it answers std::nullopt unless an answer had already arrived)
+    // instead of holding the shutdown drain for its whole bound. Application::shutdown()
+    // calls this while the event loop is already stopped, and it may be called from
+    // another thread, so nothing here may end up touching the panel.
+    if (pendingRead() != PendingRead::None) {
         cancelInteraction();
     }
 }
 
-bool VisualUserIO::Impl::beginRead(PendingRead kind, const String& prompt)
+VisualUserIO::Impl::PendingRead VisualUserIO::Impl::pendingRead() const
 {
-    PendingRead expected = PendingRead::None;
-    if (!pending.compare_exchange_strong(expected, kind)) {
+    // Taken under the lock so a reader cannot observe a slot that is being claimed or released.
+    std::lock_guard lock(read_mutex);
+    return pending;
+}
+
+bool VisualUserIO::Impl::beginRead(PendingRead kind)
+{
+    std::lock_guard lock(read_mutex);
+    if (closed) {
+        VN_LOGW("A user-input read was started while the visual I/O is shutting down; refusing it");
+        return false;
+    }
+    if (pending != PendingRead::None) {
         VN_LOGW("A user-input read is already waiting; refusing the new one");
         return false;
     }
 
-    // The prompt itself is recorded where it is shown (waitForInput's marshalled UI
-    // call), so this method never touches application-thread state: it may run on
-    // the thread the reading command resumed on.
-    cancelled.store(false);
+    // Arming happens under the same lock as the cancellation, so a cancel either arrives before this
+    // read exists (and is meant for the previous one) or after it is claimable - never in between,
+    // where it could clear the wakeup the read is about to park on.
+    pending   = kind;
+    answered  = false;
     done.reset();
     return true;
 }
 
 void VisualUserIO::Impl::endRead() noexcept
 {
-    pending.store(PendingRead::None);
+    {
+        std::lock_guard lock(read_mutex);
+        pending = PendingRead::None;
+    }
 
     // The picker belongs to the read that asked for it: dropping it here keeps the button from outliving its prompt (and
     // from being clicked for a read that is over). Reads end on the thread that completed them - for a console read that
@@ -380,7 +445,7 @@ void VisualUserIO::Impl::endRead() noexcept
 
 vn::async::Task<bool> VisualUserIO::Impl::waitForInput(PendingRead kind, const ReadUi& ui)
 {
-    if (!beginRead(kind, ui.prompt)) {
+    if (!beginRead(kind)) {
         co_return false;
     }
     const ReadScope scope{ this }; // frees the interaction slot however this ends
@@ -401,7 +466,31 @@ vn::async::Task<bool> VisualUserIO::Impl::waitForInput(PendingRead kind, const R
     }
 
     co_await done;
-    co_return !cancelled.load();
+    co_return answeredAfterWakeup();
+}
+
+bool VisualUserIO::Impl::answeredAfterWakeup()
+{
+    // The read still owns the slot here (endRead() runs when waitForInput returns), so nobody can have
+    // started another read - the flag is stable once done was set.
+    std::lock_guard lock(read_mutex);
+    return answered;
+}
+
+void VisualUserIO::Impl::close()
+{
+    {
+        std::lock_guard lock(read_mutex);
+        closed = true;
+    }
+
+    cancelInteraction();
+
+    if (pendingRead() != PendingRead::None) {
+        // The resumed command started another read; close() already refused it, so reaching this point
+        // means a read was still waiting while the owner went away.
+        VN_LOGW("VisualUserIO destroyed while a user-input read was still pending: drain the command first");
+    }
 }
 
 vn::async::Task<std::optional<String>> VisualUserIO::getStringAsync(const String& prompt)
@@ -536,8 +625,10 @@ vn::async::Task<std::optional<UserIO::PathList>> VisualUserIO::getDirsAsync(cons
 
 void VisualUserIO::Impl::onLineEntered(const String& text)
 {
-    if (pending != PendingRead::None) {
-        parseAndComplete(text);
+    // One snapshot of the slot decides what this line is: an answer to the pending read, or a command.
+    const PendingRead kind = pendingRead();
+    if (kind != PendingRead::None) {
+        parseAndComplete(kind, text);
         return;
     }
 
@@ -598,7 +689,7 @@ void VisualUserIO::Impl::appendOnApplicationThread(const String& message, Consol
 
 void VisualUserIO::Impl::onEscape()
 {
-    if (pending != PendingRead::None) {
+    if (pendingRead() != PendingRead::None) {
         cancelInteraction();
     }
     else if (owner->commandManager() && owner->commandManager()->runningCount() > 0) {
@@ -612,9 +703,9 @@ void VisualUserIO::Impl::onEscape()
     }
 }
 
-void VisualUserIO::Impl::parseAndComplete(const String& text)
+void VisualUserIO::Impl::parseAndComplete(PendingRead kind, const String& text)
 {
-    switch (pending) {
+    switch (kind) {
     case PendingRead::String: completeString(text); break;
 
     case PendingRead::Int:
@@ -749,44 +840,68 @@ void VisualUserIO::Impl::repromptError(const String& message)
 
 void VisualUserIO::Impl::completeString(const String& value)
 {
-    string_result = value;
-    done.set();
+    completeWith([this, &value] { string_result = value; });
 }
 
 void VisualUserIO::Impl::completeInt(int value)
 {
-    int_result = value;
-    done.set();
+    completeWith([this, value] { int_result = value; });
 }
 
 void VisualUserIO::Impl::completeDouble(double value)
 {
-    double_result = value;
-    done.set();
+    completeWith([this, value] { double_result = value; });
 }
 
 void VisualUserIO::Impl::completePoint(const math::Point3d& value)
 {
-    point_result = value;
-    done.set();
+    completeWith([this, &value] { point_result = value; });
 }
 
 void VisualUserIO::Impl::completePath(std::filesystem::path value)
 {
-    path_result = std::move(value);
-    done.set();
+    completeWith([this, &value] { path_result = std::move(value); });
 }
 
 void VisualUserIO::Impl::completePaths(PathList value)
 {
-    paths_result = std::move(value);
+    completeWith([this, &value] { paths_result = std::move(value); });
+}
+
+template <typename TStore>
+void VisualUserIO::Impl::completeWith(TStore&& store)
+{
+    {
+        std::lock_guard lock(read_mutex);
+        if (pending == PendingRead::None) {
+            // The read already ended (it was cancelled): this answer belongs to nobody, and waking the
+            // next read with it would hand that read a value it never asked for.
+            return;
+        }
+        store();
+        answered = true;
+    }
+
+    // Outside the lock: set() resumes the waiting coroutine on this thread, and that continuation takes
+    // read_mutex again to read the answer.
     done.set();
 }
 
 void VisualUserIO::Impl::cancelInteraction()
 {
-    cancelled = true;
-    done.set();
+    bool wake = false;
+    {
+        std::lock_guard lock(read_mutex);
+        if (pending != PendingRead::None && !answered) {
+            // An answer that already arrived wins: cancelling afterwards must not discard what the user
+            // typed, so only a read that is still unanswered is cancelled.
+            wake = true;
+        }
+    }
+
+    if (wake) {
+        done.set();
+    }
 }
 
 VN_APPFWGUI_NS_END

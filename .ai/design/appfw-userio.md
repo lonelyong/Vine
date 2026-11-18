@@ -52,6 +52,10 @@ Owner: `ApplicationData::user_io` (a `unique_ptr`, torn down before the dispatch
 
 - One interactive wait at a time; a second `getXxxAsync` returns `nullopt` immediately plus a warning.
 - The slot is released by `ReadScope`: on success, on cancellation, and when the coroutine frame is destroyed early.
+- Start, answer and cancellation are one serialized transition (the read mutex in `VisualUserIO`, the state lock in `ConsoleUserIO`), so a cancel that races with an answer or
+  with a starting read can neither lose the wakeup nor discard the answer: an answer that arrived first wins, and a cancel ends only a read that is still unanswered.
+- An implementation's destructor marks the I/O closed and then cancels: a read that the cancellation resumes cannot park again, and the wait state is never destroyed with a
+  queued waiter (see `../bugs/appfw-userio-destructor-pending-read.md`).
 - `ConsoleUserIO` reads `std::cin` on a background thread; a cancellation sets shared state and wakes the waiter, and an unconsumed line is left for the next read.
 
 ### 2.4 Reading a value
@@ -155,6 +159,7 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 | C3 | The file / directory options travel with the request; the validation is shared in the base class. |
 | C4 | The completion list is a snapshot; the per-key path never touches the registry lock. |
 | C5 | Nothing is written after `stop()`; the consumer is destroyed before `output_mutex_`. |
+| C6 | An implementation's destructor releases the read that is waiting and refuses later ones; the wait state is never destroyed with a waiter queued. |
 
 ### 5.2 Requirements (R#)
 
@@ -170,10 +175,11 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 
 | # | Invariant |
 | --- | --- |
-| N1 | Once `cancelPendingInput()` has returned, the pending read ends with `nullopt`. |
+| N1 | Once `cancelPendingInput()` has returned, the pending read has been released: it reports the answer when one had already arrived, `nullopt` otherwise. |
 | N2 | A read may start on any thread; the prompt bookkeeping and the panel writes happen on the application thread only. |
 | N3 | Completion agrees with `CommandManager::commandInfos()`. |
 | N4 | While a foreground progress exists, the headless output carries a progress line. |
+| N5 | A cancellation never discards an answer that arrived first. |
 
 ## 6. Caveats and Traps
 
@@ -188,6 +194,10 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 - How it fails: `std::getline` blocks on the waiter's thread, `cancelPendingInput()` has no effect, and shutdown hangs.
 - How to detect it: the read never returns after a cancellation, and shutdown times out.
 - How to prevent it: a reader thread plus a line buffer plus a wakeable `AsyncEvent`; an unconsumed line is left for the next read.
+- How it also fails: the I/O is destroyed while a command is still parked on a read, so the completion event dies under a queued waiter (debug: assertion; release: a
+  coroutine frame left on freed state).
+- How to prevent that: the destructor closes the I/O (a later read answers `nullopt`), cancels the one that is waiting, and logs when a read is still pending - draining the
+  command stays the host's job, which is why `Application::shutdown()` cancels before it drains.
 
 ### 6.3 `String::toInt()` wraps silently
 
@@ -215,6 +225,7 @@ Throttling: `show_delay{500ms}` / `interval{200ms}` (the minimum gap between lin
 | T4 | completion refresh / rebinding | `CommandsChangedReportsRegistryAndAliasEdits`, `RebindingTheConsoleDoesNotRunALineTwice` |
 | T5 | headless progress | `ConsoleProgressReporterTest.*` (3 cases) |
 | T6 | the `String::toInt` range | `test_core String.NumericConversions` |
+| T7 | a waiting read is released by the destructor | `UserIOTest.DestroyingTheIoWithAPendingReadReleasesIt` |
 
 ## 9. Status and Evolution
 
