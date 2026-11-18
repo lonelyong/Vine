@@ -34,27 +34,15 @@ std::span<const ResidencyRow> ResidencyLedger::rows() const noexcept
     return rows_;
 }
 
-ResidencyTotals ResidencyLedger::totals() const noexcept
+std::uint32_t ResidencyLedger::live() const noexcept
 {
-    ResidencyTotals totals;
-    std::uint64_t   bytes = 0;
-    // Engaged only when there is something to total AND every row reported bytes (see ResidencyTotals): an
-    // empty ledger and a ledger with one uncounted kind both have to stay silent about the total.
-    bool complete = !rows_.empty();
+    // The ONE sum this ledger gives: every row reports `live`, so this cannot mix measured with unmeasured (see the
+    // accessor's note for why bytes are not summed).
+    std::uint32_t live = 0;
     for (const ResidencyRow& row : rows_) {
-        totals.live += row.live;
-        if (row.bytes.has_value()) {
-            bytes += *row.bytes;
-        }
-        else {
-            ++totals.unknown;
-            complete = false;
-        }
+        live += row.live;
     }
-    if (complete) {
-        totals.bytes = bytes;
-    }
-    return totals;
+    return live;
 }
 
 const char* ResidencyLedger::nameOf(ResidencyKind kind) noexcept

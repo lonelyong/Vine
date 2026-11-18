@@ -60,33 +60,6 @@ struct ResidencyRow
 };
 
 /**
- * @brief The one answer a @ref ResidencyLedger gives about all its rows together.
- *
- * @details
- * - `bytes` is engaged only when EVERY row reports bytes: a total that adds "known" to "unknown" would be a
- *   number nobody can act on, and `unknown` says how many kinds are missing instead of hiding them.
- * - An empty ledger (a backend that retains nothing, or does not account at all) keeps `bytes` disengaged as
- *   well: "nothing is resident" and "nobody counted" stay different answers, which is the same rule the rows
- *   follow one level down.
- * - `PROGRAMS` IS WHY THE TOTAL IS STILL SILENT, and it is a property of the APIs rather than a missing tally:
- *   no GPU API reports the memory a compiled pipeline occupies - Vulkan has no query, D3D12's allocation info covers
- *   resources and not PSOs, Metal's `allocatedSize` likewise, and WebGPU exposes neither - so that row reports a
- *   count and leaves `bytes` disengaged everywhere. Every other kind IS measured (vk reports a real 0 for
- *   `Materials`, nothing surviving a frame; vsg sums its resident stream bytes), so `unknown` is 1 on either
- *   backend and a host reads the ROWS it needs rather than this figure.
- * - THE TOTAL IS NOT THE ANSWER TO "HOW MUCH VRAM": that figure belongs to the DEVICE (vk measures it internally,
- *   D3D12 `QueryVideoMemoryInfo`, Metal `currentAllocatedSize`), and reaching a host is a capability plus a report
- *   part (`.ai/backlog/graphics.md` T46). This struct stays what it is - a sum of the rows that could report -
- *   and T45 records the decision about its two fields.
- */
-struct ResidencyTotals
-{
-    std::uint32_t                live{ 0 };   // Sum of every row's `live`.
-    std::optional<std::uint64_t> bytes;       // Sum of every row's `bytes`, engaged only when all report it.
-    std::uint32_t                unknown{ 0 }; // How many rows did not report `bytes`.
-};
-
-/**
  * @brief What a backend retains, per kind - the accounting half of "GPU residency", without any policy.
  *
  * @details
@@ -130,11 +103,20 @@ class VN_GRAPHICS_API ResidencyLedger {
     [[nodiscard]] std::span<const ResidencyRow> rows() const noexcept;
 
     /**
-     * @brief Gets the totals of every recorded row (see @ref ResidencyTotals).
+     * @brief Gets how many entries are resident across every recorded row - the only figure the ledger adds.
      *
-     * @return The aggregate; `bytes` is engaged only when every row reports it.
+     * @details
+     * - WHY ONLY THIS ONE. Every row always reports `live`, so a sum of it cannot mix "known" with "unknown".
+     *   BYTES ARE NOT TOTALLED and the total is not the answer to "how much VRAM": no GPU API reports the memory a
+     *   compiled pipeline occupies (Vulkan has no query; D3D12's allocation info covers resources, not PSOs;
+     *   Metal's `allocatedSize` likewise; WebGPU exposes neither), so a byte total would have to leave `Programs`
+     *   out and the number would look complete while being partial - the trap `ResidencyRow` warns about. A host
+     *   reads the rows it needs; the device-wide memory figure is a capability plus a report part, not this sum
+     *   (`.ai/backlog/graphics.md` T46).
+     *
+     * @return The sum of every row's `live`.
      */
-    [[nodiscard]] ResidencyTotals totals() const noexcept;
+    [[nodiscard]] std::uint32_t live() const noexcept;
 
     /**
      * @brief Gets the stable name of a kind, for a log line or a HUD label.

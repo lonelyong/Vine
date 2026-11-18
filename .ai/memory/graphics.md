@@ -2003,3 +2003,20 @@
   the memory a compiled pipeline occupies and vsg exposes none. So `unknown` is 1 on both and `totals().bytes` stays
   disengaged permanently; a partial sum is exactly what `ResidencyTotals`' own rule rejects. T45 now records a
   DECISION (delete `bytes` + `unknown`, or keep them and accept the figure is unavailable) rather than work.
+
+## 2026-11-18 `BC-27`: the ledger's byte total is deleted
+
+- **What**: `ResidencyTotals` (`bytes` + `unknown`) is gone; `ResidencyLedger::live()` - the sum of every row's
+  `live` - is the only figure the ledger adds. `totals()` went with it. No aliases.
+- **Why**: `bytes` could never be engaged. No GPU API reports the memory a compiled pipeline occupies, so the sum
+  would always have left `Programs` out while looking complete - exactly what the struct's own rule rejected
+  ("known added to unknown is a number nobody can act on"). `unknown` existed only to explain that gap, so it left
+  with it. Same rule that deleted `ResidencyKind::Sets`: a promise no backend can keep does not stay on the public
+  surface.
+- **What a host does instead**: reads the rows it needs (each row's `bytes` is an `std::optional`, documented
+  "absent is not zero"), and for a device-wide VRAM figure waits for the capability + report part in backlog T46 -
+  vk already measures it internally (`MemoryStats`), it just has no public door.
+- **Tests rewritten, not deleted in spirit**: the two cases about a silent total are replaced by
+  `ARowThatDoesNotCountBytesSaysSoRatherThanReportingZero` (the "absent is not zero" rule at row level, and why only
+  the COUNT is summed) and `ANoteReplacesItsKindInsteadOfAccumulating` (a row is replaced, and its bytes must go
+  down). 5 cases in the suite.

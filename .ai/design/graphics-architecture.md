@@ -187,6 +187,12 @@ removing an unregistered pass and removing an already removed pass are the same 
       producer (one reference in the tree, its own name table). No deprecated aliases, for the reason `BC-17`…`BC-21`
       give. Every backend notes every kind, so a row's existence is the promise, a number inside it may stay absent, and a
       host writes one loop over `rows()` instead of asking which backend answered.
+    * **Applied again (`BC-27`)**: `ResidencyTotals` is DELETED, and `ResidencyLedger::live()` is what remains - the one
+      sum every row can answer. `bytes` could never be engaged: no GPU API reports the memory a compiled pipeline occupies
+      (Vulkan has no query; D3D12's allocation info covers resources, not PSOs; Metal's `allocatedSize` likewise; WebGPU
+      exposes neither), so a total would always have left `Programs` out while looking complete - and `unknown` existed
+      only to explain that gap. Same rule as `Sets`: a promise no backend can keep does not stay on the public surface. The
+      device-wide memory figure is a capability plus a report part instead (`../backlog/graphics.md` T46).
     Boundary: this decides what may be PUBLIC, not what a backend may HAVE. A mechanism both backends use is a fact about the
     backends, and it lives flat in the SDK mainline (`ADR-2026-11-16`); this point does not reopen that - a second CONSUMER is
     what moves a mechanism there, which is a different trigger from "a second backend exists".

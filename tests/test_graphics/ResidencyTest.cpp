@@ -10,8 +10,8 @@ using vn::graphics::ResidencyLedger;
 using vn::graphics::ResidencyRow;
 
 /**
- * @brief The residency ledger is a VOCABULARY: these cases pin the two rules a reader depends on - a number
- *        nobody keeps stays absent, and a total is only given when every row reported it.
+ * @brief The residency ledger is a VOCABULARY: these cases pin the rules a reader depends on - a kind is REPLACED,
+ *        not accumulated, a number nobody keeps stays absent, and the only figure the ledger adds is the COUNT.
  *
  * The device half (which backend fills which row) is a rendering backend's own evidence and is tested where the
  * device is (see `.ai/decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md`, migration step 1).
@@ -21,49 +21,32 @@ TEST(ResidencyLedgerTest, AnEmptyLedgerSaysNothingRatherThanZero)
     const ResidencyLedger ledger;
 
     EXPECT_TRUE(ledger.rows().empty());
-    const vn::graphics::ResidencyTotals totals = ledger.totals();
-    EXPECT_EQ(totals.live, 0U);
-    EXPECT_FALSE(totals.bytes.has_value()) << "an empty ledger did not measure a total, it has none";
-    EXPECT_EQ(totals.unknown, 0U);
+    EXPECT_EQ(ledger.live(), 0U) << "nothing is resident, and the count is 0 rather than unknown";
 }
 
-TEST(ResidencyLedgerTest, AKindThatDoesNotCountBytesKeepsTheTotalSilent)
+TEST(ResidencyLedgerTest, ARowThatDoesNotCountBytesSaysSoRatherThanReportingZero)
 {
     ResidencyLedger ledger;
-    // A geometry row counts entries and churn but not bytes; a texture row counts bytes. Adding them would
-    // produce a number nobody measured.
-    ledger.note(ResidencyRow{ .kind = ResidencyKind::Geometry, .live = 7U, .built = 7U, .retired = 0U, .refused = 0U });
-    ledger.note(ResidencyRow{ .kind = ResidencyKind::Textures, .live = 2U, .bytes = 4096U });
+    // No GPU API reports a pipeline's bytes (see `ResidencyKind::Programs`), so this row keeps a count only.
+    ledger.note(ResidencyRow{ .kind = ResidencyKind::Programs, .live = 3U });
 
-    const vn::graphics::ResidencyTotals totals = ledger.totals();
-    EXPECT_EQ(totals.live, 9U);
-    EXPECT_FALSE(totals.bytes.has_value()) << "one silent row is enough to make the total a guess";
-    EXPECT_EQ(totals.unknown, 1U) << "and the answer says how many kinds are missing";
+    ASSERT_EQ(ledger.rows().size(), 1U);
+    EXPECT_FALSE(ledger.rows().front().bytes.has_value()) << "absent is not zero: the backend counted entries, not bytes";
+    EXPECT_EQ(ledger.live(), 3U) << "the COUNT is always available, which is why it is the only figure added up";
 }
 
-TEST(ResidencyLedgerTest, ATotalIsGivenOnlyWhenEveryRowReportedItsBytes)
-{
-    ResidencyLedger ledger;
-    ledger.note(ResidencyRow{ .kind = ResidencyKind::Textures, .live = 2U, .bytes = 4096U });
-    ledger.note(ResidencyRow{ .kind = ResidencyKind::Materials, .live = 3U, .bytes = 1536U });
-
-    const vn::graphics::ResidencyTotals totals = ledger.totals();
-    ASSERT_TRUE(totals.bytes.has_value());
-    EXPECT_EQ(*totals.bytes, 4096U + 1536U);
-    EXPECT_EQ(totals.live, 5U);
-    EXPECT_EQ(totals.unknown, 0U);
-}
-
-TEST(ResidencyLedgerTest, ABytesReadingThatDropsIsWhatMakesItUsableAsATrimSignal)
+TEST(ResidencyLedgerTest, ANoteReplacesItsKindInsteadOfAccumulating)
 {
     ResidencyLedger ledger;
     ledger.note(ResidencyRow{ .kind = ResidencyKind::Textures, .live = 3U, .bytes = 9000U });
-    ASSERT_EQ(*ledger.totals().bytes, 9000U);
+    ASSERT_EQ(ledger.live(), 3U);
 
     // The same kind, one entry released: the row is REPLACED, not accumulated (one fact, one row).
     ledger.note(ResidencyRow{ .kind = ResidencyKind::Textures, .live = 2U, .bytes = 6000U });
-    EXPECT_EQ(ledger.rows().size(), 1U);
-    EXPECT_EQ(*ledger.totals().bytes, 6000U) << "the ledger reports what is resident now, not a running total";
+    ASSERT_EQ(ledger.rows().size(), 1U);
+    EXPECT_EQ(*ledger.rows().front().bytes, 6000U)
+        << "the ledger reports what is resident now, not a running total - a release has to make it go DOWN";
+    EXPECT_EQ(ledger.live(), 2U);
 }
 
 TEST(ResidencyLedgerTest, EveryKindHasItsOwnStableName)
@@ -88,8 +71,9 @@ TEST(ResidencyLedgerTest, ResetForgetsTheRowsAndKeepsTheObject)
     ResidencyLedger ledger;
     ledger.note(ResidencyRow{ .kind = ResidencyKind::Geometry, .live = 4U });
     ASSERT_EQ(ledger.rows().size(), 1U);
+    ASSERT_EQ(ledger.live(), 4U);
 
     ledger.reset();
     EXPECT_TRUE(ledger.rows().empty());
-    EXPECT_FALSE(ledger.totals().bytes.has_value());
+    EXPECT_EQ(ledger.live(), 0U);
 }
