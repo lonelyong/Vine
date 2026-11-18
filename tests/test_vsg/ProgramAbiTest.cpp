@@ -14,7 +14,7 @@
  *     shadowed deferred lighting program's pair follows the four G-buffer sources at 5 and 6;
  *   * a declaration inside a branch the variant does not take is not a fact, and a variant whose own text
  *     says `#error` is refused rather than half-read;
- *   * a role is the block's TYPE NAME (`VineViewBlock` ... - the L1 name, see graphics-rendering.md §11.3), not
+ *   * a role is the block's TYPE NAME (`VineViewBlock` ... - the L1 name, see graphics-rendering.md 4.3), not
  *     the position it happens to sit at: that is what lets the rewrite's own arrangement and the engine's
  *     shipped one be served by one mechanism;
  *   * a text whose two stages disagree about one binding, or that carries a conditional this scan does not

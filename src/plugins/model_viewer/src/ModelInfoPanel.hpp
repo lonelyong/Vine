@@ -26,7 +26,7 @@ namespace vn::model_viewer
  * 它是 `Control`（appfw 的 UIElement 包装）而不是裸 QWidget：dock 面板要的是 UIElement。整个类 header-only、
  * 不带自己的元数据、也没有信号槽 —— 于是 GUI 用例可以直接 include 它、驱动它，不必先加载插件。
  *
- * "内容跟当前文档"这件事由**它自己**接上（followDocumentManager）：这是 appfw-document-model.md §12 里
+ * "内容跟当前文档"这件事由**它自己**接上（followDocumentManager）：这是 appfw-document-model.md 3.1.6 里
  * "面板自己的内容自己听"那一档 —— 它只碰自己的控件，不碰 ribbon、也不碰别人的面板，所以不需要宿主替它编排。
  * 宿主（这个插件）只负责建它、挂上 dock。
  */

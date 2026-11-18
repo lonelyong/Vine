@@ -714,7 +714,7 @@ bool sameDeclaration(const AbiBinding& left, const AbiBinding& right) noexcept
 
 AbiBlockRole blockRoleOf(std::string_view type_name) noexcept
 {
-    // The GLSL block type name IS the L1 name (graphics-rendering.md §11.3), which is what lets a program put
+    // The GLSL block type name IS the L1 name (graphics-rendering.md 4.3), which is what lets a program put
     // the blocks wherever it likes and still be served.
     if (type_name == "VineViewBlock") {
         return AbiBlockRole::View;

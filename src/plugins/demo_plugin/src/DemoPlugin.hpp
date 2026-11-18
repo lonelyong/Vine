@@ -16,7 +16,7 @@ namespace vn::demo
  * @brief Demo plugin: the demo scene as a DOCUMENT (type `"demo"`).
  *
  * The demo used to be something the shell built at every startup; it is a document now, like any other content
- * (appfw-document-model.md §12):
+ * (appfw-document-model.md 3.1.1):
  *
  *  - `load()` registers the document type (with a create factory - the demo needs no payload) and the view that
  *    renders it. Nothing heavy happens here, and nothing at all happens until that document is opened;

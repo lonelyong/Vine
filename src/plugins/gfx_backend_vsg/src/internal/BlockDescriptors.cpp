@@ -144,7 +144,7 @@ struct BlockDescriptors::Data {
 std::span<const BlockDescriptors::Binding> BlockDescriptors::canonicalShape() noexcept
 {
     // The five L1 blocks at the bindings this backend's own programs declare them at (see
-    // `.ai/design/vsg-backend.md` §11.16ae): the ENGINE's programs declare them elsewhere, and a
+    // `.ai/design/vsg-backend.md` 3.4): the ENGINE's programs declare them elsewhere, and a
     // caller that serves such a program builds that shape instead.
     static constexpr Binding kCanonical[] = {
         { kViewBinding,     AbiBlockRole::View        },

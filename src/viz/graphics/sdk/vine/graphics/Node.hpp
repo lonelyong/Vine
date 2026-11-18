@@ -72,7 +72,7 @@ struct NodeCacheStats
  *     (see opacity);
  *   - layers and drawOrder take the NEAREST declaration: a node that declares its own replaces what it
  *     inherited, and clearing goes back to inheriting (see setLayers / setDrawOrder).
- * - BOUNDS ARE CACHED PER NODE (see .ai/design/graphics-scene.md §10.2): the collection walk keeps each
+ * - BOUNDS ARE CACHED PER NODE (see .ai/design/graphics-scene.md 4.3): the collection walk keeps each
  *   subtree's box in the node's OWN frame, so a camera move recomputes nothing and a culled subtree costs
  *   one transformed box instead of a walk. The cache lives by ANNOUNCEMENT: every built-in mutation
  *   (MatrixTransform::setMatrix / PositionAttitudeTransform / AutoTransform setters, Group::addChild /

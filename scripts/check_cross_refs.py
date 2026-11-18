@@ -27,6 +27,13 @@ What is skipped, on purpose:
     sentence that has to name a reference that no longer resolves (a page recording a repair, for
     instance).
 
+What this gate cannot see, and why it is not widened to see it: a reference to a page that no longer
+EXISTS. Such a name resolves to no target, so it reads as prose (see above), and an existence rule
+would also flag the ADR pointers the archive policy deletes on purpose - a superseded ADR is removed
+and git keeps it. The deleted-page class is therefore repaired by hand (16 of them on 2026-11-18) and
+guarded by the conversion rule instead: a research page is converted whole and deleted, so a comment
+citing one has to be repointed in the same round.
+
 Exit code 1 with a list of findings, 0 when every reference resolves.
 
 Usage:
@@ -41,9 +48,18 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-# Where references may APPEAR. The whole AI corpus and the user guides, because both are read by
-# people who follow pointers.
-SOURCE_GLOBS = (".ai/**/*.md", "docs/guides/**/*.md")
+# Where references may APPEAR. The whole AI corpus, the user guides and the SOURCE COMMENTS, because
+# all three are read by people who follow pointers - a header that says "see x.md 2.7" is followed the
+# same way a page's is, and until 2026-11-18 it was the one place nobody checked (35 stale section
+# numbers had accumulated there).
+SOURCE_GLOBS = (
+    ".ai/**/*.md",
+    "docs/guides/**/*.md",
+    "src/**/*.hpp",
+    "src/**/*.cpp",
+    "tests/**/*.hpp",
+    "tests/**/*.cpp",
+)
 # Pages that may be the TARGET of a reference: the pages that have a section numbering. A `.md` name
 # that resolves to none of these is prose, not a reference (see the module note).
 TARGET_GLOBS = (".ai/design/**/*.md", "docs/guides/**/*.md")

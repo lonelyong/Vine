@@ -28,7 +28,7 @@
  *   left at their last evidence forever.
  * - This is the device-level equivalent of what Filament (`Driver::destroyDeferred`), Unreal (`FRHIResource` deferred
  *   delete) and wgpu (submission index) do: ONE submission watermark per device, not one per window. See
- *   `.ai/design/graphics-architecture.md` §11.
+ *   `.ai/design/graphics-sessions.md` 2.6.
  * - "WINDOW" BELOW MEANS ONE FRAME DRIVER'S REGISTRATION. What a driver reports here is a recycle of one of its
  *   swapchain image slots; a windowed driver gets those from a window's swapchain, an off-screen one from its own
  *   frames, and both register once. That is why the identity this clock mints is a `FrameDriverId` - the verbs keep

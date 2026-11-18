@@ -218,7 +218,7 @@ class VN_APPFW_API DocumentManager {
      * THE PAYLOAD IS BORROWED. The @p open callback receives it by reference and must not keep a pointer to the payload
      * object itself: that object only has to live for the call, while anything it POINTS AT (a Vfs, a device, an image
      * buffer) has to outlive the document the opener builds. What a document does keep is what it copied out of the
-     * payload (see open(), and appfw-document-model.md §5.5 and §5.8).
+     * payload (see open(), and appfw-document-model.md 6.1 (payload lifetime) and 3.1.5 (the view layer)).
      *
      * THE FRAMEWORK NEVER COPIES A PAYLOAD EITHER: it goes from the caller's object to @p open as one reference, and
      * nothing in between holds it.
@@ -283,7 +283,7 @@ class VN_APPFW_API DocumentManager {
      *     into its source - that is the opener's job, and it is what makes a refresh possible without the framework
      *     owning any payload;
      *   - whatever the payload POINTS AT (a Vfs, a device, an image buffer) has to outlive the DOCUMENT, because the
-     *     document keeps using it long after this call returned (see appfw-document-model.md §5.5).
+     *     document keeps using it long after this call returned (see appfw-document-model.md 6.1).
      *
      * THE FRAMEWORK NEVER COPIES A PAYLOAD, and it does not help anyone keep one alive either: the copying half is the
      * document type's (copy the fields you need into yourself, see the first bullet) and the keeping half is the

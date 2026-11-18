@@ -19,7 +19,7 @@ namespace vn::model_viewer
  * @brief 模型查看器的文档：一份已经解析好的模型（节点树 + 网格 + 材质），外加"它是谁"。
  *
  * 文档只拿**数据**，不碰渲染：视图（把文档变成屏幕上的东西）是文档的消费者，由宿主在窗口就绪之后建 —— 见
- * appfw-document-model.md §5.8 的分工。把载荷变成这个对象的活儿在打开器里（ModelViewerPlugin 登记的那两个）。
+ * appfw-document-model.md 3.1.5 的分工。把载荷变成这个对象的活儿在打开器里（ModelViewerPlugin 登记的那两个）。
  *
  * 文档持的是 `models::Model` 而不是一个摊平的网格：**结构是模型的一部分**（节点变换、多部件、每部件材质），
  * 摊平发生在视图那一侧（`sceneFromModel` 把节点树变成场景节点），文档不该先把信息丢掉再让视图去猜。内存载荷

@@ -14,7 +14,7 @@ namespace vn::model_viewer
  * @brief 载荷一：**内存里已经解析好**的网格，外加一个给人看的名字。
  *
  * 载荷必须派生 `Object` 并且带自己的元数据（`VN_OBJECT_META_DECL` + 恰好一处 `VN_OBJECT_META_IMPL`）：它的 `Type`
- * 就是打开器的登记键（见 appfw-document-model.md §5.7）。框架既不解释载荷的内容，也不拷贝它 —— 载荷只在 `open()`
+ * 就是打开器的登记键（见 appfw-document-model.md 3.1.2）。框架既不解释载荷的内容，也不拷贝它 —— 载荷只在 `open()`
  * 调用期间被借用，要留下来的东西由造载荷的人或文档类型自己拷。
  */
 struct MeshPayload : public vn::Object {

@@ -8544,7 +8544,7 @@ TEST(AxisGizmoTest, ASurfaceTooSmallForTheBoxNeverYieldsANegativeViewport)
 {
     // A window mid-layout can be smaller than the corner box plus its margins: measured 100x30 on the
     // demo's first shown frame, where the naive fit computed -2 pixels for the box side (see
-    // .ai/design/vsg-backend.md §11.16db). "No room" must be spelled as a zero-area rectangle
+    // .ai/design/vsg-backend.md). "No room" must be spelled as a zero-area rectangle
     // - the backend's empty-rectangle rule then skips the drawing call - never as a negative one.
     auto gizmo = intrusive_ptr<AxisGizmo>(new AxisGizmo());
     gizmo->onSurfaceResized(100, 30);
@@ -14719,8 +14719,8 @@ TEST(RenderEngineTest, PublishingOneTargetUnderOneNameTwiceIsNotACollision)
 
 TEST(SceneTest, MeasureWhatOneCollectionCostsWithAMovingCamera)
 {
-    // A GATE with a generous ceiling, not a benchmark: it answers the question the B4 row in the backend's
-    // design log (.ai/design/vsg-backend.md §11.16bw) could not - "the demo's collection is a memo hit or ~42
+    // A GATE with a generous ceiling, not a benchmark: it answers the question the cost model
+    // (`.ai/design/vsg-backend.md` 2.11) could not - "the demo's collection is a memo hit or ~42
     // commands, so the cost is unmeasurable there". The printed figures are the record; the assertion is a
     // ceiling that only a structural regression (losing the memo/bake, an O(n^2) walk) can cross. The budget
     // is per drawable so it scales with the case instead of encoding one machine's absolute time:

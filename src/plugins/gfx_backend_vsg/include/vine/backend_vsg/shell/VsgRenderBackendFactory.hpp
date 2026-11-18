@@ -14,7 +14,7 @@ VN_BACKEND_VSG_NS_BEGIN
  * this module or on VulkanSceneGraph.
  *
  * WHAT THE NAME CREATES: the rewrite's facade (`vn::backend_vsg::VsgBackend`, see
- * .ai/design/vsg-backend.md §11.16bi). The previous implementation
+ * .ai/design/vsg-backend.md 2.9). The previous implementation
  * (`VsgRenderer`) is still in this module and still covered by its own tests, but
  * no registered name creates it any more: a second name would be a second answer
  * to "which backend is 'vsg'", which is the very thing the rewrite exists to

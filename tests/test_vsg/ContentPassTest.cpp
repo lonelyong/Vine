@@ -1,5 +1,5 @@
 /**
- * @brief Recording a pass' content from the three tables (see `.ai/design/vsg-backend.md` §11.17).
+ * @brief Recording a pass' content from the three tables (see `.ai/design/vsg-backend.md` 2.10).
  *
  * Real device, no window: SKIPped when no device can be created.
  *
