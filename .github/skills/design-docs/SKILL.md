@@ -19,9 +19,8 @@ description: |
 ## Language
 
 English is the repository's documentation language. The rule is in
-`.github/copilot-instructions.md` → "Documentation Language"; the decision is
-`ADR-2026-11-17-documentation-language`, and its migration is finished, so a page written today
-starts in English.
+`.github/copilot-instructions.md` → "Documentation Language", so a page written today starts in
+English.
 
 * **One file, one language.** New files (design pages, ADRs, backlog, memory) are English.
 * **Records are converted**: an ADR or bug postmortem is converted whole to English in one commit (git

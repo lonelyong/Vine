@@ -44,7 +44,7 @@ acceptable — is in `.github/instructions/framework-design.instructions.md`.
   * `.ai/decisions/` — **ADR** (`ADR-YYYY-MM-DD-<slug>.md`): why a decision was made, the
     options rejected and their consequences. Dated and immutable; when a later ADR replaces
     it, the superseded one is **deleted** once the successor states the current fact, and git
-    keeps it (`ADR-2026-11-18-superseded-adrs-are-deleted`). The in-tree set is the current
+    keeps it. The in-tree set is the current
     decisions plus the arguments a design page cannot carry.
   * `.ai/backlog/` — **open, trigger-gated** work only (`<area>.md`, no date suffix).
     Closed or explicitly not-doing items are deleted, not marked.
@@ -79,7 +79,7 @@ acceptable — is in `.github/instructions/framework-design.instructions.md`.
 ## Documentation Language
 
 English is the repository's documentation language, and the corpus is converted: every `.ai/**` page is
-English except the quoted literals a page has to reproduce (`ADR-2026-11-17-documentation-language`).
+English except the quoted literals a page has to reproduce.
 
 * **One file, one language.** A file is English or Chinese, never mixed paragraph by paragraph.
 * **New files are English** — every file created from now on, `.ai/**` and `.github/**` included.
@@ -90,7 +90,7 @@ English except the quoted literals a page has to reproduce (`ADR-2026-11-17-docu
   English in one commit (git holds the original) and drops its then-redundant `> **EN**:` line; a later correction
   is appended and dated, never folded into the converted text. The conversion preserves every stable ID, `G#`
   citation, link target and measured number - the before/after census is the check. An open finding is written in
-  English from the start. The boundary is `ADR-2026-11-17-documentation-language`, amendments of 2026-11-18.
+  English from the start.
 * **Identifiers are never translated.** Prose uses the code spelling (`FrameGate`, `residency`,
   `frame driver`); `.ai/memory/glossary.md` is the one mapping between a concept's English spelling
   and the words the Chinese pages use - today `docs/guides/**`, which stays Chinese - and it lists the

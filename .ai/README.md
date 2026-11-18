@@ -88,16 +88,13 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (78)
+## decisions/ — decision records (ADRs) (76)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
-- `ADR-2026-11-18-superseded-adrs-are-deleted.md` — **a superseded ADR is deleted, not kept as a marker**: a live ADR carries the rejected options a design page cannot; a tombstone carries none, and it stays in the search path and in every rename. Twelve of them went in this batch (`crash-handler-qt`, `axis-surface-frame`, `curve-third-derivative`, `planar-arc-is-a-value-type`, `planar-offset-curve`, `solid-family-and-variant`, `geom-tree-layout-and-naming`, `math-is-the-base-layer`, `shared-numeric-kernels-in-math`, `digest-vocabulary`, and the two upload-staging ones), each with the successor that states the current fact.
-
-- `ADR-2026-11-17-documentation-language.md` — **English is the documentation language**: the code's vocabulary, commit bodies and diagnostic codes were already English; one file one language, new files English, records converted whole with the original left in git, the glossary in `memory/glossary.md`. The migration is finished: every page here is English except the quoted literals a page has to reproduce, and `docs/guides/**` stays Chinese by a separate decision.
 - `ADR-2026-11-16-authoring-view-and-target-vocabulary.md` — **values carry declarations, behaviour belongs to objects**: a `View` value (`CameraSnapshot` + `Viewport` + layer mask, `CollectView` retired), `RenderArea` → `RenderArea` (surface stays with the platform), a pass's target collapsed into the two values `Target` + `Output`, `PassDesc` as the only authoring shape (`RenderPass`'s 35 setters become a read-only live handle), zero callbacks in values (`before_draw` moves to the object's `update()`, `OverlayLayout` returns a `Viewport`), the dead field `tag` deleted, `setRenderTarget` made real (vk pre-builds; CAP-86 added) or retired, the `releasePass` contract narrowed, `Capabilities` = `Features` + `Limits`, diagnostics gain `origin` (CAP-87), the light set no longer allocated per pass; four normative text revisions plus 26 section-comment cleanups. The 18 batches landed on 2026-11-17, each one's numbers in its commit body.
 - `ADR-2026-11-16-redesign-seam-and-vocabulary.md` — **the redesign is names and ownership, not capability**: the two backends' seam (`backend/`'s 25 headers reduced to 6 shared mechanisms + the guard, 18 vsg-only headers moved into the plugin), vocabulary (the design noun `Session` retired in favour of `FrameDriver` / `FrameDriverId` / `WindowSession` / `FrameHead`), a frame in three phases (frame-head resolution under one lock / lock-free recording / one submit lock, `prepare` = `Submission::TransferOnly`), one refusal shape (`DiagnosticDraft`), the target table and the engine composition root put back where they belong, the selection rule collapsed into one; `RenderBackend` the aggregate and `RenderDevice`'s five responsibility faces are kept (`G8`: no consumer), with the trigger conditions written into the ADR; the 18 batches landed on 2026-11-17. §2 and batch 3's "the directory is the seam" are superseded by the next entry.
 - `ADR-2026-11-16-no-backend-half.md` — **delete the "backend half"**: directory, include guard, the `VineGraphicsBackendSdk` install component and the file-set gate all maintained one boundary from four places, at a cost above the benefit (`G7`); the 8 shared mechanisms are flattened into `sdk/vine/graphics/` and merged into `vn::graphics` (`Keys.hpp` → `DrawState.hpp`, `ReadbackResult` → `ReadbackAnswer`), and `gfx_backend_vsg`'s own types move into `vn::backend_vsg::core` (`G13`). Gates became property-based (the module must not include a render API or a concrete backend; exported symbols are checked by file list).
@@ -206,7 +203,7 @@ decision is not to do them (the reason goes into an ADR).
 
 ## memory/ — module notes (12)
 
-- `glossary.md` — **one spelling per concept**: the English code spelling ↔ the words the Chinese pages use, the retired spellings and the false friends; prose always uses the code spelling (the mapping table for the documentation migration, see `../decisions/ADR-2026-11-17-documentation-language.md`).
+- `glossary.md` — **one spelling per concept**: the English code spelling ↔ the words the Chinese pages use, the retired spellings and the false friends; prose always uses the code spelling.
 - `graphics.md` — graphics / vsg live facts: mechanisms, criteria, traps and "why it was decided this way at the time".
 - `core.md` — core facts: a type descriptor registers only through `Type::obtain()`, the two declaration forms (inline and out-of-line), and the export convention for interfaces.
 - `crypto.md` — crypto facts: backend initialisation in one place, wolfSSL's `Md5`/`Sha256` macros colliding with `::Hmac`, incremental GCM buffering, test vectors and the commands.

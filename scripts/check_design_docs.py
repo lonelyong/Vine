@@ -47,8 +47,7 @@ CHAPTERS = [
 ]
 
 # One entry per required status-block fact. The template is English only, so the block states each
-# fact in English; the Chinese spellings left with the documentation migration
-# (ADR-2026-11-17-documentation-language).
+# fact in English.
 META = (
     ("Status",),
     ("Last verified",),
