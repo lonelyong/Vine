@@ -266,7 +266,7 @@ The display state of a command item is in `appfw-command-binding.md`.
 
 ### 9.2 Known gaps / backlog
 
-See `../backlog/appfw-ribbon.md`: an explicit order, item ids, persisting a user layout, contextual tabs and manifest contributions.
+See `../backlog/appfw-ribbon.md`; it is the one list of what is not in the code, and a gap leaves it when it lands.
 
 ### 9.3 Compatibility / migration
 
