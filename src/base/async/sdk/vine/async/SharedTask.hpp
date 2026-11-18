@@ -266,7 +266,13 @@ class SharedTask {
     }
 
     /**
-     * @brief Returns the cached result; call only when ready.
+     * @brief Returns the cached result of a completed task; throws before completion.
+     *
+     * @details
+     * - The source runs on its first co_await, so a task that has never been awaited has no
+     *   cached value: this reports that as std::logic_error instead of reading an empty slot.
+     * - isReady() is the cheap question ("may I call this now"); calling it first keeps the
+     *   normal path from paying for the exception.
      *
      * @return The shared result (const reference).
      */
@@ -277,6 +283,9 @@ class SharedTask {
             throw std::logic_error("async::SharedTask: accessing an empty task");
         }
         std::lock_guard<std::mutex> lock(state_->mutex);
+        if (!state_->completed) {
+            throw std::logic_error("async::SharedTask: result() before completion");
+        }
         if (state_->exception) {
             std::rethrow_exception(state_->exception);
         }

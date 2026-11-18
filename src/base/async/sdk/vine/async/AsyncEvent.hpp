@@ -182,15 +182,20 @@ inline void AsyncEvent::set() noexcept
         // resumed. Arming it inside the resume loop below would overwrite a
         // reset() issued by a resumed waiter (e.g. an edge-triggered event
         // clearing itself for the next batch), so it must happen here.
-        set_  = true;
-        // 代际边界：先把世代号推进一格，再按排号释放——本次 set() 只释放调用时已
-        // 经入队的 waiter（代际号 < epoch）。恢复期间（仍在本 set() 栈上）新入队的
-        // waiter 打的是 epoch，属于下一代，留给下一次 set()，否则顺序复用一个事件
-        // 时会把新等待者提前唤醒。
+        set_ = true;
+        // Generation boundary: advance the counter first, then release by stamp, so this
+        // set() releases only the waiters that were already queued when it was called
+        // (stamp < epoch).
+        // A waiter that queues during the resume window - still inside this set()'s stack -
+        // is stamped with the new epoch, belongs to the next generation, and waits for the
+        // next set(); otherwise reusing one event in sequence would wake a new waiter early.
         //
-        // 边界必须用世代号、而不是 set() 时的队尾指针：恢复期间被唤醒的 waiter 可能
-        // 销毁队尾那个 waiter（whenAny 赢家销毁落败的兄弟），指针比较随后再也判不出
-        // 边界，循环会把下一代 waiter 也唤醒（虚假唤醒）。排号天然不受谁被销毁影响。
+        // The boundary must be a generation number, not the tail pointer observed at set():
+        // a waiter resumed during the window may destroy the waiter that was the tail (a
+        // whenAny winner destroys the siblings it beat), and no pointer comparison can find
+        // the boundary afterwards - the loop would then wake the next generation too,
+        // which is a spurious wake-up.
+        // A stamp is unaffected by whoever gets destroyed.
         epoch = ++set_epoch_;
     }
     for (;;) {

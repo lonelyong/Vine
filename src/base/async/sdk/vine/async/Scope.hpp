@@ -87,8 +87,8 @@ DetachedTask runScopeChild(std::shared_ptr<ScopeState> state, Task<T> task)
  * is new: a requestStop() aimed at the previous batch does not reach it.
  *
  * Environment: the scope owns a std::stop_source and hands its token to every child it adds, so
- * a child that reads co_await currentStopToken() - or sleeps with an inherited token - can be
- * asked to stop. Destroying the scope makes that request (see ~Scope); it cannot cancel a child
+ * a child that reads co_await currentStopToken() - and passes that token to the operations it
+ * awaits - can be asked to stop. Destroying the scope makes that request (see ~Scope); it cannot cancel a child
  * that does not read the token, and it does not wait for one, so pendingChildren() is what a host
  * uses to notice a scope that went away with work still running. detach() is how a caller says
  * "leave this batch alone".
@@ -104,8 +104,8 @@ class Scope {
     /**
      * @brief Asks the children of the current batch to stop, and stops tracking them for stop requests.
      *
-     * Children that read their environment token (co_await currentStopToken(), or a sleep that
-     * inherits one) observe the request and can finish early; one that never looks is unaffected.
+     * Children that read their environment token (co_await currentStopToken()) and pass it to
+     * what they await observe the request and can finish early; one that never looks is unaffected.
      * The scope still waits for them in join() - detach() is the call that lets them be ignored.
      * The next add() starts a fresh batch that is tracked again.
      */

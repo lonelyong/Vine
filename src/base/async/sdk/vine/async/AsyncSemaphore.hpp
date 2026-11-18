@@ -129,6 +129,11 @@ inline AsyncSemaphore::AcquireAwaiter::~AcquireAwaiter() noexcept
 
 inline void AsyncSemaphore::release(std::ptrdiff_t n) noexcept
 {
+    if (n <= 0) {
+        // Releasing nothing is a no-op; a negative count would instead leave the semaphore
+        // permanently below zero, so every later acquire() would park forever.
+        return;
+    }
     {
         std::lock_guard lock(mutex_);
         count_ += n;

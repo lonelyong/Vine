@@ -11,7 +11,7 @@
 ### 1.1 Problem and background
 
 `vn::async` is a header-only coroutine runtime (`vn::Async` is an INTERFACE target depending only on `vn::Global` + `vn::Core`),
-about 28 headers and 6.9k lines. It provides tasks, combinators, synchronisation primitives and schedulers, while writing the
+28 headers and about 7.5k lines. It provides tasks, combinators, synchronisation primitives and schedulers, while writing the
 lifetime windows such as “one completion wakes several waiters” down as rules that cannot be violated.
 
 ### 1.2 Goals
@@ -71,6 +71,8 @@ and can only post a wake.
 The `Task` awaiter, `TaskFinalAwaiter`, `WhenChild::FinalAwaiter`, `WhenAnyChild::FinalAwaiter` and
 `YieldAwaiter::await_suspend` all **return handle** instead of `h.resume()`: an inline resume leaves one more frame on the machine stack for every await level
   (measured 336 B per `yield` at -O0, so 200k of them overflow the stack). A new awaiter first asks “can this return handle instead?”.
+In a composition child the returned handle is the driver's, which is also what leaves the child **suspended** until the driver has run - the lifetime
+  requirement §2.6 is about, not just the stack one.
 
 ### 2.4 Blocking for the result: two gates
 
@@ -89,7 +91,21 @@ The `Task` awaiter, `TaskFinalAwaiter`, `WhenChild::FinalAwaiter`, `WhenAnyChild
 | the `Awaitable` concept | additionally checks that `await_ready` converts to bool and that `await_suspend` is only `void`/`bool`/a handle value | only a concept that looks up “like co_await” can accept this module's own awaitables. |
 | `Generator`'s ranges contract | adds `iterator_concept` + postfix `++` + `operator->` | C++20 ranges only requires postfix `++`, and without it `weakly_incrementable` fails. |
 | the cancellation model | an explicit `CancellationToken` + `CancelPolicy` (`StopAndWait` / `Destroy`) | both camps — P2300's environment token and C#'s explicit token — are served; the default follows the wider use. |
-| a notify with no waiter | `AsyncConditionVariable` keeps it with a sticky flag | “release the AsyncMutex + register a wait” cannot be atomic, and dropping it deadlocks. |
+| a notify with no waiter | `AsyncConditionVariable` keeps it with a sticky flag | “release the AsyncMutex + register a wait” cannot be atomic, and dropping it deadlocks; `folly::coro::Baton::post` on an unawaited baton also wakes the next waiter, so the deviation has a mainstream precedent. |
+| a composition waking its driver | the child hands the driver's handle back and returns it (§2.6) | the driver destroys the children when it finishes, and only a *suspended* coroutine may be destroyed - during `await_suspend` it is not ([expr.await]); `coroutine_handle::destroy` requires a suspended coroutine ([coroutine.handle.destroy]). |
+
+### 2.6 A composition hands its driver back instead of waking it
+
+- A composition has exactly one waiter - its own driver - so its wake-up is a **single-slot hand-off** (`detail::WhenSignal`), not an event with a waiter list.
+- A child that finishes offers its `final_suspend::await_suspend` the driver's handle and **returns it** (symmetric transfer); it never resumes the driver there.
+  Why: a driver that completes is destroyed together with its children, and a coroutine may only be destroyed while it is **suspended** - during `await_suspend` it is not, so an inline resume destroys a frame that is still executing.
+  That is undefined behaviour, and no sanitizer reports it, because nothing writes to the frame after the return.
+- `WhenSignal::park` / `wake` therefore keep two states rather than a flag to re-arm: a completion arriving while no driver is parked sets `pending_`, and the next park consumes it without suspending.
+  `drainChildren` is then a plain `while (remaining != 0) co_await park`, with no window between clearing a flag and waiting in which a completion could be lost.
+- The rule is checked where it can still be observed: `~WhenChild` / `~WhenAnyChild` assert that the child's final `await_suspend` is not on the stack (`async-design.md` §6.4).
+- Cancellation still posts its wake-up (`detail::deferWhenWake`): a `std::stop_callback` may not resume the driver either, for the same same-thread-destruction reason.
+
+Serves G1 (one wake-up concept with one owner), G10 (the cost is one mutex acquisition per completion) and G11 (the invariant is asserted at the point where a violation becomes observable).
 
 ## 3. Features
 
@@ -223,6 +239,29 @@ The `Task` awaiter, `TaskFinalAwaiter`, `WhenChild::FinalAwaiter`, `WhenAnyChild
 - How to detect it: check `pendingChildren()`, or `co_await join()` explicitly on every path that needs the completion guarantee.
 - How to prevent it: `join()` explicitly before leaving the scope; `detach()` says the destructor does not request a stop.
 
+### 6.4 Returning to an inline wake-up in a composition child
+
+- How it fails: a child that resumes its driver from its own `final_suspend::await_suspend` destroys its own frame.
+  The driver completes, completing destroys the composition frame, and that destroys every child - including the one whose `await_suspend` has not returned.
+  The standard only considers a coroutine suspended once `await_suspend` has returned, so the resume is undefined behaviour; current compilers do not fault and ASan does not report it, because the freed frame is not written to afterwards.
+  This is what the module did before §2.6, where the wake-up was `AsyncEvent::set()` and `set()` resumes inline.
+- How to detect it: `~WhenChild` / `~WhenAnyChild` assert that the child's final `await_suspend` is not on the stack - the flag is set around the wake-up, so the destructor sees it exactly when the old ordering is back.
+  `tests/test_async`'s `WhenLifetimeTest` cases drive the only two ways a child can wake a **parked** driver: a `whenAll` whose last child finishes in the timer, and a `StopAndWait` `whenAny` that wakes twice.
+  Putting `parked.resume()` back into `WhenSignal::wake` turns both red.
+- How to prevent it: §2.6 - hand the handle back and let the compiler suspend the child first.
+
+### 6.5 A granted reader destroyed before resuming would leave a queued writer stranded
+
+- How it fails: `AsyncReaderWriterLock::takeWaitersLocked` grants every queued reader at once (`readers_ += waiting_readers_`) and lets
+  `resume()` wake them one at a time. A writer that arrives after the grant queues, because `tryAcquireWriter` sees `readers_ > 0`.
+  `dequeueReader` subtracts a granted reader from `readers_` when its awaiter is destroyed; should the counter reach zero that way, nothing
+  calls `takeWaitersLocked()`, and the queued writer is never woken.
+- How to detect it: the state `readers_ == 0 && writers_head_ != nullptr` with no wake in flight.
+- How to prevent it: `dequeueReader` would have to hand the lock on when the counter it touches reaches zero, exactly as `unlockRead()` does.
+  Not done, and **not reachable today**: the granted readers are popped and resumed by the same loop that granted them, so a granted reader can
+  only be destroyed from inside another granted reader's resume - which always leaves that other reader alive to unlock, and so to hand the
+  lock on. Recorded as an invariant for whoever next edits `dequeueReader`.
+
 ## 7. Rejected Options
 
 | # | Option | Why not | ADR |
@@ -234,6 +273,7 @@ The `Task` awaiter, `TaskFinalAwaiter`, `WhenChild::FinalAwaiter`, `WhenAnyChild
 | D5 | `appfw::async::sleep()` | a duplicate of `vn::async::sleepFor()` with no caller. | — |
 | D6 | turning `try_lock`/`try_acquire` into camelCase | they mirror `std::mutex`/`std::counting_semaphore`, and the rename would be a breaking change. | — |
 | D7 | a `set_stopped` cancellation result channel (a three-state `Task` result) | it would make cancellation not-an-error, but `Task<T>`'s result, every combinator, `result()` and the cancellation cases all change, while the layers above already classify `TaskCancelledException` as "cancelled"; the local tightening of `withTimeout` is the change to make instead, and `CancelPolicy` already expresses it. | — |
+| D8 | an executor or thread-affinity parameter on `Task` (P2300's scheduler environment, asio's bound executor, folly's executor that propagates through every continuation) | it would make every coroutine carry a context most of them never use, and move the choice from the call site into the library. cppcoro chose the same absence and offers `resume_on` only, which is exactly `resumeOn` / `scheduleOn`; a caller that must land somewhere says so with a `co_await` (G8: no call site needs it today). | — |
 
 ## 8. Tests and Acceptance
 
@@ -255,6 +295,8 @@ Tasks, combinators, primitives and schedulers are in place; the cancellation pol
 ### 9.2 Known Gaps and Backlog
 
 - Frame allocation is not done; the criterion it waits for is in `../backlog/async.md`.
+- `6.5` is an invariant note, not a reachable defect: the accounting direction it describes cannot be reached under the framework contract in
+  `async_global.hpp`. The composition wake-up ordering it sat next to was a real defect and is fixed; see §2.6 and §6.4.
 
 ### 9.3 Compatibility and Migration
 
@@ -283,3 +325,7 @@ There is no `appfw::async::sleep()`; use `vn::async::sleepFor()`. New code follo
   `Task.WhenAll` (a separate `Canceled` state, exceptions aggregated), and P2300 / asio (`set_stopped` plus a
   completion-condition parameter).
 - the standard's undefined cases around `std::stop_token` / `std::stop_callback`.
+- the standard's coroutine clauses the wake-up rules rest on: `[expr.await]` (a coroutine is suspended only once `await_suspend` returns)
+  and `[coroutine.handle.destroy]` (a handle may only be destroyed while the coroutine is suspended).
+- `folly::coro::Baton` — the sticky `post()` the condition variable's deviation follows, and the reason it has no lost-wakeup window: the
+  baton *is* the mutex, so "release + register" is one operation rather than two.

@@ -1545,6 +1545,20 @@ TEST(AsyncSemaphoreTest, WaiterResumedOnRelease)
     EXPECT_TRUE(acquired);
 }
 
+TEST(AsyncSemaphoreTest, NonPositiveReleaseLeavesTheCountAlone)
+{
+    async::AsyncSemaphore sem(1);
+
+    // A negative release used to drive count_ below zero, after which every acquire() parked
+    // forever - the permit existed but the counter said it did not. Releasing nothing is a
+    // no-op now, so the one permit still behaves like one permit.
+    sem.release(0);
+    sem.release(-3);
+
+    EXPECT_TRUE(sem.try_acquire());
+    EXPECT_FALSE(sem.try_acquire());
+}
+
 TEST(ThreadPoolSchedulerTest, ResumeOnPool)
 {
     vn::ThreadPool             pool(2);
@@ -1896,6 +1910,32 @@ TEST(TypedWhenAnyTest, StopAndWaitIsHeldByALoserItCannotAskToStop)
     EXPECT_TRUE(returned.load());
     EXPECT_EQ(value.load(std::memory_order_acquire), 1) << "the composition lost the winner's result";
     EXPECT_TRUE(loser_finished.load());
+}
+
+// A child that finishes while the composition is already parked is the path where an inline
+// wake-up destroys the child's own frame from inside its final await_suspend: the driver resumes,
+// runs to completion, and its frame destruction takes the children with it - including the one
+// whose await_suspend has not returned yet. The child must therefore be suspended before the
+// driver runs, which is what the hand-off does; a debug build asserts that no composition child is
+// destroyed with its final await_suspend still on the stack, so these two cases fail loudly if a
+// later change goes back to resuming the driver from there.
+TEST(WhenLifetimeTest, AChildFinishingWhileTheDriverIsParkedIsDestroyedAfterItSuspends)
+{
+    using namespace std::chrono_literals;
+
+    // Both children sit in the timer, so whoever finishes second wakes a parked driver.
+    async::whenAll(async::sleepFor(1ms), async::sleepFor(10ms)).result();
+    SUCCEED();
+}
+
+TEST(WhenLifetimeTest, AStopAndWaitWinnerAndItsLastLoserBothWakeAParkedDriver)
+{
+    using namespace std::chrono_literals;
+
+    // StopAndWait wakes the driver twice - once when the winner publishes, once when the last
+    // loser reports - and both go through the same hand-off.
+    async::whenAny(async::CancelPolicy::StopAndWait, async::sleepFor(1ms), async::sleepFor(10ms)).result();
+    SUCCEED();
 }
 
 TEST(SleepTest, SleepsForDuration)
@@ -2455,6 +2495,23 @@ TEST(SharedTaskTest, EmptySharedTask)
     EXPECT_FALSE(st.isReady());
     EXPECT_THROW(sharedAwaitInt(st).result(), std::logic_error);
     EXPECT_THROW([&st]() { return st.result(); }(), std::logic_error);
+}
+
+TEST(SharedTaskTest, ResultBeforeCompletionThrowsInsteadOfReadingAnEmptySlot)
+{
+    int  runs = 0;
+    auto st   = async::sharedTask(sharedSource(runs));
+
+    // The source is lazy: nothing has run, so there is no cached value yet. Reading the
+    // optional behind result() would be undefined behaviour; the contract is reported as
+    // std::logic_error instead, the same way an empty task is.
+    EXPECT_FALSE(st.isReady());
+    EXPECT_THROW([&st]() { return st.result(); }(), std::logic_error);
+    EXPECT_EQ(runs, 0) << "asking for the result must not start the computation";
+
+    EXPECT_EQ(sharedAwaitInt(st).result(), 42);
+    EXPECT_TRUE(st.isReady());
+    EXPECT_EQ(st.result(), 42);
 }
 
 TEST(SharedTaskTest, LazyDoesNotRunUntilFirstAwait)

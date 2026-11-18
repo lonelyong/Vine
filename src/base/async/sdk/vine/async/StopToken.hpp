@@ -40,8 +40,9 @@ inline detail::StopTokenRequest currentStopToken() noexcept
  *
  * The token is stored in the task's promise before the task starts, which a lazy Task allows:
  * calling the coroutine has not executed a line yet, so its environment is still open. Inside,
- * `co_await currentStopToken()` returns it, and the operations that take an environment use it as
- * their default (see sleepFor()).
+ * `co_await currentStopToken()` returns it - and that is the only way to reach it: a free
+ * operation such as sleepFor() cannot look up its caller's environment, so the body reads the
+ * token and passes it on (`co_await sleepFor(d, co_await currentStopToken())`).
  *
  * Nothing is inherited automatically: a task created inside another task starts with an empty
  * environment unless its creator hands one over. That is deliberate for this step - no existing
