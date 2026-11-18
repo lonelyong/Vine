@@ -1,76 +1,80 @@
-# ADR-2026-11-10：渲染世界镜像内容，内容世界留在 UI 线程
+# ADR-2026-11-10: the render world mirrors content, and the content world stays on the UI thread
 
-- 状态：已采纳（契约层面；实现按 `../design/graphics-threading.md` §9.3 的阶段与 `../backlog/graphics.md` T31 的触发条件推进）
-- 日期：2026-11-10
-- 相关：`../design/graphics-threading.md`、`../design/graphics-scene.md`、`../design/vsg-backend.md`、
-  `../design/appfw-render-surface.md` §9.2、`../backlog/graphics.md` T24/T31
+- Status: Accepted (at the contract level; implementation proceeds by the stages of §9.3 in `../design/graphics-threading.md` and the trigger conditions of T31 in `../backlog/graphics.md`)
+- Date: 2026-11-10
+- Related: `../design/graphics-threading.md`, `../design/graphics-scene.md`, `../design/vsg-backend.md`,
+  `../design/appfw-render-surface.md` §9.2, `../backlog/graphics.md` T24/T31
 
-> **EN**: Chose A: the content world stays on the content (UI) thread and the render world mirrors it, updated by deltas, with three channels - delta (values, payload required so a missing announcement fails to compile), handoff (ownership) and snapshot (immutable published value plus frame number) - and only `Buffer::revision()` / `Geometry::revision()` read across. Rejected moving content to the engine thread, per-frame extract/sync, double-buffered worlds, UI-thread-only rendering and locking the content model; the failure mode to watch is a missed announcement leaving the mirror stale without any error.
+## Background
 
-## 背景
+Today every part of a frame runs inside one call stack on the Qt application thread (`SurfaceWindow::renderFrame` → `RenderEngine::frame()`
+→ `compileFrame` → `executor().executeFrame`), and the application thread is also the UI thread. The costs are measured: 2000 drawables with a moving camera cost
+1597 µs/frame (71% of it per-command construction / resolution), the backend records 33 allocations per recorded triangle, session initialisation is ~184 ms, and vsg sleeps 16 ms on an empty recorded frame.
+appfw already treats application-thread occupancy as a budget (the 150 ms startup gate).
 
-今天一帧的每一段都在 Qt 应用线程的一次调用栈里（`SurfaceWindow::renderFrame` → `RenderEngine::frame()`
-→ `compileFrame` → `executor().executeFrame`），而应用线程同时是 UI 线程。成本已经量出来：2000 drawables 移动相机
-1597 µs/帧（逐命令构造/解析占 71%），后端记录 33 次分配/录制三角形，会话初始化 ~184 ms，vsg 在空记录帧上睡 16 ms。
-appfw 已经把应用线程占用当预算（启动门禁 150 ms 项）。
+The hard part is **who owns the content**: the backend's fact rows read from live content every frame (`GeometryFacts.cpp:181`, `ContentStore.cpp:377`),
+and collection has to walk the scene graph. So "move rendering to another thread" necessarily settles a relationship between the two sides.
 
-难点是**内容归谁**：后端的事实行每帧从活内容上读（`GeometryFacts.cpp:181`、`ContentStore.cpp:377`），
-收集也要走场景图。所以"渲染搬到另一个线程"必然要在两侧之间定一种关系。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| **A. 内容世界留在内容线程（UI），渲染世界镜像它，靠 delta 增量更新** | 内容编辑 API 不变（同步读写自己的文档）；渲染侧零锁；静止场景零成本（只在编辑时付 O(变化部分)）；只有三条值通道 | 需要镜像与 delta 协议；公告必须**穷尽**（漏发 = 镜像悄悄陈旧）；形状编辑要构造一次描述值 |
-| B. 内容归引擎线程，宿主只发意图、读快照 | 无需镜像 | 编辑器要同步读写自己的文档（属性面板、gizmo、拾取）就做不到；每个宿主与用例都要改写；Unreal/Qt Quick/Godot/Bevy 都保留作者态场景图 |
-| C. 每帧 extract / `sync()`（Qt Quick / Bevy 形状） | 协议最简单（每帧全量拷一份） | 每帧 O(drawables) 的拷贝落在内容线程 —— 正是要拿走的那部分成本 |
-| D. 双缓冲世界（编辑期克隆场景，帧边界原子换） | 内容侧可同步读写 | 每次编辑 O(content)；两份场景 = 两份驻留 |
-| E. 维持现状（UI 线程全做），只做并行 select | 零迁移；先拿到收集的 71% | UI 线程仍承担上传/记录/呈现；空记录帧的 16 ms 与 184 ms 的会话 init 仍在 UI 上 |
-| F. 给内容模型加锁 | 编辑与渲染可并发 | 同一概念两个 owner；锁进每条读路径；与稳态零分配冲突（`G1`/`G10`） |
+| **A. The content world stays on the content thread (UI), the render world mirrors it, updated incrementally by deltas** | The content-editing API is unchanged (it reads and writes its own document synchronously); the render side has no locks; a still scene costs nothing (only the changed part is paid for while editing); only three value channels | A mirror and a delta protocol are needed; announcements must be **exhaustive** (a missed one leaves the mirror silently stale); a shape edit has to build a description value once |
+| B. Content belongs to the engine thread; the host only sends intent and reads snapshots | No mirror needed | An editor that reads and writes its own document synchronously (property panel, gizmo, picking) cannot be done; every host and test would be rewritten; Unreal / Qt Quick / Godot / Bevy all keep an authoring scene graph |
+| C. Extract / `sync()` every frame (the Qt Quick / Bevy shape) | The simplest protocol (copy everything every frame) | O(drawables) copying per frame lands on the content thread - exactly the cost that is being taken away |
+| D. Double-buffered worlds (clone the scene while editing, swap atomically at the frame boundary) | The content side can read and write synchronously | O(content) per edit; two scenes means two resident copies |
+| E. Keep the status quo (everything on the UI thread) and only parallelise select | No migration; the 71% of collection is won first | The UI thread still carries upload / record / present; the 16 ms empty-frame sleep and the 184 ms session init stay on the UI thread |
+| F. Lock the content model | Editing and rendering can run concurrently | Two owners for one concept; a lock on every read path; against zero allocation in steady state (`G1`/`G10`) |
 
-## 决定
+## Decision
 
-选 **A**，并把边界画在值上：
+Chose **A**, and drew the boundary at values:
 
-1. **两个世界，各自一个写者**：内容世界（`Scene`/`Node`/`Geometry`/`Buffer`/`Program`/`Material`/`Texture`/`Camera`）
-   只被内容线程写；渲染世界（镜像节点、几何代理、材质块、驻留表、vsg 命令图、交换链）只被引擎线程写。
-2. **镜像 = 已经存在的 bake**：世界矩阵、世界盒、折叠状态、顺序（`SceneBake` 今天算的东西）搬到引擎侧，
-   输入从"读活节点"换成"应用 delta 后的值"。镜像持有 `intrusive_ptr<Node>` 只为保地址，**不读字段**。
-3. **三条通道**：delta（值，payload 必填 ⇒ 漏发编译不过）、handoff（所有权，过带边界队列）、
-   snapshot（已发布不可变值 + 帧号）。原设计的"请求"通道**删掉**（拾取/包围盒/相机在内容侧都能自答）。
-4. **字节内容不靠 delta**：`Buffer::revision()` / `Geometry::revision()` 成为原子计数，渲染侧继续轮询
-   （现行 pin 判据本来就是 O(#驻留条目)、与内容规模无关）。这是唯一允许的跨侧读。
-5. **表面归内容线程，交换链归引擎线程**：extent 变化只在帧边界应用，重建期间的帧丢弃且不计错。
-6. **并行只在镜像上的纯计算**：收集的选取一阶段分块并行，按块序合并，与串行逐位相同；小场景不并行。
-7. **两种模式一套实现**：`inline`（调用线程即引擎线程，今天的行为，测试与无头默认）与 `threaded`，共用帧循环与镜像。
+1. **Two worlds, one writer each**: the content world (`Scene`/`Node`/`Geometry`/`Buffer`/`Program`/`Material`/`Texture`/`Camera`)
+   is written only by the content thread; the render world (mirror nodes, geometry proxies, material blocks, residency table, vsg command graph, swap chain) is written only by the engine thread.
+2. **The mirror is the bake that already exists**: world matrices, world boxes, folded state and order (what `SceneBake` computes today) move to the engine side,
+   with the input changing from "read live nodes" to "the values after applying deltas". The mirror holds `intrusive_ptr<Node>` only to keep the address alive and **reads no fields**.
+3. **Three channels**: delta (values, the payload is required ⇒ a missed announcement does not compile), handoff (ownership, through a queue with an edge),
+   snapshot (an already-published immutable value plus a frame number). The original design's "request" channel is **deleted** (picking, bounding boxes and the camera can all answer themselves on
+   the content side).
+4. **Byte content does not go through deltas**: `Buffer::revision()` / `Geometry::revision()` become atomic counters and the render side keeps polling
+   (the current pin criterion is already O(#resident entries) and independent of content size). This is the only cross-side read allowed.
+5. **The surface belongs to the content thread, the swap chain to the engine thread**: an extent change is applied only at the frame boundary, and frames during a rebuild are dropped
+   without counting as an error.
+6. **Parallelism only for pure computation over the mirror**: the select stage of collection runs in parallel blocks, merged in block order, bit-identical to serial;
+   small scenes do not parallelise.
+7. **One implementation, two modes**: `inline` (the calling thread is the engine thread - today's behaviour, the default for tests and headless) and `threaded`, sharing the frame loop and the
+   mirror.
 
-## 后果
+## Consequences
 
-- **好的**：宿主侧零语义变化（编辑 API 不动，`inline` 下行为逐位相同）；渲染侧摆脱 UI 线程；静止场景每帧零拷贝；
-  镜像的正确性有一个可执行的判据（镜像产出 ≡ 内容侧 `collectRenderCommands` 对同一视图逐位相同），
-  并行化也建立在这个判据上；`RenderDevice` 的"一个线程驱动"契约不用改。
-- **坏的 / 代价**：多了一份镜像（内存 O(节点数)，与内容本身同阶）；公告必须穷尽，否则镜像陈旧而无任何报错；
-  形状编辑要在内容侧构造一次描述值（O(#通道 + #primitive)）；引擎侧要按子树增量重算世界矩阵与盒（新代码）；
-  第一次握手是 O(节点数)，大场景加载时一次性付掉。
-- **误用的失败形态**：漏发 delta / 读了内容字段 —— 都不崩、只画错，且常在特定编辑序列下才出现（见设计 §6.1、§6.2）。
-  因此把"payload 必填"做成编译期约束，并用"镜像 vs 从零重建"的等价性用例当总闸。
-- **触发条件（什么时候重开这个决定）**：
-  - 需要"内容与渲染在同一帧内互相看见"的真实需求（例如每帧动画的结果必须当帧回读做反应）—— A 允许延迟一帧，届时要么接受延迟，要么为那条数据单独开一条同步通道；
-  - 内容线程的编辑成本本身成为瓶颈（大场景里形状编辑的 O(#primitive) 描述构造进入 profile）——那时考虑把描述构造搬到 worker（handoff），不改本决定；
-  - `OwnedFrame` 的真实消费者（远程/录制）落地，跨线程帧的形态以它为准。
+- **Good**: zero semantic change on the host side (the editing API does not move, and under `inline` behaviour is bit-identical); the render side leaves the UI thread; a still scene copies nothing per frame;
+  the mirror's correctness has an executable criterion (the mirror's output is bit-identical to the content side's `collectRenderCommands` on the same view),
+  and parallelisation rests on that criterion too; `RenderDevice`'s "one thread drives it" contract does not change.
+- **Bad / cost**: one more mirror (memory O(nodes), the same order as the content itself); announcements must be exhaustive, or the mirror goes stale with no error at all;
+  a shape edit builds a description value on the content side once (O(#channels + #primitives)); the engine side recomputes world matrices and boxes per subtree delta (new code);
+  the first handshake is O(nodes), paid once while a large scene loads.
+- **How misuse fails**: a missed delta / reading a content field - neither crashes, both only draw wrong, and they often appear only under a particular edit sequence (§6.1, §6.2 of the design page).
+  That is why "the payload is required" is a compile-time constraint and the "mirror vs rebuilt from scratch" equivalence case is the master switch.
+- **Trigger conditions (when to reopen this decision)**:
+  - a real need appears for "content and rendering to see each other within one frame" (a per-frame animation whose result must be read back in the same frame to react); A allows one frame of
+    delay, so either accept the delay or open a dedicated synchronous channel for that datum;
+  - the content thread's editing cost itself becomes the bottleneck (the O(#primitives) description construction of a shape edit shows up in a profile) - then consider moving the description
+    construction to a worker (handoff) without changing this decision;
+  - a real consumer for `OwnedFrame` (remote / recording) lands, and the cross-thread frame's shape follows it.
 
-## 证据
+## Evidence
 
-- 现状全在应用线程、无渲染线程：`src/fw/appfw/src/gui/SurfaceWindow.cpp:832-861`、`src/viz/graphics/src/RenderEngine.cpp:240-313`；
-  vsg 的 `setupThreading()` 全树无人调用。
-- 事实行从活内容读：`GeometryFacts.cpp:181`、`ContentStore.cpp:377`；驻留 live 判据读 `Buffer::revision()`（`StreamUploads.cpp` 的 `beginFrame` 谓词）。
-- 镜像的原料已经存在：`Scene.cpp:937-1000`（bake / 逐视图 memo / 排序键）。
-- 公告钩子与 52 处调用点：`Node.cpp:14-36`；`Geometry.cpp:398/412`；`StateNode.cpp`。
-- 两个 revision 只被比较且单调：`Buffer.hpp:169-181`、`Geometry.hpp:766-770`；存储是非原子 `std::uint64_t`（`Buffer.hpp:368`）。
-- 线程契约只承诺"一个线程"，不承诺哪个线程：`RenderDevice.hpp:135-138`、`RenderFrameExecutor.hpp:52-55`。
-- 成本数字：`../backlog/graphics.md` T24（1597 µs @2000 / 141 µs @200 / 71% 逐命令）、`vsg-backend.md`（33 分配/录制三角形）、
-  `appfw-render-surface.md` §9.2（~184 ms 会话 init）、vsg `RecordAndSubmitTask::finish()` 的 16 ms 空记录睡眠。
-- 跨线程引用计数没有 happens-before：`RefCounted.hpp:62-83`（relaxed add / acq_rel release）⇒ handoff 必须过带边界的队列。
-- 其它库的对照（据公开架构文档）：Unreal 的 `FScene` + `FPrimitiveSceneProxy` + `ENQUEUE_RENDER_COMMAND`（＝本决定）、
-  Qt Quick 的每帧 `sync()`、Godot 的 `CommandQueueMT` + RID、Bevy 的 `Extract`、Filament 的单线程 API + job system。
-  它们都保留作者态的场景图，这正是否决选项 B 的直接依据。
+- The status quo is entirely on the application thread, with no render thread: `src/fw/appfw/src/gui/SurfaceWindow.cpp:832-861`, `src/viz/graphics/src/RenderEngine.cpp:240-313`;
+  nothing calls vsg's `setupThreading()` anywhere in the tree.
+- Fact rows read from live content: `GeometryFacts.cpp:181`, `ContentStore.cpp:377`; the residency live criterion reads `Buffer::revision()` (the `beginFrame` predicate in `StreamUploads.cpp`).
+- The mirror's raw material already exists: `Scene.cpp:937-1000` (bake / per-view memo / sort keys).
+- The announcement hooks and their 52 call sites: `Node.cpp:14-36`; `Geometry.cpp:398/412`; `StateNode.cpp`.
+- Both revisions are only compared and are monotonic: `Buffer.hpp:169-181`, `Geometry.hpp:766-770`; the storage is a non-atomic `std::uint64_t` (`Buffer.hpp:368`).
+- The threading contract only promises "one thread", not which one: `RenderDevice.hpp:135-138`, `RenderFrameExecutor.hpp:52-55`.
+- The cost numbers: `../backlog/graphics.md` T24 (1597 µs @2000 / 141 µs @200 / 71% per command), `vsg-backend.md` (33 allocations per recorded
+  triangle), `appfw-render-surface.md` §9.2 (~184 ms session init), vsg `RecordAndSubmitTask::finish()`'s 16 ms empty-record sleep.
+- Cross-thread reference counting has no happens-before: `RefCounted.hpp:62-83` (relaxed add / acq_rel release) ⇒ handoff must go through a queue with an edge.
+- Comparison with other libraries (from their published architecture documents): Unreal's `FScene` + `FPrimitiveSceneProxy` + `ENQUEUE_RENDER_COMMAND` (= this decision),
+  Qt Quick's per-frame `sync()`, Godot's `CommandQueueMT` + RID, Bevy's `Extract`, Filament's single-threaded API plus job system.
+  They all keep an authoring scene graph, which is the direct basis for rejecting option B.

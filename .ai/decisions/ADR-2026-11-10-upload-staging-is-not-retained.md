@@ -1,92 +1,89 @@
-# ADR-2026-11-10：上传暂存不保留 —— 拷贝的 fence 一完成就还，由帧边界自己判定
+# ADR-2026-11-10: upload staging is not retained - it goes back as soon as the copy's fence completes, decided at the frame boundary
 
-> **状态**：已取代（2026-11-13，见 [ADR-2026-11-13-staging-keeps-the-reusable-block.md](ADR-2026-11-13-staging-keeps-the-reusable-block.md)：
-> 完成就放的证据规则不变，但**可复用下限的块保留**，只还大于下限的一次性大块）
-> **日期**：2026-11-10
-> **取代**：[ADR-2026-11-10-upload-staging-release-is-explicit.md](ADR-2026-11-10-upload-staging-release-is-explicit.md)
-> **影响范围**：`src/viz/graphics/sdk/vine/graphics/RenderDevice.hpp`（删掉动词）、
-> `src/plugins/gfx_backend_vsg/{include,src}/internal/{TransferStaging,VsgBackend,SessionContent,OffscreenSession}`、
-> `src/plugins/model_viewer/src/{ModelRenderView.hpp,ModelViewerPlugin.cpp,commands/ReleaseMemoryCommand.*}`（删）、
-> `tests/test_vsg/{UploadScratchTest.cpp,OffscreenTargetTest.cpp}`、`tests/test_graphics/HeadlessBackendTest.cpp`、
+> **Status**: Superseded (2026-11-13, see [ADR-2026-11-13-staging-keeps-the-reusable-block.md](ADR-2026-11-13-staging-keeps-the-reusable-block.md):
+> the release-once-finished evidence rule is unchanged, but **a block at or below the reusable floor is kept**, and only a one-off block larger than it goes back)
+> **Date**: 2026-11-10
+> **Supersedes**: [ADR-2026-11-10-upload-staging-release-is-explicit.md](ADR-2026-11-10-upload-staging-release-is-explicit.md)
+> **Scope**: `src/viz/graphics/sdk/vine/graphics/RenderDevice.hpp` (the verb is deleted),
+> `src/plugins/gfx_backend_vsg/{include,src}/internal/{TransferStaging,VsgBackend,SessionContent,OffscreenSession}`,
+> `src/plugins/model_viewer/src/{ModelRenderView.hpp,ModelViewerPlugin.cpp,commands/ReleaseMemoryCommand.*}` (deleted),
+> `tests/test_vsg/{UploadScratchTest.cpp,OffscreenTargetTest.cpp}`, `tests/test_graphics/HeadlessBackendTest.cpp`,
 > `.ai/design/{graphics-content-lifecycle,vsg-backend,vsg-pitfalls}.md`
 
-> **EN**: Chose not to retain upload staging: a staging block is the source of exactly one `vkCmdCopyBuffer` and its own fence is the evidence it has been read, so `VsgBackend::executeFrame()` releases finished blocks at the frame boundary, and `RenderDevice::releaseUploadStaging()` plus the model viewer's release command are deleted because there is no longer a question for the host to answer. Rejected the explicit verb with park/drain, clearing without the fence, keeping only blocks above a size floor, and timers; the measured result is 1,228 MB of staging going to 0 for the 704 MB model. Superseded by `ADR-2026-11-13-staging-keeps-the-reusable-block`, which keeps blocks at or below a reusable floor.
+## Background
 
-## 背景
+vsg copies the bytes of one upload into a `HOST_VISIBLE|HOST_COHERENT` staging block (`TransferTask::transferData()` does
+`if (!staging || staging->size < totalSize) staging = createBufferAndMemory(...)`, which only ever grows), and **never gives it back** afterwards.
+Measured: the 704 MB body model left `SharedUsage = 1,228 MB` in the process - exactly `2 × 614 MB`, because uploads rotate by
+`dataToCopy.frameIndex`, so two uploads land on two blocks and both grow to 614 MB and stay
+(`TransferTask` has `2 × numBuffers = 6` blocks, each with its own `staging` + fence + command buffer + command pool).
 
-vsg 把一次上传的字节先拷进一块 `HOST_VISIBLE|HOST_COHERENT` 的暂存（`TransferTask::transferData()` 里
-`if (!staging || staging->size < totalSize) staging = createBufferAndMemory(...)`，只增不减），传完**不还**。
-实测：704 MB 的车身模型在进程里留下 `SharedUsage = 1,228 MB` —— 正好 `2 × 614 MB`，因为上传按
-`dataToCopy.frameIndex` 轮转，两次上传落在两块上，两块各涨到 614 MB 后一直留着
-（`TransferTask` 有 `2 × numBuffers = 6` 个块，每块各自的 `staging` + fence + command buffer + command pool）。
+The earlier ADR of the same day made it an **explicit entry point** (`RenderDevice::releaseUploadStaging()`, triggered by the host or by a user command),
+on the reasoning that "only the host knows when this memory is no longer needed". After it landed, two problems showed:
 
-同日的上一份 ADR 把它做成了**显式入口**（`RenderDevice::releaseUploadStaging()`，宿主或一条用户命令触发），
-理由是"何时不需要这块内存只有宿主知道"。落地后暴露出两个问题：
+1. **The most common host in the product does not call it**: a viewer that goes still after loading never reaches "the next frame", and the automatic "wave" rule (wait one frame with no upload)
+   does exactly the wrong thing in the one place it mattered most; so the 1.2 GB stayed, and all the user saw was "the command did nothing" (that time the park had not expired yet).
+2. **One verb carried two things**: the park's retirement point is `slots + 1` frames after submission, and the completion watermark lags by another `slots`, so either you wait
+   `2 × slots + 1` frames, or "ask again" pays one `deviceWaitIdle()` to drain it.
 
-1. **产品里最常见的宿主不调**：载入完就静止的查看器永远等不到"下一帧",而自动的"波"规则（等一帧没有上传）
-   正好在最该生效的地方不生效；于是 1.2 GB 一直留着，用户只能看到"敲了命令也没反应"（那次是 park 还没到期）。
-2. **一个动词里塞了两件事**：park 的退役点在提交之后 `slots + 1` 帧、完成水位又落后 `slots`，所以要么等
-   `2 × slots + 1` 帧，要么"再请求一次"付一次计数 `deviceWaitIdle()` 把它排空。
+## Decision
 
-## 决定
+1. **Staging is not retained.** A staging block is the source of **one** `vkCmdCopyBuffer` and has no second reader; once the copy is done it is dead weight.
+2. **The evidence is that block's own fence.** `block->fence->status() == VK_SUCCESS` means "the copy that read it has completed", which is stronger than a timeline window,
+   and it **does not wait**: a timeline needs frames, park needs a window, device idle stops the device - a fence is one `vkGetFenceStatus`.
+3. **The trigger is the frame boundary, not the host.** `VsgBackend::executeFrame()` runs `releaseFinishedUploadStaging()` once at the very start:
+   any block whose fence has completed and whose `DataToCopy` has no data left to copy has its `staging` and `buffer_data` cleared
+   — exactly the state vsg itself produces when it rebuilds a block that is too small. The host does nothing and needs to know nothing.
+4. **The SDK drops `RenderDevice::releaseUploadStaging()`**, and the model viewer's `release_render_memory` command is deleted with it.
+   With no "when does it go back" question, no entry point is needed for the host to answer it (`G8`: no extension point without a consumer).
+5. **Derive a vsg task to read and clear that state.** `detail::StagingTask` (`vsg::Inherit<vsg::TransferTask, StagingTask>`) can see and clear each block's `staging`, `buffer_data` and `fence`
+   inside `_earlyDataToCopy` / `_lateDataToCopy`; when a session starts, `installStagingTask()` replaces the task vsg built (nothing is in flight then, so the swap costs nothing).
+   `gfx_backend_vsg` has always been a vsg adapter, and its internal conventions - `numBuffers = 3`, the manual `transferQueue` hand-over and the `device->transferTask`
+   observer - have always been written into this layer.
+6. **Do not clear a block that is still in flight.** A block whose fence has not completed is left to the next frame (the frame boundary must not block); a block whose `DataToCopy`
+   still has data to copy is skipped too (the next `transferData()` would allocate again, so clearing early only loses an allocation for nothing).
 
-1. **暂存不保留。** 一块暂存是**一个** `vkCmdCopyBuffer` 的源，没有第二个读者；传完它就是死重。
-2. **证据是那块自己的 fence。** `block->fence->status() == VK_SUCCESS` 就是"读过它的拷贝已完成"，比时间线窗口更强，
-   而且**不用等**：时间线要帧、park 要窗口、设备空闲要停设备，fence 只是一个 `vkGetFenceStatus`。
-3. **触发点是帧边界，不是宿主。** `VsgBackend::executeFrame()` 在最开头跑一次 `releaseFinishedUploadStaging()`：
-   凡是 fence 已完成、且所在的 `DataToCopy` 没有待拷数据的块，把 `staging` 与 `buffer_data` 置空
-   —— 正是 vsg 自己"不够大就重建"时处理的状态。宿主不做任何事，也不需要知道。
-4. **SDK 去掉 `RenderDevice::releaseUploadStaging()`**，模型查看器的 `release_render_memory` 命令一并删除。
-   没有"何时还"这个问题，就不需要一条让宿主回答它的入口（`G8`：没有消费者的扩展点）。
-5. **派生 vsg 的任务来读/清那段状态。** `detail::StagingTask`（`vsg::Inherit<vsg::TransferTask, StagingTask>`）
-   能看能清 `_earlyDataToCopy` / `_lateDataToCopy` 里每块的 `staging`、`buffer_data`、`fence`；
-   会话起来时由 `installStagingTask()` 把 vsg 建的那个任务换掉（那时没有任何在飞的东西，换掉零成本）。
-   `gfx_backend_vsg` 本来就是 vsg 适配器，`numBuffers = 3`、`transferQueue` 手工交接、`device->transferTask`
-   观察者这些内部约定也一直写在这一层。
-6. **不清"还在飞"的块。** fence 没完成的留给下一帧（帧边界不许阻塞）；`DataToCopy` 里还有待拷数据的块也跳过
-   （下一次 `transferData()` 会重新分配，早清只是白亏一次分配）。
+## Rationale
 
-## 理由
+- `G1` / `G7`: one rule - the evidence has arrived, so it goes back. The explicit-entry version bundled "should it go back" and "can it go back now" into one verb,
+  and then needed "ask again" to express "now".
+- `G10`: the cost difference is real. When the host is not producing frames, the explicit version could only `deviceWaitIdle` (stopping the whole device); now there is zero waiting and zero idle,
+  and `RetentionStats::device_waits` never moves on this path (the tests assert it directly).
+- `G8`: with no consumer wanting the "now" semantics, the verb has no reason to exist; nor does the automatic path need a switch - it is equivalent to "release when done",
+  not an optional policy.
+- `G11`: failure is visible. Staging occupancy has a readable number (`VsgBackend::uploadStagingBytes()` /
+  `OffscreenSession::stagedBytes()`), and the tests assert it reaching zero instead of inferring it from a falling working set.
 
-- `G1` / `G7`：一条规则 —— 证据到了就还。显式入口那版把"要不要还"和"现在能不能还"塞进同一个动词，
-  还要靠"再问一次"表达"现在"。
-- `G10`：成本差是实打实的。显式版在宿主不出帧时只能 `deviceWaitIdle`（整设备停一次）；现在零等待、零 idle，
-  `RetentionStats::device_waits` 在这条线上永远不动（用例直接断言）。
-- `G8`：没有消费者要"现在"这个语义之后，动词没有存在理由；自动也不需要开关 —— 它等价于"用完就放"，
-  不是一条可选政策。
-- `G11`：失败看得见。暂存占用有了一个可读的数（`VsgBackend::uploadStagingBytes()` /
-  `OffscreenSession::stagedBytes()`），用例直接断言它归零，而不是靠工作集回落的间接推理。
+## Rejected options
 
-## 否决的选项
-
-| 选项 | 否决理由 |
+| Option | Rejection reason |
 |---|---|
-| 保留显式动词 + park/drain（上一份 ADR） | 最常见的宿主（载入完不动）不会调；而 park 要 `2 × slots + 1` 帧，还得补一条"再问一次 = 现在"。一个功能两套语义。 |
-| 每帧都清、不等 fence | 销毁还在被拷贝读的内存。 |
-| 只清比 `minimumStagingBufferSize` 大的块（保留 16 MB 可复用块） | 能让"每帧都上传"的宿主少一次分配，但它把"用完就放"变成"够大才放"，多一条判断和一条要解释的线；当前仓库里没有每帧都上传的宿主（见 backlog 的触发条件）。真出现了再加，一行判断。 |
-| 直接从 `TransferBlock` 删元素 / 换掉整个任务 | 元素不能删（`*(frames[frameIndex])` 直接解引用），换任务会把 command pool / command buffer / fence 一起丢掉，还得把三处交接再正确一遍。 |
-| 不派生，靠"上传完成后换任务" | 那是上一版机制：能还，但要知道"拷贝读完"就只能靠 park（要帧）或 `deviceWaitIdle`（停设备）。 |
-| 把回收挂在"上传结束后第一帧没有上传"上 | 与帧边界规则等价但更弱（多等一帧、还要一条计数比较）；帧边界已经是那个地方。 |
-| 起线程/定时器轮询 fence | 销毁 Vulkan 对象要在帧线程上；一个定时器只是把竞态换成了锁。 |
+| Keep the explicit verb plus park/drain (the earlier ADR) | The most common host (load, then do nothing) does not call it; park needs `2 × slots + 1` frames and still needs "ask again = now" on top. One feature, two sets of semantics. |
+| Clear every frame without waiting for the fence | That destroys memory a copy is still reading. |
+| Clear only blocks larger than `minimumStagingBufferSize` (keep a 16 MB reusable block) | It saves one allocation for a host that uploads every frame, but it turns "release when done" into "release when big enough", one more test and one more line to explain; the repository has no host that uploads every frame (see the backlog trigger). Add it when one appears - one line of test. |
+| Delete elements from `TransferBlock` / replace the whole task | Elements cannot be deleted (`*(frames[frameIndex])` dereferences directly), and replacing the task throws away the command pool / command buffer / fence together and makes the three hand-overs correct again. |
+| Do not derive; "replace the task once the upload completes" instead | That is the previous mechanism: it can give the block back, but knowing "the copy has finished reading" needs park (frames) or `deviceWaitIdle` (stops the device). |
+| Hang the reclaim on "the first frame after the upload has no upload" | Equivalent to the frame-boundary rule but weaker (one frame later, plus a counter comparison); the frame boundary already is that place. |
+| Start a thread / timer polling the fence | Destroying a Vulkan object has to happen on the frame thread; a timer only trades the race for a lock. |
 
-## 后果
+## Consequences
 
-- **内存**：一次上传的暂存活到"它的 fence 完成后的第一个帧边界"。704 MB 车身的 1,228 MB → **0**
-  （进程 ws 的另外两部分 —— 模型自身 host 副本 ~700 MB 与进程基数 ~760 MB —— 不在这条线的范围内）。
-- **性能**：每帧多 `≤ 6` 次 `vkGetFenceStatus`（纳秒级）；零 idle、零 park、零等待。
-  **代价**：每帧都上传的宿主会在每帧重新分配一块（最小 16 MB）暂存 —— 见 backlog 的触发条件。
-- **依赖 vsg 内部**：读/写 `_earlyDataToCopy` / `_lateDataToCopy`、`TransferBlock::staging`、`buffer_data`、`fence`。
-  上游改名 = 编译错（响的）；上游改语义则由 `OffscreenSessionTest` 对字节数的断言兜住（`vsg-pitfalls.md` P42.2）。
-- **ABI**：`RenderDevice` 少一个虚函数（本轮追加的那个槽位随之消失），`RenderEngine` 不变。
-- **行为**：宿主不再需要（也无法）发起回收；`RenderDevice` 的接口回到"声明资源与跑帧"，不再有"清理一次上传"的动词。
-- **测试**：`UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack`（帧不 idle；上传后的帧让数归零；
-  同一内容重画零上传；新流再上传、再由后续帧归零）、`OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands`
-  （256 MB 工作集回落 + 4 KB 逐字节读回 + 字节数断言）、`OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting`
-  （起步就装好可问的任务、出帧不涨 idle）。
-- **文档**：`graphics-content-lifecycle.md` §2.8 / F16–F22 / C4 / R2 / N7–N11 / 6.3 / D6–D13 / T5–T8；
-  `vsg-backend.md` F16.2 / T4；`vsg-pitfalls.md` P42.2。
+- **Memory**: the staging of one upload lives until "the first frame boundary after its fence completes". The 704 MB body's 1,228 MB → **0**
+  (the other two parts of the process working set - the model's own host copy at ~700 MB and the process baseline at ~760 MB - are outside this path).
+- **Performance**: at most `≤ 6` more `vkGetFenceStatus` calls per frame (nanoseconds); zero idle, zero park, zero waiting.
+  **Cost**: a host that uploads every frame reallocates a staging block (16 MB at minimum) every frame - see the backlog trigger.
+- **Depends on vsg internals**: reading and writing `_earlyDataToCopy` / `_lateDataToCopy`, `TransferBlock::staging`, `buffer_data` and `fence`.
+  An upstream rename is a compile error (loud); an upstream semantic change is caught by `OffscreenSessionTest`'s byte-count assertions (`vsg-pitfalls.md` P42.2).
+- **ABI**: `RenderDevice` has one virtual function fewer (the slot added in this round disappears with it), and `RenderEngine` is unchanged.
+- **Behaviour**: the host no longer needs to (and cannot) start a reclaim; `RenderDevice`'s interface goes back to "declare resources and run frames", with no "clean up one upload" verb.
+- **Tests**: `UploadScratchTest.TheUploadScratchIsNotRetainedAndTheFramesGiveItBack` (frames do not idle; the frame after the upload drives the number to zero;
+  redrawing the same content uploads nothing; a new stream uploads again and later frames drive it to zero), `OffscreenSessionTest.TheUploadScratchIsGivenBackAndALaterUploadStillLands`
+  (the 256 MB working set falls back + a 4 KB byte-for-byte read-back + the byte-count assertion), `OffscreenSessionTest.AReplacedTransferTaskLeavesTheSessionSubmitting`
+  (a queryable task is installed from the start, and producing frames raises no idle).
+- **Documents**: `graphics-content-lifecycle.md` §2.8 / F16–F22 / C4 / R2 / N7–N11 / 6.3 / D6–D13 / T5–T8;
+  `vsg-backend.md` F16.2 / T4; `vsg-pitfalls.md` P42.2.
 
-## 后续
+## Follow-up
 
-- 宿主侧不再有调用点。想观测的宿主读 GPU 计数器的 `SharedUsage`，或者后端自己的 `uploadStagingBytes()`。
-- 若将来出现"每帧都上传"的宿主（动态几何、流式点云）且分配进入 profile：加回"只清大于最小值的块"这一条判断。
+- There is no call site on the host side any more. A host that wants to observe reads the GPU counter's `SharedUsage`, or the backend's own `uploadStagingBytes()`.
+- If a "uploads every frame" host appears (dynamic geometry, a streaming point cloud) and allocation shows up in a profile: add back the one test "clear only blocks larger than the minimum".

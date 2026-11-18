@@ -1,78 +1,78 @@
-# ADR-2026-11-15：vk 后端保持一帧在飞，多帧流水线等“宿主成为瓶颈”再做
+# ADR-2026-11-15: the vk backend keeps one frame in flight, and a multi-frame pipeline waits until "the host becomes the bottleneck"
 
-- 状态：已采纳
-- 日期：2026-11-15
-- 相关：`../design/vk-backend.md`（§2.3 一帧一次提交、`C1`、`P6`、`§9.2` 已知缺口）、
-  `../research/graphics-2026-11-14-vk-industry-review.md`（F5）、`RenderFrameExecutor::executeFrame`、
-  `RenderDevice::readColorBuffer`、`src/plugins/gfx_backend_vk/src/internal/Device.cpp`
+- Status: Accepted
+- Date: 2026-11-15
+- Related: `../design/vk-backend.md` (§2.3 one submission per frame, `C1`, `P6`, the known gap in `§9.2`),
+  `../research/graphics-2026-11-14-vk-industry-review.md` (F5), `RenderFrameExecutor::executeFrame`,
+  `RenderDevice::readColorBuffer`, `src/plugins/gfx_backend_vk/src/internal/Device.cpp`
 
-> **EN**: Kept the vk backend at one frame in flight and recorded the consequence as a known cost in the design page, because `readColorBuffer` / `readDepthBuffer` promise "read right after the draw" and only a fence wait proves a frame is done; the measured loss on lavapipe is about 10% (8.9 vs 7.95 ms). Moving to 2-3 frame slots changes framework semantics across five modules, so it waits for an observable trigger: device time under half the wall-clock time on a real host, an offline or overlapping workload, or a second backend needing the same "which frame" question.
+## Background
 
-## 背景
+F5 of the industry-standard review points out that the vk backend calls `vkWaitForFences(..., UINT64_MAX)` immediately after each frame's `vkQueueSubmit`
+(`executeFrame` in `Device.cpp`, plus two read-back paths), that one `completion` fence serves every submission, so **CPU and GPU are
+fully serialised**; the industry practice is 2-3 frame slots, each with its own fence / command buffer / constant-ring slice, waiting only when a read-back needs that frame.
 
-工业标准审查的 F5 指出：vk 后端每帧 `vkQueueSubmit` 之后立刻 `vkWaitForFences(..., UINT64_MAX)`
-（`Device.cpp` 的 `executeFrame`，另有两处读回路径），一个 `completion` 栅栏服务所有提交，因此**CPU 与 GPU
-完全串行**；行业做法是 2–3 个帧槽，每槽自己的栅栏 / 命令缓冲 / 常量环切片，只在需要读回时等那一帧。
+This is not an oversight: `readColorBuffer` / `readDepthBuffer` promise **read right after the draw** (the origin of `C1`), and "this frame is done" can only be
+proven by a fence wait. Moving to several frames in flight changes the **framework semantics of "who guarantees this frame is done"**, which is why it is a decision
+rather than an optimisation.
 
-这条不是疏忽：`readColorBuffer` / `readDepthBuffer` 承诺**画完就能读**（`C1` 的来源），而“这一帧已完成”只有
-栅栏等待能证明。改成多帧在飞要改的是**“谁保证这一帧已完成”这条框架语义**，所以它是一个决策，而不是一处优化。
+The first thing such a decision needs is numbers: **of this frame's time, how much is waiting for the device and how much is the host's work.**
 
-决定需要的第一件事是数字：**这一帧的时间里，到底有多少是等设备、多少是宿主的活。**
+## Evidence (lavapipe, the real host `Vine --open demo`, 60-frame benchmark)
 
-## 证据（lavapipe，真实宿主 `Vine --open demo`，60 帧基准）
-
-| 量 | 值 | 怎么量的 |
+| Quantity | Value | How it was measured |
 |---|---|---|
-| 一次 `renderFrame()` 的墙钟中位 | **8.63–8.94 ms**（三次：8.94 / 8.86 / 8.76） | `VN_BENCH_WARMUP=1 VN_BENCH_FRAMES=60`，demo 的基准日志 |
-| 同一帧的**设备**时间 | **7.95 ms** | `FrameReport::timing`（`VK_QUERY_TYPE_TIMESTAMP` 一对查询，采样帧） |
-| 差额 = **宿主侧的活** | **≈ 0.7–0.9 ms（≈10%）** | 墙钟 − 设备时间；`vkWaitForFences` 在 `executeFrame` 内部，所以墙钟必然包含设备执行 |
+| Median wall clock of one `renderFrame()` | **8.63-8.94 ms** (three runs: 8.94 / 8.86 / 8.76) | `VN_BENCH_WARMUP=1 VN_BENCH_FRAMES=60`, the demo's benchmark log |
+| **Device** time of the same frame | **7.95 ms** | `FrameReport::timing` (a pair of `VK_QUERY_TYPE_TIMESTAMP` queries, sampled frame) |
+| The difference = **the host-side work** | **≈ 0.7-0.9 ms (≈10%)** | wall clock − device time; `vkWaitForFences` is inside `executeFrame`, so the wall clock necessarily contains the device execution |
 
-**结论与先前记录相反，必须更正**：`../design/vk-backend.md` §2.3 曾写“CPU 中位 8.2–9.0 / GPU 7.15–7.77，即 CPU 是
-瓶颈”——那 8.2–9.0 ms **是包含栅栏等待的墙钟**，不是宿主工作量。宿主侧只有约 0.9 ms，**设备是瓶颈**（约 90%）。
+**The conclusion is the opposite of what was recorded earlier and must be corrected**: §2.3 of `../design/vk-backend.md` once said "CPU median 8.2-9.0 / GPU 7.15-7.77,
+i.e. the CPU is the bottleneck" - that 8.2-9.0 ms **is the wall clock including the fence wait**, not the host's work. The host side is only about 0.9 ms, so
+**the device is the bottleneck** (about 90%).
 
-这个更正直接决定了本 ADR：多帧在飞的收益上限是
+That correction decides this ADR: the upper bound of the multi-frame gain is
 
 $$
-T_{\text{吞吐}} = \max(T_{\text{宿主}},\, T_{\text{设备}}) = 7.95\ \text{ms}
-\quad\text{而不是}\quad T_{\text{宿主}} + T_{\text{设备}} = 8.9\ \text{ms}
+T_{\text{throughput}} = \max(T_{\text{host}},\, T_{\text{device}}) = 7.95\ \text{ms}
+\quad\text{not}\quad T_{\text{host}} + T_{\text{device}} = 8.9\ \text{ms}
 $$
 
-即在这台机器上**约 10%**，代价是改掉“画完就能读”的 SDK 契约。而如果宿主真的成了瓶颈（真实 GPU 上常见：设备
-1–2 ms、宿主 4–6 ms），同一个改动的收益会变成 2–3 倍——那才是它值钱的时刻。
+that is **about 10%** on this machine, at the cost of changing the SDK contract "read right after the draw". And if the host really does become the bottleneck (common on a real GPU:
+device 1-2 ms, host 4-6 ms), the same change would be worth 2-3x - that is when it earns its keep.
 
-## 选项
+## Options
 
-| 选项 | 好处 | 代价 / 违反 |
+| Option | Benefit | Cost / violation |
 |---|---|---|
-| A **保持一帧在飞，把代价写进规范页** | 契约不动；“画完就能读”与单帧语义是同一条（`G3` / `G4`）；一个栅栏、一份命令缓冲，失败分类只有一处（`G11`） | 宿主与设备串行，吞吐上限是两者之和（本机 ≈10% 的损失） |
-| B 2–3 个帧槽，各自栅栏 / 命令缓冲 / 环切片，只在读回时等那一帧 | 吞吐 = max(宿主, 设备)；真实 GPU 上收益最大 | **改框架语义**：`readColorBuffer` 的“画完即读”不再无条件成立，要么新增“等这一帧”的动词，要么让读回返回 `NotReady`（`G4` 的契约被拆成两半）；常量环、描述符集缓存、`retirePoint`、内容退休、vsg 的对拍全部要按槽重算（`G5`：变化扩散到五个模块）；`G10`：显存与环的驻留乘上槽数 |
-| C 只把**读回**异步化（`readColorBuffer` 允许返回 `NotReady`，下一帧再取） | 保留单帧提交，宿主不必等 | 读回本来就是测试/工具路径，不是帧路径的成本；改了它对 8.9 ms 没有影响（`G8`：没有消费者为它付钱） |
-| D 降低宿主侧那 0.9 ms | 直接减吞吐（串行模型里宿主时间是纯损失） | 天花板 10%；而且要先把 0.9 ms 拆开才知道该减什么（今天没有按阶段的宿主计时） |
-| E 每帧只等“上一帧”，本帧不等（两槽、无读回语义变化） | 吞吐接近 max(宿主, 设备) | “画完就能读”变成“画完 + 一帧后才能读”——**仍然是契约变更**，只是把 B 的代价藏起来（`G4`：不改名就改义，比 B 更糟） |
+| A **Keep one frame in flight and write the cost into the normative page** | The contract does not move; "read right after the draw" and single-frame semantics are the same rule (`G3` / `G4`); one fence, one command buffer, one place where failures are classified (`G11`) | Host and device are serialised, and throughput is capped at the sum of the two (≈10% loss here) |
+| B 2-3 frame slots, each with its own fence / command buffer / ring slice, waiting for that frame only on read-back | Throughput = max(host, device); the biggest gain on a real GPU | **Changes the framework semantics**: `readColorBuffer`'s "read right after the draw" no longer holds unconditionally - either a new "wait for this frame" verb, or a read-back returning `NotReady` (splitting `G4`'s contract in two); the constant ring, descriptor-set cache, `retirePoint`, content retirement and the vsg parity comparison all have to be recomputed per slot (`G5`: the change spreads across five modules); `G10`: video memory and ring residency multiply by the slot count |
+| C Make only **read-back** asynchronous (`readColorBuffer` may return `NotReady`; fetch it next frame) | Keeps single-frame submission and keeps the host waiting | Read-back is a test / tool path, not a frame-path cost; changing it does nothing to the 8.9 ms (`G8`: no consumer pays for it) |
+| D Shave the 0.9 ms of host time | Directly reduces throughput (under a serial model, host time is pure loss) | Ceiling 10%; and the 0.9 ms would first have to be broken down before knowing what to shave (there is no per-stage host timing today) |
+| E Wait each frame only for "the previous frame" and not for this one (two slots, no read-back semantic change) | Throughput close to max(host, device) | "Read right after the draw" becomes "read one frame after the draw" - **still a contract change**, only with B's cost hidden (`G4`: changing the meaning without changing the name is worse than B) |
 
-## 决定
+## Decision
 
-**采纳 A**：vk 后端保持**一帧在飞**，并在 `../design/vk-backend.md` §2.3 与 §9.2 把它记为**已知代价**（含上表的数字），
-不当作待修缺陷。B 与 E 都要改 `RenderFrameExecutor` / `RenderDevice` 的语义，必须等触发条件成立后单独走 ADR（那时
-可以引用本文的算式，不必重新论证）。
+**Adopt A**: the vk backend keeps **one frame in flight**, and §2.3 and §9.2 of `../design/vk-backend.md` record it as a **known cost** (with the numbers in the table above),
+not as a defect waiting to be fixed. Both B and E change the semantics of `RenderFrameExecutor` / `RenderDevice`, so they must wait for a trigger condition and go through their own ADR
+(which may then cite the arithmetic here instead of re-arguing it).
 
-## 后果
+## Consequences
 
-- **好的**：契约简单（一帧、一次提交、一次等待、一条失败路径）；读回、内容释放、环增长、管线缓存落盘全部建立在
-  “返回即空闲”上，`C1` 一条规则覆盖它们；对拍测试不需要理解“哪一帧完成了”。
-- **坏的 / 代价**：宿主与设备串行。在本机（lavapipe）实测损失 ≈10%（8.9 vs 7.95 ms）；在设备远快于宿主的真实 GPU
-  上，这个损失会变成数倍——**那正是触发条件**。
-- **触发条件（重开本 ADR 的门槛，写成可观察的事实）**：
-  1. 任一真实宿主上实测 **`FrameReport::timing` 的设备时间 < 墙钟时间的一半**（宿主成为瓶颈），且帧时间进入
-     60 fps 预算之外；
-  2. 或出现必须与 GPU 重叠才能满足的产物形态（离线烘焙、视频导出、大场景漫游）；
-  3. 或第二个后端需要同一个“等哪一帧”的语义（那时它是框架问题，不是 vk 的问题）。
-- **不做什么**：不为了“看起来更工业”而预先上多槽——`G8`：没有消费者的扩展点会立刻把五个模块的账都乘上槽数。
+- **Good**: the contract is simple (one frame, one submission, one wait, one failure path); read-back, content release, ring growth and pipeline-cache persistence all rest on
+  "returned means idle", which `C1` alone covers; the parity tests do not need to work out "which frame has completed".
+- **Bad / cost**: host and device are serialised. Measured loss on this machine (lavapipe) is ≈10% (8.9 vs 7.95 ms); on a real GPU where the device is far faster than the host,
+  the loss becomes several times that - **and that is exactly the trigger condition**.
+- **Trigger conditions (the bar for reopening this ADR, written as observable facts)**:
+  1. on any real host, the measured `FrameReport::timing` **device time is less than half the wall-clock time** (the host is the bottleneck) and the frame time
+     falls outside the 60 fps budget;
+  2. or an output form appears that can only meet its target by overlapping with the GPU (offline baking, video export, roaming a large scene);
+  3. or a second backend needs the same "which frame do we wait for" semantics (then it is a framework question, not a vk one).
+- **What is not done**: no multi-slot pipeline "to look more industrial" - `G8`: an extension point without a consumer immediately multiplies the bill of five modules by the slot count.
 
-## 证据
+## Evidence
 
-- 数字：本文“证据”表（三次基准 + 一次采样帧的设备时间）。
-- 代码：`src/plugins/gfx_backend_vk/src/internal/Device.cpp` 的 `executeFrame`（`vkWaitForFences` 在内部）、
-  `readColorBuffer` / `readDepthBuffer`（另外两处等待）、`../design/vk-backend.md` §2.3 / `C1` / `P6`。
-- 测试：`tests/test_vk/*`（一帧一次的语义被整套用例隐含依赖：每次 `executeFrame` 之后立刻 `readColorBuffer`）；
-  `tests/test_vsg/BackendParityTest.cpp`（两个后端在同一帧语义下逐字节对拍）。
+- Numbers: the "Evidence" table above (three runs plus one sampled frame's device time).
+- Code: `executeFrame` in `src/plugins/gfx_backend_vk/src/internal/Device.cpp` (`vkWaitForFences` inside it),
+  `readColorBuffer` / `readDepthBuffer` (the other two waits), and §2.3 / `C1` / `P6` of `../design/vk-backend.md`.
+- Tests: `tests/test_vk/*` (the whole suite implicitly relies on the one-frame semantics: `readColorBuffer` right after every `executeFrame`);
+  `tests/test_vsg/BackendParityTest.cpp` (both backends compared byte for byte under the same frame semantics).
