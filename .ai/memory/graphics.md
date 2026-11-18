@@ -1819,3 +1819,35 @@
 - **Evidence**: `test_graphics` 618, `test_vsg` 572, `test_vk` 174, `BackendParityTest` 13, `content_seam` + `vk_exposure`
   green; demo on vk and on vsg 0 `[error]` / 0 `[warning]`; nine gates green (196 notes / 56 design / 138 units / 974
   public docs).
+
+## 2026-11-18 review 5: the first example is code, references are gated
+
+- **The finding**: the module guide's first example (`docs/guides/graphics.md` §3.1) **did not compile** -
+  three public-API changes had passed it by (`make_intrusive` named unqualified, a `RenderArea` built
+  directly although the constructor is private and `RenderEngine::createArea` is the only door, and
+  `engine->frame(dt)` where `frame()` takes no time). Nothing compiled a snippet and no gate read it.
+- **The fix that lasts**: the block is now a translation unit - `tests/test_graphics/GuideExample.cpp` -
+  whose device-free half (`guideScene` / `guideCamera`) `GuideExampleTest` **executes** (asserts one collected
+  draw item) and whose device half compiles. `check_doc_symbols.py`'s rule 3 requires every statement of a
+  `// example: <path>` block to exist in that file (statements compared, comments ignored, so the page can
+  keep Chinese prose and the file English).
+- **New gate**: `scripts/check_cross_refs.py` resolves every `name.md §N.M` in `.ai/**` and `docs/guides/**`
+  against the target page's numbered sections (headings plus `N.M **point**`). It found four dead references -
+  in `async-design.md`, `base-crash.md`, `graphics-threading.md` and `graphics-architecture.md`, at sections
+  4.4, 2.10, 3.1.6 and 8.2 respectively - all repaired. The numbers are written apart from the file names on
+  purpose: the entry records the repair, and a reference shaped like the live ones would be read as one. A page
+  that *must* name a dead reference writes the bare `<!-- drift-ok -->` marker on any line the reference spans.
+- **New rule R6** in `check_design_docs.py`: numbered items ascend, in both forms (`### N.M` and
+  `N.M **point**`). Found one instance (2.10 before 2.9 in `graphics-architecture.md`); fixed by moving the
+  block, **ids unchanged** - renumbering would break every citation.
+- **Design truth added**: `graphics-scene.md` 2.12 (and guide §5.2) - the three derivation verbs are chosen
+  by INPUTS: `collect*` (a node), `resolve*` (a value + a context), `effective*` (a node, the one-step
+  composition). `effectiveRenderState` == `resolveRenderState(collectRenderState(node))`.
+- **Registered, not done** (arguments in `../research/graphics-2026-11-18-review-5.md` §2): **T40** a
+  `FrameContext` for the per-frame hook (the frame verb has no time; `FpsOverlay` is the only consumer and it
+  self-clocks - `G8` says wait); **T41** `DiagnosticsRoute` should be named as the handle it is.
+- **Measured, refuted**: "the engine is still a god object" - 26 public members, three delegated mechanisms.
+- **Evidence**: `test_graphics` **619** (+`GuideExampleTest`), `test_vk` 174, `test_vsg` 572,
+  `BackendParityTest` 13, `content_seam` + `vk_exposure` green; **ten** gates green (197 notes / 56 design /
+  1351 include files / 974 public docs / 138 units). Both new rules mutation-tested (red on a reintroduced
+  defect, green after restore). No host or backend code changed, so no demo run.

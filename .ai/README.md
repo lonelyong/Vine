@@ -174,15 +174,19 @@ keeps the old argument.
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (1)
+## research/ — research and proposals (2)
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
-here is deleted. Every proposal and audit this tree carried has been converted except the one below,
-which exists because the third-round audit's open items were left with no home when its page was
-deleted (git is still the archive for the page itself).
+here is deleted. Every proposal and audit this tree carried has been converted except the two below,
+which exist because the third-round audit's open items were left with no home when its page was
+deleted (git is still the archive for the page itself), and because the fifth review's two deferred
+proposals (`T40` / `T41`) keep their arguments where a design page cannot carry them.
 
 - `graphics-2026-11-18-audit-4.md` — the third-round audit's open items (`B3`-`B14`, `T-04`-`T-16`)
   re-established against the tree, plus the drift the re-check found (`A4-01`-`A4-04`).
+- `graphics-2026-11-18-review-5.md` — the fifth pass: the first-contact example that did not compile,
+  four section references that led nowhere, the three derivation verbs written down, the eight-engine
+  benchmark, and the two deferred proposals (`T40` `FrameContext`, `T41` the `DiagnosticsRoute` name).
 
 (The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and

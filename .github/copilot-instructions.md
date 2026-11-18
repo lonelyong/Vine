@@ -73,8 +73,10 @@ acceptable — is in `.github/instructions/framework-design.instructions.md`.
 * **History**: never add dated, closed or historical docs to `.ai/design/`; git is the
   archive. Keep only an ADR for a decision likely to be re-litigated.
 * Before touching a module, read its `.ai/design/` doc and `.ai/backlog/`; after changing
-  any `.ai/` file run `python3 scripts/check_ai_docs.py --strict` and
-  `python3 scripts/check_design_docs.py`.
+  any `.ai/` file run `python3 scripts/check_ai_docs.py --strict`,
+  `python3 scripts/check_design_docs.py` and `python3 scripts/check_cross_refs.py`.
+  Every `name.md §N.M` reference must resolve, and numbered design points must ascend - both are checked,
+  because neither has an owner otherwise.
 
 ## Documentation Language
 

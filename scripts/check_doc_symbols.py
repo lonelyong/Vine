@@ -69,6 +69,51 @@ DRIFT_OK_MARKER = "<!-- drift-ok -->"
 
 UNIT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*\.(?:hpp|cpp))`")
 FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
+# A fenced block that declares which compiled file it is: `// example: tests/test_graphics/GuideExample.cpp`.
+EXAMPLE_MARKER = re.compile(r"^\s*//\s*example:\s*(\S+)\s*$")
+# A trailing `//` comment in C++ code. The examples carry prose comments in the page's language and
+# different ones in the file, so the comparison is on statements alone.
+TRAILING_COMMENT = re.compile(r"//.*$")
+
+
+def example_findings(path: Path, text: str) -> list[str]:
+    """Return one finding per statement a marked code block carries that its compiled file does not."""
+    findings: list[str] = []
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        if not FENCE_RE.match(lines[index]):
+            index += 1
+            continue
+        start = index
+        index += 1
+        block: list[str] = []
+        while index < len(lines) and not FENCE_RE.match(lines[index]):
+            block.append(lines[index])
+            index += 1
+        index += 1
+        if not block:
+            continue
+        marked = EXAMPLE_MARKER.match(block[0])
+        if marked is None:
+            continue
+        target = ROOT / marked.group(1)
+        if not target.is_file():
+            findings.append(f"{path.name}:{start + 1}: the block names {marked.group(1)}, which does not exist")
+            continue
+        compiled = {
+            " ".join(TRAILING_COMMENT.sub("", line).split())
+            for line in target.read_text(encoding="utf-8", errors="replace").splitlines()
+        }
+        for offset, line in enumerate(block[1:], start=start + 2):
+            statement = " ".join(TRAILING_COMMENT.sub("", line).split())
+            if not statement:
+                continue  # a comment-only or blank line: the two copies may word their prose differently
+            if statement not in compiled:
+                findings.append(
+                    f"{path.name}:{offset}: the compiled copy {marked.group(1)} has no statement `{statement}`"
+                )
+    return findings
 
 
 def units_of(directory: Path) -> set[str]:
@@ -141,7 +186,9 @@ def main() -> int:
     known = known_units()
 
     for doc in DOCS:
-        findings.extend(check_doc(doc, unit_names, known, doc.read_text(encoding="utf-8", errors="replace")))
+        doc_text = doc.read_text(encoding="utf-8", errors="replace")
+        findings.extend(check_doc(doc, unit_names, known, doc_text))
+        findings.extend(example_findings(doc, doc_text))
 
     # Rule 2: the map has to cover the tree — a unit nobody documented is a hole in it.
     all_text = print_doc_texts(COVERAGE_DOCS)

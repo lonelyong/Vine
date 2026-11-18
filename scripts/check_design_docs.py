@@ -11,6 +11,12 @@ The template is defined in `.github/skills/design-docs/SKILL.md` and summarised 
   R5  A document with a 功能点 chapter has at least one `F#`; each of C/R/T/N/D
       appears somewhere in the document (the template uses stable IDs even when a
       chapter is short).
+  R6  Numbered items appear in ascending numeric order, in the two forms the
+      template uses: `### N.M` subsections and `N.M **A design point**` lines.
+      An inserted point that lands at the end of a chapter reads as an appendix;
+      the numbers are how a reader finds "the ninth design point", so the order
+      is the number's meaning. IDs are stable across a reorder - move the block,
+      never renumber it.
 
 Usage:
     python3 scripts/check_design_docs.py [--strict]
@@ -127,6 +133,31 @@ def check(path: pathlib.Path) -> list[str]:
                          ("T", "test"), ("N", "note/caveat"), ("D", "rejected option")):
         if not re.search(rf"\b{token}\d+\b", text):
             findings.append(f"WARN  {path.name}: no `{token}#` {label} id")
+
+    # R6: the two numbering forms the template uses, each checked as its own ascending sequence.
+    findings.extend(out_of_order(path.name, text))
+    return findings
+
+
+DESIGN_POINT = re.compile(r"^(\d+)\.(\d+)\s+\*\*", re.MULTILINE)
+H3_NUMBERED = re.compile(r"^###\s+(\d+)\.(\d+)(?:\.(\d+))?\s", re.MULTILINE)
+
+
+def out_of_order(name: str, text: str) -> list[str]:
+    """Returns the findings for numbered items that do not ascend (rule R6)."""
+    findings: list[str] = []
+    for label, pattern in (("subsection", H3_NUMBERED), ("design point", DESIGN_POINT)):
+        seen: list[tuple[int, ...]] = []
+        for match in pattern.finditer(text):
+            seen.append(tuple(int(group) for group in match.groups() if group is not None))
+            if len(seen) > 1 and seen[-1] < seen[-2]:
+                line = text[: match.start()].count("\n") + 1
+                previous = ".".join(str(part) for part in seen[-2])
+                current = ".".join(str(part) for part in seen[-1])
+                findings.append(
+                    f"ERROR {name}:{line}: {label} {current} follows {previous} - numbered items ascend "
+                    f"(move the block; keep the ids)"
+                )
     return findings
 
 

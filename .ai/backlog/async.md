@@ -137,7 +137,7 @@ change, and the global result channel does not have to move first.
 ### 2.1 Today and the evidence
 
 - `Scope`'s contract: children **own themselves** (`DetachedTask` + shared state), `~Scope` neither waits nor cancels; a
-  child may outlive the scope, and there is one prose warning (`../design/async-design.md` §4.4).
+  child may outlive the scope, and there is one prose warning (`../design/async-design.md` §6.3).
 - **No production user anywhere in the repository**: `grep -rn 'async::Scope' src/` only hits the unrelated
   `PluginScope`/`ChainScope`/`ReadScope`.
   In other words today's "not structured" has not hurt anyone yet - but an API that is used will trip over it at once.

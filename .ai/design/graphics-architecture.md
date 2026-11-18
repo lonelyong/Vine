@@ -62,11 +62,6 @@ removing an unregistered pass and removing an already removed pass are the same 
     and needs none: **one engine drives one surface** ([ADR-2026-11-13](ADR-2026-11-13-one-engine-one-surface.md)), `Session` only names the execution side of one engine as a design
     term. Documentation and new interfaces no longer refer to a type that does not exist.
 
-2.10 **The migration APIs are closed**: the `addPass` family is gone, `Plan` is the only shape of a pass declaration;
-    `applyPlan` / `plan` / `bindSnapshot` / `prepare` are host contracts rather than migration entries. `FrameTable` is the compiled frame table (not the
-    plan), `frame()` answers only Ran / Submitted, `applyPlan` is three-state, `SessionBusy` is no longer a plan problem code.
-    Reason: changing during migration in two passes would leave three shapes alive; now there is one shape and the public signatures match the documentation (`G1` / `G6`).
-
 2.9 **Shared mechanisms live in the same directory and namespace as the host SDK**: in `sdk/vine/graphics/` besides the host types there are 8 mechanisms "both backends use"
     — `FrameGate`, `DeviceClock`, `FrameTimeline`, `RetirementQueue`, `Readback`, `DrawState` (formerly `Keys`),
     `TargetPlan`, `DiagnosticDraft`. They once had their own directory, turned "the host includes it" into a compile error through an include guard, and were installed as
@@ -89,6 +84,10 @@ removing an unregistered pass and removing an already removed pass are the same 
     `docs/guides/graphics-backends.md` 5) are checked against that list, so a mechanism cannot join or leave it without them
     changing too. An alias group (`vn::graphics::backend`) was rejected: it gives one class two names, and the shared surface
     is 25 headers, not the 8 mechanisms - a name covering 8 of 25 claims a boundary that is not there (`G1`, `G4`).
+2.10 **The migration APIs are closed**: the `addPass` family is gone, `Plan` is the only shape of a pass declaration;
+    `applyPlan` / `plan` / `bindSnapshot` / `prepare` are host contracts rather than migration entries. `FrameTable` is the compiled frame table (not the
+    plan), `frame()` answers only Ran / Submitted, `applyPlan` is three-state, `SessionBusy` is no longer a plan problem code.
+    Reason: changing during migration in two passes would leave three shapes alive; now there is one shape and the public signatures match the documentation (`G1` / `G6`).
 2.11 **An extension point's cost is a table, not an adjective** (audit `A12`): saying "easy to extend" without saying "which places a new one touches" cannot be falsified.
     So every extension point has a row here, listing **today's actual files** — read this table before adding something, update it afterwards.
     Criterion: if an extension point starts needing changes to the **core model** (`FrameDescription`'s shape, the engine's compilation, scheduling), it is not an extension

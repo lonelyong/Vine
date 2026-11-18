@@ -269,10 +269,17 @@ depth 的那些的默认"），其余没有别的层 —— 视图的模式在**
 
 ### 3.1 最小可跑：一个三角形 + forward
 
+这段代码**是编译过的**：`tests/test_graphics/GuideExample.cpp` 就是它的可编译副本，构建时会编它，
+`scripts/check_doc_symbols.py` 还会逐条核对本文代码块里的语句在那份文件里确实存在 —— 所以它不会像
+"文档里写着、代码里早没有"那样烂掉。第 ①②③ 步没有设备，由 `GuideExampleTest` **实际执行**并断言
+这一场景收集出 1 个 draw item；第 ④⑤ 步需要窗口和已加载的后端插件，只在编译期校验。
+
 ```cpp
+// example: tests/test_graphics/GuideExample.cpp
 using namespace vn::graphics;
 
 // ① 模型：一个三角形。packAttribute 把 Vec3f 打成 Buffer<float>，models 借它（不拷贝）。
+// 在没有任何 primitive 的 geometry 上装第一批位置，同时就声明了那一个 draw —— 所以这里不用再 addPrimitive。
 vn::models::Vec3fArray positions = {
     vn::math::Vec3f(0.0f, 0.0f, 0.0f),
     vn::math::Vec3f(1.0f, 0.0f, 0.0f),
@@ -293,7 +300,7 @@ auto transform = MatrixTransformPtr(new MatrixTransform());
 transform->setMatrix(Mat4d());          // 默认构造 = 单位阵
 transform->addChild(state);
 
-auto scene(new Scene());
+auto scene = vn::make_intrusive<Scene>();   // 引擎/场景都是引用计数对象：`make_intrusive` 在 `vn` 里，不在 `vn::graphics` 里
 scene->setRoot(transform);
 scene->addLight(Light::createAmbient());                   // 环境光
 scene->addLight(Light::createDirectional({ 0.0, 0.0, -1.0 }));  // 一盏方向光
@@ -306,14 +313,16 @@ camera->setAspect(16.0 / 9.0);                               // 投影的**形�
                                                              // （一台相机 = 一张画面，see Camera）
 
 // ④ 引擎 + 后端 + 预设链。
-// 引擎是**引用计数**对象，链**强持**它（`PassChain` 的构造参数就是 `intrusive_ptr<RenderEngine>`）：栈上的引擎会被
+// 引擎是**引用计数**对象，链**强持**它（`PassChain::build` 的参数就是 `intrusive_ptr<RenderEngine>`）：栈上的引擎会被
 // "最后放手的那条管线"删掉 —— `delete` 的是别人的栈/成员内存，症状不在这一刻，而是**之后某次无关的 free 报堆损坏**。
 // 所以它和别的 SDK 对象一样由 `intrusive_ptr` 持有（`test_vsg/SdkPixelFixture.hpp` 是同一个形态）。
-auto engine = make_intrusive<RenderEngine>();
+auto engine = vn::make_intrusive<RenderEngine>();
 engine->setDevice(RenderBackendRegistry::instance().create(u8"vsg"));  // 需插件已加载
 
 // 窗口与尺寸归**区**（一块表面的表）：窗口那一半由**设备**造（S10a），尺寸在这里报一次 —— 引擎不收裸句柄。
-auto area = make_intrusive<RenderArea>(engine.get());
+// 区**只能由引擎造**（`RenderEngine::createArea`）：一个引擎一块区，关系有主；第二次 createArea() 答 null 并报一次。
+auto area = engine->createArea();
+if (area == nullptr) { return false; }
 vn::graphics::SurfaceTargetResult why = vn::graphics::SurfaceTargetResult::Ok;
 vn::raw_ptr<vn::graphics::WindowPresentTarget> target = engine->device()->createSurfaceTarget(window_handle, &why);
 if (target == nullptr) { return false; }  // 无呈现能力 / 服务不了这块 surface / 窗口已被占用（见 @p why）
@@ -331,9 +340,10 @@ options.camera  = camera.get();
 auto pipeline = PassChain::build(engine.get(), options);   // 或 options.path = ShadingPath::Deferred
 if (pipeline == nullptr) { return false; }
 
-// ⑤ 帧循环。
+// ⑤ 帧循环。引擎**不收时间**：`frame()` 没有 dt —— 时间归宿主（要动画就按自己的时钟改变换，见
+// `PositionAttitudeTransform`），引擎只把这一帧编译、录制、提交、呈现。
 pipeline->resize(width, height, dpr);   // 离屏/合成 target 按 device 像素，HUD 叠加按逻辑像素（ratio 一次说清）
-engine->frame(dt);                  // 收集 → 录制 → 提交 → present
+engine->frame();                        // 收集 → 录制 → 提交 → present
 
 engine->shutdown();
 ```
@@ -1485,7 +1495,7 @@ shader 本身是**真文件**（`src/viz/graphics/shaders/builtin_skybox.vert/.f
 没有可用阴影时程序一次都不采那张图。宿主自己的程序声明了 `vn_shadow_map` 却没带上它时，会**按 drawable** 报一条
 `DiagnosticCategory::UnsupportedRequest`，而不是画出一张"没有阴影的阴影"。两个约定不同、且都写在 ABI 里：矩阵是
 **SDK 裁剪约定**（y 向上、z 0 近 → 1 远），纹理是**后端约定**（reverse-Z、near = 1 → far = 0、v = 0 是世界的"上"），
-着色器里各转一次。判据（三次像素断言 + 逐项变异）见 `.ai/design/graphics-architecture.md` §8.2 / §8.3 / §9。内容着色侧
+着色器里各转一次。判据（三次像素断言 + 逐项变异）见 `.ai/design/graphics-rendering.md` §2.6 / §2.7（阴影是一条普通 pass、四个归属）与 §8 T5。内容着色侧
 **没有保留项**：程序就是唯一入口（见 §3），未实现的着色需要宿主自己写一个 `ShaderProgram`。
 
 ```bash
@@ -1586,6 +1596,12 @@ ctest --test-dir build                # CTest 视角（32 个套件；见下面�
 与业界"项 → 调用"的顺序正好相反——`RenderCommand` 说不出它是"一个项"，`DrawDescription` 也说不出它是"一次调用"。
 现在两项与 O3DE 的 `DrawItem` / `DrawPacket`、UE 的 `FMeshBatch` / `FMeshDrawCommand` 同一顺序，迁移说明在
 [`graphics-rendering.md`](../../.ai/design/graphics-rendering.md) §2.10。
+
+**三个"推导"动词按输入分，不按返回分**（规范见 `graphics-scene.md` §2.12）：`collect*` 只吃**节点**，沿树折叠出
+一种**作者值**（`collectRenderState` 答的还是"没人说过"的空档，不是默认值）；`resolve*` 吃**一个已有值 + 一个上下文**，
+套用优先级表（`resolveRenderState(authored, pass, topology)`，并告诉你每一项是谁定的）；`effective*` 吃**节点**，
+一步给出"这个节点最终用什么"（`effectiveRenderState` = 前两步的合成，`effectiveProgram` / `effectiveMaterial` 同理）。
+所以看到 `resolve` 就别再去找它有没有先爬树，看到节点加上下文一起传的就是 `effective`。
 
 ### 5.3 五个帧值：一句问题，一个答案
 
