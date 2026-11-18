@@ -68,6 +68,11 @@ struct ResidencyRow
  * - An empty ledger (a backend that retains nothing, or does not account at all) keeps `bytes` disengaged as
  *   well: "nothing is resident" and "nobody counted" stay different answers, which is the same rule the rows
  *   follow one level down.
+ * - NEITHER BACKEND ENGAGES IT TODAY, and that is a measured state rather than a bug in this struct: each reports
+ *   bytes for the two kinds it measures and leaves them disengaged for the other two (vk: `Materials` / `Programs`;
+ *   vsg: `Geometry` / `Programs`), so `unknown` is 2 on either and a total would be a guess. A host reading
+ *   residency therefore reads the ROWS it needs, not this figure; what each backend would still have to count is
+ *   `.ai/backlog/graphics.md` T45.
  */
 struct ResidencyTotals
 {
