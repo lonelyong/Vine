@@ -3,11 +3,15 @@
 #include "appfw_global.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <stop_token>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <vine/String.hpp>
+#include <vine/Type.hpp>
 #include <vine/raw_ptr.hpp>
 
 #include "ConfigStandard.hpp"
@@ -15,6 +19,7 @@
 VN_APPFW_NS_BEGIN
 
 class Application;
+class Command;
 class CommandManager;
 class ConfigItem;
 class ConfigRegistry;
@@ -26,6 +31,10 @@ class EventBus;
  * Inside load(), the plugin obtains the config registry via configRegistry(), the
  * command manager via commandManager(), or the host Application via
  * application(). More specific accessors can be added later.
+ *
+ * Two ports also stamp what the plugin contributes: registerConfigItem() records the item's owner, and
+ * registerCommand() attributes a command registered at run time to this plugin (see its note on why a hook must use
+ * it instead of CommandManager::registerCommand()).
  */
 class VN_APPFW_API PluginLoadContext {
   public:
@@ -122,6 +131,41 @@ class VN_APPFW_API PluginLoadContext {
     bool registerConfigItem(StandardCategory cat, StandardGroup grp, const ConfigItem& item);
 
     /**
+     * @brief Registers a command owned by this plugin.
+     *
+     * @details
+     * - The command manager stamps a registration with the owner tag it reads at that moment; this call sets the tag
+     *   to this plugin's name for the duration of the registration only, then restores the previous one.
+     * - Use it for every command a lifecycle hook registers. CommandManager::registerCommand() called directly from a
+     *   hook depends on a tag the manager would have to keep set while that hook is suspended, and every registration
+     *   the main thread delivers in that window would inherit this plugin's name.
+     * - Commands a plugin declares statically (VN_DECLARE_COMMAND) need none of this: the manager flushes the
+     *   module queue itself, inside the plugin's own scope.
+     *
+     * @param command_class Meta class of the command.
+     * @param name          Unique command name; must not be empty.
+     * @param factory       Factory creating a new command instance; must not be empty.
+     * @return true when registered; false when there is no command manager, or the name is empty or taken.
+     */
+    bool registerCommand(TypeId command_class, String name, std::function<Command*()> factory);
+
+    /**
+     * @brief Registers a default-constructible command type owned by this plugin.
+     *
+     * @details
+     * - Equivalent to registerCommand(CommandT::desc(), std::move(name), [] { return new CommandT; }).
+     *
+     * @tparam CommandT Command type; must derive from Command and be default-constructible.
+     * @param name      Unique command name.
+     * @return true when registered.
+     */
+    template <typename CommandT>
+    bool registerCommand(String name)
+    {
+        return registerCommand(CommandT::desc(), std::move(name), [] { return new CommandT; });
+    }
+
+    /**
      * @brief Config items registered by this plugin.
      *
      * @return The plugin's registered items.
@@ -132,5 +176,6 @@ class VN_APPFW_API PluginLoadContext {
     struct Impl;
     std::unique_ptr<Impl> d;
 };
+
 
 VN_APPFW_NS_END

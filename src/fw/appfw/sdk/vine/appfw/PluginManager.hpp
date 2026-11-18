@@ -8,6 +8,7 @@
 
 #include <vine/String.hpp>
 #include <vine/async/Task.hpp>
+#include <vine/raw_ptr.hpp>
 
 #include <vine/appfw/Plugin.hpp>
 
@@ -36,13 +37,26 @@ enum class PluginScope
  * pluginEntries() at query time.
  */
 struct VN_APPFW_API PluginEntry {
-    PluginInfo            info;                          // Metadata declared by the plugin.
-    std::filesystem::path path;                          // Library file the plugin was found in.
-    PluginScope           scope{ PluginScope::BuiltIn }; // Location class the plugin was found in.
-    String                framework_version;             // Framework version the library was built with (PluginAbi); may be empty.
-    bool                  enabled{ true };               // Effective preference; disabled plugins are not loaded.
-    bool                  loaded{ false };               // Whether an instance exists right now.
-    bool                  skipped{ false };              // Refused by the host skip list (setSkipList()); implies !enabled.
+    /// Metadata declared by the plugin.
+    PluginInfo info;
+
+    /// Library file the plugin was found in.
+    std::filesystem::path path;
+
+    /// Location class the plugin was found in.
+    PluginScope scope{ PluginScope::BuiltIn };
+
+    /// Framework version the library was built with (PluginAbi); may be empty.
+    String framework_version;
+
+    /// Effective preference; a disabled plugin is not loaded.
+    bool enabled{ true };
+
+    /// Whether an instance exists right now.
+    bool loaded{ false };
+
+    /// Refused by the host skip list (setSkipList()); implies !enabled.
+    bool skipped{ false };
 };
 
 /**
@@ -54,13 +68,26 @@ struct VN_APPFW_API PluginEntry {
  * a package manager or an administrator installs a plugin.
  */
 struct VN_APPFW_API PluginRegistration {
-    String      id;                         // Registration file name without the extension (unique per scope).
-    String      file;                       // The registration file itself.
-    String      path;                       // Registered plugin library or directory; required.
-    String      name;                       // Plugin name recorded in the file; empty when unknown.
-    Uuid        uuid;                       // Plugin identity recorded in the file; null when unknown.
-    PluginScope scope{ PluginScope::User }; // Directory the file was read from.
-    bool        enabled{ true };            // false: disabled for everyone (administrator policy).
+    /// Registration file name without the extension (unique per scope).
+    String id;
+
+    /// The registration file itself.
+    String file;
+
+    /// Registered plugin library or directory; required.
+    String path;
+
+    /// Plugin name recorded in the file; empty when unknown.
+    String name;
+
+    /// Plugin identity recorded in the file; null when unknown.
+    Uuid uuid;
+
+    /// Directory the file was read from.
+    PluginScope scope{ PluginScope::User };
+
+    /// false: disabled for everyone (administrator policy).
+    bool enabled{ true };
 };
 
 /**
@@ -85,6 +112,20 @@ struct VN_APPFW_API PluginRegistration {
  * including an application-provided plugin. A skipped plugin is still discovered
  * and listed (PluginEntry::skipped) so it stays visible, but it is never
  * instantiated.
+ *
+ * Composition and identity
+ *
+ * One manager per process. The locations and the host's skip list are process-wide (the static members), and that is a
+ * property of the system rather than a shortcut: a plugin library can be instantiated only once per process, and its
+ * commands register into one process-global registry, so a second manager could neither own the instances
+ * independently nor unload them - it would only be a second view of the same state. What the manager OWNS (the loaded
+ * list, the discovery list, the process-local preference fallback) lives in the instance.
+ *
+ * Command attribution: a registration belongs to the plugin whose name the tag held at the moment the registration ran.
+ * The manager sets that tag around the work it performs itself (flushing a plugin's module command table) and never
+ * across a suspension - while a hook is suspended the main thread can deliver other work, and everything registered
+ * there would inherit the paused plugin's name. A hook that registers a command therefore does so through
+ * PluginLoadContext::registerCommand(), which sets the tag around that one call.
  *
  * Thread and re-entrancy contract: the manager is not thread-safe. load(), loadAll(), loadAllAsync() and unloadAll()
  * run on the thread that owns the Application, never from a plugin lifecycle callback (a nested loadAll() is refused and
@@ -238,9 +279,10 @@ class VN_APPFW_API PluginManager {
      * Plugin::load()).
      *
      * @param name_or_path Plugin name or library path.
-     * @return The loaded plugin, or nullptr on failure.
+     * @return The plugin instance (borrowed: it belongs to its library and lives for the rest of the process), or
+     *         nullptr on failure.
      */
-    [[nodiscard]] Plugin* load(const String& name_or_path);
+    [[nodiscard]] raw_ptr<Plugin> load(const String& name_or_path);
 
     /**
      * @brief Loads every plugin library found in the configured locations.
@@ -289,6 +331,19 @@ class VN_APPFW_API PluginManager {
      *         instantiate or threw out of its lifecycle.
      */
     [[nodiscard]] bool loadAll();
+
+    /**
+     * @brief Rescans the configured locations without loading anything.
+     *
+     * The discovery half of loadAll() on its own: the application's directory and every registration are walked and each
+     * plugin's metadata is read, but no instance is created, no lifecycle runs and no registration is touched. It is
+     * what a UI needs after a registration file was added or removed - installing a plugin takes effect at the next
+     * load, while the list a user looks at can be current right away.
+     *
+     * The enabled/skipped/loaded flags of the resulting list are still resolved at query time (see pluginEntries()).
+     * A plugin this manager already loaded keeps running; a scan never unloads anything.
+     */
+    void rescan();
 
     /**
      * @brief Loads every plugin, as a coroutine: the door a boot uses.
@@ -359,9 +414,9 @@ class VN_APPFW_API PluginManager {
      * @brief Returns the loaded plugin with the given name.
      *
      * @param name Plugin name.
-     * @return The plugin instance, or nullptr if not loaded.
+     * @return The plugin instance (borrowed: it belongs to its library), or nullptr if not loaded.
      */
-    [[nodiscard]] Plugin* plugin(const String& name) const;
+    [[nodiscard]] raw_ptr<Plugin> plugin(const String& name) const;
 
     /**
      * @brief Returns whether a plugin with the given name is loaded.
@@ -416,9 +471,9 @@ class VN_APPFW_API PluginManager {
     /**
      * @brief Returns the instances of all loaded plugins in load order.
      *
-     * @return The plugin instances.
+     * @return The plugin instances (borrowed: they belong to their libraries).
      */
-    [[nodiscard]] std::vector<Plugin*> plugins() const;
+    [[nodiscard]] std::vector<raw_ptr<Plugin>> plugins() const;
 
     /**
      * @brief Reports the commands registered by the given plugin.
@@ -452,13 +507,19 @@ class VN_APPFW_API PluginManager {
      * the user (administrator policy); otherwise the per-user preference from
      * setPluginEnabled() applies.
      *
+     * A registration that disables a plugin for every user is matched by the name it records, and by the location it
+     * points at when it records none (a directory registration says nothing about the plugins inside it). Pass
+     * @p library when the caller knows the file - an explicit load() must not resurrect a plugin an administrator
+     * disabled through its location.
+     *
      * Reads the per-user preference from the host ConfigManager when one is
      * available and falls back to the process-local preference otherwise.
      *
-     * @param name Plugin name.
+     * @param name    Plugin name.
+     * @param library Library the plugin is loaded from, or an empty path when only the name is known.
      * @return true if the plugin may be loaded.
      */
-    [[nodiscard]] bool isPluginEnabled(const String& name) const;
+    [[nodiscard]] bool isPluginEnabled(const String& name, const std::filesystem::path& library = {}) const;
 
     /**
      * @brief Enables or disables a plugin and persists the user's preference.
@@ -539,19 +600,6 @@ class VN_APPFW_API PluginManager {
     [[nodiscard]] std::vector<PluginRegistration> pluginRegistrations() const;
 
   private:
-    /// Reports whether a registration disables a plugin for every user.
-    ///
-    /// The scan in loadAll() records the policy of every plugin it discovers; this
-    /// lookup falls back to reading the registration files when the fast path has
-    /// nothing, so the policy holds even in a process that never ran loadAll() - an
-    /// explicit load() must not resurrect a plugin an administrator disabled.
-    ///
-    /// @param name    Plugin name.
-    /// @param library Library the plugin is loaded from, or an empty path when only
-    ///                the name is known.
-    /// @return true when a registration disables the plugin for all users.
-    [[nodiscard]] bool isPolicyDisabled(const String& name, const std::filesystem::path& library) const;
-
     struct Impl;
     std::unique_ptr<Impl> d;
 };

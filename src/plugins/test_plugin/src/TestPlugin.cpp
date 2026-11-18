@@ -7,6 +7,8 @@
 #include <vine/appfw/PluginLoadContext.hpp>
 #include <vine/appfw/plugin_export.hpp>
 
+#include "commands/HelloCommand.hpp"
+
 VN_APPFW_NS_BEGIN
 
 VN_OBJECT_META_IMPL(TestPlugin, Plugin)
@@ -27,6 +29,17 @@ vn::async::Task<void> TestPlugin::load(PluginLoadContext* context)
     }
 
     co_await Plugin::load(context);
+}
+
+vn::async::Task<void> TestPlugin::postLoad(PluginLoadContext* context)
+{
+    if (context != nullptr) {
+        // Ignored on purpose: the plugin is loaded again by later cases in the same process, and a taken name is not an
+        // error there (the command is already owned by this plugin).
+        static_cast<void>(context->registerCommand<HelloCommand>(String(u8"test_runtime_hello")));
+    }
+
+    co_await Plugin::postLoad(context);
 }
 
 VN_DECLARE_PLUGIN(TestPlugin,

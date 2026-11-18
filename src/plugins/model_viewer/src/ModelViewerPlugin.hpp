@@ -55,7 +55,7 @@ class ModelViewerPlugin : public vn::appfw::Plugin {
     void registerView(vn::appfw::Application& app);
 
     /** @brief 登记并挂上"显示"那一组按钮（模型的显示模式）。 */
-    void installShadingModeRibbon(vn::appfw::Application& app);
+    void installShadingModeRibbon(vn::appfw::PluginLoadContext& context);
 
     /// 建模型信息面板并挂到右侧 dock；没有主窗口（无头运行）时什么也不做。
     void installInfoPanel(vn::appfw::Application& app);

@@ -32,6 +32,7 @@
 
 #include "ApplicationData.hpp"
 #include "Format.hpp"
+#include "RegistrationOwnerScope.hpp"
 #include "TranslationCatalog.hpp"
 
 VN_APPFW_NS_BEGIN
@@ -454,6 +455,116 @@ bool isBuiltInPath(const std::filesystem::path& path)
     return *relative.begin() != std::filesystem::path("..");
 }
 
+/// Converts a UTF-8 String carrying a path to a filesystem path.
+std::filesystem::path toPath(const String& text)
+{
+    return std::filesystem::path(std::u8string_view(text.data(), text.size()));
+}
+
+/**
+ * @brief The inputs that decide whether a plugin may be loaded, read once per question.
+ *
+ * @details
+ * - The registration files belong to the locations and the per-user preference to the configuration; every caller
+ *   needs both, and reading either per plugin turned one directory scan into one per candidate (see
+ *   collectCandidates()).
+ * - allows() applies the documented order (skip, BuiltIn, registration policy, user preference) through
+ *   resolveEnabled(), so the list a UI shows and the decision a load takes cannot disagree.
+ */
+struct PluginPolicy {
+    /// installed.d registrations, per-user directory first.
+    std::vector<PluginRegistration> registrations;
+
+    /// Per-user preference, or the manager's process-local list when there is no ConfigManager.
+    std::vector<String> user_disabled;
+
+    /**
+     * @brief Returns whether a registration disables the plugin for every user.
+     *
+     * @details
+     * - Matched by name when the file records one, and by the location it points at otherwise: a directory
+     *   registration (what installPlugin() writes for a plugin directory) records no name, and an explicit load()
+     *   must not resurrect a plugin an administrator disabled that way.
+     * - The location comparison accepts the library itself or the directory holding it.
+     *
+     * @param name    Plugin name.
+     * @param library Library the plugin is loaded from, or an empty path when only the name is known.
+     * @return true when a registration disables the plugin for all users.
+     */
+    [[nodiscard]] bool isPolicyDisabled(const String& name, const std::filesystem::path& library) const
+    {
+        const std::filesystem::path loaded = library.empty() ? std::filesystem::path{} : normalizedPath(library);
+        for (const auto& registration : registrations) {
+            if (registration.enabled) {
+                continue;
+            }
+            if (!registration.name.empty() && registration.name == name) {
+                return true;
+            }
+            if (loaded.empty() || registration.path.empty()) {
+                continue;
+            }
+            const std::filesystem::path registered = normalizedPath(toPath(registration.path));
+            if (registered == loaded || registered == loaded.parent_path()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * @brief Applies the four inputs that decide whether a plugin may be loaded.
+     *
+     * @param name     Plugin name.
+     * @param built_in Whether the plugin ships with the application.
+     * @param skipped  Whether the host's skip list refuses it.
+     * @param library  Library the plugin is loaded from; empty when only the name is known.
+     * @return true if the plugin may be loaded.
+     */
+    [[nodiscard]] bool allows(const String& name, bool built_in, bool skipped, const std::filesystem::path& library) const
+    {
+        return resolveEnabled(name, built_in, skipped, isPolicyDisabled(name, library), user_disabled);
+    }
+};
+
+/**
+ * @brief Returns the location class a library was found in.
+ *
+ * @details
+ * - A registration is the authority when its path matches the library or its directory; the application's own
+ *   directory is next; anything else was named explicitly by a caller and is reported as a per-user plugin.
+ *
+ * @param policy  Policy snapshot (its registration list is read).
+ * @param library Plugin library.
+ * @return The scope.
+ */
+PluginScope scopeOfPath(const PluginPolicy& policy, const std::filesystem::path& library)
+{
+    const std::filesystem::path loaded = normalizedPath(library);
+    for (const auto& registration : policy.registrations) {
+        if (registration.path.empty()) {
+            continue;
+        }
+        const std::filesystem::path registered = normalizedPath(toPath(registration.path));
+        if (registered == loaded || registered == loaded.parent_path()) {
+            return registration.scope;
+        }
+    }
+    return isBuiltInPath(library) ? PluginScope::BuiltIn : PluginScope::User;
+}
+
+/**
+ * @brief Reads the policy snapshot for one question.
+ *
+ * @param registrations installed.d registrations, per-user directory first.
+ * @param fallback      Process-local preference, used when no host ConfigManager exists.
+ * @return The snapshot.
+ */
+PluginPolicy readPolicy(const std::vector<PluginRegistration>& registrations, const std::vector<String>& fallback)
+{
+    return PluginPolicy{ registrations, disabledNames(fallback) };
+}
+
 /**
  * @brief Writes a registration file, replacing it atomically.
  *
@@ -671,36 +782,6 @@ std::filesystem::path resolvePluginPath(const String& name_or_path)
 }
 
 /**
- * @brief Tags every command registered while alive with the given plugin name.
- *
- * RAII: restores the previous owner on destruction so the plugin's commands
- * (vinePluginRegisterCommands and the load lifecycle) are attributed to it.
- */
-class RegistrationOwnerScope {
-  public:
-    RegistrationOwnerScope(CommandManager* manager, const String& owner)
-      : manager_(manager)
-    {
-        if (manager_ != nullptr) {
-            manager_->setRegistrationOwner(owner);
-        }
-    }
-
-    ~RegistrationOwnerScope()
-    {
-        if (manager_ != nullptr) {
-            manager_->setRegistrationOwner({});
-        }
-    }
-
-    RegistrationOwnerScope(const RegistrationOwnerScope&)            = delete;
-    RegistrationOwnerScope& operator=(const RegistrationOwnerScope&) = delete;
-
-  private:
-    CommandManager* manager_;
-};
-
-/**
  * @brief RAII: keeps a flag set for the duration of an operation.
  *
  * loadAll() uses it to refuse re-entrant calls: a plugin that calls back into the
@@ -734,12 +815,17 @@ class ScopedFlag {
 
 /**
  * @brief A loaded plugin, its instance, the library it came from and the catalog installed for it.
+ *
+ * The location class and the framework version travel with the entry: they are facts about where the library came
+ * from, and pluginEntries() reports a loaded plugin even after a scan stopped listing its location.
  */
 struct LoadedPlugin {
     String                name;
-    Plugin*               plugin;
-    std::filesystem::path path;    // Library file the plugin was loaded from.
-    TranslationCatalog    catalog; // Released before unload() runs, and with the entry when a load fails (R3).
+    raw_ptr<Plugin>       plugin;
+    std::filesystem::path path;    ///< Library file the plugin was loaded from.
+    PluginScope           scope;   ///< Location class the library came from.
+    String                framework_version; ///< Framework version the library was built with (see PluginAbi).
+    TranslationCatalog    catalog; ///< Released before unload() runs, and with the entry when a load fails (R3).
 };
 
 /**
@@ -752,6 +838,8 @@ struct Candidate {
     std::filesystem::path        path;
     vn::runtime::DynamicLibrary* lib;
     const PluginInfo*            info;
+    PluginScope                  scope;             ///< Location class it was found in.
+    String                       framework_version; ///< Framework version the library was built with.
 };
 
 /// Runs the unload lifecycle of one plugin, swallowing and logging exceptions.
@@ -811,16 +899,11 @@ struct PluginManager::Impl {
     /// Loaded plugins, in load order (dependencies before their dependents).
     std::vector<LoadedPlugin> plugins;
 
-    /// Discovered plugins, in scan order of the last loadAll()/load(); not all loaded.
+    /// Discovered plugins, in scan order of the last loadAll()/load()/rescan(); not all loaded.
     std::vector<PluginEntry> discovered;
 
     /// Disabled plugin names, used only when no host config manager exists.
     std::vector<String> disabled_fallback;
-
-    /// Names a registration file disables for everyone (administrator policy).
-    /// Filled while scanning, because the policy is a property of the location a
-    /// plugin came from.
-    std::vector<String> policy_disabled;
 
     /// Set while loadAll() runs, so a nested call from a plugin lifecycle callback
     /// is refused instead of interleaving with the batch being created.
@@ -884,12 +967,9 @@ bool PluginManager::isPluginAbiCompatible(const PluginAbi& abi) noexcept
     return abi.abi_version == VN_APPFW_PLUGIN_ABI_VERSION;
 }
 
-Plugin* PluginManager::load(const String& name_or_path)
+raw_ptr<Plugin> PluginManager::load(const String& name_or_path)
 {
     const std::filesystem::path path = resolvePluginPath(name_or_path);
-    if (path.empty()) {
-        return nullptr;
-    }
 
     // Step 1 and 2: load the plugin library (cached by the shared loader), check its
     // ABI handshake and ask it for its metadata.
@@ -903,9 +983,14 @@ Plugin* PluginManager::load(const String& name_or_path)
     }
     const PluginInfo* info = queried.info;
 
+    // One policy snapshot per load: it answers both questions - which location the library belongs to, and whether
+    // this host may run it at all.
+    const PluginPolicy policy = readPolicy(pluginRegistrations(), d->disabled_fallback);
+    const PluginScope  scope  = scopeOfPath(policy, path);
+
     // The metadata of a plugin that is not loaded is still reported, so a
     // disabled or skipped plugin stays visible in the plugin list.
-    rememberDiscovered(d->discovered, *info, path, isBuiltInPath(path) ? PluginScope::BuiltIn : PluginScope::User, queried.framework_version);
+    rememberDiscovered(d->discovered, *info, path, scope, queried.framework_version);
 
     // Reuse an already-loaded plugin with the same name.
     for (const auto& lp : d->plugins) {
@@ -917,9 +1002,11 @@ Plugin* PluginManager::load(const String& name_or_path)
     // A disabled plugin, or one the host skips, is never instantiated, not even
     // when its library is named explicitly: the decision applies to every load. The
     // discovery above happened first, so the plugin stays visible in
-    // pluginEntries() together with the reason it was refused.
-    if (!isPluginEnabled(info->name)) {
-        logRefusal(info->name, isPolicyDisabled(info->name, path));
+    // pluginEntries() together with the reason it was refused. The path travels with the question, because a
+    // directory registration disables a plugin without naming it.
+    const bool skipped = isSkipped(info->name);
+    if (!policy.allows(info->name, scope == PluginScope::BuiltIn, skipped, path)) {
+        logRefusal(info->name, policy.isPolicyDisabled(info->name, path));
         return nullptr;
     }
 
@@ -953,8 +1040,8 @@ Plugin* PluginManager::load(const String& name_or_path)
     const String             language_tag = application != nullptr ? application->dptr()->language_tag : String();
     TranslationCatalog       catalog      = TranslationCatalog::forModule(info->name, language_tag, path);
 
-    LoadedPlugin loaded{ info->name, nullptr, path, std::move(catalog) };
-    Plugin*      plugin = nullptr;
+    LoadedPlugin loaded{ info->name, nullptr, path, scope, queried.framework_version, std::move(catalog) };
+    raw_ptr<Plugin> plugin = nullptr;
     try {
         // A plugin whose construction throws is a failed load, not an exception escaping load(): the catalog goes away
         // with the entry, and the caller sees the same nullptr an unusable library produces.
@@ -969,9 +1056,9 @@ Plugin* PluginManager::load(const String& name_or_path)
 
         // Register the plugin's commands (VN_DECLARE_COMMAND) inside its own module:
         // the DLL exports vinePluginRegisterCommands, which runs in the plugin's
-        // code and flushes its per-module queue into the CommandManager. The owner
-        // scope attributes every command registered during the plugin's load
-        // (module commands + lifecycle) to this plugin.
+        // code and flushes its per-module queue into the CommandManager. The scope
+        // closes before anything can suspend, which is what the attribution rule
+        // requires (see PluginLoadContext::registerCommand()).
         using RegisterFn              = void(CommandManager*);
         const auto      register_cmds = queried.lib->resolveSymbol<RegisterFn*>(u8"vinePluginRegisterCommands");
         Application*    app           = Application::current();
@@ -981,20 +1068,25 @@ Plugin* PluginManager::load(const String& name_or_path)
             if (register_cmds) {
                 register_cmds(cm);
             }
-
-            // Three-phase lifecycle, aligned with loadAll(): preLoad(), then load(),
-            // then postLoad() for cross-plugin wiring. The hooks are coroutines, and this is the synchronous door: it
-            // drives each of them to completion on this thread, delivering what they post to the application thread
-            // (MainThreadDispatcher::runToCompletion(), over vn::async::runToCompletion()) so a plugin that runs its
-            // heavy half on the pool still loads here. This door does not turn the event loop otherwise - loadAllAsync()
-            // is the one the boot uses.
-            PluginLoadContext context(app, info->name);
-            // 每个钩子都跑在**这次启动的环境**里：钩子用 `co_await async::currentStopToken()` 就地拿到同一个
-            // 停止令牌，不必由框架当参数传、也不必去摸全局上报口。环境里放的就是上下文里那一个。
-            static_cast<void>(MainThreadDispatcher::runToCompletion(async::withStopToken(context.stopToken(), plugin->preLoad(&context))));
-            static_cast<void>(MainThreadDispatcher::runToCompletion(async::withStopToken(context.stopToken(), plugin->load(&context))));
-            static_cast<void>(MainThreadDispatcher::runToCompletion(async::withStopToken(context.stopToken(), plugin->postLoad(&context))));
         }
+
+        // Three-phase lifecycle, aligned with loadAll(): preLoad(), then load(),
+        // then postLoad() for cross-plugin wiring. The hooks are coroutines, and this is the synchronous door: it
+        // drives each of them to completion on this thread, delivering what they post to the application thread
+        // (MainThreadDispatcher::runToCompletion(), over vn::async::runToCompletion()) so a plugin that runs its
+        // heavy half on the pool still loads here. This door does not turn the event loop otherwise - loadAllAsync()
+        // is the one the boot uses.
+        //
+        // No registration owner is held across a hook: this door pumps, so a callable delivered in that window would
+        // inherit the plugin's name. A hook that registers a command does so through
+        // PluginLoadContext::registerCommand(), which tags that one call.
+        PluginLoadContext context(app, info->name);
+        // Each hook runs inside this boot's environment: the hook reads the same stop token with
+        // `co_await async::currentStopToken()`, so the framework neither passes it as a parameter nor makes the hook
+        // reach for the process-wide reporting door.
+        static_cast<void>(MainThreadDispatcher::runToCompletion(async::withStopToken(context.stopToken(), plugin->preLoad(&context))));
+        static_cast<void>(MainThreadDispatcher::runToCompletion(async::withStopToken(context.stopToken(), plugin->load(&context))));
+        static_cast<void>(MainThreadDispatcher::runToCompletion(async::withStopToken(context.stopToken(), plugin->postLoad(&context))));
     }
     catch (const std::exception& e) {
         VN_LOGE("Plugin '{}' threw while loading: {}", toUtf8(info->name), e.what());
@@ -1030,19 +1122,16 @@ struct LoadPlan {
  * ABI handshake is remembered in @p discovered - loadable or not, because a UI reports the disabled
  * ones too - and the loadable ones come back as candidates.
  *
- * @param manager         Manager whose enable decision and registrations are used.
+ * @param policy          Policy snapshot of this pass: registrations and the per-user preference, read once.
  * @param discovered      Discovery list; it is cleared and refilled here.
- * @param policy_disabled Names a registration disables for everyone; cleared and refilled here.
  * @param loaded          Plugins already loaded; they are no candidates again.
  * @return The candidates, in scan order.
  */
-std::vector<Candidate> collectCandidates(const PluginManager&             manager,
+std::vector<Candidate> collectCandidates(const PluginPolicy&             policy,
                                          std::vector<PluginEntry>&        discovered,
-                                         std::vector<String>&             policy_disabled,
                                          const std::vector<LoadedPlugin>& loaded)
 {
     discovered.clear();
-    policy_disabled.clear();
 
     // Step 1: the library files of every configured location.
     struct Source {
@@ -1056,8 +1145,8 @@ std::vector<Candidate> collectCandidates(const PluginManager&             manage
     sources.push_back(Source{ PluginManager::builtInPluginDirectory(), PluginScope::BuiltIn, true, nullptr });
 
     // Registrations are read on every scan, so installing or removing a plugin (or editing a
-    // registration file by hand) only needs a restart.
-    const std::vector<PluginRegistration> registrations = manager.pluginRegistrations();
+    // registration file by hand) only needs a restart - or a PluginManager::rescan().
+    const std::vector<PluginRegistration>& registrations = policy.registrations;
     for (const auto& registration : registrations) {
         if (!registration.enabled) {
             VN_LOGI("Plugin registration '{}' disables its plugin for all users", toUtf8(registration.id));
@@ -1119,13 +1208,6 @@ std::vector<Candidate> collectCandidates(const PluginManager&             manage
             // reported (metadata + library path) so a UI can show it and explain why it is not running.
             rememberDiscovered(discovered, *info, path, source.scope, queried.framework_version);
 
-            // A registration that disables the plugin for every user is policy: record it before the
-            // enabled check below, which reads it back.
-            const bool policy_disables = !source.registration_enabled;
-            if (policy_disables) {
-                policy_disabled.push_back(info->name);
-            }
-
             const bool already_loaded = std::any_of(loaded.begin(), loaded.end(), [&info](const LoadedPlugin& lp) { return lp.name == info->name; });
             if (already_loaded) {
                 continue;
@@ -1139,15 +1221,19 @@ std::vector<Candidate> collectCandidates(const PluginManager&             manage
                 continue;
             }
 
+            // A registration that disables the plugin for every user is policy: it wins over the user's preference,
+            // and a directory registration disables what it points at without naming anything.
+            const bool policy_disables = policy.isPolicyDisabled(info->name, path);
+
             // Disabled plugins (by the user, by a registration, or by the host's skip list) are not
             // instantiated and do not take part in dependency resolution; a dependent is therefore
             // reported as unresolved instead of being loaded with a missing dependency.
-            if (!manager.isPluginEnabled(info->name)) {
+            if (!policy.allows(info->name, source.scope == PluginScope::BuiltIn, PluginManager::isSkipped(info->name), path)) {
                 logRefusal(info->name, policy_disables);
                 continue;
             }
 
-            candidates.push_back(Candidate{ path, queried.lib, info });
+            candidates.push_back(Candidate{ path, queried.lib, info, source.scope, queried.framework_version });
         }
     }
     return candidates;
@@ -1164,13 +1250,13 @@ std::vector<Candidate> collectCandidates(const PluginManager&             manage
  * the dependency that blocks it, chain by chain), and everything else still loads: one third-party
  * plugin with a missing or disabled dependency must not cost the application its shell.
  *
- * @param manager    Manager whose enable and skip decisions are used.
+ * @param policy     Policy snapshot of this pass.
  * @param candidates What collectCandidates() found.
  * @param loaded     Plugins already loaded: satisfied dependencies.
  * @param discovered Discovery list, to tell "missing" from "disabled" from "blocked".
  * @return The plan; the reason for everything left out is logged here.
  */
-LoadPlan resolveLoadPlan(const PluginManager&             manager,
+LoadPlan resolveLoadPlan(const PluginPolicy&              policy,
                          const std::vector<Candidate>&    candidates,
                          const std::vector<LoadedPlugin>& loaded,
                          const std::vector<PluginEntry>&  discovered)
@@ -1221,7 +1307,8 @@ LoadPlan resolveLoadPlan(const PluginManager&             manager,
             if (PluginManager::isSkipped(dep)) {
                 problem.skipped.push_back(dep);
             }
-            else if (const PluginEntry* entry = findDiscovered(discovered, dep); entry != nullptr && !manager.isPluginEnabled(dep)) {
+            else if (const PluginEntry* entry = findDiscovered(discovered, dep);
+                     entry != nullptr && !policy.allows(dep, entry->scope == PluginScope::BuiltIn, false, entry->path)) {
                 problem.disabled.push_back(dep);
             }
             else if (findDiscovered(discovered, dep) != nullptr) {
@@ -1306,7 +1393,8 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
     for (const Candidate* candidate : plan.planned) {
         const String& name = candidate->info->name;
 
-        // 取消：启动被请求停下就不再装下一个（已装的那些由调用方决定去留：应用级取消会把它们卸掉）。
+        // Cancellation: a boot that was asked to stop installs no further plugin (the caller decides what happens to
+        // the ones already created: an application-level cancellation unloads them).
         if (startup != nullptr && startup->stopToken().stop_requested()) {
             VN_LOGI("the plugin load was cancelled; '{}' and the plugins after it are not loaded", toUtf8(name));
             return false;
@@ -1331,7 +1419,7 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
             return false;
         }
 
-        LoadedPlugin loaded{ name, plugin, candidate->path, std::move(catalog) };
+        LoadedPlugin loaded{ name, plugin, candidate->path, candidate->scope, candidate->framework_version, std::move(catalog) };
 
         // Register the plugin's commands (VN_DECLARE_COMMAND) inside its own module. The owner scope
         // tags these module commands with the plugin name.
@@ -1365,6 +1453,11 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
  * friends return a task), so a plugin can send heavy, UI-free work to the pool and come back with
  * resumeOnMainThread() before touching UI again.
  *
+ * @note No command-registration owner is held across a hook. While a hook is suspended the main thread may deliver
+ *       other work, and every registration made there would inherit the paused plugin's name; a hook that registers
+ *       a command does so through PluginLoadContext::registerCommand(), which tags that one call (and therefore still
+ *       attributes a registration made after a `co_await`).
+ *
  * @param created Instances to run the lifecycle on, in dependency order; the caller owns (and
  *                releases) them.
  * @param startup Progress sink; may be null.
@@ -1373,21 +1466,18 @@ bool instantiatePlugins(const LoadPlan& plan, StartupProgress* startup, std::vec
  */
 vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, StartupProgress* startup)
 {
-    // 每拍都是一次 `co_await`，原因有两个：钩子是协程（插件自己要分段、要跳池都在里面），而且回调返回后要让循环
-    // 转一圈。owner scope 刻意写在**花括号里、不跨 await**：回转期间别的排队调用也会注册命令，owner 还挂着就会
-    // 把它们记到这个插件名下。
+    // Every turn is a `co_await` for two reasons: the hooks are coroutines (a plugin splits its own work and hops to
+    // the pool inside them), and the loop gets to turn once the callback returns.
     for (const auto& lp : created) {
-        RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
-        PluginLoadContext      context(Application::current(), lp.name);
-        // 钩子的环境就是这次启动的令牌（见下面三拍）：`co_await currentStopToken()` 读到的与
-        // `context.stopToken()` 是同一个。
+        PluginLoadContext context(Application::current(), lp.name);
+        // Each hook runs inside this boot's token (see the three phases below): `co_await currentStopToken()` reads the
+        // same token as `context.stopToken()`.
         co_await async::withStopToken(context.stopToken(), lp.plugin->preLoad(&context));
     }
 
     std::size_t loaded_units = 0; // plugins whose load() has returned: one unit of the progress each
     for (const auto& lp : created) {
-        RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
-        PluginLoadContext      context(Application::current(), lp.name);
+        PluginLoadContext context(Application::current(), lp.name);
         if (startup != nullptr) {
             startup->setLabel(formatQt(translate("appfw", "Loading plugin %1 (%2/%3)"), lp.name, loaded_units + 1, created.size()));
         }
@@ -1403,8 +1493,7 @@ vn::async::Task<bool> runLifecycle(const std::vector<LoadedPlugin>& created, Sta
     }
 
     for (const auto& lp : created) {
-        RegistrationOwnerScope owner_scope(Application::current() ? Application::current()->commandManager() : nullptr, lp.name);
-        PluginLoadContext      context(Application::current(), lp.name);
+        PluginLoadContext context(Application::current(), lp.name);
         if (startup != nullptr) {
             startup->setLabel(formatQt(translate("appfw", "Finishing plugin %1"), lp.name));
         }
@@ -1423,6 +1512,22 @@ bool PluginManager::loadAll()
     // MainThreadDispatcher::runToCompletion()) because a plugin that hops to the pool comes back through the application
     // thread, which is the thread this call is holding.
     return MainThreadDispatcher::runToCompletion(loadAllAsync());
+}
+
+void PluginManager::rescan()
+{
+    if (d->loading) {
+        // A scan during a batch would clear the discovery list that batch reports from.
+        VN_LOGW("rescan() was called from a plugin lifecycle callback; ignoring the nested scan");
+        return;
+    }
+
+    // Discovery only: every location is walked and every plugin's metadata is read, but no instance is created and no
+    // lifecycle runs (see the class comment on what discovery means). This is what a UI needs after a registration
+    // file was added or removed by hand.
+    const PluginPolicy policy = readPolicy(pluginRegistrations(), d->disabled_fallback);
+    static_cast<void>(collectCandidates(policy, d->discovered, d->plugins));
+    VN_LOGI("Plugin locations rescanned: {} plugin(s) discovered", d->discovered.size());
 }
 
 vn::async::Task<bool> PluginManager::loadAllAsync()
@@ -1456,8 +1561,10 @@ vn::async::Task<bool> PluginManager::loadAllAsync()
         startup->stage(translate("appfw", "Looking for plugins"));
     }
 
-    const std::vector<Candidate> candidates = collectCandidates(*this, d->discovered, d->policy_disabled, d->plugins);
-    const LoadPlan               plan       = resolveLoadPlan(*this, candidates, d->plugins, d->discovered);
+    // One policy snapshot for the whole pass: the same answer for the scan and for the dependency report.
+    const PluginPolicy policy = readPolicy(pluginRegistrations(), d->disabled_fallback);
+    const std::vector<Candidate> candidates = collectCandidates(policy, d->discovered, d->plugins);
+    const LoadPlan               plan       = resolveLoadPlan(policy, candidates, d->plugins, d->discovered);
 
     // The language every catalog of this batch is installed in: one fact, read from the application that resolved it
     // instead of being kept a second time here.
@@ -1520,9 +1627,14 @@ bool PluginManager::unloadAll()
     std::vector<PluginEntry> entries;
     entries.reserve(d->plugins.size());
     for (const auto& lp : d->plugins) {
-        // unloadOrder() only reads the metadata and the loaded flag; the scope and
-        // the remaining state flags are placeholders.
-        entries.push_back(PluginEntry{ .info = lp.plugin->info(), .path = lp.path, .scope = PluginScope::BuiltIn, .loaded = true });
+        // unloadOrder() only reads the metadata and the loaded flag; the remaining state flags are placeholders.
+        entries.push_back(PluginEntry{
+            .info              = lp.plugin->info(),
+            .path              = lp.path,
+            .scope             = lp.scope,
+            .framework_version = lp.framework_version,
+            .loaded            = true,
+        });
     }
 
     bool ok = true;
@@ -1586,7 +1698,7 @@ std::vector<String> PluginManager::unloadOrder(const std::vector<PluginEntry>& e
     return order;
 }
 
-Plugin* PluginManager::plugin(const String& name) const
+raw_ptr<Plugin> PluginManager::plugin(const String& name) const
 {
     for (const auto& lp : d->plugins) {
         if (lp.name == name) {
@@ -1621,30 +1733,40 @@ std::filesystem::path PluginManager::libraryPath(const String& name) const
 
 std::vector<PluginEntry> PluginManager::pluginEntries() const
 {
-    // The four state inputs are snapshotted once, so a list of n plugins costs one
-    // config read instead of n (a UI rebuilds this list on every refresh and every
-    // selection change) and the reported state is consistent across the list.
-    const std::vector<String> disabled = disabledNames(d->disabled_fallback);
-
-    std::vector<String> loaded;
-    loaded.reserve(d->plugins.size());
-    for (const auto& lp : d->plugins) {
-        loaded.push_back(lp.name);
-    }
+    // One snapshot for the whole list: a UI rebuilds it on every refresh and every selection change, so the
+    // registration files and the preference are read once, not once per plugin - and every row is answered by the same
+    // policy the next load will apply.
+    const PluginPolicy policy = readPolicy(pluginRegistrations(), d->disabled_fallback);
 
     std::vector<PluginEntry> entries = d->discovered;
+
+    // A plugin loaded from an explicit path belongs to no location a scan walks, so a later scan drops it from the
+    // discovery list while its instance keeps running; it is reported here as well (its location class and framework
+    // version travel with the loaded entry for exactly this).
+    for (const auto& lp : d->plugins) {
+        if (findDiscovered(entries, lp.name) != nullptr) {
+            continue;
+        }
+        entries.push_back(PluginEntry{
+            .info              = lp.plugin->info(),
+            .path              = lp.path,
+            .scope             = lp.scope,
+            .framework_version = lp.framework_version,
+            .loaded            = true,
+        });
+    }
+
     for (auto& entry : entries) {
         const String& name    = entry.info.name;
         const bool    skipped = isSkipped(name);
-        const bool    policy  = std::find(d->policy_disabled.begin(), d->policy_disabled.end(), name) != d->policy_disabled.end();
 
         // State is resolved at query time so the entries cannot go stale: the skip
         // list lives outside the manager, the preference in the config, the
         // instance in the loaded list. skipped is reported next to enabled so a UI
         // can tell "the host refuses it" from "the user turned it off".
         entry.skipped = skipped;
-        entry.enabled = resolveEnabled(name, entry.scope == PluginScope::BuiltIn, skipped, policy, disabled);
-        entry.loaded  = std::find(loaded.begin(), loaded.end(), name) != loaded.end();
+        entry.enabled = policy.allows(name, entry.scope == PluginScope::BuiltIn, skipped, entry.path);
+        entry.loaded  = std::any_of(d->plugins.begin(), d->plugins.end(), [&name](const LoadedPlugin& lp) { return lp.name == name; });
     }
 
     // The directory iteration order is unspecified; sort by name so the plugin
@@ -1653,47 +1775,19 @@ std::vector<PluginEntry> PluginManager::pluginEntries() const
     return entries;
 }
 
-bool PluginManager::isPluginEnabled(const String& name) const
+bool PluginManager::isPluginEnabled(const String& name, const std::filesystem::path& library) const
 {
-    // The same four inputs pluginEntries() snapshots for a whole list; here they
-    // are read for one name, so the answer is always current.
-    const PluginEntry* entry           = findDiscovered(d->discovered, name);
-    const bool         built_in        = entry != nullptr && entry->scope == PluginScope::BuiltIn;
-    const bool         skipped         = isSkipped(name);
-    const bool         policy          = isPolicyDisabled(name, {});
-    // The per-user preference comes from the host ConfigManager when there is one,
-    // and from the process-local list otherwise.
-    const std::vector<String> disabled = disabledNames(d->disabled_fallback);
+    // The same policy pluginEntries() snapshots for a whole list; here it answers one name, so the answer is always
+    // current.
+    const PluginPolicy policy   = readPolicy(pluginRegistrations(), d->disabled_fallback);
+    const PluginEntry* entry    = findDiscovered(d->discovered, name);
+    const bool         built_in = entry != nullptr && entry->scope == PluginScope::BuiltIn;
+    const bool         skipped  = isSkipped(name);
 
-    return resolveEnabled(name, built_in, skipped, policy, disabled);
-}
-
-bool PluginManager::isPolicyDisabled(const String& name, const std::filesystem::path& library) const
-{
-    if (std::find(d->policy_disabled.begin(), d->policy_disabled.end(), name) != d->policy_disabled.end()) {
-        return true; // recorded by the scan that discovered the plugin
-    }
-
-    // Not known yet: no scan has run, or the plugin was named explicitly. Reading the
-    // registrations here costs one directory listing and keeps the policy absolute.
-    const std::filesystem::path loaded = library.empty() ? std::filesystem::path{} : normalizedPath(library);
-    for (const auto& registration : pluginRegistrations()) {
-        if (registration.enabled) {
-            continue;
-        }
-        if (!registration.name.empty() && registration.name == name) {
-            return true;
-        }
-        if (loaded.empty() || registration.path.empty()) {
-            continue;
-        }
-        // A registration names the library itself or the directory holding it.
-        const std::filesystem::path registered = normalizedPath(std::filesystem::path(std::u8string_view(registration.path.data(), registration.path.size())));
-        if (registered == loaded || registered == loaded.parent_path()) {
-            return true;
-        }
-    }
-    return false;
+    // The location matters: a directory registration disables its plugins without naming them, and a caller that knows
+    // the library (an explicit load) can answer even when the discovery list has never seen it.
+    const std::filesystem::path location = !library.empty() ? library : (entry != nullptr ? entry->path : std::filesystem::path{});
+    return policy.allows(name, built_in, skipped, location);
 }
 
 bool PluginManager::setPluginEnabled(const String& name, bool enabled)
@@ -1703,12 +1797,15 @@ bool PluginManager::setPluginEnabled(const String& name, bool enabled)
         return false;
     }
 
-    if (const PluginEntry* entry = findDiscovered(d->discovered, name); entry != nullptr && entry->scope == PluginScope::BuiltIn) {
+    const PluginEntry* entry = findDiscovered(d->discovered, name);
+    if (entry != nullptr && entry->scope == PluginScope::BuiltIn) {
         VN_LOGW("Plugin '{}' is provided by the application and cannot be disabled; ask the application to stop shipping it", toUtf8(name));
         return false;
     }
 
-    if (isPolicyDisabled(name, {}) && enabled) {
+    const PluginPolicy policy   = readPolicy(pluginRegistrations(), d->disabled_fallback);
+    const auto         location = entry != nullptr ? entry->path : std::filesystem::path{};
+    if (policy.isPolicyDisabled(name, location) && enabled) {
         // Storing the preference is fine, but the policy keeps winning; saying so
         // avoids a UI that looks broken.
         VN_LOGW("Plugin '{}' is disabled for all users by its registration file; enabling it here has no effect", toUtf8(name));
@@ -1914,9 +2011,9 @@ std::vector<String> PluginManager::names() const
     return result;
 }
 
-std::vector<Plugin*> PluginManager::plugins() const
+std::vector<raw_ptr<Plugin>> PluginManager::plugins() const
 {
-    std::vector<Plugin*> result;
+    std::vector<raw_ptr<Plugin>> result;
     result.reserve(d->plugins.size());
     for (const auto& lp : d->plugins) {
         result.push_back(lp.plugin);

@@ -330,8 +330,12 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
     data->install_btn->setToolTip(
         translate("appfw", "Register a plugin location (a library or a directory, possibly outside the application directory); it is loaded after a restart."));
     auto*    install_menu      = new QMenu(data->install_btn);
-    QAction* install_for_user  = install_menu->addAction(translate("appfw", "Current user only…"));
-    QAction* install_for_users = install_menu->addAction(translate("appfw", "All users…"));
+    auto*    user_menu         = install_menu->addMenu(translate("appfw", "Current user only"));
+    QAction* user_library      = user_menu->addAction(translate("appfw", "A plugin library…"));
+    QAction* user_directory    = user_menu->addAction(translate("appfw", "A plugin directory…"));
+    auto*    all_users_menu    = install_menu->addMenu(translate("appfw", "All users"));
+    QAction* all_users_library = all_users_menu->addAction(translate("appfw", "A plugin library…"));
+    QAction* all_users_dir     = all_users_menu->addAction(translate("appfw", "A plugin directory…"));
     data->install_btn->setMenu(install_menu);
 
     auto* list_actions = new QHBoxLayout();
@@ -569,11 +573,13 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
 
     QObject::connect(data->filter, &QLineEdit::textChanged, root, [this] { refresh(); });
     QObject::connect(data->load_btn, &QPushButton::clicked, root, [this] { loadPlugin(); });
-    QObject::connect(install_for_user, &QAction::triggered, root, [this] { installPlugin(vn::appfw::PluginScope::User); });
-    QObject::connect(install_for_users, &QAction::triggered, root, [this] { installPlugin(vn::appfw::PluginScope::AllUsers); });
+    QObject::connect(user_library, &QAction::triggered, root, [this] { installPlugin(vn::appfw::PluginScope::User, false); });
+    QObject::connect(user_directory, &QAction::triggered, root, [this] { installPlugin(vn::appfw::PluginScope::User, true); });
+    QObject::connect(all_users_library, &QAction::triggered, root, [this] { installPlugin(vn::appfw::PluginScope::AllUsers, false); });
+    QObject::connect(all_users_dir, &QAction::triggered, root, [this] { installPlugin(vn::appfw::PluginScope::AllUsers, true); });
     QObject::connect(data->toggle_btn, &QPushButton::clicked, root, [this] { togglePluginEnabled(); });
     QObject::connect(data->uninstall_btn, &QPushButton::clicked, root, [this] { uninstallSelectedPlugin(); });
-    QObject::connect(refresh_btn, &QPushButton::clicked, root, [this] { refresh(); });
+    QObject::connect(refresh_btn, &QPushButton::clicked, root, [this] { rescanAndRefresh(); });
     QObject::connect(close_btn, &QPushButton::clicked, root, [root] { root->close(); });
 
     QObject::connect(data->list, &QListWidget::currentItemChanged, root, [this](QListWidgetItem* item, QListWidgetItem*) {
@@ -608,11 +614,16 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
         QAction* copy_path_action = menu.addAction(translate("appfw", "Copy the library path"));
         copy_path_action->setVisible(entry != nullptr && !entry->path.empty());
         menu.addSeparator();
-        QAction* load_action              = menu.addAction(translate("appfw", "Load a plugin…"));
-        QAction* install_action           = menu.addAction(translate("appfw", "Install a plugin (current user)…"));
-        QAction* install_all_users_action = menu.addAction(translate("appfw", "Install a plugin (all users)…"));
-        QAction* refresh_action           = menu.addAction(translate("appfw", "Refresh"));
-        QAction* chosen                   = menu.exec(data->list->viewport()->mapToGlobal(pos));
+        QAction* load_action    = menu.addAction(translate("appfw", "Load a plugin…"));
+        auto*    install_sub    = menu.addMenu(translate("appfw", "Install a plugin"));
+        auto*    install_user   = install_sub->addMenu(translate("appfw", "Current user only"));
+        QAction* user_library   = install_user->addAction(translate("appfw", "A plugin library…"));
+        QAction* user_directory = install_user->addAction(translate("appfw", "A plugin directory…"));
+        auto*    install_all    = install_sub->addMenu(translate("appfw", "All users"));
+        QAction* all_library    = install_all->addAction(translate("appfw", "A plugin library…"));
+        QAction* all_directory  = install_all->addAction(translate("appfw", "A plugin directory…"));
+        QAction* refresh_action = menu.addAction(translate("appfw", "Refresh"));
+        QAction* chosen         = menu.exec(data->list->viewport()->mapToGlobal(pos));
 
         if (chosen == view_action) {
             if (item) {
@@ -636,14 +647,20 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
         else if (chosen == load_action) {
             loadPlugin();
         }
-        else if (chosen == install_action) {
-            installPlugin(vn::appfw::PluginScope::User);
+        else if (chosen == user_library) {
+            installPlugin(vn::appfw::PluginScope::User, false);
         }
-        else if (chosen == install_all_users_action) {
-            installPlugin(vn::appfw::PluginScope::AllUsers);
+        else if (chosen == user_directory) {
+            installPlugin(vn::appfw::PluginScope::User, true);
+        }
+        else if (chosen == all_library) {
+            installPlugin(vn::appfw::PluginScope::AllUsers, false);
+        }
+        else if (chosen == all_directory) {
+            installPlugin(vn::appfw::PluginScope::AllUsers, true);
         }
         else if (chosen == refresh_action) {
-            refresh();
+            rescanAndRefresh();
         }
     });
 
@@ -758,20 +775,32 @@ void PluginManagerDialog::refresh()
     }
 }
 
-void PluginManagerDialog::installPlugin(vn::appfw::PluginScope scope)
+void PluginManagerDialog::rescanAndRefresh()
+{
+    auto* data = dptr();
+    if (data->manager) {
+        // "Refresh" means what it says: the locations are walked again, so a registration file added or removed (or a
+        // library copied next to the others) shows up without a restart. Loading still happens at the next start - a
+        // scan never loads anything (see PluginManager::rescan()).
+        data->manager->rescan();
+    }
+    refresh();
+}
+
+void PluginManagerDialog::installPlugin(vn::appfw::PluginScope scope, bool directory)
 {
     auto* data = dptr();
     if (!data->manager) {
         return;
     }
 
-    // The location may be a plugin library or a directory of them, anywhere on
-    // disk: that is how a plugin installed outside the program directory is
-    // registered. It takes effect at the next start, so nothing is loaded here.
-    const QString file = QFileDialog::getOpenFileName(nullptr,
-                                                      translate("appfw", "Choose a plugin library or a plugin directory"),
-                                                      QString(),
-                                                      translate("appfw", "Plugin libraries (*.dll *.so *.dylib)"));
+    // The location may be a plugin library or a directory of them, anywhere on disk; one native picker cannot return
+    // both, so the caller chooses which one it is. It takes effect at the next start, so nothing is loaded here.
+    const QString file = directory ? QFileDialog::getExistingDirectory(nullptr, translate("appfw", "Choose a plugin directory"))
+                                   : QFileDialog::getOpenFileName(nullptr,
+                                                                  translate("appfw", "Choose a plugin library"),
+                                                                  QString(),
+                                                                  translate("appfw", "Plugin libraries (*.dll *.so *.dylib)"));
     if (file.isEmpty()) {
         return;
     }
@@ -790,7 +819,7 @@ void PluginManagerDialog::installPlugin(vn::appfw::PluginScope scope)
         data->message_label->setText(translate("appfw", "Registration failed (the file does not exist or the registration directory is not writable): ") +
                                      file);
     }
-    refresh();
+    rescanAndRefresh();
 }
 
 void PluginManagerDialog::uninstallSelectedPlugin()
@@ -823,7 +852,7 @@ void PluginManagerDialog::uninstallSelectedPlugin()
     data->message_label->setText(removed ? translate("appfw", "Registration removed (") + scopeLabel(registration->scope) +
                                                translate("appfw", "); it is not loaded after a restart.")
                                          : translate("appfw", "Removing the registration failed: the registration file does not exist or is not writable."));
-    refresh();
+    rescanAndRefresh();
 }
 
 void PluginManagerDialog::togglePluginEnabled()

@@ -49,7 +49,7 @@ related documents**.
 - `appfw-command-manager.md` — CommandManager.
 - `appfw-command-arguments.md` — command arguments: one tokenizer, carried with the execution, parsed by the command, history/events replayable.
 - `appfw-eventbus.md` — EventBus.
-- `appfw-plugin-system.md` — the plugin system (disable and uninitialise included).
+- `appfw-plugin-system.md` — the plugin system (disable and uninitialise included; one manager per process; command attribution per registration).
 - `appfw-config.md` — the configuration subsystem.
 - `appfw-progress.md` — ambient progress (`ProgressHost`).
 - `appfw-userio.md` — UserIO.
@@ -95,6 +95,7 @@ One ADR records one decision: background, options, decision, consequences, evide
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-18-plugin-command-attribution.md` — **a command is attributed by the call that registers it, not by the stack it happens to run on**: `PluginLoadContext::registerCommand()` sets the owner tag around that one call and restores it, `PluginManager` holds no tag across a lifecycle hook (the synchronous door pumps, so a suspended hook is not a boundary), and passing the owner per registration (an ABI change for every call site) is rejected.
 - `ADR-2026-11-18-the-frame-carries-its-context.md` — **the frame carries its context, and one clock measures it**:
   `FrameContext` (frame id, interval, area size, ratio) is composed by `RenderEngine::frameContext()` and handed to
   `FrameUpdate::onFrame(const FrameContext&)`; the clock is read once per frame at the head of `frame()`, so the value

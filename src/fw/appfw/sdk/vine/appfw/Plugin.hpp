@@ -228,6 +228,10 @@ class VN_APPFW_API Plugin : public Object {
      *       `co_await`/`co_return` the body compiles as an ordinary function returning an empty task, and the call site
      *       waits for something that never runs (the framework's own driver hit this as a `ud2` at run time).
      *
+     * @note A command this hook registers is attributed to the plugin through PluginLoadContext::registerCommand(), not
+     *       through an owner tag the manager keeps set: while the hook is suspended the main thread may deliver other
+     *       work, and the manager therefore holds no tag across it.
+     *
      * @param context Load context exposing host capabilities.
      * @return A task that completes when the plugin is usable.
      */

@@ -7429,6 +7429,13 @@ TEST(PluginLifecycleTest, DisabledPluginIsListedWithMetadataButNotLoaded)
     const auto own_commands = pm->commandInfosForPlugin(u8"test_plugin");
     EXPECT_TRUE(std::any_of(own_commands.begin(), own_commands.end(), [](const vn::appfw::CommandInfo& info) { return info.name == u8"test_hello"; }))
         << "加载后命令应归属于声明它的插件";
+
+    // 钩子里登记的命令（TestPlugin::postLoad 通过 PluginLoadContext::registerCommand）同样归本插件：
+    // 管理器不在钩子挂起时保留 owner 标签，所以归属必须由那次登记自己带上。
+    EXPECT_TRUE(
+        std::any_of(own_commands.begin(), own_commands.end(), [](const vn::appfw::CommandInfo& info) { return info.name == u8"test_runtime_hello"; }))
+        << "钩子中登记的命令也必须归属于本插件";
+
     for (const auto& info : own_commands) {
         EXPECT_TRUE(info.owner == u8"test_plugin");
     }
@@ -8238,8 +8245,143 @@ TEST(PluginLifecycleTest, InstallRejectsUnusableRegistrationId)
     std::filesystem::remove_all(bad, ec);
 }
 
-// ABI 握手（PluginAbi）：宿主在读取插件声明的任何东西之前，先问它是用什么 SDK 编的。
-// 两个夹具库分别模拟"比握手更旧"（没有入口点）与"比本宿主更新"（ABI 号对不上）的插件，
+// 显式按路径加载的插件不属于任何"扫描会走的目录"：重扫会把发现列表重建一遍，找不到它，但实例还在跑。
+// 报告里不得少它这一行——否则 UI 会显示"这个插件不存在"，而它正在运行。
+TEST(PluginLifecycleTest, PluginEntriesKeepAnExplicitlyLoadedPluginAfterARescan)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    static_cast<void>(pm->unloadAll());
+
+    // 库拷到程序目录之外，再用绝对路径加载；随后把程序目录藏起来，让重扫什么也找不到。
+    const auto  library = findPluginLibrary("app_shell");
+    ASSERT_FALSE(library.empty());
+    std::error_code ec;
+    const auto      outside = std::filesystem::temp_directory_path() / "vn_plugin_explicit_load";
+    std::filesystem::remove_all(outside, ec);
+    std::filesystem::create_directories(outside, ec);
+    const auto copied = outside / library.filename();
+    ASSERT_TRUE(std::filesystem::copy_file(library, copied, std::filesystem::copy_options::overwrite_existing, ec));
+
+    BuiltInPluginDirectoryScope hidden(std::filesystem::temp_directory_path() / "vn_plugin_explicit_empty");
+
+    ASSERT_NE(pm->load(vn::String(copied.u8string())), nullptr) << "按路径显式加载应成功";
+    ASSERT_TRUE(pm->isLoaded(u8"app_shell"));
+
+    pm->rescan();
+
+    const auto  entries = pm->pluginEntries();
+    const auto* shell   = findPluginEntry(entries, u8"app_shell");
+    ASSERT_NE(shell, nullptr) << "已加载的插件不得因为一次重扫而从列表里消失";
+    EXPECT_TRUE(shell->loaded);
+    EXPECT_EQ(pm->libraryPath(u8"app_shell"), copied) << "报告里的库路径应当是它真正加载的那一份";
+
+    static_cast<void>(pm->unloadAll());
+    std::filesystem::remove_all(outside, ec);
+}
+
+// 管理员按"位置"停用一个插件（注册文件只有 path + enabled = false，没有 name）时，显式 load() 也必须被拒。
+// installPlugin() 对目录写出来的正是这个形状；旧实现只按 name 匹配策略，于是这条路径被整个跳过。
+TEST(PluginLifecycleTest, PathKeyedRegistrationBlocksAnExplicitLoad)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    static_cast<void>(pm->unloadAll());
+
+    const auto library = findPluginLibrary("app_shell");
+    ASSERT_FALSE(library.empty());
+
+    std::error_code ec;
+    const auto      dir = std::filesystem::temp_directory_path() / "vn_plugin_policy_dir";
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    const auto copied = dir / library.filename();
+    ASSERT_TRUE(std::filesystem::copy_file(library, copied, std::filesystem::copy_options::overwrite_existing, ec));
+
+    const auto registration_dir = app->pluginRegistrationDirectory();
+    std::filesystem::create_directories(registration_dir, ec);
+    const auto registration_file = registration_dir / "policy_blocked.plugin";
+
+    // 清理写成作用域对象：任何一个断言失败也不会把策略文件留给后面的用例。
+    struct Cleanup {
+        std::filesystem::path file;
+        std::filesystem::path dir;
+        ~Cleanup()
+        {
+            std::error_code ec;
+            std::filesystem::remove(file, ec);
+            std::filesystem::remove_all(dir, ec);
+        }
+    } cleanup{ registration_file, dir };
+
+    {
+        std::ofstream stream(registration_file, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(static_cast<bool>(stream));
+        stream << "path = " << dir.string() << "\nenabled = false\n";
+    }
+
+    BuiltInPluginDirectoryScope hidden(std::filesystem::temp_directory_path() / "vn_plugin_policy_empty");
+
+    EXPECT_FALSE(pm->isPluginEnabled(u8"app_shell", copied)) << "按位置禁用的注册必须能被问到";
+    EXPECT_EQ(pm->load(vn::String(copied.u8string())), nullptr) << "显式按路径加载不得复活管理员停用的插件";
+    EXPECT_FALSE(pm->isLoaded(u8"app_shell"));
+}
+
+// 重扫是"Refresh"按钮的全部含义：登记一个新位置后，一次 rescan() 就该看到它，而 loadAll() 才会加载它。
+TEST(PluginLifecycleTest, RescanFindsANewRegistrationWithoutALoad)
+{
+    auto* app = GuiEnv::app.get();
+    ASSERT_NE(app, nullptr);
+    auto* pm = app->pluginManager();
+    ASSERT_NE(pm, nullptr);
+
+    if (!builtInPluginDirectoryReady()) {
+        GTEST_SKIP() << "plugin directory not built";
+    }
+
+    static_cast<void>(pm->unloadAll());
+
+    const auto library = findPluginLibrary("test_plugin");
+    ASSERT_FALSE(library.empty());
+
+    std::error_code ec;
+    const auto      dir = std::filesystem::temp_directory_path() / "vn_plugin_rescan_dir";
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    ASSERT_TRUE(std::filesystem::copy_file(library, dir / library.filename(), std::filesystem::copy_options::overwrite_existing, ec));
+
+    BuiltInPluginDirectoryScope hidden(std::filesystem::temp_directory_path() / "vn_plugin_rescan_empty");
+
+    pm->rescan();
+    EXPECT_EQ(findPluginEntry(pm->pluginEntries(), u8"test_plugin"), nullptr) << "还没登记的位置不该被发现";
+
+    const vn::String id = pm->installPlugin(vn::String(dir.u8string()), vn::appfw::PluginScope::User);
+    ASSERT_FALSE(id.empty());
+
+    pm->rescan();
+    const auto* entry = findPluginEntry(pm->pluginEntries(), u8"test_plugin");
+    ASSERT_NE(entry, nullptr) << "重扫必须看到刚登记的插件，否则 Refresh 就是空按钮";
+    EXPECT_FALSE(entry->loaded) << "重扫只发现，不加载";
+
+    EXPECT_TRUE(pm->uninstallPlugin(id, vn::appfw::PluginScope::User));
+    std::filesystem::remove_all(dir, ec);
+}
+
+// ABI 握手（PluginAbi）：宿主在读取插件声明的任何东西之前，先问它是用什么 SDK 编的。// 两个夹具库分别模拟"比握手更旧"（没有入口点）与"比本宿主更新"（ABI 号对不上）的插件，
 // 两者都必须被拒绝，而不是按当前布局去读它们的 PluginInfo —— 那正是会静默读到垃圾、
 // 然后在别处崩掉的那条路径。夹具路径由 CMake 注入（tests/test_gui/CMakeLists.txt）。
 TEST(PluginLifecycleTest, PluginsWithoutCompatibleAbiAreRefused)

@@ -34,18 +34,26 @@ class VN_APPFW_API PluginManagerDialog : public Window {
     ~PluginManagerDialog() override;
 
   public:
-    /// Rebuilds the plugin list from the manager.
+    /// Rebuilds the plugin list from the manager (the discovery list as it is now).
     void refresh();
 
   private:
+    /// Walks the plugin locations again, then rebuilds the list.
+    ///
+    /// The difference from refresh(): a scan is what notices a registration file or a library that appeared or
+    /// disappeared, while refresh() only re-reads the state of what was already discovered.
+    void rescanAndRefresh();
+
     /// Opens a file picker and loads the selected plugin library.
     void loadPlugin();
 
-    /// Opens a file picker and registers the selected plugin location.
+    /// Opens a picker and registers the selected plugin location.
     ///
-    /// @param scope Scope to register in: PluginScope::User needs no privileges,
-    ///              PluginScope::AllUsers needs administrator rights.
-    void installPlugin(vn::appfw::PluginScope scope);
+    /// @param scope     Scope to register in: PluginScope::User needs no privileges,
+    ///                  PluginScope::AllUsers needs administrator rights.
+    /// @param directory true: pick a directory of libraries; false: pick one library file. One native picker cannot
+    ///                  return both, and PluginManager::installPlugin() accepts either location.
+    void installPlugin(vn::appfw::PluginScope scope, bool directory);
 
     /// Removes the registered location the selected plugin was discovered from.
     void uninstallSelectedPlugin();

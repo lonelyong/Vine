@@ -5,9 +5,12 @@
 #include <utility>
 
 #include <vine/appfw/Application.hpp>
+#include <vine/appfw/CommandManager.hpp>
 #include <vine/appfw/ConfigRegistry.hpp>
 #include <vine/appfw/StartupProgress.hpp>
 #include <vine/logging/Log.hpp>
+
+#include "RegistrationOwnerScope.hpp"
 
 VN_APPFW_NS_BEGIN
 
@@ -96,6 +99,20 @@ bool PluginLoadContext::registerConfigItem(StandardCategory cat, StandardGroup g
 {
     auto* reg = configRegistry();
     return reg ? reg->addItem(cat, grp, item, d->plugin_name) : false;
+}
+
+bool PluginLoadContext::registerCommand(TypeId command_class, String name, std::function<Command*()> factory)
+{
+    CommandManager* const commands = commandManager();
+    if (commands == nullptr || d->plugin_name.empty()) {
+        return false;
+    }
+
+    // The tag is set around THIS call and restored straight away: a hook that registers after a `co_await` is still
+    // attributed to its plugin, and nothing the main thread delivers while the hook is suspended is (see the note on
+    // the declaration).
+    RegistrationOwnerScope owner_scope(commands, d->plugin_name);
+    return commands->registerCommand(command_class, std::move(name), std::move(factory));
 }
 
 std::vector<const ConfigItem*> PluginLoadContext::registeredConfigs() const

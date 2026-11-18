@@ -1,7 +1,7 @@
 # appfw's plugin system
 
 > **Status**: current
-> **Last verified**: 2026-10-23
+> **Last verified**: 2026-11-18
 > **Scope**: plugin discovery / loading / unloading, dependencies, configuration persistence, metadata and the ABI handshake.
 > **Sources**: `Plugin.hpp`, `PluginManager.hpp`, `tests/test_appfw`.
 > **Backlog**: none (open items are in `../backlog/`)
@@ -69,6 +69,20 @@ Called while the loop is still running, or from a non-application thread: each l
 It is **not** a service locator — code that is **handed** to the application (a command's `CommandExecutionContext::application()`, a plugin hook's parameter, a Qt parent chain) must use the reference it was handed; otherwise the dependency is hidden, and a test that runs two applications in one process cannot work.
 Every call site checks for null ("there is no application yet" and "the application is being destroyed" are both legal), see the header comment on `Application::current()`.
 
+The boot adds one more process-wide read: `StartupProgress::current()`. It is how the manager reports stages and how `PluginLoadContext::stopToken()` answers with the running boot's token, so a boot-scoped token does not have to be threaded through every constructor. It is the same kind of door (one process, one boot at a time), and a plugin still receives the token through the context rather than reaching for the sink.
+
+### 2.4 One manager per process
+
+- What: `PluginManager` is a process singleton. The plugin locations (`setBuiltInPluginDirectory()`) and the host's skip list (`setSkipList()`) are process-wide statics; the loaded list, the discovery list and the process-local preference fallback live in the instance.
+- Why: a plugin library can be instantiated only once per process, and the commands it registers go into one process-global registry. A second manager could neither own those instances independently nor unload them; it would only be a second view of the same state (G1: the concept has one owner; G10: the lifetime cannot be made per-instance because the code is not).
+- Boundary: what the manager OWNS is per instance; what it OBSERVES about the machine (which directories this process scans, what this process refuses) is per process. A test that needs another answer swaps the global inside a scope (`BuiltInPluginDirectoryScope` in `tests/test_gui`) — the fact that this is needed is the property, not a defect.
+
+### 2.5 Command attribution is per registration, not per hook
+
+- What: `CommandManager` stamps a registration with the owner tag it reads at that moment (`Application::registrationOwner()`). The manager sets that tag only around the work it performs itself — flushing a plugin's module command table — and a lifecycle hook that registers a command does it through `PluginLoadContext::registerCommand()`, which sets the tag around that one call and restores the previous value.
+- Why: a hook is a coroutine. While it is suspended the main thread may deliver other work (the synchronous door `load()` actively pumps), and every registration made there would inherit the paused plugin's name. Keeping no tag across a hook makes the attribution independent of suspension points (G4: the rule does not depend on an unwritten timing convention; G10: no lifetime is held longer than the work it describes).
+- Boundary: statically declared commands (`VN_DECLARE_COMMAND`) are unaffected — the manager flushes their module queue inside its own scope. A plugin that registers "by hand" from a hook and bypasses the context gets an unattributed command (owner empty), never another plugin's name. See `../decisions/ADR-2026-11-18-plugin-command-attribution.md`.
+
 ## 3. Features
 
 ### 3.1 Feature index
@@ -83,6 +97,7 @@ Every call site checks for null ("there is no application yet" and "the applicat
 | F6 | Install / registration | `installed.d/<id>.plugin`; BuiltIn / User / AllUsers | landed |
 | F7 | Metadata / icon | email / repo / icon (inline SVG) | landed |
 | F8 | Manager dialog | list / details / disable / install | landed |
+| F9 | Rescan | walk the locations again without creating an instance | landed |
 
 ### 3.1.1 F1 Discovery
 
@@ -142,11 +157,19 @@ Every call site checks for null ("there is no application yet" and "the applicat
 
 ### 3.1.8 F8 Manager dialog
 
-- **Behaviour**: the left column filters / lists / loads / installs; the right column shows the details (a `QScrollArea`).
+- **Behaviour**: the left column filters / lists / loads / installs; the right column shows the details (a `QScrollArea`). Refresh walks the locations again (`rescan()`) before rebuilding the list, so a registration file that appeared or disappeared is visible without a restart; installing offers a library picker and a directory picker, because one native dialog cannot return both.
 - **Constraints** (C8): no disable button for a BuiltIn or skipped plugin; an unavailable row is greyed out.
 - **Requirements** (R8): the details show icon / email / repo / dependencies / state.
 - **Acceptance** (T8): `ManagerDialogListsDisabledPlugins`, `ManagerDialogHidesToggleWhenItCannotTakeEffect`.
-- **Caveat** (N8): the dialog reads and manipulates metadata only; it never loads plugin code itself.
+- **Caveat** (N8): the dialog reads and manipulates metadata only; it never loads plugin code itself, and Refresh never loads anything either.
+
+### 3.1.9 F9 Rescan
+
+- **Behaviour**: `rescan()` runs the discovery half of a load - walk the application directory and every registration, read each plugin's metadata - and creates no instance, runs no lifecycle and touches no registration. `pluginEntries()` reports a loaded plugin even when no location provides it any more (an explicit `load()` by path), because the instance is still running.
+- **Constraints** (C9): a scan clears and refills the discovery list; the loaded list is untouched, so a scan never unloads anything.
+- **Requirements** (R9): a plugin installed or removed while the process runs is visible after one rescan, still unloaded (`PluginEntry::loaded == false`) until the next `loadAll()`.
+- **Acceptance** (T9): `RescanFindsANewRegistrationWithoutALoad`, `PluginEntriesKeepAnExplicitlyLoadedPluginAfterARescan`.
+- **Caveat** (N9): a rescan loads libraries to read their metadata (that is what discovery is), so it is not free; it must not run while a load pass owns the batch (it refuses and logs, like a nested `loadAll()`).
 
 ## 4. Public Interface
 
@@ -157,15 +180,17 @@ Every call site checks for null ("there is no application yet" and "the applicat
 | `preLoad()` / `load()` / `postLoad()` / `unload()` | `Task<void>` lifecycle hooks | every exit says `co_return;` |
 | `PluginInfo` | uuid / name / display_name / version / description / vendor / email / repo / icon / dependencies | Qt-free |
 | `VN_DECLARE_PLUGIN` | declares the metadata | an argument-count change needs a recompile |
+| `PluginLoadContext::registerConfigItem()` | a config item owned by the plugin | the owner is an argument, not a tag |
+| `PluginLoadContext::registerCommand()` | a command owned by the plugin | sets the owner tag around that one call (§2.5) |
 
 ### 4.2 `PluginManager`
 
 | Interface | Contract | Note |
 | --- | --- | --- |
-| `discover()` / `pluginEntries()` | discover / list | instantiates nothing |
-| `load(name)` / `loadAll()` / `loadAllAsync()` | loading | dependency resolution / classification |
+| `rescan()` / `pluginEntries()` | scan / list | instantiates nothing; the list also reports a loaded plugin no location provides |
+| `load(name)` / `loadAll()` / `loadAllAsync()` | loading | dependency resolution / classification; returns a borrowed `raw_ptr<Plugin>` |
 | `unloadAll()` | unload in reverse dependency order | idempotent |
-| `setPluginEnabled()` / `isPluginEnabled()` | user preference | takes effect on the next start |
+| `setPluginEnabled()` / `isPluginEnabled(name, library)` | user preference | takes effect on the next start; the library argument lets a location-keyed policy apply |
 | `setSkipList()` / `isSkipped()` | in-process hard switch | wins over everything |
 | `installPlugin()` / `uninstallPlugin()` | registration file | BuiltIn is refused |
 
@@ -183,6 +208,9 @@ Every call site checks for null ("there is no application yet" and "the applicat
 | C6 | Identity is whatever the library's `PluginInfo` says; the registration file is written to a temporary name and renamed. |
 | C7 | `PluginInfo` is Qt-free; an SVG goes into a constant before it is passed to the macro. |
 | C8 | No disable button for a BuiltIn or skipped plugin. |
+| C9 | A scan clears and refills the discovery list; the loaded list is untouched, so a scan never unloads. |
+| C10 | A command registered inside a lifecycle hook goes through `PluginLoadContext::registerCommand()`; the manager holds no owner tag across a suspension. |
+| C11 | One manager per process: the locations and the skip list are process-wide, the owned state is per instance. |
 
 ### 5.2 Requirements (R#)
 
@@ -196,6 +224,7 @@ Every call site checks for null ("there is no application yet" and "the applicat
 | R6 | An identity conflict is a warning only; the library wins. |
 | R7 | An invalid SVG falls back to the default icon. |
 | R8 | The details show icon / email / repo / dependencies / state. |
+| R9 | A plugin installed or removed while the process runs is visible after one `rescan()`, still unloaded until the next `loadAll()`. |
 
 ### 5.3 Invariants (N#)
 
@@ -220,6 +249,12 @@ Every call site checks for null ("there is no application yet" and "the applicat
 - How to detect it: the synthetic set in `UnloadOrderIsReverseDependencyOrder`.
 - How to prevent it: use the pure `unloadOrder()` function and never look at a position in the list.
 
+### 6.3 A command registered from a hook
+
+- How it fails: the command ends up with an empty owner (attributed to no plugin), or - with an owner tag held across the hook - with the paused plugin's name while another part of the boot registered it.
+- How to detect it: `PluginManager::commandInfosForPlugin()` does not list it, or lists it under the wrong plugin; the plugin manager dialog's Commands tab shows the same answer.
+- How to prevent it: register through `PluginLoadContext::registerCommand()`; never call `CommandManager::registerCommand()` directly from a lifecycle hook.
+
 ## 7. Rejected Options
 
 | # | Option | Reason | ADR |
@@ -229,7 +264,8 @@ Every call site checks for null ("there is no application yet" and "the applicat
 | D3 | Host-side registration rollback | The manager is destroyed right after shutdown, so a rollback protects nothing. | — |
 | D4 | `QIcon` or a file path as the plugin icon | It would couple a Qt version into the ABI. | — |
 | D5 | Copy plugin files at install time | Registration is by path; a path that no longer resolves is a warning on the next start. | — |
-
+| D6 | Keep the command-registration owner set for the whole hook | A suspended hook is not a boundary the main thread respects: the synchronous door pumps, so a delivered callable's registration would inherit the paused plugin's name (G4 - the rule would depend on a timing convention nobody can see). | `ADR-2026-11-18-plugin-command-attribution.md` |
+| D7 | Pass the owner with every registration call | It changes the command-registration ABI and every call site to model a fact the context already knows; the context-level call stamps the same tag around one call (G8). | `ADR-2026-11-18-plugin-command-attribution.md` |
 ## 8. Tests and Acceptance
 
 | # | Criterion | Case / command |
@@ -241,6 +277,8 @@ Every call site checks for null ("there is no application yet" and "the applicat
 | T5 | directory layout / config round trip | `DefaultDataDirectoryLayout`, `ConfigFileRoundTripPersistsDisabledPlugins` |
 | T6 | install / registration | `InstallWritesRegistrationFile`, `HandWrittenRegistrationCanDisableForAllUsers` |
 | T7 | metadata / icon / dialog | `ManagerDialogShowsMetadataAndIcons` |
+| T8 | command attribution from a hook | `DisabledPluginIsListedWithMetadataButNotLoaded` (the `test_runtime_hello` case) |
+| T9 | rescan / location-keyed policy | `RescanFindsANewRegistrationWithoutALoad`, `PluginEntriesKeepAnExplicitlyLoadedPluginAfterARescan`, `PathKeyedRegistrationBlocksAnExplicitLoad` |
 
 ## 9. Status and Evolution
 
@@ -257,6 +295,7 @@ Discovery, loading, disabling, skipping and unloading, the configuration and dat
 ### 9.3 Compatibility / migration
 
 `VN_APPFW_PLUGIN_ABI_VERSION` is **10u**; after an argument-count change in `VN_DECLARE_PLUGIN` every plugin must be recompiled.
+Adding the non-virtual `PluginLoadContext::registerCommand()` and the defaulted `library` parameter of `isPluginEnabled()` is source-compatible and does not move any layout, so the revision does not change; a plugin built against 10u keeps loading.
 
 ## 10. References
 
@@ -266,7 +305,7 @@ Discovery, loading, disabling, skipping and unloading, the configuration and dat
 - `src/fw/appfw/sdk/vine/appfw/PluginManager.hpp`
 - `src/fw/appfw/src/PluginManager.cpp`
 - `src/fw/appfw/src/gui/PluginManagerDialog.cpp`
-- `tests/test_appfw`, `tests/test_gui`
+- `tests/test_gui` (`PluginLifecycleTest`), `tests/test_vsg` (`VsgBackendPluginTest`)
 
 ### 10.2 Documents and ADRs
 

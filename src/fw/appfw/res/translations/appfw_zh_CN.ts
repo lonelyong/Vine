@@ -92,10 +92,6 @@
         <translation>所有用户</translation>
     </message>
     <message>
-        <source>All users…</source>
-        <translation>所有用户…</translation>
-    </message>
-    <message>
         <source>Another operation is in progress; please wait.</source>
         <translation>另一个操作正在进行中，请稍候。</translation>
     </message>
@@ -158,10 +154,6 @@
     <message>
         <source>Choose a plugin library</source>
         <translation>选择插件库</translation>
-    </message>
-    <message>
-        <source>Choose a plugin library or a plugin directory</source>
-        <translation>选择插件库或插件目录</translation>
     </message>
     <message>
         <source>Choose directories</source>
@@ -228,10 +220,6 @@
         <translation>仅当前用户</translation>
     </message>
     <message>
-        <source>Current user only…</source>
-        <translation>仅当前用户…</translation>
-    </message>
-    <message>
         <source>Dependencies</source>
         <translation>依赖</translation>
     </message>
@@ -278,6 +266,18 @@
     <message>
         <source>Disabled: not loaded this run, so it has no commands or configuration; it stays unloaded after a restart. Enable it with the button on the right or the context menu.</source>
         <translation>已禁用：本次未加载，因此没有命令与配置信息；重启后仍然不加载。在右侧按钮或右键菜单中启用。</translation>
+    </message>
+    <message>
+        <source>A plugin library…</source>
+        <translation>插件库文件…</translation>
+    </message>
+    <message>
+        <source>A plugin directory…</source>
+        <translation>插件目录…</translation>
+    </message>
+    <message>
+        <source>Choose a plugin directory</source>
+        <translation>选择插件目录</translation>
     </message>
     <message>
         <source>Disabled; it takes effect after a restart.</source>
@@ -434,14 +434,6 @@
     <message>
         <source>Install a plugin</source>
         <translation>安装插件</translation>
-    </message>
-    <message>
-        <source>Install a plugin (all users)…</source>
-        <translation>安装插件（所有用户）…</translation>
-    </message>
-    <message>
-        <source>Install a plugin (current user)…</source>
-        <translation>安装插件（仅当前用户）…</translation>
     </message>
     <message>
         <source>Key</source>
