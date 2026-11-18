@@ -94,7 +94,7 @@ One ADR records one decision: background, options, decision, consequences, evide
 `accepted` / `superseded` / `rejected`; the date is immutable; when superseded, the old file is marked
 `superseded` and links the new ADR.
 
-- `ADR-2026-11-17-documentation-language.md` — **English is the documentation language**: the code's vocabulary, commit bodies and diagnostic codes were already English; the only Chinese left is 35k lines of design argument (which is also the only "why" record); one file one language, new files English, ADRs and bug postmortems append-only English summaries, the glossary in `memory/glossary.md`; the migration runs in batches per `research/docs-2026-11-17-english-migration.md`.
+- `ADR-2026-11-17-documentation-language.md` — **English is the documentation language**: the code's vocabulary, commit bodies and diagnostic codes were already English; one file one language, new files English, records converted whole with the original left in git, the glossary in `memory/glossary.md`. The migration is finished: every page here is English except the quoted literals a page has to reproduce, and `docs/guides/**` stays Chinese by a separate decision.
 - `ADR-2026-11-16-authoring-view-and-target-vocabulary.md` — **values carry declarations, behaviour belongs to objects**: a `View` value (`CameraSnapshot` + `Viewport` + layer mask, `CollectView` retired), `RenderArea` → `RenderArea` (surface stays with the platform), a pass's target collapsed into the two values `Target` + `Output`, `PassDesc` as the only authoring shape (`RenderPass`'s 35 setters become a read-only live handle), zero callbacks in values (`before_draw` moves to the object's `update()`, `OverlayLayout` returns a `Viewport`), the dead field `tag` deleted, `setRenderTarget` made real (vk pre-builds; CAP-86 added) or retired, the `releasePass` contract narrowed, `Capabilities` = `Features` + `Limits`, diagnostics gain `origin` (CAP-87), the light set no longer allocated per pass; four normative text revisions plus 26 section-comment cleanups. **Proposed, pending approval**; review and the 18-batch order are in `research/graphics-2026-11-16-redesign-r2.md`.
 - `ADR-2026-11-16-redesign-seam-and-vocabulary.md` — **the redesign is names and ownership, not capability**: the two backends' seam (`backend/`'s 25 headers reduced to 6 shared mechanisms + the guard, 18 vsg-only headers moved into the plugin), vocabulary (the design noun `Session` retired in favour of `FrameDriver` / `FrameDriverId` / `WindowSession` / `FrameHead`), a frame in three phases (frame-head resolution under one lock / lock-free recording / one submit lock, `prepare` = `Submission::TransferOnly`), one refusal shape (`DiagnosticDraft`), the target table and the engine composition root put back where they belong, the selection rule collapsed into one; `RenderBackend` the aggregate and `RenderDevice`'s five responsibility faces are kept (`G8`: no consumer), with the trigger conditions written into the ADR. **Proposed, pending approval**; the construction plan is `research/graphics-2026-11-16-redesign.md`. §2 and batch 3's "the directory is the seam" are superseded by the next entry.
 - `ADR-2026-11-16-no-backend-half.md` — **delete the "backend half"**: directory, include guard, the `VineGraphicsBackendSdk` install component and the file-set gate all maintained one boundary from four places, at a cost above the benefit (`G7`); the 8 shared mechanisms are flattened into `sdk/vine/graphics/` and merged into `vn::graphics` (`Keys.hpp` → `DrawState.hpp`, `ReadbackResult` → `ReadbackAnswer`), and `gfx_backend_vsg`'s own types move into `vn::backend_vsg::core` (`G13`). Gates became property-based (the module must not include a render API or a concrete backend; exported symbols are checked by file list).
@@ -184,16 +184,10 @@ One ADR records one decision: background, options, decision, consequences, evide
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (17 files / 1 proposal set)
+## research/ — research and proposals (16 files / 1 proposal set)
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
 here is deleted.
-
-- `docs-2026-11-17-english-migration.md` — **the documentation migration plan** (the decision is
-  `../decisions/ADR-2026-11-17-documentation-language.md`): the inventory of 221 files / 34,842 lines,
-  the M0–M10 batches and their order, the acceptance per batch (no new claims / ID census / link
-  census / nine gates) and the risks; ADRs and bug postmortems only ever gain English summaries and
-  research is not translated.
 
 - `graphics-2026-11-17-audit-3.md` — **the third independent audit that re-established the facts**: a
   conclusion per audit dimension (13 of them, "nothing found" included), 24 findings (`A3-01…A3-24`),

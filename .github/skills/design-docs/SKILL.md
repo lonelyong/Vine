@@ -20,20 +20,17 @@ description: |
 
 English is the repository's documentation language. The rule is in
 `.github/copilot-instructions.md` → "Documentation Language"; the decision is
-`ADR-2026-11-17-documentation-language`; the batched migration (which converted this skill in M0)
-is in `.ai/research/docs-2026-11-17-english-migration.md`.
+`ADR-2026-11-17-documentation-language`, and its migration is finished, so a page written today
+starts in English.
 
 * **One file, one language.** New files (design pages, ADRs, backlog, memory) are English.
-* A Chinese file that needs a substantial change is **converted whole** in that commit; a one-line
-  fact fix leaves it Chinese and it stays on the migration list.
 * **Records are converted**: an ADR or bug postmortem is converted whole to English in one commit (git
   holds the original), and a later correction is appended and dated. An open finding is English from the
   start.
 * Prose uses the code spelling; `.ai/memory/glossary.md` is the single mapping (retired spellings
   and false friends included).
-* The template below states the **English** chapter names. `scripts/check_design_docs.py` accepts
-  the Chinese legacy names too until the migration ends (M10 of the plan); after that, only the
-  English set.
+* The template below states the **English** chapter names, and `scripts/check_design_docs.py` accepts
+  only that set: a Chinese chapter or status spelling is a gate failure, not a transitional state.
 
 ## 0. In One Line
 
@@ -261,8 +258,8 @@ python3 scripts/check_public_docs.py
 - `check_ai_docs.py`: every `.md` under `.ai/` must be named in `.ai/README.md`; a reference in a
   current section must exist.
 - `check_design_docs.py`: each design doc's top block, the ten numbered chapters, the sub-numbers and
-  the `F/C/R/T/N/D` IDs; `--strict` turns the ID warnings into failures. It accepts the Chinese
-  legacy chapter and status vocabulary next to the English set until the migration ends.
+  the `F/C/R/T/N/D` IDs; `--strict` turns the ID warnings into failures. Its chapter and status
+  vocabulary is English only.
 - `check_doc_symbols.py`: a unit named by a living document in `docs/guides/` must exist.
 - `check_public_docs.py`: the public-face documentation baseline must not get worse.
 - A documentation-only change runs no build / test; a change to a source comment follows the

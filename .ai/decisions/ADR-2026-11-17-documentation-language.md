@@ -1,8 +1,7 @@
 # ADR-2026-11-17: English is the documentation language
 
-- Status: **Accepted** (2026-11-17), **amended 2026-11-18 twice** (bug postmortems converted; then ADRs
-  too - see the two amendments at the end); execution is batched, plan in
-  [`../research/docs-2026-11-17-english-migration.md`](../research/docs-2026-11-17-english-migration.md).
+- Status: **Accepted** (2026-11-17), **amended 2026-11-18 three times** (bug postmortems converted; then
+  ADRs too; then the migration ended - see the three amendments at the end). The plan is deleted.
 - Date: 2026-11-17
 - Scope: `.ai/**` prose and `.github/**` documentation. **Not** `docs/guides/**` (product documentation
   for a Chinese audience — a separate decision, see the plan's open questions).
@@ -123,3 +122,26 @@ original. So the rule narrows once more and lands on the shape the bug postmorte
 
 Every other decision in this ADR stands, including the acceptance rules: no new claims, unchanged ID
 and link census, whole file per commit.
+
+## Amendment (2026-11-18, third): the migration ended
+
+The Execution section's closing condition is met, so this decision is closed rather than still running.
+
+1. **The corpus is English.** `.ai/` has no Chinese prose left: the 56 design pages (M3-M7), the
+   11 memory notes (M2), the 13 backlog files (M8), `.ai/README.md` (M1),
+   `.github/skills/design-docs/SKILL.md` (M0), the 36 bug postmortems (M9 plus the first amendment)
+   and the 89 ADRs (`2433f63f` … `68d8c9c8`, 15 batches, 54 by area and the last 35 in date order).
+   Each batch kept the acceptance rules: no new claims, an unchanged ID and link census, a structure
+   census (headings, table rows, list items) and the nine gates.
+2. **What is still Chinese is deliberate**, and no batch will touch it: `docs/guides/**` (out of scope,
+   open question 1), the two quoted literals a page has to reproduce (`车身.stl` in the bvh-seal ADR,
+   and this decision's own citation of a Chinese word), the UI and crash-report string literals kept
+   inside code fences (`appfw-startup`, `appfw-startup-phases`, `appfw-translation`), and
+   `memory/glossary.md`'s Chinese column - the glossary now maps the code spelling to the words
+   `docs/guides/**` uses, which is the one place a Chinese reader still lands.
+3. **The plan is deleted** (git is the archive), `.ai/README.md`'s index no longer lists it, and the
+   "migration list" decision 3 mentions no longer exists: a new file starts in English.
+4. **`check_design_docs.py` accepts the English template only** - the ten chapter names and the four
+   status-block facts lost their Chinese spellings, so a Chinese design page is now a gate failure
+   rather than a legal transitional state.
+

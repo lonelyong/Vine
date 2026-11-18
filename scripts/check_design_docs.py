@@ -30,32 +30,34 @@ DESIGN = ROOT / ".ai" / "design"
 # The chapter order, with the words that identify each chapter. Keeping the
 # accepted spellings narrow is deliberate: a different name is a different
 # structure, and the point is that every design doc reads the same way.
-# The English spellings are the target vocabulary (ADR-2026-11-17-documentation-language);
-# the Chinese ones are the legacy corpus and leave this table when the migration ends.
+# The English spellings are the only vocabulary (ADR-2026-11-17-documentation-
+# language, third amendment of 2026-11-18): the Chinese set left when the corpus
+# finished converting.
 CHAPTERS = [
-    ("1", ("概要设计", "概要", "Overview")),
-    ("2", ("设计要点", "Design Points")),
-    ("3", ("功能点", "Features")),
-    ("4", ("公开接口", "Public Interface")),
-    ("5", ("约束", "要求", "不变量", "Constraints", "Requirements", "Invariants")),
-    ("6", ("注意事项", "陷阱", "Caveats", "Traps")),
-    ("7", ("已否决", "否决项", "Rejected")),
-    ("8", ("测试", "验收", "Tests", "Acceptance")),
-    ("9", ("状态", "演进", "Status", "Evolution")),
-    ("10", ("参考", "References")),
+    ("1", ("Overview",)),
+    ("2", ("Design Points",)),
+    ("3", ("Features",)),
+    ("4", ("Public Interface",)),
+    ("5", ("Constraints", "Requirements", "Invariants")),
+    ("6", ("Caveats", "Traps")),
+    ("7", ("Rejected",)),
+    ("8", ("Tests", "Acceptance")),
+    ("9", ("Status", "Evolution")),
+    ("10", ("References",)),
 ]
 
-# One entry per required status-block fact, with its accepted spellings: the block states each fact
-# in whichever language the document is written in.
+# One entry per required status-block fact. The template is English only, so the block states each
+# fact in English; the Chinese spellings left with the documentation migration
+# (ADR-2026-11-17-documentation-language).
 META = (
-    ("状态", "Status"),
-    ("最后核对", "Last verified"),
-    ("范围", "Scope"),
-    ("权威来源", "Sources"),
+    ("Status",),
+    ("Last verified",),
+    ("Scope",),
+    ("Sources",),
 )
 H2 = re.compile(r"^##\s+(\d+)\.\s+(.*)$")
 H3 = re.compile(r"^###\s+(\d+)\.(\d+)(?:\.(\d+))?\s+(.*)$")
-DATE_OR_ROUND = re.compile(r"20\d\d-\d\d-\d\d|第[一二三四五六七八九十]+轮|本轮")
+DATE_OR_ROUND = re.compile(r"20\d\d-\d\d-\d\d|\bround\b|\brevision\b", re.IGNORECASE)
 
 
 def design_docs() -> list[pathlib.Path]:

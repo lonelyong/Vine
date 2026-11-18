@@ -76,16 +76,14 @@ acceptable — is in `.github/instructions/framework-design.instructions.md`.
 
 ## Documentation Language
 
-English is the repository's documentation language. This is the end state; the Chinese corpus is being
-converted in batches (`ADR-2026-11-17-documentation-language`, plan in
-`.ai/research/docs-2026-11-17-english-migration.md`).
+English is the repository's documentation language, and the corpus is converted: every `.ai/**` page is
+English except the quoted literals a page has to reproduce (`ADR-2026-11-17-documentation-language`).
 
 * **One file, one language.** A file is English or Chinese, never mixed paragraph by paragraph.
 * **New files are English** — every file created from now on, `.ai/**` and `.github/**` included.
-* **A substantial rewrite converts the file.** "Substantial" means it touches chapter titles or more
-  than about a third of the file; convert the whole file in that commit instead of leaving it half
-  translated. A one-line fact fix leaves a Chinese file Chinese and it stays on the migration list —
-  correctness first.
+* **Nothing in `.ai/**` is Chinese prose.** The corpus is converted, so there is no migration list to
+  add to: a Chinese paragraph in a `.ai/**` page is a defect, and the only Chinese a page may carry is a
+  literal it has to reproduce (a UI string inside a code fence, a file name, a quoted word).
 * **Records are converted, and a correction is appended.** An ADR or a bug postmortem is converted whole to
   English in one commit (git holds the original) and drops its then-redundant `> **EN**:` line; a later correction
   is appended and dated, never folded into the converted text. The conversion preserves every stable ID, `G#`
@@ -93,14 +91,15 @@ converted in batches (`ADR-2026-11-17-documentation-language`, plan in
   English from the start. The boundary is `ADR-2026-11-17-documentation-language`, amendments of 2026-11-18.
 * **Identifiers are never translated.** Prose uses the code spelling (`FrameGate`, `residency`,
   `frame driver`); `.ai/memory/glossary.md` is the one mapping between a concept's English spelling
-  and the words the Chinese pages use, and it lists the retired spellings and the false friends.
+  and the words the Chinese pages use - today `docs/guides/**`, which stays Chinese - and it lists the
+  retired spellings and the false friends.
 * **Translation is not an edit.** A conversion preserves every fact, caveat, `G#` citation and stable
   ID (`F#` / `C#` / `R#` / `N#` / `P#` / `D#` / `T#`); improving the design while translating is a
   separate batch.
 * **Design chapters use the English names of the template** (`Overview`, `Design Points`, `Features`,
   `Public Interface`, `Constraints, Requirements and Invariants`, `Caveats and Traps`,
-  `Rejected Options`, `Tests and Acceptance`, `Status and Evolution`, `References`). The gate accepts
-  the Chinese legacy names until the migration ends, then only the English set.
+  `Rejected Options`, `Tests and Acceptance`, `Status and Evolution`, `References`). `check_design_docs.py`
+  accepts that set only: a Chinese chapter or status spelling is a gate failure.
 
 ## Language Standard
 
