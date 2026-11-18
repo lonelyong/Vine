@@ -220,6 +220,19 @@ class StreamUploads {
      */
     [[nodiscard]] std::uint64_t uploadedBytes() const noexcept;
 
+    /** @brief Gets the bytes the RESIDENT binds read right now (0 when nothing is resident).
+     *
+     * @details
+     * - RESIDENT, NOT CUMULATIVE: `uploadedBytes()` is churn, this is what the entries hold at this instant, so a
+     *   retire lowers it. That is the number a residency row wants (see `ResidencyKind::Geometry`).
+     * - Summed per call by visiting the entries rather than kept as a running counter: the table retires inside
+     *   `PinnedResources`, and a second total maintained alongside it would be one more number to keep in step.
+     * - Each entry's size is the array its bind reads, measured once when it was built (see `uploadedBytes`).
+     *
+     * @return Bytes of every resident vertex and index stream.
+     */
+    [[nodiscard]] std::uint64_t residentBytes() const noexcept;
+
     /** @brief Gets the number of acquires an existing bind answered. */
     [[nodiscard]] std::uint64_t aliases() const noexcept;
 

@@ -84,12 +84,14 @@ struct StreamUploads::Data {
     struct VertexEntry {
         ::vsg::ref_ptr<::vsg::BindVertexBuffers>   bind;
         vn::intrusive_ptr<const vn::Buffer<float>> owner;
+        std::uint64_t                              bytes{ 0 }; // What the bind reads, kept for the residency row.
     };
 
     /// @brief One cached index stream (see VertexEntry).
     struct IndexEntry {
         ::vsg::ref_ptr<::vsg::BindIndexBuffer>             bind;
         vn::intrusive_ptr<const vn::Buffer<std::uint32_t>> owner;
+        std::uint64_t                                      bytes{ 0 }; // What the bind reads, kept for the residency row.
     };
 
     core::PinnedResources<core::StreamKey, VertexEntry, core::StreamKeyHash> vertex;
@@ -165,8 +167,9 @@ StreamUploads::acquireVertex(const core::StreamKey& key, std::span<const float> 
 
         const auto binding = bindingOfCanonical(key.location);
         auto       bind    = ::vsg::BindVertexBuffers::create(binding, ::vsg::DataList{ array });
-        d->uploaded_bytes += static_cast<std::uint64_t>(array->dataSize());
-        return Data::VertexEntry{ bind, std::move(owner) };
+        const auto bytes   = static_cast<std::uint64_t>(array->dataSize());
+        d->uploaded_bytes += bytes;
+        return Data::VertexEntry{ bind, std::move(owner), bytes };
     });
     if (acquired.value == nullptr) {
         return {}; // the guards above ARE the rules, so the builder cannot refuse; an empty answer stays honest
@@ -205,8 +208,9 @@ StreamUploads::acquireIndex(const core::StreamKey& key, std::span<const std::uin
             array = snapshot;
         }
         auto bind = ::vsg::BindIndexBuffer::create(array);
-        d->uploaded_bytes += static_cast<std::uint64_t>(array->dataSize());
-        return Data::IndexEntry{ bind, std::move(owner) };
+        const auto bytes = static_cast<std::uint64_t>(array->dataSize());
+        d->uploaded_bytes += bytes;
+        return Data::IndexEntry{ bind, std::move(owner), bytes };
     });
     if (acquired.value == nullptr) {
         return {};
@@ -261,6 +265,14 @@ std::uint64_t StreamUploads::uploads() const noexcept
 std::uint64_t StreamUploads::uploadedBytes() const noexcept
 {
     return d->uploaded_bytes;
+}
+
+std::uint64_t StreamUploads::residentBytes() const noexcept
+{
+    std::uint64_t bytes = 0;
+    d->vertex.visitValues([&bytes](const Data::VertexEntry& entry) { bytes += entry.bytes; });
+    d->index.visitValues([&bytes](const Data::IndexEntry& entry) { bytes += entry.bytes; });
+    return bytes;
 }
 
 std::uint64_t StreamUploads::aliases() const noexcept

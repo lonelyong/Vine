@@ -1987,3 +1987,19 @@
   `ADR-2026-11-16-no-backend-half.md` for the seam relocation. **Also corrected**: `BackendFactory.hpp` claimed
   "`vsg` remains the production backend ... nothing selects `vk` implicitly", while `AppShellUi.cpp`'s
   `chooseRenderBackend()` names `vk` and honours `VN_RENDER_BACKEND` - the header now states that split.
+
+## 2026-11-18 residency bytes: three kinds measured, `Programs` cannot be
+
+- **What landed**: vk's `Materials` row now reports `bytes = 0` (a real 0: material values live in each frame's own
+  scratch, so nothing survives a frame); vsg's `Geometry` row reports `StreamUploads::residentBytes()`, a new
+  on-demand sum over the entries (each entry keeps the size of the array its bind reads, set at build). Summed per
+  call rather than kept as a counter, because the table retires inside `PinnedResources` and a second running total
+  would be one more number to keep in step.
+- **Pinned by tests**: `VsgBackendTest`'s frame-report case asserts the Geometry row's bytes > 0, and
+  `ReleasingAStreamBufferDropsTheUploadButNotTheGeometry` asserts they FALL on a retire and return to the same value
+  after the re-upload (a churn counter would not); `VkResidencyTest`'s fresh case asserts `Materials` has an engaged
+  0.
+- **The finding that ends T45 as a tally**: `Programs` cannot report bytes on EITHER backend - Vulkan has no query for
+  the memory a compiled pipeline occupies and vsg exposes none. So `unknown` is 1 on both and `totals().bytes` stays
+  disengaged permanently; a partial sum is exactly what `ResidencyTotals`' own rule rejects. T45 now records a
+  DECISION (delete `bytes` + `unknown`, or keep them and accept the figure is unavailable) rather than work.

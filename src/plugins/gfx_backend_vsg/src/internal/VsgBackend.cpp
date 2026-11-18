@@ -2177,6 +2177,7 @@ vn::graphics::FrameReport VsgBackend::frameReport() const noexcept
         const StreamUploads&          uploads = d->assembly->uploads();
         ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Geometry,
                                                 .live    = static_cast<std::uint32_t>(uploads.live()),
+                                                .bytes   = uploads.residentBytes(),
                                                 .built   = uploads.uploads(),
                                                 .retired = uploads.retired(),
                                                 .refused = uploads.refusals() });

@@ -708,6 +708,8 @@ TEST(VkResidencyTest, WhatThisDeviceDidNotMeasureItDoesNotClaim)
     const std::optional<ResidencyRow> materials = rowOf(fresh, ResidencyKind::Materials);
     ASSERT_TRUE(materials.has_value()) << "this device writes material values into each frame's own scratch";
     EXPECT_EQ(materials->live, 0U);
+    ASSERT_TRUE(materials->bytes.has_value()) << "nothing survives a frame, so zero is measured rather than unknown";
+    EXPECT_EQ(*materials->bytes, 0U);
 
     // A MATERIAL IS CONTENT WITH NOTHING RESIDENT: accepted, and nothing is claimed as released.
     const intrusive_ptr<vn::graphics::Material> material = makeMaterial(Colorf(1.0F, 1.0F, 1.0F, 1.0F));

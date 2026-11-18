@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -560,6 +561,18 @@ TEST(VsgBackendTest, TheHostReadsTheBackendsOwnFrameReport)
     // accounts for this kind) while a number inside it may stay absent, so a host writes one loop over `rows()`.
     ASSERT_TRUE(report.retention->residency.has_value());
     EXPECT_EQ(report.retention->residency->rows().size(), vn::graphics::kResidencyKindCount);
+
+    // THE GEOMETRY ROW CARRIES BYTES, not just a count: a drawn frame holds at least one stream, so the figure is
+    // engaged and positive - and it is the RESIDENT figure (`StreamUploads::residentBytes`), which a retire lowers.
+    const auto geometry_row = std::find_if(report.retention->residency->rows().begin(),
+                                           report.retention->residency->rows().end(),
+                                           [](const vn::graphics::ResidencyRow& row) {
+                                               return row.kind == vn::graphics::ResidencyKind::Geometry;
+                                           });
+    ASSERT_NE(geometry_row, report.retention->residency->rows().end());
+    EXPECT_GT(geometry_row->live, 0U) << "the triangle's vertex and index streams are resident";
+    ASSERT_TRUE(geometry_row->bytes.has_value()) << "a stream's bytes are known once it is uploaded";
+    EXPECT_GT(*geometry_row->bytes, 0U);
 
     // The frame clock, as a host can see it: SUBMITTED is not COMPLETED, and the difference is what is
     // still in flight. The proof of completion is this backend's own (the command slot was recycled), so
@@ -1187,14 +1200,18 @@ TEST(VsgBackendTest, ReleasingAStreamBufferDropsTheUploadButNotTheGeometry)
     StreamUploads&      uploads        = assembly->uploads();
     const std::uint64_t uploads_before = uploads.uploads();
     ASSERT_EQ(uploads.live(), 2U) << "the fixture's vertex channel and its index stream are the shared uploads";
+    const std::uint64_t bytes_before = uploads.residentBytes();
+    ASSERT_GT(bytes_before, 0U) << "the figure the Geometry row reports is measured, not cumulative";
 
     EXPECT_TRUE(backend->releaseContent(*triangle.positions));
     EXPECT_EQ(uploads.live(), 1U) << "only the buffer that was named went; the index stream is pinned by its own";
+    EXPECT_LT(uploads.residentBytes(), bytes_before) << "a retire LOWERS the resident bytes - a churn counter would not";
     EXPECT_EQ(store->geometryEntries(), 1U) << "the geometry is content, and it stayed";
 
     drive();
     EXPECT_EQ(backend->diagnosticCount(), 0U);
     EXPECT_EQ(uploads.live(), 2U) << "the next frame that draws uploads the released stream again";
+    EXPECT_EQ(uploads.residentBytes(), bytes_before) << "the same stream came back at the same size";
     EXPECT_GT(uploads.uploads(), uploads_before) << "which is what the release cost";
 
     EXPECT_TRUE(backend->releaseContent(*triangle.indices)) << "the index stream has its own overload";

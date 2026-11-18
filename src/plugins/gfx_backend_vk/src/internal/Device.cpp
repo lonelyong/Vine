@@ -934,8 +934,8 @@ struct Device::Impl {
      * @details
      * - EVERY KIND, ALWAYS: a row's existence is how a host learns this backend accounts for that kind, so a kind
      *   this device retains nothing of is reported as `live = 0` rather than left out.
-     * - `Materials` is that kind here: material values are written into each frame's own scratch (see
-     *   FrameScratch), so nothing survives a frame and zero is the measurement.
+     * - `Materials` is that kind here, and it is MEASURED rather than missing: material values are written into each
+     *   frame's own scratch (see FrameScratch), so nothing survives a frame - `live` and `bytes` are both a real 0.
      */
     void noteResidency(vn::graphics::ResidencyLedger& ledger) const
     {
@@ -952,7 +952,7 @@ struct Device::Impl {
                                                 .bytes   = image_numbers.live_bytes,
                                                 .built   = image_numbers.builds,
                                                 .retired = image_numbers.releases });
-        ledger.note(vn::graphics::ResidencyRow{ .kind = vn::graphics::ResidencyKind::Materials });
+        ledger.note(vn::graphics::ResidencyRow{ .kind = vn::graphics::ResidencyKind::Materials, .bytes = 0U });
         ledger.note(vn::graphics::ResidencyRow{ .kind    = vn::graphics::ResidencyKind::Programs,
                                                 .live    = content_numbers.pipelines_live,
                                                 .built   = content_numbers.pipeline_builds,
