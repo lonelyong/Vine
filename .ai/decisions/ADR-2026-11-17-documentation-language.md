@@ -1,6 +1,7 @@
 # ADR-2026-11-17: English is the documentation language
 
-- Status: **Accepted** (2026-11-17); execution is batched, plan in
+- Status: **Accepted** (2026-11-17), **amended 2026-11-18** (decision 4: bug postmortems are
+  converted, ADRs stay append-only - see the amendment at the end); execution is batched, plan in
   [`../research/docs-2026-11-17-english-migration.md`](../research/docs-2026-11-17-english-migration.md).
 - Date: 2026-11-17
 - Scope: `.ai/**` prose and `.github/**` documentation. **Not** `docs/guides/**` (product documentation
@@ -75,3 +76,29 @@
 
 Tracked by the plan. This ADR closes when the last batch lands: the plan is deleted, the Chinese
 chapter names leave `check_design_docs.py`, and `.ai/README.md` is English.
+
+## Amendment (2026-11-18): bug postmortems are converted, ADRs stay append-only
+
+Decision 4 treated both record kinds alike. The first batch to apply it - M9, which added one
+`> **EN**: …` line to 89 ADRs and 36 bug postmortems - showed that the two kinds do not carry the
+same risk, so the decision is narrowed for bug postmortems:
+
+- An **ADR** is re-litigated. Its trade-offs and rejected options are the argument a later session
+  argues against, so its wording is the evidence: the original stays, the summary is appended.
+- A **bug postmortem** is read for its verdict - symptom, root cause, fix, and the test that pins
+  it. Its body is 30-90 lines, and a summary that carries the verdict leaves a reader without
+  Chinese holding two versions of one fact (`G1`).
+
+From 2026-11-18:
+
+1. **ADRs stay append-only.** Original text plus the `> **EN**: …` summary; a correction is appended
+   and dated. This paragraph supersedes "ADRs and bug postmortems" in decision 4 and the same
+   parenthetical in this page's summary line.
+2. **Bug postmortems are converted in place to English**, whole file per commit, one batch per
+   area. Git holds the Chinese original (the repository's archive rule), and the then-redundant
+   `> **EN**:` line is removed in the same commit, because the body now says what it said.
+3. **An open finding is written in English from the start.** It describes the system as it is now,
+   so it is not a record yet.
+
+Every other decision in this ADR stands. The acceptance rules do not change: no new claims, ID and
+link census unchanged, whole file per commit.
