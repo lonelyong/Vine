@@ -422,16 +422,22 @@ TEST(EventBusTest, EventOutlivesPublishViaSharedPtr)
 
 TEST(EventBusTest, BusDestroyedBeforeQueuedDeliveryIsDropped)
 {
-    int received = 0;
+    int                            received = 0;
+    std::weak_ptr<const PingEvent> weak;
     {
         vn::appfw::EventBus bus(mainDispatcher());
         auto                sub = bus.subscribe<PingEvent>([&](const PingEvent&) { ++received; }, vn::appfw::SubscriptionThreadMode::Main);
-        bus.publish(std::make_shared<PingEvent>());
+        auto                event = std::make_shared<PingEvent>();
+        weak                      = event;
+        bus.publish(event);
+        event.reset();
         EXPECT_EQ(received, 0);
+        EXPECT_FALSE(weak.expired()); // 排队中的投递持有事件
     } // bus 销毁时投递仍排在 Qt 队列里
 
     // 排队任务只持有“已脱离 bus 的注册表 + 自己的 payload”，不引用 bus：
     // bus 销毁时 payload 被释放，任务自行丢弃。
+    EXPECT_TRUE(weak.expired()); // 事件随总线销毁立即释放，不等事件循环
     QCoreApplication::processEvents();
     EXPECT_EQ(received, 0);
 }
@@ -950,4 +956,197 @@ TEST(EventBusTest, ReentrantShutdownFromReleasedHandlerDoesNotWaitForItself)
         // 回归时线程仍卡在死锁里：detach 让用例以断言失败收场，而不是拖住整个套件。
         worker.detach();
     }
+}
+
+// 非标准异常（不是 std::exception 派生）必须和标准异常走同一条观测路径：
+// 日志里有事件类型，hook 里有完整上下文，exception_ptr 能原样重抛。
+TEST(EventBusTest, ErrorHandlerReceivesNonStandardException)
+{
+    vn::appfw::EventBus                   bus;
+    std::vector<vn::appfw::EventBusError> errors;
+    bus.setErrorHandler([&](const vn::appfw::EventBusError& error) { errors.push_back(error); });
+
+    int  delivered = 0;
+    auto throwing  = bus.subscribe<PingEvent>([](const PingEvent&) { throw 42; });
+    auto following = bus.subscribe<PingEvent>([&](const PingEvent&) { ++delivered; });
+
+    ASSERT_NO_THROW(bus.publish(std::make_shared<PingEvent>()));
+    ASSERT_EQ(errors.size(), 1u);
+    EXPECT_EQ(errors[0].event_type, PingEvent::desc());
+    EXPECT_NE(errors[0].subscriber_id, 0u);
+    EXPECT_EQ(errors[0].mode, vn::appfw::SubscriptionThreadMode::Current);
+    ASSERT_NE(errors[0].error, nullptr); // 任何异常都能重抛，不限于 std::exception
+    EXPECT_THROW(std::rethrow_exception(errors[0].error), int);
+    EXPECT_EQ(delivered, 1); // 后续订阅者仍执行
+}
+
+// 订阅时声明的线程模式随投递一起到达主线程：它是订阅的属性，
+// 不是投递那一刻重新解析出来的东西（Auto 在主线程上报时仍必须是 Auto）。
+TEST(EventBusTest, AutoModeOffMainKeepsItsQueuedMode)
+{
+    vn::appfw::EventBus                   bus(mainDispatcher());
+    std::vector<vn::appfw::EventBusError> errors;
+    bus.setErrorHandler([&](const vn::appfw::EventBusError& error) { errors.push_back(error); });
+
+    auto sub = bus.subscribe<PingEvent>([](const PingEvent&) { throw std::runtime_error("auto"); }, vn::appfw::SubscriptionThreadMode::Auto);
+
+    std::thread worker([&] { bus.publish(std::make_shared<PingEvent>()); });
+    worker.join();
+    EXPECT_TRUE(errors.empty()); // 非主线程发布 → Auto 排到主线程
+
+    QCoreApplication::processEvents();
+    ASSERT_EQ(errors.size(), 1u);
+    EXPECT_EQ(errors[0].mode, vn::appfw::SubscriptionThreadMode::Auto);
+    EXPECT_TRUE(errors[0].deferred);
+    EXPECT_EQ(errors[0].event_type, PingEvent::desc());
+}
+
+// 停止从“开始停止”那一刻就不再接纳，而不是等 drain 结束：
+// isShutDown() 在优雅关停排空期间已为 true，此时 subscribe() 只能拿到惰性句柄。
+TEST(EventBusTest, IsShutDownTurnsTrueWhileAGracefulStopDrains)
+{
+    vn::appfw::EventBus bus;
+    std::atomic<bool>   in_handler{ false };
+    std::atomic<bool>   handler_done{ false };
+    std::atomic<bool>   release{ false };
+    std::atomic<bool>   refused_while_in_flight{ false };
+    std::atomic<bool>   saw_stopping{ false };
+
+    auto sub = bus.subscribe<PingEvent>([&](const PingEvent&) {
+        in_handler.store(true);
+        while (!release.load()) {
+            std::this_thread::yield();
+        }
+        handler_done.store(true);
+    });
+
+    std::thread publisher([&] { bus.publish(std::make_shared<PingEvent>()); });
+    while (!in_handler.load()) {
+        std::this_thread::yield();
+    }
+
+    // 观察者：趁优雅关停还在等发布线程时看总线，而不是等它返回。
+    // 停止要等 release 才可能完成，所以这里的 handler_done 必然还是 false；
+    // 有界等待：不变量坏了就用例失败，而不是拖住整个套件。
+    std::thread watcher([&] {
+        bool seen = false;
+        for (int i = 0; i < 2000 && !seen; ++i) {
+            seen = bus.isShutDown();
+            if (!seen) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        const bool still_delivering = !handler_done.load();
+        const auto late             = bus.subscribe<PingEvent>([](const PingEvent&) {});
+        refused_while_in_flight.store(seen && still_delivering && !late.isActive());
+        saw_stopping.store(true);
+    });
+
+    bool        graceful = false;
+    std::thread stopper([&] { graceful = bus.shutdownGracefully(std::chrono::milliseconds(2000)); });
+
+    while (!saw_stopping.load()) {
+        std::this_thread::yield();
+    }
+    release.store(true);
+
+    publisher.join();
+    stopper.join();
+    watcher.join();
+
+    EXPECT_TRUE(refused_while_in_flight.load()); // 还有调用在飞，接纳已被拒
+    EXPECT_TRUE(graceful);                       // 发布线程已退出、无排队投递 → 这次关停确实排空了
+    EXPECT_TRUE(bus.isShutDown());
+}
+
+// 第二个关停必须等正在进行的停止完成，而不是在 drain 中途返回：
+// 先到的一方负责停止，后到的一方只有“停止已经结束”这一个合法返回时刻。
+TEST(EventBusTest, SecondShutdownWaitsForTheStopInProgress)
+{
+    vn::appfw::EventBus bus;
+    std::atomic<bool>   inside_reap{ false };
+    std::atomic<bool>   release_reap{ false };
+    std::atomic<bool>   second_returned{ false };
+
+    // 订阅闭包被关停回收时阻塞，把“第一次停止正在进行”变成一个可观察的时刻。
+    struct BlockOnDestroy {
+        std::atomic<bool>& inside;
+        std::atomic<bool>& release;
+
+        BlockOnDestroy(std::atomic<bool>& inside_flag, std::atomic<bool>& release_flag)
+          : inside(inside_flag)
+          , release(release_flag)
+        {}
+
+        ~BlockOnDestroy()
+        {
+            inside.store(true);
+            while (!release.load()) {
+                std::this_thread::yield();
+            }
+        }
+    };
+
+    {
+        auto guard = std::make_shared<BlockOnDestroy>(inside_reap, release_reap);
+        auto sub   = bus.subscribe<PingEvent>([guard](const PingEvent&) {});
+    } // 句柄销毁，闭包仍由总线持有 → 关停回收时才析构
+
+    std::thread stopper([&] { bus.shutdown(); });
+    for (int i = 0; i < 2000 && !inside_reap.load(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_TRUE(inside_reap.load()) << "关停没有回收订阅闭包";
+
+    std::thread second([&] {
+        bus.shutdown();
+        second_returned.store(true);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_FALSE(second_returned.load()); // 停止还在进行，第二个调用不得返回
+
+    release_reap.store(true);
+    stopper.join();
+    second.join();
+    EXPECT_TRUE(second_returned.load());
+    EXPECT_TRUE(bus.isShutDown());
+}
+
+// 两个发布线程与一个“订阅→退订”线程并发：快照与回收落在同一张表上，
+// 结构不能被撕裂（回归时是崩溃或断言，而不是计数偏差）。
+TEST(EventBusTest, PublishingWhileSubscriptionsChurn)
+{
+    vn::appfw::EventBus bus;
+    std::atomic<bool>   go{ true };
+    std::atomic<int>    delivered{ 0 };
+    std::atomic<int>    published{ 0 };
+
+    const auto publishLoop = [&] {
+        while (go.load(std::memory_order_relaxed)) {
+            bus.publish(std::make_shared<PingEvent>());
+            published.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    std::thread p1(publishLoop);
+    std::thread p2(publishLoop);
+    std::thread churn([&] {
+        while (go.load(std::memory_order_relaxed)) {
+            auto sub = bus.subscribe<PingEvent>([&](const PingEvent&) { delivered.fetch_add(1, std::memory_order_relaxed); });
+            sub.unsubscribe();
+        }
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    go.store(false, std::memory_order_relaxed);
+    p1.join();
+    p2.join();
+    churn.join();
+
+    // 并发之后总线仍然完整可用：一次发布恰好命中一次订阅。
+    ASSERT_GT(published.load(), 0); // 确实并发运行过，而不是空转
+    int  after = 0;
+    auto sub   = bus.subscribe<PingEvent>([&](const PingEvent&) { ++after; });
+    bus.publish(std::make_shared<PingEvent>());
+    EXPECT_EQ(after, 1);
+    EXPECT_EQ(bus.pendingDeliveryCount(), 0u);
 }

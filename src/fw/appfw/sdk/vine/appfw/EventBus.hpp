@@ -40,7 +40,7 @@ struct EventBusError {
     const vn::Type*        event_type    = nullptr;                    // Runtime type of the event being delivered.
     std::size_t            subscriber_id = 0;                          // Id of the subscription that threw; unique per event type.
     String                 tag;                                        // Label the subscriber passed to subscribe(), empty when it passed none.
-    std::exception_ptr     error;                                      // Rethrowable exception; null for non-standard ones.
+    std::exception_ptr     error;                                      // Rethrowable, whatever was thrown: a non-standard one rethrows as its own type.
     SubscriptionThreadMode mode     = SubscriptionThreadMode::Current; // Thread mode of that subscription.
     bool                   deferred = false;                           // true when it ran from the event loop, on the main thread.
 };

@@ -66,6 +66,20 @@ queue lambda ────── captures only shared_ptr<DeliveryTask> (no bus /
 - The interface walk is an explicit-stack DFS with `visited` maintained at the walk level, which removes the recursion depth and the repeated visits of a diamond.
 - `publish()` collects a subscription snapshot under the map's shared lock and dispatches after releasing it; a subscribe or unsubscribe performed during dispatch affects later `publish()` calls only.
 
+### 2.4 One owner per fact
+
+The bus reads as five small types because every fact lives with the object that owns it, and no fact is restated in a second place:
+
+| Fact | Owner | Why it lives there |
+| --- | --- | --- |
+| Whether a call may enter, who performs a stop, what that stop reported | `StopGate` | The three stop entry points sequenced the same handshake by hand; one `request()` answer makes the rule exist once (D6). |
+| The delivery thread a subscription asked for | `SubscriptionState` | It is a property of the subscription, not of a channel entry; a parked delivery therefore reads it from the object it already holds, and the entry type disappears (D7). |
+| Which channels exist, versus what one channel holds | `Impl::channels_mutex` versus `EventChannel::mutex` | Two concurrent publications both reap; one shared map lock would let two readers write the same list, so the two facts keep two locks with a fixed order (D5). |
+| The parked work, versus the queued task's lifetime | `PendingDelivery` (held by the registry) versus `DeliveryTask` (held by the event loop) | Both must outlive the bus, and only the task may unregister on death; collapsing them would put the unregistration in a destructor that the registry itself keeps from running. |
+| A failure's context | `EventBusError`, built once in the delivery path | The hook receives a value; no second copy of the event type, tag or mode is threaded through the arguments. |
+
+The public class keeps no state beyond the pimpl and the injected marshaller: `EventBus` is a facade over `Impl`, so the whole protocol can be read in one file without asking which entry point is running.
+
 ## 3. Features
 
 ### 3.1 Feature index
@@ -112,7 +126,7 @@ queue lambda ────── captures only shared_ptr<DeliveryTask> (no bus /
 
 ### 3.1.5 F5 Exception observation
 
-- **Behaviour**: `setErrorHandler(EventBusErrorHandler)` is optional; the context carries the event type, the subscription id, the tag, the `exception_ptr`, the thread mode and `deferred`.
+- **Behaviour**: `setErrorHandler(EventBusErrorHandler)` is optional; the context carries the event type, the subscription id, the tag, the `exception_ptr`, the thread mode and `deferred`. The `exception_ptr` rethrows whatever was thrown - a non-standard exception rethrows as its own type - and the log line names the event type next to the subscription id, because the id is only unique within one event type.
 - **Constraints** (C5): the hook is always called outside every lock; an exception thrown by the hook itself is discarded (`noexcept`).
 - **Requirements** (R5): a queued delivery snapshots the hook and the tag when it is posted, so replacing or removing the hook later does not affect deliveries already queued.
 - **Acceptance** (T5): `SubscriberExceptionIsContained`, `ErrorHandlerReceivesDeferredFailure`, `ErrorHandlerReportsSubscriptionTag`.
@@ -207,11 +221,11 @@ queue lambda ────── captures only shared_ptr<DeliveryTask> (no bus /
 
 | # | Criterion | Case / command |
 | --- | --- | --- |
-| T1 | subscribe / cancel / RAII / move | `SubscriptionUnsubscribesOnDestruction`, `MoveTransfersOwnership` and friends |
+| T1 | subscribe / cancel / RAII / move / concurrent churn | `SubscriptionUnsubscribesOnDestruction`, `MoveTransfersOwnership`, `PublishingWhileSubscriptionsChurn` |
 | T2 | polymorphism / interface planned order | `PolymorphicDispatch`, `MultiInterfaceVisitOrderAndDedup` |
-| T3 | queueing / event lifetime | `MainModeQueuesDelivery`, `ShutdownReleasesPendingEvent` |
-| T4 | shutdown / admission | `GracefulShutdownWaitsForPublishingThread`, `GracefulResultAfterPlainShutdownDoesNotClaimDrainedWork` |
-| T5 | exception observation | `SubscriberExceptionIsContained`, `ErrorHandlerReportsSubscriptionTag` |
+| T3 | queueing / event lifetime / the queued mode | `MainModeQueuesDelivery`, `ShutdownReleasesPendingEvent`, `BusDestroyedBeforeQueuedDeliveryIsDropped`, `AutoModeOffMainKeepsItsQueuedMode` |
+| T4 | shutdown / admission | `GracefulShutdownWaitsForPublishingThread`, `GracefulResultAfterPlainShutdownDoesNotClaimDrainedWork`, `IsShutDownTurnsTrueWhileAGracefulStopDrains`, `SecondShutdownWaitsForTheStopInProgress` |
+| T5 | exception observation (standard and non-standard) | `SubscriberExceptionIsContained`, `ErrorHandlerReportsSubscriptionTag`, `ErrorHandlerReceivesNonStandardException` |
 | T6 | the ASan gate | `scripts/asan_check.sh` (`EventBusTest.*`) |
 
 ## 9. Status and Evolution
