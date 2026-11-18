@@ -1,91 +1,89 @@
-# ADR-2026-11-14：预热可以提交一批“只有传输”的工作
+# ADR-2026-11-14: the warm-up may submit one transfer-only batch of work
 
-- 状态：已采纳
-- 日期：2026-11-14
-- 相关：`../design/graphics-frame-pipeline.md`（§3.7 F7、§5.1 `C3`、§6.11 `P11`、§7 `D11`）、
-  `../decisions/ADR-2026-11-12-adopt-graphics-next.md`、`RenderFrameExecutor::prepareFrame`、`PrepareReport`、
-  `tests/test_vk/ResidencyTest.cpp`、`tests/test_vk/PrepareUploadTest.cpp`
+- Status: Accepted
+- Date: 2026-11-14
+- Related: `../design/graphics-frame-pipeline.md` (§3.7 F7, §5.1 `C3`, §6.11 `P11`, §7 `D11`),
+  `../decisions/ADR-2026-11-12-adopt-graphics-next.md`, `RenderFrameExecutor::prepareFrame`, `PrepareReport`,
+  `tests/test_vk/ResidencyTest.cpp`, `tests/test_vk/PrepareUploadTest.cpp`
 
-> **EN**: Chose B: `prepare()` may submit exactly one command buffer of its own whose contents are transfers only (the same buffer-to-image and buffer-to-buffer copies the frame would record before its first render pass) and waits for it, so texture bytes land during loading and the frame's upload delta is genuinely zero. The frame contract stays: no swapchain acquire, no render pass, no present, and the `submitted` / `presented` watermarks do not move; `PrepareReport::uploads` now counts both kinds. Rejected the status quo, a second `flushUploads()` verb, asynchronous upload and uploading when a texture is filled.
+## Background
 
-## 背景
+`prepare()` exists for exactly one testable claim (`R23`): after a warm-up, the same declared frame's `builds` delta is 0.
+But today's contract cuts away the half it could do - **the half that needs a command buffer**:
 
-`prepare()` 存在的理由只有一个可检验的说法（`R23`）：预热之后，同一份声明的帧 `builds` 增量为 0。
-但今天的契约把它能做的那一半切掉了——**需要命令缓冲才能建立的那一半**：
-
-- 头文件写的是 “It must not submit, present, or resize the swapchain”；设计侧是 `C3` / `P11`：预热不跑帧、
-  不 acquire 交换链图像。
-- vk 把这条规则的后果直接写在代码里（`ContentDraw::prepare`）：“NO FALLBACK IMAGE, NO DESCRIPTOR SET,
+- The header says "It must not submit, present, or resize the swapchain"; the design side says `C3` / `P11`: a warm-up does not run a frame and does not
+  acquire a swap-chain image.
+- vk writes the consequence of that rule straight into the code (`ContentDraw::prepare`): "NO FALLBACK IMAGE, NO DESCRIPTOR SET,
   NO COMMAND: a warm-up is programs, streams and pipelines only - the 1x1 stand-in and the texture copies need a
-  command buffer, which prepare() does not open.”
-- 于是纹理上传落在**第一个采样它的帧**里：`Device::prepareFrame` 的 `report.uploads` 只取 `stream_builds`，
-  而那一帧的 `FrameUploads.texture_uploads` 是 1；拷贝是 `executeFrame` 在 `ContentDraw::preparePass` 里记录
-  进帧自己的命令缓冲的（`Device.cpp` 的 pass 循环第一条语句）。
-- vsg 是同一个形状：`MaterialImages::acquire` → `makeImage` 只把字节 stage 进一个 data-backed `vsg::Image`，
-  真正的拷贝由帧的传输任务提交（`../design/graphics-content-lifecycle.md` 2.8 / `F16`–`F22`）。
+  command buffer, which prepare() does not open."
+- So a texture upload lands in **the first frame that samples it**: `report.uploads` in `Device::prepareFrame` takes only `stream_builds`,
+  while that frame's `FrameUploads.texture_uploads` is 1; the copy is recorded by `executeFrame` into the frame's own command buffer
+  in `ContentDraw::preparePass` (the first statement of the pass loop in `Device.cpp`).
+- vsg has the same shape: `MaterialImages::acquire` → `makeImage` only stages the bytes into a data-backed `vsg::Image`, and
+  the real copy is submitted by the frame's transfer task (`../design/graphics-content-lifecycle.md` 2.8 / `F16`-`F22`).
 
-后果不是“少一个数字”，而是 `R23` 对**最贵的那一类**不成立：程序、流、管线都能预热，字节不能；
-宿主按 `PrepareReport` 做加载期预算时，纹理字节完全不在账上（`G4`：报告的契约是“这次调用建了什么”，
-却默默排除了一整类，而 `FrameUploads` 明明把流与纹理并列）。这与 ADR-2026-11-12 `D11` 否决的那件事不同：
-`D11` 否决的是**跑一帧但不提交**（acquire 图像、画进交换链图像、不 present ⇒ 饥饿），而这里的候选物从头到尾
-没有帧——没有 acquire、没有 render pass、没有 present。
+The consequence is not "one number missing" but that `R23` does not hold for the **most expensive class**: programs, streams and pipelines can be warmed up, bytes cannot;
+a host budgeting its load phase from `PrepareReport` has texture bytes entirely off the books (`G4`: the report's contract is "what this call built",
+yet it silently excludes a whole class, while `FrameUploads` lists streams and textures side by side). This is not the thing ADR-2026-11-12 `D11` rejected:
+`D11` rejected **running a frame without submitting** (acquire an image, draw into the swap-chain image, do not present ⇒ starvation), whereas the candidate here has
+no frame from beginning to end - no acquire, no render pass, no present.
 
-## 选项
+## Options
 
-| 选项 | 好处 | 代价 / 违反 |
+| Option | Benefit | Cost / violation |
 |---|---|---|
-| A 保持现状 | 契约不动，零风险 | `R23` 只在程序/流上成立；纹理字节永远是首帧成本且不进任何报告（`G4` / `G7`：复杂度留给宿主猜） |
-| B **预热可以提交一个自己的、只含传输的命令缓冲，返回前等它完成** | 上传在加载期落地，帧的上传增量真的为 0；一条规则覆盖全部内容；不新增入口（`G1` / `G8`） | 预热可能阻塞在自己的传输上；契约必须把“不提交帧”与“可以提交传输”写精确，否则两个词混成一个（`G4`） |
-| C 新增第二个动词（`flushUploads()` / `uploadNow()`） | 显式、语义单一 | 两个入口回答同一个问题（“把这一帧需要的东西建好”），调用方还得自己知道什么时候调（`G1` / `G7`）；今天没有消费者要求把两件事分开（`G8`） |
-| D 后台线程 / 异步队列上传 | 不阻塞宿主 | 违反 `C3`（只有一条引擎线程碰设备）；`prepare` 返回时上传还没落地，`R23` 的判据不可测（`G11`） |
-| E 纹理填充完成时就上传 | 不需要新动词 | 引擎线程不知道哪些纹理会进这一帧 ⇒ 会传没人读的内容（`P8`），而且在宿主填纹理的线程上碰设备（`C3`） |
+| A Keep the status quo | The contract does not move, no risk | `R23` holds only for programs / streams; texture bytes are always a first-frame cost and never enter any report (`G4` / `G7`: the complexity is left for the host to guess) |
+| B **A warm-up may submit one command buffer of its own containing transfers only, and waits for it before returning** | Uploads land during loading and the frame's upload delta really is 0; one rule covers all content; no new entry point (`G1` / `G8`) | A warm-up may block on its own transfers; the contract has to state "does not submit a frame" and "may submit transfers" precisely, or one word swallows the other (`G4`) |
+| C Add a second verb (`flushUploads()` / `uploadNow()`) | Explicit, single semantics | Two entry points answering the same question ("build what this frame needs"), and the caller still has to know when to call it (`G1` / `G7`); no consumer today asks for the two to be separate (`G8`) |
+| D Upload from a background thread / an asynchronous queue | Does not block the host | Against `C3` (only one engine thread touches the device); when `prepare` returns the upload has not landed, so `R23`'s criterion is unmeasurable (`G11`) |
+| E Upload when a texture's filling completes | No new verb needed | The engine thread does not know which textures enter this frame ⇒ it uploads content nobody reads (`P8`), and touches the device on the host's texture-filling thread (`C3`) |
 
-## 决定
+## Decision
 
-选 **B**，并把边界写成可判定的六条：
+Chose **B**, with the boundary written as six decidable rules:
 
-1. **预热仍然不提交帧**：不 acquire 交换链图像、不开 render pass、不 present、不改 `FrameProgress` 的
-   `submitted` / `presented`。`P11` 与 `D11` 的全部论证保持有效。
-2. **预热可以提交恰好一个自己的命令缓冲，内容只允许是传输**：buffer→image / buffer→buffer 拷贝与配套的
-   布局转换；不得含任何 draw、dispatch 或 render pass 实例。
-3. **这一批必须是“帧本来会在它的第一个 render pass 之前记录的那些拷贝”，不是第二条路径**：vk 里就是
-   `ContentDraw::preparePass`（1×1 白色 stand-in + 每张材质纹理）在预热自己的命令缓冲上跑一遍；
-   随后录制那一帧时同一处查到条目已驻留，什么都不再记录。
-4. **没有要拷的东西就不提交**：第二次预热同一个帧不产生任何提交（“零工作 ⇒ 零提交”是可观测的）。
-5. **报告口径统一**：`PrepareReport::uploads` 数这次调用建起来的**所有**上传（流 + 纹理），与
-   `FrameUploads` 的两类同名同义；`PrepareReport::Outcome::Prepared` 的措辞从 “without submitting it”
-   改为 “without submitting the frame”。
-6. **传输失败不是新的终态**：照 `prepare` 现有的“这个 pass 服务不了”处理——报诊断、计数不增，
-   下一帧自己重试；不改 `Outcome`。
+1. **A warm-up still submits no frame**: no swap-chain image is acquired, no render pass is opened, nothing is presented, and `FrameProgress`'s
+   `submitted` / `presented` do not move. Every argument of `P11` and `D11` stays valid.
+2. **A warm-up may submit exactly one command buffer of its own, whose contents are transfers only**: buffer→image / buffer→buffer copies plus the
+   companion layout transitions; no draw, dispatch or render pass instance.
+3. **The batch must be "the copies the frame would have recorded before its first render pass", not a second path**: in vk that is
+   `ContentDraw::preparePass` (the 1×1 white stand-in plus every material texture) run once on the warm-up's own command buffer;
+   when that frame is then recorded, the same place finds the entries already resident and records nothing.
+4. **Nothing to copy means nothing submitted**: warming up the same frame a second time produces no submission at all ("zero work ⇒ zero submission" is observable).
+5. **One accounting rule**: `PrepareReport::uploads` counts **all** uploads this call built (streams + textures), with the same names and meanings as
+   `FrameUploads`' two kinds; the wording of `PrepareReport::Outcome::Prepared` changes from "without submitting it" to
+   "without submitting the frame".
+6. **A failed transfer is not a new terminal state**: it is handled like `prepare`'s existing "this pass cannot serve it" - report a diagnostic, do not increment the count,
+   and let the next frame retry; `Outcome` is unchanged.
 
-## 后果
+## Consequences
 
-- 好的：
-  - `R23` 对整份内容成立，不再“除了纹理”；加载期预算能看见字节。
-  - 一条规则：“预热建的是这一帧本来就要建的东西”，不再按“要不要命令缓冲”分裂成两类。
-  - 区分仍可观测且不可混淆：`FrameProgress::submitted` / `presented` 是帧的水位，传输批不动它们——
-    “预热提交了传输”与“预热跑了一帧”在报告上是两个不同的答案。
-- 坏的 / 代价：
-  - `prepare()` 现在可能阻塞在 GPU 上，时长是它自己那批字节的拷贝时间（不是等某一帧）；宿主需要把它算进
-    加载期预算。这与设备已有的“帧同步提交”是同一类同步，不引入新的一致性故事。
-  - 契约用词必须一直精确：以后任何“允许预热做更多事”的提议都要先回答“它仍然是传输、不是帧吗”，
-    否则 `P11` 会被悄悄绕过。
-  - 两个后端的实现进度可以不同：`vk` 本次落地；`vsg` 的拷贝在它自己的传输任务里（不在帧的命令缓冲里），
-    要单独改，见 `../backlog/graphics.md` `T39`。
-- 触发条件（什么时候重开）：
-  - 出现“加载期上传本身就是可感卡顿”的真实宿主（那时需要异步入口，属 `T17` 的范畴，必须新 ADR）；
-  - 或第二个消费者要求预热严格非阻塞（同样要新 ADR，因为 `C3` 与新线程故事一起变）。
+- Good:
+  - `R23` holds for all content, no longer "except textures"; a load-phase budget can see the bytes.
+  - One rule: "a warm-up builds what this frame would have built anyway", no longer split into two classes by "does it need a command buffer".
+  - The distinction stays observable and unmistakable: `FrameProgress::submitted` / `presented` are the frame's watermarks and the transfer batch does not move them -
+    "the warm-up submitted transfers" and "the warm-up ran a frame" are two different answers in the report.
+- Bad / cost:
+  - `prepare()` may now block on the GPU, for as long as its own batch of bytes takes to copy (not waiting for some frame); the host has to count that into its
+    load-phase budget. This is the same kind of synchronisation as the device's existing "submit at the frame boundary", and introduces no new consistency story.
+  - The contract's wording must stay precise: any later proposal to "let a warm-up do more" has to answer "is it still a transfer and not a frame" first,
+    or `P11` is bypassed quietly.
+  - The two backends may progress at different speeds: `vk` lands it here; vsg's copies live in its own transfer task (not in the frame's command buffer),
+    so it needs a separate change, see `T39` in `../backlog/graphics.md`.
+- Trigger conditions (when to reopen):
+  - a real host appears where "uploading during the load phase is itself a perceptible stall" (that needs an asynchronous entry point, which is `T17`'s territory and needs a new ADR);
+  - or a second consumer requires the warm-up to be strictly non-blocking (again a new ADR, because `C3` changes together with the new threading story).
 
-## 证据
+## Evidence
 
-- 现状（改前，可读代码验证）：`Device::prepareFrame` 不创建命令缓冲、`report.uploads` 只取 `stream_builds`；
-  `ContentDraw::prepare` 的注释明说“纹理拷贝需要命令缓冲，`prepare()` 不开”；`ContentDraw::preparePass`
-  是唯一记录这些拷贝的地方，`executeFrame` 在每 pass 之首用帧自己的命令缓冲调用它。
-- 改后（`test_vk`）：`VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns` —— 预热报告
-  流上传 2 + 纹理上传 1，随后的 `executeFrame` 报 `stream_uploads == 0`、`texture_uploads == 0`，
-  且像素是该纹理的颜色（证明上传在预热里就落了地）。
-  `VkPrepareUploadTest.ASecondPrepareSubmitsNothing` —— 第二次预热 `uploads == 0` 且 `FrameProgress`
-  的 `submitted` / `presented` 仍是 0。
-- 守卫（改前后都成立）：`VkResidencyTest.PrepareBuildsWhatTheFrameNeedsAndSubmitsNothing` 断言预热后
-  `progress->submitted == 0` 且 `frameReport().uploads` 仍未接通——这条现在同时钉住“传输批不算帧”。
-- 设计侧：`../design/graphics-frame-pipeline.md` §3.7 / §5.1 `C3` / §6.11 `P11` / §7 `D13`。
+- The status quo (before, verified by reading the code): `Device::prepareFrame` creates no command buffer and `report.uploads` takes only `stream_builds`;
+  the comment on `ContentDraw::prepare` says outright "the texture copies need a command buffer, which `prepare()` does not open"; `ContentDraw::preparePass`
+  is the only place that records those copies, and `executeFrame` calls it at the head of every pass with the frame's own command buffer.
+- After (`test_vk`): `VkPrepareUploadTest.APreparedTexturedFrameUploadsNothingWhenItRuns` - the warm-up report says
+  2 stream uploads + 1 texture upload, and the following `executeFrame` reports `stream_uploads == 0`, `texture_uploads == 0`,
+  with the pixels being that texture's colour (proving the upload landed during the warm-up).
+  `VkPrepareUploadTest.ASecondPrepareSubmitsNothing` - a second warm-up has `uploads == 0` and `FrameProgress`'s
+  `submitted` / `presented` are still 0.
+- The guard (true before and after): `VkResidencyTest.PrepareBuildsWhatTheFrameNeedsAndSubmitsNothing` asserts that after a warm-up
+  `progress->submitted == 0` and `frameReport().uploads` is still unset - this case now also pins "the transfer batch is not a frame".
+- Design side: `../design/graphics-frame-pipeline.md` §3.7 / §5.1 `C3` / §6.11 `P11` / §7 `D13`.

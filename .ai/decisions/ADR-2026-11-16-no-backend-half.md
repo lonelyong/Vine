@@ -1,85 +1,84 @@
-# ADR-2026-11-16：删除“后端半边” —— 共享机制回到 SDK 主线，插件的类型回到插件
+# ADR-2026-11-16: the "backend half" is deleted - shared mechanisms return to the SDK mainline and a plugin's own types go back to the plugin
 
-- 状态：**已采纳并实施**（2026-11-16）。取代 [ADR-2026-11-16-redesign-seam-and-vocabulary](ADR-2026-11-16-redesign-seam-and-vocabulary.md)
-  §2 与批次 3 中“目录即接缝”的那一半决定；该 ADR 的词汇、相位、拒绝形状与其余批次不变。
-- 日期：2026-11-16
-- 影响范围：`src/viz/graphics/sdk/vine/graphics/backend/**`（删除）、`src/viz/graphics/src/backend/**`（删除）、
-  `scripts/check_include_hygiene.py`、`scripts/check_export_annotations.py`、`scripts/check_vk_exposure.py`、
-  `cmake/VineLibraryHelper.cmake`、`src/viz/graphics/CMakeLists.txt`、`gfx_backend_{vk,vsg}/CMakeLists.txt`、
-  `tests/*/CMakeLists.txt`、`graphics_global.hpp`、`gfx_backend_vsg` 的命名空间、`graphics-architecture.md` §2.9。
-- 相关：`ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`、`ADR-2026-11-13-one-engine-one-surface.md`。
+- Status: **Accepted and implemented** (2026-11-16). Supersedes the half of [ADR-2026-11-16-redesign-seam-and-vocabulary](ADR-2026-11-16-redesign-seam-and-vocabulary.md)
+  §2 and batch 3 that made a directory the seam; that ADR's vocabulary, phases, refusal shape and remaining batches are unchanged.
+- Date: 2026-11-16
+- Scope: `src/viz/graphics/sdk/vine/graphics/backend/**` (deleted), `src/viz/graphics/src/backend/**` (deleted),
+  `scripts/check_include_hygiene.py`, `scripts/check_export_annotations.py`, `scripts/check_vk_exposure.py`,
+  `cmake/VineLibraryHelper.cmake`, `src/viz/graphics/CMakeLists.txt`, `gfx_backend_{vk,vsg}/CMakeLists.txt`,
+  `tests/*/CMakeLists.txt`, `graphics_global.hpp`, the `vn::backend_vsg` namespace, `graphics-architecture.md` §2.9.
+- Related: `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`, `ADR-2026-11-13-one-engine-one-surface.md`.
 
-> **EN**: Deleted the "backend half" concept and superseded the part of `ADR-2026-11-16-redesign-seam-and-vocabulary` §2 and batch 3 that made a directory the seam: the eight shared mechanisms moved flat into `sdk/vine/graphics/` and `vn::graphics`, the guard header, the separate install component and the CMake parameter are gone, and the gates now test the property (the graphics module includes no rendering API and no concrete backend) instead of a path. `gfx_backend_vsg`'s own types moved to `vn::backend_vsg::core`, and `ReadbackResult` became `ReadbackAnswer` to stop colliding with the public `ReadbackResult` enum.
+## Background
 
-## 背景
+§2 of `ADR-2026-11-16` made `sdk/vine/graphics/backend/` the "backend seam", holding only the mechanisms both backends share, and gave that boundary four things:
 
-`ADR-2026-11-16` §2 把 `sdk/vine/graphics/backend/` 定为“后端接缝”，只留两个后端共用的机制，并给这条边界配了四件东西：
+1. `BackendHalfGuard.hpp`: every header included it first, and a host that had not defined `VN_GRAPHICS_BACKEND_CONSUMER` **failed to compile**; <!-- drift-ok -->
+2. `BACKEND_SDK_SUBDIR`: the default include tree excluded that subtree, which was installed separately as the `VineGraphicsBackendSdk` component;
+3. `BACKEND_HALF_AUDIENCE` in `check_include_hygiene.py`: a host may not include that prefix;
+4. `SEAM_HEADERS` / `SEAM_SOURCES`: pinning the directory's file set.
 
-1. `BackendHalfGuard.hpp`：每个头都先包含它，宿主没有定义 `VN_GRAPHICS_BACKEND_CONSUMER` 就**编译失败**； <!-- drift-ok -->
-2. `BACKEND_SDK_SUBDIR`：默认 include 树排除该子树，单独安装成 `VineGraphicsBackendSdk` 组件；
-3. `check_include_hygiene.py` 的 `BACKEND_HALF_AUDIENCE`：宿主不得 include 该前缀；
-4. `SEAM_HEADERS` / `SEAM_SOURCES`：钉住目录的文件集。
+Once batch 3 landed, the "the seam does not live up to its name" problem (18 of the 25 headers were read only by vsg) was solved: the remaining 8 mechanisms really are used by both backends.
+But the four things still maintained **one and the same boundary**, and the only question that boundary answers is one sentence: "these headers are for the backend, a host must not include them."
+One property expressed in four places: a rename, a moved file or a new header in any one of them meant syncing the other three.
 
-批次 3 落地后，“接缝名不副实”的问题（25 个头里 18 个只有 vsg 读）已经解决：剩下的 8 个机制确实两个后端都在用。
-但四件东西仍然维护**同一条边界**，而这条边界要回答的问题只有一句：“这些头是后端用的，宿主不该包含。”
-一句性质由四处表达，任何一处改了名、搬了文件、加了头，另外三处都要跟着同步。
+## Decision
 
-## 决定
+**Delete the concept of a "backend half"** (`G8`: no new consumer, and the boundary only blocks choices; `G7`: do not express one property with four layers of mechanism).
 
-**删除“后端半边”这个概念**（`G8`：没有新消费者，边界只挡选择；`G7`：不要用四层机制表达一句性质）。
+- The 8 mechanisms go flat into `sdk/vine/graphics/`, and their implementations flat into `src/viz/graphics/src/`:
+  `FrameGate`, `DeviceClock`, `FrameTimeline`, `RetirementQueue`, `Readback`, `DrawState` (formerly `Keys`),
+  `TargetPlan`, `DiagnosticDraft`.
+- The namespace merges into `vn::graphics`; `VN_GRAPHICSBACKEND_NS_BEGIN/END` and `BackendHalfGuard.hpp` are deleted. <!-- drift-ok -->
+- The install split is deleted: `vn_add_library`'s `BACKEND_SDK_SUBDIR` parameter and the matching branch in `VineLibraryHelper.cmake` go with it.
+- The gates become **about the property**, not the directory: the graphics module (`sdk/` + `src/`) may not include a rendering API or any concrete backend; the exported symbols of the shared
+  mechanisms are still checked against a file list (`check_export_annotations.py`). All three keep the guard "zero matching files is a finding".
+- **`gfx_backend_vsg`'s own types move to `vn::backend_vsg::core`**. They used to live in `vn::graphics::backend` (the plugin treated the seam namespace as its own layer), which is
+  the counter-example to `G13`: a backend's private types must not appear in the SDK's namespace. `core` keeps existing spellings such as `core::DeviceClock` with one
+  `using namespace ::VN_ROOT_NS::graphics`, so the 800-odd references do not change.
+- `Readback`'s structure `ReadbackResult` is renamed `ReadbackAnswer`: once merged into `vn::graphics` it clashed with the public `ReadbackResult` enum of `RenderDevice.hpp`,
+  and the two mean different things (one answers "can this step be done", the other "what did this read-back produce").
 
-- 8 个机制平铺进 `sdk/vine/graphics/`，实现平铺进 `src/viz/graphics/src/`：
-  `FrameGate`、`DeviceClock`、`FrameTimeline`、`RetirementQueue`、`Readback`、`DrawState`（原 `Keys`）、
-  `TargetPlan`、`DiagnosticDraft`。
-- 命名空间并入 `vn::graphics`；`VN_GRAPHICSBACKEND_NS_BEGIN/END` 与 `BackendHalfGuard.hpp` 删除。 <!-- drift-ok -->
-- 安装分流删除：`vn_add_library` 的 `BACKEND_SDK_SUBDIR` 参数与 `VineLibraryHelper.cmake` 的对应分支一并删除。
-- 门禁改成**按性质**，不按目录：图形模块（`sdk/` + `src/`）不得 include 渲染 API 或任何具体后端；共享机制的导出符号
-  仍由文件清单检查（`check_export_annotations.py`）。三者都保留“命中的文件数为 0 就是 finding”的守卫。
-- **`gfx_backend_vsg` 自己的类型搬到 `vn::backend_vsg::core`**。它们原本住在 `vn::graphics::backend`（插件把接缝
-  命名空间当自己的层用），那是 `G13` 的反例：一个后端的私有类型不该出现在 SDK 的命名空间里。`core` 用一个
-  `using namespace ::VN_ROOT_NS::graphics` 保留 `core::DeviceClock` 这类既有拼写，因此 800 余处引用不用改。
-- `Readback` 的结构体 `ReadbackResult` 改名 `ReadbackAnswer`：并入 `vn::graphics` 后它与 `RenderDevice.hpp` 的
-  公开枚举 `ReadbackResult` 同名，两者含义不同（一个答“这一步能不能做”，一个答“这次读回的结果”）。
+## Rejected roads
 
-## 被否决的路
-
-| 选项 | 为什么不做 |
+| Option | Why not |
 |---|---|
-| 平铺文件但保留 `BackendHalfGuard.hpp` | 守卫只能按文件名列举，而“宿主可包含”已经是新规则；守卫会让**合法**的使用编不过（`G8` 反例：挡住的是真实用法，不是错误） | <!-- drift-ok -->
-| 保留 `VineGraphicsBackendSdk` 组件（CMake 按文件清单排除） | 需要在 CMake 与门禁各维护一份 8 文件名单，正是本次要拆掉的那类同步（`G7`） |
-| 保留 `vn::graphics::backend` 命名空间、只平铺文件 | 名实分离：`#include <vine/graphics/FrameGate.hpp>` 却写 `graphics::backend::FrameGate`（`G1` / `G6`） |
-| 8 个机制拆给两个后端各一份 | 两份真源，驻留与帧纪律会漂（`G1`）；它们的定义就是“两个后端都用” |
-| 让 vsg 私有类型留在 `vn::graphics` | 一个后端的内部类型进入 SDK 命名空间（`G13`），且给未来的后端立了坏样子 |
+| Flat files but keep `BackendHalfGuard.hpp` | The guard can only enumerate file names, while "a host may include it" is already the new rule; the guard would stop **legitimate** uses from compiling (a `G8` counter-example: it blocks real usage, not errors) | <!-- drift-ok -->
+| Keep the `VineGraphicsBackendSdk` component (CMake excludes by file list) | It needs an 8-file list maintained in both CMake and the gates, exactly the kind of syncing this change removes (`G7`) |
+| Keep the `vn::graphics::backend` namespace and only flatten the files | Name and reality separate: `#include <vine/graphics/FrameGate.hpp>` but write `graphics::backend::FrameGate` (`G1` / `G6`) |
+| Split the 8 mechanisms into one copy per backend | Two sources of truth, and residency and frame discipline drift (`G1`); their definition is "both backends use it" |
+| Leave the vsg private types in `vn::graphics` | One backend's internal types enter the SDK namespace (`G13`), and it sets a bad example for a future backend |
 
-## 后果
+## Consequences
 
-**好的**
+**Good**
 
-- 一条性质（“SDK 不依赖任何具体后端”）由一条依赖规则表达，不再由路径 + 守卫 + 安装组件 + 文件集四处表达。
-- 插件自己的类型第一次住在自己的命名空间里（`G13`）；`vn::graphics` 不再出现 `Observe` / `VariantPool` / `PhaseTable`。
-- 少一个编译期守卫头、一个安装组件、两个 CMake 参数。
+- One property ("the SDK does not depend on any concrete backend") is expressed by one dependency rule, no longer by path + guard + install component + file set in four places.
+- A plugin's own types finally live in its own namespace (`G13`); `Observe` / `VariantPool` / `PhaseTable` no longer appear in `vn::graphics`.
+- One fewer compile-time guard header, one fewer install component, two fewer CMake parameters.
 
-**代价（如实）**
+**Cost (stated plainly)**
 
-- 宿主现在可以 include 这些机制头，SDK 的命名空间里也看得见它们——`G7` 的残余：复杂度从“四件同步的机制”变成
-  “读者需要知道这些类型是给后端用的”。这条事实只由文档与评审承载。
-- 三处门禁从“目录”改成“文件清单/模块规则”，必须保留“匹配 0 个文件即红”的守卫，否则重命名会让检查静默失效
-  （本树已发生过两次）。
-- 仓库外消费 `VineGraphicsBackendSdk` 的代码要改 include 与命名空间（源码级破坏）。
+- A host can now include these mechanism headers, and they are visible in the SDK's namespace - the residue of `G7`: the complexity went from "four mechanisms kept in sync" to
+  "a reader has to know these types are for the backend". That fact rests on documentation and review alone.
+- The three gates changed from "directory" to "file list / module rule", and must keep the guard "matching 0 files is red", or a rename silently disables the check
+  (which has happened twice in this tree).
+- Code outside the repository that consumes `VineGraphicsBackendSdk` has to change its includes and namespace (a source-level break).
 
-**触发条件（什么时候重开）**
+**Trigger conditions (when to reopen)**
 
-1. 第三个后端出现且某个机制只有它读 ⇒ 按 `G13` 搬进那个后端，不留在 SDK。
-2. 出现“宿主确实要读某个机制”的消费者 ⇒ 把它当成 SDK 的正式词汇命名与文档化，而不是恢复“半边”。
-3. 宿主误用（include 了只有后端该用的头并依赖其行为）在评审外真的发生 ⇒ 先加文档与样例，再加门禁，不恢复目录。
+1. A third backend appears and some mechanism is read only by it ⇒ move it into that backend per `G13`, do not leave it in the SDK.
+2. A consumer appears where "the host really does read some mechanism" ⇒ name and document it as proper SDK vocabulary instead of restoring a "half".
+3. Host misuse (including a header only the backend should use and depending on its behaviour) really happens outside review ⇒ add documentation and an example first, then a gate,
+   and do not restore a directory.
 
-## 实施状态
+## Implementation status
 
-- **已落地（2026-11-16）**：9 个头 → 8 个头平铺 + 7 个实现平铺；全量 include / 命名空间改写；
-  `check_include_hygiene.py`、`check_export_annotations.py`、`check_vk_exposure.py` 重新定范围；
-  `graphics_global.hpp` 只剩一组命名空间宏。证据：`Graphics` / `gfx_backend_vk` / `gfx_backend_vsg` 编译零警告，
-  `test_graphics` / `test_vk` / `test_vsg` 全绿，三道门禁零 finding。
-- **更正（2026-11-17，审计 A3-04）**：背景里第 4 件东西 `SEAM_HEADERS` / `SEAM_SOURCES` **从未存在过**——
-  本文决定删掉它时它就不在代码里。它留下的空缺（"接缝是哪 8 个头"没有门禁断言）曾被
-  `docs/guides/graphics-backends.md` 误写成"门禁已钉住文件集"，那一页已改正。是否补这条门禁是一次**新决定**
-  （与"触发条件"第 3 条同族），不是恢复"半边"；跟踪项见审计报告的 `T-04`。
+- **Landed (2026-11-16)**: 9 headers → 8 headers flat plus 7 implementations flat; the includes and namespaces rewritten throughout;
+  `check_include_hygiene.py`, `check_export_annotations.py` and `check_vk_exposure.py` rescoped;
+  `graphics_global.hpp` left with a single set of namespace macros. Evidence: `Graphics` / `gfx_backend_vk` / `gfx_backend_vsg` compile with zero warnings,
+  `test_graphics` / `test_vk` / `test_vsg` all green, and the three gates report zero findings.
+- **Correction (2026-11-17, audit A3-04)**: the fourth thing in the background, `SEAM_HEADERS` / `SEAM_SOURCES`, **never existed** -
+  it was already absent from the code when this document decided to delete it. The gap it left ("which 8 headers are the seam" has no gate assertion) was once
+  misdescribed by `docs/guides/graphics-backends.md` as "a gate pins the file set", and that page has been corrected. Adding such a gate is a **new decision**
+  (the same family as trigger condition 3), not restoring the "half"; the tracking item is `T-04` in the audit report.

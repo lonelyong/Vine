@@ -1,99 +1,98 @@
-# ADR-2026-11-12：快照接管生产收集拆成 5a 影子切换、5b-1 切换真相与 5b-2 删除
+# ADR-2026-11-12: the snapshot takes over production collection, split into 5a (shadow switch), 5b-1 (flip the source) and 5b-2 (deletion)
 
-- 状态：已采纳（迁移形状；5a、5b-1、5b-2a 与 5b-2b 已落地 2026-11-12，5b-2c 的 pass 声明收口未落地）
-- 日期：2026-11-12
-- 相关：`../design/graphics-frame-pipeline.md` §9.3；`../research/graphics-2026-11-12-instances.md`；
-  `tests/test_graphics/RenderWorldTest.cpp`（快照 / 烘焙的现役用例）
+- Status: Accepted (the migration shape; 5a, 5b-1, 5b-2a and 5b-2b landed on 2026-11-12, the pass-declaration close-out of 5b-2c has not)
+- Date: 2026-11-12
+- Related: `../design/graphics-frame-pipeline.md` §9.3; `../research/graphics-2026-11-12-instances.md`;
+  `tests/test_graphics/RenderWorldTest.cpp` (the standing cases for the snapshot / bake)
 
-> **EN**: Chose B: the step that deletes ~2000 lines of live code is split into 5a (shadow switch - both paths run on the same frame and input and are diffed item by item, old path still the truth, diff mode always on in CI), 5b-1 (flip the source, old paths demoted to an optional legacy shadow, `FrameMode::Mirrored` renamed `Published`) and 5b-2 (mechanical deletion, with 5b-2a adding the public `Scene::publish()` and moving the source and 5b-2b deleting mirror, delta and `RenderWorld`), so equivalence and deletion can be attributed separately. An errata records that 5b-2b did not remove the in-frame implicit publish; that is 5b-2c.
+## Background
 
-## 背景
+Step 5 of §9.3 is the only step that "deletes about 2000 lines of live shape": production collection moves from `ContentMirror` + `DeltaChannel` +
+`DrawListMemo` + `Version` to `detail::SceneSnapshot` + `selectSnapshot`. `K1` (203 µs), `K2` (1.03x) and
+`K3` only prove that **the prototype's snapshot and derivation are fast enough**; they do not prove **item-by-item equivalence in flight**; and `T17` does not yet cover
+every shape of the production path on the snapshot side either. Putting "prove equivalence" and "delete the old path" into one commit makes a failure unattributable
+and gives the revert surface too much to cover.
 
-§9.3 的第 5 步是唯一“删掉约 2000 行现役形状”的步骤：生产收集从 `ContentMirror` + `DeltaChannel` +
-`DrawListMemo` + `Version` 改走 `detail::SceneSnapshot` + `selectSnapshot`。`K1`（203 µs）、`K2`（1.03×）、
-`K3` 只证明**原型的快照与派生够快**，没有证明**在飞帧逐项等价**；`T17` 在 snapshot 侧也还没有覆盖
-生产路径的全部形状。把“证明等价”和“删除旧路径”放进同一个提交，失败时无法归因，回退面也过大。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A 一步完成：切换 + 删除 | 提交数少 | 等价性与删除两种风险叠加；失败无法归因（`G11`）；回退要恢复 2000 行 |
-| B 5a 影子切换，5b-1 切换真相，5b-2 删除 | 5a 只证明等价、不动生产形状；5b-1 只翻源、旧路径仍是影子；5b-2 机械删除，回退面小（`G3` / `G10`） | 迁移期两套路径并存；5a / 5b-1 的 diff 要进 CI |
-| C 拆三步：mirror / delta / memo 各一步 | 每步更小 | 中间态是死代码，每个都要独立的寿命 / 版本故事，且没有独立判据（`G8`） |
-| D 保留 mirror，只在快照上做新功能 | 不动现役路径 | 两个真相；复杂度没有消失，只是换了名字（`G1` / `G7`） |
-| E 只在 debug 里双跑 | 不进生产 | 不能作为门禁；release 行为没被证明，debug-only 路径会腐烂（`G11`） |
+| A One step: switch and delete | Fewer commits | Two kinds of risk stacked (equivalence and deletion); a failure is unattributable (`G11`); reverting means restoring 2000 lines |
+| B 5a the shadow switch, 5b-1 flip the source, 5b-2 delete | 5a only proves equivalence and does not touch the production shape; 5b-1 only flips the source, with the old path still a shadow; 5b-2 is a mechanical deletion with a small revert surface (`G3` / `G10`) | Two paths coexist during the migration; the 5a / 5b-1 diff has to run in CI |
+| C Split into three steps: mirror / delta / memo one each | Each step is smaller | The intermediate states are dead code, each needs its own lifetime / version story, and none has a criterion of its own (`G8`) |
+| D Keep the mirror and build only new features on the snapshot | The live path is untouched | Two truths; the complexity has not gone away, only been renamed (`G1` / `G7`) |
+| E Run both only in debug | Never reaches production | It cannot be a gate; Release behaviour is unproven and a debug-only path rots (`G11`) |
 
-## 决定
+## Decision
 
-采用 B。
+Adopt B.
 
-- **5a = 影子切换**：`selectSnapshot` 与旧 mirror 路径同帧同输入跑，逐项 diff（row 身份、world、
-  material / program ref、sort key、instance id）；旧路径仍是渲染真相。不删生产形状、不公开
-  `Scene::publish()`、不删 `addPass` 家族（`C11`）。diff 模式必须在 CI 的至少一个构建里常开
-  （建议 RelWithDebInfo 的 `test_graphics`），不能只靠手跑。
-- **5a 出口**：全量 `test_graphics` / `test_vsg` 绿 + `T17` 旧帧隔离绿 + `T34`（固定场景连续 ≥600 帧逐项 diff 为 0）
-  + `K1` / `K2` / `K3` / `N3` / `K7` / `N5` 绿 + 既有语义断言改动为 0。
-- **5b-1 = 切换真相（2026-11-12 已落地）**：Published 模式绑定 `snapshotSource()`；旧 rows / delta 路径降为
-  可选 LEGACY 影子（`setLegacyShadow` / `legacySource`，默认关闭），`FrameMode::Mirrored` 改名
-  `FrameMode::Published`。本步不删生产形状、不公开 `Scene::publish()`、不删 `addPass` 家族（`C11`）。
-- **5b-2a = 公开入口 + 源归位（2026-11-12 已落地）**：公开 `Scene::publish()`（三态
-  `Posted`/`Unchanged`/`InsideBatch`）；`FrameWorker` 直接持有 `SnapshotSource`，不再经过 `ContentMirror`。
-  本步不删 LEGACY 文件/用例，它们仍在树内但已不在生产路径。
-- **5b-2b = 删除旧路径（2026-11-12 已落地）**：删 `ContentMirror` / `DeltaChannel` / `RenderWorld` /
-  `RenderWorldSource` / `PublishOutcome` / `SceneRows::version/publish/editing`（含 23 条 LEGACY 用例）。
-  `DrawListMemo` 保留为 `SnapshotSource` 的纯 per-view 缓存；`Scene::refreshBoxes` / `refreshMaterials`
-  保留（快照的输入）。
-- **5b-2c = 收口 pass 声明**：删 `addPass` / `removePass` / `clearPasses` 与 `PassRegistry` 的运行时拒绝，
-  计划是唯一的形状。`K4` 的分母在 5b-2c 开始时重取；`K5` 前后 `wc -l` 对比；`T7` / `T30` 保持绿。
+- **5a = the shadow switch**: `selectSnapshot` and the old mirror path run on the same frame and the same input, diffed item by item (row identity, world,
+  material / program ref, sort key, instance id); the old path is still what is rendered. No production shape is deleted, `Scene::publish()` is not made public,
+  and the `addPass` family is not deleted (`C11`). The diff mode must be always on in at least one CI build
+  (the RelWithDebInfo `test_graphics` is suggested), not only run by hand.
+- **The 5a exit**: the whole of `test_graphics` / `test_vsg` green + `T17` old-frame isolation green + `T34` (a fixed scene over ≥600 consecutive frames with an item-by-item diff of
+  0) + `K1` / `K2` / `K3` / `N3` / `K7` / `N5` green + zero changes to existing semantic assertions.
+- **5b-1 = flip the source (landed 2026-11-12)**: Published mode binds `snapshotSource()`; the old rows / delta path is demoted to
+  an optional LEGACY shadow (`setLegacyShadow` / `legacySource`, off by default), and `FrameMode::Mirrored` is renamed
+  `FrameMode::Published`. This step deletes no production shape, does not make `Scene::publish()` public, and does not delete the `addPass` family (`C11`).
+- **5b-2a = the public entry point plus the source moving home (landed 2026-11-12)**: `Scene::publish()` becomes public (three outcomes
+  `Posted`/`Unchanged`/`InsideBatch`); `FrameWorker` holds the `SnapshotSource` directly and no longer goes through `ContentMirror`.
+  This step deletes no LEGACY files or cases - they stay in the tree but are off the production path.
+- **5b-2b = delete the old path (landed 2026-11-12)**: deletes `ContentMirror` / `DeltaChannel` / `RenderWorld` /
+  `RenderWorldSource` / `PublishOutcome` / `SceneRows::version/publish/editing` (including 23 LEGACY cases).
+  `DrawListMemo` stays as the pure per-view cache of `SnapshotSource`; `Scene::refreshBoxes` / `refreshMaterials`
+  stay (the snapshot's input).
+- **5b-2c = close out the pass declarations**: delete `addPass` / `removePass` / `clearPasses` and the `PassRegistry` runtime refusal,
+  so a plan is the only shape. `K4`'s denominator is re-taken when 5b-2c starts; `K5` compares `wc -l` before and after; `T7` / `T30` stay green.
 
-## 决定补充：A5 必须回答的四件事
+## Decision addendum: the four things A5 must answer
 
-1. **在飞帧读什么**（`G3` / `I4`）：5a / 5b-1 / 5b-2 的答案是同一份不可变 Snapshot 值；旧帧持有旧快照的引用，
-   新发布只换指针。`K7` 的判据是 `T17` 在 snapshot 侧逐项 diff（材质 / 几何 / 程序）为 0；
-   没有这条用例就不写“可删”。
-2. **谁 publish**（`G2`）：5a / 5b-1 仍由 `EngineCompile` 在帧内隐式发布；5b-2a 公开
-   `Scene::publish()` 返回三态结果；5b-2b 让 `EngineCompile` 不再自动调用 `worker_->publish`，帧内隐式发布
-   消失。公开面只在 5b-2a 变。
-   > **勘误（2026-11-12，落地核对）**：5b-2b **没有**删掉帧内隐式发布 —— 它删的是镜像 / delta / `RenderWorld`。
-   > 隐式发布仍在（`EngineCompile` 每 pass 调 `FrameWorker::publish`），但已可被宿主用
-   > `RenderEngine::bindSnapshot()` 接管；删除它是 5b-2c 的事（同样待删的还有 `addPass` 家族）。
-   > 另：5b-2a 的公开答案现在携带 `SceneSnapshotRef`（2026-11-12），见 `graphics-threading.md` §2.13。
-3. **`DrawListSource` 的去向**（`G5`）：保留这个**一个问题**的接口；`SnapshotSource` 在 5b-1 就是生产实现，
-   5b-2 删掉 `ContentMirror` / `RenderWorldSource` 后它仍是同一个接口。`FrameDescription::content` /
-   `expandPass` 的契约不变，等价性测试仍能问两个实现。不把它改成公开的新名词（`G8`：今天的消费者就是
-   `expandPass`）。
-4. **删除面与基线**（`K5`）：`ContentMirror` / `DeltaChannel` / `RenderWorld` 的 5b-2b 删除已完成；
-   `K5` 的最终 `wc -l` 与 2519 同口径（`.hpp` + `.cpp`），在 5b-2c 收口时一起记录。5a / 5b-1 / 5b-2a
-   只增不删，`K5` 只在最终收口时判。
+1. **What an in-flight frame reads** (`G3` / `I4`): the answer in 5a / 5b-1 / 5b-2 is the same immutable Snapshot value; an old frame holds a reference to the old
+   snapshot, and a new publish only swaps a pointer. `K7`'s criterion is `T17`'s item-by-item diff (material / geometry / program) being 0 on the snapshot side;
+   without that case, "safe to delete" is not written.
+2. **Who publishes** (`G2`): 5a / 5b-1 still publish implicitly inside the frame from `EngineCompile`; 5b-2a makes
+   `Scene::publish()` public, returning a three-outcome result; 5b-2b stops `EngineCompile` from calling `worker_->publish` automatically, so the in-frame implicit
+   publish disappears. The public surface changes only in 5b-2a.
+   > **Erratum (2026-11-12, checked against the landing)**: 5b-2b did **not** remove the in-frame implicit publish - it removed the mirror / delta / `RenderWorld`.
+   > The implicit publish is still there (`EngineCompile` calls `FrameWorker::publish` per pass), but a host can now take it over with
+   > `RenderEngine::bindSnapshot()`; removing it is 5b-2c's job (along with the `addPass` family, also still to be deleted).
+   > Also: the public answer of 5b-2a now carries a `SceneSnapshotRef` (2026-11-12), see §2.13 of `graphics-threading.md`.
+3. **Where `DrawListSource` goes** (`G5`): keep this interface, which is **one question**; `SnapshotSource` is the production implementation from 5b-1 on,
+   and after 5b-2 deletes `ContentMirror` / `RenderWorldSource` it is still the same interface. The contract of `FrameDescription::content` /
+   `expandPass` is unchanged, and the equivalence test can still ask two implementations. It is not renamed into a new public noun (`G8`: the consumer today is
+   `expandPass`).
+4. **The deletion surface and the baseline** (`K5`): the 5b-2b deletion of `ContentMirror` / `DeltaChannel` / `RenderWorld` is done;
+   `K5`'s final `wc -l` is measured the same way as the 2519 (`.hpp` + `.cpp`) and recorded when 5b-2c closes out. 5a / 5b-1 / 5b-2a
+   only add, so `K5` is judged only at the final close-out.
 
-## 后果
+## Consequences
 
-- 好的：等价性、翻源、公开入口与删除分开，失败可归因（`G11`）；5a 的语义断言改动必须为 0，`K4` 的分子不会因为
-  “顺手重构”而膨胀；5b-2b 是机械删除，回退面小（`G10`）。
-- 坏的 / 代价：迁移期两套路径并存，5a / 5b-1 的 diff 增加 CI 时间；5b-2b 之前代码量上升，`K5` 只在 5b-2b 收口时判。
-- 触发条件（什么时候重开）：
-  - 5a / 5b-1 的 diff 无法到 0 ⇒ 停，回到设计层重审快照模型，不进入 5b-2b；
-  - diff 的 CI 成本不可接受 ⇒ 至少保留一个 gating 场景在 CI，其余移到 nightly；
-  - 出现 mirror / delta 的新一类 in-flight / 版本缺陷、第二后端要复用内容层、或收集进入性能预算 ⇒
-    5b-2b 的代码接管提前（见 backlog）。
+- Good: equivalence, the flip, the public entry point and the deletion are kept apart, so a failure is attributable (`G11`); 5a's semantic assertion changes must be 0,
+  so `K4`'s numerator cannot inflate through "a refactor along the way"; 5b-2b is a mechanical deletion with a small revert surface (`G10`).
+- Bad / cost: two paths coexist during the migration, and the 5a / 5b-1 diff adds CI time; the code grows before 5b-2b, and `K5` is judged only at that close-out.
+- Trigger conditions (when to reopen):
+  - the 5a / 5b-1 diff cannot reach 0 ⇒ stop and go back to the design layer to re-examine the snapshot model, without entering 5b-2b;
+  - the CI cost of the diff is unacceptable ⇒ keep at least one gating scenario in CI and move the rest to nightly;
+  - a new class of in-flight / version defect appears in the mirror / delta, a second backend wants to reuse the content layer, or collection enters a performance budget ⇒
+    bring the 5b-2b takeover forward (see the backlog).
 
-## 证据
+## Evidence
 
-- **5a + 5b-1（2026-11-12）**：`SnapshotSource`（快照 → `DrawListSource`，按 `SceneSnapshot::revision` 记忆化）、
-  `DrawListDiff`（字段级比较）、`ContentMirror::snapshotSource()` / `legacySource()` /
-  `FrameWorker::setLegacyShadow()`。5b-1 的生产绑定是 `snapshotSource()`；LEGACY 影子默认关闭。
-  `T34`：`SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames`（600 帧，transform / opacity /
-  material / placement 编辑）+ `FrameWorkerTest.AWorkerExpandsTheSameFrameTheSceneWould`；
-  `SnapshotSourceTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith` 补齐 `T17` 的 snapshot 侧（材质 / 几何 /
-  程序三种 revision）；`SnapshotSourceTest.ADifferentSnapshotIsReportedAsADifference` 证明比较不是恒真。
-  `test_graphics` 577 / `test_vsg` 542 / `ctest` 30/30 / TSan 0 警告。
-- **5b-2a（2026-11-12）**：公开 `Scene::publish()` 三态；`FrameWorker` 直接持有 `SnapshotSource`，
-  `T31` 由 `FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch` 钉住。
-- **5b-2b（2026-11-12）**：删除 `ContentMirror` / `DeltaChannel` / `RenderWorld` / `RenderWorldSource` /
-  `PublishOutcome` 与 23 条 LEGACY 用例；`test_graphics` 554 / `test_vsg` 542 / `ctest` 30/30 / TSan 0。
-- 5b-2c 后分母：`test_graphics` 554 + `test_vsg` 542 = 1096；开始时重取。
-- 绑定删除面的用例初判 17 条；5b-2b 实际删除了 23 条 LEGACY 用例（`ContentMirrorTest` 11 + `RenderWorldTest` 7 +
-  `DeltaChannelTest` 5）。它们只钉旧机制，没有需要改断言的语义存续，符合 `K4` 的计数口径。
-- 相关判据：`T17` / `K1` / `K2` / `K3` / `K7` / `N5`；`K5` 的 2519 行基线见
-  `../research/graphics-2026-11-11-next-audit.md` §2。
+- **5a + 5b-1 (2026-11-12)**: `SnapshotSource` (snapshot → `DrawListSource`, memoised by `SceneSnapshot::revision`),
+  `DrawListDiff` (field-level comparison), `ContentMirror::snapshotSource()` / `legacySource()` /
+  `FrameWorker::setLegacyShadow()`. 5b-1's production binding is `snapshotSource()`; the LEGACY shadow is off by default.
+  `T34`: `SnapshotSourceTest.ThePublishedSourceMatchesTheSceneAcrossSixHundredFrames` (600 frames, transform / opacity /
+  material / placement edits) + `FrameWorkerTest.AWorkerExpandsTheSameFrameTheSceneWould`;
+  `SnapshotSourceTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith` completes `T17`'s snapshot side (material / geometry /
+  program revisions); `SnapshotSourceTest.ADifferentSnapshotIsReportedAsADifference` proves the comparison is not vacuously true.
+  `test_graphics` 577 / `test_vsg` 542 / `ctest` 30/30 / TSan 0 warnings.
+- **5b-2a (2026-11-12)**: the public three-outcome `Scene::publish()`; `FrameWorker` holds the `SnapshotSource` directly, and
+  `T31` is pinned by `FrameWorkerTest.PublishAnswersPostedUnchangedAndInsideBatch`.
+- **5b-2b (2026-11-12)**: deletes `ContentMirror` / `DeltaChannel` / `RenderWorld` / `RenderWorldSource` /
+  `PublishOutcome` and 23 LEGACY cases; `test_graphics` 554 / `test_vsg` 542 / `ctest` 30/30 / TSan 0.
+- The denominator after 5b-2c: `test_graphics` 554 + `test_vsg` 542 = 1096; re-taken at the start.
+- The first count of cases tied to the deletion surface was 17; 5b-2b actually deleted 23 LEGACY cases (`ContentMirrorTest` 11 + `RenderWorldTest` 7 +
+  `DeltaChannelTest` 5). They pinned only the old mechanism and carried no semantics that needed its assertions changed, which matches `K4`'s counting rule.
+- Related criteria: `T17` / `K1` / `K2` / `K3` / `K7` / `N5`; the 2519-line baseline of `K5` is in
+  §2 of `../research/graphics-2026-11-11-next-audit.md`.
