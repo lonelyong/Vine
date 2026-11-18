@@ -143,10 +143,14 @@ VN_GRAPHICS_API ResolvedCommandState resolveRenderState(const RenderState& autho
  * nothing resolves exactly like this, so a caller that has the content's word and no pass to draw it with (a
  * tool, a test, a host reading its own scene) uses it directly.
  *
+ * It is NOT a `resolve*` in the vocabulary of `graphics-scene.md` 2.12: that verb takes a value AND a context
+ * and answers `origin` as well, while this one takes a value alone and fills what nobody stated. The name is
+ * how a reader tells the two apart without opening the header.
+ *
  * @param state Folded optional state (see collectRenderState).
  * @return Concrete state with defaults applied, usable as a pipeline-variant
  *         key component.
  */
-VN_GRAPHICS_API ResolvedRenderState resolveRenderState(const RenderState& state);
+VN_GRAPHICS_API ResolvedRenderState applyStateDefaults(const RenderState& state);
 
 VN_GRAPHICS_NS_END

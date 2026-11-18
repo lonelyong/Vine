@@ -170,7 +170,7 @@ An instance copies neither textures nor bytes beyond the block.
 ### 3.7 F9–F11 variants, upload and diagnostics
 
 - **Behaviour**: `ProgramVariant` gains `textured` (any slot present); the `diffuse_map` bit is replaced by `textured`.
-  An instance's composite revision makes the arena rewrite; diagnostics follow `DiagnosticsRoute`'s episode rule.
+  An instance's composite revision makes the arena rewrite; diagnostics follow `DiagnosticsHandle`'s episode rule.
 - **Constraint** (C6): `vn_shader_check.sh`'s combination count = existing bits × 1, it does not grow with the slot count;
   the five sampler declarations `ProgramAbi` scans appear with `VN_TEXTURED`.
 - **Acceptance** (T6): `EmbeddedShadersTest`'s variant matrix and `ProgramAbiTest`'s binding counts are updated together.

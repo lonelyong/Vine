@@ -249,7 +249,7 @@ VN_GRAPHICS_API RenderState collectRenderState(raw_ptr<const Node> node);
 /**
  * @brief Computes the effective render state for a node in one step.
  *
- * Equivalent to resolveRenderState(collectRenderState(node)).
+ * Equivalent to applyStateDefaults(collectRenderState(node)).
  *
  * @param node Leaf or intermediate node to resolve state for.
  * @return The node's effective (resolved) render state.

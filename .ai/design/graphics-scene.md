@@ -70,12 +70,14 @@ through three named steps, and a helper is spelled by **which inputs it takes**,
 `collect*` folds the tree into one authored value (`collectRenderState(node)` answers the still-optional block,
 whose unset items mean "nobody on that path said anything", not "the default"); `resolve*` applies **one context**
 to an authored value (`resolveRenderState(authored, pass, data_topology)` answers the final state *and* the
-`origin` of every item — one implementation of the priority table; the one-argument overload is the
-content-only spelling of the same table); `effective*` is the **one-step composition** a caller usually wants
-(`effectiveRenderState(node)` equals `resolveRenderState(collectRenderState(node))`, and `effectiveProgram` /
-`effectiveMaterial` are the same shape for a single-valued property, whose search ends at the first override
-because a program or a material replaces the shading wholesale rather than one item of it).
-Why: while the three words look interchangeable, a reader cannot tell whether `resolveRenderState(state)` has
+`origin` of every item — one implementation of the priority table); `effective*` is the **one-step composition**
+a caller usually wants (`effectiveRenderState(node)` equals `applyStateDefaults(collectRenderState(node))`, and
+`effectiveProgram` / `effectiveMaterial` are the same shape for a single-valued property, whose search ends at
+the first override because a program or a material replaces the shading wholesale rather than one item of it).
+The fourth spelling that used to exist here, a one-argument `resolveRenderState(state)`, is now
+`applyStateDefaults(state)` (**BC-24**): it fills what nobody stated and takes no context, so under this rule it
+was never a `resolve*` — and a reader could not tell the two apart without opening the header.
+Why: while the three words look interchangeable, a reader cannot tell whether a derived value has
 already walked the tree, so every call site is read twice (`G1`, `G4`). Boundary: a new derivation picks its verb
 by its **inputs** — node and context together is `effective*`, a node alone is `collect*`, a value plus a context
 is `resolve*` — and a function that composes two steps says so in its comment.

@@ -4,7 +4,7 @@
 > **Last verified**: 2026-11-16
 > **Scope**: the layering of device/window/area/view/engine, and one frame's compilation and scheduling.
 > **Sources**: `RenderEngine.hpp` / `PassChain.hpp` / `PassRegistry.hpp` / `OutputRegistry.hpp` /
-> `DiagnosticsRoute.hpp` / `SceneView.hpp` / `RenderArea.hpp` / `RenderBackend.hpp`.
+> `DiagnosticsHandle.hpp` / `SceneView.hpp` / `RenderArea.hpp` / `RenderBackend.hpp`.
 > **Backlog**: `../backlog/graphics.md`
 
 ## 1. Overview
@@ -33,7 +33,7 @@ This file defines the current design of the graphics architecture: device, engin
 2.1 **Mechanisms go into the SDK, composition belongs to the application layer**: split-screen layout, several transients borrowing depth, and the boundaries of convenience objects are not made engine policy.
 2.2 **Declaration and execution separated**: a pass is a declaration, the frame compiles into values (`FrameDescription` / `FrameTable`), the backend only consumes values.
 2.3 **One fact, one home**: pass registration is only `PassRegistry`; named outputs only `OutputRegistry`; diagnostics only
-    `DiagnosticsRoute`; presentation only `RenderArea`'s present table.
+    `DiagnosticsHandle`; presentation only `RenderArea`'s present table.
 2.4 **A device is not a window**: `RenderDevice` owns the GPU device and queues and can serve several windows; window targets are issued by the device.
 2.5 **There is one scheduler implementation**: the engine's `detail::FrameScheduler` sorts; the backend no longer reorders by dependency and no longer reports cycles.
 
@@ -141,6 +141,22 @@ removing an unregistered pass and removing an already removed pass are the same 
     that is the AREA's declaration (`RenderArea::present`), never the view's guess. Renaming it is a public-API batch, not a doc edit (the reader-facing
     table is `docs/guides/graphics.md` §5.6).
 
+2.14 **A public name says what the caller is handed** (naming, `G4`): three spellings changed on 2026-11-18 because each described a
+    neighbouring thing rather than the thing in the caller's hand; the migration notes are `BC-22` (`DiagnosticsRoute` →
+    `DiagnosticsHandle`), `BC-23` (the `MaterialPtr` alias deleted from `Geometry.hpp` - `Material.hpp` is its home) and `BC-24`
+    (the one-argument `resolveRenderState` → `applyStateDefaults`). Reasons and rejected options:
+    [ADR-2026-11-18](ADR-2026-11-18-names-state-what-is-handed-over.md).
+    * `Diagnostics` is the ROUTE (counting plus the host's sink) and is what a DEVICE is handed (`RenderDevice::setDiagnosticsRoute`);
+      `DiagnosticsHandle` is a borrowed `Lease` onto the engine's route, which is what the ENGINE hands out (`RenderEngine::diagnostics()`,
+      and what a chain holds). The old name made the handle read as the route itself (`G1`).
+    * A pointer alias declared in two headers, one of which never uses it, teaches the wrong owner; deleting the copy costs a host one
+      include it already needed (`G1`).
+    * `applyStateDefaults(state)` fills what nobody stated and takes no context, so under the derivation rule of
+      `graphics-scene.md` 2.12 it was never a `resolve*`; the arity rule that separated it from the pass-aware overload is one a reader
+      cannot see at the call site (`G4`).
+    Boundary: this is a vocabulary batch, not a behaviour one - no signature changed shape, no default changed, and the in-tree call sites
+    are the whole migration.
+
 ## 3. Features
 
 ### 3.1 Device, window, area, view, engine
@@ -159,7 +175,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 |---|---|---|
 | F6 | `PassRegistry` | The only pass registration table; `add` / `remove` / `count` / `orderOf` / `contentOf` / `bindContent(...) → bool`. |
 | F7 | `OutputRegistry` | Named outputs and transients: `publish` / `resolve` / `unpublish` / `transientTarget`. |
-| F8 | `DiagnosticsRoute` | Diagnostics: `setSink` / counts / `isClean`; the engine dies first ⇒ `isValid()` false. |
+| F8 | `DiagnosticsHandle` | Diagnostics: `setSink` / counts / `isClean`; the engine dies first ⇒ `isValid()` false. |
 
 ### 3.3 Chain (recipe + registration home)
 
@@ -214,7 +230,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | `PassRegistry::orderOf()` / `contentOf()` / `bindContent()` | A pass's order / content; `bindContent` returns whether a registered pass was hit |
 | `OutputRegistry::publish()` / `resolve()` / `unpublish()` | Named outputs |
 | `OutputRegistry::transientTarget()` / `transientCount()` | Transients |
-| `DiagnosticsRoute::setSink()` / `count()` / `isClean()` | Diagnostics |
+| `DiagnosticsHandle::setSink()` / `count()` / `isClean()` | Diagnostics |
 
 ### 4.3 `PassChain`
 
@@ -263,7 +279,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 
 | # | Invariant |
 |---|---|
-| N1 | `PassChain` only borrows the engine (`PassRegistry` / `DiagnosticsRoute` are leases) and does not own it; the engine dies first ⇒ `isValid()` false. |
+| N1 | `PassChain` only borrows the engine (`PassRegistry` / `DiagnosticsHandle` are leases) and does not own it; the engine dies first ⇒ `isValid()` false. |
 | N2 | The chain's passes are registered with the engine; the chain keeps no second pass list. |
 | N3 | `PassDesc::camera` is an owning `intrusive_ptr<Camera>`; do not pass the address of a stack camera. |
 | N4 | One area, one picture; multi-cell layout belongs to the application layer, do not add a second area to the engine. |

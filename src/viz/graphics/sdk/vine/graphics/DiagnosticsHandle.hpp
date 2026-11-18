@@ -25,10 +25,10 @@ class RenderEngine;
  * - The engine may be destroyed first and the handle knows it (a `Lease`): once it is gone a report is a no-op and
  *   the counts answer zero.
  */
-class VN_GRAPHICS_API DiagnosticsRoute {
+class VN_GRAPHICS_API DiagnosticsHandle {
   public:
     /** @brief Constructs an empty handle that refers to no engine (see isValid). */
-    DiagnosticsRoute() noexcept = default;
+    DiagnosticsHandle() noexcept = default;
 
   public:
     /** @brief Gets whether the engine this handle reads is still alive.
@@ -92,7 +92,7 @@ class VN_GRAPHICS_API DiagnosticsRoute {
      *
      * @param engine Engine whose route this handle reads.
      */
-    explicit DiagnosticsRoute(Lease<RenderEngine> engine) noexcept;
+    explicit DiagnosticsHandle(Lease<RenderEngine> engine) noexcept;
 
   private:
     Lease<RenderEngine> engine_;

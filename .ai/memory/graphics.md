@@ -1842,7 +1842,8 @@
   block, **ids unchanged** - renumbering would break every citation.
 - **Design truth added**: `graphics-scene.md` 2.12 (and guide §5.2) - the three derivation verbs are chosen
   by INPUTS: `collect*` (a node), `resolve*` (a value + a context), `effective*` (a node, the one-step
-  composition). `effectiveRenderState` == `resolveRenderState(collectRenderState(node))`.
+  composition). `effectiveRenderState` == `applyStateDefaults(collectRenderState(node))` (the one-argument
+  overload was renamed on 2026-11-18, see the entry after this one).
 - **Registered, not done** (arguments in `../research/graphics-2026-11-18-review-5.md` §2): **T40** a
   `FrameContext` for the per-frame hook (the frame verb has no time; `FpsOverlay` is the only consumer and it
   self-clocks - `G8` says wait); **T41** `DiagnosticsRoute` should be named as the handle it is.
@@ -1876,3 +1877,30 @@
   `test_vsg` + `content_seam`/`vk_exposure` green; ten gates green (197 notes / 56 design / 1352
   include files / 974 public docs / 138 units). Mutation check: changing `gbuffer_pass.order = -3` to
   `-4` in the guide reddens `check_doc_symbols`, restoring greens it. No host or backend code changed.
+
+## 2026-11-18 a public name says what you are handed (T41 + two neighbours)
+
+- **What**: three spellings changed because each named a neighbouring thing rather than the thing in the
+  caller's hand. `DiagnosticsRoute` -> **`DiagnosticsHandle`** (`Diagnostics` stays the route; a DEVICE is
+  handed the route via `setDiagnosticsRoute`, the ENGINE hands out the lease-backed handle); the duplicate
+  `MaterialPtr` alias deleted from `Geometry.hpp` (`Material.hpp` is its home); the one-argument
+  `resolveRenderState(state)` -> **`applyStateDefaults(state)`** (it takes no context, so under the
+  derivation rule of `graphics-scene.md` 2.12 it was never a `resolve*`). Notes `BC-22`/`BC-23`/`BC-24` in
+  `graphics-architecture.md` 2.14; argument and rejected roads in
+  `../decisions/ADR-2026-11-18-names-state-what-is-handed-over.md`. **T41 is closed** and deleted from the
+  backlog. No deprecated aliases.
+- **Trap 1 - a sweep must not rewrite history.** A blanket `\bDiagnosticsRoute\b` rewrite also hit
+  `.ai/memory/graphics.md`, `../research/graphics-2026-11-18-review-5.md` and `.ai/README.md`, where those lines record what
+  the code *was*. Restore them (`git checkout HEAD -- <the record>`), let the design pages carry the new
+  name, and append a dated correction to the record instead. The backlog's T41 row became nonsense after
+  the sweep ("`DiagnosticsHandle` does not say it is a handle") - closed rows are deleted, so it went.
+- **Trap 2 - the renamed `.cpp` needs one `cmake -B build`** (glob without CONFIGURE_DEPENDS), then build
+  with the tool. Same trap as every file add/rename.
+- **Trap 3 - grep by the function NAME, not by an assumed argument name.** Three test call sites of the
+  one-argument overload survived my first sweep because I searched for `resolveRenderState(state)`; the
+  compiler found `resolveRenderState(RenderState())`, `(partial)` and `(content)`.
+- **No baseline move needed**: `check_public_docs.py` reported 0 new / 0 stale after the rename (unlike the
+  B12 vocabulary batch, which required `--update` because whole units moved).
+- **Evidence**: `test_graphics` 619, `test_vk` 174, `test_vsg` 572, `BackendParityTest` 13; `content_seam`
+  + `vk_exposure` green; ten gates green (198 notes / 79 ADRs / 56 design / 974 public docs / 138 units).
+  SDK + both plugins rebuilt (a class rename in a header reaches the plugins).

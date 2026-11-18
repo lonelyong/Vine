@@ -27,9 +27,6 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-class Material;
-using MaterialPtr = intrusive_ptr<Material>;
-
 class ShaderProgram;
 using ShaderProgramPtr = intrusive_ptr<ShaderProgram>;
 

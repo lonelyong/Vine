@@ -22,7 +22,7 @@ constexpr float kMinimumLineWidth = 1.0F;
 
 } // namespace
 
-ResolvedRenderState resolveRenderState(const RenderState& state)
+ResolvedRenderState applyStateDefaults(const RenderState& state)
 {
     ResolvedRenderState resolved;
     if (state.depth) {

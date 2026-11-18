@@ -202,7 +202,7 @@ RenderState collectRenderState(raw_ptr<const Node> node)
 
 ResolvedRenderState effectiveRenderState(raw_ptr<const Node> node)
 {
-    return resolveRenderState(collectRenderState(node));
+    return applyStateDefaults(collectRenderState(node));
 }
 
 ShaderProgramPtr effectiveProgram(raw_ptr<const Node> node)

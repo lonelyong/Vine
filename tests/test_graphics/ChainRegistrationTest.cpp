@@ -1,5 +1,5 @@
 #include <vine/graphics/Camera.hpp>
-#include <vine/graphics/DiagnosticsRoute.hpp>
+#include <vine/graphics/DiagnosticsHandle.hpp>
 #include <vine/graphics/FpsOverlay.hpp>
 #include <vine/graphics/OutputRegistry.hpp>
 #include <vine/graphics/PassChain.hpp>
@@ -209,7 +209,7 @@ TEST(ChainRegistrationTest, TheHandlesOutliveTheirEngineAndThenAnswerNothing)
 {
     PassRegistry     registry;
     OutputRegistry   outputs;
-    DiagnosticsRoute diagnostics;
+    DiagnosticsHandle diagnostics;
     {
         auto engine = intrusive_ptr<RenderEngine>(new RenderEngine());
         registry    = engine->passes();

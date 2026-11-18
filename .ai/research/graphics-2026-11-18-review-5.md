@@ -83,6 +83,12 @@ recommendation. Nothing here is adopted by this round; two are registered with t
   to avoid — the chain may outlive the engine). The rename is the cheap half.
 - **Recommendation: defer to the next public-API batch.** A rename with no behaviour change should
   travel with other renames, not on its own (`G8`).
+- **Landed 2026-11-18**, in the batch this proposal asked for, on an explicit go: the handle is now
+  `DiagnosticsHandle`, `Diagnostics` stays the route, and `RenderDevice::setDiagnosticsRoute` keeps its name
+  because that call really does take the route. Two neighbouring spellings were renamed in the same batch
+  (`BC-23` the duplicate `MaterialPtr` alias in `Geometry.hpp`, `BC-24` the one-argument `resolveRenderState` →
+  `applyStateDefaults`); the decision and the rejected roads are
+  `../decisions/ADR-2026-11-18-names-state-what-is-handed-over.md`.
 
 ### 2.3 A render graph for the frame compiler (rejected, unchanged)
 
@@ -160,7 +166,9 @@ and refuted with evidence rather than argument:
 | Item | Trigger |
 |---|---|
 | T40 `FrameContext` for the per-frame hook | the first feature needing two of (frame number, time, size, ratio) |
-| T41 `DiagnosticsRoute` renamed as what it is | the next public-API batch |
+
+**T41 landed the same day** (explicit go): `DiagnosticsRoute` → `DiagnosticsHandle`, with `BC-23` / `BC-24` riding on
+it - see the correction in §2.2 and `../decisions/ADR-2026-11-18-names-state-what-is-handed-over.md`.
 
 ### P2 — Landed this round
 

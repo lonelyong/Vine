@@ -9,7 +9,7 @@
 #include <vine/intrusive_ptr.hpp>
 #include <vine/raw_ptr.hpp>
 
-#include "DiagnosticsRoute.hpp"
+#include "DiagnosticsHandle.hpp"
 #include "FrameUpdate.hpp"
 #include "Node.hpp"
 #include "PassRegistry.hpp"
@@ -236,7 +236,7 @@ struct VN_GRAPHICS_API ChainDesc {
  *   to run with nobody holding them (the engine's slot table keeps its own reference, so a reference alone would keep a
  *   dropped pipeline's passes alive and drawing).
  * - It also BORROWS the engine through two NARROW handles rather than owning it (see PassRegistry /
- *   DiagnosticsRoute): the passes live in the engine's table, so the chain must be able to reach it, but keeping the
+ *   DiagnosticsHandle): the passes live in the engine's table, so the chain must be able to reach it, but keeping the
  *   engine alive from below would invert ownership - a released engine would live on for as long as any chain it
  *   once handed a pass to. The handles are leases, so the engine dies exactly when its owners drop it, and a chain
  *   that outlives it answers "gone" (isValid()) and takes its passes with it instead of calling into freed memory.
@@ -266,7 +266,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
      * @param registry    Handle over the engine's one pass table (empty is accepted; nothing is registered then).
      * @param diagnostics Handle over the engine's one diagnostic route (empty silences the chain's refusals).
      */
-    PassChain(PassRegistry registry, DiagnosticsRoute diagnostics);
+    PassChain(PassRegistry registry, DiagnosticsHandle diagnostics);
 
     /** @brief Destroys the chain: it hands every pass it registered back to the engine while the engine is still
      *         there, and answers nothing once it is gone. */
@@ -674,7 +674,7 @@ class VN_GRAPHICS_API PassChain : public Object, public RefCounted<PassChain> {
     // The two narrow contracts this chain depends on (see the class note). Both carry a lease, so the engine may
     // die first and the chain answers "gone" instead of reaching into freed memory.
     PassRegistry     registry_;
-    DiagnosticsRoute diagnostics_;
+    DiagnosticsHandle diagnostics_;
     // Every pass this chain registered lives in the engine's own slot table with `owner = this` (see
     // RenderEngine::applyPlan(plan, owner)), so "a pass the chain registered is a pass the chain unregisters" needs no second
     // list here (see the destructor) and a named pass is found by its role instead of by a field per pass.

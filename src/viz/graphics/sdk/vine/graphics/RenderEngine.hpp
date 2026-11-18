@@ -19,7 +19,7 @@
 #include "CameraSnapshot.hpp"
 #include "Capabilities.hpp"
 #include "Diagnostics.hpp"
-#include "DiagnosticsRoute.hpp"
+#include "DiagnosticsHandle.hpp"
 #include "EngineNotReadyReason.hpp"
 #include "FrameDescription.hpp"
 #include "FrameResult.hpp"
@@ -217,7 +217,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      */
     [[nodiscard]] OutputRegistry outputs() noexcept;
 
-    /** @brief Gets the engine's one diagnostic route (see DiagnosticsRoute).
+    /** @brief Gets the engine's one diagnostic route (see DiagnosticsHandle).
      *
      * @details
      * - The narrow contract for counting and reporting; a recipe holds this instead of the whole engine, and the
@@ -225,7 +225,7 @@ class VN_GRAPHICS_API RenderEngine : public Object, public RefCounted<RenderEngi
      *
      * @return A handle over this engine's diagnostic route.
      */
-    [[nodiscard]] DiagnosticsRoute diagnostics() noexcept;
+    [[nodiscard]] DiagnosticsHandle diagnostics() noexcept;
 
   public:
     /** @brief Gets the bound device.

@@ -15,7 +15,7 @@
 
 VN_GRAPHICS_NS_BEGIN
 
-PassChain::PassChain(PassRegistry registry, DiagnosticsRoute diagnostics)
+PassChain::PassChain(PassRegistry registry, DiagnosticsHandle diagnostics)
   : registry_(std::move(registry))
   , diagnostics_(std::move(diagnostics))
 {}

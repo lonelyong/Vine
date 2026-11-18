@@ -8844,7 +8844,7 @@ TEST(StateNodeTest, TheLineWidthIsStateForTheContentAndDynamicStateForTheBackend
 
 TEST(StateNodeTest, ResolveAppliesDefaults)
 {
-    const ResolvedRenderState fallback = resolveRenderState(RenderState());
+    const ResolvedRenderState fallback = applyStateDefaults(RenderState());
     EXPECT_TRUE(fallback.depth.test);
     EXPECT_TRUE(fallback.depth.write);
     EXPECT_EQ(fallback.depth.compare, CompareOp::Less);
@@ -8857,7 +8857,7 @@ TEST(StateNodeTest, ResolveAppliesDefaults)
     RenderState partial;
     partial.cullMode                   = CullMode::Back;
     partial.polygonMode                = PolygonMode::Line;
-    const ResolvedRenderState resolved = resolveRenderState(partial);
+    const ResolvedRenderState resolved = applyStateDefaults(partial);
     EXPECT_EQ(resolved.cullMode, CullMode::Back);
     EXPECT_EQ(resolved.polygonMode, PolygonMode::Line);
     EXPECT_TRUE(resolved.depth.test);
@@ -9171,7 +9171,7 @@ TEST(RenderStateTest, ThePriorityTableIsOnePlaceAndSaysWhoDecidedEachItem)
     EXPECT_EQ(viewed.origin.topology, StateOrigin::Pass);
 
     // The content-only spelling answers exactly like the same call with a pass that overrides nothing.
-    const ResolvedRenderState  alone           = resolveRenderState(content);
+    const ResolvedRenderState  alone           = applyStateDefaults(content);
     const ResolvedCommandState with_empty_pass = resolveRenderState(content, PassRenderState{}, Topology::Triangles);
     // (the content-only spelling has no data layer, so its topology is the documented default - the same one
     // the two-argument call takes)

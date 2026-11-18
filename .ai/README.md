@@ -88,13 +88,14 @@ related documents**.
 - `robotics-proximity-design.md` — Robotics proximity (interfaces, the VMR comparison, the FCL integration point).
 - `window-design.md` — the window module's cross-platform window context.
 
-## decisions/ — decision records (ADRs) (78)
+## decisions/ — decision records (ADRs) (79)
 
 One ADR records one decision: background, options, decision, consequences, evidence. Status is
 `accepted` (or partly superseded, when a live half remains); the date is immutable; when a later ADR
 replaces one whole, the replaced file is deleted and its successor states what it replaced - git
 keeps the old argument.
 
+- `ADR-2026-11-18-names-state-what-is-handed-over.md` — **a public name says what the caller is handed**: `DiagnosticsRoute` → `DiagnosticsHandle` (the route is `Diagnostics`; the handle is what the engine lends), the duplicate `MaterialPtr` alias deleted from `Geometry.hpp`, and the one-argument `resolveRenderState` → `applyStateDefaults`; migration notes `BC-22`…`BC-24` in `graphics-architecture.md` 2.14, no deprecated aliases.
 - `ADR-2026-11-18-public-vocabulary-unification.md` — **the public vocabulary is unified on what each thing is**: `RenderCommand` → `DrawItem`, `DrawDescription` → `DrawCall`, `MaterialBase` → `MaterialValues`, `EngineNotReady` → `EngineNotReadyReason`, `createSession` / `releaseSession` → `createFrameDriver` / `releaseFrameDriver`; five migration notes (`BC-17`…`BC-21`) in `graphics-rendering.md` 2.10 and **no deprecated aliases** - an alias would restore the double spelling the batch removes.
 - `ADR-2026-11-18-seam-identity-is-a-property-not-a-namespace.md` — **the seam is a property and a checked list, not a namespace**: the third-round audit's `vn::graphics::backend` alias group is rejected (one class would get two names; it would cover the 8 mechanisms while 25 SDK headers are shared, so the name would understate the seam), and the seam's identity becomes a measured property ("both backends reach it") recorded once in `check_include_hygiene.py`'s `SEAM_HEADERS`, with the two pages that state it (the design page 2.9 and the backend guide 5) required to name every mechanism the list holds.
 - `ADR-2026-11-16-authoring-view-and-target-vocabulary.md` — **values carry declarations, behaviour belongs to objects**: a `View` value (`CameraSnapshot` + `Viewport` + layer mask, `CollectView` retired), `RenderArea` → `RenderArea` (surface stays with the platform), a pass's target collapsed into the two values `Target` + `Output`, `PassDesc` as the only authoring shape (`RenderPass`'s 35 setters become a read-only live handle), zero callbacks in values (`before_draw` moves to the object's `update()`, `OverlayLayout` returns a `Viewport`), the dead field `tag` deleted, `setRenderTarget` made real (vk pre-builds; CAP-86 added) or retired, the `releasePass` contract narrowed, `Capabilities` = `Features` + `Limits`, diagnostics gain `origin` (CAP-87), the light set no longer allocated per pass; four normative text revisions plus 26 section-comment cleanups. The 18 batches landed on 2026-11-17, each one's numbers in its commit body.
