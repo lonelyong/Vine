@@ -367,41 +367,48 @@ geometry->setRevision(geometry->revision() + 1);        // 公告：重建数据
 不写任何 shader：`ScreenPass` 配 `BuiltinShaders::screenCopyProgram()` 就是"把一张彩色图拷到目标
 子视口"——**要显式命名**它（没有隐式拷贝），并且这条 pass 需要有相机。
 
+§3.3 / §3.4 / §3.5 三个例子**也是编译过的**：`tests/test_graphics/GuideExamplePasses.cpp` 是它们的可编译副本，
+`scripts/check_doc_symbols.py` 逐条核对语句（§3.1 用的同一套机制；这三个例子都需要设备和窗口，只在编译期校验）。
+
 ```cpp
+// example: tests/test_graphics/GuideExamplePasses.cpp
+using namespace vn::graphics;
+
 // ① 离屏目标：一张 RGBA8 彩色 + D24 深度。
-auto scene_rt = make_intrusive<RenderTarget>();
+auto scene_rt = vn::make_intrusive<RenderTarget>();
 scene_rt->setName(u8"scene_rt");
 scene_rt->attachColor(RenderTarget::ColorFormat::RGBA8);
 scene_rt->attachDepth(RenderTarget::DepthFormat::D24);
 scene_rt->setSize(surface_w, surface_h);
 
 // ② 场景 pass：画进 scene_rt。order < 0 ⇒ 先于主 pass 执行。
-vn::graphics::PassDesc scene_pass;
+PassDesc scene_pass;
 scene_pass.name          = u8"scene_into_rt";
-scene_pass.kind          = vn::graphics::PassKind::Scene;
+scene_pass.kind          = PassKind::Scene;
 scene_pass.order         = -1;                                  // -1 < 0：排在主 pass 之前
 scene_pass.camera        = camera;
 scene_pass.content       = scene;
-scene_pass.target        = vn::graphics::Target::explicitTarget(scene_rt);
+scene_pass.target        = Target::explicitTarget(scene_rt);
 scene_pass.clear_enabled = true;                                // 自己是第一笔，清屏
 scene_pass.clear_color   = vn::Color(26, 26, 31).toLinear();    // vn::Color 是 0..255 的 uint8 构造
 scene_pass.clear_depth   = true;
-scene_pass.depth_mode    = vn::graphics::DepthMode::TestAndWrite; // 不透明内容：测 + 写
+scene_pass.depth_mode    = DepthMode::TestAndWrite;             // 不透明内容：测 + 写
 scene_pass.output.name   = u8"SceneColor";                      // 命名输出（每帧进名字表）
-scene_pass.output.whole_target = true;                            // 对象级承诺：它是这张 target 的唯一写者
+scene_pass.output.whole_target = true;                          // 对象级承诺：它是这张 target 的唯一写者
 
 // ③ 合成 pass：作为**窗口 pass**（target 留默认 ⇒ 画进窗口），order 0。
-vn::graphics::PassDesc compose_pass;
+PassDesc compose_pass;
 compose_pass.name          = u8"compose_to_window";
 compose_pass.order         = 0;
-compose_pass.kind          = vn::graphics::PassKind::Screen;
-compose_pass.camera        = camera;                          // 窗口 pass 的相机决定窗口视角
-compose_pass.program       = vn::graphics::screenCopyProgram(); // 画面是**命名**的：纯拷贝用 SDK 的这个程序
-compose_pass.input_names   = { vn::String(u8"SceneColor") };   // 名字形式
-compose_pass.input_targets = { scene_rt };                     // 对象形式（两层在地址上汇合）
+compose_pass.kind          = PassKind::Screen;
+compose_pass.camera        = camera;                            // 窗口 pass 的相机决定窗口视角
+compose_pass.program       = screenCopyProgram();               // 画面是**命名**的：纯拷贝用 SDK 的这个程序
+compose_pass.input_names   = { vn::String(u8"SceneColor") };    // 名字形式
+compose_pass.input_targets = { scene_rt };                      // 对象形式（两层在地址上汇合）
 
-// 一个计划，两行：一条 pass 读另一条产出的名字，整份校验通过才生效。
-engine->applyPlan(vn::graphics::Plan{ { scene_pass, compose_pass } }, owner);
+// 一个计划，两行：一条 pass 读另一条产出的名字，整份校验通过才生效 —— 答案是三态的值。
+const PlanResult applied = engine->applyPlan(Plan{ { scene_pass, compose_pass } }, owner);
+return applied;
 ```
 
 想把它变成**右下角画中画**（而不是全屏），在提交前给合成 pass 一个子视口即可：
@@ -423,30 +430,31 @@ compose_pass.viewport = vn::graphics::Viewport{ surface_w - 320 - 8, 8, 320, 180
 
 ### 3.4 例：纯手动 4 pass —— 手搭一条延迟管线
 
-这条链用的三件"公有件"正是 `PassChain::build` 的 Deferred 预设内部用的东西，所以手搭出来
-与预设**完全等价**：它演示了手写延迟管线的三个要点 —— **MRT target**、**带 program 的 ScreenPass**、
-以及**借用深度**。
+（同样是 `GuideExamplePasses.cpp` 里的编译副本，见 §3.3 的说明。）
 
 ```cpp
+// example: tests/test_graphics/GuideExamplePasses.cpp
+using namespace vn::graphics;
+
 // ① 规范 G-buffer：告警里说的 4 张彩色附件（base colour / 八面体法线+粗糙度+金属度 /
 //    emissive+遮挡 / view position）+ D24 深度，全部 16F。几何 program 必须写这 4 个输出。
 //    打包契约只有一家：shaders/vine_gbuffer.glsl（写侧 encode、读侧 decode 在同一文件）。
 //    附件 0 装**基础色**（不是漫反射项），附件 1 的 rg 是八面体法线、b/a 是 roughness/metallic；
-//    反射率 f0 **不存**：两条路径都用 mix(0.04, base, metallic) 推——存派生值是两条路开始分歧的起点。
+//    反射率 f0 **不存**：两条路径都用 mix(0.04, base, metallic) 推 —— 存派生值是两条路开始分歧的起点。
 //    附件 2 的 rgb 是自发光（HDR，所以这张升到 16F），a 是遮挡因子（只缩放 ambient，直接光不受）。
 //    位置的 w 是**契约的一半**：写过的像素写 1（清除留下的透明黑是 0），光照 program 用它区分
-//    "背景" 与 "几何"；距离判据做不到——相机贴住的像素视图位置就是 ~0（2026-09-25 修）。
+//    "背景" 与 "几何"；距离判据做不到 —— 相机贴住的像素视图位置就是 ~0（2026-09-25 修）。
 auto gbuffer = defaultGbufferTarget(width, height);
 
 // ② G-buffer pass（order < 0）：一个场景遍历写 MRT。
 auto gbuffer_program = defaultGbufferGeometryProgram();
-vn::graphics::PassDesc gbuffer_pass;
+PassDesc gbuffer_pass;
 gbuffer_pass.name            = u8"gbuffer";
 gbuffer_pass.order           = -3;
-gbuffer_pass.kind            = vn::graphics::PassKind::Scene;
+gbuffer_pass.kind            = PassKind::Scene;
 gbuffer_pass.camera          = camera;
 gbuffer_pass.content         = scene;
-gbuffer_pass.target          = vn::graphics::Target::explicitTarget(gbuffer);
+gbuffer_pass.target          = Target::explicitTarget(gbuffer);
 gbuffer_pass.program_override = gbuffer_program;   // 场景 pass 也可以带自己的 program
 gbuffer_pass.output.name     = u8"GBuffer";
 gbuffer_pass.output.whole_target = true;            // 唯一写者 ⇒ 承诺整张 target
@@ -454,45 +462,50 @@ gbuffer_pass.output.whole_target = true;            // 唯一写者 ⇒ 承诺�
 // ③ 延迟光照 + 前向透明的共同落点：一张离屏 composite，它**借** G-buffer 的深度，
 //    于是不透明场景只光栅化一次，前向内容能正确地被不透明物体遮挡。
 gbuffer->setDepthPromotion(false);               // 不把深度提升为可采样（省一次布局往返）
-auto composite = make_intrusive<RenderTarget>();
+auto composite = vn::make_intrusive<RenderTarget>();
 composite->setName(u8"composite");
 composite->setSize(width, height);
 composite->attachColor(RenderTarget::ColorFormat::RGBA8);
-composite->shareDepth(depthViewOf(gbuffer));     // 借深度（也可以由下面那条 pass 声明：setDepthView）
+composite->shareDepth(depthViewOf(gbuffer));     // 借深度（也可以由那条 pass 自己声明：PassDesc::depth_view）
 
 // ④ 全屏延迟光照（带 program）：读 G-buffer 的全部彩色附件，写进 composite。
-vn::graphics::PassDesc light_pass;
+PassDesc light_pass;
 light_pass.name          = u8"deferred_lighting";
 light_pass.order         = 0;
-light_pass.kind          = vn::graphics::PassKind::Screen;
+light_pass.kind          = PassKind::Screen;
 light_pass.camera        = camera;                  // program 路径**必须**有相机
-light_pass.target        = vn::graphics::Target::explicitTarget(composite);
+light_pass.target        = Target::explicitTarget(composite);
 light_pass.input_names   = { vn::String(u8"GBuffer") };
 light_pass.input_targets = { gbuffer };             // 读整捆：program 按 binding 自己挑
 light_pass.program       = defaultDeferredLightProgram();
 
 // ⑤ 前向透明：不清屏（压在光照结果上），只测深度不写。
-vn::graphics::PassDesc forward_pass;
+PassDesc forward_pass;
 forward_pass.name          = u8"forward_transparent";
 forward_pass.order         = 1;
-forward_pass.kind          = vn::graphics::PassKind::Scene;
+forward_pass.kind          = PassKind::Scene;
 forward_pass.camera        = camera;
 forward_pass.content       = transparent_scene;
-forward_pass.target        = vn::graphics::Target::explicitTarget(composite);
+forward_pass.target        = Target::explicitTarget(composite);
 forward_pass.clear_enabled = false;
-forward_pass.depth_mode    = vn::graphics::DepthMode::TestOnly;
+forward_pass.depth_mode    = DepthMode::TestOnly;
 forward_pass.output.name   = u8"Composite";
 forward_pass.output.whole_target = true;
 
 // ⑥ 呈现：把烘好的 composite 拷到窗口（窗口 pass，target 留默认）。
-vn::graphics::PassDesc present_pass;
+PassDesc present_pass;
 present_pass.name          = u8"present";
 present_pass.order         = 2;
-present_pass.kind          = vn::graphics::PassKind::Screen;
+present_pass.kind          = PassKind::Screen;
 present_pass.camera        = camera;
-present_pass.program       = vn::graphics::screenCopyProgram();
+present_pass.program       = screenCopyProgram();
 present_pass.input_names   = { vn::String(u8"Composite") };
 present_pass.input_targets = { composite };
+
+// 四条声明一个计划：名字是身份，差分由引擎做（新增 / 同名原地更新 / 消失的移除）。
+const PlanResult applied = engine->applyPlan(Plan{ { gbuffer_pass, light_pass, forward_pass, present_pass } }, owner);
+return applied;
+```
 
 // 四条声明一个计划：名字是身份，差分由引擎做（新增 / 同名原地更新 / 消失的移除）。
 engine->applyPlan(vn::graphics::Plan{ { gbuffer_pass, light_pass, forward_pass, present_pass } }, owner);
@@ -515,21 +528,18 @@ engine->applyPlan(vn::graphics::Plan{ { gbuffer_pass, light_pass, forward_pass, 
   `resolveRenderState`）。
 - **MRT**：目标侧 `attachColor()` 调四次；程序侧输出按附件序号写；`ScreenPass` 的 program 会把源的每张
   彩色附件绑成纹理 0..N-1。
-- **借深度**：`shareDepth()` 之后**只有当两边尺寸一致**才是同一张图；源 target 重建（换尺寸）会让借用方
-  继续测旧深度 —— 引擎会检测并重建（见 §3.7）。边本身是个值（`DepthView`）：可以写在 target 上（机制），
-  也可以由那条画它的 pass 声明（`pass->setDepthView(q)`，边随 pass 走）。
-
-### 3.5 例：同样的东西用 builder 写
-
-builder 只是把 §3.3 / §3.4 的装配收起来，配上默认 program；它不会替你省掉"相机、内容、尺寸"这三个前提。
+（同样是 `GuideExamplePasses.cpp` 里的编译副本，见 §3.3 的说明。）
 
 ```cpp
+// example: tests/test_graphics/GuideExamplePasses.cpp
+using namespace vn::graphics;
+
 // 请求是一个值：写它，交给静态 build。
 ChainDesc options;
 options.content = scene;
 options.camera  = camera.get();
 
-// 结构只有两选：forward / deferred。阴影不是预设——它由"投影的那盏灯"提出请求
+// 结构只有两选：forward / deferred。阴影不是预设 —— 它由"投影的那盏灯"提出请求
 // （Light::castShadow()），预设为内容里第一盏可建的方向光/聚光建一条 depth-only 的
 // shadow pass；第二盏投射灯与点光没有图，会在诊断通道里各报一条（见 §4.3）。
 options.path = ShadingPath::Deferred;
@@ -537,25 +547,38 @@ options.offscreen_width  = 0;          // 0 = 用当前 surface 尺寸，未知�
 options.offscreen_height = 0;
 options.gbuffer_program  = nullptr;    // 空 = 用内置的临时 G-buffer 几何 program
 options.lighting_program = nullptr;    // 空 = 用内置的临时延迟光照 program
-auto pipeline = PassChain::build(&engine, options);
+auto pipeline = PassChain::build(engine, options);   // 拿到的就是这条链：后面加叠层也找它
 pipeline->resize(surface_w, surface_h, device_pixel_ratio);  // 同时管离屏 / 合成 target（device 像素）与 HUD 叠加（逻辑像素）
 
-// 内容着色：必须**显式指定**程序。没有 shader preset 枚举，也没有兜底——
-// 引擎默认用的是命名的 forward 程序（flat 是它的同一对 stage + `#define VN_FLAT 1`）：
-engine.setDefaultContentProgram(flatForwardProgram());   // 会话默认：没写 program 的 drawable 用它
-engine.setDefaultContentProgram(forwardProgram());       // 回到默认前向着色
+// 内容着色：必须**显式指定**程序。没有 shader preset 枚举，也没有兜底 ——
+// 引擎默认用的是命名的 forward 程序（flat 是它的同一对 stage + `#define VN_FLAT 1`）。
+// 这个默认值是**设备的帧那一半**的设置（一台设备可以驱动不止一个引擎），所以经 executor 设：
+engine->device()->executor().setDefaultContentProgram(flatForwardProgram());   // 会话默认：没写 program 的 drawable 用它
+engine->device()->executor().setDefaultContentProgram(forwardProgram());       // 回到默认前向着色
 
 // 离屏 + 画中画（内部就是 §3.3 的两个 pass）。注意最后那个矩形是 VIEWPORT ⇒ **device 像素**
-// （surface_w 是逻辑像素，所以高 DPI 下要各自乘 dpr；见 RenderPass::setViewport）：
-addOffscreenToScreen(&engine, camera.get(), scene, u8"preview", 512, 288,
-                     RenderTarget::ColorFormat::RGBA8,
-                     RenderTarget::DepthFormat::D24,
-                     Viewport{ viewport_x, viewport_y, 320, 180 });
+// （surface_w 是逻辑像素，所以高 DPI 下要各自乘 dpr；见 RenderPass::setViewport）。
+// 返回值是 [[nodiscard]] 的那条 ScreenPass：它回答"加没加上"，拒绝时是 null。
+auto preview_pass = addOffscreenToScreen(engine, camera.get(), scene, u8"preview", 512, 288,
+                                         RenderTarget::ColorFormat::RGBA8,
+                                         RenderTarget::DepthFormat::D24,
+                                         Viewport{ viewport_x, viewport_y, 320, 180 });
+if (preview_pass == nullptr) { return nullptr; }
 
 // 也可以自己加 HUD：叠层是**内容对象**（自己带 scene + 取景相机 + 盒子），画的是一条普通 pass 声明。
-auto gizmo = make_intrusive<AxisGizmo>();
+auto gizmo = vn::make_intrusive<AxisGizmo>();
 gizmo->setSourceCamera(camera.get());
 gizmo->onSurfaceResized(surface_w, surface_h);
+PassDesc hud;
+hud.name = u8"axis_gizmo"; hud.stage = PassStage::Overlay; hud.order = 10;
+hud.camera = vn::intrusive_ptr<Camera>(gizmo->camera());
+hud.content = vn::intrusive_ptr<Scene>(gizmo->content());
+hud.viewport = gizmo->boxViewport(); hud.clear_enabled = false; hud.depth_mode = DepthMode::Disabled;
+// 叠层自己更新（FrameUpdate）：注册给链，链在每帧之前调 gizmo->update() 镜像源相机朝向。
+pipeline->addOverlay(u8"gizmo", gizmo.get(), hud);
+
+return pipeline;
+```
 PassDesc hud;
 hud.name = u8"axis_gizmo"; hud.stage = PassStage::Overlay; hud.order = 10;
 hud.camera = intrusive_ptr<Camera>(gizmo->camera());

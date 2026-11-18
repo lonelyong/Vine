@@ -1851,3 +1851,28 @@
   `BackendParityTest` 13, `content_seam` + `vk_exposure` green; **ten** gates green (197 notes / 56 design /
   1351 include files / 974 public docs / 138 units). Both new rules mutation-tested (red on a reintroduced
   defect, green after restore). No host or backend code changed, so no demo run.
+
+## 2026-11-18 review-5 follow-up: the other three complete examples are compiled
+
+- **What**: `tests/test_graphics/GuideExamplePasses.cpp` now compiles the guide's §3.3 (two-pass
+  offscreen composite), §3.4 (hand-built deferred pipeline) and §3.5 (the builder plus a HUD overlay).
+  All three carry `// example:` and are therefore statement-checked by `check_doc_symbols.py`; the guide
+  says so in each section. Compile-only, no executed half: each needs a device and a chain.
+- **Seven defects found**, every one of the R5-01 family - a snippet drifts because nothing compiles it:
+  three unqualified `make_intrusive` calls (§3.3 twice, §3.5 once); `chain->addOverlay` on a variable
+  the block never declared (it is `pipeline`); `engine.setDefaultContentProgram` - wrong object AND
+  wrong syntax, the setting lives on the device's frame half
+  (`engine->device()->executor().setDefaultContentProgram`); `PassChain::build(&engine, ...)` where the
+  parameter is already a `raw_ptr`; `addOffscreenToScreen`'s `[[nodiscard]]` ignored (now captured and
+  checked, which also teaches that the answer says whether the PiP was built); and `intrusive_ptr<
+  Camera>` / `<Scene>` spelled as if they were `vn::graphics` names - they are `vn`'s, and that only
+  resolves inside the SDK's own namespace, never in a host translation unit.
+- **Style unified**: §3.3/§3.4 dropped their `vn::graphics::` prefixes and open with
+  `using namespace vn::graphics;`, the way §3.1 already did - one style in the chapter, and it is what
+  the compiled copy uses.
+- **Trap**: a python block-rewriter keyed on the first `// example:` fence hit §3.1 first and put the
+  new note in the wrong section. Fix by keying on the block's TARGET path, not on its ordinal.
+- **Evidence**: `test_graphics` 619 (no new case - these are compile-only), `test_graphics`/`test_vk`/
+  `test_vsg` + `content_seam`/`vk_exposure` green; ten gates green (197 notes / 56 design / 1352
+  include files / 974 public docs / 138 units). Mutation check: changing `gbuffer_pass.order = -3` to
+  `-4` in the guide reddens `check_doc_symbols`, restoring greens it. No host or backend code changed.

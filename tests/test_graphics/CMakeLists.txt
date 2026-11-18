@@ -28,7 +28,9 @@ set(SRC_FILE_LIST
 	FrameRunnerTest.cpp
         ValueChannelTest.cpp        # The module guide's first example, compiled: the snippet a host copies must not be able to
         # rot between builds (see the file's header).
-        GuideExample.cpp)
+        GuideExample.cpp
+        # The guide's three hand-built pass examples (3.3 / 3.4 / 3.5), compiled for the same reason.
+        GuideExamplePasses.cpp)
 add_executable(${TEST_NAME} ${SRC_FILE_LIST})
 set_target_properties(${TEST_NAME} PROPERTIES FOLDER test)
 target_link_libraries(${TEST_NAME} vn::Graphics vn::Geom vn::Models)

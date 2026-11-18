@@ -220,9 +220,16 @@ changed, so no demo run was owed.
 
 ## 9. Remaining Debt and Open Questions
 
-1. **Only one example is guarded.** `// example:` is a general mechanism; the guide's other 20 code
-   blocks are still unguarded snippets. Converting the ones that are complete programs (the two-pass
-   and four-pass examples in §3.3/§3.4) is the obvious next step, and it is maintenance, not design.
+1. **The guide's four complete programs are all guarded now** (the follow-up batch of the same day
+   added §3.3 / §3.4 / §3.5 as `GuideExamplePasses.cpp`). Converting them found seven more defects,
+   each of the same family as R5-01: three unqualified `make_intrusive` calls (§3.3 twice, §3.5 once),
+   an overlay registered on a `chain` the block never declared (the variable is `pipeline`), the
+   default content program set on the ENGINE (`engine.setDefaultContentProgram`) although it belongs to
+   the device's frame half (`engine->device()->executor().setDefaultContentProgram`), `&engine` passed
+   where the parameter is already a `raw_ptr`, an ignored `[[nodiscard]]` (`addOffscreenToScreen`), and
+   two root-namespace `intrusive_ptr`s spelled as if they were `vn::graphics` names. The remaining 20
+   blocks are fragments, not programs, so they stay unguarded on purpose - a fragment has no compiled
+   counterpart to compare against.
 2. **The cross-reference gate does not read intra-page references** (`see §3` inside one page). Those
    are visible to the reader of that page, so they were left out on purpose; a page that is long
    enough to make that a problem is a page that should be split.
