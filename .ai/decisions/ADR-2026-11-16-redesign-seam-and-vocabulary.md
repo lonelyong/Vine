@@ -1,6 +1,6 @@
 # ADR-2026-11-16: what was redesigned is the names and the ownership, not the capabilities - the seam, vocabulary and phases of the two-backend graphics stack
 
-- Status: **Accepted**. Approved on 2026-11-16; stage three ran the 18 batch positions of §10 in `../research/graphics-2026-11-16-redesign-r2.md`
+- Status: **Accepted**. Approved on 2026-11-16; stage three ran the 18 batch positions of the review's §10
   and **all landed on 2026-11-17** (progress is in "Implementation status" at the end of this document).
   **Partly superseded**: §2 here (the seam moving home: `backend/` keeping only the shared mechanisms) and the "directory as seam" half of batch 3
   are superseded by [ADR-2026-11-16-no-backend-half](ADR-2026-11-16-no-backend-half.md) (2026-11-16); this document's vocabulary, phases,
@@ -16,7 +16,7 @@
   `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` (this document closes out its **vocabulary and seam**, without reopening its decisions),
   `ADR-2026-11-13-one-engine-one-surface.md`, `ADR-2026-11-12-adopt-graphics-next.md`,
   `ADR-2026-11-10-gpu-residency-pinned-by-content.md`, `ADR-2026-11-14-vk-becomes-the-default-target.md`.
-- Review and construction plan: `../research/graphics-2026-11-16-redesign.md` (A the capability list, B item by item, C cross-cutting, D the conclusion table, the batch plan).
+- Review and construction plan: the 2026-11-16 review (A the capability list, B item by item, C cross-cutting, D the conclusion table, the batch plan), deleted after the batches landed.
 
 ## Background
 
@@ -149,7 +149,7 @@ the engine side's 20 reports gain codes, and `diagnostic_code_baseline.txt` goes
 - **Approved (2026-11-16)**: both ADRs and every batch approved in one go. The three behaviour changes **as one batch** (BC-08 `before_draw` no longer called implicitly,
   BC-09 vk `setRenderTarget` pre-building, BC-10 host reports not counted in the engine's `diagnosticCount`); `A-01` takes **option 1**
   (vk pre-builds too, adding CAP-86) rather than retiring the verb.
-- **Stage one (audit)**: done (`../research/graphics-2026-11-16-redesign.md` §2-§5).
+- **Stage one (audit)**: done (§2-§5 of the review).
 - **Stage two (target design + this ADR)**: done and approved.
 - **Batch 0 (characterization) + batch 10 (convention sweep) landed (2026-11-16)**: the three new cases for CAP-44 / CAP-45 / CAP-86;
   the four normative passages (one `///` line per field, no section comments, enum underlying types, numeric types and accessors/commands, the ownership vocabulary) and the sweep of 26
@@ -211,5 +211,5 @@ the engine side's 20 reports gain codes, and `diagnostic_code_baseline.txt` goes
   The counts when B9 landed: `test_graphics` **617** / `test_vk` **167** / `test_vsg` **572** / `BackendParityTest` 13;
   the nine documentation/API gates all green; the demo at `0 [error]`.
 - **Stage three (migration)**: **done** (2026-11-17). Batch progress is archived in the git commit bodies (each batch lists its capability ID triples),
-  and this document only records status; the batch table and order remain governed by §10 of `../research/graphics-2026-11-16-redesign-r2.md`.
+  and this document only records status; the batch table and order are in the commit bodies.
 - **This ADR was changed to "Accepted" when the last batch (S8) landed**; no batch was abandoned.

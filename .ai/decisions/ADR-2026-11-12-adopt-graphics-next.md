@@ -4,7 +4,7 @@
 - Date: 2026-11-12
 - Related: `../design/graphics-frame-pipeline.md` (the normative description of the target shape), `../design/graphics-threading.md`
   (threading and the two worlds before the migration), `../design/vsg-backend.md`, `../backlog/graphics.md`,
-  `../research/graphics-2026-11-11-next*.md` (the proposal and audit originals), `scripts/measure_graphics_claims.py`
+  `scripts/measure_graphics_claims.py`
 
 ## Background
 
@@ -62,9 +62,9 @@ late-dependency details are absorbed into design/ADR step by step, and **each ab
 
 ## Evidence
 
-- The proposal and two audit rounds: `../research/graphics-2026-11-11-next.md` (§4.5 `K1–K11`),
-  `graphics-2026-11-11-next-audit.md` (§8 five steps, §11 landing table),
-  `graphics-2026-11-11-next-requirements.md` (`C1–C12` / `R1–R39` / `N1–N10` / `T1–T31`).
+- The target shape itself: `../design/graphics-frame-pipeline.md` (`C1–C12` / `R1–R39` / `I1–I7` / `N1–N10` / `T1–T31`,
+  and §9.3 for the steps). The dated proposal and its two audit rounds - from which `R31–R39` and `K7–K11` came - are
+  deleted: their results are what that page states.
 - The measurements already landed: `SnapshotTest.MeasureWhatOneEditCostsToPublishAndSelect` (RelWithDebInfo 203 µs / 293 µs,
   1.03x resident row table); `scripts/measure_graphics_claims.py`; `test_graphics` 559 / `test_vsg` 540 / ctest 30/30.
 - The mechanisms already landed: `sdk/vine/graphics/ContentId.hpp` (`Handle` / `Id<Tag>` / `ContentRef` / `ContentRegistry`),

@@ -17,7 +17,7 @@
 ## Background
 
 Round one redesigned the **seam and the vocabulary** (FrameDriver / FrameDriverId / FrameHead / DiagnosticDraft / the seam's 6 mechanisms),
-with the 85-item capability list and the ten-batch plan in `graphics-2026-11-16-redesign.md`. At the owner's request round two examined four more things:
+with the 85-item capability list and the ten-batch plan of that review. At the owner's request round two examined four more things:
 **whether the abstractions are sound, whether the capabilities are designed soundly, whether the concepts have better semantics, and one programming convention**, comparing against mature frameworks.
 
 Four groups of facts decided this round (all re-checkable):
@@ -32,7 +32,7 @@ Four groups of facts decided this round (all re-checkable):
    one of which had no effect, and which left a raw pointer that could dangle. There was also **one `vector<LightValue>` allocation per pass per frame**
    (`RenderPass.cpp:242` / `ScreenPass.cpp:82`), against "zero allocation inside a frame"; and `PassDesc::tag` had 8 writes and 0 reads.
 
-Also: 4 findings of the 2026-11-11 API audit (`graphics-2026-11-11-next-api.md`, `P1`–`P32`) were **still pinned in the baseline of
+Also: 4 findings of the 2026-11-11 API audit (`P1`–`P32`) were **still pinned in the baseline of
 `check_api_style.py`**. This round reconciled them one by one (research document §3), and whatever is still open joins this document's batches.
 
 ## Decision

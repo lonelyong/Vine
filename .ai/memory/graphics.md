@@ -323,7 +323,7 @@
 
 ## 2026-11-11 — graphics-next proposal set (not adopted; continue here next time)
 
-- Six documents, entry `.ai/research/graphics-2026-11-11-next.md` (the outline), expanded as: `-requirements` (`R1–R30`,
+- Six documents, the outline plus five expansions: `-requirements` (`R1–R30`,
   `N1–N18`, `C1–C12`, `T1–T16`), `-design` (type drafts + hot/cold partitioning + seven algorithms + 7 open questions),
   `-benefits` (benefits/costs `P1–P7` / three migration batches), `-api` (`P1–P32` + `M1–M10` + the three style tiers + where 49 methods go),
   `-hot-paths` (performance budget, animation pose, post-processing dependency graph, extensions, `N11–N18`). Backlog `T32`; **the current design is unchanged**.
@@ -339,9 +339,9 @@
 - The only **production-code** change this session: `af2de738` pulled `sessionChangeAllowed` back to private (I had made it public by mistake).
 - The first command next time: `-hot-paths` §8 step 1 — turn the `Measure*` cases from printing into threshold assertions (no architecture change, make performance regressions visible).
 
-## 2026-11-11 — graphics-next second-round audit (new `graphics-2026-11-11-next-audit.md`; action order rewritten)
+## 2026-11-11 — graphics-next second-round audit (action order rewritten)
 
-- Added `.ai/research/graphics-2026-11-11-next-audit.md`: `X1–X10` cross-document contradictions, `A1–A13` design gaps,
+- Added the second-round audit: `X1–X10` cross-document contradictions, `A1–A13` design gaps,
   `R31–R39` / `T17–T31` / `K7–K11` additions. **The proposal is still “not adopted”; the current design is unchanged.**
 - The most critical one, A1: the new design's `DrawItem` carries only `id` and loses the revision; when content changes, an in-flight old frame looks up the new value by id,
   directly violating `R9`/`I1`. Today's `RenderCommand` instead carries `GeometryDescriptionPtr`/`MaterialDescriptionPtr`
@@ -1392,8 +1392,8 @@
   (new `test_vk`, compiling the plugin sources directly like `tests/test_vsg`).
 - **Milestones**: M0 plugin+device; M1 offscreen clear+readback; M2 one content draw (glslang→pipeline, channels→upload, View/Draw blocks);
   M3 targets/state/MRT; M4 material/texture/light/screen draw; M5 swapchain; M6 residency/prepare; M7 comparison with vsg.
-  M0–M2 about 2–4k lines, M3–M6 about 10–20k lines. Details in evaluation §8.
-- **Docs**: backlog §1 new T35 (the only "doable now" item); evaluation `graphics-2026-11-13-gpu-resource-abstraction.md` §8.
+  M0–M2 about 2–4k lines, M3–M6 about 10–20k lines. Details are in backlog T30.
+- **Docs**: backlog §1 new T35 (the only "doable now" item).
 
 ## 2026-11-14 —— the light block moves up into the SDK (`LightAbi.hpp`): one shape, one home
 

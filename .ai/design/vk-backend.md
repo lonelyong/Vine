@@ -21,7 +21,7 @@
   `VkDevice` / pipelines), without VulkanSceneGraph.
 - It consumes the seam, not the engine: what to draw comes from `FrameDescription`, how to draw it from this backend. That is what lets `test_vk` drive it directly
   (the plugin is a MODULE and the test compiles its sources) **with no window**.
-- Status: every milestone is landed; among the industry-standard audit's findings (`../research/graphics-2026-11-14-vk-industry-review.md`, F1–F13) the resource and
+- Status: every milestone is landed; among the industry-standard audit's findings (F1–F13, 2026-11-14) the resource and
   cost-model items (audit F1 / F2 / F4 / F7 / F8 / F12) are landed. Behaviour is pinned by `test_vk` **169 cases / 41 suites**, and the comparison against vsg by
   `BackendParityTest` (13 cases, inside `test_vsg`).
 
@@ -774,8 +774,7 @@ The full signatures and per-parameter contracts are in `include/vine/backend_vk/
 - `../decisions/ADR-2026-11-14-prepare-may-submit-transfers.md`: why `prepareFrame` may submit one transfer batch.
 - `../decisions/ADR-2026-11-14-sample-count-refused-not-lowered.md`: sample counts are "refused, not lowered".
 - `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md`: residency is pinned by content.
-- `../research/graphics-2026-11-14-vk-industry-review.md`: the audit of F1–F13 and its verdicts.
-- `../research/graphics-2026-11-13-vk-exposure-boundary.md`: the V1–V4 boundary decision.
+- `../decisions/ADR-2026-11-14-vk-becomes-the-default-target.md`: the exposure boundary (V1–V4) and the switch gate.
 
 ### 10.3 External material
 

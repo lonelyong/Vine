@@ -81,4 +81,4 @@ One property expressed in four places: a rename, a moved file or a new header in
 - **Correction (2026-11-17, audit A3-04)**: the fourth thing in the background, `SEAM_HEADERS` / `SEAM_SOURCES`, **never existed** -
   it was already absent from the code when this document decided to delete it. The gap it left ("which 8 headers are the seam" has no gate assertion) was once
   misdescribed by `docs/guides/graphics-backends.md` as "a gate pins the file set", and that page has been corrected. Adding such a gate is a **new decision**
-  (the same family as trigger condition 3), not restoring the "half"; the tracking item is `T-04` in the audit report.
+  (the same family as trigger condition 3), not restoring the "half"; the tracking item is backlog `graphics.md` T39.

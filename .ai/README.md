@@ -95,8 +95,8 @@ One ADR records one decision: background, options, decision, consequences, evide
 `superseded` and links the new ADR.
 
 - `ADR-2026-11-17-documentation-language.md` — **English is the documentation language**: the code's vocabulary, commit bodies and diagnostic codes were already English; one file one language, new files English, records converted whole with the original left in git, the glossary in `memory/glossary.md`. The migration is finished: every page here is English except the quoted literals a page has to reproduce, and `docs/guides/**` stays Chinese by a separate decision.
-- `ADR-2026-11-16-authoring-view-and-target-vocabulary.md` — **values carry declarations, behaviour belongs to objects**: a `View` value (`CameraSnapshot` + `Viewport` + layer mask, `CollectView` retired), `RenderArea` → `RenderArea` (surface stays with the platform), a pass's target collapsed into the two values `Target` + `Output`, `PassDesc` as the only authoring shape (`RenderPass`'s 35 setters become a read-only live handle), zero callbacks in values (`before_draw` moves to the object's `update()`, `OverlayLayout` returns a `Viewport`), the dead field `tag` deleted, `setRenderTarget` made real (vk pre-builds; CAP-86 added) or retired, the `releasePass` contract narrowed, `Capabilities` = `Features` + `Limits`, diagnostics gain `origin` (CAP-87), the light set no longer allocated per pass; four normative text revisions plus 26 section-comment cleanups. **Proposed, pending approval**; review and the 18-batch order are in `research/graphics-2026-11-16-redesign-r2.md`.
-- `ADR-2026-11-16-redesign-seam-and-vocabulary.md` — **the redesign is names and ownership, not capability**: the two backends' seam (`backend/`'s 25 headers reduced to 6 shared mechanisms + the guard, 18 vsg-only headers moved into the plugin), vocabulary (the design noun `Session` retired in favour of `FrameDriver` / `FrameDriverId` / `WindowSession` / `FrameHead`), a frame in three phases (frame-head resolution under one lock / lock-free recording / one submit lock, `prepare` = `Submission::TransferOnly`), one refusal shape (`DiagnosticDraft`), the target table and the engine composition root put back where they belong, the selection rule collapsed into one; `RenderBackend` the aggregate and `RenderDevice`'s five responsibility faces are kept (`G8`: no consumer), with the trigger conditions written into the ADR. **Proposed, pending approval**; the construction plan is `research/graphics-2026-11-16-redesign.md`. §2 and batch 3's "the directory is the seam" are superseded by the next entry.
+- `ADR-2026-11-16-authoring-view-and-target-vocabulary.md` — **values carry declarations, behaviour belongs to objects**: a `View` value (`CameraSnapshot` + `Viewport` + layer mask, `CollectView` retired), `RenderArea` → `RenderArea` (surface stays with the platform), a pass's target collapsed into the two values `Target` + `Output`, `PassDesc` as the only authoring shape (`RenderPass`'s 35 setters become a read-only live handle), zero callbacks in values (`before_draw` moves to the object's `update()`, `OverlayLayout` returns a `Viewport`), the dead field `tag` deleted, `setRenderTarget` made real (vk pre-builds; CAP-86 added) or retired, the `releasePass` contract narrowed, `Capabilities` = `Features` + `Limits`, diagnostics gain `origin` (CAP-87), the light set no longer allocated per pass; four normative text revisions plus 26 section-comment cleanups. The 18 batches landed on 2026-11-17, each one's numbers in its commit body.
+- `ADR-2026-11-16-redesign-seam-and-vocabulary.md` — **the redesign is names and ownership, not capability**: the two backends' seam (`backend/`'s 25 headers reduced to 6 shared mechanisms + the guard, 18 vsg-only headers moved into the plugin), vocabulary (the design noun `Session` retired in favour of `FrameDriver` / `FrameDriverId` / `WindowSession` / `FrameHead`), a frame in three phases (frame-head resolution under one lock / lock-free recording / one submit lock, `prepare` = `Submission::TransferOnly`), one refusal shape (`DiagnosticDraft`), the target table and the engine composition root put back where they belong, the selection rule collapsed into one; `RenderBackend` the aggregate and `RenderDevice`'s five responsibility faces are kept (`G8`: no consumer), with the trigger conditions written into the ADR; the 18 batches landed on 2026-11-17. §2 and batch 3's "the directory is the seam" are superseded by the next entry.
 - `ADR-2026-11-16-no-backend-half.md` — **delete the "backend half"**: directory, include guard, the `VineGraphicsBackendSdk` install component and the file-set gate all maintained one boundary from four places, at a cost above the benefit (`G7`); the 8 shared mechanisms are flattened into `sdk/vine/graphics/` and merged into `vn::graphics` (`Keys.hpp` → `DrawState.hpp`, `ReadbackResult` → `ReadbackAnswer`), and `gfx_backend_vsg`'s own types move into `vn::backend_vsg::core` (`G13`). Gates became property-based (the module must not include a render API or a concrete backend; exported symbols are checked by file list).
 - `ADR-2026-11-14-sample-count-refused-not-lowered.md` — **a sample count is a count; a request the device cannot build is refused once, not lowered**: `Capabilities::max_samples` is a power-of-two count (`vsg` used to answer the bit mask 15); above the limit or not a power of two is refused (`SamplesUnsupported` / `UnsupportedRequest`, reported once), so `RenderTarget::samples()` is always the number the images are drawn with; lowering, rounding up and adding a bit set to `Capabilities` are rejected.
 - `ADR-2026-11-14-prepare-may-submit-transfers.md` — **preparation may submit one transfer-only batch**: `prepareFrame` still submits no frame (no acquire / no present / no `FrameProgress` movement), but it may record and submit **one** command buffer containing copies and layout transitions, waiting on its own fence — so texture uploads land during loading and `R23` is no longer "except textures"; a second entry point, a background thread, and "upload while filling" are rejected.
@@ -184,105 +184,11 @@ One ADR records one decision: background, options, decision, consequences, evide
 - `ADR-2026-10-21-colour-space-in-types.md` — colour space and numeric domain go into the types.
 - `ADR-2026-10-19-produced-vs-imported-image-sources.md` — produced and imported image sources are not merged.
 
-## research/ — research and proposals (16 files / 1 proposal set)
+## research/ — research and proposals (none)
 
 Non-authoritative and dated; once adopted, the result moves into `design/` or `decisions/` and the file
-here is deleted.
-
-- `graphics-2026-11-17-audit-3.md` — **the third independent audit that re-established the facts**: a
-  conclusion per audit dimension (13 of them, "nothing found" included), 24 findings (`A3-01…A3-24`),
-  three inventories (root namespaces / macros / capabilities), 8 risk experiments, 14 batches, a
-  concept-and-semantics review (`C-A3-01…16`, against Filament / UE / O3DE / wgpu / bgfx / Godot / VSG /
-  Qt Quick) and 17 tasks (`T-00…T-16`). The only real race TSan reported at the time was `A3-01`.
-
-- `graphics-2026-11-16-redesign-r2.md` — **round two: concepts / capability semantics / implementation /
-  norms**: `E-01…E-12` (a view has no type, `RenderArea` is the area, seven target fields, two authoring
-  shapes for a pass, callbacks inside values, the dead field `tag`, the `Content*` prefix, the four
-  target roles, …), `A-01…A-08` (`setRenderTarget` is a write-once-read-never store in vk, the
-  `releasePass` contract is over-specified, readback is asymmetric in three places, `Capabilities` splits
-  into `Features`/`Limits`, diagnostics lack an origin, …), `I-01…I-08` (a light vector allocated per
-  pass per frame, vk's zero-allocation claim has no witness, …), `S-01…S-12` (law/habit inconsistencies
-  under nine green gates, 26 section comments, 37 of 94 enums with no underlying type, …), a
-  concept-by-concept comparison with a dozen frameworks (borrow / do not borrow + `G#`), and a line-by-line
-  reconciliation with the 2026-11-11 API audit `P1`–`P32`; plus the 18-batch order after adoption.
-- `graphics-2026-11-16-redesign.md` — **the graphics and two-backend redesign (phase one review + phase
-  two proposal)**: table A with 85 capabilities (one line each + carrier + executable evidence + the
-  promise it comes from + a marker for "one backend only / no evidence"), B item by item (8 groups of SDK
-  contracts / 7 engine units / 5 seam groups / 8 vk units / 8 vsg units), C cross-cutting (including an
-  include census: of the seam's 25 headers vk uses 6 and 18 have only vsg as consumer; driver identity
-  spelled three ways; two frame-head plan shapes in the two backends; 6 design sentences no longer
-  true), D the conclusion table (D-01…D-28) and a ten-batch migration plan (each revertable, with
-  capability ID triples). **No code changes; waiting for approval.**
-- `graphics-2026-11-15-independent-audit.md` — **an independent audit of the render stack (set the
-  standard first, then judge)**: seven groups of 26 criteria (`C1`–`C26`: contract truth / lifetime /
-  synchronisation / cost / failure semantics / evidence / evolvability), a verdict per group and 14
-  findings (`A1`–`A14`): the allocation path **swallows a device loss as "out of memory"** and computes a
-  refusal reason only to discard it, no memory-pressure policy, diagnostics with no code and no
-  structured fields (contrary to `R28`), `FrameDescription`'s class-level "everything is borrowed"
-  sentence refuted by three owning fields, GPU timing with no per-pass attribution, one `Device` with six
-  concerns (16 `ReportOnce`s), 18 seam verbs of which 13 have default bodies, failure paths that cannot
-  be injected, missing TSan evidence, five vocabularies for failure, two implementations of the
-  retirement rule, and no table of extension-point costs; it also lists the eight things **checked and
-  judged correct** (sRGB, the plugin ABI handshake, condition-variable threads, the barrier table, the
-  exposure-boundary gates, byte-for-byte parity, the `ReportOnce` discipline, the preparation contract).
-
-- `graphics-2026-11-14-vk-industry-review.md` — **an industry-standard review of `gfx_backend_vk`**
-  (read-only plus two small fixes): spec conformance and diagnosability are industrial grade (validation
-  0 VUID, cross-backend byte-for-byte parity, device-loss classification, the barrier table, the pipeline
-  key), while the resource and performance architecture is prototype grade — a UBO built and destroyed per
-  draw per frame (measured: 28 allocations per frame), a descriptor set allocated per draw per frame, a
-  command buffer allocated per frame, no `VkPipelineCache`, no suballocation, no GPU timing; one frame in
-  flight is a cost of the SDK contract rather than an oversight; includes F1–F13 and T43–T46.
-
-- `graphics-2026-11-13-vk-exposure-boundary.md` — the argument for **whether a backend may expose
-  Vulkan**: the SDK host face and the SDK backend face have **zero Vk types** today (every hit is a
-  comment), while 18 of the plugin's 57 `internal`+`support` headers name `Vk*` and `shell` names none;
-  against wgpu / Diligent / QRhi / Godot / bgfx / Filament / UE / Dawn, the conclusion is "anything goes
-  inside the plugin; the SDK and the factory entry points may not", and the door a learning backend needs
-  becomes an explicit free function in `support/` (`vn::backend_vk::Handles`), with checkable V1–V4 and
-  the upgrade trigger.
-- `graphics-2026-11-13-gpu-resource-abstraction.md` — **the T30 (GPU resource abstraction) assessment**:
-  0 of the host face's 18 device verbs create a GPU resource; the rule layer (pin / retirement /
-  residency books / frame values / capabilities / target decisions) is complete while the type layer has
-  no consumer; the shape when it really triggers is "an opaque resource description plus a per-backend
-  implementation", not a `GpuResource` base class; it presupposes T15 / T32 and records S4 / S5 and the
-  validation-layer gaps.
-
-- `graphics-2026-11-12-audit-3.md` — **the third graphics audit** (read-only): the thread payload
-  contradicts the contract (R3-1), three new public entry points have zero production consumers (R3-2),
-  three concepts share `Scene` (R3-3), `backend/`'s public install and Vulkan spelling (R3-4), the content
-  half calling into the engine half (R3-5), seven result shapes (R3-6), extension axes mutually exclusive
-  with the plan (R3-7), `RenderEngine` as composition root (R3-8); with the repair task table W1–W9 and
-  the trigger conditions for "not doing it now".
-- `graphics-2026-11-12-instances.md` — the `T23` A/B measurement protocol for prototypes and instances
-  (A6): 5000-row prototypes × 10 instances, four edit classes E0–E3, six measures (`snapshot_rows` /
-  `draw_rows` / placement multiplication / publish / select / residency); B's pass line (O(R+N),
-  residency ≤ 2× the 1× prototype, `K11` green) and the fallback "stop at prototype DAG sharing if the
-  numbers are bad". **Not adopted.**
-- `graphics-2026-11-11-next.md` — the redesign of graphics' overall skeleton: **the outline** (where the
-  problems come from, the skeleton in brief, `I1–I7`, the kill conditions `K1–K6`, the validation plan,
-  the rejected options, the `G1–G13` mapping). Corresponds to backlog `T32`; adopting it rewrites
-  `design/`, rejecting it leaves an ADR.
-- `graphics-2026-11-11-next-requirements.md` — the same proposal's **goals and requirements**: `O1–O7` /
-  `R1–R30` / `N1–N10` / `C1–C12` / `T1–T16`, and where today's `C1–C20` go.
-- `graphics-2026-11-11-next-design.md` — the same proposal's **preliminary design**: layering, draft
-  types, the hot/cold block layout, the publish / fold / select / sort / record / reclaim / plan-diff
-  algorithms, the threading and memory model, diagnostics, the backend contract.
-- `graphics-2026-11-11-next-benefits.md` — the same proposal's **benefits and costs**: benefits
-  quantified per dimension with the way each is measured, `P1–P7`, the three migration batches with each
-  batch's kill condition, and the answers to the counter-arguments.
-- `graphics-2026-11-11-next-hot-paths.md` — the same proposal's **performance / animation / post /
-  extensibility**: the measured cost model and the 60 fps budget, the means for select/fold/sort/record,
-  the three rules for a value's hot path, animation through "in-frame poses" (not through publication),
-  post-processing where the plan is the dependency graph, the controlled escape hatch, engineering
-  efficiency, `N11–N18`, and the priority "put thresholds into `Measure*` first".
-- `graphics-2026-11-11-next-api.md` — the same proposal's **audit of the existing API surface**:
-  `P1–P32` (one concept in two representations, callbacks in declarations, four names for a target, four
-  orderings, 49 public methods, seven aliases, …), the missing capabilities `M1–M10`, where each method
-  goes, the naming table, and the A–E batching.
-- `graphics-2026-11-11-next-audit.md` — the same proposal's **second audit**: a review of the evidence
-  standards, cross-document contradictions `X1–X10`, design gaps `A1–A13`, supplementary requirements
-  `R31–R39` and kill conditions `K7–K11`, a cost re-assessment and the revised order.
+here is deleted. Nothing is outstanding: every proposal and audit that this tree carried has been
+converted into a design page or an ADR, and the files are gone (git is the archive).
 
 (The earlier triangle-tree two-frame unification and `.vbtp` persistence have been merged into
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and

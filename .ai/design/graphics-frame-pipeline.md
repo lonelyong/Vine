@@ -284,7 +284,7 @@
   one writer domain, and no dangling `NodeId` entering a publication.
 - **Acceptance** (`T4` / `T21` / `T22` / `T23`): the fold-count case; publishing a shared prototype; instances surviving the prototype's destruction; the instantiation cost and `K11`.
 - **Caveat** (`P3`): v1's placement cost is N × the prototype's row count, not N — do not write it up as "instancing is free".
-  The A/B measurement procedure is in `../research/graphics-2026-11-12-instances.md` (`T23`); B becomes the default only once the numbers meet the line.
+  The A/B procedure is `T23`'s; the recorded numbers are in `../memory/graphics.md`, and B becomes the default only once they meet the line.
 
 ### 3.11 F11 / F12 The sort key and the frame result
 
@@ -542,14 +542,14 @@
 | T13 | concurrency | `scripts/tsan_check.sh` | run at the end of every step |
 | T14 | existing behaviour unchanged | `ctest` (30 suites) | 30/30 |
 | T15 | documentation gates | the eight `scripts/check_*.py` + `check_vsg_content_seam.cmake` | all clear |
-| T16 | quantify "pass / fail" | the benefit table in `../research/graphics-2026-11-11-next-benefits.md` | recorded step by step |
+| T16 | quantify "pass / fail" | the measurements in `../memory/graphics.md` | recorded step by step |
 | T17 | an old frame reads the old revision | change material / geometry / program with two frames in flight and diff item by item | implemented (`SnapshotSourceTest.AnOlderSnapshotKeepsTheShapeAndProgramItWasPublishedWith`) |
 | T18 | picking several instances | two instances of one prototype | not done |
 | T19 | picking after a pose | a parent joint poses and its child is picked | not done |
 | T20 | picking with the frame camera | press after the camera moved | not done |
 | T21 | publishing a shared prototype | two Scenes sharing a prototype | not done |
 | T22 | prototype lifetime | instances survive the prototype's destruction | not done |
-| T23 | the instancing cost (A/B) | a 5000-row prototype × 10 instances; report `snapshot_rows` / `draw_rows` / `placement_multiplications` / publish / select / residency; procedure in `../research/graphics-2026-11-12-instances.md` | not done (research) |
+| T23 | the instancing cost (A/B) | a 5000-row prototype × 10 instances; report `snapshot_rows` / `draw_rows` / `placement_multiplications` / publish / select / residency; procedure in `../memory/graphics.md` | not done |
 | T24 | culling per row, not per chunk | one chunk with two segments under different parent transforms, the first out of view: `SelectTest.OneChunkCullsEachRowOnItsOwnBox` (two boxes, one in and one out; they swap when the camera crosses, and culling stays on) | implemented |
 | T25 | an old snapshot after reclamation | hold an old snapshot outside the Session and submit | not done |
 | T26 | pose subtree propagation | a parent joint poses | not done |
@@ -614,8 +614,8 @@ A step that breaks its own `K` ⇒ that step is rolled back and the conclusion i
 
 - `N2`'s 50 µs is not in this round: it needs a dirty notification from the content side, which directly conflicts with "a Node has no back pointer to its Scene" (`C2`).
   The current gate is ≤ 250 µs (203 µs measured on the prototype); the 50 µs target is in `../backlog/graphics.md` (trigger-gated).
-- `-design`'s poses (`PoseSet`), the post-processing dependency graph and the replay backend's algorithm details still live only in
-  `../research/graphics-2026-11-11-next-hot-paths.md` / `../research/graphics-2026-11-11-next-design.md`, absorbed step by step rather than built up front (`G8`).
+- Poses (`PoseSet`), the post-processing dependency graph and the replay backend's algorithm details are not designed yet: they get a
+  dated research proposal when a consumer appears, rather than being built up front (`G8`).
 
 ### 9.3 Compatibility / migration
 
@@ -653,10 +653,9 @@ scope (`PassChain::build(engine, desc, owner)`) so that a rebuild updates in pla
 - `../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md` (where `I4` comes from)
 - `../decisions/ADR-2026-11-11-content-identity-is-a-handle.md` (where `I2` / `R31` come from)
 - `../design/graphics-threading.md` (the threading contract), `../design/graphics-scene.md` (the scene and collection in use)
-- `../research/graphics-2026-11-12-instances.md` (`T23`'s A/B measurement procedure; research only until adopted)
-- `../research/graphics-2026-11-11-next*.md` (the original proposals: `-design` / `-api` / `-hot-paths` / `-requirements` / `-benefits`;
-  absorbed one by one and deleted, as §9.3 says. `-audit`'s two rounds are where `R31–R39` and `K7–K11` come from, and both ADRs cite it as
-  evidence, so it stays until those references are replaced by history)
+- `../memory/graphics.md`: the measurements behind `T16` / `T23`
+- `R31–R39` and `K7–K11` came from the 2026-11-11 proposal and its two audit rounds; those documents were dated and
+  non-authoritative, and are deleted now that this page states their results
 
 ### 10.3 External material
 
