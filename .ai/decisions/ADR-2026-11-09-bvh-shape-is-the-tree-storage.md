@@ -1,79 +1,77 @@
-# ADR-2026-11-09：形状就是树的存储，不是它的转录
+# ADR-2026-11-09: the shape is the tree's storage, not its transcription
 
-> **状态**：已采纳
-> **日期**：2026-11-09
-> **影响范围**：`src/base/geom/sdk/vine/geom/spatial`（`Bvh.hpp`、`BvhTopology.hpp`、`BvhBuilder.hpp`、
-> `TriangleBvh.hpp`、`detail/{BvhBuildJob,BvhBuilders,BvhRefit,BvhTopologyCheck}.hpp`）、
-> `src/base/models/sdk/vine/models/Mesh.hpp`、`src/robotics/io/src/BvhCache.hpp`、
-> `tests/test_geom_spatial`、`.ai/design/geometry-bvh.md`
+> **Status**: Accepted
+> **Date**: 2026-11-09
+> **Scope**: `src/base/geom/sdk/vine/geom/spatial` (`Bvh.hpp`, `BvhTopology.hpp`, `BvhBuilder.hpp`,
+> `TriangleBvh.hpp`, `detail/{BvhBuildJob,BvhBuilders,BvhRefit,BvhTopologyCheck}.hpp`),
+> `src/base/models/sdk/vine/models/Mesh.hpp`, `src/robotics/io/src/BvhCache.hpp`,
+> `tests/test_geom_spatial`, `.ai/design/geometry-bvh.md`
 
-> **EN**: Made the serialisable shape the tree's own storage: `Bvh` holds a `BvhTopology shape_` (`nodes` + `order` + `depth`) with a parallel bounds array, `detail::BvhNode` is gone, `BvhTopology.hpp` keeps only vocabulary, and saving encodes the tree's arrays through `topologyView()` at zero copy. The two restore entries share one check and one refit; the measured waste that forced this was about 1 GB of copying for a 38M-triangle model. Query-path layout changes must be judged with `scripts/callgrind_diff.py`.
+## Background
 
-## 背景
+The review asked two questions: why `BvhTopology` is a file of its own and cannot be an inner class of `Bvh`; and whether there is a better structure than the current one.
+The assessment confirmed that a separate file is right (layer order, precision independence, what the codec has to include), but found one real waste in the current shape:
 
-评审中问了两个问题：`BvhTopology` 为什么要独立成文件、能不能做成 `Bvh` 的内部类；以及有没有比现状
-更好的结构。评估后确认独立是对的（层序、精度无关、编解码器包含成本），但现状里有一处真实的浪费：
+- A tree node is `detail::BvhNode<T, Volume>{bounds, offset, count}` (AoS, 32 B);
+- A node stored in a file is `BvhNodeTopology{offset, count}` (8 B);
+- The two are **two transcriptions of one contract**, so the comment can only say "these two numbers mean what they mean in `BvhNode`".
 
-- 树的节点是 `detail::BvhNode<T, Volume>{bounds, offset, count}`（AoS，32 B）；
-- 存进文件的节点是 `BvhNodeTopology{offset, count}`（8 B）；
-- 两者是**同一个约定的两份转录**，注释里只能写「两个数字的含义是 `BvhNode` 的」。
+Every `topology()` therefore copied the whole thing: for a 38M-triangle model that is about `≤2n` nodes × 8 B = 608 MB, plus 113M `order` entries × 4 B = 452 MB,
+**about 1 GB per call**; the `.vbtp` write calls it once and the restore path copies the nodes one by one through `appendNode()`
+into a build job, so one chain holds three copies.
 
-于是每一次 `topology()` 都要整份复制：38M 三角形 ≈ `≤2n` 个节点 × 8 B = 608 MB，加上 113M 个
-`order` × 4 B = 452 MB，**一次约 1 GB**；`.vbtp` 写入调一次，恢复路径再把节点逐个 `appendNode()`
-抄进构建任务，同一条链上三份拷贝。
+This is the same kind of problem as the welding OOM just fixed (`perf(meshio)!: no vertex weld`): copying bytes that already exist in a file into another
+representation.
 
-这与刚修掉的焊接 OOM（`perf(meshio)!: no vertex weld`）是同一类问题：把文件里已有的字节再复制进另一条
-表示。
+## Decision
 
-## 决定
+1. **`BvhTopology.hpp` keeps the vocabulary only**: `BvhNodeTopology`, `BvhTopology`, `BvhTopologyView`, `kBvhMaxDepth`,
+   depending on the standard library alone. `RestoreTopology` (a build algorithm) moves into `BvhBuilder.hpp`, `refitNodes` moves into
+   `detail/BvhRefit.hpp`, and the restore check moves into `detail/BvhTopologyCheck.hpp`.
+2. **The shape becomes the tree's storage**: `Bvh` holds a `BvhTopology shape_` (`nodes` + `order` + `depth`) and a parallel
+   `std::vector<VolumeType> node_bounds_`. `detail::BvhNode` is deleted, and `BvhNodeTopology` is the node.
+3. **Two restore entries, one check**: with only a view, the path is `BvhBuilder::buildWith(tree, RestoreTopology{shape})`
+   (a build algorithm, the same gate as SAH / median); when the caller owns the value, the path is `Bvh::restoreTopology(BvhTopology)`
+   (**moving** the arrays in). Both read `detail::installableHeight()` and both grow through `detail::refitNodes()`.
+4. **The save side is zero copy**: `Bvh::topologyView()` borrows the tree's own arrays and `.vbtp` encodes them directly; `topology()` stays as the
+   "I want an owned value" entry point.
 
-1. **`BvhTopology.hpp` 只留词汇**：`BvhNodeTopology`、`BvhTopology`、`BvhTopologyView`、`kBvhMaxDepth`，
-   只依赖标准库。`RestoreTopology`（构建算法）搬到 `BvhBuilder.hpp`，`refitNodes` 搬到
-   `detail/BvhRefit.hpp`，恢复检查搬到 `detail/BvhTopologyCheck.hpp`。
-2. **形状成为树的存储**：`Bvh` 持有 `BvhTopology shape_`（`nodes` + `order` + `depth`）与平行的
-   `std::vector<VolumeType> node_bounds_`。`detail::BvhNode` 删除，`BvhNodeTopology` 就是节点。
-3. **两个恢复入口，一份检查**：只有视图时走 `BvhBuilder::buildWith(tree, RestoreTopology{shape})`
-   （构建算法，与 SAH / 中位数同一个门）；自己拥有值时走 `Bvh::restoreTopology(BvhTopology)`
-   （**移动**数组进来）。两者都读 `detail::installableHeight()`，都用 `detail::refitNodes()` 长肉。
-4. **保存侧零拷贝**：`Bvh::topologyView()` 借用树自己的数组，`.vbtp` 直接编码它；`topology()` 保留为
-   「要一个拥有的值」的入口。
+## Rationale
 
-## 理由
+- **G10, cost the thing first**: the `1 GB`-per-call copy disappears. This is not "more elegant", it is a measured order of magnitude in memory and time.
+- **G1 / G6, one contract, one definition**: there is one node, `BvhNodeTopology`; the tree and the file hold the same layout, and `validate()`,
+  traversal and the codec read the same set of numbers.
+- **G4, "does not change the topology" becomes a fact of the signature**: `refitNodes()` takes the node-bounds array as its only writable parameter, so it cannot write the combinatorics;
+  `C5` turns from a comment into a compile-time guarantee.
+- **The layer order does not reverse**: `Bvh.hpp` depends on the shape header, and the shape header does not know the tree. An inner class would drag the whole tree and the build kernels
+  into the `.vbtp` codec for one POD, and would give `Bvh<float>` / `Bvh<double>` two shape types with the same layout that cannot be assigned to each other.
+- **G2, the shape header becomes a leaf**: the `.vbtp` codec no longer transitively includes the build kernels.
 
-- **G10，先算成本**：`1 GB`/次的拷贝消失。这不是「更优雅」，是内存与时间上的实测量级。
-- **G1 / G6，一个约定一处定义**：节点只有 `BvhNodeTopology` 一份，树与文件存同一个布局，`validate()`、
-  遍历、编解码读的是同一组数字。
-- **G4，把「不改拓扑」变成签名事实**：`refitNodes()` 只接收节点体积那条数组作为可写参数，写不到组合学；
-  `C5` 从注释变成编译期保证。
-- **层序不逆转**：`Bvh.hpp` 依赖形状头，形状头不认识树。把它做成内部类会让 `.vbtp` 的编解码器为了一个 POD
-  拉进整棵树与构建内核，并且给 `Bvh<float>` / `Bvh<double>` 造出两个布局相同、互不可赋值的形状类型。
-- **G2，形状头变成叶子**：`.vbtp` 编解码器不再传递包含构建内核。
+## Rejected alternatives
 
-## 否决的替代方案
-
-| 方案 | 否决理由 |
+| Alternative | Rejection reason |
 |---|---|
-| `BvhTopology` 作为 `Bvh` 的内部类 | 精度无关的值被模板化；层序反转（`Bvh.hpp` 依赖形状头）；编解码器被迫包含 `Bvh.hpp` + 构建内核（`G2`、`G10`）。 |
-| 保持转录，只把 `topology()` 改成返回视图 | 无法实现：AoS 节点按 32 B 步长，凑不出连续的 `BvhNodeTopology` 数组。 |
-| 让 `BvhTopologyView` 直接指向 `BvhNode<T, Volume>` | 视图重新依赖精度，文件格式与树的精度绑死，`Bvh<float>`/`Bvh<double>` 的缓存不再可互换。 |
-| 给 `offset` / `count` 加 `isLeaf()` / `rightChild()` 把约定塞进类型 | `BvhNodeTopology` 特意保持 plain value（平凡可拷贝、编解码直接读写），推翻一条已写明的设计点只换来少读一行注释。 |
-| 保留 `detail::BvhNode` 作为「热路径专用节点」 | 两份约定同源，等于把 `1 GB` 拷贝固化下来；遍历多阅读者一次的代价远小于它。 |
+| `BvhTopology` as an inner class of `Bvh` | A precision-independent value becomes templated; the layer order reverses (`Bvh.hpp` depends on the shape header); the codec is forced to include `Bvh.hpp` plus the build kernels (`G2`, `G10`). |
+| Keep the transcription and only make `topology()` return a view | Not implementable: AoS nodes step by 32 B, so no contiguous `BvhNodeTopology` array can be produced. |
+| Make `BvhTopologyView` point at `BvhNode<T, Volume>` directly | The view would depend on precision again, the file format would be tied to the tree's precision, and the caches of `Bvh<float>`/`Bvh<double>` would no longer be interchangeable. |
+| Give `offset` / `count` `isLeaf()` / `rightChild()` and push the contract into the type | `BvhNodeTopology` is deliberately kept a plain value (trivially copyable, read and written directly by the codec); overturning a written design point only to read one comment fewer is a bad trade. |
+| Keep `detail::BvhNode` as a "hot-path-only node" | Two contracts from one source, which means freezing the `1 GB` copy; the cost of one more read per node during traversal is far smaller than that. |
 
-## 后果
+## Consequences
 
-- 遍历每节点两次载入（`shape_.nodes[i]` + `node_bounds_[i]`），`refit()` 只扫体积数组。查询路径的形态变化
-  必须用 `scripts/callgrind_diff.py` 对比，不能用推理代替（第一次落地时记录在 `geometry-bvh.md` 2.4）。
-- `Bvh<T>` 的布局变化：它是显式实例化的 DLL 类，**ABI 破坏**，消费者全部重编。
-- `Mesh::restoreBvh` 新增 `BvhTopology` 按值重载；`restoreTriangleBvh` 同样两个重载。旧的视图入口保留。
-- 头文件计数：`spatial/detail/` 5 → 7（新增 `BvhRefit.hpp`、`BvhTopologyCheck.hpp`）。
-- `VolumeT` 别名统一改名为 `VolumeType`（三处：`Bvh`、`BuildJob`、`VolumeTraits<Aabb<T>>`），
-  一个概念一个拼写。
+- Traversal loads two things per node (`shape_.nodes[i]` + `node_bounds_[i]`), and `refit()` scans only the bounds array. A shape change on the query path
+  must be compared with `scripts/callgrind_diff.py` rather than reasoned about (the first landing is recorded in 2.4 of `geometry-bvh.md`).
+- `Bvh<T>`'s layout changes: it is an explicitly instantiated DLL class, so this is an **ABI break**, and every consumer is rebuilt.
+- `Mesh::restoreBvh` gains a by-value `BvhTopology` overload; `restoreTriangleBvh` gets the same two overloads. The old view entry point stays.
+- Header count: `spatial/detail/` goes from 5 to 7 (new `BvhRefit.hpp`, `BvhTopologyCheck.hpp`).
+- The `VolumeT` alias is renamed `VolumeType` everywhere (three places: `Bvh`, `BuildJob`, `VolumeTraits<Aabb<T>>`),
+  one concept, one spelling.
 
-## 验证
+## Verification
 
-- `test_geom_spatial` 256 例全绿（新增 `BvhBuildTest.AnOwnedTopologyIsAdoptedByTheTreeItself`、
-  `ATopologyViewBorrowsTheTreesOwnArrays`、`TriangleBvhTest.AMovedShapeIsAdoptedInsteadOfCopied`）。
-- 全量 `ctest` 28/29（`test_vsg` 的 strip/fan 用例是本机既有失败，与本次无关）。
-- `check_geom_layering.py`、`check_include_hygiene.py`、`check_export_annotations.py`、
-  `check_public_docs.py`、`check_doc_symbols.py`、`check_ai_docs.py --strict`、
-  `check_design_docs.py` 全部 0 finding。
+- `test_geom_spatial`: all 256 cases green (new `BvhBuildTest.AnOwnedTopologyIsAdoptedByTheTreeItself`,
+  `ATopologyViewBorrowsTheTreesOwnArrays`, `TriangleBvhTest.AMovedShapeIsAdoptedInsteadOfCopied`).
+- Full `ctest` 28/29 (the `test_vsg` strip/fan case was already failing on this machine and is unrelated).
+- `check_geom_layering.py`, `check_include_hygiene.py`, `check_export_annotations.py`,
+  `check_public_docs.py`, `check_doc_symbols.py`, `check_ai_docs.py --strict` and
+  `check_design_docs.py` all report 0 findings.

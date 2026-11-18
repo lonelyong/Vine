@@ -1,89 +1,87 @@
-# ADR-2026-11-10：BVH 可封存（只留结果）、拾取树粗叶 64、后端流上传零拷贝
+# ADR-2026-11-10: the BVH can be sealed (result only), the picking tree gets coarse leaves of 64, and backend stream uploads copy nothing
 
-> **状态**：已采纳
-> **日期**：2026-11-10
-> **影响范围**：`src/base/geom/sdk/vine/geom/spatial/Bvh.hpp`、`BvhBuilder.hpp`、
-> `src/viz/graphics/sdk/vine/graphics/Geometry.hpp`、`src/viz/graphics/src/Geometry.cpp`、
-> `src/plugins/gfx_backend_vsg/src/internal/StreamUploads.cpp`（与同名头文件）、
-> `tests/test_geom_spatial/BvhQueryTest.cpp`、`tests/test_graphics/GraphicsTest.cpp`、`tests/test_vsg/StreamUploadsTest.cpp`、
-> `.ai/design/geometry-bvh.md`、`.ai/design/graphics-geometry.md`、`.ai/design/vsg-backend.md`
+> **Status**: Accepted
+> **Date**: 2026-11-10
+> **Scope**: `src/base/geom/sdk/vine/geom/spatial/Bvh.hpp`, `BvhBuilder.hpp`,
+> `src/viz/graphics/sdk/vine/graphics/Geometry.hpp`, `src/viz/graphics/src/Geometry.cpp`,
+> `src/plugins/gfx_backend_vsg/src/internal/StreamUploads.cpp` (and the header of the same name),
+> `tests/test_geom_spatial/BvhQueryTest.cpp`, `tests/test_graphics/GraphicsTest.cpp`, `tests/test_vsg/StreamUploadsTest.cpp`,
+> `.ai/design/geometry-bvh.md`, `.ai/design/graphics-geometry.md`, `.ai/design/vsg-backend.md`
 
-> **EN**: Three measures against a 14M-triangle model: `Bvh::seal()` releases the per-primitive volumes and keeps the shape (sealed state derived from the data, not a flag; the write verbs throw after sealing), the draw-frame pick tree defaults to leaf capacity 64 via `graphics::kPickTreeLeafSize` while the library default stays 4, and the vsg backend aliases the model's own bytes through `VsgBufferView` instead of copying them. The pick tree dropped from 1.36 GB to 88 MB and the backend copy saved another 1.18 GB; sealed queries receive the leaf box rather than the primitive box.
+## Background
 
-## 背景
+When the model viewer opened `车身.stl` (704 MB, binary STL, 14,086,575 triangles, 42,259,725 corners), the process grew to several GB.
+Costing it section by section (the table in 2.16 of `geometry-bvh.md` is the conclusion that measurement left behind):
 
-模型查看器打开 `车身.stl`（704 MB，二进制 STL，14,086,575 个三角形、42,259,725 个角点）时，进程占用到数个 GB。
-逐段算账（`geometry-bvh.md` 2.16 的表格是这次测量留下的结论）：
-
-| 常驻项 | 大小 | 说明 |
+| Resident item | Size | Note |
 |---|---|---|
-| 模型（位置 + 法线 + 索引） | 1.18 GB | 42.26M × (12 + 12 + 4) B；三角形汤没有共享顶点，file 的 50 B/三角形 只能这样摊 |
-| 拾取树 `Bvh<double>` | 1.36 GB | 图元盒 676 MB（14.09M × 48 B）+ 节点层 632 MB + 顺序 56 MB |
-| 后端顶点/索引副本 | 1.18 GB | `StreamUploads` 把模型已有的 float 又复制进 `vsg::floatArray` |
+| The model (positions + normals + indices) | 1.18 GB | 42.26M × (12 + 12 + 4) B; a triangle soup shares no vertices, so the file's 50 B/triangle spreads out like this |
+| The picking tree `Bvh<double>` | 1.36 GB | Primitive boxes 676 MB (14.09M × 48 B) + node layer 632 MB + order 56 MB |
+| The backend's vertex/index copy | 1.18 GB | `StreamUploads` copied the floats the model already had into a `vsg::floatArray` again |
 
-三件事在这次排查中被确认，它们决定了本 ADR：
+Three things were confirmed during that investigation, and they decide this ADR:
 
-1. **叶粒度只管节点数**。`BvhBuilder::leafSize` 只影响节点数组；`prim_bounds_` 是 `48 B × 图元数`，与粒度无关。
-   把叶子从 4 调到 512，1.36 GB 的极限也只能降到 736 MB。
-2. **图元盒在拾取路径上没有被使用**。`RayIntersection` 的回调把第二个参数（图元盒）丢掉；`forEachRay` 只在**叶子层**
-   用 `node_bounds_` 剔除。图元盒是构建期数据（binned SAH 要它、叶盒合并要它），不是查询结果。
-3. **`update()` / `refit()` 没有任何生产调用方**。刚体变换不需要它（树在局部空间，变换在查询时折算，钥匙里没有
-   世界矩阵）；顶点变化走 `Mesh` 的丢树重建与 `Geometry::prepareBvh()` 的新钥匙新树。它只在
-   `BvhBuildTest` 的两条用例里出现。
+1. **Leaf granularity only affects the node count.** `BvhBuilder::leafSize` affects only the node array; `prim_bounds_` is `48 B × primitive count`, independent of granularity.
+   Raising the leaf from 4 to 512 lowers the 1.36 GB ceiling only to 736 MB.
+2. **The primitive boxes are not used on the picking path.** `RayIntersection`'s callback throws the second argument (the primitive box) away; `forEachRay` uses `node_bounds_` to cull
+   only at the **leaf level**. Primitive boxes are build-time data (binned SAH needs them, leaf box merging needs them), not query results.
+3. **`update()` / `refit()` have no production caller.** A rigid transform does not need them (the tree lives in local space, the transform is folded in at query time, and the key holds no
+   world matrix); a vertex change goes through `Mesh` dropping and rebuilding the tree, and `Geometry::prepareBvh()` builds a new tree under a new key. They appear only in
+   two cases of `BvhBuildTest`.
 
-## 决定
+## Decision
 
-1. **`Bvh` 增加封存态**：`seal()` 释放逐图元体积（`vector().swap()`），保留 `shape_` 与 `node_bounds_`；
-   `isSealed()` 由事实推出（建成了且图元盒为空），不是标志位。封存后 `add` / `addRange` / `update` / `refit` /
-   `reserve` / `restoreTopology` / 构建抛 `std::logic_error`；`primCount()` 改由 `shape_.order.size()` 回答；
-   `validate()` 只用一个图元个数（它本来也只用个数）。
-2. **绘制帧的拾取树默认叶容量 64**（`graphics::kPickTreeLeafSize`，经 `pickTreeBuilder()` 表达），并把
-   `Geometry::prepareBvh(draw, builder)` 的 builder 开放给调用方；`Geometry::prepareBvh()` 建完即 `seal()`。
-   `BvhBuilder` 自身的默认（4）不动——那是库的形状，不是引擎的策略。
-3. **vsg 后端的上传改为别名**：`StreamUploads::acquireVertex` / `acquireIndex` 用 `VsgBufferView` + 真 vsg 数组
-   （`vsg::floatArray` / `vsg::uintArray`）读模型自己的字节，只有“没有 buffer 句柄”或“span 不属于该 buffer”时
-   才退回复制。顶点通道别名**段**，索引别名**整个 buffer**。
+1. **`Bvh` gains a sealed state**: `seal()` releases the per-primitive volumes (`vector().swap()`) and keeps `shape_` and `node_bounds_`;
+   `isSealed()` is derived from the facts (built and the primitive boxes are empty), not a flag. After sealing, `add` / `addRange` / `update` / `refit` /
+   `reserve` / `restoreTopology` / building throw `std::logic_error`; `primCount()` is answered from `shape_.order.size()`;
+   `validate()` uses one primitive count (it only used the count anyway).
+2. **The draw frame's picking tree defaults to leaf capacity 64** (`graphics::kPickTreeLeafSize`, expressed through `pickTreeBuilder()`), and
+   `Geometry::prepareBvh(draw, builder)` opens the builder to the caller; `Geometry::prepareBvh()` seals as soon as it has built.
+   `BvhBuilder`'s own default (4) does not move - that is the library's shape, not the engine's policy.
+3. **The vsg backend's upload becomes an alias**: `StreamUploads::acquireVertex` / `acquireIndex` read the model's own bytes through `VsgBufferView` plus a real vsg array
+   (`vsg::floatArray` / `vsg::uintArray`), and fall back to copying only when "there is no buffer handle" or "the span does not belong to that buffer".
+   A vertex channel aliases a **segment**, an index channel aliases **the whole buffer**.
 
-## 理由
+## Rationale
 
-- `G10`（关注真实成本）：图元盒是构建草稿，却被当成长期状态常驻；唯一运行期消费者又不用它。封存把“构造成本”
-  与“查询成本”分开，谁要可变谁付 48 B/图元。
-- `G8`（保持克制）：`update`/`refit` 保留但在封存之外——不删除一个真实存在（形变网格、形状编辑预览）的消费者
-  未来会要的能力，也不让它继续向只读消费者收费。
-- `G1` / `G7`：两态的差别只有“还留不留图元盒”，做成两个类型就要复制唯一的最近优先剪枝遍历（`D20`）。
-- 粗叶的代价是可量化的：一次点击的精确测试数 = 访问叶数 × 叶容量。14M 三角形的拾取树在叶 64 下，一条射线穿过
-  十几到几十个叶子，精确测试在千级、每测 20–50 ns，即亚毫秒；换来节点数少 16 倍、建树时间少一个数量级。
-- 零拷贝的机制在本仓库已有先例（`VsgBufferView.hpp` 与 texcoord 绑定），并且它同时解决了“后端比模型活得久”
-  的生命周期问题：数组持有视图、视图持有 buffer。
+- `G10` (cost the real thing): primitive boxes are a build draft, yet they were resident as long-term state; and the only run-time consumer does not use them. Sealing separates
+  "build cost" from "query cost": whoever wants mutability pays 48 B per primitive.
+- `G8` (stay restrained): `update`/`refit` are kept but outside sealing - neither deleting a capability a real, future consumer (deforming meshes, shape-edit previews) will want,
+  nor letting it keep charging read-only consumers.
+- `G1` / `G7`: the only difference between the two states is "are the primitive boxes still there"; making it two types would duplicate the single nearest-first pruning traversal (`D20`).
+- The cost of coarse leaves is quantifiable: the exact tests of one click = leaves visited × leaf capacity. For a picking tree over 14M triangles at leaf 64, one ray crosses
+  a dozen to a few dozen leaves, and the exact tests are in the thousands at 20-50 ns each, that is sub-millisecond; what it buys is 16x fewer nodes and an order of magnitude less
+  build time.
+- Zero copy already has a precedent in this repository (`VsgBufferView.hpp` and the texcoord binding), and it solves the "the backend outlives the model" lifetime problem at the
+  same time: the array holds the view and the view holds the buffer.
 
-## 否决的选项
+## Rejected options
 
-| 选项 | 否决理由 |
+| Option | Rejection reason |
 |---|---|
-| 只调叶粒度 | 只砍节点层：1.36 GB → 736 MB，而图元盒（676 MB）一分不动。 |
-| 封存做成独立类型 `SealedBvh` / `BvhView` | 两态只差一个存储，独立类型要复制唯一的最近优先剪枝遍历，或把它模板化；两者都比“没有标志位、状态由数据推出”更重（`D20`、`G7`）。 |
-| 删除 `update` / `refit` / `qualityReport`（按 `G8`） | 会把一类真实的未来消费者（图元集合不变、盒子逐次变化）逼回“全量重建”；封存已经让它们不再互相收费，删除不带来额外收益。`F2` 里写明了它们今天没有生产调用方。 |
-| 把 `BvhBuilder` 的默认叶容量改成 64 | 库只提供形状，不提供策略；已有测试与文档按“库的默认”度量质量。策略写在消费者（`kPickTreeLeafSize`）。 |
-| 图元盒改 `Aabb<float>`（24 B） | 无损（盒值本来就是 float 坐标的 min/max），但它是**下一个**杠杆，与封存独立；先做封存可以把两者做成可分别度量的两步。留在 `backlog`。 |
-| 不做拾取树（线性扫 14M 三角形） | 一次点击 0.2–0.5 s 级，且失去“大网格拾取”这一能力本身；封存后这棵树已经比模型小一个数量级。 |
-| 懒建（第一次点击才建树） | 打开时的建树时间从“可感知的一次卡顿”换成“第一次点击的卡顿”，而内存收益已经被封存吃掉了（叶 64 的节点层只有几十 MB）。 |
+| Only adjust leaf granularity | It only cuts the node layer: 1.36 GB → 736 MB, while the primitive boxes (676 MB) do not move at all. |
+| Make sealing a separate type `SealedBvh` / `BvhView` | The two states differ by one storage only, and a separate type would duplicate the single nearest-first pruning traversal or make it a template; both are heavier than "no flag, state derived from the data" (`D20`, `G7`). |
+| Delete `update` / `refit` / `qualityReport` (per `G8`) | It would push a real future consumer (a fixed primitive set with boxes that change each time) back to "rebuild everything"; sealing already stops them charging each other, so deleting brings no extra benefit. `F2` states that they have no production caller today. |
+| Change `BvhBuilder`'s default leaf capacity to 64 | The library provides shape, not policy; existing tests and documents measure quality against "the library default". Policy goes in the consumer (`kPickTreeLeafSize`). |
+| Change primitive boxes to `Aabb<float>` (24 B) | Lossless (the box values are float coordinates' min/max already), but it is the **next** lever and independent of sealing; doing sealing first lets the two be measured as two steps. Left in the `backlog`. |
+| No picking tree (scan 14M triangles linearly) | A click costs 0.2-0.5 s, and the capability of "picking a large mesh" is lost as such; after sealing the tree is already an order of magnitude smaller than the model. |
+| Build lazily (build the tree on the first click) | The build time at open turns from "one perceptible stall" into "a stall on the first click", and the memory gain has already been eaten by sealing (the node layer at leaf 64 is only a few tens of MB). |
 
-## 后果
+## Consequences
 
-- **内存**（14.09M 三角形的拾取树）：`1.36 GB → 88 MB`（叶 64 + 封存）。后端另省 1.18 GB（顶点与索引不再复制）。
-- **语义**：封存树的查询回调收到**叶盒**而非图元盒（超集，`geometry-bvh.md` `R7` / `P10`）。拾取本就不用该参数，
-  所以行为不变；任何新消费者若需要逐图元精确盒，不该封存。
-- **ABI**：`Bvh` 的类布局不变（没有新成员），新增的全是头文件内联函数；唯一的破坏面是封存树上六个写接口会抛
-  `logic_error`——它们今天只有测试在调。
-- **测试**：`BvhQueryTest` 五条封存用例、`GraphicsTest` 两条（封存 + 粗叶可观测、调用方粒度可换）、
-  `StreamUploadsTest` 三条（数组别名到模型地址、索引别名整段、条目与 bind 各自的存活语义）。
-  `AHandBuiltDrawPreparesItsOwnTree` 与 `APreparedTreeChangesTheCostAndNotTheAnswer` 改为显式传细叶——它们量的是
-  剪枝机制，不是引擎的粒度策略。
-- **文档**：`geometry-bvh.md` 2.16 / F10 / C13 / R7 / N3 / P10 / D20 / T12；`graphics-geometry.md` F33 / C12 / N18；
-  `vsg-backend.md` F16.1。同时修正了 `geometry-bvh.md` 2.4 把 `Aabb<double>` 写成 24 字节的错（它是 48 字节）。
+- **Memory** (the picking tree over 14.09M triangles): `1.36 GB → 88 MB` (leaf 64 + sealing). The backend saves another 1.18 GB (vertices and indices are no longer copied).
+- **Semantics**: a query callback on a sealed tree receives the **leaf box** rather than the primitive box (a superset, `R7` / `P10` of `geometry-bvh.md`). Picking never used that
+  parameter, so behaviour is unchanged; any new consumer that needs an exact per-primitive box must not seal.
+- **ABI**: `Bvh`'s class layout is unchanged (no new members) and everything added is a header-inline function; the only breaking surface is that six write interfaces on a sealed tree throw
+  `logic_error` - and only tests call them today.
+- **Tests**: five sealing cases in `BvhQueryTest`, two in `GraphicsTest` (sealing and coarse leaves observable, the caller's granularity replaceable),
+  three in `StreamUploadsTest` (an array aliasing the model's address, the index aliasing a whole segment, the lifetime semantics of the entry and of the bind respectively).
+  `AHandBuiltDrawPreparesItsOwnTree` and `APreparedTreeChangesTheCostAndNotTheAnswer` now pass a fine leaf explicitly - they measure the pruning mechanism, not the engine's granularity policy.
+- **Documents**: `geometry-bvh.md` 2.16 / F10 / C13 / R7 / N3 / P10 / D20 / T12; `graphics-geometry.md` F33 / C12 / N18;
+  `vsg-backend.md` F16.1. Also corrected `geometry-bvh.md` 2.4, which wrote `Aabb<double>` as 24 bytes (it is 48 bytes).
 
-## 后续
+## Follow-up
 
-- 图元盒 / 节点盒改 `Aabb<float>`：再省一半的盒内存（无损），需要给 `Bvh` 的体积类型一个“存储标量 ≠ 计算标量”
-  的表述。见 `../backlog/geometry.md`。
-- 盒子量化（相对父节点、16 bit/轴）是更远处的一步，只在有大模型消费者的持续证据时再做。
+- Change primitive / node boxes to `Aabb<float>`: halves the box memory again (lossless), and needs a statement of "storage scalar ≠ compute scalar" for `Bvh`'s volume type.
+  See `../backlog/geometry.md`.
+- Box quantisation (relative to the parent, 16 bit per axis) is a further step, to be taken only with sustained evidence from a large-model consumer.
