@@ -163,6 +163,29 @@ removing an unregistered pass and removing an already removed pass are the same 
     The former `FrameUpdate::update()` was the reaction side wearing the driver's verb, and the pair read as a stutter;
     it is the one rename of that batch that changes no type (`BC-25`).
 
+2.15 **A fact earns a place on the public surface when the host must decide on it, never because a backend can**
+    (public surface, `G1` / `G8` / `G13`): "should this backend capability be exposed?" has been asked twice about GPU
+    resources, and both times the answer was decidable by a test rather than by argument (`../backlog/graphics.md` T30).
+    * **Three questions.** For a candidate member: (a) without it, would a host have to GUESS? (b) without it, would a host
+      have to open a backend header? (c) is it only "this backend has the ability"? Answers (a) or (b) admit it; (c) alone
+      excludes it.
+    * **Three admissions, each a host decision.** Something to BRANCH on before drawing (`Capabilities::supports`,
+      `Limits::max_samples`); something to REQUEST whose refusal is classified (`ReadbackOutcome::Unsupported` means "this
+      device never will", and a host gates its feature on it); something to READ and act on (`FrameStats::residency` for
+      trimming, `FrameReport`, `PrepareReport`).
+    * **Three exclusions.** A resource TYPE or handle - a host never names a GPU object, and the SDK's only `void*` members
+      name content identities (`DrawState::material`, `Geometry::Facts::buffer`) or a window (`DeviceDesc::native_handle`);
+      a SEMANTIC only one API family has (`DrawState::ImageLayout`, which Metal and WebGPU would have to ignore - T15); an
+      internal POLICY (a cache, a barrier, a table - T10).
+    * **Three costs, all permanent.** A promoted fact is one more obligation on every future backend (`RenderDevice` carries
+      19 virtuals today, 5 of them pure); a DEFAULTED one is a silent lie, because a backend that forgets to override reports
+      the base default, which reads as an honest "no" while meaning "did not answer" - the distinction `ResidencyRow` states
+      as "absent is not zero"; and a TYPE cannot be defaulted at all, so promoting one locks it into the ABI where a field
+      would have stayed additive.
+    Boundary: this decides what may be PUBLIC, not what a backend may HAVE. A mechanism both backends use is a fact about the
+    backends, and it lives flat in the SDK mainline (`ADR-2026-11-16`); this point does not reopen that - a second CONSUMER is
+    what moves a mechanism there, which is a different trigger from "a second backend exists".
+
 ## 3. Features
 
 ### 3.1 Device, window, area, view, engine
@@ -317,6 +340,7 @@ removing an unregistered pass and removing an already removed pass are the same 
 | D4 | One engine doing the pass table, the output table, diagnostics and the UI facade | One type, several jobs; split into three narrow facades. |
 | D5 | The backend sorting the passes again | Two sortings, two frame vocabularies; scheduling moved up into the engine. See [ADR](../decisions/ADR-2026-10-22-engine-schedules-passes.md). |
 | D6 | A `FrameBorrowed<T>` marker type on `FrameDescription` | The answer to borrowing is already "own it if you keep it" (`OwnedFrame`); a borrowed window is only one `executeFrame` call wide, and a marker type would pierce `FrameDescription` / `PassDraw` / `ImageSource` and could be bypassed by `auto` (`G8` / `G10`). |
+| D7 | A public GPU resource type, or a polymorphic resource table | A host never names a GPU object, so the type would have no consumer at any backend count; a base class would be a forwarding layer over whichever library creates the object (`G7`), and it would need a device reference on the resource (`G2`). See 2.15 and [ADR-2026-11-10](../decisions/ADR-2026-11-10-gpu-residency-pinned-by-content.md) option D. |
 
 ## 8. Tests and Acceptance
 
