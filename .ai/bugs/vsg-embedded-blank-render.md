@@ -1,47 +1,41 @@
-# Bug: 嵌入式渲染视图空白（SceneBridge 内容不显示）（历史登记）
+# Bug: the embedded render view stays blank (SceneBridge content is not drawn) (Historical record)
 
-- **日期**: 2026-09-02
-- **模块**: gfx_backend_vsg 插件（嵌入式 `SceneBridge` 几何构建路径）
-- **状态**: 已修复
+- **Date**: 2026-09-02
+- **Module**: gfx_backend_vsg plugin (the embedded `SceneBridge` geometry build path)
+- **Status**: Fixed
 
-> **历史代码位置**：`VsgRenderer` / `SceneBridge` 已在后端重写中删除，下面的文件/类名按当时记录保留；
-> 现行结构见 `.ai/design/vsg-backend.md`。
+> **Historical code locations**: `VsgRenderer` / `SceneBridge` were removed in the backend rewrite; the file and class
+> names below are kept as they were recorded then; the current structure is in `.ai/design/vsg-backend.md`.
 
-> **EN**: Fixed (historical, 2026-09-02): the embedded path drew only the clear colour because the deserialised phong `ShaderSet` in this vsg build has empty `defaultGraphicsPipelineStates` and the configurator never adds a `ViewportState`, and because the hand-built `VertexIndexDraw` draws nothing in that build. The renderer now completes the shared pipeline states explicitly (including the viewport) and the geometry uses `Commands{BindVertexBuffers, BindIndexBuffer, DrawIndexed}`. The classes named here were removed in the backend rewrite.
+## Symptom
 
-## 现象
+Even after a successful initialisation the embedded path showed only the clear colour and no geometry, while the standalone
+window path (`makeRawDemoNode`, `VN_VSG_OWN_WINDOW=1`) drew its triangle correctly.
 
-嵌入式路径即使初始化成功，视图也只有清屏色、没有任何几何体；而独立窗口路径
-（`makeRawDemoNode`，`VN_VSG_OWN_WINDOW=1`）能正常显示三角形。
+## Root cause
 
-## 根因
+1. In this vsg build (FetchContent v1.1.16, no glslang) the deserialised phong `ShaderSet` has empty
+   `defaultGraphicsPipelineStates`. `GraphicsPipelineConfigurator` fills in `DepthStencilState` / `RasterizationState` /
+   `ColorBlendState` / `MultisampleState` / `InputAssemblyState` but **never a `ViewportState`** -> the pipeline has no
+   viewport, nothing is rasterised (the comment in `VsgRenderer::makeRawDemoNode()` already says the states must be given
+   explicitly).
+2. `SceneBridge::buildGeometry()` drew through a hand-assembled `VertexIndexDraw` - which was separately verified to
+   **produce no draw** in this build; an explicit `Commands{BindVertexBuffers, BindIndexBuffer, DrawIndexed}` is required
+   (see the vsgExamples `utils/vsggraphicspipelineconfigurator`).
 
-1. 本 vsg build（FetchContent v1.1.16，无 glslang）反序列化出的 phong
-   `ShaderSet` 的 `defaultGraphicsPipelineStates` 是空的。
-   `GraphicsPipelineConfigurator` 只会补 `DepthStencilState` /
-   `RasterizationState` / `ColorBlendState` / `MultisampleState` /
-   `InputAssemblyState`，**从不补 `ViewportState`** → 管线没有视口，
-   什么都不栅格化（`VsgRenderer::makeRawDemoNode()` 注释里已说明必须显式给全）。
-2. `SceneBridge::buildGeometry()` 用手工组装的 `VertexIndexDraw` 出图——该构造
-   在本 build 已被独立验证**不产生绘制**，须用显式
-   `Commands{BindVertexBuffers, BindIndexBuffer, DrawIndexed}`（参考 vsgExamples
-   `utils/vsggraphicspipelineconfigurator`）。
+## Fix
 
-## 修复
+1. `VsgRenderer::initialize()` (`src/plugins/gfx_backend_vsg/src/VsgRenderer.cpp`): complete the shared phong `ShaderSet`'s
+   `defaultGraphicsPipelineStates` explicitly - `ViewportState` (sized from the current window), `RasterizationState` with
+   `cullMode = NONE`, `DepthStencilState` / `ColorBlendState` / `InputAssemblyState` / `MultisampleState`. Every geometry
+   pipeline `SceneBridge` builds afterwards inherits these states.
+2. `SceneBridge::buildGeometry()` (`src/plugins/gfx_backend_vsg/src/SceneBridge.cpp`): attach
+   `Commands{BindVertexBuffers(config->baseAttributeBinding, arrays), BindIndexBuffer(indices), DrawIndexed(n, 1, 0, 0, 0)}`
+   under the `StateGroup` (from `config->copyTo`) instead of `VertexIndexDraw`.
+3. Add the `vsg/commands/{Commands,BindVertexBuffers,BindIndexBuffer,DrawIndexed}.h` headers and drop the now unused
+   `vsg/nodes/VertexIndexDraw.h`.
 
-1. `VsgRenderer::initialize()`（`src/plugins/gfx_backend_vsg/src/VsgRenderer.cpp`）：
-   为共享 phong `ShaderSet` 显式补全 `defaultGraphicsPipelineStates`——含
-   `ViewportState`（取当前窗口尺寸）、`RasterizationState(cullMode = NONE)`、
-   `DepthStencilState` / `ColorBlendState` / `InputAssemblyState` /
-   `MultisampleState`。`SceneBridge` 之后构建的每个几何管线都继承这些状态。
-2. `SceneBridge::buildGeometry()`（`src/plugins/gfx_backend_vsg/src/SceneBridge.cpp`）：
-   改为在 `StateGroup`（来自 `config->copyTo`）下挂
-   `Commands{BindVertexBuffers(config->baseAttributeBinding, arrays),
-   BindIndexBuffer(indices), DrawIndexed(n, 1, 0, 0, 0)}`，替换 `VertexIndexDraw`。
-3. 补充 `vsg/commands/{Commands,BindVertexBuffers,BindIndexBuffer,DrawIndexed}.h`
-   头文件；移除不再使用的 `vsg/nodes/VertexIndexDraw.h`。
+## Verification
 
-## 验证
-
-嵌入式视图能显示启动 demo 三角形与 `TestRenderLiveCommand` 的动画三角形
-（显式 draw + 完整管线状态 = 已验证能出图的配置）。
+The embedded view draws the startup demo triangle and the animated triangle of `TestRenderLiveCommand` (explicit draw plus
+complete pipeline states = a configuration verified to produce output).

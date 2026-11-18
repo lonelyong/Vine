@@ -1,51 +1,48 @@
-# Bug: 嵌入式渲染后端初始化崩溃（关闭窗口 / Qt 重建 surface 时）（历史登记）
+# Bug: the embedded render backend crashes while initialising (closing the window, or when Qt rebuilds the surface) (Historical record)
 
-- **日期**: 2026-09-02
-- **模块**: gfx_backend_vsg 插件（嵌入式 Qt 子 HWND 渲染路径）
-- **状态**: 已修复
+- **Date**: 2026-09-02
+- **Module**: gfx_backend_vsg plugin (the embedded Qt child-HWND render path)
+- **Status**: Fixed
 
-> **历史代码位置**：`VsgRenderer` / `SceneBridge` 已在后端重写中删除，下面的文件/类名按当时记录保留；
-> 现行结构见 `.ai/design/vsg-backend.md`。
+> **Historical code locations**: `VsgRenderer` / `SceneBridge` were removed in the backend rewrite; the file and class
+> names below are kept as they were recorded then; the current structure is in `.ai/design/vsg-backend.md`.
 
-> **EN**: Fixed (historical, 2026-09-02): this build allows one vsg device, and `shutdown()` released only the window and viewer, so compiled pipelines and caches still referenced the old device, the device id was never freed, and the next `initialize()` hit "Number of vsg:Device allocated exceeds number supported", which escaped to the Qt event loop and terminated. `initialize()` now catches, logs and shuts down; `shutdown()` clears the graph, scene and caches; failure paths shut down before returning false.
+## Symptom
 
-## 现象
+The process crashed while running `TestRenderLiveCommand` or closing the window; the stack landed in `vsg::Device::Device`
+(Device.cpp:63) on an uncaught C++ exception. The embedded view (`RenderControl`, Qt child HWND) had also been blank before
+that.
 
-执行 `TestRenderLiveCommand` / 关闭窗口时进程崩溃；崩溃栈落在
-`vsg::Device::Device`（Device.cpp:63），是未被捕获的 C++ 异常。嵌入式
-（`RenderControl`，Qt 子 HWND）视图此前还表现为空白。
+## Root cause
 
-## 根因
-
-vsg 默认 `VSG_MAX_DEVICES == 1`（本 build 的 `Version.h` 中即为 1）。
-`RenderControl` 在 Qt 重建原生 surface（布局/首次显示/关闭时常重建 HWND）时，
-会 `shutdown` 后端再重新 `initialize`。但 `VsgRenderer::shutdown()` 原来只释放
-`window` / `viewer`，保留在 `vsg_scene`、`render_graph`、`SceneBridge` 缓存、
-`VsgMaterialManager` 缓存里的**已编译 pipeline / descriptor 仍引用旧
-`vsg::Device`**，导致旧 Device 不析构、设备 ID 不被释放。下一次
-`Window::create()` 分配设备 ID 1，触发：
+vsg defaults to `VSG_MAX_DEVICES == 1` (which is 1 in this build's `Version.h`). When Qt rebuilds the native surface (the
+HWND is rebuilt on layout, first show and close), `RenderControl` shuts the backend down and initialises it again. But
+`VsgRenderer::shutdown()` only released `window` / `viewer`, while the **compiled pipelines and descriptors** kept in
+`vsg_scene`, `render_graph`, the `SceneBridge` caches and the `VsgMaterialManager` cache **still referenced the old
+`vsg::Device`**, so the old device was never destructed and its device id was never released. The next `Window::create()`
+allocated device id 1 and triggered:
 
 ```
 Number of vsg:Device allocated exceeds number supported
 ```
 
-`initialize()` 原来没有 try/catch，异常一路抛到 Qt 事件循环 → `terminate` 崩溃。
+`initialize()` had no try/catch, so the exception travelled to the Qt event loop and terminated the process.
 
-## 修复
+## Fix
 
-文件：`src/plugins/gfx_backend_vsg/src/VsgRenderer.cpp`
+File: `src/plugins/gfx_backend_vsg/src/VsgRenderer.cpp`
 
-1. `initialize()` 整体包 `try/catch`：捕获后打印 `[VsgRenderer] ...`，调用
-   `shutdown()`，返回 `false`（不再把异常抛给 Qt）。
-2. `shutdown()` 现在同时释放 `render_graph`、`vsg_scene`、`vsg_camera`，并调用
-   `sceneBridge.clearCache()`、`materialManager.clear()`，确保下一次 `initialize()`
-   创建新 Device 前旧 Device 已被销毁、设备 ID 已被回收。
-3. `Window::create` 失败、`CameraBridge::create` 失败、`compile()` 失败等
-   Window 创建之后的失败路径，统一先 `shutdown()`（带日志）再 `return false`，
-   避免泄漏一个活着但未初始化的 Device，导致重试时再次触发设备超限。
-4. `traits->debugLayer = false`：避免加载本机不可用的 validation layer。
+1. `initialize()` is wrapped in `try/catch`: on a catch it prints `[VsgRenderer] ...`, calls `shutdown()` and returns
+   `false` (the exception no longer reaches Qt).
+2. `shutdown()` now also releases `render_graph`, `vsg_scene` and `vsg_camera`, and calls `sceneBridge.clearCache()` and
+   `materialManager.clear()`, so the old device is destroyed and its id reclaimed before the next `initialize()` creates a
+   new one.
+3. The failure paths after the window is created - a failed `Window::create`, a failed `CameraBridge::create`, a failed
+   `compile()` - all call `shutdown()` (with a log line) and then `return false`, so a live but uninitialised device cannot
+   leak and trip the device limit on the retry.
+4. `traits->debugLayer = false`: avoids loading a validation layer this machine does not have.
 
-## 验证
+## Verification
 
-修复后嵌入式路径首次初始化成功（启动日志无 `[VsgRenderer]` 报错），surface
-重建 / 关闭窗口不再触发设备超限崩溃。
+After the fix the embedded path initialises successfully on the first attempt (no `[VsgRenderer]` error in the startup
+log), and rebuilding the surface or closing the window no longer triggers the device-limit crash.

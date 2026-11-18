@@ -1,68 +1,67 @@
-# Bug: 窗口缩放时几何体变形（挤压 / 拉伸）（历史登记）
+# Bug: geometry is distorted (squashed or stretched) while the window is resized (Historical record)
 
-- **日期**: 2026-09-02
-- **模块**: viz/graphics + appfw/gui + gfx_backend_vsg
-- **状态**: 已修复
+- **Date**: 2026-09-02
+- **Module**: viz/graphics + appfw/gui + gfx_backend_vsg
+- **Status**: Fixed
 
-> **历史代码位置**：`VsgRenderer` / `SceneBridge` 已在后端重写中删除，下面的文件/类名按当时记录保留；
-> 现行结构见 `.ai/design/vsg-backend.md`。
+> **Historical code locations**: `VsgRenderer` / `SceneBridge` were removed in the backend rewrite; the file and class
+> names below are kept as they were recorded then; the current structure is in `.ai/design/vsg-backend.md`.
 
-> **EN**: Fixed (historical, 2026-09-02): geometry stretched on resize because the engine updated the camera projection aspect only when a camera manipulator existed, `VsgRenderer::resize()` rebuilt the swapchain without updating the vsg camera's `viewportState`, and no `ResizeEvent` was posted after the first attach. All three are fixed: the engine updates the main camera aspect itself, the control posts one resize event before the first frame, and the renderer keeps the vsg viewport in step with the window.
+## Symptom
 
-## 现象
+Dragging a window edge to change the window's aspect ratio squashed or stretched the triangle, so its proportions were
+wrong.
 
-拖动窗口边缘改变窗口宽高比后，三角形被压扁 / 拉伸，比例失真。
+## Root cause
 
-## 根因
+The application attached no `CameraManipulator` to its `RenderEngine` (`camera_manipulator_` defaults to empty).
+`RenderEngine::pushEvent(ResizeEvent)` used to update the camera projection aspect **only when a manipulator existed**, and
+otherwise only called `backend->resize()`. Therefore:
 
-应用没有给 `RenderEngine` 挂任何 `CameraManipulator`（`camera_manipulator_`
-默认为空）。`RenderEngine::pushEvent(ResizeEvent)` 原来**只在存在 manipulator**
-时才更新相机投影 aspect，否则只调 `backend->resize()`。于是：
+1. the camera aspect stayed at its default `1.0` from initialisation on and never followed the window aspect ratio -> the
+   projection frustum and the viewport disagreed -> the geometry was distorted;
+2. `VsgRenderer::resize()` rebuilt the swapchain only and did not update the vsg camera's `viewportState` - and
+   `RenderGraph` takes the render area from it every frame, so the picture kept rendering into the initial area;
+3. no `ResizeEvent` was posted after the first attach, so the first frame rendered with the wrong aspect (a non-square
+   initial window was distorted from the start).
 
-1. 相机 aspect 从初始化起一直是默认值 `1.0`，不随窗口宽高比更新 → 投影视锥与
-   视口不匹配 → 几何体变形。
-2. `VsgRenderer::resize()` 原来只重建 swapchain，没有更新 vsg 相机的
-   `viewportState`——`RenderGraph` 每帧从它取渲染区域，导致画面一直渲染在
-   初始尺寸区域。
-3. 首次 attach 成功后没有投递 `ResizeEvent`，第一帧就以错误的 aspect 渲染
-   （初始窗口若非正方形，启动即变形）。
+## Fix
 
-## 修复
+1. `RenderEngine::pushEvent(ResizeEvent)` (`src/viz/graphics/src/RenderEngine.cpp`): with no manipulator, update the main
+   camera's aspect from the new window's `w/h` (`setPerspective(fov, w/h, near, far)`), the same thing
+   `OrbitCameraManipulator::onResize()` does.
+2. `RenderControl::initializeBackend()` (`src/fw/appfw/src/gui/RenderControl.cpp`): after a successful first attach, push
+   one `ResizeEvent{surfaceWidth(), surfaceHeight()}` before the first `renderFrame()`, so the first frame uses the right
+   aspect.
+3. `VsgRenderer::resize()` (`src/plugins/gfx_backend_vsg/src/VsgRenderer.cpp`): after `window->resize()`, update
+   `d->vsg_camera->viewportState = ViewportState::create(window->extent2D())` so the render area follows the live window
+   size.
 
-1. `RenderEngine::pushEvent(ResizeEvent)`
-   （`src/viz/graphics/src/RenderEngine.cpp`）：无 manipulator 时，用新窗口
-   `w/h` 更新主相机 aspect
-   （`setPerspective(fov, w/h, near, far)`），与
-   `OrbitCameraManipulator::onResize()` 的做法一致。
-2. `RenderControl::initializeBackend()`
-   （`src/fw/appfw/src/gui/RenderControl.cpp`）：首次 attach 成功后，在首帧
-   `renderFrame()` 之前推一次 `ResizeEvent{surfaceWidth(), surfaceHeight()}`，
-   让第一帧使用正确的 aspect。
-3. `VsgRenderer::resize()`
-   （`src/plugins/gfx_backend_vsg/src/VsgRenderer.cpp`）：`window->resize()` 后
-   同步更新 `d->vsg_camera->viewportState =
-   ViewportState::create(window->extent2D())`，使渲染区域跟随实时窗口尺寸。
+## Verification
 
-## 验证
+After a window resize the geometry keeps its proportions and is no longer squashed or stretched.
 
-窗口缩放后几何体保持正常比例，不再挤压 / 拉伸。
+## Follow-up (M2c, 2026-10-11 - reverted, superseded by A, see below)
 
-## 后续（M2c，2026-10-11 —— 已回退，被 A 取代，见下）
+The fix at the time was "**remember** to push the new size to the camera" (items 1 and 2 above) - one state maintained in
+two places, and one omission distorted the picture again. M2c moved the aspect out of the camera (the projection computed
+`projectionMatrix(aspect)` on demand, one derivation in `RenderBackend::viewAspect()`), and that version was **reverted the
+same day**: see "follow-up two" below.
+See `graphics-architecture.md` section 3.2.3 (item 3 and its "revert") and the "aspect out of the camera (M2c)" entry in
+`.ai/memory/graphics.md`.
 
-当时的修法是"**记得**把新尺寸推给相机"（上面第 1、2 条）—— 一份状态两处维护，漏一次就又变形。
-M2c 把 aspect 从相机里拿出去（投影 `projectionMatrix(aspect)` 现算、一处推导 `RenderBackend::viewAspect()`），
-那一版**同日被回退**：见下面"后续二"。
-见 `graphics-architecture.md` §3.2.3（③ 与它的"回退"）与 `.ai/memory/graphics.md` 的 "aspect 出相机（M2c）" 一条。
+## Follow-up two (A, 2026-10-11, same day): the shape returns to the camera, with a single source
 
-## 后续二（A，2026-10-11 同日）：形状回到相机，但只有一个来源
+The `viewAspect()` version turned "the shape" into something **only the backend could answer, and whose answer depended on
+what had been announced before** (it read the open scope's target/viewport), so "assemble the whole frame description before
+dispatch" became unexpressible. A put it back **into the camera**: `Camera::setAspect(w / h)` is the only write entry for
+the shape, and the projection, the culling, the view block and the picking rays read the same number - the state "the
+camera's aspect is stale" still does not exist (there is one writer, and it is written by the **same** rectangle:
+`SceneView::applySurfaceGeometry` pushes the pane's shape), and "the rectangle disagrees with the camera" (one camera shared
+by two differently shaped rectangles) is no longer silently stretched but reported at engine compile time
+(`RenderEngine::collectPictureShapeMismatches()`).
 
-`viewAspect()` 那一版把"形状"变成了**只有后端能答、且答案取决于之前公告了什么**的问题（它读开着的 scope 的
-target/viewport），于是"整帧描述在派发前拼好"写不出来。A 把它放回**相机**：`Camera::setAspect(w / h)` 是形状
-唯一的写入口，投影、剔除、view block、拾取射线读同一个数 —— "相机里的宽高比过期"这个状态依然不存在（只有一处
-能写，而且是**同一个**矩形写它：`SceneView::applySurfaceGeometry` 按窗格形状 push），
-而"矩形与相机不一致"（共用一台相机给两块不同形状的矩形）不再被悄悄拉伸，由引擎编译期报出来
-（`RenderEngine::collectPictureShapeMismatches()`）。
-
-**所以这条 bug 的两个"当时"修法都不用回到**：既不需要"记得推给相机"（视图推一次，因为形状确实是它那格的），
-也不需要"问后端"（形状在相机里，编译期就答得出来）。
-见 `.ai/design/graphics-architecture.md` §"已落地：A"与 `.ai/memory/graphics.md` 的 A 那一条。
+**So neither of this bug's two "at the time" fixes needs to come back**: neither "remember to push to the camera" (the view
+pushes once, because the shape really is its pane's) nor "ask the backend" (the shape lives in the camera and is answerable
+at compile time).
+See `.ai/design/graphics-architecture.md` "landed: A" and the A entry in `.ai/memory/graphics.md`.

@@ -1,55 +1,61 @@
-# vsg 后端的 polygon offset 不生效（深度偏移状态未声明动态）
+# The vsg backend's polygon offset has no effect (the depth-bias state is not declared dynamic)
 
-- **状态**：待修复；静态代码路径已确认，缺少真实设备的像素/深度回归。
-- **发现日期**：2026-11-02
-- **模块**：`src/plugins/gfx_backend_vsg`
-- **涉及**：`makeDynamicStateDeclaration()`（`internal/ContentPipeline.cpp`、`support/VsgDynamicState.cpp`）、
-  `makeDynamicStateCommand()`（`internal/StateCommands.cpp`）、`SetDynamicState::record()`（`support/VsgDynamicState.cpp`）
+- **Status**: Open; the static code path is confirmed, a pixel or depth regression on a real device is missing.
+- **Found**: 2026-11-02
+- **Module**: `src/plugins/gfx_backend_vsg`
+- **Files**: `makeDynamicStateDeclaration()` (`internal/ContentPipeline.cpp`, `support/VsgDynamicState.cpp`),
+  `makeDynamicStateCommand()` (`internal/StateCommands.cpp`), `SetDynamicState::record()` (`support/VsgDynamicState.cpp`)
 
-> **EN**: Open finding from a static review: `setPolygonOffset` writes `vkCmdSetDepthBias`, but the content pipeline's dynamic-state declaration omits `VK_DYNAMIC_STATE_DEPTH_BIAS` (the repository has two drifted copies of that list) and the pipeline's `depthBiasEnable` stays `VK_FALSE`, so the offset is a no-op with no diagnostic at all. Both the declaration and the enable must agree with the write (`G4`, `G6`, `G10`); no pixel regression on a real device exists yet.
+## Symptom and impact
 
-## 现象与影响
+`StateNode::setPolygonOffset` / `ResolvedRenderState::polygonOffset` is a promised capability: the depth offset serves
+decals, coplanar surfaces and shadow offsets. The backend writes it into the dynamic-state command, but the content
+pipeline's dynamic-state declaration does not list it, and the pipeline create-info's `depthBiasEnable` keeps its default
+`VK_FALSE`. The offset value is written into the command stream yet takes **no part in rasterisation**, coplanar surfaces
+keep z-fighting, and nothing is diagnosed anywhere - a state that is "set but has no effect".
 
-`StateNode::setPolygonOffset` / `ResolvedRenderState::polygonOffset` 是对外承诺的能力：深偏移用于贴花、
-共面表面、阴影偏移。当前后端把它写进动态状态命令，但内容管线的动态状态声明里没有它，管线 create-info 的
-`depthBiasEnable` 也保持默认 `VK_FALSE`。结果是偏移值被写入命令流却**不参与光栅化**，共面表面继续 z-fighting，
-而且全程没有任何诊断——一个“设了但没效果”的状态。
+## Root cause
 
-## 根因
+Three places each true in isolation, failing together:
 
-三处各自成立，合起来失效：
+1. `makeDynamicStateCommand()` writes `polygon_offset.units` / `.factor` into `SetDynamicState::depth_bias_constant` /
+   `.depth_bias_slope` (`StateCommands.cpp:119-120`), and `SetDynamicState::record()` really does call `vkCmdSetDepthBias`
+   (`VsgDynamicState.cpp:90`).
+2. The `makeDynamicStateDeclaration()` the content pipeline actually uses (`internal/ContentPipeline.cpp:183-196`) lists 12
+   dynamic states and **not `VK_DYNAMIC_STATE_DEPTH_BIAS`**. The other declaration of the same name in the repository
+   (`support/VsgDynamicState.cpp:117-129`) does include it, so the two lists have drifted;
+   `ContentPipelineTest.TheEditableHalfIsDeclaredDynamic` asserts the pipeline declaration but does not cover depth bias.
+3. The pipeline create-info's `RasterizationState` is created with vsg's defaults, so `depthBiasEnable == VK_FALSE`
+   (`build/_deps/vsg-src/include/vsg/state/RasterizationState.h:33`), and nothing sets
+   `VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE_EXT` to turn it on dynamically - even with the declaration added, the enable stays
+   off.
 
-1. `makeDynamicStateCommand()` 把 `polygon_offset.units` / `.factor` 写进 `SetDynamicState::depth_bias_constant` /
-   `.depth_bias_slope`（`StateCommands.cpp:119-120`），`SetDynamicState::record()` 也真的调用了
-   `vkCmdSetDepthBias`（`VsgDynamicState.cpp:90`）。
-2. 内容管线实际使用的 `makeDynamicStateDeclaration()`（`internal/ContentPipeline.cpp:183-196`）列出 12 项动态状态，
-   **不含 `VK_DYNAMIC_STATE_DEPTH_BIAS`**。同一仓库里另一份同名声明（`support/VsgDynamicState.cpp:117-129`）包含它，
-   两份清单已经漂移；`ContentPipelineTest.TheEditableHalfIsDeclaredDynamic` 断言的是管线声明，但没覆盖深度偏移。
-3. 管线 create-info 的 `RasterizationState` 用 vsg 默认值创建，`depthBiasEnable == VK_FALSE`
-   （`build/_deps/vsg-src/include/vsg/state/RasterizationState.h:33`），且没有 `VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE_EXT`
-   去动态打开它——即使声明补上，enable 仍是关的。
+The Vulkan rule: a dynamic state that a pipeline does not declare makes `vkCmdSetXxx` ineffective for that pipeline, and the
+driver uses the value baked into create-info; while `depthBiasEnable == VK_FALSE` the depth bias is not applied at all. Both
+apply here, so the offset is necessarily a no-op.
 
-Vulkan 规则：某项动态状态未在管线里声明，`vkCmdSetXxx` 写入的值对该管线无效，驱动取 create-info 的烘焙值；
-`depthBiasEnable == VK_FALSE` 时深度偏移整体不施加。两条同时命中，偏移必然是空操作。
+## Suggested fix
 
-## 修改建议
+1. Give the dynamic-state list **one** authoritative definition: delete the duplicate and share one
+   `makeDynamicStateDeclaration()` between the content and screen pipelines.
+2. Add `VK_DYNAMIC_STATE_DEPTH_BIAS` to that list, and either bake `depthBiasEnable` to `VK_TRUE` per the engine
+   convention (an offset of 0 equals no offset, so it is a safe default) or switch to
+   `VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE_EXT` and send it with the command - pick one and state it in the header.
+3. Add a "list completeness" test: every state `record()` writes must be in the set the pipeline declares, and vice versa;
+   that test is the executable form of the rule in `graphics-rendering.md` section 2.8.
+4. If the device lacks a required feature other than `fillModeNonSolid`, refuse the session by the existing policy instead
+   of degrading to "the offset does nothing".
 
-1. 让动态状态清单只有**一处**权威定义：删除重复实现，内容/屏幕管线共用一个 `makeDynamicStateDeclaration()`。
-2. 在该清单里加入 `VK_DYNAMIC_STATE_DEPTH_BIAS`；把 `depthBiasEnable` 按引擎约定烘焙为 `VK_TRUE`（偏移为 0 时
-   等于不偏移，是安全的默认），或改用 `VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE_EXT` 随命令下发——二选一，并在头文件里写明。
-3. 加一条“清单完整性”测试：命令 `record()` 写入的每一项状态都必须在管线声明的集合里，反之亦然；这条测试是
-   `graphics-rendering.md` §2.8 那条规则的可执行形式。
-4. 若设备缺少 `fillModeNonSolid` 之外的所需特性，按既有策略在建会话时拒绝，而不是退化成“偏移无效”。
+## Verification plan
 
-## 验证建议
+- Unit: `ContentPipelineTest` asserts that the content pipeline declaration contains `VK_DYNAMIC_STATE_DEPTH_BIAS` and that
+  the `RasterizationState`'s `depthBiasEnable` is `VK_TRUE`.
+- Pixels: two coplanar triangles, one given `PolygonOffset{1,1}` and one not; after rendering and reading back, the offset
+  side wins consistently (no flicker over repeated runs). Without the offset, mixed pixels appear between them as a control.
+- Validation: run `scripts/vsg_rewrite_gate.sh` once and confirm 0 VUIDs (especially the ones around `vkCmdSetDepthBias`).
 
-- 单元：`ContentPipelineTest` 断言内容管线声明里含 `VK_DYNAMIC_STATE_DEPTH_BIAS`，且 `RasterizationState`
-  的 `depthBiasEnable` 为 `VK_TRUE`。
-- 像素：两个共面三角形，一个设 `PolygonOffset{1,1}` 一个不设；渲染后读回，设偏移的一方稳定胜出（多次运行不闪）。
-  未设偏移时两者之间出现混合像素，作为对照。
-- 验证层：跑一次 `scripts/vsg_rewrite_gate.sh`，确认 0 VUID（尤其 `vkCmdSetDepthBias` 相关项）。
+## Design constraints
 
-## 设计约束
-
-该问题涉及 **G4**（状态写入与声明语义必须一致，不存在"写了但没生效"的接口）、**G6**（同一后端两份动态状态清单是
-不一致的实现）、**G10**（把"设了没效果"的真实成本藏起来，而不是在设计里说清 enable 与动态值的分工）。
+The finding touches **G4** (writing state and declaring state must agree; there is no interface where "written but
+ineffective" is acceptable), **G6** (two dynamic-state lists in one backend are an inconsistent implementation) and **G10**
+(the real cost of "set but ineffective" is hidden instead of stating how the enable and the dynamic value divide the work).
