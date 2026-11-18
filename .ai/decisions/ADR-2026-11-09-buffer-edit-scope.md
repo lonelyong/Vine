@@ -1,61 +1,59 @@
-# ADR-2026-11-09：`Buffer` 的写入口收成一个作用域
+# ADR-2026-11-09: `Buffer`'s write entry points become one scope
 
-- 状态：已采纳
-- 日期：2026-11-09
-- 相关：`../design/graphics-geometry.md`（F18 / F25）、`../../src/base/core/sdk/vine/Buffer.hpp`、`../../docs/guides/graphics.md`
+- Status: Accepted
+- Date: 2026-11-09
+- Related: `../design/graphics-geometry.md` (F18 / F25), `../../src/base/core/sdk/vine/Buffer.hpp`, `../../docs/guides/graphics.md`
 
-> **EN**: Chose C: `Buffer::Edit` is the only handle that can mutate elements, the `Buffer` itself keeps only const accessors, and the revision advances once when the scope ends (a second concurrent writer asserts); `setRevision()` / `bumpRevision()` remain for writes made outside the object. Rejected the silent-entry status quo and per-write auto-bump, which is the same half-true announcement by another route; in practice no production code needed changing, only 15 test write sites.
+## Background
 
-## 背景
+`core::Buffer<T>` is the only "shared mutable bytes" type in the engine: the model side reads it as `T`, the render side uploads it as bytes. The whole GPU-side cache chain
+(`StreamKey`'s `revision`, the backend fact table's `described_revision`, `Scene`'s content epoch) **knows only its `revision()`**.
+And `revision()` used to have only a manual path: `setRevision()` / `bumpRevision()`, which the writer **had to remember** to call after writing.
 
-`core::Buffer<T>` 是引擎里唯一"共享可变字节"的类型：模型侧要按 `T` 读，渲染侧要按字节上传。整条 GPU 侧的缓存链
-（`StreamKey` 的 `revision`、后端事实表的 `described_revision`、`Scene` 的内容 epoch）**都只认它的 `revision()`**。
-而 `revision()` 原来只有一条手工路径：`setRevision()` / `bumpRevision()`，写者**自己记得**在写完的时候调一次。
+The long comment in `Buffer.hpp` argued that choice through, and concluded "**no** write announces itself, so the rule is absolute":
 
-`Buffer.hpp` 的长注释把这个选择论证过，结论是"**任何**写都不自动公告，所以规则是绝对的"：
+> It cannot see every write (a non-const `data()`, an element reference, a write from another thread), and it does not know where an edit begins or ends,
+> so self-bumping can only be half true: one write path announces, the next stays quiet.
 
-> 它看不见每一次写（非 const 的 `data()`、元素引用、另一个线程的写），也不知道一次编辑从哪开始到哪结束，
-> 所以自我 bump 只能是半真话：一条写路径公告，下一条悄悄不公告。
+That argument is correct - **against "each write bumps itself"**. But it misses a third option: **one edit, one scope**. The fact the object lacks is exactly
+"where the edit ends", and handing out pointers, references and spans only from a **scope that ends** supplies that fact.
 
-这个论证是对的——**针对"每次写各自 bump"**。但它漏了第三种选项：**一次编辑一个作用域**。对象缺的那个事实正是
-"编辑到哪儿结束"，把指针/引用/span 都从**有结束的作用域**里发出去，这个事实就有了。
+The cost was countable: `setRevision(` at 18 sites and `bumpRevision(` at 13 are a separate second step; `docs/guides/graphics.md` used to teach
+this two-step dance directly ("`buffer->setRevision(buffer->revision() + 1)` + `geometry->setRevision(...)`"); a missing announcement reports no error,
+it just shows up as "the picture froze on the bytes of the last upload", the same family of bug fixed earlier in that section, only on the producing side.
 
-代价是可数的：`setRevision(` 18 处、`bumpRevision(` 13 处是分离的第二步；`docs/guides/graphics.md` 原来直接
-教这个两步舞（"`buffer->setRevision(buffer->revision() + 1)` + `geometry->setRevision(...)`"）；漏了公告不报错，
-只表现为"画面停在上一次上传的字节"，与本节开头修过的那一类 bug 同源，只是发生在生产端。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 现状：四个静默写入口 + 手工公告 | 零改动；写代码最省事 | 正确性靠记性；漏公告不可检测；三份文档各讲一遍同一件事 |
-| B. 每个写自动 bump（`data()`/`operator[]`/`view()` 保留） | 简单写法的确会自动了 | 指针一旦发出就再也看不见——**正是原文论证的漏洞**：一半写公告，一半不公告，与 A 同样不可推理 |
-| C. **作用域唯一写入口**：`auto edit = buffer->edit();`，析构时公告一次 | 规则绝对且可检查（没有静默路径）；一次编辑一次公告，正是消费者要的粒度；文档不再教两步舞 | 写点从 `b->x()` 变成作用域内 `edit.x()`；需要一次机械迁移 |
+| A. Status quo: four silent write entry points plus a manual announcement | No change; writing code is easiest | Correctness depends on memory; a missed announcement is undetectable; three documents each explain the same thing |
+| B. Bump automatically on every write (keep `data()`/`operator[]`/`view()`) | The simple way of writing does announce itself | Once a pointer is handed out it can never be seen again - **exactly the hole the original argument found**: half the writes announce and half do not, which is as unreasoning as A |
+| C. **One scoped write entry point**: `auto edit = buffer->edit();`, announcing once at destruction | The rule is absolute and checkable (there is no silent path); one edit, one announcement - the granularity the consumers want; the documents no longer teach a two-step dance | A write site changes from `b->x()` to `edit.x()` inside the scope; a mechanical migration is needed |
 
-## 决定
+## Decision
 
-选 **C**。`Buffer::Edit` 是唯一能改元素的句柄（`data()` / `view()` / `operator[]` / `push_back` / `append` /
-`clear` / `reserve`），`Buffer` 只留 **const** 的 `data()` / `view()` / `operator[]` / `bytes()` / `size()` /
-`revision()`。作用域结束时 `revision` 前进一次；同时活的第二个写者会 `assert`（两次"编辑结束"会让消费者听不清）。
-`setRevision()` / `bumpRevision()` 保留，语义收窄为**对象之外的写**（映射文件、设备写、自带版本号的生产者）。
+Chose **C**. `Buffer::Edit` is the only handle that can change elements (`data()` / `view()` / `operator[]` / `push_back` / `append` /
+`clear` / `reserve`), and `Buffer` keeps only the **const** `data()` / `view()` / `operator[]` / `bytes()` / `size()` /
+`revision()`. When the scope ends, `revision` advances once; a second live writer of the same buffer `assert`s (two "edit ended" signals would leave the consumer unable to hear either).
+`setRevision()` / `bumpRevision()` are kept, their meaning narrowed to **writes made outside the object** (mapped files, device writes, producers that carry their own version numbers).
 
-## 后果
+## Consequences
 
-- 好：`G10`——正确性不再押在调用方记性上；`G11`——不存在"写了但没公告"的路径，所以这一类故障不会再出现；
-  `G4`——`data()` 不再既说读又允许写。消费者侧一行代码没变（它们只读）。
-- 好：实测**没有一行生产代码需要改**——只有测试里 15 处写点要进作用域。这反过来说明生产代码本来就"按编辑块"
-  在写（新建一个 `Buffer(std::vector)` 交给几何体），欠的只是 API 形状。
-- 代价：一条批量构建要套一层 `{}`；`reserve()` 只在一个作用域里调用也会公告一次（保守，读者多读一次，无正确性
-  影响）。
-- 代价：`Buffer` 多 4 字节（`editing_`），对一个顶点级共享对象可忽略。
-- 重开条件：出现"必须在不持有 `Buffer` 的情况下写它的字节"的合法场景（映射内存/外部 DLL 直接写）——那类场景
-  现在走 `setRevision()`，已经是显式路径，不需要重开。
+- Good: `G10` - correctness no longer rests on the caller's memory; `G11` - there is no path of "written but not announced", so this class of failure cannot recur;
+  `G4` - `data()` no longer both says read and allows write. Not one line changed on the consumer side (they only read).
+- Good: measurement showed **no production code needed changing** - only 15 write sites in tests had to enter a scope. That in turn shows production code was already written
+  "by edit block" (build a `Buffer(std::vector)` and hand it to the geometry); what was missing was the API shape.
+- Cost: a batched build has to wrap itself in `{}`; calling `reserve()` inside one scope also announces once (conservative - the reader reads once more, with no
+  correctness impact).
+- Cost: `Buffer` grows by 4 bytes (`editing_`), negligible for an object shared at vertex level.
+- Reopening condition: a legitimate case appears where the bytes of a `Buffer` must be written without holding it (mapped memory, an external DLL writing directly) - such cases
+  already go through `setRevision()`, which is the explicit path, so no reopening is needed.
 
-## 证据
+## Evidence
 
-- `BufferTest.AnEditAnnouncesItselfExactlyOnce`（一次编辑一次公告，作用域内不公告）、
-  `BufferTest.ASecondWriterCannotOpenWhileOneIsLive`（第二个写者断言）、
-  `BufferTest.SetRevisionStaysForBytesWrittenOutsideTheBuffer`（逃生口）。
-- 迁移点全部在测试里：`ChannelSliceTest`、`GraphicsTest`（实例流 / BVH 失效 / 通道增长）、`AdaptersTest`
-  （`BufferSliceSource` 的"交给了别人还改"用例）、`ContentPassTest`、`StreamRevisionTest`。
-- `test_core` / `test_graphics` / `test_vsg` 全量。
+- `BufferTest.AnEditAnnouncesItselfExactlyOnce` (one edit, one announcement, nothing announced inside the scope),
+  `BufferTest.ASecondWriterCannotOpenWhileOneIsLive` (the second writer asserts),
+  `BufferTest.SetRevisionStaysForBytesWrittenOutsideTheBuffer` (the escape hatch).
+- Every migration site is in tests: `ChannelSliceTest`, `GraphicsTest` (instance stream / BVH invalidation / channel growth), `AdaptersTest`
+  (`BufferSliceSource`'s "handed to somebody else and then changed" case), `ContentPassTest`, `StreamRevisionTest`.
+- The whole of `test_core` / `test_graphics` / `test_vsg`.

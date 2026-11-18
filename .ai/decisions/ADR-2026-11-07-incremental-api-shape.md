@@ -1,62 +1,60 @@
 # ADR-2026-11-07 incremental API shape
 
-- 状态：已采纳
-- 日期：2026-11-07
-- 相关：`.ai/design/crypto.md`、`ADR-2026-11-07-digest-vocabulary.md`（摘要词汇部分仍现行，命名部分由本文取代）
+- Status: Accepted
+- Date: 2026-11-07
+- Related: `.ai/design/crypto.md`, `ADR-2026-11-07-digest-vocabulary.md` (whose digest-vocabulary part still stands; its naming part is superseded by this document)
 
-> **EN**: Chose option 3 and superseded the naming part of `ADR-2026-11-07-digest-vocabulary`: one-shot work is a free function (`digest()`, `hmac()`), the incremental object is named for the thing (`Hasher`, `Hmac`, `AesGcm::encryptor()` / `decryptor()`), inputs are `update()` and the end is `finish()`, matching OpenSSL, libsodium, RustCrypto, Go and Qt. Rejected the invented `*Calculator` suffix, one class per algorithm, and static-class handles; `macEquals()` is a free function because `Hmac` is now an object.
+## Background
 
-## 背景
+Digests and MACs each come in two forms: the data is already in memory, or it arrives in blocks. The repository used to cover both with `Hash` (one static function per algorithm)
+and `HashCalculator` / `HmacCalculator`. Once the vocabulary merged into `Digest`, the naming problem showed itself:
 
-摘要与 MAC 都有两种形态：数据已在内存，或数据一块块到来。仓库原先用 `Hash`（每算法一个静态函数）
-与 `HashCalculator` / `HmacCalculator` 覆盖这两种形态。合并成 `Digest` 词汇后，命名问题暴露出来：
+- `Calculator` is a word we invented; the industry has no such name, so a reader has to guess what it does first.
+- One concept had two entry points: `Hash::sha256(...)` (class + static) and `HashCalculator` (class + instance),
+  plus `Hmac::compute` and `HmacCalculator` - four spellings.
+- The incremental object's method names, `write()` / `digest()`, collided with the one-shot entry points, and `digest()` meant both "compute the result" and "that free function".
 
-- `Calculator` 是我们自造的词，业界没有这种叫法，读代码的人要先猜它是干什么的。
-- 同一个概念两套入口：`Hash::sha256(...)`（类 + 静态）与 `HashCalculator`（类 + 实例），
-  再加 `Hmac::compute` 与 `HmacCalculator`，四种拼法。
-- 增量对象的方法名 `write()` / `digest()` 与一次性入口同名，`digest()` 既指“算出结果”又指“那个自由函数”。
+## Options
 
-## 选项
+1. Keep `*Calculator`. Cost: an invented word, hard to line up with the industry.
+2. One class per algorithm (`class Sha256 { update(); final(); }`). Cost: N types of exactly the same shape;
+   run-time selection then needs a base class or a variant on top.
+3. **A free function for the one-shot form, an object named for the thing for the incremental form**, with the methods uniformly `update()` / `finish()`.
+   This is exactly the shape OpenSSL (`EVP_DigestUpdate` / `EVP_DigestFinal`, `HMAC_CTX`), libsodium
+   (`crypto_hash_sha256` + `..._state` + `init/update/final`), RustCrypto (`Hasher::update/finalize`),
+   Go (`hash.Hash::Write/Sum`) and Qt (`QCryptographicHash::addData/result`) all use.
+4. Use static classes throughout (`Hasher::create(Digest)`) - that only hides the state in a handle, one more layer of indirection with no benefit.
 
-1. 保留 `*Calculator`。缺点：自造词、与业界不好对照。
-2. 每种算法一个类（`class Sha256 { update(); final(); }`）。缺点：形状完全相同的 N 个类型；
-   运行期选择还要再加基类或 variant。
-3. **一次性用自由函数、增量用“东西本身”命名的对象**，方法统一 `update()` / `finish()`。
-   这正是 OpenSSL（`EVP_DigestUpdate` / `EVP_DigestFinal`、`HMAC_CTX`）、libsodium
-   （`crypto_hash_sha256` + `..._state` + `init/update/final`）、RustCrypto（`Hasher::update/finalize`）、
-   Go（`hash.Hash::Write/Sum`）、Qt（`QCryptographicHash::addData/result`）共同采用的形态。
-4. 全用静态类（`Hasher::create(Digest)`）—— 只是把状态藏进句柄，多一层间接，没有收益。
+## Decision
 
-## 决定
+Chose **3**:
 
-选 **3**：
-
-| 概念 | 一次性 | 增量对象 | 结束 |
+| Concept | One-shot | Incremental object | End |
 |---|---|---|---|
-| 摘要 | `digest(Digest, span)` | `Hasher`（`Hasher(Digest)` / `Hasher(name)`） | `finish()` |
-| MAC | `hmac(Digest, key, span)` | `Hmac`（`Hmac(Digest, key)`） | `finish()` |
+| Digest | `digest(Digest, span)` | `Hasher` (`Hasher(Digest)` / `Hasher(name)`) | `finish()` |
+| MAC | `hmac(Digest, key, span)` | `Hmac` (`Hmac(Digest, key)`) | `finish()` |
 | AEAD | `AesGcm::seal` / `open` | `AesGcm::encryptor` / `decryptor` | `finish()` |
 
-- 增量对象的输入方法统一叫 `update()`（不是 `write()`）：`write` 会让人以为在写文件，而 `update` 是
-  OpenSSL / libsodium / RustCrypto 一致的动词。
-- 结束方法统一叫 `finish()`，与 `AesGcm::finish()` 相同；`digest()` 这个名字留给自由函数，避免“方法名撞函数名”。
-- 常量时间比较改名 `macEquals()`：它是自由函数，名字必须自己说明“比较两个 MAC”，不能挂在 `Hmac` 类上
-  （该类现在是增量对象，不是命名空间）。
-- `Hasher` 采用业界通用名（RustCrypto `Hasher`、Go `hash.Hash`）；不叫 `DigestContext`，因为那是 OpenSSL 的
-  C 风格上下文名，读起来像后端管线而不是“正在算的东西”。
+- The incremental object's input method is uniformly `update()` (not `write()`): `write` suggests writing to a file, whereas `update` is
+  the verb OpenSSL / libsodium / RustCrypto agree on.
+- The end method is uniformly `finish()`, the same as `AesGcm::finish()`; the name `digest()` stays with the free function, so a method name does not collide with a function name.
+- The constant-time comparison is renamed `macEquals()`: it is a free function, so its name has to say "compare two MACs" by itself and cannot hang off the `Hmac` class
+  (which is now an incremental object, not a namespace).
+- `Hasher` uses the industry name (RustCrypto `Hasher`, Go `hash.Hash`); it is not called `DigestContext`, because that is OpenSSL's C-style context name and reads like a
+  backend pipeline rather than "the thing being computed".
 
-## 后果
+## Consequences
 
-- 破坏性改名一次完成（仓库内调用点全部在同一个提交里改完）：`DigestCalculator` → `Hasher`，
-  `HmacCalculator` → `Hmac`，`Hmac::compute` → `hmac()`，`Hmac::verify` → `macEquals()`，
-  `AesGcm::write` → `AesGcm::update`。一次性与增量的方法名不再重叠。
-- 三个类（`Hasher` / `Hmac` / `AesGcm`）的增量形态现在是同一个手势：构造 → `update()` → `finish()`，
-  调用方不需要按类型记不同动词。
-- 代价：`Hmac` 这个名字从“静态工具类”变成“增量对象”，老读者会有一个短暂的认知迁移；换来的是
-  与库外经验一致的命名。
+- The breaking renames happen in one go (every call site inside the repository changes in the same commit): `DigestCalculator` → `Hasher`,
+  `HmacCalculator` → `Hmac`, `Hmac::compute` → `hmac()`, `Hmac::verify` → `macEquals()`,
+  `AesGcm::write` → `AesGcm::update`. The one-shot and incremental method names no longer overlap.
+- The incremental form of the three classes (`Hasher` / `Hmac` / `AesGcm`) is now one gesture: construct → `update()` → `finish()`,
+  so a caller does not have to remember a different verb per type.
+- The cost: `Hmac` changes from "a static utility class" into "an incremental object", which a long-time reader has to re-learn briefly; what it buys is
+  naming that matches experience from outside the library.
 
-## 证据
+## Evidence
 
-- `tests/test_crypto` 54 例全绿（含 RFC 4231 HMAC 向量、NIST GCM 向量、分块一致性、标签失败）。
-- 迁移时被批量替换误伤的普通 `std::ostream::write` 调用已恢复，说明这类改名必须逐点确认而不是全局替换 ——
-  已记入 `.ai/memory/`。
+- `tests/test_crypto`: 54 cases all green (including the RFC 4231 HMAC vectors, the NIST GCM vectors, chunked consistency and tag failure).
+- Plain `std::ostream::write` calls that a bulk replacement hit by mistake during the migration were restored, which shows that this kind of rename has to be confirmed
+  call site by call site rather than replaced globally - recorded in `.ai/memory/`.

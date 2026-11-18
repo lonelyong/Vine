@@ -1,71 +1,69 @@
-# ADR-2026-11-09：按地址做键的缓存，必须持有它键名所指的对象
+# ADR-2026-11-09: a cache keyed by address must hold the object its key names
 
-- 状态：已部分取代（被 `ADR-2026-11-11-content-identity-is-a-handle.md` 取代“身份”那一半：内容的键改为
-  `Handle`/`ContentRef`。本篇的“持有即身份，键要能查多久就持有多久”规则，对**尚未迁移到句柄的表**
-  —— 流上传、编译半边、管线变体 —— 仍然有效）
-- 日期：2026-11-09
-- 相关：`../design/graphics-content-lifecycle.md`（2.5 / 2.6）、`../bugs/vsg-content-address-recycled-before-rows.md`、
-  backlog `graphics.md` T19（本条决定落地时已关闭，条目已删除，证据留在下面）
+- Status: Partly superseded (the "identity" half is superseded by `ADR-2026-11-11-content-identity-is-a-handle.md`: a content key became a
+  `Handle`/`ContentRef`. This document's rule, "holding is identity, so hold it as long as the key stays queryable", still governs **the tables not yet moved to handles**
+  - stream uploads, compiled halves, pipeline variants)
+- Date: 2026-11-09
+- Related: `../design/graphics-content-lifecycle.md` (2.5 / 2.6), `../bugs/vsg-content-address-recycled-before-rows.md`,
+  backlog `graphics.md` T19 (closed when this decision landed and the item deleted; the evidence stays below)
 
-> **EN**: Chose A: an entry keyed by an object's address must hold that object for as long as the key is queryable, so the plan holds `intrusive_ptr<const Buffer<float>>`, fact rows and stream entries hold their owners, and a row that cannot park keeps its entry to the next frame; `generation` stays as insurance rather than a second identity. Rejected global stable ids (a 30+ file key vocabulary change with no consumer today) and per-key generation counters. Its identity half is superseded by `ADR-2026-11-11-content-identity-is-a-handle`; the holding rule still governs the tables not yet moved to handles.
+## Background
 
-## 背景
+Every cache table in the backend keys on the **address** of a host object: the fact table (`ContentStore`'s geometry / program / material rows), the compiled halves
+(`ContentHalves::Data::Key`), stream uploads (`StreamKey`'s `buffer`, `DataKey`'s `buffer`) and pipeline variants
+(`PipelineKey`'s `program`). The reason was that only pointers exist in a plan (`CompiledCommand` is a `const void*`), so converting to an address costs nothing.
 
-后端的每一张缓存表都用宿主对象的**地址**做键：事实表（`ContentStore` 的几何/程序/材质行）、编译半边
-（`ContentHalves::Data::Key`）、流上传（`StreamKey` 的 `buffer`、`DataKey` 的 `buffer`）、管线变体
-（`PipelineKey` 的 `program`）。理由是计划里只有指针（`CompiledCommand` 是 `const void*`），转换到地址是零成本的。
+But an entry outlives its object: a fact row parks until its in-flight frame ends, a stream entry lives `slots + 1` frames longer, and a pipeline variant lives until it is evicted or the session ends.
+A switch-over is exactly "create a new program and drop an old one", so a new object of the same size easily gets the just-freed address, and a built-in preset has the
+same revision every time it is created - so an old entry impersonates a new identity. Three consequences were measured:
 
-但条目比对象活得久：事实行停靠到 in-flight 帧结束，流条目多活 `slots + 1` 帧，管线变体活到被挤出或会话结束。
-一次换档正好"造一个新程序 + 丢一个旧程序"，同尺寸的新对象很容易拿到刚释放的地址，而内置预设每次创建的
-revision 也相同——于是旧条目冒充新身份。实测过三种后果：
+1. `ContentStore` dropped its object reference once the park succeeded → a row a new program appended at that same address was erased by the old identity's park → `LiveProgram.described`
+   still said → the row was never rebuilt → the whole pass (clear included) was refused for good.
+2. `ContentHalves`' key was only (address, revision, …) → after the address was reused, the new program was fed the pipeline compiled for the previous one (the picture froze on the previous one).
+3. A `StreamUploads` entry held only the key and not the buffer → a new buffer (revision 0) was fed bytes written by a different geometry
+   (historically the strip/fan pixel cases of `PrimitiveDrawTest` passing or failing at random, see backlog T19).
 
-1. `ContentStore` 在停靠成功后就丢掉对象引用 → 新程序在同一地址追加的行被旧身份的停靠擦除 → `LiveProgram.described`
-   仍在 → 行永不重建 → 整条 pass（含清屏）永久被拒。
-2. `ContentHalves` 的键只有 (地址, revision, …) → 地址复用后新程序被喂上一档编译出的流水线（画面停在上一档）。
-3. `StreamUploads` 的条目只有键、不持有缓冲区 → 新缓冲区（revision 0）被喂上另一个几何写进去的字节
-   （历史上表现为 `PrimitiveDrawTest` 的 strip/fan 像素用例时好时坏，见 backlog T19）。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. **持有即身份**：条目（或其停靠）持有它键名所指的对象，地址与条目同寿 | 局部、零新概念、与既有的 park/停靠机制同向；键仍是指针，转换免费 | 是一条**约定**：新表作者必须记得持有，忘了就是静默错画面 |
-| B. **稳定身份**：给可缓存对象发永不重复的 id（`Object`/`RefCounted` 上各一个计数器），所有键改用 id | 不可能悬空；`generation` 等补丁可以删掉 | 要改 `StreamKey`/`DataKey`/`PipelineKey`/`ProgramRef`/`CompiledCommand` 等公开键词汇与计划，30+ 文件；`Buffer` 不在 `Object` 体系里，还要再加一个身份来源 |
-| C. **给每个键补一个 generation**：谁复用地址就给谁加一个计数器 | 改动小 | 一个概念要写四遍（事实行、半边键、流键、管线键），是把 A 的约定换成四处补丁；`G6` 明确反对同一事实两种拼法 |
+| A. **Holding is identity**: the entry (or its park) holds the object its key names, so the address lives as long as the entry | Local, no new concept, moves with the existing park mechanism; the key is still a pointer, so the conversion is free | It is a **convention**: the author of a new table must remember to hold, and forgetting it means a silently wrong picture |
+| B. **Stable identity**: hand every cacheable object an id that never repeats (one counter each on `Object` / `RefCounted`) and key everything by it | Dangling is impossible; patches such as `generation` can go | The public key vocabulary and the plans of `StreamKey`/`DataKey`/`PipelineKey`/`ProgramRef`/`CompiledCommand` all change, 30+ files; `Buffer` is not in the `Object` family, so another identity source is needed as well |
+| C. **Add a generation to every key**: whoever reuses an address bumps a counter | A small change | One concept written four times (fact rows, half keys, stream keys, pipeline keys), which turns A's convention into four patches; `G6` is explicitly against two spellings of one fact |
 
-## 决定
+## Decision
 
-选 **A**，并把"约定"变成可检查的规则，而不是靠记性：
+Chose **A**, and turned the "convention" into a checkable rule rather than a memory exercise:
 
-- **数据是被读的，所以读者持有它**：计划持有的实例流从裸指针改成 `intrusive_ptr<const Buffer<float>>`
-  （`CollectedCommand` / `CompiledCommand`）。它同时钉住地址——流条目的键正是这个地址。
-- **键要能查多久，就持有多久**：事实表的停靠回调持有对象、流条目持有缓冲区（`StreamUploads::VertexEntry::owner` /
-  `IndexEntry::owner`）；停靠排不上时**保留条目**、下一帧再试，绝不提前把地址还给分配器。
-- **同地址不等于同身份**：事实行带 `ProgramFacts::generation`，半边键也带它——A 成立时它永远不该不同，所以它是
-  "不把正确性押在另一个模块的纪律上"的保险（`G10`），不是第二套身份。
-- 规则写进 `.ai/design/graphics-content-lifecycle.md` 2.6，每个按地址做键的表都有对应用例（见证据）。
+- **The data is read, so the reader holds it**: the instance stream a plan holds changes from raw pointers to `intrusive_ptr<const Buffer<float>>`
+  (`CollectedCommand` / `CompiledCommand`). That also pins the address - a stream entry's key is exactly that address.
+- **Hold it as long as the key stays queryable**: the fact table's park callback holds the object, and a stream entry holds its buffer (`StreamUploads::VertexEntry::owner` /
+  `IndexEntry::owner`); when a park cannot be scheduled, the entry is **kept** and retried next frame, and the address is never handed back to the allocator early.
+- **The same address is not the same identity**: a fact row carries `ProgramFacts::generation`, and so does a half key - with A in force it should never differ, so it is
+  insurance against "betting correctness on another module's discipline" (`G10`), not a second identity.
+- The rule is written into 2.6 of `.ai/design/graphics-content-lifecycle.md`, and every table keyed by address has a matching test (see the evidence).
 
-**不做 B**：目前没有任何消费者需要跨对象的全局 id；A 的三处违反都已修好并被用例钉住；把键词汇整体换成 id 是
-30+ 文件的重构，换来的是"忘写持有也不会错"这一层保险，而"忘写"现在会被同一套用例抓住。
-**不做 C**：它正是 B 的碎片版本，会把"一个身份概念"变成四份计数器。
+**B is not done**: no consumer today needs an id that is global across objects; A's three violations are all fixed and pinned by tests; replacing the whole key vocabulary with ids is
+a 30+ file refactor that buys the insurance of "forgetting to hold is still correct", and "forgetting" is now caught by that same set of tests.
+**C is not done**: it is exactly the fragmented version of B, turning "one identity concept" into four counters.
 
-## 后果
+## Consequences
 
-- 好：键词汇保持不变（指针仍是身份载体），计划/事实/流三层的生命周期只有一条规则；实例流这一处不再需要
-  "计划只借不持"的例外。
-- 代价：任何一个按地址做键的新表都必须持有对象——这是纪律，靠设计文档 2.6 + 每个表一条用例维持。
-- 代价：`CompiledCommand::instance_revision` 删除（revision 从持有的缓冲区现读，与 `ChannelFacts::streamKey()`
-  同一拼法），计划不再快照一个可以廉价现取的数。
-- 重开条件（满足任一条就改做 B）：出现**第三处**违反该约定的漏洞；出现一张**够不到句柄**的表（本次的实例流正是
-  差点如此——它靠给计划加持有才够到）；或需要跨会话/跨进程认同一份内容。
+- Good: the key vocabulary is unchanged (a pointer is still the carrier of identity), and the plan / fact / stream layers have one lifetime rule; the instance stream no longer needs
+  the "a plan borrows but does not hold" exception.
+- Cost: any new table keyed by address must hold the object - that is a discipline, kept by design page 2.6 plus one test per table.
+- Cost: `CompiledCommand::instance_revision` is removed (the revision is read from the held buffer, the same spelling as `ChannelFacts::streamKey()`),
+  so a plan no longer snapshots a number that is cheap to read on demand.
+- Reopening conditions (any one of them means doing B): a **third** hole that violates the convention appears; a table appears that **cannot reach the handle** (the instance stream here was
+  almost exactly that - it reached it only by giving the plan a holder); or one piece of content has to be recognised across sessions or processes.
 
-## 证据
+## Evidence
 
-- `FrameCompilerTest.ThePlanHoldsTheInstanceStreamItReads`：计划持有实例流，宿主放掉自己的句柄后字节仍可读。
-- `ContentPassTest`（实例化绘制那条）：录制之后 `instance_storage->useCount() > 1`，条目确实持有缓冲区。
-- `StreamUploadsTest.AnEntryHoldsTheBufferItsKeyNames`、`ContentStoreTest.AParkedRemovalKeepsTheObjectsAddressReservedUntilItsRowsLeave`、
-  `ContentStoreTest.AReleaseThatCannotBeParkedYetKeepsItsEntryAndIsRetried`、
-  `ContentHalvesTest.AnotherDescriptionOfOneIdentityIsAnotherHalf`。
-- `PrimitiveDrawTest.AStripAndAFanCoverTheSameQuadAListDoes`（原 backlog T19，已关闭）在流条目开始持有缓冲区后
-  连跑 10 次全绿。
-- `test_vsg` 全量、`test_gui` / `test_graphics` 全量。
+- `FrameCompilerTest.ThePlanHoldsTheInstanceStreamItReads`: the plan holds the instance stream, and the bytes stay readable after the host drops its own handle.
+- `ContentPassTest` (the instanced-draw case): after recording, `instance_storage->useCount() > 1`, so the entry really does hold the buffer.
+- `StreamUploadsTest.AnEntryHoldsTheBufferItsKeyNames`,
+  `ContentStoreTest.AParkedRemovalKeepsTheObjectsAddressReservedUntilItsRowsLeave`,
+  `ContentStoreTest.AReleaseThatCannotBeParkedYetKeepsItsEntryAndIsRetried`,
+  `ContentHalvesTest.AnotherDescriptionOfOneIdentityIsAnotherHalf`.
+- `PrimitiveDrawTest.AStripAndAFanCoverTheSameQuadAListDoes` (the former backlog T19, closed) runs green 10 times in a row now that a stream entry holds its buffer.
+- The whole of `test_vsg`, and the whole of `test_gui` / `test_graphics`.

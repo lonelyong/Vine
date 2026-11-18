@@ -1,51 +1,49 @@
-# ADR-2026-11-09：盒的变换算子回到 geom，`Obb` 暂不提供
+# ADR-2026-11-09: the box transform operator returns to geom; `Obb` is not offered yet
 
-> **状态**：已采纳
-> **日期**：2026-11-09
-> **影响范围**：`src/base/geom/sdk/vine/geom/spatial/Aabb.hpp`、`src/viz/graphics/sdk/vine/graphics/Node.hpp`、
-> `src/viz/graphics/src/{Node,Geometry,Scene,RayIntersection}.cpp`、`tests/test_geom_spatial/AabbTest.cpp`、
+> **Status**: Accepted
+> **Date**: 2026-11-09
+> **Scope**: `src/base/geom/sdk/vine/geom/spatial/Aabb.hpp`, `src/viz/graphics/sdk/vine/graphics/Node.hpp`,
+> `src/viz/graphics/src/{Node,Geometry,Scene,RayIntersection}.cpp`, `tests/test_geom_spatial/AabbTest.cpp`,
 > `tests/test_graphics/GraphicsTest.cpp`
 
-> **EN**: Moved the box transform operator into the geometry side as `Aabb<T>::transformed(const math::Matrix4x4<T>&)` (transform the eight corners and refit; empty box for an empty or non-affine input) and deleted both `graphics::transformBox()` and `RayIntersection.cpp`'s private copy together with the six call sites, leaving no forwarding alias. Rejected keeping an alias, returning `Obb<T>`, an `optional`, adding `Obb::transformed` (no consumer, semantics undefined off rigid transforms) and a free function.
+## Background
 
-## 背景
+"Put a local-space axis-aligned box into the coordinate system of an accumulated matrix" had two implementations in `graphics`:
+`graphics::transformBox()` (a public API in `Node.hpp`) and the private `transformBounds()` in `RayIntersection.cpp`;
+there were six call sites (a `Geometry`'s instance box and world box, a `Group`'s subtree union, `Scene`'s bounds cache, the picking rejection box).
+9.2 of `geometry-primitives.md` had long ago registered the gap: "the type has moved home, the transform operator is still on the consumer's side".
 
-“把一个局部空间的轴对齐盒放进累积矩阵的坐标系”在 `graphics` 里有两份实现：
-`graphics::transformBox()`（`Node.hpp` 里的公开 API）与 `RayIntersection.cpp` 的私有 `transformBounds()`；
-调用点六个（`Geometry` 的实例盒与世界盒、`Group` 的子树并集、`Scene` 的边界缓存、拾取的拒绝盒）。
-`geometry-primitives.md` 9.2 早已登记这条缺口：“类型已经归位，变换算子还在消费者一侧”。
+## Decision
 
-## 决定
+1. `Aabb<T>::transformed(const math::Matrix4x4<T>&)` goes into `geom`: transform the eight corners and refit; it is defined only for an affine matrix,
+   an empty box or a non-affine input answers an empty box, and `T` is restricted to floating point (an integer box times a matrix has no well-defined rounding).
+2. `graphics::transformBox()` and `RayIntersection.cpp`'s `transformBounds()` are deleted; the six call sites become
+   `box.transformed(matrix)`, and **no forwarding alias is left**.
+3. `Obb::transformed` is not offered yet; the gap and its trigger condition are recorded in 9.2 of `geometry-primitives.md`.
 
-1. `Aabb<T>::transformed(const math::Matrix4x4<T>&)` 进 `geom`：八个角点变换后重拟合；只对仿射矩阵有定义，
-   空盒或非仿射输入答空盒；`T` 限浮点（整数盒乘矩阵没有定义好的舍入）。
-2. 删除 `graphics::transformBox()` 与 `RayIntersection.cpp` 的 `transformBounds()`；六个调用点改为
-   `box.transformed(matrix)`；**不留转发别名**。
-3. `Obb::transformed` 暂不提供；缺口与触发条件记在 `geometry-primitives.md` 9.2。
+## Rationale
 
-## 理由
+- **`G1` / `G7` / `G13`**: this is a geometric fact of the value type itself, not render vocabulary. One operator with two homes drifts on the first change.
+- **No forwarding**: repository practice is to change everything at once and leave no compatibility alias (`graphics::Ray` was handled the same way); keeping `transformBox()`
+  would only give one operation two names during the transition (`G4`).
+- **The `Obb` representation**: it stores a center plus half-extents plus a quaternion and is exact only for rigid transforms (and uniform scaling) - the image of a general affine
+  map is a parallelepiped, which this representation cannot hold. `Obb` has zero production consumers today, so settle the semantics first (`G8`).
 
-- **`G1` / `G7` / `G13`**：这是值类型自己的几何事实，不是渲染词汇。一个算子两个家，改动必然漂移。
-- **不留转发**：仓库惯例是一次改完、不留兼容别名（`graphics::Ray` 同样处理过）；留下 `transformBox()`
-  只会在过渡期里给同一个操作两个名字（`G4`）。
-- **`Obb` 的表示**：它存 center + 半长 + 四元数，只对刚体（及均匀缩放）精确——一般仿射的像是平行六面体，
-  这个表示装不下。今天 `Obb` 零生产消费者，先定语义再动手（`G8`）。
+## Rejected options
 
-## 已否决选项
-
-| 选项 | 否决理由 |
+| Option | Rejection reason |
 |---|---|
-| 留 `graphics::transformBox()` 作为一行转发 | 同一操作两个名字（`G4`）；仓库对旧名字的处理是一次删完。 |
-| 返回 `Obb<T>`（精确像） | 场景盒与拾取拒绝盒要的是界；精确像零消费者。 |
-| 返回 `std::optional<Aabb<T>>` | 空盒已经是“没有盒”的表示，外面再套一层不带信息。 |
-| 同时加 `Obb::transformed` | 零生产消费者，且非刚体变换下的语义还没定（`G8`）。 |
-| 自由函数 `spatial::transformBox(aabb, m)` | 与值类型的既有风格不一致；`intersectTriangle` 是自由函数只因为三角形不是值类型。 |
+| Keep `graphics::transformBox()` as a one-line forwarder | Two names for one operation (`G4`); this repository removes an old name all at once. |
+| Return `Obb<T>` (the exact image) | A scene box and a picking rejection box want a bound; the exact image has zero consumers. |
+| Return `std::optional<Aabb<T>>` | An empty box already is the representation of "no box", and wrapping it again carries no information. |
+| Add `Obb::transformed` as well | Zero production consumers, and its semantics under a non-rigid transform are undecided (`G8`). |
+| A free function `spatial::transformBox(aabb, m)` | Inconsistent with the value-type style already in place; `intersectTriangle` is a free function only because a triangle is not a value type. |
 
-## 后果
+## Consequences
 
-- `Aabb.hpp` 新增对 `math/Transform3.hpp` 的依赖（矩阵 × 点运算符的唯一定义）。编译耦合从“点 / 向量”升到
-  “矩阵”，但 `Aabb` 早已 include `Ray.hpp`，这不是新性质。
-- 公共 API 删除 `VN_GRAPHICS_API transformBox`；仓库内调用点只有 `graphics` 自己与一个测试，已全部改完。
-- 非仿射矩阵从“静默算出一个错盒”变成“答空盒”，并由 `AabbTest.cpp` 的用例盯住。
-- `Node.hpp` 里原本描述 `transformBox()` 的段落删除；`GraphicsTest` 改成
-  `geom->localBounds().transformed(geom->worldMatrix())`，仍然钉住“走查与自答一致”。
+- `Aabb.hpp` gains a dependency on `math/Transform3.hpp` (the only definition of the matrix × point operator). The compile coupling rises from "point / vector" to
+  "matrix", but `Aabb` already included `Ray.hpp`, so this is not a new property.
+- The public API drops `VN_GRAPHICS_API transformBox`; the only call sites in the repository were `graphics` itself and one test, and all are changed.
+- A non-affine matrix changes from "silently computes a wrong box" to "answers an empty box", watched by a case in `AabbTest.cpp`.
+- The paragraph in `Node.hpp` that described `transformBox()` is deleted; `GraphicsTest` becomes
+  `geom->localBounds().transformed(geom->worldMatrix())`, which still pins "the walk agrees with the self-answer".
