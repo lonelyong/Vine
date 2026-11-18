@@ -1,42 +1,39 @@
-# Bug: auto-hide 临时 flyout 被中央渲染区遮挡（历史登记）
+# Bug: an auto-hide flyout is covered by the central render area (Historical record)
 
-- **日期**: 2026-09-02
-- **模块**: third_party/DockingPanes（DockingPaneFlyoutWidget）
-- **状态**: 已修复
+- **Date**: 2026-09-02
+- **Module**: third_party/DockingPanes (DockingPaneFlyoutWidget)
+- **Status**: Fixed
 
-> **EN**: Fixed (historical, 2026-09-02): the auto-hide flyout was a plain child widget, and on Windows a native child window (the `createWindowContainer`-embedded Vulkan surface) always paints above its parent's own content, so `raise()` could not help. The flyout became a top-level frameless `Qt::Tool` window whose geometry is computed in screen coordinates, and the container raises it after `show()`.
+## Symptom
 
-## 现象
+After a panel is pinned to auto-hide, clicking the edge button expands it temporarily, and the part of the flyout that
+overlaps the central vsg render area is covered by the render area (it looks like a z-order problem).
 
-面板 pin（auto-hide）后点击边缘按钮临时展开，flyout 与中央 vsg 渲染区重叠的
-部分被渲染区盖住（看起来像 z-index 落后）。
+## Root cause
 
-## 根因
+The central render area (`RenderControl`) is a native `QWindow` embedded with `QWidget::createWindowContainer` (the Vulkan
+surface is a child HWND). On Windows a **native child window always paints above its parent's own drawing**. The
+`DockingPaneFlyoutWidget` was an ordinary child widget with no window handle, and `raise()` has no effect on native
+siblings, so it was covered as soon as it overlapped the render area.
 
-中央渲染区（`RenderControl`）是用 `QWidget::createWindowContainer` 嵌入的原生
-`QWindow`（Vulkan 表面 = 子 HWND）。Windows 上**原生子窗口永远画在父窗口自绘
-内容之上**。而 `DockingPaneFlyoutWidget` 原本是无窗口句柄的普通子控件，raise()
-对原生兄弟无效 → 一旦与渲染区重叠必被盖住。
+## Fix (the final design: a top-level tool window)
 
-## 修复（最终方案：顶层 Tool 窗口）
+1. The flyout became a **top-level frameless tool window** with
+   `setWindowFlags(Qt::Tool | Qt::FramelessWindowHint)` - it floats above the main window (and all of its native children)
+   by construction and does not disturb the render surface at all.
+2. The geometry `setPositionAndSize()` computes changed from parent-local coordinates to **screen coordinates**
+   (`parentWidget()->rect()` through `mapToGlobal`), otherwise a top-level window lands in the wrong place.
+3. `openFlyout()` (DockingPaneContainer / DockingPaneTabbedContainer) calls `raise()` after `show()`.
 
-1. flyout 改为**顶层无边框工具窗口**
-   `setWindowFlags(Qt::Tool | Qt::FramelessWindowHint)` —— 天然浮在主窗口
-   （含其所有原生子窗口）之上，且完全不扰动渲染表面。
-2. `setPositionAndSize()` 的几何由“父控件本地坐标”改为**屏幕坐标**
-   （`parentWidget()->rect()` 经 `mapToGlobal`），否则顶层窗口定位跑偏。
-3. `openFlyout()`（DockingPaneContainer / DockingPaneTabbedContainer）在
-   `show()` 后 `raise()`。
+## Detours not to take again
 
-## 走过的弯路（勿再走）
+- `Qt::WA_NativeWindow` was tried (making the flyout a native child window and raising it): the side effects were large -
+  the central render area became invisible after the flyout was closed or restored (the native child disturbed the render
+  surface and the sibling hierarchy). Conclusion: do not stack a native child window as a sibling of a
+  `createWindowContainer` render surface.
 
-- 试过 `Qt::WA_NativeWindow`（把 flyout 变原生子窗口 + raise）：
-  **副作用大**——flyout 关闭/恢复后中央渲染区直接不可见（原生子窗口搅动了
-  渲染表面/兄弟层级）。结论：不要用原生子窗口与 createWindowContainer 的
-  渲染面做兄弟叠放。
+## Verification
 
-## 验证
-
-- pin 后点 auto-hide 按钮，flyout 正常盖在渲染区之上；
-- 关闭/恢复后中央渲染区仍正常显示；
-- flyout 位置正确贴边、可拖动/改大小。
+- After pinning, clicking the auto-hide button shows the flyout above the render area;
+- the central render area still displays correctly after the flyout is closed or restored;
+- the flyout is anchored at the right edge and can be dragged and resized.

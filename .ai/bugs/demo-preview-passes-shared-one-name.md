@@ -1,52 +1,57 @@
-# demo 的四个 G-buffer 预览共用一个 pass 名：只剩最后一个，且布局重排从不生效
+# Bug: the demo's four G-buffer previews share one pass name, so only the last survives and the layout re-ordering never takes effect
 
-- **状态**：已修复（2026-11-14，`demo_plugin`）
-- **发现日期**：2026-11-14
-- **模块**：`src/plugins/demo_plugin`（宿主侧接线；引擎的 `(owner, name)` 计划语义本身正确）
-- **涉及**：`src/plugins/demo_plugin/src/DemoScene.cpp`（`addDemoPipeline`）、
-  `src/viz/graphics/src/EngineCompile.cpp`（`applyPlanRows`：同 owner 同名 = 一行，原地 `setDesc`）
+- **Status**: Fixed (2026-11-14, `demo_plugin`)
+- **Found**: 2026-11-14
+- **Module**: `src/plugins/demo_plugin` (host-side wiring; the engine's `(owner, name)` plan semantics are correct)
+- **Files**: `src/plugins/demo_plugin/src/DemoScene.cpp` (`addDemoPipeline`),
+  `src/viz/graphics/src/EngineCompile.cpp` (`applyPlanRows`: same owner and name is one row, `setDesc` in place)
 
-> **EN**: Fixed (demo_plugin, 2026-11-14): because a plan row is identified by `(owner, name)`, the four G-buffer previews all named `gbuffer_preview` collapsed into one row whose last declaration overwrote the others, so only attachment 3 appeared; the fix gives each preview its own name, and the layout step re-declares the pass after `setViewport()` because engine nodes are built from declarations, not from the objects the host mutates.
+## Symptom and impact
 
-## 现象与影响
+The G-buffer preview strip at the top of the deferred demo should show four tiles (albedo / shading normal / occlusion /
+view position), but only the **fourth** appeared. After the fix the frame table has four independent rows, and the four
+tiles have different means:
 
-deferred demo 顶部的 G-buffer 预览条本应是四块（albedo / shading normal / occlusion / view position），
-实际**只有第 4 块**出现。修复后帧表是四条独立行，四块 tile 的均值各不相同：
-
-| tile | 帧表名字 | 均值（RGB） |
+| tile | name in the frame table | mean (RGB) |
 |---|---|---|
 | 0 | `gbuffer_preview_albedo` | (65.2, 65.5, 66.5) |
 | 1 | `gbuffer_preview_normal` | (3.0, 18.5, 13.7) |
-| 2 | `gbuffer_preview_emissive`（occlusion 走 alpha） | (30.1, 30.1, 30.1) |
+| 2 | `gbuffer_preview_emissive` (occlusion rides in alpha) | (30.1, 30.1, 30.1) |
 | 3 | `gbuffer_preview_view_position` | (12.3, 3.1, 0.0) |
 
-## 根因
+## Root cause
 
-两件事叠在一起，都源于“计划按 `(owner, name)` 认行”：
+Two problems on top of each other, both rooted in "a plan identifies a row by `(owner, name)`":
 
-1. 四个预览都叫 `gbuffer_preview`、owner 都是 render control ⇒ `applyPlanRows` 把它当成**同一行**的
-   四次声明，最后一次（attachment 3）的 desc 原地覆盖前三次（`setDesc`）。于是帧里只有一个预览 pass，
-   采样的是 attachment 3。
-2. 布局步里的“按源图纵横比重排预览矩形”只改了 demo 自己持有的 `ScreenPass` 对象：
-   `previews[i]->setViewport(...)`。引擎的节点是**从声明建出来**的，改对象不回灌；重排因此从未生效
-   （帧表里的矩形一直是最初的 160×90 槽位）。
+1. All four previews were named `gbuffer_preview` with the render control as owner, so `applyPlanRows` read them as four
+   declarations of **one row**, and the last one's desc (attachment 3) overwrote the first three in place (`setDesc`). The
+   frame therefore held one preview pass, sampling attachment 3.
+2. The layout step's "re-arrange the preview rectangles by the source image's aspect ratio" mutated only the `ScreenPass`
+   objects the demo held: `previews[i]->setViewport(...)`. Engine nodes are **built from declarations**, and mutating the
+   object does not feed back; the re-ordering therefore never took effect (the rectangles in the frame table stayed at the
+   original 160x90 slots).
 
-## 修复
+## Fix
 
-- 每个预览一个名字（按它显示的通道：albedo / normal / emissive / view position）——同一 owner 下名字就是
-  行身份。
-- 布局步在 `setViewport` 之后**重新声明**该 pass（`addDemoPass` 再应用一次，同 owner 同名原地更新），
-  矩形才会到帧里。
+- One name per preview, by the channel it shows (albedo / normal / emissive / view position) - under one owner the name is
+  the row identity.
+- The layout step **re-declares** the pass after `setViewport` (`addDemoPass` applied once more, which updates the same row
+  in place), so the rectangle reaches the frame.
 
-## 验证
+## Verification
 
-- `VN_FRAME_PLAN=1`：帧表从 1 条 `gbuffer_preview` 变为 4 条（order 120–123，矩形各不相同）。
-- 窗口拉宽到 1032×421 抓帧：四块 tile 的均值如上（互不相同，且都不是背景色）。
-- vk 与 vsg 同场景渲染区**逐字节相同**（0/82004 像素差）；`test_vk` 72/72、`BackendParityTest` 12/12。
+- `VN_FRAME_PLAN=1`: the frame table goes from one `gbuffer_preview` row to four (order 120-123, each with a different
+  rectangle).
+- A frame captured with the window widened to 1032x421 shows the four tile means above (all different, none the background
+  colour).
+- The same scene's render area is **byte-identical** between vk and vsg (0 of 82004 pixels differ); `test_vk` 72/72 and
+  `BackendParityTest` 12/12.
 
-## 设计约束
+## Design constraints
 
-- **G4**（接口语义）：`(owner, name)` 是计划的行身份，名字不是标签；同一个贡献者要画四块就必须声明四行。
-- **G9**（可扩展）：预览条按 attachment 循环，加一个通道 = 表里多一项，不需要动布局步的形状。
-- **G11**（可调试性）：帧表一眼就能回答“这条流水线到底有几行、矩形是什么”；症状能被表直接读出来，
-  不需要猜。
+- **G4** (interface semantics): `(owner, name)` is a plan's row identity; the name is not a label. A contributor that wants
+  four tiles has to declare four rows.
+- **G9** (extensible): the preview strip iterates over attachments, so adding a channel is one more entry in the table and
+  does not change the shape of the layout step.
+- **G11** (debuggable): the frame table answers "how many rows does this pipeline have, and what are their rectangles" at a
+  glance; the symptom can be read straight off the table instead of guessed.

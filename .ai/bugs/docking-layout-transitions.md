@@ -1,62 +1,85 @@
-# Bug: 停靠面板布局切换（浮动/停靠/Tab 组合）的一组缺陷（历史登记）
+# Bug: a set of docked-layout transition defects (floating, docking, tab groups) (Historical record)
 
-- **日期**: 2026-09-11
-- **模块**: third_party/DockingPanes + src/fw/appfw（DockPanel / DockPanelManager）
-- **状态**: 已修复（拖放命中命中类路径无自动化用例，见"验证"）
+- **Date**: 2026-09-11
+- **Module**: third_party/DockingPanes + src/fw/appfw (DockPanel / DockPanelManager)
+- **Status**: Fixed (the drag-and-drop hit paths have no automated case, see "Verification")
 
-> **EN**: Fixed (historical, 2026-09-11): a set of floating/docking/tab defects in the vendored DockingPanes - panes shrinkable to a few pixels or thrown off screen, tab drag-outs losing the mouse grab, drop offsets built from magic numbers, `setFloating(false)` restoring the creation-time side because a cached dock area went stale, and double ownership of the wrapper. The fixes are one geometry rule (`DockingPaneGeometry` with a 120x80 floor and a title bar kept on screen), an explicit drag hand-off, `titleHeight()` instead of `10`, and removal of the cached area.
+## Symptom
 
-## 现象
+1. A floating pane could be dragged down to a few pixels and could no longer be grabbed; a fast fling could throw the
+   window off screen, after which it could not be dragged back.
+2. When a tab was dragged out of a tab group, the pane stopped following the mouse while the button was still held, and
+   the drop indicator no longer appeared.
+3. For a floating window dragged out of a tab strip, the cursor's position relative to the title bar varied with the tab
+   index, so the window jumped out from under the cursor when dragging.
+4. After a panel was dragged to the other side, `setFloating(false)` / `restore()` docked it back on the side it had at
+   **creation** time.
+5. After `removeDockPanel()` the process occasionally crashed or read a released wrapper object.
 
-1. 浮动窗格可以拖到只剩几像素，抓不住；快速甩动能把窗口甩出屏幕，之后再也拖不回来。
-2. 把一个 Tab 从 Tab 组里拖出来时，鼠标还按着，窗格却不再跟随，停靠指示器也不再出现。
-3. 从 Tab 条拖出的浮窗，光标落在标题栏上的相对位置随 Tab 序号变化，拖动时会从光标下"跳"开。
-4. 面板被用户拖到另一侧后，`setFloating(false)` / `restore()` 把它停靠回**创建时**的那一侧。
-5. `removeDockPanel()` 后偶发崩溃或读到已释放的包装对象。
+## Root cause
 
-## 根因
+- **Geometry rules written per path**: four paths created floating panes (title bar, tab strip, flyout, public API), and
+  none of them constrained size or position.
+- **Drag ownership was never handed over**: a tab drag-out is started by `DockingPaneTabbedContainer`, which holds the
+  mouse grab, while dragging out re-arranges and may destroy the tab group, so the grab was lost mid-drag; the old code
+  corrected the position with `move()`, which hid the symptom.
+- **Drop offsets built from magic numbers**: `floatPane(QPoint(-deltaPos.x(), -10))` used the local X inside the tab label
+  as the offset and hard-coded the title-bar height as `10` (it is really `6 + fontMetrics().height()`).
+- **Two sources of truth**: `DockPanel` cached the dock area in the `_vn_dockarea` property (written only by
+  `addDockPanel()`), while `dockArea()` had long since become a live query, so a stale cache docked the panel on the wrong
+  side.
+- **Double ownership**: the wrapper object and the `DockingPaneContainer` both considered themselves owners, and
+  `userData()` was still used by the library's close callback after the wrapper object had been destroyed.
 
-- **几何规则各处自写**：产生浮动窗格有四条路径（标题栏、Tab 条、Flyout、公共 API），没有任何一条约束尺寸或位置。
-- **拖动所有权没有交接**：Tab 拖出由 `DockingPaneTabbedContainer` 发起并持有鼠标抓取，而拖出过程会重排/可能销毁 Tab 组，抓取在拖动进行中被丢掉；原代码用 `move()` 纠正位置，掩盖了症状。
-- **落点靠魔数**：`floatPane(QPoint(-deltaPos.x(), -10))` 把 Tab 标签内的局部 X 当偏移量，标题栏高度写死 `10`（实际是 `6 + fontMetrics().height()`）。
-- **两处"真相"**：`DockPanel` 把停靠区域缓存在 `_vn_dockarea` 属性里（只在 `addDockPanel()` 写），而 `dockArea()` 早已改成动态查询，缓存过期后停靠回错误的一侧。
-- **双重所有权**：包装对象与 `DockingPaneContainer` 都认为自己是所有者；`userData()` 在包装对象销毁后仍被库内关闭回调使用。
+## Fix
 
-## 修复
+Library side (`third_party/DockingPanes`, see section 5 of its `BUGS.md`):
 
-库侧（`third_party/DockingPanes`，详见其 `BUGS.md` 第五节）：
-
-| 项 | 修复 |
+| Item | Fix |
 |---|---|
-| 尺寸/边界 | 新增 `inc/DockingPaneGeometry.h`：浮动下限 120x80、标题栏至少 24 px 留在可用屏幕内；`floatPane(QRect)`、`dockPane()`、`floatingPaneEndMove()` 三处统一应用 |
-| 拖动交接 | Tab 拖出时 `m_draggedPane->continueDrag(grabGlobal)` 把拖动交给窗格标题栏（`takeGrab()`），容器清空自己的拖动态并只在仍持有抓取时 `releaseMouse()` |
-| 落点 | `floatPane(QPoint(0, 0))`（参数是偏移量）+ 新增 `titleHeight()`，按 `grabGlobal - QPoint(0, titleHeight() / 2)` 定位 |
-| 空 Tab 组 | 取 Tab 名之前判空 + `qBound` 夹索引；组空则 `hide()` + `deletePane(this)` |
-| 事件处理器异常 | `default:` 不再 `throw`，改 `qWarning()` 跳过停靠，且只在命中目标（`m_targetPosition >= 0`）时才 `dockPane()` |
-| 悬停判定 | `DockAutoHideButton::onTimerElapsed` 用 `underMouse()` 取代 `QCursor::pos()`（Wayland 返回 (0,0)） |
-| 自动隐藏飞窗定位（**已回退**） | 2026-09-11 按用户要求恢复原状：`DockingPaneFlyoutWidget.{h,cpp}` 与上游一致（`setPositionAndSize()` 仍为“先 move 再 resize + 5px/9px 贴合”），`openFlyout` 宿主仍为 `m_thisWidget`，`keepTitleBarReachable()` 保持两参数。结论：位置本身不动；若将来仍要处理，方向是把飞窗改成不受窗口管理器管理的窗口（X11 override-redirect），而不是改贴合基准 |
+| Size and bounds | New `inc/DockingPaneGeometry.h`: a 120x80 floating floor and at least 24 px of the title bar kept inside the available screen; applied uniformly at `floatPane(QRect)`, `dockPane()` and `floatingPaneEndMove()` |
+| Drag hand-off | On a tab drag-out `m_draggedPane->continueDrag(grabGlobal)` hands the drag to the pane's title bar (`takeGrab()`); the container clears its own drag state and calls `releaseMouse()` only while it still holds the grab |
+| Drop offset | `floatPane(QPoint(0, 0))` (the argument is an offset) plus the new `titleHeight()`, positioned at `grabGlobal - QPoint(0, titleHeight() / 2)` |
+| Empty tab group | Null-check before reading the tab name and clamp the index with `qBound`; an empty group calls `hide()` and `deletePane(this)` |
+| Exception in an event handler | `default:` no longer throws; it logs `qWarning()` and skips docking, and calls `dockPane()` only when a target was hit (`m_targetPosition >= 0`) |
+| Hover test | `DockAutoHideButton::onTimerElapsed` uses `underMouse()` instead of `QCursor::pos()` (Wayland returns (0,0)) |
+| Auto-hide flyout geometry (**reverted**) | Restored on 2026-09-11 at the user's request: `DockingPaneFlyoutWidget.{h,cpp}` match upstream again (`setPositionAndSize()` is still "move, then resize, plus the 5px/9px fit"), `openFlyout`'s host is still `m_thisWidget` and `keepTitleBarReachable()` keeps two parameters. Conclusion: the position itself stays; if it is ever handled, the direction is to make the flyout a window the window manager does not manage (X11 override-redirect) instead of changing the fit baseline |
 
-框架侧（`src/fw/appfw`）：
+Framework side (`src/fw/appfw`):
 
-| 项 | 修复 |
+| Item | Fix |
 |---|---|
-| 区域真相 | 脱离停靠树之前（`setFloating(true)` / `pin()` / `collapse()`）用 `dockPositionOf()` 记录实时位置；停靠回来时用 `dockPositionFor(rememberedDockArea(...))` 还原 |
-| 所有权 | `removeDockPanel()`：`closePane()` 后按 `state() != Hidden` 判断是否真被关闭回调否决；成功则 `setUserData(nullptr)` + `setOwnsImpl(false)` + `deletePane()`，最后 `delete panel` |
-| 类型安全 | `static_cast<QWidget*>(impl())` 改为 `qobject_cast<QWidget*>()`（impl 不是 QWidget 时不再被误当成 QWidget） |
-| 接口语义 | `setContent()` 明确"窗格拥有它显示的内容"（旧 client 由窗格 `deleteLater()`）；状态方法补 Doxygen |
+| Area of record | Before leaving the dock tree (`setFloating(true)` / `pin()` / `collapse()`) `dockPositionOf()` records the live position; docking back restores it through `dockPositionFor(rememberedDockArea(...))` |
+| Ownership | `removeDockPanel()`: after `closePane()` decide from `state() != Hidden` whether a close callback really vetoed it; on success `setUserData(nullptr)`, `setOwnsImpl(false)`, `deletePane()` and finally `delete panel` |
+| Type safety | `static_cast<QWidget*>(impl())` became `qobject_cast<QWidget*>()` (an impl that is not a QWidget is no longer treated as one) |
+| Interface semantics | `setContent()` now states that the pane owns the content it shows (the old client is `deleteLater()`ed by the pane); Doxygen added to the state methods |
 
-## 验证
+## Verification
 
-- `tests/test_gui/test_gui.cpp` 新增 5 个用例：`DockPanel_FloatRoundTripKeepsArea`、`DockPanel_TabDetachCollapsesGroup`、`DockPanelManager_RemoveDockPanel`、`DockGeometryTest.FloatingMinimum`、`DockGeometryTest.TitleBarStaysReachable`。
-- 另加 `DockPanel_PinnedFlyoutIsAnchoredToDockArea`：四条边各自动隐藏后点击边条按钮，断言飞窗贴边坐标与停靠区几何一致（含内容最小尺寸大于飞窗请求尺寸的情况）。- `test_gui` 158 个用例全通过；`test_core` / `test_vsg` / `test_async` / `test_progress` / `test_math` / `test_logging` 全通过。
-- ASan：`VN_ASAN_FILTER='GuiTest.DockPanel*:GuiTest.DockPanelManager*:DockGeometryTest.*' scripts/asan_check.sh` → PASS。
-- 严格告警扫描（`-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion`）在改动行上无新增告警。
+- `tests/test_gui/test_gui.cpp` gained five cases: `DockPanel_FloatRoundTripKeepsArea`, `DockPanel_TabDetachCollapsesGroup`,
+  `DockPanelManager_RemoveDockPanel`, `DockGeometryTest.FloatingMinimum` and `DockGeometryTest.TitleBarStaysReachable`.
+- Plus `DockPanel_PinnedFlyoutIsAnchoredToDockArea`: after auto-hiding each of the four edges and clicking the edge button,
+  the case asserts that the flyout's edge coordinates agree with the dock area's geometry, including the case where the
+  content's minimum size exceeds the size the flyout asked for.
+- All 158 `test_gui` cases pass; `test_core` / `test_vsg` / `test_async` / `test_progress` / `test_math` / `test_logging`
+  pass as well.
+- ASan: `VN_ASAN_FILTER='GuiTest.DockPanel*:GuiTest.DockPanelManager*:DockGeometryTest.*' scripts/asan_check.sh` -> PASS.
+- A strict warning scan (`-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion`) adds no warning on the
+  changed lines.
 
-## 遗留 / 有意未做
+## Left undone / deliberately out of scope
 
-- **Tab 拖出/拖入的拖放命中、Flyout 拖出**：需要真实鼠标抓取与窗口管理器配合，无自动化用例；本次按代码路径核对（标题栏发出全局坐标，`floatingPaneStartMove` / `floatingPaneEndMove` 的调用点未变）。
-- **飞窗在 WM 映射时被自行摆放**：无头环境无法覆盖。2026-09-11 的一轮改动（映射后纠偏 + 参考系改为整个停靠部件）已全部回退；保留 `GuiTest.DockPanel_PinnedFlyoutIsAnchoredToDockArea` 钉住库的原有贴合关系（5px 内缩 / 远边 9px 让开边条）。
-- 浮动窗格仍用 `Qt::ToolTip | Qt::FramelessWindowHint`（改 `Qt::Tool` 会引入任务栏条目与 WM 装饰，需整个拖动/指示器机制配合）。
-- 分数缩放下的 1px 抖动（Qt 分数缩放取整，非本库范围）。
-- `DockingPaneFlyoutWidget::updateCursor()`、`DockingPaneGlowWidget` 中的 `QCursor::pos()`（无事件对象可依赖，宿主已强制 xcb）。
-- 库内遗留：Tab 子窗格命中顺序依赖列表顺序（`updateFloatingPane`）、`DockFeatures` 缺 Floatable/Movable 特性位（见 `third_party/DockingPanes/BUGS.md` 第三节）。
+- **The drag-and-drop hit paths of tab drag-out and drag-in, and flyout drag-out**: they need a real mouse grab and a
+  cooperating window manager, so there is no automated case; this round verified the code paths by reading them (the title
+  bar emits global coordinates and the call sites of `floatingPaneStartMove` / `floatingPaneEndMove` are unchanged).
+- **The flyout being placed by the window manager when it maps**: a headless environment cannot cover it. The 2026-09-11
+  round (a correction after mapping plus a reference frame changed to the whole dock widget) was reverted completely;
+  `GuiTest.DockPanel_PinnedFlyoutIsAnchoredToDockArea` still pins the library's original fit (5 px inset, the far edge
+  gives up 9 px for the edge strip).
+- A floating pane still uses `Qt::ToolTip | Qt::FramelessWindowHint` (switching to `Qt::Tool` adds a taskbar entry and
+  window-manager decoration, which the whole drag and indicator machinery would have to support).
+- The 1 px jitter under fractional scaling (a Qt rounding property, outside this library's scope).
+- `DockingPaneFlyoutWidget::updateCursor()` and the `QCursor::pos()` inside `DockingPaneGlowWidget` (there is no event
+  object to rely on, and the host already forces xcb).
+- Left in the library: the hit order of tab children depends on list order (`updateFloatingPane`), and `DockFeatures`
+  lacks the Floatable / Movable feature bits (see section 3 of `third_party/DockingPanes/BUGS.md`).
