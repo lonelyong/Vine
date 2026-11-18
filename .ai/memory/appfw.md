@@ -180,3 +180,18 @@
 - Changing a string ⇒ run `lupdate -locations none -no-obsolete <module>/src <module>/sdk -ts <file>` in the
   same commit and add the Chinese.
 
+
+## EventBus
+
+- Admission and the stop handshake live in one type, `StopGate` (`EventBus.cpp`): `Ticket` admits a call,
+  `request(Deadline)` answers `Perform` / `Completed` / `Reentrant` / `TimedOut`, and `finish(clean)` publishes the
+  outcome. `shutdown()`, `shutdownGracefully()` and `~EventBus()` differ only in what they do after `Perform`.
+- `Deadline::max()` means "no bound", so one `request()` and one `awaitCallers()` cover the bounded and the unbounded
+  wait instead of two functions each.
+- The delivery thread mode is a `SubscriptionState` property, not a channel entry's: a parked `PendingDelivery` reads
+  it from the state it already holds, and the queued lambda captures only a `DeliveryTask`.
+- Two locks, two facts: `Impl::channels_mutex` decides which channels exist (exclusive only for `subscribe()`), a
+  channel's own mutex decides its list and is always taken while the map lock is held.
+- TSan over `test_gui` (2026-11-18): 12 reports, all Qt's DBus / `QWaitCondition` teardown inside the fixture's
+  `QCoreApplication` destruction, none with a frame in `EventBus.cpp`; the repo's TSan gate is graphics-scoped, so a
+  clean `test_gui` TSan run is not something to expect. `scripts/asan_check.sh` is the EventBus gate.

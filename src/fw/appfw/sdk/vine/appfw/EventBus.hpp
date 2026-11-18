@@ -66,18 +66,35 @@ using EventBusErrorHandler = std::function<void(const EventBusError&)>;
  */
 class VN_APPFW_API Subscription {
   public:
+    /**
+     * @brief Creates an idle handle that cancels nothing.
+     *
+     * Such a handle is what a refused subscribe() returns: isActive() reports false
+     * and every other member is a no-op.
+     */
     Subscription() noexcept = default;
 
-    /// Cancels the subscription.
+    /**
+     * @brief Cancels the subscription.
+     */
     ~Subscription();
 
     Subscription(const Subscription&)            = delete;
     Subscription& operator=(const Subscription&) = delete;
 
-    /// Transfers the subscription; the moved-from handle becomes inactive.
+    /**
+     * @brief Transfers the subscription from other.
+     *
+     * @param other Handle to take over; it becomes inactive and cancels nothing.
+     */
     Subscription(Subscription&& other) noexcept;
 
-    /// Cancels the current subscription first, then takes over the other handle.
+    /**
+     * @brief Cancels this handle's subscription and takes over other's.
+     *
+     * @param other Handle to take over; it becomes inactive and cancels nothing.
+     * @return A reference to this handle.
+     */
     Subscription& operator=(Subscription&& other) noexcept;
 
     /**
@@ -149,9 +166,11 @@ class VN_APPFW_API Subscription {
  *   type, subscription id and the subscription's tag - for deferred deliveries
  *   too. Neither the log call nor the handler is allowed to escape: the
  *   observation path never becomes a new failure source.
- * - Handlers are stored type-erased (shared_ptr<const Object>) in an internal
- *   channel (EventBus.cpp); subscribe<TEvent> restores the concrete type, so
- *   subscribers keep a strongly typed handler while the public API stays tiny.
+ * - Handlers are stored type-erased as
+ *   std::function<void(const std::shared_ptr<const Object>&)> in an internal
+ *   channel (EventBus.cpp); subscribe<TEvent> casts the delivered Object back to
+ *   TEvent with obj_cast, so subscribers keep a strongly typed handler while the
+ *   public API stays tiny.
  * - The bus never keeps itself alive through a handle or a pending delivery, and
  *   it does not look the Application up globally: the marshaller is injected at
  *   construction and must outlive the bus. Without a marshaller - or without a
@@ -184,9 +203,17 @@ class VN_APPFW_API EventBus {
      * Cancels the subscriptions and drops the pending deliveries first, so that an
      * admitted call finishes promptly, then waits for those calls to leave before
      * the implementation is released. The bus must not be destroyed from inside a
-     * handler, and no handler may need the destroying thread to make progress.
+     * handler - nor from a handler closure's destructor, which a stop reaps - and no
+     * handler may need the destroying thread to make progress.
      */
     ~EventBus();
+
+    /// A bus is one object per owner: a copy or a move would split the admission state
+    /// it exists to coordinate.
+    EventBus(const EventBus&)            = delete;
+    EventBus& operator=(const EventBus&) = delete;
+    EventBus(EventBus&&)                 = delete;
+    EventBus& operator=(EventBus&&)      = delete;
 
     /**
      * @brief Subscribes a handler for events of type TEvent (and derived types).
@@ -219,8 +246,9 @@ class VN_APPFW_API EventBus {
      *
      * @param event Event to broadcast; kept alive for the whole delivery, or an
      *              empty pointer to publish nothing.
-     * @throws std::bad_alloc if the delivery plan cannot be built; nothing is
-     *         delivered in that case.
+     * @throws std::bad_alloc if the plan cannot be built, in which case nothing is
+     *         delivered. A failure while parking a later delivery ends the publish
+     *         where it stands: the subscribers served before it keep their delivery.
      */
     void publish(const std::shared_ptr<const Object>& event);
 
@@ -324,12 +352,6 @@ class VN_APPFW_API EventBus {
     /// Type-erased registration used by subscribe<TEvent>.
     Subscription
     subscribeErased(vn::TypeId type, std::function<void(const std::shared_ptr<const Object>&)> handler, SubscriptionThreadMode mode, const String& tag);
-
-    /// Cancels every subscription and drops the deliveries that are still parked.
-    void cancelSubscriptions();
-
-    /// Runs the parked deliveries until the deadline; false when they could not run.
-    bool drainPendingDeliveries(std::chrono::steady_clock::time_point deadline);
 
     struct Impl;
 

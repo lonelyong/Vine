@@ -10,6 +10,8 @@
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <span>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -21,6 +23,14 @@ VN_APPFW_NS_BEGIN
 
 namespace
 {
+
+/// Views a String's UTF-8 bytes without allocating.
+/// The calls that use it sit inside catch blocks, where an allocation or a logger failure would
+/// turn a handled subscriber failure into a std::terminate().
+std::string_view toUtf8View(const String& s) noexcept
+{
+    return { reinterpret_cast<const char*>(s.data()), s.size() };
+}
 
 /**
  * @brief Visits a class's interfaces and, transitively, the interfaces they extend.
@@ -54,26 +64,38 @@ void forEachInterface(std::span<const vn::Type* const> roots, std::vector<const 
 }
 
 /**
- * @brief Per-subscription state shared by the channel, the RAII handle and queued deliveries.
+ * @brief One subscription: its handler and everything the bus has to know about it.
  *
  * Holds no pointer back to the bus or to its channel, so nothing that leaves the
- * bus (a Subscription handle, a queued delivery) can dangle when the bus is
+ * bus - a Subscription handle, a parked delivery - can dangle when the bus is
  * destroyed. Only active_ is mutable, so cancelling a subscription never races
  * with an invocation that is already running.
+ *
+ * The delivery thread lives here rather than beside the entry in the channel: a
+ * subscription's properties belong to the subscription, and a parked delivery
+ * then reads the mode it was queued with from the one object it already holds.
  */
 class SubscriptionState {
   public:
     using Handler = std::function<void(const std::shared_ptr<const Object>&)>;
 
-    SubscriptionState(std::size_t id, Handler handler, String tag)
+    SubscriptionState(std::size_t id, Handler handler, SubscriptionThreadMode mode, String tag)
       : id_(id)
       , handler_(std::move(handler))
+      , mode_(mode)
       , tag_(std::move(tag))
     {}
 
+    /// Unique within the subscription's channel, i.e. within one event type.
     std::size_t id() const noexcept
     {
         return id_;
+    }
+
+    /// Delivery thread the subscriber asked for.
+    SubscriptionThreadMode mode() const noexcept
+    {
+        return mode_;
     }
 
     /// Free-form label the subscriber passed to subscribe(); may be empty.
@@ -98,52 +120,46 @@ class SubscriptionState {
     }
 
   private:
-    const std::size_t id_;
-    const Handler     handler_;
-    const String      tag_;
-    std::atomic<bool> active_{ true };
+    const std::size_t            id_;
+    const Handler                handler_;
+    const SubscriptionThreadMode mode_;
+    const String                 tag_;
+    std::atomic<bool>            active_{ true };
 };
 
-/// One entry of a channel's ordered subscription list.
-struct SubscriptionEntry {
-    SubscriptionThreadMode             mode;
-    std::shared_ptr<SubscriptionState> state;
-};
-
-/// Reports a handler failure to the log and, when installed, to the error handler.
-///
-/// Never throws: the observation path must not become a new failure source, and
-/// the caller is already handling an exception.
-void reportHandlerError(const std::shared_ptr<const EventBusErrorHandler>& handler,
-                        const std::shared_ptr<SubscriptionState>&          state,
-                        const std::shared_ptr<const Object>&               event,
-                        SubscriptionThreadMode                             mode,
-                        bool                                               deferred,
-                        const std::exception*                              error,
-                        std::exception_ptr                                 error_ptr) noexcept
+/// Logs a subscriber failure - the only report when no hook is installed - and
+/// hands it to the installed hook. Never throws: the observation path must not
+/// become a new failure source.
+void reportFailure(const std::shared_ptr<const EventBusErrorHandler>& handler,
+                   const std::shared_ptr<SubscriptionState>&          state,
+                   const std::shared_ptr<const Object>&               event,
+                   bool                                               deferred,
+                   std::exception_ptr                                 error) noexcept
 {
-    // Logging cannot throw (see Logger: every level function is noexcept and reports
-    // a failure on stderr instead), so it needs no guard of its own here.
-    if (error != nullptr) {
-        VN_LOGE("EventBus: subscriber '{}' threw: {}", state->id(), error->what());
+    // The message belongs to the caught exception, and rethrowing is the only way
+    // back to what() once its catch clause has been left. Neither log call throws.
+    try {
+        std::rethrow_exception(error);
     }
-    else {
-        VN_LOGE("EventBus: subscriber '{}' threw a non-standard exception", state->id());
+    catch (const std::exception& caught) {
+        VN_LOGE("EventBus: subscriber {} of '{}' threw: {}", state->id(), toUtf8View(event->getType()->name()), caught.what());
+    }
+    catch (...) {
+        VN_LOGE("EventBus: subscriber {} of '{}' threw a non-standard exception", state->id(), toUtf8View(event->getType()->name()));
     }
 
     if (handler == nullptr) {
         return;
     }
-    // Everything below can allocate, and this function is noexcept: a failure while
-    // building the context must not become a std::terminate in the middle of the
-    // error path.
+    // Building the context allocates, and this function is noexcept: a failure here
+    // must not become a std::terminate in the middle of the error path.
     try {
         EventBusError context;
-        context.event_type    = event != nullptr ? event->getType() : nullptr;
+        context.event_type    = event->getType();
         context.subscriber_id = state->id();
         context.tag           = state->tag();
-        context.error         = std::move(error_ptr);
-        context.mode          = mode;
+        context.error         = std::move(error);
+        context.mode          = state->mode();
         context.deferred      = deferred;
         (*handler)(context);
     }
@@ -152,56 +168,54 @@ void reportHandlerError(const std::shared_ptr<const EventBusErrorHandler>& handl
     }
 }
 
+/// Delivers one event to one subscription and contains whatever the handler does.
+///
+/// Never throws, so one bad subscriber cannot break a publish and the subscribers
+/// after it still run. The event is never null: publish() refuses an empty one
+/// before it plans anything.
 void deliver(const std::shared_ptr<SubscriptionState>&          state,
              const std::shared_ptr<const Object>&               event,
              const std::shared_ptr<const EventBusErrorHandler>& error_handler,
-             SubscriptionThreadMode                             mode,
              bool                                               deferred) noexcept
 {
     try {
         state->invoke(event);
     }
-    catch (const std::exception& error) {
-        reportHandlerError(error_handler, state, event, mode, deferred, &error, std::current_exception());
-    }
     catch (...) {
-        reportHandlerError(error_handler, state, event, mode, deferred, nullptr, std::current_exception());
+        reportFailure(error_handler, state, event, deferred, std::current_exception());
     }
 }
 
 /**
- * @brief Payload of a queued (Main) delivery: which subscription, and which event.
+ * @brief One delivery parked in the event loop: which subscription, and which event.
  *
- * Fully immutable, so it needs no synchronization; a DeliveryRegistry owns it
- * for exactly as long as the delivery is parked in the event loop.
+ * Immutable, so it needs no synchronization; a DeliveryRegistry owns it for
+ * exactly as long as the delivery is parked. It keeps the event alive and only
+ * observes the subscription, so cancelling a subscription still releases its
+ * handler while a delivery for it is queued.
  */
-class Payload {
+class PendingDelivery {
   public:
-    Payload(std::weak_ptr<SubscriptionState>            state,
-            std::shared_ptr<const Object>               event,
-            SubscriptionThreadMode                      mode,
-            std::shared_ptr<const EventBusErrorHandler> error_handler)
+    PendingDelivery(std::weak_ptr<SubscriptionState> state, std::shared_ptr<const Object> event, std::shared_ptr<const EventBusErrorHandler> error_handler)
       : state_(std::move(state))
       , event_(std::move(event))
-      , mode_(mode)
       , error_handler_(std::move(error_handler))
     {}
 
+    /// The subscription to deliver to, or nullptr once nothing owns it any more.
     std::shared_ptr<SubscriptionState> lockState() const noexcept
     {
         return state_.lock();
     }
 
+    /// The event; never null, because publish() refuses an empty one before it
+    /// plans anything.
     const std::shared_ptr<const Object>& event() const noexcept
     {
         return event_;
     }
 
-    SubscriptionThreadMode mode() const noexcept
-    {
-        return mode_;
-    }
-
+    /// The failure hook that was installed when the delivery was parked.
     const std::shared_ptr<const EventBusErrorHandler>& errorHandler() const noexcept
     {
         return error_handler_;
@@ -210,7 +224,6 @@ class Payload {
   private:
     const std::weak_ptr<SubscriptionState>            state_;
     const std::shared_ptr<const Object>               event_;
-    const SubscriptionThreadMode                      mode_;
     const std::shared_ptr<const EventBusErrorHandler> error_handler_;
 };
 
@@ -218,146 +231,178 @@ class Payload {
  * @brief Registry of the deliveries currently parked in the event loop.
  *
  * Deliberately detached from the bus: a queued task keeps the registry itself
- * alive and only ever touches the registry and its own payload, so it stays
- * valid after the bus is destroyed. Dropping the payloads (clear()) releases the
- * events they hold immediately, without waiting for the event loop.
+ * alive and only ever touches the registry and its own delivery, so it stays
+ * valid after the bus is destroyed. Dropping the deliveries (clear()) releases
+ * the events they hold immediately, without waiting for the event loop.
  */
 class DeliveryRegistry {
   public:
-    void add(std::shared_ptr<Payload> payload)
+    void add(std::shared_ptr<PendingDelivery> pending)
     {
         std::lock_guard lock(mutex_);
-        payloads_.push_back(std::move(payload));
+        pending_.push_back(std::move(pending));
     }
 
-    void remove(const std::weak_ptr<Payload>& payload) noexcept
+    void remove(const std::weak_ptr<PendingDelivery>& pending) noexcept
     {
-        const auto locked = payload.lock();
+        const auto locked = pending.lock();
         if (locked == nullptr) {
             return; // already dropped by clear()
         }
-        std::shared_ptr<Payload> removed;
+        std::shared_ptr<PendingDelivery> removed;
         {
             std::lock_guard lock(mutex_);
-            const auto      it = std::ranges::find(payloads_, locked);
-            if (it != payloads_.end()) {
+            const auto      it = std::ranges::find(pending_, locked);
+            if (it != pending_.end()) {
                 removed = std::move(*it);
-                payloads_.erase(it);
+                pending_.erase(it);
             }
         }
-        // `removed` is destroyed here, outside the lock: releasing the payload can
-        // destroy the event, i.e. run arbitrary user code.
+        // `removed` is destroyed here, outside the lock: releasing a delivery can
+        // destroy its event, i.e. run arbitrary user code.
     }
 
     void clear() noexcept
     {
-        std::vector<std::shared_ptr<Payload>> dropped;
+        std::vector<std::shared_ptr<PendingDelivery>> dropped;
         {
             std::lock_guard lock(mutex_);
-            dropped.swap(payloads_);
+            dropped.swap(pending_);
         }
-        // Dropped outside the lock: releases every event held for a pending delivery.
+        // Dropped outside the lock: releases every event held for a parked delivery.
     }
 
     std::size_t pendingCount() const
     {
         std::lock_guard lock(mutex_);
-        return payloads_.size();
+        return pending_.size();
     }
 
   private:
-    mutable std::mutex                    mutex_;
-    std::vector<std::shared_ptr<Payload>> payloads_;
+    mutable std::mutex                            mutex_;
+    std::vector<std::shared_ptr<PendingDelivery>> pending_;
 };
 
 /**
  * @brief State of one queued task; lives exactly as long as the task in the event loop.
  *
  * Owns nothing from the bus beyond the shared registry, and unregisters its
- * payload when the task dies - whether it ran, was cancelled, or was dropped by
+ * delivery when the task dies - whether it ran, was cancelled, or was dropped by
  * the event loop. Held behind a shared_ptr so that Qt's copies of the task share
  * one instance and therefore one unregistration.
  */
-class Delivery {
+class DeliveryTask {
   public:
-    Delivery(std::shared_ptr<DeliveryRegistry> registry, std::shared_ptr<Payload> payload)
+    DeliveryTask(std::shared_ptr<DeliveryRegistry> registry, std::shared_ptr<PendingDelivery> pending)
       : registry_(std::move(registry))
-      , payload_(std::move(payload))
+      , pending_(std::move(pending))
     {}
 
-    ~Delivery()
+    ~DeliveryTask()
     {
-        registry_->remove(payload_);
+        registry_->remove(pending_);
     }
 
-    Delivery(const Delivery&)            = delete;
-    Delivery& operator=(const Delivery&) = delete;
+    DeliveryTask(const DeliveryTask&)            = delete;
+    DeliveryTask& operator=(const DeliveryTask&) = delete;
 
-    /// Delivers unless the subscription is inactive or the bus dropped the
-    /// payload; never throws.
+    /// Delivers unless the subscription is gone or the bus dropped the delivery;
+    /// never throws.
     void run() noexcept
     {
-        const auto payload = payload_.lock();
-        if (payload == nullptr) {
+        const auto pending = pending_.lock();
+        if (pending == nullptr) {
             return; // dropped by shutdown()/~EventBus
         }
-        const auto state = payload->lockState();
+        const auto state = pending->lockState();
         if (state == nullptr || !state->isActive()) {
             return; // subscription cancelled, or the bus was stopped
         }
-        deliver(state, payload->event(), payload->errorHandler(), payload->mode(), /* deferred */ true);
+        deliver(state, pending->event(), pending->errorHandler(), /* deferred */ true);
     }
 
   private:
     const std::shared_ptr<DeliveryRegistry> registry_;
-    const std::weak_ptr<Payload>            payload_;
+    const std::weak_ptr<PendingDelivery>    pending_;
 };
 
-/// Channel holding the live subscriptions for one event type.
+/// Parks one delivery in the event loop.
+///
+/// The task keeps only the registry and its own delivery alive, so it neither
+/// references nor keeps alive the bus: shutdown() releases the event by dropping
+/// the delivery from the registry, and a task that is still queued then runs as
+/// a no-op.
+///
+/// @param registry      Registry owned by the bus the delivery belongs to.
+/// @param state         Subscription to deliver to; observed weakly.
+/// @param event         Event to deliver; never null (see publish()).
+/// @param error_handler Failure hook installed when the delivery was parked.
+void parkDelivery(const std::shared_ptr<DeliveryRegistry>&           registry,
+                  const std::shared_ptr<SubscriptionState>&          state,
+                  const std::shared_ptr<const Object>&               event,
+                  const std::shared_ptr<const EventBusErrorHandler>& error_handler)
+{
+    auto pending = std::make_shared<PendingDelivery>(state, event, error_handler);
+    auto task    = std::make_shared<DeliveryTask>(registry, pending);
+    registry->add(std::move(pending));
+    if (!MainThreadDispatcher::postToMainThread([task] { task->run(); })) {
+        // The refused task went away with the lambda, and its destructor already
+        // unregistered the delivery: nothing is left behind.
+        VN_LOGW("EventBus: dropping a Main delivery, the event loop refused the task");
+    }
+}
+
+/// The subscriptions of one event type, in subscription order.
+///
+/// Two locks, two facts: Impl::channels_mutex decides which channels exist - only
+/// subscribe() inserts into the map, so only it needs the exclusive lock - and a
+/// channel's mutex decides its own list. The channel lock is always taken while the
+/// map lock is held, so the order is fixed and there is no cycle; that is also what
+/// lets two concurrent publications reap the same list without racing.
 class EventChannel {
   public:
-    /// Registers a subscription and hands the reaped entries back to the caller,
+    /// Registers a subscription and hands the cancelled entries to the caller,
     /// which destroys them once every lock has been released.
     std::shared_ptr<SubscriptionState>
-    subscribe(SubscriptionState::Handler handler, SubscriptionThreadMode mode, String tag, std::vector<SubscriptionEntry>& garbage);
+    subscribe(SubscriptionState::Handler handler, SubscriptionThreadMode mode, String tag, std::vector<std::shared_ptr<SubscriptionState>>& garbage);
 
-    /// Appends a snapshot of the live subscriptions; reaped entries are moved to
-    /// garbage so that the caller destroys their closures outside every lock.
-    void collect(std::vector<SubscriptionEntry>& out, std::vector<SubscriptionEntry>& garbage);
+    /// Appends a snapshot of the live subscriptions; cancelled entries are reaped
+    /// into garbage so that the caller destroys their closures outside every lock.
+    void collect(std::vector<std::shared_ptr<SubscriptionState>>& out, std::vector<std::shared_ptr<SubscriptionState>>& garbage);
 
     /// Deactivates every subscription and moves the entries to garbage.
-    void takeAll(std::vector<SubscriptionEntry>& garbage);
+    void takeAll(std::vector<std::shared_ptr<SubscriptionState>>& garbage);
 
   private:
-    void reapLocked(std::vector<SubscriptionEntry>& garbage);
+    void reap(std::vector<std::shared_ptr<SubscriptionState>>& garbage);
 
-    std::vector<SubscriptionEntry> handlers_;
-    std::size_t                    last_id_ = 0;
-    mutable std::mutex             mutex_;
+    std::vector<std::shared_ptr<SubscriptionState>> handlers_;
+    std::size_t                                     last_id_ = 0;
+    mutable std::mutex                              mutex_;
 };
 
 std::shared_ptr<SubscriptionState>
-EventChannel::subscribe(SubscriptionState::Handler handler, SubscriptionThreadMode mode, String tag, std::vector<SubscriptionEntry>& garbage)
+EventChannel::subscribe(SubscriptionState::Handler handler, SubscriptionThreadMode mode, String tag, std::vector<std::shared_ptr<SubscriptionState>>& garbage)
 {
     std::lock_guard                    lock(mutex_);
-    std::shared_ptr<SubscriptionState> state = std::make_shared<SubscriptionState>(++last_id_, std::move(handler), std::move(tag));
-    reapLocked(garbage);
-    handlers_.push_back(SubscriptionEntry{ mode, state });
+    std::shared_ptr<SubscriptionState> state = std::make_shared<SubscriptionState>(++last_id_, std::move(handler), mode, std::move(tag));
+    reap(garbage);
+    handlers_.push_back(state);
     return state;
 }
 
-void EventChannel::collect(std::vector<SubscriptionEntry>& out, std::vector<SubscriptionEntry>& garbage)
+void EventChannel::collect(std::vector<std::shared_ptr<SubscriptionState>>& out, std::vector<std::shared_ptr<SubscriptionState>>& garbage)
 {
     std::lock_guard lock(mutex_);
-    reapLocked(garbage);
+    reap(garbage);
     out.insert(out.end(), handlers_.begin(), handlers_.end());
 }
 
-void EventChannel::takeAll(std::vector<SubscriptionEntry>& garbage)
+void EventChannel::takeAll(std::vector<std::shared_ptr<SubscriptionState>>& garbage)
 {
     std::lock_guard lock(mutex_);
-    for (const auto& entry : handlers_) {
-        entry.state->deactivate();
+    for (const auto& state : handlers_) {
+        state->deactivate();
     }
     // The copies in garbage keep every state - and therefore every handler
     // closure - alive, so clearing the channel runs no user code under the lock.
@@ -365,18 +410,254 @@ void EventChannel::takeAll(std::vector<SubscriptionEntry>& garbage)
     handlers_.clear();
 }
 
-void EventChannel::reapLocked(std::vector<SubscriptionEntry>& garbage)
+void EventChannel::reap(std::vector<std::shared_ptr<SubscriptionState>>& garbage)
 {
     // Cancelling a subscription only flips its state's atomic flag; the entry is
     // reaped here, and handed to the caller so that the handler closure is
     // destroyed outside the channel lock and outside the map lock.
-    std::erase_if(handlers_, [&garbage](const SubscriptionEntry& entry) {
-        if (entry.state->isActive()) {
+    std::erase_if(handlers_, [&garbage](const std::shared_ptr<SubscriptionState>& state) {
+        if (state->isActive()) {
             return false;
         }
-        garbage.push_back(entry);
+        garbage.push_back(state);
         return true;
     });
+}
+
+/**
+ * @brief Admission and the stop handshake: who enters the bus, who stops it, and
+ *        who waits for whom.
+ *
+ * One mutex guards one decision - whether a call is still admitted - and that is
+ * what makes "a graceful stop returned true ⇒ nobody is still inside" hold: a
+ * call is either counted before the state leaves Running or refused, and the two
+ * cannot cross. Pure observers of the decision (isStopping(), the admission fast
+ * path) read the atomic mirror instead of taking the lock.
+ *
+ * A thread's own admitted calls are excluded from every wait, because they cannot
+ * finish before the wait returns. That count is kept per gate: a call this thread
+ * makes through another bus says nothing about this one.
+ */
+class StopGate {
+  public:
+    /// A wait bound; `Deadline::max()` waits without one.
+    using Deadline = std::chrono::steady_clock::time_point;
+
+    /// What a stop request found.
+    enum class Order
+    {
+        Perform,   // this call performs the stop and must then call finish()
+        Completed, // another thread's stop is over; result() says what it reported
+        Reentrant, // the caller is running that stop and cannot wait for itself
+        TimedOut,  // another thread's stop is still running and the deadline passed
+    };
+
+    /**
+     * @brief One admitted call: the gate admits work for as long as a ticket lives.
+     */
+    class Ticket {
+      public:
+        /**
+         * @brief Admits one call, or builds a ticket that is not admitted.
+         *
+         * @param gate Gate to enter; must outlive the ticket.
+         */
+        explicit Ticket(StopGate& gate)
+          : gate_(&gate)
+        {
+            if (gate_->isStopping()) {
+                return; // fast reject: a gate that is stopping never admits again
+            }
+            gate_->enterThreadCall(); // may allocate: kept outside the count
+            std::lock_guard lock(gate_->mutex_);
+            if (gate_->state_ != State::Running) {
+                gate_->leaveThreadCall();
+                return;
+            }
+            ++gate_->active_calls_;
+            admitted_ = true;
+        }
+
+        ~Ticket()
+        {
+            if (!admitted_) {
+                return;
+            }
+            gate_->leaveThreadCall();
+            std::lock_guard lock(gate_->mutex_);
+            --gate_->active_calls_;
+            gate_->cv_.notify_all();
+        }
+
+        Ticket(const Ticket&)            = delete;
+        Ticket& operator=(const Ticket&) = delete;
+
+        /// false when the gate was already stopping: the call must do nothing.
+        bool admitted() const noexcept
+        {
+            return admitted_;
+        }
+
+      private:
+        StopGate* const gate_;
+        bool            admitted_ = false;
+    };
+
+    /// true from the moment the stop begins, i.e. already while a graceful stop is
+    /// still draining.
+    bool isStopping() const noexcept
+    {
+        return stopping_.load(std::memory_order_acquire);
+    }
+
+    /// The result the last completed stop reported; meaningful after Order::Completed.
+    bool result() const noexcept
+    {
+        std::lock_guard lock(mutex_);
+        return result_;
+    }
+
+    /**
+     * @brief Asks to stop the bus and reports who owns the stop now.
+     *
+     * @details
+     * - `Perform`: this caller owns the Running → Stopping transition; it runs the
+     *   cancel (and drain) pass and then calls finish().
+     * - `Completed`: a stop is already over, and result() is that stop's answer.
+     * - `Reentrant`: this thread is the one running the stop; waiting would be
+     *   waiting for itself, so the caller returns and reports failure if it must
+     *   report something.
+     * - `TimedOut`: a stop runs elsewhere and the deadline passed.
+     *
+     * @param deadline How long to wait for a stop that is already running;
+     *                 `Deadline::max()` for no bound.
+     * @return What this request found.
+     */
+    Order request(Deadline deadline) noexcept
+    {
+        std::unique_lock lock(mutex_);
+        if (state_ == State::Running) {
+            // The stopper is published with the state, under the same lock, so no
+            // reader can see Stopping with a thread id that does not belong to it.
+            stopper_ = std::this_thread::get_id();
+            state_   = State::Stopping;
+            stopping_.store(true, std::memory_order_release);
+            return Order::Perform;
+        }
+        if (state_ == State::Stopping && stopper_ == std::this_thread::get_id()) {
+            return Order::Reentrant;
+        }
+        if (!cv_.wait_until(lock, deadline, [this] { return state_ == State::Stopped; })) {
+            return Order::TimedOut;
+        }
+        return Order::Completed;
+    }
+
+    /**
+     * @brief Completes the stop this caller performed and publishes its outcome.
+     *
+     * @param clean true only when the caller waited for the admitted calls and ran
+     *              every parked delivery; a stop that dropped the remaining work
+     *              passes false, so that a later graceful caller is not told that
+     *              everything ran.
+     */
+    void finish(bool clean) noexcept
+    {
+        std::lock_guard lock(mutex_);
+        result_ = clean;
+        state_  = State::Stopped;
+        cv_.notify_all();
+    }
+
+    /**
+     * @brief Waits until no thread other than this one is inside an admitted call.
+     *
+     * @param deadline How long to wait; `Deadline::max()` for no bound.
+     * @return true when only this thread's own calls were left.
+     */
+    bool awaitCallers(Deadline deadline)
+    {
+        const int self = threadCallDepth();
+        std::unique_lock lock(mutex_);
+        return cv_.wait_until(lock, deadline, [this, self] { return active_calls_ <= self; });
+    }
+
+  private:
+    /// Lifecycle of the gate: Running admits calls, Stopping refuses new ones while
+    /// the stop in progress drains, Stopped means no caller is inside any more.
+    enum class State
+    {
+        Running,
+        Stopping,
+        Stopped,
+    };
+
+    /// Admitted calls this thread holds on one gate.
+    struct ThreadCall {
+        const StopGate* gate;
+        int             depth;
+    };
+
+    /// The gates this thread is inside, one entry each; an entry disappears when
+    /// its depth returns to zero, so no stale key can outlive its gate.
+    static std::vector<ThreadCall>& threadCalls() noexcept;
+
+    /// Records one admitted call of this thread; may allocate.
+    void enterThreadCall();
+    /// Drops one admitted call of this thread.
+    void leaveThreadCall() noexcept;
+    /// Admitted calls this thread holds on this gate (0 when it holds none).
+    int threadCallDepth() const noexcept;
+
+    mutable std::mutex      mutex_;
+    std::condition_variable cv_;
+    int                     active_calls_ = 0;
+    State                   state_        = State::Running;
+    bool                    result_       = false; // meaningful once state_ == Stopped
+    /// Thread performing the Stopping → Stopped transition; guarded by mutex_ and
+    /// only meaningful while state_ == Stopping. A reentrant stop request from that
+    /// same thread (a handler closure's destructor running inside a cancel pass)
+    /// must not wait for a stop it is itself holding up.
+    std::thread::id stopper_;
+    /// Mirror of state_ != Running: keeps isStopping() and the admission fast path
+    /// lock-free. Written with the transition, under mutex_.
+    std::atomic<bool> stopping_{ false };
+};
+
+std::vector<StopGate::ThreadCall>& StopGate::threadCalls() noexcept
+{
+    static thread_local std::vector<ThreadCall> calls;
+    return calls;
+}
+
+void StopGate::enterThreadCall()
+{
+    auto&      calls = threadCalls();
+    const auto entry = std::ranges::find(calls, this, &ThreadCall::gate);
+    if (entry != calls.end()) {
+        ++entry->depth;
+        return;
+    }
+    calls.push_back(ThreadCall{ this, 1 });
+}
+
+void StopGate::leaveThreadCall() noexcept
+{
+    auto&      calls = threadCalls();
+    const auto entry = std::ranges::find(calls, this, &ThreadCall::gate);
+    if (entry == calls.end()) {
+        return;
+    }
+    if (--entry->depth == 0) {
+        calls.erase(entry);
+    }
+}
+
+int StopGate::threadCallDepth() const noexcept
+{
+    const auto& calls = threadCalls();
+    const auto  entry = std::ranges::find(calls, this, &ThreadCall::gate);
+    return entry != calls.end() ? entry->depth : 0;
 }
 
 } // namespace
@@ -430,221 +711,58 @@ bool Subscription::isActive() const noexcept
     return control_ != nullptr && control_->isActive();
 }
 
-/// Lifecycle of the bus: Running admits calls, Stopping refuses new ones while the
-/// shutdown in progress drains, Stopped means no caller is inside any more.
-enum class BusState
-{
-    Running,
-    Stopping,
-    Stopped,
-};
-
 struct EventBus::Impl {
-    /// Admits one call (publish/subscribe) and releases it on the way out.
-    ///
-    /// The state and the caller count live under one mutex, so "the bus is
-    /// stopping" and "a caller entered the bus" can never cross each other: once
-    /// the state left Running no further call is admitted, and every call that was
-    /// admitted stays visible to the waiter. That is what makes the completion of
-    /// a graceful shutdown a proof that no thread is inside the bus any more.
-    class CallGuard {
-      public:
-        explicit CallGuard(Impl& impl)
-          : impl_(&impl)
-        {
-            if (impl_->stopped.load(std::memory_order_acquire)) {
-                return; // fast reject: a stopping bus never admits again
-            }
-            Impl::enterCall(impl_); // may allocate: keep it outside the count
-            std::lock_guard lock(impl_->call_mutex);
-            if (impl_->state != BusState::Running) {
-                Impl::leaveCall(impl_);
-                return;
-            }
-            ++impl_->active_calls;
-            admitted_ = true;
-        }
-
-        ~CallGuard()
-        {
-            if (!admitted_) {
-                return;
-            }
-            Impl::leaveCall(impl_);
-            std::lock_guard lock(impl_->call_mutex);
-            --impl_->active_calls;
-            impl_->call_cv.notify_all();
-        }
-
-        CallGuard(const CallGuard&)            = delete;
-        CallGuard& operator=(const CallGuard&) = delete;
-
-        /// false when the bus was already stopping or stopped: the call must do nothing.
-        bool admitted() const noexcept
-        {
-            return admitted_;
-        }
-
-      private:
-        Impl* const impl_;
-        bool        admitted_ = false;
-    };
-
-    // One concrete EventChannel per subscribed event type.
+    /// Subscriptions per event type. The map's lock decides which channels exist -
+    /// shared for every reader, exclusive only for subscribe(), which inserts; a
+    /// channel's own lock decides its contents and is always taken while the map
+    /// lock is held, so the order is fixed and there is no cycle.
     std::map<vn::TypeId, EventChannel> channels;
-    // Shared lock: publish reads the map concurrently; subscribe inserts.
-    mutable std::shared_mutex mutex;
-    // Deliveries currently parked in the event loop. Shared with the queued tasks
-    // so that they stay valid after the bus is destroyed.
+    mutable std::shared_mutex          channels_mutex;
+
+    /// The deliveries parked in the event loop. Shared with their queued tasks so
+    /// that the registry stays valid after the bus is destroyed.
     std::shared_ptr<DeliveryRegistry> deliveries{ std::make_shared<DeliveryRegistry>() };
 
-    // Admission and shutdown protocol (see CallGuard).
-    mutable std::mutex      call_mutex;
-    std::condition_variable call_cv;
-    int                     active_calls    = 0;
-    BusState                state           = BusState::Running;
-    bool                    shutdown_result = false; // meaningful once state == Stopped
-    // Thread performing the Stopping -> Stopped transition; guarded by call_mutex and
-    // only meaningful while state == Stopping. A reentrant stop request from that same
-    // thread (a handler-closure destructor running inside cancelSubscriptions) must not
-    // wait for a stop it is itself holding up.
-    std::thread::id stopper;
-    // Mirror of state != Running: keeps isShutDown() and the admission fast path
-    // lock-free. Written together with the state transition, under call_mutex.
-    std::atomic<bool> stopped{ false };
+    /// Admission and the stop handshake.
+    StopGate gate;
 
-    // Optional observation hook for subscriber exceptions. A delivery only pays a
-    // single load unless a handler is installed, so the happy path stays as is.
+    /// Optional observation hook for subscriber exceptions. A delivery only pays a
+    /// single load unless a handler is installed, so the happy path stays as is.
     std::atomic<bool>                           has_error_handler{ false };
     mutable std::mutex                          error_mutex;
     std::shared_ptr<const EventBusErrorHandler> error_handler; // guarded by error_mutex
 
     /// Installs (or clears) the error handler.
     void setErrorHandler(EventBusErrorHandler handler);
-    /// Returns the installed handler, or nullptr; the snapshot stays valid even if
-    /// the handler is replaced later.
+
+    /// The installed handler, or nullptr; the snapshot stays valid if it is later
+    /// replaced.
     std::shared_ptr<const EventBusErrorHandler> currentErrorHandler() const;
 
-    /// Admitted calls the current thread holds on this bus (0 when it holds none).
-    ///
-    /// Kept per bus: a thread nested inside another bus's call must not make this
-    /// bus's waiter exclude calls it does not own, or the shutdown could report
-    /// "nobody inside" while another thread is still in here.
-    struct CallDepth {
-        const Impl* impl;
-        int         depth;
-    };
-
-    static std::vector<CallDepth>& callDepths() noexcept;
-    /// Admitted calls the current thread holds on impl (0 when it holds none).
-    static int callDepth(const Impl* impl) noexcept;
-    /// Records one admitted call of the current thread; may allocate.
-    static void enterCall(const Impl* impl);
-    /// Drops one admitted call of the current thread.
-    static void leaveCall(const Impl* impl) noexcept;
-
-    /// Waits until no thread other than the caller is inside an admitted call.
-    bool waitForCallers(std::unique_lock<std::mutex>& lock, std::chrono::steady_clock::time_point deadline);
-
-    /// Same, without a deadline: used by the destructor, which must not let Impl
-    /// disappear under an admitted call.
-    void waitForCallersForever(std::unique_lock<std::mutex>& lock);
-
     /// Snapshots the subscriptions that match event, most derived type first (see
-    /// EventBus::publish()). Reaped handler closures are destroyed here, outside
+    /// EventBus::publish()); reaped handler closures are destroyed here, outside
     /// every lock.
-    void collectPlan(const Object& event, std::vector<SubscriptionEntry>& plan);
+    void collectPlan(const Object& event, std::vector<std::shared_ptr<SubscriptionState>>& plan);
 
-    /// Starts the stop, if it has not started yet. The caller holds call_mutex.
-    ///
-    /// @return true when this call performed the Running -> Stopping transition and
-    ///         is therefore the one that has to finish it.
-    bool beginStop() noexcept;
+    /// Cancels every subscription, then drops the deliveries that are still parked.
+    void cancelSubscriptions();
 
-    /// Completes the stop this caller performed and returns the result that every
-    /// caller of shutdownGracefully() then sees. The caller holds call_mutex.
-    ///
-    /// @param clean true only when the caller waited for the admitted calls and ran
-    ///              every parked delivery: a stop that cancels the remaining work
-    ///              instead passes false, so that a later graceful caller is not told
-    ///              that everything ran.
-    bool finishStop(bool clean) noexcept;
-
-    /// Reports whether this very thread performs the stop in progress. Such a caller
-    /// must not wait for the Stopped transition, because it is the one holding it up.
-    /// The caller holds call_mutex.
-    bool stoppingOnThisThread() const noexcept;
-
-    /// Waits for the stop in progress to complete. The caller holds call_mutex.
-    void awaitStopped(std::unique_lock<std::mutex>& lock);
-
-    /// Same, bounded by deadline. The caller holds call_mutex.
-    bool awaitStoppedUntil(std::unique_lock<std::mutex>& lock, std::chrono::steady_clock::time_point deadline);
+    /// Runs the parked deliveries until the deadline; false when they could not all
+    /// run, so nothing may claim they did.
+    bool drainPendingDeliveries(MainThreadDispatcher* dispatcher, StopGate::Deadline deadline);
 };
 
-std::vector<EventBus::Impl::CallDepth>& EventBus::Impl::callDepths() noexcept
-{
-    // One entry per bus this thread is currently inside; entries disappear when
-    // the depth returns to zero, so no stale key can outlive its bus.
-    static thread_local std::vector<CallDepth> depths;
-    return depths;
-}
-
-int EventBus::Impl::callDepth(const Impl* impl) noexcept
-{
-    const auto& depths = callDepths();
-    const auto  entry  = std::ranges::find(depths, impl, &CallDepth::impl);
-    return entry != depths.end() ? entry->depth : 0;
-}
-
-void EventBus::Impl::enterCall(const Impl* impl)
-{
-    auto&      depths = callDepths();
-    const auto entry  = std::ranges::find(depths, impl, &CallDepth::impl);
-    if (entry != depths.end()) {
-        ++entry->depth;
-        return;
-    }
-    depths.push_back(CallDepth{ impl, 1 });
-}
-
-void EventBus::Impl::leaveCall(const Impl* impl) noexcept
-{
-    auto&      depths = callDepths();
-    const auto entry  = std::ranges::find(depths, impl, &CallDepth::impl);
-    if (entry == depths.end()) {
-        return;
-    }
-    if (--entry->depth == 0) {
-        depths.erase(entry);
-    }
-}
-
-bool EventBus::Impl::waitForCallers(std::unique_lock<std::mutex>& lock, std::chrono::steady_clock::time_point deadline)
-{
-    // Calls made by this thread on this bus cannot finish before this function
-    // returns, so they are deliberately not waited for.
-    const int self = callDepth(this);
-    return call_cv.wait_until(lock, deadline, [this, self] { return active_calls <= self; });
-}
-
-void EventBus::Impl::waitForCallersForever(std::unique_lock<std::mutex>& lock)
-{
-    const int self = callDepth(this);
-    call_cv.wait(lock, [this, self] { return active_calls <= self; });
-}
-
-void EventBus::Impl::collectPlan(const Object& event, std::vector<SubscriptionEntry>& plan)
+void EventBus::Impl::collectPlan(const Object& event, std::vector<std::shared_ptr<SubscriptionState>>& plan)
 {
     // One consistent plan per publish: the most derived class first, then the
     // interfaces it declares, then the base classes and their interfaces - all
     // snapshotted under the map lock, so subscribing or unsubscribing during a
     // dispatch only affects later publications. `visited` prunes the interface walk,
     // so a diamond hierarchy is walked once.
-    std::vector<SubscriptionEntry> garbage;
-    std::vector<vn::TypeId>        visited;
+    std::vector<std::shared_ptr<SubscriptionState>> garbage;
+    std::vector<vn::TypeId>                         visited;
     {
-        std::shared_lock lock(mutex);
+        std::shared_lock lock(channels_mutex);
         const auto       consider = [&](const vn::Type* type) {
             if (const auto it = channels.find(type); it != channels.end()) {
                 it->second.collect(plan, garbage);
@@ -660,40 +778,52 @@ void EventBus::Impl::collectPlan(const Object& event, std::vector<SubscriptionEn
     garbage.clear();
 }
 
-bool EventBus::Impl::beginStop() noexcept
+void EventBus::Impl::cancelSubscriptions()
 {
-    if (state != BusState::Running) {
-        return false;
+    // Cancel the subscriptions first, so a task that is being dequeued right now
+    // sees an inactive subscription and skips its handler. The channels and the map
+    // themselves stay alive (only ~Impl destroys them), so a publish() that already
+    // took its plan cannot dangle: it either finds an empty channel or delivers what
+    // it snapshotted.
+    std::vector<std::shared_ptr<SubscriptionState>> garbage;
+    {
+        std::shared_lock lock(channels_mutex);
+        for (auto& entry : channels) {
+            entry.second.takeAll(garbage);
+        }
     }
-    // The stopper is published together with the state, so no reader can observe
-    // Stopping with the wrong thread id.
-    stopper = std::this_thread::get_id();
-    state   = BusState::Stopping;
-    stopped.store(true, std::memory_order_release);
+    // Handler closures are destroyed outside every lock, so their destructors may
+    // call back into the bus.
+    garbage.clear();
+
+    // Finally drop the parked deliveries: this releases the events they hold
+    // without waiting for the event loop, and makes their tasks no-ops.
+    deliveries->clear();
+}
+
+bool EventBus::Impl::drainPendingDeliveries(MainThreadDispatcher* dispatcher, StopGate::Deadline deadline)
+{
+    if (deliveries->pendingCount() == 0) {
+        return true;
+    }
+    if (dispatcher == nullptr) {
+        return false; // nothing can marshal them: they will never run here
+    }
+    while (deliveries->pendingCount() != 0) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return false;
+        }
+        const auto before = deliveries->pendingCount();
+        if (!dispatcher->deliverPostedCalls()) {
+            return false; // only the application thread can pump the queue
+        }
+        if (deliveries->pendingCount() >= before) {
+            // Nothing ran in this round: another thread may own the queue, so give
+            // it a slot instead of spinning on it.
+            std::this_thread::yield();
+        }
+    }
     return true;
-}
-
-bool EventBus::Impl::finishStop(bool clean) noexcept
-{
-    shutdown_result = clean;
-    state           = BusState::Stopped;
-    call_cv.notify_all();
-    return shutdown_result;
-}
-
-bool EventBus::Impl::stoppingOnThisThread() const noexcept
-{
-    return state == BusState::Stopping && stopper == std::this_thread::get_id();
-}
-
-void EventBus::Impl::awaitStopped(std::unique_lock<std::mutex>& lock)
-{
-    call_cv.wait(lock, [this] { return state == BusState::Stopped; });
-}
-
-bool EventBus::Impl::awaitStoppedUntil(std::unique_lock<std::mutex>& lock, std::chrono::steady_clock::time_point deadline)
-{
-    return call_cv.wait_until(lock, deadline, [this] { return state == BusState::Stopped; });
 }
 
 void EventBus::Impl::setErrorHandler(EventBusErrorHandler handler)
@@ -720,124 +850,62 @@ EventBus::EventBus(MainThreadDispatcher* dispatcher)
 
 EventBus::~EventBus()
 {
-    // Refuse admission, cancel what is pending - so an in-flight call finishes
-    // promptly - and only then let Impl go. The contract says the bus is destroyed
-    // while nothing else calls it; this wait turns a violation into a short delay
-    // instead of a dangling Impl (a handler must therefore never need the
-    // destroying thread to make progress, and must not destroy the bus itself).
-    std::unique_lock lock(d->call_mutex);
-    if (d->beginStop()) {
-        lock.unlock();
-        cancelSubscriptions();
-        lock.lock();
-        d->finishStop(/* clean */ false);
+    // Refuse admission and cancel what is pending, so a call that is already inside
+    // finishes promptly, and only then let Impl go. The contract says the bus is
+    // destroyed while nothing else calls it; this wait turns a violation into a short
+    // delay instead of a dangling Impl.
+    if (d->gate.request(StopGate::Deadline::max()) == StopGate::Order::Perform) {
+        d->cancelSubscriptions();
+        d->gate.finish(/* clean */ false);
     }
-    else {
-        // Somebody else is stopping: their cancel pass must finish before Impl goes.
-        d->awaitStopped(lock);
-    }
-    d->waitForCallersForever(lock);
+    // Completed: another thread's stop is over. Reentrant: the stopper is this very
+    // thread - a handler, or a closure the stop just reaped, destroying the bus -
+    // which no wait can repair, so it stays a documented contract violation.
+    d->gate.awaitCallers(StopGate::Deadline::max());
 }
 
 void EventBus::shutdown()
 {
-    std::unique_lock lock(d->call_mutex);
-    if (d->beginStop()) {
-        // Refuse admission from here on, then cancel what is left.
-        lock.unlock();
-        cancelSubscriptions();
-        lock.lock();
-        d->finishStop(/* clean */ false);
-        return;
+    // request() waits out a stop that another thread is running; only Perform leaves
+    // work for this call, and Reentrant (this thread is already stopping) has nothing
+    // to wait for.
+    if (d->gate.request(StopGate::Deadline::max()) == StopGate::Order::Perform) {
+        d->cancelSubscriptions();
+        d->gate.finish(/* clean */ false);
     }
-    // Somebody else is stopping: wait for that stop to complete instead of letting
-    // the caller destroy the bus while it is still draining. A reentrant stop request
-    // from the stopping thread itself has nothing to wait for (see
-    // stoppingOnThisThread()).
-    if (d->stoppingOnThisThread()) {
-        return;
-    }
-    d->awaitStopped(lock);
 }
 
 bool EventBus::shutdownGracefully(std::chrono::milliseconds timeout)
 {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
-
-    std::unique_lock lock(d->call_mutex);
-    if (!d->beginStop()) {
-        // Another stop is already in progress (or has completed): wait for it and
-        // report its outcome, so that every caller of a completed shutdown sees the
-        // same result. A stop this very thread is running cannot finish before this
-        // call returns, so it is not waited for.
-        if (d->stoppingOnThisThread()) {
+    switch (d->gate.request(deadline)) {
+        case StopGate::Order::Completed:
+            // Every caller of a finished stop reports that stop's answer.
+            return d->gate.result();
+        case StopGate::Order::Reentrant:
+        case StopGate::Order::TimedOut:
+            // This call drained nothing: it would have to wait for itself, or the stop
+            // it waited for is still running elsewhere.
             return false;
-        }
-        return d->awaitStoppedUntil(lock, deadline) && d->shutdown_result;
+        case StopGate::Order::Perform:
+            break;
     }
 
-    // Refuse admission, then drain what the admitted callers left behind, and only
-    // then cancel: a parked delivery still sees an active subscription and runs.
-    const bool callers = d->waitForCallers(lock, deadline);
-    lock.unlock();
-    const bool deliveries = drainPendingDeliveries(deadline);
-    cancelSubscriptions();
+    // Admission is refused from here on. Let the admitted callers finish, run what
+    // they parked - a parked delivery still sees an active subscription - and cancel
+    // only what is left.
+    const bool callers    = d->gate.awaitCallers(deadline);
+    const bool deliveries = d->drainPendingDeliveries(dispatcher_, deadline);
+    d->cancelSubscriptions();
 
-    lock.lock();
-    return d->finishStop(callers && deliveries);
-}
-
-bool EventBus::drainPendingDeliveries(std::chrono::steady_clock::time_point deadline)
-{
-    if (d->deliveries->pendingCount() == 0) {
-        return true;
-    }
-    if (dispatcher_ == nullptr) {
-        return false; // nothing can marshal them: they will never run here
-    }
-    while (d->deliveries->pendingCount() != 0) {
-        if (std::chrono::steady_clock::now() >= deadline) {
-            return false;
-        }
-        const auto before = d->deliveries->pendingCount();
-        if (!dispatcher_->deliverPostedCalls()) {
-            return false; // only the application thread can pump the queue
-        }
-        if (d->deliveries->pendingCount() >= before) {
-            // Nothing ran in this round: another thread may own the queue, so give
-            // it a slot instead of spinning on it.
-            std::this_thread::yield();
-        }
-    }
-    return true;
-}
-
-void EventBus::cancelSubscriptions()
-{
-    // Cancel the subscriptions first, so a task that is being dequeued right now
-    // sees an inactive subscription and skips its handler. The channels and the
-    // map themselves stay alive (only ~EventBus destroys them), so a publish()
-    // that already planned its deliveries cannot dangle: it either finds an empty
-    // channel or delivers from the plan it took earlier.
-    std::vector<SubscriptionEntry> garbage;
-    {
-        std::shared_lock lock(d->mutex);
-        for (auto& entry : d->channels) {
-            entry.second.takeAll(garbage);
-        }
-    }
-    // Handler closures are destroyed outside every lock, so their destructors may
-    // call back into the bus.
-    garbage.clear();
-
-    // Finally drop the parked deliveries: this releases the events they hold
-    // without waiting for the event loop, and makes their tasks no-ops.
-    d->deliveries->clear();
+    const bool drained = callers && deliveries;
+    d->gate.finish(drained);
+    return drained;
 }
 
 bool EventBus::isShutDown() const noexcept
 {
-    return d->stopped.load(std::memory_order_acquire);
+    return d->gate.isStopping();
 }
 
 std::size_t EventBus::pendingDeliveryCount() const
@@ -853,20 +921,20 @@ void EventBus::setErrorHandler(EventBusErrorHandler handler)
 Subscription
 EventBus::subscribeErased(vn::TypeId type, std::function<void(const std::shared_ptr<const Object>&)> handler, SubscriptionThreadMode mode, const String& tag)
 {
-    const Impl::CallGuard guard(*d);
-    if (!guard.admitted()) {
+    const StopGate::Ticket ticket(d->gate);
+    if (!ticket.admitted()) {
         return Subscription(); // stopping or stopped: never register again
     }
 
-    std::shared_ptr<SubscriptionState> state;
-    std::vector<SubscriptionEntry>     garbage;
+    std::shared_ptr<SubscriptionState>             state;
+    std::vector<std::shared_ptr<SubscriptionState>> garbage;
     {
-        std::unique_lock lock(d->mutex);
-        // Re-checked under the map lock: shutdown() clears the channels with the
-        // same lock, so a registration racing with the stop is refused instead of
-        // surviving it. Together with the admission above this makes "no valid
-        // subscription exists once shutdown() has returned" hold.
-        if (d->stopped.load(std::memory_order_acquire)) {
+        std::unique_lock lock(d->channels_mutex);
+        // Re-checked under the map lock: cancelSubscriptions() empties the channels
+        // under the same lock, so a registration racing with the stop is refused
+        // instead of surviving it. Together with the admission above this makes "no
+        // live subscription exists once shutdown() has returned" hold.
+        if (d->gate.isStopping()) {
             return Subscription();
         }
         state = d->channels[type].subscribe(std::move(handler), mode, tag, garbage);
@@ -876,14 +944,14 @@ EventBus::subscribeErased(vn::TypeId type, std::function<void(const std::shared_
     garbage.clear();
 
     try {
-        // The state is passed by value, so it is still valid if the allocation of
-        // the control block throws.
+        // The state is passed by value, so it is still valid if the allocation of the
+        // control block throws.
         return Subscription(std::make_shared<Subscription::Control>(state));
     }
     catch (...) {
-        // Registration succeeded but no handle could be built: make the orphan
-        // inert, so a subscription nobody can cancel is at least never invoked,
-        // and let the failure surface.
+        // Registration succeeded but no handle could be built: make the orphan inert,
+        // so a subscription nobody can cancel is at least never invoked, and let the
+        // failure surface.
         state->deactivate();
         throw;
     }
@@ -894,41 +962,34 @@ void EventBus::publish(const std::shared_ptr<const Object>& event)
     if (!event) {
         return;
     }
-    const Impl::CallGuard guard(*d);
-    if (!guard.admitted()) {
+    const StopGate::Ticket ticket(d->gate);
+    if (!ticket.admitted()) {
         return; // stopping or stopped: no new work enters the bus
     }
 
-    std::vector<SubscriptionEntry> plan;
+    std::vector<std::shared_ptr<SubscriptionState>> plan;
     d->collectPlan(*event, plan);
 
-    // Thread policy, resolved once per publish. Without a marshaller there is
-    // nowhere to marshal to, so Main/Auto degrade to the publishing thread.
-    const bool marshaller_ready = dispatcher_ != nullptr && MainThreadDispatcher::hasEventLoop();
-    const bool on_main_thread   = !marshaller_ready || MainThreadDispatcher::isMainThread();
-    // Error observation snapshot: one load when no handler is installed.
-    const auto error_handler    = d->has_error_handler.load(std::memory_order_acquire) ? d->currentErrorHandler() : nullptr;
+    // Thread policy, resolved once per publish. Without a marshaller there is nowhere
+    // to marshal to, so Main/Auto degrade to the publishing thread.
+    const bool marshals = dispatcher_ != nullptr && MainThreadDispatcher::hasEventLoop();
+    const bool on_main  = !marshals || MainThreadDispatcher::isMainThread();
+    // Failure observation snapshot: one load when no handler is installed.
+    const auto error_handler = d->has_error_handler.load(std::memory_order_acquire) ? d->currentErrorHandler() : nullptr;
 
-    for (const auto& entry : plan) {
-        if (!entry.state->isActive()) {
+    for (const auto& state : plan) {
+        if (!state->isActive()) {
             continue; // cancelled by unsubscribe()/shutdown() before its turn
         }
-        const bool defer = entry.mode == SubscriptionThreadMode::Main || (entry.mode == SubscriptionThreadMode::Auto && !on_main_thread);
-        if (!defer || !marshaller_ready) {
-            deliver(entry.state, event, error_handler, entry.mode, /* deferred */ false);
+        // Main, or Auto off the main thread, becomes a parked delivery - unless there is
+        // nowhere to park it, in which case it runs here (see above).
+        const auto mode = state->mode();
+        const bool park = marshals && (mode == SubscriptionThreadMode::Main || (mode == SubscriptionThreadMode::Auto && !on_main));
+        if (!park) {
+            deliver(state, event, error_handler, /* deferred */ false);
             continue;
         }
-        // Main, or Auto off the main thread: park the delivery in the event loop.
-        // The task keeps only the detached registry and its own payload alive, so
-        // it neither references nor keeps alive the bus.
-        auto payload  = std::make_shared<Payload>(entry.state, event, entry.mode, error_handler);
-        auto delivery = std::make_shared<Delivery>(d->deliveries, payload);
-        d->deliveries->add(std::move(payload));
-        if (!MainThreadDispatcher::postToMainThread([delivery] { delivery->run(); })) {
-            // The task was dropped and is already gone with the lambda, so its
-            // Delivery destructor unregistered the payload again: nothing leaks.
-            VN_LOGW("EventBus: dropping a Main delivery, the event loop refused the task");
-        }
+        parkDelivery(d->deliveries, state, event, error_handler);
     }
 }
 

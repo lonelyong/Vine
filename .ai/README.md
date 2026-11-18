@@ -198,7 +198,7 @@ proposals (`T40` / `T41`) keep their arguments where a design page cannot carry 
 `design/graphics-geometry.md` 2.10 / F33, `design/geometry-bvh.md` 2.13 / F8 and
 `design/robotics-io-design.md` F7.)
 
-## backlog/ — open work (13)
+## backlog/ — open work (14)
 
 Only items that are **not done and have a trigger**; delete them when done, and delete them when the
 decision is not to do them (the reason goes into an ADR).
@@ -207,6 +207,7 @@ decision is not to do them (the reason goes into an ADR).
 - `appfw-startup.md` — what is left of the startup flow (the Windows half).
 - `appfw-ribbon.md` — Ribbon open items (order, item id, custom layouts, contextual tabs, manifest).
 - `appfw-command-arguments.md` — what is left of command arguments (declarative arguments, help/completion, asking for a missing argument, object arguments, length limits).
+- `appfw-eventbus.md` — EventBus open items (the O(N²) drain on a large pending set, and the enum width that belongs to the next plugin-ABI batch).
 - `appfw-app-info.md` — app-info open items (build-time version, manifest and third-party acknowledgements).
 - `appfw-translation.md` — translation open items (runtime switching, the first English catalogue, plugin metadata, the lupdate gate, the deployment rule for the override file).
 - `async.md` — async's next steps (cancellation environment, scope, the go/no-go on frame allocation).

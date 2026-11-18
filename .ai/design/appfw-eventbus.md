@@ -1,10 +1,10 @@
 # appfw's EventBus
 
 > **Status**: current
-> **Last verified**: 2026-10-23
+> **Last verified**: 2026-11-18
 > **Scope**: the event bus, subscription and cancellation, delivery and shutdown; not the internals of `Signal` itself.
-> **Sources**: `EventBus.hpp`, `tests/test_gui/EventBusTest.cpp`.
-> **Backlog**: none (open items are in `../backlog/`)
+> **Sources**: `EventBus.hpp`, `EventBus.cpp`, `tests/test_gui/EventBusTest.cpp`.
+> **Backlog**: `../backlog/appfw-eventbus.md`
 
 ## 1. Overview
 
@@ -35,25 +35,29 @@ Every path out of `EventBus` holds `shared_ptr` state or delivery objects, never
 ### 2.1 Structure
 
 ```
-EventBus ── Impl ─┬─ map<TypeId, EventChannel>   (channels, std::shared_mutex)
-                  ├─ shared_ptr<DeliveryRegistry>  (queued deliveries, decoupled from the bus)
-                  └─ atomic<bool> stopped
-EventChannel ──── vector<SubscriptionEntry{mode, shared_ptr<SubscriptionState>}> + std::mutex
-SubscriptionState  const id / const Handler / atomic<bool> active
-Subscription     ── shared_ptr<Control>  (Control holds SubscriptionState; its destructor deactivates)
-Payload          ── weak_ptr<SubscriptionState> + shared_ptr<const Object> event
-Delivery         ── shared_ptr<DeliveryRegistry> + weak_ptr<Payload>; unregisters from the registry when destroyed
-queue lambda     ── captures only shared_ptr<Delivery> (no bus / channel / this)
+EventBus ── Impl ─┬─ map<TypeId, EventChannel>     (channels, std::shared_mutex)
+                  ├─ shared_ptr<DeliveryRegistry> (parked deliveries, decoupled from the bus)
+                  └─ StopGate                     (admission + the stop handshake)
+StopGate ────────── mutex + cv + active_calls + State + stopper + atomic stopping_ + per-thread depth table
+  └─ StopGate::Ticket ── one admitted call; releases the count on destruction
+EventChannel ────── vector<shared_ptr<SubscriptionState>> + std::mutex
+SubscriptionState ── const id / const Handler / const mode / const tag / atomic<bool> active
+Subscription ────── shared_ptr<Control>  (Control holds SubscriptionState; its destructor deactivates)
+PendingDelivery ─── weak_ptr<SubscriptionState> + shared_ptr<const Object> + error-hook snapshot
+DeliveryTask ────── shared_ptr<DeliveryRegistry> + weak_ptr<PendingDelivery>; unregisters when destroyed
+queue lambda ────── captures only shared_ptr<DeliveryTask> (no bus / channel / this)
 ```
 
 `MainThreadDispatcher` is created by `Application` and injected into `EventBus`; in `ApplicationData` the `main_dispatcher` member is declared before `event_bus` and is therefore destroyed after it.
 
-### 2.2 Admission and the close state machine
+`Impl` owns no admission state of its own: the whole protocol lives in `StopGate`, which is the only place that knows what "the bus is stopping" means.
 
-- `publish()` / `subscribe()` enter the bus through `Impl::CallGuard`; `state` and `active_calls` live under the same `call_mutex`, so "the bus has begun stopping" and "a caller got in" cannot interleave.
-- `Running → Stopping → Stopped`; entering `Stopping` also sets the `stopped` flag that is visible outside the lock.
-- A concurrent `shutdown()` / `shutdownGracefully()` that does not hold the stop waits for `Stopped` and receives the result of that same shutdown.
-- The state machine is implemented in exactly one place, `Impl`: `beginStop()` / `finishStop(clean)` / `stoppingOnThisThread()` / `awaitStopped()` / `awaitStoppedUntil()`.
+### 2.2 Admission and the stop handshake
+
+- `publish()` / `subscribe()` enter the bus through `StopGate::Ticket`; `state` and `active_calls` live under the same gate mutex, so "the bus has begun stopping" and "a caller got in" cannot interleave.
+- `Running → Stopping → Stopped`; entering `Stopping` also sets the `stopping_` flag that is visible outside the lock.
+- Every stop entry point asks the gate once and then does only what the answer says: `request()` returns `Perform` (this call owns the stop and must call `finish()`), `Completed` (another thread's stop is over and `result()` is its answer), `Reentrant` (this thread is running that stop) or `TimedOut`. `shutdown()`, `shutdownGracefully()` and `~EventBus()` therefore differ only in what they do *after* `Perform`.
+- One wait bound: `StopGate::Deadline`, where `Deadline::max()` means "no bound", so "wait forever" and "wait until" are one function with two arguments instead of two functions.
 
 ### 2.3 Dispatch rules
 
@@ -92,9 +96,9 @@ queue lambda     ── captures only shared_ptr<Delivery> (no bus / channel / t
 
 ### 3.1.3 F3 Queued delivery
 
-- **Behaviour**: Main / Auto modes; the `DeliveryRegistry` holds the `Payload` strongly and the queued task holds a weak reference.
+- **Behaviour**: Main / Auto modes; the `DeliveryRegistry` holds the `PendingDelivery` strongly and the queued `DeliveryTask` holds a weak reference.
 - **Constraints** (C3): `shutdown()` clears the registry → the event is released immediately and the queued callback degenerates to a no-op.
-- **Requirements** (R3): whether a task runs, is cancelled or is dropped, `~Delivery` is what unregisters it.
+- **Requirements** (R3): whether a task runs, is cancelled or is dropped, `~DeliveryTask` is what unregisters it.
 - **Acceptance** (T3): `MainModeQueuesDelivery`, `ShutdownReleasesPendingEvent`, `BusDestroyedBeforeQueuedDeliveryIsDropped`.
 - **Caveat** (N3): with no dispatcher, or no `QCoreApplication`, Main / Auto run inline on the publishing thread (documented).
 
@@ -153,7 +157,7 @@ queue lambda     ── captures only shared_ptr<Delivery> (no bus / channel / t
 | --- | --- |
 | R1 | A call that fails the cancellation point never starts; a call that has started runs to its end. |
 | R2 | `publish()` with a null event, or on a stopped bus, is a no-op; `subscribe()` after the stop returns an inert handle. |
-| R3 | Whether a queued task runs, is cancelled or is dropped, `~Delivery` unregisters it. |
+| R3 | Whether a queued task runs, is cancelled or is dropped, `~DeliveryTask` unregisters it. |
 | R4 | A re-entrant call on the stopping thread does not wait for itself; graceful from a non-application thread returns false. |
 | R5 | A queued delivery snapshots the exception hook and the tag when it is posted. |
 
@@ -173,6 +177,7 @@ queue lambda     ── captures only shared_ptr<Delivery> (no bus / channel / t
 - How it fails: `~EventBus()` waits for admitted calls to leave, and the current handler is one of them → deadlock or a delay.
 - How to detect it: `delete bus` or a destruction call inside a handler.
 - How to prevent it: never destroy the bus inside a handler; to stop the process use `Application::exit()`.
+- The same shape one step later: a stop reaps the handler closures outside every lock, so a closure that owns (and deletes) the bus destroys it from the stopping thread. `~EventBus()` asks the gate, gets `Reentrant`, and cannot wait for a stop it is itself holding up - the object dies under the stopper. `shutdown()` and `shutdownGracefully()` answer `Reentrant` by returning, the destructor cannot, so this stays a contract violation to avoid rather than one the bus can absorb.
 
 ### 6.2 Graceful shutdown from a non-application thread
 
@@ -194,6 +199,9 @@ queue lambda     ── captures only shared_ptr<Delivery> (no bus / channel / t
 | D2 | `visited` as an `unordered_set` | The set is small, pointer comparison is faster and it allocates nothing. | — |
 | D3 | A `thread_local` depth covering detached async tasks | An async task calling `publish()` is its own admission call and does not rely on a depth escaping the thread. | — |
 | D4 | Making `shutdown()` wait for in-flight calls | Its meaning is "stop admitting"; waiting belongs to `shutdownGracefully()` / the destructor. | — |
+| D5 | One lock for the map and the channels | Two concurrent publications both reap cancelled entries, so a single shared map lock would let two readers write the same list. The channel mutex keeps "which channels exist" and "what one channel holds" as two facts, with the lock order fixed. | — |
+| D6 | Three separate stop arbitrations | `beginStop()` / `stoppingOnThisThread()` / `awaitStopped*()` had to be sequenced identically by three entry points. One `request()` answer (`Perform` / `Completed` / `Reentrant` / `TimedOut`) makes the rule one rule. | — |
+| D7 | A separate entry type carrying the thread mode | The mode is a subscription property, not an entry property: keeping it in `SubscriptionState` removes the entry type and lets a parked delivery read the mode from the object it already holds. | — |
 
 ## 8. Tests and Acceptance
 
@@ -214,7 +222,8 @@ Subscription, dispatch, queueing, shutdown and exception observation are all in 
 
 ### 9.2 Known gaps / backlog
 
-- If the event loop stalls for a long time with tens of thousands of Main deliveries pending at once, `remove` on the drain path is O(N²); the registry changes if that happens (see D1).
+- If the event loop stalls for a long time with tens of thousands of Main deliveries pending at once, `remove` on the drain path is O(N²); the registry changes if that happens (see D1 and `../backlog/appfw-eventbus.md` T1).
+- `SubscriptionThreadMode` states no underlying type although it appears in the public `EventBusError` value; declaring it `: std::uint8_t` changes that struct's layout, so it rides the next plugin-ABI batch instead of a stand-alone edit (`../backlog/appfw-eventbus.md` T2).
 - LeakSanitizer's 15 reports / 5864 bytes all pass through `GuiTest::SetUp`; they are held by the test fixture / `QApplication`, not by the bus.
 
 ### 9.3 Compatibility / migration

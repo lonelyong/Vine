@@ -508,8 +508,6 @@ src/fw/appfw/sdk/vine/appfw/ConfigRegistry.hpp	brief|ConfigRegistry::ConfigRegis
 src/fw/appfw/sdk/vine/appfw/ConfigRegistry.hpp	return|ConfigRegistry::categories
 src/fw/appfw/sdk/vine/appfw/ConfigRegistry.hpp	return|ConfigRegistry::itemCount
 src/fw/appfw/sdk/vine/appfw/Document.hpp	brief|Document::Document
-src/fw/appfw/sdk/vine/appfw/EventBus.hpp	brief|Subscription::Subscription
-src/fw/appfw/sdk/vine/appfw/EventBus.hpp	param|Subscription::Subscription/1
 src/fw/appfw/sdk/vine/appfw/PluginLoadContext.hpp	return|PluginLoadContext::configRegistry
 src/fw/appfw/sdk/vine/appfw/PluginManager.hpp	brief|PluginManager::PluginManager
 src/fw/appfw/sdk/vine/appfw/ServiceManager.hpp	brief|ServiceManager::ServiceManager
