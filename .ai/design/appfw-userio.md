@@ -53,7 +53,8 @@ Owner: `ApplicationData::user_io` (a `unique_ptr`, torn down before the dispatch
 - One interactive wait at a time; a second `getXxxAsync` returns `nullopt` immediately plus a warning.
 - The slot is released by `ReadScope`: on success, on cancellation, and when the coroutine frame is destroyed early.
 - Start, answer and cancellation are one serialized transition (the read mutex in `VisualUserIO`, the state lock in `ConsoleUserIO`), so a cancel that races with an answer or
-  with a starting read can neither lose the wakeup nor discard the answer: an answer that arrived first wins, and a cancel ends only a read that is still unanswered.
+  with a starting read can neither lose the wakeup nor discard the answer: the answer slot is the result - claiming the slot, emptying it and arming the wakeup happen together,
+  a cancel only wakes the read (which hands back whatever the slot holds), and an answer whose read is gone, or whose slot a different read already owns, is dropped.
 - An implementation's destructor marks the I/O closed and then cancels: a read that the cancellation resumes cannot park again, and the wait state is never destroyed with a
   queued waiter (see `../bugs/appfw-userio-destructor-pending-read.md`).
 - `ConsoleUserIO` reads `std::cin` on a background thread; a cancellation sets shared state and wakes the waiter, and an unconsumed line is left for the next read.
