@@ -1,48 +1,43 @@
 # ADR-2026-11-07 AES-GCM streaming
 
-- 状态：已采纳
-- 日期：2026-11-07
-- 相关：`.ai/design/crypto.md`（`C14`、`P4`、`D2`）、`ADR-2026-11-07-crypto-api-shape.md`（其“缓冲式增量 GCM”决定由本文取代）
+- Status: Accepted
+- Date: 2026-11-07
+- Related: `.ai/design/crypto.md` (`C14`, `P4`, `D2`), `ADR-2026-11-07-crypto-api-shape.md` (whose "buffered incremental GCM" decision is superseded by this document)
 
-> **EN**: Replaced the buffered incremental AES-GCM with a real streaming implementation on the wolfSSL v5.9.4 entry points (`Init` / `Update` / `Final`), so memory stays constant for any input size; `update()` emits as many bytes as it takes (GCM is a CTR stream) and the `out&` overload writes into caller storage. The new contract, written into the header and the design page, is that decrypted bytes are untrusted until `finish()` succeeds, and `operator<<` is gone because nothing is buffered any more.
+## Background
 
-## 背景
+The first `AesGcm` had a **buffered** incremental form: `update()` accumulated input into a vector and `finish()` computed it in one go.
+The reason at the time was that wolfSSL's incremental GCM entry points had different signatures between versions, and the failure mode of a wrong call was "admitting unauthenticated data" - an unacceptable cost.
 
-第一版 `AesGcm` 的增量形态是**缓冲式**：`update()` 把输入攒进一个 vector，`finish()` 一次算完。
-当时的理由是 wolfSSL 的增量 GCM 入口在不同版本签名不同，而调错的失败方式是“放行未认证数据”——代价不可接受。
+The price was a recorded defect (the old `P4`): memory grew linearly with the input, so a large file meant reading the whole file into memory.
 
-代价是记在案的一条缺陷（旧 `P4`）：内存随输入线性增长，大文件等于把整个文件读进内存。
+After upgrading to wolfSSL v5.9.4 the backend offers stable and explicit streaming entry points:
 
-升级到 wolfSSL v5.9.4 后，后端提供了稳定且明确的流式入口：
+- `wc_AesGcmEncryptInit/Update/Final`, `wc_AesGcmDecryptInit/Update/Final`;
+- `wc_AesGcmDecryptFinal` carries `WARN_UNUSED_RESULT`, so a caller that ignores the return value gets a compiler error;
+- the output length of `update()` always equals the input length (GCM is a CTR stream), so no fallback block has to be kept.
 
-- `wc_AesGcmEncryptInit/Update/Final`、`wc_AesGcmDecryptInit/Update/Final`；
-- `wc_AesGcmDecryptFinal` 带 `WARN_UNUSED_RESULT`，调用方不检查返回值编译器会报错；
-- `update()` 的输出长度恒等于输入长度（GCM 是 CTR 流），不需要保留回退块。
+## Decision
 
-## 决定
+Switch to a real streaming implementation and drop the buffer:
 
-改为真正的流式实现，去掉缓冲：
-
-| 形态 | 行为 |
+| Shape | Behaviour |
 |---|---|
-| 构造 | 初始化上下文、设密钥与 IV、一次喂完 AAD（GCM 要求所有关联数据在首字节密文之前） |
-| `update(span)` | 处理这一块，返回等长的输出（加密侧密文，解密侧明文） |
-| `update(span, out&)` | 同上，输出写进调用方缓冲，避免每块一次分配 |
-| `finish()` | 加密侧写标签；解密侧做标签判定，失败抛 `std::runtime_error` |
+| Construction | Initialise the context, set the key and IV, and feed all AAD at once (GCM requires every associated datum before the first ciphertext byte) |
+| `update(span)` | Process this block and return an equal-length output (ciphertext on the encrypt side, plaintext on the decrypt side) |
+| `update(span, out&)` | The same, with the output written into caller storage, avoiding one allocation per block |
+| `finish()` | Write the tag on the encrypt side; make the tag decision on the decrypt side, throwing `std::runtime_error` on failure |
 
-## 后果
+## Consequences
 
-- 任意大小的输入都能常量内存处理；`seal` / `open` 也走同一条路径，测试用“分块结果 == 一次性结果”锁住一致性。
-- **新的契约**（写进头文件 `@warning` 与设计文档 `C14`/`P4`）：解密时 `update()` 交出的字节在 `finish()` 成功之前
-  不可信。这是流式 AEAD 的固有性质，不是实现缺陷；调用方要么把输出写到可回滚的地方，要么最后再提交。
-  旧实现“先验证再给明文”的优势因此消失，换来的是有界内存——这个取舍必须明说，不能靠实现悄悄保证。
-- `AesGcm` 不再提供 `operator<<`：输入不再被攒起来，流操作符“喂进去以后再取”的语义不再成立。
-- `finish()` 对 GCM 返回空（GCM 没有尾部块），保留返回值是为了与 `Hasher` / `Hmac` 的手势一致。
+- Any input size is processed in constant memory; `seal` / `open` take the same path, and a test locks the consistency with "chunked result == one-shot result".
+- **A new contract** (written into the header's `@warning` and the design page's `C14`/`P4`): when decrypting, the bytes `update()` hands out are untrusted until `finish()` succeeds. This is inherent to streaming AEAD and not an implementation defect; the caller either writes the output somewhere it can roll back or commits at the end.
+  The old implementation's advantage of "verify first, then hand out plaintext" is therefore gone, and what it bought is bounded memory - a trade-off that has to be stated, not silently guaranteed by the implementation.
+- `AesGcm` no longer provides `operator<<`: the input is no longer accumulated, so the stream operator's "feed it and take it out later" semantics no longer holds.
+- `finish()` returns nothing for GCM (GCM has no trailing block); the return value is kept for consistency with the gestures of `Hasher` / `Hmac`.
 
-## 证据
+## Evidence
 
-- `tests/test_crypto/CipherTest.cpp`：1000 字节按 1 + 509 + 余下分块加密，密文与 `seal()` 逐字节相同；
-  分块解密还原原文；篡改任一密文字节或标签都在 `finish()` 抛异常；空输入仍然认证 AAD。
-- NIST SP 800-38D case 2 向量继续通过，说明流式路径与一次性路径给出同样的结果。
-- 启用方式：`target_compile_definitions(wolfssl PRIVATE WOLFSSL_AESGCM_STREAM)`，并在 `src/WolfSsl.hpp` 重新声明该宏
-  ——生成的 `options.h` 会 `#undef` 它，命令行传入的定义活不过那一行，而 `Aes` 的结构布局取决于它。
+- `tests/test_crypto/CipherTest.cpp`: 1000 bytes encrypted in chunks of 1, 509 and the rest, with the ciphertext byte-identical to `seal()`; chunked decryption restores the plaintext; tampering with any ciphertext byte or the tag throws at `finish()`; an empty input still authenticates the AAD.
+- The NIST SP 800-38D case 2 vector still passes, which shows the streaming path and the one-shot path give the same result.
+- How it is enabled: `target_compile_definitions(wolfssl PRIVATE WOLFSSL_AESGCM_STREAM)`, with the macro re-declared in `src/WolfSsl.hpp` - the generated `options.h` `#undef`s it, so a definition passed on the command line does not survive that line, while the layout of `Aes` depends on it.

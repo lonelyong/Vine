@@ -1,55 +1,53 @@
-# ADR-2026-11-06：`geom` 内部设 `detail` 子树，只收与维度无关的共享实现
+# ADR-2026-11-06: a `detail` subtree inside `geom`, holding only dimension-independent shared implementations
 
-- 状态：已采纳
-- 日期：2026-11-06
-- 相关：`../design/geometry-module.md` 2.2–2.3 / 3.1、`../design/geometry-planar.md` C10 / D3、`ADR-2026-11-06-merged-geom-module.md`、`ADR-2026-11-06-math-is-the-base-layer.md`、`ADR-2026-11-06-shared-numeric-kernels-in-math.md`
+- Status: Accepted
+- Date: 2026-11-06
+- Related: `../design/geometry-module.md` 2.2-2.3 / 3.1, `../design/geometry-planar.md` C10 / D3, `ADR-2026-11-06-merged-geom-module.md`, `ADR-2026-11-06-math-is-the-base-layer.md`, `ADR-2026-11-06-shared-numeric-kernels-in-math.md`
 
-> **EN**: Added `vn::geom::detail` for the dimension-independent shared geometry implementations (`CurveTraits`, `CrossingSearch`, `CurveMeasure`, `CurvePairSearch`) while the public entry points stay in each contract namespace and forward, with `check_geom_layering.py` pinning that neither contract includes the other and `detail` includes neither. The test for sinking code is whether two copies differ only in type names and documentation; `math`'s numeric and spline kernels were not moved by this ADR (a same-day follow-up did move them).
+## Background
 
-## 背景
+Merging `geom/planar` / `geom/spatial` solved "the library" and did not solve "where the shared code lives". After the merge a measurement showed the two trees still had line-for-line identical implementations, because the place that can see both sides does not exist inside the library: the garage held two trees and their own `detail`s.
 
-合并 `geom/planar` / `geom/spatial` 解决了“库”，没解决“共享件的位置”。合并后实测：两棵树仍有逐行相同的实现，因为能同时看见两边的地方在库内并不存在——车库里只有两棵树和各自的 `detail`。
-
-| 对 | 2D 行 | 3D 行 | 差异行 | 差异内容 |
+| Pair | 2D lines | 3D lines | Differing lines | What differs |
 |---|---|---|---|---|
-| `CurveProjection.hpp` | 244 | 248 | 56 | `narrowCrossing` 逐字相同；`CurveScalar` / `CurveWindow` / `resolveCurveWindow` 只差一句文档 |
-| `CurveCurveDistance.hpp` | 217 | 217 | 22 | `refineCurveCurveDistance` 逐行相同（纯泛型） |
-| `CurveLength.hpp` | 138 | 139 | 21 | `arcLength` / `parameterAtLength` 的实现逐行相同 |
+| `CurveProjection.hpp` | 244 | 248 | 56 | `narrowCrossing` is identical word for word; `CurveScalar` / `CurveWindow` / `resolveCurveWindow` differ by one documentation sentence |
+| `CurveCurveDistance.hpp` | 217 | 217 | 22 | `refineCurveCurveDistance` is identical line for line (purely generic) |
+| `CurveLength.hpp` | 138 | 139 | 21 | the implementations of `arcLength` / `parameterAtLength` are identical line for line |
 
-还有一处隐蔽耦合：`CurveScalar` 这个“曲线的标量”别名住在**投影**头里，于是 `CurveCurvature` / `CurveLength` / `CurveCurveDistance` / `CurveCurveIntersection` 全都为了一个别名而 include `CurveProjection.hpp`——一次不需要投影的曲率查询也会把投影器拉进编译。
+There was also one hidden coupling: the "scalar of a curve" alias `CurveScalar` lived in the **projection** header, so `CurveCurvature` / `CurveLength` / `CurveCurveDistance` / `CurveCurveIntersection` all included `CurveProjection.hpp` for one alias - a curvature query that needs no projection pulled the projector into the compile.
 
-## 选项
+## Options
 
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A 保持重复 | 零改动；每棵树自足 | 三份近 200 行的拷贝，改一处必须记得改另一处（文档已经在漂：一边写“与平面侧同一内核”，另一边什么都没写） |
-| B 把 `math/numeric` 与 `math/spline` 搬进 `geom` 当 `detail` | 写起来最省事：几何侧不再跨层找内核 | `math` 是底座层，搬上去以后“怎么积一个函数”只有几何能回答；imaging / mesh / brep / robotics 为了一个积分要么依赖曲线库要么再复制一份。`Quadrature` / `RootFinding` 有独立单测与在效 ADR，降级成 `detail` 会让单测去测私有代码 |
-| C 在 `geom` 内建 `detail` 子树，只收维度无关的几何共享件 | 重复消失，层向不变（`geom → math` 照旧），公开名字不动 | 多一层命名空间；`detail` 必须被门禁钉住“不得命名维度”，否则会变成第三个维度树 |
-| D 给每个类型加 `2`/`3` 后缀，把两套命名空间并成一个 | 单命名空间 | 48 个类型名、82 个别名、62 个头、489 处限定引用、15 个目标；且名字会谎报族关系（两个契约零继承、不可互换），`BezierCurve3` 在 CAD 里已经等于“三次”。`D3` 早已否决同一件事 |
+| A. Keep the duplication | No change; each tree is self-sufficient | Three copies of nearly 200 lines, and a change in one must be remembered in the other (the documentation has already drifted: one side says "the same kernel as the planar side", the other says nothing) |
+| B. Move `math/numeric` and `math/spline` into `geom` as `detail` | The easiest to write: the geometry side stops looking for kernels across layers | `math` is the base layer, and after the move only geometry could answer "how do I integrate a function"; imaging / mesh / brep / robotics would either depend on the curve library for one integral or copy it again. `Quadrature` / `RootFinding` have their own unit tests and a live ADR, and demoting them to `detail` would make the tests test private code |
+| C. Build a `detail` subtree inside `geom`, holding only dimension-independent shared geometry code | The duplication disappears, the layer direction is unchanged (`geom -> math` as before), the public names do not move | One more namespace level; the gate has to pin that `detail` may not name a dimension, or it becomes a third dimension tree |
+| D. Add a `2`/`3` suffix to every type and merge the two namespaces into one | One namespace | 48 type names, 82 aliases, 62 headers, 489 qualified references, 15 targets; and the names would misreport the family relation (two contracts with zero inheritance, not interchangeable), while `BezierCurve3` already means "cubic" in CAD. `D3` rejected the same thing long ago |
 
-## 决定
+## Decision
 
-采用 **C**：
+Chose **C**:
 
-- 新子树 `src/base/geom/sdk/vine/geom/detail/`，include 路径 `<vine/geom/detail/...>`，命名空间 `vn::geom::detail`（`geom_global.hpp` 新增 `VN_GEOM_NS_BEGIN` 与 `VN_GEOM_DETAIL_NS_BEGIN`）。
-- 内容只收**与维度无关**的东西：`CurveTraits.hpp`（`CurveScalar` / `CurveWindow` / `resolveTolerance` / `resolveCurveWindow`）、`CrossingSearch.hpp`（`narrowCrossing`）、`CurveMeasure.hpp`（`arcLengthBetween` / `parameterCovering`）、`CurvePairSearch.hpp`（`refineCurvePair`）。
-- **公开名字不动**：`geom::planar::arcLength` / `geom::spatial::arcLength` 仍是唯一文档化的入口，各自解析窗口与容差后转发（`G4`：契约留在各自命名空间，实现只留一份）。
-- **门禁钉住方向**：`scripts/check_geom_layering.py` 从“两棵互不 include”扩成三条——`geom/planar` 不得 include `geom/spatial`、反之亦然、`geom/detail` 不得 include 任一方（命名了维度的 helper 就不再共享）。
-- 判定下沉与否，看两份拷贝的差异：只有类型名与文档 → 下沉；差异在数学上 → 各留一份。因此 `signedCurvature`（2D 有符号）与 `curvature`（3D 模长）保持两份，`closestPointOnCurve` 也保持两份（结果类型带 `Point2` / `Point3`）。
+- The new subtree `src/base/geom/sdk/vine/geom/detail/`, include path `<vine/geom/detail/...>`, namespace `vn::geom::detail` (`geom_global.hpp` gains `VN_GEOM_NS_BEGIN` and `VN_GEOM_DETAIL_NS_BEGIN`).
+- Its contents are only **dimension-independent**: `CurveTraits.hpp` (`CurveScalar` / `CurveWindow` / `resolveTolerance` / `resolveCurveWindow`), `CrossingSearch.hpp` (`narrowCrossing`), `CurveMeasure.hpp` (`arcLengthBetween` / `parameterCovering`), `CurvePairSearch.hpp` (`refineCurvePair`).
+- **The public names do not move**: `geom::planar::arcLength` / `geom::spatial::arcLength` remain the only documented entries, each resolving its own window and tolerance and then forwarding (`G4`: the contract stays in its namespace, the implementation exists once).
+- **The gate pins the direction**: `scripts/check_geom_layering.py` grows from "the two trees do not include each other" to three rules - `geom/planar` may not include `geom/spatial`, the reverse may not happen, and `geom/detail` may not include either (a helper that names a dimension is no longer shared).
+- Whether code sinks is decided by the difference between the two copies: only type names and documentation differ -> sink; the difference is mathematical -> keep one each. So `signedCurvature` (signed in 2D) and `curvature` (a magnitude in 3D) stay two copies, and `closestPointOnCurve` does too (its result type carries `Point2` / `Point3`).
 
-判据：`G1`（共享件一份）、`G2`（共享件仍住在能向下看的那一层，几何不下沉到 `math`、`math` 不上浮到几何）、`G5`（几何级改动不再需要改两处）、`G7`（复杂度被吸收在一个 `detail` 里，而不是变成调用方的模板参数或回调）。`G8` 的张力：`geom/detail` 只有四个头、每个实现一份，不为“将来可能共享”预建任何东西。
+Criteria: `G1` (one copy of the shared code), `G2` (the shared code still lives on the layer that can look down; geometry does not sink into `math` and `math` does not float up into geometry), `G5` (a geometry-level change no longer means editing two places), `G7` (the complexity is absorbed in one `detail` instead of becoming a template parameter or a callback for the caller). The tension with `G8`: `geom/detail` had four headers with one implementation each, and nothing was pre-built for "might be shared later".
 
-## 后果
+## Consequences
 
-- 好的：`narrowCrossing`、窗口规则、容差规则、两曲线细化、弧长与反解各一份；`CurveCurvature` 不再为别名而拉进投影器；`CurveLength` 不再 include `CurveProjection.hpp`。
-- 代价：`geom::detail::` 这个限定名比 `detail::` 长；`geom` 里现在同时存在“树局部 `detail`”（`geom::planar::detail` / `geom::spatial::detail`，装文件内 helper）与“模块共享 `detail`”（`vn::geom::detail`），两者靠限定名区分。
-- 不做：不把 `math` 的 `numeric` / `spline` 搬进来（选项 B）；不给类型加 `2`/`3` 后缀（选项 D，`D3` 已有）。
-- 边界：`geom/detail` 里的名字不是公开接口，不承诺 ABI 与稳定性；要公开一个共享能力，先在两个命名空间各起一个公开入口。
-- 后记（同日）：上表 B 后来被完整采纳——`spline` 的节点模型与基函数、纯 Bernstein 求值、以及 `math/numeric` 的求根与积分全部搬进了本 ADR 建立的 `geom/detail`，`math` 只剩词汇。那两条针对 `numeric` 的反对意见（“底座层要能应答积分”）仍成立，只是被明确记为代价：出现第二个消费者时升独立模块，不在 `geom` 里将就。见 `ADR-2026-11-06-math-keeps-only-vocabulary.md`。
+- Good: one copy each of `narrowCrossing`, the window rules, the tolerance rules, the two-curve refinement, the arc length and the inverse solve; `CurveCurvature` no longer pulls in the projector for an alias; `CurveLength` no longer includes `CurveProjection.hpp`.
+- Cost: the qualifier `geom::detail::` is longer than `detail::`; `geom` now holds both a "tree-local `detail`" (`geom::planar::detail` / `geom::spatial::detail`, holding file-local helpers) and a "module-shared `detail`" (`vn::geom::detail`), told apart by the qualifier.
+- Not done: moving `math`'s `numeric` / `spline` in (option B); adding `2`/`3` suffixes to types (option D, `D3` already covers it).
+- Boundary: the names inside `geom/detail` are not a public interface and promise no ABI or stability; to publish a shared capability, first give it one public entry in each namespace.
+- Follow-up (same day): option B was later adopted in full - the `spline` knot model and basis functions, the pure Bernstein evaluation, and `math/numeric`'s root finding and integration all moved into the `geom/detail` this ADR created, leaving `math` with vocabulary only. The two objections aimed at `numeric` ("the base layer must be able to answer an integral") still hold, and are now recorded explicitly as a cost: when a second consumer appears, promote it to its own module rather than settling for `geom`. See `ADR-2026-11-06-math-keeps-only-vocabulary.md`.
 
-## 证据
+## Evidence
 
-- 新头：`geometry-planar.md` 2.5 列出的四个文件；`geom_global.hpp` 的三个命名空间宏与一处 `Continuity` 重导出。
-- 删除：两棵树各删掉 `narrowCrossing`（含文档）、`CurveScalar` / `CurveWindow` / `resolveCurveWindow`、`refineCurveCurveDistance`、`arcLength` / `parameterAtLength` 的实现体——`CurveProjection.hpp` 244→141 / 248→145 行，`CurveCurveDistance.hpp` 217→150 行（两侧），`CurveLength.hpp` 138→120 / 139→121 行。剩余差异全部是文档。
-- 门禁：`python scripts/check_geom_layering.py` → `0 finding(s) in 66 file(s)`。
-- 验证：Debug 构建通过；`test_geom_planar` 138、`test_geom_spatial` 193、`test_math` 56 全绿（行为未变，纯搬迁）。
+- New headers: the four files listed in `geometry-planar.md` 2.5; the three namespace macros in `geom_global.hpp` plus one `Continuity` re-export.
+- Deleted: each tree lost `narrowCrossing` (with its documentation), `CurveScalar` / `CurveWindow` / `resolveCurveWindow`, `refineCurveCurveDistance`, and the bodies of `arcLength` / `parameterAtLength` - `CurveProjection.hpp` 244 -> 141 / 248 -> 145 lines, `CurveCurveDistance.hpp` 217 -> 150 lines (both sides), `CurveLength.hpp` 138 -> 120 / 139 -> 121 lines. Every remaining difference is documentation.
+- Gate: `python scripts/check_geom_layering.py` -> `0 finding(s) in 66 file(s)`.
+- Verified: the Debug build passes; `test_geom_planar` 138, `test_geom_spatial` 193 and `test_math` 56 green (behaviour unchanged, a pure move).

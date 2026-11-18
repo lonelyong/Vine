@@ -1,44 +1,42 @@
-# ADR-2026-11-06：空间曲线族答三阶导，`OffsetCurve` 成为可构造的值类型
+# ADR-2026-11-06: the spatial curve family answers the third derivative, and `OffsetCurve` becomes a constructible value type
 
-- 状态：已采纳
-- 日期：2026-11-06
-- 取代：`ADR-2026-11-04-curve-third-derivative.md`
-- 相关：`../design/geometry-kinds.md` 2.7 / 2.8 / D9、`ADR-2026-11-05-curve-derivative-capability.md`、`../design/geometry-planar.md` 2.13
+- Status: Accepted
+- Date: 2026-11-06
+- Supersedes: `ADR-2026-11-04-curve-third-derivative.md`
+- Related: `../design/geometry-kinds.md` 2.7 / 2.8 / D9, `ADR-2026-11-05-curve-derivative-capability.md`, `../design/geometry-planar.md` 2.13
 
-> **EN**: Chose C, superseding `ADR-2026-11-04-curve-third-derivative`: concrete curve types gain a non-virtual `thirdDerivative(u)` and override `maxDerivativeOrder() == 3` / `derivativeAt(u, 3)`, and `geom::spatial::OffsetCurve` becomes a constructible value type computing `U''` from the basis third derivative, with order `min(2, basis capability - 1)` and `isValid()` false below it. The contract gains no pure virtual, and the 2D and 3D offsets are now the same shape.
+## Background
 
-## 背景
+The decision of 2026-11-04 was "do not add a third derivative to `Curve<T>`, so `OffsetCurve` stays abstract". The capability protocol (`maxDerivativeOrder()` / `derivativeAt()`) changed that premise: the third derivative can exist only as **a capability of the concrete types**, and the contract need not gain a pure virtual. The conclusion "the offset must be abstract" therefore expired - the reason it held was "a runtime basis curve cannot be asked for a third derivative".
 
-2026-11-04 的决定是“不给 `Curve<T>` 加三阶导数，`OffsetCurve` 因此保持抽象”。半年后的能力协议（`maxDerivativeOrder()` / `derivativeAt()`）改变了这个前提：三阶导可以只作为**具体类型的能力**存在，契约不必多一项纯虚。于是“偏置必须抽象”这个结论失效了——它原来成立的理由是“运行期基曲线问不出三阶导”。
+The planar side had also landed, on 2026-11-05, the shape "the offset holds a handle, and the order is the basis capability minus one"; if the spatial side stayed abstract the same concept would have different shapes in the two modules (`G6`), and the spatial offset would be unconstructible and unable to join family sweeps.
 
-同时平面侧已经在 2026-11-05 落地了“偏置持句柄、阶数 = 基曲线能力 − 1”的形态，空间侧若继续抽象，同一个概念在两个模块里形状不同（`G6`），且空间偏置不可构造、不能进族级扫查。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A 维持现状（偏置抽象、曲线只答二阶） | 零改动 | 空间偏置不可构造；两个模块的同一个概念形状不同；裁剪片段也无法偏置 |
-| B 给 `Curve<T>` 加纯虚 `thirdDerivative()` | 偏置直接能算 | 阶梯不闭合（偏置的 D3 要基曲线 D4）；所有实现者付账；与能力协议重复（`G8`） |
-| C 具体类型加非虚 `thirdDerivative()` + 覆写 `maxDerivativeOrder()==3` / `derivativeAt()`；`OffsetCurve` 用能力判定并变具体 | 契约不变；阶梯由能力表达；两模块同形 | 每个能答三阶的类型多两个覆写；多一份三阶导实现 |
-| D 只把 `OffsetCurve` 变具体，曲线族不答三阶 | 改动更小 | 没有基曲线能答三阶 ⇒ 偏置永远 `isValid() == false`，等于没实现 |
+| A. Keep the status quo (the offset abstract, curves answering two orders) | No change | The spatial offset cannot be constructed; the same concept has different shapes in the two modules; a trimmed piece cannot be offset either |
+| B. Add a pure virtual `thirdDerivative()` to `Curve<T>` | The offset can compute directly | The ladder does not close (the offset's D3 needs the basis D4); every implementer pays; it duplicates the capability protocol (`G8`) |
+| C. A non-virtual `thirdDerivative()` on the concrete types plus overrides of `maxDerivativeOrder() == 3` / `derivativeAt()`, with `OffsetCurve` deciding by capability and becoming concrete | The contract is unchanged; the ladder is expressed by capability; the two modules share a shape | Two more overrides per type that can answer the third order; one more third-derivative implementation |
+| D. Make only `OffsetCurve` concrete and let the curve family keep answering two orders | A smaller change | No basis answers the third order => the offset is forever `isValid() == false`, i.e. not implemented at all |
 
-## 决定
+## Decision
 
-采用 **C**。
+Chose **C**.
 
-- 具体类型新增非虚 `thirdDerivative(u)`，并覆写 `maxDerivativeOrder() == 3` 与 `derivativeAt(u, 3)`：`LineCurve`（零）、`CircleCurve`（`-P'`）、`EllipseCurve`（`-P'`）、`HyperbolaCurve`（`P'`）、`ParabolaCurve`（零）、`BezierCurve`（三阶差分 × `n(n-1)(n-2)`，有理形式加一层商法则）、`BSplineCurve`（基函数第三层 + 商法则）。`TrimmedCurve` 不变，已经向基曲线转发。
-- `geom::spatial::OffsetCurve` 去掉纯虚的 `secondDerivative`：用 `N = e × p'`、`R = |N|`、`k = (N·N')/R²` 写成 `U'' = N''/R − 2 N' k/R + U (k² − k')`，`N'' = e × p'''` 来自 `basis_curve->derivativeAt(u, 3)`。
-- `maxDerivativeOrder()` 报 `min(2, 基曲线能力 − 1)`（与平面侧同一条规则），`isValid()` 增加“基曲线能答三阶”这一条，`derivativeAt()` 在越界时答 `std::nullopt`。
+- The concrete types gain a non-virtual `thirdDerivative(u)` and override `maxDerivativeOrder() == 3` and `derivativeAt(u, 3)`: `LineCurve` (zero), `CircleCurve` (`-P'`), `EllipseCurve` (`-P'`), `HyperbolaCurve` (`P'`), `ParabolaCurve` (zero), `BezierCurve` (the third difference times `n(n-1)(n-2)`, with one quotient-rule layer for the rational form), `BSplineCurve` (the third layer of basis functions plus the quotient rule). `TrimmedCurve` is unchanged and already forwards to the basis.
+- `geom::spatial::OffsetCurve` drops the pure virtual `secondDerivative`: with `N = e x p'`, `R = |N|` and `k = (N.N')/R^2`, it writes `U'' = N''/R - 2 N' k/R + U (k^2 - k')`, where `N'' = e x p'''` comes from `basis_curve->derivativeAt(u, 3)`.
+- `maxDerivativeOrder()` reports `min(2, basis capability - 1)` (the same rule as the planar side), `isValid()` gains "the basis can answer the third order", and `derivativeAt()` answers `std::nullopt` out of range.
 
-判据：`G1`（阶数是能力，不是契约项）、`G4`（越界答空、能力决定 `isValid()`，不伪造零）、`G6`（2D / 3D 的 `OffsetCurve` 同形）、`G9`（新曲线只需报告能力）、`G10`（偏置二阶导只多一次虚调用，没有数值差分）。
+Criteria: `G1` (the order is a capability, not a contract item), `G4` (out of range answers empty, the capability decides `isValid()`, and no zero is fabricated), `G6` (the 2D and 3D `OffsetCurve` share a shape), `G9` (a new curve only reports its capability), `G10` (the offset's second derivative costs one more virtual call and no numerical difference).
 
-## 后果
+## Consequences
 
-- 好的：`OffsetCurve` 可构造、可进族级扫查、可偏置裁剪片段；两个模块的偏置形状一致；“偏置第 n 阶要基曲线第 n+1 阶”成为可查询的事实；`secondDerivative` 是精确值而不是差分近似。
-- 坏的 / 代价：每个能答三阶的类型多两个覆写与一份闭式实现；偏置套偏置仍是“位置 + 速度”视图（`isValid()` 为假、`maxDerivativeOrder() == 1`）；偏置仍不提供 `bounds()`。
-- 触发条件（何时重开）：需要偏置的第三阶导（曲率变化率、G3 拼接）时，规则会自动降到“基曲线必须答 4”，届时再决定是给具体类型加第四阶还是让偏置停在那一步。
+- Good: `OffsetCurve` is constructible, can join family sweeps and can offset trimmed pieces; the two modules' offsets have the same shape; "the offset's nth order needs the basis's (n+1)th" is a queryable fact; `secondDerivative` is an exact value rather than a difference approximation.
+- Bad / cost: each type that can answer the third order gains two overrides and one closed-form implementation; an offset of an offset is still a "position plus velocity" view (`isValid()` false, `maxDerivativeOrder() == 1`); the offset still offers no `bounds()`.
+- Trigger (when to reopen): when the offset's third derivative is needed (rate of curvature change, G3 joining), the rule drops automatically to "the basis must answer 4", and then it is decided whether to add a fourth derivative to the concrete types or stop the offset at that step.
 
-## 证据
+## Evidence
 
-- `src/base/geom/sdk/vine/geom/spatial/`：`LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` / `BezierCurve` / `BSplineCurve` 的 `thirdDerivative` 与能力覆写；`OffsetCurve` 的 `secondDerivative` / `maxDerivativeOrder` / `derivativeAt` / `isValid`。
-- `tests/test_geom_spatial/GeometryKindsTest.cpp`：`static_assert(!std::is_abstract_v<OffsetCurve<double>>)`；`everySpaceCurveAnswersItsThirdDerivative`（八种类型的三阶导与二阶导的中心差分一致，含两种有理形式，并对照四条闭式关系）；`theSpaceOffsetAnswersASecondDerivativeExactly`（二阶导与一阶导差分一致、零距离等于基曲线）；`anOffsetOfAnOffsetStopsAtTheVelocity`（报 1、`isValid()` 为假、二阶导答空、位置仍精确）；`sweepCurves` 两次精度都包含偏置。
+- `src/base/geom/sdk/vine/geom/spatial/`: `thirdDerivative` and the capability overrides of `LineCurve` / `CircleCurve` / `EllipseCurve` / `HyperbolaCurve` / `ParabolaCurve` / `BezierCurve` / `BSplineCurve`; `secondDerivative` / `maxDerivativeOrder` / `derivativeAt` / `isValid` of `OffsetCurve`.
+- `tests/test_geom_spatial/GeometryKindsTest.cpp`: `static_assert(!std::is_abstract_v<OffsetCurve<double>>)`; `everySpaceCurveAnswersItsThirdDerivative` (the third derivative of eight types agreeing with a central difference of the second, both rational forms included, checked against four closed-form relations); `theSpaceOffsetAnswersASecondDerivativeExactly` (the second derivative agreeing with a difference of the first, a zero distance giving the basis); `anOffsetOfAnOffsetStopsAtTheVelocity` (reports 1, `isValid()` false, a second derivative answering empty, the position still exact); `sweepCurves` covers the offset in both precisions.

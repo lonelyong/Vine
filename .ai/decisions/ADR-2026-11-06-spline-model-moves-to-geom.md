@@ -1,54 +1,52 @@
-# ADR-2026-11-06：B 样条的节点模型与 `Continuity` 从 `math` 移入 `geom`
+# ADR-2026-11-06: the B-spline knot model and `Continuity` move from `math` into `geom`
 
-- 状态：部分取代（“Bernstein 求值留在 `math/spline`”与“`math/numeric` 不动”两条已被 `ADR-2026-11-06-math-keeps-only-vocabulary.md` 取代；节点模型与 `Continuity` 的移动结论不变）
-- 日期：2026-11-06
-- 相关：`../design/math-base-layer.md`、`../design/geometry-module.md` 2.3 / 7、`ADR-2026-11-06-geom-detail-subtree.md`、`ADR-2026-11-04-bspline-without-knot-breaks.md`
+- Status: Partly superseded ("Bernstein evaluation stays in `math/spline`" and "`math/numeric` does not move" were superseded by `ADR-2026-11-06-math-keeps-only-vocabulary.md`; the move of the knot model and `Continuity` stands)
+- Date: 2026-11-06
+- Related: `../design/math-base-layer.md`, `../design/geometry-module.md` 2.3 / 7, `ADR-2026-11-06-geom-detail-subtree.md`, `ADR-2026-11-04-bspline-without-knot-breaks.md`
 
-> **EN**: Split `math/spline` by "does the signature mention our own data model": `BSplineBasis` moved to `vn::geom::detail` and `Continuity` to `vn::geom` (re-exported into both dimension namespaces), while `BezierBlend` stayed in `math/spline` as pure evaluation and `math/numeric` was untouched. Its Bernstein and numeric halves are superseded by `ADR-2026-11-06-math-keeps-only-vocabulary`; the knot model and `Continuity` move stands.
+## Background
 
-## 背景
+`math/spline/` had held two things since it was created: `BezierBlend.hpp` (`deCasteljau` / `differences`, Bernstein evaluation) and `BSplineBasis.hpp` (the knot model of distinct knots plus multiplicities, with the Cox-de Boor basis functions). Their only reason for being in `math` was "there was no other place at the time", and `ADR-2026-11-06-math-is-the-base-layer.md` redefined `math` as "the base layer, not only a maths library" to that end - **a page that has to defend a name is itself a signal of misplacement** (`G4`).
 
-`math/spline/` 自建立起就装着两件事：`BezierBlend.hpp`（`deCasteljau` / `differences`，Bernstein 求值）与 `BSplineBasis.hpp`（相异节点 + 重数这一套节点模型，加上 Cox–de Boor 基函数）。它们进 `math` 的理由只是“当时没有别的位置”，`ADR-2026-11-06-math-is-the-base-layer.md` 为此把 `math` 重新定义成“底座层，不只是数学库”——**一篇文档要为名字辩护，本身就是错位的信号**（`G4`）。
+The criterion then changed: `geom/planar` / `geom/spatial` merged into one module with a `geom/detail` subtree, so "where does shared geometry code go" had an answer, while "shared mathematics" still had only `math`. Once separated, the question became clear:
 
-判据后来变了：`geom/planar` / `geom/spatial` 合并成一个模块并有了 `geom/detail` 子树，于是“共享的几何东西放哪”有了答案，而“共享的数学东西”仍然只有 `math`。分开之后问题变得清楚：
-
-| 头 | 内容 | 签名里有我们自己的数据模型吗 | 消费者 |
+| Header | Content | Does the signature mention our own data model? | Consumers |
 |---|---|---|---|
-| `BezierBlend.hpp` | 一组值 + 一个标量，Bernstein 混合与有限差分 | 没有 | 两棵树的 `BezierCurve` / `BezierSurface` |
-| `BSplineBasis.hpp` | `flatKnotCount` / `knotAt` / `knotSpan` / `isClampedKnotVector` / `knotContinuity` / `basisValue` | **有**：相异节点 + 重数就是我们选的 NURBS 表示，`knotContinuity` 甚至直接答几何接口的 `Continuity` | 两棵树的 `BSplineCurve` / `BSplineSurface` |
+| `BezierBlend.hpp` | A set of values plus a scalar, Bernstein blending and finite differences | No | `BezierCurve` / `BezierSurface` in both trees |
+| `BSplineBasis.hpp` | `flatKnotCount` / `knotAt` / `knotSpan` / `isClampedKnotVector` / `knotContinuity` / `basisValue` | **Yes**: distinct knots plus multiplicities is the NURBS representation we chose, and `knotContinuity` answers the geometry interface's `Continuity` directly | `BSplineCurve` / `BSplineSurface` in both trees |
 
-同样的检查落到 `math/Continuity.hpp`：全仓库直接 include 它的只有 `geom/planar/Curve.hpp`、`geom/spatial/Curve.hpp`、`geom_global.hpp`——它的唯一消费者也是几何。
+The same check applied to `math/Continuity.hpp`: the only files in the repository that include it directly are `geom/planar/Curve.hpp`, `geom/spatial/Curve.hpp` and `geom_global.hpp` - its only consumers are geometry too.
 
-## 选项
+## Options
 
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A 保持现状 | 零改动 | 继续用一篇文档为 `math` 的名字辩护；`basisValue` 的模型住在“数学”层，而 `math` 里没有第二个消费者 |
-| B 整个 `spline/` 目录搬进 `geom/detail` | 一条规则讲完 | 连带把纯数学的 Bernstein 求值也搬走：将来做动画/重采样要用它，就得依赖曲线库（`G2` 反向） |
-| C 按“签名里有没有我们的数据模型”切：`BSplineBasis` → `geom/detail`，`BezierBlend` 留 `math/spline`；`Continuity` → `geom/Continuity.hpp` | 每一层只装自己认识的东西；两个头都不必改写签名 | `math/spline` 只剩一个头；`Continuity` 换了 include 路径 |
-| D 让 `math` 保持纯数学：`basisValue` 改吃**扁平**节点向量，由几何侧负责扁平化 | 模型与求值彻底分开 | 每次求值都要扁平化一次（分配），正是当初选“相异 + 重数”要避免的代价（`G1` 让位给 `G10` 的那条取舍） |
+| A. Keep the status quo | No change | Keep using a page to defend the name `math`; the model behind `basisValue` lives in the "mathematics" layer, while `math` has no second consumer |
+| B. Move the whole `spline/` directory into `geom/detail` | One rule explains everything | It also moves the purely mathematical Bernstein evaluation: animation or resampling later would have to depend on the curve library (a reversed `G2`) |
+| C. Split by "does the signature mention our data model": `BSplineBasis` -> `geom/detail`, `BezierBlend` stays in `math/spline`; `Continuity` -> `geom/Continuity.hpp` | Each layer holds only what it understands; neither header needs its signature rewritten | `math/spline` keeps one header; `Continuity` changes its include path |
+| D. Keep `math` purely mathematical: `basisValue` takes a **flat** knot vector and geometry flattens it | Model and evaluation are fully separated | Every evaluation would flatten once (an allocation), exactly the cost that choosing "distinct plus multiplicity" avoided (`G1` yielding to `G10`) |
 
-## 决定
+## Decision
 
-采用 **C**：
+Chose **C**:
 
-- `BSplineBasis.hpp` → `src/base/geom/sdk/vine/geom/detail/BSplineBasis.hpp`，命名空间 `vn::geom::detail`。它维度无关（不命名 `Point2` / `Point3`），符合 `geom/detail` 的既有规则；它只有模块内消费者，所以 `detail` 是诚实的标签。
-- `Continuity.hpp` → `src/base/geom/sdk/vine/geom/Continuity.hpp`，命名空间 `vn::geom`（模块根，**不是** `detail`）：它出现在 `Curve<T>` / `Surface<T>` 的纯虚签名里，是公共词汇；`geom_global.hpp` 把它重导出进两个维度命名空间（`geom/planar` / `geom/spatial` 是 `geom` 的**兄弟**而不是子命名空间，所以这个 import 是必需的，不是便利）。
-- `BezierBlend.hpp` 留在 `src/base/math/sdk/vine/math/spline/`：纯求值，无模型；将来若出现非几何的 Bernstein 消费者，这条决定就被印证。 <!-- drift-ok -->
-- `math/numeric` 不动：求根与积分是“调用方给精度目标”的过程，任何模块都可能需要，`basisValue` 不是那种东西。
-- 一处实现约束：`Continuity.hpp` 直接写 `VN_ROOT_NS_BEGIN namespace geom {`，不通过 `VN_GEOM_NS_BEGIN`——`geom_global.hpp` 要 include 它来做重导出，用它自己的宏就会形成“两边都还没声明就互相 include”的环。
+- `BSplineBasis.hpp` -> `src/base/geom/sdk/vine/geom/detail/BSplineBasis.hpp`, namespace `vn::geom::detail`. It is dimension-independent (it does not name `Point2` / `Point3`), which matches the existing rule for `geom/detail`; its consumers are inside the module only, so `detail` is an honest label.
+- `Continuity.hpp` -> `src/base/geom/sdk/vine/geom/Continuity.hpp`, namespace `vn::geom` (the module root, **not** `detail`): it appears in the pure virtual signatures of `Curve<T>` / `Surface<T>`, so it is public vocabulary; `geom_global.hpp` re-exports it into both dimension namespaces (`geom/planar` / `geom/spatial` are **siblings** of `geom` rather than sub-namespaces, so the import is required and not a convenience).
+- `BezierBlend.hpp` stays in `src/base/math/sdk/vine/math/spline/`: pure evaluation, no model; if a non-geometric Bernstein consumer appears later, this decision is confirmed. <!-- drift-ok -->
+- `math/numeric` does not move: root finding and integration are processes where "the caller supplies the precision target", any module might need them, and `basisValue` is not that kind of thing.
+- One implementation constraint: `Continuity.hpp` writes `VN_ROOT_NS_BEGIN namespace geom {` directly rather than going through `VN_GEOM_NS_BEGIN` - `geom_global.hpp` has to include it for the re-export, and using its own macro would create a cycle where neither side is declared when the other is included.
 
-判据：`G1`（一个概念一个所有者：节点表示归几何）、`G2`（纯数学仍留在底座层，几何概念不再占底座层）、`G4`（名字不再需要文档辩护）、`G10`（不引入每次求值的扁平化）、`G13`（表示的约定跟着存它的几何类型走）。`G8` 的反面检查：`math/spline` 只剩一个头，但它不是为将来预建的——它是 Bernstein 求值，今天就有消费者。
+Criteria: `G1` (one owner per concept: the knot representation belongs to geometry), `G2` (pure mathematics stays in the base layer and geometry concepts no longer occupy it), `G4` (the names need no documentation defence), `G10` (no per-evaluation flattening), `G13` (the representation convention travels with the geometry type that stores it). The reverse check of `G8`: `math/spline` keeps one header, but it was not pre-built for the future - it is Bernstein evaluation, and it has a consumer today.
 
-## 后果
+## Consequences
 
-- 好的：`math` 里不再有任何几何概念；`geom` 自带全部几何词汇（`Continuity`）与表示约定（节点模型），几何模块对样条表示的自足性不再依赖“底座层的巧合”；`knotContinuity` 与使用它的 `continuity()` 在同一个模块内。
-- 代价 / 迁移：`<vine/math/spline/BSplineBasis.hpp>` → `<vine/geom/detail/BSplineBasis.hpp>`，`math::spline::` → `geom::detail::`（3 个头、26 处调用）；`<vine/math/Continuity.hpp>` → `<vine/geom/Continuity.hpp>`（3 个头直接 include，其余经 `geom_global.hpp`）；`vn::math::Continuity` → `vn::geom::Continuity`（6 个测试、13 处）；`tests/test_math/BSplineBasisTest.cpp` → `tests/test_geom_spatial/`（`test_math` 只链 `vn::Math`，不再认识这个头）。 <!-- drift-ok -->
-- 反转条件：出现**非几何**的节点模型消费者（例如机器人轨迹插值要直接构造 B 样条）时重新评估——那时它要么再上一个共享位置，要么连 `vn::Nurbs` 一起升模块；出现第二个表示约定家族时，`ADR-2026-11-06-math-is-the-base-layer.md` 里写的 `vn::Nurbs` 触发条件依然有效。
+- Good: `math` holds no geometry concept any more; `geom` brings all its own geometry vocabulary (`Continuity`) and representation conventions (the knot model), so the module's self-sufficiency for spline representation no longer depends on "a coincidence of the base layer"; `knotContinuity` and the `continuity()` that uses it are in one module.
+- Cost / migration: `<vine/math/spline/BSplineBasis.hpp>` -> `<vine/geom/detail/BSplineBasis.hpp>`, `math::spline::` -> `geom::detail::` (3 headers, 26 call sites); `<vine/math/Continuity.hpp>` -> `<vine/geom/Continuity.hpp>` (3 headers include it directly, the rest through `geom_global.hpp`); `vn::math::Continuity` -> `vn::geom::Continuity` (6 tests, 13 occurrences); `tests/test_math/BSplineBasisTest.cpp` -> `tests/test_geom_spatial/` (`test_math` links only `vn::Math` and no longer knows this header). <!-- drift-ok -->
+- Reversal condition: a **non-geometric** consumer of the knot model appears (robot trajectory interpolation constructing a B-spline directly, for example) - then either give it another shared place, or promote it together with `vn::Nurbs`; when a second family of representation conventions appears, the `vn::Nurbs` trigger written in `ADR-2026-11-06-math-is-the-base-layer.md` still applies.
 
-## 证据
+## Evidence
 
-- `src/base/geom/sdk/vine/geom/detail/BSplineBasis.hpp`、`src/base/geom/sdk/vine/geom/Continuity.hpp`；`src/base/math/sdk/vine/math/spline/` 只剩 `BezierBlend.hpp`。 <!-- drift-ok -->
-- `geom_global.hpp`：`using geom::Continuity;` 两处，`VN_GEOM_NS_BEGIN` / `VN_GEOM_DETAIL_NS_BEGIN` 三个模块级宏。
-- 测试：`test_math` 56 → 49（7 个 B 样条基函数用例迁走），`test_geom_spatial` 193 → 200，`test_geom_planar` 138 不变；合计 357 全绿。
-- 门禁：`check_geom_layering.py` 67 个几何头 0 处违规（`geom/detail` 不 include 任一棵维度树）。
+- `src/base/geom/sdk/vine/geom/detail/BSplineBasis.hpp`, `src/base/geom/sdk/vine/geom/Continuity.hpp`; `src/base/math/sdk/vine/math/spline/` keeps only `BezierBlend.hpp`. <!-- drift-ok -->
+- `geom_global.hpp`: two `using geom::Continuity;` lines and the three module-level macros `VN_GEOM_NS_BEGIN` / `VN_GEOM_DETAIL_NS_BEGIN`.
+- Tests: `test_math` 56 -> 49 (7 B-spline basis cases moved), `test_geom_spatial` 193 -> 200, `test_geom_planar` unchanged at 138; 357 green together.
+- Gate: `check_geom_layering.py` reports 0 violations over 67 geometry headers (`geom/detail` includes neither dimension tree).

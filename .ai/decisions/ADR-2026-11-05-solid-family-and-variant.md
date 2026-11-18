@@ -1,51 +1,49 @@
-# ADR-2026-11-05：解析实体是"族接口 + 封闭值集"，模型按值持有
+# ADR-2026-11-05: analytic solids are "one family interface plus a closed value set", held by the model by value
 
-- 状态：已取代（“模型按值持有 `SolidShapef`”由 `ADR-2026-11-05-primitive-is-a-modelling-base.md` 取代；`SolidShape` 变体本身由 `ADR-2026-11-09-solid-closed-set-without-variant.md` 删除；`Solid<T>` 族接口 + 五个 kind 值仍现行）
-- 日期：2026-11-05
-- 相关：`../design/geometry-solid.md`、`../design/geometry-parametric.md`、`../../src/base/geometry/sdk/vine/geometry/Solid.hpp`、`../../tests/test_geometry/SolidTest.cpp`
+- Status: Superseded ("the model holds a `SolidShapef` by value" is superseded by `ADR-2026-11-05-primitive-is-a-modelling-base.md`; the `SolidShape` variant itself is deleted by `ADR-2026-11-09-solid-closed-set-without-variant.md`; the `Solid<T>` family interface plus the five kind values still stand)
+- Date: 2026-11-05
+- Related: `../design/geometry-solid.md`, `../design/geometry-parametric.md`, `../../src/base/geometry/sdk/vine/geometry/Solid.hpp`, `../../tests/test_geometry/SolidTest.cpp`
 
-> **EN**: Chose D: analytic solids are an interface family `Solid<T>` (five pure virtuals) plus a closed variant `SolidShape<T>`, with `Primitive` holding that variant by value and `solidOf()` giving the family view by reference at zero copy. Rejected algorithms on the modelling types, a bare variant, and pointer-held interface objects (allocation and shared ownership). Its "model holds the variant" part is superseded by `ADR-2026-11-05-primitive-is-a-modelling-base`, and the variant itself is deleted by `ADR-2026-11-09-solid-closed-set-without-variant`; the family plus five kinds stands.
+## Background
 
-## 背景
+Geometry algorithms were initially attached to the modelling types: tessellation, ray intersection and point-to-solid distance were each a free function whose only entry was `shapeType()`. The consequences were that the formulas for one shape were scattered over three files, that model consumers knew the algorithm entries, and that every new capability meant writing the tag dispatch once more.
 
-几何算法最初挂在建模类型上：三角化、射线求交、点到实体距离各是一个以 `shapeType()` 为唯一入口的自由函数。后果是同一个形状的公式散在三个文件里、模型的消费者认识算法入口、每加一个能力都要再写一遍标签分派。
+The value side also lacked the word "solid": `Aabb` / `Obb` are boxes, the five surfaces are shells without caps or interiors, and `closestPointOnSurface()` cannot answer a distance with solid semantics.
 
-值类型一侧又缺少“实体”这个词汇：`Aabb` / `Obb` 是盒，五个曲面是无盖无内部的壳，`closestPointOnSurface()` 答不了实体语义的距离。
+Two real constraints emerged during the evaluation and pushed the design to its final shape:
 
-评估中出现两个真实约束，它们把设计推到最终形态：
+1. **Some parameters must be concrete types.** An exported signature or a backend interface can only write `const Solid<float>&`, not a template, so a **family type** for "any one of the solids" is needed.
+2. **The model and the geometry share no ownership** (`G13`), and every shape of the model already exists on the heap, so the geometry should lie in that memory rather than be allocated again.
 
-1. **有些参数必须是具体类型**。一个导出签名或后端接口只能写 `const Solid<float>&`，不能是模板；所以需要一个“任意一种实体”的**族类型**。
-2. **模型与几何不共享所有权**（`G13`），并且模型的每个形状都在堆上已经存在，几何应当躺在那块内存里，而不是再分配一次。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A 五个模型子类各自带算法（原状） | 零改动 | `ShapeType` 与类可能漂移；同一形状的公式散在多处；模型消费者认识算法入口（`G1`、`G12`） |
-| B `Solid<T>` 直接是 `std::variant` 的别名 | 最简、最像 C++ | 没有共同类型；只问一个问题的消费者也要自己 visit（`G7`） |
-| C 族接口 + `Primitive` 用指针持有 | 共同类型、便宜拷贝 | 每次构造一次堆分配、每次 `bounds()` 一次解引用、共享所有权（`G10`、`G13`） |
-| D 族接口 `Solid<T>` + 五个 kind 值 + 模型持有 `SolidShape<T>` 变体 | 共同类型；零分配；visit 穷尽；模型侧一次持有 | 每个 kind 多一个 vptr；两个视图（接口 / variant）各有一条使用规则 |
+| A. The five model subclasses each carry their algorithms (the original) | No change | `ShapeType` and the class can drift; the formulas of one shape are scattered; model consumers know the algorithm entries (`G1`, `G12`) |
+| B. `Solid<T>` is simply an alias of `std::variant` | Simplest, most idiomatic C++ | No common type; even a consumer asking one question has to visit itself (`G7`) |
+| C. A family interface with `Primitive` holding a pointer | A common type, cheap copies | One heap allocation per construction, one dereference per `bounds()`, shared ownership (`G10`, `G13`) |
+| D. The family interface `Solid<T>` plus the five kind values plus the model holding a `SolidShape<T>` variant | A common type; zero allocation; exhaustive visit; one holding on the model side | One more vptr per kind; two views (interface and variant) with one usage rule each |
 
-## 决定
+## Decision
 
-采纳 D。
+Chose D.
 
-- `Solid<T>`：抽象接口，五个纯虚——`isValid()`、`hasVolume(T)`、`bounds()`、`closestPoint()`、`intersectWith(Ray)`。默认容差写在接口与每个 kind 的声明上（派生类会遮蔽基类的默认参数）。
-- `Box<T>` … `Ellipsoid<T>`：`final` 值类型，持半量纲与自己的解析式。
-- `SolidShape<T> = std::variant<五个 kind>`：模型按值存的那份几何。
-- `solidOf(SolidShape<T>&)`：族视图，一个 `std::visit` 取引用，零拷贝。
-- `Primitive`：`Shape`（身份、名字、revision）+ `SolidShapef`。`setSolid()` 是唯一 mutator，同时同步 `shapeType()`；`solid()` 给族视图，`shape()` 给 variant。
-- 三角化、B-rep 桥、描述文件读写者 visit 这份 variant（它们必须按 kind 作答）。
+- `Solid<T>`: an abstract interface with five pure virtuals - `isValid()`, `hasVolume(T)`, `bounds()`, `closestPoint()`, `intersectWith(Ray)`. Default tolerances are declared on the interface and on each kind (a derived class shadows the base's default arguments).
+- `Box<T>` ... `Ellipsoid<T>`: `final` value types holding half-dimensions and their own analytic formulas.
+- `SolidShape<T> = std::variant<the five kinds>`: the geometry the model stores by value.
+- `solidOf(SolidShape<T>&)`: the family view, one `std::visit` taking a reference, no copy.
+- `Primitive`: `Shape` (identity, name, revision) plus `SolidShapef`. `setSolid()` is the only mutator and synchronises `shapeType()` at the same time; `solid()` gives the family view and `shape()` the variant.
+- Tessellation, the B-rep bridge and description file reading and writing visit this variant (they must answer by kind).
 
-## 后果
+## Consequences
 
-- 好的：一个形状一个家；模型不再认识算法；`ShapeType` 由几何派生，不会漂移；加一种 kind 时，每个 visit 点都是编译错误，编译器直接列出待办；`const Solidf&` 让“必须是具体类型”的签名成立。
-- 好的：`Primitive` 仍然是零额外分配——几何躺在本来就要分配的那个对象里。
-- 坏的 / 代价：每个 kind 有一个 vptr（`SolidShapef` 约 24–32 字节，`Primitive` 跟着变大，仍无分配）；两个视图各有一条使用规则（问一个问题用 `solid()`，按 kind 作答用 `shape()`）；默认参数要在两处重复。
-- 触发条件（什么时候重开）：出现必须**异构持有实体**的容器（`vector<unique_ptr<Solid>>`），或第三方需要注册自定义 kind——那时才该把 variant 换成指针 + 纯接口（选项 C 的代价届时才有对应的收益）。
+- Good: one shape, one home; the model no longer knows algorithms; `ShapeType` is derived from the geometry and cannot drift; adding a kind makes every visit point a compile error, so the compiler lists the work; `const Solidf&` makes "must be a concrete type" signatures possible.
+- Good: `Primitive` still allocates nothing extra - the geometry lies inside the object that had to be allocated anyway.
+- Bad / cost: each kind has one vptr (`SolidShapef` is about 24-32 bytes and `Primitive` grows with it, still with no allocation); the two views have one usage rule each (ask a question through `solid()`, answer by kind through `shape()`); the default arguments have to be repeated in two places.
+- Trigger (when to reopen): a container that must **hold solids heterogeneously** appears (`vector<unique_ptr<Solid>>`), or a third party needs to register a custom kind - only then should the variant become a pointer plus a pure interface (option C's cost gains its benefit at that point).
 
-## 证据
+## Evidence
 
-- 测试：`tests/test_geometry/SolidTest.cpp`（接口抽象、两个视图一致、标签派生、体积判据）、`SolidDistanceTest.cpp`、`SolidIntersectionTest.cpp`、`SolidTessellationTest.cpp`；`test_geometry` 165 项全绿，`ctest` 28 项中除环境性的 `check_translations`（缺 `lupdate`）外全部通过。 <!-- drift-ok -->
-- 门禁：`check_public_docs.py` 0 new、`check_include_hygiene.py` 0、`check_export_annotations.py` 0、`check_diagnostic_formats.py` 0、`check_ai_docs.py --strict` 0、`check_design_docs.py` 0。
-- 外部对照：Box2D v3 用 tag + union（选项 B 的 C 风格等价物）；PhysX 的几何族有基类但**没有虚函数**，行为由 `PxGeometryQuery` 按 tag 分派；Bullet / Jolt 用虚函数，代价是形状必须指针持有——它们买的是第三方扩展，本仓库不卖。
+- Tests: `tests/test_geometry/SolidTest.cpp` (interface abstractness, the two views agreeing, the tag derived, the volume criterion), `SolidDistanceTest.cpp`, `SolidIntersectionTest.cpp`, `SolidTessellationTest.cpp`; `test_geometry` 165 green, and of the 28 `ctest` items all pass except the environmental `check_translations` (missing `lupdate`). <!-- drift-ok -->
+- Gates: `check_public_docs.py` 0 new, `check_include_hygiene.py` 0, `check_export_annotations.py` 0, `check_diagnostic_formats.py` 0, `check_ai_docs.py --strict` 0, `check_design_docs.py` 0.
+- External comparison: Box2D v3 uses a tag plus a union (the C-style equivalent of option B); PhysX's geometry family has a base class but **no virtual functions**, and behaviour is dispatched by tag in `PxGeometryQuery`; Bullet and Jolt use virtual functions, at the cost of holding shapes by pointer - what they buy is third-party extension, which this repository does not sell.

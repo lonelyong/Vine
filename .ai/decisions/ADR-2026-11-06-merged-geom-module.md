@@ -1,45 +1,43 @@
-# ADR-2026-11-06：`geom/planar` 与 `geom/spatial` 合并为一个 `vn::Geom` 模块
+# ADR-2026-11-06: `geom/planar` and `geom/spatial` merge into one `vn::Geom` module
 
-- 状态：已采纳
-- 日期：2026-11-06
-- 相关：`../design/geometry-planar.md` 2.5、`ADR-2026-11-05-planar-curve-contract.md`、`ADR-2026-11-06-math-is-the-base-layer.md`、`ADR-2026-11-06-shared-numeric-kernels-in-math.md`
+- Status: Accepted
+- Date: 2026-11-06
+- Related: `../design/geometry-planar.md` 2.5, `ADR-2026-11-05-planar-curve-contract.md`, `ADR-2026-11-06-math-is-the-base-layer.md`, `ADR-2026-11-06-shared-numeric-kernels-in-math.md`
 
-> **EN**: Merged `vn::Geom3D` and `vn::Geom2D` into one `src/base/geom` module and one `vn::Geom` target with a single `geom_global.hpp` and `VN_GEOM_API`, keeping the SDK trees and namespaces unchanged; the 2D/3D isolation that the target boundary used to enforce is now enforced by `scripts/check_geom_layering.py`. Rejected keeping two modules with duplicated shared code and inserting a `GeomBase` module; the direct gain was de-duplicating `narrowCrossing` and three pairs of family algorithms.
+## Background
 
-## 背景
+The two geometry modules had always been two CMake units: `vn::Geom3D` was SHARED (explicit instantiations plus three non-template implementations) and `vn::Geom2D` was INTERFACE (17 headers, no `src/`, zero exported symbols). The consumers were extremely asymmetric as well: 15 CMake targets used `vn::Geom3D` and only its own tests used `vn::Geom2D`.
 
-两个几何模块一直是两个 CMake 单元：`vn::Geom3D` 是 SHARED（有显式实例化与三个非模板实现），`vn::Geom2D` 是 INTERFACE（17 个头、无 `src/`、零导出符号）。消费者也极不对称：`vn::Geom3D` 有 15 个 CMake 目标在用，`vn::Geom2D` 只有它自己的测试。
+The cost of these "sibling directories" showed up over the last few rounds: `detail::narrowCrossing` and three pairs of family algorithms (arc length, projection, two-curve distance) existed once in each module, because **no place can see both sides** - `math` does not know curves, and two sibling modules should not depend on each other. Either copy, or merge.
 
-这种“兄弟目录”的代价在最近几轮暴露出来：`detail::narrowCrossing` 与三对族级算法（弧长、投影、两曲线距离）在两个模块里各有一份，因为**能同时看见两边的位置不存在**——`math` 不认识曲线，两个兄弟模块之间也不该互相依赖。要么复制，要么合并。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A 保持两个模块，重复继续存在 | 零改动；2D 保持 INTERFACE、无 ABI | 共享件只能复制；每加一条几何级共享逻辑就多一份漂移风险 |
-| B 合并为 `src/base/geom` + 单库 `vn::Geom`，SDK 树仍分 `geom/planar` / `geom/spatial`，两树共用一个 `geom/geom_global.hpp` | 共享件有家；一个 target；一个 API 宏；**include 路径与命名空间零改动** | 失去编译器强制的 2D/3D 隔离，改由脚本门禁；2D 消费者要链 `libGeom`；文档路径与 baseline 要一次性更新 |
-| C 新建一个位于两者之下的 `vn::GeomBase` 模块放共享件 | 保住 target 边界 | 为两个头开一个新模块，且共享件仍不能使用曲线类型本身 |
+| A. Keep two modules and the duplication | No change; 2D stays INTERFACE with no ABI | Shared code can only be copied; every new geometry-level shared piece adds a drift risk |
+| B. Merge into `src/base/geom` and one library `vn::Geom`, with the SDK trees still split into `geom/planar` / `geom/spatial` and both sharing one `geom/geom_global.hpp` | The shared code has a home; one target; one API macro; **include paths and namespaces do not move at all** | The compiler-enforced 2D/3D isolation is lost and moves to a script gate; 2D consumers link `libGeom`; documentation paths and the baseline need a one-off update |
+| C. Create a `vn::GeomBase` module below both for the shared code | The target boundary is kept | A new module for two headers, and the shared code still cannot use the curve types themselves |
 
-## 决定
+## Decision
 
-采用 **B**：
+Chose **B**:
 
-- 目录 `src/base/geom/{sdk/vine/geom/planar, sdk/vine/geom/spatial, sdk/vine/geom, src}`；目标 `vn::Geom`，编译定义 `VN_GEOM_LIB`。
-- **一个 global**：`sdk/vine/geom/geom_global.hpp` 提供 `VN_GEOM_API`、`VN_GEOM_PLANAR_NS_BEGIN/END`、`VN_GEOM_SPATIAL_NS_BEGIN/END`，并在两个命名空间各重导出一次 `Continuity`。原来的两个模块各有一个 global 头（`geom/planar_global.hpp` / `geom/spatial_global.hpp`），现已删除；64 个头改成 `#include <vine/geom/geom_global.hpp>`（参考 `appfw_global.hpp` 的形态：一个模块一个 global，多个命名空间写在同一文件里）。 <!-- drift-ok -->
-- **隔离改由门禁保证**：新增 `scripts/check_geom_layering.py`，`geom/planar` 的头不得 include `geom/spatial`，反之亦然。原先是“两个 target 互相链接不了”，现在是“脚本报错”，可执行、可进 CI。
+- Directories `src/base/geom/{sdk/vine/geom/planar, sdk/vine/geom/spatial, sdk/vine/geom, src}`; target `vn::Geom`, compile definition `VN_GEOM_LIB`.
+- **One global**: `sdk/vine/geom/geom_global.hpp` provides `VN_GEOM_API`, `VN_GEOM_PLANAR_NS_BEGIN/END` and `VN_GEOM_SPATIAL_NS_BEGIN/END`, and re-exports `Continuity` once into each namespace. The two modules each had their own global header before (`geom/planar_global.hpp` / `geom/spatial_global.hpp`) and both are deleted; 64 headers now include `<vine/geom/geom_global.hpp>` (following the shape of `appfw_global.hpp`: one global per module, several namespaces written into one file). <!-- drift-ok -->
+- **Isolation moves to the gate**: a new `scripts/check_geom_layering.py` forbids a `geom/planar` header from including `geom/spatial` and the reverse. What used to be "the two targets cannot link to each other" is now "the script reports it", which is executable and can go into CI.
 
-判据：`G1`（共享件一份）、`G5`（几何级改动落在一个模块内）、`G6`（模块形态统一：一个库、一个 global）、`G10`（消费者链接面收窄；2D 不导出符号，无 ABI 损失）。`G8` 的张力如实记录：合并当下的直接收益只有 `narrowCrossing` 与三对算法的去重，属于结构性收益，不是功能驱动——这一步是用户明确要求的方向，因此执行，但代价与替代方案都在此存照。
+Criteria: `G1` (one copy of the shared code), `G5` (a geometry-level change lands in one module), `G6` (a uniform module shape: one library, one global), `G10` (the consumer's link surface narrows; 2D exports no symbols, so there is no ABI loss). The tension with `G8` is recorded honestly: the immediate benefit of merging was only de-duplicating `narrowCrossing` and three pairs of algorithms, a structural gain rather than a functional driver - this step is a direction the user explicitly asked for, so it was taken, but its cost and alternatives are on the record here.
 
-## 后果
+## Consequences
 
-- 好的：2D/3D 可以共享实现；消费者统一链 `vn::Geom`；一个 API 宏；`check_public_docs` baseline 与几何无关（几何头全部有文档），因此移动没有产生新的欠账。
-- 坏的 / 代价：**隔离从编译器降级为约定 + 脚本**；`vn::Geom2D` 这个名字消失（消费者 `tests/test_geom_planar` 改为链 `vn::Geom`）；`geometry-planar.md` 2.5 原先写的“header-only / INTERFACE 目标”不再成立，已改写为“一个模块、一个库、一个 global，两套命名空间”。
-- 迁移：`vn::Geom3D` / `vn::Geom2D` → `vn::Geom`（16 个 CMakeLists）；`#include "geom2d_global.hpp"` / `"geom3d_global.hpp"` → `#include <vine/geom/geom_global.hpp>`（64 个头）；`VN_GEOM2D_API` / `VN_GEOM3D_API` → `VN_GEOM_API`。
-- 不做：重命名命名空间（`vn::geom::planar` / `vn::geom::spatial` 保持不变——它们是概念名，不是模块名）。
+- Good: 2D and 3D can share implementations; consumers link `vn::Geom` uniformly; one API macro; the `check_public_docs` baseline is unrelated to geometry (every geometry header has documentation), so the move created no new debt.
+- Bad / cost: **the isolation is downgraded from the compiler to a convention plus a script**; the name `vn::Geom2D` disappears (its consumer `tests/test_geom_planar` links `vn::Geom` now); what 2.5 of `geometry-planar.md` used to say ("header-only / INTERFACE target") no longer holds and was rewritten as "one module, one library, one global, two namespaces".
+- Migration: `vn::Geom3D` / `vn::Geom2D` -> `vn::Geom` (16 CMakeLists); `#include "geom2d_global.hpp"` / `"geom3d_global.hpp"` -> `#include <vine/geom/geom_global.hpp>` (64 headers); `VN_GEOM2D_API` / `VN_GEOM3D_API` -> `VN_GEOM_API`.
+- Not done: renaming the namespaces (`vn::geom::planar` / `vn::geom::spatial` stay - they are concept names, not module names).
 
-## 证据
+## Evidence
 
-- `src/base/geom/CMakeLists.txt`：单 target、`VN_GEOM_LIB`、以及“隔离由脚本保证”的注释。
-- `src/base/geom/sdk/vine/geom/geom_global.hpp`：一个 API 宏、两个命名空间宏、两处 `Continuity` 重导出。
-- `scripts/check_geom_layering.py`：62 个几何头，0 处跨树 include。
-- 验证：全量 Debug 构建通过；`test_math` 56、`test_geom_planar` 138、`test_geom_spatial` 193 全绿；`check_ai_docs` / `check_design_docs` / `check_public_docs` / `check_include_hygiene` / `check_doc_symbols` / `check_export_annotations` / `check_diagnostic_formats` 均 0 发现。
+- `src/base/geom/CMakeLists.txt`: one target, `VN_GEOM_LIB`, and the comment saying the isolation is guaranteed by the script.
+- `src/base/geom/sdk/vine/geom/geom_global.hpp`: one API macro, two namespace macros, two `Continuity` re-exports.
+- `scripts/check_geom_layering.py`: 62 geometry headers, 0 cross-tree includes.
+- Verified: the full Debug build passes; `test_math` 56, `test_geom_planar` 138 and `test_geom_spatial` 193 green; `check_ai_docs` / `check_design_docs` / `check_public_docs` / `check_include_hygiene` / `check_doc_symbols` / `check_export_annotations` / `check_diagnostic_formats` all report 0 findings.

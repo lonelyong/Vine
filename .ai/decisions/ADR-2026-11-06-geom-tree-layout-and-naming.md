@@ -1,51 +1,49 @@
-# ADR-2026-11-06：几何两棵树的目录位置与维度命名维持现状
+# ADR-2026-11-06: the geometry trees keep their directory position and their dimension naming
 
-- 状态：已取代（两个契约已下沉为 `geom/{planar,spatial}` 子目录与 `vn::geom::{planar,spatial}` 子命名空间，见 `ADR-2026-11-06-geom-contracts-nested-under-module.md`；本文对 `2` 后缀与“两棵契约都加标记”的否决仍然有效）
-- 日期：2026-11-06
-- 相关：`../design/geometry-module.md` 2.2–2.5 / 7、`ADR-2026-11-06-merged-geom-module.md`、`ADR-2026-11-06-geom-detail-subtree.md`
+- Status: Superseded (both contracts have sunk into the `geom/{planar,spatial}` subdirectories and the `vn::geom::{planar,spatial}` sub-namespaces, see `ADR-2026-11-06-geom-contracts-nested-under-module.md`; this document's rejection of a `2` suffix and of "tag both contracts" still holds)
+- Date: 2026-11-06
+- Related: `../design/geometry-module.md` 2.2-2.5 / 7, `ADR-2026-11-06-merged-geom-module.md`, `ADR-2026-11-06-geom-detail-subtree.md`
 
-> **EN**: Record of a decision since replaced: kept the sibling directory layout and the namespace-carried dimension (no `2` / `3` type suffixes), because the shared-helper problem was already solved by `geom/detail` and the reorder bought only tidier names for 689 rewritten references; the `2` / `3` suffix and "both trees tagged" options stay rejected. Superseded by `ADR-2026-11-06-geom-contracts-nested-under-module`, which did nest both directory and namespace.
+## Background
 
-## 背景
+One session produced three reorder proposals, all aimed at the same thing - "make the module's physical shape look more like what it says it is":
 
-同一个会话里出现过三个重排提议，都指向同一件事——"让模块的物理形状更像它自称的样子"：
+1. add `2` / `3` suffixes to the types and merge the two namespaces into one;
+2. move the two trees down to `geom/planar` and `geom/spatial` and sink the namespaces with them;
+3. flatten everything into `geom/` and tag only 2D (`Curve2`, `CircleCurve2`), leaving 3D untagged.
 
-1. 给类型加 `2` / `3` 后缀，把两套命名空间并成一个；
-2. 把两棵树下移到 `geom/planar` 与 `geom/spatial`，命名空间跟着下沉；
-3. 平铺到 `geom/` 下，只给 2D 加标记（`Curve2`、`CircleCurve2`），3D 保持不带标记。
+The real problem they were meant to solve (dimension-independent code needs a shared place inside the module) **was already solved**: `geom/planar` and `geom/spatial` share implementations today by including `vine/geom/detail/...` (16 of their 64 headers do so), and `scripts/check_geom_layering.py` explicitly allows that direction and forbids the two trees from including each other, with 0 violations at the time. **All the reorder could add was "names and directories that look tidier", not capability.**
 
-它们要解决的实际问题（与维度无关的代码需要一个模块内的共享位置）**已经解决了**：`geom/planar` 与 `geom/spatial` 今天就是通过 include `vine/geom/detail/...` 共享实现的（64 个头里有 16 个这么做），`scripts/check_geom_layering.py` 明确允许这个方向、禁止两棵树互相 include，当前 0 处违规。**重排剩下的只是"名字和目录看起来更整齐"，不是能力。**
+## Options
 
-## 选项
-
-| 选项 | 好处 | 否决理由 |
+| Option | Benefit | Reason for rejection |
 |---|---|---|
-| A 嵌套 `geom/planar` + `geom/spatial`（命名空间 `vn::geom::planar` / `spatial`） | `Continuity` 与 `detail` 由外层命名空间自动可见，`geom_global.hpp` 的两段 `using`（及"兄弟命名空间查不到"的说明）可以删掉 | 689 处代码引用 + 265 处文档引用全部改写，换来 20 行减少；两棵树仍各有一个 `CircleCurve.hpp`，文件识别问题一点没解决 |
-| B 平铺 + 只标 2D（`Curve2` / `CircleCurve2`），3D 原名 | 3D 的名字一个不动；文件一眼可分 | ① 4 对**公开函数**同名，其中 `closestPointOnCurve` 与 `curveToCurveDistance` 参数表相同、返回类型不同——C++ 不能按返回类型重载，必须连函数一起改名（`closestPointOnCurve2`），这是用户可见 API；② `LineCurved`（3D）对 `LineCurve2d`（2D）：`d` / `f` 已被精度别名占用（`Vec2d`、`Rect2d`），两个后缀挤在一个位置；③ `CircleCurve` 变成"无标记即 3D"的不成文约定（`G4`）；④ `BezierCurve2` / `BSplineCurve2` 与 `degree()` 所在的"二次/三次"语义冲突 |
-| C 平铺 + 两棵树都标（`Curve2` / `Curve3`） | 完全对称，单命名空间 | 15 个 2D 类型 + 47 个 3D 类型 + 4 个函数同时改名；且名字谎称"同一个族的两个维度"——2D 没有曲面与实体，两个契约零继承、不可互换（`G4`、`G1`） |
+| A. Nest `geom/planar` + `geom/spatial` (namespaces `vn::geom::planar` / `spatial`) | `Continuity` and `detail` become visible through the enclosing namespace, and the two `using` blocks in `geom_global.hpp` (plus the "sibling namespaces cannot be found" note) can be deleted | All 689 code references and 265 documentation references rewritten for 20 lines fewer; the two trees still each have a `CircleCurve.hpp`, so the file-identification problem is untouched |
+| B. Flatten and tag only 2D (`Curve2` / `CircleCurve2`), 3D unchanged | Not one 3D name moves; files are distinguishable at a glance | (1) four pairs of **public functions** share a name, and `closestPointOnCurve` and `curveToCurveDistance` have the same parameter list and different return types - C++ cannot overload on the return type, so the functions have to be renamed too (`closestPointOnCurve2`), and that is user-visible API; (2) `LineCurved` (3D) against `LineCurve2d` (2D): `d` / `f` are already taken by the precision aliases (`Vec2d`, `Rect2d`), so two suffixes crowd into one position; (3) `CircleCurve` becomes the unwritten convention "untagged means 3D" (`G4`); (4) `BezierCurve2` / `BSplineCurve2` collide with the "quadratic/cubic" meaning that `degree()` carries |
+| C. Flatten and tag both trees (`Curve2` / `Curve3`) | Fully symmetric, one namespace | 15 2D types, 47 3D types and 4 functions renamed at once; and the names would claim "two dimensions of one family" - 2D has no surfaces or solids, and the two contracts share zero inheritance and are not interchangeable (`G4`, `G1`) |
 
-行业对照只支持其中一种写法，而且不是尾缀：OCCT 是"2D 加标记、3D 不加"，但标记写成 **`2d` 中缀**（`Geom_Curve` 对 `Geom2d_Curve`、`gp_Circ` 对 `gp_Circ2d`），正是为了避开与度数、阶数抢同一个位置。本仓库连 `2d` 都用不了——`d` 已经是标量后缀。
+The industry comparison supports only one of these spellings, and it is not a suffix: OCCT tags 2D and leaves 3D untagged, but writes the tag as an **infix** (`Geom_Curve` against `Geom2d_Curve`, `gp_Circ` against `gp_Circ2d`), precisely to avoid competing with degree and order. This repository cannot even use `2d` - `d` is already the scalar suffix.
 
-## 决定
+## Decision
 
-维持现状：
+Keep the status quo:
 
-- 目录：`sdk/vine/geom/planar` 与 `sdk/vine/geom/spatial` 是 `sdk/vine/` 下与 `geom/` 平级的两棵树；`geom/` 放模块的 `geom_global.hpp`、`Continuity.hpp` 与 `detail/`。
-- 命名：维度由**命名空间**承载（`vn::geom::planar` / `vn::geom::spatial`），类型名不带维度标记，精度后缀仍是 `d` / `f`。
-- 共享：两棵树都可以 include `vine/geom/detail/`，且不得互相 include——由门禁保证，不由目录位置保证。
-- 已知代价（接受）：`geom/planar` / `geom/spatial` 是 `geom` 的兄弟而非孩子，所以 `geom_global.hpp` 必须把 `Continuity` 重导出进两个命名空间；这段 import 及其说明保留，`@note` 已写明"非限定名靠 import 才解析"。
+- Directories: `sdk/vine/geom/planar` and `sdk/vine/geom/spatial` are two trees under `sdk/vine/` at the same level as `geom/`; `geom/` holds the module's `geom_global.hpp`, `Continuity.hpp` and `detail/`.
+- Naming: the dimension is carried by the **namespace** (`vn::geom::planar` / `vn::geom::spatial`), type names carry no dimension tag, and the precision suffix stays `d` / `f`.
+- Sharing: both trees may include `vine/geom/detail/` and may not include each other - guaranteed by the gate, not by the directory position.
+- Known cost (accepted): `geom/planar` / `geom/spatial` are siblings of `geom` rather than children, so `geom_global.hpp` has to re-export `Continuity` into both namespaces; that import and its explanation stay, and the `@note` already says "unqualified names resolve only through the import".
 
-判据：`G8`（没有功能收益的重排不做）、`G4`（维度已经在命名空间里说清，再进名字就是重复，且会与度数/精度抢位置）、`G11`（用户可见的 `closestPointOnCurve` / `arcLength` 不改名）。
+Criteria: `G8` (a reorder without a functional gain is not done), `G4` (the dimension is already stated in the namespace, so putting it into the name repeats it and competes with degree and precision), `G11` (the user-visible `closestPointOnCurve` / `arcLength` are not renamed).
 
-## 后果
+## Consequences
 
-- 好的：本轮不需要改动任何代码；`geom/detail` 的共享关系保持原样；两棵树的公开 API 与别名一个不动。
-- 代价 / 遗留：`math` 的 18 个头全在 `vine/math/` 下，而几何的三棵树不全在 `vine/geom/` 下——这条不对称留着。它是**纯目录观感**问题，不值得用 689 处改写作交换。
-- 何时重新评估：出现**第三棵树**（例如多边形或网格几何），或 `geom` 的模块级词汇多到需要自己的命名空间层次时。判断依据是"有没有功能收益"，不是"名字是否更好看"。
+- Good: this round needed no code change; the sharing inside `geom/detail` is as it was; the public API and aliases of both trees did not move.
+- Cost / leftover: all 18 of `math`'s headers are under `vine/math/`, while the three geometry trees are not all under `vine/geom/` - that asymmetry stays. It is a **purely cosmetic directory** question and not worth 689 rewrites.
+- When to re-evaluate: a **third tree** appears (polygonal or mesh geometry, for example), or `geom`'s module-level vocabulary grows enough to need its own namespace levels. The criterion is "is there a functional gain", not "do the names look better".
 
-## 证据
+## Evidence
 
-- 现状：`geom/planar` 17 个头、`geom/spatial` 47 个头、`geom/` 2 个头 + `detail/` 8 个；其中 16 个树内头 include 了 `vine/geom/detail/...`。
-- 门禁：`python scripts/check_geom_layering.py` → `0 finding(s) in 70 file(s)`。
-- 改名面：`src` + `tests` 里 `geom::planar::|geom::spatial::|vine/geom/planar|vine/geom/spatial` 共 689 处；`.ai` 265 处。
-- 同名函数实测：`arcLength`、`parameterAtLength`、`closestPointOnCurve`、`curveToCurveDistance` 两棵树各一份；2D 另有 `offsetCurve` / `trimCurve` / `intersectCurveWithCurve`，3D 另有 `curvature` / `closestPointOnSurface` 等 17 个。
+- Today: `geom/planar` 17 headers, `geom/spatial` 47 headers, `geom/` 2 headers plus 8 under `detail/`; 16 of the in-tree headers include `vine/geom/detail/...`.
+- Gate: `python scripts/check_geom_layering.py` -> `0 finding(s) in 70 file(s)`.
+- Rename surface: 689 occurrences of `geom::planar::|geom::spatial::|vine/geom/planar|vine/geom/spatial` in `src` + `tests`; 265 in `.ai`.
+- Same-named functions measured: `arcLength`, `parameterAtLength`, `closestPointOnCurve` and `curveToCurveDistance` exist once in each tree; 2D also has `offsetCurve` / `trimCurve` / `intersectCurveWithCurve`, and 3D has `curvature` / `closestPointOnSurface` and 17 others.

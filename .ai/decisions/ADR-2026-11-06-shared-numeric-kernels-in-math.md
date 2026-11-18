@@ -1,74 +1,72 @@
-# ADR-2026-11-06：与维度无关的数值内核住在 `math`
+# ADR-2026-11-06: dimension-independent numeric kernels live in `math`
 
-- 状态：已取代（内核已移入 `geom/detail`，见 `ADR-2026-11-06-math-keeps-only-vocabulary.md`；内核的签名契约与判据仍然照本条所述）
-- 日期：2026-11-06
-- 相关：`../design/geometry-curve-queries.md` 2.6、`../design/geometry-planar.md` 2.14、`../design/geometry-intersection.md` 2.7
+- Status: Superseded (the kernels have moved to `geom/detail`, see `ADR-2026-11-06-math-keeps-only-vocabulary.md`; the kernels' signature contracts and criteria still stand as described here)
+- Date: 2026-11-06
+- Related: `../design/geometry-curve-queries.md` 2.6, `../design/geometry-planar.md` 2.14, `../design/geometry-intersection.md` 2.7
 
-> **EN**: Record of a decision since replaced: put the dimension-independent numeric kernels (`adaptiveSimpson`, `parameterReaching`, and the existing `rootInBracket`) under `vn::math::numeric`, so geometry keeps only the sampling and result types and the two contract trees cannot drift apart. Superseded by `ADR-2026-11-06-math-keeps-only-vocabulary`, which moves them to `geom/detail`; the signature contracts and the "scalar function plus bracket" criterion still stand.
+## Background
 
-## 背景
+`geom/planar` and `geom/spatial` each had their own arc length and inverse solve: an adaptive Simpson recursion and a Newton iteration protected by bisection, line for line identical, differing only in "how speed is computed" and "which point of a dimension is used for length". This duplication was no accident - it was ported line by line from the 3D version, so one piece of numeric logic had two implementations free to drift apart (a `G1` violation), and fixing a numeric defect meant remembering two places.
 
-`geom/planar` 与 `geom/spatial` 各自有一份弧长与反解：自适应 Simpson 的递归、带二分保护的 Newton 迭代，逐行相同，只有“速度怎么算”和“长度用哪个点是不同维度”的差别。这类复制不是巧合——它们是照着 3D 版逐行移植出来的，于是同一段数值逻辑有两份可独立漂移的实现（`G1` 违反），而修一个数值缺陷要记得改两处。
+`rootInBracket()` had already given the answer: 2.7 of `geometry-intersection.md` says explicitly "why the root finder lives in `math`" - it knows only "a continuous univariate function plus a bracket", it is a pure numeric algorithm, and the geometry side only supplies values and assembles the result. The same criterion applies to integration and the monotone inverse solve.
 
-`rootInBracket()` 已经给出过答案：`geometry-intersection.md` 2.7 明确写了“求根器为什么在 `math`”——它只认识“一元连续函数 + 括号”，是纯数值算法，几何侧只负责取值与组装结果。同一条判据适用于积分与单调反解。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A 维持两份实现 | 零改动，两个模块互不引用 | 同一算法两个家，修一处要记得改另一处；两边的容差语义可以悄悄分叉（`G1`、`G5`） |
-| B 3D 侧包含 2D 侧的头 | 改动小 | `geom/spatial` 反向依赖 `geom/planar`，层次出错（`G2`） |
-| C 把内核放进 `math`：只认标量函数与区间，几何侧保留取值与结果类型 | 一份实现；依赖方向仍是 geometry → math；两侧语义不可能漂移 | `math` 多了两个模板函数；几何侧仍要为每个算法写十几个取值的胶水 |
-| D 只把 2D/3D 曲线算法整体模板化为一份（concept 约束的曲线算法层） | 连胶水也只剩一份 | 需要把“曲线”这个概念搬进 `math`，或者新建共享层；接口面更大，收益只在胶水那十几行 |
+| A. Keep two implementations | No change, neither module references the other | One algorithm in two homes, and a fix in one must be remembered in the other; the tolerance semantics on the two sides can silently diverge (`G1`, `G5`) |
+| B. The 3D side includes the 2D side's headers | A small change | `geom/spatial` would depend back on `geom/planar`, which is the wrong layer (`G2`) |
+| C. Put the kernels in `math`: they know only scalar functions and intervals, geometry keeps the sampling and the result types | One implementation; the dependency still points geometry -> math; the two sides' semantics cannot drift | `math` gains two template functions; the geometry side still writes a dozen sampling lines of glue per algorithm |
+| D. Template the whole 2D/3D curve algorithm into one (a concept-constrained curve algorithm layer) | Even the glue exists once | Would move the concept "curve" into `math`, or need a new shared layer; a larger interface surface for a gain of those dozen lines of glue |
 
-## 决定
+## Decision
 
-采用 **C**，先落地两个内核：
+Chose **C**, landing two kernels first:
 
-- `math/numeric/Quadrature.hpp` 的 `vn::math::numeric::adaptiveSimpson(function, lower, upper, tolerance, max_depth)`：Richardson 误差估计的自适应 Simpson，非有限采样与倒序区间答 `std::nullopt`。
-- `math/numeric/RootFinding.hpp` 的 `vn::math::numeric::parameterReaching(value, slope, lower, upper, target, tolerance, max_iterations)`：给定单调量与斜率提示的安全 Newton（越界或斜率过小退回二分），停判据在**值**上；返回值是那个**参数**，名字因此以 `parameter` 开头。同名头里的 `rootInBracket(function, lower, upper, tolerance, max_iterations)` 是变号版本——两个名字都把前提写在里面：括号由调用方给，函数只收窄。
-- 两个内核与既有的 `vn::math::numeric::rootInBracket()` 同一个子命名空间：`vn::math` 根层只放数值词汇（常量、类型、概念、初等函数），算法族进子层——这与 `vn::math::spline` 是同一条规矩（`G6`，且不为两个名字多长一层）。
+- `vn::math::numeric::adaptiveSimpson(function, lower, upper, tolerance, max_depth)` in `math/numeric/Quadrature.hpp`: adaptive Simpson with a Richardson error estimate; non-finite samples and a reversed interval answer `std::nullopt`.
+- `vn::math::numeric::parameterReaching(value, slope, lower, upper, target, tolerance, max_iterations)` in `math/numeric/RootFinding.hpp`: a safeguarded Newton for a given monotone quantity and a slope hint (falling back to bisection outside the bounds or when the slope is too small), with the stopping criterion on the **value**; the return value is that **parameter**, which is why the name starts with `parameter`. `rootInBracket(function, lower, upper, tolerance, max_iterations)` in the same header is the sign-change version - both names state their premise: the bracket comes from the caller and the function only narrows it.
+- The two kernels share the sub-namespace of the existing `vn::math::numeric::rootInBracket()`: the `vn::math` root layer holds numeric vocabulary only (constants, types, concepts, elementary functions) and algorithm families go into the sub-layer - the same rule as `vn::math::spline` (`G6`, and no extra level for two names).
 
-`geom::planar::arcLength` / `parameterAtLength` 与 `geom/spatial` 的同名函数改为只提供 `speed(u)` 与 `reached(u)`，其余交给内核。曲线自己的语义（窗口规则、`isValid()` 守卫、长度量纲、`std::nullopt` 条件）仍留在几何侧，一行不少。
+`geom::planar::arcLength` / `parameterAtLength` and their `geom/spatial` namesakes now supply only `speed(u)` and `reached(u)`, leaving the rest to the kernel. The curve's own semantics (window rules, the `isValid()` guard, the length dimension, the `std::nullopt` conditions) stay on the geometry side, not one line fewer.
 
-**消费者（两边都用，这是共享的前提）**：
+**Consumers (both sides use them, which is the premise for sharing)**:
 
-| 内核 | `geom/planar` | `geom/spatial` |
+| Kernel | `geom/planar` | `geom/spatial` |
 |---|---|---|
-| `adaptiveSimpson` | `arcLength()`（`CurveLength.hpp`） | `arcLength()`（`CurveLength.hpp`） |
+| `adaptiveSimpson` | `arcLength()` (`CurveLength.hpp`) | `arcLength()` (`CurveLength.hpp`) |
 | `parameterReaching` | `parameterAtLength()` | `parameterAtLength()` |
-| `rootInBracket` | `closestPointOnCurve()`（`CurveProjection.hpp`）；`intersectCurveWithCurve()` 经它间接使用 | `closestPointOnCurve()`；`intersectCurveWithSurface()`（`CurveSurfaceIntersection.hpp`） |
+| `rootInBracket` | `closestPointOnCurve()` (`CurveProjection.hpp`); `intersectCurveWithCurve()` uses it indirectly | `closestPointOnCurve()`; `intersectCurveWithSurface()` (`CurveSurfaceIntersection.hpp`) |
 
-三个内核都有两个模块的消费者，没有一个是为“将来可能”而放进 `math` 的。
+All three kernels have consumers in both modules; none was put into `math` for a possible future.
 
-判据：`G1`（一份实现）、`G2`（依赖仍朝 `math`）、`G9`（新维度 / 新曲线类型复用同一内核）、`G10`（无分配，与原来同样的采样次数）、`G11`（内核可单独测：`tests/test_math/QuadratureTest.cpp` 与 `RootFindingTest.cpp`）。 <!-- drift-ok -->
+Criteria: `G1` (one implementation), `G2` (the dependency still points at `math`), `G9` (a new dimension or curve type reuses the same kernel), `G10` (no allocation, the same number of samples as before), `G11` (the kernels are testable alone: `tests/test_math/QuadratureTest.cpp` and `RootFindingTest.cpp`). <!-- drift-ok -->
 
-**为什么不是另起一个 `numeric` 模块**：这里的分层轴不是“算法 vs 数学”，而是“值上的运算”与“以函数为输入的数值过程”——后者仍是数学，OCCT 把 `math_FunctionRoot` / `math_Integration` 就放在它的 Math 包里；本仓库也已经按同一条判据把“3×3 对称矩阵特征分解”放进了 `math`（`geometry-primitives.md` 2.7：`symmetricEigen` 是数值运算不是空间实体，放进 `geometry` 会让 `math` 反向依赖）。隔离不靠新模块，靠三件事：独立头文件（与 `EigenDecomposition` 同一做法）、子命名空间 `numeric`、独立测试文件。新建模块反而会让 `EigenDecomposition` 与 `spline` 留在“另一个家”，变成两个家而不是一个。
+**Why not a separate `numeric` module**: the axis here is not "algorithm versus mathematics" but "operations on values" against "numeric processes taking a function as input" - the latter is still mathematics, and OCCT puts `math_FunctionRoot` / `math_Integration` in its Math package; this repository had already put "eigendecomposition of a 3x3 symmetric matrix" into `math` by the same criterion (`geometry-primitives.md` 2.7: `symmetricEigen` is a numeric operation and not a spatial entity, and putting it into `geometry` would make `math` depend back on it). Isolation does not come from a new module but from three things: a separate header (the same practice as `EigenDecomposition`), the `numeric` sub-namespace, and a separate test file. A new module would instead leave `EigenDecomposition` and `spline` in "another home", making two homes rather than one.
 
-**判据（看签名，不看“像不像算法”）**：调用方是否**给出精度目标**（`tolerance` / `max_iterations`），且函数能答“没达到”（`std::nullopt`）？是 → `numeric`（过程）；否 → `math` 根层（求值对象）。`math` 为什么同时承载数学词汇与 CAD 表示约定（`spline` 的节点重数、夹持形式、连续度阶梯），见 `ADR-2026-11-06-math-is-the-base-layer.md`。
+**The criterion (look at the signature, not at "does it look like an algorithm")**: does the caller **supply a precision target** (`tolerance` / `max_iterations`), and can the function answer "did not reach it" (`std::nullopt`)? Yes -> `numeric` (a process); no -> the `math` root layer (an evaluated object). Why `math` also carries CAD representation conventions (the spline knot multiplicity, clamped form and continuity ladder) is in `ADR-2026-11-06-math-is-the-base-layer.md`.
 
-| 设施 | 签名里有调用方容差吗 | 归属 |
+| Facility | Caller tolerance in the signature? | Home |
 |---|---|---|
-| `spline::deCasteljau` / `differences` / `basisValue` / `knotSpan` / `knotContinuity` | 没有——精确求值，一次算出 | `math` 根层（`spline` 子命名空间）。2D 与 3D 的 `BezierCurve` / `BSplineCurve` / `BezierSurface` / `BSplineSurface` 都用它，是提前于 `numeric` 就存在的同一条分享理由 |
-| `symmetricEigen` | 没有——内部固定 `EPS<T>()*4`，返回谱 + 收敛 bool | `math` 根层 |
-| `rootInBracket` / `parameterReaching` / `adaptiveSimpson` | 有——容差与迭代上限由调用方给，失败答 `std::nullopt` | `numeric` |
+| `spline::deCasteljau` / `differences` / `basisValue` / `knotSpan` / `knotContinuity` | No - exact evaluation, computed once | The `math` root layer (the `spline` sub-namespace). The 2D and 3D `BezierCurve` / `BSplineCurve` / `BezierSurface` / `BSplineSurface` all use it, the same sharing reason that predates `numeric` |
+| `symmetricEigen` | No - internally fixed at `EPS<T>()*4`, returning a spectrum plus a converged flag | The `math` root layer |
+| `rootInBracket` / `parameterReaching` / `adaptiveSimpson` | Yes - the tolerance and iteration cap come from the caller and a failure answers `std::nullopt` | `numeric` |
 
-所以 `spline` 在 `math` 里不是先例被破坏，而是同一个判据的另一个结果：它是“算得出来的函数族”，不是“逼近一个目标的过程”。
+So `spline` in `math` is not a broken precedent but another outcome of the same criterion: it is "a family of functions that compute", not "a process approximating a target".
 
-不选 D 的理由是此刻收益不抵风险：胶水只有十几行，而把曲线概念搬进 `math` 会扩大那层的语义；等到第三对算法（投影 / 距离）也证明“只有取值不同”时再评估。**这条是后续评估的触发条件，不是永久否决。**
+D was not chosen because the gain does not outweigh the risk at this point: the glue is a dozen lines, while moving the concept of a curve into `math` would widen that layer's semantics; it is re-evaluated when a third pair of algorithms (projection, distance) also proves to differ only in sampling. **That is a trigger for later evaluation, not a permanent rejection.**
 
-## 后果
+## Consequences
 
-- 好的：弧长与反解只有一份实现，两个模块的测试同时盯着它；内核有自己的单元测试（已知积分、折点、深度上限、单精度、拒绝条件）；`math` 与几何侧的边界更清楚——`math` 只认标量函数。
-- 好的（容差换算的位置）：从“几何容差”到“参数容差”的换算（`value_tolerance / |dP/du|`）需要曲线速度，所以它留在几何侧，两个模块各有一个 `detail::narrowCrossing(curve, value, previous, current, value_tolerance, fallback)`；三处调用点（2D 投影、3D 投影、3D 曲线×曲面）原来逐行重复的那段前置换成一句调用，而内核仍不认识曲线。
-- 坏的 / 代价：几何侧多两个 include；内核的参数（`std::optional` 返回值、深度上限语义）成了两个模块共享的约定，改它要同时看两边的设计点。`max_depth = 0` 的含义（仍做一次二分）写在内核文档里，避免两边各自解释。
-- 未做：`CurveProjection` / `CurveCurveDistance` 的采样与 Gauss-Newton 仍是两份，因为它们的胶水比例更高（候选筛选、重合判定、二维步长）；按上文的触发条件再评估。
-- 未做：更一般的求根器（Brent 的逆二次插值、`|f|` 容差、相切根）。`rootInBracket()` 只做“变号括号内的单根 + 参数宽度容差”，头文件里逐条写了它不是什么；今天三个调用点都只需要参数精度，升级是 `G8` 意义上的过度设计。触发条件：出现要求 `|f|` 达标的消费者，或偏斜括号上的二分收敛率成为瓶颈。
-- 升级触发条件（什么时候该把这些过程升成 `vn::Numeric` 模块）：出现需要 `src/` 的非模板实现（比如带工作缓冲的积分器），或 `numeric` 里的过程多到子命名空间装不下，或出现第三个消费者模块要求一条单独链接边。升级时把 `EigenDecomposition` 一并迁入，不做一半——一个“数值算法”只能有一个家。
+- Good: the arc length and the inverse solve exist once, and both modules' tests watch the same implementation; the kernels have their own unit tests (known integrals, a kink, the depth cap, single precision, refusal conditions); the boundary between `math` and geometry is clearer - `math` knows only scalar functions.
+- Good (where the tolerance conversion lives): converting "geometry tolerance" to "parameter tolerance" (`value_tolerance / |dP/du|`) needs the curve's speed, so it stays on the geometry side, with one `detail::narrowCrossing(curve, value, previous, current, value_tolerance, fallback)` in each module; the duplicated prologue at three call sites (2D projection, 3D projection, 3D curve against surface) became one call, while the kernel still does not know curves.
+- Bad / cost: the geometry side gains two includes; the kernels' parameters (`std::optional` return, the meaning of the depth cap) become a convention shared by two modules, and changing it means reading both design points. The meaning of `max_depth = 0` (still one bisection) is in the kernel documentation, so the two sides do not interpret it separately.
+- Not done: the sampling and Gauss-Newton of `CurveProjection` / `CurveCurveDistance` are still two copies, because their glue proportion is higher (candidate filtering, coincidence decisions, two-dimensional step); re-evaluate per the trigger above.
+- Not done: a more general root finder (Brent's inverse quadratic interpolation, an `|f|` tolerance, tangential roots). `rootInBracket()` only does "a single root inside a sign-change bracket plus a parameter-width tolerance", and the header lists item by item what it is not; all three call sites need parameter precision only today, and an upgrade would be over-design in the `G8` sense. Trigger: a consumer that requires `|f|` to meet a bound, or a bisection convergence rate on a skewed bracket that becomes the bottleneck.
+- Escalation trigger (when these processes should become a `vn::Numeric` module): a non-template implementation needing `src/` appears (an integrator with a work buffer, for example), or the processes in `numeric` outgrow the sub-namespace, or a third consumer module requires its own link edge. When escalating, move `EigenDecomposition` in as well and do not do half of it - a "numeric algorithm" can have only one home.
 
-## 证据
+## Evidence
 
-- `src/base/math/sdk/vine/math/numeric/Quadrature.hpp`、`numeric/RootFinding.hpp`（`rootInBracket` / `parameterReaching`）。 <!-- drift-ok -->
-- `src/base/geom/sdk/vine/geom/planar/CurveLength.hpp`、`src/base/geom/sdk/vine/geom/spatial/CurveLength.hpp`：两个公开函数的函数体各剩十余行。
-- `tests/test_math/QuadratureTest.cpp`、`tests/test_math/RootFindingTest.cpp`：内核的单元测试。 <!-- drift-ok -->
-- `tests/test_geom_planar/CurveLengthTest.cpp`、`tests/test_geom_spatial/CurveLengthTest.cpp`：两侧的端到端验收（闭式长度、尖点、窗口拒绝、内部反解、两种精度），抽取后未改一行仍全绿。
+- `src/base/math/sdk/vine/math/numeric/Quadrature.hpp`, `numeric/RootFinding.hpp` (`rootInBracket` / `parameterReaching`). <!-- drift-ok -->
+- `src/base/geom/sdk/vine/geom/planar/CurveLength.hpp`, `src/base/geom/sdk/vine/geom/spatial/CurveLength.hpp`: the bodies of both public functions are down to about a dozen lines each.
+- `tests/test_math/QuadratureTest.cpp`, `tests/test_math/RootFindingTest.cpp`: the kernels' unit tests. <!-- drift-ok -->
+- `tests/test_geom_planar/CurveLengthTest.cpp`, `tests/test_geom_spatial/CurveLengthTest.cpp`: the end-to-end acceptance on both sides (closed-form length, a cusp, a rejected window, an interior inverse, both precisions), green after the extraction without a single line changed.

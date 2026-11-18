@@ -1,56 +1,54 @@
-# ADR-2026-11-05：`Primitive` 是建模基类，不持有实体
+# ADR-2026-11-05: `Primitive` is a modelling base class and holds no solid
 
-- 状态：已采纳
-- 日期：2026-11-05
-- 取代：`ADR-2026-11-05-solid-family-and-variant.md`（其中"模型按值持有 `SolidShapef`"的部分；`Solid<T>` 族本身不变）
-- 相关：`../design/geometry-parametric.md`、`../design/geometry-solid.md`、`../../src/base/geometry/sdk/vine/geometry/Primitive.hpp`、`../../tests/test_geometry/SolidTest.cpp`
+- Status: Accepted
+- Date: 2026-11-05
+- Supersedes: `ADR-2026-11-05-solid-family-and-variant.md` (the part where "the model holds a `SolidShapef` by value"; the `Solid<T>` family itself is unchanged)
+- Related: `../design/geometry-parametric.md`, `../design/geometry-solid.md`, `../../src/base/geometry/sdk/vine/geometry/Primitive.hpp`, `../../tests/test_geometry/SolidTest.cpp`
 
-> **EN**: Chose B, superseding the "model holds a `SolidShapef` by value" half of `ADR-2026-11-05-solid-family-and-variant`: `Primitive : Shape` owns no geometry and declares only `bounds()`, the five `final` subclasses hold their own dimensions and construct their `...Solidf` value on demand (`solid()`), and the geometry kinds are renamed `BoxSolid` / `SphereSolid` / ... so the modelling names are free. Non-solid primitives can now be derived; `visitPrimitive()` and `solidShapeOf()` answer the closed set.
+## Background
 
-## 背景
+The approach earlier that day was: `Primitive` was the **only** modelling class, holding a `SolidShapef` (the variant of the five analytic solids) by value, with `shapeType()` derived from the variant and consumers using `std::visit`.
 
-当天早些时候的做法是：`Primitive` 是**唯一**的建模类，按值持有一个 `SolidShapef`（五个解析体的变体），`shapeType()` 由变体派生，消费者 `std::visit` 它。
+That approach wrote an assumption into the base class: **every primitive is an analytic solid**. In reality it is not:
 
-这个做法把一个假设写死进了基类：**每个图元都是一个解析实体**。实际不是：
+- a description file will contain primitives without an analytic solid (an extruded profile, a swept face, possibly text or a curve profile later);
+- once the base class member is a `SolidShapef`, those primitives either cannot be expressed or are forced into one of the five solids;
+- the model consumers (the `brep` bridge, description file reading and writing, tessellation) therefore recognise only "the variant" and cannot answer by subclass.
 
-- 描述文件里会出现没有解析体的图元（轮廓拉伸、扫掠面、以后可能的文本或曲线轮廓）；
-- 一旦基类成员是 `SolidShapef`，这些图元要么无法表达，要么被迫塞进五个实体之一；
-- 模型消费者（`brep` 桥、描述文件读写、三角化）也因此只认"变体"，而无法按子类作答。
+At the same time the modelling code needs **names** such as `Box` / `Sphere`: identity (name / revision / tag), their own dimensions, and `obj_cast`. The earlier shape (`ADR-2026-11-04-primitive-is-a-shape.md`) was exactly that, and it was replaced that day by "the variant is held", at the price of making "a primitive is necessarily a solid" part of the base class's definition.
 
-同时，建模代码里需要的是 `Box` / `Sphere` 这样的**名字**：带身份（name / revision / tag）、带自己的尺寸、能 `obj_cast`。旧形态（`ADR-2026-11-04-primitive-is-a-shape.md`）正是这个形状，而当天被"变体持有"取代，代价是把"图元必然是实体"变成了基类的定义。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A 保持变体持有（当天的形态） | 零改动；标签不可能漂移；消费者一次 `visit` | 基类假设了"图元是实体"；非实体图元无处安放；建模代码没有 `Box` 这个名字 |
-| B 基类不持几何，五个子类各自持尺寸并给出自己的 `solid()` | 概念只要求"能回答 bounds 和自己的身份"；非实体图元天然可派生；建模侧有具体类名 | 每个子类一份尺寸字段；`bounds()` 变成纯虚；消费者要按 closed set 分派 |
-| C 子类各存一份 `SolidShapef` + 一份尺寸字段 | 下标访问 `shape()` | 尺寸两个家，必然漂移（`G1`） |
-| D 子类作为"视图"读写基类持有的变体 | 尺寸一个家 | 仍是 A 的假设；`setSolid()` 会打穿类型不变式（`G11`） |
+| A. Keep the variant (that day's shape) | No change; the tag cannot drift; the consumer visits once | The base class assumes "a primitive is a solid"; a non-solid primitive has nowhere to go; the modelling code has no `Box` name |
+| B. The base class holds no geometry; each of the five subclasses holds its own dimensions and offers `solid()` | The concept only requires "answers bounds and its own identity"; a non-solid primitive can be derived naturally; the modelling side has concrete class names | One set of dimension fields per subclass; `bounds()` becomes pure virtual; consumers dispatch over the closed set |
+| C. Each subclass stores a `SolidShapef` plus a set of dimension fields | `shape()` is an indexed access | Dimensions in two homes, which must drift (`G1`) |
+| D. The subclasses act as "views" reading and writing the variant the base class holds | Dimensions in one home | Still A's assumption; `setSolid()` breaks the type invariant (`G11`) |
 
-## 决定
+## Decision
 
-采纳 B。
+Chose B.
 
-- `Primitive : Shape`：受保护构造 `Primitive(ShapeType)`，**只**声明纯虚 `bounds()`；不持有任何几何、不认识 `Solid`。
-- `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`：`final` 子类，各存自己的尺寸（`width_` / `height_` / `depth_`、`radius_`、`height_`、`radius_x_` …），量纲是描述文件写的**全量纲**。
-- 每个子类另给 `solid()`：按当前字段**构造**自己的具体 kind（`BoxSolidf{ width_ / 2, … }`），返回**值**。尺寸只有一份，实体不存储、不缓存，因此没有失效点。
-- `isValid()` / `hasVolume()` / `bounds()` 由子类实现，转发给 `solid()` 的那次构造：公式仍在几何侧（`G13`）。
-- 几何侧的五个 kind 改名 `BoxSolid` / `SphereSolid` / `CylinderSolid` / `ConeSolid` / `EllipsoidSolid`（别名 `BoxSolidf` / `BoxSolidd` …），把 `Box` / `Sphere` 这些名字让给建模侧。
-- 两个访问入口，都放在 `Primitive.hpp`：
-  - `visitPrimitive(primitive, visitor)`：按 closed set 把具体子类交给 visitor；不属于五个时返回 `false`。
-  - `solidShapeOf(primitive)`：返回 `std::optional<SolidShapef>`；不是实体时返回空。
-- 移除 `Primitive::shape()` / `Primitive::solid()` / `Primitive::setSolid()` / `Primitive(const SolidShapef&)`。
+- `Primitive : Shape`: a protected constructor `Primitive(ShapeType)` and **only** the pure virtual `bounds()`; it holds no geometry and does not know `Solid`.
+- `Box` / `Sphere` / `Cylinder` / `Cone` / `Ellipsoid`: `final` subclasses, each holding its own dimensions (`width_` / `height_` / `depth_`, `radius_`, `height_`, `radius_x_`, ...), with the dimensions **full-size** as the description file writes them.
+- Each subclass also offers `solid()`: it **constructs** its own concrete kind from the current fields (`BoxSolidf{ width_ / 2, ... }`) and returns a **value**. The dimensions exist once, and the solid is neither stored nor cached, so there is no invalidation point.
+- `isValid()` / `hasVolume()` / `bounds()` are implemented by the subclass and forwarded to that construction in `solid()`: the formulas stay on the geometry side (`G13`).
+- The five geometry kinds are renamed `BoxSolid` / `SphereSolid` / `CylinderSolid` / `ConeSolid` / `EllipsoidSolid` (aliases `BoxSolidf` / `BoxSolidd`, ...), giving the `Box` / `Sphere` names to the modelling side.
+- Two access entries, both in `Primitive.hpp`:
+  - `visitPrimitive(primitive, visitor)`: hands the concrete subclass to the visitor over the closed set, returning `false` when it is not one of the five.
+  - `solidShapeOf(primitive)`: returns `std::optional<SolidShapef>`, empty when it is not a solid.
+- `Primitive::shape()` / `Primitive::solid()` / `Primitive::setSolid()` / `Primitive(const SolidShapef&)` are removed.
 
-## 后果
+## Consequences
 
-- 好的：基类不再声称"图元是实体"，非实体图元可以派生（`GeometryKindsTest` 之外的 `SolidTest.cpp` 用 `Profile` 类实测这一点）。
-- 好的：建模代码写 `make_intrusive<Box>(2, 4, 6)`、`box.setWidth(...)`、`obj_cast<Box>(shape)`；描述文件的读写按子类作答。
-- 好的：`Box` 与 `BoxSolid` 在调用点可区分（`G12`），且 `Box` 的名字不再和几何值冲突。
-- 坏的 / 代价：每个子类要重复 `isValid()` / `hasVolume()` / `bounds()` 三个转发（15 个三行函数）；消费者每次从模型取几何都要构造一次值（`SolidShapef` 约 24–40 字节，无分配）；新增一种实体要同时动几何 kind 与建模子类。
-- 触发条件（什么时候重开）：出现"图元必须异构持有"的容器（`vector<unique_ptr<Primitive>>` 已是这种做法，无需重开），或建模侧需要在不改子类的前提下替换实体 —— 那时再评估 B → A 之外的第三种形态。
+- Good: the base class no longer claims "a primitive is a solid", and a non-solid primitive can be derived (`SolidTest.cpp`, beyond `GeometryKindsTest`, measures this with a `Profile` class).
+- Good: modelling code writes `make_intrusive<Box>(2, 4, 6)`, `box.setWidth(...)`, `obj_cast<Box>(shape)`; reading and writing a description file answers by subclass.
+- Good: `Box` and `BoxSolid` are distinguishable at the call site (`G12`), and the `Box` name no longer collides with a geometry value.
+- Bad / cost: each subclass repeats three forwards, `isValid()` / `hasVolume()` / `bounds()` (15 three-line functions); a consumer constructs one value each time it takes geometry from a model (`SolidShapef` is about 24-40 bytes, no allocation); adding a solid means touching both the geometry kind and the modelling subclass.
+- Trigger (when to reopen): a container that must hold primitives **heterogeneously** appears (`vector<unique_ptr<Primitive>>` is already that, so it does not count), or the modelling side needs to replace the solid without changing the subclass - then consider a third shape beyond B -> A.
 
-## 证据
+## Evidence
 
-- 测试：`tests/test_geometry/SolidTest.cpp` 覆盖"基类不持几何"（`Profile`）、"子类按需构造实体"、"五个子类各报自己的标签"、`solidShapeOf` 只认五个、`visitPrimitive` 交出具体类型；`SolidDistanceTest` / `SolidIntersectionTest` / `SolidTessellationTest` 走子类到实体；`test_brep`、`test_robotics_io`、`test_proximity`、`test_graphics`、`test_meshio`、`test_brepio`、`test_gui` 全绿。 <!-- drift-ok -->
-- 门禁：`check_ai_docs.py --strict`、`check_design_docs.py`、`check_public_docs.py`、`check_include_hygiene.py`、`check_export_annotations.py` 见提交说明。
+- Tests: `tests/test_geometry/SolidTest.cpp` covers "the base class holds no geometry" (`Profile`), "a subclass constructs its solid on demand", "each of the five reports its own tag", "`solidShapeOf` recognises only the five" and "`visitPrimitive` hands out the concrete type"; `SolidDistanceTest` / `SolidIntersectionTest` / `SolidTessellationTest` go from subclass to solid; `test_brep`, `test_robotics_io`, `test_proximity`, `test_graphics`, `test_meshio`, `test_brepio` and `test_gui` are all green. <!-- drift-ok -->
+- Gates: `check_ai_docs.py --strict`, `check_design_docs.py`, `check_public_docs.py`, `check_include_hygiene.py` and `check_export_annotations.py` as described in the commit message.
