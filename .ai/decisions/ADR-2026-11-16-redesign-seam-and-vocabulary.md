@@ -1,216 +1,215 @@
-# ADR-2026-11-16：重设计的是名字与归属，不是能力 —— 两后端图形栈的接缝、词汇与相位
+# ADR-2026-11-16: what was redesigned is the names and the ownership, not the capabilities - the seam, vocabulary and phases of the two-backend graphics stack
 
-- 状态：**已采纳**。2026-11-16 批准；阶段三按 `../research/graphics-2026-11-16-redesign-r2.md` §10 的
-  18 个批次位置执行，**2026-11-17 全部落地**（进度见本文末“实施状态”）。
-  **部分取代**：本文 §2（接缝归位：`backend/` 只留共享机制）与批次 3 中“目录即接缝”的那一半决定，已由
-  [ADR-2026-11-16-no-backend-half](ADR-2026-11-16-no-backend-half.md) 取代（2026-11-16）；本文的词汇、相位、
-  拒绝形状与其余批次不变。
-- 日期：2026-11-16
-- 影响范围：`graphics/sdk/vine/graphics/backend/**`（25 → 7 个头：6 机制 + 1 守卫）、`graphics-architecture.md`（§2.9 / §2.11）、
-  `graphics-sessions.md`（§2.1 / §2.3 的词汇与相位）、`graphics-threading.md`（§2.16 的驱动者身份）、
-  `vk-backend.md`（§2.16 / §2.17 / §9 的状态）、`vsg-backend.md`（§2.9.1 的接缝声明）、
-  `docs/guides/`（按后端分页 → 按能力分页）、`RenderFrameExecutor.hpp` / `RenderDevice.hpp` 的契约文本、
-  `FrameStats.hpp`（`FrameReport::locking`，additive）。
-- 相关：`ADR-2026-11-16-authoring-view-and-target-vocabulary.md`（第二轮的**概念与 API 形状**续篇：`View` /
-  `RenderArea` / `Target`+`Output` / pass 作者形状 / 规范修订；两份提案一起批准或一起缓）、
-  `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md`（本文是它的**词汇与接缝**收口，不重开它的决定）、
-  `ADR-2026-11-13-one-engine-one-surface.md`、`ADR-2026-11-12-adopt-graphics-next.md`、
-  `ADR-2026-11-10-gpu-residency-pinned-by-content.md`、`ADR-2026-11-14-vk-becomes-the-default-target.md`。
-- 审核与施工图：`../research/graphics-2026-11-16-redesign.md`（A 能力清单、B 逐项、C 横切、D 结论表、批次计划）。
+- Status: **Accepted**. Approved on 2026-11-16; stage three ran the 18 batch positions of §10 in `../research/graphics-2026-11-16-redesign-r2.md`
+  and **all landed on 2026-11-17** (progress is in "Implementation status" at the end of this document).
+  **Partly superseded**: §2 here (the seam moving home: `backend/` keeping only the shared mechanisms) and the "directory as seam" half of batch 3
+  are superseded by [ADR-2026-11-16-no-backend-half](ADR-2026-11-16-no-backend-half.md) (2026-11-16); this document's vocabulary, phases,
+  refusal shape and remaining batches are unchanged.
+- Date: 2026-11-16
+- Scope: `graphics/sdk/vine/graphics/backend/**` (25 → 7 headers: 6 mechanisms + 1 guard), `graphics-architecture.md` (§2.9 / §2.11),
+  `graphics-sessions.md` (§2.1 / §2.3 vocabulary and phases), `graphics-threading.md` (§2.16 driver identity),
+  `vk-backend.md` (§2.16 / §2.17 / §9 status), `vsg-backend.md` (§2.9.1 the seam declaration),
+  `docs/guides/` (pages split by backend → pages split by capability), the contract text of `RenderFrameExecutor.hpp` / `RenderDevice.hpp`,
+  `FrameStats.hpp` (`FrameReport::locking`, additive).
+- Related: `ADR-2026-11-16-authoring-view-and-target-vocabulary.md` (round two's **concept and API shape** sequel: `View` /
+  `RenderArea` / `Target`+`Output` / the pass authoring shape / the normative revisions; the two proposals are approved or deferred together),
+  `ADR-2026-11-15-device-is-a-pool-sessions-own-frames.md` (this document closes out its **vocabulary and seam**, without reopening its decisions),
+  `ADR-2026-11-13-one-engine-one-surface.md`, `ADR-2026-11-12-adopt-graphics-next.md`,
+  `ADR-2026-11-10-gpu-residency-pinned-by-content.md`, `ADR-2026-11-14-vk-becomes-the-default-target.md`.
+- Review and construction plan: `../research/graphics-2026-11-16-redesign.md` (A the capability list, B item by item, C cross-cutting, D the conclusion table, the batch plan).
 
-> **EN**: Round one of the graphics redesign: the audit found the capability set complete and the problems nearly all in names and ownership, so the decision is to re-partition what exists (`G13`) without adding capability (`G8`), migrated in ten rollback-sized batches. It fixes the vocabulary - `FrameDriver` and `FrameDriverId` behind the existing `RenderFrameExecutor` type, `WindowSession` for a window's swapchain session, `FrameHead` with its `DrawPlan` merged across backends, and `Submission` naming the submit policy - and states the seam's six mechanisms. Its §2 "directory as seam" half is superseded by `ADR-2026-11-16-no-backend-half`; the vocabulary, phases and rejection shapes stand.
+## Background
 
-## 背景
+The owner's request: **redesign graphics and the two backends (concepts / abstractions / framework / C++ structure), losing no functionality.**
+Types, interfaces, layers, naming and public API/ABI may all be redesigned; not one capability may be dropped; deliberate behaviour changes are listed one by one and approved.
 
-用户要求：**重新设计 graphics 与两个后端（概念 / 抽象 / 框架 / C++ 结构），功能不减。**
-类型、接口、层次、命名、公开 API/ABI 都可以重设计；能力一项都不能丢；有意改变的行为逐条列出并经批准。
+Stage one did a read-only audit of about 44k lines of `.cpp` (`graphics/src` 14.8k + vk 12.0k + vsg 17.2k), 21k lines of SDK headers,
+1286 test cases, 12 design pages and 100 diagnostic codes, and the conclusion came down to one sentence:
 
-阶段一对约 4.4 万行 `.cpp`（`graphics/src` 1.48 万 + vk 1.20 万 + vsg 1.72 万）、2.1 万行 SDK 头、
-1286 条用例、12 个设计页与 100 条诊断 code 做了只读审计，结论集中在一句话上：
+> **The capabilities are complete and the evidence is thick; nearly all the problems are in the names and the ownership.**
 
-> **能力很全、证据很厚；问题几乎全在名字与归属。**
+The three most telling facts (each verifiable by file:line or by include counts):
 
-最能说明问题的三条事实（都可以用 file:line 或 include 计数核对）：
+1. **The seam did not live up to its name**: of the 25 headers in `sdk/vine/graphics/backend/` (including 1 include guard), `gfx_backend_vk` included only 6;
+   18 had `gfx_backend_vsg` as their only consumer, while their implementations (18 `.cpp` files) compiled into `libGraphics` and were installed
+   with the `VineGraphicsBackendSdk` component. Two design pages called this layer "the backend contract", but in reality it was **the first backend's
+   portable half promoted into a seam**.
+2. **"Session" was four things**: the design noun (= `RenderFrameExecutor`), vk's `Device::Session` (the frame machine),
+   vsg's `api::Session` (window + swap chain), vsg's `VsgDriver` (the frame driver); the identity types were split further into
+   `DeviceClock::WindowId`(u32), `ResidenceTable::SessionId`(u64) and `TargetClaims::SessionId`(u32).
+3. **One thing invented separately in each backend**: the value a frame head resolves for each draw call was
+   `CommandPlan` + `ScreenPlan` + `ResolvedTextures` in vk and `ContentPlan::Call` in vsg.
+   Both were right, but the shapes and names did not match; `graphics-sessions.md` itself said "the remaining difference is only the shape".
 
-1. **接缝名不副实**：`sdk/vine/graphics/backend/` 的 25 个头里（含 1 个包含守卫），`gfx_backend_vk` 只 include 6 个；
-   18 个只有 `gfx_backend_vsg` 一个消费者，而它们的实现（18 个 `.cpp`）编在 `libGraphics` 里、
-   随 `VineGraphicsBackendSdk` 组件安装。这层被两份设计页称作"后端契约"，实际是**第一个后端的
-   可移植半边被提升为接缝**。
-2. **"会话"是四个东西**：设计名词（= `RenderFrameExecutor`）、vk `Device::Session`（帧机器）、
-   vsg `api::Session`（窗口 + 交换链）、vsg `VsgDriver`（帧驱动者）；身份类型还分成
-   `DeviceClock::WindowId`(u32)、`ResidenceTable::SessionId`(u64)、`TargetClaims::SessionId`(u32)。
-3. **同一件东西在两个后端各自发明**：帧首解析出的"每条绘制调用的值"在 vk 是
-   `CommandPlan` + `ScreenPlan` + `ResolvedTextures`，在 vsg 是 `ContentPlan::Call`。
-   两者都对，但形状与名字对不上；`graphics-sessions.md` 自己写"剩下的差别只是形状"。
+The audit also found two pieces of **engineering debt** (not design debt): 22 uncoded reports (6 files, the per-file ceilings in `diagnostic_code_baseline.txt`)
+and 6 design-page sentences that the implementation had already overturned (`vk-backend.md` §2.17/§9.2, the end of `graphics-threading.md` §2.16, and others).
 
-审计还发现两处**工程债**（不是设计债）：22 处未编码报告（6 个文件，`diagnostic_code_baseline.txt`
-的每文件上限）、6 处设计页句子已被实现推翻（`vk-backend.md` §2.17/§9.2、`graphics-threading.md` §2.16 末等）。
+## Decision
 
-## 决定
+**Adopt "repartition what already exists" (`G13`), adding no capability (`G8`); migrate in ten batches (0-9), each one revertible commit.**
 
-**采纳"重新划分已有能力"（`G13`），不新增能力（`G8`）；分十批（0–9）迁移，每批一个可回滚提交。**
+### 1. Vocabulary: one concept, one name
 
-### 1. 词汇：一个概念一个名字
-
-| 概念 | 名字 | 备注 |
+| Concept | Name | Note |
 |---|---|---|
-| 帧执行者 | **FrameDriver**（类型仍是 `RenderFrameExecutor`） | 设计名词 `Session` 退役；`createSession()` 动词保留，文档改成"借一个驱动者" |
-| 驱动者身份 | **`FrameDriverId`**（u32） | 替掉 `WindowId` / 两个 `SessionId`；`WindowId` 留一版 `@deprecated` 别名 |
-| 一个窗口的交换链会话 | **WindowSession**（原 vsg `api::Session`） | 它是窗口，不是帧驱动者 |
-| 帧首解析出的值 | **FrameHead** + **FrameHead::DrawPlan** | vk 三个类型合并、vsg `ContentPlan`/`Call` 改名 |
-| 一帧的提交策略 | **`Submission`**（参数/枚举，不建类型） | `Frame` / `TransferOnly`（prepare）；把散文里的"transfer batch"变成名词 |
+| The frame executor | **FrameDriver** (the type stays `RenderFrameExecutor`) | The design noun `Session` retires; the verb `createSession()` stays, and the documentation says "borrow a driver" |
+| The driver's identity | **`FrameDriverId`** (u32) | Replaces `WindowId` / the two `SessionId`s; `WindowId` stays as a `@deprecated` alias for one version |
+| One window's swap-chain session | **WindowSession** (formerly vsg `api::Session`) | It is a window, not a frame driver |
+| The value a frame head resolves | **FrameHead** + **FrameHead::DrawPlan** | vk's three types merge; vsg's `ContentPlan`/`Call` are renamed |
+| A frame's submission policy | **`Submission`** (a parameter / enum, no type is built) | `Frame` / `TransferOnly` (prepare); turns the prose "transfer batch" into a noun |
 
-**不改**：`RenderDevice` / `RenderFrameExecutor` / `RenderBackend` / `PresentTarget` / `RenderEngine` /
-`Scene` / `Plan` / `PassChain` 的动词与签名；`ContentCaches` / `ContentStore` 等实现类型名（改名只有 churn）。
+**Unchanged**: the verbs and signatures of `RenderDevice` / `RenderFrameExecutor` / `RenderBackend` / `PresentTarget` / `RenderEngine` /
+`Scene` / `Plan` / `PassChain`; implementation type names such as `ContentCaches` / `ContentStore` (renaming them would be pure churn).
 
-### 2. 接缝归位：`backend/` 只留共享机制
+### 2. The seam moves home: `backend/` keeps only the shared mechanisms
 
-保留 6 个（两个后端真的都在用）：`FrameGate`、`DeviceClock`、`RetirementQueue`、`Readback`、
-`Keys`、`TargetPlan`；新增 `DiagnosticDraft`。
-其余 18 个头 + 18 个 `.cpp` **搬进 `gfx_backend_vsg/internal/`**（纯移动，零行为）。
-`VineGraphicsBackendSdk` 组件随之缩小；`libGraphics` 不再编译 vsg 专用机制。
+Six are kept (both backends really use them): `FrameGate`, `DeviceClock`, `RetirementQueue`, `Readback`,
+`Keys`, `TargetPlan`; `DiagnosticDraft` is added. The other 18 headers and 18 `.cpp` files **move into `gfx_backend_vsg/internal/`**
+(a pure move, zero behaviour). The `VineGraphicsBackendSdk` component shrinks with them; `libGraphics` no longer compiles vsg-only mechanisms.
 
-### 3. 一帧三相位，两后端同形
+### 3. Three phases per frame, the same shape in both backends
 
 ```
-openFrameHead(value, present_to)   // 1 次设备锁：解析目标/输入/内容键/上传 → FrameHead
-record(frame_head, cmd)            // 0 次设备锁：只读 FrameHead
-commit(cmd, target)                // 1 次设备锁：提交、present、帧账
+openFrameHead(value, present_to)   // 1 device lock: resolve target/input/content keys/uploads → FrameHead
+record(frame_head, cmd)            // 0 device locks: reads FrameHead only
+commit(cmd, target)                // 1 device lock: submit, present, frame accounting
 ```
 
-`prepareFrame` = 同一流程 + `Submission::TransferOnly`。相位的**次数**由 `FrameReport::locking`
-（新可选字段：`acquisitions` / `waits`，缺席 = 不测）跨后端可读。
+`prepareFrame` = the same flow + `Submission::TransferOnly`. The **count** of phases is readable across backends from `FrameReport::locking`
+(new optional fields: `acquisitions` / `waits`; absent = not measured).
 
-### 4. 拒绝只有一种形状
+### 4. A refusal has exactly one shape
 
-`backend/DiagnosticDraft`：`category + code + subject + limit + message`，`refuse()` 唯一写者、
-先到者胜。vk `ContentRefusal` 变成它的别名 + "枚举 → code 的无 `default` switch"（学 vsg 的
-`HostReadbackRefusal`）；引擎侧 20 条报告补 code，`diagnostic_code_baseline.txt` 清零。
+`backend/DiagnosticDraft`: `category + code + subject + limit + message`, with `refuse()` the only writer and first-come-first-served.
+vk's `ContentRefusal` becomes its alias plus "a `default`-less switch from enum → code" (learning from vsg's `HostReadbackRefusal`);
+the engine side's 20 reports gain codes, and `diagnostic_code_baseline.txt` goes to zero.
 
-### 5. 目标与引擎：各自归位
+### 5. Targets and the engine: each goes home
 
-- 目标：vk 抽 `TargetTable`（map + 形状缓存 + 构建/重建 + claim + park），`Device.cpp` 只装配与转发；
-  vsg 的 `VsgTargetRegistry` + `HostTargets` 按同一概念命名。**claim 是目标表的一个属性**，不是第三张表。
-- 引擎：抽 `detail::SessionShape` / `FramePump` / `SurfaceLedger`，`RenderEngine` 退回组合根；
-  公开面零变化是验收条件。
-- 收集：**一份实现**（快照 + `selectSnapshot`），删除 `ScenePublisher` 里的第二份行走与 memo。
-  先量后改，可整批回滚。
+- Targets: vk extracts `TargetTable` (map + shape cache + build/rebuild + claim + park), and `Device.cpp` only assembles and forwards;
+  vsg's `VsgTargetRegistry` + `HostTargets` are named by the same concept. **A claim is a property of the target table**, not a third table.
+- Engine: extract `detail::SessionShape` / `FramePump` / `SurfaceLedger`, and `RenderEngine` returns to being the composition root;
+  zero change to the public surface is an acceptance condition.
+- Collection: **one implementation** (the snapshot + `selectSnapshot`), deleting the second walk and memo in `ScenePublisher`.
+  Measure first, then change; revertible as a whole batch.
 
-## 被否决的路（与理由）
+## Rejected roads (and why)
 
-| 选项 | 为什么不做 |
+| Option | Why not |
 |---|---|
-| 把 `RenderDevice` 拆成六个接口 | 只有测试替身受益（它们已靠默认实现只覆写 5 个纯动词）；第二个 API 家族才有被迫的形状（`G8`） |
-| 两个后端共用一个 `ResolvedDraw` 类型 | 只能类型擦除，把复杂度推给每个读者（`G7` 反面）；统一形状足够 |
-| `ResidenceTable` 与 `ResourceTable` 合成一套 | 一个回答"谁可以建这个键"，一个回答"这份驻留能不能放"；合并会丢三态或丢 pin（`G1`） |
-| 用 `Session` 取代 `RenderFrameExecutor` 作为公开类型 | 为一个词改公开 API，迁移面大、收益零（`G8`） |
-| `RenderBackend` 改成两个指针的值（拆 T32） | 破坏 2 个后端 + 5 个测试替身，今天没有消费者（`G8`）；记为触发条件 |
-| 立刻删直接收集路径 | `T34` 是等价性证据，不是性能证据；先量后改 |
-| 统一五套失败枚举（A10） | 它们回答不同问题，统一丢精度（`G8`） |
-| 本次退役 vsg | 产品决策，必须单独提出；用户已声明两个后端都保留 |
-| 一次大提交 | 不可回滚、不可分批验证 |
+| Split `RenderDevice` into six interfaces | Only the test doubles would benefit (they already override just the 5 pure verbs, thanks to default implementations); only a second API family forces that shape (`G8`) |
+| One shared `ResolvedDraw` type for both backends | Only type erasure, pushing the complexity onto every reader (the reverse of `G7`); a unified shape is enough |
+| Merge `ResidenceTable` and `ResourceTable` into one | One answers "who may build this key", the other "may this residence go"; merging loses either the three states or the pin (`G1`) |
+| Use `Session` instead of `RenderFrameExecutor` as the public type | Changing a public API for one word, with a large migration surface and zero benefit (`G8`) |
+| Turn `RenderBackend` into a value of two pointers (splitting T32) | Breaks 2 backends + 5 test doubles, and there is no consumer today (`G8`); recorded as a trigger condition |
+| Delete the direct collection path right away | `T34` is equivalence evidence, not performance evidence; measure first, then change |
+| Unify the five failure enums (A10) | They answer different questions, and unifying loses precision (`G8`) |
+| Retire vsg in this round | A product decision that has to be raised separately; the owner has stated both backends stay |
+| One big commit | Not revertible, not verifiable batch by batch |
 
-## 后果
+## Consequences
 
-**好的**
+**Good**
 
-- 第四个后端第一次能读一份**只含 6 个机制**的接缝，不必学 vsg 的 `FrameCompiler` / `VariantPool` / `PhaseTable`；
-  也不必学 Vulkan 的 `subpass`（若第 8 批落地）。
-- "一帧三相位"从两段散文变成契约 + 跨后端可读的数字；"记录路径零锁"第一次有共同读数。
-- 一个概念一个名字：新人不必先学"session 在这里指窗口"。
-- 诊断面从三种形状收成一种；engine 侧 baseline 归零。
-- 引擎的线程策略改动落在 `FramePump`，不再外溢到 9 个文件；收集规则只有一份。
-- 净删代码（第二份选择、第二套拒绝形状、vk 的两个 plan 类型、一份 gate）。
+- A fourth backend can, for the first time, read a seam with **6 mechanisms only**, without learning vsg's `FrameCompiler` / `VariantPool` / `PhaseTable`;
+  nor Vulkan's `subpass` (if batch 8 lands).
+- "Three phases per frame" goes from two paragraphs of prose to a contract plus cross-backend numbers; "the record path takes no lock" has a shared reading for the first time.
+- One concept, one name: a newcomer no longer has to learn "session here means a window".
+- The diagnostic surface collapses from three shapes into one; the engine-side baseline goes to zero.
+- The engine's threading policy changes land in `FramePump` and no longer spill across 9 files; there is one collection rule.
+- Net code deleted (a second selection, a second refusal shape, vk's two plan types, one gate).
 
-**代价 / 风险（如实）**
+**Cost / risk (stated plainly)**
 
-- 第 3 批是 36 个文件（18 个头 + 18 个实现）的大搬家，漏一个 `.cpp` 就是链接错；回滚粒度大。
-- 第 2 批碰线程与锁，必须 TSan/ASan 全跑；vk 与 vsg 的 gate 合成一个时，语义细节（租约、递归、诊断重入）
-  要逐条对齐，任何一条不同都是行为变化。
-- 第 7 批可能变慢（publish 进入查询路径）；只有测量允许它落地。
-- 公开面虽然"签名不变"，但 `FrameReport` 加字段、18 个头搬家都是**源码级破坏**（仓库外消费者）；
-  第 3 / 4 批各自的文档与 ADR 状态必须同批更新。
-- 本机（lavapipe）测不出并发收益——本文不用它证明收益，只用结构证明成本（热路径零锁、miss 才付费）。
+- Batch 3 is a move of 36 files (18 headers + 18 implementations); one missed `.cpp` is a link error, and the rollback granularity is coarse.
+- Batch 2 touches threads and locks and must run the whole of TSan/ASan; when vk's and vsg's gates are merged into one, the semantic details (leases, recursion,
+  diagnostic re-entry) have to be aligned one by one, and any difference is a behaviour change.
+- Batch 7 may become slower (publish enters the query path); only measurement allows it to land.
+- Though the public surface keeps "the same signatures", adding fields to `FrameReport` and moving 18 headers are a **source-level break** (for consumers outside the repository);
+  the documents and ADR statuses of batches 3 / 4 must be updated in the same batch.
+- This machine (lavapipe) cannot measure a concurrency gain - this document does not use it to prove a benefit, only to prove the cost structurally (no lock on the hot path,
+  paying only on a miss).
 
-**触发条件（什么时候重开被否决的项）**
+**Trigger conditions (when to reopen a rejected item)**
 
-1. 第二个 **API 家族**的后端（D3D12 / Metal）出现 ⇒ 拆 `RenderDevice`（D1）与去 Vulkan 拼写（第 8 批）一起做。
-2. 第一个"只想返回 `RenderDevice`"的工厂，或第三个后端 ⇒ 拆 `RenderBackend` 聚合（T32）。
-3. 出现"跨帧持有帧值"的消费者（render graph / 离线渲染）⇒ 拆 `FrameValue` / `FrameHandles`。
-4. 真实宿主"一边编辑一边烘焙"且第 2 批的等待进入帧预算 ⇒ 回到 `ADR-2026-11-15` 的多会话扩展。
+1. A backend of a second **API family** (D3D12 / Metal) appears ⇒ split `RenderDevice` (D1) and remove the Vulkan spellings (batch 8) together.
+2. The first factory that "only wants to return a `RenderDevice`", or a third backend ⇒ split the `RenderBackend` aggregate (T32).
+3. A consumer that holds a frame value across frames appears (a render graph / offline rendering) ⇒ split `FrameValue` / `FrameHandles`.
+4. A real host "edits while baking" and batch 2's waits enter the frame budget ⇒ go back to `ADR-2026-11-15`'s multi-session extension.
 
-**明确不做**
+**Explicitly not done**
 
-- 不新增没有消费者的扩展点（`G8`）；不引入第三方依赖。
-- 不改两个后端**有意不同**的能力（借深度释放语义、内存池、管线缓存文件、GPU 计时）——它们在用户文档的
-  差异表里被写明，而不是被抹平。
-- 不在本 ADR 里顺带做 backlog 的任何触发型项（多帧在飞、dynamic rendering、VMA、LOD、点光阴影……）。
+- No extension point without a consumer (`G8`); no third-party dependency.
+- Do not change the capabilities the two backends are **deliberately different** in (borrowed-depth release semantics, memory pools, pipeline-cache files, GPU timing) - they are
+  written into the user documentation's difference table rather than smoothed over.
+- Do not take on any of the backlog's trigger-gated items in this ADR (multi-frame in flight, dynamic rendering, VMA, LOD, spot-light shadows, …).
 
-## 实施状态
+## Implementation status
 
-- **批准（2026-11-16）**：两份 ADR 与全部批次一次批准。三条行为变更**全批**（BC-08 `before_draw` 不再隐式调用、
-  BC-09 vk `setRenderTarget` 预建、BC-10 宿主报告不计入引擎 `diagnosticCount`）；`A-01` 走**方案 1**
-  （vk 也预建，补 CAP-86），不退役动词。
-- **阶段一（审核）**：完成（`.ai/research/graphics-2026-11-16-redesign.md` §2–§5）。
-- **阶段二（目标设计 + 本 ADR）**：完成并批准。
-- **批次 0（characterization）+ 批次 10（规范清扫）已落地（2026-11-16）**：CAP-44 / CAP-45 / CAP-86 的三条新用例；
-  四条规范文字（字段一行 `///`、禁止 section comment、枚举底层类型、数值类型与访问器/命令、所有权词汇表）与 26 处
-  section comment 的清扫。证据：`test_vk` 140、`test_vsg` 564 全绿，九道门禁零新增。
-- **批次 1（词汇与身份）已落地（2026-11-16）**：`backend::FrameDriverId`（u32）成为帧驱动者身份的唯一定义，
-  `TargetClaims::SessionId`（u32）与 `ResidenceTable::SessionId`（u64）合并进它（后者收窄到 u32，全仓无 64 位来源）；
-  vsg `api::Session` → `api::WindowSession`（文件、include、`tests/test_vsg/CMakeLists.txt` 清单、`SessionOptions` →
-  `WindowSessionOptions`）；vk `Device::Session` → `Device::FrameDriver`；`DeviceClock::WindowId` 留一版 `@deprecated`
-  别名。**纯改名，零行为**：三套用例的名字一个没动（它们是指纹），`VkMultiSessionTest.TwoDriversShadeWithTheirOwnDefaultProgram` /
-  `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram` / `HeadlessBackendTest.OneDeviceServesSeveralAreasWithoutCrossingThem`
-  改名后仍绿；`DeviceClock` 的**动词**仍是 `addWindow` / `windowCompleted`（只改类型，动词留给下一个批次决定）。
-- **批次 2（一帧三相位 + 帧闸）已落地（2026-11-16）**：`backend::FrameGate` 只剩一份实现（`enterShared` /
-  `enterExclusive` + 租约 + 每闸每线程嵌套栈 + `Counters`），vk 的设备体闸与 vsg 的 `internal::DeviceGate` 都换成了它；
-  13 个 vk 宿主动词从"同线程死锁"改成拒绝值 + 一条 `vk.device.reentry`；`FrameReport::locking` 落地（两后端各一条
-  "稳态常数 + waits 0"的用例）。**批次 2b（`FrameHead` 词汇）同日落地**：帧首解析出的值在两后端都叫 `FrameHead` +
-  `FrameHead::DrawPlan`——vsg 的 `internal/ContentPlan`（类 `ContentPlan` / `Call`）改名，
-  vk 的 `CommandPlan` / `ScreenPlan` / `ResolvedTextures` 合并进新头 `internal/FrameHead.hpp`（`planDraw` 一个动词
-  两个重载、帧级纹理/采样器事实挂 `FrameHead`，screen 计划也是 `DrawPlan`、用 `kind` 区分）。**不建共享头**，统一的是
-  名字与形状（本文"被否决的路"里的 `ResolvedDraw`）。纯改名/合并，零用例改名：`test_graphics` 607 / `test_vk` 159 /
-  `test_vsg` 571、对拍 13；九道门禁与 `content_seam` / `vk_exposure` 全绿。
-- **批次 3（接缝归位）已落地（2026-11-16）**：`sdk/vine/graphics/backend/` 只留 7 个机制 + 守卫——`FrameGate` /
-  `DeviceClock` / `FrameTimeline` / `RetirementQueue` / `Readback` / `Keys` / `TargetPlan`；17 个头与 16 个 `.cpp`
-  （原文的 18 + 18 里，`FrameTimeline` 留下、`ResourceTable` 本来就没有实现）搬进
-  `gfx_backend_vsg/{include/vine/backend_vsg/internal,src/internal}`。`FrameTimeline` 的判据：`DeviceClock` 持有它、
-  `RetirementQueue::retire/advance/retirePoint` 以它为参数——搬它是接缝重构，不是搬家（`G1`）；vk 在 Device.cpp 的
-  注释里也引用它。搬走的类换成 `VN_BACKEND_VSG_API`（`VN_GRAPHICS_API` 在插件里会展开成 dllimport，Windows 链接错），
-  不再包含 `BackendHalfGuard.hpp`（它们不再是那一半）。`libGraphics` 的 `src/backend/` 只剩 6 个 `.cpp`；新门禁 <!-- drift-ok -->
-  `check_include_hygiene.py` 钉住接缝的**文件集**（多一个文件就红）。`CoreTimelineTest`（5 例）随 `FrameTimeline`
-  搬进 `tests/BackendSeamTest.cpp`（三个测试二进制都编它）；**零用例改名**，`test_graphics` 612 / `test_vk` 164 /
-  `test_vsg` 571、对拍 13，九道门禁全绿。
-- **批次 4（拒绝只有一种形状 + 诊断来源）已落地（2026-11-16）**：接缝新增 `backend/DiagnosticDraft`（category + code +
-  subject + limit + message，`refuse()` 唯一写者、先到者胜，`diagnostic()` 转成 SDK 的值）；vk 的 `ContentRefusal` 成为它的
-  别名，且原因改成 `ContentRefusalCause` 枚举 + `contentRefusalCode()` 的**无 `default` switch**（D-22：加一个原因不写 code
-  就编不过，`VkContentRefusalTest.EveryCauseNamesAStableCodeAndTheDraftIsTheSharedShape` 走一遍全表并验形状）；vsg 的读回拒绝
-  （`HostReadbackRefusal`）也经 draft 产出同一个值。引擎侧 20 条报告全部带 `engine.*` code（`detail::engineProblem` 是唯一
-  构造者），宿主一条带 `appfw.viewer.foreign_view`；`scripts/diagnostic_code_baseline.txt` **清零**（门禁：122 个 code
-  双向对齐、0 条未编码报告）。**`RenderDiagnostic::origin`（Engine / Device / Host）** 落地（A-06 / CAP-87）：`reportEngineProblem`
-  的三实参形式是宿主入口、带 `Host`；`diagnostics().report` 是引擎/配方入口、带 `Engine`；设备的报告默认 `Device`。于是
-  `diagnosticCount()` / `diagnosticsClean()` / `diagnosticCount(category)` 只算引擎 + 设备（**BC-10 落地**），宿主另有
-  `diagnosticCount(DiagnosticOrigin::Host)`；见证 `RenderEngineTest.AHostReportIsCountedApartFromTheEnginesOwnFindings`。
-  零用例改名：`test_graphics` 613 / `test_vk` 165 / `test_vsg` 571、对拍 13。
-- **批次 5–18（S4–S8）已全部落地（2026-11-16 / 11-17）**：
-  - **S4**：B5a `0e9a9b84`（vk `TargetTable`：map + 形状/构建 + 租约 + park，`TargetClaims.{hpp,cpp}` 删除）、
-    B5b `81e0ba0d`（`TargetImages` → `TargetObjects`；vsg `OffscreenTarget` → `TargetObjects`、`HostTargets` →
-    `TargetTable` 并并入 `VsgTargetRegistry`）、B11 `1d57dc77`（SDK `LightSet`：灯一份不可变共享值；
-    `FrameHead::storageGrows()` 作为稳态证人）。
-  - **S5**：B12 `efc01336`（`View` 值：`CameraSnapshot` + `CollectView` + viewport + layer_mask）、
-    B13 `5b22c289`（`RenderSurface` → `RenderArea`）、B14 `001b2b80`（`Target` / `Output` 两个值；vk
-    `setRenderTarget` 真预建；`releasePass` 契约）。
-  - **S6**：B6 `2d47390e`（`RenderEngine` 是组合根：帧泵 / 会话形状 / 表面账三个机制）、B7 `16c55e69`
-    （场景 draw list 只有一条选择规则）。
-  - **S7**：B15 `955f7a94`（`Capabilities` → `Features` / `Limits`；读回 `ImageRef`）、B8 `c200d667`
-    （`DeviceFormat` + `RenderPassKey` 取代接缝里的 Vulkan 拼写）、B16a `5e31e89b` / B16b `82b4ec3f` /
-    B16c `49645332`（一个 pass 作者形状：`tag` 删除、`FrameUpdate`、`PassDesc` 唯一作者）。
-  - **S8**：B17 `7b83a509`（`ContentHalves` → `ProgramHalves`、`ContentSets` → `BindingSets`、
-    `ContentPush` → `PushRange`；命名法写进 `graphics-architecture.md` 2.12）、B9（文档真实性 + 用户文档按
-    能力重组：`.ai/design` 逐页对账、`docs/guides/graphics-backends.md` 取代三个 per-backend 页）。
-  计数（B9 落地时）：`test_graphics` **617** / `test_vk` **167** / `test_vsg` **572** / `BackendParityTest` 13；
-  九道文档/API 门禁全绿；demo `0 [error]`。
-- **阶段三（迁移）**：**完成**（2026-11-17）。批次进度以 git 的提交正文为档案（每批列出能力 ID 三元组），
-  本文只记状态；批次表与顺序仍以 `../research/graphics-2026-11-16-redesign-r2.md` §10 为准。
-- **本 ADR 已于最后一批（S8）落地时改为“已采纳”**；没有批次被放弃。
+- **Approved (2026-11-16)**: both ADRs and every batch approved in one go. The three behaviour changes **as one batch** (BC-08 `before_draw` no longer called implicitly,
+  BC-09 vk `setRenderTarget` pre-building, BC-10 host reports not counted in the engine's `diagnosticCount`); `A-01` takes **option 1**
+  (vk pre-builds too, adding CAP-86) rather than retiring the verb.
+- **Stage one (audit)**: done (`../research/graphics-2026-11-16-redesign.md` §2-§5).
+- **Stage two (target design + this ADR)**: done and approved.
+- **Batch 0 (characterization) + batch 10 (convention sweep) landed (2026-11-16)**: the three new cases for CAP-44 / CAP-45 / CAP-86;
+  the four normative passages (one `///` line per field, no section comments, enum underlying types, numeric types and accessors/commands, the ownership vocabulary) and the sweep of 26
+  section comments. Evidence: `test_vk` 140 and `test_vsg` 564 all green, nine gates with no new findings.
+- **Batch 1 (vocabulary and identity) landed (2026-11-16)**: `backend::FrameDriverId` (u32) becomes the only definition of a frame driver's identity,
+  `TargetClaims::SessionId` (u32) and `ResidenceTable::SessionId` (u64) merge into it (the latter narrowed to u32; there is no 64-bit source anywhere in the tree);
+  vsg `api::Session` → `api::WindowSession` (files, includes, the `tests/test_vsg/CMakeLists.txt` list, `SessionOptions` →
+  `WindowSessionOptions`); vk `Device::Session` → `Device::FrameDriver`; `DeviceClock::WindowId` keeps a `@deprecated`
+  alias for one version. **A pure rename, zero behaviour**: not one of the three suites' case names changed (they are fingerprints), and
+  `VkMultiSessionTest.TwoDriversShadeWithTheirOwnDefaultProgram` / `VsgBackendTest.TwoDriversKeepTheirOwnDefaultProgram` /
+  `HeadlessBackendTest.OneDeviceServesSeveralAreasWithoutCrossingThem` stay green after the rename; `DeviceClock`'s **verbs** are still `addWindow` /
+  `windowCompleted` (only the type changed; the verbs are left to the next batch).
+- **Batch 2 (three phases per frame + frame gate) landed (2026-11-16)**: `backend::FrameGate` has one implementation only (`enterShared` /
+  `enterExclusive` + lease + a per-gate per-thread nesting stack + `Counters`), and vk's device-wide gate and vsg's `internal::DeviceGate` both became it;
+  13 vk host verbs change from "deadlock on the same thread" into a refusal value plus one `vk.device.reentry`; `FrameReport::locking` lands (one case per backend
+  asserting "a steady-state constant + waits 0"). **Batch 2b (the `FrameHead` vocabulary) landed the same day**: the value a frame head resolves is called `FrameHead` +
+  `FrameHead::DrawPlan` in both backends - vsg's `internal/ContentPlan` (the `ContentPlan` / `Call` classes) is renamed,
+  and vk's `CommandPlan` / `ScreenPlan` / `ResolvedTextures` merge into the new header `internal/FrameHead.hpp` (one verb `planDraw`
+  with two overloads; frame-level texture/sampler facts hang off `FrameHead`; the screen plan is a `DrawPlan` too, told apart by `kind`). **No shared header is built**; what is unified is
+  the names and the shape (the `ResolvedDraw` in this document's "Rejected roads"). A pure rename/merge with zero case renames: `test_graphics` 607 / `test_vk` 159 /
+  `test_vsg` 571, parity 13; the nine gates plus `content_seam` / `vk_exposure` all green.
+- **Batch 3 (the seam moves home) landed (2026-11-16)**: `sdk/vine/graphics/backend/` keeps only 7 mechanisms + the guard - `FrameGate` /
+  `DeviceClock` / `FrameTimeline` / `RetirementQueue` / `Readback` / `Keys` / `TargetPlan`; 17 headers and 16 `.cpp` files
+  (of the original 18 + 18, `FrameTimeline` stays and `ResourceTable` never had an implementation) move into
+  `gfx_backend_vsg/{include/vine/backend_vsg/internal,src/internal}`. `FrameTimeline`'s criterion: `DeviceClock` holds it and
+  `RetirementQueue::retire/advance/retirePoint` take it as a parameter - moving it is a seam refactor, not a move (`G1`); vk's comments in Device.cpp
+  refer to it too. The moved classes switch to `VN_BACKEND_VSG_API` (`VN_GRAPHICS_API` would expand to dllimport inside a plugin, breaking the Windows link),
+  and no longer include `BackendHalfGuard.hpp` (they are no longer that half). `libGraphics`'s `src/backend/` is down to 6 `.cpp` files; the new gate <!-- drift-ok -->
+  `check_include_hygiene.py` pins the seam's **file set** (one extra file turns it red). `CoreTimelineTest` (5 cases) moves with `FrameTimeline`
+  into `tests/BackendSeamTest.cpp` (all three test binaries compile it); **zero case renames**, `test_graphics` 612 / `test_vk` 164 /
+  `test_vsg` 571, parity 13, the nine gates all green.
+- **Batch 4 (one refusal shape + diagnostic origin) landed (2026-11-16)**: the seam gains `backend/DiagnosticDraft` (category + code +
+  subject + limit + message, with `refuse()` the only writer, first-come-first-served, and `diagnostic()` converting it into the SDK's value); vk's `ContentRefusal` becomes
+  its alias, with reasons changed to the `ContentRefusalCause` enum plus a `default`-less switch in `contentRefusalCode()` (D-22: adding a reason without writing a code
+  does not compile; `VkContentRefusalTest.EveryCauseNamesAStableCodeAndTheDraftIsTheSharedShape` walks the whole table and checks the shape); vsg's read-back refusals
+  (`HostReadbackRefusal`) produce the same value through the draft as well. All 20 engine-side reports carry an `engine.*` code (`detail::engineProblem` is the only
+  constructor), and one host report carries `appfw.viewer.foreign_view`; `scripts/diagnostic_code_baseline.txt` is **zeroed** (gate: 122 codes
+  aligned in both directions, 0 uncoded reports). **`RenderDiagnostic::origin` (Engine / Device / Host)** lands (A-06 / CAP-87): the three-argument form of
+  `reportEngineProblem` is the host entry point and carries `Host`; `diagnostics().report` is the engine/recipe entry point and carries `Engine`; a device report defaults to `Device`.
+  So `diagnosticCount()` / `diagnosticsClean()` / `diagnosticCount(category)` count only engine + device (**BC-10 lands**), and a host has
+  `diagnosticCount(DiagnosticOrigin::Host)` separately; the witness is `RenderEngineTest.AHostReportIsCountedApartFromTheEnginesOwnFindings`.
+  Zero case renames: `test_graphics` 613 / `test_vk` 165 / `test_vsg` 571, parity 13.
+- **Batches 5-18 (S4-S8) all landed (2026-11-16 / 11-17)**:
+  - **S4**: B5a `0e9a9b84` (vk `TargetTable`: map + shape / build + lease + park; `TargetClaims.{hpp,cpp}` deleted),
+    B5b `81e0ba0d` (`TargetImages` → `TargetObjects`; vsg's `OffscreenTarget` → `TargetObjects`, `HostTargets` →
+    `TargetTable` merged with `VsgTargetRegistry`), B11 `1d57dc77` (SDK `LightSet`: the lights as one immutable shared value;
+    `FrameHead::storageGrows()` as the steady-state witness).
+  - **S5**: B12 `efc01336` (the `View` value: `CameraSnapshot` + `CollectView` + viewport + layer_mask),
+    B13 `5b22c289` (`RenderSurface` → `RenderArea`), B14 `001b2b80` (the two values `Target` / `Output`; vk
+    `setRenderTarget` really pre-builds; the `releasePass` contract).
+  - **S6**: B6 `2d47390e` (`RenderEngine` as the composition root: the three mechanisms frame pump / session shape / surface ledger), B7 `16c55e69`
+    (the scene's draw list has one selection rule only).
+  - **S7**: B15 `955f7a94` (`Capabilities` → `Features` / `Limits`; read-back takes an `ImageRef`), B8 `c200d667`
+    (`DeviceFormat` + `RenderPassKey` replace the Vulkan spellings in the seam), B16a `5e31e89b` / B16b `82b4ec3f` /
+    B16c `49645332` (one pass authoring shape: `tag` deleted, `FrameUpdate`, `PassDesc` the only author).
+  - **S8**: B17 `7b83a509` (`ContentHalves` → `ProgramHalves`, `ContentSets` → `BindingSets`,
+    `ContentPush` → `PushRange`; the naming rule written into `graphics-architecture.md` 2.12), B9 (documentation truthfulness + the user documentation regrouped by
+    capability: `.ai/design` reconciled page by page, `docs/guides/graphics-backends.md` replacing the three per-backend pages).
+  The counts when B9 landed: `test_graphics` **617** / `test_vk` **167** / `test_vsg` **572** / `BackendParityTest` 13;
+  the nine documentation/API gates all green; the demo at `0 [error]`.
+- **Stage three (migration)**: **done** (2026-11-17). Batch progress is archived in the git commit bodies (each batch lists its capability ID triples),
+  and this document only records status; the batch table and order remain governed by §10 of `../research/graphics-2026-11-16-redesign-r2.md`.
+- **This ADR was changed to "Accepted" when the last batch (S8) landed**; no batch was abandoned.
