@@ -1,57 +1,55 @@
-# ADR-2026-11-01：只有界面层可翻译，源语言是中文，目录用 Qt Linguist
+# ADR-2026-11-01: only the UI layer is translatable, the source language is Chinese, the catalogue uses Qt Linguist
 
-- 状态：已采纳（“源语言是中文”一条已由 `ADR-2026-11-02-english-source-language.md` 取代；范围、机制、目录归属、装载时机、不做运行期切换继续有效）
-- 日期：2026-11-01
-- 相关：`../design/appfw-translation.md`、`../backlog/appfw-translation.md`、`src/fw/appfw/sdk/vine/appfw/AppConfig.hpp`
+- Status: Accepted (the "the source language is Chinese" item is superseded by `ADR-2026-11-02-english-source-language.md`; the scope, mechanism, catalogue ownership, load timing and "no runtime switching" still hold)
+- Date: 2026-11-01
+- Related: `../design/appfw-translation.md`, `../backlog/appfw-translation.md`, `src/fw/appfw/sdk/vine/appfw/AppConfig.hpp`
 
-> **EN**: Chose A: only appfw and the layers above it (host, plugins) carry translatable UI strings, judged by "is this text UI or a diagnostic", with the directory mechanism being Qt Linguist (`.ts` in git, `.qm` a build product), catalogues loaded at `Application::initialize()` (plugins by the loader before `load()`), the language living in the config item `general.language` rather than `AppConfig`, and no runtime switching in v1. Base-library logs and exceptions stay untranslated so they remain greppable. The "Chinese is the source language" part is superseded by `ADR-2026-11-02-english-source-language`.
+## Background
 
-## 背景
+Every UI string was hard-coded in Chinese (about 140 places in appfw's GUI, the same in app_shell and the plugins), and `AppConfig::language` had always been "a placeholder for i18n, not wired yet". Supporting a second language required deciding three things first: **which layers are translatable**, **which language is the source**, and **which catalogue mechanism is used**. The logs and exceptions of the lower libraries (base / viz / robotics / loaders) were already English, and whether they enter the translation scope decides directly whether the layering breaks.
 
-界面文案全部硬编码为中文（appfw GUI 约 140 处，app_shell 与插件同样），`AppConfig::language` 一直是“留给 i18n 的占位、还没接线”。要支持第二种语言，需要先定三件事：**哪些层可翻译**、**源语言是哪一种**、**用哪套目录机制**。底层库（base / viz / robotics / loaders）的日志与异常已经是英文，它们是否进入翻译范围，直接决定分层是否被破坏。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 只有 appfw 及以上层可翻译；源语言中文；Qt Linguist（选定） | 分层不变；两百多条现有文案零改动；`.ts` 可 diff、可评审；`lupdate` 自动抽取 | 源码里不是英文源；需要 `.ts` 维护与 CI 检查 |
-| B. 全树可翻译，含 base 的日志与异常 | “一套机制覆盖全部文字” | 底层库被绑上界面生命周期（换语言要重刷日志点）；日志/异常被翻译后 grep、门禁脚本、issue 检索对不上；base 还要依赖翻译头（G2、G4） |
-| C. 英文作为源语言，中文作为译文 | 符合 Qt 社区惯例，外部贡献者友好 | 现有约两百条中文文案要译成英文再翻回中文，纯 churn；`.ts` 评审语言与团队不一致（G8） |
-| D. 自造 JSON/CSV 目录 + 自己的查找 | 完全可控，不依赖 Qt 工具链 | 要重新实现 context、复数、回退、查找顺序与编辑器（G7）；失去 `lupdate`/Linguist |
-| E. gettext（`.po`/`msgfmt`） | 工具成熟，译者熟悉 | 新依赖；与 `QCoreApplication::translate()` 不共享查找，插件还要各带一套 |
-| F. `.qm` 编进资源文件**作为唯一手段** | 部署简单，不会缺文件 | 改一个字就要重编程序，翻译更新变成发版（G9）。已取代：保留其部署优点，但改为“内嵌为默认 + 模块旁文件覆盖”→ `ADR-2026-11-01-translation-catalog-embedding.md` |
+| A. Only appfw and the layers above it are translatable; the source language is Chinese; Qt Linguist (chosen) | Layering unchanged; the two hundred existing strings change by zero; a `.ts` can be diffed and reviewed; `lupdate` extracts automatically | The source in the code is not English; `.ts` maintenance and a CI check are needed |
+| B. The whole tree is translatable, including base's logs and exceptions | "One mechanism covers all text" | The lower libraries are tied to the UI lifecycle (a language change would have to refresh log sites); translated logs and exceptions no longer match grep, gate scripts or issue searches; base would also depend on a translation header (`G2`, `G4`) |
+| C. English as the source language, Chinese as the translation | Matches Qt community practice and is friendly to outside contributors | About two hundred Chinese strings would be translated to English and back, pure churn; the `.ts` review language would not match the team's (`G8`) |
+| D. A self-made JSON/CSV catalogue with its own lookup | Fully controllable, no Qt toolchain | Reimplements context, plurals, fallback, lookup order and an editor (`G7`); `lupdate` and Linguist are lost |
+| E. gettext (`.po`/`msgfmt`) | Mature tools, familiar to translators | A new dependency; it does not share lookup with `QCoreApplication::translate()`, so each plugin would carry its own set |
+| F. Compile `.qm` into a resource **as the only means** | Simple to deploy, never a missing file | Changing one word means rebuilding the program, so a translation update becomes a release (`G9`). Superseded: its deployment benefit is kept, but reshaped as "embedded by default plus a file beside the module overriding it" -> `ADR-2026-11-01-translation-catalog-embedding.md` |
 
-## 决定
+## Decision
 
-采用 A：
+Chose A:
 
-- **范围**：只有 appfw 与它以上的层（宿主、插件）写可翻译文案。判断标准是“这段字属于界面还是诊断”，而不是“用户看不看得见”。
-- **源语言**：中文。目录的键是现有中文源串，译文是其它语言；缺译文回退源串。
-- **机制**：`QCoreApplication::translate()` + `.ts`（进 git）+ `lrelease` 产出的 `.qm`（构建产物）。目录归属与形态（随模块走、内嵌、可被文件覆盖）由 `ADR-2026-11-01-translation-catalog-embedding.md` 决定。
-- **装载**：启动时在 `Application::initialize()` 里装框架与宿主目录（早于任何窗口），插件目录由加载器在 `load()` 前代装、卸载时移除。
-- **语言的归属**：语言是配置项 `general.language`（`ConfigManager` 的值 + `ConfigRegistry` 里的元数据，显示在“通用 / 语言”），不是 `AppConfig` 的字段——它要和其它设置同一个家：用户能在配置窗口改、能写进配置文件、能持久化。
-- **v1 不做运行期切换**：语言在启动时确定，改语言 = 改配置项 `general.language` 后重启。
+- **Scope**: only appfw and the layers above it (host, plugins) write translatable text. The test is "is this text UI or a diagnostic", not "can the user see it".
+- **Source language**: Chinese. The catalogue's keys are the existing Chinese source strings and the translations are other languages; a missing translation falls back to the source string.
+- **Mechanism**: `QCoreApplication::translate()` plus `.ts` (committed) plus the `.qm` produced by `lrelease` (a build product). Catalogue ownership and shape (per module, embedded, overridable by a file) are decided by `ADR-2026-11-01-translation-catalog-embedding.md`.
+- **Loading**: the framework and host catalogues are installed in `Application::initialize()` at start-up (before any window), and the loader installs a plugin's catalogue before `load()` and removes it on unload.
+- **Where the language lives**: the language is the config item `general.language` (a `ConfigManager` value plus metadata in `ConfigRegistry`, shown under "General / Language"), not an `AppConfig` field - it belongs in the same home as the other settings: changeable in the configuration window, writable to the configuration file, persistent.
+- **v1 does no runtime switching**: the language is fixed at start-up, so changing it means changing the config item `general.language` and restarting.
 
-## 后果
+## Consequences
 
-- 好的：
-  - 分层不动：底层库不知道“翻译”存在，日志与异常保持英文、可 grep；
-  - 现有文案不用改一个字，只把 `QStringLiteral("…")` 换成 `tr(u8"…")`；
-  - 目录是文本，翻译可以单独提交、单独评审，不必等代码发版。
-- 坏的 / 代价：
-  - 源码里的字符串不是英文；
-  - `.ts` 需要随文案变更更新（obsolete/missing 检查进 CI）；
-  - 译文变长会挤占版式（Backstage 行高、按钮宽度都按中文排过），需要目视检查每种语言。
-  - 崩溃窗口与崩溃报告仍是硬编码中文（base 零 Qt 依赖，本轮不管；见 backlog T7/T8）。
-- 触发条件（什么时候重开）：
-  - 需要运行期切换语言（此时补 `setLanguage()` 与全部控件的 `LanguageChange` 处理）；
-  - 出现大量外部（非中文）贡献者，届时再评估选项 C；
-  - 需要翻译插件元数据（名字/描述）。
+- Good:
+  - the layering does not move: the lower libraries do not know that "translation" exists, and logs and exceptions stay English and greppable;
+  - not one existing string changes; only `QStringLiteral("...")` becomes `tr(u8"...")`;
+  - the catalogue is text, so a translation can be committed and reviewed on its own without waiting for a code release.
+- Bad / cost:
+  - the strings in the source are not English;
+  - the `.ts` has to follow string changes (an obsolete/missing check goes into CI);
+  - a longer translation eats into the layout (the Backstage row heights and button widths were laid out for Chinese), so each language needs a visual check;
+  - the crash window and crash report stay hard-coded Chinese (base has no Qt dependency and this round does not touch it; see backlog T7/T8).
+- Trigger (when to reopen):
+  - runtime language switching is needed (then add `setLanguage()` and `LanguageChange` handling in every widget);
+  - a large number of outside (non-Chinese) contributors appear, at which point option C is re-evaluated;
+  - plugin metadata (name, description) must be translated.
 
-## 证据
+## Evidence
 
-- 现有文案分布：`src/fw/appfw/src/gui` 下约 140 处中文字面量；`app_shell` 与 `model_viewer` 同样。
-- 语言设置的现状：没有可用的语言字段——`AppConfig` 里的 `language` 一直只是“留给 i18n 的占位、还没接线”，本轮连同它一起撤掉，改由配置项 `general.language` 承担。
-- 占位字段：`src/fw/appfw/sdk/vine/appfw/AppConfig.hpp` 的 `language`（注释即“not wired yet”）。
-- 装载时机：`src/fw/appfw/src/gui/GuiApplication.cpp`（`initialize()` 之后才 `createWindows()`，主窗在构造时就 `setText`）。
-- 设计：`../design/appfw-translation.md`。
+- Where the text lives today: about 140 Chinese literals under `src/fw/appfw/src/gui`; the same in `app_shell` and `model_viewer`.
+- The state of the language setting: there was no usable language field - `AppConfig`'s `language` had only ever been "a placeholder for i18n, not wired yet", and it was removed together with this round, with the config item `general.language` taking over.
+- The placeholder field: `language` in `src/fw/appfw/sdk/vine/appfw/AppConfig.hpp` (its comment is "not wired yet").
+- Load timing: `src/fw/appfw/src/gui/GuiApplication.cpp` (`createWindows()` only runs after `initialize()`, and the main window calls `setText` in its constructor).
+- Design: `../design/appfw-translation.md`.

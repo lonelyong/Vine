@@ -1,56 +1,46 @@
-# ADR-2026-11-04：B 样条的内部重数不超过度数，缺口不是一条曲线
+# ADR-2026-11-04: a B-spline's internal multiplicity does not exceed its degree; a gap is not one curve
 
-> **状态**：已采纳
-> **日期**：2026-11-04
-> **相关**：`../design/geometry-kinds.md` 2.8 / C13 / P10；`src/base/geometry/sdk/vine/geometry/BSplineBasis.hpp`（`isClampedKnotVector`、`knotContinuity`）、`BSplineCurve.hpp`、`BSplineSurface.hpp`；`tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
+> **Status**: Accepted
+> **Date**: 2026-11-04
+> **Related**: `../design/geometry-kinds.md` 2.8 / C13 / P10; `src/base/geometry/sdk/vine/geometry/BSplineBasis.hpp` (`isClampedKnotVector`, `knotContinuity`), `BSplineCurve.hpp`, `BSplineSurface.hpp`; `tests/test_geometry/GeometryKindsTest.cpp` <!-- drift-ok -->
 
-> **EN**: Chose A: `isClampedKnotVector()` requires multiplicity `degree + 1` only at the two ends and at most `degree` inside, so an internal multiplicity of `degree + 1` - which makes the parameter domain a disconnected point set - is rejected instead of being reported as `C0`. Rejected adding a `Discontinuous` bottom step to `Continuity` (no consumer, and every traversal algorithm would have to handle a hole) and documenting the lie; data with such knots must be split into separate curves, which differs from OCCT's accepted range.
+## Background
 
-## 背景
+`isClampedKnotVector()` used to require only that the multiplicity of each distinct knot lie in `[1, degree + 1]`, with the two ends exactly `degree + 1`.
+So an **internal** knot's multiplicity could also reach `degree + 1`. Mathematically that cuts the curve (or one direction of a surface) into two unrelated parts: the point **jumps** when the parameter crosses that knot, and each side is an independent B-spline segment.
 
-`isClampedKnotVector()` 此前只要求每个相异节点的重数在 `[1, degree + 1]`，两端必须恰好是 `degree + 1`。
-于是**内部**节点的重数也可以取到 `degree + 1`。数学上这是把曲线（或曲面的一个方向）切成两段互不相关的部分：
-参数跨过该节点时点会**跳**，两侧各自是独立的 B 样条段。
+The rest of the framework would not know about this:
 
-问题是框架的其余部分不会知道这件事：
+- `knotContinuity()` computes `degree - m`, which gives `-1` when `m = degree + 1` and is clamped to `C0`. So `continuity()` answers `C0`, while the definition of `Continuity::C0` is "position continuous: the segments meet at one point" - a lie about an object whose segments do not meet at all;
+- `isCN(0)` is true with it, and `isValid()` reports usable with it, so "the single decision entry" (`geometry-kinds.md` C12) fails on this input.
 
-- `knotContinuity()` 算 `degree - m`，`m = degree + 1` 时得到 `-1`，被夹到 `C0`。于是 `continuity()` 回答 `C0`，
-  而 `Continuity::C0` 的定义是「位置连续：各段交于一点」——对一个根本不相交的对象说了假话；
-- `isCN(0)` 随之为真，`isValid()` 也随之报可用，于是「唯一的判定入口」（`geometry-kinds.md` C12）在这条输入上失效。
+This is not a theoretical construction: a multiplicity like `{3, 3, 3}` is common when a spline is rebuilt from CAD data, as soon as a caller feeds a cut piece of data in as one curve.
 
-这不是理论构造：`{3, 3, 3}` 这样的重数在从 CAD 数据重建样条时很常见，只要调用方把一段被切开的数据当成一条曲线喂进来。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. `isValid()` 拒绝内部重数 `degree + 1` | 不改公共枚举；`continuity()` 的 `C0` 重新是真的（「交于一点」）；把「一段数据 ≠ 一条曲线」这个判断交给调用方显式拆分 | 收窄可接受的数据：与 OCCT（`Geom_BSplineCurve` 允许内部重数到 `degree + 1`）分道扬镳；重建时必须拆成多条 |
-| B. 给 `Continuity` 加一个「不连续」底阶（如 `Discontinuous`），如实回答 | 保持 OCCT 兼容，接受任意重数 | 公共枚举与 `isCN()` 的语义都要重新解释；`isClosed()` / `reversedParameter()` / 任何遍历算法都要开始处理「曲线有洞」；而仓库里今天没有任何消费者需要它（`G8`） |
-| C. 维持现状，在文档里警告 | 零改动 | 接口继续在合法输入上讲假话（`G4`），且 `isCN(0)` 与 `isValid()` 同时给出错误答案，比缺能力更糟 |
+| A. `isValid()` rejects an internal multiplicity of `degree + 1` | The public enum is unchanged; `continuity()`'s `C0` is true again ("meet at one point"); the judgement "a piece of data is not one curve" goes to the caller as an explicit split | Narrows the accepted data: parts ways with OCCT (`Geom_BSplineCurve` allows an internal multiplicity up to `degree + 1`); a rebuild has to split into several curves |
+| B. Add a "discontinuous" bottom step to `Continuity` (for example `Discontinuous`) and answer truthfully | Stays OCCT-compatible and accepts any multiplicity | The public enum and the semantics of `isCN()` both have to be reinterpreted; `isClosed()`, `reversedParameter()` and every traversal algorithm would have to handle "a curve with a hole"; and nothing in the repository needs it today (`G8`) |
+| C. Keep the status quo and warn in the documentation | No change | The interface keeps lying about legal input (`G4`), and `isCN(0)` and `isValid()` both give a wrong answer, which is worse than a missing capability |
 
-## 决定
+## Decision
 
-采用 A。
+Chose A.
 
-`isClampedKnotVector()` 对两端要求 `degree + 1`，对内部要求不超过 `degree`。因为 `degree - m >= 0` 恒成立，
-`Continuity` 阶梯不需要新增底阶，`C0` 的含义（各段交于一点）重新精确。
+`isClampedKnotVector()` requires `degree + 1` at the two ends and at most `degree` inside. Because `degree - m >= 0` always holds, the `Continuity` ladder needs no new bottom step, and the meaning of `C0` (the segments meet at one point) is exact again.
 
-「一条曲线」因此有了可检查的定义：**参数域上的点集是连通的**。需要保留断点的调用方把它拆成两条曲线
-（`TrimmedCurve` 与 `BSplineCurve` 都够用），这比让每个算法都学会处理洞更便宜（`G1`、`G10`）。
+"One curve" therefore has a checkable definition: **the point set over the parameter domain is connected**. A caller that must keep a break splits it into two curves (`TrimmedCurve` and `BSplineCurve` both suffice), which is cheaper than teaching every algorithm to handle a hole (`G1`, `G10`).
 
-## 后果
+## Consequences
 
-- 好的：`isValid()` / `continuity()` / `isCN()` 三者重新互相一致；`knotContinuity()` 的 `degree - m >= 0`
-  成了一个可以引用的事实，而不是一个被夹住的巧合。
-- 好的：与既有取舍同向——`BSplineCurve` / `BSplineSurface` 本来只描述夹持、非周期的形式（`geometry-kinds.md` P5），
-  「一段连通的多项式片」是同一条收窄的自然续写。
-- 坏的 / 代价：与 OCCT 的接受范围不同。从 OCCT 或 STL 读进来的数据若带 `degree + 1` 内部重数，
-  `isValid()` 会返回假，调用方必须拆分。这条差异写在头文件的 `@details` 与 P10 里。
-- 触发条件（什么时候重开）：出现真正需要**一条曲线里有洞**的消费者（例如把整份 STEP 边表存成一个对象），
-  届时按 B 方案加 `Continuity::Discontinuous` 并让遍历算法显式处理，而不是回到「夹成 C0」。
+- Good: `isValid()`, `continuity()` and `isCN()` agree with each other again; `degree - m >= 0` in `knotContinuity()` becomes a fact that can be cited rather than a clamped coincidence.
+- Good: it points the same way as the existing trade-off - `BSplineCurve` / `BSplineSurface` already describe only clamped, non-periodic forms (`geometry-kinds.md` P5), and "one connected polynomial piece" is the natural continuation of the same narrowing.
+- Bad / cost: the accepted range differs from OCCT. Data read from OCCT or STL with an internal multiplicity of `degree + 1` makes `isValid()` false, and the caller must split. The difference is written into the header's `@details` and into P10.
+- Trigger (when to reopen): a consumer that genuinely needs **a hole inside one curve** appears (for example storing a whole STEP edge table as one object); then add `Continuity::Discontinuous` along option B and make the traversal algorithms handle it explicitly, instead of going back to "clamped to C0".
 
-## 证据
+## Evidence
 
-- `src/base/geometry/sdk/vine/geometry/BSplineBasis.hpp`：`isClampedKnotVector()` 的新逐项上限与 `knotContinuity()` 的说明。 <!-- drift-ok -->
-- `tests/test_geometry/GeometryKindsTest.cpp`：`aKnotVectorThatBreaksTheCurveIsNotACurve`——`{3, 3, 3}`（度 2）的曲线与 <!-- drift-ok -->
-  曲面 `isValid()` 均为假；重数恰好等于度数的 `{3, 2, 3}` 仍为真且 `continuity() == C0`、`isCN(0)` 为真、`isCN(1)` 为假。
+- `src/base/geometry/sdk/vine/geometry/BSplineBasis.hpp`: the new per-item upper bounds in `isClampedKnotVector()` and the note on `knotContinuity()`. <!-- drift-ok -->
+- `tests/test_geometry/GeometryKindsTest.cpp`: `aKnotVectorThatBreaksTheCurveIsNotACurve` - both the curve and <!-- drift-ok -->
+  the surface of `{3, 3, 3}` (degree 2) report `isValid()` false; `{3, 2, 3}`, whose multiplicity equals the degree exactly, is still valid with `continuity() == C0`, `isCN(0)` true and `isCN(1)` false.

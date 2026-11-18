@@ -1,60 +1,58 @@
-# ADR-2026-11-01：翻译目录随模块走，内嵌进模块并可被文件覆盖
+# ADR-2026-11-01: a translation catalogue travels with its module, is embedded into it, and can be overridden by a file
 
-- 状态：已采纳（嵌入/归属的决定继续有效；文中“源串是中文、只交付英文目录”的措辞已过时——2026-11-02 起源语言是英文，见 `ADR-2026-11-02-english-source-language.md`）
-- 日期：2026-11-01
-- 相关：`../design/appfw-translation.md` §2.10、`ADR-2026-11-01-translation-scope.md`（选项 F 由本 ADR 取代）、`cmake/VinePluginHelper.cmake`、`cmake/VineEmbedShaders.cmake`
+- Status: Accepted (the embedding and ownership decisions still hold; the wording "the source string is Chinese, only an English catalogue ships" is out of date - on 2026-11-02 the source language became English, see `ADR-2026-11-02-english-source-language.md`)
+- Date: 2026-11-01
+- Related: `../design/appfw-translation.md` section 2.10, `ADR-2026-11-01-translation-scope.md` (its option F is superseded by this ADR), `cmake/VinePluginHelper.cmake`, `cmake/VineEmbedShaders.cmake`
 
-> **EN**: Chose D: every module (framework, host, each plugin) owns its `<id>.ts` next to the code that writes the strings and embeds `<id>_<locale>.qm` into its own binary under `/i18n`, with a same-named `.qm` beside the module taking precedence over the embedded copy. Rejected loose `.qm` files in the install tree, one central catalogue and embedding-only; only `zh_CN` and `en` exist, and `PluginManager` keeps no translation table - a missing catalogue is not an error. The 2026-11-02 ADR reverses which language is the source.
+## Background
 
-## 背景
+`ADR-2026-11-01-translation-scope.md` settled the mechanism (Qt Linguist) and the scope (appfw and the layers above it), but not the two things that necessarily follow: **who owns the catalogue files and where they live**, and **whether they appear as loose files in the install tree**.
 
-`ADR-2026-11-01-translation-scope.md` 定了机制（Qt Linguist）与范围（appfw 及以上层），但没定两件后续必然要定的事：**目录文件归谁所有、放在哪里**，以及**是否让它以散文件出现在安装树里**。
+The first ADR's option F (compile the `.qm` into a resource) was rejected at the time, on the ground that "changing one word means rebuilding the program, so a translation update becomes a release". That objection was aimed at "embedding as the only means". Deployment added two more pressures:
 
-第一个 ADR 的选项 F（把 `.qm` 编进资源文件）当时被否，理由是“改一个字就要重编程序，翻译更新变成发版”。那条理由针对的是“嵌入作为唯一手段”。实际部署时还有两点压力：
+- a plugin's install path already has three variants (build tree / install tree x Windows / Linux, see `vn_add_plugin`), and one more `translations/` directory per module doubles the number of rules;
+- a `.qm` in the install tree can be deleted or replaced by mistake, and the symptom is "Chinese appearing in an English interface", which is hard to locate.
 
-- 插件的安装路径已经有三套（构建树 / 安装树 × Windows / Linux，见 `vn_add_plugin`），再为每种模块加一份 `translations/` 目录，规则数量翻倍；
-- 安装树里的 `.qm` 会被用户误删、误替换，出问题时表现为“英文界面里冒出中文”，难以定位。
+At the same time the language set was settled as **Chinese and English only**. The source strings were themselves Chinese, so Chinese needed no catalogue - the only thing to ship was one English catalogue. That removed most of the weight from the "central versus distributed" argument: there are only a few catalogues in total.
 
-同时，语言范围已明确为**只有中文和英文**。源串本身就是中文，因此中文不需要目录——真正要交付的只有一本英文目录。这一点让“集中 vs 分散”的争论失去大部分分量：总共就那么几本。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 每个模块一本 `.ts`，`.qm` 作为散文件安装到 `translations/` | 翻译可热修；安装包结构直白 | 安装树必须多一层目录，构建树/安装树 × 平台的规则翻倍；文件可被误删/替换（G10 的现实成本） |
-| B. 全树一本中央 `.ts` | 译者只开一个文件，术语一致性最好 | `lupdate` 要扫所有插件目录；中央文件成为合并冲突热点；appfw 被迫知道插件清单（G2 倒挂、G9 失败） |
-| C. 每个模块一本 `.ts`，`.qm` 只内嵌、无文件覆盖 | 部署最简单，安装树最干净 | 翻译的一个错别字也要重编并重新分发模块；把第一个 ADR 选项 F 的两难原样搬回来（G9） |
-| D. 每个模块一本 `.ts`，内嵌为默认 + 模块旁同名文件覆盖（选定） | 开箱干净、无散文件；发现错译时可只放一个 `.qm` 覆盖，不必发版 | 查找要按候选列表（两行代码）；两个来源可能不一致，需要日志说清用了哪个 |
+| A. One `.ts` per module, `.qm` installed as loose files into `translations/` | Translations can be hot-fixed; the package structure is obvious | The install tree needs one more directory level, and the build-tree/install-tree x platform rules double; the files can be deleted or replaced (the real cost of `G10`) |
+| B. One central `.ts` for the whole tree | A translator opens one file, and terminology is most consistent | `lupdate` has to scan every plugin directory; the central file becomes a merge-conflict hotspot; appfw is forced to know the plugin list (an inverted `G2`, a failed `G9`) |
+| C. One `.ts` per module, `.qm` embedded only, no file override | The simplest deployment and the cleanest install tree | One typo in a translation means rebuilding and redistributing the module, which brings back the dilemma of the first ADR's option F (`G9`) |
+| D. One `.ts` per module, embedded by default with a same-named file beside the module overriding it (chosen) | Clean out of the box, no loose files; a wrong translation can be fixed by dropping one `.qm`, without a release | The lookup walks a candidate list (two lines of code); the two sources can disagree, so the log has to say which one was loaded |
 
-## 决定
+## Decision
 
-采用 D：
+Chose D:
 
-- **归属**：每个模块（框架、宿主、每个插件）拥有自己的 `<id>.ts`，与写这些文案的代码同目录；context、目录文件名前缀、插件 id 三者相同。
-- **形态**：模块自己的构建用 `qt_add_translations()` 把 `<id>_<locale>.qm` 嵌进自己的二进制，资源前缀 `/i18n`；不集中收集 `.qm`。
-- **查找顺序**：`<模块旁>/<id>_<locale>.qm` 优先，其次 `:/i18n/<id>_<locale>.qm`，都没有则回退源串。文件优先是为了保住“翻译可热修”，内嵌是为了“开箱可用”。
-- **语言集合**：只有 `zh_CN`、`en`（以及 `system`/空 表示跟随系统）。源串是中文，所以**只交付一本英文目录**；`zh_CN` 不产生 `.qm`，回退源串即正确结果。Qt 自带控件的文案仍由 Qt 自己的 `qtbase_zh_CN.qm` / `qtbase_en.qm` 提供。
-- **不加清单**：`PluginManager` 不持有插件翻译表，只按约定查找；缺目录不是错误。
+- **Ownership**: every module (framework, host, each plugin) owns its own `<id>.ts`, in the same directory as the code that writes those strings; the context, the catalogue file name prefix and the plugin id are the same string.
+- **Shape**: a module's own build embeds `<id>_<locale>.qm` into its binary with `qt_add_translations()`, resource prefix `/i18n`; `.qm` files are not collected centrally.
+- **Lookup order**: `<beside the module>/<id>_<locale>.qm` first, then `:/i18n/<id>_<locale>.qm`, and the source string as the fallback. File first keeps "translations can be hot-fixed"; embedding gives "works out of the box".
+- **Language set**: only `zh_CN` and `en` (plus `system`/empty meaning follow the system). The source strings were Chinese, so **only an English catalogue ships**; `zh_CN` produces no `.qm`, and falling back to the source string is the correct result. The text of Qt's own widgets still comes from Qt's `qtbase_zh_CN.qm` / `qtbase_en.qm`.
+- **No registry**: `PluginManager` holds no plugin translation table and only looks up by convention; a missing catalogue is not an error.
 
-## 后果
+## Consequences
 
-- 好的：
-  - 安装树里没有散落的 `.qm`，路径规则不随“构建树/安装树 × 平台”翻倍；
-  - 改文案与更新目录落在同一个提交，`.ts` 评审看得到上下文；
-  - 新增插件是纯增量：它自带 `.ts`、自己嵌，appfw 一行不改（G9）；
-  - 错译仍可热修，不必等发版——第一个 ADR 否决 F 的理由被“文件优先”抵消。
-- 坏的 / 代价：
-  - 每个模块都要一个 `lrelease` 步骤，构建对 `LinguistTools` 有 soft 依赖（缺工具时警告并跳过嵌入）；
-  - 跨模块的术语一致性没有代码保证，只能靠词汇表与评审；
-  - 两个来源可能不一致（内嵌旧、旁边文件新），排查时要先看日志里装载的是哪一个。
-  - `.qm` 不是加密格式，`lconvert` 可还原成 `.ts`：内嵌只改变“放在哪”，不改变“谁能读”。
-- 触发条件（什么时候重开）：
-  - 引入集中式翻译平台（Weblate/Crowdin）且要求单一文件：仍可直接消费各模块的 `.ts`，不必改本决定；
-  - 需要运行期切换语言：影响的是装载时机而非目录归属，见 backlog T1；
-  - 支持中日韩之外的更多语言：语言集合的假设（只有一本目录）需要重新评估，复数与语序也要进设计。
+- Good:
+  - there are no loose `.qm` files in the install tree, so the path rules do not double with "build tree/install tree x platform";
+  - a string change and the catalogue update land in one commit, and a `.ts` review shows the context;
+  - a new plugin is purely additive: it brings its `.ts` and embeds it, and appfw changes by zero lines (`G9`);
+  - a wrong translation is still hot-fixable without waiting for a release - "file first" cancels the reason the first ADR rejected F.
+- Bad / cost:
+  - every module needs an `lrelease` step, so the build has a soft dependency on `LinguistTools` (a warning and a skipped embed when the tool is missing);
+  - cross-module terminology consistency has no code guarantee, only the glossary and review;
+  - the two sources can disagree (an older embedded copy, a newer file beside the module), so the first step when investigating is to check the log for which one was loaded;
+  - `.qm` is not an encrypted format and `lconvert` restores a `.ts`: embedding changes "where it lives", not "who can read it".
+- Trigger (when to reopen):
+  - a central translation platform (Weblate/Crowdin) is adopted and demands a single file: it can still consume each module's `.ts`, so this decision need not change;
+  - runtime language switching is needed: that affects load timing, not catalogue ownership, see backlog T1;
+  - languages beyond CJK are supported: the "there is only one catalogue" assumption has to be re-evaluated, and plurals and word order enter the design.
 
-## 证据
+## Evidence
 
-- 现有先例：`cmake/VineEmbedShaders.cmake` 已按“文件留在源码树、产物装进二进制”的方式处理着色器，理由相同（无散文件、无需运行时拷贝）。
-- 路径成本：`cmake/VinePluginHelper.cmake` 已为 Windows / macOS / Linux 分别处理插件输出目录与 `install()`，再加一层翻译目录会让分支继续累加。
-- 语言范围：`.ai/design/appfw-translation.md` §2.4（源语言中文）与 C7。
+- An existing precedent: `cmake/VineEmbedShaders.cmake` already treats shaders the same way ("the file stays in the source tree, the product goes into the binary") for the same reasons (no loose files, no runtime copying).
+- Path cost: `cmake/VinePluginHelper.cmake` already handles the plugin output directory and `install()` separately for Windows / macOS / Linux, and one more translation directory would keep adding branches.
+- Language scope: `../design/appfw-translation.md` section 2.4 (Chinese source language) and C7.

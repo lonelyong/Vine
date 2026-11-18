@@ -1,57 +1,55 @@
-# ADR-2026-11-02：源语言改为英文，中文进目录
+# ADR-2026-11-02: the source language becomes English, Chinese moves into the catalogue
 
-- 状态：已采纳
-- 日期：2026-11-02
-- 取代：`ADR-2026-11-01-translation-scope.md` 中"源语言是中文、选项 C（英文源）被否决"这一条；该 ADR 的其余决定（可翻译范围、Qt Linguist 机制、目录归属与内嵌、装载时机、语言是配置项、v1 不做运行期切换）继续有效
-- 相关：`../design/appfw-translation.md`、`../backlog/appfw-translation.md`
+- Status: Accepted
+- Date: 2026-11-02
+- Supersedes: the item of `ADR-2026-11-01-translation-scope.md` that says "the source language is Chinese and option C (English source) is rejected"; the other decisions of that ADR (translatable scope, Qt Linguist mechanism, catalogue ownership and embedding, load timing, language as a config item, no runtime switching in v1) still hold
+- Related: `../design/appfw-translation.md`, `../backlog/appfw-translation.md`
 
-> **EN**: Chose B, superseding the "Chinese source language" part of `ADR-2026-11-01-translation-scope`: English becomes the source string (`translate("appfw", "Restart required")`), `zh_CN` gains the catalogue, a missing translation falls back to English, and any unknown system language resolves to `en`. The rest of the earlier ADR (scope, Qt Linguist, ownership and embedding, load timing, language as a config item, no runtime switching) still stands.
+## Background
 
-## 背景
+`ADR-2026-11-01-translation-scope.md` chose "Chinese as the source string and English as the translation" for two reasons: the two hundred existing strings were already Chinese, so changing the source was pure churn; and the team reviews a `.ts` in Chinese. Both premises have to be weighed again today:
 
-`ADR-2026-11-01-translation-scope.md` 当时选了"中文当源串、英文当译文"，理由有两条：两百多条现有文案已经是中文，改源等于纯 churn；团队评审 `.ts` 时看中文。今天这两个前提都要重新称一次：
+- the code already has two language conventions - UI text in Chinese, logs and exceptions in English. A reader has to switch between them, and `translate("appfw", "...")` and `VN_LOGW("Plugin '{}' has no create entry point")` are two voices in one source file.
+- the fallback direction for a missing translation is "Chinese showing up in an English interface", which is the worst direction for a user outside a Chinese environment.
+- a system that is neither Chinese nor English (German, Japanese, ...) currently resolves to `zh_CN` (`systemLanguageTag()` only treats English as `en`), so it gets a Chinese interface.
 
-- 代码里已经有两套语言约定——界面文案中文、日志与异常英文。读代码的人要在两种约定之间切换，`translate("appfw", "重启后生效")` 和 `VN_LOGW("Plugin '{}' has no create entry point")` 是同一份源码里的两种声音。
-- 缺译文时的回退方向现在是"英文界面里露中文"；对不在中文环境里的用户，这是最坏的方向。
-- 非中文、非英文的系统（德语、日语……）现在解析成 `zh_CN`（`systemLanguageTag()` 只把英文当作 `en`），也就是拿到中文界面。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 维持中文源 + 默认语言改 `en` | 一行改动；英文目录已经 100% 完整 | 不解决"源码两种语言约定"与"缺译文回退中文"；`translate()` 的源串仍是中文 |
-| B. 英文作源串，中文作译文（选定） | 代码与日志/异常/身份串统一英文；缺译文回退英文；`en` 不需要 `.qm`；系统语言不认识时自然落到源语言 | ~346 个调用点、304 条目录条目要反转；英文源串与人写的中文译文各要过一轮评审 |
-| C. 双源（中英都能当源串） | 不需要迁移 | 一个 key 两种写法，`lupdate` 与查表都要处理两份；同一句话有两个来源，改一处漏一处（G1、G7） |
+| A. Keep the Chinese source and change the default language to `en` | One line; the English catalogue is already 100% complete | Does not solve "two language conventions in the source" or "a missing translation falls back to Chinese"; the `translate()` source strings stay Chinese |
+| B. English as the source string, Chinese as the translation (chosen) | Code, logs, exceptions and identity strings are all English; a missing translation falls back to English; `en` needs no `.qm`; an unknown system language naturally lands on the source language | About 346 call sites and 304 catalogue entries are inverted; the English source strings and the human-written Chinese translations each need a review round |
+| C. Two sources (Chinese and English can both be source strings) | No migration | One key with two spellings, and `lupdate` and the lookup each handle both; one sentence with two sources misses one when one is edited (`G1`, `G7`) |
 
-## 决定
+## Decision
 
-采用 B：
+Chose B:
 
-- **源串是英文**：`translate("appfw", "Restart required")`。`en` 是源语言，因此不再有 `*_en.ts`；`zh_CN` 有自己的目录。
-- **目录方向**：每个模块一本 `<id>_zh_CN.ts`（中文译文进 git，`.qm` 仍是构建产物并内嵌）。
-- **回退**：没有目录或没有某一条译文时逐字返回英文源串（N1 不变，只是方向反转）。
-- **语言集合不变**：仍是 `zh_CN` 与 `en`（C7 的方向反转）。
-- **系统语言解析**：中文系统 → `zh_CN`，其它（含不认识的语言）→ `en`；Windows 取系统自己的 UI 语言（进程环境里的 `LANG` 是启动它的 shell 留下的，不算系统设置），Unix 取 `QLocale::system()`。`general.language` 的缺省仍是"跟随系统"，所以中文机器默认中文、其余机器默认英文。
-- **迁移方式**：一次性机械反转（旧目录的 `(中文 source, 英文 translation)` 翻成 `(英文 source, 中文 translation)`，调用点按同一张表替换），再用 `check_translations`（要求 `zh_CN` 全译）与 `test_gui`（固定 `zh_CN`）验收。
+- **The source string is English**: `translate("appfw", "Restart required")`. `en` is the source language, so there is no `*_en.ts` any more; `zh_CN` has its own catalogue.
+- **Catalogue direction**: one `<id>_zh_CN.ts` per module (the Chinese translation is committed, and the `.qm` is still a build product, embedded).
+- **Fallback**: with no catalogue or no entry for a string, the English source string is returned verbatim (`N1` unchanged, only the direction is inverted).
+- **The language set is unchanged**: still `zh_CN` and `en` (the inversion of C7's direction).
+- **System language resolution**: a Chinese system -> `zh_CN`, anything else (including an unknown language) -> `en`; on Windows the system's own UI language is used (the `LANG` in the process environment is left by the shell that started it and is not a system setting), on Unix `QLocale::system()`. The default of `general.language` is still "follow the system", so a Chinese machine defaults to Chinese and every other machine to English.
+- **Migration**: a one-off mechanical inversion (the old catalogue's `(Chinese source, English translation)` becomes `(English source, Chinese translation)`, and the call sites follow the same table), accepted by `check_translations` (which requires `zh_CN` to be complete) and `test_gui` (pinned to `zh_CN`).
 
-## 后果
+## Consequences
 
-- 好的：
-  - 源码只有一种语言：界面文案、日志、异常、配置键、命令名都是英文，中文只出现在目录里；
-  - 缺译文回退到英文，而不是把中文漏进英文界面；
-  - 非中英系统不再被硬塞中文；
-  - 与 Qt 社区惯例一致，外部贡献者读代码与改文案不需要中文。
-- 坏的 / 代价：
-  - 一次性迁移成本（本轮完成），英文源串需要人写而不是从旧译文照抄；
-  - 中文用户看到的文案依赖 `zh_CN` 目录的完整性，漏一条会看到英文——门禁 `check_translations` 是这条的护栏（缺译文即失败）；
-  - 团队评审 `.ts` 时源串是英文、译文是中文，评审方向反过来。
-- 触发条件（什么时候重开）：
-  - 需要第三种语言时，按同一方向再加一本 `<id>_<locale>.ts`；
-  - 需要运行期切换语言（仍按 `ADR-2026-11-01` 的结论不做）。
+- Good:
+  - the source has one language only: UI text, logs, exceptions, configuration keys and command names are all English, and Chinese appears only in catalogues;
+  - a missing translation falls back to English instead of leaking Chinese into an English interface;
+  - a system that is neither Chinese nor English is no longer force-fed Chinese;
+  - it matches Qt community practice, so an outside contributor needs no Chinese to read the code or change a string.
+- Bad / cost:
+  - a one-off migration cost (done in this round), and the English source strings have to be written by a person rather than copied from the old translations;
+  - what a Chinese user sees depends on the `zh_CN` catalogue being complete, and a missing entry shows English - the `check_translations` gate is the guard (a missing translation fails);
+  - the team now reviews a `.ts` whose source is English and whose translation is Chinese, so the review direction is inverted.
+- Trigger (when to reopen):
+  - a third language is needed, added in the same direction as one more `<id>_<locale>.ts`;
+  - runtime language switching is needed (still not done, per the conclusion of `ADR-2026-11-01`).
 
-## 证据
+## Evidence
 
-- 调用点与条目规模：`translate(` 调用点约 346 处；目录条目 `appfw` 212、`app_shell` 57、`model_viewer` 35。
-- 反转冲突只有一处：`界面语言` 与 `语言` 都译成 `Language`；源串分别取 `UI language` 与 `Language`（前者本来就更准确）。
-- 系统语言映射：`src/fw/appfw/src/Translation.cpp` 的 `systemLanguageTag()`（今天 `English → en`，其余 `zh_CN`）。
-- 设计：`../design/appfw-translation.md` §2.4、§5.1 C7。
+- Size of the call sites and the catalogue: about 346 `translate(` call sites; catalogue entries `appfw` 212, `app_shell` 57, `model_viewer` 35.
+- There was exactly one inversion clash: both "interface language" and "language" translated to `Language`; the source strings became `UI language` and `Language` (the former is more accurate anyway).
+- The system language mapping: `systemLanguageTag()` in `src/fw/appfw/src/Translation.cpp` (today `English -> en`, everything else `zh_CN`).
+- Design: `../design/appfw-translation.md` section 2.4 and section 5.1 C7.

@@ -1,49 +1,47 @@
-# ADR-2026-11-04：几何族用空标签分类，不用虚基类
+# ADR-2026-11-04: geometry families are classified by empty tags, not by virtual base classes
 
-> **状态**：已采纳（曲线族部分已被 `ADR-2026-11-04-curve-evaluation-interface.md` 取代：`Curve<T>` 现为虚接口）
-> **日期**：2026-11-04
-> **影响范围**：`src/base/geometry/sdk/vine/geometry`（曲线与曲面族按“一个类型一个头”补齐并改名：`Curve` / `LineCurve` / `CircleCurve` / `ConicCurve` / `BoundedCurve` / `OffsetCurve` / `Surface` / `ElementarySurface` / `BoundedSurface` 及各占位类型；既有类型声明归属）、`tests/test_geometry` <!-- drift-ok -->
+> **Status**: Accepted (the curve half is superseded by `ADR-2026-11-04-curve-evaluation-interface.md`: `Curve<T>` is now a virtual interface)
+> **Date**: 2026-11-04
+> **Scope**: `src/base/geometry/sdk/vine/geometry` (the curve and surface families completed and renamed one type per header: `Curve` / `LineCurve` / `CircleCurve` / `ConicCurve` / `BoundedCurve` / `OffsetCurve` / `Surface` / `ElementarySurface` / `BoundedSurface` and the placeholder types; the existing type declarations' placement), `tests/test_geometry` <!-- drift-ok -->
 
-> **EN**: Chose empty tags to classify the geometry families: `Curve` / `Surface` carry no state and no virtual functions, only `static constexpr int kDimension`, with the curve tree (`LineCurve`, `ConicCurve`, `BoundedCurve`, `OffsetCurve`) and surface tree (`ElementarySurface`, `BoundedSurface`) filled in one type per header, runtime polymorphism via `std::variant` + `std::visit`, and zero cost pinned by `static_assert`. Rejected virtual base classes (a vptr per value type breaks inlining and trivially copyable), concepts only, hoisting `pointAt` into a base class and doing nothing. The curve half is superseded by `ADR-2026-11-04-curve-evaluation-interface`, which turns `Curve<T>` into a virtual interface.
+## Background
 
-## 背景
+The geometry types had no classification relationship: "a curve / a surface / a solid" existed only in discussion, and the code could neither constrain by family nor answer "how many dimensions is this" at compile time. The only runtime classification was `ShapeType`, and it covers only `Shape` subclasses.
 
-几何类型之间没有分类关系："一条曲线 / 一个曲面 / 一个实体"只在讨论里存在，代码里既不能按族约束，也不能在编译期回答"这是几维的"。运行期分类只有 `ShapeType`，而它只覆盖 `Shape` 子类。
+Two changes that landed the same day made the cost of this decision concrete:
 
-同一天刚落地的两项改动把这个决定的代价变得具体：
+- the short queries of `Aabb` / `Obb` / `LineCurve` / `Plane` / `Ray` moved from `.cpp` into headers and inline across modules;
+- the per-triangle ray test was measured at 7.09 -> 5.99 ns (hit) and 3.96 -> 2.71 ns (parallel rejection, `geometry-ray.md` 2.7).
 
-- `Aabb` / `Obb` / `LineCurve` / `Plane` / `Ray` 的短查询从 `.cpp` 搬进头文件，跨模块内联。
-- 逐三角形射线测试实测 7.09 → 5.99 ns（命中）、3.96 → 2.71 ns（平行剔除，`geometry-ray.md` 2.7）。
+## Decision
 
-## 决定
+1. `Curve` / `Surface` are **empty tags**: no state, no virtual functions, only `static constexpr int kDimension` (1/2).
+2. The curve tree follows CAD-kernel vocabulary: `LineCurve` under `Curve`; `ConicCurve` for the four conics (`CircleCurve`, `EllipseCurve`, `HyperbolaCurve`, `ParabolaCurve`, all implemented); `BoundedCurve` for bounded curves (`BezierCurve` / `BSplineCurve` still placeholders); `OffsetCurve` a placeholder.
+3. The surface tree likewise: `ElementarySurface` (`Plane` and `SphericalSurface` implemented, three placeholder) and `BoundedSurface` (three placeholders).
+4. One type per header; an unimplemented type is declared only, with its default constructor deleted, so it cannot be constructed.
+5. Family membership is declared once, at the type definition; the meaning of the parameters stays with the concrete type (`Ray` is a distance, `LineCurve` a direction multiplier, `CircleCurve` radians).
+6. Runtime polymorphism still uses `std::variant` + `std::visit`.
+7. The zero cost is guarded by tests: `static_assert` asserts membership, non-membership, unchanged `sizeof` and trivially copyable.
 
-1. `Curve` / `Surface` 是**空标签**：无状态、无虚函数，只带 `static constexpr int kDimension`（1/2）。
-2. 曲线树照 CAD 内核的词汇展开：`LineCurve` 挂在 `Curve` 下；`ConicCurve` 给四个圆锥曲线（`CircleCurve`、`EllipseCurve`、`HyperbolaCurve`、`ParabolaCurve`，均已实现）；`BoundedCurve` 给有限曲线（`BezierCurve` / `BSplineCurve` 仍占位）；`OffsetCurve` 占位。
-3. 曲面树同理：`ElementarySurface`（`Plane`、`SphericalSurface` 已实现，另三个占位）与 `BoundedSurface`（三个占位）。
-4. 一个类型一个头文件；未实现的类型只声明、默认构造删除，不可构造。
-5. 族归属只在类型定义处声明一次；参数的含义留在具体类型（`Ray` 是距离、`LineCurve` 是方向倍数、`CircleCurve` 是弧度）。
-6. 运行期多态仍用 `std::variant` + `std::visit`。
-7. 零成本由测试守：`static_assert` 断言归属、非归属、`sizeof` 不变与 trivially copyable。
+## Rationale
 
-## 理由
+- `G10`: a virtual base class would add a vptr to `Ray`, `LineCurve` and `Box`, breaking copy by value and cross-module inlining and giving back the benefit just measured.
+- `G1`, `G12`: classification needs a name and one declaration site; an empty tag writes that into the type system without adding a runtime mechanism.
+- `G8`: only classification and the implementations verified by tests are added; family-level algorithms (intersection, distance) have no consumer and go to the backlog.
+- `G9`: adding a member is one header plus one derivation declaration, and the consumers are pointed at by compile errors rather than by convention.
 
-- `G10`：虚基类会给 `Ray`、`LineCurve`、`Box` 各加一个 vptr，破坏按值拷贝与跨模块内联，把刚测到的收益退回去。
-- `G1`、`G12`：分类需要一个名字和一处声明；空标签把这件事写进类型系统，而不新增运行期机制。
-- `G8`：只加分类与被测试验证的实现；族级算法（求交、距离）没有消费者，进 backlog。
-- `G9`：新成员接入是一个头文件 + 一条派生声明，消费点由编译错误指出，不靠约定。
+## Rejected options
 
-## 已否决选项
-
-| 选项 | 否决理由 |
+| Option | Why not |
 |---|---|
-| 三个族做成虚基类，具体类型公开继承 | 每个值类型多一个 vptr，`Ray` 在热循环里按值拷贝；内联收益与 trivially copyable 一起丢失（`G10`） |
-| 只提供 concept 约束、不提供标签 | `is_base_of` 这类编译期问法与族的文档位置消失；运行期仍需要 variant 覆盖同一集合（`G1`） |
-| 把 `pointAt(t)` 提升进基类统一定义 | 四种曲线的 `t` 语义不同，统一签名把差异藏进文档（`G4`） |
-| 先不做分类，等有消费者再说 | 分类是命名与文档问题，成本是一次性且可验证为零；缺了它，新几何无处声明归属（`G12`） |
+| Make the three families virtual base classes that concrete types inherit publicly | One more vptr per value type, and `Ray` is copied by value in hot loops; the inlining benefit and trivially copyable are lost together (`G10`) |
+| Offer concept constraints only, no tags | Compile-time questions such as `is_base_of` lose their answer, and the family loses its documentation home; runtime still needs a variant over the same set (`G1`) |
+| Hoist `pointAt(t)` into a base class with one definition | The four curves mean different things by `t`, and one signature would hide the difference in documentation (`G4`) |
+| Do no classification and wait for a consumer | Classification is a naming and documentation question whose cost is one-off and verifiably zero; without it a new geometry type has nowhere to declare its family (`G12`) |
 
-## 后果
+## Consequences
 
-- 既有类型的布局、语义、ABI 均不变（空基类优化），改动是纯增量。
-- 新增四个值类型；坐标/面族的名称与 `QuadMesh`、`TriangleMesh` 不冲突（前者是单个面，后者是网格存储）。
-- 族级算法仍缺失，已记入 `../backlog/geometry.md`。
-- 现行设计记录在 `.ai/design/geometry-kinds.md`。
+- The layout, semantics and ABI of existing types are unchanged (empty base optimisation), so the change is purely additive.
+- Four value types are added; the names of the point and surface families do not clash with `QuadMesh` or `TriangleMesh` (the former is a single face, the latter mesh storage).
+- Family-level algorithms are still missing and are recorded in `../backlog/geometry.md`.
+- The current design is recorded in `.ai/design/geometry-kinds.md`.

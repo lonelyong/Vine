@@ -1,50 +1,42 @@
-# ADR-2026-11-04：偏置曲线的二阶导数不实现，也不给 `Curve<T>` 加三阶导数
+# ADR-2026-11-04: the offset curve's second derivative is not implemented, and `Curve<T>` gains no third derivative
 
-> **状态**：已取代（被 `ADR-2026-11-06-space-third-derivative-and-offset.md` 取代：能力协议落地后，空间曲线族答三阶导，`OffsetCurve` 成为可构造的值类型）
-> **日期**：2026-11-04
-> **相关**：`../design/geometry-kinds.md` 2.7 / 2.8 / D9；`src/base/geom/sdk/vine/geom/spatial/Curve.hpp`、`OffsetCurve.hpp`；`tests/test_geom_spatial/GeometryKindsTest.cpp` <!-- drift-ok -->
+> **Status**: Superseded (by `ADR-2026-11-06-space-third-derivative-and-offset.md`: once the capability protocol landed, the spatial curve family answers the third derivative and `OffsetCurve` became a constructible value type)
+> **Date**: 2026-11-04
+> **Related**: `../design/geometry-kinds.md` 2.7 / 2.8 / D9; `src/base/geom/sdk/vine/geom/spatial/Curve.hpp`, `OffsetCurve.hpp`; `tests/test_geom_spatial/GeometryKindsTest.cpp` <!-- drift-ok -->
 
-> **EN**: Chose C: `OffsetCurve` re-declares `secondDerivative` pure and stays abstract, because an exact offset second derivative needs the base curve's third derivative, and adding `thirdDerivative()` to `Curve<T>` would charge every concrete curve for one consumer while a central difference would hide a numerical error behind an exact contract. Superseded by `ADR-2026-11-06-space-third-derivative-and-offset`, which adds the capability protocol and makes `OffsetCurve` constructible.
+## Background
 
-## 背景
+Once the evaluation of `BezierCurve` / `BSplineCurve` had landed, `OffsetCurve` had one pure virtual function left: `secondDerivative()`. By definition `P(u) = p(u) + d * N(u) / |N(u)|`, where `N(u) = reference_direction x p'(u)`, so
 
-`BezierCurve` / `BSplineCurve` 的求值落地后，`OffsetCurve` 只剩一个纯虚函数：`secondDerivative()`。按定义
-`P(u) = p(u) + d * N(u) / |N(u)|`，其中 `N(u) = reference_direction x p'(u)`，因此
+- `P'(u)` needs `p''` (already in the interface);
+- the expansion of `P''(u)` contains `N''(u) = reference_direction x p'''(u)`, which is the **basis curve's third derivative**.
 
-- `P'(u)` 需要 `p''`（接口已有）；
-- `P''(u)` 展开后含 `N''(u) = reference_direction x p'''(u)`，也就是**基曲线的三阶导数**。
+The very first version of `Curve<T>` excluded `D3` / `DN` from the interface explicitly (`ADR-2026-11-04-curve-evaluation-interface.md` item 7, `geometry-kinds.md` D6), because there was no consumer at the time.
 
-`Curve<T>` 的第一版就把 `D3` / `DN` 明确排除在接口之外（`ADR-2026-11-04-curve-evaluation-interface.md` 第 7 条、`geometry-kinds.md` D6），理由是当时没有任何消费者。
+## Options
 
-## 选项
-
-| 选项 | 好处 | 代价 |
+| Option | Benefit | Cost |
 |---|---|---|
-| A. 给 `Curve<T>` 加 `thirdDerivative()` 纯虚 | 偏置的二阶导数精确、与 OCCT 的 `Geom_Curve::D3` 对齐 | 所有具体曲线（直线、四个圆锥、两种样条、裁剪、偏置自己）都要实现；接口从十项变十一项，每个新增曲线多一份成本，而今天只有一条曲线需要它（`G8`） |
-| B. 用 `derivative()` 的中心差分近似 | 不改接口，`OffsetCurve` 立刻可构造 | 精度随步长变化、结果依赖参数化尺度；把一个隐式数值误差藏进一个本应精确的契约（`G4`、`G11`） |
-| C. `secondDerivative()` 保持纯虚，`evaluate()` / `derivative()` 照常实现 | 不扩大接口、不引入数值误差；没实现的部分由类型系统如实表达（抽象类型不可构造） | `OffsetCurve` 仍不可构造，只能通过派生类测试（测试里一个只补这一项的小 stub） |
+| A. Add a pure virtual `thirdDerivative()` to `Curve<T>` | The offset's second derivative is exact and aligns with OCCT's `Geom_Curve::D3` | Every concrete curve (lines, the four conics, the two splines, trims, the offset itself) has to implement it; the interface grows from ten items to eleven, adding a cost per new curve, while only one curve needs it today (`G8`) |
+| B. Approximate with a central difference of `derivative()` | The interface is unchanged and `OffsetCurve` is constructible at once | The accuracy varies with the step and depends on the parameterisation scale; an implicit numerical error is hidden inside a contract that is meant to be exact (`G4`, `G11`) |
+| C. Keep `secondDerivative()` pure and implement `evaluate()` / `derivative()` as usual | The interface does not widen and no numerical error is introduced; what is not implemented is stated honestly by the type system (an abstract type is not constructible) | `OffsetCurve` stays unconstructible and can only be tested through a derived class (a small stub that supplies only this item) |
 
-## 决定
+## Decision
 
-采用 C。
+Chose C.
 
-`OffsetCurve` 在派生类里重新声明 `secondDerivative(T) const override = 0;`，并在声明处写清阻塞原因（缺三阶导数、
-拒绝有限差分）。类型因此保持抽象，和“这一项还没有实现”这件事完全一致。
+`OffsetCurve` re-declares `secondDerivative(T) const override = 0;` in the derived class and states the blocking reason at the declaration (the third derivative is missing, finite differences are refused). The type therefore stays abstract, exactly consistent with "this item is not implemented yet".
 
-## 后果
+## Consequences
 
-- 好的：接口大小不变，八种具体曲线不必为一个没有消费者的能力付账（`G8`）；偏置的点与一阶导数已经可用，未来补
-  三阶导数时只需在 `Curve<T>` 上增加一项、在 `OffsetCurve` 里补一条公式。
-- 坏的 / 代价：`OffsetCurve` 不能构造，`evaluate()` / `derivative()` 只能经派生类调用；使用者要多看一眼
-  `is_abstract` 的原因。
-- 触发条件（什么时候重开）：出现真正需要**偏置曲线二阶导数**的消费者（例如偏置曲线的曲率、G2 拼接检查），
-  或第二个需要三阶导数的算法（例如 jerk 连续的运动规划）。届时按 A 扩充接口，并同步更新
-  `geometry-kinds.md` 2.7 与 `D6`。
+- Good: the interface size does not change, and the eight concrete curves need not pay for a capability without a consumer (`G8`); the offset's point and first derivative are already usable, and adding the third derivative later means one item on `Curve<T>` and one formula in `OffsetCurve`.
+- Bad / cost: `OffsetCurve` cannot be constructed, and `evaluate()` / `derivative()` can only be called through a derived class; a user has to look once at why it is abstract.
+- Trigger (when to reopen): a consumer that genuinely needs **an offset curve's second derivative** appears (for example the curvature of an offset curve, or a G2 continuity check), or a second algorithm needs the third derivative (for example jerk-continuous motion planning). Then extend the interface along A and update `geometry-kinds.md` 2.7 and `D6` with it.
 
-## 证据
+## Evidence
 
-- `src/base/geometry/sdk/vine/geometry/OffsetCurve.hpp`：`evaluate()` / `derivative()` 的实现与 `secondDerivative()` <!-- drift-ok -->
-  上的 `= 0` 及说明。
-- `tests/test_geometry/GeometryKindsTest.cpp`：`static_assert(std::is_abstract_v<OffsetCurved>)`、 <!-- drift-ok -->
-  `OffsetStub` 只补 `secondDerivative()`、`anOffsetCurveInheritsTheBasisDomain` 覆盖域转发与位移几何。
-- OCCT `Geom_OffsetCurveUtils.pxx` 的 `CalculateD2` 用到了基曲线的 `D3`，即同一阻塞在参考实现里的形态。
+- `src/base/geometry/sdk/vine/geometry/OffsetCurve.hpp`: the implementations of `evaluate()` / `derivative()` and the `= 0` <!-- drift-ok -->
+  and its note on `secondDerivative()`.
+- `tests/test_geometry/GeometryKindsTest.cpp`: `static_assert(std::is_abstract_v<OffsetCurved>)`, the <!-- drift-ok -->
+  `OffsetStub` supplying only `secondDerivative()`, and `anOffsetCurveInheritsTheBasisDomain` covering domain forwarding and the displaced geometry.
+- `CalculateD2` in OCCT's `Geom_OffsetCurveUtils.pxx` uses the basis curve's `D3`, i.e. the same blockage exists in the reference implementation.
