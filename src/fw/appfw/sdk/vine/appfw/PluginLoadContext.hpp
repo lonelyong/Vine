@@ -77,6 +77,11 @@ class VN_APPFW_API PluginLoadContext {
     /**
      * @brief Command manager: plugins register their commands here during load().
      *
+     * @note Registering through this pointer inside a lifecycle hook leaves the command unattributed (empty owner):
+     *       the manager keeps no owner tag set while the hook is suspended, so the registration cannot know whose it
+     *       is. Use registerCommand() below instead. The pointer itself is for queries and for what runs outside a
+     *       hook.
+     *
      * @return The command manager, or nullptr if no Application is set.
      */
     raw_ptr<CommandManager> commandManager() const;
@@ -141,6 +146,10 @@ class VN_APPFW_API PluginLoadContext {
      *   the main thread delivers in that window would inherit this plugin's name.
      * - Commands a plugin declares statically (VN_DECLARE_COMMAND) need none of this: the manager flushes the
      *   module queue itself, inside the plugin's own scope.
+     *
+     * @warning The owner tag is one process-wide value, so this call belongs on the application thread - the same
+     *          thread that drives the load. Registering from a pool thread would race the tag with whatever the
+     *          application thread is doing at that moment.
      *
      * @param command_class Meta class of the command.
      * @param name          Unique command name; must not be empty.

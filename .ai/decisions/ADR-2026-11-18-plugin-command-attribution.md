@@ -54,8 +54,9 @@ manager's own scope.
 - A command registered from a hook is attributed correctly even after a `co_await`, and nothing else can inherit the
   paused plugin's name. A plugin that bypasses the context gets an *unattributed* command (empty owner), never another
   plugin's.
-- Adding the non-virtual member and the defaulted `isPluginEnabled()` parameter is source- and layout-compatible: the
-  plug-in ABI revision stays `10u`.
+- Adding the non-virtual member keeps the plug-in ABI revision at `10u`; the location-aware enabled query was added as
+  an **overload**, not as a defaulted parameter, because a default argument would have replaced the one-argument symbol
+  and a plugin built against the previous SDK would have failed to resolve it at load time.
 - The rule now lives where the fact is: the registration call, not the call stack. A future "plugin registers a config
   item, a document type, a view" follows the same shape - `PluginLoadContext::registerConfigItem()` already did.
 

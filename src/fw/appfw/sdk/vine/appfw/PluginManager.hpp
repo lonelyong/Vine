@@ -515,11 +515,29 @@ class VN_APPFW_API PluginManager {
      * Reads the per-user preference from the host ConfigManager when one is
      * available and falls back to the process-local preference otherwise.
      *
-     * @param name    Plugin name.
-     * @param library Library the plugin is loaded from, or an empty path when only the name is known.
+     * @param name Plugin name.
      * @return true if the plugin may be loaded.
      */
-    [[nodiscard]] bool isPluginEnabled(const String& name, const std::filesystem::path& library = {}) const;
+    [[nodiscard]] bool isPluginEnabled(const String& name) const;
+
+    /**
+     * @brief Returns the effective enabled state of a plugin that would be loaded from @p library.
+     *
+     * Same four inputs as the other overload, plus the one fact a name cannot carry: a registration may disable a
+     * plugin by the location it points at, because a directory registration records no name (see installPlugin()). A
+     * caller that knows the file - an explicit load() - must ask this overload, or an administrator's location-keyed
+     * policy would not be applied.
+     *
+     * An empty @p library means "only the name is known" and answers like the one-argument overload.
+     *
+     * @note This is an overload rather than a defaulted parameter on purpose: a default argument would replace the
+     *       one-argument symbol, and a plugin built against the previous SDK would fail to resolve it at load time.
+     *
+     * @param name    Plugin name.
+     * @param library Library the plugin is loaded from, or an empty path.
+     * @return true if the plugin may be loaded.
+     */
+    [[nodiscard]] bool isPluginEnabled(const String& name, const std::filesystem::path& library) const;
 
     /**
      * @brief Enables or disables a plugin and persists the user's preference.

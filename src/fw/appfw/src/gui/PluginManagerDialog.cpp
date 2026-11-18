@@ -257,6 +257,16 @@ struct PluginManagerDialog::Impl : public WindowData {
     /// Repository URL of the selected plugin; the info tab links to it.
     QString current_repo;
 
+    /// The list this dialog shows, filled by refresh() and reused by every detail/action handler.
+    ///
+    /// One manager query per refresh, not one per selection: pluginEntries() reads the registration files (it resolves
+    /// the policy at query time), so asking it again for the detail page, the toggle and the context menu would turn one
+    /// click into four directory walks.
+    std::vector<vn::appfw::PluginEntry> entries;
+
+    /// The registrations behind `entries`, read with them (same reason).
+    std::vector<vn::appfw::PluginRegistration> registrations;
+
     /// Rendered icons, keyed by "<size>|<svg source>": the list is rebuilt on every
     /// refresh, and re-rendering the same SVG each time would be wasteful.
     QHash<QString, QPixmap> icons;
@@ -593,10 +603,9 @@ PluginManagerDialog::PluginManagerDialog(vn::appfw::PluginManager* manager)
         auto* item = data->list->itemAt(pos);
 
         const String selected     = item ? Convert::fromQString(item->data(Qt::UserRole).toString()) : String{};
-        const auto   entries      = data->manager ? data->manager->pluginEntries() : std::vector<vn::appfw::PluginEntry>{};
-        // Named copies: findRegistration()/findEntry() would return pointers into
-        // temporaries otherwise.
-        const auto  registrations = data->manager ? data->manager->pluginRegistrations() : std::vector<vn::appfw::PluginRegistration>{};
+        // The list and the registrations of the last refresh: the menu describes what is on screen.
+        const auto& entries       = data->entries;
+        const auto& registrations = data->registrations;
         const auto* entry         = findEntry(entries, selected);
 
         // Same rule as the buttons: only offer the actions that can take effect.
@@ -710,11 +719,15 @@ void PluginManagerDialog::refresh()
 
     int select_row = -1;
     if (data->manager) {
+        // One query for the list and one for the registrations: the rows, the detail page and the actions all read these
+        // two members until the next refresh.
+        data->entries       = data->manager->pluginEntries();
+        data->registrations = data->manager->pluginRegistrations();
+
         // Discovery, not loading: plugins that are disabled, skipped by the host or
         // failed to load are listed as well, with their metadata, so they can be
         // inspected here instead of being invisible.
-        for (const auto& entry : data->manager->pluginEntries()) {
-            const String  plugin_name = entry.info.name;
+        for (const auto& entry : data->entries) {            const String  plugin_name = entry.info.name;
             const QString name        = Convert::toQString(plugin_name);
             const QString display     = entry.info.display_name.empty() ? name : Convert::toQString(entry.info.display_name);
 
@@ -753,6 +766,11 @@ void PluginManagerDialog::refresh()
                 select_row = data->list->count() - 1;
             }
         }
+    }
+    else {
+        // No manager: nothing to show, and the caches from the previous refresh must not outlive it.
+        data->entries.clear();
+        data->registrations.clear();
     }
     data->list->blockSignals(false);
 
@@ -830,7 +848,7 @@ void PluginManagerDialog::uninstallSelectedPlugin()
     }
 
     const String name    = Convert::fromQString(data->list->currentItem()->data(Qt::UserRole).toString());
-    const auto   entries = data->manager->pluginEntries();
+    const auto&  entries = data->entries;
     const auto*  entry   = findEntry(entries, name);
     if (entry == nullptr) {
         return;
@@ -838,8 +856,8 @@ void PluginManagerDialog::uninstallSelectedPlugin()
 
     // Only a registered plugin can be uninstalled: what ships with the
     // application is removed by the application, not by the user. The
-    // registration list is kept in a named local so the pointer stays valid.
-    const auto  registrations = data->manager->pluginRegistrations();
+    // registrations come from the same refresh as the entry.
+    const auto& registrations = data->registrations;
     const auto* registration  = findRegistration(registrations, entry->path);
     if (registration == nullptr) {
         data->message_label->setText(translate("appfw", "This plugin ships with the application and cannot be uninstalled."));
@@ -863,7 +881,7 @@ void PluginManagerDialog::togglePluginEnabled()
     }
 
     const String name    = Convert::fromQString(data->list->currentItem()->data(Qt::UserRole).toString());
-    const auto   entries = data->manager->pluginEntries();
+    const auto&  entries = data->entries;
     const auto*  entry   = findEntry(entries, name);
     if (entry == nullptr) {
         return;
@@ -895,12 +913,11 @@ void PluginManagerDialog::showDetail(const vn::String& name)
         return;
     }
 
-    const auto  entries = data->manager->pluginEntries();
+    const auto& entries = data->entries;
     const auto* entry   = findEntry(entries, name);
 
-    // The registration list is kept in a named local: findRegistration() would
-    // return a pointer into a temporary otherwise.
-    const auto  registrations = data->manager->pluginRegistrations();
+    // The entry and its registration come from the same refresh; both are read when the list is built.
+    const auto& registrations = data->registrations;
     const auto* registration  = entry != nullptr ? findRegistration(registrations, entry->path) : nullptr;
 
     const QString id      = Convert::toQString(name);

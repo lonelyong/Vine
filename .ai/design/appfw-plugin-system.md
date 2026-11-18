@@ -295,7 +295,7 @@ Discovery, loading, disabling, skipping and unloading, the configuration and dat
 ### 9.3 Compatibility / migration
 
 `VN_APPFW_PLUGIN_ABI_VERSION` is **10u**; after an argument-count change in `VN_DECLARE_PLUGIN` every plugin must be recompiled.
-Adding the non-virtual `PluginLoadContext::registerCommand()` and the defaulted `library` parameter of `isPluginEnabled()` is source-compatible and does not move any layout, so the revision does not change; a plugin built against 10u keeps loading.
+Adding the non-virtual `PluginLoadContext::registerCommand()` adds a symbol and moves no layout, and `isPluginEnabled(name, library)` is an **overload** rather than a defaulted parameter - a default argument would replace the one-argument symbol and a plugin built against 10u would fail to resolve it at load time. Both stay within a revision, so 10u is unchanged.
 
 ## 10. References
 

@@ -8339,6 +8339,10 @@ TEST(PluginLifecycleTest, PathKeyedRegistrationBlocksAnExplicitLoad)
     EXPECT_FALSE(pm->isPluginEnabled(u8"app_shell", copied)) << "按位置禁用的注册必须能被问到";
     EXPECT_EQ(pm->load(vn::String(copied.u8string())), nullptr) << "显式按路径加载不得复活管理员停用的插件";
     EXPECT_FALSE(pm->isLoaded(u8"app_shell"));
+
+    // 只给名字的那一问也必须落到同一个答案：重扫之后，发现列表里的库路径就在被禁用的那个位置上。
+    pm->rescan();
+    EXPECT_FALSE(pm->isPluginEnabled(u8"app_shell")) << "单参数查询用发现到的库路径，不能只看名字";
 }
 
 // 重扫是"Refresh"按钮的全部含义：登记一个新位置后，一次 rescan() 就该看到它，而 loadAll() 才会加载它。

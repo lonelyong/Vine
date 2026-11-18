@@ -771,7 +771,7 @@ std::vector<std::filesystem::path> pluginLibrariesIn(const std::filesystem::path
 /// Resolves a plugin name or library path to a library file.
 std::filesystem::path resolvePluginPath(const String& name_or_path)
 {
-    const std::filesystem::path given(std::u8string_view(name_or_path.data(), name_or_path.size()));
+    const std::filesystem::path given = toPath(name_or_path);
     std::error_code             ec;
     if (given.has_extension() && std::filesystem::exists(given, ec)) {
         return given;
@@ -1137,12 +1137,11 @@ std::vector<Candidate> collectCandidates(const PluginPolicy&             policy,
     struct Source {
         std::filesystem::path     path;
         PluginScope               scope;
-        bool                      registration_enabled; // false: a registration disables it for everyone.
-        const PluginRegistration* registration{};       // the file this source came from; null for the application's directory.
+        const PluginRegistration* registration{}; ///< the file this source came from; null for the application's directory.
     };
 
     std::vector<Source> sources;
-    sources.push_back(Source{ PluginManager::builtInPluginDirectory(), PluginScope::BuiltIn, true, nullptr });
+    sources.push_back(Source{ PluginManager::builtInPluginDirectory(), PluginScope::BuiltIn, nullptr });
 
     // Registrations are read on every scan, so installing or removing a plugin (or editing a
     // registration file by hand) only needs a restart - or a PluginManager::rescan().
@@ -1151,10 +1150,7 @@ std::vector<Candidate> collectCandidates(const PluginPolicy&             policy,
         if (!registration.enabled) {
             VN_LOGI("Plugin registration '{}' disables its plugin for all users", toUtf8(registration.id));
         }
-        sources.push_back(Source{ std::filesystem::path(std::u8string_view(registration.path.data(), registration.path.size())),
-                                  registration.scope,
-                                  registration.enabled,
-                                  &registration });
+        sources.push_back(Source{ toPath(registration.path), registration.scope, &registration });
     }
 
     // Step 2: the metadata of every unfiltered, valid Vine plugin. No instance is created yet; only
@@ -1775,6 +1771,13 @@ std::vector<PluginEntry> PluginManager::pluginEntries() const
     return entries;
 }
 
+bool PluginManager::isPluginEnabled(const String& name) const
+{
+    // The discovered library, when there is one: the location is part of the answer (see the overload).
+    const PluginEntry* entry = findDiscovered(d->discovered, name);
+    return isPluginEnabled(name, entry != nullptr ? entry->path : std::filesystem::path{});
+}
+
 bool PluginManager::isPluginEnabled(const String& name, const std::filesystem::path& library) const
 {
     // The same policy pluginEntries() snapshots for a whole list; here it answers one name, so the answer is always
@@ -1880,8 +1883,7 @@ String PluginManager::installPlugin(const String& path, PluginScope scope)
     // resolving even though it is valid right now. Symlinks are deliberately kept as
     // given - the registration records where the user pointed, not what it resolves to.
     std::error_code             ec;
-    const std::filesystem::path location =
-        std::filesystem::absolute(std::filesystem::path(std::u8string_view(path.data(), path.size())), ec).lexically_normal();
+    const std::filesystem::path location = std::filesystem::absolute(toPath(path), ec).lexically_normal();
     if (!std::filesystem::exists(location, ec)) {
         // The registration is a path, so registering a missing one would only
         // produce a warning on every later start.
@@ -1952,7 +1954,7 @@ String PluginManager::installPlugin(const String& path, PluginScope scope)
         return {};
     }
 
-    std::filesystem::path target = directory / std::filesystem::path(std::u8string_view(id.data(), id.size()));
+    std::filesystem::path target = directory / toPath(id);
     target += kRegistrationExtension;
 
     if (!writeRegistrationFile(target, registration)) {
@@ -1989,7 +1991,7 @@ bool PluginManager::uninstallPlugin(const String& id, PluginScope scope)
     }
 
     for (const auto& directory : candidates) {
-        std::filesystem::path file = directory / std::filesystem::path(std::u8string_view(id.data(), id.size()));
+        std::filesystem::path file = directory / toPath(id);
         file += kRegistrationExtension;
 
         std::error_code ec;
